@@ -1,0 +1,22 @@
+# 本地文件
+.local/
+
+# 依赖
+node_modules/
+
+# 构建产物
+dist/
+dist-electron/
+out/
+*.tsbuildinfo
+
+# 日志
+*.log
+npm-debug.log*
+
+# 系统
+.DS_Store
+
+# 编辑器
+.idea/
+.vscode/
