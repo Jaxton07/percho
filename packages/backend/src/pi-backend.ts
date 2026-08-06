@@ -1,5 +1,7 @@
+import { unlink } from "node:fs/promises";
 import type { Model, ThinkingLevel } from "@earendil-works/pi-ai";
 import {
+	type AgentSession,
 	type AgentSessionEvent,
 	createAgentSession,
 	type ExtensionUIContext,
@@ -68,6 +70,24 @@ export class PiBackend {
 		}
 	}
 
+	/** pi 无自动命名逻辑：首轮 agent_end 后取第一条用户消息首行作为会话标题 */
+	private autoName(session: AgentSession, event: AgentSessionEvent): void {
+		if (event.type !== "agent_end") return;
+		if (session.sessionManager.getSessionName()) return;
+		const firstUser = session.agent.state.messages.find((m) => m.role === "user");
+		if (!firstUser) return;
+		const text =
+			typeof firstUser.content === "string"
+				? firstUser.content
+				: firstUser.content
+						.filter((p) => p.type === "text")
+						.map((p) => ("text" in p ? p.text : ""))
+						.join(" ");
+		const firstLine = (text.trim().split("\n")[0] ?? "").trim();
+		if (!firstLine) return;
+		session.setSessionName(firstLine.length > 30 ? `${firstLine.slice(0, 30)}…` : firstLine);
+	}
+
 	private makeUiContext(gate: PermissionGate): ExtensionUIContext {
 		return {
 			select: (title, options) =>
@@ -133,7 +153,10 @@ export class PiBackend {
 			});
 		}
 
-		const unsubscribe = session.subscribe((event) => this.emitEvent(session.sessionId, event));
+		const unsubscribe = session.subscribe((event) => {
+			this.autoName(session, event);
+			this.emitEvent(session.sessionId, event);
+		});
 		this.registry.add({ session, unsubscribe, cwd });
 		return this.toMetaOrThrow(session.sessionId);
 	}
@@ -146,7 +169,10 @@ export class PiBackend {
 			sessionManager,
 			modelRuntime: runtime,
 		});
-		const unsubscribe = session.subscribe((event) => this.emitEvent(session.sessionId, event));
+		const unsubscribe = session.subscribe((event) => {
+			this.autoName(session, event);
+			this.emitEvent(session.sessionId, event);
+		});
 		this.registry.add({ session, unsubscribe, cwd });
 		return this.toMetaOrThrow(session.sessionId);
 	}
@@ -165,6 +191,25 @@ export class PiBackend {
 				active: false,
 				messageCount: info.messageCount,
 				createdAt: info.created.getTime(),
+				modifiedAt: info.modified.getTime(),
+			}));
+	}
+
+	/** 跨全部项目目录枚举历史会话（项目管理页用） */
+	async listAllSessions(): Promise<SessionMeta[]> {
+		const infos = await SessionManager.listAll();
+		const activeIds = new Set(this.registry.list().map((e) => e.session.sessionId));
+		return infos
+			.filter((info) => !activeIds.has(info.id) && info.cwd)
+			.map((info) => ({
+				sessionId: info.id,
+				sessionFile: info.path,
+				cwd: info.cwd || "",
+				name: info.name,
+				active: false,
+				messageCount: info.messageCount,
+				createdAt: info.created.getTime(),
+				modifiedAt: info.modified.getTime(),
 			}));
 	}
 
@@ -175,6 +220,15 @@ export class PiBackend {
 		this.gates.get(sessionId)?.dispose();
 		this.gates.delete(sessionId);
 		this.registry.delete(sessionId);
+	}
+
+	/** 删除历史会话（pi 无删除 API，会话即磁盘 jsonl，直接删文件） */
+	async deleteSession(sessionId: string, sessionFile?: string): Promise<void> {
+		const entry = this.registry.get(sessionId);
+		const file = sessionFile ?? entry?.session.sessionManager.getSessionFile();
+		if (entry) await this.closeSession(sessionId);
+		if (!file) throw new Error(`Session file not found: ${sessionId}`);
+		await unlink(file);
 	}
 
 	async prompt(sessionId: string, text: string): Promise<void> {

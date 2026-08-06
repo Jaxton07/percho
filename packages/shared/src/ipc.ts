@@ -1,5 +1,6 @@
 import type {
 	CreateSessionOptions,
+	GitBranches,
 	PermissionAnswer,
 	PermissionRequest,
 	SessionEventEnvelope,
@@ -12,8 +13,10 @@ import type { CustomProviderInput, ProviderInfo, ProviderTestResult } from "./se
 export const IpcChannels = {
 	SessionCreate: "session:create",
 	SessionList: "session:list",
+	SessionListAll: "session:listAll",
 	SessionOpen: "session:open",
 	SessionClose: "session:close",
+	SessionDelete: "session:delete",
 	SessionPrompt: "session:prompt",
 	SessionAbort: "session:abort",
 	SessionSetModel: "session:setModel",
@@ -30,6 +33,9 @@ export const IpcChannels = {
 	PermissionRespond: "permission:respond",
 	ProjectPickDirectory: "project:pickDirectory",
 	ProjectGetGitBranch: "project:getGitBranch",
+	ProjectListGitBranches: "project:listGitBranches",
+	ProjectCheckoutBranch: "project:checkoutBranch",
+	AppOpenExternal: "app:openExternal",
 	/** main → renderer 事件 */
 	Event: "pi:event",
 	PermissionRequest: "pi:permission-request",
@@ -39,8 +45,12 @@ export const IpcChannels = {
 export interface PiApi {
 	createSession(options: CreateSessionOptions): Promise<SessionMeta>;
 	listSessions(cwd?: string): Promise<SessionMeta[]>;
+	/** 跨全部项目目录枚举历史会话（项目管理页用） */
+	listAllSessions(): Promise<SessionMeta[]>;
 	openSession(filePath: string): Promise<SessionMeta>;
 	closeSession(sessionId: string): Promise<void>;
+	/** 删除会话（含磁盘 jsonl 文件，不可恢复） */
+	deleteSession(sessionId: string, sessionFile?: string): Promise<void>;
 	prompt(sessionId: string, text: string): Promise<void>;
 	abort(sessionId: string): Promise<void>;
 	setModel(sessionId: string, provider: string, modelId: string): Promise<void>;
@@ -57,6 +67,11 @@ export interface PiApi {
 	respondPermission(requestId: string, answer: PermissionAnswer): Promise<void>;
 	pickDirectory(): Promise<string | null>;
 	getGitBranch(cwd: string): Promise<string | null>;
+	listGitBranches(cwd: string): Promise<GitBranches>;
+	/** 切换分支；返回切换后的当前分支（失败抛错） */
+	checkoutBranch(cwd: string, branch: string): Promise<string>;
+	/** 用系统浏览器打开链接 */
+	openExternal(url: string): Promise<void>;
 	/** 订阅会话事件；返回取消函数 */
 	onEvent(cb: (payload: SessionEventEnvelope) => void): () => void;
 	onPermissionRequest(cb: (req: PermissionRequest) => void): () => void;

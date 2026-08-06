@@ -1,5 +1,6 @@
 # 本地文件
 .local/
+AGENTS.md
 
 # 依赖
 node_modules/

@@ -1,48 +1,117 @@
 import { type CustomProviderInput, KNOWN_APIS, type ProviderInfo } from "@pi-desktop/shared";
 import { useState } from "react";
+import { type Language, useI18nStore, useT } from "../i18n";
 import { useSettingsStore } from "../stores/settings";
 
-/** 设置弹窗：provider / 模型 / 凭证的可视化配置 */
+type SettingsCategory = "general" | "providers" | "skills" | "mcp" | "extensions";
+
+const CATEGORIES: SettingsCategory[] = ["general", "providers", "skills", "mcp", "extensions"];
+
+/** 设置弹窗：左侧分类导航 + 右侧内容，两列均可独立滚动 */
 export function SettingsDialog() {
+	const t = useT();
 	const open = useSettingsStore((s) => s.open);
 	const setOpen = useSettingsStore((s) => s.setOpen);
-	const providers = useSettingsStore((s) => s.providers);
-	const loading = useSettingsStore((s) => s.loading);
-	const error = useSettingsStore((s) => s.error);
+	const [category, setCategory] = useState<SettingsCategory>("providers");
 
 	if (!open) return null;
 
 	return (
 		<div className="fixed inset-0 z-40 flex items-center justify-center bg-black/20" role="dialog" aria-modal>
-			<div className="flex max-h-[80vh] w-[560px] flex-col rounded-xl border border-zinc-200 bg-white shadow-xl">
-				<div className="flex items-center justify-between border-b border-zinc-100 px-4 py-3">
-					<h2 className="text-sm font-semibold text-zinc-900">模型与 Provider 设置</h2>
+			<div className="flex h-[70vh] w-[720px] flex-col overflow-hidden rounded-xl border border-zinc-200 bg-white shadow-xl">
+				<div className="flex shrink-0 items-center justify-between border-b border-zinc-100 px-4 py-3">
+					<h2 className="text-sm font-semibold text-zinc-900">{t("settings.title")}</h2>
 					<button
 						type="button"
 						className="rounded-lg px-2 py-1 text-zinc-400 transition-colors hover:bg-zinc-100 hover:text-zinc-700"
 						onClick={() => setOpen(false)}
-						aria-label="关闭"
+						aria-label={t("common.close")}
 					>
 						✕
 					</button>
 				</div>
-				<div className="min-h-0 flex-1 overflow-y-auto px-4 py-3">
-					{error && <p className="mb-2 rounded-lg bg-red-50 px-3 py-2 text-[12px] text-red-600">{error}</p>}
-					{loading && providers.length === 0 ? (
-						<p className="py-8 text-center text-[13px] text-zinc-400">加载中…</p>
-					) : (
-						<ProviderList providers={providers} />
-					)}
-					<CustomProviderForm />
+				<div className="flex min-h-0 flex-1">
+					<nav className="w-44 shrink-0 overflow-y-auto border-r border-zinc-100 p-2">
+						{CATEGORIES.map((id) => (
+							<button
+								key={id}
+								type="button"
+								className={`mb-0.5 w-full rounded-lg px-3 py-2 text-left text-[13px] transition-colors ${
+									category === id
+										? "bg-zinc-100 font-medium text-zinc-900"
+										: "text-zinc-500 hover:bg-zinc-50 hover:text-zinc-800"
+								}`}
+								onClick={() => setCategory(id)}
+							>
+								{t(`settings.category.${id}`)}
+							</button>
+						))}
+					</nav>
+					<div className="min-w-0 flex-1 overflow-y-auto px-4 py-3">
+						{category === "general" && <GeneralPanel />}
+						{category === "providers" && <ProvidersPanel />}
+						{category !== "general" && category !== "providers" && (
+							<p className="py-8 text-center text-[13px] text-zinc-400">{t("settings.comingSoon")}</p>
+						)}
+					</div>
 				</div>
 			</div>
 		</div>
 	);
 }
 
+function GeneralPanel() {
+	const t = useT();
+	const language = useI18nStore((s) => s.language);
+	const setLanguage = useI18nStore((s) => s.setLanguage);
+
+	return (
+		<div>
+			<h3 className="text-[13px] font-medium text-zinc-800">{t("settings.language")}</h3>
+			<p className="mt-0.5 text-[11px] text-zinc-400">{t("settings.languageHint")}</p>
+			<div className="mt-2 flex gap-2">
+				{(["zh", "en"] as Language[]).map((lang) => (
+					<button
+						key={lang}
+						type="button"
+						className={`rounded-lg border px-3 py-1.5 text-[13px] transition-colors ${
+							language === lang
+								? "border-zinc-900 bg-zinc-900 text-white"
+								: "border-zinc-200 text-zinc-600 hover:border-zinc-300 hover:bg-zinc-50"
+						}`}
+						onClick={() => setLanguage(lang)}
+					>
+						{t(`lang.${lang}`)}
+					</button>
+				))}
+			</div>
+		</div>
+	);
+}
+
+function ProvidersPanel() {
+	const t = useT();
+	const providers = useSettingsStore((s) => s.providers);
+	const loading = useSettingsStore((s) => s.loading);
+	const error = useSettingsStore((s) => s.error);
+
+	return (
+		<div>
+			{error && <p className="mb-2 rounded-lg bg-red-50 px-3 py-2 text-[12px] text-red-600">{error}</p>}
+			{loading && providers.length === 0 ? (
+				<p className="py-8 text-center text-[13px] text-zinc-400">{t("settings.loading")}</p>
+			) : (
+				<ProviderList providers={providers} />
+			)}
+			<CustomProviderForm />
+		</div>
+	);
+}
+
 function ProviderList({ providers }: { providers: ProviderInfo[] }) {
+	const t = useT();
 	if (providers.length === 0) {
-		return <p className="py-4 text-center text-[13px] text-zinc-400">未发现可用 provider</p>;
+		return <p className="py-4 text-center text-[13px] text-zinc-400">{t("settings.providers.empty")}</p>;
 	}
 	return (
 		<ul className="divide-y divide-zinc-100">
@@ -54,6 +123,7 @@ function ProviderList({ providers }: { providers: ProviderInfo[] }) {
 }
 
 function ProviderRow({ provider }: { provider: ProviderInfo }) {
+	const t = useT();
 	const saveKey = useSettingsStore((s) => s.saveKey);
 	const removeCredential = useSettingsStore((s) => s.removeCredential);
 	const removeCustom = useSettingsStore((s) => s.removeCustom);
@@ -76,11 +146,13 @@ function ProviderRow({ provider }: { provider: ProviderInfo }) {
 					<div className="flex items-center gap-1.5">
 						<span className="truncate text-[13px] font-medium text-zinc-800">{provider.name}</span>
 						{provider.custom && (
-							<span className="rounded bg-zinc-100 px-1.5 py-0.5 text-[10px] text-zinc-500">自定义</span>
+							<span className="rounded bg-zinc-100 px-1.5 py-0.5 text-[10px] text-zinc-500">
+								{t("settings.providers.custom")}
+							</span>
 						)}
 					</div>
 					<div className="mt-0.5 text-[11px] text-zinc-400">
-						{provider.models.length} 个模型
+						{t("settings.providers.modelCount", { count: provider.models.length })}
 						{provider.configured && provider.authLabel ? ` · ${provider.authLabel}` : ""}
 					</div>
 				</div>
@@ -89,7 +161,7 @@ function ProviderRow({ provider }: { provider: ProviderInfo }) {
 						provider.configured ? "bg-emerald-50 text-emerald-600" : "bg-zinc-100 text-zinc-400"
 					}`}
 				>
-					{provider.configured ? "已配置" : "未配置"}
+					{provider.configured ? t("settings.providers.configured") : t("settings.providers.unconfigured")}
 				</span>
 				{provider.configured && (
 					<button
@@ -98,7 +170,7 @@ function ProviderRow({ provider }: { provider: ProviderInfo }) {
 						onClick={() => void test(provider.id)}
 						disabled={testResult === "testing"}
 					>
-						{testResult === "testing" ? "测试中…" : "测试"}
+						{testResult === "testing" ? t("settings.providers.testing") : t("settings.providers.test")}
 					</button>
 				)}
 				<button
@@ -106,7 +178,7 @@ function ProviderRow({ provider }: { provider: ProviderInfo }) {
 					className="shrink-0 rounded-lg px-2 py-1 text-[12px] text-zinc-500 transition-colors hover:bg-zinc-100"
 					onClick={() => setEditing((v) => !v)}
 				>
-					{provider.configured ? "更新 Key" : "配置 Key"}
+					{provider.configured ? t("settings.providers.updateKey") : t("settings.providers.configKey")}
 				</button>
 				{provider.custom ? (
 					<button
@@ -114,7 +186,7 @@ function ProviderRow({ provider }: { provider: ProviderInfo }) {
 						className="shrink-0 rounded-lg px-2 py-1 text-[12px] text-red-500 transition-colors hover:bg-red-50"
 						onClick={() => void removeCustom(provider.id)}
 					>
-						删除
+						{t("common.delete")}
 					</button>
 				) : (
 					provider.configured &&
@@ -124,7 +196,7 @@ function ProviderRow({ provider }: { provider: ProviderInfo }) {
 							className="shrink-0 rounded-lg px-2 py-1 text-[12px] text-red-500 transition-colors hover:bg-red-50"
 							onClick={() => void removeCredential(provider.id)}
 						>
-							移除凭证
+							{t("settings.providers.removeCredential")}
 						</button>
 					)
 				)}
@@ -135,7 +207,9 @@ function ProviderRow({ provider }: { provider: ProviderInfo }) {
 						testResult.ok ? "bg-emerald-50 text-emerald-600" : "bg-red-50 text-red-600"
 					}`}
 				>
-					{testResult.ok ? `连接正常（${testResult.modelId}）` : `测试失败：${testResult.error}`}
+					{testResult.ok
+						? t("settings.providers.testOk", { modelId: testResult.modelId ?? "" })
+						: t("settings.providers.testFailed", { error: testResult.error ?? "" })}
 				</p>
 			)}
 			{editing && (
@@ -143,7 +217,7 @@ function ProviderRow({ provider }: { provider: ProviderInfo }) {
 					<input
 						type="password"
 						className="min-w-0 flex-1 rounded-lg border border-zinc-200 px-2.5 py-1.5 text-[12px] outline-none focus:border-zinc-400"
-						placeholder="粘贴 API Key，保存到 ~/.pi/agent/auth.json"
+						placeholder={t("settings.providers.keyPlaceholder")}
 						value={key}
 						onChange={(e) => setKey(e.target.value)}
 						onKeyDown={(e) => e.key === "Enter" && void save()}
@@ -154,7 +228,7 @@ function ProviderRow({ provider }: { provider: ProviderInfo }) {
 						onClick={() => void save()}
 						disabled={!key.trim()}
 					>
-						保存
+						{t("common.save")}
 					</button>
 				</div>
 			)}
@@ -163,6 +237,7 @@ function ProviderRow({ provider }: { provider: ProviderInfo }) {
 }
 
 function CustomProviderForm() {
+	const t = useT();
 	const addCustom = useSettingsStore((s) => s.addCustom);
 	const [show, setShow] = useState(false);
 	const [form, setForm] = useState({
@@ -182,7 +257,7 @@ function CustomProviderForm() {
 				className="mt-3 w-full rounded-lg border border-dashed border-zinc-200 py-2 text-[13px] text-zinc-500 transition-colors hover:border-zinc-300 hover:bg-zinc-50"
 				onClick={() => setShow(true)}
 			>
-				+ 添加自定义 Provider
+				{t("settings.providers.addCustom")}
 			</button>
 		);
 	}
@@ -220,13 +295,23 @@ function CustomProviderForm() {
 
 	return (
 		<div className="mt-3 rounded-xl border border-zinc-200 p-3">
-			<h3 className="text-[13px] font-medium text-zinc-800">自定义 Provider</h3>
+			<h3 className="text-[13px] font-medium text-zinc-800">{t("settings.providers.customTitle")}</h3>
 			<div className="mt-2 grid grid-cols-2 gap-2">
-				<input className={inputClass} placeholder="ID，如 ai-ops" value={form.id} onChange={set("id")} />
-				<input className={inputClass} placeholder="显示名（可选）" value={form.name} onChange={set("name")} />
+				<input
+					className={inputClass}
+					placeholder={t("settings.providers.customId")}
+					value={form.id}
+					onChange={set("id")}
+				/>
+				<input
+					className={inputClass}
+					placeholder={t("settings.providers.customName")}
+					value={form.name}
+					onChange={set("name")}
+				/>
 				<input
 					className={`${inputClass} col-span-2`}
-					placeholder="baseUrl，如 https://api.deepseek.com"
+					placeholder={t("settings.providers.customBaseUrl")}
 					value={form.baseUrl}
 					onChange={set("baseUrl")}
 				/>
@@ -239,7 +324,7 @@ function CustomProviderForm() {
 				</select>
 				<input
 					className={inputClass}
-					placeholder="API Key（可选，存 auth.json）"
+					placeholder={t("settings.providers.customKey")}
 					type="password"
 					value={form.apiKey}
 					onChange={set("apiKey")}
@@ -247,7 +332,7 @@ function CustomProviderForm() {
 				<textarea
 					className={`${inputClass} col-span-2 resize-none`}
 					rows={2}
-					placeholder="模型 ID，逗号或换行分隔，如 deepseek-chat, deepseek-reasoner"
+					placeholder={t("settings.providers.customModels")}
 					value={form.models}
 					onChange={set("models")}
 				/>
@@ -258,7 +343,7 @@ function CustomProviderForm() {
 					className="rounded-lg px-3 py-1.5 text-[12px] text-zinc-500 transition-colors hover:bg-zinc-100"
 					onClick={() => setShow(false)}
 				>
-					取消
+					{t("common.cancel")}
 				</button>
 				<button
 					type="button"
@@ -266,7 +351,7 @@ function CustomProviderForm() {
 					onClick={() => void submit()}
 					disabled={submitting || !form.id.trim() || !form.baseUrl.trim() || !form.models.trim()}
 				>
-					{submitting ? "保存中…" : "保存"}
+					{submitting ? t("settings.providers.submitting") : t("common.save")}
 				</button>
 			</div>
 		</div>

@@ -15,6 +15,8 @@ export interface SessionMeta {
 	messageCount: number;
 	/** 创建时间（unix 毫秒） */
 	createdAt: number;
+	/** 最后活动时间（unix 毫秒，历史会话列表排序/分组用） */
+	modifiedAt?: number;
 }
 
 export interface SessionStats {
@@ -50,6 +52,12 @@ export interface PermissionRequest {
 }
 
 export type PermissionAnswer = "allow" | "deny" | "allowAlways";
+
+/** git 分支信息（项目管理页/空态分支选择器用） */
+export interface GitBranches {
+	current: string | null;
+	branches: string[];
+}
 
 /** 渲染进程收到的统一事件包络 */
 export interface SessionEventEnvelope {

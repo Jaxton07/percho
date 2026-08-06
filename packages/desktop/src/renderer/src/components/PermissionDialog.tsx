@@ -1,8 +1,10 @@
 import { getPi } from "../api";
+import { useT } from "../i18n";
 import { useTranscriptStore } from "../stores/transcript";
 
 /** 权限确认对话框：允许一次 / 拒绝 / 本会话总是允许 */
 export function PermissionDialog({ sessionId }: { sessionId: string | null }) {
+	const t = useT();
 	const pendingPermissions = useTranscriptStore((s) =>
 		sessionId ? s.bySession[sessionId]?.pendingPermissions : undefined,
 	);
@@ -34,25 +36,27 @@ export function PermissionDialog({ sessionId }: { sessionId: string | null }) {
 						className="rounded-lg px-3 py-1.5 text-[13px] text-zinc-500 transition-colors hover:bg-zinc-100"
 						onClick={() => respond("deny")}
 					>
-						拒绝
+						{t("permission.deny")}
 					</button>
 					<button
 						type="button"
 						className="rounded-lg px-3 py-1.5 text-[13px] text-zinc-500 transition-colors hover:bg-zinc-100"
 						onClick={() => respond("allowAlways")}
 					>
-						本会话总是允许
+						{t("permission.allowAlways")}
 					</button>
 					<button
 						type="button"
 						className="rounded-lg bg-zinc-900 px-3 py-1.5 text-[13px] font-medium text-white transition-colors hover:bg-zinc-700"
 						onClick={() => respond("allow")}
 					>
-						允许一次
+						{t("permission.allowOnce")}
 					</button>
 				</div>
 				{pendingPermissions.length > 1 && (
-					<p className="mt-2 text-[11px] text-zinc-400">还有 {pendingPermissions.length - 1} 个请求排队</p>
+					<p className="mt-2 text-[11px] text-zinc-400">
+						{t("permission.queued", { count: pendingPermissions.length - 1 })}
+					</p>
 				)}
 			</div>
 		</div>

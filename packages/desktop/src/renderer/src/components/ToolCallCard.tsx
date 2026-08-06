@@ -1,3 +1,4 @@
+import { useT } from "../i18n";
 import type { UIToolCall } from "../stores/transcript";
 
 const toolIcons: Record<string, string> = {
@@ -27,6 +28,7 @@ function summarizeArgs(args: string): string {
 
 /** 工具调用折叠卡片 */
 export function ToolCallCard({ tool }: { tool: UIToolCall }) {
+	const t = useT();
 	const summary = summarizeArgs(tool.args);
 	const stateColor =
 		tool.state === "error"
@@ -52,7 +54,9 @@ export function ToolCallCard({ tool }: { tool: UIToolCall }) {
 					{toolIcons[tool.name] ?? "🔧"} {tool.name}
 				</span>
 				{summary && <span className="truncate font-mono text-[11px] text-zinc-500">{summary}</span>}
-				{tool.state === "running" && <span className="ml-auto text-[10px] text-zinc-400">运行中…</span>}
+				{tool.state === "running" && (
+					<span className="ml-auto text-[10px] text-zinc-400">{t("tool.running")}</span>
+				)}
 			</summary>
 			{tool.output && (
 				<div className="border-t border-zinc-100 px-2.5 py-2">

@@ -1,9 +1,11 @@
 import { useEffect, useState } from "react";
 import { getPi } from "../api";
+import { useT } from "../i18n";
 import { useSessionsStore } from "../stores/sessions";
 
 /** 状态栏：项目目录 + git 分支 */
 export function StatusBar() {
+	const t = useT();
 	const cwd = useSessionsStore((s) => s.cwd);
 	const pickDirectory = useSessionsStore((s) => s.pickDirectory);
 	const [branch, setBranch] = useState<string | null>(null);
@@ -28,15 +30,15 @@ export function StatusBar() {
 				type="button"
 				className="transition-colors hover:text-zinc-700"
 				onClick={() => void pickDirectory()}
-				title="切换工作目录"
+				title={t("common.switchDir")}
 			>
 				<span className="mr-1">🗂</span>
-				{cwd ?? "未选择目录"}
+				{cwd ?? t("statusbar.noDir")}
 			</button>
 			<span className="text-zinc-200">|</span>
-			<span title="git 分支">
+			<span title={t("statusbar.gitBranch")}>
 				<span className="mr-1">⎇</span>
-				{branch ?? "无 Git"}
+				{branch ?? t("statusbar.noGit")}
 			</span>
 		</div>
 	);

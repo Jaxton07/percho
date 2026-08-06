@@ -1,26 +1,53 @@
-import { memo, useState } from "react";
+/** biome-ignore-all lint/security/noDangerouslySetInnerHtml: shiki 本地生成的高亮 HTML，代码文本已被 shiki 转义 */
+import { memo, useEffect, useState } from "react";
 import ReactMarkdown from "react-markdown";
+import { useT } from "../i18n";
 import type { UIMessage, UIToolCall } from "../stores/transcript";
+import { highlightCode } from "./code-highlight";
 import { ToolCallCard } from "./ToolCallCard";
 
-function CodeBlock({ children }: { children: string }) {
+function CodeBlock({ className, children }: { className?: string; children: string }) {
+	const t = useT();
 	const [copied, setCopied] = useState(false);
+	const [html, setHtml] = useState<string | null>(null);
+	const lang = /language-([\w+-]+)/.exec(className ?? "")?.[1] ?? "text";
+
+	useEffect(() => {
+		let cancelled = false;
+		void highlightCode(children, lang).then((result) => {
+			if (!cancelled) setHtml(result);
+		});
+		return () => {
+			cancelled = true;
+		};
+	}, [children, lang]);
+
 	return (
 		<div className="group relative my-2 overflow-hidden rounded-lg border border-zinc-200 bg-zinc-50">
 			<button
 				type="button"
-				className="absolute right-2 top-2 rounded border border-zinc-200 bg-white px-1.5 py-0.5 text-[10px] text-zinc-500 opacity-0 transition-opacity hover:text-zinc-800 group-hover:opacity-100"
+				className="absolute right-2 top-2 z-10 rounded border border-zinc-200 bg-white px-1.5 py-0.5 text-[10px] text-zinc-500 opacity-0 transition-opacity hover:text-zinc-800 group-hover:opacity-100"
 				onClick={() => {
 					void navigator.clipboard.writeText(children);
 					setCopied(true);
 					setTimeout(() => setCopied(false), 1500);
 				}}
 			>
-				{copied ? "已复制" : "复制"}
+				{copied ? t("message.copied") : t("message.copy")}
 			</button>
-			<pre className="overflow-x-auto p-3 text-[12.5px] leading-relaxed text-zinc-800 select-text">
-				<code>{children}</code>
-			</pre>
+			{lang !== "text" && (
+				<span className="absolute left-3 top-2 text-[10px] text-zinc-400 select-none">{lang}</span>
+			)}
+			{html ? (
+				<div
+					className="shiki-body overflow-x-auto p-3 text-[12.5px] leading-relaxed select-text"
+					dangerouslySetInnerHTML={{ __html: html }}
+				/>
+			) : (
+				<pre className="overflow-x-auto p-3 text-[12.5px] leading-relaxed text-zinc-800 select-text">
+					<code>{children}</code>
+				</pre>
+			)}
 		</div>
 	);
 }
@@ -36,12 +63,14 @@ function AssistantBody({
 	tools: UIToolCall[];
 	streaming?: boolean;
 }) {
+	const t = useT();
 	return (
 		<div className="flex flex-col gap-2">
 			{thinking && (
 				<details className="group rounded-lg border border-zinc-100 bg-zinc-50/80">
 					<summary className="cursor-pointer px-2.5 py-1 text-xs text-zinc-400 select-none hover:text-zinc-600">
-						思考过程{streaming && "…"}
+						{t("message.thinking")}
+						{streaming && "…"}
 					</summary>
 					<div className="border-t border-zinc-100 px-2.5 py-2 text-[12.5px] leading-relaxed text-zinc-500 whitespace-pre-wrap select-text">
 						{thinking}
@@ -60,10 +89,13 @@ function AssistantBody({
 					<ReactMarkdown
 						components={{
 							pre: ({ children: preChildren }) => {
-								const code = preChildren as React.ReactElement<{ children?: string }>;
+								const code = preChildren as React.ReactElement<{
+									className?: string;
+									children?: string;
+								}>;
 								const raw = code?.props?.children;
 								const str = typeof raw === "string" ? raw : "";
-								return <CodeBlock>{str}</CodeBlock>;
+								return <CodeBlock className={code?.props?.className}>{str}</CodeBlock>;
 							},
 							a: ({ href, children: linkChildren }) => (
 								<a

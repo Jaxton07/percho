@@ -34,6 +34,13 @@ code {
 	font-family: "SF Mono", "JetBrains Mono", Menlo, Consolas, monospace;
 }
 
+/* shiki 高亮：透明背景融入卡片容器 */
+.shiki-body .shiki {
+	/* biome-ignore lint/complexity/noImportantStyles: 需覆盖 shiki 内联背景色 */
+	background-color: transparent !important;
+	margin: 0;
+}
+
 /* 顶栏拖拽区（macOS hiddenInset） */
 .drag-region {
 	-webkit-app-region: drag;

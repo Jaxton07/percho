@@ -14,6 +14,8 @@ interface SessionsStore {
 	switchSession: (sessionId: string) => void;
 	closeSession: (sessionId: string) => Promise<void>;
 	openFromHistory: (filePath: string) => Promise<void>;
+	/** 自动命名等事件带来的标题变更 */
+	updateSessionName: (sessionId: string, name: string | undefined) => void;
 	pickDirectory: () => Promise<void>;
 	loadModels: () => Promise<void>;
 	setCurrentModel: (provider: string, modelId: string) => Promise<void>;
@@ -40,6 +42,11 @@ export const useSessionsStore = create<SessionsStore>((set, get) => ({
 	},
 
 	switchSession: (sessionId) => set({ activeSessionId: sessionId }),
+
+	updateSessionName: (sessionId, name) =>
+		set((state) => ({
+			sessions: state.sessions.map((s) => (s.sessionId === sessionId ? { ...s, name } : s)),
+		})),
 
 	closeSession: async (sessionId) => {
 		await getPi().closeSession(sessionId);
