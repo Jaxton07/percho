@@ -1,8 +1,9 @@
 import { useEffect, useRef, useState } from "react";
-import { getPi } from "../api";
-import { useT } from "../i18n";
-import { useSessionsStore } from "../stores/sessions";
-import { selectTranscript, useTranscriptStore } from "../stores/transcript";
+import { getPi } from "../../api";
+import { useT } from "../../i18n";
+import { useSessionsStore } from "../../stores/sessions";
+import { selectTranscript, useTranscriptStore } from "../../stores/transcript";
+import { SendIcon, StopIcon } from "../icons";
 
 /** 底部输入框：自动增高、Enter 发送、生成中变停止；centered 用于空态居中布局 */
 export function Composer({ centered = false }: { centered?: boolean }) {
@@ -99,9 +100,7 @@ export function Composer({ centered = false }: { centered?: boolean }) {
 								title={t("composer.stop")}
 								aria-label={t("composer.stop")}
 							>
-								<svg width="10" height="10" viewBox="0 0 10 10" fill="currentColor" aria-hidden="true">
-									<rect x="0" y="0" width="10" height="10" rx="1.5" />
-								</svg>
+								<StopIcon />
 							</button>
 						) : (
 							<button
@@ -112,9 +111,7 @@ export function Composer({ centered = false }: { centered?: boolean }) {
 								title={t("composer.send")}
 								aria-label={t("composer.send")}
 							>
-								<svg width="12" height="12" viewBox="0 0 12 12" fill="none" aria-hidden="true">
-									<path d="M2 1.5l8 4.5-8 4.5v-3.6l5-0.9-5-0.9z" fill="currentColor" />
-								</svg>
+								<SendIcon />
 							</button>
 						)}
 					</div>

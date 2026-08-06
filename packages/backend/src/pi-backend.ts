@@ -1,10 +1,8 @@
 import { unlink } from "node:fs/promises";
 import type { Model, ThinkingLevel } from "@earendil-works/pi-ai";
 import {
-	type AgentSession,
 	type AgentSessionEvent,
 	createAgentSession,
-	type ExtensionUIContext,
 	ModelRuntime,
 	SessionManager,
 	type ToolDefinition,
@@ -18,8 +16,10 @@ import type {
 	SessionStats,
 } from "@pi-desktop/shared";
 import { PermissionGate } from "./permissions";
+import { autoNameSession } from "./session-naming";
 import { type EventForwarder, SessionRegistry } from "./session-registry";
 import { SettingsService } from "./settings";
+import { makeUiContext } from "./ui-context";
 
 export interface PiBackendOptions {
 	/** 默认工作目录（createSession 未指定时使用） */
@@ -70,58 +70,6 @@ export class PiBackend {
 		}
 	}
 
-	/** pi 无自动命名逻辑：首轮 agent_end 后取第一条用户消息首行作为会话标题 */
-	private autoName(session: AgentSession, event: AgentSessionEvent): void {
-		if (event.type !== "agent_end") return;
-		if (session.sessionManager.getSessionName()) return;
-		const firstUser = session.agent.state.messages.find((m) => m.role === "user");
-		if (!firstUser) return;
-		const text =
-			typeof firstUser.content === "string"
-				? firstUser.content
-				: firstUser.content
-						.filter((p) => p.type === "text")
-						.map((p) => ("text" in p ? p.text : ""))
-						.join(" ");
-		const firstLine = (text.trim().split("\n")[0] ?? "").trim();
-		if (!firstLine) return;
-		session.setSessionName(firstLine.length > 30 ? `${firstLine.slice(0, 30)}…` : firstLine);
-	}
-
-	private makeUiContext(gate: PermissionGate): ExtensionUIContext {
-		return {
-			select: (title, options) =>
-				gate.confirm(title, options.join(", ")).then((ok) => (ok ? options[0] : undefined)),
-			confirm: (title, message) => gate.confirm(title, message),
-			input: (title) => gate.confirm(title, "允许输入?").then((ok) => (ok ? "" : undefined)),
-			notify: () => {},
-			onTerminalInput: () => () => {},
-			setStatus: () => {},
-			setWorkingMessage: () => {},
-			setWorkingVisible: () => {},
-			setWorkingIndicator: () => {},
-			setHiddenThinkingLabel: () => {},
-			setWidget: () => {},
-			setFooter: () => {},
-			setHeader: () => {},
-			setTitle: () => {},
-			custom: (async () => undefined) as ExtensionUIContext["custom"],
-			pasteToEditor: () => {},
-			setEditorText: () => {},
-			getEditorText: () => "",
-			editor: async () => undefined,
-			addAutocompleteProvider: () => {},
-			setEditorComponent: () => {},
-			getEditorComponent: () => undefined,
-			theme: {} as ExtensionUIContext["theme"],
-			getAllThemes: () => [],
-			getTheme: () => undefined,
-			setTheme: () => ({ success: true }),
-			getToolsExpanded: () => false,
-			setToolsExpanded: () => {},
-		};
-	}
-
 	async init(): Promise<void> {
 		await this.getModelRuntime();
 	}
@@ -148,13 +96,13 @@ export class PiBackend {
 		this.gates.set(session.sessionId, gate);
 		if (this.options.permissionGates !== false) {
 			await session.bindExtensions({
-				uiContext: this.makeUiContext(gate),
+				uiContext: makeUiContext(gate),
 				mode: "tui",
 			});
 		}
 
 		const unsubscribe = session.subscribe((event) => {
-			this.autoName(session, event);
+			autoNameSession(session, event);
 			this.emitEvent(session.sessionId, event);
 		});
 		this.registry.add({ session, unsubscribe, cwd });
@@ -170,7 +118,7 @@ export class PiBackend {
 			modelRuntime: runtime,
 		});
 		const unsubscribe = session.subscribe((event) => {
-			this.autoName(session, event);
+			autoNameSession(session, event);
 			this.emitEvent(session.sessionId, event);
 		});
 		this.registry.add({ session, unsubscribe, cwd });

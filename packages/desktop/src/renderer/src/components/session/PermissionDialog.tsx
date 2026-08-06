@@ -1,6 +1,7 @@
-import { getPi } from "../api";
-import { useT } from "../i18n";
-import { useTranscriptStore } from "../stores/transcript";
+import { getPi } from "../../api";
+import { useT } from "../../i18n";
+import { useTranscriptStore } from "../../stores/transcript";
+import { Button } from "../ui/Button";
 
 /** 权限确认对话框：允许一次 / 拒绝 / 本会话总是允许 */
 export function PermissionDialog({ sessionId }: { sessionId: string | null }) {
@@ -31,27 +32,11 @@ export function PermissionDialog({ sessionId }: { sessionId: string | null }) {
 					{request.message}
 				</p>
 				<div className="mt-4 flex items-center justify-end gap-2">
-					<button
-						type="button"
-						className="rounded-lg px-3 py-1.5 text-[13px] text-zinc-500 transition-colors hover:bg-zinc-100"
-						onClick={() => respond("deny")}
-					>
-						{t("permission.deny")}
-					</button>
-					<button
-						type="button"
-						className="rounded-lg px-3 py-1.5 text-[13px] text-zinc-500 transition-colors hover:bg-zinc-100"
-						onClick={() => respond("allowAlways")}
-					>
-						{t("permission.allowAlways")}
-					</button>
-					<button
-						type="button"
-						className="rounded-lg bg-zinc-900 px-3 py-1.5 text-[13px] font-medium text-white transition-colors hover:bg-zinc-700"
-						onClick={() => respond("allow")}
-					>
+					<Button onClick={() => respond("deny")}>{t("permission.deny")}</Button>
+					<Button onClick={() => respond("allowAlways")}>{t("permission.allowAlways")}</Button>
+					<Button variant="primary" onClick={() => respond("allow")}>
 						{t("permission.allowOnce")}
-					</button>
+					</Button>
 				</div>
 				{pendingPermissions.length > 1 && (
 					<p className="mt-2 text-[11px] text-zinc-400">

@@ -1,8 +1,8 @@
 import { useEffect } from "react";
-import { useProjectsStore } from "../stores/projects";
-import { useSessionsStore } from "../stores/sessions";
-import { Composer } from "./Composer";
-import { ProjectBranchPicker } from "./ProjectBranchPicker";
+import { useProjectsStore } from "../../stores/projects";
+import { useSessionsStore } from "../../stores/sessions";
+import { Composer } from "../composer/Composer";
+import { ProjectBranchPicker } from "../projects/ProjectBranchPicker";
 
 /** 空态：大字 Logo + 居中输入框 + 项目/分支选择（对标 opencode 新会话页） */
 export function EmptyState() {

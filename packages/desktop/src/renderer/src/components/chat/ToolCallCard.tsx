@@ -1,5 +1,5 @@
-import { useT } from "../i18n";
-import type { UIToolCall } from "../stores/transcript";
+import { useT } from "../../i18n";
+import type { UIToolCall } from "../../stores/transcript";
 
 const toolIcons: Record<string, string> = {
 	bash: ">_",

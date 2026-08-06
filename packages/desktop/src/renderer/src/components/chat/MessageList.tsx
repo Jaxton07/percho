@@ -1,5 +1,5 @@
-import { useSessionsStore } from "../stores/sessions";
-import { selectTranscript, useTranscriptStore } from "../stores/transcript";
+import { useSessionsStore } from "../../stores/sessions";
+import { selectTranscript, useTranscriptStore } from "../../stores/transcript";
 import { MessageItem } from "./MessageItem";
 
 /** 中央消息流：最大宽度 760px 居中 */

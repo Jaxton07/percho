@@ -1,8 +1,9 @@
-import { useEffect, useMemo, useRef, useState } from "react";
-import { getPi } from "../api";
-import { useT } from "../i18n";
-import { deriveProjects, useProjectsStore } from "../stores/projects";
-import { useSessionsStore } from "../stores/sessions";
+import { useEffect, useMemo, useState } from "react";
+import { getPi } from "../../api";
+import { useT } from "../../i18n";
+import { deriveProjects, useProjectsStore } from "../../stores/projects";
+import { useSessionsStore } from "../../stores/sessions";
+import { Dropdown } from "../ui/Dropdown";
 
 /** 空态 Composer 下方：项目目录选择 + git 分支选择（对标 opencode） */
 export function ProjectBranchPicker() {
@@ -138,54 +139,5 @@ function BranchPicker({ cwd }: { cwd: string | null }) {
 			</Dropdown>
 			{error && <span className="text-[11px] text-red-500">{error}</span>}
 		</>
-	);
-}
-
-/** 轻量下拉：trigger + 上弹面板，点击外部关闭 */
-function Dropdown({
-	trigger,
-	children,
-}: {
-	trigger: React.ReactNode;
-	children: (close: () => void) => React.ReactNode;
-}) {
-	const [open, setOpen] = useState(false);
-	const ref = useRef<HTMLDivElement>(null);
-
-	useEffect(() => {
-		if (!open) return;
-		const onPointerDown = (e: PointerEvent) => {
-			if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false);
-		};
-		window.addEventListener("pointerdown", onPointerDown);
-		return () => window.removeEventListener("pointerdown", onPointerDown);
-	}, [open]);
-
-	return (
-		<div ref={ref} className="relative">
-			<button
-				type="button"
-				className="flex items-center gap-1 rounded-lg px-2 py-1 transition-colors hover:bg-zinc-100 hover:text-zinc-800"
-				onClick={() => setOpen((v) => !v)}
-			>
-				{trigger}
-				<svg
-					width="10"
-					height="10"
-					viewBox="0 0 24 24"
-					fill="none"
-					stroke="currentColor"
-					strokeWidth="2.5"
-					aria-hidden="true"
-				>
-					<path d="m6 9 6 6 6-6" strokeLinecap="round" strokeLinejoin="round" />
-				</svg>
-			</button>
-			{open && (
-				<div className="absolute bottom-full left-1/2 z-30 mb-1 max-h-64 w-56 -translate-x-1/2 overflow-y-auto rounded-xl border border-zinc-200 bg-white p-1 shadow-lg">
-					{children(() => setOpen(false))}
-				</div>
-			)}
-		</div>
 	);
 }

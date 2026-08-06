@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
-import { getPi } from "../api";
-import { useT } from "../i18n";
-import { useSessionsStore } from "../stores/sessions";
+import { getPi } from "../../api";
+import { useT } from "../../i18n";
+import { useSessionsStore } from "../../stores/sessions";
 
 /** 状态栏：项目目录 + git 分支 */
 export function StatusBar() {

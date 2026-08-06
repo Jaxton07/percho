@@ -1,8 +1,8 @@
-import { useT } from "../i18n";
-import { useSessionsStore } from "../stores/sessions";
-import { useTranscriptStore } from "../stores/transcript";
-import { useUiStore } from "../stores/ui";
-import { ComposeIcon } from "./ProjectPage";
+import { useT } from "../../i18n";
+import { useSessionsStore } from "../../stores/sessions";
+import { useTranscriptStore } from "../../stores/transcript";
+import { useUiStore } from "../../stores/ui";
+import { CloseIcon, ComposeIcon, GridIcon } from "../icons";
 
 /** 顶栏：macOS hiddenInset 红绿灯左侧，会话 tab 从右排开 */
 export function SessionTabBar() {
@@ -32,20 +32,7 @@ export function SessionTabBar() {
 				title={t("projects.title")}
 				aria-label={t("projects.title")}
 			>
-				<svg
-					width="15"
-					height="15"
-					viewBox="0 0 24 24"
-					fill="none"
-					stroke="currentColor"
-					strokeWidth="2"
-					aria-hidden="true"
-				>
-					<rect x="3" y="3" width="7" height="7" rx="1.5" />
-					<rect x="14" y="3" width="7" height="7" rx="1.5" />
-					<rect x="3" y="14" width="7" height="7" rx="1.5" />
-					<rect x="14" y="14" width="7" height="7" rx="1.5" />
-				</svg>
+				<GridIcon />
 			</button>
 			<div className="flex min-w-0 flex-1 items-center gap-1 overflow-x-auto">
 				{sessions.map((session) => {
@@ -85,9 +72,7 @@ export function SessionTabBar() {
 									void closeSession(session.sessionId);
 								}}
 							>
-								<svg width="10" height="10" viewBox="0 0 10 10" fill="none" aria-hidden="true">
-									<path d="M1 1l8 8M9 1l-8 8" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
-								</svg>
+								<CloseIcon />
 							</span>
 						</button>
 					);
