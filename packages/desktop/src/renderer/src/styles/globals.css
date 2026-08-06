@@ -1,0 +1,59 @@
+@import "tailwindcss";
+
+:root {
+	--color-bg: #fafafa;
+	--color-surface: #ffffff;
+	--color-border: #e5e5e5;
+	--color-text: #1a1a1a;
+	--color-text-secondary: #8a8a8a;
+	--color-accent: #7c3aed;
+	--color-hover: #f0f0f0;
+}
+
+html,
+body,
+#root {
+	height: 100%;
+	margin: 0;
+	overflow: hidden;
+}
+
+body {
+	font-family:
+		-apple-system, BlinkMacSystemFont, "SF Pro Text", "Helvetica Neue", "PingFang SC", "Microsoft YaHei",
+		sans-serif;
+	background: var(--color-bg);
+	color: var(--color-text);
+	font-size: 14px;
+	-webkit-font-smoothing: antialiased;
+	user-select: none;
+}
+
+pre,
+code {
+	font-family: "SF Mono", "JetBrains Mono", Menlo, Consolas, monospace;
+}
+
+/* 顶栏拖拽区（macOS hiddenInset） */
+.drag-region {
+	-webkit-app-region: drag;
+}
+.no-drag {
+	-webkit-app-region: no-drag;
+}
+
+/* 细滚动条 */
+::-webkit-scrollbar {
+	width: 8px;
+	height: 8px;
+}
+::-webkit-scrollbar-thumb {
+	background: #d4d4d4;
+	border-radius: 4px;
+}
+::-webkit-scrollbar-thumb:hover {
+	background: #bfbfbf;
+}
+::-webkit-scrollbar-track {
+	background: transparent;
+}

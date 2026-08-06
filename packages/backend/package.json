@@ -1,0 +1,24 @@
+{
+	"name": "@pi-desktop/backend",
+	"version": "0.1.0",
+	"private": true,
+	"type": "module",
+	"main": "./src/index.ts",
+	"types": "./src/index.ts",
+	"exports": {
+		".": "./src/index.ts"
+	},
+	"scripts": {
+		"typecheck": "tsc --noEmit",
+		"test": "vitest run"
+	},
+	"dependencies": {
+		"@earendil-works/pi-ai": "0.84.0",
+		"@earendil-works/pi-coding-agent": "0.84.0",
+		"@pi-desktop/shared": "*"
+	},
+	"devDependencies": {
+		"typescript": "^5.9.0",
+		"vitest": "^3.2.0"
+	}
+}

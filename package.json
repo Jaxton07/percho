@@ -1,0 +1,26 @@
+{
+	"name": "pi-desktop",
+	"private": true,
+	"version": "0.1.0",
+	"description": "Minimal desktop GUI for Pi Agent",
+	"workspaces": [
+		"packages/*"
+	],
+	"scripts": {
+		"dev": "npm run dev -w packages/desktop",
+		"build": "npm run build -w packages/desktop",
+		"typecheck": "npm run typecheck --workspaces",
+		"test": "npm run test --workspaces --if-present",
+		"dist": "npm run dist -w packages/desktop",
+		"lint": "biome check ."
+	},
+	"engines": {
+		"node": ">=22.19"
+	},
+	"devDependencies": {
+		"@biomejs/biome": "^2.4.0"
+	},
+	"allowScripts": {
+		"electron@43.3.0": true
+	}
+}
