@@ -118,3 +118,82 @@ code {
 		background-position: -100% 0;
 	}
 }
+
+/* markstream-react 视觉覆写：组件样式均为 :where() 零优先级，此处规则必覆盖；对齐原 react-markdown 设计 */
+.markdown-body {
+	--link-color: #7c3aed;
+}
+.markdown-body .paragraph-node {
+	margin: 0.375rem 0;
+}
+.markdown-body ul,
+.markdown-body ol {
+	margin: 0.375rem 0;
+	padding-left: 1.25rem;
+}
+.markdown-body li {
+	margin: 0.125rem 0;
+}
+.markdown-body .blockquote-node {
+	margin: 0.375rem 0;
+	padding-left: 0.75rem;
+	border-left: 2px solid #e4e4e7;
+	font-weight: normal;
+	font-style: normal;
+	color: #71717a;
+}
+.markdown-body .heading-node {
+	font-weight: 600;
+}
+.markdown-body .heading-1 {
+	margin: 0.75rem 0 0.25rem;
+	font-size: 1.125rem;
+	line-height: 1.4;
+}
+.markdown-body .heading-2 {
+	margin: 0.75rem 0 0.25rem;
+	font-size: 1rem;
+	line-height: 1.4;
+}
+.markdown-body .heading-3 {
+	margin: 0.5rem 0 0.25rem;
+	font-size: 0.875rem;
+	line-height: 1.4;
+}
+.markdown-body .heading-4,
+.markdown-body .heading-5,
+.markdown-body .heading-6 {
+	margin: 0.5rem 0 0.25rem;
+	font-size: 0.875rem;
+}
+.markdown-body .link-node {
+	text-decoration: underline;
+	text-decoration-color: #c4b5fd;
+}
+.markdown-body .link-node:hover {
+	color: #6d28d9;
+}
+.markdown-body .inline-code {
+	padding: 0.125rem 0.25rem;
+	border-radius: 0.25rem;
+	background: #f4f4f5;
+	color: #3f3f46;
+	font-size: 12.5px;
+}
+.markdown-body .table-node {
+	font-size: 13px;
+}
+.markdown-body .table-node th,
+.markdown-body .table-node td {
+	border: 1px solid #e4e4e7;
+	padding: 0.25rem 0.5rem;
+	text-align: left;
+}
+.markdown-body .table-node th {
+	background: #fafafa;
+}
+.markdown-body .hr-node,
+.markdown-body .thematic-break {
+	margin: 1rem 0;
+	border-top-color: #e4e4e7;
+}

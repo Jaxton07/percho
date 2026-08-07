@@ -18,7 +18,7 @@ function ThinkingRow({ thinking }: { thinking: string }) {
 	const t = useT();
 	return (
 		<details className="group/dets">
-			<summary className="group/row flex cursor-pointer items-center gap-2 px-1 py-0.5 select-none [&::-webkit-details-marker]:hidden">
+			<summary className="group/row flex cursor-pointer items-center gap-2 py-0.5 select-none [&::-webkit-details-marker]:hidden">
 				<span className="shrink-0 text-[13px] font-semibold text-zinc-400 transition-colors group-hover/row:text-zinc-800">
 					{t("message.thinking")}
 				</span>
@@ -109,7 +109,7 @@ export function MetaGroup({
 		// -mb-3：抵消 MessageList gap-6 的一部分，状态行与后续正文/消息间距收紧
 		<div className="-mb-3">
 			<details className="group/outer peer">
-				<summary className="group/row flex cursor-pointer items-center gap-2 px-1 py-0.5 select-none [&::-webkit-details-marker]:hidden">
+				<summary className="group/row flex cursor-pointer items-center gap-2 py-0.5 select-none [&::-webkit-details-marker]:hidden">
 					<span
 						className={`shrink-0 text-[13px] font-medium text-zinc-500 transition-colors group-hover/row:text-zinc-800 ${shownWorking ? "shimmer-sweep" : ""}`}
 					>
@@ -120,7 +120,7 @@ export function MetaGroup({
 				</summary>
 				<div className="flex flex-col gap-1.5 py-1">{rows}</div>
 			</details>
-			<div className="-mt-3 peer-[[open]]:hidden">{shownWorking && <PreviewTicker items={liveItems} />}</div>
+			<div className="peer-[[open]]:hidden">{shownWorking && <PreviewTicker items={liveItems} />}</div>
 		</div>
 	);
 }

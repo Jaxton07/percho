@@ -53,7 +53,7 @@ export function ToolCallCard({ tool }: { tool: UIToolCall }) {
 		<details className="group/dets">
 			<summary
 				ref={rowRef}
-				className="group/row flex cursor-pointer items-center gap-2 px-1 py-0.5 select-none [&::-webkit-details-marker]:hidden"
+				className="group/row flex cursor-pointer items-center gap-2 py-0.5 select-none [&::-webkit-details-marker]:hidden"
 			>
 				<span className={nameClass}>{displayName(tool.name)}</span>
 				{summary && (

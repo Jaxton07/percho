@@ -20,7 +20,7 @@ interface CurrentSlot {
 function ThinkingPreviewRow() {
 	const t = useT();
 	return (
-		<div className="flex items-center gap-2 px-1 py-0.5">
+		<div className="flex items-center gap-2 py-0.5">
 			<span className="shrink-0 text-[13px] font-semibold text-zinc-500">{t("message.thinkingPreview")}</span>
 		</div>
 	);
@@ -30,7 +30,7 @@ function ThinkingPreviewRow() {
 function ToolPreviewRow({ name, args }: { name: string; args: string }) {
 	const summary = summarizeArgs(args);
 	return (
-		<div className="flex items-center gap-2 px-1 py-0.5">
+		<div className="flex items-center gap-2 py-0.5">
 			<span className="shrink-0 font-mono text-[13px] font-semibold text-zinc-500">{displayName(name)}</span>
 			{summary && (
 				<span className="min-w-0 flex-1 truncate font-mono text-[12px] text-zinc-400">{summary}</span>

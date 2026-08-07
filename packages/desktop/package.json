@@ -15,10 +15,9 @@
 	"dependencies": {
 		"@pi-desktop/backend": "*",
 		"@pi-desktop/shared": "*",
+		"markstream-react": "^0.0.55",
 		"react": "^19.2.8",
 		"react-dom": "^19.2.8",
-		"react-markdown": "^10.1.0",
-		"shiki": "^4.4.2",
 		"zustand": "^5.0.14"
 	},
 	"devDependencies": {
