@@ -17,6 +17,12 @@ const api: PiApi = {
 		ipcRenderer.invoke(IpcChannels.SessionSetThinkingLevel, sessionId, level),
 	compact: (sessionId) => ipcRenderer.invoke(IpcChannels.SessionCompact, sessionId),
 	getStats: (sessionId) => ipcRenderer.invoke(IpcChannels.SessionStats, sessionId),
+	getContextUsage: (sessionId) => ipcRenderer.invoke(IpcChannels.SessionGetContextUsage, sessionId),
+	listSlashCommands: (sessionId) => ipcRenderer.invoke(IpcChannels.SessionListSlashCommands, sessionId),
+	setSessionName: (sessionId, name) => ipcRenderer.invoke(IpcChannels.SessionSetName, sessionId, name),
+	exportSession: (sessionId, format) => ipcRenderer.invoke(IpcChannels.SessionExport, sessionId, format),
+	saveFileDialog: (defaultName, content) =>
+		ipcRenderer.invoke(IpcChannels.FileSaveDialog, defaultName, content),
 	getSessionMessages: (sessionId) => ipcRenderer.invoke(IpcChannels.SessionGetMessages, sessionId),
 	listModels: () => ipcRenderer.invoke(IpcChannels.ModelsList),
 	listProviders: () => ipcRenderer.invoke(IpcChannels.SettingsListProviders),

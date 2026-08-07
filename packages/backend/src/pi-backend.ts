@@ -9,6 +9,7 @@ import {
 } from "@earendil-works/pi-coding-agent";
 import type {
 	AvailableModel,
+	ContextUsageInfo,
 	CreateSessionOptions,
 	ImageInput,
 	PermissionAnswer,
@@ -17,6 +18,7 @@ import type {
 	SessionMeta,
 	SessionStats,
 	SessionToolCall,
+	SlashCommandInfo,
 } from "@pi-desktop/shared";
 import { PermissionGate } from "./permissions";
 import { autoNameSession } from "./session-naming";
@@ -227,6 +229,52 @@ export class PiBackend {
 		};
 	}
 
+	/** 当前模型上下文使用情况；刚压缩后 tokens 未知（null），会话无模型时 percent 为 null */
+	async getContextUsage(sessionId: string): Promise<ContextUsageInfo | null> {
+		const entry = this.requireSession(sessionId);
+		const usage = entry.session.getContextUsage();
+		if (!usage) return null;
+		return { tokens: usage.tokens, contextWindow: usage.contextWindow, percent: usage.percent };
+	}
+
+	/** 列出斜杠命令：内置（标记 supported）+ prompt 模板 + skill + 扩展命令 */
+	async listSlashCommands(sessionId: string): Promise<SlashCommandInfo[]> {
+		const entry = this.requireSession(sessionId);
+		const session = entry.session;
+		const templates: SlashCommandInfo[] = session.promptTemplates.map((template) => ({
+			name: template.name,
+			description: template.description,
+			argumentHint: template.argumentHint,
+			source: "template",
+			supported: true,
+		}));
+		const skills: SlashCommandInfo[] = session.resourceLoader.getSkills().skills.map((skill) => ({
+			name: `skill:${skill.name}`,
+			description: skill.description,
+			source: "skill",
+			supported: true,
+		}));
+		const extensions: SlashCommandInfo[] = session.extensionRunner.getRegisteredCommands().map((command) => ({
+			name: command.invocationName,
+			description: command.description ?? "",
+			source: "extension",
+			supported: true,
+		}));
+		return [...BUILTIN_SLASH_COMMANDS, ...templates, ...skills, ...extensions];
+	}
+
+	/** 设置会话显示名（触发 session_info_changed 事件） */
+	async setSessionName(sessionId: string, name: string): Promise<void> {
+		const entry = this.requireSession(sessionId);
+		entry.session.setSessionName(name);
+	}
+
+	/** 导出会话内容（HTML/JSONL）；返回文件内容，由调用方保存 */
+	async exportSession(sessionId: string, format: "html" | "jsonl"): Promise<string> {
+		const entry = this.requireSession(sessionId);
+		return format === "html" ? entry.session.exportToHtml() : entry.session.exportToJsonl();
+	}
+
 	/** 读取会话历史消息（打开历史会话时回放给 UI） */
 	async getSessionMessages(sessionId: string): Promise<SessionMessage[]> {
 		const entry = this.requireSession(sessionId);
@@ -294,6 +342,75 @@ export class PiBackend {
 }
 
 export type { EventForwarder, Model };
+
+/**
+ * pi 内置斜杠命令表（与 pi 0.84.0 的 BUILTIN_SLASH_COMMANDS 对齐）。
+ * supported=false 表示桌面端尚未实现，面板中置灰展示。
+ * 注：模板/skill/扩展命令不由这里列出，SDK prompt() 原生处理。
+ */
+const BUILTIN_SLASH_COMMANDS: SlashCommandInfo[] = [
+	{ name: "compact", description: "Compress session context", source: "builtin", supported: true },
+	{
+		name: "name",
+		description: "Set session display name",
+		argumentHint: "<name>",
+		source: "builtin",
+		supported: true,
+	},
+	{ name: "copy", description: "Copy last agent message to clipboard", source: "builtin", supported: true },
+	{
+		name: "export",
+		description: "Export session (.html/.jsonl)",
+		argumentHint: "[path]",
+		source: "builtin",
+		supported: true,
+	},
+	{ name: "new", description: "Start a new session", source: "builtin", supported: true },
+	{ name: "settings", description: "Open settings", source: "builtin", supported: true },
+	{
+		name: "login",
+		description: "Configure provider authentication",
+		argumentHint: "<provider>",
+		source: "builtin",
+		supported: true,
+	},
+	{
+		name: "model",
+		description: "Select model",
+		argumentHint: "<provider/model>",
+		source: "builtin",
+		supported: false,
+	},
+	{
+		name: "scoped-models",
+		description: "Manage models for Ctrl+P cycling",
+		source: "builtin",
+		supported: false,
+	},
+	{ name: "session", description: "Show session info and stats", source: "builtin", supported: false },
+	{
+		name: "import",
+		description: "Import and resume a session from JSONL",
+		source: "builtin",
+		supported: false,
+	},
+	{ name: "share", description: "Share session as secret gist", source: "builtin", supported: false },
+	{
+		name: "fork",
+		description: "Create a fork from a previous user message",
+		source: "builtin",
+		supported: false,
+	},
+	{ name: "clone", description: "Duplicate the current session", source: "builtin", supported: false },
+	{ name: "tree", description: "Navigate session tree", source: "builtin", supported: false },
+	{ name: "resume", description: "Resume a different session", source: "builtin", supported: false },
+	{ name: "trust", description: "Save project trust decision", source: "builtin", supported: false },
+	{ name: "logout", description: "Remove provider authentication", source: "builtin", supported: false },
+	{ name: "reload", description: "Reload extensions, skills, prompts", source: "builtin", supported: false },
+	{ name: "changelog", description: "Show changelog entries", source: "builtin", supported: false },
+	{ name: "hotkeys", description: "Show all keyboard shortcuts", source: "builtin", supported: false },
+	{ name: "quit", description: "Quit pi", source: "builtin", supported: false },
+];
 
 /** 消息 content 块（pi-ai 结构，仅读取所需字段） */
 interface ContentBlock {

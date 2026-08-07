@@ -66,6 +66,30 @@ export interface ImageInput {
 	mimeType: string;
 }
 
+/** 斜杠命令来源 */
+export type SlashCommandSource = "builtin" | "template" | "skill" | "extension";
+
+/** 斜杠命令条目（补全面板展示用） */
+export interface SlashCommandInfo {
+	/** 命令名，不含前导 / */
+	name: string;
+	description: string;
+	argumentHint?: string;
+	source: SlashCommandSource;
+	/** 内置命令是否已在桌面端实现（模板/skill/扩展命令恒为 true，SDK 原生处理） */
+	supported: boolean;
+}
+
+/** 当前模型上下文使用情况（圆环进度条用；percent/tokens 为 null 表示未知，如刚压缩后） */
+export interface ContextUsageInfo {
+	/** 估计的已用上下文 tokens */
+	tokens: number | null;
+	/** 模型最大上下文窗口 */
+	contextWindow: number;
+	/** 已用百分比（0-100） */
+	percent: number | null;
+}
+
 export interface CreateSessionOptions {
 	cwd: string;
 	provider?: string;

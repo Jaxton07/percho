@@ -27,6 +27,7 @@ export const MessageItem = memo(function MessageItem({
 						<div className="mb-1.5 flex flex-wrap justify-end gap-1.5">
 							{message.images.map((image, index) => (
 								<button
+									// biome-ignore lint/suspicious/noArrayIndexKey: 缩略图列表不可变（删除为整列表替换）
 									key={index}
 									type="button"
 									className="h-16 w-16 overflow-hidden rounded-lg border border-zinc-200"
@@ -74,6 +75,10 @@ export const MessageItem = memo(function MessageItem({
 		);
 	}
 
+	if (message.kind === "system") {
+		return <SystemMessage message={message} />;
+	}
+
 	return (
 		<AssistantMessage
 			text={message.text}
@@ -83,3 +88,55 @@ export const MessageItem = memo(function MessageItem({
 		/>
 	);
 });
+
+function SystemMessage({ message }: { message: Extract<UIMessage, { kind: "system" }> }) {
+	const t = useT();
+	const compact = message.compact;
+	if (!compact) return null;
+	const reason = t(`compaction.reason.${compact.reason}`);
+	if (compact.status === "running") {
+		return (
+			<div className="flex items-center justify-center gap-2 py-1 text-xs text-zinc-400">
+				<span className="h-3 w-3 animate-spin rounded-full border-2 border-zinc-300 border-t-zinc-500" />
+				<span>
+					{t("compaction.running")} · {reason}
+				</span>
+			</div>
+		);
+	}
+	const tokens =
+		compact.tokensBefore != null && compact.tokensAfter != null
+			? ` · ${formatTokens(compact.tokensBefore)} → ${formatTokens(compact.tokensAfter)}`
+			: "";
+	if (compact.status === "cancelled") {
+		return (
+			<div className="py-1 text-center text-xs text-zinc-400">
+				{t("compaction.cancelled")} · {reason}
+			</div>
+		);
+	}
+	if (compact.status === "error") {
+		return (
+			<div className="py-1 text-center text-xs text-red-500">
+				{t("compaction.failed", { error: compact.errorMessage ?? "" })}
+			</div>
+		);
+	}
+	return (
+		<div
+			className="mx-auto max-w-[560px] rounded-lg border border-zinc-200 bg-zinc-50 px-3 py-2 text-center text-xs leading-relaxed text-zinc-500 select-text"
+			title={compact.summary}
+		>
+			<p className="font-medium text-zinc-600">
+				{t("compaction.done")} · {reason}
+				{tokens}
+			</p>
+			{compact.summary && <p className="mt-1 line-clamp-3">{compact.summary}</p>}
+		</div>
+	);
+}
+
+function formatTokens(n: number): string {
+	if (n >= 1000) return `${(n / 1000).toFixed(1)}k`;
+	return String(n);
+}

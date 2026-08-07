@@ -1,3 +1,4 @@
+import { writeFile } from "node:fs/promises";
 import { PiBackend } from "@pi-desktop/backend";
 import {
 	type CustomProviderInput,
@@ -44,6 +45,31 @@ function registerIpc(): void {
 	);
 	ipcMain.handle(IpcChannels.SessionCompact, (_e, sessionId: string) => backend.compact(sessionId));
 	ipcMain.handle(IpcChannels.SessionStats, (_e, sessionId: string) => backend.getStats(sessionId));
+	ipcMain.handle(IpcChannels.SessionGetContextUsage, (_e, sessionId: string) =>
+		backend.getContextUsage(sessionId),
+	);
+	ipcMain.handle(IpcChannels.SessionListSlashCommands, (_e, sessionId: string) =>
+		backend.listSlashCommands(sessionId),
+	);
+	ipcMain.handle(IpcChannels.SessionSetName, (_e, sessionId: string, name: string) =>
+		backend.setSessionName(sessionId, name),
+	);
+	ipcMain.handle(IpcChannels.SessionExport, (_e, sessionId: string, format: "html" | "jsonl") =>
+		backend.exportSession(sessionId, format),
+	);
+	ipcMain.handle(IpcChannels.FileSaveDialog, async (_e, defaultName: string, content: string) => {
+		const window = BrowserWindow.getAllWindows()[0];
+		const options: Electron.SaveDialogOptions = {
+			defaultPath: defaultName,
+			filters: [{ name: "All Files", extensions: ["*"] }],
+		};
+		const result = window
+			? await dialog.showSaveDialog(window, options)
+			: await dialog.showSaveDialog(options);
+		if (result.canceled || !result.filePath) return null;
+		await writeFile(result.filePath, content, "utf-8");
+		return result.filePath;
+	});
 	ipcMain.handle(IpcChannels.SessionGetMessages, (_e, sessionId: string) =>
 		backend.getSessionMessages(sessionId),
 	);

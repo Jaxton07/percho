@@ -35,6 +35,25 @@ export const en: Messages = {
 		removeImage: "Remove image",
 		previewImage: "View image",
 	},
+	slash: {
+		noMatch: "No matching commands",
+		group: {
+			builtin: "Built-in",
+			template: "Templates",
+			skill: "Skills",
+			extension: "Extensions",
+		},
+		feedback: {
+			compacted: "Context compaction started",
+			renamed: "Session renamed: {name}",
+			noName: "Usage: /name <name>",
+			copied: "Copied last reply",
+			noCopy: "No agent reply yet",
+			exported: "Exported: {path}",
+			exportCancelled: "Export cancelled",
+			noSession: "Pick a project directory and create a session first",
+		},
+	},
 	thinkingLevels: {
 		off: "Off",
 		minimal: "Minimal",
@@ -44,10 +63,16 @@ export const en: Messages = {
 		xhigh: "XHigh",
 		max: "Max",
 	},
-	statusbar: {
-		noDir: "No directory selected",
-		noGit: "No Git",
-		gitBranch: "Git branch",
+	compaction: {
+		running: "Compacting context",
+		done: "Context compacted",
+		cancelled: "Compaction cancelled",
+		failed: "Compaction failed: {error}",
+		reason: {
+			manual: "manual",
+			threshold: "auto (context threshold)",
+			overflow: "auto (overflow recovery)",
+		},
 	},
 	permission: {
 		deny: "Deny",

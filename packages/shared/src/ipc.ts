@@ -1,4 +1,5 @@
 import type {
+	ContextUsageInfo,
 	CreateSessionOptions,
 	GitBranches,
 	ImageInput,
@@ -8,6 +9,7 @@ import type {
 	SessionMessage,
 	SessionMeta,
 	SessionStats,
+	SlashCommandInfo,
 } from "./session";
 import type { CustomProviderInput, ProviderInfo, ProviderTestResult } from "./settings";
 
@@ -26,6 +28,11 @@ export const IpcChannels = {
 	SessionGetMessages: "session:getMessages",
 	SessionCompact: "session:compact",
 	SessionStats: "session:stats",
+	SessionGetContextUsage: "session:getContextUsage",
+	SessionListSlashCommands: "session:listSlashCommands",
+	SessionSetName: "session:setName",
+	SessionExport: "session:export",
+	FileSaveDialog: "file:saveDialog",
 	ModelsList: "models:list",
 	SettingsListProviders: "settings:listProviders",
 	SettingsSaveApiKey: "settings:saveApiKey",
@@ -63,6 +70,16 @@ export interface PiApi {
 	getSessionMessages(sessionId: string): Promise<SessionMessage[]>;
 	compact(sessionId: string): Promise<void>;
 	getStats(sessionId: string): Promise<SessionStats>;
+	/** 当前模型上下文使用（tokens/contextWindow/percent），无会话或未知时返回 null */
+	getContextUsage(sessionId: string): Promise<ContextUsageInfo | null>;
+	/** 列出斜杠命令（内置 + prompt 模板 + skill + 扩展命令） */
+	listSlashCommands(sessionId: string): Promise<SlashCommandInfo[]>;
+	/** 设置会话显示名（触发 session_info_changed 事件） */
+	setSessionName(sessionId: string, name: string): Promise<void>;
+	/** 导出会话内容（HTML/JSONL），返回文件内容文本 */
+	exportSession(sessionId: string, format: "html" | "jsonl"): Promise<string>;
+	/** 弹保存对话框并写文件；用户取消返回 null，成功返回写入路径 */
+	saveFileDialog(defaultName: string, content: string): Promise<string | null>;
 	listModels(): Promise<import("./session").AvailableModel[]>;
 	listProviders(): Promise<ProviderInfo[]>;
 	saveApiKey(providerId: string, key: string): Promise<void>;

@@ -1,11 +1,14 @@
-import type { ImageInput } from "@pi-desktop/shared";
+import type { ImageInput, SlashCommandInfo } from "@pi-desktop/shared";
 import { useEffect, useRef, useState } from "react";
 import { getPi } from "../../api";
 import { useT } from "../../i18n";
 import { useSessionsStore } from "../../stores/sessions";
+import { useSettingsStore } from "../../stores/settings";
 import { selectTranscript, useTranscriptStore } from "../../stores/transcript";
 import { ArrowUpIcon, CloseIcon, PlusIcon, StopIcon } from "../icons";
+import { ContextRing } from "./ContextRing";
 import { ModelPicker } from "./ModelPicker";
+import { filterCommands, SlashMenu } from "./SlashMenu";
 import { ThinkingPicker } from "./ThinkingPicker";
 
 /** 底部输入框：自动增高、Enter 发送、生成中变停止；centered 用于空态居中布局 */
@@ -20,10 +23,28 @@ export function Composer({ centered = false }: { centered?: boolean }) {
 	const [previewImage, setPreviewImage] = useState<ImageInput | null>(null);
 	const [sending, setSending] = useState(false);
 	const [error, setError] = useState<string | null>(null);
+	const [feedback, setFeedback] = useState<string | null>(null);
+	const [slashSelected, setSlashSelected] = useState(0);
+	const [slashCommands, setSlashCommands] = useState<SlashCommandInfo[]>([]);
+	/** 点击面板外部后隐藏菜单（保留文本，再次输入时恢复） */
+	const [slashDismissed, setSlashDismissed] = useState(false);
 	const textareaRef = useRef<HTMLTextAreaElement>(null);
+	const boxRef = useRef<HTMLDivElement>(null);
 	const fileInputRef = useRef<HTMLInputElement>(null);
+	const feedbackTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
 	const isStreaming = transcript.phase === "streaming" || sending;
+	/** 输入以 / 开头时打开命令面板；query = 第一个词（/ 后） */
+	const slashOpen = text.startsWith("/") && !slashDismissed;
+	const slashQuery = slashOpen ? (text.slice(1).split(" ")[0] ?? "") : "";
+	/** trim 后是否已带参数（Enter 时决定执行还是选中） */
+	const slashHasArgs = slashOpen && text.trim().includes(" ");
+
+	const showFeedback = (message: string) => {
+		setFeedback(message);
+		if (feedbackTimer.current) clearTimeout(feedbackTimer.current);
+		feedbackTimer.current = setTimeout(() => setFeedback(null), 2500);
+	};
 
 	// biome-ignore lint/correctness/useExhaustiveDependencies: 高度由文本 DOM 变化驱动，显式依赖 text 便于触发
 	useEffect(() => {
@@ -33,12 +54,136 @@ export function Composer({ centered = false }: { centered?: boolean }) {
 		el.style.height = `${Math.min(el.scrollHeight, 200)}px`;
 	}, [text]);
 
+	// biome-ignore lint/correctness/useExhaustiveDependencies: 查询词变化时重置选中项
+	useEffect(() => {
+		setSlashSelected(0);
+	}, [slashQuery]);
+
+	// 点击输入框容器外部时收起命令面板（文本保留；继续输入时恢复）
+	useEffect(() => {
+		if (!slashOpen) return;
+		const onPointerDown = (e: PointerEvent) => {
+			if (boxRef.current && !boxRef.current.contains(e.target as Node)) setSlashDismissed(true);
+		};
+		window.addEventListener("pointerdown", onPointerDown);
+		return () => window.removeEventListener("pointerdown", onPointerDown);
+	}, [slashOpen]);
+
+	// 会话切换时重新拉取命令列表（模板/skill 随项目变化）
+	useEffect(() => {
+		if (!activeSessionId) return;
+		let cancelled = false;
+		void getPi()
+			.listSlashCommands(activeSessionId)
+			.then((list) => {
+				if (!cancelled) setSlashCommands(list);
+			})
+			.catch(() => {
+				if (!cancelled) setSlashCommands([]);
+			});
+		return () => {
+			cancelled = true;
+		};
+	}, [activeSessionId]);
+
+	/** 确保有活跃会话（无则新建），返回 sessionId */
+	const ensureSession = async (): Promise<string | null> => {
+		let sessionId = activeSessionId;
+		if (!sessionId) {
+			if (!cwd) return null;
+			await createSession(cwd);
+			sessionId = useSessionsStore.getState().activeSessionId;
+		}
+		return sessionId;
+	};
+
+	/** 执行内置命令（发送以 / 开头文本时的分发；未匹配则透传给 SDK 原生处理模板/skill/扩展命令） */
+	const runSlashCommand = async (content: string, sessionId: string): Promise<boolean> => {
+		const [name, ...rest] = content.slice(1).split(/\s+/);
+		const arg = rest.join(" ").trim();
+		const pi = getPi();
+		switch (name) {
+			case "compact":
+				if (!arg) {
+					await pi.compact(sessionId);
+					showFeedback(t("slash.feedback.compacted"));
+					return true;
+				}
+				return false;
+			case "name":
+				if (arg) {
+					await pi.setSessionName(sessionId, arg);
+					showFeedback(t("slash.feedback.renamed", { name: arg }));
+					return true;
+				}
+				showFeedback(t("slash.feedback.noName"));
+				return true;
+			case "copy": {
+				const msgs = useTranscriptStore.getState().bySession[sessionId]?.messages ?? [];
+				let lastText = "";
+				for (const m of [...msgs].reverse()) {
+					if (m.kind === "assistant" && m.text) {
+						lastText = m.text;
+						break;
+					}
+				}
+				if (lastText) {
+					await navigator.clipboard.writeText(lastText);
+					showFeedback(t("slash.feedback.copied"));
+				} else {
+					showFeedback(t("slash.feedback.noCopy"));
+				}
+				return true;
+			}
+			case "export": {
+				const format = arg === "html" ? "html" : arg === "jsonl" ? "jsonl" : "jsonl";
+				const contentOut = await pi.exportSession(sessionId, format);
+				const path = await pi.saveFileDialog(`pi-session-${Date.now()}.${format}`, contentOut);
+				showFeedback(path ? t("slash.feedback.exported", { path }) : t("slash.feedback.exportCancelled"));
+				return true;
+			}
+			case "new":
+				if (!arg) {
+					await createSession(cwd ?? undefined);
+					return true;
+				}
+				return false;
+			case "settings":
+				if (!arg) {
+					useSettingsStore.getState().openWith();
+					return true;
+				}
+				return false;
+			case "login":
+				useSettingsStore.getState().openWith("providers");
+				return true;
+			default:
+				// 模板/skill/扩展命令由 SDK 原生处理，原样透传
+				return false;
+		}
+	};
+
 	const handleSend = async () => {
 		const content = text.trim();
 		if ((!content && images.length === 0) || isStreaming) return;
 
 		let sessionId = activeSessionId;
-		if (!sessionId) {
+		if (content.startsWith("/") && images.length === 0) {
+			sessionId = await ensureSession();
+			if (!sessionId) {
+				showFeedback(t("slash.feedback.noSession"));
+				return;
+			}
+			setText("");
+			try {
+				const handled = await runSlashCommand(content, sessionId);
+				if (handled) return;
+			} catch (err) {
+				setError(err instanceof Error ? err.message : String(err));
+				return;
+			}
+			// 未匹配的内置命令：落回正常发送（SDK 原生处理模板/技能/扩展命令）
+		} else if (!sessionId) {
 			if (!cwd) return;
 			await createSession(cwd);
 			sessionId = useSessionsStore.getState().activeSessionId;
@@ -58,6 +203,36 @@ export function Composer({ centered = false }: { centered?: boolean }) {
 		} finally {
 			setSending(false);
 		}
+	};
+
+	/** 菜单选中命令：无参内置立即执行；带参内置/模板/技能回填继续编辑 */
+	const handleSlashPick = async (command: SlashCommandInfo) => {
+		if (!command.supported) return;
+		const sessionId = await ensureSession();
+		if (!sessionId) {
+			showFeedback(t("slash.feedback.noSession"));
+			return;
+		}
+		const inline = new Set(["compact", "copy", "new", "settings", "login"]);
+		if (command.source === "builtin" && inline.has(command.name)) {
+			setText("");
+			try {
+				await runSlashCommand(`/${command.name}`, sessionId);
+			} catch (err) {
+				setError(err instanceof Error ? err.message : String(err));
+			}
+			return;
+		}
+		// 回填 /name 前缀（含空格），光标置末尾等待参数
+		setText(`/${command.name} `);
+		requestAnimationFrame(() => {
+			const el = textareaRef.current;
+			if (el) {
+				el.focus();
+				const len = el.value.length;
+				el.setSelectionRange(len, len);
+			}
+		});
 	};
 
 	const handleFiles = (files: FileList | File[] | null) => {
@@ -95,20 +270,71 @@ export function Composer({ centered = false }: { centered?: boolean }) {
 	const imageSrc = (image: ImageInput) => `data:${image.mimeType};base64,${image.data}`;
 
 	const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
+		if (slashOpen && e.key !== "Enter") {
+			if (e.key === "ArrowDown") {
+				e.preventDefault();
+				setSlashSelected((s) => s + 1);
+				return;
+			}
+			if (e.key === "ArrowUp") {
+				e.preventDefault();
+				setSlashSelected((s) => s - 1);
+				return;
+			}
+			if (e.key === "Escape") {
+				e.preventDefault();
+				setText("");
+				return;
+			}
+		}
 		if (e.key === "Enter" && !e.shiftKey && !e.nativeEvent.isComposing) {
 			e.preventDefault();
+			if (slashOpen) {
+				// 已带参数 → 直接发送（命令分发或模板透传）；否则选中的命令执行/回填
+				if (slashHasArgs) {
+					void handleSend();
+				} else {
+					void handleSlashPickByIndex(slashSelected);
+				}
+			} else {
+				void handleSend();
+			}
+		}
+	};
+
+	/** 按下标选中菜单项（无匹配时落回正常发送） */
+	const handleSlashPickByIndex = (index: number) => {
+		const flat = filterCommands(slashCommands, slashQuery);
+		const command = flat[Math.min(index, flat.length - 1)] ?? undefined;
+		if (command) {
+			void handleSlashPick(command);
+		} else {
 			void handleSend();
 		}
 	};
 
 	return (
-		<div className={centered ? "w-full max-w-[760px]" : "shrink-0 px-6 pb-3"}>
+		<div ref={boxRef} className={centered ? "w-full max-w-[760px]" : "shrink-0 px-6 pb-3"}>
 			<div className="mx-auto max-w-[760px]">
 				{error && <p className="mb-1.5 text-xs text-red-500">{error}</p>}
+				{feedback && !error && <p className="mb-1.5 text-xs text-green-600">{feedback}</p>}
+				{slashOpen && (
+					<SlashMenu
+						commands={slashCommands}
+						query={slashQuery}
+						selectedIndex={slashSelected}
+						onSelectedIndexChange={setSlashSelected}
+						onPick={(command) => void handleSlashPick(command)}
+					/>
+				)}
 				{images.length > 0 && (
 					<div className="mb-1.5 flex flex-wrap items-end gap-2">
 						{images.map((image, index) => (
-							<div key={index} className="group relative">
+							<div
+								// biome-ignore lint/suspicious/noArrayIndexKey: 缩略图列表不可变（删除为整列表替换）
+								key={index}
+								className="group relative"
+							>
 								<button
 									type="button"
 									className="block h-16 w-16 overflow-hidden rounded-lg border border-zinc-200 bg-white"
@@ -141,7 +367,10 @@ export function Composer({ centered = false }: { centered?: boolean }) {
 						placeholder={t("composer.placeholder")}
 						value={text}
 						rows={1}
-						onChange={(e) => setText(e.target.value)}
+						onChange={(e) => {
+							setSlashDismissed(false);
+							setText(e.target.value);
+						}}
 						onKeyDown={handleKeyDown}
 						onPaste={handlePaste}
 					/>
@@ -166,10 +395,12 @@ export function Composer({ centered = false }: { centered?: boolean }) {
 						>
 							<PlusIcon size={18} />
 						</button>
+						<ContextRing />
 						<div className="flex-1" />
 						<ModelPicker />
 						<ThinkingPicker />
-						{isStreaming ? (							<button
+						{isStreaming ? (
+							<button
 								type="button"
 								className="flex h-8 w-8 items-center justify-center rounded-full bg-zinc-900 text-white transition-colors hover:bg-red-600"
 								onClick={() => {

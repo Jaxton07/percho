@@ -1,11 +1,8 @@
 import type { ComponentType } from "react";
-import { useState } from "react";
 import { useT } from "../../i18n";
-import { useSettingsStore } from "../../stores/settings";
+import { type SettingsCategory, useSettingsStore } from "../../stores/settings";
 import { GeneralPanel } from "./GeneralPanel";
 import { ProvidersPanel } from "./providers/ProvidersPanel";
-
-type SettingsCategory = "general" | "providers" | "skills" | "mcp" | "extensions";
 
 const CATEGORIES: SettingsCategory[] = ["general", "providers", "skills", "mcp", "extensions"];
 
@@ -20,7 +17,8 @@ export function SettingsDialog() {
 	const t = useT();
 	const open = useSettingsStore((s) => s.open);
 	const setOpen = useSettingsStore((s) => s.setOpen);
-	const [category, setCategory] = useState<SettingsCategory>("providers");
+	const category = useSettingsStore((s) => s.category);
+	const setCategory = useSettingsStore((s) => s.setCategory);
 
 	if (!open) return null;
 

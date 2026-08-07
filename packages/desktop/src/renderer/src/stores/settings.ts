@@ -3,14 +3,21 @@ import { create } from "zustand";
 import { getPi } from "../api";
 import { useSessionsStore } from "./sessions";
 
+export type SettingsCategory = "general" | "providers" | "skills" | "mcp" | "extensions";
+
 interface SettingsStore {
 	open: boolean;
+	/** 当前设置分类（/settings 命令可定位到指定面板） */
+	category: SettingsCategory;
 	providers: ProviderInfo[];
 	loading: boolean;
 	/** providerId → 测试结果（"testing" 表示进行中） */
 	testResults: Record<string, ProviderTestResult | "testing">;
 	error: string | null;
 	setOpen: (open: boolean) => void;
+	/** 打开并（可选）定位到指定分类 */
+	openWith: (category?: SettingsCategory) => void;
+	setCategory: (category: SettingsCategory) => void;
 	refresh: () => Promise<void>;
 	saveKey: (providerId: string, key: string) => Promise<void>;
 	removeCredential: (providerId: string) => Promise<void>;
@@ -28,6 +35,7 @@ export const useSettingsStore = create<SettingsStore>((set, get) => {
 
 	return {
 		open: false,
+		category: "providers",
 		providers: [],
 		loading: false,
 		testResults: {},
@@ -37,6 +45,13 @@ export const useSettingsStore = create<SettingsStore>((set, get) => {
 			set({ open, testResults: {}, error: null });
 			if (open) void get().refresh();
 		},
+
+		openWith: (category) => {
+			set((state) => ({ category: category ?? state.category, open: true, testResults: {}, error: null }));
+			void get().refresh();
+		},
+
+		setCategory: (category) => set({ category }),
 
 		refresh: async () => {
 			set({ loading: true });

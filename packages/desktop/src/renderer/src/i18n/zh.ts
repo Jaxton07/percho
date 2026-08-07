@@ -33,6 +33,25 @@ export const zh = {
 		removeImage: "移除图片",
 		previewImage: "查看图片",
 	},
+	slash: {
+		noMatch: "没有匹配的命令",
+		group: {
+			builtin: "内置命令",
+			template: "模板",
+			skill: "技能",
+			extension: "扩展",
+		},
+		feedback: {
+			compacted: "已开始压缩上下文",
+			renamed: "会话已改名：{name}",
+			noName: "用法：/name <名字>",
+			copied: "已复制最后一条回复",
+			noCopy: "还没有 agent 回复",
+			exported: "已导出：{path}",
+			exportCancelled: "已取消导出",
+			noSession: "请先选择项目目录并创建会话",
+		},
+	},
 	thinkingLevels: {
 		off: "关闭",
 		minimal: "最低",
@@ -42,10 +61,16 @@ export const zh = {
 		xhigh: "特高",
 		max: "最大",
 	},
-	statusbar: {
-		noDir: "未选择目录",
-		noGit: "无 Git",
-		gitBranch: "git 分支",
+	compaction: {
+		running: "正在压缩上下文",
+		done: "已压缩上下文",
+		cancelled: "已取消压缩",
+		failed: "压缩失败：{error}",
+		reason: {
+			manual: "手动",
+			threshold: "自动（上下文阈值）",
+			overflow: "自动（溢出恢复）",
+		},
 	},
 	permission: {
 		deny: "拒绝",

@@ -10,7 +10,18 @@ export type UIMessage =
 			timestamp: number;
 	  }
 	| { kind: "assistant"; id: string; text: string; thinking: string; tools: UIToolCall[]; timestamp: number }
-	| { kind: "error"; id: string; text: string; timestamp: number };
+	| { kind: "error"; id: string; text: string; timestamp: number }
+	| { kind: "system"; id: string; text: string; timestamp: number; compact?: CompactionUiState };
+
+/** 上下文压缩系统消息状态（compaction_start → compaction_end 更新同一条） */
+export interface CompactionUiState {
+	status: "running" | "done" | "cancelled" | "error";
+	reason: "manual" | "threshold" | "overflow";
+	summary?: string;
+	tokensBefore?: number;
+	tokensAfter?: number;
+	errorMessage?: string;
+}
 
 /** 工具调用卡片状态 */
 export interface UIToolCall {
@@ -230,9 +241,59 @@ export function reduceEvent(state: SessionTranscriptState, event: AgentSessionEv
 			return finalizeStreaming({ ...state, phase: event.willRetry ? "streaming" : "idle" });
 		case "agent_settled":
 			return finalizeStreaming({ ...state, phase: "idle" });
+		case "compaction_start": {
+			const pending: UIMessage = {
+				kind: "system",
+				id: `compaction-${Date.now()}-${state.messages.length}`,
+				text: "",
+				timestamp: Date.now(),
+				compact: { status: "running", reason: event.reason },
+			};
+			return { ...state, messages: [...state.messages, pending] };
+		}
+		case "compaction_end": {
+			const info: CompactionUiState = event.aborted
+				? { status: "cancelled", reason: event.reason }
+				: event.errorMessage
+					? { status: "error", reason: event.reason, errorMessage: event.errorMessage }
+					: {
+							status: "done",
+							reason: event.reason,
+							summary: event.result?.summary,
+							tokensBefore: event.result?.tokensBefore,
+							tokensAfter: event.result?.estimatedTokensAfter,
+						};
+			// 更新进行中的压缩消息（同一 id），否则追加
+			const idx = findLastIndex(
+				state.messages,
+				(m) => m.kind === "system" && m.compact?.status === "running",
+			);
+			if (idx >= 0) {
+				const messages = state.messages.map((m, i) =>
+					i === idx ? ({ ...m, compact: info } as UIMessage) : m,
+				);
+				return { ...state, messages };
+			}
+			const entry: UIMessage = {
+				kind: "system",
+				id: `compaction-${Date.now()}-${state.messages.length}`,
+				text: "",
+				timestamp: Date.now(),
+				compact: info,
+			};
+			return { ...state, messages: [...state.messages, entry] };
+		}
 		default:
 			return state;
 	}
+}
+
+function findLastIndex<T>(arr: readonly T[], predicate: (item: T) => boolean): number {
+	for (let i = arr.length - 1; i >= 0; i--) {
+		const item = arr[i];
+		if (item && predicate(item)) return i;
+	}
+	return -1;
 }
 
 function extractExecutionDelta(partialResult: unknown): string | null {

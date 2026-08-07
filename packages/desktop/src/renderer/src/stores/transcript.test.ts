@@ -216,4 +216,57 @@ describe("transcript reducer", () => {
 		} as unknown as AgentSessionEvent);
 		expect(state.phase).toBe("idle");
 	});
+
+	it("compaction_start 追加进行中系统消息，compaction_end 更新为摘要", () => {
+		let state = emptyTranscript();
+		state = reduceEvent(state, {
+			type: "compaction_start",
+			reason: "manual",
+		} as unknown as AgentSessionEvent);
+		expect(state.messages).toHaveLength(1);
+		expect(state.messages[0]).toMatchObject({
+			kind: "system",
+			compact: { status: "running", reason: "manual" },
+		});
+		const pendingId = state.messages[0]?.id;
+
+		state = reduceEvent(state, {
+			type: "compaction_end",
+			reason: "manual",
+			aborted: false,
+			willRetry: false,
+			result: {
+				summary: "讨论了图片上传实现",
+				firstKeptEntryId: "x",
+				tokensBefore: 12000,
+				estimatedTokensAfter: 6000,
+			},
+		} as unknown as AgentSessionEvent);
+		expect(state.messages).toHaveLength(1);
+		expect(state.messages[0]).toMatchObject({
+			kind: "system",
+			id: pendingId,
+			compact: {
+				status: "done",
+				summary: "讨论了图片上传实现",
+				tokensBefore: 12000,
+				tokensAfter: 6000,
+			},
+		});
+	});
+
+	it("compaction_end 无进行中消息时追加；aborted 显示取消状态", () => {
+		let state = emptyTranscript();
+		state = reduceEvent(state, {
+			type: "compaction_end",
+			reason: "threshold",
+			aborted: true,
+			willRetry: false,
+		} as unknown as AgentSessionEvent);
+		expect(state.messages).toHaveLength(1);
+		expect(state.messages[0]).toMatchObject({
+			kind: "system",
+			compact: { status: "cancelled", reason: "threshold" },
+		});
+	});
 });
