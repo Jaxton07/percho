@@ -37,6 +37,7 @@ export const en: Messages = {
 	},
 	slash: {
 		noMatch: "No matching commands",
+		argPlaceholder: "Type arguments…",
 		group: {
 			builtin: "Built-in",
 			template: "Templates",
@@ -84,6 +85,8 @@ export const en: Messages = {
 		copy: "Copy",
 		copied: "Copied",
 		thinking: "Thinking",
+		working: "Working…",
+		worked: "Worked",
 	},
 	tool: {
 		running: "Running…",

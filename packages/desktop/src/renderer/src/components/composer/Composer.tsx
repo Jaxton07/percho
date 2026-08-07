@@ -26,6 +26,8 @@ export function Composer({ centered = false }: { centered?: boolean }) {
 	const [feedback, setFeedback] = useState<string | null>(null);
 	const [slashSelected, setSlashSelected] = useState(0);
 	const [slashCommands, setSlashCommands] = useState<SlashCommandInfo[]>([]);
+	/** Tab/点击回填后确认的命令名：输入框显示为灰色胶囊，args 为普通文本 */
+	const [slashCommand, setSlashCommand] = useState<string | null>(null);
 	/** 点击面板外部后隐藏菜单（保留文本，再次输入时恢复） */
 	const [slashDismissed, setSlashDismissed] = useState(false);
 	const textareaRef = useRef<HTMLTextAreaElement>(null);
@@ -164,7 +166,8 @@ export function Composer({ centered = false }: { centered?: boolean }) {
 	};
 
 	const handleSend = async () => {
-		const content = text.trim();
+		// 胶囊确认的命令 + args 拼回原始 /cmd 形式
+		const content = slashCommand ? `/${slashCommand}${text.trim() ? ` ${text.trim()}` : ""}` : text.trim();
 		if ((!content && images.length === 0) || isStreaming) return;
 
 		let sessionId = activeSessionId;
@@ -175,6 +178,7 @@ export function Composer({ centered = false }: { centered?: boolean }) {
 				return;
 			}
 			setText("");
+			setSlashCommand(null);
 			try {
 				const handled = await runSlashCommand(content, sessionId);
 				if (handled) return;
@@ -191,6 +195,7 @@ export function Composer({ centered = false }: { centered?: boolean }) {
 		}
 
 		setText("");
+		setSlashCommand(null);
 		setSending(true);
 		setError(null);
 		const sentImages = images;
@@ -223,16 +228,11 @@ export function Composer({ centered = false }: { centered?: boolean }) {
 			}
 			return;
 		}
-		// 回填 /name 前缀（含空格），光标置末尾等待参数
-		setText(`/${command.name} `);
-		requestAnimationFrame(() => {
-			const el = textareaRef.current;
-			if (el) {
-				el.focus();
-				const len = el.value.length;
-				el.setSelectionRange(len, len);
-			}
-		});
+		// 需参数/模板/skill：确认命令，输入框显示为胶囊，等待 args
+		setSlashCommand(command.name);
+		setText("");
+		setSlashDismissed(true);
+		requestAnimationFrame(() => textareaRef.current?.focus());
 	};
 
 	const handleFiles = (files: FileList | File[] | null) => {
@@ -270,6 +270,30 @@ export function Composer({ centered = false }: { centered?: boolean }) {
 	const imageSrc = (image: ImageInput) => `data:${image.mimeType};base64,${image.data}`;
 
 	const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
+		// 胶囊模式下 args 为空时，Backspace/Delete/Escape 取消命令（恢复文本，菜单不重新弹出）
+		if (slashCommand && text === "") {
+			if (e.key === "Backspace" || e.key === "Delete" || e.key === "Escape") {
+				e.preventDefault();
+				setSlashCommand(null);
+				setText(`/${slashCommand} `);
+				setSlashDismissed(true);
+				requestAnimationFrame(() => {
+					const el = textareaRef.current;
+					if (el) {
+						el.focus();
+						const len = el.value.length;
+						el.setSelectionRange(len, len);
+					}
+				});
+				return;
+			}
+		}
+		// Tab 补全选中命令（已有参数时让位默认行为）
+		if (slashOpen && !slashHasArgs && e.key === "Tab") {
+			e.preventDefault();
+			handleSlashTabComplete();
+			return;
+		}
 		if (slashOpen && e.key !== "Enter") {
 			if (e.key === "ArrowDown") {
 				e.preventDefault();
@@ -311,6 +335,19 @@ export function Composer({ centered = false }: { centered?: boolean }) {
 		} else {
 			void handleSend();
 		}
+	};
+
+	/** Tab 补全：确认选中命令为胶囊（args 留空待输入），菜单随之关闭 */
+	const handleSlashTabComplete = () => {
+		const flat = filterCommands(slashCommands, slashQuery);
+		if (flat.length === 0) return;
+		const command = flat[Math.min(slashSelected, flat.length - 1)] ?? flat[0];
+		if (!command) return;
+		setSlashCommand(command.name);
+		setText("");
+		setSlashSelected(0);
+		setSlashDismissed(false);
+		requestAnimationFrame(() => textareaRef.current?.focus());
 	};
 
 	return (
@@ -361,19 +398,40 @@ export function Composer({ centered = false }: { centered?: boolean }) {
 					</div>
 				)}
 				<div className="rounded-2xl border-[0.5px] border-zinc-200 bg-white shadow-[0_0_14px_-2px_rgba(24,24,27,0.08)]">
-					<textarea
-						ref={textareaRef}
-						className="max-h-[200px] w-full resize-none rounded-t-2xl px-4 pt-5 pb-2 text-[14px] leading-relaxed bg-transparent outline-none placeholder:text-zinc-400 select-text"
-						placeholder={t("composer.placeholder")}
-						value={text}
-						rows={1}
-						onChange={(e) => {
-							setSlashDismissed(false);
-							setText(e.target.value);
-						}}
-						onKeyDown={handleKeyDown}
-						onPaste={handlePaste}
-					/>
+					{slashCommand ? (
+						<div className="flex items-start gap-1.5 px-4 pt-5 pb-2">
+							<span className="mt-0.5 shrink-0 select-none rounded-md bg-zinc-200 px-2 py-0.5 font-mono text-[12px] leading-5 text-zinc-700">
+								/{slashCommand}
+							</span>
+							<textarea
+								ref={textareaRef}
+								className="max-h-[200px] flex-1 resize-none bg-transparent pt-0.5 text-[14px] leading-relaxed outline-none placeholder:text-zinc-400 select-text"
+								placeholder={t("slash.argPlaceholder")}
+								value={text}
+								rows={1}
+								onChange={(e) => {
+									setSlashDismissed(false);
+									setText(e.target.value);
+								}}
+								onKeyDown={handleKeyDown}
+								onPaste={handlePaste}
+							/>
+						</div>
+					) : (
+						<textarea
+							ref={textareaRef}
+							className="max-h-[200px] w-full resize-none rounded-t-2xl px-4 pt-5 pb-2 text-[14px] leading-relaxed bg-transparent outline-none placeholder:text-zinc-400 select-text"
+							placeholder={t("composer.placeholder")}
+							value={text}
+							rows={1}
+							onChange={(e) => {
+								setSlashDismissed(false);
+								setText(e.target.value);
+							}}
+							onKeyDown={handleKeyDown}
+							onPaste={handlePaste}
+						/>
+					)}
 					<div className="flex items-center gap-2 px-3 pb-2">
 						<input
 							ref={fileInputRef}
@@ -415,7 +473,7 @@ export function Composer({ centered = false }: { centered?: boolean }) {
 							<button
 								type="button"
 								className="flex h-8 w-8 items-center justify-center rounded-full bg-zinc-900 text-white transition-colors hover:bg-zinc-700 disabled:opacity-30"
-								disabled={(!text.trim() && images.length === 0) || isStreaming}
+								disabled={(!text.trim() && images.length === 0 && !slashCommand) || isStreaming}
 								onClick={() => void handleSend()}
 								title={t("composer.send")}
 								aria-label={t("composer.send")}

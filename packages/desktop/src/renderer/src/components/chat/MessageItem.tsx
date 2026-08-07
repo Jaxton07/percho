@@ -44,7 +44,7 @@ export const MessageItem = memo(function MessageItem({
 						</div>
 					)}
 					{message.text && (
-						<div className="rounded-2xl rounded-br-md bg-zinc-900 px-3.5 py-2 text-[14px] leading-relaxed text-white select-text">
+						<div className="rounded-2xl rounded-br-md bg-zinc-200 px-3.5 py-2 text-[14px] leading-relaxed text-zinc-800 select-text">
 							{message.text}
 						</div>
 					)}

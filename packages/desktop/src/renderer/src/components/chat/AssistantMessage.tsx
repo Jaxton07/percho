@@ -1,9 +1,8 @@
-import { useT } from "../../i18n";
 import type { UIToolCall } from "../../stores/transcript";
 import { Markdown } from "./Markdown";
-import { ToolCallCard } from "./ToolCallCard";
+import { MetaGroup, type MetaItem } from "./MetaGroup";
 
-/** 助手消息体：思考过程（折叠）+ 工具调用 + Markdown 正文 + 打字指示器 */
+/** 助手消息体：元数据（思考/工具，折叠）+ Markdown 正文 + 打字指示器 */
 export function AssistantMessage({
 	text,
 	thinking,
@@ -15,27 +14,12 @@ export function AssistantMessage({
 	tools: UIToolCall[];
 	streaming?: boolean;
 }) {
-	const t = useT();
+	const items: MetaItem[] = [];
+	if (thinking || tools.length > 0) items.push({ thinking, tools, streaming });
+
 	return (
 		<div className="flex flex-col gap-2">
-			{thinking && (
-				<details className="group rounded-lg border border-zinc-100 bg-zinc-50/80">
-					<summary className="cursor-pointer px-2.5 py-1 text-xs text-zinc-400 select-none hover:text-zinc-600">
-						{t("message.thinking")}
-						{streaming && "…"}
-					</summary>
-					<div className="border-t border-zinc-100 px-2.5 py-2 text-[12.5px] leading-relaxed text-zinc-500 whitespace-pre-wrap select-text">
-						{thinking}
-					</div>
-				</details>
-			)}
-			{tools.length > 0 && (
-				<div className="flex flex-col gap-1.5">
-					{tools.map((tool, i) => (
-						<ToolCallCard key={`${tool.id || i}`} tool={tool} />
-					))}
-				</div>
-			)}
+			{items.length > 0 && <MetaGroup items={items} />}
 			{text && <Markdown text={text} />}
 			{streaming && !text && !thinking && tools.length === 0 && (
 				<div className="flex items-center gap-1 text-zinc-400">

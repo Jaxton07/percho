@@ -1,15 +1,6 @@
-import { useT } from "../../i18n";
+import { useEffect, useRef, useState } from "react";
 import type { UIToolCall } from "../../stores/transcript";
-
-const toolIcons: Record<string, string> = {
-	bash: ">_",
-	read: "📄",
-	write: "✏️",
-	edit: "🖊",
-	grep: "🔍",
-	find: "🔎",
-	ls: "📁",
-};
+import { ExpandArrowIcon } from "../icons";
 
 function summarizeArgs(args: string): string {
 	if (!args || args === "{}") return "";
@@ -26,52 +17,75 @@ function summarizeArgs(args: string): string {
 	return trimmed.length < args.length ? `${trimmed}…` : trimmed;
 }
 
-/** 工具调用折叠卡片 */
+const displayName = (name: string) => name.charAt(0).toUpperCase() + name.slice(1);
+
+/** 工具调用行：无边框、默认折叠；折叠态 = 工具名 + 执行对象（单行渐变截断），展开显示完整参数与结果 */
 export function ToolCallCard({ tool }: { tool: UIToolCall }) {
-	const t = useT();
 	const summary = summarizeArgs(tool.args);
-	const stateColor =
-		tool.state === "error"
-			? "border-red-200 bg-red-50"
-			: tool.state === "done"
-				? "border-zinc-200"
-				: "border-zinc-200 bg-zinc-50";
-	const dotColor =
-		tool.state === "running"
-			? "bg-violet-500 animate-pulse"
-			: tool.state === "error"
-				? "bg-red-500"
-				: "bg-zinc-400";
+	/** 内容是否超过一行（决定渐变 + 箭头是否贴行尾） */
+	const [overflowing, setOverflowing] = useState(false);
+	const textRef = useRef<HTMLSpanElement>(null);
+	const rowRef = useRef<HTMLElement>(null);
+
+	// args 在工具调用创建后不变，只测量一次 + 监听行宽变化
+	useEffect(() => {
+		const check = () => {
+			const el = textRef.current;
+			const row = rowRef.current;
+			if (!el || !row) return;
+			const left = el.getBoundingClientRect().left - row.getBoundingClientRect().left;
+			setOverflowing(el.scrollWidth > row.clientWidth - left);
+		};
+		check();
+		const row = rowRef.current;
+		if (!row) return;
+		const ro = new ResizeObserver(check);
+		ro.observe(row);
+		return () => ro.disconnect();
+	}, []);
+
+	const nameClass =
+		"shrink-0 font-mono text-[13px] font-medium text-zinc-500 transition-colors group-hover/row:text-zinc-800";
+	const summaryClass =
+		"relative overflow-hidden whitespace-nowrap font-mono text-[12px] text-zinc-400 transition-colors group-hover/row:text-zinc-800";
 
 	return (
-		<details
-			className={`rounded-lg border ${stateColor}`}
-			open={tool.state === "running" || tool.output.length > 0}
-		>
-			<summary className="flex cursor-pointer items-center gap-2 px-2.5 py-1.5 select-none">
-				<span className={`h-1.5 w-1.5 shrink-0 rounded-full ${dotColor}`} />
-				<span className="font-mono text-[12px] font-medium text-zinc-700">
-					{toolIcons[tool.name] ?? "🔧"} {tool.name}
-				</span>
-				{summary && <span className="truncate font-mono text-[11px] text-zinc-500">{summary}</span>}
-				{tool.state === "running" && (
-					<span className="ml-auto text-[10px] text-zinc-400">{t("tool.running")}</span>
+		<details className="group/dets">
+			<summary
+				ref={rowRef}
+				className="group/row flex cursor-pointer items-center gap-2 px-1 py-0.5 select-none [&::-webkit-details-marker]:hidden"
+			>
+				<span className={nameClass}>{displayName(tool.name)}</span>
+				{summary && (
+					<span
+						ref={textRef}
+						className={overflowing ? `${summaryClass} min-w-0 flex-1` : `${summaryClass} shrink-0`}
+					>
+						{summary}
+						{overflowing && (
+							<span className="pointer-events-none absolute inset-y-0 right-0 w-10 bg-gradient-to-l from-[var(--color-bg)] to-transparent" />
+						)}
+					</span>
 				)}
+				{tool.state === "running" && summary && (
+					<span className="shrink-0 font-mono text-[12px] text-zinc-400 transition-colors group-hover/row:text-zinc-700">
+						…
+					</span>
+				)}
+				<ExpandArrowIcon className="shrink-0 text-zinc-400 opacity-0 transition-[opacity,transform,color] group-hover/row:opacity-100 group-hover/row:text-zinc-700 group-open/dets:rotate-90" />
 			</summary>
-			{tool.output && (
-				<div className="border-t border-zinc-100 px-2.5 py-2">
-					<pre className="max-h-56 overflow-y-auto font-mono text-[11.5px] leading-relaxed whitespace-pre-wrap text-zinc-600 select-text">
-						{tool.output}
-					</pre>
-				</div>
-			)}
-			{tool.args && !summary && (
-				<div className="border-t border-zinc-100 px-2.5 py-2">
-					<pre className="font-mono text-[11.5px] whitespace-pre-wrap text-zinc-500 select-text">
+			<div className="flex flex-col gap-1.5 py-1 pl-4">
+				{tool.args && (
+					<pre className="max-h-56 overflow-y-auto font-mono text-[12px] leading-relaxed whitespace-pre-wrap text-zinc-500 select-text">
 						{tool.args}
 					</pre>
-				</div>
-			)}
+				)}
+				{tool.output && (
+					<pre className="max-h-56 overflow-y-auto font-mono text-[12px] leading-relaxed whitespace-pre-wrap text-zinc-600 select-text">
+						{tool.output}
+					</pre>
+				)}
+			</div>
 		</details>
 	);
 }

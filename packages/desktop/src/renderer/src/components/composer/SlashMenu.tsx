@@ -1,4 +1,5 @@
 import type { SlashCommandInfo } from "@pi-desktop/shared";
+import { useEffect, useRef } from "react";
 import { useT } from "../../i18n";
 
 export const SOURCE_ORDER: SlashCommandInfo["source"][] = ["builtin", "template", "skill", "extension"];
@@ -24,6 +25,7 @@ export function SlashMenu({
 	onPick: (command: SlashCommandInfo) => void;
 }) {
 	const t = useT();
+	const listRef = useRef<HTMLDivElement>(null);
 	const filtered = filterCommands(commands, query);
 	const groups = SOURCE_ORDER.map((source) => ({
 		source,
@@ -31,6 +33,21 @@ export function SlashMenu({
 	})).filter((g) => g.items.length > 0);
 	const flat = groups.flatMap((g) => g.items);
 	const active = Math.min(selectedIndex, Math.max(flat.length - 1, 0));
+
+	// 选中项超出可视区域时跟随滚动（键盘上下移动/鼠标悬停均生效）
+	useEffect(() => {
+		const container = listRef.current;
+		if (!container) return;
+		const item = container.querySelector<HTMLElement>(`[data-index="${active}"]`);
+		if (!item) return;
+		const cRect = container.getBoundingClientRect();
+		const iRect = item.getBoundingClientRect();
+		if (iRect.top < cRect.top) {
+			container.scrollTop -= cRect.top - iRect.top;
+		} else if (iRect.bottom > cRect.bottom) {
+			container.scrollTop += iRect.bottom - cRect.bottom;
+		}
+	}, [active]);
 
 	if (flat.length === 0) {
 		return (
@@ -41,7 +58,10 @@ export function SlashMenu({
 	}
 
 	return (
-		<div className="mb-1.5 max-h-64 overflow-y-auto rounded-lg border border-zinc-200 bg-white shadow-lg">
+		<div
+			ref={listRef}
+			className="mb-1.5 max-h-64 overflow-y-auto rounded-lg border border-zinc-200 bg-white shadow-lg"
+		>
 			{groups.map((group) => (
 				<div key={group.source}>
 					<p className="px-3 pt-2 pb-1 text-[11px] font-medium text-zinc-400">
@@ -54,6 +74,7 @@ export function SlashMenu({
 							<button
 								key={`${command.source}:${command.name}`}
 								type="button"
+								data-index={index}
 								className={`flex w-full items-center gap-2 px-3 py-1.5 text-left text-[13px] transition-colors ${
 									index === active ? "bg-zinc-100 text-zinc-900" : "text-zinc-600 hover:bg-zinc-50"
 								} ${unsupported ? "cursor-not-allowed opacity-50" : ""}`}
