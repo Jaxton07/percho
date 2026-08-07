@@ -1,6 +1,7 @@
 import { PiBackend } from "@pi-desktop/backend";
 import {
 	type CustomProviderInput,
+	type ImageInput,
 	IpcChannels,
 	type PermissionAnswer,
 	type PermissionRequest,
@@ -31,8 +32,8 @@ function registerIpc(): void {
 	ipcMain.handle(IpcChannels.SessionDelete, (_e, sessionId: string, sessionFile?: string) =>
 		backend.deleteSession(sessionId, sessionFile),
 	);
-	ipcMain.handle(IpcChannels.SessionPrompt, (_e, sessionId: string, text: string) =>
-		backend.prompt(sessionId, text),
+	ipcMain.handle(IpcChannels.SessionPrompt, (_e, sessionId: string, text: string, images?: ImageInput[]) =>
+		backend.prompt(sessionId, text, images),
 	);
 	ipcMain.handle(IpcChannels.SessionAbort, (_e, sessionId: string) => backend.abort(sessionId));
 	ipcMain.handle(IpcChannels.SessionSetModel, (_e, sessionId: string, provider: string, modelId: string) =>

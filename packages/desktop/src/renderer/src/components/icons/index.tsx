@@ -65,6 +65,7 @@ export function PlusIcon({ size = 14, className }: IconProps) {
 			height={size}
 			viewBox="0 0 24 24"
 			{...strokeProps}
+			strokeWidth={1.5}
 			aria-hidden="true"
 		>
 			<path d="M12 5v14M5 12h14" strokeLinecap="round" />
@@ -180,6 +181,21 @@ export function ChevronDownIcon({ size = 10, className }: IconProps) {
 				d="m6 9 6 6 6-6"
 				stroke="currentColor"
 				strokeWidth="2.5"
+				strokeLinecap="round"
+				strokeLinejoin="round"
+			/>
+		</svg>
+	);
+}
+
+/** 勾选 */
+export function CheckIcon({ size = 12, className }: IconProps) {
+	return (
+		<svg className={className} width={size} height={size} viewBox="0 0 24 24" fill="none" aria-hidden="true">
+			<path
+				d="M20 6 9 17l-5-5"
+				stroke="currentColor"
+				strokeWidth="3"
 				strokeLinecap="round"
 				strokeLinejoin="round"
 			/>

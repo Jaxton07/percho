@@ -1,8 +1,14 @@
-import type { AgentSessionEvent, SessionMessage } from "@pi-desktop/shared";
+import type { AgentSessionEvent, ImageInput, SessionMessage } from "@pi-desktop/shared";
 
 /** 单条 UI 消息 */
 export type UIMessage =
-	| { kind: "user"; id: string; text: string; timestamp: number }
+	| {
+			kind: "user";
+			id: string;
+			text: string;
+			images: ImageInput[];
+			timestamp: number;
+	  }
 	| { kind: "assistant"; id: string; text: string; thinking: string; tools: UIToolCall[]; timestamp: number }
 	| { kind: "error"; id: string; text: string; timestamp: number };
 
@@ -110,9 +116,20 @@ export function reduceEvent(state: SessionTranscriptState, event: AgentSessionEv
 							.filter((c) => c.type === "text")
 							.map((c) => (c as { text: string }).text)
 							.join("");
+			const images: ImageInput[] = Array.isArray(content)
+				? content
+						.filter((c) => c.type === "image" && (c as { data?: string }).data)
+						.map((c) => ({
+							data: (c as { data: string }).data,
+							mimeType: (c as { mimeType?: string }).mimeType ?? "image/png",
+						}))
+				: [];
 			return {
 				...state,
-				messages: [...state.messages, { kind: "user", id: newMessageId(), text, timestamp: Date.now() }],
+				messages: [
+					...state.messages,
+					{ kind: "user", id: newMessageId(), text, images, timestamp: Date.now() },
+				],
 			};
 		}
 		case "message_update": {
@@ -237,7 +254,9 @@ export function messagesToUIMessages(messages: SessionMessage[]): UIMessage[] {
 		if (!m) continue;
 		const id = `h${i}`;
 		if (m.role === "user") {
-			if (m.text) ui.push({ kind: "user", id, text: m.text, timestamp: m.timestamp });
+			if (m.text || m.images.length > 0) {
+				ui.push({ kind: "user", id, text: m.text, images: m.images, timestamp: m.timestamp });
+			}
 			continue;
 		}
 		const tools: UIToolCall[] = m.tools.map((tool) => ({

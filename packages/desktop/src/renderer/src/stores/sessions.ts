@@ -1,8 +1,8 @@
 import type { AvailableModel, SessionMeta } from "@pi-desktop/shared";
 import { create } from "zustand";
 import { getPi } from "../api";
-import { messagesToUIMessages } from "./transcript-reducer";
 import { useTranscriptStore } from "./transcript";
+import { messagesToUIMessages } from "./transcript-reducer";
 
 /** 顶栏打开的会话持久化（重启恢复用），以磁盘路径为 key */
 const TABS_KEY = "pi-desktop.open-tabs";
@@ -33,8 +33,7 @@ function persistTabs(state: Pick<SessionsStore, "sessions" | "activeSessionId">)
 			TABS_KEY,
 			JSON.stringify({
 				files: [...new Set(state.sessions.map((s) => s.sessionFile).filter((f): f is string => Boolean(f)))],
-				activeFile:
-					state.sessions.find((s) => s.sessionId === state.activeSessionId)?.sessionFile ?? null,
+				activeFile: state.sessions.find((s) => s.sessionId === state.activeSessionId)?.sessionFile ?? null,
 			}),
 		);
 	} catch {
@@ -48,6 +47,7 @@ interface SessionsStore {
 	cwd: string | null;
 	models: AvailableModel[];
 	currentModel: { provider: string; modelId: string } | null;
+	thinkingLevel: string;
 	error: string | null;
 	createSession: (cwd?: string) => Promise<void>;
 	switchSession: (sessionId: string) => void;
@@ -60,6 +60,7 @@ interface SessionsStore {
 	pickDirectory: () => Promise<void>;
 	loadModels: () => Promise<void>;
 	setCurrentModel: (provider: string, modelId: string) => Promise<void>;
+	setThinkingLevel: (level: string) => Promise<void>;
 }
 
 export const useSessionsStore = create<SessionsStore>((set, get) => ({
@@ -68,13 +69,18 @@ export const useSessionsStore = create<SessionsStore>((set, get) => ({
 	cwd: null,
 	models: [],
 	currentModel: null,
+	thinkingLevel: "medium",
 	error: null,
 
 	createSession: async (cwd) => {
 		const targetCwd = cwd ?? get().cwd;
 		if (!targetCwd) return;
 		try {
-			const meta = await getPi().createSession({ cwd: targetCwd, ...get().currentModel });
+			const meta = await getPi().createSession({
+				cwd: targetCwd,
+				...get().currentModel,
+				thinkingLevel: get().thinkingLevel,
+			});
 			set((state) => ({
 				sessions: [...state.sessions, meta],
 				activeSessionId: meta.sessionId,
@@ -151,9 +157,7 @@ export const useSessionsStore = create<SessionsStore>((set, get) => ({
 		const lastOpened = opened[opened.length - 1];
 		if (!lastOpened) return;
 		set((state) => {
-			const existing = state.sessions.filter(
-				(s) => !opened.some((o) => o.sessionId === s.sessionId),
-			);
+			const existing = state.sessions.filter((s) => !opened.some((o) => o.sessionId === s.sessionId));
 			const sessions = [...existing, ...opened];
 			const activeSessionId = activeId ?? lastOpened.sessionId;
 			const cwd = sessions.find((s) => s.sessionId === activeSessionId)?.cwd ?? null;
@@ -172,8 +176,11 @@ export const useSessionsStore = create<SessionsStore>((set, get) => ({
 			const models = await getPi().listModels();
 			set({ models });
 			const current = get().currentModel;
-			if (!current && models[0]) {
-				set({ currentModel: { provider: models[0].provider, modelId: models[0].id } });
+			if (!current) {
+				const first = models.find((m) => m.authed) ?? models[0];
+				if (first) {
+					set({ currentModel: { provider: first.provider, modelId: first.id } });
+				}
 			}
 		} catch (error) {
 			set({ error: error instanceof Error ? error.message : String(error) });
@@ -186,6 +193,18 @@ export const useSessionsStore = create<SessionsStore>((set, get) => ({
 		if (activeSessionId) {
 			try {
 				await getPi().setModel(activeSessionId, provider, modelId);
+			} catch (error) {
+				set({ error: error instanceof Error ? error.message : String(error) });
+			}
+		}
+	},
+
+	setThinkingLevel: async (level) => {
+		const { activeSessionId } = get();
+		set({ thinkingLevel: level });
+		if (activeSessionId) {
+			try {
+				await getPi().setThinkingLevel(activeSessionId, level);
 			} catch (error) {
 				set({ error: error instanceof Error ? error.message : String(error) });
 			}

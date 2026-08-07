@@ -1,6 +1,7 @@
 import type {
 	CreateSessionOptions,
 	GitBranches,
+	ImageInput,
 	PermissionAnswer,
 	PermissionRequest,
 	SessionEventEnvelope,
@@ -53,7 +54,8 @@ export interface PiApi {
 	closeSession(sessionId: string): Promise<void>;
 	/** 删除会话（含磁盘 jsonl 文件，不可恢复） */
 	deleteSession(sessionId: string, sessionFile?: string): Promise<void>;
-	prompt(sessionId: string, text: string): Promise<void>;
+	/** 发送消息；images 为随消息附带的图片（base64） */
+	prompt(sessionId: string, text: string, images?: ImageInput[]): Promise<void>;
 	abort(sessionId: string): Promise<void>;
 	setModel(sessionId: string, provider: string, modelId: string): Promise<void>;
 	setThinkingLevel(sessionId: string, level: string): Promise<void>;

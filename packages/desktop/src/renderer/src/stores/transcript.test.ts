@@ -17,6 +17,26 @@ describe("transcript reducer", () => {
 		expect(state.messages[0]).toMatchObject({ kind: "user", text: "你好" });
 	});
 
+	it("message_start 提取图片块为 images", () => {
+		let state = emptyTranscript();
+		state = reduceEvent(state, {
+			type: "message_start",
+			message: {
+				role: "user",
+				content: [
+					{ type: "image", data: "AAAA", mimeType: "image/png" },
+					{ type: "text", text: "看图" },
+				],
+			},
+		} as unknown as AgentSessionEvent);
+		expect(state.messages).toHaveLength(1);
+		expect(state.messages[0]).toMatchObject({
+			kind: "user",
+			text: "看图",
+			images: [{ data: "AAAA", mimeType: "image/png" }],
+		});
+	});
+
 	it("agent_start 进入流式，text_delta 累积", () => {
 		let state = emptyTranscript();
 		state = reduceEvent(state, ev("agent_start"));

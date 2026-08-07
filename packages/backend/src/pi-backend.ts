@@ -10,6 +10,7 @@ import {
 import type {
 	AvailableModel,
 	CreateSessionOptions,
+	ImageInput,
 	PermissionAnswer,
 	PermissionRequest,
 	SessionMessage,
@@ -181,9 +182,15 @@ export class PiBackend {
 		await unlink(file);
 	}
 
-	async prompt(sessionId: string, text: string): Promise<void> {
+	async prompt(sessionId: string, text: string, images?: ImageInput[]): Promise<void> {
 		const entry = this.requireSession(sessionId);
-		await entry.session.prompt(text);
+		await entry.session.prompt(text, {
+			images: images?.map((image) => ({
+				type: "image" as const,
+				data: image.data,
+				mimeType: image.mimeType,
+			})),
+		});
 	}
 
 	async abort(sessionId: string): Promise<void> {
@@ -227,14 +234,18 @@ export class PiBackend {
 	}
 
 	async listModels(): Promise<AvailableModel[]> {
-		const runtime = await this.getModelRuntime();
-		const available = await runtime.getAvailable();
-		return available.map((model) => ({
-			provider: model.provider,
-			id: model.id,
-			label: model.name,
-			authed: true,
-		}));
+		const providers = await this.settings.listProviders();
+		return providers.flatMap((provider) =>
+			provider.configured
+				? provider.models.map((model) => ({
+						provider: provider.id,
+						providerName: provider.name,
+						id: model.id,
+						label: model.name,
+						authed: true,
+					}))
+				: [],
+		);
 	}
 
 	onEvent(handler: EventHandler): () => void {
@@ -292,6 +303,8 @@ interface ContentBlock {
 	id?: string;
 	name?: string;
 	arguments?: Record<string, unknown>;
+	data?: string;
+	mimeType?: string;
 }
 
 interface RawMessage {
@@ -329,6 +342,13 @@ function blockToolCalls(content: ContentBlock[] | undefined): SessionToolCall[] 
 		}));
 }
 
+function blockImages(content: string | ContentBlock[] | undefined): ImageInput[] {
+	if (typeof content === "string") return [];
+	return (content ?? [])
+		.filter((c) => c.type === "image" && c.data)
+		.map((c) => ({ data: c.data as string, mimeType: (c.mimeType as string) ?? "image/png" }));
+}
+
 /**
  * pi 消息 → 中立 SessionMessage 列表。
  * toolResult 消息单独出现（带 toolCallId），把输出回填到对应工具卡片。
@@ -343,6 +363,7 @@ export function toSessionMessages(rawMessages: readonly unknown[]): SessionMessa
 				text: blockText(raw.content),
 				thinking: "",
 				tools: [],
+				images: blockImages(raw.content),
 				timestamp: raw.timestamp ?? Date.now(),
 			});
 			continue;
@@ -356,6 +377,7 @@ export function toSessionMessages(rawMessages: readonly unknown[]): SessionMessa
 				text: blockText(raw.content),
 				thinking: blockThinking(content),
 				tools,
+				images: [],
 				timestamp: raw.timestamp ?? Date.now(),
 			};
 			if (message.text || message.thinking || message.tools.length > 0) {

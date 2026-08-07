@@ -44,16 +44,26 @@ export interface SessionMessage {
 	text: string;
 	thinking: string;
 	tools: SessionToolCall[];
+	/** user 消息附带的图片 */
+	images: ImageInput[];
 	timestamp: number;
 }
 
 export interface AvailableModel {
 	provider: string;
+	/** provider 显示名（如 "Anthropic"） */
+	providerName: string;
 	id: string;
 	/** 展示名，如 "Claude Opus 4.5" */
 	label: string;
 	/** 是否有可用凭证 */
 	authed: boolean;
+}
+
+/** 随消息附带的图片（pi ImageContent；data 为纯 base64，不含 data URL 前缀） */
+export interface ImageInput {
+	data: string;
+	mimeType: string;
 }
 
 export interface CreateSessionOptions {

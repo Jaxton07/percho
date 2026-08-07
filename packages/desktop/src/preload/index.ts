@@ -9,7 +9,7 @@ const api: PiApi = {
 	closeSession: (sessionId) => ipcRenderer.invoke(IpcChannels.SessionClose, sessionId),
 	deleteSession: (sessionId, sessionFile) =>
 		ipcRenderer.invoke(IpcChannels.SessionDelete, sessionId, sessionFile),
-	prompt: (sessionId, text) => ipcRenderer.invoke(IpcChannels.SessionPrompt, sessionId, text),
+	prompt: (sessionId, text, images) => ipcRenderer.invoke(IpcChannels.SessionPrompt, sessionId, text, images),
 	abort: (sessionId) => ipcRenderer.invoke(IpcChannels.SessionAbort, sessionId),
 	setModel: (sessionId, provider, modelId) =>
 		ipcRenderer.invoke(IpcChannels.SessionSetModel, sessionId, provider, modelId),
