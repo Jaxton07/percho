@@ -62,7 +62,7 @@ export function Composer({ centered = false }: { centered?: boolean }) {
 		<div className={centered ? "w-full max-w-[760px]" : "shrink-0 px-6 pb-3"}>
 			<div className="mx-auto max-w-[760px]">
 				{error && <p className="mb-1.5 text-xs text-red-500">{error}</p>}
-				<div className="rounded-2xl border border-zinc-200 bg-white shadow-sm focus-within:border-zinc-400">
+				<div className="rounded-2xl border border-zinc-200 bg-white shadow-sm">
 					<textarea
 						ref={textareaRef}
 						className="max-h-[200px] w-full resize-none rounded-t-2xl px-4 pt-5 pb-2 text-[14px] leading-relaxed bg-transparent outline-none placeholder:text-zinc-400 select-text"
@@ -95,7 +95,7 @@ export function Composer({ centered = false }: { centered?: boolean }) {
 								title={t("composer.send")}
 								aria-label={t("composer.send")}
 							>
-								<ArrowUpIcon size={16} />
+								<ArrowUpIcon size={20} />
 							</button>
 						)}
 					</div>
