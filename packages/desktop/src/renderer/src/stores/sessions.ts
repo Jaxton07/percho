@@ -34,14 +34,22 @@ export const useSessionsStore = create<SessionsStore>((set, get) => ({
 		if (!targetCwd) return;
 		try {
 			const meta = await getPi().createSession({ cwd: targetCwd, ...get().currentModel });
-			set((state) => ({ sessions: [...state.sessions, meta], activeSessionId: meta.sessionId }));
+			set((state) => ({
+				sessions: [...state.sessions, meta],
+				activeSessionId: meta.sessionId,
+				cwd: targetCwd,
+			}));
 			useTranscriptStore.getState().resetSession(meta.sessionId);
 		} catch (error) {
 			set({ error: error instanceof Error ? error.message : String(error) });
 		}
 	},
 
-	switchSession: (sessionId) => set({ activeSessionId: sessionId }),
+	switchSession: (sessionId) =>
+		set((state) => {
+			const session = state.sessions.find((s) => s.sessionId === sessionId);
+			return { activeSessionId: sessionId, cwd: session?.cwd ?? state.cwd };
+		}),
 
 	updateSessionName: (sessionId, name) =>
 		set((state) => ({
@@ -65,6 +73,7 @@ export const useSessionsStore = create<SessionsStore>((set, get) => ({
 			set((state) => ({
 				sessions: [...state.sessions.filter((s) => s.sessionId !== meta.sessionId), meta],
 				activeSessionId: meta.sessionId,
+				cwd: meta.cwd,
 			}));
 			useTranscriptStore.getState().resetSession(meta.sessionId);
 		} catch (error) {

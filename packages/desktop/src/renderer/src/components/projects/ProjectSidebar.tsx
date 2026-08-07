@@ -1,9 +1,9 @@
-import { useMemo } from "react";
+import { useMemo, useState } from "react";
 import { getPi } from "../../api";
 import { useT } from "../../i18n";
 import { deriveProjects, useProjectsStore } from "../../stores/projects";
 import { useSettingsStore } from "../../stores/settings";
-import { GearIcon, HelpIcon, PlusIcon } from "../icons";
+import { CloseIcon, GearIcon, HelpIcon, PlusIcon } from "../icons";
 
 const PI_REPO_URL = "https://github.com/earendil-works/pi";
 
@@ -19,6 +19,7 @@ export function ProjectSidebar() {
 	const selectedCwd = useProjectsStore((s) => s.selectedCwd);
 	const select = useProjectsStore((s) => s.select);
 	const addProject = useProjectsStore((s) => s.addProject);
+	const deleteProject = useProjectsStore((s) => s.deleteProject);
 	const openSettings = useSettingsStore((s) => s.setOpen);
 
 	return (
@@ -39,29 +40,15 @@ export function ProjectSidebar() {
 				{projects.length === 0 && (
 					<p className="px-2 py-6 text-center text-[12px] text-zinc-400">{t("projects.noProjects")}</p>
 				)}
-				{projects.map((project) => {
-					const isActive = project.cwd === selectedCwd;
-					return (
-						<button
-							key={project.cwd}
-							type="button"
-							className={`mb-0.5 flex w-full items-center gap-2.5 rounded-lg px-2.5 py-1.5 text-left text-[13px] transition-colors ${
-								isActive ? "bg-zinc-100 text-zinc-900" : "text-zinc-600 hover:bg-zinc-50"
-							}`}
-							onClick={() => select(project.cwd)}
-							title={project.cwd}
-						>
-							<span
-								className={`flex h-5 w-5 shrink-0 items-center justify-center rounded text-[11px] font-semibold text-white ${
-									isActive ? "bg-violet-500" : "bg-zinc-400"
-								}`}
-							>
-								{(project.name[0] ?? "P").toUpperCase()}
-							</span>
-							<span className="truncate">{project.name}</span>
-						</button>
-					);
-				})}
+				{projects.map((project) => (
+					<ProjectItem
+						key={project.cwd}
+						project={project}
+						isActive={project.cwd === selectedCwd}
+						onSelect={() => select(project.cwd)}
+						onDelete={() => void deleteProject(project.cwd)}
+					/>
+				))}
 			</div>
 			<div className="shrink-0 px-3 py-3">
 				<button
@@ -82,5 +69,59 @@ export function ProjectSidebar() {
 				</button>
 			</div>
 		</aside>
+	);
+}
+
+/** 项目项：点击选中，hover 出现删除（二次确认，删除该项目全部会话） */
+function ProjectItem({
+	project,
+	isActive,
+	onSelect,
+	onDelete,
+}: {
+	project: { cwd: string; name: string };
+	isActive: boolean;
+	onSelect: () => void;
+	onDelete: () => void;
+}) {
+	const t = useT();
+	const [confirming, setConfirming] = useState(false);
+
+	return (
+		<div className="group relative mb-0.5">
+			<button
+				type="button"
+				className={`flex w-full items-center gap-2.5 rounded-lg px-2.5 py-1.5 text-left text-[13px] transition-colors ${
+					isActive ? "bg-zinc-100 text-zinc-900" : "text-zinc-600 hover:bg-zinc-50"
+				}`}
+				onClick={onSelect}
+				title={project.cwd}
+			>
+				<span
+					className={`flex h-5 w-5 shrink-0 items-center justify-center rounded text-[11px] font-semibold text-white ${
+						isActive ? "bg-violet-500" : "bg-zinc-400"
+					}`}
+				>
+					{(project.name[0] ?? "P").toUpperCase()}
+				</span>
+				<span className="min-w-0 flex-1 truncate">{project.name}</span>
+			</button>
+			<button
+				type="button"
+				className={`invisible absolute right-1.5 top-1/2 -translate-y-1/2 rounded-md px-1.5 py-0.5 text-[11px] transition-colors group-hover:visible ${
+					confirming ? "bg-red-50 text-red-600" : "text-zinc-400 hover:bg-zinc-100 hover:text-zinc-700"
+				}`}
+				onClick={() => {
+					if (confirming) {
+						onDelete();
+					} else {
+						setConfirming(true);
+					}
+				}}
+				title={t("projects.deleteProject")}
+			>
+				{confirming ? t("projects.confirmDeleteProject") : <CloseIcon />}
+			</button>
+		</div>
 	);
 }

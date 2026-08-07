@@ -42,7 +42,7 @@ export default function App() {
 		<div className="flex h-full flex-col">
 			<SessionTabBar />
 			{view === "projects" ? (
-				<div className="min-h-0 flex-1 p-3">
+				<div className="min-h-0 flex-1">
 					<ProjectPage />
 				</div>
 			) : (

@@ -14,13 +14,13 @@ export function SessionRow({ session }: { session: SessionMeta }) {
 	const [confirming, setConfirming] = useState(false);
 
 	return (
-		<li className="group relative">
+		<li className="group relative" onMouseLeave={() => setConfirming(false)}>
 			<button
 				type="button"
 				className="flex w-full items-center gap-2 rounded-lg px-2.5 py-1.5 text-left transition-colors hover:bg-zinc-50"
 				onClick={() => {
 					if (session.sessionFile) {
-						void openSession(session.sessionFile).then(() => setView("chat"));
+						void openSession(session).then(() => setView("chat"));
 					}
 				}}
 			>
@@ -41,7 +41,6 @@ export function SessionRow({ session }: { session: SessionMeta }) {
 						void deleteSession(session);
 					} else {
 						setConfirming(true);
-						setTimeout(() => setConfirming(false), 2000);
 					}
 				}}
 				title={t("projects.delete")}

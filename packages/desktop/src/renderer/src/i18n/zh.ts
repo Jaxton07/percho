@@ -62,6 +62,8 @@ export const zh = {
 		messages: "{count} 条消息",
 		delete: "删除会话",
 		confirmDelete: "确认删除?",
+		deleteProject: "删除项目",
+		confirmDeleteProject: "确认删除项目?",
 		selectProject: "选择项目目录",
 		branch: "分支",
 		noGit: "无 Git",

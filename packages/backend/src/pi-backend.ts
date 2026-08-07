@@ -143,18 +143,18 @@ export class PiBackend {
 			}));
 	}
 
-	/** 跨全部项目目录枚举历史会话（项目管理页用） */
+	/** 跨全部项目目录枚举会话（项目管理页用，含活跃会话） */
 	async listAllSessions(): Promise<SessionMeta[]> {
 		const infos = await SessionManager.listAll();
 		const activeIds = new Set(this.registry.list().map((e) => e.session.sessionId));
 		return infos
-			.filter((info) => !activeIds.has(info.id) && info.cwd)
+			.filter((info) => info.cwd)
 			.map((info) => ({
 				sessionId: info.id,
 				sessionFile: info.path,
 				cwd: info.cwd || "",
 				name: info.name,
-				active: false,
+				active: activeIds.has(info.id),
 				messageCount: info.messageCount,
 				createdAt: info.created.getTime(),
 				modifiedAt: info.modified.getTime(),

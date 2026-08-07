@@ -64,6 +64,8 @@ export const en: Messages = {
 		messages: "{count} messages",
 		delete: "Delete session",
 		confirmDelete: "Click again to confirm",
+		deleteProject: "Delete project",
+		confirmDeleteProject: "Click again to confirm",
 		selectProject: "Pick project directory",
 		branch: "Branch",
 		noGit: "No Git",

@@ -39,8 +39,10 @@ interface ProjectsStore {
 	addProject: () => Promise<void>;
 	/** 删除历史会话（含磁盘文件）；若该会话在顶栏打开中则一并关闭 */
 	deleteSession: (session: SessionMeta) => Promise<void>;
-	/** 从历史会话打开并切回聊天视图 */
-	openSession: (sessionFile: string) => Promise<void>;
+	/** 删除整个项目：删除该项目下全部会话（含磁盘文件），并从已添加列表移除 */
+	deleteProject: (cwd: string) => Promise<void>;
+	/** 从历史会话打开并切回聊天视图；若已在顶栏打开则直接切换 */
+	openSession: (session: SessionMeta) => Promise<void>;
 }
 
 export const useProjectsStore = create<ProjectsStore>((set, get) => ({
@@ -93,8 +95,28 @@ export const useProjectsStore = create<ProjectsStore>((set, get) => ({
 		}));
 	},
 
-	openSession: async (sessionFile) => {
-		await useSessionsStore.getState().openFromHistory(sessionFile);
+	deleteProject: async (cwd) => {
+		const { allSessions } = get();
+		for (const session of allSessions.filter((s) => s.cwd === cwd)) {
+			await get().deleteSession(session);
+		}
+		const added = get().addedProjects.filter((p) => p !== cwd);
+		localStorage.setItem(ADDED_KEY, JSON.stringify(added));
+		set({ addedProjects: added });
+		const { selectedCwd } = get();
+		if (selectedCwd === cwd) {
+			const projects = deriveProjects(get());
+			set({ selectedCwd: projects[0]?.cwd ?? null, search: "" });
+		}
+	},
+
+	openSession: async (session) => {
+		const sessionsState = useSessionsStore.getState();
+		if (sessionsState.sessions.some((s) => s.sessionId === session.sessionId)) {
+			sessionsState.switchSession(session.sessionId);
+			return;
+		}
+		await sessionsState.openFromHistory(session.sessionFile ?? "");
 	},
 }));
 
