@@ -117,7 +117,23 @@ export function reduceEvent(state: SessionTranscriptState, event: AgentSessionEv
 				phase: "streaming",
 				streaming: { text: "", thinking: "", tools: [], activeToolIndex: -1, toolByContentIndex: {} },
 			};
+		case "turn_start": {
+			// 每轮新的 assistant 消息（多轮工具循环）前重置累积容器并回到 streaming；
+			// 上一轮内容已由 turn_end 提交，否则后续 message_update/tool_execution_* 会被丢弃
+			return {
+				...state,
+				phase: "streaming",
+				streaming: { text: "", thinking: "", tools: [], activeToolIndex: -1, toolByContentIndex: {} },
+			};
+		}
 		case "message_start": {
+			// 防御：assistant 消息开始但容器不存在时（如 turn_start 缺失）补建
+			if (event.message.role === "assistant" && !state.streaming) {
+				state = {
+					...state,
+					streaming: { text: "", thinking: "", tools: [], activeToolIndex: -1, toolByContentIndex: {} },
+				};
+			}
 			if (event.message.role !== "user") return state;
 			const content = event.message.content;
 			const text =

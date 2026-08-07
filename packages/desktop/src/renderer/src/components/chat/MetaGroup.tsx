@@ -28,7 +28,6 @@ function ThinkingRow({ thinking }: { thinking: string }) {
 		</details>
 	);
 }
-
 /** 外层折叠组：聚合多条非正文消息的思考/工具，标题 = Working/Worked + 项目数 */
 export function MetaGroup({ items }: { items: MetaItem[] }) {
 	const t = useT();
@@ -36,24 +35,45 @@ export function MetaGroup({ items }: { items: MetaItem[] }) {
 		(item) => item.tools.some((tool) => tool.state === "running") || (item.streaming && !!item.thinking),
 	);
 	const count = items.reduce((n, item) => n + (item.thinking ? 1 : 0) + item.tools.length, 0);
+	/** 进行中的项：折叠状态下仍紧贴标题展示，感知运行状态 */
+	const activeItems = items.filter(
+		(item) => item.tools.some((tool) => tool.state === "running") || (item.streaming && !!item.thinking),
+	);
 
 	return (
-		<details className="group/outer">
-			<summary className="group/row flex cursor-pointer items-center gap-2 px-1 py-0.5 select-none [&::-webkit-details-marker]:hidden">
-				<span className="shrink-0 text-[13px] font-medium text-zinc-500 transition-colors group-hover/row:text-zinc-800">
-					{t(working ? "message.working" : "message.worked")}
-					{working && "…"}
-					<span className="ml-1 font-normal text-zinc-400">· {count}</span>
-				</span>
-				<ExpandArrowIcon className="shrink-0 text-zinc-400 transition-[opacity,transform,color] group-hover/row:text-zinc-700 group-open/outer:rotate-90" />
-			</summary>
-			<div className="flex flex-col gap-1.5 py-1 pl-4">
-				{items.flatMap((item, i) => [
-					// biome-ignore lint/suspicious/noArrayIndexKey: 折叠组内项无独立 id，列表顺序稳定
-					item.thinking ? <ThinkingRow key={`thinking-${i}`} thinking={item.thinking} /> : null,
-					...item.tools.map((tool) => <ToolCallCard key={tool.id} tool={tool} />),
-				])}
-			</div>
-		</details>
+		<>
+			<details className="group/outer peer">
+				<summary className="group/row flex cursor-pointer items-center gap-2 px-1 py-0.5 select-none [&::-webkit-details-marker]:hidden">
+					<span
+						className={`shrink-0 text-[13px] font-medium text-zinc-500 transition-colors group-hover/row:text-zinc-800 ${working ? "shimmer-sweep" : ""}`}
+					>
+						{t(working ? "message.working" : "message.worked")}
+						{working && "…"}
+						<span className="ml-1 font-normal text-zinc-400">· {count}</span>
+					</span>
+					<ExpandArrowIcon className="shrink-0 text-zinc-400 transition-[opacity,transform,color] group-hover/row:text-zinc-700 group-open/outer:rotate-90" />
+				</summary>
+				<div className="flex flex-col gap-1.5 py-1 pl-4">
+					{items.flatMap((item, i) => [
+						// biome-ignore lint/suspicious/noArrayIndexKey: 折叠组内项无独立 id，列表顺序稳定
+						item.thinking ? <ThinkingRow key={`thinking-${i}`} thinking={item.thinking} /> : null,
+						...item.tools.map((tool) => <ToolCallCard key={tool.id} tool={tool} />),
+					])}
+				</div>
+			</details>
+			{activeItems.length > 0 && (
+				<div className="shimmer-sweep flex flex-col gap-1.5 py-1 pl-4 peer-[[open]]:hidden">
+					{activeItems.flatMap((item, i) => [
+						item.streaming && item.thinking ? (
+							// biome-ignore lint/suspicious/noArrayIndexKey: 同上，顺序稳定
+							<ThinkingRow key={`live-t-${i}`} thinking={item.thinking} />
+						) : null,
+						...item.tools
+							.filter((tool) => tool.state === "running")
+							.map((tool) => <ToolCallCard key={tool.id} tool={tool} />),
+					])}
+				</div>
+			)}
+		</>
 	);
 }

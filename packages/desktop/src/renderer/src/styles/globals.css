@@ -64,3 +64,25 @@ code {
 ::-webkit-scrollbar-track {
 	background: transparent;
 }
+
+/* Working 高亮扫过动画（codex 风格）：白色光带从左往右扫过文字 */
+.shimmer-sweep {
+	position: relative;
+	overflow: hidden;
+}
+.shimmer-sweep::after {
+	content: "";
+	position: absolute;
+	inset-block: 0;
+	left: 0;
+	width: 40%;
+	background: linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.7), transparent);
+	transform: translateX(-120%);
+	animation: shimmer-sweep 2.2s ease-in-out infinite;
+	pointer-events: none;
+}
+@keyframes shimmer-sweep {
+	to {
+		transform: translateX(320%);
+	}
+}

@@ -1,5 +1,6 @@
 import { writeFile } from "node:fs/promises";
-import { PiBackend } from "@pi-desktop/backend";
+import { join } from "node:path";
+import { createLogger, initLogging, PiBackend } from "@pi-desktop/backend";
 import {
 	type CustomProviderInput,
 	type ImageInput,
@@ -11,6 +12,7 @@ import { app, BrowserWindow, dialog, ipcMain, shell } from "electron";
 import { checkoutBranch, getGitBranch, listGitBranches } from "./git";
 import { createWindow } from "./window";
 
+const log = createLogger("main");
 let backend: PiBackend;
 
 function sendToRenderer(channel: string, payload: unknown): void {
@@ -120,6 +122,32 @@ function registerIpc(): void {
 }
 
 app.whenReady().then(async () => {
+	initLogging(join(app.getPath("userData"), "logs"));
+	log.info("app ready", { version: app.getVersion(), userData: app.getPath("userData") });
+
+	// renderer 异常/崩溃 → 日志（错误排查依赖 trace + 日志）
+	const crashLog = createLogger("renderer");
+	app.on("web-contents-created", (_e, contents) => {
+		contents.on("render-process-gone", (_event, details) => {
+			crashLog.error("render process gone", details);
+		});
+		contents.on("unresponsive", () => {
+			crashLog.warn("renderer unresponsive");
+		});
+		contents.on("console-message", (_event, level, message, line, sourceId) => {
+			// level: 0 verbose / 1 info / 2 warning / 3 error
+			if (level >= 3) crashLog.error("renderer console", { message, line, sourceId });
+			else crashLog.debug("renderer console", { message, line, sourceId });
+		});
+	});
+
+	process.on("uncaughtException", (err) => {
+		log.error("uncaught exception", err);
+	});
+	process.on("unhandledRejection", (reason) => {
+		log.error("unhandled rejection", reason);
+	});
+
 	backend = new PiBackend();
 	await backend.init();
 	registerIpc();

@@ -66,6 +66,70 @@ describe("transcript reducer", () => {
 		expect(state.messages[0]).toMatchObject({ kind: "assistant", text: "Hi" });
 	});
 
+	it("多轮工具循环：turn_start 重置容器，各轮内容分别固化为消息", () => {
+		let state = emptyTranscript();
+		state = reduceEvent(state, ev("agent_start"));
+
+		// 第一轮：思考 + 2 个 bash
+		state = reduceEvent(state, {
+			type: "message_update",
+			assistantMessageEvent: { type: "thinking_delta", contentIndex: 0, delta: "看一下" },
+		} as unknown as AgentSessionEvent);
+		state = reduceEvent(state, {
+			type: "message_update",
+			assistantMessageEvent: {
+				type: "toolcall_start",
+				contentIndex: 1,
+				partial: { toolCalls: [{ name: "bash" }] },
+			},
+		} as unknown as AgentSessionEvent);
+		state = reduceEvent(state, {
+			type: "message_update",
+			assistantMessageEvent: {
+				type: "toolcall_end",
+				contentIndex: 1,
+				toolCall: { id: "tc1", name: "bash", arguments: { command: "ls" } },
+			},
+		} as unknown as AgentSessionEvent);
+		state = reduceEvent(state, {
+			type: "tool_execution_end",
+			toolCallId: "tc1",
+			toolName: "bash",
+			result: { output: "src" },
+			isError: false,
+		} as unknown as AgentSessionEvent);
+		state = reduceEvent(state, ev("turn_end"));
+		expect(state.streaming).toBeNull();
+		expect(state.messages).toHaveLength(1);
+		expect(state.messages[0]).toMatchObject({
+			kind: "assistant",
+			thinking: "看一下",
+		});
+
+		// 第二轮：新 turn_start 后继续累积，不得丢弃
+		state = reduceEvent(state, ev("turn_start"));
+		expect(state.phase).toBe("streaming");
+		expect(state.streaming?.text).toBe("");
+		expect(state.streaming?.tools).toHaveLength(0);
+		state = reduceEvent(state, {
+			type: "message_update",
+			assistantMessageEvent: { type: "thinking_delta", contentIndex: 0, delta: "再看" },
+		} as unknown as AgentSessionEvent);
+		state = reduceEvent(state, {
+			type: "message_update",
+			assistantMessageEvent: { type: "text_delta", contentIndex: 0, delta: "答案是 src" },
+		} as unknown as AgentSessionEvent);
+		state = reduceEvent(state, ev("turn_end"));
+		state = reduceEvent(state, ev("agent_end", { willRetry: false, messages: [] }));
+
+		expect(state.messages).toHaveLength(2);
+		expect(state.messages[1]).toMatchObject({
+			kind: "assistant",
+			thinking: "再看",
+			text: "答案是 src",
+		});
+	});
+
 	it("toolcall 事件累积为工具卡片，tool_execution_* 流式输出", () => {
 		let state = emptyTranscript();
 		state = reduceEvent(state, ev("agent_start"));

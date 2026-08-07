@@ -20,11 +20,15 @@ import type {
 	SessionToolCall,
 	SlashCommandInfo,
 } from "@pi-desktop/shared";
+import { createLogger } from "./log";
 import { PermissionGate } from "./permissions";
 import { autoNameSession } from "./session-naming";
 import { type EventForwarder, SessionRegistry } from "./session-registry";
 import { SettingsService } from "./settings";
+import { TraceRecorder } from "./trace";
 import { makeUiContext } from "./ui-context";
+
+const log = createLogger("backend");
 
 export interface PiBackendOptions {
 	/** 默认工作目录（createSession 未指定时使用） */
@@ -49,6 +53,8 @@ export class PiBackend {
 	private readonly eventHandlers = new Set<EventHandler>();
 	private readonly permissionHandlers = new Set<PermissionHandler>();
 	private readonly gates = new Map<string, PermissionGate>();
+	/** 会话事件 trace（JSONL，离线可重放） */
+	private readonly traceRecorders = new Map<string, TraceRecorder>();
 	private modelRuntime: ModelRuntime | undefined;
 	private modelPromise: Promise<ModelRuntime> | undefined;
 	/** 设置页（provider/模型/凭证配置）服务 */
@@ -66,6 +72,7 @@ export class PiBackend {
 	}
 
 	private emitEvent(sessionId: string, event: AgentSessionEvent): void {
+		this.traceRecorders.get(sessionId)?.record(event);
 		for (const handler of this.eventHandlers) {
 			try {
 				handler(sessionId, event);
@@ -73,6 +80,25 @@ export class PiBackend {
 				// 事件处理器异常不影响主流程
 			}
 		}
+	}
+
+	/** 为会话建立 trace（与会话同目录） */
+	private async startTrace(sessionId: string, sessionDir: string | undefined): Promise<void> {
+		if (!sessionDir) return;
+		try {
+			const recorder = await TraceRecorder.create(sessionDir, sessionId);
+			this.traceRecorders.set(sessionId, recorder);
+		} catch (err) {
+			log.warn("trace create failed", sessionId, err);
+		}
+	}
+
+	/** 停止并落盘 trace */
+	private async stopTrace(sessionId: string): Promise<void> {
+		const recorder = this.traceRecorders.get(sessionId);
+		if (!recorder) return;
+		this.traceRecorders.delete(sessionId);
+		await recorder.close();
 	}
 
 	async init(): Promise<void> {
@@ -111,6 +137,8 @@ export class PiBackend {
 			this.emitEvent(session.sessionId, event);
 		});
 		this.registry.add({ session, unsubscribe, cwd });
+		await this.startTrace(session.sessionId, session.sessionManager.getSessionDir());
+		log.info("session created", session.sessionId, { cwd });
 		return this.toMetaOrThrow(session.sessionId);
 	}
 
@@ -127,6 +155,8 @@ export class PiBackend {
 			this.emitEvent(session.sessionId, event);
 		});
 		this.registry.add({ session, unsubscribe, cwd });
+		await this.startTrace(session.sessionId, session.sessionManager.getSessionDir());
+		log.info("session opened", session.sessionId, { file: filePath });
 		return this.toMetaOrThrow(session.sessionId);
 	}
 
@@ -173,19 +203,25 @@ export class PiBackend {
 		this.gates.get(sessionId)?.dispose();
 		this.gates.delete(sessionId);
 		this.registry.delete(sessionId);
+		await this.stopTrace(sessionId);
+		log.info("session closed", sessionId);
 	}
 
 	/** 删除历史会话（pi 无删除 API，会话即磁盘 jsonl，直接删文件） */
 	async deleteSession(sessionId: string, sessionFile?: string): Promise<void> {
 		const entry = this.registry.get(sessionId);
+		const sessionDir = entry?.session.sessionManager.getSessionDir();
 		const file = sessionFile ?? entry?.session.sessionManager.getSessionFile();
 		if (entry) await this.closeSession(sessionId);
 		if (!file) throw new Error(`Session file not found: ${sessionId}`);
 		await unlink(file);
+		if (sessionDir) await TraceRecorder.removeAll(sessionDir, sessionId);
+		log.info("session deleted", sessionId);
 	}
 
 	async prompt(sessionId: string, text: string, images?: ImageInput[]): Promise<void> {
 		const entry = this.requireSession(sessionId);
+		log.info("prompt", sessionId, { text: text.slice(0, 120), images: images?.length ?? 0 });
 		await entry.session.prompt(text, {
 			images: images?.map((image) => ({
 				type: "image" as const,
@@ -198,6 +234,7 @@ export class PiBackend {
 	async abort(sessionId: string): Promise<void> {
 		const entry = this.registry.get(sessionId);
 		if (!entry) return;
+		log.info("abort", sessionId);
 		await entry.session.abort();
 	}
 
@@ -216,6 +253,7 @@ export class PiBackend {
 
 	async compact(sessionId: string): Promise<void> {
 		const entry = this.requireSession(sessionId);
+		log.info("compact", sessionId);
 		await entry.session.compact();
 	}
 
@@ -316,6 +354,11 @@ export class PiBackend {
 		this.registry.disposeAll();
 		this.eventHandlers.clear();
 		this.permissionHandlers.clear();
+		for (const recorder of this.traceRecorders.values()) {
+			void recorder.close();
+		}
+		this.traceRecorders.clear();
+		log.info("backend disposed");
 	}
 
 	private requireSession(sessionId: string) {
