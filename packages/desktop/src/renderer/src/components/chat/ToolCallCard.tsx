@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import type { UIToolCall } from "../../stores/transcript";
 import { ExpandArrowIcon } from "../icons";
 
-function summarizeArgs(args: string): string {
+export function summarizeArgs(args: string): string {
 	if (!args || args === "{}") return "";
 	try {
 		const parsed = JSON.parse(args) as Record<string, unknown>;
@@ -17,7 +17,7 @@ function summarizeArgs(args: string): string {
 	return trimmed.length < args.length ? `${trimmed}…` : trimmed;
 }
 
-const displayName = (name: string) => name.charAt(0).toUpperCase() + name.slice(1);
+export const displayName = (name: string) => name.charAt(0).toUpperCase() + name.slice(1);
 
 /** 工具调用行：无边框、默认折叠；折叠态 = 工具名 + 执行对象（单行渐变截断），展开显示完整参数与结果 */
 export function ToolCallCard({ tool }: { tool: UIToolCall }) {
@@ -45,7 +45,7 @@ export function ToolCallCard({ tool }: { tool: UIToolCall }) {
 	}, []);
 
 	const nameClass =
-		"shrink-0 font-mono text-[13px] font-medium text-zinc-500 transition-colors group-hover/row:text-zinc-800";
+		"shrink-0 font-mono text-[13px] font-semibold text-zinc-500 transition-colors group-hover/row:text-zinc-800";
 	const summaryClass =
 		"relative overflow-hidden whitespace-nowrap font-mono text-[12px] text-zinc-400 transition-colors group-hover/row:text-zinc-800";
 

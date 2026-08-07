@@ -12,9 +12,12 @@ function imageSrc(image: ImageInput): string {
 export const MessageItem = memo(function MessageItem({
 	message,
 	streaming,
+	metaInGroup,
 }: {
 	message: UIMessage;
 	streaming?: boolean;
+	/** 思考/工具已并入上方合并组，不再自行包裹（正文消息由 MessageList 调用） */
+	metaInGroup?: boolean;
 }) {
 	const t = useT();
 	const [previewImage, setPreviewImage] = useState<ImageInput | null>(null);
@@ -85,6 +88,7 @@ export const MessageItem = memo(function MessageItem({
 			thinking={message.thinking}
 			tools={message.tools}
 			streaming={streaming}
+			metaInGroup={metaInGroup}
 		/>
 	);
 });

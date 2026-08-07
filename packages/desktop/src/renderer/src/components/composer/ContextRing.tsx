@@ -2,6 +2,7 @@ import type { ContextUsageInfo } from "@pi-desktop/shared";
 import { useCallback, useEffect, useState } from "react";
 import { getPi } from "../../api";
 import { useSessionsStore } from "../../stores/sessions";
+import { selectTranscript, useTranscriptStore } from "../../stores/transcript";
 
 /** 触发刷新的事件类型（流式 delta 类高频事件不刷新） */
 const REFRESH_EVENTS = new Set([
@@ -18,9 +19,10 @@ function isRefreshEvent(type: string): boolean {
 	return REFRESH_EVENTS.has(type);
 }
 
-/** 上下文使用圆环：加号旁的小进度环，hover 显示 tokens / 窗口 / 百分比 */
+/** 上下文使用圆环：加号旁的小进度环，hover 显示 tokens / 窗口 / 百分比；会话无消息时隐藏（新会话的基线占用不展示） */
 export function ContextRing() {
 	const activeSessionId = useSessionsStore((s) => s.activeSessionId);
+	const hasMessages = useTranscriptStore((s) => selectTranscript(s, activeSessionId).messages.length > 0);
 	const [usage, setUsage] = useState<ContextUsageInfo | null>(null);
 
 	const refresh = useCallback(async () => {
@@ -48,7 +50,7 @@ export function ContextRing() {
 		return off;
 	}, [activeSessionId, refresh]);
 
-	if (!usage || usage.percent == null) return null;
+	if (!usage || usage.percent == null || !hasMessages) return null;
 
 	const pct = Math.max(0, Math.min(100, usage.percent));
 	const color = pct < 60 ? "stroke-zinc-400" : pct < 85 ? "stroke-amber-500" : "stroke-red-500";

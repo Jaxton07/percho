@@ -200,9 +200,12 @@ export function Composer({ centered = false }: { centered?: boolean }) {
 		setError(null);
 		const sentImages = images;
 		setImages([]);
+		// 乐观置工作中：agent_start 事件到达前立即显示，失败后回滚
+		useTranscriptStore.getState().markAgentActive(sessionId, true);
 		try {
 			await getPi().prompt(sessionId, content, sentImages.length > 0 ? sentImages : undefined);
 		} catch (err) {
+			useTranscriptStore.getState().markAgentActive(sessionId, false);
 			setError(err instanceof Error ? err.message : String(err));
 			setImages(sentImages);
 		} finally {

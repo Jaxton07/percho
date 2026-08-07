@@ -1,5 +1,43 @@
 @import "tailwindcss";
 
+/* 预览行上滑切换：新行从下方滑入，旧行向上滑出（时长恒定 0.32s，与 PreviewTicker 的 ANIMATION_MS 同步；不随队列积压变化）。slide-out 必须 forwards：动画结束后保持透明/位移终态，否则旧行在 React 移除前弹回可见造成重叠 */
+.preview-slide-in {
+	animation: preview-slide-in 0.32s ease-out;
+}
+.preview-slide-out {
+	animation: preview-slide-out 0.28s ease-in forwards;
+}
+@keyframes preview-slide-in {
+	from {
+		transform: translateY(100%) scale(0.97);
+		opacity: 0;
+		filter: blur(1.5px);
+	}
+	to {
+		transform: translateY(0) scale(1);
+		opacity: 1;
+		filter: blur(0);
+	}
+}
+@keyframes preview-slide-out {
+	from {
+		transform: translateY(0) scale(1);
+		opacity: 1;
+		filter: blur(0);
+	}
+	to {
+		transform: translateY(-100%) scale(0.97);
+		opacity: 0;
+		filter: blur(1.5px);
+	}
+}
+@media (prefers-reduced-motion: reduce) {
+	.preview-slide-in,
+	.preview-slide-out {
+		animation: none;
+	}
+}
+
 :root {
 	--color-bg: #fafafa;
 	--color-surface: #ffffff;
@@ -65,24 +103,18 @@ code {
 	background: transparent;
 }
 
-/* Working 高亮扫过动画（codex 风格）：白色光带从左往右扫过文字 */
+/* Working 文字高亮扫过（codex 风格）：光带只扫文字本身，背景不变（background-clip: text） */
 .shimmer-sweep {
-	position: relative;
-	overflow: hidden;
-}
-.shimmer-sweep::after {
-	content: "";
-	position: absolute;
-	inset-block: 0;
-	left: 0;
-	width: 40%;
-	background: linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.7), transparent);
-	transform: translateX(-120%);
+	background-image: linear-gradient(90deg, currentColor 40%, rgba(255, 255, 255, 0.9) 50%, currentColor 60%);
+	background-size: 200% 100%;
+	background-position: 200% 0;
+	-webkit-background-clip: text;
+	background-clip: text;
+	-webkit-text-fill-color: transparent;
 	animation: shimmer-sweep 2.2s ease-in-out infinite;
-	pointer-events: none;
 }
 @keyframes shimmer-sweep {
 	to {
-		transform: translateX(320%);
+		background-position: -100% 0;
 	}
 }

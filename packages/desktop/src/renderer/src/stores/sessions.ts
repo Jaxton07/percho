@@ -1,43 +1,18 @@
-import type { AvailableModel, SessionMeta } from "@pi-desktop/shared";
+import type { AvailableModel, SavedTabs, SessionMeta } from "@pi-desktop/shared";
 import { create } from "zustand";
 import { getPi } from "../api";
 import { useTranscriptStore } from "./transcript";
 import { messagesToUIMessages } from "./transcript-reducer";
 
-/** 顶栏打开的会话持久化（重启恢复用），以磁盘路径为 key */
-const TABS_KEY = "pi-desktop.open-tabs";
-
-interface SavedTabs {
-	files: string[];
-	activeFile: string | null;
-}
-
-function loadSavedTabs(): SavedTabs | null {
-	try {
-		const raw = localStorage.getItem(TABS_KEY);
-		if (!raw) return null;
-		const parsed = JSON.parse(raw) as Partial<SavedTabs>;
-		if (!Array.isArray(parsed.files)) return null;
-		return {
-			files: [...new Set(parsed.files.filter((f): f is string => typeof f === "string"))],
-			activeFile: typeof parsed.activeFile === "string" ? parsed.activeFile : null,
-		};
-	} catch {
-		return null;
-	}
-}
-
+/** 顶栏打开的会话持久化（重启恢复用）；由主进程写 userData/tabs.json，不依赖 renderer localStorage */
 function persistTabs(state: Pick<SessionsStore, "sessions" | "activeSessionId">): void {
 	try {
-		localStorage.setItem(
-			TABS_KEY,
-			JSON.stringify({
-				files: [...new Set(state.sessions.map((s) => s.sessionFile).filter((f): f is string => Boolean(f)))],
-				activeFile: state.sessions.find((s) => s.sessionId === state.activeSessionId)?.sessionFile ?? null,
-			}),
-		);
+		void getPi().saveTabs({
+			files: [...new Set(state.sessions.map((s) => s.sessionFile).filter((f): f is string => Boolean(f)))],
+			activeFile: state.sessions.find((s) => s.sessionId === state.activeSessionId)?.sessionFile ?? null,
+		});
 	} catch {
-		// localStorage 不可用时静默失败
+		// 持久化失败静默（不影响主流程）
 	}
 }
 
@@ -135,7 +110,7 @@ export const useSessionsStore = create<SessionsStore>((set, get) => ({
 	},
 
 	restoreTabs: async () => {
-		const saved = loadSavedTabs();
+		const saved: SavedTabs | null = await getPi().loadTabs();
 		if (!saved || saved.files.length === 0) return;
 		const opened: SessionMeta[] = [];
 		const seen = new Set<string>();
@@ -174,14 +149,23 @@ export const useSessionsStore = create<SessionsStore>((set, get) => ({
 	loadModels: async () => {
 		try {
 			const models = await getPi().listModels();
-			set({ models });
+			// 复用上次使用的模型/思考级别（失效则回退到第一个可用模型）
+			const saved = await getPi().loadUiState();
+			const savedModel =
+				saved?.currentModel &&
+				models.some(
+					(m) => m.provider === saved.currentModel?.provider && m.id === saved.currentModel?.modelId,
+				)
+					? saved.currentModel
+					: null;
 			const current = get().currentModel;
-			if (!current) {
-				const first = models.find((m) => m.authed) ?? models[0];
-				if (first) {
-					set({ currentModel: { provider: first.provider, modelId: first.id } });
-				}
-			}
+			const fallback = models.find((m) => m.authed) ?? models[0];
+			set({
+				models,
+				currentModel:
+					savedModel ?? current ?? (fallback ? { provider: fallback.provider, modelId: fallback.id } : null),
+				thinkingLevel: saved?.thinkingLevel ?? get().thinkingLevel,
+			});
 		} catch (error) {
 			set({ error: error instanceof Error ? error.message : String(error) });
 		}
@@ -190,6 +174,7 @@ export const useSessionsStore = create<SessionsStore>((set, get) => ({
 	setCurrentModel: async (provider, modelId) => {
 		const { activeSessionId } = get();
 		set({ currentModel: { provider, modelId } });
+		void getPi().saveUiState({ currentModel: { provider, modelId }, thinkingLevel: get().thinkingLevel });
 		if (activeSessionId) {
 			try {
 				await getPi().setModel(activeSessionId, provider, modelId);
@@ -200,8 +185,9 @@ export const useSessionsStore = create<SessionsStore>((set, get) => ({
 	},
 
 	setThinkingLevel: async (level) => {
-		const { activeSessionId } = get();
+		const { activeSessionId, currentModel } = get();
 		set({ thinkingLevel: level });
+		void getPi().saveUiState({ currentModel, thinkingLevel: level });
 		if (activeSessionId) {
 			try {
 				await getPi().setThinkingLevel(activeSessionId, level);

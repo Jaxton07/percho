@@ -25,6 +25,8 @@ export interface CompactionUiState {
 
 /** 工具调用卡片状态 */
 export interface UIToolCall {
+	/** 本地稳定标识（React key 用）：创建时分配，不随 toolcall_end 改写（id 会从 "" 翻转为真实 id） */
+	key: string;
 	id: string;
 	name: string;
 	/** 参数摘要（JSON 或纯文本） */
@@ -32,6 +34,17 @@ export interface UIToolCall {
 	/** 执行输出累积 */
 	output: string;
 	state: "running" | "done" | "error";
+}
+
+/** 预览活动条目：事件流按到达顺序追加，预览行永远显示最新一条（latest-wins） */
+export interface ActivityEntry {
+	/** 稳定身份：thinking 为 "thinking"，tool 为 `c${contentIndex}`（turn 内唯一，跨 delta/end 不变） */
+	id: string;
+	kind: "thinking" | "tool";
+	/** tool：工具名（toolcall_start 时已知） */
+	name?: string;
+	/** tool：参数摘要源文本（随 delta 增长，end 后为完整 JSON） */
+	args?: string;
 }
 
 /** 进行中的流式累积 */
@@ -43,6 +56,8 @@ export interface StreamingState {
 	activeToolIndex: number;
 	/** assistant 消息 content 绝对索引 → tools 数组索引（事件带 contentIndex，须按此匹配） */
 	toolByContentIndex: Record<number, number>;
+	/** 到达顺序的活动序列（thinking / tool call 穿插），预览行数据源 */
+	activity: ActivityEntry[];
 }
 
 export type SessionPhase = "idle" | "streaming" | "awaiting_permission";
@@ -51,15 +66,26 @@ export interface SessionTranscriptState {
 	messages: UIMessage[];
 	streaming: StreamingState | null;
 	phase: SessionPhase;
+	/** agent 运行中（用户发消息后 → 下一次正文回复间为 true，agent 结束/中止为 false） */
+	agentActive: boolean;
 }
 
 export function emptyTranscript(): SessionTranscriptState {
-	return { messages: [], streaming: null, phase: "idle" };
+	return { messages: [], streaming: null, phase: "idle", agentActive: false };
+}
+
+function emptyStreaming(): StreamingState {
+	return { text: "", thinking: "", tools: [], activeToolIndex: -1, toolByContentIndex: {}, activity: [] };
 }
 
 let nextMessageId = 0;
 function newMessageId(): string {
 	return `m${nextMessageId++}`;
+}
+
+let nextToolKey = 0;
+function newToolKey(): string {
+	return `t${nextToolKey++}`;
 }
 
 function parseArgs(raw: unknown): string {
@@ -115,7 +141,8 @@ export function reduceEvent(state: SessionTranscriptState, event: AgentSessionEv
 			return {
 				...state,
 				phase: "streaming",
-				streaming: { text: "", thinking: "", tools: [], activeToolIndex: -1, toolByContentIndex: {} },
+				agentActive: true,
+				streaming: emptyStreaming(),
 			};
 		case "turn_start": {
 			// 每轮新的 assistant 消息（多轮工具循环）前重置累积容器并回到 streaming；
@@ -123,7 +150,7 @@ export function reduceEvent(state: SessionTranscriptState, event: AgentSessionEv
 			return {
 				...state,
 				phase: "streaming",
-				streaming: { text: "", thinking: "", tools: [], activeToolIndex: -1, toolByContentIndex: {} },
+				streaming: emptyStreaming(),
 			};
 		}
 		case "message_start": {
@@ -131,7 +158,7 @@ export function reduceEvent(state: SessionTranscriptState, event: AgentSessionEv
 			if (event.message.role === "assistant" && !state.streaming) {
 				state = {
 					...state,
-					streaming: { text: "", thinking: "", tools: [], activeToolIndex: -1, toolByContentIndex: {} },
+					streaming: emptyStreaming(),
 				};
 			}
 			if (event.message.role !== "user") return state;
@@ -166,14 +193,23 @@ export function reduceEvent(state: SessionTranscriptState, event: AgentSessionEv
 			switch (e.type) {
 				case "text_delta":
 					return { ...state, streaming: { ...streaming, text: streaming.text + e.delta } };
-				case "thinking_delta":
-					return { ...state, streaming: { ...streaming, thinking: streaming.thinking + e.delta } };
+				case "thinking_delta": {
+					// 活动序列：连续 thinking 合并为同一条目（内容从 streaming.thinking 读）
+					const last = streaming.activity[streaming.activity.length - 1];
+					const activity =
+						last?.kind === "thinking"
+							? streaming.activity
+							: [...streaming.activity, { id: "thinking", kind: "thinking" as const }];
+					return { ...state, streaming: { ...streaming, thinking: streaming.thinking + e.delta, activity } };
+				}
 				case "toolcall_start": {
+					const name = toolNameFromPartial(e.partial, e.contentIndex);
 					const tools = [
 						...streaming.tools,
 						{
+							key: newToolKey(),
 							id: "",
-							name: toolNameFromPartial(e.partial, e.contentIndex),
+							name,
 							args: "",
 							output: "",
 							state: "running" as const,
@@ -190,6 +226,10 @@ export function reduceEvent(state: SessionTranscriptState, event: AgentSessionEv
 							tools,
 							toolByContentIndex,
 							activeToolIndex: tools.length - 1,
+							activity: [
+								...streaming.activity,
+								{ id: `c${e.contentIndex}`, kind: "tool" as const, name, args: "" },
+							],
 						},
 					};
 				}
@@ -201,7 +241,14 @@ export function reduceEvent(state: SessionTranscriptState, event: AgentSessionEv
 					const tool = tools[idx];
 					if (!tool) return state;
 					tools[idx] = { ...tool, args: tool.args + e.delta };
-					return { ...state, streaming: { ...streaming, tools } };
+					return {
+						...state,
+						streaming: {
+							...streaming,
+							tools,
+							activity: updateToolActivity(streaming.activity, e.contentIndex, (a) => a + e.delta),
+						},
+					};
 				}
 				case "toolcall_end": {
 					const tools = [...streaming.tools];
@@ -211,13 +258,17 @@ export function reduceEvent(state: SessionTranscriptState, event: AgentSessionEv
 					const target = idx >= 0 ? idx : tools.findIndex((t) => t.id === e.toolCall.id);
 					const tool = tools[target];
 					if (!tool) return state;
+					const args = parseArgs(e.toolCall.arguments);
 					tools[target] = {
 						...tool,
 						id: e.toolCall.id,
 						name: e.toolCall.name || tool.name,
-						args: parseArgs(e.toolCall.arguments),
+						args,
 					};
-					return { ...state, streaming: { ...streaming, tools, activeToolIndex: -1 } };
+					const activity = streaming.activity.map((a) =>
+						a.id === `c${e.contentIndex}` ? { ...a, name: e.toolCall.name || a.name, args } : a,
+					);
+					return { ...state, streaming: { ...streaming, tools, activity, activeToolIndex: -1 } };
 				}
 				default:
 					return state;
@@ -254,9 +305,14 @@ export function reduceEvent(state: SessionTranscriptState, event: AgentSessionEv
 		case "turn_end":
 			return finalizeStreaming({ ...state, phase: "idle" });
 		case "agent_end":
-			return finalizeStreaming({ ...state, phase: event.willRetry ? "streaming" : "idle" });
+			return finalizeStreaming({
+				...state,
+				phase: event.willRetry ? "streaming" : "idle",
+				// willRetry 还会继续 → 保持工作中；否则 run 结束（含中止）
+				agentActive: event.willRetry ? state.agentActive : false,
+			});
 		case "agent_settled":
-			return finalizeStreaming({ ...state, phase: "idle" });
+			return finalizeStreaming({ ...state, phase: "idle", agentActive: false });
 		case "compaction_start": {
 			const pending: UIMessage = {
 				kind: "system",
@@ -304,6 +360,17 @@ export function reduceEvent(state: SessionTranscriptState, event: AgentSessionEv
 	}
 }
 
+/** toolcall_delta：按 contentIndex 找到 activity 条目并追加参数字段（无对应条目则原样返回） */
+function updateToolActivity(
+	activity: ActivityEntry[],
+	contentIndex: number,
+	append: (args: string) => string,
+): ActivityEntry[] {
+	const id = `c${contentIndex}`;
+	if (!activity.some((a) => a.id === id)) return activity;
+	return activity.map((a) => (a.id === id ? { ...a, args: append(a.args ?? "") } : a));
+}
+
 function findLastIndex<T>(arr: readonly T[], predicate: (item: T) => boolean): number {
 	for (let i = arr.length - 1; i >= 0; i--) {
 		const item = arr[i];
@@ -337,6 +404,7 @@ export function messagesToUIMessages(messages: SessionMessage[]): UIMessage[] {
 			continue;
 		}
 		const tools: UIToolCall[] = m.tools.map((tool) => ({
+			key: tool.id || newToolKey(),
 			id: tool.id,
 			name: tool.name,
 			args: tool.args,

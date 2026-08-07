@@ -8,18 +8,21 @@ export function AssistantMessage({
 	thinking,
 	tools,
 	streaming,
+	metaInGroup = false,
 }: {
 	text: string;
 	thinking: string;
 	tools: UIToolCall[];
 	streaming?: boolean;
+	/** 思考/工具已并入上方合并组（MessageList 合并模式），不再自行包裹 */
+	metaInGroup?: boolean;
 }) {
 	const items: MetaItem[] = [];
-	if (thinking || tools.length > 0) items.push({ thinking, tools, streaming });
+	if (!metaInGroup && (thinking || tools.length > 0)) items.push({ thinking, tools });
 
 	return (
 		<div className="flex flex-col gap-2">
-			{items.length > 0 && <MetaGroup items={items} />}
+			{items.length > 0 && <MetaGroup items={items} working={Boolean(streaming) && !text} />}
 			{text && <Markdown text={text} />}
 			{streaming && !text && !thinking && tools.length === 0 && (
 				<div className="flex items-center gap-1 text-zinc-400">

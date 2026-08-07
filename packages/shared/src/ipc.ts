@@ -5,11 +5,13 @@ import type {
 	ImageInput,
 	PermissionAnswer,
 	PermissionRequest,
+	SavedTabs,
 	SessionEventEnvelope,
 	SessionMessage,
 	SessionMeta,
 	SessionStats,
 	SlashCommandInfo,
+	UiState,
 } from "./session";
 import type { CustomProviderInput, ProviderInfo, ProviderTestResult } from "./settings";
 
@@ -46,6 +48,12 @@ export const IpcChannels = {
 	ProjectListGitBranches: "project:listGitBranches",
 	ProjectCheckoutBranch: "project:checkoutBranch",
 	AppOpenExternal: "app:openExternal",
+	/** 顶栏 tabs 持久化（userData/tabs.json，不依赖 renderer localStorage） */
+	TabsLoad: "tabs:load",
+	TabsSave: "tabs:save",
+	/** 应用 UI 状态持久化（userData/ui-state.json：上次使用的模型/思考级别） */
+	UiStateLoad: "uiState:load",
+	UiStateSave: "uiState:save",
 	/** main → renderer 事件 */
 	Event: "pi:event",
 	PermissionRequest: "pi:permission-request",
@@ -95,6 +103,14 @@ export interface PiApi {
 	checkoutBranch(cwd: string, branch: string): Promise<string>;
 	/** 用系统浏览器打开链接 */
 	openExternal(url: string): Promise<void>;
+	/** 读取持久化的顶栏 tabs（无数据返回 null） */
+	loadTabs(): Promise<SavedTabs | null>;
+	/** 持久化顶栏 tabs（主进程写 userData/tabs.json） */
+	saveTabs(tabs: SavedTabs): Promise<void>;
+	/** 读取持久化 UI 状态（上次使用的模型/思考级别；无数据返回 null） */
+	loadUiState(): Promise<UiState | null>;
+	/** 持久化 UI 状态（主进程写 userData/ui-state.json） */
+	saveUiState(state: UiState): Promise<void>;
 	/** 订阅会话事件；返回取消函数 */
 	onEvent(cb: (payload: SessionEventEnvelope) => void): () => void;
 	onPermissionRequest(cb: (req: PermissionRequest) => void): () => void;

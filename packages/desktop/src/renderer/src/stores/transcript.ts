@@ -7,7 +7,13 @@ import {
 	type UIMessage,
 } from "./transcript-reducer";
 
-export type { SessionPhase, StreamingState, UIMessage, UIToolCall } from "./transcript-reducer";
+export type {
+	ActivityEntry,
+	SessionPhase,
+	StreamingState,
+	UIMessage,
+	UIToolCall,
+} from "./transcript-reducer";
 
 export interface PermissionRequest {
 	id: string;
@@ -25,6 +31,8 @@ const EMPTY_ENTRY: SessionEntry = { ...emptyTranscript(), pendingPermissions: []
 interface TranscriptStore {
 	bySession: Record<string, SessionEntry>;
 	applyEvent: (sessionId: string, event: AgentSessionEvent) => void;
+	/** 乐观置 agent 运行状态（发送消息后立即置 true，失败/结束后置 false 修正） */
+	markAgentActive: (sessionId: string, active: boolean) => void;
 	addPermission: (sessionId: string, req: PermissionRequest) => void;
 	resolvePermission: (sessionId: string, requestId: string) => void;
 	resetSession: (sessionId: string) => void;
@@ -42,6 +50,18 @@ export const useTranscriptStore = create<TranscriptStore>((set) => ({
 				bySession: {
 					...state.bySession,
 					[sessionId]: { ...next, pendingPermissions: current?.pendingPermissions ?? [] },
+				},
+			};
+		});
+	},
+	markAgentActive: (sessionId, active) => {
+		set((state) => {
+			const current = state.bySession[sessionId];
+			if (!current) return state;
+			return {
+				bySession: {
+					...state.bySession,
+					[sessionId]: { ...current, agentActive: active },
 				},
 			};
 		});
@@ -89,6 +109,7 @@ export const useTranscriptStore = create<TranscriptStore>((set) => ({
 						messages,
 						streaming: null,
 						phase: "idle",
+						agentActive: false,
 						pendingPermissions: current?.pendingPermissions ?? [],
 					},
 				},

@@ -83,7 +83,8 @@ export const zh = {
 		copy: "复制",
 		copied: "已复制",
 		thinking: "思考过程",
-		working: "工作中…",
+		thinkingPreview: "思考中",
+		working: "工作中",
 		worked: "已完成",
 	},
 	tool: {

@@ -40,6 +40,10 @@ const api: PiApi = {
 	listGitBranches: (cwd) => ipcRenderer.invoke(IpcChannels.ProjectListGitBranches, cwd),
 	checkoutBranch: (cwd, branch) => ipcRenderer.invoke(IpcChannels.ProjectCheckoutBranch, cwd, branch),
 	openExternal: (url) => ipcRenderer.invoke(IpcChannels.AppOpenExternal, url),
+	loadTabs: () => ipcRenderer.invoke(IpcChannels.TabsLoad),
+	saveTabs: (tabs) => ipcRenderer.invoke(IpcChannels.TabsSave, tabs),
+	loadUiState: () => ipcRenderer.invoke(IpcChannels.UiStateLoad),
+	saveUiState: (state) => ipcRenderer.invoke(IpcChannels.UiStateSave, state),
 	onEvent: (cb) => {
 		const listener = (_event: unknown, payload: SessionEventEnvelope) => cb(payload);
 		ipcRenderer.on(IpcChannels.Event, listener);

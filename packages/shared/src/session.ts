@@ -1,5 +1,17 @@
 import type { AgentSessionEvent } from "@earendil-works/pi-coding-agent";
 
+/** 顶栏打开的会话持久化（重启恢复用，由主进程写入 userData/tabs.json） */
+export interface SavedTabs {
+	files: string[];
+	activeFile: string | null;
+}
+
+/** 应用 UI 状态持久化（重启恢复用，主进程写 userData/ui-state.json）：新会话复用上次的模型/思考级别 */
+export interface UiState {
+	currentModel: { provider: string; modelId: string } | null;
+	thinkingLevel: string;
+}
+
 /** 会话元数据（IPC 往返用，独立于 pi 内部类型） */
 export interface SessionMeta {
 	sessionId: string;

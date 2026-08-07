@@ -85,7 +85,8 @@ export const en: Messages = {
 		copy: "Copy",
 		copied: "Copied",
 		thinking: "Thinking",
-		working: "Working…",
+		thinkingPreview: "Thinking",
+		working: "Working",
 		worked: "Worked",
 	},
 	tool: {

@@ -7,9 +7,13 @@ import {
 	IpcChannels,
 	type PermissionAnswer,
 	type PermissionRequest,
+	type SavedTabs,
+	type UiState,
 } from "@pi-desktop/shared";
 import { app, BrowserWindow, dialog, ipcMain, shell } from "electron";
 import { checkoutBranch, getGitBranch, listGitBranches } from "./git";
+import { loadTabs, saveTabs } from "./tabs";
+import { loadUiState, saveUiState } from "./ui-state";
 import { createWindow } from "./window";
 
 const log = createLogger("main");
@@ -104,6 +108,10 @@ function registerIpc(): void {
 		// 只允许 http(s) 链接，防 file:// 等协议滥用
 		if (typeof url === "string" && /^https?:\/\//.test(url)) return shell.openExternal(url);
 	});
+	ipcMain.handle(IpcChannels.TabsLoad, () => loadTabs());
+	ipcMain.handle(IpcChannels.TabsSave, (_e, tabs: SavedTabs) => saveTabs(tabs));
+	ipcMain.handle(IpcChannels.UiStateLoad, () => loadUiState());
+	ipcMain.handle(IpcChannels.UiStateSave, (_e, state: UiState) => saveUiState(state));
 	ipcMain.handle(IpcChannels.ProjectPickDirectory, async () => {
 		const window = BrowserWindow.getAllWindows()[0];
 		const options: Electron.OpenDialogOptions = { properties: ["openDirectory", "createDirectory"] };

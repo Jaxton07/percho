@@ -41,6 +41,7 @@ describe("transcript reducer", () => {
 		let state = emptyTranscript();
 		state = reduceEvent(state, ev("agent_start"));
 		expect(state.phase).toBe("streaming");
+		expect(state.agentActive).toBe(true);
 		state = reduceEvent(state, {
 			type: "message_update",
 			assistantMessageEvent: { type: "text_delta", contentIndex: 0, delta: "Hello" },
@@ -62,8 +63,19 @@ describe("transcript reducer", () => {
 		state = reduceEvent(state, ev("turn_end"));
 		expect(state.phase).toBe("idle");
 		expect(state.streaming).toBeNull();
+		// turn_end 不结束 run：agentActive 保持（后续可能还有 turn）
+		expect(state.agentActive).toBe(true);
 		expect(state.messages).toHaveLength(1);
 		expect(state.messages[0]).toMatchObject({ kind: "assistant", text: "Hi" });
+
+		// run 结束（agent_end 无 willRetry）→ agentActive false
+		state = reduceEvent(state, ev("agent_end", { willRetry: false, messages: [] }));
+		expect(state.agentActive).toBe(false);
+		// agent_settled 也置 false
+		state = reduceEvent(state, ev("agent_start"));
+		expect(state.agentActive).toBe(true);
+		state = reduceEvent(state, ev("agent_settled"));
+		expect(state.agentActive).toBe(false);
 	});
 
 	it("多轮工具循环：turn_start 重置容器，各轮内容分别固化为消息", () => {
