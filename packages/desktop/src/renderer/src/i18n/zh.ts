@@ -79,6 +79,18 @@ export const zh = {
 		allowOnce: "允许一次",
 		queued: "还有 {count} 个请求排队",
 	},
+	trust: {
+		title: "信任此项目文件夹？",
+		message:
+			"该项目包含 .pi 配置或 .agents/skills，信任后将加载项目级设置、提示词并执行项目扩展。只信任你了解的文件夹。",
+		path: "{cwd}",
+		trust: "信任",
+		trustParent: "信任父文件夹（{parentPath}）",
+		trustSession: "信任（仅本次会话）",
+		deny: "不信任",
+		denySession: "不信任（仅本次会话）",
+		queued: "还有 {count} 个项目等待确认",
+	},
 	message: {
 		copy: "复制",
 		copied: "已复制",

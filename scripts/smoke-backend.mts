@@ -2,7 +2,7 @@
 import { PiBackend } from "../packages/backend/src/index.ts";
 
 async function main() {
-  const backend = new PiBackend({ defaultCwd: "/tmp" });
+  const backend = new PiBackend({ defaultCwd: "/tmp", projectTrust: false });
   await backend.init();
 
   const models = await backend.listModels();

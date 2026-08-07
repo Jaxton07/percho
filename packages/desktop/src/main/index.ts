@@ -8,6 +8,7 @@ import {
 	type PermissionAnswer,
 	type PermissionRequest,
 	type SavedTabs,
+	type TrustRequest,
 	type UiState,
 } from "@pi-desktop/shared";
 import { app, BrowserWindow, dialog, ipcMain, shell } from "electron";
@@ -99,6 +100,9 @@ function registerIpc(): void {
 	ipcMain.handle(IpcChannels.PermissionRespond, (_e, requestId: string, answer: PermissionAnswer) =>
 		backend.respondPermission(requestId, answer),
 	);
+	ipcMain.handle(IpcChannels.TrustRespond, (_e, requestId: string, answer: number) =>
+		backend.respondTrust(requestId, answer),
+	);
 	ipcMain.handle(IpcChannels.ProjectGetGitBranch, (_e, cwd: string) => getGitBranch(cwd));
 	ipcMain.handle(IpcChannels.ProjectListGitBranches, (_e, cwd: string) => listGitBranches(cwd));
 	ipcMain.handle(IpcChannels.ProjectCheckoutBranch, (_e, cwd: string, branch: string) =>
@@ -126,6 +130,9 @@ function registerIpc(): void {
 	});
 	backend.onPermissionRequest((req: PermissionRequest) => {
 		sendToRenderer(IpcChannels.PermissionRequest, req);
+	});
+	backend.onTrustRequest((req: TrustRequest) => {
+		sendToRenderer(IpcChannels.TrustRequest, req);
 	});
 }
 

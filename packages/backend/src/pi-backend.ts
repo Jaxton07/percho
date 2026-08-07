@@ -3,8 +3,12 @@ import type { Model, ThinkingLevel } from "@earendil-works/pi-ai";
 import {
 	type AgentSessionEvent,
 	createAgentSession,
+	DefaultResourceLoader,
+	getAgentDir,
 	ModelRuntime,
+	ProjectTrustStore,
 	SessionManager,
+	SettingsManager,
 	type ToolDefinition,
 } from "@earendil-works/pi-coding-agent";
 import type {
@@ -19,6 +23,8 @@ import type {
 	SessionStats,
 	SessionToolCall,
 	SlashCommandInfo,
+	TrustAnswer,
+	TrustRequest,
 } from "@pi-desktop/shared";
 import { createLogger } from "./log";
 import { PermissionGate } from "./permissions";
@@ -26,6 +32,7 @@ import { autoNameSession } from "./session-naming";
 import { type EventForwarder, SessionRegistry } from "./session-registry";
 import { SettingsService } from "./settings";
 import { TraceRecorder } from "./trace";
+import { resolveProjectTrust, TrustGate } from "./trust";
 import { makeUiContext } from "./ui-context";
 
 const log = createLogger("backend");
@@ -39,10 +46,13 @@ export interface PiBackendOptions {
 	customTools?: ToolDefinition[];
 	/** 是否启用权限确认门控（false 时 confirm 直接通过） */
 	permissionGates?: boolean;
+	/** 是否启用项目信任门控（false 时所有项目自动信任，项目资源直接加载；供无人值守场景用） */
+	projectTrust?: boolean;
 }
 
 type EventHandler = (sessionId: string, event: AgentSessionEvent) => void;
 type PermissionHandler = (req: PermissionRequest) => void;
+type TrustHandler = (req: TrustRequest) => void;
 
 /**
  * PiBackend：pi SDK 的唯一适配层。不依赖 Electron，
@@ -52,7 +62,11 @@ export class PiBackend {
 	private readonly registry = new SessionRegistry();
 	private readonly eventHandlers = new Set<EventHandler>();
 	private readonly permissionHandlers = new Set<PermissionHandler>();
+	private readonly trustHandlers = new Set<TrustHandler>();
 	private readonly gates = new Map<string, PermissionGate>();
+	/** 项目信任决策记录（~/.pi/agent/trust.json，与 CLI 共享）+ 信任请求门控 */
+	private readonly trustStore = new ProjectTrustStore(getAgentDir());
+	private readonly trustGate = new TrustGate((req) => this.dispatchTrustRequest(req));
 	/** 会话事件 trace（JSONL，离线可重放） */
 	private readonly traceRecorders = new Map<string, TraceRecorder>();
 	private modelRuntime: ModelRuntime | undefined;
@@ -105,6 +119,39 @@ export class PiBackend {
 		await this.getModelRuntime();
 	}
 
+	/**
+	 * 两阶段加载项目资源（对齐 CLI main.js:533-570）：
+	 * 先 projectTrusted=false 只加载用户级资源 → 解析项目信任 → 按结果重载。
+	 * 不信任时项目级 settings/extensions/skills/prompts/themes 不加载。
+	 */
+	private async loadProjectResources(cwd: string): Promise<{
+		settingsManager: SettingsManager;
+		resourceLoader: DefaultResourceLoader;
+	}> {
+		const agentDir = getAgentDir();
+		const settingsManager = SettingsManager.create(cwd, agentDir, { projectTrusted: false });
+		const resourceLoader = new DefaultResourceLoader({ cwd, agentDir, settingsManager });
+		if (this.options.projectTrust === false) {
+			settingsManager.setProjectTrusted(true);
+			await resourceLoader.reload();
+			return { settingsManager, resourceLoader };
+		}
+		await resourceLoader.reload({
+			resolveProjectTrust: async () => {
+				const trusted = await resolveProjectTrust({
+					cwd,
+					trustStore: this.trustStore,
+					defaultProjectTrust: settingsManager.getDefaultProjectTrust(),
+					askUser:
+						this.trustHandlers.size > 0 ? (dir, options) => this.trustGate.ask(dir, options) : undefined,
+				});
+				log.info("project trust resolved", cwd, { trusted });
+				return trusted;
+			},
+		});
+		return { settingsManager, resourceLoader };
+	}
+
 	async createSession(options: CreateSessionOptions): Promise<SessionMeta> {
 		const runtime = await this.getModelRuntime();
 		const cwd = options.cwd || this.options.defaultCwd || process.cwd();
@@ -113,6 +160,7 @@ export class PiBackend {
 
 		const gate = new PermissionGate((req) => this.dispatchPermissionRequest(req));
 
+		const { settingsManager, resourceLoader } = await this.loadProjectResources(cwd);
 		const { session } = await createAgentSession({
 			cwd,
 			modelRuntime: runtime,
@@ -121,6 +169,8 @@ export class PiBackend {
 			tools: this.options.tools,
 			customTools: this.options.customTools,
 			sessionManager: SessionManager.create(cwd),
+			settingsManager,
+			resourceLoader,
 		});
 
 		gate.bindSession(session.sessionId);
@@ -146,9 +196,12 @@ export class PiBackend {
 		const runtime = await this.getModelRuntime();
 		const sessionManager = SessionManager.open(filePath);
 		const cwd = sessionManager.getCwd() || process.cwd();
+		const { settingsManager, resourceLoader } = await this.loadProjectResources(cwd);
 		const { session } = await createAgentSession({
 			sessionManager,
 			modelRuntime: runtime,
+			settingsManager,
+			resourceLoader,
 		});
 		const unsubscribe = session.subscribe((event) => {
 			autoNameSession(session, event);
@@ -344,16 +397,27 @@ export class PiBackend {
 		return () => this.permissionHandlers.delete(handler);
 	}
 
+	onTrustRequest(handler: TrustHandler): () => void {
+		this.trustHandlers.add(handler);
+		return () => this.trustHandlers.delete(handler);
+	}
+
 	respondPermission(requestId: string, answer: PermissionAnswer): void {
 		for (const gate of this.gates.values()) {
 			gate.respond(requestId, answer);
 		}
 	}
 
+	respondTrust(requestId: string, answer: TrustAnswer): void {
+		this.trustGate.respond(requestId, answer);
+	}
+
 	dispose(): void {
 		this.registry.disposeAll();
 		this.eventHandlers.clear();
 		this.permissionHandlers.clear();
+		this.trustHandlers.clear();
+		this.trustGate.dispose();
 		for (const recorder of this.traceRecorders.values()) {
 			void recorder.close();
 		}
@@ -375,6 +439,16 @@ export class PiBackend {
 
 	private dispatchPermissionRequest(req: PermissionRequest): void {
 		for (const handler of this.permissionHandlers) {
+			try {
+				handler(req);
+			} catch {
+				// 忽略单个处理器异常
+			}
+		}
+	}
+
+	private dispatchTrustRequest(req: TrustRequest): void {
+		for (const handler of this.trustHandlers) {
 			try {
 				handler(req);
 			} catch {

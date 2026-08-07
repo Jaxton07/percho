@@ -11,6 +11,8 @@ import type {
 	SessionMeta,
 	SessionStats,
 	SlashCommandInfo,
+	TrustAnswer,
+	TrustRequest,
 	UiState,
 } from "./session";
 import type { CustomProviderInput, ProviderInfo, ProviderTestResult } from "./settings";
@@ -43,6 +45,8 @@ export const IpcChannels = {
 	SettingsRemoveCustomProvider: "settings:removeCustomProvider",
 	SettingsTestProvider: "settings:testProvider",
 	PermissionRespond: "permission:respond",
+	/** 项目信任应答（选项下标） */
+	TrustRespond: "trust:respond",
 	ProjectPickDirectory: "project:pickDirectory",
 	ProjectGetGitBranch: "project:getGitBranch",
 	ProjectListGitBranches: "project:listGitBranches",
@@ -57,6 +61,8 @@ export const IpcChannels = {
 	/** main → renderer 事件 */
 	Event: "pi:event",
 	PermissionRequest: "pi:permission-request",
+	/** main → renderer 项目信任请求（会话创建前） */
+	TrustRequest: "pi:trust-request",
 } as const;
 
 /** 渲染进程经 preload 暴露的 window.pi 类型 */
@@ -96,6 +102,8 @@ export interface PiApi {
 	removeCustomProvider(providerId: string): Promise<void>;
 	testProvider(providerId: string, modelId?: string): Promise<ProviderTestResult>;
 	respondPermission(requestId: string, answer: PermissionAnswer): Promise<void>;
+	/** 应答项目信任请求（optionIndex 为 TrustRequest.options 下标） */
+	respondTrust(requestId: string, answer: TrustAnswer): Promise<void>;
 	pickDirectory(): Promise<string | null>;
 	getGitBranch(cwd: string): Promise<string | null>;
 	listGitBranches(cwd: string): Promise<GitBranches>;
@@ -114,4 +122,6 @@ export interface PiApi {
 	/** 订阅会话事件；返回取消函数 */
 	onEvent(cb: (payload: SessionEventEnvelope) => void): () => void;
 	onPermissionRequest(cb: (req: PermissionRequest) => void): () => void;
+	/** 订阅项目信任请求；返回取消函数 */
+	onTrustRequest(cb: (req: TrustRequest) => void): () => void;
 }

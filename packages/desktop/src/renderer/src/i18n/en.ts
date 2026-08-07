@@ -81,6 +81,18 @@ export const en: Messages = {
 		allowOnce: "Allow once",
 		queued: "{count} more requests queued",
 	},
+	trust: {
+		title: "Trust this project folder?",
+		message:
+			"This project contains .pi config or .agents/skills. Trusting loads project settings, prompts and executes project extensions. Only trust folders you know.",
+		path: "{cwd}",
+		trust: "Trust",
+		trustParent: "Trust parent folder ({parentPath})",
+		trustSession: "Trust (this session only)",
+		deny: "Do not trust",
+		denySession: "Do not trust (this session only)",
+		queued: "{count} more projects awaiting decision",
+	},
 	message: {
 		copy: "Copy",
 		copied: "Copied",

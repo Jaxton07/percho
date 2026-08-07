@@ -35,6 +35,7 @@ const api: PiApi = {
 		ipcRenderer.invoke(IpcChannels.SettingsTestProvider, providerId, modelId),
 	respondPermission: (requestId, answer) =>
 		ipcRenderer.invoke(IpcChannels.PermissionRespond, requestId, answer),
+	respondTrust: (requestId, answer) => ipcRenderer.invoke(IpcChannels.TrustRespond, requestId, answer),
 	pickDirectory: () => ipcRenderer.invoke(IpcChannels.ProjectPickDirectory),
 	getGitBranch: (cwd) => ipcRenderer.invoke(IpcChannels.ProjectGetGitBranch, cwd),
 	listGitBranches: (cwd) => ipcRenderer.invoke(IpcChannels.ProjectListGitBranches, cwd),
@@ -53,6 +54,11 @@ const api: PiApi = {
 		const listener = (_event: unknown, req: Parameters<typeof cb>[0]) => cb(req);
 		ipcRenderer.on(IpcChannels.PermissionRequest, listener);
 		return () => ipcRenderer.removeListener(IpcChannels.PermissionRequest, listener);
+	},
+	onTrustRequest: (cb) => {
+		const listener = (_event: unknown, req: Parameters<typeof cb>[0]) => cb(req);
+		ipcRenderer.on(IpcChannels.TrustRequest, listener);
+		return () => ipcRenderer.removeListener(IpcChannels.TrustRequest, listener);
 	},
 };
 

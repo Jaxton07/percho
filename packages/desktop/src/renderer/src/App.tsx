@@ -1,5 +1,5 @@
-import type { AgentSessionEvent } from "@pi-desktop/shared";
-import { useEffect } from "react";
+import type { AgentSessionEvent, TrustRequest } from "@pi-desktop/shared";
+import { useEffect, useState } from "react";
 import { getPi } from "./api";
 import { EmptyState } from "./components/chat/EmptyState";
 import { MessageList } from "./components/chat/MessageList";
@@ -7,6 +7,7 @@ import { Composer } from "./components/composer/Composer";
 import { ProjectPage } from "./components/projects/ProjectPage";
 import { PermissionDialog } from "./components/session/PermissionDialog";
 import { SessionTabBar } from "./components/session/SessionTabBar";
+import { TrustDialog } from "./components/session/TrustDialog";
 import { SettingsDialog } from "./components/settings/SettingsDialog";
 import { useSessionsStore } from "./stores/sessions";
 import { useTranscriptStore } from "./stores/transcript";
@@ -17,6 +18,7 @@ export default function App() {
 	const activeSessionId = useSessionsStore((s) => s.activeSessionId);
 	const view = useUiStore((s) => s.view);
 	const transcript = useTranscriptStore((s) => (activeSessionId ? s.bySession[activeSessionId] : undefined));
+	const [trustRequests, setTrustRequests] = useState<TrustRequest[]>([]);
 
 	useEffect(() => {
 		const pi = getPi();
@@ -40,13 +42,22 @@ export default function App() {
 		const offPermission = pi.onPermissionRequest((req) => {
 			useTranscriptStore.getState().addPermission(req.sessionId, req);
 		});
+		const offTrust = pi.onTrustRequest((req) => {
+			setTrustRequests((prev) => [...prev, req]);
+		});
 		void useSessionsStore.getState().loadModels();
 		void useSessionsStore.getState().restoreTabs();
 		return () => {
 			offEvent();
 			offPermission();
+			offTrust();
 		};
 	}, []);
+
+	const respondTrust = (requestId: string, optionIndex: number) => {
+		void getPi().respondTrust(requestId, optionIndex);
+		setTrustRequests((prev) => prev.filter((req) => req.id !== requestId));
+	};
 
 	const showEmpty = !transcript || (transcript.messages.length === 0 && !transcript.streaming);
 
@@ -67,6 +78,7 @@ export default function App() {
 				</>
 			)}
 			<SettingsDialog />
+			<TrustDialog requests={trustRequests} onRespond={respondTrust} />
 		</div>
 	);
 }

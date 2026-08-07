@@ -119,6 +119,25 @@ export interface PermissionRequest {
 
 export type PermissionAnswer = "allow" | "deny" | "allowAlways";
 
+/**
+ * 项目信任选项（创建/打开会话时，项目含 .pi/ 资源或祖先 .agents/skills 需用户决策）。
+ * key 由 backend 分类，renderer 按 key 出 i18n 文案；parentPath 仅 trustParent 有值。
+ */
+export interface TrustOption {
+	key: "trust" | "trustParent" | "trustSession" | "deny" | "denySession";
+	parentPath?: string;
+}
+
+/** 项目信任请求（发生在会话创建前，无 sessionId） */
+export interface TrustRequest {
+	id: string;
+	cwd: string;
+	options: TrustOption[];
+}
+
+/** 信任应答：所选选项在 TrustRequest.options 中的下标 */
+export type TrustAnswer = number;
+
 /** git 分支信息（项目管理页/空态分支选择器用） */
 export interface GitBranches {
 	current: string | null;
