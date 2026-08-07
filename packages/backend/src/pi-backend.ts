@@ -12,8 +12,10 @@ import type {
 	CreateSessionOptions,
 	PermissionAnswer,
 	PermissionRequest,
+	SessionMessage,
 	SessionMeta,
 	SessionStats,
+	SessionToolCall,
 } from "@pi-desktop/shared";
 import { PermissionGate } from "./permissions";
 import { autoNameSession } from "./session-naming";
@@ -218,6 +220,12 @@ export class PiBackend {
 		};
 	}
 
+	/** 读取会话历史消息（打开历史会话时回放给 UI） */
+	async getSessionMessages(sessionId: string): Promise<SessionMessage[]> {
+		const entry = this.requireSession(sessionId);
+		return toSessionMessages(entry.session.messages);
+	}
+
 	async listModels(): Promise<AvailableModel[]> {
 		const runtime = await this.getModelRuntime();
 		const available = await runtime.getAvailable();
@@ -275,3 +283,93 @@ export class PiBackend {
 }
 
 export type { EventForwarder, Model };
+
+/** 消息 content 块（pi-ai 结构，仅读取所需字段） */
+interface ContentBlock {
+	type: string;
+	text?: string;
+	thinking?: string;
+	id?: string;
+	name?: string;
+	arguments?: Record<string, unknown>;
+}
+
+interface RawMessage {
+	role: string;
+	content?: string | ContentBlock[];
+	toolCallId?: string;
+	isError?: boolean;
+	timestamp?: number;
+}
+
+function blockText(content: string | ContentBlock[] | undefined): string {
+	if (typeof content === "string") return content;
+	return (content ?? [])
+		.filter((c) => c.type === "text" && c.text)
+		.map((c) => c.text ?? "")
+		.join("");
+}
+
+function blockThinking(content: ContentBlock[] | undefined): string {
+	return (content ?? [])
+		.filter((c) => c.type === "thinking" && c.thinking)
+		.map((c) => c.thinking ?? "")
+		.join("");
+}
+
+function blockToolCalls(content: ContentBlock[] | undefined): SessionToolCall[] {
+	return (content ?? [])
+		.filter((c) => c.type === "toolCall" && c.id)
+		.map((c) => ({
+			id: c.id ?? "",
+			name: c.name ?? "tool",
+			args: JSON.stringify(c.arguments ?? {}),
+			output: "",
+			isError: false,
+		}));
+}
+
+/**
+ * pi 消息 → 中立 SessionMessage 列表。
+ * toolResult 消息单独出现（带 toolCallId），把输出回填到对应工具卡片。
+ */
+export function toSessionMessages(rawMessages: readonly unknown[]): SessionMessage[] {
+	const out: SessionMessage[] = [];
+	const toolById = new Map<string, SessionToolCall>();
+	for (const raw of rawMessages as RawMessage[]) {
+		if (raw.role === "user") {
+			out.push({
+				role: "user",
+				text: blockText(raw.content),
+				thinking: "",
+				tools: [],
+				timestamp: raw.timestamp ?? Date.now(),
+			});
+			continue;
+		}
+		if (raw.role === "assistant") {
+			const content = Array.isArray(raw.content) ? raw.content : [];
+			const tools = blockToolCalls(content);
+			for (const tool of tools) toolById.set(tool.id, tool);
+			const message: SessionMessage = {
+				role: "assistant",
+				text: blockText(raw.content),
+				thinking: blockThinking(content),
+				tools,
+				timestamp: raw.timestamp ?? Date.now(),
+			};
+			if (message.text || message.thinking || message.tools.length > 0) {
+				out.push(message);
+			}
+			continue;
+		}
+		if (raw.role === "toolResult") {
+			const tool = raw.toolCallId ? toolById.get(raw.toolCallId) : undefined;
+			if (tool) {
+				tool.output = blockText(raw.content);
+				tool.isError = raw.isError === true;
+			}
+		}
+	}
+	return out;
+}

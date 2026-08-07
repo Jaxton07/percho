@@ -100,6 +100,86 @@ describe("transcript reducer", () => {
 		expect(state.messages[0]).toMatchObject({ kind: "assistant" });
 	});
 
+	it("并行两个 toolcall：contentIndex 交错时按块匹配，两个都能 done", () => {
+		let state = emptyTranscript();
+		state = reduceEvent(state, ev("agent_start"));
+		// ci=0 与 ci=1 各自 start
+		state = reduceEvent(state, {
+			type: "message_update",
+			assistantMessageEvent: {
+				type: "toolcall_start",
+				contentIndex: 0,
+				partial: { content: [{ type: "toolCall", name: "bash" }] },
+			},
+		} as unknown as AgentSessionEvent);
+		state = reduceEvent(state, {
+			type: "message_update",
+			assistantMessageEvent: {
+				type: "toolcall_start",
+				contentIndex: 1,
+				partial: {
+					content: [
+						{ type: "toolCall", name: "bash" },
+						{ type: "toolCall", name: "grep" },
+					],
+				},
+			},
+		} as unknown as AgentSessionEvent);
+		// delta 交错到来（SDK 保证事件可按任意块交错）
+		state = reduceEvent(state, {
+			type: "message_update",
+			assistantMessageEvent: {
+				type: "toolcall_delta",
+				contentIndex: 1,
+				delta: '{"pattern":"ui"',
+			},
+		} as unknown as AgentSessionEvent);
+		state = reduceEvent(state, {
+			type: "message_update",
+			assistantMessageEvent: {
+				type: "toolcall_delta",
+				contentIndex: 0,
+				delta: '{"command":"ls"',
+			},
+		} as unknown as AgentSessionEvent);
+		// end 交错：先 ci=1 再 ci=0
+		state = reduceEvent(state, {
+			type: "message_update",
+			assistantMessageEvent: {
+				type: "toolcall_end",
+				contentIndex: 1,
+				toolCall: { id: "call_b", name: "grep", arguments: { pattern: "ui" } },
+			},
+		} as unknown as AgentSessionEvent);
+		state = reduceEvent(state, {
+			type: "message_update",
+			assistantMessageEvent: {
+				type: "toolcall_end",
+				contentIndex: 0,
+				toolCall: { id: "call_a", name: "bash", arguments: { command: "ls" } },
+			},
+		} as unknown as AgentSessionEvent);
+		expect(state.streaming?.tools).toHaveLength(2);
+		expect(state.streaming?.tools[0]).toMatchObject({ id: "call_a", name: "bash" });
+		expect(state.streaming?.tools[1]).toMatchObject({ id: "call_b", name: "grep" });
+		// 执行事件各自匹配
+		state = reduceEvent(state, {
+			type: "tool_execution_end",
+			toolCallId: "call_b",
+			toolName: "grep",
+			result: {},
+			isError: false,
+		} as unknown as AgentSessionEvent);
+		state = reduceEvent(state, {
+			type: "tool_execution_end",
+			toolCallId: "call_a",
+			toolName: "bash",
+			result: {},
+			isError: false,
+		} as unknown as AgentSessionEvent);
+		expect(state.streaming?.tools.every((t) => t.state === "done")).toBe(true);
+	});
+
 	it("agent_end willRetry 保持流式，无重试回到 idle", () => {
 		let state = emptyTranscript();
 		state = reduceEvent(state, ev("agent_start"));

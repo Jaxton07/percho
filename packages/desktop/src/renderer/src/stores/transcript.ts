@@ -1,6 +1,11 @@
 import type { AgentSessionEvent } from "@pi-desktop/shared";
 import { create } from "zustand";
-import { emptyTranscript, reduceEvent, type SessionTranscriptState } from "./transcript-reducer";
+import {
+	emptyTranscript,
+	reduceEvent,
+	type SessionTranscriptState,
+	type UIMessage,
+} from "./transcript-reducer";
 
 export type { SessionPhase, StreamingState, UIMessage, UIToolCall } from "./transcript-reducer";
 
@@ -23,6 +28,8 @@ interface TranscriptStore {
 	addPermission: (sessionId: string, req: PermissionRequest) => void;
 	resolvePermission: (sessionId: string, requestId: string) => void;
 	resetSession: (sessionId: string) => void;
+	/** 打开历史会话时回放已有消息（不触发 reducer 事件流） */
+	loadHistory: (sessionId: string, messages: UIMessage[]) => void;
 }
 
 export const useTranscriptStore = create<TranscriptStore>((set) => ({
@@ -71,6 +78,22 @@ export const useTranscriptStore = create<TranscriptStore>((set) => ({
 		set((state) => ({
 			bySession: { ...state.bySession, [sessionId]: { ...emptyTranscript(), pendingPermissions: [] } },
 		}));
+	},
+	loadHistory: (sessionId, messages) => {
+		set((state) => {
+			const current = state.bySession[sessionId];
+			return {
+				bySession: {
+					...state.bySession,
+					[sessionId]: {
+						messages,
+						streaming: null,
+						phase: "idle",
+						pendingPermissions: current?.pendingPermissions ?? [],
+					},
+				},
+			};
+		});
 	},
 }));
 

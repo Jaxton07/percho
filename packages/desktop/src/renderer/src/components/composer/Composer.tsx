@@ -3,7 +3,7 @@ import { getPi } from "../../api";
 import { useT } from "../../i18n";
 import { useSessionsStore } from "../../stores/sessions";
 import { selectTranscript, useTranscriptStore } from "../../stores/transcript";
-import { SendIcon, StopIcon } from "../icons";
+import { ArrowUpIcon, StopIcon } from "../icons";
 
 /** 底部输入框：自动增高、Enter 发送、生成中变停止；centered 用于空态居中布局 */
 export function Composer({ centered = false }: { centered?: boolean }) {
@@ -11,7 +11,6 @@ export function Composer({ centered = false }: { centered?: boolean }) {
 	const activeSessionId = useSessionsStore((s) => s.activeSessionId);
 	const cwd = useSessionsStore((s) => s.cwd);
 	const createSession = useSessionsStore((s) => s.createSession);
-	const pickDirectory = useSessionsStore((s) => s.pickDirectory);
 	const transcript = useTranscriptStore((s) => selectTranscript(s, activeSessionId));
 	const [text, setText] = useState("");
 	const [sending, setSending] = useState(false);
@@ -34,12 +33,8 @@ export function Composer({ centered = false }: { centered?: boolean }) {
 
 		let sessionId = activeSessionId;
 		if (!sessionId) {
-			if (!cwd) {
-				await pickDirectory();
-			}
-			const target = useSessionsStore.getState().cwd;
-			if (!target) return;
-			await createSession(target);
+			if (!cwd) return;
+			await createSession(cwd);
 			sessionId = useSessionsStore.getState().activeSessionId;
 			if (!sessionId) return;
 		}
@@ -70,7 +65,7 @@ export function Composer({ centered = false }: { centered?: boolean }) {
 				<div className="rounded-2xl border border-zinc-200 bg-white shadow-sm focus-within:border-zinc-400">
 					<textarea
 						ref={textareaRef}
-						className="max-h-[200px] w-full resize-none rounded-t-2xl px-4 pt-3.5 pb-1 text-[14px] leading-relaxed bg-transparent outline-none placeholder:text-zinc-400 select-text"
+						className="max-h-[200px] w-full resize-none rounded-t-2xl px-4 pt-5 pb-2 text-[14px] leading-relaxed bg-transparent outline-none placeholder:text-zinc-400 select-text"
 						placeholder={t("composer.placeholder")}
 						value={text}
 						rows={1}
@@ -78,17 +73,6 @@ export function Composer({ centered = false }: { centered?: boolean }) {
 						onKeyDown={handleKeyDown}
 					/>
 					<div className="flex items-center gap-2 px-3 pb-2">
-						<span className="rounded-md border border-zinc-200 px-1.5 py-0.5 text-[11px] text-zinc-500">
-							Build
-						</span>
-						<button
-							type="button"
-							className="rounded-md px-1.5 py-0.5 text-[11px] text-zinc-400 transition-colors hover:bg-zinc-50 hover:text-zinc-600"
-							onClick={() => void pickDirectory()}
-							title={t("common.switchDir")}
-						>
-							{cwd ? cwd.split("/").filter(Boolean).pop() : t("composer.pickDir")}
-						</button>
 						<div className="flex-1" />
 						{isStreaming ? (
 							<button
@@ -111,7 +95,7 @@ export function Composer({ centered = false }: { centered?: boolean }) {
 								title={t("composer.send")}
 								aria-label={t("composer.send")}
 							>
-								<SendIcon />
+								<ArrowUpIcon size={16} />
 							</button>
 						)}
 					</div>

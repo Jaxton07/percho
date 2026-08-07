@@ -40,7 +40,7 @@ export class SessionRegistry {
 			sessionId: session.sessionId,
 			sessionFile: session.sessionFile,
 			cwd,
-			name: undefined,
+			name: session.sessionName,
 			modelLabel: session.model?.name,
 			active: true,
 			messageCount: session.messages.length,

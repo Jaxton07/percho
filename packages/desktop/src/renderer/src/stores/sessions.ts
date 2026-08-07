@@ -1,7 +1,46 @@
 import type { AvailableModel, SessionMeta } from "@pi-desktop/shared";
 import { create } from "zustand";
 import { getPi } from "../api";
+import { messagesToUIMessages } from "./transcript-reducer";
 import { useTranscriptStore } from "./transcript";
+
+/** 顶栏打开的会话持久化（重启恢复用），以磁盘路径为 key */
+const TABS_KEY = "pi-desktop.open-tabs";
+
+interface SavedTabs {
+	files: string[];
+	activeFile: string | null;
+}
+
+function loadSavedTabs(): SavedTabs | null {
+	try {
+		const raw = localStorage.getItem(TABS_KEY);
+		if (!raw) return null;
+		const parsed = JSON.parse(raw) as Partial<SavedTabs>;
+		if (!Array.isArray(parsed.files)) return null;
+		return {
+			files: [...new Set(parsed.files.filter((f): f is string => typeof f === "string"))],
+			activeFile: typeof parsed.activeFile === "string" ? parsed.activeFile : null,
+		};
+	} catch {
+		return null;
+	}
+}
+
+function persistTabs(state: Pick<SessionsStore, "sessions" | "activeSessionId">): void {
+	try {
+		localStorage.setItem(
+			TABS_KEY,
+			JSON.stringify({
+				files: [...new Set(state.sessions.map((s) => s.sessionFile).filter((f): f is string => Boolean(f)))],
+				activeFile:
+					state.sessions.find((s) => s.sessionId === state.activeSessionId)?.sessionFile ?? null,
+			}),
+		);
+	} catch {
+		// localStorage 不可用时静默失败
+	}
+}
 
 interface SessionsStore {
 	sessions: SessionMeta[];
@@ -14,6 +53,8 @@ interface SessionsStore {
 	switchSession: (sessionId: string) => void;
 	closeSession: (sessionId: string) => Promise<void>;
 	openFromHistory: (filePath: string) => Promise<void>;
+	/** 重启后恢复上次打开的顶栏会话 */
+	restoreTabs: () => Promise<void>;
 	/** 自动命名等事件带来的标题变更 */
 	updateSessionName: (sessionId: string, name: string | undefined) => void;
 	pickDirectory: () => Promise<void>;
@@ -40,16 +81,19 @@ export const useSessionsStore = create<SessionsStore>((set, get) => ({
 				cwd: targetCwd,
 			}));
 			useTranscriptStore.getState().resetSession(meta.sessionId);
+			persistTabs(get());
 		} catch (error) {
 			set({ error: error instanceof Error ? error.message : String(error) });
 		}
 	},
 
-	switchSession: (sessionId) =>
+	switchSession: (sessionId) => {
 		set((state) => {
 			const session = state.sessions.find((s) => s.sessionId === sessionId);
 			return { activeSessionId: sessionId, cwd: session?.cwd ?? state.cwd };
-		}),
+		});
+		persistTabs(get());
+	},
 
 	updateSessionName: (sessionId, name) =>
 		set((state) => ({
@@ -65,6 +109,7 @@ export const useSessionsStore = create<SessionsStore>((set, get) => ({
 				state.activeSessionId === sessionId ? (sessions[0]?.sessionId ?? null) : state.activeSessionId;
 			return { sessions, activeSessionId };
 		});
+		persistTabs(get());
 	},
 
 	openFromHistory: async (filePath) => {
@@ -75,10 +120,46 @@ export const useSessionsStore = create<SessionsStore>((set, get) => ({
 				activeSessionId: meta.sessionId,
 				cwd: meta.cwd,
 			}));
-			useTranscriptStore.getState().resetSession(meta.sessionId);
+			const history = await getPi().getSessionMessages(meta.sessionId);
+			useTranscriptStore.getState().loadHistory(meta.sessionId, messagesToUIMessages(history));
+			persistTabs(get());
 		} catch (error) {
 			set({ error: error instanceof Error ? error.message : String(error) });
 		}
+	},
+
+	restoreTabs: async () => {
+		const saved = loadSavedTabs();
+		if (!saved || saved.files.length === 0) return;
+		const opened: SessionMeta[] = [];
+		const seen = new Set<string>();
+		let activeId: string | null = null;
+		for (const file of saved.files) {
+			try {
+				const meta = await getPi().openSession(file);
+				if (seen.has(meta.sessionId)) continue;
+				seen.add(meta.sessionId);
+				const history = await getPi().getSessionMessages(meta.sessionId);
+				useTranscriptStore.getState().loadHistory(meta.sessionId, messagesToUIMessages(history));
+				opened.push(meta);
+				if (meta.sessionFile === saved.activeFile) activeId = meta.sessionId;
+			} catch {
+				// 会话文件已被删除等：跳过
+			}
+		}
+		if (opened.length === 0) return;
+		const lastOpened = opened[opened.length - 1];
+		if (!lastOpened) return;
+		set((state) => {
+			const existing = state.sessions.filter(
+				(s) => !opened.some((o) => o.sessionId === s.sessionId),
+			);
+			const sessions = [...existing, ...opened];
+			const activeSessionId = activeId ?? lastOpened.sessionId;
+			const cwd = sessions.find((s) => s.sessionId === activeSessionId)?.cwd ?? null;
+			return { sessions, activeSessionId, cwd };
+		});
+		persistTabs(get());
 	},
 
 	pickDirectory: async () => {

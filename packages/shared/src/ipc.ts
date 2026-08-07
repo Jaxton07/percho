@@ -4,6 +4,7 @@ import type {
 	PermissionAnswer,
 	PermissionRequest,
 	SessionEventEnvelope,
+	SessionMessage,
 	SessionMeta,
 	SessionStats,
 } from "./session";
@@ -21,6 +22,7 @@ export const IpcChannels = {
 	SessionAbort: "session:abort",
 	SessionSetModel: "session:setModel",
 	SessionSetThinkingLevel: "session:setThinkingLevel",
+	SessionGetMessages: "session:getMessages",
 	SessionCompact: "session:compact",
 	SessionStats: "session:stats",
 	ModelsList: "models:list",
@@ -55,6 +57,8 @@ export interface PiApi {
 	abort(sessionId: string): Promise<void>;
 	setModel(sessionId: string, provider: string, modelId: string): Promise<void>;
 	setThinkingLevel(sessionId: string, level: string): Promise<void>;
+	/** 读取会话历史消息（打开历史会话时回放） */
+	getSessionMessages(sessionId: string): Promise<SessionMessage[]>;
 	compact(sessionId: string): Promise<void>;
 	getStats(sessionId: string): Promise<SessionStats>;
 	listModels(): Promise<import("./session").AvailableModel[]>;

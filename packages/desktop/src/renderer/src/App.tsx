@@ -30,6 +30,7 @@ export default function App() {
 			useTranscriptStore.getState().addPermission(req.sessionId, req);
 		});
 		void useSessionsStore.getState().loadModels();
+		void useSessionsStore.getState().restoreTabs();
 		return () => {
 			offEvent();
 			offPermission();

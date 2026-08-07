@@ -10,11 +10,11 @@ export const en: Messages = {
 		switchDir: "Switch working directory",
 	},
 	tabbar: {
-		noProject: "No project directory selected",
 		newSession: "New session",
 		pickProjectFirst: "Pick a project directory first",
 		untitled: "New session",
 		settings: "Settings",
+		close: "Close session (keep on disk)",
 	},
 	empty: {
 		hint: "Pick a project directory to start chatting with Pi Agent",
@@ -25,7 +25,6 @@ export const en: Messages = {
 	},
 	composer: {
 		placeholder: "Ask anything, / for commands, @ for context",
-		pickDir: "Pick directory",
 		stop: "Stop",
 		send: "Send",
 		hint: "Enter to send · Shift+Enter for newline",

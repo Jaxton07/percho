@@ -1,4 +1,4 @@
-import type { AgentSessionEvent } from "@pi-desktop/shared";
+import type { AgentSessionEvent, SessionMessage } from "@pi-desktop/shared";
 
 /** 单条 UI 消息 */
 export type UIMessage =
@@ -22,8 +22,10 @@ export interface StreamingState {
 	text: string;
 	thinking: string;
 	tools: UIToolCall[];
-	/** 正在流式累积参数的最后一个工具索引 */
+	/** 最近一次 toolcall_start 的工具索引 */
 	activeToolIndex: number;
+	/** assistant 消息 content 绝对索引 → tools 数组索引（事件带 contentIndex，须按此匹配） */
+	toolByContentIndex: Record<number, number>;
 }
 
 export type SessionPhase = "idle" | "streaming" | "awaiting_permission";
@@ -54,11 +56,14 @@ function parseArgs(raw: unknown): string {
 }
 
 function toolNameFromPartial(partial: unknown, contentIndex: number): string {
-	const toolCalls = (partial as { toolCalls?: Array<{ name?: string }> } | undefined)?.toolCalls;
-	const tool = toolCalls?.[contentIndex];
-	if (tool?.name) return tool.name;
-	const last = toolCalls?.[toolCalls.length - 1];
-	return last?.name || "tool";
+	const content = (partial as { content?: Array<{ type?: string; name?: string }> } | undefined)?.content;
+	const block = content?.[contentIndex];
+	if (block?.type === "toolCall" && block.name) return block.name;
+	for (let i = contentIndex - 1; i >= 0; i--) {
+		const prev = content?.[i];
+		if (prev?.type === "toolCall" && prev.name) return prev.name;
+	}
+	return "tool";
 }
 
 function finalizeStreaming(state: SessionTranscriptState): SessionTranscriptState {
@@ -93,7 +98,7 @@ export function reduceEvent(state: SessionTranscriptState, event: AgentSessionEv
 			return {
 				...state,
 				phase: "streaming",
-				streaming: { text: "", thinking: "", tools: [], activeToolIndex: -1 },
+				streaming: { text: "", thinking: "", tools: [], activeToolIndex: -1, toolByContentIndex: {} },
 			};
 		case "message_start": {
 			if (event.message.role !== "user") return state;
@@ -130,11 +135,25 @@ export function reduceEvent(state: SessionTranscriptState, event: AgentSessionEv
 							state: "running" as const,
 						},
 					];
-					return { ...state, streaming: { ...streaming, tools, activeToolIndex: tools.length - 1 } };
+					const toolByContentIndex = {
+						...streaming.toolByContentIndex,
+						[e.contentIndex]: tools.length - 1,
+					};
+					return {
+						...state,
+						streaming: {
+							...streaming,
+							tools,
+							toolByContentIndex,
+							activeToolIndex: tools.length - 1,
+						},
+					};
 				}
 				case "toolcall_delta": {
 					const tools = [...streaming.tools];
-					const idx = streaming.activeToolIndex >= 0 ? streaming.activeToolIndex : tools.length - 1;
+					const idx =
+						streaming.toolByContentIndex[e.contentIndex] ??
+						(streaming.activeToolIndex >= 0 ? streaming.activeToolIndex : tools.length - 1);
 					const tool = tools[idx];
 					if (!tool) return state;
 					tools[idx] = { ...tool, args: tool.args + e.delta };
@@ -142,8 +161,10 @@ export function reduceEvent(state: SessionTranscriptState, event: AgentSessionEv
 				}
 				case "toolcall_end": {
 					const tools = [...streaming.tools];
-					const idx = tools.findIndex((t) => t.id === e.toolCall.id);
-					const target = idx >= 0 ? idx : streaming.activeToolIndex;
+					const idx =
+						streaming.toolByContentIndex[e.contentIndex] ??
+						(streaming.activeToolIndex >= 0 ? streaming.activeToolIndex : tools.length - 1);
+					const target = idx >= 0 ? idx : tools.findIndex((t) => t.id === e.toolCall.id);
 					const tool = tools[target];
 					if (!tool) return state;
 					tools[target] = {
@@ -206,4 +227,27 @@ function extractExecutionDelta(partialResult: unknown): string | null {
 	const text = partial.text;
 	if (typeof text === "string" && text.length > 0) return text;
 	return null;
+}
+
+/** 历史消息 → UI 消息（打开历史会话时回放） */
+export function messagesToUIMessages(messages: SessionMessage[]): UIMessage[] {
+	const ui: UIMessage[] = [];
+	for (let i = 0; i < messages.length; i++) {
+		const m = messages[i];
+		if (!m) continue;
+		const id = `h${i}`;
+		if (m.role === "user") {
+			if (m.text) ui.push({ kind: "user", id, text: m.text, timestamp: m.timestamp });
+			continue;
+		}
+		const tools: UIToolCall[] = m.tools.map((tool) => ({
+			id: tool.id,
+			name: tool.name,
+			args: tool.args,
+			output: tool.output,
+			state: tool.isError ? "error" : "done",
+		}));
+		ui.push({ kind: "assistant", id, text: m.text, thinking: m.thinking, tools, timestamp: m.timestamp });
+	}
+	return ui;
 }

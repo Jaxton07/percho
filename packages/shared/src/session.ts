@@ -27,6 +27,26 @@ export interface SessionStats {
 	cost: number;
 }
 
+/** 历史会话中的一次工具调用（渲染用） */
+export interface SessionToolCall {
+	id: string;
+	name: string;
+	/** 参数（JSON 字符串） */
+	args: string;
+	/** 执行输出 */
+	output: string;
+	isError: boolean;
+}
+
+/** 历史会话消息（打开历史会话时回放用；不依赖 pi 内部类型） */
+export interface SessionMessage {
+	role: "user" | "assistant";
+	text: string;
+	thinking: string;
+	tools: SessionToolCall[];
+	timestamp: number;
+}
+
 export interface AvailableModel {
 	provider: string;
 	id: string;

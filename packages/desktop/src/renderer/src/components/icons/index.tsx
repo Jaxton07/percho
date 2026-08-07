@@ -135,6 +135,26 @@ export function SendIcon({ size = 12, className }: IconProps) {
 	);
 }
 
+/** 发送（向上箭头） */
+export function ArrowUpIcon({ size = 14, className }: IconProps) {
+	return (
+		<svg
+			className={className}
+			width={size}
+			height={size}
+			viewBox="0 0 16 16"
+			fill="none"
+			stroke="currentColor"
+			strokeWidth="2"
+			strokeLinecap="round"
+			strokeLinejoin="round"
+			aria-hidden="true"
+		>
+			<path d="M8 14.5V3M2 9 8 3l6 6" />
+		</svg>
+	);
+}
+
 /** 停止（方块） */
 export function StopIcon({ size = 10, className }: IconProps) {
 	return (

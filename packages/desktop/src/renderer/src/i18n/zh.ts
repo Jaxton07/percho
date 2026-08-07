@@ -8,11 +8,11 @@ export const zh = {
 		switchDir: "切换工作目录",
 	},
 	tabbar: {
-		noProject: "尚未选择项目目录",
 		newSession: "新建会话",
 		pickProjectFirst: "请先选择项目目录",
 		untitled: "新会话",
 		settings: "设置",
+		close: "关闭会话（不删除）",
 	},
 	empty: {
 		hint: "选择项目目录后开始与 Pi Agent 对话",
@@ -23,7 +23,6 @@ export const zh = {
 	},
 	composer: {
 		placeholder: "随便问点什么，/ 命令，@ 上下文",
-		pickDir: "选择目录",
 		stop: "停止",
 		send: "发送",
 		hint: "Enter 发送 · Shift+Enter 换行",
