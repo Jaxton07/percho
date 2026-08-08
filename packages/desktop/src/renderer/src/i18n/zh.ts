@@ -13,11 +13,6 @@ export const zh = {
 		untitled: "新会话",
 		settings: "设置",
 		close: "关闭会话（不删除）",
-		status: {
-			working: "工作中",
-			attention: "等待审批",
-			done: "已完成，点击查看",
-		},
 	},
 	empty: {
 		hint: "选择项目目录后开始与 Pi Agent 对话",
@@ -168,7 +163,6 @@ export const zh = {
 			configured: "已配置",
 			unconfigured: "未配置",
 			test: "测试",
-			testing: "测试中…",
 			testOk: "连接正常（{modelId}）",
 			testFailed: "测试失败：{error}",
 			configKey: "配置 Key",

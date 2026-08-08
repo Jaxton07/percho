@@ -15,11 +15,6 @@ export const en: Messages = {
 		untitled: "New session",
 		settings: "Settings",
 		close: "Close session (keep on disk)",
-		status: {
-			working: "Working",
-			attention: "Awaiting approval",
-			done: "Finished — click to view",
-		},
 	},
 	empty: {
 		hint: "Pick a project directory to start chatting with Pi Agent",
@@ -170,7 +165,6 @@ export const en: Messages = {
 			configured: "Configured",
 			unconfigured: "Not configured",
 			test: "Test",
-			testing: "Testing…",
 			testOk: "Connection OK ({modelId})",
 			testFailed: "Test failed: {error}",
 			configKey: "Set Key",
