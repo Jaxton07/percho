@@ -15,6 +15,11 @@ export const en: Messages = {
 		untitled: "New session",
 		settings: "Settings",
 		close: "Close session (keep on disk)",
+		status: {
+			working: "Working",
+			attention: "Awaiting approval",
+			done: "Finished — click to view",
+		},
 	},
 	empty: {
 		hint: "Pick a project directory to start chatting with Pi Agent",

@@ -98,8 +98,8 @@ function ProjectItem({
 				title={project.cwd}
 			>
 				<span
-					className={`flex h-5 w-5 shrink-0 items-center justify-center rounded text-[11px] font-semibold text-white ${
-						isActive ? "bg-violet-500" : "bg-ink-faint"
+					className={`flex h-5 w-5 shrink-0 items-center justify-center rounded text-[11px] font-semibold text-on-ink ${
+						isActive ? "bg-ink" : "bg-ink-faint"
 					}`}
 				>
 					{(project.name[0] ?? "P").toUpperCase()}
