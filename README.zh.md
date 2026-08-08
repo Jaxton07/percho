@@ -16,6 +16,8 @@
 
 ## 演示
 
+![pi-desktop 聊天页截图](docs/pi_desktop_chat_page.png)
+
 **聊天页**
 
 ![聊天页演示](docs/demo-chat.gif)

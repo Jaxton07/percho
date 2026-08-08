@@ -16,6 +16,8 @@
 
 ## Demo
 
+![pi-desktop chat page](docs/pi_desktop_chat_page.png)
+
 **Chat**
 
 ![Chat page demo](docs/demo-chat.gif)
