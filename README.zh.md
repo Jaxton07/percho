@@ -1,10 +1,16 @@
-# pi-desktop
-
-[Pi coding agent](https://www.npmjs.com/package/@earendil-works/pi-coding-agent) 的桌面端 GUI —— 保留 Pi 的全部能力与可扩展性，加上可视化的交互界面。
-
-[![License](https://img.shields.io/github/license/Jaxton07/pi-desktop?style=flat-square)](LICENSE)
-
-[English](README.md) | [简体中文](README.zh.md)
+<p align="center">
+  <img src="docs/icon.svg" alt="pi-desktop logo" width="128">
+</p>
+<h1 align="center">pi-desktop</h1>
+<p align="center">
+  <a href="https://www.npmjs.com/package/@earendil-works/pi-coding-agent">Pi coding agent</a> 的桌面端 GUI —— 保留 Pi 的全部能力与可扩展性，加上可视化的交互界面。
+</p>
+<p align="center">
+  <a href="LICENSE"><img src="https://img.shields.io/github/license/Jaxton07/pi-desktop?style=flat-square" alt="License"></a>
+</p>
+<p align="center">
+  <a href="README.md">English</a> | <a href="README.zh.md">简体中文</a>
+</p>
 
 ---
 
