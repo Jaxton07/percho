@@ -26,14 +26,6 @@ function SessionTab({ session, isActive }: { session: SessionMeta; isActive: boo
 	});
 	// 图标字母 = 项目名（cwd 最后一段）首字母，与会话标题无关
 	const letter = session.cwd.split("/").filter(Boolean).pop()?.[0] ?? "P";
-	const statusLabel =
-		status === "attention"
-			? t("tabbar.status.attention")
-			: status === "working"
-				? t("tabbar.status.working")
-				: status === "done"
-					? t("tabbar.status.done")
-					: undefined;
 	// 苹果式设计：状态全部收拢到头像图标（黑白色系，仅语义色保留琥珀/绿点），胶囊本体与标题完全不动
 	const avatarClass =
 		status === "attention"
@@ -53,7 +45,6 @@ function SessionTab({ session, isActive }: { session: SessionMeta; isActive: boo
 				switchSession(session.sessionId);
 				setView("chat");
 			}}
-			title={statusLabel}
 		>
 			<span
 				className={`relative flex h-4 w-4 shrink-0 items-center justify-center rounded text-[10px] font-semibold text-on-ink ${avatarClass}`}
@@ -75,7 +66,6 @@ function SessionTab({ session, isActive }: { session: SessionMeta; isActive: boo
 						e.stopPropagation();
 						void closeSession(session.sessionId);
 					}}
-					title={t("tabbar.close")}
 				>
 					<CloseIcon />
 				</span>
@@ -126,7 +116,6 @@ export function SessionTabBar() {
 					view === "projects" ? "bg-border/80 text-ink" : "text-ink-dim hover:bg-hover hover:text-ink"
 				}`}
 				onClick={() => setView(view === "projects" ? "chat" : "projects")}
-				title={t("projects.title")}
 				aria-label={t("projects.title")}
 			>
 				<GridIcon />
@@ -151,8 +140,7 @@ export function SessionTabBar() {
 						void createSession();
 						setView("chat");
 					}}
-					title={cwd ? t("tabbar.newSession") : t("tabbar.pickProjectFirst")}
-					aria-label={t("tabbar.newSession")}
+					aria-label={cwd ? t("tabbar.newSession") : t("tabbar.pickProjectFirst")}
 				>
 					<ComposeIcon size={15} />
 				</button>

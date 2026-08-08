@@ -46,7 +46,6 @@ export function ThinkingPicker() {
 		<div ref={ref} className="relative">
 			<button
 				type="button"
-				title={t("composer.thinkingSwitch")}
 				className="flex items-center gap-1 rounded-lg px-2 py-1 text-xs text-ink-dim transition-colors hover:bg-hover hover:text-ink"
 				onClick={() => setOpen((v) => !v)}
 			>

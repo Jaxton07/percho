@@ -43,7 +43,6 @@ export function SessionRow({ session }: { session: SessionMeta }) {
 						setConfirming(true);
 					}
 				}}
-				title={t("projects.delete")}
 			>
 				{confirming ? t("projects.confirmDelete") : <CloseIcon />}
 			</button>
