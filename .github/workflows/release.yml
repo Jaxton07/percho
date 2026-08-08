@@ -44,6 +44,7 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           gh release create "${{ github.ref_name }}" artifacts/* \
+            -R "${{ github.repository }}" \
             --title "${{ github.ref_name }}" \
             --notes-file - <<'EOF'
           First public release of **pi-desktop**.
