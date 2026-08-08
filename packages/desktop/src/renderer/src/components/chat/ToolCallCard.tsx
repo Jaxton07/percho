@@ -10,6 +10,8 @@ export function summarizeArgs(args: string): string {
 		if (typeof command === "string") return command;
 		const filePath = parsed.filePath ?? parsed.path ?? parsed.file;
 		if (typeof filePath === "string") return filePath;
+		const url = parsed.url;
+		if (typeof url === "string") return url;
 	} catch {
 		// 非 JSON，原样展示
 	}
