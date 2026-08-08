@@ -18,11 +18,11 @@
 
 **聊天页**
 
-![聊天页演示](docs/demo-chat.mp4)
+<video src="https://raw.githubusercontent.com/Jaxton07/pi-desktop/main/docs/demo-chat.mp4" controls></video>
 
 **设置页 —— 模型与 Provider**
 
-![设置页演示](docs/demo-settings.mp4)
+<video src="https://raw.githubusercontent.com/Jaxton07/pi-desktop/main/docs/demo-settings.mp4" controls></video>
 
 ## 为什么选择 pi-desktop？
 

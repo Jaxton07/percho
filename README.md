@@ -18,11 +18,11 @@
 
 **Chat**
 
-![Chat page demo](docs/demo-chat.mp4)
+<video src="https://raw.githubusercontent.com/Jaxton07/pi-desktop/main/docs/demo-chat.mp4" controls></video>
 
 **Settings — providers & models**
 
-![Settings page demo](docs/demo-settings.mp4)
+<video src="https://raw.githubusercontent.com/Jaxton07/pi-desktop/main/docs/demo-settings.mp4" controls></video>
 
 ## Why pi-desktop?
 
