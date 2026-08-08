@@ -64,6 +64,7 @@ export function MessageList() {
 	}, [lastUserMessageId, pinToBottom, updateFollowing]);
 
 	// 切换会话 → 回到底部并恢复跟随
+	// biome-ignore lint/correctness/useExhaustiveDependencies: activeSessionId 是刻意的重跑触发器（切换会话时重新贴底）
 	useEffect(() => {
 		updateFollowing(true);
 		pinToBottom();
