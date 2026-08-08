@@ -1,0 +1,32 @@
+appId: io.github.jaxton07.pi-desktop
+productName: pi-desktop
+directories:
+  output: dist
+files:
+  - out/**
+  - package.json
+  - "!node_modules/@pi-desktop"
+asarUnpack:
+  - "**/*.node"
+mac:
+  category: public.app-category.developer-tools
+  target:
+    - target: dmg
+      arch: [arm64, x64]
+    - target: zip
+      arch: [arm64, x64]
+  artifactName: ${productName}-mac-${arch}.${ext}
+win:
+  target:
+    - target: nsis
+      arch: [x64]
+    - target: zip
+      arch: [x64]
+  artifactName: ${productName}-windows-${arch}.${ext}
+nsis:
+  oneClick: false
+  allowToChangeInstallationDirectory: true
+publish:
+  provider: github
+  owner: Jaxton07
+  repo: pi-desktop

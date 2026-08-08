@@ -2,6 +2,9 @@
 	"name": "@pi-desktop/desktop",
 	"version": "0.1.0",
 	"private": true,
+	"description": "Desktop GUI for the Pi coding agent",
+	"author": "Jaxton07",
+	"license": "MIT",
 	"type": "module",
 	"main": "./out/main/index.js",
 	"scripts": {
@@ -13,6 +16,8 @@
 		"start": "electron-vite preview"
 	},
 	"dependencies": {
+		"@earendil-works/pi-ai": "0.84.0",
+		"@earendil-works/pi-coding-agent": "0.84.0",
 		"@pi-desktop/backend": "*",
 		"@pi-desktop/shared": "*",
 		"markstream-react": "^0.0.55",
@@ -25,7 +30,7 @@
 		"@types/react": "^19.2.0",
 		"@types/react-dom": "^19.2.0",
 		"@vitejs/plugin-react": "^5.1.1",
-		"electron": "^43.3.0",
+		"electron": "43.3.0",
 		"electron-builder": "^26.0.0",
 		"electron-vite": "^5.0.0",
 		"tailwindcss": "^4.3.3",
