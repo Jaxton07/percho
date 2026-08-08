@@ -21,6 +21,38 @@ jobs:
           node-version: 22
           cache: npm
       - run: npm ci
-      - run: npm run dist -w packages/desktop -- --publish always
+      - run: npm run dist -w packages/desktop -- --publish never
+      - uses: actions/upload-artifact@v4
+        with:
+          name: dist-${{ matrix.os }}
+          path: |
+            packages/desktop/dist/*
+            !packages/desktop/dist/mac
+            !packages/desktop/dist/mac-arm64
+            !packages/desktop/dist/win-unpacked
+          if-no-files-found: error
+  publish:
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+          merge-multiple: true
+      - name: Create GitHub release
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh release create "${{ github.ref_name }}" artifacts/* \
+            --title "${{ github.ref_name }}" \
+            --notes-file - <<'EOF'
+          First public release of **pi-desktop**.
+
+          | Platform | Download |
+          | --- | --- |
+          | macOS (Apple Silicon) | `pi-desktop-mac-arm64.dmg` |
+          | macOS (Intel) | `pi-desktop-mac-x64.dmg` |
+          | Windows | `pi-desktop-windows-x64.exe` (installer) or `pi-desktop-windows-x64.zip` |
+
+          > Builds are currently unsigned. On macOS, right-click the app and choose Open (or run `xattr -cr /Applications/pi-desktop.app`). On Windows, click "More info" → "Run anyway" when SmartScreen appears.
+          EOF
