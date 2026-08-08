@@ -103,6 +103,8 @@ export const useSessionsStore = create<SessionsStore>((set, get) => ({
 			}));
 			const history = await getPi().getSessionMessages(meta.sessionId);
 			useTranscriptStore.getState().loadHistory(meta.sessionId, messagesToUIMessages(history));
+			const followUpQueue = await getPi().getFollowUpMessages(meta.sessionId);
+			useTranscriptStore.getState().setFollowUpQueue(meta.sessionId, followUpQueue);
 			persistTabs(get());
 		} catch (error) {
 			set({ error: error instanceof Error ? error.message : String(error) });
@@ -122,6 +124,8 @@ export const useSessionsStore = create<SessionsStore>((set, get) => ({
 				seen.add(meta.sessionId);
 				const history = await getPi().getSessionMessages(meta.sessionId);
 				useTranscriptStore.getState().loadHistory(meta.sessionId, messagesToUIMessages(history));
+				const followUpQueue = await getPi().getFollowUpMessages(meta.sessionId);
+				useTranscriptStore.getState().setFollowUpQueue(meta.sessionId, followUpQueue);
 				opened.push(meta);
 				if (meta.sessionFile === saved.activeFile) activeId = meta.sessionId;
 			} catch {

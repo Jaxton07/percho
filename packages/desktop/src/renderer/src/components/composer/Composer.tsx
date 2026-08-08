@@ -2,10 +2,11 @@ import type { ImageInput, SlashCommandInfo } from "@pi-desktop/shared";
 import { useEffect, useRef, useState } from "react";
 import { getPi } from "../../api";
 import { useT } from "../../i18n";
+import { EMPTY_DRAFT, NEW_SESSION_DRAFT_KEY, useDraftStore } from "../../stores/drafts";
 import { useSessionsStore } from "../../stores/sessions";
 import { useSettingsStore } from "../../stores/settings";
 import { selectTranscript, useTranscriptStore } from "../../stores/transcript";
-import { ArrowUpIcon, CloseIcon, PlusIcon, StopIcon } from "../icons";
+import { ArrowUpIcon, CloseIcon, PlusIcon, StopIcon, UndoIcon } from "../icons";
 import { ContextRing } from "./ContextRing";
 import { ModelPicker } from "./ModelPicker";
 import { filterCommands, SlashMenu } from "./SlashMenu";
@@ -18,16 +19,29 @@ export function Composer({ centered = false }: { centered?: boolean }) {
 	const cwd = useSessionsStore((s) => s.cwd);
 	const createSession = useSessionsStore((s) => s.createSession);
 	const transcript = useTranscriptStore((s) => selectTranscript(s, activeSessionId));
-	const [text, setText] = useState("");
-	const [images, setImages] = useState<ImageInput[]>([]);
+	/** 草稿（文本/图片/命令胶囊）按会话持久：切换会话/空态↔列表态换 Composer 实例不丢、不串会话 */
+	const draftKey = activeSessionId ?? NEW_SESSION_DRAFT_KEY;
+	const draft = useDraftStore((s) => s.bySession[draftKey] ?? EMPTY_DRAFT);
+	const { text, images, slashCommand } = draft;
+	const updateDraft = useDraftStore((s) => s.updateDraft);
+	const setText = (updater: string | ((prev: string) => string)) => {
+		updateDraft(draftKey, (d) => ({ ...d, text: typeof updater === "function" ? updater(d.text) : updater }));
+	};
+	const setImages = (updater: ImageInput[] | ((prev: ImageInput[]) => ImageInput[])) => {
+		updateDraft(draftKey, (d) => ({
+			...d,
+			images: typeof updater === "function" ? updater(d.images) : updater,
+		}));
+	};
+	const setSlashCommand = (command: string | null) => {
+		updateDraft(draftKey, (d) => ({ ...d, slashCommand: command }));
+	};
 	const [previewImage, setPreviewImage] = useState<ImageInput | null>(null);
 	const [sending, setSending] = useState(false);
 	const [error, setError] = useState<string | null>(null);
 	const [feedback, setFeedback] = useState<string | null>(null);
 	const [slashSelected, setSlashSelected] = useState(0);
 	const [slashCommands, setSlashCommands] = useState<SlashCommandInfo[]>([]);
-	/** Tab/点击回填后确认的命令名：输入框显示为灰色胶囊，args 为普通文本 */
-	const [slashCommand, setSlashCommand] = useState<string | null>(null);
 	/** 点击面板外部后隐藏菜单（保留文本，再次输入时恢复） */
 	const [slashDismissed, setSlashDismissed] = useState(false);
 	const textareaRef = useRef<HTMLTextAreaElement>(null);
@@ -36,6 +50,9 @@ export function Composer({ centered = false }: { centered?: boolean }) {
 	const feedbackTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
 	const isStreaming = transcript.phase === "streaming" || sending;
+	const followUpQueue = transcript.followUpQueue;
+	/** 输入框有内容：streaming 中按钮从停止切回发送（入队后文本清空自动切回停止） */
+	const hasContent = Boolean(text.trim()) || images.length > 0 || Boolean(slashCommand);
 	/** 输入以 / 开头时打开命令面板；query = 第一个词（/ 后） */
 	const slashOpen = text.startsWith("/") && !slashDismissed;
 	const slashQuery = slashOpen ? (text.slice(1).split(" ")[0] ?? "") : "";
@@ -168,7 +185,15 @@ export function Composer({ centered = false }: { centered?: boolean }) {
 	const handleSend = async () => {
 		// 胶囊确认的命令 + args 拼回原始 /cmd 形式
 		const content = slashCommand ? `/${slashCommand}${text.trim() ? ` ${text.trim()}` : ""}` : text.trim();
-		if ((!content && images.length === 0) || isStreaming) return;
+		// 运行中（streaming）不拦截：prompt 走 followUp 排队；仅防双击重发（sending）
+		if ((!content && images.length === 0) || sending) return;
+		// 单条排队上限：已有一条且本次是普通文本则挡住（斜杠命令 streaming 中也可立即执行，不受限）
+		if (followUpQueue.length >= 1 && !content.startsWith("/")) {
+			showFeedback(t("composer.queueFull"));
+			return;
+		}
+		/** 发送前是否已在运行：排队失败不回滚工作中状态（run 并未受影响） */
+		const wasActive = transcript.agentActive;
 
 		let sessionId = activeSessionId;
 		if (content.startsWith("/") && images.length === 0) {
@@ -205,12 +230,34 @@ export function Composer({ centered = false }: { centered?: boolean }) {
 		try {
 			await getPi().prompt(sessionId, content, sentImages.length > 0 ? sentImages : undefined);
 		} catch (err) {
-			useTranscriptStore.getState().markAgentActive(sessionId, false);
+			useTranscriptStore.getState().markAgentActive(sessionId, wasActive);
 			setError(err instanceof Error ? err.message : String(err));
 			setImages(sentImages);
 		} finally {
 			setSending(false);
 		}
+	};
+
+	/** 停止：先清排队（避免 abort 后 SDK 把排队消息投递出去）并还原为草稿，再中止 */
+	const handleStop = async () => {
+		if (!activeSessionId) return;
+		useTranscriptStore.getState().setFollowUpQueue(activeSessionId, []); // 乐观清面板
+		const cleared = await getPi().clearQueue(activeSessionId);
+		if (cleared.followUp.length > 0) {
+			const restored = cleared.followUp.join("\n");
+			setText((prev) => (prev ? `${prev}\n${restored}` : restored));
+		}
+		await getPi().abort(activeSessionId);
+	};
+
+	/** 取回排队消息：清队列（SDK 侧 queue_update 随后对齐），内容放回输入框继续编辑 */
+	const handleRestoreQueue = async () => {
+		if (!activeSessionId) return;
+		useTranscriptStore.getState().setFollowUpQueue(activeSessionId, []); // 乐观清面板
+		const cleared = await getPi().clearQueue(activeSessionId);
+		const restored = cleared.followUp[0];
+		if (restored) setText((prev) => (prev ? `${prev}\n${restored}` : restored));
+		requestAnimationFrame(() => textareaRef.current?.focus());
 	};
 
 	/** 菜单选中命令：无参内置立即执行；带参内置/模板/技能回填继续编辑 */
@@ -367,6 +414,28 @@ export function Composer({ centered = false }: { centered?: boolean }) {
 						onPick={(command) => void handleSlashPick(command)}
 					/>
 				)}
+				{followUpQueue.length > 0 && (
+					<div className="group/queue relative mb-1.5 flex items-center gap-2 overflow-hidden rounded-xl bg-white px-3 py-1.5 shadow-[0_0_14px_-2px_rgba(24,24,27,0.08)]">
+						<span className="shrink-0 text-[12px] text-zinc-400">{t("composer.queueTitle")}</span>
+						<span className="min-w-0 flex-1 truncate text-[13px] text-zinc-600">{followUpQueue[0]}</span>
+						{/* 撤销层：hover 行才显示；渐变模糊压住下方文字，仅镂空图标可点（防误点） */}
+						<div className="pointer-events-none absolute inset-y-0 right-0 flex w-14 items-center justify-end pr-2.5 opacity-0 transition-opacity group-hover/queue:opacity-100">
+							<span
+								className="absolute inset-0 bg-gradient-to-l from-white/60 to-transparent backdrop-blur-[3px] [mask-image:linear-gradient(to_left,black_45%,transparent)]"
+								aria-hidden="true"
+							/>
+							<button
+								type="button"
+								className="pointer-events-auto relative flex items-center justify-center text-zinc-400 transition-colors hover:text-zinc-700"
+								title={t("composer.queueRestore")}
+								aria-label={t("composer.queueRestore")}
+								onClick={() => void handleRestoreQueue()}
+							>
+								<UndoIcon size={14} />
+							</button>
+						</div>
+					</div>
+				)}
 				{images.length > 0 && (
 					<div className="mb-1.5 flex flex-wrap items-end gap-2">
 						{images.map((image, index) => (
@@ -424,7 +493,7 @@ export function Composer({ centered = false }: { centered?: boolean }) {
 						<textarea
 							ref={textareaRef}
 							className="max-h-[200px] w-full resize-none rounded-t-2xl px-4 pt-5 pb-2 text-[14px] leading-relaxed bg-transparent outline-none placeholder:text-zinc-400 select-text"
-							placeholder={t("composer.placeholder")}
+							placeholder={isStreaming ? t("composer.placeholderQueued") : t("composer.placeholder")}
 							value={text}
 							rows={1}
 							onChange={(e) => {
@@ -460,13 +529,11 @@ export function Composer({ centered = false }: { centered?: boolean }) {
 						<div className="flex-1" />
 						<ModelPicker />
 						<ThinkingPicker />
-						{isStreaming ? (
+						{isStreaming && !hasContent ? (
 							<button
 								type="button"
 								className="flex h-8 w-8 items-center justify-center rounded-full bg-zinc-900 text-white transition-colors hover:bg-red-600"
-								onClick={() => {
-									if (activeSessionId) void getPi().abort(activeSessionId);
-								}}
+								onClick={() => void handleStop()}
 								title={t("composer.stop")}
 								aria-label={t("composer.stop")}
 							>
@@ -476,7 +543,7 @@ export function Composer({ centered = false }: { centered?: boolean }) {
 							<button
 								type="button"
 								className="flex h-8 w-8 items-center justify-center rounded-full bg-zinc-900 text-white transition-colors hover:bg-zinc-700 disabled:opacity-30"
-								disabled={(!text.trim() && images.length === 0 && !slashCommand) || isStreaming}
+								disabled={!hasContent || sending}
 								onClick={() => void handleSend()}
 								title={t("composer.send")}
 								aria-label={t("composer.send")}

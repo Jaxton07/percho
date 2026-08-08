@@ -98,8 +98,14 @@ export interface ContextUsageInfo {
 	tokens: number | null;
 	/** 模型最大上下文窗口 */
 	contextWindow: number;
-	/** 已用百分比（0-100） */
+	/** 已用百分比（0-100），未知为 null */
 	percent: number | null;
+}
+
+/** 运行中排队的消息（clearQueue 返回结构；桌面端只用 followUp，steering 恒为空） */
+export interface QueuedMessages {
+	steering: string[];
+	followUp: string[];
 }
 
 export interface CreateSessionOptions {

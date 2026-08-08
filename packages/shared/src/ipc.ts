@@ -5,6 +5,7 @@ import type {
 	ImageInput,
 	PermissionAnswer,
 	PermissionRequest,
+	QueuedMessages,
 	SavedTabs,
 	SessionEventEnvelope,
 	SessionMessage,
@@ -33,6 +34,8 @@ export const IpcChannels = {
 	SessionCompact: "session:compact",
 	SessionStats: "session:stats",
 	SessionGetContextUsage: "session:getContextUsage",
+	SessionClearQueue: "session:clearQueue",
+	SessionGetFollowUpMessages: "session:getFollowUpMessages",
 	SessionListSlashCommands: "session:listSlashCommands",
 	SessionSetName: "session:setName",
 	SessionExport: "session:export",
@@ -86,6 +89,10 @@ export interface PiApi {
 	getStats(sessionId: string): Promise<SessionStats>;
 	/** 当前模型上下文使用（tokens/contextWindow/percent），无会话或未知时返回 null */
 	getContextUsage(sessionId: string): Promise<ContextUsageInfo | null>;
+	/** 清空运行中排队的消息（steer+followUp 都清），返回被清内容（abort 时还原草稿/队列面板清空按钮用） */
+	clearQueue(sessionId: string): Promise<QueuedMessages>;
+	/** 当前排队的 followUp 消息文本（切换会话回来自恢复队列面板用） */
+	getFollowUpMessages(sessionId: string): Promise<string[]>;
 	/** 列出斜杠命令（内置 + prompt 模板 + skill + 扩展命令） */
 	listSlashCommands(sessionId: string): Promise<SlashCommandInfo[]>;
 	/** 设置会话显示名（触发 session_info_changed 事件） */

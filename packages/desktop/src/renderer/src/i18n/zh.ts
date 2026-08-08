@@ -23,6 +23,7 @@ export const zh = {
 	},
 	composer: {
 		placeholder: "随便问点什么，/ 命令，@ 上下文",
+		placeholderQueued: "排队消息，当前任务完成后自动发送",
 		stop: "停止",
 		send: "发送",
 		hint: "Enter 发送 · Shift+Enter 换行",
@@ -32,6 +33,9 @@ export const zh = {
 		addImage: "添加图片",
 		removeImage: "移除图片",
 		previewImage: "查看图片",
+		queueTitle: "排队中",
+		queueRestore: "取回编辑",
+		queueFull: "已有一条排队消息，取回后再发",
 	},
 	slash: {
 		noMatch: "没有匹配的命令",

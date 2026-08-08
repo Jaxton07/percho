@@ -276,6 +276,9 @@ export class PiBackend {
 		const entry = this.requireSession(sessionId);
 		log.info("prompt", sessionId, { text: text.slice(0, 120), images: images?.length ?? 0 });
 		await entry.session.prompt(text, {
+			// 运行中发送走 followUp 排队（agent 完成后自动投递；steer 打断暂不支持）
+			// SDK 要求 streaming 时必传 streamingBehavior，否则抛错
+			streamingBehavior: "followUp",
 			images: images?.map((image) => ({
 				type: "image" as const,
 				data: image.data,
@@ -289,6 +292,21 @@ export class PiBackend {
 		if (!entry) return;
 		log.info("abort", sessionId);
 		await entry.session.abort();
+	}
+
+	/** 清空运行中排队消息（steer+followUp 都清），返回被清内容；无会话返回空 */
+	async clearQueue(sessionId: string): Promise<{ steering: string[]; followUp: string[] }> {
+		const entry = this.registry.get(sessionId);
+		if (!entry) return { steering: [], followUp: [] };
+		log.info("clearQueue", sessionId);
+		return entry.session.clearQueue();
+	}
+
+	/** 当前排队的 followUp 消息文本；无会话返回空 */
+	async getFollowUpMessages(sessionId: string): Promise<string[]> {
+		const entry = this.registry.get(sessionId);
+		if (!entry) return [];
+		return [...entry.session.getFollowUpMessages()];
 	}
 
 	async setModel(sessionId: string, provider: string, modelId: string): Promise<void> {

@@ -25,6 +25,7 @@ export const en: Messages = {
 	},
 	composer: {
 		placeholder: "Ask anything, / for commands, @ for context",
+		placeholderQueued: "Queue a message — sent when the current task finishes",
 		stop: "Stop",
 		send: "Send",
 		hint: "Enter to send · Shift+Enter for newline",
@@ -34,6 +35,9 @@ export const en: Messages = {
 		addImage: "Add image",
 		removeImage: "Remove image",
 		previewImage: "View image",
+		queueTitle: "Queued",
+		queueRestore: "Take back to editor",
+		queueFull: "A message is already queued — take it back first",
 	},
 	slash: {
 		noMatch: "No matching commands",

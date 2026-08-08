@@ -68,10 +68,12 @@ export interface SessionTranscriptState {
 	phase: SessionPhase;
 	/** agent 运行中（用户发消息后 → 下一次正文回复间为 true，agent 结束/中止为 false） */
 	agentActive: boolean;
+	/** 运行中排队的 followUp 消息文本（SDK queue_update 事件整组替换；agent 完成自动投递后清空） */
+	followUpQueue: string[];
 }
 
 export function emptyTranscript(): SessionTranscriptState {
-	return { messages: [], streaming: null, phase: "idle", agentActive: false };
+	return { messages: [], streaming: null, phase: "idle", agentActive: false, followUpQueue: [] };
 }
 
 function emptyStreaming(): StreamingState {
@@ -313,6 +315,9 @@ export function reduceEvent(state: SessionTranscriptState, event: AgentSessionEv
 			});
 		case "agent_settled":
 			return finalizeStreaming({ ...state, phase: "idle", agentActive: false });
+		case "queue_update":
+			// SDK 整组下发（steering 桌面端不用）；投递/清空都由 SDK 侧触发后推新数组
+			return { ...state, followUpQueue: [...event.followUp] };
 		case "compaction_start": {
 			const pending: UIMessage = {
 				kind: "system",

@@ -55,6 +55,10 @@ function registerIpc(): void {
 	ipcMain.handle(IpcChannels.SessionGetContextUsage, (_e, sessionId: string) =>
 		backend.getContextUsage(sessionId),
 	);
+	ipcMain.handle(IpcChannels.SessionClearQueue, (_e, sessionId: string) => backend.clearQueue(sessionId));
+	ipcMain.handle(IpcChannels.SessionGetFollowUpMessages, (_e, sessionId: string) =>
+		backend.getFollowUpMessages(sessionId),
+	);
 	ipcMain.handle(IpcChannels.SessionListSlashCommands, (_e, sessionId: string) =>
 		backend.listSlashCommands(sessionId),
 	);

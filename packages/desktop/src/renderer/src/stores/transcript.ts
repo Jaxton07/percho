@@ -38,6 +38,8 @@ interface TranscriptStore {
 	resetSession: (sessionId: string) => void;
 	/** 打开历史会话时回放已有消息（不触发 reducer 事件流） */
 	loadHistory: (sessionId: string, messages: UIMessage[]) => void;
+	/** 直接设置排队中的 followUp（打开/切换会话时从 backend 拉初始值；运行中由 queue_update 事件驱动） */
+	setFollowUpQueue: (sessionId: string, queue: string[]) => void;
 }
 
 export const useTranscriptStore = create<TranscriptStore>((set) => ({
@@ -110,7 +112,22 @@ export const useTranscriptStore = create<TranscriptStore>((set) => ({
 						streaming: null,
 						phase: "idle",
 						agentActive: false,
+						followUpQueue: current?.followUpQueue ?? [],
 						pendingPermissions: current?.pendingPermissions ?? [],
+					},
+				},
+			};
+		});
+	},
+	setFollowUpQueue: (sessionId, queue) => {
+		set((state) => {
+			const current = state.bySession[sessionId];
+			return {
+				bySession: {
+					...state.bySession,
+					[sessionId]: {
+						...(current ?? { ...EMPTY_ENTRY }),
+						followUpQueue: queue,
 					},
 				},
 			};

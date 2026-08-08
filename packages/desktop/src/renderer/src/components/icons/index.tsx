@@ -157,6 +157,25 @@ export function ArrowUpIcon({ size = 14, className }: IconProps) {
 	);
 }
 
+/** 撤销/取回（回卷箭头，描边镂空） */
+export function UndoIcon({ size = 14, className }: IconProps) {
+	return (
+		<svg
+			className={className}
+			width={size}
+			height={size}
+			viewBox="0 0 24 24"
+			{...strokeProps}
+			strokeLinecap="round"
+			strokeLinejoin="round"
+			aria-hidden="true"
+		>
+			<path d="M9 14 4 9l5-5" />
+			<path d="M4 9h10.5a5.5 5.5 0 0 1 0 11H11" />
+		</svg>
+	);
+}
+
 /** 停止（方块） */
 export function StopIcon({ size = 10, className }: IconProps) {
 	return (
