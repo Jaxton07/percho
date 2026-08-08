@@ -163,7 +163,6 @@ export const zh = {
 			configured: "已配置",
 			unconfigured: "未配置",
 			test: "测试",
-			testing: "测试中…",
 			testOk: "连接正常（{modelId}）",
 			testFailed: "测试失败：{error}",
 			configKey: "配置 Key",

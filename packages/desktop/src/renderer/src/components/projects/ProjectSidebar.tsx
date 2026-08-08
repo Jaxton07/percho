@@ -4,6 +4,7 @@ import { useT } from "../../i18n";
 import { deriveProjects, useProjectsStore } from "../../stores/projects";
 import { useSettingsStore } from "../../stores/settings";
 import { CloseIcon, GearIcon, HelpIcon, PlusIcon } from "../icons";
+import { Tooltip } from "../ui/Tooltip";
 
 const PI_REPO_URL = "https://github.com/earendil-works/pi";
 
@@ -26,15 +27,16 @@ export function ProjectSidebar() {
 		<aside className="flex w-60 shrink-0 flex-col border-r border-border">
 			<div className="flex items-center justify-between px-4 pt-3 pb-2">
 				<span className="text-[13px] font-medium text-ink">{t("projects.title")}</span>
-				<button
-					type="button"
-					className="rounded-lg p-1 text-ink-faint transition-colors hover:bg-hover hover:text-ink-2"
-					onClick={() => void addProject()}
-					title={t("projects.addProject")}
-					aria-label={t("projects.addProject")}
-				>
-					<PlusIcon />
-				</button>
+				<Tooltip label={t("projects.addProject")}>
+					<button
+						type="button"
+						className="rounded-lg p-1 text-ink-faint transition-colors hover:bg-hover hover:text-ink-2"
+						onClick={() => void addProject()}
+						aria-label={t("projects.addProject")}
+					>
+						<PlusIcon />
+					</button>
+				</Tooltip>
 			</div>
 			<div className="min-h-0 flex-1 overflow-y-auto px-3 pb-2">
 				{projects.length === 0 && (
@@ -98,8 +100,8 @@ function ProjectItem({
 				title={project.cwd}
 			>
 				<span
-					className={`flex h-5 w-5 shrink-0 items-center justify-center rounded text-[11px] font-semibold text-white ${
-						isActive ? "bg-violet-500" : "bg-ink-faint"
+					className={`flex h-5 w-5 shrink-0 items-center justify-center rounded text-[11px] font-semibold text-on-ink ${
+						isActive ? "bg-ink" : "bg-ink-faint"
 					}`}
 				>
 					{(project.name[0] ?? "P").toUpperCase()}
@@ -118,7 +120,6 @@ function ProjectItem({
 						setConfirming(true);
 					}
 				}}
-				title={t("projects.deleteProject")}
 			>
 				{confirming ? t("projects.confirmDeleteProject") : <CloseIcon />}
 			</button>

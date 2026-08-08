@@ -28,3 +28,15 @@ export {
 	type TrustOptionInternal,
 	type TrustResponder,
 } from "./trust";
+export {
+	assertPublicUrl,
+	type Cidr,
+	FAKE_IP_CIDR,
+	htmlToText,
+	ipInCidr,
+	isPublicIp,
+	makeWebFetchTool,
+	parseCidr,
+	type WebFetchDetails,
+	type WebFetchOptions,
+} from "./webfetch";

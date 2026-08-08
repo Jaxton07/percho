@@ -1,5 +1,6 @@
 import type { AgentSessionEvent } from "@pi-desktop/shared";
-import { describe, expect, it } from "vitest";
+import { beforeEach, describe, expect, it } from "vitest";
+import { useTranscriptStore } from "./transcript";
 import { emptyTranscript, reduceEvent } from "./transcript-reducer";
 
 function ev(type: string, extra: Record<string, unknown> = {}): AgentSessionEvent {
@@ -356,5 +357,58 @@ describe("transcript reducer", () => {
 		// 投递完成 SDK 推空数组
 		state = reduceEvent(state, ev("queue_update", { steering: [], followUp: [] }));
 		expect(state.followUpQueue).toEqual([]);
+	});
+});
+
+describe("transcript store unseenCompletion", () => {
+	beforeEach(() => {
+		useTranscriptStore.setState({ bySession: {} });
+	});
+
+	function entry(sessionId: string) {
+		return useTranscriptStore.getState().bySession[sessionId];
+	}
+
+	it("后台会话 agent 结束 → 置完成未读；查看后清除", () => {
+		const store = useTranscriptStore.getState();
+		store.applyEvent("s1", ev("agent_start"), { isActiveViewing: false });
+		expect(entry("s1")?.unseenCompletion).toBe(false);
+		store.applyEvent("s1", ev("agent_end"), { isActiveViewing: false });
+		expect(entry("s1")?.agentActive).toBe(false);
+		expect(entry("s1")?.unseenCompletion).toBe(true);
+		useTranscriptStore.getState().markCompletionSeen("s1");
+		expect(entry("s1")?.unseenCompletion).toBe(false);
+	});
+
+	it("正被查看的会话结束 → 不置未读", () => {
+		const store = useTranscriptStore.getState();
+		store.applyEvent("s1", ev("agent_start"), { isActiveViewing: true });
+		store.applyEvent("s1", ev("agent_end"), { isActiveViewing: true });
+		expect(entry("s1")?.unseenCompletion).toBe(false);
+	});
+
+	it("重新开工清除未读；willRetry 不算完成", () => {
+		const store = useTranscriptStore.getState();
+		store.applyEvent("s1", ev("agent_start"), { isActiveViewing: false });
+		store.applyEvent("s1", ev("agent_end", { willRetry: true }), { isActiveViewing: false });
+		expect(entry("s1")?.agentActive).toBe(true);
+		expect(entry("s1")?.unseenCompletion).toBe(false);
+		store.applyEvent("s1", ev("agent_end"), { isActiveViewing: false });
+		expect(entry("s1")?.unseenCompletion).toBe(true);
+		// 新一轮开工清除
+		store.applyEvent("s1", ev("agent_start"), { isActiveViewing: false });
+		expect(entry("s1")?.unseenCompletion).toBe(false);
+	});
+
+	it("markAgentActive 乐观开工清未读；失败回滚不误置", () => {
+		const store = useTranscriptStore.getState();
+		store.applyEvent("s1", ev("agent_start"), { isActiveViewing: false });
+		store.applyEvent("s1", ev("agent_end"), { isActiveViewing: false });
+		expect(entry("s1")?.unseenCompletion).toBe(true);
+		useTranscriptStore.getState().markAgentActive("s1", true);
+		expect(entry("s1")?.unseenCompletion).toBe(false);
+		// 发送失败回滚 false：不算完成，未读保持 false
+		useTranscriptStore.getState().markAgentActive("s1", false);
+		expect(entry("s1")?.unseenCompletion).toBe(false);
 	});
 });

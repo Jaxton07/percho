@@ -33,7 +33,7 @@ function ProjectPicker() {
 		<Dropdown
 			trigger={
 				<span className="flex items-center gap-1.5">
-					<span className="flex h-4.5 w-4.5 items-center justify-center rounded bg-emerald-600 text-[10px] font-semibold text-white">
+					<span className="flex h-4.5 w-4.5 items-center justify-center rounded bg-ink text-[10px] font-semibold text-on-ink">
 						{(name?.[0] ?? "P").toUpperCase()}
 					</span>
 					{name ?? t("projects.selectProject")}
@@ -54,7 +54,7 @@ function ProjectPicker() {
 								close();
 							}}
 						>
-							<span className="flex h-4.5 w-4.5 shrink-0 items-center justify-center rounded bg-ink-faint text-[10px] font-semibold text-white">
+							<span className="flex h-4.5 w-4.5 shrink-0 items-center justify-center rounded bg-ink-faint text-[10px] font-semibold text-on-ink">
 								{(project.name[0] ?? "P").toUpperCase()}
 							</span>
 							<span className="truncate">{project.name}</span>

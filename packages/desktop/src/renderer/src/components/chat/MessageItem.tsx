@@ -31,7 +31,6 @@ function CopyButton({ text }: { text: string }) {
 		<button
 			type="button"
 			onClick={handleCopy}
-			title={copied ? t("message.copied") : t("message.copy")}
 			aria-label={copied ? t("message.copied") : t("message.copy")}
 			className="flex h-6 w-6 items-center justify-center rounded-md text-ink-faint opacity-0 transition-opacity duration-150 hover:bg-border/70 hover:text-ink-2 focus-visible:opacity-100 group-hover:opacity-100"
 		>
@@ -96,7 +95,6 @@ export const MessageItem = memo(function MessageItem({
 									key={index}
 									type="button"
 									className="h-16 w-16 overflow-hidden rounded-lg border border-border"
-									title={t("composer.previewImage")}
 									onClick={() => setPreviewImage(image)}
 								>
 									<img
@@ -124,7 +122,6 @@ export const MessageItem = memo(function MessageItem({
 						type="button"
 						className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 p-8"
 						onClick={() => setPreviewImage(null)}
-						title={t("common.close")}
 					>
 						<img
 							src={imageSrc(previewImage)}

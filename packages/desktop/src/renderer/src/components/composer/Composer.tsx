@@ -427,7 +427,6 @@ export function Composer({ centered = false }: { centered?: boolean }) {
 							<button
 								type="button"
 								className="pointer-events-auto relative flex items-center justify-center text-ink-faint transition-colors hover:text-ink-2"
-								title={t("composer.queueRestore")}
 								aria-label={t("composer.queueRestore")}
 								onClick={() => void handleRestoreQueue()}
 							>
@@ -447,7 +446,6 @@ export function Composer({ centered = false }: { centered?: boolean }) {
 								<button
 									type="button"
 									className="block h-16 w-16 overflow-hidden rounded-lg border border-border bg-surface"
-									title={t("composer.previewImage")}
 									onClick={() => setPreviewImage(image)}
 								>
 									<img
@@ -459,7 +457,6 @@ export function Composer({ centered = false }: { centered?: boolean }) {
 								<button
 									type="button"
 									className="absolute -right-1.5 -top-1.5 flex h-4 w-4 items-center justify-center rounded-full bg-ink text-on-ink shadow transition-colors hover:bg-red-600"
-									title={t("composer.removeImage")}
 									aria-label={t("composer.removeImage")}
 									onClick={() => setImages((prev) => prev.filter((_, i) => i !== index))}
 								>
@@ -519,7 +516,6 @@ export function Composer({ centered = false }: { centered?: boolean }) {
 						<button
 							type="button"
 							className="-ml-1 -mb-1 flex h-7 w-7 items-center justify-center rounded-lg text-ink-dim transition-colors hover:bg-hover hover:text-ink"
-							title={t("composer.addImage")}
 							aria-label={t("composer.addImage")}
 							onClick={() => fileInputRef.current?.click()}
 						>
@@ -534,7 +530,6 @@ export function Composer({ centered = false }: { centered?: boolean }) {
 								type="button"
 								className="flex h-8 w-8 items-center justify-center rounded-full bg-ink text-on-ink transition-colors hover:bg-red-600"
 								onClick={() => void handleStop()}
-								title={t("composer.stop")}
 								aria-label={t("composer.stop")}
 							>
 								<StopIcon />
@@ -545,7 +540,6 @@ export function Composer({ centered = false }: { centered?: boolean }) {
 								className="flex h-8 w-8 items-center justify-center rounded-full bg-ink text-on-ink transition-colors hover:bg-ink-2 disabled:opacity-30"
 								disabled={!hasContent || sending}
 								onClick={() => void handleSend()}
-								title={t("composer.send")}
 								aria-label={t("composer.send")}
 							>
 								<ArrowUpIcon size={20} />
@@ -559,7 +553,6 @@ export function Composer({ centered = false }: { centered?: boolean }) {
 					type="button"
 					className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 p-8"
 					onClick={() => setPreviewImage(null)}
-					title={t("common.close")}
 				>
 					<img
 						src={imageSrc(previewImage)}

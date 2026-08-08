@@ -36,6 +36,7 @@ import { SettingsService } from "./settings";
 import { TraceRecorder } from "./trace";
 import { resolveProjectTrust, TrustGate } from "./trust";
 import { makeUiContext } from "./ui-context";
+import { makeWebFetchTool } from "./webfetch";
 
 const log = createLogger("backend");
 
@@ -52,6 +53,8 @@ export interface PiBackendOptions {
 	permissionExtension?: boolean;
 	/** 是否启用项目信任门控（false 时所有项目自动信任，项目资源直接加载；供无人值守场景用） */
 	projectTrust?: boolean;
+	/** 是否内置 webfetch 工具（默认 true）；传对象可配置 CIDR 放行 */
+	webFetch?: boolean | { allowRanges?: string[] };
 }
 
 type EventHandler = (sessionId: string, event: AgentSessionEvent) => void;
@@ -79,6 +82,16 @@ export class PiBackend {
 	readonly settings = new SettingsService(() => this.getModelRuntime());
 
 	constructor(private readonly options: PiBackendOptions = {}) {}
+
+	/** 自定义工具 = 调用方传入的 + 内置 webfetch（webFetch:false 关闭） */
+	private buildCustomTools(): ToolDefinition[] {
+		const tools = [...(this.options.customTools ?? [])];
+		const webFetch = this.options.webFetch;
+		if (webFetch !== false) {
+			tools.push(makeWebFetchTool(typeof webFetch === "object" ? webFetch : undefined));
+		}
+		return tools;
+	}
 
 	private async getModelRuntime(): Promise<ModelRuntime> {
 		if (this.modelRuntime) return this.modelRuntime;
@@ -179,7 +192,7 @@ export class PiBackend {
 			model,
 			thinkingLevel: options.thinkingLevel as ThinkingLevel | undefined,
 			tools: this.options.tools,
-			customTools: this.options.customTools,
+			customTools: this.buildCustomTools(),
 			sessionManager: SessionManager.create(cwd),
 			settingsManager,
 			resourceLoader,
@@ -214,6 +227,7 @@ export class PiBackend {
 			modelRuntime: runtime,
 			settingsManager,
 			resourceLoader,
+			customTools: this.buildCustomTools(),
 		});
 		const unsubscribe = session.subscribe((event) => {
 			autoNameSession(session, event);

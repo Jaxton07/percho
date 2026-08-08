@@ -68,12 +68,21 @@ export interface SessionTranscriptState {
 	phase: SessionPhase;
 	/** agent 运行中（用户发消息后 → 下一次正文回复间为 true，agent 结束/中止为 false） */
 	agentActive: boolean;
+	/** 后台会话完成未读（agentActive true→false 时该会话未被查看则置 true；查看/重新开工清除）。reducer 不维护，由 store 层按 isActiveViewing 处理 */
+	unseenCompletion: boolean;
 	/** 运行中排队的 followUp 消息文本（SDK queue_update 事件整组替换；agent 完成自动投递后清空） */
 	followUpQueue: string[];
 }
 
 export function emptyTranscript(): SessionTranscriptState {
-	return { messages: [], streaming: null, phase: "idle", agentActive: false, followUpQueue: [] };
+	return {
+		messages: [],
+		streaming: null,
+		phase: "idle",
+		agentActive: false,
+		unseenCompletion: false,
+		followUpQueue: [],
+	};
 }
 
 function emptyStreaming(): StreamingState {

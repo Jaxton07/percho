@@ -30,9 +30,12 @@ const EMPTY_ENTRY: SessionEntry = { ...emptyTranscript(), pendingPermissions: []
 
 interface TranscriptStore {
 	bySession: Record<string, SessionEntry>;
-	applyEvent: (sessionId: string, event: AgentSessionEvent) => void;
+	/** isActiveViewing：事件到达时该会话是否正被查看（活跃 tab 且 chat 视图），由调用方判定避免依赖 sessions store */
+	applyEvent: (sessionId: string, event: AgentSessionEvent, opts?: { isActiveViewing?: boolean }) => void;
 	/** 乐观置 agent 运行状态（发送消息后立即置 true，失败/结束后置 false 修正） */
 	markAgentActive: (sessionId: string, active: boolean) => void;
+	/** 清除完成未读标记（切到该会话/回到 chat 视图时调用） */
+	markCompletionSeen: (sessionId: string) => void;
 	addPermission: (sessionId: string, req: PermissionRequest) => void;
 	resolvePermission: (sessionId: string, requestId: string) => void;
 	resetSession: (sessionId: string) => void;
@@ -44,14 +47,23 @@ interface TranscriptStore {
 
 export const useTranscriptStore = create<TranscriptStore>((set) => ({
 	bySession: {},
-	applyEvent: (sessionId, event) => {
+	applyEvent: (sessionId, event, opts) => {
 		set((state) => {
 			const current = state.bySession[sessionId];
-			const next = reduceEvent(current ?? emptyTranscript(), event);
+			const prev = current ?? emptyTranscript();
+			const next = reduceEvent(prev, event);
+			// 完成未读：agentActive true→false 且当时未被查看 → 置标记；重新开工 → 清除
+			let unseenCompletion = prev.unseenCompletion;
+			if (next.agentActive) unseenCompletion = false;
+			else if (prev.agentActive && !opts?.isActiveViewing) unseenCompletion = true;
 			return {
 				bySession: {
 					...state.bySession,
-					[sessionId]: { ...next, pendingPermissions: current?.pendingPermissions ?? [] },
+					[sessionId]: {
+						...next,
+						unseenCompletion,
+						pendingPermissions: current?.pendingPermissions ?? [],
+					},
 				},
 			};
 		});
@@ -63,7 +75,24 @@ export const useTranscriptStore = create<TranscriptStore>((set) => ({
 			return {
 				bySession: {
 					...state.bySession,
-					[sessionId]: { ...current, agentActive: active },
+					// 乐观开工同时清未读；失败回滚 false 不算"完成"，不动未读标记
+					[sessionId]: {
+						...current,
+						agentActive: active,
+						unseenCompletion: active ? false : current.unseenCompletion,
+					},
+				},
+			};
+		});
+	},
+	markCompletionSeen: (sessionId) => {
+		set((state) => {
+			const current = state.bySession[sessionId];
+			if (!current?.unseenCompletion) return state;
+			return {
+				bySession: {
+					...state.bySession,
+					[sessionId]: { ...current, unseenCompletion: false },
 				},
 			};
 		});
@@ -112,6 +141,7 @@ export const useTranscriptStore = create<TranscriptStore>((set) => ({
 						streaming: null,
 						phase: "idle",
 						agentActive: false,
+						unseenCompletion: false,
 						followUpQueue: current?.followUpQueue ?? [],
 						pendingPermissions: current?.pendingPermissions ?? [],
 					},

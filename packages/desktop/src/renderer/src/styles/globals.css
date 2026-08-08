@@ -151,6 +151,27 @@
 	}
 }
 
+/* 会话 tab 状态：全部收拢到头像图标（颜色即语义），胶囊本体不动。
+   工作中 = 蓝底头像 MacBook 睡眠灯式慢呼吸（仅透明度起伏）；等待审批 = 静态琥珀；
+   完成未读 = 图标右上角 iOS 式绿点角标（静态，查看即消） */
+.tab-avatar-working {
+	animation: avatar-breathe 3.2s ease-in-out infinite;
+}
+@keyframes avatar-breathe {
+	0%,
+	100% {
+		opacity: 0.55;
+	}
+	50% {
+		opacity: 1;
+	}
+}
+@media (prefers-reduced-motion: reduce) {
+	.tab-avatar-working {
+		animation: none;
+	}
+}
+
 html,
 body,
 #root {
