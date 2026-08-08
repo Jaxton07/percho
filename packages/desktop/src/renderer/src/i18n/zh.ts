@@ -98,6 +98,7 @@ export const zh = {
 	message: {
 		copy: "复制",
 		copied: "已复制",
+		scrollToBottom: "回到底部",
 		thinking: "思考过程",
 		thinkingPreview: "思考中",
 		working: "工作中",

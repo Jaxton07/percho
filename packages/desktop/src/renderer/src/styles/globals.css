@@ -141,19 +141,29 @@ code {
 	background: transparent;
 }
 
-/* Working 文字高亮扫过（codex 风格）：光带只扫文字本身，背景不变（background-clip: text） */
+/* Working 文字高亮扫过（codex 风格）：光带只扫文字本身，背景不变（background-clip: text）。
+   光带位于渐变 40–60%（图宽 200%），仅当 background-position ∈ (-20%, 120%) 时可见——
+   动画精确走 120% → -20% 且 linear：首尾光带都在视口外，循环无缝无重置卡顿。 */
 .shimmer-sweep {
 	background-image: linear-gradient(90deg, currentColor 40%, rgba(255, 255, 255, 0.9) 50%, currentColor 60%);
 	background-size: 200% 100%;
-	background-position: 200% 0;
+	background-position: 120% 0;
 	-webkit-background-clip: text;
 	background-clip: text;
 	-webkit-text-fill-color: transparent;
-	animation: shimmer-sweep 2.2s ease-in-out infinite;
+	animation: shimmer-sweep 1.6s linear infinite;
 }
 @keyframes shimmer-sweep {
+	from {
+		background-position: 120% 0;
+	}
 	to {
-		background-position: -100% 0;
+		background-position: -20% 0;
+	}
+}
+@media (prefers-reduced-motion: reduce) {
+	.shimmer-sweep {
+		animation: none;
 	}
 }
 

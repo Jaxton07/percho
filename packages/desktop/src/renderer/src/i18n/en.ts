@@ -100,6 +100,7 @@ export const en: Messages = {
 	message: {
 		copy: "Copy",
 		copied: "Copied",
+		scrollToBottom: "Back to bottom",
 		thinking: "Thinking",
 		thinkingPreview: "Thinking",
 		working: "Working",
