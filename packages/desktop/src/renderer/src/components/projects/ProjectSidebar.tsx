@@ -23,12 +23,12 @@ export function ProjectSidebar() {
 	const openSettings = useSettingsStore((s) => s.setOpen);
 
 	return (
-		<aside className="flex w-60 shrink-0 flex-col border-r border-zinc-100">
+		<aside className="flex w-60 shrink-0 flex-col border-r border-border">
 			<div className="flex items-center justify-between px-4 pt-3 pb-2">
-				<span className="text-[13px] font-medium text-zinc-800">{t("projects.title")}</span>
+				<span className="text-[13px] font-medium text-ink">{t("projects.title")}</span>
 				<button
 					type="button"
-					className="rounded-lg p-1 text-zinc-400 transition-colors hover:bg-zinc-100 hover:text-zinc-700"
+					className="rounded-lg p-1 text-ink-faint transition-colors hover:bg-hover hover:text-ink-2"
 					onClick={() => void addProject()}
 					title={t("projects.addProject")}
 					aria-label={t("projects.addProject")}
@@ -38,7 +38,7 @@ export function ProjectSidebar() {
 			</div>
 			<div className="min-h-0 flex-1 overflow-y-auto px-3 pb-2">
 				{projects.length === 0 && (
-					<p className="px-2 py-6 text-center text-[12px] text-zinc-400">{t("projects.noProjects")}</p>
+					<p className="px-2 py-6 text-center text-[12px] text-ink-faint">{t("projects.noProjects")}</p>
 				)}
 				{projects.map((project) => (
 					<ProjectItem
@@ -53,7 +53,7 @@ export function ProjectSidebar() {
 			<div className="shrink-0 px-3 py-3">
 				<button
 					type="button"
-					className="flex w-full items-center gap-2.5 rounded-lg px-2.5 py-1.5 text-[13px] text-zinc-500 transition-colors hover:bg-zinc-50 hover:text-zinc-800"
+					className="flex w-full items-center gap-2.5 rounded-lg px-2.5 py-1.5 text-[13px] text-ink-dim transition-colors hover:bg-hover hover:text-ink"
 					onClick={() => openSettings(true)}
 				>
 					<GearIcon />
@@ -61,7 +61,7 @@ export function ProjectSidebar() {
 				</button>
 				<button
 					type="button"
-					className="flex w-full items-center gap-2.5 rounded-lg px-2.5 py-1.5 text-[13px] text-zinc-500 transition-colors hover:bg-zinc-50 hover:text-zinc-800"
+					className="flex w-full items-center gap-2.5 rounded-lg px-2.5 py-1.5 text-[13px] text-ink-dim transition-colors hover:bg-hover hover:text-ink"
 					onClick={() => void getPi().openExternal(PI_REPO_URL)}
 				>
 					<HelpIcon />
@@ -92,14 +92,14 @@ function ProjectItem({
 			<button
 				type="button"
 				className={`flex w-full items-center gap-2.5 rounded-lg px-2.5 py-1.5 text-left text-[13px] transition-colors ${
-					isActive ? "bg-zinc-100 text-zinc-900" : "text-zinc-600 hover:bg-zinc-50"
+					isActive ? "bg-hover text-ink" : "text-ink-2 hover:bg-hover"
 				}`}
 				onClick={onSelect}
 				title={project.cwd}
 			>
 				<span
 					className={`flex h-5 w-5 shrink-0 items-center justify-center rounded text-[11px] font-semibold text-white ${
-						isActive ? "bg-violet-500" : "bg-zinc-400"
+						isActive ? "bg-violet-500" : "bg-ink-faint"
 					}`}
 				>
 					{(project.name[0] ?? "P").toUpperCase()}
@@ -109,7 +109,7 @@ function ProjectItem({
 			<button
 				type="button"
 				className={`invisible absolute right-1.5 top-1/2 -translate-y-1/2 rounded-md px-1.5 py-0.5 text-[11px] transition-colors group-hover:visible ${
-					confirming ? "bg-red-50 text-red-600" : "text-zinc-400 hover:bg-zinc-100 hover:text-zinc-700"
+					confirming ? "bg-red-50 text-red-600" : "text-ink-faint hover:bg-hover hover:text-ink-2"
 				}`}
 				onClick={() => {
 					if (confirming) {

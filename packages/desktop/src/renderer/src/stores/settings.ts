@@ -3,7 +3,7 @@ import { create } from "zustand";
 import { getPi } from "../api";
 import { useSessionsStore } from "./sessions";
 
-export type SettingsCategory = "general" | "providers" | "skills" | "mcp" | "extensions";
+export type SettingsCategory = "general" | "appearance" | "providers" | "skills" | "mcp" | "extensions";
 
 interface SettingsStore {
 	open: boolean;

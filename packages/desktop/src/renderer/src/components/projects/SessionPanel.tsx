@@ -39,7 +39,7 @@ export function SessionPanel() {
 			<div className="flex shrink-0 items-center justify-end px-5 pt-3">
 				<button
 					type="button"
-					className="flex shrink-0 items-center gap-1.5 rounded-lg px-2.5 py-1.5 text-[13px] text-zinc-600 transition-colors hover:bg-zinc-100 disabled:opacity-40"
+					className="flex shrink-0 items-center gap-1.5 rounded-lg px-2.5 py-1.5 text-[13px] text-ink-2 transition-colors hover:bg-hover disabled:opacity-40"
 					onClick={() => void newSession()}
 					disabled={!selectedCwd}
 				>
@@ -49,11 +49,11 @@ export function SessionPanel() {
 			</div>
 			<div className="min-h-0 flex-1 overflow-y-auto px-5 pb-4">
 				{sessions.length === 0 && (
-					<p className="py-10 text-center text-[13px] text-zinc-400">{t("projects.noSessions")}</p>
+					<p className="py-10 text-center text-[13px] text-ink-faint">{t("projects.noSessions")}</p>
 				)}
 				{groups.map((group) => (
 					<div key={group.key}>
-						<h3 className="pt-4 pb-2 text-[13px] font-medium text-zinc-500">{t(GROUP_LABELS[group.key])}</h3>
+						<h3 className="pt-4 pb-2 text-[13px] font-medium text-ink-dim">{t(GROUP_LABELS[group.key])}</h3>
 						<ul className="flex flex-col gap-0.5">
 							{group.sessions.map((session) => (
 								<SessionRow key={session.sessionId} session={session} />

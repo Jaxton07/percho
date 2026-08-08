@@ -47,14 +47,14 @@ export function ThinkingPicker() {
 			<button
 				type="button"
 				title={t("composer.thinkingSwitch")}
-				className="flex items-center gap-1 rounded-lg px-2 py-1 text-xs text-zinc-500 transition-colors hover:bg-zinc-100 hover:text-zinc-800"
+				className="flex items-center gap-1 rounded-lg px-2 py-1 text-xs text-ink-dim transition-colors hover:bg-hover hover:text-ink"
 				onClick={() => setOpen((v) => !v)}
 			>
 				<span>{label}</span>
 				<ChevronDownIcon className={open ? "rotate-180 transition-transform" : "transition-transform"} />
 			</button>
 			{open && (
-				<div className="absolute bottom-full left-0 z-30 mb-1 w-40 overflow-hidden rounded-xl border border-zinc-200 bg-white p-1 shadow-lg">
+				<div className="absolute bottom-full left-0 z-30 mb-1 w-40 overflow-hidden rounded-xl border border-border bg-surface p-1 shadow-lg">
 					{THINKING_LEVELS.map((level) => {
 						const selected = level === thinkingLevel;
 						return (
@@ -62,7 +62,7 @@ export function ThinkingPicker() {
 								key={level}
 								type="button"
 								className={`flex w-full items-center justify-between gap-2 rounded-lg px-2 py-1.5 text-left text-xs transition-colors ${
-									selected ? "text-blue-600" : "text-zinc-700 hover:bg-zinc-100"
+									selected ? "text-blue-600" : "text-ink-2 hover:bg-hover"
 								}`}
 								onClick={() => {
 									void setThinkingLevel(level);

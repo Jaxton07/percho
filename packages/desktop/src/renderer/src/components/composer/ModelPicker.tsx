@@ -58,20 +58,22 @@ export function ModelPicker() {
 			<button
 				type="button"
 				title={t("composer.modelSwitch")}
-				className="flex max-w-[160px] items-center gap-1 rounded-lg px-2 py-1 text-xs text-zinc-500 transition-colors hover:bg-zinc-100 hover:text-zinc-800"
+				className="flex max-w-[160px] items-center gap-1 rounded-lg px-2 py-1 text-xs text-ink-dim transition-colors hover:bg-hover hover:text-ink"
 				onClick={() => setOpen((v) => !v)}
 			>
 				<span className="truncate">{label}</span>
 				<ChevronDownIcon className={open ? "rotate-180 transition-transform" : "transition-transform"} />
 			</button>
 			{open && (
-				<div className="absolute bottom-full left-0 z-30 mb-1 max-h-72 w-72 overflow-y-auto rounded-xl border border-zinc-200 bg-white p-1 shadow-lg">
+				<div className="absolute bottom-full left-0 z-30 mb-1 max-h-72 w-72 overflow-y-auto rounded-xl border border-border bg-surface p-1 shadow-lg">
 					{groups.length === 0 && (
-						<div className="px-2 py-3 text-center text-xs text-zinc-400">{t("settings.providers.empty")}</div>
+						<div className="px-2 py-3 text-center text-xs text-ink-faint">
+							{t("settings.providers.empty")}
+						</div>
 					)}
 					{groups.map((group) => (
 						<div key={group.name}>
-							<div className="px-2 pt-2 pb-1 text-[10px] font-medium tracking-wide text-zinc-400 uppercase">
+							<div className="px-2 pt-2 pb-1 text-[10px] font-medium tracking-wide text-ink-faint uppercase">
 								{group.name}
 							</div>
 							{group.items.map((m) => {
@@ -81,7 +83,7 @@ export function ModelPicker() {
 										key={`${m.provider}/${m.id}`}
 										type="button"
 										className={`flex w-full items-center justify-between gap-2 rounded-lg px-2 py-1.5 text-left text-xs transition-colors ${
-											selected ? "text-blue-600" : "text-zinc-700 hover:bg-zinc-100"
+											selected ? "text-blue-600" : "text-ink-2 hover:bg-hover"
 										}`}
 										onClick={() => {
 											void setCurrentModel(m.provider, m.id);

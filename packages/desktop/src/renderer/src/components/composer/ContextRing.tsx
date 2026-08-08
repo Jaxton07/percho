@@ -53,7 +53,7 @@ export function ContextRing() {
 	if (!usage || usage.percent == null || !hasMessages) return null;
 
 	const pct = Math.max(0, Math.min(100, usage.percent));
-	const color = pct < 60 ? "stroke-zinc-400" : pct < 85 ? "stroke-amber-500" : "stroke-red-500";
+	const color = pct < 60 ? "stroke-ink-faint" : pct < 85 ? "stroke-amber-500" : "stroke-red-500";
 	const r = 7;
 	const c = 2 * Math.PI * r;
 
@@ -67,7 +67,7 @@ export function ContextRing() {
 				role="img"
 				aria-label={`${usage.percent.toFixed(0)}%`}
 			>
-				<circle cx="10" cy="10" r={r} className="fill-none stroke-zinc-200" strokeWidth="2.5" />
+				<circle cx="10" cy="10" r={r} className="fill-none stroke-border" strokeWidth="2.5" />
 				<circle
 					cx="10"
 					cy="10"
@@ -78,7 +78,7 @@ export function ContextRing() {
 					strokeDasharray={`${(pct / 100) * c} ${c}`}
 				/>
 			</svg>
-			<div className="pointer-events-none absolute bottom-full left-1/2 mb-1.5 -translate-x-1/2 rounded-md border border-zinc-200 bg-white px-2 py-1 text-[11px] whitespace-nowrap text-zinc-600 opacity-0 shadow-lg transition-opacity group-hover:opacity-100">
+			<div className="pointer-events-none absolute bottom-full left-1/2 mb-1.5 -translate-x-1/2 rounded-md border border-border bg-surface px-2 py-1 text-[11px] whitespace-nowrap text-ink-2 opacity-0 shadow-lg transition-opacity group-hover:opacity-100">
 				{formatTokens(usage.tokens ?? 0)} / {formatTokens(usage.contextWindow)} tokens · {pct.toFixed(0)}%
 			</div>
 		</div>

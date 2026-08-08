@@ -87,7 +87,7 @@ export function ApprovalDock({
 			<div className="mx-auto max-w-[760px]">
 				<div
 					key={shown.id}
-					className={`rounded-2xl border-[0.5px] border-zinc-200 border-l-2 border-l-amber-400 bg-white px-4 py-3 shadow-[0_0_14px_-2px_rgba(24,24,27,0.08)] ${
+					className={`rounded-2xl border-[0.5px] border-border border-l-2 border-l-amber-400 bg-surface px-4 py-3 shadow-[0_0_14px_-2px_rgba(24,24,27,0.08)] ${
 						leaving ? "approval-exit" : "approval-enter"
 					}`}
 					role="dialog"
@@ -97,30 +97,30 @@ export function ApprovalDock({
 						<span className="text-amber-500" aria-hidden="true">
 							⚠
 						</span>
-						<h3 className="min-w-0 flex-1 truncate font-mono text-[13px] font-medium text-zinc-900">
+						<h3 className="min-w-0 flex-1 truncate font-mono text-[13px] font-medium text-ink">
 							{shown.title}
 						</h3>
 						{queueCount > 0 && (
-							<span className="shrink-0 text-[11px] text-zinc-400">
+							<span className="shrink-0 text-[11px] text-ink-faint">
 								{t("permission.queued", { count: queueCount })}
 							</span>
 						)}
 					</div>
-					<p className="mt-2 max-h-32 overflow-y-auto rounded-lg bg-zinc-50 p-2.5 font-mono text-[12px] leading-relaxed break-all whitespace-pre-wrap text-zinc-700 select-text">
+					<p className="mt-2 max-h-32 overflow-y-auto rounded-lg bg-hover p-2.5 font-mono text-[12px] leading-relaxed break-all whitespace-pre-wrap text-ink-2 select-text">
 						{shown.message}
 					</p>
 					<div className="mt-3 flex items-center justify-end gap-2">
 						<Button onClick={() => respond("deny")}>
 							{t("permission.deny")}
-							<kbd className="ml-1.5 rounded bg-zinc-100 px-1 py-0.5 text-[10px] text-zinc-400">Esc</kbd>
+							<kbd className="ml-1.5 rounded bg-hover px-1 py-0.5 text-[10px] text-ink-faint">Esc</kbd>
 						</Button>
 						<Button onClick={() => respond("allowAlways")}>
 							{t("permission.allowAlways")}
-							<kbd className="ml-1.5 rounded bg-zinc-100 px-1 py-0.5 text-[10px] text-zinc-400">A</kbd>
+							<kbd className="ml-1.5 rounded bg-hover px-1 py-0.5 text-[10px] text-ink-faint">A</kbd>
 						</Button>
 						<Button variant="primary" onClick={() => respond("allow")}>
 							{t("permission.allowOnce")}
-							<kbd className="ml-1.5 rounded bg-white/15 px-1 py-0.5 text-[10px] text-white/80">Enter</kbd>
+							<kbd className="ml-1.5 rounded bg-on-ink/15 px-1 py-0.5 text-[10px] text-on-ink/80">Enter</kbd>
 						</Button>
 					</div>
 				</div>

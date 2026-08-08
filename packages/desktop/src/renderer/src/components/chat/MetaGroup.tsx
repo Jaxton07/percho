@@ -19,12 +19,12 @@ function ThinkingRow({ thinking }: { thinking: string }) {
 	return (
 		<details className="group/dets">
 			<summary className="group/row flex cursor-pointer items-center gap-2 py-0.5 select-none [&::-webkit-details-marker]:hidden">
-				<span className="shrink-0 text-[13px] font-semibold text-zinc-400 transition-colors group-hover/row:text-zinc-800">
+				<span className="shrink-0 text-[13px] font-semibold text-ink-faint transition-colors group-hover/row:text-ink">
 					{t("message.thinking")}
 				</span>
-				<ExpandArrowIcon className="shrink-0 text-zinc-400 opacity-0 transition-[opacity,transform,color] group-hover/row:opacity-100 group-hover/row:text-zinc-700 group-open/dets:rotate-90" />
+				<ExpandArrowIcon className="shrink-0 text-ink-faint opacity-0 transition-[opacity,transform,color] group-hover/row:opacity-100 group-hover/row:text-ink-2 group-open/dets:rotate-90" />
 			</summary>
-			<div className="py-1 pl-4 text-[13px] leading-relaxed whitespace-pre-wrap text-zinc-500 select-text">
+			<div className="py-1 pl-4 text-[13px] leading-relaxed whitespace-pre-wrap text-ink-dim select-text">
 				{thinking}
 			</div>
 		</details>
@@ -111,12 +111,12 @@ export function MetaGroup({
 			<details className="group/outer peer">
 				<summary className="group/row flex cursor-pointer items-center gap-2 py-0.5 select-none [&::-webkit-details-marker]:hidden">
 					<span
-						className={`shrink-0 text-[13px] font-medium text-zinc-500 transition-colors group-hover/row:text-zinc-800 ${shownWorking ? "shimmer-sweep" : ""}`}
+						className={`shrink-0 text-[13px] font-medium text-ink-dim transition-colors group-hover/row:text-ink ${shownWorking ? "shimmer-sweep" : ""}`}
 					>
 						{t(shownWorking ? "message.working" : "message.worked")}
-						{count > 0 && <span className="ml-1 font-normal text-zinc-400">· {count}</span>}
+						{count > 0 && <span className="ml-1 font-normal text-ink-faint">· {count}</span>}
 					</span>
-					<ExpandArrowIcon className="shrink-0 text-zinc-400 opacity-0 transition-[opacity,transform,color] group-hover/row:opacity-100 group-hover/row:text-zinc-700 group-open/outer:rotate-90" />
+					<ExpandArrowIcon className="shrink-0 text-ink-faint opacity-0 transition-[opacity,transform,color] group-hover/row:opacity-100 group-hover/row:text-ink-2 group-open/outer:rotate-90" />
 				</summary>
 				<div className="flex flex-col gap-1.5 py-1">{rows}</div>
 			</details>

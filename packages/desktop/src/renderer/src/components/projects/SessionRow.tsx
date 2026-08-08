@@ -17,24 +17,24 @@ export function SessionRow({ session }: { session: SessionMeta }) {
 		<li className="group relative" onMouseLeave={() => setConfirming(false)}>
 			<button
 				type="button"
-				className="flex w-full items-center gap-2 rounded-lg px-2.5 py-1.5 text-left transition-colors hover:bg-zinc-50"
+				className="flex w-full items-center gap-2 rounded-lg px-2.5 py-1.5 text-left transition-colors hover:bg-hover"
 				onClick={() => {
 					if (session.sessionFile) {
 						void openSession(session).then(() => setView("chat"));
 					}
 				}}
 			>
-				<span className="min-w-0 flex-1 truncate text-[13px] text-zinc-800">
+				<span className="min-w-0 flex-1 truncate text-[13px] text-ink">
 					{session.name ?? t("projects.untitled")}
 				</span>
-				<span className="shrink-0 text-[11px] text-zinc-400 group-hover:invisible">
+				<span className="shrink-0 text-[11px] text-ink-faint group-hover:invisible">
 					{t("projects.messages", { count: session.messageCount })}
 				</span>
 			</button>
 			<button
 				type="button"
 				className={`invisible absolute right-2 top-1/2 -translate-y-1/2 rounded-md px-1.5 py-0.5 text-[11px] transition-colors group-hover:visible ${
-					confirming ? "bg-red-50 text-red-600" : "text-zinc-400 hover:bg-zinc-100 hover:text-zinc-700"
+					confirming ? "bg-red-50 text-red-600" : "text-ink-faint hover:bg-hover hover:text-ink-2"
 				}`}
 				onClick={() => {
 					if (confirming) {

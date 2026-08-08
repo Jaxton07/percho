@@ -33,7 +33,7 @@ function CopyButton({ text }: { text: string }) {
 			onClick={handleCopy}
 			title={copied ? t("message.copied") : t("message.copy")}
 			aria-label={copied ? t("message.copied") : t("message.copy")}
-			className="flex h-6 w-6 items-center justify-center rounded-md text-zinc-400 opacity-0 transition-opacity duration-150 hover:bg-zinc-200/70 hover:text-zinc-600 focus-visible:opacity-100 group-hover:opacity-100"
+			className="flex h-6 w-6 items-center justify-center rounded-md text-ink-faint opacity-0 transition-opacity duration-150 hover:bg-border/70 hover:text-ink-2 focus-visible:opacity-100 group-hover:opacity-100"
 		>
 			{copied ? (
 				<svg
@@ -95,7 +95,7 @@ export const MessageItem = memo(function MessageItem({
 									// biome-ignore lint/suspicious/noArrayIndexKey: 缩略图列表不可变（删除为整列表替换）
 									key={index}
 									type="button"
-									className="h-16 w-16 overflow-hidden rounded-lg border border-zinc-200"
+									className="h-16 w-16 overflow-hidden rounded-lg border border-border"
 									title={t("composer.previewImage")}
 									onClick={() => setPreviewImage(image)}
 								>
@@ -109,7 +109,7 @@ export const MessageItem = memo(function MessageItem({
 						</div>
 					)}
 					{message.text && (
-						<div className="rounded-2xl rounded-br-md bg-zinc-200 px-3.5 py-2 text-[14px] leading-relaxed text-zinc-800 select-text">
+						<div className="rounded-2xl rounded-br-md bg-border px-3.5 py-2 text-[14px] leading-relaxed text-ink select-text">
 							{message.text}
 						</div>
 					)}
@@ -167,8 +167,8 @@ function SystemMessage({ message }: { message: Extract<UIMessage, { kind: "syste
 	const reason = t(`compaction.reason.${compact.reason}`);
 	if (compact.status === "running") {
 		return (
-			<div className="flex items-center justify-center gap-2 py-1 text-xs text-zinc-400">
-				<span className="h-3 w-3 animate-spin rounded-full border-2 border-zinc-300 border-t-zinc-500" />
+			<div className="flex items-center justify-center gap-2 py-1 text-xs text-ink-faint">
+				<span className="h-3 w-3 animate-spin rounded-full border-2 border-border-strong border-t-ink-dim" />
 				<span>
 					{t("compaction.running")} · {reason}
 				</span>
@@ -181,7 +181,7 @@ function SystemMessage({ message }: { message: Extract<UIMessage, { kind: "syste
 			: "";
 	if (compact.status === "cancelled") {
 		return (
-			<div className="py-1 text-center text-xs text-zinc-400">
+			<div className="py-1 text-center text-xs text-ink-faint">
 				{t("compaction.cancelled")} · {reason}
 			</div>
 		);
@@ -195,10 +195,10 @@ function SystemMessage({ message }: { message: Extract<UIMessage, { kind: "syste
 	}
 	return (
 		<div
-			className="mx-auto max-w-[560px] rounded-lg border border-zinc-200 bg-zinc-50 px-3 py-2 text-center text-xs leading-relaxed text-zinc-500 select-text"
+			className="mx-auto max-w-[560px] rounded-lg border border-border bg-hover px-3 py-2 text-center text-xs leading-relaxed text-ink-dim select-text"
 			title={compact.summary}
 		>
-			<p className="font-medium text-zinc-600">
+			<p className="font-medium text-ink-2">
 				{t("compaction.done")} · {reason}
 				{tokens}
 			</p>

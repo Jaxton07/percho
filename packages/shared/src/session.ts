@@ -6,10 +6,21 @@ export interface SavedTabs {
 	activeFile: string | null;
 }
 
-/** 应用 UI 状态持久化（重启恢复用，主进程写 userData/ui-state.json）：新会话复用上次的模型/思考级别 */
+/** 主题模式：system = 跟随系统 prefers-color-scheme */
+export type ThemeMode = "light" | "dark" | "system";
+
+/** 自定义背景：image 为主进程 userData/backgrounds/ 下的文件名（renderer 经 pi-bg:// 协议加载）；dim 为遮罩不透明度 0–1（越大背景越淡） */
+export interface BackgroundSettings {
+	image: string | null;
+	dim: number;
+}
+
+/** 应用 UI 状态持久化（重启恢复用，主进程写 userData/ui-state.json）：新会话复用上次的模型/思考级别；主题与背景设置 */
 export interface UiState {
 	currentModel: { provider: string; modelId: string } | null;
 	thinkingLevel: string;
+	theme: ThemeMode;
+	background: BackgroundSettings;
 }
 
 /** 会话元数据（IPC 往返用，独立于 pi 内部类型） */

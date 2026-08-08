@@ -49,6 +49,7 @@ const api: PiApi = {
 	saveTabs: (tabs) => ipcRenderer.invoke(IpcChannels.TabsSave, tabs),
 	loadUiState: () => ipcRenderer.invoke(IpcChannels.UiStateLoad),
 	saveUiState: (state) => ipcRenderer.invoke(IpcChannels.UiStateSave, state),
+	pickBackgroundImage: () => ipcRenderer.invoke(IpcChannels.BackgroundPick),
 	onEvent: (cb) => {
 		const listener = (_event: unknown, payload: SessionEventEnvelope) => cb(payload);
 		ipcRenderer.on(IpcChannels.Event, listener);

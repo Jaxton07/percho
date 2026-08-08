@@ -1,14 +1,16 @@
 import type { ComponentType } from "react";
 import { useT } from "../../i18n";
 import { type SettingsCategory, useSettingsStore } from "../../stores/settings";
+import { AppearancePanel } from "./AppearancePanel";
 import { GeneralPanel } from "./GeneralPanel";
 import { ProvidersPanel } from "./providers/ProvidersPanel";
 
-const CATEGORIES: SettingsCategory[] = ["general", "providers", "skills", "mcp", "extensions"];
+const CATEGORIES: SettingsCategory[] = ["general", "appearance", "providers", "skills", "mcp", "extensions"];
 
 /** 面板注册表：新增分类 = 写一个面板组件 + 在这里登记（未登记显示 coming soon） */
 const PANELS: Partial<Record<SettingsCategory, ComponentType>> = {
 	general: GeneralPanel,
+	appearance: AppearancePanel,
 	providers: ProvidersPanel,
 };
 
@@ -25,13 +27,13 @@ export function SettingsDialog() {
 	const Panel = PANELS[category];
 
 	return (
-		<div className="fixed inset-0 z-40 flex items-center justify-center bg-black/20" role="dialog" aria-modal>
-			<div className="flex h-[70vh] w-[720px] flex-col overflow-hidden rounded-xl border border-zinc-200 bg-white shadow-xl">
-				<div className="flex shrink-0 items-center justify-between border-b border-zinc-100 px-4 py-3">
-					<h2 className="text-sm font-semibold text-zinc-900">{t("settings.title")}</h2>
+		<div className="fixed inset-0 z-40 flex items-center justify-center bg-ink/20" role="dialog" aria-modal>
+			<div className="flex h-[70vh] w-[720px] flex-col overflow-hidden rounded-xl border border-border bg-surface shadow-xl">
+				<div className="flex shrink-0 items-center justify-between border-b border-border px-4 py-3">
+					<h2 className="text-sm font-semibold text-ink">{t("settings.title")}</h2>
 					<button
 						type="button"
-						className="rounded-lg px-2 py-1 text-zinc-400 transition-colors hover:bg-zinc-100 hover:text-zinc-700"
+						className="rounded-lg px-2 py-1 text-ink-faint transition-colors hover:bg-hover hover:text-ink-2"
 						onClick={() => setOpen(false)}
 						aria-label={t("common.close")}
 					>
@@ -39,15 +41,15 @@ export function SettingsDialog() {
 					</button>
 				</div>
 				<div className="flex min-h-0 flex-1">
-					<nav className="w-44 shrink-0 overflow-y-auto border-r border-zinc-100 p-2">
+					<nav className="w-44 shrink-0 overflow-y-auto border-r border-border p-2">
 						{CATEGORIES.map((id) => (
 							<button
 								key={id}
 								type="button"
 								className={`mb-0.5 w-full rounded-lg px-3 py-2 text-left text-[13px] transition-colors ${
 									category === id
-										? "bg-zinc-100 font-medium text-zinc-900"
-										: "text-zinc-500 hover:bg-zinc-50 hover:text-zinc-800"
+										? "bg-hover font-medium text-ink"
+										: "text-ink-dim hover:bg-hover hover:text-ink"
 								}`}
 								onClick={() => setCategory(id)}
 							>
@@ -59,7 +61,7 @@ export function SettingsDialog() {
 						{Panel ? (
 							<Panel />
 						) : (
-							<p className="py-8 text-center text-[13px] text-zinc-400">{t("settings.comingSoon")}</p>
+							<p className="py-8 text-center text-[13px] text-ink-faint">{t("settings.comingSoon")}</p>
 						)}
 					</div>
 				</div>

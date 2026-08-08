@@ -38,13 +38,11 @@ export function SessionTabBar() {
 	}, []);
 
 	return (
-		<div className="drag-region flex h-12 shrink-0 items-center gap-1 border-b border-zinc-200 bg-[var(--color-bg)] pl-20 pr-3">
+		<div className="drag-region flex h-12 shrink-0 items-center gap-1 border-b border-border bg-canvas pl-20 pr-3">
 			<button
 				type="button"
 				className={`no-drag shrink-0 rounded-lg p-1.5 transition-colors ${
-					view === "projects"
-						? "bg-zinc-200/80 text-zinc-900"
-						: "text-zinc-500 hover:bg-zinc-100 hover:text-zinc-800"
+					view === "projects" ? "bg-border/80 text-ink" : "text-ink-dim hover:bg-hover hover:text-ink"
 				}`}
 				onClick={() => setView(view === "projects" ? "chat" : "projects")}
 				title={t("projects.title")}
@@ -66,9 +64,7 @@ export function SessionTabBar() {
 							type="button"
 							key={session.sessionId}
 							className={`no-drag group relative flex w-52 shrink-0 cursor-pointer items-center gap-2 rounded-lg px-2.5 py-1.5 text-sm transition-colors ${
-								isActive
-									? "bg-zinc-200/80 text-zinc-900"
-									: "text-zinc-500 hover:bg-zinc-100 hover:text-zinc-800"
+								isActive ? "bg-border/80 text-ink" : "text-ink-dim hover:bg-hover hover:text-ink"
 							}`}
 							onClick={() => {
 								switchSession(session.sessionId);
@@ -77,7 +73,7 @@ export function SessionTabBar() {
 						>
 							<span
 								className={`flex h-4 w-4 shrink-0 items-center justify-center rounded text-[10px] font-semibold text-white ${
-									isActive ? "bg-violet-500" : "bg-zinc-400"
+									isActive ? "bg-violet-500" : "bg-ink-faint"
 								}`}
 							>
 								{letter.toUpperCase()}
@@ -86,9 +82,9 @@ export function SessionTabBar() {
 								<span className="block truncate pr-6 text-left">
 									{session.name ?? session.cwd.split("/").filter(Boolean).pop() ?? t("tabbar.untitled")}
 								</span>
-								<span className="invisible pointer-events-none absolute inset-y-0 right-0 w-7 bg-gradient-to-l from-zinc-100 via-zinc-100/60 to-transparent group-hover:visible" />
+								<span className="invisible pointer-events-none absolute inset-y-0 right-0 w-7 bg-gradient-to-l from-hover via-hover/60 to-transparent group-hover:visible" />
 								<span
-									className="invisible absolute right-0 top-1/2 -translate-y-1/2 rounded-md bg-zinc-100 p-1 text-zinc-500 opacity-0 transition-opacity hover:bg-zinc-300/60 hover:text-zinc-700 group-hover:visible group-hover:opacity-100"
+									className="invisible absolute right-0 top-1/2 -translate-y-1/2 rounded-md bg-hover p-1 text-ink-dim opacity-0 transition-opacity hover:bg-border-strong/60 hover:text-ink-2 group-hover:visible group-hover:opacity-100"
 									aria-hidden="true"
 									onClick={(e) => {
 										e.stopPropagation();
@@ -109,7 +105,7 @@ export function SessionTabBar() {
 			{view !== "projects" && (
 				<button
 					type="button"
-					className="no-drag shrink-0 rounded-lg p-1.5 text-zinc-500 transition-colors hover:bg-zinc-100 hover:text-zinc-800"
+					className="no-drag shrink-0 rounded-lg p-1.5 text-ink-dim transition-colors hover:bg-hover hover:text-ink"
 					onClick={() => {
 						void createSession();
 						setView("chat");

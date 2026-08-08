@@ -24,7 +24,7 @@ export function CustomProviderForm() {
 		return (
 			<button
 				type="button"
-				className="mt-3 w-full rounded-lg border border-dashed border-zinc-200 py-2 text-[13px] text-zinc-500 transition-colors hover:border-zinc-300 hover:bg-zinc-50"
+				className="mt-3 w-full rounded-lg border border-dashed border-border py-2 text-[13px] text-ink-dim transition-colors hover:border-border-strong hover:bg-hover"
 				onClick={() => setShow(true)}
 			>
 				{t("settings.providers.addCustom")}
@@ -61,11 +61,11 @@ export function CustomProviderForm() {
 	};
 
 	const inputClass =
-		"w-full rounded-lg border border-zinc-200 px-2.5 py-1.5 text-[12px] outline-none focus:border-zinc-400";
+		"w-full rounded-lg border border-border px-2.5 py-1.5 text-[12px] outline-none focus:border-ink-faint";
 
 	return (
-		<div className="mt-3 rounded-xl border border-zinc-200 p-3">
-			<h3 className="text-[13px] font-medium text-zinc-800">{t("settings.providers.customTitle")}</h3>
+		<div className="mt-3 rounded-xl border border-border p-3">
+			<h3 className="text-[13px] font-medium text-ink">{t("settings.providers.customTitle")}</h3>
 			<div className="mt-2 grid grid-cols-2 gap-2">
 				<input
 					className={inputClass}
@@ -110,14 +110,14 @@ export function CustomProviderForm() {
 			<div className="mt-2 flex justify-end gap-2">
 				<button
 					type="button"
-					className="rounded-lg px-3 py-1.5 text-[12px] text-zinc-500 transition-colors hover:bg-zinc-100"
+					className="rounded-lg px-3 py-1.5 text-[12px] text-ink-dim transition-colors hover:bg-hover"
 					onClick={() => setShow(false)}
 				>
 					{t("common.cancel")}
 				</button>
 				<button
 					type="button"
-					className="rounded-lg bg-zinc-900 px-3 py-1.5 text-[12px] font-medium text-white transition-colors hover:bg-zinc-700 disabled:opacity-40"
+					className="rounded-lg bg-ink px-3 py-1.5 text-[12px] font-medium text-on-ink transition-colors hover:bg-ink-2 disabled:opacity-40"
 					onClick={() => void submit()}
 					disabled={submitting || !form.id.trim() || !form.baseUrl.trim() || !form.models.trim()}
 				>

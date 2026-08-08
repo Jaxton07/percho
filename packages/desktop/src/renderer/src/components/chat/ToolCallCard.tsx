@@ -45,9 +45,9 @@ export function ToolCallCard({ tool }: { tool: UIToolCall }) {
 	}, []);
 
 	const nameClass =
-		"shrink-0 font-mono text-[13px] font-semibold text-zinc-500 transition-colors group-hover/row:text-zinc-800";
+		"shrink-0 font-mono text-[13px] font-semibold text-ink-dim transition-colors group-hover/row:text-ink";
 	const summaryClass =
-		"relative overflow-hidden whitespace-nowrap font-mono text-[12px] text-zinc-400 transition-colors group-hover/row:text-zinc-800";
+		"relative overflow-hidden whitespace-nowrap font-mono text-[12px] text-ink-faint transition-colors group-hover/row:text-ink";
 
 	return (
 		<details className="group/dets">
@@ -63,25 +63,25 @@ export function ToolCallCard({ tool }: { tool: UIToolCall }) {
 					>
 						{summary}
 						{overflowing && (
-							<span className="pointer-events-none absolute inset-y-0 right-0 w-10 bg-gradient-to-l from-[var(--color-bg)] to-transparent" />
+							<span className="pointer-events-none absolute inset-y-0 right-0 w-10 bg-gradient-to-l from-canvas to-transparent" />
 						)}
 					</span>
 				)}
 				{tool.state === "running" && summary && (
-					<span className="shrink-0 font-mono text-[12px] text-zinc-400 transition-colors group-hover/row:text-zinc-700">
+					<span className="shrink-0 font-mono text-[12px] text-ink-faint transition-colors group-hover/row:text-ink-2">
 						…
 					</span>
 				)}
-				<ExpandArrowIcon className="shrink-0 text-zinc-400 opacity-0 transition-[opacity,transform,color] group-hover/row:opacity-100 group-hover/row:text-zinc-700 group-open/dets:rotate-90" />
+				<ExpandArrowIcon className="shrink-0 text-ink-faint opacity-0 transition-[opacity,transform,color] group-hover/row:opacity-100 group-hover/row:text-ink-2 group-open/dets:rotate-90" />
 			</summary>
 			<div className="flex flex-col gap-1.5 py-1 pl-4">
 				{tool.args && (
-					<pre className="max-h-56 overflow-y-auto font-mono text-[12px] leading-relaxed whitespace-pre-wrap text-zinc-500 select-text">
+					<pre className="max-h-56 overflow-y-auto font-mono text-[12px] leading-relaxed whitespace-pre-wrap text-ink-dim select-text">
 						{tool.args}
 					</pre>
 				)}
 				{tool.output && (
-					<pre className="max-h-56 overflow-y-auto font-mono text-[12px] leading-relaxed whitespace-pre-wrap text-zinc-600 select-text">
+					<pre className="max-h-56 overflow-y-auto font-mono text-[12px] leading-relaxed whitespace-pre-wrap text-ink-2 select-text">
 						{tool.output}
 					</pre>
 				)}

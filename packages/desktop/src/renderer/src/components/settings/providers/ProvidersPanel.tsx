@@ -15,7 +15,7 @@ export function ProvidersPanel() {
 		<div>
 			{error && <p className="mb-2 rounded-lg bg-red-50 px-3 py-2 text-[12px] text-red-600">{error}</p>}
 			{loading && providers.length === 0 ? (
-				<p className="py-8 text-center text-[13px] text-zinc-400">{t("settings.loading")}</p>
+				<p className="py-8 text-center text-[13px] text-ink-faint">{t("settings.loading")}</p>
 			) : (
 				<ProviderList providers={providers} />
 			)}
@@ -27,10 +27,10 @@ export function ProvidersPanel() {
 function ProviderList({ providers }: { providers: ProviderInfo[] }) {
 	const t = useT();
 	if (providers.length === 0) {
-		return <p className="py-4 text-center text-[13px] text-zinc-400">{t("settings.providers.empty")}</p>;
+		return <p className="py-4 text-center text-[13px] text-ink-faint">{t("settings.providers.empty")}</p>;
 	}
 	return (
-		<ul className="divide-y divide-zinc-100">
+		<ul className="divide-y divide-border">
 			{providers.map((provider) => (
 				<ProviderRow key={provider.id} provider={provider} />
 			))}

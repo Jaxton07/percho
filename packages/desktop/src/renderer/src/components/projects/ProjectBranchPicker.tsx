@@ -9,9 +9,9 @@ import { Dropdown } from "../ui/Dropdown";
 export function ProjectBranchPicker() {
 	const cwd = useSessionsStore((s) => s.cwd);
 	return (
-		<div className="flex items-center justify-center gap-2 text-[13px] text-zinc-500">
+		<div className="flex items-center justify-center gap-2 text-[13px] text-ink-dim">
 			<ProjectPicker />
-			<span className="text-zinc-300">/</span>
+			<span className="text-border-strong">/</span>
 			<BranchPicker key={cwd ?? "none"} cwd={cwd} />
 		</div>
 	);
@@ -46,15 +46,15 @@ function ProjectPicker() {
 						<button
 							key={project.cwd}
 							type="button"
-							className={`flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left text-[13px] transition-colors hover:bg-zinc-100 ${
-								project.cwd === cwd ? "text-zinc-900" : "text-zinc-600"
+							className={`flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left text-[13px] transition-colors hover:bg-hover ${
+								project.cwd === cwd ? "text-ink" : "text-ink-2"
 							}`}
 							onClick={() => {
 								useSessionsStore.setState({ cwd: project.cwd });
 								close();
 							}}
 						>
-							<span className="flex h-4.5 w-4.5 shrink-0 items-center justify-center rounded bg-zinc-400 text-[10px] font-semibold text-white">
+							<span className="flex h-4.5 w-4.5 shrink-0 items-center justify-center rounded bg-ink-faint text-[10px] font-semibold text-white">
 								{(project.name[0] ?? "P").toUpperCase()}
 							</span>
 							<span className="truncate">{project.name}</span>
@@ -62,7 +62,7 @@ function ProjectPicker() {
 					))}
 					<button
 						type="button"
-						className="mt-0.5 flex w-full items-center gap-2 rounded-md border-t border-zinc-100 px-2 py-1.5 text-left text-[13px] text-zinc-500 transition-colors hover:bg-zinc-100"
+						className="mt-0.5 flex w-full items-center gap-2 rounded-md border-t border-border px-2 py-1.5 text-left text-[13px] text-ink-dim transition-colors hover:bg-hover"
 						onClick={() => {
 							void pickDirectory();
 							close();
@@ -98,7 +98,7 @@ function BranchPicker({ cwd }: { cwd: string | null }) {
 	}, [cwd]);
 
 	if (!cwd || !current) {
-		return <span className="text-zinc-400">⎇ {t("projects.noGit")}</span>;
+		return <span className="text-ink-faint">⎇ {t("projects.noGit")}</span>;
 	}
 
 	return (
@@ -117,8 +117,8 @@ function BranchPicker({ cwd }: { cwd: string | null }) {
 							<button
 								key={branch}
 								type="button"
-								className={`flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left text-[13px] transition-colors hover:bg-zinc-100 ${
-									branch === current ? "font-medium text-zinc-900" : "text-zinc-600"
+								className={`flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left text-[13px] transition-colors hover:bg-hover ${
+									branch === current ? "font-medium text-ink" : "text-ink-2"
 								}`}
 								onClick={() => {
 									if (branch !== current && cwd) {

@@ -21,7 +21,7 @@ function ThinkingPreviewRow() {
 	const t = useT();
 	return (
 		<div className="flex items-center gap-2 py-0.5">
-			<span className="shrink-0 text-[13px] font-semibold text-zinc-500">{t("message.thinkingPreview")}</span>
+			<span className="shrink-0 text-[13px] font-semibold text-ink-dim">{t("message.thinkingPreview")}</span>
 		</div>
 	);
 }
@@ -31,9 +31,9 @@ function ToolPreviewRow({ name, args }: { name: string; args: string }) {
 	const summary = summarizeArgs(args);
 	return (
 		<div className="flex items-center gap-2 py-0.5">
-			<span className="shrink-0 font-mono text-[13px] font-semibold text-zinc-500">{displayName(name)}</span>
+			<span className="shrink-0 font-mono text-[13px] font-semibold text-ink-dim">{displayName(name)}</span>
 			{summary && (
-				<span className="min-w-0 flex-1 truncate font-mono text-[12px] text-zinc-400">{summary}</span>
+				<span className="min-w-0 flex-1 truncate font-mono text-[12px] text-ink-faint">{summary}</span>
 			)}
 		</div>
 	);
@@ -142,7 +142,7 @@ export function PreviewTicker({ items }: { items: LivePreviewItem[] }) {
 
 	return (
 		// 上下边缘 mask 渐隐：滑入/滑出行穿过容器边界时柔化，避免硬裁切边（静态行文字居中不受影响）
-		<div className="relative h-6 overflow-hidden text-zinc-500 [mask-image:linear-gradient(to_bottom,transparent,black_20%,black_80%,transparent)]">
+		<div className="relative h-6 overflow-hidden text-ink-dim [mask-image:linear-gradient(to_bottom,transparent,black_20%,black_80%,transparent)]">
 			{previous && (
 				<div key={`prev-${previous.id}`} className="preview-slide-out absolute inset-x-0 top-0">
 					{rowOf(previous)}

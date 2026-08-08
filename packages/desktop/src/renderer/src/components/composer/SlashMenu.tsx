@@ -51,7 +51,7 @@ export function SlashMenu({
 
 	if (flat.length === 0) {
 		return (
-			<div className="mb-1.5 rounded-lg border border-zinc-200 bg-white py-2 text-center text-xs text-zinc-400 shadow-lg">
+			<div className="mb-1.5 rounded-lg border border-border bg-surface py-2 text-center text-xs text-ink-faint shadow-lg">
 				{t("slash.noMatch")}
 			</div>
 		);
@@ -60,11 +60,11 @@ export function SlashMenu({
 	return (
 		<div
 			ref={listRef}
-			className="mb-1.5 max-h-64 overflow-y-auto rounded-lg border border-zinc-200 bg-white shadow-lg"
+			className="mb-1.5 max-h-64 overflow-y-auto rounded-lg border border-border bg-surface shadow-lg"
 		>
 			{groups.map((group) => (
 				<div key={group.source}>
-					<p className="px-3 pt-2 pb-1 text-[11px] font-medium text-zinc-400">
+					<p className="px-3 pt-2 pb-1 text-[11px] font-medium text-ink-faint">
 						{t(`slash.group.${group.source}`)}
 					</p>
 					{group.items.map((command) => {
@@ -76,15 +76,17 @@ export function SlashMenu({
 								type="button"
 								data-index={index}
 								className={`flex w-full items-center gap-2 px-3 py-1.5 text-left text-[13px] transition-colors ${
-									index === active ? "bg-zinc-100 text-zinc-900" : "text-zinc-600 hover:bg-zinc-50"
+									index === active ? "bg-hover text-ink" : "text-ink-2 hover:bg-hover"
 								} ${unsupported ? "cursor-not-allowed opacity-50" : ""}`}
 								onMouseEnter={() => onSelectedIndexChange(index)}
 								onClick={() => onPick(command)}
 							>
-								<span className="font-mono text-zinc-500">/{command.name}</span>
-								<span className="min-w-0 flex-1 truncate text-zinc-400">{command.description}</span>
+								<span className="font-mono text-ink-dim">/{command.name}</span>
+								<span className="min-w-0 flex-1 truncate text-ink-faint">{command.description}</span>
 								{command.argumentHint && (
-									<span className="shrink-0 font-mono text-[11px] text-zinc-300">{command.argumentHint}</span>
+									<span className="shrink-0 font-mono text-[11px] text-border-strong">
+										{command.argumentHint}
+									</span>
 								)}
 							</button>
 						);

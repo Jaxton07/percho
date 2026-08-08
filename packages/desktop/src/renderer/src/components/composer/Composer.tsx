@@ -415,18 +415,18 @@ export function Composer({ centered = false }: { centered?: boolean }) {
 					/>
 				)}
 				{followUpQueue.length > 0 && (
-					<div className="group/queue relative mb-1.5 flex items-center gap-2 overflow-hidden rounded-xl bg-white px-3 py-1.5 shadow-[0_0_14px_-2px_rgba(24,24,27,0.08)]">
-						<span className="shrink-0 text-[12px] text-zinc-400">{t("composer.queueTitle")}</span>
-						<span className="min-w-0 flex-1 truncate text-[13px] text-zinc-600">{followUpQueue[0]}</span>
+					<div className="group/queue relative mb-1.5 flex items-center gap-2 overflow-hidden rounded-xl bg-surface px-3 py-1.5 shadow-[0_0_14px_-2px_rgba(24,24,27,0.08)]">
+						<span className="shrink-0 text-[12px] text-ink-faint">{t("composer.queueTitle")}</span>
+						<span className="min-w-0 flex-1 truncate text-[13px] text-ink-2">{followUpQueue[0]}</span>
 						{/* 撤销层：hover 行才显示；渐变模糊压住下方文字，仅镂空图标可点（防误点） */}
 						<div className="pointer-events-none absolute inset-y-0 right-0 flex w-14 items-center justify-end pr-2.5 opacity-0 transition-opacity group-hover/queue:opacity-100">
 							<span
-								className="absolute inset-0 bg-gradient-to-l from-white/60 to-transparent backdrop-blur-[3px] [mask-image:linear-gradient(to_left,black_45%,transparent)]"
+								className="absolute inset-0 bg-gradient-to-l from-surface/60 to-transparent backdrop-blur-[3px] [mask-image:linear-gradient(to_left,black_45%,transparent)]"
 								aria-hidden="true"
 							/>
 							<button
 								type="button"
-								className="pointer-events-auto relative flex items-center justify-center text-zinc-400 transition-colors hover:text-zinc-700"
+								className="pointer-events-auto relative flex items-center justify-center text-ink-faint transition-colors hover:text-ink-2"
 								title={t("composer.queueRestore")}
 								aria-label={t("composer.queueRestore")}
 								onClick={() => void handleRestoreQueue()}
@@ -446,7 +446,7 @@ export function Composer({ centered = false }: { centered?: boolean }) {
 							>
 								<button
 									type="button"
-									className="block h-16 w-16 overflow-hidden rounded-lg border border-zinc-200 bg-white"
+									className="block h-16 w-16 overflow-hidden rounded-lg border border-border bg-surface"
 									title={t("composer.previewImage")}
 									onClick={() => setPreviewImage(image)}
 								>
@@ -458,7 +458,7 @@ export function Composer({ centered = false }: { centered?: boolean }) {
 								</button>
 								<button
 									type="button"
-									className="absolute -right-1.5 -top-1.5 flex h-4 w-4 items-center justify-center rounded-full bg-zinc-800 text-white shadow transition-colors hover:bg-red-600"
+									className="absolute -right-1.5 -top-1.5 flex h-4 w-4 items-center justify-center rounded-full bg-ink text-on-ink shadow transition-colors hover:bg-red-600"
 									title={t("composer.removeImage")}
 									aria-label={t("composer.removeImage")}
 									onClick={() => setImages((prev) => prev.filter((_, i) => i !== index))}
@@ -469,15 +469,15 @@ export function Composer({ centered = false }: { centered?: boolean }) {
 						))}
 					</div>
 				)}
-				<div className="rounded-2xl border-[0.5px] border-zinc-200 bg-white shadow-[0_0_14px_-2px_rgba(24,24,27,0.08)]">
+				<div className="rounded-2xl border-[0.5px] border-border bg-surface shadow-[0_0_14px_-2px_rgba(24,24,27,0.08)]">
 					{slashCommand ? (
 						<div className="flex items-start gap-1.5 px-4 pt-5 pb-2">
-							<span className="mt-0.5 shrink-0 select-none rounded-md bg-zinc-200 px-2 py-0.5 font-mono text-[12px] leading-5 text-zinc-700">
+							<span className="mt-0.5 shrink-0 select-none rounded-md bg-border px-2 py-0.5 font-mono text-[12px] leading-5 text-ink-2">
 								/{slashCommand}
 							</span>
 							<textarea
 								ref={textareaRef}
-								className="max-h-[200px] flex-1 resize-none bg-transparent pt-0.5 text-[14px] leading-relaxed outline-none placeholder:text-zinc-400 select-text"
+								className="max-h-[200px] flex-1 resize-none bg-transparent pt-0.5 text-[14px] leading-relaxed outline-none placeholder:text-ink-faint select-text"
 								placeholder={t("slash.argPlaceholder")}
 								value={text}
 								rows={1}
@@ -492,7 +492,7 @@ export function Composer({ centered = false }: { centered?: boolean }) {
 					) : (
 						<textarea
 							ref={textareaRef}
-							className="max-h-[200px] w-full resize-none rounded-t-2xl px-4 pt-5 pb-2 text-[14px] leading-relaxed bg-transparent outline-none placeholder:text-zinc-400 select-text"
+							className="max-h-[200px] w-full resize-none rounded-t-2xl px-4 pt-5 pb-2 text-[14px] leading-relaxed bg-transparent outline-none placeholder:text-ink-faint select-text"
 							placeholder={isStreaming ? t("composer.placeholderQueued") : t("composer.placeholder")}
 							value={text}
 							rows={1}
@@ -518,7 +518,7 @@ export function Composer({ centered = false }: { centered?: boolean }) {
 						/>
 						<button
 							type="button"
-							className="-ml-1 -mb-1 flex h-7 w-7 items-center justify-center rounded-lg text-zinc-500 transition-colors hover:bg-zinc-100 hover:text-zinc-800"
+							className="-ml-1 -mb-1 flex h-7 w-7 items-center justify-center rounded-lg text-ink-dim transition-colors hover:bg-hover hover:text-ink"
 							title={t("composer.addImage")}
 							aria-label={t("composer.addImage")}
 							onClick={() => fileInputRef.current?.click()}
@@ -532,7 +532,7 @@ export function Composer({ centered = false }: { centered?: boolean }) {
 						{isStreaming && !hasContent ? (
 							<button
 								type="button"
-								className="flex h-8 w-8 items-center justify-center rounded-full bg-zinc-900 text-white transition-colors hover:bg-red-600"
+								className="flex h-8 w-8 items-center justify-center rounded-full bg-ink text-on-ink transition-colors hover:bg-red-600"
 								onClick={() => void handleStop()}
 								title={t("composer.stop")}
 								aria-label={t("composer.stop")}
@@ -542,7 +542,7 @@ export function Composer({ centered = false }: { centered?: boolean }) {
 						) : (
 							<button
 								type="button"
-								className="flex h-8 w-8 items-center justify-center rounded-full bg-zinc-900 text-white transition-colors hover:bg-zinc-700 disabled:opacity-30"
+								className="flex h-8 w-8 items-center justify-center rounded-full bg-ink text-on-ink transition-colors hover:bg-ink-2 disabled:opacity-30"
 								disabled={!hasContent || sending}
 								onClick={() => void handleSend()}
 								title={t("composer.send")}

@@ -30,13 +30,13 @@ export function TrustDialog({
 	};
 
 	return (
-		<div className="fixed inset-0 z-50 flex items-center justify-center bg-black/20" role="dialog" aria-modal>
-			<div className="w-[440px] rounded-xl border border-zinc-200 bg-white p-4 shadow-xl">
-				<h3 className="text-sm font-semibold text-zinc-900">{t("trust.title")}</h3>
-				<p className="mt-1.5 rounded-lg bg-zinc-50 px-2.5 py-1.5 font-mono text-[12px] break-all text-zinc-700 select-text">
+		<div className="fixed inset-0 z-50 flex items-center justify-center bg-ink/20" role="dialog" aria-modal>
+			<div className="w-[440px] rounded-xl border border-border bg-surface p-4 shadow-xl">
+				<h3 className="text-sm font-semibold text-ink">{t("trust.title")}</h3>
+				<p className="mt-1.5 rounded-lg bg-hover px-2.5 py-1.5 font-mono text-[12px] break-all text-ink-2 select-text">
 					{request.cwd}
 				</p>
-				<p className="mt-2 text-[12px] leading-relaxed text-zinc-600">{t("trust.message")}</p>
+				<p className="mt-2 text-[12px] leading-relaxed text-ink-2">{t("trust.message")}</p>
 				<div className="mt-4 flex flex-col items-stretch gap-1.5">
 					{request.options.map((option, index) => (
 						<Button
@@ -51,7 +51,7 @@ export function TrustDialog({
 					))}
 				</div>
 				{requests.length > 1 && (
-					<p className="mt-2 text-[11px] text-zinc-400">
+					<p className="mt-2 text-[11px] text-ink-faint">
 						{t("trust.queued", { count: requests.length - 1 })}
 					</p>
 				)}

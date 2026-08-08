@@ -9,6 +9,7 @@ import { SessionTabBar } from "./components/session/SessionTabBar";
 import { TrustDialog } from "./components/session/TrustDialog";
 import { SettingsDialog } from "./components/settings/SettingsDialog";
 import { useSessionsStore } from "./stores/sessions";
+import { backgroundImageUrl, useThemeStore } from "./stores/theme";
 import { useTranscriptStore } from "./stores/transcript";
 import { messagesToUIMessages } from "./stores/transcript-reducer";
 import { useUiStore } from "./stores/ui";
@@ -59,20 +60,30 @@ export default function App() {
 	};
 
 	const showEmpty = !transcript || (transcript.messages.length === 0 && !transcript.streaming);
+	const bgImage = useThemeStore((s) => s.background.image);
+	const bgDim = useThemeStore((s) => s.background.dim);
 
 	return (
-		<div className="flex h-full flex-col">
-			<SessionTabBar />
-			{view === "projects" ? (
-				<div className="min-h-0 flex-1">
-					<ProjectPage />
-				</div>
-			) : (
+		<div className="relative h-full">
+			{bgImage && (
 				<>
-					<main className="relative min-h-0 flex-1">{showEmpty ? <EmptyState /> : <MessageList />}</main>
-					<ApprovalDock sessionId={activeSessionId} hideComposer={showEmpty} />
+					<div className="app-bg" style={{ backgroundImage: `url("${backgroundImageUrl(bgImage)}")` }} />
+					<div className="app-bg-scrim" style={{ opacity: bgDim }} />
 				</>
 			)}
+			<div className="relative z-10 flex h-full flex-col">
+				<SessionTabBar />
+				{view === "projects" ? (
+					<div className="min-h-0 flex-1">
+						<ProjectPage />
+					</div>
+				) : (
+					<>
+						<main className="relative min-h-0 flex-1">{showEmpty ? <EmptyState /> : <MessageList />}</main>
+						<ApprovalDock sessionId={activeSessionId} hideComposer={showEmpty} />
+					</>
+				)}
+			</div>
 			<SettingsDialog />
 			<TrustDialog requests={trustRequests} onRespond={respondTrust} />
 		</div>

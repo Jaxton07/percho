@@ -1,5 +1,6 @@
 import { writeFile } from "node:fs/promises";
 import { join } from "node:path";
+import { pathToFileURL } from "node:url";
 import { createLogger, initLogging, PiBackend } from "@pi-desktop/backend";
 import {
 	type CustomProviderInput,
@@ -8,10 +9,12 @@ import {
 	type PermissionAnswer,
 	type PermissionRequest,
 	type SavedTabs,
+	type ThemeMode,
 	type TrustRequest,
 	type UiState,
 } from "@pi-desktop/shared";
-import { app, BrowserWindow, dialog, ipcMain, shell } from "electron";
+import { app, BrowserWindow, dialog, ipcMain, nativeTheme, net, protocol, shell } from "electron";
+import { backgroundsDir, pickBackgroundImage } from "./background";
 import { checkoutBranch, getGitBranch, listGitBranches } from "./git";
 import { loadTabs, saveTabs } from "./tabs";
 import { loadUiState, saveUiState } from "./ui-state";
@@ -19,6 +22,19 @@ import { createWindow } from "./window";
 
 const log = createLogger("main");
 let backend: PiBackend;
+
+/** renderer 加载自定义背景图的协议（pi-bg://background/<文件名>，只读 userData/backgrounds/） */
+const BG_PROTOCOL = "pi-bg";
+
+protocol.registerSchemesAsPrivileged([
+	{ scheme: BG_PROTOCOL, privileges: { standard: true, secure: true, supportFetchAPI: true } },
+]);
+
+/** 窗口启动底色跟随主题，避免深色模式下启动白闪 */
+function resolveWindowBackground(theme: ThemeMode | undefined): string {
+	const dark = theme === "dark" || (theme !== "light" && nativeTheme.shouldUseDarkColors);
+	return dark ? "#17171a" : "#fafafa";
+}
 
 function sendToRenderer(channel: string, payload: unknown): void {
 	const window = BrowserWindow.getAllWindows()[0];
@@ -123,7 +139,8 @@ function registerIpc(): void {
 	ipcMain.handle(IpcChannels.TabsLoad, () => loadTabs());
 	ipcMain.handle(IpcChannels.TabsSave, (_e, tabs: SavedTabs) => saveTabs(tabs));
 	ipcMain.handle(IpcChannels.UiStateLoad, () => loadUiState());
-	ipcMain.handle(IpcChannels.UiStateSave, (_e, state: UiState) => saveUiState(state));
+	ipcMain.handle(IpcChannels.UiStateSave, (_e, state: Partial<UiState>) => saveUiState(state));
+	ipcMain.handle(IpcChannels.BackgroundPick, () => pickBackgroundImage(BrowserWindow.getAllWindows()[0]));
 	ipcMain.handle(IpcChannels.ProjectPickDirectory, async () => {
 		const window = BrowserWindow.getAllWindows()[0];
 		const options: Electron.OpenDialogOptions = { properties: ["openDirectory", "createDirectory"] };
@@ -147,6 +164,13 @@ function registerIpc(): void {
 app.whenReady().then(async () => {
 	initLogging(join(app.getPath("userData"), "logs"));
 	log.info("app ready", { version: app.getVersion(), userData: app.getPath("userData") });
+
+	// 自定义背景图协议：pi-bg://background/<文件名> → userData/backgrounds/<文件名>（文件名白名单防路径穿越）
+	protocol.handle(BG_PROTOCOL, (request) => {
+		const name = decodeURIComponent(new URL(request.url).pathname).replace(/^\/+/, "");
+		if (!/^[\w.-]+$/.test(name)) return new Response("invalid background name", { status: 400 });
+		return net.fetch(pathToFileURL(join(backgroundsDir(), name)).toString());
+	});
 
 	// renderer 异常/崩溃 → 日志（错误排查依赖 trace + 日志）
 	const crashLog = createLogger("renderer");
@@ -174,10 +198,11 @@ app.whenReady().then(async () => {
 	backend = new PiBackend();
 	await backend.init();
 	registerIpc();
-	createWindow();
+	const uiState = await loadUiState();
+	createWindow(resolveWindowBackground(uiState?.theme));
 
 	app.on("activate", () => {
-		if (BrowserWindow.getAllWindows().length === 0) createWindow();
+		if (BrowserWindow.getAllWindows().length === 0) createWindow(resolveWindowBackground(uiState?.theme));
 	});
 });
 

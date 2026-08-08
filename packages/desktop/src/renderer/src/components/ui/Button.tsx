@@ -11,8 +11,8 @@ const SIZE: Record<Size, string> = {
 
 const TONE: Record<Tone, Record<Variant, string>> = {
 	default: {
-		ghost: "text-zinc-500 transition-colors hover:bg-zinc-100 hover:text-zinc-800",
-		primary: "bg-zinc-900 font-medium text-white transition-colors hover:bg-zinc-700 disabled:opacity-40",
+		ghost: "text-ink-dim transition-colors hover:bg-hover hover:text-ink",
+		primary: "bg-ink font-medium text-on-ink transition-colors hover:bg-ink-2 disabled:opacity-40",
 	},
 	danger: {
 		ghost: "text-red-500 transition-colors hover:bg-red-50",

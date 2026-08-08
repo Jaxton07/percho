@@ -27,21 +27,21 @@ export function ProviderRow({ provider }: { provider: ProviderInfo }) {
 			<div className="flex items-center gap-2">
 				<div className="min-w-0 flex-1">
 					<div className="flex items-center gap-1.5">
-						<span className="truncate text-[13px] font-medium text-zinc-800">{provider.name}</span>
+						<span className="truncate text-[13px] font-medium text-ink">{provider.name}</span>
 						{provider.custom && (
-							<span className="rounded bg-zinc-100 px-1.5 py-0.5 text-[10px] text-zinc-500">
+							<span className="rounded bg-hover px-1.5 py-0.5 text-[10px] text-ink-dim">
 								{t("settings.providers.custom")}
 							</span>
 						)}
 					</div>
-					<div className="mt-0.5 text-[11px] text-zinc-400">
+					<div className="mt-0.5 text-[11px] text-ink-faint">
 						{t("settings.providers.modelCount", { count: provider.models.length })}
 						{provider.configured && provider.authLabel ? ` · ${provider.authLabel}` : ""}
 					</div>
 				</div>
 				<span
 					className={`shrink-0 rounded-full px-2 py-0.5 text-[11px] ${
-						provider.configured ? "bg-emerald-50 text-emerald-600" : "bg-zinc-100 text-zinc-400"
+						provider.configured ? "bg-emerald-50 text-emerald-600" : "bg-hover text-ink-faint"
 					}`}
 				>
 					{provider.configured ? t("settings.providers.configured") : t("settings.providers.unconfigured")}
@@ -82,7 +82,7 @@ export function ProviderRow({ provider }: { provider: ProviderInfo }) {
 				<div className="mt-2 flex items-center gap-2">
 					<input
 						type="password"
-						className="min-w-0 flex-1 rounded-lg border border-zinc-200 px-2.5 py-1.5 text-[12px] outline-none focus:border-zinc-400"
+						className="min-w-0 flex-1 rounded-lg border border-border px-2.5 py-1.5 text-[12px] outline-none focus:border-ink-faint"
 						placeholder={t("settings.providers.keyPlaceholder")}
 						value={key}
 						onChange={(e) => setKey(e.target.value)}

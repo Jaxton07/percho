@@ -1,5 +1,80 @@
 @import "tailwindcss";
 
+/* dark: 工具类挂到 data-theme（手动切换），不走 prefers-color-scheme */
+@custom-variant dark (&:where([data-theme="dark"], [data-theme="dark"] *));
+
+/* 语义 token → Tailwind 工具类（bg-canvas / bg-surface / text-ink / border-border ...）。
+   inline 让工具类直接引用运行时变量，[data-theme] 改写变量值即完成主题切换 */
+@theme inline {
+	--color-canvas: var(--color-canvas);
+	--color-surface: var(--color-surface);
+	--color-hover: var(--color-hover);
+	--color-border: var(--color-border);
+	--color-border-strong: var(--color-border-strong);
+	--color-ink: var(--color-ink);
+	--color-ink-2: var(--color-ink-2);
+	--color-ink-dim: var(--color-ink-dim);
+	--color-ink-faint: var(--color-ink-faint);
+	--color-on-ink: var(--color-on-ink);
+	--color-accent: var(--color-accent);
+	--color-on-accent: var(--color-on-accent);
+}
+
+:root {
+	--color-canvas: #fafafa;
+	--color-surface: #ffffff;
+	--color-hover: #f4f4f5;
+	--color-border: #e4e4e7;
+	--color-border-strong: #d4d4d8;
+	--color-ink: #18181b;
+	--color-ink-2: #3f3f46;
+	--color-ink-dim: #71717a;
+	--color-ink-faint: #a1a1aa;
+	--color-on-ink: #ffffff;
+	--color-accent: #7c3aed;
+	--color-on-accent: #ffffff;
+	/* 自定义背景图遮罩（rgb 分量；不透明度由 .app-bg-scrim 的 inline opacity 控制） */
+	--color-scrim: 250 250 250;
+	--markdown-code-bg: #f4f4f5;
+	--markdown-code-text: #3f3f46;
+	--markdown-quote-border: #e4e4e7;
+	--markdown-quote-text: #71717a;
+	--markdown-table-border: #e4e4e7;
+	--markdown-table-head-bg: #fafafa;
+	--markdown-link-decoration: #c4b5fd;
+	--markdown-link-hover: #6d28d9;
+	--shimmer-highlight: rgba(255, 255, 255, 0.9);
+	--scrollbar-thumb: #d4d4d4;
+	--scrollbar-thumb-hover: #bfbfbf;
+}
+
+[data-theme="dark"] {
+	--color-canvas: #17171a;
+	--color-surface: #212126;
+	--color-hover: #2b2b31;
+	--color-border: #38383f;
+	--color-border-strong: #4b4b53;
+	--color-ink: #e6e6ea;
+	--color-ink-2: #c6c6cd;
+	--color-ink-dim: #9a9aa3;
+	--color-ink-faint: #6e6e77;
+	--color-on-ink: #17171a;
+	--color-accent: #8b5cf6;
+	--color-on-accent: #ffffff;
+	--color-scrim: 23 23 26;
+	--markdown-code-bg: #2b2b31;
+	--markdown-code-text: #d4d4db;
+	--markdown-quote-border: #4b4b53;
+	--markdown-quote-text: #9a9aa3;
+	--markdown-table-border: #38383f;
+	--markdown-table-head-bg: #212126;
+	--markdown-link-decoration: #6d28d9;
+	--markdown-link-hover: #a78bfa;
+	--shimmer-highlight: rgba(255, 255, 255, 0.55);
+	--scrollbar-thumb: #4b4b53;
+	--scrollbar-thumb-hover: #5d5d66;
+}
+
 /* 预览行上滑切换：新行从下方滑入，旧行向上滑出（时长恒定 0.32s，与 PreviewTicker 的 ANIMATION_MS 同步；不随队列积压变化）。slide-out 必须 forwards：动画结束后保持透明/位移终态，否则旧行在 React 移除前弹回可见造成重叠 */
 .preview-slide-in {
 	animation: preview-slide-in 0.32s ease-out;
@@ -76,16 +151,6 @@
 	}
 }
 
-:root {
-	--color-bg: #fafafa;
-	--color-surface: #ffffff;
-	--color-border: #e5e5e5;
-	--color-text: #1a1a1a;
-	--color-text-secondary: #8a8a8a;
-	--color-accent: #7c3aed;
-	--color-hover: #f0f0f0;
-}
-
 html,
 body,
 #root {
@@ -98,11 +163,30 @@ body {
 	font-family:
 		-apple-system, BlinkMacSystemFont, "SF Pro Text", "Helvetica Neue", "PingFang SC", "Microsoft YaHei",
 		sans-serif;
-	background: var(--color-bg);
-	color: var(--color-text);
+	background: var(--color-canvas);
+	color: var(--color-ink);
 	font-size: 14px;
 	-webkit-font-smoothing: antialiased;
 	user-select: none;
+	transition: background-color 0.15s ease;
+}
+
+/* 设置了自定义背景图时 body 透明，让 #root 内的背景层透出 */
+[data-has-bg="true"] body {
+	background: transparent;
+}
+
+/* 应用背景层：图片 cover + 主题感知遮罩（透明度 = 设置的 dim 值，inline style 控制） */
+.app-bg {
+	position: absolute;
+	inset: 0;
+	background-size: cover;
+	background-position: center;
+}
+.app-bg-scrim {
+	position: absolute;
+	inset: 0;
+	background: rgb(var(--color-scrim));
 }
 
 pre,
@@ -131,11 +215,11 @@ code {
 	height: 8px;
 }
 ::-webkit-scrollbar-thumb {
-	background: #d4d4d4;
+	background: var(--scrollbar-thumb);
 	border-radius: 4px;
 }
 ::-webkit-scrollbar-thumb:hover {
-	background: #bfbfbf;
+	background: var(--scrollbar-thumb-hover);
 }
 ::-webkit-scrollbar-track {
 	background: transparent;
@@ -145,7 +229,7 @@ code {
    光带位于渐变 40–60%（图宽 200%），仅当 background-position ∈ (-20%, 120%) 时可见——
    动画精确走 120% → -20% 且 linear：首尾光带都在视口外，循环无缝无重置卡顿。 */
 .shimmer-sweep {
-	background-image: linear-gradient(90deg, currentColor 40%, rgba(255, 255, 255, 0.9) 50%, currentColor 60%);
+	background-image: linear-gradient(90deg, currentColor 40%, var(--shimmer-highlight) 50%, currentColor 60%);
 	background-size: 200% 100%;
 	background-position: 120% 0;
 	-webkit-background-clip: text;
@@ -169,7 +253,7 @@ code {
 
 /* markstream-react 视觉覆写：组件样式均为 :where() 零优先级，此处规则必覆盖；对齐原 react-markdown 设计 */
 .markdown-body {
-	--link-color: #7c3aed;
+	--link-color: var(--color-accent);
 }
 .markdown-body .paragraph-node {
 	margin: 0.375rem 0;
@@ -185,10 +269,10 @@ code {
 .markdown-body .blockquote-node {
 	margin: 0.375rem 0;
 	padding-left: 0.75rem;
-	border-left: 2px solid #e4e4e7;
+	border-left: 2px solid var(--markdown-quote-border);
 	font-weight: normal;
 	font-style: normal;
-	color: #71717a;
+	color: var(--markdown-quote-text);
 }
 .markdown-body .heading-node {
 	font-weight: 600;
@@ -216,16 +300,16 @@ code {
 }
 .markdown-body .link-node {
 	text-decoration: underline;
-	text-decoration-color: #c4b5fd;
+	text-decoration-color: var(--markdown-link-decoration);
 }
 .markdown-body .link-node:hover {
-	color: #6d28d9;
+	color: var(--markdown-link-hover);
 }
 .markdown-body .inline-code {
 	padding: 0.125rem 0.25rem;
 	border-radius: 0.25rem;
-	background: #f4f4f5;
-	color: #3f3f46;
+	background: var(--markdown-code-bg);
+	color: var(--markdown-code-text);
 	font-size: 12.5px;
 }
 .markdown-body .table-node {
@@ -233,15 +317,15 @@ code {
 }
 .markdown-body .table-node th,
 .markdown-body .table-node td {
-	border: 1px solid #e4e4e7;
+	border: 1px solid var(--markdown-table-border);
 	padding: 0.25rem 0.5rem;
 	text-align: left;
 }
 .markdown-body .table-node th {
-	background: #fafafa;
+	background: var(--markdown-table-head-bg);
 }
 .markdown-body .hr-node,
 .markdown-body .thematic-break {
 	margin: 1rem 0;
-	border-top-color: #e4e4e7;
+	border-top-color: var(--markdown-table-border);
 }

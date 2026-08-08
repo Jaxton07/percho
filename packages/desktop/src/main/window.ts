@@ -3,7 +3,7 @@ import { BrowserWindow, shell } from "electron";
 
 const __dirname = import.meta.dirname;
 
-export function createWindow(): BrowserWindow {
+export function createWindow(backgroundColor = "#fafafa"): BrowserWindow {
 	const window = new BrowserWindow({
 		width: 1100,
 		height: 750,
@@ -12,7 +12,7 @@ export function createWindow(): BrowserWindow {
 		show: false,
 		titleBarStyle: "hiddenInset",
 		trafficLightPosition: { x: 16, y: 16 },
-		backgroundColor: "#fafafa",
+		backgroundColor,
 		webPreferences: {
 			preload: join(__dirname, "../preload/index.cjs"),
 			contextIsolation: true,

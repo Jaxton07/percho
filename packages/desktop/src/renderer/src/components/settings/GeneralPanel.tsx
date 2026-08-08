@@ -13,8 +13,8 @@ export function GeneralPanel() {
 	return (
 		<div className="flex flex-col gap-6">
 			<div>
-				<h3 className="text-[13px] font-medium text-zinc-800">{t("settings.language")}</h3>
-				<p className="mt-0.5 text-[11px] text-zinc-400">{t("settings.languageHint")}</p>
+				<h3 className="text-[13px] font-medium text-ink">{t("settings.language")}</h3>
+				<p className="mt-0.5 text-[11px] text-ink-faint">{t("settings.languageHint")}</p>
 				<div className="mt-2 flex gap-2">
 					{(["zh", "en"] as Language[]).map((lang) => (
 						<button
@@ -22,8 +22,8 @@ export function GeneralPanel() {
 							type="button"
 							className={`rounded-lg border px-3 py-1.5 text-[13px] transition-colors ${
 								language === lang
-									? "border-zinc-900 bg-zinc-900 text-white"
-									: "border-zinc-200 text-zinc-600 hover:border-zinc-300 hover:bg-zinc-50"
+									? "border-ink bg-ink text-on-ink"
+									: "border-border text-ink-2 hover:border-border-strong hover:bg-hover"
 							}`}
 							onClick={() => setLanguage(lang)}
 						>
@@ -34,7 +34,7 @@ export function GeneralPanel() {
 			</div>
 			<div>
 				<div className="flex items-center justify-between gap-4">
-					<h3 className="text-[13px] font-medium text-zinc-800">{t("settings.permissionGate")}</h3>
+					<h3 className="text-[13px] font-medium text-ink">{t("settings.permissionGate")}</h3>
 					<button
 						type="button"
 						role="switch"
@@ -42,17 +42,19 @@ export function GeneralPanel() {
 						disabled={permissionEnabled === null}
 						onClick={() => void setPermissionEnabled(!(permissionEnabled === true))}
 						className={`relative h-5 w-9 shrink-0 rounded-full transition-colors ${
-							permissionEnabled === true ? "bg-zinc-900" : "bg-zinc-300"
+							permissionEnabled === true ? "bg-ink" : "bg-border-strong"
 						} disabled:opacity-40`}
 					>
 						<span
-							className={`absolute top-0.5 h-4 w-4 rounded-full bg-white shadow transition-all ${
+							className={`absolute top-0.5 h-4 w-4 rounded-full bg-surface shadow transition-all ${
 								permissionEnabled === true ? "left-[18px]" : "left-0.5"
 							}`}
 						/>
 					</button>
 				</div>
-				<p className="mt-0.5 text-[11px] leading-relaxed text-zinc-400">{t("settings.permissionGateHint")}</p>
+				<p className="mt-0.5 text-[11px] leading-relaxed text-ink-faint">
+					{t("settings.permissionGateHint")}
+				</p>
 			</div>
 		</div>
 	);

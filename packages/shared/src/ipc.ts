@@ -62,9 +62,11 @@ export const IpcChannels = {
 	/** 顶栏 tabs 持久化（userData/tabs.json，不依赖 renderer localStorage） */
 	TabsLoad: "tabs:load",
 	TabsSave: "tabs:save",
-	/** 应用 UI 状态持久化（userData/ui-state.json：上次使用的模型/思考级别） */
+	/** 应用 UI 状态持久化（userData/ui-state.json：上次使用的模型/思考级别 + 主题/背景） */
 	UiStateLoad: "uiState:load",
 	UiStateSave: "uiState:save",
+	/** 自定义背景：弹图选框并拷贝进 userData/backgrounds/，返回文件名（取消返回 null） */
+	BackgroundPick: "background:pick",
 	/** main → renderer 事件 */
 	Event: "pi:event",
 	PermissionRequest: "pi:permission-request",
@@ -130,10 +132,12 @@ export interface PiApi {
 	loadTabs(): Promise<SavedTabs | null>;
 	/** 持久化顶栏 tabs（主进程写 userData/tabs.json） */
 	saveTabs(tabs: SavedTabs): Promise<void>;
-	/** 读取持久化 UI 状态（上次使用的模型/思考级别；无数据返回 null） */
+	/** 读取持久化 UI 状态（上次使用的模型/思考级别/主题/背景；无数据返回 null） */
 	loadUiState(): Promise<UiState | null>;
-	/** 持久化 UI 状态（主进程写 userData/ui-state.json） */
-	saveUiState(state: UiState): Promise<void>;
+	/** 持久化 UI 状态（主进程合并写入 userData/ui-state.json，传补丁即可） */
+	saveUiState(state: Partial<UiState>): Promise<void>;
+	/** 弹图选框选背景图并拷贝进 userData/backgrounds/；返回文件名（经 pi-bg://background/<name> 加载），取消返回 null */
+	pickBackgroundImage(): Promise<string | null>;
 	/** 订阅会话事件；返回取消函数 */
 	onEvent(cb: (payload: SessionEventEnvelope) => void): () => void;
 	onPermissionRequest(cb: (req: PermissionRequest) => void): () => void;
