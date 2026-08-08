@@ -51,7 +51,7 @@ Prebuilt installers are published on the [Releases](https://github.com/Jaxton07/
 | macOS (Intel) | `pi-desktop-mac-x64.dmg` |
 | Windows | `pi-desktop-windows-x64.exe` |
 
-> Builds are currently unsigned. On macOS, the first launch may show **"pi-desktop is damaged and can't be opened"** — that's Gatekeeper blocking an unsigned download, not actual damage. Fix it by removing the quarantine flag: `xattr -cr /Applications/pi-desktop.app`, then open normally. On Windows, click "More info" → "Run anyway" when SmartScreen appears.
+> Builds are currently unsigned. On macOS, the first launch may show **"Pi Desktop is damaged and can't be opened"** — that's Gatekeeper blocking an unsigned download, not actual damage. Fix it by removing the quarantine flag: `xattr -cr "/Applications/Pi Desktop.app"`, then open normally. On Windows, click "More info" → "Run anyway" when SmartScreen appears.
 
 ## Configuration
 

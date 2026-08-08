@@ -1,5 +1,5 @@
 appId: io.github.jaxton07.pi-desktop
-productName: pi-desktop
+productName: Pi Desktop
 directories:
   output: dist
 files:
@@ -15,14 +15,15 @@ mac:
       arch: [arm64, x64]
     - target: zip
       arch: [arm64, x64]
-  artifactName: ${productName}-mac-${arch}.${ext}
+  # 产物名与 productName 解耦：保持 pi-desktop-mac-* 兼容 README 下载表（productName 带空格仅作显示名）
+  artifactName: pi-desktop-mac-${arch}.${ext}
 win:
   target:
     - target: nsis
       arch: [x64]
     - target: zip
       arch: [x64]
-  artifactName: ${productName}-windows-${arch}.${ext}
+  artifactName: pi-desktop-windows-${arch}.${ext}
 nsis:
   oneClick: false
   allowToChangeInstallationDirectory: true
