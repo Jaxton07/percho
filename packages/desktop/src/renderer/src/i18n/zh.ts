@@ -140,6 +140,9 @@ export const zh = {
 		},
 		language: "语言",
 		languageHint: "默认跟随系统语言",
+		permissionGate: "内置权限门控",
+		permissionGateHint:
+			"开启后按规则拦截工具调用：高危命令（rm -rf、sudo、强推等）弹窗确认，其余放行。规则文件 ~/.pi/agent/permissions.json，修改即时生效。关闭可换用自己安装的权限扩展。",
 		providers: {
 			empty: "未发现可用 provider",
 			custom: "自定义",

@@ -38,6 +38,44 @@
 	}
 }
 
+/* 权限审批面板：进入从下方浮起（弹出感），退出下沉淡出（ApprovalDock 的 EXIT_MS 需与退出时长同步） */
+.approval-enter {
+	animation: approval-enter 0.22s cubic-bezier(0.16, 1, 0.3, 1);
+}
+.approval-exit {
+	animation: approval-exit 0.15s ease-in forwards;
+}
+.approval-composer-enter {
+	animation: approval-enter 0.18s ease-out;
+}
+@keyframes approval-enter {
+	from {
+		transform: translateY(10px) scale(0.99);
+		opacity: 0;
+	}
+	to {
+		transform: translateY(0) scale(1);
+		opacity: 1;
+	}
+}
+@keyframes approval-exit {
+	from {
+		transform: translateY(0);
+		opacity: 1;
+	}
+	to {
+		transform: translateY(6px);
+		opacity: 0;
+	}
+}
+@media (prefers-reduced-motion: reduce) {
+	.approval-enter,
+	.approval-exit,
+	.approval-composer-enter {
+		animation: none;
+	}
+}
+
 :root {
 	--color-bg: #fafafa;
 	--color-surface: #ffffff;

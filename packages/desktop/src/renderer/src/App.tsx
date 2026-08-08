@@ -3,9 +3,8 @@ import { useEffect, useState } from "react";
 import { getPi } from "./api";
 import { EmptyState } from "./components/chat/EmptyState";
 import { MessageList } from "./components/chat/MessageList";
-import { Composer } from "./components/composer/Composer";
 import { ProjectPage } from "./components/projects/ProjectPage";
-import { PermissionDialog } from "./components/session/PermissionDialog";
+import { ApprovalDock } from "./components/session/ApprovalDock";
 import { SessionTabBar } from "./components/session/SessionTabBar";
 import { TrustDialog } from "./components/session/TrustDialog";
 import { SettingsDialog } from "./components/settings/SettingsDialog";
@@ -70,11 +69,8 @@ export default function App() {
 				</div>
 			) : (
 				<>
-					<main className="relative min-h-0 flex-1">
-						{showEmpty ? <EmptyState /> : <MessageList />}
-						<PermissionDialog sessionId={activeSessionId} />
-					</main>
-					{!showEmpty && <Composer />}
+					<main className="relative min-h-0 flex-1">{showEmpty ? <EmptyState /> : <MessageList />}</main>
+					<ApprovalDock sessionId={activeSessionId} hideComposer={showEmpty} />
 				</>
 			)}
 			<SettingsDialog />

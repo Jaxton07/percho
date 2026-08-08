@@ -37,6 +37,8 @@ const api: PiApi = {
 		ipcRenderer.invoke(IpcChannels.SettingsTestProvider, providerId, modelId),
 	respondPermission: (requestId, answer) =>
 		ipcRenderer.invoke(IpcChannels.PermissionRespond, requestId, answer),
+	getPermissionConfig: () => ipcRenderer.invoke(IpcChannels.PermissionGetConfig),
+	setPermissionEnabled: (enabled) => ipcRenderer.invoke(IpcChannels.PermissionSetEnabled, enabled),
 	respondTrust: (requestId, answer) => ipcRenderer.invoke(IpcChannels.TrustRespond, requestId, answer),
 	pickDirectory: () => ipcRenderer.invoke(IpcChannels.ProjectPickDirectory),
 	getGitBranch: (cwd) => ipcRenderer.invoke(IpcChannels.ProjectGetGitBranch, cwd),

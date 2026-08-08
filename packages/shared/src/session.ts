@@ -125,6 +125,11 @@ export interface PermissionRequest {
 
 export type PermissionAnswer = "allow" | "deny" | "allowAlways";
 
+/** 权限门控配置（设置 UI 开关；规则全文在 ~/.pi/agent/permissions.json） */
+export interface PermissionConfigInfo {
+	enabled: boolean;
+}
+
 /**
  * 项目信任选项（创建/打开会话时，项目含 .pi/ 资源或祖先 .agents/skills 需用户决策）。
  * key 由 backend 分类，renderer 按 key 出 i18n 文案；parentPath 仅 trustParent 有值。

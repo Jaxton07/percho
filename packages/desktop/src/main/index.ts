@@ -104,6 +104,10 @@ function registerIpc(): void {
 	ipcMain.handle(IpcChannels.PermissionRespond, (_e, requestId: string, answer: PermissionAnswer) =>
 		backend.respondPermission(requestId, answer),
 	);
+	ipcMain.handle(IpcChannels.PermissionGetConfig, () => backend.getPermissionConfig());
+	ipcMain.handle(IpcChannels.PermissionSetEnabled, (_e, enabled: boolean) =>
+		backend.setPermissionEnabled(enabled),
+	);
 	ipcMain.handle(IpcChannels.TrustRespond, (_e, requestId: string, answer: number) =>
 		backend.respondTrust(requestId, answer),
 	);

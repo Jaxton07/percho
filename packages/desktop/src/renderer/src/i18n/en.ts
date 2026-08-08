@@ -142,6 +142,9 @@ export const en: Messages = {
 		},
 		language: "Language",
 		languageHint: "Follows system language by default",
+		permissionGate: "Built-in permission gate",
+		permissionGateHint:
+			"When on, tool calls are checked against rules: dangerous commands (rm -rf, sudo, force push, etc.) ask for confirmation, everything else runs. Rules live in ~/.pi/agent/permissions.json and apply instantly. Turn off to replace with your own permission extension.",
 		providers: {
 			empty: "No providers available",
 			custom: "Custom",

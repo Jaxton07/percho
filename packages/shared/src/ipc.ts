@@ -4,6 +4,7 @@ import type {
 	GitBranches,
 	ImageInput,
 	PermissionAnswer,
+	PermissionConfigInfo,
 	PermissionRequest,
 	QueuedMessages,
 	SavedTabs,
@@ -48,6 +49,9 @@ export const IpcChannels = {
 	SettingsRemoveCustomProvider: "settings:removeCustomProvider",
 	SettingsTestProvider: "settings:testProvider",
 	PermissionRespond: "permission:respond",
+	/** 权限门控配置（设置 UI 开关） */
+	PermissionGetConfig: "permission:getConfig",
+	PermissionSetEnabled: "permission:setEnabled",
 	/** 项目信任应答（选项下标） */
 	TrustRespond: "trust:respond",
 	ProjectPickDirectory: "project:pickDirectory",
@@ -109,6 +113,10 @@ export interface PiApi {
 	removeCustomProvider(providerId: string): Promise<void>;
 	testProvider(providerId: string, modelId?: string): Promise<ProviderTestResult>;
 	respondPermission(requestId: string, answer: PermissionAnswer): Promise<void>;
+	/** 读取权限门控开关状态 */
+	getPermissionConfig(): Promise<PermissionConfigInfo>;
+	/** 设置权限门控开关（即时生效，扩展按 mtime 重读配置） */
+	setPermissionEnabled(enabled: boolean): Promise<void>;
 	/** 应答项目信任请求（optionIndex 为 TrustRequest.options 下标） */
 	respondTrust(requestId: string, answer: TrustAnswer): Promise<void>;
 	pickDirectory(): Promise<string | null>;

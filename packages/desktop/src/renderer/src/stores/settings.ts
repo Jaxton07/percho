@@ -11,6 +11,8 @@ interface SettingsStore {
 	category: SettingsCategory;
 	providers: ProviderInfo[];
 	loading: boolean;
+	/** 内置权限门控开关（null = 未加载） */
+	permissionEnabled: boolean | null;
 	/** providerId → 测试结果（"testing" 表示进行中） */
 	testResults: Record<string, ProviderTestResult | "testing">;
 	error: string | null;
@@ -24,6 +26,7 @@ interface SettingsStore {
 	addCustom: (input: CustomProviderInput) => Promise<void>;
 	removeCustom: (providerId: string) => Promise<void>;
 	test: (providerId: string) => Promise<void>;
+	setPermissionEnabled: (enabled: boolean) => Promise<void>;
 }
 
 export const useSettingsStore = create<SettingsStore>((set, get) => {
@@ -38,6 +41,7 @@ export const useSettingsStore = create<SettingsStore>((set, get) => {
 		category: "providers",
 		providers: [],
 		loading: false,
+		permissionEnabled: null,
 		testResults: {},
 		error: null,
 
@@ -56,10 +60,26 @@ export const useSettingsStore = create<SettingsStore>((set, get) => {
 		refresh: async () => {
 			set({ loading: true });
 			try {
-				const providers = await getPi().listProviders();
-				set({ providers, loading: false, error: null });
+				const [providers, permission] = await Promise.all([
+					getPi().listProviders(),
+					getPi().getPermissionConfig(),
+				]);
+				set({ providers, permissionEnabled: permission.enabled, loading: false, error: null });
 			} catch (error) {
 				set({ loading: false, error: error instanceof Error ? error.message : String(error) });
+			}
+		},
+
+		setPermissionEnabled: async (enabled) => {
+			const previous = get().permissionEnabled;
+			set({ permissionEnabled: enabled });
+			try {
+				await getPi().setPermissionEnabled(enabled);
+			} catch (error) {
+				set({
+					permissionEnabled: previous,
+					error: error instanceof Error ? error.message : String(error),
+				});
 			}
 		},
 

@@ -27,6 +27,8 @@ import type {
 	TrustRequest,
 } from "@pi-desktop/shared";
 import { createLogger } from "./log";
+import { makePermissionGateExtension } from "./permission-extension";
+import { loadPermissionConfig, setPermissionEnabled as writePermissionEnabled } from "./permission-rules";
 import { PermissionGate } from "./permissions";
 import { autoNameSession } from "./session-naming";
 import { type EventForwarder, SessionRegistry } from "./session-registry";
@@ -46,6 +48,8 @@ export interface PiBackendOptions {
 	customTools?: ToolDefinition[];
 	/** 是否启用权限确认门控（false 时 confirm 直接通过） */
 	permissionGates?: boolean;
+	/** 是否注册内置权限门控扩展（false 时逐工具规则不生效；用户换用自己的权限扩展时关闭）。permissionGates=false 时强制不注册 */
+	permissionExtension?: boolean;
 	/** 是否启用项目信任门控（false 时所有项目自动信任，项目资源直接加载；供无人值守场景用） */
 	projectTrust?: boolean;
 }
@@ -130,7 +134,15 @@ export class PiBackend {
 	}> {
 		const agentDir = getAgentDir();
 		const settingsManager = SettingsManager.create(cwd, agentDir, { projectTrusted: false });
-		const resourceLoader = new DefaultResourceLoader({ cwd, agentDir, settingsManager });
+		// 内置权限门控扩展随资源加载器注册（inline factory，不受项目信任影响，不受信任的
+		// 项目里也能拦截高危命令）；permissionGates=false 时 confirm 恒 false，不能注册
+		const enableGate = this.options.permissionGates !== false && this.options.permissionExtension !== false;
+		const resourceLoader = new DefaultResourceLoader({
+			cwd,
+			agentDir,
+			settingsManager,
+			extensionFactories: enableGate ? [makePermissionGateExtension(agentDir)] : [],
+		});
 		if (this.options.projectTrust === false) {
 			settingsManager.setProjectTrusted(true);
 			await resourceLoader.reload();
@@ -424,6 +436,17 @@ export class PiBackend {
 		for (const gate of this.gates.values()) {
 			gate.respond(requestId, answer);
 		}
+	}
+
+	/** 权限门控配置（设置 UI 开关用；规则全文在 ~/.pi/agent/permissions.json） */
+	getPermissionConfig(): { enabled: boolean } {
+		return { enabled: loadPermissionConfig(getAgentDir()).enabled };
+	}
+
+	/** 写 enabled 开关；扩展按 mtime 重读配置，即时生效 */
+	setPermissionEnabled(enabled: boolean): void {
+		writePermissionEnabled(getAgentDir(), enabled);
+		log.info("permission gate enabled", enabled);
 	}
 
 	respondTrust(requestId: string, answer: TrustAnswer): void {
