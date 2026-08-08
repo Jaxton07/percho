@@ -1,0 +1,44 @@
+name: Bug report
+description: Report something that isn't working
+title: "[Bug] "
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for reporting! Please **redact API keys and personal data** — never paste `auth.json`, session files, or keys.
+  - type: input
+    id: version
+    attributes:
+      label: App version
+      description: e.g. 0.1.0 — shown in the app or the release you downloaded
+    validations:
+      required: true
+  - type: input
+    id: os
+    attributes:
+      label: Operating system
+      description: e.g. macOS 15.3 (Apple Silicon), Windows 11
+    validations:
+      required: true
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened?
+      description: What did you do, what did you expect, what actually happened?
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce
+      value: |
+        1.
+        2.
+        3.
+  - type: textarea
+    id: logs
+    attributes:
+      label: Relevant logs
+      description: Console output or error messages, if any (redact secrets!)
+      render: shell

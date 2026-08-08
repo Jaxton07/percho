@@ -2,7 +2,14 @@
 	"name": "pi-desktop",
 	"private": true,
 	"version": "0.1.0",
-	"description": "Minimal desktop GUI for Pi Agent",
+	"description": "Desktop GUI for the Pi coding agent, built with Electron",
+	"license": "MIT",
+	"author": "Jaxton07",
+	"repository": {
+		"type": "git",
+		"url": "git+https://github.com/Jaxton07/pi-desktop.git"
+	},
+	"bugs": "https://github.com/Jaxton07/pi-desktop/issues",
 	"workspaces": [
 		"packages/*"
 	],

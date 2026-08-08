@@ -1,0 +1,71 @@
+# pi-desktop
+
+A desktop GUI for the [Pi coding agent](https://www.npmjs.com/package/@earendil-works/pi-coding-agent) — Pi's power and extensibility, with a visual interface.
+
+[![License](https://img.shields.io/github/license/Jaxton07/pi-desktop?style=flat-square)](LICENSE)
+
+[English](README.md) | [简体中文](README.zh.md)
+
+---
+
+## Demo
+
+**Chat**
+
+![Chat page demo](docs/demo-chat.mp4)
+
+**Settings — providers & models**
+
+![Settings page demo](docs/demo-settings.mp4)
+
+## Why pi-desktop?
+
+pi-desktop embeds the official Pi SDK (`@earendil-works/pi-coding-agent`) in the Electron main process. It is **not a fork and not a reimplementation** — it runs the same engine as the Pi CLI and inherits Pi's native strengths:
+
+- **Extensibility** — TypeScript extensions, skills, and prompt templates installed for the Pi CLI work here too, including project-local ones (with a trust prompt before loading). Adapt Pi to your workflows, no forking required.
+- **Shared configuration** — same `~/.pi/agent/` directory as the CLI: sessions, auth, and model settings carry over. Start a session in the terminal, continue it in the GUI.
+- **Providers** — subscriptions (Claude Pro/Max, ChatGPT Plus/Pro Codex, GitHub Copilot) and API keys for Anthropic, OpenAI, Gemini, DeepSeek, Bedrock, and more.
+
+And for those who prefer a GUI over a TUI:
+
+- Minimalist by design — a clean, uncluttered interface that stays true to Pi's aesthetic
+- Visual permission gates — approve or deny each tool call from a dock, backed by a per-tool rule engine
+- Multi-session sidebar, per-session composer drafts, follow-up queue with undo
+- Streaming markdown rendering, image previews, message copy
+
+## Download
+
+Prebuilt installers are published on the [Releases](https://github.com/Jaxton07/pi-desktop/releases) page.
+
+| Platform | Download |
+| --- | --- |
+| macOS (Apple Silicon) | `pi-desktop-mac-arm64.dmg` |
+| macOS (Intel) | `pi-desktop-mac-x64.dmg` |
+| Windows | `pi-desktop-windows-x64.exe` |
+
+> Builds are currently unsigned. On macOS, right-click the app and choose Open (or run `xattr -cr /Applications/pi-desktop.app`). On Windows, click "More info" → "Run anyway" when SmartScreen appears.
+
+## Configuration
+
+API keys are never stored in this repo or written into the app bundle. `~/.pi/agent/models.json` references environment variables (e.g. `$AI_OPS_API_KEY`) and keys stay in your shell environment. If you already use the Pi CLI, your existing setup just works.
+
+## Development
+
+Prerequisites: **Node.js >= 22.19**.
+
+```bash
+npm install
+npm run dev
+```
+
+npm workspaces monorepo, three packages: `packages/shared` (IPC contracts), `packages/backend` (the only place that imports the Pi SDK), `packages/desktop` (Electron + React 19 + Tailwind 4 + Zustand). Common commands: `npm run typecheck` / `test` / `lint` / `build` / `dist`.
+
+See [CONTRIBUTING.md](CONTRIBUTING.md) for the full guide. If you are in China and the Electron binary download stalls, set `ELECTRON_MIRROR=https://npmmirror.com/mirrors/electron/` first.
+
+## Disclaimer
+
+pi-desktop is a community project. It is **not** built by or affiliated with the Pi team (earendil-works).
+
+## License
+
+[MIT](LICENSE)
