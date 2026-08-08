@@ -51,6 +51,14 @@ These are hard-won lessons — please follow them:
 - Permission prompts are injected via `session.bindExtensions(...)` — only modify the `confirm` handler in `makeUiContext`, don't rewrite the whole UI context.
 - The preload bundle must stay CJS (`format: "cjs"`, `index.cjs`) or sandboxed renderers won't load it.
 
+## Releasing
+
+Releases are built by GitHub Actions and published to GitHub Releases (macOS arm64/x64 dmg+zip, Windows x64 nsis+zip):
+
+1. Bump `version` in `packages/desktop/package.json` and commit.
+2. `git tag vX.Y.Z && git push --tags`
+3. The Release workflow builds both platforms and uploads the installers.
+
 ## Reporting bugs
 
 Open an issue with the bug report template. Include your OS, app version, and steps to reproduce. Never paste API keys, session files, or `auth.json` contents into issues.
