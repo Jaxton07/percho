@@ -1,3 +1,4 @@
+import { existsSync } from "node:fs";
 import { unlink } from "node:fs/promises";
 import type { Model, ThinkingLevel } from "@earendil-works/pi-ai";
 import {
@@ -30,6 +31,7 @@ import { createLogger } from "./log";
 import { makePermissionGateExtension } from "./permission-extension";
 import { loadPermissionConfig, setPermissionEnabled as writePermissionEnabled } from "./permission-rules";
 import { PermissionGate } from "./permissions";
+import { walkProjectFiles } from "./project-files";
 import { autoNameSession } from "./session-naming";
 import { type EventForwarder, SessionRegistry } from "./session-registry";
 import { SettingsService } from "./settings";
@@ -134,6 +136,11 @@ export class PiBackend {
 
 	async init(): Promise<void> {
 		await this.getModelRuntime();
+	}
+
+	/** 项目文件列表（@ 补全数据源，相对路径、目录带尾 /，TTL 缓存） */
+	async listProjectFiles(cwd?: string): Promise<string[]> {
+		return walkProjectFiles(cwd || this.options.defaultCwd || process.cwd());
 	}
 
 	/**
@@ -348,10 +355,10 @@ export class PiBackend {
 		entry.session.setThinkingLevel(level as ThinkingLevel);
 	}
 
-	async compact(sessionId: string): Promise<void> {
+	async compact(sessionId: string, customInstructions?: string): Promise<void> {
 		const entry = this.requireSession(sessionId);
 		log.info("compact", sessionId);
-		await entry.session.compact();
+		await entry.session.compact(customInstructions);
 	}
 
 	async getStats(sessionId: string): Promise<SessionStats> {
@@ -413,7 +420,63 @@ export class PiBackend {
 	/** 读取会话历史消息（打开历史会话时回放给 UI） */
 	async getSessionMessages(sessionId: string): Promise<SessionMessage[]> {
 		const entry = this.requireSession(sessionId);
-		return toSessionMessages(entry.session.messages);
+		const messages = toSessionMessages(entry.session.messages);
+		// 配对 assistant 消息与会话树 entry id（fork 定位）：branch 上 assistant 消息 entry
+		// 按 timestamp 建队列，与上下文消息同序消费；compaction 只截断更早 entry，不影响配对
+		const byTimestamp = new Map<number, string[]>();
+		for (const e of entry.session.sessionManager.getBranch()) {
+			if (e.type !== "message") continue;
+			const m = e.message as RawMessage;
+			if (m.role !== "assistant" || typeof m.timestamp !== "number") continue;
+			const queue = byTimestamp.get(m.timestamp);
+			if (queue) queue.push(e.id);
+			else byTimestamp.set(m.timestamp, [e.id]);
+		}
+		for (const message of messages) {
+			if (message.role !== "assistant") continue;
+			const id = byTimestamp.get(message.timestamp)?.shift();
+			if (id) message.entryId = id;
+		}
+		return messages;
+	}
+
+	/**
+	 * 在指定 assistant 消息处分叉：新会话文件以其为结尾（原文件与原会话都保留），
+	 * 打开新会话并返回其 meta（调用方决定新开会话标签还是原位切换）。
+	 * ref.entryId 精确定位；缺省时按 ref.text 从分支尾部向前匹配最近一条同文 assistant 消息
+	 * （刚完成的流式消息还没有 entryId，走文本兜底）。
+	 */
+	async forkSession(sessionId: string, ref: { entryId?: string; text?: string }): Promise<SessionMeta> {
+		const entry = this.requireSession(sessionId);
+		if (entry.session.isStreaming) throw new Error("Cannot fork while the agent is running");
+		const sourceManager = entry.session.sessionManager;
+		const targetId = this.resolveForkEntryId(sourceManager, ref);
+		const file = sourceManager.getSessionFile();
+		if (!file || !existsSync(file)) {
+			throw new Error("This session has not been saved yet. Send a message first.");
+		}
+		// 在新打开的 manager 上分叉，避免动当前会话的 manager 状态
+		const forkedManager = SessionManager.open(file, sourceManager.getSessionDir());
+		const newPath = forkedManager.createBranchedSession(targetId);
+		if (!newPath) throw new Error("Failed to create forked session");
+		log.info("fork session", sessionId, { targetId, newPath });
+		return this.openSession(newPath);
+	}
+
+	/** 解析 fork 目标 entry：entryId 直接校验；否则按正文文本从分支尾部向前匹配 assistant 消息 */
+	private resolveForkEntryId(sm: SessionManager, ref: { entryId?: string; text?: string }): string {
+		if (ref.entryId && sm.getEntry(ref.entryId)) return ref.entryId;
+		if (ref.text) {
+			const branch = sm.getBranch();
+			for (let i = branch.length - 1; i >= 0; i--) {
+				const e = branch[i];
+				if (e?.type !== "message") continue;
+				const m = e.message as RawMessage;
+				if (m.role !== "assistant") continue;
+				if (blockText(m.content) === ref.text) return e.id;
+			}
+		}
+		throw new Error("Fork target message not found");
 	}
 
 	async listModels(): Promise<AvailableModel[]> {
@@ -516,12 +579,17 @@ export class PiBackend {
 export type { EventForwarder, Model };
 
 /**
- * pi 内置斜杠命令表（与 pi 0.84.0 的 BUILTIN_SLASH_COMMANDS 对齐）。
- * supported=false 表示桌面端尚未实现，面板中置灰展示。
+ * pi 内置斜杠命令表（桌面端只保留有实际用途的；TUI 专属/已有 UI 等价物的不列出）。
  * 注：模板/skill/扩展命令不由这里列出，SDK prompt() 原生处理。
  */
 const BUILTIN_SLASH_COMMANDS: SlashCommandInfo[] = [
-	{ name: "compact", description: "Compress session context", source: "builtin", supported: true },
+	{
+		name: "compact",
+		description: "Compress session context",
+		argumentHint: "[focus]",
+		source: "builtin",
+		supported: true,
+	},
 	{
 		name: "name",
 		description: "Set session display name",
@@ -529,7 +597,6 @@ const BUILTIN_SLASH_COMMANDS: SlashCommandInfo[] = [
 		source: "builtin",
 		supported: true,
 	},
-	{ name: "copy", description: "Copy last agent message to clipboard", source: "builtin", supported: true },
 	{
 		name: "export",
 		description: "Export session (.html/.jsonl)",
@@ -537,51 +604,12 @@ const BUILTIN_SLASH_COMMANDS: SlashCommandInfo[] = [
 		source: "builtin",
 		supported: true,
 	},
-	{ name: "new", description: "Start a new session", source: "builtin", supported: true },
-	{ name: "settings", description: "Open settings", source: "builtin", supported: true },
 	{
-		name: "login",
-		description: "Configure provider authentication",
-		argumentHint: "<provider>",
+		name: "settings",
+		description: "Open settings",
 		source: "builtin",
 		supported: true,
 	},
-	{
-		name: "model",
-		description: "Select model",
-		argumentHint: "<provider/model>",
-		source: "builtin",
-		supported: false,
-	},
-	{
-		name: "scoped-models",
-		description: "Manage models for Ctrl+P cycling",
-		source: "builtin",
-		supported: false,
-	},
-	{ name: "session", description: "Show session info and stats", source: "builtin", supported: false },
-	{
-		name: "import",
-		description: "Import and resume a session from JSONL",
-		source: "builtin",
-		supported: false,
-	},
-	{ name: "share", description: "Share session as secret gist", source: "builtin", supported: false },
-	{
-		name: "fork",
-		description: "Create a fork from a previous user message",
-		source: "builtin",
-		supported: false,
-	},
-	{ name: "clone", description: "Duplicate the current session", source: "builtin", supported: false },
-	{ name: "tree", description: "Navigate session tree", source: "builtin", supported: false },
-	{ name: "resume", description: "Resume a different session", source: "builtin", supported: false },
-	{ name: "trust", description: "Save project trust decision", source: "builtin", supported: false },
-	{ name: "logout", description: "Remove provider authentication", source: "builtin", supported: false },
-	{ name: "reload", description: "Reload extensions, skills, prompts", source: "builtin", supported: false },
-	{ name: "changelog", description: "Show changelog entries", source: "builtin", supported: false },
-	{ name: "hotkeys", description: "Show all keyboard shortcuts", source: "builtin", supported: false },
-	{ name: "quit", description: "Quit pi", source: "builtin", supported: false },
 ];
 
 /** 消息 content 块（pi-ai 结构，仅读取所需字段） */

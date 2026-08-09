@@ -58,9 +58,16 @@ const PREV_CLEANUP_MS = ANIMATION_MS + 60;
  * - 同一活动参数增长只更新内容，不触发切换动画
  * - 切换动画串行化：一次滑入/滑出必放完，期间到达的切换合并为最新、在动画结束瞬间提交；
  *   活动清空也走滑出动画（不瞬时卸载）
- * - 无活动且无在屏动画时不渲染（思考中只在真 thinking 流式时出现）
+ * - 无活动且无在屏动画时不渲染（思考中只在真 thinking 流式时出现）；
+ *   reserveSpace 时改为渲染空占位行（working 期间高度恒定，避免下方内容随活动间隙上下跳）
  */
-export function PreviewTicker({ items }: { items: LivePreviewItem[] }) {
+export function PreviewTicker({
+	items,
+	reserveSpace = false,
+}: {
+	items: LivePreviewItem[];
+	reserveSpace?: boolean;
+}) {
 	// useState 惰性初始化：调度器实例跨渲染稳定（同一引用）
 	const [ticker] = useState(createActivityTicker);
 	const [snap, setSnap] = useState<ActivityTickerSnapshot>(() => ticker.peek());
@@ -138,7 +145,10 @@ export function PreviewTicker({ items }: { items: LivePreviewItem[] }) {
 		return () => clearTimeout(timer);
 	}, [previous]);
 
-	if (!shown && !previous) return null;
+	if (!shown && !previous) {
+		// working 期间占位：tool call 间隙不卸载，高度恒为 h-6，消除触底时布局跳动
+		return reserveSpace ? <div className="relative h-6 overflow-hidden" /> : null;
+	}
 
 	return (
 		// 上下边缘 mask 渐隐：滑入/滑出行穿过容器边界时柔化，避免硬裁切边（静态行文字居中不受影响）

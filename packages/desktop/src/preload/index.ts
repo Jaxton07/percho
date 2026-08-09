@@ -15,7 +15,8 @@ const api: PiApi = {
 		ipcRenderer.invoke(IpcChannels.SessionSetModel, sessionId, provider, modelId),
 	setThinkingLevel: (sessionId, level) =>
 		ipcRenderer.invoke(IpcChannels.SessionSetThinkingLevel, sessionId, level),
-	compact: (sessionId) => ipcRenderer.invoke(IpcChannels.SessionCompact, sessionId),
+	compact: (sessionId, customInstructions) =>
+		ipcRenderer.invoke(IpcChannels.SessionCompact, sessionId, customInstructions),
 	getStats: (sessionId) => ipcRenderer.invoke(IpcChannels.SessionStats, sessionId),
 	getContextUsage: (sessionId) => ipcRenderer.invoke(IpcChannels.SessionGetContextUsage, sessionId),
 	clearQueue: (sessionId) => ipcRenderer.invoke(IpcChannels.SessionClearQueue, sessionId),
@@ -23,6 +24,7 @@ const api: PiApi = {
 	listSlashCommands: (sessionId) => ipcRenderer.invoke(IpcChannels.SessionListSlashCommands, sessionId),
 	setSessionName: (sessionId, name) => ipcRenderer.invoke(IpcChannels.SessionSetName, sessionId, name),
 	exportSession: (sessionId, format) => ipcRenderer.invoke(IpcChannels.SessionExport, sessionId, format),
+	forkSession: (sessionId, ref) => ipcRenderer.invoke(IpcChannels.SessionFork, sessionId, ref),
 	saveFileDialog: (defaultName, content) =>
 		ipcRenderer.invoke(IpcChannels.FileSaveDialog, defaultName, content),
 	getSessionMessages: (sessionId) => ipcRenderer.invoke(IpcChannels.SessionGetMessages, sessionId),
@@ -41,6 +43,7 @@ const api: PiApi = {
 	setPermissionEnabled: (enabled) => ipcRenderer.invoke(IpcChannels.PermissionSetEnabled, enabled),
 	respondTrust: (requestId, answer) => ipcRenderer.invoke(IpcChannels.TrustRespond, requestId, answer),
 	pickDirectory: () => ipcRenderer.invoke(IpcChannels.ProjectPickDirectory),
+	listProjectFiles: (cwd) => ipcRenderer.invoke(IpcChannels.ProjectListFiles, cwd),
 	getGitBranch: (cwd) => ipcRenderer.invoke(IpcChannels.ProjectGetGitBranch, cwd),
 	listGitBranches: (cwd) => ipcRenderer.invoke(IpcChannels.ProjectListGitBranches, cwd),
 	checkoutBranch: (cwd, branch) => ipcRenderer.invoke(IpcChannels.ProjectCheckoutBranch, cwd, branch),

@@ -34,6 +34,7 @@ export const en: Messages = {
 		thinkingSwitch: "Switch thinking level",
 		addImage: "Add image",
 		removeImage: "Remove image",
+		removeAttachment: "Remove reference",
 		previewImage: "View image",
 		queueTitle: "Queued",
 		queueRestore: "Take back to editor",
@@ -52,12 +53,13 @@ export const en: Messages = {
 			compacted: "Context compaction started",
 			renamed: "Session renamed: {name}",
 			noName: "Usage: /name <name>",
-			copied: "Copied last reply",
-			noCopy: "No agent reply yet",
 			exported: "Exported: {path}",
 			exportCancelled: "Export cancelled",
 			noSession: "Pick a project directory and create a session first",
 		},
+	},
+	at: {
+		noMatch: "No matching files",
 	},
 	thinkingLevels: {
 		off: "Off",
@@ -100,6 +102,7 @@ export const en: Messages = {
 	message: {
 		copy: "Copy",
 		copied: "Copied",
+		fork: "Fork from here",
 		scrollToBottom: "Back to bottom",
 		thinking: "Thinking",
 		thinkingPreview: "Thinking",

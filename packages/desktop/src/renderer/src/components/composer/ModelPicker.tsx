@@ -64,7 +64,7 @@ export function ModelPicker() {
 				<ChevronDownIcon className={open ? "rotate-180 transition-transform" : "transition-transform"} />
 			</button>
 			{open && (
-				<div className="absolute bottom-full left-0 z-30 mb-1 max-h-72 w-72 overflow-y-auto rounded-xl border border-border bg-surface p-1 shadow-lg">
+				<div className="absolute bottom-full left-0 z-30 mb-1 max-h-72 w-72 overflow-y-auto rounded-xl border border-border bg-surface p-1 shadow-pop">
 					{groups.length === 0 && (
 						<div className="px-2 py-3 text-center text-xs text-ink-faint">
 							{t("settings.providers.empty")}

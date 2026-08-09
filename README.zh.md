@@ -51,7 +51,7 @@ pi-desktop 把官方 Pi SDK（`@earendil-works/pi-coding-agent`）跑在 Electro
 | macOS (Intel) | `pi-desktop-mac-x64.dmg` |
 | Windows | `pi-desktop-windows-x64.exe` |
 
-> 目前构建未签名。macOS 首次打开可能提示**「pi-desktop 已损坏，无法打开」**—— 这是 Gatekeeper 拦截未签名的下载文件，并非真的损坏。执行 `xattr -cr /Applications/pi-desktop.app` 移除隔离属性后即可正常打开（右键「打开」对此无效）。Windows 上 SmartScreen 提示时点「更多信息」→「仍要运行」。
+> 目前构建未签名。macOS 首次打开可能提示**「Pi Desktop 已损坏，无法打开」**—— 这是 Gatekeeper 拦截未签名的下载文件，并非真的损坏。执行 `xattr -cr "/Applications/Pi Desktop.app"` 移除隔离属性后即可正常打开（右键「打开」对此无效）。Windows 上 SmartScreen 提示时点「更多信息」→「仍要运行」。
 
 ## 配置
 

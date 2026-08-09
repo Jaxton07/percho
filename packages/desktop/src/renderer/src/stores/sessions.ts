@@ -28,6 +28,8 @@ interface SessionsStore {
 	switchSession: (sessionId: string) => void;
 	closeSession: (sessionId: string) => Promise<void>;
 	openFromHistory: (filePath: string) => Promise<void>;
+	/** 在指定 assistant 消息处分叉：新会话以新 tab 打开并切换过去（原会话保留原样） */
+	forkSession: (ref: { entryId?: string; text?: string }) => Promise<void>;
 	/** 重启后恢复上次打开的顶栏会话 */
 	restoreTabs: () => Promise<void>;
 	/** 自动命名等事件带来的标题变更 */
@@ -100,6 +102,25 @@ export const useSessionsStore = create<SessionsStore>((set, get) => ({
 				sessions: [...state.sessions.filter((s) => s.sessionId !== meta.sessionId), meta],
 				activeSessionId: meta.sessionId,
 				cwd: meta.cwd,
+			}));
+			const history = await getPi().getSessionMessages(meta.sessionId);
+			useTranscriptStore.getState().loadHistory(meta.sessionId, messagesToUIMessages(history));
+			const followUpQueue = await getPi().getFollowUpMessages(meta.sessionId);
+			useTranscriptStore.getState().setFollowUpQueue(meta.sessionId, followUpQueue);
+			persistTabs(get());
+		} catch (error) {
+			set({ error: error instanceof Error ? error.message : String(error) });
+		}
+	},
+
+	forkSession: async (ref) => {
+		const { activeSessionId } = get();
+		if (!activeSessionId) return;
+		try {
+			const meta = await getPi().forkSession(activeSessionId, ref);
+			set((state) => ({
+				sessions: [...state.sessions.filter((s) => s.sessionId !== meta.sessionId), meta],
+				activeSessionId: meta.sessionId,
 			}));
 			const history = await getPi().getSessionMessages(meta.sessionId);
 			useTranscriptStore.getState().loadHistory(meta.sessionId, messagesToUIMessages(history));

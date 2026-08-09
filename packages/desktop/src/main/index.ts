@@ -66,7 +66,9 @@ function registerIpc(): void {
 	ipcMain.handle(IpcChannels.SessionSetThinkingLevel, (_e, sessionId: string, level: string) =>
 		backend.setThinkingLevel(sessionId, level),
 	);
-	ipcMain.handle(IpcChannels.SessionCompact, (_e, sessionId: string) => backend.compact(sessionId));
+	ipcMain.handle(IpcChannels.SessionCompact, (_e, sessionId: string, customInstructions?: string) =>
+		backend.compact(sessionId, customInstructions),
+	);
 	ipcMain.handle(IpcChannels.SessionStats, (_e, sessionId: string) => backend.getStats(sessionId));
 	ipcMain.handle(IpcChannels.SessionGetContextUsage, (_e, sessionId: string) =>
 		backend.getContextUsage(sessionId),
@@ -83,6 +85,9 @@ function registerIpc(): void {
 	);
 	ipcMain.handle(IpcChannels.SessionExport, (_e, sessionId: string, format: "html" | "jsonl") =>
 		backend.exportSession(sessionId, format),
+	);
+	ipcMain.handle(IpcChannels.SessionFork, (_e, sessionId: string, ref: { entryId?: string; text?: string }) =>
+		backend.forkSession(sessionId, ref),
 	);
 	ipcMain.handle(IpcChannels.FileSaveDialog, async (_e, defaultName: string, content: string) => {
 		const window = BrowserWindow.getAllWindows()[0];
@@ -149,6 +154,7 @@ function registerIpc(): void {
 			: await dialog.showOpenDialog(options);
 		return result.canceled ? null : result.filePaths[0];
 	});
+	ipcMain.handle(IpcChannels.ProjectListFiles, (_e, cwd?: string) => backend.listProjectFiles(cwd));
 
 	backend.onEvent((sessionId, event) => {
 		sendToRenderer(IpcChannels.Event, { sessionId, event });

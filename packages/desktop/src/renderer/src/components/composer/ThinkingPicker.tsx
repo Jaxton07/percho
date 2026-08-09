@@ -53,7 +53,7 @@ export function ThinkingPicker() {
 				<ChevronDownIcon className={open ? "rotate-180 transition-transform" : "transition-transform"} />
 			</button>
 			{open && (
-				<div className="absolute bottom-full left-0 z-30 mb-1 w-40 overflow-hidden rounded-xl border border-border bg-surface p-1 shadow-lg">
+				<div className="absolute bottom-full left-0 z-30 mb-1 w-40 overflow-hidden rounded-xl border border-border bg-surface p-1 shadow-pop">
 					{THINKING_LEVELS.map((level) => {
 						const selected = level === thinkingLevel;
 						return (

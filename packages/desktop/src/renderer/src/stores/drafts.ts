@@ -4,15 +4,17 @@ import { create } from "zustand";
 /** 无活跃会话（未创建的新会话）时的草稿 key */
 export const NEW_SESSION_DRAFT_KEY = "__new__";
 
-/** 一份会话草稿：文本 + 图片附件 + slash 命令胶囊 */
+/** 一份会话草稿：文本 + 图片附件 + slash 命令胶囊 + @ 文件引用胶囊 */
 export interface DraftEntry {
 	text: string;
 	images: ImageInput[];
 	slashCommand: string | null;
+	/** @ 文件引用（项目相对路径）；发送时拼回 @path 列表置于正文前 */
+	attachments: string[];
 }
 
 /** 模块级共享空态（selector 缺省返回，引用稳定防重渲染循环） */
-export const EMPTY_DRAFT: DraftEntry = { text: "", images: [], slashCommand: null };
+export const EMPTY_DRAFT: DraftEntry = { text: "", images: [], slashCommand: null, attachments: [] };
 
 /**
  * 输入框草稿按会话保存。Composer 会在空态（EmptyState 内）与列表态（底部）之间切换实例，
@@ -25,7 +27,7 @@ interface DraftStore {
 }
 
 function isEmpty(entry: DraftEntry): boolean {
-	return !entry.text && entry.images.length === 0 && !entry.slashCommand;
+	return !entry.text && entry.images.length === 0 && !entry.slashCommand && entry.attachments.length === 0;
 }
 
 export const useDraftStore = create<DraftStore>((set) => ({

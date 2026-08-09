@@ -163,7 +163,7 @@ export function MessageList() {
 						updateFollowing(true);
 						pinToBottom(window.matchMedia("(prefers-reduced-motion: reduce)").matches ? "auto" : "smooth");
 					}}
-					className="absolute bottom-4 left-1/2 z-10 flex -translate-x-1/2 items-center gap-1.5 rounded-full border border-border bg-surface/95 px-3 py-1.5 text-xs text-ink-2 shadow-md backdrop-blur transition-colors hover:bg-hover"
+					className="absolute bottom-4 left-1/2 z-10 flex -translate-x-1/2 items-center gap-1.5 rounded-full border border-border bg-surface/95 px-3 py-1.5 text-xs text-ink-2 shadow-pop backdrop-blur transition-colors hover:bg-hover"
 					aria-label={t("message.scrollToBottom")}
 				>
 					<svg

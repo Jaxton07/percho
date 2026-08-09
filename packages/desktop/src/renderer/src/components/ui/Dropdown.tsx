@@ -32,7 +32,7 @@ export function Dropdown({
 				<ChevronDownIcon />
 			</button>
 			{open && (
-				<div className="absolute bottom-full left-1/2 z-30 mb-1 max-h-64 w-56 -translate-x-1/2 overflow-y-auto rounded-xl border border-border bg-surface p-1 shadow-lg">
+				<div className="absolute bottom-full left-1/2 z-30 mb-1 max-h-64 w-56 -translate-x-1/2 overflow-y-auto rounded-xl border border-border bg-surface p-1 shadow-pop">
 					{children(() => setOpen(false))}
 				</div>
 			)}
