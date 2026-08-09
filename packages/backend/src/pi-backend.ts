@@ -161,7 +161,7 @@ export class PiBackend {
 			cwd,
 			agentDir,
 			settingsManager,
-			extensionFactories: enableGate ? [makePermissionGateExtension(agentDir)] : [],
+			extensionFactories: enableGate ? [makePermissionGateExtension(agentDir, { projectRoot: cwd })] : [],
 		});
 		if (this.options.projectTrust === false) {
 			settingsManager.setProjectTrusted(true);

@@ -1,9 +1,12 @@
 export { createLogger, initLogging, type Logger } from "./log";
-export { makePermissionGateExtension } from "./permission-extension";
+export { makePermissionGateExtension, type PermissionGateOptions } from "./permission-extension";
 export {
 	createPermissionConfigLoader,
 	DEFAULT_PERMISSION_CONFIG,
+	evaluateBashCommand,
 	evaluateRules,
+	extractShellExecArg,
+	extractSubstitutions,
 	loadPermissionConfig,
 	matchPattern,
 	matchTextFor,
@@ -12,7 +15,9 @@ export {
 	type PermissionConfig,
 	type PermissionRule,
 	type PermissionRules,
+	permissionConfigPath,
 	setPermissionEnabled,
+	splitShellSegments,
 	suggestPattern,
 } from "./permission-rules";
 export { PermissionGate, type PermissionResponder } from "./permissions";
