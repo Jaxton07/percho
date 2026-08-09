@@ -9,7 +9,16 @@ export type UIMessage =
 			images: ImageInput[];
 			timestamp: number;
 	  }
-	| { kind: "assistant"; id: string; text: string; thinking: string; tools: UIToolCall[]; timestamp: number }
+	| {
+			kind: "assistant";
+			id: string;
+			text: string;
+			thinking: string;
+			tools: UIToolCall[];
+			timestamp: number;
+			/** 会话树 entry id（仅历史回放消息有；fork 精确定位，缺省时 fork 按正文文本兜底） */
+			entryId?: string;
+	  }
 	| { kind: "error"; id: string; text: string; timestamp: number }
 	| { kind: "system"; id: string; text: string; timestamp: number; compact?: CompactionUiState };
 
@@ -425,7 +434,15 @@ export function messagesToUIMessages(messages: SessionMessage[]): UIMessage[] {
 			output: tool.output,
 			state: tool.isError ? "error" : "done",
 		}));
-		ui.push({ kind: "assistant", id, text: m.text, thinking: m.thinking, tools, timestamp: m.timestamp });
+		ui.push({
+			kind: "assistant",
+			id,
+			text: m.text,
+			thinking: m.thinking,
+			tools,
+			timestamp: m.timestamp,
+			entryId: m.entryId,
+		});
 	}
 	return ui;
 }

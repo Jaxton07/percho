@@ -40,6 +40,7 @@ export const IpcChannels = {
 	SessionListSlashCommands: "session:listSlashCommands",
 	SessionSetName: "session:setName",
 	SessionExport: "session:export",
+	SessionFork: "session:fork",
 	FileSaveDialog: "file:saveDialog",
 	ModelsList: "models:list",
 	SettingsListProviders: "settings:listProviders",
@@ -58,6 +59,8 @@ export const IpcChannels = {
 	ProjectGetGitBranch: "project:getGitBranch",
 	ProjectListGitBranches: "project:listGitBranches",
 	ProjectCheckoutBranch: "project:checkoutBranch",
+	/** @ 补全数据源：项目文件相对路径列表（目录带尾 /） */
+	ProjectListFiles: "project:listFiles",
 	AppOpenExternal: "app:openExternal",
 	/** 顶栏 tabs 持久化（userData/tabs.json，不依赖 renderer localStorage） */
 	TabsLoad: "tabs:load",
@@ -105,6 +108,12 @@ export interface PiApi {
 	setSessionName(sessionId: string, name: string): Promise<void>;
 	/** 导出会话内容（HTML/JSONL），返回文件内容文本 */
 	exportSession(sessionId: string, format: "html" | "jsonl"): Promise<string>;
+	/**
+	 * 在指定 assistant 消息处分叉：生成以其为结尾的新会话并切换过去（原会话文件保留）。
+	 * ref.entryId 精确定位（历史消息）；缺省时按 ref.text 从分支尾部匹配最近一条同文 assistant 消息。
+	 * 运行中的会话拒绝 fork。返回新会话 meta。
+	 */
+	forkSession(sessionId: string, ref: { entryId?: string; text?: string }): Promise<SessionMeta>;
 	/** 弹保存对话框并写文件；用户取消返回 null，成功返回写入路径 */
 	saveFileDialog(defaultName: string, content: string): Promise<string | null>;
 	listModels(): Promise<import("./session").AvailableModel[]>;
@@ -122,6 +131,8 @@ export interface PiApi {
 	/** 应答项目信任请求（optionIndex 为 TrustRequest.options 下标） */
 	respondTrust(requestId: string, answer: TrustAnswer): Promise<void>;
 	pickDirectory(): Promise<string | null>;
+	/** @ 补全数据源：项目文件相对路径列表（目录带尾 /，TTL 缓存） */
+	listProjectFiles(cwd?: string): Promise<string[]>;
 	getGitBranch(cwd: string): Promise<string | null>;
 	listGitBranches(cwd: string): Promise<GitBranches>;
 	/** 切换分支；返回切换后的当前分支（失败抛错） */

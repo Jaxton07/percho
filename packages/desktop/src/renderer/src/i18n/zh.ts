@@ -32,6 +32,7 @@ export const zh = {
 		thinkingSwitch: "切换思考深度",
 		addImage: "添加图片",
 		removeImage: "移除图片",
+		removeAttachment: "移除引用",
 		previewImage: "查看图片",
 		queueTitle: "排队中",
 		queueRestore: "取回编辑",
@@ -50,12 +51,13 @@ export const zh = {
 			compacted: "已开始压缩上下文",
 			renamed: "会话已改名：{name}",
 			noName: "用法：/name <名字>",
-			copied: "已复制最后一条回复",
-			noCopy: "还没有 agent 回复",
 			exported: "已导出：{path}",
 			exportCancelled: "已取消导出",
 			noSession: "请先选择项目目录并创建会话",
 		},
+	},
+	at: {
+		noMatch: "没有匹配的文件",
 	},
 	thinkingLevels: {
 		off: "关闭",
@@ -98,6 +100,7 @@ export const zh = {
 	message: {
 		copy: "复制",
 		copied: "已复制",
+		fork: "从此处分叉",
 		scrollToBottom: "回到底部",
 		thinking: "思考过程",
 		thinkingPreview: "思考中",

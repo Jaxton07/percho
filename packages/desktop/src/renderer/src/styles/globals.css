@@ -18,6 +18,10 @@
 	--color-on-ink: var(--color-on-ink);
 	--color-accent: var(--color-accent);
 	--color-on-accent: var(--color-on-accent);
+	/* 阴影 token（shadow-soft/shadow-pop/shadow-dialog 工具类）：浅色深色系投影，深色白色发光 */
+	--shadow-soft: var(--shadow-soft);
+	--shadow-pop: var(--shadow-pop);
+	--shadow-dialog: var(--shadow-dialog);
 }
 
 :root {
@@ -44,6 +48,9 @@
 	--markdown-link-decoration: #c4b5fd;
 	--markdown-link-hover: #6d28d9;
 	--shimmer-highlight: rgba(255, 255, 255, 0.9);
+	--shadow-soft: 0 0 14px -2px rgba(24, 24, 27, 0.08);
+	--shadow-pop: 0 4px 16px rgba(0, 0, 0, 0.12);
+	--shadow-dialog: 0 12px 40px rgba(0, 0, 0, 0.18);
 	--scrollbar-thumb: #d4d4d4;
 	--scrollbar-thumb-hover: #bfbfbf;
 }
@@ -71,6 +78,9 @@
 	--markdown-link-decoration: #6d28d9;
 	--markdown-link-hover: #a78bfa;
 	--shimmer-highlight: rgba(255, 255, 255, 0.95);
+	--shadow-soft: 0 0 14px -2px rgba(255, 255, 255, 0.1);
+	--shadow-pop: 0 4px 16px rgba(255, 255, 255, 0.14);
+	--shadow-dialog: 0 12px 40px rgba(255, 255, 255, 0.18);
 	--scrollbar-thumb: #4b4b53;
 	--scrollbar-thumb-hover: #5d5d66;
 }

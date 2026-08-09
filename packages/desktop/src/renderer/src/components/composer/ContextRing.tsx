@@ -78,7 +78,7 @@ export function ContextRing() {
 					strokeDasharray={`${(pct / 100) * c} ${c}`}
 				/>
 			</svg>
-			<div className="pointer-events-none absolute bottom-full left-1/2 mb-1.5 -translate-x-1/2 rounded-md border border-border bg-surface px-2 py-1 text-[11px] whitespace-nowrap text-ink-2 opacity-0 shadow-lg transition-opacity group-hover:opacity-100">
+			<div className="pointer-events-none absolute bottom-full left-1/2 mb-1.5 -translate-x-1/2 rounded-md border border-border bg-surface px-2 py-1 text-[11px] whitespace-nowrap text-ink-2 opacity-0 shadow-pop transition-opacity group-hover:opacity-100">
 				{formatTokens(usage.tokens ?? 0)} / {formatTokens(usage.contextWindow)} tokens · {pct.toFixed(0)}%
 			</div>
 		</div>

@@ -15,8 +15,8 @@ export function summarizeArgs(args: string): string {
 	} catch {
 		// 流式中的不完整 JSON：按优先级正则抽取字段值（值允许未闭合，随流式增长原地更新）
 		for (const key of ["command", "cmd", "filePath", "path", "file", "url"]) {
-			const m = args.match(new RegExp(`"${key}"\\s*:\\s*"((?:[^"\\\\]|\\\\.)*)`));
-			if (m) return m[1];
+			const value = args.match(new RegExp(`"${key}"\\s*:\\s*"((?:[^"\\\\]|\\\\.)*)`))?.[1];
+			if (value) return value;
 		}
 	}
 	const trimmed = args.slice(0, 120);

@@ -111,7 +111,7 @@ export function MetaGroup({
 			<details className="group/outer peer">
 				<summary className="group/row flex cursor-pointer items-center gap-2 py-0.5 select-none [&::-webkit-details-marker]:hidden">
 					<span
-						className={`shrink-0 text-[13px] font-medium transition-colors ${
+						className={`shrink-0 text-[13px] font-bold transition-colors ${
 							shownWorking ? "shimmer-sweep text-ink-dim" : "text-ink-dim group-hover/row:text-ink"
 						}`}
 					>

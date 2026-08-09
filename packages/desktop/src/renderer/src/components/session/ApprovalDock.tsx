@@ -87,7 +87,7 @@ export function ApprovalDock({
 			<div className="mx-auto max-w-[760px]">
 				<div
 					key={shown.id}
-					className={`rounded-2xl border-[0.5px] border-border border-l-2 border-l-amber-400 bg-surface px-4 py-3 shadow-[0_0_14px_-2px_rgba(24,24,27,0.08)] ${
+					className={`rounded-2xl border-[0.5px] border-border border-l-2 border-l-amber-400 bg-surface px-4 py-3 shadow-soft ${
 						leaving ? "approval-exit" : "approval-enter"
 					}`}
 					role="dialog"

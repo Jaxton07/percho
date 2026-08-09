@@ -51,7 +51,7 @@ export function SlashMenu({
 
 	if (flat.length === 0) {
 		return (
-			<div className="mb-1.5 rounded-lg border border-border bg-surface py-2 text-center text-xs text-ink-faint shadow-lg">
+			<div className="mb-1.5 rounded-lg border border-border bg-surface py-2 text-center text-xs text-ink-faint shadow-pop">
 				{t("slash.noMatch")}
 			</div>
 		);
@@ -60,7 +60,7 @@ export function SlashMenu({
 	return (
 		<div
 			ref={listRef}
-			className="mb-1.5 max-h-64 overflow-y-auto rounded-lg border border-border bg-surface shadow-lg"
+			className="mb-1.5 max-h-64 overflow-y-auto rounded-lg border border-border bg-surface shadow-pop"
 		>
 			{groups.map((group) => (
 				<div key={group.source}>

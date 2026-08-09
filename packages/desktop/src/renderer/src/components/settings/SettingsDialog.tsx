@@ -28,7 +28,7 @@ export function SettingsDialog() {
 
 	return (
 		<div className="fixed inset-0 z-40 flex items-center justify-center bg-ink/20" role="dialog" aria-modal>
-			<div className="flex h-[70vh] w-[720px] flex-col overflow-hidden rounded-xl border border-border bg-surface shadow-xl">
+			<div className="flex h-[70vh] w-[720px] flex-col overflow-hidden rounded-xl border border-border bg-surface shadow-dialog">
 				<div className="flex shrink-0 items-center justify-between border-b border-border px-4 py-3">
 					<h2 className="text-sm font-semibold text-ink">{t("settings.title")}</h2>
 					<button

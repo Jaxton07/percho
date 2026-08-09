@@ -7,6 +7,9 @@ import { useSessionsStore } from "../../stores/sessions";
 import { useSettingsStore } from "../../stores/settings";
 import { selectTranscript, useTranscriptStore } from "../../stores/transcript";
 import { ArrowUpIcon, CloseIcon, PlusIcon, StopIcon, UndoIcon } from "../icons";
+import { Tooltip } from "../ui/Tooltip";
+import { AtMenu } from "./AtMenu";
+import { type AtToken, extractAtToken, filterFiles } from "./at-files";
 import { ContextRing } from "./ContextRing";
 import { ModelPicker } from "./ModelPicker";
 import { filterCommands, SlashMenu } from "./SlashMenu";
@@ -22,7 +25,7 @@ export function Composer({ centered = false }: { centered?: boolean }) {
 	/** 草稿（文本/图片/命令胶囊）按会话持久：切换会话/空态↔列表态换 Composer 实例不丢、不串会话 */
 	const draftKey = activeSessionId ?? NEW_SESSION_DRAFT_KEY;
 	const draft = useDraftStore((s) => s.bySession[draftKey] ?? EMPTY_DRAFT);
-	const { text, images, slashCommand } = draft;
+	const { text, images, slashCommand, attachments } = draft;
 	const updateDraft = useDraftStore((s) => s.updateDraft);
 	const setText = (updater: string | ((prev: string) => string)) => {
 		updateDraft(draftKey, (d) => ({ ...d, text: typeof updater === "function" ? updater(d.text) : updater }));
@@ -36,6 +39,12 @@ export function Composer({ centered = false }: { centered?: boolean }) {
 	const setSlashCommand = (command: string | null) => {
 		updateDraft(draftKey, (d) => ({ ...d, slashCommand: command }));
 	};
+	const setAttachments = (updater: string[] | ((prev: string[]) => string[])) => {
+		updateDraft(draftKey, (d) => ({
+			...d,
+			attachments: typeof updater === "function" ? updater(d.attachments) : updater,
+		}));
+	};
 	const [previewImage, setPreviewImage] = useState<ImageInput | null>(null);
 	const [sending, setSending] = useState(false);
 	const [error, setError] = useState<string | null>(null);
@@ -44,6 +53,12 @@ export function Composer({ centered = false }: { centered?: boolean }) {
 	const [slashCommands, setSlashCommands] = useState<SlashCommandInfo[]>([]);
 	/** 点击面板外部后隐藏菜单（保留文本，再次输入时恢复） */
 	const [slashDismissed, setSlashDismissed] = useState(false);
+	/** @ 文件补全：token 状态 + 项目文件缓存（cwd 变化后重拉） */
+	const [atToken, setAtToken] = useState<AtToken | null>(null);
+	const [atFiles, setAtFiles] = useState<string[]>([]);
+	const [atFilesCwd, setAtFilesCwd] = useState<string | null>(null);
+	const [atSelected, setAtSelected] = useState(0);
+	const [atDismissed, setAtDismissed] = useState(false);
 	const textareaRef = useRef<HTMLTextAreaElement>(null);
 	const boxRef = useRef<HTMLDivElement>(null);
 	const fileInputRef = useRef<HTMLInputElement>(null);
@@ -52,12 +67,20 @@ export function Composer({ centered = false }: { centered?: boolean }) {
 	const isStreaming = transcript.phase === "streaming" || sending;
 	const followUpQueue = transcript.followUpQueue;
 	/** 输入框有内容：streaming 中按钮从停止切回发送（入队后文本清空自动切回停止） */
-	const hasContent = Boolean(text.trim()) || images.length > 0 || Boolean(slashCommand);
+	const hasContent =
+		Boolean(text.trim()) || images.length > 0 || Boolean(slashCommand) || attachments.length > 0;
 	/** 输入以 / 开头时打开命令面板；query = 第一个词（/ 后） */
 	const slashOpen = text.startsWith("/") && !slashDismissed;
 	const slashQuery = slashOpen ? (text.slice(1).split(" ")[0] ?? "") : "";
 	/** trim 后是否已带参数（Enter 时决定执行还是选中） */
 	const slashHasArgs = slashOpen && text.trim().includes(" ");
+	/** @ 菜单：token 仍与当前文本一致才有效（程序化清空文本后自动失效），slash 打开时不竞争 */
+	const atOpen =
+		atToken !== null &&
+		text.slice(atToken.start, atToken.end) === `@${atToken.query}` &&
+		!atDismissed &&
+		!slashOpen;
+	const atFiltered = atOpen && atToken ? filterFiles(atFiles, atToken.query) : [];
 
 	const showFeedback = (message: string) => {
 		setFeedback(message);
@@ -78,15 +101,48 @@ export function Composer({ centered = false }: { centered?: boolean }) {
 		setSlashSelected(0);
 	}, [slashQuery]);
 
-	// 点击输入框容器外部时收起命令面板（文本保留；继续输入时恢复）
+	/** 文本变化：重置菜单折叠态 + 探测光标前 @ token（驱动 @ 菜单） */
+	const handleTextChange = (e: React.ChangeEvent<HTMLTextAreaElement>) => {
+		setSlashDismissed(false);
+		setAtDismissed(false);
+		setText(e.target.value);
+		setAtToken(extractAtToken(e.target.value, e.target.selectionStart ?? e.target.value.length));
+	};
+
+	// @ token 出现时拉取项目文件列表（每 cwd 一次，backend TTL 缓存；atToken 击键频变但条件拦截）
 	useEffect(() => {
-		if (!slashOpen) return;
+		if (!atToken || !cwd || atFilesCwd === cwd) return;
+		let cancelled = false;
+		void getPi()
+			.listProjectFiles(cwd)
+			.then((list) => {
+				if (cancelled) return;
+				setAtFiles(list);
+				setAtFilesCwd(cwd);
+			})
+			.catch(() => {});
+		return () => {
+			cancelled = true;
+		};
+	}, [atToken, cwd, atFilesCwd]);
+
+	// biome-ignore lint/correctness/useExhaustiveDependencies: @ 查询词变化时重置选中项
+	useEffect(() => {
+		setAtSelected(0);
+	}, [atToken?.query]);
+
+	// 点击输入框容器外部时收起命令/文件面板（文本保留；继续输入时恢复）
+	useEffect(() => {
+		if (!slashOpen && !atOpen) return;
 		const onPointerDown = (e: PointerEvent) => {
-			if (boxRef.current && !boxRef.current.contains(e.target as Node)) setSlashDismissed(true);
+			if (boxRef.current && !boxRef.current.contains(e.target as Node)) {
+				setSlashDismissed(true);
+				setAtDismissed(true);
+			}
 		};
 		window.addEventListener("pointerdown", onPointerDown);
 		return () => window.removeEventListener("pointerdown", onPointerDown);
-	}, [slashOpen]);
+	}, [slashOpen, atOpen]);
 
 	// 会话切换时重新拉取命令列表（模板/skill 随项目变化）
 	useEffect(() => {
@@ -134,23 +190,6 @@ export function Composer({ centered = false }: { centered?: boolean }) {
 				}
 				showFeedback(t("slash.feedback.noName"));
 				return true;
-			case "copy": {
-				const msgs = useTranscriptStore.getState().bySession[sessionId]?.messages ?? [];
-				let lastText = "";
-				for (const m of [...msgs].reverse()) {
-					if (m.kind === "assistant" && m.text) {
-						lastText = m.text;
-						break;
-					}
-				}
-				if (lastText) {
-					await navigator.clipboard.writeText(lastText);
-					showFeedback(t("slash.feedback.copied"));
-				} else {
-					showFeedback(t("slash.feedback.noCopy"));
-				}
-				return true;
-			}
 			case "export": {
 				const format = arg === "html" ? "html" : arg === "jsonl" ? "jsonl" : "jsonl";
 				const contentOut = await pi.exportSession(sessionId, format);
@@ -158,20 +197,8 @@ export function Composer({ centered = false }: { centered?: boolean }) {
 				showFeedback(path ? t("slash.feedback.exported", { path }) : t("slash.feedback.exportCancelled"));
 				return true;
 			}
-			case "new":
-				if (!arg) {
-					await createSession(cwd ?? undefined);
-					return true;
-				}
-				return false;
 			case "settings":
-				if (!arg) {
-					useSettingsStore.getState().openWith();
-					return true;
-				}
-				return false;
-			case "login":
-				useSettingsStore.getState().openWith("providers");
+				useSettingsStore.getState().openWith();
 				return true;
 			default:
 				// 模板/skill/扩展命令由 SDK 原生处理，原样透传
@@ -180,8 +207,11 @@ export function Composer({ centered = false }: { centered?: boolean }) {
 	};
 
 	const handleSend = async () => {
-		// 胶囊确认的命令 + args 拼回原始 /cmd 形式
-		const content = slashCommand ? `/${slashCommand}${text.trim() ? ` ${text.trim()}` : ""}` : text.trim();
+		// @ 引用胶囊拼回文本：slash 胶囊时并入参数（保 /cmd 开头供 SDK 展开），否则独立成行置正文前
+		const atText = attachments.map((p) => `@${p}`).join(" ");
+		const content = slashCommand
+			? `/${slashCommand}${atText ? ` ${atText}` : ""}${text.trim() ? ` ${text.trim()}` : ""}`
+			: [atText, text.trim()].filter(Boolean).join("\n");
 		// 运行中（streaming）不拦截：prompt 走 followUp 排队；仅防双击重发（sending）
 		if ((!content && images.length === 0) || sending) return;
 		// 单条排队上限：已有一条且本次是普通文本则挡住（斜杠命令 streaming 中也可立即执行，不受限）
@@ -221,7 +251,9 @@ export function Composer({ centered = false }: { centered?: boolean }) {
 		setSending(true);
 		setError(null);
 		const sentImages = images;
+		const sentAttachments = attachments;
 		setImages([]);
+		setAttachments([]);
 		// 乐观置工作中：agent_start 事件到达前立即显示，失败后回滚
 		useTranscriptStore.getState().markAgentActive(sessionId, true);
 		try {
@@ -230,6 +262,7 @@ export function Composer({ centered = false }: { centered?: boolean }) {
 			useTranscriptStore.getState().markAgentActive(sessionId, wasActive);
 			setError(err instanceof Error ? err.message : String(err));
 			setImages(sentImages);
+			setAttachments(sentAttachments);
 		} finally {
 			setSending(false);
 		}
@@ -265,7 +298,7 @@ export function Composer({ centered = false }: { centered?: boolean }) {
 			showFeedback(t("slash.feedback.noSession"));
 			return;
 		}
-		const inline = new Set(["compact", "copy", "new", "settings", "login"]);
+		const inline = new Set(["compact", "settings"]);
 		if (command.source === "builtin" && inline.has(command.name)) {
 			setText("");
 			try {
@@ -317,9 +350,17 @@ export function Composer({ centered = false }: { centered?: boolean }) {
 	const imageSrc = (image: ImageInput) => `data:${image.mimeType};base64,${image.data}`;
 
 	const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
-		// 胶囊模式下 args 为空时，Backspace/Delete/Escape 取消命令（恢复文本，菜单不重新弹出）
-		if (slashCommand && text === "") {
-			if (e.key === "Backspace" || e.key === "Delete" || e.key === "Escape") {
+		// 空文本时 Backspace/Delete：优先把最近的 @ 胶囊弹回全路径纯文本，其次取消 slash 胶囊恢复文本
+		if (
+			text === "" &&
+			(e.key === "Backspace" || e.key === "Delete" || (e.key === "Escape" && slashCommand))
+		) {
+			if (attachments.length > 0 && e.key !== "Escape") {
+				e.preventDefault();
+				handleAttachmentRemove(attachments.length - 1);
+				return;
+			}
+			if (slashCommand) {
 				e.preventDefault();
 				setSlashCommand(null);
 				setText(`/${slashCommand} `);
@@ -332,6 +373,30 @@ export function Composer({ centered = false }: { centered?: boolean }) {
 						el.setSelectionRange(len, len);
 					}
 				});
+				return;
+			}
+		}
+		// @ 菜单导航/选择：↑↓ 移动，Enter/Tab 选中，Esc 折叠（保留文本）
+		if (atOpen && atToken) {
+			if (e.key === "ArrowDown") {
+				e.preventDefault();
+				setAtSelected((s) => s + 1);
+				return;
+			}
+			if (e.key === "ArrowUp") {
+				e.preventDefault();
+				setAtSelected((s) => s - 1);
+				return;
+			}
+			if (e.key === "Escape") {
+				e.preventDefault();
+				setAtDismissed(true);
+				return;
+			}
+			if (e.key === "Tab" || (e.key === "Enter" && !e.shiftKey && !e.nativeEvent.isComposing)) {
+				e.preventDefault();
+				const path = atFiltered[Math.min(atSelected, atFiltered.length - 1)];
+				if (path) handleAtPick(path);
 				return;
 			}
 		}
@@ -373,6 +438,57 @@ export function Composer({ centered = false }: { centered?: boolean }) {
 		}
 	};
 
+	/** 选中文件/目录：文件 → @ 胶囊（token 从文本移除）；目录续钻（菜单保持，query 变为目录路径） */
+	const handleAtPick = (path: string) => {
+		if (!atToken) return;
+		const isDir = path.endsWith("/");
+		const before = text.slice(0, atToken.start);
+		const after = text.slice(atToken.end);
+		if (!isDir) {
+			// token 两侧都是空白时收掉一个，避免出现双空格
+			const joined = before.endsWith(" ") && after.startsWith(" ") ? before + after.slice(1) : before + after;
+			setText(joined);
+			setAttachments((prev) => [...prev, path]);
+			setAtToken(null);
+			const cursor = before.length;
+			requestAnimationFrame(() => {
+				const el = textareaRef.current;
+				if (el) {
+					el.focus();
+					el.setSelectionRange(cursor, cursor);
+				}
+			});
+			return;
+		}
+		const insert = `@${path}`;
+		setText(before + insert + after);
+		const cursor = (before + insert).length;
+		setAtToken({ start: atToken.start, end: cursor, query: path });
+		requestAnimationFrame(() => {
+			const el = textareaRef.current;
+			if (el) {
+				el.focus();
+				el.setSelectionRange(cursor, cursor);
+			}
+		});
+	};
+
+	/** 移除 @ 胶囊：恢复为全路径纯文本（追加到文本末尾，与 slash 胶囊删除恢复同逻辑） */
+	const handleAttachmentRemove = (index: number) => {
+		const path = attachments[index];
+		if (!path) return;
+		setAttachments((prev) => prev.filter((_, i) => i !== index));
+		setText((prev) => (prev ? `${prev} @${path} ` : `@${path} `));
+		requestAnimationFrame(() => {
+			const el = textareaRef.current;
+			if (el) {
+				el.focus();
+				const len = el.value.length;
+				el.setSelectionRange(len, len);
+			}
+		});
+	};
+
 	/** 按下标选中菜单项（无匹配时落回正常发送） */
 	const handleSlashPickByIndex = (index: number) => {
 		const flat = filterCommands(slashCommands, slashQuery);
@@ -411,8 +527,16 @@ export function Composer({ centered = false }: { centered?: boolean }) {
 						onPick={(command) => void handleSlashPick(command)}
 					/>
 				)}
+				{atOpen && (
+					<AtMenu
+						files={atFiltered}
+						selectedIndex={atSelected}
+						onSelectedIndexChange={setAtSelected}
+						onPick={handleAtPick}
+					/>
+				)}
 				{followUpQueue.length > 0 && (
-					<div className="group/queue relative mb-1.5 flex items-center gap-2 overflow-hidden rounded-xl bg-surface px-3 py-1.5 shadow-[0_0_14px_-2px_rgba(24,24,27,0.08)]">
+					<div className="group/queue relative mb-1.5 flex items-center gap-2 overflow-hidden rounded-xl bg-surface px-3 py-1.5 shadow-soft">
 						<span className="shrink-0 text-[12px] text-ink-faint">{t("composer.queueTitle")}</span>
 						<span className="min-w-0 flex-1 truncate text-[13px] text-ink-2">{followUpQueue[0]}</span>
 						{/* 撤销层：hover 行才显示；渐变模糊压住下方文字，仅镂空图标可点（防误点） */}
@@ -463,22 +587,24 @@ export function Composer({ centered = false }: { centered?: boolean }) {
 						))}
 					</div>
 				)}
-				<div className="rounded-2xl border-[0.5px] border-border bg-surface shadow-[0_0_14px_-2px_rgba(24,24,27,0.08)]">
-					{slashCommand ? (
-						<div className="flex items-start gap-1.5 px-4 pt-5 pb-2">
-							<span className="mt-0.5 shrink-0 select-none rounded-md bg-border px-2 py-0.5 font-mono text-[12px] leading-5 text-ink-2">
-								/{slashCommand}
-							</span>
+				<div className="rounded-2xl border-[0.5px] border-border bg-surface shadow-soft">
+					{slashCommand || attachments.length > 0 ? (
+						<div className="flex flex-wrap items-start gap-1.5 px-4 pt-5 pb-2">
+							{slashCommand && (
+								<span className="mt-0.5 shrink-0 select-none rounded-md bg-border px-2 py-0.5 font-mono text-[12px] leading-5 text-ink-2">
+									/{slashCommand}
+								</span>
+							)}
+							{attachments.map((path, index) => (
+								<AttachmentChip key={path} path={path} onRemove={() => handleAttachmentRemove(index)} />
+							))}
 							<textarea
 								ref={textareaRef}
-								className="max-h-[200px] flex-1 resize-none bg-transparent pt-0.5 text-[14px] leading-relaxed outline-none placeholder:text-ink-faint select-text"
-								placeholder={t("slash.argPlaceholder")}
+								className="max-h-[200px] min-w-[140px] flex-1 resize-none bg-transparent pt-0.5 text-[14px] leading-relaxed outline-none placeholder:text-ink-faint select-text"
+								placeholder={slashCommand ? t("slash.argPlaceholder") : t("composer.placeholder")}
 								value={text}
 								rows={1}
-								onChange={(e) => {
-									setSlashDismissed(false);
-									setText(e.target.value);
-								}}
+								onChange={handleTextChange}
 								onKeyDown={handleKeyDown}
 								onPaste={handlePaste}
 							/>
@@ -490,10 +616,7 @@ export function Composer({ centered = false }: { centered?: boolean }) {
 							placeholder={isStreaming ? t("composer.placeholderQueued") : t("composer.placeholder")}
 							value={text}
 							rows={1}
-							onChange={(e) => {
-								setSlashDismissed(false);
-								setText(e.target.value);
-							}}
+							onChange={handleTextChange}
 							onKeyDown={handleKeyDown}
 							onPaste={handlePaste}
 						/>
@@ -560,4 +683,35 @@ export function Composer({ centered = false }: { centered?: boolean }) {
 			)}
 		</div>
 	);
+}
+
+/** @ 文件引用胶囊：淡蓝底色；路径超长时 RTL 截断（优先保留文件名端），× 移除并恢复全路径纯文本。
+   仅截断时挂 Tooltip 显示全路径（未截断内容与胶囊重复，不显示） */
+function AttachmentChip({ path, onRemove }: { path: string; onRemove: () => void }) {
+	const t = useT();
+	const pathRef = useRef<HTMLSpanElement>(null);
+	const [truncated, setTruncated] = useState(false);
+
+	useEffect(() => {
+		const el = pathRef.current;
+		if (el) setTruncated(el.scrollWidth > el.clientWidth);
+	}, [path]);
+
+	const chip = (
+		<span className="mt-0.5 flex max-w-[220px] select-none items-center gap-1 rounded-md bg-blue-500/10 px-2 py-0.5 font-mono text-[12px] leading-5 text-blue-700 dark:bg-blue-400/15 dark:text-blue-300">
+			<span aria-hidden="true">@</span>
+			<span ref={pathRef} className="min-w-0 truncate" style={{ direction: "rtl", textAlign: "left" }}>
+				{path}
+			</span>
+			<button
+				type="button"
+				aria-label={t("composer.removeAttachment")}
+				onClick={onRemove}
+				className="shrink-0 text-blue-400 transition-colors hover:text-blue-600 dark:hover:text-blue-200"
+			>
+				<CloseIcon size={8} />
+			</button>
+		</span>
+	);
+	return truncated ? <Tooltip label={path}>{chip}</Tooltip> : chip;
 }

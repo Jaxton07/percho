@@ -86,6 +86,9 @@ function registerIpc(): void {
 	ipcMain.handle(IpcChannels.SessionExport, (_e, sessionId: string, format: "html" | "jsonl") =>
 		backend.exportSession(sessionId, format),
 	);
+	ipcMain.handle(IpcChannels.SessionFork, (_e, sessionId: string, ref: { entryId?: string; text?: string }) =>
+		backend.forkSession(sessionId, ref),
+	);
 	ipcMain.handle(IpcChannels.FileSaveDialog, async (_e, defaultName: string, content: string) => {
 		const window = BrowserWindow.getAllWindows()[0];
 		const options: Electron.SaveDialogOptions = {
@@ -151,6 +154,7 @@ function registerIpc(): void {
 			: await dialog.showOpenDialog(options);
 		return result.canceled ? null : result.filePaths[0];
 	});
+	ipcMain.handle(IpcChannels.ProjectListFiles, (_e, cwd?: string) => backend.listProjectFiles(cwd));
 
 	backend.onEvent((sessionId, event) => {
 		sendToRenderer(IpcChannels.Event, { sessionId, event });

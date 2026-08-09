@@ -1,7 +1,10 @@
 import type { ImageInput } from "@pi-desktop/shared";
 import { memo, useEffect, useRef, useState } from "react";
 import { useT } from "../../i18n";
+import { useSessionsStore } from "../../stores/sessions";
 import type { UIMessage } from "../../stores/transcript";
+import { selectTranscript, useTranscriptStore } from "../../stores/transcript";
+import { ForkIcon } from "../icons";
 import { AssistantMessage } from "./AssistantMessage";
 
 function imageSrc(image: ImageInput): string {
@@ -65,6 +68,34 @@ function CopyButton({ text }: { text: string }) {
 					<path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1" />
 				</svg>
 			)}
+		</button>
+	);
+}
+
+/** 分叉按钮：以该 assistant 消息为结尾生成新会话并切换；agent 运行中/分叉中禁用 */
+function ForkButton({ entryId, text }: { entryId?: string; text: string }) {
+	const t = useT();
+	const activeSessionId = useSessionsStore((s) => s.activeSessionId);
+	const agentActive = useTranscriptStore((s) => selectTranscript(s, activeSessionId).agentActive);
+	const forkSession = useSessionsStore((s) => s.forkSession);
+	const [forking, setForking] = useState(false);
+
+	const handleFork = () => {
+		if (forking || agentActive) return;
+		setForking(true);
+		// entryId 精确定位（历史消息）；流式刚提交的消息无 entryId，按正文文本兜底匹配
+		void forkSession(entryId ? { entryId } : { text }).finally(() => setForking(false));
+	};
+
+	return (
+		<button
+			type="button"
+			onClick={handleFork}
+			disabled={agentActive || forking}
+			aria-label={t("message.fork")}
+			className="flex h-6 w-6 items-center justify-center rounded-md text-ink-faint opacity-0 transition-opacity duration-150 hover:bg-border/70 hover:text-ink-2 focus-visible:opacity-100 group-hover:opacity-100 disabled:cursor-not-allowed"
+		>
+			<ForkIcon />
 		</button>
 	);
 }
@@ -147,13 +178,22 @@ export const MessageItem = memo(function MessageItem({
 	}
 
 	return (
-		<AssistantMessage
-			text={message.text}
-			thinking={message.thinking}
-			tools={message.tools}
-			streaming={streaming}
-			metaInGroup={metaInGroup}
-		/>
+		<div className="group">
+			<AssistantMessage
+				text={message.text}
+				thinking={message.thinking}
+				tools={message.tools}
+				streaming={streaming}
+				metaInGroup={metaInGroup}
+			/>
+			{/* 操作行（仅正文消息）：复制正文 + 从此处分叉；常驻占位，hover 淡入避免布局抖动 */}
+			{!streaming && message.text && (
+				<div className="mt-1 flex items-center gap-1">
+					<CopyButton text={message.text} />
+					<ForkButton entryId={message.entryId} text={message.text} />
+				</div>
+			)}
+		</div>
 	);
 });
 
