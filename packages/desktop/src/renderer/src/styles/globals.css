@@ -70,7 +70,7 @@
 	--markdown-table-head-bg: #212126;
 	--markdown-link-decoration: #6d28d9;
 	--markdown-link-hover: #a78bfa;
-	--shimmer-highlight: rgba(255, 255, 255, 0.55);
+	--shimmer-highlight: rgba(255, 255, 255, 0.95);
 	--scrollbar-thumb: #4b4b53;
 	--scrollbar-thumb-hover: #5d5d66;
 }

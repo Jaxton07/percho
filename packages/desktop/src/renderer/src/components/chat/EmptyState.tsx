@@ -15,7 +15,7 @@ export function EmptyState() {
 
 	return (
 		<div className="flex h-full flex-col items-center justify-center gap-8 px-8 pb-[8vh]">
-			<div className="text-7xl font-extrabold tracking-tight text-border select-none">pi</div>
+			<div className="text-7xl font-extrabold tracking-tight text-ink select-none">pi</div>
 			{error && <p className="max-w-md text-center text-xs text-red-500">{error}</p>}
 			<Composer centered />
 			<ProjectBranchPicker />

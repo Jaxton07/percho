@@ -101,8 +101,8 @@ export const zh = {
 		scrollToBottom: "回到底部",
 		thinking: "思考过程",
 		thinkingPreview: "思考中",
-		working: "工作中",
-		worked: "已完成",
+		working: "Working",
+		worked: "Worked",
 	},
 	tool: {
 		running: "运行中…",
