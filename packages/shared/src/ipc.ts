@@ -91,7 +91,7 @@ export interface PiApi {
 	setThinkingLevel(sessionId: string, level: string): Promise<void>;
 	/** 读取会话历史消息（打开历史会话时回放） */
 	getSessionMessages(sessionId: string): Promise<SessionMessage[]>;
-	compact(sessionId: string): Promise<void>;
+	compact(sessionId: string, customInstructions?: string): Promise<void>;
 	getStats(sessionId: string): Promise<SessionStats>;
 	/** 当前模型上下文使用（tokens/contextWindow/percent），无会话或未知时返回 null */
 	getContextUsage(sessionId: string): Promise<ContextUsageInfo | null>;

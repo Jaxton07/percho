@@ -15,7 +15,8 @@ const api: PiApi = {
 		ipcRenderer.invoke(IpcChannels.SessionSetModel, sessionId, provider, modelId),
 	setThinkingLevel: (sessionId, level) =>
 		ipcRenderer.invoke(IpcChannels.SessionSetThinkingLevel, sessionId, level),
-	compact: (sessionId) => ipcRenderer.invoke(IpcChannels.SessionCompact, sessionId),
+	compact: (sessionId, customInstructions) =>
+		ipcRenderer.invoke(IpcChannels.SessionCompact, sessionId, customInstructions),
 	getStats: (sessionId) => ipcRenderer.invoke(IpcChannels.SessionStats, sessionId),
 	getContextUsage: (sessionId) => ipcRenderer.invoke(IpcChannels.SessionGetContextUsage, sessionId),
 	clearQueue: (sessionId) => ipcRenderer.invoke(IpcChannels.SessionClearQueue, sessionId),

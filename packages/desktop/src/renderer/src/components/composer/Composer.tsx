@@ -123,12 +123,9 @@ export function Composer({ centered = false }: { centered?: boolean }) {
 		const pi = getPi();
 		switch (name) {
 			case "compact":
-				if (!arg) {
-					await pi.compact(sessionId);
-					showFeedback(t("slash.feedback.compacted"));
-					return true;
-				}
-				return false;
+				await pi.compact(sessionId, arg || undefined);
+				showFeedback(t("slash.feedback.compacted"));
+				return true;
 			case "name":
 				if (arg) {
 					await pi.setSessionName(sessionId, arg);

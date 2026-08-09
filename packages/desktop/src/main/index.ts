@@ -66,7 +66,9 @@ function registerIpc(): void {
 	ipcMain.handle(IpcChannels.SessionSetThinkingLevel, (_e, sessionId: string, level: string) =>
 		backend.setThinkingLevel(sessionId, level),
 	);
-	ipcMain.handle(IpcChannels.SessionCompact, (_e, sessionId: string) => backend.compact(sessionId));
+	ipcMain.handle(IpcChannels.SessionCompact, (_e, sessionId: string, customInstructions?: string) =>
+		backend.compact(sessionId, customInstructions),
+	);
 	ipcMain.handle(IpcChannels.SessionStats, (_e, sessionId: string) => backend.getStats(sessionId));
 	ipcMain.handle(IpcChannels.SessionGetContextUsage, (_e, sessionId: string) =>
 		backend.getContextUsage(sessionId),

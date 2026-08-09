@@ -348,10 +348,10 @@ export class PiBackend {
 		entry.session.setThinkingLevel(level as ThinkingLevel);
 	}
 
-	async compact(sessionId: string): Promise<void> {
+	async compact(sessionId: string, customInstructions?: string): Promise<void> {
 		const entry = this.requireSession(sessionId);
 		log.info("compact", sessionId);
-		await entry.session.compact();
+		await entry.session.compact(customInstructions);
 	}
 
 	async getStats(sessionId: string): Promise<SessionStats> {
@@ -521,7 +521,13 @@ export type { EventForwarder, Model };
  * 注：模板/skill/扩展命令不由这里列出，SDK prompt() 原生处理。
  */
 const BUILTIN_SLASH_COMMANDS: SlashCommandInfo[] = [
-	{ name: "compact", description: "Compress session context", source: "builtin", supported: true },
+	{
+		name: "compact",
+		description: "Compress session context",
+		argumentHint: "[focus]",
+		source: "builtin",
+		supported: true,
+	},
 	{
 		name: "name",
 		description: "Set session display name",
