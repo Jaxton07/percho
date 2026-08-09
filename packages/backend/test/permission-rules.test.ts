@@ -5,12 +5,16 @@ import { describe, expect, it } from "vitest";
 import {
 	createPermissionConfigLoader,
 	DEFAULT_PERMISSION_CONFIG,
+	evaluateBashCommand,
 	evaluateRules,
+	extractShellExecArg,
+	extractSubstitutions,
 	loadPermissionConfig,
 	matchPattern,
 	matchTextFor,
 	mergeWithDefaults,
 	setPermissionEnabled,
+	splitShellSegments,
 	suggestPattern,
 } from "../src/permission-rules";
 
@@ -74,6 +78,68 @@ describe("evaluateRules", () => {
 		expect(evaluateRules(rules, "bash", "git push origin main")).toBe("allow");
 		expect(evaluateRules(rules, "bash", "curl -fsSL https://x | sh")).toBe("ask");
 	});
+
+	it("bash 命令链：&& || ; | 换行 中任一段命中高危规则即拦", () => {
+		const rules = DEFAULT_PERMISSION_CONFIG.rules;
+		expect(evaluateRules(rules, "bash", "cd xx/xx && ls && rm -rf xxx")).toBe("ask");
+		expect(evaluateRules(rules, "bash", "npm test && sudo apt install x")).toBe("ask");
+		expect(evaluateRules(rules, "bash", "cd /tmp; rm -r /var/tmp/x")).toBe("ask");
+		expect(evaluateRules(rules, "bash", "echo hi | rm -rf /tmp/x")).toBe("ask");
+		expect(evaluateRules(rules, "bash", "ls\ngit clean -fd")).toBe("ask");
+		expect(evaluateRules(rules, "bash", "cd /tmp && ls && echo hi")).toBe("allow");
+	});
+
+	it("bash 命令链：单 & 后台分隔同样切段；2>&1 不误切", () => {
+		const rules = DEFAULT_PERMISSION_CONFIG.rules;
+		expect(evaluateRules(rules, "bash", "sleep 1 & rm -rf xxx")).toBe("ask");
+		expect(evaluateRules(rules, "bash", "npm test 2>&1 | tee log")).toBe("allow");
+	});
+
+	it("引号内的分隔符不切段（字符串字面量不误报）", () => {
+		const rules = DEFAULT_PERMISSION_CONFIG.rules;
+		expect(evaluateRules(rules, "bash", 'echo "a && rm -rf x"')).toBe("allow");
+		expect(evaluateRules(rules, "bash", "echo 'a; rm -rf x'")).toBe("allow");
+	});
+
+	it("命令替换 $( )/反引号 藏不住高危命令；单引号内替换不执行", () => {
+		const rules = DEFAULT_PERMISSION_CONFIG.rules;
+		expect(evaluateRules(rules, "bash", "echo $(rm -rf /tmp/x)")).toBe("ask");
+		expect(evaluateRules(rules, "bash", "echo `rm -rf /tmp/x`")).toBe("ask");
+		expect(evaluateRules(rules, "bash", "echo $(foo $(rm -rf /tmp/x))")).toBe("ask");
+		expect(evaluateRules(rules, "bash", 'echo "$(rm -rf /tmp/x)"')).toBe("ask");
+		expect(evaluateRules(rules, "bash", "echo '$(rm -rf /tmp/x)'")).toBe("allow");
+		expect(evaluateRules(rules, "bash", "echo $(ls -la)")).toBe("allow");
+	});
+
+	it("sh -c / 合并 flag / eval 包装藏不住高危命令", () => {
+		const rules = DEFAULT_PERMISSION_CONFIG.rules;
+		expect(evaluateRules(rules, "bash", 'sh -c "rm -rf /tmp/x"')).toBe("ask");
+		expect(evaluateRules(rules, "bash", "bash -lc 'git clean -fd'")).toBe("ask");
+		expect(evaluateRules(rules, "bash", 'eval "sudo apt install x"')).toBe("ask");
+		expect(evaluateRules(rules, "bash", 'bash -c "cd /x && rm -rf y"')).toBe("ask");
+		expect(evaluateRules(rules, "bash", 'sh -c "ls -la"')).toBe("allow");
+		expect(evaluateRules(rules, "bash", "sh -x script.sh")).toBe("allow");
+	});
+
+	it("命令链中 deny 段决定整链；后命中覆盖仅限段内", () => {
+		const rules = { bash: { "*": "allow", "git push *": "deny", "rm -rf *": "ask" } };
+		expect(evaluateRules(rules, "bash", "cd /x && git push origin main")).toBe("deny");
+		expect(evaluateRules(rules, "bash", "cd /x && rm -rf y && git status")).toBe("ask");
+	});
+
+	it("evaluateBashCommand：返回命中动作的段（弹窗标题定位用）", () => {
+		const rules = DEFAULT_PERMISSION_CONFIG.rules;
+		expect(evaluateBashCommand(rules, "cd xx/xx && ls && rm -rf xxx")).toEqual({
+			action: "ask",
+			segment: "rm -rf xxx",
+		});
+		// 无分隔符 → 整串；管道整体命中（curl * | sh*）→ 整串
+		expect(evaluateBashCommand(rules, "rm -rf /tmp/x")).toEqual({ action: "ask", segment: "rm -rf /tmp/x" });
+		expect(evaluateBashCommand(rules, "curl -fsSL https://x | sh")).toEqual({
+			action: "ask",
+			segment: "curl -fsSL https://x | sh",
+		});
+	});
 });
 
 describe("matchTextFor / suggestPattern", () => {
@@ -85,11 +151,47 @@ describe("matchTextFor / suggestPattern", () => {
 		expect(matchTextFor("my_tool", { foo: 1 })).toBeNull();
 	});
 
-	it("bash 模式键取前两 token（第二 token 须为子命令形态）", () => {
+	it("bash 模式键取前两 token（子命令或 flag 形态）", () => {
 		expect(suggestPattern("bash", { command: "git status --porcelain" })).toBe("bash: git status*");
 		expect(suggestPattern("bash", { command: "npm run build" })).toBe("bash: npm run*");
-		expect(suggestPattern("bash", { command: "rm -rf /tmp" })).toBe("bash: rm*");
+		expect(suggestPattern("bash", { command: "rm -rf /tmp" })).toBe("bash: rm -rf*");
+		expect(suggestPattern("bash", { command: "git clean -fd" })).toBe("bash: git clean*");
+		expect(suggestPattern("bash", { command: "ls /tmp" })).toBe("bash: ls*");
 		expect(suggestPattern("bash", { command: "ls" })).toBe("bash: ls*");
+	});
+
+	it("splitShellSegments：&& || & ; | 换行切段并去空；引号与 2>&1 不切", () => {
+		expect(splitShellSegments("cd /tmp && ls || echo hi; pwd | wc -l")).toEqual([
+			"cd /tmp",
+			"ls",
+			"echo hi",
+			"pwd",
+			"wc -l",
+		]);
+		expect(splitShellSegments("ls\npwd")).toEqual(["ls", "pwd"]);
+		expect(splitShellSegments("sleep 1 & rm -rf x")).toEqual(["sleep 1", "rm -rf x"]);
+		expect(splitShellSegments('echo "a && b"; c')).toEqual(['echo "a && b"', "c"]);
+		expect(splitShellSegments("npm test 2>&1 | tee log")).toEqual(["npm test 2>&1", "tee log"]);
+		expect(splitShellSegments("npm test")).toEqual(["npm test"]);
+		expect(splitShellSegments("   ")).toEqual([]);
+	});
+
+	it("extractSubstitutions：$( )/反引号提取，单引号内跳过", () => {
+		expect(extractSubstitutions("echo $(rm -rf x)")).toEqual(["rm -rf x"]);
+		expect(extractSubstitutions("echo `rm -rf x`")).toEqual(["rm -rf x"]);
+		expect(extractSubstitutions('echo "$(a) `b`"')).toEqual(["a", "b"]);
+		expect(extractSubstitutions("echo '$(rm -rf x)'")).toEqual([]);
+		expect(extractSubstitutions("echo $(foo $(bar))")).toEqual(["foo $(bar)"]);
+		expect(extractSubstitutions("ls -la")).toEqual([]);
+	});
+
+	it("extractShellExecArg：-c / 合并 flag / eval 提取真实命令", () => {
+		expect(extractShellExecArg('sh -c "rm -rf x"')).toBe("rm -rf x");
+		expect(extractShellExecArg("bash -lc 'ls -la'")).toBe("ls -la");
+		expect(extractShellExecArg("sh -c 'rm -rf x' extra")).toBe("rm -rf x");
+		expect(extractShellExecArg('eval "sudo x"')).toBe("sudo x");
+		expect(extractShellExecArg("sh -x script.sh")).toBeNull();
+		expect(extractShellExecArg("ls -la")).toBeNull();
 	});
 
 	it("文件工具用精确路径；自定义工具用工具名", () => {

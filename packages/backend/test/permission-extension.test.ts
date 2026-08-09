@@ -21,8 +21,12 @@ function makeAgentDir(): string {
 }
 
 /** 挂载扩展并返回 tool_call 触发器；confirmAnswer 控制弹窗结果 */
-function makeHarness(agentDir: string, confirmAnswer: boolean | ((title: string) => boolean) = false) {
-	const extension = makePermissionGateExtension(agentDir);
+function makeHarness(
+	agentDir: string,
+	confirmAnswer: boolean | ((title: string) => boolean) = false,
+	options?: { projectRoot?: string },
+) {
+	const extension = makePermissionGateExtension(agentDir, options);
 	if (typeof extension === "function" || !("factory" in extension)) {
 		throw new Error("expected named inline extension");
 	}
@@ -62,7 +66,7 @@ describe("permission-gate 扩展", () => {
 		const { call, confirms } = makeHarness(makeAgentDir(), true);
 		await expect(call("bash", { command: "rm -rf /tmp/x" })).resolves.toBeUndefined();
 		expect(confirms).toHaveLength(1);
-		expect(confirms[0].title).toBe("bash: rm*");
+		expect(confirms[0].title).toBe("bash: rm -rf*");
 		expect(confirms[0].message).toBe("rm -rf /tmp/x");
 	});
 
@@ -71,6 +75,16 @@ describe("permission-gate 扩展", () => {
 		const result = await call("bash", { command: "sudo rm -rf /" });
 		expect(result).toMatchObject({ block: true });
 		expect((result as ToolCallEventResult).reason).toContain("denied");
+	});
+
+	it("命令链中藏高危命令同样弹窗；标题定位危险段", async () => {
+		const { call, confirms } = makeHarness(makeAgentDir(), false);
+		const result = await call("bash", { command: "cd /tmp && ls && rm -rf xxx" });
+		expect(result).toMatchObject({ block: true });
+		expect((result as ToolCallEventResult).reason).toContain("denied");
+		expect(confirms).toHaveLength(1);
+		expect(confirms[0].title).toBe("bash: rm -rf*");
+		expect(confirms[0].message).toBe("cd /tmp && ls && rm -rf xxx");
 	});
 
 	it("deny 规则直接 block，不弹窗", async () => {
@@ -92,6 +106,25 @@ describe("permission-gate 扩展", () => {
 		const { call, confirms } = makeHarness(dir, false);
 		await expect(call("bash", { command: "rm -rf /" })).resolves.toBeUndefined();
 		expect(confirms).toHaveLength(0);
+	});
+
+	it("项目边界：根外路径弹窗（含 ../../ 相对逃逸），根内与不设边界放行", async () => {
+		const dir = makeAgentDir();
+		const root = join(dir, "proj");
+		mkdirSync(root, { recursive: true });
+		const { call, confirms } = makeHarness(dir, false, { projectRoot: root });
+		// 根内绝对/相对路径直接放行
+		await expect(call("edit", { path: join(root, "a.ts") })).resolves.toBeUndefined();
+		await expect(call("read", { path: "src/b.ts" })).resolves.toBeUndefined();
+		// 根外绝对路径与 ../../ 相对逃逸都弹窗（confirmAnswer=false → block）
+		await expect(call("edit", { path: "/etc/hosts" })).resolves.toMatchObject({ block: true });
+		await expect(call("write", { path: "../../escape.ts" })).resolves.toMatchObject({ block: true });
+		expect(confirms.map((c) => c.title)).toEqual(["edit: /etc/hosts", "write: ../../escape.ts"]);
+		// 不传 projectRoot → 无边界检查，任意路径放行
+		const open = makeHarness(dir, false);
+		await expect(open.call("edit", { path: "/etc/hosts" })).resolves.toBeUndefined();
+		// bash 无法路径约束，不受边界影响
+		await expect(call("bash", { command: "ls /etc" })).resolves.toBeUndefined();
 	});
 
 	it("自定义工具吃工具名级规则", async () => {
