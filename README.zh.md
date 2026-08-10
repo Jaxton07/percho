@@ -22,15 +22,27 @@
 
 ## 演示
 
-![pi-desktop 聊天页截图](docs/pi_desktop_chat_page.png)
+![pi-desktop 聊天页截图](docs/assets/img/pi_desktop_chat_page.png)
 
 **聊天页**
 
-![聊天页演示](docs/demo-chat.gif)
+![聊天页演示](docs/assets/img/demo-chat.gif)
+
+**Agent 在对话中发图（`show_image`）**
+
+![Agent 在对话中展示一排图片](docs/assets/img/chat_show_img.png)
+
+**自定义背景 + 深色主题**
+
+![深色主题下带自定义背景的聊天页](docs/assets/img/chat_img_bg_show_img.png)
 
 **设置页 —— 模型与 Provider**
 
-![设置页演示](docs/demo-settings.gif)
+![设置页演示](docs/assets/img/demo-settings.gif)
+
+**设置页 —— 外观（主题与背景）**
+
+![外观设置](docs/assets/img/settings_img_bg.png)
 
 ## 为什么选择 pi-desktop？
 
@@ -46,6 +58,8 @@ pi-desktop 把官方 Pi SDK（`@earendil-works/pi-coding-agent`）跑在 Electro
 - 可视化权限审批 —— 在底部审批坞里逐个批准/拒绝工具调用，背后是逐工具的规则引擎
 - 多会话侧栏、逐会话输入草稿、可撤销的跟进消息队列
 - 流式 Markdown 渲染、图片预览、消息复制
+- Agent 主动发图 —— 内置 `show_image` 工具让 agent 在需要时把图片（单张或成组）直接显示到对话区，而不是把所有工具结果都变成噪音
+- 自定义背景图与遮罩透明度，浅色/深色/跟随系统主题
 
 ## 下载
 

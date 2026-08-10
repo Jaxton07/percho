@@ -22,15 +22,27 @@
 
 ## Demo
 
-![pi-desktop chat page](docs/pi_desktop_chat_page.png)
+![pi-desktop chat page](docs/assets/img/pi_desktop_chat_page.png)
 
 **Chat**
 
-![Chat page demo](docs/demo-chat.gif)
+![Chat page demo](docs/assets/img/demo-chat.gif)
+
+**Agent showing images in chat (`show_image`)**
+
+![Agent displaying a row of images in chat](docs/assets/img/chat_show_img.png)
+
+**Custom background & dark theme**
+
+![Chat with custom background image in dark theme](docs/assets/img/chat_img_bg_show_img.png)
 
 **Settings — providers & models**
 
-![Settings page demo](docs/demo-settings.gif)
+![Settings page demo](docs/assets/img/demo-settings.gif)
+
+**Settings — appearance (theme & background)**
+
+![Appearance settings](docs/assets/img/settings_img_bg.png)
 
 ## Why pi-desktop?
 
@@ -46,6 +58,8 @@ And for those who prefer a GUI over a TUI:
 - Visual permission gates — approve or deny each tool call from a dock, backed by a per-tool rule engine
 - Multi-session sidebar, per-session composer drafts, follow-up queue with undo
 - Streaming markdown rendering, image previews, message copy
+- Agent-initiated image display — a built-in `show_image` tool lets the agent deliberately show you images inline (single or grouped), without turning every tool result into noise
+- Custom background image with adjustable overlay dimming, light/dark/system themes
 
 ## Download
 
