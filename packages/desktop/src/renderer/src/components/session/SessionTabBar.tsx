@@ -58,9 +58,8 @@ function SessionTab({ session, isActive }: { session: SessionMeta; isActive: boo
 				<span className="block truncate pr-6 text-left">
 					{session.name ?? session.cwd.split("/").filter(Boolean).pop() ?? t("tabbar.untitled")}
 				</span>
-				<span className="invisible pointer-events-none absolute inset-y-0 right-0 w-7 bg-gradient-to-l from-hover via-hover/60 to-transparent group-hover:visible" />
 				<span
-					className="invisible absolute right-0 top-1/2 -translate-y-1/2 rounded-md bg-hover p-1 text-ink-dim opacity-0 transition-opacity hover:bg-border-strong/60 hover:text-ink-2 group-hover:visible group-hover:opacity-100"
+					className="invisible absolute right-0 top-1/2 -translate-y-1/2 p-1 text-ink-dim opacity-0 transition-opacity hover:text-ink group-hover:visible group-hover:opacity-100"
 					aria-hidden="true"
 					onClick={(e) => {
 						e.stopPropagation();
