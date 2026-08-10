@@ -17,6 +17,7 @@ import type {
 	ContextUsageInfo,
 	CreateSessionOptions,
 	ImageInput,
+	LoadedResources,
 	PermissionAnswer,
 	PermissionRequest,
 	SessionMessage,
@@ -405,6 +406,48 @@ export class PiBackend {
 			supported: true,
 		}));
 		return [...BUILTIN_SLASH_COMMANDS, ...templates, ...skills, ...extensions];
+	}
+
+	/** 扩展显示名：`<inline:N>` 原样，目录式扩展取最后一段（剥 index.ts 后缀） */
+	private extensionDisplayName(path: string): string {
+		const cleaned = path.replace(/\/index\.(ts|js)$/, "");
+		const base = cleaned.split("/").filter(Boolean).pop();
+		return base ?? path;
+	}
+
+	/** 读取会话已加载的资源（skills/扩展；设置页展示用） */
+	async getLoadedResources(sessionId: string): Promise<LoadedResources> {
+		const entry = this.requireSession(sessionId);
+		const session = entry.session;
+		const skillResult = session.resourceLoader.getSkills();
+		const extResult = session.resourceLoader.getExtensions();
+		return {
+			skills: skillResult.skills.map((skill) => ({
+				name: skill.name,
+				description: skill.description,
+				scope: skill.sourceInfo.scope,
+				source: skill.sourceInfo.source,
+				path: skill.filePath,
+				disableModelInvocation: skill.disableModelInvocation,
+			})),
+			skillDiagnostics: skillResult.diagnostics.map((d) => ({
+				type: d.type,
+				message: d.message,
+				path: d.path,
+			})),
+			extensions: extResult.extensions.map((ext) => ({
+				name: this.extensionDisplayName(ext.path),
+				path: ext.path,
+				scope: ext.sourceInfo.scope,
+				source: ext.sourceInfo.source,
+				hidden: ext.hidden === true,
+				toolsCount: ext.tools.size,
+				commands: [...ext.commands.keys()],
+				flagsCount: ext.flags.size,
+				shortcutsCount: ext.shortcuts.size,
+			})),
+			extensionErrors: extResult.errors,
+		};
 	}
 
 	/** 设置会话显示名（触发 session_info_changed 事件） */
