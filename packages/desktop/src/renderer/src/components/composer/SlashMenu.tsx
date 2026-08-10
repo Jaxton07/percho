@@ -1,13 +1,7 @@
 import type { SlashCommandInfo } from "@pi-desktop/shared";
 import { useEffect, useRef } from "react";
 import { useT } from "../../i18n";
-
-export const SOURCE_ORDER: SlashCommandInfo["source"][] = ["builtin", "template", "skill", "extension"];
-
-/** 过滤后的命令列表（按来源分组顺序拍平） */
-export function filterCommands(commands: SlashCommandInfo[], query: string): SlashCommandInfo[] {
-	return commands.filter((c) => c.name.startsWith(query));
-}
+import { filterCommands, SOURCE_ORDER } from "./slash-filter";
 
 /** 斜杠命令补全面板：纯展示，分组（内置/模板/skill/扩展），受控选中与回调由 Composer 驱动 */
 export function SlashMenu({

@@ -13,7 +13,8 @@ import { AtMenu } from "./AtMenu";
 import { type AtToken, extractAtToken, filterFiles } from "./at-files";
 import { ContextRing } from "./ContextRing";
 import { ModelPicker } from "./ModelPicker";
-import { filterCommands, SlashMenu } from "./SlashMenu";
+import { SlashMenu } from "./SlashMenu";
+import { filterCommands } from "./slash-filter";
 import { ThinkingPicker } from "./ThinkingPicker";
 
 /** 底部输入框：自动增高、Enter 发送、生成中变停止；centered 用于空态居中布局 */
