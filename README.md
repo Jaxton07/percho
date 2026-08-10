@@ -7,6 +7,12 @@
 </p>
 <p align="center">
   <a href="LICENSE"><img src="https://img.shields.io/github/license/Jaxton07/pi-desktop?style=flat-square" alt="License"></a>
+  <a href="https://github.com/Jaxton07/pi-desktop/releases"><img src="https://img.shields.io/github/v/release/Jaxton07/pi-desktop?style=flat-square" alt="Release"></a>
+  <a href="https://github.com/Jaxton07/pi-desktop/releases"><img src="https://img.shields.io/github/downloads/Jaxton07/pi-desktop/total?style=flat-square" alt="Downloads"></a>
+  <a href="https://github.com/Jaxton07/pi-desktop/actions/workflows/ci.yml"><img src="https://img.shields.io/github/actions/workflow/status/Jaxton07/pi-desktop/ci.yml?style=flat-square" alt="CI"></a>
+  <a href="https://github.com/Jaxton07/pi-desktop"><img src="https://img.shields.io/github/stars/Jaxton07/pi-desktop?style=flat-square" alt="Stars"></a>
+  <img src="https://img.shields.io/badge/node-%3E%3D22.19-339933?logo=nodedotjs&style=flat-square" alt="Node >=22.19">
+  <img src="https://img.shields.io/badge/platform-macOS%20%7C%20Windows-blue?style=flat-square" alt="macOS | Windows">
 </p>
 <p align="center">
   <a href="README.md">English</a> | <a href="README.zh.md">简体中文</a>
