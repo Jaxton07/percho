@@ -196,9 +196,15 @@ export const useSessionsStore = create<SessionsStore>((set, get) => ({
 		}
 	},
 
+	/** 切换当前会话的模型：更新全局默认（新会话用）+ 当前会话（只影响该会话），并同步 SDK */
 	setCurrentModel: async (provider, modelId) => {
 		const { activeSessionId } = get();
-		set({ currentModel: { provider, modelId } });
+		set((state) => ({
+			currentModel: { provider, modelId },
+			sessions: state.sessions.map((s) =>
+				s.sessionId === activeSessionId ? { ...s, model: { provider, modelId } } : s,
+			),
+		}));
 		void getPi().saveUiState({ currentModel: { provider, modelId }, thinkingLevel: get().thinkingLevel });
 		if (activeSessionId) {
 			try {
@@ -209,9 +215,15 @@ export const useSessionsStore = create<SessionsStore>((set, get) => ({
 		}
 	},
 
+	/** 切换当前会话的思考深度：更新全局默认 + 当前会话（只影响该会话），并同步 SDK */
 	setThinkingLevel: async (level) => {
 		const { activeSessionId, currentModel } = get();
-		set({ thinkingLevel: level });
+		set((state) => ({
+			thinkingLevel: level,
+			sessions: state.sessions.map((s) =>
+				s.sessionId === activeSessionId ? { ...s, thinkingLevel: level } : s,
+			),
+		}));
 		void getPi().saveUiState({ currentModel, thinkingLevel: level });
 		if (activeSessionId) {
 			try {

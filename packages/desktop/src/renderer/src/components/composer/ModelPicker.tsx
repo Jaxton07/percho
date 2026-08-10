@@ -8,6 +8,7 @@ export function ModelPicker() {
 	const t = useT();
 	const models = useSessionsStore((s) => s.models);
 	const currentModel = useSessionsStore((s) => s.currentModel);
+	const activeSession = useSessionsStore((s) => s.sessions.find((x) => x.sessionId === s.activeSessionId));
 	const setCurrentModel = useSessionsStore((s) => s.setCurrentModel);
 	const [open, setOpen] = useState(false);
 	const ref = useRef<HTMLDivElement>(null);
@@ -28,12 +29,14 @@ export function ModelPicker() {
 		};
 	}, [open]);
 
+	// 每个会话独立持有模型：优先显示当前会话的模型，未设置（内存/旧会话）回退全局默认
+	const effective = activeSession?.model ?? currentModel;
 	const current = useMemo(
 		() =>
-			currentModel
-				? (models.find((m) => m.provider === currentModel.provider && m.id === currentModel.modelId) ?? null)
+			effective
+				? (models.find((m) => m.provider === effective.provider && m.id === effective.modelId) ?? null)
 				: null,
-		[models, currentModel],
+		[models, effective],
 	);
 
 	const groups = useMemo(() => {
@@ -50,8 +53,7 @@ export function ModelPicker() {
 	}, [models]);
 
 	const label =
-		current?.label ??
-		(currentModel ? `${currentModel.provider}/${currentModel.modelId}` : t("composer.modelDefault"));
+		current?.label ?? (effective ? `${effective.provider}/${effective.modelId}` : t("composer.modelDefault"));
 
 	return (
 		<div ref={ref} className="relative">
@@ -76,7 +78,7 @@ export function ModelPicker() {
 								{group.name}
 							</div>
 							{group.items.map((m) => {
-								const selected = currentModel?.provider === m.provider && currentModel.modelId === m.id;
+								const selected = effective?.provider === m.provider && effective.modelId === m.id;
 								return (
 									<button
 										key={`${m.provider}/${m.id}`}

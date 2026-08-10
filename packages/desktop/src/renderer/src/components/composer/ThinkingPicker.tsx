@@ -16,10 +16,11 @@ function levelLabel(t: ReturnType<typeof useT>, level: string): string {
 	return t(`thinkingLevels.${isThinkingLevel(level) ? level : "medium"}`);
 }
 
-/** 输入框思考深度切换：chip 按钮 + 上弹单选列表 */
+/** 输入框思考深度切换：chip 按钮 + 上弹单选列表（每个会话独立持有，未设置回退全局默认） */
 export function ThinkingPicker() {
 	const t = useT();
 	const thinkingLevel = useSessionsStore((s) => s.thinkingLevel);
+	const activeSession = useSessionsStore((s) => s.sessions.find((x) => x.sessionId === s.activeSessionId));
 	const setThinkingLevel = useSessionsStore((s) => s.setThinkingLevel);
 	const [open, setOpen] = useState(false);
 	const ref = useRef<HTMLDivElement>(null);
@@ -40,7 +41,8 @@ export function ThinkingPicker() {
 		};
 	}, [open]);
 
-	const label = levelLabel(t, thinkingLevel);
+	const effective = activeSession?.thinkingLevel ?? thinkingLevel;
+	const label = levelLabel(t, effective);
 
 	return (
 		<div ref={ref} className="relative">
@@ -55,7 +57,7 @@ export function ThinkingPicker() {
 			{open && (
 				<div className="absolute bottom-full left-0 z-30 mb-1 w-40 overflow-hidden rounded-xl border border-border bg-surface p-1 shadow-pop">
 					{THINKING_LEVELS.map((level) => {
-						const selected = level === thinkingLevel;
+						const selected = level === effective;
 						return (
 							<button
 								key={level}

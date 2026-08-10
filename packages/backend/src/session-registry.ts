@@ -42,6 +42,8 @@ export class SessionRegistry {
 			cwd,
 			name: session.sessionName,
 			modelLabel: session.model?.name,
+			model: session.model ? { provider: session.model.provider, modelId: session.model.id } : null,
+			thinkingLevel: session.thinkingLevel,
 			active: true,
 			messageCount: session.messages.length,
 			createdAt: Date.now(),
