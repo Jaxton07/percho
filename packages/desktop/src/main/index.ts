@@ -23,6 +23,9 @@ import { createWindow } from "./window";
 const log = createLogger("main");
 let backend: PiBackend;
 
+/** 项目仓库地址（帮助跳转 + 关于页） */
+export const APP_REPO_URL = "https://github.com/Jaxton07/pi-desktop";
+
 /** renderer 加载自定义背景图的协议（pi-bg://background/<文件名>，只读 userData/backgrounds/） */
 const BG_PROTOCOL = "pi-bg";
 
@@ -89,6 +92,9 @@ function registerIpc(): void {
 	ipcMain.handle(IpcChannels.SessionFork, (_e, sessionId: string, ref: { entryId?: string; text?: string }) =>
 		backend.forkSession(sessionId, ref),
 	);
+	ipcMain.handle(IpcChannels.SessionGetLoadedResources, (_e, sessionId: string) =>
+		backend.getLoadedResources(sessionId),
+	);
 	ipcMain.handle(IpcChannels.FileSaveDialog, async (_e, defaultName: string, content: string) => {
 		const window = BrowserWindow.getAllWindows()[0];
 		const options: Electron.SaveDialogOptions = {
@@ -141,6 +147,16 @@ function registerIpc(): void {
 		// 只允许 http(s) 链接，防 file:// 等协议滥用
 		if (typeof url === "string" && /^https?:\/\//.test(url)) return shell.openExternal(url);
 	});
+	ipcMain.handle(IpcChannels.AppGetInfo, () => ({
+		name: app.getName(),
+		version: app.getVersion(),
+		electron: process.versions.electron ?? "",
+		chrome: process.versions.chrome ?? "",
+		node: process.versions.node ?? "",
+		platform: process.platform,
+		arch: process.arch,
+		repoUrl: APP_REPO_URL,
+	}));
 	ipcMain.handle(IpcChannels.TabsLoad, () => loadTabs());
 	ipcMain.handle(IpcChannels.TabsSave, (_e, tabs: SavedTabs) => saveTabs(tabs));
 	ipcMain.handle(IpcChannels.UiStateLoad, () => loadUiState());

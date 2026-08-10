@@ -25,6 +25,7 @@ const api: PiApi = {
 	setSessionName: (sessionId, name) => ipcRenderer.invoke(IpcChannels.SessionSetName, sessionId, name),
 	exportSession: (sessionId, format) => ipcRenderer.invoke(IpcChannels.SessionExport, sessionId, format),
 	forkSession: (sessionId, ref) => ipcRenderer.invoke(IpcChannels.SessionFork, sessionId, ref),
+	getLoadedResources: (sessionId) => ipcRenderer.invoke(IpcChannels.SessionGetLoadedResources, sessionId),
 	saveFileDialog: (defaultName, content) =>
 		ipcRenderer.invoke(IpcChannels.FileSaveDialog, defaultName, content),
 	getSessionMessages: (sessionId) => ipcRenderer.invoke(IpcChannels.SessionGetMessages, sessionId),
@@ -48,6 +49,7 @@ const api: PiApi = {
 	listGitBranches: (cwd) => ipcRenderer.invoke(IpcChannels.ProjectListGitBranches, cwd),
 	checkoutBranch: (cwd, branch) => ipcRenderer.invoke(IpcChannels.ProjectCheckoutBranch, cwd, branch),
 	openExternal: (url) => ipcRenderer.invoke(IpcChannels.AppOpenExternal, url),
+	getAppInfo: () => ipcRenderer.invoke(IpcChannels.AppGetInfo),
 	loadTabs: () => ipcRenderer.invoke(IpcChannels.TabsLoad),
 	saveTabs: (tabs) => ipcRenderer.invoke(IpcChannels.TabsSave, tabs),
 	loadUiState: () => ipcRenderer.invoke(IpcChannels.UiStateLoad),

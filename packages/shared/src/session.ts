@@ -24,6 +24,12 @@ export interface UiState {
 }
 
 /** 会话元数据（IPC 往返用，独立于 pi 内部类型） */
+/** 会话模型引用（provider + 模型 id） */
+export interface SessionModelRef {
+	provider: string;
+	modelId: string;
+}
+
 export interface SessionMeta {
 	sessionId: string;
 	/** 会话文件路径（持久化会话）；内存会话为 undefined */
@@ -32,6 +38,10 @@ export interface SessionMeta {
 	/** 会话标题（用户设置或自动生成） */
 	name?: string;
 	modelLabel?: string;
+	/** 会话当前使用的模型（活跃会话才有值；未选择为 null） */
+	model?: SessionModelRef | null;
+	/** 会话当前思考级别（活跃会话才有值；未选择为 null） */
+	thinkingLevel?: string | null;
 	/** 是否仍在内存中活跃（否则是历史会话） */
 	active: boolean;
 	/** 消息条数（用于历史列表展示） */
@@ -175,6 +185,74 @@ export type TrustAnswer = number;
 export interface GitBranches {
 	current: string | null;
 	branches: string[];
+}
+
+/** 应用信息（设置 → 关于页展示，来自主进程） */
+export interface AppInfo {
+	/** 应用名 */
+	name: string;
+	/** 应用版本 */
+	version: string;
+	electron: string;
+	chrome: string;
+	node: string;
+	platform: string;
+	arch: string;
+	/** 项目仓库地址（关于页/帮助跳转） */
+	repoUrl: string;
+}
+
+/** 已加载资源的作用域（用户级 ~/.pi/agent / 项目级 / 临时合成） */
+export type ResourceScope = "user" | "project" | "temporary";
+
+/** 已加载的 skill（设置页 skills 面板数据源） */
+export interface LoadedSkill {
+	name: string;
+	description: string;
+	/** 来源作用域 */
+	scope: ResourceScope;
+	/** 来源标记（如用户级目录名 / 项目名） */
+	source: string;
+	/** SKILL.md 文件路径 */
+	path: string;
+	/** 是否禁用模型自动调用（仅手动触发） */
+	disableModelInvocation: boolean;
+}
+
+/** 已加载的扩展（设置页 extensions 面板数据源） */
+export interface LoadedExtension {
+	/** 显示名（路径 basename；内置 inline 扩展用合成名） */
+	name: string;
+	/** 扩展路径（inline 扩展为合成路径） */
+	path: string;
+	scope: ResourceScope;
+	/** 来源标记 */
+	source: string;
+	/** 隐藏扩展（如部分内部扩展） */
+	hidden: boolean;
+	/** 注册的工具数 */
+	toolsCount: number;
+	/** 注册的斜杠命令名 */
+	commands: string[];
+	/** 注册的 flag 数 */
+	flagsCount: number;
+	/** 注册的快捷键数 */
+	shortcutsCount: number;
+}
+
+/** 资源加载诊断（collision 冲突/warning/error） */
+export interface ResourceDiagnosticInfo {
+	type: "warning" | "error" | "collision";
+	message: string;
+	path?: string;
+}
+
+/** 会话已加载资源总览（设置页 skills/扩展面板数据，按会话项目加载） */
+export interface LoadedResources {
+	skills: LoadedSkill[];
+	skillDiagnostics: ResourceDiagnosticInfo[];
+	extensions: LoadedExtension[];
+	extensionErrors: { path: string; error: string }[];
 }
 
 /** 渲染进程收到的统一事件包络 */

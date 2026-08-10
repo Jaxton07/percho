@@ -1,17 +1,33 @@
 import type { ComponentType } from "react";
 import { useT } from "../../i18n";
 import { type SettingsCategory, useSettingsStore } from "../../stores/settings";
+import { AboutPanel } from "./AboutPanel";
 import { AppearancePanel } from "./AppearancePanel";
+import { ExtensionsPanel } from "./ExtensionsPanel";
 import { GeneralPanel } from "./GeneralPanel";
+import { McpPanel } from "./McpPanel";
 import { ProvidersPanel } from "./providers/ProvidersPanel";
+import { SkillsPanel } from "./SkillsPanel";
 
-const CATEGORIES: SettingsCategory[] = ["general", "appearance", "providers", "skills", "mcp", "extensions"];
+const CATEGORIES: SettingsCategory[] = [
+	"general",
+	"appearance",
+	"providers",
+	"skills",
+	"mcp",
+	"extensions",
+	"about",
+];
 
 /** 面板注册表：新增分类 = 写一个面板组件 + 在这里登记（未登记显示 coming soon） */
 const PANELS: Partial<Record<SettingsCategory, ComponentType>> = {
 	general: GeneralPanel,
 	appearance: AppearancePanel,
 	providers: ProvidersPanel,
+	skills: SkillsPanel,
+	mcp: McpPanel,
+	extensions: ExtensionsPanel,
+	about: AboutPanel,
 };
 
 /** 设置弹窗：左侧分类导航 + 右侧内容，两列均可独立滚动 */

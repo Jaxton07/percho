@@ -1,8 +1,10 @@
 import type {
+	AppInfo,
 	ContextUsageInfo,
 	CreateSessionOptions,
 	GitBranches,
 	ImageInput,
+	LoadedResources,
 	PermissionAnswer,
 	PermissionConfigInfo,
 	PermissionRequest,
@@ -41,6 +43,8 @@ export const IpcChannels = {
 	SessionSetName: "session:setName",
 	SessionExport: "session:export",
 	SessionFork: "session:fork",
+	/** 已加载资源（skills/扩展，设置页展示用） */
+	SessionGetLoadedResources: "session:getLoadedResources",
 	FileSaveDialog: "file:saveDialog",
 	ModelsList: "models:list",
 	SettingsListProviders: "settings:listProviders",
@@ -62,6 +66,8 @@ export const IpcChannels = {
 	/** @ 补全数据源：项目文件相对路径列表（目录带尾 /） */
 	ProjectListFiles: "project:listFiles",
 	AppOpenExternal: "app:openExternal",
+	/** 应用信息（版本/运行时版本/仓库地址，设置关于页用） */
+	AppGetInfo: "app:getInfo",
 	/** 顶栏 tabs 持久化（userData/tabs.json，不依赖 renderer localStorage） */
 	TabsLoad: "tabs:load",
 	TabsSave: "tabs:save",
@@ -114,6 +120,8 @@ export interface PiApi {
 	 * 运行中的会话拒绝 fork。返回新会话 meta。
 	 */
 	forkSession(sessionId: string, ref: { entryId?: string; text?: string }): Promise<SessionMeta>;
+	/** 读取会话已加载的资源（skills/扩展；设置页展示用） */
+	getLoadedResources(sessionId: string): Promise<LoadedResources>;
 	/** 弹保存对话框并写文件；用户取消返回 null，成功返回写入路径 */
 	saveFileDialog(defaultName: string, content: string): Promise<string | null>;
 	listModels(): Promise<import("./session").AvailableModel[]>;
@@ -139,6 +147,8 @@ export interface PiApi {
 	checkoutBranch(cwd: string, branch: string): Promise<string>;
 	/** 用系统浏览器打开链接 */
 	openExternal(url: string): Promise<void>;
+	/** 读取应用信息（版本/运行时/仓库地址） */
+	getAppInfo(): Promise<AppInfo>;
 	/** 读取持久化的顶栏 tabs（无数据返回 null） */
 	loadTabs(): Promise<SavedTabs | null>;
 	/** 持久化顶栏 tabs（主进程写 userData/tabs.json） */

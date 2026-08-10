@@ -145,6 +145,7 @@ export const en: Messages = {
 			skills: "Skills",
 			mcp: "MCP Plugins",
 			extensions: "Extensions",
+			about: "About",
 		},
 		language: "Language",
 		languageHint: "Follows system language by default",
@@ -162,6 +163,11 @@ export const en: Messages = {
 		permissionGate: "Built-in permission gate",
 		permissionGateHint:
 			"When on, tool calls are checked against rules: dangerous commands (rm -rf, sudo, force push, etc.) ask for confirmation, everything else runs. Rules live in ~/.pi/agent/permissions.json and apply instantly. Turn off to replace with your own permission extension.",
+		about: {
+			version: "Version",
+			poweredBy: "Built on Pi Coding Agent",
+			sourceCode: "Source code & feedback",
+		},
 		providers: {
 			empty: "No providers available",
 			custom: "Custom",
@@ -183,6 +189,38 @@ export const en: Messages = {
 			customKey: "API Key (optional, stored in auth.json)",
 			customModels: "Model IDs, separated by commas or newlines, e.g. deepseek-chat, deepseek-reasoner",
 			submitting: "Saving…",
+		},
+		skills: {
+			title: "Loaded Skills",
+			hint: "Skills loaded for the current project (active session), from ~/.pi/agent/skills and project .pi/skills",
+			empty: "No skills loaded for the current project",
+			emptyNoSession:
+				"No open session. Create or open a session first, then the loaded skills for that project will show here",
+			scopeUser: "User",
+			scopeProject: "Project",
+			scopeTemporary: "Temporary",
+			manualOnly: "Manual only",
+			diagnostics: "Load diagnostics",
+		},
+		mcp: {
+			unsupported:
+				"MCP is not supported by the current pi SDK version (0.84.0) yet. It will be enabled once the SDK adds support.",
+		},
+		extensions: {
+			title: "Loaded Extensions",
+			hint: "Extensions loaded for the current project (active session) with their registered tools/commands",
+			empty: "No extensions loaded for the current project",
+			emptyNoSession:
+				"No open session. Create or open a session first, then the loaded extensions for that project will show here",
+			scopeUser: "User",
+			scopeProject: "Project",
+			scopeTemporary: "Temporary",
+			tools: "{count} tools",
+			commands: "{count} commands",
+			flags: "{count} flags",
+			shortcuts: "{count} shortcuts",
+			loadErrors: "{count} extensions failed to load",
+			hidden: "Hidden",
 		},
 	},
 	lang: {
