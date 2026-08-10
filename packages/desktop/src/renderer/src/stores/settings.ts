@@ -1,9 +1,23 @@
-import type { CustomProviderInput, ProviderInfo, ProviderTestResult } from "@pi-desktop/shared";
+import type {
+	CustomProviderInput,
+	LoadedExtension,
+	LoadedSkill,
+	ProviderInfo,
+	ProviderTestResult,
+	ResourceDiagnosticInfo,
+} from "@pi-desktop/shared";
 import { create } from "zustand";
 import { getPi } from "../api";
 import { useSessionsStore } from "./sessions";
 
-export type SettingsCategory = "general" | "appearance" | "providers" | "skills" | "mcp" | "extensions";
+export type SettingsCategory =
+	| "general"
+	| "appearance"
+	| "providers"
+	| "skills"
+	| "mcp"
+	| "extensions"
+	| "about";
 
 interface SettingsStore {
 	open: boolean;
@@ -13,6 +27,12 @@ interface SettingsStore {
 	loading: boolean;
 	/** 内置权限门控开关（null = 未加载） */
 	permissionEnabled: boolean | null;
+	/** 当前活跃会话已加载的 skills（null = 未加载/无会话） */
+	skills: LoadedSkill[] | null;
+	skillDiagnostics: ResourceDiagnosticInfo[];
+	/** 当前活跃会话已加载的扩展（null = 未加载/无会话） */
+	extensions: LoadedExtension[] | null;
+	extensionErrors: { path: string; error: string }[];
 	/** providerId → 测试结果（"testing" 表示进行中） */
 	testResults: Record<string, ProviderTestResult | "testing">;
 	error: string | null;
@@ -42,6 +62,10 @@ export const useSettingsStore = create<SettingsStore>((set, get) => {
 		providers: [],
 		loading: false,
 		permissionEnabled: null,
+		skills: null,
+		skillDiagnostics: [],
+		extensions: null,
+		extensionErrors: [],
 		testResults: {},
 		error: null,
 
@@ -65,6 +89,19 @@ export const useSettingsStore = create<SettingsStore>((set, get) => {
 					getPi().getPermissionConfig(),
 				]);
 				set({ providers, permissionEnabled: permission.enabled, loading: false, error: null });
+				// 已加载资源按当前活跃会话（其项目）展示；无会话时为 null（面板显示空态）
+				const activeSessionId = useSessionsStore.getState().activeSessionId;
+				if (activeSessionId) {
+					const resources = await getPi().getLoadedResources(activeSessionId);
+					set({
+						skills: resources.skills,
+						skillDiagnostics: resources.skillDiagnostics,
+						extensions: resources.extensions,
+						extensionErrors: resources.extensionErrors,
+					});
+				} else {
+					set({ skills: null, skillDiagnostics: [], extensions: null, extensionErrors: [] });
+				}
 			} catch (error) {
 				set({ loading: false, error: error instanceof Error ? error.message : String(error) });
 			}
