@@ -6,7 +6,8 @@ import { useSettingsStore } from "../../stores/settings";
 import { CloseIcon, GearIcon, HelpIcon, PlusIcon } from "../icons";
 import { Tooltip } from "../ui/Tooltip";
 
-const PI_REPO_URL = "https://github.com/earendil-works/pi";
+/** 项目仓库地址（帮助按钮跳转） */
+const PI_REPO_URL = "https://github.com/Jaxton07/pi-desktop";
 
 /** 项目列表侧栏：项目项 + 底部设置/帮助入口 */
 export function ProjectSidebar() {
