@@ -24,6 +24,7 @@ export { PermissionGate, type PermissionResponder } from "./permissions";
 export { PiBackend, type PiBackendOptions } from "./pi-backend";
 export { type RegisteredSession, SessionRegistry } from "./session-registry";
 export { SettingsService } from "./settings";
+export { makeShowImageTool, resolveShowImagePath, type ShowImageDetails } from "./show-image-tool";
 export { TraceRecorder } from "./trace";
 export {
 	buildTrustOptions,

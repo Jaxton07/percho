@@ -13,7 +13,7 @@ import {
 const log = createLogger("permission-gate");
 
 /** matchText 为文件路径的工具（项目边界检查对象；grep/find 的 matchText 是 pattern 不在列） */
-const PATH_TOOLS = new Set(["read", "edit", "write", "ls"]);
+const PATH_TOOLS = new Set(["read", "edit", "write", "ls", "show_image"]);
 
 export interface PermissionGateOptions {
 	/** 会话项目根：带路径工具解析后落在根外时，规则结果为 allow 也提升为 ask */

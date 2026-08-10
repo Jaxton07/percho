@@ -345,6 +345,11 @@ export function matchTextFor(toolName: string, input: Record<string, unknown>): 
 			case "write":
 			case "ls":
 				return input.path;
+			case "show_image": {
+				// 多路径参数取首个做边界抽查（数组整体逃逸是已知边角）
+				const paths = input.paths;
+				return Array.isArray(paths) ? paths[0] : input.path;
+			}
 			case "grep":
 			case "find":
 				return input.pattern;

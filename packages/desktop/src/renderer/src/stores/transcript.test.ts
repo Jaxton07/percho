@@ -1,7 +1,7 @@
 import type { AgentSessionEvent } from "@pi-desktop/shared";
 import { beforeEach, describe, expect, it } from "vitest";
 import { useTranscriptStore } from "./transcript";
-import { emptyTranscript, reduceEvent } from "./transcript-reducer";
+import { emptyTranscript, messagesToUIMessages, reduceEvent } from "./transcript-reducer";
 
 function ev(type: string, extra: Record<string, unknown> = {}): AgentSessionEvent {
 	return { type, ...extra } as AgentSessionEvent;
@@ -357,6 +357,134 @@ describe("transcript reducer", () => {
 		// 投递完成 SDK 推空数组
 		state = reduceEvent(state, ev("queue_update", { steering: [], followUp: [] }));
 		expect(state.followUpQueue).toEqual([]);
+	});
+
+	it("show_image：tool_execution_end 缓冲图片，turn_end 排在 assistant 之后", () => {
+		let state = emptyTranscript();
+		state = reduceEvent(state, ev("agent_start"));
+		state = reduceEvent(state, {
+			type: "message_update",
+			assistantMessageEvent: {
+				type: "toolcall_start",
+				contentIndex: 0,
+				partial: { toolCalls: [{ name: "show_image" }] },
+			},
+		} as unknown as AgentSessionEvent);
+		state = reduceEvent(state, {
+			type: "message_update",
+			assistantMessageEvent: {
+				type: "toolcall_end",
+				contentIndex: 0,
+				toolCall: { id: "tc1", name: "show_image", arguments: { paths: ["a.png", "b.png"] } },
+			},
+		} as unknown as AgentSessionEvent);
+		state = reduceEvent(state, {
+			type: "tool_execution_end",
+			toolCallId: "tc1",
+			toolName: "show_image",
+			result: {
+				content: [{ type: "text", text: "2 images displayed to the user in the chat: a.png, b.png" }],
+				details: {
+					paths: ["a.png", "b.png"],
+					images: [
+						{ data: "AAAA", mimeType: "image/png" },
+						{ data: "BBBB", mimeType: "image/png" },
+					],
+				},
+			},
+			isError: false,
+		} as unknown as AgentSessionEvent);
+		// 图片先进缓冲（不落 messages），工具卡仍 done
+		expect(state.messages).toHaveLength(0);
+		expect(state.streaming?.pendingImages).toHaveLength(1);
+		expect(state.streaming?.tools[0]?.state).toBe("done");
+
+		// turn_end 固化：assistant 在前、图片在后（与历史回放顺序一致）
+		state = reduceEvent(state, {
+			type: "message_update",
+			assistantMessageEvent: { type: "text_delta", contentIndex: 1, delta: "这是两张图" },
+		} as unknown as AgentSessionEvent);
+		state = reduceEvent(state, ev("turn_end"));
+		expect(state.messages.map((m) => m.kind)).toEqual(["assistant", "image"]);
+		expect(state.messages[1]).toMatchObject({
+			kind: "image",
+			images: [
+				{ data: "AAAA", mimeType: "image/png" },
+				{ data: "BBBB", mimeType: "image/png" },
+			],
+			paths: ["a.png", "b.png"],
+		});
+	});
+
+	it("show_image 无正文内容时 turn_end 仍落缓冲图片（防御分支）", () => {
+		let state = emptyTranscript();
+		state = reduceEvent(state, ev("agent_start"));
+		// 直接构造：streaming 无任何 text/thinking/tools 但带缓冲图片
+		state = {
+			...state,
+			streaming: state.streaming && {
+				...state.streaming,
+				pendingImages: [{ images: [{ data: "AAAA", mimeType: "image/png" }], paths: ["a.png"] }],
+			},
+		};
+		state = reduceEvent(state, ev("turn_end"));
+		expect(state.messages.map((m) => m.kind)).toEqual(["image"]);
+	});
+
+	it("show_image 出错或其他工具带 details：不产出图片消息", () => {
+		let state = emptyTranscript();
+		state = reduceEvent(state, ev("agent_start"));
+		state = reduceEvent(state, {
+			type: "message_update",
+			assistantMessageEvent: {
+				type: "toolcall_end",
+				contentIndex: 0,
+				toolCall: { id: "tc1", name: "show_image", arguments: { path: "missing.png" } },
+			},
+		} as unknown as AgentSessionEvent);
+		state = reduceEvent(state, {
+			type: "tool_execution_end",
+			toolCallId: "tc1",
+			toolName: "show_image",
+			result: { content: [{ type: "text", text: "file not found" }] },
+			isError: true,
+		} as unknown as AgentSessionEvent);
+		expect(state.messages).toHaveLength(0);
+
+		state = reduceEvent(state, {
+			type: "tool_execution_end",
+			toolCallId: "tc2",
+			toolName: "webfetch",
+			result: {
+				content: [{ type: "text", text: "page" }],
+				details: { url: "https://x", image: { data: "AAAA", mimeType: "image/png" } },
+			},
+			isError: false,
+		} as unknown as AgentSessionEvent);
+		expect(state.messages).toHaveLength(0);
+	});
+});
+
+describe("messagesToUIMessages 历史回放", () => {
+	it("image 角色消息还原为图片消息，位置保持", () => {
+		const ui = messagesToUIMessages([
+			{ role: "user", text: "看图", thinking: "", tools: [], images: [], timestamp: 1 },
+			{
+				role: "assistant",
+				text: "这是 logo",
+				thinking: "",
+				tools: [{ id: "tc1", name: "show_image", args: '{"path":"logo.png"}', output: "", isError: false }],
+				images: [],
+				timestamp: 2,
+			},
+			{ role: "image", images: [{ data: "AAAA", mimeType: "image/png" }], paths: ["logo.png"], timestamp: 3 },
+		]);
+		expect(ui.map((m) => m.kind)).toEqual(["user", "assistant", "image"]);
+		expect(ui[2]).toMatchObject({
+			kind: "image",
+			images: [{ data: "AAAA", mimeType: "image/png" }],
+			paths: ["logo.png"],
+		});
 	});
 });
 

@@ -108,6 +108,7 @@ export const en: Messages = {
 		thinkingPreview: "Thinking",
 		working: "Working",
 		worked: "Worked",
+		image: "View image",
 	},
 	tool: {
 		running: "Running…",

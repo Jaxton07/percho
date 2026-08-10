@@ -6,10 +6,7 @@ import type { UIMessage } from "../../stores/transcript";
 import { selectTranscript, useTranscriptStore } from "../../stores/transcript";
 import { ForkIcon } from "../icons";
 import { AssistantMessage } from "./AssistantMessage";
-
-function imageSrc(image: ImageInput): string {
-	return `data:${image.mimeType};base64,${image.data}`;
-}
+import { ImagePreviewOverlay, imageSrc } from "./ImagePreview";
 
 /** 用户消息复制按钮：hover 气泡显示（常驻占位避免布局抖动），复制成功短暂变为对勾 */
 function CopyButton({ text }: { text: string }) {
@@ -148,19 +145,39 @@ export const MessageItem = memo(function MessageItem({
 						</div>
 					)}
 				</div>
-				{previewImage && (
-					<button
-						type="button"
-						className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 p-8"
-						onClick={() => setPreviewImage(null)}
-					>
-						<img
-							src={imageSrc(previewImage)}
-							alt={t("composer.previewImage")}
-							className="max-h-full max-w-full rounded-lg object-contain"
-						/>
-					</button>
-				)}
+				{previewImage && <ImagePreviewOverlay image={previewImage} onClose={() => setPreviewImage(null)} />}
+			</div>
+		);
+	}
+
+	if (message.kind === "image") {
+		// show_image 发图：assistant 侧独立图片块，点击全屏预览。
+		// 单图自然比例；多图统一正方形缩略图按数量分档（一行优先，超出 flex-wrap 换行）
+		const count = message.images.length;
+		const sizeClass =
+			count === 1
+				? "max-h-36 max-w-48 object-contain"
+				: count <= 3
+					? "h-24 w-24 object-cover"
+					: count <= 6
+						? "h-20 w-20 object-cover"
+						: "h-16 w-16 object-cover";
+		return (
+			<div>
+				<div className="flex flex-wrap gap-2">
+					{message.images.map((image, index) => (
+						<button
+							// biome-ignore lint/suspicious/noArrayIndexKey: 图片列表不可变
+							key={index}
+							type="button"
+							className="overflow-hidden rounded-xl border border-border"
+							onClick={() => setPreviewImage(image)}
+						>
+							<img src={imageSrc(image)} alt={t("message.image")} className={sizeClass} />
+						</button>
+					))}
+				</div>
+				{previewImage && <ImagePreviewOverlay image={previewImage} onClose={() => setPreviewImage(null)} />}
 			</div>
 		);
 	}

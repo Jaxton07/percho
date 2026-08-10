@@ -35,6 +35,7 @@ import { walkProjectFiles } from "./project-files";
 import { autoNameSession } from "./session-naming";
 import { type EventForwarder, SessionRegistry } from "./session-registry";
 import { SettingsService } from "./settings";
+import { makeShowImageTool } from "./show-image-tool";
 import { TraceRecorder } from "./trace";
 import { resolveProjectTrust, TrustGate } from "./trust";
 import { makeUiContext } from "./ui-context";
@@ -85,13 +86,14 @@ export class PiBackend {
 
 	constructor(private readonly options: PiBackendOptions = {}) {}
 
-	/** 自定义工具 = 调用方传入的 + 内置 webfetch（webFetch:false 关闭） */
+	/** 自定义工具 = 调用方传入的 + 内置 webfetch（webFetch:false 关闭）+ 内置 show_image */
 	private buildCustomTools(): ToolDefinition[] {
 		const tools = [...(this.options.customTools ?? [])];
 		const webFetch = this.options.webFetch;
 		if (webFetch !== false) {
 			tools.push(makeWebFetchTool(typeof webFetch === "object" ? webFetch : undefined));
 		}
+		tools.push(makeShowImageTool());
 		return tools;
 	}
 
@@ -630,6 +632,27 @@ interface RawMessage {
 	toolCallId?: string;
 	isError?: boolean;
 	timestamp?: number;
+	/** 工具结果结构化详情（show_image 在此带图片；模型不可见） */
+	details?: unknown;
+}
+
+/** show_image toolResult.details → { images, paths }（兼容旧单图 { path, image } 形状；不符返回 null） */
+function showImageFromDetails(details: unknown): { images: ImageInput[]; paths: string[] } | null {
+	const d = details as { paths?: unknown; images?: unknown; path?: unknown; image?: unknown } | undefined;
+	const toImage = (raw: unknown): ImageInput | null => {
+		const img = raw as { data?: unknown; mimeType?: unknown } | undefined;
+		if (typeof img?.data !== "string" || typeof img?.mimeType !== "string") return null;
+		return { data: img.data, mimeType: img.mimeType };
+	};
+	if (Array.isArray(d?.images)) {
+		const images = d.images.map(toImage).filter((img): img is ImageInput => img !== null);
+		if (images.length === 0) return null;
+		const paths = Array.isArray(d?.paths) ? d.paths.filter((p): p is string => typeof p === "string") : [];
+		return { images, paths };
+	}
+	const legacy = toImage(d?.image);
+	if (!legacy) return null;
+	return { images: [legacy], paths: typeof d?.path === "string" ? [d.path] : [] };
 }
 
 function blockText(content: string | ContentBlock[] | undefined): string {
@@ -707,6 +730,18 @@ export function toSessionMessages(rawMessages: readonly unknown[]): SessionMessa
 			if (tool) {
 				tool.output = blockText(raw.content);
 				tool.isError = raw.isError === true;
+				// show_image：图片从 details 提取为独立图片消息（紧随其 assistant 消息之后）
+				if (tool.name === "show_image" && !tool.isError) {
+					const shown = showImageFromDetails(raw.details);
+					if (shown) {
+						out.push({
+							role: "image",
+							images: shown.images,
+							paths: shown.paths,
+							timestamp: raw.timestamp ?? Date.now(),
+						});
+					}
+				}
 			}
 		}
 	}

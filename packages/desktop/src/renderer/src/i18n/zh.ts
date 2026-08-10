@@ -106,6 +106,7 @@ export const zh = {
 		thinkingPreview: "思考中",
 		working: "Working",
 		worked: "Worked",
+		image: "查看图片",
 	},
 	tool: {
 		running: "运行中…",

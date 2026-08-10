@@ -62,17 +62,26 @@ export interface SessionToolCall {
 }
 
 /** 历史会话消息（打开历史会话时回放用；不依赖 pi 内部类型） */
-export interface SessionMessage {
-	role: "user" | "assistant";
-	text: string;
-	thinking: string;
-	tools: SessionToolCall[];
-	/** user 消息附带的图片 */
-	images: ImageInput[];
-	timestamp: number;
-	/** 会话树中的 entry id（assistant 消息有；fork 定位用，匹配失败时缺省） */
-	entryId?: string;
-}
+export type SessionMessage =
+	| {
+			role: "user" | "assistant";
+			text: string;
+			thinking: string;
+			tools: SessionToolCall[];
+			/** user 消息附带的图片 */
+			images: ImageInput[];
+			timestamp: number;
+			/** 会话树中的 entry id（assistant 消息有；fork 定位用，匹配失败时缺省） */
+			entryId?: string;
+	  }
+	| {
+			/** show_image 工具主动展示给用户的图片（独立消息，不进工具卡） */
+			role: "image";
+			images: ImageInput[];
+			/** 原文件路径（工具参数，仅调试用） */
+			paths: string[];
+			timestamp: number;
+	  };
 
 export interface AvailableModel {
 	provider: string;

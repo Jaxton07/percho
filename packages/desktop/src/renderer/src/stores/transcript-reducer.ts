@@ -20,7 +20,15 @@ export type UIMessage =
 			entryId?: string;
 	  }
 	| { kind: "error"; id: string; text: string; timestamp: number }
-	| { kind: "system"; id: string; text: string; timestamp: number; compact?: CompactionUiState };
+	| { kind: "system"; id: string; text: string; timestamp: number; compact?: CompactionUiState }
+	| {
+			/** show_image 工具发给用户看的图片（assistant 侧独立消息，tool_execution_end 时立即落 messages） */
+			kind: "image";
+			id: string;
+			images: ImageInput[];
+			paths: string[];
+			timestamp: number;
+	  };
 
 /** 上下文压缩系统消息状态（compaction_start → compaction_end 更新同一条） */
 export interface CompactionUiState {
@@ -61,6 +69,8 @@ export interface StreamingState {
 	text: string;
 	thinking: string;
 	tools: UIToolCall[];
+	/** show_image 发图缓冲：tool_execution_end 先入缓冲，turn_end 固化时排在 assistant 消息之后（与历史回放顺序一致） */
+	pendingImages: { images: ImageInput[]; paths: string[] }[];
 	/** 最近一次 toolcall_start 的工具索引 */
 	activeToolIndex: number;
 	/** assistant 消息 content 绝对索引 → tools 数组索引（事件带 contentIndex，须按此匹配） */
@@ -95,7 +105,15 @@ export function emptyTranscript(): SessionTranscriptState {
 }
 
 function emptyStreaming(): StreamingState {
-	return { text: "", thinking: "", tools: [], activeToolIndex: -1, toolByContentIndex: {}, activity: [] };
+	return {
+		text: "",
+		thinking: "",
+		tools: [],
+		pendingImages: [],
+		activeToolIndex: -1,
+		toolByContentIndex: {},
+		activity: [],
+	};
 }
 
 let nextMessageId = 0;
@@ -132,8 +150,20 @@ function toolNameFromPartial(partial: unknown, contentIndex: number): string {
 function finalizeStreaming(state: SessionTranscriptState): SessionTranscriptState {
 	const { streaming, messages } = state;
 	if (!streaming) return state;
+	// show_image 缓冲图片：排在 assistant 消息之后落地（对齐历史回放的 toolResult 顺序）
+	const images: UIMessage[] = streaming.pendingImages.map((img) => ({
+		kind: "image",
+		id: newMessageId(),
+		images: img.images,
+		paths: img.paths,
+		timestamp: Date.now(),
+	}));
 	const hasContent = streaming.text.length > 0 || streaming.thinking.length > 0 || streaming.tools.length > 0;
-	if (!hasContent) return { ...state, streaming: null };
+	if (!hasContent) {
+		return images.length > 0
+			? { ...state, messages: [...messages, ...images], streaming: null }
+			: { ...state, streaming: null };
+	}
 	return {
 		...state,
 		messages: [
@@ -146,6 +176,7 @@ function finalizeStreaming(state: SessionTranscriptState): SessionTranscriptStat
 				tools: streaming.tools,
 				timestamp: Date.now(),
 			},
+			...images,
 		],
 		streaming: null,
 	};
@@ -320,7 +351,16 @@ export function reduceEvent(state: SessionTranscriptState, event: AgentSessionEv
 					? { ...t, state: (event.isError ? "error" : "done") as "error" | "done" }
 					: t,
 			);
-			return { ...state, streaming: { ...streaming, tools } };
+			// show_image：图片先入 pendingImages 缓冲，turn_end 固化时排在 assistant 消息之后
+			const shown = event.toolName === "show_image" && !event.isError ? extractShowImage(event.result) : null;
+			return {
+				...state,
+				streaming: {
+					...streaming,
+					tools,
+					pendingImages: shown ? [...streaming.pendingImages, shown] : streaming.pendingImages,
+				},
+			};
 		}
 		case "turn_end":
 			return finalizeStreaming({ ...state, phase: "idle" });
@@ -413,6 +453,26 @@ function extractExecutionDelta(partialResult: unknown): string | null {
 	return null;
 }
 
+/** show_image 工具结果 → 待发图片（兼容旧单图 details.image；结构不符返回 null） */
+function extractShowImage(result: unknown): { images: ImageInput[]; paths: string[] } | null {
+	const details = (result as { details?: unknown } | null | undefined)?.details;
+	const d = details as { paths?: unknown; images?: unknown; path?: unknown; image?: unknown } | undefined;
+	const toImage = (raw: unknown): ImageInput | null => {
+		const img = raw as { data?: unknown; mimeType?: unknown } | undefined;
+		if (typeof img?.data !== "string" || typeof img?.mimeType !== "string") return null;
+		return { data: img.data, mimeType: img.mimeType };
+	};
+	const toPaths = (raw: unknown): string[] =>
+		Array.isArray(raw) ? raw.filter((p): p is string => typeof p === "string") : [];
+	if (Array.isArray(d?.images)) {
+		const images = d.images.map(toImage).filter((img): img is ImageInput => img !== null);
+		return images.length > 0 ? { images, paths: toPaths(d.paths) } : null;
+	}
+	const legacy = toImage(d?.image);
+	if (!legacy) return null;
+	return { images: [legacy], paths: typeof d?.path === "string" ? [d.path] : [] };
+}
+
 /** 历史消息 → UI 消息（打开历史会话时回放） */
 export function messagesToUIMessages(messages: SessionMessage[]): UIMessage[] {
 	const ui: UIMessage[] = [];
@@ -420,6 +480,10 @@ export function messagesToUIMessages(messages: SessionMessage[]): UIMessage[] {
 		const m = messages[i];
 		if (!m) continue;
 		const id = `h${i}`;
+		if (m.role === "image") {
+			ui.push({ kind: "image", id, images: m.images, paths: m.paths, timestamp: m.timestamp });
+			continue;
+		}
 		if (m.role === "user") {
 			if (m.text || m.images.length > 0) {
 				ui.push({ kind: "user", id, text: m.text, images: m.images, timestamp: m.timestamp });

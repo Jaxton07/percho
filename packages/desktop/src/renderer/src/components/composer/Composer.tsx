@@ -6,6 +6,7 @@ import { EMPTY_DRAFT, NEW_SESSION_DRAFT_KEY, useDraftStore } from "../../stores/
 import { useSessionsStore } from "../../stores/sessions";
 import { useSettingsStore } from "../../stores/settings";
 import { selectTranscript, useTranscriptStore } from "../../stores/transcript";
+import { ImagePreviewOverlay, imageSrc } from "../chat/ImagePreview";
 import { ArrowUpIcon, CloseIcon, PlusIcon, StopIcon, UndoIcon } from "../icons";
 import { Tooltip } from "../ui/Tooltip";
 import { AtMenu } from "./AtMenu";
@@ -347,8 +348,6 @@ export function Composer({ centered = false }: { centered?: boolean }) {
 		handleFiles(files);
 	};
 
-	const imageSrc = (image: ImageInput) => `data:${image.mimeType};base64,${image.data}`;
-
 	const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
 		// 空文本时 Backspace/Delete：优先把最近的 @ 胶囊弹回全路径纯文本，其次取消 slash 胶囊恢复文本
 		if (
@@ -668,19 +667,7 @@ export function Composer({ centered = false }: { centered?: boolean }) {
 					</div>
 				</div>
 			</div>
-			{previewImage && (
-				<button
-					type="button"
-					className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 p-8"
-					onClick={() => setPreviewImage(null)}
-				>
-					<img
-						src={imageSrc(previewImage)}
-						alt={t("composer.previewImage")}
-						className="max-h-full max-w-full rounded-lg object-contain"
-					/>
-				</button>
-			)}
+			{previewImage && <ImagePreviewOverlay image={previewImage} onClose={() => setPreviewImage(null)} />}
 		</div>
 	);
 }
