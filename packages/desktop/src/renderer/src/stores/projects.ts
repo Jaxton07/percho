@@ -22,6 +22,8 @@ export interface ProjectEntry {
 	sessionCount: number;
 	/** 该项目下会话的最后活动时间 */
 	lastActive: number;
+	/** 手动添加过的项目在 addedProjects 中的下标（添加时间序；未手动添加为 -1），排序用 */
+	addedIndex: number;
 }
 
 interface ProjectsStore {
@@ -120,7 +122,7 @@ export const useProjectsStore = create<ProjectsStore>((set, get) => ({
 	},
 }));
 
-/** 项目列表 = 有历史会话的目录 ∪ 手动添加的目录，按最后活动排序 */
+/** 项目列表 = 有历史会话的目录 ∪ 手动添加的目录；手动添加的按添加时间倒排（最新在前），未添加过的按最后活动排后 */
 export function deriveProjects(state: Pick<ProjectsStore, "allSessions" | "addedProjects">): ProjectEntry[] {
 	const byCwd = new Map<string, ProjectEntry>();
 	for (const session of state.allSessions) {
@@ -132,20 +134,30 @@ export function deriveProjects(state: Pick<ProjectsStore, "allSessions" | "added
 			existing.sessionCount += 1;
 			existing.lastActive = Math.max(existing.lastActive, modified);
 		} else {
-			byCwd.set(session.cwd, { cwd: session.cwd, name, sessionCount: 1, lastActive: modified });
+			byCwd.set(session.cwd, {
+				cwd: session.cwd,
+				name,
+				sessionCount: 1,
+				lastActive: modified,
+				addedIndex: -1,
+			});
 		}
 	}
-	for (const cwd of state.addedProjects) {
-		if (!byCwd.has(cwd)) {
+	for (const [idx, cwd] of state.addedProjects.entries()) {
+		const existing = byCwd.get(cwd);
+		if (existing) {
+			existing.addedIndex = idx;
+		} else {
 			byCwd.set(cwd, {
 				cwd,
 				name: cwd.split("/").filter(Boolean).pop() ?? cwd,
 				sessionCount: 0,
 				lastActive: 0,
+				addedIndex: idx,
 			});
 		}
 	}
-	return [...byCwd.values()].sort((a, b) => b.lastActive - a.lastActive);
+	return [...byCwd.values()].sort((a, b) => b.addedIndex - a.addedIndex || b.lastActive - a.lastActive);
 }
 
 /** 选中项目下按搜索过滤后的会话（按最后活动倒序） */
