@@ -29,6 +29,10 @@ extraResources:
     to: "pi-package/dist/modes/interactive/assets"
 mac:
   category: public.app-category.developer-tools
+  # adhoc 临时签名整个 bundle：Gatekeeper 从「已损坏（无绕过）」→「无法验证开发者（可右键打开）」
+  # hardenedRuntime 必须关：library validation 会拒绝预签名 Electron 框架和 pi SDK 的 .node prebuild
+  identity: "-"
+  hardenedRuntime: false
   target:
     - target: dmg
       arch: [arm64, x64]

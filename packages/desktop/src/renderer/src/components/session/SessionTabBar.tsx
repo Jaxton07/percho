@@ -5,6 +5,7 @@ import { useSessionsStore } from "../../stores/sessions";
 import { useTranscriptStore } from "../../stores/transcript";
 import { useUiStore } from "../../stores/ui";
 import { CloseIcon, ComposeIcon, GridIcon } from "../icons";
+import { UpdateButton } from "./UpdateButton";
 
 /** tab 状态（优先级递减）：等待权限 > 工作中 > 完成未读 > 空闲 */
 type TabStatus = "attention" | "working" | "done" | "idle";
@@ -131,6 +132,7 @@ export function SessionTabBar() {
 					/>
 				))}
 			</div>
+			<UpdateButton />
 			{view !== "projects" && (
 				<button
 					type="button"

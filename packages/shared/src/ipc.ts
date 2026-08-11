@@ -21,6 +21,7 @@ import type {
 	UiState,
 } from "./session";
 import type { CustomProviderInput, ProviderInfo, ProviderTestResult } from "./settings";
+import type { UpdateState } from "./update";
 
 /** IPC 通道名常量 */
 export const IpcChannels = {
@@ -82,6 +83,12 @@ export const IpcChannels = {
 	UiStateSave: "uiState:save",
 	/** 自定义背景：弹图选框并拷贝进 userData/backgrounds/，返回文件名（取消返回 null） */
 	BackgroundPick: "background:pick",
+	/** 检查更新（silent=true 静默：无更新不打扰） */
+	UpdateCheck: "update:check",
+	/** 重启并安装已下载的更新 */
+	UpdateInstall: "update:install",
+	/** main → renderer 更新状态 */
+	UpdateEvent: "update:event",
 	/** main → renderer 事件 */
 	Event: "pi:event",
 	PermissionRequest: "pi:permission-request",
@@ -173,6 +180,12 @@ export interface PiApi {
 	saveUiState(state: Partial<UiState>): Promise<void>;
 	/** 弹图选框选背景图并拷贝进 userData/backgrounds/；返回文件名（经 pi-bg://background/<name> 加载），取消返回 null */
 	pickBackgroundImage(): Promise<string | null>;
+	/** 检查更新（发现新版自动开始后台下载，状态经 onUpdateEvent 推送） */
+	checkForUpdates(): Promise<void>;
+	/** 重启并安装已下载的更新 */
+	installUpdate(): Promise<void>;
+	/** 订阅更新状态（checking/available/downloading/downloaded/error）；返回取消函数 */
+	onUpdateEvent(cb: (state: UpdateState) => void): () => void;
 	/** 订阅会话事件；返回取消函数 */
 	onEvent(cb: (payload: SessionEventEnvelope) => void): () => void;
 	onPermissionRequest(cb: (req: PermissionRequest) => void): () => void;

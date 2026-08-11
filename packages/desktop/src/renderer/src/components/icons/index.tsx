@@ -292,6 +292,26 @@ export function TrashIcon({ size = 13, className }: IconProps) {
 	);
 }
 
+/** 下载（顶栏更新按钮 / 更新进度环内图标） */
+export function DownloadIcon({ size = 14, className }: IconProps) {
+	return (
+		<svg
+			className={className}
+			width={size}
+			height={size}
+			viewBox="0 0 24 24"
+			{...strokeProps}
+			strokeLinecap="round"
+			strokeLinejoin="round"
+			aria-hidden="true"
+		>
+			<path d="M12 3v12" />
+			<path d="m7 10 5 5 5-5" />
+			<path d="M4 17v2a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-2" />
+		</svg>
+	);
+}
+
 /** 分叉（assistant 消息操作行，外部下载 fork.svg，1024 实心填充） */
 export function ForkIcon({ size = 16, className }: IconProps) {
 	return (

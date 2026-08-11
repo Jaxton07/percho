@@ -1,4 +1,4 @@
-import { IpcChannels, type PiApi, type SessionEventEnvelope } from "@pi-desktop/shared";
+import { IpcChannels, type PiApi, type SessionEventEnvelope, type UpdateState } from "@pi-desktop/shared";
 import { contextBridge, ipcRenderer } from "electron";
 
 const api: PiApi = {
@@ -60,6 +60,13 @@ const api: PiApi = {
 	loadUiState: () => ipcRenderer.invoke(IpcChannels.UiStateLoad),
 	saveUiState: (state) => ipcRenderer.invoke(IpcChannels.UiStateSave, state),
 	pickBackgroundImage: () => ipcRenderer.invoke(IpcChannels.BackgroundPick),
+	checkForUpdates: () => ipcRenderer.invoke(IpcChannels.UpdateCheck),
+	installUpdate: () => ipcRenderer.invoke(IpcChannels.UpdateInstall),
+	onUpdateEvent: (cb) => {
+		const listener = (_event: unknown, state: UpdateState) => cb(state);
+		ipcRenderer.on(IpcChannels.UpdateEvent, listener);
+		return () => ipcRenderer.removeListener(IpcChannels.UpdateEvent, listener);
+	},
 	onEvent: (cb) => {
 		const listener = (_event: unknown, payload: SessionEventEnvelope) => cb(payload);
 		ipcRenderer.on(IpcChannels.Event, listener);

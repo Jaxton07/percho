@@ -13,6 +13,7 @@ import { backgroundImageUrl, useThemeStore } from "./stores/theme";
 import { useTranscriptStore } from "./stores/transcript";
 import { messagesToUIMessages } from "./stores/transcript-reducer";
 import { useUiStore } from "./stores/ui";
+import { initUpdateStore } from "./stores/update";
 
 export default function App() {
 	const activeSessionId = useSessionsStore((s) => s.activeSessionId);
@@ -52,6 +53,7 @@ export default function App() {
 		});
 		void useSessionsStore.getState().loadModels();
 		void useSessionsStore.getState().restoreTabs();
+		initUpdateStore();
 		return () => {
 			offEvent();
 			offPermission();

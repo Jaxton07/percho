@@ -2,11 +2,13 @@ import type { AppInfo } from "@pi-desktop/shared";
 import { useEffect, useState } from "react";
 import { getPi } from "../../api";
 import { useT } from "../../i18n";
+import { useUpdateStore } from "../../stores/update";
 
-/** 关于面板：应用标识 + 软件版本 + 仓库入口，居中展示 */
+/** 关于面板：应用标识 + 软件版本 + 检查更新 + 仓库入口，居中展示 */
 export function AboutPanel() {
 	const t = useT();
 	const [info, setInfo] = useState<AppInfo | null>(null);
+	const state = useUpdateStore((s) => s.state);
 
 	useEffect(() => {
 		let cancelled = false;
@@ -23,6 +25,22 @@ export function AboutPanel() {
 		};
 	}, []);
 
+	// 状态行文案；downloaded 态按钮语义切换为「重启并安装」
+	const statusText =
+		state?.phase === "checking"
+			? t("update.checking")
+			: state?.phase === "available"
+				? t("update.available", { version: state.version })
+				: state?.phase === "downloading"
+					? t("update.downloading", { percent: state.percent })
+					: state?.phase === "downloaded"
+						? t("update.downloaded")
+						: state?.phase === "not-available"
+							? t("update.upToDate")
+							: state?.phase === "error"
+								? t("update.checkFailed", { message: state.message })
+								: null;
+
 	return (
 		<div className="flex flex-col items-center gap-1.5 py-10 text-center">
 			<div className="flex h-12 w-12 items-center justify-center rounded-xl bg-ink text-[16px] font-bold text-on-ink">
@@ -33,15 +51,28 @@ export function AboutPanel() {
 			<p className="mt-2 font-mono text-[12px] text-ink-dim">
 				{t("settings.about.version")} {info?.version ?? "…"}
 			</p>
-			<button
-				type="button"
-				className="mt-4 rounded-lg border border-border px-4 py-1.5 text-[13px] text-ink-2 transition-colors hover:border-border-strong hover:bg-hover hover:text-ink"
-				onClick={() => {
-					if (info?.repoUrl) void getPi().openExternal(info.repoUrl);
-				}}
-			>
-				{t("settings.about.sourceCode")}
-			</button>
+			<div className="mt-4 flex items-center gap-2">
+				<button
+					type="button"
+					className="rounded-lg border border-border px-4 py-1.5 text-[13px] text-ink-2 transition-colors hover:border-border-strong hover:bg-hover hover:text-ink"
+					onClick={() => {
+						if (state?.phase === "downloaded") void getPi().installUpdate();
+						else void getPi().checkForUpdates();
+					}}
+				>
+					{state?.phase === "downloaded" ? t("update.installNow") : t("update.checkForUpdates")}
+				</button>
+				<button
+					type="button"
+					className="rounded-lg border border-border px-4 py-1.5 text-[13px] text-ink-2 transition-colors hover:border-border-strong hover:bg-hover hover:text-ink"
+					onClick={() => {
+						if (info?.repoUrl) void getPi().openExternal(info.repoUrl);
+					}}
+				>
+					{t("settings.about.sourceCode")}
+				</button>
+			</div>
+			{statusText && <p className="mt-1 text-[11px] text-ink-faint">{statusText}</p>}
 		</div>
 	);
 }

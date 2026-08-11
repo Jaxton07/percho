@@ -14,6 +14,16 @@ export const zh = {
 		settings: "设置",
 		close: "关闭会话（不删除）",
 	},
+	update: {
+		checkForUpdates: "检查更新",
+		checking: "正在检查更新…",
+		available: "发现新版本 {version}",
+		downloading: "下载中 {percent}%",
+		downloaded: "已下载，重启后安装",
+		installNow: "重启并安装",
+		upToDate: "已是最新版本",
+		checkFailed: "检查更新失败：{message}",
+	},
 	empty: {
 		hint: "选择项目目录后开始与 Pi Agent 对话",
 		cwd: "工作目录：{cwd}",

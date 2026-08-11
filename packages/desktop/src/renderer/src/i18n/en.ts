@@ -16,6 +16,16 @@ export const en: Messages = {
 		settings: "Settings",
 		close: "Close session (keep on disk)",
 	},
+	update: {
+		checkForUpdates: "Check for updates",
+		checking: "Checking for updates…",
+		available: "Version {version} available",
+		downloading: "Downloading {percent}%",
+		downloaded: "Downloaded, installs on restart",
+		installNow: "Restart & install",
+		upToDate: "You're up to date",
+		checkFailed: "Update check failed: {message}",
+	},
 	empty: {
 		hint: "Pick a project directory to start chatting with Pi Agent",
 		cwd: "Working directory: {cwd}",

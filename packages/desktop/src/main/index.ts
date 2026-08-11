@@ -20,6 +20,13 @@ import { backgroundsDir, pickBackgroundImage } from "./background";
 import { checkoutBranch, getGitBranch, listGitBranches } from "./git";
 import { loadTabs, saveTabs } from "./tabs";
 import { loadUiState, saveUiState } from "./ui-state";
+import {
+	checkForUpdates,
+	initUpdater,
+	installUpdate,
+	onUpdateState,
+	scheduleAutoUpdateCheck,
+} from "./updater";
 import { createWindow } from "./window";
 
 const log = createLogger("main");
@@ -172,6 +179,8 @@ function registerIpc(): void {
 	ipcMain.handle(IpcChannels.UiStateLoad, () => loadUiState());
 	ipcMain.handle(IpcChannels.UiStateSave, (_e, state: Partial<UiState>) => saveUiState(state));
 	ipcMain.handle(IpcChannels.BackgroundPick, () => pickBackgroundImage(BrowserWindow.getAllWindows()[0]));
+	ipcMain.handle(IpcChannels.UpdateCheck, () => checkForUpdates());
+	ipcMain.handle(IpcChannels.UpdateInstall, () => installUpdate());
 	ipcMain.handle(IpcChannels.ProjectPickDirectory, async () => {
 		const window = BrowserWindow.getAllWindows()[0];
 		const options: Electron.OpenDialogOptions = { properties: ["openDirectory", "createDirectory"] };
@@ -190,6 +199,9 @@ function registerIpc(): void {
 	});
 	backend.onTrustRequest((req: TrustRequest) => {
 		sendToRenderer(IpcChannels.TrustRequest, req);
+	});
+	onUpdateState((state) => {
+		sendToRenderer(IpcChannels.UpdateEvent, state);
 	});
 }
 
@@ -230,6 +242,8 @@ app.whenReady().then(async () => {
 	backend = new PiBackend();
 	await backend.init();
 	registerIpc();
+	initUpdater();
+	scheduleAutoUpdateCheck();
 	const uiState = await loadUiState();
 	createWindow(resolveWindowBackground(uiState?.theme));
 

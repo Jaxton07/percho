@@ -14,6 +14,9 @@ jobs:
       matrix:
         os: [macos-latest, windows-latest]
     runs-on: ${{ matrix.os }}
+    env:
+      # 无开发者证书：mac 显式走 adhoc 签名（identity: "-"），禁用 runner 上的证书自动发现
+      CSC_IDENTITY_AUTO_DISCOVERY: "false"
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -47,13 +50,11 @@ jobs:
             -R "${{ github.repository }}" \
             --title "${{ github.ref_name }}" \
             --notes-file - <<'EOF'
-          First public release of **pi-desktop**.
-
           | Platform | Download |
           | --- | --- |
           | macOS (Apple Silicon) | `pi-desktop-mac-arm64.dmg` |
           | macOS (Intel) | `pi-desktop-mac-x64.dmg` |
           | Windows | `pi-desktop-windows-x64.exe` (installer) or `pi-desktop-windows-x64.zip` |
 
-          > Builds are currently unsigned. On macOS, right-click the app and choose Open (or run `xattr -cr "/Applications/Pi Desktop.app"`). On Windows, click "More info" → "Run anyway" when SmartScreen appears.
+          > Ad-hoc signed (no Developer ID). On macOS, if Gatekeeper blocks the app, right-click it and choose **Open** (or run `xattr -cr "/Applications/Pi Desktop.app"`). Installed apps update automatically via **Check for updates** in Settings → About.
           EOF
