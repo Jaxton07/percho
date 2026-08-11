@@ -1,8 +1,10 @@
+import "./pi-package-dir";
 import { writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { pathToFileURL } from "node:url";
 import { createLogger, initLogging, PiBackend } from "@pi-desktop/backend";
 import {
+	type CatalogPackageType,
 	type CustomProviderInput,
 	type ImageInput,
 	IpcChannels,
@@ -95,6 +97,14 @@ function registerIpc(): void {
 	ipcMain.handle(IpcChannels.SessionGetLoadedResources, (_e, sessionId: string) =>
 		backend.getLoadedResources(sessionId),
 	);
+	ipcMain.handle(IpcChannels.PackagesSearchCatalog, (_e, query: string, type?: string, page?: number) =>
+		backend.searchPackages(query, type as CatalogPackageType | "" | undefined, page),
+	);
+	ipcMain.handle(IpcChannels.PackagesInstall, (_e, name: string) => backend.installPackage(name));
+	ipcMain.handle(IpcChannels.PackagesRemove, (_e, source: string, scope: "user" | "project") =>
+		backend.removePackage(source, scope),
+	);
+	ipcMain.handle(IpcChannels.PackagesListConfigured, () => backend.listConfiguredPackages());
 	ipcMain.handle(IpcChannels.FileSaveDialog, async (_e, defaultName: string, content: string) => {
 		const window = BrowserWindow.getAllWindows()[0];
 		const options: Electron.SaveDialogOptions = {

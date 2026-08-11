@@ -463,6 +463,237 @@ describe("transcript reducer", () => {
 		} as unknown as AgentSessionEvent);
 		expect(state.messages).toHaveLength(0);
 	});
+
+	it("subagent：tool_execution_start 建独立工作中行并从工具区移出", () => {
+		let state = emptyTranscript();
+		state = reduceEvent(state, ev("agent_start"));
+		state = reduceEvent(state, {
+			type: "message_update",
+			assistantMessageEvent: {
+				type: "toolcall_start",
+				contentIndex: 0,
+				partial: { toolCalls: [{ name: "subagent" }] },
+			},
+		} as unknown as AgentSessionEvent);
+		state = reduceEvent(state, {
+			type: "message_update",
+			assistantMessageEvent: {
+				type: "toolcall_end",
+				contentIndex: 0,
+				toolCall: { id: "tc1", name: "subagent", arguments: { agent: "reviewer", task: "review diff" } },
+			},
+		} as unknown as AgentSessionEvent);
+		expect(state.streaming?.tools).toHaveLength(1);
+		state = reduceEvent(state, {
+			type: "tool_execution_start",
+			toolCallId: "tc1",
+			toolName: "subagent",
+			args: { agent: "reviewer", task: "review diff" },
+		} as unknown as AgentSessionEvent);
+		// 从折叠工具区移出，进入独立 running 行
+		expect(state.streaming?.tools).toHaveLength(0);
+		expect(state.streaming?.subagentRuns).toHaveLength(1);
+		expect(state.streaming?.subagentRuns[0]).toMatchObject({
+			agent: "reviewer",
+			task: "review diff",
+			status: "running",
+		});
+	});
+
+	it("subagent：tool_execution_end 用 details 完善运行组，turn_end 固化为独立消息", () => {
+		let state = emptyTranscript();
+		state = reduceEvent(state, ev("agent_start"));
+		state = reduceEvent(state, {
+			type: "tool_execution_start",
+			toolCallId: "tc1",
+			toolName: "subagent",
+			args: { agent: "reviewer" },
+		} as unknown as AgentSessionEvent);
+		state = reduceEvent(state, {
+			type: "tool_execution_end",
+			toolCallId: "tc1",
+			toolName: "subagent",
+			result: {
+				content: [{ type: "text", text: "reviewed" }],
+				details: {
+					artifacts: { dir: "/tmp/runs/abc" },
+					results: [
+						{
+							index: 0,
+							agent: "reviewer",
+							task: "review diff",
+							exitCode: 0,
+							model: "anthropic/claude",
+							usage: { totalTokens: { tokens: 12345 } },
+							sessionFile: "/Users/x/.pi/agent/sessions/x/sub-agent-1.jsonl",
+						},
+					],
+				},
+			},
+			isError: false,
+		} as unknown as AgentSessionEvent);
+		expect(state.streaming?.subagentRuns).toHaveLength(1);
+		expect(state.streaming?.subagentRuns[0]).toMatchObject({
+			agent: "reviewer",
+			task: "review diff",
+			status: "done",
+			model: "anthropic/claude",
+			tokens: 12345,
+			exitCode: 0,
+			artifactsDir: "/tmp/runs/abc",
+			sessionFile: "/Users/x/.pi/agent/sessions/x/sub-agent-1.jsonl",
+		});
+		// 无正文也固化（subagent 独立消息在 assistant 前补位）
+		state = reduceEvent(state, ev("turn_end"));
+		expect(state.messages.map((m) => m.kind)).toEqual(["subagent"]);
+		expect(state.messages[0]).toMatchObject({
+			kind: "subagent",
+			runs: [{ agent: "reviewer", status: "done" }],
+		});
+	});
+
+	it("subagent：一次调用多个子代理（fanout）替换占位组；错误标记", () => {
+		let state = emptyTranscript();
+		state = reduceEvent(state, ev("agent_start"));
+		state = reduceEvent(state, {
+			type: "tool_execution_start",
+			toolCallId: "tc1",
+			toolName: "subagent",
+			args: { agent: "reviewer" },
+		} as unknown as AgentSessionEvent);
+		state = reduceEvent(state, {
+			type: "tool_execution_end",
+			toolCallId: "tc1",
+			toolName: "subagent",
+			result: {
+				content: [{ type: "text", text: "done" }],
+				details: {
+					results: [
+						{ agent: "r1", exitCode: 0, sessionFile: "/s1.jsonl" },
+						{ agent: "r2", exitCode: 1, error: "boom", sessionFile: "/s2.jsonl" },
+					],
+				},
+			},
+			isError: false,
+		} as unknown as AgentSessionEvent);
+		expect(state.streaming?.subagentRuns).toHaveLength(2);
+		expect(state.streaming?.subagentRuns[1]).toMatchObject({ agent: "r2", status: "error" });
+	});
+
+	it("subagent：非 subagent 工具但 details 带 results/sessionFile（结构检测兜底）", () => {
+		let state = emptyTranscript();
+		state = reduceEvent(state, ev("agent_start"));
+		state = reduceEvent(state, {
+			type: "tool_execution_end",
+			toolCallId: "tc9",
+			toolName: "custom_delegate",
+			result: {
+				content: [{ type: "text", text: "done" }],
+				details: {
+					results: [{ agent: "scout", sessionFile: "/s.jsonl" }],
+				},
+			},
+			isError: false,
+		} as unknown as AgentSessionEvent);
+		expect(state.streaming?.subagentRuns).toHaveLength(1);
+		expect(state.streaming?.subagentRuns[0]).toMatchObject({ agent: "scout", status: "done" });
+	});
+
+	it("subagent：management（action）调用不建独立行，留在工具折叠区", () => {
+		let state = emptyTranscript();
+		state = reduceEvent(state, ev("agent_start"));
+		state = reduceEvent(state, {
+			type: "message_update",
+			assistantMessageEvent: {
+				type: "toolcall_start",
+				contentIndex: 0,
+				partial: { toolCalls: [{ name: "subagent" }] },
+			},
+		} as unknown as AgentSessionEvent);
+		state = reduceEvent(state, {
+			type: "message_update",
+			assistantMessageEvent: {
+				type: "toolcall_end",
+				contentIndex: 0,
+				toolCall: { id: "tc1", name: "subagent", arguments: { action: "list" } },
+			},
+		} as unknown as AgentSessionEvent);
+		state = reduceEvent(state, {
+			type: "tool_execution_start",
+			toolCallId: "tc1",
+			toolName: "subagent",
+			args: { action: "list" },
+		} as unknown as AgentSessionEvent);
+		expect(state.streaming?.subagentRuns).toHaveLength(0);
+		expect(state.streaming?.tools).toHaveLength(1);
+		state = reduceEvent(state, {
+			type: "tool_execution_end",
+			toolCallId: "tc1",
+			toolName: "subagent",
+			result: { content: [{ type: "text", text: "6 agents" }], details: { mode: "management", results: [] } },
+			isError: false,
+		} as unknown as AgentSessionEvent);
+		expect(state.streaming?.subagentRuns).toHaveLength(0);
+		expect(state.streaming?.tools[0]?.state).toBe("done");
+	});
+
+	it("subagent：wait 工具 details.completions 提取子代理行（后台并行）", () => {
+		let state = emptyTranscript();
+		state = reduceEvent(state, ev("agent_start"));
+		state = reduceEvent(state, {
+			type: "tool_execution_end",
+			toolCallId: "tc4",
+			toolName: "subagent_wait",
+			result: {
+				content: [{ type: "text", text: "all done" }],
+				details: {
+					mode: "management",
+					results: [],
+					completions: [
+						{
+							runId: "r1",
+							agent: "workflow",
+							success: true,
+							results: [
+								{ agent: "scout", success: true },
+								{
+									agent: "worker",
+									success: true,
+									artifactPaths: { outputPath: "/Users/x/.pi/agent/sessions/x/sub.jsonl" },
+								},
+								{
+									agent: "worker",
+									success: false,
+									artifactPaths: { outputPath: "/Users/x/.pi/agent/sessions/x/sub2.jsonl" },
+								},
+							],
+						},
+					],
+				},
+			},
+			isError: false,
+		} as unknown as AgentSessionEvent);
+		expect(state.streaming?.subagentRuns).toHaveLength(3);
+		expect(state.streaming?.subagentRuns[1]).toMatchObject({
+			agent: "worker",
+			status: "done",
+			sessionFile: "/Users/x/.pi/agent/sessions/x/sub.jsonl",
+		});
+		expect(state.streaming?.subagentRuns[2]).toMatchObject({ agent: "worker", status: "error" });
+	});
+
+	it("subagent：普通工具带无关 details 不进子代理行", () => {
+		let state = emptyTranscript();
+		state = reduceEvent(state, ev("agent_start"));
+		state = reduceEvent(state, {
+			type: "tool_execution_end",
+			toolCallId: "tc3",
+			toolName: "bash",
+			result: { content: [{ type: "text", text: "ok" }], details: { url: "https://x" } },
+			isError: false,
+		} as unknown as AgentSessionEvent);
+		expect(state.streaming?.subagentRuns).toHaveLength(0);
+	});
 });
 
 describe("messagesToUIMessages 历史回放", () => {
@@ -484,6 +715,21 @@ describe("messagesToUIMessages 历史回放", () => {
 			kind: "image",
 			images: [{ data: "AAAA", mimeType: "image/png" }],
 			paths: ["logo.png"],
+		});
+	});
+
+	it("subagent 角色消息还原为子代理消息", () => {
+		const ui = messagesToUIMessages([
+			{
+				role: "subagent",
+				runs: [{ agent: "reviewer", status: "done", sessionFile: "/s.jsonl" }],
+				timestamp: 1,
+			},
+		]);
+		expect(ui.map((m) => m.kind)).toEqual(["subagent"]);
+		expect(ui[0]).toMatchObject({
+			kind: "subagent",
+			runs: [{ agent: "reviewer", status: "done", sessionFile: "/s.jsonl" }],
 		});
 	});
 });

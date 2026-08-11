@@ -26,6 +26,11 @@ const api: PiApi = {
 	exportSession: (sessionId, format) => ipcRenderer.invoke(IpcChannels.SessionExport, sessionId, format),
 	forkSession: (sessionId, ref) => ipcRenderer.invoke(IpcChannels.SessionFork, sessionId, ref),
 	getLoadedResources: (sessionId) => ipcRenderer.invoke(IpcChannels.SessionGetLoadedResources, sessionId),
+	searchCatalog: (query, type, page) =>
+		ipcRenderer.invoke(IpcChannels.PackagesSearchCatalog, query, type, page),
+	installPackage: (name) => ipcRenderer.invoke(IpcChannels.PackagesInstall, name),
+	removePackage: (source, scope) => ipcRenderer.invoke(IpcChannels.PackagesRemove, source, scope),
+	listConfiguredPackages: () => ipcRenderer.invoke(IpcChannels.PackagesListConfigured),
 	saveFileDialog: (defaultName, content) =>
 		ipcRenderer.invoke(IpcChannels.FileSaveDialog, defaultName, content),
 	getSessionMessages: (sessionId) => ipcRenderer.invoke(IpcChannels.SessionGetMessages, sessionId),

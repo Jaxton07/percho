@@ -11,6 +11,7 @@ export type {
 	ActivityEntry,
 	SessionPhase,
 	StreamingState,
+	SubagentRunUi,
 	UIMessage,
 	UIToolCall,
 } from "./transcript-reducer";

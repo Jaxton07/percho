@@ -7,6 +7,7 @@ import { selectTranscript, useTranscriptStore } from "../../stores/transcript";
 import { ForkIcon } from "../icons";
 import { AssistantMessage } from "./AssistantMessage";
 import { ImagePreviewOverlay, imageSrc } from "./ImagePreview";
+import { SubagentRunCard } from "./SubagentRunCard";
 
 /** 用户消息复制按钮：hover 气泡显示（常驻占位避免布局抖动），复制成功短暂变为对勾 */
 function CopyButton({ text }: { text: string }) {
@@ -180,6 +181,10 @@ export const MessageItem = memo(function MessageItem({
 				{previewImage && <ImagePreviewOverlay image={previewImage} onClose={() => setPreviewImage(null)} />}
 			</div>
 		);
+	}
+
+	if (message.kind === "subagent") {
+		return <SubagentRunCard runs={message.runs} />;
 	}
 
 	if (message.kind === "error") {

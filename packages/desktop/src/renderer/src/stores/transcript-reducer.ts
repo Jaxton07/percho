@@ -1,4 +1,24 @@
-import type { AgentSessionEvent, ImageInput, SessionMessage } from "@pi-desktop/shared";
+import {
+	type AgentSessionEvent,
+	extractSubagentRuns,
+	type ImageInput,
+	type SessionMessage,
+} from "@pi-desktop/shared";
+
+/** 子代理运行（UI 态：流式期 running，固化后 done/error） */
+export interface SubagentRunUi {
+	/** 本地稳定标识（React key 用） */
+	key: string;
+	agent: string;
+	task?: string;
+	status: "running" | "done" | "error";
+	model?: string;
+	tokens?: number;
+	exitCode?: number;
+	artifactsDir?: string;
+	/** 子代理会话文件路径（点击打开完整对话） */
+	sessionFile?: string;
+}
 
 /** 单条 UI 消息 */
 export type UIMessage =
@@ -27,6 +47,13 @@ export type UIMessage =
 			id: string;
 			images: ImageInput[];
 			paths: string[];
+			timestamp: number;
+	  }
+	| {
+			/** subagent 工具调用（独立行，不收进工具折叠区；流式期 running，固化后 done/error） */
+			kind: "subagent";
+			id: string;
+			runs: SubagentRunUi[];
 			timestamp: number;
 	  };
 
@@ -71,6 +98,10 @@ export interface StreamingState {
 	tools: UIToolCall[];
 	/** show_image 发图缓冲：tool_execution_end 先入缓冲，turn_end 固化时排在 assistant 消息之后（与历史回放顺序一致） */
 	pendingImages: { images: ImageInput[]; paths: string[] }[];
+	/** 子代理运行缓冲：tool_execution_start 建占位（工作中），end 用 details 完善，turn_end 固化为独立消息 */
+	subagentRuns: SubagentRunUi[];
+	/** toolCallId → subagentRuns 下标（start 记录，end 更新；非 subagent 工具不进入） */
+	subagentByToolCallId: Record<string, number>;
 	/** 最近一次 toolcall_start 的工具索引 */
 	activeToolIndex: number;
 	/** assistant 消息 content 绝对索引 → tools 数组索引（事件带 contentIndex，须按此匹配） */
@@ -110,6 +141,8 @@ function emptyStreaming(): StreamingState {
 		thinking: "",
 		tools: [],
 		pendingImages: [],
+		subagentRuns: [],
+		subagentByToolCallId: {},
 		activeToolIndex: -1,
 		toolByContentIndex: {},
 		activity: [],
@@ -124,6 +157,11 @@ function newMessageId(): string {
 let nextToolKey = 0;
 function newToolKey(): string {
 	return `t${nextToolKey++}`;
+}
+
+let nextSubagentKey = 0;
+function newSubagentKey(): string {
+	return `s${nextSubagentKey++}`;
 }
 
 function parseArgs(raw: unknown): string {
@@ -150,6 +188,18 @@ function toolNameFromPartial(partial: unknown, contentIndex: number): string {
 function finalizeStreaming(state: SessionTranscriptState): SessionTranscriptState {
 	const { streaming, messages } = state;
 	if (!streaming) return state;
+	// 子代理运行：排在 assistant 消息之后落地（对齐历史回放顺序）
+	const subagents: UIMessage[] =
+		streaming.subagentRuns.length > 0
+			? [
+					{
+						kind: "subagent",
+						id: newMessageId(),
+						runs: streaming.subagentRuns,
+						timestamp: Date.now(),
+					},
+				]
+			: [];
 	// show_image 缓冲图片：排在 assistant 消息之后落地（对齐历史回放的 toolResult 顺序）
 	const images: UIMessage[] = streaming.pendingImages.map((img) => ({
 		kind: "image",
@@ -160,8 +210,8 @@ function finalizeStreaming(state: SessionTranscriptState): SessionTranscriptStat
 	}));
 	const hasContent = streaming.text.length > 0 || streaming.thinking.length > 0 || streaming.tools.length > 0;
 	if (!hasContent) {
-		return images.length > 0
-			? { ...state, messages: [...messages, ...images], streaming: null }
+		return images.length > 0 || subagents.length > 0
+			? { ...state, messages: [...messages, ...subagents, ...images], streaming: null }
 			: { ...state, streaming: null };
 	}
 	return {
@@ -176,6 +226,7 @@ function finalizeStreaming(state: SessionTranscriptState): SessionTranscriptStat
 				tools: streaming.tools,
 				timestamp: Date.now(),
 			},
+			...subagents,
 			...images,
 		],
 		streaming: null,
@@ -328,6 +379,29 @@ export function reduceEvent(state: SessionTranscriptState, event: AgentSessionEv
 		case "tool_execution_start": {
 			const streaming = state.streaming;
 			if (!streaming) return state;
+			// subagent：单代理直接派发（agent 参数存在、非 management action）才从折叠区移出建独立工作中行；
+			// management（action）/workflowScript（可能后台）/subagent_wait 不走独立行（结果在 wait completions 或 tool 卡）
+			const startArgs = (event.args ?? {}) as { action?: unknown; agent?: unknown; task?: unknown };
+			if (event.toolName === "subagent" && startArgs.action == null && typeof startArgs.agent === "string") {
+				const run: SubagentRunUi = {
+					key: newSubagentKey(),
+					agent: startArgs.agent.length > 0 ? startArgs.agent : "subagent",
+					task: typeof startArgs.task === "string" && startArgs.task.length > 0 ? startArgs.task : undefined,
+					status: "running",
+				};
+				return {
+					...state,
+					streaming: {
+						...streaming,
+						tools: streaming.tools.filter((t) => t.id !== event.toolCallId),
+						subagentRuns: [...streaming.subagentRuns, run],
+						subagentByToolCallId: {
+							...streaming.subagentByToolCallId,
+							[event.toolCallId]: streaming.subagentRuns.length,
+						},
+					},
+				};
+			}
 			const tools = streaming.tools.map((t) =>
 				t.id === event.toolCallId ? { ...t, state: "running" as const } : t,
 			);
@@ -346,6 +420,37 @@ export function reduceEvent(state: SessionTranscriptState, event: AgentSessionEv
 		case "tool_execution_end": {
 			const streaming = state.streaming;
 			if (!streaming) return state;
+			const extracted = extractSubagentRuns(
+				(event.result as { details?: unknown } | null | undefined)?.details,
+			);
+			const start = streaming.subagentByToolCallId[event.toolCallId];
+			if (start !== undefined || (extracted && extracted.length > 0)) {
+				// 独立子代理行：已知占位更新 / 结构检测兜底；一次调用可有多个子代理（fanout）
+				const before = streaming.subagentRuns.slice(0, start ?? streaming.subagentRuns.length);
+				const after = start !== undefined ? streaming.subagentRuns.slice(start + 1) : [];
+				const placeholder = start !== undefined ? streaming.subagentRuns[start] : undefined;
+				const runs: SubagentRunUi[] =
+					extracted && extracted.length > 0
+						? extracted.map((run) => ({ ...run, key: newSubagentKey() }))
+						: placeholder
+							? [
+									{
+										key: placeholder.key,
+										agent: placeholder.agent,
+										task: placeholder.task,
+										status: event.isError ? ("error" as const) : ("done" as const),
+									},
+								]
+							: [];
+				return {
+					...state,
+					streaming: {
+						...streaming,
+						tools: streaming.tools.filter((t) => t.id !== event.toolCallId),
+						subagentRuns: [...before, ...runs, ...after],
+					},
+				};
+			}
 			const tools = streaming.tools.map((t) =>
 				t.id === event.toolCallId
 					? { ...t, state: (event.isError ? "error" : "done") as "error" | "done" }
@@ -482,6 +587,15 @@ export function messagesToUIMessages(messages: SessionMessage[]): UIMessage[] {
 		const id = `h${i}`;
 		if (m.role === "image") {
 			ui.push({ kind: "image", id, images: m.images, paths: m.paths, timestamp: m.timestamp });
+			continue;
+		}
+		if (m.role === "subagent") {
+			ui.push({
+				kind: "subagent",
+				id,
+				runs: m.runs.map((run) => ({ ...run, key: newSubagentKey() })),
+				timestamp: m.timestamp,
+			});
 			continue;
 		}
 		if (m.role === "user") {

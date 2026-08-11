@@ -4,6 +4,7 @@ import type { Model, ThinkingLevel } from "@earendil-works/pi-ai";
 import {
 	type AgentSessionEvent,
 	createAgentSession,
+	DefaultPackageManager,
 	DefaultResourceLoader,
 	getAgentDir,
 	ModelRuntime,
@@ -14,6 +15,9 @@ import {
 } from "@earendil-works/pi-coding-agent";
 import type {
 	AvailableModel,
+	CatalogPackageType,
+	CatalogSearchResult,
+	ConfiguredPackageInfo,
 	ContextUsageInfo,
 	CreateSessionOptions,
 	ImageInput,
@@ -28,7 +32,9 @@ import type {
 	TrustAnswer,
 	TrustRequest,
 } from "@pi-desktop/shared";
+import { extractSubagentRuns } from "@pi-desktop/shared";
 import { createLogger } from "./log";
+import { fetchPackageCatalog } from "./package-catalog";
 import { makePermissionGateExtension } from "./permission-extension";
 import { loadPermissionConfig, setPermissionEnabled as writePermissionEnabled } from "./permission-rules";
 import { PermissionGate } from "./permissions";
@@ -450,6 +456,71 @@ export class PiBackend {
 		};
 	}
 
+	/** 包管理器（用户级安装/卸载，懒加载；settingsManager 仅用于读写 settings.json 安装记录） */
+	private packageManager: DefaultPackageManager | undefined;
+	private getPackageManager(): DefaultPackageManager {
+		if (!this.packageManager) {
+			const cwd = this.options.defaultCwd || process.cwd();
+			this.packageManager = new DefaultPackageManager({
+				cwd,
+				agentDir: getAgentDir(),
+				settingsManager: SettingsManager.create(cwd, getAgentDir()),
+			});
+		}
+		return this.packageManager;
+	}
+
+	/** 搜索 pi.dev 社区包目录（设置页扩展面板浏览用） */
+	async searchPackages(
+		query: string,
+		type?: CatalogPackageType | "",
+		page?: number,
+	): Promise<CatalogSearchResult> {
+		return fetchPackageCatalog({ query, type: type || undefined, page });
+	}
+
+	/** 列出 settings.json 已配置的包（「已安装」态匹配用） */
+	async listConfiguredPackages(): Promise<ConfiguredPackageInfo[]> {
+		return this.getPackageManager()
+			.listConfiguredPackages()
+			.map((p) => ({ source: p.source, scope: p.scope }));
+	}
+
+	/** 安装社区包（npm:<name>，用户级）；成功后热重载非流式活跃会话，扩展立即生效（对齐 CLI /reload） */
+	async installPackage(name: string): Promise<void> {
+		if (!/^(@[a-z0-9][a-z0-9._-]*\/)?[a-z0-9][a-z0-9._-]*$/i.test(name)) {
+			throw new Error(`Invalid package name: ${name}`);
+		}
+		await this.getPackageManager().installAndPersist(`npm:${name}`);
+		log.info("package installed", name);
+		await this.reloadSessions();
+	}
+
+	/** 卸载已配置的包（按 source + scope 移除并持久化）；成功后热重载非流式活跃会话 */
+	async removePackage(source: string, scope: "user" | "project"): Promise<void> {
+		const removed = await this.getPackageManager().removeAndPersist(source, {
+			local: scope === "project",
+		});
+		if (!removed) throw new Error(`Package not installed: ${source}`);
+		log.info("package removed", source, { scope });
+		await this.reloadSessions();
+	}
+
+	/** 对非流式活跃会话做资源热重载（装/卸包后立即生效） */
+	private async reloadSessions(): Promise<void> {
+		for (const entry of this.registry.list()) {
+			if (entry.session.isStreaming) {
+				log.info("skip reload while streaming", entry.session.sessionId);
+				continue;
+			}
+			try {
+				await entry.session.reload();
+			} catch (err) {
+				log.warn("session reload failed", entry.session.sessionId, err);
+			}
+		}
+	}
+
 	/** 设置会话显示名（触发 session_info_changed 事件） */
 	async setSessionName(sessionId: string, name: string): Promise<void> {
 		const entry = this.requireSession(sessionId);
@@ -781,6 +852,17 @@ export function toSessionMessages(rawMessages: readonly unknown[]): SessionMessa
 							role: "image",
 							images: shown.images,
 							paths: shown.paths,
+							timestamp: raw.timestamp ?? Date.now(),
+						});
+					}
+				}
+				// subagent：details 带 results/sessionFile → 独立子代理消息（结构检测，不依赖工具名）
+				if (!tool.isError) {
+					const runs = extractSubagentRuns(raw.details);
+					if (runs) {
+						out.push({
+							role: "subagent",
+							runs,
 							timestamp: raw.timestamp ?? Date.now(),
 						});
 					}

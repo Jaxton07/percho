@@ -1,4 +1,5 @@
 export { createLogger, initLogging, type Logger } from "./log";
+export { fetchPackageCatalog, parseCatalogHtml } from "./package-catalog";
 export { makePermissionGateExtension, type PermissionGateOptions } from "./permission-extension";
 export {
 	createPermissionConfigLoader,

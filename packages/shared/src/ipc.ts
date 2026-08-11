@@ -1,3 +1,4 @@
+import type { CatalogPackageType, CatalogSearchResult, ConfiguredPackageInfo } from "./packages";
 import type {
 	AppInfo,
 	ContextUsageInfo,
@@ -45,6 +46,11 @@ export const IpcChannels = {
 	SessionFork: "session:fork",
 	/** 已加载资源（skills/扩展，设置页展示用） */
 	SessionGetLoadedResources: "session:getLoadedResources",
+	/** pi.dev 社区包目录（设置页扩展面板浏览/安装用） */
+	PackagesSearchCatalog: "packages:searchCatalog",
+	PackagesInstall: "packages:install",
+	PackagesRemove: "packages:remove",
+	PackagesListConfigured: "packages:listConfigured",
 	FileSaveDialog: "file:saveDialog",
 	ModelsList: "models:list",
 	SettingsListProviders: "settings:listProviders",
@@ -122,6 +128,14 @@ export interface PiApi {
 	forkSession(sessionId: string, ref: { entryId?: string; text?: string }): Promise<SessionMeta>;
 	/** 读取会话已加载的资源（skills/扩展；设置页展示用） */
 	getLoadedResources(sessionId: string): Promise<LoadedResources>;
+	/** 搜索 pi.dev 社区包目录（服务端模糊匹配名称/描述/作者，50 条/页） */
+	searchCatalog(query: string, type?: CatalogPackageType | "", page?: number): Promise<CatalogSearchResult>;
+	/** 安装社区包（npm:<name>，用户级）；成功后热重载非流式活跃会话 */
+	installPackage(name: string): Promise<void>;
+	/** 卸载已配置的包（按 source + scope 移除并持久化）；成功后热重载非流式活跃会话 */
+	removePackage(source: string, scope: "user" | "project"): Promise<void>;
+	/** 列出 settings.json 已配置的包（「已安装」态匹配用） */
+	listConfiguredPackages(): Promise<ConfiguredPackageInfo[]>;
 	/** 弹保存对话框并写文件；用户取消返回 null，成功返回写入路径 */
 	saveFileDialog(defaultName: string, content: string): Promise<string | null>;
 	listModels(): Promise<import("./session").AvailableModel[]>;
