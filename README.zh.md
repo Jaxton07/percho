@@ -3,7 +3,7 @@
 </p>
 <h1 align="center">pi-desktop</h1>
 <p align="center">
-  <a href="https://www.npmjs.com/package/@earendil-works/pi-coding-agent">Pi coding agent</a> 的桌面端 GUI —— 保留 Pi 的全部能力与可扩展性，加上可视化的交互界面。
+  极简设计的 <a href="https://www.npmjs.com/package/@earendil-works/pi-coding-agent">Pi coding agent</a> 桌面端 GUI —— 与 Pi CLI 同源同引擎，干净清爽的视觉界面。多会话聊天、可视化工具审批、自定义主题。
 </p>
 <p align="center">
   <a href="LICENSE"><img src="https://img.shields.io/github/license/Jaxton07/pi-desktop?style=flat-square" alt="License"></a>

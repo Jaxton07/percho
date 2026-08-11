@@ -8,6 +8,25 @@ files:
   - "!node_modules/@pi-desktop"
 asarUnpack:
   - "**/*.node"
+# pi SDK 包资源镜像：docs/examples/README 不进 asar，agent 的 read/bash 工具都能直接访问。
+# main 进程经 PI_PACKAGE_DIR 指到这里（export-html/themes/package.json 同根解析，必须一起带）。
+extraResources:
+  - from: "../../node_modules/@earendil-works/pi-coding-agent/docs"
+    to: "pi-package/docs"
+  - from: "../../node_modules/@earendil-works/pi-coding-agent/examples"
+    to: "pi-package/examples"
+  - from: "../../node_modules/@earendil-works/pi-coding-agent/README.md"
+    to: "pi-package/README.md"
+  - from: "../../node_modules/@earendil-works/pi-coding-agent/CHANGELOG.md"
+    to: "pi-package/CHANGELOG.md"
+  - from: "../../node_modules/@earendil-works/pi-coding-agent/package.json"
+    to: "pi-package/package.json"
+  - from: "../../node_modules/@earendil-works/pi-coding-agent/dist/core/export-html"
+    to: "pi-package/dist/core/export-html"
+  - from: "../../node_modules/@earendil-works/pi-coding-agent/dist/modes/interactive/theme"
+    to: "pi-package/dist/modes/interactive/theme"
+  - from: "../../node_modules/@earendil-works/pi-coding-agent/dist/modes/interactive/assets"
+    to: "pi-package/dist/modes/interactive/assets"
 mac:
   category: public.app-category.developer-tools
   target:
