@@ -35,6 +35,7 @@ export function ToolCallCard({ tool }: { tool: UIToolCall }) {
 
 	// 挂载时 args 可能为空（流式 toolcall，textRef 未渲染）→ 随 summary 变化重测；
 	// overflow:hidden 下 scrollWidth 恒为内容全宽，收缩后重测结果依然正确
+	// biome-ignore lint/correctness/useExhaustiveDependencies: summary 是刻意的重跑触发器（effect 内只读 ref，args 流式增长时需重测）
 	useEffect(() => {
 		const check = () => {
 			const el = textRef.current;
