@@ -9,6 +9,7 @@ import { ApprovalDock } from "./components/session/ApprovalDock";
 import { SessionTabBar } from "./components/session/SessionTabBar";
 import { TrustDialog } from "./components/session/TrustDialog";
 import { SettingsDialog } from "./components/settings/SettingsDialog";
+import { finishSplash } from "./splash";
 import { useSessionsStore } from "./stores/sessions";
 import { backgroundImageUrl, useThemeStore } from "./stores/theme";
 import { useTranscriptStore } from "./stores/transcript";
@@ -52,8 +53,11 @@ export default function App() {
 		const offTrust = pi.onTrustRequest((req) => {
 			setTrustRequests((prev) => [...prev, req]);
 		});
-		void useSessionsStore.getState().loadModels();
-		void useSessionsStore.getState().restoreTabs();
+		// 开屏就绪信号：首批数据（模型列表 + 恢复标签页）settle 后绽放收場（finishSplash 幂等）
+		void Promise.allSettled([
+			useSessionsStore.getState().loadModels(),
+			useSessionsStore.getState().restoreTabs(),
+		]).then(() => finishSplash());
 		initUpdateStore();
 		return () => {
 			offEvent();
