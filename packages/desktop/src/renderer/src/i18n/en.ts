@@ -19,10 +19,11 @@ export const en: Messages = {
 	update: {
 		checkForUpdates: "Check for updates",
 		checking: "Checking for updates…",
-		available: "Version {version} available",
+		available: "Version {version} available, click to download",
 		downloading: "Downloading {percent}%",
 		downloaded: "Downloaded, installs on restart",
 		installNow: "Restart & install",
+		restart: "Restart",
 		upToDate: "You're up to date",
 		checkFailed: "Update check failed: {message}",
 	},
