@@ -1,0 +1,24 @@
+cask "pi-desktop" do
+  version "{{VERSION}}"
+
+  on_arm do
+    sha256 "{{SHA256_ARM}}"
+    url "https://github.com/Jaxton07/pi-desktop/releases/download/v#{version}/pi-desktop-mac-arm64.zip"
+  end
+  on_intel do
+    sha256 "{{SHA256_X64}}"
+    url "https://github.com/Jaxton07/pi-desktop/releases/download/v#{version}/pi-desktop-mac-x64.zip"
+  end
+
+  name "Pi Desktop"
+  desc "Desktop GUI for the Pi coding agent"
+  homepage "https://github.com/Jaxton07/pi-desktop"
+
+  app "Pi Desktop.app"
+
+  zap trash: [
+    "~/Library/Application Support/@pi-desktop",
+    "~/Library/Caches/io.github.jaxton07.pi-desktop",
+    "~/Library/Caches/@pi-desktopdesktop-updater",
+  ]
+end

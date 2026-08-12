@@ -7,7 +7,7 @@ import { Tooltip } from "../ui/Tooltip";
 const RING_RADIUS = 8.5;
 const CIRCUMFERENCE = 2 * Math.PI * RING_RADIUS;
 
-/** 顶栏更新按钮：无更新不渲染；发现新版=下载图标+角标（点击开始下载），下载中=淡蓝进度环，下载完=「重启」胶囊（点击安装重启） */
+/** 顶栏更新按钮：无更新不渲染；发现新版=下载图标+角标（点击开始下载；manual 构建改跳 release 页），下载中=进度环，下载完=「重启」胶囊（点击安装重启） */
 export function UpdateButton() {
 	const t = useT();
 	const state = useUpdateStore((s) => s.state);
@@ -16,12 +16,19 @@ export function UpdateButton() {
 		return null;
 	}
 
+	const openReleasePage = async (version: string) => {
+		const info = await getPi().getAppInfo();
+		void getPi().openExternal(`${info.repoUrl}/releases/tag/v${version}`);
+	};
+
 	const label =
 		state.phase === "downloading"
 			? t("update.downloading", { percent: state.percent })
 			: state.phase === "downloaded"
 				? t("update.installNow")
-				: t("update.available", { version: state.version });
+				: state.phase === "available" && state.manual
+					? t("update.availableManual", { version: state.version })
+					: t("update.available", { version: state.version });
 
 	if (state.phase === "downloaded") {
 		return (
@@ -43,9 +50,11 @@ export function UpdateButton() {
 			<button
 				type="button"
 				aria-label={label}
-				className="no-drag relative flex h-6 w-6 shrink-0 items-center justify-center rounded-full text-update transition-colors hover:bg-hover hover:text-ink"
+				className="no-drag relative flex h-6 w-6 shrink-0 items-center justify-center rounded-full text-ink transition-colors hover:bg-hover"
 				onClick={() => {
-					if (state.phase === "available") void getPi().checkForUpdates();
+					if (state.phase !== "available") return;
+					if (state.manual) void openReleasePage(state.version);
+					else void getPi().checkForUpdates();
 				}}
 			>
 				{state.phase === "downloading" ? (
@@ -75,7 +84,7 @@ export function UpdateButton() {
 					<DownloadIcon size={14} />
 				)}
 				{state.phase === "available" && (
-					<span className="absolute right-0.5 top-0.5 h-1.5 w-1.5 rounded-full bg-update ring-1 ring-canvas" />
+					<span className="absolute right-0.5 top-0.5 h-1.5 w-1.5 rounded-full bg-sky-400 ring-1 ring-canvas" />
 				)}
 			</button>
 		</Tooltip>

@@ -39,8 +39,9 @@
 	--color-on-ink: #ffffff;
 	--color-accent: #7c3aed;
 	--color-on-accent: #ffffff;
-	--color-update: #38bdf8;
-	--color-on-update: #0c4a6e;
+	/* 「重启」胶囊：很浅的蓝底 + 比背景深一档的中蓝字 */
+	--color-update: #e0f2fe;
+	--color-on-update: #0284c7;
 	/* 自定义背景图遮罩（rgb 分量；不透明度由 .app-bg-scrim 的 inline opacity 控制） */
 	--color-scrim: 250 250 250;
 	--markdown-code-bg: #f4f4f5;
@@ -72,8 +73,8 @@
 	--color-on-ink: #17171a;
 	--color-accent: #8b5cf6;
 	--color-on-accent: #ffffff;
-	--color-update: #38bdf8;
-	--color-on-update: #082f49;
+	--color-update: #0c4a6e;
+	--color-on-update: #7dd3fc;
 	--color-scrim: 23 23 26;
 	--markdown-code-bg: #2b2b31;
 	--markdown-code-text: #d4d4db;
