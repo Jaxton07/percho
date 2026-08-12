@@ -1,3 +1,4 @@
+import { execFile } from "node:child_process";
 import { createRequire } from "node:module";
 import { createLogger } from "@pi-desktop/backend";
 import type { UpdateState } from "@pi-desktop/shared";
@@ -19,6 +20,31 @@ let latestVersion: string | null = null;
 let downloaded = false;
 /** 已上报的 phase：下载中/已下载时屏蔽 checking/not-available，防按钮闪烁/消失 */
 let currentPhase: UpdateState["phase"] | null = null;
+/** 当前构建无法自动安装（mac adhoc/未签名）→ 更新只提示，点击跳 release 页手动下载 */
+let manualInstall = false;
+
+/**
+ * mac 上 Squirrel 安装前强制校验代码签名（旧 app 的 designated requirement），
+ * adhoc/未签名构建必失败且静默无反应 → 检测出来走手动下载流程；正式签名后自动恢复正常路径
+ */
+function detectManualInstall(): Promise<boolean> {
+	if (process.platform !== "darwin") return Promise.resolve(false);
+	const exe = app.getPath("exe");
+	const appIndex = exe.indexOf(".app/");
+	if (appIndex === -1) return Promise.resolve(true);
+	const bundlePath = exe.slice(0, appIndex + ".app".length);
+	return new Promise((resolve) => {
+		// codesign -dv 的信息输出在 stderr；命令失败（含完全未签名）也按手动安装处理
+		execFile("codesign", ["-dv", bundlePath], (error, _stdout, stderr) => {
+			if (error) {
+				log.warn("codesign check failed, fallback to manual install", error.message);
+				resolve(true);
+				return;
+			}
+			resolve(stderr.includes("Signature=adhoc"));
+		});
+	});
+}
 
 export function onUpdateState(cb: Listener): void {
 	listeners.add(cb);
@@ -34,8 +60,12 @@ function emit(state: UpdateState): void {
 }
 
 /** 初始化 autoUpdater 事件转发；dev 模式（未打包）无 app-update.yml，直接跳过 */
-export function initUpdater(): void {
+export async function initUpdater(): Promise<void> {
 	if (!app.isPackaged) return;
+	manualInstall = await detectManualInstall();
+	if (manualInstall) {
+		log.info("unsigned/adhoc build: auto-install disabled, update clicks open the release page");
+	}
 	// 不做后台自动下载：发现新版只发 available 提示，用户点击后才下载
 	autoUpdater.autoDownload = false;
 	// 兜底：若下载完成后安装流程未执行，用户完全退出 app 时自动安装
@@ -46,7 +76,7 @@ export function initUpdater(): void {
 	autoUpdater.on("checking-for-update", () => emit({ phase: "checking" }));
 	autoUpdater.on("update-available", (info) => {
 		latestVersion = info.version;
-		emit({ phase: "available", version: info.version });
+		emit({ phase: "available", version: info.version, manual: manualInstall });
 	});
 	autoUpdater.on("update-not-available", () => emit({ phase: "not-available" }));
 	autoUpdater.on("download-progress", (progress) => {
@@ -65,7 +95,7 @@ export function initUpdater(): void {
 		if (downloaded) return;
 		if (latestVersion) {
 			// 下载失败 → 回退到「发现新版本」保留下载入口，用户可重试
-			emit({ phase: "available", version: latestVersion });
+			emit({ phase: "available", version: latestVersion, manual: manualInstall });
 		} else {
 			emit({ phase: "error", message: error instanceof Error ? error.message : String(error) });
 		}
@@ -75,11 +105,12 @@ export function initUpdater(): void {
 /**
  * 检查更新 / 下载更新（renderer 两个入口同走这里）：
  * 已发现新版且未下载 → 直接下载；否则先检查（autoDownload=false 时发现新版不会自动下载）。
+ * manual 构建不下载（装了也过不了签名校验），重复调用只重查。
  */
 export async function checkForUpdates(): Promise<void> {
 	if (!app.isPackaged) return;
 	try {
-		if (latestVersion && !downloaded) {
+		if (latestVersion && !downloaded && !manualInstall) {
 			// 立即上报 downloading（download-progress 首个事件可能滞后），按钮马上变进度环
 			emit({ phase: "downloading", version: latestVersion, percent: 0 });
 			await autoUpdater.downloadUpdate();

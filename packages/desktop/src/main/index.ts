@@ -244,7 +244,7 @@ app.whenReady().then(async () => {
 	backend = new PiBackend();
 	await backend.init();
 	registerIpc();
-	initUpdater();
+	await initUpdater();
 	scheduleAutoUpdateCheck();
 	const uiState = await loadUiState();
 	createWindow(resolveTheme(uiState?.theme));

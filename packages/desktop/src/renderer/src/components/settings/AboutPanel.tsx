@@ -25,12 +25,14 @@ export function AboutPanel() {
 		};
 	}, []);
 
-	// 状态行文案；downloaded 态按钮语义切换为「重启并安装」
+	// 状态行文案；downloaded 态按钮语义切换为「重启并安装」；manual 构建（mac 未正式签名）跳 release 页手动下载
 	const statusText =
 		state?.phase === "checking"
 			? t("update.checking")
 			: state?.phase === "available"
-				? t("update.available", { version: state.version })
+				? state.manual
+					? t("update.availableManual", { version: state.version })
+					: t("update.available", { version: state.version })
 				: state?.phase === "downloading"
 					? t("update.downloading", { percent: state.percent })
 					: state?.phase === "downloaded"
@@ -40,6 +42,18 @@ export function AboutPanel() {
 							: state?.phase === "error"
 								? t("update.checkFailed", { message: state.message })
 								: null;
+
+	const openReleasePage = async (version: string) => {
+		const appInfo = info ?? (await getPi().getAppInfo());
+		void getPi().openExternal(`${appInfo.repoUrl}/releases/tag/v${version}`);
+	};
+
+	const buttonLabel =
+		state?.phase === "downloaded"
+			? t("update.installNow")
+			: state?.phase === "available" && state.manual
+				? t("update.goDownload")
+				: t("update.checkForUpdates");
 
 	return (
 		<div className="flex flex-col items-center gap-1.5 py-10 text-center">
@@ -57,10 +71,11 @@ export function AboutPanel() {
 					className="rounded-lg border border-border px-4 py-1.5 text-[13px] text-ink-2 transition-colors hover:border-border-strong hover:bg-hover hover:text-ink"
 					onClick={() => {
 						if (state?.phase === "downloaded") void getPi().installUpdate();
+						else if (state?.phase === "available" && state.manual) void openReleasePage(state.version);
 						else void getPi().checkForUpdates();
 					}}
 				>
-					{state?.phase === "downloaded" ? t("update.installNow") : t("update.checkForUpdates")}
+					{buttonLabel}
 				</button>
 				<button
 					type="button"
