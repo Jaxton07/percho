@@ -33,7 +33,8 @@ export function ToolCallCard({ tool }: { tool: UIToolCall }) {
 	const textRef = useRef<HTMLSpanElement>(null);
 	const rowRef = useRef<HTMLElement>(null);
 
-	// args 在工具调用创建后不变，只测量一次 + 监听行宽变化
+	// 挂载时 args 可能为空（流式 toolcall，textRef 未渲染）→ 随 summary 变化重测；
+	// overflow:hidden 下 scrollWidth 恒为内容全宽，收缩后重测结果依然正确
 	useEffect(() => {
 		const check = () => {
 			const el = textRef.current;
@@ -48,10 +49,12 @@ export function ToolCallCard({ tool }: { tool: UIToolCall }) {
 		const ro = new ResizeObserver(check);
 		ro.observe(row);
 		return () => ro.disconnect();
-	}, []);
+	}, [summary]);
 
-	const nameClass =
-		"shrink-0 font-mono text-[13px] font-semibold text-ink-dim transition-colors group-hover/row:text-ink";
+	// running 时工具名加高光扫过动画（与 MetaGroup 的 Working 标题同款 shimmer-sweep）
+	const nameClass = `shrink-0 font-mono text-[13px] font-semibold text-ink-dim transition-colors group-hover/row:text-ink${
+		tool.state === "running" ? " shimmer-sweep" : ""
+	}`;
 	const summaryClass =
 		"relative overflow-hidden whitespace-nowrap font-mono text-[12px] text-ink-faint transition-colors group-hover/row:text-ink";
 

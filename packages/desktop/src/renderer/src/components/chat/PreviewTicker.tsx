@@ -26,12 +26,14 @@ function ThinkingPreviewRow() {
 	);
 }
 
-/** tool 预览行：工具名 + 参数摘要（单行截断），不可展开；参数随流式增长原地更新 */
+/** tool 预览行：工具名（data-shimmer-name：MetaGroup 统一扫光的范围终点）+ 参数摘要（单行截断），不可展开；参数随流式增长原地更新 */
 function ToolPreviewRow({ name, args }: { name: string; args: string }) {
 	const summary = summarizeArgs(args);
 	return (
 		<div className="flex items-center gap-2 py-0.5">
-			<span className="shrink-0 font-mono text-[13px] font-semibold text-ink-dim">{displayName(name)}</span>
+			<span data-shimmer-name className="shrink-0 font-mono text-[13px] font-semibold text-ink-dim">
+				{displayName(name)}
+			</span>
 			{summary && (
 				<span className="min-w-0 flex-1 truncate font-mono text-[12px] text-ink-faint">{summary}</span>
 			)}

@@ -4,6 +4,7 @@ import { useSessionsStore } from "../../stores/sessions";
 import { selectTranscript, useTranscriptStore } from "../../stores/transcript";
 import { MessageItem } from "./MessageItem";
 import { MetaGroup, type MetaItem } from "./MetaGroup";
+import { SubagentRunCard } from "./SubagentRunCard";
 
 /** 距底 ≤ 此值视为「在底部」，自动恢复跟随 */
 const BOTTOM_THRESHOLD = 48;
@@ -21,8 +22,14 @@ export function MessageList() {
 	const t = useT();
 	const activeSessionId = useSessionsStore((s) => s.activeSessionId);
 	const transcript = useTranscriptStore((s) => selectTranscript(s, activeSessionId));
-	/** agent 运行中且正文未出现（用户消息 → 下一次正文回复之间）→ 折叠组标题 working */
-	const agentWorking = transcript.agentActive && !transcript.streaming?.text;
+	const streaming = transcript.streaming;
+	/** 执行中的工具/子代理：工具执行发生在 message_end 之后、turn_end 之前，期间 streaming.text 仍在 */
+	const hasRunningWork = Boolean(
+		streaming?.tools.some((t) => t.state === "running") ||
+			streaming?.subagentRuns.some((r) => r.status === "running"),
+	);
+	/** agent 运行中且正文未出现 → 折叠组标题 working；正文已出但工具/子代理还在跑时不熄灯 */
+	const agentWorking = transcript.agentActive && (!streaming?.text || hasRunningWork);
 
 	const scrollRef = useRef<HTMLDivElement>(null);
 	const contentRef = useRef<HTMLDivElement>(null);
@@ -119,8 +126,7 @@ export function MessageList() {
 			items.push(<MessageItem key={message.id} message={message} metaInGroup />);
 		}
 	}
-	if (transcript.streaming) {
-		const streaming = transcript.streaming;
+	if (streaming) {
 		if (streaming.thinking || streaming.tools.length > 0) {
 			metaItems.push({
 				thinking: streaming.thinking,
@@ -146,12 +152,21 @@ export function MessageList() {
 				/>,
 			);
 		}
+		// 子代理运行中行：tool_execution_start 即入缓冲，流式期就展示（不等 turn_end 固化），顺序对齐固化后的 assistant → subagents
+		if (streaming.subagentRuns.length > 0) {
+			items.push(<SubagentRunCard key="streaming-subagents" runs={streaming.subagentRuns} />);
+		}
+	}
+	// 最新组无内容但仍在工作（正文已出、工具/子代理执行中）：挂上流式活动序列，预览行继续显示最新活动
+	if (metaItems.length === 0 && agentWorking && streaming && streaming.activity.length > 0) {
+		metaItems.push({ thinking: "", tools: [], activity: streaming.activity });
 	}
 	flushMeta(true, agentWorking);
 
 	return (
 		<div className="relative h-full">
-			<div ref={scrollRef} onScroll={handleScroll} className="h-full overflow-y-auto">
+			{/* overflow-x-hidden：任何行内容异常超宽都只裁剪，不产生页面级横向滚动条 */}
+			<div ref={scrollRef} onScroll={handleScroll} className="h-full overflow-x-hidden overflow-y-auto">
 				<div ref={contentRef} className="mx-auto flex max-w-[760px] flex-col gap-6 px-6 pt-8 pb-16">
 					{items}
 				</div>
