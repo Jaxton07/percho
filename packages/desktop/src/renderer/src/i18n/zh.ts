@@ -124,7 +124,6 @@ export const zh = {
 			running: "工作中",
 			done: "已完成",
 			failed: "失败",
-			open: "打开子代理会话",
 		},
 	},
 	tool: {
@@ -191,6 +190,8 @@ export const zh = {
 		},
 		providers: {
 			empty: "未发现可用 provider",
+			catalogHint: "模型目录来自 SDK 内置数据与本地缓存，点击右侧按钮可从 pi.dev 拉取最新",
+			refresh: "联网刷新模型目录",
 			custom: "自定义",
 			modelCount: "{count} 个模型",
 			configured: "已配置",

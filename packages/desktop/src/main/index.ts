@@ -9,6 +9,7 @@ import {
 	type CustomProviderInput,
 	type ImageInput,
 	IpcChannels,
+	type ListProvidersOptions,
 	type PermissionAnswer,
 	type PermissionRequest,
 	type SavedTabs,
@@ -131,7 +132,9 @@ function registerIpc(): void {
 	);
 	ipcMain.handle(IpcChannels.SessionGetTodos, (_e, sessionId: string) => backend.getTodos(sessionId));
 	ipcMain.handle(IpcChannels.ModelsList, () => backend.listModels());
-	ipcMain.handle(IpcChannels.SettingsListProviders, () => backend.settings.listProviders());
+	ipcMain.handle(IpcChannels.SettingsListProviders, (_e, options?: ListProvidersOptions) =>
+		backend.settings.listProviders(options),
+	);
 	ipcMain.handle(IpcChannels.SettingsSaveApiKey, (_e, providerId: string, key: string) =>
 		backend.settings.saveApiKey(providerId, key),
 	);

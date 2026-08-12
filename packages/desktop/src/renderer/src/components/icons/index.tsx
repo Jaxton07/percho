@@ -313,6 +313,25 @@ export function EditIcon({ size = 13, className }: IconProps) {
 	);
 }
 
+/** 刷新（循环箭头，设置页联网刷新模型目录） */
+export function RefreshIcon({ size = 13, className }: IconProps) {
+	return (
+		<svg
+			className={className}
+			width={size}
+			height={size}
+			viewBox="0 0 24 24"
+			{...strokeProps}
+			strokeLinecap="round"
+			strokeLinejoin="round"
+			aria-hidden="true"
+		>
+			<path d="M21 12a9 9 0 1 1-2.64-6.36" />
+			<path d="M21 3v6h-6" />
+		</svg>
+	);
+}
+
 /** 垃圾桶（删除/移除凭证） */
 export function TrashIcon({ size = 13, className }: IconProps) {
 	return (

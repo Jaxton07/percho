@@ -1,9 +1,17 @@
 import { readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { getAgentDir, type ModelRuntime } from "@earendil-works/pi-coding-agent";
-import type { CustomProviderInput, ProviderInfo, ProviderTestResult } from "@pi-desktop/shared";
+import type {
+	CustomProviderInput,
+	ListProvidersOptions,
+	ProviderInfo,
+	ProviderTestResult,
+} from "@pi-desktop/shared";
 
 type JsonObject = Record<string, unknown>;
+
+/** 联网刷新模型目录的整体超时（SDK fetchWithRetry 默认无超时，网络不可达时会一直挂） */
+const NETWORK_REFRESH_TIMEOUT_MS = 15_000;
 
 async function readJsonFile(path: string): Promise<JsonObject> {
 	try {
@@ -45,9 +53,20 @@ export class SettingsService {
 		return new Set(providers ? Object.keys(providers) : []);
 	}
 
-	async listProviders(): Promise<ProviderInfo[]> {
+	async listProviders(options?: ListProvidersOptions): Promise<ProviderInfo[]> {
 		const runtime = await this.getRuntime();
-		await runtime.refresh();
+		if (options?.forceNetwork) {
+			// 用户显式刷新才联网；SDK 的目录请求无内置超时，这里兜底，超时回退本地数据
+			const result = await runtime.refresh({
+				allowNetwork: true,
+				force: true,
+				signal: AbortSignal.timeout(NETWORK_REFRESH_TIMEOUT_MS),
+			});
+			if (result.aborted) throw new Error("刷新模型目录超时，请检查网络后重试");
+		} else {
+			// 默认纯本地：内置目录 + models-store.json 缓存（refresh 的 allowNetwork 缺省为 true，必须显式关）
+			await runtime.refresh({ allowNetwork: false });
+		}
 		const customIds = await this.customProviderIds();
 		return runtime
 			.getProviders()

@@ -126,7 +126,6 @@ export const en: Messages = {
 			running: "Working",
 			done: "Done",
 			failed: "Failed",
-			open: "Open subagent session",
 		},
 	},
 	tool: {
@@ -193,6 +192,9 @@ export const en: Messages = {
 		},
 		providers: {
 			empty: "No providers available",
+			catalogHint:
+				"Model catalog uses SDK built-in data and local cache; click the button to fetch the latest from pi.dev",
+			refresh: "Refresh model catalog from network",
 			custom: "Custom",
 			modelCount: "{count} models",
 			configured: "Configured",

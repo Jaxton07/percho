@@ -25,7 +25,6 @@ function SubagentRunRow({ run }: { run: SubagentRunUi }) {
 			type="button"
 			disabled={!clickable}
 			onClick={() => clickable && run.sessionFile && void openFromHistory(run.sessionFile)}
-			title={clickable ? t("message.subagent.open") : undefined}
 			className={`flex w-full items-center gap-2 py-1 text-left ${
 				clickable ? "cursor-pointer rounded-md hover:bg-hover" : "cursor-default"
 			} px-1.5 transition-colors`}

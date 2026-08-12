@@ -383,6 +383,36 @@ code {
 }
 .markdown-body .link-node:hover {
 	color: var(--markdown-link-hover);
+	/* markstream 默认 hover 用 text-decoration 简写，会把下划线颜色重置成 currentColor 并加 0.2rem 偏移，这里压回设计态 */
+	text-decoration-color: var(--markdown-link-decoration);
+	text-underline-offset: auto;
+}
+/* 抹平 markstream-react 自带的默认 hover（非我们的设计）：代码块头部按钮变蓝、action 按钮透明度跳变、
+   mermaid 按钮/关闭键变色、脚注 hover 下划线。统一 hover = 常态 */
+.markdown-body .code-block-btn:hover {
+	background: #0f172a99;
+	border-color: rgba(148, 163, 184, 0.4);
+	color: #f8fafc;
+}
+.markdown-body .code-action-btn:hover {
+	opacity: 0.7;
+}
+.markdown-body .footnote-link:hover,
+.markdown-body .footnote-anchor:hover {
+	text-decoration: none;
+}
+.markdown-body .mermaid-btn:hover,
+.markdown-body .mermaid-modal-close:hover {
+	background: transparent;
+	color: inherit;
+	opacity: 0.9;
+}
+/* markstream 的深色 hover 是 .dark 前缀（0,3,0 优先级），用 [data-theme] 压过它 */
+[data-theme="dark"] .markdown-body .mermaid-btn:hover,
+[data-theme="dark"] .markdown-body .mermaid-modal-close:hover {
+	background: transparent;
+	color: inherit;
+	opacity: 0.9;
 }
 .markdown-body .inline-code {
 	padding: 0.125rem 0.25rem;

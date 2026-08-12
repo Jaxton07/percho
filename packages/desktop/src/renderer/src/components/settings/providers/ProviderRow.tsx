@@ -6,8 +6,8 @@ import { EditIcon, TestIcon, TrashIcon } from "../../icons";
 import { Button } from "../../ui/Button";
 import { Tooltip } from "../../ui/Tooltip";
 
-/** 图标操作按钮：图标无文字，Tooltip + aria-label 必需 */
-function IconAction({
+/** 图标操作按钮：图标无文字，Tooltip + aria-label 必需（ProvidersPanel 刷新按钮复用） */
+export function IconAction({
 	label,
 	danger,
 	disabled,

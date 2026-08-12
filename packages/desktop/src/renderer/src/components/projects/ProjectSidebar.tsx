@@ -98,7 +98,6 @@ function ProjectItem({
 					isActive ? "bg-hover text-ink" : "text-ink-2 hover:bg-hover"
 				}`}
 				onClick={onSelect}
-				title={project.cwd}
 			>
 				<span
 					className={`flex h-5 w-5 shrink-0 items-center justify-center rounded text-[11px] font-semibold text-on-ink ${

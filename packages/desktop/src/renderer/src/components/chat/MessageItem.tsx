@@ -253,10 +253,7 @@ function SystemMessage({ message }: { message: Extract<UIMessage, { kind: "syste
 		);
 	}
 	return (
-		<div
-			className="mx-auto max-w-[560px] rounded-lg border border-border bg-hover px-3 py-2 text-center text-xs leading-relaxed text-ink-dim select-text"
-			title={compact.summary}
-		>
+		<div className="mx-auto max-w-[560px] rounded-lg border border-border bg-hover px-3 py-2 text-center text-xs leading-relaxed text-ink-dim select-text">
 			<p className="font-medium text-ink-2">
 				{t("compaction.done")} · {reason}
 				{tokens}

@@ -1,18 +1,35 @@
 import type { ProviderInfo } from "@pi-desktop/shared";
 import { useT } from "../../../i18n";
 import { useSettingsStore } from "../../../stores/settings";
+import { RefreshIcon } from "../../icons";
 import { CustomProviderForm } from "./CustomProviderForm";
-import { ProviderRow } from "./ProviderRow";
+import { IconAction, ProviderRow } from "./ProviderRow";
 
-/** Provider 设置面板：列表 + 自定义 provider 表单 */
+/** Provider 设置面板：列表 + 联网刷新 + 自定义 provider 表单 */
 export function ProvidersPanel() {
 	const t = useT();
 	const providers = useSettingsStore((s) => s.providers);
 	const loading = useSettingsStore((s) => s.loading);
+	const refreshing = useSettingsStore((s) => s.refreshing);
+	const refreshFromNetwork = useSettingsStore((s) => s.refreshProvidersFromNetwork);
 	const error = useSettingsStore((s) => s.error);
 
 	return (
 		<div>
+			<div className="mb-2 flex items-center justify-between gap-2">
+				<p className="text-[11px] text-ink-faint">{t("settings.providers.catalogHint")}</p>
+				<IconAction
+					label={t("settings.providers.refresh")}
+					disabled={loading || refreshing}
+					onClick={() => void refreshFromNetwork()}
+				>
+					{refreshing ? (
+						<span className="h-3 w-3 animate-spin rounded-full border-[1.5px] border-current border-t-transparent" />
+					) : (
+						<RefreshIcon />
+					)}
+				</IconAction>
+			</div>
 			{error && <p className="mb-2 rounded-lg bg-red-50 px-3 py-2 text-[12px] text-red-600">{error}</p>}
 			{loading && providers.length === 0 ? (
 				<p className="py-8 text-center text-[13px] text-ink-faint">{t("settings.loading")}</p>

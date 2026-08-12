@@ -20,7 +20,7 @@ import type {
 	TrustRequest,
 	UiState,
 } from "./session";
-import type { CustomProviderInput, ProviderInfo, ProviderTestResult } from "./settings";
+import type { CustomProviderInput, ListProvidersOptions, ProviderInfo, ProviderTestResult } from "./settings";
 import type { TodoItem } from "./todo";
 import type { UpdateState } from "./update";
 
@@ -150,7 +150,8 @@ export interface PiApi {
 	/** 弹保存对话框并写文件；用户取消返回 null，成功返回写入路径 */
 	saveFileDialog(defaultName: string, content: string): Promise<string | null>;
 	listModels(): Promise<import("./session").AvailableModel[]>;
-	listProviders(): Promise<ProviderInfo[]>;
+	/** 列出 provider（默认只走内置目录+本地缓存；forceNetwork 时联网拉最新模型目录） */
+	listProviders(options?: ListProvidersOptions): Promise<ProviderInfo[]>;
 	saveApiKey(providerId: string, key: string): Promise<void>;
 	removeCredential(providerId: string): Promise<void>;
 	addCustomProvider(input: CustomProviderInput): Promise<void>;

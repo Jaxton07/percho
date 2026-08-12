@@ -28,6 +28,8 @@ interface SettingsStore {
 	category: SettingsCategory;
 	providers: ProviderInfo[];
 	loading: boolean;
+	/** 联网刷新模型目录进行中（默认刷新只走本地，见 refreshProvidersFromNetwork） */
+	refreshing: boolean;
 	/** 内置权限门控开关（null = 未加载） */
 	permissionEnabled: boolean | null;
 	/** 当前活跃会话已加载的 skills（null = 未加载/无会话） */
@@ -67,6 +69,8 @@ interface SettingsStore {
 	openWith: (category?: SettingsCategory) => void;
 	setCategory: (category: SettingsCategory) => void;
 	refresh: () => Promise<void>;
+	/** 从 pi.dev 联网拉取最新模型目录（绕过新鲜度窗口；成功后同步模型选择器数据） */
+	refreshProvidersFromNetwork: () => Promise<void>;
 	saveKey: (providerId: string, key: string) => Promise<void>;
 	removeCredential: (providerId: string) => Promise<void>;
 	addCustom: (input: CustomProviderInput) => Promise<void>;
@@ -104,6 +108,7 @@ export const useSettingsStore = create<SettingsStore>((set, get) => {
 		category: "providers",
 		providers: [],
 		loading: false,
+		refreshing: false,
 		permissionEnabled: null,
 		skills: null,
 		skillDiagnostics: [],
@@ -245,12 +250,14 @@ export const useSettingsStore = create<SettingsStore>((set, get) => {
 
 		refresh: async () => {
 			set({ loading: true });
+			// 权限门控配置是本地文件读，独立加载，不被 provider 列表阻塞
+			void getPi()
+				.getPermissionConfig()
+				.then((permission) => set({ permissionEnabled: permission.enabled }))
+				.catch(() => {});
 			try {
-				const [providers, permission] = await Promise.all([
-					getPi().listProviders(),
-					getPi().getPermissionConfig(),
-				]);
-				set({ providers, permissionEnabled: permission.enabled, loading: false, error: null });
+				const providers = await getPi().listProviders();
+				set({ providers, loading: false, error: null });
 				// 已加载资源按当前活跃会话（其项目）展示；无会话时为 null（面板显示空态）
 				const activeSessionId = useSessionsStore.getState().activeSessionId;
 				if (activeSessionId) {
@@ -266,6 +273,18 @@ export const useSettingsStore = create<SettingsStore>((set, get) => {
 				}
 			} catch (error) {
 				set({ loading: false, error: error instanceof Error ? error.message : String(error) });
+			}
+		},
+
+		refreshProvidersFromNetwork: async () => {
+			set({ refreshing: true, error: null });
+			try {
+				const providers = await getPi().listProviders({ forceNetwork: true });
+				set({ providers, refreshing: false });
+				// runtime 已持有最新目录，本地刷新模型选择器数据即可
+				await useSessionsStore.getState().loadModels();
+			} catch (error) {
+				set({ refreshing: false, error: error instanceof Error ? error.message : String(error) });
 			}
 		},
 

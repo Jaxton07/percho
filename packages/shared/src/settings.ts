@@ -16,6 +16,11 @@ export const KNOWN_APIS = [
 
 export type KnownApiId = (typeof KNOWN_APIS)[number];
 
+export interface ListProvidersOptions {
+	/** true 时强制从 pi.dev 联网拉取最新模型目录（绕过 4h 新鲜度窗口）；默认 false 只用内置目录 + 本地缓存 */
+	forceNetwork?: boolean;
+}
+
 export interface ProviderModelInfo {
 	id: string;
 	name: string;
