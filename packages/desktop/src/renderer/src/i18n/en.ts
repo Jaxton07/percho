@@ -129,6 +129,10 @@ export const en: Messages = {
 	tool: {
 		running: "Running…",
 	},
+	todo: {
+		tasks: "tasks",
+		allDone: "All done",
+	},
 	projects: {
 		title: "Projects",
 		search: "Search sessions in {project}",

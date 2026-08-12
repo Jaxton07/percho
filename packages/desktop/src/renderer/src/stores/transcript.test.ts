@@ -694,6 +694,87 @@ describe("transcript reducer", () => {
 		} as unknown as AgentSessionEvent);
 		expect(state.streaming?.subagentRuns).toHaveLength(0);
 	});
+
+	it("todo：tool_execution_end 设置/替换/清空列表，turn_end 后保留", () => {
+		let state = emptyTranscript();
+		state = reduceEvent(state, ev("agent_start"));
+		state = reduceEvent(state, {
+			type: "tool_execution_end",
+			toolCallId: "tc1",
+			toolName: "todo",
+			result: {
+				content: [{ type: "text", text: "Current task list:\n1. [in_progress] a" }],
+				details: {
+					todos: [
+						{ content: "a", status: "in_progress" },
+						{ content: "b", status: "pending" },
+					],
+				},
+			},
+			isError: false,
+		} as unknown as AgentSessionEvent);
+		expect(state.todos).toEqual([
+			{ content: "a", status: "in_progress" },
+			{ content: "b", status: "pending" },
+		]);
+		// turn_end 固化消息不清理 todos（跨 turn 存活）
+		state = reduceEvent(state, ev("turn_end"));
+		expect(state.todos).toHaveLength(2);
+
+		// 再次调用整体替换
+		state = reduceEvent(state, ev("agent_start"));
+		state = reduceEvent(state, {
+			type: "tool_execution_end",
+			toolCallId: "tc2",
+			toolName: "todo",
+			result: { details: { todos: [{ content: "c", status: "completed" }] } },
+			isError: false,
+		} as unknown as AgentSessionEvent);
+		expect(state.todos).toEqual([{ content: "c", status: "completed" }]);
+
+		// 空数组 = 清空
+		state = reduceEvent(state, {
+			type: "tool_execution_end",
+			toolCallId: "tc3",
+			toolName: "todo",
+			result: { details: { todos: [] } },
+			isError: false,
+		} as unknown as AgentSessionEvent);
+		expect(state.todos).toEqual([]);
+	});
+
+	it("todo：error 结果忽略；非 todo 工具带 todos details 不误触发", () => {
+		let state = emptyTranscript();
+		state = reduceEvent(state, ev("agent_start"));
+		state = reduceEvent(state, {
+			type: "tool_execution_end",
+			toolCallId: "tc1",
+			toolName: "todo",
+			result: { details: { todos: [{ content: "a", status: "pending" }] } },
+			isError: true,
+		} as unknown as AgentSessionEvent);
+		expect(state.todos).toEqual([]);
+		state = reduceEvent(state, {
+			type: "tool_execution_end",
+			toolCallId: "tc2",
+			toolName: "webfetch",
+			result: { details: { todos: [{ content: "a", status: "pending" }] } },
+			isError: false,
+		} as unknown as AgentSessionEvent);
+		expect(state.todos).toEqual([]);
+	});
+
+	it("todo：无流式容器时也能提取（容错分支）", () => {
+		let state = emptyTranscript();
+		state = reduceEvent(state, {
+			type: "tool_execution_end",
+			toolCallId: "tc1",
+			toolName: "todo",
+			result: { details: { todos: [{ content: "a", status: "in_progress" }] } },
+			isError: false,
+		} as unknown as AgentSessionEvent);
+		expect(state.todos).toEqual([{ content: "a", status: "in_progress" }]);
+	});
 });
 
 describe("messagesToUIMessages 历史回放", () => {
@@ -784,5 +865,21 @@ describe("transcript store unseenCompletion", () => {
 		// 发送失败回滚 false：不算完成，未读保持 false
 		useTranscriptStore.getState().markAgentActive("s1", false);
 		expect(entry("s1")?.unseenCompletion).toBe(false);
+	});
+
+	it("todo：loadHistory 不清列表（compaction 后消息重建不丢面板数据），loadTodos 覆盖", () => {
+		const store = useTranscriptStore.getState();
+		store.applyEvent("s1", {
+			type: "tool_execution_end",
+			toolCallId: "tc1",
+			toolName: "todo",
+			result: { details: { todos: [{ content: "a", status: "in_progress" }] } },
+			isError: false,
+		} as unknown as AgentSessionEvent);
+		expect(entry("s1")?.todos).toEqual([{ content: "a", status: "in_progress" }]);
+		store.loadHistory("s1", []);
+		expect(entry("s1")?.todos).toEqual([{ content: "a", status: "in_progress" }]);
+		store.loadTodos("s1", []);
+		expect(entry("s1")?.todos).toEqual([]);
 	});
 });

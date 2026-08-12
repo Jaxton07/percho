@@ -34,6 +34,7 @@ const api: PiApi = {
 	saveFileDialog: (defaultName, content) =>
 		ipcRenderer.invoke(IpcChannels.FileSaveDialog, defaultName, content),
 	getSessionMessages: (sessionId) => ipcRenderer.invoke(IpcChannels.SessionGetMessages, sessionId),
+	getTodos: (sessionId) => ipcRenderer.invoke(IpcChannels.SessionGetTodos, sessionId),
 	listModels: () => ipcRenderer.invoke(IpcChannels.ModelsList),
 	listProviders: () => ipcRenderer.invoke(IpcChannels.SettingsListProviders),
 	saveApiKey: (providerId, key) => ipcRenderer.invoke(IpcChannels.SettingsSaveApiKey, providerId, key),

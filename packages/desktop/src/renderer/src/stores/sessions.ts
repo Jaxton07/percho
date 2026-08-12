@@ -107,6 +107,8 @@ export const useSessionsStore = create<SessionsStore>((set, get) => ({
 			useTranscriptStore.getState().loadHistory(meta.sessionId, messagesToUIMessages(history));
 			const followUpQueue = await getPi().getFollowUpMessages(meta.sessionId);
 			useTranscriptStore.getState().setFollowUpQueue(meta.sessionId, followUpQueue);
+			const todos = await getPi().getTodos(meta.sessionId);
+			useTranscriptStore.getState().loadTodos(meta.sessionId, todos);
 			persistTabs(get());
 		} catch (error) {
 			set({ error: error instanceof Error ? error.message : String(error) });
@@ -126,6 +128,8 @@ export const useSessionsStore = create<SessionsStore>((set, get) => ({
 			useTranscriptStore.getState().loadHistory(meta.sessionId, messagesToUIMessages(history));
 			const followUpQueue = await getPi().getFollowUpMessages(meta.sessionId);
 			useTranscriptStore.getState().setFollowUpQueue(meta.sessionId, followUpQueue);
+			const todos = await getPi().getTodos(meta.sessionId);
+			useTranscriptStore.getState().loadTodos(meta.sessionId, todos);
 			persistTabs(get());
 		} catch (error) {
 			set({ error: error instanceof Error ? error.message : String(error) });
@@ -147,6 +151,8 @@ export const useSessionsStore = create<SessionsStore>((set, get) => ({
 				useTranscriptStore.getState().loadHistory(meta.sessionId, messagesToUIMessages(history));
 				const followUpQueue = await getPi().getFollowUpMessages(meta.sessionId);
 				useTranscriptStore.getState().setFollowUpQueue(meta.sessionId, followUpQueue);
+				const todos = await getPi().getTodos(meta.sessionId);
+				useTranscriptStore.getState().loadTodos(meta.sessionId, todos);
 				opened.push(meta);
 				if (meta.sessionFile === saved.activeFile) activeId = meta.sessionId;
 			} catch {

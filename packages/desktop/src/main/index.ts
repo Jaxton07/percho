@@ -128,6 +128,7 @@ function registerIpc(): void {
 	ipcMain.handle(IpcChannels.SessionGetMessages, (_e, sessionId: string) =>
 		backend.getSessionMessages(sessionId),
 	);
+	ipcMain.handle(IpcChannels.SessionGetTodos, (_e, sessionId: string) => backend.getTodos(sessionId));
 	ipcMain.handle(IpcChannels.ModelsList, () => backend.listModels());
 	ipcMain.handle(IpcChannels.SettingsListProviders, () => backend.settings.listProviders());
 	ipcMain.handle(IpcChannels.SettingsSaveApiKey, (_e, providerId: string, key: string) =>

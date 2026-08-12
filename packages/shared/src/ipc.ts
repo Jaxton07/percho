@@ -21,6 +21,7 @@ import type {
 	UiState,
 } from "./session";
 import type { CustomProviderInput, ProviderInfo, ProviderTestResult } from "./settings";
+import type { TodoItem } from "./todo";
 import type { UpdateState } from "./update";
 
 /** IPC 通道名常量 */
@@ -36,6 +37,7 @@ export const IpcChannels = {
 	SessionSetModel: "session:setModel",
 	SessionSetThinkingLevel: "session:setThinkingLevel",
 	SessionGetMessages: "session:getMessages",
+	SessionGetTodos: "session:getTodos",
 	SessionCompact: "session:compact",
 	SessionStats: "session:stats",
 	SessionGetContextUsage: "session:getContextUsage",
@@ -113,6 +115,8 @@ export interface PiApi {
 	setThinkingLevel(sessionId: string, level: string): Promise<void>;
 	/** 读取会话历史消息（打开历史会话时回放） */
 	getSessionMessages(sessionId: string): Promise<SessionMessage[]>;
+	/** 读取会话当前 todo 列表（最后一条 todo 工具结果，或 compaction 后恢复的 reminder 消息；无则空数组） */
+	getTodos(sessionId: string): Promise<TodoItem[]>;
 	compact(sessionId: string, customInstructions?: string): Promise<void>;
 	getStats(sessionId: string): Promise<SessionStats>;
 	/** 当前模型上下文使用（tokens/contextWindow/percent），无会话或未知时返回 null */

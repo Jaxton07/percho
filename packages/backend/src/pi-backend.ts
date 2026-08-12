@@ -32,7 +32,13 @@ import type {
 	TrustAnswer,
 	TrustRequest,
 } from "@pi-desktop/shared";
-import { extractSubagentRuns } from "@pi-desktop/shared";
+import {
+	extractSubagentRuns,
+	extractTodos,
+	TODO_REMINDER_CUSTOM_TYPE,
+	TODO_TOOL_NAME,
+	type TodoItem,
+} from "@pi-desktop/shared";
 import { createLogger } from "./log";
 import { fetchPackageCatalog } from "./package-catalog";
 import { makePermissionGateExtension } from "./permission-extension";
@@ -43,6 +49,8 @@ import { autoNameSession } from "./session-naming";
 import { type EventForwarder, SessionRegistry } from "./session-registry";
 import { SettingsService } from "./settings";
 import { makeShowImageTool } from "./show-image-tool";
+import { makeTodoReminderExtension } from "./todo-reminder-extension";
+import { makeTodoTool } from "./todo-tool";
 import { TraceRecorder } from "./trace";
 import { resolveProjectTrust, TrustGate } from "./trust";
 import { makeUiContext } from "./ui-context";
@@ -93,7 +101,7 @@ export class PiBackend {
 
 	constructor(private readonly options: PiBackendOptions = {}) {}
 
-	/** 自定义工具 = 调用方传入的 + 内置 webfetch（webFetch:false 关闭）+ 内置 show_image */
+	/** 自定义工具 = 调用方传入的 + 内置 webfetch（webFetch:false 关闭）+ show_image + todo */
 	private buildCustomTools(): ToolDefinition[] {
 		const tools = [...(this.options.customTools ?? [])];
 		const webFetch = this.options.webFetch;
@@ -101,6 +109,7 @@ export class PiBackend {
 			tools.push(makeWebFetchTool(typeof webFetch === "object" ? webFetch : undefined));
 		}
 		tools.push(makeShowImageTool());
+		tools.push(makeTodoTool());
 		return tools;
 	}
 
@@ -163,14 +172,19 @@ export class PiBackend {
 	}> {
 		const agentDir = getAgentDir();
 		const settingsManager = SettingsManager.create(cwd, agentDir, { projectTrusted: false });
-		// 内置权限门控扩展随资源加载器注册（inline factory，不受项目信任影响，不受信任的
-		// 项目里也能拦截高危命令）；permissionGates=false 时 confirm 恒 false，不能注册
-		const enableGate = this.options.permissionGates !== false && this.options.permissionExtension !== false;
+		// 内置扩展随资源加载器注册（inline factory，不受项目信任影响）：todo-reminder
+		// 负责 compaction 后恢复任务列表（不受权限开关影响）；权限门控扩展受
+		// permissionGates/permissionExtension 开关控制（permissionGates=false 时
+		// confirm 恒 false，不能注册）
+		const extensionFactories = [makeTodoReminderExtension()];
+		if (this.options.permissionGates !== false && this.options.permissionExtension !== false) {
+			extensionFactories.push(makePermissionGateExtension(agentDir, { projectRoot: cwd }));
+		}
 		const resourceLoader = new DefaultResourceLoader({
 			cwd,
 			agentDir,
 			settingsManager,
-			extensionFactories: enableGate ? [makePermissionGateExtension(agentDir, { projectRoot: cwd })] : [],
+			extensionFactories,
 		});
 		if (this.options.projectTrust === false) {
 			settingsManager.setProjectTrusted(true);
@@ -557,6 +571,27 @@ export class PiBackend {
 	}
 
 	/**
+	 * 读取会话当前 todo 列表：扫 session.messages（裁剪后的上下文）找最后一条
+	 * todo 工具结果的 details，或最后一条 todo-reminder custom message 的 details
+	 * （compaction 后注入的恢复消息；toolResult 已被截断时兜底）。都没有返回 []。
+	 */
+	async getTodos(sessionId: string): Promise<TodoItem[]> {
+		const entry = this.requireSession(sessionId);
+		for (const raw of [...entry.session.messages].reverse()) {
+			const m = raw as RawMessage;
+			if (m.role === "toolResult" && m.toolName === TODO_TOOL_NAME && !m.isError) {
+				const todos = extractTodos(m.details);
+				if (todos) return todos;
+			}
+			if (m.role === "custom" && m.customType === TODO_REMINDER_CUSTOM_TYPE) {
+				const todos = extractTodos(m.details);
+				if (todos) return todos;
+			}
+		}
+		return [];
+	}
+
+	/**
 	 * 在指定 assistant 消息处分叉：新会话文件以其为结尾（原文件与原会话都保留），
 	 * 打开新会话并返回其 meta（调用方决定新开会话标签还是原位切换）。
 	 * ref.entryId 精确定位；缺省时按 ref.text 从分支尾部向前匹配最近一条同文 assistant 消息
@@ -748,6 +783,10 @@ interface RawMessage {
 	timestamp?: number;
 	/** 工具结果结构化详情（show_image 在此带图片；模型不可见） */
 	details?: unknown;
+	/** toolResult 消息的工具名（getTodos 扫 todo 结果用） */
+	toolName?: string;
+	/** custom 消息的自定义类型（getTodos 扫 todo-reminder 恢复消息用） */
+	customType?: string;
 }
 
 /** show_image toolResult.details → { images, paths }（兼容旧单图 { path, image } 形状；不符返回 null） */

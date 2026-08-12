@@ -9,7 +9,7 @@ import { AssistantMessage } from "./AssistantMessage";
 import { ImagePreviewOverlay, imageSrc } from "./ImagePreview";
 import { SubagentRunCard } from "./SubagentRunCard";
 
-/** 用户消息复制按钮：hover 气泡显示（常驻占位避免布局抖动），复制成功短暂变为对勾 */
+/** 复制按钮（用户气泡/助手正文共用）：常驻显示，复制成功短暂变为对勾 */
 function CopyButton({ text }: { text: string }) {
 	const t = useT();
 	const [copied, setCopied] = useState(false);
@@ -33,7 +33,7 @@ function CopyButton({ text }: { text: string }) {
 			type="button"
 			onClick={handleCopy}
 			aria-label={copied ? t("message.copied") : t("message.copy")}
-			className="flex h-6 w-6 items-center justify-center rounded-md text-ink-faint opacity-0 transition-opacity duration-150 hover:bg-border/70 hover:text-ink-2 focus-visible:opacity-100 group-hover:opacity-100"
+			className="flex h-6 w-6 items-center justify-center rounded-md text-ink-faint transition-colors duration-150 hover:bg-border/70 hover:text-ink-2 disabled:cursor-not-allowed"
 		>
 			{copied ? (
 				<svg
@@ -91,7 +91,7 @@ function ForkButton({ entryId, text }: { entryId?: string; text: string }) {
 			onClick={handleFork}
 			disabled={agentActive || forking}
 			aria-label={t("message.fork")}
-			className="flex h-6 w-6 items-center justify-center rounded-md text-ink-faint opacity-0 transition-opacity duration-150 hover:bg-border/70 hover:text-ink-2 focus-visible:opacity-100 group-hover:opacity-100 disabled:cursor-not-allowed"
+			className="flex h-6 w-6 items-center justify-center rounded-md text-ink-faint transition-colors duration-150 hover:bg-border/70 hover:text-ink-2 disabled:cursor-not-allowed"
 		>
 			<ForkIcon />
 		</button>
@@ -208,9 +208,9 @@ export const MessageItem = memo(function MessageItem({
 				streaming={streaming}
 				metaInGroup={metaInGroup}
 			/>
-			{/* 操作行（仅正文消息）：复制正文 + 从此处分叉；常驻占位，hover 淡入避免布局抖动 */}
+			{/* 操作行（仅正文消息）：复制正文 + 从此处分叉；常驻显示 */}
 			{!streaming && message.text && (
-				<div className="mt-1 flex items-center gap-1">
+				<div className="mt-0.5 flex items-center gap-1">
 					<CopyButton text={message.text} />
 					<ForkButton entryId={message.entryId} text={message.text} />
 				</div>

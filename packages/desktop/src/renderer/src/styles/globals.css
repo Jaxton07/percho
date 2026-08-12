@@ -161,6 +161,41 @@
 	}
 }
 
+/* todo 胶囊当前任务切换：新任务从下方滑入、旧任务向上滑出（latest-wins，时长与 TodoPanel 的
+   PREV_CLEANUP_MS 同步）。slide-out 必须 forwards：动画结束后保持终态，否则旧行被清理前弹回可见 */
+.todo-pill-slide-in {
+	animation: todo-pill-slide-in 0.2s ease-out;
+}
+.todo-pill-slide-out {
+	animation: todo-pill-slide-out 0.18s ease-in forwards;
+}
+@keyframes todo-pill-slide-in {
+	from {
+		transform: translateY(100%);
+		opacity: 0;
+	}
+	to {
+		transform: translateY(0);
+		opacity: 1;
+	}
+}
+@keyframes todo-pill-slide-out {
+	from {
+		transform: translateY(0);
+		opacity: 1;
+	}
+	to {
+		transform: translateY(-100%);
+		opacity: 0;
+	}
+}
+@media (prefers-reduced-motion: reduce) {
+	.todo-pill-slide-in,
+	.todo-pill-slide-out {
+		animation: none;
+	}
+}
+
 /* 会话 tab 状态：全部收拢到头像图标（颜色即语义），胶囊本体不动。
    工作中 = 蓝底头像 MacBook 睡眠灯式慢呼吸（仅透明度起伏）；等待审批 = 静态琥珀；
    完成未读 = 图标右上角 iOS 式绿点角标（静态，查看即消） */

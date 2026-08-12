@@ -1,8 +1,11 @@
 import {
 	type AgentSessionEvent,
 	extractSubagentRuns,
+	extractTodos,
 	type ImageInput,
 	type SessionMessage,
+	TODO_TOOL_NAME,
+	type TodoItem,
 } from "@pi-desktop/shared";
 
 /** 子代理运行（UI 态：流式期 running，固化后 done/error） */
@@ -122,6 +125,8 @@ export interface SessionTranscriptState {
 	unseenCompletion: boolean;
 	/** 运行中排队的 followUp 消息文本（SDK queue_update 事件整组替换；agent 完成自动投递后清空） */
 	followUpQueue: string[];
+	/** todo 工具维护的任务列表（跨 turn 存活；compaction 后由 loadTodos 从 backend 恢复） */
+	todos: TodoItem[];
 }
 
 export function emptyTranscript(): SessionTranscriptState {
@@ -132,6 +137,7 @@ export function emptyTranscript(): SessionTranscriptState {
 		agentActive: false,
 		unseenCompletion: false,
 		followUpQueue: [],
+		todos: [],
 	};
 }
 
@@ -418,8 +424,15 @@ export function reduceEvent(state: SessionTranscriptState, event: AgentSessionEv
 			return { ...state, streaming: { ...streaming, tools } };
 		}
 		case "tool_execution_end": {
-			const streaming = state.streaming;
-			if (!streaming) return state;
+			// todo 工具：全量替换会话任务列表（含空数组=清空）。不随 turn_end 清理、
+			// 不被 loadHistory 重置 —— 在 streaming 守卫之前处理，容错无流式容器的情况
+			let next = state;
+			if (event.toolName === TODO_TOOL_NAME && !event.isError) {
+				const todos = extractTodos((event.result as { details?: unknown } | null | undefined)?.details);
+				if (todos) next = { ...state, todos };
+			}
+			const streaming = next.streaming;
+			if (!streaming) return next;
 			const extracted = extractSubagentRuns(
 				(event.result as { details?: unknown } | null | undefined)?.details,
 			);
@@ -443,7 +456,7 @@ export function reduceEvent(state: SessionTranscriptState, event: AgentSessionEv
 								]
 							: [];
 				return {
-					...state,
+					...next,
 					streaming: {
 						...streaming,
 						tools: streaming.tools.filter((t) => t.id !== event.toolCallId),
@@ -459,7 +472,7 @@ export function reduceEvent(state: SessionTranscriptState, event: AgentSessionEv
 			// show_image：图片先入 pendingImages 缓冲，turn_end 固化时排在 assistant 消息之后
 			const shown = event.toolName === "show_image" && !event.isError ? extractShowImage(event.result) : null;
 			return {
-				...state,
+				...next,
 				streaming: {
 					...streaming,
 					tools,

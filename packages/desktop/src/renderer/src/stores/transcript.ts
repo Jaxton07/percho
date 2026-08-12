@@ -1,4 +1,4 @@
-import type { AgentSessionEvent } from "@pi-desktop/shared";
+import type { AgentSessionEvent, TodoItem } from "@pi-desktop/shared";
 import { create } from "zustand";
 import {
 	emptyTranscript,
@@ -29,6 +29,9 @@ export interface SessionEntry extends SessionTranscriptState {
 
 const EMPTY_ENTRY: SessionEntry = { ...emptyTranscript(), pendingPermissions: [] };
 
+/** 空 todo 列表稳定引用（面板 selector 缺省用，禁内联新数组） */
+export const EMPTY_TODOS: TodoItem[] = [];
+
 interface TranscriptStore {
 	bySession: Record<string, SessionEntry>;
 	/** isActiveViewing：事件到达时该会话是否正被查看（活跃 tab 且 chat 视图），由调用方判定避免依赖 sessions store */
@@ -44,6 +47,8 @@ interface TranscriptStore {
 	loadHistory: (sessionId: string, messages: UIMessage[]) => void;
 	/** 直接设置排队中的 followUp（打开/切换会话时从 backend 拉初始值；运行中由 queue_update 事件驱动） */
 	setFollowUpQueue: (sessionId: string, queue: string[]) => void;
+	/** 打开会话时从 backend 恢复任务列表（compaction 后 UI 面板数据源；仅写 todos，不动消息） */
+	loadTodos: (sessionId: string, todos: TodoItem[]) => void;
 }
 
 export const useTranscriptStore = create<TranscriptStore>((set) => ({
@@ -144,6 +149,8 @@ export const useTranscriptStore = create<TranscriptStore>((set) => ({
 						agentActive: false,
 						unseenCompletion: false,
 						followUpQueue: current?.followUpQueue ?? [],
+						// loadHistory 只换消息流（compaction 后对齐 pi 裁剪），todo 列表保留
+						todos: current?.todos ?? [],
 						pendingPermissions: current?.pendingPermissions ?? [],
 					},
 				},
@@ -159,6 +166,20 @@ export const useTranscriptStore = create<TranscriptStore>((set) => ({
 					[sessionId]: {
 						...(current ?? { ...EMPTY_ENTRY }),
 						followUpQueue: queue,
+					},
+				},
+			};
+		});
+	},
+	loadTodos: (sessionId, todos) => {
+		set((state) => {
+			const current = state.bySession[sessionId];
+			return {
+				bySession: {
+					...state.bySession,
+					[sessionId]: {
+						...(current ?? { ...EMPTY_ENTRY }),
+						todos,
 					},
 				},
 			};

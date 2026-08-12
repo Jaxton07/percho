@@ -3,6 +3,7 @@ import { useEffect, useState } from "react";
 import { getPi } from "./api";
 import { EmptyState } from "./components/chat/EmptyState";
 import { MessageList } from "./components/chat/MessageList";
+import { TodoPanel } from "./components/chat/TodoPanel";
 import { ProjectPage } from "./components/projects/ProjectPage";
 import { ApprovalDock } from "./components/session/ApprovalDock";
 import { SessionTabBar } from "./components/session/SessionTabBar";
@@ -86,7 +87,10 @@ export default function App() {
 					</div>
 				) : (
 					<>
-						<main className="relative min-h-0 flex-1">{showEmpty ? <EmptyState /> : <MessageList />}</main>
+						<main className="relative min-h-0 flex-1">
+							{showEmpty ? <EmptyState /> : <MessageList />}
+							<TodoPanel />
+						</main>
 						<ApprovalDock sessionId={activeSessionId} hideComposer={showEmpty} />
 					</>
 				)}

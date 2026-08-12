@@ -96,16 +96,29 @@ export interface SubagentRunData {
  * - 后台并行：subagent_wait 的 details.completions[].results[]（agent/success/artifactPaths.outputPath 可能是子会话 jsonl）
  */
 export function extractSubagentRuns(details: unknown): SubagentRunData[] | null {
-	const d = details as {
-		results?: unknown[];
-		completions?: unknown[];
-		artifacts?: { dir?: unknown };
-	} | null | undefined;
+	const d = details as
+		| {
+				results?: unknown[];
+				completions?: unknown[];
+				artifacts?: { dir?: unknown };
+		  }
+		| null
+		| undefined;
 	if (!d) return null;
 	const runs: SubagentRunData[] = [];
 	const artifactsDir = typeof d.artifacts?.dir === "string" ? d.artifacts.dir : undefined;
 
-	const pushRun = (agent: unknown, rest: { task?: unknown; model?: unknown; exitCode?: unknown; error?: unknown; sessionFile?: unknown; tokens?: unknown }) => {
+	const pushRun = (
+		agent: unknown,
+		rest: {
+			task?: unknown;
+			model?: unknown;
+			exitCode?: unknown;
+			error?: unknown;
+			sessionFile?: unknown;
+			tokens?: unknown;
+		},
+	) => {
 		if (typeof agent !== "string") return;
 		const sessionFile = typeof rest.sessionFile === "string" ? rest.sessionFile : undefined;
 		const task = typeof rest.task === "string" && rest.task.length > 0 ? rest.task : undefined;
@@ -132,15 +145,19 @@ export function extractSubagentRuns(details: unknown): SubagentRunData[] | null 
 		if (!completion || !Array.isArray(completion.results)) continue;
 		for (const rawChild of completion.results) {
 			const child = rawChild as
-				| { agent?: unknown; success?: unknown; error?: unknown; artifactPaths?: { jsonlPath?: unknown; outputPath?: unknown } }
+				| {
+						agent?: unknown;
+						success?: unknown;
+						error?: unknown;
+						artifactPaths?: { jsonlPath?: unknown; outputPath?: unknown };
+				  }
 				| undefined;
 			if (!child) continue;
 			const outputPath =
 				typeof child.artifactPaths?.outputPath === "string" ? child.artifactPaths.outputPath : undefined;
 			const jsonlPath =
 				typeof child.artifactPaths?.jsonlPath === "string" ? child.artifactPaths.jsonlPath : undefined;
-			const sessionFile =
-				jsonlPath ?? (outputPath?.endsWith(".jsonl") ? outputPath : undefined);
+			const sessionFile = jsonlPath ?? (outputPath?.endsWith(".jsonl") ? outputPath : undefined);
 			pushRun(child.agent, {
 				error: child.error,
 				sessionFile,
@@ -157,7 +174,9 @@ export function extractSubagentRuns(details: unknown): SubagentRunData[] | null 
 		const sessionFile = typeof r.sessionFile === "string" ? r.sessionFile : undefined;
 		if (!agent && !sessionFile) continue;
 		const artifactPaths = r.artifactPaths as { jsonlPath?: unknown } | undefined;
-		const usage = r.usage as { totalTokens?: { tokens?: unknown }; tokens?: unknown; input?: unknown; output?: unknown } | undefined;
+		const usage = r.usage as
+			| { totalTokens?: { tokens?: unknown }; tokens?: unknown; input?: unknown; output?: unknown }
+			| undefined;
 		const progress = r.progressSummary as { tokens?: unknown } | undefined;
 		const totalTokens = r.totalTokens as { tokens?: unknown } | undefined;
 		const tokenValue =
@@ -175,7 +194,8 @@ export function extractSubagentRuns(details: unknown): SubagentRunData[] | null 
 			model: r.model,
 			exitCode,
 			error,
-			sessionFile: sessionFile ?? (typeof artifactPaths?.jsonlPath === "string" ? artifactPaths.jsonlPath : undefined),
+			sessionFile:
+				sessionFile ?? (typeof artifactPaths?.jsonlPath === "string" ? artifactPaths.jsonlPath : undefined),
 			tokens: tokenValue,
 		});
 	}

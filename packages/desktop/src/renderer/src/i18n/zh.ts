@@ -127,6 +127,10 @@ export const zh = {
 	tool: {
 		running: "运行中…",
 	},
+	todo: {
+		tasks: "任务",
+		allDone: "全部完成",
+	},
 	projects: {
 		title: "项目",
 		search: "在 {project} 中搜索会话",
