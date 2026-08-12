@@ -1,4 +1,5 @@
 import "./pi-package-dir";
+import "./dev-agent-dir";
 import { writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { pathToFileURL } from "node:url";
@@ -42,10 +43,10 @@ protocol.registerSchemesAsPrivileged([
 	{ scheme: BG_PROTOCOL, privileges: { standard: true, secure: true, supportFetchAPI: true } },
 ]);
 
-/** 窗口启动底色跟随主题，避免深色模式下启动白闪 */
-function resolveWindowBackground(theme: ThemeMode | undefined): string {
+/** 解析保存的主题为明确的深浅色（system 时跟随系统），窗口底色与 ?theme= 传参同源 */
+function resolveTheme(theme: ThemeMode | undefined): "dark" | "light" {
 	const dark = theme === "dark" || (theme !== "light" && nativeTheme.shouldUseDarkColors);
-	return dark ? "#17171a" : "#fafafa";
+	return dark ? "dark" : "light";
 }
 
 function sendToRenderer(channel: string, payload: unknown): void {
@@ -246,10 +247,10 @@ app.whenReady().then(async () => {
 	initUpdater();
 	scheduleAutoUpdateCheck();
 	const uiState = await loadUiState();
-	createWindow(resolveWindowBackground(uiState?.theme));
+	createWindow(resolveTheme(uiState?.theme));
 
 	app.on("activate", () => {
-		if (BrowserWindow.getAllWindows().length === 0) createWindow(resolveWindowBackground(uiState?.theme));
+		if (BrowserWindow.getAllWindows().length === 0) createWindow(resolveTheme(uiState?.theme));
 	});
 });
 

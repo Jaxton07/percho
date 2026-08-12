@@ -243,6 +243,12 @@ body {
 	transition: background-color 0.15s ease;
 }
 
+/* 主题就绪（data-theme 写入）前 body 透明：透出窗口 backgroundColor（main 已按主题设置），
+   防深色启动时开屏动画底下闪白 */
+:root:not([data-theme]) body {
+	background: transparent;
+}
+
 /* 设置了自定义背景图时 body 透明，让 #root 内的背景层透出 */
 [data-has-bg="true"] body {
 	background: transparent;

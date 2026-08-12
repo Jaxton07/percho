@@ -8,9 +8,14 @@
       content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: pi-bg:; font-src 'self' data:"
     />
     <title>Pi Desktop</title>
+    <!-- 开屏动画（黑白哑光粒子光团 → 散场）：样式 splash.css（渲染阻塞，首帧前就绪）；
+         DOM 由 splash-dom.ts 在首帧前同步生成（粒子参数程序化生成）；收場控制见 splash.ts。 -->
+    <link rel="stylesheet" href="/src/styles/splash.css" />
   </head>
   <body>
     <div id="root"></div>
+    <script type="module" src="/src/bootstrap-theme.ts"></script>
+    <script type="module" src="/src/splash-dom.ts"></script>
     <script type="module" src="/src/main.tsx"></script>
   </body>
 </html>

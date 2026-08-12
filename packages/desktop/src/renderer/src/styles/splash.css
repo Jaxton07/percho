@@ -1,0 +1,340 @@
+/*
+ * 开屏动画（黑白哑光粒子光团 → 散场）样式。
+ * 经 index.html <link> 引入（渲染阻塞，首帧前就绪），不依赖任何 JS bundle；
+ * DOM 由 splash-dom.ts 在首帧前同步生成，收場时机见 splash.ts（data-app-ready 触发）。
+ * 配色挂 data-theme（bootstrap-theme.ts 首帧前写入）：深色 = 白色微光粒子，浅色 = 墨色粒子；
+ * 波浪（涟漪/冲击波）与粒子反色、随主题挂钩：浅色主题纯白 / 深色主题墨色（用户定案 2026-08）。
+ */
+
+#splash {
+	position: fixed;
+	inset: 0;
+	z-index: 9999;
+	display: grid;
+	place-items: center;
+	overflow: hidden;
+	pointer-events: none;
+}
+#splash > * {
+	grid-area: 1 / 1;
+}
+#root {
+	visibility: hidden;
+}
+html[data-app-ready] #root {
+	visibility: visible;
+	animation: sp-root-in 1s cubic-bezier(0.25, 0.46, 0.45, 0.94) 1.35s both;
+}
+
+/* 粒子团：三层嵌套分离 transform（慢转 / 入场 / 呼吸互不覆盖），粒子各自漂移明灭 */
+.sp-swarm {
+	position: relative;
+	width: 220px;
+	height: 220px;
+	color: #18181b;
+	animation: sp-spin 60s linear infinite;
+}
+html[data-theme="dark"] .sp-swarm {
+	color: #f4f4f5;
+}
+.sp-swarm-in {
+	width: 100%;
+	height: 100%;
+	opacity: 0;
+	transform: scale(0.72);
+	animation: sp-swarm-in 1.1s cubic-bezier(0.16, 1, 0.3, 1) 0.15s forwards;
+}
+.sp-swarm-breathe {
+	width: 100%;
+	height: 100%;
+	animation: sp-swarm-breathe 4.2s ease-in-out 1.3s infinite;
+}
+.sp-dot {
+	position: absolute;
+	left: 50%;
+	top: 50%;
+	width: var(--s);
+	height: var(--s);
+	margin: calc(var(--s) / -2);
+	border-radius: 50%;
+	background: radial-gradient(circle, currentColor 28%, transparent 72%);
+	opacity: var(--o);
+	transform: translate(var(--x), var(--y));
+	animation: sp-dot-drift var(--t) ease-in-out var(--dl) infinite;
+}
+
+/* 声纳涟漪：细环 + 模糊柔边（水波而非画线），透明度克制。
+   颜色与主题挂钩（与粒子反色，穿过粒子团时才有水波感）：浅色主题 = 纯白（墨色粒子上可见），深色主题 = 墨色（白色粒子上可见） */
+.sp-rings {
+	position: relative;
+	width: 220px;
+	height: 220px;
+}
+.sp-rings::before,
+.sp-rings::after {
+	content: "";
+	position: absolute;
+	inset: 0;
+	border: 1px solid rgba(255, 255, 255, 0.6);
+	border-radius: 50%;
+	filter: blur(1px);
+	opacity: 0;
+	animation: sp-sonar 3.2s cubic-bezier(0.16, 1, 0.3, 1) 1.4s infinite;
+}
+.sp-rings::after {
+	animation-delay: 3s;
+}
+html[data-theme="dark"] .sp-rings::before,
+html[data-theme="dark"] .sp-rings::after {
+	border-color: rgba(24, 24, 27, 0.6);
+}
+
+/* 收場涟漪：细环 + 模糊柔边的双环（主环 + 淡回波），从中心扩散出屏。
+   与待机声纳相反：收場时粒子已飞散，环要对**背景**可见——浅色主题 = 淡墨、深色主题 = 柔白 */
+.sp-wave {
+	position: relative;
+	width: 220px;
+	height: 220px;
+	--sp-wave-c: rgba(24, 24, 27, 0.4);
+	--po: 0.7;
+}
+html[data-theme="dark"] .sp-wave {
+	--sp-wave-c: rgba(244, 244, 245, 0.55);
+}
+.sp-wave,
+.sp-wave::after {
+	border: 1.5px solid var(--sp-wave-c);
+	border-radius: 50%;
+	filter: blur(1.5px);
+	opacity: 0;
+}
+.sp-wave::after {
+	content: "";
+	position: absolute;
+	inset: 0;
+	--po: 0.45;
+}
+
+/* 品牌字：粒子团浮现后淡入；底色同色光晕把字从粒子里托出来 */
+.sp-word {
+	font:
+		600 44px / 1 -apple-system,
+		BlinkMacSystemFont,
+		"SF Pro Text",
+		"Helvetica Neue",
+		"PingFang SC",
+		sans-serif;
+	color: #18181b;
+	letter-spacing: 0.02em;
+	text-shadow: 0 0 18px rgba(250, 250, 250, 0.9);
+	user-select: none;
+	opacity: 0;
+	transform: translateY(6px);
+	animation: sp-word-in 0.9s cubic-bezier(0.16, 1, 0.3, 1) 0.55s forwards;
+}
+html[data-theme="dark"] .sp-word {
+	color: #e6e6ea;
+	text-shadow: 0 0 18px rgba(23, 23, 26, 0.85);
+}
+
+/* 慢加载细线：2.4s 后才淡入（正常启动永远看不到） */
+.sp-line {
+	width: 140px;
+	height: 2px;
+	border-radius: 2px;
+	overflow: hidden;
+	background: rgba(24, 24, 27, 0.12);
+	opacity: 0;
+	transform: translateY(160px);
+	animation: sp-fade-in 0.6s ease-out 2.4s forwards;
+}
+.sp-line::after {
+	content: "";
+	display: block;
+	width: 100%;
+	height: 100%;
+	background: linear-gradient(90deg, transparent, rgba(24, 24, 27, 0.55), transparent);
+	transform: translateX(-100%);
+	animation: sp-sweep 1.4s ease-in-out 2.4s infinite;
+}
+html[data-theme="dark"] .sp-line {
+	background: rgba(255, 255, 255, 0.14);
+}
+html[data-theme="dark"] .sp-line::after {
+	background: linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.7), transparent);
+}
+
+/* ---- 收場（data-app-ready 触发）：粒子向外爆裂飞出屏外 + 涟漪双环扩散出屏 → 屏幕归于主题纯色 → 主界面再淡入（先后不交叠） ----
+   注意：base opacity:0 的元素（ swarm-in / word / rings / line ）可见态全靠入场动画 forwards 填充，
+   收場替换动画会瞬间塌回 0 —— 必须先把 base 值显式设为当前可见值，再挂收場动画 */
+html[data-app-ready] .sp-word {
+	opacity: 1;
+	transform: translateY(0);
+	animation: sp-word-out 0.45s ease-in forwards;
+}
+html[data-app-ready] .sp-rings::before,
+html[data-app-ready] .sp-rings::after {
+	opacity: 0.35;
+	animation: sp-quick-out 0.25s ease-in forwards;
+}
+html[data-app-ready] .sp-line {
+	opacity: 1;
+	animation: sp-quick-out 0.2s ease-in forwards;
+}
+html[data-app-ready] .sp-line::after {
+	animation: none;
+}
+html[data-app-ready] .sp-dot {
+	animation: sp-dot-out 1.2s cubic-bezier(0.55, 0.06, 0.68, 0.19) 0.05s forwards;
+}
+html[data-app-ready] .sp-swarm-in {
+	opacity: 1;
+	transform: scale(1);
+	animation: sp-quick-out 0.3s ease-in 1.3s forwards;
+}
+html[data-app-ready] .sp-wave {
+	animation: sp-wave-out 1.8s cubic-bezier(0.25, 0.46, 0.45, 0.94) 0.15s forwards;
+}
+html[data-app-ready] .sp-wave::after {
+	animation: sp-wave-out 1.8s cubic-bezier(0.25, 0.46, 0.45, 0.94) 0.38s forwards;
+}
+
+@keyframes sp-fade-in {
+	to {
+		opacity: 1;
+	}
+}
+@keyframes sp-spin {
+	to {
+		transform: rotate(1turn);
+	}
+}
+@keyframes sp-swarm-in {
+	to {
+		opacity: 1;
+		transform: scale(1);
+	}
+}
+@keyframes sp-swarm-breathe {
+	0%,
+	100% {
+		transform: scale(1);
+	}
+	50% {
+		transform: scale(1.05);
+	}
+}
+@keyframes sp-dot-drift {
+	0%,
+	100% {
+		opacity: var(--o);
+		transform: translate(var(--x), var(--y)) scale(1);
+	}
+	50% {
+		opacity: calc(var(--o) * 0.45);
+		transform: translate(calc(var(--x) * 1.14), calc(var(--y) * 1.14)) scale(1.3);
+	}
+}
+@keyframes sp-sonar {
+	0% {
+		transform: scale(0.72);
+		opacity: 0;
+	}
+	15% {
+		opacity: 0.65;
+	}
+	60% {
+		opacity: 0.25;
+	}
+	100% {
+		transform: scale(2.3);
+		opacity: 0;
+	}
+}
+@keyframes sp-wave-out {
+	0% {
+		transform: scale(0.5);
+		opacity: 0;
+	}
+	8% {
+		opacity: var(--po);
+	}
+	55% {
+		opacity: calc(var(--po) * 0.7);
+	}
+	100% {
+		transform: scale(12);
+		opacity: 0;
+	}
+}
+@keyframes sp-word-in {
+	to {
+		opacity: 1;
+		transform: translateY(0);
+	}
+}
+@keyframes sp-sweep {
+	to {
+		transform: translateX(100%);
+	}
+}
+@keyframes sp-root-in {
+	from {
+		opacity: 0;
+	}
+	to {
+		opacity: 1;
+	}
+}
+@keyframes sp-quick-out {
+	to {
+		opacity: 0;
+	}
+}
+@keyframes sp-word-out {
+	to {
+		opacity: 0;
+		transform: translateY(-8px) scale(1.12);
+	}
+}
+@keyframes sp-dot-out {
+	0% {
+		opacity: var(--o);
+		transform: translate(var(--x), var(--y)) scale(1);
+	}
+	55% {
+		opacity: calc(var(--o) * 0.85);
+	}
+	100% {
+		opacity: 0;
+		transform: translate(var(--ex), var(--ey)) scale(0.6);
+	}
+}
+
+/* 减弱动态：静态粒子团 + 纯淡入淡出 */
+@media (prefers-reduced-motion: reduce) {
+	.sp-swarm,
+	.sp-dot {
+		animation: none;
+	}
+	.sp-rings,
+	.sp-wave,
+	.sp-line {
+		display: none;
+	}
+	.sp-swarm-in {
+		animation: sp-fade-in 0.2s ease-out forwards;
+	}
+	.sp-word {
+		animation: sp-word-in 0.2s ease-out 0.1s forwards;
+	}
+	html[data-app-ready] .sp-swarm-in,
+	html[data-app-ready] .sp-word {
+		opacity: 1;
+		transform: none;
+		animation: sp-quick-out 0.2s ease-in forwards;
+	}
+	html[data-app-ready] #root {
+		animation: none;
+	}
+}
