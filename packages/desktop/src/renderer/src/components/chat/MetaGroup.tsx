@@ -124,8 +124,7 @@ export function MetaGroup({
 				//（与 .shimmer-sweep 的 120%→-20% 同为左→右）；元素背景左缘 = centerRel - w - 元素在 range 内偏移
 				const progress = ((now - start) % SWEEP_MS) / SWEEP_MS;
 				const centerRel = -0.2 * w + progress * 1.4 * w;
-				for (let i = 0; i < targets.length; i++) {
-					const el = targets[i];
+				for (const el of targets) {
 					const rect = el.getBoundingClientRect();
 					if (rect.width === 0) continue;
 					el.style.backgroundImage = SWEEP_GRADIENT;
