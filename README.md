@@ -28,10 +28,6 @@
 
 ![Chat page demo](docs/assets/img/demo-chat.gif)
 
-**Agent showing images in chat (`show_image`)**
-
-![Agent displaying a row of images in chat](docs/assets/img/chat_show_img.png)
-
 **Custom background & dark theme**
 
 ![Chat with custom background image in dark theme](docs/assets/img/chat_img_bg_show_img.png)
@@ -71,7 +67,15 @@ Prebuilt installers are published on the [Releases](https://github.com/Jaxton07/
 | macOS (Intel) | `pi-desktop-mac-x64.dmg` |
 | Windows | `pi-desktop-windows-x64.exe` |
 
-> Builds are currently unsigned. On macOS, the first launch may show **"Pi Desktop is damaged and can't be opened"** — that's Gatekeeper blocking an unsigned download, not actual damage. Fix it by removing the quarantine flag: `xattr -cr "/Applications/Pi Desktop.app"`, then open normally. On Windows, click "More info" → "Run anyway" when SmartScreen appears.
+> Builds are ad-hoc signed (no Developer ID certificate). On macOS, the first launch after a download may show **"Apple cannot verify Pi Desktop is free from malware"** — that's Gatekeeper blocking an un-notarized app. To open it:
+>
+> 1. **System Settings → Privacy & Security** → scroll to the bottom → click **Open Anyway** next to the Pi Desktop entry, then confirm with your password or Touch ID (recommended).
+>
+>    ![macOS Open Anyway](docs/assets/img/pi_desk_mac_permission.png)
+>
+> 2. Or in Terminal: `xattr -cr "/Applications/Pi Desktop.app"`.
+>
+> Only the first launch of each downloaded version needs this — later updates install automatically in-app and skip Gatekeeper entirely. On Windows, click "More info" → "Run anyway" when SmartScreen appears.
 
 ## Configuration
 

@@ -28,10 +28,6 @@
 
 ![聊天页演示](docs/assets/img/demo-chat.gif)
 
-**Agent 在对话中发图（`show_image`）**
-
-![Agent 在对话中展示一排图片](docs/assets/img/chat_show_img.png)
-
 **自定义背景 + 深色主题**
 
 ![深色主题下带自定义背景的聊天页](docs/assets/img/chat_img_bg_show_img.png)
@@ -71,7 +67,15 @@ pi-desktop 把官方 Pi SDK（`@earendil-works/pi-coding-agent`）跑在 Electro
 | macOS (Intel) | `pi-desktop-mac-x64.dmg` |
 | Windows | `pi-desktop-windows-x64.exe` |
 
-> 目前构建未签名。macOS 首次打开可能提示**「Pi Desktop 已损坏，无法打开」**—— 这是 Gatekeeper 拦截未签名的下载文件，并非真的损坏。执行 `xattr -cr "/Applications/Pi Desktop.app"` 移除隔离属性后即可正常打开（右键「打开」对此无效）。Windows 上 SmartScreen 提示时点「更多信息」→「仍要运行」。
+> 构建为 adhoc 临时签名（无 Developer ID 证书）。macOS 下载后首次打开可能提示**「Apple 无法验证 Pi Desktop 是否包含危害 Mac 安全或泄漏隐私的恶意软件」**—— 这是 Gatekeeper 拦截未公证的 App。按以下方式放行：
+>
+> 1. **系统设置 → 隐私与安全性** → 滚动到底部 → 在 Pi Desktop 条目旁点**「仍要打开」**，然后输入密码或 Touch ID 确认（推荐）。
+>
+>    ![macOS「仍要打开」](docs/assets/img/pi_desk_mac_permission.png)
+>
+> 2. 或在终端执行：`xattr -cr "/Applications/Pi Desktop.app"`。
+>
+> 每个下载版本只需首次打开时放行一次——之后自动更新在应用内完成，不会再触发 Gatekeeper。Windows 上 SmartScreen 提示时点「更多信息」→「仍要运行」。
 
 ## 配置
 
