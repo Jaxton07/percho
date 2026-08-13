@@ -160,7 +160,7 @@ export function MetaGroup({
 	// （必须在 liveItems 之前推导，因为 liveItems 会过滤掉 thinking）
 	const latestActivity = useMemo(() => {
 		for (let i = items.length - 1; i >= 0; i--) {
-			const activity = items[i].activity;
+			const activity = items[i]?.activity;
 			if (activity && activity.length > 0) {
 				return activity[activity.length - 1];
 			}
