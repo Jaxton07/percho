@@ -3,7 +3,7 @@ import { useEffect, useRef, useState } from "react";
 import { getPi } from "../../api";
 import { useT } from "../../i18n";
 import { EMPTY_DRAFT, NEW_SESSION_DRAFT_KEY, useDraftStore } from "../../stores/drafts";
-import { useSessionsStore } from "../../stores/sessions";
+import { isDraftSessionId, useSessionsStore } from "../../stores/sessions";
 import { useSettingsStore } from "../../stores/settings";
 import { selectTranscript, useTranscriptStore } from "../../stores/transcript";
 import { ImagePreviewOverlay, imageSrc } from "../chat/ImagePreview";
@@ -153,9 +153,12 @@ export function Composer({ centered = false }: { centered?: boolean }) {
 		return () => window.removeEventListener("pointerdown", onPointerDown);
 	}, [slashOpen, atOpen]);
 
-	// 会话切换时重新拉取命令列表（模板/skill 随项目变化）
+	// 会话切换时重新拉取命令列表（模板/skill 随项目变化）；draft 在后端不存在，跳过
 	useEffect(() => {
-		if (!activeSessionId) return;
+		if (!activeSessionId || isDraftSessionId(activeSessionId)) {
+			setSlashCommands([]);
+			return;
+		}
 		let cancelled = false;
 		void getPi()
 			.listSlashCommands(activeSessionId)
@@ -170,15 +173,17 @@ export function Composer({ centered = false }: { centered?: boolean }) {
 		};
 	}, [activeSessionId]);
 
-	/** 确保有活跃会话（无则新建），返回 sessionId */
+	/** 确保有活跃会话（无会话或 draft 时用其 cwd 真正创建，draft tab 原地转正），返回 sessionId */
 	const ensureSession = async (): Promise<string | null> => {
-		let sessionId = activeSessionId;
-		if (!sessionId) {
-			if (!cwd) return null;
-			await createSession(cwd);
-			sessionId = useSessionsStore.getState().activeSessionId;
-		}
-		return sessionId;
+		const state = useSessionsStore.getState();
+		const current = state.activeSessionId;
+		if (current && !isDraftSessionId(current)) return current;
+		const draftCwd = current ? state.sessions.find((s) => s.sessionId === current)?.cwd : undefined;
+		const targetCwd = draftCwd ?? state.cwd;
+		if (!targetCwd) return null;
+		await createSession(targetCwd, current ?? undefined);
+		const created = useSessionsStore.getState().activeSessionId;
+		return created && !isDraftSessionId(created) ? created : null;
 	};
 
 	/** 执行内置命令（发送以 / 开头文本时的分发；未匹配则透传给 SDK 原生处理模板/skill/扩展命令） */
@@ -258,10 +263,9 @@ export function Composer({ centered = false }: { centered?: boolean }) {
 				return;
 			}
 			// 未匹配的内置命令：落回正常发送（SDK 原生处理模板/技能/扩展命令）
-		} else if (!sessionId) {
-			if (!cwd) return;
-			await createSession(cwd);
-			sessionId = useSessionsStore.getState().activeSessionId;
+		} else if (!sessionId || isDraftSessionId(sessionId)) {
+			// 无会话或 draft tab：用其 cwd 真正创建（draft 原地转正）
+			sessionId = await ensureSession();
 			if (!sessionId) return;
 		}
 
@@ -289,7 +293,7 @@ export function Composer({ centered = false }: { centered?: boolean }) {
 
 	/** 停止：先清排队（避免 abort 后 SDK 把排队消息投递出去）并还原为草稿，再中止 */
 	const handleStop = async () => {
-		if (!activeSessionId) return;
+		if (!activeSessionId || isDraftSessionId(activeSessionId)) return;
 		useTranscriptStore.getState().setFollowUpQueue(activeSessionId, []); // 乐观清面板
 		const cleared = await getPi().clearQueue(activeSessionId);
 		if (cleared.followUp.length > 0) {
@@ -301,7 +305,7 @@ export function Composer({ centered = false }: { centered?: boolean }) {
 
 	/** 取回排队消息：清队列（SDK 侧 queue_update 随后对齐），内容放回输入框继续编辑 */
 	const handleRestoreQueue = async () => {
-		if (!activeSessionId) return;
+		if (!activeSessionId || isDraftSessionId(activeSessionId)) return;
 		useTranscriptStore.getState().setFollowUpQueue(activeSessionId, []); // 乐观清面板
 		const cleared = await getPi().clearQueue(activeSessionId);
 		const restored = cleared.followUp[0];

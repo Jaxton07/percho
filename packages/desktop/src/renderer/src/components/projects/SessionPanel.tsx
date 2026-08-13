@@ -23,14 +23,15 @@ export function SessionPanel() {
 		() => deriveSessions({ allSessions, selectedCwd, search }),
 		[allSessions, selectedCwd, search],
 	);
-	const createSession = useSessionsStore((s) => s.createSession);
+	const createDraftSession = useSessionsStore((s) => s.createDraftSession);
 	const setView = useUiStore((s) => s.setView);
 
 	const groups = groupByDate(sessions);
 
-	const newSession = async () => {
+	const newSession = () => {
 		if (!selectedCwd) return;
-		await createSession(selectedCwd);
+		// draft tab：发送首条消息时才真正创建，期间仍可在空态切换项目
+		createDraftSession(selectedCwd);
 		setView("chat");
 	};
 
@@ -40,7 +41,7 @@ export function SessionPanel() {
 				<button
 					type="button"
 					className="flex shrink-0 items-center gap-1.5 rounded-lg px-2.5 py-1.5 text-[13px] text-ink-2 transition-colors hover:bg-hover disabled:opacity-40"
-					onClick={() => void newSession()}
+					onClick={newSession}
 					disabled={!selectedCwd}
 				>
 					<ComposeIcon />

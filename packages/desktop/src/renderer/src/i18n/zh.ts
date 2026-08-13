@@ -133,8 +133,7 @@ export const zh = {
 		running: "运行中…",
 	},
 	todo: {
-		tasks: "任务",
-		allDone: "全部完成",
+		title: "任务清单",
 	},
 	projects: {
 		title: "项目",

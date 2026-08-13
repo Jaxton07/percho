@@ -79,7 +79,7 @@ export function SessionTabBar() {
 	const t = useT();
 	const sessions = useSessionsStore((s) => s.sessions);
 	const activeSessionId = useSessionsStore((s) => s.activeSessionId);
-	const createSession = useSessionsStore((s) => s.createSession);
+	const createDraftSession = useSessionsStore((s) => s.createDraftSession);
 	const cwd = useSessionsStore((s) => s.cwd);
 	const view = useUiStore((s) => s.view);
 	const setView = useUiStore((s) => s.setView);
@@ -138,7 +138,8 @@ export function SessionTabBar() {
 					type="button"
 					className="no-drag shrink-0 rounded-lg p-1.5 text-ink-dim transition-colors hover:bg-hover hover:text-ink"
 					onClick={() => {
-						void createSession();
+						// 只建内存 draft tab（空 tab 重启自动消失）；发送首条消息时才真正创建后端会话
+						createDraftSession();
 						setView("chat");
 					}}
 					aria-label={cwd ? t("tabbar.newSession") : t("tabbar.pickProjectFirst")}

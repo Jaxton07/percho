@@ -11,7 +11,7 @@ import type {
 } from "@percho/shared";
 import { create } from "zustand";
 import { getPi } from "../api";
-import { useSessionsStore } from "./sessions";
+import { isDraftSessionId, useSessionsStore } from "./sessions";
 
 export type SettingsCategory =
 	| "general"
@@ -258,9 +258,9 @@ export const useSettingsStore = create<SettingsStore>((set, get) => {
 			try {
 				const providers = await getPi().listProviders();
 				set({ providers, loading: false, error: null });
-				// 已加载资源按当前活跃会话（其项目）展示；无会话时为 null（面板显示空态）
+				// 已加载资源按当前活跃会话（其项目）展示；无会话或 draft（未真正创建）时为 null（面板显示空态）
 				const activeSessionId = useSessionsStore.getState().activeSessionId;
-				if (activeSessionId) {
+				if (activeSessionId && !isDraftSessionId(activeSessionId)) {
 					const resources = await getPi().getLoadedResources(activeSessionId);
 					set({
 						skills: resources.skills,

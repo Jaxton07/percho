@@ -1,7 +1,7 @@
 import type { ContextUsageInfo } from "@percho/shared";
 import { useCallback, useEffect, useState } from "react";
 import { getPi } from "../../api";
-import { useSessionsStore } from "../../stores/sessions";
+import { isDraftSessionId, useSessionsStore } from "../../stores/sessions";
 import { selectTranscript, useTranscriptStore } from "../../stores/transcript";
 
 /** 触发刷新的事件类型（流式 delta 类高频事件不刷新） */
@@ -26,7 +26,8 @@ export function ContextRing() {
 	const [usage, setUsage] = useState<ContextUsageInfo | null>(null);
 
 	const refresh = useCallback(async () => {
-		if (!activeSessionId) {
+		// draft 在后端不存在，无上下文用量可查
+		if (!activeSessionId || isDraftSessionId(activeSessionId)) {
 			setUsage(null);
 			return;
 		}

@@ -2,12 +2,16 @@ import { useEffect, useMemo, useState } from "react";
 import { getPi } from "../../api";
 import { useT } from "../../i18n";
 import { deriveProjects, useProjectsStore } from "../../stores/projects";
-import { useSessionsStore } from "../../stores/sessions";
+import { isDraftSessionId, useSessionsStore } from "../../stores/sessions";
 import { Dropdown } from "../ui/Dropdown";
 
 /** 空态 Composer 下方：项目目录选择 + git 分支选择（对标 opencode） */
 export function ProjectBranchPicker() {
 	const cwd = useSessionsStore((s) => s.cwd);
+	const activeSessionId = useSessionsStore((s) => s.activeSessionId);
+	// 真实会话的项目在创建时已绑定、不可更改：只在无会话 / draft（新会话）时提供切换，
+	// 避免选择器看起来能切、实际不生效的假交互
+	if (activeSessionId && !isDraftSessionId(activeSessionId)) return null;
 	return (
 		<div className="flex items-center justify-center gap-2 text-[13px] text-ink-dim">
 			<ProjectPicker />
@@ -21,6 +25,7 @@ function ProjectPicker() {
 	const t = useT();
 	const cwd = useSessionsStore((s) => s.cwd);
 	const pickDirectory = useSessionsStore((s) => s.pickDirectory);
+	const setDraftCwd = useSessionsStore((s) => s.setDraftCwd);
 	const allSessions = useProjectsStore((s) => s.allSessions);
 	const addedProjects = useProjectsStore((s) => s.addedProjects);
 	const projects = useMemo(
@@ -50,7 +55,8 @@ function ProjectPicker() {
 								project.cwd === cwd ? "text-ink" : "text-ink-2"
 							}`}
 							onClick={() => {
-								useSessionsStore.setState({ cwd: project.cwd });
+								// draft 场景下同步更新 draft 条目的 cwd，发送首条消息时即用此目录创建
+								setDraftCwd(project.cwd);
 								close();
 							}}
 						>

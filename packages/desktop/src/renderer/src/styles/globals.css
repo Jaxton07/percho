@@ -168,38 +168,67 @@
 	}
 }
 
-/* todo 胶囊当前任务切换：新任务从下方滑入、旧任务向上滑出（latest-wins，时长与 TodoPanel 的
-   PREV_CLEANUP_MS 同步）。slide-out 必须 forwards：动画结束后保持终态，否则旧行被清理前弹回可见 */
-.todo-pill-slide-in {
-	animation: todo-pill-slide-in 0.2s ease-out;
+/* todo 折叠态呼吸灯：颜色取 ink（与背景相反——日间黑 / 夜间白），仅透明度 + 缩放起伏 */
+.todo-breath-dot {
+	width: 7px;
+	height: 7px;
+	flex-shrink: 0;
+	border-radius: 9999px;
+	background: var(--color-ink);
+	animation: todo-breath 2.2s ease-in-out infinite;
+	transition: opacity 0.3s;
 }
-.todo-pill-slide-out {
-	animation: todo-pill-slide-out 0.18s ease-in forwards;
+/* 工作停止（agentActive false）：呼吸定格 + 变淡成静态暗点，恢复工作自动继续 */
+.todo-breath-dot-paused {
+	animation-play-state: paused;
+	opacity: 0.3;
 }
-@keyframes todo-pill-slide-in {
-	from {
-		transform: translateY(100%);
-		opacity: 0;
-	}
-	to {
-		transform: translateY(0);
+@keyframes todo-breath {
+	0%,
+	100% {
 		opacity: 1;
+		transform: scale(1);
+	}
+	50% {
+		opacity: 0.3;
+		transform: scale(0.72);
 	}
 }
-@keyframes todo-pill-slide-out {
-	from {
-		transform: translateY(0);
-		opacity: 1;
-	}
+
+/* todo 完成对勾描边绘制：仅新挂载的行触发（React 复用 DOM 节点不会重放动画） */
+.todo-check-path {
+	stroke-dasharray: 16;
+	stroke-dashoffset: 16;
+	animation: todo-check-draw 0.45s cubic-bezier(0.65, 0, 0.35, 1) 0.05s forwards;
+}
+@keyframes todo-check-draw {
 	to {
-		transform: translateY(-100%);
-		opacity: 0;
+		stroke-dashoffset: 0;
 	}
 }
+
+/* todo 展开列表：极细滚动条（3px，track 透明） */
+.todo-thin-scroll::-webkit-scrollbar {
+	width: 3px;
+}
+.todo-thin-scroll::-webkit-scrollbar-thumb {
+	background: var(--scrollbar-thumb);
+	border-radius: 2px;
+}
+.todo-thin-scroll::-webkit-scrollbar-thumb:hover {
+	background: var(--scrollbar-thumb-hover);
+}
+.todo-thin-scroll::-webkit-scrollbar-track {
+	background: transparent;
+}
+
 @media (prefers-reduced-motion: reduce) {
-	.todo-pill-slide-in,
-	.todo-pill-slide-out {
+	.todo-breath-dot {
 		animation: none;
+	}
+	.todo-check-path {
+		animation: none;
+		stroke-dashoffset: 0;
 	}
 }
 

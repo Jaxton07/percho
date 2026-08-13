@@ -4,6 +4,13 @@ import { getPi } from "../api";
 import { useTranscriptStore } from "./transcript";
 import { messagesToUIMessages } from "./transcript-reducer";
 
+/** 草稿会话 id 前缀：新会话 tab 的占位条目，只存在于 renderer 内存，后端永远不会看到 */
+export const DRAFT_SESSION_PREFIX = "draft:";
+
+export function isDraftSessionId(sessionId: string | null | undefined): boolean {
+	return typeof sessionId === "string" && sessionId.startsWith(DRAFT_SESSION_PREFIX);
+}
+
 /** 顶栏打开的会话持久化（重启恢复用）；由主进程写 userData/tabs.json，不依赖 renderer localStorage */
 function persistTabs(state: Pick<SessionsStore, "sessions" | "activeSessionId">): void {
 	try {
@@ -24,7 +31,11 @@ interface SessionsStore {
 	currentModel: { provider: string; modelId: string } | null;
 	thinkingLevel: string;
 	error: string | null;
-	createSession: (cwd?: string) => Promise<void>;
+	createSession: (cwd?: string, replaceDraftId?: string) => Promise<void>;
+	/** 新建草稿会话 tab：不触后端、不落盘（空 tab 重启后自动消失），发送首条消息时才用其 cwd 真正创建 */
+	createDraftSession: (cwd?: string) => void;
+	/** 设置新会话的目标项目目录；活跃 tab 是 draft 时同步更新其条目（切 tab 往返不丢选择） */
+	setDraftCwd: (cwd: string) => void;
 	switchSession: (sessionId: string) => void;
 	closeSession: (sessionId: string) => Promise<void>;
 	openFromHistory: (filePath: string) => Promise<void>;
@@ -49,7 +60,7 @@ export const useSessionsStore = create<SessionsStore>((set, get) => ({
 	thinkingLevel: "medium",
 	error: null,
 
-	createSession: async (cwd) => {
+	createSession: async (cwd, replaceDraftId) => {
 		const targetCwd = cwd ?? get().cwd;
 		if (!targetCwd) return;
 		try {
@@ -59,23 +70,62 @@ export const useSessionsStore = create<SessionsStore>((set, get) => ({
 				thinkingLevel: get().thinkingLevel,
 			});
 			set((state) => ({
-				sessions: [...state.sessions, meta],
+				// draft 转正式会话：原地替换保持 tab 位置；普通新建则追加
+				sessions: replaceDraftId
+					? state.sessions.map((s) => (s.sessionId === replaceDraftId ? meta : s))
+					: [...state.sessions, meta],
 				activeSessionId: meta.sessionId,
 				cwd: targetCwd,
 			}));
 			useTranscriptStore.getState().resetSession(meta.sessionId);
 			persistTabs(get());
 		} catch (error) {
+			// 失败时 draft tab 保留，用户重试即可
 			set({ error: error instanceof Error ? error.message : String(error) });
 		}
 	},
+
+	createDraftSession: (cwd) => {
+		const targetCwd = cwd ?? get().cwd;
+		if (!targetCwd) return;
+		const now = Date.now();
+		const draft: SessionMeta = {
+			sessionId: `${DRAFT_SESSION_PREFIX}${crypto.randomUUID()}`,
+			cwd: targetCwd,
+			model: get().currentModel,
+			thinkingLevel: get().thinkingLevel,
+			active: true,
+			messageCount: 0,
+			createdAt: now,
+			modifiedAt: now,
+		};
+		set((state) => ({
+			sessions: [...state.sessions, draft],
+			activeSessionId: draft.sessionId,
+			cwd: targetCwd,
+		}));
+		// 不 persistTabs：draft 无 sessionFile 本就会被过滤，tabs.json 保持指向最近的真实会话
+	},
+
+	setDraftCwd: (cwd) =>
+		set((state) => {
+			const active = state.sessions.find((s) => s.sessionId === state.activeSessionId);
+			if (active && isDraftSessionId(active.sessionId)) {
+				return {
+					cwd,
+					sessions: state.sessions.map((s) => (s.sessionId === active.sessionId ? { ...s, cwd } : s)),
+				};
+			}
+			return { cwd };
+		}),
 
 	switchSession: (sessionId) => {
 		set((state) => {
 			const session = state.sessions.find((s) => s.sessionId === sessionId);
 			return { activeSessionId: sessionId, cwd: session?.cwd ?? state.cwd };
 		});
-		persistTabs(get());
+		// 切到 draft 不落盘：tabs.json 保持指向最近的真实会话（draft 重启后本就会消失）
+		if (!isDraftSessionId(sessionId)) persistTabs(get());
 	},
 
 	updateSessionName: (sessionId, name) =>
@@ -84,7 +134,9 @@ export const useSessionsStore = create<SessionsStore>((set, get) => ({
 		})),
 
 	closeSession: async (sessionId) => {
-		await getPi().closeSession(sessionId);
+		const isDraft = isDraftSessionId(sessionId);
+		// draft 没有后端会话，纯本地移除
+		if (!isDraft) await getPi().closeSession(sessionId);
 		useTranscriptStore.getState().resetSession(sessionId);
 		set((state) => {
 			const sessions = state.sessions.filter((s) => s.sessionId !== sessionId);
@@ -92,7 +144,7 @@ export const useSessionsStore = create<SessionsStore>((set, get) => ({
 				state.activeSessionId === sessionId ? (sessions[0]?.sessionId ?? null) : state.activeSessionId;
 			return { sessions, activeSessionId };
 		});
-		persistTabs(get());
+		if (!isDraft) persistTabs(get());
 	},
 
 	openFromHistory: async (filePath) => {
@@ -117,7 +169,8 @@ export const useSessionsStore = create<SessionsStore>((set, get) => ({
 
 	forkSession: async (ref) => {
 		const { activeSessionId } = get();
-		if (!activeSessionId) return;
+		// draft 还没有消息，无可分叉（UI 上也到不了这里，防御性拦截）
+		if (!activeSessionId || isDraftSessionId(activeSessionId)) return;
 		try {
 			const meta = await getPi().forkSession(activeSessionId, ref);
 			set((state) => ({
@@ -174,7 +227,8 @@ export const useSessionsStore = create<SessionsStore>((set, get) => ({
 
 	pickDirectory: async () => {
 		const cwd = await getPi().pickDirectory();
-		if (cwd) set({ cwd });
+		// 走 setDraftCwd：活跃 tab 是 draft 时同步更新其条目
+		if (cwd) get().setDraftCwd(cwd);
 	},
 
 	loadModels: async () => {
@@ -212,7 +266,8 @@ export const useSessionsStore = create<SessionsStore>((set, get) => ({
 			),
 		}));
 		void getPi().saveUiState({ currentModel: { provider, modelId }, thinkingLevel: get().thinkingLevel });
-		if (activeSessionId) {
+		// draft 无后端会话：模型选择只作为全局默认，创建时随 createSession 生效
+		if (activeSessionId && !isDraftSessionId(activeSessionId)) {
 			try {
 				await getPi().setModel(activeSessionId, provider, modelId);
 			} catch (error) {
@@ -231,7 +286,8 @@ export const useSessionsStore = create<SessionsStore>((set, get) => ({
 			),
 		}));
 		void getPi().saveUiState({ currentModel, thinkingLevel: level });
-		if (activeSessionId) {
+		// draft 无后端会话：同上，仅作全局默认
+		if (activeSessionId && !isDraftSessionId(activeSessionId)) {
 			try {
 				await getPi().setThinkingLevel(activeSessionId, level);
 			} catch (error) {

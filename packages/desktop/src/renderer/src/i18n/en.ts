@@ -135,8 +135,7 @@ export const en: Messages = {
 		running: "Running…",
 	},
 	todo: {
-		tasks: "tasks",
-		allDone: "All done",
+		title: "Todo List",
 	},
 	projects: {
 		title: "Projects",
