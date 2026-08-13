@@ -1,7 +1,7 @@
 import { execFile } from "node:child_process";
 import { createRequire } from "node:module";
-import { createLogger } from "@pi-desktop/backend";
-import type { UpdateState } from "@pi-desktop/shared";
+import { createLogger } from "@percho/backend";
+import type { UpdateState } from "@percho/shared";
 import { app } from "electron";
 
 const log = createLogger("updater");

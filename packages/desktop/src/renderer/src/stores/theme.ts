@@ -1,4 +1,4 @@
-import type { BackgroundSettings, ThemeMode } from "@pi-desktop/shared";
+import type { BackgroundSettings, ThemeMode } from "@percho/shared";
 import { create } from "zustand";
 import { getPi } from "../api";
 

@@ -1,4 +1,4 @@
-import type { ContextUsageInfo } from "@pi-desktop/shared";
+import type { ContextUsageInfo } from "@percho/shared";
 import { useCallback, useEffect, useState } from "react";
 import { getPi } from "../../api";
 import { useSessionsStore } from "../../stores/sessions";

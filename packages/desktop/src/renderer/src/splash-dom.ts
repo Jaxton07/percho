@@ -39,6 +39,6 @@ splash.innerHTML = `
 	</div>
 	<div class="sp-rings"></div>
 	<div class="sp-wave"></div>
-	<div class="sp-word">pi</div>
+	<div class="sp-word">percho</div>
 	<div class="sp-line"></div>`;
 document.body.append(splash);

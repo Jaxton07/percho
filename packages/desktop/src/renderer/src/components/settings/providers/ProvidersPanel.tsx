@@ -1,4 +1,4 @@
-import type { ProviderInfo } from "@pi-desktop/shared";
+import type { ProviderInfo } from "@percho/shared";
 import { useT } from "../../../i18n";
 import { useSettingsStore } from "../../../stores/settings";
 import { RefreshIcon } from "../../icons";

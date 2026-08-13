@@ -1,4 +1,4 @@
-import type { ThemeMode } from "@pi-desktop/shared";
+import type { ThemeMode } from "@percho/shared";
 import { useT } from "../../i18n";
 import { backgroundImageUrl, useThemeStore } from "../../stores/theme";
 

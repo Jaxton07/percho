@@ -1,4 +1,4 @@
-import type { PermissionAnswer, PermissionRequest } from "@pi-desktop/shared";
+import type { PermissionAnswer, PermissionRequest } from "@percho/shared";
 
 export type PermissionResponder = (req: PermissionRequest) => void;
 

@@ -1,5 +1,5 @@
 {
-	"name": "@pi-desktop/desktop",
+	"name": "@percho/desktop",
 	"version": "0.2.4",
 	"private": true,
 	"description": "Desktop GUI for the Pi coding agent",
@@ -18,8 +18,8 @@
 	"dependencies": {
 		"@earendil-works/pi-ai": "0.84.0",
 		"@earendil-works/pi-coding-agent": "0.84.0",
-		"@pi-desktop/backend": "*",
-		"@pi-desktop/shared": "*",
+		"@percho/backend": "*",
+		"@percho/shared": "*",
 		"electron-updater": "^6.8.9",
 		"markstream-react": "^0.0.55",
 		"react": "^19.2.8",

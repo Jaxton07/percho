@@ -1,4 +1,4 @@
-import { IpcChannels, type PiApi, type SessionEventEnvelope, type UpdateState } from "@pi-desktop/shared";
+import { IpcChannels, type PiApi, type SessionEventEnvelope, type UpdateState } from "@percho/shared";
 import { contextBridge, ipcRenderer } from "electron";
 
 const api: PiApi = {

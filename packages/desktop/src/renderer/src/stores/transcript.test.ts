@@ -1,4 +1,4 @@
-import type { AgentSessionEvent } from "@pi-desktop/shared";
+import type { AgentSessionEvent } from "@percho/shared";
 import { beforeEach, describe, expect, it } from "vitest";
 import { useTranscriptStore } from "./transcript";
 import { emptyTranscript, messagesToUIMessages, reduceEvent } from "./transcript-reducer";

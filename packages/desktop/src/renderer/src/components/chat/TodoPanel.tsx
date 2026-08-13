@@ -1,4 +1,4 @@
-import type { TodoItem } from "@pi-desktop/shared";
+import type { TodoItem } from "@percho/shared";
 import { useEffect, useRef, useState } from "react";
 import { useT } from "../../i18n";
 import { useSessionsStore } from "../../stores/sessions";

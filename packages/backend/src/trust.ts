@@ -6,7 +6,7 @@ import {
 	type ProjectTrustStore,
 	type ProjectTrustUpdate,
 } from "@earendil-works/pi-coding-agent";
-import type { TrustOption, TrustRequest } from "@pi-desktop/shared";
+import type { TrustOption, TrustRequest } from "@percho/shared";
 
 /** 信任选项（含写 trust.json 所需的 updates；key/parentPath 发给 renderer 展示） */
 export interface TrustOptionInternal {

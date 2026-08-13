@@ -1,5 +1,5 @@
 {
-	"name": "pi-desktop",
+	"name": "percho",
 	"private": true,
 	"version": "0.1.0",
 	"description": "Desktop GUI for the Pi coding agent, built with Electron",
@@ -7,9 +7,9 @@
 	"author": "Jaxton07",
 	"repository": {
 		"type": "git",
-		"url": "git+https://github.com/Jaxton07/pi-desktop.git"
+		"url": "git+https://github.com/Jaxton07/percho.git"
 	},
-	"bugs": "https://github.com/Jaxton07/pi-desktop/issues",
+	"bugs": "https://github.com/Jaxton07/percho/issues",
 	"workspaces": [
 		"packages/*"
 	],

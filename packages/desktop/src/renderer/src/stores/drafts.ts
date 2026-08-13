@@ -1,4 +1,4 @@
-import type { ImageInput } from "@pi-desktop/shared";
+import type { ImageInput } from "@percho/shared";
 import { create } from "zustand";
 
 /** 无活跃会话（未创建的新会话）时的草稿 key */

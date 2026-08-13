@@ -1,4 +1,4 @@
-import type { SessionMeta } from "@pi-desktop/shared";
+import type { SessionMeta } from "@percho/shared";
 
 export type DateGroupKey = "today" | "yesterday" | "earlier";
 

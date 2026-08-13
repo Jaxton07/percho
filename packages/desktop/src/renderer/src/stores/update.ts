@@ -1,4 +1,4 @@
-import type { UpdateState } from "@pi-desktop/shared";
+import type { UpdateState } from "@percho/shared";
 import { create } from "zustand";
 import { getPi } from "../api";
 

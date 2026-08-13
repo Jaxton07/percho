@@ -31,14 +31,14 @@ import type {
 	SlashCommandInfo,
 	TrustAnswer,
 	TrustRequest,
-} from "@pi-desktop/shared";
+} from "@percho/shared";
 import {
 	extractSubagentRuns,
 	extractTodos,
 	TODO_REMINDER_CUSTOM_TYPE,
 	TODO_TOOL_NAME,
 	type TodoItem,
-} from "@pi-desktop/shared";
+} from "@percho/shared";
 import { createLogger } from "./log";
 import { fetchPackageCatalog } from "./package-catalog";
 import { makePermissionGateExtension } from "./permission-extension";

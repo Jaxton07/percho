@@ -1,4 +1,4 @@
-import type { SlashCommandInfo } from "@pi-desktop/shared";
+import type { SlashCommandInfo } from "@percho/shared";
 import { useEffect, useRef } from "react";
 import { useT } from "../../i18n";
 import { filterCommands, SOURCE_ORDER } from "./slash-filter";

@@ -3,7 +3,7 @@ import "./dev-agent-dir";
 import { writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { pathToFileURL } from "node:url";
-import { createLogger, initLogging, PiBackend } from "@pi-desktop/backend";
+import { createLogger, initLogging, PiBackend } from "@percho/backend";
 import {
 	type CatalogPackageType,
 	type CustomProviderInput,
@@ -16,7 +16,7 @@ import {
 	type ThemeMode,
 	type TrustRequest,
 	type UiState,
-} from "@pi-desktop/shared";
+} from "@percho/shared";
 import { app, BrowserWindow, dialog, ipcMain, nativeTheme, net, protocol, shell } from "electron";
 import { backgroundsDir, pickBackgroundImage } from "./background";
 import { checkoutBranch, getGitBranch, listGitBranches } from "./git";
@@ -35,7 +35,7 @@ const log = createLogger("main");
 let backend: PiBackend;
 
 /** 项目仓库地址（帮助跳转 + 关于页） */
-export const APP_REPO_URL = "https://github.com/Jaxton07/pi-desktop";
+export const APP_REPO_URL = "https://github.com/Jaxton07/percho";
 
 /** renderer 加载自定义背景图的协议（pi-bg://background/<文件名>，只读 userData/backgrounds/） */
 const BG_PROTOCOL = "pi-bg";

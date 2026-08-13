@@ -4,7 +4,7 @@
 
 Please **do not** open a public issue for security vulnerabilities.
 
-Report them privately through GitHub's [private vulnerability reporting](https://github.com/Jaxton07/pi-desktop/security/advisories/new), or by emailing the maintainer directly.
+Report them privately through GitHub's [private vulnerability reporting](https://github.com/Jaxton07/percho/security/advisories/new), or by emailing the maintainer directly.
 
 You can expect an initial response within a few days. Once the issue is confirmed, we will prepare a fix and credit you in the release notes if you wish.
 

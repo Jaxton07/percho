@@ -1,7 +1,7 @@
 import { readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
-import { createLogger } from "@pi-desktop/backend";
-import type { SavedTabs } from "@pi-desktop/shared";
+import { createLogger } from "@percho/backend";
+import type { SavedTabs } from "@percho/shared";
 import { app } from "electron";
 
 const log = createLogger("tabs");

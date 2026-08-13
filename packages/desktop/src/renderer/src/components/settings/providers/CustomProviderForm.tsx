@@ -1,4 +1,4 @@
-import { type CustomProviderInput, KNOWN_APIS } from "@pi-desktop/shared";
+import { type CustomProviderInput, KNOWN_APIS } from "@percho/shared";
 import { useState } from "react";
 import { useT } from "../../../i18n";
 import { useSettingsStore } from "../../../stores/settings";

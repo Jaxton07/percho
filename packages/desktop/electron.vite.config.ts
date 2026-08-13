@@ -5,7 +5,7 @@ import { defineConfig, externalizeDepsPlugin } from "electron-vite";
 
 export default defineConfig({
 	main: {
-		plugins: [externalizeDepsPlugin({ exclude: ["@pi-desktop/backend", "@pi-desktop/shared"] })],
+		plugins: [externalizeDepsPlugin({ exclude: ["@percho/backend", "@percho/shared"] })],
 		build: {
 			rollupOptions: {
 				external: ["@earendil-works/pi-coding-agent"],
@@ -13,13 +13,13 @@ export default defineConfig({
 		},
 		resolve: {
 			alias: {
-				"@pi-desktop/backend": resolve(__dirname, "../backend/src/index.ts"),
-				"@pi-desktop/shared": resolve(__dirname, "../shared/src/index.ts"),
+				"@percho/backend": resolve(__dirname, "../backend/src/index.ts"),
+				"@percho/shared": resolve(__dirname, "../shared/src/index.ts"),
 			},
 		},
 	},
 	preload: {
-		plugins: [externalizeDepsPlugin({ exclude: ["@pi-desktop/shared"] })],
+		plugins: [externalizeDepsPlugin({ exclude: ["@percho/shared"] })],
 		build: {
 			rollupOptions: {
 				output: {
@@ -30,14 +30,14 @@ export default defineConfig({
 		},
 		resolve: {
 			alias: {
-				"@pi-desktop/shared": resolve(__dirname, "../shared/src/index.ts"),
+				"@percho/shared": resolve(__dirname, "../shared/src/index.ts"),
 			},
 		},
 	},
 	renderer: {
 		resolve: {
 			alias: {
-				"@pi-desktop/shared": resolve(__dirname, "../shared/src/index.ts"),
+				"@percho/shared": resolve(__dirname, "../shared/src/index.ts"),
 				"@renderer": resolve(__dirname, "src/renderer/src"),
 			},
 		},

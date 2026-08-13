@@ -1,11 +1,11 @@
-appId: io.github.jaxton07.pi-desktop
-productName: Pi Desktop
+appId: io.github.jaxton07.percho
+productName: Percho
 directories:
   output: dist
 files:
   - out/**
   - package.json
-  - "!node_modules/@pi-desktop"
+  - "!node_modules/@percho"
 asarUnpack:
   - "**/*.node"
 # pi SDK 包资源镜像：docs/examples/README 不进 asar，agent 的 read/bash 工具都能直接访问。
@@ -38,19 +38,19 @@ mac:
       arch: [arm64, x64]
     - target: zip
       arch: [arm64, x64]
-  # 产物名与 productName 解耦：保持 pi-desktop-mac-* 兼容 README 下载表（productName 带空格仅作显示名）
-  artifactName: pi-desktop-mac-${arch}.${ext}
+  # 产物名与 productName 解耦：保持 percho-mac-* 兼容 README 下载表（productName 带空格仅作显示名）
+  artifactName: percho-mac-${arch}.${ext}
 win:
   target:
     - target: nsis
       arch: [x64]
     - target: zip
       arch: [x64]
-  artifactName: pi-desktop-windows-${arch}.${ext}
+  artifactName: percho-windows-${arch}.${ext}
 nsis:
   oneClick: false
   allowToChangeInstallationDirectory: true
 publish:
   provider: github
   owner: Jaxton07
-  repo: pi-desktop
+  repo: percho
