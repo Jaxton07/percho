@@ -200,18 +200,29 @@ export const useSessionsStore = create<SessionsStore>((set, get) => ({
 				const meta = await getPi().openSession(file);
 				if (seen.has(meta.sessionId)) continue;
 				seen.add(meta.sessionId);
-				const history = await getPi().getSessionMessages(meta.sessionId);
-				useTranscriptStore.getState().loadHistory(meta.sessionId, messagesToUIMessages(history));
-				const followUpQueue = await getPi().getFollowUpMessages(meta.sessionId);
-				useTranscriptStore.getState().setFollowUpQueue(meta.sessionId, followUpQueue);
-				const todos = await getPi().getTodos(meta.sessionId);
-				useTranscriptStore.getState().loadTodos(meta.sessionId, todos);
 				opened.push(meta);
 				if (meta.sessionFile === saved.activeFile) activeId = meta.sessionId;
 			} catch {
 				// 会话文件已被删除等：跳过
 			}
 		}
+		// 每个会话的历史/队列/todo 三次 IPC 并行取（原先 3×N 次串行往返，首启时长期占住主线程 → 开屏掉帧）
+		await Promise.all(
+			opened.map(async (meta) => {
+				try {
+					const [history, followUpQueue, todos] = await Promise.all([
+						getPi().getSessionMessages(meta.sessionId),
+						getPi().getFollowUpMessages(meta.sessionId),
+						getPi().getTodos(meta.sessionId),
+					]);
+					useTranscriptStore.getState().loadHistory(meta.sessionId, messagesToUIMessages(history));
+					useTranscriptStore.getState().setFollowUpQueue(meta.sessionId, followUpQueue);
+					useTranscriptStore.getState().loadTodos(meta.sessionId, todos);
+				} catch {
+					// 单会话数据取不到不影响其它 tab 恢复
+				}
+			}),
+		);
 		if (opened.length === 0) return;
 		const lastOpened = opened[opened.length - 1];
 		if (!lastOpened) return;

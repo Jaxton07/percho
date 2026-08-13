@@ -123,6 +123,7 @@ export const en: Messages = {
 		thinking: "Thinking",
 		thinkingPreview: "Thinking",
 		working: "Working",
+		thinkingLabel: "Thinking",
 		worked: "Worked",
 		image: "View image",
 		subagent: {

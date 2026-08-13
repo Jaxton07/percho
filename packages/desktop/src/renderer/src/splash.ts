@@ -40,7 +40,7 @@ function removeSplash(): void {
 export function initSplash(): void {
 	if (alreadyPlayed()) {
 		finished = true;
-		// splash.css 常驻，#root 初始 visibility:hidden —— 跳过时也要放出主界面
+		// splash.css 常驻，#root 初始 content-visibility:hidden —— 跳过时也要放出主界面
 		document.documentElement.dataset.appReady = "true";
 		removeSplash();
 		return;

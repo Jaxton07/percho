@@ -31,7 +31,7 @@ function ToolPreviewRow({ name, args }: { name: string; args: string }) {
 	const summary = summarizeArgs(args);
 	return (
 		<div className="flex items-center gap-2 py-0.5">
-			<span data-shimmer-name className="shrink-0 font-mono text-[13px] font-semibold text-ink-dim">
+			<span data-shimmer-name className="shrink-0 font-mono text-[13px] text-ink-dim">
 				{displayName(name)}
 			</span>
 			{summary && (

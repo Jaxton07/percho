@@ -1,4 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
+import type { OrbState } from "thinking-orbs";
+import { ThinkingOrb } from "thinking-orbs";
 import { useT } from "../../i18n";
 import type { ActivityEntry, UIToolCall } from "../../stores/transcript";
 import { ExpandArrowIcon } from "../icons";
@@ -152,17 +154,38 @@ export function MetaGroup({
 		item.thinking ? <ThinkingRow key={`thinking-${i}`} thinking={item.thinking} /> : null,
 		...item.tools.map((tool) => <ToolCallCard key={tool.key} tool={tool} />),
 	]);
+	// orb 状态（名字是包的渲染器名，与我们的语义不同名）：
+	// tool 运行中 → connecting（星座连线 + 信号跑边）
+	// 纯 thinking → working（粒子轨道，转速更快）
+	// （必须在 liveItems 之前推导，因为 liveItems 会过滤掉 thinking）
+	const latestActivity = useMemo(() => {
+		for (let i = items.length - 1; i >= 0; i--) {
+			const activity = items[i].activity;
+			if (activity && activity.length > 0) {
+				return activity[activity.length - 1];
+			}
+		}
+		return undefined;
+	}, [items]);
+	const isTool = latestActivity?.kind === "tool";
+	const orbState: OrbState = isTool ? "connecting" : "working";
+	const labelKey = isTool ? "message.working" : "message.thinkingLabel";
+
 	// 实时预览：流式项的活动序列按到达顺序展开（latest-wins，预览行显示最后一条）
+	// 过滤掉 thinking：只显示 tool call，避免与标签栏的“思考中”重复
 	const liveItems = useMemo<LivePreviewItem[]>(() => {
 		const out: LivePreviewItem[] = [];
 		for (const item of items) {
 			if (!item.activity) continue;
 			for (const entry of item.activity) {
-				out.push(
-					entry.kind === "thinking"
-						? { kind: "thinking", id: entry.id }
-						: { kind: "tool", id: entry.id, name: entry.name ?? "tool", args: entry.args ?? "" },
-				);
+				if (entry.kind === "tool") {
+					out.push({
+						kind: "tool",
+						id: entry.id,
+						name: entry.name ?? "tool",
+						args: entry.args ?? "",
+					});
+				}
 			}
 		}
 		return out;
@@ -180,13 +203,16 @@ export function MetaGroup({
 			{/* min-h-6：与内联预览行（h-6）等高，working/worked 切换行高不变 */}
 			<details className="group/outer peer">
 				<summary className="group/row flex min-h-6 cursor-pointer items-center gap-2 py-0.5 select-none [&::-webkit-details-marker]:hidden">
-					<span
-						ref={labelRef}
-						className="shrink-0 text-[13px] font-bold text-ink-dim transition-colors group-hover/row:text-ink"
-					>
-						{t(shownWorking ? "message.working" : "message.worked")}
-						{count > 0 && <span className="ml-1 font-normal text-ink-faint">· {count}</span>}
-					</span>
+					<div className="flex shrink-0 items-center gap-2">
+						{shownWorking && <ThinkingOrb state={orbState} size={20} paused={false} />}
+						<span
+							ref={labelRef}
+							className="text-[14px] font-bold text-ink-dim transition-colors group-hover/row:text-ink"
+						>
+							{t(shownWorking ? labelKey : "message.worked")}
+							{count > 0 && <span className="ml-1 font-normal text-ink-faint">· {count}</span>}
+						</span>
+					</div>
 					{/* 实时预览内联进标题行（单行截断，展开组时隐藏）：工作中与完成后恒为一行高，消除布局抖动 */}
 					{shownWorking && (
 						<div ref={tickerWrapRef} className="min-w-0 flex-1 group-open/outer:hidden">

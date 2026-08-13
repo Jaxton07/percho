@@ -121,6 +121,7 @@ export const zh = {
 		thinking: "思考过程",
 		thinkingPreview: "思考中",
 		working: "Working",
+		thinkingLabel: "Thinking",
 		worked: "Worked",
 		image: "查看图片",
 		subagent: {

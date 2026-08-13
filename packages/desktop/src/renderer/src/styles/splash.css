@@ -14,15 +14,18 @@
 	place-items: center;
 	overflow: hidden;
 	pointer-events: none;
+	/* 开屏是独立图层子树，隔离布局/绘制，避免与 #root 的首屏 layout 互相牵连 */
+	contain: layout paint style;
 }
 #splash > * {
 	grid-area: 1 / 1;
 }
+/* 开屏期间 #root 真正隐藏（content-visibility: hidden）：阻止 layout/paint，React 挂载期间不抢帧 */
 #root {
-	visibility: hidden;
+	content-visibility: hidden;
 }
 html[data-app-ready] #root {
-	visibility: visible;
+	content-visibility: visible;
 	animation: sp-root-in 1s cubic-bezier(0.25, 0.46, 0.45, 0.94) 1.35s both;
 }
 
@@ -33,6 +36,7 @@ html[data-app-ready] #root {
 	height: 220px;
 	color: #18181b;
 	animation: sp-spin 60s linear infinite;
+	will-change: transform;
 }
 html[data-theme="dark"] .sp-swarm {
 	color: #f4f4f5;
@@ -43,11 +47,13 @@ html[data-theme="dark"] .sp-swarm {
 	opacity: 0;
 	transform: scale(0.72);
 	animation: sp-swarm-in 1.1s cubic-bezier(0.16, 1, 0.3, 1) 0.15s forwards;
+	will-change: transform, opacity;
 }
 .sp-swarm-breathe {
 	width: 100%;
 	height: 100%;
 	animation: sp-swarm-breathe 4.2s ease-in-out 1.3s infinite;
+	will-change: transform;
 }
 .sp-dot {
 	position: absolute;
@@ -61,6 +67,8 @@ html[data-theme="dark"] .sp-swarm {
 	opacity: var(--o);
 	transform: translate(var(--x), var(--y));
 	animation: sp-dot-drift var(--t) ease-in-out var(--dl) infinite;
+	/* 首帧前就提前提升为合成层：否则 64 个 dot 在动画启动瞬间集中提层，正撞上 React 挂载 */
+	will-change: transform, opacity;
 }
 
 /* 声纳涟漪：细环 + 模糊柔边（水波而非画线），透明度克制。
@@ -75,18 +83,24 @@ html[data-theme="dark"] .sp-swarm {
 	content: "";
 	position: absolute;
 	inset: 0;
-	border: 1px solid rgba(255, 255, 255, 0.6);
+	/* 柔边细环用 radial-gradient 画（不用 filter: blur）：blur + scale 动画会每帧重新光栅化，
+	   放大到 2.3x / 12x 时是开屏最贵的一项；gradient 版本可纯合成 */
+	background: radial-gradient(
+		closest-side,
+		transparent 97%,
+		var(--sp-ring-c, rgba(255, 255, 255, 0.6)) 98.6%,
+		transparent 100%
+	);
 	border-radius: 50%;
-	filter: blur(1px);
 	opacity: 0;
 	animation: sp-sonar 3.2s cubic-bezier(0.16, 1, 0.3, 1) 1.4s infinite;
+	will-change: transform, opacity;
 }
 .sp-rings::after {
 	animation-delay: 3s;
 }
-html[data-theme="dark"] .sp-rings::before,
-html[data-theme="dark"] .sp-rings::after {
-	border-color: rgba(24, 24, 27, 0.6);
+html[data-theme="dark"] .sp-rings {
+	--sp-ring-c: rgba(24, 24, 27, 0.6);
 }
 
 /* 收場涟漪：细环 + 模糊柔边的双环（主环 + 淡回波），从中心扩散出屏。
@@ -103,10 +117,10 @@ html[data-theme="dark"] .sp-wave {
 }
 .sp-wave,
 .sp-wave::after {
-	border: 1.5px solid var(--sp-wave-c);
+	background: radial-gradient(closest-side, transparent 96.5%, var(--sp-wave-c) 98.4%, transparent 100%);
 	border-radius: 50%;
-	filter: blur(1.5px);
 	opacity: 0;
+	will-change: transform, opacity;
 }
 .sp-wave::after {
 	content: "";
