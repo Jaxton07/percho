@@ -1,4 +1,4 @@
-import type { PiApi } from "@pi-desktop/shared";
+import type { PiApi } from "@percho/shared";
 
 declare global {
 	interface Window {

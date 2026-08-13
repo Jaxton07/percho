@@ -1,4 +1,4 @@
-import type { ImageInput, SlashCommandInfo } from "@pi-desktop/shared";
+import type { ImageInput, SlashCommandInfo } from "@percho/shared";
 import { useEffect, useRef, useState } from "react";
 import { getPi } from "../../api";
 import { useT } from "../../i18n";

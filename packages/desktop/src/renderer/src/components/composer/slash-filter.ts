@@ -1,4 +1,4 @@
-import type { SlashCommandInfo } from "@pi-desktop/shared";
+import type { SlashCommandInfo } from "@percho/shared";
 
 export const SOURCE_ORDER: SlashCommandInfo["source"][] = ["builtin", "template", "skill", "extension"];
 

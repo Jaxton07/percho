@@ -6,7 +6,7 @@ import {
 	type SessionMessage,
 	TODO_TOOL_NAME,
 	type TodoItem,
-} from "@pi-desktop/shared";
+} from "@percho/shared";
 
 /** 子代理运行（UI 态：流式期 running，固化后 done/error） */
 export interface SubagentRunUi {

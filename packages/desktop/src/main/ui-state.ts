@@ -1,7 +1,7 @@
 import { readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
-import { createLogger } from "@pi-desktop/backend";
-import type { UiState } from "@pi-desktop/shared";
+import { createLogger } from "@percho/backend";
+import type { UiState } from "@percho/shared";
 import { app } from "electron";
 
 const log = createLogger("ui-state");

@@ -1,16 +1,16 @@
 <p align="center">
-  <img src="docs/icon.svg" alt="pi-desktop logo" width="128">
+  <img src="docs/icon.svg" alt="percho logo" width="128">
 </p>
-<h1 align="center">pi-desktop</h1>
+<h1 align="center">percho</h1>
 <p align="center">
   极简设计的 <a href="https://www.npmjs.com/package/@earendil-works/pi-coding-agent">Pi coding agent</a> 桌面端 GUI —— 与 Pi CLI 同源同引擎，干净清爽的视觉界面。多会话聊天、可视化工具审批、自定义主题。
 </p>
 <p align="center">
-  <a href="LICENSE"><img src="https://img.shields.io/github/license/Jaxton07/pi-desktop?style=flat-square" alt="License"></a>
-  <a href="https://github.com/Jaxton07/pi-desktop/releases"><img src="https://img.shields.io/github/v/release/Jaxton07/pi-desktop?style=flat-square" alt="Release"></a>
-  <a href="https://github.com/Jaxton07/pi-desktop/releases"><img src="https://img.shields.io/github/downloads/Jaxton07/pi-desktop/total?style=flat-square" alt="Downloads"></a>
-  <a href="https://github.com/Jaxton07/pi-desktop/actions/workflows/ci.yml"><img src="https://img.shields.io/github/actions/workflow/status/Jaxton07/pi-desktop/ci.yml?style=flat-square" alt="CI"></a>
-  <a href="https://github.com/Jaxton07/pi-desktop"><img src="https://img.shields.io/github/stars/Jaxton07/pi-desktop?style=flat-square" alt="Stars"></a>
+  <a href="LICENSE"><img src="https://img.shields.io/github/license/Jaxton07/percho?style=flat-square" alt="License"></a>
+  <a href="https://github.com/Jaxton07/percho/releases"><img src="https://img.shields.io/github/v/release/Jaxton07/percho?style=flat-square" alt="Release"></a>
+  <a href="https://github.com/Jaxton07/percho/releases"><img src="https://img.shields.io/github/downloads/Jaxton07/percho/total?style=flat-square" alt="Downloads"></a>
+  <a href="https://github.com/Jaxton07/percho/actions/workflows/ci.yml"><img src="https://img.shields.io/github/actions/workflow/status/Jaxton07/percho/ci.yml?style=flat-square" alt="CI"></a>
+  <a href="https://github.com/Jaxton07/percho"><img src="https://img.shields.io/github/stars/Jaxton07/percho?style=flat-square" alt="Stars"></a>
   <img src="https://img.shields.io/badge/node-%3E%3D22.19-339933?logo=nodedotjs&style=flat-square" alt="Node >=22.19">
   <img src="https://img.shields.io/badge/platform-macOS%20%7C%20Windows-blue?style=flat-square" alt="macOS | Windows">
 </p>
@@ -22,7 +22,7 @@
 
 ## 演示
 
-![pi-desktop 聊天页截图](docs/assets/img/pi_desktop_chat_page.png)
+![percho 聊天页截图](docs/assets/img/percho_chat_page.png)
 
 **聊天页**
 
@@ -40,9 +40,9 @@
 
 ![外观设置](docs/assets/img/settings_img_bg.png)
 
-## 为什么选择 pi-desktop？
+## 为什么选择 percho？
 
-pi-desktop 把官方 Pi SDK（`@earendil-works/pi-coding-agent`）跑在 Electron 主进程里。**不是 fork，也不是重新实现** —— 它和 Pi CLI 用的是同一套引擎，完整继承 Pi 的原生优势：
+percho 把官方 Pi SDK（`@earendil-works/pi-coding-agent`）跑在 Electron 主进程里。**不是 fork，也不是重新实现** —— 它和 Pi CLI 用的是同一套引擎，完整继承 Pi 的原生优势：
 
 - **可扩展性** —— 为 Pi CLI 安装的 TypeScript 扩展、Skills、Prompt 模板在这里同样生效，包括项目级资源（加载前会有信任确认）。让 Pi 适应你的工作流，无需 fork。
 - **配置共享** —— 与 CLI 共用 `~/.pi/agent/` 目录：会话、认证、模型配置全部互通。终端里开的会话，可以在 GUI 里继续。
@@ -59,21 +59,21 @@ pi-desktop 把官方 Pi SDK（`@earendil-works/pi-coding-agent`）跑在 Electro
 
 ## 下载
 
-预编译安装包发布在 [Releases](https://github.com/Jaxton07/pi-desktop/releases) 页面。
+预编译安装包发布在 [Releases](https://github.com/Jaxton07/percho/releases) 页面。
 
 | 平台 | 下载 |
 | --- | --- |
-| macOS (Apple Silicon) | `pi-desktop-mac-arm64.dmg` |
-| macOS (Intel) | `pi-desktop-mac-x64.dmg` |
-| Windows | `pi-desktop-windows-x64.exe` |
+| macOS (Apple Silicon) | `percho-mac-arm64.dmg` |
+| macOS (Intel) | `percho-mac-x64.dmg` |
+| Windows | `percho-windows-x64.exe` |
 
-> 构建为 adhoc 临时签名（无 Developer ID 证书）。macOS 下载后首次打开可能提示**「Apple 无法验证 Pi Desktop 是否包含危害 Mac 安全或泄漏隐私的恶意软件」**—— 这是 Gatekeeper 拦截未公证的 App。按以下方式放行：
+> 构建为 adhoc 临时签名（无 Developer ID 证书）。macOS 下载后首次打开可能提示**「Apple 无法验证 Percho 是否包含危害 Mac 安全或泄漏隐私的恶意软件」**—— 这是 Gatekeeper 拦截未公证的 App。按以下方式放行：
 >
-> 1. **系统设置 → 隐私与安全性** → 滚动到底部 → 在 Pi Desktop 条目旁点**「仍要打开」**，然后输入密码或 Touch ID 确认（推荐）。
+> 1. **系统设置 → 隐私与安全性** → 滚动到底部 → 在 Percho 条目旁点**「仍要打开」**，然后输入密码或 Touch ID 确认（推荐）。
 >
->    ![macOS「仍要打开」](docs/assets/img/pi_desk_mac_permission.png)
+>    ![macOS「仍要打开」](docs/assets/img/percho_mac_permission.png)
 >
-> 2. 或在终端执行：`xattr -cr "/Applications/Pi Desktop.app"`。
+> 2. 或在终端执行：`xattr -cr "/Applications/Percho.app"`。
 >
 > 每个下载版本只需首次打开时放行一次——之后自动更新在应用内完成，不会再触发 Gatekeeper。Windows 上 SmartScreen 提示时点「更多信息」→「仍要运行」。
 
@@ -96,7 +96,7 @@ npm workspaces monorepo，三个包：`packages/shared`（IPC 契约）、`packa
 
 ## 声明
 
-pi-desktop 是社区项目，**并非** Pi 团队（earendil-works）官方出品，也与其无任何隶属关系。
+percho 是社区项目，**并非** Pi 团队（earendil-works）官方出品，也与其无任何隶属关系。
 
 ## License
 

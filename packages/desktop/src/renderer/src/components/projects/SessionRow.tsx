@@ -1,4 +1,4 @@
-import type { SessionMeta } from "@pi-desktop/shared";
+import type { SessionMeta } from "@percho/shared";
 import { useState } from "react";
 import { useT } from "../../i18n";
 import { useProjectsStore } from "../../stores/projects";

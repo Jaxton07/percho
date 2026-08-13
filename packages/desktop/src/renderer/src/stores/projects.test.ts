@@ -1,4 +1,4 @@
-import type { SessionMeta } from "@pi-desktop/shared";
+import type { SessionMeta } from "@percho/shared";
 import { describe, expect, it } from "vitest";
 import { deriveProjects } from "./projects";
 

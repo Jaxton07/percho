@@ -10,7 +10,7 @@ import { app } from "electron";
 // （index.ts 顶部 side-effect import，与 pi-package-dir 同模式）。
 // 用户显式设置了 PI_CODING_AGENT_DIR 时尊重之，不做任何处理。
 if (!app.isPackaged) {
-	// dev 与正式版 app 名相同（@pi-desktop/desktop），userData 默认同目录，
+	// dev 与正式版 app 名相同（@percho/desktop），userData 默认同目录，
 	// tabs.json/ui-state.json/Local Storage 会被正式版污染（顶栏恢复出正式会话）。
 	// 重定向到 -dev 后缀目录，app ready 前调用才生效。
 	const devUserData = `${app.getPath("userData")}-dev`;

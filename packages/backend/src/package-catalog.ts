@@ -1,4 +1,4 @@
-import type { CatalogPackage, CatalogSearchResult } from "@pi-desktop/shared";
+import type { CatalogPackage, CatalogSearchResult } from "@percho/shared";
 import { createLogger } from "./log";
 
 const log = createLogger("package-catalog");
@@ -79,7 +79,7 @@ export async function fetchPackageCatalog(q: CatalogQuery): Promise<CatalogSearc
 
 	log.info("fetch catalog", url.toString());
 	const res = await fetch(url, {
-		headers: { "User-Agent": "pi-desktop", Accept: "text/html" },
+		headers: { "User-Agent": "percho", Accept: "text/html" },
 		signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
 	});
 	if (!res.ok) throw new Error(`pi.dev returned HTTP ${res.status}`);

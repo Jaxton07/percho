@@ -1,4 +1,4 @@
-import type { ImageInput } from "@pi-desktop/shared";
+import type { ImageInput } from "@percho/shared";
 import { useT } from "../../i18n";
 
 export function imageSrc(image: ImageInput): string {

@@ -1,4 +1,4 @@
-import type { CatalogPackage, CatalogPackageType, LoadedExtension, ResourceScope } from "@pi-desktop/shared";
+import type { CatalogPackage, CatalogPackageType, LoadedExtension, ResourceScope } from "@percho/shared";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useT } from "../../i18n";
 import { useSettingsStore } from "../../stores/settings";

@@ -1,4 +1,4 @@
-import type { AgentSessionEvent, TodoItem } from "@pi-desktop/shared";
+import type { AgentSessionEvent, TodoItem } from "@percho/shared";
 import { create } from "zustand";
 import {
 	emptyTranscript,

@@ -8,7 +8,7 @@ import type {
 	ProviderInfo,
 	ProviderTestResult,
 	ResourceDiagnosticInfo,
-} from "@pi-desktop/shared";
+} from "@percho/shared";
 import { create } from "zustand";
 import { getPi } from "../api";
 import { useSessionsStore } from "./sessions";

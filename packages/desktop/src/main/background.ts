@@ -1,6 +1,6 @@
 import { copyFile, mkdir, readdir, rm } from "node:fs/promises";
 import { extname, join } from "node:path";
-import { createLogger } from "@pi-desktop/backend";
+import { createLogger } from "@percho/backend";
 import { app, type BrowserWindow, dialog } from "electron";
 
 const log = createLogger("background");

@@ -6,7 +6,7 @@ import type {
 	ListProvidersOptions,
 	ProviderInfo,
 	ProviderTestResult,
-} from "@pi-desktop/shared";
+} from "@percho/shared";
 
 type JsonObject = Record<string, unknown>;
 

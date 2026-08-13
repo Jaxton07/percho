@@ -1,4 +1,4 @@
-import type { AvailableModel, SavedTabs, SessionMeta } from "@pi-desktop/shared";
+import type { AvailableModel, SavedTabs, SessionMeta } from "@percho/shared";
 import { create } from "zustand";
 import { getPi } from "../api";
 import { useTranscriptStore } from "./transcript";

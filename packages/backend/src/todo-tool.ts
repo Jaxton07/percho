@@ -1,5 +1,5 @@
 import type { AgentToolResult, ToolDefinition } from "@earendil-works/pi-coding-agent";
-import { TODO_TOOL_NAME, type TodoItem } from "@pi-desktop/shared";
+import { TODO_TOOL_NAME, type TodoItem } from "@percho/shared";
 import { Type } from "typebox";
 
 /** 单次调用最多任务数（全量替换协议，防滥用） */

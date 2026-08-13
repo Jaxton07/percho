@@ -1,4 +1,4 @@
-import type { AgentSessionEvent, TrustRequest } from "@pi-desktop/shared";
+import type { AgentSessionEvent, TrustRequest } from "@percho/shared";
 import { useEffect, useState } from "react";
 import { getPi } from "./api";
 import { EmptyState } from "./components/chat/EmptyState";

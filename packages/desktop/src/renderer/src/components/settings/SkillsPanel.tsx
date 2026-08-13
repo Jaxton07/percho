@@ -1,4 +1,4 @@
-import type { LoadedSkill, ResourceScope } from "@pi-desktop/shared";
+import type { LoadedSkill, ResourceScope } from "@percho/shared";
 import { useT } from "../../i18n";
 import { useSettingsStore } from "../../stores/settings";
 
