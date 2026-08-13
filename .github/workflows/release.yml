@@ -58,6 +58,21 @@ jobs:
 
           > Ad-hoc signed (no Developer ID). On macOS, if Gatekeeper blocks the app, right-click it and choose **Open** (or run `xattr -cr "/Applications/Pi Desktop.app"`). macOS users can also install/update via Homebrew: `brew install --cask jaxton07/tap/pi-desktop` (installed via brew has no Gatekeeper prompt). Windows builds update automatically in-app.
           EOF
+  # 刷新官网（pi-desktop-website，Cloudflare Pages）：触发 Deploy Hook 重建，同步版本号与 changelog。
+  # 需要 repo secret CF_PAGES_DEPLOY_HOOK（Cloudflare Pages → Settings → Builds → Deploy hooks 创建）；未配置时跳过不影响发布
+  website:
+    needs: publish
+    runs-on: ubuntu-latest
+    steps:
+      - name: Trigger Cloudflare Pages deploy hook
+        env:
+          HOOK: ${{ secrets.CF_PAGES_DEPLOY_HOOK }}
+        run: |
+          if [ -n "$HOOK" ]; then
+            curl -fsS -X POST "$HOOK"
+          else
+            echo "CF_PAGES_DEPLOY_HOOK not set, skipping"
+          fi
   # 同步 homebrew tap（Jaxton07/homebrew-tap）：渲染 cask 模板并推送。
   # 需要 repo secret TAP_GITHUB_TOKEN（能推 homebrew-tap 的 PAT）；未配置时此 job 失败不影响已发布的 Release
   tap:
