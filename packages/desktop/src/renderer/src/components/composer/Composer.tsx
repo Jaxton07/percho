@@ -50,7 +50,7 @@ export function Composer({ centered = false }: { centered?: boolean }) {
 	const [previewImage, setPreviewImage] = useState<ImageInput | null>(null);
 	const [sending, setSending] = useState(false);
 	const [error, setError] = useState<string | null>(null);
-	const [feedback, setFeedback] = useState<string | null>(null);
+	const [feedback, setFeedback] = useState<{ message: string; tone: "info" | "warn" } | null>(null);
 	const [slashSelected, setSlashSelected] = useState(0);
 	const [slashCommands, setSlashCommands] = useState<SlashCommandInfo[]>([]);
 	/** 点击面板外部后隐藏菜单（保留文本，再次输入时恢复） */
@@ -68,6 +68,13 @@ export function Composer({ centered = false }: { centered?: boolean }) {
 
 	const isStreaming = transcript.phase === "streaming" || sending;
 	const followUpQueue = transcript.followUpQueue;
+	/** 压缩进行中：禁发（SDK 拒绝压缩中的 prompt；提前拦截保住草稿， warn 提示代替报错丢文本） */
+	const compacting = transcript.compacting;
+	const placeholder = compacting
+		? t("composer.placeholderCompacting")
+		: isStreaming
+			? t("composer.placeholderQueued")
+			: t("composer.placeholder");
 	/** 输入框有内容：streaming 中按钮从停止切回发送（入队后文本清空自动切回停止） */
 	const hasContent =
 		Boolean(text.trim()) || images.length > 0 || Boolean(slashCommand) || attachments.length > 0;
@@ -84,8 +91,8 @@ export function Composer({ centered = false }: { centered?: boolean }) {
 		!slashOpen;
 	const atFiltered = atOpen && atToken ? filterFiles(atFiles, atToken.query) : [];
 
-	const showFeedback = (message: string) => {
-		setFeedback(message);
+	const showFeedback = (message: string, tone: "info" | "warn" = "info") => {
+		setFeedback({ message, tone });
 		if (feedbackTimer.current) clearTimeout(feedbackTimer.current);
 		feedbackTimer.current = setTimeout(() => setFeedback(null), 2500);
 	};
@@ -181,8 +188,13 @@ export function Composer({ centered = false }: { centered?: boolean }) {
 		const pi = getPi();
 		switch (name) {
 			case "compact":
-				await pi.compact(sessionId, arg || undefined);
-				showFeedback(t("slash.feedback.compacted"));
+				// 失败不在输入框上方报错：对话区压缩分割线（compaction_end error）已完整呈现
+				try {
+					await pi.compact(sessionId, arg || undefined);
+					showFeedback(t("slash.feedback.compacted"));
+				} catch {
+					// 静默，理由见上
+				}
 				return true;
 			case "name":
 				if (arg) {
@@ -190,7 +202,7 @@ export function Composer({ centered = false }: { centered?: boolean }) {
 					showFeedback(t("slash.feedback.renamed", { name: arg }));
 					return true;
 				}
-				showFeedback(t("slash.feedback.noName"));
+				showFeedback(t("slash.feedback.noName"), "warn");
 				return true;
 			case "export": {
 				const format = arg === "html" ? "html" : arg === "jsonl" ? "jsonl" : "jsonl";
@@ -216,9 +228,14 @@ export function Composer({ centered = false }: { centered?: boolean }) {
 			: [atText, text.trim()].filter(Boolean).join("\n");
 		// 运行中（streaming）不拦截：prompt 走 followUp 排队；仅防双击重发（sending）
 		if ((!content && images.length === 0) || sending) return;
+		// 压缩中禁发：SDK 拒绝压缩中的 prompt，提前拦截保住草稿
+		if (compacting) {
+			showFeedback(t("composer.compacting"), "warn");
+			return;
+		}
 		// 单条排队上限：已有一条且本次是普通文本则挡住（斜杠命令 streaming 中也可立即执行，不受限）
 		if (followUpQueue.length >= 1 && !content.startsWith("/")) {
-			showFeedback(t("composer.queueFull"));
+			showFeedback(t("composer.queueFull"), "warn");
 			return;
 		}
 		/** 发送前是否已在运行：排队失败不回滚工作中状态（run 并未受影响） */
@@ -228,7 +245,7 @@ export function Composer({ centered = false }: { centered?: boolean }) {
 		if (content.startsWith("/") && images.length === 0) {
 			sessionId = await ensureSession();
 			if (!sessionId) {
-				showFeedback(t("slash.feedback.noSession"));
+				showFeedback(t("slash.feedback.noSession"), "warn");
 				return;
 			}
 			setText("");
@@ -297,7 +314,7 @@ export function Composer({ centered = false }: { centered?: boolean }) {
 		if (!command.supported) return;
 		const sessionId = await ensureSession();
 		if (!sessionId) {
-			showFeedback(t("slash.feedback.noSession"));
+			showFeedback(t("slash.feedback.noSession"), "warn");
 			return;
 		}
 		const inline = new Set(["compact", "settings"]);
@@ -517,7 +534,11 @@ export function Composer({ centered = false }: { centered?: boolean }) {
 		<div ref={boxRef} className={centered ? "w-full max-w-[760px]" : "shrink-0 px-6 pb-3"}>
 			<div className="mx-auto max-w-[760px]">
 				{error && <p className="mb-1.5 text-xs text-red-500">{error}</p>}
-				{feedback && !error && <p className="mb-1.5 text-xs text-green-600">{feedback}</p>}
+				{feedback && !error && (
+					<p className={`mb-1.5 text-xs ${feedback.tone === "warn" ? "text-amber-500" : "text-ink-dim"}`}>
+						{feedback.message}
+					</p>
+				)}
 				{slashOpen && (
 					<SlashMenu
 						commands={slashCommands}
@@ -601,7 +622,7 @@ export function Composer({ centered = false }: { centered?: boolean }) {
 							<textarea
 								ref={textareaRef}
 								className="max-h-[200px] min-w-[140px] flex-1 resize-none bg-transparent pt-0.5 text-[14px] leading-relaxed outline-none placeholder:text-ink-faint select-text"
-								placeholder={slashCommand ? t("slash.argPlaceholder") : t("composer.placeholder")}
+								placeholder={slashCommand ? t("slash.argPlaceholder") : placeholder}
 								value={text}
 								rows={1}
 								onChange={handleTextChange}
@@ -613,7 +634,7 @@ export function Composer({ centered = false }: { centered?: boolean }) {
 						<textarea
 							ref={textareaRef}
 							className="max-h-[200px] w-full resize-none rounded-t-2xl px-4 pt-5 pb-2 text-[14px] leading-relaxed bg-transparent outline-none placeholder:text-ink-faint select-text"
-							placeholder={isStreaming ? t("composer.placeholderQueued") : t("composer.placeholder")}
+							placeholder={placeholder}
 							value={text}
 							rows={1}
 							onChange={handleTextChange}

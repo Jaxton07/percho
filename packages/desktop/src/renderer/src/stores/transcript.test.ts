@@ -296,10 +296,12 @@ describe("transcript reducer", () => {
 
 	it("compaction_start 追加进行中系统消息，compaction_end 更新为摘要", () => {
 		let state = emptyTranscript();
+		expect(state.compacting).toBe(false);
 		state = reduceEvent(state, {
 			type: "compaction_start",
 			reason: "manual",
 		} as unknown as AgentSessionEvent);
+		expect(state.compacting).toBe(true);
 		expect(state.messages).toHaveLength(1);
 		expect(state.messages[0]).toMatchObject({
 			kind: "system",
@@ -319,6 +321,7 @@ describe("transcript reducer", () => {
 				estimatedTokensAfter: 6000,
 			},
 		} as unknown as AgentSessionEvent);
+		expect(state.compacting).toBe(false);
 		expect(state.messages).toHaveLength(1);
 		expect(state.messages[0]).toMatchObject({
 			kind: "system",
@@ -340,10 +343,31 @@ describe("transcript reducer", () => {
 			aborted: true,
 			willRetry: false,
 		} as unknown as AgentSessionEvent);
+		expect(state.compacting).toBe(false);
 		expect(state.messages).toHaveLength(1);
 		expect(state.messages[0]).toMatchObject({
 			kind: "system",
 			compact: { status: "cancelled", reason: "threshold" },
+		});
+	});
+
+	it("compaction_end 失败：剥掉 SDK errorMessage 自带的 Compaction failed 前缀", () => {
+		let state = emptyTranscript();
+		state = reduceEvent(state, {
+			type: "compaction_end",
+			reason: "manual",
+			aborted: false,
+			willRetry: false,
+			errorMessage: "Compaction failed: Nothing to compact (session too small)",
+		} as unknown as AgentSessionEvent);
+		expect(state.compacting).toBe(false);
+		expect(state.messages[0]).toMatchObject({
+			kind: "system",
+			compact: {
+				status: "error",
+				reason: "manual",
+				errorMessage: "Nothing to compact (session too small)",
+			},
 		});
 	});
 

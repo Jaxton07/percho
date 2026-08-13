@@ -1,5 +1,5 @@
 import type { ImageInput } from "@pi-desktop/shared";
-import { memo, useEffect, useRef, useState } from "react";
+import { memo, type ReactNode, useEffect, useRef, useState } from "react";
 import { useT } from "../../i18n";
 import { useSessionsStore } from "../../stores/sessions";
 import type { UIMessage } from "../../stores/transcript";
@@ -219,46 +219,81 @@ export const MessageItem = memo(function MessageItem({
 	);
 });
 
+/** 上下文压缩分割线：──── 状态文字 ────（codex/opencode 式）；done 态摘要可点击展开 */
 function SystemMessage({ message }: { message: Extract<UIMessage, { kind: "system" }> }) {
 	const t = useT();
+	const [expanded, setExpanded] = useState(false);
 	const compact = message.compact;
 	if (!compact) return null;
 	const reason = t(`compaction.reason.${compact.reason}`);
+
 	if (compact.status === "running") {
 		return (
-			<div className="flex items-center justify-center gap-2 py-1 text-xs text-ink-faint">
+			<CompactionDivider>
 				<span className="h-3 w-3 animate-spin rounded-full border-2 border-border-strong border-t-ink-dim" />
 				<span>
 					{t("compaction.running")} · {reason}
 				</span>
-			</div>
+			</CompactionDivider>
+		);
+	}
+	if (compact.status === "cancelled") {
+		return (
+			<CompactionDivider>
+				{t("compaction.cancelled")} · {reason}
+			</CompactionDivider>
+		);
+	}
+	if (compact.status === "error") {
+		// 提醒级信息（多为无可压缩内容等非致命原因），琥珀色而非错误红
+		return (
+			<CompactionDivider className="text-amber-500">
+				{t("compaction.failed", { error: compact.errorMessage ?? "" })}
+			</CompactionDivider>
 		);
 	}
 	const tokens =
 		compact.tokensBefore != null && compact.tokensAfter != null
 			? ` · ${formatTokens(compact.tokensBefore)} → ${formatTokens(compact.tokensAfter)}`
 			: "";
-	if (compact.status === "cancelled") {
-		return (
-			<div className="py-1 text-center text-xs text-ink-faint">
-				{t("compaction.cancelled")} · {reason}
-			</div>
-		);
-	}
-	if (compact.status === "error") {
-		return (
-			<div className="py-1 text-center text-xs text-red-500">
-				{t("compaction.failed", { error: compact.errorMessage ?? "" })}
-			</div>
-		);
-	}
 	return (
-		<div className="mx-auto max-w-[560px] rounded-lg border border-border bg-hover px-3 py-2 text-center text-xs leading-relaxed text-ink-dim select-text">
-			<p className="font-medium text-ink-2">
-				{t("compaction.done")} · {reason}
-				{tokens}
-			</p>
-			{compact.summary && <p className="mt-1 line-clamp-3">{compact.summary}</p>}
+		<div>
+			<CompactionDivider>
+				<span>
+					{t("compaction.done")} · {reason}
+					{tokens}
+				</span>
+				{compact.summary && (
+					<button
+						type="button"
+						className="transition-colors hover:text-ink-2"
+						onClick={() => setExpanded((v) => !v)}
+					>
+						{t("compaction.summary")} {expanded ? "▴" : "▾"}
+					</button>
+				)}
+			</CompactionDivider>
+			{expanded && compact.summary && (
+				<p className="mx-auto max-w-[560px] px-3 pb-1 text-center text-xs leading-relaxed text-ink-dim select-text">
+					{compact.summary}
+				</p>
+			)}
+		</div>
+	);
+}
+
+function CompactionDivider({
+	children,
+	className = "text-ink-faint",
+}: {
+	children: ReactNode;
+	className?: string;
+}) {
+	return (
+		<div className={`flex items-center gap-3 py-1 text-xs select-none ${className}`}>
+			<span className="h-px flex-1 bg-border" />
+			<span className="flex items-center gap-2">{children}</span>
+			<span className="h-px flex-1 bg-border" />
 		</div>
 	);
 }

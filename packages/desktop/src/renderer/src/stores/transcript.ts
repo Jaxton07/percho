@@ -148,6 +148,7 @@ export const useTranscriptStore = create<TranscriptStore>((set) => ({
 						phase: "idle",
 						agentActive: false,
 						unseenCompletion: false,
+						compacting: false,
 						followUpQueue: current?.followUpQueue ?? [],
 						// loadHistory 只换消息流（compaction 后对齐 pi 裁剪），todo 列表保留
 						todos: current?.todos ?? [],

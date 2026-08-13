@@ -125,6 +125,8 @@ export interface SessionTranscriptState {
 	unseenCompletion: boolean;
 	/** 运行中排队的 followUp 消息文本（SDK queue_update 事件整组替换；agent 完成自动投递后清空） */
 	followUpQueue: string[];
+	/** 上下文压缩进行中（compaction_start/end 驱动；期间禁发——SDK 拒绝压缩中的 prompt，前端提前拦截保草稿） */
+	compacting: boolean;
 	/** todo 工具维护的任务列表（跨 turn 存活；compaction 后由 loadTodos 从 backend 恢复） */
 	todos: TodoItem[];
 }
@@ -137,6 +139,7 @@ export function emptyTranscript(): SessionTranscriptState {
 		agentActive: false,
 		unseenCompletion: false,
 		followUpQueue: [],
+		compacting: false,
 		todos: [],
 	};
 }
@@ -502,13 +505,15 @@ export function reduceEvent(state: SessionTranscriptState, event: AgentSessionEv
 				timestamp: Date.now(),
 				compact: { status: "running", reason: event.reason },
 			};
-			return { ...state, messages: [...state.messages, pending] };
+			return { ...state, compacting: true, messages: [...state.messages, pending] };
 		}
 		case "compaction_end": {
+			// SDK errorMessage 自带 "Compaction failed: " 前缀，与 i18n 的「压缩失败：」重复，剥掉
+			const errorMessage = event.errorMessage?.replace(/^Compaction failed:\s*/i, "");
 			const info: CompactionUiState = event.aborted
 				? { status: "cancelled", reason: event.reason }
 				: event.errorMessage
-					? { status: "error", reason: event.reason, errorMessage: event.errorMessage }
+					? { status: "error", reason: event.reason, errorMessage }
 					: {
 							status: "done",
 							reason: event.reason,
@@ -525,7 +530,7 @@ export function reduceEvent(state: SessionTranscriptState, event: AgentSessionEv
 				const messages = state.messages.map((m, i) =>
 					i === idx ? ({ ...m, compact: info } as UIMessage) : m,
 				);
-				return { ...state, messages };
+				return { ...state, compacting: false, messages };
 			}
 			const entry: UIMessage = {
 				kind: "system",
@@ -534,7 +539,7 @@ export function reduceEvent(state: SessionTranscriptState, event: AgentSessionEv
 				timestamp: Date.now(),
 				compact: info,
 			};
-			return { ...state, messages: [...state.messages, entry] };
+			return { ...state, compacting: false, messages: [...state.messages, entry] };
 		}
 		default:
 			return state;

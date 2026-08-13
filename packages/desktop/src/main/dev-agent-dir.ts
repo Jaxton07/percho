@@ -9,6 +9,16 @@ import { app } from "electron";
 // trust/permissions/skills 全部派生自它）。必须早于 backend 的任何路径解析
 // （index.ts 顶部 side-effect import，与 pi-package-dir 同模式）。
 // 用户显式设置了 PI_CODING_AGENT_DIR 时尊重之，不做任何处理。
+if (!app.isPackaged) {
+	// dev 与正式版 app 名相同（@pi-desktop/desktop），userData 默认同目录，
+	// tabs.json/ui-state.json/Local Storage 会被正式版污染（顶栏恢复出正式会话）。
+	// 重定向到 -dev 后缀目录，app ready 前调用才生效。
+	const devUserData = `${app.getPath("userData")}-dev`;
+	app.setPath("userData", devUserData);
+	mkdirSync(devUserData, { recursive: true });
+	console.log(`[dev-agent-dir] userData=${devUserData}（与正式版 userData 隔离）`);
+}
+
 if (!app.isPackaged && !process.env.PI_CODING_AGENT_DIR) {
 	const devDir = join(homedir(), ".pi", "agent-dev");
 	const prodDir = join(homedir(), ".pi", "agent");

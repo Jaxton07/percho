@@ -331,15 +331,31 @@ export class PiBackend {
 	async prompt(sessionId: string, text: string, images?: ImageInput[]): Promise<void> {
 		const entry = this.requireSession(sessionId);
 		log.info("prompt", sessionId, { text: text.slice(0, 120), images: images?.length ?? 0 });
-		await entry.session.prompt(text, {
-			// 运行中发送走 followUp 排队（agent 完成后自动投递；steer 打断暂不支持）
-			// SDK 要求 streaming 时必传 streamingBehavior，否则抛错
-			streamingBehavior: "followUp",
-			images: images?.map((image) => ({
-				type: "image" as const,
-				data: image.data,
-				mimeType: image.mimeType,
-			})),
+		// session.prompt() 非流式路径会 await 整个 run（直到 agent_settled）；渲染端只需要
+		// “已受理/已入队”回执——用 preflightResult 提前返回，否则 IPC 挂一整轮，渲染端
+		// sending 状态被占住，运行中的 followUp 排队发送被防重发守卫静默拦截。
+		// preflight 前抛错（无模型/无 key/compaction 中）照常 reject 传给渲染端；
+		// ack 之后 run 期错误不再回传（走事件流呈现），then 的 reject 在已 resolve 后为 no-op。
+		// preflightResult(false) 只在 SDK catch 里紧随 throw 触发，不据此 reject，真实错误经 throw 传递。
+		await new Promise<void>((resolve, reject) => {
+			entry.session
+				.prompt(text, {
+					// 运行中发送走 followUp 排队（agent 完成后自动投递；steer 打断暂不支持）
+					// SDK 要求 streaming 时必传 streamingBehavior，否则抛错
+					streamingBehavior: "followUp",
+					images: images?.map((image) => ({
+						type: "image" as const,
+						data: image.data,
+						mimeType: image.mimeType,
+					})),
+					preflightResult: (ok) => {
+						if (ok) resolve();
+					},
+				})
+				.then(
+					() => resolve(),
+					(err) => reject(err),
+				);
 		});
 	}
 

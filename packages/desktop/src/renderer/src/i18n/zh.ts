@@ -37,6 +37,8 @@ export const zh = {
 	composer: {
 		placeholder: "随便问点什么，/ 命令，@ 上下文",
 		placeholderQueued: "排队消息，当前任务完成后自动发送",
+		placeholderCompacting: "正在压缩上下文…",
+		compacting: "正在压缩上下文，完成后再发送",
 		stop: "停止",
 		send: "发送",
 		hint: "Enter 发送 · Shift+Enter 换行",
@@ -86,6 +88,7 @@ export const zh = {
 		done: "已压缩上下文",
 		cancelled: "已取消压缩",
 		failed: "压缩失败：{error}",
+		summary: "摘要",
 		reason: {
 			manual: "手动",
 			threshold: "自动（上下文阈值）",
