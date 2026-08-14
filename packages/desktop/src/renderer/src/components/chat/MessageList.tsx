@@ -89,7 +89,8 @@ export function MessageList() {
 
 	const items: ReactNode[] = [];
 	let metaItems: MetaItem[] = [];
-	/** 组序号：key 按位置稳定（streaming→committed 转换不 remount，正文边界后的新组自增） */
+	/** 组序号：同会话内 key 按位置稳定（streaming→committed 转换不 remount，正文边界后的新组自增）；
+	 *  key 含会话 id：切会话强制 remount——shownWorking 滞后/预览行调度等组内本地状态不跨会话泄漏 */
 	let groupIndex = 0;
 	/**
 	 * isLatest：是否为当前 run 的组（仅最后一个组接收 working 信号，历史组恒为已完成）
@@ -101,7 +102,7 @@ export function MessageList() {
 		const endByText = Boolean(transcript.streaming?.text);
 		items.push(
 			<MetaGroup
-				key={`meta-g${groupIndex++}`}
+				key={`meta-${activeSessionId}-g${groupIndex++}`}
 				items={metaItems}
 				working={isLatest && agentWorking}
 				endByText={endByText}

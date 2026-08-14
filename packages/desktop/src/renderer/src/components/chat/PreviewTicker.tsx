@@ -26,12 +26,12 @@ function ThinkingPreviewRow() {
 	);
 }
 
-/** tool 预览行：工具名（data-shimmer-name：MetaGroup 统一扫光的范围终点）+ 参数摘要（单行截断），不可展开；参数随流式增长原地更新 */
+/** tool 预览行：工具名（data-shimmer-name：MetaGroup 统一扫光的范围终点；sweep-target：扫光样式兜底，挂载/清理无闪帧）+ 参数摘要（单行截断），不可展开；参数随流式增长原地更新 */
 function ToolPreviewRow({ name, args }: { name: string; args: string }) {
 	const summary = summarizeArgs(args);
 	return (
 		<div className="flex items-center gap-2 py-0.5">
-			<span data-shimmer-name className="shrink-0 font-mono text-[13px] text-ink-dim">
+			<span data-shimmer-name className="sweep-target shrink-0 font-mono text-[13px] text-ink-working">
 				{displayName(name)}
 			</span>
 			{summary && (
