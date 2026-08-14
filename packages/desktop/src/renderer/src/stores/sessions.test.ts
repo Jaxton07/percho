@@ -10,6 +10,7 @@ const piMock = vi.hoisted(() => ({
 	setThinkingLevel: vi.fn(),
 	saveUiState: vi.fn(),
 	pickDirectory: vi.fn(),
+	ensureProjectTrust: vi.fn(() => Promise.resolve(true)),
 }));
 vi.mock("../api", () => ({ getPi: () => piMock }));
 

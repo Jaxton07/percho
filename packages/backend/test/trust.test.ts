@@ -16,27 +16,16 @@ function makeProject(): { cwd: string; agentDir: string; trustStore: ProjectTrus
 }
 
 describe("buildTrustOptions", () => {
-	it("生成与 CLI 一致的五个选项（含父目录）", () => {
+	it("只生成信任/不信任两个选项（均落盘）", () => {
 		const { cwd } = makeProject();
 		const options = buildTrustOptions(cwd);
-		expect(options.map((o) => o.key)).toEqual([
-			"trust",
-			"trustParent",
-			"trustSession",
-			"deny",
-			"denySession",
-		]);
+		expect(options.map((o) => o.key)).toEqual(["trust", "deny"]);
 
-		const [trust, trustParent, trustSession, deny, denySession] = options;
+		const [trust, deny] = options;
 		expect(trust.updates).toHaveLength(1);
 		expect(trust.updates[0].decision).toBe(true);
-		expect(trustParent.updates).toEqual([
-			{ path: trustParent.parentPath, decision: true },
-			{ path: trust.updates[0].path, decision: null },
-		]);
-		expect(trustSession.updates).toHaveLength(0);
+		expect(deny.updates).toHaveLength(1);
 		expect(deny.updates[0].decision).toBe(false);
-		expect(denySession.updates).toHaveLength(0);
 	});
 });
 
@@ -71,7 +60,7 @@ describe("resolveProjectTrust", () => {
 			defaultProjectTrust: "ask",
 			askUser: async () => {
 				asked = true;
-				return 2;
+				return 0;
 			},
 		});
 		expect(trusted).toBe(true);
@@ -114,32 +103,7 @@ describe("resolveProjectTrust", () => {
 		expect(trustStore.get(cwd)).toBe(true);
 	});
 
-	it("选择 trustParent 写父目录并清除子目录记录", async () => {
-		const { cwd, trustStore } = makeProject();
-		const trusted = await resolveProjectTrust({
-			cwd,
-			trustStore,
-			defaultProjectTrust: "ask",
-			askUser: async (_dir, options) => options.findIndex((o) => o.key === "trustParent"),
-		});
-		expect(trusted).toBe(true);
-		const parent = join(cwd, "..");
-		expect(trustStore.get(parent)).toBe(true);
-	});
-
-	it("选择 trustSession 不写 trust.json", async () => {
-		const { cwd, trustStore } = makeProject();
-		const trusted = await resolveProjectTrust({
-			cwd,
-			trustStore,
-			defaultProjectTrust: "ask",
-			askUser: async (_dir, options) => options.findIndex((o) => o.key === "trustSession"),
-		});
-		expect(trusted).toBe(true);
-		expect(trustStore.get(cwd)).toBeNull();
-	});
-
-	it("选择 deny 写入不信任；denySession 不写", async () => {
+	it("选择 deny 写入不信任", async () => {
 		const { cwd, trustStore } = makeProject();
 		const denied = await resolveProjectTrust({
 			cwd,
@@ -149,16 +113,6 @@ describe("resolveProjectTrust", () => {
 		});
 		expect(denied).toBe(false);
 		expect(trustStore.get(cwd)).toBe(false);
-
-		const other = makeProject();
-		const sessionDenied = await resolveProjectTrust({
-			cwd: other.cwd,
-			trustStore: other.trustStore,
-			defaultProjectTrust: "ask",
-			askUser: async (_dir, options) => options.findIndex((o) => o.key === "denySession"),
-		});
-		expect(sessionDenied).toBe(false);
-		expect(other.trustStore.get(other.cwd)).toBeNull();
 	});
 
 	it("用户取消（undefined）按不信任且不写记录", async () => {
@@ -204,5 +158,28 @@ describe("TrustGate", () => {
 		const promise = gate.ask("/tmp/project-x", buildTrustOptions("/tmp/project-x"));
 		gate.dispose();
 		await expect(promise).resolves.toBeUndefined();
+	});
+
+	it("同一 cwd 的在途询问去重（不重复弹窗），应答后可再问", async () => {
+		const { gate, requests } = makeGate();
+		const p1 = gate.ask("/tmp/project-x", buildTrustOptions("/tmp/project-x"));
+		const p2 = gate.ask("/tmp/project-x", buildTrustOptions("/tmp/project-x"));
+		expect(requests).toHaveLength(1);
+
+		gate.respond(requests[0].id, 0);
+		await expect(p1).resolves.toBe(0);
+		await expect(p2).resolves.toBe(0);
+
+		const p3 = gate.ask("/tmp/project-x", buildTrustOptions("/tmp/project-x"));
+		expect(requests).toHaveLength(2);
+		gate.respond(requests[1].id, 1);
+		await expect(p3).resolves.toBe(1);
+	});
+
+	it("不同 cwd 互不去重", async () => {
+		const { gate, requests } = makeGate();
+		gate.ask("/tmp/project-x", buildTrustOptions("/tmp/project-x"));
+		gate.ask("/tmp/project-y", buildTrustOptions("/tmp/project-y"));
+		expect(requests).toHaveLength(2);
 	});
 });

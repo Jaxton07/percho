@@ -20,7 +20,13 @@ import type {
 	TrustRequest,
 	UiState,
 } from "./session";
-import type { CustomProviderInput, ListProvidersOptions, ProviderInfo, ProviderTestResult } from "./settings";
+import type {
+	CustomProviderInput,
+	CustomProviderUpdateInput,
+	ListProvidersOptions,
+	ProviderInfo,
+	ProviderTestResult,
+} from "./settings";
 import type { TodoItem } from "./todo";
 import type { UpdateState } from "./update";
 
@@ -44,6 +50,8 @@ export const IpcChannels = {
 	SessionClearQueue: "session:clearQueue",
 	SessionGetFollowUpMessages: "session:getFollowUpMessages",
 	SessionListSlashCommands: "session:listSlashCommands",
+	/** 无会话斜杠命令列表（draft 新会话按 cwd 拉取；信任未决不弹窗，只含用户级资源） */
+	SessionListSlashCommandsForCwd: "session:listSlashCommandsForCwd",
 	SessionSetName: "session:setName",
 	SessionExport: "session:export",
 	SessionFork: "session:fork",
@@ -60,6 +68,7 @@ export const IpcChannels = {
 	SettingsSaveApiKey: "settings:saveApiKey",
 	SettingsRemoveCredential: "settings:removeCredential",
 	SettingsAddCustomProvider: "settings:addCustomProvider",
+	SettingsUpdateCustomProvider: "settings:updateCustomProvider",
 	SettingsRemoveCustomProvider: "settings:removeCustomProvider",
 	SettingsTestProvider: "settings:testProvider",
 	PermissionRespond: "permission:respond",
@@ -68,6 +77,8 @@ export const IpcChannels = {
 	PermissionSetEnabled: "permission:setEnabled",
 	/** 项目信任应答（选项下标） */
 	TrustRespond: "trust:respond",
+	/** 项目信任前置决策（添加项目/切换 draft cwd 时调用，未决则弹窗） */
+	ProjectEnsureTrust: "project:ensureTrust",
 	ProjectPickDirectory: "project:pickDirectory",
 	ProjectGetGitBranch: "project:getGitBranch",
 	ProjectListGitBranches: "project:listGitBranches",
@@ -127,6 +138,8 @@ export interface PiApi {
 	getFollowUpMessages(sessionId: string): Promise<string[]>;
 	/** 列出斜杠命令（内置 + prompt 模板 + skill + 扩展命令） */
 	listSlashCommands(sessionId: string): Promise<SlashCommandInfo[]>;
+	/** 无会话列出斜杠命令（draft 新会话用；信任未决的项目不弹窗，只含用户级资源） */
+	listSlashCommandsForCwd(cwd: string): Promise<SlashCommandInfo[]>;
 	/** 设置会话显示名（触发 session_info_changed 事件） */
 	setSessionName(sessionId: string, name: string): Promise<void>;
 	/** 导出会话内容（HTML/JSONL），返回文件内容文本 */
@@ -155,6 +168,8 @@ export interface PiApi {
 	saveApiKey(providerId: string, key: string): Promise<void>;
 	removeCredential(providerId: string): Promise<void>;
 	addCustomProvider(input: CustomProviderInput): Promise<void>;
+	/** 更新自定义 provider（ID 不可改；apiKey 留空保持不变，clearApiKey 删除已存 key） */
+	updateCustomProvider(input: CustomProviderUpdateInput): Promise<void>;
 	removeCustomProvider(providerId: string): Promise<void>;
 	testProvider(providerId: string, modelId?: string): Promise<ProviderTestResult>;
 	respondPermission(requestId: string, answer: PermissionAnswer): Promise<void>;
@@ -164,6 +179,8 @@ export interface PiApi {
 	setPermissionEnabled(enabled: boolean): Promise<void>;
 	/** 应答项目信任请求（optionIndex 为 TrustRequest.options 下标） */
 	respondTrust(requestId: string, answer: TrustAnswer): Promise<void>;
+	/** 项目信任前置决策（选目录/切 draft cwd 时调用；未决弹窗，结果落 trust.json） */
+	ensureProjectTrust(cwd: string): Promise<boolean>;
 	pickDirectory(): Promise<string | null>;
 	/** @ 补全数据源：项目文件相对路径列表（目录带尾 /，TTL 缓存） */
 	listProjectFiles(cwd?: string): Promise<string[]>;

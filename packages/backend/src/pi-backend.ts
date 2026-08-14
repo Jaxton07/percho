@@ -6,9 +6,11 @@ import {
 	createAgentSession,
 	DefaultPackageManager,
 	DefaultResourceLoader,
+	type Extension,
 	getAgentDir,
 	ModelRuntime,
 	ProjectTrustStore,
+	type ResourceLoader,
 	SessionManager,
 	SettingsManager,
 	type ToolDefinition,
@@ -165,8 +167,13 @@ export class PiBackend {
 	 * 两阶段加载项目资源（对齐 CLI main.js:533-570）：
 	 * 先 projectTrusted=false 只加载用户级资源 → 解析项目信任 → 按结果重载。
 	 * 不信任时项目级 settings/extensions/skills/prompts/themes 不加载。
+	 * askTrust=false 时信任未决按不信任处理（不弹窗）：draft 拉斜杠命令等只读场景用，
+	 * 弹窗已在选目录时经 ensureProjectTrust 前置。
 	 */
-	private async loadProjectResources(cwd: string): Promise<{
+	private async loadProjectResources(
+		cwd: string,
+		options?: { askTrust?: boolean },
+	): Promise<{
 		settingsManager: SettingsManager;
 		resourceLoader: DefaultResourceLoader;
 	}> {
@@ -198,13 +205,31 @@ export class PiBackend {
 					trustStore: this.trustStore,
 					defaultProjectTrust: settingsManager.getDefaultProjectTrust(),
 					askUser:
-						this.trustHandlers.size > 0 ? (dir, options) => this.trustGate.ask(dir, options) : undefined,
+						options?.askTrust !== false && this.trustHandlers.size > 0
+							? (dir, opts) => this.trustGate.ask(dir, opts)
+							: undefined,
 				});
 				log.info("project trust resolved", cwd, { trusted });
 				return trusted;
 			},
 		});
 		return { settingsManager, resourceLoader };
+	}
+
+	/**
+	 * 项目信任前置决策（添加项目/切换 draft cwd 时由 renderer 调用）：未决则经
+	 * TrustGate 弹窗，结果落 trust.json；此后 draft 拉命令与建会话都命中缓存，不再弹窗。
+	 */
+	async ensureProjectTrust(cwd: string): Promise<boolean> {
+		const settingsManager = SettingsManager.create(cwd, getAgentDir(), { projectTrusted: false });
+		const trusted = await resolveProjectTrust({
+			cwd,
+			trustStore: this.trustStore,
+			defaultProjectTrust: settingsManager.getDefaultProjectTrust(),
+			askUser: this.trustHandlers.size > 0 ? (dir, o) => this.trustGate.ask(dir, o) : undefined,
+		});
+		log.info("project trust ensured", cwd, { trusted });
+		return trusted;
 	}
 
 	async createSession(options: CreateSessionOptions): Promise<SessionMeta> {
@@ -422,26 +447,35 @@ export class PiBackend {
 	async listSlashCommands(sessionId: string): Promise<SlashCommandInfo[]> {
 		const entry = this.requireSession(sessionId);
 		const session = entry.session;
-		const templates: SlashCommandInfo[] = session.promptTemplates.map((template) => ({
-			name: template.name,
-			description: template.description,
-			argumentHint: template.argumentHint,
-			source: "template",
-			supported: true,
-		}));
-		const skills: SlashCommandInfo[] = session.resourceLoader.getSkills().skills.map((skill) => ({
-			name: `skill:${skill.name}`,
-			description: skill.description,
-			source: "skill",
-			supported: true,
-		}));
+		// 扩展命令走 runner（反映 bindExtensions 后的运行时注册与重名去重）
 		const extensions: SlashCommandInfo[] = session.extensionRunner.getRegisteredCommands().map((command) => ({
 			name: command.invocationName,
 			description: command.description ?? "",
 			source: "extension",
 			supported: true,
 		}));
-		return [...BUILTIN_SLASH_COMMANDS, ...templates, ...skills, ...extensions];
+		return [
+			...BUILTIN_SLASH_COMMANDS,
+			...templateCommands(session.resourceLoader),
+			...skillCommands(session.resourceLoader),
+			...extensions,
+		];
+	}
+
+	/**
+	 * 无会话列出斜杠命令（draft 新会话的补全数据源）：三类命令都只依赖
+	 * DefaultResourceLoader（扩展命令在加载期注册进 ext.commands），无需建会话。
+	 * 信任未决的项目不弹窗、按不信任只加载用户级资源（弹窗已在选目录时前置）。
+	 */
+	async listSlashCommandsForCwd(cwd?: string): Promise<SlashCommandInfo[]> {
+		const target = cwd || this.options.defaultCwd || process.cwd();
+		const { resourceLoader } = await this.loadProjectResources(target, { askTrust: false });
+		return [
+			...BUILTIN_SLASH_COMMANDS,
+			...templateCommands(resourceLoader),
+			...skillCommands(resourceLoader),
+			...extensionCommands(resourceLoader.getExtensions().extensions),
+		];
 	}
 
 	/** 扩展显示名：`<inline:N>` 原样，目录式扩展取最后一段（剥 index.ts 后缀） */
@@ -778,6 +812,59 @@ const BUILTIN_SLASH_COMMANDS: SlashCommandInfo[] = [
 		supported: true,
 	},
 ];
+
+/** 模板命令映射（listSlashCommands / listSlashCommandsForCwd 共用） */
+function templateCommands(loader: ResourceLoader): SlashCommandInfo[] {
+	return loader.getPrompts().prompts.map((template) => ({
+		name: template.name,
+		description: template.description,
+		argumentHint: template.argumentHint,
+		source: "template",
+		supported: true,
+	}));
+}
+
+/** skill 命令映射（listSlashCommands / listSlashCommandsForCwd 共用） */
+function skillCommands(loader: ResourceLoader): SlashCommandInfo[] {
+	return loader.getSkills().skills.map((skill) => ({
+		name: `skill:${skill.name}`,
+		description: skill.description,
+		source: "skill",
+		supported: true,
+	}));
+}
+
+/**
+ * 无会话扩展命令清单（draft 用）：命令在扩展加载期就注册进 ext.commands
+ * （注册类扩展 API 无需 bindExtensions），重名命令复刻 SDK
+ * ExtensionRunner.resolveRegisteredCommands 的 :N 后缀去重规则。
+ */
+function extensionCommands(extensions: Extension[]): SlashCommandInfo[] {
+	const all = extensions.flatMap((ext) => [...ext.commands.values()]);
+	const counts = new Map<string, number>();
+	for (const command of all) counts.set(command.name, (counts.get(command.name) ?? 0) + 1);
+	const seen = new Map<string, number>();
+	const taken = new Set<string>();
+	return all.map((command) => {
+		const occurrence = (seen.get(command.name) ?? 0) + 1;
+		seen.set(command.name, occurrence);
+		let invocationName = (counts.get(command.name) ?? 0) > 1 ? `${command.name}:${occurrence}` : command.name;
+		if (taken.has(invocationName)) {
+			let suffix = occurrence;
+			do {
+				suffix++;
+				invocationName = `${command.name}:${suffix}`;
+			} while (taken.has(invocationName));
+		}
+		taken.add(invocationName);
+		return {
+			name: invocationName,
+			description: command.description ?? "",
+			source: "extension",
+			supported: true,
+		};
+	});
+}
 
 /** 消息 content 块（pi-ai 结构，仅读取所需字段） */
 interface ContentBlock {

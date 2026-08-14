@@ -22,6 +22,8 @@ export function Composer({ centered = false }: { centered?: boolean }) {
 	const t = useT();
 	const activeSessionId = useSessionsStore((s) => s.activeSessionId);
 	const cwd = useSessionsStore((s) => s.cwd);
+	/** 信任决策应答后递增：draft 斜杠菜单按新决策（信任与否）重拉命令 */
+	const trustVersion = useSessionsStore((s) => s.trustVersion);
 	const createSession = useSessionsStore((s) => s.createSession);
 	const transcript = useTranscriptStore((s) => selectTranscript(s, activeSessionId));
 	/** 草稿（文本/图片/命令胶囊）按会话持久：切换会话/空态↔列表态换 Composer 实例不丢、不串会话 */
@@ -153,15 +155,26 @@ export function Composer({ centered = false }: { centered?: boolean }) {
 		return () => window.removeEventListener("pointerdown", onPointerDown);
 	}, [slashOpen, atOpen]);
 
-	// 会话切换时重新拉取命令列表（模板/skill 随项目变化）；draft 在后端不存在，跳过
+	// 会话切换时重新拉取命令列表（模板/skill 随项目变化）；draft 无后端会话，按 cwd 拉
+	// （三类命令只依赖资源加载器；项目信任已在选目录时经 ensureProjectTrust 决策落盘，
+	// 应答后 trustVersion 递增触发重拉，把项目级资源补进菜单）
+	// biome-ignore lint/correctness/useExhaustiveDependencies: trustVersion 是刻意的触发依赖（信任应答后重拉），effect 体内不引用
 	useEffect(() => {
-		if (!activeSessionId || isDraftSessionId(activeSessionId)) {
+		if (!activeSessionId) {
+			setSlashCommands([]);
+			return;
+		}
+		const request = isDraftSessionId(activeSessionId)
+			? cwd
+				? getPi().listSlashCommandsForCwd(cwd)
+				: null
+			: getPi().listSlashCommands(activeSessionId);
+		if (!request) {
 			setSlashCommands([]);
 			return;
 		}
 		let cancelled = false;
-		void getPi()
-			.listSlashCommands(activeSessionId)
+		void request
 			.then((list) => {
 				if (!cancelled) setSlashCommands(list);
 			})
@@ -171,7 +184,7 @@ export function Composer({ centered = false }: { centered?: boolean }) {
 		return () => {
 			cancelled = true;
 		};
-	}, [activeSessionId]);
+	}, [activeSessionId, cwd, trustVersion]);
 
 	/** 确保有活跃会话（无会话或 draft 时用其 cwd 真正创建，draft tab 原地转正），返回 sessionId */
 	const ensureSession = async (): Promise<string | null> => {
@@ -313,16 +326,16 @@ export function Composer({ centered = false }: { centered?: boolean }) {
 		requestAnimationFrame(() => textareaRef.current?.focus());
 	};
 
-	/** 菜单选中命令：无参内置立即执行；带参内置/模板/技能回填继续编辑 */
+	/** 菜单选中命令：无参内置立即执行（此时才建真实会话）；带参内置/模板/技能回填胶囊，发送时才建 */
 	const handleSlashPick = async (command: SlashCommandInfo) => {
 		if (!command.supported) return;
-		const sessionId = await ensureSession();
-		if (!sessionId) {
-			showFeedback(t("slash.feedback.noSession"), "warn");
-			return;
-		}
 		const inline = new Set(["compact", "settings"]);
 		if (command.source === "builtin" && inline.has(command.name)) {
+			const sessionId = await ensureSession();
+			if (!sessionId) {
+				showFeedback(t("slash.feedback.noSession"), "warn");
+				return;
+			}
 			setText("");
 			try {
 				await runSlashCommand(`/${command.name}`, sessionId);
@@ -331,7 +344,7 @@ export function Composer({ centered = false }: { centered?: boolean }) {
 			}
 			return;
 		}
-		// 需参数/模板/skill：确认命令，输入框显示为胶囊，等待 args
+		// 需参数/模板/skill：确认命令，输入框显示为胶囊，等待 args（draft 不提前转正，发送时 ensureSession）
 		setSlashCommand(command.name);
 		setText("");
 		setSlashDismissed(true);

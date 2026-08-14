@@ -31,6 +31,8 @@ interface SessionsStore {
 	currentModel: { provider: string; modelId: string } | null;
 	thinkingLevel: string;
 	error: string | null;
+	/** 项目信任决策完成计数：ensureProjectTrust 应答后 +1，驱动 draft 斜杠菜单按新决策重拉 */
+	trustVersion: number;
 	createSession: (cwd?: string, replaceDraftId?: string) => Promise<void>;
 	/** 新建草稿会话 tab：不触后端、不落盘（空 tab 重启后自动消失），发送首条消息时才用其 cwd 真正创建 */
 	createDraftSession: (cwd?: string) => void;
@@ -59,6 +61,7 @@ export const useSessionsStore = create<SessionsStore>((set, get) => ({
 	currentModel: null,
 	thinkingLevel: "medium",
 	error: null,
+	trustVersion: 0,
 
 	createSession: async (cwd, replaceDraftId) => {
 		const targetCwd = cwd ?? get().cwd;
@@ -88,6 +91,11 @@ export const useSessionsStore = create<SessionsStore>((set, get) => ({
 	createDraftSession: (cwd) => {
 		const targetCwd = cwd ?? get().cwd;
 		if (!targetCwd) return;
+		// 信任前置：未决项目立即弹窗（结果落 trust.json），draft 拉斜杠命令/转正建会话直接命中缓存
+		void getPi()
+			.ensureProjectTrust(targetCwd)
+			.then(() => set((s) => ({ trustVersion: s.trustVersion + 1 })))
+			.catch(() => {});
 		const now = Date.now();
 		const draft: SessionMeta = {
 			sessionId: `${DRAFT_SESSION_PREFIX}${crypto.randomUUID()}`,
@@ -107,7 +115,12 @@ export const useSessionsStore = create<SessionsStore>((set, get) => ({
 		// 不 persistTabs：draft 无 sessionFile 本就会被过滤，tabs.json 保持指向最近的真实会话
 	},
 
-	setDraftCwd: (cwd) =>
+	setDraftCwd: (cwd) => {
+		// 同 createDraftSession：cwd 变化即前置信任决策
+		void getPi()
+			.ensureProjectTrust(cwd)
+			.then(() => set((s) => ({ trustVersion: s.trustVersion + 1 })))
+			.catch(() => {});
 		set((state) => {
 			const active = state.sessions.find((s) => s.sessionId === state.activeSessionId);
 			if (active && isDraftSessionId(active.sessionId)) {
@@ -117,7 +130,8 @@ export const useSessionsStore = create<SessionsStore>((set, get) => ({
 				};
 			}
 			return { cwd };
-		}),
+		});
+	},
 
 	switchSession: (sessionId) => {
 		set((state) => {

@@ -3,6 +3,7 @@ import { join } from "node:path";
 import { getAgentDir, type ModelRuntime } from "@earendil-works/pi-coding-agent";
 import type {
 	CustomProviderInput,
+	CustomProviderUpdateInput,
 	ListProvidersOptions,
 	ProviderInfo,
 	ProviderTestResult,
@@ -47,10 +48,28 @@ export class SettingsService {
 		return join(getAgentDir(), "models.json");
 	}
 
-	private async customProviderIds(): Promise<Set<string>> {
+	private async readCustomProviders(): Promise<JsonObject> {
 		const data = await readJsonFile(this.modelsJsonPath);
-		const providers = data.providers as JsonObject | undefined;
-		return new Set(providers ? Object.keys(providers) : []);
+		return (data.providers as JsonObject | undefined) ?? {};
+	}
+
+	private async refreshLocalModels(): Promise<void> {
+		const runtime = await this.getRuntime();
+		// Mutations are already durable; network catalog freshness must never block their IPC response.
+		await runtime.refresh({ allowNetwork: false });
+	}
+
+	/** 从 models.json 原文提取 per-model 元数据（保留「未设置」状态，编辑表单预填用） */
+	private customModelMeta(customEntry: JsonObject | undefined): Map<string, JsonObject> {
+		const map = new Map<string, JsonObject>();
+		const rawModels = customEntry?.models;
+		if (!Array.isArray(rawModels)) return map;
+		for (const raw of rawModels) {
+			if (raw && typeof raw === "object" && typeof (raw as JsonObject).id === "string") {
+				map.set((raw as JsonObject).id as string, raw as JsonObject);
+			}
+		}
+		return map;
 	}
 
 	async listProviders(options?: ListProvidersOptions): Promise<ProviderInfo[]> {
@@ -67,11 +86,14 @@ export class SettingsService {
 			// 默认纯本地：内置目录 + models-store.json 缓存（refresh 的 allowNetwork 缺省为 true，必须显式关）
 			await runtime.refresh({ allowNetwork: false });
 		}
-		const customIds = await this.customProviderIds();
+		const customs = await this.readCustomProviders();
+		const customIds = new Set(Object.keys(customs));
 		return runtime
 			.getProviders()
 			.map((provider) => {
 				const status = runtime.getProviderAuthStatus(provider.id);
+				const customEntry = customs[provider.id] as JsonObject | undefined;
+				const modelMeta = this.customModelMeta(customEntry);
 				return {
 					id: provider.id,
 					name: provider.name || provider.id,
@@ -79,7 +101,28 @@ export class SettingsService {
 					configured: status.configured,
 					authSource: status.source,
 					authLabel: status.label,
-					models: runtime.getModels(provider.id).map((model) => ({ id: model.id, name: model.name })),
+					// 自定义 provider 回填 baseUrl/api，编辑表单预填用（key 永不回读）
+					...(customEntry
+						? {
+								baseUrl: typeof customEntry.baseUrl === "string" ? customEntry.baseUrl : undefined,
+								api: typeof customEntry.api === "string" ? customEntry.api : undefined,
+							}
+						: {}),
+					models: runtime.getModels(provider.id).map((model) => {
+						const raw = modelMeta.get(model.id);
+						return {
+							id: model.id,
+							name: model.name,
+							...(raw
+								? {
+										reasoning: raw.reasoning === true || undefined,
+										contextWindow: typeof raw.contextWindow === "number" ? raw.contextWindow : undefined,
+										maxTokens: typeof raw.maxTokens === "number" ? raw.maxTokens : undefined,
+										imageInput: (Array.isArray(raw.input) && raw.input.includes("image")) || undefined,
+									}
+								: {}),
+						};
+					}),
 				};
 			})
 			.sort((a, b) => Number(b.configured) - Number(a.configured) || a.id.localeCompare(b.id));
@@ -92,8 +135,7 @@ export class SettingsService {
 		const data = await readJsonFile(this.authPath);
 		data[providerId] = { type: "api_key", key: trimmed };
 		await writeJsonFile(this.authPath, data, 0o600);
-		const runtime = await this.getRuntime();
-		await runtime.refresh();
+		await this.refreshLocalModels();
 	}
 
 	async removeCredential(providerId: string): Promise<void> {
@@ -102,8 +144,39 @@ export class SettingsService {
 			delete data[providerId];
 			await writeJsonFile(this.authPath, data, 0o600);
 		}
-		const runtime = await this.getRuntime();
-		await runtime.refresh();
+		await this.refreshLocalModels();
+	}
+
+	/** 校验并构建 models.json 条目（add/update 共用）；id 由调用方单独校验 */
+	private buildCustomEntry(input: CustomProviderInput): JsonObject {
+		if (!input.baseUrl.trim()) throw new Error("baseUrl 不能为空");
+		if (!input.api.trim()) throw new Error("api 协议不能为空");
+		const models = input.models.filter((m) => m.id.trim());
+		if (models.length === 0) throw new Error("至少需要一个模型");
+		return {
+			...(input.name?.trim() ? { name: input.name.trim() } : {}),
+			baseUrl: input.baseUrl.trim(),
+			api: input.api.trim(),
+			models: models.map((m) => {
+				for (const [field, value] of [
+					["contextWindow", m.contextWindow],
+					["maxTokens", m.maxTokens],
+				] as const) {
+					if (value !== undefined && (!Number.isFinite(value) || value <= 0)) {
+						throw new Error(`模型 ${m.id.trim()} 的 ${field} 必须是正数`);
+					}
+				}
+				// 缺省字段不写进 models.json，跟随 SDK 默认（reasoning:false / 128000 / 16384 / 仅文本）
+				return {
+					id: m.id.trim(),
+					...(m.name?.trim() ? { name: m.name.trim() } : {}),
+					...(m.reasoning ? { reasoning: true } : {}),
+					...(m.contextWindow ? { contextWindow: Math.round(m.contextWindow) } : {}),
+					...(m.maxTokens ? { maxTokens: Math.round(m.maxTokens) } : {}),
+					...(m.imageInput ? { input: ["text", "image"] } : {}),
+				};
+			}),
+		};
 	}
 
 	/** 写 models.json 自定义 provider；可选把 key 存进 auth.json */
@@ -111,22 +184,10 @@ export class SettingsService {
 		const id = input.id.trim();
 		if (!id) throw new Error("Provider ID 不能为空");
 		if (!/^[a-z0-9][a-z0-9-_]*$/i.test(id)) throw new Error("Provider ID 只能包含字母、数字、-、_");
-		if (!input.baseUrl.trim()) throw new Error("baseUrl 不能为空");
-		if (!input.api.trim()) throw new Error("api 协议不能为空");
-		const models = input.models.filter((m) => m.id.trim());
-		if (models.length === 0) throw new Error("至少需要一个模型");
 
 		const data = await readJsonFile(this.modelsJsonPath);
 		const providers = (data.providers as JsonObject | undefined) ?? {};
-		providers[id] = {
-			...(input.name?.trim() ? { name: input.name.trim() } : {}),
-			baseUrl: input.baseUrl.trim(),
-			api: input.api.trim(),
-			models: models.map((m) => ({
-				id: m.id.trim(),
-				...(m.name?.trim() ? { name: m.name.trim() } : {}),
-			})),
-		};
+		providers[id] = this.buildCustomEntry(input);
 		data.providers = providers;
 		await writeJsonFile(this.modelsJsonPath, data);
 
@@ -136,8 +197,38 @@ export class SettingsService {
 			await writeJsonFile(this.authPath, auth, 0o600);
 		}
 
-		const runtime = await this.getRuntime();
-		await runtime.refresh();
+		await this.refreshLocalModels();
+	}
+
+	/**
+	 * 更新已存在的自定义 provider（name/baseUrl/api/models 全覆盖式更新）。
+	 * ID 是主键（models.json/auth.json/会话模型引用都按它关联），不可修改。
+	 * Key 语义：留空 = 保持不变；填写 = 替换；clearApiKey = 从 auth.json 删除。
+	 */
+	async updateCustomProvider(input: CustomProviderUpdateInput): Promise<void> {
+		const id = input.id.trim();
+		if (!id) throw new Error("Provider ID 不能为空");
+
+		const data = await readJsonFile(this.modelsJsonPath);
+		const providers = (data.providers as JsonObject | undefined) ?? {};
+		if (!(id in providers)) throw new Error(`自定义 provider 不存在：${id}`);
+		providers[id] = this.buildCustomEntry(input);
+		data.providers = providers;
+		await writeJsonFile(this.modelsJsonPath, data);
+
+		if (input.clearApiKey) {
+			const auth = await readJsonFile(this.authPath);
+			if (id in auth) {
+				delete auth[id];
+				await writeJsonFile(this.authPath, auth, 0o600);
+			}
+		} else if (input.apiKey?.trim()) {
+			const auth = await readJsonFile(this.authPath);
+			auth[id] = { type: "api_key", key: input.apiKey.trim() };
+			await writeJsonFile(this.authPath, auth, 0o600);
+		}
+
+		await this.refreshLocalModels();
 	}
 
 	async removeCustomProvider(providerId: string): Promise<void> {
@@ -153,8 +244,7 @@ export class SettingsService {
 			delete auth[providerId];
 			await writeJsonFile(this.authPath, auth, 0o600);
 		}
-		const runtime = await this.getRuntime();
-		await runtime.refresh();
+		await this.refreshLocalModels();
 	}
 
 	/** 真实发一个最小请求验证凭证可用 */

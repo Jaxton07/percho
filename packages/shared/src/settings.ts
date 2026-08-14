@@ -24,6 +24,14 @@ export interface ListProvidersOptions {
 export interface ProviderModelInfo {
 	id: string;
 	name: string;
+	/** 是否支持思考/推理（自定义 provider 从 models.json 原文回填，编辑预填用） */
+	reasoning?: boolean;
+	/** 上下文窗口 tokens（同上，未设置则为 undefined，SDK 缺省 128000） */
+	contextWindow?: number;
+	/** 最大输出 tokens（同上，SDK 缺省 16384） */
+	maxTokens?: number;
+	/** 支持图片输入（同上，SDK 缺省仅文本） */
+	imageInput?: boolean;
 }
 
 export interface ProviderInfo {
@@ -37,12 +45,24 @@ export interface ProviderInfo {
 	/** 凭证来源：stored / runtime / environment / models_json_key / models_json_command */
 	authSource?: string;
 	authLabel?: string;
+	/** 自定义 provider 的 baseUrl（来自 models.json，编辑表单预填用；内置 provider 不填） */
+	baseUrl?: string;
+	/** 自定义 provider 的 api 协议（编辑表单预填用；内置 provider 不填） */
+	api?: string;
 	models: ProviderModelInfo[];
 }
 
 export interface CustomProviderModelInput {
 	id: string;
 	name?: string;
+	/** 支持思考/推理；缺省 SDK 按 false 处理（思考深度会被钳到 off） */
+	reasoning?: boolean;
+	/** 上下文窗口 tokens；缺省 SDK 按 128000 */
+	contextWindow?: number;
+	/** 最大输出 tokens；缺省 SDK 按 16384 */
+	maxTokens?: number;
+	/** 支持图片输入；缺省仅文本 */
+	imageInput?: boolean;
 }
 
 export interface CustomProviderInput {
@@ -54,6 +74,12 @@ export interface CustomProviderInput {
 	models: CustomProviderModelInput[];
 	/** 可选；保存进 auth.json（0600），不写进 models.json */
 	apiKey?: string;
+}
+
+/** 更新自定义 provider：ID 为主键不可改；apiKey 留空 = 保持不变 */
+export interface CustomProviderUpdateInput extends CustomProviderInput {
+	/** true 时删除 auth.json 中已保存的 key（与 apiKey 互斥，优先生效） */
+	clearApiKey?: boolean;
 }
 
 export interface ProviderTestResult {

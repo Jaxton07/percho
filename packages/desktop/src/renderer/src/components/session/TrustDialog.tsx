@@ -2,7 +2,7 @@ import type { TrustOption, TrustRequest } from "@percho/shared";
 import { useT } from "../../i18n";
 import { Button } from "../ui/Button";
 
-/** 项目信任对话框：创建/打开会话前确认是否加载项目本地资源（.pi/ 扩展、skills 等） */
+/** 项目信任对话框：添加项目/创建会话前确认是否加载项目本地资源（.pi/ 扩展、skills 等） */
 export function TrustDialog({
 	requests,
 	onRespond,
@@ -18,14 +18,8 @@ export function TrustDialog({
 		switch (option.key) {
 			case "trust":
 				return t("trust.trust");
-			case "trustParent":
-				return t("trust.trustParent", { parentPath: option.parentPath ?? "" });
-			case "trustSession":
-				return t("trust.trustSession");
 			case "deny":
 				return t("trust.deny");
-			case "denySession":
-				return t("trust.denySession");
 		}
 	};
 

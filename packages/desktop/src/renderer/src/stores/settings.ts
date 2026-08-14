@@ -3,6 +3,7 @@ import type {
 	CatalogPackageType,
 	ConfiguredPackageInfo,
 	CustomProviderInput,
+	CustomProviderUpdateInput,
 	LoadedExtension,
 	LoadedSkill,
 	ProviderInfo,
@@ -74,6 +75,7 @@ interface SettingsStore {
 	saveKey: (providerId: string, key: string) => Promise<void>;
 	removeCredential: (providerId: string) => Promise<void>;
 	addCustom: (input: CustomProviderInput) => Promise<void>;
+	updateCustom: (input: CustomProviderUpdateInput) => Promise<void>;
 	removeCustom: (providerId: string) => Promise<void>;
 	test: (providerId: string) => Promise<void>;
 	setPermissionEnabled: (enabled: boolean) => Promise<void>;
@@ -322,6 +324,16 @@ export const useSettingsStore = create<SettingsStore>((set, get) => {
 		addCustom: async (input) => {
 			try {
 				await getPi().addCustomProvider(input);
+				await afterMutation();
+			} catch (error) {
+				set({ error: error instanceof Error ? error.message : String(error) });
+				throw error;
+			}
+		},
+
+		updateCustom: async (input) => {
+			try {
+				await getPi().updateCustomProvider(input);
 				await afterMutation();
 			} catch (error) {
 				set({ error: error instanceof Error ? error.message : String(error) });

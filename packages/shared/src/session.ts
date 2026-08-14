@@ -300,12 +300,12 @@ export interface PermissionConfigInfo {
 }
 
 /**
- * 项目信任选项（创建/打开会话时，项目含 .pi/ 资源或祖先 .agents/skills 需用户决策）。
- * key 由 backend 分类，renderer 按 key 出 i18n 文案；parentPath 仅 trustParent 有值。
+ * 项目信任选项（添加项目/创建会话前，项目含 .pi/ 资源或祖先 .agents/skills 需用户决策）。
+ * 刻意从 CLI 的五选项精简为两个（信任/不信任，均落盘）：「仅本次」在 draft 拉命令
+ * + 建会话双检查点的流程里语义不明且场景极少。
  */
 export interface TrustOption {
-	key: "trust" | "trustParent" | "trustSession" | "deny" | "denySession";
-	parentPath?: string;
+	key: "trust" | "deny";
 }
 
 /** 项目信任请求（发生在会话创建前，无 sessionId） */
