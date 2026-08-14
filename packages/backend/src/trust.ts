@@ -1,5 +1,5 @@
 import { realpathSync } from "node:fs";
-import { dirname, resolve } from "node:path";
+import { resolve } from "node:path";
 import {
 	type DefaultProjectTrust,
 	hasTrustRequiringProjectResources,
@@ -8,12 +8,11 @@ import {
 } from "@earendil-works/pi-coding-agent";
 import type { TrustOption, TrustRequest } from "@percho/shared";
 
-/** 信任选项（含写 trust.json 所需的 updates；key/parentPath 发给 renderer 展示） */
+/** 信任选项（含写 trust.json 所需的 updates；key 发给 renderer 展示） */
 export interface TrustOptionInternal {
 	key: TrustOption["key"];
 	trusted: boolean;
 	updates: ProjectTrustUpdate[];
-	parentPath?: string;
 }
 
 /** trust.json key 与 CLI 对齐：realpath 解析符号链接（如 macOS /tmp → /private/tmp） */
@@ -26,30 +25,16 @@ function canonicalize(path: string): string {
 }
 
 /**
- * 复刻 pi 的 getProjectTrustOptions（SDK 未导出，core/trust-manager.js:38-67）。
- * 选项与顺序保持 CLI 一致：信任 / 信任父目录 / 仅本次信任 / 不信任 / 仅本次不信任。
+ * 信任选项：刻意从 CLI 的五选项精简为两个（信任/不信任，均落 trust.json）。
+ * 「仅本次」不落盘，在 draft 拉斜杠命令 + 建会话都要查信任的流程里语义会崩
+ * （每次进入都重问）且场景极少；信任父目录可用直接选择上层目录替代。
  */
 export function buildTrustOptions(cwd: string): TrustOptionInternal[] {
 	const trustPath = canonicalize(resolve(cwd));
-	const options: TrustOptionInternal[] = [
+	return [
 		{ key: "trust", trusted: true, updates: [{ path: trustPath, decision: true }] },
+		{ key: "deny", trusted: false, updates: [{ path: trustPath, decision: false }] },
 	];
-	const parentPath = dirname(trustPath);
-	if (parentPath !== trustPath) {
-		options.push({
-			key: "trustParent",
-			trusted: true,
-			updates: [
-				{ path: parentPath, decision: true },
-				{ path: trustPath, decision: null },
-			],
-			parentPath,
-		});
-	}
-	options.push({ key: "trustSession", trusted: true, updates: [] });
-	options.push({ key: "deny", trusted: false, updates: [{ path: trustPath, decision: false }] });
-	options.push({ key: "denySession", trusted: false, updates: [] });
-	return options;
 }
 
 export interface ResolveTrustOptions {
@@ -99,19 +84,26 @@ export class TrustGate {
 		string,
 		{ optionCount: number; resolve: (answer: number | undefined) => void }
 	>();
+	/** 同一 cwd 的在途询问去重：选目录预检与会话创建可能并发触发，避免同项目弹两次 */
+	private readonly inflightByCwd = new Map<string, Promise<number | undefined>>();
 
 	constructor(private readonly onRequest: TrustResponder) {}
 
 	ask(cwd: string, options: TrustOptionInternal[]): Promise<number | undefined> {
+		const inflight = this.inflightByCwd.get(cwd);
+		if (inflight) return inflight;
 		const id = `trust-${nextId++}`;
-		return new Promise<number | undefined>((resolve) => {
+		const promise = new Promise<number | undefined>((resolve) => {
 			this.pending.set(id, { optionCount: options.length, resolve });
 			this.onRequest({
 				id,
 				cwd,
-				options: options.map((o) => ({ key: o.key, parentPath: o.parentPath })),
+				options: options.map((o) => ({ key: o.key })),
 			});
 		});
+		this.inflightByCwd.set(cwd, promise);
+		void promise.then(() => this.inflightByCwd.delete(cwd));
+		return promise;
 	}
 
 	respond(requestId: string, answer: number): void {
@@ -128,5 +120,6 @@ export class TrustGate {
 	dispose(): void {
 		for (const entry of this.pending.values()) entry.resolve(undefined);
 		this.pending.clear();
+		this.inflightByCwd.clear();
 	}
 }

@@ -52,7 +52,7 @@ export function ToolCallCard({ tool }: { tool: UIToolCall }) {
 		return () => ro.disconnect();
 	}, [summary]);
 
-	// running 时工具名加高光扫过动画（与 MetaGroup 的 Working 标题同款 shimmer-sweep）
+	// running 时工具名加高光扫过动画（与 MetaGroup 状态行同款光带渐变）
 	const nameClass = `shrink-0 font-mono text-[13px] font-semibold text-ink-dim transition-colors group-hover/row:text-ink${
 		tool.state === "running" ? " shimmer-sweep" : ""
 	}`;

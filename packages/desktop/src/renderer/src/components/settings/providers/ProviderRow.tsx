@@ -5,6 +5,7 @@ import { useSettingsStore } from "../../../stores/settings";
 import { EditIcon, TestIcon, TrashIcon } from "../../icons";
 import { Button } from "../../ui/Button";
 import { Tooltip } from "../../ui/Tooltip";
+import { CustomProviderEditForm } from "./CustomProviderForm";
 
 /** 图标操作按钮：图标无文字，Tooltip + aria-label 必需（ProvidersPanel 刷新按钮复用） */
 export function IconAction({
@@ -47,6 +48,7 @@ export function ProviderRow({ provider }: { provider: ProviderInfo }) {
 	const removeCustom = useSettingsStore((s) => s.removeCustom);
 	const test = useSettingsStore((s) => s.test);
 	const testResult = useSettingsStore((s) => s.testResults[provider.id]);
+	/** 自定义 provider 展开全字段编辑表单，内置 provider 只填/更新 Key */
 	const [editing, setEditing] = useState(false);
 	const [key, setKey] = useState("");
 
@@ -95,7 +97,13 @@ export function ProviderRow({ provider }: { provider: ProviderInfo }) {
 					</IconAction>
 				)}
 				<IconAction
-					label={provider.configured ? t("settings.providers.updateKey") : t("settings.providers.configKey")}
+					label={
+						provider.custom
+							? t("settings.providers.editCustom")
+							: provider.configured
+								? t("settings.providers.updateKey")
+								: t("settings.providers.configKey")
+					}
 					onClick={() => setEditing((v) => !v)}
 				>
 					<EditIcon />
@@ -128,21 +136,26 @@ export function ProviderRow({ provider }: { provider: ProviderInfo }) {
 						: t("settings.providers.testFailed", { error: testResult.error ?? "" })}
 				</p>
 			)}
-			{editing && (
-				<div className="mt-2 flex items-center gap-2">
-					<input
-						type="password"
-						className="min-w-0 flex-1 rounded-lg border border-border px-2.5 py-1.5 text-[12px] outline-none focus:border-ink-faint"
-						placeholder={t("settings.providers.keyPlaceholder")}
-						value={key}
-						onChange={(e) => setKey(e.target.value)}
-						onKeyDown={(e) => e.key === "Enter" && void save()}
-					/>
-					<Button variant="primary" onClick={() => void save()} disabled={!key.trim()}>
-						{t("common.save")}
-					</Button>
-				</div>
-			)}
+			{editing &&
+				(provider.custom ? (
+					<div className="mt-2">
+						<CustomProviderEditForm provider={provider} onDone={() => setEditing(false)} />
+					</div>
+				) : (
+					<div className="mt-2 flex items-center gap-2">
+						<input
+							type="password"
+							className="min-w-0 flex-1 rounded-lg border border-border px-2.5 py-1.5 text-[12px] outline-none focus:border-ink-faint"
+							placeholder={t("settings.providers.keyPlaceholder")}
+							value={key}
+							onChange={(e) => setKey(e.target.value)}
+							onKeyDown={(e) => e.key === "Enter" && void save()}
+						/>
+						<Button variant="primary" onClick={() => void save()} disabled={!key.trim()}>
+							{t("common.save")}
+						</Button>
+					</div>
+				))}
 		</li>
 	);
 }

@@ -82,12 +82,11 @@ export function TodoPanel() {
 	if (todos.length === 0 || !activeSessionId) return null;
 
 	const done = todos.filter((x) => x.status === "completed").length;
-	const allDone = done === todos.length;
 
 	return (
 		<div className="absolute top-2 right-4 z-20 max-w-[calc(100%-2rem)]">
-			{/* 同一卡片容器：折叠 = 小胶囊，展开 = 面板。宽度 + 内部 grid-rows 高度同步过渡，
-				形成「胶囊 ↔ 面板」的 morph 感（参考 .local/design/components/todo-panel-concepts.html 方案 A） */}
+			{/* 同一卡片容器：折叠 = 小胶囊，展开 = 面板。外层宽度 + 内部 grid-rows 高度同步过渡。
+				列表始终按展开后的宽度排版，避免宽度过渡时任务文字反复换行。 */}
 			<div
 				className={`overflow-hidden rounded-xl bg-surface shadow-pop transition-all duration-300 ease-[cubic-bezier(0.4,0,0.2,1)] motion-reduce:transition-none ${
 					expanded ? "w-64" : "w-40"
@@ -99,15 +98,13 @@ export function TodoPanel() {
 					aria-expanded={expanded}
 					className="flex w-full cursor-pointer items-center gap-2 px-3 py-2 text-left"
 				>
-					{/* 呼吸灯：颜色取 ink（与背景相反，日间黑 / 夜间白），动画见 globals.css todo-breath-dot */}
+					{/* 呼吸灯：颜色取 ink-dim（弱化存在感），动画见 globals.css todo-breath-dot */}
 					<span
 						className={`todo-breath-dot ${agentActive ? "" : "todo-breath-dot-paused"}`}
 						aria-hidden="true"
 					/>
-					<span className="shrink-0 text-[13px] font-medium text-ink">{t("todo.title")}</span>
-					<span
-						className={`shrink-0 text-[11px] tabular-nums ${allDone ? "text-green-500" : "text-ink-dim"}`}
-					>
+					<span className="shrink-0 text-[13px] font-medium text-ink-dim">{t("todo.title")}</span>
+					<span className="shrink-0 text-[11px] tabular-nums text-ink-faint">
 						{done}/{todos.length}
 					</span>
 					<span className="ml-auto shrink-0">
@@ -117,7 +114,7 @@ export function TodoPanel() {
 				{/* body 常驻 DOM：grid-rows 0fr→1fr 在卡片内部抽拉，容器 overflow-hidden 裁剪，
 					收起时高度归零、卡片缩回胶囊态（退出动画自然播放） */}
 				<div
-					className={`grid transition-all duration-300 ease-[cubic-bezier(0.4,0,0.2,1)] motion-reduce:transition-none ${
+					className={`grid w-64 transition-all duration-300 ease-[cubic-bezier(0.4,0,0.2,1)] motion-reduce:transition-none ${
 						expanded ? "grid-rows-[1fr] opacity-100" : "pointer-events-none grid-rows-[0fr] opacity-0"
 					}`}
 					aria-hidden={!expanded}

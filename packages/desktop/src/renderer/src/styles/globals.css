@@ -15,6 +15,7 @@
 	--color-ink-2: var(--color-ink-2);
 	--color-ink-dim: var(--color-ink-dim);
 	--color-ink-faint: var(--color-ink-faint);
+	--color-ink-working: var(--color-ink-working);
 	--color-on-ink: var(--color-on-ink);
 	--color-accent: var(--color-accent);
 	--color-on-accent: var(--color-on-accent);
@@ -36,6 +37,9 @@
 	--color-ink-2: #3f3f46;
 	--color-ink-dim: #71717a;
 	--color-ink-faint: #a1a1aa;
+	/* 工作中状态行文字基色：日间用浅一档灰（= ink-faint），给加深扫光让出对比空间
+	   （若用 ink-dim 本身偏深，扫光加深不明显） */
+	--color-ink-working: #a1a1aa;
 	--color-on-ink: #ffffff;
 	--color-accent: #7c3aed;
 	--color-on-accent: #ffffff;
@@ -52,7 +56,9 @@
 	--markdown-table-head-bg: #fafafa;
 	--markdown-link-decoration: #c4b5fd;
 	--markdown-link-hover: #6d28d9;
-	--shimmer-highlight: rgba(255, 255, 255, 0.9);
+	/* 扫光高光色 = 文字颜色的推移方向：日间往黑推（文字加深，对比度升高）；
+	   用白色会把文字推向近白背景，像消散而非高光。深色值与 --color-ink 一致 */
+	--shimmer-highlight: rgba(24, 24, 27, 0.9);
 	--shadow-soft: 0 0 14px -2px rgba(24, 24, 27, 0.08);
 	--shadow-pop: 0 4px 16px rgba(0, 0, 0, 0.12);
 	--shadow-dialog: 0 12px 40px rgba(0, 0, 0, 0.18);
@@ -70,6 +76,8 @@
 	--color-ink-2: #c6c6cd;
 	--color-ink-dim: #9a9aa3;
 	--color-ink-faint: #6e6e77;
+	/* 工作中状态行文字基色：夜间保持 ink-dim（提亮扫光在浅灰上正好） */
+	--color-ink-working: #9a9aa3;
 	--color-on-ink: #17171a;
 	--color-accent: #8b5cf6;
 	--color-on-accent: #ffffff;
@@ -84,6 +92,7 @@
 	--markdown-table-head-bg: #212126;
 	--markdown-link-decoration: #6d28d9;
 	--markdown-link-hover: #a78bfa;
+	/* 扫光高光色 = 往白推（文字提亮，与日间方向相反） */
 	--shimmer-highlight: rgba(255, 255, 255, 0.95);
 	--shadow-soft: 0 0 14px -2px rgba(255, 255, 255, 0.1);
 	--shadow-pop: 0 4px 16px rgba(255, 255, 255, 0.14);
@@ -168,13 +177,13 @@
 	}
 }
 
-/* todo 折叠态呼吸灯：颜色取 ink（与背景相反——日间黑 / 夜间白），仅透明度 + 缩放起伏 */
+/* todo 折叠态呼吸灯：颜色取 ink-dim（弱化存在感的中性灰，深浅主题各自反色），仅透明度 + 缩放起伏 */
 .todo-breath-dot {
 	width: 7px;
 	height: 7px;
 	flex-shrink: 0;
 	border-radius: 9999px;
-	background: var(--color-ink);
+	background: var(--color-ink-dim);
 	animation: todo-breath 2.2s ease-in-out infinite;
 	transition: opacity 0.3s;
 }
@@ -334,24 +343,43 @@ code {
 }
 
 /* Working 文字高亮扫过（codex 风格）：光带只扫文字本身，背景不变（background-clip: text）。
-   光带位于渐变 40–60%（图宽 200%），仅当 background-position ∈ (-20%, 120%) 时可见——
-   动画精确走 120% → -20% 且 linear：首尾光带都在视口外，循环无缝无重置卡顿。 */
+   光带为平滑对称单峰渐变（边缘 = currentColor 本色，图宽 200%）：行程端点 200% / -100% 处
+   渐变图恰好完全滑出视口两侧——动画精确走 200% → -100% 且 linear，循环无缝无重置卡顿。
+   渐变形状与 MetaGroup.tsx 的 bandGradient 保持一致（改则两边同步）。 */
 .shimmer-sweep {
-	background-image: linear-gradient(90deg, currentColor 40%, var(--shimmer-highlight) 50%, currentColor 60%);
+	background-image: linear-gradient(
+		90deg,
+		currentColor 0%,
+		color-mix(in srgb, currentColor 75%, var(--shimmer-highlight)) 28%,
+		color-mix(in srgb, currentColor 30%, var(--shimmer-highlight)) 46%,
+		color-mix(in srgb, var(--shimmer-highlight) 90%, currentColor) 50%,
+		color-mix(in srgb, currentColor 30%, var(--shimmer-highlight)) 54%,
+		color-mix(in srgb, currentColor 75%, var(--shimmer-highlight)) 72%,
+		currentColor 100%
+	);
 	background-size: 200% 100%;
-	background-position: 120% 0;
+	background-position: 200% 0;
 	-webkit-background-clip: text;
 	background-clip: text;
 	-webkit-text-fill-color: transparent;
-	animation: shimmer-sweep 1.6s linear infinite;
+	animation: shimmer-sweep 3.6s linear infinite;
 }
 @keyframes shimmer-sweep {
 	from {
-		background-position: 120% 0;
+		background-position: 200% 0;
 	}
 	to {
-		background-position: -20% 0;
+		background-position: -100% 0;
 	}
+}
+/* 扫光目标常态兜底：实心 currentColor 渐变 + text clip，渲染效果与普通文字一致；
+   让扫光元素始终走同一条渲染路径（clip:text + 透明填充），rAF 扫光只重写 backgroundImage
+  （光带位置烘焙在渐变 px 色标里，背景恒铺满元素）——挂载/卸载/清理的瞬间无纯色闪帧。 */
+.sweep-target {
+	background-image: linear-gradient(90deg, currentColor, currentColor);
+	-webkit-background-clip: text;
+	background-clip: text;
+	-webkit-text-fill-color: transparent;
 }
 @media (prefers-reduced-motion: reduce) {
 	.shimmer-sweep {
@@ -466,4 +494,25 @@ code {
 .markdown-body .thematic-break {
 	margin: 1rem 0;
 	border-top-color: var(--markdown-table-border);
+}
+
+/* <details> 内容区的抽屉式展开/折叠动画（MetaGroup 工具组等）。
+   ::details-content（Chromium 131+）是包裹 summary 之外内容的伪元素；calc-size(auto, size)
+   让 height 可在 0 与 auto 之间过渡。content-visibility 一并过渡：它参与离散动画时有特殊插值
+   规则——任一端点是 visible 则整个过渡区间保持 visible → 关闭动画播完内容才真正隐藏。
+   不支持的旧内核此规则整体不命中，<details> 退化为原生瞬开瞬关，无破坏性。 */
+.drawer-details::details-content {
+	height: 0;
+	overflow: clip;
+	transition:
+		height 0.28s cubic-bezier(0.16, 1, 0.3, 1),
+		content-visibility 0.28s allow-discrete;
+}
+.drawer-details[open]::details-content {
+	height: calc-size(auto, size);
+}
+@media (prefers-reduced-motion: reduce) {
+	.drawer-details::details-content {
+		transition: none;
+	}
 }

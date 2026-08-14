@@ -7,6 +7,7 @@ import { createLogger, initLogging, PiBackend } from "@percho/backend";
 import {
 	type CatalogPackageType,
 	type CustomProviderInput,
+	type CustomProviderUpdateInput,
 	type ImageInput,
 	IpcChannels,
 	type ListProvidersOptions,
@@ -94,6 +95,9 @@ function registerIpc(): void {
 	ipcMain.handle(IpcChannels.SessionListSlashCommands, (_e, sessionId: string) =>
 		backend.listSlashCommands(sessionId),
 	);
+	ipcMain.handle(IpcChannels.SessionListSlashCommandsForCwd, (_e, cwd: string) =>
+		backend.listSlashCommandsForCwd(cwd),
+	);
 	ipcMain.handle(IpcChannels.SessionSetName, (_e, sessionId: string, name: string) =>
 		backend.setSessionName(sessionId, name),
 	);
@@ -144,6 +148,9 @@ function registerIpc(): void {
 	ipcMain.handle(IpcChannels.SettingsAddCustomProvider, (_e, input: CustomProviderInput) =>
 		backend.settings.addCustomProvider(input),
 	);
+	ipcMain.handle(IpcChannels.SettingsUpdateCustomProvider, (_e, input: CustomProviderUpdateInput) =>
+		backend.settings.updateCustomProvider(input),
+	);
 	ipcMain.handle(IpcChannels.SettingsRemoveCustomProvider, (_e, providerId: string) =>
 		backend.settings.removeCustomProvider(providerId),
 	);
@@ -160,6 +167,7 @@ function registerIpc(): void {
 	ipcMain.handle(IpcChannels.TrustRespond, (_e, requestId: string, answer: number) =>
 		backend.respondTrust(requestId, answer),
 	);
+	ipcMain.handle(IpcChannels.ProjectEnsureTrust, (_e, cwd: string) => backend.ensureProjectTrust(cwd));
 	ipcMain.handle(IpcChannels.ProjectGetGitBranch, (_e, cwd: string) => getGitBranch(cwd));
 	ipcMain.handle(IpcChannels.ProjectListGitBranches, (_e, cwd: string) => listGitBranches(cwd));
 	ipcMain.handle(IpcChannels.ProjectCheckoutBranch, (_e, cwd: string, branch: string) =>
@@ -230,10 +238,11 @@ app.whenReady().then(async () => {
 		contents.on("unresponsive", () => {
 			crashLog.warn("renderer unresponsive");
 		});
-		contents.on("console-message", (_event, level, message, line, sourceId) => {
-			// level: 0 verbose / 1 info / 2 warning / 3 error
-			if (level >= 3) crashLog.error("renderer console", { message, line, sourceId });
-			else crashLog.debug("renderer console", { message, line, sourceId });
+		contents.on("console-message", (details) => {
+			// details.level: debug / info / warning / error（Electron 37+ 对象形式，旧数值签名已废弃）
+			const { level, message, lineNumber, sourceId } = details;
+			if (level === "error") crashLog.error("renderer console", { message, line: lineNumber, sourceId });
+			else crashLog.debug("renderer console", { message, line: lineNumber, sourceId });
 		});
 	});
 

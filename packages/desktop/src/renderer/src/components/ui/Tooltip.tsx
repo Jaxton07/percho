@@ -3,9 +3,18 @@ import type { ReactNode } from "react";
 /** 轻量自定义 tooltip，替代原生 title（延迟不可控/跟随鼠标/系统样式）：
    悬停 300ms 后淡入（防扫过闪烁），离开立即消失；固定锚在触发元素下方居中。
    纯色悬浮卡片：浅色纯白 / 深色纯黑 + 悬浮阴影（无边框） */
-export function Tooltip({ label, children }: { label: string; children: ReactNode }) {
+export function Tooltip({
+	label,
+	className,
+	children,
+}: {
+	label: string;
+	/** 追加到触发元素包裹层（如 w-full 让栅格内的禁用输入撑满） */
+	className?: string;
+	children: ReactNode;
+}) {
 	return (
-		<span className="group/tooltip relative inline-flex shrink-0">
+		<span className={`group/tooltip relative inline-flex shrink-0 ${className ?? ""}`}>
 			{children}
 			<span
 				role="tooltip"
