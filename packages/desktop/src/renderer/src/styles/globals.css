@@ -177,13 +177,13 @@
 	}
 }
 
-/* todo 折叠态呼吸灯：颜色取 ink（与背景相反——日间黑 / 夜间白），仅透明度 + 缩放起伏 */
+/* todo 折叠态呼吸灯：颜色取 ink-dim（弱化存在感的中性灰，深浅主题各自反色），仅透明度 + 缩放起伏 */
 .todo-breath-dot {
 	width: 7px;
 	height: 7px;
 	flex-shrink: 0;
 	border-radius: 9999px;
-	background: var(--color-ink);
+	background: var(--color-ink-dim);
 	animation: todo-breath 2.2s ease-in-out infinite;
 	transition: opacity 0.3s;
 }
@@ -494,4 +494,25 @@ code {
 .markdown-body .thematic-break {
 	margin: 1rem 0;
 	border-top-color: var(--markdown-table-border);
+}
+
+/* <details> 内容区的抽屉式展开/折叠动画（MetaGroup 工具组等）。
+   ::details-content（Chromium 131+）是包裹 summary 之外内容的伪元素；calc-size(auto, size)
+   让 height 可在 0 与 auto 之间过渡。content-visibility 一并过渡：它参与离散动画时有特殊插值
+   规则——任一端点是 visible 则整个过渡区间保持 visible → 关闭动画播完内容才真正隐藏。
+   不支持的旧内核此规则整体不命中，<details> 退化为原生瞬开瞬关，无破坏性。 */
+.drawer-details::details-content {
+	height: 0;
+	overflow: clip;
+	transition:
+		height 0.28s cubic-bezier(0.16, 1, 0.3, 1),
+		content-visibility 0.28s allow-discrete;
+}
+.drawer-details[open]::details-content {
+	height: calc-size(auto, size);
+}
+@media (prefers-reduced-motion: reduce) {
+	.drawer-details::details-content {
+		transition: none;
+	}
 }

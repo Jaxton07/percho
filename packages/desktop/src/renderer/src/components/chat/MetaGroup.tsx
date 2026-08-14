@@ -241,7 +241,7 @@ export function MetaGroup({
 		// -mb-3：抵消 MessageList gap-6 的一部分，状态行与后续正文/消息间距收紧
 		<div className="-mb-3">
 			{/* min-h-6：与内联预览行（h-6）等高，working/worked 切换行高不变 */}
-			<details className="group/outer peer">
+			<details className="group/outer peer drawer-details">
 				<summary className="group/row flex min-h-6 cursor-pointer items-center gap-2 py-0.5 select-none [&::-webkit-details-marker]:hidden">
 					<div className="flex shrink-0 items-center gap-2">
 						{shownWorking && <ThinkingOrb state={orbState} size={20} paused={false} />}
