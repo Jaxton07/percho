@@ -8,7 +8,7 @@ import {
 	isPublicIp,
 	makeWebFetchTool,
 	parseCidr,
-} from "../src/webfetch";
+} from "../src/tools/webfetch";
 
 const PUBLIC_ADDR = [{ address: "1.2.3.4", family: 4 as const }];
 

@@ -1,4 +1,4 @@
-import { type ReactNode, useCallback, useEffect, useRef, useState } from "react";
+import { type MouseEvent, type ReactNode, useCallback, useEffect, useRef, useState } from "react";
 import { useT } from "../../i18n";
 import { useSessionsStore } from "../../stores/sessions";
 import { selectTranscript, useTranscriptStore } from "../../stores/transcript";
@@ -85,6 +85,13 @@ export function MessageList() {
 		if (atBottom) updateFollowing(true);
 		else if (el.scrollTop < lastScrollTopRef.current) updateFollowing(false);
 		lastScrollTopRef.current = el.scrollTop;
+	};
+
+	// 展开/折叠任何折叠组（details summary）→ 释放底部跟随：否则贴底 RO 会在高度动画期间
+	// 持续拉回底部，出现「Worked 上移 + 内容下展」两边同动的不稳定感。释放后视口钉在点击处、
+	// 新内容向下展开，与「向上滚动脱离」同一语义（滚回底部即恢复跟随）
+	const handleSummaryToggle = (e: MouseEvent) => {
+		if (e.target instanceof Element && e.target.closest("summary")) updateFollowing(false);
 	};
 
 	const items: ReactNode[] = [];
@@ -203,7 +210,14 @@ export function MessageList() {
 	return (
 		<div className="relative h-full">
 			{/* overflow-x-hidden：任何行内容异常超宽都只裁剪，不产生页面级横向滚动条 */}
-			<div ref={scrollRef} onScroll={handleScroll} className="h-full overflow-x-hidden overflow-y-auto">
+			{/* scrollbar-gutter:stable：永久保留滚动条槽位——展开折叠组跨过溢出阈值时滚动条出现/消失
+			    会挤掉布局宽度，导致居中列（mx-auto max-w-760）整体左右横移；悬浮滚动条模式下无副作用 */}
+			<div
+				ref={scrollRef}
+				onScroll={handleScroll}
+				onClickCapture={handleSummaryToggle}
+				className="h-full overflow-x-hidden overflow-y-auto [scrollbar-gutter:stable]"
+			>
 				<div ref={contentRef} className="mx-auto flex max-w-[760px] flex-col gap-6 px-6 pt-8 pb-16">
 					{items}
 				</div>

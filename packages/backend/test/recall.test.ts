@@ -1,7 +1,7 @@
 import type { Message } from "@earendil-works/pi-ai";
 import { SessionManager } from "@earendil-works/pi-coding-agent";
 import { describe, expect, it } from "vitest";
-import { resolveRecallEntryId } from "../src/pi-backend";
+import { resolveRecallEntryId } from "../src/session/messages";
 
 /** 构造带两条用户消息（+一条回复在中间）的内存会话，返回 manager 与 entry id */
 function makeSession() {

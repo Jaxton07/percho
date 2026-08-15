@@ -1,6 +1,5 @@
 export { createLogger, initLogging, type Logger } from "./log";
-export { fetchPackageCatalog, parseCatalogHtml } from "./package-catalog";
-export { makePermissionGateExtension, type PermissionGateOptions } from "./permission-extension";
+export { fetchPackageCatalog, parseCatalogHtml } from "./packages/catalog";
 export {
 	createPermissionConfigLoader,
 	DEFAULT_PERMISSION_CONFIG,
@@ -14,21 +13,22 @@ export {
 	mergeWithDefaults,
 	type PermissionAction,
 	type PermissionConfig,
+	type PermissionOutside,
 	type PermissionRule,
 	type PermissionRules,
+	patternMatchesToolCall,
 	permissionConfigPath,
 	setPermissionEnabled,
 	splitShellSegments,
 	suggestPattern,
-} from "./permission-rules";
-export { PermissionGate, type PermissionResponder } from "./permissions";
+} from "./permissions";
+export {
+	makePermissionGateExtension,
+	type PermissionConfirm,
+	type PermissionGateOptions,
+} from "./permissions/extension";
+export { PermissionGate, type PermissionRequestMeta, type PermissionResponder } from "./permissions/gate";
 export { PiBackend, type PiBackendOptions } from "./pi-backend";
-export { type RegisteredSession, SessionRegistry } from "./session-registry";
-export { SettingsService } from "./settings";
-export { makeShowImageTool, resolveShowImagePath, type ShowImageDetails } from "./show-image-tool";
-export { makeTodoReminderExtension } from "./todo-reminder-extension";
-export { formatTodoList, makeTodoTool, normalizeTodos } from "./todo-tool";
-export { TraceRecorder } from "./trace";
 export {
 	buildTrustOptions,
 	type ResolveTrustOptions,
@@ -36,10 +36,36 @@ export {
 	TrustGate,
 	type TrustOptionInternal,
 	type TrustResponder,
-} from "./trust";
-export { describeImage, pingVision, VisionClientError } from "./vision-client";
-export { resolveVisionKey, VisionConfigService } from "./vision-config";
-export { makeVisionProxyExtension, type VisionProxyOptions } from "./vision-proxy-extension";
+} from "./project/trust";
+export {
+	addAllowedPattern,
+	addWorkspaceRoot,
+	createWorkspacesLoader,
+	emptyWorkspaces,
+	loadWorkspaces,
+	removeWorkspaceRoot,
+	suggestRootCandidate,
+	type WorkspaceProjectEntry,
+	type WorkspacesConfig,
+	workspaceConfigPath,
+} from "./project/workspace-store";
+export {
+	assignEntryIds,
+	blockImages,
+	blockText,
+	type ContentBlock,
+	type RawMessage,
+	resolveForkEntryId,
+	resolveRecallEntryId,
+	toSessionMessages,
+} from "./session/messages";
+export { type RegisteredSession, SessionRegistry } from "./session/registry";
+export { TraceRecorder } from "./session/trace";
+export { SettingsService } from "./settings/settings";
+export { BUILTIN_SLASH_COMMANDS, slashCommandsForLoader, slashCommandsForSession } from "./slash-commands";
+export { makeShowImageTool, resolveShowImagePath, type ShowImageDetails } from "./tools/show-image";
+export { formatTodoList, makeTodoTool, normalizeTodos } from "./tools/todo";
+export { makeTodoReminderExtension } from "./tools/todo-reminder";
 export {
 	assertPublicUrl,
 	type Cidr,
@@ -51,4 +77,7 @@ export {
 	parseCidr,
 	type WebFetchDetails,
 	type WebFetchOptions,
-} from "./webfetch";
+} from "./tools/webfetch";
+export { describeImage, pingVision, VisionClientError } from "./vision/client";
+export { resolveVisionKey, VisionConfigService } from "./vision/config";
+export { makeVisionProxyExtension, type VisionProxyOptions } from "./vision/proxy-extension";

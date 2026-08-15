@@ -18,7 +18,7 @@ vi.mock("@earendil-works/pi-coding-agent", () => ({
 	getAgentDir: () => "/agent",
 }));
 
-import { SettingsService } from "../src/settings";
+import { SettingsService } from "../src/settings/settings";
 
 describe("SettingsService provider mutations", () => {
 	beforeEach(() => files.clear());

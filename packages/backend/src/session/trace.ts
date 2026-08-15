@@ -1,6 +1,6 @@
 import { appendFile, mkdir, readdir, rename, stat, unlink } from "node:fs/promises";
 import { join } from "node:path";
-import { createLogger } from "./log";
+import { createLogger } from "../log";
 
 const log = createLogger("trace");
 

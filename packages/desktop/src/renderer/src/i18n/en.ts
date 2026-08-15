@@ -99,8 +99,11 @@ export const en: Messages = {
 	},
 	permission: {
 		deny: "Deny",
-		allowAlways: "Always allow this session",
+		allowAlways: "Always allow (this project)",
 		allowOnce: "Allow once",
+		allowDir: "Allow this directory",
+		allowDirHint:
+			"Add {dir} to this project's workspace: reads and writes inside it no longer prompt (persisted to workspaces.json)",
 		queued: "{count} more requests queued",
 	},
 	trust: {
@@ -123,6 +126,11 @@ export const en: Messages = {
 		working: "Working",
 		thinkingLabel: "Thinking",
 		worked: "Worked",
+		summaryRead: "Read {n} {unit}",
+		summaryEdit: "Edited {n} {unit}",
+		summaryExplore: "Explored {n} {unit}",
+		summarySearch: "Searched {n} {unit}",
+		summaryBash: "Ran {n} {unit}",
 		image: "View image",
 		subagent: {
 			running: "Working",

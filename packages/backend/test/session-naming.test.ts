@@ -1,6 +1,6 @@
 import type { AgentSession, AgentSessionEvent } from "@earendil-works/pi-coding-agent";
 import { describe, expect, it } from "vitest";
-import { autoNameSession } from "../src/session-naming";
+import { autoNameSession } from "../src/session/naming";
 
 function makeSession(existingName: string | null = null) {
 	const calls: string[] = [];

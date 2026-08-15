@@ -3,7 +3,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { ProjectTrustStore } from "@earendil-works/pi-coding-agent";
 import { describe, expect, it } from "vitest";
-import { buildTrustOptions, resolveProjectTrust, TrustGate } from "../src/trust";
+import { buildTrustOptions, resolveProjectTrust, TrustGate } from "../src/project/trust";
 
 function makeProject(): { cwd: string; agentDir: string; trustStore: ProjectTrustStore } {
 	const root = mkdtempSync(join(tmpdir(), "pi-trust-test-"));

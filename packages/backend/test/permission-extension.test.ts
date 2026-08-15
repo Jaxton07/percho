@@ -1,6 +1,6 @@
 import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join, sep } from "node:path";
 import type {
 	ExtensionAPI,
 	ExtensionContext,
@@ -9,10 +9,18 @@ import type {
 	ToolCallEventResult,
 } from "@earendil-works/pi-coding-agent";
 import { describe, expect, it } from "vitest";
-import { makePermissionGateExtension } from "../src/permission-extension";
-import { PermissionGate } from "../src/permissions";
+import { makePermissionGateExtension, type PermissionConfirm } from "../src/permissions/extension";
+import { PermissionGate } from "../src/permissions/gate";
+import { workspaceConfigPath } from "../src/project/workspace-store";
 
 type ToolCallHandler = ExtensionHandler<ToolCallEvent, ToolCallEventResult>;
+
+interface ConfirmCall {
+	title: string;
+	message: string;
+	kind?: "path" | "command" | "other";
+	suggestDir?: string;
+}
 
 function makeAgentDir(): string {
 	const dir = mkdtempSync(join(tmpdir(), "pi-perm-ext-"));
@@ -20,13 +28,20 @@ function makeAgentDir(): string {
 	return dir;
 }
 
-/** 挂载扩展并返回 tool_call 触发器；confirmAnswer 控制弹窗结果 */
+/** 挂载扩展并返回 tool_call 触发器；confirmAnswer 控制弹窗结果，confirmCalls 捕获元数据 */
 function makeHarness(
 	agentDir: string,
 	confirmAnswer: boolean | ((title: string) => boolean) = false,
-	options?: { projectRoot?: string },
+	options?: { projectRoot?: string; confirmCalls?: ConfirmCall[] },
 ) {
-	const extension = makePermissionGateExtension(agentDir, options);
+	const confirmCalls = options?.confirmCalls;
+	const confirm: PermissionConfirm | undefined = confirmCalls
+		? async (title, message, meta) => {
+				confirmCalls.push({ title, message, ...meta });
+				return typeof confirmAnswer === "function" ? confirmAnswer(title) : confirmAnswer;
+			}
+		: undefined;
+	const extension = makePermissionGateExtension(agentDir, { projectRoot: options?.projectRoot, confirm });
 	if (typeof extension === "function" || !("factory" in extension)) {
 		throw new Error("expected named inline extension");
 	}
@@ -108,7 +123,16 @@ describe("permission-gate 扩展", () => {
 		expect(confirms).toHaveLength(0);
 	});
 
-	it("项目边界：根外路径弹窗（含 ../../ 相对逃逸），根内与不设边界放行", async () => {
+	it("自保护默认规则：触及权限/凭证配置的 bash 与 edit/write 必确认", async () => {
+		const { call, confirms } = makeHarness(makeAgentDir(), false);
+		await expect(call("bash", { command: "cat ~/.pi/agent/permissions.json" })).resolves.toMatchObject({
+			block: true,
+		});
+		await expect(call("edit", { path: "/somewhere/auth.json" })).resolves.toMatchObject({ block: true });
+		expect(confirms).toHaveLength(2);
+	});
+
+	it("项目边界：界外写确认（含 ../../ 相对逃逸），界内与不设边界放行", async () => {
 		const dir = makeAgentDir();
 		const root = join(dir, "proj");
 		mkdirSync(root, { recursive: true });
@@ -116,15 +140,103 @@ describe("permission-gate 扩展", () => {
 		// 根内绝对/相对路径直接放行
 		await expect(call("edit", { path: join(root, "a.ts") })).resolves.toBeUndefined();
 		await expect(call("read", { path: "src/b.ts" })).resolves.toBeUndefined();
-		// 根外绝对路径与 ../../ 相对逃逸都弹窗（confirmAnswer=false → block）
+		// 根外绝对路径与 ../../ 相对逃逸都确认（confirmAnswer=false → block）
 		await expect(call("edit", { path: "/etc/hosts" })).resolves.toMatchObject({ block: true });
-		await expect(call("write", { path: "../../escape.ts" })).resolves.toMatchObject({ block: true });
-		expect(confirms.map((c) => c.title)).toEqual(["edit: /etc/hosts", "write: ../../escape.ts"]);
+		const escapeResult = await call("write", { path: "../../escape.ts" });
+		expect(escapeResult).toMatchObject({ block: true });
+		// 标题 = 记忆模式键（绝对路径的父目录前缀）；../../escape.ts 相对 root 解析后落在 tmpdir 根
+		expect(confirms.map((c) => c.title)).toEqual(["edit: /etc/*", `write: ${dirname(dir)}${sep}*`]);
 		// 不传 projectRoot → 无边界检查，任意路径放行
 		const open = makeHarness(dir, false);
 		await expect(open.call("edit", { path: "/etc/hosts" })).resolves.toBeUndefined();
 		// bash 无法路径约束，不受边界影响
 		await expect(call("bash", { command: "ls /etc" })).resolves.toBeUndefined();
+	});
+
+	it("读写分离：界外读默认放行（outside.read=allow）", async () => {
+		const dir = makeAgentDir();
+		const root = join(dir, "proj");
+		mkdirSync(root, { recursive: true });
+		const { call, confirms } = makeHarness(dir, false, { projectRoot: root });
+		await expect(call("read", { path: "/etc/hosts" })).resolves.toBeUndefined();
+		await expect(call("ls", { path: join(dir, "elsewhere") })).resolves.toBeUndefined();
+		expect(confirms).toHaveLength(0);
+	});
+
+	it("读写分离：outside.read=ask 收紧后界外读确认", async () => {
+		const dir = makeAgentDir();
+		writeFileSync(join(dir, "permissions.json"), JSON.stringify({ outside: { read: "ask" } }));
+		const root = join(dir, "proj");
+		mkdirSync(root, { recursive: true });
+		const { call, confirms } = makeHarness(dir, false, { projectRoot: root });
+		await expect(call("read", { path: "/etc/hosts" })).resolves.toMatchObject({ block: true });
+		// 界内读不受影响
+		await expect(call("read", { path: join(root, "a.ts") })).resolves.toBeUndefined();
+		expect(confirms).toHaveLength(1);
+	});
+
+	it("工作区多根：根集合内的路径视为界内直接放行", async () => {
+		const dir = makeAgentDir();
+		const root = join(dir, "proj");
+		const other = join(dir, "other-repo");
+		mkdirSync(root, { recursive: true });
+		mkdirSync(join(other, "src"), { recursive: true });
+		writeFileSync(
+			workspaceConfigPath(dir),
+			JSON.stringify({ version: 1, projects: { [root]: { roots: [other], allowed: [] } } }),
+		);
+		const { call, confirms } = makeHarness(dir, false, { projectRoot: root });
+		// other 根内读写均放行（界内规则：默认 allow）
+		await expect(call("edit", { path: join(other, "src", "a.ts") })).resolves.toBeUndefined();
+		await expect(call("read", { path: join(other, "README.md") })).resolves.toBeUndefined();
+		// 仍在全部根之外 → 确认
+		await expect(call("edit", { path: "/etc/hosts" })).resolves.toMatchObject({ block: true });
+		expect(confirms).toHaveLength(1);
+	});
+
+	it("项目记忆（allowAlways 持久化）：allowed 模式命中不再弹窗；deny 不可被记忆覆盖", async () => {
+		const dir = makeAgentDir();
+		writeFileSync(join(dir, "permissions.json"), JSON.stringify({ rules: { bash: { "*": "ask" } } }));
+		const root = join(dir, "proj");
+		mkdirSync(root, { recursive: true });
+		writeFileSync(
+			workspaceConfigPath(dir),
+			JSON.stringify({
+				version: 1,
+				projects: { [root]: { roots: [], allowed: ["bash: npm test*", "write: /safe/*"] } },
+			}),
+		);
+		const { call, confirms } = makeHarness(dir, false, { projectRoot: root });
+		// 记忆命中（含命令链切段：cd x && npm test 命中 bash: npm test*）
+		await expect(call("bash", { command: "npm test" })).resolves.toBeUndefined();
+		await expect(call("bash", { command: "cd /tmp && npm test --watch" })).resolves.toBeUndefined();
+		// 未记忆的模式仍确认
+		await expect(call("bash", { command: "npm run build" })).resolves.toMatchObject({ block: true });
+		expect(confirms).toHaveLength(1);
+		// 界外写命中目录前缀记忆 → 放行
+		await expect(call("write", { path: "/safe/notes.md" })).resolves.toBeUndefined();
+		// deny 规则不被记忆覆盖
+		writeFileSync(
+			join(dir, "permissions.json"),
+			JSON.stringify({ rules: { bash: { "*": "ask", "npm test *": "deny" } } }),
+		);
+		await expect(call("bash", { command: "npm test -- --grep x" })).resolves.toMatchObject({ block: true });
+	});
+
+	it("ask 元数据：path 类带 kind/suggestDir（git 根候选）；bash 为 command 无 suggestDir", async () => {
+		const dir = makeAgentDir();
+		const root = join(dir, "proj");
+		const repo = join(dir, "other-repo");
+		mkdirSync(root, { recursive: true });
+		mkdirSync(join(repo, "sub"), { recursive: true });
+		mkdirSync(join(repo, ".git")); // git 根候选
+		const calls: ConfirmCall[] = [];
+		const { call } = makeHarness(dir, false, { projectRoot: root, confirmCalls: calls });
+		await call("edit", { path: join(repo, "sub", "a.ts") });
+		await call("bash", { command: "rm -rf /tmp/x" });
+		expect(calls[0]).toMatchObject({ kind: "path", suggestDir: repo });
+		expect(calls[1]).toMatchObject({ kind: "command" });
+		expect(calls[1].suggestDir).toBeUndefined();
 	});
 
 	it("自定义工具吃工具名级规则", async () => {

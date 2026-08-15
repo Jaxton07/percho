@@ -1,9 +1,9 @@
 import { createHash } from "node:crypto";
 import type { InlineExtension } from "@earendil-works/pi-coding-agent";
 import type { VisionConfig } from "@percho/shared";
-import { createLogger } from "./log";
-import { describeImage, VisionClientError } from "./vision-client";
-import { resolveVisionKey, VISION_RETRY_TTL_MS, type VisionConfigService } from "./vision-config";
+import { createLogger } from "../log";
+import { describeImage, VisionClientError } from "./client";
+import { resolveVisionKey, VISION_RETRY_TTL_MS, type VisionConfigService } from "./config";
 
 const log = createLogger("vision-proxy");
 

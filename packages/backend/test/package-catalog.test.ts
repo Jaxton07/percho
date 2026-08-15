@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { decodeHtmlEntities, parseCatalogHtml } from "../src/package-catalog";
+import { decodeHtmlEntities, parseCatalogHtml } from "../src/packages/catalog";
 
 /** 按 pi.dev/packages 真实卡片结构构造的精简 fixture（字段位置/类名与线上一致） */
 function card(attrs: string, body: string): string {

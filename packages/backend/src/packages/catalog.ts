@@ -1,5 +1,5 @@
 import type { CatalogPackage, CatalogSearchResult } from "@percho/shared";
-import { createLogger } from "./log";
+import { createLogger } from "../log";
 
 const log = createLogger("package-catalog");
 

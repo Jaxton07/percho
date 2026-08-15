@@ -97,8 +97,10 @@ export const zh = {
 	},
 	permission: {
 		deny: "拒绝",
-		allowAlways: "本会话总是允许",
+		allowAlways: "本项目总是允许",
 		allowOnce: "允许一次",
+		allowDir: "允许此目录",
+		allowDirHint: "把 {dir} 加入本项目工作区：目录内读写不再逐次确认（持久化到 workspaces.json）",
 		queued: "还有 {count} 个请求排队",
 	},
 	trust: {
@@ -121,6 +123,11 @@ export const zh = {
 		working: "Working",
 		thinkingLabel: "Thinking",
 		worked: "Worked",
+		summaryRead: "读取 {n} 个文件",
+		summaryEdit: "编辑 {n} 个文件",
+		summaryExplore: "探索 {n} 次",
+		summarySearch: "搜索 {n} 次",
+		summaryBash: "执行 {n} 条命令",
 		image: "查看图片",
 		subagent: {
 			running: "工作中",

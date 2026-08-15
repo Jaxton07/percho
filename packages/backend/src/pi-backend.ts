@@ -4,16 +4,11 @@ import type { Model, ThinkingLevel } from "@earendil-works/pi-ai";
 import {
 	type AgentSessionEvent,
 	createAgentSession,
-	DefaultPackageManager,
-	DefaultResourceLoader,
-	type Extension,
 	getAgentDir,
 	ModelRuntime,
 	ProjectTrustStore,
-	type ResourceLoader,
 	type SessionEntry,
 	SessionManager,
-	SettingsManager,
 	type ToolDefinition,
 } from "@earendil-works/pi-coding-agent";
 import type {
@@ -30,7 +25,6 @@ import type {
 	SessionMessage,
 	SessionMeta,
 	SessionStats,
-	SessionToolCall,
 	SlashCommandInfo,
 	TrustAnswer,
 	TrustRequest,
@@ -41,31 +35,43 @@ import type {
 import {
 	DEFAULT_VISION_BASE_URL,
 	DEFAULT_VISION_MODEL,
-	extractSubagentRuns,
 	extractTodos,
 	TODO_REMINDER_CUSTOM_TYPE,
 	TODO_TOOL_NAME,
 	type TodoItem,
 } from "@percho/shared";
 import { createLogger } from "./log";
-import { fetchPackageCatalog } from "./package-catalog";
-import { makePermissionGateExtension } from "./permission-extension";
-import { loadPermissionConfig, setPermissionEnabled as writePermissionEnabled } from "./permission-rules";
-import { PermissionGate } from "./permissions";
-import { walkProjectFiles } from "./project-files";
-import { autoNameSession } from "./session-naming";
-import { type EventForwarder, SessionRegistry } from "./session-registry";
-import { SettingsService } from "./settings";
-import { makeShowImageTool } from "./show-image-tool";
-import { makeTodoReminderExtension } from "./todo-reminder-extension";
-import { makeTodoTool } from "./todo-tool";
-import { TraceRecorder } from "./trace";
-import { resolveProjectTrust, TrustGate } from "./trust";
-import { makeUiContext } from "./ui-context";
-import { pingVision } from "./vision-client";
-import { resolveVisionKey, VisionConfigService } from "./vision-config";
-import { makeVisionProxyExtension } from "./vision-proxy-extension";
-import { makeWebFetchTool } from "./webfetch";
+import { PackageAdmin } from "./packages/admin";
+import { loadPermissionConfig, setPermissionEnabled as writePermissionEnabled } from "./permissions";
+import { makePermissionGateExtension, type PermissionConfirm } from "./permissions/extension";
+import { PermissionGate } from "./permissions/gate";
+import { walkProjectFiles } from "./project/files";
+import { TrustGate } from "./project/trust";
+import { ProjectResourceLoader } from "./project/trust-loader";
+import { addAllowedPattern, addWorkspaceRoot } from "./project/workspace-store";
+import {
+	assignEntryIds,
+	blockImages,
+	blockText,
+	type RawMessage,
+	resolveForkEntryId,
+	resolveRecallEntryId,
+	toSessionMessages,
+} from "./session/messages";
+import { autoNameSession } from "./session/naming";
+import { type EventForwarder, SessionRegistry } from "./session/registry";
+import { TraceRecorder } from "./session/trace";
+import { SessionTraces } from "./session/traces";
+import { makeUiContext } from "./session/ui-context";
+import { SettingsService } from "./settings/settings";
+import { slashCommandsForLoader, slashCommandsForSession } from "./slash-commands";
+import { makeShowImageTool } from "./tools/show-image";
+import { makeTodoTool } from "./tools/todo";
+import { makeTodoReminderExtension } from "./tools/todo-reminder";
+import { makeWebFetchTool } from "./tools/webfetch";
+import { pingVision } from "./vision/client";
+import { resolveVisionKey, VisionConfigService } from "./vision/config";
+import { makeVisionProxyExtension } from "./vision/proxy-extension";
 
 const log = createLogger("backend");
 
@@ -95,8 +101,15 @@ type PermissionHandler = (req: PermissionRequest) => void;
 type TrustHandler = (req: TrustRequest) => void;
 
 /**
- * PiBackend：pi SDK 的唯一适配层。不依赖 Electron，
+ * PiBackend：pi SDK 的唯一适配层（门面）。不依赖 Electron，
  * 主进程与（未来的）独立 server 均可复用。
+ *
+ * 领域实现拆在同包模块（各文件单一职责）：
+ * - slash-commands.ts     斜杠命令清单（内置/模板/skill/扩展）
+ * - session-messages.ts   pi 消息 → SessionMessage 解析与 entryId 配对（fork/recall/回放共用）
+ * - package-admin.ts      社区包安装/卸载/搜索 + 会话热重载
+ * - project-trust-loader.ts 两阶段项目资源加载 + 信任决策
+ * - session-trace.ts      会话事件 trace 生命周期
  */
 export class PiBackend {
 	private readonly registry = new SessionRegistry();
@@ -108,18 +121,30 @@ export class PiBackend {
 	private readonly trustStore = new ProjectTrustStore(getAgentDir());
 	private readonly trustGate = new TrustGate((req) => this.dispatchTrustRequest(req));
 	/** 会话事件 trace（JSONL，离线可重放） */
-	private readonly traceRecorders = new Map<string, TraceRecorder>();
+	private readonly traces = new SessionTraces();
 	private modelRuntime: ModelRuntime | undefined;
 	private modelPromise: Promise<ModelRuntime> | undefined;
 	/** 设置页（provider/模型/凭证配置）服务 */
 	readonly settings = new SettingsService(() => this.getModelRuntime());
 	/** 视觉代理配置（userData/vision.json；未提供路径时禁用） */
 	private readonly visionConfig: VisionConfigService | undefined;
+	/** 社区包管理（安装/卸载 + 会话热重载） */
+	private readonly packages: PackageAdmin;
+	/** 项目资源两阶段加载 + 信任决策 */
+	private readonly projectLoader: ProjectResourceLoader;
 
 	constructor(private readonly options: PiBackendOptions = {}) {
 		this.visionConfig = options.visionConfigPath
 			? new VisionConfigService(options.visionConfigPath)
 			: undefined;
+		this.packages = new PackageAdmin({ registry: this.registry, defaultCwd: options.defaultCwd });
+		this.projectLoader = new ProjectResourceLoader({
+			trustStore: this.trustStore,
+			ask: (dir, opts) => this.trustGate.ask(dir, opts),
+			canAsk: () => this.trustHandlers.size > 0,
+			buildExtensions: (cwd, confirm) => this.buildExtensionFactories(cwd, confirm),
+			projectTrust: options.projectTrust,
+		});
 	}
 
 	/** 自定义工具 = 调用方传入的 + 内置 webfetch（webFetch:false 关闭）+ show_image + todo */
@@ -134,6 +159,29 @@ export class PiBackend {
 		return tools;
 	}
 
+	/**
+	 * 内置扩展随资源加载器注册（inline factory，不受项目信任影响）：todo-reminder
+	 * 负责 compaction 后恢复任务列表（不受权限开关影响）；权限门控扩展受
+	 * permissionGates/permissionExtension 开关控制（permissionGates=false 时
+	 * confirm 恒 false，不能注册）；视觉代理每次 LLM 调用前把 image block 换成
+	 * 识别描述（纯文本模型用），handler 实时读配置，设置页保存后立即生效。
+	 */
+	private buildExtensionFactories(
+		cwd: string,
+		confirm: PermissionConfirm | undefined,
+	): ReturnType<typeof makeTodoReminderExtension>[] {
+		const factories = [makeTodoReminderExtension()];
+		if (this.options.permissionGates !== false && this.options.permissionExtension !== false) {
+			// confirm 直接桥到 PermissionGate（携带 kind/suggestDir 元数据，驱动「允许此目录」）；
+			// 未提供时扩展自行回退 ctx.ui.confirm（无元数据）
+			factories.push(makePermissionGateExtension(getAgentDir(), { projectRoot: cwd, confirm }));
+		}
+		if (this.visionConfig && this.options.visionProxy !== false) {
+			factories.push(makeVisionProxyExtension({ configService: this.visionConfig }));
+		}
+		return factories;
+	}
+
 	private async getModelRuntime(): Promise<ModelRuntime> {
 		if (this.modelRuntime) return this.modelRuntime;
 		if (!this.modelPromise) {
@@ -144,7 +192,7 @@ export class PiBackend {
 	}
 
 	private emitEvent(sessionId: string, event: AgentSessionEvent): void {
-		this.traceRecorders.get(sessionId)?.record(event);
+		this.traces.record(sessionId, event);
 		for (const handler of this.eventHandlers) {
 			try {
 				handler(sessionId, event);
@@ -152,25 +200,6 @@ export class PiBackend {
 				// 事件处理器异常不影响主流程
 			}
 		}
-	}
-
-	/** 为会话建立 trace（与会话同目录） */
-	private async startTrace(sessionId: string, sessionDir: string | undefined): Promise<void> {
-		if (!sessionDir) return;
-		try {
-			const recorder = await TraceRecorder.create(sessionDir, sessionId);
-			this.traceRecorders.set(sessionId, recorder);
-		} catch (err) {
-			log.warn("trace create failed", sessionId, err);
-		}
-	}
-
-	/** 停止并落盘 trace */
-	private async stopTrace(sessionId: string): Promise<void> {
-		const recorder = this.traceRecorders.get(sessionId);
-		if (!recorder) return;
-		this.traceRecorders.delete(sessionId);
-		await recorder.close();
 	}
 
 	async init(): Promise<void> {
@@ -182,80 +211,6 @@ export class PiBackend {
 		return walkProjectFiles(cwd || this.options.defaultCwd || process.cwd());
 	}
 
-	/**
-	 * 两阶段加载项目资源（对齐 CLI main.js:533-570）：
-	 * 先 projectTrusted=false 只加载用户级资源 → 解析项目信任 → 按结果重载。
-	 * 不信任时项目级 settings/extensions/skills/prompts/themes 不加载。
-	 * askTrust=false 时信任未决按不信任处理（不弹窗）：draft 拉斜杠命令等只读场景用，
-	 * 弹窗已在选目录时经 ensureProjectTrust 前置。
-	 */
-	private async loadProjectResources(
-		cwd: string,
-		options?: { askTrust?: boolean },
-	): Promise<{
-		settingsManager: SettingsManager;
-		resourceLoader: DefaultResourceLoader;
-	}> {
-		const agentDir = getAgentDir();
-		const settingsManager = SettingsManager.create(cwd, agentDir, { projectTrusted: false });
-		// 内置扩展随资源加载器注册（inline factory，不受项目信任影响）：todo-reminder
-		// 负责 compaction 后恢复任务列表（不受权限开关影响）；权限门控扩展受
-		// permissionGates/permissionExtension 开关控制（permissionGates=false 时
-		// confirm 恒 false，不能注册）
-		const extensionFactories = [makeTodoReminderExtension()];
-		if (this.options.permissionGates !== false && this.options.permissionExtension !== false) {
-			extensionFactories.push(makePermissionGateExtension(agentDir, { projectRoot: cwd }));
-		}
-		// 视觉代理：每次 LLM 调用前把 image block 换成识别描述（纯文本模型用）。
-		// handler 内实时读配置，设置页保存后对所有已打开会话立即生效
-		if (this.visionConfig && this.options.visionProxy !== false) {
-			extensionFactories.push(makeVisionProxyExtension({ configService: this.visionConfig }));
-		}
-		const resourceLoader = new DefaultResourceLoader({
-			cwd,
-			agentDir,
-			settingsManager,
-			extensionFactories,
-		});
-		if (this.options.projectTrust === false) {
-			settingsManager.setProjectTrusted(true);
-			await resourceLoader.reload();
-			return { settingsManager, resourceLoader };
-		}
-		await resourceLoader.reload({
-			resolveProjectTrust: async () => {
-				const trusted = await resolveProjectTrust({
-					cwd,
-					trustStore: this.trustStore,
-					defaultProjectTrust: settingsManager.getDefaultProjectTrust(),
-					askUser:
-						options?.askTrust !== false && this.trustHandlers.size > 0
-							? (dir, opts) => this.trustGate.ask(dir, opts)
-							: undefined,
-				});
-				log.info("project trust resolved", cwd, { trusted });
-				return trusted;
-			},
-		});
-		return { settingsManager, resourceLoader };
-	}
-
-	/**
-	 * 项目信任前置决策（添加项目/切换 draft cwd 时由 renderer 调用）：未决则经
-	 * TrustGate 弹窗，结果落 trust.json；此后 draft 拉命令与建会话都命中缓存，不再弹窗。
-	 */
-	async ensureProjectTrust(cwd: string): Promise<boolean> {
-		const settingsManager = SettingsManager.create(cwd, getAgentDir(), { projectTrusted: false });
-		const trusted = await resolveProjectTrust({
-			cwd,
-			trustStore: this.trustStore,
-			defaultProjectTrust: settingsManager.getDefaultProjectTrust(),
-			askUser: this.trustHandlers.size > 0 ? (dir, o) => this.trustGate.ask(dir, o) : undefined,
-		});
-		log.info("project trust ensured", cwd, { trusted });
-		return trusted;
-	}
-
 	async createSession(options: CreateSessionOptions): Promise<SessionMeta> {
 		const runtime = await this.getModelRuntime();
 		const cwd = options.cwd || this.options.defaultCwd || process.cwd();
@@ -263,8 +218,12 @@ export class PiBackend {
 			options.provider && options.modelId ? runtime.getModel(options.provider, options.modelId) : undefined;
 
 		const gate = new PermissionGate((req) => this.dispatchPermissionRequest(req));
+		// 权限扩展的确认通道直接桥到 gate（携带 kind/suggestDir 元数据，驱动「允许此目录」/持久化）
+		const confirmBridge: PermissionConfirm = (title, message, meta) => gate.confirm(title, message, meta);
 
-		const { settingsManager, resourceLoader } = await this.loadProjectResources(cwd);
+		const { settingsManager, resourceLoader } = await this.projectLoader.load(cwd, {
+			confirm: confirmBridge,
+		});
 		const { session } = await createAgentSession({
 			cwd,
 			modelRuntime: runtime,
@@ -291,7 +250,8 @@ export class PiBackend {
 			this.emitEvent(session.sessionId, event);
 		});
 		this.registry.add({ session, unsubscribe, cwd });
-		await this.startTrace(session.sessionId, session.sessionManager.getSessionDir());
+		await this.traces.start(session.sessionId, session.sessionManager.getSessionDir());
+
 		log.info("session created", session.sessionId, { cwd });
 		return this.toMetaOrThrow(session.sessionId);
 	}
@@ -300,7 +260,7 @@ export class PiBackend {
 		const runtime = await this.getModelRuntime();
 		const sessionManager = SessionManager.open(filePath);
 		const cwd = sessionManager.getCwd() || process.cwd();
-		const { settingsManager, resourceLoader } = await this.loadProjectResources(cwd);
+		const { settingsManager, resourceLoader } = await this.projectLoader.load(cwd);
 		const { session } = await createAgentSession({
 			sessionManager,
 			modelRuntime: runtime,
@@ -313,7 +273,7 @@ export class PiBackend {
 			this.emitEvent(session.sessionId, event);
 		});
 		this.registry.add({ session, unsubscribe, cwd });
-		await this.startTrace(session.sessionId, session.sessionManager.getSessionDir());
+		await this.traces.start(session.sessionId, session.sessionManager.getSessionDir());
 		log.info("session opened", session.sessionId, { file: filePath });
 		return this.toMetaOrThrow(session.sessionId);
 	}
@@ -361,7 +321,7 @@ export class PiBackend {
 		this.gates.get(sessionId)?.dispose();
 		this.gates.delete(sessionId);
 		this.registry.delete(sessionId);
-		await this.stopTrace(sessionId);
+		await this.traces.stop(sessionId);
 		log.info("session closed", sessionId);
 	}
 
@@ -469,21 +429,7 @@ export class PiBackend {
 
 	/** 列出斜杠命令：内置（标记 supported）+ prompt 模板 + skill + 扩展命令 */
 	async listSlashCommands(sessionId: string): Promise<SlashCommandInfo[]> {
-		const entry = this.requireSession(sessionId);
-		const session = entry.session;
-		// 扩展命令走 runner（反映 bindExtensions 后的运行时注册与重名去重）
-		const extensions: SlashCommandInfo[] = session.extensionRunner.getRegisteredCommands().map((command) => ({
-			name: command.invocationName,
-			description: command.description ?? "",
-			source: "extension",
-			supported: true,
-		}));
-		return [
-			...BUILTIN_SLASH_COMMANDS,
-			...templateCommands(session.resourceLoader),
-			...skillCommands(session.resourceLoader),
-			...extensions,
-		];
+		return slashCommandsForSession(this.requireSession(sessionId).session);
 	}
 
 	/**
@@ -493,13 +439,13 @@ export class PiBackend {
 	 */
 	async listSlashCommandsForCwd(cwd?: string): Promise<SlashCommandInfo[]> {
 		const target = cwd || this.options.defaultCwd || process.cwd();
-		const { resourceLoader } = await this.loadProjectResources(target, { askTrust: false });
-		return [
-			...BUILTIN_SLASH_COMMANDS,
-			...templateCommands(resourceLoader),
-			...skillCommands(resourceLoader),
-			...extensionCommands(resourceLoader.getExtensions().extensions),
-		];
+		const { resourceLoader } = await this.projectLoader.load(target, { askTrust: false });
+		return slashCommandsForLoader(resourceLoader);
+	}
+
+	/** 项目信任前置决策（添加项目/切换 draft cwd 时由 renderer 调用） */
+	async ensureProjectTrust(cwd: string): Promise<boolean> {
+		return this.projectLoader.ensureTrust(cwd);
 	}
 
 	/** 扩展显示名：`<inline:N>` 原样，目录式扩展取最后一段（剥 index.ts 后缀） */
@@ -544,69 +490,28 @@ export class PiBackend {
 		};
 	}
 
-	/** 包管理器（用户级安装/卸载，懒加载；settingsManager 仅用于读写 settings.json 安装记录） */
-	private packageManager: DefaultPackageManager | undefined;
-	private getPackageManager(): DefaultPackageManager {
-		if (!this.packageManager) {
-			const cwd = this.options.defaultCwd || process.cwd();
-			this.packageManager = new DefaultPackageManager({
-				cwd,
-				agentDir: getAgentDir(),
-				settingsManager: SettingsManager.create(cwd, getAgentDir()),
-			});
-		}
-		return this.packageManager;
-	}
-
 	/** 搜索 pi.dev 社区包目录（设置页扩展面板浏览用） */
 	async searchPackages(
 		query: string,
 		type?: CatalogPackageType | "",
 		page?: number,
 	): Promise<CatalogSearchResult> {
-		return fetchPackageCatalog({ query, type: type || undefined, page });
+		return this.packages.searchPackages(query, type, page);
 	}
 
 	/** 列出 settings.json 已配置的包（「已安装」态匹配用） */
 	async listConfiguredPackages(): Promise<ConfiguredPackageInfo[]> {
-		return this.getPackageManager()
-			.listConfiguredPackages()
-			.map((p) => ({ source: p.source, scope: p.scope }));
+		return this.packages.listConfiguredPackages();
 	}
 
-	/** 安装社区包（npm:<name>，用户级）；成功后热重载非流式活跃会话，扩展立即生效（对齐 CLI /reload） */
+	/** 安装社区包（npm:<name>，用户级）；成功后热重载非流式活跃会话，扩展立即生效 */
 	async installPackage(name: string): Promise<void> {
-		if (!/^(@[a-z0-9][a-z0-9._-]*\/)?[a-z0-9][a-z0-9._-]*$/i.test(name)) {
-			throw new Error(`Invalid package name: ${name}`);
-		}
-		await this.getPackageManager().installAndPersist(`npm:${name}`);
-		log.info("package installed", name);
-		await this.reloadSessions();
+		return this.packages.installPackage(name);
 	}
 
 	/** 卸载已配置的包（按 source + scope 移除并持久化）；成功后热重载非流式活跃会话 */
 	async removePackage(source: string, scope: "user" | "project"): Promise<void> {
-		const removed = await this.getPackageManager().removeAndPersist(source, {
-			local: scope === "project",
-		});
-		if (!removed) throw new Error(`Package not installed: ${source}`);
-		log.info("package removed", source, { scope });
-		await this.reloadSessions();
-	}
-
-	/** 对非流式活跃会话做资源热重载（装/卸包后立即生效） */
-	private async reloadSessions(): Promise<void> {
-		for (const entry of this.registry.list()) {
-			if (entry.session.isStreaming) {
-				log.info("skip reload while streaming", entry.session.sessionId);
-				continue;
-			}
-			try {
-				await entry.session.reload();
-			} catch (err) {
-				log.warn("session reload failed", entry.session.sessionId, err);
-			}
-		}
+		return this.packages.removePackage(source, scope);
 	}
 
 	/** 设置会话显示名（触发 session_info_changed 事件） */
@@ -625,36 +530,8 @@ export class PiBackend {
 	async getSessionMessages(sessionId: string): Promise<SessionMessage[]> {
 		const entry = this.requireSession(sessionId);
 		const messages = toSessionMessages(entry.session.messages);
-		// 配对消息与会话树 entry id（assistant 供 fork 定位、user 供撤回定位）：branch 上
-		// 同角色消息 entry 按 timestamp 建队列，与上下文消息同序消费；compaction 只截断更早
-		// entry，不影响配对。user/assistant 分开建表，避免同 ms 碰撞时串角色
-		const assistantByTimestamp = new Map<number, string[]>();
-		const userByTimestamp = new Map<number, string[]>();
-		for (const e of entry.session.sessionManager.getBranch()) {
-			if (e.type !== "message") continue;
-			const m = e.message as RawMessage;
-			if (typeof m.timestamp !== "number") continue;
-			const table =
-				m.role === "assistant" ? assistantByTimestamp : m.role === "user" ? userByTimestamp : null;
-			if (!table) continue;
-			const queue = table.get(m.timestamp);
-			if (queue) queue.push(e.id);
-			else table.set(m.timestamp, [e.id]);
-		}
-		for (const message of messages) {
-			// 无正文的拆分消息（同 turn 正文后的工具组）不参与配对：无 fork 按钮不消费 entry 队列，
-			// 避免挤占后续正文消息的 entryId（同 ms timestamp 碰撞时）
-			if (message.role === "assistant") {
-				if (!message.text) continue;
-				const id = assistantByTimestamp.get(message.timestamp)?.shift();
-				if (id) message.entryId = id;
-				continue;
-			}
-			if (message.role === "user") {
-				const id = userByTimestamp.get(message.timestamp)?.shift();
-				if (id) message.entryId = id;
-			}
-		}
+		// 配对消息与会话树 entry id（assistant 供 fork 定位、user 供撤回定位）
+		assignEntryIds(messages, entry.session.sessionManager.getBranch());
 		return messages;
 	}
 
@@ -689,7 +566,7 @@ export class PiBackend {
 		const entry = this.requireSession(sessionId);
 		if (entry.session.isStreaming) throw new Error("Cannot fork while the agent is running");
 		const sourceManager = entry.session.sessionManager;
-		const targetId = this.resolveForkEntryId(sourceManager, ref);
+		const targetId = resolveForkEntryId(sourceManager, ref);
 		const file = sourceManager.getSessionFile();
 		if (!file || !existsSync(file)) {
 			throw new Error("This session has not been saved yet. Send a message first.");
@@ -700,22 +577,6 @@ export class PiBackend {
 		if (!newPath) throw new Error("Failed to create forked session");
 		log.info("fork session", sessionId, { targetId, newPath });
 		return this.openSession(newPath);
-	}
-
-	/** 解析 fork 目标 entry：entryId 直接校验；否则按正文文本从分支尾部向前匹配 assistant 消息 */
-	private resolveForkEntryId(sm: SessionManager, ref: { entryId?: string; text?: string }): string {
-		if (ref.entryId && sm.getEntry(ref.entryId)) return ref.entryId;
-		if (ref.text) {
-			const branch = sm.getBranch();
-			for (let i = branch.length - 1; i >= 0; i--) {
-				const e = branch[i];
-				if (e?.type !== "message") continue;
-				const m = e.message as RawMessage;
-				if (m.role !== "assistant") continue;
-				if (blockText(m.content) === ref.text) return e.id;
-			}
-		}
-		throw new Error("Fork target message not found");
 	}
 
 	/** 撤回的 custom entry 标记类型：追加在回退点后使 leaf 移动落盘持久（重启后撤回仍生效） */
@@ -788,6 +649,27 @@ export class PiBackend {
 	}
 
 	respondPermission(requestId: string, answer: PermissionAnswer): void {
+		if (answer === "allowDir" || answer === "allowAlways") {
+			// 持久化决策（仅内置权限扩展的请求带 meta）：
+			// allowDir → 根加入 workspaces.json（本次与后续均按界内处置）；
+			// allowAlways → 模式键记入当前项目的 allowed[]（跨会话生效）
+			for (const gate of this.gates.values()) {
+				const req = gate.getRequest(requestId);
+				if (!req) continue;
+				const entry = this.registry.get(gate.getSessionId());
+				const agentDir = getAgentDir();
+				if (entry) {
+					if (answer === "allowDir" && req.meta?.suggestDir) {
+						addWorkspaceRoot(agentDir, entry.cwd, req.meta.suggestDir);
+					} else if (answer === "allowAlways" && req.meta) {
+						addAllowedPattern(agentDir, entry.cwd, req.title);
+					}
+				}
+				gate.respond(requestId, answer);
+				return;
+			}
+			return;
+		}
 		for (const gate of this.gates.values()) {
 			gate.respond(requestId, answer);
 		}
@@ -854,10 +736,7 @@ export class PiBackend {
 		this.permissionHandlers.clear();
 		this.trustHandlers.clear();
 		this.trustGate.dispose();
-		for (const recorder of this.traceRecorders.values()) {
-			void recorder.close();
-		}
-		this.traceRecorders.clear();
+		this.traces.disposeAll();
 		log.info("backend disposed");
 	}
 
@@ -895,307 +774,3 @@ export class PiBackend {
 }
 
 export type { EventForwarder, Model };
-
-/**
- * pi 内置斜杠命令表（桌面端只保留有实际用途的；TUI 专属/已有 UI 等价物的不列出）。
- * 注：模板/skill/扩展命令不由这里列出，SDK prompt() 原生处理。
- */
-const BUILTIN_SLASH_COMMANDS: SlashCommandInfo[] = [
-	{
-		name: "compact",
-		description: "Compress session context",
-		argumentHint: "[focus]",
-		source: "builtin",
-		supported: true,
-	},
-	{
-		name: "name",
-		description: "Set session display name",
-		argumentHint: "<name>",
-		source: "builtin",
-		supported: true,
-	},
-	{
-		name: "export",
-		description: "Export session (.html/.jsonl)",
-		argumentHint: "[path]",
-		source: "builtin",
-		supported: true,
-	},
-	{
-		name: "settings",
-		description: "Open settings",
-		source: "builtin",
-		supported: true,
-	},
-];
-
-/** 模板命令映射（listSlashCommands / listSlashCommandsForCwd 共用） */
-function templateCommands(loader: ResourceLoader): SlashCommandInfo[] {
-	return loader.getPrompts().prompts.map((template) => ({
-		name: template.name,
-		description: template.description,
-		argumentHint: template.argumentHint,
-		source: "template",
-		supported: true,
-	}));
-}
-
-/** skill 命令映射（listSlashCommands / listSlashCommandsForCwd 共用） */
-function skillCommands(loader: ResourceLoader): SlashCommandInfo[] {
-	return loader.getSkills().skills.map((skill) => ({
-		name: `skill:${skill.name}`,
-		description: skill.description,
-		source: "skill",
-		supported: true,
-	}));
-}
-
-/**
- * 无会话扩展命令清单（draft 用）：命令在扩展加载期就注册进 ext.commands
- * （注册类扩展 API 无需 bindExtensions），重名命令复刻 SDK
- * ExtensionRunner.resolveRegisteredCommands 的 :N 后缀去重规则。
- */
-function extensionCommands(extensions: Extension[]): SlashCommandInfo[] {
-	const all = extensions.flatMap((ext) => [...ext.commands.values()]);
-	const counts = new Map<string, number>();
-	for (const command of all) counts.set(command.name, (counts.get(command.name) ?? 0) + 1);
-	const seen = new Map<string, number>();
-	const taken = new Set<string>();
-	return all.map((command) => {
-		const occurrence = (seen.get(command.name) ?? 0) + 1;
-		seen.set(command.name, occurrence);
-		let invocationName = (counts.get(command.name) ?? 0) > 1 ? `${command.name}:${occurrence}` : command.name;
-		if (taken.has(invocationName)) {
-			let suffix = occurrence;
-			do {
-				suffix++;
-				invocationName = `${command.name}:${suffix}`;
-			} while (taken.has(invocationName));
-		}
-		taken.add(invocationName);
-		return {
-			name: invocationName,
-			description: command.description ?? "",
-			source: "extension",
-			supported: true,
-		};
-	});
-}
-
-/** 消息 content 块（pi-ai 结构，仅读取所需字段） */
-interface ContentBlock {
-	type: string;
-	text?: string;
-	thinking?: string;
-	id?: string;
-	name?: string;
-	arguments?: Record<string, unknown>;
-	data?: string;
-	mimeType?: string;
-}
-
-interface RawMessage {
-	role: string;
-	content?: string | ContentBlock[];
-	toolCallId?: string;
-	isError?: boolean;
-	timestamp?: number;
-	/** 工具结果结构化详情（show_image 在此带图片；模型不可见） */
-	details?: unknown;
-	/** toolResult 消息的工具名（getTodos 扫 todo 结果用） */
-	toolName?: string;
-	/** custom 消息的自定义类型（getTodos 扫 todo-reminder 恢复消息用） */
-	customType?: string;
-}
-
-/** show_image toolResult.details → { images, paths }（兼容旧单图 { path, image } 形状；不符返回 null） */
-function showImageFromDetails(details: unknown): { images: ImageInput[]; paths: string[] } | null {
-	const d = details as { paths?: unknown; images?: unknown; path?: unknown; image?: unknown } | undefined;
-	const toImage = (raw: unknown): ImageInput | null => {
-		const img = raw as { data?: unknown; mimeType?: unknown } | undefined;
-		if (typeof img?.data !== "string" || typeof img?.mimeType !== "string") return null;
-		return { data: img.data, mimeType: img.mimeType };
-	};
-	if (Array.isArray(d?.images)) {
-		const images = d.images.map(toImage).filter((img): img is ImageInput => img !== null);
-		if (images.length === 0) return null;
-		const paths = Array.isArray(d?.paths) ? d.paths.filter((p): p is string => typeof p === "string") : [];
-		return { images, paths };
-	}
-	const legacy = toImage(d?.image);
-	if (!legacy) return null;
-	return { images: [legacy], paths: typeof d?.path === "string" ? [d.path] : [] };
-}
-
-function blockText(content: string | ContentBlock[] | undefined): string {
-	if (typeof content === "string") return content;
-	return (content ?? [])
-		.filter((c) => c.type === "text" && c.text)
-		.map((c) => c.text ?? "")
-		.join("");
-}
-
-function blockThinking(content: ContentBlock[] | undefined): string {
-	return (content ?? [])
-		.filter((c) => c.type === "thinking" && c.thinking)
-		.map((c) => c.thinking ?? "")
-		.join("");
-}
-
-function blockToolCalls(
-	content: ContentBlock[] | undefined,
-): Array<{ tool: SessionToolCall; index: number }> {
-	return (content ?? [])
-		.map((c, index) => ({ c, index }))
-		.filter(({ c }) => c.type === "toolCall" && c.id)
-		.map(({ c, index }) => ({
-			tool: {
-				id: c.id ?? "",
-				name: c.name ?? "tool",
-				args: JSON.stringify(c.arguments ?? {}),
-				output: "",
-				isError: false,
-			},
-			index,
-		}));
-}
-
-function blockImages(content: string | ContentBlock[] | undefined): ImageInput[] {
-	if (typeof content === "string") return [];
-	return (content ?? [])
-		.filter((c) => c.type === "image" && c.data)
-		.map((c) => ({ data: c.data as string, mimeType: (c.mimeType as string) ?? "image/png" }));
-}
-
-/**
- * 解析撤回目标 user entry：entryId 直接校验（非 user 消息拒绝）；否则按 text（+timestamp
- * 优先比对）从分支尾部向前匹配最近一条 user 消息 entry（实时消息无 entryId 时兜底）。
- * 导出供单测：只依赖 SessionManager 的只读接口。
- */
-export function resolveRecallEntryId(
-	sm: Pick<SessionManager, "getEntry" | "getBranch">,
-	ref: { entryId?: string; text?: string; timestamp?: number },
-): string {
-	if (ref.entryId) {
-		const e = sm.getEntry(ref.entryId);
-		if (!e) throw new Error("Recall target message not found");
-		if (e.type !== "message" || (e.message as RawMessage).role !== "user") {
-			throw new Error("Recall target is not a user message");
-		}
-		return ref.entryId;
-	}
-	if (ref.text !== undefined || ref.timestamp !== undefined) {
-		const branch = sm.getBranch();
-		for (let i = branch.length - 1; i >= 0; i--) {
-			const e = branch[i];
-			if (e?.type !== "message") continue;
-			const m = e.message as RawMessage;
-			if (m.role !== "user") continue;
-			// timestamp 同时给出时必须相等（毫秒碰撞军见，双重锚定防同文消息错配）
-			if (ref.timestamp !== undefined && m.timestamp !== ref.timestamp) continue;
-			if (ref.text !== undefined && blockText(m.content) !== ref.text) continue;
-			return e.id;
-		}
-	}
-	throw new Error("Recall target message not found");
-}
-
-/**
- * pi 消息 → 中立 SessionMessage 列表。
- * toolResult 消息单独出现（带 toolCallId），把输出回填到对应工具卡片。
- */
-export function toSessionMessages(rawMessages: readonly unknown[]): SessionMessage[] {
-	const out: SessionMessage[] = [];
-	const toolById = new Map<string, SessionToolCall>();
-	for (const raw of rawMessages as RawMessage[]) {
-		if (raw.role === "user") {
-			out.push({
-				role: "user",
-				text: blockText(raw.content),
-				thinking: "",
-				tools: [],
-				images: blockImages(raw.content),
-				timestamp: raw.timestamp ?? Date.now(),
-			});
-			continue;
-		}
-		if (raw.role === "assistant") {
-			const content = Array.isArray(raw.content) ? raw.content : [];
-			const toolBlocks = blockToolCalls(content);
-			const tools = toolBlocks.map((b) => b.tool);
-			for (const tool of tools) toolById.set(tool.id, tool);
-			const text = blockText(raw.content);
-			// 正文后的工具（块序在首个 text 块之后，同 turn 内 text→toolCall 交错）：拆成独立 meta 消息
-			// 排在正文消息之后，与 renderer finalizeStreaming 的拆分一致——否则渲染时会被倒挂到正文上方
-			const textIndex = content.findIndex((c) => c?.type === "text" && c.text);
-			const postBlocks = text && textIndex >= 0 ? toolBlocks.filter((b) => b.index > textIndex) : [];
-			if (postBlocks.length > 0) {
-				const preTools = toolBlocks.filter((b) => b.index < textIndex).map((b) => b.tool);
-				const timestamp = raw.timestamp ?? Date.now();
-				if (text || preTools.length > 0) {
-					out.push({
-						role: "assistant",
-						text,
-						thinking: blockThinking(content),
-						tools: preTools,
-						images: [],
-						timestamp,
-					});
-				}
-				out.push({
-					role: "assistant",
-					text: "",
-					thinking: "",
-					tools: postBlocks.map((b) => b.tool),
-					images: [],
-					timestamp,
-				});
-				continue;
-			}
-			const message: SessionMessage = {
-				role: "assistant",
-				text,
-				thinking: blockThinking(content),
-				tools,
-				images: [],
-				timestamp: raw.timestamp ?? Date.now(),
-			};
-			if (message.text || message.thinking || message.tools.length > 0) {
-				out.push(message);
-			}
-			continue;
-		}
-		if (raw.role === "toolResult") {
-			const tool = raw.toolCallId ? toolById.get(raw.toolCallId) : undefined;
-			if (tool) {
-				tool.output = blockText(raw.content);
-				tool.isError = raw.isError === true;
-				// show_image：图片从 details 提取为独立图片消息（紧随其 assistant 消息之后）
-				if (tool.name === "show_image" && !tool.isError) {
-					const shown = showImageFromDetails(raw.details);
-					if (shown) {
-						out.push({
-							role: "image",
-							images: shown.images,
-							paths: shown.paths,
-							timestamp: raw.timestamp ?? Date.now(),
-						});
-					}
-				}
-				// subagent：details 带 results/sessionFile → 独立子代理消息（结构检测，不依赖工具名）
-				if (!tool.isError) {
-					const runs = extractSubagentRuns(raw.details);
-					if (runs) {
-						out.push({
-							role: "subagent",
-							runs,
-							timestamp: raw.timestamp ?? Date.now(),
-						});
-					}
-				}
-			}
-		}
-	}
-	return out;
-}

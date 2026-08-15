@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { formatTodoList, makeTodoTool, normalizeTodos } from "../src/todo-tool";
+import { formatTodoList, makeTodoTool, normalizeTodos } from "../src/tools/todo";
 
 describe("normalizeTodos", () => {
 	it("多 in_progress：保留第一个、其余降 pending", () => {
