@@ -123,6 +123,11 @@ export const zh = {
 		working: "Working",
 		thinkingLabel: "Thinking",
 		worked: "Worked",
+		summaryRead: "读取 {n} 个文件",
+		summaryEdit: "编辑 {n} 个文件",
+		summaryExplore: "探索 {n} 次",
+		summarySearch: "搜索 {n} 次",
+		summaryBash: "执行 {n} 条命令",
 		image: "查看图片",
 		subagent: {
 			running: "工作中",

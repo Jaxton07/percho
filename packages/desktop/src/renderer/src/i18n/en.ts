@@ -126,6 +126,11 @@ export const en: Messages = {
 		working: "Working",
 		thinkingLabel: "Thinking",
 		worked: "Worked",
+		summaryRead: "Read {n} {unit}",
+		summaryEdit: "Edited {n} {unit}",
+		summaryExplore: "Explored {n} {unit}",
+		summarySearch: "Searched {n} {unit}",
+		summaryBash: "Ran {n} {unit}",
 		image: "View image",
 		subagent: {
 			running: "Working",

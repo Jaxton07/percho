@@ -239,6 +239,24 @@
 		animation: none;
 		stroke-dashoffset: 0;
 	}
+	.meta-dot-running {
+		animation: none;
+	}
+}
+
+/* 工作中折叠组圆点行：运行中工具 = 空心呼吸点（done 实心 ink / error 灰用 Tailwind 类，见 MetaGroup） */
+.meta-dot-running {
+	border: 1px solid var(--color-ink-dim);
+	animation: meta-dot-breathe 1.6s ease-in-out infinite;
+}
+@keyframes meta-dot-breathe {
+	0%,
+	100% {
+		opacity: 1;
+	}
+	50% {
+		opacity: 0.35;
+	}
 }
 
 /* 会话 tab 状态：全部收拢到头像图标（颜色即语义），胶囊本体不动。

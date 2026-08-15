@@ -1,11 +1,12 @@
-import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { Fragment, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import type { OrbState } from "thinking-orbs";
 import { ThinkingOrb } from "thinking-orbs";
 import { useT } from "../../i18n";
 import type { ActivityEntry, UIToolCall } from "../../stores/transcript";
 import { ExpandArrowIcon } from "../icons";
+import { dotsFromItems, type MetaDot, type SummarySegment, summarizeCategories } from "./meta-summary";
 import { type LivePreviewItem, PreviewTicker } from "./PreviewTicker";
-import { ToolCallCard } from "./ToolCallCard";
+import { displayName, ToolCallCard } from "./ToolCallCard";
 
 /** 折叠组中的一条元数据项（一条消息的思考/工具，或流式中的进行中部分） */
 export interface MetaItem {
@@ -65,8 +66,39 @@ function clearSweepStyles(els: (HTMLElement | null)[]) {
 	}
 }
 
+/** en 复数单位（zh 模板不含 {unit} 占位，参数传入即被忽略） */
+const pluralUnit = (n: number, one: string, many: string) => (n === 1 ? one : many);
+
+/** 汇总段文案：已知类目走 i18n 模板；other 显示 原名 ×N（无需翻译） */
+function summaryLabel(t: ReturnType<typeof useT>, seg: SummarySegment): string {
+	switch (seg.category) {
+		case "read":
+			return t("message.summaryRead", { n: seg.count, unit: pluralUnit(seg.count, "file", "files") });
+		case "edit":
+			return t("message.summaryEdit", { n: seg.count, unit: pluralUnit(seg.count, "file", "files") });
+		case "explore":
+			return t("message.summaryExplore", { n: seg.count, unit: pluralUnit(seg.count, "time", "times") });
+		case "search":
+			return t("message.summarySearch", { n: seg.count, unit: pluralUnit(seg.count, "time", "times") });
+		case "bash":
+			return t("message.summaryBash", { n: seg.count, unit: pluralUnit(seg.count, "command", "commands") });
+		default:
+			return `${displayName(seg.name)} ×${seg.count}`;
+	}
+}
+
+/** 圆点样式：done = 实心 ink-dim（与 Worked 标签同色，弱化存在感），error = 更浅的 ink-faint，running = 空心呼吸（globals.css meta-dot-running）；4px 小点紧密成串 */
+function dotClass(state: MetaDot["state"]): string {
+	const base = "h-1 w-1 shrink-0 rounded-full";
+	if (state === "running") return `${base} meta-dot-running`;
+	return state === "error" ? `${base} bg-ink-faint` : `${base} bg-ink-dim`;
+}
+
 /**
- * 外层折叠组：聚合多条非正文消息的思考/工具，标题 = Working/Worked + 项目数
+ * 外层折叠组：聚合多条非正文消息的思考/工具。
+ * 标题行 = Working/Worked 标签（无计数）+ 内联预览行；其下圆点行按 tool call 逐粒追加
+ * （done 实心 ink / error 灰 / running 空心呼吸），working 期实时、结束后随 items 冻结，
+ * 展开组时隐藏。展开区顶部一行分类统计（读取/编辑/探索/搜索/执行命令，未知工具按原名计数）。
  * endByText：组被正文边界切分（streaming.text 在输出）→ working 信号消失时立即结束，
  * 不做滞后缓冲；否则（turn 间隙）滞后 HYSTERESIS_MS 防闪烁
  */
@@ -81,6 +113,10 @@ export function MetaGroup({
 }) {
 	const t = useT();
 	const count = items.reduce((n, item) => n + (item.thinking ? 1 : 0) + item.tools.length, 0);
+	// 圆点序列：组内工具按到达顺序展开（working 期实时追加；组结束后随 items 冻结在原位）
+	const dots = useMemo(() => dotsFromItems(items), [items]);
+	// 分类汇总：展开区顶部的速读行（收起态由圆点行承担密度感，语义分类只占展开区）
+	const segments = useMemo(() => summarizeCategories(items), [items]);
 
 	// 滞后缓冲：working 信号消失后需保持 HYSTERESIS_MS 才显示 worked（turn 间隙内不闪烁）
 	const [shownWorking, setShownWorking] = useState(working);
@@ -241,30 +277,54 @@ export function MetaGroup({
 	return (
 		// -mb-4：抵消容器 gap-6 的一部分，折叠行与后续正文净距 8px（成组与单行一致）
 		<div className="-mb-4">
-			{/* min-h-6：与内联预览行（h-6）等高，working/worked 切换行高不变 */}
 			<details className="group/outer peer drawer-details">
-				<summary className="group/row flex min-h-6 cursor-pointer items-center gap-2 py-0.5 select-none [&::-webkit-details-marker]:hidden">
-					<div className="flex shrink-0 items-center gap-2">
-						{shownWorking && <ThinkingOrb state={orbState} size={20} paused={false} />}
-						<span
-							ref={labelRef}
-							className={`text-[14px] font-bold transition-colors group-hover/row:text-ink ${
-								shownWorking ? "sweep-target text-ink-working" : "text-ink-dim"
-							}`}
-						>
-							{t(shownWorking ? labelKey : "message.worked")}
-							{count > 0 && <span className="ml-1 font-normal text-ink-faint">· {count}</span>}
-						</span>
+				<summary className="group/row flex cursor-pointer select-none flex-col [&::-webkit-details-marker]:hidden">
+					{/* min-h-6：与内联预览行（h-6）等高，working/worked 切换首行行高不变 */}
+					<div className="flex min-h-6 w-full items-center gap-2 py-0.5">
+						<div className="flex shrink-0 items-center gap-2">
+							{shownWorking && <ThinkingOrb state={orbState} size={20} paused={false} />}
+							<span
+								ref={labelRef}
+								className={`text-[14px] font-bold transition-colors group-hover/row:text-ink ${
+									shownWorking ? "sweep-target text-ink-working" : "text-ink-dim"
+								}`}
+							>
+								{t(shownWorking ? labelKey : "message.worked")}
+							</span>
+						</div>
+						{/* 实时预览内联进标题行（单行截断，展开组时隐藏） */}
+						{shownWorking && (
+							<div ref={tickerWrapRef} className="min-w-0 flex-1 group-open/outer:hidden">
+								<PreviewTicker items={liveItems} reserveSpace />
+							</div>
+						)}
+						<ExpandArrowIcon className="shrink-0 text-ink-faint opacity-0 transition-[opacity,transform,color] group-hover/row:opacity-100 group-hover/row:text-ink-2 group-open/outer:rotate-90" />
 					</div>
-					{/* 实时预览内联进标题行（单行截断，展开组时隐藏）：工作中与完成后恒为一行高，消除布局抖动 */}
-					{shownWorking && (
-						<div ref={tickerWrapRef} className="min-w-0 flex-1 group-open/outer:hidden">
-							<PreviewTicker items={liveItems} reserveSpace />
+					{/* 圆点行：一次 tool call 一粒（running 空心呼吸 → done 实心 ink-dim / error ink-faint），working 期实时追加、
+					    结束后随 items 冻结原位；超长 flex-wrap 换行；展开组时隐藏（展开区有完整工具卡）。
+					    左缘与状态行（orb/标签）对齐；gap-1 紧密成串（密度感） */}
+					{dots.length > 0 && (
+						<div className="mb-0.5 flex flex-wrap gap-1 py-0.5 group-open/outer:hidden">
+							{dots.map((dot) => (
+								<span key={dot.key} className={dotClass(dot.state)} />
+							))}
 						</div>
 					)}
-					<ExpandArrowIcon className="shrink-0 text-ink-faint opacity-0 transition-[opacity,transform,color] group-hover/row:opacity-100 group-hover/row:text-ink-2 group-open/outer:rotate-90" />
 				</summary>
-				<div className="flex flex-col gap-1.5 py-1">{rows}</div>
+				<div className="flex flex-col gap-1.5 py-1">
+					{/* 分类统计速读行：展开区顶部单行（· 分隔，flex-wrap 兜底） */}
+					{segments.length > 0 && (
+						<div className="flex flex-wrap items-center gap-x-2 gap-y-0.5 py-0.5 text-[13px] text-ink-faint">
+							{segments.map((seg, i) => (
+								<Fragment key={seg.key}>
+									{i > 0 && <span className="opacity-50">·</span>}
+									<span>{summaryLabel(t, seg)}</span>
+								</Fragment>
+							))}
+						</div>
+					)}
+					{rows}
+				</div>
 			</details>
 		</div>
 	);
