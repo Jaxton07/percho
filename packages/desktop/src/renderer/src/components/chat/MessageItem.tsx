@@ -4,7 +4,7 @@ import { useT } from "../../i18n";
 import { useSessionsStore } from "../../stores/sessions";
 import type { UIMessage } from "../../stores/transcript";
 import { selectTranscript, useTranscriptStore } from "../../stores/transcript";
-import { ForkIcon } from "../icons";
+import { ForkIcon, UndoIcon } from "../icons";
 import { AssistantMessage } from "./AssistantMessage";
 import { ImagePreviewOverlay, imageSrc } from "./ImagePreview";
 import { SubagentRunCard } from "./SubagentRunCard";
@@ -98,16 +98,47 @@ function ForkButton({ entryId, text }: { entryId?: string; text: string }) {
 	);
 }
 
+/** 撤回按钮：会话回退到该用户消息之前，内容放回输入框继续编辑；agent 运行中禁用 */
+function RecallButton({ entryId, text, timestamp }: { entryId?: string; text: string; timestamp: number }) {
+	const t = useT();
+	const activeSessionId = useSessionsStore((s) => s.activeSessionId);
+	const agentActive = useTranscriptStore((s) => selectTranscript(s, activeSessionId).agentActive);
+	const recallMessage = useSessionsStore((s) => s.recallMessage);
+	const [recalling, setRecalling] = useState(false);
+
+	const handleRecall = () => {
+		if (recalling || agentActive) return;
+		setRecalling(true);
+		// entryId 精确定位（历史消息）；实时消息无 entryId，按文本+时间戳兑底匹配
+		void recallMessage({ entryId, text: text || undefined, timestamp }).finally(() => setRecalling(false));
+	};
+
+	return (
+		<button
+			type="button"
+			onClick={handleRecall}
+			disabled={agentActive || recalling}
+			aria-label={t("message.recall")}
+			className="flex h-6 w-6 items-center justify-center rounded-md text-ink-faint transition-colors duration-150 hover:bg-border/70 hover:text-ink-2 disabled:cursor-not-allowed"
+		>
+			<UndoIcon />
+		</button>
+	);
+}
+
 /** 单条消息：按类型分发（用户气泡 / 错误 / 助手消息体） */
 export const MessageItem = memo(function MessageItem({
 	message,
 	streaming,
 	metaInGroup,
+	showActions = true,
 }: {
 	message: UIMessage;
 	streaming?: boolean;
 	/** 思考/工具已并入上方合并组，不再自行包裹（正文消息由 MessageList 调用） */
 	metaInGroup?: boolean;
+	/** 是否渲染操作行：仅轮次最后一段正文为 true（中间自言自语不挂复制/fork，减少噪音） */
+	showActions?: boolean;
 }) {
 	const t = useT();
 	const [previewImage, setPreviewImage] = useState<ImageInput | null>(null);
@@ -136,13 +167,14 @@ export const MessageItem = memo(function MessageItem({
 						</div>
 					)}
 					{message.text && (
-						<div className="rounded-2xl rounded-br-md bg-border px-3.5 py-2 text-[14px] leading-relaxed text-ink select-text">
+						<div className="rounded-2xl rounded-br-md bg-border px-3.5 py-2 text-[14px] leading-relaxed whitespace-pre-wrap text-ink select-text">
 							{message.text}
 						</div>
 					)}
-					{message.text && (
-						<div className="mt-1 flex justify-end">
-							<CopyButton text={message.text} />
+					{(message.text || message.images.length > 0) && (
+						<div className="mt-1 flex items-center justify-end gap-1">
+							{message.text && <CopyButton text={message.text} />}
+							<RecallButton entryId={message.entryId} text={message.text} timestamp={message.timestamp} />
 						</div>
 					)}
 				</div>
@@ -208,8 +240,8 @@ export const MessageItem = memo(function MessageItem({
 				streaming={streaming}
 				metaInGroup={metaInGroup}
 			/>
-			{/* 操作行（仅正文消息）：复制正文 + 从此处分叉；常驻显示 */}
-			{!streaming && message.text && (
+			{/* 操作行（仅轮次最后一段正文）：复制正文 + 从此处分叉；agent 回复结束后出现 */}
+			{!streaming && message.text && showActions && (
 				<div className="mt-0.5 flex items-center gap-1">
 					<CopyButton text={message.text} />
 					<ForkButton entryId={message.entryId} text={message.text} />

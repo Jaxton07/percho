@@ -1,6 +1,7 @@
 import type { AvailableModel, SavedTabs, SessionMeta } from "@percho/shared";
 import { create } from "zustand";
 import { getPi } from "../api";
+import { COMPOSER_FOCUS_EVENT, useDraftStore } from "./drafts";
 import { useTranscriptStore } from "./transcript";
 import { messagesToUIMessages } from "./transcript-reducer";
 
@@ -43,6 +44,8 @@ interface SessionsStore {
 	openFromHistory: (filePath: string) => Promise<void>;
 	/** 在指定 assistant 消息处分叉：新会话以新 tab 打开并切换过去（原会话保留原样） */
 	forkSession: (ref: { entryId?: string; text?: string }) => Promise<void>;
+	/** 撤回一条用户消息：会话回退到该消息之前，文本/图片放回输入框草稿继续编辑 */
+	recallMessage: (ref: { entryId?: string; text?: string; timestamp?: number }) => Promise<void>;
 	/** 重启后恢复上次打开的顶栏会话 */
 	restoreTabs: () => Promise<void>;
 	/** 自动命名等事件带来的标题变更 */
@@ -198,6 +201,31 @@ export const useSessionsStore = create<SessionsStore>((set, get) => ({
 			const todos = await getPi().getTodos(meta.sessionId);
 			useTranscriptStore.getState().loadTodos(meta.sessionId, todos);
 			persistTabs(get());
+		} catch (error) {
+			set({ error: error instanceof Error ? error.message : String(error) });
+		}
+	},
+
+	recallMessage: async (ref) => {
+		const { activeSessionId } = get();
+		// draft 还没有消息，无可撤回（UI 上也到不了这里，防御性拦截）
+		if (!activeSessionId || isDraftSessionId(activeSessionId)) return;
+		try {
+			const recalled = await getPi().recallMessage(activeSessionId, ref);
+			// 内容回填草稿：已有草稿文本时换行拼接（与排队取回一致），图片追加在尾部
+			useDraftStore.getState().updateDraft(activeSessionId, (d) => ({
+				...d,
+				text: d.text ? `${d.text}\n${recalled.text}` : recalled.text,
+				images: recalled.images.length > 0 ? [...d.images, ...recalled.images] : d.images,
+			}));
+			// 重建消息流 + 队列/todo 对齐（同 fork 的恢复套路；会话 meta 不变无需更新）
+			const history = await getPi().getSessionMessages(activeSessionId);
+			useTranscriptStore.getState().loadHistory(activeSessionId, messagesToUIMessages(history));
+			const followUpQueue = await getPi().getFollowUpMessages(activeSessionId);
+			useTranscriptStore.getState().setFollowUpQueue(activeSessionId, followUpQueue);
+			const todos = await getPi().getTodos(activeSessionId);
+			useTranscriptStore.getState().loadTodos(activeSessionId, todos);
+			window.dispatchEvent(new CustomEvent(COMPOSER_FOCUS_EVENT));
 		} catch (error) {
 			set({ error: error instanceof Error ? error.message : String(error) });
 		}

@@ -18,6 +18,24 @@ describe("transcript reducer", () => {
 		expect(state.messages[0]).toMatchObject({ kind: "user", text: "你好" });
 	});
 
+	it("用户消息透传 SDK timestamp（撤回兑底定位用），缺省回退本地时间", () => {
+		let state = emptyTranscript();
+		state = reduceEvent(state, {
+			type: "message_start",
+			message: { role: "user", content: "带时间戳", timestamp: 1720000000000 },
+		} as unknown as AgentSessionEvent);
+		expect(state.messages[0]).toMatchObject({ kind: "user", timestamp: 1720000000000 });
+
+		state = emptyTranscript();
+		const before = Date.now();
+		state = reduceEvent(state, {
+			type: "message_start",
+			message: { role: "user", content: [{ type: "text", text: "无时间戳" }] },
+		} as unknown as AgentSessionEvent);
+		const ts = (state.messages[0] as { timestamp: number }).timestamp;
+		expect(ts).toBeGreaterThanOrEqual(before);
+	});
+
 	it("message_start 提取图片块为 images", () => {
 		let state = emptyTranscript();
 		state = reduceEvent(state, {
@@ -61,13 +79,16 @@ describe("transcript reducer", () => {
 			type: "message_update",
 			assistantMessageEvent: { type: "text_delta", contentIndex: 0, delta: "Hi" },
 		} as unknown as AgentSessionEvent);
+		// 固化消息复用流式容器预生成的 id（流式 → 固化不 remount，Markdown 平滑输出续播）
+		const streamingId = state.streaming?.id;
+		expect(streamingId).toBeTruthy();
 		state = reduceEvent(state, ev("turn_end"));
 		expect(state.phase).toBe("idle");
 		expect(state.streaming).toBeNull();
 		// turn_end 不结束 run：agentActive 保持（后续可能还有 turn）
 		expect(state.agentActive).toBe(true);
 		expect(state.messages).toHaveLength(1);
-		expect(state.messages[0]).toMatchObject({ kind: "assistant", text: "Hi" });
+		expect(state.messages[0]).toMatchObject({ kind: "assistant", text: "Hi", id: streamingId });
 
 		// run 结束（agent_end 无 willRetry）→ agentActive false
 		state = reduceEvent(state, ev("agent_end", { willRetry: false, messages: [] }));
@@ -275,6 +296,103 @@ describe("transcript reducer", () => {
 			isError: false,
 		} as unknown as AgentSessionEvent);
 		expect(state.streaming?.tools.every((t) => t.state === "done")).toBe(true);
+	});
+
+	it("同 turn 正文后的工具拆分为独立 meta 消息（保住 text→toolCall 交错时序）", () => {
+		let state = emptyTranscript();
+		state = reduceEvent(state, ev("agent_start"));
+		// turn 块序：[thinking, tool(pre), text, tool(post)] —— 模型“任务完成，清空列表”+todo clear 的典型交错
+		state = reduceEvent(state, {
+			type: "message_update",
+			assistantMessageEvent: { type: "thinking_delta", contentIndex: 0, delta: "想一下" },
+		} as unknown as AgentSessionEvent);
+		state = reduceEvent(state, {
+			type: "message_update",
+			assistantMessageEvent: {
+				type: "toolcall_start",
+				contentIndex: 1,
+				partial: { content: [{}, { type: "toolCall", name: "bash" }] },
+			},
+		} as unknown as AgentSessionEvent);
+		state = reduceEvent(state, {
+			type: "message_update",
+			assistantMessageEvent: {
+				type: "toolcall_end",
+				contentIndex: 1,
+				toolCall: { id: "tc1", name: "bash", arguments: { command: "ls" } },
+			},
+		} as unknown as AgentSessionEvent);
+		state = reduceEvent(state, {
+			type: "message_update",
+			assistantMessageEvent: { type: "text_delta", contentIndex: 2, delta: "任务完成，清空列表" },
+		} as unknown as AgentSessionEvent);
+		state = reduceEvent(state, {
+			type: "message_update",
+			assistantMessageEvent: {
+				type: "toolcall_start",
+				contentIndex: 3,
+				partial: { content: [{}, {}, {}, { type: "toolCall", name: "todo" }] },
+			},
+		} as unknown as AgentSessionEvent);
+		state = reduceEvent(state, {
+			type: "message_update",
+			assistantMessageEvent: {
+				type: "toolcall_end",
+				contentIndex: 3,
+				toolCall: { id: "tc2", name: "todo", arguments: { todos: [] } },
+			},
+		} as unknown as AgentSessionEvent);
+		// 流式期就记录正文起点锚：后续工具按 blockIndex 判定在正文之后
+		expect(state.streaming?.textBlockIndex).toBe(2);
+		const streamingId = state.streaming?.id;
+		state = reduceEvent(state, ev("turn_end"));
+		// 固化拆两条：msg1 = thinking + 正文前工具 + 正文（保留流式 id）；msg2 = 正文后工具（无正文）
+		expect(state.messages).toHaveLength(2);
+		expect(state.messages[0]).toMatchObject({
+			kind: "assistant",
+			text: "任务完成，清空列表",
+			thinking: "想一下",
+			tools: [{ id: "tc1" }],
+			id: streamingId,
+		});
+		expect(state.messages[1]).toMatchObject({
+			kind: "assistant",
+			text: "",
+			thinking: "",
+			tools: [{ id: "tc2" }],
+		});
+	});
+
+	it("正文在工具前的 turn 不拆分（现状路径不变）", () => {
+		let state = emptyTranscript();
+		state = reduceEvent(state, ev("agent_start"));
+		state = reduceEvent(state, {
+			type: "message_update",
+			assistantMessageEvent: {
+				type: "toolcall_start",
+				contentIndex: 0,
+				partial: { content: [{ type: "toolCall", name: "bash" }] },
+			},
+		} as unknown as AgentSessionEvent);
+		state = reduceEvent(state, {
+			type: "message_update",
+			assistantMessageEvent: {
+				type: "toolcall_end",
+				contentIndex: 0,
+				toolCall: { id: "tc1", name: "bash", arguments: { command: "ls" } },
+			},
+		} as unknown as AgentSessionEvent);
+		state = reduceEvent(state, {
+			type: "message_update",
+			assistantMessageEvent: { type: "text_delta", contentIndex: 1, delta: "结果如下" },
+		} as unknown as AgentSessionEvent);
+		state = reduceEvent(state, ev("turn_end"));
+		expect(state.messages).toHaveLength(1);
+		expect(state.messages[0]).toMatchObject({
+			kind: "assistant",
+			text: "结果如下",
+			tools: [{ id: "tc1" }],
+		});
 	});
 
 	it("agent_end willRetry 保持流式，无重试回到 idle", () => {
@@ -802,6 +920,15 @@ describe("transcript reducer", () => {
 });
 
 describe("messagesToUIMessages 历史回放", () => {
+	it("user 消息透传 entryId（撤回精确定位用）", () => {
+		const ui = messagesToUIMessages([
+			{ role: "user", text: "撤我", thinking: "", tools: [], images: [], timestamp: 1, entryId: "e1" },
+			{ role: "assistant", text: "好", thinking: "", tools: [], images: [], timestamp: 2 },
+		]);
+		expect(ui[0]).toMatchObject({ kind: "user", entryId: "e1" });
+		expect(ui[1]).not.toHaveProperty("entryId", "e1");
+	});
+
 	it("image 角色消息还原为图片消息，位置保持", () => {
 		const ui = messagesToUIMessages([
 			{ role: "user", text: "看图", thinking: "", tools: [], images: [], timestamp: 1 },

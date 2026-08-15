@@ -8,6 +8,7 @@ import { GeneralPanel } from "./GeneralPanel";
 import { McpPanel } from "./McpPanel";
 import { ProvidersPanel } from "./providers/ProvidersPanel";
 import { SkillsPanel } from "./SkillsPanel";
+import { VisionPanel } from "./VisionPanel";
 
 const CATEGORIES: SettingsCategory[] = [
 	"general",
@@ -16,6 +17,7 @@ const CATEGORIES: SettingsCategory[] = [
 	"skills",
 	"mcp",
 	"extensions",
+	"vision",
 	"about",
 ];
 
@@ -27,6 +29,7 @@ const PANELS: Partial<Record<SettingsCategory, ComponentType>> = {
 	skills: SkillsPanel,
 	mcp: McpPanel,
 	extensions: ExtensionsPanel,
+	vision: VisionPanel,
 	about: AboutPanel,
 };
 

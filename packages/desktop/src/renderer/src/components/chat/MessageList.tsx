@@ -89,6 +89,22 @@ export function MessageList() {
 
 	const items: ReactNode[] = [];
 	let metaItems: MetaItem[] = [];
+	/**
+	 * 轮次末段正文 id 集合：以 user 消息为轮次边界，每轮（agent 一次回复）只给最后一段正文
+	 * 挂复制/fork 操作行——中间多段是工具循环里的自言自语，全部挂按钮噪音太大。
+	 * agentActive 期间本轮尚未定稿，末段先不挂（agent_end 后自然出现）。
+	 */
+	const turnFinalTextIds = new Set<string>();
+	let lastTextId: string | null = null;
+	for (const message of transcript.messages) {
+		if (message.kind === "user") {
+			if (lastTextId) turnFinalTextIds.add(lastTextId);
+			lastTextId = null;
+			continue;
+		}
+		if (message.kind === "assistant" && message.text) lastTextId = message.id;
+	}
+	if (!transcript.agentActive && lastTextId) turnFinalTextIds.add(lastTextId);
 	/** 组序号：同会话内 key 按位置稳定（streaming→committed 转换不 remount，正文边界后的新组自增）；
 	 *  key 含会话 id：切会话强制 remount——shownWorking 滞后/预览行调度等组内本地状态不跨会话泄漏 */
 	let groupIndex = 0;
@@ -124,25 +140,41 @@ export function MessageList() {
 		// 正文是边界：组关闭，正文独立渲染（meta 已并入组）
 		if (message.text) {
 			flushMeta();
-			items.push(<MessageItem key={message.id} message={message} metaInGroup />);
+			items.push(
+				<MessageItem
+					key={message.id}
+					message={message}
+					metaInGroup
+					showActions={turnFinalTextIds.has(message.id)}
+				/>,
+			);
 		}
 	}
 	if (streaming) {
-		if (streaming.thinking || streaming.tools.length > 0) {
+		// 正文起点锚：同 turn 的工具按 blockIndex 分「正文前/正文后」两组，保住 text→toolCall 交错时序
+		//（与 finalizeStreaming 的拆分一致）；正文出现后 pre 组立即结束，post 组成为最新组接收 working 信号
+		const textIdx = streaming.textBlockIndex;
+		const preTools =
+			textIdx == null ? streaming.tools : streaming.tools.filter((t) => (t.blockIndex ?? 0) < textIdx);
+		const postTools = textIdx == null ? [] : streaming.tools.filter((t) => (t.blockIndex ?? 0) > textIdx);
+		if (streaming.thinking || preTools.length > 0) {
 			metaItems.push({
 				thinking: streaming.thinking,
-				tools: streaming.tools,
-				activity: streaming.activity,
+				tools: preTools,
+				// 正文已出现时 pre 组被强制结束（endByText），不再携带活动序列；未出正文时维持现状
+				activity: textIdx == null ? streaming.activity : undefined,
 			});
 		}
 		if (streaming.text) {
 			flushMeta();
 			items.push(
 				<MessageItem
-					key="streaming"
+					// key = 预生成的消息 id：turn_end 固化后同 id 进入 messages，流式 → 固化不 remount
+					// （Markdown 平滑输出 controller 存活，固化后继续追平剩余 backlog 不跳变）
+					key={streaming.id}
 					message={{
 						kind: "assistant",
-						id: "streaming",
+						id: streaming.id,
 						text: streaming.text,
 						thinking: streaming.thinking,
 						tools: streaming.tools,
@@ -152,6 +184,10 @@ export function MessageList() {
 					metaInGroup
 				/>,
 			);
+		}
+		// 正文后的工具进新组（成为最新组）：working 预览行继续显示最新活动，尾部 flushMeta 接管 working 信号
+		if (postTools.length > 0) {
+			metaItems.push({ thinking: "", tools: postTools, activity: streaming.activity });
 		}
 		// 子代理运行中行：tool_execution_start 即入缓冲，流式期就展示（不等 turn_end 固化），顺序对齐固化后的 assistant → subagents
 		if (streaming.subagentRuns.length > 0) {

@@ -2,7 +2,7 @@ import type { ImageInput, SlashCommandInfo } from "@percho/shared";
 import { useEffect, useRef, useState } from "react";
 import { getPi } from "../../api";
 import { useT } from "../../i18n";
-import { EMPTY_DRAFT, NEW_SESSION_DRAFT_KEY, useDraftStore } from "../../stores/drafts";
+import { COMPOSER_FOCUS_EVENT, EMPTY_DRAFT, NEW_SESSION_DRAFT_KEY, useDraftStore } from "../../stores/drafts";
 import { isDraftSessionId, useSessionsStore } from "../../stores/sessions";
 import { useSettingsStore } from "../../stores/settings";
 import { selectTranscript, useTranscriptStore } from "../../stores/transcript";
@@ -106,6 +106,13 @@ export function Composer({ centered = false }: { centered?: boolean }) {
 		el.style.height = "auto";
 		el.style.height = `${Math.min(el.scrollHeight, 200)}px`;
 	}, [text]);
+
+	// 撤回回填草稿后聚焦输入框继续编辑（sessions store 派发，window 事件解耦组件间依赖）
+	useEffect(() => {
+		const onFocusRequest = () => textareaRef.current?.focus();
+		window.addEventListener(COMPOSER_FOCUS_EVENT, onFocusRequest);
+		return () => window.removeEventListener(COMPOSER_FOCUS_EVENT, onFocusRequest);
+	}, []);
 
 	// biome-ignore lint/correctness/useExhaustiveDependencies: 查询词变化时重置选中项
 	useEffect(() => {

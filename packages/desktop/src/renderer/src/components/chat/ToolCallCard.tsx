@@ -60,7 +60,7 @@ export function ToolCallCard({ tool }: { tool: UIToolCall }) {
 		"relative overflow-hidden whitespace-nowrap font-mono text-[12px] text-ink-faint transition-colors group-hover/row:text-ink";
 
 	return (
-		<details className="group/dets">
+		<details className="group/dets drawer-details">
 			<summary
 				ref={rowRef}
 				className="group/row flex cursor-pointer items-center gap-2 py-0.5 select-none [&::-webkit-details-marker]:hidden"

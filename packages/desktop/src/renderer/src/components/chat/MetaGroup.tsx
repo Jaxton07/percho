@@ -19,7 +19,7 @@ export interface MetaItem {
 function ThinkingRow({ thinking }: { thinking: string }) {
 	const t = useT();
 	return (
-		<details className="group/dets">
+		<details className="group/dets drawer-details">
 			<summary className="group/row flex cursor-pointer items-center gap-2 py-0.5 select-none [&::-webkit-details-marker]:hidden">
 				<span className="shrink-0 text-[13px] font-semibold text-ink-faint transition-colors group-hover/row:text-ink">
 					{t("message.thinking")}
@@ -231,15 +231,16 @@ export function MetaGroup({
 		if (!shownWorking) clearSweepStyles([labelRef.current]);
 	}, [shownWorking]);
 
-	/** 单条已结束（如正文前的思考）直接裸行展示，不套 "已完成 · 1" 外壳 */
+	/** 单条已结束（如正文前的思考）直接裸行展示，不套 "已完成 · 1" 外壳；-mb-4 与包装组一致：
+	 * 与后续正文净距 8px（容器 gap-6 - 16px），单行/成组间距统一 */
 	const showWrapper = count >= 2 || shownWorking;
 	if (!showWrapper) {
-		return <div className="flex flex-col gap-1.5">{rows}</div>;
+		return <div className="-mb-4 flex flex-col gap-1.5">{rows}</div>;
 	}
 
 	return (
-		// -mb-3：抵消 MessageList gap-6 的一部分，状态行与后续正文/消息间距收紧
-		<div className="-mb-3">
+		// -mb-4：抵消容器 gap-6 的一部分，折叠行与后续正文净距 8px（成组与单行一致）
+		<div className="-mb-4">
 			{/* min-h-6：与内联预览行（h-6）等高，working/worked 切换行高不变 */}
 			<details className="group/outer peer drawer-details">
 				<summary className="group/row flex min-h-6 cursor-pointer items-center gap-2 py-0.5 select-none [&::-webkit-details-marker]:hidden">

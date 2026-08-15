@@ -26,6 +26,7 @@ const api: PiApi = {
 	setSessionName: (sessionId, name) => ipcRenderer.invoke(IpcChannels.SessionSetName, sessionId, name),
 	exportSession: (sessionId, format) => ipcRenderer.invoke(IpcChannels.SessionExport, sessionId, format),
 	forkSession: (sessionId, ref) => ipcRenderer.invoke(IpcChannels.SessionFork, sessionId, ref),
+	recallMessage: (sessionId, ref) => ipcRenderer.invoke(IpcChannels.SessionRecall, sessionId, ref),
 	getLoadedResources: (sessionId) => ipcRenderer.invoke(IpcChannels.SessionGetLoadedResources, sessionId),
 	searchCatalog: (query, type, page) =>
 		ipcRenderer.invoke(IpcChannels.PackagesSearchCatalog, query, type, page),
@@ -50,6 +51,10 @@ const api: PiApi = {
 		ipcRenderer.invoke(IpcChannels.PermissionRespond, requestId, answer),
 	getPermissionConfig: () => ipcRenderer.invoke(IpcChannels.PermissionGetConfig),
 	setPermissionEnabled: (enabled) => ipcRenderer.invoke(IpcChannels.PermissionSetEnabled, enabled),
+	getVisionConfig: () => ipcRenderer.invoke(IpcChannels.VisionGetConfig),
+	saveVisionConfig: (input) => ipcRenderer.invoke(IpcChannels.VisionSaveConfig, input),
+	testVision: () => ipcRenderer.invoke(IpcChannels.VisionTest),
+	setVisionLanguage: (language) => ipcRenderer.invoke(IpcChannels.VisionSetLanguage, language),
 	respondTrust: (requestId, answer) => ipcRenderer.invoke(IpcChannels.TrustRespond, requestId, answer),
 	ensureProjectTrust: (cwd) => ipcRenderer.invoke(IpcChannels.ProjectEnsureTrust, cwd),
 	pickDirectory: () => ipcRenderer.invoke(IpcChannels.ProjectPickDirectory),

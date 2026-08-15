@@ -115,6 +115,7 @@ export const en: Messages = {
 	message: {
 		copy: "Copy",
 		copied: "Copied",
+		recall: "Recall to composer",
 		fork: "Fork from here",
 		scrollToBottom: "Back to bottom",
 		thinking: "Thinking",
@@ -167,6 +168,7 @@ export const en: Messages = {
 			skills: "Skills",
 			mcp: "MCP Plugins",
 			extensions: "Extensions",
+			vision: "Vision",
 			about: "About",
 		},
 		language: "Language",
@@ -185,6 +187,35 @@ export const en: Messages = {
 		permissionGate: "Built-in permission gate",
 		permissionGateHint:
 			"When on, tool calls are checked against rules: dangerous commands (rm -rf, sudo, force push, etc.) ask for confirmation, everything else runs. Rules live in ~/.pi/agent/permissions.json and apply instantly. Turn off to replace with your own permission extension.",
+		vision: {
+			title: "Vision",
+			hint: "Adds an external vision model for text-only models: images you send are first described by the vision model, then handed to the current reasoning model. Native multimodal models skip this automatically.",
+			privacy:
+				"When enabled, images in the conversation are sent to your configured vision provider for recognition. Do not send images containing sensitive information.",
+			preset: "Vision provider",
+			presetZhipu: "Zhipu GLM-4.6V-Flash (free)",
+			presetZhipuHint:
+				"Free, but may rate-limit (429) at peak hours; failed recognition degrades to a placeholder and retries later.",
+			presetQwen: "Alibaba Qwen3.7-Flash (paid, very cheap)",
+			presetQwenHint:
+				"Generous rate limits, stable; ¥0.2/M input tokens — one screenshot costs far less than a cent.",
+			presetCustom: "Custom",
+			presetCustomHint: "Any OpenAI-compatible multimodal model: fill in base URL and model ID.",
+			keyPlaceholder: "Paste API Key ($ENV_VAR references supported)",
+			keyHintZhipu: "Get an API Key from the bigmodel.cn console ($ENV_VAR references supported)",
+			keyHintQwen:
+				"Get an API Key from Alibaba Cloud Bailian; or enter $DASHSCOPE_API_KEY to reference the env var",
+			keyKeep: "Configured — leave empty to keep",
+			keyClear: "Clear",
+			advanced: "Advanced (base URL / model)",
+			modelLabel: "Model ID",
+			save: "Save",
+			test: "Test connection",
+			testing: "Testing…",
+			saved: "Saved",
+			testOk: "Connected (model replied: {reply})",
+			testFail: "Connection failed: {message}",
+		},
 		about: {
 			version: "Version",
 			poweredBy: "Built on Pi Coding Agent",

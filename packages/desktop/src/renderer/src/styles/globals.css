@@ -496,7 +496,7 @@ code {
 	border-top-color: var(--markdown-table-border);
 }
 
-/* <details> 内容区的抽屉式展开/折叠动画（MetaGroup 工具组等）。
+/* <details> 内容区的抽屉式展开/折叠动画（外层工具组 + 内层 thinking 行 / tool call 行）。
    ::details-content（Chromium 131+）是包裹 summary 之外内容的伪元素；calc-size(auto, size)
    让 height 可在 0 与 auto 之间过渡。content-visibility 一并过渡：它参与离散动画时有特殊插值
    规则——任一端点是 visible 则整个过渡区间保持 visible → 关闭动画播完内容才真正隐藏。

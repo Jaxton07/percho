@@ -17,6 +17,7 @@ import {
 	type ThemeMode,
 	type TrustRequest,
 	type UiState,
+	type VisionSaveInput,
 } from "@percho/shared";
 import { app, BrowserWindow, dialog, ipcMain, nativeTheme, net, protocol, shell } from "electron";
 import { backgroundsDir, pickBackgroundImage } from "./background";
@@ -107,6 +108,11 @@ function registerIpc(): void {
 	ipcMain.handle(IpcChannels.SessionFork, (_e, sessionId: string, ref: { entryId?: string; text?: string }) =>
 		backend.forkSession(sessionId, ref),
 	);
+	ipcMain.handle(
+		IpcChannels.SessionRecall,
+		(_e, sessionId: string, ref: { entryId?: string; text?: string; timestamp?: number }) =>
+			backend.recallMessage(sessionId, ref),
+	);
 	ipcMain.handle(IpcChannels.SessionGetLoadedResources, (_e, sessionId: string) =>
 		backend.getLoadedResources(sessionId),
 	);
@@ -163,6 +169,14 @@ function registerIpc(): void {
 	ipcMain.handle(IpcChannels.PermissionGetConfig, () => backend.getPermissionConfig());
 	ipcMain.handle(IpcChannels.PermissionSetEnabled, (_e, enabled: boolean) =>
 		backend.setPermissionEnabled(enabled),
+	);
+	ipcMain.handle(IpcChannels.VisionGetConfig, () => backend.getVisionConfig());
+	ipcMain.handle(IpcChannels.VisionSaveConfig, (_e, input: VisionSaveInput) =>
+		backend.saveVisionConfig(input),
+	);
+	ipcMain.handle(IpcChannels.VisionTest, () => backend.testVision());
+	ipcMain.handle(IpcChannels.VisionSetLanguage, (_e, language: "zh" | "en") =>
+		backend.setVisionLanguage(language),
 	);
 	ipcMain.handle(IpcChannels.TrustRespond, (_e, requestId: string, answer: number) =>
 		backend.respondTrust(requestId, answer),
@@ -253,7 +267,7 @@ app.whenReady().then(async () => {
 		log.error("unhandled rejection", reason);
 	});
 
-	backend = new PiBackend();
+	backend = new PiBackend({ visionConfigPath: join(app.getPath("userData"), "vision.json") });
 	await backend.init();
 	registerIpc();
 	await initUpdater();

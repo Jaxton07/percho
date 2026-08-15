@@ -106,19 +106,25 @@ describe("toSessionMessages：show_image 历史回放", () => {
 			},
 			{ role: "assistant", content: [{ type: "text", text: "就是这张" }], timestamp: 4 },
 		]);
-		expect(messages.map((m) => m.role)).toEqual(["user", "assistant", "image", "assistant"]);
-		expect(messages[2]).toMatchObject({
+		// 同 turn 正文→工具拆分：正文消息在前，无正文工具组紧随，image 消息跟在工具组后
+		expect(messages.map((m) => m.role)).toEqual(["user", "assistant", "assistant", "image", "assistant"]);
+		expect(messages[3]).toMatchObject({
 			role: "image",
 			images: [{ data: "AAAA", mimeType: "image/png" }],
 			paths: ["logo.png"],
 		});
-		// 工具卡照常回填文本输出
-		const assistant = messages[1];
-		if (assistant?.role !== "assistant") throw new Error("expected assistant message");
-		expect(assistant.tools[0]).toMatchObject({
+		// 工具卡在无正文工具组消息上，照常回填文本输出
+		const toolGroup = messages[2];
+		if (toolGroup?.role !== "assistant") throw new Error("expected assistant tool group");
+		expect(toolGroup.tools[0]).toMatchObject({
 			name: "show_image",
 			output: expect.stringContaining("logo.png"),
 		});
+		// 正文消息不携带工具
+		const bodyText = messages[1];
+		if (bodyText?.role !== "assistant") throw new Error("expected assistant body");
+		expect(bodyText.text).toContain("好的");
+		expect(bodyText.tools).toHaveLength(0);
 	});
 
 	it("多图 details 完整还原为一条图片消息", () => {

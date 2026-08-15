@@ -31,6 +31,8 @@ export type UIMessage =
 			text: string;
 			images: ImageInput[];
 			timestamp: number;
+			/** 会话树 entry id（仅历史回放消息有；撤回精确定位，缺省时按文本+时间戳兑底） */
+			entryId?: string;
 	  }
 	| {
 			kind: "assistant";
@@ -81,6 +83,9 @@ export interface UIToolCall {
 	/** 执行输出累积 */
 	output: string;
 	state: "running" | "done" | "error";
+	/** content 块绝对索引（toolcall_start 时记录）：与 StreamingState.textBlockIndex 比较判定「正文前/正文后」，
+	 * 保住同 turn 内 text→toolCall 交错的时序；历史回放消息由 backend 预拆分，不带此字段 */
+	blockIndex?: number;
 }
 
 /** 预览活动条目：事件流按到达顺序追加，预览行永远显示最新一条（latest-wins） */
@@ -96,6 +101,9 @@ export interface ActivityEntry {
 
 /** 进行中的流式累积 */
 export interface StreamingState {
+	/** 消息 id：容器创建时预生成，turn_end 固化时复用同一个 id —— 流式与固化后的 MessageItem key 一致，
+	 * 组件不 remount，Markdown 的平滑输出 controller 得以存活续播（否则固化瞬间平滑被打断、整段跳变） */
+	id: string;
 	text: string;
 	thinking: string;
 	tools: UIToolCall[];
@@ -111,6 +119,10 @@ export interface StreamingState {
 	toolByContentIndex: Record<number, number>;
 	/** 到达顺序的活动序列（thinking / tool call 穿插），预览行数据源 */
 	activity: ActivityEntry[];
+	/** 首个 text 块的 contentIndex（正文起点锚）；null = 本 turn 尚无正文。同 turn 的工具按
+	 * blockIndex 与之比较分「正文前/正文后」——否则平铺模型会把正文后的工具（如
+	 * “任务完成，清空列表”+todo clear）倒挂到正文上方并进前一个折叠组，时序反转 */
+	textBlockIndex: number | null;
 }
 
 export type SessionPhase = "idle" | "streaming" | "awaiting_permission";
@@ -146,6 +158,7 @@ export function emptyTranscript(): SessionTranscriptState {
 
 function emptyStreaming(): StreamingState {
 	return {
+		id: newMessageId(),
 		text: "",
 		thinking: "",
 		tools: [],
@@ -155,6 +168,7 @@ function emptyStreaming(): StreamingState {
 		activeToolIndex: -1,
 		toolByContentIndex: {},
 		activity: [],
+		textBlockIndex: null,
 	};
 }
 
@@ -223,21 +237,38 @@ function finalizeStreaming(state: SessionTranscriptState): SessionTranscriptStat
 			? { ...state, messages: [...messages, ...subagents, ...images], streaming: null }
 			: { ...state, streaming: null };
 	}
+	// 正文后到达的工具（同 turn 内 text→toolCall 交错，如“任务完成，清空列表”+todo clear）：
+	// 拆成独立 meta 消息排在正文消息之后——否则渲染时会被倒挂到正文上方并进前一个折叠组（时序反转）。
+	// thinking 恒归正文前组（provider 的 thinking 块总在 text 之前）；与 backend 历史回放的拆分保持一致
+	const textIdx = streaming.textBlockIndex;
+	const postTools = textIdx == null ? [] : streaming.tools.filter((t) => (t.blockIndex ?? 0) > textIdx);
+	const preTools =
+		textIdx == null ? streaming.tools : streaming.tools.filter((t) => (t.blockIndex ?? 0) < textIdx);
+	const assistantMessages: UIMessage[] = [];
+	if (streaming.text || streaming.thinking || preTools.length > 0) {
+		assistantMessages.push({
+			kind: "assistant",
+			// 复用流式容器预生成的 id（key 稳定 → 不 remount，见 StreamingState.id 注释）
+			id: streaming.id,
+			text: streaming.text,
+			thinking: streaming.thinking,
+			tools: preTools,
+			timestamp: Date.now(),
+		});
+	}
+	if (postTools.length > 0) {
+		assistantMessages.push({
+			kind: "assistant",
+			id: newMessageId(),
+			text: "",
+			thinking: "",
+			tools: postTools,
+			timestamp: Date.now(),
+		});
+	}
 	return {
 		...state,
-		messages: [
-			...messages,
-			{
-				kind: "assistant",
-				id: newMessageId(),
-				text: streaming.text,
-				thinking: streaming.thinking,
-				tools: streaming.tools,
-				timestamp: Date.now(),
-			},
-			...subagents,
-			...images,
-		],
+		messages: [...messages, ...assistantMessages, ...subagents, ...images],
 		streaming: null,
 	};
 }
@@ -293,7 +324,13 @@ export function reduceEvent(state: SessionTranscriptState, event: AgentSessionEv
 				...state,
 				messages: [
 					...state.messages,
-					{ kind: "user", id: newMessageId(), text, images, timestamp: Date.now() },
+					{
+						kind: "user",
+						id: newMessageId(),
+						text,
+						images,
+						timestamp: event.message.timestamp ?? Date.now(),
+					},
 				],
 			};
 		}
@@ -303,7 +340,15 @@ export function reduceEvent(state: SessionTranscriptState, event: AgentSessionEv
 			const e = event.assistantMessageEvent;
 			switch (e.type) {
 				case "text_delta":
-					return { ...state, streaming: { ...streaming, text: streaming.text + e.delta } };
+					return {
+						...state,
+						streaming: {
+							...streaming,
+							text: streaming.text + e.delta,
+							// 首个 text 块位置 = 正文起点锚（后续同 turn 工具按此分前后组，见 StreamingState.textBlockIndex）
+							textBlockIndex: streaming.textBlockIndex ?? e.contentIndex,
+						},
+					};
 				case "thinking_delta": {
 					// 活动序列：连续 thinking 合并为同一条目（内容从 streaming.thinking 读）
 					const last = streaming.activity[streaming.activity.length - 1];
@@ -324,6 +369,7 @@ export function reduceEvent(state: SessionTranscriptState, event: AgentSessionEv
 							args: "",
 							output: "",
 							state: "running" as const,
+							blockIndex: e.contentIndex,
 						},
 					];
 					const toolByContentIndex = {
@@ -618,7 +664,14 @@ export function messagesToUIMessages(messages: SessionMessage[]): UIMessage[] {
 		}
 		if (m.role === "user") {
 			if (m.text || m.images.length > 0) {
-				ui.push({ kind: "user", id, text: m.text, images: m.images, timestamp: m.timestamp });
+				ui.push({
+					kind: "user",
+					id,
+					text: m.text,
+					images: m.images,
+					timestamp: m.timestamp,
+					entryId: m.entryId,
+				});
 			}
 			continue;
 		}

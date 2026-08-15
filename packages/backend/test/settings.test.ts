@@ -119,7 +119,7 @@ describe("SettingsService provider mutations", () => {
 			models: [{ id: "gpt-5" }],
 			clearApiKey: true,
 		});
-		expect(JSON.parse(files.get("/agent/auth.json") ?? "{}")["proxy"]).toBeUndefined();
+		expect(JSON.parse(files.get("/agent/auth.json") ?? "{}").proxy).toBeUndefined();
 	});
 
 	it("writes per-model metadata (reasoning/contextWindow/maxTokens/input) when provided", async () => {

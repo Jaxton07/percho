@@ -9,6 +9,9 @@ import type {
 	ProviderInfo,
 	ProviderTestResult,
 	ResourceDiagnosticInfo,
+	VisionConfigInfo,
+	VisionSaveInput,
+	VisionTestResult,
 } from "@percho/shared";
 import { create } from "zustand";
 import { getPi } from "../api";
@@ -21,6 +24,7 @@ export type SettingsCategory =
 	| "skills"
 	| "mcp"
 	| "extensions"
+	| "vision"
 	| "about";
 
 interface SettingsStore {
@@ -33,6 +37,11 @@ interface SettingsStore {
 	refreshing: boolean;
 	/** 内置权限门控开关（null = 未加载） */
 	permissionEnabled: boolean | null;
+	/** 视觉代理配置（null = 未加载） */
+	visionConfig: VisionConfigInfo | null;
+	/** 视觉模型连通性测试中 */
+	visionTesting: boolean;
+	visionTestResult: VisionTestResult | null;
 	/** 当前活跃会话已加载的 skills（null = 未加载/无会话） */
 	skills: LoadedSkill[] | null;
 	skillDiagnostics: ResourceDiagnosticInfo[];
@@ -79,6 +88,11 @@ interface SettingsStore {
 	removeCustom: (providerId: string) => Promise<void>;
 	test: (providerId: string) => Promise<void>;
 	setPermissionEnabled: (enabled: boolean) => Promise<void>;
+	/** 保存视觉代理配置（返回新配置；key 留空保持不变） */
+	saveVision: (input: VisionSaveInput) => Promise<void>;
+	/** 测试视觉模型连通性（1×1 png 实调） */
+	testVision: () => Promise<void>;
+	clearVisionTestResult: () => void;
 	setExtensionsTab: (tab: "browse" | "loaded") => void;
 	setCatalogQuery: (query: string) => void;
 	setCatalogType: (type: "" | CatalogPackageType) => void;
@@ -112,6 +126,9 @@ export const useSettingsStore = create<SettingsStore>((set, get) => {
 		loading: false,
 		refreshing: false,
 		permissionEnabled: null,
+		visionConfig: null,
+		visionTesting: false,
+		visionTestResult: null,
 		skills: null,
 		skillDiagnostics: [],
 		extensions: null,
@@ -257,6 +274,11 @@ export const useSettingsStore = create<SettingsStore>((set, get) => {
 				.getPermissionConfig()
 				.then((permission) => set({ permissionEnabled: permission.enabled }))
 				.catch(() => {});
+			// 视觉代理配置同样本地文件读，独立加载
+			void getPi()
+				.getVisionConfig()
+				.then((visionConfig) => set({ visionConfig }))
+				.catch(() => {});
 			try {
 				const providers = await getPi().listProviders();
 				set({ providers, loading: false, error: null });
@@ -302,6 +324,30 @@ export const useSettingsStore = create<SettingsStore>((set, get) => {
 				});
 			}
 		},
+
+		saveVision: async (input) => {
+			try {
+				const visionConfig = await getPi().saveVisionConfig(input);
+				set({ visionConfig, visionTestResult: null });
+			} catch (error) {
+				set({ error: error instanceof Error ? error.message : String(error) });
+			}
+		},
+
+		testVision: async () => {
+			set({ visionTesting: true, visionTestResult: null });
+			try {
+				const result = await getPi().testVision();
+				set({ visionTesting: false, visionTestResult: result });
+			} catch (error) {
+				set({
+					visionTesting: false,
+					visionTestResult: { ok: false, message: error instanceof Error ? error.message : String(error) },
+				});
+			}
+		},
+
+		clearVisionTestResult: () => set({ visionTestResult: null }),
 
 		saveKey: async (providerId, key) => {
 			try {

@@ -4,6 +4,9 @@ import { create } from "zustand";
 /** 无活跃会话（未创建的新会话）时的草稿 key */
 export const NEW_SESSION_DRAFT_KEY = "__new__";
 
+/** 请求聚焦输入框的窗口事件名（撤回回填草稿后由 store 派发，Composer 监听聚焦 textarea） */
+export const COMPOSER_FOCUS_EVENT = "pi:composer-focus";
+
 /** 一份会话草稿：文本 + 图片附件 + slash 命令胶囊 + @ 文件引用胶囊 */
 export interface DraftEntry {
 	text: string;

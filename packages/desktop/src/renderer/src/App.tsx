@@ -9,6 +9,7 @@ import { ApprovalDock } from "./components/session/ApprovalDock";
 import { SessionTabBar } from "./components/session/SessionTabBar";
 import { TrustDialog } from "./components/session/TrustDialog";
 import { SettingsDialog } from "./components/settings/SettingsDialog";
+import { useI18nStore } from "./i18n";
 import { finishSplash } from "./splash";
 import { useSessionsStore } from "./stores/sessions";
 import { backgroundImageUrl, useThemeStore } from "./stores/theme";
@@ -22,6 +23,12 @@ export default function App() {
 	const view = useUiStore((s) => s.view);
 	const transcript = useTranscriptStore((s) => (activeSessionId ? s.bySession[activeSessionId] : undefined));
 	const [trustRequests, setTrustRequests] = useState<TrustRequest[]>([]);
+	const language = useI18nStore((s) => s.language);
+
+	// 视觉代理识别描述语言跟随界面语言（启动 + 切语言时推送 backend）
+	useEffect(() => {
+		void getPi().setVisionLanguage(language);
+	}, [language]);
 
 	useEffect(() => {
 		const pi = getPi();

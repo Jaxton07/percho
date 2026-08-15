@@ -212,7 +212,7 @@ export type SessionMessage =
 			/** user 消息附带的图片 */
 			images: ImageInput[];
 			timestamp: number;
-			/** 会话树中的 entry id（assistant 消息有；fork 定位用，匹配失败时缺省） */
+			/** 会话树中的 entry id（assistant/user 消息均有；fork·撤回定位用，匹配失败时缺省） */
 			entryId?: string;
 	  }
 	| {

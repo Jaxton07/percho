@@ -11,6 +11,7 @@ import {
 	ModelRuntime,
 	ProjectTrustStore,
 	type ResourceLoader,
+	type SessionEntry,
 	SessionManager,
 	SettingsManager,
 	type ToolDefinition,
@@ -33,8 +34,13 @@ import type {
 	SlashCommandInfo,
 	TrustAnswer,
 	TrustRequest,
+	VisionConfigInfo,
+	VisionSaveInput,
+	VisionTestResult,
 } from "@percho/shared";
 import {
+	DEFAULT_VISION_BASE_URL,
+	DEFAULT_VISION_MODEL,
 	extractSubagentRuns,
 	extractTodos,
 	TODO_REMINDER_CUSTOM_TYPE,
@@ -56,6 +62,9 @@ import { makeTodoTool } from "./todo-tool";
 import { TraceRecorder } from "./trace";
 import { resolveProjectTrust, TrustGate } from "./trust";
 import { makeUiContext } from "./ui-context";
+import { pingVision } from "./vision-client";
+import { resolveVisionKey, VisionConfigService } from "./vision-config";
+import { makeVisionProxyExtension } from "./vision-proxy-extension";
 import { makeWebFetchTool } from "./webfetch";
 
 const log = createLogger("backend");
@@ -75,6 +84,10 @@ export interface PiBackendOptions {
 	projectTrust?: boolean;
 	/** 是否内置 webfetch 工具（默认 true）；传对象可配置 CIDR 放行 */
 	webFetch?: boolean | { allowRanges?: string[] };
+	/** 视觉代理配置文件路径（userData/vision.json）；缺省不启用视觉代理功能 */
+	visionConfigPath?: string;
+	/** 是否注册内置视觉代理扩展（默认 true；visionConfigPath 缺省时无效果） */
+	visionProxy?: boolean;
 }
 
 type EventHandler = (sessionId: string, event: AgentSessionEvent) => void;
@@ -100,8 +113,14 @@ export class PiBackend {
 	private modelPromise: Promise<ModelRuntime> | undefined;
 	/** 设置页（provider/模型/凭证配置）服务 */
 	readonly settings = new SettingsService(() => this.getModelRuntime());
+	/** 视觉代理配置（userData/vision.json；未提供路径时禁用） */
+	private readonly visionConfig: VisionConfigService | undefined;
 
-	constructor(private readonly options: PiBackendOptions = {}) {}
+	constructor(private readonly options: PiBackendOptions = {}) {
+		this.visionConfig = options.visionConfigPath
+			? new VisionConfigService(options.visionConfigPath)
+			: undefined;
+	}
 
 	/** 自定义工具 = 调用方传入的 + 内置 webfetch（webFetch:false 关闭）+ show_image + todo */
 	private buildCustomTools(): ToolDefinition[] {
@@ -186,6 +205,11 @@ export class PiBackend {
 		const extensionFactories = [makeTodoReminderExtension()];
 		if (this.options.permissionGates !== false && this.options.permissionExtension !== false) {
 			extensionFactories.push(makePermissionGateExtension(agentDir, { projectRoot: cwd }));
+		}
+		// 视觉代理：每次 LLM 调用前把 image block 换成识别描述（纯文本模型用）。
+		// handler 内实时读配置，设置页保存后对所有已打开会话立即生效
+		if (this.visionConfig && this.options.visionProxy !== false) {
+			extensionFactories.push(makeVisionProxyExtension({ configService: this.visionConfig }));
 		}
 		const resourceLoader = new DefaultResourceLoader({
 			cwd,
@@ -601,21 +625,35 @@ export class PiBackend {
 	async getSessionMessages(sessionId: string): Promise<SessionMessage[]> {
 		const entry = this.requireSession(sessionId);
 		const messages = toSessionMessages(entry.session.messages);
-		// 配对 assistant 消息与会话树 entry id（fork 定位）：branch 上 assistant 消息 entry
-		// 按 timestamp 建队列，与上下文消息同序消费；compaction 只截断更早 entry，不影响配对
-		const byTimestamp = new Map<number, string[]>();
+		// 配对消息与会话树 entry id（assistant 供 fork 定位、user 供撤回定位）：branch 上
+		// 同角色消息 entry 按 timestamp 建队列，与上下文消息同序消费；compaction 只截断更早
+		// entry，不影响配对。user/assistant 分开建表，避免同 ms 碰撞时串角色
+		const assistantByTimestamp = new Map<number, string[]>();
+		const userByTimestamp = new Map<number, string[]>();
 		for (const e of entry.session.sessionManager.getBranch()) {
 			if (e.type !== "message") continue;
 			const m = e.message as RawMessage;
-			if (m.role !== "assistant" || typeof m.timestamp !== "number") continue;
-			const queue = byTimestamp.get(m.timestamp);
+			if (typeof m.timestamp !== "number") continue;
+			const table =
+				m.role === "assistant" ? assistantByTimestamp : m.role === "user" ? userByTimestamp : null;
+			if (!table) continue;
+			const queue = table.get(m.timestamp);
 			if (queue) queue.push(e.id);
-			else byTimestamp.set(m.timestamp, [e.id]);
+			else table.set(m.timestamp, [e.id]);
 		}
 		for (const message of messages) {
-			if (message.role !== "assistant") continue;
-			const id = byTimestamp.get(message.timestamp)?.shift();
-			if (id) message.entryId = id;
+			// 无正文的拆分消息（同 turn 正文后的工具组）不参与配对：无 fork 按钮不消费 entry 队列，
+			// 避免挤占后续正文消息的 entryId（同 ms timestamp 碰撞时）
+			if (message.role === "assistant") {
+				if (!message.text) continue;
+				const id = assistantByTimestamp.get(message.timestamp)?.shift();
+				if (id) message.entryId = id;
+				continue;
+			}
+			if (message.role === "user") {
+				const id = userByTimestamp.get(message.timestamp)?.shift();
+				if (id) message.entryId = id;
+			}
 		}
 		return messages;
 	}
@@ -680,6 +718,45 @@ export class PiBackend {
 		throw new Error("Fork target message not found");
 	}
 
+	/** 撤回的 custom entry 标记类型：追加在回退点后使 leaf 移动落盘持久（重启后撤回仍生效） */
+	static readonly RECALLED_MARKER_TYPE = "message-recalled";
+
+	/**
+	 * 撤回一条用户消息：navigateTree 把会话 leaf 回退到该消息之前（被撤回内容在文件中
+	 * 保留为侧枝，不删除），同时重建内存 LLM 上下文；随后追加 message-recalled custom entry
+	 * （不进上下文、不进消息列表）把 leaf 移动持久化，避免重启后旧分支回来。
+	 * 文本与图片从目标 entry 提取后返回，调用方放回输入框继续编辑。
+	 */
+	async recallMessage(
+		sessionId: string,
+		ref: { entryId?: string; text?: string; timestamp?: number },
+	): Promise<{ text: string; images: ImageInput[] }> {
+		const entry = this.requireSession(sessionId);
+		if (entry.session.isStreaming) throw new Error("Cannot recall while the agent is running");
+		const sm = entry.session.sessionManager;
+		const targetId = resolveRecallEntryId(sm, ref);
+		const target = sm.getEntry(targetId) as Extract<SessionEntry, { type: "message" }>;
+		const message = target.message as RawMessage;
+		// 文本/图片从目标 entry 提取（navigateTree 只返回 editorText，图片会丢）
+		const text = blockText(message.content);
+		const images = blockImages(message.content);
+		if (sm.getLeafId() === targetId) {
+			// 悬挂的用户消息（发出后无任何回复，entry 即当前 leaf）：navigateTree 视为 no-op，
+			// 手动回退 leaf 并同步内存上下文（与 navigateTree 内部做的事一致）
+			if (target.parentId) sm.branch(target.parentId);
+			else sm.resetLeaf();
+			entry.session.agent.state.messages = sm.buildSessionContext().messages;
+		} else {
+			const result = await entry.session.navigateTree(targetId);
+			if (result.cancelled) throw new Error("Recall was cancelled by an extension");
+		}
+		// 持久化回退点：custom entry 不参与 LLM 上下文，只把 leaf 移动写进文件
+		// （否则撤回只存在内存，重启后旧分支回来）
+		sm.appendCustomEntry(PiBackend.RECALLED_MARKER_TYPE, { recalledEntryId: targetId });
+		log.info("recall message", sessionId, { targetId });
+		return { text, images };
+	}
+
 	async listModels(): Promise<AvailableModel[]> {
 		const providers = await this.settings.listProviders();
 		return providers.flatMap((provider) =>
@@ -725,6 +802,46 @@ export class PiBackend {
 	setPermissionEnabled(enabled: boolean): void {
 		writePermissionEnabled(getAgentDir(), enabled);
 		log.info("permission gate enabled", enabled);
+	}
+
+	/** 视觉代理配置（key 只给存在性，不回传）；未提供配置路径时返回禁用态 */
+	async getVisionConfig(): Promise<VisionConfigInfo> {
+		if (!this.visionConfig) {
+			return {
+				enabled: false,
+				hasKey: false,
+				baseUrl: DEFAULT_VISION_BASE_URL,
+				model: DEFAULT_VISION_MODEL,
+				language: "zh",
+			};
+		}
+		return this.visionConfig.getInfo();
+	}
+
+	/** 保存视觉代理配置（即时生效：扩展 handler 每次调用实时读） */
+	async saveVisionConfig(input: VisionSaveInput): Promise<VisionConfigInfo> {
+		if (!this.visionConfig) return this.getVisionConfig();
+		const info = await this.visionConfig.save(input);
+		log.info("vision config saved", { enabled: info.enabled, hasKey: info.hasKey, model: info.model });
+		return info;
+	}
+
+	/** 连通性测试：1×1 png 实调视觉模型（不看 enabled 开关，配置中即可测） */
+	async testVision(): Promise<VisionTestResult> {
+		if (!this.visionConfig) return { ok: false, message: "vision config unavailable" };
+		const config = await this.visionConfig.getConfig();
+		if (!resolveVisionKey(config.apiKey)) return { ok: false, message: "API key not configured" };
+		try {
+			const reply = await pingVision({ config, language: this.visionConfig.getLanguage() });
+			return { ok: true, message: reply.slice(0, 200) };
+		} catch (err) {
+			return { ok: false, message: err instanceof Error ? err.message : String(err) };
+		}
+	}
+
+	/** 推送界面语言（识别描述语言跟随；内存态，App 启动/切语言时推送） */
+	setVisionLanguage(language: "zh" | "en"): void {
+		this.visionConfig?.setLanguage(language);
 	}
 
 	respondTrust(requestId: string, answer: TrustAnswer): void {
@@ -926,15 +1043,21 @@ function blockThinking(content: ContentBlock[] | undefined): string {
 		.join("");
 }
 
-function blockToolCalls(content: ContentBlock[] | undefined): SessionToolCall[] {
+function blockToolCalls(
+	content: ContentBlock[] | undefined,
+): Array<{ tool: SessionToolCall; index: number }> {
 	return (content ?? [])
-		.filter((c) => c.type === "toolCall" && c.id)
-		.map((c) => ({
-			id: c.id ?? "",
-			name: c.name ?? "tool",
-			args: JSON.stringify(c.arguments ?? {}),
-			output: "",
-			isError: false,
+		.map((c, index) => ({ c, index }))
+		.filter(({ c }) => c.type === "toolCall" && c.id)
+		.map(({ c, index }) => ({
+			tool: {
+				id: c.id ?? "",
+				name: c.name ?? "tool",
+				args: JSON.stringify(c.arguments ?? {}),
+				output: "",
+				isError: false,
+			},
+			index,
 		}));
 }
 
@@ -943,6 +1066,39 @@ function blockImages(content: string | ContentBlock[] | undefined): ImageInput[]
 	return (content ?? [])
 		.filter((c) => c.type === "image" && c.data)
 		.map((c) => ({ data: c.data as string, mimeType: (c.mimeType as string) ?? "image/png" }));
+}
+
+/**
+ * 解析撤回目标 user entry：entryId 直接校验（非 user 消息拒绝）；否则按 text（+timestamp
+ * 优先比对）从分支尾部向前匹配最近一条 user 消息 entry（实时消息无 entryId 时兜底）。
+ * 导出供单测：只依赖 SessionManager 的只读接口。
+ */
+export function resolveRecallEntryId(
+	sm: Pick<SessionManager, "getEntry" | "getBranch">,
+	ref: { entryId?: string; text?: string; timestamp?: number },
+): string {
+	if (ref.entryId) {
+		const e = sm.getEntry(ref.entryId);
+		if (!e) throw new Error("Recall target message not found");
+		if (e.type !== "message" || (e.message as RawMessage).role !== "user") {
+			throw new Error("Recall target is not a user message");
+		}
+		return ref.entryId;
+	}
+	if (ref.text !== undefined || ref.timestamp !== undefined) {
+		const branch = sm.getBranch();
+		for (let i = branch.length - 1; i >= 0; i--) {
+			const e = branch[i];
+			if (e?.type !== "message") continue;
+			const m = e.message as RawMessage;
+			if (m.role !== "user") continue;
+			// timestamp 同时给出时必须相等（毫秒碰撞军见，双重锚定防同文消息错配）
+			if (ref.timestamp !== undefined && m.timestamp !== ref.timestamp) continue;
+			if (ref.text !== undefined && blockText(m.content) !== ref.text) continue;
+			return e.id;
+		}
+	}
+	throw new Error("Recall target message not found");
 }
 
 /**
@@ -966,11 +1122,40 @@ export function toSessionMessages(rawMessages: readonly unknown[]): SessionMessa
 		}
 		if (raw.role === "assistant") {
 			const content = Array.isArray(raw.content) ? raw.content : [];
-			const tools = blockToolCalls(content);
+			const toolBlocks = blockToolCalls(content);
+			const tools = toolBlocks.map((b) => b.tool);
 			for (const tool of tools) toolById.set(tool.id, tool);
+			const text = blockText(raw.content);
+			// 正文后的工具（块序在首个 text 块之后，同 turn 内 text→toolCall 交错）：拆成独立 meta 消息
+			// 排在正文消息之后，与 renderer finalizeStreaming 的拆分一致——否则渲染时会被倒挂到正文上方
+			const textIndex = content.findIndex((c) => c?.type === "text" && c.text);
+			const postBlocks = text && textIndex >= 0 ? toolBlocks.filter((b) => b.index > textIndex) : [];
+			if (postBlocks.length > 0) {
+				const preTools = toolBlocks.filter((b) => b.index < textIndex).map((b) => b.tool);
+				const timestamp = raw.timestamp ?? Date.now();
+				if (text || preTools.length > 0) {
+					out.push({
+						role: "assistant",
+						text,
+						thinking: blockThinking(content),
+						tools: preTools,
+						images: [],
+						timestamp,
+					});
+				}
+				out.push({
+					role: "assistant",
+					text: "",
+					thinking: "",
+					tools: postBlocks.map((b) => b.tool),
+					images: [],
+					timestamp,
+				});
+				continue;
+			}
 			const message: SessionMessage = {
 				role: "assistant",
-				text: blockText(raw.content),
+				text,
 				thinking: blockThinking(content),
 				tools,
 				images: [],

@@ -37,6 +37,9 @@ export {
 	type TrustOptionInternal,
 	type TrustResponder,
 } from "./trust";
+export { describeImage, pingVision, VisionClientError } from "./vision-client";
+export { resolveVisionKey, VisionConfigService } from "./vision-config";
+export { makeVisionProxyExtension, type VisionProxyOptions } from "./vision-proxy-extension";
 export {
 	assertPublicUrl,
 	type Cidr,

@@ -29,6 +29,7 @@ import type {
 } from "./settings";
 import type { TodoItem } from "./todo";
 import type { UpdateState } from "./update";
+import type { VisionConfigInfo, VisionSaveInput, VisionTestResult } from "./vision";
 
 /** IPC 通道名常量 */
 export const IpcChannels = {
@@ -55,6 +56,8 @@ export const IpcChannels = {
 	SessionSetName: "session:setName",
 	SessionExport: "session:export",
 	SessionFork: "session:fork",
+	/** 撤回用户消息（回退到该消息之前，内容放回输入框） */
+	SessionRecall: "session:recall",
 	/** 已加载资源（skills/扩展，设置页展示用） */
 	SessionGetLoadedResources: "session:getLoadedResources",
 	/** pi.dev 社区包目录（设置页扩展面板浏览/安装用） */
@@ -71,6 +74,11 @@ export const IpcChannels = {
 	SettingsUpdateCustomProvider: "settings:updateCustomProvider",
 	SettingsRemoveCustomProvider: "settings:removeCustomProvider",
 	SettingsTestProvider: "settings:testProvider",
+	/** 视觉代理（外挂图像识别，纯文本模型用） */
+	VisionGetConfig: "vision:getConfig",
+	VisionSaveConfig: "vision:saveConfig",
+	VisionTest: "vision:test",
+	VisionSetLanguage: "vision:setLanguage",
 	PermissionRespond: "permission:respond",
 	/** 权限门控配置（设置 UI 开关） */
 	PermissionGetConfig: "permission:getConfig",
@@ -150,6 +158,14 @@ export interface PiApi {
 	 * 运行中的会话拒绝 fork。返回新会话 meta。
 	 */
 	forkSession(sessionId: string, ref: { entryId?: string; text?: string }): Promise<SessionMeta>;
+	/**
+	 * 撤回一条用户消息：会话回退到该消息发送之前（被撤回内容在文件中保留为侧枝），
+	 * 文本与图片返回给调用方放回输入框。运行中的会话拒绝撤回。
+	 */
+	recallMessage(
+		sessionId: string,
+		ref: { entryId?: string; text?: string; timestamp?: number },
+	): Promise<{ text: string; images: ImageInput[] }>;
 	/** 读取会话已加载的资源（skills/扩展；设置页展示用） */
 	getLoadedResources(sessionId: string): Promise<LoadedResources>;
 	/** 搜索 pi.dev 社区包目录（服务端模糊匹配名称/描述/作者，50 条/页） */
@@ -172,6 +188,14 @@ export interface PiApi {
 	updateCustomProvider(input: CustomProviderUpdateInput): Promise<void>;
 	removeCustomProvider(providerId: string): Promise<void>;
 	testProvider(providerId: string, modelId?: string): Promise<ProviderTestResult>;
+	/** 读取视觉代理配置（key 只给存在性，不回传） */
+	getVisionConfig(): Promise<VisionConfigInfo>;
+	/** 保存视觉代理配置（apiKey 留空保持不变，clearApiKey 删除）；即时生效 */
+	saveVisionConfig(input: VisionSaveInput): Promise<VisionConfigInfo>;
+	/** 测试视觉模型连通性（1×1 png 实调） */
+	testVision(): Promise<VisionTestResult>;
+	/** 推送界面语言（识别描述语言跟随；backend 内存态） */
+	setVisionLanguage(language: "zh" | "en"): Promise<void>;
 	respondPermission(requestId: string, answer: PermissionAnswer): Promise<void>;
 	/** 读取权限门控开关状态 */
 	getPermissionConfig(): Promise<PermissionConfigInfo>;
