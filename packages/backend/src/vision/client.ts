@@ -1,5 +1,5 @@
 import { buildVisionPrompt, type VisionConfig } from "@percho/shared";
-import { resolveVisionKey } from "./vision-config";
+import { resolveVisionKey } from "./config";
 
 /** 单图识别超时（截图识别通常 <10s，长图/复杂 OCR 留余量） */
 export const VISION_TIMEOUT_MS = 45_000;

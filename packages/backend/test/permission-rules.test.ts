@@ -17,7 +17,7 @@ import {
 	setPermissionEnabled,
 	splitShellSegments,
 	suggestPattern,
-} from "../src/permission-rules";
+} from "../src/permissions";
 
 function makeAgentDir(): string {
 	const dir = mkdtempSync(join(tmpdir(), "pi-perm-rules-"));

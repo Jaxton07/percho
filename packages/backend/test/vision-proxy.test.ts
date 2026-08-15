@@ -1,12 +1,12 @@
 import type { InlineExtension } from "@earendil-works/pi-coding-agent";
 import type { VisionConfig } from "@percho/shared";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { describeImage } from "../src/vision-client";
-import type { VisionConfigService } from "../src/vision-config";
-import { makeVisionProxyExtension } from "../src/vision-proxy-extension";
+import { describeImage } from "../src/vision/client";
+import type { VisionConfigService } from "../src/vision/config";
+import { makeVisionProxyExtension } from "../src/vision/proxy-extension";
 
-vi.mock("../src/vision-client", async (importOriginal) => {
-	const mod = await importOriginal<typeof import("../src/vision-client")>();
+vi.mock("../src/vision/client", async (importOriginal) => {
+	const mod = await importOriginal<typeof import("../percho/vision/client")>();
 	return { ...mod, describeImage: vi.fn() };
 });
 

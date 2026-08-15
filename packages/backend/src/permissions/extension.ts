@@ -1,6 +1,7 @@
 import { isAbsolute, relative, resolve } from "node:path";
 import type { InlineExtension } from "@earendil-works/pi-coding-agent";
-import { createLogger } from "./log";
+import { createLogger } from "../log";
+import { createWorkspacesLoader, suggestRootCandidate } from "../project/workspace-store";
 import {
 	createPermissionConfigLoader,
 	evaluateBashCommand,
@@ -9,9 +10,8 @@ import {
 	type PermissionAction,
 	patternMatchesToolCall,
 	suggestPattern,
-} from "./permission-rules";
-import type { PermissionRequestMeta } from "./permissions";
-import { createWorkspacesLoader, suggestRootCandidate } from "./workspace-store";
+} from ".";
+import type { PermissionRequestMeta } from "./gate";
 
 const log = createLogger("permission-gate");
 

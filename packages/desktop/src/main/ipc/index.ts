@@ -1,0 +1,41 @@
+import type { PiBackend } from "@percho/backend";
+import type { PermissionRequest, TrustRequest } from "@percho/shared";
+import { IpcChannels } from "@percho/shared";
+import { BrowserWindow } from "electron";
+import { onUpdateState } from "../updater";
+import { registerAppIpc } from "./app";
+import { registerPackagesIpc } from "./packages";
+import { registerSessionsIpc } from "./sessions";
+import { registerSettingsIpc } from "./settings";
+
+/** 向 renderer 推事件（backend 事件转发 + 更新状态共用） */
+export function sendToRenderer(channel: string, payload: unknown): void {
+	const window = BrowserWindow.getAllWindows()[0];
+	if (window && !window.isDestroyed()) {
+		window.webContents.send(channel, payload);
+	}
+}
+
+/**
+ * IPC 注册组合入口：按域拆在 ./sessions ./settings ./packages ./app 四个文件，
+ * 这里只做拼装 + backend/updater 事件转发到 renderer。
+ */
+export function registerIpc(backend: PiBackend): void {
+	registerSessionsIpc(backend);
+	registerSettingsIpc(backend);
+	registerPackagesIpc(backend);
+	registerAppIpc(backend);
+
+	backend.onEvent((sessionId, event) => {
+		sendToRenderer(IpcChannels.Event, { sessionId, event });
+	});
+	backend.onPermissionRequest((req: PermissionRequest) => {
+		sendToRenderer(IpcChannels.PermissionRequest, req);
+	});
+	backend.onTrustRequest((req: TrustRequest) => {
+		sendToRenderer(IpcChannels.TrustRequest, req);
+	});
+	onUpdateState((state) => {
+		sendToRenderer(IpcChannels.UpdateEvent, state);
+	});
+}

@@ -9,9 +9,9 @@ import type {
 	ToolCallEventResult,
 } from "@earendil-works/pi-coding-agent";
 import { describe, expect, it } from "vitest";
-import { makePermissionGateExtension, type PermissionConfirm } from "../src/permission-extension";
-import { PermissionGate } from "../src/permissions";
-import { workspaceConfigPath } from "../src/workspace-store";
+import { makePermissionGateExtension, type PermissionConfirm } from "../src/permissions/extension";
+import { PermissionGate } from "../src/permissions/gate";
+import { workspaceConfigPath } from "../src/project/workspace-store";
 
 type ToolCallHandler = ExtensionHandler<ToolCallEvent, ToolCallEventResult>;
 

@@ -11,7 +11,7 @@ import {
 	removeWorkspaceRoot,
 	suggestRootCandidate,
 	workspaceConfigPath,
-} from "../src/workspace-store";
+} from "../src/project/workspace-store";
 
 function makeAgentDir(): string {
 	const dir = mkdtempSync(join(tmpdir(), "pi-ws-"));

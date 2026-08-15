@@ -1,6 +1,6 @@
 import type { VisionConfig } from "@percho/shared";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { describeImage, pingVision, VisionClientError } from "../src/vision-client";
+import { describeImage, pingVision, VisionClientError } from "../src/vision/client";
 
 const CONFIG: VisionConfig = {
 	enabled: true,

@@ -1,7 +1,7 @@
 import type { AgentSession } from "@earendil-works/pi-coding-agent";
 import { describe, expect, it } from "vitest";
 import { PiBackend } from "../src/pi-backend";
-import type { SessionRegistry } from "../src/session-registry";
+import type { SessionRegistry } from "../src/session/registry";
 
 interface PromptOptions {
 	preflightResult?: (ok: boolean) => void;

@@ -1,6 +1,6 @@
 import type { PermissionRequest } from "@percho/shared";
 import { describe, expect, it } from "vitest";
-import { PermissionGate } from "../src/permissions";
+import { PermissionGate } from "../src/permissions/gate";
 
 function makeGate(requests: PermissionRequest[] = []) {
 	const gate = new PermissionGate((req) => requests.push(req));

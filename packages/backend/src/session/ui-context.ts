@@ -1,5 +1,5 @@
 import type { ExtensionUIContext } from "@earendil-works/pi-coding-agent";
-import type { PermissionGate } from "./permissions";
+import type { PermissionGate } from "../permissions/gate";
 
 /**
  * ExtensionUIContext 全量 no-op 实现：只桥接权限确认（confirm），其余保持默认。

@@ -1,43 +1,18 @@
 import "./pi-package-dir";
 import "./dev-agent-dir";
-import { writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { pathToFileURL } from "node:url";
 import { createLogger, initLogging, PiBackend } from "@percho/backend";
-import {
-	type CatalogPackageType,
-	type CustomProviderInput,
-	type CustomProviderUpdateInput,
-	type ImageInput,
-	IpcChannels,
-	type ListProvidersOptions,
-	type PermissionAnswer,
-	type PermissionRequest,
-	type SavedTabs,
-	type ThemeMode,
-	type TrustRequest,
-	type UiState,
-	type VisionSaveInput,
-} from "@percho/shared";
-import { app, BrowserWindow, dialog, ipcMain, nativeTheme, net, protocol, shell } from "electron";
-import { backgroundsDir, pickBackgroundImage } from "./background";
-import { checkoutBranch, getGitBranch, listGitBranches } from "./git";
-import { loadTabs, saveTabs } from "./tabs";
-import { loadUiState, saveUiState } from "./ui-state";
-import {
-	checkForUpdates,
-	initUpdater,
-	installUpdate,
-	onUpdateState,
-	scheduleAutoUpdateCheck,
-} from "./updater";
+import type { ThemeMode } from "@percho/shared";
+import { app, BrowserWindow, nativeTheme, net, protocol } from "electron";
+import { backgroundsDir } from "./background";
+import { registerIpc } from "./ipc";
+import { loadUiState } from "./ui-state";
+import { initUpdater, scheduleAutoUpdateCheck } from "./updater";
 import { createWindow } from "./window";
 
 const log = createLogger("main");
 let backend: PiBackend;
-
-/** 项目仓库地址（帮助跳转 + 关于页） */
-export const APP_REPO_URL = "https://github.com/Jaxton07/percho";
 
 /** renderer 加载自定义背景图的协议（pi-bg://background/<文件名>，只读 userData/backgrounds/） */
 const BG_PROTOCOL = "pi-bg";
@@ -50,186 +25,6 @@ protocol.registerSchemesAsPrivileged([
 function resolveTheme(theme: ThemeMode | undefined): "dark" | "light" {
 	const dark = theme === "dark" || (theme !== "light" && nativeTheme.shouldUseDarkColors);
 	return dark ? "dark" : "light";
-}
-
-function sendToRenderer(channel: string, payload: unknown): void {
-	const window = BrowserWindow.getAllWindows()[0];
-	if (window && !window.isDestroyed()) {
-		window.webContents.send(channel, payload);
-	}
-}
-
-function registerIpc(): void {
-	ipcMain.handle(
-		IpcChannels.SessionCreate,
-		(_e, options: { cwd: string; provider?: string; modelId?: string; thinkingLevel?: string }) =>
-			backend.createSession(options),
-	);
-	ipcMain.handle(IpcChannels.SessionList, (_e, cwd?: string) => backend.listSessions(cwd));
-	ipcMain.handle(IpcChannels.SessionListAll, () => backend.listAllSessions());
-	ipcMain.handle(IpcChannels.SessionOpen, (_e, filePath: string) => backend.openSession(filePath));
-	ipcMain.handle(IpcChannels.SessionClose, (_e, sessionId: string) => backend.closeSession(sessionId));
-	ipcMain.handle(IpcChannels.SessionDelete, (_e, sessionId: string, sessionFile?: string) =>
-		backend.deleteSession(sessionId, sessionFile),
-	);
-	ipcMain.handle(IpcChannels.SessionPrompt, (_e, sessionId: string, text: string, images?: ImageInput[]) =>
-		backend.prompt(sessionId, text, images),
-	);
-	ipcMain.handle(IpcChannels.SessionAbort, (_e, sessionId: string) => backend.abort(sessionId));
-	ipcMain.handle(IpcChannels.SessionSetModel, (_e, sessionId: string, provider: string, modelId: string) =>
-		backend.setModel(sessionId, provider, modelId),
-	);
-	ipcMain.handle(IpcChannels.SessionSetThinkingLevel, (_e, sessionId: string, level: string) =>
-		backend.setThinkingLevel(sessionId, level),
-	);
-	ipcMain.handle(IpcChannels.SessionCompact, (_e, sessionId: string, customInstructions?: string) =>
-		backend.compact(sessionId, customInstructions),
-	);
-	ipcMain.handle(IpcChannels.SessionStats, (_e, sessionId: string) => backend.getStats(sessionId));
-	ipcMain.handle(IpcChannels.SessionGetContextUsage, (_e, sessionId: string) =>
-		backend.getContextUsage(sessionId),
-	);
-	ipcMain.handle(IpcChannels.SessionClearQueue, (_e, sessionId: string) => backend.clearQueue(sessionId));
-	ipcMain.handle(IpcChannels.SessionGetFollowUpMessages, (_e, sessionId: string) =>
-		backend.getFollowUpMessages(sessionId),
-	);
-	ipcMain.handle(IpcChannels.SessionListSlashCommands, (_e, sessionId: string) =>
-		backend.listSlashCommands(sessionId),
-	);
-	ipcMain.handle(IpcChannels.SessionListSlashCommandsForCwd, (_e, cwd: string) =>
-		backend.listSlashCommandsForCwd(cwd),
-	);
-	ipcMain.handle(IpcChannels.SessionSetName, (_e, sessionId: string, name: string) =>
-		backend.setSessionName(sessionId, name),
-	);
-	ipcMain.handle(IpcChannels.SessionExport, (_e, sessionId: string, format: "html" | "jsonl") =>
-		backend.exportSession(sessionId, format),
-	);
-	ipcMain.handle(IpcChannels.SessionFork, (_e, sessionId: string, ref: { entryId?: string; text?: string }) =>
-		backend.forkSession(sessionId, ref),
-	);
-	ipcMain.handle(
-		IpcChannels.SessionRecall,
-		(_e, sessionId: string, ref: { entryId?: string; text?: string; timestamp?: number }) =>
-			backend.recallMessage(sessionId, ref),
-	);
-	ipcMain.handle(IpcChannels.SessionGetLoadedResources, (_e, sessionId: string) =>
-		backend.getLoadedResources(sessionId),
-	);
-	ipcMain.handle(IpcChannels.PackagesSearchCatalog, (_e, query: string, type?: string, page?: number) =>
-		backend.searchPackages(query, type as CatalogPackageType | "" | undefined, page),
-	);
-	ipcMain.handle(IpcChannels.PackagesInstall, (_e, name: string) => backend.installPackage(name));
-	ipcMain.handle(IpcChannels.PackagesRemove, (_e, source: string, scope: "user" | "project") =>
-		backend.removePackage(source, scope),
-	);
-	ipcMain.handle(IpcChannels.PackagesListConfigured, () => backend.listConfiguredPackages());
-	ipcMain.handle(IpcChannels.FileSaveDialog, async (_e, defaultName: string, content: string) => {
-		const window = BrowserWindow.getAllWindows()[0];
-		const options: Electron.SaveDialogOptions = {
-			defaultPath: defaultName,
-			filters: [{ name: "All Files", extensions: ["*"] }],
-		};
-		const result = window
-			? await dialog.showSaveDialog(window, options)
-			: await dialog.showSaveDialog(options);
-		if (result.canceled || !result.filePath) return null;
-		await writeFile(result.filePath, content, "utf-8");
-		return result.filePath;
-	});
-	ipcMain.handle(IpcChannels.SessionGetMessages, (_e, sessionId: string) =>
-		backend.getSessionMessages(sessionId),
-	);
-	ipcMain.handle(IpcChannels.SessionGetTodos, (_e, sessionId: string) => backend.getTodos(sessionId));
-	ipcMain.handle(IpcChannels.ModelsList, () => backend.listModels());
-	ipcMain.handle(IpcChannels.SettingsListProviders, (_e, options?: ListProvidersOptions) =>
-		backend.settings.listProviders(options),
-	);
-	ipcMain.handle(IpcChannels.SettingsSaveApiKey, (_e, providerId: string, key: string) =>
-		backend.settings.saveApiKey(providerId, key),
-	);
-	ipcMain.handle(IpcChannels.SettingsRemoveCredential, (_e, providerId: string) =>
-		backend.settings.removeCredential(providerId),
-	);
-	ipcMain.handle(IpcChannels.SettingsAddCustomProvider, (_e, input: CustomProviderInput) =>
-		backend.settings.addCustomProvider(input),
-	);
-	ipcMain.handle(IpcChannels.SettingsUpdateCustomProvider, (_e, input: CustomProviderUpdateInput) =>
-		backend.settings.updateCustomProvider(input),
-	);
-	ipcMain.handle(IpcChannels.SettingsRemoveCustomProvider, (_e, providerId: string) =>
-		backend.settings.removeCustomProvider(providerId),
-	);
-	ipcMain.handle(IpcChannels.SettingsTestProvider, (_e, providerId: string, modelId?: string) =>
-		backend.settings.testProvider(providerId, modelId),
-	);
-	ipcMain.handle(IpcChannels.PermissionRespond, (_e, requestId: string, answer: PermissionAnswer) =>
-		backend.respondPermission(requestId, answer),
-	);
-	ipcMain.handle(IpcChannels.PermissionGetConfig, () => backend.getPermissionConfig());
-	ipcMain.handle(IpcChannels.PermissionSetEnabled, (_e, enabled: boolean) =>
-		backend.setPermissionEnabled(enabled),
-	);
-	ipcMain.handle(IpcChannels.VisionGetConfig, () => backend.getVisionConfig());
-	ipcMain.handle(IpcChannels.VisionSaveConfig, (_e, input: VisionSaveInput) =>
-		backend.saveVisionConfig(input),
-	);
-	ipcMain.handle(IpcChannels.VisionTest, () => backend.testVision());
-	ipcMain.handle(IpcChannels.VisionSetLanguage, (_e, language: "zh" | "en") =>
-		backend.setVisionLanguage(language),
-	);
-	ipcMain.handle(IpcChannels.TrustRespond, (_e, requestId: string, answer: number) =>
-		backend.respondTrust(requestId, answer),
-	);
-	ipcMain.handle(IpcChannels.ProjectEnsureTrust, (_e, cwd: string) => backend.ensureProjectTrust(cwd));
-	ipcMain.handle(IpcChannels.ProjectGetGitBranch, (_e, cwd: string) => getGitBranch(cwd));
-	ipcMain.handle(IpcChannels.ProjectListGitBranches, (_e, cwd: string) => listGitBranches(cwd));
-	ipcMain.handle(IpcChannels.ProjectCheckoutBranch, (_e, cwd: string, branch: string) =>
-		checkoutBranch(cwd, branch),
-	);
-	ipcMain.handle(IpcChannels.AppOpenExternal, (_e, url: string) => {
-		// 只允许 http(s) 链接，防 file:// 等协议滥用
-		if (typeof url === "string" && /^https?:\/\//.test(url)) return shell.openExternal(url);
-	});
-	ipcMain.handle(IpcChannels.AppGetInfo, () => ({
-		name: app.getName(),
-		version: app.getVersion(),
-		electron: process.versions.electron ?? "",
-		chrome: process.versions.chrome ?? "",
-		node: process.versions.node ?? "",
-		platform: process.platform,
-		arch: process.arch,
-		repoUrl: APP_REPO_URL,
-	}));
-	ipcMain.handle(IpcChannels.TabsLoad, () => loadTabs());
-	ipcMain.handle(IpcChannels.TabsSave, (_e, tabs: SavedTabs) => saveTabs(tabs));
-	ipcMain.handle(IpcChannels.UiStateLoad, () => loadUiState());
-	ipcMain.handle(IpcChannels.UiStateSave, (_e, state: Partial<UiState>) => saveUiState(state));
-	ipcMain.handle(IpcChannels.BackgroundPick, () => pickBackgroundImage(BrowserWindow.getAllWindows()[0]));
-	ipcMain.handle(IpcChannels.UpdateCheck, () => checkForUpdates());
-	ipcMain.handle(IpcChannels.UpdateInstall, () => installUpdate());
-	ipcMain.handle(IpcChannels.ProjectPickDirectory, async () => {
-		const window = BrowserWindow.getAllWindows()[0];
-		const options: Electron.OpenDialogOptions = { properties: ["openDirectory", "createDirectory"] };
-		const result = window
-			? await dialog.showOpenDialog(window, options)
-			: await dialog.showOpenDialog(options);
-		return result.canceled ? null : result.filePaths[0];
-	});
-	ipcMain.handle(IpcChannels.ProjectListFiles, (_e, cwd?: string) => backend.listProjectFiles(cwd));
-
-	backend.onEvent((sessionId, event) => {
-		sendToRenderer(IpcChannels.Event, { sessionId, event });
-	});
-	backend.onPermissionRequest((req: PermissionRequest) => {
-		sendToRenderer(IpcChannels.PermissionRequest, req);
-	});
-	backend.onTrustRequest((req: TrustRequest) => {
-		sendToRenderer(IpcChannels.TrustRequest, req);
-	});
-	onUpdateState((state) => {
-		sendToRenderer(IpcChannels.UpdateEvent, state);
-	});
 }
 
 app.whenReady().then(async () => {
@@ -269,7 +64,7 @@ app.whenReady().then(async () => {
 
 	backend = new PiBackend({ visionConfigPath: join(app.getPath("userData"), "vision.json") });
 	await backend.init();
-	registerIpc();
+	registerIpc(backend);
 	await initUpdater();
 	scheduleAutoUpdateCheck();
 	const uiState = await loadUiState();

@@ -2,8 +2,8 @@ import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { toSessionMessages } from "../src/pi-backend";
-import { makeShowImageTool, resolveShowImagePath } from "../src/show-image-tool";
+import { toSessionMessages } from "../src/session/messages";
+import { makeShowImageTool, resolveShowImagePath } from "../src/tools/show-image";
 
 const PNG_BYTES = Buffer.from(
 	"iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==",
