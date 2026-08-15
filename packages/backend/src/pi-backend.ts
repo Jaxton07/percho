@@ -49,7 +49,7 @@ import {
 } from "@percho/shared";
 import { createLogger } from "./log";
 import { fetchPackageCatalog } from "./package-catalog";
-import { makePermissionGateExtension } from "./permission-extension";
+import { makePermissionGateExtension, type PermissionConfirm } from "./permission-extension";
 import { loadPermissionConfig, setPermissionEnabled as writePermissionEnabled } from "./permission-rules";
 import { PermissionGate } from "./permissions";
 import { walkProjectFiles } from "./project-files";
@@ -66,6 +66,7 @@ import { pingVision } from "./vision-client";
 import { resolveVisionKey, VisionConfigService } from "./vision-config";
 import { makeVisionProxyExtension } from "./vision-proxy-extension";
 import { makeWebFetchTool } from "./webfetch";
+import { addAllowedPattern, addWorkspaceRoot } from "./workspace-store";
 
 const log = createLogger("backend");
 
@@ -191,7 +192,7 @@ export class PiBackend {
 	 */
 	private async loadProjectResources(
 		cwd: string,
-		options?: { askTrust?: boolean },
+		options?: { askTrust?: boolean; confirm?: PermissionConfirm },
 	): Promise<{
 		settingsManager: SettingsManager;
 		resourceLoader: DefaultResourceLoader;
@@ -204,7 +205,11 @@ export class PiBackend {
 		// confirm 恒 false，不能注册）
 		const extensionFactories = [makeTodoReminderExtension()];
 		if (this.options.permissionGates !== false && this.options.permissionExtension !== false) {
-			extensionFactories.push(makePermissionGateExtension(agentDir, { projectRoot: cwd }));
+			// confirm 直接桥到 PermissionGate（携带 kind/suggestDir 元数据，驱动「允许此目录」）；
+			// 未提供时扩展自行回退 ctx.ui.confirm（无元数据）
+			extensionFactories.push(
+				makePermissionGateExtension(agentDir, { projectRoot: cwd, confirm: options?.confirm }),
+			);
 		}
 		// 视觉代理：每次 LLM 调用前把 image block 换成识别描述（纯文本模型用）。
 		// handler 内实时读配置，设置页保存后对所有已打开会话立即生效
@@ -263,8 +268,12 @@ export class PiBackend {
 			options.provider && options.modelId ? runtime.getModel(options.provider, options.modelId) : undefined;
 
 		const gate = new PermissionGate((req) => this.dispatchPermissionRequest(req));
+		// 权限扩展的确认通道直接桥到 gate（携带 kind/suggestDir 元数据，驱动「允许此目录」/持久化）
+		const confirmBridge: PermissionConfirm = (title, message, meta) => gate.confirm(title, message, meta);
 
-		const { settingsManager, resourceLoader } = await this.loadProjectResources(cwd);
+		const { settingsManager, resourceLoader } = await this.loadProjectResources(cwd, {
+			confirm: confirmBridge,
+		});
 		const { session } = await createAgentSession({
 			cwd,
 			modelRuntime: runtime,
@@ -788,6 +797,27 @@ export class PiBackend {
 	}
 
 	respondPermission(requestId: string, answer: PermissionAnswer): void {
+		if (answer === "allowDir" || answer === "allowAlways") {
+			// 持久化决策（仅内置权限扩展的请求带 meta）：
+			// allowDir → 根加入 workspaces.json（本次与后续均按界内处置）；
+			// allowAlways → 模式键记入当前项目的 allowed[]（跨会话生效）
+			for (const gate of this.gates.values()) {
+				const req = gate.getRequest(requestId);
+				if (!req) continue;
+				const entry = this.registry.get(gate.getSessionId());
+				const agentDir = getAgentDir();
+				if (entry) {
+					if (answer === "allowDir" && req.meta?.suggestDir) {
+						addWorkspaceRoot(agentDir, entry.cwd, req.meta.suggestDir);
+					} else if (answer === "allowAlways" && req.meta) {
+						addAllowedPattern(agentDir, entry.cwd, req.title);
+					}
+				}
+				gate.respond(requestId, answer);
+				return;
+			}
+			return;
+		}
 		for (const gate of this.gates.values()) {
 			gate.respond(requestId, answer);
 		}

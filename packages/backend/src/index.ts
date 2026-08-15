@@ -1,6 +1,10 @@
 export { createLogger, initLogging, type Logger } from "./log";
 export { fetchPackageCatalog, parseCatalogHtml } from "./package-catalog";
-export { makePermissionGateExtension, type PermissionGateOptions } from "./permission-extension";
+export {
+	makePermissionGateExtension,
+	type PermissionConfirm,
+	type PermissionGateOptions,
+} from "./permission-extension";
 export {
 	createPermissionConfigLoader,
 	DEFAULT_PERMISSION_CONFIG,
@@ -14,14 +18,16 @@ export {
 	mergeWithDefaults,
 	type PermissionAction,
 	type PermissionConfig,
+	type PermissionOutside,
 	type PermissionRule,
 	type PermissionRules,
+	patternMatchesToolCall,
 	permissionConfigPath,
 	setPermissionEnabled,
 	splitShellSegments,
 	suggestPattern,
 } from "./permission-rules";
-export { PermissionGate, type PermissionResponder } from "./permissions";
+export { PermissionGate, type PermissionRequestMeta, type PermissionResponder } from "./permissions";
 export { PiBackend, type PiBackendOptions } from "./pi-backend";
 export { type RegisteredSession, SessionRegistry } from "./session-registry";
 export { SettingsService } from "./settings";
@@ -52,3 +58,15 @@ export {
 	type WebFetchDetails,
 	type WebFetchOptions,
 } from "./webfetch";
+export {
+	addAllowedPattern,
+	addWorkspaceRoot,
+	createWorkspacesLoader,
+	emptyWorkspaces,
+	loadWorkspaces,
+	removeWorkspaceRoot,
+	suggestRootCandidate,
+	type WorkspaceProjectEntry,
+	type WorkspacesConfig,
+	workspaceConfigPath,
+} from "./workspace-store";

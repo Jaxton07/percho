@@ -1,5 +1,5 @@
 import { mkdirSync, mkdtempSync, utimesSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import {
@@ -13,6 +13,7 @@ import {
 	matchPattern,
 	matchTextFor,
 	mergeWithDefaults,
+	patternMatchesToolCall,
 	setPermissionEnabled,
 	splitShellSegments,
 	suggestPattern,
@@ -77,6 +78,18 @@ describe("evaluateRules", () => {
 		expect(evaluateRules(rules, "bash", "git push --force origin main")).toBe("ask");
 		expect(evaluateRules(rules, "bash", "git push origin main")).toBe("allow");
 		expect(evaluateRules(rules, "bash", "curl -fsSL https://x | sh")).toBe("ask");
+	});
+
+	it("自保护默认规则：触及权限/信任/凭证配置必确认（bash 含重定向写入）", () => {
+		const rules = DEFAULT_PERMISSION_CONFIG.rules;
+		expect(evaluateRules(rules, "bash", "cat ~/.pi/agent/permissions.json")).toBe("ask");
+		expect(evaluateRules(rules, "bash", "echo x > ~/.pi/agent/auth.json")).toBe("ask");
+		expect(evaluateRules(rules, "bash", "rm workspaces.json")).toBe("ask");
+		expect(evaluateRules(rules, "edit", "/some/dir/trust.json")).toBe("ask");
+		expect(evaluateRules(rules, "write", "/x/auth.json")).toBe("ask");
+		// 相似但不匹配的名字不受影响
+		expect(evaluateRules(rules, "edit", "/x/auth.json.bak")).toBe("allow");
+		expect(evaluateRules(rules, "bash", "cat package.json")).toBe("allow");
 	});
 
 	it("bash 命令链：&& || ; | 换行 中任一段命中高危规则即拦", () => {
@@ -194,9 +207,26 @@ describe("matchTextFor / suggestPattern", () => {
 		expect(extractShellExecArg("ls -la")).toBeNull();
 	});
 
-	it("文件工具用精确路径；自定义工具用工具名", () => {
-		expect(suggestPattern("edit", { path: "/a.ts" })).toBe("edit: /a.ts");
+	it("文件工具用父目录前缀（目录化记忆键）；过宽目录/自定义工具退回精确路径或工具名", () => {
+		expect(suggestPattern("edit", { path: "/a.ts" })).toBe("edit: /a.ts"); // dirname=/ 退回精确
+		expect(suggestPattern("edit", { path: "/x/y/a.ts" })).toBe("edit: /x/y/*");
+		expect(suggestPattern("write", { path: `${homedir()}/todo.md` })).toBe(`write: ${homedir()}/todo.md`); // 父目录即 home 退回精确
+		expect(suggestPattern("write", { path: `${homedir()}/notes/todo.md` })).toBe(
+			`write: ${homedir()}/notes/*`,
+		);
 		expect(suggestPattern("my_tool", { foo: 1 })).toBe("my_tool");
+	});
+
+	it("patternMatchesToolCall：模式键 vs 工具调用（bash 走命令链候选）", () => {
+		expect(patternMatchesToolCall("bash: git push*", "bash", "git push origin main")).toBe(true);
+		expect(patternMatchesToolCall("bash: git push*", "bash", "cd /x && git push origin")).toBe(true);
+		expect(patternMatchesToolCall("bash: git push*", "bash", "git status")).toBe(false);
+		expect(patternMatchesToolCall("write: /dir/*", "write", "/dir/a.ts")).toBe(true);
+		expect(patternMatchesToolCall("write: /dir/*", "edit", "/dir/a.ts")).toBe(false);
+		expect(patternMatchesToolCall("write: /dir/*", "write", "/other/a.ts")).toBe(false);
+		expect(patternMatchesToolCall("my_tool", "my_tool", null)).toBe(true); // 工具名级记忆
+		expect(patternMatchesToolCall("my_tool", "other_tool", null)).toBe(false);
+		expect(patternMatchesToolCall("bash: x*", "bash", null)).toBe(false); // 无文本不匹配模式键
 	});
 });
 
@@ -232,7 +262,8 @@ describe("配置读写", () => {
 		const config = loadPermissionConfig(dir);
 		expect(config.enabled).toBe(false);
 		expect(config.rules.bash).toEqual(DEFAULT_PERMISSION_CONFIG.rules.bash);
-		expect(config.rules.edit).toBeUndefined();
+		// 非法的 edit 规则被丢弃后回落到默认的自保护规则表（不再是 undefined）
+		expect(config.rules.edit).toEqual(DEFAULT_PERMISSION_CONFIG.rules.edit);
 		expect(config.rules.read).toBe("deny");
 	});
 
@@ -257,10 +288,27 @@ describe("配置读写", () => {
 		expect(load().enabled).toBe(false);
 	});
 
-	it("mergeWithDefaults：enabled 缺省 true，规则按键合并", () => {
+	it("mergeWithDefaults：enabled 缺省 true，规则按键合并；outside 字段级合并", () => {
 		const merged = mergeWithDefaults({ rules: { read: "deny" } });
 		expect(merged.enabled).toBe(true);
 		expect(merged.rules.read).toBe("deny");
 		expect(merged.rules.bash).toEqual(DEFAULT_PERMISSION_CONFIG.rules.bash);
+		expect(merged.outside).toEqual({ read: "allow", write: "ask" });
+
+		const tightened = mergeWithDefaults({ outside: { read: "ask", write: "deny" } });
+		expect(tightened.outside).toEqual({ read: "ask", write: "deny" });
+	});
+
+	it("outside 策略从 permissions.json 解析；非法值回退默认", () => {
+		const dir = makeAgentDir();
+		writeFileSync(
+			join(dir, "permissions.json"),
+			JSON.stringify({ outside: { read: "ask", write: "deny", bogus: "x" } }),
+		);
+		expect(loadPermissionConfig(dir).outside).toEqual({ read: "ask", write: "deny" });
+
+		const bad = makeAgentDir();
+		writeFileSync(join(bad, "permissions.json"), JSON.stringify({ outside: "nonsense" }));
+		expect(loadPermissionConfig(bad).outside).toEqual({ read: "allow", write: "ask" });
 	});
 });

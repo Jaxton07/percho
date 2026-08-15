@@ -285,14 +285,20 @@ export interface CreateSessionOptions {
 }
 
 /** 权限确认请求（由 backend 的 uiContext.confirm 桥接产生） */
+/** 请求类别：path=路径类工具（可提供「允许此目录」建议根），command=命令类，other=其余 */
+export type PermissionRequestKind = "path" | "command" | "other";
+
 export interface PermissionRequest {
 	id: string;
 	sessionId: string;
 	title: string;
 	message: string;
+	kind: PermissionRequestKind;
+	/** path 类越界时建议加入工作区的根目录（git 根候选；无安全候选时缺省） */
+	suggestDir?: string;
 }
 
-export type PermissionAnswer = "allow" | "deny" | "allowAlways";
+export type PermissionAnswer = "allow" | "deny" | "allowAlways" | "allowDir";
 
 /** 权限门控配置（设置 UI 开关；规则全文在 ~/.pi/agent/permissions.json） */
 export interface PermissionConfigInfo {

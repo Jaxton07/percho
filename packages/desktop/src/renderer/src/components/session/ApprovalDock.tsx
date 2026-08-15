@@ -5,6 +5,7 @@ import { useT } from "../../i18n";
 import { useTranscriptStore } from "../../stores/transcript";
 import { Composer } from "../composer/Composer";
 import { Button } from "../ui/Button";
+import { Tooltip } from "../ui/Tooltip";
 
 /** 退出动画时长，与 globals.css 的 approval-exit 同步 */
 const EXIT_MS = 150;
@@ -47,13 +48,13 @@ export function ApprovalDock({
 		return () => clearTimeout(timer);
 	}, [request, shown]);
 
-	const respond = (answer: "allow" | "deny" | "allowAlways") => {
+	const respond = (answer: "allow" | "deny" | "allowAlways" | "allowDir") => {
 		if (!shown || leaving || !sessionId) return;
 		void getPi().respondPermission(shown.id, answer);
 		resolvePermission(sessionId, shown.id);
 	};
 
-	// 键盘快捷键：Enter=允许一次，A=本会话总是允许，Esc=拒绝（输入框已隐藏，无冲突）
+	// 键盘快捷键：Enter=允许一次，A=本项目总是允许，D=允许此目录（仅越界路径类有），Esc=拒绝
 	useEffect(() => {
 		if (!shown || leaving || !sessionId) return;
 		const onKeyDown = (e: KeyboardEvent) => {
@@ -64,7 +65,9 @@ export function ApprovalDock({
 						? "deny"
 						: e.key === "a" || e.key === "A"
 							? "allowAlways"
-							: null;
+							: (e.key === "d" || e.key === "D") && shown.suggestDir
+								? "allowDir"
+								: null;
 			if (!answer) return;
 			e.preventDefault();
 			void getPi().respondPermission(shown.id, answer);
@@ -109,11 +112,19 @@ export function ApprovalDock({
 					<p className="mt-2 max-h-32 overflow-y-auto rounded-lg bg-hover p-2.5 font-mono text-[12px] leading-relaxed break-all whitespace-pre-wrap text-ink-2 select-text">
 						{shown.message}
 					</p>
-					<div className="mt-3 flex items-center justify-end gap-2">
+					<div className="mt-3 flex flex-wrap items-center justify-end gap-2">
 						<Button onClick={() => respond("deny")}>
 							{t("permission.deny")}
 							<kbd className="ml-1.5 rounded bg-hover px-1 py-0.5 text-[10px] text-ink-faint">Esc</kbd>
 						</Button>
+						{shown.suggestDir && (
+							<Tooltip label={t("permission.allowDirHint", { dir: shown.suggestDir })}>
+								<Button onClick={() => respond("allowDir")}>
+									{t("permission.allowDir")}
+									<kbd className="ml-1.5 rounded bg-hover px-1 py-0.5 text-[10px] text-ink-faint">D</kbd>
+								</Button>
+							</Tooltip>
+						)}
 						<Button onClick={() => respond("allowAlways")}>
 							{t("permission.allowAlways")}
 							<kbd className="ml-1.5 rounded bg-hover px-1 py-0.5 text-[10px] text-ink-faint">A</kbd>

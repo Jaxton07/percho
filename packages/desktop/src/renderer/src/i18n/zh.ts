@@ -97,8 +97,10 @@ export const zh = {
 	},
 	permission: {
 		deny: "拒绝",
-		allowAlways: "本会话总是允许",
+		allowAlways: "本项目总是允许",
 		allowOnce: "允许一次",
+		allowDir: "允许此目录",
+		allowDirHint: "把 {dir} 加入本项目工作区：目录内读写不再逐次确认（持久化到 workspaces.json）",
 		queued: "还有 {count} 个请求排队",
 	},
 	trust: {

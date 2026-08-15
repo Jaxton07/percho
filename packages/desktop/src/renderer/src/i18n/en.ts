@@ -99,8 +99,11 @@ export const en: Messages = {
 	},
 	permission: {
 		deny: "Deny",
-		allowAlways: "Always allow this session",
+		allowAlways: "Always allow (this project)",
 		allowOnce: "Allow once",
+		allowDir: "Allow this directory",
+		allowDirHint:
+			"Add {dir} to this project's workspace: reads and writes inside it no longer prompt (persisted to workspaces.json)",
 		queued: "{count} more requests queued",
 	},
 	trust: {

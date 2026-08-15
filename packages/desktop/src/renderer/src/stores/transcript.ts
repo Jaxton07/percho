@@ -1,4 +1,8 @@
-import type { AgentSessionEvent, TodoItem } from "@percho/shared";
+import type {
+	AgentSessionEvent,
+	PermissionRequest as SharedPermissionRequest,
+	TodoItem,
+} from "@percho/shared";
 import { create } from "zustand";
 import {
 	emptyTranscript,
@@ -16,12 +20,8 @@ export type {
 	UIToolCall,
 } from "./transcript-reducer";
 
-export interface PermissionRequest {
-	id: string;
-	sessionId: string;
-	title: string;
-	message: string;
-}
+/** 跨进程完整请求（含 kind/suggestDir）；App 订阅转发时缺省字段补齐 */
+export interface PermissionRequest extends SharedPermissionRequest {}
 
 export interface SessionEntry extends SessionTranscriptState {
 	pendingPermissions: PermissionRequest[];

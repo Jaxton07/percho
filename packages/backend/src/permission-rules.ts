@@ -1,5 +1,6 @@
 import { existsSync, readFileSync, statSync, writeFileSync } from "node:fs";
-import { join } from "node:path";
+import { homedir } from "node:os";
+import { dirname, join, sep } from "node:path";
 import { createLogger } from "./log";
 
 const log = createLogger("permission-rules");
@@ -17,17 +18,31 @@ export interface PermissionRules {
 
 export interface PermissionConfig {
 	enabled: boolean;
+	/** 路径工具落在全部工作区根之外时的动作（读写分离：观察默认放行，变更默认确认） */
+	outside: PermissionOutside;
 	rules: PermissionRules;
+}
+
+export interface PermissionOutside {
+	/** read/ls/show_image 越界动作（默认 allow，与 bash cat 现状对齐；拦读不换安全只损效率） */
+	read: PermissionAction;
+	/** edit/write 越界动作（默认 ask） */
+	write: PermissionAction;
 }
 
 const ACTIONS: ReadonlySet<string> = new Set(["allow", "ask", "deny"]);
 
+/** agent 自身权限/信任/凭证配置的文件名（默认规则自保护：改动这些文件必须确认） */
+const PROTECTED_FILES = ["permissions.json", "workspaces.json", "auth.json", "trust.json"] as const;
+
 /**
  * 默认配置：宽松 + 高危兜底（coding agent 效率优先）。
- * 只读工具/编辑/自定义工具默认 allow；bash 默认 allow，枚举的高危命令 ask。
+ * 只读工具/编辑/自定义工具默认 allow；bash 默认 allow，枚举的高危命令 ask；
+ * 读写分离：路径工具越界时读放行、写确认；agent 自身权限/信任/凭证配置改动必确认。
  */
 export const DEFAULT_PERMISSION_CONFIG: PermissionConfig = {
 	enabled: true,
+	outside: { read: "allow", write: "ask" },
 	rules: {
 		"*": "allow",
 		bash: {
@@ -51,7 +66,19 @@ export const DEFAULT_PERMISSION_CONFIG: PermissionConfig = {
 			"curl * | bash*": "ask",
 			"wget * | sh*": "ask",
 			"wget * | bash*": "ask",
+			// 自保护：任何触及权限/信任/凭证配置的命令（含重定向写入）必确认
+			"*permissions.json*": "ask",
+			"*workspaces.json*": "ask",
+			"*auth.json*": "ask",
+			"*trust.json*": "ask",
 		},
+		// 同自保护：edit/write 改权限/信任/凭证文件必确认（路径模式尾缀匹配）
+		...Object.fromEntries(
+			["edit", "write"].map((tool) => [
+				tool,
+				Object.fromEntries(PROTECTED_FILES.map((file) => [`*${file}`, "ask"] as const)),
+			]),
+		),
 	},
 };
 
@@ -360,10 +387,28 @@ export function matchTextFor(toolName: string, input: Record<string, unknown>): 
 	return typeof value === "string" && value.length > 0 ? value : null;
 }
 
+/** 目录粒度过宽的守卫：/、home、home 祖先下的直接子文件用精确路径，不做目录模式 */
+function tooBroadDir(dir: string, home: string): boolean {
+	return dir === "/" || dir === home || home.startsWith(dir + sep) || dir === dirname(home);
+}
+
 /**
- * ask 弹窗的模式键（PermissionGate 的 allowAlways 按 title 记忆 = 会话白名单）。
+ * 路径工具的 allowAlways 模式键：父目录前缀（`edit: /dir/*`）。
+ * 精确文件粒度太细——换一个文件又弹；目录粒度在用户点过「总是允许」后是合理授权面。
+ * 过宽目录（/、home、home 祖先）退回精确路径，绝不因记忆键放大到整个家目录。
+ */
+function pathToolPattern(toolName: string, path: string, home: string): string {
+	const dir = dirname(path);
+	return tooBroadDir(dir, home) ? `${toolName}: ${path}` : `${toolName}: ${dir}${sep}*`;
+}
+
+/** matchText 是文件路径的工具（路径目录化记忆；与 permission-extension 的边界检查工具集对应） */
+const PATH_PATTERN_TOOLS = new Set(["read", "edit", "write", "ls", "show_image"]);
+
+/**
+ * ask 弹窗的模式键（PermissionGate 会话内记忆 + workspaces.json 项目级持久化）。
  * bash 取前两 token（第二 token 须为子命令形态如 `git push` 或 flag 形态如 `rm -rf`），
- * 其余工具用精确路径/工具名。flag 规整让 allowAlways 粒度是「rm -rf*」而非「rm*」。
+ * flag 规整让 allowAlways 粒度是「rm -rf*」而非「rm*」；路径工具用父目录前缀（pathToolPattern）。
  */
 export function suggestPattern(toolName: string, input: Record<string, unknown>): string {
 	const matchText = matchTextFor(toolName, input);
@@ -377,15 +422,40 @@ export function suggestPattern(toolName: string, input: Record<string, unknown>)
 		return `bash: ${first}*`;
 	}
 	if (matchText) {
+		if (PATH_PATTERN_TOOLS.has(toolName)) {
+			return pathToolPattern(toolName, matchText, homedir());
+		}
 		return `${toolName}: ${matchText}`;
 	}
 	return toolName;
 }
 
-/** 配置规则与默认值按工具粒度合并：文件里的单工具规则整体替换默认的同名规则 */
+/**
+ * 项目级记忆匹配（workspaces.json 的 allowed[] 模式键 vs 本次工具调用）。
+ * 键格式同 suggestPattern："bash: git push*" / "write: /dir/*" / "my_tool"（无匹配文本）。
+ * bash 与命令链求值同构：任一切段/替换/包装候选命中即算命中（`cd x && git push` 命中 `bash: git push*`）。
+ */
+export function patternMatchesToolCall(pattern: string, toolName: string, matchText: string | null): boolean {
+	const idx = pattern.indexOf(": ");
+	const pTool = idx > 0 ? pattern.slice(0, idx) : pattern;
+	const pText = idx > 0 ? pattern.slice(idx + 2) : null;
+	if (pTool !== toolName) return false;
+	if (pText === null) return true;
+	if (matchText === null) return false;
+	if (toolName === "bash") {
+		return collectBashCandidates(matchText).some((c) => matchPattern(pText, c));
+	}
+	return matchPattern(pText, matchText);
+}
+
+/** 配置规则与默认值按工具粒度合并：文件里的单工具规则整体替换默认的同名规则；outside 字段级合并 */
 export function mergeWithDefaults(config: Partial<PermissionConfig>): PermissionConfig {
 	return {
 		enabled: config.enabled ?? true,
+		outside: {
+			read: config.outside?.read ?? DEFAULT_PERMISSION_CONFIG.outside.read,
+			write: config.outside?.write ?? DEFAULT_PERMISSION_CONFIG.outside.write,
+		},
 		rules: { ...DEFAULT_PERMISSION_CONFIG.rules, ...(config.rules ?? {}) },
 	};
 }
@@ -396,11 +466,25 @@ function isValidRule(rule: unknown): rule is PermissionRule {
 	return Object.values(rule).every((v) => typeof v === "string" && ACTIONS.has(v));
 }
 
+function parseOutside(raw: unknown): PermissionOutside | undefined {
+	if (typeof raw !== "object" || raw === null) return undefined;
+	const input = raw as { read?: unknown; write?: unknown };
+	const result: Partial<PermissionOutside> = {};
+	if (typeof input.read === "string" && ACTIONS.has(input.read)) {
+		result.read = input.read as PermissionAction;
+	}
+	if (typeof input.write === "string" && ACTIONS.has(input.write)) {
+		result.write = input.write as PermissionAction;
+	}
+	return result.read || result.write ? (result as PermissionOutside) : undefined;
+}
+
 function parseConfig(raw: unknown): Partial<PermissionConfig> {
 	if (typeof raw !== "object" || raw === null) return {};
-	const input = raw as { enabled?: unknown; rules?: unknown };
+	const input = raw as { enabled?: unknown; outside?: unknown; rules?: unknown };
 	const result: Partial<PermissionConfig> = {};
 	if (typeof input.enabled === "boolean") result.enabled = input.enabled;
+	result.outside = parseOutside(input.outside);
 	if (typeof input.rules === "object" && input.rules !== null && !Array.isArray(input.rules)) {
 		const rules: PermissionRules = {};
 		for (const [tool, rule] of Object.entries(input.rules)) {
