@@ -11,6 +11,7 @@ import {
 	SessionManager,
 	type ToolDefinition,
 } from "@earendil-works/pi-coding-agent";
+import { getSupportedThinkingLevels } from "@earendil-works/pi-ai";
 import type {
 	AvailableModel,
 	CatalogPackageType,
@@ -620,15 +621,27 @@ export class PiBackend {
 
 	async listModels(): Promise<AvailableModel[]> {
 		const providers = await this.settings.listProviders();
+		const runtime = await this.getModelRuntime();
 		return providers.flatMap((provider) =>
 			provider.configured
-				? provider.models.map((model) => ({
-						provider: provider.id,
-						providerName: provider.name,
-						id: model.id,
-						label: model.name,
-						authed: true,
-					}))
+				? provider.models.map((model) => {
+						// 该模型实际支持的思考深度（SDK 按 reasoning/thinkingLevelMap 判定；不推理的模型只有 off）
+						let thinkingLevels: string[] | undefined;
+						try {
+							const m = runtime.getModel(provider.id, model.id);
+							if (m) thinkingLevels = getSupportedThinkingLevels(m);
+						} catch {
+							thinkingLevels = undefined;
+						}
+						return {
+							provider: provider.id,
+							providerName: provider.name,
+							id: model.id,
+							label: model.name,
+							authed: true,
+							thinkingLevels,
+						};
+					})
 				: [],
 		);
 	}

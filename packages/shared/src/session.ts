@@ -109,6 +109,8 @@ export interface AvailableModel {
 	label: string;
 	/** 是否有可用凭证 */
 	authed: boolean;
+	/** 该模型支持的思考深度（off/minimal/low/medium/high/xhigh/max 子集）；未提供时 UI 按全量显示 */
+	thinkingLevels?: string[];
 }
 
 /** 随消息附带的图片（pi ImageContent；data 为纯 base64，不含 data URL 前缀） */
