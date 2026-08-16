@@ -564,7 +564,9 @@ export class PiBackend {
 	 */
 	async forkSession(sessionId: string, ref: { entryId?: string; text?: string }): Promise<SessionMeta> {
 		const entry = this.requireSession(sessionId);
-		if (entry.session.isStreaming) throw new Error("Cannot fork while the agent is running");
+		if (entry.session.isStreaming || entry.session.isCompacting) {
+			throw new Error("Cannot fork while the agent is running or context is compacting");
+		}
 		const sourceManager = entry.session.sessionManager;
 		const targetId = resolveForkEntryId(sourceManager, ref);
 		const file = sourceManager.getSessionFile();
@@ -593,7 +595,9 @@ export class PiBackend {
 		ref: { entryId?: string; text?: string; timestamp?: number },
 	): Promise<{ text: string; images: ImageInput[] }> {
 		const entry = this.requireSession(sessionId);
-		if (entry.session.isStreaming) throw new Error("Cannot recall while the agent is running");
+		if (entry.session.isStreaming || entry.session.isCompacting) {
+			throw new Error("Cannot recall while the agent is running or context is compacting");
+		}
 		const sm = entry.session.sessionManager;
 		const targetId = resolveRecallEntryId(sm, ref);
 		const target = sm.getEntry(targetId) as Extract<SessionEntry, { type: "message" }>;
