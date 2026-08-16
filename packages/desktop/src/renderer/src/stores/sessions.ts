@@ -40,6 +40,8 @@ interface SessionsStore {
 	/** 设置新会话的目标项目目录；活跃 tab 是 draft 时同步更新其条目（切 tab 往返不丢选择） */
 	setDraftCwd: (cwd: string) => void;
 	switchSession: (sessionId: string) => void;
+	/** 拖拽排序顶栏胶囊：调整 sessions 数组顺序并落盘（tabs.json 的 files 本就保序，重启按新序恢复） */
+	reorderSessions: (fromId: string, toId: string) => void;
 	closeSession: (sessionId: string) => Promise<void>;
 	openFromHistory: (filePath: string) => Promise<void>;
 	/** 在指定 assistant 消息处分叉：新会话以新 tab 打开并切换过去（原会话保留原样） */
@@ -149,6 +151,20 @@ export const useSessionsStore = create<SessionsStore>((set, get) => ({
 		set((state) => ({
 			sessions: state.sessions.map((s) => (s.sessionId === sessionId ? { ...s, name } : s)),
 		})),
+
+	reorderSessions: (fromId, toId) => {
+		const { sessions } = get();
+		const from = sessions.findIndex((s) => s.sessionId === fromId);
+		const to = sessions.findIndex((s) => s.sessionId === toId);
+		if (from < 0 || to < 0 || from === to) return;
+		const next = [...sessions];
+		const [moved] = next.splice(from, 1);
+		if (!moved) return;
+		next.splice(to, 0, moved);
+		set({ sessions: next });
+		// draft 无 sessionFile 会被过滤，落盘的是真实会话的新视觉顺序
+		persistTabs(get());
+	},
 
 	closeSession: async (sessionId) => {
 		const isDraft = isDraftSessionId(sessionId);

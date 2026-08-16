@@ -280,6 +280,37 @@
 	}
 }
 
+/* 会话胶囊拖拽排序：tab-pill 是内层视觉层（拾起 scale + 上浮 + 阴影，160ms 独立过渡；
+   opacity 同表：拖拽时本体淡出交由 DragOverlay ghost，落位时淡入，与 ghost fade 交叉）。
+   几何层的 translate/让位/FLIP 由 dnd-kit 内联 style 控制（见 SessionTabBar），两层互不干扰；
+   全程只动 transform/box-shadow/opacity，合成器友好 */
+.tab-pill {
+	transition:
+		transform 160ms cubic-bezier(0.2, 0, 0, 1),
+		box-shadow 160ms cubic-bezier(0.2, 0, 0, 1),
+		opacity 160ms ease;
+}
+.tab-dragging {
+	transform: scale(1.045) translateY(-1px);
+	box-shadow:
+		0 6px 18px rgb(0 0 0 / 0.18),
+		0 0 0 1px rgb(0 0 0 / 0.05);
+}
+/* 拖拽期间指针常在胶囊间隙上，cursor 挂根元素统一接管。
+   不用 !important：Tailwind 工具类在 @layer utilities，未分层规则天然优先 */
+.tab-dragging-cursor,
+.tab-dragging-cursor * {
+	cursor: grabbing;
+}
+@media (prefers-reduced-motion: reduce) {
+	.tab-pill {
+		transition: none;
+	}
+	.tab-dragging {
+		transform: none;
+	}
+}
+
 html,
 body,
 #root {
