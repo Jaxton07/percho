@@ -155,12 +155,12 @@ export interface PiApi {
 	/**
 	 * 在指定 assistant 消息处分叉：生成以其为结尾的新会话并切换过去（原会话文件保留）。
 	 * ref.entryId 精确定位（历史消息）；缺省时按 ref.text 从分支尾部匹配最近一条同文 assistant 消息。
-	 * 运行中的会话拒绝 fork。返回新会话 meta。
+	 * 运行或压缩中的会话拒绝 fork。返回新会话 meta。
 	 */
 	forkSession(sessionId: string, ref: { entryId?: string; text?: string }): Promise<SessionMeta>;
 	/**
 	 * 撤回一条用户消息：会话回退到该消息发送之前（被撤回内容在文件中保留为侧枝），
-	 * 文本与图片返回给调用方放回输入框。运行中的会话拒绝撤回。
+	 * 文本与图片返回给调用方放回输入框。运行或压缩中的会话拒绝撤回。
 	 */
 	recallMessage(
 		sessionId: string,

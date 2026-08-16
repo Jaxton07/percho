@@ -68,8 +68,11 @@ export interface VisionProxyOptions {
  * 原生多模态模型直通零成本；识别失败降级为占位文本，对话不中断
  * （context 钩子契约：不得 throw，异常时原样放行）。
  *
- * 已知限制：compaction 的摘要请求不经 context 钩子（SDK 直接 convertToLlm），
- * 文本模型 + 含图历史触发压缩时仍可能报 provider 图像错误（现状已有，后续项）。
+ * 已知限制：compaction / branch summary 的摘要请求不经 context 钩子（SDK 在
+ * compaction 内部直接 convertToLlm）。但 SDK 0.84 随后会 serializeConversation
+ * 成纯文本 prompt（contentText 只保留 text block），image block 不会进入摘要
+ * 请求，因此文本模型 + 含图历史触发压缩时不会报 provider 图像错误；代价是
+ * 图片内容不参与摘要（仅文字部分被摘要）。
  */
 export function makeVisionProxyExtension(options: VisionProxyOptions): InlineExtension {
 	return {

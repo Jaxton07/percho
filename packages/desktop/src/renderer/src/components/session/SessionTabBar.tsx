@@ -1,33 +1,74 @@
+import type { DragEndEvent, Modifier } from "@dnd-kit/core";
+import {
+	closestCenter,
+	DndContext,
+	DragOverlay,
+	KeyboardSensor,
+	PointerSensor,
+	useSensor,
+	useSensors,
+} from "@dnd-kit/core";
+import { restrictToHorizontalAxis, restrictToParentElement } from "@dnd-kit/modifiers";
+import {
+	horizontalListSortingStrategy,
+	SortableContext,
+	sortableKeyboardCoordinates,
+	useSortable,
+} from "@dnd-kit/sortable";
 import type { SessionMeta } from "@percho/shared";
-import { useEffect, useRef } from "react";
+import type { ComponentProps } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useT } from "../../i18n";
 import { useSessionsStore } from "../../stores/sessions";
 import { useTranscriptStore } from "../../stores/transcript";
 import { useUiStore } from "../../stores/ui";
 import { CloseIcon, ComposeIcon, GridIcon } from "../icons";
+import { sessionLetter, sessionTitle, useSessionStatus } from "./session-status";
 import { UpdateButton } from "./UpdateButton";
 
-/** tab 状态（优先级递减）：等待权限 > 工作中 > 完成未读 > 空闲 */
-type TabStatus = "attention" | "working" | "done" | "idle";
+/** 拖拽让位/落位的减速曲线（浏览器标签同款手感） */
+const SORT_EASE = "cubic-bezier(0.2, 0, 0, 1)";
 
-/** 单个会话 tab：独立订阅自己的运行状态（切走后状态不丢） */
-function SessionTab({ session, isActive }: { session: SessionMeta; isActive: boolean }) {
+/** 拖拽轴锁定（挂在 DragOverlay 上）：只许水平移动，且钳在 tab 条容器内（浏览器标签行为）。
+ *  必须挂 overlay：ghost 是 fixed 定位不参与滚动区域；若让指针 transform 落在流内胶囊上，
+ *  Chromium 会把 transform 后的盒子计入滚动容器的可滚动区域 → 拖到右缘 scrollWidth 持续增长，
+ *  auto-scroll 追着新边缘滚 = 无限右滚（左侧有 scrollLeft>=0 天然边界所以没事） */
+const DRAG_MODIFIERS: Modifier[] = [restrictToHorizontalAxis, restrictToParentElement];
+
+/** ghost 落位动画：fade 回到槽位（duration 用自己的曲线节奏） */
+const DROP_ANIMATION = { duration: 180, easing: SORT_EASE };
+
+const prefersReducedMotion = (): boolean => window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+
+/** 拖拽中的全局 cursor（指针常在胶囊外的间隙上，须挂在根元素） */
+function setDraggingCursor(on: boolean): void {
+	document.documentElement.classList.toggle("tab-dragging-cursor", on);
+}
+
+/** 胶囊视觉（presentational）：真实胶囊与拖拽 ghost 共用一份渲染。
+ *  独立订阅自己的运行状态（切走后状态不丢）；苹果式设计：状态全收拢到头像图标
+ *  （黑白色系，仅语义色保留琥珀/绿点），胶囊本体与标题完全不动 */
+function TabPill({
+	session,
+	isActive,
+	ghost = false,
+	hidden = false,
+	buttonProps,
+}: {
+	session: SessionMeta;
+	isActive: boolean;
+	/** DragOverlay ghost：拾起视觉，无交互 */
+	ghost?: boolean;
+	/** 真实胶囊正被 ghost 接管：隐藏本体但保留布局槽位（邻居让位计算依赖它） */
+	hidden?: boolean;
+	buttonProps?: ComponentProps<"button">;
+}) {
 	const t = useT();
-	const switchSession = useSessionsStore((s) => s.switchSession);
 	const closeSession = useSessionsStore((s) => s.closeSession);
-	const setView = useUiStore((s) => s.setView);
-	// selector 返回字符串原始值，引用稳定不触发多余渲染
-	const status = useTranscriptStore((s): TabStatus => {
-		const entry = s.bySession[session.sessionId];
-		if (!entry) return "idle";
-		if (entry.pendingPermissions.length > 0) return "attention";
-		if (entry.agentActive) return "working";
-		if (entry.unseenCompletion) return "done";
-		return "idle";
-	});
+	// 状态订阅与左侧会话轨道共用（优先级：审批 > 工作中 > 完成未读 > 空闲）
+	const status = useSessionStatus(session.sessionId);
 	// 图标字母 = 项目名（cwd 最后一段）首字母，与会话标题无关
-	const letter = session.cwd.split("/").filter(Boolean).pop()?.[0] ?? "P";
-	// 苹果式设计：状态全部收拢到头像图标（黑白色系，仅语义色保留琥珀/绿点），胶囊本体与标题完全不动
+	const letter = sessionLetter(session);
 	const avatarClass =
 		status === "attention"
 			? "bg-amber-500"
@@ -39,13 +80,12 @@ function SessionTab({ session, isActive }: { session: SessionMeta; isActive: boo
 	return (
 		<button
 			type="button"
-			className={`no-drag group relative flex w-52 shrink-0 cursor-pointer items-center gap-2 rounded-lg px-2.5 py-1.5 text-sm transition-colors ${
+			{...buttonProps}
+			style={{ touchAction: "none", ...(hidden ? { opacity: 0 } : null) }}
+			className={`no-drag tab-pill group relative flex w-52 cursor-pointer items-center gap-2 rounded-lg px-2.5 py-1.5 text-sm ${
 				isActive ? "bg-border/80 text-ink" : "text-ink-dim hover:bg-hover hover:text-ink"
-			}`}
-			onClick={() => {
-				switchSession(session.sessionId);
-				setView("chat");
-			}}
+			} ${ghost ? "tab-dragging" : ""}`}
+			onClick={ghost ? undefined : buttonProps?.onClick}
 		>
 			<span
 				className={`relative flex h-4 w-4 shrink-0 items-center justify-center rounded text-[10px] font-semibold text-on-ink ${avatarClass}`}
@@ -56,34 +96,85 @@ function SessionTab({ session, isActive }: { session: SessionMeta; isActive: boo
 				)}
 			</span>
 			<span className="relative min-w-0 flex-1">
-				<span className="block truncate pr-6 text-left">
-					{session.name ?? session.cwd.split("/").filter(Boolean).pop() ?? t("tabbar.untitled")}
-				</span>
-				<span
-					className="invisible absolute right-0 top-1/2 -translate-y-1/2 p-1 text-ink-dim opacity-0 transition-opacity hover:text-ink group-hover:visible group-hover:opacity-100"
-					aria-hidden="true"
-					onClick={(e) => {
-						e.stopPropagation();
-						void closeSession(session.sessionId);
-					}}
-				>
-					<CloseIcon />
-				</span>
+				<span className="block truncate pr-6 text-left">{sessionTitle(session, t("tabbar.untitled"))}</span>
+				{!ghost && (
+					<span
+						className="invisible absolute right-0 top-1/2 -translate-y-1/2 p-1 text-ink-dim opacity-0 transition-opacity hover:text-ink group-hover:visible group-hover:opacity-100"
+						aria-hidden="true"
+						onClick={(e) => {
+							e.stopPropagation();
+							void closeSession(session.sessionId);
+						}}
+					>
+						<CloseIcon />
+					</span>
+				)}
 			</span>
 		</button>
 	);
 }
 
-/** 顶栏：macOS hiddenInset 红绿灯左侧，会话 tab 从右排开 */
+/** 单个会话 tab：几何层（useSortable 的 transform/transition）在 wrapper div 上按 dnd-kit 协议
+ *  原样应用——transition 含 "none" 帧时绝不能覆盖成动画，那是 FLIP 布点帧（覆盖会造成落位回闪）；
+ *  拖拽本体隐藏、由 DragOverlay 的 ghost 跟随指针（见 DRAG_MODIFIERS 注释） */
+function SessionTab({ session, isActive }: { session: SessionMeta; isActive: boolean }) {
+	const switchSession = useSessionsStore((s) => s.switchSession);
+	const setView = useUiStore((s) => s.setView);
+	const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({
+		id: session.sessionId,
+		// 自定义让位/落位节奏；reduced-motion 传 null = dnd-kit 不再给出过渡串
+		transition: prefersReducedMotion() ? null : { duration: 220, easing: SORT_EASE },
+	});
+	return (
+		<div
+			ref={setNodeRef}
+			className="shrink-0"
+			style={{
+				transform: transform ? `translate3d(${transform.x}px, ${transform.y}px, 0)` : undefined,
+				transition: transition || undefined,
+			}}
+		>
+			<TabPill
+				session={session}
+				isActive={isActive}
+				hidden={isDragging}
+				buttonProps={{
+					...attributes,
+					...listeners,
+					onClick: () => {
+						switchSession(session.sessionId);
+						setView("chat");
+					},
+				}}
+			/>
+		</div>
+	);
+}
+
+/** 顶栏：macOS hiddenInset 红绿灯左侧，会话 tab 从右排开，可拖拽排序（浏览器标签式） */
 export function SessionTabBar() {
 	const t = useT();
 	const sessions = useSessionsStore((s) => s.sessions);
 	const activeSessionId = useSessionsStore((s) => s.activeSessionId);
 	const createDraftSession = useSessionsStore((s) => s.createDraftSession);
+	const reorderSessions = useSessionsStore((s) => s.reorderSessions);
 	const cwd = useSessionsStore((s) => s.cwd);
 	const view = useUiStore((s) => s.view);
 	const setView = useUiStore((s) => s.setView);
 	const scrollerRef = useRef<HTMLDivElement>(null);
+	const [activeId, setActiveId] = useState<string | null>(null);
+	const activeSession = sessions.find((s) => s.sessionId === activeId);
+	// 拖拽期间：顶栏整体退出窗口拖拽区（胶囊间隙本是 drag-region，指针扫过会被 macOS 当拖窗口吞事件）
+	const dragging = activeId !== null;
+	// 5px 激活距离：原地点击/关胶囊不触发拖拽；键盘传感器支持 Space 抬起 + 左右键移动
+	const sensors = useSensors(
+		useSensor(PointerSensor, { activationConstraint: { distance: 5 } }),
+		useSensor(KeyboardSensor, { coordinateGetter: sortableKeyboardCoordinates }),
+	);
+	const endDrag = () => {
+		setActiveId(null);
+		setDraggingCursor(false);
+	};
 
 	// 正在查看的会话：完成未读标记立即清除（覆盖切 tab 与 projects ↔ chat 视图切换）
 	useEffect(() => {
@@ -109,7 +200,9 @@ export function SessionTabBar() {
 	}, []);
 
 	return (
-		<div className="drag-region flex h-12 shrink-0 items-center gap-1 border-b border-border bg-canvas pl-20 pr-3">
+		<div
+			className={`${dragging ? "" : "drag-region"} flex h-12 shrink-0 items-center gap-1 border-b border-border bg-canvas pl-20 pr-3`}
+		>
 			<button
 				type="button"
 				className={`no-drag shrink-0 rounded-lg p-1.5 transition-colors ${
@@ -124,13 +217,41 @@ export function SessionTabBar() {
 				ref={scrollerRef}
 				className="flex min-w-0 flex-1 items-center gap-1 overflow-x-scroll [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
 			>
-				{sessions.map((session) => (
-					<SessionTab
-						key={session.sessionId}
-						session={session}
-						isActive={session.sessionId === activeSessionId}
-					/>
-				))}
+				<DndContext
+					sensors={sensors}
+					collisionDetection={closestCenter}
+					onDragStart={({ active }) => {
+						setActiveId(String(active.id));
+						setDraggingCursor(true);
+					}}
+					onDragEnd={({ active, over }: DragEndEvent) => {
+						endDrag();
+						if (over && active.id !== over.id) {
+							reorderSessions(String(active.id), String(over.id));
+						}
+					}}
+					onDragCancel={endDrag}
+				>
+					<SortableContext items={sessions.map((s) => s.sessionId)} strategy={horizontalListSortingStrategy}>
+						{sessions.map((session) => (
+							<SessionTab
+								key={session.sessionId}
+								session={session}
+								isActive={session.sessionId === activeSessionId}
+							/>
+						))}
+					</SortableContext>
+					{/* 拖拽 ghost：fixed 定位（不参与滚动区域 → 不会撑大 scrollWidth），
+					    落位时 fade 回槽位，真实胶囊同时 fade in（.tab-pill 的 opacity 过渡） */}
+					<DragOverlay
+						modifiers={DRAG_MODIFIERS}
+						dropAnimation={prefersReducedMotion() ? null : DROP_ANIMATION}
+					>
+						{activeSession ? (
+							<TabPill session={activeSession} isActive={activeSession.sessionId === activeSessionId} ghost />
+						) : null}
+					</DragOverlay>
+				</DndContext>
 			</div>
 			<UpdateButton />
 			{view !== "projects" && (
