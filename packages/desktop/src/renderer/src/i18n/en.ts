@@ -195,6 +195,9 @@ export const en: Messages = {
 		permissionGate: "Built-in permission gate",
 		permissionGateHint:
 			"When on, tool calls are checked against rules: dangerous commands (rm -rf, sudo, force push, etc.) ask for confirmation, everything else runs. Rules live in ~/.pi/agent/permissions.json and apply instantly. Turn off to replace with your own permission extension.",
+		sessionRail: "Left session rail",
+		sessionRailHint:
+			"Shows a vertically centered track of session lines on the left of the chat view; hover or focus a line and it grows into a floating capsule (project icon + title) — click to switch. The top tab bar stays unchanged; turn off to hide it.",
 		vision: {
 			title: "Vision",
 			hint: "Adds an external vision model for text-only models: images you send are first described by the vision model, then handed to the current reasoning model. Native multimodal models skip this automatically.",

@@ -311,6 +311,167 @@
 	}
 }
 
+/* 左侧会话轨道（设置 → 外观开关，可选交互）：聊天页左侧垂直居中一列**直角细线**（codex 风），
+   悬停/聚焦时原地「变形」为悬浮胶囊，上下邻居按行距分级跟涨成**半大/迷你胶囊**（dock 波浪：
+   展开 208×32 → ±1 胶囊 104×24（内容可见、标题裁断） → ±2 迷你空胶囊 44×14 → 细线），
+   状态类 is-expanded/is-near-1/is-near-2 由 JS 按行距下发（比 :has 链易控：呼吸/内容显隐按距离精确开关）。
+   **行高同步分级撑开（16 → 40/32/20 = 胶囊 + 留白）**：按钮在文档流内，行一撑上下邻居自然让位，
+   胶囊各行其道互不叠压；行高与胶囊同时长同曲线伸缩，任何时刻胶囊都不会超出行。
+   变形是两阶段时序（transition 取「目标态」的定义，正反向可分别配时序）：
+   展开/跟涨 = 先在小尺寸上 90ms 翻色/翻圆角（深色线 → 白胶囊），再回弹放大（340/300/280ms 随档位递减）；
+   收起 = 先 260ms 收缩（仍是白胶囊），颜色/圆角延迟 150ms 到接近尾声才变回细线。
+   避免旧版「深色线拉长到一半才闪白」的颜色逆变闪烁。 */
+/* 行高波浪：transition 同样取目标态定义（收起走基线 260ms） */
+.session-rail-item {
+	transition: height 260ms cubic-bezier(0.34, 1.15, 0.64, 1);
+}
+.session-rail-item.is-expanded {
+	height: 40px;
+	transition: height 340ms cubic-bezier(0.34, 1.25, 0.64, 1);
+}
+.session-rail-item.is-near-1 {
+	height: 32px;
+	transition: height 300ms cubic-bezier(0.34, 1.25, 0.64, 1);
+}
+.session-rail-item.is-near-2 {
+	height: 20px;
+	transition: height 280ms cubic-bezier(0.34, 1.25, 0.64, 1);
+}
+.session-rail-item .rail-capsule {
+	position: absolute;
+	left: 6px;
+	top: 50%;
+	display: flex;
+	align-items: center;
+	/* 无 padding：否则 border-box 下收起态高度被 padding 撑成 12px，就不是一条线了。
+	   内距在内容包裹层（JSX 的 px-2.5），收起时随内容一起被 overflow 裁掉 */
+	border-radius: 0;
+	overflow: hidden;
+	transform: translateY(-50%);
+	/* 收起（目标态 = 细线）：尺寸先走，颜色/圆角延迟到收缩近尾声再翻 */
+	transition:
+		width 260ms cubic-bezier(0.34, 1.15, 0.64, 1),
+		height 260ms cubic-bezier(0.34, 1.15, 0.64, 1),
+		background-color 80ms ease 150ms,
+		border-radius 80ms ease 150ms,
+		box-shadow 120ms ease;
+}
+/* 波浪档位 z 序：展开浮最上，±1 压 ±2 压细线（胶囊比行距大，会覆盖邻行） */
+.session-rail-item.is-expanded {
+	z-index: 10;
+}
+.session-rail-item.is-near-1 {
+	z-index: 6;
+}
+.session-rail-item.is-near-2 {
+	z-index: 4;
+}
+.session-rail-item.is-expanded .rail-capsule {
+	/* 与顶栏胶囊同宽（w-52）；窄窗口按视口收缩，不越过右缘 */
+	width: min(208px, calc(100vw - 40px));
+	height: 32px;
+	border-radius: 9999px;
+	background-color: var(--color-surface);
+	box-shadow: var(--shadow-pop);
+	/* 展开（目标态 = 胶囊）：颜色/圆角 90ms 先行（趁尺寸还小），尺寸随后 340ms 回弹放大，阴影最后到 */
+	transition:
+		width 340ms cubic-bezier(0.34, 1.25, 0.64, 1),
+		height 340ms cubic-bezier(0.34, 1.25, 0.64, 1),
+		background-color 90ms ease,
+		border-radius 90ms ease,
+		box-shadow 220ms ease 80ms;
+}
+/* ±1：一半大的胶囊（104×24），头像+标题可见（裁断出预览感），柔阴影 */
+.session-rail-item.is-near-1 .rail-capsule {
+	width: 104px;
+	height: 24px;
+	border-radius: 9999px;
+	background-color: var(--color-surface);
+	box-shadow: var(--shadow-soft);
+	transition:
+		width 300ms cubic-bezier(0.34, 1.25, 0.64, 1),
+		height 300ms cubic-bezier(0.34, 1.25, 0.64, 1),
+		background-color 90ms ease 20ms,
+		border-radius 90ms ease 20ms,
+		box-shadow 180ms ease 60ms;
+}
+/* ±2：迷你空胶囊（44×14），纯波形过渡元素，不显示内容 */
+.session-rail-item.is-near-2 .rail-capsule {
+	width: 44px;
+	height: 14px;
+	border-radius: 9999px;
+	background-color: var(--color-surface);
+	box-shadow: var(--shadow-soft);
+	transition:
+		width 280ms cubic-bezier(0.34, 1.25, 0.64, 1),
+		height 280ms cubic-bezier(0.34, 1.25, 0.64, 1),
+		background-color 90ms ease 20ms,
+		border-radius 90ms ease 20ms,
+		box-shadow 150ms ease 50ms;
+}
+/* 胶囊内容（图标 + 标题）：展开/±1 时等翻色完成后渐入，配合裁剪逐步揭示；
+   收起/进 ±2 时 120ms 淡出（快于收缩），不留空胶囊 */
+.session-rail-item .rail-capsule > * {
+	opacity: 0;
+	transition: opacity 120ms ease;
+}
+.session-rail-item.is-expanded .rail-capsule > * {
+	opacity: 1;
+	transition: opacity 180ms ease 110ms;
+}
+.session-rail-item.is-near-1 .rail-capsule > * {
+	opacity: 1;
+	transition: opacity 160ms ease 70ms;
+}
+/* 胶囊末尾的关闭 ×：仅展开态可见可点（同顶栏 group-hover 语义；±1/±2 只是波浪预览不给操作），
+   点击 stopPropagation 不触发切换；closeSession 后顶栏/轨道同读 sessions 数组，天然双向同步。
+   宽度 0→16 与胶囊同曲线「长出来」（margin-left 负值抵消 gap），±1 预览标题不被挤占 */
+.session-rail-item .rail-close {
+	width: 0;
+	margin-left: -8px;
+	opacity: 0;
+	pointer-events: none;
+	transition:
+		width 260ms cubic-bezier(0.34, 1.15, 0.64, 1),
+		margin-left 260ms cubic-bezier(0.34, 1.15, 0.64, 1),
+		opacity 100ms ease;
+}
+.session-rail-item.is-expanded .rail-close {
+	width: 16px;
+	margin-left: 0;
+	opacity: 1;
+	pointer-events: auto;
+	transition:
+		width 340ms cubic-bezier(0.34, 1.25, 0.64, 1),
+		margin-left 340ms cubic-bezier(0.34, 1.25, 0.64, 1),
+		opacity 180ms ease 110ms;
+}
+/* 呼吸只作用于收起态的细线；展开/跟涨成白胶囊后由内部头像的 tab-avatar-working 承担（整个白胶囊闪透明度会像故障） */
+.session-rail-item:not(.is-expanded):not(.is-near-1):not(.is-near-2) .rail-working {
+	animation: avatar-breathe 3.2s ease-in-out infinite;
+}
+@media (prefers-reduced-motion: reduce) {
+	/* 各档位 transition 定义在更高优先级的状态选择器里，必须逐档同优先级覆盖才压得住 */
+	.session-rail-item,
+	.session-rail-item.is-expanded,
+	.session-rail-item.is-near-1,
+	.session-rail-item.is-near-2,
+	.session-rail-item .rail-capsule,
+	.session-rail-item.is-expanded .rail-capsule,
+	.session-rail-item.is-near-1 .rail-capsule,
+	.session-rail-item.is-near-2 .rail-capsule,
+	.session-rail-item .rail-capsule > *,
+	.session-rail-item.is-expanded .rail-capsule > *,
+	.session-rail-item.is-near-1 .rail-capsule > *,
+	.session-rail-item .rail-close,
+	.session-rail-item.is-expanded .rail-close {
+		transition: none;
+	}
+	.session-rail-item:not(.is-expanded):not(.is-near-1):not(.is-near-2) .rail-working {
+		animation: none;
+	}
+}
+
 html,
 body,
 #root {
@@ -439,6 +600,8 @@ code {
 /* markstream-react 视觉覆写：组件样式均为 :where() 零优先级，此处规则必覆盖；对齐原 react-markdown 设计 */
 .markdown-body {
 	--link-color: var(--color-accent);
+	/* 库的 rounded-lg 等工具类吃 --ms-radius，CSS 里无默认定义（→ 直角）；在此补上 */
+	--ms-radius: 10px;
 }
 .markdown-body .paragraph-node {
 	margin: 0.375rem 0;
@@ -493,12 +656,80 @@ code {
 	text-decoration-color: var(--markdown-link-decoration);
 	text-underline-offset: auto;
 }
+/* 代码块容器：边框/阴影 token 化（库默认 gray-200/gray-700 硬编码 + shadow-sm） */
+.markdown-body .code-block-container {
+	border-color: var(--color-border);
+	box-shadow: var(--shadow-soft);
+}
+/* 代码块「纯净化」：标题栏悬浮 —— 常态隐身（纯代码），hover / 键盘聚焦 / 折叠态时浮现。
+   header DOM 必须保留（折叠/复制按钮逻辑都在里面，折叠是组件内部 state 外部无法控制，
+   showHeader:false 会把按钮一起去掉），多余按钮已在 Markdown.tsx 经 codeBlockProps 关闭。
+   组件把 header 背景用 inline style 钉成编辑器主题色，需 !important 压掉。 */
+.markdown-body .code-block-container .code-block-header {
+	position: absolute;
+	top: 0;
+	left: 0;
+	right: 0;
+	z-index: 2;
+	padding: 0.5rem 0.625rem;
+	/* biome-ignore lint/complexity/noImportantStyles: 必须压过组件 inline style 的 background-color: var(--vscode-editor-background) */
+	background: transparent !important;
+	border-bottom: none;
+	opacity: 0;
+	pointer-events: none;
+	transition: opacity 0.18s ease;
+}
+.markdown-body .code-block-container:hover .code-block-header,
+.markdown-body .code-block-container:focus-within .code-block-header,
+/* 折叠后内容区整个卸载，悬浮条必须常显才能再展开（此时只剩折叠钮有 aria-pressed） */
+	.markdown-body
+	.code-block-container:has(.code-action-btn[aria-pressed="true"])
+	.code-block-header {
+	opacity: 1;
+	pointer-events: auto;
+}
+/* 折叠态容器会塌成 0 高，给悬浮条留最小可点击高度 */
+.markdown-body .code-block-container:has(.code-action-btn[aria-pressed="true"]) {
+	min-height: 44px;
+}
+/* 悬浮语言标签与按钮：半透明胶囊 + 毛玻璃，颜色全走 token 自动适配深浅 */
+.markdown-body .code-block-header > div:first-child,
+.markdown-body .code-block-header .code-action-btn {
+	border: 1px solid var(--color-border);
+	border-radius: 6px;
+	background: color-mix(in srgb, var(--color-canvas) 72%, transparent);
+	backdrop-filter: blur(8px);
+}
+.markdown-body .code-block-header > div:first-child {
+	flex: none; /* 盖掉库 flex-1：否则语言胶囊撑满整条通栏 */
+	padding: 0.125rem 0.5rem;
+	color: var(--color-ink-dim);
+}
+/* 语言名（库渲染为无语义类的 span.text-sm.font-mono） */
+.markdown-body .code-block-header > div:first-child > span:last-child {
+	font-size: 11px;
+	letter-spacing: 0.03em;
+}
+.markdown-body .code-block-header .code-action-btn {
+	padding: 0.25rem;
+}
+@media (prefers-reduced-motion: reduce) {
+	.markdown-body .code-block-container .code-block-header {
+		transition: none;
+	}
+}
+/* header 右侧图标按钮：颜色继承自容器（= 编辑器主题前景），只需抹平深蓝底文字按钮 */
+.markdown-body .code-block-btn {
+	border-color: var(--color-border-strong);
+	background: var(--color-surface);
+	color: var(--color-ink-2);
+}
 /* 抹平 markstream-react 自带的默认 hover（非我们的设计）：代码块头部按钮变蓝、action 按钮透明度跳变、
    mermaid 按钮/关闭键变色、脚注 hover 下划线。统一 hover = 常态 */
 .markdown-body .code-block-btn:hover {
-	background: #0f172a99;
-	border-color: rgba(148, 163, 184, 0.4);
-	color: #f8fafc;
+	background: var(--color-hover);
+	border-color: var(--color-border-strong);
+	color: var(--color-ink);
 }
 .markdown-body .code-action-btn:hover {
 	opacity: 0.7;
@@ -519,6 +750,13 @@ code {
 	background: transparent;
 	color: inherit;
 	opacity: 0.9;
+}
+/* monaco 就绪前/失败时的纯文本 fallback：库默认 font-family/background 全 inherit（混入正文体），
+   补齐等宽字体与主题色表面，加载瞬间不突兀 */
+.markdown-body .code-fallback-plain {
+	font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace;
+	font-size: 12.5px;
+	padding: 0.75rem 1rem;
 }
 .markdown-body .inline-code {
 	padding: 0.125rem 0.25rem;

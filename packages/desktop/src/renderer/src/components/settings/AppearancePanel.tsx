@@ -1,6 +1,7 @@
 import type { ThemeMode } from "@percho/shared";
 import { useT } from "../../i18n";
 import { backgroundImageUrl, useThemeStore } from "../../stores/theme";
+import { useUiPreferencesStore } from "../../stores/ui-preferences";
 
 const THEME_MODES: ThemeMode[] = ["light", "dark", "system"];
 const THEME_LABEL_KEYS = {
@@ -18,6 +19,8 @@ export function AppearancePanel() {
 	const pickBackground = useThemeStore((s) => s.pickBackground);
 	const clearBackground = useThemeStore((s) => s.clearBackground);
 	const setBackgroundDim = useThemeStore((s) => s.setBackgroundDim);
+	const sessionRailEnabled = useUiPreferencesStore((s) => s.sessionRailEnabled);
+	const setSessionRailEnabled = useUiPreferencesStore((s) => s.setSessionRailEnabled);
 
 	return (
 		<div className="flex flex-col gap-6">
@@ -92,6 +95,27 @@ export function AppearancePanel() {
 						</span>
 					</div>
 				)}
+			</div>
+			<div>
+				<div className="flex items-center justify-between gap-4">
+					<h3 className="text-[13px] font-medium text-ink">{t("settings.sessionRail")}</h3>
+					<button
+						type="button"
+						role="switch"
+						aria-checked={sessionRailEnabled}
+						onClick={() => setSessionRailEnabled(!sessionRailEnabled)}
+						className={`relative h-5 w-9 shrink-0 rounded-full transition-colors ${
+							sessionRailEnabled ? "bg-ink" : "bg-border-strong"
+						}`}
+					>
+						<span
+							className={`absolute top-0.5 h-4 w-4 rounded-full bg-surface shadow transition-all ${
+								sessionRailEnabled ? "left-[18px]" : "left-0.5"
+							}`}
+						/>
+					</button>
+				</div>
+				<p className="mt-0.5 text-[11px] leading-relaxed text-ink-faint">{t("settings.sessionRailHint")}</p>
 			</div>
 		</div>
 	);

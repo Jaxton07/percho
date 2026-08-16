@@ -22,6 +22,8 @@ export interface UiState {
 	thinkingLevel: string;
 	theme: ThemeMode;
 	background: BackgroundSettings;
+	/** 左侧会话轨道开关（聊天页左侧短线悬停展开标题，见 SessionRail；旧版本文件缺省为 false） */
+	sessionRailEnabled: boolean;
 }
 
 /** 会话元数据（IPC 往返用，独立于 pi 内部类型） */

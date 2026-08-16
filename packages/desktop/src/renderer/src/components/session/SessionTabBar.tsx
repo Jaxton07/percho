@@ -23,10 +23,8 @@ import { useSessionsStore } from "../../stores/sessions";
 import { useTranscriptStore } from "../../stores/transcript";
 import { useUiStore } from "../../stores/ui";
 import { CloseIcon, ComposeIcon, GridIcon } from "../icons";
+import { sessionLetter, sessionTitle, useSessionStatus } from "./session-status";
 import { UpdateButton } from "./UpdateButton";
-
-/** tab 状态（优先级递减）：等待权限 > 工作中 > 完成未读 > 空闲 */
-type TabStatus = "attention" | "working" | "done" | "idle";
 
 /** 拖拽让位/落位的减速曲线（浏览器标签同款手感） */
 const SORT_EASE = "cubic-bezier(0.2, 0, 0, 1)";
@@ -67,17 +65,10 @@ function TabPill({
 }) {
 	const t = useT();
 	const closeSession = useSessionsStore((s) => s.closeSession);
-	// selector 返回字符串原始值，引用稳定不触发多余渲染
-	const status = useTranscriptStore((s): TabStatus => {
-		const entry = s.bySession[session.sessionId];
-		if (!entry) return "idle";
-		if (entry.pendingPermissions.length > 0) return "attention";
-		if (entry.agentActive) return "working";
-		if (entry.unseenCompletion) return "done";
-		return "idle";
-	});
+	// 状态订阅与左侧会话轨道共用（优先级：审批 > 工作中 > 完成未读 > 空闲）
+	const status = useSessionStatus(session.sessionId);
 	// 图标字母 = 项目名（cwd 最后一段）首字母，与会话标题无关
-	const letter = session.cwd.split("/").filter(Boolean).pop()?.[0] ?? "P";
+	const letter = sessionLetter(session);
 	const avatarClass =
 		status === "attention"
 			? "bg-amber-500"
@@ -105,9 +96,7 @@ function TabPill({
 				)}
 			</span>
 			<span className="relative min-w-0 flex-1">
-				<span className="block truncate pr-6 text-left">
-					{session.name ?? session.cwd.split("/").filter(Boolean).pop() ?? t("tabbar.untitled")}
-				</span>
+				<span className="block truncate pr-6 text-left">{sessionTitle(session, t("tabbar.untitled"))}</span>
 				{!ghost && (
 					<span
 						className="invisible absolute right-0 top-1/2 -translate-y-1/2 p-1 text-ink-dim opacity-0 transition-opacity hover:text-ink group-hover:visible group-hover:opacity-100"
