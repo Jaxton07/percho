@@ -312,13 +312,22 @@ export const useSessionsStore = create<SessionsStore>((set, get) => ({
 	/** 切换当前会话的模型：更新全局默认（新会话用）+ 当前会话（只影响该会话），并同步 SDK */
 	setCurrentModel: async (provider, modelId) => {
 		const { activeSessionId } = get();
+		// 思考深度跟随新模型能力收缩（如从支持 max 的模型切到只支持到 high 的模型）
+		const nextModel = get().models.find((m) => m.provider === provider && m.id === modelId);
+		let thinkingLevel: string = get().thinkingLevel;
+		if (nextModel?.thinkingLevels && nextModel.thinkingLevels.length > 0) {
+			if (!nextModel.thinkingLevels.includes(thinkingLevel)) {
+				thinkingLevel = nextModel.thinkingLevels[nextModel.thinkingLevels.length - 1] ?? thinkingLevel;
+			}
+		}
 		set((state) => ({
 			currentModel: { provider, modelId },
+			thinkingLevel,
 			sessions: state.sessions.map((s) =>
-				s.sessionId === activeSessionId ? { ...s, model: { provider, modelId } } : s,
+				s.sessionId === activeSessionId ? { ...s, model: { provider, modelId }, thinkingLevel } : s,
 			),
 		}));
-		void getPi().saveUiState({ currentModel: { provider, modelId }, thinkingLevel: get().thinkingLevel });
+		void getPi().saveUiState({ currentModel: { provider, modelId }, thinkingLevel });
 		// draft 无后端会话：模型选择只作为全局默认，创建时随 createSession 生效
 		if (activeSessionId && !isDraftSessionId(activeSessionId)) {
 			try {

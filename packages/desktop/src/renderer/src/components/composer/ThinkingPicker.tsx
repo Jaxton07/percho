@@ -21,6 +21,8 @@ export function ThinkingPicker() {
 	const t = useT();
 	const thinkingLevel = useSessionsStore((s) => s.thinkingLevel);
 	const activeSession = useSessionsStore((s) => s.sessions.find((x) => x.sessionId === s.activeSessionId));
+	const models = useSessionsStore((s) => s.models);
+	const globalCurrentModel = useSessionsStore((s) => s.currentModel);
 	const setThinkingLevel = useSessionsStore((s) => s.setThinkingLevel);
 	const [open, setOpen] = useState(false);
 	const ref = useRef<HTMLDivElement>(null);
@@ -42,7 +44,16 @@ export function ThinkingPicker() {
 	}, [open]);
 
 	const effective = activeSession?.thinkingLevel ?? thinkingLevel;
-	const label = levelLabel(t, effective);
+	// 当前会话模型实际支持的思考深度（模型配置下发）；缺省按全量显示
+	const currentModelRef = activeSession?.model ?? globalCurrentModel;
+	const model = models.find((m) => m.provider === currentModelRef?.provider && m.id === currentModelRef?.modelId);
+	const supported =
+		model?.thinkingLevels && model.thinkingLevels.length > 0 ? model.thinkingLevels : [...THINKING_LEVELS];
+	// 当前级别超出模型能力（如切模型后遗留）→ 显示并选中最高可用级别
+	const displayLevel = (supported as readonly string[]).includes(effective)
+		? effective
+		: (supported[supported.length - 1] ?? "medium");
+	const label = levelLabel(t, displayLevel);
 
 	return (
 		<div ref={ref} className="relative">
@@ -56,25 +67,27 @@ export function ThinkingPicker() {
 			</button>
 			{open && (
 				<div className="absolute bottom-full left-0 z-30 mb-1 w-40 overflow-hidden rounded-xl border border-border bg-surface p-1 shadow-pop">
-					{THINKING_LEVELS.map((level) => {
-						const selected = level === effective;
-						return (
-							<button
-								key={level}
-								type="button"
-								className={`flex w-full items-center justify-between gap-2 rounded-lg px-2 py-1.5 text-left text-xs transition-colors ${
-									selected ? "text-blue-600" : "text-ink-2 hover:bg-hover"
-								}`}
-								onClick={() => {
-									void setThinkingLevel(level);
-									setOpen(false);
-								}}
-							>
-								<span>{levelLabel(t, level)}</span>
-								{selected && <CheckIcon size={12} />}
-							</button>
-						);
-					})}
+					{THINKING_LEVELS.filter((level) => (supported as readonly string[]).includes(level)).map(
+						(level) => {
+							const selected = level === displayLevel;
+							return (
+								<button
+									key={level}
+									type="button"
+									className={`flex w-full items-center justify-between gap-2 rounded-lg px-2 py-1.5 text-left text-xs transition-colors ${
+										selected ? "text-blue-600" : "text-ink-2 hover:bg-hover"
+									}`}
+									onClick={() => {
+										void setThinkingLevel(level);
+										setOpen(false);
+									}}
+								>
+									<span>{levelLabel(t, level)}</span>
+									{selected && <CheckIcon size={12} />}
+								</button>
+							);
+						},
+					)}
 				</div>
 			)}
 		</div>
