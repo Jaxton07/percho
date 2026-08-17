@@ -1,14 +1,10 @@
 import { useEffect, useRef, useState } from "react";
 import { useT } from "../../i18n";
+import { clampThinkingLevel, THINKING_LEVELS } from "../../lib/thinking";
 import { useSessionsStore } from "../../stores/sessions";
 import { CheckIcon, ChevronDownIcon } from "../icons";
 
-/** pi 支持的思考深度（顺序即显示顺序） */
-export const THINKING_LEVELS = ["off", "minimal", "low", "medium", "high", "xhigh", "max"] as const;
-
-export type ThinkingLevel = (typeof THINKING_LEVELS)[number];
-
-function isThinkingLevel(value: string): value is ThinkingLevel {
+function isThinkingLevel(value: string): value is (typeof THINKING_LEVELS)[number] {
 	return (THINKING_LEVELS as readonly string[]).includes(value);
 }
 
@@ -46,13 +42,13 @@ export function ThinkingPicker() {
 	const effective = activeSession?.thinkingLevel ?? thinkingLevel;
 	// 当前会话模型实际支持的思考深度（模型配置下发）；缺省按全量显示
 	const currentModelRef = activeSession?.model ?? globalCurrentModel;
-	const model = models.find((m) => m.provider === currentModelRef?.provider && m.id === currentModelRef?.modelId);
+	const model = models.find(
+		(m) => m.provider === currentModelRef?.provider && m.id === currentModelRef?.modelId,
+	);
 	const supported =
 		model?.thinkingLevels && model.thinkingLevels.length > 0 ? model.thinkingLevels : [...THINKING_LEVELS];
-	// 当前级别超出模型能力（如切模型后遗留）→ 显示并选中最高可用级别
-	const displayLevel = (supported as readonly string[]).includes(effective)
-		? effective
-		: (supported[supported.length - 1] ?? "medium");
+	// 当前级别超出模型能力（如切模型后遗留）→ 就近向上找，否则取 supported 最高档
+	const displayLevel = clampThinkingLevel(effective, supported);
 	const label = levelLabel(t, displayLevel);
 
 	return (

@@ -1,6 +1,7 @@
 import { existsSync } from "node:fs";
 import { unlink } from "node:fs/promises";
 import type { Model, ThinkingLevel } from "@earendil-works/pi-ai";
+import { getSupportedThinkingLevels } from "@earendil-works/pi-ai";
 import {
 	type AgentSessionEvent,
 	createAgentSession,
@@ -11,7 +12,6 @@ import {
 	SessionManager,
 	type ToolDefinition,
 } from "@earendil-works/pi-coding-agent";
-import { getSupportedThinkingLevels } from "@earendil-works/pi-ai";
 import type {
 	AvailableModel,
 	CatalogPackageType,

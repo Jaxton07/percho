@@ -1,6 +1,7 @@
 import type { AvailableModel, SavedTabs, SessionMeta } from "@percho/shared";
 import { create } from "zustand";
 import { getPi } from "../api";
+import { clampThinkingLevel } from "../lib/thinking";
 import { COMPOSER_FOCUS_EVENT, useDraftStore } from "./drafts";
 import { useTranscriptStore } from "./transcript";
 import { messagesToUIMessages } from "./transcript-reducer";
@@ -298,11 +299,22 @@ export const useSessionsStore = create<SessionsStore>((set, get) => ({
 					: null;
 			const current = get().currentModel;
 			const fallback = models.find((m) => m.authed) ?? models[0];
+			const nextCurrentModel =
+				savedModel ?? current ?? (fallback ? { provider: fallback.provider, modelId: fallback.id } : null);
+			// 持久化级别也按当前选中模型的能力夹紧（避免恢复后 store 与 UI/SDK 实际生效值不一致）
+			const nextModelRecord = nextCurrentModel
+				? models.find((m) => m.provider === nextCurrentModel.provider && m.id === nextCurrentModel.modelId)
+				: undefined;
+			const supportedLevels = nextModelRecord?.thinkingLevels;
+			const rawLevel = saved?.thinkingLevel ?? get().thinkingLevel;
+			const clampedLevel =
+				supportedLevels && supportedLevels.length > 0
+					? clampThinkingLevel(rawLevel, supportedLevels)
+					: rawLevel;
 			set({
 				models,
-				currentModel:
-					savedModel ?? current ?? (fallback ? { provider: fallback.provider, modelId: fallback.id } : null),
-				thinkingLevel: saved?.thinkingLevel ?? get().thinkingLevel,
+				currentModel: nextCurrentModel,
+				thinkingLevel: clampedLevel,
 			});
 		} catch (error) {
 			set({ error: error instanceof Error ? error.message : String(error) });
@@ -312,13 +324,11 @@ export const useSessionsStore = create<SessionsStore>((set, get) => ({
 	/** 切换当前会话的模型：更新全局默认（新会话用）+ 当前会话（只影响该会话），并同步 SDK */
 	setCurrentModel: async (provider, modelId) => {
 		const { activeSessionId } = get();
-		// 思考深度跟随新模型能力收缩（如从支持 max 的模型切到只支持到 high 的模型）
+		// 思考深度跟随新模型能力收缩（就近向上找，找不到再取最高档，与 UI 一致）
 		const nextModel = get().models.find((m) => m.provider === provider && m.id === modelId);
 		let thinkingLevel: string = get().thinkingLevel;
 		if (nextModel?.thinkingLevels && nextModel.thinkingLevels.length > 0) {
-			if (!nextModel.thinkingLevels.includes(thinkingLevel)) {
-				thinkingLevel = nextModel.thinkingLevels[nextModel.thinkingLevels.length - 1] ?? thinkingLevel;
-			}
+			thinkingLevel = clampThinkingLevel(thinkingLevel, nextModel.thinkingLevels);
 		}
 		set((state) => ({
 			currentModel: { provider, modelId },
