@@ -3,7 +3,7 @@
 </p>
 <h1 align="center">percho</h1>
 <p align="center">
-  极简设计的 <a href="https://www.npmjs.com/package/@earendil-works/pi-coding-agent">Pi coding agent</a> 桌面端 GUI —— 与 Pi CLI 同源同引擎，干净清爽的视觉界面。多会话聊天、可视化工具审批、自定义主题。
+  高度自定义的 <a href="https://www.npmjs.com/package/@earendil-works/pi-coding-agent">Pi coding agent</a> 桌面端 GUI —— 与 Pi CLI 同源同引擎，干净清爽的视觉界面。多会话聊天、可视化工具审批、UI 插件、自定义主题。
 </p>
 <p align="center">
   <a href="LICENSE"><img src="https://img.shields.io/github/license/Jaxton07/percho?style=flat-square" alt="License"></a>
@@ -22,7 +22,9 @@
 
 ## 演示
 
-![percho 聊天页截图](docs/assets/img/percho_chat_page.png)
+![percho 欢迎页与鲸鱼娘桌宠](docs/assets/img/percho_pet.png)
+
+![设置 —— UI 插件管理，内置鲸鱼娘桌宠](docs/assets/img/percho_ui_plugins.png)
 
 **聊天页**
 
@@ -36,10 +38,6 @@
 
 ![设置页演示](docs/assets/img/demo-settings.gif)
 
-**设置页 —— 外观（主题与背景）**
-
-![外观设置](docs/assets/img/settings_img_bg.png)
-
 ## 为什么选择 percho？
 
 percho 把官方 Pi SDK（`@earendil-works/pi-coding-agent`）跑在 Electron 主进程里。**不是 fork，也不是重新实现** —— 它和 Pi CLI 用的是同一套引擎，完整继承 Pi 的原生优势：
@@ -50,7 +48,7 @@ percho 把官方 Pi SDK（`@earendil-works/pi-coding-agent`）跑在 Electron �
 
 同时，为更喜欢图形界面的用户提供：
 
-- 极简设计美学 —— 界面保持 Pi 一贯的清爽干净，不堆砌元素
+- 高度自定义界面 —— UI 插件可替换工具调用卡、添加桌宠浮层、扩展设置面板（内置鲸鱼娘桌宠）
 - 可视化权限审批 —— 在底部审批坞里逐个批准/拒绝工具调用，背后是逐工具的规则引擎
 - 多会话侧栏、逐会话输入草稿、可撤销的跟进消息队列
 - 流式 Markdown 渲染、图片预览、消息复制
