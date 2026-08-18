@@ -6,6 +6,7 @@ import { EMPTY_CONTRIBUTIONS } from "../../plugins/RegionHost";
 import { type Contribution, useUiPluginRegistry } from "../../plugins/registry";
 import { UI_REGIONS } from "../../plugins/slots";
 import { type SettingsCategory, useSettingsStore } from "../../stores/settings";
+import { useUiPluginsStore } from "../../stores/ui-plugins";
 import { AboutPanel } from "./AboutPanel";
 import { AppearancePanel } from "./AppearancePanel";
 import { ExtensionsPanel } from "./ExtensionsPanel";
@@ -66,8 +67,10 @@ export function SettingsDialog() {
 	const setCategory = useSettingsStore((s) => s.setCategory);
 
 	// settings.panel 贡献：动态分类（插件停用/卸载即消失）；稳定引用（空用模块级 EMPTY）
-	const pluginCategories =
-		useUiPluginRegistry((s) => s.contributions[UI_REGIONS.SettingsPanel]) ?? EMPTY_CONTRIBUTIONS;
+	// 全局总开关关闭时隐藏插件分类（与 RegionHost 同一开关语义；当前正在看的分类回落 comingSoon 空态）
+	const masterOn = useUiPluginsStore((s) => s.config.enabled);
+	const registryCategories = useUiPluginRegistry((s) => s.contributions[UI_REGIONS.SettingsPanel]);
+	const pluginCategories = masterOn ? (registryCategories ?? EMPTY_CONTRIBUTIONS) : EMPTY_CONTRIBUTIONS;
 	// 贡献边界 key 带 loadNonce（与 RegionHost 一致）：热重载换新边界实例，settings.panel 贡献崩溃后可恢复
 	const pluginNonces = useUiPluginRegistry((s) => s.loadNonces);
 

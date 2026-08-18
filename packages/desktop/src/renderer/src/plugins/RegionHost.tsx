@@ -1,5 +1,6 @@
 import type { UiPluginAnchor } from "@percho/shared";
 import type { ComponentType } from "react";
+import { useUiPluginsStore } from "../stores/ui-plugins";
 import { PluginBoundary } from "./PluginBoundary";
 import { type Contribution, useUiPluginRegistry } from "./registry";
 import { type RegionName, UI_REGIONS } from "./slots";
@@ -41,7 +42,9 @@ export function RegionHost({ region }: { region: RegionName }) {
 	const list = useUiPluginRegistry((s) => s.contributions[region]) ?? EMPTY_CONTRIBUTIONS;
 	// 热重载换新边界实例（errored 归零），与 Slot 的 key 语义一致
 	const nonces = useUiPluginRegistry((s) => s.loadNonces);
-	if (list.length === 0) return null;
+	// 全局总开关：关 = 全部贡献立即停用（与 Slot 同一开关语义；registry 保留，开回即恢复）
+	const masterOn = useUiPluginsStore((s) => s.config.enabled);
+	if (!masterOn || list.length === 0) return null;
 
 	const renderContribution = (c: Contribution) => {
 		const Comp = c.component as ComponentType<Record<string, never>>;
