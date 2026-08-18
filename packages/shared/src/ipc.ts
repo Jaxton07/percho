@@ -28,6 +28,7 @@ import type {
 	ProviderTestResult,
 } from "./settings";
 import type { TodoItem } from "./todo";
+import type { UiPluginInfo, UiPluginManifest, UiPluginsConfig, UiPluginsEventPayload } from "./ui-plugins";
 import type { UpdateState } from "./update";
 import type { VisionConfigInfo, VisionSaveInput, VisionTestResult } from "./vision";
 
@@ -110,6 +111,24 @@ export const IpcChannels = {
 	UpdateInstall: "update:install",
 	/** main → renderer 更新状态 */
 	UpdateEvent: "update:event",
+	/** UI 插件：读全局配置 */
+	UiPluginsGetConfig: "uiPlugins:getConfig",
+	/** UI 插件：设全局总开关 */
+	UiPluginsSetEnabled: "uiPlugins:setEnabled",
+	/** UI 插件：列插件（含状态） */
+	UiPluginsList: "uiPlugins:list",
+	/** UI 插件：读构建产物代码 */
+	UiPluginsReadCode: "uiPlugins:readCode",
+	/** UI 插件：启用/停用单个插件（启用=信任） */
+	UiPluginsSetPluginEnabled: "uiPlugins:setPluginEnabled",
+	/** UI 插件：槽位指派（pluginName=null 取消指派） */
+	UiPluginsAssignSlot: "uiPlugins:assignSlot",
+	/** UI 插件：重新构建 */
+	UiPluginsRebuild: "uiPlugins:rebuild",
+	/** UI 插件：打开插件目录（shell.openPath） */
+	UiPluginsOpenDir: "uiPlugins:openDir",
+	/** main → renderer UI 插件事件（changed/config） */
+	UiPluginsEvent: "uiPlugins:event",
 	/** main → renderer 事件 */
 	Event: "pi:event",
 	PermissionRequest: "pi:permission-request",
@@ -232,6 +251,24 @@ export interface PiApi {
 	installUpdate(): Promise<void>;
 	/** 订阅更新状态（checking/available/downloading/downloaded/error）；返回取消函数 */
 	onUpdateEvent(cb: (state: UpdateState) => void): () => void;
+	/** 读 UI 插件全局配置（总开关/启用信任表/槽位指派） */
+	uiPluginsGetConfig(): Promise<UiPluginsConfig>;
+	/** 设 UI 插件全局总开关 */
+	uiPluginsSetEnabled(enabled: boolean): Promise<void>;
+	/** 列 UI 插件（含 enabled/trusted/buildError/invalidReason） */
+	uiPluginsList(): Promise<UiPluginInfo[]>;
+	/** 读插件构建产物（name 必须是扫描到的合法插件名，禁路径）；{ manifest, code } 或 { error } */
+	uiPluginsReadCode(name: string): Promise<{ manifest: UiPluginManifest; code: string } | { error: string }>;
+	/** 启用/停用单个插件（启用=信任，同步落盘） */
+	uiPluginsSetPluginEnabled(name: string, enabled: boolean): Promise<void>;
+	/** 槽位指派（pluginName=null 取消指派） */
+	uiPluginsAssignSlot(slot: string, pluginName: string | null): Promise<void>;
+	/** 重新构建插件（构建失败返回错误信息，旧产物保留） */
+	uiPluginsRebuild(name: string): Promise<{ ok: true } | { ok: false; error: string }>;
+	/** 打开插件目录（不传 name 开根目录；shell.openPath） */
+	uiPluginsOpenDir(name?: string): Promise<void>;
+	/** 订阅 UI 插件事件（changed/config）；返回取消函数 */
+	onUiPluginsEvent(cb: (payload: UiPluginsEventPayload) => void): () => void;
 	/** 订阅会话事件；返回取消函数 */
 	onEvent(cb: (payload: SessionEventEnvelope) => void): () => void;
 	onPermissionRequest(cb: (req: PermissionRequest) => void): () => void;

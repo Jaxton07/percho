@@ -27,6 +27,9 @@ extraResources:
     to: "pi-package/dist/modes/interactive/theme"
   - from: "../../node_modules/@earendil-works/pi-coding-agent/dist/modes/interactive/assets"
     to: "pi-package/dist/modes/interactive/assets"
+  # UI 插件 agent 规范三件套（SPEC/percho-ui.d.ts/skill/examples）：main 经 process.resourcesPath 读取
+  - from: "resources/ui-plugins"
+    to: "ui-plugins"
 mac:
   category: public.app-category.developer-tools
   # adhoc 临时签名整个 bundle：Gatekeeper 从「已损坏（无绕过）」→「无法验证开发者（可右键打开）」

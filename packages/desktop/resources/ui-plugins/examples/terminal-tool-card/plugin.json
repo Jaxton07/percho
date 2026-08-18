@@ -1,0 +1,9 @@
+{
+	"name": "terminal-tool-card",
+	"version": "0.1.0",
+	"displayName": "终端风工具卡",
+	"description": "把工具调用卡改成终端样式（▸ 前缀 + 全大写工具名 + 等宽输出区）",
+	"perchoUi": 1,
+	"main": "src/index.tsx",
+	"slots": { "chat.tool-call-card": "ToolCallCard" }
+}

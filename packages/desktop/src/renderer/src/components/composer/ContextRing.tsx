@@ -1,55 +1,12 @@
-import type { ContextUsageInfo } from "@percho/shared";
-import { useCallback, useEffect, useState } from "react";
-import { getPi } from "../../api";
-import { isDraftSessionId, useSessionsStore } from "../../stores/sessions";
+import { useContextUsage } from "../../hooks/use-context-usage";
+import { useSessionsStore } from "../../stores/sessions";
 import { selectTranscript, useTranscriptStore } from "../../stores/transcript";
-
-/** 触发刷新的事件类型（流式 delta 类高频事件不刷新） */
-const REFRESH_EVENTS = new Set([
-	"message_end",
-	"tool_execution_end",
-	"turn_end",
-	"agent_settled",
-	"compaction_end",
-	"session_info_changed",
-]);
-
-/** 刷新事件类型集合的类型收窄 */
-function isRefreshEvent(type: string): boolean {
-	return REFRESH_EVENTS.has(type);
-}
 
 /** 上下文使用圆环：加号旁的小进度环，hover 显示 tokens / 窗口 / 百分比；会话无消息时隐藏（新会话的基线占用不展示） */
 export function ContextRing() {
 	const activeSessionId = useSessionsStore((s) => s.activeSessionId);
 	const hasMessages = useTranscriptStore((s) => selectTranscript(s, activeSessionId).messages.length > 0);
-	const [usage, setUsage] = useState<ContextUsageInfo | null>(null);
-
-	const refresh = useCallback(async () => {
-		// draft 在后端不存在，无上下文用量可查
-		if (!activeSessionId || isDraftSessionId(activeSessionId)) {
-			setUsage(null);
-			return;
-		}
-		try {
-			setUsage(await getPi().getContextUsage(activeSessionId));
-		} catch {
-			setUsage(null);
-		}
-	}, [activeSessionId]);
-
-	useEffect(() => {
-		void refresh();
-	}, [refresh]);
-
-	// 事件驱动刷新：每轮结束/工具完成后取一次
-	useEffect(() => {
-		const off = getPi().onEvent(({ sessionId, event }) => {
-			if (sessionId !== activeSessionId || !isRefreshEvent(event.type)) return;
-			void refresh();
-		});
-		return off;
-	}, [activeSessionId, refresh]);
+	const usage = useContextUsage(activeSessionId);
 
 	if (!usage || usage.percent == null || !hasMessages) return null;
 

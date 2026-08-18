@@ -15,6 +15,8 @@ import {
 
 /**
  * 左侧会话轨道（可选交互，设置 → 外观 开关）：聊天页左侧垂直居中一列短线。
+ * 定位基准是 tab bar 以下的**整列内容区**（App.tsx 把 rail 挂在 main + ApprovalDock 的父容器上，
+ * 而非 main 内）——输入框（ApprovalDock）高度变化不压缩 rail 的居中参考系，轨道位置不随输入框漂移。
  * 悬停/聚焦时短线原地「膨胀」成悬浮胶囊（项目图标 + 会话标题，bg-surface + shadow-pop 全圆角 pill），
  * 相邻 ±1 变成一半大的胶囊（同样白底圆角，内容可见被裁断）、±2 变成迷你空胶囊，
  * 连续划过即 dock 式波浪（距离类 is-expanded/is-near-1/is-near-2 由 JS 按 expandedId 下标算出，

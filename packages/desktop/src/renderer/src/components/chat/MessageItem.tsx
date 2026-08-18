@@ -1,6 +1,8 @@
 import type { ImageInput } from "@percho/shared";
 import { memo, type ReactNode, useEffect, useRef, useState } from "react";
 import { useT } from "../../i18n";
+import { Slot } from "../../plugins/Slot";
+import { UI_SLOTS } from "../../plugins/slots";
 import { useSessionsStore } from "../../stores/sessions";
 import type { UIMessage } from "../../stores/transcript";
 import { selectTranscript, useTranscriptStore } from "../../stores/transcript";
@@ -222,7 +224,7 @@ export const MessageItem = memo(function MessageItem({
 	}
 
 	if (message.kind === "subagent") {
-		return <SubagentRunCard runs={message.runs} />;
+		return <Slot name={UI_SLOTS.SubagentCard} props={{ runs: message.runs }} fallback={SubagentRunCard} />;
 	}
 
 	if (message.kind === "error") {
