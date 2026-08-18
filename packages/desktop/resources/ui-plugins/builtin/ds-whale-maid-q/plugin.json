@@ -1,0 +1,11 @@
+{
+	"name": "ds-whale-maid-q",
+	"version": "0.1.0",
+	"displayName": "鲸鱼娘女仆 Q版",
+	"description": "Q 版鲸鱼娘女仆桌宠：呼吸浮动、会眨眼，agent 工作时抱着小电脑敲字吐泡泡，可拖拽摆放，点她会开心",
+	"perchoUi": 1,
+	"main": "src/index.tsx",
+	"contributions": [
+		{ "id": "pet", "region": "app.overlay", "anchor": "bottom-right", "export": "Pet", "title": "鲸鱼娘 Q版" }
+	]
+}
