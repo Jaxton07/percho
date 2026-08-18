@@ -1,4 +1,10 @@
-import { IpcChannels, type PiApi, type SessionEventEnvelope, type UpdateState } from "@percho/shared";
+import {
+	IpcChannels,
+	type PiApi,
+	type SessionEventEnvelope,
+	type UiPluginsEventPayload,
+	type UpdateState,
+} from "@percho/shared";
 import { contextBridge, ipcRenderer } from "electron";
 
 const api: PiApi = {
@@ -71,6 +77,21 @@ const api: PiApi = {
 	pickBackgroundImage: () => ipcRenderer.invoke(IpcChannels.BackgroundPick),
 	checkForUpdates: () => ipcRenderer.invoke(IpcChannels.UpdateCheck),
 	installUpdate: () => ipcRenderer.invoke(IpcChannels.UpdateInstall),
+	uiPluginsGetConfig: () => ipcRenderer.invoke(IpcChannels.UiPluginsGetConfig),
+	uiPluginsSetEnabled: (enabled) => ipcRenderer.invoke(IpcChannels.UiPluginsSetEnabled, enabled),
+	uiPluginsList: () => ipcRenderer.invoke(IpcChannels.UiPluginsList),
+	uiPluginsReadCode: (name) => ipcRenderer.invoke(IpcChannels.UiPluginsReadCode, name),
+	uiPluginsSetPluginEnabled: (name, enabled) =>
+		ipcRenderer.invoke(IpcChannels.UiPluginsSetPluginEnabled, name, enabled),
+	uiPluginsAssignSlot: (slot, pluginName) =>
+		ipcRenderer.invoke(IpcChannels.UiPluginsAssignSlot, slot, pluginName),
+	uiPluginsRebuild: (name) => ipcRenderer.invoke(IpcChannels.UiPluginsRebuild, name),
+	uiPluginsOpenDir: (name) => ipcRenderer.invoke(IpcChannels.UiPluginsOpenDir, name),
+	onUiPluginsEvent: (cb) => {
+		const listener = (_event: unknown, payload: UiPluginsEventPayload) => cb(payload);
+		ipcRenderer.on(IpcChannels.UiPluginsEvent, listener);
+		return () => ipcRenderer.removeListener(IpcChannels.UiPluginsEvent, listener);
+	},
 	onUpdateEvent: (cb) => {
 		const listener = (_event: unknown, state: UpdateState) => cb(state);
 		ipcRenderer.on(IpcChannels.UpdateEvent, listener);

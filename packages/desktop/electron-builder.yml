@@ -8,6 +8,10 @@ files:
   - "!node_modules/@percho"
 asarUnpack:
   - "**/*.node"
+  # UI 插件运行时构建：esbuild 要 spawn 平台二进制，asar 内无法 exec（spawn ENOTDIR）；
+  # unpack 后 Electron child_process 自动把 app.asar 路径重写为 app.asar.unpacked
+  - "**/node_modules/esbuild/**"
+  - "**/node_modules/@esbuild/**"
 # pi SDK 包资源镜像：docs/examples/README 不进 asar，agent 的 read/bash 工具都能直接访问。
 # main 进程经 PI_PACKAGE_DIR 指到这里（export-html/themes/package.json 同根解析，必须一起带）。
 extraResources:
@@ -27,6 +31,9 @@ extraResources:
     to: "pi-package/dist/modes/interactive/theme"
   - from: "../../node_modules/@earendil-works/pi-coding-agent/dist/modes/interactive/assets"
     to: "pi-package/dist/modes/interactive/assets"
+  # UI 插件 agent 规范三件套（SPEC/percho-ui.d.ts/skill/examples）：main 经 process.resourcesPath 读取
+  - from: "resources/ui-plugins"
+    to: "ui-plugins"
 mac:
   category: public.app-category.developer-tools
   # adhoc 临时签名整个 bundle：Gatekeeper 从「已损坏（无绕过）」→「无法验证开发者（可右键打开）」

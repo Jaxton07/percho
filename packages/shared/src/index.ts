@@ -4,5 +4,6 @@ export * from "./session";
 export * from "./settings";
 export * from "./subagent";
 export * from "./todo";
+export * from "./ui-plugins";
 export * from "./update";
 export * from "./vision";

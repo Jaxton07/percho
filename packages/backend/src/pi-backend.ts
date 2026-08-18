@@ -95,6 +95,15 @@ export interface PiBackendOptions {
 	visionConfigPath?: string;
 	/** 是否注册内置视觉代理扩展（默认 true；visionConfigPath 缺省时无效果） */
 	visionProxy?: boolean;
+	/**
+	 * 桌面端集成（Electron 专用；纯 CLI 环境不传）：
+	 * appendSystemPrompt = 追加进每次会话系统提示词的段落（如「你运行在 Percho 桌面端，界面可被 UI 插件定制」）；
+	 * additionalSkillPaths = 额外技能目录（如随包分发的 percho-ui-plugin skill，描述原生进可用技能清单）。
+	 */
+	desktopIntegration?: {
+		appendSystemPrompt: string[];
+		additionalSkillPaths: string[];
+	};
 }
 
 type EventHandler = (sessionId: string, event: AgentSessionEvent) => void;
@@ -145,6 +154,7 @@ export class PiBackend {
 			canAsk: () => this.trustHandlers.size > 0,
 			buildExtensions: (cwd, confirm) => this.buildExtensionFactories(cwd, confirm),
 			projectTrust: options.projectTrust,
+			desktopIntegration: options.desktopIntegration,
 		});
 	}
 
@@ -565,7 +575,9 @@ export class PiBackend {
 	 */
 	async forkSession(sessionId: string, ref: { entryId?: string; text?: string }): Promise<SessionMeta> {
 		const entry = this.requireSession(sessionId);
-		if (entry.session.isStreaming) throw new Error("Cannot fork while the agent is running");
+		if (entry.session.isStreaming || entry.session.isCompacting) {
+			throw new Error("Cannot fork while the agent is running or context is compacting");
+		}
 		const sourceManager = entry.session.sessionManager;
 		const targetId = resolveForkEntryId(sourceManager, ref);
 		const file = sourceManager.getSessionFile();
@@ -594,7 +606,9 @@ export class PiBackend {
 		ref: { entryId?: string; text?: string; timestamp?: number },
 	): Promise<{ text: string; images: ImageInput[] }> {
 		const entry = this.requireSession(sessionId);
-		if (entry.session.isStreaming) throw new Error("Cannot recall while the agent is running");
+		if (entry.session.isStreaming || entry.session.isCompacting) {
+			throw new Error("Cannot recall while the agent is running or context is compacting");
+		}
 		const sm = entry.session.sessionManager;
 		const targetId = resolveRecallEntryId(sm, ref);
 		const target = sm.getEntry(targetId) as Extract<SessionEntry, { type: "message" }>;

@@ -6,10 +6,15 @@ import { MessageList } from "./components/chat/MessageList";
 import { TodoPanel } from "./components/chat/TodoPanel";
 import { ProjectPage } from "./components/projects/ProjectPage";
 import { ApprovalDock } from "./components/session/ApprovalDock";
+import { SessionRail } from "./components/session/SessionRail";
 import { SessionTabBar } from "./components/session/SessionTabBar";
 import { TrustDialog } from "./components/session/TrustDialog";
 import { SettingsDialog } from "./components/settings/SettingsDialog";
 import { useI18nStore } from "./i18n";
+import { initUiPlugins } from "./plugins/loader";
+import { RegionHost } from "./plugins/RegionHost";
+import { Slot } from "./plugins/Slot";
+import { UI_REGIONS, UI_SLOTS } from "./plugins/slots";
 import { finishSplash } from "./splash";
 import { useSessionsStore } from "./stores/sessions";
 import { backgroundImageUrl, useThemeStore } from "./stores/theme";
@@ -66,6 +71,8 @@ export default function App() {
 			useSessionsStore.getState().restoreTabs(),
 		]).then(() => finishSplash());
 		initUpdateStore();
+		// UI 插件加载链路（总开关关时只订阅事件，零开销）
+		void initUiPlugins();
 		return () => {
 			offEvent();
 			offPermission();
@@ -90,6 +97,8 @@ export default function App() {
 					<div className="app-bg-scrim" style={{ opacity: bgDim }} />
 				</>
 			)}
+			{/* 背景贡献层：与自定义背景图同层同规则（z-0，界面默认不透明时不可见），内容列（z-10）之前 */}
+			<RegionHost region={UI_REGIONS.AppBackground} />
 			<div className="relative z-10 flex h-full flex-col">
 				<SessionTabBar />
 				{view === "projects" ? (
@@ -97,15 +106,25 @@ export default function App() {
 						<ProjectPage />
 					</div>
 				) : (
-					<>
+					/* SessionRail 以整列（tab bar 以下全视口）为定位基准：不在 main 内，
+					   否则输入框（ApprovalDock）高度变化会压缩 main，轨道垂直居中随之漂移 */
+					<div className="relative flex min-h-0 flex-1 flex-col">
 						<main className="relative min-h-0 flex-1">
 							{showEmpty ? <EmptyState /> : <MessageList />}
-							<TodoPanel />
+							<Slot name={UI_SLOTS.TodoPanel} props={{}} fallback={TodoPanel} />
+							{/* 聊天区四角贡献层（top-right 与 TodoPanel 同角，容器已预留 pt-12） */}
+							<RegionHost region={UI_REGIONS.CornerTopLeft} />
+							<RegionHost region={UI_REGIONS.CornerTopRight} />
+							<RegionHost region={UI_REGIONS.CornerBottomLeft} />
+							<RegionHost region={UI_REGIONS.CornerBottomRight} />
 						</main>
 						<ApprovalDock sessionId={activeSessionId} hideComposer={showEmpty} />
-					</>
+						<SessionRail />
+					</div>
 				)}
 			</div>
+			{/* 悬浮贡献层：内容列之后、设置弹窗之前（z-20 < z-40，插件层永在弹窗之下） */}
+			<RegionHost region={UI_REGIONS.AppOverlay} />
 			<SettingsDialog />
 			<TrustDialog requests={trustRequests} onRespond={respondTrust} />
 		</div>

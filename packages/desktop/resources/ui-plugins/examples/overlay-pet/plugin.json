@@ -1,0 +1,17 @@
+{
+	"name": "overlay-pet",
+	"version": "0.1.0",
+	"displayName": "桌宠（示例）",
+	"description": "跟随 agent 工作状态呼吸的悬浮桌宠（app.overlay，bottom-right 锚点）",
+	"perchoUi": 1,
+	"main": "src/index.tsx",
+	"contributions": [
+		{
+			"id": "pet",
+			"region": "app.overlay",
+			"anchor": "bottom-right",
+			"export": "Pet",
+			"title": "桌宠"
+		}
+	]
+}

@@ -29,6 +29,11 @@ export class ProjectResourceLoader {
 			buildExtensions: ExtensionFactoryBuilder;
 			/** false 时所有项目自动信任（无人值守场景） */
 			projectTrust?: boolean;
+			/** 桌面端集成：追加系统提示词段落 + 额外技能目录（透传给 DefaultResourceLoader） */
+			desktopIntegration?: {
+				appendSystemPrompt: string[];
+				additionalSkillPaths: string[];
+			};
 		},
 	) {}
 
@@ -50,6 +55,7 @@ export class ProjectResourceLoader {
 			agentDir,
 			settingsManager,
 			extensionFactories: this.deps.buildExtensions(cwd, options?.confirm),
+			...this.deps.desktopIntegration,
 		});
 		if (this.deps.projectTrust === false) {
 			settingsManager.setProjectTrusted(true);

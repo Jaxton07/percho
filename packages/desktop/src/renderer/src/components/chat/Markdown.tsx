@@ -15,6 +15,14 @@ const SMOOTH_OPTIONS: SmoothMarkdownStreamOptions = {
 	// 其余（targetLatencyMs 900 / catchUpLatencyMs 350 / catchUpThreshold 600 / max 1000cps）用默认
 };
 
+const CODE_BLOCK_PROPS = {
+	// 标题栏在视觉上被 CSS 悬浮化（见 globals.css），这里只裁掉多余按钮：字号三键/全屏/预览，
+	// 保留折叠 + 复制。不能用 showHeader:false——它会连按钮一起去掉，且折叠是组件内部 state，外部无法控制。
+	showFontSizeButtons: false,
+	showExpandButton: false,
+	showPreviewButton: false,
+} as const;
+
 /** 减速动效偏好：直接关闭 pacing（直出）；库 CSS 自带 animation:none 处理淡入 */
 const REDUCED_MOTION =
 	typeof window !== "undefined" && window.matchMedia("(prefers-reduced-motion: reduce)").matches;
@@ -30,7 +38,9 @@ const REDUCED_MOTION =
  *    controller 才能存活并平滑追平。
  * 2. fade：新块节点 enter 淡入（.28s）+ 文本节点新增内容交替淡入（text-node-stream-delta a/b）。
  * 样式：组件自带 CSS（:where() 零优先级），视觉覆写集中在 globals.css 的 .markdown-body 下。
- * isDark 驱动代码块 shiki 主题（vitesse-light/dark）与容器深浅。
+ * isDark 驱动代码块 shiki 主题（vitesse-light/dark）与容器深浅。注意必须显式传
+ * codeBlockLightTheme/codeBlockDarkTheme：不传时 stream-monaco 回退到 themes[0]（默认 vitesse-dark），
+ * 浅色模式下代码块也会是深色。
  */
 export function Markdown({ text, streaming }: { text: string; streaming?: boolean }) {
 	const isDark = useThemeStore((s) => s.resolved === "dark");
@@ -48,6 +58,9 @@ export function Markdown({ text, streaming }: { text: string; streaming?: boolea
 				smoothStreaming={smoothableRef.current}
 				smoothStreamingOptions={SMOOTH_OPTIONS}
 				isDark={isDark}
+				codeBlockLightTheme="vitesse-light"
+				codeBlockDarkTheme="vitesse-dark"
+				codeBlockProps={CODE_BLOCK_PROPS}
 				deferNodesUntilVisible={false}
 			/>
 		</div>

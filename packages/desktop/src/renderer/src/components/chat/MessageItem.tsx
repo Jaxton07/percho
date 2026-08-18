@@ -1,6 +1,8 @@
 import type { ImageInput } from "@percho/shared";
 import { memo, type ReactNode, useEffect, useRef, useState } from "react";
 import { useT } from "../../i18n";
+import { Slot } from "../../plugins/Slot";
+import { UI_SLOTS } from "../../plugins/slots";
 import { useSessionsStore } from "../../stores/sessions";
 import type { UIMessage } from "../../stores/transcript";
 import { selectTranscript, useTranscriptStore } from "../../stores/transcript";
@@ -70,16 +72,19 @@ function CopyButton({ text }: { text: string }) {
 	);
 }
 
-/** 分叉按钮：以该 assistant 消息为结尾生成新会话并切换；agent 运行中/分叉中禁用 */
+/** 分叉按钮：以该 assistant 消息为结尾生成新会话并切换；agent 运行、压缩或分叉中禁用 */
 function ForkButton({ entryId, text }: { entryId?: string; text: string }) {
 	const t = useT();
 	const activeSessionId = useSessionsStore((s) => s.activeSessionId);
-	const agentActive = useTranscriptStore((s) => selectTranscript(s, activeSessionId).agentActive);
+	const sessionBusy = useTranscriptStore((s) => {
+		const transcript = selectTranscript(s, activeSessionId);
+		return transcript.agentActive || transcript.compacting;
+	});
 	const forkSession = useSessionsStore((s) => s.forkSession);
 	const [forking, setForking] = useState(false);
 
 	const handleFork = () => {
-		if (forking || agentActive) return;
+		if (forking || sessionBusy) return;
 		setForking(true);
 		// entryId 精确定位（历史消息）；流式刚提交的消息无 entryId，按正文文本兜底匹配
 		void forkSession(entryId ? { entryId } : { text }).finally(() => setForking(false));
@@ -89,7 +94,7 @@ function ForkButton({ entryId, text }: { entryId?: string; text: string }) {
 		<button
 			type="button"
 			onClick={handleFork}
-			disabled={agentActive || forking}
+			disabled={sessionBusy || forking}
 			aria-label={t("message.fork")}
 			className="flex h-6 w-6 items-center justify-center rounded-md text-ink-faint transition-colors duration-150 hover:bg-border/70 hover:text-ink-2 disabled:cursor-not-allowed"
 		>
@@ -98,16 +103,19 @@ function ForkButton({ entryId, text }: { entryId?: string; text: string }) {
 	);
 }
 
-/** 撤回按钮：会话回退到该用户消息之前，内容放回输入框继续编辑；agent 运行中禁用 */
+/** 撤回按钮：会话回退到该用户消息之前，内容放回输入框继续编辑；agent 运行或压缩中禁用 */
 function RecallButton({ entryId, text, timestamp }: { entryId?: string; text: string; timestamp: number }) {
 	const t = useT();
 	const activeSessionId = useSessionsStore((s) => s.activeSessionId);
-	const agentActive = useTranscriptStore((s) => selectTranscript(s, activeSessionId).agentActive);
+	const sessionBusy = useTranscriptStore((s) => {
+		const transcript = selectTranscript(s, activeSessionId);
+		return transcript.agentActive || transcript.compacting;
+	});
 	const recallMessage = useSessionsStore((s) => s.recallMessage);
 	const [recalling, setRecalling] = useState(false);
 
 	const handleRecall = () => {
-		if (recalling || agentActive) return;
+		if (recalling || sessionBusy) return;
 		setRecalling(true);
 		// entryId 精确定位（历史消息）；实时消息无 entryId，按文本+时间戳兑底匹配
 		void recallMessage({ entryId, text: text || undefined, timestamp }).finally(() => setRecalling(false));
@@ -117,7 +125,7 @@ function RecallButton({ entryId, text, timestamp }: { entryId?: string; text: st
 		<button
 			type="button"
 			onClick={handleRecall}
-			disabled={agentActive || recalling}
+			disabled={sessionBusy || recalling}
 			aria-label={t("message.recall")}
 			className="flex h-6 w-6 items-center justify-center rounded-md text-ink-faint transition-colors duration-150 hover:bg-border/70 hover:text-ink-2 disabled:cursor-not-allowed"
 		>
@@ -216,7 +224,7 @@ export const MessageItem = memo(function MessageItem({
 	}
 
 	if (message.kind === "subagent") {
-		return <SubagentRunCard runs={message.runs} />;
+		return <Slot name={UI_SLOTS.SubagentCard} props={{ runs: message.runs }} fallback={SubagentRunCard} />;
 	}
 
 	if (message.kind === "error") {

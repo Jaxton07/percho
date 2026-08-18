@@ -176,6 +176,51 @@ describe("switchSession", () => {
 	});
 });
 
+describe("reorderSessions（拖拽排序）", () => {
+	const draftMeta = (name: string): SessionMeta => ({
+		...realMeta(name, "/p"),
+		sessionId: `${DRAFT_SESSION_PREFIX}x`,
+		sessionFile: undefined,
+	});
+
+	it("向后拖：a 跨过 draft 到末尾，并按新视觉序落盘", () => {
+		useSessionsStore.setState({
+			sessions: [realMeta("a", "/p"), draftMeta("dx"), realMeta("b", "/p")],
+			cwd: "/p",
+		});
+		useSessionsStore.getState().reorderSessions("a", "b");
+		expect(useSessionsStore.getState().sessions.map((s) => s.sessionId)).toEqual([
+			`${DRAFT_SESSION_PREFIX}x`,
+			"b",
+			"a",
+		]);
+		// files 只含真实会话，顺序 = 去掉 draft 后的视觉序
+		expect(piMock.saveTabs).toHaveBeenCalledWith({
+			files: ["/tmp/b.jsonl", "/tmp/a.jsonl"],
+			activeFile: null,
+		});
+	});
+
+	it("向前拖：插入到目标原索引，中间项整体右移（arrayMove 语义，与落位视觉一致）", () => {
+		useSessionsStore.setState({ sessions: [realMeta("a", "/p"), draftMeta("dx"), realMeta("b", "/p")] });
+		useSessionsStore.getState().reorderSessions("b", "a");
+		expect(useSessionsStore.getState().sessions.map((s) => s.sessionId)).toEqual([
+			"b",
+			"a",
+			`${DRAFT_SESSION_PREFIX}x`,
+		]);
+	});
+
+	it("原地/未知 id 不变序也不落盘", () => {
+		useSessionsStore.setState({ sessions: [realMeta("a", "/p"), realMeta("b", "/p")] });
+		useSessionsStore.getState().reorderSessions("a", "a");
+		useSessionsStore.getState().reorderSessions("nope", "b");
+		useSessionsStore.getState().reorderSessions("a", "nope");
+		expect(useSessionsStore.getState().sessions.map((s) => s.sessionId)).toEqual(["a", "b"]);
+		expect(piMock.saveTabs).not.toHaveBeenCalled();
+	});
+});
+
 describe("模型/思考级别", () => {
 	it("draft 下切换模型：只更新全局默认与 draft 条目，不调后端 setModel", async () => {
 		useSessionsStore.getState().createDraftSession("/proj/a");

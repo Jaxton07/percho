@@ -3,7 +3,7 @@
 </p>
 <h1 align="center">percho</h1>
 <p align="center">
-  Minimalist desktop GUI for the <a href="https://www.npmjs.com/package/@earendil-works/pi-coding-agent">Pi coding agent</a> — the same engine as the Pi CLI, in a clean visual interface. Multi-session chat, visual tool approvals, and custom themes.
+  Highly customizable desktop GUI for the <a href="https://www.npmjs.com/package/@earendil-works/pi-coding-agent">Pi coding agent</a> — the same engine as the Pi CLI, in a clean visual interface. Multi-session chat, visual tool approvals, UI plugins, and custom themes.
 </p>
 <p align="center">
   <a href="LICENSE"><img src="https://img.shields.io/github/license/Jaxton07/percho?style=flat-square" alt="License"></a>
@@ -22,7 +22,9 @@
 
 ## Demo
 
-![percho chat page](docs/assets/img/percho_chat_page.png)
+![percho welcome page with the whale maid desk pet](docs/assets/img/percho_pet.png)
+
+![UI plugins settings — the whale maid desk pet ships built in](docs/assets/img/percho_ui_plugins.png)
 
 **Chat**
 
@@ -36,10 +38,6 @@
 
 ![Settings page demo](docs/assets/img/demo-settings.gif)
 
-**Settings — appearance (theme & background)**
-
-![Appearance settings](docs/assets/img/settings_img_bg.png)
-
 ## Why percho?
 
 percho embeds the official Pi SDK (`@earendil-works/pi-coding-agent`) in the Electron main process. It is **not a fork and not a reimplementation** — it runs the same engine as the Pi CLI and inherits Pi's native strengths:
@@ -50,7 +48,7 @@ percho embeds the official Pi SDK (`@earendil-works/pi-coding-agent`) in the Ele
 
 And for those who prefer a GUI over a TUI:
 
-- Minimalist by design — a clean, uncluttered interface that stays true to Pi's aesthetic
+- Highly customizable UI — swap tool-call cards, drop in desk-pet overlays, or extend the settings panel via UI plugins (a whale-maid desk pet ships built in)
 - Visual permission gates — approve or deny each tool call from a dock, backed by a per-tool rule engine
 - Multi-session sidebar, per-session composer drafts, follow-up queue with undo
 - Streaming markdown rendering, image previews, message copy
