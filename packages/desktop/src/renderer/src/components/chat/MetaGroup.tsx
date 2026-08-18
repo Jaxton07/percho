@@ -2,6 +2,8 @@ import { Fragment, useEffect, useLayoutEffect, useMemo, useRef, useState } from 
 import type { OrbState } from "thinking-orbs";
 import { ThinkingOrb } from "thinking-orbs";
 import { useT } from "../../i18n";
+import { Slot } from "../../plugins/Slot";
+import { UI_SLOTS } from "../../plugins/slots";
 import type { ActivityEntry, UIToolCall } from "../../stores/transcript";
 import { ExpandArrowIcon } from "../icons";
 import { dotsFromItems, type MetaDot, type SummarySegment, summarizeCategories } from "./meta-summary";
@@ -213,7 +215,9 @@ export function MetaGroup({
 	const rows = items.flatMap((item, i) => [
 		// biome-ignore lint/suspicious/noArrayIndexKey: 折叠组内项无独立 id，列表顺序稳定
 		item.thinking ? <ThinkingRow key={`thinking-${i}`} thinking={item.thinking} /> : null,
-		...item.tools.map((tool) => <ToolCallCard key={tool.key} tool={tool} />),
+		...item.tools.map((tool) => (
+			<Slot key={tool.key} name={UI_SLOTS.ToolCallCard} props={{ tool }} fallback={ToolCallCard} />
+		)),
 	]);
 	// orb 状态（名字是包的渲染器名，与我们的语义不同名）：
 	// tool 运行中 → connecting（星座连线 + 信号跑边）

@@ -1,0 +1,16 @@
+{
+	"name": "token-meter",
+	"version": "0.1.0",
+	"displayName": "Token 仪表盘（示例）",
+	"description": "聊天区右上角的迷你上下文用量仪表盘（chat.corner.top-right，useContextUsage）",
+	"perchoUi": 1,
+	"main": "src/index.tsx",
+	"contributions": [
+		{
+			"id": "meter",
+			"region": "chat.corner.top-right",
+			"export": "TokenMeter",
+			"title": "Token 仪表盘"
+		}
+	]
+}

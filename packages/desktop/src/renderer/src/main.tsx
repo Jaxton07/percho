@@ -1,6 +1,8 @@
 import { StrictMode } from "react";
 import { createRoot } from "react-dom/client";
 import App from "./App";
+// 宿主 API 挂载（副作用）：必须在任何插件代码可能运行之前执行，因此置于 theme store init 之前
+import "./plugins/host-api";
 import { initSplash } from "./splash";
 import { useThemeStore } from "./stores/theme";
 import { useUiPreferencesStore } from "./stores/ui-preferences";

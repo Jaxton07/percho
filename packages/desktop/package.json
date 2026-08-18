@@ -1,6 +1,6 @@
 {
 	"name": "@percho/desktop",
-	"version": "0.3.6",
+	"version": "0.4.0",
 	"private": true,
 	"description": "Desktop GUI for the Pi coding agent",
 	"author": "Jaxton07",
@@ -24,6 +24,7 @@
 		"@percho/backend": "*",
 		"@percho/shared": "*",
 		"electron-updater": "^6.8.9",
+		"esbuild": "0.25.12",
 		"markstream-react": "^0.0.55",
 		"monaco-editor": "^0.55.1",
 		"react": "^19.2.8",

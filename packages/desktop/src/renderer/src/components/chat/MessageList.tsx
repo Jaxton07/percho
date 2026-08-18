@@ -1,5 +1,7 @@
 import { type MouseEvent, type ReactNode, useCallback, useEffect, useRef, useState } from "react";
 import { useT } from "../../i18n";
+import { Slot } from "../../plugins/Slot";
+import { UI_SLOTS } from "../../plugins/slots";
 import { useSessionsStore } from "../../stores/sessions";
 import { selectTranscript, useTranscriptStore } from "../../stores/transcript";
 import { MessageItem } from "./MessageItem";
@@ -198,7 +200,14 @@ export function MessageList() {
 		}
 		// 子代理运行中行：tool_execution_start 即入缓冲，流式期就展示（不等 turn_end 固化），顺序对齐固化后的 assistant → subagents
 		if (streaming.subagentRuns.length > 0) {
-			items.push(<SubagentRunCard key="streaming-subagents" runs={streaming.subagentRuns} />);
+			items.push(
+				<Slot
+					key="streaming-subagents"
+					name={UI_SLOTS.SubagentCard}
+					props={{ runs: streaming.subagentRuns }}
+					fallback={SubagentRunCard}
+				/>,
+			);
 		}
 	}
 	// 最新组无内容但仍在工作（正文已出、工具/子代理执行中）：挂上流式活动序列，预览行继续显示最新活动
