@@ -37,14 +37,39 @@ function pluginsDir(): string {
 	return join(app.getPath("userData"), "ui-plugins");
 }
 
-/** 内置插件源码目录（随包分发，packaged 态在 .app 内只读）；userData 同名插件遮蔽内置版 */
+/** 内置插件源码目录（随包分发，packaged 态在 .app 内只读）；init 时导出到用户插件目录 */
 function builtinPluginsDir(): string {
 	return join(uiPluginsResourcesDir(), "builtin");
 }
 
-/** 内置插件产物缓存根：按应用版本分层（升级自动重建；dev 期靠 mtime 检查迭代） */
-function builtinDistRoot(): string {
-	return join(app.getPath("userData"), "ui-plugins-builtin", app.getVersion());
+/** 内置插件导出戳：记录上次导出时的应用版本（点开头过不了 NAME_RE，不会被当插件扫描） */
+function builtinSeedStampPath(): string {
+	return join(pluginsDir(), ".builtin-seed.json");
+}
+
+/**
+ * 导出内置插件到用户插件目录——之后与用户插件走**同一条**扫描/构建/热重载/读码路径，无特殊分支。
+ * 策略：仅首次安装 / 应用版本变化时整树刷新（copyTree 内容一致自动跳过）；同版本重启直接返回零开销；
+ * dev 态每次跑 copyTree（一致跳过 ≈ 零开销，源码迭代即时生效）。
+ * 边界语义：手动删除某内置目录 → 本版本内不再回来（尊重删除），下次升级重新导出；
+ * 直接改内置副本 → 升级时被覆盖（注释与 SPEC 都写明：魔改请把目录改名另存，面板「打开目录」可达）。
+ */
+async function seedBuiltinPlugins(): Promise<void> {
+	const stampPath = builtinSeedStampPath();
+	const version = app.getVersion();
+	const stamp = await readFile(stampPath, "utf-8")
+		.then((s) => JSON.parse(s) as { version?: string })
+		.catch(() => null);
+	if (app.isPackaged && stamp?.version === version) return;
+	const src = builtinPluginsDir();
+	const entries = await readdir(src, { withFileTypes: true }).catch(() => []);
+	for (const entry of entries) {
+		if (!entry.isDirectory() || !NAME_RE.test(entry.name)) continue;
+		await copyTree(join(src, entry.name), join(pluginsDir(), entry.name));
+	}
+	await writeFile(stampPath, JSON.stringify({ version }), "utf-8").catch((err) =>
+		log.error("builtin seed stamp failed", err),
+	);
 }
 
 /** 随包资源目录：dev 态 = packages/desktop/resources/ui-plugins；packaged 态 = resources/ui-plugins（extraResources 镜像） */
@@ -236,31 +261,29 @@ export class UiPluginManager {
 	private infos = new Map<string, UiPluginInfo>();
 	/** name → 插件目录绝对路径（白名单：readCode/openDir 只接受扫描到的合法名） */
 	private dirNames = new Map<string, string>();
-	/** 内置插件名集合（scanAll 重建；产物路径走 userData 缓存而非插件目录） */
+	/** 随包内置插件名集合（init 时导出到用户目录；此处仅用于合成 builtin 标志 → 面板 badge/启用免确认） */
 	private builtinNames = new Set<string>();
 	/** 持久化配置缓存（updateConfig 后刷新；scanAll 时叠加） */
 	private config: UiPluginsConfig = defaultUiPluginsConfig();
-	/** 热重载 watcher（startWatcher 启动；will-quit 时关闭；[0]=用户目录 [1]=内置目录） */
+	/** 热重载 watcher（startWatcher 启动；will-quit 时关闭） */
 	private watchers: FSWatcher[] = [];
 	/** 插件名 → 防抖重建定时器（连续保存只重建一次） */
 	private rebuildTimers = new Map<string, NodeJS.Timeout>();
 
-	/** 确保插件根目录存在、分发规范文档（SPEC/percho-ui.d.ts/symlink）并加载配置 + 首次扫描 */
+	/** 确保插件根目录存在、分发规范文档与内置插件、加载配置 + 首次扫描 */
 	async init(): Promise<void> {
 		await mkdir(pluginsDir(), { recursive: true });
+		// 0.4.0 内置插件版本化缓存目录的遗留（seed 方案后不再需要，静默清掉）
+		await rm(join(app.getPath("userData"), "ui-plugins-builtin"), { recursive: true, force: true }).catch(
+			() => {},
+		);
 		await seedDocs();
+		await seedBuiltinPlugins();
 		await this.scanAll();
 	}
 
-	/** 插件产物目录：用户插件 = 插件目录内 dist/；内置插件 = userData 版本化缓存（resources 只读写不得） */
-	private distDirOf(name: string): string | null {
-		const src = this.dirNames.get(name);
-		if (!src) return null;
-		return this.builtinNames.has(name) ? join(builtinDistRoot(), name, "dist") : join(src, "dist");
-	}
-
-	/** 合成单个插件的 UiPluginInfo（用户/内置两路扫描共用） */
-	private async scanOne(name: string, srcDir: string, builtin: boolean): Promise<UiPluginInfo> {
+	/** 合成单个插件的 UiPluginInfo（统一从用户插件目录扫描；builtin 标志来自随包名单） */
+	private async scanOne(name: string, srcDir: string): Promise<UiPluginInfo> {
 		const manifest = await readManifest(srcDir);
 		const invalidReason = validateManifest(name, manifest ?? {});
 		const prev = this.infos.get(name);
@@ -276,18 +299,22 @@ export class UiPluginManager {
 			trusted: this.config.plugins[name]?.trusted ?? false,
 			invalidReason: invalidReason ?? undefined,
 			buildError: prev?.buildError,
-			built: existsSync(join(this.distDirOf(name) ?? "", "index.js")),
-			builtin: builtin || undefined, // 用户插件不落字段（保持载荷干净）
+			built: existsSync(join(srcDir, "dist/index.js")),
+			builtin: this.builtinNames.has(name) || undefined, // 用户插件不落字段（保持载荷干净）
 		};
 	}
 
-	/** 扫描 userData/ui-plugins/ + resources builtin/ 每个子目录：校验 manifest 并合成 UiPluginInfo（叠加 config/产物状态） */
+	/** 扫描 userData/ui-plugins/ 每个子目录：校验 manifest 并合成 UiPluginInfo（叠加 config/产物状态） */
 	async scanAll(): Promise<UiPluginInfo[]> {
 		this.config = await loadUiPluginsConfig();
+		// 随包内置名单（每次扫描现取，目录静态几乎零开销）
+		const builtinEntries = await readdir(builtinPluginsDir(), { withFileTypes: true }).catch(() => []);
+		this.builtinNames = new Set(
+			builtinEntries.filter((e) => e.isDirectory() && NAME_RE.test(e.name)).map((e) => e.name),
+		);
 		const dir = pluginsDir();
 		const out: UiPluginInfo[] = [];
 		const seen = new Set<string>();
-		this.builtinNames.clear();
 		const entries = await readdir(dir, { withFileTypes: true }).catch((err) => {
 			log.error("scanAll readdir failed", err);
 			return [];
@@ -298,23 +325,8 @@ export class UiPluginManager {
 			if (!NAME_RE.test(name)) continue; // 目录名非法直接跳过（不占白名单）
 			seen.add(name);
 			this.dirNames.set(name, join(dir, name));
-			const info = await this.scanOne(name, join(dir, name), false);
+			const info = await this.scanOne(name, join(dir, name));
 			this.infos.set(name, info);
-			out.push(info);
-		}
-		// 内置插件：随包分发；userData 同名遮蔽（用户 fork 魔改优先）
-		const builtinEntries = await readdir(builtinPluginsDir(), { withFileTypes: true }).catch(() => []);
-		for (const entry of builtinEntries) {
-			if (!entry.isDirectory() || !NAME_RE.test(entry.name)) continue;
-			if (seen.has(entry.name)) {
-				log.warn(`内置插件被 userData 同名插件遮蔽: ${entry.name}`);
-				continue;
-			}
-			seen.add(entry.name);
-			this.dirNames.set(entry.name, join(builtinPluginsDir(), entry.name));
-			this.builtinNames.add(entry.name);
-			const info = await this.scanOne(entry.name, join(builtinPluginsDir(), entry.name), true);
-			this.infos.set(entry.name, info);
 			out.push(info);
 		}
 		// 清理幽灵条目：目录已删除/改名的插件从两个 Map 移除（否则面板显示已删除插件直到重启）
@@ -346,9 +358,8 @@ export class UiPluginManager {
 		if (!info || info.invalidReason) return false;
 		const pluginDir = this.dirNames.get(name);
 		const manifest = await readManifest(pluginDir ?? "");
-		const distDir = this.distDirOf(name);
-		if (!pluginDir || !manifest || typeof manifest.main !== "string" || !distDir) return false;
-		const dist = join(distDir, "index.js");
+		if (!pluginDir || !manifest || typeof manifest.main !== "string") return false;
+		const dist = join(pluginDir, "dist/index.js");
 		try {
 			let needsBuild = force || !existsSync(dist);
 			if (!needsBuild) {
@@ -357,7 +368,7 @@ export class UiPluginManager {
 				needsBuild = srcMtime === null || !distStat || srcMtime > distStat.mtimeMs;
 			}
 			if (needsBuild) {
-				const res = await buildPlugin(pluginDir, manifest.main, { outDir: distDir });
+				const res = await buildPlugin(pluginDir, manifest.main);
 				if (res.ok) {
 					this.infos.set(name, { ...info, buildError: undefined, built: true });
 				} else {
@@ -380,19 +391,18 @@ export class UiPluginManager {
 		const info = this.infos.get(name);
 		if (!info || info.invalidReason) return { error: `未知插件 ${name}` };
 		const pluginDir = this.dirNames.get(name);
-		const distDir = this.distDirOf(name);
-		if (!pluginDir || !distDir) return { error: `未知插件 ${name}` };
+		if (!pluginDir) return { error: `未知插件 ${name}` };
 		const ok = await this.ensureBuilt(name);
 		if (!ok) {
 			// 构建失败：旧产物存在则继续生效（spec §6，不清 dist）；buildError 已进 list 由面板展示
-			if (!existsSync(join(distDir, "index.js"))) {
+			if (!existsSync(join(pluginDir, "dist/index.js"))) {
 				return { error: this.infos.get(name)?.buildError ?? `构建失败：${name}` };
 			}
 		}
 		try {
 			const [manifest, code] = await Promise.all([
 				readManifest(pluginDir),
-				readFile(join(distDir, "index.js"), "utf-8"),
+				readFile(join(pluginDir, "dist/index.js"), "utf-8"),
 			]);
 			if (!manifest || validateManifest(name, manifest)) return { error: "manifest 校验失败" };
 			// 未知 region 条目已被过滤（与 scanAll 合成 info 同源），registry 只注册已知区域
@@ -418,27 +428,27 @@ export class UiPluginManager {
 	}
 
 	/**
-	 * 启动热重载 watcher：监听用户插件目录 + 内置插件目录（recursive），变更落在某插件的 src/ 或 plugin.json
+	 * 启动热重载 watcher：监听插件目录（recursive），变更落在某插件的 src/ 或 plugin.json
 	 * → 300ms 防抖后重新扫描+构建（无论成败）→ 回调通知（推 { kind: "changed", name }）。
 	 * dist/ 下的构建产物事件忽略（否则构建自身会触发重建死循环）；watch 失败只告警不致命。
+	 * （内置插件已导出到本目录，天然被覆盖——无需第二路 watcher）
 	 */
 	startWatcher(onChange: (name: string) => void): void {
 		if (this.watchers.length > 0) return;
-		const handler = (_event: string, filename: string | null) => {
-			if (typeof filename !== "string") return;
-			const rel = filename.split(/[\\/]/);
-			const name = rel[0];
-			if (!name || !NAME_RE.test(name)) return;
-			const rest = rel.slice(1);
-			if (rest.length === 0 || rest[0] === "dist") return; // 目录事件/构建产物忽略
-			this.scheduleRebuild(name, onChange);
-		};
-		for (const dir of [pluginsDir(), builtinPluginsDir()]) {
-			try {
-				this.watchers.push(watch(dir, { recursive: true }, handler));
-			} catch (err) {
-				log.error("fs.watch failed（该目录热重载不可用，手动重建不受影响）", dir, err);
-			}
+		try {
+			this.watchers.push(
+				watch(pluginsDir(), { recursive: true }, (_event, filename) => {
+					if (typeof filename !== "string") return;
+					const rel = filename.split(/[\\/]/);
+					const name = rel[0];
+					if (!name || !NAME_RE.test(name)) return;
+					const rest = rel.slice(1);
+					if (rest.length === 0 || rest[0] === "dist") return; // 目录事件/构建产物忽略
+					this.scheduleRebuild(name, onChange);
+				}),
+			);
+		} catch (err) {
+			log.error("fs.watch failed（热重载不可用，手动重建不受影响）", err);
 		}
 	}
 

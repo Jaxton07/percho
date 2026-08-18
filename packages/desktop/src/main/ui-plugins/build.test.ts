@@ -71,18 +71,6 @@ export function Card() { return <img src={iconUrl} alt="" />; }
 		expect(out).toContain(pngB64);
 	});
 
-	it("自定义 outDir：产物落到指定目录（内置插件 resources 只读 → userData 缓存路径）", async () => {
-		const dir = await makePlugin(`
-export function Card() { return <div className="x">hi</div>; }
-`);
-		const outDir = join(dir, "cache-dist");
-		const res = await buildPlugin(dir, "src/index.tsx", { outDir });
-		expect(res).toEqual({ ok: true });
-		await expect(readFile(join(outDir, "index.js"), "utf-8")).resolves.toContain("window.PerchoUI");
-		// 默认路径不出产物
-		await expect(readFile(join(dir, "dist/index.js"), "utf-8")).rejects.toThrow();
-	});
-
 	it("语法错误返回首条错误 text+location 单行字符串，不产出 dist", async () => {
 		const dir = await makePlugin(`
 export function Card() { return <div>未闭合

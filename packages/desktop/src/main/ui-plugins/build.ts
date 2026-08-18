@@ -1,6 +1,27 @@
+import { existsSync } from "node:fs";
 import { join } from "node:path";
 import type { Plugin } from "esbuild";
-import { build } from "esbuild";
+
+/**
+ * 懒加载 esbuild + 打包态二进制路径修正（两件事必须一起做）：
+ * - 打包态 esbuild 平台二进制在 app.asar 内无法 exec（spawn ENOTDIR），需指向 asarUnpack 镜像出的真实文件；
+ * - esbuild 在**模块求值时**一次性缓存 ESBUILD_BINARY_PATH（main.js 顶层），
+ *   而 ESM import 提升会让静态 import 先于任何模块体执行 → 必须 import() 前动态设 env。
+ * dev/测试态 unpacked 路径不存在 → 不设环境变量，esbuild 默认按包布局解析。
+ */
+let esbuildPromise: Promise<typeof import("esbuild")> | null = null;
+function loadEsbuild(): Promise<typeof import("esbuild")> {
+	if (!esbuildPromise) {
+		const bin = process.platform === "win32" ? "esbuild.exe" : "esbuild";
+		const unpacked = join(
+			process.resourcesPath ?? "",
+			`app.asar.unpacked/node_modules/@esbuild/${process.platform}-${process.arch}/bin/${bin}`,
+		);
+		if (existsSync(unpacked)) process.env.ESBUILD_BINARY_PATH = unpacked;
+		esbuildPromise = import("esbuild");
+	}
+	return esbuildPromise;
+}
 
 /**
  * 宿主 API 暴露面（四个虚拟模块的 shim 重写目标 = window.PerchoUI）。
@@ -82,6 +103,7 @@ export async function buildPlugin(
 	// 产物目录：默认插件目录内 dist/；内置插件（resources 只读）由 manager 指定 userData 版本化缓存目录
 	const outDir = options?.outDir ?? join(pluginDir, "dist");
 	try {
+		const { build } = await loadEsbuild();
 		await build({
 			entryPoints: [join(pluginDir, mainEntry)],
 			bundle: true,
