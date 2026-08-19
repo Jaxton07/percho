@@ -24,6 +24,8 @@ import type {
 	CustomProviderInput,
 	CustomProviderUpdateInput,
 	ListProvidersOptions,
+	LoginEventPayload,
+	LoginResult,
 	ProviderInfo,
 	ProviderTestResult,
 } from "./settings";
@@ -75,6 +77,12 @@ export const IpcChannels = {
 	SettingsUpdateCustomProvider: "settings:updateCustomProvider",
 	SettingsRemoveCustomProvider: "settings:removeCustomProvider",
 	SettingsTestProvider: "settings:testProvider",
+	/** provider 订阅登录（OAuth）；loginId 由 renderer 生成用于事件归属 */
+	SettingsLoginStart: "settings:loginStart",
+	SettingsLoginCancel: "settings:loginCancel",
+	SettingsLoginRespond: "settings:loginRespond",
+	/** main → renderer 登录流程事件（event/prompt/prompt-cancel） */
+	SettingsLoginEvent: "settings:loginEvent",
 	/** 视觉代理（外挂图像识别，纯文本模型用） */
 	VisionGetConfig: "vision:getConfig",
 	VisionSaveConfig: "vision:saveConfig",
@@ -207,6 +215,14 @@ export interface PiApi {
 	updateCustomProvider(input: CustomProviderUpdateInput): Promise<void>;
 	removeCustomProvider(providerId: string): Promise<void>;
 	testProvider(providerId: string, modelId?: string): Promise<ProviderTestResult>;
+	/** 启动 provider 订阅登录（OAuth 浏览器/设备码流）；事件经 onProviderLoginEvent 推送，promise 在流程结束时 resolve（取消不算错误） */
+	startProviderLogin(loginId: string, providerId: string): Promise<LoginResult>;
+	/** 取消进行中的登录流程（未知 loginId 静默忽略） */
+	cancelProviderLogin(loginId: string): Promise<void>;
+	/** 应答登录过程中的输入/选择提示（promptId 已被外部取消时静默忽略） */
+	respondProviderLogin(loginId: string, promptId: string, value: string): Promise<void>;
+	/** 订阅登录流程事件（event/prompt/prompt-cancel，按 loginId 归属）；返回取消函数 */
+	onProviderLoginEvent(cb: (payload: LoginEventPayload) => void): () => void;
 	/** 读取视觉代理配置（key 只给存在性，不回传） */
 	getVisionConfig(): Promise<VisionConfigInfo>;
 	/** 保存视觉代理配置（apiKey 留空保持不变，clearApiKey 删除）；即时生效 */

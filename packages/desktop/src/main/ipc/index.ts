@@ -42,6 +42,9 @@ export function registerIpc(backend: PiBackend, uiPluginsManager: UiPluginManage
 	backend.onTrustRequest((req: TrustRequest) => {
 		sendToRenderer(IpcChannels.TrustRequest, req);
 	});
+	backend.onLoginEvent((payload) => {
+		sendToRenderer(IpcChannels.SettingsLoginEvent, payload);
+	});
 	onUpdateState((state) => {
 		sendToRenderer(IpcChannels.UpdateEvent, state);
 	});

@@ -3,6 +3,7 @@ import { useT } from "../../../i18n";
 import { useSettingsStore } from "../../../stores/settings";
 import { RefreshIcon } from "../../icons";
 import { CustomProviderForm } from "./CustomProviderForm";
+import { LoginDialog } from "./LoginDialog";
 import { IconAction, ProviderRow } from "./ProviderRow";
 
 /** Provider 设置面板：列表 + 联网刷新 + 自定义 provider 表单 */
@@ -37,6 +38,7 @@ export function ProvidersPanel() {
 				<ProviderList providers={providers} />
 			)}
 			<CustomProviderForm />
+			<LoginDialog />
 		</div>
 	);
 }

@@ -6,6 +6,7 @@ import type {
 	CustomProviderUpdateInput,
 	LoadedExtension,
 	LoadedSkill,
+	LoginAuthPrompt,
 	ProviderInfo,
 	ProviderTestResult,
 	ResourceDiagnosticInfo,
@@ -29,6 +30,26 @@ export type SettingsCategory =
 	| "about"
 	// 插件自带设置页分类（settings.panel 贡献动态拼接，id = plugin:<pluginName>:<contributionId>）
 	| `plugin:${string}`;
+
+/** 订阅登录（OAuth）流程的 UI 状态机；事件来自 backend LoginService 桥接 */
+export interface LoginFlowState {
+	/** renderer 生成的流程 id（事件归属/应答/取消关联） */
+	loginId: string;
+	providerId: string;
+	providerName: string;
+	/** 最新 progress/info 文案（SDK 原文） */
+	statusLine?: string;
+	/** info 事件附带的链接 */
+	infoLinks?: readonly { url: string; label?: string }[];
+	/** 浏览器授权地址（auth_url 事件；收到时自动开一次浏览器） */
+	authUrl?: { url: string; instructions?: string };
+	/** 设备码（device_code 事件；SDK 侧自行轮询） */
+	deviceCode?: { userCode: string; verificationUri: string; expiresInSeconds?: number };
+	/** 当前挂起的输入/选择提示（应答或 prompt-cancel 后清空） */
+	pendingPrompt?: { promptId: string; prompt: LoginAuthPrompt };
+	/** 流程已结束但失败（保留对话框展示错误；cancelled 直接关闭不设此字段） */
+	error?: string;
+}
 
 interface SettingsStore {
 	open: boolean;
@@ -76,6 +97,8 @@ interface SettingsStore {
 	configuredPackages: ConfiguredPackageInfo[] | null;
 	/** providerId → 测试结果（"testing" 表示进行中） */
 	testResults: Record<string, ProviderTestResult | "testing">;
+	/** 进行中的订阅登录流程（同一时刻一个；null = 无） */
+	login: LoginFlowState | null;
 	error: string | null;
 	setOpen: (open: boolean) => void;
 	/** 打开并（可选）定位到指定分类 */
@@ -90,6 +113,14 @@ interface SettingsStore {
 	updateCustom: (input: CustomProviderUpdateInput) => Promise<void>;
 	removeCustom: (providerId: string) => Promise<void>;
 	test: (providerId: string) => Promise<void>;
+	/** 启动 provider 订阅登录（OAuth）；事件驱动 login 状态机，结束自动收尾 */
+	startProviderLogin: (provider: ProviderInfo) => Promise<void>;
+	/** 应答登录中的输入/选择提示 */
+	respondLoginPrompt: (value: string) => void;
+	/** 取消进行中的登录（invoke 收尾时统一清空状态） */
+	cancelProviderLogin: () => void;
+	/** 关闭登录对话框（错误态保留展示时用） */
+	dismissLogin: () => void;
 	setPermissionEnabled: (enabled: boolean) => Promise<void>;
 	/** 保存视觉代理配置（返回新配置；key 留空保持不变） */
 	saveVision: (input: VisionSaveInput) => Promise<void>;
@@ -152,9 +183,16 @@ export const useSettingsStore = create<SettingsStore>((set, get) => {
 		removeErrors: {},
 		configuredPackages: null,
 		testResults: {},
+		login: null,
 		error: null,
 
 		setOpen: (open) => {
+			// 关闭设置时取消进行中的登录流程（对话框随面板卸载）
+			if (!open) {
+				const active = get().login;
+				if (active && !active.error) void getPi().cancelProviderLogin(active.loginId);
+				if (active) set({ login: null });
+			}
 			set({ open, testResults: {}, error: null });
 			if (open) void get().refresh();
 		},
@@ -413,5 +451,99 @@ export const useSettingsStore = create<SettingsStore>((set, get) => {
 				}));
 			}
 		},
+
+		startProviderLogin: async (provider) => {
+			if (get().login) return;
+			const loginId = `login-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+			set({ login: { loginId, providerId: provider.id, providerName: provider.name } });
+			// 每个流程只自动开一次浏览器（auth_url 可能重复发）
+			let browserOpened = false;
+			// 先订阅再 invoke：事件可能在 invoke 返回前到达
+			const unsubscribe = getPi().onProviderLoginEvent((payload) => {
+				if (payload.loginId !== loginId) return;
+				const state = get().login;
+				if (!state || state.loginId !== loginId) return;
+				if (payload.kind === "prompt") {
+					set({ login: { ...state, pendingPrompt: { promptId: payload.promptId, prompt: payload.prompt } } });
+					return;
+				}
+				if (payload.kind === "prompt-cancel") {
+					if (state.pendingPrompt?.promptId === payload.promptId) {
+						set({ login: { ...state, pendingPrompt: undefined } });
+					}
+					return;
+				}
+				const event = payload.event;
+				if (event.type === "auth_url") {
+					set({ login: { ...state, authUrl: { url: event.url, instructions: event.instructions } } });
+					if (!browserOpened) {
+						browserOpened = true;
+						void getPi().openExternal(event.url);
+					}
+				} else if (event.type === "device_code") {
+					set({
+						login: {
+							...state,
+							deviceCode: {
+								userCode: event.userCode,
+								verificationUri: event.verificationUri,
+								expiresInSeconds: event.expiresInSeconds,
+							},
+						},
+					});
+				} else if (event.type === "progress") {
+					set({ login: { ...state, statusLine: event.message } });
+				} else if (event.type === "info") {
+					set({ login: { ...state, statusLine: event.message, infoLinks: event.links } });
+				}
+			});
+			try {
+				const result = await getPi().startProviderLogin(loginId, provider.id);
+				if (result.ok) {
+					set({ login: null });
+					// 凭证已持久化并同步运行时：刷新 provider 徽章 + 模型选择器
+					await afterMutation();
+				} else if (result.cancelled) {
+					set({ login: null });
+				} else {
+					const state = get().login;
+					if (state) {
+						set({
+							login: { ...state, pendingPrompt: undefined, error: result.error ?? "unknown error" },
+						});
+					}
+				}
+			} catch (error) {
+				// invoke 层错误（并发守卫等）：保留对话框展示
+				const state = get().login;
+				if (state) {
+					set({
+						login: {
+							...state,
+							pendingPrompt: undefined,
+							error: error instanceof Error ? error.message : String(error),
+						},
+					});
+				}
+			} finally {
+				unsubscribe();
+			}
+		},
+
+		respondLoginPrompt: (value) => {
+			const state = get().login;
+			if (!state?.pendingPrompt) return;
+			const { promptId } = state.pendingPrompt;
+			set({ login: { ...state, pendingPrompt: undefined } });
+			void getPi().respondProviderLogin(state.loginId, promptId, value);
+		},
+
+		cancelProviderLogin: () => {
+			const state = get().login;
+			if (!state) return;
+			void getPi().cancelProviderLogin(state.loginId);
+		},
+
+		dismissLogin: () => set({ login: null }),
 	};
 });

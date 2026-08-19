@@ -21,6 +21,7 @@ import type {
 	CreateSessionOptions,
 	ImageInput,
 	LoadedResources,
+	LoginEventPayload,
 	PermissionAnswer,
 	PermissionRequest,
 	SessionMessage,
@@ -64,6 +65,7 @@ import { type EventForwarder, SessionRegistry } from "./session/registry";
 import { TraceRecorder } from "./session/trace";
 import { SessionTraces } from "./session/traces";
 import { makeUiContext } from "./session/ui-context";
+import { LoginService } from "./settings/login";
 import { SettingsService } from "./settings/settings";
 import { slashCommandsForLoader, slashCommandsForSession } from "./slash-commands";
 import { makeShowImageTool } from "./tools/show-image";
@@ -109,6 +111,7 @@ export interface PiBackendOptions {
 type EventHandler = (sessionId: string, event: AgentSessionEvent) => void;
 type PermissionHandler = (req: PermissionRequest) => void;
 type TrustHandler = (req: TrustRequest) => void;
+type LoginHandler = (payload: LoginEventPayload) => void;
 
 /**
  * PiBackend：pi SDK 的唯一适配层（门面）。不依赖 Electron，
@@ -126,6 +129,7 @@ export class PiBackend {
 	private readonly eventHandlers = new Set<EventHandler>();
 	private readonly permissionHandlers = new Set<PermissionHandler>();
 	private readonly trustHandlers = new Set<TrustHandler>();
+	private readonly loginHandlers = new Set<LoginHandler>();
 	private readonly gates = new Map<string, PermissionGate>();
 	/** 项目信任决策记录（~/.pi/agent/trust.json，与 CLI 共享）+ 信任请求门控 */
 	private readonly trustStore = new ProjectTrustStore(getAgentDir());
@@ -136,6 +140,11 @@ export class PiBackend {
 	private modelPromise: Promise<ModelRuntime> | undefined;
 	/** 设置页（provider/模型/凭证配置）服务 */
 	readonly settings = new SettingsService(() => this.getModelRuntime());
+	/** provider 订阅登录（OAuth）服务，事件经 onLoginEvent 分发 */
+	readonly login = new LoginService({
+		getRuntime: () => this.getModelRuntime(),
+		send: (payload) => this.dispatchLoginEvent(payload),
+	});
 	/** 视觉代理配置（userData/vision.json；未提供路径时禁用） */
 	private readonly visionConfig: VisionConfigService | undefined;
 	/** 社区包管理（安装/卸载 + 会话热重载） */
@@ -675,6 +684,11 @@ export class PiBackend {
 		return () => this.trustHandlers.delete(handler);
 	}
 
+	onLoginEvent(handler: LoginHandler): () => void {
+		this.loginHandlers.add(handler);
+		return () => this.loginHandlers.delete(handler);
+	}
+
 	respondPermission(requestId: string, answer: PermissionAnswer): void {
 		if (answer === "allowDir" || answer === "allowAlways") {
 			// 持久化决策（仅内置权限扩展的请求带 meta）：
@@ -793,6 +807,16 @@ export class PiBackend {
 		for (const handler of this.trustHandlers) {
 			try {
 				handler(req);
+			} catch {
+				// 忽略单个处理器异常
+			}
+		}
+	}
+
+	private dispatchLoginEvent(payload: LoginEventPayload): void {
+		for (const handler of this.loginHandlers) {
+			try {
+				handler(payload);
 			} catch {
 				// 忽略单个处理器异常
 			}

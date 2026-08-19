@@ -248,6 +248,7 @@ export const en: Messages = {
 			configKey: "Set Key",
 			updateKey: "Update Key",
 			removeCredential: "Remove credential",
+			login: "Sign in with subscription",
 			keyPlaceholder: "Paste API Key, saved to ~/.pi/agent/auth.json",
 			addCustom: "+ Add custom provider",
 			customTitle: "Custom Provider",
@@ -270,6 +271,16 @@ export const en: Messages = {
 			customModelsHint:
 				"One model per row; paste a comma/newline-separated list to split into rows; enable Think to unlock thinking levels for that model",
 			submitting: "Saving…",
+		},
+		login: {
+			title: "Subscription sign-in · {name}",
+			browserHint:
+				"Authorization page opened in your browser. If it doesn't complete automatically, paste the final redirect URL from the browser address bar into the input below",
+			deviceCodeHint: "Enter this code on the verification page",
+			deviceCodeExpires: "Code expires in {minutes} min",
+			waiting: "Waiting for authorization…",
+			submit: "Submit",
+			failed: "Sign-in failed",
 		},
 		skills: {
 			title: "Loaded Skills",

@@ -32,6 +32,13 @@ export function registerSettingsIpc(backend: PiBackend): void {
 	ipcMain.handle(IpcChannels.SettingsTestProvider, (_e, providerId: string, modelId?: string) =>
 		backend.settings.testProvider(providerId, modelId),
 	);
+	ipcMain.handle(IpcChannels.SettingsLoginStart, (_e, loginId: string, providerId: string) =>
+		backend.login.startLogin(loginId, providerId),
+	);
+	ipcMain.handle(IpcChannels.SettingsLoginCancel, (_e, loginId: string) => backend.login.cancel(loginId));
+	ipcMain.handle(IpcChannels.SettingsLoginRespond, (_e, loginId: string, promptId: string, value: string) =>
+		backend.login.respond(loginId, promptId, value),
+	);
 	ipcMain.handle(IpcChannels.PermissionRespond, (_e, requestId: string, answer: PermissionAnswer) =>
 		backend.respondPermission(requestId, answer),
 	);

@@ -240,6 +240,7 @@ export const zh = {
 			configKey: "配置 Key",
 			updateKey: "更新 Key",
 			removeCredential: "移除凭证",
+			login: "订阅登录",
 			keyPlaceholder: "粘贴 API Key，保存到 ~/.pi/agent/auth.json",
 			addCustom: "+ 添加自定义 Provider",
 			customTitle: "自定义 Provider",
@@ -261,6 +262,15 @@ export const zh = {
 			removeModelRow: "删除此行",
 			customModelsHint: "每行一个模型，可粘贴逗号/换行分隔的列表自动拆行；「思考」开启后该模型才可选思考深度",
 			submitting: "保存中…",
+		},
+		login: {
+			title: "订阅登录 · {name}",
+			browserHint: "授权页面已在浏览器中打开；没有自动完成时，把浏览器地址栏最终的回调地址粘贴到下方输入框",
+			deviceCodeHint: "在打开的验证页面输入以下代码",
+			deviceCodeExpires: "代码 {minutes} 分钟内有效",
+			waiting: "等待授权完成…",
+			submit: "提交",
+			failed: "登录失败",
 		},
 		skills: {
 			title: "已加载的 Skills",
