@@ -1,5 +1,5 @@
 import type { CatalogPackage, CatalogPackageType, LoadedExtension, ResourceScope } from "@percho/shared";
-import { NPM_NOT_FOUND_SENTINEL } from "@percho/shared";
+import { isSubagentPackage, isSubagentToolName, NPM_NOT_FOUND_SENTINEL } from "@percho/shared";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useT } from "../../i18n";
 import { useSettingsStore } from "../../stores/settings";
@@ -114,6 +114,11 @@ function ExtensionRow({
 						{t("settings.extensions.hidden")}
 					</span>
 				)}
+				{extension.tools.some(isSubagentToolName) && (
+					<span className="shrink-0 rounded bg-accent/10 px-1.5 py-0.5 text-[10px] text-accent">
+						{t("settings.extensions.subagentBuiltin")}
+					</span>
+				)}
 				<ScopeBadge scope={extension.scope} />
 				{configured && <UninstallButton source={configured.source} scope={configured.scope} />}
 			</div>
@@ -160,6 +165,20 @@ function CatalogRow({
 	const installing = useSettingsStore((s) => s.installingNames[pkg.name] === true);
 	const installError = useSettingsStore((s) => s.installErrors[pkg.name]);
 	const installCatalogPackage = useSettingsStore((s) => s.installCatalogPackage);
+	// subagent 包安装前警示：两段式确认（与 UninstallButton 同模式，不用 window.confirm）
+	const [warnConfirming, setWarnConfirming] = useState(false);
+	const warnTimerRef = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
+	const isSubagent = isSubagentPackage(pkg);
+	const handleInstall = () => {
+		if (isSubagent && !warnConfirming) {
+			setWarnConfirming(true);
+			clearTimeout(warnTimerRef.current);
+			warnTimerRef.current = setTimeout(() => setWarnConfirming(false), 3000);
+			return;
+		}
+		setWarnConfirming(false);
+		void installCatalogPackage(pkg.name);
+	};
 
 	return (
 		<li className="flex items-start gap-3 py-2.5">
@@ -196,21 +215,31 @@ function CatalogRow({
 						<UninstallButton source={configured.source} scope={configured.scope} />
 					</div>
 				) : (
-					<Button
-						variant="primary"
-						size="sm"
-						disabled={installing}
-						onClick={() => void installCatalogPackage(pkg.name)}
-					>
-						{installing ? (
-							<span className="inline-flex items-center gap-1.5">
-								<span className="h-3 w-3 animate-spin rounded-full border-[1.5px] border-current border-t-transparent" />
-								{t("settings.extensions.installing")}
-							</span>
-						) : (
-							t("settings.extensions.install")
+					<div className="flex flex-col items-end gap-1">
+						<Button
+							variant="primary"
+							size="sm"
+							disabled={installing}
+							title={isSubagent ? t("settings.extensions.subagentInstallWarning") : undefined}
+							onClick={handleInstall}
+						>
+							{installing ? (
+								<span className="inline-flex items-center gap-1.5">
+									<span className="h-3 w-3 animate-spin rounded-full border-[1.5px] border-current border-t-transparent" />
+									{t("settings.extensions.installing")}
+								</span>
+							) : warnConfirming ? (
+								t("settings.extensions.subagentInstallConfirm")
+							) : (
+								t("settings.extensions.install")
+							)}
+						</Button>
+						{warnConfirming && (
+							<p className="max-w-56 text-right text-[11px] leading-snug text-ink-dim">
+								{t("settings.extensions.subagentInstallWarning")}
+							</p>
 						)}
-					</Button>
+					</div>
 				)}
 			</div>
 		</li>

@@ -1,7 +1,7 @@
 import type { UIToolCall } from "../../stores/transcript";
 
-/** 折叠组工具的语义分类（展示统计用）；未知工具归 other（按原始工具名各自计数） */
-export type ToolCategory = "read" | "edit" | "explore" | "search" | "bash" | "other";
+/** 折叠组工具的语义分类（展示统计用）；未知工具归 other（按原始工具名各自计数）；subagent 为正向汇总段（不计工具明细） */
+export type ToolCategory = "read" | "edit" | "explore" | "search" | "bash" | "other" | "subagent";
 
 /** 工具名 → 语义类目：edit/write 同为「编辑」，ls/glob 同为「探索」，grep 单独「搜索」 */
 export function categoryOf(toolName: string): ToolCategory {
@@ -58,8 +58,12 @@ export interface SummarySegment {
 	count: number;
 }
 
-/** 分类汇总：按首见顺序聚合（同 toolName 的 edit/write 归并为一类），other 各自计数 */
-export function summarizeCategories(items: ReadonlyArray<{ tools: UIToolCall[] }>): SummarySegment[] {
+/** 分类汇总：按首见顺序聚合（同 toolName 的 edit/write 归并为一类），other 各自计数；
+ *  subagentCount > 0 时末尾追加「子代理」汇总段（spec §9.0 分野：计数来自组的 subagentRuns/固化消息，不经 tools） */
+export function summarizeCategories(
+	items: ReadonlyArray<{ tools: UIToolCall[] }>,
+	subagentCount = 0,
+): SummarySegment[] {
 	const segments = new Map<string, SummarySegment>();
 	for (const item of items) {
 		for (const tool of item.tools) {
@@ -71,5 +75,9 @@ export function summarizeCategories(items: ReadonlyArray<{ tools: UIToolCall[] }
 			else segments.set(key, { key, category, name: tool.name, count: 1 });
 		}
 	}
-	return [...segments.values()];
+	const result = [...segments.values()];
+	if (subagentCount > 0) {
+		result.push({ key: "subagent", category: "subagent", name: "subagent", count: subagentCount });
+	}
+	return result;
 }

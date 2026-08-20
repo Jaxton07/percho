@@ -83,6 +83,11 @@ function summaryLabel(t: ReturnType<typeof useT>, seg: SummarySegment): string {
 			return t("message.summarySearch", { n: seg.count, unit: pluralUnit(seg.count, "time", "times") });
 		case "bash":
 			return t("message.summaryBash", { n: seg.count, unit: pluralUnit(seg.count, "command", "commands") });
+		case "subagent":
+			return t("message.summarySubagents", {
+				n: seg.count,
+				unit: pluralUnit(seg.count, "subagent", "subagents"),
+			});
 		default:
 			return `${displayName(seg.name)} ×${seg.count}`;
 	}
@@ -108,17 +113,20 @@ export function MetaGroup({
 	items,
 	working,
 	endImmediately = false,
+	subagentCount = 0,
 }: {
 	items: MetaItem[];
 	working: boolean;
 	endImmediately?: boolean;
+	/** 该组派生的子代理数（统计行正向显示「子代理 ×N」；由 MessageList 按组归属计算） */
+	subagentCount?: number;
 }) {
 	const t = useT();
 	const count = items.reduce((n, item) => n + (item.thinking ? 1 : 0) + item.tools.length, 0);
 	// 圆点序列：组内工具按到达顺序展开（working 期实时追加；组结束后随 items 冻结在原位）
 	const dots = useMemo(() => dotsFromItems(items), [items]);
 	// 分类汇总：worked 态标题行（working 期不显示；展开组时标题仍在）
-	const segments = useMemo(() => summarizeCategories(items), [items]);
+	const segments = useMemo(() => summarizeCategories(items, subagentCount), [items, subagentCount]);
 
 	// 滞后缓冲：working 信号消失后需保持缓冲才显示 worked（turn 间隙内不闪烁）；
 	// 与 CenterOrb 中央动画共用同一 hook，两处显隐节奏一致

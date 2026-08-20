@@ -2,10 +2,13 @@ import type { ProviderInfo } from "@percho/shared";
 import { useState } from "react";
 import { useT } from "../../../i18n";
 import { useSettingsStore } from "../../../stores/settings";
-import { EditIcon, LoginIcon, TestIcon, TrashIcon } from "../../icons";
+import { EditIcon, ExpandArrowIcon, LoginIcon, TestIcon, TrashIcon } from "../../icons";
 import { Button } from "../../ui/Button";
+import { Switch } from "../../ui/Switch";
 import { Tooltip } from "../../ui/Tooltip";
 import { CustomProviderEditForm } from "./CustomProviderForm";
+
+const EMPTY_MODEL_IDS: string[] = [];
 
 /** 图标操作按钮：图标无文字，Tooltip + aria-label 必需（ProvidersPanel 刷新按钮复用） */
 export function IconAction({
@@ -50,8 +53,11 @@ export function ProviderRow({ provider }: { provider: ProviderInfo }) {
 	const startLogin = useSettingsStore((s) => s.startProviderLogin);
 	const loginActive = useSettingsStore((s) => s.login !== null);
 	const testResult = useSettingsStore((s) => s.testResults[provider.id]);
+	const hiddenModelIds = useSettingsStore((s) => s.modelPrefs?.hiddenModels[provider.id] ?? EMPTY_MODEL_IDS);
+	const setModelHidden = useSettingsStore((s) => s.setModelHidden);
 	/** 自定义 provider 展开全字段编辑表单，内置 provider 只填/更新 Key */
 	const [editing, setEditing] = useState(false);
+	const [modelsOpen, setModelsOpen] = useState(false);
 	const [key, setKey] = useState("");
 
 	const save = async () => {
@@ -73,8 +79,20 @@ export function ProviderRow({ provider }: { provider: ProviderInfo }) {
 							</span>
 						)}
 					</div>
-					<div className="mt-0.5 text-[11px] text-ink-faint">
-						{t("settings.providers.modelCount", { count: provider.models.length })}
+					<div className="mt-0.5 flex items-center gap-1 text-[11px] text-ink-faint">
+						{provider.configured ? (
+							<button
+								type="button"
+								className="flex items-center gap-1 rounded hover:text-ink"
+								onClick={() => setModelsOpen((open) => !open)}
+								aria-expanded={modelsOpen}
+							>
+								{t("settings.providers.modelCount", { count: provider.models.length })}
+								<ExpandArrowIcon className={`transition-transform ${modelsOpen ? "rotate-90" : ""}`} />
+							</button>
+						) : (
+							<span>{t("settings.providers.modelCount", { count: provider.models.length })}</span>
+						)}
 						{provider.configured && provider.authLabel ? ` · ${provider.authLabel}` : ""}
 					</div>
 				</div>
@@ -146,6 +164,31 @@ export function ProviderRow({ provider }: { provider: ProviderInfo }) {
 						? t("settings.providers.testOk", { modelId: testResult.modelId ?? "" })
 						: t("settings.providers.testFailed", { error: testResult.error ?? "" })}
 				</p>
+			)}
+			{provider.configured && modelsOpen && provider.models.length > 0 && (
+				<div className="mt-2 rounded-lg bg-hover/60 px-2.5 py-2">
+					<p className="mb-1 text-[10px] font-medium text-ink-faint">
+						{t("settings.providers.modelVisibility")}
+					</p>
+					<ul className="space-y-0.5">
+						{provider.models.map((model) => {
+							const visible = !hiddenModelIds.includes(model.id);
+							return (
+								<li key={model.id}>
+									<div className="flex items-center gap-2 rounded px-1 py-1 text-[11px] text-ink-dim hover:bg-surface">
+										<span className="min-w-0 flex-1 truncate">{model.name}</span>
+										<Switch
+											checked={visible}
+											onCheckedChange={(nextVisible) =>
+												void setModelHidden(provider.id, model.id, !nextVisible)
+											}
+										/>
+									</div>
+								</li>
+							);
+						})}
+					</ul>
+				</div>
 			)}
 			{editing &&
 				(provider.custom ? (

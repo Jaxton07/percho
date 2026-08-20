@@ -1,3 +1,4 @@
+import { isSubagentPackage } from "@percho/shared";
 import { describe, expect, it } from "vitest";
 import { decodeHtmlEntities, parseCatalogHtml } from "../src/packages/catalog";
 
@@ -83,6 +84,14 @@ describe("parseCatalogHtml", () => {
 
 	it("结构不符时不抛出、返回空列表", () => {
 		expect(parseCatalogHtml("garbage").packages).toEqual([]);
+	});
+});
+
+describe("isSubagentPackage", () => {
+	it("按包名或描述启发式识别 subagent 包", () => {
+		expect(isSubagentPackage({ name: "pi-subagents", description: "parallel delegation" })).toBe(true);
+		expect(isSubagentPackage({ name: "code-tools", description: "A sub-agent runner" })).toBe(true);
+		expect(isSubagentPackage({ name: "pi-lens", description: "code feedback" })).toBe(false);
 	});
 });
 

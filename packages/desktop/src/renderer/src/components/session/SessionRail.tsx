@@ -4,7 +4,7 @@ import { useT } from "../../i18n";
 import { useSessionsStore } from "../../stores/sessions";
 import { useUiStore } from "../../stores/ui";
 import { useUiPreferencesStore } from "../../stores/ui-preferences";
-import { CloseIcon } from "../icons";
+import { CloseIcon, SubagentIcon } from "../icons";
 import {
 	type SessionStatus,
 	sessionLetter,
@@ -114,10 +114,12 @@ function RailItem({
 			<span className={`rail-capsule h-[2px] ${railLineClass(status, isActive)}`} aria-hidden="true">
 				<span className="flex min-w-0 flex-1 items-center gap-2 px-2.5">
 					<span
-						className={`relative flex h-4 w-4 shrink-0 items-center justify-center rounded text-[10px] font-semibold text-on-ink ${railAvatarClass(status, isActive)}`}
+						className={`relative flex h-4 w-4 shrink-0 items-center justify-center rounded text-[10px] font-semibold text-on-ink ${
+							session.readOnly ? "bg-accent text-on-accent" : railAvatarClass(status, isActive)
+						}`}
 					>
-						{sessionLetter(session).toUpperCase()}
-						{status === "done" && (
+						{session.readOnly ? <SubagentIcon size={11} /> : sessionLetter(session).toUpperCase()}
+						{!session.readOnly && status === "done" && (
 							<span className="absolute -right-0.5 -top-0.5 h-1.5 w-1.5 rounded-full bg-green-500 ring-1 ring-surface" />
 						)}
 					</span>

@@ -21,3 +21,4 @@ npm-debug.log*
 # 编辑器
 .idea/
 .vscode/
+.agents/

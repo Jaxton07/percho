@@ -20,6 +20,14 @@ export interface SubagentRunData {
 }
 
 /**
+ * subagent 家族工具名判定（互斥/接管 badge 的单一来源）：
+ * 内置同名工具 `subagent` + 第三方家族配套 `subagent_*`（wait/status 等）。
+ */
+export function isSubagentToolName(name: string): boolean {
+	return name === "subagent" || name.startsWith("subagent_");
+}
+
+/**
  * 从工具结果 details 提取子代理运行数据。
  * 结构检测（不依赖工具名）：details.results 数组且至少一项带 agent/sessionFile → 返回运行组，否则 null。
  * 兼容 pi-subagents 及遵循同约定的社区扩展：

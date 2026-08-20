@@ -8,6 +8,33 @@ function ev(type: string, extra: Record<string, unknown> = {}): AgentSessionEven
 }
 
 describe("transcript reducer", () => {
+	it("subagent 互斥事件生成系统消息（结构化 + 同扩展去重）", () => {
+		let state = reduceEvent(emptyTranscript(), {
+			type: "subagent_mutex",
+			extensionPath: "/tmp/pi-subagents.ts",
+			tools: ["subagent", "subagent_wait"],
+		});
+		expect(state.messages[0]).toMatchObject({ kind: "system" });
+		expect((state.messages[0] as { mutex?: { extensionPath: string; tools: string[] } }).mutex).toEqual({
+			extensionPath: "/tmp/pi-subagents.ts",
+			tools: ["subagent", "subagent_wait"],
+		});
+		// 同一扩展再次打开会话重发事件时不累积重复通知
+		state = reduceEvent(state, {
+			type: "subagent_mutex",
+			extensionPath: "/tmp/pi-subagents.ts",
+			tools: ["subagent", "subagent_wait"],
+		});
+		expect(state.messages).toHaveLength(1);
+		// 不同扩展各自一条
+		state = reduceEvent(state, {
+			type: "subagent_mutex",
+			extensionPath: "/tmp/other-subagents.ts",
+			tools: ["subagent"],
+		});
+		expect(state.messages).toHaveLength(2);
+	});
+
 	it("用户消息经 message_start 进入消息流", () => {
 		let state = emptyTranscript();
 		state = reduceEvent(state, {
@@ -640,6 +667,105 @@ describe("transcript reducer", () => {
 			task: "review diff",
 			status: "running",
 		});
+	});
+
+	it("subagent：tool_execution_start 移出折叠区时同步摘除 ticker 活动条目（不进 Working 预览行）", () => {
+		let state = emptyTranscript();
+		state = reduceEvent(state, ev("agent_start"));
+		// toolcall_start 建立 tools 条目 + activity 预览条目（id = c${contentIndex}）
+		state = reduceEvent(state, {
+			type: "message_update",
+			assistantMessageEvent: {
+				type: "toolcall_start",
+				contentIndex: 2,
+				partial: { toolCalls: [{ name: "subagent" }] },
+			},
+		} as unknown as AgentSessionEvent);
+		state = reduceEvent(state, {
+			type: "message_update",
+			assistantMessageEvent: {
+				type: "toolcall_end",
+				contentIndex: 2,
+				toolCall: { id: "tc-sub", name: "subagent", arguments: { agent: "scout", task: "侦察" } },
+			},
+		} as unknown as AgentSessionEvent);
+		expect(state.streaming?.activity.some((a) => a.id === "c2")).toBe(true);
+		state = reduceEvent(state, {
+			type: "tool_execution_start",
+			toolCallId: "tc-sub",
+			toolName: "subagent",
+			args: { agent: "scout", task: "侦察" },
+		} as unknown as AgentSessionEvent);
+		expect(state.streaming?.tools).toHaveLength(0);
+		expect(state.streaming?.activity.some((a) => a.id === "c2")).toBe(false);
+		expect(state.streaming?.subagentRuns).toHaveLength(1);
+		// end 兑底分支（无 start 占位但 details 命中）：同样摘除
+		state = reduceEvent(state, {
+			type: "message_update",
+			assistantMessageEvent: {
+				type: "toolcall_start",
+				contentIndex: 3,
+				partial: { toolCalls: [{ name: "subagent" }] },
+			},
+		} as unknown as AgentSessionEvent);
+		state = reduceEvent(state, {
+			type: "message_update",
+			assistantMessageEvent: {
+				type: "toolcall_end",
+				contentIndex: 3,
+				toolCall: { id: "tc-sub2", name: "subagent", arguments: { action: "list" } },
+			},
+		} as unknown as AgentSessionEvent);
+		expect(state.streaming?.activity.some((a) => a.id === "c3")).toBe(true);
+		state = reduceEvent(state, {
+			type: "tool_execution_end",
+			toolCallId: "tc-sub2",
+			toolName: "subagent",
+			result: {
+				content: [{ type: "text", text: "done" }],
+				details: { mode: "single", results: [{ agent: "scout", exitCode: 0 }] },
+			},
+			isError: false,
+		} as unknown as AgentSessionEvent);
+		expect(state.streaming?.activity.some((a) => a.id === "c3")).toBe(false);
+	});
+
+	it("subagent：parallel tasks 建多个占位并整体替换，不残留占位", () => {
+		let state = emptyTranscript();
+		state = reduceEvent(state, ev("agent_start"));
+		state = reduceEvent(state, {
+			type: "tool_execution_start",
+			toolCallId: "parallel-1",
+			toolName: "subagent",
+			args: {
+				tasks: [
+					{ agent: "scout", task: "read one" },
+					{ agent: "scout", task: "read two" },
+				],
+			},
+		} as unknown as AgentSessionEvent);
+		expect(state.streaming?.subagentRuns).toHaveLength(2);
+		expect(state.streaming?.subagentRuns.map((run) => run.status)).toEqual(["running", "running"]);
+		expect(state.streaming?.subagentRuns.map((run) => run.key)).toEqual(["parallel-1:0", "parallel-1:1"]);
+		state = reduceEvent(state, {
+			type: "tool_execution_end",
+			toolCallId: "parallel-1",
+			toolName: "subagent",
+			result: {
+				content: [{ type: "text", text: "done" }],
+				details: {
+					mode: "parallel",
+					results: [
+						{ agent: "scout", task: "read one", exitCode: 0, sessionFile: "/one.jsonl" },
+						{ agent: "scout", task: "read two", exitCode: 0, sessionFile: "/two.jsonl" },
+					],
+				},
+			},
+			isError: false,
+		} as unknown as AgentSessionEvent);
+		expect(state.streaming?.subagentRuns).toHaveLength(2);
+		expect(state.streaming?.subagentRuns.every((run) => run.status === "done")).toBe(true);
+		expect(state.streaming?.subagentRuns.map((run) => run.sessionFile)).toEqual(["/one.jsonl", "/two.jsonl"]);
 	});
 
 	it("subagent：tool_execution_end 用 details 完善运行组，turn_end 固化为独立消息", () => {

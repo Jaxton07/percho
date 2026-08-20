@@ -54,6 +54,12 @@ const api: PiApi = {
 		ipcRenderer.invoke(IpcChannels.SettingsRemoveCustomProvider, providerId),
 	testProvider: (providerId, modelId) =>
 		ipcRenderer.invoke(IpcChannels.SettingsTestProvider, providerId, modelId),
+	getModelPrefs: () => ipcRenderer.invoke(IpcChannels.SettingsGetModelPrefs),
+	setModelHidden: (provider, modelId, hidden) =>
+		ipcRenderer.invoke(IpcChannels.SettingsSetModelHidden, provider, modelId, hidden),
+	setSubagentModel: (agent, modelRef) =>
+		ipcRenderer.invoke(IpcChannels.SettingsSetSubagentModel, agent, modelRef),
+	listSubagents: () => ipcRenderer.invoke(IpcChannels.SettingsListSubagents),
 	startProviderLogin: (loginId, providerId) =>
 		ipcRenderer.invoke(IpcChannels.SettingsLoginStart, loginId, providerId),
 	cancelProviderLogin: (loginId) => ipcRenderer.invoke(IpcChannels.SettingsLoginCancel, loginId),

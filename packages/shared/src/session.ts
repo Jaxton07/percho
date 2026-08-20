@@ -1,4 +1,4 @@
-import type { AgentSessionEvent } from "@earendil-works/pi-coding-agent";
+import type { AgentSessionEvent as PiAgentSessionEvent } from "@earendil-works/pi-coding-agent";
 import type { SubagentRunData } from "./subagent";
 
 /** 顶栏打开的会话持久化（重启恢复用，由主进程写入 userData/tabs.json） */
@@ -49,6 +49,8 @@ export interface SessionMeta {
 	thinkingLevel?: string | null;
 	/** 是否仍在内存中活跃（否则是历史会话） */
 	active: boolean;
+	/** 只读会话（subagent 产物检视，spec §8.1）：禁用输入/fork/撤回/模型切换 */
+	readOnly?: boolean;
 	/** 消息条数（用于历史列表展示） */
 	messageCount: number;
 	/** 创建时间（unix 毫秒） */
@@ -251,6 +253,8 @@ export interface LoadedExtension {
 	hidden: boolean;
 	/** 注册的工具数 */
 	toolsCount: number;
+	/** 注册的工具名（用于识别 subagent 家族） */
+	tools: string[];
 	/** 注册的斜杠命令名 */
 	commands: string[];
 	/** 注册的 flag 数 */
@@ -274,14 +278,19 @@ export interface LoadedResources {
 	extensionErrors: { path: string; error: string }[];
 }
 
+/** Percho 自己产生的会话 UI 事件（不进入 pi 子会话 trace）。 */
+export interface SubagentMutexEvent {
+	type: "subagent_mutex";
+	extensionPath: string;
+	tools: string[];
+}
+
+/** pi 事件 + Percho UI 事件，跨 IPC 统一转发。 */
+export type { PiAgentSessionEvent as AgentSessionEvent };
+export type SessionEvent = PiAgentSessionEvent | SubagentMutexEvent;
+
 /** 渲染进程收到的统一事件包络 */
 export interface SessionEventEnvelope {
 	sessionId: string;
-	event: AgentSessionEvent;
+	event: SessionEvent;
 }
-
-/**
- * pi 会话事件类型（type-only 转发自 pi SDK，运行时零依赖）。
- * 保证 backend / preload / renderer 三方对事件流有完全一致的强类型。
- */
-export type { AgentSessionEvent } from "@earendil-works/pi-coding-agent";

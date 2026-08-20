@@ -2,6 +2,7 @@ import type { ThemeMode } from "@percho/shared";
 import { useT } from "../../i18n";
 import { backgroundImageUrl, useThemeStore } from "../../stores/theme";
 import { useUiPreferencesStore } from "../../stores/ui-preferences";
+import { Switch } from "../ui/Switch";
 
 const THEME_MODES: ThemeMode[] = ["light", "dark", "system"];
 const THEME_LABEL_KEYS = {
@@ -101,42 +102,14 @@ export function AppearancePanel() {
 			<div>
 				<div className="flex items-center justify-between gap-4">
 					<h3 className="text-[13px] font-medium text-ink">{t("settings.sessionRail")}</h3>
-					<button
-						type="button"
-						role="switch"
-						aria-checked={sessionRailEnabled}
-						onClick={() => setSessionRailEnabled(!sessionRailEnabled)}
-						className={`relative h-5 w-9 shrink-0 rounded-full transition-colors ${
-							sessionRailEnabled ? "bg-ink" : "bg-border-strong"
-						}`}
-					>
-						<span
-							className={`absolute top-0.5 h-4 w-4 rounded-full bg-surface shadow transition-all ${
-								sessionRailEnabled ? "left-[18px]" : "left-0.5"
-							}`}
-						/>
-					</button>
+					<Switch checked={sessionRailEnabled} onCheckedChange={setSessionRailEnabled} />
 				</div>
 				<p className="mt-0.5 text-[11px] leading-relaxed text-ink-faint">{t("settings.sessionRailHint")}</p>
 			</div>
 			<div>
 				<div className="flex items-center justify-between gap-4">
 					<h3 className="text-[13px] font-medium text-ink">{t("settings.centerOrb")}</h3>
-					<button
-						type="button"
-						role="switch"
-						aria-checked={centerOrbEnabled}
-						onClick={() => setCenterOrbEnabled(!centerOrbEnabled)}
-						className={`relative h-5 w-9 shrink-0 rounded-full transition-colors ${
-							centerOrbEnabled ? "bg-ink" : "bg-border-strong"
-						}`}
-					>
-						<span
-							className={`absolute top-0.5 h-4 w-4 rounded-full bg-surface shadow transition-all ${
-								centerOrbEnabled ? "left-[18px]" : "left-0.5"
-							}`}
-						/>
-					</button>
+					<Switch checked={centerOrbEnabled} onCheckedChange={setCenterOrbEnabled} />
 				</div>
 				<p className="mt-0.5 text-[11px] leading-relaxed text-ink-faint">{t("settings.centerOrbHint")}</p>
 			</div>

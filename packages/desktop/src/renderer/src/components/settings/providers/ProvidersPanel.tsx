@@ -1,14 +1,19 @@
 import type { ProviderInfo } from "@percho/shared";
+import { useState } from "react";
 import { useT } from "../../../i18n";
 import { useSettingsStore } from "../../../stores/settings";
 import { RefreshIcon } from "../../icons";
 import { CustomProviderForm } from "./CustomProviderForm";
 import { LoginDialog } from "./LoginDialog";
 import { IconAction, ProviderRow } from "./ProviderRow";
+import { SubagentPanel } from "./SubagentPanel";
 
-/** Provider 设置面板：列表 + 联网刷新 + 自定义 provider 表单 */
+type ModelSettingsTab = "providers" | "subagents";
+
+/** 模型配置：Provider 目录/可见性与子代理模型覆盖。 */
 export function ProvidersPanel() {
 	const t = useT();
+	const [tab, setTab] = useState<ModelSettingsTab>("providers");
 	const providers = useSettingsStore((s) => s.providers);
 	const loading = useSettingsStore((s) => s.loading);
 	const refreshing = useSettingsStore((s) => s.refreshing);
@@ -17,28 +22,48 @@ export function ProvidersPanel() {
 
 	return (
 		<div>
-			<div className="mb-2 flex items-center justify-between gap-2">
-				<p className="text-[11px] text-ink-faint">{t("settings.providers.catalogHint")}</p>
-				<IconAction
-					label={t("settings.providers.refresh")}
-					disabled={loading || refreshing}
-					onClick={() => void refreshFromNetwork()}
-				>
-					{refreshing ? (
-						<span className="h-3 w-3 animate-spin rounded-full border-[1.5px] border-current border-t-transparent" />
-					) : (
-						<RefreshIcon />
-					)}
-				</IconAction>
+			<div className="mb-3 flex gap-1 border-b border-border">
+				{(["providers", "subagents"] as const).map((id) => (
+					<button
+						key={id}
+						type="button"
+						className={`px-2.5 py-1.5 text-[12px] transition-colors ${
+							tab === id ? "border-b-2 border-ink text-ink" : "text-ink-faint hover:text-ink"
+						}`}
+						onClick={() => setTab(id)}
+					>
+						{t(`settings.models.${id}`)}
+					</button>
+				))}
 			</div>
-			{error && <p className="mb-2 rounded-lg bg-red-50 px-3 py-2 text-[12px] text-red-600">{error}</p>}
-			{loading && providers.length === 0 ? (
-				<p className="py-8 text-center text-[13px] text-ink-faint">{t("settings.loading")}</p>
+			{tab === "subagents" ? (
+				<SubagentPanel />
 			) : (
-				<ProviderList providers={providers} />
+				<>
+					<div className="mb-2 flex items-center justify-between gap-2">
+						<p className="text-[11px] text-ink-faint">{t("settings.providers.catalogHint")}</p>
+						<IconAction
+							label={t("settings.providers.refresh")}
+							disabled={loading || refreshing}
+							onClick={() => void refreshFromNetwork()}
+						>
+							{refreshing ? (
+								<span className="h-3 w-3 animate-spin rounded-full border-[1.5px] border-current border-t-transparent" />
+							) : (
+								<RefreshIcon />
+							)}
+						</IconAction>
+					</div>
+					{error && <p className="mb-2 rounded-lg bg-red-50 px-3 py-2 text-[12px] text-red-600">{error}</p>}
+					{loading && providers.length === 0 ? (
+						<p className="py-8 text-center text-[13px] text-ink-faint">{t("settings.loading")}</p>
+					) : (
+						<ProviderList providers={providers} />
+					)}
+					<CustomProviderForm />
+					<LoginDialog />
+				</>
 			)}
-			<CustomProviderForm />
-			<LoginDialog />
 		</div>
 	);
 }

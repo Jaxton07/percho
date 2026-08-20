@@ -1,8 +1,4 @@
-import type {
-	AgentSessionEvent,
-	PermissionRequest as SharedPermissionRequest,
-	TodoItem,
-} from "@percho/shared";
+import type { SessionEvent, PermissionRequest as SharedPermissionRequest, TodoItem } from "@percho/shared";
 import { create } from "zustand";
 import {
 	emptyTranscript,
@@ -35,7 +31,7 @@ export const EMPTY_TODOS: TodoItem[] = [];
 interface TranscriptStore {
 	bySession: Record<string, SessionEntry>;
 	/** isActiveViewing：事件到达时该会话是否正被查看（活跃 tab 且 chat 视图），由调用方判定避免依赖 sessions store */
-	applyEvent: (sessionId: string, event: AgentSessionEvent, opts?: { isActiveViewing?: boolean }) => void;
+	applyEvent: (sessionId: string, event: SessionEvent, opts?: { isActiveViewing?: boolean }) => void;
 	/** 乐观置 agent 运行状态（发送消息后立即置 true，失败/结束后置 false 修正） */
 	markAgentActive: (sessionId: string, active: boolean) => void;
 	/** 清除完成未读标记（切到该会话/回到 chat 视图时调用） */
@@ -139,11 +135,13 @@ export const useTranscriptStore = create<TranscriptStore>((set) => ({
 	loadHistory: (sessionId, messages) => {
 		set((state) => {
 			const current = state.bySession[sessionId];
+			const notices =
+				current?.messages.filter((message) => message.kind === "system" && !message.compact) ?? [];
 			return {
 				bySession: {
 					...state.bySession,
 					[sessionId]: {
-						messages,
+						messages: [...notices, ...messages],
 						streaming: null,
 						phase: "idle",
 						agentActive: false,

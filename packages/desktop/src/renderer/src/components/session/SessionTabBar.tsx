@@ -23,7 +23,7 @@ import { useT } from "../../i18n";
 import { useSessionsStore } from "../../stores/sessions";
 import { useTranscriptStore } from "../../stores/transcript";
 import { useUiStore } from "../../stores/ui";
-import { CloseIcon, ComposeIcon, GridIcon } from "../icons";
+import { CloseIcon, ComposeIcon, GridIcon, SubagentIcon } from "../icons";
 import { sessionLetter, sessionTitle, useSessionStatus } from "./session-status";
 import { UpdateButton } from "./UpdateButton";
 
@@ -68,10 +68,11 @@ function TabPill({
 	const closeSession = useSessionsStore((s) => s.closeSession);
 	// 状态订阅与左侧会话轨道共用（优先级：审批 > 工作中 > 完成未读 > 空闲）
 	const status = useSessionStatus(session.sessionId);
-	// 图标字母 = 项目名（cwd 最后一段）首字母，与会话标题无关
+	// 图标字母 = 项目名（cwd 最后一段）首字母；只读子会话改用专属图标，一眼可辨。
 	const letter = sessionLetter(session);
-	const avatarClass =
-		status === "attention"
+	const avatarClass = session.readOnly
+		? "bg-accent text-on-accent"
+		: status === "attention"
 			? "bg-amber-500"
 			: status === "working"
 				? "bg-ink tab-avatar-working"
@@ -91,8 +92,8 @@ function TabPill({
 			<span
 				className={`relative flex h-4 w-4 shrink-0 items-center justify-center rounded text-[10px] font-semibold text-on-ink ${avatarClass}`}
 			>
-				{letter.toUpperCase()}
-				{status === "done" && (
+				{session.readOnly ? <SubagentIcon size={11} /> : letter.toUpperCase()}
+				{!session.readOnly && status === "done" && (
 					<span className="absolute -right-0.5 -top-0.5 h-1.5 w-1.5 rounded-full bg-green-500 ring-1 ring-canvas" />
 				)}
 			</span>

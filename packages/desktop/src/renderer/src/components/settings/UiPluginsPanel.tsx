@@ -4,6 +4,7 @@ import { type MessageKey, useT } from "../../i18n";
 import { useUiPluginsStore } from "../../stores/ui-plugins";
 import { FolderIcon, RefreshIcon } from "../icons";
 import { Dropdown } from "../ui/Dropdown";
+import { Switch } from "../ui/Switch";
 import { Tooltip } from "../ui/Tooltip";
 
 /** 槽位名 → i18n key（KNOWN_UI_SLOTS 与 renderer slots.ts 对齐） */
@@ -258,21 +259,7 @@ export function UiPluginsPanel() {
 						{t("settings.uiPlugins.masterHint")}
 					</p>
 				</div>
-				<button
-					type="button"
-					role="switch"
-					aria-checked={config.enabled}
-					onClick={() => void setMaster(!config.enabled)}
-					className={`relative h-5 w-9 shrink-0 rounded-full transition-colors ${
-						config.enabled ? "bg-ink" : "bg-border-strong"
-					}`}
-				>
-					<span
-						className={`absolute top-0.5 h-4 w-4 rounded-full bg-surface shadow transition-all ${
-							config.enabled ? "left-[18px]" : "left-0.5"
-						}`}
-					/>
-				</button>
+				<Switch checked={config.enabled} onCheckedChange={(enabled) => void setMaster(enabled)} />
 			</div>
 
 			{plugins.length === 0 ? (

@@ -131,6 +131,20 @@ export function MessageList() {
 	/** 组序号：同会话内 key 按位置稳定（streaming→committed 转换不 remount，正文边界后的新组自增）；
 	 *  key 含会话 id：切会话强制 remount——shownWorking 滞后/预览行调度等组内本地状态不跨会话泄漏 */
 	let groupIndex = 0;
+	/** 最后一个 flush 的组（subagent 固化消息的计数补丁目标）；
+	 *  用 ref 对象持有：闭包内赋值会导致 let 变量被 TS 错误窄化成 null；渲染前可直接替换 items 数组元素 */
+	const lastGroup = {
+		current: null as null | {
+			at: number;
+			key: string;
+			groupItems: MetaItem[];
+			working: boolean;
+			endImmediately: boolean;
+			subagentCount: number;
+		},
+	};
+	/** subagent 消息找不到前序组时（整轮只有子代理）结转给下一个 flush 的组 */
+	let carrySubagentCount = 0;
 	/**
 	 * isLatest：是否为当前 run 的组（仅最后一个组接收 working 信号，历史组恒为已完成）
 	 * forceEmpty：agent 工作中即使无内容也渲染（占位与流式组一体：空组 = 工作中 + 思考中预览）
@@ -139,19 +153,59 @@ export function MessageList() {
 		if (metaItems.length === 0 && !forceEmpty) return;
 		// 正文在输出（组被正文边界切分）或 run 已终结 → working 信号消失时立即结束，不做滞后缓冲
 		const endImmediately = Boolean(transcript.streaming?.text) || !transcript.agentActive;
+		const key = `meta-${activeSessionId}-g${groupIndex++}`;
+		const groupItems = metaItems;
+		const working = isLatest && agentWorking;
+		const subagentCount = carrySubagentCount;
+		carrySubagentCount = 0;
 		items.push(
 			<MetaGroup
-				key={`meta-${activeSessionId}-g${groupIndex++}`}
-				items={metaItems}
-				working={isLatest && agentWorking}
+				key={key}
+				items={groupItems}
+				working={working}
 				endImmediately={endImmediately}
+				subagentCount={subagentCount}
 			/>,
 		);
+		lastGroup.current = {
+			at: items.length - 1,
+			key,
+			groupItems,
+			working,
+			endImmediately,
+			subagentCount,
+		};
 		metaItems = [];
 	};
 
 	for (const message of transcript.messages) {
+		if (message.kind === "subagent") {
+			// 子代理固化消息（turn_end 排在 assistant 之后）：先 flush 关闭本轮组，再把计数补丁
+			// 打给刚关闭的组（本轮工具所在组），统计行正向显示「子代理 ×N」（spec §9.0）；
+			// 没有任何前序组（整轮只有子代理）则结转下一个组
+			flushMeta();
+			const add = message.runs.length;
+			const g = lastGroup.current;
+			if (g) {
+				g.subagentCount += add;
+				items[g.at] = (
+					<MetaGroup
+						key={g.key}
+						items={g.groupItems}
+						working={g.working}
+						endImmediately={g.endImmediately}
+						subagentCount={g.subagentCount}
+					/>
+				);
+			} else {
+				carrySubagentCount += add;
+			}
+			items.push(<MessageItem key={message.id} message={message} />);
+			continue;
+		}
 		if (message.kind !== "assistant") {
+			// user 消息 = 轮次硬边界：subagent 计数不允许跨轮补丁
+			if (message.kind === "user") lastGroup.current = null;
 			flushMeta();
 			items.push(<MessageItem key={message.id} message={message} />);
 			continue;
@@ -228,6 +282,8 @@ export function MessageList() {
 	if (metaItems.length === 0 && agentWorking && streaming && streaming.activity.length > 0) {
 		metaItems.push({ thinking: "", tools: [], activity: streaming.activity });
 	}
+	// 流式期的子代理运行归入当前 run 的最终组（固化后经 subagent 消息补丁前序组，两阶段不重复计数）
+	if (streaming) carrySubagentCount += streaming.subagentRuns.length;
 	flushMeta(true, agentWorking);
 
 	return (

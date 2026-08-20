@@ -82,6 +82,11 @@ function ForkButton({ entryId, text }: { entryId?: string; text: string }) {
 	});
 	const forkSession = useSessionsStore((s) => s.forkSession);
 	const [forking, setForking] = useState(false);
+	// 只读会话（subagent 检视）不提供分叉
+	const readOnly = useSessionsStore(
+		(s) => s.sessions.find((session) => session.sessionId === s.activeSessionId)?.readOnly === true,
+	);
+	if (readOnly) return null;
 
 	const handleFork = () => {
 		if (forking || sessionBusy) return;
@@ -113,6 +118,11 @@ function RecallButton({ entryId, text, timestamp }: { entryId?: string; text: st
 	});
 	const recallMessage = useSessionsStore((s) => s.recallMessage);
 	const [recalling, setRecalling] = useState(false);
+	// 只读会话（subagent 检视）不提供撤回
+	const readOnly = useSessionsStore(
+		(s) => s.sessions.find((session) => session.sessionId === s.activeSessionId)?.readOnly === true,
+	);
+	if (readOnly) return null;
 
 	const handleRecall = () => {
 		if (recalling || sessionBusy) return;
@@ -264,7 +274,18 @@ function SystemMessage({ message }: { message: Extract<UIMessage, { kind: "syste
 	const t = useT();
 	const [expanded, setExpanded] = useState(false);
 	const compact = message.compact;
-	if (!compact) return null;
+	if (!compact) {
+		const mutex = message.mutex;
+		if (mutex) {
+			const fileName = mutex.extensionPath.split(/[\\/]/).pop() ?? mutex.extensionPath;
+			return (
+				<CompactionDivider>
+					{t("message.subagent.mutex", { path: fileName, tools: mutex.tools.join(", ") })}
+				</CompactionDivider>
+			);
+		}
+		return <CompactionDivider>{message.text}</CompactionDivider>;
+	}
 	const reason = t(`compaction.reason.${compact.reason}`);
 
 	if (compact.status === "running") {
