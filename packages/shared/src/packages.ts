@@ -20,6 +20,11 @@ export interface CatalogPackage {
 	installSource: string;
 }
 
+/** 启发式识别提供 subagent 能力的社区包（安装提醒，不作为安全边界）。 */
+export function isSubagentPackage(pkg: Pick<CatalogPackage, "name" | "description">): boolean {
+	return /sub-?agent/i.test(`${pkg.name} ${pkg.description}`);
+}
+
 export interface CatalogSearchResult {
 	packages: CatalogPackage[];
 	/** 全量匹配总数（分页用） */

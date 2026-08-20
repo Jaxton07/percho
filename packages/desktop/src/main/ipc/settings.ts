@@ -32,6 +32,16 @@ export function registerSettingsIpc(backend: PiBackend): void {
 	ipcMain.handle(IpcChannels.SettingsTestProvider, (_e, providerId: string, modelId?: string) =>
 		backend.settings.testProvider(providerId, modelId),
 	);
+	ipcMain.handle(IpcChannels.SettingsGetModelPrefs, () => backend.getModelPrefs());
+	ipcMain.handle(
+		IpcChannels.SettingsSetModelHidden,
+		(_e, provider: string, modelId: string, hidden: boolean) =>
+			backend.setModelHidden(provider, modelId, hidden),
+	);
+	ipcMain.handle(IpcChannels.SettingsSetSubagentModel, (_e, agent: string, modelRef: string | null) =>
+		backend.setSubagentModel(agent, modelRef),
+	);
+	ipcMain.handle(IpcChannels.SettingsListSubagents, () => backend.listSubagents());
 	ipcMain.handle(IpcChannels.SettingsLoginStart, (_e, loginId: string, providerId: string) =>
 		backend.login.startLogin(loginId, providerId),
 	);

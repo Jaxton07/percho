@@ -21,6 +21,19 @@ export interface ListProvidersOptions {
 	forceNetwork?: boolean;
 }
 
+/** 用户级模型偏好（<agentDir>/model-prefs.json）。 */
+export interface ModelPrefs {
+	hiddenModels: Record<string, string[]>;
+	subagentModels: Record<string, string>;
+}
+
+/** 设置页可配置的子代理（仅内置与用户级定义，不含项目级）。 */
+export interface SubagentInfo {
+	name: string;
+	description: string;
+	source: "builtin" | "user";
+}
+
 export interface ProviderModelInfo {
 	id: string;
 	name: string;

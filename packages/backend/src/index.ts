@@ -62,6 +62,7 @@ export {
 export { type RegisteredSession, SessionRegistry } from "./session/registry";
 export { TraceRecorder } from "./session/trace";
 export { LoginService, type LoginServiceDeps } from "./settings/login";
+export { ModelPrefsService } from "./settings/model-prefs";
 export { SettingsService } from "./settings/settings";
 export { BUILTIN_SLASH_COMMANDS, slashCommandsForLoader, slashCommandsForSession } from "./slash-commands";
 export { makeShowImageTool, resolveShowImagePath, type ShowImageDetails } from "./tools/show-image";

@@ -7,6 +7,7 @@ import {
 import { useEffect, useState } from "react";
 import { useT } from "../../i18n";
 import { useSettingsStore } from "../../stores/settings";
+import { Switch } from "../ui/Switch";
 
 const inputClass =
 	"w-full rounded-lg border border-border bg-surface px-2.5 py-1.5 text-[12px] text-ink outline-none focus:border-ink-faint disabled:cursor-not-allowed disabled:text-ink-faint";
@@ -90,22 +91,11 @@ export function VisionPanel() {
 			<div>
 				<div className="flex items-center justify-between gap-4">
 					<h3 className="text-[13px] font-medium text-ink">{t("settings.vision.title")}</h3>
-					<button
-						type="button"
-						role="switch"
-						aria-checked={enabled}
+					<Switch
+						checked={enabled}
 						disabled={!loaded}
-						onClick={() => void saveVision({ enabled: !enabled })}
-						className={`relative h-5 w-9 shrink-0 rounded-full transition-colors ${
-							enabled ? "bg-ink" : "bg-border-strong"
-						} disabled:opacity-40`}
-					>
-						<span
-							className={`absolute top-0.5 h-4 w-4 rounded-full bg-surface shadow transition-all ${
-								enabled ? "left-[18px]" : "left-0.5"
-							}`}
-						/>
-					</button>
+						onCheckedChange={(nextEnabled) => void saveVision({ enabled: nextEnabled })}
+					/>
 				</div>
 				<p className="mt-0.5 text-[11px] leading-relaxed text-ink-faint">{t("settings.vision.hint")}</p>
 			</div>

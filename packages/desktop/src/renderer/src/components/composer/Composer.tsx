@@ -26,6 +26,10 @@ import { useSlashMenu } from "./use-slash-menu";
 export function Composer({ centered = false }: { centered?: boolean }) {
 	const t = useT();
 	const activeSessionId = useSessionsStore((s) => s.activeSessionId);
+	/** 只读会话（subagent 产物检视）：输入/发送/图片全禁，模型与思考档位选择器置灰 */
+	const readOnly = useSessionsStore(
+		(s) => s.sessions.find((session) => session.sessionId === s.activeSessionId)?.readOnly === true,
+	);
 	const cwd = useSessionsStore((s) => s.cwd);
 	/** 信任决策应答后递增：draft 斜杠菜单按新决策（信任与否）重拉命令 */
 	const trustVersion = useSessionsStore((s) => s.trustVersion);
@@ -83,11 +87,13 @@ export function Composer({ centered = false }: { centered?: boolean }) {
 		send;
 	const focusTextarea = () => textareaRef.current?.focus();
 	const isStreaming = transcript.phase === "streaming" || sending;
-	const placeholder = compacting
-		? t("composer.placeholderCompacting")
-		: isStreaming
-			? t("composer.placeholderQueued")
-			: t("composer.placeholder");
+	const placeholder = readOnly
+		? t("composer.placeholderReadOnly")
+		: compacting
+			? t("composer.placeholderCompacting")
+			: isStreaming
+				? t("composer.placeholderQueued")
+				: t("composer.placeholder");
 
 	const slash = useSlashMenu({
 		activeSessionId,
@@ -263,6 +269,7 @@ export function Composer({ centered = false }: { centered?: boolean }) {
 								placeholder={slashCommand ? t("slash.argPlaceholder") : placeholder}
 								value={text}
 								rows={1}
+								disabled={readOnly}
 								onChange={handleTextChange}
 								onKeyDown={handleKeyDown}
 								onPaste={handlePaste}
@@ -275,6 +282,7 @@ export function Composer({ centered = false }: { centered?: boolean }) {
 							placeholder={placeholder}
 							value={text}
 							rows={1}
+							disabled={readOnly}
 							onChange={handleTextChange}
 							onKeyDown={handleKeyDown}
 							onPaste={handlePaste}
@@ -296,14 +304,19 @@ export function Composer({ centered = false }: { centered?: boolean }) {
 							type="button"
 							className="-ml-1 -mb-1 flex h-7 w-7 items-center justify-center rounded-lg text-ink-dim transition-colors hover:bg-hover hover:text-ink"
 							aria-label={t("composer.addImage")}
+							disabled={readOnly}
 							onClick={() => fileInputRef.current?.click()}
 						>
 							<PlusIcon size={18} />
 						</button>
 						<ContextRing />
 						<div className="flex-1" />
-						<ModelPicker />
-						<ThinkingPicker />
+						<div className={readOnly ? "pointer-events-none opacity-40" : undefined}>
+							<ModelPicker />
+						</div>
+						<div className={readOnly ? "pointer-events-none opacity-40" : undefined}>
+							<ThinkingPicker />
+						</div>
 						{isStreaming && !hasContent ? (
 							<button
 								type="button"
@@ -317,7 +330,7 @@ export function Composer({ centered = false }: { centered?: boolean }) {
 							<button
 								type="button"
 								className="flex h-8 w-8 items-center justify-center rounded-full bg-ink text-on-ink transition-colors hover:bg-ink-2 disabled:opacity-30"
-								disabled={!hasContent || sending}
+								disabled={readOnly || !hasContent || sending}
 								onClick={() => void handleSend()}
 								aria-label={t("composer.send")}
 							>

@@ -1,8 +1,8 @@
 import {
-	type AgentSessionEvent,
 	extractSubagentRuns,
 	extractTodos,
 	type ImageInput,
+	type SessionEvent,
 	TODO_TOOL_NAME,
 } from "@percho/shared";
 import {
@@ -11,7 +11,6 @@ import {
 	extractShowImage,
 	findLastIndex,
 	newMessageId,
-	newSubagentKey,
 	newToolKey,
 	parseArgs,
 	toolNameFromPartial,
@@ -88,8 +87,30 @@ function finalizeStreaming(state: SessionTranscriptState): SessionTranscriptStat
  * pi 事件 → UI 状态 reducer。
  * 事件经 IPC 原样转发（AgentSessionEvent），本函数纯函数化应用。
  */
-export function reduceEvent(state: SessionTranscriptState, event: AgentSessionEvent): SessionTranscriptState {
+export function reduceEvent(state: SessionTranscriptState, event: SessionEvent): SessionTranscriptState {
 	switch (event.type) {
+		case "subagent_mutex": {
+			// 同一扩展的通知只保留一条：每次 openSession 都会重发互斥事件，而 loadHistory 会保留系统通知
+			if (
+				state.messages.some(
+					(message) => message.kind === "system" && message.mutex?.extensionPath === event.extensionPath,
+				)
+			)
+				return state;
+			return {
+				...state,
+				messages: [
+					...state.messages,
+					{
+						kind: "system" as const,
+						id: newMessageId(),
+						text: "",
+						timestamp: Date.now(),
+						mutex: { extensionPath: event.extensionPath, tools: event.tools },
+					},
+				],
+			};
+		}
 		case "agent_start":
 			return {
 				...state,
@@ -245,25 +266,46 @@ export function reduceEvent(state: SessionTranscriptState, event: AgentSessionEv
 		case "tool_execution_start": {
 			const streaming = state.streaming;
 			if (!streaming) return state;
-			// subagent：单代理直接派发（agent 参数存在、非 management action）才从折叠区移出建独立工作中行；
-			// management（action）/workflowScript（可能后台）/subagent_wait 不走独立行（结果在 wait completions 或 tool 卡）
-			const startArgs = (event.args ?? {}) as { action?: unknown; agent?: unknown; task?: unknown };
-			if (event.toolName === "subagent" && startArgs.action == null && typeof startArgs.agent === "string") {
-				const run: SubagentRunUi = {
-					key: newSubagentKey(),
-					agent: startArgs.agent.length > 0 ? startArgs.agent : "subagent",
-					task: typeof startArgs.task === "string" && startArgs.task.length > 0 ? startArgs.task : undefined,
+			// subagent：单代理或 parallel tasks 都从折叠区移出建独立工作中行；
+			// management（action）/workflowScript（可能后台）/subagent_wait 不走独立行。
+			const startArgs = (event.args ?? {}) as {
+				action?: unknown;
+				agent?: unknown;
+				task?: unknown;
+				tasks?: Array<{ agent?: unknown; task?: unknown }>;
+			};
+			const parallelTasks = Array.isArray(startArgs.tasks) ? startArgs.tasks : [];
+			const runInputs =
+				event.toolName === "subagent" && startArgs.action == null
+					? typeof startArgs.agent === "string"
+						? [{ agent: startArgs.agent, task: startArgs.task }]
+						: parallelTasks.filter((task) => typeof task.agent === "string")
+					: [];
+			if (runInputs.length > 0) {
+				const start = streaming.subagentRuns.length;
+				const runs: SubagentRunUi[] = runInputs.map((input, index) => ({
+					key: `${event.toolCallId}:${index}`,
+					agent: typeof input.agent === "string" && input.agent.length > 0 ? input.agent : "subagent",
+					task: typeof input.task === "string" && input.task.length > 0 ? input.task : undefined,
 					status: "running",
-				};
+				}));
+				// ticker 摘条（spec §9.0）：subagent 不进 Working 预览行——toolcall_start 已在
+				// activity 留了 `c${blockIndex}` 条目，移出折叠区时同步摘除
+				const removedTool = streaming.tools.find((t) => t.id === event.toolCallId);
+				const activity =
+					removedTool?.blockIndex != null
+						? streaming.activity.filter((a) => a.id !== `c${removedTool.blockIndex}`)
+						: streaming.activity;
 				return {
 					...state,
 					streaming: {
 						...streaming,
 						tools: streaming.tools.filter((t) => t.id !== event.toolCallId),
-						subagentRuns: [...streaming.subagentRuns, run],
+						activity,
+						subagentRuns: [...streaming.subagentRuns, ...runs],
 						subagentByToolCallId: {
 							...streaming.subagentByToolCallId,
-							[event.toolCallId]: streaming.subagentRuns.length,
+							[event.toolCallId]: { start, count: runs.length },
 						},
 					},
 				};
@@ -296,30 +338,35 @@ export function reduceEvent(state: SessionTranscriptState, event: AgentSessionEv
 			const extracted = extractSubagentRuns(
 				(event.result as { details?: unknown } | null | undefined)?.details,
 			);
-			const start = streaming.subagentByToolCallId[event.toolCallId];
-			if (start !== undefined || (extracted && extracted.length > 0)) {
+			const placement = streaming.subagentByToolCallId[event.toolCallId];
+			if (placement !== undefined || (extracted && extracted.length > 0)) {
 				// 独立子代理行：已知占位更新 / 结构检测兜底；一次调用可有多个子代理（fanout）
-				const before = streaming.subagentRuns.slice(0, start ?? streaming.subagentRuns.length);
-				const after = start !== undefined ? streaming.subagentRuns.slice(start + 1) : [];
-				const placeholder = start !== undefined ? streaming.subagentRuns[start] : undefined;
+				const start = placement?.start ?? streaming.subagentRuns.length;
+				const count = placement?.count ?? 0;
+				const before = streaming.subagentRuns.slice(0, start);
+				const after = placement ? streaming.subagentRuns.slice(start + count) : [];
+				const placeholders = placement ? streaming.subagentRuns.slice(start, start + count) : [];
 				const runs: SubagentRunUi[] =
 					extracted && extracted.length > 0
-						? extracted.map((run) => ({ ...run, key: newSubagentKey() }))
-						: placeholder
-							? [
-									{
-										key: placeholder.key,
-										agent: placeholder.agent,
-										task: placeholder.task,
-										status: event.isError ? ("error" as const) : ("done" as const),
-									},
-								]
-							: [];
+						? extracted.map((run, index) => ({ ...run, key: `${event.toolCallId}:${index}` }))
+						: placeholders.map((placeholder) => ({
+								key: placeholder.key,
+								agent: placeholder.agent,
+								task: placeholder.task,
+								status: event.isError ? ("error" as const) : ("done" as const),
+							}));
+				// ticker 摘条（兑底分支同 spec §9.0）：start 未建占位时工具仍在折叠区/activity 里
+				const endedTool = streaming.tools.find((t) => t.id === event.toolCallId);
+				const activity =
+					endedTool?.blockIndex != null
+						? streaming.activity.filter((a) => a.id !== `c${endedTool.blockIndex}`)
+						: streaming.activity;
 				return {
 					...next,
 					streaming: {
 						...streaming,
 						tools: streaming.tools.filter((t) => t.id !== event.toolCallId),
+						activity,
 						subagentRuns: [...before, ...runs, ...after],
 					},
 				};

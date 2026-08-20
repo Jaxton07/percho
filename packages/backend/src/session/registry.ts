@@ -5,6 +5,8 @@ export interface RegisteredSession {
 	session: AgentSession;
 	unsubscribe: () => void;
 	cwd: string;
+	/** 只读会话（subagent 产物检视）：prompt/fork/recall/setModel 等写操作全部拒绝 */
+	readOnly?: boolean;
 }
 
 /** 维护 sessionId → AgentSession 实例 */
@@ -47,6 +49,7 @@ export class SessionRegistry {
 			active: true,
 			messageCount: session.messages.length,
 			createdAt: Date.now(),
+			readOnly: entry.readOnly || undefined,
 		};
 	}
 

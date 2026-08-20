@@ -26,8 +26,10 @@ import type {
 	ListProvidersOptions,
 	LoginEventPayload,
 	LoginResult,
+	ModelPrefs,
 	ProviderInfo,
 	ProviderTestResult,
+	SubagentInfo,
 } from "./settings";
 import type { TodoItem } from "./todo";
 import type { UiPluginInfo, UiPluginManifest, UiPluginsConfig, UiPluginsEventPayload } from "./ui-plugins";
@@ -77,6 +79,12 @@ export const IpcChannels = {
 	SettingsUpdateCustomProvider: "settings:updateCustomProvider",
 	SettingsRemoveCustomProvider: "settings:removeCustomProvider",
 	SettingsTestProvider: "settings:testProvider",
+	/** 用户级模型偏好：隐藏模型 + 子代理模型覆盖 */
+	SettingsGetModelPrefs: "settings:getModelPrefs",
+	SettingsSetModelHidden: "settings:setModelHidden",
+	SettingsSetSubagentModel: "settings:setSubagentModel",
+	/** 只列内置与用户级 subagent（设置是全局配置，不绑定项目） */
+	SettingsListSubagents: "settings:listSubagents",
 	/** provider 订阅登录（OAuth）；loginId 由 renderer 生成用于事件归属 */
 	SettingsLoginStart: "settings:loginStart",
 	SettingsLoginCancel: "settings:loginCancel",
@@ -217,6 +225,14 @@ export interface PiApi {
 	updateCustomProvider(input: CustomProviderUpdateInput): Promise<void>;
 	removeCustomProvider(providerId: string): Promise<void>;
 	testProvider(providerId: string, modelId?: string): Promise<ProviderTestResult>;
+	/** 读取用户级模型可见性与子代理模型偏好 */
+	getModelPrefs(): Promise<ModelPrefs>;
+	/** 设置模型在选择器中的可见性；隐藏不影响已经选中的会话运行 */
+	setModelHidden(provider: string, modelId: string, hidden: boolean): Promise<ModelPrefs>;
+	/** 为子代理指定 provider/model；null = 继承父会话模型 */
+	setSubagentModel(agent: string, modelRef: string | null): Promise<ModelPrefs>;
+	/** 列内置与用户级 subagent 定义（不读项目级定义） */
+	listSubagents(): Promise<SubagentInfo[]>;
 	/** 启动 provider 订阅登录（OAuth 浏览器/设备码流）；事件经 onProviderLoginEvent 推送，promise 在流程结束时 resolve（取消不算错误） */
 	startProviderLogin(loginId: string, providerId: string): Promise<LoginResult>;
 	/** 取消进行中的登录流程（未知 loginId 静默忽略） */

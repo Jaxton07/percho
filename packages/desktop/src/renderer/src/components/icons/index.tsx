@@ -11,6 +11,25 @@ const strokeProps = {
 	strokeWidth: 2,
 } as const;
 
+/** 子代理（隔离会话 / 小机器人） */
+export function SubagentIcon({ size = 12, className }: IconProps) {
+	return (
+		<svg
+			className={className}
+			width={size}
+			height={size}
+			viewBox="0 0 24 24"
+			{...strokeProps}
+			strokeWidth={2.2}
+			strokeLinecap="round"
+			strokeLinejoin="round"
+			aria-hidden="true"
+		>
+			<path d="M12 3v4M9 13h.01M15 13h.01M8 19h8a3 3 0 0 0 3-3v-5a4 4 0 0 0-4-4H9a4 4 0 0 0-4 4v5a3 3 0 0 0 3 3Z" />
+		</svg>
+	);
+}
+
 /** 项目网格（顶栏切换项目管理页） */
 export function GridIcon({ size = 15, className }: IconProps) {
 	return (

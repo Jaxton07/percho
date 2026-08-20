@@ -1,9 +1,9 @@
 import { existsSync } from "node:fs";
 import { unlink } from "node:fs/promises";
+import { join } from "node:path";
 import type { Model, ThinkingLevel } from "@earendil-works/pi-ai";
 import { getSupportedThinkingLevels } from "@earendil-works/pi-ai";
 import {
-	type AgentSessionEvent,
 	createAgentSession,
 	getAgentDir,
 	ModelRuntime,
@@ -22,12 +22,15 @@ import type {
 	ImageInput,
 	LoadedResources,
 	LoginEventPayload,
+	ModelPrefs,
 	PermissionAnswer,
 	PermissionRequest,
+	SessionEvent,
 	SessionMessage,
 	SessionMeta,
 	SessionStats,
 	SlashCommandInfo,
+	SubagentInfo,
 	TrustAnswer,
 	TrustRequest,
 	VisionConfigInfo,
@@ -66,9 +69,12 @@ import { TraceRecorder } from "./session/trace";
 import { SessionTraces } from "./session/traces";
 import { makeUiContext } from "./session/ui-context";
 import { LoginService } from "./settings/login";
+import { ModelPrefsService } from "./settings/model-prefs";
 import { SettingsService } from "./settings/settings";
 import { slashCommandsForLoader, slashCommandsForSession } from "./slash-commands";
 import { makeShowImageTool } from "./tools/show-image";
+import { discoverAgents, isSubagentSessionPath, makeSubagentTool } from "./tools/subagent";
+import { applySubagentMutex } from "./tools/subagent/mutex";
 import { makeTodoTool } from "./tools/todo";
 import { makeTodoReminderExtension } from "./tools/todo-reminder";
 import { makeWebFetchTool } from "./tools/webfetch";
@@ -97,6 +103,8 @@ export interface PiBackendOptions {
 	visionConfigPath?: string;
 	/** 是否注册内置视觉代理扩展（默认 true；visionConfigPath 缺省时无效果） */
 	visionProxy?: boolean;
+	/** 内置 subagent 优先于第三方 subagent 扩展（默认 true） */
+	subagentPreferBuiltin?: boolean;
 	/**
 	 * 桌面端集成（Electron 专用；纯 CLI 环境不传）：
 	 * appendSystemPrompt = 追加进每次会话系统提示词的段落（如「你运行在 Percho 桌面端，界面可被 UI 插件定制」）；
@@ -108,7 +116,7 @@ export interface PiBackendOptions {
 	};
 }
 
-type EventHandler = (sessionId: string, event: AgentSessionEvent) => void;
+type EventHandler = (sessionId: string, event: SessionEvent) => void;
 type PermissionHandler = (req: PermissionRequest) => void;
 type TrustHandler = (req: TrustRequest) => void;
 type LoginHandler = (payload: LoginEventPayload) => void;
@@ -140,6 +148,8 @@ export class PiBackend {
 	private modelPromise: Promise<ModelRuntime> | undefined;
 	/** 设置页（provider/模型/凭证配置）服务 */
 	readonly settings = new SettingsService(() => this.getModelRuntime());
+	/** 用户级模型可见性与子代理模型偏好（独立于 CLI 共用 settings.json）。 */
+	private readonly modelPrefs = new ModelPrefsService(join(getAgentDir(), "model-prefs.json"));
 	/** provider 订阅登录（OAuth）服务，事件经 onLoginEvent 分发 */
 	readonly login = new LoginService({
 		getRuntime: () => this.getModelRuntime(),
@@ -167,8 +177,8 @@ export class PiBackend {
 		});
 	}
 
-	/** 自定义工具 = 调用方传入的 + 内置 webfetch（webFetch:false 关闭）+ show_image + todo */
-	private buildCustomTools(): ToolDefinition[] {
+	/** 自定义工具 = 调用方传入的 + 内置 webfetch（webFetch:false 关闭）+ show_image + todo + subagent */
+	private buildCustomTools(gate: PermissionGate): ToolDefinition[] {
 		const tools = [...(this.options.customTools ?? [])];
 		const webFetch = this.options.webFetch;
 		if (webFetch !== false) {
@@ -176,6 +186,16 @@ export class PiBackend {
 		}
 		tools.push(makeShowImageTool());
 		tools.push(makeTodoTool());
+		if (this.options.subagentPreferBuiltin !== false) {
+			tools.push(
+				makeSubagentTool({
+					getModelRuntime: () => this.getModelRuntime(),
+					getSubagentModel: (agentName) => this.modelPrefs.getSubagentModel(agentName),
+					gate,
+					traces: this.traces,
+				}),
+			);
+		}
 		return tools;
 	}
 
@@ -211,8 +231,8 @@ export class PiBackend {
 		return this.modelRuntime;
 	}
 
-	private emitEvent(sessionId: string, event: AgentSessionEvent): void {
-		this.traces.record(sessionId, event);
+	private emitEvent(sessionId: string, event: SessionEvent): void {
+		if (event.type !== "subagent_mutex") this.traces.record(sessionId, event);
 		for (const handler of this.eventHandlers) {
 			try {
 				handler(sessionId, event);
@@ -244,17 +264,28 @@ export class PiBackend {
 		const { settingsManager, resourceLoader } = await this.projectLoader.load(cwd, {
 			confirm: confirmBridge,
 		});
-		const { session } = await createAgentSession({
+		const { session, extensionsResult } = await createAgentSession({
 			cwd,
 			modelRuntime: runtime,
 			model,
 			thinkingLevel: options.thinkingLevel as ThinkingLevel | undefined,
 			tools: this.options.tools,
-			customTools: this.buildCustomTools(),
+			customTools: this.buildCustomTools(gate),
 			sessionManager: SessionManager.create(cwd),
 			settingsManager,
 			resourceLoader,
 		});
+		const mutex = applySubagentMutex(session, extensionsResult, this.options.subagentPreferBuiltin !== false);
+		if (mutex.shadowed.length > 0) {
+			log.info("third-party subagent tools shadowed", session.sessionId, mutex);
+			for (const shadowed of mutex.shadowed) {
+				this.emitEvent(session.sessionId, {
+					type: "subagent_mutex",
+					extensionPath: shadowed.extensionPath,
+					tools: shadowed.tools,
+				});
+			}
+		}
 
 		gate.bindSession(session.sessionId);
 		this.gates.set(session.sessionId, gate);
@@ -280,19 +311,40 @@ export class PiBackend {
 		const runtime = await this.getModelRuntime();
 		const sessionManager = SessionManager.open(filePath);
 		const cwd = sessionManager.getCwd() || process.cwd();
-		const { settingsManager, resourceLoader } = await this.projectLoader.load(cwd);
-		const { session } = await createAgentSession({
+		const gate = new PermissionGate((req) => this.dispatchPermissionRequest(req));
+		const confirmBridge: PermissionConfirm = (title, message, meta) => gate.confirm(title, message, meta);
+		const { settingsManager, resourceLoader } = await this.projectLoader.load(cwd, {
+			confirm: confirmBridge,
+		});
+		const { session, extensionsResult } = await createAgentSession({
 			sessionManager,
 			modelRuntime: runtime,
 			settingsManager,
 			resourceLoader,
-			customTools: this.buildCustomTools(),
+			customTools: this.buildCustomTools(gate),
 		});
+		const mutex = applySubagentMutex(session, extensionsResult, this.options.subagentPreferBuiltin !== false);
+		if (mutex.shadowed.length > 0) {
+			log.info("third-party subagent tools shadowed", session.sessionId, mutex);
+			for (const shadowed of mutex.shadowed) {
+				this.emitEvent(session.sessionId, {
+					type: "subagent_mutex",
+					extensionPath: shadowed.extensionPath,
+					tools: shadowed.tools,
+				});
+			}
+		}
+		gate.bindSession(session.sessionId);
+		this.gates.set(session.sessionId, gate);
+		if (this.options.permissionGates !== false) {
+			await session.bindExtensions({ uiContext: makeUiContext(gate), mode: "tui" });
+		}
 		const unsubscribe = session.subscribe((event) => {
 			autoNameSession(session, event);
 			this.emitEvent(session.sessionId, event);
 		});
-		this.registry.add({ session, unsubscribe, cwd });
+		// 子代理产物目录下的会话文件 = 只读检视（spec §8.1：防能力静默漂移/递归绕过）
+		this.registry.add({ session, unsubscribe, cwd, readOnly: isSubagentSessionPath(filePath) || undefined });
 		await this.traces.start(session.sessionId, session.sessionManager.getSessionDir());
 		log.info("session opened", session.sessionId, { file: filePath });
 		return this.toMetaOrThrow(session.sessionId);
@@ -359,6 +411,7 @@ export class PiBackend {
 
 	async prompt(sessionId: string, text: string, images?: ImageInput[]): Promise<void> {
 		const entry = this.requireSession(sessionId);
+		if (entry.readOnly) throw new Error("Session is read-only (subagent transcript)");
 		log.info("prompt", sessionId, { text: text.slice(0, 120), images: images?.length ?? 0 });
 		// session.prompt() 非流式路径会 await 整个 run（直到 agent_settled）；渲染端只需要
 		// “已受理/已入队”回执——用 preflightResult 提前返回，否则 IPC 挂一整轮，渲染端
@@ -412,6 +465,7 @@ export class PiBackend {
 
 	async setModel(sessionId: string, provider: string, modelId: string): Promise<void> {
 		const entry = this.requireSession(sessionId);
+		if (entry.readOnly) throw new Error("Session is read-only (subagent transcript)");
 		const runtime = await this.getModelRuntime();
 		const model = runtime.getModel(provider, modelId);
 		if (!model) throw new Error(`Model not found: ${provider}/${modelId}`);
@@ -420,11 +474,13 @@ export class PiBackend {
 
 	async setThinkingLevel(sessionId: string, level: string): Promise<void> {
 		const entry = this.requireSession(sessionId);
+		if (entry.readOnly) throw new Error("Session is read-only (subagent transcript)");
 		entry.session.setThinkingLevel(level as ThinkingLevel);
 	}
 
 	async compact(sessionId: string, customInstructions?: string): Promise<void> {
 		const entry = this.requireSession(sessionId);
+		if (entry.readOnly) throw new Error("Cannot compact a read-only subagent transcript");
 		log.info("compact", sessionId);
 		await entry.session.compact(customInstructions);
 	}
@@ -502,6 +558,7 @@ export class PiBackend {
 				source: ext.sourceInfo.source,
 				hidden: ext.hidden === true,
 				toolsCount: ext.tools.size,
+				tools: [...ext.tools.keys()],
 				commands: [...ext.commands.keys()],
 				flagsCount: ext.flags.size,
 				shortcutsCount: ext.shortcuts.size,
@@ -537,6 +594,7 @@ export class PiBackend {
 	/** 设置会话显示名（触发 session_info_changed 事件） */
 	async setSessionName(sessionId: string, name: string): Promise<void> {
 		const entry = this.requireSession(sessionId);
+		if (entry.readOnly) throw new Error("Cannot rename a read-only subagent transcript");
 		entry.session.setSessionName(name);
 	}
 
@@ -584,6 +642,7 @@ export class PiBackend {
 	 */
 	async forkSession(sessionId: string, ref: { entryId?: string; text?: string }): Promise<SessionMeta> {
 		const entry = this.requireSession(sessionId);
+		if (entry.readOnly) throw new Error("Cannot fork a read-only subagent transcript");
 		if (entry.session.isStreaming || entry.session.isCompacting) {
 			throw new Error("Cannot fork while the agent is running or context is compacting");
 		}
@@ -615,6 +674,7 @@ export class PiBackend {
 		ref: { entryId?: string; text?: string; timestamp?: number },
 	): Promise<{ text: string; images: ImageInput[] }> {
 		const entry = this.requireSession(sessionId);
+		if (entry.readOnly) throw new Error("Cannot recall in a read-only subagent transcript");
 		if (entry.session.isStreaming || entry.session.isCompacting) {
 			throw new Error("Cannot recall while the agent is running or context is compacting");
 		}
@@ -643,30 +703,58 @@ export class PiBackend {
 	}
 
 	async listModels(): Promise<AvailableModel[]> {
-		const providers = await this.settings.listProviders();
-		const runtime = await this.getModelRuntime();
+		const [providers, prefs, runtime] = await Promise.all([
+			this.settings.listProviders(),
+			this.modelPrefs.getPrefs(),
+			this.getModelRuntime(),
+		]);
 		return providers.flatMap((provider) =>
 			provider.configured
-				? provider.models.map((model) => {
-						// 该模型实际支持的思考深度（SDK 按 reasoning/thinkingLevelMap 判定；不推理的模型只有 off）
-						let thinkingLevels: string[] | undefined;
-						try {
-							const m = runtime.getModel(provider.id, model.id);
-							if (m) thinkingLevels = getSupportedThinkingLevels(m);
-						} catch {
-							thinkingLevels = undefined;
-						}
-						return {
-							provider: provider.id,
-							providerName: provider.name,
-							id: model.id,
-							label: model.name,
-							authed: true,
-							thinkingLevels,
-						};
-					})
+				? provider.models
+						.filter((model) => !prefs.hiddenModels[provider.id]?.includes(model.id))
+						.map((model) => {
+							// 该模型实际支持的思考深度（SDK 按 reasoning/thinkingLevelMap 判定；不推理的模型只有 off）
+							let thinkingLevels: string[] | undefined;
+							try {
+								const m = runtime.getModel(provider.id, model.id);
+								if (m) thinkingLevels = getSupportedThinkingLevels(m);
+							} catch {
+								thinkingLevels = undefined;
+							}
+							return {
+								provider: provider.id,
+								providerName: provider.name,
+								id: model.id,
+								label: model.name,
+								authed: true,
+								thinkingLevels,
+							};
+						})
 				: [],
 		);
+	}
+
+	async getModelPrefs(): Promise<ModelPrefs> {
+		return this.modelPrefs.getPrefs();
+	}
+
+	async setModelHidden(provider: string, modelId: string, hidden: boolean): Promise<ModelPrefs> {
+		return this.modelPrefs.setModelHidden(provider, modelId, hidden);
+	}
+
+	async setSubagentModel(agent: string, modelRef: string | null): Promise<ModelPrefs> {
+		return this.modelPrefs.setSubagentModel(agent, modelRef);
+	}
+
+	async listSubagents(): Promise<SubagentInfo[]> {
+		const agents = await discoverAgents(this.options.defaultCwd ?? process.cwd(), { projectTrusted: false });
+		return agents
+			.filter((agent) => agent.source !== "project")
+			.map(({ name, description, source }) => ({
+				name,
+				description,
+				source: source === "builtin" ? "builtin" : "user",
+			}));
 	}
 
 	onEvent(handler: EventHandler): () => void {

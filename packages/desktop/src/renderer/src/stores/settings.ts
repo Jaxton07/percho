@@ -7,9 +7,11 @@ import type {
 	LoadedExtension,
 	LoadedSkill,
 	LoginAuthPrompt,
+	ModelPrefs,
 	ProviderInfo,
 	ProviderTestResult,
 	ResourceDiagnosticInfo,
+	SubagentInfo,
 	VisionConfigInfo,
 	VisionSaveInput,
 	VisionTestResult,
@@ -21,7 +23,7 @@ import { isDraftSessionId, useSessionsStore } from "./sessions";
 export type SettingsCategory =
 	| "general"
 	| "appearance"
-	| "providers"
+	| "models"
 	| "skills"
 	| "mcp"
 	| "extensions"
@@ -56,6 +58,9 @@ interface SettingsStore {
 	/** 当前设置分类（/settings 命令可定位到指定面板） */
 	category: SettingsCategory;
 	providers: ProviderInfo[];
+	/** 用户级模型可见性与子代理模型覆盖（null = 未加载） */
+	modelPrefs: ModelPrefs | null;
+	subagents: SubagentInfo[];
 	loading: boolean;
 	/** 联网刷新模型目录进行中（默认刷新只走本地，见 refreshProvidersFromNetwork） */
 	refreshing: boolean;
@@ -113,6 +118,8 @@ interface SettingsStore {
 	updateCustom: (input: CustomProviderUpdateInput) => Promise<void>;
 	removeCustom: (providerId: string) => Promise<void>;
 	test: (providerId: string) => Promise<void>;
+	setModelHidden: (provider: string, modelId: string, hidden: boolean) => Promise<void>;
+	setSubagentModel: (agent: string, modelRef: string | null) => Promise<void>;
 	/** 启动 provider 订阅登录（OAuth）；事件驱动 login 状态机，结束自动收尾 */
 	startProviderLogin: (provider: ProviderInfo) => Promise<void>;
 	/** 应答登录中的输入/选择提示 */
@@ -155,8 +162,10 @@ export const useSettingsStore = create<SettingsStore>((set, get) => {
 
 	return {
 		open: false,
-		category: "providers",
+		category: "models",
 		providers: [],
+		modelPrefs: null,
+		subagents: [],
 		loading: false,
 		refreshing: false,
 		permissionEnabled: null,
@@ -321,8 +330,12 @@ export const useSettingsStore = create<SettingsStore>((set, get) => {
 				.then((visionConfig) => set({ visionConfig }))
 				.catch(() => {});
 			try {
-				const providers = await getPi().listProviders();
-				set({ providers, loading: false, error: null });
+				const [providers, modelPrefs, subagents] = await Promise.all([
+					getPi().listProviders(),
+					getPi().getModelPrefs(),
+					getPi().listSubagents(),
+				]);
+				set({ providers, modelPrefs, subagents, loading: false, error: null });
 				// 已加载资源按当前活跃会话（其项目）展示；无会话或 draft（未真正创建）时为 null（面板显示空态）
 				const activeSessionId = useSessionsStore.getState().activeSessionId;
 				if (activeSessionId && !isDraftSessionId(activeSessionId)) {
@@ -434,6 +447,38 @@ export const useSettingsStore = create<SettingsStore>((set, get) => {
 				await afterMutation();
 			} catch (error) {
 				set({ error: error instanceof Error ? error.message : String(error) });
+			}
+		},
+
+		setModelHidden: async (provider, modelId, hidden) => {
+			const previous = get().modelPrefs;
+			const base = previous ?? { hiddenModels: {}, subagentModels: {} };
+			const ids = new Set(base.hiddenModels[provider] ?? []);
+			if (hidden) ids.add(modelId);
+			else ids.delete(modelId);
+			const hiddenModels = { ...base.hiddenModels };
+			if (ids.size) hiddenModels[provider] = [...ids];
+			else delete hiddenModels[provider];
+			// 先本地更新，开关圆点不必等待 Electron IPC 往返；失败时以磁盘实际状态回滚。
+			set({ modelPrefs: { ...base, hiddenModels } });
+			try {
+				await getPi().setModelHidden(provider, modelId, hidden);
+				await useSessionsStore.getState().loadModels();
+			} catch (error) {
+				const modelPrefs = await getPi()
+					.getModelPrefs()
+					.catch(() => previous);
+				set({ modelPrefs, error: error instanceof Error ? error.message : String(error) });
+			}
+		},
+
+		setSubagentModel: async (agent, modelRef) => {
+			const previous = get().modelPrefs;
+			try {
+				const modelPrefs = await getPi().setSubagentModel(agent, modelRef);
+				set({ modelPrefs });
+			} catch (error) {
+				set({ modelPrefs: previous, error: error instanceof Error ? error.message : String(error) });
 			}
 		},
 

@@ -39,7 +39,15 @@ export type UIMessage =
 			entryId?: string;
 	  }
 	| { kind: "error"; id: string; text: string; timestamp: number }
-	| { kind: "system"; id: string; text: string; timestamp: number; compact?: CompactionUiState }
+	| {
+			kind: "system";
+			id: string;
+			text: string;
+			timestamp: number;
+			compact?: CompactionUiState;
+			/** subagent 互斥接管通知（结构化字段，渲染层 i18n；dedup 以 extensionPath 为准） */
+			mutex?: { extensionPath: string; tools: string[] };
+	  }
 	| {
 			/** show_image 工具发给用户看的图片（assistant 侧独立消息，tool_execution_end 时立即落 messages） */
 			kind: "image";
@@ -105,8 +113,8 @@ export interface StreamingState {
 	pendingImages: { images: ImageInput[]; paths: string[] }[];
 	/** 子代理运行缓冲：tool_execution_start 建占位（工作中），end 用 details 完善，turn_end 固化为独立消息 */
 	subagentRuns: SubagentRunUi[];
-	/** toolCallId → subagentRuns 下标（start 记录，end 更新；非 subagent 工具不进入） */
-	subagentByToolCallId: Record<string, number>;
+	/** toolCallId → subagentRuns 起点与占位数（parallel 一次调用可对应多行） */
+	subagentByToolCallId: Record<string, { start: number; count: number }>;
 	/** 最近一次 toolcall_start 的工具索引 */
 	activeToolIndex: number;
 	/** assistant 消息 content 绝对索引 → tools 数组索引（事件带 contentIndex，须按此匹配） */

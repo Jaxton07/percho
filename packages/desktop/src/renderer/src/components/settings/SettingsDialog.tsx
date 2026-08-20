@@ -20,7 +20,7 @@ import { VisionPanel } from "./VisionPanel";
 const STATIC_CATEGORIES = [
 	"general",
 	"appearance",
-	"providers",
+	"models",
 	"skills",
 	"mcp",
 	"extensions",
@@ -33,7 +33,7 @@ const STATIC_CATEGORIES = [
 const PANELS: Partial<Record<SettingsCategory, ComponentType>> = {
 	general: GeneralPanel,
 	appearance: AppearancePanel,
-	providers: ProvidersPanel,
+	models: ProvidersPanel,
 	skills: SkillsPanel,
 	mcp: McpPanel,
 	extensions: ExtensionsPanel,

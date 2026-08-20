@@ -40,6 +40,7 @@ export const en: Messages = {
 		placeholder: "Ask anything, / for commands, @ for context",
 		placeholderQueued: "Queue a message — sent when the current task finishes",
 		placeholderCompacting: "Compacting context…",
+		placeholderReadOnly: "Subagent transcript is read-only — continue in the parent session",
 		compacting: "Compacting context — send when it finishes",
 		stop: "Stop",
 		send: "Send",
@@ -131,11 +132,13 @@ export const en: Messages = {
 		summaryExplore: "Explored {n} {unit}",
 		summarySearch: "Searched {n} {unit}",
 		summaryBash: "Ran {n} {unit}",
+		summarySubagents: "{n} {unit} dispatched",
 		image: "View image",
 		subagent: {
 			running: "Working",
 			done: "Done",
 			failed: "Failed",
+			mutex: "Detected subagent extension {path}; built-in subagent took over: {tools}",
 		},
 	},
 	tool: {
@@ -172,7 +175,7 @@ export const en: Messages = {
 		category: {
 			general: "General",
 			appearance: "Appearance",
-			providers: "Models & Providers",
+			models: "Models",
 			skills: "Skills",
 			mcp: "MCP Plugins",
 			extensions: "Extensions",
@@ -236,6 +239,14 @@ export const en: Messages = {
 			poweredBy: "Built on Pi Coding Agent",
 			sourceCode: "Source code & feedback",
 		},
+		models: {
+			providers: "Provider configuration",
+			subagents: "Subagent configuration",
+			inherit: "Inherit parent session model",
+			subagentHint:
+				"Choose a model for each built-in or user-level subagent. Unconfigured agents inherit the parent session model.",
+			subagentsEmpty: "No configurable subagents found",
+		},
 		providers: {
 			empty: "No providers available",
 			catalogHint:
@@ -243,6 +254,7 @@ export const en: Messages = {
 			refresh: "Refresh model catalog from network",
 			custom: "Custom",
 			modelCount: "{count} models",
+			modelVisibility: "Model visibility (hidden models are removed from model pickers)",
 			configured: "Configured",
 			unconfigured: "Not configured",
 			test: "Test",
@@ -340,6 +352,10 @@ export const en: Messages = {
 			commands: "{count} commands",
 			flags: "{count} flags",
 			shortcuts: "{count} shortcuts",
+			subagentInstallWarning:
+				"This package provides subagent capabilities. Percho already includes a deeply integrated built-in subagent; its same-named tools will be taken over after installation.",
+			subagentInstallConfirm: "Built-in takes over — install anyway",
+			subagentBuiltin: "subagent handled by built-in",
 			loadErrors: "{count} extensions failed to load",
 			hidden: "Hidden",
 		},

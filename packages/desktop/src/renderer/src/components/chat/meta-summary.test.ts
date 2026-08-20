@@ -72,8 +72,15 @@ describe("summarizeCategories", () => {
 		]);
 	});
 
-	it("subagent 不入统计", () => {
+	it("subagent 不入工具统计，subagentCount 追加「子代理」汇总段", () => {
 		expect(summarizeCategories([{ tools: [tool("subagent")] }])).toEqual([]);
+		const segs = summarizeCategories([{ tools: [tool("read"), tool("subagent")] }], 2);
+		expect(segs).toEqual([
+			{ key: "read", category: "read", name: "read", count: 1 },
+			{ key: "subagent", category: "subagent", name: "subagent", count: 2 },
+		]);
+		// 无 subagent 的组（subagentCount=0）不显示该段
+		expect(summarizeCategories([{ tools: [tool("read")] }], 0)).toHaveLength(1);
 	});
 
 	it("error 工具照常计数（失败态由圆点行标识）", () => {

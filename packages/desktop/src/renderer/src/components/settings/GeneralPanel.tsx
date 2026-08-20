@@ -1,6 +1,7 @@
 import type { Language } from "../../i18n";
 import { useI18nStore, useT } from "../../i18n";
 import { useSettingsStore } from "../../stores/settings";
+import { Switch } from "../ui/Switch";
 
 /** 通用设置面板：语言选择 + 内置权限门控开关 */
 export function GeneralPanel() {
@@ -35,22 +36,11 @@ export function GeneralPanel() {
 			<div>
 				<div className="flex items-center justify-between gap-4">
 					<h3 className="text-[13px] font-medium text-ink">{t("settings.permissionGate")}</h3>
-					<button
-						type="button"
-						role="switch"
-						aria-checked={permissionEnabled === true}
+					<Switch
+						checked={permissionEnabled === true}
 						disabled={permissionEnabled === null}
-						onClick={() => void setPermissionEnabled(!(permissionEnabled === true))}
-						className={`relative h-5 w-9 shrink-0 rounded-full transition-colors ${
-							permissionEnabled === true ? "bg-ink" : "bg-border-strong"
-						} disabled:opacity-40`}
-					>
-						<span
-							className={`absolute top-0.5 h-4 w-4 rounded-full bg-surface shadow transition-all ${
-								permissionEnabled === true ? "left-[18px]" : "left-0.5"
-							}`}
-						/>
-					</button>
+						onCheckedChange={(enabled) => void setPermissionEnabled(enabled)}
+					/>
 				</div>
 				<p className="mt-0.5 text-[11px] leading-relaxed text-ink-faint">
 					{t("settings.permissionGateHint")}

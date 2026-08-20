@@ -1,4 +1,4 @@
-import type { AgentSessionEvent, TrustRequest } from "@percho/shared";
+import type { SessionEvent, TrustRequest } from "@percho/shared";
 import { useEffect, useState } from "react";
 import { getPi } from "./api";
 import { EmptyState } from "./components/chat/EmptyState";
@@ -37,28 +37,25 @@ export default function App() {
 
 	useEffect(() => {
 		const pi = getPi();
-		const offEvent = pi.onEvent(
-			async ({ sessionId, event }: { sessionId: string; event: AgentSessionEvent }) => {
-				// 压缩成功后 pi 内部消息被裁剪，重新拉取对齐 UI 消息流
-				if (event.type === "compaction_end" && !event.aborted && event.result) {
-					try {
-						const history = await pi.getSessionMessages(sessionId);
-						useTranscriptStore.getState().loadHistory(sessionId, messagesToUIMessages(history));
-					} catch {
-						// 拉取失败不阻塞事件应用
-					}
+		const offEvent = pi.onEvent(async ({ sessionId, event }: { sessionId: string; event: SessionEvent }) => {
+			// 压缩成功后 pi 内部消息被裁剪，重新拉取对齐 UI 消息流
+			if (event.type === "compaction_end" && !event.aborted && event.result) {
+				try {
+					const history = await pi.getSessionMessages(sessionId);
+					useTranscriptStore.getState().loadHistory(sessionId, messagesToUIMessages(history));
+				} catch {
+					// 拉取失败不阻塞事件应用
 				}
-				useTranscriptStore.getState().applyEvent(sessionId, event, {
-					// 正被查看（活跃 tab 且 chat 视图）的会话完成时不打未读标记
-					isActiveViewing:
-						useSessionsStore.getState().activeSessionId === sessionId &&
-						useUiStore.getState().view === "chat",
-				});
-				if (event.type === "session_info_changed") {
-					useSessionsStore.getState().updateSessionName(sessionId, event.name);
-				}
-			},
-		);
+			}
+			useTranscriptStore.getState().applyEvent(sessionId, event, {
+				// 正被查看（活跃 tab 且 chat 视图）的会话完成时不打未读标记
+				isActiveViewing:
+					useSessionsStore.getState().activeSessionId === sessionId && useUiStore.getState().view === "chat",
+			});
+			if (event.type === "session_info_changed") {
+				useSessionsStore.getState().updateSessionName(sessionId, event.name);
+			}
+		});
 		const offPermission = pi.onPermissionRequest((req) => {
 			useTranscriptStore.getState().addPermission(req.sessionId, req);
 		});
