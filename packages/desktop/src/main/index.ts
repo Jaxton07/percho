@@ -1,5 +1,6 @@
 import "./pi-package-dir";
 import "./dev-agent-dir";
+import "./fix-path";
 import { join } from "node:path";
 import { pathToFileURL } from "node:url";
 import { createLogger, initLogging, PiBackend } from "@percho/backend";

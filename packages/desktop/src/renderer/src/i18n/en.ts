@@ -317,6 +317,8 @@ export const en: Messages = {
 			install: "Install",
 			installing: "Installing…",
 			installed: "Installed",
+			npmNotFound:
+				"npm (Node.js package manager) not found. Install Node.js (e.g. brew install node) and restart Percho; if npm lives in a non-standard path, add it to the system PATH and restart.",
 			uninstall: "Uninstall",
 			confirmUninstall: "Uninstall?",
 			removing: "Removing…",
