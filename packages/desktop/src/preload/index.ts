@@ -8,6 +8,7 @@ import {
 import { contextBridge, ipcRenderer } from "electron";
 
 const api: PiApi = {
+	platform: process.platform,
 	createSession: (options) => ipcRenderer.invoke(IpcChannels.SessionCreate, options),
 	listSessions: (cwd) => ipcRenderer.invoke(IpcChannels.SessionList, cwd),
 	listAllSessions: () => ipcRenderer.invoke(IpcChannels.SessionListAll),
@@ -53,6 +54,16 @@ const api: PiApi = {
 		ipcRenderer.invoke(IpcChannels.SettingsRemoveCustomProvider, providerId),
 	testProvider: (providerId, modelId) =>
 		ipcRenderer.invoke(IpcChannels.SettingsTestProvider, providerId, modelId),
+	startProviderLogin: (loginId, providerId) =>
+		ipcRenderer.invoke(IpcChannels.SettingsLoginStart, loginId, providerId),
+	cancelProviderLogin: (loginId) => ipcRenderer.invoke(IpcChannels.SettingsLoginCancel, loginId),
+	respondProviderLogin: (loginId, promptId, value) =>
+		ipcRenderer.invoke(IpcChannels.SettingsLoginRespond, loginId, promptId, value),
+	onProviderLoginEvent: (cb) => {
+		const listener = (_event: unknown, payload: Parameters<typeof cb>[0]) => cb(payload);
+		ipcRenderer.on(IpcChannels.SettingsLoginEvent, listener);
+		return () => ipcRenderer.removeListener(IpcChannels.SettingsLoginEvent, listener);
+	},
 	respondPermission: (requestId, answer) =>
 		ipcRenderer.invoke(IpcChannels.PermissionRespond, requestId, answer),
 	getPermissionConfig: () => ipcRenderer.invoke(IpcChannels.PermissionGetConfig),

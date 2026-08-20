@@ -196,6 +196,9 @@ export const zh = {
 		sessionRail: "左侧会话轨道",
 		sessionRailHint:
 			"在聊天页左侧居中显示一列会话短线：悬停或聚焦时短线展开为悬浮胶囊（项目图标 + 会话标题），点击快速切换。顶栏会话胶囊保持不变，关闭后完全隐藏。",
+		centerOrb: "居中放大状态动画",
+		centerOrbHint:
+			"任务运行时在对话区域中央显示放大的状态动画（盖在文字之上，半透明遮罩压暗身后文字——工作时专心看动画即可）。只控制中央动画，Working/Thinking 状态行前的小动画始终显示。",
 		vision: {
 			title: "视觉理解",
 			hint: "为不支持图片输入的模型外挂视觉识别：发送图片时先由视觉模型识别为文字描述，再交给当前推理模型。原生多模态模型自动跳过，不受影响。",
@@ -240,6 +243,7 @@ export const zh = {
 			configKey: "配置 Key",
 			updateKey: "更新 Key",
 			removeCredential: "移除凭证",
+			login: "订阅登录",
 			keyPlaceholder: "粘贴 API Key，保存到 ~/.pi/agent/auth.json",
 			addCustom: "+ 添加自定义 Provider",
 			customTitle: "自定义 Provider",
@@ -261,6 +265,15 @@ export const zh = {
 			removeModelRow: "删除此行",
 			customModelsHint: "每行一个模型，可粘贴逗号/换行分隔的列表自动拆行；「思考」开启后该模型才可选思考深度",
 			submitting: "保存中…",
+		},
+		login: {
+			title: "订阅登录 · {name}",
+			browserHint: "授权页面已在浏览器中打开；没有自动完成时，把浏览器地址栏最终的回调地址粘贴到下方输入框",
+			deviceCodeHint: "在打开的验证页面输入以下代码",
+			deviceCodeExpires: "代码 {minutes} 分钟内有效",
+			waiting: "等待授权完成…",
+			submit: "提交",
+			failed: "登录失败",
 		},
 		skills: {
 			title: "已加载的 Skills",
@@ -295,6 +308,8 @@ export const zh = {
 			install: "安装",
 			installing: "安装中…",
 			installed: "已安装",
+			npmNotFound:
+				"未检测到 npm（Node.js 包管理器）。请先安装 Node.js（如 brew install node）后重启 Percho；若已安装在非标准路径，请将其加入系统 PATH 后重启",
 			uninstall: "卸载",
 			confirmUninstall: "确认卸载？",
 			removing: "卸载中…",

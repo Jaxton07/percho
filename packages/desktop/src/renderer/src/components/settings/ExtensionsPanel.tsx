@@ -1,4 +1,5 @@
 import type { CatalogPackage, CatalogPackageType, LoadedExtension, ResourceScope } from "@percho/shared";
+import { NPM_NOT_FOUND_SENTINEL } from "@percho/shared";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useT } from "../../i18n";
 import { useSettingsStore } from "../../stores/settings";
@@ -177,7 +178,13 @@ function CatalogRow({
 					{pkg.author && <span aria-hidden>·</span>}
 					<span>{t("settings.extensions.downloadsPerMonth", { count: formatDownloads(pkg.downloads) })}</span>
 				</div>
-				{installError && <p className="mt-1 text-[11px] text-red-500">{installError}</p>}
+				{installError && (
+					<p className="mt-1 text-[11px] text-red-500">
+						{installError.includes(NPM_NOT_FOUND_SENTINEL)
+							? t("settings.extensions.npmNotFound")
+							: installError}
+					</p>
+				)}
 			</div>
 			<div className="shrink-0 pt-0.5">
 				{configured ? (

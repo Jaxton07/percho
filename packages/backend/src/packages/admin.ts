@@ -1,10 +1,35 @@
 import { DefaultPackageManager, getAgentDir, SettingsManager } from "@earendil-works/pi-coding-agent";
 import type { CatalogPackageType, CatalogSearchResult, ConfiguredPackageInfo } from "@percho/shared";
+import { NPM_NOT_FOUND_SENTINEL } from "@percho/shared";
 import { createLogger } from "../log";
 import type { SessionRegistry } from "../session/registry";
 import { fetchPackageCatalog } from "./catalog";
 
 const log = createLogger("backend");
+
+export { NPM_NOT_FOUND_SENTINEL };
+
+/** 判断错误是否为 spawn npm ENOENT（GUI 启动 PATH 不含 npm 安装目录时的典型报错，issue #18） */
+export function isNpmSpawnEnoent(err: unknown): boolean {
+	if (
+		/(^|\b)spawn(\s+[^\s]+)*\s+npm(\.\w+)?\s+ENOENT\b/.test(err instanceof Error ? err.message : String(err))
+	) {
+		return true;
+	}
+	const code = (err as { code?: unknown } | null)?.code;
+	const syscall = (err as { syscall?: unknown } | null)?.syscall;
+	return code === "ENOENT" && typeof syscall === "string" && /\bnpm\b/.test(syscall);
+}
+
+/** npm ENOENT 时换为带哨兵的可读错误，其余原样抛出 */
+function rethrowPackageError(err: unknown): never {
+	if (isNpmSpawnEnoent(err)) {
+		throw new Error(
+			`${NPM_NOT_FOUND_SENTINEL}: npm executable not found on PATH (install Node.js, then restart the app)`,
+		);
+	}
+	throw err;
+}
 
 /**
  * pi.dev 社区包管理：目录搜索 + 用户级安装/卸载 + 已配置清单。
@@ -54,16 +79,25 @@ export class PackageAdmin {
 		if (!/^(@[a-z0-9][a-z0-9._-]*\/)?[a-z0-9][a-z0-9._-]*$/i.test(name)) {
 			throw new Error(`Invalid package name: ${name}`);
 		}
-		await this.getPackageManager().installAndPersist(`npm:${name}`);
+		try {
+			await this.getPackageManager().installAndPersist(`npm:${name}`);
+		} catch (err) {
+			rethrowPackageError(err);
+		}
 		log.info("package installed", name);
 		await this.reloadSessions();
 	}
 
 	/** 卸载已配置的包（按 source + scope 移除并持久化）；成功后热重载非流式活跃会话 */
 	async removePackage(source: string, scope: "user" | "project"): Promise<void> {
-		const removed = await this.getPackageManager().removeAndPersist(source, {
-			local: scope === "project",
-		});
+		let removed: boolean;
+		try {
+			removed = await this.getPackageManager().removeAndPersist(source, {
+				local: scope === "project",
+			});
+		} catch (err) {
+			rethrowPackageError(err);
+		}
 		if (!removed) throw new Error(`Package not installed: ${source}`);
 		log.info("package removed", source, { scope });
 		await this.reloadSessions();

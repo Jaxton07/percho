@@ -101,6 +101,13 @@ export class SettingsService {
 					configured: status.configured,
 					authSource: status.source,
 					authLabel: status.label,
+					// 订阅登录（OAuth）能力标记：UI 据此显示「订阅登录」入口（如 ChatGPT Plus/Pro、Claude Pro/Max）
+					oauth: provider.auth.oauth
+						? {
+								loginLabel: provider.auth.oauth.loginLabel,
+								isSubscription: provider.auth.oauth.isSubscription,
+							}
+						: undefined,
 					// 自定义 provider 回填 baseUrl/api，编辑表单预填用（key 永不回读）
 					...(customEntry
 						? {
@@ -138,12 +145,10 @@ export class SettingsService {
 		await this.refreshLocalModels();
 	}
 
+	/** 移除凭证：走 SDK logout（同步清理运行时内存态与 auth.json；直接删文件会让内存视图残留） */
 	async removeCredential(providerId: string): Promise<void> {
-		const data = await readJsonFile(this.authPath);
-		if (providerId in data) {
-			delete data[providerId];
-			await writeJsonFile(this.authPath, data, 0o600);
-		}
+		const runtime = await this.getRuntime();
+		await runtime.logout(providerId);
 		await this.refreshLocalModels();
 	}
 

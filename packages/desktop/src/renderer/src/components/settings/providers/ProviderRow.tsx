@@ -2,7 +2,7 @@ import type { ProviderInfo } from "@percho/shared";
 import { useState } from "react";
 import { useT } from "../../../i18n";
 import { useSettingsStore } from "../../../stores/settings";
-import { EditIcon, TestIcon, TrashIcon } from "../../icons";
+import { EditIcon, LoginIcon, TestIcon, TrashIcon } from "../../icons";
 import { Button } from "../../ui/Button";
 import { Tooltip } from "../../ui/Tooltip";
 import { CustomProviderEditForm } from "./CustomProviderForm";
@@ -47,6 +47,8 @@ export function ProviderRow({ provider }: { provider: ProviderInfo }) {
 	const removeCredential = useSettingsStore((s) => s.removeCredential);
 	const removeCustom = useSettingsStore((s) => s.removeCustom);
 	const test = useSettingsStore((s) => s.test);
+	const startLogin = useSettingsStore((s) => s.startProviderLogin);
+	const loginActive = useSettingsStore((s) => s.login !== null);
 	const testResult = useSettingsStore((s) => s.testResults[provider.id]);
 	/** 自定义 provider 展开全字段编辑表单，内置 provider 只填/更新 Key */
 	const [editing, setEditing] = useState(false);
@@ -94,6 +96,15 @@ export function ProviderRow({ provider }: { provider: ProviderInfo }) {
 						) : (
 							<TestIcon />
 						)}
+					</IconAction>
+				)}
+				{provider.oauth && !provider.custom && (
+					<IconAction
+						label={provider.oauth.loginLabel ?? t("settings.providers.login")}
+						disabled={loginActive}
+						onClick={() => void startLogin(provider)}
+					>
+						<LoginIcon />
 					</IconAction>
 				)}
 				<IconAction

@@ -5,20 +5,34 @@ import type { Plugin } from "esbuild";
 /**
  * 懒加载 esbuild + 打包态二进制路径修正（两件事必须一起做）：
  * - 打包态 esbuild 平台二进制在 app.asar 内无法 exec（spawn ENOTDIR），需指向 asarUnpack 镜像出的真实文件；
- * - esbuild 在**模块求值时**一次性缓存 ESBUILD_BINARY_PATH（main.js 顶层），
+ * - esbuild 在**模块求值时**一次性缓存 ESBUILD_BINARY_PATH（main.js 顶层，0.25.x 见 main.js:1599），
  *   而 ESM import 提升会让静态 import 先于任何模块体执行 → 必须 import() 前动态设 env。
+ * - env 用完即恢复原值：主进程的环境会被之后 spawn 的所有子进程继承（agent bash / MCP 等），
+ *   仓库里其他版本的 esbuild（如 vite 内嵌的 0.28.x）读到指向旧二进制的 ESBUILD_BINARY_PATH 会直接崩
+ *   （Host version does not match binary version）。求值在 import() resolve 前已完成，then 里恢复是安全时点。
+ *   ⚠ 升级 esbuild 版本前先确认它仍是「求值时缓存 env」（若改为 spawn 时才读，恢复会让打包态回退到 asar 内路径）。
  * dev/测试态 unpacked 路径不存在 → 不设环境变量，esbuild 默认按包布局解析。
  */
 let esbuildPromise: Promise<typeof import("esbuild")> | null = null;
-function loadEsbuild(): Promise<typeof import("esbuild")> {
+/** internal：导出仅供 build-env.test.ts 验证 env 现场恢复 */
+export function loadEsbuild(): Promise<typeof import("esbuild")> {
 	if (!esbuildPromise) {
 		const bin = process.platform === "win32" ? "esbuild.exe" : "esbuild";
 		const unpacked = join(
 			process.resourcesPath ?? "",
 			`app.asar.unpacked/node_modules/@esbuild/${process.platform}-${process.arch}/bin/${bin}`,
 		);
-		if (existsSync(unpacked)) process.env.ESBUILD_BINARY_PATH = unpacked;
-		esbuildPromise = import("esbuild");
+		const patched = existsSync(unpacked);
+		const prev = process.env.ESBUILD_BINARY_PATH;
+		if (patched) process.env.ESBUILD_BINARY_PATH = unpacked;
+		esbuildPromise = import("esbuild").then((mod) => {
+			if (patched) {
+				// 求值已缓存 env → 恢复现场（用户预设过则还原，否则删除），防泄漏给子进程
+				if (prev === undefined) delete process.env.ESBUILD_BINARY_PATH;
+				else process.env.ESBUILD_BINARY_PATH = prev;
+			}
+			return mod;
+		});
 	}
 	return esbuildPromise;
 }

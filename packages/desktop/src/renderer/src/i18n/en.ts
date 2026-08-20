@@ -199,6 +199,9 @@ export const en: Messages = {
 		sessionRail: "Left session rail",
 		sessionRailHint:
 			"Shows a vertically centered track of session lines on the left of the chat view; hover or focus a line and it grows into a floating capsule (project icon + title) — click to switch. The top tab bar stays unchanged; turn off to hide it.",
+		centerOrb: "Centered status animation",
+		centerOrbHint:
+			"While a task is running, shows an enlarged status animation at the center of the conversation area (above the text, with a translucent scrim dimming whatever is behind it). Only controls the centered animation — the small orb before the Working/Thinking row always stays.",
 		vision: {
 			title: "Vision",
 			hint: "Adds an external vision model for text-only models: images you send are first described by the vision model, then handed to the current reasoning model. Native multimodal models skip this automatically.",
@@ -248,6 +251,7 @@ export const en: Messages = {
 			configKey: "Set Key",
 			updateKey: "Update Key",
 			removeCredential: "Remove credential",
+			login: "Sign in with subscription",
 			keyPlaceholder: "Paste API Key, saved to ~/.pi/agent/auth.json",
 			addCustom: "+ Add custom provider",
 			customTitle: "Custom Provider",
@@ -270,6 +274,16 @@ export const en: Messages = {
 			customModelsHint:
 				"One model per row; paste a comma/newline-separated list to split into rows; enable Think to unlock thinking levels for that model",
 			submitting: "Saving…",
+		},
+		login: {
+			title: "Subscription sign-in · {name}",
+			browserHint:
+				"Authorization page opened in your browser. If it doesn't complete automatically, paste the final redirect URL from the browser address bar into the input below",
+			deviceCodeHint: "Enter this code on the verification page",
+			deviceCodeExpires: "Code expires in {minutes} min",
+			waiting: "Waiting for authorization…",
+			submit: "Submit",
+			failed: "Sign-in failed",
 		},
 		skills: {
 			title: "Loaded Skills",
@@ -306,6 +320,8 @@ export const en: Messages = {
 			install: "Install",
 			installing: "Installing…",
 			installed: "Installed",
+			npmNotFound:
+				"npm (Node.js package manager) not found. Install Node.js (e.g. brew install node) and restart Percho; if npm lives in a non-standard path, add it to the system PATH and restart.",
 			uninstall: "Uninstall",
 			confirmUninstall: "Uninstall?",
 			removing: "Removing…",

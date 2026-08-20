@@ -411,3 +411,23 @@ export function ForkIcon({ size = 16, className }: IconProps) {
 		</svg>
 	);
 }
+
+/** 订阅登录（provider OAuth 入口，lucide log-in 风格） */
+export function LoginIcon({ size = 13, className }: IconProps) {
+	return (
+		<svg
+			className={className}
+			width={size}
+			height={size}
+			viewBox="0 0 24 24"
+			{...strokeProps}
+			strokeLinecap="round"
+			strokeLinejoin="round"
+			aria-hidden="true"
+		>
+			<path d="M15 3h4a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2h-4" />
+			<path d="M10 17l5-5-5-5" />
+			<path d="M15 12H3" />
+		</svg>
+	);
+}

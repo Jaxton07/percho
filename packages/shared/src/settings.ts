@@ -34,6 +34,14 @@ export interface ProviderModelInfo {
 	imageInput?: boolean;
 }
 
+/** provider 的订阅登录（OAuth）能力标记（来自 SDK `provider.auth.oauth`） */
+export interface ProviderOAuthInfo {
+	/** SDK 提供的登录选项文案（如 "Sign in with SuperGrok or X Premium"） */
+	loginLabel?: string;
+	/** 是否订阅制访问 */
+	isSubscription?: boolean;
+}
+
 export interface ProviderInfo {
 	id: string;
 	/** 显示名 */
@@ -45,11 +53,52 @@ export interface ProviderInfo {
 	/** 凭证来源：stored / runtime / environment / models_json_key / models_json_command */
 	authSource?: string;
 	authLabel?: string;
+	/** 支持订阅登录（OAuth）时存在；UI 据此显示「订阅登录」入口 */
+	oauth?: ProviderOAuthInfo;
 	/** 自定义 provider 的 baseUrl（来自 models.json，编辑表单预填用；内置 provider 不填） */
 	baseUrl?: string;
 	/** 自定义 provider 的 api 协议（编辑表单预填用；内置 provider 不填） */
 	api?: string;
 	models: ProviderModelInfo[];
+}
+
+/** 订阅登录过程中的输入/选择提示（pi AuthPrompt 的 IPC 镜像；signal 不可跨进程，已剥离为 prompt-cancel 事件） */
+export type LoginAuthPrompt =
+	| { type: "text"; message: string; placeholder?: string }
+	| { type: "secret"; message: string; placeholder?: string }
+	| { type: "manual_code"; message: string; placeholder?: string }
+	| {
+			type: "select";
+			message: string;
+			options: readonly { id: string; label: string; description?: string }[];
+	  };
+
+/** 订阅登录过程中的状态事件（pi AuthEvent 的 IPC 镜像） */
+export type LoginAuthEvent =
+	| { type: "info"; message: string; links?: readonly { url: string; label?: string }[] }
+	| { type: "auth_url"; url: string; instructions?: string }
+	| {
+			type: "device_code";
+			userCode: string;
+			verificationUri: string;
+			intervalSeconds?: number;
+			expiresInSeconds?: number;
+	  }
+	| { type: "progress"; message: string };
+
+/** main → renderer 登录事件载荷（按 loginId 归属一次登录流程；promptId 关联应答/取消） */
+export type LoginEventPayload = { loginId: string } & (
+	| { kind: "event"; event: LoginAuthEvent }
+	| { kind: "prompt"; promptId: string; prompt: LoginAuthPrompt }
+	| { kind: "prompt-cancel"; promptId: string }
+);
+
+/** 登录流程最终结果（settings:loginStart 的 invoke 返回值；取消不算错误） */
+export interface LoginResult {
+	ok: boolean;
+	/** 用户主动取消（或 SDK 侧流程中止） */
+	cancelled?: boolean;
+	error?: string;
 }
 
 export interface CustomProviderModelInput {
