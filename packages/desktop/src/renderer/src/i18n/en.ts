@@ -199,6 +199,9 @@ export const en: Messages = {
 		sessionRail: "Left session rail",
 		sessionRailHint:
 			"Shows a vertically centered track of session lines on the left of the chat view; hover or focus a line and it grows into a floating capsule (project icon + title) — click to switch. The top tab bar stays unchanged; turn off to hide it.",
+		centerOrb: "Centered status animation",
+		centerOrbHint:
+			"While a task is running, shows an enlarged status animation at the center of the conversation area (above the text, with a translucent scrim dimming whatever is behind it). Only controls the centered animation — the small orb before the Working/Thinking row always stays.",
 		vision: {
 			title: "Vision",
 			hint: "Adds an external vision model for text-only models: images you send are first described by the vision model, then handed to the current reasoning model. Native multimodal models skip this automatically.",

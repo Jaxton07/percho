@@ -1,4 +1,4 @@
-import { Fragment, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { Fragment, useEffect, useLayoutEffect, useMemo, useRef } from "react";
 import type { OrbState } from "thinking-orbs";
 import { ThinkingOrb } from "thinking-orbs";
 import { useT } from "../../i18n";
@@ -9,6 +9,7 @@ import { ExpandArrowIcon } from "../icons";
 import { dotsFromItems, type MetaDot, type SummarySegment, summarizeCategories } from "./meta-summary";
 import { type LivePreviewItem, PreviewTicker } from "./PreviewTicker";
 import { displayName, ToolCallCard } from "./ToolCallCard";
+import { useShownWorking } from "./use-shown-working";
 
 /** 折叠组中的一条元数据项（一条消息的思考/工具，或流式中的进行中部分） */
 export interface MetaItem {
@@ -35,8 +36,6 @@ function ThinkingRow({ thinking }: { thinking: string }) {
 		</details>
 	);
 }
-/** working → worked 切换的缓冲时长：turn 间隙内不闪烁 */
-const HYSTERESIS_MS = 1500;
 /** 光带宽（px，恒定）：高光形状/宽度不随扫光并集伸缩（codex 式固定宽度高光条） */
 const BAND_PX = 260;
 /** 扫光速度（px/s，恒定）：周期随行程自然伸缩；并集增删只影响回绕阈值，不改写光带几何 */
@@ -89,7 +88,7 @@ function summaryLabel(t: ReturnType<typeof useT>, seg: SummarySegment): string {
 	}
 }
 
-/** 圆点样式：done = 实心 ink-dim（与 Worked 标签同色，弱化存在感），error = 更浅的 ink-faint，running = 空心呼吸（globals.css meta-dot-running）；4px 小点紧密成串 */
+/** 圆点样式：done = 实心 ink-dim（与 worked 态标题同色，弱化存在感），error = 更浅的 ink-faint，running = 空心呼吸（globals.css meta-dot-running）；4px 小点紧密成串 */
 function dotClass(state: MetaDot["state"]): string {
 	const base = "h-1 w-1 shrink-0 rounded-full";
 	if (state === "running") return `${base} meta-dot-running`;
@@ -98,55 +97,33 @@ function dotClass(state: MetaDot["state"]): string {
 
 /**
  * 外层折叠组：聚合多条非正文消息的思考/工具。
- * 标题行 = Working/Worked 标签（无计数）+ 内联预览行；其下圆点行按 tool call 逐粒追加
- * （done 实心 ink / error 灰 / running 空心呼吸），working 期实时、结束后随 items 冻结，
- * 展开组时隐藏。展开区顶部一行分类统计（读取/编辑/探索/搜索/执行命令，未知工具按原名计数）。
- * endByText：组被正文边界切分（streaming.text 在输出）→ working 信号消失时立即结束，
- * 不做滞后缓冲；否则（turn 间隙）滞后 HYSTERESIS_MS 防闪烁
+ * 标题行：working 期 = Working/Thinking 标签 + 内联预览行；worked 期 = 分类统计单行
+ * （读取/编辑/探索/搜索/执行命令，未知工具按原名计数；无工具时回退 Worked 标签）。
+ * 其下圆点行按 tool call 逐粒追加（done 实心 ink / error 灰 / running 空心呼吸），working 期
+ * 实时、结束后随 items 冻结，展开组时隐藏。展开区为完整思考行/工具卡。
+ * endImmediately：组被正文边界切分（streaming.text 在输出）或 run 已终结 → working 信号消失时
+ * 立即结束，不做滞后缓冲；否则（turn/工具间隙）滞后 HYSTERESIS_MS 防闪烁
  */
 export function MetaGroup({
 	items,
 	working,
-	endByText = false,
+	endImmediately = false,
 }: {
 	items: MetaItem[];
 	working: boolean;
-	endByText?: boolean;
+	endImmediately?: boolean;
 }) {
 	const t = useT();
 	const count = items.reduce((n, item) => n + (item.thinking ? 1 : 0) + item.tools.length, 0);
 	// 圆点序列：组内工具按到达顺序展开（working 期实时追加；组结束后随 items 冻结在原位）
 	const dots = useMemo(() => dotsFromItems(items), [items]);
-	// 分类汇总：展开区顶部的速读行（收起态由圆点行承担密度感，语义分类只占展开区）
+	// 分类汇总：worked 态标题行（working 期不显示；展开组时标题仍在）
 	const segments = useMemo(() => summarizeCategories(items), [items]);
 
-	// 滞后缓冲：working 信号消失后需保持 HYSTERESIS_MS 才显示 worked（turn 间隙内不闪烁）
-	const [shownWorking, setShownWorking] = useState(working);
-	const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-	useEffect(() => {
-		if (working) {
-			if (timerRef.current) {
-				clearTimeout(timerRef.current);
-				timerRef.current = null;
-			}
-			setShownWorking(true);
-		} else if (shownWorking) {
-			if (endByText) {
-				// 正文已出现：组立即结束，避免与正文后的新预览重叠
-				setShownWorking(false);
-				return;
-			}
-			if (!timerRef.current) {
-				timerRef.current = setTimeout(() => {
-					timerRef.current = null;
-					setShownWorking(false);
-				}, HYSTERESIS_MS);
-			}
-		}
-		return () => {
-			if (timerRef.current) clearTimeout(timerRef.current);
-		};
-	}, [working, shownWorking, endByText]);
+	// 滞后缓冲：working 信号消失后需保持缓冲才显示 worked（turn 间隙内不闪烁）；
+	// 与 CenterOrb 中央动画共用同一 hook，两处显隐节奏一致
+	const shownWorking = useShownWorking(working, endImmediately);
+	// 状态行小 orb 恒显示：中央动画开关（centerOrbEnabled）与本行解耦，互不让位
 
 	const labelRef = useRef<HTMLSpanElement>(null);
 	const tickerWrapRef = useRef<HTMLDivElement>(null);
@@ -285,24 +262,40 @@ export function MetaGroup({
 				<summary className="group/row flex cursor-pointer select-none flex-col [&::-webkit-details-marker]:hidden">
 					{/* min-h-6：与内联预览行（h-6）等高，working/worked 切换首行行高不变 */}
 					<div className="flex min-h-6 w-full items-center gap-2 py-0.5">
-						<div className="flex shrink-0 items-center gap-2">
-							{shownWorking && <ThinkingOrb state={orbState} size={20} paused={false} />}
+						{shownWorking ? (
+							<>
+								<div className="flex shrink-0 items-center gap-2">
+									<ThinkingOrb state={orbState} size={20} paused={false} />
+									<span
+										ref={labelRef}
+										className="sweep-target text-[14px] font-bold text-ink-working transition-colors group-hover/row:text-ink"
+									>
+										{t(labelKey)}
+									</span>
+								</div>
+								{/* 实时预览内联进标题行（单行截断，展开组时隐藏） */}
+								<div ref={tickerWrapRef} className="min-w-0 flex-1 group-open/outer:hidden">
+									<PreviewTicker items={liveItems} reserveSpace />
+								</div>
+							</>
+						) : segments.length > 0 ? (
+							/* worked 态标题 = 分类统计（原展开区速读行提上来）；单行截断，hover 变色提示可展开 */
+							<span className="min-w-0 flex-1 truncate text-[13px] text-ink-dim transition-colors group-hover/row:text-ink">
+								{segments.map((seg, i) => (
+									<Fragment key={seg.key}>
+										{i > 0 && <span className="opacity-50"> · </span>}
+										{summaryLabel(t, seg)}
+									</Fragment>
+								))}
+							</span>
+						) : (
 							<span
 								ref={labelRef}
-								className={`text-[14px] font-bold transition-colors group-hover/row:text-ink ${
-									shownWorking ? "sweep-target text-ink-working" : "text-ink-dim"
-								}`}
+								className="text-[14px] font-bold text-ink-dim transition-colors group-hover/row:text-ink"
 							>
-								{t(shownWorking ? labelKey : "message.worked")}
+								{t("message.worked")}
 							</span>
-						</div>
-						{/* 实时预览内联进标题行（单行截断，展开组时隐藏） */}
-						{shownWorking && (
-							<div ref={tickerWrapRef} className="min-w-0 flex-1 group-open/outer:hidden">
-								<PreviewTicker items={liveItems} reserveSpace />
-							</div>
 						)}
-						<ExpandArrowIcon className="shrink-0 text-ink-faint opacity-0 transition-[opacity,transform,color] group-hover/row:opacity-100 group-hover/row:text-ink-2 group-open/outer:rotate-90" />
 					</div>
 					{/* 圆点行：一次 tool call 一粒（running 空心呼吸 → done 实心 ink-dim / error ink-faint），working 期实时追加、
 					    结束后随 items 冻结原位；超长 flex-wrap 换行；展开组时隐藏（展开区有完整工具卡）。
@@ -315,20 +308,7 @@ export function MetaGroup({
 						</div>
 					)}
 				</summary>
-				<div className="flex flex-col gap-1.5 py-1">
-					{/* 分类统计速读行：展开区顶部单行（· 分隔，flex-wrap 兜底） */}
-					{segments.length > 0 && (
-						<div className="flex flex-wrap items-center gap-x-2 gap-y-0.5 py-0.5 text-[13px] text-ink-faint">
-							{segments.map((seg, i) => (
-								<Fragment key={seg.key}>
-									{i > 0 && <span className="opacity-50">·</span>}
-									<span>{summaryLabel(t, seg)}</span>
-								</Fragment>
-							))}
-						</div>
-					)}
-					{rows}
-				</div>
+				<div className="flex flex-col gap-1.5 py-1">{rows}</div>
 			</details>
 		</div>
 	);

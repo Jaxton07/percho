@@ -26,6 +26,7 @@ function normalize(parsed: Partial<UiState>): UiState {
 		theme,
 		background: { image: typeof background?.image === "string" ? background.image : null, dim },
 		sessionRailEnabled: typeof parsed.sessionRailEnabled === "boolean" ? parsed.sessionRailEnabled : false,
+		centerOrbEnabled: typeof parsed.centerOrbEnabled === "boolean" ? parsed.centerOrbEnabled : false,
 	};
 }
 

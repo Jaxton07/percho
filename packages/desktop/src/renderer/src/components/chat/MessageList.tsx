@@ -4,9 +4,12 @@ import { Slot } from "../../plugins/Slot";
 import { UI_SLOTS } from "../../plugins/slots";
 import { useSessionsStore } from "../../stores/sessions";
 import { selectTranscript, useTranscriptStore } from "../../stores/transcript";
+import { useUiPreferencesStore } from "../../stores/ui-preferences";
+import { CenterOrb } from "./CenterOrb";
 import { MessageItem } from "./MessageItem";
 import { MetaGroup, type MetaItem } from "./MetaGroup";
 import { SubagentRunCard } from "./SubagentRunCard";
+import { useShownWorking } from "./use-shown-working";
 
 /** 距底 ≤ 此值视为「在底部」，自动恢复跟随 */
 const BOTTOM_THRESHOLD = 48;
@@ -32,6 +35,17 @@ export function MessageList() {
 	);
 	/** agent 运行中且正文未出现 → 折叠组标题 working；正文已出但工具/子代理还在跑时不熄灯 */
 	const agentWorking = transcript.agentActive && (!streaming?.text || hasRunningWork);
+
+	// 中央状态动画（设置开关，与状态行小 orb 解耦）：与 MetaGroup 同一 working 信号 + 同一滞后缓冲，
+	// 显隐节奏一致；动画两态合一为中速单动画（无状态切换），CenterOrb 只收 visible。
+	// 滞后缓冲只在 run 存活期内生效：正文在输出或 run 已终结（!agentActive）时立即结束——
+	// 杜绝结束/中止后的 1.5s 滞留；resetKey=会话 id：切会话立即对齐新信号，不滞留旧动画
+	const centerOrbEnabled = useUiPreferencesStore((s) => s.centerOrbEnabled);
+	const shownWorking = useShownWorking(
+		agentWorking,
+		Boolean(streaming?.text) || !transcript.agentActive,
+		activeSessionId,
+	);
 
 	const scrollRef = useRef<HTMLDivElement>(null);
 	const contentRef = useRef<HTMLDivElement>(null);
@@ -123,14 +137,14 @@ export function MessageList() {
 	 */
 	const flushMeta = (isLatest = false, forceEmpty = false) => {
 		if (metaItems.length === 0 && !forceEmpty) return;
-		// 正文在输出 → 工作组强制结束（streaming 里残留的 thinking/tools 不延长工作中）
-		const endByText = Boolean(transcript.streaming?.text);
+		// 正文在输出（组被正文边界切分）或 run 已终结 → working 信号消失时立即结束，不做滞后缓冲
+		const endImmediately = Boolean(transcript.streaming?.text) || !transcript.agentActive;
 		items.push(
 			<MetaGroup
 				key={`meta-${activeSessionId}-g${groupIndex++}`}
 				items={metaItems}
 				working={isLatest && agentWorking}
-				endByText={endByText}
+				endImmediately={endImmediately}
 			/>,
 		);
 		metaItems = [];
@@ -170,7 +184,7 @@ export function MessageList() {
 			metaItems.push({
 				thinking: streaming.thinking,
 				tools: preTools,
-				// 正文已出现时 pre 组被强制结束（endByText），不再携带活动序列；未出正文时维持现状
+				// 正文已出现时 pre 组被强制结束（endImmediately），不再携带活动序列；未出正文时维持现状
 				activity: textIdx == null ? streaming.activity : undefined,
 			});
 		}
@@ -218,14 +232,19 @@ export function MessageList() {
 
 	return (
 		<div className="relative h-full">
+			{/* 中央状态动画：z-20 在文字层（z-10 滚动容器）之上——canvas 一体遮罩压住身后文字、
+			    凸显动画本体（用户规格：工作中不看文字）；pointer-events-none 不拦截交互 */}
+			{centerOrbEnabled && <CenterOrb visible={shownWorking} />}
 			{/* overflow-x-hidden：任何行内容异常超宽都只裁剪，不产生页面级横向滚动条 */}
 			{/* scrollbar-gutter:stable：永久保留滚动条槽位——展开折叠组跨过溢出阈值时滚动条出现/消失
 			    会挤掉布局宽度，导致居中列（mx-auto max-w-760）整体左右横移；悬浮滚动条模式下无副作用 */}
+			{/* relative z-10：无背景；CenterOrb（z-20）连同其 canvas 遮罩盖在本层之上（工作中场景），
+			    交互不受影响（orb 整层 pointer-events-none） */}
 			<div
 				ref={scrollRef}
 				onScroll={handleScroll}
 				onClickCapture={handleSummaryToggle}
-				className="h-full overflow-x-hidden overflow-y-auto [scrollbar-gutter:stable]"
+				className="relative z-10 h-full overflow-x-hidden overflow-y-auto [scrollbar-gutter:stable]"
 			>
 				<div ref={contentRef} className="mx-auto flex max-w-[760px] flex-col gap-6 px-6 pt-8 pb-16">
 					{items}

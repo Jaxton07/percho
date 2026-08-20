@@ -21,6 +21,8 @@ export function AppearancePanel() {
 	const setBackgroundDim = useThemeStore((s) => s.setBackgroundDim);
 	const sessionRailEnabled = useUiPreferencesStore((s) => s.sessionRailEnabled);
 	const setSessionRailEnabled = useUiPreferencesStore((s) => s.setSessionRailEnabled);
+	const centerOrbEnabled = useUiPreferencesStore((s) => s.centerOrbEnabled);
+	const setCenterOrbEnabled = useUiPreferencesStore((s) => s.setCenterOrbEnabled);
 
 	return (
 		<div className="flex flex-col gap-6">
@@ -116,6 +118,27 @@ export function AppearancePanel() {
 					</button>
 				</div>
 				<p className="mt-0.5 text-[11px] leading-relaxed text-ink-faint">{t("settings.sessionRailHint")}</p>
+			</div>
+			<div>
+				<div className="flex items-center justify-between gap-4">
+					<h3 className="text-[13px] font-medium text-ink">{t("settings.centerOrb")}</h3>
+					<button
+						type="button"
+						role="switch"
+						aria-checked={centerOrbEnabled}
+						onClick={() => setCenterOrbEnabled(!centerOrbEnabled)}
+						className={`relative h-5 w-9 shrink-0 rounded-full transition-colors ${
+							centerOrbEnabled ? "bg-ink" : "bg-border-strong"
+						}`}
+					>
+						<span
+							className={`absolute top-0.5 h-4 w-4 rounded-full bg-surface shadow transition-all ${
+								centerOrbEnabled ? "left-[18px]" : "left-0.5"
+							}`}
+						/>
+					</button>
+				</div>
+				<p className="mt-0.5 text-[11px] leading-relaxed text-ink-faint">{t("settings.centerOrbHint")}</p>
 			</div>
 		</div>
 	);
