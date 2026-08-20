@@ -146,6 +146,8 @@ export const IpcChannels = {
 
 /** 渲染进程经 preload 暴露的 window.pi 类型 */
 export interface PiApi {
+	/** 运行平台（preload 同步注入，供 renderer 按平台分流 UI：如顶栏红绿灯/窗口按钮留白） */
+	readonly platform: "darwin" | "win32" | "linux" | (string & {});
 	createSession(options: CreateSessionOptions): Promise<SessionMeta>;
 	listSessions(cwd?: string): Promise<SessionMeta[]>;
 	/** 跨全部项目目录枚举历史会话（项目管理页用） */

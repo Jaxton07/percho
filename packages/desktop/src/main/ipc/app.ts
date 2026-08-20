@@ -2,7 +2,7 @@ import { writeFile } from "node:fs/promises";
 import type { PiBackend } from "@percho/backend";
 import type { SavedTabs, UiState } from "@percho/shared";
 import { IpcChannels } from "@percho/shared";
-import { app, BrowserWindow, dialog, ipcMain, shell } from "electron";
+import { app, BrowserWindow, dialog, ipcMain, nativeTheme, shell } from "electron";
 import { pickBackgroundImage } from "../background";
 import { checkoutBranch, getGitBranch, listGitBranches } from "../git";
 import { loadTabs, saveTabs } from "../tabs";
@@ -34,7 +34,11 @@ export function registerAppIpc(_backend: PiBackend): void {
 	ipcMain.handle(IpcChannels.TabsLoad, () => loadTabs());
 	ipcMain.handle(IpcChannels.TabsSave, (_e, tabs: SavedTabs) => saveTabs(tabs));
 	ipcMain.handle(IpcChannels.UiStateLoad, () => loadUiState());
-	ipcMain.handle(IpcChannels.UiStateSave, (_e, state: Partial<UiState>) => saveUiState(state));
+	ipcMain.handle(IpcChannels.UiStateSave, (_e, state: Partial<UiState>) => {
+		// 主题变更 → 对齐 main 原生主题（themeSource 赋值触发 updated 事件，窗口底色/Windows 按钮覆盖层随之刷新）
+		if (state.theme) nativeTheme.themeSource = state.theme;
+		return saveUiState(state);
+	});
 	ipcMain.handle(IpcChannels.BackgroundPick, () => pickBackgroundImage(BrowserWindow.getAllWindows()[0]));
 	ipcMain.handle(IpcChannels.UpdateCheck, () => checkForUpdates());
 	ipcMain.handle(IpcChannels.UpdateInstall, () => installUpdate());

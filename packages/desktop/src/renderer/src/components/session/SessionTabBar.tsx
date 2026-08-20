@@ -18,6 +18,7 @@ import {
 import type { SessionMeta } from "@percho/shared";
 import type { ComponentProps } from "react";
 import { useEffect, useRef, useState } from "react";
+import { getPi } from "../../api";
 import { useT } from "../../i18n";
 import { useSessionsStore } from "../../stores/sessions";
 import { useTranscriptStore } from "../../stores/transcript";
@@ -151,9 +152,11 @@ function SessionTab({ session, isActive }: { session: SessionMeta; isActive: boo
 	);
 }
 
-/** 顶栏：macOS hiddenInset 红绿灯左侧，会话 tab 从右排开，可拖拽排序（浏览器标签式） */
+/** 顶栏：macOS hiddenInset 红绿灯在左（预留 pl-20）；Windows 系统按钮覆盖层在右（预留 pr-[140px]）；
+ *  Linux 原生框架两侧均不预留。会话 tab 从左排开，可拖拽排序（浏览器标签式） */
 export function SessionTabBar() {
 	const t = useT();
+	const platform = getPi().platform;
 	const sessions = useSessionsStore((s) => s.sessions);
 	const activeSessionId = useSessionsStore((s) => s.activeSessionId);
 	const createDraftSession = useSessionsStore((s) => s.createDraftSession);
@@ -199,9 +202,13 @@ export function SessionTabBar() {
 		return () => el.removeEventListener("wheel", onWheel);
 	}, []);
 
+	// macOS 左侧为红绿灯留 80px；Windows 右侧为窗口按钮覆盖层留 140px（3 × 46px 取整）
+	const chromePadding =
+		platform === "darwin" ? "pl-20 pr-3" : platform === "win32" ? "pl-3 pr-[140px]" : "pl-3 pr-3";
+
 	return (
 		<div
-			className={`${dragging ? "" : "drag-region"} flex h-12 shrink-0 items-center gap-1 border-b border-border bg-canvas pl-20 pr-3`}
+			className={`${dragging ? "" : "drag-region"} flex h-12 shrink-0 items-center gap-1 border-b border-border bg-canvas ${chromePadding}`}
 		>
 			<button
 				type="button"

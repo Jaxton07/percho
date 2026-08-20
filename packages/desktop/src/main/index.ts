@@ -4,14 +4,13 @@ import "./fix-path";
 import { join } from "node:path";
 import { pathToFileURL } from "node:url";
 import { createLogger, initLogging, PiBackend } from "@percho/backend";
-import type { ThemeMode } from "@percho/shared";
-import { app, BrowserWindow, nativeTheme, net, protocol } from "electron";
+import { app, BrowserWindow, Menu, nativeTheme, net, protocol } from "electron";
 import { backgroundsDir } from "./background";
 import { registerIpc } from "./ipc";
 import { UiPluginManager, uiPluginsResourcesDir } from "./ui-plugins/manager";
 import { loadUiState } from "./ui-state";
 import { initUpdater, scheduleAutoUpdateCheck } from "./updater";
-import { createWindow } from "./window";
+import { applyChromeTheme, createWindow, resolveTheme } from "./window";
 
 const log = createLogger("main");
 let backend: PiBackend;
@@ -35,11 +34,10 @@ protocol.registerSchemesAsPrivileged([
 	{ scheme: BG_PROTOCOL, privileges: { standard: true, secure: true, supportFetchAPI: true } },
 ]);
 
-/** 解析保存的主题为明确的深浅色（system 时跟随系统），窗口底色与 ?theme= 传参同源 */
-function resolveTheme(theme: ThemeMode | undefined): "dark" | "light" {
-	const dark = theme === "dark" || (theme !== "light" && nativeTheme.shouldUseDarkColors);
-	return dark ? "dark" : "light";
-}
+// Windows/Linux 不显示默认应用菜单（File/Edit/...）；macOS 菜单在系统菜单栏且承担复制粘贴等快捷键，保留
+if (process.platform !== "darwin") Menu.setApplicationMenu(null);
+// 系统深浅色变化（或用户切换主题导致 themeSource 变更）→ 同步窗口底色与 Windows 窗口按钮覆盖层
+nativeTheme.on("updated", () => applyChromeTheme(nativeTheme.themeSource));
 
 app.whenReady().then(async () => {
 	initLogging(join(app.getPath("userData"), "logs"));
@@ -91,6 +89,8 @@ app.whenReady().then(async () => {
 	await initUpdater();
 	scheduleAutoUpdateCheck();
 	const uiState = await loadUiState();
+	// main 进程原生主题与 app 设置对齐（Windows 窗口按钮覆盖层/后续主题切换的 system 解析依赖它）
+	nativeTheme.themeSource = uiState?.theme ?? "system";
 	createWindow(resolveTheme(uiState?.theme));
 
 	app.on("activate", () => {

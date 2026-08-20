@@ -8,6 +8,7 @@ import {
 import { contextBridge, ipcRenderer } from "electron";
 
 const api: PiApi = {
+	platform: process.platform,
 	createSession: (options) => ipcRenderer.invoke(IpcChannels.SessionCreate, options),
 	listSessions: (cwd) => ipcRenderer.invoke(IpcChannels.SessionList, cwd),
 	listAllSessions: () => ipcRenderer.invoke(IpcChannels.SessionListAll),
