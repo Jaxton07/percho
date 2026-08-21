@@ -1,51 +1,41 @@
-import { type ReactNode, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
-import { useT } from "../../i18n";
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { type ActivityTickerSnapshot, createActivityTicker } from "./activity-ticker";
-import { displayName, summarizeArgs } from "./ToolCallCard";
+import { StreamingMarquee } from "./StreamingMarquee";
+import { displayName } from "./ToolCallCard";
 
 /** 预览条目（由 MetaGroup 从流式 activity 派生，按到达顺序） */
 export type LivePreviewItem =
-	| { kind: "tool"; id: string; name: string; args: string }
-	| { kind: "thinking"; id: string };
+	| { kind: "thinking"; id: string; text: string }
+	| { kind: "tool"; id: string; name: string; text: string };
 
-/** 当前屏上的 slot（渲染用） */
-interface CurrentSlot {
-	id: string;
-	kind: "tool" | "thinking";
-	name?: string;
-	args?: string;
-}
+type CurrentSlot = LivePreviewItem;
 
-/** thinking 预览行：只有"思考中"标签，不显示思考内容 */
-function ThinkingPreviewRow() {
-	const t = useT();
+/** thinking 行的固定身份在 MetaGroup；此处只显示对应的流式正文。 */
+function ThinkingPreviewRow({ text }: { text: string }) {
 	return (
-		<div className="flex items-center gap-2 py-0.5">
-			<span className="shrink-0 text-[13px] font-semibold text-ink-dim">{t("message.thinkingPreview")}</span>
+		<div className="flex min-w-0 items-center py-0.5 text-[13px] text-ink-dim">
+			<StreamingMarquee text={text} />
 		</div>
 	);
 }
 
-/** tool 预览行：工具名（data-shimmer-name：MetaGroup 统一扫光的范围终点；sweep-target：扫光样式兜底，挂载/清理无闪帧）+ 参数摘要（单行截断），不可展开；参数随流式增长原地更新 */
-function ToolPreviewRow({ name, args }: { name: string; args: string }) {
-	const summary = summarizeArgs(args);
+/** 工具名保持固定，参数原文作为流式正文横移；不沿用 ToolCallCard 的摘要逻辑。 */
+function ToolPreviewRow({ name, text }: { name: string; text: string }) {
 	return (
-		<div className="flex items-center gap-2 py-0.5">
+		<div className="flex min-w-0 items-center gap-2 py-0.5">
 			<span data-shimmer-name className="sweep-target shrink-0 font-mono text-[13px] text-ink-working">
 				{displayName(name)}
 			</span>
-			{summary && (
-				<span className="min-w-0 flex-1 truncate font-mono text-[12px] text-ink-faint">{summary}</span>
-			)}
+			{text && <StreamingMarquee text={text} />}
 		</div>
 	);
 }
 
-function rowOf(slot: CurrentSlot): ReactNode {
-	return slot.kind === "tool" && slot.name ? (
-		<ToolPreviewRow name={slot.name} args={slot.args ?? ""} />
+function rowOf(slot: CurrentSlot) {
+	return slot.kind === "tool" ? (
+		<ToolPreviewRow name={slot.name} text={slot.text} />
 	) : (
-		<ThinkingPreviewRow />
+		<ThinkingPreviewRow text={slot.text} />
 	);
 }
 
@@ -57,11 +47,10 @@ const PREV_CLEANUP_MS = ANIMATION_MS + 60;
 /**
  * 工作中预览行：永远显示最新一条活动（latest-wins）。
  * - 新活动上滑替换旧的；最小停留期内的爆发合并为最新一条（调度见 activity-ticker.ts）
- * - 同一活动参数增长只更新内容，不触发切换动画
- * - 切换动画串行化：一次滑入/滑出必放完，期间到达的切换合并为最新、在动画结束瞬间提交；
- *   活动清空也走滑出动画（不瞬时卸载）
- * - 无活动且无在屏动画时不渲染（思考中只在真 thinking 流式时出现）；
- *   reserveSpace 时改为渲染空占位行（working 期间高度恒定，避免下方内容随活动间隙上下跳）
+ * - 同一活动内容增长只更新内容，不触发切换动画
+ * - 切换动画串行化：一次滑入/滑出必放完，期间到达的切换合并为最新、在动画结束瞬间提交
+ * - 无活动且无在屏动画时不渲染（思考中只在真 thinking 流式时出现）
+ * - reserveSpace 时渲染空占位行，避免 tool call 间隙造成布局跳动
  */
 export function PreviewTicker({
 	items,
@@ -70,7 +59,6 @@ export function PreviewTicker({
 	items: LivePreviewItem[];
 	reserveSpace?: boolean;
 }) {
-	// useState 惰性初始化：调度器实例跨渲染稳定（同一引用）
 	const [ticker] = useState(createActivityTicker);
 	const [snap, setSnap] = useState<ActivityTickerSnapshot>(() => ticker.peek());
 	const [shown, setShownState] = useState<CurrentSlot | null>(null);
@@ -80,16 +68,16 @@ export function PreviewTicker({
 	/** 当前切换动画的结束时刻（此前不得发起下一次切换） */
 	const animUntilRef = useRef(0);
 
-	const slots = useMemo(() => items.map((i) => ({ id: i.id, kind: i.kind })), [items]);
+	const slots = useMemo(() => items.map((item) => ({ id: item.id, kind: item.kind })), [items]);
 
-	// 调度：items 变化（新活动/参数增长）→ latest-wins 判定；快照未变时保持旧引用 bail out
 	// biome-ignore lint/correctness/useExhaustiveDependencies: ticker 由 useState 惰性初始化，实例跨渲染恒定
 	useEffect(() => {
 		const next = ticker.ingest(slots, Date.now());
-		setSnap((prev) => (prev.currentId === next.currentId && prev.switchAt === next.switchAt ? prev : next));
+		setSnap((current) =>
+			current.currentId === next.currentId && current.switchAt === next.switchAt ? current : next,
+		);
 	}, [slots]);
 
-	// 最小停留到点 → 切到最新（合并停留期间到达的多条）
 	// biome-ignore lint/correctness/useExhaustiveDependencies: ticker 实例跨渲染恒定
 	useEffect(() => {
 		if (!snap.switchAt) return;
@@ -98,39 +86,34 @@ export function PreviewTicker({
 		return () => clearTimeout(timer);
 	}, [snap]);
 
-	// 目标 slot：无活动 → null（走滑出后消失）
-	const live = snap.currentId ? items.find((i) => i.id === snap.currentId) : undefined;
-	const desired: CurrentSlot | null = live
-		? live.kind === "tool"
-			? { id: live.id, kind: "tool", name: live.name, args: live.args }
-			: { id: live.id, kind: "thinking" }
-		: null;
+	const live = snap.currentId ? items.find((item) => item.id === snap.currentId) : undefined;
+	const desired = live ?? null;
 	desiredRef.current = desired;
 
-	// 提交切换：旧行挪到 previous 滑出，新行上屏；此后 ANIMATION_MS 内不再切换（动画放完）
 	const commit = (next: CurrentSlot | null) => {
-		const cur = shownRef.current;
-		if (cur && cur.id !== next?.id) setPrevious(cur);
+		const current = shownRef.current;
+		if (current && current.id !== next?.id) setPrevious(current);
 		animUntilRef.current = Date.now() + ANIMATION_MS;
 		shownRef.current = next;
 		setShownState(next);
 	};
 
-	// 切换决策：同 id → 原地内容更新；异 id → 动画空闲立即提交，动画中延迟到放完
-	// （延迟期间 desired 继续更新，提交时取最新 → 爆发合并为一跳，每跳都是完整动画）。
-	// 必须用 useLayoutEffect（paint 前同步 flush）：旧行滑出与新行滑入同一帧开始
-	// biome-ignore lint/correctness/useExhaustiveDependencies: commit/ refs 均为稳定引用
+	// 同 id 内容增长原地更新；异 id 才提交纵向滑动。layout effect 保证进/出场同帧开始。
+	// biome-ignore lint/correctness/useExhaustiveDependencies: commit/refs 均为稳定引用
 	useLayoutEffect(() => {
-		const cur = shownRef.current;
-		if (desired && desired.id === cur?.id) {
-			// 同一活动参数增长：内容原地更新（不动画、不重置计时）
-			if (desired.name !== cur.name || desired.args !== cur.args) {
+		const current = shownRef.current;
+		if (desired && desired.id === current?.id) {
+			if (
+				desired.kind !== current.kind ||
+				desired.text !== current.text ||
+				(desired.kind === "tool" && current.kind === "tool" && desired.name !== current.name)
+			) {
 				shownRef.current = desired;
 				setShownState(desired);
 			}
 			return;
 		}
-		if (desired === null && cur === null) return;
+		if (desired === null && current === null) return;
 		const wait = animUntilRef.current - Date.now();
 		if (wait <= 0) {
 			commit(desired);
@@ -140,20 +123,15 @@ export function PreviewTicker({
 		return () => clearTimeout(timer);
 	}, [desired]);
 
-	// previous 兜底清理（动画未触发 / motion-reduce 时也能移除）
 	useEffect(() => {
 		if (!previous) return;
 		const timer = setTimeout(() => setPrevious(null), PREV_CLEANUP_MS);
 		return () => clearTimeout(timer);
 	}, [previous]);
 
-	if (!shown && !previous) {
-		// working 期间占位：tool call 间隙不卸载，高度恒为 h-6，消除触底时布局跳动
-		return reserveSpace ? <div className="relative h-6 overflow-hidden" /> : null;
-	}
+	if (!shown && !previous) return reserveSpace ? <div className="relative h-6 overflow-hidden" /> : null;
 
 	return (
-		// 上下边缘 mask 渐隐：滑入/滑出行穿过容器边界时柔化，避免硬裁切边（静态行文字居中不受影响）
 		<div className="relative h-6 overflow-hidden text-ink-dim [mask-image:linear-gradient(to_bottom,transparent,black_20%,black_80%,transparent)]">
 			{previous && (
 				<div key={`prev-${previous.id}`} className="preview-slide-out absolute inset-x-0 top-0">

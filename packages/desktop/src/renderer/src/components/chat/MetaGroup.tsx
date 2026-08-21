@@ -221,20 +221,17 @@ export function MetaGroup({
 	const orbState: OrbState = isTool ? "connecting" : "working";
 	const labelKey = isTool ? "message.working" : "message.thinkingLabel";
 
-	// 实时预览：流式项的活动序列按到达顺序展开（latest-wins，预览行显示最后一条）
-	// 过滤掉 thinking：只显示 tool call，避免与标签栏的“思考中”重复
+	// 实时预览：完整活动序列按到达顺序展开，ticker 在 thinking/tool 间保持 latest-wins。
+	// 内容已由 reducer 分块累计；这里不重新合并、解析或摘要。
 	const liveItems = useMemo<LivePreviewItem[]>(() => {
 		const out: LivePreviewItem[] = [];
 		for (const item of items) {
 			if (!item.activity) continue;
 			for (const entry of item.activity) {
-				if (entry.kind === "tool") {
-					out.push({
-						kind: "tool",
-						id: entry.id,
-						name: entry.name ?? "tool",
-						args: entry.args ?? "",
-					});
+				if (entry.kind === "thinking") {
+					out.push({ kind: "thinking", id: entry.id, text: entry.text });
+				} else {
+					out.push({ kind: "tool", id: entry.id, name: entry.name, text: entry.args });
 				}
 			}
 		}
