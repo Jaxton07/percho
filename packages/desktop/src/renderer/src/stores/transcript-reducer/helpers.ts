@@ -56,14 +56,29 @@ export function toolNameFromPartial(partial: unknown, contentIndex: number): str
 	return "tool";
 }
 
+/** thinking 按 content block 累积；同一块原地更新，首次到达按顺序追加。 */
+export function updateThinkingActivity(
+	activity: ActivityEntry[],
+	contentIndex: number,
+	append: (text: string) => string,
+): ActivityEntry[] {
+	const id = `h${contentIndex}`;
+	const existing = activity.find((entry) => entry.id === id);
+	if (!existing) return [...activity, { id, kind: "thinking", text: append("") }];
+	return activity.map((entry) =>
+		entry.id === id && entry.kind === "thinking" ? { ...entry, text: append(entry.text) } : entry,
+	);
+}
+
 export function updateToolActivity(
 	activity: ActivityEntry[],
 	contentIndex: number,
 	append: (args: string) => string,
 ): ActivityEntry[] {
 	const id = `c${contentIndex}`;
-	if (!activity.some((a) => a.id === id)) return activity;
-	return activity.map((a) => (a.id === id ? { ...a, args: append(a.args ?? "") } : a));
+	return activity.map((entry) =>
+		entry.id === id && entry.kind === "tool" ? { ...entry, args: append(entry.args) } : entry,
+	);
 }
 
 export function findLastIndex<T>(arr: readonly T[], predicate: (item: T) => boolean): number {

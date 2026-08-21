@@ -15,6 +15,7 @@ import {
 	newToolKey,
 	parseArgs,
 	toolNameFromPartial,
+	updateThinkingActivity,
 	updateToolActivity,
 } from "./helpers";
 import type { CompactionUiState, SessionTranscriptState, SubagentRunUi, UIMessage } from "./types";
@@ -186,15 +187,15 @@ export function reduceEvent(state: SessionTranscriptState, event: SessionEvent):
 							textBlockIndex: streaming.textBlockIndex ?? e.contentIndex,
 						},
 					};
-				case "thinking_delta": {
-					// 活动序列：连续 thinking 合并为同一条目（内容从 streaming.thinking 读）
-					const last = streaming.activity[streaming.activity.length - 1];
-					const activity =
-						last?.kind === "thinking"
-							? streaming.activity
-							: [...streaming.activity, { id: "thinking", kind: "thinking" as const }];
-					return { ...state, streaming: { ...streaming, thinking: streaming.thinking + e.delta, activity } };
-				}
+				case "thinking_delta":
+					return {
+						...state,
+						streaming: {
+							...streaming,
+							thinking: streaming.thinking + e.delta,
+							activity: updateThinkingActivity(streaming.activity, e.contentIndex, (text) => text + e.delta),
+						},
+					};
 				case "toolcall_start": {
 					const name = toolNameFromPartial(e.partial, e.contentIndex);
 					const tools = [
@@ -259,8 +260,10 @@ export function reduceEvent(state: SessionTranscriptState, event: SessionEvent):
 						name: e.toolCall.name || tool.name,
 						args,
 					};
-					const activity = streaming.activity.map((a) =>
-						a.id === `c${e.contentIndex}` ? { ...a, name: e.toolCall.name || a.name, args } : a,
+					const activity = streaming.activity.map((entry) =>
+						entry.id === `c${e.contentIndex}` && entry.kind === "tool"
+							? { ...entry, name: e.toolCall.name || entry.name, args }
+							: entry,
 					);
 					return { ...state, streaming: { ...streaming, tools, activity, activeToolIndex: -1 } };
 				}

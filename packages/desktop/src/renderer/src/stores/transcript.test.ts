@@ -127,6 +127,48 @@ describe("transcript reducer", () => {
 		expect(state.streaming?.text).toBe("Hello world");
 	});
 
+	it("thinking 活动按 contentIndex 累积并保持首次到达位置", () => {
+		let state = reduceEvent(emptyTranscript(), ev("agent_start"));
+		state = reduceEvent(state, {
+			type: "message_update",
+			assistantMessageEvent: { type: "thinking_delta", contentIndex: 0, delta: "先" },
+		} as unknown as AgentSessionEvent);
+		state = reduceEvent(state, {
+			type: "message_update",
+			assistantMessageEvent: { type: "thinking_delta", contentIndex: 0, delta: "想" },
+		} as unknown as AgentSessionEvent);
+		expect(state.streaming?.activity).toEqual([{ id: "h0", kind: "thinking", text: "先想" }]);
+	});
+
+	it("交错 thinking 与 tool 活动各自保留内容和到达顺序", () => {
+		let state = reduceEvent(emptyTranscript(), ev("agent_start"));
+		state = reduceEvent(state, {
+			type: "message_update",
+			assistantMessageEvent: { type: "thinking_delta", contentIndex: 0, delta: "第一段" },
+		} as unknown as AgentSessionEvent);
+		state = reduceEvent(state, {
+			type: "message_update",
+			assistantMessageEvent: {
+				type: "toolcall_start",
+				contentIndex: 1,
+				partial: { content: [{}, { type: "toolCall", name: "bash" }] },
+			},
+		} as unknown as AgentSessionEvent);
+		state = reduceEvent(state, {
+			type: "message_update",
+			assistantMessageEvent: { type: "toolcall_delta", contentIndex: 1, delta: '{"command":"ls"}' },
+		} as unknown as AgentSessionEvent);
+		state = reduceEvent(state, {
+			type: "message_update",
+			assistantMessageEvent: { type: "thinking_delta", contentIndex: 2, delta: "第二段" },
+		} as unknown as AgentSessionEvent);
+		expect(state.streaming?.activity).toEqual([
+			{ id: "h0", kind: "thinking", text: "第一段" },
+			{ id: "c1", kind: "tool", name: "bash", args: '{"command":"ls"}' },
+			{ id: "h2", kind: "thinking", text: "第二段" },
+		]);
+	});
+
 	it("turn_end 固化为 assistant 消息并回到 idle", () => {
 		let state = emptyTranscript();
 		state = reduceEvent(state, ev("agent_start"));

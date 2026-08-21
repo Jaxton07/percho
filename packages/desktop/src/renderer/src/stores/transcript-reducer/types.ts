@@ -94,16 +94,12 @@ export interface UIToolCall {
 	blockIndex?: number;
 }
 
-/** 预览活动条目：事件流按到达顺序追加，预览行永远显示最新一条（latest-wins） */
-export interface ActivityEntry {
-	/** 稳定身份：thinking 为 "thinking"，tool 为 `c${contentIndex}`（turn 内唯一，跨 delta/end 不变） */
-	id: string;
-	kind: "thinking" | "tool";
-	/** tool：工具名（toolcall_start 时已知） */
-	name?: string;
-	/** tool：参数摘要源文本（随 delta 增长，end 后为完整 JSON） */
-	args?: string;
-}
+/** 预览活动条目：事件流按首次到达顺序追加，只服务 live preview，不写入历史。 */
+export type ActivityEntry =
+	/** 按 content block 拆分，避免 think → tool → think 复用固定身份。 */
+	| { id: string; kind: "thinking"; text: string }
+	/** 工具参数随 delta 累积，toolcall_end 用最终规范参数覆盖。 */
+	| { id: string; kind: "tool"; name: string; args: string };
 
 /** 进行中的流式累积 */
 export interface StreamingState {
