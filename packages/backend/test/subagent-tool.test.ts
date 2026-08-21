@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { SingleResult } from "../src/tools/subagent/runner";
-import { finalizeSubagentResult } from "../src/tools/subagent/tool";
+import { finalizeSubagentResult, subagentParams } from "../src/tools/subagent/tool";
 
 function makeResult(overrides: Partial<SingleResult> = {}): SingleResult {
 	return {
@@ -12,6 +12,34 @@ function makeResult(overrides: Partial<SingleResult> = {}): SingleResult {
 		...overrides,
 	};
 }
+
+describe("subagentParams schema（provider 兼容，0.4.5 回归）", () => {
+	// SDK 发送前会 JSON 序列化 schema（symbol 键丢失），断言序列化后的形态最贴近真实请求
+	const schema = JSON.parse(JSON.stringify(subagentParams)) as Record<string, unknown>;
+
+	it("顶层必须是 type:object（DeepSeek 等 openai-completions 端点硬性要求）", () => {
+		expect(schema.type).toBe("object");
+	});
+
+	it("顶层不使用 anyOf/allOf 组合器（anthropic convertTools 会剥掉它们，剩空 schema）", () => {
+		expect(schema.anyOf).toBeUndefined();
+		expect(schema.allOf).toBeUndefined();
+	});
+
+	it("完整 properties：agent/task/cwd/tasks/confirmProjectAgents 均带描述", () => {
+		const props = schema.properties as Record<string, { description?: string }>;
+		expect(Object.keys(props)).toEqual(
+			expect.arrayContaining(["agent", "task", "cwd", "tasks", "confirmProjectAgents"]),
+		);
+		for (const key of ["agent", "task", "tasks"]) {
+			expect(props[key]?.description, `${key} 缺 description`).toBeTruthy();
+		}
+	});
+
+	it("所有字段 optional（互斥约束由 execute 运行时校验兜底）", () => {
+		expect(schema.required).toBeUndefined();
+	});
+});
 
 describe("finalizeSubagentResult（失败语义 spec §6）", () => {
 	it("single 成功：content 为结论，无 isError", () => {
