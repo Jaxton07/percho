@@ -121,6 +121,7 @@ export const en: Messages = {
 		copied: "Copied",
 		recall: "Recall to composer",
 		fork: "Fork from here",
+		skillInvocation: "Skill · {name}",
 		scrollToBottom: "Back to bottom",
 		thinking: "Thinking",
 		thinkingPreview: "Thinking",

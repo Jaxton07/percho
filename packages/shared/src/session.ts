@@ -1,4 +1,5 @@
 import type { AgentSessionEvent as PiAgentSessionEvent } from "@earendil-works/pi-coding-agent";
+import type { SkillInvocationDisplay } from "./skill-invocation";
 import type { SubagentRunData } from "./subagent";
 
 /** 顶栏打开的会话持久化（重启恢复用，由主进程写入 userData/tabs.json） */
@@ -78,19 +79,39 @@ export interface SessionToolCall {
 	isError: boolean;
 }
 
+/** 历史 user 消息（打开历史会话时回放用；不依赖 pi 内部类型） */
+export interface SessionUserMessage {
+	role: "user";
+	text: string;
+	thinking: string;
+	tools: SessionToolCall[];
+	/** user 消息附带的图片 */
+	images: ImageInput[];
+	timestamp: number;
+	/** 会话树中的 entry id（撤回精确定位用，匹配失败时缺省） */
+	entryId?: string;
+	/** 已展开 skill 的安全展示信息（不含正文或路径） */
+	skill?: SkillInvocationDisplay;
+	/** 已持久化的完整文本；只供实时撤回匹配，绝不能展示、复制或进入可访问文本 */
+	sourceText?: string;
+}
+
+/** 历史 assistant 消息（打开历史会话时回放用；不依赖 pi 内部类型） */
+export interface SessionAssistantMessage {
+	role: "assistant";
+	text: string;
+	thinking: string;
+	tools: SessionToolCall[];
+	images: ImageInput[];
+	timestamp: number;
+	/** 会话树中的 entry id（fork 精确定位用，匹配失败时缺省） */
+	entryId?: string;
+}
+
 /** 历史会话消息（打开历史会话时回放用；不依赖 pi 内部类型） */
 export type SessionMessage =
-	| {
-			role: "user" | "assistant";
-			text: string;
-			thinking: string;
-			tools: SessionToolCall[];
-			/** user 消息附带的图片 */
-			images: ImageInput[];
-			timestamp: number;
-			/** 会话树中的 entry id（assistant/user 消息均有；fork·撤回定位用，匹配失败时缺省） */
-			entryId?: string;
-	  }
+	| SessionUserMessage
+	| SessionAssistantMessage
 	| {
 			/** show_image 工具主动展示给用户的图片（独立消息，不进工具卡） */
 			role: "image";

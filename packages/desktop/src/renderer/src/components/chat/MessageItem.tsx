@@ -1,4 +1,4 @@
-import type { ImageInput } from "@percho/shared";
+import { formatSkillCommand, type ImageInput } from "@percho/shared";
 import { memo, type ReactNode, useEffect, useRef, useState } from "react";
 import { useT } from "../../i18n";
 import { Slot } from "../../plugins/Slot";
@@ -109,7 +109,15 @@ function ForkButton({ entryId, text }: { entryId?: string; text: string }) {
 }
 
 /** 撤回按钮：会话回退到该用户消息之前，内容放回输入框继续编辑；agent 运行或压缩中禁用 */
-function RecallButton({ entryId, text, timestamp }: { entryId?: string; text: string; timestamp: number }) {
+function RecallButton({
+	entryId,
+	matchText,
+	timestamp,
+}: {
+	entryId?: string;
+	matchText: string;
+	timestamp: number;
+}) {
 	const t = useT();
 	const activeSessionId = useSessionsStore((s) => s.activeSessionId);
 	const sessionBusy = useTranscriptStore((s) => {
@@ -127,8 +135,10 @@ function RecallButton({ entryId, text, timestamp }: { entryId?: string; text: st
 	const handleRecall = () => {
 		if (recalling || sessionBusy) return;
 		setRecalling(true);
-		// entryId 精确定位（历史消息）；实时消息无 entryId，按文本+时间戳兑底匹配
-		void recallMessage({ entryId, text: text || undefined, timestamp }).finally(() => setRecalling(false));
+		// entryId 精确定位（历史消息）；实时消息无 entryId，按持久化文本+时间戳兑底匹配
+		void recallMessage({ entryId, text: matchText || undefined, timestamp }).finally(() =>
+			setRecalling(false),
+		);
 	};
 
 	return (
@@ -184,15 +194,36 @@ export const MessageItem = memo(function MessageItem({
 							))}
 						</div>
 					)}
-					{message.text && (
-						<div className="rounded-2xl rounded-br-md bg-border px-3.5 py-2 text-[14px] leading-relaxed whitespace-pre-wrap text-ink select-text">
-							{message.text}
+					{message.skill ? (
+						<div className="rounded-2xl rounded-br-md bg-border px-3.5 py-2 text-[14px] leading-relaxed text-ink select-text">
+							<div
+								className={
+									message.text
+										? "mb-1 font-mono text-[12px] text-ink-dim"
+										: "font-mono text-[12px] text-ink-dim"
+								}
+							>
+								{t("message.skillInvocation", { name: message.skill.name })}
+							</div>
+							{message.text && <div className="whitespace-pre-wrap">{message.text}</div>}
 						</div>
+					) : (
+						message.text && (
+							<div className="rounded-2xl rounded-br-md bg-border px-3.5 py-2 text-[14px] leading-relaxed whitespace-pre-wrap text-ink select-text">
+								{message.text}
+							</div>
+						)
 					)}
-					{(message.text || message.images.length > 0) && (
+					{(message.skill || message.text || message.images.length > 0) && (
 						<div className="mt-1 flex items-center justify-end gap-1">
-							{message.text && <CopyButton text={message.text} />}
-							<RecallButton entryId={message.entryId} text={message.text} timestamp={message.timestamp} />
+							{(message.skill || message.text) && (
+								<CopyButton text={message.skill ? formatSkillCommand(message.skill) : message.text} />
+							)}
+							<RecallButton
+								entryId={message.entryId}
+								matchText={message.sourceText ?? message.text}
+								timestamp={message.timestamp}
+							/>
 						</div>
 					)}
 				</div>

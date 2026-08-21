@@ -23,7 +23,7 @@ export function messagesToUIMessages(messages: SessionMessage[]): UIMessage[] {
 			continue;
 		}
 		if (m.role === "user") {
-			if (m.text || m.images.length > 0) {
+			if (m.skill || m.text || m.images.length > 0) {
 				ui.push({
 					kind: "user",
 					id,
@@ -31,6 +31,8 @@ export function messagesToUIMessages(messages: SessionMessage[]): UIMessage[] {
 					images: m.images,
 					timestamp: m.timestamp,
 					entryId: m.entryId,
+					skill: m.skill,
+					sourceText: m.sourceText,
 				});
 			}
 			continue;

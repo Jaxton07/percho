@@ -41,6 +41,8 @@ import {
 	DEFAULT_VISION_BASE_URL,
 	DEFAULT_VISION_MODEL,
 	extractTodos,
+	formatSkillCommand,
+	parseExpandedSkillInvocation,
 	TODO_REMINDER_CUSTOM_TYPE,
 	TODO_TOOL_NAME,
 	type TodoItem,
@@ -683,7 +685,9 @@ export class PiBackend {
 		const target = sm.getEntry(targetId) as Extract<SessionEntry, { type: "message" }>;
 		const message = target.message as RawMessage;
 		// 文本/图片从目标 entry 提取（navigateTree 只返回 editorText，图片会丢）
-		const text = blockText(message.content);
+		const sourceText = blockText(message.content);
+		const invocation = parseExpandedSkillInvocation(sourceText);
+		const text = invocation ? formatSkillCommand(invocation) : sourceText;
 		const images = blockImages(message.content);
 		if (sm.getLeafId() === targetId) {
 			// 悬挂的用户消息（发出后无任何回复，entry 即当前 leaf）：navigateTree 视为 no-op，

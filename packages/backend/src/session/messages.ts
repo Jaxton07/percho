@@ -2,6 +2,7 @@ import type { SessionEntry, SessionManager } from "@earendil-works/pi-coding-age
 import {
 	extractSubagentRuns,
 	type ImageInput,
+	parseExpandedSkillInvocation,
 	type SessionMessage,
 	type SessionToolCall,
 } from "@percho/shared";
@@ -157,13 +158,16 @@ export function toSessionMessages(rawMessages: readonly unknown[]): SessionMessa
 	const toolById = new Map<string, SessionToolCall>();
 	for (const raw of rawMessages as RawMessage[]) {
 		if (raw.role === "user") {
+			const sourceText = blockText(raw.content);
+			const invocation = parseExpandedSkillInvocation(sourceText);
 			out.push({
 				role: "user",
-				text: blockText(raw.content),
+				text: invocation ? (invocation.args ?? "") : sourceText,
 				thinking: "",
 				tools: [],
 				images: blockImages(raw.content),
 				timestamp: raw.timestamp ?? Date.now(),
+				...(invocation ? { skill: { name: invocation.name, args: invocation.args }, sourceText } : {}),
 			});
 			continue;
 		}

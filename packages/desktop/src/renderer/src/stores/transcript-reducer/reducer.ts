@@ -2,6 +2,7 @@ import {
 	extractSubagentRuns,
 	extractTodos,
 	type ImageInput,
+	parseExpandedSkillInvocation,
 	type SessionEvent,
 	TODO_TOOL_NAME,
 } from "@percho/shared";
@@ -144,6 +145,7 @@ export function reduceEvent(state: SessionTranscriptState, event: SessionEvent):
 							.filter((c) => c.type === "text")
 							.map((c) => (c as { text: string }).text)
 							.join("");
+			const invocation = parseExpandedSkillInvocation(text);
 			const images: ImageInput[] = Array.isArray(content)
 				? content
 						.filter((c) => c.type === "image" && (c as { data?: string }).data)
@@ -159,9 +161,12 @@ export function reduceEvent(state: SessionTranscriptState, event: SessionEvent):
 					{
 						kind: "user",
 						id: newMessageId(),
-						text,
+						text: invocation ? (invocation.args ?? "") : text,
 						images,
 						timestamp: event.message.timestamp ?? Date.now(),
+						...(invocation
+							? { skill: { name: invocation.name, args: invocation.args }, sourceText: text }
+							: {}),
 					},
 				],
 			};

@@ -118,6 +118,7 @@ export const zh = {
 		copied: "已复制",
 		recall: "撤回并放回输入框",
 		fork: "从此处分叉",
+		skillInvocation: "Skill · {name}",
 		scrollToBottom: "回到底部",
 		thinking: "思考过程",
 		thinkingPreview: "思考中",

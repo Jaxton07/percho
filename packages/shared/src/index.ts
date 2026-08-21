@@ -2,6 +2,7 @@ export * from "./ipc";
 export * from "./packages";
 export * from "./session";
 export * from "./settings";
+export * from "./skill-invocation";
 export * from "./subagent";
 export * from "./todo";
 export * from "./ui-plugins";

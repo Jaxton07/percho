@@ -1,4 +1,4 @@
-import type { ImageInput, TodoItem } from "@percho/shared";
+import type { ImageInput, SkillInvocationDisplay, TodoItem } from "@percho/shared";
 
 /** 会话 UI 态类型（transcript reducer 的状态形状） */
 
@@ -27,6 +27,10 @@ export type UIMessage =
 			timestamp: number;
 			/** 会话树 entry id（仅历史回放消息有；撤回精确定位，缺省时按文本+时间戳兑底） */
 			entryId?: string;
+			/** 已展开 skill 的安全展示信息（不含正文或路径） */
+			skill?: SkillInvocationDisplay;
+			/** 完整持久化文本，仅供实时撤回匹配；绝不能渲染、复制或进入可访问文本 */
+			sourceText?: string;
 	  }
 	| {
 			kind: "assistant";

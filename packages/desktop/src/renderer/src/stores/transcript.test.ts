@@ -7,6 +7,9 @@ function ev(type: string, extra: Record<string, unknown> = {}): AgentSessionEven
 	return { type, ...extra } as AgentSessionEvent;
 }
 
+const canonicalSkill = (args?: string) =>
+	`<skill name="mindmap" location="/tmp/skills/mindmap/SKILL.md">\nReferences are relative to /tmp/skills/mindmap.\n\n# Mind map\n\nBody\n</skill>${args ? `\n\n${args}` : ""}`;
+
 describe("transcript reducer", () => {
 	it("subagent 互斥事件生成系统消息（结构化 + 同扩展去重）", () => {
 		let state = reduceEvent(emptyTranscript(), {
@@ -43,6 +46,31 @@ describe("transcript reducer", () => {
 		} as unknown as AgentSessionEvent);
 		expect(state.messages).toHaveLength(1);
 		expect(state.messages[0]).toMatchObject({ kind: "user", text: "你好" });
+	});
+
+	it("canonical skill 用户消息紧凑投影，并保留 sourceText 供撤回定位", () => {
+		let state = reduceEvent(emptyTranscript(), {
+			type: "message_start",
+			message: { role: "user", content: canonicalSkill("topic\nmore"), timestamp: 1720000000000 },
+		} as unknown as AgentSessionEvent);
+		expect(state.messages[0]).toMatchObject({
+			kind: "user",
+			text: "topic\nmore",
+			skill: { name: "mindmap", args: "topic\nmore" },
+			sourceText: canonicalSkill("topic\nmore"),
+			timestamp: 1720000000000,
+		});
+
+		state = reduceEvent(emptyTranscript(), {
+			type: "message_start",
+			message: { role: "user", content: canonicalSkill() },
+		} as unknown as AgentSessionEvent);
+		expect(state.messages[0]).toMatchObject({
+			kind: "user",
+			text: "",
+			skill: { name: "mindmap", args: undefined },
+			sourceText: canonicalSkill(),
+		});
 	});
 
 	it("用户消息透传 SDK timestamp（撤回兑底定位用），缺省回退本地时间", () => {
@@ -1053,6 +1081,39 @@ describe("messagesToUIMessages 历史回放", () => {
 		]);
 		expect(ui[0]).toMatchObject({ kind: "user", entryId: "e1" });
 		expect(ui[1]).not.toHaveProperty("entryId", "e1");
+	});
+
+	it("skill 历史消息保留紧凑元数据与 sourceText", () => {
+		const sourceText = canonicalSkill("layout");
+		const ui = messagesToUIMessages([
+			{
+				role: "user",
+				text: "layout",
+				thinking: "",
+				tools: [],
+				images: [],
+				timestamp: 1,
+				skill: { name: "mindmap", args: "layout" },
+				sourceText,
+			},
+			{
+				role: "user",
+				text: "",
+				thinking: "",
+				tools: [],
+				images: [],
+				timestamp: 2,
+				skill: { name: "mindmap", args: undefined },
+				sourceText: canonicalSkill(),
+			},
+		]);
+		expect(ui[0]).toMatchObject({
+			kind: "user",
+			text: "layout",
+			skill: { name: "mindmap", args: "layout" },
+			sourceText,
+		});
+		expect(ui[1]).toMatchObject({ kind: "user", text: "", skill: { name: "mindmap", args: undefined } });
 	});
 
 	it("image 角色消息还原为图片消息，位置保持", () => {
