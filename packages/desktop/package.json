@@ -1,6 +1,6 @@
 {
 	"name": "@percho/desktop",
-	"version": "0.4.5",
+	"version": "0.4.6",
 	"private": true,
 	"description": "Desktop GUI for the Pi coding agent",
 	"author": "Jaxton07",
