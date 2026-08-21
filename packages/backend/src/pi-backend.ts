@@ -195,6 +195,7 @@ export class PiBackend {
 					getSubagentModel: (agentName) => this.modelPrefs.getSubagentModel(agentName),
 					gate,
 					traces: this.traces,
+					onEvent: (sessionId, event) => this.emitEvent(sessionId, event),
 				}),
 			);
 		}
@@ -345,9 +346,11 @@ export class PiBackend {
 			autoNameSession(session, event);
 			this.emitEvent(session.sessionId, event);
 		});
-		// 子代理产物目录下的会话文件 = 只读检视（spec §8.1：防能力静默漂移/递归绕过）
-		this.registry.add({ session, unsubscribe, cwd, readOnly: isSubagentSessionPath(filePath) || undefined });
-		await this.traces.start(session.sessionId, session.sessionManager.getSessionDir());
+		// 子代理产物目录下的会话文件 = 只读检视（spec §8.1：防能力静默漂移/递归绕过）。
+		// 其运行 trace 由 runner 管理，检视页不可写，故不另建 recorder（避免覆盖运行中的 recorder）。
+		const readOnly = isSubagentSessionPath(filePath);
+		this.registry.add({ session, unsubscribe, cwd, readOnly: readOnly || undefined });
+		if (!readOnly) await this.traces.start(session.sessionId, session.sessionManager.getSessionDir());
 		log.info("session opened", session.sessionId, { file: filePath });
 		return this.toMetaOrThrow(session.sessionId);
 	}

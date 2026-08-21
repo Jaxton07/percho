@@ -189,8 +189,13 @@ export const useSessionsStore = create<SessionsStore>((set, get) => ({
 				activeSessionId: meta.sessionId,
 				cwd: meta.cwd,
 			}));
-			const history = await getPi().getSessionMessages(meta.sessionId);
-			useTranscriptStore.getState().loadHistory(meta.sessionId, messagesToUIMessages(history));
+			// 运行中子会话的事件已按其 sessionId 实时转发；保留已有流式态，
+			// 否则会在点击卡片时把 agent_start 建立的进度视图重置为静态历史。
+			const hasLiveTranscript = useTranscriptStore.getState().bySession[meta.sessionId]?.agentActive;
+			if (!hasLiveTranscript) {
+				const history = await getPi().getSessionMessages(meta.sessionId);
+				useTranscriptStore.getState().loadHistory(meta.sessionId, messagesToUIMessages(history));
+			}
 			const followUpQueue = await getPi().getFollowUpMessages(meta.sessionId);
 			useTranscriptStore.getState().setFollowUpQueue(meta.sessionId, followUpQueue);
 			const todos = await getPi().getTodos(meta.sessionId);

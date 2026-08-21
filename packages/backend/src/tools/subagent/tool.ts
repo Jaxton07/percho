@@ -1,4 +1,5 @@
 import type {
+	AgentSessionEvent,
 	AgentToolResult,
 	ExtensionContext,
 	ModelRuntime,
@@ -33,6 +34,8 @@ export interface MakeSubagentToolDeps {
 	getSubagentModel: (agentName: string) => Promise<string | undefined>;
 	gate: PermissionGate;
 	traces: SessionTraces;
+	/** 把运行中子会话事件转发给桌面会话订阅方。 */
+	onEvent?: (sessionId: string, event: AgentSessionEvent) => void;
 }
 
 interface SubagentDetails {

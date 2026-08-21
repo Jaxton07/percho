@@ -324,11 +324,35 @@ export function reduceEvent(state: SessionTranscriptState, event: SessionEvent):
 			const streaming = state.streaming;
 			if (!streaming) return state;
 			const delta = extractExecutionDelta(event.partialResult);
-			if (!delta) return state;
-			const tools = streaming.tools.map((t) =>
-				t.id === event.toolCallId ? { ...t, output: t.output + delta } : t,
-			);
-			return { ...state, streaming: { ...streaming, tools } };
+			const placement = streaming.subagentByToolCallId[event.toolCallId];
+			const progress = placement
+				? extractSubagentRuns((event.partialResult as { details?: unknown } | null | undefined)?.details)
+				: null;
+			let subagentRuns = streaming.subagentRuns;
+			if (placement && progress) {
+				// 子会话在 runner 创建后立即通过 partialResult 上报 sessionFile；只回填路径，
+				// 保住 running 状态（其 exitCode=-1，不能被 extract 的 error 判定覆盖）。
+				const next = [...subagentRuns];
+				for (const update of progress) {
+					if (!update.sessionFile) continue;
+					const index = next.findIndex(
+						(run, i) =>
+							i >= placement.start &&
+							i < placement.start + placement.count &&
+							run.sessionFile == null &&
+							run.agent === update.agent &&
+							(update.task == null || run.task === update.task),
+					);
+					const current = index >= 0 ? next[index] : undefined;
+					if (current) next[index] = { ...current, sessionFile: update.sessionFile };
+				}
+				subagentRuns = next;
+			}
+			if (!delta && subagentRuns === streaming.subagentRuns) return state;
+			const tools = delta
+				? streaming.tools.map((t) => (t.id === event.toolCallId ? { ...t, output: t.output + delta } : t))
+				: streaming.tools;
+			return { ...state, streaming: { ...streaming, tools, subagentRuns } };
 		}
 		case "tool_execution_end": {
 			// todo 工具：全量替换会话任务列表（含空数组=清空）。不随 turn_end 清理、

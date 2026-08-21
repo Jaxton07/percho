@@ -697,6 +697,39 @@ describe("transcript reducer", () => {
 		});
 	});
 
+	it("subagent：progress 在运行中回填 sessionFile，保住 running 状态", () => {
+		let state = emptyTranscript();
+		state = reduceEvent(state, ev("agent_start"));
+		state = reduceEvent(state, {
+			type: "tool_execution_start",
+			toolCallId: "tc-progress",
+			toolName: "subagent",
+			args: { agent: "reviewer", task: "review diff" },
+		} as unknown as AgentSessionEvent);
+		state = reduceEvent(state, {
+			type: "tool_execution_update",
+			toolCallId: "tc-progress",
+			toolName: "subagent",
+			partialResult: {
+				details: {
+					mode: "single",
+					results: [
+						{
+							agent: "reviewer",
+							task: "review diff",
+							exitCode: -1,
+							artifactPaths: { jsonlPath: "/tmp/subagent-running.jsonl" },
+						},
+					],
+				},
+			},
+		} as unknown as AgentSessionEvent);
+		expect(state.streaming?.subagentRuns[0]).toMatchObject({
+			status: "running",
+			sessionFile: "/tmp/subagent-running.jsonl",
+		});
+	});
+
 	it("subagent：tool_execution_start 移出折叠区时同步摘除 ticker 活动条目（不进 Working 预览行）", () => {
 		let state = emptyTranscript();
 		state = reduceEvent(state, ev("agent_start"));

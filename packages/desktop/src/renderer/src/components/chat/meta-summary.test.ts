@@ -79,6 +79,10 @@ describe("summarizeCategories", () => {
 			{ key: "read", category: "read", name: "read", count: 1 },
 			{ key: "subagent", category: "subagent", name: "subagent", count: 2 },
 		]);
+		// 纯子代理轮也有自己的折叠状态行：空组仍产出汇总段作为卡片的时间锚点
+		expect(summarizeCategories([{ tools: [] }], 1)).toEqual([
+			{ key: "subagent", category: "subagent", name: "subagent", count: 1 },
+		]);
 		// 无 subagent 的组（subagentCount=0）不显示该段
 		expect(summarizeCategories([{ tools: [tool("read")] }], 0)).toHaveLength(1);
 	});

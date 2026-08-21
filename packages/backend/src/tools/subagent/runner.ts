@@ -53,6 +53,8 @@ export interface RunSubagentDeps {
 	getSubagentModel: (agentName: string) => Promise<string | undefined>;
 	gate: PermissionGate;
 	traces: SessionTraces;
+	/** 把运行中子会话事件转发给宿主；未提供时只写 trace（供非桌面宿主使用）。 */
+	onEvent?: (sessionId: string, event: AgentSessionEvent) => void;
 }
 
 const EMPTY_USAGE: SubagentUsage = {
@@ -223,8 +225,6 @@ export async function runSubagent(deps: RunSubagentDeps, input: RunSubagentInput
 		usage: structuredClone(EMPTY_USAGE),
 		artifactPaths: { jsonlPath: session.sessionFile },
 	};
-	input.onProgress?.(result);
-
 	let settled = false;
 	let failure: string | undefined;
 	let unsubscribeEvents: (() => void) | undefined;
@@ -232,7 +232,8 @@ export async function runSubagent(deps: RunSubagentDeps, input: RunSubagentInput
 	// （正常结束 / 异常逃逸 / abort）都触发；agent_end 在 overflow 重试（willRetry）或异常时不算终结。
 	const endPromise = new Promise<void>((resolve) => {
 		unsubscribeEvents = session.subscribe((event: AgentSessionEvent) => {
-			void deps.traces.record(session.sessionId, event);
+			if (deps.onEvent) deps.onEvent(session.sessionId, event);
+			else deps.traces.record(session.sessionId, event);
 			if (event.type === "message_end") addUsage(result.usage, usageFromMessage(event.message));
 			if (event.type === "agent_settled") {
 				settled = true;
@@ -248,6 +249,8 @@ export async function runSubagent(deps: RunSubagentDeps, input: RunSubagentInput
 		else input.signal.addEventListener("abort", abort, { once: true });
 	}
 	try {
+		// sessionFile 已在创建时落盘；先通知父工具/UI，用户即可在首个模型事件前进入实时子会话。
+		input.onProgress?.(result);
 		await deps.traces.start(session.sessionId, session.sessionManager.getSessionDir());
 		// expandPromptTemplates: false——子会话无任何模板/命令，任务文本以 "/" 开头也不触发命令解析
 		await session.prompt(input.task, { expandPromptTemplates: false });

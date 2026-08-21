@@ -1,4 +1,4 @@
-import type { SessionMeta } from "@percho/shared";
+import type { SessionEvent, SessionMeta } from "@percho/shared";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 /** window.pi 的 mock：sessions store 经 getPi() 访问，测试环境无 preload 注入 */
@@ -11,10 +11,15 @@ const piMock = vi.hoisted(() => ({
 	saveUiState: vi.fn(),
 	pickDirectory: vi.fn(),
 	ensureProjectTrust: vi.fn(() => Promise.resolve(true)),
+	openSession: vi.fn(),
+	getSessionMessages: vi.fn(),
+	getFollowUpMessages: vi.fn(() => Promise.resolve([])),
+	getTodos: vi.fn(() => Promise.resolve([])),
 }));
 vi.mock("../api", () => ({ getPi: () => piMock }));
 
 import { DRAFT_SESSION_PREFIX, isDraftSessionId, useSessionsStore } from "./sessions";
+import { useTranscriptStore } from "./transcript";
 
 function realMeta(sessionId: string, cwd: string): SessionMeta {
 	return {
@@ -42,6 +47,7 @@ function resetStore() {
 beforeEach(() => {
 	vi.clearAllMocks();
 	resetStore();
+	useTranscriptStore.setState({ bySession: {} });
 });
 
 describe("isDraftSessionId", () => {
@@ -173,6 +179,19 @@ describe("switchSession", () => {
 		useSessionsStore.getState().switchSession(draftId);
 		expect(useSessionsStore.getState().cwd).toBe("/proj/b");
 		expect(piMock.saveTabs).toHaveBeenCalledTimes(1);
+	});
+});
+
+describe("openFromHistory", () => {
+	it("运行中子会话已收到实时事件时保留流式进度，不回放静态历史覆盖", async () => {
+		piMock.openSession.mockResolvedValue(realMeta("sub-1", "/proj"));
+		useTranscriptStore.getState().applyEvent("sub-1", { type: "agent_start" } as SessionEvent);
+
+		await useSessionsStore.getState().openFromHistory("/tmp/sub-1.jsonl");
+
+		expect(piMock.getSessionMessages).not.toHaveBeenCalled();
+		expect(useTranscriptStore.getState().bySession["sub-1"]?.agentActive).toBe(true);
+		expect(useSessionsStore.getState().activeSessionId).toBe("sub-1");
 	});
 });
 

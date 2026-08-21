@@ -12,7 +12,8 @@ function SubagentRunRow({ run }: { run: SubagentRunUi }) {
 	const t = useT();
 	const openFromHistory = useSessionsStore((s) => s.openFromHistory);
 
-	const clickable = run.sessionFile != null && run.status !== "running";
+	// runner 创建会话文件后即回填 sessionFile；运行中同样允许打开只读检视页。
+	const clickable = run.sessionFile != null;
 	const statusLabel =
 		run.status === "running"
 			? t("message.subagent.running")
