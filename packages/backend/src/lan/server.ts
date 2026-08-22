@@ -134,6 +134,7 @@ export class LanObserverServer {
 			urls: [],
 			qrDataUrl: null,
 			clients: this.clients.size,
+			remoteControl: this.config.cached()?.remoteControl ?? false,
 		};
 	}
 

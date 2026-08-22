@@ -1,4 +1,5 @@
 import type { SessionEvent, TrustRequest } from "@percho/shared";
+import { messagesToUIMessages } from "@percho/shared";
 import { useEffect, useState } from "react";
 import { getPi } from "./api";
 import { EmptyState } from "./components/chat/EmptyState";
@@ -19,7 +20,6 @@ import { finishSplash } from "./splash";
 import { useSessionsStore } from "./stores/sessions";
 import { backgroundImageUrl, useThemeStore } from "./stores/theme";
 import { useTranscriptStore } from "./stores/transcript";
-import { messagesToUIMessages } from "./stores/transcript-reducer";
 import { useUiStore } from "./stores/ui";
 import { initUpdateStore } from "./stores/update";
 

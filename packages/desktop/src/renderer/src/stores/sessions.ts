@@ -1,10 +1,10 @@
 import type { AvailableModel, SavedTabs, SessionMeta } from "@percho/shared";
+import { messagesToUIMessages } from "@percho/shared";
 import { create } from "zustand";
 import { getPi } from "../api";
 import { clampThinkingLevel } from "../lib/thinking";
 import { COMPOSER_FOCUS_EVENT, useDraftStore } from "./drafts";
 import { useTranscriptStore } from "./transcript";
-import { messagesToUIMessages } from "./transcript-reducer";
 
 /** 草稿会话 id 前缀：新会话 tab 的占位条目，只存在于 renderer 内存，后端永远不会看到 */
 export const DRAFT_SESSION_PREFIX = "draft:";

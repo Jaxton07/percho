@@ -1,4 +1,6 @@
-import type { ImageInput, SkillInvocationDisplay, TodoItem } from "@percho/shared";
+import type { ImageInput } from "../session";
+import type { SkillInvocationDisplay } from "../skill-invocation";
+import type { TodoItem } from "../todo";
 
 /** 会话 UI 态类型（transcript reducer 的状态形状） */
 

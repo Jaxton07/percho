@@ -1,5 +1,5 @@
 /**
- * 会话 transcript reducer barrel：实现拆在本目录：types / helpers / reducer / mapping，入口即本文件（原 transcript-reducer.ts）。
+ * 会话 transcript reducer barrel：实现拆在本目录：types / helpers / reducer / mapping，入口即本文件（原 desktop stores/transcript-reducer.ts，V2 下沉 shared 供 lan-web 复用）。
  * - types.ts    UI 消息/流式累积/会话状态类型 + emptyTranscript
  * - helpers.ts  本地 id 生成、事件载荷解析（reducer 内部共用）
  * - reducer.ts  reduceEvent（pi 事件 → UI 状态，纯函数）

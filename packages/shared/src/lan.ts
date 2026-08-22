@@ -1,3 +1,4 @@
+import type { PermissionRequest, SessionMessage } from "./session";
 import type { TodoItem } from "./todo";
 
 /** 局域网观察服务的持久化配置（token 在每次启用时轮换）。 */
@@ -6,6 +7,8 @@ export interface LanObserverConfig {
 	/** 期望监听端口；端口被占用时实际端口见 LanStatus。 */
 	port: number;
 	token: string | null;
+	/** M2 远程控制二级开关（默认 false；开观察 ≠ 开控制）。旧配置缺此字段视为 false。 */
+	remoteControl: boolean;
 }
 
 /** 局域网观察服务的运行状态（供设置页显示）。 */
@@ -19,6 +22,8 @@ export interface LanStatus {
 	qrDataUrl: string | null;
 	/** 当前 SSE 连接数。 */
 	clients: number;
+	/** M2 远程控制开关运行态（客户端据此显隐 composer/审批按钮）。 */
+	remoteControl: boolean;
 }
 
 /** 会话列表项；历史会话只暴露此投影，不提供详情。 */
@@ -65,5 +70,62 @@ export interface LanSseListFrame {
 	data: { list: LanSessionBrief[]; seq: number };
 }
 
+/** SSE 会话事件转发帧（V2 新增；event 已 sanitize，仅活跃会话）。 */
+export interface LanSseEventFrame {
+	event: "event";
+	data: { sessionId: string; event: import("./session").SessionEvent; seq: number };
+}
+
+/** SSE 权限请求帧（V2 新增；request 含 requestId 供远程应答）。 */
+export interface LanSsePermFrame {
+	event: "perm";
+	data: { sessionId: string; request: PermissionRequest; seq: number };
+}
+
+/** SSE 权限已应答帧（V2 新增；客户端据此清除权限卡）。 */
+export interface LanSsePermResolvedFrame {
+	event: "perm_resolved";
+	data: { sessionId: string; requestId: string; answered: boolean; seq: number };
+}
+
 /** 局域网观察服务的所有 SSE 数据帧。 */
-export type LanSseFrame = LanSseHelloFrame | LanSseViewFrame | LanSseListFrame;
+export type LanSseFrame =
+	| LanSseHelloFrame
+	| LanSseViewFrame
+	| LanSseListFrame
+	| LanSseEventFrame
+	| LanSsePermFrame
+	| LanSsePermResolvedFrame;
+
+/** snapshot 中单会话的历史消息投影（sanitize 后）。 */
+export interface LanTranscript {
+	sessionId: string;
+	/** sanitize 后的历史消息，尾部 cap 100 条。 */
+	messages: SessionMessage[];
+	/** 被 cap 截断 = true（客户端显示「仅显示最近消息」）。 */
+	truncated: boolean;
+}
+
+/** GET /api/snapshot 响应（V2 扩展：+ transcripts 与 remoteControl）。 */
+export interface LanSnapshot {
+	serverTime: number;
+	list: LanSessionBrief[];
+	views: LanSessionView[];
+	transcripts: LanTranscript[];
+	remoteControl: boolean;
+}
+
+/** M2 POST /api/sessions/:id/prompt 请求体。 */
+export interface LanPromptBody {
+	text: string;
+}
+
+/** M2 POST /api/permissions/:id/respond 请求体（远程只允许允许一次/拒绝）。 */
+export interface LanRespondBody {
+	answer: "allowOnce" | "deny";
+}
+
+/** M2 写端点统一成功响应。 */
+export interface LanWriteResult {
+	ok: true;
+}

@@ -1,4 +1,4 @@
-import type { ImageInput } from "@percho/shared";
+import type { ImageInput } from "../session";
 import type { ActivityEntry, StreamingState } from "./types";
 
 /** reducer 内部共用工具：本地 id 生成、事件载荷解析、流式容器构造 */

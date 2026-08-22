@@ -1,7 +1,7 @@
 import type { AgentSessionEvent } from "@percho/shared";
+import { emptyTranscript, messagesToUIMessages, reduceEvent } from "@percho/shared";
 import { beforeEach, describe, expect, it } from "vitest";
 import { useTranscriptStore } from "./transcript";
-import { emptyTranscript, messagesToUIMessages, reduceEvent } from "./transcript-reducer";
 
 function ev(type: string, extra: Record<string, unknown> = {}): AgentSessionEvent {
 	return { type, ...extra } as AgentSessionEvent;

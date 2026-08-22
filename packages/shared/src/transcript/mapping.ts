@@ -1,4 +1,4 @@
-import type { SessionMessage } from "@percho/shared";
+import type { SessionMessage } from "../session";
 import { newSubagentKey, newToolKey } from "./helpers";
 import type { UIMessage, UIToolCall } from "./types";
 

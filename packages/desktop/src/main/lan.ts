@@ -35,10 +35,10 @@ export async function initLanObserver(backend: PiBackend, configPath: string): P
 }
 
 async function statusWithUrls(server: LanObserverServer, config: LanConfigService): Promise<LanStatus> {
+	const saved = await config.load();
 	const status = server.status();
-	const token = (await config.load()).token;
-	if (!status.port || !token) return status;
-	const urls = localIpv4Addresses().map((address) => `http://${address}:${status.port}/?t=${token}`);
+	if (!status.port || !saved.token) return status;
+	const urls = localIpv4Addresses().map((address) => `http://${address}:${status.port}/?t=${saved.token}`);
 	return { ...status, urls, qrDataUrl: urls[0] ? await QRCode.toDataURL(urls[0]) : null };
 }
 
