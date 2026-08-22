@@ -1,5 +1,5 @@
-import type { AgentSession, AgentSessionEvent } from "@earendil-works/pi-coding-agent";
 import { statSync } from "node:fs";
+import type { AgentSession, AgentSessionEvent } from "@earendil-works/pi-coding-agent";
 import type { SessionMeta } from "@percho/shared";
 
 export interface RegisteredSession {

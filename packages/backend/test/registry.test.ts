@@ -2,10 +2,13 @@ import { mkdtempSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { SessionRegistry, type RegisteredSession } from "../src/session/registry";
+import { type RegisteredSession, SessionRegistry } from "../src/session/registry";
 
 /** mock AgentSession（RegisteredSession 只用到这些成员；dispose/unsubscribe 用 spy 断言） */
-function makeEntry(sessionId: string, sessionFile: string): {
+function makeEntry(
+	sessionId: string,
+	sessionFile: string,
+): {
 	entry: RegisteredSession;
 	dispose: ReturnType<typeof vi.fn>;
 	unsubscribe: ReturnType<typeof vi.fn>;
@@ -21,7 +24,11 @@ function makeEntry(sessionId: string, sessionFile: string): {
 		messages: [],
 		dispose,
 	};
-	return { entry: { session, unsubscribe, cwd: "/tmp" } as unknown as RegisteredSession, dispose, unsubscribe };
+	return {
+		entry: { session, unsubscribe, cwd: "/tmp" } as unknown as RegisteredSession,
+		dispose,
+		unsubscribe,
+	};
 }
 
 let dir: string;

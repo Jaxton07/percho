@@ -69,11 +69,11 @@ export default function App() {
 					}
 				}
 				useTranscriptStore.getState().applyEvent(sessionId, event, {
-						// 正被查看（活跃 tab 且 chat 视图）的会话完成时不打未读标记
-						isActiveViewing:
-							useSessionsStore.getState().activeSessionId === sessionId &&
-							useUiStore.getState().view === "chat",
-					});
+					// 正被查看（活跃 tab 且 chat 视图）的会话完成时不打未读标记
+					isActiveViewing:
+						useSessionsStore.getState().activeSessionId === sessionId &&
+						useUiStore.getState().view === "chat",
+				});
 				if (event.type === "session_info_changed") {
 					useSessionsStore.getState().updateSessionName(sessionId, event.name);
 				}

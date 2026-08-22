@@ -49,9 +49,8 @@ export async function loadUiState(): Promise<UiState | null> {
 /** 持久化 UI 状态（与现有内容浅合并后原子写，调用方传补丁即可；失败不吞，UiStateSave 是 handle） */
 export async function saveUiState(patch: Partial<UiState>): Promise<void> {
 	try {
-		const existing = await loadUiState();
-		const merged: UiState = normalize({ ...existing, ...patch });
-		await uiStateStore().write(merged);
+		// 单次 update：读改写整体在 per-path 队列内串行（并发 patch 不互相覆盖）
+		await uiStateStore().update((draft) => normalize({ ...(draft ?? {}), ...patch }));
 	} catch (err) {
 		log.error("ui-state save failed", err);
 		throw err;

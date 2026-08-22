@@ -198,9 +198,10 @@ export class SettingsService {
 			draft.providers = providers;
 		});
 
-		if (input.apiKey?.trim()) {
+		const apiKey = input.apiKey?.trim();
+		if (apiKey) {
 			await jsonStoreFor(this.authPath, 0o600).update((auth) => {
-				auth[id] = { type: "api_key", key: input.apiKey!.trim() };
+				auth[id] = { type: "api_key", key: apiKey };
 			});
 		}
 
@@ -227,10 +228,13 @@ export class SettingsService {
 			await jsonStoreFor(this.authPath, 0o600).update((auth) => {
 				delete auth[id];
 			});
-		} else if (input.apiKey?.trim()) {
-			await jsonStoreFor(this.authPath, 0o600).update((auth) => {
-				auth[id] = { type: "api_key", key: input.apiKey!.trim() };
-			});
+		} else {
+			const apiKey = input.apiKey?.trim();
+			if (apiKey) {
+				await jsonStoreFor(this.authPath, 0o600).update((auth) => {
+					auth[id] = { type: "api_key", key: apiKey };
+				});
+			}
 		}
 
 		await this.refreshLocalModels();

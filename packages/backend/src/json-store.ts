@@ -1,5 +1,5 @@
-import { mkdir, readFile, rename, rm, writeFile } from "node:fs/promises";
 import { mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
+import { mkdir, readFile, rename, rm, writeFile } from "node:fs/promises";
 import { basename, dirname, join } from "node:path";
 import { createLogger } from "./log";
 
@@ -18,9 +18,7 @@ const log = createLogger("json-store");
  */
 
 /** 读取结果的 tri-state：ok/missing 都有可用值，corrupted 只携带错误 */
-export type ReadResult<T> =
-	| { kind: "ok" | "missing"; value: T }
-	| { kind: "corrupted"; error: unknown };
+export type ReadResult<T> = { kind: "ok" | "missing"; value: T } | { kind: "corrupted"; error: unknown };
 
 /** update 路径遇到损坏文件时抛出；message 面向用户（经 IPC 传给 renderer 展示） */
 export class JsonStoreCorruptedError extends Error {
@@ -113,7 +111,10 @@ export class JsonStore<T> {
 	private async writeInternal(value: T): Promise<void> {
 		const dir = dirname(this.path);
 		await mkdir(dir, { recursive: true });
-		const tmp = join(dir, `.${basename(this.path)}.${process.pid}.${Math.random().toString(36).slice(2)}.tmp`);
+		const tmp = join(
+			dir,
+			`.${basename(this.path)}.${process.pid}.${Math.random().toString(36).slice(2)}.tmp`,
+		);
 		try {
 			await writeFile(tmp, `${JSON.stringify(value, null, 2)}\n`, { encoding: "utf8", mode: this.mode });
 			await rename(tmp, this.path);
@@ -126,7 +127,10 @@ export class JsonStore<T> {
 	private writeInternalSync(value: T): void {
 		const dir = dirname(this.path);
 		mkdirSync(dir, { recursive: true });
-		const tmp = join(dir, `.${basename(this.path)}.${process.pid}.${Math.random().toString(36).slice(2)}.tmp`);
+		const tmp = join(
+			dir,
+			`.${basename(this.path)}.${process.pid}.${Math.random().toString(36).slice(2)}.tmp`,
+		);
 		try {
 			writeFileSync(tmp, `${JSON.stringify(value, null, 2)}\n`, { encoding: "utf8", mode: this.mode });
 			renameSync(tmp, this.path);
@@ -169,6 +173,7 @@ export class JsonStore<T> {
 	 * 读改写（串行化）：损坏抛 `JsonStoreCorruptedError`；mutator 可原地改 draft 或返回替换值。
 	 * 返回最终写入的值。
 	 */
+	// biome-ignore lint/suspicious/noConfusingVoidType: 返回联合中的 void 是有意为之——块体 mutator（原地改 draft、无 return）推断为 void，必须与返回替换值的 mutator 同签兼容；改 undefined 会拒掉所有块体调用方
 	async update(mutator: (draft: T) => T | void): Promise<T> {
 		return enqueue(this.path, async () => {
 			const result = await this.readRaw();
@@ -181,6 +186,7 @@ export class JsonStore<T> {
 		});
 	}
 
+	// biome-ignore lint/suspicious/noConfusingVoidType: 同上——块体 mutator 的 void 返回须合法
 	updateSync(mutator: (draft: T) => T | void): T {
 		const result = this.readRawSync();
 		if (result.kind === "corrupted") throw new JsonStoreCorruptedError(this.path, result.error);

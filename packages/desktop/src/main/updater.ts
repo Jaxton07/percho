@@ -37,19 +37,14 @@ function detectManualInstall(): Promise<boolean> {
 	return new Promise((resolve) => {
 		// codesign -dv 的信息输出在 stderr；命令失败（含完全未签名）也按手动安装处理
 		// 3s 超时兜底：codesign 卡死（如钥匙串不可用）时走 error 分支回退 manual
-		execFile(
-			"codesign",
-			["-dv", bundlePath],
-			{ timeout: 3000 },
-			(error, _stdout, stderr) => {
-				if (error) {
-					log.warn("codesign check failed, fallback to manual install", error.message);
-					resolve(true);
-					return;
-				}
-				resolve(stderr.includes("Signature=adhoc"));
-			},
-		);
+		execFile("codesign", ["-dv", bundlePath], { timeout: 3000 }, (error, _stdout, stderr) => {
+			if (error) {
+				log.warn("codesign check failed, fallback to manual install", error.message);
+				resolve(true);
+				return;
+			}
+			resolve(stderr.includes("Signature=adhoc"));
+		});
 	});
 }
 

@@ -35,16 +35,20 @@ describe("JsonStore async", () => {
 		writeFileSync(path, "{ not json", "utf8");
 		const s = store();
 		await expect(s.read()).resolves.toEqual({ seeded: true });
-		await expect(s.update((draft) => void (draft.n = 1))).rejects.toBeInstanceOf(
-			JsonStoreCorruptedError,
-		);
+		await expect(
+			s.update((draft) => {
+				draft.n = 1;
+			}),
+		).rejects.toBeInstanceOf(JsonStoreCorruptedError);
 		// 拒写：损坏文件原样保留，未被 default 覆盖
 		expect(readFileSync(path, "utf8")).toBe("{ not json");
 	});
 
 	it("update 写盘后再 read 一致（mutate in place / 返回替换两种形式）", async () => {
 		const s = store();
-		await s.update((draft) => void (draft.count = 1));
+		await s.update((draft) => {
+			draft.count = 1;
+		});
 		await s.update((draft) => ({ ...draft, label: "x" }));
 		expect(await s.read()).toEqual({ seeded: true, count: 1, label: "x" });
 	});
@@ -64,7 +68,11 @@ describe("JsonStore async", () => {
 	it("并发 update 串行化，无丢更新", async () => {
 		const s = store(() => ({ n: 0 }));
 		await Promise.all(
-			Array.from({ length: 10 }, () => s.update((draft) => void (draft.n = (draft.n ?? 0) + 1))),
+			Array.from({ length: 10 }, () =>
+				s.update((draft) => {
+					draft.n = (draft.n ?? 0) + 1;
+				}),
+			),
 		);
 		expect(await s.read()).toEqual({ n: 10 });
 	});
@@ -99,13 +107,19 @@ describe("JsonStore sync 变体", () => {
 		writeFileSync(path, "[broken", "utf8");
 		const s = store();
 		expect(s.readSync()).toEqual({ seeded: true });
-		expect(() => s.updateSync((draft) => void (draft.n = 1))).toThrow(JsonStoreCorruptedError);
+		expect(() =>
+			s.updateSync((draft) => {
+				draft.n = 1;
+			}),
+		).toThrow(JsonStoreCorruptedError);
 		expect(readFileSync(path, "utf8")).toBe("[broken");
 	});
 
 	it("updateSync 写盘后 readSync 一致；成功与失败路径均无 tmp 残留", () => {
 		const s = store();
-		s.updateSync((draft) => void (draft.n = 1));
+		s.updateSync((draft) => {
+			draft.n = 1;
+		});
 		expect(s.readSync()).toEqual({ seeded: true, n: 1 });
 		expect(readdirSync(dir).filter((f) => f.endsWith(".tmp"))).toEqual([]);
 	});

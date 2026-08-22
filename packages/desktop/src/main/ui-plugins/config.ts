@@ -60,9 +60,9 @@ export async function loadUiPluginsConfig(): Promise<UiPluginsConfig> {
  */
 export async function saveUiPluginsConfig(patch: Partial<UiPluginsConfig>): Promise<void> {
 	try {
-		const existing = await loadUiPluginsConfig();
-		const merged: UiPluginsConfig = normalize({ ...existing, ...patch });
-		await configStore().write(merged);
+		// 单次 update：读改写整体在 per-path 队列内串行（handler 并发调用不互相覆盖）；
+		// 损坏拒写抛 CorruptedError（原为读损坏回退默认后照样覆盖写 = 自愈但静默丢数据）
+		await configStore().update((draft) => normalize({ ...(draft ?? {}), ...patch }));
 	} catch (err) {
 		log.error("ui-plugins config save failed", err);
 		throw err;

@@ -580,16 +580,18 @@ export const useSettingsStore = create<SettingsStore>((set, get) => {
 			}
 		},
 
-	/** 应答登录 prompt：await IPC 成功才清 pendingPrompt；失败恢复 prompt + 记 error（可重答） */
+		/** 应答登录 prompt：await IPC 成功才清 pendingPrompt；失败恢复 prompt + 记 error（可重答） */
 		respondLoginPrompt: async (value) => {
 			const state = get().login;
 			if (!state?.pendingPrompt) return;
 			const { promptId } = state.pendingPrompt;
 			try {
 				await getPi().respondProviderLogin(state.loginId, promptId, value);
-				set({ login: { ...state, pendingPrompt: undefined } });
+				// 函数式更新：await 期间 login 状态可能已推进（新 prompt/状态行），不可用旧快照整体覆盖
+				set((s) => (s.login ? { login: { ...s.login, pendingPrompt: undefined } } : {}));
 			} catch (error) {
-				set({ login: { ...state, error: error instanceof Error ? error.message : String(error) } });
+				const message = error instanceof Error ? error.message : String(error);
+				set((s) => (s.login ? { login: { ...s.login, error: message } } : {}));
 			}
 		},
 
