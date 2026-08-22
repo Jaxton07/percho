@@ -3,6 +3,7 @@ import { createRequire } from "node:module";
 import { createLogger } from "@percho/backend";
 import type { UpdateState } from "@percho/shared";
 import { app } from "electron";
+import { nextUpdateAction } from "./update-policy";
 
 const log = createLogger("updater");
 
@@ -35,14 +36,20 @@ function detectManualInstall(): Promise<boolean> {
 	const bundlePath = exe.slice(0, appIndex + ".app".length);
 	return new Promise((resolve) => {
 		// codesign -dv 的信息输出在 stderr；命令失败（含完全未签名）也按手动安装处理
-		execFile("codesign", ["-dv", bundlePath], (error, _stdout, stderr) => {
-			if (error) {
-				log.warn("codesign check failed, fallback to manual install", error.message);
-				resolve(true);
-				return;
-			}
-			resolve(stderr.includes("Signature=adhoc"));
-		});
+		// 3s 超时兜底：codesign 卡死（如钥匙串不可用）时走 error 分支回退 manual
+		execFile(
+			"codesign",
+			["-dv", bundlePath],
+			{ timeout: 3000 },
+			(error, _stdout, stderr) => {
+				if (error) {
+					log.warn("codesign check failed, fallback to manual install", error.message);
+					resolve(true);
+					return;
+				}
+				resolve(stderr.includes("Signature=adhoc"));
+			},
+		);
 	});
 }
 
@@ -103,14 +110,28 @@ export async function initUpdater(): Promise<void> {
 }
 
 /**
- * 检查更新 / 下载更新（renderer 两个入口同走这里）：
- * 已发现新版且未下载 → 直接下载；否则先检查（autoDownload=false 时发现新版不会自动下载）。
- * manual 构建不下载（装了也过不了签名校验），重复调用只重查。
+ * 纯检查更新（定时任务与关于页按钮走这里）：autoDownload=false，发现新版只发 available 提示，
+ * **绝不下载**——下载只经 downloadUpdate()（用户显式点击）。
  */
 export async function checkForUpdates(): Promise<void> {
 	if (!app.isPackaged) return;
 	try {
-		if (latestVersion && !downloaded && !manualInstall) {
+		await autoUpdater.checkForUpdates();
+	} catch (error) {
+		// 失败经 error 事件上报，这里只兜 unhandled rejection
+		log.error("update check failed", error);
+	}
+}
+
+/**
+ * 下载更新（顶栏 UpdateButton 用户点击）：已发现新版未下载且非 manual → 下载；
+ * 未发现新版 → 退化为先检查（检查到后用户再点一次下载，语义与按钮状态机一致）。
+ */
+export async function downloadUpdate(): Promise<void> {
+	if (!app.isPackaged) return;
+	const action = nextUpdateAction({ latestVersion, downloaded, manualInstall });
+	try {
+		if (action === "download" && latestVersion) {
 			// 立即上报 downloading（download-progress 首个事件可能滞后），按钮马上变进度环
 			emit({ phase: "downloading", version: latestVersion, percent: 0 });
 			await autoUpdater.downloadUpdate();

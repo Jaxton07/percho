@@ -93,6 +93,7 @@ const api: PiApi = {
 	saveUiState: (state) => ipcRenderer.invoke(IpcChannels.UiStateSave, state),
 	pickBackgroundImage: () => ipcRenderer.invoke(IpcChannels.BackgroundPick),
 	checkForUpdates: () => ipcRenderer.invoke(IpcChannels.UpdateCheck),
+	downloadUpdate: () => ipcRenderer.invoke(IpcChannels.UpdateDownload),
 	installUpdate: () => ipcRenderer.invoke(IpcChannels.UpdateInstall),
 	uiPluginsGetConfig: () => ipcRenderer.invoke(IpcChannels.UiPluginsGetConfig),
 	uiPluginsSetEnabled: (enabled) => ipcRenderer.invoke(IpcChannels.UiPluginsSetEnabled, enabled),

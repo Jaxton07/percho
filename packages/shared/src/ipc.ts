@@ -121,8 +121,10 @@ export const IpcChannels = {
 	UiStateSave: "uiState:save",
 	/** 自定义背景：弹图选框并拷贝进 userData/backgrounds/，返回文件名（取消返回 null） */
 	BackgroundPick: "background:pick",
-	/** 检查更新（silent=true 静默：无更新不打扰） */
+	/** 检查更新（纯检查：发现新版只提示不下载） */
 	UpdateCheck: "update:check",
+	/** 下载更新（已发现新版→下载；未发现→先检查）；仅用户显式点击触发 */
+	UpdateDownload: "update:download",
 	/** 重启并安装已下载的更新 */
 	UpdateInstall: "update:install",
 	/** main → renderer 更新状态 */
@@ -279,8 +281,10 @@ export interface PiApi {
 	saveUiState(state: Partial<UiState>): Promise<void>;
 	/** 弹图选框选背景图并拷贝进 userData/backgrounds/；返回文件名（经 pi-bg://background/<name> 加载），取消返回 null */
 	pickBackgroundImage(): Promise<string | null>;
-	/** 检查更新（发现新版自动开始后台下载，状态经 onUpdateEvent 推送） */
+	/** 检查更新（纯检查不下载，状态经 onUpdateEvent 推送） */
 	checkForUpdates(): Promise<void>;
+	/** 下载更新（已发现新版→下载；未发现→先检查） */
+	downloadUpdate(): Promise<void>;
 	/** 重启并安装已下载的更新 */
 	installUpdate(): Promise<void>;
 	/** 订阅更新状态（checking/available/downloading/downloaded/error）；返回取消函数 */

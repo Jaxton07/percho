@@ -7,7 +7,7 @@ import { pickBackgroundImage } from "../background";
 import { checkoutBranch, getGitBranch, listGitBranches } from "../git";
 import { loadTabs, saveTabs } from "../tabs";
 import { loadUiState, saveUiState } from "../ui-state";
-import { checkForUpdates, installUpdate } from "../updater";
+import { checkForUpdates, downloadUpdate, installUpdate } from "../updater";
 
 /** 项目仓库地址（帮助跳转 + 关于页） */
 const REPO_URL = "https://github.com/Jaxton07/percho";
@@ -41,6 +41,7 @@ export function registerAppIpc(_backend: PiBackend): void {
 	});
 	ipcMain.handle(IpcChannels.BackgroundPick, () => pickBackgroundImage(BrowserWindow.getAllWindows()[0]));
 	ipcMain.handle(IpcChannels.UpdateCheck, () => checkForUpdates());
+	ipcMain.handle(IpcChannels.UpdateDownload, () => downloadUpdate());
 	ipcMain.handle(IpcChannels.UpdateInstall, () => installUpdate());
 	ipcMain.handle(IpcChannels.FileSaveDialog, async (_e, defaultName: string, content: string) => {
 		const window = BrowserWindow.getAllWindows()[0];
