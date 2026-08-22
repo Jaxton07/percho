@@ -113,6 +113,8 @@ export interface LanSnapshot {
 	views: LanSessionView[];
 	transcripts: LanTranscript[];
 	remoteControl: boolean;
+	/** 快照采集起点的服务端帧序号：客户端丢弃 seq ≤ 此值的 event 帧（效果已含在快照内），防 delta 双重应用。 */
+	snapshotSeq: number;
 }
 
 /** M2 POST /api/sessions/:id/prompt 请求体。 */
@@ -129,3 +131,6 @@ export interface LanRespondBody {
 export interface LanWriteResult {
 	ok: true;
 }
+
+/** sanitize 后图片数据的哨兵值（base64 被剥除）；客户端据此渲染占位而非尝试加载。 */
+export const LAN_IMAGE_PLACEHOLDER = "lan-image-stripped";

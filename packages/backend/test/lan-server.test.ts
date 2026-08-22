@@ -78,6 +78,32 @@ function sse(url: string): Promise<string> {
 	});
 }
 
+/** 收集 SSE 流直到 predicate 命中或超时；返回已收到的原始文本。 */
+function sseCollect(url: string, predicate: (text: string) => boolean, timeoutMs = 3000): Promise<string> {
+	return new Promise((resolve, reject) => {
+		const timer = setTimeout(() => {
+			req.destroy();
+			reject(new Error(`sseCollect timeout; received:\n${text}`));
+		}, timeoutMs);
+		let text = "";
+		const req = get(url, (res) => {
+			res.setEncoding("utf8");
+			res.on("data", (chunk) => {
+				text += chunk;
+				if (predicate(text)) {
+					clearTimeout(timer);
+					req.destroy();
+					resolve(text);
+				}
+			});
+		});
+		req.on("error", (error) => {
+			clearTimeout(timer);
+			reject(error);
+		});
+	});
+}
+
 describe("LanObserverServer", () => {
 	it("requires a valid token and serves snapshot plus SSE", async () => {
 		const server = await start();
@@ -140,5 +166,145 @@ describe("LanObserverServer", () => {
 		const replacement = createServer();
 		await new Promise<void>((resolve) => replacement.listen(actualPort, "0.0.0.0", resolve));
 		await new Promise<void>((resolve) => replacement.close(() => resolve()));
+	});
+
+	it("snapshot carries sanitized transcripts, remoteControl and snapshotSeq", async () => {
+		const observer: LanObserverBackend = {
+			...backend(),
+			getSessionMessages: async () =>
+				[
+					{
+						role: "user",
+						text: "hi",
+						thinking: "",
+						tools: [],
+						images: [{ data: "aGVsbG8=", mimeType: "image/png" }],
+						timestamp: 1,
+						sourceText: "secret source",
+					},
+					{ role: "assistant", text: "hello", thinking: "", tools: [], images: [], timestamp: 2 },
+				] as never,
+		};
+		const server = await start(0, observer);
+		const port = server.status().port;
+		const res = await request(`http://127.0.0.1:${port}/api/snapshot?t=${token}`);
+		const snapshot = JSON.parse(res.text);
+		expect(snapshot.remoteControl).toBe(false);
+		expect(typeof snapshot.snapshotSeq).toBe("number");
+		expect(snapshot.transcripts).toHaveLength(1);
+		const transcript = snapshot.transcripts[0];
+		expect(transcript.sessionId).toBe("session-1");
+		expect(transcript.truncated).toBe(false);
+		const user = transcript.messages[0];
+		expect(user.sourceText).toBeUndefined();
+		expect(user.images[0].data).toBe("lan-image-stripped");
+		expect(transcript.messages[1].text).toBe("hello");
+	});
+
+	it("relays sanitized event frames for known sessions with 50ms delta batching", async () => {
+		let eventHandler: ((sessionId: string, event: never) => void) | undefined;
+		const observer: LanObserverBackend = {
+			...backend(),
+			onEvent: (handler) => {
+				eventHandler = handler as (sessionId: string, event: never) => void;
+				return () => {};
+			},
+		};
+		const server = await start(0, observer);
+		const port = server.status().port;
+		const collected = sseCollect(
+			`http://127.0.0.1:${port}/api/stream?t=${token}`,
+			(text) => text.includes("event: event") && text.includes("agent_start"),
+		);
+		await new Promise((resolve) => setTimeout(resolve, 50));
+		// 连续 3 个同 contentIndex 的 text_delta 应合并为一帧
+		for (const delta of ["你", "好", "呀"]) {
+			eventHandler?.("session-1", {
+				type: "message_update",
+				message: { role: "assistant", content: [] },
+				assistantMessageEvent: { type: "text_delta", contentIndex: 0, delta },
+			} as never);
+		}
+		// 非 delta 事件即时转发
+		eventHandler?.("session-1", { type: "agent_start" } as never);
+		const text = await collected;
+		const frames = [...text.matchAll(/^event: event\ndata: (.+)$/gm)].map((m) => JSON.parse(m[1] ?? ""));
+		expect(frames).toHaveLength(2);
+		expect(frames[0].event.assistantMessageEvent.delta).toBe("你好呀");
+		expect(frames[1].event.type).toBe("agent_start");
+		expect(frames[0].seq).toBeLessThan(frames[1].seq);
+	});
+
+	it("does not relay event frames for unknown (subagent) sessions", async () => {
+		let eventHandler: ((sessionId: string, event: never) => void) | undefined;
+		const observer: LanObserverBackend = {
+			...backend(),
+			onEvent: (handler) => {
+				eventHandler = handler as (sessionId: string, event: never) => void;
+				return () => {};
+			},
+		};
+		const server = await start(0, observer);
+		const port = server.status().port;
+		let text = "";
+		await new Promise<void>((resolve, reject) => {
+			const req = get(`http://127.0.0.1:${port}/api/stream?t=${token}`, (res) => {
+				res.setEncoding("utf8");
+				res.on("data", (chunk) => (text += chunk));
+				setTimeout(() => {
+					req.destroy();
+					resolve();
+				}, 300);
+			});
+			req.on("error", reject);
+		});
+		for (let index = 0; index < 50; index++) {
+			eventHandler?.("subagent-session", {
+				type: "message_update",
+				assistantMessageEvent: { type: "text_delta", contentIndex: 0, delta: "x" },
+			} as never);
+		}
+		await new Promise((resolve) => setTimeout(resolve, 150));
+		expect(text).not.toContain("event: event");
+	});
+
+	it("broadcasts perm and perm_resolved frames", async () => {
+		let requestHandler: ((req: never) => void) | undefined;
+		let resolvedHandler: ((result: never) => void) | undefined;
+		const observer: LanObserverBackend = {
+			...backend(),
+			onPermissionRequest: (handler) => {
+				requestHandler = handler as (req: never) => void;
+				return () => {};
+			},
+			onPermissionResolved: (handler) => {
+				resolvedHandler = handler as (result: never) => void;
+				return () => {};
+			},
+		};
+		const server = await start(0, observer);
+		const port = server.status().port;
+		const collected = sseCollect(`http://127.0.0.1:${port}/api/stream?t=${token}`, (text) =>
+			text.includes("event: perm_resolved"),
+		);
+		await new Promise((resolve) => setTimeout(resolve, 50));
+		requestHandler?.({
+			id: "req-1",
+			sessionId: "session-1",
+			title: "写文件",
+			message: "edit /work/a.ts",
+			kind: "path",
+			suggestDir: "/work",
+		} as never);
+		resolvedHandler?.({ sessionId: "session-1", requestId: "req-1", answered: true } as never);
+		const text = await collected;
+		const perm = /event: perm\ndata: (.+)/.exec(text);
+		const resolved = /event: perm_resolved\ndata: (.+)/.exec(text);
+		expect(perm).not.toBeNull();
+		expect(JSON.parse(perm?.[1] ?? "")).toMatchObject({
+			sessionId: "session-1",
+			request: { id: "req-1", title: "写文件", kind: "path", suggestDir: "/work" },
+		});
+		expect(JSON.parse(resolved?.[1] ?? "")).toMatchObject({ requestId: "req-1", answered: true });
 	});
 });

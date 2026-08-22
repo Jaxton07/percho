@@ -516,10 +516,9 @@ export class PiBackend {
 	}
 
 	/** 全部未决权限请求的只读快照（LAN Observer 等被动观察者用）。 */
-	getPendingPermissionRequests(): { sessionId: string; title: string; message: string; kind: string }[] {
-		return [...this.gates.values()].flatMap((gate) =>
-			gate.listPending().map(({ sessionId, title, message, kind }) => ({ sessionId, title, message, kind })),
-		);
+	/** 全部未决权限请求快照（含 requestId；LAN 观察/远程应答与桌面共用） */
+	getPendingPermissionRequests(): PermissionRequest[] {
+		return [...this.gates.values()].flatMap((gate) => gate.listPending());
 	}
 
 	/** 当前模型上下文使用情况；刚压缩后 tokens 未知（null），会话无模型时 percent 为 null */
