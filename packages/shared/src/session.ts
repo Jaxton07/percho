@@ -199,6 +199,13 @@ export interface PermissionRequest {
 
 export type PermissionAnswer = "allow" | "deny" | "allowAlways" | "allowDir";
 
+/** 权限请求已裁决（answered=true 为批准/拒绝，false 为取消/过期）。 */
+export interface PermissionResolved {
+	sessionId: string;
+	requestId: string;
+	answered: boolean;
+}
+
 /** 权限门控配置（设置 UI 开关；规则全文在 ~/.pi/agent/permissions.json） */
 export interface PermissionConfigInfo {
 	enabled: boolean;

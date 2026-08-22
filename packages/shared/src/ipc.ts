@@ -10,6 +10,7 @@ import type {
 	PermissionAnswer,
 	PermissionConfigInfo,
 	PermissionRequest,
+	PermissionResolved,
 	QueuedMessages,
 	SavedTabs,
 	SessionEventEnvelope,
@@ -156,6 +157,8 @@ export const IpcChannels = {
 	/** main → renderer 事件 */
 	Event: "pi:event",
 	PermissionRequest: "pi:permission-request",
+	/** main → renderer 权限请求已裁决（含 LAN 远程应答；桌面端据此撤卡） */
+	PermissionResolved: "pi:permission-resolved",
 	/** main → renderer 项目信任请求（会话创建前） */
 	TrustRequest: "pi:trust-request",
 } as const;
@@ -322,6 +325,7 @@ export interface PiApi {
 	/** 订阅会话事件；返回取消函数 */
 	onEvent(cb: (payload: SessionEventEnvelope) => void): () => void;
 	onPermissionRequest(cb: (req: PermissionRequest) => void): () => void;
+	onPermissionResolved(cb: (result: PermissionResolved) => void): () => void;
 	/** 订阅项目信任请求；返回取消函数 */
 	onTrustRequest(cb: (req: TrustRequest) => void): () => void;
 }

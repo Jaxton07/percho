@@ -128,6 +128,11 @@ const api: PiApi = {
 		ipcRenderer.on(IpcChannels.PermissionRequest, listener);
 		return () => ipcRenderer.removeListener(IpcChannels.PermissionRequest, listener);
 	},
+	onPermissionResolved: (cb) => {
+		const listener = (_event: unknown, result: Parameters<typeof cb>[0]) => cb(result);
+		ipcRenderer.on(IpcChannels.PermissionResolved, listener);
+		return () => ipcRenderer.removeListener(IpcChannels.PermissionResolved, listener);
+	},
 	onTrustRequest: (cb) => {
 		const listener = (_event: unknown, req: Parameters<typeof cb>[0]) => cb(req);
 		ipcRenderer.on(IpcChannels.TrustRequest, listener);

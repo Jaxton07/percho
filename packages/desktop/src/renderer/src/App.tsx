@@ -82,6 +82,9 @@ export default function App() {
 		const offPermission = pi.onPermissionRequest((req) => {
 			useTranscriptStore.getState().addPermission(req.sessionId, req);
 		});
+		const offPermissionResolved = pi.onPermissionResolved((result) => {
+			useTranscriptStore.getState().resolvePermission(result.sessionId, result.requestId);
+		});
 		const offTrust = pi.onTrustRequest((req) => {
 			setTrustRequests((prev) => [...prev, req]);
 		});
@@ -96,6 +99,7 @@ export default function App() {
 		return () => {
 			offEvent();
 			offPermission();
+			offPermissionResolved();
 			offTrust();
 		};
 	}, []);

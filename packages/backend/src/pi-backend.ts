@@ -25,6 +25,7 @@ import type {
 	ModelPrefs,
 	PermissionAnswer,
 	PermissionRequest,
+	PermissionResolved,
 	SessionEvent,
 	SessionMessage,
 	SessionMeta,
@@ -120,11 +121,7 @@ export interface PiBackendOptions {
 
 type EventHandler = (sessionId: string, event: SessionEvent) => void;
 type PermissionHandler = (req: PermissionRequest) => void;
-type PermissionResolvedHandler = (result: {
-	sessionId: string;
-	requestId: string;
-	answered: boolean;
-}) => void;
+type PermissionResolvedHandler = (result: PermissionResolved) => void;
 type TrustHandler = (req: TrustRequest) => void;
 type LoginHandler = (payload: LoginEventPayload) => void;
 
@@ -948,11 +945,7 @@ export class PiBackend {
 		}
 	}
 
-	private dispatchPermissionResolved(result: {
-		sessionId: string;
-		requestId: string;
-		answered: boolean;
-	}): void {
+	private dispatchPermissionResolved(result: PermissionResolved): void {
 		for (const handler of this.permissionResolvedHandlers) {
 			try {
 				handler(result);
