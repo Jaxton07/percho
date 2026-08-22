@@ -80,6 +80,7 @@ const api: PiApi = {
 	setVisionLanguage: (language) => ipcRenderer.invoke(IpcChannels.VisionSetLanguage, language),
 	lanGetStatus: () => ipcRenderer.invoke(IpcChannels.LanGetStatus),
 	lanSetEnabled: (enabled) => ipcRenderer.invoke(IpcChannels.LanSetEnabled, enabled),
+	lanSetRemoteControl: (enabled) => ipcRenderer.invoke(IpcChannels.LanSetRemoteControl, enabled),
 	respondTrust: (requestId, answer) => ipcRenderer.invoke(IpcChannels.TrustRespond, requestId, answer),
 	ensureProjectTrust: (cwd) => ipcRenderer.invoke(IpcChannels.ProjectEnsureTrust, cwd),
 	pickDirectory: () => ipcRenderer.invoke(IpcChannels.ProjectPickDirectory),

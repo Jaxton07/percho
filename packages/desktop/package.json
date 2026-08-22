@@ -9,10 +9,12 @@
 	"main": "./out/main/index.js",
 	"scripts": {
 		"dev": "electron-vite dev",
-		"build": "electron-vite build",
+		"predev": "npm run build:lan-web",
+		"build:lan-web": "vite build --config src/lan-web/vite.config.ts",
+		"build": "npm run build:lan-web && electron-vite build",
 		"typecheck": "tsc --noEmit -p tsconfig.node.json && tsc --noEmit -p tsconfig.web.json",
 		"test": "vitest run",
-		"dist": "electron-vite build && electron-builder",
+		"dist": "npm run build && electron-builder",
 		"start": "electron-vite preview"
 	},
 	"dependencies": {

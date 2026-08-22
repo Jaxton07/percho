@@ -59,6 +59,10 @@ interface SseClient {
 
 export interface LanObserverServerOptions {
 	pageHtml: string;
+	/** PWA manifest JSON（无鉴权、no-store）。 */
+	pwaManifest?: string;
+	/** PWA 图标 PNG 二进制（无鉴权、no-store）。 */
+	iconPng?: Buffer;
 }
 
 /** 默认关闭时零资源；启动后才订阅 backend 并提供只读 HTTP/SSE 投影。 */
@@ -151,6 +155,19 @@ export class LanObserverServer {
 		if (url.pathname === "/") {
 			res.writeHead(200, { "Content-Type": "text/html; charset=utf-8", "Cache-Control": "no-store" });
 			res.end(this.options.pageHtml);
+			return;
+		}
+		if (url.pathname === "/manifest.webmanifest" && this.options.pwaManifest) {
+			res.writeHead(200, {
+				"Content-Type": "application/manifest+json; charset=utf-8",
+				"Cache-Control": "no-store",
+			});
+			res.end(this.options.pwaManifest);
+			return;
+		}
+		if (url.pathname === "/icon.png" && this.options.iconPng) {
+			res.writeHead(200, { "Content-Type": "image/png", "Cache-Control": "no-store" });
+			res.end(this.options.iconPng);
 			return;
 		}
 		if (url.pathname !== "/api/snapshot" && url.pathname !== "/api/stream") {

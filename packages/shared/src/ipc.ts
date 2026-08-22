@@ -100,6 +100,8 @@ export const IpcChannels = {
 	/** 局域网观察页（默认关闭、只读服务）。 */
 	LanGetStatus: "lan:getStatus",
 	LanSetEnabled: "lan:setEnabled",
+	/** 局域网远程控制二级开关（M2；默认关闭，开观察 ≠ 开控制）。 */
+	LanSetRemoteControl: "lan:setRemoteControl",
 	PermissionRespond: "permission:respond",
 	/** 权限门控配置（设置 UI 开关） */
 	PermissionGetConfig: "permission:getConfig",
@@ -259,6 +261,8 @@ export interface PiApi {
 	lanGetStatus(): Promise<LanStatus>;
 	/** 启用或停止局域网只读观察服务；启用时轮换访问 token。 */
 	lanSetEnabled(enabled: boolean): Promise<LanStatus>;
+	/** 设置远程控制开关（独立于观察开关；未开观察时允许配置但不生效）。 */
+	lanSetRemoteControl(enabled: boolean): Promise<LanStatus>;
 	respondPermission(requestId: string, answer: PermissionAnswer): Promise<void>;
 	/** 读取权限门控开关状态 */
 	getPermissionConfig(): Promise<PermissionConfigInfo>;
