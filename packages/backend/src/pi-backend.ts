@@ -120,6 +120,11 @@ export interface PiBackendOptions {
 
 type EventHandler = (sessionId: string, event: SessionEvent) => void;
 type PermissionHandler = (req: PermissionRequest) => void;
+type PermissionResolvedHandler = (result: {
+	sessionId: string;
+	requestId: string;
+	answered: boolean;
+}) => void;
 type TrustHandler = (req: TrustRequest) => void;
 type LoginHandler = (payload: LoginEventPayload) => void;
 
@@ -138,6 +143,7 @@ export class PiBackend {
 	private readonly registry = new SessionRegistry();
 	private readonly eventHandlers = new Set<EventHandler>();
 	private readonly permissionHandlers = new Set<PermissionHandler>();
+	private readonly permissionResolvedHandlers = new Set<PermissionResolvedHandler>();
 	private readonly trustHandlers = new Set<TrustHandler>();
 	private readonly loginHandlers = new Set<LoginHandler>();
 	private readonly gates = new Map<string, PermissionGate>();
@@ -500,6 +506,22 @@ export class PiBackend {
 		};
 	}
 
+	/** 全部活跃会话的运行态快照（只读观察者用）。 */
+	listActiveSessionRuntime(): { sessionId: string; streaming: boolean; compacting: boolean }[] {
+		return this.registry.list().map(({ session }) => ({
+			sessionId: session.sessionId,
+			streaming: session.isStreaming,
+			compacting: session.isCompacting,
+		}));
+	}
+
+	/** 全部未决权限请求的只读快照（LAN Observer 等被动观察者用）。 */
+	getPendingPermissionRequests(): { sessionId: string; title: string; message: string; kind: string }[] {
+		return [...this.gates.values()].flatMap((gate) =>
+			gate.listPending().map(({ sessionId, title, message, kind }) => ({ sessionId, title, message, kind })),
+		);
+	}
+
 	/** 当前模型上下文使用情况；刚压缩后 tokens 未知（null），会话无模型时 percent 为 null */
 	async getContextUsage(sessionId: string): Promise<ContextUsageInfo | null> {
 		const entry = this.requireSession(sessionId);
@@ -774,6 +796,12 @@ export class PiBackend {
 		return () => this.permissionHandlers.delete(handler);
 	}
 
+	/** 权限请求被桌面端实际应答后通知被动观察者。 */
+	onPermissionResolved(handler: PermissionResolvedHandler): () => void {
+		this.permissionResolvedHandlers.add(handler);
+		return () => this.permissionResolvedHandlers.delete(handler);
+	}
+
 	onTrustRequest(handler: TrustHandler): () => void {
 		this.trustHandlers.add(handler);
 		return () => this.trustHandlers.delete(handler);
@@ -795,6 +823,7 @@ export class PiBackend {
 				// 先放行 agent 再持久化（D3）：持久化失败（如 workspaces.json 损坏拒写）只丢记忆不挂会话，
 				// log.error 留痕——fail-open 与 enabled=false 整体放行的既有语义一致
 				gate.respond(requestId, answer);
+				this.dispatchPermissionResolved({ sessionId: gate.getSessionId(), requestId, answered: true });
 				const entry = this.registry.get(gate.getSessionId());
 				if (entry) {
 					try {
@@ -813,7 +842,9 @@ export class PiBackend {
 			return;
 		}
 		for (const gate of this.gates.values()) {
+			if (!gate.getRequest(requestId)) continue;
 			gate.respond(requestId, answer);
+			this.dispatchPermissionResolved({ sessionId: gate.getSessionId(), requestId, answered: true });
 		}
 	}
 
@@ -881,6 +912,7 @@ export class PiBackend {
 		this.registry.disposeAll();
 		this.eventHandlers.clear();
 		this.permissionHandlers.clear();
+		this.permissionResolvedHandlers.clear();
 		this.trustHandlers.clear();
 		this.trustGate.dispose();
 		this.traces.disposeAll();
@@ -903,6 +935,20 @@ export class PiBackend {
 		for (const handler of this.permissionHandlers) {
 			try {
 				handler(req);
+			} catch {
+				// 忽略单个处理器异常
+			}
+		}
+	}
+
+	private dispatchPermissionResolved(result: {
+		sessionId: string;
+		requestId: string;
+		answered: boolean;
+	}): void {
+		for (const handler of this.permissionResolvedHandlers) {
+			try {
+				handler(result);
 			} catch {
 				// 忽略单个处理器异常
 			}

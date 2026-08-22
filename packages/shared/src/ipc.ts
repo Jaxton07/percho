@@ -1,3 +1,4 @@
+import type { LanStatus } from "./lan";
 import type { CatalogPackageType, CatalogSearchResult, ConfiguredPackageInfo } from "./packages";
 import type {
 	AppInfo,
@@ -96,6 +97,9 @@ export const IpcChannels = {
 	VisionSaveConfig: "vision:saveConfig",
 	VisionTest: "vision:test",
 	VisionSetLanguage: "vision:setLanguage",
+	/** 局域网观察页（默认关闭、只读服务）。 */
+	LanGetStatus: "lan:getStatus",
+	LanSetEnabled: "lan:setEnabled",
 	PermissionRespond: "permission:respond",
 	/** 权限门控配置（设置 UI 开关） */
 	PermissionGetConfig: "permission:getConfig",
@@ -251,6 +255,10 @@ export interface PiApi {
 	testVision(): Promise<VisionTestResult>;
 	/** 推送界面语言（识别描述语言跟随；backend 内存态） */
 	setVisionLanguage(language: "zh" | "en"): Promise<void>;
+	/** 读取局域网观察服务状态（URL/二维码只在启用并监听后提供）。 */
+	lanGetStatus(): Promise<LanStatus>;
+	/** 启用或停止局域网只读观察服务；启用时轮换访问 token。 */
+	lanSetEnabled(enabled: boolean): Promise<LanStatus>;
 	respondPermission(requestId: string, answer: PermissionAnswer): Promise<void>;
 	/** 读取权限门控开关状态 */
 	getPermissionConfig(): Promise<PermissionConfigInfo>;

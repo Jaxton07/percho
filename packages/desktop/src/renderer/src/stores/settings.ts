@@ -4,6 +4,7 @@ import type {
 	ConfiguredPackageInfo,
 	CustomProviderInput,
 	CustomProviderUpdateInput,
+	LanStatus,
 	LoadedExtension,
 	LoadedSkill,
 	LoginAuthPrompt,
@@ -29,6 +30,7 @@ export type SettingsCategory =
 	| "extensions"
 	| "uiPlugins"
 	| "vision"
+	| "lan"
 	| "about"
 	// 插件自带设置页分类（settings.panel 贡献动态拼接，id = plugin:<pluginName>:<contributionId>）
 	| `plugin:${string}`;
@@ -70,6 +72,9 @@ interface SettingsStore {
 	visionConfig: VisionConfigInfo | null;
 	/** 视觉模型连通性测试中 */
 	visionTesting: boolean;
+	/** 局域网观察服务运行状态（null = 未加载）。 */
+	lanStatus: LanStatus | null;
+	lanSaving: boolean;
 	visionTestResult: VisionTestResult | null;
 	/** 当前活跃会话已加载的 skills（null = 未加载/无会话） */
 	skills: LoadedSkill[] | null;
@@ -134,6 +139,8 @@ interface SettingsStore {
 	/** 测试视觉模型连通性（1×1 png 实调） */
 	testVision: () => Promise<void>;
 	clearVisionTestResult: () => void;
+	refreshLanStatus: () => Promise<void>;
+	setLanEnabled: (enabled: boolean) => Promise<void>;
 	setExtensionsTab: (tab: "browse" | "loaded") => void;
 	setCatalogQuery: (query: string) => void;
 	setCatalogType: (type: "" | CatalogPackageType) => void;
@@ -172,6 +179,8 @@ export const useSettingsStore = create<SettingsStore>((set, get) => {
 		visionConfig: null,
 		visionTesting: false,
 		visionTestResult: null,
+		lanStatus: null,
+		lanSaving: false,
 		skills: null,
 		skillDiagnostics: [],
 		extensions: null,
@@ -329,6 +338,10 @@ export const useSettingsStore = create<SettingsStore>((set, get) => {
 				.getVisionConfig()
 				.then((visionConfig) => set({ visionConfig }))
 				.catch(() => {});
+			void getPi()
+				.lanGetStatus()
+				.then((lanStatus) => set({ lanStatus }))
+				.catch(() => {});
 			try {
 				const [providers, modelPrefs, subagents] = await Promise.all([
 					getPi().listProviders(),
@@ -407,6 +420,24 @@ export const useSettingsStore = create<SettingsStore>((set, get) => {
 		},
 
 		clearVisionTestResult: () => set({ visionTestResult: null }),
+
+		refreshLanStatus: async () => {
+			try {
+				set({ lanStatus: await getPi().lanGetStatus() });
+			} catch (error) {
+				set({ error: error instanceof Error ? error.message : String(error) });
+			}
+		},
+
+		setLanEnabled: async (enabled) => {
+			set({ lanSaving: true });
+			try {
+				const lanStatus = await getPi().lanSetEnabled(enabled);
+				set({ lanStatus, lanSaving: false });
+			} catch (error) {
+				set({ lanSaving: false, error: error instanceof Error ? error.message : String(error) });
+			}
+		},
 
 		saveKey: async (providerId, key) => {
 			try {
