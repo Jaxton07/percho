@@ -23,6 +23,26 @@ import { messagesToUIMessages } from "./stores/transcript-reducer";
 import { useUiStore } from "./stores/ui";
 import { initUpdateStore } from "./stores/update";
 
+/**
+ * per-session 事件处理串行链（D4）：`compaction_end` 先 `getSessionMessages` 重建消息列表
+ * 再 applyEvent，期间同会话后续事件若先被 apply 会以旧消息流渲染 → 回跳；链尾追加、
+ * 空则删，保证同会话事件严格按到达顺序应用（compaction 的 try/catch 保留）。
+ */
+const eventChains = new Map<string, Promise<void>>();
+
+function enqueueEvent(sessionId: string, run: () => Promise<void>): void {
+	const prev = eventChains.get(sessionId) ?? Promise.resolve();
+	const next = prev.then(run, run); // 链上错误已被吞，两分支等价；链尾追加保证顺序
+	const settled = next.then(
+		() => {},
+		() => {},
+	);
+	eventChains.set(sessionId, settled);
+	void settled.then(() => {
+		if (eventChains.get(sessionId) === settled) eventChains.delete(sessionId); // 空链回收，防 Map 无界增长
+	});
+}
+
 export default function App() {
 	const activeSessionId = useSessionsStore((s) => s.activeSessionId);
 	const view = useUiStore((s) => s.view);
@@ -37,24 +57,27 @@ export default function App() {
 
 	useEffect(() => {
 		const pi = getPi();
-		const offEvent = pi.onEvent(async ({ sessionId, event }: { sessionId: string; event: SessionEvent }) => {
-			// 压缩成功后 pi 内部消息被裁剪，重新拉取对齐 UI 消息流
-			if (event.type === "compaction_end" && !event.aborted && event.result) {
-				try {
-					const history = await pi.getSessionMessages(sessionId);
-					useTranscriptStore.getState().loadHistory(sessionId, messagesToUIMessages(history));
-				} catch {
-					// 拉取失败不阻塞事件应用
+		const offEvent = pi.onEvent(({ sessionId, event }: { sessionId: string; event: SessionEvent }) => {
+			enqueueEvent(sessionId, async () => {
+				// 压缩成功后 pi 内部消息被裁剪，重新拉取对齐 UI 消息流
+				if (event.type === "compaction_end" && !event.aborted && event.result) {
+					try {
+						const history = await pi.getSessionMessages(sessionId);
+						useTranscriptStore.getState().loadHistory(sessionId, messagesToUIMessages(history));
+					} catch {
+						// 拉取失败不阻塞事件应用
+					}
 				}
-			}
-			useTranscriptStore.getState().applyEvent(sessionId, event, {
-				// 正被查看（活跃 tab 且 chat 视图）的会话完成时不打未读标记
-				isActiveViewing:
-					useSessionsStore.getState().activeSessionId === sessionId && useUiStore.getState().view === "chat",
+				useTranscriptStore.getState().applyEvent(sessionId, event, {
+						// 正被查看（活跃 tab 且 chat 视图）的会话完成时不打未读标记
+						isActiveViewing:
+							useSessionsStore.getState().activeSessionId === sessionId &&
+							useUiStore.getState().view === "chat",
+					});
+				if (event.type === "session_info_changed") {
+					useSessionsStore.getState().updateSessionName(sessionId, event.name);
+				}
 			});
-			if (event.type === "session_info_changed") {
-				useSessionsStore.getState().updateSessionName(sessionId, event.name);
-			}
 		});
 		const offPermission = pi.onPermissionRequest((req) => {
 			useTranscriptStore.getState().addPermission(req.sessionId, req);

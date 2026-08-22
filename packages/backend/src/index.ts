@@ -1,4 +1,10 @@
 export { createLogger, initLogging, type Logger } from "./log";
+export {
+	JsonStore,
+	JsonStoreCorruptedError,
+	type JsonStoreOptions,
+	type ReadResult,
+} from "./json-store";
 export { fetchPackageCatalog, parseCatalogHtml } from "./packages/catalog";
 export {
 	createPermissionConfigLoader,

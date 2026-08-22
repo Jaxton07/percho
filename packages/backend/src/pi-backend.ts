@@ -792,16 +792,22 @@ export class PiBackend {
 			for (const gate of this.gates.values()) {
 				const req = gate.getRequest(requestId);
 				if (!req) continue;
+				// 先放行 agent 再持久化（D3）：持久化失败（如 workspaces.json 损坏拒写）只丢记忆不挂会话，
+				// log.error 留痕——fail-open 与 enabled=false 整体放行的既有语义一致
+				gate.respond(requestId, answer);
 				const entry = this.registry.get(gate.getSessionId());
-				const agentDir = getAgentDir();
 				if (entry) {
-					if (answer === "allowDir" && req.meta?.suggestDir) {
-						addWorkspaceRoot(agentDir, entry.cwd, req.meta.suggestDir);
-					} else if (answer === "allowAlways" && req.meta) {
-						addAllowedPattern(agentDir, entry.cwd, req.title);
+					try {
+						const agentDir = getAgentDir();
+						if (answer === "allowDir" && req.meta?.suggestDir) {
+							addWorkspaceRoot(agentDir, entry.cwd, req.meta.suggestDir);
+						} else if (answer === "allowAlways" && req.meta) {
+							addAllowedPattern(agentDir, entry.cwd, req.title);
+						}
+					} catch (err) {
+						log.error("权限决策持久化失败（agent 已放行，本次决策不记忆）", requestId, err);
 					}
 				}
-				gate.respond(requestId, answer);
 				return;
 			}
 			return;
@@ -816,9 +822,14 @@ export class PiBackend {
 		return { enabled: loadPermissionConfig(getAgentDir()).enabled };
 	}
 
-	/** 写 enabled 开关；扩展按 mtime 重读配置，即时生效 */
+	/** 写 enabled 开关；扩展按 mtime 重读配置，即时生效。损坏拒写时上抛（renderer 需要知道保存失败） */
 	setPermissionEnabled(enabled: boolean): void {
-		writePermissionEnabled(getAgentDir(), enabled);
+		try {
+			writePermissionEnabled(getAgentDir(), enabled);
+		} catch (err) {
+			log.error("permissions.json 写入失败（enabled 开关未保存）", err);
+			throw err; // PermissionRespond 是 ipcMain.handle，reject 传回 renderer
+		}
 		log.info("permission gate enabled", enabled);
 	}
 

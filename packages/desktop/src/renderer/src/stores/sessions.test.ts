@@ -5,10 +5,10 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 const piMock = vi.hoisted(() => ({
 	createSession: vi.fn(),
 	closeSession: vi.fn(),
-	saveTabs: vi.fn(),
+	saveTabs: vi.fn(() => Promise.resolve()),
 	setModel: vi.fn(),
 	setThinkingLevel: vi.fn(),
-	saveUiState: vi.fn(),
+	saveUiState: vi.fn(() => Promise.resolve()),
 	pickDirectory: vi.fn(),
 	ensureProjectTrust: vi.fn(() => Promise.resolve(true)),
 	openSession: vi.fn(),

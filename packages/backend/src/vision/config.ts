@@ -1,5 +1,3 @@
-import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
-import { dirname, join } from "node:path";
 import {
 	DEFAULT_VISION_BASE_URL,
 	DEFAULT_VISION_MODEL,
@@ -7,14 +5,7 @@ import {
 	type VisionConfigInfo,
 	type VisionSaveInput,
 } from "@percho/shared";
-
-/** 默认关闭、无 key：必须显式开启 + 配置 key 才工作 */
-const DEFAULT_CONFIG: VisionConfig = {
-	enabled: false,
-	apiKey: "",
-	baseUrl: DEFAULT_VISION_BASE_URL,
-	model: DEFAULT_VISION_MODEL,
-};
+import { JsonStore } from "../json-store";
 
 /** 识别失败占位缓存的重试窗口 */
 export const VISION_RETRY_TTL_MS = 60_000;
@@ -30,33 +21,30 @@ export class VisionConfigService {
 
 	constructor(private readonly configPath: string) {}
 
+	private store(): JsonStore<Partial<VisionConfig>> {
+		return new JsonStore<Partial<VisionConfig>>({
+			path: this.configPath,
+			defaultValue: () => ({}),
+		});
+	}
+
 	private async read(): Promise<VisionConfig> {
 		if (this.cache) return this.cache;
-		let config = { ...DEFAULT_CONFIG };
-		try {
-			const raw = await readFile(this.configPath, "utf8");
-			const data = JSON.parse(raw) as Partial<VisionConfig>;
-			config = {
-				enabled: data.enabled === true,
-				apiKey: typeof data.apiKey === "string" ? data.apiKey : "",
-				baseUrl: data.baseUrl?.trim() || DEFAULT_VISION_BASE_URL,
-				model: data.model?.trim() || DEFAULT_VISION_MODEL,
-			};
-		} catch {
-			// 无文件 / 损坏：用缺省
-		}
+		// 损坏/无文件回退缺省（JsonStore 保证）；字段级规整仍在服务层
+		const data = await this.store().read();
+		const config: VisionConfig = {
+			enabled: data.enabled === true,
+			apiKey: typeof data.apiKey === "string" ? data.apiKey : "",
+			baseUrl: data.baseUrl?.trim() || DEFAULT_VISION_BASE_URL,
+			model: data.model?.trim() || DEFAULT_VISION_MODEL,
+		};
 		this.cache = config;
 		return config;
 	}
 
 	private async write(config: VisionConfig): Promise<void> {
 		this.cache = config;
-		const dir = dirname(this.configPath);
-		await mkdir(dir, { recursive: true });
-		// 原子写：先写临时文件再 rename，避免写一半时读到残缺 JSON
-		const tmp = join(dir, `.${Math.random().toString(36).slice(2)}.vision.tmp`);
-		await writeFile(tmp, `${JSON.stringify(config, null, 2)}\n`, "utf8");
-		await rename(tmp, this.configPath);
+		await this.store().write(config);
 	}
 
 	/** 运行态（含 key），仅供 backend 内部使用；绝不整个回传渲染层 */

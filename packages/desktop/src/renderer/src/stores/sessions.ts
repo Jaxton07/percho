@@ -16,10 +16,12 @@ export function isDraftSessionId(sessionId: string | null | undefined): boolean 
 /** 顶栏打开的会话持久化（重启恢复用）；由主进程写 userData/tabs.json，不依赖 renderer localStorage */
 function persistTabs(state: Pick<SessionsStore, "sessions" | "activeSessionId">): void {
 	try {
-		void getPi().saveTabs({
-			files: [...new Set(state.sessions.map((s) => s.sessionFile).filter((f): f is string => Boolean(f)))],
-			activeFile: state.sessions.find((s) => s.sessionId === state.activeSessionId)?.sessionFile ?? null,
-		});
+		getPi()
+			.saveTabs({
+				files: [...new Set(state.sessions.map((s) => s.sessionFile).filter((f): f is string => Boolean(f)))],
+				activeFile: state.sessions.find((s) => s.sessionId === state.activeSessionId)?.sessionFile ?? null,
+			})
+			.catch((error) => console.error("tabs 持久化失败", error));
 	} catch {
 		// 持久化失败静默（不影响主流程）
 	}
@@ -358,7 +360,9 @@ export const useSessionsStore = create<SessionsStore>((set, get) => ({
 				s.sessionId === activeSessionId ? { ...s, model: { provider, modelId }, thinkingLevel } : s,
 			),
 		}));
-		void getPi().saveUiState({ currentModel: { provider, modelId }, thinkingLevel });
+		getPi()
+			.saveUiState({ currentModel: { provider, modelId }, thinkingLevel })
+			.catch((error) => console.error("ui-state 持久化失败", error));
 		// draft 无后端会话：模型选择只作为全局默认，创建时随 createSession 生效
 		if (activeSessionId && !isDraftSessionId(activeSessionId)) {
 			try {
@@ -378,7 +382,9 @@ export const useSessionsStore = create<SessionsStore>((set, get) => ({
 				s.sessionId === activeSessionId ? { ...s, thinkingLevel: level } : s,
 			),
 		}));
-		void getPi().saveUiState({ currentModel, thinkingLevel: level });
+		getPi()
+			.saveUiState({ currentModel, thinkingLevel: level })
+			.catch((error) => console.error("ui-state 持久化失败", error));
 		// draft 无后端会话：同上，仅作全局默认
 		if (activeSessionId && !isDraftSessionId(activeSessionId)) {
 			try {
