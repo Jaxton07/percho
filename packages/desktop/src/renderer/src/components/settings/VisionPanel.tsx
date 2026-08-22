@@ -57,18 +57,18 @@ export function VisionPanel() {
 				? t("settings.vision.keyHintQwen")
 				: t("settings.vision.keyPlaceholder");
 
-	/** 保存表单（key 留空 = 保持不变），返回是否成功 */
-	const saveForm = async () => {
+	/** 保存表单（key 留空 = 保持不变），返回是否成功；失败不显示「已保存」 */
+	const saveForm = async (): Promise<boolean> => {
 		setSaving(true);
-		await saveVision({ apiKey, baseUrl, model });
+		const ok = await saveVision({ apiKey, baseUrl, model });
 		setSaving(false);
-		setSavedAt(Date.now());
-		return !useSettingsStore.getState().error;
+		if (ok) setSavedAt(Date.now());
+		return ok;
 	};
 
 	const handleTest = async () => {
-		// 先保存当前表单再测（否则测的是旧 key）
-		await saveForm();
+		// 先保存当前表单再测（否则测的是旧 key）；保存失败不继续测试
+		if (!(await saveForm())) return;
 		await testVision();
 	};
 

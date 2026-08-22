@@ -77,7 +77,7 @@ export class SettingsService {
 	async listProviders(options?: ListProvidersOptions): Promise<ProviderInfo[]> {
 		const runtime = await this.getRuntime();
 		if (options?.forceNetwork) {
-			// 用户显式刷新才联网；SDK 的目录请求无内置超时，这里兜底，超时回退本地数据
+			// 用户显式刷新才联网；SDK 的目录请求无内置超时，这里兜底，超时抛错（UI 层回退到已加载的本地数据）
 			const result = await runtime.refresh({
 				allowNetwork: true,
 				force: true,

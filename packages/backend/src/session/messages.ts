@@ -135,7 +135,17 @@ export function resolveForkEntryId(
 	sm: Pick<SessionManager, "getEntry" | "getBranch">,
 	ref: { entryId?: string; text?: string },
 ): string {
-	if (ref.entryId && sm.getEntry(ref.entryId)) return ref.entryId;
+	if (ref.entryId) {
+		const e = sm.getEntry(ref.entryId);
+		if (e) {
+			// 只接受 assistant 消息作为 fork 点（与 text 分支同语义）；user/tool 条目拒绝防破坏分支结构（B7）
+			if (e.type !== "message" || (e.message as RawMessage).role !== "assistant") {
+				throw new Error("Fork target is not an assistant message");
+			}
+			return ref.entryId;
+		}
+		// entryId 未命中（如实时消息 entryId 缺失/已失效）→ 走 text 兑底
+	}
 	if (ref.text) {
 		const branch = sm.getBranch();
 		for (let i = branch.length - 1; i >= 0; i--) {

@@ -129,8 +129,8 @@ interface SettingsStore {
 	/** 关闭登录对话框（错误态保留展示时用） */
 	dismissLogin: () => void;
 	setPermissionEnabled: (enabled: boolean) => Promise<void>;
-	/** 保存视觉代理配置（返回新配置；key 留空保持不变） */
-	saveVision: (input: VisionSaveInput) => Promise<void>;
+	/** 保存视觉代理配置（返回是否成功；key 留空保持不变） */
+	saveVision: (input: VisionSaveInput) => Promise<boolean>;
 	/** 测试视觉模型连通性（1×1 png 实调） */
 	testVision: () => Promise<void>;
 	clearVisionTestResult: () => void;
@@ -340,12 +340,15 @@ export const useSettingsStore = create<SettingsStore>((set, get) => {
 				const activeSessionId = useSessionsStore.getState().activeSessionId;
 				if (activeSessionId && !isDraftSessionId(activeSessionId)) {
 					const resources = await getPi().getLoadedResources(activeSessionId);
-					set({
-						skills: resources.skills,
-						skillDiagnostics: resources.skillDiagnostics,
-						extensions: resources.extensions,
-						extensionErrors: resources.extensionErrors,
-					});
+					// 竞态守卫：await 期间活跃会话已切换则丢弃（防把 A 项目的资源写到 B 会话的面板）
+					if (useSessionsStore.getState().activeSessionId === activeSessionId) {
+						set({
+							skills: resources.skills,
+							skillDiagnostics: resources.skillDiagnostics,
+							extensions: resources.extensions,
+							extensionErrors: resources.extensionErrors,
+						});
+					}
 				} else {
 					set({ skills: null, skillDiagnostics: [], extensions: null, extensionErrors: [] });
 				}
@@ -383,8 +386,10 @@ export const useSettingsStore = create<SettingsStore>((set, get) => {
 			try {
 				const visionConfig = await getPi().saveVisionConfig(input);
 				set({ visionConfig, visionTestResult: null });
+				return true;
 			} catch (error) {
 				set({ error: error instanceof Error ? error.message : String(error) });
+				return false;
 			}
 		},
 
@@ -575,12 +580,17 @@ export const useSettingsStore = create<SettingsStore>((set, get) => {
 			}
 		},
 
-		respondLoginPrompt: (value) => {
+	/** 应答登录 prompt：await IPC 成功才清 pendingPrompt；失败恢复 prompt + 记 error（可重答） */
+		respondLoginPrompt: async (value) => {
 			const state = get().login;
 			if (!state?.pendingPrompt) return;
 			const { promptId } = state.pendingPrompt;
-			set({ login: { ...state, pendingPrompt: undefined } });
-			void getPi().respondProviderLogin(state.loginId, promptId, value);
+			try {
+				await getPi().respondProviderLogin(state.loginId, promptId, value);
+				set({ login: { ...state, pendingPrompt: undefined } });
+			} catch (error) {
+				set({ login: { ...state, error: error instanceof Error ? error.message : String(error) } });
+			}
 		},
 
 		cancelProviderLogin: () => {

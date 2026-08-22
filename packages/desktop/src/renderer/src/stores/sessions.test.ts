@@ -158,6 +158,30 @@ describe("closeSession", () => {
 		expect(piMock.closeSession).toHaveBeenCalledWith("r1");
 		expect(piMock.saveTabs).toHaveBeenCalled();
 	});
+
+	it("关闭跨项目激活会话：cwd 同步切到剩余会话的项目（B5）", async () => {
+		useSessionsStore.setState({
+			sessions: [realMeta("r1", "/proj/a"), realMeta("r2", "/proj/b")],
+			activeSessionId: "r2",
+			cwd: "/proj/b",
+		});
+		await useSessionsStore.getState().closeSession("r2");
+		const state = useSessionsStore.getState();
+		expect(state.activeSessionId).toBe("r1");
+		expect(state.cwd).toBe("/proj/a");
+	});
+
+	it("关闭后台会话：active 与 cwd 不变", async () => {
+		useSessionsStore.setState({
+			sessions: [realMeta("r1", "/proj/a"), realMeta("r2", "/proj/b")],
+			activeSessionId: "r1",
+			cwd: "/proj/a",
+		});
+		await useSessionsStore.getState().closeSession("r2");
+		const state = useSessionsStore.getState();
+		expect(state.activeSessionId).toBe("r1");
+		expect(state.cwd).toBe("/proj/a");
+	});
 });
 
 describe("switchSession", () => {

@@ -178,7 +178,11 @@ export const useSessionsStore = create<SessionsStore>((set, get) => ({
 			const sessions = state.sessions.filter((s) => s.sessionId !== sessionId);
 			const activeSessionId =
 				state.activeSessionId === sessionId ? (sessions[0]?.sessionId ?? null) : state.activeSessionId;
-			return { sessions, activeSessionId };
+			// 切 active 后 cwd 同步到新活跃会话的项目（否则跨项目关会话后 cwd 残留旧项目，新建会话归属错）（B5）
+			const cwd = activeSessionId
+				? (sessions.find((s) => s.sessionId === activeSessionId)?.cwd ?? state.cwd)
+				: state.cwd;
+			return { sessions, activeSessionId, cwd };
 		});
 		if (!isDraft) persistTabs(get());
 	},
