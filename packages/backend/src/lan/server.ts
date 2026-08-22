@@ -233,8 +233,7 @@ export class LanObserverServer {
 			this.dirty.add(sessionId);
 			this.relayEvent(sessionId, event);
 			return;
-		}
-		// 子代理子会话也会转发原生事件，却不在 listAllSessions（物理隔离）中；
+		} // 子代理子会话也会转发原生事件，却不在 listAllSessions（物理隔离）中；
 		// 对已知不可种子的 id 直接丢弃，避免每个 delta 都触发磁盘扫描。
 		// 未知会话的事件绝不转发为 event 帧（R1 防护不退化）。
 		if (this.unseedableSessions.has(sessionId)) return;

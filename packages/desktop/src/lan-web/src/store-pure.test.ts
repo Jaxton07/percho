@@ -1,0 +1,172 @@
+import type { LanSnapshot, LanSseFrame, SessionMessage } from "@percho/shared";
+import { describe, expect, it } from "vitest";
+import { applyFrame, initialLanState, seedSessions } from "./store-pure";
+
+const baseView = {
+	sessionId: "s1",
+	name: "测试会话",
+	cwd: "/work",
+	agentActive: false,
+	compacting: false,
+	queued: false,
+	currentTool: null,
+	assistantTail: null,
+	todos: [],
+	pendingPermission: null,
+	lastError: null,
+	stats: null,
+	lastActivity: 1,
+};
+
+function snapshot(overrides: Partial<LanSnapshot> = {}): LanSnapshot {
+	return {
+		serverTime: 1,
+		list: [{ sessionId: "s1", name: "测试会话", cwd: "/work", active: true, modifiedAt: 2 }],
+		views: [baseView],
+		transcripts: [
+			{
+				sessionId: "s1",
+				messages: [
+					{ role: "user", text: "你好", thinking: "", tools: [], images: [], timestamp: 1 },
+					{
+						role: "assistant",
+						text: "你好！**有什么**可以帮你？",
+						thinking: "",
+						tools: [],
+						images: [],
+						timestamp: 2,
+					},
+				] as SessionMessage[],
+				truncated: false,
+			},
+		],
+		remoteControl: false,
+		snapshotSeq: 10,
+		...overrides,
+	};
+}
+
+function eventFrame(sessionId: string, event: Record<string, unknown>, seq: number): LanSseFrame {
+	return { event: "event", data: { sessionId, event, seq } } as LanSseFrame;
+}
+
+describe("lan-web store pure functions", () => {
+	it("snapshot seeds transcripts via messagesToUIMessages", () => {
+		const next = seedSessions(initialLanState, snapshot());
+		expect(next.transcripts?.s1?.messages).toHaveLength(2);
+		expect(next.transcripts?.s1?.messages[0]).toMatchObject({ kind: "user", text: "你好" });
+		expect(next.transcripts?.s1?.messages[1]).toMatchObject({ kind: "assistant" });
+		expect(next.snapshotSeq).toBe(10);
+		expect(next.seeded).toBe(true);
+	});
+
+	it("event frames drive the shared reducer (agent_start + text_delta streaming)", () => {
+		let state = { ...initialLanState, ...seedSessions(initialLanState, snapshot()) };
+		state = {
+			...state,
+			...applyFrame(state, eventFrame("s1", { type: "agent_start" }, 11)),
+		};
+		state = {
+			...state,
+			...applyFrame(
+				state,
+				eventFrame(
+					"s1",
+					{
+						type: "message_update",
+						message: { role: "assistant", content: [] },
+						assistantMessageEvent: { type: "text_delta", contentIndex: 0, delta: "正在" },
+					},
+					12,
+				),
+			),
+		};
+		expect(state.transcripts.s1?.streaming?.text).toBe("正在");
+		expect(state.transcripts.s1?.agentActive).toBe(true);
+	});
+
+	it("drops event frames with seq <= snapshotSeq (already included in snapshot)", () => {
+		let state = { ...initialLanState, ...seedSessions(initialLanState, snapshot()) };
+		state = {
+			...state,
+			...applyFrame(state, eventFrame("s1", { type: "agent_start" }, 5)),
+		};
+		expect(state.transcripts.s1?.streaming).toBeNull();
+		expect(state.transcripts.s1?.agentActive).toBe(false);
+	});
+
+	it("perm frame lifecycle: perm adds, perm_resolved removes", () => {
+		let state = { ...initialLanState, ...seedSessions(initialLanState, snapshot()) };
+		const request = {
+			id: "r1",
+			sessionId: "s1",
+			title: "写文件",
+			message: "edit a.ts",
+			kind: "path" as const,
+		};
+		state = {
+			...state,
+			...applyFrame(state, { event: "perm", data: { sessionId: "s1", request, seq: 11 } }),
+		};
+		expect(state.pendingPerms.s1).toHaveLength(1);
+		// 重复 perm 帧幂等
+		state = {
+			...state,
+			...applyFrame(state, { event: "perm", data: { sessionId: "s1", request, seq: 12 } }),
+		};
+		expect(state.pendingPerms.s1).toHaveLength(1);
+		state = {
+			...state,
+			...applyFrame(state, {
+				event: "perm_resolved",
+				data: { sessionId: "s1", requestId: "r1", answered: true, seq: 13 },
+			}),
+		};
+		expect(state.pendingPerms.s1).toHaveLength(0);
+	});
+
+	it("view frame updates status bits on existing transcript", () => {
+		let state = { ...initialLanState, ...seedSessions(initialLanState, snapshot()) };
+		state = {
+			...state,
+			...applyFrame(state, {
+				event: "view",
+				data: {
+					sessionId: "s1",
+					view: { ...baseView, agentActive: true, currentTool: "bash" },
+					seq: 11,
+				},
+			}),
+		};
+		expect(state.transcripts.s1?.agentActive).toBe(true);
+		expect(state.views.s1?.currentTool).toBe("bash");
+	});
+
+	it("reconnect re-seed heals state (snapshot authoritative)", () => {
+		let state = { ...initialLanState, ...seedSessions(initialLanState, snapshot()) };
+		state = {
+			...state,
+			...applyFrame(state, eventFrame("s1", { type: "agent_start" }, 11)),
+		};
+		expect(state.transcripts.s1?.streaming).not.toBeNull();
+		// 重连重拉：streaming 清空回到快照状态
+		state = { ...state, ...seedSessions(state, snapshot()) };
+		expect(state.transcripts.s1?.streaming).toBeNull();
+		expect(state.transcripts.s1?.messages).toHaveLength(2);
+	});
+
+	it("selected survives re-seed when session still exists, resets otherwise", () => {
+		const seeded = {
+			...initialLanState,
+			...seedSessions({ ...initialLanState, selected: "s1" }, snapshot()),
+		};
+		expect(seeded.selected).toBe("s1");
+		const gone = seedSessions(seeded as never, {
+			...snapshot(),
+			list: [],
+			views: [],
+			transcripts: [],
+		});
+		expect(gone.selected).toBeNull();
+	});
+});
