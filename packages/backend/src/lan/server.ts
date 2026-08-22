@@ -12,6 +12,7 @@ import type {
 	SessionMessage,
 	SessionMeta,
 } from "@percho/shared";
+import { LanAuditLog } from "./audit";
 import type { LanConfigService } from "./config";
 import {
 	applyEvent,
@@ -34,6 +35,60 @@ const MAX_UNSEEDABLE_SESSIONS = 256;
 const DELTA_BATCH_MS = 50;
 /** snapshot 每会话消息尾部上限。 */
 const TRANSCRIPT_TAIL_LIMIT = 100;
+/** M2：prompt 正文上限 8KB；写端点 body 上限 16KB（防放大）。 */
+const PROMPT_MAX_BYTES = 8 * 1024;
+const BODY_MAX_BYTES = 16 * 1024;
+
+type WriteRoute = { action: "prompt" | "abort"; id: string } | { action: "perm"; id: string };
+
+/** 写端点路由匹配：/api/sessions/:id/prompt|abort、/api/permissions/:id/respond */
+function matchWriteRoute(pathname: string): WriteRoute | null {
+	const session = /^\/api\/sessions\/([^/]+)\/(prompt|abort)$/.exec(pathname);
+	if (session?.[1] && (session[2] === "prompt" || session[2] === "abort")) {
+		return { action: session[2], id: decodeURIComponent(session[1]) };
+	}
+	const perm = /^\/api\/permissions\/([^/]+)\/respond$/.exec(pathname);
+	if (perm?.[1]) return { action: "perm", id: decodeURIComponent(perm[1]) };
+	return null;
+}
+
+function bearerToken(req: IncomingMessage): string | null {
+	const header = req.headers.authorization;
+	if (!header?.startsWith("Bearer ")) return null;
+	return header.slice("Bearer ".length).trim() || null;
+}
+
+/** 读 JSON body（上限 16KB，超限/解析失败返回错误）。 */
+function readJsonBody(
+	req: IncomingMessage,
+): Promise<{ ok: true; data: Record<string, unknown> } | { ok: false; error: string }> {
+	return new Promise((resolve) => {
+		const chunks: Buffer[] = [];
+		let size = 0;
+		req.on("data", (chunk: Buffer) => {
+			size += chunk.length;
+			if (size > BODY_MAX_BYTES) {
+				resolve({ ok: false, error: "body too large" });
+				req.destroy();
+				return;
+			}
+			chunks.push(chunk);
+		});
+		req.on("end", () => {
+			try {
+				const parsed = JSON.parse(Buffer.concat(chunks).toString("utf8") || "{}") as unknown;
+				if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+					resolve({ ok: false, error: "invalid json" });
+					return;
+				}
+				resolve({ ok: true, data: parsed as Record<string, unknown> });
+			} catch {
+				resolve({ ok: false, error: "invalid json" });
+			}
+		});
+		req.on("error", () => resolve({ ok: false, error: "read error" }));
+	});
+}
 
 /** LAN server 所需的 PiBackend 只读/订阅面；方便无 SDK 的单测替身。 */
 export interface LanObserverBackend {
@@ -49,6 +104,11 @@ export interface LanObserverBackend {
 	): () => void;
 	/** 未决权限请求快照（含 requestId，M2 远程应答定位用）。 */
 	getPendingPermissionRequests(): PermissionRequest[];
+	/** M2 写端点前置检查（registry 直查，无磁盘 IO）。 */
+	checkSessionWritable(sessionId: string): "ok" | "not_found" | "read_only";
+	prompt(sessionId: string, text: string): Promise<void>;
+	abort(sessionId: string): Promise<void>;
+	respondPermission(requestId: string, answer: "allow" | "deny"): void;
 }
 
 interface SseClient {
@@ -63,6 +123,8 @@ export interface LanObserverServerOptions {
 	pwaManifest?: string;
 	/** PWA 图标 PNG 二进制（无鉴权、no-store）。 */
 	iconPng?: Buffer;
+	/** M2 写操作审计日志路径（userData/lan-audit.jsonl；缺省不记录）。 */
+	auditPath?: string;
 }
 
 /** 默认关闭时零资源；启动后才订阅 backend 并提供只读 HTTP/SSE 投影。 */
@@ -86,12 +148,15 @@ export class LanObserverServer {
 	private dirtyTimer: ReturnType<typeof setInterval> | null = null;
 	private pingTimer: ReturnType<typeof setInterval> | null = null;
 	private reconcileTimer: ReturnType<typeof setInterval> | null = null;
+	private readonly auditLog: LanAuditLog | null;
 
 	constructor(
 		private readonly backend: LanObserverBackend,
 		private readonly config: LanConfigService,
 		private readonly options: LanObserverServerOptions,
-	) {}
+	) {
+		this.auditLog = options.auditPath ? new LanAuditLog(options.auditPath) : null;
+	}
 
 	async start(): Promise<void> {
 		if (this.server) return;
@@ -151,13 +216,13 @@ export class LanObserverServer {
 
 	private async handleRequest(req: IncomingMessage, res: ServerResponse): Promise<void> {
 		const url = new URL(req.url ?? "/", "http://localhost");
-		if (req.method !== "GET") return this.sendJson(res, 404, { error: "not found" });
-		if (url.pathname === "/") {
+		const path = url.pathname;
+		if (req.method === "GET" && path === "/") {
 			res.writeHead(200, { "Content-Type": "text/html; charset=utf-8", "Cache-Control": "no-store" });
 			res.end(this.options.pageHtml);
 			return;
 		}
-		if (url.pathname === "/manifest.webmanifest" && this.options.pwaManifest) {
+		if (req.method === "GET" && path === "/manifest.webmanifest" && this.options.pwaManifest) {
 			res.writeHead(200, {
 				"Content-Type": "application/manifest+json; charset=utf-8",
 				"Cache-Control": "no-store",
@@ -165,18 +230,21 @@ export class LanObserverServer {
 			res.end(this.options.pwaManifest);
 			return;
 		}
-		if (url.pathname === "/icon.png" && this.options.iconPng) {
+		if (req.method === "GET" && path === "/icon.png" && this.options.iconPng) {
 			res.writeHead(200, { "Content-Type": "image/png", "Cache-Control": "no-store" });
 			res.end(this.options.iconPng);
 			return;
 		}
-		if (url.pathname !== "/api/snapshot" && url.pathname !== "/api/stream") {
-			return this.sendJson(res, 404, { error: "not found" });
-		}
-		if (!(await this.authorized(url.searchParams.get("t")))) {
+		const isGetApi = req.method === "GET" && (path === "/api/snapshot" || path === "/api/stream");
+		const writeRoute = req.method === "POST" ? matchWriteRoute(path) : null;
+		if (!isGetApi && !writeRoute) return this.sendJson(res, 404, { error: "not found" });
+		// 鉴权：POST 优先 Authorization: Bearer，回落 ?t=（无 cookie/ambient auth → CSRF 天然免疫）
+		const token =
+			req.method === "POST" ? (bearerToken(req) ?? url.searchParams.get("t")) : url.searchParams.get("t");
+		if (!(await this.authorized(token))) {
 			return this.sendJson(res, 401, { error: "invalid token" });
 		}
-		if (url.pathname === "/api/snapshot") {
+		if (path === "/api/snapshot") {
 			// 先冲刷待合并 delta 再记录序号：客户端丢弃 seq ≤ snapshotSeq 的 event 帧（效果已含在快照内）
 			this.flushAllDeltas();
 			const snapshotSeq = this.seq;
@@ -186,13 +254,24 @@ export class LanObserverServer {
 				list: this.list,
 				views: [...this.views.values()],
 				transcripts,
+				pendingPermissions: this.backend.getPendingPermissionRequests(),
 				remoteControl: this.config.cached()?.remoteControl ?? false,
 				snapshotSeq,
 			};
 			this.sendJson(res, 200, snapshot);
 			return;
 		}
-		this.openStream(req, res);
+		if (path === "/api/stream") {
+			this.openStream(req, res);
+			return;
+		}
+		// M2 写端点双闸门之二：remoteControl 运行态（请求时实时读，开关即时生效无需重启）
+		if (!this.config.cached()?.remoteControl) {
+			this.audit(req, writeRoute?.action ?? "unknown", writeRoute?.id ?? "", "denied: remote_control_off");
+			return this.sendJson(res, 403, { error: "remote control disabled" });
+		}
+		if (writeRoute) return this.handleWrite(req, res, writeRoute);
+		this.sendJson(res, 404, { error: "not found" });
 	}
 
 	private async authorized(token: string | null): Promise<boolean> {
@@ -206,6 +285,75 @@ export class LanObserverServer {
 	private sendJson(res: ServerResponse, status: number, body: unknown): void {
 		res.writeHead(status, { "Content-Type": "application/json; charset=utf-8", "Cache-Control": "no-store" });
 		res.end(JSON.stringify(body));
+	}
+
+	/** M2 写端点处理（均已通过 token + remoteControl 双闸门）。 */
+	private async handleWrite(req: IncomingMessage, res: ServerResponse, route: WriteRoute): Promise<void> {
+		if (route.action === "prompt" || route.action === "abort") {
+			const writable = this.backend.checkSessionWritable(route.id);
+			if (writable === "not_found") {
+				this.audit(req, route.action, route.id, "denied: not_found");
+				return this.sendJson(res, 404, { error: "session not found" });
+			}
+			if (writable === "read_only") {
+				this.audit(req, route.action, route.id, "denied: read_only");
+				return this.sendJson(res, 403, { error: "read-only session" });
+			}
+		}
+		if (route.action === "abort") {
+			await this.backend.abort(route.id);
+			this.audit(req, "abort", route.id, "ok");
+			return this.sendJson(res, 200, { ok: true });
+		}
+		const body = await readJsonBody(req);
+		if (!body.ok) {
+			this.audit(req, route.action, route.id, "denied: bad_body");
+			return this.sendJson(res, 400, { error: body.error });
+		}
+		if (route.action === "prompt") {
+			const text = typeof body.data.text === "string" ? body.data.text.trim() : "";
+			if (!text) {
+				this.audit(req, "prompt", route.id, "denied: empty");
+				return this.sendJson(res, 400, { error: "empty prompt" });
+			}
+			if (Buffer.byteLength(text, "utf8") > PROMPT_MAX_BYTES) {
+				this.audit(req, "prompt", route.id, "denied: too_long");
+				return this.sendJson(res, 400, { error: "prompt too long" });
+			}
+			try {
+				await this.backend.prompt(route.id, text);
+			} catch (error) {
+				const message = error instanceof Error ? error.message.split("\n")[0] : "prompt failed";
+				this.audit(req, "prompt", route.id, `error: ${message}`);
+				return this.sendJson(res, 400, { error: message });
+			}
+			this.audit(req, "prompt", route.id, "ok");
+			return this.sendJson(res, 200, { ok: true });
+		}
+		// perm respond：远程只允许「允许一次/拒绝」（D6/D7：不改项目持久信任）
+		const answer = (body.data as { answer?: unknown }).answer;
+		if (answer !== "allowOnce" && answer !== "deny") {
+			this.audit(req, "perm", route.id, "denied: bad_answer");
+			return this.sendJson(res, 403, { error: "only allowOnce/deny allowed remotely" });
+		}
+		const pending = this.backend.getPendingPermissionRequests().find((r) => r.id === route.id);
+		if (!pending) {
+			this.audit(req, "perm", route.id, "denied: not_found");
+			return this.sendJson(res, 404, { error: "request not found" });
+		}
+		this.backend.respondPermission(route.id, answer === "allowOnce" ? "allow" : "deny");
+		this.audit(req, "perm", route.id, `ok: ${answer}`);
+		return this.sendJson(res, 200, { ok: true });
+	}
+
+	private audit(req: IncomingMessage, action: string, target: string, result: string): void {
+		this.auditLog?.record({
+			t: new Date().toISOString(),
+			ip: req.socket.remoteAddress ?? "",
+			action,
+			target,
+			result: result.slice(0, 200),
+		});
 	}
 
 	private openStream(req: IncomingMessage, res: ServerResponse): void {
@@ -445,6 +593,7 @@ function toBrief(
 		cwd: session.cwd,
 		active: session.active,
 		modifiedAt: session.modifiedAt ?? session.createdAt,
+		readOnly: session.readOnly || undefined,
 	};
 }
 

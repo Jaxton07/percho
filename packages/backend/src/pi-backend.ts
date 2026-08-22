@@ -459,6 +459,14 @@ export class PiBackend {
 		await entry.session.abort();
 	}
 
+	/** LAN 远程写端点前置检查（registry 直查，无磁盘 IO）。 */
+	checkSessionWritable(sessionId: string): "ok" | "not_found" | "read_only" {
+		const entry = this.registry.get(sessionId);
+		if (!entry) return "not_found";
+		if (entry.readOnly) return "read_only";
+		return "ok";
+	}
+
 	/** 清空运行中排队消息（steer+followUp 都清），返回被清内容；无会话返回空 */
 	async clearQueue(sessionId: string): Promise<{ steering: string[]; followUp: string[] }> {
 		const entry = this.registry.get(sessionId);

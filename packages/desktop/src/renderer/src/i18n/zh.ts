@@ -238,6 +238,9 @@ export const zh = {
 			copied: "已复制",
 			qrAlt: "观察页二维码",
 			noAddress: "未发现可访问的局域网 IPv4 地址。",
+			remoteControl: "允许远程控制",
+			remoteControlHint:
+				"开启后，手机可发送消息、中断运行、回答权限询问（仅“允许一次/拒绝”，不改变持久信任设置）。所有远程操作会记录审计日志。",
 			securityTitle: "安全提示",
 			securityContent: "观察页会显示对话输出、工具调用和任务内容，其中可能含代码或敏感信息。",
 			securityTrusted: "仅在可信局域网中开启并分享链接。",

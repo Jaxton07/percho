@@ -11,6 +11,10 @@ interface LanStore extends LanAppState {
 	logout: () => void;
 	setToken: (token: string) => void;
 	select: (sessionId: string | null) => void;
+	/** M2 写操作。返回 null = 成功，string = 错误提示。401 自动 logout。 */
+	sendPrompt: (sessionId: string, text: string) => Promise<string | null>;
+	abortSession: (sessionId: string) => Promise<string | null>;
+	respondPermission: (requestId: string, answer: "allowOnce" | "deny") => Promise<string | null>;
 }
 
 export const useLanStore = create<LanStore>((set) => ({
@@ -27,7 +31,44 @@ export const useLanStore = create<LanStore>((set) => ({
 		connect();
 	},
 	select: (selected) => set({ selected }),
+	sendPrompt: async (sessionId, text) => {
+		const res = await postApi(`/api/sessions/${encodeURIComponent(sessionId)}/prompt`, { text });
+		return res;
+	},
+	abortSession: async (sessionId) => {
+		const res = await postApi(`/api/sessions/${encodeURIComponent(sessionId)}/abort`, {});
+		return res;
+	},
+	respondPermission: async (requestId, answer) => {
+		const res = await postApi(`/api/permissions/${encodeURIComponent(requestId)}/respond`, { answer });
+		return res;
+	},
 }));
+
+/** POST 写端点：Authorization: Bearer（不依赖 ?t=，token 不进 URL 日志）。 */
+async function postApi(path: string, body: unknown): Promise<string | null> {
+	try {
+		const res = await fetch(path, {
+			method: "POST",
+			headers: {
+				"Content-Type": "application/json",
+				Authorization: `Bearer ${useLanStore.getState().token}`,
+			},
+			body: JSON.stringify(body),
+		});
+		if (res.status === 401) {
+			useLanStore.getState().logout();
+			return null;
+		}
+		if (!res.ok) {
+			const data = (await res.json().catch(() => null)) as { error?: string } | null;
+			return data?.error ?? `error ${res.status}`;
+		}
+		return null;
+	} catch {
+		return "network error";
+	}
+}
 
 let stream: EventSource | null = null;
 let snapshotInFlight = false;

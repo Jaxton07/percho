@@ -10,6 +10,7 @@ export function LanObserverPanel() {
 	const saving = useSettingsStore((s) => s.lanSaving);
 	const refresh = useSettingsStore((s) => s.refreshLanStatus);
 	const setEnabled = useSettingsStore((s) => s.setLanEnabled);
+	const setRemoteControl = useSettingsStore((s) => s.setLanRemoteControl);
 	const [copied, setCopied] = useState(false);
 
 	useEffect(() => {
@@ -52,6 +53,15 @@ export function LanObserverPanel() {
 					<div className="flex items-center justify-between text-[11px] text-ink-dim">
 						<span>{t("settings.lan.port", { port: status.port ?? "—" })}</span>
 						<span>{t("settings.lan.clients", { count: status.clients })}</span>
+					</div>
+					<div className="flex items-center justify-between gap-4 border-t border-border/60 pt-3">
+						<div>
+							<div className="text-[12px] font-medium text-ink">{t("settings.lan.remoteControl")}</div>
+							<p className="mt-0.5 text-[11px] leading-relaxed text-ink-faint">
+								{t("settings.lan.remoteControlHint")}
+							</p>
+						</div>
+						<Switch checked={status.remoteControl} disabled={saving} onCheckedChange={setRemoteControl} />
 					</div>
 					{url ? (
 						<>

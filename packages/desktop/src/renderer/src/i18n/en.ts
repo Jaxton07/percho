@@ -245,6 +245,9 @@ export const en: Messages = {
 			copied: "Copied",
 			qrAlt: "Observer page QR code",
 			noAddress: "No reachable local-network IPv4 address was found.",
+			remoteControl: "Allow remote control",
+			remoteControlHint:
+				'When enabled, the phone can send messages, abort runs, and answer permission prompts ("allow once"/"deny" only; persistent trust settings are never changed). All remote actions are recorded in an audit log.',
 			securityTitle: "Security notice",
 			securityContent:
 				"The observer can show conversation output, tool calls, and task content, which may include code or sensitive data.",

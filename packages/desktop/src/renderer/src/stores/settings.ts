@@ -141,6 +141,7 @@ interface SettingsStore {
 	clearVisionTestResult: () => void;
 	refreshLanStatus: () => Promise<void>;
 	setLanEnabled: (enabled: boolean) => Promise<void>;
+	setLanRemoteControl: (enabled: boolean) => Promise<void>;
 	setExtensionsTab: (tab: "browse" | "loaded") => void;
 	setCatalogQuery: (query: string) => void;
 	setCatalogType: (type: "" | CatalogPackageType) => void;
@@ -433,6 +434,16 @@ export const useSettingsStore = create<SettingsStore>((set, get) => {
 			set({ lanSaving: true });
 			try {
 				const lanStatus = await getPi().lanSetEnabled(enabled);
+				set({ lanStatus, lanSaving: false });
+			} catch (error) {
+				set({ lanSaving: false, error: error instanceof Error ? error.message : String(error) });
+			}
+		},
+
+		setLanRemoteControl: async (enabled) => {
+			set({ lanSaving: true });
+			try {
+				const lanStatus = await getPi().lanSetRemoteControl(enabled);
 				set({ lanStatus, lanSaving: false });
 			} catch (error) {
 				set({ lanSaving: false, error: error instanceof Error ? error.message : String(error) });

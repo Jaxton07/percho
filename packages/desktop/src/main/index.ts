@@ -85,7 +85,11 @@ app.whenReady().then(async () => {
 		},
 	});
 	await backend.init();
-	lanObserver = await initLanObserver(backend, join(app.getPath("userData"), "lan-observer.json"));
+	lanObserver = await initLanObserver(
+		backend,
+		join(app.getPath("userData"), "lan-observer.json"),
+		join(app.getPath("userData"), "lan-audit.jsonl"),
+	);
 	uiPluginsManager = new UiPluginManager();
 	await uiPluginsManager.init();
 	registerIpc(backend, uiPluginsManager, lanObserver);

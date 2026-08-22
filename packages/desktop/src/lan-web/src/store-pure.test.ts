@@ -142,6 +142,21 @@ describe("lan-web store pure functions", () => {
 		expect(state.views.s1?.currentTool).toBe("bash");
 	});
 
+	it("snapshot seeds pendingPermissions (M2 远程应答种子)", () => {
+		const next = seedSessions(
+			initialLanState,
+			snapshot({
+				pendingPermissions: [
+					{ id: "r1", sessionId: "s1", title: "写文件", message: "edit a.ts", kind: "path" },
+					{ id: "r2", sessionId: "s1", title: "执行命令", message: "ls", kind: "command" },
+				],
+				remoteControl: true,
+			}),
+		);
+		expect(next.pendingPerms?.s1?.map((r) => r.id)).toEqual(["r1", "r2"]);
+		expect(next.remoteControl).toBe(true);
+	});
+
 	it("reconnect re-seed heals state (snapshot authoritative)", () => {
 		let state = { ...initialLanState, ...seedSessions(initialLanState, snapshot()) };
 		state = {

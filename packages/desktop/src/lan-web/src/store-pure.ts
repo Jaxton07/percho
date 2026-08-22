@@ -72,11 +72,19 @@ export function seedSessions(state: LanAppState, snap: LanSnapshot): Partial<Lan
 		state.selected && (views[state.selected] || snap.list.some((s) => s.sessionId === state.selected))
 			? state.selected
 			: null;
+	// 未决权限种子（perm 帧的补充；快照权威 → 整体重置）
+	const pendingPerms: Record<string, PermissionRequest[]> = {};
+	for (const request of snap.pendingPermissions ?? []) {
+		const bucket = pendingPerms[request.sessionId] ?? [];
+		bucket.push(request);
+		pendingPerms[request.sessionId] = bucket;
+	}
 	return {
 		list: snap.list,
 		views,
 		transcripts,
 		truncated,
+		pendingPerms,
 		selected,
 		snapshotSeq: snap.snapshotSeq,
 		remoteControl: snap.remoteControl,

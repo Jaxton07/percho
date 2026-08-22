@@ -33,6 +33,8 @@ export interface LanSessionBrief {
 	cwd: string;
 	active: boolean;
 	modifiedAt: number;
+	/** subagent 产物会话只读（M2 写端点 403；客户端输入区禁用提示用）。 */
+	readOnly?: boolean;
 }
 
 /** 手机观察页使用的单个活跃会话只读投影。 */
@@ -112,6 +114,8 @@ export interface LanSnapshot {
 	list: LanSessionBrief[];
 	views: LanSessionView[];
 	transcripts: LanTranscript[];
+	/** 未决权限请求（含 requestId；M2 远程应答的种子，perm 帧的补充）。 */
+	pendingPermissions?: PermissionRequest[];
 	remoteControl: boolean;
 	/** 快照采集起点的服务端帧序号：客户端丢弃 seq ≤ 此值的 event 帧（效果已含在快照内），防 delta 双重应用。 */
 	snapshotSeq: number;

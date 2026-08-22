@@ -835,6 +835,68 @@ body {
 	background: var(--markdown-table-head-bg);
 }
 
+/* ---------- M2 远程输入区 ---------- */
+.composer {
+	border-top: 1px solid var(--color-border);
+	padding: 8px 12px calc(8px + env(safe-area-inset-bottom, 0px));
+	background: var(--color-surface);
+	flex-shrink: 0;
+}
+.composer.readonly {
+	text-align: center;
+	font-size: 12px;
+	color: var(--color-ink-faint);
+}
+.composer-notice {
+	font-size: 11px;
+	color: var(--color-ink-dim);
+	margin-bottom: 6px;
+	text-align: center;
+}
+.composer-row {
+	display: flex;
+	align-items: flex-end;
+	gap: 8px;
+}
+.composer-input {
+	flex: 1;
+	min-width: 0;
+	resize: none;
+	border: 1px solid var(--color-border);
+	border-radius: 18px;
+	background: var(--color-canvas);
+	color: var(--color-ink);
+	padding: 8px 12px;
+	font-size: 14px;
+	line-height: 1.4;
+	max-height: 120px;
+	outline: none;
+	font-family: inherit;
+}
+.composer-input:focus {
+	border-color: var(--color-accent);
+}
+.composer-btn {
+	flex-shrink: 0;
+	border: none;
+	border-radius: 18px;
+	padding: 8px 14px;
+	font-size: 13px;
+	font-weight: 500;
+	cursor: pointer;
+	color: #fff;
+}
+.composer-btn.send {
+	background: var(--color-accent);
+}
+.composer-btn.stop {
+	background: var(--color-danger);
+}
+.composer-btn:disabled {
+	opacity: 0.45;
+	cursor: default;
+}
+
 @media (prefers-reduced-motion: reduce) {
 	.msg-enter,
 	.perm-enter,

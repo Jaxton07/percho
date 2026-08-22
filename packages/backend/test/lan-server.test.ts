@@ -1,5 +1,5 @@
-import { mkdtemp, rm } from "node:fs/promises";
-import { createServer, get } from "node:http";
+import { mkdtemp, readFile, rm } from "node:fs/promises";
+import { createServer, get, request as requestRaw } from "node:http";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
@@ -33,18 +33,29 @@ function backend(): LanObserverBackend {
 		getStats: async () => ({ inputTokens: 1, outputTokens: 2, cost: 0.01 }),
 		listActiveSessionRuntime: () => [{ sessionId: session.sessionId, streaming: true, compacting: false }],
 		getPendingPermissionRequests: () => [],
+		checkSessionWritable: () => "ok",
+		prompt: async () => {},
+		abort: async () => {},
+		respondPermission: () => {},
 		onEvent: () => () => {},
 		onPermissionRequest: () => () => {},
 		onPermissionResolved: () => () => {},
 	};
 }
 
-async function start(port = 0, observer: LanObserverBackend = backend()): Promise<LanObserverServer> {
+async function start(
+	port = 0,
+	observer: LanObserverBackend = backend(),
+	options: { auditPath?: string; remoteControl?: boolean } = {},
+): Promise<LanObserverServer> {
 	const dir = await mkdtemp(join(tmpdir(), "percho-lan-"));
 	dirs.push(dir);
 	const config = new LanConfigService(join(dir, "lan-observer.json"));
-	await config.save({ enabled: true, port, token });
-	const server = new LanObserverServer(observer, config, { pageHtml: "<h1>observer</h1>" });
+	await config.save({ enabled: true, port, token, remoteControl: options.remoteControl ?? false });
+	const server = new LanObserverServer(observer, config, {
+		pageHtml: "<h1>observer</h1>",
+		auditPath: options.auditPath,
+	});
 	servers.push(server);
 	await server.start();
 	return server;
@@ -58,6 +69,37 @@ function request(url: string): Promise<{ status: number; text: string }> {
 			res.on("data", (chunk) => (text += chunk));
 			res.on("end", () => resolve({ status: res.statusCode ?? 0, text }));
 		}).on("error", reject);
+	});
+}
+
+/** POST JSON（Authorization: Bearer）。 */
+function post(
+	url: string,
+	body: unknown,
+	headers: Record<string, string> = {},
+): Promise<{ status: number; text: string }> {
+	return new Promise((resolve, reject) => {
+		const data = JSON.stringify(body);
+		const req = requestRaw(
+			url,
+			{
+				method: "POST",
+				headers: {
+					"Content-Type": "application/json",
+					"Content-Length": Buffer.byteLength(data),
+					...headers,
+				},
+			},
+			(res) => {
+				let text = "";
+				res.setEncoding("utf8");
+				res.on("data", (chunk) => (text += chunk));
+				res.on("end", () => resolve({ status: res.statusCode ?? 0, text }));
+			},
+		);
+		req.on("error", reject);
+		req.write(data);
+		req.end();
 	});
 }
 
@@ -306,5 +348,108 @@ describe("LanObserverServer", () => {
 			request: { id: "req-1", title: "写文件", kind: "path", suggestDir: "/work" },
 		});
 		expect(JSON.parse(resolved?.[1] ?? "")).toMatchObject({ requestId: "req-1", answered: true });
+	});
+
+	it("M2 write endpoints: full auth/control/validation matrix", async () => {
+		const calls: Array<{ method: string; args: unknown[] }> = [];
+		const observer: LanObserverBackend = {
+			...backend(),
+			prompt: async (...args) => {
+				calls.push({ method: "prompt", args });
+			},
+			abort: async (...args) => {
+				calls.push({ method: "abort", args });
+			},
+			respondPermission: (...args) => {
+				calls.push({ method: "respondPermission", args });
+			},
+			getPendingPermissionRequests: () => [
+				{ id: "req-1", sessionId: "session-1", title: "写文件", message: "edit a.ts", kind: "path" },
+			],
+		};
+		// remoteControl 关闭：写端点 403
+		const off = await start(0, observer);
+		const offPort = off.status().port;
+		const denied = await post(
+			`http://127.0.0.1:${offPort}/api/sessions/session-1/prompt`,
+			{ text: "hi" },
+			{ Authorization: `Bearer ${token}` },
+		);
+		expect(denied.status).toBe(403);
+		expect(JSON.parse(denied.text).error).toBe("remote control disabled");
+		await off.stop();
+		servers.splice(servers.indexOf(off), 1);
+
+		// remoteControl 开启
+		const auditDir = await mkdtemp(join(tmpdir(), "percho-lan-audit-"));
+		dirs.push(auditDir);
+		const auditPath = join(auditDir, "lan-audit.jsonl");
+		const server = await start(0, observer, { auditPath, remoteControl: true });
+		const port = server.status().port;
+		const base = `http://127.0.0.1:${port}`;
+		const auth = { Authorization: `Bearer ${token}` };
+
+		// 401：无 token / 错 token
+		expect((await post(`${base}/api/sessions/session-1/prompt`, { text: "hi" })).status).toBe(401);
+		expect(
+			(await post(`${base}/api/sessions/session-1/prompt`, { text: "hi" }, { Authorization: "Bearer bad" }))
+				.status,
+		).toBe(401);
+		// 400：空文本 / 缺 text 字段
+		expect((await post(`${base}/api/sessions/session-1/prompt`, { text: "  " }, auth)).status).toBe(400);
+		expect((await post(`${base}/api/sessions/session-1/prompt`, {}, auth)).status).toBe(400);
+		// 404：未知会话（checkSessionWritable）
+		const notFoundBackend = { ...observer, checkSessionWritable: () => "not_found" as const };
+		const server404 = await start(0, notFoundBackend, { remoteControl: true });
+		expect(
+			(
+				await post(
+					`http://127.0.0.1:${server404.status().port}/api/sessions/ghost/prompt`,
+					{ text: "hi" },
+					auth,
+				)
+			).status,
+		).toBe(404);
+		await server404.stop();
+		servers.splice(servers.indexOf(server404), 1);
+		// 403：readOnly 会话
+		const roBackend = { ...observer, checkSessionWritable: () => "read_only" as const };
+		const serverRO = await start(0, roBackend, { remoteControl: true });
+		expect(
+			(await post(`http://127.0.0.1:${serverRO.status().port}/api/sessions/sub/prompt`, { text: "hi" }, auth))
+				.status,
+		).toBe(403);
+		await serverRO.stop();
+		servers.splice(servers.indexOf(serverRO), 1);
+
+		// 200：prompt / abort 调进 backend
+		expect((await post(`${base}/api/sessions/session-1/prompt`, { text: " 你好 " }, auth)).status).toBe(200);
+		expect((await post(`${base}/api/sessions/session-1/abort`, {}, auth)).status).toBe(200);
+		// respond：allowOnce → allow 映射；allowAlways 硬拒 403；未知 requestId 404
+		expect((await post(`${base}/api/permissions/req-1/respond`, { answer: "allowOnce" }, auth)).status).toBe(
+			200,
+		);
+		expect(
+			(await post(`${base}/api/permissions/req-1/respond`, { answer: "allowAlways" }, auth)).status,
+		).toBe(403);
+		expect((await post(`${base}/api/permissions/ghost/respond`, { answer: "deny" }, auth)).status).toBe(404);
+
+		expect(calls).toEqual([
+			{ method: "prompt", args: ["session-1", "你好"] },
+			{ method: "abort", args: ["session-1"] },
+			{ method: "respondPermission", args: ["req-1", "allow"] },
+		]);
+
+		// 审计日志：写尝试（含被拒）都有记录，且不含 token
+		const audit = await readFile(auditPath, "utf8");
+		const lines = audit
+			.trim()
+			.split("\n")
+			.map((l) => JSON.parse(l));
+		expect(lines.some((l) => l.action === "prompt" && l.result === "ok")).toBe(true);
+		expect(lines.some((l) => l.result === "denied: bad_answer")).toBe(true);
+		expect(lines.some((l) => l.result === "denied: not_found")).toBe(true);
+		expect(lines.every((l) => !JSON.stringify(l).includes(token))).toBe(true);
+		expect(lines[0]).toMatchObject({ ip: expect.any(String), t: expect.any(String) });
 	});
 });

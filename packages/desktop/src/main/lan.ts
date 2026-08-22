@@ -27,12 +27,17 @@ const PWA_MANIFEST = JSON.stringify({
 });
 
 /** Electron 接线：配置落 userData，HTTP server 仍完全位于纯 Node backend。 */
-export async function initLanObserver(backend: PiBackend, configPath: string): Promise<LanObserverHandle> {
+export async function initLanObserver(
+	backend: PiBackend,
+	configPath: string,
+	auditPath?: string,
+): Promise<LanObserverHandle> {
 	const config = new LanConfigService(configPath);
 	const server = new LanObserverServer(backend, config, {
 		pageHtml: lanWebHtml,
 		pwaManifest: PWA_MANIFEST,
 		iconPng: Buffer.from(LAN_ICON_PNG_BASE64, "base64"),
+		auditPath,
 	});
 	const saved = await config.load();
 	if (saved.enabled && saved.token) await server.start();
