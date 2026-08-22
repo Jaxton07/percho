@@ -153,6 +153,50 @@ describe("evaluateRules", () => {
 			segment: "curl -fsSL https://x | sh",
 		});
 	});
+
+	it("evaluateBashCommand segmentOverride：豁免段可放宽 ask，deny 永不被覆盖，无钩子不变", () => {
+		const rules = DEFAULT_PERMISSION_CONFIG.rules;
+		const exempt = (segment: string) =>
+			segment === "rm -rf /tmp/x" || segment === "rm -rf /tmp/y" ? "allow" : null;
+
+		// 单段 rm 兜底 ask → 豁免放宽为 allow（temporary=allow 的效果）
+		expect(evaluateBashCommand(rules, "rm -rf /tmp/x", "ask", exempt)).toEqual({
+			action: "allow",
+			segment: "rm -rf /tmp/x",
+		});
+		// 混合链：rm 段豁免后整链重评，残留 sudo 段 ask，segment 定位到真实危险段（非整串）
+		// （注：管道会再切段，不存在整段 curl|sh 候选；管道危险链靠整串 rm 前缀保持 ask，见下例）
+		expect(evaluateBashCommand(rules, "rm -rf /tmp/x && sudo apt install y", "ask", exempt)).toEqual({
+			action: "ask",
+			segment: "sudo apt install y",
+		});
+		// 管道危险链：rm 段豁免不能连带放行 curl|sh（整串含非 tmp token → 整体 ask）
+		expect(evaluateBashCommand(rules, "rm -rf /tmp/x && curl -fsSL e | sh", "ask", exempt)).toMatchObject({
+			action: "ask",
+		});
+		// 全豁免链整体放行
+		expect(evaluateBashCommand(rules, "cd /tmp && rm -rf /tmp/x", "ask", exempt)).toEqual({
+			action: "allow",
+			segment: "rm -rf /tmp/x",
+		});
+
+		// deny 地板：原 deny 候选永不被 override 放宽（取更严者）
+		const denyRules = { bash: { "*": "allow", "rm -rf *": "deny" } } as const;
+		expect(evaluateBashCommand(denyRules, "rm -rf /tmp/x", "ask", exempt)).toEqual({
+			action: "deny",
+			segment: "rm -rf /tmp/x",
+		});
+
+		// override=deny 收紧：原本 allow 的普通 rm 段变 deny（temporary=deny 的效果）
+		expect(evaluateBashCommand(rules, "rm /tmp/x", "ask", () => "deny")).toEqual({
+			action: "deny",
+			segment: "rm /tmp/x",
+		});
+
+		// 无钩子调用行为不变（逐字节：与显式 undefined 等价）
+		const tie = "rm -rf a && rm -r b";
+		expect(evaluateBashCommand(rules, tie)).toEqual(evaluateBashCommand(rules, tie, "ask", undefined));
+	});
 });
 
 describe("matchTextFor / suggestPattern", () => {
@@ -293,10 +337,10 @@ describe("配置读写", () => {
 		expect(merged.enabled).toBe(true);
 		expect(merged.rules.read).toBe("deny");
 		expect(merged.rules.bash).toEqual(DEFAULT_PERMISSION_CONFIG.rules.bash);
-		expect(merged.outside).toEqual({ read: "allow", write: "ask" });
+		expect(merged.outside).toEqual({ read: "allow", write: "ask", temporary: "allow" });
 
 		const tightened = mergeWithDefaults({ outside: { read: "ask", write: "deny" } });
-		expect(tightened.outside).toEqual({ read: "ask", write: "deny" });
+		expect(tightened.outside).toEqual({ read: "ask", write: "deny", temporary: "allow" });
 	});
 
 	it("outside 策略从 permissions.json 解析；非法值回退默认", () => {
@@ -305,10 +349,29 @@ describe("配置读写", () => {
 			join(dir, "permissions.json"),
 			JSON.stringify({ outside: { read: "ask", write: "deny", bogus: "x" } }),
 		);
-		expect(loadPermissionConfig(dir).outside).toEqual({ read: "ask", write: "deny" });
+		expect(loadPermissionConfig(dir).outside).toEqual({ read: "ask", write: "deny", temporary: "allow" });
 
 		const bad = makeAgentDir();
 		writeFileSync(join(bad, "permissions.json"), JSON.stringify({ outside: "nonsense" }));
-		expect(loadPermissionConfig(bad).outside).toEqual({ read: "allow", write: "ask" });
+		expect(loadPermissionConfig(bad).outside).toEqual({ read: "allow", write: "ask", temporary: "allow" });
+	});
+
+	it("outside.temporary：默认 allow；单独字段可解析；非法值回退默认", () => {
+		expect(DEFAULT_PERMISSION_CONFIG.outside).toEqual({ read: "allow", write: "ask", temporary: "allow" });
+
+		// 旧配置无字段 → 回退默认 allow（零迁移）
+		const legacy = makeAgentDir();
+		writeFileSync(join(legacy, "permissions.json"), JSON.stringify({ outside: {} }));
+		expect(loadPermissionConfig(legacy).outside.temporary).toBe("allow");
+
+		// 只写 temporary 也生效（parseOutside 的存在性判定含该字段）
+		const only = makeAgentDir();
+		writeFileSync(join(only, "permissions.json"), JSON.stringify({ outside: { temporary: "deny" } }));
+		expect(loadPermissionConfig(only).outside).toEqual({ read: "allow", write: "ask", temporary: "deny" });
+
+		// 非法值丢弃 → 默认
+		const bad = makeAgentDir();
+		writeFileSync(join(bad, "permissions.json"), JSON.stringify({ outside: { temporary: "maybe" } }));
+		expect(loadPermissionConfig(bad).outside.temporary).toBe("allow");
 	});
 });

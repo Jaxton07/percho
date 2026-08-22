@@ -13,7 +13,8 @@ const log = createLogger("permission-rules");
 
 export interface PermissionConfig {
 	enabled: boolean;
-	/** 路径工具落在全部工作区根之外时的动作（读写分离：观察默认放行，变更默认确认） */
+	/** 路径工具落在全部工作区根之外时的动作（读写分离：观察默认放行，变更默认确认）；
+	 * temporary 为路径/删除目标落在系统临时区时的动作（默认 allow，agent 临时工作流免打断） */
 	outside: PermissionOutside;
 	rules: PermissionRules;
 }
@@ -26,11 +27,12 @@ const PROTECTED_FILES = ["permissions.json", "workspaces.json", "auth.json", "tr
 /**
  * 默认配置：宽松 + 高危兜底（coding agent 效率优先）。
  * 只读工具/编辑/自定义工具默认 allow；bash 默认 allow，枚举的高危命令 ask；
- * 读写分离：路径工具越界时读放行、写确认；agent 自身权限/信任/凭证配置改动必确认。
+ * 读写分离：路径工具越界时读放行、写确认；系统临时区（tmpdir ∪ /tmp）默认放行
+ * （temporary 动作，rm 兜底同理豁免）；agent 自身权限/信任/凭证配置改动必确认。
  */
 export const DEFAULT_PERMISSION_CONFIG: PermissionConfig = {
 	enabled: true,
-	outside: { read: "allow", write: "ask" },
+	outside: { read: "allow", write: "ask", temporary: "allow" },
 	rules: {
 		"*": "allow",
 		bash: {
@@ -77,6 +79,7 @@ export function mergeWithDefaults(config: Partial<PermissionConfig>): Permission
 		outside: {
 			read: config.outside?.read ?? DEFAULT_PERMISSION_CONFIG.outside.read,
 			write: config.outside?.write ?? DEFAULT_PERMISSION_CONFIG.outside.write,
+			temporary: config.outside?.temporary ?? DEFAULT_PERMISSION_CONFIG.outside.temporary,
 		},
 		rules: { ...DEFAULT_PERMISSION_CONFIG.rules, ...(config.rules ?? {}) },
 	};
@@ -90,7 +93,7 @@ function isValidRule(rule: unknown): rule is PermissionRule {
 
 function parseOutside(raw: unknown): PermissionOutside | undefined {
 	if (typeof raw !== "object" || raw === null) return undefined;
-	const input = raw as { read?: unknown; write?: unknown };
+	const input = raw as { read?: unknown; write?: unknown; temporary?: unknown };
 	const result: Partial<PermissionOutside> = {};
 	if (typeof input.read === "string" && ACTIONS.has(input.read)) {
 		result.read = input.read as PermissionAction;
@@ -98,7 +101,10 @@ function parseOutside(raw: unknown): PermissionOutside | undefined {
 	if (typeof input.write === "string" && ACTIONS.has(input.write)) {
 		result.write = input.write as PermissionAction;
 	}
-	return result.read || result.write ? (result as PermissionOutside) : undefined;
+	if (typeof input.temporary === "string" && ACTIONS.has(input.temporary)) {
+		result.temporary = input.temporary as PermissionAction;
+	}
+	return result.read || result.write || result.temporary ? (result as PermissionOutside) : undefined;
 }
 
 function parseConfig(raw: unknown): Partial<PermissionConfig> {
