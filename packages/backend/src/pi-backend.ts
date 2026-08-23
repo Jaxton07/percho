@@ -76,6 +76,7 @@ import { LoginService } from "./settings/login";
 import { ModelPrefsService } from "./settings/model-prefs";
 import { SettingsService } from "./settings/settings";
 import { slashCommandsForLoader, slashCommandsForSession } from "./slash-commands";
+import { makeAcpExtension } from "./tools/acp-context";
 import { makeShowImageTool } from "./tools/show-image";
 import { discoverAgents, isSubagentSessionPath, makeSubagentTool } from "./tools/subagent";
 import { applySubagentMutex } from "./tools/subagent/mutex";
@@ -207,17 +208,22 @@ export class PiBackend {
 	}
 
 	/**
-	 * 内置扩展随资源加载器注册（inline factory，不受项目信任影响）：todo-reminder
-	 * 负责 compaction 后恢复任务列表（不受权限开关影响）；权限门控扩展受
-	 * permissionGates/permissionExtension 开关控制（permissionGates=false 时
-	 * confirm 恒 false，不能注册）；视觉代理每次 LLM 调用前把 image block 换成
-	 * 识别描述（纯文本模型用），handler 实时读配置，设置页保存后立即生效。
+	 * 内置扩展随资源加载器注册（inline factory，不受项目信任影响）。注册序即
+	 * context 钩子链序（V2 冒烟实证）：权限门控（无 context 钩子）→ 视觉代理
+	 * （image→文本，先文本化）→ ACP 上下文压缩（基于文本化内容做压缩决策，
+	 * 需保住视觉代理的替换）→ todo-reminder（恢复注入最后，不被压）。
+	 * 权限门控受 permissionGates/permissionExtension 开关控制（permissionGates=false
+	 * 时 confirm 恒 false，不能注册）；视觉代理 handler 实时读配置，设置页保存后立即
+	 * 生效；ACP 受用户级 settings.json 的 acpCompressionEnabled 开关控制（默认关，
+	 * subagent 子会话不加载本工厂——noExtensions，见 runner.ts）。
 	 */
 	private buildExtensionFactories(
 		cwd: string,
 		confirm: PermissionConfirm | undefined,
-	): ReturnType<typeof makeTodoReminderExtension>[] {
-		const factories = [makeTodoReminderExtension()];
+	): Array<ReturnType<typeof makeTodoReminderExtension> | ReturnType<typeof makeAcpExtension>> {
+		const factories: Array<
+			ReturnType<typeof makeTodoReminderExtension> | ReturnType<typeof makeAcpExtension>
+		> = [];
 		if (this.options.permissionGates !== false && this.options.permissionExtension !== false) {
 			// confirm 直接桥到 PermissionGate（携带 kind/suggestDir 元数据，驱动「允许此目录」）；
 			// 未提供时扩展自行回退 ctx.ui.confirm（无元数据）
@@ -226,6 +232,11 @@ export class PiBackend {
 		if (this.visionConfig && this.options.visionProxy !== false) {
 			factories.push(makeVisionProxyExtension({ configService: this.visionConfig }));
 		}
+		// ACP 上下文压缩（开关默认关；工厂内部 session_start 时检查开关，关时零副作用）
+		factories.push(makeAcpExtension({ agentDir: getAgentDir() }));
+		// todo-reminder 最后：compaction 后恢复注入的任务列表不被上游折叠，
+		// 且其末尾追加的 CustomMessage 不干扰 ACP 的 entries↔messages 对齐
+		factories.push(makeTodoReminderExtension());
 		return factories;
 	}
 

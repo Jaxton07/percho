@@ -550,6 +550,36 @@ describe("transcript reducer", () => {
 		});
 	});
 
+	it("compaction_end 后历史消息完整保留（问题一搭车修复：不再整体重置）", () => {
+		// 预置：一轮完整对话（user + assistant 正文）已固化在消息流里
+		let state = emptyTranscript();
+		state = reduceEvent(state, {
+			type: "message_start",
+			message: { role: "user", content: "早前的用户消息", timestamp: 1 },
+		} as unknown as AgentSessionEvent);
+		state = reduceEvent(state, { type: "agent_start" } as unknown as AgentSessionEvent);
+		state = reduceEvent(state, {
+			type: "message_update",
+			assistantMessageEvent: { type: "text_delta", delta: "早前的助手回复" },
+		} as unknown as AgentSessionEvent);
+		state = reduceEvent(state, { type: "turn_end" } as unknown as AgentSessionEvent);
+		const before = state.messages.filter((m) => m.kind !== "system");
+		expect(before.length).toBeGreaterThanOrEqual(2);
+
+		// 压缩分界线到达：只追加 system 消息，历史消息原样保留（不再 loadHistory 重建）
+		state = reduceEvent(state, {
+			type: "compaction_end",
+			reason: "threshold",
+			aborted: false,
+			willRetry: false,
+			result: { summary: "压缩摘要", firstKeptEntryId: "x", tokensBefore: 9000, estimatedTokensAfter: 3000 },
+		} as unknown as AgentSessionEvent);
+		const after = state.messages.filter((m) => m.kind !== "system");
+		expect(after).toHaveLength(before.length);
+		expect(after[0]).toBe(before[0]);
+		expect(state.messages.some((m) => m.kind === "system")).toBe(true);
+	});
+
 	it("compaction_end 无进行中消息时追加；aborted 显示取消状态", () => {
 		let state = emptyTranscript();
 		state = reduceEvent(state, {

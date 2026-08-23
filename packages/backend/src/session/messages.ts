@@ -41,6 +41,8 @@ export interface RawMessage {
 	toolName?: string;
 	/** custom 消息的自定义类型（getTodos 扫 todo-reminder 恢复消息用） */
 	customType?: string;
+	/** custom 消息的 UI 展示开关（acp 摘要消息 display:false，不进消息流） */
+	display?: boolean;
 }
 
 /** show_image toolResult.details → { images, paths }（兼容旧单图 { path, image } 形状；不符返回 null） */

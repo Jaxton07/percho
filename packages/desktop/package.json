@@ -25,6 +25,7 @@
 		"@earendil-works/pi-coding-agent": "0.84.0",
 		"@percho/backend": "*",
 		"@percho/shared": "*",
+		"acp-kernel": "0.0.42",
 		"electron-updater": "^6.8.9",
 		"esbuild": "0.25.12",
 		"markstream-react": "^0.0.55",
