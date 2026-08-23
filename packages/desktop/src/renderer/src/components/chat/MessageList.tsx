@@ -49,6 +49,7 @@ export function MessageList() {
 	const followingRef = useRef(true);
 	const [following, setFollowing] = useState(true);
 	const lastScrollTopRef = useRef(0);
+	const lastScrollHeightRef = useRef(0);
 
 	const updateFollowing = useCallback((value: boolean) => {
 		followingRef.current = value;
@@ -89,14 +90,18 @@ export function MessageList() {
 		pinToBottom();
 	}, [activeSessionId, pinToBottom, updateFollowing]);
 
-	// 仅「向上滚动」脱离跟随（程序性向下贴底/平滑回底不中断跟随）；到达底部恢复
+	// 仅「向上滚动」脱离跟随（程序性向下贴底/平滑回底不中断跟随）；到达底部恢复。
+	// 压缩/消息重建会让内容变矮、浏览器把 scrollTop 往下钳——高度收缩导致的 top 下降
+	// 不是用户意图，不释放跟随（否则每次 compaction 后跟随静默死亡）；RO 会随即重新贴底。
 	const handleScroll = () => {
 		const el = scrollRef.current;
 		if (!el) return;
+		const heightShrank = el.scrollHeight < lastScrollHeightRef.current;
 		const atBottom = el.scrollHeight - el.scrollTop - el.clientHeight <= BOTTOM_THRESHOLD;
 		if (atBottom) updateFollowing(true);
-		else if (el.scrollTop < lastScrollTopRef.current) updateFollowing(false);
+		else if (el.scrollTop < lastScrollTopRef.current && !heightShrank) updateFollowing(false);
 		lastScrollTopRef.current = el.scrollTop;
+		lastScrollHeightRef.current = el.scrollHeight;
 	};
 
 	// 展开/折叠任何折叠组（details summary）→ 释放底部跟随：否则贴底 RO 会在高度动画期间

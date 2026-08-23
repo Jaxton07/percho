@@ -1,4 +1,5 @@
 import type { UIToolCall } from "@percho/shared";
+import { ChevronRightIcon } from "./icons";
 
 /** 与桌面端 ToolCallCard.summarizeArgs 同逻辑：优先 command/filePath/url 字段，容忍流式不完整 JSON */
 export function summarizeArgs(args: string): string {
@@ -37,7 +38,7 @@ export function ToolCard({ tool }: { tool: UIToolCall }) {
 						{displayName(tool.name)}
 					</span>
 					{summary && <span className="tool-args-summary">{summary}</span>}
-					<span className="tool-arrow">▶</span>
+					<ChevronRightIcon size={12} className="tool-arrow" />
 				</summary>
 				<div className="tool-detail">
 					{tool.args && <pre>{tool.args}</pre>}

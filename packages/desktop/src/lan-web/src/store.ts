@@ -1,6 +1,13 @@
 import type { LanSseFrame, LanTranscript } from "@percho/shared";
 import { create } from "zustand";
-import { applyFrame, initialLanState, type LanAppState, seedSessions, seedTranscript } from "./store-pure";
+import {
+	applyFrame,
+	initialLanState,
+	type LanAppState,
+	ORPHAN_BOUNDARY_TYPES,
+	seedSessions,
+	seedTranscript,
+} from "./store-pure";
 
 export type { LanAppState } from "./store-pure";
 
@@ -96,22 +103,29 @@ let snapshotInFlight = false;
 let preSeedFrames: LanSseFrame[] = [];
 /** 未知会话活动触发的快照重拉防抖（服务端种子竞态自愈，见 IMPL-NOTES 阶段 4）。 */
 let refetchScheduled = false;
+/** 快照重拉最小间隔（unknown 会话自愈风暴防护；immediate 边界帧不受限） */
+let lastRefetchAt = 0;
+const REFETCH_MIN_INTERVAL_MS = 2500;
 
 async function fetchSnapshot(): Promise<void> {
 	const token = useLanStore.getState().token;
-	const res = await fetch(`/api/snapshot?t=${encodeURIComponent(token)}`, { cache: "no-store" });
-	if (res.status === 401) {
-		useLanStore.getState().logout();
-		return;
+	try {
+		const res = await fetch(`/api/snapshot?t=${encodeURIComponent(token)}`, { cache: "no-store" });
+		if (res.status === 401) {
+			useLanStore.getState().logout();
+			return;
+		}
+		if (!res.ok) throw new Error(`snapshot ${res.status}`);
+		const snap = await res.json();
+		useLanStore.setState((state) => seedSessions(state, snap));
+		// 种子完成：回放缓冲帧（applyFrame 内部按 snapshotSeq 去重）
+		const buffered = preSeedFrames;
+		preSeedFrames = [];
+		for (const frame of buffered) useLanStore.setState((state) => applyFrame(state, frame));
+	} finally {
+		// 失败也必须复位：否则 snapshotInFlight 永久卡 true，后续所有帧只缓冲不应用（页面冻结）
+		snapshotInFlight = false;
 	}
-	if (!res.ok) throw new Error(`snapshot ${res.status}`);
-	const snap = await res.json();
-	useLanStore.setState((state) => seedSessions(state, snap));
-	// 种子完成：回放缓冲帧（applyFrame 内部按 snapshotSeq 去重）
-	const buffered = preSeedFrames;
-	preSeedFrames = [];
-	snapshotInFlight = false;
-	for (const frame of buffered) useLanStore.setState((state) => applyFrame(state, frame));
 }
 
 function onFrame(frame: LanSseFrame): void {
@@ -126,19 +140,28 @@ function onFrame(frame: LanSseFrame): void {
 		scheduleSnapshotRefetch();
 		return;
 	}
+	// 中途进入自愈：streamHealing 态下到达 run 提交/终态边界 → 立即重拉快照取回已提交消息
+	if (frame.event === "event" && sessionId && ORPHAN_BOUNDARY_TYPES.has(frame.data.event.type)) {
+		const state = useLanStore.getState();
+		if (state.streamHealing[sessionId] && !state.transcripts[sessionId]?.streaming) {
+			scheduleSnapshotRefetch({ immediate: true });
+		}
+	}
 	useLanStore.setState((state) => applyFrame(state, frame));
 }
 
-function scheduleSnapshotRefetch(): void {
+function scheduleSnapshotRefetch(opts?: { immediate?: boolean }): void {
 	if (refetchScheduled || snapshotInFlight) return;
 	refetchScheduled = true;
+	const wait = opts?.immediate ? 0 : Math.max(300, REFETCH_MIN_INTERVAL_MS - (Date.now() - lastRefetchAt));
 	setTimeout(() => {
 		refetchScheduled = false;
 		if (snapshotInFlight) return;
 		snapshotInFlight = true;
 		preSeedFrames = [];
+		lastRefetchAt = Date.now();
 		void fetchSnapshot().catch(() => {});
-	}, 300);
+	}, wait);
 }
 
 /** 建立/重建 SSE 连接（token 变化、logout 时调用）。无 token 时停在输入页。 */

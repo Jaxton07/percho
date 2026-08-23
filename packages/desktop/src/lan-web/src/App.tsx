@@ -1,8 +1,8 @@
 import { useEffect, useState } from "react";
 import { ChatView } from "./components/ChatView";
 import { Composer } from "./components/Composer";
+import { ChevronLeftIcon } from "./components/icons";
 import { SessionList } from "./components/SessionList";
-import { StatusBar } from "./components/StatusBar";
 import { TokenGate } from "./components/TokenGate";
 import { t } from "./i18n";
 import { connect, useLanStore } from "./store";
@@ -53,32 +53,99 @@ export function App() {
 
 	return (
 		<div className="app">
-			<header className="app-header">
-				{selected && (
-					<button type="button" className="back-btn" onClick={() => select(null)} aria-label={t("chat.back")}>
-						‹
+			{selected ? (
+				<header className="chat-nav">
+					<button type="button" className="nav-back" onClick={() => select(null)} aria-label={t("chat.back")}>
+						<ChevronLeftIcon size={17} />
 					</button>
-				)}
-				<div className="app-title">{selected ? name : t("app.title")}</div>
-				<ConnBadge />
-			</header>
+					<div className="titles">
+						<div className="t1">{name}</div>
+						<ChatStatusLine sessionId={selected} />
+					</div>
+					<ConnPill />
+				</header>
+			) : (
+				<header className="nav eyebrow-row">
+					<div className="eyebrow-text">{t("app.eyebrow")}</div>
+					<div className="nav-main">
+						<div className="nav-title">{t("list.title")}</div>
+						<ConnPill />
+					</div>
+				</header>
+			)}
 			{selected ? <ChatView sessionId={selected} isDark={isDark} onRespond={onRespond} /> : <SessionList />}
 			{selected && remoteControl && <Composer sessionId={selected} />}
-			<StatusBar sessionId={selected} />
+			{!selected && <FootLine />}
 		</div>
 	);
 }
 
-function ConnBadge() {
+/** 连接药丸（header 右侧）：已连接=绿 ping 光环；连接中/重连中=琥珀呼吸 */
+function ConnPill() {
 	const status = useLanStore((s) => s.status);
 	return (
-		<span className="conn">
-			<span className={`conn-dot ${status === "connected" ? "ok" : "bad"}`} />
-			{status === "connected"
-				? t("conn.connected")
-				: status === "reconnecting"
-					? t("conn.reconnecting")
-					: t("conn.connecting")}
+		<span className={`conn-pill${status === "connected" ? "" : " warn"}`}>
+			<span className="pulse-dot" />
+			{connLabel(status)}
 		</span>
+	);
+}
+
+/** 列表页底部居中连接行（StatusBar 拆解后仅留纯连接态；hello 帧无主机名/IP，见 spec 非目标） */
+function FootLine() {
+	const status = useLanStore((s) => s.status);
+	return (
+		<div className="foot-line">
+			<span className={`pulse-dot sm${status === "connected" ? "" : " amber"}`} />
+			{connLabel(status)}
+		</div>
+	);
+}
+
+function connLabel(status: "token" | "connecting" | "connected" | "reconnecting"): string {
+	return status === "connected"
+		? t("conn.connected")
+		: status === "reconnecting"
+			? t("conn.reconnecting")
+			: t("conn.connecting");
+}
+
+/** 聊天页标题副行：等待权限（琥珀）> 工作中·工具名（紫+流光）> 压缩中（琥珀）> 空闲 / 无视图=只读 */
+function ChatStatusLine({ sessionId }: { sessionId: string }) {
+	const view = useLanStore((s) => s.views[sessionId]);
+	const permPending = useLanStore(
+		(s) => (s.pendingPerms[sessionId]?.length ?? 0) > 0 || Boolean(s.views[sessionId]?.pendingPermission),
+	);
+	return (
+		<div className="t2">
+			{!view ? (
+				<>
+					<span className="pulse-dot sm still" />
+					{t("list.readonly")}
+				</>
+			) : permPending ? (
+				<>
+					<span className="pulse-dot sm amber" />
+					{t("chat.waitingPermission")}
+				</>
+			) : view.agentActive ? (
+				<>
+					<span className="pulse-dot sm violet" />
+					<span className="work-text">
+						{view.currentTool ? `${t("status.working")} · ${view.currentTool}` : t("status.working")}
+					</span>
+				</>
+			) : view.compacting ? (
+				<>
+					<span className="pulse-dot sm amber" />
+					{t("status.compacting")}
+				</>
+			) : (
+				<>
+					<span className="pulse-dot sm" />
+					{t("status.idle")}
+				</>
+			)}
+		</div>
 	);
 }

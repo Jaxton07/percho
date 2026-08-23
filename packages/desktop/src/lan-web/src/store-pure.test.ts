@@ -96,6 +96,70 @@ describe("lan-web store pure functions", () => {
 		expect(state.transcripts.s1?.agentActive).toBe(false);
 	});
 
+	it("mid-run join: orphan delta flags streamHealing; container rebuild clears it", () => {
+		let state = { ...initialLanState, ...seedSessions(initialLanState, snapshot()) };
+		// 中途进入：错过 message_start，text_delta 在 reducer 空转 → 标记兑底
+		state = {
+			...state,
+			...applyFrame(
+				state,
+				eventFrame(
+					"s1",
+					{
+						type: "message_update",
+						message: { role: "assistant", content: [] },
+						assistantMessageEvent: { type: "text_delta", contentIndex: 0, delta: "你好" },
+					},
+					11,
+				),
+			),
+		};
+		expect(state.streamHealing.s1).toBe(true);
+		expect(state.transcripts.s1?.streaming).toBeNull();
+		// 容器重建（agent_start）→ 摘标记，后续 delta 正常累积不再误标
+		state = { ...state, ...applyFrame(state, eventFrame("s1", { type: "agent_start" }, 12)) };
+		expect(state.streamHealing.s1).toBeUndefined();
+		state = {
+			...state,
+			...applyFrame(
+				state,
+				eventFrame(
+					"s1",
+					{
+						type: "message_update",
+						message: { role: "assistant", content: [] },
+						assistantMessageEvent: { type: "text_delta", contentIndex: 0, delta: "在" },
+					},
+					13,
+				),
+			),
+		};
+		expect(state.streamHealing.s1).toBeUndefined();
+		expect(state.transcripts.s1?.streaming?.text).toBe("在");
+	});
+
+	it("mid-run join: orphan turn_end boundary clears flag (refetch wired in store.ts)", () => {
+		let state = { ...initialLanState, ...seedSessions(initialLanState, snapshot()) };
+		state = {
+			...state,
+			...applyFrame(
+				state,
+				eventFrame(
+					"s1",
+					{
+						type: "message_update",
+						message: { role: "assistant", content: [] },
+						assistantMessageEvent: { type: "text_delta", contentIndex: 0, delta: "x" },
+					},
+					11,
+				),
+			),
+		};
+		expect(state.streamHealing.s1).toBe(true);
+		state = { ...state, ...applyFrame(state, eventFrame("s1", { type: "turn_end" }, 12)) };
+		expect(state.streamHealing.s1).toBeUndefined();
+	});
+
 	it("perm frame lifecycle: perm adds, perm_resolved removes", () => {
 		let state = { ...initialLanState, ...seedSessions(initialLanState, snapshot()) };
 		const request = {

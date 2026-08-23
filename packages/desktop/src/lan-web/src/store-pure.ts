@@ -29,6 +29,9 @@ export interface LanAppState {
 	truncated: Record<string, boolean>;
 	/** 未决权限请求（含 requestId；perm/perm_resolved 帧驱动）。 */
 	pendingPerms: Record<string, PermissionRequest[]>;
+	/** 中途进入（错过 message_start/turn_start）导致流式事件帧空转的会话标记。
+	 *  ChatView 据此用 view.assistantTail 渲染兜底流式气泡；容器重建或 run 边界时摘除。 */
+	streamHealing: Record<string, boolean>;
 	/** 当前选中的会话（null = 会话列表页）。 */
 	selected: string | null;
 	/** 最近一次快照的服务端帧序号（event 帧去重边界）。 */
@@ -46,6 +49,7 @@ export const initialLanState: LanAppState = {
 	transcripts: {},
 	truncated: {},
 	pendingPerms: {},
+	streamHealing: {},
 	selected: null,
 	snapshotSeq: 0,
 	seeded: false,
@@ -93,6 +97,18 @@ export function seedSessions(state: LanAppState, snap: LanSnapshot): Partial<Lan
 	};
 }
 
+/** 无流式容器时在 reducer 空转、据此判定「中途进入」的事件类型。 */
+const ORPHAN_EVENT_TYPES = new Set([
+	"message_update",
+	"tool_execution_start",
+	"tool_execution_update",
+	"tool_execution_end",
+	"turn_end",
+]);
+
+/** run 提交/终态边界：streamHealing 态下到达 → 摘标记 + 接线层立即重拉快照取回已提交消息。 */
+export const ORPHAN_BOUNDARY_TYPES = new Set(["turn_end", "agent_end", "agent_settled"]);
+
 /** SSE 帧 → 状态迁移（event 帧带 seq 去重；view/list 全量幂等）。 */ export function applyFrame(
 	state: LanAppState,
 	frame: LanSseFrame,
@@ -125,7 +141,20 @@ export function seedSessions(state: LanAppState, snap: LanSnapshot): Partial<Lan
 			if (seq <= state.snapshotSeq) return {};
 			const prev = state.transcripts[sessionId] ?? emptyTranscript();
 			const next = reduceEvent(prev, event);
-			if (next === prev && state.transcripts[sessionId]) return {};
+			const healing = state.streamHealing[sessionId] === true;
+			if (next === prev && state.transcripts[sessionId]) {
+				// 中途进入错过 message_start/turn_start：流式帧空转 → 标记兜底（ChatView 渲染 assistantTail）
+				if (!healing && !prev.streaming && ORPHAN_EVENT_TYPES.has(event.type)) {
+					return { streamHealing: { ...state.streamHealing, [sessionId]: true } };
+				}
+				return {};
+			}
+			// 容器重建（agent_start/turn_start/message_start）或 run 边界 → 摘标记
+			if (healing && (next.streaming != null || ORPHAN_BOUNDARY_TYPES.has(event.type))) {
+				const streamHealing = { ...state.streamHealing };
+				delete streamHealing[sessionId];
+				return { transcripts: { ...state.transcripts, [sessionId]: next }, streamHealing };
+			}
 			return { transcripts: { ...state.transcripts, [sessionId]: next } };
 		}
 		case "perm": {

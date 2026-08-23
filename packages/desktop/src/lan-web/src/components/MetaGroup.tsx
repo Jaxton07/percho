@@ -8,6 +8,7 @@ import {
 } from "@percho/shared";
 import { useMemo } from "react";
 import { t } from "../i18n";
+import { ChevronRightIcon } from "./icons";
 import { TailMarquee } from "./TailMarquee";
 import { ToolCard } from "./ToolCard";
 import { useShownWorking } from "./use-shown-working";
@@ -52,7 +53,10 @@ function latestActivity(items: MetaItem[]): ActivityEntry | undefined {
 function ThinkingRow({ thinking }: { thinking: string }) {
 	return (
 		<details className="drawer-details meta-thinking">
-			<summary>{t("meta.thinking")}</summary>
+			<summary>
+				{t("meta.thinking")}
+				<ChevronRightIcon size={12} className="meta-caret" />
+			</summary>
 			<div className="meta-thinking-body">{thinking}</div>
 		</details>
 	);
@@ -97,11 +101,15 @@ export function MetaGroup({
 
 	return (
 		<details className="meta-group drawer-details">
-			<summary>
+			<summary className="meta-head">
 				{shownWorking ? (
 					<>
-						<span className="dot live meta-working-dot" />
-						<span className="meta-working-label">
+						<span className="wave">
+							<i />
+							<i />
+							<i />
+						</span>
+						<span className="meta-live-label">
 							{isThinking ? t("meta.thinkingLabel") : t("meta.working")}
 						</span>
 						{preview && <TailMarquee text={preview} />}
@@ -110,14 +118,18 @@ export function MetaGroup({
 					<>
 						<span className="meta-dots">
 							{dots.map((dot: MetaDot) => (
-								<span key={dot.key} className={`meta-dot ${dot.state}`} />
+								<i
+									key={dot.key}
+									className={dot.state === "error" ? "err" : dot.state === "running" ? "run" : ""}
+								/>
 							))}
 						</span>
-						<span className="meta-summary">
+						<span className="meta-sum">
 							{segments.length > 0 ? segments.map(summaryLabel).join(" · ") : t("meta.worked")}
 						</span>
 					</>
 				)}
+				<ChevronRightIcon size={13} className="meta-caret" />
 			</summary>
 			<div className="meta-body">{rows}</div>
 		</details>

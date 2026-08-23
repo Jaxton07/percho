@@ -1,11 +1,13 @@
 import { useEffect, useRef, useState } from "react";
 import { t } from "../i18n";
 import { useLanStore } from "../store";
+import { ArrowUpIcon, StopIcon } from "./icons";
 
 /**
  * 远程输入区（M2）：remoteControl 开启时才由 App 渲染。
  * 发送：agent 运行中由后端 followUp 排队（发送即“已受理/已入队”回执）。
  * 停止：运行中才可用。readOnly（subagent 产物）会话整区禁用。
+ * UX v2：悬浮毛玻璃条（24px 圆角 + blur）+ 圆形 SVG 按钮（发送=bg-ink 黑白，停止=红）。
  */
 export function Composer({ sessionId }: { sessionId: string }) {
 	const sendPrompt = useLanStore((s) => s.sendPrompt);
@@ -44,7 +46,7 @@ export function Composer({ sessionId }: { sessionId: string }) {
 		const el = areaRef.current;
 		if (!el) return;
 		el.style.height = "auto";
-		el.style.height = `${Math.min(el.scrollHeight, 120)}px`;
+		el.style.height = `${Math.min(el.scrollHeight, 96)}px`;
 	};
 
 	const send = async () => {
@@ -68,17 +70,19 @@ export function Composer({ sessionId }: { sessionId: string }) {
 		if (error) showError(error);
 	};
 
-	if (readOnly) {
-		return <div className="composer readonly">{t("composer.readonly")}</div>;
-	}
-	if (!hasView) {
-		return <div className="composer readonly">{t("composer.closed")}</div>;
+	if (readOnly || !hasView) {
+		return (
+			<div className="composer-zone">
+				<div className="composer-readonly">{readOnly ? t("composer.readonly") : t("composer.closed")}</div>
+			</div>
+		);
 	}
 
+	const canSend = !sending && Boolean(text.trim());
 	return (
-		<div className="composer">
-			{notice && <div className="composer-notice">{notice}</div>}
-			<div className="composer-row">
+		<div className="composer-zone">
+			{notice && <div className="queue-hint">{notice}</div>}
+			<div className="composer-bar">
 				<textarea
 					ref={areaRef}
 					className="composer-input"
@@ -99,17 +103,23 @@ export function Composer({ sessionId }: { sessionId: string }) {
 					}}
 				/>
 				{agentActive ? (
-					<button type="button" className="composer-btn stop" onClick={() => void abort()}>
-						{t("composer.stop")}
+					<button
+						type="button"
+						className="c-btn stop"
+						onClick={() => void abort()}
+						aria-label={t("composer.stop")}
+					>
+						<StopIcon size={15} />
 					</button>
 				) : null}
 				<button
 					type="button"
-					className="composer-btn send"
-					disabled={sending || !text.trim()}
+					className={`c-btn send${canSend ? "" : " off"}`}
+					disabled={!canSend}
 					onClick={() => void send()}
+					aria-label={t("composer.send")}
 				>
-					{t("composer.send")}
+					<ArrowUpIcon size={16} />
 				</button>
 			</div>
 		</div>

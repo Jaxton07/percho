@@ -1,18 +1,23 @@
 import { LAN_IMAGE_PLACEHOLDER, type UIMessage } from "@percho/shared";
 import { t } from "../i18n";
+import { ChevronRightIcon, ImageIcon } from "./icons";
 import { Markdown } from "./Markdown";
 import { SubagentCard } from "./SubagentCard";
 import { ToolCard } from "./ToolCard";
 
-/** 图片占位块（sanitize 后 data 为哨兵值；lan-web 不传输 base64 图片） */
+/** 图片占位块（sanitize 后 data 为哨兵值；lan-web 不传输 base64 图片）。UX v2：🖼 emoji → SVG。 */
 function ImageTiles({ count }: { count: number }) {
 	return (
-		<div className="msg-image-tiles">
+		<div className="img-tiles">
 			{Array.from({ length: count }, (_, i) => (
 				// biome-ignore lint/suspicious/noArrayIndexKey: 占位块完全同构且永不重排
-				<div key={i} className="image-placeholder">
-					<span>{t("chat.imagePlaceholder")}</span>
-					<span style={{ fontSize: 10 }}>{t("chat.imageHidden")}</span>
+				<div key={i} className="img-ph">
+					<ImageIcon size={20} />
+					<span>
+						{t("chat.imagePlaceholder")}
+						<br />
+						{t("chat.imageHidden")}
+					</span>
 				</div>
 			))}
 		</div>
@@ -23,7 +28,10 @@ function ThinkingBlock({ text }: { text: string }) {
 	if (!text) return null;
 	return (
 		<details className="msg-thinking drawer-details">
-			<summary>Thinking</summary>
+			<summary>
+				Thinking
+				<ChevronRightIcon size={12} className="meta-caret" />
+			</summary>
 			<pre>{text}</pre>
 		</details>
 	);
@@ -32,7 +40,7 @@ function ThinkingBlock({ text }: { text: string }) {
 function CompactMessage({ message }: { message: Extract<UIMessage, { kind: "system" }> }) {
 	const compact = message.compact;
 	if (!compact) {
-		return <div className="msg-system msg-enter">{message.mutex ? t("mutex.notice") : message.text}</div>;
+		return <div className="m-sys rise-in">{message.mutex ? t("mutex.notice") : message.text}</div>;
 	}
 	const label =
 		compact.status === "running"
@@ -43,7 +51,7 @@ function CompactMessage({ message }: { message: Extract<UIMessage, { kind: "syst
 					? `${t("compact.failed")}${compact.errorMessage ? `：${compact.errorMessage}` : ""}`
 					: t("compact.done");
 	return (
-		<div className="msg-system msg-enter">
+		<div className="m-sys rise-in">
 			<span>{label}</span>
 			{compact.summary && (
 				<details className="compact-summary">
@@ -70,13 +78,13 @@ export function MessageItem({
 	streaming?: boolean;
 	metaInGroup?: boolean;
 }) {
-	const cls = enter ? " msg-enter" : "";
+	const cls = enter ? " rise-in" : "";
 	switch (message.kind) {
 		case "user":
 			return (
-				<div className={`msg-user${cls}`}>
+				<div className={`m-user${cls}`}>
 					{message.skill && (
-						<div className="msg-skill">
+						<div className="skill-tag">
 							/{message.skill.name}
 							{message.skill.args ? ` ${message.skill.args}` : ""}
 						</div>
@@ -91,25 +99,25 @@ export function MessageItem({
 			);
 		case "assistant":
 			return (
-				<div className={`msg-assistant${cls}`}>
+				<div className={`m-assistant${cls}`}>
 					{!metaInGroup && <ThinkingBlock text={message.thinking} />}
 					{message.text && <Markdown text={message.text} isDark={isDark} streaming={streaming} />}
 					{!metaInGroup && message.tools.map((tool) => <ToolCard key={tool.key} tool={tool} />)}
 				</div>
 			);
 		case "error":
-			return <div className={`msg-error${cls}`}>{message.text}</div>;
+			return <div className={`m-err${cls}`}>{message.text}</div>;
 		case "system":
 			return <CompactMessage message={message} />;
 		case "image":
 			return (
-				<div className={`msg-assistant${cls}`}>
+				<div className={`m-assistant${cls}`}>
 					<ImageTiles count={message.images.length} />
 				</div>
 			);
 		case "subagent":
 			return (
-				<div className={`msg-assistant${cls}`}>
+				<div className={`m-assistant${cls}`}>
 					<SubagentCard runs={message.runs} />
 				</div>
 			);

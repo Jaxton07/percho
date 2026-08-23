@@ -11,7 +11,6 @@ import { ThinkingOrb } from "thinking-orbs";
 import { useT } from "../../i18n";
 import { Slot } from "../../plugins/Slot";
 import { UI_SLOTS } from "../../plugins/slots";
-import type { ActivityEntry, UIToolCall } from "../../stores/transcript";
 import { ExpandArrowIcon } from "../icons";
 import { type LivePreviewItem, PreviewTicker } from "./PreviewTicker";
 import { displayName, ToolCallCard } from "./ToolCallCard";
