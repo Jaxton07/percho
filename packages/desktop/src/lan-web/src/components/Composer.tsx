@@ -11,6 +11,8 @@ export function Composer({ sessionId }: { sessionId: string }) {
 	const sendPrompt = useLanStore((s) => s.sendPrompt);
 	const abortSession = useLanStore((s) => s.abortSession);
 	const agentActive = useLanStore((s) => s.views[sessionId]?.agentActive ?? false);
+	/** 会话未在桌面打开（无视图）→ 不能远程发消息（prompt 会 404），给提示 */
+	const hasView = useLanStore((s) => Boolean(s.views[sessionId]));
 	const readOnly = useLanStore((s) => s.list.find((item) => item.sessionId === sessionId)?.readOnly ?? false);
 	const [text, setText] = useState("");
 	const [sending, setSending] = useState(false);
@@ -68,6 +70,9 @@ export function Composer({ sessionId }: { sessionId: string }) {
 
 	if (readOnly) {
 		return <div className="composer readonly">{t("composer.readonly")}</div>;
+	}
+	if (!hasView) {
+		return <div className="composer readonly">{t("composer.closed")}</div>;
 	}
 
 	return (

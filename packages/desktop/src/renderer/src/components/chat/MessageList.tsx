@@ -1,4 +1,5 @@
-import { type MouseEvent, type ReactNode, useCallback, useEffect, useRef, useState } from "react";
+import { buildChatRows, isAgentWorking } from "@percho/shared";
+import { type MouseEvent, useCallback, useEffect, useRef, useState } from "react";
 import { useT } from "../../i18n";
 import { Slot } from "../../plugins/Slot";
 import { UI_SLOTS } from "../../plugins/slots";
@@ -7,7 +8,7 @@ import { selectTranscript, useTranscriptStore } from "../../stores/transcript";
 import { useUiPreferencesStore } from "../../stores/ui-preferences";
 import { CenterOrb } from "./CenterOrb";
 import { MessageItem } from "./MessageItem";
-import { MetaGroup, type MetaItem } from "./MetaGroup";
+import { MetaGroup } from "./MetaGroup";
 import { SubagentRunCard } from "./SubagentRunCard";
 import { useShownWorking } from "./use-shown-working";
 
@@ -28,13 +29,8 @@ export function MessageList() {
 	const activeSessionId = useSessionsStore((s) => s.activeSessionId);
 	const transcript = useTranscriptStore((s) => selectTranscript(s, activeSessionId));
 	const streaming = transcript.streaming;
-	/** 执行中的工具/子代理：工具执行发生在 message_end 之后、turn_end 之前，期间 streaming.text 仍在 */
-	const hasRunningWork = Boolean(
-		streaming?.tools.some((t) => t.state === "running") ||
-			streaming?.subagentRuns.some((r) => r.status === "running"),
-	);
 	/** agent 运行中且正文未出现 → 折叠组标题 working；正文已出但工具/子代理还在跑时不熄灯 */
-	const agentWorking = transcript.agentActive && (!streaming?.text || hasRunningWork);
+	const agentWorking = isAgentWorking(transcript);
 
 	// 中央状态动画（设置开关，与状态行小 orb 解耦）：与 MetaGroup 同一 working 信号 + 同一滞后缓冲，
 	// 显隐节奏一致；动画两态合一为中速单动画（无状态切换），CenterOrb 只收 visible。
@@ -110,138 +106,39 @@ export function MessageList() {
 		if (e.target instanceof Element && e.target.closest("summary")) updateFollowing(false);
 	};
 
-	const items: ReactNode[] = [];
-	let metaItems: MetaItem[] = [];
-	/**
-	 * 轮次末段正文 id 集合：以 user 消息为轮次边界，每轮（agent 一次回复）只给最后一段正文
-	 * 挂复制/fork 操作行——中间多段是工具循环里的自言自语，全部挂按钮噪音太大。
-	 * agentActive 期间本轮尚未定稿，末段先不挂（agent_end 后自然出现）。
-	 */
-	const turnFinalTextIds = new Set<string>();
-	let lastTextId: string | null = null;
-	for (const message of transcript.messages) {
-		if (message.kind === "user") {
-			if (lastTextId) turnFinalTextIds.add(lastTextId);
-			lastTextId = null;
-			continue;
-		}
-		if (message.kind === "assistant" && message.text) lastTextId = message.id;
-	}
-	if (!transcript.agentActive && lastTextId) turnFinalTextIds.add(lastTextId);
-	/** 组序号：同会话内 key 按位置稳定（streaming→committed 转换不 remount，正文边界后的新组自增）；
-	 *  key 含会话 id：切会话强制 remount——shownWorking 滞后/预览行调度等组内本地状态不跨会话泄漏 */
-	let groupIndex = 0;
-	/**
-	 * isLatest：是否为当前 run 的组（仅最后一个组接收 working 信号，历史组恒为已完成）
-	 * forceEmpty：agent 工作中即使无内容也渲染（占位与流式组一体：空组 = 工作中 + 思考中预览）
-	 * subagentCount：子代理没有普通工具卡，仍须生成所属的折叠状态行，让卡片按时间排在它正下方。
-	 */
-	const flushMeta = (isLatest = false, forceEmpty = false, subagentCount = 0) => {
-		if (metaItems.length === 0 && !forceEmpty && subagentCount === 0) return;
-		// 正文在输出（组被正文边界切分）或 run 已终结 → working 信号消失时立即结束，不做滞后缓冲
-		const endImmediately = Boolean(transcript.streaming?.text) || !transcript.agentActive;
-		const key = `meta-${activeSessionId}-g${groupIndex++}`;
-		const groupItems = metaItems;
-		const working = isLatest && agentWorking;
-		items.push(
-			<MetaGroup
-				key={key}
-				items={groupItems}
-				working={working}
-				endImmediately={endImmediately}
-				subagentCount={subagentCount}
-			/>,
-		);
-		metaItems = [];
-	};
-
-	for (const message of transcript.messages) {
-		if (message.kind === "subagent") {
-			// 子代理结果发生在调用工具之后：无论该轮是否还有普通工具/思考，都先落一条所属的
-			// 折叠状态行，再紧接卡片。不能回补“上一个”组，否则纯子代理轮会跳到前一轮顶部。
-			flushMeta(false, false, message.runs.length);
-			items.push(<MessageItem key={message.id} message={message} />);
-			continue;
-		}
-		if (message.kind !== "assistant") {
-			flushMeta();
-			items.push(<MessageItem key={message.id} message={message} />);
-			continue;
-		}
-		// 思考/工具（含正文消息自带的）全部进当前组
-		if (message.thinking || message.tools.length > 0) {
-			metaItems.push({ thinking: message.thinking, tools: message.tools });
-		}
-		// 正文是边界：组关闭，正文独立渲染（meta 已并入组）
-		if (message.text) {
-			flushMeta();
-			items.push(
-				<MessageItem
-					key={message.id}
-					message={message}
-					metaInGroup
-					showActions={turnFinalTextIds.has(message.id)}
-				/>,
+	// 行序列由 shared buildChatRows 产出（与 lan-web 同一分组大脑）；此处只做行模型 → JSX 映射
+	const items = buildChatRows(transcript, String(activeSessionId)).map((row) => {
+		if (row.kind === "metaGroup") {
+			return (
+				<MetaGroup
+					key={row.key}
+					items={row.items}
+					working={row.working}
+					endImmediately={row.endImmediately}
+					subagentCount={row.subagentCount}
+				/>
 			);
 		}
-	}
-	if (streaming) {
-		// 正文起点锚：同 turn 的工具按 blockIndex 分「正文前/正文后」两组，保住 text→toolCall 交错时序
-		//（与 finalizeStreaming 的拆分一致）；正文出现后 pre 组立即结束，post 组成为最新组接收 working 信号
-		const textIdx = streaming.textBlockIndex;
-		const preTools =
-			textIdx == null ? streaming.tools : streaming.tools.filter((t) => (t.blockIndex ?? 0) < textIdx);
-		const postTools = textIdx == null ? [] : streaming.tools.filter((t) => (t.blockIndex ?? 0) > textIdx);
-		if (streaming.thinking || preTools.length > 0) {
-			metaItems.push({
-				thinking: streaming.thinking,
-				tools: preTools,
-				// 正文已出现时 pre 组被强制结束（endImmediately），不再携带活动序列；未出正文时维持现状
-				activity: textIdx == null ? streaming.activity : undefined,
-			});
-		}
-		if (streaming.text) {
-			flushMeta();
-			items.push(
-				<MessageItem
-					// key = 预生成的消息 id：turn_end 固化后同 id 进入 messages，流式 → 固化不 remount
-					// （Markdown 平滑输出 controller 存活，固化后继续追平剩余 backlog 不跳变）
-					key={streaming.id}
-					message={{
-						kind: "assistant",
-						id: streaming.id,
-						text: streaming.text,
-						thinking: streaming.thinking,
-						tools: streaming.tools,
-						timestamp: Date.now(),
-					}}
-					streaming
-					metaInGroup
-				/>,
+		if (row.kind === "streamingSubagents") {
+			return (
+				<Slot
+					key={row.key}
+					name={UI_SLOTS.SubagentCard}
+					props={{ runs: row.runs }}
+					fallback={SubagentRunCard}
+				/>
 			);
 		}
-		// 正文后的工具进新组（成为最新组）：working 预览行继续显示最新活动，尾部 flushMeta 接管 working 信号
-		if (postTools.length > 0) {
-			metaItems.push({ thinking: "", tools: postTools, activity: streaming.activity });
-		}
-	}
-	// 最新组无内容但仍在工作（正文已出、工具/子代理执行中）：挂上流式活动序列，预览行继续显示最新活动
-	if (metaItems.length === 0 && agentWorking && streaming && streaming.activity.length > 0) {
-		metaItems.push({ thinking: "", tools: [], activity: streaming.activity });
-	}
-	// 流式子代理也属于当前最后一条状态行：先 flush 状态行、后挂卡片，避免卡片倒挂在折叠行上方。
-	const streamingSubagentRuns = streaming?.subagentRuns ?? [];
-	flushMeta(true, agentWorking, streamingSubagentRuns.length);
-	if (streamingSubagentRuns.length > 0) {
-		items.push(
-			<Slot
-				key="streaming-subagents"
-				name={UI_SLOTS.SubagentCard}
-				props={{ runs: streamingSubagentRuns }}
-				fallback={SubagentRunCard}
-			/>,
+		return (
+			<MessageItem
+				key={row.key}
+				message={row.message}
+				metaInGroup={row.metaInGroup}
+				showActions={row.showActions}
+				streaming={row.streaming}
+			/>
 		);
-	}
+	});
 
 	return (
 		<div className="relative h-full">

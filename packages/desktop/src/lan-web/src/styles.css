@@ -835,6 +835,128 @@ body {
 	background: var(--markdown-table-head-bg);
 }
 
+/* ---------- 折叠组（与桌面 MetaGroup 同语义） ---------- */
+.meta-bare {
+	display: flex;
+	flex-direction: column;
+	gap: 6px;
+}
+.meta-group summary {
+	cursor: pointer;
+	list-style: none;
+	display: flex;
+	align-items: center;
+	gap: 8px;
+	padding: 2px 0;
+	min-height: 24px;
+	user-select: none;
+	-webkit-user-select: none;
+}
+.meta-group summary::-webkit-details-marker {
+	display: none;
+}
+.meta-dots {
+	display: inline-flex;
+	gap: 3px;
+	flex-shrink: 0;
+}
+.meta-dot {
+	width: 4px;
+	height: 4px;
+	border-radius: 50%;
+	background: var(--color-ink-dim);
+}
+.meta-dot.error {
+	background: var(--color-ink-faint);
+}
+.meta-dot.running {
+	background: transparent;
+	border: 1px solid var(--color-ink-dim);
+	animation: pulse 1.2s ease-in-out infinite;
+}
+.meta-summary {
+	font-size: 13px;
+	color: var(--color-ink-dim);
+	white-space: nowrap;
+	overflow: hidden;
+	text-overflow: ellipsis;
+}
+.meta-working-dot {
+	flex-shrink: 0;
+}
+.meta-working-label {
+	font-size: 13.5px;
+	font-weight: 600;
+	color: var(--color-ink-dim);
+	flex-shrink: 0;
+	animation: shimmer 1.8s linear infinite;
+	background: linear-gradient(
+		90deg,
+		var(--color-ink-dim) 0%,
+		var(--shimmer-highlight, var(--color-ink)) 50%,
+		var(--color-ink-dim) 100%
+	);
+	background-size: 200% 100%;
+	-webkit-background-clip: text;
+	background-clip: text;
+	-webkit-text-fill-color: transparent;
+}
+@keyframes shimmer {
+	0% {
+		background-position: 200% 0;
+	}
+	100% {
+		background-position: -200% 0;
+	}
+}
+.tail-marquee {
+	flex: 1;
+	min-width: 0;
+	overflow: hidden;
+	height: 20px;
+	mask-image: linear-gradient(90deg, transparent 0, #000 24px);
+	-webkit-mask-image: linear-gradient(90deg, transparent 0, #000 24px);
+}
+.tail-marquee-inner {
+	display: inline-block;
+	white-space: nowrap;
+	font-size: 12px;
+	color: var(--color-ink-faint);
+	line-height: 20px;
+	will-change: transform;
+}
+.meta-body {
+	display: flex;
+	flex-direction: column;
+	gap: 6px;
+	padding: 6px 0 2px 12px;
+}
+.meta-thinking summary {
+	font-size: 12.5px;
+	color: var(--color-ink-faint);
+	cursor: pointer;
+	list-style: none;
+}
+.meta-thinking summary::-webkit-details-marker {
+	display: none;
+}
+.meta-thinking summary::before {
+	content: "▸";
+	display: inline-block;
+	margin-right: 6px;
+	transition: transform 0.15s;
+}
+.meta-thinking[open] summary::before {
+	transform: rotate(90deg);
+}
+.meta-thinking-body {
+	font-size: 12.5px;
+	line-height: 1.6;
+	color: var(--color-ink-dim);
+	white-space: pre-wrap;
+	padding: 4px 0 4px 16px;
+}
+
 /* ---------- M2 远程输入区 ---------- */
 .composer {
 	border-top: 1px solid var(--color-border);
@@ -904,7 +1026,9 @@ body {
 	.conn-dot.bad,
 	.dot.live,
 	.tool-state-dot.running,
-	.subagent-row .dot.running {
+	.subagent-row .dot.running,
+	.meta-dot.running,
+	.meta-working-label {
 		animation: none !important;
 	}
 	.drawer-details::details-content {

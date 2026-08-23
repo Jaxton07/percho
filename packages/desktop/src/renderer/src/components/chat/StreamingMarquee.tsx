@@ -1,5 +1,5 @@
+import { tailOffsetForWidths } from "@percho/shared";
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
-import { tailOffsetForWidths } from "./marquee-motion";
 
 /**
  * 流式预览的 tail-follow：文本每次增长后立即右对齐，保持最新 token 在视口末端。

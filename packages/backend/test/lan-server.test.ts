@@ -33,6 +33,7 @@ function backend(): LanObserverBackend {
 		getStats: async () => ({ inputTokens: 1, outputTokens: 2, cost: 0.01 }),
 		listActiveSessionRuntime: () => [{ sessionId: session.sessionId, streaming: true, compacting: false }],
 		getPendingPermissionRequests: () => [],
+		peekSessionMessages: async () => null,
 		checkSessionWritable: () => "ok",
 		prompt: async () => {},
 		abort: async () => {},
@@ -348,6 +349,41 @@ describe("LanObserverServer", () => {
 			request: { id: "req-1", title: "写文件", kind: "path", suggestDir: "/work" },
 		});
 		expect(JSON.parse(resolved?.[1] ?? "")).toMatchObject({ requestId: "req-1", answered: true });
+	});
+
+	it("serves per-session transcript on demand (history peek), sanitized + 404 for unknown", async () => {
+		const observer: LanObserverBackend = {
+			...backend(),
+			peekSessionMessages: async (id) =>
+				id === "hist-1"
+					? [
+							{
+								role: "user",
+								text: "历史问题",
+								sourceText: "raw secret source",
+								thinking: "",
+								tools: [],
+								images: [{ data: "base64secret", mimeType: "image/png" }],
+								timestamp: 1,
+							} as never,
+						]
+					: null,
+		};
+		const server = await start(0, observer);
+		const port = server.status().port;
+		// 401 / 404 / 200 + sanitize（sourceText 剥离、图片占位）
+		expect((await request(`http://127.0.0.1:${port}/api/sessions/hist-1/transcript`)).status).toBe(401);
+		expect((await request(`http://127.0.0.1:${port}/api/sessions/ghost/transcript?t=${token}`)).status).toBe(
+			404,
+		);
+		const res = await request(`http://127.0.0.1:${port}/api/sessions/hist-1/transcript?t=${token}`);
+		expect(res.status).toBe(200);
+		const body = JSON.parse(res.text);
+		expect(body.sessionId).toBe("hist-1");
+		expect(body.messages[0].text).toBe("历史问题");
+		expect(res.text).not.toContain("base64secret");
+		expect(res.text).not.toContain("raw secret source");
+		expect(body.messages[0].images[0].data).toBe("lan-image-stripped");
 	});
 
 	it("M2 write endpoints: full auth/control/validation matrix", async () => {

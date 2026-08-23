@@ -4,6 +4,7 @@ import {
 	type LanSessionView,
 	type LanSnapshot,
 	type LanSseFrame,
+	type LanTranscript,
 	messagesToUIMessages,
 	type PermissionRequest,
 	reduceEvent,
@@ -92,8 +93,10 @@ export function seedSessions(state: LanAppState, snap: LanSnapshot): Partial<Lan
 	};
 }
 
-/** SSE 帧 → 状态迁移（event 帧带 seq 去重；view/list 全量幂等）。 */
-export function applyFrame(state: LanAppState, frame: LanSseFrame): Partial<LanAppState> {
+/** SSE 帧 → 状态迁移（event 帧带 seq 去重；view/list 全量幂等）。 */ export function applyFrame(
+	state: LanAppState,
+	frame: LanSseFrame,
+): Partial<LanAppState> {
 	switch (frame.event) {
 		case "hello":
 			return {};
@@ -143,4 +146,23 @@ export function applyFrame(state: LanAppState, frame: LanSseFrame): Partial<LanA
 			};
 		}
 	}
+}
+
+/** 单会话 transcript 按需种子（历史会话点开时拉取；已有种子/流式进行时不覆盖）。 */
+export function seedTranscript(state: LanAppState, entry: LanTranscript): Partial<LanAppState> {
+	if (state.transcripts[entry.sessionId]) return {};
+	const view = state.views[entry.sessionId];
+	return {
+		transcripts: {
+			...state.transcripts,
+			[entry.sessionId]: {
+				...emptyTranscript(),
+				messages: messagesToUIMessages(entry.messages),
+				agentActive: view?.agentActive ?? false,
+				compacting: view?.compacting ?? false,
+				todos: view?.todos ?? [],
+			},
+		},
+		truncated: { ...state.truncated, [entry.sessionId]: entry.truncated },
+	};
 }

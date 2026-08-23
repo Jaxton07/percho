@@ -1,5 +1,5 @@
 import { existsSync } from "node:fs";
-import { unlink } from "node:fs/promises";
+import { readFile, unlink } from "node:fs/promises";
 import { join } from "node:path";
 import type { Model, ThinkingLevel } from "@earendil-works/pi-ai";
 import { getSupportedThinkingLevels } from "@earendil-works/pi-ai";
@@ -62,6 +62,7 @@ import {
 	blockImages,
 	blockText,
 	type RawMessage,
+	readSessionMessagesFromContent,
 	resolveForkEntryId,
 	resolveRecallEntryId,
 	toSessionMessages,
@@ -388,6 +389,8 @@ export class PiBackend {
 				cwd: info.cwd || "",
 				name: info.name,
 				active: activeIds.has(info.id),
+				// subagent 产物会话只读（LAN 列表/写端点禁用判定用）
+				readOnly: isSubagentSessionPath(info.path) || undefined,
 				messageCount: info.messageCount,
 				createdAt: info.created.getTime(),
 				modifiedAt: info.modified.getTime(),
@@ -642,6 +645,22 @@ export class PiBackend {
 		// 配对消息与会话树 entry id（assistant 供 fork 定位、user 供撤回定位）
 		assignEntryIds(messages, entry.session.sessionManager.getBranch());
 		return messages;
+	}
+
+	/**
+	 * LAN 历史会话只读透视：活跃会话走 registry（同 getSessionMessages）；
+	 * 未打开的会话纯解析文件（不开 SessionManager，零副作用零写盘）。不存在返回 null。
+	 */
+	async peekSessionMessages(sessionId: string): Promise<SessionMessage[] | null> {
+		if (this.registry.get(sessionId)) return this.getSessionMessages(sessionId);
+		const meta = (await this.listAllSessions()).find((s) => s.sessionId === sessionId);
+		if (!meta?.sessionFile) return null;
+		try {
+			const content = await readFile(meta.sessionFile, "utf8");
+			return readSessionMessagesFromContent(content);
+		} catch {
+			return null;
+		}
 	}
 
 	/**

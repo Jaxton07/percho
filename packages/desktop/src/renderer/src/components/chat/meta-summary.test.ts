@@ -1,6 +1,6 @@
+import type { UIToolCall } from "@percho/shared";
+import { categoryOf, dotsFromItems, summarizeCategories } from "@percho/shared";
 import { describe, expect, it } from "vitest";
-import type { UIToolCall } from "../../stores/transcript";
-import { categoryOf, dotsFromItems, summarizeCategories } from "./meta-summary";
 
 function tool(name: string, state: UIToolCall["state"] = "done", key = name): UIToolCall {
 	return { key, id: key, name, args: "{}", output: "", state };

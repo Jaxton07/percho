@@ -1,3 +1,10 @@
+import {
+	dotsFromItems,
+	type MetaDot,
+	type MetaItem,
+	type SummarySegment,
+	summarizeCategories,
+} from "@percho/shared";
 import { Fragment, useEffect, useLayoutEffect, useMemo, useRef } from "react";
 import type { OrbState } from "thinking-orbs";
 import { ThinkingOrb } from "thinking-orbs";
@@ -6,18 +13,11 @@ import { Slot } from "../../plugins/Slot";
 import { UI_SLOTS } from "../../plugins/slots";
 import type { ActivityEntry, UIToolCall } from "../../stores/transcript";
 import { ExpandArrowIcon } from "../icons";
-import { dotsFromItems, type MetaDot, type SummarySegment, summarizeCategories } from "./meta-summary";
 import { type LivePreviewItem, PreviewTicker } from "./PreviewTicker";
 import { displayName, ToolCallCard } from "./ToolCallCard";
 import { useShownWorking } from "./use-shown-working";
 
-/** 折叠组中的一条元数据项（一条消息的思考/工具，或流式中的进行中部分） */
-export interface MetaItem {
-	thinking: string;
-	tools: UIToolCall[];
-	/** 流式项的活动序列（到达顺序），预览行数据源；仅流式（未提交）项携带 */
-	activity?: ActivityEntry[];
-}
+export type { MetaItem };
 
 /** 思考过程行（内层折叠，与 tool call 行同风格） */
 function ThinkingRow({ thinking }: { thinking: string }) {

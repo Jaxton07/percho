@@ -5,7 +5,17 @@
  * - reducer.ts  reduceEvent（pi 事件 → UI 状态，纯函数）
  * - mapping.ts  messagesToUIMessages（历史消息回放映射）
  */
+
+export { buildChatRows, type ChatRow, isAgentWorking, type MetaItem } from "./chat-rows";
 export { messagesToUIMessages } from "./mapping";
+export {
+	categoryOf,
+	dotsFromItems,
+	type MetaDot,
+	type SummarySegment,
+	summarizeCategories,
+	type ToolCategory,
+} from "./meta-summary";
 export { reduceEvent } from "./reducer";
 export {
 	type ActivityEntry,

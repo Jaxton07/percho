@@ -12,12 +12,14 @@ const zh = {
 	"conn.connected": "已连接",
 	"conn.reconnecting": "重连中…",
 	"list.empty": "暂无会话",
+	"list.readonly": "只读",
 	"list.history": "历史（只读）",
 	"status.working": "工作中",
 	"status.idle": "空闲",
 	"status.compacting": "压缩中…",
 	"status.queued": "有排队消息",
 	"chat.truncated": "仅显示最近消息",
+	"chat.loading": "加载中…",
 	"chat.back": "返回",
 	"chat.imagePlaceholder": "🖼 图片",
 	"chat.imageHidden": "图片不在局域网流中传输",
@@ -43,6 +45,17 @@ const zh = {
 	"composer.readonly": "子代理会话只读",
 	"toast.denied": "远程控制已关闭或无权限",
 	"toast.failed": "发送失败",
+	"meta.thinking": "思考过程",
+	"meta.thinkingLabel": "思考中",
+	"meta.working": "工作中",
+	"meta.worked": "已完成",
+	"meta.read": "读取 {n} 个文件",
+	"meta.edit": "编辑 {n} 个文件",
+	"meta.explore": "探索 {n} 次",
+	"meta.search": "搜索 {n} 次",
+	"meta.bash": "执行 {n} 条命令",
+	"meta.subagents": "子代理 ×{n}",
+	"composer.closed": "会话未在桌面打开，仅可查看",
 };
 
 const en: Record<keyof typeof zh, string> = {
@@ -55,12 +68,14 @@ const en: Record<keyof typeof zh, string> = {
 	"conn.connected": "Connected",
 	"conn.reconnecting": "Reconnecting…",
 	"list.empty": "No sessions",
+	"list.readonly": "Read-only",
 	"list.history": "History (read-only)",
 	"status.working": "Working",
 	"status.idle": "Idle",
 	"status.compacting": "Compacting…",
 	"status.queued": "Queued message",
 	"chat.truncated": "Showing recent messages only",
+	"chat.loading": "Loading…",
 	"chat.back": "Back",
 	"chat.imagePlaceholder": "🖼 Image",
 	"chat.imageHidden": "Images are not streamed over LAN",
@@ -86,12 +101,25 @@ const en: Record<keyof typeof zh, string> = {
 	"composer.readonly": "Subagent session is read-only",
 	"toast.denied": "Remote control off or not permitted",
 	"toast.failed": "Send failed",
+	"meta.thinking": "Thinking",
+	"meta.thinkingLabel": "Thinking",
+	"meta.working": "Working",
+	"meta.worked": "Done",
+	"meta.read": "Read {n} file(s)",
+	"meta.edit": "Edited {n} file(s)",
+	"meta.explore": "Explored {n} time(s)",
+	"meta.search": "Searched {n} time(s)",
+	"meta.bash": "Ran {n} command(s)",
+	"meta.subagents": "Subagents ×{n}",
+	"composer.closed": "Session not open on desktop; read-only",
 };
 
 export type LanI18nKey = keyof typeof zh;
 
 const table: Record<LanI18nKey, string> = navigator.language.toLowerCase().startsWith("zh") ? zh : en;
 
-export function t(key: LanI18nKey): string {
-	return table[key] ?? key;
+export function t(key: LanI18nKey, params?: Record<string, string | number>): string {
+	const template: string = table[key] ?? key;
+	if (!params) return template;
+	return template.replace(/\{(\w+)\}/g, (_, name) => String(params[name] ?? `{${name}}`));
 }

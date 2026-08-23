@@ -58,6 +58,12 @@ function bearerToken(req: IncomingMessage): string | null {
 	return header.slice("Bearer ".length).trim() || null;
 }
 
+/** GET /api/sessions/:id/transcript → 会话 id（不匹配返回 null）。 */
+function matchTranscriptRoute(pathname: string): string | null {
+	const match = /^\/api\/sessions\/([^/]+)\/transcript$/.exec(pathname);
+	return match?.[1] ? decodeURIComponent(match[1]) : null;
+}
+
 /** 读 JSON body（上限 16KB，超限/解析失败返回错误）。 */
 function readJsonBody(
 	req: IncomingMessage,
@@ -94,6 +100,8 @@ function readJsonBody(
 export interface LanObserverBackend {
 	listAllSessions(): Promise<SessionMeta[]>;
 	getSessionMessages(sessionId: string): Promise<SessionMessage[]>;
+	/** 历史会话只读透视（未打开的会话纯解析文件）；不存在返回 null。 */
+	peekSessionMessages(sessionId: string): Promise<SessionMessage[] | null>;
 	getTodos(sessionId: string): Promise<LanSessionView["todos"]>;
 	getStats(sessionId: string): Promise<NonNullable<LanSessionView["stats"]>>;
 	listActiveSessionRuntime(): Array<{ sessionId: string; streaming: boolean; compacting: boolean }>;
@@ -235,7 +243,9 @@ export class LanObserverServer {
 			res.end(this.options.iconPng);
 			return;
 		}
-		const isGetApi = req.method === "GET" && (path === "/api/snapshot" || path === "/api/stream");
+		const isGetApi =
+			req.method === "GET" &&
+			(path === "/api/snapshot" || path === "/api/stream" || matchTranscriptRoute(path) !== null);
 		const writeRoute = req.method === "POST" ? matchWriteRoute(path) : null;
 		if (!isGetApi && !writeRoute) return this.sendJson(res, 404, { error: "not found" });
 		// 鉴权：POST 优先 Authorization: Bearer，回落 ?t=（无 cookie/ambient auth → CSRF 天然免疫）
@@ -264,6 +274,18 @@ export class LanObserverServer {
 		if (path === "/api/stream") {
 			this.openStream(req, res);
 			return;
+		}
+		// 历史会话按需拉取（M1 补：快照只带活跃会话 transcript；点历史会话时单独拉）
+		const transcriptId = matchTranscriptRoute(path);
+		if (transcriptId) {
+			const messages = await this.backend.peekSessionMessages(transcriptId);
+			if (!messages) return this.sendJson(res, 404, { error: "session not found" });
+			const transcript: LanTranscript = {
+				sessionId: transcriptId,
+				messages: messages.slice(-TRANSCRIPT_TAIL_LIMIT).map(sanitizeSessionMessage),
+				truncated: messages.length > TRANSCRIPT_TAIL_LIMIT,
+			};
+			return this.sendJson(res, 200, transcript);
 		}
 		// M2 写端点双闸门之二：remoteControl 运行态（请求时实时读，开关即时生效无需重启）
 		if (!this.config.cached()?.remoteControl) {

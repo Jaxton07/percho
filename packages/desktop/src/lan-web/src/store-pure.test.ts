@@ -1,6 +1,7 @@
-import type { LanSnapshot, LanSseFrame, SessionMessage } from "@percho/shared";
+import type { LanSnapshot, LanSseFrame, LanTranscript, SessionMessage } from "@percho/shared";
 import { describe, expect, it } from "vitest";
-import { applyFrame, initialLanState, seedSessions } from "./store-pure";
+import type { LanAppState } from "./store-pure";
+import { applyFrame, initialLanState, seedSessions, seedTranscript } from "./store-pure";
 
 const baseView = {
 	sessionId: "s1",
@@ -183,5 +184,22 @@ describe("lan-web store pure functions", () => {
 			transcripts: [],
 		});
 		expect(gone.selected).toBeNull();
+	});
+
+	it("seedTranscript seeds history session on demand, never overwrites existing", () => {
+		const entry: LanTranscript = {
+			sessionId: "hist-1",
+			messages: [{ role: "user", text: "旧消息", thinking: "", tools: [], images: [], timestamp: 1 }],
+			truncated: true,
+		};
+		const seeded = seedTranscript(initialLanState, entry);
+		expect(seeded.transcripts?.["hist-1"]?.messages).toHaveLength(1);
+		expect(seeded.truncated?.["hist-1"]).toBe(true);
+		// 已有种子不覆盖（流式进行中保护）
+		const again = seedTranscript({ ...initialLanState, transcripts: seeded.transcripts } as LanAppState, {
+			...entry,
+			messages: [],
+		});
+		expect(again.transcripts).toBeUndefined();
 	});
 });

@@ -1,4 +1,4 @@
-import type { UIToolCall } from "../../stores/transcript";
+import type { UIToolCall } from "./types";
 
 /** 折叠组工具的语义分类（展示统计用）；未知工具归 other（按原始工具名各自计数）；subagent 为正向汇总段（不计工具明细） */
 export type ToolCategory = "read" | "edit" | "explore" | "search" | "bash" | "other" | "subagent";

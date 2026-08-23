@@ -1,7 +1,8 @@
 import { t } from "../i18n";
 import { useLanStore } from "../store";
 
-/** 会话列表页：活跃会话可点进聊天页，历史会话置灰只读（M1 不提供历史 transcript 浏览）。 */
+/** 会话列表页：所有会话可点进聊天页（活跃会话走快照种子；历史会话按需拉 transcript，
+ *  输入区在会话未打开/只读时显示提示）。 */
 export function SessionList() {
 	const list = useLanStore((s) => s.list);
 	const views = useLanStore((s) => s.views);
@@ -23,23 +24,26 @@ export function SessionList() {
 						key={item.sessionId}
 						type="button"
 						className={`session-row${active ? "" : " history"}`}
-						disabled={!active}
-						onClick={() => active && select(item.sessionId)}
+						onClick={() => select(item.sessionId)}
 					>
 						<div className="session-name">
 							<span className={`dot${view?.agentActive ? " live" : ""}`} />
 							{item.name}
 						</div>
 						<div className="session-cwd">{item.cwd}</div>
-						{active && (
-							<div className="session-badges">
-								<span className={`badge${view?.agentActive ? " live" : ""}`}>
-									{view?.agentActive ? t("status.working") : t("status.idle")}
-								</span>
-								{view?.compacting && <span className="badge">{t("status.compacting")}</span>}
-								{pendingPerm && <span className="badge perm">{t("perm.title")}</span>}
-							</div>
-						)}
+						<div className="session-badges">
+							{active ? (
+								<>
+									<span className={`badge${view?.agentActive ? " live" : ""}`}>
+										{view?.agentActive ? t("status.working") : t("status.idle")}
+									</span>
+									{view?.compacting && <span className="badge">{t("status.compacting")}</span>}
+									{pendingPerm && <span className="badge perm">{t("perm.title")}</span>}
+								</>
+							) : (
+								<span className="badge">{t("list.readonly")}</span>
+							)}
+						</div>
 					</button>
 				);
 			})}

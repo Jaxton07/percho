@@ -1,4 +1,9 @@
-import type { SessionEntry, SessionManager } from "@earendil-works/pi-coding-agent";
+import {
+	parseSessionEntries,
+	type SessionEntry,
+	type SessionManager,
+	type SessionMessageEntry,
+} from "@earendil-works/pi-coding-agent";
 import {
 	extractSubagentRuns,
 	type ImageInput,
@@ -157,6 +162,30 @@ export function resolveForkEntryId(
 		}
 	}
 	throw new Error("Fork target message not found");
+}
+
+/**
+ * 只读解析会话文件内容（LAN 历史会话透视用）：不走 SessionManager.open（可能迁移写盘），
+ * 纯函数 parseSessionEntries + 从文件末尾（leaf tip）沿 parentId 回溯出当前分支。
+ * 分支语义与 getBranch() 一致：只保留当前分支上的消息。
+ */
+export function readSessionMessagesFromContent(content: string): SessionMessage[] {
+	const entries = parseSessionEntries(content);
+	// 当前分支：从最后一条 entry（leaf）沿 parentId 回溯
+	const byId = new Map<string, (typeof entries)[number]>();
+	for (const entry of entries) {
+		if (entry.type !== "session") byId.set(entry.id, entry);
+	}
+	const branch: (typeof entries)[number][] = [];
+	let cursor = entries.length > 0 ? entries[entries.length - 1] : null;
+	while (cursor && cursor.type !== "session") {
+		branch.unshift(cursor);
+		cursor = cursor.parentId ? (byId.get(cursor.parentId) ?? null) : null;
+	}
+	const raw = branch
+		.filter((entry): entry is SessionMessageEntry => entry.type === "message")
+		.map((entry) => entry.message);
+	return toSessionMessages(raw);
 }
 
 /**

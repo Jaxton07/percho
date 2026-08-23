@@ -1,4 +1,4 @@
-import { LAN_IMAGE_PLACEHOLDER, type StreamingState, type UIMessage } from "@percho/shared";
+import { LAN_IMAGE_PLACEHOLDER, type UIMessage } from "@percho/shared";
 import { t } from "../i18n";
 import { Markdown } from "./Markdown";
 import { SubagentCard } from "./SubagentCard";
@@ -55,15 +55,20 @@ function CompactMessage({ message }: { message: Extract<UIMessage, { kind: "syst
 	);
 }
 
-/** 单条消息渲染（按 kind 分发）。enter=false 时跳过入场动画（种子历史消息）。 */
+/** 单条消息渲染（按 kind 分发）。enter=false 时跳过入场动画（种子历史消息）。
+ *  metaInGroup：思考/工具已并入折叠组（不重复渲染）；streaming：正文走流式平滑。 */
 export function MessageItem({
 	message,
 	isDark,
 	enter = true,
+	streaming = false,
+	metaInGroup = false,
 }: {
 	message: UIMessage;
 	isDark: boolean;
 	enter?: boolean;
+	streaming?: boolean;
+	metaInGroup?: boolean;
 }) {
 	const cls = enter ? " msg-enter" : "";
 	switch (message.kind) {
@@ -87,11 +92,9 @@ export function MessageItem({
 		case "assistant":
 			return (
 				<div className={`msg-assistant${cls}`}>
-					<ThinkingBlock text={message.thinking} />
-					{message.text && <Markdown text={message.text} isDark={isDark} />}
-					{message.tools.map((tool) => (
-						<ToolCard key={tool.key} tool={tool} />
-					))}
+					{!metaInGroup && <ThinkingBlock text={message.thinking} />}
+					{message.text && <Markdown text={message.text} isDark={isDark} streaming={streaming} />}
+					{!metaInGroup && message.tools.map((tool) => <ToolCard key={tool.key} tool={tool} />)}
 				</div>
 			);
 		case "error":
@@ -111,21 +114,6 @@ export function MessageItem({
 				</div>
 			);
 	}
-}
-
-/** 流式中的消息（streaming 容器实时渲染：正文 markdown 流式 + 思考 + 工具卡） */
-export function StreamingMessage({ streaming, isDark }: { streaming: StreamingState; isDark: boolean }) {
-	if (!streaming.text && !streaming.thinking && streaming.tools.length === 0) return null;
-	return (
-		<div className="msg-assistant">
-			<ThinkingBlock text={streaming.thinking} />
-			{streaming.text && <Markdown text={streaming.text} streaming isDark={isDark} />}
-			{streaming.tools.map((tool) => (
-				<ToolCard key={tool.key} tool={tool} />
-			))}
-			{streaming.subagentRuns.length > 0 && <SubagentCard runs={streaming.subagentRuns} />}
-		</div>
-	);
 }
 
 /** 图片占位判定（sanitize 哨兵） */

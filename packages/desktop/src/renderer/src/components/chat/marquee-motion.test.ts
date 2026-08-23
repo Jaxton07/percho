@@ -1,5 +1,5 @@
+import { tailOffsetForWidths } from "@percho/shared";
 import { describe, expect, it } from "vitest";
-import { tailOffsetForWidths } from "./marquee-motion";
 
 describe("streaming preview tail-follow motion", () => {
 	it("无效尺寸时停在开头", () => {

@@ -1,6 +1,6 @@
-import type { LanSseFrame } from "@percho/shared";
+import type { LanSseFrame, LanTranscript } from "@percho/shared";
 import { create } from "zustand";
-import { applyFrame, initialLanState, type LanAppState, seedSessions } from "./store-pure";
+import { applyFrame, initialLanState, type LanAppState, seedSessions, seedTranscript } from "./store-pure";
 
 export type { LanAppState } from "./store-pure";
 
@@ -11,6 +11,8 @@ interface LanStore extends LanAppState {
 	logout: () => void;
 	setToken: (token: string) => void;
 	select: (sessionId: string | null) => void;
+	/** 历史会话按需拉 transcript（无种子时由 ChatView 触发）。 */
+	loadTranscript: (sessionId: string) => Promise<void>;
 	/** M2 写操作。返回 null = 成功，string = 错误提示。401 自动 logout。 */
 	sendPrompt: (sessionId: string, text: string) => Promise<string | null>;
 	abortSession: (sessionId: string) => Promise<string | null>;
@@ -31,6 +33,24 @@ export const useLanStore = create<LanStore>((set) => ({
 		connect();
 	},
 	select: (selected) => set({ selected }),
+	loadTranscript: async (sessionId) => {
+		const token = useLanStore.getState().token;
+		try {
+			const res = await fetch(
+				`/api/sessions/${encodeURIComponent(sessionId)}/transcript?t=${encodeURIComponent(token)}`,
+				{ cache: "no-store" },
+			);
+			if (res.status === 401) {
+				useLanStore.getState().logout();
+				return;
+			}
+			if (!res.ok) return;
+			const entry = (await res.json()) as LanTranscript;
+			useLanStore.setState((state) => seedTranscript(state, entry));
+		} catch {
+			// 网络失败：保持「加载中」，下次进入会话重试
+		}
+	},
 	sendPrompt: async (sessionId, text) => {
 		const res = await postApi(`/api/sessions/${encodeURIComponent(sessionId)}/prompt`, { text });
 		return res;
