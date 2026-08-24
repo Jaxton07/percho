@@ -206,7 +206,7 @@ async function sweepArchived(dir: string, sessionId: string): Promise<void> {
 				(
 					await readdir(dir)
 				)
-					.filter((f) => f.startsWith(prefix) && f.endsWith(".jsonl"))
+					.filter((f) => f !== `trace-${sessionId}.jsonl` && f.startsWith(prefix) && f.endsWith(".jsonl"))
 					.map(async (f) => {
 						const path = join(dir, f);
 						const { mtime } = await stat(path);

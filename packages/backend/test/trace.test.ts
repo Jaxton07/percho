@@ -81,10 +81,15 @@ describe("TraceRecorder", () => {
 			// 不变量：单文件 ≤ 轮转阈值 + 单批上限（轮转在整批 append 后触发），远高事故的 12.7GB 无界增长
 			expect(size).toBeLessThan(1024 + 128 * 128);
 		}
-		// 行数：12 批 × 128 条，轮转后 sweep 只留最近 5 份归档 + 活跃文件（旧归档被删，行丢了但文件有界）
+		// 轮转按实际 flush 块而非固定 128 条切分：异步 flush 的边界可落在批中，
+		// 因此保留的 5 个归档不保证刚好是 5 个完整测试批次。
 		const lines = await allLines(dir, sessionId);
-		expect(lines.length).toBeGreaterThanOrEqual(128 * 5);
-		expect(JSON.parse(lines[lines.length - 1] ?? "{}")).toMatchObject({ type: "tick", i: 128 * 12 - 1 });
+		expect(lines.length).toBeGreaterThanOrEqual(128 * 4 + 1);
+		expect(lines.map((line) => JSON.parse(line))).toContainEqual({
+			type: "tick",
+			i: 128 * 12 - 1,
+			pad: "y".repeat(32),
+		});
 	});
 
 	it("截断标记行可被 reducer 安全消费（replay 含标记行的事故 trace 不崩）", async () => {
@@ -123,6 +128,23 @@ describe("TraceRecorder", () => {
 		const active = await readFile(join(traceDir, `trace-${sessionId}.jsonl`), "utf8");
 		expect(JSON.parse(active.trim())).toEqual({ type: "agent_start" });
 		expect((await readFile(join(traceDir, archives[0] ?? ""), "utf8")).length).toBe(2048);
+	});
+
+	it("重开非超限活跃文件时不把它当作归档清理", async () => {
+		const dir = await tmpDir();
+		const sessionId = "s7";
+		const traceDir = join(dir, "traces");
+		await mkdir(traceDir, { recursive: true });
+		for (let i = 0; i < 5; i++) {
+			await writeFile(join(traceDir, `trace-${sessionId}.archive-${i}.jsonl`), `archive-${i}\n`);
+		}
+		const activePath = join(traceDir, `trace-${sessionId}.jsonl`);
+		await writeFile(activePath, "active\n");
+		const recorder = await TraceRecorder.create(dir, sessionId, { flushIntervalMs: 60_000 });
+		await recorder.close();
+		const files = await readdir(traceDir);
+		expect(await readFile(activePath, "utf8")).toBe("active\n");
+		expect(files.filter((f) => f !== `trace-${sessionId}.jsonl`)).toHaveLength(5);
 	});
 
 	it("缓冲字节超限：丢最旧保最新并留标记", async () => {
