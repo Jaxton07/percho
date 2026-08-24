@@ -1176,6 +1176,74 @@ describe("transcript reducer", () => {
 		} as unknown as AgentSessionEvent);
 		expect(state.todos).toEqual([{ content: "a", status: "in_progress" }]);
 	});
+
+	it("edit：tool_execution_end 把 details.patch 存进 UIToolCall.diff（turn-diff 数据源）", () => {
+		const PATCH = `--- src/a.ts\n+++ src/a.ts\n@@ -1 +1 @@\n-old\n+new\n`;
+		let state = emptyTranscript();
+		state = reduceEvent(state, ev("agent_start"));
+		state = reduceEvent(state, {
+			type: "message_update",
+			assistantMessageEvent: {
+				type: "toolcall_start",
+				contentIndex: 0,
+				partial: { toolCalls: [{ name: "edit" }] },
+			},
+		} as unknown as AgentSessionEvent);
+		state = reduceEvent(state, {
+			type: "message_update",
+			assistantMessageEvent: {
+				type: "toolcall_end",
+				contentIndex: 0,
+				toolCall: { id: "tc1", name: "edit", arguments: { path: "src/a.ts", edits: [] } },
+			},
+		} as unknown as AgentSessionEvent);
+		state = reduceEvent(state, {
+			type: "tool_execution_end",
+			toolCallId: "tc1",
+			toolName: "edit",
+			result: {
+				content: [{ type: "text", text: "ok" }],
+				details: { diff: "...", patch: PATCH, firstChangedLine: 1 },
+			},
+			isError: false,
+		} as unknown as AgentSessionEvent);
+		expect(state.streaming?.tools[0]?.diff).toBe(PATCH);
+
+		// turn_end 固化后 diff 随消息存活
+		state = reduceEvent(state, ev("turn_end"));
+		const assistant = state.messages[0];
+		if (assistant?.kind !== "assistant") throw new Error("expected assistant");
+		expect(assistant.tools[0]?.diff).toBe(PATCH);
+	});
+
+	it("edit：error / details 缺 patch 时不写 diff 字段", () => {
+		let state = emptyTranscript();
+		state = reduceEvent(state, ev("agent_start"));
+		state = reduceEvent(state, {
+			type: "message_update",
+			assistantMessageEvent: {
+				type: "toolcall_start",
+				contentIndex: 0,
+				partial: { toolCalls: [{ name: "edit" }] },
+			},
+		} as unknown as AgentSessionEvent);
+		state = reduceEvent(state, {
+			type: "message_update",
+			assistantMessageEvent: {
+				type: "toolcall_end",
+				contentIndex: 0,
+				toolCall: { id: "tc1", name: "edit", arguments: { path: "a", edits: [] } },
+			},
+		} as unknown as AgentSessionEvent);
+		state = reduceEvent(state, {
+			type: "tool_execution_end",
+			toolCallId: "tc1",
+			toolName: "edit",
+			result: { content: [{ type: "text", text: "no match" }], details: { patch: "--- a\n+++ b\n" } },
+			isError: true,
+		} as unknown as AgentSessionEvent);
+		expect(state.streaming?.tools[0]?.diff).toBeUndefined();
+	});
 });
 
 describe("messagesToUIMessages 历史回放", () => {
@@ -1255,6 +1323,34 @@ describe("messagesToUIMessages 历史回放", () => {
 			kind: "subagent",
 			runs: [{ agent: "reviewer", status: "done", sessionFile: "/s.jsonl" }],
 		});
+	});
+
+	it("SessionToolCall.diff 透传到 UIToolCall（历史 diff 侧栏）", () => {
+		const ui = messagesToUIMessages([
+			{ role: "user", text: "u", thinking: "", tools: [], images: [], timestamp: 1 },
+			{
+				role: "assistant",
+				text: "",
+				thinking: "",
+				tools: [
+					{
+						id: "tc1",
+						name: "edit",
+						args: '{"path":"a.ts"}',
+						output: "",
+						isError: false,
+						diff: "--- a\n+++ b\n",
+					},
+					{ id: "tc2", name: "read", args: "{}", output: "", isError: false },
+				],
+				images: [],
+				timestamp: 2,
+			},
+		]);
+		const assistant = ui[1];
+		if (assistant?.kind !== "assistant") throw new Error("expected assistant");
+		expect(assistant.tools[0]?.diff).toBe("--- a\n+++ b\n");
+		expect(assistant.tools[1]?.diff).toBeUndefined();
 	});
 });
 

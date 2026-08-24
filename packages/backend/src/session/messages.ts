@@ -263,6 +263,11 @@ export function toSessionMessages(rawMessages: readonly unknown[]): SessionMessa
 			if (tool) {
 				tool.output = blockText(raw.content);
 				tool.isError = raw.isError === true;
+				// edit：unified patch 提取进 SessionToolCall.diff（diff 侧栏历史回放数据源；模型不可见）
+				if (tool.name === "edit" && !tool.isError) {
+					const patch = (raw.details as { patch?: unknown } | undefined)?.patch;
+					if (typeof patch === "string" && patch.length > 0) tool.diff = patch;
+				}
 				// show_image：图片从 details 提取为独立图片消息（紧随其 assistant 消息之后）
 				if (tool.name === "show_image" && !tool.isError) {
 					const shown = showImageFromDetails(raw.details);

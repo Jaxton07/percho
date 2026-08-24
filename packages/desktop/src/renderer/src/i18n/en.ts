@@ -142,6 +142,18 @@ export const en: Messages = {
 			mutex: "Detected subagent extension {path}; built-in subagent took over: {tools}",
 		},
 	},
+	diff: {
+		toggle: "Changes sidebar",
+		title: "Changes",
+		filesChanged: "{count} {unit} changed",
+		filesSummary: "{count} files",
+		openSidebar: "View in sidebar",
+		scopeAll: "All",
+		scopeLatest: "Latest turn",
+		empty: "No file changes in this session yet",
+		expandMore: "Show remaining {lines} lines",
+		turnLabel: "Turn {n}",
+	},
 	tool: {
 		running: "Running…",
 	},

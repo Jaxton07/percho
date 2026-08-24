@@ -76,6 +76,8 @@ export interface SessionToolCall {
 	args: string;
 	/** 执行输出 */
 	output: string;
+	/** unified patch（仅 edit 工具成功时从 toolResult.details.patch 提取；历史回放 diff 侧栏用） */
+	diff?: string;
 	isError: boolean;
 }
 

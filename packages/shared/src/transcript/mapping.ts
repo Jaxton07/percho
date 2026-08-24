@@ -43,6 +43,7 @@ export function messagesToUIMessages(messages: SessionMessage[]): UIMessage[] {
 			name: tool.name,
 			args: tool.args,
 			output: tool.output,
+			...(tool.diff ? { diff: tool.diff } : {}),
 			state: tool.isError ? "error" : "done",
 		}));
 		ui.push({

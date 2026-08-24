@@ -139,6 +139,18 @@ export const zh = {
 			mutex: "检测到 subagent 扩展 {path}，其工具已由内置 subagent 接管：{tools}",
 		},
 	},
+	diff: {
+		toggle: "变更侧栏",
+		title: "变更",
+		filesChanged: "修改了 {count} 个文件",
+		filesSummary: "{count} 文件",
+		openSidebar: "侧栏查看",
+		scopeAll: "全部",
+		scopeLatest: "最近一轮",
+		empty: "本会话还没有文件变更",
+		expandMore: "展开其余 {lines} 行",
+		turnLabel: "第 {n} 轮",
+	},
 	tool: {
 		running: "运行中…",
 	},

@@ -90,6 +90,8 @@ export interface UIToolCall {
 	args: string;
 	/** 执行输出累积 */
 	output: string;
+	/** unified patch（仅 edit 工具成功时由 SDK details.patch 写入；write/其他工具无此字段） */
+	diff?: string;
 	state: "running" | "done" | "error";
 	/** content 块绝对索引（toolcall_start 时记录）：与 StreamingState.textBlockIndex 比较判定「正文前/正文后」，
 	 * 保住同 turn 内 text→toolCall 交错的时序；历史回放消息由 backend 预拆分，不带此字段 */

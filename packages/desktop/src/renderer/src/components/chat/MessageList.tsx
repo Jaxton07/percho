@@ -1,5 +1,5 @@
-import { buildChatRows, isAgentWorking } from "@percho/shared";
-import { type MouseEvent, useCallback, useEffect, useRef, useState } from "react";
+import { buildChatRows, deriveTurnChanges, isAgentWorking, type TurnChanges } from "@percho/shared";
+import { type MouseEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useT } from "../../i18n";
 import { Slot } from "../../plugins/Slot";
 import { UI_SLOTS } from "../../plugins/slots";
@@ -10,6 +10,7 @@ import { CenterOrb } from "./CenterOrb";
 import { MessageItem } from "./MessageItem";
 import { MetaGroup } from "./MetaGroup";
 import { SubagentRunCard } from "./SubagentRunCard";
+import { TurnDiffChip } from "./TurnDiffChip";
 import { useShownWorking } from "./use-shown-working";
 
 /** 距底 ≤ 此值视为「在底部」，自动恢复跟随 */
@@ -112,38 +113,79 @@ export function MessageList() {
 	};
 
 	// 行序列由 shared buildChatRows 产出（与 lan-web 同一分组大脑）；此处只做行模型 → JSX 映射
-	const items = buildChatRows(transcript, String(activeSessionId)).map((row) => {
+	// 轮次文件变更 chip：位置式插入——turn i 的 chip 插到第 i+1 条 user 行之前，最后一轮追加到末尾。
+	//（不锚消息行：轮末 assistant 无正文时会被吸进折叠组，没有独立行可锚。streaming 中的轮次
+	// 工具未固化进 messages，天然不满足「turn_end 后才出现」）
+	const turnChanges = useMemo(() => deriveTurnChanges(transcript.messages), [transcript.messages]);
+	// 进场动画只给「本会话查看期间新完成的最后一轮」播：基线在切会话/历史重建时对齐，不随渲染更新（防 agent_end 紧随的二次渲染摘掉动画类）
+	const turnBaselineRef = useRef({ sid: activeSessionId, count: 0 });
+	if (turnBaselineRef.current.sid !== activeSessionId) {
+		turnBaselineRef.current = { sid: activeSessionId, count: turnChanges.length };
+	}
+	const enteringTurn =
+		turnChanges.length > turnBaselineRef.current.count
+			? turnChanges[turnChanges.length - 1]?.turnIndex
+			: null;
+
+	const rows = buildChatRows(transcript, String(activeSessionId));
+	const chipBeforeRow = new Map<number, TurnChanges>();
+	const changeByTurn = new Map(turnChanges.map((tc) => [tc.turnIndex, tc]));
+	let userRowCount = 0;
+	for (let i = 0; i < rows.length; i++) {
+		const row = rows[i];
+		if (row?.kind === "message" && row.message.kind === "user") {
+			const tc = changeByTurn.get(userRowCount - 1);
+			if (tc) chipBeforeRow.set(i, tc);
+			userRowCount++;
+		}
+	}
+	// 最后一轮（无下一条 user 行）的 chip 追加到行序列末尾
+	const tailChanges = changeByTurn.get(userRowCount - 1);
+
+	const renderChip = (tc: TurnChanges) => (
+		<div key={`turn-diff-${tc.turnIndex}`} className="-mt-4">
+			<TurnDiffChip changes={tc} entering={tc.turnIndex === enteringTurn} />
+		</div>
+	);
+
+	const items: React.ReactNode[] = [];
+	rows.forEach((row, rowIndex) => {
+		const chip = chipBeforeRow.get(rowIndex);
+		if (chip) items.push(renderChip(chip));
 		if (row.kind === "metaGroup") {
-			return (
+			items.push(
 				<MetaGroup
 					key={row.key}
 					items={row.items}
 					working={row.working}
 					endImmediately={row.endImmediately}
 					subagentCount={row.subagentCount}
-				/>
+				/>,
 			);
+			return;
 		}
 		if (row.kind === "streamingSubagents") {
-			return (
+			items.push(
 				<Slot
 					key={row.key}
 					name={UI_SLOTS.SubagentCard}
 					props={{ runs: row.runs }}
 					fallback={SubagentRunCard}
-				/>
+				/>,
 			);
+			return;
 		}
-		return (
+		items.push(
 			<MessageItem
 				key={row.key}
 				message={row.message}
 				metaInGroup={row.metaInGroup}
 				showActions={row.showActions}
 				streaming={row.streaming}
-			/>
+			/>,
 		);
 	});
+	if (tailChanges) items.push(renderChip(tailChanges));
 
 	return (
 		<div className="relative h-full">

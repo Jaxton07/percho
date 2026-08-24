@@ -4,6 +4,7 @@ import { extractSubagentRuns } from "../subagent";
 import { extractTodos, TODO_TOOL_NAME } from "../todo";
 import {
 	emptyStreaming,
+	extractEditPatch,
 	extractExecutionDelta,
 	extractShowImage,
 	findLastIndex,
@@ -399,9 +400,15 @@ export function reduceEvent(state: SessionTranscriptState, event: SessionEvent):
 					},
 				};
 			}
+			// edit 工具成功 → 存 unified patch（turn-diff chip / diff 侧栏数据源）
+			const editPatch = event.toolName === "edit" && !event.isError ? extractEditPatch(event.result) : null;
 			const tools = streaming.tools.map((t) =>
 				t.id === event.toolCallId
-					? { ...t, state: (event.isError ? "error" : "done") as "error" | "done" }
+					? {
+							...t,
+							state: (event.isError ? "error" : "done") as "error" | "done",
+							...(editPatch ? { diff: editPatch } : {}),
+						}
 					: t,
 			);
 			// show_image：图片先入 pendingImages 缓冲，turn_end 固化时排在 assistant 消息之后

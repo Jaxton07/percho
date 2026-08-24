@@ -4,6 +4,7 @@ import { getPi } from "./api";
 import { EmptyState } from "./components/chat/EmptyState";
 import { MessageList } from "./components/chat/MessageList";
 import { TodoPanel } from "./components/chat/TodoPanel";
+import { DiffSidebar } from "./components/diff/DiffSidebar";
 import { ProjectPage } from "./components/projects/ProjectPage";
 import { ApprovalDock } from "./components/session/ApprovalDock";
 import { SessionRail } from "./components/session/SessionRail";
@@ -106,19 +107,23 @@ export default function App() {
 					</div>
 				) : (
 					/* SessionRail 以整列（tab bar 以下全视口）为定位基准：不在 main 内，
-					   否则输入框（ApprovalDock）高度变化会压缩 main，轨道垂直居中随之漂移 */
-					<div className="relative flex min-h-0 flex-1 flex-col">
-						<main className="relative min-h-0 flex-1">
-							{showEmpty ? <EmptyState /> : <MessageList />}
-							<Slot name={UI_SLOTS.TodoPanel} props={{}} fallback={TodoPanel} />
-							{/* 聊天区四角贡献层（top-right 与 TodoPanel 同角，容器已预留 pt-12） */}
-							<RegionHost region={UI_REGIONS.CornerTopLeft} />
-							<RegionHost region={UI_REGIONS.CornerTopRight} />
-							<RegionHost region={UI_REGIONS.CornerBottomLeft} />
-							<RegionHost region={UI_REGIONS.CornerBottomRight} />
-						</main>
-						<ApprovalDock sessionId={activeSessionId} hideComposer={showEmpty} />
-						<SessionRail />
+					   否则输入框（ApprovalDock）高度变化会压缩 main，轨道垂直居中随之漂移。
+					   外层 flex-row：末尾挂 DiffSidebar（push 式，聊天列自然压缩） */
+					<div className="relative flex min-h-0 flex-1">
+						<div className="relative flex min-w-0 flex-1 flex-col">
+							<main className="relative min-h-0 flex-1">
+								{showEmpty ? <EmptyState /> : <MessageList />}
+								<Slot name={UI_SLOTS.TodoPanel} props={{}} fallback={TodoPanel} />
+								{/* 聊天区四角贡献层（top-right 与 TodoPanel 同角，容器已预留 pt-12） */}
+								<RegionHost region={UI_REGIONS.CornerTopLeft} />
+								<RegionHost region={UI_REGIONS.CornerTopRight} />
+								<RegionHost region={UI_REGIONS.CornerBottomLeft} />
+								<RegionHost region={UI_REGIONS.CornerBottomRight} />
+							</main>
+							<ApprovalDock sessionId={activeSessionId} hideComposer={showEmpty} />
+							<SessionRail />
+						</div>
+						<DiffSidebar />
 					</div>
 				)}
 			</div>

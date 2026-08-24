@@ -120,3 +120,10 @@ export function extractShowImage(result: unknown): { images: ImageInput[]; paths
 	if (!legacy) return null;
 	return { images: [legacy], paths: typeof d?.path === "string" ? [d.path] : [] };
 }
+
+/** edit 工具结果 → unified patch（details.patch 由 SDK edit-diff 产出；结构不符/非字符串返回 null） */
+export function extractEditPatch(result: unknown): string | null {
+	const details = (result as { details?: unknown } | null | undefined)?.details;
+	const patch = (details as { patch?: unknown } | undefined)?.patch;
+	return typeof patch === "string" && patch.length > 0 ? patch : null;
+}

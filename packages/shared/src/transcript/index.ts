@@ -16,7 +16,14 @@ export {
 	summarizeCategories,
 	type ToolCategory,
 } from "./meta-summary";
+export { type PatchHunk, type PatchLine, parsePatch, patchStat } from "./parse-patch";
 export { reduceEvent } from "./reducer";
+export {
+	type DiffSection,
+	deriveTurnChanges,
+	type TurnChanges,
+	type TurnFileChange,
+} from "./turn-files";
 export {
 	type ActivityEntry,
 	type CompactionUiState,
