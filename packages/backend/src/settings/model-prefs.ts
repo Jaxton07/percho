@@ -1,8 +1,5 @@
-import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
-import { dirname, join } from "node:path";
 import type { ModelPrefs } from "@percho/shared";
-
-const EMPTY_PREFS: ModelPrefs = { hiddenModels: {}, subagentModels: {} };
+import { JsonStore } from "../json-store";
 
 function copyPrefs(prefs: ModelPrefs): ModelPrefs {
 	return {
@@ -46,29 +43,28 @@ export class ModelPrefsService {
 
 	constructor(private readonly configPath: string) {}
 
+	private store(): JsonStore<Partial<ModelPrefs>> {
+		return new JsonStore<Partial<ModelPrefs>>({
+			path: this.configPath,
+			defaultValue: () => ({}),
+		});
+	}
+
 	private async read(): Promise<ModelPrefs> {
 		if (this.cache) return this.cache;
-		let prefs = copyPrefs(EMPTY_PREFS);
-		try {
-			const data = JSON.parse(await readFile(this.configPath, "utf8")) as Partial<ModelPrefs>;
-			prefs = {
-				hiddenModels: normalizeHiddenModels(data.hiddenModels),
-				subagentModels: normalizeStringMap(data.subagentModels),
-			};
-		} catch {
-			// 文件不存在或损坏：安全地回退为空配置
-		}
+		// 损坏/缺失回退空配置（JsonStore 保证）；字段级规整仍在服务层
+		const data = await this.store().read();
+		const prefs: ModelPrefs = {
+			hiddenModels: normalizeHiddenModels(data.hiddenModels),
+			subagentModels: normalizeStringMap(data.subagentModels),
+		};
 		this.cache = prefs;
 		return prefs;
 	}
 
 	private async write(prefs: ModelPrefs): Promise<void> {
 		this.cache = prefs;
-		const dir = dirname(this.configPath);
-		await mkdir(dir, { recursive: true });
-		const tmp = join(dir, `.${Math.random().toString(36).slice(2)}.model-prefs.tmp`);
-		await writeFile(tmp, `${JSON.stringify(prefs, null, 2)}\n`, "utf8");
-		await rename(tmp, this.configPath);
+		await this.store().write(prefs);
 	}
 
 	async getPrefs(): Promise<ModelPrefs> {

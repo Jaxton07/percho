@@ -76,6 +76,8 @@ export interface SessionToolCall {
 	args: string;
 	/** 执行输出 */
 	output: string;
+	/** unified patch（仅 edit 工具成功时从 toolResult.details.patch 提取；历史回放 diff 侧栏用） */
+	diff?: string;
 	isError: boolean;
 }
 
@@ -92,7 +94,7 @@ export interface SessionUserMessage {
 	entryId?: string;
 	/** 已展开 skill 的安全展示信息（不含正文或路径） */
 	skill?: SkillInvocationDisplay;
-	/** 已持久化的完整文本；只供实时撤回匹配，绝不能展示、复制或进入可访问文本 */
+	/** 已持久化的完整文本（skill 展开或展示净化后保留）；只供撤回匹配，绝不能展示、复制或进入可访问文本 */
 	sourceText?: string;
 }
 
@@ -106,6 +108,8 @@ export interface SessionAssistantMessage {
 	timestamp: number;
 	/** 会话树中的 entry id（fork 精确定位用，匹配失败时缺省） */
 	entryId?: string;
+	/** 已持久化的完整正文（展示净化后保留）；只供 fork fallback 匹配，绝不能展示、复制或进入可访问文本 */
+	sourceText?: string;
 }
 
 /** 历史会话消息（打开历史会话时回放用；不依赖 pi 内部类型） */
@@ -199,8 +203,20 @@ export interface PermissionRequest {
 
 export type PermissionAnswer = "allow" | "deny" | "allowAlways" | "allowDir";
 
+/** 权限请求已裁决（answered=true 为批准/拒绝，false 为取消/过期）。 */
+export interface PermissionResolved {
+	sessionId: string;
+	requestId: string;
+	answered: boolean;
+}
+
 /** 权限门控配置（设置 UI 开关；规则全文在 ~/.pi/agent/permissions.json） */
 export interface PermissionConfigInfo {
+	enabled: boolean;
+}
+
+/** ACP 上下文压缩配置（设置 UI 开关；键在 ~/.pi/agent/settings.json，缺省=开） */
+export interface AcpConfigInfo {
 	enabled: boolean;
 }
 

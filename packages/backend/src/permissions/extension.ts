@@ -12,6 +12,7 @@ import {
 	suggestPattern,
 } from ".";
 import type { PermissionRequestMeta } from "./gate";
+import { isRmSegment, isTemporaryPath, rmSegmentExempt } from "./tmp-zone";
 
 const log = createLogger("permission-gate");
 
@@ -37,8 +38,11 @@ export interface PermissionGateOptions {
 
 /**
  * 内置权限门控扩展：只用 pi 公开扩展 API（tool_call 钩子 + 确认通道）。
- * 求值顺序（设计见 .local/docs/design/phase2/permission-workspace.md）：
+ * 求值顺序（设计见 .local/docs/design/phase2/permission-workspace.md、spec permission-tmp-zone）：
  *  ① 全局规则 permissions.json —— deny 直接 block
+ *  ②' 系统临时区（os.tmpdir() ∪ /tmp，绝对地理概念，不依赖 projectRoot）：路径工具与
+ *      rm 段目标全落临时区时按 outside.temporary 处置（默认 allow：agent 临时工作流免打断；
+ *      可覆盖 ask，永不可覆盖 deny；仅改写 allow，不放松显式 ask）
  *  ② 路径边界（多根：projectRoot ∪ workspaces.json roots）—— 界外读放行/界外写确认（读写分离）
  *  ③ 项目记忆 workspaces.json allowed[]（allowAlways 持久化）—— 命中放行（可覆盖 ask，不可覆盖 deny）
  *  ④ ask → confirm（带 kind/suggestDir 元数据 → ApprovalDock 第四按钮「允许此目录」）
@@ -60,9 +64,16 @@ export function makePermissionGateExtension(
 				if (!config.enabled) return;
 				const input = (event.input ?? {}) as Record<string, unknown>;
 				const matchText = matchTextFor(event.toolName, input);
-				// bash 单次求值同时拿到命中段（弹窗标题定位用）
+				// 相对路径 resolve 基准：projectRoot ?? ctx.cwd（皆缺时 tmp 豁免仅绝对路径可判，fail-safe）
+				const base: string | undefined = projectRoot ?? ctx.cwd;
+				// bash 单次求值同时拿到命中段（弹窗标题定位用）；段豁免钩子（②'）：rm 家族且
+				// 全目标在临时区 → outside.temporary（默认 allow 跳过 rm 兜底；deny 永不被覆盖，在钩子内保证）
+				const rmExempt = (segment: string): PermissionAction | null =>
+					isRmSegment(segment) && rmSegmentExempt(segment, base) ? config.outside.temporary : null;
 				const bashResult =
-					event.toolName === "bash" && matchText ? evaluateBashCommand(config.rules, matchText) : null;
+					event.toolName === "bash" && matchText
+						? evaluateBashCommand(config.rules, matchText, "ask", rmExempt)
+						: null;
 				let action: PermissionAction = bashResult
 					? bashResult.action
 					: evaluateRules(config.rules, event.toolName, matchText);
@@ -75,24 +86,38 @@ export function makePermissionGateExtension(
 					};
 				}
 
-				// 路径边界（多根）：有 projectRoot 才检查。路径工具的匹配文本统一用
-				// resolve 后的绝对路径（记忆键/弹窗标题跨相对绝对写法稳定）
+				// 路径边界（多根）+ 临时区（②'）：路径工具的匹配文本统一用 resolve 后的绝对路径
+				// （记忆键/弹窗标题跨相对绝对写法稳定）
 				const isPath = PATH_TOOLS.has(event.toolName);
 				let patternText: string | null = matchText;
 				let outside = false;
-				if (projectRoot && isPath && matchText) {
-					const abs = isAbsolute(matchText) ? matchText : resolve(projectRoot, matchText);
-					const roots = [projectRoot, ...(loadWorkspaces().projects[projectRoot]?.roots ?? [])];
-					const inside = roots.some((root) => {
-						const rel = relative(root, abs);
-						return !rel.startsWith("..") && !isAbsolute(rel);
-					});
-					patternText = abs;
-					if (!inside) {
-						outside = true;
-						// 读写分离：界外读默认放行（拦读不换安全只损效率），界外写确认
+				if (isPath && matchText) {
+					// 绝对路径直接用；相对按 base resolve；无 base 无从判定（保持原样，不进任一地理分支）
+					const abs = isAbsolute(matchText)
+						? matchText
+						: base !== undefined
+							? resolve(base, matchText)
+							: null;
+					// ②' 临时区优先：绝对地理概念（projectRoot 在临时区内也按 tmp 语义，spec §2 边界澄清）；
+					// 沿用守卫——只在 action=allow 时改写（deny ① 已返回，显式 ask 规则不被放松）
+					if (abs !== null && isTemporaryPath(abs)) {
+						patternText = abs;
 						if (action === "allow") {
-							action = READ_TOOLS.has(event.toolName) ? config.outside.read : config.outside.write;
+							action = config.outside.temporary;
+						}
+					} else if (projectRoot && abs !== null) {
+						const roots = [projectRoot, ...(loadWorkspaces().projects[projectRoot]?.roots ?? [])];
+						const inside = roots.some((root) => {
+							const rel = relative(root, abs);
+							return !rel.startsWith("..") && !isAbsolute(rel);
+						});
+						patternText = abs;
+						if (!inside) {
+							outside = true;
+							// 读写分离：界外读默认放行（拦读不换安全只损效率），界外写确认
+							if (action === "allow") {
+								action = READ_TOOLS.has(event.toolName) ? config.outside.read : config.outside.write;
+							}
 						}
 					}
 				}

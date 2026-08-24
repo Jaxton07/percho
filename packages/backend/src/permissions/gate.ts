@@ -18,7 +18,7 @@ let nextId = 0;
 export class PermissionGate {
 	private readonly pending = new Map<
 		string,
-		{ resolve: (answer: boolean) => void; meta?: PermissionRequestMeta }
+		{ resolve: (answer: boolean) => void; message: string; meta?: PermissionRequestMeta }
 	>();
 	private readonly titles = new Map<string, string>();
 	private readonly alwaysAllowed = new Set<string>();
@@ -39,7 +39,7 @@ export class PermissionGate {
 		}
 		const id = `perm-${this.sessionId}-${nextId++}`;
 		return new Promise<boolean>((resolve) => {
-			this.pending.set(id, { resolve, meta });
+			this.pending.set(id, { resolve, message, meta });
 			this.titles.set(id, title);
 			this.onRequest({
 				id,
@@ -56,6 +56,18 @@ export class PermissionGate {
 	getRequest(requestId: string): { title: string; meta?: PermissionRequestMeta } | undefined {
 		if (!this.pending.has(requestId)) return undefined;
 		return { title: this.titles.get(requestId) ?? "", meta: this.pending.get(requestId)?.meta };
+	}
+
+	/** 全部未决请求的只读快照（LAN Observer 等被动观察者用）。 */
+	listPending(): PermissionRequest[] {
+		return [...this.pending.entries()].map(([id, entry]) => ({
+			id,
+			sessionId: this.sessionId,
+			title: this.titles.get(id) ?? "",
+			message: entry.message,
+			kind: entry.meta?.kind ?? "other",
+			suggestDir: entry.meta?.suggestDir,
+		}));
 	}
 
 	/** 请求所属会话（持久化定位项目根用） */

@@ -1,5 +1,7 @@
+import type { LanStatus } from "./lan";
 import type { CatalogPackageType, CatalogSearchResult, ConfiguredPackageInfo } from "./packages";
 import type {
+	AcpConfigInfo,
 	AppInfo,
 	ContextUsageInfo,
 	CreateSessionOptions,
@@ -9,6 +11,7 @@ import type {
 	PermissionAnswer,
 	PermissionConfigInfo,
 	PermissionRequest,
+	PermissionResolved,
 	QueuedMessages,
 	SavedTabs,
 	SessionEventEnvelope,
@@ -96,10 +99,18 @@ export const IpcChannels = {
 	VisionSaveConfig: "vision:saveConfig",
 	VisionTest: "vision:test",
 	VisionSetLanguage: "vision:setLanguage",
+	/** 局域网观察页（默认关闭、只读服务）。 */
+	LanGetStatus: "lan:getStatus",
+	LanSetEnabled: "lan:setEnabled",
+	/** 局域网远程控制二级开关（M2；默认关闭，开观察 ≠ 开控制）。 */
+	LanSetRemoteControl: "lan:setRemoteControl",
 	PermissionRespond: "permission:respond",
 	/** 权限门控配置（设置 UI 开关） */
 	PermissionGetConfig: "permission:getConfig",
 	PermissionSetEnabled: "permission:setEnabled",
+	/** ACP 上下文压缩开关（设置 UI「通用」面板） */
+	AcpGetConfig: "acp:getConfig",
+	AcpSetEnabled: "acp:setEnabled",
 	/** 项目信任应答（选项下标） */
 	TrustRespond: "trust:respond",
 	/** 项目信任前置决策（添加项目/切换 draft cwd 时调用，未决则弹窗） */
@@ -121,8 +132,10 @@ export const IpcChannels = {
 	UiStateSave: "uiState:save",
 	/** 自定义背景：弹图选框并拷贝进 userData/backgrounds/，返回文件名（取消返回 null） */
 	BackgroundPick: "background:pick",
-	/** 检查更新（silent=true 静默：无更新不打扰） */
+	/** 检查更新（纯检查：发现新版只提示不下载） */
 	UpdateCheck: "update:check",
+	/** 下载更新（已发现新版→下载；未发现→先检查）；仅用户显式点击触发 */
+	UpdateDownload: "update:download",
 	/** 重启并安装已下载的更新 */
 	UpdateInstall: "update:install",
 	/** main → renderer 更新状态 */
@@ -148,6 +161,8 @@ export const IpcChannels = {
 	/** main → renderer 事件 */
 	Event: "pi:event",
 	PermissionRequest: "pi:permission-request",
+	/** main → renderer 权限请求已裁决（含 LAN 远程应答；桌面端据此撤卡） */
+	PermissionResolved: "pi:permission-resolved",
 	/** main → renderer 项目信任请求（会话创建前） */
 	TrustRequest: "pi:trust-request",
 } as const;
@@ -249,11 +264,21 @@ export interface PiApi {
 	testVision(): Promise<VisionTestResult>;
 	/** 推送界面语言（识别描述语言跟随；backend 内存态） */
 	setVisionLanguage(language: "zh" | "en"): Promise<void>;
+	/** 读取局域网观察服务状态（URL/二维码只在启用并监听后提供）。 */
+	lanGetStatus(): Promise<LanStatus>;
+	/** 启用或停止局域网只读观察服务；启用时轮换访问 token。 */
+	lanSetEnabled(enabled: boolean): Promise<LanStatus>;
+	/** 设置远程控制开关（独立于观察开关；未开观察时允许配置但不生效）。 */
+	lanSetRemoteControl(enabled: boolean): Promise<LanStatus>;
 	respondPermission(requestId: string, answer: PermissionAnswer): Promise<void>;
 	/** 读取权限门控开关状态 */
 	getPermissionConfig(): Promise<PermissionConfigInfo>;
 	/** 设置权限门控开关（即时生效，扩展按 mtime 重读配置） */
 	setPermissionEnabled(enabled: boolean): Promise<void>;
+	/** 读取 ACP 上下文压缩开关状态 */
+	getAcpConfig(): Promise<AcpConfigInfo>;
+	/** 设置 ACP 上下文压缩开关（写后即生效：压中的会话下一轮停压，工具注册随下次会话重载） */
+	setAcpEnabled(enabled: boolean): Promise<void>;
 	/** 应答项目信任请求（optionIndex 为 TrustRequest.options 下标） */
 	respondTrust(requestId: string, answer: TrustAnswer): Promise<void>;
 	/** 项目信任前置决策（选目录/切 draft cwd 时调用；未决弹窗，结果落 trust.json） */
@@ -279,8 +304,10 @@ export interface PiApi {
 	saveUiState(state: Partial<UiState>): Promise<void>;
 	/** 弹图选框选背景图并拷贝进 userData/backgrounds/；返回文件名（经 pi-bg://background/<name> 加载），取消返回 null */
 	pickBackgroundImage(): Promise<string | null>;
-	/** 检查更新（发现新版自动开始后台下载，状态经 onUpdateEvent 推送） */
+	/** 检查更新（纯检查不下载，状态经 onUpdateEvent 推送） */
 	checkForUpdates(): Promise<void>;
+	/** 下载更新（已发现新版→下载；未发现→先检查） */
+	downloadUpdate(): Promise<void>;
 	/** 重启并安装已下载的更新 */
 	installUpdate(): Promise<void>;
 	/** 订阅更新状态（checking/available/downloading/downloaded/error）；返回取消函数 */
@@ -306,6 +333,7 @@ export interface PiApi {
 	/** 订阅会话事件；返回取消函数 */
 	onEvent(cb: (payload: SessionEventEnvelope) => void): () => void;
 	onPermissionRequest(cb: (req: PermissionRequest) => void): () => void;
+	onPermissionResolved(cb: (result: PermissionResolved) => void): () => void;
 	/** 订阅项目信任请求；返回取消函数 */
 	onTrustRequest(cb: (req: TrustRequest) => void): () => void;
 }

@@ -56,6 +56,28 @@ describe("autoNameSession", () => {
 		expect(calls).toEqual([]);
 	});
 
+	it("SDK 展开的 skill 命令还原为 /skill:name args 再取首行（不拿 XML 头当标题）", () => {
+		const { session, calls } = makeSession();
+		autoNameSession(
+			session,
+			userMsg(
+				'<skill name="mindmap" location="/tmp/skills/mindmap/SKILL.md">\nReferences are relative to /tmp/skills/mindmap.\n\n# Mind map\n\nBody\n</skill>\n\n帮我画架构图\n细节补充',
+			),
+		);
+		expect(calls).toEqual(["/skill:mindmap 帮我画架构图"]);
+	});
+
+	it("skill 无参数时标题为 /skill:name", () => {
+		const { session, calls } = makeSession();
+		autoNameSession(
+			session,
+			userMsg(
+				'<skill name="mindmap" location="/tmp/skills/mindmap/SKILL.md">\nReferences are relative to /tmp/skills/mindmap.\n\n# Mind map\n\nBody\n</skill>',
+			),
+		);
+		expect(calls).toEqual(["/skill:mindmap"]);
+	});
+
 	it("纯图片消息不命名，后续文本消息仍可命名", () => {
 		const { session, calls } = makeSession();
 		autoNameSession(session, {

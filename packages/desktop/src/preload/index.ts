@@ -74,10 +74,15 @@ const api: PiApi = {
 		ipcRenderer.invoke(IpcChannels.PermissionRespond, requestId, answer),
 	getPermissionConfig: () => ipcRenderer.invoke(IpcChannels.PermissionGetConfig),
 	setPermissionEnabled: (enabled) => ipcRenderer.invoke(IpcChannels.PermissionSetEnabled, enabled),
+	getAcpConfig: () => ipcRenderer.invoke(IpcChannels.AcpGetConfig),
+	setAcpEnabled: (enabled) => ipcRenderer.invoke(IpcChannels.AcpSetEnabled, enabled),
 	getVisionConfig: () => ipcRenderer.invoke(IpcChannels.VisionGetConfig),
 	saveVisionConfig: (input) => ipcRenderer.invoke(IpcChannels.VisionSaveConfig, input),
 	testVision: () => ipcRenderer.invoke(IpcChannels.VisionTest),
 	setVisionLanguage: (language) => ipcRenderer.invoke(IpcChannels.VisionSetLanguage, language),
+	lanGetStatus: () => ipcRenderer.invoke(IpcChannels.LanGetStatus),
+	lanSetEnabled: (enabled) => ipcRenderer.invoke(IpcChannels.LanSetEnabled, enabled),
+	lanSetRemoteControl: (enabled) => ipcRenderer.invoke(IpcChannels.LanSetRemoteControl, enabled),
 	respondTrust: (requestId, answer) => ipcRenderer.invoke(IpcChannels.TrustRespond, requestId, answer),
 	ensureProjectTrust: (cwd) => ipcRenderer.invoke(IpcChannels.ProjectEnsureTrust, cwd),
 	pickDirectory: () => ipcRenderer.invoke(IpcChannels.ProjectPickDirectory),
@@ -93,6 +98,7 @@ const api: PiApi = {
 	saveUiState: (state) => ipcRenderer.invoke(IpcChannels.UiStateSave, state),
 	pickBackgroundImage: () => ipcRenderer.invoke(IpcChannels.BackgroundPick),
 	checkForUpdates: () => ipcRenderer.invoke(IpcChannels.UpdateCheck),
+	downloadUpdate: () => ipcRenderer.invoke(IpcChannels.UpdateDownload),
 	installUpdate: () => ipcRenderer.invoke(IpcChannels.UpdateInstall),
 	uiPluginsGetConfig: () => ipcRenderer.invoke(IpcChannels.UiPluginsGetConfig),
 	uiPluginsSetEnabled: (enabled) => ipcRenderer.invoke(IpcChannels.UiPluginsSetEnabled, enabled),
@@ -123,6 +129,11 @@ const api: PiApi = {
 		const listener = (_event: unknown, req: Parameters<typeof cb>[0]) => cb(req);
 		ipcRenderer.on(IpcChannels.PermissionRequest, listener);
 		return () => ipcRenderer.removeListener(IpcChannels.PermissionRequest, listener);
+	},
+	onPermissionResolved: (cb) => {
+		const listener = (_event: unknown, result: Parameters<typeof cb>[0]) => cb(result);
+		ipcRenderer.on(IpcChannels.PermissionResolved, listener);
+		return () => ipcRenderer.removeListener(IpcChannels.PermissionResolved, listener);
 	},
 	onTrustRequest: (cb) => {
 		const listener = (_event: unknown, req: Parameters<typeof cb>[0]) => cb(req);

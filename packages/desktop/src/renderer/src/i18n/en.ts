@@ -142,6 +142,18 @@ export const en: Messages = {
 			mutex: "Detected subagent extension {path}; built-in subagent took over: {tools}",
 		},
 	},
+	diff: {
+		toggle: "Changes sidebar",
+		title: "Changes",
+		filesChanged: "{count} {unit} changed",
+		filesSummary: "{count} files",
+		openSidebar: "View in sidebar",
+		scopeAll: "All",
+		scopeLatest: "Latest turn",
+		empty: "No file changes in this session yet",
+		expandMore: "Show remaining {lines} lines",
+		turnLabel: "Turn {n}",
+	},
 	tool: {
 		running: "Running…",
 	},
@@ -182,6 +194,7 @@ export const en: Messages = {
 			extensions: "Extensions",
 			uiPlugins: "UI Plugins",
 			vision: "Vision",
+			lan: "LAN Observer",
 			about: "About",
 		},
 		language: "Language",
@@ -200,6 +213,9 @@ export const en: Messages = {
 		permissionGate: "Built-in permission gate",
 		permissionGateHint:
 			"When on, tool calls are checked against rules: dangerous commands (rm -rf, sudo, force push, etc.) ask for confirmation, everything else runs. Rules live in ~/.pi/agent/permissions.json and apply instantly. Turn off to replace with your own permission extension.",
+		acpCompression: "Smart context compression (ACP)",
+		acpCompressionHint:
+			"In long sessions the model summarizes and compresses consumed history itself — the task keeps running and compressed content stays recoverable via decompress. Nudges start around 75% context usage. On by default; stored in ~/.pi/agent/settings.json, fully applies to new sessions.",
 		sessionRail: "Left session rail",
 		sessionRailHint:
 			"Shows a vertically centered track of session lines on the left of the chat view; hover or focus a line and it grows into a floating capsule (project icon + title) — click to switch. The top tab bar stays unchanged; turn off to hide it.",
@@ -234,6 +250,25 @@ export const en: Messages = {
 			saved: "Saved",
 			testOk: "Connected (model replied: {reply})",
 			testFail: "Connection failed: {message}",
+		},
+		lan: {
+			title: "LAN Observer",
+			hint: "View live agent progress from your phone on a trusted local network. Off by default; the access token rotates every time it is enabled.",
+			port: "Listening port: {port}",
+			clients: "{count} connected device(s)",
+			copy: "Copy",
+			copied: "Copied",
+			qrAlt: "Observer page QR code",
+			noAddress: "No reachable local-network IPv4 address was found.",
+			remoteControl: "Allow remote control",
+			remoteControlHint:
+				'When enabled, the phone can send messages, abort runs, and answer permission prompts ("allow once"/"deny" only; persistent trust settings are never changed). All remote actions are recorded in an audit log.',
+			securityTitle: "Security notice",
+			securityContent:
+				"The observer can show conversation output, tool calls, and task content, which may include code or sensitive data.",
+			securityTrusted: "Enable and share the link only on trusted local networks.",
+			securityForward: "Do not forward this port or expose it to the public internet.",
+			securityFirewall: "A macOS “allow incoming connections” firewall prompt on first use is normal.",
 		},
 		about: {
 			version: "Version",

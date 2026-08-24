@@ -7,7 +7,7 @@
 import { readFile, readdir, stat } from "node:fs/promises";
 import { homedir } from "node:os";
 import { join } from "node:path";
-import { emptyTranscript, reduceEvent } from "../packages/desktop/src/renderer/src/stores/transcript-reducer/index.ts";
+import { emptyTranscript, reduceEvent } from "../packages/shared/src/transcript/index.ts";
 
 /** 递归找最新 trace 文件 */
 async function findLatestTrace(): Promise<string | null> {

@@ -4,6 +4,7 @@ import type {
 	ConfiguredPackageInfo,
 	CustomProviderInput,
 	CustomProviderUpdateInput,
+	LanStatus,
 	LoadedExtension,
 	LoadedSkill,
 	LoginAuthPrompt,
@@ -29,6 +30,7 @@ export type SettingsCategory =
 	| "extensions"
 	| "uiPlugins"
 	| "vision"
+	| "lan"
 	| "about"
 	// 插件自带设置页分类（settings.panel 贡献动态拼接，id = plugin:<pluginName>:<contributionId>）
 	| `plugin:${string}`;
@@ -66,10 +68,15 @@ interface SettingsStore {
 	refreshing: boolean;
 	/** 内置权限门控开关（null = 未加载） */
 	permissionEnabled: boolean | null;
+	/** ACP 上下文压缩开关（null = 未加载） */
+	acpEnabled: boolean | null;
 	/** 视觉代理配置（null = 未加载） */
 	visionConfig: VisionConfigInfo | null;
 	/** 视觉模型连通性测试中 */
 	visionTesting: boolean;
+	/** 局域网观察服务运行状态（null = 未加载）。 */
+	lanStatus: LanStatus | null;
+	lanSaving: boolean;
 	visionTestResult: VisionTestResult | null;
 	/** 当前活跃会话已加载的 skills（null = 未加载/无会话） */
 	skills: LoadedSkill[] | null;
@@ -129,11 +136,15 @@ interface SettingsStore {
 	/** 关闭登录对话框（错误态保留展示时用） */
 	dismissLogin: () => void;
 	setPermissionEnabled: (enabled: boolean) => Promise<void>;
-	/** 保存视觉代理配置（返回新配置；key 留空保持不变） */
-	saveVision: (input: VisionSaveInput) => Promise<void>;
+	setAcpEnabled: (enabled: boolean) => Promise<void>;
+	/** 保存视觉代理配置（返回是否成功；key 留空保持不变） */
+	saveVision: (input: VisionSaveInput) => Promise<boolean>;
 	/** 测试视觉模型连通性（1×1 png 实调） */
 	testVision: () => Promise<void>;
 	clearVisionTestResult: () => void;
+	refreshLanStatus: () => Promise<void>;
+	setLanEnabled: (enabled: boolean) => Promise<void>;
+	setLanRemoteControl: (enabled: boolean) => Promise<void>;
 	setExtensionsTab: (tab: "browse" | "loaded") => void;
 	setCatalogQuery: (query: string) => void;
 	setCatalogType: (type: "" | CatalogPackageType) => void;
@@ -169,9 +180,12 @@ export const useSettingsStore = create<SettingsStore>((set, get) => {
 		loading: false,
 		refreshing: false,
 		permissionEnabled: null,
+		acpEnabled: null,
 		visionConfig: null,
 		visionTesting: false,
 		visionTestResult: null,
+		lanStatus: null,
+		lanSaving: false,
 		skills: null,
 		skillDiagnostics: [],
 		extensions: null,
@@ -324,10 +338,19 @@ export const useSettingsStore = create<SettingsStore>((set, get) => {
 				.getPermissionConfig()
 				.then((permission) => set({ permissionEnabled: permission.enabled }))
 				.catch(() => {});
+			// ACP 压缩开关同样本地文件读，独立加载
+			void getPi()
+				.getAcpConfig()
+				.then((acp) => set({ acpEnabled: acp.enabled }))
+				.catch(() => {});
 			// 视觉代理配置同样本地文件读，独立加载
 			void getPi()
 				.getVisionConfig()
 				.then((visionConfig) => set({ visionConfig }))
+				.catch(() => {});
+			void getPi()
+				.lanGetStatus()
+				.then((lanStatus) => set({ lanStatus }))
 				.catch(() => {});
 			try {
 				const [providers, modelPrefs, subagents] = await Promise.all([
@@ -340,12 +363,15 @@ export const useSettingsStore = create<SettingsStore>((set, get) => {
 				const activeSessionId = useSessionsStore.getState().activeSessionId;
 				if (activeSessionId && !isDraftSessionId(activeSessionId)) {
 					const resources = await getPi().getLoadedResources(activeSessionId);
-					set({
-						skills: resources.skills,
-						skillDiagnostics: resources.skillDiagnostics,
-						extensions: resources.extensions,
-						extensionErrors: resources.extensionErrors,
-					});
+					// 竞态守卫：await 期间活跃会话已切换则丢弃（防把 A 项目的资源写到 B 会话的面板）
+					if (useSessionsStore.getState().activeSessionId === activeSessionId) {
+						set({
+							skills: resources.skills,
+							skillDiagnostics: resources.skillDiagnostics,
+							extensions: resources.extensions,
+							extensionErrors: resources.extensionErrors,
+						});
+					}
 				} else {
 					set({ skills: null, skillDiagnostics: [], extensions: null, extensionErrors: [] });
 				}
@@ -379,12 +405,27 @@ export const useSettingsStore = create<SettingsStore>((set, get) => {
 			}
 		},
 
+		setAcpEnabled: async (enabled) => {
+			const previous = get().acpEnabled;
+			set({ acpEnabled: enabled });
+			try {
+				await getPi().setAcpEnabled(enabled);
+			} catch (error) {
+				set({
+					acpEnabled: previous,
+					error: error instanceof Error ? error.message : String(error),
+				});
+			}
+		},
+
 		saveVision: async (input) => {
 			try {
 				const visionConfig = await getPi().saveVisionConfig(input);
 				set({ visionConfig, visionTestResult: null });
+				return true;
 			} catch (error) {
 				set({ error: error instanceof Error ? error.message : String(error) });
+				return false;
 			}
 		},
 
@@ -402,6 +443,34 @@ export const useSettingsStore = create<SettingsStore>((set, get) => {
 		},
 
 		clearVisionTestResult: () => set({ visionTestResult: null }),
+
+		refreshLanStatus: async () => {
+			try {
+				set({ lanStatus: await getPi().lanGetStatus() });
+			} catch (error) {
+				set({ error: error instanceof Error ? error.message : String(error) });
+			}
+		},
+
+		setLanEnabled: async (enabled) => {
+			set({ lanSaving: true });
+			try {
+				const lanStatus = await getPi().lanSetEnabled(enabled);
+				set({ lanStatus, lanSaving: false });
+			} catch (error) {
+				set({ lanSaving: false, error: error instanceof Error ? error.message : String(error) });
+			}
+		},
+
+		setLanRemoteControl: async (enabled) => {
+			set({ lanSaving: true });
+			try {
+				const lanStatus = await getPi().lanSetRemoteControl(enabled);
+				set({ lanStatus, lanSaving: false });
+			} catch (error) {
+				set({ lanSaving: false, error: error instanceof Error ? error.message : String(error) });
+			}
+		},
 
 		saveKey: async (providerId, key) => {
 			try {
@@ -575,12 +644,19 @@ export const useSettingsStore = create<SettingsStore>((set, get) => {
 			}
 		},
 
-		respondLoginPrompt: (value) => {
+		/** 应答登录 prompt：await IPC 成功才清 pendingPrompt；失败恢复 prompt + 记 error（可重答） */
+		respondLoginPrompt: async (value) => {
 			const state = get().login;
 			if (!state?.pendingPrompt) return;
 			const { promptId } = state.pendingPrompt;
-			set({ login: { ...state, pendingPrompt: undefined } });
-			void getPi().respondProviderLogin(state.loginId, promptId, value);
+			try {
+				await getPi().respondProviderLogin(state.loginId, promptId, value);
+				// 函数式更新：await 期间 login 状态可能已推进（新 prompt/状态行），不可用旧快照整体覆盖
+				set((s) => (s.login ? { login: { ...s.login, pendingPrompt: undefined } } : {}));
+			} catch (error) {
+				const message = error instanceof Error ? error.message : String(error);
+				set((s) => (s.login ? { login: { ...s.login, error: message } } : {}));
+			}
 		},
 
 		cancelProviderLogin: () => {

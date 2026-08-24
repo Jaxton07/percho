@@ -1,5 +1,6 @@
-import { existsSync, readFileSync, statSync, writeFileSync } from "node:fs";
+import { existsSync, readFileSync, statSync } from "node:fs";
 import { join } from "node:path";
+import { JsonStore } from "../json-store";
 import { createLogger } from "../log";
 import type { PermissionAction, PermissionOutside, PermissionRule, PermissionRules } from "./pattern";
 
@@ -12,7 +13,8 @@ const log = createLogger("permission-rules");
 
 export interface PermissionConfig {
 	enabled: boolean;
-	/** 路径工具落在全部工作区根之外时的动作（读写分离：观察默认放行，变更默认确认） */
+	/** 路径工具落在全部工作区根之外时的动作（读写分离：观察默认放行，变更默认确认）；
+	 * temporary 为路径/删除目标落在系统临时区时的动作（默认 allow，agent 临时工作流免打断） */
 	outside: PermissionOutside;
 	rules: PermissionRules;
 }
@@ -25,11 +27,12 @@ const PROTECTED_FILES = ["permissions.json", "workspaces.json", "auth.json", "tr
 /**
  * 默认配置：宽松 + 高危兜底（coding agent 效率优先）。
  * 只读工具/编辑/自定义工具默认 allow；bash 默认 allow，枚举的高危命令 ask；
- * 读写分离：路径工具越界时读放行、写确认；agent 自身权限/信任/凭证配置改动必确认。
+ * 读写分离：路径工具越界时读放行、写确认；系统临时区（tmpdir ∪ /tmp）默认放行
+ * （temporary 动作，rm 兜底同理豁免）；agent 自身权限/信任/凭证配置改动必确认。
  */
 export const DEFAULT_PERMISSION_CONFIG: PermissionConfig = {
 	enabled: true,
-	outside: { read: "allow", write: "ask" },
+	outside: { read: "allow", write: "ask", temporary: "allow" },
 	rules: {
 		"*": "allow",
 		bash: {
@@ -76,6 +79,7 @@ export function mergeWithDefaults(config: Partial<PermissionConfig>): Permission
 		outside: {
 			read: config.outside?.read ?? DEFAULT_PERMISSION_CONFIG.outside.read,
 			write: config.outside?.write ?? DEFAULT_PERMISSION_CONFIG.outside.write,
+			temporary: config.outside?.temporary ?? DEFAULT_PERMISSION_CONFIG.outside.temporary,
 		},
 		rules: { ...DEFAULT_PERMISSION_CONFIG.rules, ...(config.rules ?? {}) },
 	};
@@ -89,7 +93,7 @@ function isValidRule(rule: unknown): rule is PermissionRule {
 
 function parseOutside(raw: unknown): PermissionOutside | undefined {
 	if (typeof raw !== "object" || raw === null) return undefined;
-	const input = raw as { read?: unknown; write?: unknown };
+	const input = raw as { read?: unknown; write?: unknown; temporary?: unknown };
 	const result: Partial<PermissionOutside> = {};
 	if (typeof input.read === "string" && ACTIONS.has(input.read)) {
 		result.read = input.read as PermissionAction;
@@ -97,7 +101,10 @@ function parseOutside(raw: unknown): PermissionOutside | undefined {
 	if (typeof input.write === "string" && ACTIONS.has(input.write)) {
 		result.write = input.write as PermissionAction;
 	}
-	return result.read || result.write ? (result as PermissionOutside) : undefined;
+	if (typeof input.temporary === "string" && ACTIONS.has(input.temporary)) {
+		result.temporary = input.temporary as PermissionAction;
+	}
+	return result.read || result.write || result.temporary ? (result as PermissionOutside) : undefined;
 }
 
 function parseConfig(raw: unknown): Partial<PermissionConfig> {
@@ -137,19 +144,19 @@ export function loadPermissionConfig(agentDir: string): PermissionConfig {
 	}
 }
 
-/** 写 enabled 开关（保留现有 rules；无文件时只写 enabled，rules 走默认） */
+/**
+ * 写 enabled 开关（保留现有 rules；无文件时只写 enabled，rules 走默认）。
+ * 原子写 + 损坏拒写：文件损坏时抛 JsonStoreCorruptedError（不再重写为仅含 enabled 丢 rules），
+ * 调用方 catch 后上抛让 renderer 知道保存失败。
+ */
 export function setPermissionEnabled(agentDir: string, enabled: boolean): void {
-	const path = permissionConfigPath(agentDir);
-	let existing: Record<string, unknown> = {};
-	if (existsSync(path)) {
-		try {
-			const raw = JSON.parse(readFileSync(path, "utf-8"));
-			if (typeof raw === "object" && raw !== null) existing = raw as Record<string, unknown>;
-		} catch (err) {
-			log.warn("permissions.json 读取失败，将重写为仅含 enabled", path, err);
-		}
-	}
-	writeFileSync(path, `${JSON.stringify({ ...existing, enabled }, null, 2)}\n`, "utf-8");
+	const store = new JsonStore<Record<string, unknown>>({
+		path: permissionConfigPath(agentDir),
+		defaultValue: () => ({}),
+	});
+	store.updateSync((existing) => {
+		existing.enabled = enabled;
+	});
 }
 
 /** mtime 缓存的配置读取：扩展在每次 tool_call 前调用，开关/规则修改即时生效 */

@@ -1,6 +1,6 @@
-import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
-import { dirname, join, sep } from "node:path";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { homedir, tmpdir } from "node:os";
+import { dirname, join, resolve, sep } from "node:path";
 import type {
 	ExtensionAPI,
 	ExtensionContext,
@@ -28,11 +28,12 @@ function makeAgentDir(): string {
 	return dir;
 }
 
-/** 挂载扩展并返回 tool_call 触发器；confirmAnswer 控制弹窗结果，confirmCalls 捕获元数据 */
+/** 挂载扩展并返回 tool_call 触发器；confirmAnswer 控制弹窗结果，confirmCalls 捕获元数据；
+ * ctx.cwd 缺省 homedir（非临时区基准；临时区豁免测试按需覆盖 cwd） */
 function makeHarness(
 	agentDir: string,
 	confirmAnswer: boolean | ((title: string) => boolean) = false,
-	options?: { projectRoot?: string; confirmCalls?: ConfirmCall[] },
+	options?: { projectRoot?: string; confirmCalls?: ConfirmCall[]; cwd?: string },
 ) {
 	const confirmCalls = options?.confirmCalls;
 	const confirm: PermissionConfirm | undefined = confirmCalls
@@ -56,6 +57,7 @@ function makeHarness(
 
 	const confirms: { title: string; message: string }[] = [];
 	const ctx = {
+		cwd: options?.cwd ?? homedir(),
 		ui: {
 			confirm: async (title: string, message: string) => {
 				confirms.push({ title, message });
@@ -79,10 +81,10 @@ describe("permission-gate 扩展", () => {
 
 	it("高危命令弹窗；用户允许则放行", async () => {
 		const { call, confirms } = makeHarness(makeAgentDir(), true);
-		await expect(call("bash", { command: "rm -rf /tmp/x" })).resolves.toBeUndefined();
+		await expect(call("bash", { command: "rm -rf /etc/perm-x" })).resolves.toBeUndefined();
 		expect(confirms).toHaveLength(1);
 		expect(confirms[0].title).toBe("bash: rm -rf*");
-		expect(confirms[0].message).toBe("rm -rf /tmp/x");
+		expect(confirms[0].message).toBe("rm -rf /etc/perm-x");
 	});
 
 	it("高危命令弹窗；用户拒绝则 block 并给 LLM reason", async () => {
@@ -94,12 +96,12 @@ describe("permission-gate 扩展", () => {
 
 	it("命令链中藏高危命令同样弹窗；标题定位危险段", async () => {
 		const { call, confirms } = makeHarness(makeAgentDir(), false);
-		const result = await call("bash", { command: "cd /tmp && ls && rm -rf xxx" });
+		const result = await call("bash", { command: "cd /tmp && ls && rm -rf /etc/xxx" });
 		expect(result).toMatchObject({ block: true });
 		expect((result as ToolCallEventResult).reason).toContain("denied");
 		expect(confirms).toHaveLength(1);
 		expect(confirms[0].title).toBe("bash: rm -rf*");
-		expect(confirms[0].message).toBe("cd /tmp && ls && rm -rf xxx");
+		expect(confirms[0].message).toBe("cd /tmp && ls && rm -rf /etc/xxx");
 	});
 
 	it("deny 规则直接 block，不弹窗", async () => {
@@ -140,12 +142,17 @@ describe("permission-gate 扩展", () => {
 		// 根内绝对/相对路径直接放行
 		await expect(call("edit", { path: join(root, "a.ts") })).resolves.toBeUndefined();
 		await expect(call("read", { path: "src/b.ts" })).resolves.toBeUndefined();
-		// 根外绝对路径与 ../../ 相对逃逸都确认（confirmAnswer=false → block）
+		// 根外绝对路径与相对逃逸都确认（confirmAnswer=false → block）；沙箱在 tmpdir 下，
+		// 逃逸深度 +1 才能落出临时区（../../escape.ts 落入 T 根，会被 temporary=allow 豁免）
 		await expect(call("edit", { path: "/etc/hosts" })).resolves.toMatchObject({ block: true });
-		const escapeResult = await call("write", { path: "../../escape.ts" });
+		const escapePath = resolve(root, "../../../escape.ts");
+		const escapeResult = await call("write", { path: "../../../escape.ts" });
 		expect(escapeResult).toMatchObject({ block: true });
-		// 标题 = 记忆模式键（绝对路径的父目录前缀）；../../escape.ts 相对 root 解析后落在 tmpdir 根
-		expect(confirms.map((c) => c.title)).toEqual(["edit: /etc/*", `write: ${dirname(dir)}${sep}*`]);
+		// 标题 = 记忆模式键：macOS 的临时区有父目录，按目录授权；Linux 会逃到 /，
+		// 根目录过宽时降级为精确文件授权。
+		const expectedEscapeTitle =
+			dirname(escapePath) === sep ? `write: ${escapePath}` : `write: ${dirname(escapePath)}${sep}*`;
+		expect(confirms.map((c) => c.title)).toEqual(["edit: /etc/*", expectedEscapeTitle]);
 		// 不传 projectRoot → 无边界检查，任意路径放行
 		const open = makeHarness(dir, false);
 		await expect(open.call("edit", { path: "/etc/hosts" })).resolves.toBeUndefined();
@@ -226,17 +233,24 @@ describe("permission-gate 扩展", () => {
 	it("ask 元数据：path 类带 kind/suggestDir（git 根候选）；bash 为 command 无 suggestDir", async () => {
 		const dir = makeAgentDir();
 		const root = join(dir, "proj");
-		const repo = join(dir, "other-repo");
+		// git 根候选 fixture 必须在临时区之外（tmp 路径走 temporary 分支：默认放行不弹窗，
+		// 收紧后也不给 suggestDir）；放包目录下临时目录（用后清理），不写用户家目录
+		const fixtureBase = mkdtempSync(join(process.cwd(), ".perm-ext-fixture-"));
+		const repo = join(fixtureBase, "other-repo");
 		mkdirSync(root, { recursive: true });
 		mkdirSync(join(repo, "sub"), { recursive: true });
 		mkdirSync(join(repo, ".git")); // git 根候选
-		const calls: ConfirmCall[] = [];
-		const { call } = makeHarness(dir, false, { projectRoot: root, confirmCalls: calls });
-		await call("edit", { path: join(repo, "sub", "a.ts") });
-		await call("bash", { command: "rm -rf /tmp/x" });
-		expect(calls[0]).toMatchObject({ kind: "path", suggestDir: repo });
-		expect(calls[1]).toMatchObject({ kind: "command" });
-		expect(calls[1].suggestDir).toBeUndefined();
+		try {
+			const calls: ConfirmCall[] = [];
+			const { call } = makeHarness(dir, false, { projectRoot: root, confirmCalls: calls });
+			await call("edit", { path: join(repo, "sub", "a.ts") });
+			await call("bash", { command: "rm -rf /etc/perm-x" });
+			expect(calls[0]).toMatchObject({ kind: "path", suggestDir: repo });
+			expect(calls[1]).toMatchObject({ kind: "command" });
+			expect(calls[1].suggestDir).toBeUndefined();
+		} finally {
+			rmSync(fixtureBase, { recursive: true, force: true });
+		}
 	});
 
 	it("自定义工具吃工具名级规则", async () => {
@@ -284,5 +298,83 @@ describe("permission-gate 扩展", () => {
 		await expect(call("npm test --watch")).resolves.toBeUndefined();
 		// npm run build 的模式键不同会再问一次；npm test --watch 命中已记忆的 bash: npm test* 不再问
 		expect(confirms).toEqual(["bash: npm test*", "bash: npm run*"]);
+	});
+
+	it("临时区默认放行：write/edit 落 tmp 不弹窗；rm 删 tmp 目标跳过兜底；穿越/混合目标仍确认", async () => {
+		const { call, confirms } = makeHarness(makeAgentDir(), false);
+		await expect(call("write", { path: `${resolve(tmpdir())}/x.ts` })).resolves.toBeUndefined();
+		await expect(call("edit", { path: "/tmp/y.ts" })).resolves.toBeUndefined();
+		await expect(call("bash", { command: `rm -rf ${resolve(tmpdir())}/sub/` })).resolves.toBeUndefined();
+		await expect(call("bash", { command: "rm -rf /tmp/a /tmp/b" })).resolves.toBeUndefined();
+		expect(confirms).toHaveLength(0);
+		// 路径穿越与混合目标不被豁免（fail-safe）
+		await expect(call("bash", { command: "rm -rf /tmp/../etc/perm-test" })).resolves.toMatchObject({
+			block: true,
+		});
+		await expect(call("bash", { command: "rm -rf /tmp/a /etc/b" })).resolves.toMatchObject({ block: true });
+		expect(confirms.map((c) => c.title)).toEqual(["bash: rm -rf*", "bash: rm -rf*"]);
+	});
+
+	it("自保护规则不受临时区影响：tmp 下的 permissions.json 写入仍确认（显式 ask 不被放松）", async () => {
+		const { call, confirms } = makeHarness(makeAgentDir(), false);
+		await expect(call("write", { path: `${resolve(tmpdir())}/permissions.json` })).resolves.toMatchObject({
+			block: true,
+		});
+		expect(confirms).toHaveLength(1);
+	});
+
+	it("outside.temporary=ask 收紧：tmp 写与 tmp rm 目标从默认放行变确认", async () => {
+		const dir = makeAgentDir();
+		writeFileSync(join(dir, "permissions.json"), JSON.stringify({ outside: { temporary: "ask" } }));
+		const { call, confirms } = makeHarness(dir, false);
+		await expect(call("write", { path: `${resolve(tmpdir())}/x.ts` })).resolves.toMatchObject({
+			block: true,
+		});
+		await expect(call("bash", { command: `rm -rf ${resolve(tmpdir())}/x` })).resolves.toMatchObject({
+			block: true,
+		});
+		expect(confirms.map((c) => c.title)).toEqual([`write: ${resolve(tmpdir())}${sep}*`, "bash: rm -rf*"]);
+	});
+
+	it("outside.temporary=deny 收紧：tmp 写走确认（拒→block）；rm tmp 目标在求值层直接 block（deny 地板）", async () => {
+		const dir = makeAgentDir();
+		writeFileSync(join(dir, "permissions.json"), JSON.stringify({ outside: { temporary: "deny" } }));
+		const { call, confirms } = makeHarness(dir, false);
+		await expect(call("write", { path: "/tmp/x.ts" })).resolves.toMatchObject({ block: true });
+		const rmResult = await call("bash", { command: "rm -rf /tmp/x" });
+		expect(rmResult).toMatchObject({ block: true });
+		expect((rmResult as ToolCallEventResult).reason).toContain("permission rule");
+		expect(confirms).toHaveLength(1); // 只有 write 弹窗；bash 段 deny 地板在 evaluateBashCommand 内生效，不弹窗
+	});
+
+	it("用户显式 deny 永不被 temporary=allow 覆盖（rm -rf /tmp/precious* 直接 block 不弹窗）", async () => {
+		const dir = makeAgentDir();
+		writeFileSync(
+			join(dir, "permissions.json"),
+			JSON.stringify({ rules: { bash: { "*": "allow", "rm -rf /tmp/precious*": "deny" } } }),
+		);
+		const { call, confirms } = makeHarness(dir, false);
+		const result = await call("bash", { command: "rm -rf /tmp/precious-data" });
+		expect(result).toMatchObject({ block: true });
+		expect((result as ToolCallEventResult).reason).toContain("permission rule");
+		expect(confirms).toHaveLength(0);
+	});
+
+	it("projectRoot 本身在临时区：地理优先，按 temporary 语义处置（ask → 确认）", async () => {
+		const dir = makeAgentDir();
+		writeFileSync(join(dir, "permissions.json"), JSON.stringify({ outside: { temporary: "ask" } }));
+		const root = join(dir, "proj"); // 沙箱本身在 tmpdir 下
+		const { call, confirms } = makeHarness(dir, false, { projectRoot: root });
+		await expect(call("write", { path: join(root, "a.ts") })).resolves.toMatchObject({ block: true });
+		expect(confirms).toHaveLength(1);
+	});
+
+	it("rm 相对目标按 ctx.cwd resolve：cwd 在临时区 → 豁免；不在 → 确认", async () => {
+		const inTmp = makeHarness(makeAgentDir(), false, { cwd: resolve(tmpdir()) });
+		await expect(inTmp.call("bash", { command: "rm -rf sub/x" })).resolves.toBeUndefined();
+		expect(inTmp.confirms).toHaveLength(0);
+		const atHome = makeHarness(makeAgentDir(), false, { cwd: homedir() });
+		await expect(atHome.call("bash", { command: "rm -rf sub/x" })).resolves.toMatchObject({ block: true });
+		expect(atHome.confirms).toHaveLength(1);
 	});
 });

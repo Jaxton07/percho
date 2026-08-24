@@ -1,3 +1,19 @@
+export {
+	JsonStore,
+	JsonStoreCorruptedError,
+	type JsonStoreOptions,
+	type ReadResult,
+} from "./json-store";
+export { LanConfigService } from "./lan/config";
+export {
+	applyEvent as applyLanEvent,
+	applyPermissionRequest as applyLanPermissionRequest,
+	applyPermissionResolved as applyLanPermissionResolved,
+	type LanPendingPermission,
+	type LanSessionRuntime,
+	seedView as seedLanView,
+} from "./lan/projector";
+export { type LanObserverBackend, LanObserverServer, type LanObserverServerOptions } from "./lan/server";
 export { createLogger, initLogging, type Logger } from "./log";
 export { fetchPackageCatalog, parseCatalogHtml } from "./packages/catalog";
 export {

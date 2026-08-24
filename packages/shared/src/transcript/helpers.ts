@@ -1,4 +1,4 @@
-import type { ImageInput } from "@percho/shared";
+import type { ImageInput } from "../session";
 import type { ActivityEntry, StreamingState } from "./types";
 
 /** reducer 内部共用工具：本地 id 生成、事件载荷解析、流式容器构造 */
@@ -22,6 +22,7 @@ export function emptyStreaming(): StreamingState {
 	return {
 		id: newMessageId(),
 		text: "",
+		rawText: "",
 		thinking: "",
 		tools: [],
 		pendingImages: [],
@@ -29,6 +30,7 @@ export function emptyStreaming(): StreamingState {
 		subagentByToolCallId: {},
 		activeToolIndex: -1,
 		toolByContentIndex: {},
+		rawToolOutputs: {},
 		activity: [],
 		textBlockIndex: null,
 	};
@@ -119,4 +121,11 @@ export function extractShowImage(result: unknown): { images: ImageInput[]; paths
 	const legacy = toImage(d?.image);
 	if (!legacy) return null;
 	return { images: [legacy], paths: typeof d?.path === "string" ? [d.path] : [] };
+}
+
+/** edit 工具结果 → unified patch（details.patch 由 SDK edit-diff 产出；结构不符/非字符串返回 null） */
+export function extractEditPatch(result: unknown): string | null {
+	const details = (result as { details?: unknown } | null | undefined)?.details;
+	const patch = (details as { patch?: unknown } | undefined)?.patch;
+	return typeof patch === "string" && patch.length > 0 ? patch : null;
 }

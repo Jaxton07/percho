@@ -7,6 +7,7 @@ import { createLogger, initLogging, PiBackend } from "@percho/backend";
 import { app, BrowserWindow, Menu, nativeTheme, net, protocol } from "electron";
 import { backgroundsDir } from "./background";
 import { registerIpc } from "./ipc";
+import { initLanObserver, type LanObserverHandle } from "./lan";
 import { UiPluginManager, uiPluginsResourcesDir } from "./ui-plugins/manager";
 import { loadUiState } from "./ui-state";
 import { initUpdater, scheduleAutoUpdateCheck } from "./updater";
@@ -15,6 +16,7 @@ import { applyChromeTheme, createWindow, resolveTheme } from "./window";
 const log = createLogger("main");
 let backend: PiBackend;
 let uiPluginsManager: UiPluginManager;
+let lanObserver: LanObserverHandle | undefined;
 
 /**
  * 追加进每次会话系统提示词的桌面端段落（每次调用都付费，保持精简）。
@@ -83,9 +85,14 @@ app.whenReady().then(async () => {
 		},
 	});
 	await backend.init();
+	lanObserver = await initLanObserver(
+		backend,
+		join(app.getPath("userData"), "lan-observer.json"),
+		join(app.getPath("userData"), "lan-audit.jsonl"),
+	);
 	uiPluginsManager = new UiPluginManager();
 	await uiPluginsManager.init();
-	registerIpc(backend, uiPluginsManager);
+	registerIpc(backend, uiPluginsManager, lanObserver);
 	await initUpdater();
 	scheduleAutoUpdateCheck();
 	const uiState = await loadUiState();
@@ -103,6 +110,7 @@ app.on("window-all-closed", () => {
 });
 
 app.on("before-quit", () => {
+	void lanObserver?.stop();
 	backend?.dispose();
 	uiPluginsManager?.disposeWatcher();
 });

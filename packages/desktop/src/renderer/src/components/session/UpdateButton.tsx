@@ -54,7 +54,7 @@ export function UpdateButton() {
 				onClick={() => {
 					if (state.phase !== "available") return;
 					if (state.manual) void openReleasePage(state.version);
-					else void getPi().checkForUpdates();
+					else void getPi().downloadUpdate();
 				}}
 			>
 				{state.phase === "downloading" ? (

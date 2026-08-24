@@ -23,6 +23,9 @@ export interface PermissionOutside {
 	read: PermissionAction;
 	/** edit/write 越界动作（默认 ask） */
 	write: PermissionAction;
+	/** 路径/删除目标落在系统临时区（os.tmpdir() ∪ /tmp）时的动作（缺省 allow：tmp 易失，
+	 * agent 的临时工作流不该被弹窗打断；ask/deny 收紧）。层级：可覆盖 ask，永不可覆盖 deny */
+	temporary: PermissionAction;
 }
 
 const ACTIONS: ReadonlySet<string> = new Set(["allow", "ask", "deny"]);
@@ -77,18 +80,29 @@ function evaluateSingle(
  * bash 命令链求值：所有候选（见 collectBashCandidates）分别求值，动作取最严
  * （deny > ask > allow）——`cd x && ls && rm -rf y`、`echo $(rm -rf y)` 均无法绕过。
  * segment 返回命中最终动作的候选（供弹窗标题定位危险命令；无分隔符时即整串）。
+ * segmentOverride（可选）：候选求值后的段动作改写钩子（临时区豁免用，spec §5.4）——返回
+ * 非 null 且该候选原动作非 deny 时改写为该值（temporary 分区动作层级高于 ask、低于 deny，
+ * deny 永不被覆盖；override=deny 则收紧）。无钩子调用行为逐字节不变；有钩子时平级段
+ * 追踪改为后命中生效（豁免后残留的等严段定位到真实危险段，如整串与段同为 ask 时取段）。
  */
 export function evaluateBashCommand(
 	rules: PermissionRules,
 	command: string,
 	fallback: PermissionAction = "ask",
+	segmentOverride?: (segment: string) => PermissionAction | null,
 ): { action: PermissionAction; segment: string } {
 	// 从最松（allow）起步，候选结果各自已含 fallback，取最严者
 	let action: PermissionAction = "allow";
 	let segment = command;
 	for (const candidate of collectBashCandidates(command)) {
-		const a = evaluateSingle(rules, "bash", candidate, fallback);
-		if (ACTION_PRIORITY[a] > ACTION_PRIORITY[action]) {
+		let a = evaluateSingle(rules, "bash", candidate, fallback);
+		if (segmentOverride) {
+			const override = segmentOverride(candidate);
+			// deny 地板：改写只体现 temporary 分区动作，原 deny 永不被覆盖
+			if (override !== null && a !== "deny") a = override;
+		}
+		const priority = ACTION_PRIORITY[a];
+		if (priority > ACTION_PRIORITY[action] || (segmentOverride && priority === ACTION_PRIORITY[action])) {
 			action = a;
 			segment = candidate;
 		}

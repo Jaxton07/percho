@@ -1,4 +1,3 @@
-import { readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { getAgentDir, type ModelRuntime } from "@earendil-works/pi-coding-agent";
 import type {
@@ -8,28 +7,31 @@ import type {
 	ProviderInfo,
 	ProviderTestResult,
 } from "@percho/shared";
+import { JsonStore } from "../json-store";
 
 type JsonObject = Record<string, unknown>;
 
 /** 联网刷新模型目录的整体超时（SDK fetchWithRetry 默认无超时，网络不可达时会一直挂） */
 const NETWORK_REFRESH_TIMEOUT_MS = 15_000;
 
-async function readJsonFile(path: string): Promise<JsonObject> {
-	try {
-		const raw = await readFile(path, "utf8");
-		return JSON.parse(stripJsonComments(raw)) as JsonObject;
-	} catch {
-		return {};
-	}
-}
-
 /** models.json 支持 JSONC 注释；写入时统一输出纯 JSON */
 function stripJsonComments(raw: string): string {
 	return raw.replace(/\/\/[^\n"]*(?=\n)/g, "").replace(/\/\*[\s\S]*?\*\//g, "");
 }
 
-async function writeJsonFile(path: string, data: JsonObject, mode?: number): Promise<void> {
-	await writeFile(path, `${JSON.stringify(data, null, 2)}\n`, { encoding: "utf8", mode });
+/** auth/models 的 JsonStore：JSONC 读侧 + 损坏时 read 回退 {}（写入拒损坏由 update 保证） */
+function jsonStoreFor(path: string, mode?: number): JsonStore<JsonObject> {
+	return new JsonStore<JsonObject>({
+		path,
+		defaultValue: () => ({}),
+		mode,
+		parse: (raw) => JSON.parse(stripJsonComments(raw)) as JsonObject,
+	});
+}
+
+/** 纯读（损坏/缺失回退 {}）；写路径一律走 jsonStoreFor(...).update —— 损坏拒写防全量配置丢失 */
+async function readJsonFile(path: string): Promise<JsonObject> {
+	return jsonStoreFor(path).read();
 }
 
 /**
@@ -75,7 +77,7 @@ export class SettingsService {
 	async listProviders(options?: ListProvidersOptions): Promise<ProviderInfo[]> {
 		const runtime = await this.getRuntime();
 		if (options?.forceNetwork) {
-			// 用户显式刷新才联网；SDK 的目录请求无内置超时，这里兜底，超时回退本地数据
+			// 用户显式刷新才联网；SDK 的目录请求无内置超时，这里兜底，超时抛错（UI 层回退到已加载的本地数据）
 			const result = await runtime.refresh({
 				allowNetwork: true,
 				force: true,
@@ -139,9 +141,9 @@ export class SettingsService {
 	async saveApiKey(providerId: string, key: string): Promise<void> {
 		const trimmed = key.trim();
 		if (!trimmed) throw new Error("API key 不能为空");
-		const data = await readJsonFile(this.authPath);
-		data[providerId] = { type: "api_key", key: trimmed };
-		await writeJsonFile(this.authPath, data, 0o600);
+		await jsonStoreFor(this.authPath, 0o600).update((auth) => {
+			auth[providerId] = { type: "api_key", key: trimmed };
+		});
 		await this.refreshLocalModels();
 	}
 
@@ -190,16 +192,17 @@ export class SettingsService {
 		if (!id) throw new Error("Provider ID 不能为空");
 		if (!/^[a-z0-9][a-z0-9-_]*$/i.test(id)) throw new Error("Provider ID 只能包含字母、数字、-、_");
 
-		const data = await readJsonFile(this.modelsJsonPath);
-		const providers = (data.providers as JsonObject | undefined) ?? {};
-		providers[id] = this.buildCustomEntry(input);
-		data.providers = providers;
-		await writeJsonFile(this.modelsJsonPath, data);
+		await jsonStoreFor(this.modelsJsonPath).update((draft) => {
+			const providers = (draft.providers as JsonObject | undefined) ?? {};
+			providers[id] = this.buildCustomEntry(input);
+			draft.providers = providers;
+		});
 
-		if (input.apiKey?.trim()) {
-			const auth = await readJsonFile(this.authPath);
-			auth[id] = { type: "api_key", key: input.apiKey.trim() };
-			await writeJsonFile(this.authPath, auth, 0o600);
+		const apiKey = input.apiKey?.trim();
+		if (apiKey) {
+			await jsonStoreFor(this.authPath, 0o600).update((auth) => {
+				auth[id] = { type: "api_key", key: apiKey };
+			});
 		}
 
 		await this.refreshLocalModels();
@@ -214,23 +217,24 @@ export class SettingsService {
 		const id = input.id.trim();
 		if (!id) throw new Error("Provider ID 不能为空");
 
-		const data = await readJsonFile(this.modelsJsonPath);
-		const providers = (data.providers as JsonObject | undefined) ?? {};
-		if (!(id in providers)) throw new Error(`自定义 provider 不存在：${id}`);
-		providers[id] = this.buildCustomEntry(input);
-		data.providers = providers;
-		await writeJsonFile(this.modelsJsonPath, data);
+		await jsonStoreFor(this.modelsJsonPath).update((draft) => {
+			const providers = (draft.providers as JsonObject | undefined) ?? {};
+			if (!(id in providers)) throw new Error(`自定义 provider 不存在：${id}`);
+			providers[id] = this.buildCustomEntry(input);
+			draft.providers = providers;
+		});
 
 		if (input.clearApiKey) {
-			const auth = await readJsonFile(this.authPath);
-			if (id in auth) {
+			await jsonStoreFor(this.authPath, 0o600).update((auth) => {
 				delete auth[id];
-				await writeJsonFile(this.authPath, auth, 0o600);
+			});
+		} else {
+			const apiKey = input.apiKey?.trim();
+			if (apiKey) {
+				await jsonStoreFor(this.authPath, 0o600).update((auth) => {
+					auth[id] = { type: "api_key", key: apiKey };
+				});
 			}
-		} else if (input.apiKey?.trim()) {
-			const auth = await readJsonFile(this.authPath);
-			auth[id] = { type: "api_key", key: input.apiKey.trim() };
-			await writeJsonFile(this.authPath, auth, 0o600);
 		}
 
 		await this.refreshLocalModels();
@@ -240,14 +244,17 @@ export class SettingsService {
 		const data = await readJsonFile(this.modelsJsonPath);
 		const providers = (data.providers as JsonObject | undefined) ?? {};
 		if (providerId in providers) {
-			delete providers[providerId];
-			data.providers = providers;
-			await writeJsonFile(this.modelsJsonPath, data);
+			await jsonStoreFor(this.modelsJsonPath).update((draft) => {
+				const p = (draft.providers as JsonObject | undefined) ?? {};
+				delete p[providerId];
+				draft.providers = p;
+			});
 		}
 		const auth = await readJsonFile(this.authPath);
 		if (providerId in auth) {
-			delete auth[providerId];
-			await writeJsonFile(this.authPath, auth, 0o600);
+			await jsonStoreFor(this.authPath, 0o600).update((draft) => {
+				delete draft[providerId];
+			});
 		}
 		await this.refreshLocalModels();
 	}

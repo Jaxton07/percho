@@ -803,3 +803,482 @@ code {
 		transition: none;
 	}
 }
+
+/* ============================================================
+   turn-diff：轮末文件变更 chip + 右侧 diff 栏
+   设计稿：.local/design/ux/turn_diff/index.html（动画/配色以此为准）
+   ============================================================ */
+:root {
+	--diff-add: #16a34a;
+	--diff-add-bg: rgba(22, 163, 74, 0.075);
+	--diff-add-gutter: rgba(22, 163, 74, 0.12);
+	--diff-del: #dc2626;
+	--diff-del-bg: rgba(220, 38, 38, 0.065);
+	--diff-del-gutter: rgba(220, 38, 38, 0.1);
+}
+[data-theme="dark"] {
+	--diff-add: #4ade80;
+	--diff-add-bg: rgba(74, 222, 128, 0.08);
+	--diff-add-gutter: rgba(74, 222, 128, 0.13);
+	--diff-del: #f87171;
+	--diff-del-bg: rgba(248, 113, 113, 0.08);
+	--diff-del-gutter: rgba(248, 113, 113, 0.12);
+}
+
+/* ---- 轮末 chip ---- */
+.turn-diff {
+	font-size: 12.5px;
+}
+.turn-diff-head {
+	display: inline-flex;
+	align-items: center;
+	gap: 7px;
+	cursor: pointer;
+	user-select: none;
+	list-style: none;
+	padding: 3px 8px;
+	border-radius: 7px;
+	color: var(--color-ink-dim);
+	transition:
+		background 0.15s,
+		color 0.15s;
+}
+.turn-diff-head:hover {
+	background: var(--color-hover);
+	color: var(--color-ink);
+}
+.turn-diff-head::-webkit-details-marker {
+	display: none;
+}
+.turn-diff-stat {
+	font-variant-numeric: tabular-nums;
+	font-weight: 600;
+}
+.turn-diff-added {
+	color: var(--diff-add);
+}
+.turn-diff-removed {
+	color: var(--diff-del);
+}
+.turn-diff-chev {
+	display: flex;
+	transition: transform 0.25s;
+}
+.turn-diff[open] .turn-diff-chev {
+	transform: rotate(90deg);
+}
+/* hover 浮出的「侧栏查看」小按钮 */
+.turn-diff-open-side {
+	display: inline-flex;
+	align-items: center;
+	gap: 4px;
+	margin-left: 6px;
+	padding: 2px 8px;
+	border-radius: 6px;
+	border: 1px solid var(--color-border);
+	color: var(--color-ink-dim);
+	font-size: 11.5px;
+	background: var(--color-surface);
+	opacity: 0;
+	transition:
+		opacity 0.15s,
+		color 0.15s,
+		border-color 0.15s;
+}
+.turn-diff-head:hover .turn-diff-open-side {
+	opacity: 1;
+}
+.turn-diff-open-side:hover {
+	color: var(--color-ink);
+	border-color: var(--color-border-strong);
+}
+/* chip 进场：turn_end 后 pop（上浮 6px + scale 0.97 + 去模糊） */
+.turn-diff-enter {
+	animation: turn-diff-in 0.42s cubic-bezier(0.34, 1.35, 0.64, 1) both;
+}
+@keyframes turn-diff-in {
+	from {
+		opacity: 0;
+		transform: translateY(6px) scale(0.97);
+		filter: blur(1px);
+	}
+	to {
+		opacity: 1;
+		transform: none;
+		filter: none;
+	}
+}
+/* chip 内联文件列表 */
+.turn-diff-files {
+	display: flex;
+	flex-direction: column;
+	gap: 1px;
+	padding: 4px 0 2px 8px;
+}
+.turn-diff-file {
+	display: flex;
+	align-items: center;
+	gap: 8px;
+	padding: 3px 8px;
+	border-radius: 6px;
+	border: none;
+	background: none;
+	cursor: pointer;
+	font-family: inherit;
+	font-size: 12px;
+	color: var(--color-ink-2);
+	transition: background 0.12s;
+	text-align: left;
+	width: fit-content;
+	max-width: 100%;
+}
+.turn-diff-file:hover {
+	background: var(--color-hover);
+}
+/* mono path RTL 截断：优先保留文件名端 */
+.turn-diff-path,
+.diff-file-path {
+	font-family: ui-monospace, "SF Mono", SFMono-Regular, Menlo, Consolas, monospace;
+	font-size: 11.5px;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+	direction: rtl;
+	text-align: left;
+}
+.turn-diff-path {
+	max-width: 420px;
+}
+
+/* ---- chip ---- */
+
+/* ---- 右侧 diff 栏（push 式宽度过渡 + 内容错峰淡入） ---- */
+.diff-sidebar {
+	flex: none;
+	width: 0;
+	overflow: hidden;
+	border-left: 1px solid transparent;
+	transition:
+		width 0.42s cubic-bezier(0.32, 0.72, 0, 1),
+		border-color 0.2s;
+}
+.diff-sidebar.open {
+	width: min(420px, 38vw);
+	border-left-color: var(--color-border);
+}
+.diff-sidebar-in {
+	width: min(420px, 38vw);
+	height: 100%;
+	display: flex;
+	flex-direction: column;
+	background: var(--color-canvas);
+	opacity: 0;
+	transform: translateX(28px);
+	transition:
+		opacity 0.3s 0.08s,
+		transform 0.38s 0.06s cubic-bezier(0.32, 0.72, 0, 1);
+}
+.diff-sidebar.open .diff-sidebar-in {
+	opacity: 1;
+	transform: none;
+}
+.diff-side-head {
+	flex: none;
+	display: flex;
+	align-items: center;
+	gap: 10px;
+	padding: 12px 14px 10px;
+	border-bottom: 1px solid var(--color-border);
+}
+.diff-side-title {
+	font-size: 13px;
+	font-weight: 600;
+	color: var(--color-ink);
+}
+.diff-side-sum {
+	font-size: 11.5px;
+	color: var(--color-ink-dim);
+	font-variant-numeric: tabular-nums;
+	white-space: nowrap;
+}
+.diff-seg {
+	display: flex;
+	background: var(--color-hover);
+	border-radius: 7px;
+	padding: 2px;
+	margin-left: auto;
+}
+.diff-seg button {
+	border: none;
+	background: none;
+	font-family: inherit;
+	font-size: 11px;
+	color: var(--color-ink-dim);
+	padding: 2px 9px;
+	border-radius: 5px;
+	cursor: pointer;
+	transition:
+		background 0.15s,
+		color 0.15s;
+	white-space: nowrap;
+}
+.diff-seg button.on {
+	background: var(--color-surface);
+	color: var(--color-ink);
+	box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
+}
+.diff-side-close {
+	border: none;
+	background: none;
+	cursor: pointer;
+	color: var(--color-ink-dim);
+	border-radius: 8px;
+	padding: 6px;
+	display: flex;
+	align-items: center;
+	transition:
+		background 0.15s,
+		color 0.15s;
+}
+.diff-side-close:hover {
+	background: var(--color-hover);
+	color: var(--color-ink);
+}
+.diff-side-scroll {
+	flex: 1;
+	overflow-y: auto;
+	overflow-x: hidden;
+	padding: 10px 12px 24px;
+}
+.diff-side-empty {
+	padding: 40px 20px;
+	text-align: center;
+	color: var(--color-ink-faint);
+	font-size: 12px;
+}
+
+/* 轮次分组 */
+.diff-turn-group {
+	margin-bottom: 14px;
+	animation: diff-group-in 0.5s cubic-bezier(0.34, 1.25, 0.64, 1) both;
+}
+@keyframes diff-group-in {
+	from {
+		opacity: 0;
+		transform: translateY(-10px) scale(0.98);
+	}
+	to {
+		opacity: 1;
+		transform: none;
+	}
+}
+.diff-tg-head {
+	display: flex;
+	align-items: baseline;
+	gap: 8px;
+	padding: 2px 4px 6px;
+	font-size: 11.5px;
+	color: var(--color-ink-faint);
+}
+.diff-tg-title {
+	font-weight: 600;
+	color: var(--color-ink-dim);
+}
+.diff-tg-sum {
+	margin-left: auto;
+	font-variant-numeric: tabular-nums;
+}
+
+/* 文件卡片（手风琴） */
+.diff-file-card {
+	border: 1px solid var(--color-border);
+	border-radius: 10px;
+	background: var(--color-surface);
+	margin-bottom: 8px;
+	overflow: hidden;
+	transition: border-color 0.15s;
+}
+.diff-file-card[open] {
+	border-color: var(--color-border-strong);
+}
+/* chip 跳转定位：紫色描边闪烁 */
+.diff-file-card.jump-flash {
+	animation: diff-jump-flash 1.15s ease-out;
+}
+@keyframes diff-jump-flash {
+	0%,
+	40% {
+		border-color: var(--color-accent);
+		box-shadow: 0 0 0 3px color-mix(in srgb, var(--color-accent) 22%, transparent);
+	}
+	100% {
+		box-shadow: none;
+	}
+}
+.diff-file-head {
+	display: flex;
+	align-items: center;
+	gap: 8px;
+	width: 100%;
+	padding: 8px 10px;
+	cursor: pointer;
+	user-select: none;
+	list-style: none;
+	transition: background 0.12s;
+}
+.diff-file-head:hover {
+	background: var(--color-hover);
+}
+.diff-file-icon {
+	color: var(--color-ink-faint);
+	flex: none;
+}
+.diff-file-path {
+	flex: 1;
+	min-width: 0;
+	color: var(--color-ink-2);
+}
+.diff-file-head .turn-diff-stat {
+	font-size: 11px;
+	flex: none;
+}
+.diff-file-chev {
+	color: var(--color-ink-faint);
+	transition: transform 0.25s;
+	display: flex;
+	flex: none;
+}
+.diff-file-card[open] .diff-file-chev {
+	transform: rotate(90deg);
+}
+.diff-card-body {
+	border-top: 1px solid var(--color-border);
+	overflow-x: auto;
+}
+.diff-section-sep {
+	border-top: 1px dashed var(--color-border);
+	margin: 2px 0;
+}
+
+/* diff 表格：双 gutter 行号 + 符号列；min-width: max-content 让横向溢出可滚动 */
+.diff-table {
+	display: grid;
+	grid-template-columns: 34px 34px 1fr;
+	font-family: ui-monospace, "SF Mono", SFMono-Regular, Menlo, Consolas, monospace;
+	font-size: 11px;
+	line-height: 20px;
+	min-width: max-content;
+	width: 100%;
+}
+.diff-line {
+	display: contents;
+}
+.diff-line > span {
+	padding: 0 6px;
+	white-space: pre;
+}
+.diff-g {
+	text-align: right;
+	color: var(--color-ink-faint);
+	user-select: none;
+	font-size: 10px;
+	padding-right: 6px;
+	background: color-mix(in srgb, var(--color-hover) 55%, transparent);
+}
+.diff-code {
+	color: var(--color-ink-2);
+	padding-right: 12px;
+}
+.diff-line-add {
+	background: var(--diff-add-bg);
+}
+.diff-line-add .diff-g {
+	background: var(--diff-add-gutter);
+	color: color-mix(in srgb, var(--diff-add) 75%, transparent);
+}
+.diff-line-add .diff-code {
+	color: var(--color-ink);
+}
+.diff-line-add .diff-code::first-letter {
+	color: var(--diff-add);
+}
+.diff-line-del {
+	background: var(--diff-del-bg);
+}
+.diff-line-del .diff-g {
+	background: var(--diff-del-gutter);
+	color: color-mix(in srgb, var(--diff-del) 75%, transparent);
+}
+.diff-line-del .diff-code {
+	color: var(--color-ink-dim);
+}
+.diff-line-del .diff-code::first-letter {
+	color: var(--diff-del);
+}
+.diff-hunk {
+	grid-column: 1 / -1;
+	background: color-mix(in srgb, var(--color-hover) 70%, transparent);
+	color: var(--color-ink-faint);
+	font-size: 10px;
+	padding: 2px 10px;
+	user-select: none;
+}
+/* 逐行 stagger 进入（--i 由渲染层写入，上限 24 防长 diff 拖沓） */
+.diff-line > span,
+.diff-hunk {
+	animation: diff-line-in 0.3s both;
+	animation-delay: calc(min(var(--i, 0), 24) * 14ms);
+}
+@keyframes diff-line-in {
+	from {
+		opacity: 0;
+		transform: translateX(5px);
+	}
+	to {
+		opacity: 1;
+		transform: none;
+	}
+}
+.diff-more {
+	display: block;
+	width: 100%;
+	border: none;
+	border-top: 1px dashed var(--color-border);
+	background: none;
+	font-family: ui-monospace, "SF Mono", SFMono-Regular, Menlo, Consolas, monospace;
+	font-size: 10.5px;
+	color: var(--color-ink-faint);
+	padding: 5px;
+	cursor: pointer;
+}
+.diff-more:hover {
+	color: var(--color-ink-dim);
+	background: var(--color-hover);
+}
+.diff-fallback {
+	margin: 0;
+	padding: 8px 10px;
+	font-size: 11px;
+	line-height: 18px;
+	white-space: pre-wrap;
+	word-break: break-all;
+	color: var(--color-ink-2);
+}
+
+@media (prefers-reduced-motion: reduce) {
+	/* 与基础规则同优先级、位置靠后覆盖（项目约定不用 !important） */
+	.turn-diff-enter,
+	.diff-turn-group,
+	.diff-line > span,
+	.diff-hunk,
+	.diff-file-card.jump-flash {
+		animation: none;
+	}
+	.diff-sidebar,
+	.diff-sidebar-in,
+	.turn-diff-head,
+	.turn-diff-chev,
+	.diff-file-chev {
+		transition: none;
+	}
+}

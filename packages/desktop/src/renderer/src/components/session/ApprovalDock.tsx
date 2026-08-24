@@ -1,5 +1,5 @@
 import type { PermissionRequest } from "@percho/shared";
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { getPi } from "../../api";
 import { useT } from "../../i18n";
 import { useTranscriptStore } from "../../stores/transcript";
@@ -33,6 +33,9 @@ export function ApprovalDock({
 	// shown：正在显示（含退出动画中）的请求；request 消失后保留 EXIT_MS 播退出
 	const [shown, setShown] = useState<PermissionRequest | null>(null);
 	const [leaving, setLeaving] = useState(false);
+	// 应答 IPC 失败：请求保留在 pending（agent 仍在等待），展示错误供重试（D3）
+	const [error, setError] = useState<string | null>(null);
+	const [sending, setSending] = useState(false);
 	useEffect(() => {
 		if (request) {
 			setShown(request);
@@ -48,11 +51,23 @@ export function ApprovalDock({
 		return () => clearTimeout(timer);
 	}, [request, shown]);
 
-	const respond = (answer: "allow" | "deny" | "allowAlways" | "allowDir") => {
-		if (!shown || leaving || !sessionId) return;
-		void getPi().respondPermission(shown.id, answer);
-		resolvePermission(sessionId, shown.id);
-	};
+	// 应答链：await IPC 成功才移除 UI（失败保留请求，agent 不丢审批）；按钮与快捷键共用
+	const respond = useCallback(
+		async (answer: "allow" | "deny" | "allowAlways" | "allowDir") => {
+			if (!shown || leaving || !sessionId || sending) return;
+			setSending(true);
+			setError(null);
+			try {
+				await getPi().respondPermission(shown.id, answer);
+				resolvePermission(sessionId, shown.id);
+			} catch (err) {
+				setError(err instanceof Error ? err.message : String(err));
+			} finally {
+				setSending(false);
+			}
+		},
+		[shown, leaving, sessionId, sending, resolvePermission],
+	);
 
 	// 键盘快捷键：Enter=允许一次，A=本项目总是允许，D=允许此目录（仅越界路径类有），Esc=拒绝
 	useEffect(() => {
@@ -70,12 +85,11 @@ export function ApprovalDock({
 								: null;
 			if (!answer) return;
 			e.preventDefault();
-			void getPi().respondPermission(shown.id, answer);
-			resolvePermission(sessionId, shown.id);
+			void respond(answer);
 		};
 		window.addEventListener("keydown", onKeyDown);
 		return () => window.removeEventListener("keydown", onKeyDown);
-	}, [shown, leaving, sessionId, resolvePermission]);
+	}, [shown, leaving, sessionId, respond]);
 
 	if (!shown) {
 		return hideComposer ? null : (
@@ -112,6 +126,9 @@ export function ApprovalDock({
 					<p className="mt-2 max-h-32 overflow-y-auto rounded-lg bg-hover p-2.5 font-mono text-[12px] leading-relaxed break-all whitespace-pre-wrap text-ink-2 select-text">
 						{shown.message}
 					</p>
+					{error && (
+						<p className="mt-2 rounded-lg bg-red-50 px-3 py-2 text-[12px] break-all text-red-600">{error}</p>
+					)}
 					<div className="mt-3 flex flex-wrap items-center justify-end gap-2">
 						<Button onClick={() => respond("deny")}>
 							{t("permission.deny")}

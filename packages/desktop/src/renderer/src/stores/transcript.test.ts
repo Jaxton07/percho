@@ -1,7 +1,13 @@
 import type { AgentSessionEvent } from "@percho/shared";
+import {
+	buildChatRows,
+	emptyTranscript,
+	messagesToUIMessages,
+	reduceEvent,
+	stripAcpReferenceTags,
+} from "@percho/shared";
 import { beforeEach, describe, expect, it } from "vitest";
 import { useTranscriptStore } from "./transcript";
-import { emptyTranscript, messagesToUIMessages, reduceEvent } from "./transcript-reducer";
 
 function ev(type: string, extra: Record<string, unknown> = {}): AgentSessionEvent {
 	return { type, ...extra } as AgentSessionEvent;
@@ -9,6 +15,30 @@ function ev(type: string, extra: Record<string, unknown> = {}): AgentSessionEven
 
 const canonicalSkill = (args?: string) =>
 	`<skill name="mindmap" location="/tmp/skills/mindmap/SKILL.md">\nReferences are relative to /tmp/skills/mindmap.\n\n# Mind map\n\nBody\n</skill>${args ? `\n\n${args}` : ""}`;
+
+const acpTag = '<acp tokens="55" type="bash">m00058</acp>';
+
+describe("stripAcpReferenceTags", () => {
+	it("仅移除独立的完整 producer 标签行，并保留其他内容", () => {
+		expect(stripAcpReferenceTags(`before\n${acpTag}\nafter`)).toBe("before\nafter");
+		expect(stripAcpReferenceTags(`\t${acpTag}  \r\n`)).toBe("");
+		expect(stripAcpReferenceTags(`${acpTag}\n\n`)).toBe("");
+		expect(stripAcpReferenceTags(`before\n${acpTag}\n\nafter`)).toBe("before\n\nafter");
+	});
+
+	it("不吞非 producer 形状、行内标签或普通 XML", () => {
+		for (const text of [
+			'<acp type="bash" tokens="55">m00058</acp>',
+			'<acp tokens="55">m00058</acp>',
+			`prefix ${acpTag}`,
+			'<acp tokens="55" type="bash">m000581</acp>',
+			'<acp tokens="55" type="bash">m00058</acp> suffix',
+			"<note>m00058</note>",
+		]) {
+			expect(stripAcpReferenceTags(text)).toBe(text);
+		}
+	});
+});
 
 describe("transcript reducer", () => {
 	it("subagent 互斥事件生成系统消息（结构化 + 同扩展去重）", () => {
@@ -125,6 +155,111 @@ describe("transcript reducer", () => {
 			assistantMessageEvent: { type: "text_delta", contentIndex: 0, delta: " world" },
 		} as unknown as AgentSessionEvent);
 		expect(state.streaming?.text).toBe("Hello world");
+	});
+
+	it("实时 assistant 固化后保留净化前正文供 Fork fallback 匹配", () => {
+		const rawText = `答案\n${acpTag}`;
+		let state = reduceEvent(emptyTranscript(), ev("agent_start"));
+		state = reduceEvent(state, {
+			type: "message_update",
+			assistantMessageEvent: { type: "text_delta", contentIndex: 0, delta: rawText },
+		} as unknown as AgentSessionEvent);
+		state = reduceEvent(state, ev("turn_end"));
+		expect(state.messages[0]).toMatchObject({
+			kind: "assistant",
+			text: "答案\n",
+			sourceText: rawText,
+		});
+	});
+
+	it("实时 user、assistant 与工具输出隐藏 ACP 标签，并保留 user 原文", () => {
+		let state = reduceEvent(emptyTranscript(), {
+			type: "message_start",
+			message: { role: "user", content: `问题\n${acpTag}` },
+		} as unknown as AgentSessionEvent);
+		expect(state.messages[0]).toMatchObject({ kind: "user", text: "问题\n", sourceText: `问题\n${acpTag}` });
+
+		state = reduceEvent(state, ev("agent_start"));
+		state = reduceEvent(state, {
+			type: "message_update",
+			assistantMessageEvent: { type: "text_delta", contentIndex: 0, delta: acpTag },
+		} as unknown as AgentSessionEvent);
+		expect(state.streaming).toMatchObject({ text: "", textBlockIndex: null });
+		state = reduceEvent(state, {
+			type: "message_update",
+			assistantMessageEvent: { type: "text_delta", contentIndex: 0, delta: "\n答案" },
+		} as unknown as AgentSessionEvent);
+		expect(state.streaming).toMatchObject({ text: "答案", textBlockIndex: 0 });
+		state = reduceEvent(state, {
+			type: "message_update",
+			assistantMessageEvent: {
+				type: "toolcall_start",
+				contentIndex: 1,
+				partial: { toolCalls: [{ name: "bash" }] },
+			},
+		} as unknown as AgentSessionEvent);
+		state = reduceEvent(state, {
+			type: "message_update",
+			assistantMessageEvent: {
+				type: "toolcall_end",
+				contentIndex: 1,
+				toolCall: { id: "tc-tag", name: "bash", arguments: {} },
+			},
+		} as unknown as AgentSessionEvent);
+		state = reduceEvent(state, {
+			type: "tool_execution_update",
+			toolCallId: "tc-tag",
+			toolName: "bash",
+			args: {},
+			partialResult: { output: `output\n${acpTag}` },
+		} as unknown as AgentSessionEvent);
+		expect(state.streaming?.tools[0]?.output).toBe("output\n");
+		state = reduceEvent(state, {
+			type: "tool_execution_update",
+			toolCallId: "tc-tag",
+			toolName: "bash",
+			args: {},
+			partialResult: { output: "\nmore" },
+		} as unknown as AgentSessionEvent);
+		expect(state.streaming?.tools[0]?.output).toBe("output\nmore");
+	});
+
+	it("tag-only assistant text does not split adjacent tools into separate meta groups", () => {
+		let state = reduceEvent(emptyTranscript(), ev("agent_start"));
+		for (const [contentIndex, id] of [
+			[0, "tool-a"],
+			[2, "tool-b"],
+		] as const) {
+			state = reduceEvent(state, {
+				type: "message_update",
+				assistantMessageEvent: {
+					type: "toolcall_start",
+					contentIndex,
+					partial: { toolCalls: [{ name: "bash" }] },
+				},
+			} as unknown as AgentSessionEvent);
+			state = reduceEvent(state, {
+				type: "message_update",
+				assistantMessageEvent: {
+					type: "toolcall_end",
+					contentIndex,
+					toolCall: { id, name: "bash", arguments: {} },
+				},
+			} as unknown as AgentSessionEvent);
+			if (contentIndex === 0) {
+				state = reduceEvent(state, {
+					type: "message_update",
+					assistantMessageEvent: { type: "text_delta", contentIndex: 1, delta: acpTag },
+				} as unknown as AgentSessionEvent);
+			}
+		}
+		state = reduceEvent(state, ev("turn_end"));
+		const metaGroups = buildChatRows(state, "session-1").filter((row) => row.kind === "metaGroup");
+		expect(metaGroups).toHaveLength(1);
+		expect(metaGroups[0]?.items.flatMap((item) => item.tools.map((tool) => tool.id))).toEqual([
+			"tool-a",
+			"tool-b",
+		]);
 	});
 
 	it("thinking 活动按 contentIndex 累积并保持首次到达位置", () => {
@@ -548,6 +683,36 @@ describe("transcript reducer", () => {
 				tokensAfter: 6000,
 			},
 		});
+	});
+
+	it("compaction_end 后历史消息完整保留（问题一搭车修复：不再整体重置）", () => {
+		// 预置：一轮完整对话（user + assistant 正文）已固化在消息流里
+		let state = emptyTranscript();
+		state = reduceEvent(state, {
+			type: "message_start",
+			message: { role: "user", content: "早前的用户消息", timestamp: 1 },
+		} as unknown as AgentSessionEvent);
+		state = reduceEvent(state, { type: "agent_start" } as unknown as AgentSessionEvent);
+		state = reduceEvent(state, {
+			type: "message_update",
+			assistantMessageEvent: { type: "text_delta", delta: "早前的助手回复" },
+		} as unknown as AgentSessionEvent);
+		state = reduceEvent(state, { type: "turn_end" } as unknown as AgentSessionEvent);
+		const before = state.messages.filter((m) => m.kind !== "system");
+		expect(before.length).toBeGreaterThanOrEqual(2);
+
+		// 压缩分界线到达：只追加 system 消息，历史消息原样保留（不再 loadHistory 重建）
+		state = reduceEvent(state, {
+			type: "compaction_end",
+			reason: "threshold",
+			aborted: false,
+			willRetry: false,
+			result: { summary: "压缩摘要", firstKeptEntryId: "x", tokensBefore: 9000, estimatedTokensAfter: 3000 },
+		} as unknown as AgentSessionEvent);
+		const after = state.messages.filter((m) => m.kind !== "system");
+		expect(after).toHaveLength(before.length);
+		expect(after[0]).toBe(before[0]);
+		expect(state.messages.some((m) => m.kind === "system")).toBe(true);
 	});
 
 	it("compaction_end 无进行中消息时追加；aborted 显示取消状态", () => {
@@ -1146,6 +1311,74 @@ describe("transcript reducer", () => {
 		} as unknown as AgentSessionEvent);
 		expect(state.todos).toEqual([{ content: "a", status: "in_progress" }]);
 	});
+
+	it("edit：tool_execution_end 把 details.patch 存进 UIToolCall.diff（turn-diff 数据源）", () => {
+		const PATCH = `--- src/a.ts\n+++ src/a.ts\n@@ -1 +1 @@\n-old\n+new\n`;
+		let state = emptyTranscript();
+		state = reduceEvent(state, ev("agent_start"));
+		state = reduceEvent(state, {
+			type: "message_update",
+			assistantMessageEvent: {
+				type: "toolcall_start",
+				contentIndex: 0,
+				partial: { toolCalls: [{ name: "edit" }] },
+			},
+		} as unknown as AgentSessionEvent);
+		state = reduceEvent(state, {
+			type: "message_update",
+			assistantMessageEvent: {
+				type: "toolcall_end",
+				contentIndex: 0,
+				toolCall: { id: "tc1", name: "edit", arguments: { path: "src/a.ts", edits: [] } },
+			},
+		} as unknown as AgentSessionEvent);
+		state = reduceEvent(state, {
+			type: "tool_execution_end",
+			toolCallId: "tc1",
+			toolName: "edit",
+			result: {
+				content: [{ type: "text", text: "ok" }],
+				details: { diff: "...", patch: PATCH, firstChangedLine: 1 },
+			},
+			isError: false,
+		} as unknown as AgentSessionEvent);
+		expect(state.streaming?.tools[0]?.diff).toBe(PATCH);
+
+		// turn_end 固化后 diff 随消息存活
+		state = reduceEvent(state, ev("turn_end"));
+		const assistant = state.messages[0];
+		if (assistant?.kind !== "assistant") throw new Error("expected assistant");
+		expect(assistant.tools[0]?.diff).toBe(PATCH);
+	});
+
+	it("edit：error / details 缺 patch 时不写 diff 字段", () => {
+		let state = emptyTranscript();
+		state = reduceEvent(state, ev("agent_start"));
+		state = reduceEvent(state, {
+			type: "message_update",
+			assistantMessageEvent: {
+				type: "toolcall_start",
+				contentIndex: 0,
+				partial: { toolCalls: [{ name: "edit" }] },
+			},
+		} as unknown as AgentSessionEvent);
+		state = reduceEvent(state, {
+			type: "message_update",
+			assistantMessageEvent: {
+				type: "toolcall_end",
+				contentIndex: 0,
+				toolCall: { id: "tc1", name: "edit", arguments: { path: "a", edits: [] } },
+			},
+		} as unknown as AgentSessionEvent);
+		state = reduceEvent(state, {
+			type: "tool_execution_end",
+			toolCallId: "tc1",
+			toolName: "edit",
+			result: { content: [{ type: "text", text: "no match" }], details: { patch: "--- a\n+++ b\n" } },
+			isError: true,
+		} as unknown as AgentSessionEvent);
+		expect(state.streaming?.tools[0]?.diff).toBeUndefined();
+	});
 });
 
 describe("messagesToUIMessages 历史回放", () => {
@@ -1191,6 +1424,34 @@ describe("messagesToUIMessages 历史回放", () => {
 		expect(ui[1]).toMatchObject({ kind: "user", text: "", skill: { name: "mindmap", args: undefined } });
 	});
 
+	it("历史 mapper 作为展示边界净化 user、assistant 与工具输出", () => {
+		const ui = messagesToUIMessages([
+			{
+				role: "user",
+				text: `问题\n${acpTag}`,
+				thinking: "",
+				tools: [],
+				images: [],
+				timestamp: 1,
+			},
+			{
+				role: "assistant",
+				text: acpTag,
+				thinking: "",
+				tools: [{ id: "tool", name: "bash", args: "{}", output: `结果\n${acpTag}`, isError: false }],
+				images: [],
+				timestamp: 2,
+			},
+		]);
+		expect(ui[0]).toMatchObject({ kind: "user", text: "问题\n", sourceText: `问题\n${acpTag}` });
+		expect(ui[1]).toMatchObject({
+			kind: "assistant",
+			text: "",
+			sourceText: acpTag,
+			tools: [{ output: "结果\n" }],
+		});
+	});
+
 	it("image 角色消息还原为图片消息，位置保持", () => {
 		const ui = messagesToUIMessages([
 			{ role: "user", text: "看图", thinking: "", tools: [], images: [], timestamp: 1 },
@@ -1225,6 +1486,34 @@ describe("messagesToUIMessages 历史回放", () => {
 			kind: "subagent",
 			runs: [{ agent: "reviewer", status: "done", sessionFile: "/s.jsonl" }],
 		});
+	});
+
+	it("SessionToolCall.diff 透传到 UIToolCall（历史 diff 侧栏）", () => {
+		const ui = messagesToUIMessages([
+			{ role: "user", text: "u", thinking: "", tools: [], images: [], timestamp: 1 },
+			{
+				role: "assistant",
+				text: "",
+				thinking: "",
+				tools: [
+					{
+						id: "tc1",
+						name: "edit",
+						args: '{"path":"a.ts"}',
+						output: "",
+						isError: false,
+						diff: "--- a\n+++ b\n",
+					},
+					{ id: "tc2", name: "read", args: "{}", output: "", isError: false },
+				],
+				images: [],
+				timestamp: 2,
+			},
+		]);
+		const assistant = ui[1];
+		if (assistant?.kind !== "assistant") throw new Error("expected assistant");
+		expect(assistant.tools[0]?.diff).toBe("--- a\n+++ b\n");
+		expect(assistant.tools[1]?.diff).toBeUndefined();
 	});
 });
 

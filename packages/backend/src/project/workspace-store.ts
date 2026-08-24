@@ -1,6 +1,7 @@
-import { existsSync, mkdirSync, readFileSync, renameSync, statSync, writeFileSync } from "node:fs";
-import { homedir, tmpdir } from "node:os";
+import { existsSync, statSync } from "node:fs";
+import { homedir } from "node:os";
 import { dirname, isAbsolute, join, resolve, sep } from "node:path";
+import { JsonStore } from "../json-store";
 import { createLogger } from "../log";
 
 const log = createLogger("workspace-store");
@@ -41,48 +42,52 @@ function parseEntry(raw: unknown): WorkspaceProjectEntry | null {
 	return { roots, allowed };
 }
 
+/** 原始 JSON → 规整配置：非绝对路径根/非法条目剔除（loadWorkspaces 读侧与 mutateEntry 写侧共用） */
+function parseWorkspaces(raw: unknown): WorkspacesConfig {
+	const config = emptyWorkspaces();
+	if (typeof raw !== "object" || raw === null) return config;
+	const projects = (raw as { projects?: unknown }).projects;
+	if (typeof projects !== "object" || projects === null) return config;
+	for (const [root, entry] of Object.entries(projects as Record<string, unknown>)) {
+		if (!isAbsolute(root)) continue;
+		const parsed = parseEntry(entry);
+		if (parsed) config.projects[root] = parsed;
+	}
+	return config;
+}
+
 /** 读取工作区配置；文件不存在/非法时返回空配置（不抛错） */
 export function loadWorkspaces(agentDir: string): WorkspacesConfig {
-	const path = workspaceConfigPath(agentDir);
-	if (!existsSync(path)) return emptyWorkspaces();
-	try {
-		const raw = JSON.parse(readFileSync(path, "utf-8")) as { projects?: unknown };
-		if (typeof raw !== "object" || raw === null || typeof raw.projects !== "object") {
-			return emptyWorkspaces();
-		}
-		const config = emptyWorkspaces();
-		for (const [root, entry] of Object.entries(raw.projects as Record<string, unknown>)) {
-			if (!isAbsolute(root)) continue;
-			const parsed = parseEntry(entry);
-			if (parsed) config.projects[root] = parsed;
+	const store = workspacesStore(agentDir);
+	return parseWorkspaces(store.readSync());
+}
+
+function workspacesStore(agentDir: string): JsonStore<unknown> {
+	return new JsonStore<unknown>({
+		path: workspaceConfigPath(agentDir),
+		defaultValue: () => null,
+	});
+}
+
+/**
+ * 读改写（sync，权限应答热路径）：同目录 tmp+rename 原子写（修跨卷 EXDEV）；
+ * 文件损坏时抛 JsonStoreCorruptedError 拒写（静默继续会用空配置覆盖真记忆），
+ * 调用方（respondPermission）负责 catch 呈现。
+ */
+function mutateEntry(agentDir: string, projectRoot: string, mutate: (entry: WorkspaceProjectEntry) => void) {
+	const store = workspacesStore(agentDir);
+	store.updateSync((raw) => {
+		const config = parseWorkspaces(raw);
+		const key = resolve(projectRoot);
+		const entry = config.projects[key] ?? { roots: [], allowed: [] };
+		mutate(entry);
+		if (entry.roots.length === 0 && entry.allowed.length === 0) {
+			delete config.projects[key]; // 空条目回收，避免积累空对象
+		} else {
+			config.projects[key] = entry;
 		}
 		return config;
-	} catch (err) {
-		log.warn("workspaces.json 解析失败，按空配置处理", path, err);
-		return emptyWorkspaces();
-	}
-}
-
-/** 原子写（tmp + rename）；读改写窗口的并发竞态最坏丢一条记忆，可接受 */
-function saveWorkspaces(agentDir: string, config: WorkspacesConfig): void {
-	const path = workspaceConfigPath(agentDir);
-	mkdirSync(agentDir, { recursive: true });
-	const tmp = join(tmpdir(), `workspaces-${process.pid}-${Date.now()}.json`);
-	writeFileSync(tmp, `${JSON.stringify(config, null, 2)}\n`, "utf-8");
-	renameSync(tmp, path);
-}
-
-function mutateEntry(agentDir: string, projectRoot: string, mutate: (entry: WorkspaceProjectEntry) => void) {
-	const key = resolve(projectRoot);
-	const config = loadWorkspaces(agentDir);
-	const entry = config.projects[key] ?? { roots: [], allowed: [] };
-	mutate(entry);
-	if (entry.roots.length === 0 && entry.allowed.length === 0) {
-		delete config.projects[key]; // 空条目回收，避免积累空对象
-	} else {
-		config.projects[key] = entry;
-	}
-	saveWorkspaces(agentDir, config);
+	});
 }
 
 /** 把 newRoot 加入项目的额外信任根（去重） */

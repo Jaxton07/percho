@@ -9,10 +9,12 @@
 	"main": "./out/main/index.js",
 	"scripts": {
 		"dev": "electron-vite dev",
-		"build": "electron-vite build",
+		"predev": "npm run build:lan-web",
+		"build:lan-web": "vite build --config src/lan-web/vite.config.ts",
+		"build": "npm run build:lan-web && electron-vite build",
 		"typecheck": "tsc --noEmit -p tsconfig.node.json && tsc --noEmit -p tsconfig.web.json",
 		"test": "vitest run",
-		"dist": "electron-vite build && electron-builder",
+		"dist": "npm run build && electron-builder",
 		"start": "electron-vite preview"
 	},
 	"dependencies": {
@@ -23,10 +25,12 @@
 		"@earendil-works/pi-coding-agent": "0.84.0",
 		"@percho/backend": "*",
 		"@percho/shared": "*",
+		"acp-kernel": "0.0.42",
 		"electron-updater": "^6.8.9",
 		"esbuild": "0.25.12",
 		"markstream-react": "^0.0.55",
 		"monaco-editor": "^0.55.1",
+		"qrcode": "^1.5.4",
 		"react": "^19.2.8",
 		"react-dom": "^19.2.8",
 		"stream-markdown": "^0.0.16",
@@ -36,6 +40,7 @@
 	},
 	"devDependencies": {
 		"@tailwindcss/vite": "^4.3.3",
+		"@types/qrcode": "^1.5.6",
 		"@types/react": "^19.2.0",
 		"@types/react-dom": "^19.2.0",
 		"@vitejs/plugin-react": "^5.1.1",
@@ -45,6 +50,7 @@
 		"tailwindcss": "^4.3.3",
 		"typescript": "^5.9.0",
 		"vite": "^7.0.0",
+		"vite-plugin-singlefile": "^2.3.3",
 		"vitest": "^3.2.0"
 	}
 }

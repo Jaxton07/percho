@@ -1,10 +1,10 @@
 import type { AvailableModel, SavedTabs, SessionMeta } from "@percho/shared";
+import { messagesToUIMessages } from "@percho/shared";
 import { create } from "zustand";
 import { getPi } from "../api";
 import { clampThinkingLevel } from "../lib/thinking";
 import { COMPOSER_FOCUS_EVENT, useDraftStore } from "./drafts";
 import { useTranscriptStore } from "./transcript";
-import { messagesToUIMessages } from "./transcript-reducer";
 
 /** 草稿会话 id 前缀：新会话 tab 的占位条目，只存在于 renderer 内存，后端永远不会看到 */
 export const DRAFT_SESSION_PREFIX = "draft:";
@@ -16,10 +16,12 @@ export function isDraftSessionId(sessionId: string | null | undefined): boolean 
 /** 顶栏打开的会话持久化（重启恢复用）；由主进程写 userData/tabs.json，不依赖 renderer localStorage */
 function persistTabs(state: Pick<SessionsStore, "sessions" | "activeSessionId">): void {
 	try {
-		void getPi().saveTabs({
-			files: [...new Set(state.sessions.map((s) => s.sessionFile).filter((f): f is string => Boolean(f)))],
-			activeFile: state.sessions.find((s) => s.sessionId === state.activeSessionId)?.sessionFile ?? null,
-		});
+		getPi()
+			.saveTabs({
+				files: [...new Set(state.sessions.map((s) => s.sessionFile).filter((f): f is string => Boolean(f)))],
+				activeFile: state.sessions.find((s) => s.sessionId === state.activeSessionId)?.sessionFile ?? null,
+			})
+			.catch((error) => console.error("tabs 持久化失败", error));
 	} catch {
 		// 持久化失败静默（不影响主流程）
 	}
@@ -176,7 +178,11 @@ export const useSessionsStore = create<SessionsStore>((set, get) => ({
 			const sessions = state.sessions.filter((s) => s.sessionId !== sessionId);
 			const activeSessionId =
 				state.activeSessionId === sessionId ? (sessions[0]?.sessionId ?? null) : state.activeSessionId;
-			return { sessions, activeSessionId };
+			// 切 active 后 cwd 同步到新活跃会话的项目（否则跨项目关会话后 cwd 残留旧项目，新建会话归属错）（B5）
+			const cwd = activeSessionId
+				? (sessions.find((s) => s.sessionId === activeSessionId)?.cwd ?? state.cwd)
+				: state.cwd;
+			return { sessions, activeSessionId, cwd };
 		});
 		if (!isDraft) persistTabs(get());
 	},
@@ -358,7 +364,9 @@ export const useSessionsStore = create<SessionsStore>((set, get) => ({
 				s.sessionId === activeSessionId ? { ...s, model: { provider, modelId }, thinkingLevel } : s,
 			),
 		}));
-		void getPi().saveUiState({ currentModel: { provider, modelId }, thinkingLevel });
+		getPi()
+			.saveUiState({ currentModel: { provider, modelId }, thinkingLevel })
+			.catch((error) => console.error("ui-state 持久化失败", error));
 		// draft 无后端会话：模型选择只作为全局默认，创建时随 createSession 生效
 		if (activeSessionId && !isDraftSessionId(activeSessionId)) {
 			try {
@@ -378,7 +386,9 @@ export const useSessionsStore = create<SessionsStore>((set, get) => ({
 				s.sessionId === activeSessionId ? { ...s, thinkingLevel: level } : s,
 			),
 		}));
-		void getPi().saveUiState({ currentModel, thinkingLevel: level });
+		getPi()
+			.saveUiState({ currentModel, thinkingLevel: level })
+			.catch((error) => console.error("ui-state 持久化失败", error));
 		// draft 无后端会话：同上，仅作全局默认
 		if (activeSessionId && !isDraftSessionId(activeSessionId)) {
 			try {

@@ -23,7 +23,7 @@ import { useT } from "../../i18n";
 import { useSessionsStore } from "../../stores/sessions";
 import { useTranscriptStore } from "../../stores/transcript";
 import { useUiStore } from "../../stores/ui";
-import { CloseIcon, ComposeIcon, GridIcon, SubagentIcon } from "../icons";
+import { CloseIcon, ComposeIcon, DiffIcon, GridIcon, SubagentIcon } from "../icons";
 import { sessionLetter, sessionTitle, useSessionStatus } from "./session-status";
 import { UpdateButton } from "./UpdateButton";
 
@@ -165,6 +165,8 @@ export function SessionTabBar() {
 	const cwd = useSessionsStore((s) => s.cwd);
 	const view = useUiStore((s) => s.view);
 	const setView = useUiStore((s) => s.setView);
+	const diffSidebarOpen = useUiStore((s) => s.diffSidebarOpen);
+	const toggleDiffSidebar = useUiStore((s) => s.toggleDiffSidebar);
 	const scrollerRef = useRef<HTMLDivElement>(null);
 	const [activeId, setActiveId] = useState<string | null>(null);
 	const activeSession = sessions.find((s) => s.sessionId === activeId);
@@ -274,6 +276,19 @@ export function SessionTabBar() {
 					aria-label={cwd ? t("tabbar.newSession") : t("tabbar.pickProjectFirst")}
 				>
 					<ComposeIcon size={15} />
+				</button>
+			)}
+			{/* diff 侧栏开关：新会话按钮之后，active 态底色区分 */}
+			{view !== "projects" && (
+				<button
+					type="button"
+					className={`no-drag relative shrink-0 rounded-lg p-1.5 transition-colors ${
+						diffSidebarOpen ? "bg-hover text-ink" : "text-ink-dim hover:bg-hover hover:text-ink"
+					}`}
+					onClick={toggleDiffSidebar}
+					aria-label={t("diff.toggle")}
+				>
+					<DiffIcon size={16} />
 				</button>
 			)}
 		</div>

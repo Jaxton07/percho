@@ -63,9 +63,16 @@ async function seedBuiltinPlugins(): Promise<void> {
 	if (app.isPackaged && stamp?.version === version) return;
 	const src = builtinPluginsDir();
 	const entries = await readdir(src, { withFileTypes: true }).catch(() => []);
+	let allOk = true;
 	for (const entry of entries) {
 		if (!entry.isDirectory() || !NAME_RE.test(entry.name)) continue;
-		await copyTree(join(src, entry.name), join(pluginsDir(), entry.name));
+		const ok = await copyTree(join(src, entry.name), join(pluginsDir(), entry.name));
+		if (!ok) allOk = false;
+	}
+	if (!allOk) {
+		// 任一导出失败不写版本戳，下次启动重试（否则部分插件缺失被版本戳永久遮蔽，B9）
+		log.error("builtin plugins seed incomplete, will retry next launch");
+		return;
 	}
 	await writeFile(stampPath, JSON.stringify({ version }), "utf-8").catch((err) =>
 		log.error("builtin seed stamp failed", err),
@@ -80,7 +87,8 @@ export function uiPluginsResourcesDir(): string {
 }
 
 /**
- * 分发 agent 规范三件套：SPEC.md / percho-ui.d.ts 拷贝进 userData/ui-plugins/（内容一致跳过），
+ * 分发 agent 规范三件套：SPEC.md / percho-ui.d.ts 是**宿主管理的契约文档**（agent 按它写插件），
+ * 始终更新到随包版本（内容一致跳过避免无谓写入），用户不应手改——这不是用户配置。
  * examples/ 整体拷为 `_examples/`（下划线开头过不了 NAME_RE，scanAll 天然忽略、不会当插件扫描）；
  * 并确保 symlink ~/.percho/ui-plugins → userData/ui-plugins（给 agent 一个不随 dev/prod 漂移的稳定路径）。
  * 任一步失败只告警不致命（插件加载不受影响）。
@@ -93,7 +101,7 @@ async function seedDocs(): Promise<void> {
 				readFile(join(uiPluginsResourcesDir(), file)),
 				readFile(join(root, file)).catch(() => null),
 			]);
-			if (dst && src.equals(dst)) continue; // 内容一致跳过（尊重用户手动改过的版本）
+			if (dst && src.equals(dst)) continue; // 内容一致跳过（避免无谓写入；契约文档始终以随包版本为准）
 			await writeFile(join(root, file), src);
 		} catch (err) {
 			log.error("seed doc failed", file, err);
@@ -172,9 +180,12 @@ function validateManifest(dirName: string, m: Partial<UiPluginManifest>): string
 /**
  * 过滤 contributions：剔除未知 region 条目（scanAll 合成 info 与 readCode 返回的 manifest 都用这份），
  * 并把非 app.overlay 区域的 anchor 剥离（anchor 仅对 overlay 有意义）。
+ * 非数组输入（坏插件可能给任意形状）一律空，防上层 for...of/条目访问抛错。
  */
-function filterContributions(contributions: UiPluginContribution[] | undefined): UiPluginContribution[] {
-	if (!contributions) return [];
+export function filterContributions(
+	contributions: UiPluginContribution[] | undefined,
+): UiPluginContribution[] {
+	if (!Array.isArray(contributions)) return [];
 	const out: UiPluginContribution[] = [];
 	for (const c of contributions) {
 		if (!c || typeof c.region !== "string" || !KNOWN_UI_REGIONS.includes(c.region)) continue;
@@ -193,8 +204,8 @@ async function readManifest(dir: string): Promise<Partial<UiPluginManifest> | nu
 	}
 }
 
-/** 目录级拷贝：递归比较（文件逐字节、目录递归），内容一致则跳过；失败只告警 */
-async function copyTree(src: string, dst: string): Promise<void> {
+/** 目录级拷贝：递归比较（文件逐字节、目录递归），内容一致则跳过；返回是否成功（失败告警） */
+async function copyTree(src: string, dst: string): Promise<boolean> {
 	try {
 		const srcStat = await stat(src);
 		if (srcStat.isDirectory()) {
@@ -207,13 +218,16 @@ async function copyTree(src: string, dst: string): Promise<void> {
 						break;
 					}
 				}
-				if (allSame) return;
+				if (allSame) return true;
 			}
 			await rm(dst, { recursive: true, force: true });
 			await cp(src, dst, { recursive: true });
+			return true;
 		}
+		return true; // 非目录源（文件/其他）无整树可拷，视为无事可做
 	} catch (err) {
 		log.error("copyTree failed", src, err);
+		return false;
 	}
 }
 
@@ -323,11 +337,28 @@ export class UiPluginManager {
 			if (!entry.isDirectory()) continue;
 			const name = entry.name;
 			if (!NAME_RE.test(name)) continue; // 目录名非法直接跳过（不占白名单）
-			seen.add(name);
-			this.dirNames.set(name, join(dir, name));
-			const info = await this.scanOne(name, join(dir, name));
-			this.infos.set(name, info);
-			out.push(info);
+			try {
+				seen.add(name);
+				this.dirNames.set(name, join(dir, name));
+				const info = await this.scanOne(name, join(dir, name));
+				this.infos.set(name, info);
+				out.push(info);
+			} catch (err) {
+				// 单插件扫描异常不阻断应用启动与其余插件（B2）：合成 invalid info 继续下一个
+				const msg = err instanceof Error ? err.message : String(err);
+				log.error("scanOne failed", name, err);
+				const info: UiPluginInfo = {
+					name,
+					slots: {},
+					contributions: [],
+					enabled: false,
+					trusted: false,
+					built: false,
+					invalidReason: `扫描异常: ${msg}`,
+				};
+				this.infos.set(name, info);
+				out.push(info);
+			}
 		}
 		// 清理幽灵条目：目录已删除/改名的插件从两个 Map 移除（否则面板显示已删除插件直到重启）
 		for (const stale of [...this.infos.keys()]) {

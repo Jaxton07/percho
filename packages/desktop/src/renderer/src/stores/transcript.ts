@@ -1,20 +1,18 @@
 import type { SessionEvent, PermissionRequest as SharedPermissionRequest, TodoItem } from "@percho/shared";
-import { create } from "zustand";
 import {
+	type ActivityEntry,
 	emptyTranscript,
 	reduceEvent,
+	type SessionPhase,
 	type SessionTranscriptState,
+	type StreamingState,
+	type SubagentRunUi,
 	type UIMessage,
-} from "./transcript-reducer";
+	type UIToolCall,
+} from "@percho/shared";
+import { create } from "zustand";
 
-export type {
-	ActivityEntry,
-	SessionPhase,
-	StreamingState,
-	SubagentRunUi,
-	UIMessage,
-	UIToolCall,
-} from "./transcript-reducer";
+export type { ActivityEntry, SessionPhase, StreamingState, SubagentRunUi, UIMessage, UIToolCall };
 
 /** 跨进程完整请求（含 kind/suggestDir）；App 订阅转发时缺省字段补齐 */
 export interface PermissionRequest extends SharedPermissionRequest {}

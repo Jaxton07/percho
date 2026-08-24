@@ -75,6 +75,25 @@ export function ComposeIcon({ size = 14, className }: IconProps) {
 	);
 }
 
+/** Diff 侧栏开关（右栏面板图形；字形占满 viewBox，与新会话铅笔视觉同尺寸） */
+export function DiffIcon({ size = 15, className }: IconProps) {
+	return (
+		<svg
+			className={className}
+			width={size}
+			height={size}
+			viewBox="0 0 24 24"
+			{...strokeProps}
+			strokeWidth={1.8}
+			strokeLinecap="round"
+			aria-hidden="true"
+		>
+			<rect x="2.8" y="3.8" width="18.4" height="16.4" rx="2.5" />
+			<path d="M14.2 3.8v16.4" />
+		</svg>
+	);
+}
+
 /** 加号 */
 export function PlusIcon({ size = 14, className }: IconProps) {
 	return (

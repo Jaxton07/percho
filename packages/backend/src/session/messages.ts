@@ -1,10 +1,16 @@
-import type { SessionEntry, SessionManager } from "@earendil-works/pi-coding-agent";
+import {
+	parseSessionEntries,
+	type SessionEntry,
+	type SessionManager,
+	type SessionMessageEntry,
+} from "@earendil-works/pi-coding-agent";
 import {
 	extractSubagentRuns,
 	type ImageInput,
 	parseExpandedSkillInvocation,
 	type SessionMessage,
 	type SessionToolCall,
+	stripAcpReferenceTags,
 } from "@percho/shared";
 
 /**
@@ -36,6 +42,8 @@ export interface RawMessage {
 	toolName?: string;
 	/** custom 消息的自定义类型（getTodos 扫 todo-reminder 恢复消息用） */
 	customType?: string;
+	/** custom 消息的 UI 展示开关（acp 摘要消息 display:false，不进消息流） */
+	display?: boolean;
 }
 
 /** show_image toolResult.details → { images, paths }（兼容旧单图 { path, image } 形状；不符返回 null） */
@@ -135,7 +143,17 @@ export function resolveForkEntryId(
 	sm: Pick<SessionManager, "getEntry" | "getBranch">,
 	ref: { entryId?: string; text?: string },
 ): string {
-	if (ref.entryId && sm.getEntry(ref.entryId)) return ref.entryId;
+	if (ref.entryId) {
+		const e = sm.getEntry(ref.entryId);
+		if (e) {
+			// 只接受 assistant 消息作为 fork 点（与 text 分支同语义）；user/tool 条目拒绝防破坏分支结构（B7）
+			if (e.type !== "message" || (e.message as RawMessage).role !== "assistant") {
+				throw new Error("Fork target is not an assistant message");
+			}
+			return ref.entryId;
+		}
+		// entryId 未命中（如实时消息 entryId 缺失/已失效）→ 走 text 兑底
+	}
 	if (ref.text) {
 		const branch = sm.getBranch();
 		for (let i = branch.length - 1; i >= 0; i--) {
@@ -150,6 +168,30 @@ export function resolveForkEntryId(
 }
 
 /**
+ * 只读解析会话文件内容（LAN 历史会话透视用）：不走 SessionManager.open（可能迁移写盘），
+ * 纯函数 parseSessionEntries + 从文件末尾（leaf tip）沿 parentId 回溯出当前分支。
+ * 分支语义与 getBranch() 一致：只保留当前分支上的消息。
+ */
+export function readSessionMessagesFromContent(content: string): SessionMessage[] {
+	const entries = parseSessionEntries(content);
+	// 当前分支：从最后一条 entry（leaf）沿 parentId 回溯
+	const byId = new Map<string, (typeof entries)[number]>();
+	for (const entry of entries) {
+		if (entry.type !== "session") byId.set(entry.id, entry);
+	}
+	const branch: (typeof entries)[number][] = [];
+	let cursor = entries.length > 0 ? entries[entries.length - 1] : null;
+	while (cursor && cursor.type !== "session") {
+		branch.unshift(cursor);
+		cursor = cursor.parentId ? (byId.get(cursor.parentId) ?? null) : null;
+	}
+	const raw = branch
+		.filter((entry): entry is SessionMessageEntry => entry.type === "message")
+		.map((entry) => entry.message);
+	return toSessionMessages(raw);
+}
+
+/**
  * pi 消息 → 中立 SessionMessage 列表。
  * toolResult 消息单独出现（带 toolCallId），把输出回填到对应工具卡片。
  */
@@ -159,15 +201,18 @@ export function toSessionMessages(rawMessages: readonly unknown[]): SessionMessa
 	for (const raw of rawMessages as RawMessage[]) {
 		if (raw.role === "user") {
 			const sourceText = blockText(raw.content);
-			const invocation = parseExpandedSkillInvocation(sourceText);
+			const displayText = stripAcpReferenceTags(sourceText);
+			const invocation = parseExpandedSkillInvocation(displayText);
 			out.push({
 				role: "user",
-				text: invocation ? (invocation.args ?? "") : sourceText,
+				text: invocation ? (invocation.args ?? "") : displayText,
 				thinking: "",
 				tools: [],
 				images: blockImages(raw.content),
 				timestamp: raw.timestamp ?? Date.now(),
-				...(invocation ? { skill: { name: invocation.name, args: invocation.args }, sourceText } : {}),
+				...(invocation || displayText !== sourceText
+					? { ...(invocation ? { skill: { name: invocation.name, args: invocation.args } } : {}), sourceText }
+					: {}),
 			});
 			continue;
 		}
@@ -176,7 +221,8 @@ export function toSessionMessages(rawMessages: readonly unknown[]): SessionMessa
 			const toolBlocks = blockToolCalls(content);
 			const tools = toolBlocks.map((b) => b.tool);
 			for (const tool of tools) toolById.set(tool.id, tool);
-			const text = blockText(raw.content);
+			const sourceText = blockText(raw.content);
+			const text = stripAcpReferenceTags(sourceText);
 			// 正文后的工具（块序在首个 text 块之后，同 turn 内 text→toolCall 交错）：拆成独立 meta 消息
 			// 排在正文消息之后，与 renderer finalizeStreaming 的拆分一致——否则渲染时会被倒挂到正文上方
 			const textIndex = content.findIndex((c) => c?.type === "text" && c.text);
@@ -192,6 +238,7 @@ export function toSessionMessages(rawMessages: readonly unknown[]): SessionMessa
 						tools: preTools,
 						images: [],
 						timestamp,
+						...(text !== sourceText ? { sourceText } : {}),
 					});
 				}
 				out.push({
@@ -211,6 +258,7 @@ export function toSessionMessages(rawMessages: readonly unknown[]): SessionMessa
 				tools,
 				images: [],
 				timestamp: raw.timestamp ?? Date.now(),
+				...(text !== sourceText ? { sourceText } : {}),
 			};
 			if (message.text || message.thinking || message.tools.length > 0) {
 				out.push(message);
@@ -220,8 +268,13 @@ export function toSessionMessages(rawMessages: readonly unknown[]): SessionMessa
 		if (raw.role === "toolResult") {
 			const tool = raw.toolCallId ? toolById.get(raw.toolCallId) : undefined;
 			if (tool) {
-				tool.output = blockText(raw.content);
+				tool.output = stripAcpReferenceTags(blockText(raw.content));
 				tool.isError = raw.isError === true;
+				// edit：unified patch 提取进 SessionToolCall.diff（diff 侧栏历史回放数据源；模型不可见）
+				if (tool.name === "edit" && !tool.isError) {
+					const patch = (raw.details as { patch?: unknown } | undefined)?.patch;
+					if (typeof patch === "string" && patch.length > 0) tool.diff = patch;
+				}
 				// show_image：图片从 details 提取为独立图片消息（紧随其 assistant 消息之后）
 				if (tool.name === "show_image" && !tool.isError) {
 					const shown = showImageFromDetails(raw.details);

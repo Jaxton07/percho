@@ -1,8 +1,9 @@
 /**
- * 逐工具权限规则引擎 barrel：实现拆在本目录三模块，入口 = permissions/index.ts（原 permission-rules.ts）。
+ * 逐工具权限规则引擎 barrel：实现拆在本目录四模块，入口 = permissions/index.ts（原 permission-rules.ts）。
  * - bash-chain.ts  bash 命令链解析（切段/替换提取/包装剥壳/候选收集）
  * - pattern.ts     规则求值 + 通配匹配 + 模式键建议（含 PermissionAction/Rule/Rules/Outside 类型）
  * - config.ts      permissions.json 读写 + 默认配置（含 PermissionConfig 类型）
+ * - tmp-zone.ts    系统临时区判定 + rm 目标提取（地理分区豁免，纯函数）
  */
 export {
 	collectBashCandidates,
@@ -31,3 +32,4 @@ export {
 	patternMatchesToolCall,
 	suggestPattern,
 } from "./pattern";
+export { isRmSegment, isTemporaryPath, rmSegmentExempt, temporaryRoots } from "./tmp-zone";

@@ -6,12 +6,21 @@ const files = new Map<string, string>();
 vi.mock("node:fs/promises", () => ({
 	readFile: vi.fn(async (path: string) => {
 		const value = files.get(path);
-		if (value === undefined) throw new Error("ENOENT");
+		if (value === undefined) throw Object.assign(new Error("ENOENT"), { code: "ENOENT" });
 		return value;
 	}),
 	writeFile: vi.fn(async (path: string, data: string) => {
 		files.set(path, data);
 	}),
+	// JsonStore 同目录 tmp+rename 原子写所需的配套原语（内存 Map 模拟）
+	mkdir: vi.fn(async () => {}),
+	rename: vi.fn(async (from: string, to: string) => {
+		const value = files.get(from);
+		if (value === undefined) throw Object.assign(new Error("ENOENT"), { code: "ENOENT" });
+		files.set(to, value);
+		files.delete(from);
+	}),
+	rm: vi.fn(async () => {}),
 }));
 
 vi.mock("@earendil-works/pi-coding-agent", () => ({

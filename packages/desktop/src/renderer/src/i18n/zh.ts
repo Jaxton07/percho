@@ -139,6 +139,18 @@ export const zh = {
 			mutex: "检测到 subagent 扩展 {path}，其工具已由内置 subagent 接管：{tools}",
 		},
 	},
+	diff: {
+		toggle: "变更侧栏",
+		title: "变更",
+		filesChanged: "修改了 {count} 个文件",
+		filesSummary: "{count} 文件",
+		openSidebar: "侧栏查看",
+		scopeAll: "全部",
+		scopeLatest: "最近一轮",
+		empty: "本会话还没有文件变更",
+		expandMore: "展开其余 {lines} 行",
+		turnLabel: "第 {n} 轮",
+	},
 	tool: {
 		running: "运行中…",
 	},
@@ -179,6 +191,7 @@ export const zh = {
 			extensions: "扩展",
 			uiPlugins: "UI 插件",
 			vision: "视觉",
+			lan: "局域网观察",
 			about: "关于",
 		},
 		language: "语言",
@@ -197,6 +210,9 @@ export const zh = {
 		permissionGate: "内置权限门控",
 		permissionGateHint:
 			"开启后按规则拦截工具调用：高危命令（rm -rf、sudo、强推等）弹窗确认，其余放行。规则文件 ~/.pi/agent/permissions.json，修改即时生效。关闭可换用自己安装的权限扩展。",
+		acpCompression: "智能上下文压缩（ACP）",
+		acpCompressionHint:
+			"长会话中让模型自主摘要压缩已消耗的旧对话，任务不中断、压缩内容可随时 decompress 还原。约 75% 上下文占用时开始引导压缩，默认开启。开关存于 ~/.pi/agent/settings.json，对新建会话完全生效。",
 		sessionRail: "左侧会话轨道",
 		sessionRailHint:
 			"在聊天页左侧居中显示一列会话短线：悬停或聚焦时短线展开为悬浮胶囊（项目图标 + 会话标题），点击快速切换。顶栏会话胶囊保持不变，关闭后完全隐藏。",
@@ -227,6 +243,24 @@ export const zh = {
 			saved: "已保存",
 			testOk: "连接成功（模型响应：{reply}）",
 			testFail: "连接失败：{message}",
+		},
+		lan: {
+			title: "局域网观察页",
+			hint: "在可信局域网内，用手机实时查看 agent 的运行进度。默认关闭；每次开启会轮换访问令牌。",
+			port: "监听端口：{port}",
+			clients: "已连接 {count} 台设备",
+			copy: "复制",
+			copied: "已复制",
+			qrAlt: "观察页二维码",
+			noAddress: "未发现可访问的局域网 IPv4 地址。",
+			remoteControl: "允许远程控制",
+			remoteControlHint:
+				"开启后，手机可发送消息、中断运行、回答权限询问（仅“允许一次/拒绝”，不改变持久信任设置）。所有远程操作会记录审计日志。",
+			securityTitle: "安全提示",
+			securityContent: "观察页会显示对话输出、工具调用和任务内容，其中可能含代码或敏感信息。",
+			securityTrusted: "仅在可信局域网中开启并分享链接。",
+			securityForward: "不要把此端口转发或暴露到公网。",
+			securityFirewall: "macOS 首次监听时出现“允许传入连接”防火墙提示属正常。",
 		},
 		about: {
 			version: "版本",

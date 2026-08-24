@@ -5,5 +5,5 @@
 		"jsx": "react-jsx",
 		"types": ["vite/client"]
 	},
-	"include": ["src/renderer/src"]
+	"include": ["src/renderer/src", "src/lan-web/src"]
 }

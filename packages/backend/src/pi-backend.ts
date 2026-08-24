@@ -1,5 +1,5 @@
 import { existsSync } from "node:fs";
-import { unlink } from "node:fs/promises";
+import { readFile, unlink } from "node:fs/promises";
 import { join } from "node:path";
 import type { Model, ThinkingLevel } from "@earendil-works/pi-ai";
 import { getSupportedThinkingLevels } from "@earendil-works/pi-ai";
@@ -25,6 +25,7 @@ import type {
 	ModelPrefs,
 	PermissionAnswer,
 	PermissionRequest,
+	PermissionResolved,
 	SessionEvent,
 	SessionMessage,
 	SessionMeta,
@@ -56,17 +57,20 @@ import { walkProjectFiles } from "./project/files";
 import { TrustGate } from "./project/trust";
 import { ProjectResourceLoader } from "./project/trust-loader";
 import { addAllowedPattern, addWorkspaceRoot } from "./project/workspace-store";
+import { slimMessageUpdate } from "./session/event-slim";
 import {
 	assignEntryIds,
 	blockImages,
 	blockText,
 	type RawMessage,
+	readSessionMessagesFromContent,
 	resolveForkEntryId,
 	resolveRecallEntryId,
 	toSessionMessages,
 } from "./session/messages";
 import { autoNameSession } from "./session/naming";
 import { type EventForwarder, SessionRegistry } from "./session/registry";
+import { StreamGuard } from "./session/stream-guard";
 import { TraceRecorder } from "./session/trace";
 import { SessionTraces } from "./session/traces";
 import { makeUiContext } from "./session/ui-context";
@@ -74,6 +78,7 @@ import { LoginService } from "./settings/login";
 import { ModelPrefsService } from "./settings/model-prefs";
 import { SettingsService } from "./settings/settings";
 import { slashCommandsForLoader, slashCommandsForSession } from "./slash-commands";
+import { makeAcpExtension, readAcpEnabled, writeAcpEnabled } from "./tools/acp-context";
 import { makeShowImageTool } from "./tools/show-image";
 import { discoverAgents, isSubagentSessionPath, makeSubagentTool } from "./tools/subagent";
 import { applySubagentMutex } from "./tools/subagent/mutex";
@@ -120,6 +125,7 @@ export interface PiBackendOptions {
 
 type EventHandler = (sessionId: string, event: SessionEvent) => void;
 type PermissionHandler = (req: PermissionRequest) => void;
+type PermissionResolvedHandler = (result: PermissionResolved) => void;
 type TrustHandler = (req: TrustRequest) => void;
 type LoginHandler = (payload: LoginEventPayload) => void;
 
@@ -138,6 +144,7 @@ export class PiBackend {
 	private readonly registry = new SessionRegistry();
 	private readonly eventHandlers = new Set<EventHandler>();
 	private readonly permissionHandlers = new Set<PermissionHandler>();
+	private readonly permissionResolvedHandlers = new Set<PermissionResolvedHandler>();
 	private readonly trustHandlers = new Set<TrustHandler>();
 	private readonly loginHandlers = new Set<LoginHandler>();
 	private readonly gates = new Map<string, PermissionGate>();
@@ -146,6 +153,7 @@ export class PiBackend {
 	private readonly trustGate = new TrustGate((req) => this.dispatchTrustRequest(req));
 	/** 会话事件 trace（JSONL，离线可重放） */
 	private readonly traces = new SessionTraces();
+	private readonly streamGuard = new StreamGuard();
 	private modelRuntime: ModelRuntime | undefined;
 	private modelPromise: Promise<ModelRuntime> | undefined;
 	/** 设置页（provider/模型/凭证配置）服务 */
@@ -203,17 +211,22 @@ export class PiBackend {
 	}
 
 	/**
-	 * 内置扩展随资源加载器注册（inline factory，不受项目信任影响）：todo-reminder
-	 * 负责 compaction 后恢复任务列表（不受权限开关影响）；权限门控扩展受
-	 * permissionGates/permissionExtension 开关控制（permissionGates=false 时
-	 * confirm 恒 false，不能注册）；视觉代理每次 LLM 调用前把 image block 换成
-	 * 识别描述（纯文本模型用），handler 实时读配置，设置页保存后立即生效。
+	 * 内置扩展随资源加载器注册（inline factory，不受项目信任影响）。注册序即
+	 * context 钩子链序（V2 冒烟实证）：权限门控（无 context 钩子）→ 视觉代理
+	 * （image→文本，先文本化）→ ACP 上下文压缩（基于文本化内容做压缩决策，
+	 * 需保住视觉代理的替换）→ todo-reminder（恢复注入最后，不被压）。
+	 * 权限门控受 permissionGates/permissionExtension 开关控制（permissionGates=false
+	 * 时 confirm 恒 false，不能注册）；视觉代理 handler 实时读配置，设置页保存后立即
+	 * 生效；ACP 受用户级 settings.json 的 acpCompressionEnabled 开关控制（默认开，P2
+	 * 起随 app 启用、设置页可关；subagent 子会话不加载本工厂——noExtensions，见 runner.ts）。
 	 */
 	private buildExtensionFactories(
 		cwd: string,
 		confirm: PermissionConfirm | undefined,
-	): ReturnType<typeof makeTodoReminderExtension>[] {
-		const factories = [makeTodoReminderExtension()];
+	): Array<ReturnType<typeof makeTodoReminderExtension> | ReturnType<typeof makeAcpExtension>> {
+		const factories: Array<
+			ReturnType<typeof makeTodoReminderExtension> | ReturnType<typeof makeAcpExtension>
+		> = [];
 		if (this.options.permissionGates !== false && this.options.permissionExtension !== false) {
 			// confirm 直接桥到 PermissionGate（携带 kind/suggestDir 元数据，驱动「允许此目录」）；
 			// 未提供时扩展自行回退 ctx.ui.confirm（无元数据）
@@ -222,6 +235,11 @@ export class PiBackend {
 		if (this.visionConfig && this.options.visionProxy !== false) {
 			factories.push(makeVisionProxyExtension({ configService: this.visionConfig }));
 		}
+		// ACP 上下文压缩（开关默认开；工厂内部 session_start 时检查开关，关时零副作用）
+		factories.push(makeAcpExtension({ agentDir: getAgentDir() }));
+		// todo-reminder 最后：compaction 后恢复注入的任务列表不被上游折叠，
+		// 且其末尾追加的 CustomMessage 不干扰 ACP 的 entries↔messages 对齐
+		factories.push(makeTodoReminderExtension());
 		return factories;
 	}
 
@@ -235,6 +253,17 @@ export class PiBackend {
 	}
 
 	private emitEvent(sessionId: string, event: SessionEvent): void {
+		// message_update 携带全量快照（partial + message），平方放大事故源头，先瘦身再分发
+		if (event.type === "message_update") event = slimMessageUpdate(event);
+		// 流式熔断：病态输出（空白洪流/超量）trip 后 abort 会话，并丢弃后续增量（trace 与转发同步止血）
+		const verdict = this.streamGuard.inspect(sessionId, event);
+		if (verdict !== "pass") {
+			if (verdict !== "suppress") {
+				log.error("stream guard tripped, aborting session", sessionId, { verdict });
+				void this.abort(sessionId).catch(() => {});
+			}
+			return;
+		}
 		if (event.type !== "subagent_mutex") this.traces.record(sessionId, event);
 		for (const handler of this.eventHandlers) {
 			try {
@@ -385,6 +414,8 @@ export class PiBackend {
 				cwd: info.cwd || "",
 				name: info.name,
 				active: activeIds.has(info.id),
+				// subagent 产物会话只读（LAN 列表/写端点禁用判定用）
+				readOnly: isSubagentSessionPath(info.path) || undefined,
 				messageCount: info.messageCount,
 				createdAt: info.created.getTime(),
 				modifiedAt: info.modified.getTime(),
@@ -397,6 +428,7 @@ export class PiBackend {
 		entry.session.dispose();
 		this.gates.get(sessionId)?.dispose();
 		this.gates.delete(sessionId);
+		this.streamGuard.cleanup(sessionId);
 		this.registry.delete(sessionId);
 		await this.traces.stop(sessionId);
 		log.info("session closed", sessionId);
@@ -453,6 +485,14 @@ export class PiBackend {
 		await entry.session.abort();
 	}
 
+	/** LAN 远程写端点前置检查（registry 直查，无磁盘 IO）。 */
+	checkSessionWritable(sessionId: string): "ok" | "not_found" | "read_only" {
+		const entry = this.registry.get(sessionId);
+		if (!entry) return "not_found";
+		if (entry.readOnly) return "read_only";
+		return "ok";
+	}
+
 	/** 清空运行中排队消息（steer+followUp 都清），返回被清内容；无会话返回空 */
 	async clearQueue(sessionId: string): Promise<{ steering: string[]; followUp: string[] }> {
 		const entry = this.registry.get(sessionId);
@@ -498,6 +538,21 @@ export class PiBackend {
 			outputTokens: stats.tokens.output,
 			cost: stats.cost,
 		};
+	}
+
+	/** 全部活跃会话的运行态快照（只读观察者用）。 */
+	listActiveSessionRuntime(): { sessionId: string; streaming: boolean; compacting: boolean }[] {
+		return this.registry.list().map(({ session }) => ({
+			sessionId: session.sessionId,
+			streaming: session.isStreaming,
+			compacting: session.isCompacting,
+		}));
+	}
+
+	/** 全部未决权限请求的只读快照（LAN Observer 等被动观察者用）。 */
+	/** 全部未决权限请求快照（含 requestId；LAN 观察/远程应答与桌面共用） */
+	getPendingPermissionRequests(): PermissionRequest[] {
+		return [...this.gates.values()].flatMap((gate) => gate.listPending());
 	}
 
 	/** 当前模型上下文使用情况；刚压缩后 tokens 未知（null），会话无模型时 percent 为 null */
@@ -616,6 +671,22 @@ export class PiBackend {
 		// 配对消息与会话树 entry id（assistant 供 fork 定位、user 供撤回定位）
 		assignEntryIds(messages, entry.session.sessionManager.getBranch());
 		return messages;
+	}
+
+	/**
+	 * LAN 历史会话只读透视：活跃会话走 registry（同 getSessionMessages）；
+	 * 未打开的会话纯解析文件（不开 SessionManager，零副作用零写盘）。不存在返回 null。
+	 */
+	async peekSessionMessages(sessionId: string): Promise<SessionMessage[] | null> {
+		if (this.registry.get(sessionId)) return this.getSessionMessages(sessionId);
+		const meta = (await this.listAllSessions()).find((s) => s.sessionId === sessionId);
+		if (!meta?.sessionFile) return null;
+		try {
+			const content = await readFile(meta.sessionFile, "utf8");
+			return readSessionMessagesFromContent(content);
+		} catch {
+			return null;
+		}
 	}
 
 	/**
@@ -774,6 +845,12 @@ export class PiBackend {
 		return () => this.permissionHandlers.delete(handler);
 	}
 
+	/** 权限请求被桌面端实际应答后通知被动观察者。 */
+	onPermissionResolved(handler: PermissionResolvedHandler): () => void {
+		this.permissionResolvedHandlers.add(handler);
+		return () => this.permissionResolvedHandlers.delete(handler);
+	}
+
 	onTrustRequest(handler: TrustHandler): () => void {
 		this.trustHandlers.add(handler);
 		return () => this.trustHandlers.delete(handler);
@@ -792,22 +869,31 @@ export class PiBackend {
 			for (const gate of this.gates.values()) {
 				const req = gate.getRequest(requestId);
 				if (!req) continue;
+				// 先放行 agent 再持久化（D3）：持久化失败（如 workspaces.json 损坏拒写）只丢记忆不挂会话，
+				// log.error 留痕——fail-open 与 enabled=false 整体放行的既有语义一致
+				gate.respond(requestId, answer);
+				this.dispatchPermissionResolved({ sessionId: gate.getSessionId(), requestId, answered: true });
 				const entry = this.registry.get(gate.getSessionId());
-				const agentDir = getAgentDir();
 				if (entry) {
-					if (answer === "allowDir" && req.meta?.suggestDir) {
-						addWorkspaceRoot(agentDir, entry.cwd, req.meta.suggestDir);
-					} else if (answer === "allowAlways" && req.meta) {
-						addAllowedPattern(agentDir, entry.cwd, req.title);
+					try {
+						const agentDir = getAgentDir();
+						if (answer === "allowDir" && req.meta?.suggestDir) {
+							addWorkspaceRoot(agentDir, entry.cwd, req.meta.suggestDir);
+						} else if (answer === "allowAlways" && req.meta) {
+							addAllowedPattern(agentDir, entry.cwd, req.title);
+						}
+					} catch (err) {
+						log.error("权限决策持久化失败（agent 已放行，本次决策不记忆）", requestId, err);
 					}
 				}
-				gate.respond(requestId, answer);
 				return;
 			}
 			return;
 		}
 		for (const gate of this.gates.values()) {
+			if (!gate.getRequest(requestId)) continue;
 			gate.respond(requestId, answer);
+			this.dispatchPermissionResolved({ sessionId: gate.getSessionId(), requestId, answered: true });
 		}
 	}
 
@@ -816,10 +902,31 @@ export class PiBackend {
 		return { enabled: loadPermissionConfig(getAgentDir()).enabled };
 	}
 
-	/** 写 enabled 开关；扩展按 mtime 重读配置，即时生效 */
+	/** 写 enabled 开关；扩展按 mtime 重读配置，即时生效。损坏拒写时上抛（renderer 需要知道保存失败） */
 	setPermissionEnabled(enabled: boolean): void {
-		writePermissionEnabled(getAgentDir(), enabled);
+		try {
+			writePermissionEnabled(getAgentDir(), enabled);
+		} catch (err) {
+			log.error("permissions.json 写入失败（enabled 开关未保存）", err);
+			throw err; // PermissionRespond 是 ipcMain.handle，reject 传回 renderer
+		}
 		log.info("permission gate enabled", enabled);
+	}
+
+	/** ACP 上下文压缩开关（设置 UI 用；键在 ~/.pi/agent/settings.json，缺省=开） */
+	getAcpConfig(): { enabled: boolean } {
+		return { enabled: readAcpEnabled(getAgentDir()) };
+	}
+
+	/** 写 ACP 开关并清读缓存（下一轮 context 钩子即见新值；工具注册在下一次 session_start）。损坏拒写时上抛 */
+	setAcpEnabled(enabled: boolean): void {
+		try {
+			writeAcpEnabled(getAgentDir(), enabled);
+		} catch (err) {
+			log.error("settings.json 写入失败（acp 开关未保存）", err);
+			throw err; // ipcMain.handle，reject 传回 renderer
+		}
+		log.info("acp compression enabled", enabled);
 	}
 
 	/** 视觉代理配置（key 只给存在性，不回传）；未提供配置路径时返回禁用态 */
@@ -870,6 +977,7 @@ export class PiBackend {
 		this.registry.disposeAll();
 		this.eventHandlers.clear();
 		this.permissionHandlers.clear();
+		this.permissionResolvedHandlers.clear();
 		this.trustHandlers.clear();
 		this.trustGate.dispose();
 		this.traces.disposeAll();
@@ -892,6 +1000,16 @@ export class PiBackend {
 		for (const handler of this.permissionHandlers) {
 			try {
 				handler(req);
+			} catch {
+				// 忽略单个处理器异常
+			}
+		}
+	}
+
+	private dispatchPermissionResolved(result: PermissionResolved): void {
+		for (const handler of this.permissionResolvedHandlers) {
+			try {
+				handler(result);
 			} catch {
 				// 忽略单个处理器异常
 			}

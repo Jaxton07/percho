@@ -1,13 +1,11 @@
-import {
-	extractSubagentRuns,
-	extractTodos,
-	type ImageInput,
-	parseExpandedSkillInvocation,
-	type SessionEvent,
-	TODO_TOOL_NAME,
-} from "@percho/shared";
+import { stripAcpReferenceTags } from "../acp-reference-tags";
+import type { ImageInput, SessionEvent } from "../session";
+import { parseExpandedSkillInvocation } from "../skill-invocation";
+import { extractSubagentRuns } from "../subagent";
+import { extractTodos, TODO_TOOL_NAME } from "../todo";
 import {
 	emptyStreaming,
+	extractEditPatch,
 	extractExecutionDelta,
 	extractShowImage,
 	findLastIndex,
@@ -66,6 +64,9 @@ function finalizeStreaming(state: SessionTranscriptState): SessionTranscriptStat
 			thinking: streaming.thinking,
 			tools: preTools,
 			timestamp: Date.now(),
+			...(streaming.rawText !== undefined && streaming.text !== streaming.rawText
+				? { sourceText: streaming.rawText }
+				: {}),
 		});
 	}
 	if (postTools.length > 0) {
@@ -146,7 +147,8 @@ export function reduceEvent(state: SessionTranscriptState, event: SessionEvent):
 							.filter((c) => c.type === "text")
 							.map((c) => (c as { text: string }).text)
 							.join("");
-			const invocation = parseExpandedSkillInvocation(text);
+			const displayText = stripAcpReferenceTags(text);
+			const invocation = parseExpandedSkillInvocation(displayText);
 			const images: ImageInput[] = Array.isArray(content)
 				? content
 						.filter((c) => c.type === "image" && (c as { data?: string }).data)
@@ -162,11 +164,14 @@ export function reduceEvent(state: SessionTranscriptState, event: SessionEvent):
 					{
 						kind: "user",
 						id: newMessageId(),
-						text: invocation ? (invocation.args ?? "") : text,
+						text: invocation ? (invocation.args ?? "") : displayText,
 						images,
 						timestamp: event.message.timestamp ?? Date.now(),
-						...(invocation
-							? { skill: { name: invocation.name, args: invocation.args }, sourceText: text }
+						...(invocation || displayText !== text
+							? {
+									...(invocation ? { skill: { name: invocation.name, args: invocation.args } } : {}),
+									sourceText: text,
+								}
 							: {}),
 					},
 				],
@@ -177,16 +182,20 @@ export function reduceEvent(state: SessionTranscriptState, event: SessionEvent):
 			if (!streaming) return state;
 			const e = event.assistantMessageEvent;
 			switch (e.type) {
-				case "text_delta":
+				case "text_delta": {
+					const rawText = (streaming.rawText ?? streaming.text) + e.delta;
+					const text = stripAcpReferenceTags(rawText);
 					return {
 						...state,
 						streaming: {
 							...streaming,
-							text: streaming.text + e.delta,
-							// 首个 text 块位置 = 正文起点锚（后续同 turn 工具按此分前后组，见 StreamingState.textBlockIndex）
-							textBlockIndex: streaming.textBlockIndex ?? e.contentIndex,
+							rawText,
+							text,
+							// 首个真实正文块位置 = 正文起点锚（tag-only text 不得成为工具分组边界）
+							textBlockIndex: text ? (streaming.textBlockIndex ?? e.contentIndex) : null,
 						},
 					};
+				}
 				case "thinking_delta":
 					return {
 						...state,
@@ -352,10 +361,23 @@ export function reduceEvent(state: SessionTranscriptState, event: SessionEvent):
 				subagentRuns = next;
 			}
 			if (!delta && subagentRuns === streaming.subagentRuns) return state;
+			const rawToolOutputs = delta
+				? {
+						...streaming.rawToolOutputs,
+						[event.toolCallId]:
+							(streaming.rawToolOutputs?.[event.toolCallId] ??
+								streaming.tools.find((tool) => tool.id === event.toolCallId)?.output ??
+								"") + delta,
+					}
+				: streaming.rawToolOutputs;
 			const tools = delta
-				? streaming.tools.map((t) => (t.id === event.toolCallId ? { ...t, output: t.output + delta } : t))
+				? streaming.tools.map((tool) =>
+						tool.id === event.toolCallId
+							? { ...tool, output: stripAcpReferenceTags(rawToolOutputs?.[event.toolCallId] ?? "") }
+							: tool,
+					)
 				: streaming.tools;
-			return { ...state, streaming: { ...streaming, tools, subagentRuns } };
+			return { ...state, streaming: { ...streaming, tools, rawToolOutputs, subagentRuns } };
 		}
 		case "tool_execution_end": {
 			// todo 工具：全量替换会话任务列表（含空数组=清空）。不随 turn_end 清理、
@@ -403,9 +425,15 @@ export function reduceEvent(state: SessionTranscriptState, event: SessionEvent):
 					},
 				};
 			}
+			// edit 工具成功 → 存 unified patch（turn-diff chip / diff 侧栏数据源）
+			const editPatch = event.toolName === "edit" && !event.isError ? extractEditPatch(event.result) : null;
 			const tools = streaming.tools.map((t) =>
 				t.id === event.toolCallId
-					? { ...t, state: (event.isError ? "error" : "done") as "error" | "done" }
+					? {
+							...t,
+							state: (event.isError ? "error" : "done") as "error" | "done",
+							...(editPatch ? { diff: editPatch } : {}),
+						}
 					: t,
 			);
 			// show_image：图片先入 pendingImages 缓冲，turn_end 固化时排在 assistant 消息之后

@@ -7,10 +7,11 @@ import type { PermissionGate } from "../permissions/gate";
  */
 export function makeUiContext(gate: PermissionGate): ExtensionUIContext {
 	return {
-		select: (title, options) =>
-			gate.confirm(title, options.join(", ")).then((ok) => (ok ? options[0] : undefined)),
+		// SDK 契约：select/input 的 undefined = 用户取消（types.d.ts），合法返回值；GUI 无对应
+		// 交互 UI，一律取消，不伪造「第一项/空串」当作用户输入（D8）
+		select: (_title, _options) => Promise.resolve(undefined),
 		confirm: (title, message) => gate.confirm(title, message),
-		input: (title) => gate.confirm(title, "允许输入?").then((ok) => (ok ? "" : undefined)),
+		input: (_title) => Promise.resolve(undefined),
 		notify: () => {},
 		onTerminalInput: () => () => {},
 		setStatus: () => {},

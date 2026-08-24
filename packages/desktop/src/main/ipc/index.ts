@@ -1,10 +1,12 @@
 import type { PiBackend } from "@percho/backend";
-import type { PermissionRequest, TrustRequest } from "@percho/shared";
+import type { PermissionRequest, PermissionResolved, TrustRequest } from "@percho/shared";
 import { IpcChannels } from "@percho/shared";
 import { BrowserWindow } from "electron";
+import type { LanObserverHandle } from "../lan";
 import type { UiPluginManager } from "../ui-plugins/manager";
 import { onUpdateState } from "../updater";
 import { registerAppIpc } from "./app";
+import { registerLanIpc } from "./lan";
 import { registerPackagesIpc } from "./packages";
 import { registerSessionsIpc } from "./sessions";
 import { registerSettingsIpc } from "./settings";
@@ -22,12 +24,17 @@ export function sendToRenderer(channel: string, payload: unknown): void {
  * IPC 注册组合入口：按域拆在 ./sessions ./settings ./packages ./app ./ui-plugins 五个文件，
  * 这里只做拼装 + backend/updater 事件转发到 renderer。
  */
-export function registerIpc(backend: PiBackend, uiPluginsManager: UiPluginManager): void {
+export function registerIpc(
+	backend: PiBackend,
+	uiPluginsManager: UiPluginManager,
+	lan: LanObserverHandle,
+): void {
 	registerSessionsIpc(backend);
 	registerSettingsIpc(backend);
 	registerPackagesIpc(backend);
 	registerAppIpc(backend);
 	registerUiPluginsIpc(uiPluginsManager);
+	registerLanIpc(lan);
 	// 热重载 watcher：插件源码变更 → 重建 → 推 changed 事件（renderer 经 loader reloadPlugin 热替换）
 	uiPluginsManager.startWatcher((name) => {
 		sendToRenderer(IpcChannels.UiPluginsEvent, { kind: "changed", name });
@@ -38,6 +45,10 @@ export function registerIpc(backend: PiBackend, uiPluginsManager: UiPluginManage
 	});
 	backend.onPermissionRequest((req: PermissionRequest) => {
 		sendToRenderer(IpcChannels.PermissionRequest, req);
+	});
+	// 权限裁决也回投渲染端：LAN 远程应答 / 其他来源应答时桌面卡片要同步撤掉
+	backend.onPermissionResolved((result: PermissionResolved) => {
+		sendToRenderer(IpcChannels.PermissionResolved, result);
 	});
 	backend.onTrustRequest((req: TrustRequest) => {
 		sendToRenderer(IpcChannels.TrustRequest, req);
