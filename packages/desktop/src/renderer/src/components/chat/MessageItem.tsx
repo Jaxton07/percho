@@ -73,7 +73,7 @@ function CopyButton({ text }: { text: string }) {
 }
 
 /** 分叉按钮：以该 assistant 消息为结尾生成新会话并切换；agent 运行、压缩或分叉中禁用 */
-function ForkButton({ entryId, text }: { entryId?: string; text: string }) {
+function ForkButton({ entryId, matchText }: { entryId?: string; matchText: string }) {
 	const t = useT();
 	const activeSessionId = useSessionsStore((s) => s.activeSessionId);
 	const sessionBusy = useTranscriptStore((s) => {
@@ -92,7 +92,7 @@ function ForkButton({ entryId, text }: { entryId?: string; text: string }) {
 		if (forking || sessionBusy) return;
 		setForking(true);
 		// entryId 精确定位（历史消息）；流式刚提交的消息无 entryId，按正文文本兜底匹配
-		void forkSession(entryId ? { entryId } : { text }).finally(() => setForking(false));
+		void forkSession(entryId ? { entryId } : { text: matchText }).finally(() => setForking(false));
 	};
 
 	return (
@@ -293,7 +293,7 @@ export const MessageItem = memo(function MessageItem({
 			{!streaming && message.text && showActions && (
 				<div className="mt-0.5 flex items-center gap-1">
 					<CopyButton text={message.text} />
-					<ForkButton entryId={message.entryId} text={message.text} />
+					<ForkButton entryId={message.entryId} matchText={message.sourceText ?? message.text} />
 				</div>
 			)}
 		</div>

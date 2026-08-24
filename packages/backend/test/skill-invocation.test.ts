@@ -9,6 +9,8 @@ import type { SessionRegistry } from "../src/session/registry";
 const canonicalSkill = (args?: string) =>
 	`<skill name="mindmap" location="/tmp/skills/mindmap/SKILL.md">\nReferences are relative to /tmp/skills/mindmap.\n\n# Mind map\n\nBody\n</skill>${args ? `\n\n${args}` : ""}`;
 
+const acpTag = '<acp tokens="55" type="bash">m00058</acp>';
+
 describe("expanded skill invocation parser", () => {
 	it("parses the canonical producer format with no args, multiline args, and formats commands", () => {
 		const expected: SkillInvocation = {
@@ -57,6 +59,32 @@ describe("skill invocation history projection", () => {
 			tools: [],
 			images: [],
 			timestamp: 2,
+		});
+	});
+
+	it("hides ACP reference tags in history display while retaining raw user text", () => {
+		const messages = toSessionMessages([
+			{ role: "user", content: `question\n${acpTag}`, timestamp: 1 },
+			{
+				role: "assistant",
+				content: [
+					{ type: "text", text: acpTag },
+					{ type: "toolCall", id: "tool-1", name: "bash", arguments: {} },
+				],
+				timestamp: 2,
+			},
+			{ role: "toolResult", toolCallId: "tool-1", content: `result\n${acpTag}`, timestamp: 3 },
+		]);
+		expect(messages[0]).toMatchObject({
+			role: "user",
+			text: "question\n",
+			sourceText: `question\n${acpTag}`,
+		});
+		expect(messages[1]).toMatchObject({
+			role: "assistant",
+			text: "",
+			sourceText: acpTag,
+			tools: [{ output: "result\n" }],
 		});
 	});
 

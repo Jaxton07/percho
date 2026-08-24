@@ -25,16 +25,18 @@ describe("sanitizeSessionMessage", () => {
 		expect(out.images.every((img) => img.data === LAN_IMAGE_PLACEHOLDER)).toBe(true);
 	});
 
-	it("strips assistant images", () => {
+	it("strips assistant sourceText and images", () => {
 		const message = {
 			role: "assistant",
 			text: "ok",
+			sourceText: "raw secret source",
 			thinking: "",
 			tools: [],
 			images: [{ data: "aGVsbG8=", mimeType: "image/png" }],
 			timestamp: 1,
 		} satisfies SessionMessage;
 		const out = sanitizeSessionMessage(message);
+		expect("sourceText" in out).toBe(false);
 		expect(out.images[0]?.data).toBe(LAN_IMAGE_PLACEHOLDER);
 	});
 

@@ -26,7 +26,7 @@ function makeSession() {
 describe("resolveForkEntryId（分叉目标解析）", () => {
 	it("entryId 精确命中 assistant 消息", () => {
 		const { sm, reply } = makeSession();
-		expect(resolveForkEntryId(sm, { entryId: reply })).toBe(reply);
+		expect(resolveForkEntryId(sm, { entryId: reply, text: "不同的文本不应影响精确定位" })).toBe(reply);
 	});
 
 	it("entryId 指向 user 消息时拒绝（B7：不静默接受非法分支点）", () => {
@@ -42,6 +42,20 @@ describe("resolveForkEntryId（分叉目标解析）", () => {
 	it("按文本从分支尾部匹配最近一条 assistant 消息", () => {
 		const { sm, reply } = makeSession();
 		expect(resolveForkEntryId(sm, { text: "回答" })).toBe(reply);
+	});
+
+	it("ACP 净化后的实时 assistant 必须以完整持久化正文走 text fallback", () => {
+		const sm = SessionManager.inMemory();
+		const rawText = '<acp tokens="55" type="bash">m00058</acp>';
+		const reply = sm.appendMessage({
+			role: "assistant",
+			content: [{ type: "text", text: rawText }],
+			api: "anthropic",
+			provider: "anthropic",
+			model: "claude",
+			timestamp: 1001,
+		} as unknown as Message);
+		expect(resolveForkEntryId(sm, { text: rawText })).toBe(reply);
 	});
 
 	it("未命中（文本不存在 / 全空 ref）抛错", () => {

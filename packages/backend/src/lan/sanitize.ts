@@ -91,7 +91,8 @@ export function sanitizeSessionMessage(message: SessionMessage): SessionMessage 
 		return { ...rest, images: placeholderImages(message.images) };
 	}
 	if (message.role === "assistant") {
-		return { ...message, images: placeholderImages(message.images) };
+		const { sourceText: _st, ...rest } = message;
+		return { ...rest, images: placeholderImages(message.images) };
 	}
 	if (message.role === "image") {
 		// show_image 历史：占位保留（客户端显示图片占位），本地路径剥除

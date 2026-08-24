@@ -22,6 +22,7 @@ export function emptyStreaming(): StreamingState {
 	return {
 		id: newMessageId(),
 		text: "",
+		rawText: "",
 		thinking: "",
 		tools: [],
 		pendingImages: [],
@@ -29,6 +30,7 @@ export function emptyStreaming(): StreamingState {
 		subagentByToolCallId: {},
 		activeToolIndex: -1,
 		toolByContentIndex: {},
+		rawToolOutputs: {},
 		activity: [],
 		textBlockIndex: null,
 	};

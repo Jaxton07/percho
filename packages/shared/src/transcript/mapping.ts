@@ -1,3 +1,4 @@
+import { stripAcpReferenceTags } from "../acp-reference-tags";
 import type { SessionMessage } from "../session";
 import { newSubagentKey, newToolKey } from "./helpers";
 import type { UIMessage, UIToolCall } from "./types";
@@ -23,37 +24,42 @@ export function messagesToUIMessages(messages: SessionMessage[]): UIMessage[] {
 			continue;
 		}
 		if (m.role === "user") {
-			if (m.skill || m.text || m.images.length > 0) {
+			const text = stripAcpReferenceTags(m.text);
+			const sourceText = m.sourceText ?? (text !== m.text ? m.text : undefined);
+			if (m.skill || text || m.images.length > 0) {
 				ui.push({
 					kind: "user",
 					id,
-					text: m.text,
+					text,
 					images: m.images,
 					timestamp: m.timestamp,
 					entryId: m.entryId,
 					skill: m.skill,
-					sourceText: m.sourceText,
+					...(sourceText !== undefined ? { sourceText } : {}),
 				});
 			}
 			continue;
 		}
+		const text = stripAcpReferenceTags(m.text);
+		const sourceText = m.sourceText ?? (text !== m.text ? m.text : undefined);
 		const tools: UIToolCall[] = m.tools.map((tool) => ({
 			key: tool.id || newToolKey(),
 			id: tool.id,
 			name: tool.name,
 			args: tool.args,
-			output: tool.output,
+			output: stripAcpReferenceTags(tool.output),
 			...(tool.diff ? { diff: tool.diff } : {}),
 			state: tool.isError ? "error" : "done",
 		}));
 		ui.push({
 			kind: "assistant",
 			id,
-			text: m.text,
+			text,
 			thinking: m.thinking,
 			tools,
 			timestamp: m.timestamp,
 			entryId: m.entryId,
+			...(sourceText !== undefined ? { sourceText } : {}),
 		});
 	}
 	return ui;

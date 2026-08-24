@@ -31,7 +31,7 @@ export type UIMessage =
 			entryId?: string;
 			/** 已展开 skill 的安全展示信息（不含正文或路径） */
 			skill?: SkillInvocationDisplay;
-			/** 完整持久化文本，仅供实时撤回匹配；绝不能渲染、复制或进入可访问文本 */
+			/** 完整持久化文本（skill 展开或展示净化后保留），仅供撤回匹配；绝不能渲染、复制或进入可访问文本 */
 			sourceText?: string;
 	  }
 	| {
@@ -43,6 +43,8 @@ export type UIMessage =
 			timestamp: number;
 			/** 会话树 entry id（仅历史回放消息有；fork 精确定位，缺省时 fork 按正文文本兜底） */
 			entryId?: string;
+			/** 完整持久化正文（展示净化后保留），仅供 fork fallback 匹配；绝不能渲染、复制或进入可访问文本 */
+			sourceText?: string;
 	  }
 	| { kind: "error"; id: string; text: string; timestamp: number }
 	| {
@@ -111,6 +113,8 @@ export interface StreamingState {
 	 * 组件不 remount，Markdown 的平滑输出 controller 得以存活续播（否则固化瞬间平滑被打断、整段跳变） */
 	id: string;
 	text: string;
+	/** assistant 原始 delta 累积，仅用于每次重算 display text；绝不能交给渲染层 */
+	rawText?: string;
 	thinking: string;
 	tools: UIToolCall[];
 	/** show_image 发图缓冲：tool_execution_end 先入缓冲，turn_end 固化时排在 assistant 消息之后（与历史回放顺序一致） */
@@ -123,6 +127,8 @@ export interface StreamingState {
 	activeToolIndex: number;
 	/** assistant 消息 content 绝对索引 → tools 数组索引（事件带 contentIndex，须按此匹配） */
 	toolByContentIndex: Record<number, number>;
+	/** toolCallId → 原始 output delta 累积，仅用于每次重算 display output；绝不能交给渲染层 */
+	rawToolOutputs?: Record<string, string>;
 	/** 到达顺序的活动序列（thinking / tool call 穿插），预览行数据源 */
 	activity: ActivityEntry[];
 	/** 首个 text 块的 contentIndex（正文起点锚）；null = 本 turn 尚无正文。同 turn 的工具按
