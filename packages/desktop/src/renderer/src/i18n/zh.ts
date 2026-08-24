@@ -210,6 +210,9 @@ export const zh = {
 		permissionGate: "内置权限门控",
 		permissionGateHint:
 			"开启后按规则拦截工具调用：高危命令（rm -rf、sudo、强推等）弹窗确认，其余放行。规则文件 ~/.pi/agent/permissions.json，修改即时生效。关闭可换用自己安装的权限扩展。",
+		acpCompression: "智能上下文压缩（ACP）",
+		acpCompressionHint:
+			"长会话中让模型自主摘要压缩已消耗的旧对话，任务不中断、压缩内容可随时 decompress 还原。约 75% 上下文占用时开始引导压缩，默认开启。开关存于 ~/.pi/agent/settings.json，对新建会话完全生效。",
 		sessionRail: "左侧会话轨道",
 		sessionRailHint:
 			"在聊天页左侧居中显示一列会话短线：悬停或聚焦时短线展开为悬浮胶囊（项目图标 + 会话标题），点击快速切换。顶栏会话胶囊保持不变，关闭后完全隐藏。",

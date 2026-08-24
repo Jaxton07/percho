@@ -78,7 +78,7 @@ import { LoginService } from "./settings/login";
 import { ModelPrefsService } from "./settings/model-prefs";
 import { SettingsService } from "./settings/settings";
 import { slashCommandsForLoader, slashCommandsForSession } from "./slash-commands";
-import { makeAcpExtension } from "./tools/acp-context";
+import { makeAcpExtension, readAcpEnabled, writeAcpEnabled } from "./tools/acp-context";
 import { makeShowImageTool } from "./tools/show-image";
 import { discoverAgents, isSubagentSessionPath, makeSubagentTool } from "./tools/subagent";
 import { applySubagentMutex } from "./tools/subagent/mutex";
@@ -217,8 +217,8 @@ export class PiBackend {
 	 * 需保住视觉代理的替换）→ todo-reminder（恢复注入最后，不被压）。
 	 * 权限门控受 permissionGates/permissionExtension 开关控制（permissionGates=false
 	 * 时 confirm 恒 false，不能注册）；视觉代理 handler 实时读配置，设置页保存后立即
-	 * 生效；ACP 受用户级 settings.json 的 acpCompressionEnabled 开关控制（默认关，
-	 * subagent 子会话不加载本工厂——noExtensions，见 runner.ts）。
+	 * 生效；ACP 受用户级 settings.json 的 acpCompressionEnabled 开关控制（默认开，P2
+	 * 起随 app 启用、设置页可关；subagent 子会话不加载本工厂——noExtensions，见 runner.ts）。
 	 */
 	private buildExtensionFactories(
 		cwd: string,
@@ -235,7 +235,7 @@ export class PiBackend {
 		if (this.visionConfig && this.options.visionProxy !== false) {
 			factories.push(makeVisionProxyExtension({ configService: this.visionConfig }));
 		}
-		// ACP 上下文压缩（开关默认关；工厂内部 session_start 时检查开关，关时零副作用）
+		// ACP 上下文压缩（开关默认开；工厂内部 session_start 时检查开关，关时零副作用）
 		factories.push(makeAcpExtension({ agentDir: getAgentDir() }));
 		// todo-reminder 最后：compaction 后恢复注入的任务列表不被上游折叠，
 		// 且其末尾追加的 CustomMessage 不干扰 ACP 的 entries↔messages 对齐
@@ -911,6 +911,22 @@ export class PiBackend {
 			throw err; // PermissionRespond 是 ipcMain.handle，reject 传回 renderer
 		}
 		log.info("permission gate enabled", enabled);
+	}
+
+	/** ACP 上下文压缩开关（设置 UI 用；键在 ~/.pi/agent/settings.json，缺省=开） */
+	getAcpConfig(): { enabled: boolean } {
+		return { enabled: readAcpEnabled(getAgentDir()) };
+	}
+
+	/** 写 ACP 开关并清读缓存（下一轮 context 钩子即见新值；工具注册在下一次 session_start）。损坏拒写时上抛 */
+	setAcpEnabled(enabled: boolean): void {
+		try {
+			writeAcpEnabled(getAgentDir(), enabled);
+		} catch (err) {
+			log.error("settings.json 写入失败（acp 开关未保存）", err);
+			throw err; // ipcMain.handle，reject 传回 renderer
+		}
+		log.info("acp compression enabled", enabled);
 	}
 
 	/** 视觉代理配置（key 只给存在性，不回传）；未提供配置路径时返回禁用态 */

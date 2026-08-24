@@ -1,6 +1,7 @@
 import type { LanStatus } from "./lan";
 import type { CatalogPackageType, CatalogSearchResult, ConfiguredPackageInfo } from "./packages";
 import type {
+	AcpConfigInfo,
 	AppInfo,
 	ContextUsageInfo,
 	CreateSessionOptions,
@@ -107,6 +108,9 @@ export const IpcChannels = {
 	/** 权限门控配置（设置 UI 开关） */
 	PermissionGetConfig: "permission:getConfig",
 	PermissionSetEnabled: "permission:setEnabled",
+	/** ACP 上下文压缩开关（设置 UI「通用」面板） */
+	AcpGetConfig: "acp:getConfig",
+	AcpSetEnabled: "acp:setEnabled",
 	/** 项目信任应答（选项下标） */
 	TrustRespond: "trust:respond",
 	/** 项目信任前置决策（添加项目/切换 draft cwd 时调用，未决则弹窗） */
@@ -271,6 +275,10 @@ export interface PiApi {
 	getPermissionConfig(): Promise<PermissionConfigInfo>;
 	/** 设置权限门控开关（即时生效，扩展按 mtime 重读配置） */
 	setPermissionEnabled(enabled: boolean): Promise<void>;
+	/** 读取 ACP 上下文压缩开关状态 */
+	getAcpConfig(): Promise<AcpConfigInfo>;
+	/** 设置 ACP 上下文压缩开关（写后即生效：压中的会话下一轮停压，工具注册随下次会话重载） */
+	setAcpEnabled(enabled: boolean): Promise<void>;
 	/** 应答项目信任请求（optionIndex 为 TrustRequest.options 下标） */
 	respondTrust(requestId: string, answer: TrustAnswer): Promise<void>;
 	/** 项目信任前置决策（选目录/切 draft cwd 时调用；未决弹窗，结果落 trust.json） */

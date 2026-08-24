@@ -9,7 +9,7 @@
 
 export type { BridgeEntry } from "./bridge";
 export { alignOriginals, coreOutToAgentMessages, entriesToCoreMessages, projectEntries } from "./bridge";
-export { clearAcpEnabledCache, readAcpEnabled } from "./config";
+export { clearAcpEnabledCache, readAcpEnabled, writeAcpEnabled } from "./config";
 export type { AcpExtensionOptions, AcpStore } from "./extension";
 export { ACP_EMERGENCY_FALLBACK_PCT, buildAcpSystemPrompt, makeAcpExtension } from "./extension";
 export { buildNudgeMessage, nudgeTextFor, nudgeTurnKey } from "./nudge";

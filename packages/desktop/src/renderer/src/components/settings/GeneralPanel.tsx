@@ -3,13 +3,15 @@ import { useI18nStore, useT } from "../../i18n";
 import { useSettingsStore } from "../../stores/settings";
 import { Switch } from "../ui/Switch";
 
-/** 通用设置面板：语言选择 + 内置权限门控开关 */
+/** 通用设置面板：语言选择 + 内置权限门控开关 + ACP 上下文压缩开关 */
 export function GeneralPanel() {
 	const t = useT();
 	const language = useI18nStore((s) => s.language);
 	const setLanguage = useI18nStore((s) => s.setLanguage);
 	const permissionEnabled = useSettingsStore((s) => s.permissionEnabled);
 	const setPermissionEnabled = useSettingsStore((s) => s.setPermissionEnabled);
+	const acpEnabled = useSettingsStore((s) => s.acpEnabled);
+	const setAcpEnabled = useSettingsStore((s) => s.setAcpEnabled);
 
 	return (
 		<div className="flex flex-col gap-6">
@@ -44,6 +46,19 @@ export function GeneralPanel() {
 				</div>
 				<p className="mt-0.5 text-[11px] leading-relaxed text-ink-faint">
 					{t("settings.permissionGateHint")}
+				</p>
+			</div>
+			<div>
+				<div className="flex items-center justify-between gap-4">
+					<h3 className="text-[13px] font-medium text-ink">{t("settings.acpCompression")}</h3>
+					<Switch
+						checked={acpEnabled === true}
+						disabled={acpEnabled === null}
+						onCheckedChange={(enabled) => void setAcpEnabled(enabled)}
+					/>
+				</div>
+				<p className="mt-0.5 text-[11px] leading-relaxed text-ink-faint">
+					{t("settings.acpCompressionHint")}
 				</p>
 			</div>
 		</div>

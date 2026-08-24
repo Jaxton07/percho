@@ -213,6 +213,11 @@ export interface PermissionConfigInfo {
 	enabled: boolean;
 }
 
+/** ACP 上下文压缩配置（设置 UI 开关；键在 ~/.pi/agent/settings.json，缺省=开） */
+export interface AcpConfigInfo {
+	enabled: boolean;
+}
+
 /**
  * 项目信任选项（添加项目/创建会话前，项目含 .pi/ 资源或祖先 .agents/skills 需用户决策）。
  * 刻意从 CLI 的五选项精简为两个（信任/不信任，均落盘）：「仅本次」在 draft 拉命令

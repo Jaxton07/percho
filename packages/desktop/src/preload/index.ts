@@ -74,6 +74,8 @@ const api: PiApi = {
 		ipcRenderer.invoke(IpcChannels.PermissionRespond, requestId, answer),
 	getPermissionConfig: () => ipcRenderer.invoke(IpcChannels.PermissionGetConfig),
 	setPermissionEnabled: (enabled) => ipcRenderer.invoke(IpcChannels.PermissionSetEnabled, enabled),
+	getAcpConfig: () => ipcRenderer.invoke(IpcChannels.AcpGetConfig),
+	setAcpEnabled: (enabled) => ipcRenderer.invoke(IpcChannels.AcpSetEnabled, enabled),
 	getVisionConfig: () => ipcRenderer.invoke(IpcChannels.VisionGetConfig),
 	saveVisionConfig: (input) => ipcRenderer.invoke(IpcChannels.VisionSaveConfig, input),
 	testVision: () => ipcRenderer.invoke(IpcChannels.VisionTest),
