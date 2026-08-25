@@ -53,6 +53,23 @@ export function isAgentWorking(transcript: SessionTranscriptState): boolean {
 	return transcript.agentActive && (!streaming?.text || hasRunningWork);
 }
 
+/**
+ * 已提交消息的 MetaItem 缓存（WeakMap，键 = 消息对象）：
+ * 历史 MessageList 每次渲染都重跑 buildChatRows，若 items 里的元素每次都是新字面量，
+ * MetaGroup 的 memo 比较器会永远失败 → 历史折叠组随每条流式 delta 全量重渲染
+ * （重建 ToolCallCard 元素 + summarizeArgs 正则，随历史长度线性放大）。
+ * 消息对象不可变（替换必新建对象），以对象身份为键安全；loadHistory 重建 → 新键、旧项 GC。
+ */
+const committedMetaCache = new WeakMap<Extract<UIMessage, { kind: "assistant" }>, MetaItem>();
+function committedMetaItem(message: Extract<UIMessage, { kind: "assistant" }>): MetaItem {
+	let item = committedMetaCache.get(message);
+	if (!item) {
+		item = { thinking: message.thinking, tools: message.tools };
+		committedMetaCache.set(message, item);
+	}
+	return item;
+}
+
 export function buildChatRows(
 	transcript: SessionTranscriptState,
 	sessionId: string,
@@ -123,9 +140,9 @@ export function buildChatRows(
 			});
 			continue;
 		}
-		// 思考/工具（含正文消息自带的）全部进当前组
+		// 思考/工具（含正文消息自带的）全部进当前组（缓存复用，保证 items 元素引用跨渲染稳定）
 		if (message.thinking || message.tools.length > 0) {
-			metaItems.push({ thinking: message.thinking, tools: message.tools });
+			metaItems.push(committedMetaItem(message));
 		}
 		// 正文是边界：组关闭，正文独立成行（meta 已并入组）
 		if (message.text) {

@@ -17,6 +17,7 @@ import { RegionHost } from "./plugins/RegionHost";
 import { Slot } from "./plugins/Slot";
 import { UI_REGIONS, UI_SLOTS } from "./plugins/slots";
 import { finishSplash } from "./splash";
+import { EventConflator } from "./stores/event-conflator";
 import { useSessionsStore } from "./stores/sessions";
 import { backgroundImageUrl, useThemeStore } from "./stores/theme";
 import { useTranscriptStore } from "./stores/transcript";
@@ -33,7 +34,12 @@ import { initUpdateStore } from "./stores/update";
 export default function App() {
 	const activeSessionId = useSessionsStore((s) => s.activeSessionId);
 	const view = useUiStore((s) => s.view);
-	const transcript = useTranscriptStore((s) => (activeSessionId ? s.bySession[activeSessionId] : undefined));
+	// 订阅收敛为原始值（selector 返回 boolean → 仅在值翻转时重渲染）：App 子树（TabBar/MessageList/
+	// TodoPanel/DiffSidebar/…）无 memo，若订阅 transcript 对象会随每条流式 delta 全量级联重渲染
+	const showEmpty = useTranscriptStore((s) => {
+		const entry = activeSessionId ? s.bySession[activeSessionId] : undefined;
+		return !entry || (entry.messages.length === 0 && !entry.streaming);
+	});
 	const [trustRequests, setTrustRequests] = useState<TrustRequest[]>([]);
 	const language = useI18nStore((s) => s.language);
 
@@ -44,16 +50,26 @@ export default function App() {
 
 	useEffect(() => {
 		const pi = getPi();
+		// 流式 delta 按帧合流（见 stores/event-conflator.ts）：store 提交频率 ≤ 1 次/帧，
+		// 边界事件（message_start/end、toolcall_start/end、turn_end、agent_end…）先冲刷挂起增量
+		// 再立即应用，顺序与逐条转发完全一致。isActiveViewing 在应用时刻取值：延迟至多一帧且
+		// 该标记只在 agentActive 翻转的边界事件上生效（不经过合流），语义不变
+		const conflator = new EventConflator({
+			apply: (sessionId, event) => {
+				useTranscriptStore.getState().applyEvent(sessionId, event, {
+					// 正被查看（活跃 tab 且 chat 视图）的会话完成时不打未读标记
+					isActiveViewing:
+						useSessionsStore.getState().activeSessionId === sessionId &&
+						useUiStore.getState().view === "chat",
+				});
+			},
+		});
 		const offEvent = pi.onEvent(({ sessionId, event }: { sessionId: string; event: SessionEvent }) => {
-			// 压缩不再整体重置消息流（见文件头注释）：reducer 只追加分界线，历史完整保留
-			useTranscriptStore.getState().applyEvent(sessionId, event, {
-				// 正被查看（活跃 tab 且 chat 视图）的会话完成时不打未读标记
-				isActiveViewing:
-					useSessionsStore.getState().activeSessionId === sessionId && useUiStore.getState().view === "chat",
-			});
 			if (event.type === "session_info_changed") {
 				useSessionsStore.getState().updateSessionName(sessionId, event.name);
+				return; // 会话名走 sessions store；reducer 对该类型本就无操作
 			}
+			conflator.push(sessionId, event);
 		});
 		const offPermission = pi.onPermissionRequest((req) => {
 			useTranscriptStore.getState().addPermission(req.sessionId, req);
@@ -74,6 +90,7 @@ export default function App() {
 		void initUiPlugins();
 		return () => {
 			offEvent();
+			conflator.dispose();
 			offPermission();
 			offPermissionResolved();
 			offTrust();
@@ -85,7 +102,6 @@ export default function App() {
 		setTrustRequests((prev) => prev.filter((req) => req.id !== requestId));
 	};
 
-	const showEmpty = !transcript || (transcript.messages.length === 0 && !transcript.streaming);
 	const bgImage = useThemeStore((s) => s.background.image);
 	const bgDim = useThemeStore((s) => s.background.dim);
 

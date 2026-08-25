@@ -112,7 +112,6 @@ export function MessageList() {
 		if (e.target instanceof Element && e.target.closest("summary")) updateFollowing(false);
 	};
 
-	// 行序列由 shared buildChatRows 产出（与 lan-web 同一分组大脑）；此处只做行模型 → JSX 映射
 	// 轮次文件变更 chip：位置式插入——turn i 的 chip 插到第 i+1 条 user 行之前，最后一轮追加到末尾。
 	//（不锚消息行：轮末 assistant 无正文时会被吸进折叠组，没有独立行可锚。streaming 中的轮次
 	// 工具未固化进 messages，天然不满足「turn_end 后才出现」）
@@ -127,7 +126,13 @@ export function MessageList() {
 			? turnChanges[turnChanges.length - 1]?.turnIndex
 			: null;
 
-	const rows = buildChatRows(transcript, String(activeSessionId));
+	// 行序列由 shared buildChatRows 产出（与 lan-web 同一分组大脑）；此处只做行模型 → JSX 映射。
+	// useMemo：滚动/跟随等本组件局部 state 翻转不重跑（历史长会话单次 ~60µs+）；transcript 每
+	// 次变更（合流后 ≤ 1 次/帧）重跑一次是预期成本
+	const rows = useMemo(
+		() => buildChatRows(transcript, String(activeSessionId)),
+		[transcript, activeSessionId],
+	);
 	const chipBeforeRow = new Map<number, TurnChanges>();
 	const changeByTurn = new Map(turnChanges.map((tc) => [tc.turnIndex, tc]));
 	let userRowCount = 0;
