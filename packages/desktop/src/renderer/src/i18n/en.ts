@@ -9,6 +9,11 @@ export const en: Messages = {
 		close: "Close",
 		switchDir: "Switch working directory",
 	},
+	appError: {
+		title: "Something went wrong",
+		desc: "A rendering error occurred: {detail}",
+		reload: "Reload",
+	},
 	tabbar: {
 		newSession: "New session",
 		pickProjectFirst: "Pick a project directory first",
@@ -147,7 +152,6 @@ export const en: Messages = {
 		title: "Changes",
 		filesChanged: "{count} {unit} changed",
 		filesSummary: "{count} files",
-		openSidebar: "View in sidebar",
 		scopeAll: "All",
 		scopeLatest: "Latest turn",
 		empty: "No file changes in this session yet",
@@ -291,6 +295,8 @@ export const en: Messages = {
 			custom: "Custom",
 			modelCount: "{count} models",
 			modelVisibility: "Model visibility (hidden models are removed from model pickers)",
+			hideAllModels: "Hide all {name} models",
+			showAllModels: "Show all {name} models",
 			configured: "Configured",
 			unconfigured: "Not configured",
 			test: "Test",

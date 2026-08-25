@@ -1,7 +1,6 @@
 import type { TurnChanges } from "@percho/shared";
 import { useT } from "../../i18n";
 import { useUiStore } from "../../stores/ui";
-import { DiffIcon } from "../icons";
 
 /** en 复数单位（与 MetaGroup 的 pluralUnit 同规则） */
 const pluralUnit = (n: number, one: string, many: string) => (n === 1 ? one : many);
@@ -45,20 +44,6 @@ export function TurnDiffChip({ changes, entering }: { changes: TurnChanges; ente
 						<path d="m9 6 6 6-6 6" />
 					</svg>
 				</span>
-				{/* hover 浮出的「侧栏查看」：真 button（键盘可达），阻止冒泡防触发 summary 折叠切换 */}
-				<button
-					type="button"
-					className="turn-diff-open-side"
-					tabIndex={-1}
-					onClick={(e) => {
-						e.preventDefault();
-						e.stopPropagation();
-						jumpTo(changes.files[0]?.sections[0]?.toolCallKey);
-					}}
-				>
-					<DiffIcon size={11} />
-					{t("diff.openSidebar")}
-				</button>
 			</summary>
 			<div className="turn-diff-files">
 				{changes.files.map((f) => (

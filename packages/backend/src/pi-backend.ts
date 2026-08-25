@@ -820,6 +820,10 @@ export class PiBackend {
 		return this.modelPrefs.setModelHidden(provider, modelId, hidden);
 	}
 
+	async setModelsHidden(provider: string, modelIds: string[], hidden: boolean): Promise<ModelPrefs> {
+		return this.modelPrefs.setModelsHidden(provider, modelIds, hidden);
+	}
+
 	async setSubagentModel(agent: string, modelRef: string | null): Promise<ModelPrefs> {
 		return this.modelPrefs.setSubagentModel(agent, modelRef);
 	}

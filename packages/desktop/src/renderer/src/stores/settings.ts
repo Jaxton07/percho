@@ -126,6 +126,7 @@ interface SettingsStore {
 	removeCustom: (providerId: string) => Promise<void>;
 	test: (providerId: string) => Promise<void>;
 	setModelHidden: (provider: string, modelId: string, hidden: boolean) => Promise<void>;
+	setModelsHidden: (provider: string, modelIds: string[], hidden: boolean) => Promise<void>;
 	setSubagentModel: (agent: string, modelRef: string | null) => Promise<void>;
 	/** 启动 provider 订阅登录（OAuth）；事件驱动 login 状态机，结束自动收尾 */
 	startProviderLogin: (provider: ProviderInfo) => Promise<void>;
@@ -521,7 +522,7 @@ export const useSettingsStore = create<SettingsStore>((set, get) => {
 
 		setModelHidden: async (provider, modelId, hidden) => {
 			const previous = get().modelPrefs;
-			const base = previous ?? { hiddenModels: {}, subagentModels: {} };
+			const base: ModelPrefs = previous ?? { hiddenModels: {}, subagentModels: {} };
 			const ids = new Set(base.hiddenModels[provider] ?? []);
 			if (hidden) ids.add(modelId);
 			else ids.delete(modelId);
@@ -532,6 +533,30 @@ export const useSettingsStore = create<SettingsStore>((set, get) => {
 			set({ modelPrefs: { ...base, hiddenModels } });
 			try {
 				await getPi().setModelHidden(provider, modelId, hidden);
+				await useSessionsStore.getState().loadModels();
+			} catch (error) {
+				const modelPrefs = await getPi()
+					.getModelPrefs()
+					.catch(() => previous);
+				set({ modelPrefs, error: error instanceof Error ? error.message : String(error) });
+			}
+		},
+
+		setModelsHidden: async (provider, modelIds, hidden) => {
+			const previous = get().modelPrefs;
+			const base: ModelPrefs = previous ?? { hiddenModels: {}, subagentModels: {} };
+			const hiddenSet = new Set(base.hiddenModels[provider] ?? []);
+			for (const id of modelIds) {
+				if (hidden) hiddenSet.add(id);
+				else hiddenSet.delete(id);
+			}
+			const hiddenModels = { ...base.hiddenModels };
+			if (hiddenSet.size) hiddenModels[provider] = [...hiddenSet];
+			else delete hiddenModels[provider];
+			// 先本地更新（一次 IPC 写盘，不逐个往返）；失败时以磁盘实际状态回滚。
+			set({ modelPrefs: { ...base, hiddenModels } });
+			try {
+				await getPi().setModelsHidden(provider, modelIds, hidden);
 				await useSessionsStore.getState().loadModels();
 			} catch (error) {
 				const modelPrefs = await getPi()

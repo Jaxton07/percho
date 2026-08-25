@@ -89,6 +89,24 @@ export class ModelPrefsService {
 		return copyPrefs(prefs);
 	}
 
+	async setModelsHidden(provider: string, modelIds: string[], hidden: boolean): Promise<ModelPrefs> {
+		const cleanProvider = provider.trim();
+		if (!cleanProvider) throw new Error("provider is required");
+		const ids = [...new Set(modelIds.map((id) => id.trim()).filter(Boolean))].sort();
+		if (!ids.length) return copyPrefs(await this.read());
+		const prefs = copyPrefs(await this.read());
+		const set = new Set(prefs.hiddenModels[cleanProvider] ?? []);
+		if (hidden) {
+			for (const id of ids) set.add(id);
+		} else {
+			for (const id of ids) set.delete(id);
+		}
+		if (set.size) prefs.hiddenModels[cleanProvider] = [...set].sort();
+		else delete prefs.hiddenModels[cleanProvider];
+		await this.write(prefs);
+		return copyPrefs(prefs);
+	}
+
 	async setSubagentModel(agent: string, modelRef: string | null): Promise<ModelPrefs> {
 		const cleanAgent = agent.trim();
 		if (!cleanAgent) throw new Error("agent is required");

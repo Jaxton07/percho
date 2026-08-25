@@ -15,6 +15,7 @@
 	],
 	"scripts": {
 		"dev": "npm run dev -w packages/desktop",
+		"postinstall": "patch-package",
 		"build": "npm run build -w packages/desktop",
 		"typecheck": "npm run typecheck --workspaces",
 		"test": "npm run test --workspaces --if-present",
@@ -25,7 +26,8 @@
 		"node": ">=22.19"
 	},
 	"devDependencies": {
-		"@biomejs/biome": "^2.4.0"
+		"@biomejs/biome": "^2.4.0",
+		"patch-package": "^8.0.1"
 	},
 	"allowScripts": {
 		"electron@43.3.0": true

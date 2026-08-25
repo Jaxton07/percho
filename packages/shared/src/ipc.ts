@@ -85,6 +85,7 @@ export const IpcChannels = {
 	/** 用户级模型偏好：隐藏模型 + 子代理模型覆盖 */
 	SettingsGetModelPrefs: "settings:getModelPrefs",
 	SettingsSetModelHidden: "settings:setModelHidden",
+	SettingsSetModelsHidden: "settings:setModelsHidden",
 	SettingsSetSubagentModel: "settings:setSubagentModel",
 	/** 只列内置与用户级 subagent（设置是全局配置，不绑定项目） */
 	SettingsListSubagents: "settings:listSubagents",
@@ -244,6 +245,8 @@ export interface PiApi {
 	getModelPrefs(): Promise<ModelPrefs>;
 	/** 设置模型在选择器中的可见性；隐藏不影响已经选中的会话运行 */
 	setModelHidden(provider: string, modelId: string, hidden: boolean): Promise<ModelPrefs>;
+	/** 批量设置一组模型可见性（一键全隐藏/全显示某 provider 的全部模型）；一次写盘 */
+	setModelsHidden(provider: string, modelIds: string[], hidden: boolean): Promise<ModelPrefs>;
 	/** 为子代理指定 provider/model；null = 继承父会话模型 */
 	setSubagentModel(agent: string, modelRef: string | null): Promise<ModelPrefs>;
 	/** 列内置与用户级 subagent 定义（不读项目级定义） */

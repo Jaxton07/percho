@@ -135,7 +135,7 @@ export function SettingsDialog() {
 							);
 						})}
 					</nav>
-					<div className="min-w-0 flex-1 overflow-y-auto px-4 py-3">
+					<div className="min-w-0 flex-1 overflow-y-auto overflow-x-hidden px-4 py-3">
 						{Panel ? (
 							<Panel />
 						) : activePluginContribution ? (

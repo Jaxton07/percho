@@ -57,6 +57,8 @@ const api: PiApi = {
 	getModelPrefs: () => ipcRenderer.invoke(IpcChannels.SettingsGetModelPrefs),
 	setModelHidden: (provider, modelId, hidden) =>
 		ipcRenderer.invoke(IpcChannels.SettingsSetModelHidden, provider, modelId, hidden),
+	setModelsHidden: (provider, modelIds, hidden) =>
+		ipcRenderer.invoke(IpcChannels.SettingsSetModelsHidden, provider, modelIds, hidden),
 	setSubagentModel: (agent, modelRef) =>
 		ipcRenderer.invoke(IpcChannels.SettingsSetSubagentModel, agent, modelRef),
 	listSubagents: () => ipcRenderer.invoke(IpcChannels.SettingsListSubagents),

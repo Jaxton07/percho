@@ -38,6 +38,11 @@ export function registerSettingsIpc(backend: PiBackend): void {
 		(_e, provider: string, modelId: string, hidden: boolean) =>
 			backend.setModelHidden(provider, modelId, hidden),
 	);
+	ipcMain.handle(
+		IpcChannels.SettingsSetModelsHidden,
+		(_e, provider: string, modelIds: string[], hidden: boolean) =>
+			backend.setModelsHidden(provider, modelIds, hidden),
+	);
 	ipcMain.handle(IpcChannels.SettingsSetSubagentModel, (_e, agent: string, modelRef: string | null) =>
 		backend.setSubagentModel(agent, modelRef),
 	);

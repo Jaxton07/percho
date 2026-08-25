@@ -44,6 +44,7 @@ export function ProvidersPanel() {
 						<p className="text-[11px] text-ink-faint">{t("settings.providers.catalogHint")}</p>
 						<IconAction
 							label={t("settings.providers.refresh")}
+							align="end"
 							disabled={loading || refreshing}
 							onClick={() => void refreshFromNetwork()}
 						>

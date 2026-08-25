@@ -1483,6 +1483,7 @@ body {
 	.orb .r1,
 	.orb .r2,
 	.orb .r3 {
+		/* biome-ignore lint/complexity/noImportantStyles: reduced-motion 无障碍覆盖必须赢过任何 specificity 的动画规则 */
 		animation: none !important;
 	}
 	.pulse-dot::after {
@@ -1492,6 +1493,7 @@ body {
 	.todo-bar,
 	.perm-card2,
 	.toast {
+		/* biome-ignore lint/complexity/noImportantStyles: reduced-motion 无障碍覆盖必须赢过任何 specificity 的动画规则 */
 		animation: none !important;
 	}
 	.s-card,
@@ -1499,6 +1501,7 @@ body {
 	.pbtn,
 	.c-btn,
 	.token-open {
+		/* biome-ignore lint/complexity/noImportantStyles: reduced-motion 无障碍覆盖必须赢过任何 specificity 的动画规则 */
 		transition: none !important;
 	}
 	.drawer-details::details-content {

@@ -30,5 +30,13 @@ export default defineConfig({
 	build: {
 		outDir: r("./dist/lan-web"),
 		emptyOutDir: true,
+		rollupOptions: {
+			// markstream-react 0.0.55 dist 为二次打包产物，/* @__PURE__ */ 注释漂移到语句末尾，
+			// Rollup 无法解释该位置的注解（INVALID_ANNOTATION），删注释只丢 tree-shaking hint，无正确性影响，静音
+			onwarn(warning, warn) {
+				if (warning.code === "INVALID_ANNOTATION") return;
+				warn(warning);
+			},
+		},
 	},
 });

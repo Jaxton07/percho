@@ -1,6 +1,7 @@
 import { StrictMode } from "react";
 import { createRoot } from "react-dom/client";
 import App from "./App";
+import { AppErrorBoundary } from "./components/AppErrorBoundary";
 // 宿主 API 挂载（副作用）：必须在任何插件代码可能运行之前执行，因此置于 theme store init 之前
 import "./plugins/host-api";
 import { initSplash } from "./splash";
@@ -18,7 +19,10 @@ initSplash();
 void Promise.all([useThemeStore.getState().init(), useUiPreferencesStore.getState().init()]).finally(() => {
 	createRoot(root).render(
 		<StrictMode>
-			<App />
+			{/* 全局边界：渲染期异常（含 #185 无限更新类）落到可恢复错误页而非整窗白屏 */}
+			<AppErrorBoundary>
+				<App />
+			</AppErrorBoundary>
 		</StrictMode>,
 	);
 });

@@ -84,7 +84,7 @@ function TabPill({
 			type="button"
 			{...buttonProps}
 			style={{ touchAction: "none", ...(hidden ? { opacity: 0 } : null) }}
-			className={`no-drag tab-pill group relative flex w-52 cursor-pointer items-center gap-2 rounded-lg px-2.5 py-1.5 text-sm ${
+			className={`no-drag tab-pill group relative flex ${ghost ? "w-52" : "w-full"} cursor-pointer items-center gap-2 rounded-lg px-2.5 py-1.5 text-sm ${
 				isActive ? "bg-border/80 text-ink" : "text-ink-dim hover:bg-hover hover:text-ink"
 			} ${ghost ? "tab-dragging" : ""}`}
 			onClick={ghost ? undefined : buttonProps?.onClick}
@@ -98,18 +98,31 @@ function TabPill({
 				)}
 			</span>
 			<span className="relative min-w-0 flex-1">
-				<span className="block truncate pr-6 text-left">{sessionTitle(session, t("tabbar.untitled"))}</span>
+				<span className="block truncate text-left">{sessionTitle(session, t("tabbar.untitled"))}</span>
 				{!ghost && (
-					<span
-						className="invisible absolute right-0 top-1/2 -translate-y-1/2 p-1 text-ink-dim opacity-0 transition-opacity hover:text-ink group-hover:visible group-hover:opacity-100"
-						aria-hidden="true"
-						onClick={(e) => {
-							e.stopPropagation();
-							void closeSession(session.sessionId);
-						}}
-					>
-						<CloseIcon />
-					</span>
+					<>
+						{/* hover 时尾部雾化渐变：盖住被叉叉重叠的文字尾，突出叉叉。
+						   from 色必须与胶囊背景同款：active 背景是 bg-border/80（border 80% 叠 canvas），
+						   直接 from-hover 在深色主题下会比 active 底色浅一档，渐变条会显成方形色块 */}
+						<span
+							aria-hidden="true"
+							className={`pointer-events-none invisible absolute inset-y-0 right-0 w-7 bg-gradient-to-l to-transparent opacity-0 transition-opacity group-hover:visible group-hover:opacity-100 ${
+								isActive
+									? "from-[color-mix(in_oklab,var(--color-border)_80%,var(--color-canvas))]"
+									: "from-hover"
+							}`}
+						/>
+						<span
+							className="invisible absolute right-0 top-1/2 -translate-y-1/2 p-1 text-ink-dim opacity-0 transition-opacity hover:text-ink group-hover:visible group-hover:opacity-100"
+							aria-hidden="true"
+							onClick={(e) => {
+								e.stopPropagation();
+								void closeSession(session.sessionId);
+							}}
+						>
+							<CloseIcon />
+						</span>
+					</>
 				)}
 			</span>
 		</button>
@@ -127,10 +140,12 @@ function SessionTab({ session, isActive }: { session: SessionMeta; isActive: boo
 		// 自定义让位/落位节奏；reduced-motion 传 null = dnd-kit 不再给出过渡串
 		transition: prefersReducedMotion() ? null : { duration: 220, easing: SORT_EASE },
 	});
+	// 动态宽度：flex-1 均分剩余空间（每胶囊 ≤ max-w-52），空间不足时平均压缩（≥ min-w-24），
+	// 全到最短后溢出由外层 scroller 滚动兜底；ghost 拖拽层固定 w-52 不参与 flex 布局
 	return (
 		<div
 			ref={setNodeRef}
-			className="shrink-0"
+			className="min-w-24 max-w-52 flex-1"
 			style={{
 				transform: transform ? `translate3d(${transform.x}px, ${transform.y}px, 0)` : undefined,
 				transition: transition || undefined,

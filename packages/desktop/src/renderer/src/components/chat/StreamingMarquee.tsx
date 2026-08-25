@@ -46,9 +46,13 @@ export function StreamingMarquee({ text }: { text: string }) {
 	}, []);
 
 	// 文本 delta 不一定改变主 span 的布局盒尺寸，commit 后补量 scrollWidth 以立即追随最新 token。
+	// 依赖 [text]：只在文本变化后的渲染补一次测量——无依赖数组时本 effect 每渲染必跑，
+	// 与 RO 回调的 measure→setMetrics→重渲染反馈环耦合可自激（React #185 无限更新→整树卸载→白屏，
+	// 0.4.6/0.5.0 流式期间多次触发；几何尺寸变化由下方 ResizeObserver 覆盖，无需全量重测）
+	// biome-ignore lint/correctness/useExhaustiveDependencies: 故意以 text 为触发器（文本变化后补测 scrollWidth，effect 体内不直接读 text）
 	useLayoutEffect(() => {
 		measureRef.current();
-	});
+	}, [text]);
 
 	useLayoutEffect(() => {
 		if (trackRef.current) trackRef.current.style.transform = `translate3d(-${offset}px, 0, 0)`;

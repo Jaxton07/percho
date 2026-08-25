@@ -23,6 +23,7 @@ export interface ListProvidersOptions {
 
 /** 用户级模型偏好（<agentDir>/model-prefs.json）。 */
 export interface ModelPrefs {
+	/** 隐藏的模型 id（provider → modelId 列表）；隐藏不影响已经选中的会话运行 */
 	hiddenModels: Record<string, string[]>;
 	subagentModels: Record<string, string>;
 }

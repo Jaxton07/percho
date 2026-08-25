@@ -7,6 +7,11 @@ export const zh = {
 		close: "关闭",
 		switchDir: "切换工作目录",
 	},
+	appError: {
+		title: "界面出现异常",
+		desc: "渲染层发生错误：{detail}",
+		reload: "重新加载",
+	},
 	tabbar: {
 		newSession: "新建会话",
 		pickProjectFirst: "请先选择项目目录",
@@ -144,7 +149,6 @@ export const zh = {
 		title: "变更",
 		filesChanged: "修改了 {count} 个文件",
 		filesSummary: "{count} 文件",
-		openSidebar: "侧栏查看",
 		scopeAll: "全部",
 		scopeLatest: "最近一轮",
 		empty: "本会话还没有文件变更",
@@ -281,6 +285,8 @@ export const zh = {
 			custom: "自定义",
 			modelCount: "{count} 个模型",
 			modelVisibility: "模型可见性（关闭后不在模型选择器中显示）",
+			hideAllModels: "隐藏 {name} 的全部模型",
+			showAllModels: "显示 {name} 的全部模型",
 			configured: "已配置",
 			unconfigured: "未配置",
 			test: "测试",

@@ -13,19 +13,22 @@ const EMPTY_MODEL_IDS: string[] = [];
 /** 图标操作按钮：图标无文字，Tooltip + aria-label 必需（ProvidersPanel 刷新按钮复用） */
 export function IconAction({
 	label,
+	align,
 	danger,
 	disabled,
 	onClick,
 	children,
 }: {
 	label: string;
+	/** 透传给 Tooltip：靠滚动容器右缘的按钮用 "end"，居中气泡会向右溢出被裁 */
+	align?: "center" | "end";
 	danger?: boolean;
 	disabled?: boolean;
 	onClick: () => void;
 	children: React.ReactNode;
 }) {
 	return (
-		<Tooltip label={label}>
+		<Tooltip label={label} align={align}>
 			<button
 				type="button"
 				aria-label={label}
@@ -55,6 +58,12 @@ export function ProviderRow({ provider }: { provider: ProviderInfo }) {
 	const testResult = useSettingsStore((s) => s.testResults[provider.id]);
 	const hiddenModelIds = useSettingsStore((s) => s.modelPrefs?.hiddenModels[provider.id] ?? EMPTY_MODEL_IDS);
 	const setModelHidden = useSettingsStore((s) => s.setModelHidden);
+	const setModelsHidden = useSettingsStore((s) => s.setModelsHidden);
+	/** 批量开关三态：全可见 / 全隐藏 / 部分隐藏（中间态点击 = 一键全隐藏，方便先藏再挑） */
+	const hiddenCount = provider.models.filter((m) => hiddenModelIds.includes(m.id)).length;
+	const allVisible = hiddenCount === 0;
+	const allHidden = hiddenCount > 0 && hiddenCount === provider.models.length;
+	const mixed = !allVisible && !allHidden;
 	/** 自定义 provider 展开全字段编辑表单，内置 provider 只填/更新 Key */
 	const [editing, setEditing] = useState(false);
 	const [modelsOpen, setModelsOpen] = useState(false);
@@ -153,6 +162,34 @@ export function ProviderRow({ provider }: { provider: ProviderInfo }) {
 						</IconAction>
 					)
 				)}
+				{/* 行末批量开关：一键全显示/全隐藏该 provider 的所有模型（openrouter 这类几百个模型的供应商先全藏再挑）。
+					tooltip 右对齐（align=end）：开关紧贴滚动容器右缘，居中气泡会向右溢出 */}
+				<Tooltip
+					label={
+						allHidden
+							? t("settings.providers.showAllModels", { name: provider.name })
+							: t("settings.providers.hideAllModels", { name: provider.name })
+					}
+					align="end"
+				>
+					<Switch
+						checked={allVisible}
+						indeterminate={mixed}
+						disabled={provider.models.length === 0}
+						onCheckedChange={() =>
+							void setModelsHidden(
+								provider.id,
+								provider.models.map((m) => m.id),
+								!allHidden,
+							)
+						}
+						aria-label={
+							allHidden
+								? t("settings.providers.showAllModels", { name: provider.name })
+								: t("settings.providers.hideAllModels", { name: provider.name })
+						}
+					/>
+				</Tooltip>
 			</div>
 			{testResult && testResult !== "testing" && (
 				<p
