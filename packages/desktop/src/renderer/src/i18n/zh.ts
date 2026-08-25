@@ -217,6 +217,9 @@ export const zh = {
 		acpCompression: "智能上下文压缩（ACP）",
 		acpCompressionHint:
 			"长会话中让模型自主摘要压缩已消耗的旧对话，任务不中断、压缩内容可随时 decompress 还原。约 75% 上下文占用时开始引导压缩，默认开启。开关存于 ~/.pi/agent/settings.json，对新建会话完全生效。",
+		channelWatch: "跨会话频道协作（channel-watch）",
+		channelWatchHint:
+			"会话订阅频道后自动监听 .local/agent-work/channel/<主题>/ 的文件更新，另一会话写入时唤醒本会话查收（按 HANDOFF.md 沟通协议）。订阅经 appendEntry 持久化，重开会话自动恢复；内置防环保护。默认开启，对已信任项目完全生效。",
 		sessionRail: "左侧会话轨道",
 		sessionRailHint:
 			"在聊天页左侧居中显示一列会话短线：悬停或聚焦时短线展开为悬浮胶囊（项目图标 + 会话标题），点击快速切换。顶栏会话胶囊保持不变，关闭后完全隐藏。",

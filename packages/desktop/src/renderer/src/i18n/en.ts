@@ -220,6 +220,9 @@ export const en: Messages = {
 		acpCompression: "Smart context compression (ACP)",
 		acpCompressionHint:
 			"In long sessions the model summarizes and compresses consumed history itself — the task keeps running and compressed content stays recoverable via decompress. Nudges start around 75% context usage. On by default; stored in ~/.pi/agent/settings.json, fully applies to new sessions.",
+		channelWatch: "Cross-session channel collaboration (channel-watch)",
+		channelWatchHint:
+			"After a session subscribes to a channel it watches .local/agent-work/channel/<topic>/ for file updates; writes from another session wake this session to pick them up (per the HANDOFF.md protocol). Subscriptions persist via appendEntry and restore on session reopen; built-in loop protection. On by default, fully effective for trusted projects.",
 		sessionRail: "Left session rail",
 		sessionRailHint:
 			"Shows a vertically centered track of session lines on the left of the chat view; hover or focus a line and it grows into a floating capsule (project icon + title) — click to switch. The top tab bar stays unchanged; turn off to hide it.",

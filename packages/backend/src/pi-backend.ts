@@ -79,6 +79,11 @@ import { ModelPrefsService } from "./settings/model-prefs";
 import { SettingsService } from "./settings/settings";
 import { slashCommandsForLoader, slashCommandsForSession } from "./slash-commands";
 import { makeAcpExtension, readAcpEnabled, writeAcpEnabled } from "./tools/acp-context";
+import {
+	makeChannelWatchExtension,
+	readChannelWatchEnabled,
+	writeChannelWatchEnabled,
+} from "./tools/channel-watch";
 import { makeShowImageTool } from "./tools/show-image";
 import { discoverAgents, isSubagentSessionPath, makeSubagentTool } from "./tools/subagent";
 import { applySubagentMutex } from "./tools/subagent/mutex";
@@ -223,9 +228,15 @@ export class PiBackend {
 	private buildExtensionFactories(
 		cwd: string,
 		confirm: PermissionConfirm | undefined,
-	): Array<ReturnType<typeof makeTodoReminderExtension> | ReturnType<typeof makeAcpExtension>> {
+	): Array<
+		| ReturnType<typeof makeTodoReminderExtension>
+		| ReturnType<typeof makeAcpExtension>
+		| ReturnType<typeof makeChannelWatchExtension>
+	> {
 		const factories: Array<
-			ReturnType<typeof makeTodoReminderExtension> | ReturnType<typeof makeAcpExtension>
+			| ReturnType<typeof makeTodoReminderExtension>
+			| ReturnType<typeof makeAcpExtension>
+			| ReturnType<typeof makeChannelWatchExtension>
 		> = [];
 		if (this.options.permissionGates !== false && this.options.permissionExtension !== false) {
 			// confirm 直接桥到 PermissionGate（携带 kind/suggestDir 元数据，驱动「允许此目录」）；
@@ -237,6 +248,9 @@ export class PiBackend {
 		}
 		// ACP 上下文压缩（开关默认开；工厂内部 session_start 时检查开关，关时零副作用）
 		factories.push(makeAcpExtension({ agentDir: getAgentDir() }));
+		// channel-watch 跨会话协作（开关默认开；session_start 检查开关 + trusted 门，
+		// 无订阅时零 fs 监听；钩子与 ACP/todo 无语义交互，位置不敏感，放 todo 前）
+		factories.push(makeChannelWatchExtension({ agentDir: getAgentDir(), cwd }));
 		// todo-reminder 最后：compaction 后恢复注入的任务列表不被上游折叠，
 		// 且其末尾追加的 CustomMessage 不干扰 ACP 的 entries↔messages 对齐
 		factories.push(makeTodoReminderExtension());
@@ -931,6 +945,22 @@ export class PiBackend {
 			throw err; // ipcMain.handle，reject 传回 renderer
 		}
 		log.info("acp compression enabled", enabled);
+	}
+
+	/** channel-watch 总开关（设置 UI 用；键在 ~/.pi/agent/settings.json，缺省=开） */
+	getChannelWatchConfig(): { enabled: boolean } {
+		return { enabled: readChannelWatchEnabled(getAgentDir()) };
+	}
+
+	/** 写 channel-watch 开关（下一 session_start 生效：目录 init/watcher/工具注册全部跟随）。损坏拒写时上抛 */
+	setChannelWatchEnabled(enabled: boolean): void {
+		try {
+			writeChannelWatchEnabled(getAgentDir(), enabled);
+		} catch (err) {
+			log.error("settings.json 写入失败（channel-watch 开关未保存）", err);
+			throw err; // ipcMain.handle，reject 传回 renderer
+		}
+		log.info("channel watch enabled", enabled);
 	}
 
 	/** 视觉代理配置（key 只给存在性，不回传）；未提供配置路径时返回禁用态 */
