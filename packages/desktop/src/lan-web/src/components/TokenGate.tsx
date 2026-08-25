@@ -4,17 +4,17 @@ import { useLanStore } from "../store";
 import { LockIcon, XIcon } from "./icons";
 
 /** 令牌输入页（无 ?t= 且 localStorage 无缓存时；401 也回落到这里）。
- *  UX v2：品牌 Orb 三圈涟漪 + 中央 ink 圆球、lock 图标输入框、黑白主按钮（bg-ink text-canvas）。 */
+ *  UX v2：品牌 Orb 三圈涟漪 + 中央 ink 圆球、lock 图标输入框、黑白主按钮（bg-ink text-canvas）。
+ *  401 失败信号：store.authFailed（logout 置 true，setToken 重试时清）。 */
 export function TokenGate() {
 	const [value, setValue] = useState("");
-	const [failed, setFailed] = useState(false);
+	const authFailed = useLanStore((s) => s.authFailed);
 	const setToken = useLanStore((s) => s.setToken);
 	const submit = () => {
 		const token = value.trim();
 		if (!token) return;
-		setFailed(false);
+		// 乐观进入：401 时 store logout 清回此页并置 authFailed（重试时已清）
 		setToken(token);
-		// 401 时 store logout 会清回此页；这里乐观进入，失败由状态机兜底
 	};
 	return (
 		<div className="token-wrap">
@@ -38,7 +38,7 @@ export function TokenGate() {
 					onKeyDown={(e) => e.key === "Enter" && submit()}
 				/>
 			</div>
-			{failed && (
+			{authFailed && (
 				<div className="token-err">
 					<XIcon size={12} />
 					{t("token.invalid")}
