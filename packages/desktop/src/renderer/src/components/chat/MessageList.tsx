@@ -142,8 +142,10 @@ export function MessageList() {
 	// 最后一轮（无下一条 user 行）的 chip 追加到行序列末尾
 	const tailChanges = changeByTurn.get(userRowCount - 1);
 
-	const renderChip = (tc: TurnChanges) => (
-		<div key={`turn-diff-${tc.turnIndex}`} className="-mt-4">
+	// 已完成轮次保留上提 16px，和普通消息的 8px 净距对齐；当前运行轮不应上提：
+	// MetaGroup 的圆点仍会实时追加，否则 diff 会贴到圆点行上。
+	const renderChip = (tc: TurnChanges, running = false) => (
+		<div key={`turn-diff-${tc.turnIndex}`} className={running ? undefined : "-mt-4"}>
 			<TurnDiffChip changes={tc} entering={tc.turnIndex === enteringTurn} />
 		</div>
 	);
@@ -185,7 +187,7 @@ export function MessageList() {
 			/>,
 		);
 	});
-	if (tailChanges) items.push(renderChip(tailChanges));
+	if (tailChanges) items.push(renderChip(tailChanges, transcript.agentActive));
 
 	return (
 		<div className="relative h-full">
@@ -201,7 +203,7 @@ export function MessageList() {
 				ref={scrollRef}
 				onScroll={handleScroll}
 				onClickCapture={handleSummaryToggle}
-				className="relative z-10 h-full overflow-x-hidden overflow-y-auto [scrollbar-gutter:stable]"
+				className="chat-scrollbar relative z-10 h-full overflow-x-hidden overflow-y-auto [scrollbar-gutter:stable]"
 			>
 				<div ref={contentRef} className="mx-auto flex max-w-[760px] flex-col gap-6 px-6 pt-8 pb-16">
 					{items}

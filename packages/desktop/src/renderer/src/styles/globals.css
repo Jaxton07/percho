@@ -552,6 +552,15 @@ code {
 	background: transparent;
 }
 
+/* 对话消息流比全局滚动条更轻，避免右侧视觉重量抢过内容。
+   Electron 的 Chromium 只走 WebKit 伪元素；不设 scrollbar-width，避免触发系统轨道绘制。 */
+.chat-scrollbar::-webkit-scrollbar {
+	width: 4px;
+}
+.chat-scrollbar::-webkit-scrollbar-thumb {
+	border-radius: 3px;
+}
+
 /* Working 文字高亮扫过（codex 风格）：光带只扫文字本身，背景不变（background-clip: text）。
    光带为平滑对称单峰渐变（边缘 = currentColor 本色，图宽 200%）：行程端点 200% / -100% 处
    渐变图恰好完全滑出视口两侧——动画精确走 200% → -100% 且 linear，循环无缝无重置卡顿。
@@ -1061,15 +1070,16 @@ code {
 
 /* 文件卡片（手风琴） */
 .diff-file-card {
-	border: 1px solid var(--color-border);
+	border: none;
 	border-radius: 10px;
 	background: var(--color-surface);
-	margin-bottom: 8px;
+	box-shadow: var(--shadow-soft);
+	margin-bottom: 10px;
 	overflow: hidden;
-	transition: border-color 0.15s;
+	transition: box-shadow 0.18s;
 }
 .diff-file-card[open] {
-	border-color: var(--color-border-strong);
+	box-shadow: var(--shadow-pop);
 }
 /* chip 跳转定位：紫色描边闪烁 */
 .diff-file-card.jump-flash {
@@ -1078,11 +1088,12 @@ code {
 @keyframes diff-jump-flash {
 	0%,
 	40% {
-		border-color: var(--color-accent);
-		box-shadow: 0 0 0 3px color-mix(in srgb, var(--color-accent) 22%, transparent);
+		box-shadow:
+			var(--shadow-pop),
+			0 0 0 3px color-mix(in srgb, var(--color-accent) 22%, transparent);
 	}
 	100% {
-		box-shadow: none;
+		box-shadow: var(--shadow-soft);
 	}
 }
 .diff-file-head {
@@ -1122,7 +1133,6 @@ code {
 	transform: rotate(90deg);
 }
 .diff-card-body {
-	border-top: 1px solid var(--color-border);
 	overflow-x: auto;
 }
 .diff-section-sep {
@@ -1130,10 +1140,9 @@ code {
 	margin: 2px 0;
 }
 
-/* diff 表格：双 gutter 行号 + 符号列；min-width: max-content 让横向溢出可滚动 */
+/* diff 行自带 grid，才能让增删背景覆盖双 gutter 与代码区的整行；
+   min-width: max-content 保留长代码的横向滚动。 */
 .diff-table {
-	display: grid;
-	grid-template-columns: 34px 34px 1fr;
 	font-family: ui-monospace, "SF Mono", SFMono-Regular, Menlo, Consolas, monospace;
 	font-size: 11px;
 	line-height: 20px;
@@ -1141,7 +1150,8 @@ code {
 	width: 100%;
 }
 .diff-line {
-	display: contents;
+	display: grid;
+	grid-template-columns: 34px 34px minmax(0, 1fr);
 }
 .diff-line > span {
 	padding: 0 6px;
@@ -1186,7 +1196,6 @@ code {
 	color: var(--diff-del);
 }
 .diff-hunk {
-	grid-column: 1 / -1;
 	background: color-mix(in srgb, var(--color-hover) 70%, transparent);
 	color: var(--color-ink-faint);
 	font-size: 10px;
@@ -1194,7 +1203,7 @@ code {
 	user-select: none;
 }
 /* 逐行 stagger 进入（--i 由渲染层写入，上限 24 防长 diff 拖沓） */
-.diff-line > span,
+.diff-line,
 .diff-hunk {
 	animation: diff-line-in 0.3s both;
 	animation-delay: calc(min(var(--i, 0), 24) * 14ms);
@@ -1239,7 +1248,7 @@ code {
 	/* 与基础规则同优先级、位置靠后覆盖（项目约定不用 !important） */
 	.turn-diff-enter,
 	.diff-turn-group,
-	.diff-line > span,
+	.diff-line,
 	.diff-hunk,
 	.diff-file-card.jump-flash {
 		animation: none;
