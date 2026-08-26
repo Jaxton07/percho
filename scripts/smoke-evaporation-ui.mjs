@@ -29,7 +29,11 @@ function send(method, params = {}) {
 	});
 }
 async function evalJs(expr) {
-	const result = await send("Runtime.evaluate", { expression: expr, returnByValue: true, awaitPromise: true });
+	const result = await send("Runtime.evaluate", {
+		expression: expr,
+		returnByValue: true,
+		awaitPromise: true,
+	});
 	if (result.result?.exceptionDetails) throw new Error(JSON.stringify(result.result.exceptionDetails));
 	return result.result?.result?.value;
 }
