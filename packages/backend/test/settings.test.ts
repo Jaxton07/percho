@@ -109,7 +109,7 @@ describe("SettingsService provider mutations", () => {
 		expect(entry).not.toHaveProperty("name");
 	});
 
-	it("replaces the key when provided, deletes it with clearApiKey", async () => {
+	it("replaces the key when provided; key untouched when omitted", async () => {
 		const { settings } = await seedProxy();
 
 		await settings.updateCustomProvider({
@@ -121,14 +121,14 @@ describe("SettingsService provider mutations", () => {
 		});
 		expect(JSON.parse(files.get("/agent/auth.json") ?? "{}").proxy.key).toBe("new-secret");
 
+		// 不传 key = 保持不变（删除凭证走 removeCredential/removeCustomProvider）
 		await settings.updateCustomProvider({
 			id: "proxy",
 			baseUrl: "https://proxy.example/v1",
 			api: "openai-completions",
 			models: [{ id: "gpt-5" }],
-			clearApiKey: true,
 		});
-		expect(JSON.parse(files.get("/agent/auth.json") ?? "{}").proxy).toBeUndefined();
+		expect(JSON.parse(files.get("/agent/auth.json") ?? "{}").proxy.key).toBe("new-secret");
 	});
 
 	it("writes per-model metadata (reasoning/contextWindow/maxTokens/input) when provided", async () => {

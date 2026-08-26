@@ -62,6 +62,8 @@ export interface ProviderInfo {
 	name: string;
 	/** 是否来自 models.json 的自定义 provider */
 	custom: boolean;
+	/** 覆写内置 provider（models.json 有配置且 id 为内置，如 openai——pi 官方「覆写 baseUrl 共享官方模型列表」语义）；区别于真·自定义全新 id */
+	overridesBuiltin?: boolean;
 	/** 是否有可用凭证 */
 	configured: boolean;
 	/** 凭证来源：stored / runtime / environment / models_json_key / models_json_command */
@@ -73,6 +75,9 @@ export interface ProviderInfo {
 	baseUrl?: string;
 	/** 自定义 provider 的 api 协议（编辑表单预填用；内置 provider 不填） */
 	api?: string;
+	/** 已在 models.json 落盘的自定义模型定义（原文回填，编辑表单预填用；区别于 runtime 全量 models） */
+	customModels?: CustomProviderModelInput[];
+	/** 全量模型（内置 + models.json 自定义 + 远程目录 overlay，展示用） */
 	models: ProviderModelInfo[];
 }
 
@@ -139,11 +144,8 @@ export interface CustomProviderInput {
 	apiKey?: string;
 }
 
-/** 更新自定义 provider：ID 为主键不可改；apiKey 留空 = 保持不变 */
-export interface CustomProviderUpdateInput extends CustomProviderInput {
-	/** true 时删除 auth.json 中已保存的 key（与 apiKey 互斥，优先生效） */
-	clearApiKey?: boolean;
-}
+/** 更新自定义 provider：ID 为主键不可改；apiKey 留空 = 保持不变（删除凭证走行上的「移除凭证」/「删除」） */
+export type CustomProviderUpdateInput = CustomProviderInput;
 
 export interface ProviderTestResult {
 	ok: boolean;

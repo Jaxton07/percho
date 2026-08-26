@@ -22,7 +22,6 @@ interface ProviderFormState {
 	/** 逐模型行（id/上下文/输出/思考/图像），提交时经 rowsToModelInputs 转换 */
 	models: ModelRow[];
 	apiKey: string;
-	clearKey: boolean;
 }
 
 const EMPTY_FORM: ProviderFormState = {
@@ -32,7 +31,6 @@ const EMPTY_FORM: ProviderFormState = {
 	api: "openai-completions",
 	models: [{ ...EMPTY_MODEL_ROW }],
 	apiKey: "",
-	clearKey: false,
 };
 
 function toInput(form: ProviderFormState): CustomProviderInput {
@@ -146,16 +144,32 @@ function ModelRowsEditor({ rows, onChange }: { rows: ModelRow[]; onChange: (rows
 					</button>
 				</div>
 			))}
-			<button
-				type="button"
-				className="rounded-md px-1.5 py-1 text-[11px] text-ink-dim transition-colors hover:bg-hover"
-				onClick={() => onChange([...rows, { ...EMPTY_MODEL_ROW }])}
-			>
-				{t("settings.providers.addModelRow")}
-			</button>
+			<div className="flex items-center gap-3">
+				<button
+					type="button"
+					className="rounded-md px-1.5 py-1 text-[11px] text-ink-dim transition-colors hover:bg-hover"
+					onClick={() => onChange([...rows, { ...EMPTY_MODEL_ROW }])}
+				>
+					{t("settings.providers.addModelRow")}
+				</button>
+				{rows.some((row) => row.id.trim()) && (
+					<button
+						type="button"
+						className="rounded-md px-1.5 py-1 text-[11px] text-ink-dim transition-colors hover:bg-hover"
+						onClick={() => onChange([{ ...EMPTY_MODEL_ROW }])}
+					>
+						{t("settings.providers.clearModelRows")}
+					</button>
+				)}
+			</div>
 			<p className="mt-1 text-[10px] leading-relaxed text-ink-faint">
 				{t("settings.providers.customModelsHint")}
 			</p>
+			{rows.every((row) => !row.id.trim()) && (
+				<p className="mt-1 text-[10px] leading-relaxed text-ink-dim">
+					{t("settings.providers.customModelsEmptyHint")}
+				</p>
+			)}
 		</div>
 	);
 }
@@ -165,7 +179,6 @@ function ProviderConfigForm({
 	title,
 	initial,
 	lockId,
-	allowClearKey,
 	onSubmit,
 	onCancel,
 }: {
@@ -173,8 +186,6 @@ function ProviderConfigForm({
 	initial: ProviderFormState;
 	/** 编辑模式锁定 ID：它是 models.json/auth.json/会话模型引用的主键，不可改 */
 	lockId?: boolean;
-	/** 显示「清除已保存的 Key」选项（凭证存于 auth.json 的编辑场景） */
-	allowClearKey?: boolean;
 	onSubmit: (form: ProviderFormState) => Promise<void>;
 	onCancel: () => void;
 }) {
@@ -247,19 +258,7 @@ function ProviderConfigForm({
 					type="password"
 					value={form.apiKey}
 					onChange={set("apiKey")}
-					disabled={form.clearKey}
 				/>
-				{allowClearKey && (
-					<label className="col-span-2 flex items-center gap-1.5 text-[11px] text-ink-dim">
-						<input
-							type="checkbox"
-							className="h-3 w-3 accent-ink"
-							checked={form.clearKey}
-							onChange={(e) => setForm((f) => ({ ...f, clearKey: e.target.checked }))}
-						/>
-						{t("settings.providers.customKeyClear")}
-					</label>
-				)}
 				<ModelRowsEditor rows={form.models} onChange={(models) => setForm((f) => ({ ...f, models }))} />
 			</div>
 			<div className="mt-2 flex justify-end gap-2">
@@ -331,15 +330,88 @@ export function CustomProviderEditForm({ provider, onDone }: { provider: Provide
 				name: provider.name !== provider.id ? provider.name : "",
 				baseUrl: provider.baseUrl ?? "",
 				api: provider.api ?? "openai-completions",
-				models: modelsToRows(provider.models),
+				// 只预填已落盘的自定义模型定义（避免把 runtime 全量内置模型写回 models.json）
+				models: modelsToRows(provider.customModels ?? []),
 			}}
 			lockId
-			allowClearKey={provider.authSource === "stored"}
 			onSubmit={async (form) => {
-				await updateCustom({ ...toInput(form), clearApiKey: form.clearKey || undefined });
+				await updateCustom(toInput(form));
 				onDone();
 			}}
 			onCancel={onDone}
 		/>
+	);
+}
+
+/**
+ * 内置 provider 的端点覆写编辑（pi 官方语义）：只填 baseUrl（可选）+ Key。
+ * 模型列表永远共享官方配置，不出现在表单里；baseUrl 留空保存 = 清除覆写回官方。
+ */
+export function BuiltinProviderEditForm({
+	provider,
+	onDone,
+}: {
+	provider: ProviderInfo;
+	onDone: () => void;
+}) {
+	const t = useT();
+	const setProviderBaseUrl = useSettingsStore((s) => s.setProviderBaseUrl);
+	const [baseUrl, setBaseUrl] = useState(provider.baseUrl ?? "");
+	const [key, setKey] = useState("");
+	const [submitting, setSubmitting] = useState(false);
+
+	const save = async () => {
+		setSubmitting(true);
+		try {
+			await setProviderBaseUrl(provider.id, baseUrl, key || undefined);
+			onDone();
+		} catch {
+			// 错误已写入 store.error，表单保持打开
+		} finally {
+			setSubmitting(false);
+		}
+	};
+
+	return (
+		<div className="mt-2 rounded-xl border border-border p-3">
+			<h3 className="text-[13px] font-medium text-ink">
+				{t("settings.providers.builtinEditTitle", { name: provider.name })}
+			</h3>
+			<div className="mt-2">
+				<input
+					className={inputClass}
+					placeholder={t("settings.providers.builtinBaseUrl")}
+					value={baseUrl}
+					onChange={(e) => setBaseUrl(e.target.value)}
+				/>
+			</div>
+			<div className="mt-2">
+				<input
+					type="password"
+					className={inputClass}
+					placeholder={t("settings.providers.customKeyKeep")}
+					value={key}
+					onChange={(e) => setKey(e.target.value)}
+				/>
+			</div>
+			<p className="mt-2 text-[10px] leading-relaxed text-ink-faint">{t("settings.providers.builtinHint")}</p>
+			<div className="mt-2 flex justify-end gap-2">
+				<button
+					type="button"
+					className="rounded-lg px-3 py-1.5 text-[12px] text-ink-dim transition-colors hover:bg-hover"
+					onClick={onDone}
+				>
+					{t("common.cancel")}
+				</button>
+				<button
+					type="button"
+					className="rounded-lg bg-ink px-3 py-1.5 text-[12px] font-medium text-on-ink transition-colors hover:bg-ink-2 disabled:opacity-40"
+					onClick={() => void save()}
+					disabled={submitting}
+				>
+					{submitting ? t("settings.providers.submitting") : t("common.save")}
+				</button>
+			</div>
+		</div>
 	);
 }

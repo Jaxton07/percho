@@ -52,6 +52,8 @@ const api: PiApi = {
 	updateCustomProvider: (input) => ipcRenderer.invoke(IpcChannels.SettingsUpdateCustomProvider, input),
 	removeCustomProvider: (providerId) =>
 		ipcRenderer.invoke(IpcChannels.SettingsRemoveCustomProvider, providerId),
+	setProviderBaseUrl: (providerId, baseUrl, apiKey) =>
+		ipcRenderer.invoke(IpcChannels.SettingsSetProviderBaseUrl, providerId, baseUrl, apiKey),
 	testProvider: (providerId, modelId) =>
 		ipcRenderer.invoke(IpcChannels.SettingsTestProvider, providerId, modelId),
 	getModelPrefs: () => ipcRenderer.invoke(IpcChannels.SettingsGetModelPrefs),

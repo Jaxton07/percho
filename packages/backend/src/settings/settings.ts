@@ -1,4 +1,5 @@
 import { join } from "node:path";
+import { builtinProviders } from "@earendil-works/pi-ai/providers/all";
 import { getAgentDir, type ModelRuntime } from "@earendil-works/pi-coding-agent";
 import type {
 	CustomProviderInput,
@@ -8,6 +9,12 @@ import type {
 	ProviderTestResult,
 } from "@percho/shared";
 import { JsonStore } from "../json-store";
+
+/** 内置 provider id 集合：models.json 里配置的 ID 命中它 = 「覆写内置」（有官方模型列表可共享），否则是全新自定义 provider */
+const BUILTIN_PROVIDER_IDS = new Set(builtinProviders().map((p) => p.id));
+
+/** percho 表单管理的字段（用户输入决定，可被清空删除）；其余顶层字段（pi 手写的 apiKey/headers/compat 等）更新时保留，防编辑丢配置 */
+const MANAGED_PROVIDER_FIELDS = ["name", "baseUrl", "api", "models"] as const;
 
 type JsonObject = Record<string, unknown>;
 
@@ -100,6 +107,12 @@ export class SettingsService {
 					id: provider.id,
 					name: provider.name || provider.id,
 					custom: customIds.has(provider.id),
+					// 覆写 = models.json 条目存在、有 baseUrl 且 id 为内置（仅填 key 不算覆写）；全新 id = 真自定义
+					overridesBuiltin:
+						(customIds.has(provider.id) &&
+							typeof customEntry?.baseUrl === "string" &&
+							BUILTIN_PROVIDER_IDS.has(provider.id)) ||
+						undefined,
 					configured: status.configured,
 					authSource: status.source,
 					authLabel: status.label,
@@ -115,6 +128,15 @@ export class SettingsService {
 						? {
 								baseUrl: typeof customEntry.baseUrl === "string" ? customEntry.baseUrl : undefined,
 								api: typeof customEntry.api === "string" ? customEntry.api : undefined,
+								// 已在 models.json 落盘的自定义模型定义：编辑表单预填用（区别于 runtime 全量 models）
+								customModels: [...modelMeta.values()].map((raw) => ({
+									id: String(raw.id),
+									...(typeof raw.name === "string" ? { name: raw.name } : {}),
+									...(raw.reasoning === true ? { reasoning: true } : {}),
+									...(typeof raw.contextWindow === "number" ? { contextWindow: raw.contextWindow } : {}),
+									...(typeof raw.maxTokens === "number" ? { maxTokens: raw.maxTokens } : {}),
+									...(Array.isArray(raw.input) && raw.input.includes("image") ? { imageInput: true } : {}),
+								})),
 							}
 						: {}),
 					models: runtime.getModels(provider.id).map((model) => {
@@ -154,35 +176,58 @@ export class SettingsService {
 		await this.refreshLocalModels();
 	}
 
+	/**
+	 * 空模型列表的合法性：覆写内置 provider（ID 为内置）时可留空以共享其官方模型列表
+	 * （SDK applyModelsJson 语义：无 models 时内置模型全保留、只覆写 baseUrl）；
+	 * 全新 provider 空模型无意义（SDK 会加载出零模型 provider），直接拒绝。
+	 * 注意必须用 BUILTIN_PROVIDER_IDS 判断而非 runtime.getProvider(id)——后者对 models.json
+	 * 里已注册的自定义 provider 也返回真值，「编辑已有自定义 provider 时清空模型」会漏拦。
+	 */
+	private assertModelsMeaningful(id: string, models: readonly { id: string }[]): void {
+		if (models.length > 0) return;
+		if (!BUILTIN_PROVIDER_IDS.has(id)) {
+			throw new Error(
+				`${id} 不是内置 provider，留空模型列表无法使用；覆写内置 provider（如 openai）请用其 ID 并留空模型，即沿用官方模型列表`,
+			);
+		}
+	}
+
 	/** 校验并构建 models.json 条目（add/update 共用）；id 由调用方单独校验 */
 	private buildCustomEntry(input: CustomProviderInput): JsonObject {
 		if (!input.baseUrl.trim()) throw new Error("baseUrl 不能为空");
+		if (!/^https?:\/\//i.test(input.baseUrl.trim())) {
+			throw new Error("baseUrl 必须以 http(s):// 开头");
+		}
 		if (!input.api.trim()) throw new Error("api 协议不能为空");
 		const models = input.models.filter((m) => m.id.trim());
-		if (models.length === 0) throw new Error("至少需要一个模型");
 		return {
 			...(input.name?.trim() ? { name: input.name.trim() } : {}),
 			baseUrl: input.baseUrl.trim(),
 			api: input.api.trim(),
-			models: models.map((m) => {
-				for (const [field, value] of [
-					["contextWindow", m.contextWindow],
-					["maxTokens", m.maxTokens],
-				] as const) {
-					if (value !== undefined && (!Number.isFinite(value) || value <= 0)) {
-						throw new Error(`模型 ${m.id.trim()} 的 ${field} 必须是正数`);
+			// 模型留空不写 models 键：SDK 按「共享内置模型列表、仅覆写 baseUrl」处理（官方语义）
+			...(models.length > 0
+				? {
+						models: models.map((m) => {
+							for (const [field, value] of [
+								["contextWindow", m.contextWindow],
+								["maxTokens", m.maxTokens],
+							] as const) {
+								if (value !== undefined && (!Number.isFinite(value) || value <= 0)) {
+									throw new Error(`模型 ${m.id.trim()} 的 ${field} 必须是正数`);
+								}
+							}
+							// 缺省字段不写进 models.json，跟随 SDK 默认（reasoning:false / 128000 / 16384 / 仅文本）
+							return {
+								id: m.id.trim(),
+								...(m.name?.trim() ? { name: m.name.trim() } : {}),
+								...(m.reasoning ? { reasoning: true } : {}),
+								...(m.contextWindow ? { contextWindow: Math.round(m.contextWindow) } : {}),
+								...(m.maxTokens ? { maxTokens: Math.round(m.maxTokens) } : {}),
+								...(m.imageInput ? { input: ["text", "image"] } : {}),
+							};
+						}),
 					}
-				}
-				// 缺省字段不写进 models.json，跟随 SDK 默认（reasoning:false / 128000 / 16384 / 仅文本）
-				return {
-					id: m.id.trim(),
-					...(m.name?.trim() ? { name: m.name.trim() } : {}),
-					...(m.reasoning ? { reasoning: true } : {}),
-					...(m.contextWindow ? { contextWindow: Math.round(m.contextWindow) } : {}),
-					...(m.maxTokens ? { maxTokens: Math.round(m.maxTokens) } : {}),
-					...(m.imageInput ? { input: ["text", "image"] } : {}),
-				};
-			}),
+				: {}),
 		};
 	}
 
@@ -191,6 +236,11 @@ export class SettingsService {
 		const id = input.id.trim();
 		if (!id) throw new Error("Provider ID 不能为空");
 		if (!/^[a-z0-9][a-z0-9-_]*$/i.test(id)) throw new Error("Provider ID 只能包含字母、数字、-、_");
+
+		this.assertModelsMeaningful(
+			id,
+			input.models.filter((m) => m.id.trim()),
+		);
 
 		await jsonStoreFor(this.modelsJsonPath).update((draft) => {
 			const providers = (draft.providers as JsonObject | undefined) ?? {};
@@ -211,30 +261,70 @@ export class SettingsService {
 	/**
 	 * 更新已存在的自定义 provider（name/baseUrl/api/models 全覆盖式更新）。
 	 * ID 是主键（models.json/auth.json/会话模型引用都按它关联），不可修改。
-	 * Key 语义：留空 = 保持不变；填写 = 替换；clearApiKey = 从 auth.json 删除。
+	 * Key 语义：留空 = 保持不变；填写 = 替换（删除凭证走行上的「移除凭证」/「删除」）。
 	 */
 	async updateCustomProvider(input: CustomProviderUpdateInput): Promise<void> {
 		const id = input.id.trim();
 		if (!id) throw new Error("Provider ID 不能为空");
 
+		this.assertModelsMeaningful(
+			id,
+			input.models.filter((m) => m.id.trim()),
+		);
 		await jsonStoreFor(this.modelsJsonPath).update((draft) => {
 			const providers = (draft.providers as JsonObject | undefined) ?? {};
 			if (!(id in providers)) throw new Error(`自定义 provider 不存在：${id}`);
-			providers[id] = this.buildCustomEntry(input);
+			// 保留 pi TUI 手写的、表单不管理的字段（apiKey/headers/compat/modelOverrides 等）；
+			// 表单管理字段（name/baseUrl/api/models）以表单为准。
+			const preserved = { ...(providers[id] as JsonObject) };
+			for (const field of MANAGED_PROVIDER_FIELDS) delete preserved[field];
+			providers[id] = { ...preserved, ...this.buildCustomEntry(input) };
 			draft.providers = providers;
 		});
 
-		if (input.clearApiKey) {
+		const apiKey = input.apiKey?.trim();
+		if (apiKey) {
 			await jsonStoreFor(this.authPath, 0o600).update((auth) => {
-				delete auth[id];
+				auth[id] = { type: "api_key", key: apiKey };
 			});
-		} else {
-			const apiKey = input.apiKey?.trim();
-			if (apiKey) {
-				await jsonStoreFor(this.authPath, 0o600).update((auth) => {
-					auth[id] = { type: "api_key", key: apiKey };
-				});
+		}
+
+		await this.refreshLocalModels();
+	}
+
+	/**
+	 * 内置 provider 的可选 baseUrl 覆写（pi 官方「Overriding Built-in Providers」语义：
+	 * 不写 models，共享官方模型列表，仅替换端点）。只管理 providers[id].baseUrl 一个字段，
+	 * 条目已有其他字段（pi 手写的 apiKey/headers 等）原样保留；baseUrl 空串 = 删除整条
+	 * 回官方（含 pi 手写字段——语义即「回到官方」）。
+	 * key 逻辑：apiKey 非空写 auth.json（删除凭证走行上的「移除凭证」）。
+	 */
+	async setProviderBaseUrl(providerId: string, baseUrl: string, apiKey?: string): Promise<void> {
+		const id = providerId.trim();
+		if (!id) throw new Error("Provider ID 不能为空");
+		if (!BUILTIN_PROVIDER_IDS.has(id)) {
+			throw new Error(`${id} 不是内置 provider，请改用「自定义 Provider」配置`);
+		}
+		const trimmedBase = baseUrl.trim();
+		if (trimmedBase && !/^https?:\/\//i.test(trimmedBase)) {
+			throw new Error("baseUrl 必须以 http(s):// 开头");
+		}
+		await jsonStoreFor(this.modelsJsonPath).update((draft) => {
+			const providers = (draft.providers as JsonObject | undefined) ?? {};
+			const entry = providers[id] as JsonObject | undefined;
+			if (trimmedBase) {
+				providers[id] = { ...entry, baseUrl: trimmedBase };
+			} else if (entry) {
+				delete providers[id];
 			}
+			draft.providers = providers;
+		});
+
+		const trimmedKey = apiKey?.trim();
+		if (trimmedKey) {
+			await jsonStoreFor(this.authPath, 0o600).update((auth) => {
+				auth[id] = { type: "api_key", key: trimmedKey };
+			});
 		}
 
 		await this.refreshLocalModels();

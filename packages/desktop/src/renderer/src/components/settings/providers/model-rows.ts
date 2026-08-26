@@ -1,4 +1,4 @@
-import type { CustomProviderModelInput, ProviderModelInfo } from "@percho/shared";
+import type { CustomProviderModelInput } from "@percho/shared";
 
 /** 模型行编辑器的一行：数字字段保留原文（支持 k 后缀），提交时才解析 */
 export interface ModelRow {
@@ -35,8 +35,21 @@ export function formatTokenCount(value: number): string {
 	return value >= 1000 && value % 1000 === 0 ? `${value / 1000}k` : String(value);
 }
 
-/** ProviderInfo.models（models.json 原文回填）→ 编辑表单行 */
-export function modelsToRows(models: ProviderModelInfo[]): ModelRow[] {
+/**
+ * 模型定义（ProviderInfo.models 或 models.json 回填的 CustomProviderModelInput）→ 行：
+ * 保留「未设置」状态（ctx/out 显示占位）。编辑表单预填一律用 customModels（已落盘定义）
+ * 而非 runtime 全量，防保存时全量落盘。
+ */
+export function modelsToRows(
+	models: readonly {
+		id: string;
+		name?: string;
+		reasoning?: boolean;
+		contextWindow?: number;
+		maxTokens?: number;
+		imageInput?: boolean;
+	}[],
+): ModelRow[] {
 	const rows = models.map((m) => ({
 		id: m.id,
 		contextWindow: m.contextWindow !== undefined ? formatTokenCount(m.contextWindow) : "",
@@ -60,9 +73,11 @@ export function rowsToModelInputs(rows: ModelRow[]): CustomProviderModelInput[] 
 		}));
 }
 
-/** 至少一行有 id，且所有 ctx/out 输入要么留空要么合法 */
+/**
+ * 所有 ctx/out 输入要么留空要么合法。
+ * 不要求至少一行有 id：全空 = 共享该 provider 的内置模型列表（仅覆写 baseUrl，pi 官方语义）。
+ */
 export function rowsValid(rows: ModelRow[]): boolean {
-	if (!rows.some((row) => row.id.trim())) return false;
 	return rows.every(
 		(row) =>
 			(!row.contextWindow.trim() || parseTokenCount(row.contextWindow) !== null) &&
