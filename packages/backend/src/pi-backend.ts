@@ -88,6 +88,7 @@ import {
 import {
 	makeEvapExtension,
 	readContextManagerMode,
+	reportEvapBatch,
 	writeContextManagerMode,
 } from "./tools/context-evaporation";
 import { makeShowImageTool } from "./tools/show-image";
@@ -257,8 +258,18 @@ export class PiBackend {
 		// ACP 上下文压缩（开关默认开；工厂内部 session_start 时检查开关，关时零副作用）
 		factories.push(makeAcpExtension({ agentDir: getAgentDir() }));
 		// 上下文蒸发（与 ACP 互斥：mode=evaporation 时 ACP 物理关闭；钩子实时读派生
-		// mode，设置页切换后 ≤2s 生效，无需重开会话。arch §2.1：插在 ACP 槽位之后）
-		factories.push(makeEvapExtension({ agentDir: getAgentDir() }));
+		// mode，设置页切换后 ≤2s 生效，无需重开会话。arch §2.1：插在 ACP 槽位之后）。
+		// 批次上报双通道：log（快速 grep）+ trace_custom 行（灰度分析脚本直读，
+		// reducer 未知类型 no-op，replay-trace.mts 重放安全）
+		factories.push(
+			makeEvapExtension({
+				agentDir: getAgentDir(),
+				reporter: (sessionId, batch) => {
+					reportEvapBatch(batch);
+					this.traces.recordCustom(sessionId, "evap_batch", batch);
+				},
+			}),
+		);
 		// channel-watch 跨会话协作（开关默认开；session_start 检查开关 + trusted 门，
 		// 无订阅时零 fs 监听；钩子与 ACP/todo 无语义交互，位置不敏感，放 todo 前）
 		factories.push(makeChannelWatchExtension({ agentDir: getAgentDir(), cwd }));

@@ -29,8 +29,9 @@ export interface EvapExtensionOptions {
 	isEnabled?: () => boolean;
 	/** 配置读取（缺省 readEvapConfig(agentDir)，测试可注入） */
 	getConfig?: () => EvapConfig;
-	/** 批次上报（P3 起 PiBackend 注入 trace writer；缺省仅 log.info） */
-	reporter?: (batch: EvapBatchInfo) => void;
+	/** 批次上报（PiBackend 注入：log + trace recordCustom；缺省仅 log.info）。
+	 *  sessionId 来自 session_start 时的会话闭包（trace 按会话落盘） */
+	reporter?: (sessionId: string, batch: EvapBatchInfo) => void;
 }
 
 export function makeEvapExtension(options: EvapExtensionOptions): InlineExtension {
@@ -39,7 +40,8 @@ export function makeEvapExtension(options: EvapExtensionOptions): InlineExtensio
 		factory: (pi) => {
 			const enabled = options.isEnabled ?? (() => readContextManagerMode(options.agentDir) === "evaporation");
 			const getConfig = options.getConfig ?? (() => readEvapConfig(options.agentDir));
-			const report = options.reporter ?? ((batch: EvapBatchInfo) => reportBatch(batch));
+			const report = options.reporter ?? ((_sessionId: string, batch: EvapBatchInfo) => reportBatch(batch));
+			let currentSessionId = "";
 
 			// --- 会话闭包状态（context 钩子经 withLock 串行访问） ---
 			let active = false;
@@ -76,9 +78,8 @@ export function makeEvapExtension(options: EvapExtensionOptions): InlineExtensio
 					}
 					active = true;
 					state = createEvapState();
-					log.info("evaporation enabled", {
-						sessionId: ctx.sessionManager.getSessionId(),
-					});
+					currentSessionId = ctx.sessionManager.getSessionId();
+					log.info("evaporation enabled", { sessionId: currentSessionId });
 				} catch (err) {
 					// 启用判定失败 → 降级为关闭（会话照常，SDK 默认路径不变）
 					active = false;
@@ -121,7 +122,7 @@ export function makeEvapExtension(options: EvapExtensionOptions): InlineExtensio
 						usageTokens,
 					});
 					if (result.batch.snipped + result.batch.pruned > 0) {
-						report(result.batch);
+						report(currentSessionId, result.batch);
 					}
 					// 无变化（Tier 0 或零决策）→ undefined 原样放行，零干扰
 					if (result.messages === wire) return undefined;
@@ -138,7 +139,11 @@ export function makeEvapExtension(options: EvapExtensionOptions): InlineExtensio
 	};
 }
 
-/** 批次日志（P2 可观测；字段 = arch §8 字段表） */
+/** 批次日志（可观测；字段 = arch §8 字段表）。PiBackend 的 trace reporter 也复用它保 log */
+export function reportEvapBatch(batch: EvapBatchInfo): void {
+	reportBatch(batch);
+}
+
 function reportBatch(batch: EvapBatchInfo): void {
 	log.info("evap batch", {
 		tier: batch.tier,

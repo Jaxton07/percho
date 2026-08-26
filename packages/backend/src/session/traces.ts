@@ -24,6 +24,12 @@ export class SessionTraces {
 		this.recorders.get(sessionId)?.record(event);
 	}
 
+	/** 自定义观测行（合成 type=trace_custom；reducer 遇未知类型 no-op，replay 安全）。
+	 *  不走 emitEvent → 不进 IPC/不进 UI——只落 trace 供灰度分析脚本直读（如蒸发批次） */
+	recordCustom(sessionId: string, kind: string, data: unknown): void {
+		this.recorders.get(sessionId)?.record({ type: "trace_custom", kind, data, ts: Date.now() });
+	}
+
 	/** 停止并落盘 trace */
 	async stop(sessionId: string): Promise<void> {
 		const recorder = this.recorders.get(sessionId);

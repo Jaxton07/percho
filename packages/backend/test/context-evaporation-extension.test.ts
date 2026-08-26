@@ -133,8 +133,11 @@ describe("开关矩阵", () => {
 	});
 
 	it("高水位：wire 被蒸发（read 结果 → stub），返回新数组", async () => {
-		const batches: EvapBatchInfo[] = [];
-		const pi = await wire({ enabled: true, reporter: (b) => batches.push(b) });
+		const batches: Array<{ sessionId: string; batch: EvapBatchInfo }> = [];
+		const pi = await wire({
+			enabled: true,
+			reporter: (sessionId, b) => batches.push({ sessionId, batch: b }),
+		});
 		await pi.emit({ type: "session_start", reason: "new" }, makeFakeCtx());
 		const wire0 = makeWire();
 		// usage 3900 / min(256000, 4000) = 97.5% ≥ 85% → Tier 2
@@ -144,9 +147,10 @@ describe("开关矩阵", () => {
 		expect(firstText(result?.messages ?? [], 2)).toContain("输出已淘汰");
 		// 未蒸发消息保持对象身份（user 原对象）
 		expect(result?.messages?.[0]).toBe(wire0[0]);
-		// 批次上报（有动作才报）
+		// 批次上报（有动作才报；sessionId 来自 session_start 会话闭窗——trace 按会话落盘的 key）
 		expect(batches.length).toBe(1);
-		expect(batches[0]?.pruned).toBeGreaterThan(0);
+		expect(batches[0]?.batch.pruned).toBeGreaterThan(0);
+		expect(batches[0]?.sessionId).toBe("test-session");
 	});
 });
 
