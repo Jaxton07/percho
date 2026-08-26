@@ -37,13 +37,25 @@ describe("formatTokenCount", () => {
 });
 
 describe("rowsValid / rowsToModelInputs", () => {
-	it("至少要有一行带 id 的模型", () => {
+	it("全空行合法：模型列表留空 = 沿用内置模型列表（仅覆写 baseUrl）", () => {
 		expect(
 			rowsValid([{ id: "", contextWindow: "", maxTokens: "", reasoning: false, imageInput: false }]),
-		).toBe(false);
+		).toBe(true);
+		expect(
+			rowsValid([
+				{ id: "", contextWindow: "", maxTokens: "", reasoning: false, imageInput: false },
+				{ id: "", contextWindow: "", maxTokens: "", reasoning: false, imageInput: false },
+			]),
+		).toBe(true);
 		expect(
 			rowsValid([{ id: "gpt-5", contextWindow: "", maxTokens: "", reasoning: false, imageInput: false }]),
 		).toBe(true);
+	});
+
+	it("全空行转换为空数组（不落盘 models 键）", () => {
+		expect(
+			rowsToModelInputs([{ id: "", contextWindow: "", maxTokens: "", reasoning: false, imageInput: false }]),
+		).toEqual([]);
 	});
 
 	it("ctx/out 留空合法，非法值不合法", () => {

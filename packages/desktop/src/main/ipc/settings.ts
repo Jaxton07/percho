@@ -29,6 +29,11 @@ export function registerSettingsIpc(backend: PiBackend): void {
 	ipcMain.handle(IpcChannels.SettingsRemoveCustomProvider, (_e, providerId: string) =>
 		backend.settings.removeCustomProvider(providerId),
 	);
+	ipcMain.handle(
+		IpcChannels.SettingsSetProviderBaseUrl,
+		(_e, providerId: string, baseUrl: string, apiKey?: string) =>
+			backend.settings.setProviderBaseUrl(providerId, baseUrl, apiKey),
+	);
 	ipcMain.handle(IpcChannels.SettingsTestProvider, (_e, providerId: string, modelId?: string) =>
 		backend.settings.testProvider(providerId, modelId),
 	);

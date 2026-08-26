@@ -84,6 +84,7 @@ export const IpcChannels = {
 	SettingsAddCustomProvider: "settings:addCustomProvider",
 	SettingsUpdateCustomProvider: "settings:updateCustomProvider",
 	SettingsRemoveCustomProvider: "settings:removeCustomProvider",
+	SettingsSetProviderBaseUrl: "settings:setProviderBaseUrl",
 	SettingsTestProvider: "settings:testProvider",
 	/** 用户级模型偏好：隐藏模型 + 子代理模型覆盖 */
 	SettingsGetModelPrefs: "settings:getModelPrefs",
@@ -246,9 +247,11 @@ export interface PiApi {
 	saveApiKey(providerId: string, key: string): Promise<void>;
 	removeCredential(providerId: string): Promise<void>;
 	addCustomProvider(input: CustomProviderInput): Promise<void>;
-	/** 更新自定义 provider（ID 不可改；apiKey 留空保持不变，clearApiKey 删除已存 key） */
+	/** 更新自定义 provider（ID 不可改；apiKey 留空保持不变） */
 	updateCustomProvider(input: CustomProviderUpdateInput): Promise<void>;
 	removeCustomProvider(providerId: string): Promise<void>;
+	/** 内置 provider 的可选 baseUrl 覆写（pi 官方语义：不写 models，共享官方模型列表）；baseUrl 空串 = 清除覆写回官方 */
+	setProviderBaseUrl(providerId: string, baseUrl: string, apiKey?: string): Promise<void>;
 	testProvider(providerId: string, modelId?: string): Promise<ProviderTestResult>;
 	/** 读取用户级模型可见性与子代理模型偏好 */
 	getModelPrefs(): Promise<ModelPrefs>;

@@ -3,10 +3,9 @@ import { useState } from "react";
 import { useT } from "../../../i18n";
 import { useSettingsStore } from "../../../stores/settings";
 import { EditIcon, ExpandArrowIcon, LoginIcon, TestIcon, TrashIcon } from "../../icons";
-import { Button } from "../../ui/Button";
 import { Switch } from "../../ui/Switch";
 import { Tooltip } from "../../ui/Tooltip";
-import { CustomProviderEditForm } from "./CustomProviderForm";
+import { BuiltinProviderEditForm, CustomProviderEditForm } from "./CustomProviderForm";
 
 const EMPTY_MODEL_IDS: string[] = [];
 
@@ -49,7 +48,6 @@ export function IconAction({
 /** 单个 Provider：配置状态徽章 + 图标操作（测试 / 填 Key / 删除 / 移除凭证） */
 export function ProviderRow({ provider }: { provider: ProviderInfo }) {
 	const t = useT();
-	const saveKey = useSettingsStore((s) => s.saveKey);
 	const removeCredential = useSettingsStore((s) => s.removeCredential);
 	const removeCustom = useSettingsStore((s) => s.removeCustom);
 	const test = useSettingsStore((s) => s.test);
@@ -64,17 +62,12 @@ export function ProviderRow({ provider }: { provider: ProviderInfo }) {
 	const allVisible = hiddenCount === 0;
 	const allHidden = hiddenCount > 0 && hiddenCount === provider.models.length;
 	const mixed = !allVisible && !allHidden;
-	/** 自定义 provider 展开全字段编辑表单，内置 provider 只填/更新 Key */
+	/** 全字段编辑 vs 端点覆写：有落盘的自定义模型定义或全新 id 走全字段；
+	 * 纯 baseUrl 覆写（内置 id、无自定义模型）永远走端点覆写表单——防止保存后同一按钮换表单的跳变 */
+	const fullEdit =
+		provider.custom && (!provider.overridesBuiltin || (provider.customModels?.length ?? 0) > 0);
 	const [editing, setEditing] = useState(false);
 	const [modelsOpen, setModelsOpen] = useState(false);
-	const [key, setKey] = useState("");
-
-	const save = async () => {
-		if (!key.trim()) return;
-		await saveKey(provider.id, key);
-		setEditing(false);
-		setKey("");
-	};
 
 	return (
 		<li className="py-2.5">
@@ -82,13 +75,22 @@ export function ProviderRow({ provider }: { provider: ProviderInfo }) {
 				<div className="min-w-0 flex-1">
 					<div className="flex items-center gap-1.5">
 						<span className="truncate text-[13px] font-medium text-ink">{provider.name}</span>
-						{provider.custom && (
+						{provider.overridesBuiltin ? (
+							<span className="rounded bg-hover px-1.5 py-0.5 text-[10px] text-ink-dim">
+								{t("settings.providers.overrideBuiltin")}
+							</span>
+						) : provider.custom ? (
 							<span className="rounded bg-hover px-1.5 py-0.5 text-[10px] text-ink-dim">
 								{t("settings.providers.custom")}
 							</span>
-						)}
+						) : null}
 					</div>
 					<div className="mt-0.5 flex items-center gap-1 text-[11px] text-ink-faint">
+						{provider.overridesBuiltin && provider.baseUrl && (
+							<span className="mr-1 max-w-[220px] truncate text-[10px] text-ink-dim" title={provider.baseUrl}>
+								→ {provider.baseUrl}
+							</span>
+						)}
 						{provider.configured ? (
 							<button
 								type="button"
@@ -135,13 +137,7 @@ export function ProviderRow({ provider }: { provider: ProviderInfo }) {
 					</IconAction>
 				)}
 				<IconAction
-					label={
-						provider.custom
-							? t("settings.providers.editCustom")
-							: provider.configured
-								? t("settings.providers.updateKey")
-								: t("settings.providers.configKey")
-					}
+					label={fullEdit ? t("settings.providers.editCustom") : t("settings.providers.builtinEdit")}
 					onClick={() => setEditing((v) => !v)}
 				>
 					<EditIcon />
@@ -227,26 +223,15 @@ export function ProviderRow({ provider }: { provider: ProviderInfo }) {
 					</ul>
 				</div>
 			)}
-			{editing &&
-				(provider.custom ? (
-					<div className="mt-2">
+			{editing && (
+				<div className="mt-2">
+					{fullEdit ? (
 						<CustomProviderEditForm provider={provider} onDone={() => setEditing(false)} />
-					</div>
-				) : (
-					<div className="mt-2 flex items-center gap-2">
-						<input
-							type="password"
-							className="min-w-0 flex-1 rounded-lg border border-border px-2.5 py-1.5 text-[12px] outline-none focus:border-ink-faint"
-							placeholder={t("settings.providers.keyPlaceholder")}
-							value={key}
-							onChange={(e) => setKey(e.target.value)}
-							onKeyDown={(e) => e.key === "Enter" && void save()}
-						/>
-						<Button variant="primary" onClick={() => void save()} disabled={!key.trim()}>
-							{t("common.save")}
-						</Button>
-					</div>
-				))}
+					) : (
+						<BuiltinProviderEditForm provider={provider} onDone={() => setEditing(false)} />
+					)}
+				</div>
+			)}
 		</li>
 	);
 }

@@ -129,6 +129,8 @@ interface SettingsStore {
 	addCustom: (input: CustomProviderInput) => Promise<void>;
 	updateCustom: (input: CustomProviderUpdateInput) => Promise<void>;
 	removeCustom: (providerId: string) => Promise<void>;
+	/** 内置 provider 的可选 baseUrl 覆写（留空 = 清除覆写回官方） */
+	setProviderBaseUrl: (providerId: string, baseUrl: string, apiKey?: string) => Promise<void>;
 	test: (providerId: string) => Promise<void>;
 	setModelHidden: (provider: string, modelId: string, hidden: boolean) => Promise<void>;
 	setModelsHidden: (provider: string, modelIds: string[], hidden: boolean) => Promise<void>;
@@ -562,6 +564,16 @@ export const useSettingsStore = create<SettingsStore>((set, get) => {
 				await afterMutation();
 			} catch (error) {
 				set({ error: error instanceof Error ? error.message : String(error) });
+			}
+		},
+
+		setProviderBaseUrl: async (providerId, baseUrl, apiKey) => {
+			try {
+				await getPi().setProviderBaseUrl(providerId, baseUrl, apiKey);
+				await afterMutation();
+			} catch (error) {
+				set({ error: error instanceof Error ? error.message : String(error) });
+				throw error;
 			}
 		},
 
