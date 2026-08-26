@@ -299,7 +299,9 @@ describe("extension 全链路", () => {
 describe("buildWakeMessage", () => {
 	it("模板格式（HH:MM:SS）", () => {
 		const msg = buildWakeMessage("t1", new Date(2026, 0, 1, 9, 5));
-		expect(msg).toBe("[channel:t1] 有新消息（09:05:00），请读 .local/agent-work/channel/t1/MESSAGES.md 查收。");
+		expect(msg).toBe(
+			"[channel:t1] 有新消息（09:05:00），请读 .local/agent-work/channel/t1/MESSAGES.md 查收。",
+		);
 	});
 });
 
