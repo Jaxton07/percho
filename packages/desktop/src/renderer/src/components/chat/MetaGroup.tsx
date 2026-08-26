@@ -29,7 +29,7 @@ function ThinkingRow({ thinking }: { thinking: string }) {
 				</span>
 				<ExpandArrowIcon className="shrink-0 text-ink-faint opacity-0 transition-[opacity,transform,color] group-hover/row:opacity-100 group-hover/row:text-ink-2 group-open/dets:rotate-90" />
 			</summary>
-			<div className="py-1 pl-4 text-[13px] leading-relaxed whitespace-pre-wrap text-ink-dim select-text">
+			<div className="py-1 pl-4 text-[13px] leading-relaxed whitespace-pre-wrap break-words text-ink-dim select-text">
 				{thinking}
 			</div>
 		</details>
