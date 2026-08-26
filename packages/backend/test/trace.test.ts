@@ -108,6 +108,48 @@ describe("TraceRecorder", () => {
 		expect(reduceEvent(streaming, JSON.parse(line ?? "{}") as never)).toBe(streaming);
 	});
 
+	it("recordCustom 合成 trace_custom 行：可 parse 且 reducer no-op（replay 不崩）", async () => {
+		const dir = await tmpDir();
+		const { SessionTraces } = await import("../src/session/traces");
+		const traces = new SessionTraces();
+		await traces.start("s-custom", dir);
+		traces.record("s-custom", { type: "agent_start" } as never);
+		// 蒸发批次形态的观测行（P3 接入的真实载荷）
+		traces.recordCustom("s-custom", "evap_batch", {
+			tier: 2,
+			usagePct: 91.2,
+			snipped: 3,
+			pruned: 12,
+			savedEstTokens: 48210,
+			wireEstTokens: 121000,
+			cacheHits: 34,
+			mapSize: 49,
+		});
+		traces.record("s-custom", { type: "turn_start" } as never);
+		// 无 recorder 的会话：静默 no-op
+		traces.recordCustom("no-such-session", "evap_batch", { tier: 0 });
+		await traces.stop("s-custom");
+
+		const lines = await allLines(dir, "s-custom");
+		expect(lines).toHaveLength(3);
+		const custom = JSON.parse(lines[1] ?? "{}") as {
+			type: string;
+			kind: string;
+			data: Record<string, unknown>;
+			ts: number;
+		};
+		expect(custom.type).toBe("trace_custom");
+		expect(custom.kind).toBe("evap_batch");
+		expect(custom.data.pruned).toBe(12);
+		expect(custom.ts).toBeGreaterThan(0);
+
+		// reducer 消费：trace_custom 行 no-op（state 引用不变），replay-trace.mts 同路径安全
+		const { emptyTranscript, reduceEvent } = await import("@percho/shared");
+		const state = reduceEvent(emptyTranscript(), { type: "agent_start" } as never);
+		const nextState = reduceEvent(state, { type: "turn_start" } as never);
+		expect(reduceEvent(nextState, JSON.parse(lines[1] ?? "{}") as never)).toBe(nextState);
+	});
+
 	it("create 时已有超大文件先轮转（按注入限额判定）", async () => {
 		const dir = await tmpDir();
 		const sessionId = "s6";

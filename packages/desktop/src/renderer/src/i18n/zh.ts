@@ -214,9 +214,18 @@ export const zh = {
 		permissionGate: "内置权限门控",
 		permissionGateHint:
 			"开启后按规则拦截工具调用：高危命令（rm -rf、sudo、强推等）弹窗确认，其余放行。规则文件 ~/.pi/agent/permissions.json，修改即时生效。关闭可换用自己安装的权限扩展。",
-		acpCompression: "智能上下文压缩（ACP）",
-		acpCompressionHint:
-			"长会话中让模型自主摘要压缩已消耗的旧对话，任务不中断、压缩内容可随时 decompress 还原。约 75% 上下文占用时开始引导压缩，默认开启。开关存于 ~/.pi/agent/settings.json，对新建会话完全生效。",
+		contextManager: "上下文管理",
+		contextManagerMode: {
+			acp: "智能压缩（ACP）",
+			evaporation: "蒸发（实验）",
+			off: "关闭",
+		},
+		contextManagerHint: {
+			acp: "长会话中让模型自主摘要压缩已消耗的旧对话，任务不中断、压缩内容可随时 decompress 还原。约 75% 上下文占用时开始引导压缩，默认开启。切换后无需重开会话。",
+			evaporation:
+				"按水位线把到龄的工具输出蒸发为带恢复指令的占位符（如「输出已淘汰，可用相同参数重读」）：零 LLM 调用、对话原文保留、会话文件不动。窗口预算 256K，60%/85% 分级触发。实验特性，切换后无需重开会话。",
+			off: "关闭全部上下文管理：不做主动压缩/蒸发，依赖 SDK 在接近窗口上限时的原生压缩兜底。长会话可能中断等待压缩。",
+		},
 		channelWatch: "跨会话频道协作（channel-watch）",
 		channelWatchHint:
 			"会话订阅频道后自动监听 .local/agent-work/channel/<主题>/ 的文件更新，另一会话写入时唤醒本会话查收（按 HANDOFF.md 沟通协议）。订阅经 appendEntry 持久化，重开会话自动恢复；内置防环保护。默认开启，对已信任项目完全生效。",
