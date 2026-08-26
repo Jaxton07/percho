@@ -5,6 +5,7 @@ import { createLogger } from "../../log";
 import { readChannelWatchEnabled } from "./config";
 import { contentHash, LoopGuard } from "./guard";
 import { channelRoot, ensureAgentWorkInit, validateTopic } from "./init";
+import { appendPost, MESSAGES_FILE } from "./post";
 import { buildSubsPayload, restoreSubscriptions, SUBSCRIPTION_CUSTOM_TYPE } from "./subscriptions";
 import { makeChannelTools } from "./tools";
 import { type ChannelWatchEvent, ChannelWatcher } from "./watcher";
@@ -12,26 +13,25 @@ import { type ChannelWatchEvent, ChannelWatcher } from "./watcher";
 const log = createLogger("channel-watch");
 
 /**
- * channel-watch 内置扩展（spec channel-automation.md）：
- * 跨会话文件协作——订阅频道 → 另一会话更新频道文件 → fs.watch 感知 →
- * sendUserMessage 唤醒本会话按协议查收。
+ * channel-watch 内置扩展（spec channel-automation.md + channel-post.md）：
+ * 跨会话文件协作——订阅频道 → 另一会话 channel_post 写 MESSAGES.md → fs.watch 感知 →
+ * sendUserMessage 唤醒本会话按协议查收（仅 MESSAGES.md 触发唤醒，其余频道文件静默）。
  *
  * 接线一览（钩子全 try/catch 绝不 throw）：
  * - session_start：开关 → trusted 门 → 目录协议 init（首次 notify）→ 恢复订阅（appendEntry）
  *   → 非空订阅惰性起 watcher → 注册三工具（幂等）
  * - input：真人/rpc 消息介入 → 清乒乓计数（source!=="extension"）
  * - tool_call：write/edit 目标 → guard.markSelfWrite（自写抑制）
- * - watcher onEvent：订阅过滤 → 读文件 hash → guard.shouldDeliver（自写/hash/暂停）
+ * - watcher onEvent：订阅过滤 → 仅 MESSAGES.md → 读文件 hash → guard.shouldDeliver（自写/hash/暂停）
  *   → sendUserMessage({deliverAs:"followUp"})（流式中排队、空闲立即——SDK prompt 语义）
  *   → recordDelivered（hash 快照 + 乒乓计数，上限触发暂停 + notify）
  * - session_shutdown：watcher.stop + guard.reset（幂等）
  */
 
-/** 唤醒消息模板（spec D3，一行固定文案，不携带文件内容） */
-export function buildWakeMessage(topic: string, relPath: string, at: Date = new Date()): string {
-	const hh = String(at.getHours()).padStart(2, "0");
-	const mm = String(at.getMinutes()).padStart(2, "0");
-	return `[channel:${topic}] ${basename(relPath)} 有更新（${hh}:${mm}），请按 .local/agent-work/channel/${topic}/HANDOFF.md 的沟通协议查收。`;
+/** 唤醒消息模板（spec channel-post D3，一行固定文案，不携带消息内容） */
+export function buildWakeMessage(topic: string, at: Date = new Date()): string {
+	const p = (n: number): string => String(n).padStart(2, "0");
+	return `[channel:${topic}] 有新消息（${p(at.getHours())}:${p(at.getMinutes())}:${p(at.getSeconds())}），请读 .local/agent-work/channel/${topic}/MESSAGES.md 查收。`;
 }
 
 export interface ChannelWatchOptions {
@@ -92,6 +92,8 @@ export function makeChannelWatchExtension(options: ChannelWatchOptions): InlineE
 			const onWatchEvent = (event: ChannelWatchEvent): void => {
 				try {
 					if (!active || !subscriptions.has(event.topic)) return;
+					// 触发收窄（spec channel-post）：仅 MESSAGES.md 投递唤醒，其余频道文件静默
+					if (basename(event.relPath) !== MESSAGES_FILE) return;
 					const abs = join(channelRoot(options.cwd), event.relPath);
 					void (async () => {
 						let hash: string;
@@ -105,7 +107,7 @@ export function makeChannelWatchExtension(options: ChannelWatchOptions): InlineE
 							log.info("唤醒抑制", { topic: event.topic, relPath: event.relPath, reason: decision.reason });
 							return;
 						}
-						sendWake(buildWakeMessage(event.topic, event.relPath));
+						sendWake(buildWakeMessage(event.topic));
 						log.info("channel 唤醒已投递", { topic: event.topic, relPath: event.relPath });
 						const pausedNow = guard.recordDelivered(event.topic, event.relPath, hash);
 						if (pausedNow) {
@@ -160,6 +162,24 @@ export function makeChannelWatchExtension(options: ChannelWatchOptions): InlineE
 						persist();
 						void ensureWatcher();
 						return { ok: true, resumed };
+					},
+					async post(topic, message, closed) {
+						if (!trusted) {
+							return {
+								ok: false,
+								error: "项目未受信任（trusted），频道协作不可用；请在设置中信任本项目后重开会话",
+							};
+						}
+						try {
+							const sessionId = lastCtx?.sessionManager.getSessionId();
+							const file = await appendPost(options.cwd, { topic, message, closed, sessionId });
+							// appendFile 不经 write/edit tool_call 钩子，手动标记自写
+							// （否则「自订阅频道自 post」会自我唤醒）
+							guard.markSelfWrite(file);
+							return { ok: true };
+						} catch (err) {
+							return { ok: false, error: err instanceof Error ? err.message : String(err) };
+						}
 					},
 					unsubscribe(topic) {
 						if (!subscriptions.delete(topic)) return { ok: false, error: `未订阅频道 [${topic}]` };
