@@ -9,6 +9,7 @@ import { useUiPreferencesStore } from "../../stores/ui-preferences";
 import { CenterOrb } from "./CenterOrb";
 import { MessageItem } from "./MessageItem";
 import { MetaGroup } from "./MetaGroup";
+import { RetryNote } from "./RetryNote";
 import { SubagentRunCard } from "./SubagentRunCard";
 import { TurnDiffChip } from "./TurnDiffChip";
 import { useShownWorking } from "./use-shown-working";
@@ -189,6 +190,7 @@ export function MessageList() {
 				metaInGroup={row.metaInGroup}
 				showActions={row.showActions}
 				streaming={row.streaming}
+				sessionId={activeSessionId}
 			/>,
 		);
 	});
@@ -212,6 +214,7 @@ export function MessageList() {
 			>
 				<div ref={contentRef} className="mx-auto flex max-w-[760px] flex-col gap-6 px-6 pt-8 pb-16">
 					{items}
+					{transcript.retrying && <RetryNote info={transcript.retrying} />}
 				</div>
 			</div>
 			{!following && (

@@ -11,6 +11,7 @@ import { SessionRail } from "./components/session/SessionRail";
 import { SessionTabBar } from "./components/session/SessionTabBar";
 import { TrustDialog } from "./components/session/TrustDialog";
 import { SettingsDialog } from "./components/settings/SettingsDialog";
+import { Toaster } from "./components/Toaster";
 import { useI18nStore } from "./i18n";
 import { initUiPlugins } from "./plugins/loader";
 import { RegionHost } from "./plugins/RegionHost";
@@ -147,6 +148,7 @@ export default function App() {
 			<RegionHost region={UI_REGIONS.AppOverlay} />
 			<SettingsDialog />
 			<TrustDialog requests={trustRequests} onRespond={respondTrust} />
+			<Toaster />
 		</div>
 	);
 }

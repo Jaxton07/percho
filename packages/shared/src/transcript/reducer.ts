@@ -1,4 +1,5 @@
 import { stripAcpReferenceTags } from "../acp-reference-tags";
+import { buildLlmUiError, buildStreamGuardUiError, type UiError } from "../errors";
 import type { ImageInput, SessionEvent } from "../session";
 import { parseExpandedSkillInvocation } from "../skill-invocation";
 import { extractSubagentRuns } from "../subagent";
@@ -86,12 +87,38 @@ function finalizeStreaming(state: SessionTranscriptState): SessionTranscriptStat
 	};
 }
 
+/** 错误卡落地 + 清 pending（agent_end 最终失败 / agent_settled 竞底 / guard trip 共用） */
+function commitLlmErrorCard(state: SessionTranscriptState, error: UiError): SessionTranscriptState {
+	return {
+		...state,
+		pendingLlmError: null,
+		messages: [
+			...state.messages,
+			{ kind: "error" as const, id: newMessageId(), text: "", timestamp: error.timestamp, error },
+		],
+	};
+}
+
 /**
  * pi 事件 → UI 状态 reducer。
  * 事件经 IPC 原样转发（AgentSessionEvent），本函数纯函数化应用。
  */
 export function reduceEvent(state: SessionTranscriptState, event: SessionEvent): SessionTranscriptState {
 	switch (event.type) {
+		case "stream_guard_tripped": {
+			// 熔断显形：warning 卡（含 verdict detail）；同轮 pending 的 LLM 错误卡不再落（熔断卡是唯一解释）
+			// 先 finalize 再落卡——熔断发生在流式中途（message_update 触发），partial 正文必须先固化在卡前
+			const card = buildStreamGuardUiError(event.verdict);
+			const final = finalizeStreaming(state);
+			return {
+				...final,
+				pendingLlmError: null,
+				messages: [
+					...final.messages,
+					{ kind: "error" as const, id: newMessageId(), text: "", timestamp: card.timestamp, error: card },
+				],
+			};
+		}
 		case "subagent_mutex": {
 			// 同一扩展的通知只保留一条：每次 openSession 都会重发互斥事件，而 loadHistory 会保留系统通知
 			if (
@@ -447,17 +474,47 @@ export function reduceEvent(state: SessionTranscriptState, event: SessionEvent):
 				},
 			};
 		}
-		case "turn_end":
-			return finalizeStreaming({ ...state, phase: "idle" });
-		case "agent_end":
-			return finalizeStreaming({
+		case "auto_retry_start":
+			// 自动重试瞬时状态行（不落卡；成功恢复不留痕，最终失败由 turn_end/agent_end 落卡）
+			return {
+				...state,
+				retrying: { attempt: event.attempt, maxAttempts: event.maxAttempts, delayMs: event.delayMs },
+			};
+		case "auto_retry_end":
+			return { ...state, retrying: null };
+		case "turn_end": {
+			const final = finalizeStreaming({ ...state, phase: "idle" });
+			// LLM 错误轮：不当场落卡，挂 pending 等 agent_end 的 willRetry 判定（决策 D1：
+			// SDK 每个 retry 轮都发 turn_end(error)，只有最终失败才落卡）
+			const message = event.message as { role?: unknown; stopReason?: unknown; errorMessage?: unknown };
+			if (
+				message?.role === "assistant" &&
+				message.stopReason === "error" &&
+				typeof message.errorMessage === "string" &&
+				message.errorMessage.length > 0
+			) {
+				return { ...final, pendingLlmError: buildLlmUiError(message.errorMessage) };
+			}
+			return final;
+		}
+		case "agent_end": {
+			const final = finalizeStreaming({
 				...state,
 				phase: event.willRetry ? "streaming" : "idle",
 				// willRetry 还会继续 → 保持工作中；否则 run 结束（含中止）
 				agentActive: event.willRetry ? state.agentActive : false,
 			});
-		case "agent_settled":
-			return finalizeStreaming({ ...state, phase: "idle", agentActive: false });
+			// 决策 D1：willRetry=true → 继续重试，丢弃本轮的 pending 错误卡；
+			// willRetry=false → 最终失败，落卡（位置 = 该轮 assistant 消息之后）
+			if (final.pendingLlmError && !event.willRetry) return commitLlmErrorCard(final, final.pendingLlmError);
+			return final.pendingLlmError ? { ...final, pendingLlmError: null } : final;
+		}
+		case "agent_settled": {
+			// 竞赛路径竞底：agent_end 缺失时（异常流）pending 仍要落卡，不留隐患。
+			// 正常路径 agent_end 已处理（willRetry=false 落卡 / true 丢弃），此处 pending 恒为 null，零成本检查
+			const final = finalizeStreaming({ ...state, phase: "idle", agentActive: false, retrying: null });
+			return final.pendingLlmError ? commitLlmErrorCard(final, final.pendingLlmError) : final;
+		}
 		case "queue_update":
 			// SDK 整组下发（steering 桌面端不用）；投递/清空都由 SDK 侧触发后推新数组
 			return { ...state, followUpQueue: [...event.followUp] };

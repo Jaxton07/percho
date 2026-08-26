@@ -644,8 +644,20 @@ body {
 	border-radius: 12px;
 	padding: 9px 13px;
 	line-height: 1.5;
+}
+.m-err-title {
+	font-weight: 550;
+	font-size: 12.5px;
+}
+.m-err-detail {
+	margin-top: 6px;
+	font-family: ui-monospace, "SF Mono", SFMono-Regular, Menlo, monospace;
+	font-size: 11px;
+	color: var(--ink-faint);
 	white-space: pre-wrap;
 	word-break: break-word;
+	max-height: 96px;
+	overflow: auto;
 }
 
 /* ---- 图片占位 ---- */

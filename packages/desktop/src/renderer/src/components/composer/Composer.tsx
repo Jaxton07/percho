@@ -12,6 +12,7 @@ import { ContextRing } from "./ContextRing";
 import { ImageTray } from "./ImageTray";
 import { ModelPicker } from "./ModelPicker";
 import { QueueBar } from "./QueueBar";
+import { SendErrorBar } from "./SendErrorBar";
 import { SlashMenu } from "./SlashMenu";
 import { ThinkingPicker } from "./ThinkingPicker";
 import { useAtCompletion } from "./use-at-completion";
@@ -218,7 +219,7 @@ export function Composer({ centered = false }: { centered?: boolean }) {
 	return (
 		<div ref={boxRef} className={centered ? "w-full max-w-[760px]" : "shrink-0 px-6 pb-3"}>
 			<div className="mx-auto max-w-[760px]">
-				{error && <p className="mb-1.5 text-xs text-red-500">{error}</p>}
+				{error && <SendErrorBar error={error} onRetry={() => void handleSend()} />}
 				{feedback && !error && (
 					<p className={`mb-1.5 text-xs ${feedback.tone === "warn" ? "text-amber-500" : "text-ink-dim"}`}>
 						{feedback.message}

@@ -21,6 +21,9 @@
 	--color-on-accent: var(--color-on-accent);
 	--color-update: var(--color-update);
 	--color-on-update: var(--color-on-update);
+	--color-err: var(--color-err);
+	--color-warn: var(--color-warn);
+	--color-info: var(--color-info);
 	/* 阴影 token（shadow-soft/shadow-pop/shadow-dialog 工具类）：浅色深色系投影，深色白色发光 */
 	--shadow-soft: var(--shadow-soft);
 	--shadow-pop: var(--shadow-pop);
@@ -46,6 +49,10 @@
 	/* 「重启」胶囊：很浅的蓝底 + 比背景深一档的中蓝字 */
 	--color-update: #e0f2fe;
 	--color-on-update: #0284c7;
+	/* 报错 severity token：仅供 graphics（glyph/图标）着色用（error-system spec：只限一枚 glyph）+ 文案色 */
+	--color-err: #d6352c;
+	--color-warn: #c2740a;
+	--color-info: #a1a1aa;
 	/* 自定义背景图遮罩（rgb 分量；不透明度由 .app-bg-scrim 的 inline opacity 控制） */
 	--color-scrim: 250 250 250;
 	--markdown-code-bg: #f4f4f5;
@@ -83,6 +90,9 @@
 	--color-on-accent: #ffffff;
 	--color-update: #0c4a6e;
 	--color-on-update: #7dd3fc;
+	--color-err: #f87171;
+	--color-warn: #f0b84a;
+	--color-info: #6e6e77;
 	--color-scrim: 23 23 26;
 	--markdown-code-bg: #2b2b31;
 	--markdown-code-text: #d4d4db;
@@ -1259,5 +1269,317 @@ code {
 	.turn-diff-chev,
 	.diff-file-chev {
 		transition: none;
+	}
+}
+
+/* ============================================================
+   error-system：统一报错（会话内错误条 / Composer 内联条 / 重试瞬态）
+   设计稿：.local/design/ux/error-system/index.html（v2 定稿）
+   —— 无边框悬浮卡片（rounded-xl + bg-surface + shadow-soft，QueueBar/TodoPanel 同款）；
+   severity 只由一枚 14px 着色 glyph 表达；操作是幽灵文字按钮
+   ============================================================ */
+
+/* ---- 会话内错误条（<details> 折叠卡；抽屉动画复用 .drawer-details） ---- */
+.error-note {
+	background: var(--color-surface);
+	border-radius: 12px;
+	box-shadow: var(--shadow-soft);
+	overflow: hidden;
+}
+.error-note summary {
+	display: flex;
+	align-items: center;
+	gap: 8px;
+	padding: 9px 12px;
+	border-radius: 12px;
+	cursor: pointer;
+	user-select: none;
+	list-style: none;
+	transition: background 0.15s ease;
+}
+.error-note summary::-webkit-details-marker {
+	display: none;
+}
+.error-note summary:hover {
+	background: var(--color-hover);
+}
+.error-note[open] summary:hover {
+	background: transparent;
+}
+.error-note-sev {
+	flex: none;
+	display: flex;
+	align-self: center;
+}
+.error-note-sev svg {
+	width: 14px;
+	height: 14px;
+	display: block;
+}
+.error-note-title {
+	font-size: 13px;
+	font-weight: 500;
+	color: var(--color-ink-2);
+	letter-spacing: -0.01em;
+}
+.error-note-meta {
+	font-size: 11px;
+	color: var(--color-ink-faint);
+	font-variant-numeric: tabular-nums;
+	white-space: nowrap;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	min-width: 0;
+}
+.error-note-chev {
+	margin-left: auto;
+	color: var(--color-ink-faint);
+	flex: none;
+	display: flex;
+	align-self: center;
+	transition: transform 0.18s ease;
+	opacity: 0.7;
+}
+.error-note[open] .error-note-chev {
+	transform: rotate(90deg);
+}
+.error-note-chev svg {
+	width: 13px;
+	height: 13px;
+	display: block;
+}
+.error-note-body {
+	padding: 2px 12px 10px 34px;
+	display: flex;
+	flex-direction: column;
+	gap: 9px;
+}
+.error-note-detail {
+	font-family: ui-monospace, "SF Mono", SFMono-Regular, Menlo, Consolas, monospace;
+	font-size: 11.5px;
+	line-height: 1.7;
+	color: var(--color-ink-dim);
+	background: var(--color-hover);
+	border-radius: 8px;
+	padding: 8px 10px;
+	max-height: 112px;
+	overflow: auto;
+	white-space: pre-wrap;
+	word-break: break-word;
+	user-select: text;
+	cursor: text;
+}
+.error-note-hint {
+	font-size: 12px;
+	color: var(--color-ink-dim);
+	line-height: 1.6;
+}
+.error-note-actions {
+	display: flex;
+	align-items: center;
+	gap: 2px;
+	margin-left: -6px;
+}
+.error-note-act {
+	font-family: inherit;
+	font-size: 12px;
+	font-weight: 450;
+	color: var(--color-ink-faint);
+	background: none;
+	border: none;
+	cursor: pointer;
+	border-radius: 7px;
+	padding: 4px 8px;
+	display: inline-flex;
+	align-items: center;
+	gap: 5px;
+	transition:
+		color 0.14s ease,
+		background 0.14s ease;
+}
+.error-note-act svg {
+	width: 12px;
+	height: 12px;
+}
+.error-note-act:hover {
+	color: var(--color-ink-2);
+	background: var(--color-hover);
+}
+.error-note-act.strong {
+	color: var(--color-ink);
+	font-weight: 500;
+}
+.error-note-act.strong:hover {
+	background: var(--color-hover);
+}
+.error-note-copied {
+	font-size: 11px;
+	color: var(--color-ink-faint);
+	opacity: 0;
+	transition: opacity 0.2s;
+	margin-left: 4px;
+}
+.error-note-copied.on {
+	opacity: 1;
+}
+
+/* ---- Composer 内联错误条（QueueBar 同款悬浮卡） ---- */
+.send-error {
+	display: flex;
+	align-items: center;
+	gap: 8px;
+	background: var(--color-surface);
+	border-radius: 12px;
+	box-shadow: var(--shadow-soft);
+	padding: 8px 12px;
+}
+.send-error .se-glyph {
+	flex: none;
+	display: flex;
+}
+.send-error .se-glyph svg {
+	width: 14px;
+	height: 14px;
+	color: var(--color-err);
+}
+.send-error .se-title {
+	font-size: 13px;
+	font-weight: 500;
+	color: var(--color-ink-2);
+}
+.send-error .se-sub {
+	font-size: 11px;
+	color: var(--color-ink-faint);
+	margin-top: 1px;
+}
+.send-error .se-retry {
+	margin-left: auto;
+	flex: none;
+	font-family: inherit;
+	font-size: 12px;
+	font-weight: 500;
+	color: var(--color-ink);
+	background: none;
+	border: none;
+	cursor: pointer;
+	border-radius: 7px;
+	padding: 4px 9px;
+	display: inline-flex;
+	align-items: center;
+	gap: 5px;
+	transition: background 0.14s ease;
+}
+.send-error .se-retry:hover {
+	background: var(--color-hover);
+}
+.send-error .se-retry svg {
+	width: 12px;
+	height: 12px;
+}
+
+/* ---- 自动重试瞬时状态行（无底色，文字 + 琥珀旋转 glyph；跟随 working 行下方） ---- */
+.retry-note {
+	display: flex;
+	align-items: center;
+	gap: 7px;
+	font-size: 12px;
+	color: var(--color-ink-faint);
+}
+.retry-note svg {
+	width: 12px;
+	height: 12px;
+	color: var(--color-warn);
+	flex: none;
+	animation: retry-spin 1.6s linear infinite;
+}
+@keyframes retry-spin {
+	to {
+		transform: rotate(360deg);
+	}
+}
+.retry-note .r-detail {
+	color: var(--color-ink-faint);
+	opacity: 0.75;
+}
+
+@media (prefers-reduced-motion: reduce) {
+	.error-note summary,
+	.error-note-chev,
+	.error-note-act,
+	.retry-note svg {
+		transition: none;
+		animation: none;
+	}
+}
+
+/* ============================================================
+   全局 Toast 栈（error-system 画板 ⑥⑦：右上角浮动，surface + shadow-pop）
+   ============================================================ */
+.toast {
+	pointer-events: auto;
+	background: var(--color-surface);
+	border-radius: 13px;
+	box-shadow: var(--shadow-pop);
+	padding: 10px 12px;
+	display: flex;
+	gap: 9px;
+	align-items: flex-start;
+	animation: toast-in 0.35s cubic-bezier(0.2, 0.9, 0.3, 1.05);
+}
+@keyframes toast-in {
+	from {
+		opacity: 0;
+		transform: translateX(20px);
+	}
+	to {
+		opacity: 1;
+		transform: none;
+	}
+}
+.toast .t-glyph {
+	flex: none;
+	display: flex;
+	margin-top: 1.5px;
+}
+.toast .t-glyph svg {
+	width: 14px;
+	height: 14px;
+	display: block;
+}
+.toast .t-title {
+	font-size: 12.5px;
+	font-weight: 500;
+	color: var(--color-ink-2);
+	line-height: 1.45;
+}
+.toast .t-sub {
+	font-size: 11px;
+	color: var(--color-ink-faint);
+	margin-top: 2px;
+	line-height: 1.5;
+	max-width: 240px;
+}
+.toast .t-x {
+	margin-left: auto;
+	color: var(--color-ink-faint);
+	flex: none;
+	cursor: pointer;
+	border: none;
+	background: none;
+	padding: 2px;
+	opacity: 0.45;
+	transition: opacity 0.14s ease;
+}
+.toast:hover .t-x {
+	opacity: 1;
+}
+.toast .t-x svg {
+	width: 11px;
+	height: 11px;
+	display: block;
+}
+@media (prefers-reduced-motion: reduce) {
+	.toast {
+		animation: none;
 	}
 }

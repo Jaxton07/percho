@@ -44,6 +44,10 @@ export interface RawMessage {
 	customType?: string;
 	/** custom 消息的 UI 展示开关（acp 摘要消息 display:false，不进消息流） */
 	display?: boolean;
+	/** LLM 停因（assistant 消息；"error" 时历史回放产错误卡；旧会话文件无此字段 → undefined） */
+	stopReason?: string;
+	/** LLM 错误详情（stopReason==="error" 时存在） */
+	errorMessage?: string;
 }
 
 /** show_image toolResult.details → { images, paths }（兼容旧单图 { path, image } 形状；不符返回 null） */
@@ -259,8 +263,14 @@ export function toSessionMessages(rawMessages: readonly unknown[]): SessionMessa
 				images: [],
 				timestamp: raw.timestamp ?? Date.now(),
 				...(text !== sourceText ? { sourceText } : {}),
+				...(raw.stopReason ? { stopReason: raw.stopReason } : {}),
+				...(typeof raw.errorMessage === "string" && raw.errorMessage.length > 0
+					? { errorMessage: raw.errorMessage }
+					: {}),
 			};
-			if (message.text || message.thinking || message.tools.length > 0) {
+			// 错误轮次（LLM 请求失败）text/thinking/tools 全空，但错误信息必须在回放中可见——
+			// 否则历史回放产不出错误卡（live 产卡与回放必须一致，spec §2 原则 1）
+			if (message.text || message.thinking || message.tools.length > 0 || message.stopReason === "error") {
 				out.push(message);
 			}
 			continue;

@@ -8,6 +8,7 @@ import type { UIMessage } from "../../stores/transcript";
 import { selectTranscript, useTranscriptStore } from "../../stores/transcript";
 import { ForkIcon, UndoIcon } from "../icons";
 import { AssistantMessage } from "./AssistantMessage";
+import { ErrorNote } from "./ErrorNote";
 import { ImagePreviewOverlay, imageSrc } from "./ImagePreview";
 import { SubagentRunCard } from "./SubagentRunCard";
 
@@ -160,6 +161,7 @@ export const MessageItem = memo(function MessageItem({
 	streaming,
 	metaInGroup,
 	showActions = true,
+	sessionId = null,
 }: {
 	message: UIMessage;
 	streaming?: boolean;
@@ -167,6 +169,8 @@ export const MessageItem = memo(function MessageItem({
 	metaInGroup?: boolean;
 	/** 是否渲染操作行：仅轮次最后一段正文为 true（中间自言自语不挂复制/fork，减少噪音） */
 	showActions?: boolean;
+	/** 当前会话（错误卡重试/压缩动作需要） */
+	sessionId?: string | null;
 }) {
 	const t = useT();
 	const [previewImage, setPreviewImage] = useState<ImageInput | null>(null);
@@ -269,11 +273,8 @@ export const MessageItem = memo(function MessageItem({
 	}
 
 	if (message.kind === "error") {
-		return (
-			<div className="rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-[13px] text-red-600 select-text">
-				{message.text}
-			</div>
-		);
+		// 统一报错卡（v2 无边框悬浮卡片；旧大红底纯文本分支已被替换）
+		return <ErrorNote sessionId={sessionId} cardId={message.id} error={message.error} />;
 	}
 
 	if (message.kind === "system") {

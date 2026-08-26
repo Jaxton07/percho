@@ -297,10 +297,21 @@ export class PiBackend {
 			if (verdict !== "suppress") {
 				log.error("stream guard tripped, aborting session", sessionId, { verdict });
 				void this.abort(sessionId).catch(() => {});
+				// 熔断显形：合成 stream_guard_tripped UI 事件（subagent_mutex 同款：union + IPC 转发 +
+				// 不进 trace），reducer 产 warning 条——否则「回复戛然而止」零 UI 信号。
+				// 合成事件直接调 handler 循环，不喂回 streamGuard.inspect（防线不能自触发）。
+				for (const handler of this.eventHandlers) {
+					try {
+						handler(sessionId, { type: "stream_guard_tripped", verdict });
+					} catch {
+						// 事件处理器异常不影响主流程
+					}
+				}
 			}
 			return;
 		}
-		if (event.type !== "subagent_mutex") this.traces.record(sessionId, event);
+		if (event.type !== "subagent_mutex" && event.type !== "stream_guard_tripped")
+			this.traces.record(sessionId, event);
 		for (const handler of this.eventHandlers) {
 			try {
 				handler(sessionId, event);

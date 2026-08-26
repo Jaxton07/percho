@@ -441,6 +441,49 @@ export const zh = {
 		zh: "中文",
 		en: "English",
 	},
+	error: {
+		meta: {
+			llm: "模型请求",
+			session: "会话",
+			tool: "工具",
+			extension: "扩展",
+			app: "应用",
+			network: "网络",
+		},
+		action: {
+			retry: "重试",
+			compact: "压缩上下文",
+			openSettings: "打开设置",
+			copyDetail: "复制详情",
+		},
+		copied: "已复制",
+		title: {
+			llmAuth: "模型请求失败：凭证无效",
+			llmRateLimit: "模型请求失败：请求过于频繁",
+			llmOverflow: "模型请求失败：上下文超限",
+			llmNetwork: "模型请求失败：网络错误",
+			llmGeneric: "模型请求失败",
+			streamGuard: "回复已被安全机制中止",
+			sendFailed: "发送失败",
+			sendReadOnly: "会话是只读的，无法发送",
+		},
+		hint: {
+			checkApiKey: "API 凭证无效或已过期。检查「设置 → 模型服务」中的 API Key。",
+			rateLimit: "请求过于频繁或服务端限流，稍候重试。",
+			compact: "会话过长。可执行 /compact 压缩上下文，或从此处分叉开启新会话。",
+			network: "网络连接异常，请检查网络后重试。",
+			streamGuard: "模型输出异常（病态流），已被安全机制中止。",
+		},
+		retrying: "自动重试中 · 第 {attempt}/{maxAttempts} 次 · 等待 {delay}s",
+		retryDone: "重试成功",
+		retryFailed: "重试失败",
+	},
+	toast: {
+		tabsSaveFailed: "标签页保存失败",
+		uiStateSaveFailed: "界面设置保存失败",
+		trustFailed: "项目信任检查失败",
+		closeFailed: "关闭会话失败",
+	},
 };
 
 export type Messages = typeof zh;
