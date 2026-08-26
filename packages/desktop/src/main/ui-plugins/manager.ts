@@ -120,10 +120,15 @@ async function seedDocs(): Promise<void> {
 			log.warn("~/.percho/ui-plugins 已存在且非 symlink，跳过");
 		} else {
 			await mkdir(join(homedir(), ".percho"), { recursive: true });
-			await symlink(root, link);
+			// Windows 普通用户建符号链接需管理员/开发者模式（EPERM 必现，#28 附报）；
+			// junction 目录联接不需提权，行为等价（目录型链接、跟随重定向）；
+			// 其他平台保持真 symlink（lstat/realpath 判定与上面一致，junction 在 POSIX 不可用）
+			await symlink(root, link, process.platform === "win32" ? "junction" : undefined);
 		}
 	} catch (err) {
-		log.error("symlink ~/.percho/ui-plugins failed", err);
+		// 链接失败只告警：插件功能不受影响（真实目录在 userData/ui-plugins），
+		// 只是 agent 按规范路径 ~/.percho/ui-plugins 读不到，提示真实路径便于排查
+		log.error(`symlink ~/.percho/ui-plugins failed（真实插件目录：${root}）`, err);
 	}
 }
 
