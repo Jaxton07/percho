@@ -14,7 +14,7 @@ export type { LanAppState } from "./store-pure";
 const TOKEN_KEY = "percho-lan-token";
 
 interface LanStore extends LanAppState {
-	/** 401 → 清 token 回输入页 */
+	/** 401 → 清 token 回输入页，并置 authFailed（TokenGate 展示「令牌无效」）。 */
 	logout: () => void;
 	setToken: (token: string) => void;
 	select: (sessionId: string | null) => void;
@@ -31,12 +31,12 @@ export const useLanStore = create<LanStore>((set) => ({
 	token: new URLSearchParams(location.search).get("t") ?? localStorage.getItem(TOKEN_KEY) ?? "",
 	logout: () => {
 		localStorage.removeItem(TOKEN_KEY);
-		set({ ...initialLanState, token: "", status: "token" });
+		set({ ...initialLanState, token: "", status: "token", authFailed: true });
 		connect();
 	},
 	setToken: (token) => {
 		localStorage.setItem(TOKEN_KEY, token);
-		set({ token });
+		set({ token, authFailed: false });
 		connect();
 	},
 	select: (selected) => set({ selected }),

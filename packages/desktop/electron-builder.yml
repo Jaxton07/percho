@@ -34,6 +34,9 @@ extraResources:
   # UI 插件 agent 规范三件套（SPEC/percho-ui.d.ts/skill/examples）：main 经 process.resourcesPath 读取
   - from: "resources/ui-plugins"
     to: "ui-plugins"
+  # 内置协作 skill（channel-pickup/design-handoff）：additionalSkillPaths 扫描，与 UI 插件目录分列
+  - from: "resources/skills"
+    to: "skills"
 mac:
   category: public.app-category.developer-tools
   # adhoc 临时签名整个 bundle：Gatekeeper 从「已损坏（无绕过）」→「无法验证开发者（可右键打开）」

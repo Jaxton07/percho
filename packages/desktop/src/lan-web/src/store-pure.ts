@@ -20,6 +20,8 @@ export type ConnStatus = "token" | "connecting" | "connected" | "reconnecting";
 
 export interface LanAppState {
 	token: string;
+	/** 上一次尝试的 token 被 401 拒绝（logout 置 true，setToken 重试时清）。 */
+	authFailed: boolean;
 	status: ConnStatus;
 	remoteControl: boolean;
 	list: LanSessionBrief[];
@@ -42,6 +44,7 @@ export interface LanAppState {
 
 export const initialLanState: LanAppState = {
 	token: "",
+	authFailed: false,
 	status: "token",
 	remoteControl: false,
 	list: [],

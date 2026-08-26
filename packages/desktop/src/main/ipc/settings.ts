@@ -63,6 +63,10 @@ export function registerSettingsIpc(backend: PiBackend): void {
 	);
 	ipcMain.handle(IpcChannels.AcpGetConfig, () => backend.getAcpConfig());
 	ipcMain.handle(IpcChannels.AcpSetEnabled, (_e, enabled: boolean) => backend.setAcpEnabled(enabled));
+	ipcMain.handle(IpcChannels.ChannelWatchGetConfig, () => backend.getChannelWatchConfig());
+	ipcMain.handle(IpcChannels.ChannelWatchSetEnabled, (_e, enabled: boolean) =>
+		backend.setChannelWatchEnabled(enabled),
+	);
 	ipcMain.handle(IpcChannels.VisionGetConfig, () => backend.getVisionConfig());
 	ipcMain.handle(IpcChannels.VisionSaveConfig, (_e, input: VisionSaveInput) =>
 		backend.saveVisionConfig(input),

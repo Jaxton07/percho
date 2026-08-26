@@ -205,11 +205,11 @@ export const MessageItem = memo(function MessageItem({
 							>
 								{t("message.skillInvocation", { name: message.skill.name })}
 							</div>
-							{message.text && <div className="whitespace-pre-wrap">{message.text}</div>}
+							{message.text && <div className="whitespace-pre-wrap break-words">{message.text}</div>}
 						</div>
 					) : (
 						message.text && (
-							<div className="rounded-2xl rounded-br-md bg-border px-3.5 py-2 text-[14px] leading-relaxed whitespace-pre-wrap text-ink select-text">
+							<div className="rounded-2xl rounded-br-md bg-border px-3.5 py-2 text-[14px] leading-relaxed whitespace-pre-wrap break-words text-ink select-text">
 								{message.text}
 							</div>
 						)
@@ -366,7 +366,7 @@ function SystemMessage({ message }: { message: Extract<UIMessage, { kind: "syste
 				)}
 			</CompactionDivider>
 			{expanded && compact.summary && (
-				<p className="mx-auto max-w-[560px] px-3 pb-1 text-center text-xs leading-relaxed text-ink-dim select-text">
+				<p className="mx-auto max-w-[560px] px-3 pb-1 text-center text-xs leading-relaxed break-words text-ink-dim select-text">
 					{compact.summary}
 				</p>
 			)}

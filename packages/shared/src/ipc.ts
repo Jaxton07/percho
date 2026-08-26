@@ -3,6 +3,7 @@ import type { CatalogPackageType, CatalogSearchResult, ConfiguredPackageInfo } f
 import type {
 	AcpConfigInfo,
 	AppInfo,
+	ChannelWatchConfigInfo,
 	ContextUsageInfo,
 	CreateSessionOptions,
 	GitBranches,
@@ -112,6 +113,9 @@ export const IpcChannels = {
 	/** ACP 上下文压缩开关（设置 UI「通用」面板） */
 	AcpGetConfig: "acp:getConfig",
 	AcpSetEnabled: "acp:setEnabled",
+	/** channel-watch 跨会话频道唤醒开关（设置 UI「通用」面板） */
+	ChannelWatchGetConfig: "channelWatch:getConfig",
+	ChannelWatchSetEnabled: "channelWatch:setEnabled",
 	/** 项目信任应答（选项下标） */
 	TrustRespond: "trust:respond",
 	/** 项目信任前置决策（添加项目/切换 draft cwd 时调用，未决则弹窗） */
@@ -282,6 +286,10 @@ export interface PiApi {
 	getAcpConfig(): Promise<AcpConfigInfo>;
 	/** 设置 ACP 上下文压缩开关（写后即生效：压中的会话下一轮停压，工具注册随下次会话重载） */
 	setAcpEnabled(enabled: boolean): Promise<void>;
+	/** 读取 channel-watch 频道唤醒开关状态 */
+	getChannelWatchConfig(): Promise<ChannelWatchConfigInfo>;
+	/** 设置 channel-watch 开关（下一 session_start 生效：目录 init/watcher/工具注册全部跟随） */
+	setChannelWatchEnabled(enabled: boolean): Promise<void>;
 	/** 应答项目信任请求（optionIndex 为 TrustRequest.options 下标） */
 	respondTrust(requestId: string, answer: TrustAnswer): Promise<void>;
 	/** 项目信任前置决策（选目录/切 draft cwd 时调用；未决弹窗，结果落 trust.json） */

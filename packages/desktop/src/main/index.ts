@@ -78,10 +78,14 @@ app.whenReady().then(async () => {
 
 	backend = new PiBackend({
 		visionConfigPath: join(app.getPath("userData"), "vision.json"),
-		// 桌面端集成：UI 插件技能目录（随包分发）+ 系统提示词段落
+		// 桌面端集成：UI 插件技能目录 + 内置协作 skill 目录（均随包分发）+ 系统提示词段落
 		desktopIntegration: {
 			appendSystemPrompt: UI_PLUGIN_PROMPT,
-			additionalSkillPaths: [join(uiPluginsResourcesDir(), "skills")],
+			additionalSkillPaths: [
+				join(uiPluginsResourcesDir(), "skills"),
+				// 内置协作 skill（channel-pickup/design-handoff）：语义上与 UI 插件无关，独立目录分发
+				app.isPackaged ? join(process.resourcesPath, "skills") : join(__dirname, "../../resources/skills"),
+			],
 		},
 	});
 	await backend.init();

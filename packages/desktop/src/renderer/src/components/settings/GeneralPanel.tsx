@@ -12,6 +12,8 @@ export function GeneralPanel() {
 	const setPermissionEnabled = useSettingsStore((s) => s.setPermissionEnabled);
 	const acpEnabled = useSettingsStore((s) => s.acpEnabled);
 	const setAcpEnabled = useSettingsStore((s) => s.setAcpEnabled);
+	const channelWatchEnabled = useSettingsStore((s) => s.channelWatchEnabled);
+	const setChannelWatchEnabled = useSettingsStore((s) => s.setChannelWatchEnabled);
 
 	return (
 		<div className="flex flex-col gap-6">
@@ -60,6 +62,17 @@ export function GeneralPanel() {
 				<p className="mt-0.5 text-[11px] leading-relaxed text-ink-faint">
 					{t("settings.acpCompressionHint")}
 				</p>
+			</div>
+			<div>
+				<div className="flex items-center justify-between gap-4">
+					<h3 className="text-[13px] font-medium text-ink">{t("settings.channelWatch")}</h3>
+					<Switch
+						checked={channelWatchEnabled === true}
+						disabled={channelWatchEnabled === null}
+						onCheckedChange={(enabled) => void setChannelWatchEnabled(enabled)}
+					/>
+				</div>
+				<p className="mt-0.5 text-[11px] leading-relaxed text-ink-faint">{t("settings.channelWatchHint")}</p>
 			</div>
 		</div>
 	);

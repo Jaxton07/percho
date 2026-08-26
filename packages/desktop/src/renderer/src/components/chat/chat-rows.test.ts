@@ -179,3 +179,39 @@ describe("isAgentWorking", () => {
 		).toBe(false);
 	});
 });
+
+describe("committed MetaItem 稳定性（WeakMap 缓存）", () => {
+	it("同一消息对象重复构建 → metaGroup items 元素引用稳定（MetaGroup memo 依赖）", () => {
+		const t = {
+			...emptyTranscript(),
+			messages: [
+				assistant("正文一", { tools: [tool("read"), tool("bash")] }),
+				assistant("正文二", { tools: [tool("edit")] }),
+			],
+		};
+		const first = buildChatRows(t, "s1");
+		// 模拟流式期间反复重建：streaming 变化不影响历史消息的 items 引用
+		const second = buildChatRows({ ...t, streaming: streaming({ text: "x" }) }, "s1");
+		const groupsA = first.filter((r) => r.kind === "metaGroup");
+		const groupsB = second.filter((r) => r.kind === "metaGroup");
+		expect(groupsA.length).toBeGreaterThan(0);
+		for (const [i, ga] of groupsA.entries()) {
+			const gb = groupsB[i];
+			if (!gb) continue;
+			expect(ga.items.length).toBe(gb.items.length);
+			for (const [j, item] of ga.items.entries()) {
+				expect(gb.items[j]).toBe(item); // 身份相等，不是深比较
+			}
+		}
+	});
+
+	it("消息对象被替换（loadHistory 重建）→ 缓存自然失效，取新值", () => {
+		const msg1 = assistant("旧正文", { tools: [tool("read")] });
+		const t1 = { ...emptyTranscript(), messages: [msg1] };
+		const r1 = buildChatRows(t1, "s1").find((r) => r.kind === "metaGroup");
+		const t2 = { ...emptyTranscript(), messages: [{ ...msg1, tools: [tool("edit")] }] };
+		const r2 = buildChatRows(t2, "s1").find((r) => r.kind === "metaGroup");
+		expect(r1?.items[0]?.tools[0]?.name).toBe("read");
+		expect(r2?.items[0]?.tools[0]?.name).toBe("edit");
+	});
+});

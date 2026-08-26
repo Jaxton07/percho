@@ -70,6 +70,8 @@ interface SettingsStore {
 	permissionEnabled: boolean | null;
 	/** ACP 上下文压缩开关（null = 未加载） */
 	acpEnabled: boolean | null;
+	/** channel-watch 跨会话频道唤醒开关（null = 未加载） */
+	channelWatchEnabled: boolean | null;
 	/** 视觉代理配置（null = 未加载） */
 	visionConfig: VisionConfigInfo | null;
 	/** 视觉模型连通性测试中 */
@@ -138,6 +140,7 @@ interface SettingsStore {
 	dismissLogin: () => void;
 	setPermissionEnabled: (enabled: boolean) => Promise<void>;
 	setAcpEnabled: (enabled: boolean) => Promise<void>;
+	setChannelWatchEnabled: (enabled: boolean) => Promise<void>;
 	/** 保存视觉代理配置（返回是否成功；key 留空保持不变） */
 	saveVision: (input: VisionSaveInput) => Promise<boolean>;
 	/** 测试视觉模型连通性（1×1 png 实调） */
@@ -182,6 +185,7 @@ export const useSettingsStore = create<SettingsStore>((set, get) => {
 		refreshing: false,
 		permissionEnabled: null,
 		acpEnabled: null,
+		channelWatchEnabled: null,
 		visionConfig: null,
 		visionTesting: false,
 		visionTestResult: null,
@@ -344,6 +348,11 @@ export const useSettingsStore = create<SettingsStore>((set, get) => {
 				.getAcpConfig()
 				.then((acp) => set({ acpEnabled: acp.enabled }))
 				.catch(() => {});
+			// channel-watch 开关同样本地文件读，独立加载
+			void getPi()
+				.getChannelWatchConfig()
+				.then((cw) => set({ channelWatchEnabled: cw.enabled }))
+				.catch(() => {});
 			// 视觉代理配置同样本地文件读，独立加载
 			void getPi()
 				.getVisionConfig()
@@ -414,6 +423,19 @@ export const useSettingsStore = create<SettingsStore>((set, get) => {
 			} catch (error) {
 				set({
 					acpEnabled: previous,
+					error: error instanceof Error ? error.message : String(error),
+				});
+			}
+		},
+
+		setChannelWatchEnabled: async (enabled) => {
+			const previous = get().channelWatchEnabled;
+			set({ channelWatchEnabled: enabled });
+			try {
+				await getPi().setChannelWatchEnabled(enabled);
+			} catch (error) {
+				set({
+					channelWatchEnabled: previous,
 					error: error instanceof Error ? error.message : String(error),
 				});
 			}

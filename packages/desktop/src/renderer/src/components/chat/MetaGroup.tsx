@@ -5,7 +5,7 @@ import {
 	type SummarySegment,
 	summarizeCategories,
 } from "@percho/shared";
-import { Fragment, useEffect, useLayoutEffect, useMemo, useRef } from "react";
+import { Fragment, memo, useEffect, useLayoutEffect, useMemo, useRef } from "react";
 import type { OrbState } from "thinking-orbs";
 import { ThinkingOrb } from "thinking-orbs";
 import { useT } from "../../i18n";
@@ -29,7 +29,7 @@ function ThinkingRow({ thinking }: { thinking: string }) {
 				</span>
 				<ExpandArrowIcon className="shrink-0 text-ink-faint opacity-0 transition-[opacity,transform,color] group-hover/row:opacity-100 group-hover/row:text-ink-2 group-open/dets:rotate-90" />
 			</summary>
-			<div className="py-1 pl-4 text-[13px] leading-relaxed whitespace-pre-wrap text-ink-dim select-text">
+			<div className="py-1 pl-4 text-[13px] leading-relaxed whitespace-pre-wrap break-words text-ink-dim select-text">
 				{thinking}
 			</div>
 		</details>
@@ -108,7 +108,29 @@ function dotClass(state: MetaDot["state"]): string {
  * endImmediately：组被正文边界切分（streaming.text 在输出）或 run 已终结 → working 信号消失时
  * 立即结束，不做滞后缓冲；否则（turn/工具间隙）滞后 HYSTERESIS_MS 防闪烁
  */
-export function MetaGroup({
+/**
+ * memo 比较器：items 元素逐一身份比较（历史 MetaItem 由 chat-rows 的 WeakMap 缓存保证引用稳定；
+ * 数组本身每次重建，不能比数组身份）。working/endImmediately/subagentCount 为原始值。
+ * 语言切换不受影响：useT/i18n 订阅在组件内部，父级 memo 拦不住也不需要拦。
+ */
+function metaGroupPropsEqual(
+	a: { items: MetaItem[]; working: boolean; endImmediately?: boolean; subagentCount?: number },
+	b: { items: MetaItem[]; working: boolean; endImmediately?: boolean; subagentCount?: number },
+): boolean {
+	if (
+		a.working !== b.working ||
+		a.endImmediately !== b.endImmediately ||
+		a.subagentCount !== b.subagentCount ||
+		a.items.length !== b.items.length
+	)
+		return false;
+	for (let i = 0; i < a.items.length; i++) {
+		if (a.items[i] !== b.items[i]) return false;
+	}
+	return true;
+}
+
+export const MetaGroup = memo(function MetaGroup({
 	items,
 	working,
 	endImmediately = false,
@@ -317,4 +339,4 @@ export function MetaGroup({
 			</details>
 		</div>
 	);
-}
+}, metaGroupPropsEqual);
