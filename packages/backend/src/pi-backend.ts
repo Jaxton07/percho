@@ -17,6 +17,7 @@ import type {
 	CatalogPackageType,
 	CatalogSearchResult,
 	ConfiguredPackageInfo,
+	ContextManagerMode,
 	ContextUsageInfo,
 	CreateSessionOptions,
 	ImageInput,
@@ -84,6 +85,11 @@ import {
 	readChannelWatchEnabled,
 	writeChannelWatchEnabled,
 } from "./tools/channel-watch";
+import {
+	makeEvapExtension,
+	readContextManagerMode,
+	writeContextManagerMode,
+} from "./tools/context-evaporation";
 import { makeShowImageTool } from "./tools/show-image";
 import { discoverAgents, isSubagentSessionPath, makeSubagentTool } from "./tools/subagent";
 import { applySubagentMutex } from "./tools/subagent/mutex";
@@ -232,11 +238,13 @@ export class PiBackend {
 		| ReturnType<typeof makeTodoReminderExtension>
 		| ReturnType<typeof makeAcpExtension>
 		| ReturnType<typeof makeChannelWatchExtension>
+		| ReturnType<typeof makeEvapExtension>
 	> {
 		const factories: Array<
 			| ReturnType<typeof makeTodoReminderExtension>
 			| ReturnType<typeof makeAcpExtension>
 			| ReturnType<typeof makeChannelWatchExtension>
+			| ReturnType<typeof makeEvapExtension>
 		> = [];
 		if (this.options.permissionGates !== false && this.options.permissionExtension !== false) {
 			// confirm 直接桥到 PermissionGate（携带 kind/suggestDir 元数据，驱动「允许此目录」）；
@@ -248,6 +256,9 @@ export class PiBackend {
 		}
 		// ACP 上下文压缩（开关默认开；工厂内部 session_start 时检查开关，关时零副作用）
 		factories.push(makeAcpExtension({ agentDir: getAgentDir() }));
+		// 上下文蒸发（与 ACP 互斥：mode=evaporation 时 ACP 物理关闭；钩子实时读派生
+		// mode，设置页切换后 ≤2s 生效，无需重开会话。arch §2.1：插在 ACP 槽位之后）
+		factories.push(makeEvapExtension({ agentDir: getAgentDir() }));
 		// channel-watch 跨会话协作（开关默认开；session_start 检查开关 + trusted 门，
 		// 无订阅时零 fs 监听；钩子与 ACP/todo 无语义交互，位置不敏感，放 todo 前）
 		factories.push(makeChannelWatchExtension({ agentDir: getAgentDir(), cwd }));
@@ -934,6 +945,22 @@ export class PiBackend {
 	/** ACP 上下文压缩开关（设置 UI 用；键在 ~/.pi/agent/settings.json，缺省=开） */
 	getAcpConfig(): { enabled: boolean } {
 		return { enabled: readAcpEnabled(getAgentDir()) };
+	}
+
+	/** 上下文管理模式（三态：acp / evaporation / off；双 key 派生读，双开冲突 ACP 优先） */
+	getContextManagerConfig(): { mode: ContextManagerMode } {
+		return { mode: readContextManagerMode(getAgentDir()) };
+	}
+
+	/** 写上下文管理模式（单一写者原子双写，写后即效：下一轮 context 钩子见新值）。损坏拒写时上抛 */
+	setContextManagerMode(mode: ContextManagerMode): void {
+		try {
+			writeContextManagerMode(getAgentDir(), mode);
+		} catch (err) {
+			log.error("settings.json 写入失败（contextManager mode 未保存）", err);
+			throw err; // ipcMain.handle，reject 传回 renderer
+		}
+		log.info("context manager mode", mode);
 	}
 
 	/** 写 ACP 开关并清读缓存（下一轮 context 钩子即见新值；工具注册在下一次 session_start）。损坏拒写时上抛 */

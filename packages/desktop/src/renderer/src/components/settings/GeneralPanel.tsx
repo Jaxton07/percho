@@ -1,17 +1,20 @@
+import type { ContextManagerMode } from "@percho/shared";
 import type { Language } from "../../i18n";
 import { useI18nStore, useT } from "../../i18n";
 import { useSettingsStore } from "../../stores/settings";
 import { Switch } from "../ui/Switch";
 
-/** 通用设置面板：语言选择 + 内置权限门控开关 + ACP 上下文压缩开关 */
+const CONTEXT_MANAGER_MODES: ContextManagerMode[] = ["acp", "evaporation", "off"];
+
+/** 通用设置面板：语言选择 + 内置权限门控开关 + 上下文管理三态 + channel-watch 开关 */
 export function GeneralPanel() {
 	const t = useT();
 	const language = useI18nStore((s) => s.language);
 	const setLanguage = useI18nStore((s) => s.setLanguage);
 	const permissionEnabled = useSettingsStore((s) => s.permissionEnabled);
 	const setPermissionEnabled = useSettingsStore((s) => s.setPermissionEnabled);
-	const acpEnabled = useSettingsStore((s) => s.acpEnabled);
-	const setAcpEnabled = useSettingsStore((s) => s.setAcpEnabled);
+	const contextManagerMode = useSettingsStore((s) => s.contextManagerMode);
+	const setContextManagerMode = useSettingsStore((s) => s.setContextManagerMode);
 	const channelWatchEnabled = useSettingsStore((s) => s.channelWatchEnabled);
 	const setChannelWatchEnabled = useSettingsStore((s) => s.setChannelWatchEnabled);
 
@@ -52,15 +55,27 @@ export function GeneralPanel() {
 			</div>
 			<div>
 				<div className="flex items-center justify-between gap-4">
-					<h3 className="text-[13px] font-medium text-ink">{t("settings.acpCompression")}</h3>
-					<Switch
-						checked={acpEnabled === true}
-						disabled={acpEnabled === null}
-						onCheckedChange={(enabled) => void setAcpEnabled(enabled)}
-					/>
+					<h3 className="text-[13px] font-medium text-ink">{t("settings.contextManager")}</h3>
+					<div className="flex gap-2">
+						{CONTEXT_MANAGER_MODES.map((mode) => (
+							<button
+								key={mode}
+								type="button"
+								disabled={contextManagerMode === null}
+								className={`rounded-lg border px-3 py-1.5 text-[13px] transition-colors disabled:opacity-50 ${
+									contextManagerMode === mode
+										? "border-ink bg-ink text-on-ink"
+										: "border-border text-ink-2 hover:border-border-strong hover:bg-hover"
+								}`}
+								onClick={() => void setContextManagerMode(mode)}
+							>
+								{t(`settings.contextManagerMode.${mode}`)}
+							</button>
+						))}
+					</div>
 				</div>
 				<p className="mt-0.5 text-[11px] leading-relaxed text-ink-faint">
-					{t("settings.acpCompressionHint")}
+					{contextManagerMode ? t(`settings.contextManagerHint.${contextManagerMode}`) : ""}
 				</p>
 			</div>
 			<div>

@@ -4,6 +4,8 @@ import type {
 	AcpConfigInfo,
 	AppInfo,
 	ChannelWatchConfigInfo,
+	ContextManagerConfigInfo,
+	ContextManagerMode,
 	ContextUsageInfo,
 	CreateSessionOptions,
 	GitBranches,
@@ -113,6 +115,9 @@ export const IpcChannels = {
 	/** ACP 上下文压缩开关（设置 UI「通用」面板） */
 	AcpGetConfig: "acp:getConfig",
 	AcpSetEnabled: "acp:setEnabled",
+	/** 上下文管理模式三态（设置 UI「通用」面板；与 ACP 开关互斥的派生层） */
+	ContextManagerGetConfig: "contextManager:getConfig",
+	ContextManagerSetMode: "contextManager:setMode",
 	/** channel-watch 跨会话频道唤醒开关（设置 UI「通用」面板） */
 	ChannelWatchGetConfig: "channelWatch:getConfig",
 	ChannelWatchSetEnabled: "channelWatch:setEnabled",
@@ -286,6 +291,10 @@ export interface PiApi {
 	getAcpConfig(): Promise<AcpConfigInfo>;
 	/** 设置 ACP 上下文压缩开关（写后即生效：压中的会话下一轮停压，工具注册随下次会话重载） */
 	setAcpEnabled(enabled: boolean): Promise<void>;
+	/** 读取上下文管理模式（acp / evaporation / off 三态派生） */
+	getContextManagerConfig(): Promise<ContextManagerConfigInfo>;
+	/** 设置上下文管理模式（原子双写，写后 ≤2s 生效，无需重开会话） */
+	setContextManagerMode(mode: ContextManagerMode): Promise<void>;
 	/** 读取 channel-watch 频道唤醒开关状态 */
 	getChannelWatchConfig(): Promise<ChannelWatchConfigInfo>;
 	/** 设置 channel-watch 开关（下一 session_start 生效：目录 init/watcher/工具注册全部跟随） */

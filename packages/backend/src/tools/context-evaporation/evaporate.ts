@@ -526,7 +526,10 @@ function renderTrim(text: string): string {
 export interface EvapCallContext {
 	/** effectiveWindow = min(model.contextWindow, config.budgetTokens) */
 	windowTokens: number;
-	/** 真实 usage（getContextUsage().tokens）；null → 内部估算兜底（compaction 后首轮等） */
+	/** 真实 usage（getContextUsage().tokens）；null → 内部估算兜底（compaction 后首轮等）。
+	 *  真实 usage 与 wire 文本估算的差值（system prompt + 工具 schema + 估算器偏差）
+	 *  作为 offset 锚定批停机尺度：usage 驱动触发，批处理目标按「wire 估算 + offset」
+	 *  投影后续 usage（蒸发 savings ≈ 1:1 体现到 usage）。null 时 offset = 0（replay 语义） */
 	usageTokens: number | null;
 }
 
@@ -600,13 +603,15 @@ export function evaporateWire(
 	}
 	if (lastErr >= 0) protIdx.add(lastErr);
 
-	// 水位（usageTokens 优先，内部估算兜底——arch §2.2）
+	// 水位（usageTokens 优先，内部估算兜底——arch §2.2）+ offset 锚定：
+	// 真实 usage ≈ wire 估算 + offset（offset = system prompt 等恒定开销 + 估算器偏差）。
+	// 批停机与档位判定用「wire 估算 + offset」投影，与触发同尺度，防 usage ≫ 估算时批空转
+	const wireTokens0 = n > 0 ? (cum[n] ?? 0) : 0;
+	const offset = ctx.usageTokens != null ? Math.max(0, ctx.usageTokens - wireTokens0) : 0;
 	const pct =
 		ctx.usageTokens != null
 			? (ctx.usageTokens / ctx.windowTokens) * 100
-			: n > 0
-				? ((cum[n] ?? 0) / ctx.windowTokens) * 100
-				: 0;
+			: (wireTokens0 / ctx.windowTokens) * 100;
 
 	let tier = 0;
 	if (pct >= config.tiers.snip) tier = 1;
@@ -619,7 +624,7 @@ export function evaporateWire(
 	const applyBatch = (targetPct: number, level: EvapLevel): void => {
 		let tok = cum[n] ?? 0;
 		for (let i = 0; i < n; i++) {
-			if ((tok / ctx.windowTokens) * 100 < targetPct) break;
+			if (((tok + offset) / ctx.windowTokens) * 100 < targetPct) break;
 			const info = parts[i];
 			if (!info || protIdx.has(i) || info.pinned === true) continue;
 			if (level === "snip") {
@@ -658,7 +663,7 @@ export function evaporateWire(
 			// replay 否决项，仅保留开关路径：留前两句 + 标记
 			let tok = cum[n] ?? 0;
 			for (let i = 0; i < n; i++) {
-				if ((tok / ctx.windowTokens) * 100 < config.tiers.prune - HYSTERESIS_PCT) break;
+				if (((tok + offset) / ctx.windowTokens) * 100 < config.tiers.prune - HYSTERESIS_PCT) break;
 				const info = parts[i];
 				if (
 					info?.cls !== "assistantText" ||
@@ -679,8 +684,8 @@ export function evaporateWire(
 		rebuildCum();
 	}
 
-	// Tier 3（v1 = 无动作，SDK 原生压缩兜底；仅记录档位）
-	if (n > 0 && ((cum[n] ?? 0) / ctx.windowTokens) * 100 >= config.tiers.summarize) {
+	// Tier 3（v1 = 无动作，SDK 原生压缩兜底；仅记录档位）——批处理后尺度（replay 同款：rebuild 后 cum）
+	if ((((cum[n] ?? 0) + offset) / ctx.windowTokens) * 100 >= config.tiers.summarize) {
 		tier = 3;
 	}
 

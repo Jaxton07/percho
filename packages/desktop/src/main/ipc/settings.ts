@@ -63,6 +63,13 @@ export function registerSettingsIpc(backend: PiBackend): void {
 	);
 	ipcMain.handle(IpcChannels.AcpGetConfig, () => backend.getAcpConfig());
 	ipcMain.handle(IpcChannels.AcpSetEnabled, (_e, enabled: boolean) => backend.setAcpEnabled(enabled));
+	ipcMain.handle(IpcChannels.ContextManagerGetConfig, () => backend.getContextManagerConfig());
+	ipcMain.handle(IpcChannels.ContextManagerSetMode, (_e, mode: unknown) => {
+		if (mode !== "acp" && mode !== "evaporation" && mode !== "off") {
+			throw new Error(`invalid context manager mode: ${String(mode)}`);
+		}
+		backend.setContextManagerMode(mode);
+	});
 	ipcMain.handle(IpcChannels.ChannelWatchGetConfig, () => backend.getChannelWatchConfig());
 	ipcMain.handle(IpcChannels.ChannelWatchSetEnabled, (_e, enabled: boolean) =>
 		backend.setChannelWatchEnabled(enabled),

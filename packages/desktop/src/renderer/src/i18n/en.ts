@@ -217,9 +217,18 @@ export const en: Messages = {
 		permissionGate: "Built-in permission gate",
 		permissionGateHint:
 			"When on, tool calls are checked against rules: dangerous commands (rm -rf, sudo, force push, etc.) ask for confirmation, everything else runs. Rules live in ~/.pi/agent/permissions.json and apply instantly. Turn off to replace with your own permission extension.",
-		acpCompression: "Smart context compression (ACP)",
-		acpCompressionHint:
-			"In long sessions the model summarizes and compresses consumed history itself — the task keeps running and compressed content stays recoverable via decompress. Nudges start around 75% context usage. On by default; stored in ~/.pi/agent/settings.json, fully applies to new sessions.",
+		contextManager: "Context management",
+		contextManagerMode: {
+			acp: "Smart (ACP)",
+			evaporation: "Evaporation (beta)",
+			off: "Off",
+		},
+		contextManagerHint: {
+			acp: "In long sessions the model summarizes and compresses consumed history itself — the task keeps running and compressed content stays recoverable via decompress. Nudges start around 75% context usage. Switching applies without restarting sessions.",
+			evaporation:
+				"Evaporates aged tool output into self-describing stubs (e.g. “output evicted, re-read with the same arguments”) by watermark: zero LLM calls, conversation text preserved, session files untouched. 256K window budget with 60%/85% tiers. Experimental; applies without restarting sessions.",
+			off: "Disables all context management: no active compression/evaporation; the SDK's native compaction kicks in near the window limit. Long sessions may pause for compaction.",
+		},
 		channelWatch: "Cross-session channel collaboration (channel-watch)",
 		channelWatchHint:
 			"After a session subscribes to a channel it watches .local/agent-work/channel/<topic>/ for file updates; writes from another session wake this session to pick them up (per the HANDOFF.md protocol). Subscriptions persist via appendEntry and restore on session reopen; built-in loop protection. On by default, fully effective for trusted projects.",
