@@ -18,12 +18,27 @@ let minLevel: Level = (process.env.PI_LOG_LEVEL as Level | undefined) ?? "info";
 let logDir: string | undefined = process.env.PI_LOG_DIR;
 let logFilePath: string | undefined;
 
+/**
+ * 本地墙上时间 + 显式时区偏移（ISO 8601 `±HH:MM`）：本地可直接读、偏移无歧义（看 `+08:00` 不用心算 UTC+8）、
+ * ASCII 尾缀不影响前缀区间比较（字典序可排序）。旧文件是 UTC `Z` 尾缀，格式自带判别，互不冲突。
+ */
+export function formatTimestamp(d: Date): string {
+	const p = (n: number, w = 2): string => String(n).padStart(w, "0");
+	const local = `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}T${p(d.getHours())}:${p(
+		d.getMinutes(),
+	)}:${p(d.getSeconds())}.${p(d.getMilliseconds(), 3)}`;
+	const offsetMin = d.getTimezoneOffset(); // UTC+8 → -480；正数 = 本地在 UTC 以西
+	const sign = offsetMin <= 0 ? "+" : "-";
+	const abs = Math.abs(offsetMin);
+	return `${local}${sign}${p(Math.floor(abs / 60))}:${p(abs % 60)}`;
+}
+
 export function initLogging(dir?: string, level?: Level): void {
 	if (dir) logDir = dir;
 	if (level) minLevel = level;
 	if (logDir) {
-		const now = new Date();
-		const date = now.toISOString().slice(0, 10);
+		// 文件名日期同步改本地日（与行内时间戳同一基准；sweepOldLogs 的 main-YYYY-MM-DD.log 正则不变）
+		const date = formatTimestamp(new Date()).slice(0, 10);
 		logFilePath = join(logDir, `main-${date}.log`);
 		mkdirSync(logDir, { recursive: true });
 		sweepOldLogs();
@@ -79,7 +94,7 @@ export interface Logger {
 export function createLogger(tag: string): Logger {
 	const write = (level: Level, message: string, args: unknown[]) => {
 		if (LEVEL_ORDER[level] < LEVEL_ORDER[minLevel]) return;
-		const ts = new Date().toISOString();
+		const ts = formatTimestamp(new Date());
 		const line = `${ts} ${level.padEnd(5)} [${tag}] ${message}${args.length > 0 ? ` ${formatArgs(args)}` : ""}`;
 		if (process.stdout.isTTY) {
 			process.stdout.write(`${COLOR[level]}${line}${RESET}\n`);

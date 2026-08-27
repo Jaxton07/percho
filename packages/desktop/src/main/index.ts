@@ -6,6 +6,7 @@ import { pathToFileURL } from "node:url";
 import { createLogger, initLogging, PiBackend } from "@percho/backend";
 import { app, BrowserWindow, dialog, Menu, nativeTheme, net, protocol } from "electron";
 import { backgroundsDir } from "./background";
+import { consoleDedupLogLine, consoleSignature, createConsoleDeduper } from "./console-dedup";
 import { registerIpc } from "./ipc";
 import { initLanObserver, type LanObserverHandle } from "./lan";
 import { UiPluginManager, uiPluginsResourcesDir } from "./ui-plugins/manager";
@@ -32,6 +33,47 @@ const UI_PLUGIN_PROMPT: string[] = [
 /** renderer 加载自定义背景图的协议（pi-bg://background/<文件名>，只读 userData/backgrounds/） */
 const BG_PROTOCOL = "pi-bg";
 
+/** 心跳周期（60s：事故形态是小时级爬坡，太快会把心跳自己变成噪音） */
+const HEARTBEAT_INTERVAL_MS = 60_000;
+
+/** 每会话事件速率摘要（心跳与临终快照共用）：短 id 可 grep 反查，只记数字不记内容 */
+function summarizeRates(
+	rates: Map<string, { window60s: number[]; lastEventAt: number }>,
+	now = Date.now(),
+): { id: string; rate1m: number; lastEventAgeMs: number }[] {
+	return [...rates.entries()].map(([id, r]) => ({
+		id: id.slice(0, 8),
+		rate1m: r.window60s.reduce((a, b) => a + b, 0),
+		lastEventAgeMs: Math.max(0, now - r.lastEventAt),
+	}));
+}
+
+/** renderer/gpu 进程资源摘要（appMetrics 里 renderer 进程的 type 为 "Tab"；
+ *  本版 Electron CPUUsage 无 percent 字段，只取内存 workingSetSize(KB)） */
+function summarizeProcesses(metrics: ReturnType<typeof app.getAppMetrics>) {
+	return metrics
+		.filter((m) => m.type === "Tab" || m.type === "GPU")
+		.map((m) => ({ type: m.type, memoryMb: Math.round(m.memory.workingSetSize / 1024) }));
+}
+
+/** 临终快照（决策 3）：崩溃原因/进程资源/每会话事件速率与最近事件距 crash 的毫秒数——
+ *  区分「正在流式输出中死亡」vs「空闲死亡」，事故归因关键 */
+function buildIncidentSnapshot(details: { reason: string; exitCode: number }): {
+	reason: string;
+	exitCode: number;
+	processes: ReturnType<typeof summarizeProcesses>;
+	sessions: { id: string; rate1m: number; lastEventAgeMs: number }[];
+	uptimeMs: number;
+} {
+	return {
+		reason: details.reason,
+		exitCode: details.exitCode,
+		processes: summarizeProcesses(app.getAppMetrics()),
+		sessions: summarizeRates(backend.getEventRates()),
+		uptimeMs: Math.round(process.uptime() * 1000),
+	};
+}
+
 protocol.registerSchemesAsPrivileged([
 	{ scheme: BG_PROTOCOL, privileges: { standard: true, secure: true, supportFetchAPI: true } },
 ]);
@@ -54,6 +96,9 @@ app.whenReady().then(async () => {
 
 	// renderer 异常/崩溃 → 日志（错误排查依赖 trace + 日志）+ 进程级死亡自动恢复
 	const crashLog = createLogger("renderer");
+	// console 错误签名去重（事故实录：monaco 一天 1005 条近似重复）：首次全量、重复计数、
+	// 阈值/周期汇总；60s flush 定时器在 backend 初始化后统一启动（unref）
+	const consoleDedup = createConsoleDeduper();
 	// 0.5.2 白屏事故（2026-08-27 04:39）：流式 IPC 洪水下 renderer 被 SIGTERM 杀死，
 	// 主进程/会话健在（LAN 页仍在跑）但窗口永久空白。AppErrorBoundary 只能接 React 层异常，
 	// 进程级死亡必须在这里兜底 reload；短窗高频崩溃则停手转人工（防崩溃循环反复闪屏）
@@ -65,6 +110,9 @@ app.whenReady().then(async () => {
 			crashLog.error("render process gone", details);
 			// clean-exit：reload/quit 等正常退出也触发本事件，不是崩溃
 			if (details.reason === "clean-exit") return;
+			// 临终快照（决策 3）：谁杀的/死前多忙/内存多高——reload 前同步取数，避免异步竞态。
+			// 只记 id/速率/内存数字，绝不记消息正文
+			crashLog.error("incident snapshot", buildIncidentSnapshot(details));
 			const now = Date.now();
 			while (crashReloads.length > 0 && now - (crashReloads[0] ?? 0) > RELOAD_WINDOW_MS) crashReloads.shift();
 			if (crashReloads.length >= MAX_AUTO_RELOADS) {
@@ -107,8 +155,18 @@ app.whenReady().then(async () => {
 		contents.on("console-message", (details) => {
 			// details.level: debug / info / warning / error（Electron 37+ 对象形式，旧数值签名已废弃）
 			const { level, message, lineNumber, sourceId } = details;
-			if (level === "error") crashLog.error("renderer console", { message, line: lineNumber, sourceId });
-			else crashLog.debug("renderer console", { message, line: lineNumber, sourceId });
+			if (level === "error") {
+				// 去重只对 error 分支（决策 4）；debug 本来就低价值，行为不变
+				const signature = consoleSignature(message, sourceId);
+				const decision = consoleDedup.observe(signature);
+				if (decision.summary) {
+					crashLog.error(...consoleDedupLogLine(decision.summary));
+				} else if (decision.logFull) {
+					crashLog.error("renderer console", { message, line: lineNumber, sourceId });
+				}
+			} else {
+				crashLog.debug("renderer console", { message, line: lineNumber, sourceId });
+			}
 		});
 	});
 
@@ -132,6 +190,27 @@ app.whenReady().then(async () => {
 		},
 	});
 	await backend.init();
+
+	// 心跳（决策 3，60s unref）：renderer 内存 + 每会话事件速率——白屏/冻结事故「死前多忙」的
+	// 最后读数；快照/心跳只记 id/速率/内存数字，绝不记消息正文
+	const heartbeat = setInterval(() => {
+		try {
+			const tabs = app.getAppMetrics().filter((m) => m.type === "Tab");
+			const rendererMemoryMb = Math.round(tabs.reduce((sum, m) => sum + m.memory.workingSetSize, 0) / 1024);
+			crashLog.info("renderer heartbeat", {
+				rendererMemoryMb,
+				sessions: summarizeRates(backend.getEventRates()),
+			});
+		} catch (err) {
+			crashLog.warn("renderer heartbeat failed", err);
+		}
+	}, HEARTBEAT_INTERVAL_MS);
+	heartbeat.unref();
+	// console 错误汇总周期 flush（决策 4）：慢烧场景补一条，有界不噪声
+	const consoleFlush = setInterval(() => {
+		for (const summary of consoleDedup.flush()) crashLog.error(...consoleDedupLogLine(summary));
+	}, HEARTBEAT_INTERVAL_MS);
+	consoleFlush.unref();
 	lanObserver = await initLanObserver(
 		backend,
 		join(app.getPath("userData"), "lan-observer.json"),

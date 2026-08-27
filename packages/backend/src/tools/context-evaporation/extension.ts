@@ -40,7 +40,8 @@ export function makeEvapExtension(options: EvapExtensionOptions): InlineExtensio
 		factory: (pi) => {
 			const enabled = options.isEnabled ?? (() => readContextManagerMode(options.agentDir) === "evaporation");
 			const getConfig = options.getConfig ?? (() => readEvapConfig(options.agentDir));
-			const report = options.reporter ?? ((_sessionId: string, batch: EvapBatchInfo) => reportBatch(batch));
+			const report =
+				options.reporter ?? ((sessionId: string, batch: EvapBatchInfo) => reportBatch(sessionId, batch));
 			let currentSessionId = "";
 
 			// --- 会话闭包状态（context 钩子经 withLock 串行访问） ---
@@ -139,13 +140,15 @@ export function makeEvapExtension(options: EvapExtensionOptions): InlineExtensio
 	};
 }
 
-/** 批次日志（可观测；字段 = arch §8 字段表）。PiBackend 的 trace reporter 也复用它保 log */
-export function reportEvapBatch(batch: EvapBatchInfo): void {
-	reportBatch(batch);
+/** 批次日志（可观测；字段 = arch §8 字段表）。PiBackend 的 trace reporter 也复用它保 log。
+ *  sessionId 只记短 8 位（决策 5：列宽 + 足以 grep 反查，完整 id 看会话文件名） */
+export function reportEvapBatch(sessionId: string, batch: EvapBatchInfo): void {
+	reportBatch(sessionId, batch);
 }
 
-function reportBatch(batch: EvapBatchInfo): void {
+function reportBatch(sessionId: string, batch: EvapBatchInfo): void {
 	log.info("evap batch", {
+		sessionId: sessionId.slice(0, 8),
 		tier: batch.tier,
 		usagePct: Math.round(batch.usagePct * 10) / 10,
 		snipped: batch.snipped,

@@ -176,6 +176,7 @@ export const zh = {
 		messages: "{count} 条消息",
 		delete: "删除会话",
 		confirmDelete: "确认删除?",
+		copyDiagnostics: "复制诊断信息",
 		deleteProject: "删除项目",
 		confirmDeleteProject: "确认删除项目?",
 		selectProject: "选择项目目录",

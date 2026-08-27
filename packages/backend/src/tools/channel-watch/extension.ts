@@ -79,6 +79,16 @@ export function makeChannelWatchExtension(options: ChannelWatchOptions): InlineE
 				}
 			};
 
+			// 多会话并发时行归属（决策 5）：短 8 位 id 足以 grep 反查；session_start 前拿到
+			// 不到时留空（watcher 惰性起在 session_start 之后，实际不会缺）
+			const shortId = (): string | undefined => {
+				try {
+					return lastCtx?.sessionManager.getSessionId().slice(0, 8);
+				} catch {
+					return undefined;
+				}
+			};
+
 			const persist = (): void => {
 				try {
 					pi.appendEntry(SUBSCRIPTION_CUSTOM_TYPE, buildSubsPayload(subscriptions));
@@ -104,11 +114,20 @@ export function makeChannelWatchExtension(options: ChannelWatchOptions): InlineE
 						}
 						const decision = guard.shouldDeliver(event.topic, event.relPath, hash, abs);
 						if (!decision.deliver) {
-							log.info("唤醒抑制", { topic: event.topic, relPath: event.relPath, reason: decision.reason });
+							log.info("唤醒抑制", {
+								sessionId: shortId(),
+								topic: event.topic,
+								relPath: event.relPath,
+								reason: decision.reason,
+							});
 							return;
 						}
 						sendWake(buildWakeMessage(event.topic));
-						log.info("channel 唤醒已投递", { topic: event.topic, relPath: event.relPath });
+						log.info("channel 唤醒已投递", {
+							sessionId: shortId(),
+							topic: event.topic,
+							relPath: event.relPath,
+						});
 						const pausedNow = guard.recordDelivered(event.topic, event.relPath, hash);
 						if (pausedNow) {
 							notify(

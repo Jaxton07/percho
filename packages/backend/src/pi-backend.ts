@@ -70,6 +70,7 @@ import {
 	toSessionMessages,
 } from "./session/messages";
 import { autoNameSession } from "./session/naming";
+import { EventRateTracker } from "./session/rates";
 import { type EventForwarder, SessionRegistry } from "./session/registry";
 import { StreamGuard } from "./session/stream-guard";
 import { TraceRecorder } from "./session/trace";
@@ -166,6 +167,8 @@ export class PiBackend {
 	/** 会话事件 trace（JSONL，离线可重放） */
 	private readonly traces = new SessionTraces();
 	private readonly streamGuard = new StreamGuard();
+	/** 每会话事件速率（60s 窗口；心跳/临终快照数据源） */
+	private readonly eventRates = new EventRateTracker();
 	private modelRuntime: ModelRuntime | undefined;
 	private modelPromise: Promise<ModelRuntime> | undefined;
 	/** 设置页（provider/模型/凭证配置）服务 */
@@ -265,7 +268,7 @@ export class PiBackend {
 			makeEvapExtension({
 				agentDir: getAgentDir(),
 				reporter: (sessionId, batch) => {
-					reportEvapBatch(batch);
+					reportEvapBatch(sessionId, batch);
 					this.traces.recordCustom(sessionId, "evap_batch", batch);
 				},
 			}),
@@ -289,6 +292,10 @@ export class PiBackend {
 	}
 
 	private emitEvent(sessionId: string, event: SessionEvent): void {
+		this.eventRates.tick(sessionId);
+		// 会话标题全量落一行日志（决策 7：不截断）：用户拿 UI 里看到的标题（含自动命名的 …）
+		// 能直接 grep 主日志定位会话，不再只靠 prompt 行的 120 字符截断
+		if (event.type === "session_info_changed") log.info("session renamed", sessionId, { name: event.name });
 		// message_update 携带全量快照（partial + message），平方放大事故源头，先瘦身再分发
 		if (event.type === "message_update") event = slimMessageUpdate(event);
 		// toolResult 大结果四份快照重复携带（0.5.2 白屏事故降压层）：image base64 剥除 + 超长 text 截断
@@ -478,6 +485,7 @@ export class PiBackend {
 		this.gates.get(sessionId)?.dispose();
 		this.gates.delete(sessionId);
 		this.streamGuard.cleanup(sessionId);
+		this.eventRates.delete(sessionId);
 		this.registry.delete(sessionId);
 		await this.traces.stop(sessionId);
 		log.info("session closed", sessionId);
@@ -587,6 +595,13 @@ export class PiBackend {
 			outputTokens: stats.tokens.output,
 			cost: stats.cost,
 		};
+	}
+
+	/** 每会话事件速率快照（心跳/临终快照数据源）：最近 60s 每秒事件数 + 最近事件时刻。
+	 * 顺带回收已结束会话（subagent 子会话不走 closeSession）的残留条目。 */
+	getEventRates(): Map<string, { window60s: number[]; lastEventAt: number }> {
+		this.eventRates.prune((id) => this.registry.has(id));
+		return this.eventRates.snapshot();
 	}
 
 	/** 全部活跃会话的运行态快照（只读观察者用）。 */

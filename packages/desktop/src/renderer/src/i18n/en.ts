@@ -179,6 +179,7 @@ export const en: Messages = {
 		messages: "{count} messages",
 		delete: "Delete session",
 		confirmDelete: "Click again to confirm",
+		copyDiagnostics: "Copy diagnostics",
 		deleteProject: "Delete project",
 		confirmDeleteProject: "Click again to confirm",
 		selectProject: "Pick project directory",
