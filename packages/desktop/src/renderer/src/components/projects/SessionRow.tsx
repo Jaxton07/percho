@@ -36,7 +36,10 @@ export function SessionRow({ session }: { session: SessionMeta }) {
 	};
 
 	return (
-		<li className="group relative" onMouseLeave={() => setConfirming(false)}>
+		<li className="group relative hover:z-10" onMouseLeave={() => setConfirming(false)}>
+			{/* hover:z-10 —— 悬停行整体垫高：复制诊断气泡会从本行向下溢出到下一行，而每行都是
+			    position:relative（z 为 auto），后续兄弟行会盖住气泡（z-50 被 -translate-y 产生的
+			    层叠上下文困在本行内，出不去）。把悬停行抬到正层级，其内气泡即浮到相邻行之上。 */}
 			<button
 				type="button"
 				className="flex w-full items-center gap-2 rounded-lg px-2.5 py-1.5 text-left transition-colors hover:bg-hover"
@@ -56,14 +59,17 @@ export function SessionRow({ session }: { session: SessionMeta }) {
 			{/* 复制按钮：自研 Tooltip（替代 native title：延迟可控+样式统一）。定位类不能传给
 			    Tooltip（其包裹层固定 relative，与 absolute 同置会冲突使包含块错乱、气泡被滚动容器
 			    裁剪）——外层自套定位 span，Tooltip 在其内正常锦点 */}
-			<span className="absolute right-10 top-1/2 -translate-y-1/2">
+			{/* flex items-center —— 修复图标垂直不居中：此 span 是 block，内容（inline-flex
+			    气泡挂件）按行盒基线排布于高 21px 行盒顶部，图标被抬高约 3px。改 flex 后挂件
+			    作为 flex item 垂直居中，图标回到行中线（与右侧删除 X 对齐）。 */}
+			<span className="absolute right-10 top-1/2 -translate-y-1/2 flex items-center">
 				<Tooltip label={t("projects.copyDiagnostics")} align="end">
 					<button
 						type="button"
 						className="invisible rounded-md px-1.5 py-0.5 text-[11px] text-ink-faint transition-colors hover:bg-hover hover:text-ink-2 group-hover:visible"
 						onClick={copyDiagnostics}
 					>
-						{copied ? <CheckIcon /> : <CopyIcon />}
+						{copied ? <CheckIcon size={15} /> : <CopyIcon size={15} />}
 					</button>
 				</Tooltip>
 			</span>
