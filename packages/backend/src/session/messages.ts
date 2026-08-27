@@ -10,7 +10,6 @@ import {
 	parseExpandedSkillInvocation,
 	type SessionMessage,
 	type SessionToolCall,
-	stripAcpReferenceTags,
 } from "@percho/shared";
 
 /**
@@ -42,8 +41,6 @@ export interface RawMessage {
 	toolName?: string;
 	/** custom 消息的自定义类型（getTodos 扫 todo-reminder 恢复消息用） */
 	customType?: string;
-	/** custom 消息的 UI 展示开关（acp 摘要消息 display:false，不进消息流） */
-	display?: boolean;
 	/** LLM 停因（assistant 消息；"error" 时历史回放产错误卡；旧会话文件无此字段 → undefined） */
 	stopReason?: string;
 	/** LLM 错误详情（stopReason==="error" 时存在） */
@@ -205,18 +202,15 @@ export function toSessionMessages(rawMessages: readonly unknown[]): SessionMessa
 	for (const raw of rawMessages as RawMessage[]) {
 		if (raw.role === "user") {
 			const sourceText = blockText(raw.content);
-			const displayText = stripAcpReferenceTags(sourceText);
-			const invocation = parseExpandedSkillInvocation(displayText);
+			const invocation = parseExpandedSkillInvocation(sourceText);
 			out.push({
 				role: "user",
-				text: invocation ? (invocation.args ?? "") : displayText,
+				text: invocation ? (invocation.args ?? "") : sourceText,
 				thinking: "",
 				tools: [],
 				images: blockImages(raw.content),
 				timestamp: raw.timestamp ?? Date.now(),
-				...(invocation || displayText !== sourceText
-					? { ...(invocation ? { skill: { name: invocation.name, args: invocation.args } } : {}), sourceText }
-					: {}),
+				...(invocation ? { skill: { name: invocation.name, args: invocation.args }, sourceText } : {}),
 			});
 			continue;
 		}
@@ -225,8 +219,7 @@ export function toSessionMessages(rawMessages: readonly unknown[]): SessionMessa
 			const toolBlocks = blockToolCalls(content);
 			const tools = toolBlocks.map((b) => b.tool);
 			for (const tool of tools) toolById.set(tool.id, tool);
-			const sourceText = blockText(raw.content);
-			const text = stripAcpReferenceTags(sourceText);
+			const text = blockText(raw.content);
 			// 正文后的工具（块序在首个 text 块之后，同 turn 内 text→toolCall 交错）：拆成独立 meta 消息
 			// 排在正文消息之后，与 renderer finalizeStreaming 的拆分一致——否则渲染时会被倒挂到正文上方
 			const textIndex = content.findIndex((c) => c?.type === "text" && c.text);
@@ -242,7 +235,6 @@ export function toSessionMessages(rawMessages: readonly unknown[]): SessionMessa
 						tools: preTools,
 						images: [],
 						timestamp,
-						...(text !== sourceText ? { sourceText } : {}),
 					});
 				}
 				out.push({
@@ -262,7 +254,6 @@ export function toSessionMessages(rawMessages: readonly unknown[]): SessionMessa
 				tools,
 				images: [],
 				timestamp: raw.timestamp ?? Date.now(),
-				...(text !== sourceText ? { sourceText } : {}),
 				...(raw.stopReason ? { stopReason: raw.stopReason } : {}),
 				...(typeof raw.errorMessage === "string" && raw.errorMessage.length > 0
 					? { errorMessage: raw.errorMessage }
@@ -278,7 +269,7 @@ export function toSessionMessages(rawMessages: readonly unknown[]): SessionMessa
 		if (raw.role === "toolResult") {
 			const tool = raw.toolCallId ? toolById.get(raw.toolCallId) : undefined;
 			if (tool) {
-				tool.output = stripAcpReferenceTags(blockText(raw.content));
+				tool.output = blockText(raw.content);
 				tool.isError = raw.isError === true;
 				// edit：unified patch 提取进 SessionToolCall.diff（diff 侧栏历史回放数据源；模型不可见）
 				if (tool.name === "edit" && !tool.isError) {

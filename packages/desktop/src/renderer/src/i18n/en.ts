@@ -220,14 +220,12 @@ export const en: Messages = {
 			"When on, tool calls are checked against rules: dangerous commands (rm -rf, sudo, force push, etc.) ask for confirmation, everything else runs. Rules live in ~/.pi/agent/permissions.json and apply instantly. Turn off to replace with your own permission extension.",
 		contextManager: "Context management",
 		contextManagerMode: {
-			acp: "Smart (ACP)",
-			evaporation: "Evaporation (beta)",
+			evaporation: "Evaporation",
 			off: "Off",
 		},
 		contextManagerHint: {
-			acp: "In long sessions the model summarizes and compresses consumed history itself — the task keeps running and compressed content stays recoverable via decompress. Nudges start around 75% context usage. Switching applies without restarting sessions.",
 			evaporation:
-				"Evaporates aged tool output into self-describing stubs (e.g. “output evicted, re-read with the same arguments”) by watermark: zero LLM calls, conversation text preserved, session files untouched. 256K window budget with 60%/85% tiers. Experimental; applies without restarting sessions.",
+				"On by default. Evaporates aged tool output into self-describing stubs by watermark (e.g. “output evicted, re-read with the same arguments”): tool output truncated from 60%, evicted into placeholders from 85%; zero LLM calls, conversation text preserved, session files untouched. Switching applies without restarting sessions.",
 			off: "Disables all context management: no active compression/evaporation; the SDK's native compaction kicks in near the window limit. Long sessions may pause for compaction.",
 		},
 		channelWatch: "Cross-session channel collaboration (channel-watch)",

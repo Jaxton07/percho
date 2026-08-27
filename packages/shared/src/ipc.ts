@@ -1,7 +1,6 @@
 import type { LanStatus } from "./lan";
 import type { CatalogPackageType, CatalogSearchResult, ConfiguredPackageInfo } from "./packages";
 import type {
-	AcpConfigInfo,
 	AppInfo,
 	ChannelWatchConfigInfo,
 	ContextManagerConfigInfo,
@@ -113,10 +112,7 @@ export const IpcChannels = {
 	/** 权限门控配置（设置 UI 开关） */
 	PermissionGetConfig: "permission:getConfig",
 	PermissionSetEnabled: "permission:setEnabled",
-	/** ACP 上下文压缩开关（设置 UI「通用」面板） */
-	AcpGetConfig: "acp:getConfig",
-	AcpSetEnabled: "acp:setEnabled",
-	/** 上下文管理模式三态（设置 UI「通用」面板；与 ACP 开关互斥的派生层） */
+	/** 上下文管理模式二态（设置 UI「通用」面板，默认蒸发） */
 	ContextManagerGetConfig: "contextManager:getConfig",
 	ContextManagerSetMode: "contextManager:setMode",
 	/** channel-watch 跨会话频道唤醒开关（设置 UI「通用」面板） */
@@ -290,13 +286,9 @@ export interface PiApi {
 	getPermissionConfig(): Promise<PermissionConfigInfo>;
 	/** 设置权限门控开关（即时生效，扩展按 mtime 重读配置） */
 	setPermissionEnabled(enabled: boolean): Promise<void>;
-	/** 读取 ACP 上下文压缩开关状态 */
-	getAcpConfig(): Promise<AcpConfigInfo>;
-	/** 设置 ACP 上下文压缩开关（写后即生效：压中的会话下一轮停压，工具注册随下次会话重载） */
-	setAcpEnabled(enabled: boolean): Promise<void>;
-	/** 读取上下文管理模式（acp / evaporation / off 三态派生） */
+	/** 读取上下文管理模式（evaporation / off 二态派生） */
 	getContextManagerConfig(): Promise<ContextManagerConfigInfo>;
-	/** 设置上下文管理模式（原子双写，写后 ≤2s 生效，无需重开会话） */
+	/** 设置上下文管理模式（写后 ≤2s 生效，无需重开会话） */
 	setContextManagerMode(mode: ContextManagerMode): Promise<void>;
 	/** 读取 channel-watch 频道唤醒开关状态 */
 	getChannelWatchConfig(): Promise<ChannelWatchConfigInfo>;

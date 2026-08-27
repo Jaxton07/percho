@@ -128,8 +128,6 @@ export interface StreamingState {
 	 * 组件不 remount，Markdown 的平滑输出 controller 得以存活续播（否则固化瞬间平滑被打断、整段跳变） */
 	id: string;
 	text: string;
-	/** assistant 原始 delta 累积，仅用于每次重算 display text；绝不能交给渲染层 */
-	rawText?: string;
 	thinking: string;
 	tools: UIToolCall[];
 	/** show_image 发图缓冲：tool_execution_end 先入缓冲，turn_end 固化时排在 assistant 消息之后（与历史回放顺序一致） */

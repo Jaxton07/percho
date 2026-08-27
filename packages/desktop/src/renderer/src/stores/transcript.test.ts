@@ -1,11 +1,5 @@
 import type { AgentSessionEvent } from "@percho/shared";
-import {
-	buildChatRows,
-	emptyTranscript,
-	messagesToUIMessages,
-	reduceEvent,
-	stripAcpReferenceTags,
-} from "@percho/shared";
+import { emptyTranscript, messagesToUIMessages, reduceEvent } from "@percho/shared";
 import { beforeEach, describe, expect, it } from "vitest";
 import { useTranscriptStore } from "./transcript";
 
@@ -15,30 +9,6 @@ function ev(type: string, extra: Record<string, unknown> = {}): AgentSessionEven
 
 const canonicalSkill = (args?: string) =>
 	`<skill name="mindmap" location="/tmp/skills/mindmap/SKILL.md">\nReferences are relative to /tmp/skills/mindmap.\n\n# Mind map\n\nBody\n</skill>${args ? `\n\n${args}` : ""}`;
-
-const acpTag = '<acp tokens="55" type="bash">m00058</acp>';
-
-describe("stripAcpReferenceTags", () => {
-	it("仅移除独立的完整 producer 标签行，并保留其他内容", () => {
-		expect(stripAcpReferenceTags(`before\n${acpTag}\nafter`)).toBe("before\nafter");
-		expect(stripAcpReferenceTags(`\t${acpTag}  \r\n`)).toBe("");
-		expect(stripAcpReferenceTags(`${acpTag}\n\n`)).toBe("");
-		expect(stripAcpReferenceTags(`before\n${acpTag}\n\nafter`)).toBe("before\n\nafter");
-	});
-
-	it("不吞非 producer 形状、行内标签或普通 XML", () => {
-		for (const text of [
-			'<acp type="bash" tokens="55">m00058</acp>',
-			'<acp tokens="55">m00058</acp>',
-			`prefix ${acpTag}`,
-			'<acp tokens="55" type="bash">m000581</acp>',
-			'<acp tokens="55" type="bash">m00058</acp> suffix',
-			"<note>m00058</note>",
-		]) {
-			expect(stripAcpReferenceTags(text)).toBe(text);
-		}
-	});
-});
 
 describe("transcript reducer", () => {
 	it("subagent 互斥事件生成系统消息（结构化 + 同扩展去重）", () => {
@@ -155,111 +125,6 @@ describe("transcript reducer", () => {
 			assistantMessageEvent: { type: "text_delta", contentIndex: 0, delta: " world" },
 		} as unknown as AgentSessionEvent);
 		expect(state.streaming?.text).toBe("Hello world");
-	});
-
-	it("实时 assistant 固化后保留净化前正文供 Fork fallback 匹配", () => {
-		const rawText = `答案\n${acpTag}`;
-		let state = reduceEvent(emptyTranscript(), ev("agent_start"));
-		state = reduceEvent(state, {
-			type: "message_update",
-			assistantMessageEvent: { type: "text_delta", contentIndex: 0, delta: rawText },
-		} as unknown as AgentSessionEvent);
-		state = reduceEvent(state, ev("turn_end"));
-		expect(state.messages[0]).toMatchObject({
-			kind: "assistant",
-			text: "答案\n",
-			sourceText: rawText,
-		});
-	});
-
-	it("实时 user、assistant 与工具输出隐藏 ACP 标签，并保留 user 原文", () => {
-		let state = reduceEvent(emptyTranscript(), {
-			type: "message_start",
-			message: { role: "user", content: `问题\n${acpTag}` },
-		} as unknown as AgentSessionEvent);
-		expect(state.messages[0]).toMatchObject({ kind: "user", text: "问题\n", sourceText: `问题\n${acpTag}` });
-
-		state = reduceEvent(state, ev("agent_start"));
-		state = reduceEvent(state, {
-			type: "message_update",
-			assistantMessageEvent: { type: "text_delta", contentIndex: 0, delta: acpTag },
-		} as unknown as AgentSessionEvent);
-		expect(state.streaming).toMatchObject({ text: "", textBlockIndex: null });
-		state = reduceEvent(state, {
-			type: "message_update",
-			assistantMessageEvent: { type: "text_delta", contentIndex: 0, delta: "\n答案" },
-		} as unknown as AgentSessionEvent);
-		expect(state.streaming).toMatchObject({ text: "答案", textBlockIndex: 0 });
-		state = reduceEvent(state, {
-			type: "message_update",
-			assistantMessageEvent: {
-				type: "toolcall_start",
-				contentIndex: 1,
-				partial: { toolCalls: [{ name: "bash" }] },
-			},
-		} as unknown as AgentSessionEvent);
-		state = reduceEvent(state, {
-			type: "message_update",
-			assistantMessageEvent: {
-				type: "toolcall_end",
-				contentIndex: 1,
-				toolCall: { id: "tc-tag", name: "bash", arguments: {} },
-			},
-		} as unknown as AgentSessionEvent);
-		state = reduceEvent(state, {
-			type: "tool_execution_update",
-			toolCallId: "tc-tag",
-			toolName: "bash",
-			args: {},
-			partialResult: { output: `output\n${acpTag}` },
-		} as unknown as AgentSessionEvent);
-		expect(state.streaming?.tools[0]?.output).toBe("output\n");
-		state = reduceEvent(state, {
-			type: "tool_execution_update",
-			toolCallId: "tc-tag",
-			toolName: "bash",
-			args: {},
-			partialResult: { output: "\nmore" },
-		} as unknown as AgentSessionEvent);
-		expect(state.streaming?.tools[0]?.output).toBe("output\nmore");
-	});
-
-	it("tag-only assistant text does not split adjacent tools into separate meta groups", () => {
-		let state = reduceEvent(emptyTranscript(), ev("agent_start"));
-		for (const [contentIndex, id] of [
-			[0, "tool-a"],
-			[2, "tool-b"],
-		] as const) {
-			state = reduceEvent(state, {
-				type: "message_update",
-				assistantMessageEvent: {
-					type: "toolcall_start",
-					contentIndex,
-					partial: { toolCalls: [{ name: "bash" }] },
-				},
-			} as unknown as AgentSessionEvent);
-			state = reduceEvent(state, {
-				type: "message_update",
-				assistantMessageEvent: {
-					type: "toolcall_end",
-					contentIndex,
-					toolCall: { id, name: "bash", arguments: {} },
-				},
-			} as unknown as AgentSessionEvent);
-			if (contentIndex === 0) {
-				state = reduceEvent(state, {
-					type: "message_update",
-					assistantMessageEvent: { type: "text_delta", contentIndex: 1, delta: acpTag },
-				} as unknown as AgentSessionEvent);
-			}
-		}
-		state = reduceEvent(state, ev("turn_end"));
-		const metaGroups = buildChatRows(state, "session-1").filter((row) => row.kind === "metaGroup");
-		expect(metaGroups).toHaveLength(1);
-		expect(metaGroups[0]?.items.flatMap((item) => item.tools.map((tool) => tool.id))).toEqual([
-			"tool-a",
-			"tool-b",
-		]);
 	});
 
 	it("thinking 活动按 contentIndex 累积并保持首次到达位置", () => {
@@ -1424,11 +1289,12 @@ describe("messagesToUIMessages 历史回放", () => {
 		expect(ui[1]).toMatchObject({ kind: "user", text: "", skill: { name: "mindmap", args: undefined } });
 	});
 
-	it("历史 mapper 作为展示边界净化 user、assistant 与工具输出", () => {
+	it("历史 mapper 原样展示 user、assistant 与工具输出（不剥任何 tag）", () => {
+		const raw = '<acp tokens="55" type="bash">m00058</acp>';
 		const ui = messagesToUIMessages([
 			{
 				role: "user",
-				text: `问题\n${acpTag}`,
+				text: `问题\n${raw}`,
 				thinking: "",
 				tools: [],
 				images: [],
@@ -1436,19 +1302,19 @@ describe("messagesToUIMessages 历史回放", () => {
 			},
 			{
 				role: "assistant",
-				text: acpTag,
+				text: raw,
 				thinking: "",
-				tools: [{ id: "tool", name: "bash", args: "{}", output: `结果\n${acpTag}`, isError: false }],
+				tools: [{ id: "tool", name: "bash", args: "{}", output: `结果\n${raw}`, isError: false }],
 				images: [],
 				timestamp: 2,
 			},
 		]);
-		expect(ui[0]).toMatchObject({ kind: "user", text: "问题\n", sourceText: `问题\n${acpTag}` });
+		expect(ui[0]).toMatchObject({ kind: "user", text: `问题\n${raw}` });
+		expect((ui[0] as { sourceText?: string }).sourceText).toBeUndefined();
 		expect(ui[1]).toMatchObject({
 			kind: "assistant",
-			text: "",
-			sourceText: acpTag,
-			tools: [{ output: "结果\n" }],
+			text: raw,
+			tools: [{ output: `结果\n${raw}` }],
 		});
 	});
 

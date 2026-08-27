@@ -1,4 +1,3 @@
-import { stripAcpReferenceTags } from "../acp-reference-tags";
 import { buildLlmUiError, buildStreamGuardUiError, type UiError } from "../errors";
 import type { ImageInput, SessionEvent } from "../session";
 import { parseExpandedSkillInvocation } from "../skill-invocation";
@@ -65,9 +64,6 @@ function finalizeStreaming(state: SessionTranscriptState): SessionTranscriptStat
 			thinking: streaming.thinking,
 			tools: preTools,
 			timestamp: Date.now(),
-			...(streaming.rawText !== undefined && streaming.text !== streaming.rawText
-				? { sourceText: streaming.rawText }
-				: {}),
 		});
 	}
 	if (postTools.length > 0) {
@@ -174,8 +170,7 @@ export function reduceEvent(state: SessionTranscriptState, event: SessionEvent):
 							.filter((c) => c.type === "text")
 							.map((c) => (c as { text: string }).text)
 							.join("");
-			const displayText = stripAcpReferenceTags(text);
-			const invocation = parseExpandedSkillInvocation(displayText);
+			const invocation = parseExpandedSkillInvocation(text);
 			const images: ImageInput[] = Array.isArray(content)
 				? content
 						.filter((c) => c.type === "image" && (c as { data?: string }).data)
@@ -191,12 +186,12 @@ export function reduceEvent(state: SessionTranscriptState, event: SessionEvent):
 					{
 						kind: "user",
 						id: newMessageId(),
-						text: invocation ? (invocation.args ?? "") : displayText,
+						text: invocation ? (invocation.args ?? "") : text,
 						images,
 						timestamp: event.message.timestamp ?? Date.now(),
-						...(invocation || displayText !== text
+						...(invocation
 							? {
-									...(invocation ? { skill: { name: invocation.name, args: invocation.args } } : {}),
+									skill: { name: invocation.name, args: invocation.args },
 									sourceText: text,
 								}
 							: {}),
@@ -210,15 +205,13 @@ export function reduceEvent(state: SessionTranscriptState, event: SessionEvent):
 			const e = event.assistantMessageEvent;
 			switch (e.type) {
 				case "text_delta": {
-					const rawText = (streaming.rawText ?? streaming.text) + e.delta;
-					const text = stripAcpReferenceTags(rawText);
+					const text = streaming.text + e.delta;
 					return {
 						...state,
 						streaming: {
 							...streaming,
-							rawText,
 							text,
-							// 首个真实正文块位置 = 正文起点锚（tag-only text 不得成为工具分组边界）
+							// 首个非空正文块位置 = 正文起点锚
 							textBlockIndex: text ? (streaming.textBlockIndex ?? e.contentIndex) : null,
 						},
 					};
@@ -400,7 +393,7 @@ export function reduceEvent(state: SessionTranscriptState, event: SessionEvent):
 			const tools = delta
 				? streaming.tools.map((tool) =>
 						tool.id === event.toolCallId
-							? { ...tool, output: stripAcpReferenceTags(rawToolOutputs?.[event.toolCallId] ?? "") }
+							? { ...tool, output: rawToolOutputs?.[event.toolCallId] ?? "" }
 							: tool,
 					)
 				: streaming.tools;

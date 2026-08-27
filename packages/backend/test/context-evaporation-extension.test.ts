@@ -3,7 +3,7 @@ import { makeEvapExtension } from "../src/tools/context-evaporation/extension";
 import type { EvapBatchInfo, EvapConfig } from "../src/tools/context-evaporation/types";
 import { DEFAULT_EVAP_CONFIG } from "../src/tools/context-evaporation/types";
 
-/** 假 pi：记录 handler（照 acp-extension.test.ts 模式） */
+/** 假 pi：记录 handler（inline extension 测试通用模式） */
 function makeFakePi() {
 	const handlers = new Map<string, Array<(event: never, ctx: never) => unknown>>();
 	return {

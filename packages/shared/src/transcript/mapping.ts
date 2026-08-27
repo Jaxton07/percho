@@ -1,4 +1,3 @@
-import { stripAcpReferenceTags } from "../acp-reference-tags";
 import { buildLlmUiError, type UiError } from "../errors";
 import type { SessionMessage } from "../session";
 import { newSubagentKey, newToolKey } from "./helpers";
@@ -43,8 +42,8 @@ export function messagesToUIMessages(messages: SessionMessage[]): UIMessage[] {
 		}
 		if (m.role === "user") {
 			flushError();
-			const text = stripAcpReferenceTags(m.text);
-			const sourceText = m.sourceText ?? (text !== m.text ? m.text : undefined);
+			const text = m.text;
+			const sourceText = m.sourceText;
 			if (m.skill || text || m.images.length > 0) {
 				ui.push({
 					kind: "user",
@@ -59,14 +58,14 @@ export function messagesToUIMessages(messages: SessionMessage[]): UIMessage[] {
 			}
 			continue;
 		}
-		const text = stripAcpReferenceTags(m.text);
-		const sourceText = m.sourceText ?? (text !== m.text ? m.text : undefined);
+		const text = m.text;
+		const sourceText = m.sourceText;
 		const tools: UIToolCall[] = m.tools.map((tool) => ({
 			key: tool.id || newToolKey(),
 			id: tool.id,
 			name: tool.name,
 			args: tool.args,
-			output: stripAcpReferenceTags(tool.output),
+			output: tool.output,
 			...(tool.diff ? { diff: tool.diff } : {}),
 			state: tool.isError ? "error" : "done",
 		}));

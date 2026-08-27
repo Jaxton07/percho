@@ -17,8 +17,8 @@ const log = createLogger("context-evaporation");
  *   → 有动作时 reporter(batch)（P3 起接 trace）；Tier 0 / 无变化返回 undefined 零干扰
  * - session_compact：重置决策 Map（arch §4.2：compact 边界前的 part 整体消失，防幽灵决策）
  *
- * 与 ACP 互斥（arch §5）：工厂链两者都常驻（运行时切换免重启），激活靠派生 mode——
- * mode==="evaporation" 时 acpCompressionEnabled 必为 false（单一写者保证），物理不会双开。
+ * 二态激活（单一写者保证）：mode==="evaporation" 才启用（缺省即蒸发），off 可运行时关闭，
+ * 切换 ≤2s 生效免重开会话。
  *
  * 扩展不注册任何工具、不改 system prompt——stub 自带恢复指令，零 prompt 污染。
  */
@@ -48,7 +48,7 @@ export function makeEvapExtension(options: EvapExtensionOptions): InlineExtensio
 			let active = false;
 			let state: EvapState = createEvapState();
 
-			/** 实时生效判定（同 ACP R3 模式）：active 表示 session_start 时曾启用，
+			/** 实时生效判定：active 表示 session_start 时曾启用，
 			 * 开关同进程翻转（开→关）时闭包 active 停留 true，入口每次实时读 enabled() */
 			const liveEnabled = (): boolean => active && enabled();
 

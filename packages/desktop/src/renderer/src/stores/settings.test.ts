@@ -5,13 +5,12 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 const piMock = vi.hoisted(() => ({
 	// refresh() 会并行拉多个本地配置，无关成员给最小 stub
 	getPermissionConfig: vi.fn(() => Promise.resolve({ enabled: true })),
-	getAcpConfig: vi.fn(() => Promise.resolve({ enabled: true })),
 	getChannelWatchConfig: vi.fn(() => Promise.resolve({ enabled: true })),
 	getVisionConfig: vi.fn(() => Promise.resolve({ hasKey: false })),
 	lanGetStatus: vi.fn(() => Promise.resolve(null)),
 	listProviders: vi.fn(() => Promise.resolve({ providers: [] })),
 	listSubagents: vi.fn(() => Promise.resolve([])),
-	getContextManagerConfig: vi.fn(() => Promise.resolve({ mode: "acp" })),
+	getContextManagerConfig: vi.fn(() => Promise.resolve({ mode: "evaporation" })),
 	setContextManagerMode: vi.fn(() => Promise.resolve()),
 }));
 vi.mock("../api", () => ({ getPi: () => piMock }));
@@ -45,7 +44,7 @@ describe("settings store：contextManagerMode（乐观更新 + 失败回滚）",
 	});
 
 	it("切换成功：乐观更新生效", async () => {
-		useSettingsStore.setState({ contextManagerMode: "acp" });
+		useSettingsStore.setState({ contextManagerMode: "off" });
 		await useSettingsStore.getState().setContextManagerMode("evaporation");
 		expect(piMock.setContextManagerMode).toHaveBeenCalledWith("evaporation");
 		expect(useSettingsStore.getState().contextManagerMode).toBe("evaporation");
@@ -53,10 +52,10 @@ describe("settings store：contextManagerMode（乐观更新 + 失败回滚）",
 	});
 
 	it("切换失败：回滚上一模式并记录错误", async () => {
-		useSettingsStore.setState({ contextManagerMode: "acp" });
+		useSettingsStore.setState({ contextManagerMode: "evaporation" });
 		piMock.setContextManagerMode.mockRejectedValue(new Error("disk full"));
 		await useSettingsStore.getState().setContextManagerMode("off");
-		expect(useSettingsStore.getState().contextManagerMode).toBe("acp");
+		expect(useSettingsStore.getState().contextManagerMode).toBe("evaporation");
 		expect(useSettingsStore.getState().error).toBe("disk full");
 	});
 });

@@ -80,7 +80,6 @@ import { LoginService } from "./settings/login";
 import { ModelPrefsService } from "./settings/model-prefs";
 import { SettingsService } from "./settings/settings";
 import { slashCommandsForLoader, slashCommandsForSession } from "./slash-commands";
-import { makeAcpExtension, readAcpEnabled, writeAcpEnabled } from "./tools/acp-context";
 import {
 	makeChannelWatchExtension,
 	readChannelWatchEnabled,
@@ -228,25 +227,23 @@ export class PiBackend {
 	/**
 	 * 内置扩展随资源加载器注册（inline factory，不受项目信任影响）。注册序即
 	 * context 钩子链序（V2 冒烟实证）：权限门控（无 context 钩子）→ 视觉代理
-	 * （image→文本，先文本化）→ ACP 上下文压缩（基于文本化内容做压缩决策，
+	 * （image→文本，先文本化）→ 上下文蒸发（基于文本化内容做蒸发决策，
 	 * 需保住视觉代理的替换）→ todo-reminder（恢复注入最后，不被压）。
 	 * 权限门控受 permissionGates/permissionExtension 开关控制（permissionGates=false
 	 * 时 confirm 恒 false，不能注册）；视觉代理 handler 实时读配置，设置页保存后立即
-	 * 生效；ACP 受用户级 settings.json 的 acpCompressionEnabled 开关控制（默认开，P2
-	 * 起随 app 启用、设置页可关；subagent 子会话不加载本工厂——noExtensions，见 runner.ts）。
+	 * 生效；上下文蒸发默认开启（缺省 mode=evaporation），设置页可切 off，切换 ≤2s
+	 * 生效免重开会话；subagent 子会话不加载本工厂——noExtensions，见 runner.ts）。
 	 */
 	private buildExtensionFactories(
 		cwd: string,
 		confirm: PermissionConfirm | undefined,
 	): Array<
 		| ReturnType<typeof makeTodoReminderExtension>
-		| ReturnType<typeof makeAcpExtension>
 		| ReturnType<typeof makeChannelWatchExtension>
 		| ReturnType<typeof makeEvapExtension>
 	> {
 		const factories: Array<
 			| ReturnType<typeof makeTodoReminderExtension>
-			| ReturnType<typeof makeAcpExtension>
 			| ReturnType<typeof makeChannelWatchExtension>
 			| ReturnType<typeof makeEvapExtension>
 		> = [];
@@ -258,10 +255,8 @@ export class PiBackend {
 		if (this.visionConfig && this.options.visionProxy !== false) {
 			factories.push(makeVisionProxyExtension({ configService: this.visionConfig }));
 		}
-		// ACP 上下文压缩（开关默认开；工厂内部 session_start 时检查开关，关时零副作用）
-		factories.push(makeAcpExtension({ agentDir: getAgentDir() }));
-		// 上下文蒸发（与 ACP 互斥：mode=evaporation 时 ACP 物理关闭；钩子实时读派生
-		// mode，设置页切换后 ≤2s 生效，无需重开会话。arch §2.1：插在 ACP 槽位之后）。
+		// 上下文蒸发（默认开启：缺省 mode=evaporation；钩子实时读派生 mode，
+		// 设置页切换后 ≤2s 生效，无需重开会话）。
 		// 批次上报双通道：log（快速 grep）+ trace_custom 行（灰度分析脚本直读，
 		// reducer 未知类型 no-op，replay-trace.mts 重放安全）
 		factories.push(
@@ -274,10 +269,9 @@ export class PiBackend {
 			}),
 		);
 		// channel-watch 跨会话协作（开关默认开；session_start 检查开关 + trusted 门，
-		// 无订阅时零 fs 监听；钩子与 ACP/todo 无语义交互，位置不敏感，放 todo 前）
+		// 无订阅时零 fs 监听；钩子与蒸发/todo 无语义交互，位置不敏感，放 todo 前）
 		factories.push(makeChannelWatchExtension({ agentDir: getAgentDir(), cwd }));
-		// todo-reminder 最后：compaction 后恢复注入的任务列表不被上游折叠，
-		// 且其末尾追加的 CustomMessage 不干扰 ACP 的 entries↔messages 对齐
+		// todo-reminder 最后：compaction 后恢复注入的任务列表不被上游折叠
 		factories.push(makeTodoReminderExtension());
 		return factories;
 	}
@@ -981,17 +975,12 @@ export class PiBackend {
 		log.info("permission gate enabled", enabled);
 	}
 
-	/** ACP 上下文压缩开关（设置 UI 用；键在 ~/.pi/agent/settings.json，缺省=开） */
-	getAcpConfig(): { enabled: boolean } {
-		return { enabled: readAcpEnabled(getAgentDir()) };
-	}
-
-	/** 上下文管理模式（三态：acp / evaporation / off；双 key 派生读，双开冲突 ACP 优先） */
+	/** 上下文管理模式（二态：evaporation / off；单一 key 派生读，缺省蒸发） */
 	getContextManagerConfig(): { mode: ContextManagerMode } {
 		return { mode: readContextManagerMode(getAgentDir()) };
 	}
 
-	/** 写上下文管理模式（单一写者原子双写，写后即效：下一轮 context 钩子见新值）。损坏拒写时上抛 */
+	/** 写上下文管理模式（单一写者原子写，写后即效：下一轮 context 钩子见新值）。损坏拒写时上抛 */
 	setContextManagerMode(mode: ContextManagerMode): void {
 		try {
 			writeContextManagerMode(getAgentDir(), mode);
@@ -1000,17 +989,6 @@ export class PiBackend {
 			throw err; // ipcMain.handle，reject 传回 renderer
 		}
 		log.info("context manager mode", mode);
-	}
-
-	/** 写 ACP 开关并清读缓存（下一轮 context 钩子即见新值；工具注册在下一次 session_start）。损坏拒写时上抛 */
-	setAcpEnabled(enabled: boolean): void {
-		try {
-			writeAcpEnabled(getAgentDir(), enabled);
-		} catch (err) {
-			log.error("settings.json 写入失败（acp 开关未保存）", err);
-			throw err; // ipcMain.handle，reject 传回 renderer
-		}
-		log.info("acp compression enabled", enabled);
 	}
 
 	/** channel-watch 总开关（设置 UI 用；键在 ~/.pi/agent/settings.json，缺省=开） */

@@ -26,10 +26,10 @@ import { useUiStore } from "./stores/ui";
 import { initUpdateStore } from "./stores/update";
 
 /**
- * 压缩后 UI 历史保留（问题一搭车修复，acp-context 任务 T8）：SDK compaction 只裁剪
- * LLM 上下文（agent.state.messages），会话树 jsonl 完整；UI 消息流不再在
- * `compaction_end` 后用 getSessionMessages 整体重置（曾把 1334 条历史瞬间换成 662
- * 条裁剪版），只让 reducer 追加分界线 system 消息——历史/fork/recall 依旧基于完整分支。
+ * 压缩后 UI 历史保留：SDK compaction 只裁剪 LLM 上下文（agent.state.messages），
+ * 会话树 jsonl 完整；UI 消息流不再在 `compaction_end` 后用 getSessionMessages 整体
+ * 重置（曾把 1334 条历史瞬间换成 662 条裁剪版），只让 reducer 追加分界线 system
+ * 消息——历史/fork/recall 依旧基于完整分支。
  */
 
 export default function App() {

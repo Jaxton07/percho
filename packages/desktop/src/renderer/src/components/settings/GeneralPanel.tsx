@@ -4,9 +4,9 @@ import { useI18nStore, useT } from "../../i18n";
 import { useSettingsStore } from "../../stores/settings";
 import { Switch } from "../ui/Switch";
 
-const CONTEXT_MANAGER_MODES: ContextManagerMode[] = ["acp", "evaporation", "off"];
+const CONTEXT_MANAGER_MODES: ContextManagerMode[] = ["evaporation", "off"];
 
-/** 通用设置面板：语言选择 + 内置权限门控开关 + 上下文管理三态 + channel-watch 开关 */
+/** 通用设置面板：语言选择 + 内置权限门控开关 + 上下文管理二态 + channel-watch 开关 */
 export function GeneralPanel() {
 	const t = useT();
 	const language = useI18nStore((s) => s.language);

@@ -9,7 +9,7 @@ const log = createLogger("channel-watch-config");
  * channel-watch 总开关（spec D7）：用户级 settings.json 的 `channelWatchEnabled`
  * （**默认开**——用户拍板默认启用）。设置页「通用」面板经 IPC 读写。
  *
- * 结构照抄 acp-context/config.ts：JSONC 容错解析 + 2s TTL 缓存 + fail-soft
+ * 结构沿用 settings 配置链路既有模式：JSONC 容错解析 + 2s TTL 缓存 + fail-soft
  * （读失败按默认开，绝不影响会话创建）。
  */
 
