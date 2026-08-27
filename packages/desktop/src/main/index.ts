@@ -4,7 +4,7 @@ import "./fix-path";
 import { join } from "node:path";
 import { pathToFileURL } from "node:url";
 import { createLogger, initLogging, PiBackend } from "@percho/backend";
-import { app, BrowserWindow, Menu, nativeTheme, net, protocol } from "electron";
+import { app, BrowserWindow, dialog, Menu, nativeTheme, net, protocol } from "electron";
 import { backgroundsDir } from "./background";
 import { registerIpc } from "./ipc";
 import { initLanObserver, type LanObserverHandle } from "./lan";
@@ -52,11 +52,54 @@ app.whenReady().then(async () => {
 		return net.fetch(pathToFileURL(join(backgroundsDir(), name)).toString());
 	});
 
-	// renderer 异常/崩溃 → 日志（错误排查依赖 trace + 日志）
+	// renderer 异常/崩溃 → 日志（错误排查依赖 trace + 日志）+ 进程级死亡自动恢复
 	const crashLog = createLogger("renderer");
+	// 0.5.2 白屏事故（2026-08-27 04:39）：流式 IPC 洪水下 renderer 被 SIGTERM 杀死，
+	// 主进程/会话健在（LAN 页仍在跑）但窗口永久空白。AppErrorBoundary 只能接 React 层异常，
+	// 进程级死亡必须在这里兜底 reload；短窗高频崩溃则停手转人工（防崩溃循环反复闪屏）
+	const RELOAD_WINDOW_MS = 30_000;
+	const MAX_AUTO_RELOADS = 3;
+	const crashReloads: number[] = [];
 	app.on("web-contents-created", (_e, contents) => {
 		contents.on("render-process-gone", (_event, details) => {
 			crashLog.error("render process gone", details);
+			// clean-exit：reload/quit 等正常退出也触发本事件，不是崩溃
+			if (details.reason === "clean-exit") return;
+			const now = Date.now();
+			while (crashReloads.length > 0 && now - (crashReloads[0] ?? 0) > RELOAD_WINDOW_MS) crashReloads.shift();
+			if (crashReloads.length >= MAX_AUTO_RELOADS) {
+				crashLog.error("renderer crash loop, auto reload suspended", {
+					windowMs: RELOAD_WINDOW_MS,
+					count: crashReloads.length,
+				});
+				const win = BrowserWindow.fromWebContents(contents);
+				const options: Electron.MessageBoxOptions = {
+					type: "error",
+					title: "Percho",
+					message: "界面进程反复崩溃",
+					detail: "自动恢复已暂停，避免崩溃循环。可重试加载或退出（后台任务不受影响）。",
+					buttons: ["重新加载", "退出"],
+					defaultId: 0,
+					noLink: true,
+				};
+				void (win ? dialog.showMessageBox(win, options) : dialog.showMessageBox(options)).then(
+					({ response }) => {
+						if (response === 0) {
+							crashReloads.length = 0;
+							contents.reload();
+						} else {
+							app.quit();
+						}
+					},
+				);
+				return;
+			}
+			crashReloads.push(now);
+			crashLog.info("renderer crashed, auto reloading", {
+				reason: details.reason,
+				exitCode: details.exitCode,
+			});
+			contents.reload();
 		});
 		contents.on("unresponsive", () => {
 			crashLog.warn("renderer unresponsive");

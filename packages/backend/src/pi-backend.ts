@@ -58,7 +58,7 @@ import { walkProjectFiles } from "./project/files";
 import { TrustGate } from "./project/trust";
 import { ProjectResourceLoader } from "./project/trust-loader";
 import { addAllowedPattern, addWorkspaceRoot } from "./project/workspace-store";
-import { slimMessageUpdate } from "./session/event-slim";
+import { slimBulkyEvent, slimMessageUpdate } from "./session/event-slim";
 import {
 	assignEntryIds,
 	blockImages,
@@ -291,6 +291,8 @@ export class PiBackend {
 	private emitEvent(sessionId: string, event: SessionEvent): void {
 		// message_update 携带全量快照（partial + message），平方放大事故源头，先瘦身再分发
 		if (event.type === "message_update") event = slimMessageUpdate(event);
+		// toolResult 大结果四份快照重复携带（0.5.2 白屏事故降压层）：image base64 剥除 + 超长 text 截断
+		event = slimBulkyEvent(event);
 		// 流式熔断：病态输出（空白洪流/超量）trip 后 abort 会话，并丢弃后续增量（trace 与转发同步止血）
 		const verdict = this.streamGuard.inspect(sessionId, event);
 		if (verdict !== "pass") {
