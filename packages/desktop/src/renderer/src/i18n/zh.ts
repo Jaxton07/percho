@@ -176,6 +176,7 @@ export const zh = {
 		messages: "{count} 条消息",
 		delete: "删除会话",
 		confirmDelete: "确认删除?",
+		copyDiagnostics: "复制诊断信息",
 		deleteProject: "删除项目",
 		confirmDeleteProject: "确认删除项目?",
 		selectProject: "选择项目目录",
@@ -216,14 +217,12 @@ export const zh = {
 			"开启后按规则拦截工具调用：高危命令（rm -rf、sudo、强推等）弹窗确认，其余放行。规则文件 ~/.pi/agent/permissions.json，修改即时生效。关闭可换用自己安装的权限扩展。",
 		contextManager: "上下文管理",
 		contextManagerMode: {
-			acp: "智能压缩（ACP）",
-			evaporation: "蒸发（实验）",
+			evaporation: "蒸发",
 			off: "关闭",
 		},
 		contextManagerHint: {
-			acp: "长会话中让模型自主摘要压缩已消耗的旧对话，任务不中断、压缩内容可随时 decompress 还原。约 75% 上下文占用时开始引导压缩，默认开启。切换后无需重开会话。",
 			evaporation:
-				"按水位线把到龄的工具输出蒸发为带恢复指令的占位符（如「输出已淘汰，可用相同参数重读」）：零 LLM 调用、对话原文保留、会话文件不动。窗口预算 256K，60%/85% 分级触发。实验特性，切换后无需重开会话。",
+				"默认开启。按水位线把到龄的工具输出蒸发为带恢复指令的占位符（如「输出已淘汰，可用相同参数重读」）：60% 起截断工具输出、85% 起淘汰为占位；零 LLM 调用、对话原文保留、会话文件不动。切换后无需重开会话。",
 			off: "关闭全部上下文管理：不做主动压缩/蒸发，依赖 SDK 在接近窗口上限时的原生压缩兜底。长会话可能中断等待压缩。",
 		},
 		channelWatch: "跨会话频道协作（channel-watch）",
@@ -440,6 +439,49 @@ export const zh = {
 	lang: {
 		zh: "中文",
 		en: "English",
+	},
+	error: {
+		meta: {
+			llm: "模型请求",
+			session: "会话",
+			tool: "工具",
+			extension: "扩展",
+			app: "应用",
+			network: "网络",
+		},
+		action: {
+			retry: "重试",
+			compact: "压缩上下文",
+			openSettings: "打开设置",
+			copyDetail: "复制详情",
+		},
+		copied: "已复制",
+		title: {
+			llmAuth: "模型请求失败：凭证无效",
+			llmRateLimit: "模型请求失败：请求过于频繁",
+			llmOverflow: "模型请求失败：上下文超限",
+			llmNetwork: "模型请求失败：网络错误",
+			llmGeneric: "模型请求失败",
+			streamGuard: "回复已被安全机制中止",
+			sendFailed: "发送失败",
+			sendReadOnly: "会话是只读的，无法发送",
+		},
+		hint: {
+			checkApiKey: "API 凭证无效或已过期。检查「设置 → 模型服务」中的 API Key。",
+			rateLimit: "请求过于频繁或服务端限流，稍候重试。",
+			compact: "会话过长。可执行 /compact 压缩上下文，或从此处分叉开启新会话。",
+			network: "网络连接异常，请检查网络后重试。",
+			streamGuard: "模型输出异常（病态流），已被安全机制中止。",
+		},
+		retrying: "自动重试中 · 第 {attempt}/{maxAttempts} 次 · 等待 {delay}s",
+		retryDone: "重试成功",
+		retryFailed: "重试失败",
+	},
+	toast: {
+		tabsSaveFailed: "标签页保存失败",
+		uiStateSaveFailed: "界面设置保存失败",
+		trustFailed: "项目信任检查失败",
+		closeFailed: "关闭会话失败",
 	},
 };
 

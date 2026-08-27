@@ -4,6 +4,7 @@ import { create } from "zustand";
 import { getPi } from "../api";
 import { clampThinkingLevel } from "../lib/thinking";
 import { COMPOSER_FOCUS_EVENT, useDraftStore } from "./drafts";
+import { pushToast } from "./toasts";
 import { useTranscriptStore } from "./transcript";
 
 /** 草稿会话 id 前缀：新会话 tab 的占位条目，只存在于 renderer 内存，后端永远不会看到 */
@@ -11,6 +12,13 @@ export const DRAFT_SESSION_PREFIX = "draft:";
 
 export function isDraftSessionId(sessionId: string | null | undefined): boolean {
 	return typeof sessionId === "string" && sessionId.startsWith(DRAFT_SESSION_PREFIX);
+}
+
+/** toast detail 展示截断（原始错误文本超出只留首段） */
+function errText(error: unknown): string | undefined {
+	const message = error instanceof Error ? error.message : typeof error === "string" ? error : undefined;
+	if (!message) return undefined;
+	return message.length > 140 ? `${message.slice(0, 140)}…` : message;
 }
 
 /** 顶栏打开的会话持久化（重启恢复用）；由主进程写 userData/tabs.json，不依赖 renderer localStorage */
@@ -21,9 +29,13 @@ function persistTabs(state: Pick<SessionsStore, "sessions" | "activeSessionId">)
 				files: [...new Set(state.sessions.map((s) => s.sessionFile).filter((f): f is string => Boolean(f)))],
 				activeFile: state.sessions.find((s) => s.sessionId === state.activeSessionId)?.sessionFile ?? null,
 			})
-			.catch((error) => console.error("tabs 持久化失败", error));
-	} catch {
-		// 持久化失败静默（不影响主流程）
+			.catch((error) => {
+				console.error("tabs 持久化失败", error);
+				pushToast("warning", "toast.tabsSaveFailed", errText(error));
+			});
+	} catch (error) {
+		console.error("tabs 持久化失败", error);
+		pushToast("warning", "toast.tabsSaveFailed", errText(error));
 	}
 }
 
@@ -103,7 +115,10 @@ export const useSessionsStore = create<SessionsStore>((set, get) => ({
 		void getPi()
 			.ensureProjectTrust(targetCwd)
 			.then(() => set((s) => ({ trustVersion: s.trustVersion + 1 })))
-			.catch(() => {});
+			.catch((error) => {
+				console.error("项目信任检查失败", error);
+				pushToast("warning", "toast.trustFailed", errText(error));
+			});
 		const now = Date.now();
 		const draft: SessionMeta = {
 			sessionId: `${DRAFT_SESSION_PREFIX}${crypto.randomUUID()}`,
@@ -128,7 +143,10 @@ export const useSessionsStore = create<SessionsStore>((set, get) => ({
 		void getPi()
 			.ensureProjectTrust(cwd)
 			.then(() => set((s) => ({ trustVersion: s.trustVersion + 1 })))
-			.catch(() => {});
+			.catch((error) => {
+				console.error("项目信任检查失败", error);
+				pushToast("warning", "toast.trustFailed", errText(error));
+			});
 		set((state) => {
 			const active = state.sessions.find((s) => s.sessionId === state.activeSessionId);
 			if (active && isDraftSessionId(active.sessionId)) {
@@ -172,7 +190,16 @@ export const useSessionsStore = create<SessionsStore>((set, get) => ({
 	closeSession: async (sessionId) => {
 		const isDraft = isDraftSessionId(sessionId);
 		// draft 没有后端会话，纯本地移除
-		if (!isDraft) await getPi().closeSession(sessionId);
+		if (!isDraft) {
+			try {
+				await getPi().closeSession(sessionId);
+			} catch (error) {
+				// 会话关闭失败：UI 状态保留（用户可重试），显形不静默（曾「点了没反应」）
+				console.error("关闭会话失败", error);
+				pushToast("warning", "toast.closeFailed", errText(error));
+				return;
+			}
+		}
 		useTranscriptStore.getState().resetSession(sessionId);
 		set((state) => {
 			const sessions = state.sessions.filter((s) => s.sessionId !== sessionId);
@@ -366,7 +393,10 @@ export const useSessionsStore = create<SessionsStore>((set, get) => ({
 		}));
 		getPi()
 			.saveUiState({ currentModel: { provider, modelId }, thinkingLevel })
-			.catch((error) => console.error("ui-state 持久化失败", error));
+			.catch((error) => {
+				console.error("ui-state 持久化失败", error);
+				pushToast("warning", "toast.uiStateSaveFailed", errText(error));
+			});
 		// draft 无后端会话：模型选择只作为全局默认，创建时随 createSession 生效
 		if (activeSessionId && !isDraftSessionId(activeSessionId)) {
 			try {

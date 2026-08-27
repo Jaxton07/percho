@@ -179,6 +179,7 @@ export const en: Messages = {
 		messages: "{count} messages",
 		delete: "Delete session",
 		confirmDelete: "Click again to confirm",
+		copyDiagnostics: "Copy diagnostics",
 		deleteProject: "Delete project",
 		confirmDeleteProject: "Click again to confirm",
 		selectProject: "Pick project directory",
@@ -219,14 +220,12 @@ export const en: Messages = {
 			"When on, tool calls are checked against rules: dangerous commands (rm -rf, sudo, force push, etc.) ask for confirmation, everything else runs. Rules live in ~/.pi/agent/permissions.json and apply instantly. Turn off to replace with your own permission extension.",
 		contextManager: "Context management",
 		contextManagerMode: {
-			acp: "Smart (ACP)",
-			evaporation: "Evaporation (beta)",
+			evaporation: "Evaporation",
 			off: "Off",
 		},
 		contextManagerHint: {
-			acp: "In long sessions the model summarizes and compresses consumed history itself — the task keeps running and compressed content stays recoverable via decompress. Nudges start around 75% context usage. Switching applies without restarting sessions.",
 			evaporation:
-				"Evaporates aged tool output into self-describing stubs (e.g. “output evicted, re-read with the same arguments”) by watermark: zero LLM calls, conversation text preserved, session files untouched. 256K window budget with 60%/85% tiers. Experimental; applies without restarting sessions.",
+				"On by default. Evaporates aged tool output into self-describing stubs by watermark (e.g. “output evicted, re-read with the same arguments”): tool output truncated from 60%, evicted into placeholders from 85%; zero LLM calls, conversation text preserved, session files untouched. Switching applies without restarting sessions.",
 			off: "Disables all context management: no active compression/evaporation; the SDK's native compaction kicks in near the window limit. Long sessions may pause for compaction.",
 		},
 		channelWatch: "Cross-session channel collaboration (channel-watch)",
@@ -457,5 +456,48 @@ export const en: Messages = {
 	lang: {
 		zh: "中文",
 		en: "English",
+	},
+	error: {
+		meta: {
+			llm: "Model request",
+			session: "Session",
+			tool: "Tool",
+			extension: "Extension",
+			app: "App",
+			network: "Network",
+		},
+		action: {
+			retry: "Retry",
+			compact: "Compact context",
+			openSettings: "Open settings",
+			copyDetail: "Copy detail",
+		},
+		copied: "Copied",
+		title: {
+			llmAuth: "Model request failed: invalid credentials",
+			llmRateLimit: "Model request failed: rate limited",
+			llmOverflow: "Model request failed: context limit exceeded",
+			llmNetwork: "Model request failed: network error",
+			llmGeneric: "Model request failed",
+			streamGuard: "Reply aborted by safety guard",
+			sendFailed: "Failed to send",
+			sendReadOnly: "Session is read-only, cannot send",
+		},
+		hint: {
+			checkApiKey: "API credentials are invalid or expired. Check the API key in Settings → Model providers.",
+			rateLimit: "Too many requests or server-side throttling; try again shortly.",
+			compact: "Context is too long. Run /compact to compress, or fork from here to start a new session.",
+			network: "Network connection issue; check your connection and retry.",
+			streamGuard: "Abnormal model output (pathological stream) was aborted by the safety guard.",
+		},
+		retrying: "Auto-retrying · attempt {attempt}/{maxAttempts} · waiting {delay}s",
+		retryDone: "Retry succeeded",
+		retryFailed: "Retry failed",
+	},
+	toast: {
+		tabsSaveFailed: "Failed to save tabs",
+		uiStateSaveFailed: "Failed to save UI state",
+		trustFailed: "Failed to check project trust",
+		closeFailed: "Failed to close session",
 	},
 };

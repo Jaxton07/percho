@@ -44,9 +44,10 @@ describe("resolveForkEntryId（分叉目标解析）", () => {
 		expect(resolveForkEntryId(sm, { text: "回答" })).toBe(reply);
 	});
 
-	it("ACP 净化后的实时 assistant 必须以完整持久化正文走 text fallback", () => {
+	it("skill 展开消息（展示≠原文场景）以完整持久化正文走 text fallback", () => {
 		const sm = SessionManager.inMemory();
-		const rawText = '<acp tokens="55" type="bash">m00058</acp>';
+		const rawText =
+			'<skill name="mindmap" location="/tmp/skills/mindmap/SKILL.md">\nReferences are relative to /tmp/skills/mindmap.\n\nBody\n</skill>';
 		const reply = sm.appendMessage({
 			role: "assistant",
 			content: [{ type: "text", text: rawText }],

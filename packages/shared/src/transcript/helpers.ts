@@ -22,7 +22,6 @@ export function emptyStreaming(): StreamingState {
 	return {
 		id: newMessageId(),
 		text: "",
-		rawText: "",
 		thinking: "",
 		tools: [],
 		pendingImages: [],

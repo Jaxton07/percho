@@ -99,7 +99,12 @@ export class TraceRecorder {
 		if (this.closed) return;
 		let line: string;
 		try {
-			line = JSON.stringify(event) ?? "null";
+			// 顶层加 ts（epoch 毫秒）：事故时 trace 与主日志/系统时间可对时（原先只能靠文件 mtime 反推）；
+			// replay/统计脚本逐行 JSON.parse 读 type，新字段透明。null/非对象事件保持原序列化不变。
+			line =
+				event !== null && typeof event === "object"
+					? JSON.stringify({ ts: Date.now(), ...(event as object) })
+					: (JSON.stringify(event) ?? "null");
 		} catch (err) {
 			log.warn("trace serialize failed", this.filePath, err);
 			return;
@@ -108,7 +113,7 @@ export class TraceRecorder {
 			// 巨型事件（异常快照等）：只记截断标记，不落巨型行；保持每行可 JSON.parse。
 			// type 用合成值 trace_gap（reducer no-op），真实类型放 originalType（见文件头注释）。
 			const originalType = JSON.stringify((event as { type?: unknown })?.type ?? "unknown");
-			line = `{"_truncated":true,"type":"trace_gap","originalType":${originalType},"bytes":${line.length}}`;
+			line = `{"ts":${Date.now()},"_truncated":true,"type":"trace_gap","originalType":${originalType},"bytes":${line.length}}`;
 		}
 		this.buffer.push(line);
 		this.bufferBytes += line.length;
@@ -134,7 +139,7 @@ export class TraceRecorder {
 		} catch (err) {
 			// join 本身失败（单条超长触发分配上限）：丢弃整批记标记，绝不重试同一批
 			log.error("trace flush join failed, batch dropped", this.filePath, err);
-			chunk = `{"_truncated":true,"type":"trace_gap","reason":"flush_join_failed"}\n`;
+			chunk = `{"ts":${Date.now()},"_truncated":true,"type":"trace_gap","reason":"flush_join_failed"}\n`;
 		}
 		this.buffer.length = 0;
 		this.bufferBytes = 0;
@@ -174,7 +179,7 @@ export class TraceRecorder {
 			this.bufferBytes -= line.length;
 			dropped++;
 		}
-		const marker = `{"_truncated":true,"type":"trace_gap","reason":"buffer_overflow","dropped":${dropped}}`;
+		const marker = `{"ts":${Date.now()},"_truncated":true,"type":"trace_gap","reason":"buffer_overflow","dropped":${dropped}}`;
 		this.buffer.unshift(marker);
 		this.bufferBytes += marker.length;
 	}

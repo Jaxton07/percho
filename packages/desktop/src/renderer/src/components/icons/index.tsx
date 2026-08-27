@@ -11,6 +11,62 @@ const strokeProps = {
 	strokeWidth: 2,
 } as const;
 
+/** 错误包「！」：（报错卡片 glyph，severity 着色由使用方 text-err/warn/info 控制） */
+export function ErrorCircleIcon({ size = 14, className }: IconProps) {
+	return (
+		<svg
+			className={className}
+			width={size}
+			height={size}
+			viewBox="0 0 24 24"
+			{...strokeProps}
+			strokeLinecap="round"
+			aria-hidden="true"
+		>
+			<circle cx="12" cy="12" r="9" />
+			<path d="M12 8v5" />
+			<circle cx="12" cy="16.4" r="0.7" fill="currentColor" stroke="none" />
+		</svg>
+	);
+}
+
+/** 右箭头（错误卡展开 chevron） */
+export function ChevronRightIcon({ size = 12, className }: IconProps) {
+	return (
+		<svg
+			className={className}
+			width={size}
+			height={size}
+			viewBox="0 0 24 24"
+			{...strokeProps}
+			strokeLinecap="round"
+			strokeLinejoin="round"
+			aria-hidden="true"
+		>
+			<path d="m9 6 6 6-6 6" />
+		</svg>
+	);
+}
+
+/** 复制（详情复制） */
+export function CopyIcon({ size = 12, className }: IconProps) {
+	return (
+		<svg
+			className={className}
+			width={size}
+			height={size}
+			viewBox="0 0 24 24"
+			{...strokeProps}
+			strokeLinecap="round"
+			strokeLinejoin="round"
+			aria-hidden="true"
+		>
+			<rect x="9" y="9" width="12" height="12" rx="2" />
+			<path d="M5 15V5a2 2 0 0 1 2-2h10" />
+		</svg>
+	);
+}
+
 /** 子代理（隔离会话 / 小机器人） */
 export function SubagentIcon({ size = 12, className }: IconProps) {
 	return (

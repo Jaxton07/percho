@@ -1,10 +1,11 @@
-import type { ImageInput } from "@percho/shared";
+import type { ImageInput, UiError } from "@percho/shared";
 import { useEffect, useRef, useState } from "react";
 import { getPi } from "../../api";
 import { useT } from "../../i18n";
 import { isDraftSessionId, useSessionsStore } from "../../stores/sessions";
 import { useSettingsStore } from "../../stores/settings";
 import { useTranscriptStore } from "../../stores/transcript";
+import { buildSendUiError } from "./send-error";
 
 export interface UseComposerSendOptions {
 	activeSessionId: string | null;
@@ -30,9 +31,12 @@ export interface UseComposerSendOptions {
 export function useComposerSend(options: UseComposerSendOptions) {
 	const t = useT();
 	const [sending, setSending] = useState(false);
-	const [error, setError] = useState<string | null>(null);
+	const [error, setErrorState] = useState<UiError | null>(null);
 	const [feedback, setFeedback] = useState<{ message: string; tone: "info" | "warn" } | null>(null);
 	const feedbackTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+	/** 统一信封：发送失败也走 UiError（内联条 + 与消息流错误卡同语言）；传 null 清除 */
+	const setError = (message: string | null) => setErrorState(message ? buildSendUiError(message) : null);
 
 	const showFeedback = (message: string, tone: "info" | "warn" = "info") => {
 		setFeedback({ message, tone });
@@ -153,6 +157,8 @@ export function useComposerSend(options: UseComposerSendOptions) {
 			setError(err instanceof Error ? err.message : String(err));
 			options.setImages(sentImages);
 			options.setAttachments(sentAttachments);
+			// 草稿恢复：发送失败不丢输入（重试按钮/编辑重发都基于它）
+			if (text.trim()) options.setText(text);
 		} finally {
 			setSending(false);
 		}

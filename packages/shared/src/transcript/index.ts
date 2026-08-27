@@ -28,6 +28,7 @@ export {
 	type ActivityEntry,
 	type CompactionUiState,
 	emptyTranscript,
+	type RetryInfo,
 	type SessionPhase,
 	type SessionTranscriptState,
 	type StreamingState,

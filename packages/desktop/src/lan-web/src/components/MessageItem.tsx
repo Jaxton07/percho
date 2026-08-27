@@ -1,5 +1,5 @@
 import { LAN_IMAGE_PLACEHOLDER, type UIMessage } from "@percho/shared";
-import { t } from "../i18n";
+import { type LanI18nKey, t } from "../i18n";
 import { ChevronRightIcon, ImageIcon } from "./icons";
 import { Markdown } from "./Markdown";
 import { SubagentCard } from "./SubagentCard";
@@ -35,6 +35,19 @@ function ThinkingBlock({ text }: { text: string }) {
 			<pre>{text}</pre>
 		</details>
 	);
+}
+
+/** error.title.* 迷你字典键（zh/en 已收录）；未知 key（未来新增）降级 error.generic */
+const KNOWN_ERROR_TITLES = new Set([
+	"error.title.llmAuth",
+	"error.title.llmRateLimit",
+	"error.title.llmOverflow",
+	"error.title.llmNetwork",
+	"error.title.llmGeneric",
+	"error.title.streamGuard",
+]);
+function errorTitleKey(key: string): LanI18nKey {
+	return KNOWN_ERROR_TITLES.has(key) ? (key as LanI18nKey) : "error.generic";
 }
 
 function CompactMessage({ message }: { message: Extract<UIMessage, { kind: "system" }> }) {
@@ -106,7 +119,14 @@ export function MessageItem({
 				</div>
 			);
 		case "error":
-			return <div className={`m-err${cls}`}>{message.text}</div>;
+			// 统一报错信封（共用 reducer 自动派发）；LAN 迷你字典没有 error.* 全量
+			// 密钥，标题用 titleKey 的中文兜底（仅当已知 key 时翻译，否则原文 key）
+			return (
+				<div className={`m-err${cls}`}>
+					<div className="m-err-title">{t(errorTitleKey(message.error.titleKey))}</div>
+					{message.error.detail && <pre className="m-err-detail">{message.error.detail}</pre>}
+				</div>
+			);
 		case "system":
 			return <CompactMessage message={message} />;
 		case "image":

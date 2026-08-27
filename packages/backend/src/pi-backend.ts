@@ -58,7 +58,7 @@ import { walkProjectFiles } from "./project/files";
 import { TrustGate } from "./project/trust";
 import { ProjectResourceLoader } from "./project/trust-loader";
 import { addAllowedPattern, addWorkspaceRoot } from "./project/workspace-store";
-import { slimMessageUpdate } from "./session/event-slim";
+import { slimBulkyEvent, slimMessageUpdate } from "./session/event-slim";
 import {
 	assignEntryIds,
 	blockImages,
@@ -70,6 +70,7 @@ import {
 	toSessionMessages,
 } from "./session/messages";
 import { autoNameSession } from "./session/naming";
+import { EventRateTracker } from "./session/rates";
 import { type EventForwarder, SessionRegistry } from "./session/registry";
 import { StreamGuard } from "./session/stream-guard";
 import { TraceRecorder } from "./session/trace";
@@ -79,7 +80,6 @@ import { LoginService } from "./settings/login";
 import { ModelPrefsService } from "./settings/model-prefs";
 import { SettingsService } from "./settings/settings";
 import { slashCommandsForLoader, slashCommandsForSession } from "./slash-commands";
-import { makeAcpExtension, readAcpEnabled, writeAcpEnabled } from "./tools/acp-context";
 import {
 	makeChannelWatchExtension,
 	readChannelWatchEnabled,
@@ -166,6 +166,8 @@ export class PiBackend {
 	/** 会话事件 trace（JSONL，离线可重放） */
 	private readonly traces = new SessionTraces();
 	private readonly streamGuard = new StreamGuard();
+	/** 每会话事件速率（60s 窗口；心跳/临终快照数据源） */
+	private readonly eventRates = new EventRateTracker();
 	private modelRuntime: ModelRuntime | undefined;
 	private modelPromise: Promise<ModelRuntime> | undefined;
 	/** 设置页（provider/模型/凭证配置）服务 */
@@ -225,25 +227,23 @@ export class PiBackend {
 	/**
 	 * 内置扩展随资源加载器注册（inline factory，不受项目信任影响）。注册序即
 	 * context 钩子链序（V2 冒烟实证）：权限门控（无 context 钩子）→ 视觉代理
-	 * （image→文本，先文本化）→ ACP 上下文压缩（基于文本化内容做压缩决策，
+	 * （image→文本，先文本化）→ 上下文蒸发（基于文本化内容做蒸发决策，
 	 * 需保住视觉代理的替换）→ todo-reminder（恢复注入最后，不被压）。
 	 * 权限门控受 permissionGates/permissionExtension 开关控制（permissionGates=false
 	 * 时 confirm 恒 false，不能注册）；视觉代理 handler 实时读配置，设置页保存后立即
-	 * 生效；ACP 受用户级 settings.json 的 acpCompressionEnabled 开关控制（默认开，P2
-	 * 起随 app 启用、设置页可关；subagent 子会话不加载本工厂——noExtensions，见 runner.ts）。
+	 * 生效；上下文蒸发默认开启（缺省 mode=evaporation），设置页可切 off，切换 ≤2s
+	 * 生效免重开会话；subagent 子会话不加载本工厂——noExtensions，见 runner.ts）。
 	 */
 	private buildExtensionFactories(
 		cwd: string,
 		confirm: PermissionConfirm | undefined,
 	): Array<
 		| ReturnType<typeof makeTodoReminderExtension>
-		| ReturnType<typeof makeAcpExtension>
 		| ReturnType<typeof makeChannelWatchExtension>
 		| ReturnType<typeof makeEvapExtension>
 	> {
 		const factories: Array<
 			| ReturnType<typeof makeTodoReminderExtension>
-			| ReturnType<typeof makeAcpExtension>
 			| ReturnType<typeof makeChannelWatchExtension>
 			| ReturnType<typeof makeEvapExtension>
 		> = [];
@@ -255,26 +255,23 @@ export class PiBackend {
 		if (this.visionConfig && this.options.visionProxy !== false) {
 			factories.push(makeVisionProxyExtension({ configService: this.visionConfig }));
 		}
-		// ACP 上下文压缩（开关默认开；工厂内部 session_start 时检查开关，关时零副作用）
-		factories.push(makeAcpExtension({ agentDir: getAgentDir() }));
-		// 上下文蒸发（与 ACP 互斥：mode=evaporation 时 ACP 物理关闭；钩子实时读派生
-		// mode，设置页切换后 ≤2s 生效，无需重开会话。arch §2.1：插在 ACP 槽位之后）。
+		// 上下文蒸发（默认开启：缺省 mode=evaporation；钩子实时读派生 mode，
+		// 设置页切换后 ≤2s 生效，无需重开会话）。
 		// 批次上报双通道：log（快速 grep）+ trace_custom 行（灰度分析脚本直读，
 		// reducer 未知类型 no-op，replay-trace.mts 重放安全）
 		factories.push(
 			makeEvapExtension({
 				agentDir: getAgentDir(),
 				reporter: (sessionId, batch) => {
-					reportEvapBatch(batch);
+					reportEvapBatch(sessionId, batch);
 					this.traces.recordCustom(sessionId, "evap_batch", batch);
 				},
 			}),
 		);
 		// channel-watch 跨会话协作（开关默认开；session_start 检查开关 + trusted 门，
-		// 无订阅时零 fs 监听；钩子与 ACP/todo 无语义交互，位置不敏感，放 todo 前）
+		// 无订阅时零 fs 监听；钩子与蒸发/todo 无语义交互，位置不敏感，放 todo 前）
 		factories.push(makeChannelWatchExtension({ agentDir: getAgentDir(), cwd }));
-		// todo-reminder 最后：compaction 后恢复注入的任务列表不被上游折叠，
-		// 且其末尾追加的 CustomMessage 不干扰 ACP 的 entries↔messages 对齐
+		// todo-reminder 最后：compaction 后恢复注入的任务列表不被上游折叠
 		factories.push(makeTodoReminderExtension());
 		return factories;
 	}
@@ -289,18 +286,35 @@ export class PiBackend {
 	}
 
 	private emitEvent(sessionId: string, event: SessionEvent): void {
+		this.eventRates.tick(sessionId);
+		// 会话标题全量落一行日志（决策 7：不截断）：用户拿 UI 里看到的标题（含自动命名的 …）
+		// 能直接 grep 主日志定位会话，不再只靠 prompt 行的 120 字符截断
+		if (event.type === "session_info_changed") log.info("session renamed", sessionId, { name: event.name });
 		// message_update 携带全量快照（partial + message），平方放大事故源头，先瘦身再分发
 		if (event.type === "message_update") event = slimMessageUpdate(event);
+		// toolResult 大结果四份快照重复携带（0.5.2 白屏事故降压层）：image base64 剥除 + 超长 text 截断
+		event = slimBulkyEvent(event);
 		// 流式熔断：病态输出（空白洪流/超量）trip 后 abort 会话，并丢弃后续增量（trace 与转发同步止血）
 		const verdict = this.streamGuard.inspect(sessionId, event);
 		if (verdict !== "pass") {
 			if (verdict !== "suppress") {
 				log.error("stream guard tripped, aborting session", sessionId, { verdict });
 				void this.abort(sessionId).catch(() => {});
+				// 熔断显形：合成 stream_guard_tripped UI 事件（subagent_mutex 同款：union + IPC 转发 +
+				// 不进 trace），reducer 产 warning 条——否则「回复戛然而止」零 UI 信号。
+				// 合成事件直接调 handler 循环，不喂回 streamGuard.inspect（防线不能自触发）。
+				for (const handler of this.eventHandlers) {
+					try {
+						handler(sessionId, { type: "stream_guard_tripped", verdict });
+					} catch {
+						// 事件处理器异常不影响主流程
+					}
+				}
 			}
 			return;
 		}
-		if (event.type !== "subagent_mutex") this.traces.record(sessionId, event);
+		if (event.type !== "subagent_mutex" && event.type !== "stream_guard_tripped")
+			this.traces.record(sessionId, event);
 		for (const handler of this.eventHandlers) {
 			try {
 				handler(sessionId, event);
@@ -465,6 +479,7 @@ export class PiBackend {
 		this.gates.get(sessionId)?.dispose();
 		this.gates.delete(sessionId);
 		this.streamGuard.cleanup(sessionId);
+		this.eventRates.delete(sessionId);
 		this.registry.delete(sessionId);
 		await this.traces.stop(sessionId);
 		log.info("session closed", sessionId);
@@ -574,6 +589,13 @@ export class PiBackend {
 			outputTokens: stats.tokens.output,
 			cost: stats.cost,
 		};
+	}
+
+	/** 每会话事件速率快照（心跳/临终快照数据源）：最近 60s 每秒事件数 + 最近事件时刻。
+	 * 顺带回收已结束会话（subagent 子会话不走 closeSession）的残留条目。 */
+	getEventRates(): Map<string, { window60s: number[]; lastEventAt: number }> {
+		this.eventRates.prune((id) => this.registry.has(id));
+		return this.eventRates.snapshot();
 	}
 
 	/** 全部活跃会话的运行态快照（只读观察者用）。 */
@@ -953,17 +975,12 @@ export class PiBackend {
 		log.info("permission gate enabled", enabled);
 	}
 
-	/** ACP 上下文压缩开关（设置 UI 用；键在 ~/.pi/agent/settings.json，缺省=开） */
-	getAcpConfig(): { enabled: boolean } {
-		return { enabled: readAcpEnabled(getAgentDir()) };
-	}
-
-	/** 上下文管理模式（三态：acp / evaporation / off；双 key 派生读，双开冲突 ACP 优先） */
+	/** 上下文管理模式（二态：evaporation / off；单一 key 派生读，缺省蒸发） */
 	getContextManagerConfig(): { mode: ContextManagerMode } {
 		return { mode: readContextManagerMode(getAgentDir()) };
 	}
 
-	/** 写上下文管理模式（单一写者原子双写，写后即效：下一轮 context 钩子见新值）。损坏拒写时上抛 */
+	/** 写上下文管理模式（单一写者原子写，写后即效：下一轮 context 钩子见新值）。损坏拒写时上抛 */
 	setContextManagerMode(mode: ContextManagerMode): void {
 		try {
 			writeContextManagerMode(getAgentDir(), mode);
@@ -972,17 +989,6 @@ export class PiBackend {
 			throw err; // ipcMain.handle，reject 传回 renderer
 		}
 		log.info("context manager mode", mode);
-	}
-
-	/** 写 ACP 开关并清读缓存（下一轮 context 钩子即见新值；工具注册在下一次 session_start）。损坏拒写时上抛 */
-	setAcpEnabled(enabled: boolean): void {
-		try {
-			writeAcpEnabled(getAgentDir(), enabled);
-		} catch (err) {
-			log.error("settings.json 写入失败（acp 开关未保存）", err);
-			throw err; // ipcMain.handle，reject 传回 renderer
-		}
-		log.info("acp compression enabled", enabled);
 	}
 
 	/** channel-watch 总开关（设置 UI 用；键在 ~/.pi/agent/settings.json，缺省=开） */

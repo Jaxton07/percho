@@ -69,9 +69,7 @@ interface SettingsStore {
 	refreshing: boolean;
 	/** 内置权限门控开关（null = 未加载） */
 	permissionEnabled: boolean | null;
-	/** ACP 上下文压缩开关（null = 未加载；通用面板已改用 contextManagerMode 三态，通道保留） */
-	acpEnabled: boolean | null;
-	/** 上下文管理模式（acp / evaporation / off；null = 未加载） */
+	/** 上下文管理模式（evaporation / off；null = 未加载） */
 	contextManagerMode: ContextManagerMode | null;
 	/** channel-watch 跨会话频道唤醒开关（null = 未加载） */
 	channelWatchEnabled: boolean | null;
@@ -144,7 +142,6 @@ interface SettingsStore {
 	/** 关闭登录对话框（错误态保留展示时用） */
 	dismissLogin: () => void;
 	setPermissionEnabled: (enabled: boolean) => Promise<void>;
-	setAcpEnabled: (enabled: boolean) => Promise<void>;
 	setContextManagerMode: (mode: ContextManagerMode) => Promise<void>;
 	setChannelWatchEnabled: (enabled: boolean) => Promise<void>;
 	/** 保存视觉代理配置（返回是否成功；key 留空保持不变） */
@@ -190,7 +187,6 @@ export const useSettingsStore = create<SettingsStore>((set, get) => {
 		loading: false,
 		refreshing: false,
 		permissionEnabled: null,
-		acpEnabled: null,
 		contextManagerMode: null,
 		channelWatchEnabled: null,
 		visionConfig: null,
@@ -350,12 +346,7 @@ export const useSettingsStore = create<SettingsStore>((set, get) => {
 				.getPermissionConfig()
 				.then((permission) => set({ permissionEnabled: permission.enabled }))
 				.catch(() => {});
-			// ACP 压缩开关同样本地文件读，独立加载
-			void getPi()
-				.getAcpConfig()
-				.then((acp) => set({ acpEnabled: acp.enabled }))
-				.catch(() => {});
-			// 上下文管理模式三态同样本地文件读，独立加载
+			// 上下文管理模式二态同样本地文件读，独立加载
 			void getPi()
 				.getContextManagerConfig()
 				.then((cm) => set({ contextManagerMode: cm.mode }))
@@ -422,19 +413,6 @@ export const useSettingsStore = create<SettingsStore>((set, get) => {
 			} catch (error) {
 				set({
 					permissionEnabled: previous,
-					error: error instanceof Error ? error.message : String(error),
-				});
-			}
-		},
-
-		setAcpEnabled: async (enabled) => {
-			const previous = get().acpEnabled;
-			set({ acpEnabled: enabled });
-			try {
-				await getPi().setAcpEnabled(enabled);
-			} catch (error) {
-				set({
-					acpEnabled: previous,
 					error: error instanceof Error ? error.message : String(error),
 				});
 			}

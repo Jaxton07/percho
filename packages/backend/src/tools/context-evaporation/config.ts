@@ -3,20 +3,18 @@ import { join } from "node:path";
 import type { ContextManagerMode } from "@percho/shared";
 import { JsonStore } from "../../json-store";
 import { createLogger } from "../../log";
-import { clearAcpEnabledCache } from "../acp-context";
 import { DEFAULT_EVAP_CONFIG, type EvapConfig } from "./types";
 
 const log = createLogger("context-evaporation-config");
 
 /**
- * 蒸发配置链路（arch §3）：物理双 key + 单一写者原子双写 + 派生读。
+ * 蒸发配置链路：单一决策 key + 单一写者原子写 + 派生读。
  *
  * - `contextEvaporation`（本模块拥有）：对象整体容错读，缺字段补默认值（spec §9 定稿）
- * - `acpCompressionEnabled`（ACP 拥有，本模块**只读不改代码**）：缺 key/异常 = 开（ACP 缺省语义）
- * - 互斥不靠两个 checkbox 自觉：写侧唯一入口 `writeContextManagerMode` 一次原子双写；
- *   读侧 `readContextManagerMode` 派生——双开冲突时 ACP 优先（保守现状偏向）+ warn
+ * - 上下文管理二态：contextEvaporation.enabled === false → off；否则（true 或缺 key）→ evaporation（默认蒸发）
+ * - 遗留 `acpCompressionEnabled` 键读侧忽略（不再参与派生），写侧 `writeContextManagerMode` 顺带 delete 收敛
  *
- * 解析容错与 acp-context/config.ts 同款：JSONC 容忍解析、2s TTL 缓存、fail-soft。
+ * 解析容错（JSONC 容忍解析、2s TTL 缓存、fail-soft）沿袭既有实现。
  */
 
 const CACHE_TTL_MS = 2000;
@@ -24,7 +22,7 @@ const CACHE_TTL_MS = 2000;
 const evapCache = new Map<string, { value: unknown; expires: number }>();
 const modeCache = new Map<string, { value: ContextManagerMode; expires: number }>();
 
-/** 剥行/块注释与尾随逗号（与 acp config 同款 JSONC 语义） */
+/** 剥行/块注释与尾随逗号（JSONC 容错语义） */
 function stripJsonC(raw: string): string {
 	return raw
 		.replace(/^\s*\/\/.*$/gm, "")
@@ -116,10 +114,9 @@ export function readEvapConfig(agentDir: string): EvapConfig {
 // ---------- readContextManagerMode ----------
 
 /**
- * 派生读：`"acp" | "evaporation" | "off"`。
- * - evapOn = contextEvaporation.enabled === true；acpOn = acpCompressionEnabled !== false（ACP 缺省开）
- * - 双开冲突（手改文件）→ ACP 优先 + warn（蒸发是实验方）
- * - P4 默认值翻转只改这里的「全无 key」缺省（一个常量的事）
+ * 派生读：`"evaporation" | "off"`（二态，默认蒸发）。
+ * - contextEvaporation.enabled === false → off；否则（true 或缺 key）→ evaporation
+ * - 遗留 `acpCompressionEnabled` 键不再参与派生（读侧忽略；写侧收敛，见 writeContextManagerMode）
  */
 export function readContextManagerMode(agentDir: string): ContextManagerMode {
 	const now = Date.now();
@@ -133,17 +130,7 @@ export function readContextManagerMode(agentDir: string): ContextManagerMode {
 		!Array.isArray(raw.contextEvaporation)
 			? (raw.contextEvaporation as Record<string, unknown>)
 			: {};
-	const evapOn = evapSrc.enabled === true;
-	const acpOn = raw.acpCompressionEnabled !== false;
-	let mode: ContextManagerMode;
-	if (evapOn && acpOn) {
-		log.warn("配置冲突：蒸发与 ACP 同时开启，按 ACP 处理（请从设置页重新选择一次以收敛）");
-		mode = "acp";
-	} else if (evapOn) {
-		mode = "evaporation";
-	} else {
-		mode = acpOn ? "acp" : "off";
-	}
+	const mode: ContextManagerMode = evapSrc.enabled === false ? "off" : "evaporation";
 	modeCache.set(agentDir, { value: mode, expires: now + CACHE_TTL_MS });
 	return mode;
 }
@@ -151,12 +138,12 @@ export function readContextManagerMode(agentDir: string): ContextManagerMode {
 // ---------- writeContextManagerMode ----------
 
 /**
- * 写模式（设置 UI 唯一写入口）：一次 JsonStore updateSync 原子双写——
- * - `mode="evaporation"` → contextEvaporation.enabled=true 且 acpCompressionEnabled=false
- * - `mode="acp"` → contextEvaporation.enabled=false 且 acpCompressionEnabled=true
- * - `mode="off"` → 两者都 false
- * 只动这两个 key（`contextEvaporation` 的数值子键保留），settings.json 其余键不动。
- * 写后清两侧读缓存（本模块 + ACP 的 TTL 缓存），下一轮 context 钩子即见新值。
+ * 写模式（设置 UI 唯一写入口）：一次 JsonStore updateSync 原子写——
+ * - `mode="evaporation"` → contextEvaporation.enabled=true
+ * - `mode="off"` → contextEvaporation.enabled=false
+ * 只动 `contextEvaporation.enabled`（其数值子键保留），settings.json 其余键不动；
+ * 顺带 delete 遗留 `acpCompressionEnabled` 键（幂等收敛，spec D5）。
+ * 写后清本模块读缓存，下一轮 context 钩子即见新值。
  * 损坏拒写（JsonStoreCorruptedError 上抛，renderer 需要知道保存失败）。
  */
 export function writeContextManagerMode(agentDir: string, mode: ContextManagerMode): void {
@@ -178,10 +165,9 @@ export function writeContextManagerMode(agentDir: string, mode: ContextManagerMo
 				: {};
 		evap.enabled = mode === "evaporation";
 		existing.contextEvaporation = evap;
-		existing.acpCompressionEnabled = mode === "acp";
+		delete existing.acpCompressionEnabled;
 	});
 	clearEvapConfigCache(agentDir);
-	clearAcpEnabledCache();
 }
 
 /** 仅测试用：清缓存 */

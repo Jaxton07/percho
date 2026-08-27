@@ -1,6 +1,14 @@
+import type { UiError } from "../errors";
 import type { ImageInput } from "../session";
 import type { SkillInvocationDisplay } from "../skill-invocation";
 import type { TodoItem } from "../todo";
+
+/** SDK 自动重试（auto_retry_start）即时信息：状态行文案 + 出现/清除时机都来自事件流 */
+export interface RetryInfo {
+	attempt: number;
+	maxAttempts: number;
+	delayMs: number;
+}
 
 /** 会话 UI 态类型（transcript reducer 的状态形状） */
 
@@ -46,7 +54,14 @@ export type UIMessage =
 			/** 完整持久化正文（展示净化后保留），仅供 fork fallback 匹配；绝不能渲染、复制或进入可访问文本 */
 			sourceText?: string;
 	  }
-	| { kind: "error"; id: string; text: string; timestamp: number }
+	| {
+			/** 错误卡（live 与历史回放共用的统一报错信封；派生消息，不持久化 — text 恒为空串，渲染走 error） */
+			kind: "error";
+			id: string;
+			text: string;
+			timestamp: number;
+			error: UiError;
+	  }
 	| {
 			kind: "system";
 			id: string;
@@ -113,8 +128,6 @@ export interface StreamingState {
 	 * 组件不 remount，Markdown 的平滑输出 controller 得以存活续播（否则固化瞬间平滑被打断、整段跳变） */
 	id: string;
 	text: string;
-	/** assistant 原始 delta 累积，仅用于每次重算 display text；绝不能交给渲染层 */
-	rawText?: string;
 	thinking: string;
 	tools: UIToolCall[];
 	/** show_image 发图缓冲：tool_execution_end 先入缓冲，turn_end 固化时排在 assistant 消息之后（与历史回放顺序一致） */
@@ -153,6 +166,12 @@ export interface SessionTranscriptState {
 	compacting: boolean;
 	/** todo 工具维护的任务列表（跨 turn 存活；compaction 后由 loadTodos 从 backend 恢复） */
 	todos: TodoItem[];
+	/** 本轮 turn_end 已见 LLM 错误但尚未确定是否落卡（agent_end willRetry=true → 丢弃；false → 落卡
+	 * —— SDK 每个 retry 轮都发 turn_end(error)，立即落卡会在重试场景产多张卡且成功后残留，
+	 * 违背「只有最终失败才落卡」）。清空时机：agent_end/agent_settled/stream_guard_tripped。 */
+	pendingLlmError: UiError | null;
+	/** SDK 自动重试瞬时信息（auto_retry_start → 状态行；auto_retry_end/turn_start/agent_settled 清） */
+	retrying: RetryInfo | null;
 }
 
 export function emptyTranscript(): SessionTranscriptState {
@@ -165,5 +184,7 @@ export function emptyTranscript(): SessionTranscriptState {
 		followUpQueue: [],
 		compacting: false,
 		todos: [],
+		pendingLlmError: null,
+		retrying: null,
 	};
 }

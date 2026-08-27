@@ -4,7 +4,7 @@
  * 约束（arch §1）：本文件零 SDK、零仓库 import（除同目录 estimate/evaporate 彼此）——
  * 单测无需 mock SDK，replay 脚本（scripts/replay-evaporation.mts --core）可直接 import
  * 同一份决策逻辑做离线/在线同构验证。wire 消息用结构投影类型，与 SDK AgentMessage
- * 兼容、经 unknown 收窄（acp-context/bridge.ts 同款手法）。
+ * 兼容、经 unknown 收窄。
  *
  * 行为规则唯一权威：.local/agent-work/spec/context-evaporation.md（spec v2 §3-§7）。
  */

@@ -1,4 +1,4 @@
-export * from "./acp-reference-tags";
+export * from "./errors";
 export * from "./ipc";
 export * from "./lan";
 export * from "./marquee-motion";

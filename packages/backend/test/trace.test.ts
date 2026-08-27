@@ -36,7 +36,19 @@ describe("TraceRecorder", () => {
 		await recorder.close();
 		const lines = await allLines(dir, "s1");
 		expect(lines).toHaveLength(2);
-		expect(JSON.parse(lines[0])).toEqual({ type: "agent_start" });
+		// 行首 ts：事故时与主日志/系统时间对齐（决策 2）；事件字段原样保留
+		expect(JSON.parse(lines[0])).toMatchObject({ type: "agent_start" });
+		expect(typeof (JSON.parse(lines[0]) as { ts?: unknown }).ts).toBe("number");
+		expect(typeof (JSON.parse(lines[1]) as { ts?: unknown }).ts).toBe("number");
+	});
+
+	it("null/非对象事件保持原序列化（不包 ts 壳）", async () => {
+		const dir = await tmpDir();
+		const recorder = await TraceRecorder.create(dir, "s1b", { flushIntervalMs: 60_000 });
+		recorder.record(undefined);
+		await recorder.close();
+		const lines = await allLines(dir, "s1b");
+		expect(lines).toEqual(["null"]);
 	});
 
 	it("巨型事件只记截断标记（单行可 parse、带 bytes）", async () => {
@@ -51,8 +63,9 @@ describe("TraceRecorder", () => {
 		const lines = await allLines(dir, "s2");
 		expect(lines).toHaveLength(2);
 		const marker = JSON.parse(lines[0]);
-		// type 是合成值 trace_gap（reducer no-op，replay 不崩），真实类型在 originalType
+		// type 是合成值 trace_gap（reducer no-op，replay 不崩），真实类型在 originalType；标记行同样带 ts
 		expect(marker).toMatchObject({ _truncated: true, type: "trace_gap", originalType: "message_update" });
+		expect(typeof marker.ts).toBe("number");
 		expect(marker.bytes).toBeGreaterThan(50 * 1024);
 		expect(lines[0].length).toBeLessThan(200);
 	});
@@ -85,11 +98,9 @@ describe("TraceRecorder", () => {
 		// 因此保留的 5 个归档不保证刚好是 5 个完整测试批次。
 		const lines = await allLines(dir, sessionId);
 		expect(lines.length).toBeGreaterThanOrEqual(128 * 4 + 1);
-		expect(lines.map((line) => JSON.parse(line))).toContainEqual({
-			type: "tick",
-			i: 128 * 12 - 1,
-			pad: "y".repeat(32),
-		});
+		expect(lines.map((line) => JSON.parse(line))).toContainEqual(
+			expect.objectContaining({ type: "tick", i: 128 * 12 - 1, pad: "y".repeat(32) }),
+		);
 	});
 
 	it("截断标记行可被 reducer 安全消费（replay 含标记行的事故 trace 不崩）", async () => {
@@ -168,7 +179,7 @@ describe("TraceRecorder", () => {
 		expect(archives).toHaveLength(1);
 		// 活跃文件是新建的小文件（只含刚 record 的一条）；旧的 2KB 内容完整在归档里
 		const active = await readFile(join(traceDir, `trace-${sessionId}.jsonl`), "utf8");
-		expect(JSON.parse(active.trim())).toEqual({ type: "agent_start" });
+		expect(JSON.parse(active.trim())).toMatchObject({ type: "agent_start" });
 		expect((await readFile(join(traceDir, archives[0] ?? ""), "utf8")).length).toBe(2048);
 	});
 
