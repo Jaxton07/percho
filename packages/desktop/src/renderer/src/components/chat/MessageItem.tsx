@@ -1,4 +1,4 @@
-import { formatSkillCommand, type ImageInput } from "@percho/shared";
+import { formatSkillCommand } from "@percho/shared";
 import { memo, type ReactNode, useEffect, useRef, useState } from "react";
 import { useT } from "../../i18n";
 import { Slot } from "../../plugins/Slot";
@@ -173,7 +173,7 @@ export const MessageItem = memo(function MessageItem({
 	sessionId?: string | null;
 }) {
 	const t = useT();
-	const [previewImage, setPreviewImage] = useState<ImageInput | null>(null);
+	const [previewIndex, setPreviewIndex] = useState<number | null>(null);
 
 	if (message.kind === "user") {
 		return (
@@ -187,7 +187,7 @@ export const MessageItem = memo(function MessageItem({
 									key={index}
 									type="button"
 									className="h-16 w-16 overflow-hidden rounded-lg border border-border"
-									onClick={() => setPreviewImage(image)}
+									onClick={() => setPreviewIndex(index)}
 								>
 									<img
 										src={imageSrc(image)}
@@ -231,7 +231,13 @@ export const MessageItem = memo(function MessageItem({
 						</div>
 					)}
 				</div>
-				{previewImage && <ImagePreviewOverlay image={previewImage} onClose={() => setPreviewImage(null)} />}
+				{previewIndex !== null && (
+					<ImagePreviewOverlay
+						images={message.images}
+						initialIndex={previewIndex}
+						onClose={() => setPreviewIndex(null)}
+					/>
+				)}
 			</div>
 		);
 	}
@@ -257,13 +263,19 @@ export const MessageItem = memo(function MessageItem({
 							key={index}
 							type="button"
 							className="overflow-hidden rounded-xl border border-border"
-							onClick={() => setPreviewImage(image)}
+							onClick={() => setPreviewIndex(index)}
 						>
 							<img src={imageSrc(image)} alt={t("message.image")} className={sizeClass} />
 						</button>
 					))}
 				</div>
-				{previewImage && <ImagePreviewOverlay image={previewImage} onClose={() => setPreviewImage(null)} />}
+				{previewIndex !== null && (
+					<ImagePreviewOverlay
+						images={message.images}
+						initialIndex={previewIndex}
+						onClose={() => setPreviewIndex(null)}
+					/>
+				)}
 			</div>
 		);
 	}
