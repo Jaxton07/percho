@@ -1,4 +1,4 @@
-import { buildChatRows, deriveTurnChanges, isAgentWorking, type TurnChanges } from "@percho/shared";
+import { buildChatRows, deriveTurnChanges, isAgentWorking } from "@percho/shared";
 import { type MouseEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useT } from "../../i18n";
 import { Slot } from "../../plugins/Slot";
@@ -113,11 +113,8 @@ export function MessageList() {
 		if (e.target instanceof Element && e.target.closest("summary")) updateFollowing(false);
 	};
 
-	// 轮次文件变更 chip：位置式插入——turn i 的 chip 插到第 i+1 条 user 行之前，最后一轮追加到末尾。
-	//（不锚消息行：轮末 assistant 无正文时会被吸进折叠组，没有独立行可锚。streaming 中的轮次
-	// 工具未固化进 messages，天然不满足「turn_end 后才出现」）
+	// 轮次文件变更：进场动画只给「本会话查看期间新完成的最后一轮」播：基线在切会话/历史重建时对齐，不随渲染更新（防 agent_end 紧随的二次渲染摘掉动画类）；chip 的定位/上提规则全部在 shared buildChatRows 内完成（opts 传入，与 lan-web 同一分组大脑）
 	const turnChanges = useMemo(() => deriveTurnChanges(transcript.messages), [transcript.messages]);
-	// 进场动画只给「本会话查看期间新完成的最后一轮」播：基线在切会话/历史重建时对齐，不随渲染更新（防 agent_end 紧随的二次渲染摘掉动画类）
 	const turnBaselineRef = useRef({ sid: activeSessionId, count: 0 });
 	if (turnBaselineRef.current.sid !== activeSessionId) {
 		turnBaselineRef.current = { sid: activeSessionId, count: turnChanges.length };
@@ -129,42 +126,26 @@ export function MessageList() {
 
 	// 行序列由 shared buildChatRows 产出（与 lan-web 同一分组大脑）；此处只做行模型 → JSX 映射。
 	// useMemo：滚动/跟随等本组件局部 state 翻转不重跑（历史长会话单次 ~60µs+）；transcript 每
-	// 次变更（合流后 ≤ 1 次/帧）重跑一次是预期成本
+	// 次变更（合流后 ≤ 1 次/帧）重跑一次是预期成本；turnChanges/enteringTurn 是 chip 行输入
 	const rows = useMemo(
-		() => buildChatRows(transcript, String(activeSessionId)),
-		[transcript, activeSessionId],
-	);
-	const chipBeforeRow = new Map<number, TurnChanges>();
-	const changeByTurn = new Map(turnChanges.map((tc) => [tc.turnIndex, tc]));
-	let userRowCount = 0;
-	for (let i = 0; i < rows.length; i++) {
-		const row = rows[i];
-		if (row?.kind === "message" && row.message.kind === "user") {
-			const tc = changeByTurn.get(userRowCount - 1);
-			if (tc) chipBeforeRow.set(i, tc);
-			userRowCount++;
-		}
-	}
-	// 最后一轮（无下一条 user 行）的 chip 追加到行序列末尾
-	const tailChanges = changeByTurn.get(userRowCount - 1);
-
-	// 已完成轮次保留上提 16px，和普通消息的 8px 净距对齐；两条不上提：
-	// ① 当前运行轮——MetaGroup 的圆点仍会实时追加，上提会贴到圆点行上；
-	// ② 前面紧邻的是折叠组（纯工具轮 / 被打断轮无正文，组自带 -mb-4 对消 gap）——
-	//    再上提 16px 会与组的圆点行重叠 8px（组结束圆点仍冻结原位）。
-	const renderChip = (tc: TurnChanges, running = false, afterMetaGroup = false) => (
-		<div key={`turn-diff-${tc.turnIndex}`} className={running || afterMetaGroup ? undefined : "-mt-4"}>
-			<TurnDiffChip changes={tc} entering={tc.turnIndex === enteringTurn} />
-		</div>
+		() =>
+			buildChatRows(transcript, String(activeSessionId), Date.now(), { turnChanges, enteringTurn }),
+		[transcript, activeSessionId, turnChanges, enteringTurn],
 	);
 
 	const items: React.ReactNode[] = [];
-	rows.forEach((row, rowIndex) => {
-		const chip = chipBeforeRow.get(rowIndex);
-		if (chip) {
-			// 上一行是折叠组（纯工具轮收尾）时，组自带 -mb-4，chip 不再上提（见 renderChip 注释②）
-			const prev = rows[rowIndex - 1];
-			items.push(renderChip(chip, false, prev?.kind === "metaGroup"));
+	rows.forEach((row) => {
+		if (row.kind === "turnDiff") {
+			// 已完成轮次保留上提 16px，和普通消息的 8px 净距对齐；两条不上提：
+			// ① 当前运行轮（running）——MetaGroup 的圆点仍会实时追加，上提会贴到圆点行上；
+			// ② 前面紧邻的是折叠组（afterMetaGroup，纯工具轮 / 被打断轮无正文，组自带 -mb-4 对消 gap）——
+			//    再上提 16px 会与组的圆点行重叠 8px（组结束圆点仍冻结原位）。
+			items.push(
+				<div key={row.key} className={row.running || row.afterMetaGroup ? undefined : "-mt-4"}>
+					<TurnDiffChip changes={row.changes} entering={row.entering} />
+				</div>,
+			);
+			return;
 		}
 		if (row.kind === "metaGroup") {
 			items.push(
@@ -200,10 +181,6 @@ export function MessageList() {
 			/>,
 		);
 	});
-	if (tailChanges) {
-		const last = rows[rows.length - 1];
-		items.push(renderChip(tailChanges, transcript.agentActive, last?.kind === "metaGroup"));
-	}
 
 	return (
 		<div className="relative h-full">

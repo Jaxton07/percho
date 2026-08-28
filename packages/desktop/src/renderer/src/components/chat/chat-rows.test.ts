@@ -6,6 +6,7 @@ import {
 	type StreamingState,
 	type UIMessage,
 	type UIToolCall,
+	type TurnChanges,
 } from "@percho/shared";
 import { describe, expect, it } from "vitest";
 
@@ -213,5 +214,63 @@ describe("committed MetaItem 稳定性（WeakMap 缓存）", () => {
 		const r2 = buildChatRows(t2, "s1").find((r) => r.kind === "metaGroup");
 		expect(r1?.items[0]?.tools[0]?.name).toBe("read");
 		expect(r2?.items[0]?.tools[0]?.name).toBe("edit");
+	});
+});
+
+describe("turnDiff chip 行（桌面路径）", () => {
+	function user(text: string): UIMessage {
+		return { kind: "user", id: `u-${text}`, text, images: [], timestamp: 1 } as UIMessage;
+	}
+	const changes = (turnIndex: number): TurnChanges => ({ turnIndex, files: [], totalAdded: 0, totalRemoved: 0 });
+
+	it("turn i 的 chip 插在第 i+1 条 user 行之前，最后一轮追加到末尾", () => {
+		const t = {
+			...emptyTranscript(),
+			messages: [user("一"), assistant("答一"), user("二"), assistant("答二")],
+		};
+		const rows = buildChatRows(t, "s1", 1, {
+			turnChanges: [changes(0), changes(1)],
+			enteringTurn: null,
+		});
+		const kinds = rows.map((r) => r.kind);
+		// chip(turn 0) 在 user「二」之前；chip(turn 1) 在末尾
+		expect(kinds.indexOf("turnDiff")).toBeGreaterThan(-1);
+		const firstChipIdx = kinds.indexOf("turnDiff");
+		const secondChipIdx = kinds.lastIndexOf("turnDiff");
+		// 第一条 user 前没有 chip（turn -1 不存在）
+		expect(rows[0]?.kind).not.toBe("turnDiff");
+		// 第二条 user 行紧跟 chip(turn 0) 之后（中间无其他行）
+		expect(kinds[secondChipIdx]).toBe("turnDiff");
+		expect(secondChipIdx).toBe(rows.length - 1);
+		expect(kinds[firstChipIdx + 1]).toBe("message");
+		const afterChip = rows[firstChipIdx + 1];
+		if (afterChip?.kind === "message") {
+			expect(afterChip.message.kind).toBe("user");
+			expect(afterChip.message.id).toBe("u-二");
+		}
+	});
+
+	it("最后一轮 chip running = agentActive；afterMetaGroup = 前一行是折叠组", () => {
+		const t = {
+			...emptyTranscript(),
+			messages: [user("一"), assistant("", { tools: [tool("read")] })],
+			agentActive: true,
+		};
+		const rows = buildChatRows(t, "s1", 1, { turnChanges: [changes(0)], enteringTurn: null });
+		const tail = rows[rows.length - 1];
+		// 轮末 assistant 无正文 → 收进折叠组，tail chip 前一行是 metaGroup
+		if (tail?.kind !== "turnDiff") throw new Error(`expect turnDiff, got ${tail?.kind}`);
+		expect(tail.running).toBe(true);
+		expect(tail.afterMetaGroup).toBe(true);
+		expect(rows[rows.length - 2]?.kind).toBe("metaGroup");
+	});
+
+	it("不传 turnChanges 不生成 turnDiff 行（lan-web 路径零行为变化）", () => {
+		const t = {
+			...emptyTranscript(),
+			messages: [user("一"), assistant("答一")],
+		};
+		const rows = buildChatRows(t, "s1");
+		expect(rows.some((r) => r.kind === "turnDiff")).toBe(false);
 	});
 });

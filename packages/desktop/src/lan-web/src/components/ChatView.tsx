@@ -118,6 +118,10 @@ export function ChatView({
 							</div>
 						);
 					}
+					// 运行时 guard：本端 buildChatRows 不传 turnChanges（桌面专用行 lan-web 永不生成），
+					// 但 shared 行模型后续可能新增 kind——未知行型渲染 null 兑底，防 fall-through 到
+					// MessageItem 读 message 字段崩溃（R2）
+					if (row.kind !== "message") return null;
 					return (
 						<MessageItem
 							key={row.key}
