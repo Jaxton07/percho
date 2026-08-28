@@ -1,13 +1,13 @@
 import { useT } from "../../../i18n";
-import { useSettingsStore } from "../../../stores/settings";
+import { useCatalogStore } from "../../../stores/catalog";
 import { BrowseSection } from "./BrowseSection";
 import { LoadedSection } from "./LoadedSection";
 
 /** 扩展设置面板：浏览社区目录安装 + 查看已加载扩展（分段切换） */
 export function ExtensionsPanel() {
 	const t = useT();
-	const tab = useSettingsStore((s) => s.extensionsTab);
-	const setExtensionsTab = useSettingsStore((s) => s.setExtensionsTab);
+	const tab = useCatalogStore((s) => s.extensionsTab);
+	const setExtensionsTab = useCatalogStore((s) => s.setExtensionsTab);
 
 	return (
 		<div>

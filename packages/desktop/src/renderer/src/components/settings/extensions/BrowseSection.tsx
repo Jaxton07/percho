@@ -1,7 +1,7 @@
 import type { CatalogPackageType } from "@percho/shared";
 import { useEffect, useMemo } from "react";
 import { useT } from "../../../i18n";
-import { useSettingsStore } from "../../../stores/settings";
+import { useCatalogStore } from "../../../stores/catalog";
 import { SearchIcon } from "../../icons";
 import { Button } from "../../ui/Button";
 import { CatalogRow, npmSourceToName } from "./rows";
@@ -11,17 +11,17 @@ const CATALOG_TYPES: ("" | CatalogPackageType)[] = ["", "extension", "skill", "p
 /** 浏览社区：pi.dev 目录搜索 + 安装 */
 export function BrowseSection() {
 	const t = useT();
-	const query = useSettingsStore((s) => s.catalogQuery);
-	const type = useSettingsStore((s) => s.catalogType);
-	const packages = useSettingsStore((s) => s.catalogPackages);
-	const total = useSettingsStore((s) => s.catalogTotal);
-	const loading = useSettingsStore((s) => s.catalogLoading);
-	const loadingMore = useSettingsStore((s) => s.catalogLoadingMore);
-	const error = useSettingsStore((s) => s.catalogError);
-	const configuredPackages = useSettingsStore((s) => s.configuredPackages);
-	const setCatalogQuery = useSettingsStore((s) => s.setCatalogQuery);
-	const setCatalogType = useSettingsStore((s) => s.setCatalogType);
-	const searchCatalog = useSettingsStore((s) => s.searchCatalog);
+	const query = useCatalogStore((s) => s.catalogQuery);
+	const type = useCatalogStore((s) => s.catalogType);
+	const packages = useCatalogStore((s) => s.catalogPackages);
+	const total = useCatalogStore((s) => s.catalogTotal);
+	const loading = useCatalogStore((s) => s.catalogLoading);
+	const loadingMore = useCatalogStore((s) => s.catalogLoadingMore);
+	const error = useCatalogStore((s) => s.catalogError);
+	const configuredPackages = useCatalogStore((s) => s.configuredPackages);
+	const setCatalogQuery = useCatalogStore((s) => s.setCatalogQuery);
+	const setCatalogType = useCatalogStore((s) => s.setCatalogType);
+	const searchCatalog = useCatalogStore((s) => s.searchCatalog);
 
 	// name → 已配置条目（「已安装」态 + 卸载入口；只有 npm: 源能对上目录包）
 	const configuredByPackage = useMemo(() => {
@@ -35,7 +35,7 @@ export function BrowseSection() {
 
 	// 已配置包列表只需拉一次（安装成功后 store 会自刷）；目录首载（防抖搜索只在输入时触发）
 	useEffect(() => {
-		const s = useSettingsStore.getState();
+		const s = useCatalogStore.getState();
 		if (s.configuredPackages === null) void s.refreshConfiguredPackages();
 		if (s.catalogPage === 0 && !s.catalogLoading) void s.searchCatalog(false);
 	}, []);

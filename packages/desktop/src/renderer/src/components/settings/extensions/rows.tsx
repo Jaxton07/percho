@@ -2,7 +2,7 @@ import type { CatalogPackage, LoadedExtension, ResourceScope } from "@percho/sha
 import { isSubagentPackage, isSubagentToolName, NPM_NOT_FOUND_SENTINEL } from "@percho/shared";
 import { useRef, useState } from "react";
 import { useT } from "../../../i18n";
-import { useSettingsStore } from "../../../stores/settings";
+import { useCatalogStore } from "../../../stores/catalog";
 import { CheckIcon, TrashIcon } from "../../icons";
 import { Button } from "../../ui/Button";
 import { Tooltip } from "../../ui/Tooltip";
@@ -28,8 +28,8 @@ function UninstallButton({ source, scope }: { source: string; scope: "user" | "p
 	const t = useT();
 	const [confirming, setConfirming] = useState(false);
 	const timerRef = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
-	const removing = useSettingsStore((s) => s.removingSources[source] === true);
-	const removeConfiguredPackage = useSettingsStore((s) => s.removeConfiguredPackage);
+	const removing = useCatalogStore((s) => s.removingSources[source] === true);
+	const removeConfiguredPackage = useCatalogStore((s) => s.removeConfiguredPackage);
 
 	const enterConfirm = () => {
 		setConfirming(true);
@@ -160,9 +160,9 @@ export function CatalogRow({
 	configured: { source: string; scope: "user" | "project" } | null;
 }) {
 	const t = useT();
-	const installing = useSettingsStore((s) => s.installingNames[pkg.name] === true);
-	const installError = useSettingsStore((s) => s.installErrors[pkg.name]);
-	const installCatalogPackage = useSettingsStore((s) => s.installCatalogPackage);
+	const installing = useCatalogStore((s) => s.installingNames[pkg.name] === true);
+	const installError = useCatalogStore((s) => s.installErrors[pkg.name]);
+	const installCatalogPackage = useCatalogStore((s) => s.installCatalogPackage);
 	// subagent 包安装前警示：两段式确认（与 UninstallButton 同模式，不用 window.confirm）
 	const [warnConfirming, setWarnConfirming] = useState(false);
 	const warnTimerRef = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);

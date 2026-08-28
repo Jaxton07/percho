@@ -1,5 +1,6 @@
 import { useMemo } from "react";
 import { useT } from "../../../i18n";
+import { useCatalogStore } from "../../../stores/catalog";
 import { useSettingsStore } from "../../../stores/settings";
 import { ExtensionRow } from "./rows";
 
@@ -8,7 +9,7 @@ export function LoadedSection() {
 	const t = useT();
 	const extensions = useSettingsStore((s) => s.extensions);
 	const errors = useSettingsStore((s) => s.extensionErrors);
-	const configuredPackages = useSettingsStore((s) => s.configuredPackages);
+	const configuredPackages = useCatalogStore((s) => s.configuredPackages);
 
 	// 已加载扩展的 source 命中已配置包 → 可卸载（source 为 npm:/git: 等安装源时）
 	const configuredBySource = useMemo(() => {
