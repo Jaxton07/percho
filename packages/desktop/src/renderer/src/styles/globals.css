@@ -691,9 +691,10 @@ code {
 	border-color: var(--color-border);
 	box-shadow: var(--shadow-soft);
 }
-/* 代码块「纯净化」：标题栏悬浮 —— 常态隐身（纯代码），hover / 键盘聚焦 / 折叠态时浮现。
-   header DOM 必须保留（折叠/复制按钮逻辑都在里面，折叠是组件内部 state 外部无法控制，
-   showHeader:false 会把按钮一起去掉），多余按钮已在 Markdown.tsx 经 codeBlockProps 关闭。
+/* 代码块「纯净化」：标题栏悬浮 —— 常态隐身（纯代码），hover / 键盘聚焦时浮现。
+   header DOM 必须保留（复制按钮在里面，showHeader:false 会把按钮一起去掉），
+   语言标签/折叠按钮已裁：语言胶囊在下方 display:none，折叠经 codeBlockProps
+   showCollapseButton:false 关闭（Markdown.tsx）。
    组件把 header 背景用 inline style 钉成编辑器主题色，需 !important 压掉。 */
 .markdown-body .code-block-container .code-block-header {
 	position: absolute;
@@ -710,37 +711,20 @@ code {
 	transition: opacity 0.18s ease;
 }
 .markdown-body .code-block-container:hover .code-block-header,
-.markdown-body .code-block-container:focus-within .code-block-header,
-/* 折叠后内容区整个卸载，悬浮条必须常显才能再展开（此时只剩折叠钮有 aria-pressed） */
-	.markdown-body
-	.code-block-container:has(.code-action-btn[aria-pressed="true"])
-	.code-block-header {
+.markdown-body .code-block-container:focus-within .code-block-header {
 	opacity: 1;
 	pointer-events: auto;
 }
-/* 折叠态容器会塌成 0 高，给悬浮条留最小可点击高度 */
-.markdown-body .code-block-container:has(.code-action-btn[aria-pressed="true"]) {
-	min-height: 44px;
+/* 语言标签胶囊：不展示（设计去语言标签） */
+.markdown-body .code-block-header > div:first-child {
+	display: none;
 }
-/* 悬浮语言标签与按钮：半透明胶囊 + 毛玻璃，颜色全走 token 自动适配深浅 */
-.markdown-body .code-block-header > div:first-child,
+/* 悬浮操作按钮：半透明胶囊 + 毛玻璃，颜色全走 token 自动适配深浅 */
 .markdown-body .code-block-header .code-action-btn {
 	border: 1px solid var(--color-border);
 	border-radius: 6px;
 	background: color-mix(in srgb, var(--color-canvas) 72%, transparent);
 	backdrop-filter: blur(8px);
-}
-.markdown-body .code-block-header > div:first-child {
-	flex: none; /* 盖掉库 flex-1：否则语言胶囊撑满整条通栏 */
-	padding: 0.125rem 0.5rem;
-	color: var(--color-ink-dim);
-}
-/* 语言名（库渲染为无语义类的 span.text-sm.font-mono） */
-.markdown-body .code-block-header > div:first-child > span:last-child {
-	font-size: 11px;
-	letter-spacing: 0.03em;
-}
-.markdown-body .code-block-header .code-action-btn {
 	padding: 0.25rem;
 }
 @media (prefers-reduced-motion: reduce) {

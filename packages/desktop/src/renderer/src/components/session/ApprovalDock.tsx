@@ -93,14 +93,16 @@ export function ApprovalDock({
 
 	if (!shown) {
 		return hideComposer ? null : (
-			<div className="approval-composer-enter">
+			// relative z-20：× 删除键 -top-1.5 伸出容器顶 → 落入消息区，须盖过 MessageList 的 z-10
+			<div className="approval-composer-enter relative z-20">
 				<Composer />
 			</div>
 		);
 	}
 
 	return (
-		<div className="shrink-0 px-6 pb-3">
+		// z-20 同上：审批卡在下方时缩略图 × 同样会伸出容器顶
+		<div className="relative z-20 shrink-0 px-6 pb-3">
 			<div className="mx-auto max-w-[760px]">
 				<div
 					key={shown.id}

@@ -16,11 +16,16 @@ const SMOOTH_OPTIONS: SmoothMarkdownStreamOptions = {
 };
 
 const CODE_BLOCK_PROPS = {
-	// 标题栏在视觉上被 CSS 悬浮化（见 globals.css），这里只裁掉多余按钮：字号三键/全屏/预览，
-	// 保留折叠 + 复制。不能用 showHeader:false——它会连按钮一起去掉，且折叠是组件内部 state，外部无法控制。
+	// 标题栏在视觉上被 CSS 悬浮化（见 globals.css），这里只裁掉多余按钮：字号三键/全屏/预览/折叠，
+	// 保留复制。不能用 showHeader:false——它会连复制按钮一起去掉。
 	showFontSizeButtons: false,
 	showExpandButton: false,
 	showPreviewButton: false,
+	showCollapseButton: false,
+	// 首行灰底修复：库的 monaco 默认值（renderLineHighlight:"none" 等）只对 diff 块生效
+	//（En() 首行 if(!e) return o），普通块裸奔 —— 只读编辑器光标恒停第一行，当前行高亮
+	// 让首行比其他行多一层灰底。显式关掉。
+	monacoOptions: { renderLineHighlight: "none" },
 } as const;
 
 /** 减速动效偏好：直接关闭 pacing（直出）；库 CSS 自带 animation:none 处理淡入 */

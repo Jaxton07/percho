@@ -92,11 +92,11 @@ function summaryLabel(t: ReturnType<typeof useT>, seg: SummarySegment): string {
 	}
 }
 
-/** 圆点样式：done = 实心 ink-dim（与 worked 态标题同色，弱化存在感），error = 更浅的 ink-faint，running = 空心呼吸（globals.css meta-dot-running）；4px 小点紧密成串 */
+/** 圆点样式：done = 实心 ink-dim（与 worked 态标题同色，弱化存在感），error = 琥珀 warn token，running = 空心呼吸（globals.css meta-dot-running）；4px 小点紧密成串 */
 function dotClass(state: MetaDot["state"]): string {
 	const base = "h-1 w-1 shrink-0 rounded-full";
 	if (state === "running") return `${base} meta-dot-running`;
-	return state === "error" ? `${base} bg-ink-faint` : `${base} bg-ink-dim`;
+	return state === "error" ? `${base} bg-warn` : `${base} bg-ink-dim`;
 }
 
 /**
