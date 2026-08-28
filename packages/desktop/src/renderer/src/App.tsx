@@ -7,6 +7,7 @@ import { TodoPanel } from "./components/chat/TodoPanel";
 import { DiffSidebar } from "./components/diff/DiffSidebar";
 import { ProjectPage } from "./components/projects/ProjectPage";
 import { ApprovalDock } from "./components/session/ApprovalDock";
+import { BranchBadge } from "./components/session/BranchBadge";
 import { SessionRail } from "./components/session/SessionRail";
 import { SessionTabBar } from "./components/session/SessionTabBar";
 import { TrustDialog } from "./components/session/TrustDialog";
@@ -131,6 +132,7 @@ export default function App() {
 							<main className="relative min-h-0 flex-1">
 								{showEmpty ? <EmptyState /> : <MessageList />}
 								<Slot name={UI_SLOTS.TodoPanel} props={{}} fallback={TodoPanel} />
+								<BranchBadge />
 								{/* 聊天区四角贡献层（top-right 与 TodoPanel 同角，容器已预留 pt-12） */}
 								<RegionHost region={UI_REGIONS.CornerTopLeft} />
 								<RegionHost region={UI_REGIONS.CornerTopRight} />
