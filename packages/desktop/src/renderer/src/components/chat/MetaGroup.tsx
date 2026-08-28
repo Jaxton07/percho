@@ -1,9 +1,4 @@
-import {
-	dotsFromItems,
-	type MetaDot,
-	type MetaItem,
-	summarizeCategories,
-} from "@percho/shared";
+import { dotsFromItems, type MetaDot, type MetaItem, summarizeCategories } from "@percho/shared";
 import { Fragment, memo, useMemo } from "react";
 import type { OrbState } from "thinking-orbs";
 import { ThinkingOrb } from "thinking-orbs";
@@ -11,9 +6,9 @@ import { useT } from "../../i18n";
 import { Slot } from "../../plugins/Slot";
 import { UI_SLOTS } from "../../plugins/slots";
 import { ExpandArrowIcon } from "../icons";
-import { type LivePreviewItem, PreviewTicker } from "./PreviewTicker";
-import { displayName, ToolCallCard } from "./ToolCallCard";
 import { summaryLabel } from "./meta-summary-label";
+import { type LivePreviewItem, PreviewTicker } from "./PreviewTicker";
+import { ToolCallCard } from "./ToolCallCard";
 import { useShownWorking } from "./use-shown-working";
 import { useSweepHighlight } from "./use-sweep-highlight";
 
@@ -142,7 +137,6 @@ export const MetaGroup = memo(function MetaGroup({
 	// 扫光目标集合（预览行 id）标识：集合变化 → hook 内同帧补样式，消除新行首帧实色闪烁
 	const liveKey = liveItems.map((i) => i.id).join(",");
 	const { labelRef, wrapRef: tickerWrapRef } = useSweepHighlight(shownWorking, liveKey);
-
 
 	/** 单条已结束（如正文前的思考）直接裸行展示，不套 "已完成 · 1" 外壳；-mb-4 与包装组一致：
 	 * 与后续正文净距 8px（容器 gap-6 - 16px），单行/成组间距统一 */

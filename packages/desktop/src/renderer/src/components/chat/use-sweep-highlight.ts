@@ -63,9 +63,7 @@ export function useSweepHighlight(
 		let centerAbs = Number.NaN;
 		const paint = () => {
 			// 切换动画期间新旧两行并存：全部纳入（同 x 位置堆叠，新行立即有扫光）
-			const nameEls = Array.from(
-				wrapRef.current?.querySelectorAll<HTMLElement>("[data-shimmer-name]") ?? [],
-			);
+			const nameEls = Array.from(wrapRef.current?.querySelectorAll<HTMLElement>("[data-shimmer-name]") ?? []);
 			const targets: HTMLElement[] = [label, ...nameEls];
 			const pairs = targets.map((el) => ({ el, rect: el.getBoundingClientRect() }));
 			const visible = pairs.filter((p) => p.rect.width > 0);

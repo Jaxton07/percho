@@ -4,9 +4,9 @@ import {
 	emptyTranscript,
 	isAgentWorking,
 	type StreamingState,
+	type TurnChanges,
 	type UIMessage,
 	type UIToolCall,
-	type TurnChanges,
 } from "@percho/shared";
 import { describe, expect, it } from "vitest";
 
@@ -221,7 +221,12 @@ describe("turnDiff chip 行（桌面路径）", () => {
 	function user(text: string): UIMessage {
 		return { kind: "user", id: `u-${text}`, text, images: [], timestamp: 1 } as UIMessage;
 	}
-	const changes = (turnIndex: number): TurnChanges => ({ turnIndex, files: [], totalAdded: 0, totalRemoved: 0 });
+	const changes = (turnIndex: number): TurnChanges => ({
+		turnIndex,
+		files: [],
+		totalAdded: 0,
+		totalRemoved: 0,
+	});
 
 	it("turn i 的 chip 插在第 i+1 条 user 行之前，最后一轮追加到末尾", () => {
 		const t = {

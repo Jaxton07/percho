@@ -1,5 +1,5 @@
 import type { SummarySegment } from "@percho/shared";
-import { useT } from "../../i18n";
+import type { useT } from "../../i18n";
 import { displayName } from "./ToolCallCard";
 
 /** en 复数单位（zh 模板不含 {unit} 占位，参数传入即被忽略） */

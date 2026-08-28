@@ -1,8 +1,8 @@
 import type { ImageInput } from "@percho/shared";
 import { useEffect, useRef, useState } from "react";
+import { useSessionReadOnly } from "../../hooks/use-session-state";
 import { useT } from "../../i18n";
 import { COMPOSER_FOCUS_EVENT, EMPTY_DRAFT, NEW_SESSION_DRAFT_KEY, useDraftStore } from "../../stores/drafts";
-import { useSessionReadOnly } from "../../hooks/use-session-state";
 import { useSessionsStore } from "../../stores/sessions";
 import { selectTranscript, useTranscriptStore } from "../../stores/transcript";
 import { ImagePreviewOverlay } from "../chat/ImagePreview";

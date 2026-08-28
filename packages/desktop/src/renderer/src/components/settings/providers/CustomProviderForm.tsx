@@ -2,18 +2,9 @@ import { type CustomProviderInput, KNOWN_APIS, type ProviderInfo } from "@percho
 import { useState } from "react";
 import { useT } from "../../../i18n";
 import { useSettingsStore } from "../../../stores/settings";
-import { CloseIcon } from "../../icons";
 import { Tooltip } from "../../ui/Tooltip";
 import { ModelRowsEditor } from "./ModelRowsEditor";
-import {
-	EMPTY_MODEL_ROW,
-	type ModelRow,
-	modelsToRows,
-	parseTokenCount,
-	rowsToModelInputs,
-	rowsValid,
-	splitPastedModelIds,
-} from "./model-rows";
+import { EMPTY_MODEL_ROW, type ModelRow, modelsToRows, rowsToModelInputs, rowsValid } from "./model-rows";
 
 interface ProviderFormState {
 	id: string;

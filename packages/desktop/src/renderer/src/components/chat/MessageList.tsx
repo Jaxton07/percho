@@ -128,8 +128,7 @@ export function MessageList() {
 	// useMemo：滚动/跟随等本组件局部 state 翻转不重跑（历史长会话单次 ~60µs+）；transcript 每
 	// 次变更（合流后 ≤ 1 次/帧）重跑一次是预期成本；turnChanges/enteringTurn 是 chip 行输入
 	const rows = useMemo(
-		() =>
-			buildChatRows(transcript, String(activeSessionId), Date.now(), { turnChanges, enteringTurn }),
+		() => buildChatRows(transcript, String(activeSessionId), Date.now(), { turnChanges, enteringTurn }),
 		[transcript, activeSessionId, turnChanges, enteringTurn],
 	);
 

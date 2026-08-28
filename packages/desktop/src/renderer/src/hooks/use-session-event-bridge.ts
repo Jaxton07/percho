@@ -13,7 +13,11 @@ import { useUiStore } from "../stores/ui";
  * 再立即应用，顺序与逐条转发完全一致。isActiveViewing 在应用时刻取值：延迟至多一帧且
  * 该标记只在 agentActive 翻转的边界事件上生效（不经过合流），语义不变。
  */
-export function useSessionEventBridge({ onTrustRequest }: { onTrustRequest: (req: TrustRequest) => void }): void {
+export function useSessionEventBridge({
+	onTrustRequest,
+}: {
+	onTrustRequest: (req: TrustRequest) => void;
+}): void {
 	useEffect(() => {
 		const pi = getPi();
 		const conflator = new EventConflator({

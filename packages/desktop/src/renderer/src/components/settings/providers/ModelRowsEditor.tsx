@@ -7,7 +7,13 @@ const inputClass =
 	"w-full rounded-lg border border-border px-2.5 py-1.5 text-[12px] outline-none focus:border-ink-faint disabled:cursor-not-allowed disabled:text-ink-faint";
 
 /** 模型行编辑器：每行一个模型；ctx/out 留空跟随 SDK 默认（128k/16k），非法值红框且禁止保存 */
-export function ModelRowsEditor({ rows, onChange }: { rows: ModelRow[]; onChange: (rows: ModelRow[]) => void }) {
+export function ModelRowsEditor({
+	rows,
+	onChange,
+}: {
+	rows: ModelRow[];
+	onChange: (rows: ModelRow[]) => void;
+}) {
 	const t = useT();
 
 	const setRow = (index: number, patch: Partial<ModelRow>) =>

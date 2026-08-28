@@ -1,4 +1,4 @@
-import { beforeEach, afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 /** window.pi 的 mock：catalog store 经 getPi() 访问，测试环境无 preload 注入 */
 const piMock = vi.hoisted(() => ({
