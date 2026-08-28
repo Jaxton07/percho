@@ -2,6 +2,7 @@ import type { ImageInput } from "@percho/shared";
 import { useEffect, useRef, useState } from "react";
 import { useT } from "../../i18n";
 import { COMPOSER_FOCUS_EVENT, EMPTY_DRAFT, NEW_SESSION_DRAFT_KEY, useDraftStore } from "../../stores/drafts";
+import { useSessionReadOnly } from "../../hooks/use-session-state";
 import { useSessionsStore } from "../../stores/sessions";
 import { selectTranscript, useTranscriptStore } from "../../stores/transcript";
 import { ImagePreviewOverlay } from "../chat/ImagePreview";
@@ -28,9 +29,7 @@ export function Composer({ centered = false }: { centered?: boolean }) {
 	const t = useT();
 	const activeSessionId = useSessionsStore((s) => s.activeSessionId);
 	/** 只读会话（subagent 产物检视）：输入/发送/图片全禁，模型与思考档位选择器置灰 */
-	const readOnly = useSessionsStore(
-		(s) => s.sessions.find((session) => session.sessionId === s.activeSessionId)?.readOnly === true,
-	);
+	const readOnly = useSessionReadOnly();
 	const cwd = useSessionsStore((s) => s.cwd);
 	/** 信任决策应答后递增：draft 斜杠菜单按新决策（信任与否）重拉命令 */
 	const trustVersion = useSessionsStore((s) => s.trustVersion);

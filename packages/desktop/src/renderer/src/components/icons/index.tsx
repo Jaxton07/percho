@@ -67,6 +67,43 @@ export function CopyIcon({ size = 12, className }: IconProps) {
 	);
 }
 
+/** 复制（消息操作行，14px 完整形状；与详情复制 CopyIcon 路径不同，保持原样） */
+export function CopyActionIcon({ size = 14, className }: IconProps) {
+	return (
+		<svg
+			className={className}
+			width={size}
+			height={size}
+			viewBox="0 0 24 24"
+			{...strokeProps}
+			strokeLinecap="round"
+			strokeLinejoin="round"
+			aria-hidden="true"
+		>
+			<rect x="9" y="9" width="13" height="13" rx="2" />
+			<path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1" />
+		</svg>
+	);
+}
+
+/** 复制成功对勾（消息操作行复制态，14px，着色由使用方 text-green-500 控制） */
+export function CopyCheckIcon({ size = 14, className }: IconProps) {
+	return (
+		<svg
+			className={className}
+			width={size}
+			height={size}
+			viewBox="0 0 24 24"
+			{...strokeProps}
+			strokeLinecap="round"
+			strokeLinejoin="round"
+			aria-hidden="true"
+		>
+			<path d="M20 6 9 17l-5-5" />
+		</svg>
+	);
+}
+
 /** 子代理（隔离会话 / 小机器人） */
 export function SubagentIcon({ size = 12, className }: IconProps) {
 	return (
