@@ -689,14 +689,13 @@ code {
 /* 代码块容器：无边框悬浮卡片（设计语言 rounded-xl bg-surface shadow-soft 同 QueueBar/TodoPanel；
    编辑器底色即卡片面，浅色=vitesse-light 白/深色=主题深底）。库自带 border 工具类 +
    inline borderColor，此处 border:none 以更高优先级压掉宽度；--ms-radius 抬到 12px（rounded-xl）。
-   阴影不用 shadow-soft（0 0 14px-2px 微光在大卡片左右不可见），改双层环境光：近场柔 + 远场大伞
-   四周可见；从 ink 派生 —— 深色 ink 为浅色，自动变「白色发光」符合既有约定 */
+   左右各收 8px：shadow-soft 外扩约 12px，卡片与正文同宽时阴影左右被溢出感挤压（贴边生硬），
+   收窄后阴影四周完整悬浮 */
 .markdown-body .code-block-container {
 	--ms-radius: 12px;
 	border: none;
-	box-shadow:
-		0 2px 24px -2px color-mix(in srgb, var(--color-ink) 10%, transparent),
-		0 0 64px -12px color-mix(in srgb, var(--color-ink) 9%, transparent);
+	margin-inline: 8px;
+	box-shadow: var(--shadow-soft);
 }
 /* 代码块「纯净化」：标题栏悬浮 —— 常态隐身（纯代码），hover / 键盘聚焦时浮现。
    header DOM 必须保留（复制按钮在里面，showHeader:false 会把按钮一起去掉），
