@@ -152,21 +152,32 @@ export function Composer({ centered = false }: { centered?: boolean }) {
 		return () => window.removeEventListener("pointerdown", onPointerDown);
 	}, [slash.slashOpen, at.atOpen, setSlashDismissed, setAtDismissed]);
 
-	/** 文本变化：重置菜单折叠态 + 探测光标前 @ token（驱动 @ 菜单） */
+	/** 文本变化：重置菜单折叠态 + 探测光标前 @ / slash token（驱动两个菜单） */
 	const handleTextChange = (e: React.ChangeEvent<HTMLTextAreaElement>) => {
 		slash.setSlashDismissed(false);
 		at.setAtDismissed(false);
 		setText(e.target.value);
-		at.updateToken(e.target.value, e.target.selectionStart ?? e.target.value.length);
+		const cursor = e.target.selectionStart ?? e.target.value.length;
+		slash.updateToken(e.target.value, cursor);
+		at.updateToken(e.target.value, cursor);
+	};
+
+	/** 光标移动（点击/方向键）：重探 slash token（@ 菜单仅输入驱动，点进去不弹） */
+	const handleSelect = (e: React.SyntheticEvent<HTMLTextAreaElement>) => {
+		const el = e.currentTarget;
+		slash.updateToken(el.value, el.selectionStart ?? el.value.length);
 	};
 
 	const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
-		// 空文本时 Backspace/Delete：优先把最近的 @ 胶囊弹回全路径纯文本，其次取消 slash 胶囊恢复文本
-		if (
-			text === "" &&
-			(e.key === "Backspace" || e.key === "Delete" || (e.key === "Escape" && slashCommand))
-		) {
-			if (attachments.length > 0 && e.key !== "Escape") {
+		if (at.handleKeyDown(e)) return;
+		if (slash.handleKeyDown(e)) return;
+		// 胶囊撤销：Esc（任意文本态，菜单未消费时）；空文本 Backspace/Delete 先 @ 胶囊后 slash 胶囊
+		if (slashCommand && e.key === "Escape") {
+			slash.restoreSlashPill(e);
+			return;
+		}
+		if (text === "" && (e.key === "Backspace" || e.key === "Delete")) {
+			if (attachments.length > 0) {
 				e.preventDefault();
 				at.handleAttachmentRemove(attachments.length - 1);
 				return;
@@ -176,8 +187,6 @@ export function Composer({ centered = false }: { centered?: boolean }) {
 				return;
 			}
 		}
-		if (at.handleKeyDown(e)) return;
-		if (slash.handleKeyDown(e)) return;
 		if (e.key === "Enter" && !e.shiftKey && !e.nativeEvent.isComposing) {
 			e.preventDefault();
 			void handleSend();
@@ -273,6 +282,7 @@ export function Composer({ centered = false }: { centered?: boolean }) {
 								disabled={readOnly}
 								onChange={handleTextChange}
 								onKeyDown={handleKeyDown}
+								onSelect={handleSelect}
 								onPaste={handlePaste}
 							/>
 						</div>
@@ -286,6 +296,7 @@ export function Composer({ centered = false }: { centered?: boolean }) {
 							disabled={readOnly}
 							onChange={handleTextChange}
 							onKeyDown={handleKeyDown}
+							onSelect={handleSelect}
 							onPaste={handlePaste}
 						/>
 					)}
