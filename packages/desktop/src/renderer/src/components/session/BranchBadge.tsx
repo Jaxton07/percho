@@ -72,7 +72,9 @@ export function BranchBadge() {
 					<span aria-hidden="true" className="shrink-0 text-[13px] leading-5 text-ink-faint">
 						⎇
 					</span>
-					<span className="shrink-0 truncate text-[13px] font-medium text-ink-dim">{current}</span>
+					{/* min-w-0 + truncate：长分支名省略号截断，title 悬停看全名。
+					不能用 shrink-0（会撑破 w-40 被容器硬裁，truncate 失效） */}
+				<span title={current} className="min-w-0 truncate text-[13px] font-medium text-ink-dim">{current}</span>
 				</button>
 				<div
 					className={`grid w-56 transition-all duration-300 ease-[cubic-bezier(0.4,0,0.2,1)] motion-reduce:transition-none ${
@@ -96,7 +98,7 @@ export function BranchBadge() {
 											aria-hidden="true"
 											className={`h-1.5 w-1.5 shrink-0 rounded-full ${isCurrent ? "bg-ink-2" : "bg-transparent"}`}
 										/>
-										<span className="min-w-0 truncate">{branch}</span>
+										<span title={branch} className="min-w-0 truncate">{branch}</span>
 									</li>
 								);
 							})}
