@@ -12,6 +12,7 @@ const piMock = vi.hoisted(() => ({
 	pickDirectory: vi.fn(),
 	ensureProjectTrust: vi.fn(() => Promise.resolve(true)),
 	openSession: vi.fn(),
+	forkSession: vi.fn(),
 	getSessionMessages: vi.fn(),
 	getFollowUpMessages: vi.fn(() => Promise.resolve([])),
 	getTodos: vi.fn(() => Promise.resolve([])),
@@ -214,8 +215,38 @@ describe("openFromHistory", () => {
 		await useSessionsStore.getState().openFromHistory("/tmp/sub-1.jsonl");
 
 		expect(piMock.getSessionMessages).not.toHaveBeenCalled();
+		// skipHistoryIfLive 只跳过历史，队列/todo 仍照常装载
+		expect(piMock.getFollowUpMessages).toHaveBeenCalledTimes(1);
+		expect(piMock.getTodos).toHaveBeenCalledTimes(1);
 		expect(useTranscriptStore.getState().bySession["sub-1"]?.agentActive).toBe(true);
 		expect(useSessionsStore.getState().activeSessionId).toBe("sub-1");
+	});
+
+	it("非 live 会话：历史/队列/todo 各恰好装载一次", async () => {
+		piMock.openSession.mockResolvedValue(realMeta("hist-1", "/proj"));
+		piMock.getSessionMessages.mockResolvedValue([]);
+
+		await useSessionsStore.getState().openFromHistory("/tmp/hist-1.jsonl");
+
+		expect(piMock.getSessionMessages).toHaveBeenCalledTimes(1);
+		expect(piMock.getFollowUpMessages).toHaveBeenCalledTimes(1);
+		expect(piMock.getTodos).toHaveBeenCalledTimes(1);
+		expect(useTranscriptStore.getState().bySession["hist-1"]).toBeDefined();
+	});
+});
+
+describe("forkSession", () => {
+	it("装载三件套失败：error 字段置值（异常穿透）", async () => {
+		piMock.getSessionMessages.mockRejectedValue(new Error("bundle boom"));
+		useSessionsStore.setState({
+			sessions: [realMeta("r1", "/proj")],
+			activeSessionId: "r1",
+		});
+		piMock.forkSession.mockResolvedValue(realMeta("fork-1", "/proj"));
+
+		await useSessionsStore.getState().forkSession({});
+
+		expect(useSessionsStore.getState().error).toBe("bundle boom");
 	});
 });
 
