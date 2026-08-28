@@ -1,6 +1,6 @@
 ---
 name: design-handoff
-description: 为本项目设计新功能/系统并交接给新会话实施：先调研验证（读代码和 SDK 源码落实事实，不靠猜），产出 spec（.local/agent-work/spec/）+ 实施 plan（.local/agent-work/plan/），创建跨会话沟通频道（.local/agent-work/channel/<主题>/HANDOFF.md），最后更新 INDEX.md。当用户要求「设计 XX」「写 spec 和 plan」「做 handoff / 交接给新会话」「安排新会话实施」时使用。
+description: 为本项目设计新功能/系统并交接给新会话实施：先调研验证（读代码和 SDK 源码落实事实，不靠猜），产出 spec（.local/agent-work/spec/）+ 实施 plan（.local/agent-work/plan/），创建跨会话沟通频道（.local/agent-work/channel/<主题>/HANDOFF.md），最后按项目文档约定收尾（更新索引，如有）。当用户要求「设计 XX」「写 spec 和 plan」「做 handoff / 交接给新会话」「安排新会话实施」时使用。
 ---
 
 # 设计 + 交接流程（发起会话用）
@@ -9,7 +9,7 @@ description: 为本项目设计新功能/系统并交接给新会话实施：先
 
 ## 第 0 步：调研与验证（最重要，别跳过）
 
-1. 读 `docs/INDEX.md`（项目索引 + 「想改 X 改哪里」速查表）和相关代码。
+1. 读项目索引/导航文档（**如有**——`AGENTS.md` 通常会指路，含「想改 X 改哪里」速查表最理想；没有就跳过，不要新建）和相关代码。
 2. **验证而非猜测**：凡涉及 SDK/API/外部依赖行为的关键论断（函数签名、覆盖语义、默认值、扫描范围），必须读 `node_modules` 里的源码/`.d.ts` 或官方文档落实，并记录出处（文件:行）。
 3. 已有的 UI/基础设施要先盘点——很多时候「半边已经完工」（如 renderer 已有对应卡片/解析逻辑），设计只需补缺的那半。
 4. 方案对比要有结论：列对比表，说明为什么否掉备选（如「子进程方案在打包态不可用」），不要只列可能性。
@@ -33,7 +33,7 @@ description: 为本项目设计新功能/系统并交接给新会话实施：先
 
 - **阶段 0 冒烟验证**：把 spec 里每个「待验证」变成一个可执行断言脚本（仿 `scripts/smoke-backend.mts`），附通过标准；**卡点处理规则写死：失败回 channel 留言，不许绕过**（后续决策依赖这些事实）
 - 后续阶段按文件拆任务：每个任务写清新建/修改哪个文件、做什么、配什么测试
-- 验收清单：`npm run typecheck && npm run lint && npm run test` + 逐项手测脚本 + 收尾纪律（关闭测试起的服务/进程、更新 INDEX.md）
+- 验收清单：`npm run typecheck && npm run lint && npm run test` + 逐项手测脚本 + 收尾纪律（关闭测试起的服务/进程、更新项目索引（如有））
 - 「明确不做」清单（与 spec 非目标呼应）
 - 引用 spec 而非重复其内容
 
@@ -42,7 +42,7 @@ description: 为本项目设计新功能/系统并交接给新会话实施：先
 新会话的唯一入口，自包含、不依赖本次聊天记录。必含：
 
 1. **任务一句话** + 完成定义（= plan 验收清单全过 + 用户 review 通过）
-2. **必读文档顺序**：HANDOFF → spec → plan → AGENTS.md + INDEX.md
+2. **必读文档顺序**：HANDOFF → spec → plan → 项目根 `AGENTS.md`（含其指路的项目索引，如有）
 3. **关键约束**：本项目通用纪律（dev 数据隔离、正式目录零写入、默认路径零行为变化、i18n 双字典、Zustand 稳定引用等，详见 AGENTS.md 踩坑记录）+ 本任务特有的硬约束（如递归防护、目录隔离）
 4. **已验证事实表**（事实 | 出处）——实施会话直接采信，禁止重复考证
 5. **待决策点**：实施中遇到二选一时自行决策并记录进 IMPL-NOTES
@@ -60,7 +60,7 @@ description: 为本项目设计新功能/系统并交接给新会话实施：先
 
 ## 第 4 步：收尾
 
-**不要把 spec/plan 文件写进 `docs/INDEX.md`**——agent 协作产物随任务生灭、会不定期清理，索引只标 `.local/agent-work/` 目录一行，不标其下的 spec/plan/channel 单个文件。HANDOFF.md 里有完整路径，可发现性靠频道目录本身。
+**不要把 spec/plan 文件写进项目索引**——agent 协作产物随任务生灭、会不定期清理，索引里至多标 `.local/agent-work/` 目录一行，不标其下的 spec/plan/channel 单个文件。HANDOFF.md 里有完整路径，可发现性靠频道目录本身。项目没有索引文档？不要为此新建。
 
 交付后（用户开了实施会话后）：你用 channel_post 发的消息会自动唤醒实施会话查收——需要传达新信息时**写文件 + post 一条摘要即可**（IMPL-NOTES 回应、REVIEW 意见），不必等用户传话；但同样遵守「无信息量不 post」。
 
