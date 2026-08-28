@@ -5,7 +5,8 @@ import { useSettingsStore } from "../../../stores/settings";
 import { EditIcon, ExpandArrowIcon, LoginIcon, TestIcon, TrashIcon } from "../../icons";
 import { Switch } from "../../ui/Switch";
 import { Tooltip } from "../../ui/Tooltip";
-import { BuiltinProviderEditForm, CustomProviderEditForm } from "./CustomProviderForm";
+import { BuiltinProviderEditForm } from "./BuiltinProviderEditForm";
+import { CustomProviderEditForm } from "./CustomProviderForm";
 
 const EMPTY_MODEL_IDS: string[] = [];
 

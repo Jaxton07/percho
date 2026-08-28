@@ -1,23 +1,21 @@
-import type { CatalogPackage, CatalogPackageType, LoadedExtension, ResourceScope } from "@percho/shared";
+import type { CatalogPackage, LoadedExtension, ResourceScope } from "@percho/shared";
 import { isSubagentPackage, isSubagentToolName, NPM_NOT_FOUND_SENTINEL } from "@percho/shared";
-import { useEffect, useMemo, useRef, useState } from "react";
-import { useT } from "../../i18n";
-import { useSettingsStore } from "../../stores/settings";
-import { CheckIcon, SearchIcon, TrashIcon } from "../icons";
-import { Button } from "../ui/Button";
-import { Tooltip } from "../ui/Tooltip";
-
-const CATALOG_TYPES: ("" | CatalogPackageType)[] = ["", "extension", "skill", "prompt", "theme"];
+import { useRef, useState } from "react";
+import { useT } from "../../../i18n";
+import { useSettingsStore } from "../../../stores/settings";
+import { CheckIcon, TrashIcon } from "../../icons";
+import { Button } from "../../ui/Button";
+import { Tooltip } from "../../ui/Tooltip";
 
 /** 下载量格式化：479565 → 479.6K，1234567 → 1.2M */
-function formatDownloads(n: number): string {
+export function formatDownloads(n: number): string {
 	if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(1)}M`;
 	if (n >= 1_000) return `${(n / 1_000).toFixed(1)}K`;
 	return String(n);
 }
 
 /** 已配置 source → 包名（仅 npm: 源能与目录匹配；剥版本后缀，兼容 scoped 名） */
-function npmSourceToName(source: string): string | null {
+export function npmSourceToName(source: string): string | null {
 	if (!source.startsWith("npm:")) return null;
 	const spec = source.slice(4);
 	const searchFrom = spec.startsWith("@") ? spec.indexOf("/") + 1 : 1;
@@ -97,7 +95,7 @@ function Stat({ label }: { label: string }) {
 	return <span className="text-[10px] text-ink-faint">{label}</span>;
 }
 
-function ExtensionRow({
+export function ExtensionRow({
 	extension,
 	configured,
 }: {
@@ -154,7 +152,7 @@ function TypeBadge({ type }: { type: string }) {
 	);
 }
 
-function CatalogRow({
+export function CatalogRow({
 	pkg,
 	configured,
 }: {
@@ -243,186 +241,5 @@ function CatalogRow({
 				)}
 			</div>
 		</li>
-	);
-}
-
-/** 浏览社区：pi.dev 目录搜索 + 安装 */
-function BrowseSection() {
-	const t = useT();
-	const query = useSettingsStore((s) => s.catalogQuery);
-	const type = useSettingsStore((s) => s.catalogType);
-	const packages = useSettingsStore((s) => s.catalogPackages);
-	const total = useSettingsStore((s) => s.catalogTotal);
-	const loading = useSettingsStore((s) => s.catalogLoading);
-	const loadingMore = useSettingsStore((s) => s.catalogLoadingMore);
-	const error = useSettingsStore((s) => s.catalogError);
-	const configuredPackages = useSettingsStore((s) => s.configuredPackages);
-	const setCatalogQuery = useSettingsStore((s) => s.setCatalogQuery);
-	const setCatalogType = useSettingsStore((s) => s.setCatalogType);
-	const searchCatalog = useSettingsStore((s) => s.searchCatalog);
-
-	// name → 已配置条目（「已安装」态 + 卸载入口；只有 npm: 源能对上目录包）
-	const configuredByPackage = useMemo(() => {
-		const map = new Map<string, { source: string; scope: "user" | "project" }>();
-		for (const p of configuredPackages ?? []) {
-			const name = npmSourceToName(p.source);
-			if (name && !map.has(name)) map.set(name, { source: p.source, scope: p.scope });
-		}
-		return map;
-	}, [configuredPackages]);
-
-	// 已配置包列表只需拉一次（安装成功后 store 会自刷）；目录首载（防抖搜索只在输入时触发）
-	useEffect(() => {
-		const s = useSettingsStore.getState();
-		if (s.configuredPackages === null) void s.refreshConfiguredPackages();
-		if (s.catalogPage === 0 && !s.catalogLoading) void s.searchCatalog(false);
-	}, []);
-
-	const remaining = total - packages.length;
-
-	return (
-		<div>
-			<div className="relative">
-				<SearchIcon className="absolute left-3 top-1/2 -translate-y-1/2 text-ink-faint" />
-				<input
-					className="w-full rounded-lg bg-hover/80 py-2 pl-9 pr-3 text-[13px] outline-none placeholder:text-ink-faint focus:bg-hover"
-					placeholder={t("settings.extensions.searchPlaceholder")}
-					value={query}
-					onChange={(e) => setCatalogQuery(e.target.value)}
-				/>
-			</div>
-			<div className="mt-2 flex flex-wrap gap-1">
-				{CATALOG_TYPES.map((id) => (
-					<button
-						key={id || "all"}
-						type="button"
-						className={`rounded-full px-2.5 py-1 text-[11px] transition-colors ${
-							type === id ? "bg-ink font-medium text-on-ink" : "bg-hover text-ink-dim hover:text-ink"
-						}`}
-						onClick={() => setCatalogType(id)}
-					>
-						{t(`settings.extensions.type.${id || "all"}`)}
-					</button>
-				))}
-			</div>
-			{loading ? (
-				<p className="py-8 text-center text-[13px] text-ink-faint">{t("settings.extensions.loading")}</p>
-			) : error ? (
-				<div className="py-8 text-center">
-					<p className="text-[13px] text-ink-faint">{t("settings.extensions.catalogError")}</p>
-					<p className="mt-1 text-[11px] text-ink-faint">{error}</p>
-					<Button size="sm" className="mt-3" onClick={() => void searchCatalog(false)}>
-						{t("settings.extensions.retry")}
-					</Button>
-				</div>
-			) : packages.length === 0 ? (
-				<p className="py-8 text-center text-[13px] text-ink-faint">{t("settings.extensions.noResults")}</p>
-			) : (
-				<>
-					<ul className="mt-1 divide-y divide-border">
-						{packages.map((pkg) => (
-							<CatalogRow key={pkg.name} pkg={pkg} configured={configuredByPackage.get(pkg.name) ?? null} />
-						))}
-					</ul>
-					{remaining > 0 && (
-						<div className="mt-2 flex justify-center">
-							<Button size="sm" disabled={loadingMore} onClick={() => void searchCatalog(true)}>
-								{loadingMore ? (
-									<span className="inline-flex items-center gap-1.5">
-										<span className="h-3 w-3 animate-spin rounded-full border-[1.5px] border-current border-t-transparent" />
-										{t("settings.extensions.loading")}
-									</span>
-								) : (
-									t("settings.extensions.loadMore", { count: remaining })
-								)}
-							</Button>
-						</div>
-					)}
-				</>
-			)}
-		</div>
-	);
-}
-
-/** 已加载：当前项目（活跃会话）加载的扩展及其注册的工具/命令 */
-function LoadedSection() {
-	const t = useT();
-	const extensions = useSettingsStore((s) => s.extensions);
-	const errors = useSettingsStore((s) => s.extensionErrors);
-	const configuredPackages = useSettingsStore((s) => s.configuredPackages);
-
-	// 已加载扩展的 source 命中已配置包 → 可卸载（source 为 npm:/git: 等安装源时）
-	const configuredBySource = useMemo(() => {
-		const map = new Map<string, { source: string; scope: "user" | "project" }>();
-		for (const p of configuredPackages ?? []) {
-			if (!map.has(p.source)) map.set(p.source, { source: p.source, scope: p.scope });
-		}
-		return map;
-	}, [configuredPackages]);
-
-	if (extensions === null) {
-		return (
-			<p className="py-8 text-center text-[13px] text-ink-faint">{t("settings.extensions.emptyNoSession")}</p>
-		);
-	}
-	return (
-		<div>
-			{extensions.length === 0 && errors.length === 0 ? (
-				<p className="py-8 text-center text-[13px] text-ink-faint">{t("settings.extensions.empty")}</p>
-			) : (
-				<ul className="divide-y divide-border">
-					{extensions.map((extension) => (
-						<ExtensionRow
-							key={extension.path}
-							extension={extension}
-							configured={configuredBySource.get(extension.source) ?? null}
-						/>
-					))}
-				</ul>
-			)}
-			{errors.length > 0 && (
-				<div className="mt-4 rounded-lg bg-red-50 px-3 py-2">
-					<p className="text-[11px] font-medium text-red-600">
-						{t("settings.extensions.loadErrors", { count: errors.length })}
-					</p>
-					<ul className="mt-1 space-y-1">
-						{errors.map((err) => (
-							<li key={err.path} className="text-[11px] leading-relaxed text-red-500">
-								<span className="font-mono">{err.path}</span> — {err.error}
-							</li>
-						))}
-					</ul>
-				</div>
-			)}
-		</div>
-	);
-}
-
-/** 扩展设置面板：浏览社区目录安装 + 查看已加载扩展（分段切换） */
-export function ExtensionsPanel() {
-	const t = useT();
-	const tab = useSettingsStore((s) => s.extensionsTab);
-	const setExtensionsTab = useSettingsStore((s) => s.setExtensionsTab);
-
-	return (
-		<div>
-			<h3 className="text-[13px] font-medium text-ink">{t("settings.extensions.title")}</h3>
-			<p className="mt-0.5 text-[11px] text-ink-faint">{t("settings.extensions.hint")}</p>
-			<div className="mt-3 flex rounded-lg bg-hover p-0.5">
-				{(["browse", "loaded"] as const).map((id) => (
-					<button
-						key={id}
-						type="button"
-						className={`flex-1 rounded-md px-3 py-1 text-[12px] transition-colors ${
-							tab === id ? "bg-surface font-medium text-ink shadow-sm" : "text-ink-dim hover:text-ink"
-						}`}
-						onClick={() => setExtensionsTab(id)}
-					>
-						{t(`settings.extensions.tab.${id}`)}
-					</button>
-				))}
-			</div>
-			<div className="mt-3">{tab === "browse" ? <BrowseSection /> : <LoadedSection />}</div>
-		</div>
 	);
 }
