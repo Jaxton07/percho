@@ -686,9 +686,12 @@ code {
 	text-decoration-color: var(--markdown-link-decoration);
 	text-underline-offset: auto;
 }
-/* 代码块容器：边框/阴影 token 化（库默认 gray-200/gray-700 硬编码 + shadow-sm） */
+/* 代码块容器：无边框悬浮卡片（设计语言 rounded-xl bg-surface shadow-soft 同 QueueBar/TodoPanel；
+   编辑器底色即卡片面，浅色=vitesse-light 白/深色=主题深底）。库自带 border 工具类 +
+   inline borderColor，此处 border:none 以更高优先级压掉宽度；--ms-radius 抬到 12px（rounded-xl） */
 .markdown-body .code-block-container {
-	border-color: var(--color-border);
+	--ms-radius: 12px;
+	border: none;
 	box-shadow: var(--shadow-soft);
 }
 /* 代码块「纯净化」：标题栏悬浮 —— 常态隐身（纯代码），hover / 键盘聚焦时浮现。
@@ -703,6 +706,8 @@ code {
 	right: 0;
 	z-index: 2;
 	padding: 0.5rem 0.625rem;
+	/* 语言标签隐藏后 header 只剩右侧按钮组：靠右（库是 justify-between，剩一个子元素会落到左） */
+	justify-content: flex-end;
 	/* biome-ignore lint/complexity/noImportantStyles: 必须压过组件 inline style 的 background-color: var(--vscode-editor-background) */
 	background: transparent !important;
 	border-bottom: none;
