@@ -3,7 +3,7 @@
 </p>
 <h1 align="center">percho</h1>
 <p align="center">
-  Highly customizable desktop GUI for the <a href="https://www.npmjs.com/package/@earendil-works/pi-coding-agent">Pi coding agent</a> — the same engine as the Pi CLI, in a clean visual interface. Multi-session chat, visual tool approvals, UI plugins, and custom themes.
+  Highly customizable desktop GUI for the <a href="https://www.npmjs.com/package/@earendil-works/pi-coding-agent">Pi coding agent</a> — the same engine as the Pi CLI, in a clean visual interface. Multi-session chat, visual tool approvals, built-in subagents, UI plugins, and custom themes.
 </p>
 <p align="center">
   <a href="LICENSE"><img src="https://img.shields.io/github/license/Jaxton07/percho?style=flat-square" alt="License"></a>
@@ -44,16 +44,22 @@ percho embeds the official Pi SDK (`@earendil-works/pi-coding-agent`) in the Ele
 
 - **Extensibility** — TypeScript extensions, skills, and prompt templates installed for the Pi CLI work here too, including project-local ones (with a trust prompt before loading). Adapt Pi to your workflows, no forking required.
 - **Shared configuration** — same `~/.pi/agent/` directory as the CLI: sessions, auth, and model settings carry over. Start a session in the terminal, continue it in the GUI.
-- **Providers** — subscriptions (Claude Pro/Max, ChatGPT Plus/Pro Codex, GitHub Copilot) and API keys for Anthropic, OpenAI, Gemini, DeepSeek, Bedrock, and more.
+- **Providers** — subscriptions (Claude Pro/Max, ChatGPT Plus/Pro Codex, GitHub Copilot, logged in via an in-app OAuth flow) and API keys for Anthropic, OpenAI, Gemini, DeepSeek, Bedrock, and more; custom providers and base-URL overrides for relay gateways.
 
 And for those who prefer a GUI over a TUI:
 
-- Highly customizable UI — swap tool-call cards, drop in desk-pet overlays, or extend the settings panel via UI plugins (a whale-maid desk pet ships built in)
+- Highly customizable UI — swap tool-call cards, drop in desk-pet overlays (two whale-maid pets ship built in), or extend the settings panel via UI plugins
 - Visual permission gates — approve or deny each tool call from a dock, backed by a per-tool rule engine
-- Multi-session sidebar, per-session composer drafts, follow-up queue with undo
+- Draggable multi-session tabs (plus an optional session rail), per-session composer drafts, follow-up queue with undo
+- Built-in subagents — a scout plus your own agent definitions, parallel task fan-outs, and run cards you can click to inspect the sub-session read-only
+- Context evaporation (on by default) — stale tool outputs age into compact stubs, keeping long sessions within budget
+- Vision proxy — when a text-only model meets an image, a vision model describes it inline before it reaches the LLM
+- Unified error system — in-chat error cards with one-click retry, an auto-retry status line, and a crash-proof renderer
+- Solid session workspace — fork any message, recall your own message back into the composer, todo panel, per-turn diff sidebar, slash-command menu and @-file completion
 - Streaming markdown rendering, image previews, message copy
 - Agent-initiated image display — a built-in `show_image` tool lets the agent deliberately show you images inline (single or grouped), without turning every tool result into noise
 - Custom background image with adjustable overlay dimming, light/dark/system themes
+- LAN observer — watch a session read-only from a phone or tablet browser via QR code
 
 ## Download
 
@@ -63,7 +69,9 @@ Prebuilt installers are published on the [Releases](https://github.com/Jaxton07/
 | --- | --- |
 | macOS (Apple Silicon) | `percho-mac-arm64.dmg` |
 | macOS (Intel) | `percho-mac-x64.dmg` |
-| Windows | `percho-windows-x64.exe` |
+| Windows | `percho-windows-x64.exe` (installer) or `percho-windows-x64.zip` |
+
+macOS users can also install with Homebrew: `brew install --cask jaxton07/tap/percho` — no Gatekeeper prompt, and updates flow through brew.
 
 > Builds are ad-hoc signed (no Developer ID certificate). On macOS, the first launch after a download may show **"Apple cannot verify Percho is free from malware"** — that's Gatekeeper blocking an un-notarized app. To open it:
 >
@@ -73,7 +81,7 @@ Prebuilt installers are published on the [Releases](https://github.com/Jaxton07/
 >
 > 2. Or in Terminal: `xattr -cr "/Applications/Percho.app"`.
 >
-> Only the first launch of each downloaded version needs this — later updates install automatically in-app and skip Gatekeeper entirely. On Windows, click "More info" → "Run anyway" when SmartScreen appears.
+> Updates are checked in-app. On Windows they download and install there too (click download, then restart). On macOS the ad-hoc signed build cannot self-install, so the app jumps to the Releases page — and a freshly downloaded version will hit Gatekeeper once again (installing via Homebrew avoids this entirely). On Windows, click "More info" → "Run anyway" when SmartScreen appears.
 
 ## Configuration
 

@@ -1,11 +1,13 @@
 import type { ProviderInfo } from "@percho/shared";
 import { useState } from "react";
 import { useT } from "../../../i18n";
+import { useProviderLoginStore } from "../../../stores/provider-login";
 import { useSettingsStore } from "../../../stores/settings";
 import { EditIcon, ExpandArrowIcon, LoginIcon, TestIcon, TrashIcon } from "../../icons";
 import { Switch } from "../../ui/Switch";
 import { Tooltip } from "../../ui/Tooltip";
-import { BuiltinProviderEditForm, CustomProviderEditForm } from "./CustomProviderForm";
+import { BuiltinProviderEditForm } from "./BuiltinProviderEditForm";
+import { CustomProviderEditForm } from "./CustomProviderForm";
 
 const EMPTY_MODEL_IDS: string[] = [];
 
@@ -51,8 +53,8 @@ export function ProviderRow({ provider }: { provider: ProviderInfo }) {
 	const removeCredential = useSettingsStore((s) => s.removeCredential);
 	const removeCustom = useSettingsStore((s) => s.removeCustom);
 	const test = useSettingsStore((s) => s.test);
-	const startLogin = useSettingsStore((s) => s.startProviderLogin);
-	const loginActive = useSettingsStore((s) => s.login !== null);
+	const startLogin = useProviderLoginStore((s) => s.startProviderLogin);
+	const loginActive = useProviderLoginStore((s) => s.login !== null);
 	const testResult = useSettingsStore((s) => s.testResults[provider.id]);
 	const hiddenModelIds = useSettingsStore((s) => s.modelPrefs?.hiddenModels[provider.id] ?? EMPTY_MODEL_IDS);
 	const setModelHidden = useSettingsStore((s) => s.setModelHidden);

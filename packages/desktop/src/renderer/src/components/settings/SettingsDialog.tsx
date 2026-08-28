@@ -9,7 +9,7 @@ import { type SettingsCategory, useSettingsStore } from "../../stores/settings";
 import { useUiPluginsStore } from "../../stores/ui-plugins";
 import { AboutPanel } from "./AboutPanel";
 import { AppearancePanel } from "./AppearancePanel";
-import { ExtensionsPanel } from "./ExtensionsPanel";
+import { ExtensionsPanel } from "./extensions/ExtensionsPanel";
 import { GeneralPanel } from "./GeneralPanel";
 import { LanObserverPanel } from "./LanObserverPanel";
 import { McpPanel } from "./McpPanel";

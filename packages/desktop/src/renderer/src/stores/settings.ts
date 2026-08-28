@@ -1,14 +1,10 @@
 import type {
-	CatalogPackage,
-	CatalogPackageType,
-	ConfiguredPackageInfo,
 	ContextManagerMode,
 	CustomProviderInput,
 	CustomProviderUpdateInput,
 	LanStatus,
 	LoadedExtension,
 	LoadedSkill,
-	LoginAuthPrompt,
 	ModelPrefs,
 	ProviderInfo,
 	ProviderTestResult,
@@ -35,26 +31,6 @@ export type SettingsCategory =
 	| "about"
 	// 插件自带设置页分类（settings.panel 贡献动态拼接，id = plugin:<pluginName>:<contributionId>）
 	| `plugin:${string}`;
-
-/** 订阅登录（OAuth）流程的 UI 状态机；事件来自 backend LoginService 桥接 */
-export interface LoginFlowState {
-	/** renderer 生成的流程 id（事件归属/应答/取消关联） */
-	loginId: string;
-	providerId: string;
-	providerName: string;
-	/** 最新 progress/info 文案（SDK 原文） */
-	statusLine?: string;
-	/** info 事件附带的链接 */
-	infoLinks?: readonly { url: string; label?: string }[];
-	/** 浏览器授权地址（auth_url 事件；收到时自动开一次浏览器） */
-	authUrl?: { url: string; instructions?: string };
-	/** 设备码（device_code 事件；SDK 侧自行轮询） */
-	deviceCode?: { userCode: string; verificationUri: string; expiresInSeconds?: number };
-	/** 当前挂起的输入/选择提示（应答或 prompt-cancel 后清空） */
-	pendingPrompt?: { promptId: string; prompt: LoginAuthPrompt };
-	/** 流程已结束但失败（保留对话框展示错误；cancelled 直接关闭不设此字段） */
-	error?: string;
-}
 
 interface SettingsStore {
 	open: boolean;
@@ -87,33 +63,8 @@ interface SettingsStore {
 	/** 当前活跃会话已加载的扩展（null = 未加载/无会话） */
 	extensions: LoadedExtension[] | null;
 	extensionErrors: { path: string; error: string }[];
-	/** 扩展面板分段：浏览社区 / 已加载 */
-	extensionsTab: "browse" | "loaded";
-	/** 社区包目录（pi.dev，服务端模糊搜索） */
-	catalogQuery: string;
-	catalogType: "" | CatalogPackageType;
-	catalogPackages: CatalogPackage[];
-	catalogTotal: number;
-	catalogPage: number;
-	catalogLoading: boolean;
-	catalogLoadingMore: boolean;
-	catalogError: string | null;
-	/** 防陈旧响应：每次搜索自增，响应只认最新序号 */
-	catalogSeq: number;
-	/** 安装中的包名集合 */
-	installingNames: Record<string, true>;
-	/** 按包名的安装错误 */
-	installErrors: Record<string, string>;
-	/** 卸载中的 source 集合 */
-	removingSources: Record<string, true>;
-	/** 按 source 的卸载错误 */
-	removeErrors: Record<string, string>;
-	/** settings.json 已配置的包（null = 未加载；「已安装」态匹配/卸载用） */
-	configuredPackages: ConfiguredPackageInfo[] | null;
 	/** providerId → 测试结果（"testing" 表示进行中） */
 	testResults: Record<string, ProviderTestResult | "testing">;
-	/** 进行中的订阅登录流程（同一时刻一个；null = 无） */
-	login: LoginFlowState | null;
 	error: string | null;
 	setOpen: (open: boolean) => void;
 	/** 打开并（可选）定位到指定分类 */
@@ -133,14 +84,6 @@ interface SettingsStore {
 	setModelHidden: (provider: string, modelId: string, hidden: boolean) => Promise<void>;
 	setModelsHidden: (provider: string, modelIds: string[], hidden: boolean) => Promise<void>;
 	setSubagentModel: (agent: string, modelRef: string | null) => Promise<void>;
-	/** 启动 provider 订阅登录（OAuth）；事件驱动 login 状态机，结束自动收尾 */
-	startProviderLogin: (provider: ProviderInfo) => Promise<void>;
-	/** 应答登录中的输入/选择提示 */
-	respondLoginPrompt: (value: string) => void;
-	/** 取消进行中的登录（invoke 收尾时统一清空状态） */
-	cancelProviderLogin: () => void;
-	/** 关闭登录对话框（错误态保留展示时用） */
-	dismissLogin: () => void;
 	setPermissionEnabled: (enabled: boolean) => Promise<void>;
 	setContextManagerMode: (mode: ContextManagerMode) => Promise<void>;
 	setChannelWatchEnabled: (enabled: boolean) => Promise<void>;
@@ -152,16 +95,6 @@ interface SettingsStore {
 	refreshLanStatus: () => Promise<void>;
 	setLanEnabled: (enabled: boolean) => Promise<void>;
 	setLanRemoteControl: (enabled: boolean) => Promise<void>;
-	setExtensionsTab: (tab: "browse" | "loaded") => void;
-	setCatalogQuery: (query: string) => void;
-	setCatalogType: (type: "" | CatalogPackageType) => void;
-	/** 搜索社区包目录；append=true 时加载下一页并追加 */
-	searchCatalog: (append?: boolean) => Promise<void>;
-	/** 安装社区包（用户级），成功后刷新已配置列表与已加载资源 */
-	installCatalogPackage: (name: string) => Promise<void>;
-	/** 卸载已配置的包，成功后刷新已配置列表与已加载资源 */
-	removeConfiguredPackage: (source: string, scope: "user" | "project") => Promise<void>;
-	refreshConfiguredPackages: () => Promise<void>;
 }
 
 export const useSettingsStore = create<SettingsStore>((set, get) => {
@@ -169,13 +102,6 @@ export const useSettingsStore = create<SettingsStore>((set, get) => {
 	const afterMutation = async () => {
 		await get().refresh();
 		await useSessionsStore.getState().loadModels();
-	};
-
-	/** 目录搜索防抖（query/type 变更 300ms 后触发） */
-	let catalogDebounceTimer: ReturnType<typeof setTimeout> | undefined;
-	const scheduleCatalogSearch = () => {
-		clearTimeout(catalogDebounceTimer);
-		catalogDebounceTimer = setTimeout(() => void get().searchCatalog(false), 300);
 	};
 
 	return {
@@ -198,32 +124,10 @@ export const useSettingsStore = create<SettingsStore>((set, get) => {
 		skillDiagnostics: [],
 		extensions: null,
 		extensionErrors: [],
-		extensionsTab: "browse",
-		catalogQuery: "",
-		catalogType: "",
-		catalogPackages: [],
-		catalogTotal: 0,
-		catalogPage: 0,
-		catalogLoading: false,
-		catalogLoadingMore: false,
-		catalogError: null,
-		catalogSeq: 0,
-		installingNames: {},
-		installErrors: {},
-		removingSources: {},
-		removeErrors: {},
-		configuredPackages: null,
 		testResults: {},
-		login: null,
 		error: null,
 
 		setOpen: (open) => {
-			// 关闭设置时取消进行中的登录流程（对话框随面板卸载）
-			if (!open) {
-				const active = get().login;
-				if (active && !active.error) void getPi().cancelProviderLogin(active.loginId);
-				if (active) set({ login: null });
-			}
 			set({ open, testResults: {}, error: null });
 			if (open) void get().refresh();
 		},
@@ -234,110 +138,6 @@ export const useSettingsStore = create<SettingsStore>((set, get) => {
 		},
 
 		setCategory: (category) => set({ category }),
-
-		setExtensionsTab: (extensionsTab) => set({ extensionsTab }),
-
-		setCatalogQuery: (catalogQuery) => {
-			set({ catalogQuery });
-			scheduleCatalogSearch();
-		},
-
-		setCatalogType: (catalogType) => {
-			set({ catalogType });
-			scheduleCatalogSearch();
-		},
-
-		searchCatalog: async (append = false) => {
-			const { catalogQuery, catalogType, catalogPage, catalogSeq } = get();
-			const page = append ? catalogPage + 1 : 1;
-			const seq = catalogSeq + 1;
-			set(
-				append
-					? { catalogSeq: seq, catalogLoadingMore: true, catalogError: null }
-					: { catalogSeq: seq, catalogLoading: true, catalogError: null },
-			);
-			try {
-				const result = await getPi().searchCatalog(catalogQuery, catalogType, page);
-				if (get().catalogSeq !== seq) return; // 已有更新的搜索，丢弃陈旧响应
-				set((state) => ({
-					catalogPackages: append ? [...state.catalogPackages, ...result.packages] : result.packages,
-					catalogTotal: result.total,
-					catalogPage: result.page,
-					catalogLoading: false,
-					catalogLoadingMore: false,
-				}));
-			} catch (error) {
-				if (get().catalogSeq !== seq) return;
-				set({
-					catalogLoading: false,
-					catalogLoadingMore: false,
-					catalogError: error instanceof Error ? error.message : String(error),
-				});
-			}
-		},
-
-		installCatalogPackage: async (name) => {
-			set((state) => {
-				const installErrors = { ...state.installErrors };
-				delete installErrors[name];
-				return { installingNames: { ...state.installingNames, [name]: true }, installErrors };
-			});
-			try {
-				await getPi().installPackage(name);
-				await get().refreshConfiguredPackages();
-				// backend 已对非流式会话做 session.reload()，刷新已加载资源列表让「已加载」页同步
-				void get().refresh();
-			} catch (error) {
-				set((state) => ({
-					installErrors: {
-						...state.installErrors,
-						[name]: error instanceof Error ? error.message : String(error),
-					},
-				}));
-			} finally {
-				set((state) => {
-					const installingNames = { ...state.installingNames };
-					delete installingNames[name];
-					return { installingNames };
-				});
-			}
-		},
-
-		refreshConfiguredPackages: async () => {
-			try {
-				const configured = await getPi().listConfiguredPackages();
-				set({ configuredPackages: configured });
-			} catch {
-				set({ configuredPackages: [] });
-			}
-		},
-
-		removeConfiguredPackage: async (source, scope) => {
-			set((state) => {
-				const removeErrors = { ...state.removeErrors };
-				delete removeErrors[source];
-				return { removingSources: { ...state.removingSources, [source]: true }, removeErrors };
-			});
-			try {
-				await getPi().removePackage(source, scope);
-				await get().refreshConfiguredPackages();
-				// backend 已对非流式会话做 session.reload()，刷新已加载资源列表让「已加载」页同步
-				void get().refresh();
-			} catch (error) {
-				set((state) => ({
-					removeErrors: {
-						...state.removeErrors,
-						[source]: error instanceof Error ? error.message : String(error),
-					},
-				}));
-			} finally {
-				set((state) => {
-					const removingSources = { ...state.removingSources };
-					delete removingSources[source];
-					return { removingSources };
-				});
-			}
-		},
 
 		refresh: async () => {
 			set({ loading: true });
@@ -625,106 +425,5 @@ export const useSettingsStore = create<SettingsStore>((set, get) => {
 				}));
 			}
 		},
-
-		startProviderLogin: async (provider) => {
-			if (get().login) return;
-			const loginId = `login-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
-			set({ login: { loginId, providerId: provider.id, providerName: provider.name } });
-			// 每个流程只自动开一次浏览器（auth_url 可能重复发）
-			let browserOpened = false;
-			// 先订阅再 invoke：事件可能在 invoke 返回前到达
-			const unsubscribe = getPi().onProviderLoginEvent((payload) => {
-				if (payload.loginId !== loginId) return;
-				const state = get().login;
-				if (!state || state.loginId !== loginId) return;
-				if (payload.kind === "prompt") {
-					set({ login: { ...state, pendingPrompt: { promptId: payload.promptId, prompt: payload.prompt } } });
-					return;
-				}
-				if (payload.kind === "prompt-cancel") {
-					if (state.pendingPrompt?.promptId === payload.promptId) {
-						set({ login: { ...state, pendingPrompt: undefined } });
-					}
-					return;
-				}
-				const event = payload.event;
-				if (event.type === "auth_url") {
-					set({ login: { ...state, authUrl: { url: event.url, instructions: event.instructions } } });
-					if (!browserOpened) {
-						browserOpened = true;
-						void getPi().openExternal(event.url);
-					}
-				} else if (event.type === "device_code") {
-					set({
-						login: {
-							...state,
-							deviceCode: {
-								userCode: event.userCode,
-								verificationUri: event.verificationUri,
-								expiresInSeconds: event.expiresInSeconds,
-							},
-						},
-					});
-				} else if (event.type === "progress") {
-					set({ login: { ...state, statusLine: event.message } });
-				} else if (event.type === "info") {
-					set({ login: { ...state, statusLine: event.message, infoLinks: event.links } });
-				}
-			});
-			try {
-				const result = await getPi().startProviderLogin(loginId, provider.id);
-				if (result.ok) {
-					set({ login: null });
-					// 凭证已持久化并同步运行时：刷新 provider 徽章 + 模型选择器
-					await afterMutation();
-				} else if (result.cancelled) {
-					set({ login: null });
-				} else {
-					const state = get().login;
-					if (state) {
-						set({
-							login: { ...state, pendingPrompt: undefined, error: result.error ?? "unknown error" },
-						});
-					}
-				}
-			} catch (error) {
-				// invoke 层错误（并发守卫等）：保留对话框展示
-				const state = get().login;
-				if (state) {
-					set({
-						login: {
-							...state,
-							pendingPrompt: undefined,
-							error: error instanceof Error ? error.message : String(error),
-						},
-					});
-				}
-			} finally {
-				unsubscribe();
-			}
-		},
-
-		/** 应答登录 prompt：await IPC 成功才清 pendingPrompt；失败恢复 prompt + 记 error（可重答） */
-		respondLoginPrompt: async (value) => {
-			const state = get().login;
-			if (!state?.pendingPrompt) return;
-			const { promptId } = state.pendingPrompt;
-			try {
-				await getPi().respondProviderLogin(state.loginId, promptId, value);
-				// 函数式更新：await 期间 login 状态可能已推进（新 prompt/状态行），不可用旧快照整体覆盖
-				set((s) => (s.login ? { login: { ...s.login, pendingPrompt: undefined } } : {}));
-			} catch (error) {
-				const message = error instanceof Error ? error.message : String(error);
-				set((s) => (s.login ? { login: { ...s.login, error: message } } : {}));
-			}
-		},
-
-		cancelProviderLogin: () => {
-			const state = get().login;
-			if (!state) return;
-			void getPi().cancelProviderLogin(state.loginId);
-		},
-
-		dismissLogin: () => set({ login: null }),
 	};
 });

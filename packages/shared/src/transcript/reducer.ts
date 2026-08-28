@@ -1,4 +1,4 @@
-import { buildLlmUiError, buildStreamGuardUiError, type UiError } from "../errors";
+import { buildLlmUiError, buildStreamGuardUiError, isUserAbortError, type UiError } from "../errors";
 import type { ImageInput, SessionEvent } from "../session";
 import { parseExpandedSkillInvocation } from "../skill-invocation";
 import { extractSubagentRuns } from "../subagent";
@@ -484,7 +484,9 @@ export function reduceEvent(state: SessionTranscriptState, event: SessionEvent):
 				message?.role === "assistant" &&
 				message.stopReason === "error" &&
 				typeof message.errorMessage === "string" &&
-				message.errorMessage.length > 0
+				message.errorMessage.length > 0 &&
+				// 用户主动中断的取消错误（SDK 标成 error）不产卡：这是中断不是失败（见 errors.ts 判定注释）
+				!isUserAbortError(message.errorMessage)
 			) {
 				return { ...final, pendingLlmError: buildLlmUiError(message.errorMessage) };
 			}

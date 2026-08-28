@@ -1,5 +1,6 @@
 import { deriveTurnChanges, type TurnChanges } from "@percho/shared";
 import { useEffect, useMemo, useRef, useState } from "react";
+import { getPi } from "../../api";
 import { useT } from "../../i18n";
 import { useSessionsStore } from "../../stores/sessions";
 import { useTranscriptStore } from "../../stores/transcript";
@@ -9,6 +10,83 @@ import { DiffFileCard } from "./DiffFileCard";
 
 /** 空 turn 列表稳定引用（selector/useMemo 缺省，禁内联新数组） */
 const EMPTY_TURNS: TurnChanges[] = [];
+
+/**
+ * 分支行：侧栏 header 下方一条幽灵文字行（⎇ 分支名），点击下弹本地分支列表。
+ * 只读不可切换（空态 ProjectBranchPicker 才是切换入口，列表无 hover/click 态避免假交互）。
+ * 原先是消息区左上角悬浮胶囊，被用户判为突兀后收进侧栏——分支与变更同域（仓库状态）。
+ * 有消息内容才显示（新会话与输入框下方 ProjectBranchPicker 重复）；非 git 目录不渲染。
+ */
+function BranchRow() {
+	const activeSessionId = useSessionsStore((s) => s.activeSessionId);
+	const cwd = useSessionsStore((s) => s.cwd);
+	const messages = useTranscriptStore((s) =>
+		activeSessionId ? s.bySession[activeSessionId]?.messages : undefined,
+	);
+	const [branches, setBranches] = useState<string[]>([]);
+	const [current, setCurrent] = useState<string | null>(null);
+	const [open, setOpen] = useState(false);
+	const hasContent = !!messages && messages.length > 0;
+
+	// cwd 变化（切会话/切项目）即刷新；展开时也重拉一次（分支可能在终端被切走）
+	// biome-ignore lint/correctness/useExhaustiveDependencies: open 是有意触发源——展开时重拉一次（分支可能在终端被切走）
+	useEffect(() => {
+		if (!cwd || !hasContent) return;
+		let cancelled = false;
+		void getPi()
+			.listGitBranches(cwd)
+			.then((r) => {
+				if (cancelled) return;
+				setBranches(r.branches);
+				setCurrent(r.current);
+			})
+			.catch(() => {});
+		return () => {
+			cancelled = true;
+		};
+	}, [cwd, hasContent, open]);
+
+	// 点击外部关闭（Dropdown 同款）
+	useEffect(() => {
+		if (!open) return;
+		const onPointerDown = (e: PointerEvent) => {
+			const hit = e.target instanceof Element ? e.target.closest("[data-branch-row]") : null;
+			if (!hit) setOpen(false);
+		};
+		window.addEventListener("pointerdown", onPointerDown);
+		return () => window.removeEventListener("pointerdown", onPointerDown);
+	}, [open]);
+
+	if (!hasContent || !cwd || !current || branches.length === 0) return null;
+
+	return (
+		<div className="diff-side-branch" data-branch-row>
+			<button
+				type="button"
+				className="diff-branch-btn"
+				aria-expanded={open}
+				title={current}
+				onClick={() => setOpen((v) => !v)}
+			>
+				<span aria-hidden="true">⎇</span>
+				<span className="diff-branch-name">{current}</span>
+			</button>
+			{open && (
+				<div className="diff-branch-pop">
+					{branches.map((branch) => {
+						const isCurrent = branch === current;
+						return (
+							<div key={branch} className={`diff-branch-item${isCurrent ? " on" : ""}`} title={branch}>
+								<span aria-hidden="true" className="diff-branch-dot" />
+								<span className="diff-branch-itemname">{branch}</span>
+							</div>
+						);
+					})}
+				</div>
+			)}
+		</div>
+	);
+}
 
 /**
  * 右侧 diff 栏（push 式，宽度 0 ↔ 420px 过渡，聊天列自然压缩）。
@@ -96,6 +174,7 @@ export function DiffSidebar() {
 						<CloseIcon />
 					</button>
 				</div>
+				<BranchRow />
 				<div className="diff-side-scroll" ref={bodyRef}>
 					{totalFiles === 0 ? (
 						<div className="diff-side-empty">{t("diff.empty")}</div>

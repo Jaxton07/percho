@@ -1,3 +1,4 @@
+import type { TurnChanges } from "./turn-files";
 import type { ActivityEntry, SessionTranscriptState, SubagentRunUi, UIMessage, UIToolCall } from "./types";
 
 /**
@@ -38,7 +39,18 @@ export type ChatRow =
 			/** 流式正文占位（固化后同 id 进入 messages，不 remount） */
 			streaming: boolean;
 	  }
-	| { kind: "streamingSubagents"; key: string; runs: SubagentRunUi[] };
+	| { kind: "streamingSubagents"; key: string; runs: SubagentRunUi[] }
+	| {
+			kind: "turnDiff";
+			key: string;
+			changes: TurnChanges;
+			/** 最后一轮且 agent 运行中（桌面包装层样式用） */
+			running: boolean;
+			/** 前一行是折叠组（组自带 -mb-4，chip 不再上提） */
+			afterMetaGroup: boolean;
+			/** 本会话查看期间新完成的最后一轮（进场动画） */
+			entering: boolean;
+	  };
 
 /**
  * agentWorking：agent 运行中且正文未出现 → 折叠组标题 working；
@@ -70,10 +82,18 @@ function committedMetaItem(message: Extract<UIMessage, { kind: "assistant" }>): 
 	return item;
 }
 
+export interface TurnDiffRowsOptions {
+	/** 每轮文件变更（桌面 deriveTurnChanges 产出；不传 = 不生成 turnDiff 行，lan-web 路径） */
+	turnChanges?: TurnChanges[];
+	/** 进场动画目标轮（桌面 MessageList 的 baseline 逻辑算出） */
+	enteringTurn?: number | null;
+}
+
 export function buildChatRows(
 	transcript: SessionTranscriptState,
 	sessionId: string,
 	now: number = Date.now(),
+	opts?: TurnDiffRowsOptions,
 ): ChatRow[] {
 	const { streaming } = transcript;
 	const agentWorking = isAgentWorking(transcript);
@@ -113,6 +133,24 @@ export function buildChatRows(
 		metaItems = [];
 	};
 
+	// 轮次文件变更 chip 行（桌面路径）：位置式插入——turn i 的 chip 插到第 i+1 条 user 行之前，
+	// 最后一轮追加到行序列末尾。（不锚消息行：轮末 assistant 无正文时会被吸进折叠组，没有独立行可锚。
+	// streaming 中的轮次工具未固化进 messages，天然不满足「turn_end 后才出现」）
+	const { turnChanges, enteringTurn } = opts ?? {};
+	const changeByTurn = turnChanges ? new Map(turnChanges.map((tc) => [tc.turnIndex, tc])) : null;
+	let userRowCount = 0;
+	const pushTurnDiffRow = (tc: TurnChanges, running: boolean): void => {
+		rows.push({
+			kind: "turnDiff",
+			key: `turn-diff-${tc.turnIndex}`,
+			changes: tc,
+			running,
+			// 前一行是折叠组（纯工具轮/被打断轮无正文，组自带 -mb-4 对消 gap）→ chip 不再上提
+			afterMetaGroup: rows[rows.length - 1]?.kind === "metaGroup",
+			entering: tc.turnIndex === enteringTurn,
+		});
+	};
+
 	for (const message of transcript.messages) {
 		if (message.kind === "subagent") {
 			// 子代理结果发生在调用工具之后：无论该轮是否还有普通工具/思考，都先落一条所属的
@@ -130,6 +168,11 @@ export function buildChatRows(
 		}
 		if (message.kind !== "assistant") {
 			flushMeta();
+			if (message.kind === "user" && changeByTurn) {
+				const tc = changeByTurn.get(userRowCount - 1);
+				if (tc) pushTurnDiffRow(tc, false);
+				userRowCount++;
+			}
 			rows.push({
 				kind: "message",
 				key: message.id,
@@ -205,6 +248,11 @@ export function buildChatRows(
 	flushMeta(true, agentWorking, streamingSubagentRuns.length);
 	if (streamingSubagentRuns.length > 0) {
 		rows.push({ kind: "streamingSubagents", key: "streaming-subagents", runs: streamingSubagentRuns });
+	}
+	// 最后一轮（无下一条 user 行）的 chip 追加到行序列末尾；running = agent 仍在该轮工作
+	if (changeByTurn) {
+		const tail = changeByTurn.get(userRowCount - 1);
+		if (tail) pushTurnDiffRow(tail, transcript.agentActive);
 	}
 	return rows;
 }

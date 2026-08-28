@@ -502,6 +502,17 @@ body {
 	transition: background-color 0.15s ease;
 }
 
+/* 键盘焦点环统一接管（@layer base：可被 utilities 层的 outline-none 覆盖）。
+   不写的话会落到 Chromium UA 默认环 outline:auto——颜色跟随 macOS 系统强调色（如琥珀色），
+   不受设计 token 控制。改为统一用 accent 低饱和描边，仅在 Tab 键盘导航时出现
+   （:focus-visible 对鼠标点击不命中），键盘可达性保留。 */
+@layer base {
+	:focus-visible {
+		outline: 2px solid color-mix(in srgb, var(--color-accent) 35%, transparent);
+		outline-offset: 1px;
+	}
+}
+
 /* 主题就绪（data-theme 写入）前 body 透明：透出窗口 backgroundColor（main 已按主题设置），
    防深色启动时开屏动画底下闪白 */
 :root:not([data-theme]) body {
@@ -675,14 +686,21 @@ code {
 	text-decoration-color: var(--markdown-link-decoration);
 	text-underline-offset: auto;
 }
-/* 代码块容器：边框/阴影 token 化（库默认 gray-200/gray-700 硬编码 + shadow-sm） */
+/* 代码块容器：无边框悬浮卡片（设计语言 rounded-xl bg-surface shadow-soft 同 QueueBar/TodoPanel；
+   编辑器底色即卡片面，浅色=vitesse-light 白/深色=主题深底）。库自带 border 工具类 +
+   inline borderColor，此处 border:none 以更高优先级压掉宽度；--ms-radius 抬到 12px（rounded-xl）。
+   左右各收 8px：shadow-soft 外扩约 12px，卡片与正文同宽时阴影左右被溢出感挤压（贴边生硬），
+   收窄后阴影四周完整悬浮 */
 .markdown-body .code-block-container {
-	border-color: var(--color-border);
+	--ms-radius: 12px;
+	border: none;
+	margin-inline: 8px;
 	box-shadow: var(--shadow-soft);
 }
-/* 代码块「纯净化」：标题栏悬浮 —— 常态隐身（纯代码），hover / 键盘聚焦 / 折叠态时浮现。
-   header DOM 必须保留（折叠/复制按钮逻辑都在里面，折叠是组件内部 state 外部无法控制，
-   showHeader:false 会把按钮一起去掉），多余按钮已在 Markdown.tsx 经 codeBlockProps 关闭。
+/* 代码块「纯净化」：标题栏悬浮 —— 常态隐身（纯代码），hover / 键盘聚焦时浮现。
+   header DOM 必须保留（复制按钮在里面，showHeader:false 会把按钮一起去掉），
+   语言标签/折叠按钮已裁：语言胶囊在下方 display:none，折叠经 codeBlockProps
+   showCollapseButton:false 关闭（Markdown.tsx）。
    组件把 header 背景用 inline style 钉成编辑器主题色，需 !important 压掉。 */
 .markdown-body .code-block-container .code-block-header {
 	position: absolute;
@@ -691,6 +709,8 @@ code {
 	right: 0;
 	z-index: 2;
 	padding: 0.5rem 0.625rem;
+	/* 语言标签隐藏后 header 只剩右侧按钮组：靠右（库是 justify-between，剩一个子元素会落到左） */
+	justify-content: flex-end;
 	/* biome-ignore lint/complexity/noImportantStyles: 必须压过组件 inline style 的 background-color: var(--vscode-editor-background) */
 	background: transparent !important;
 	border-bottom: none;
@@ -699,37 +719,20 @@ code {
 	transition: opacity 0.18s ease;
 }
 .markdown-body .code-block-container:hover .code-block-header,
-.markdown-body .code-block-container:focus-within .code-block-header,
-/* 折叠后内容区整个卸载，悬浮条必须常显才能再展开（此时只剩折叠钮有 aria-pressed） */
-	.markdown-body
-	.code-block-container:has(.code-action-btn[aria-pressed="true"])
-	.code-block-header {
+.markdown-body .code-block-container:focus-within .code-block-header {
 	opacity: 1;
 	pointer-events: auto;
 }
-/* 折叠态容器会塌成 0 高，给悬浮条留最小可点击高度 */
-.markdown-body .code-block-container:has(.code-action-btn[aria-pressed="true"]) {
-	min-height: 44px;
+/* 语言标签胶囊：不展示（设计去语言标签） */
+.markdown-body .code-block-header > div:first-child {
+	display: none;
 }
-/* 悬浮语言标签与按钮：半透明胶囊 + 毛玻璃，颜色全走 token 自动适配深浅 */
-.markdown-body .code-block-header > div:first-child,
+/* 悬浮操作按钮：半透明胶囊 + 毛玻璃，颜色全走 token 自动适配深浅 */
 .markdown-body .code-block-header .code-action-btn {
 	border: 1px solid var(--color-border);
 	border-radius: 6px;
 	background: color-mix(in srgb, var(--color-canvas) 72%, transparent);
 	backdrop-filter: blur(8px);
-}
-.markdown-body .code-block-header > div:first-child {
-	flex: none; /* 盖掉库 flex-1：否则语言胶囊撑满整条通栏 */
-	padding: 0.125rem 0.5rem;
-	color: var(--color-ink-dim);
-}
-/* 语言名（库渲染为无语义类的 span.text-sm.font-mono） */
-.markdown-body .code-block-header > div:first-child > span:last-child {
-	font-size: 11px;
-	letter-spacing: 0.03em;
-}
-.markdown-body .code-block-header .code-action-btn {
 	padding: 0.25rem;
 }
 @media (prefers-reduced-motion: reduce) {
@@ -976,13 +979,87 @@ code {
 	display: flex;
 	align-items: center;
 	gap: 10px;
-	padding: 12px 14px 10px;
-	border-bottom: 1px solid var(--color-border);
+	padding: 12px 14px 6px;
 }
 .diff-side-title {
 	font-size: 13px;
 	font-weight: 600;
 	color: var(--color-ink);
+}
+/* 分支行：header 下方幽灵文字行（⎇ 分支名），分隔线从 head 移到此处（head+branch 同为一组头部） */
+.diff-side-branch {
+	position: relative;
+	flex: none;
+	padding: 0 10px 8px;
+	border-bottom: 1px solid var(--color-border);
+}
+.diff-branch-btn {
+	display: inline-flex;
+	align-items: center;
+	gap: 6px;
+	max-width: 100%;
+	padding: 3px 6px;
+	border-radius: 6px;
+	font-size: 11.5px;
+	color: var(--color-ink-faint);
+	transition:
+		color 0.15s,
+		background-color 0.15s;
+}
+.diff-branch-btn:hover {
+	color: var(--color-ink-2);
+	background: var(--color-hover);
+}
+.diff-branch-name {
+	min-width: 0;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+/* 只读分支列表下弹：无边框浮卡（shadow-pop），当前分支圆点 + 加重；行无 hover/click 态 */
+.diff-branch-pop {
+	position: absolute;
+	top: 100%;
+	left: 10px;
+	z-index: 30;
+	margin-top: 4px;
+	width: 240px;
+	max-height: 288px;
+	overflow-y: auto;
+	padding: 6px;
+	border-radius: 12px;
+	background: var(--color-surface);
+	box-shadow: var(--shadow-pop);
+}
+.diff-branch-item {
+	display: flex;
+	align-items: center;
+	gap: 8px;
+	padding: 5px 8px;
+	border-radius: 6px;
+	font-size: 13px;
+	color: var(--color-ink-2);
+}
+.diff-branch-item.on {
+	color: var(--color-ink);
+	font-weight: 500;
+}
+.diff-branch-dot {
+	width: 6px;
+	height: 6px;
+	flex: none;
+	border-radius: 9999px;
+	background: transparent;
+}
+.diff-branch-item.on .diff-branch-dot {
+	background: var(--color-ink-2);
+}
+.diff-branch-itemname,
+.diff-branch-item .diff-branch-itemname {
+	min-width: 0;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
 }
 .diff-side-sum {
 	font-size: 11.5px;

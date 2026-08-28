@@ -1,7 +1,7 @@
 import type { LoginAuthPrompt } from "@percho/shared";
 import { useEffect, useRef, useState } from "react";
 import { useT } from "../../../i18n";
-import { useSettingsStore } from "../../../stores/settings";
+import { useProviderLoginStore } from "../../../stores/provider-login";
 import { Button } from "../../ui/Button";
 
 /**
@@ -12,10 +12,22 @@ import { Button } from "../../ui/Button";
  */
 export function LoginDialog() {
 	const t = useT();
-	const login = useSettingsStore((s) => s.login);
-	const respond = useSettingsStore((s) => s.respondLoginPrompt);
-	const cancel = useSettingsStore((s) => s.cancelProviderLogin);
-	const dismiss = useSettingsStore((s) => s.dismissLogin);
+	const login = useProviderLoginStore((s) => s.login);
+	const respond = useProviderLoginStore((s) => s.respondLoginPrompt);
+	const cancel = useProviderLoginStore((s) => s.cancelProviderLogin);
+	const dismiss = useProviderLoginStore((s) => s.dismissLogin);
+
+	// 卸载清理 = 关闭设置弹窗（ProvidersPanel 随 SettingsDialog 整树卸载）时取消进行中流程：
+	// 有活跃流程且非 error 态 → invoke 取消；error 态保留（对话框重开后仍展示错误）。login 状态无条件清空。
+	// （LoginDialog 恒挂载于 ProvidersPanel，login 为 null 时渲染 null 不卸载组件，本 effect 只在真卸载时跑）
+	useEffect(
+		() => () => {
+			const s = useProviderLoginStore.getState();
+			if (s.login && !s.login.error) s.cancelProviderLogin();
+			useProviderLoginStore.setState({ login: null });
+		},
+		[],
+	);
 
 	if (!login) return null;
 	const { pendingPrompt, deviceCode, authUrl, infoLinks } = login;

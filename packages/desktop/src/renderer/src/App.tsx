@@ -1,5 +1,5 @@
-import type { SessionEvent, TrustRequest } from "@percho/shared";
-import { useEffect, useState } from "react";
+import type { TrustRequest } from "@percho/shared";
+import { useCallback, useEffect, useState } from "react";
 import { getPi } from "./api";
 import { EmptyState } from "./components/chat/EmptyState";
 import { MessageList } from "./components/chat/MessageList";
@@ -12,13 +12,13 @@ import { SessionTabBar } from "./components/session/SessionTabBar";
 import { TrustDialog } from "./components/session/TrustDialog";
 import { SettingsDialog } from "./components/settings/SettingsDialog";
 import { Toaster } from "./components/Toaster";
+import { useSessionEventBridge } from "./hooks/use-session-event-bridge";
 import { useI18nStore } from "./i18n";
 import { initUiPlugins } from "./plugins/loader";
 import { RegionHost } from "./plugins/RegionHost";
 import { Slot } from "./plugins/Slot";
 import { UI_REGIONS, UI_SLOTS } from "./plugins/slots";
 import { finishSplash } from "./splash";
-import { EventConflator } from "./stores/event-conflator";
 import { useSessionsStore } from "./stores/sessions";
 import { backgroundImageUrl, useThemeStore } from "./stores/theme";
 import { useTranscriptStore } from "./stores/transcript";
@@ -49,38 +49,14 @@ export default function App() {
 		void getPi().setVisionLanguage(language);
 	}, [language]);
 
+	// 事件桥：conflator 装配 + 事件/权限/信任订阅（回调稳定引用，桥只订阅一次不重挂）
+	const pushTrustRequest = useCallback((req: TrustRequest) => {
+		setTrustRequests((prev) => [...prev, req]);
+	}, []);
+	useSessionEventBridge({ onTrustRequest: pushTrustRequest });
+
+	// 一次性 bootstrap：开屏就绪信号 + 更新状态 + UI 插件加载
 	useEffect(() => {
-		const pi = getPi();
-		// 流式 delta 按帧合流（见 stores/event-conflator.ts）：store 提交频率 ≤ 1 次/帧，
-		// 边界事件（message_start/end、toolcall_start/end、turn_end、agent_end…）先冲刷挂起增量
-		// 再立即应用，顺序与逐条转发完全一致。isActiveViewing 在应用时刻取值：延迟至多一帧且
-		// 该标记只在 agentActive 翻转的边界事件上生效（不经过合流），语义不变
-		const conflator = new EventConflator({
-			apply: (sessionId, event) => {
-				useTranscriptStore.getState().applyEvent(sessionId, event, {
-					// 正被查看（活跃 tab 且 chat 视图）的会话完成时不打未读标记
-					isActiveViewing:
-						useSessionsStore.getState().activeSessionId === sessionId &&
-						useUiStore.getState().view === "chat",
-				});
-			},
-		});
-		const offEvent = pi.onEvent(({ sessionId, event }: { sessionId: string; event: SessionEvent }) => {
-			if (event.type === "session_info_changed") {
-				useSessionsStore.getState().updateSessionName(sessionId, event.name);
-				return; // 会话名走 sessions store；reducer 对该类型本就无操作
-			}
-			conflator.push(sessionId, event);
-		});
-		const offPermission = pi.onPermissionRequest((req) => {
-			useTranscriptStore.getState().addPermission(req.sessionId, req);
-		});
-		const offPermissionResolved = pi.onPermissionResolved((result) => {
-			useTranscriptStore.getState().resolvePermission(result.sessionId, result.requestId);
-		});
-		const offTrust = pi.onTrustRequest((req) => {
-			setTrustRequests((prev) => [...prev, req]);
-		});
 		// 开屏就绪信号：首批数据（模型列表 + 恢复标签页）settle 后绽放收場（finishSplash 幂等）
 		void Promise.allSettled([
 			useSessionsStore.getState().loadModels(),
@@ -89,13 +65,6 @@ export default function App() {
 		initUpdateStore();
 		// UI 插件加载链路（总开关关时只订阅事件，零开销）
 		void initUiPlugins();
-		return () => {
-			offEvent();
-			conflator.dispose();
-			offPermission();
-			offPermissionResolved();
-			offTrust();
-		};
 	}, []);
 
 	const respondTrust = (requestId: string, optionIndex: number) => {

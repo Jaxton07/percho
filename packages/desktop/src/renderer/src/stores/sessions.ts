@@ -14,6 +14,26 @@ export function isDraftSessionId(sessionId: string | null | undefined): boolean 
 	return typeof sessionId === "string" && sessionId.startsWith(DRAFT_SESSION_PREFIX);
 }
 
+/**
+ * 打开会话时同步三件套：消息历史（可选跳过 live 态）、排队队列、todo 面板。
+ * 取数并行（三写各写 store 不同字段，无交叉读），应用顺序保持 history → queue → todos。
+ */
+async function loadSessionBundle(sessionId: string, opts?: { skipHistoryIfLive?: boolean }): Promise<void> {
+	// skip 判定在入口一次性取值：并行发起 IPC 前先确定是否跳过历史（agent 运行中保流式态，见 openFromHistory 注释）
+	const skipHistory =
+		opts?.skipHistoryIfLive === true &&
+		useTranscriptStore.getState().bySession[sessionId]?.agentActive === true;
+	const [history, followUpQueue, todos] = await Promise.all([
+		skipHistory ? Promise.resolve(null) : getPi().getSessionMessages(sessionId),
+		getPi().getFollowUpMessages(sessionId),
+		getPi().getTodos(sessionId),
+	]);
+	const t = useTranscriptStore.getState();
+	if (history) t.loadHistory(sessionId, messagesToUIMessages(history));
+	t.setFollowUpQueue(sessionId, followUpQueue);
+	t.loadTodos(sessionId, todos);
+}
+
 /** toast detail 展示截断（原始错误文本超出只留首段） */
 function errText(error: unknown): string | undefined {
 	const message = error instanceof Error ? error.message : typeof error === "string" ? error : undefined;
@@ -224,15 +244,7 @@ export const useSessionsStore = create<SessionsStore>((set, get) => ({
 			}));
 			// 运行中子会话的事件已按其 sessionId 实时转发；保留已有流式态，
 			// 否则会在点击卡片时把 agent_start 建立的进度视图重置为静态历史。
-			const hasLiveTranscript = useTranscriptStore.getState().bySession[meta.sessionId]?.agentActive;
-			if (!hasLiveTranscript) {
-				const history = await getPi().getSessionMessages(meta.sessionId);
-				useTranscriptStore.getState().loadHistory(meta.sessionId, messagesToUIMessages(history));
-			}
-			const followUpQueue = await getPi().getFollowUpMessages(meta.sessionId);
-			useTranscriptStore.getState().setFollowUpQueue(meta.sessionId, followUpQueue);
-			const todos = await getPi().getTodos(meta.sessionId);
-			useTranscriptStore.getState().loadTodos(meta.sessionId, todos);
+			await loadSessionBundle(meta.sessionId, { skipHistoryIfLive: true });
 			persistTabs(get());
 		} catch (error) {
 			set({ error: error instanceof Error ? error.message : String(error) });
@@ -249,12 +261,7 @@ export const useSessionsStore = create<SessionsStore>((set, get) => ({
 				sessions: [...state.sessions.filter((s) => s.sessionId !== meta.sessionId), meta],
 				activeSessionId: meta.sessionId,
 			}));
-			const history = await getPi().getSessionMessages(meta.sessionId);
-			useTranscriptStore.getState().loadHistory(meta.sessionId, messagesToUIMessages(history));
-			const followUpQueue = await getPi().getFollowUpMessages(meta.sessionId);
-			useTranscriptStore.getState().setFollowUpQueue(meta.sessionId, followUpQueue);
-			const todos = await getPi().getTodos(meta.sessionId);
-			useTranscriptStore.getState().loadTodos(meta.sessionId, todos);
+			await loadSessionBundle(meta.sessionId);
 			persistTabs(get());
 		} catch (error) {
 			set({ error: error instanceof Error ? error.message : String(error) });
@@ -274,12 +281,7 @@ export const useSessionsStore = create<SessionsStore>((set, get) => ({
 				images: recalled.images.length > 0 ? [...d.images, ...recalled.images] : d.images,
 			}));
 			// 重建消息流 + 队列/todo 对齐（同 fork 的恢复套路；会话 meta 不变无需更新）
-			const history = await getPi().getSessionMessages(activeSessionId);
-			useTranscriptStore.getState().loadHistory(activeSessionId, messagesToUIMessages(history));
-			const followUpQueue = await getPi().getFollowUpMessages(activeSessionId);
-			useTranscriptStore.getState().setFollowUpQueue(activeSessionId, followUpQueue);
-			const todos = await getPi().getTodos(activeSessionId);
-			useTranscriptStore.getState().loadTodos(activeSessionId, todos);
+			await loadSessionBundle(activeSessionId);
 			window.dispatchEvent(new CustomEvent(COMPOSER_FOCUS_EVENT));
 		} catch (error) {
 			set({ error: error instanceof Error ? error.message : String(error) });
@@ -303,18 +305,11 @@ export const useSessionsStore = create<SessionsStore>((set, get) => ({
 				// 会话文件已被删除等：跳过
 			}
 		}
-		// 每个会话的历史/队列/todo 三次 IPC 并行取（原先 3×N 次串行往返，首启时长期占住主线程 → 开屏掉帧）
+		// 每个会话三件套并行取（原先 3×N 次串行往返，首启时长期占住主线程 → 开屏掉帧）
 		await Promise.all(
 			opened.map(async (meta) => {
 				try {
-					const [history, followUpQueue, todos] = await Promise.all([
-						getPi().getSessionMessages(meta.sessionId),
-						getPi().getFollowUpMessages(meta.sessionId),
-						getPi().getTodos(meta.sessionId),
-					]);
-					useTranscriptStore.getState().loadHistory(meta.sessionId, messagesToUIMessages(history));
-					useTranscriptStore.getState().setFollowUpQueue(meta.sessionId, followUpQueue);
-					useTranscriptStore.getState().loadTodos(meta.sessionId, todos);
+					await loadSessionBundle(meta.sessionId);
 				} catch {
 					// 单会话数据取不到不影响其它 tab 恢复
 				}
