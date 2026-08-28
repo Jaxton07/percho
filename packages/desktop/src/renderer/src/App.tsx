@@ -13,7 +13,6 @@ import { TrustDialog } from "./components/session/TrustDialog";
 import { SettingsDialog } from "./components/settings/SettingsDialog";
 import { Toaster } from "./components/Toaster";
 import { useSessionEventBridge } from "./hooks/use-session-event-bridge";
-import { useI18nStore } from "./i18n";
 import { initUiPlugins } from "./plugins/loader";
 import { RegionHost } from "./plugins/RegionHost";
 import { Slot } from "./plugins/Slot";
@@ -42,12 +41,6 @@ export default function App() {
 		return !entry || (entry.messages.length === 0 && !entry.streaming);
 	});
 	const [trustRequests, setTrustRequests] = useState<TrustRequest[]>([]);
-	const language = useI18nStore((s) => s.language);
-
-	// 视觉代理识别描述语言跟随界面语言（启动 + 切语言时推送 backend）
-	useEffect(() => {
-		void getPi().setVisionLanguage(language);
-	}, [language]);
 
 	// 事件桥：conflator 装配 + 事件/权限/信任订阅（回调稳定引用，桥只订阅一次不重挂）
 	const pushTrustRequest = useCallback((req: TrustRequest) => {

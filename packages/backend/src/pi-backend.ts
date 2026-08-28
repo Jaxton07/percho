@@ -35,13 +35,8 @@ import type {
 	SubagentInfo,
 	TrustAnswer,
 	TrustRequest,
-	VisionConfigInfo,
-	VisionSaveInput,
-	VisionTestResult,
 } from "@percho/shared";
 import {
-	DEFAULT_VISION_BASE_URL,
-	DEFAULT_VISION_MODEL,
 	extractTodos,
 	formatSkillCommand,
 	parseExpandedSkillInvocation,
@@ -97,9 +92,6 @@ import { applySubagentMutex } from "./tools/subagent/mutex";
 import { makeTodoTool } from "./tools/todo";
 import { makeTodoReminderExtension } from "./tools/todo-reminder";
 import { makeWebFetchTool } from "./tools/webfetch";
-import { pingVision } from "./vision/client";
-import { resolveVisionKey, VisionConfigService } from "./vision/config";
-import { makeVisionProxyExtension } from "./vision/proxy-extension";
 
 const log = createLogger("backend");
 
@@ -118,10 +110,6 @@ export interface PiBackendOptions {
 	projectTrust?: boolean;
 	/** 是否内置 webfetch 工具（默认 true）；传对象可配置 CIDR 放行 */
 	webFetch?: boolean | { allowRanges?: string[] };
-	/** 视觉代理配置文件路径（userData/vision.json）；缺省不启用视觉代理功能 */
-	visionConfigPath?: string;
-	/** 是否注册内置视觉代理扩展（默认 true；visionConfigPath 缺省时无效果） */
-	visionProxy?: boolean;
 	/** 内置 subagent 优先于第三方 subagent 扩展（默认 true） */
 	subagentPreferBuiltin?: boolean;
 	/**
@@ -179,17 +167,12 @@ export class PiBackend {
 		getRuntime: () => this.getModelRuntime(),
 		send: (payload) => this.dispatchLoginEvent(payload),
 	});
-	/** 视觉代理配置（userData/vision.json；未提供路径时禁用） */
-	private readonly visionConfig: VisionConfigService | undefined;
 	/** 社区包管理（安装/卸载 + 会话热重载） */
 	private readonly packages: PackageAdmin;
 	/** 项目资源两阶段加载 + 信任决策 */
 	private readonly projectLoader: ProjectResourceLoader;
 
 	constructor(private readonly options: PiBackendOptions = {}) {
-		this.visionConfig = options.visionConfigPath
-			? new VisionConfigService(options.visionConfigPath)
-			: undefined;
 		this.packages = new PackageAdmin({ registry: this.registry, defaultCwd: options.defaultCwd });
 		this.projectLoader = new ProjectResourceLoader({
 			trustStore: this.trustStore,
@@ -251,9 +234,6 @@ export class PiBackend {
 			// confirm 直接桥到 PermissionGate（携带 kind/suggestDir 元数据，驱动「允许此目录」）；
 			// 未提供时扩展自行回退 ctx.ui.confirm（无元数据）
 			factories.push(makePermissionGateExtension(getAgentDir(), { projectRoot: cwd, confirm }));
-		}
-		if (this.visionConfig && this.options.visionProxy !== false) {
-			factories.push(makeVisionProxyExtension({ configService: this.visionConfig }));
 		}
 		// 上下文蒸发（默认开启：缺省 mode=evaporation；钩子实时读派生 mode，
 		// 设置页切换后 ≤2s 生效，无需重开会话）。
@@ -850,12 +830,18 @@ export class PiBackend {
 						.filter((model) => !prefs.hiddenModels[provider.id]?.includes(model.id))
 						.map((model) => {
 							// 该模型实际支持的思考深度（SDK 按 reasoning/thinkingLevelMap 判定；不推理的模型只有 off）
+							// + 图片输入能力（input 含 image；查不到则缺省，UI fail-open）
 							let thinkingLevels: string[] | undefined;
+							let imageInput: boolean | undefined;
 							try {
 								const m = runtime.getModel(provider.id, model.id);
-								if (m) thinkingLevels = getSupportedThinkingLevels(m);
+								if (m) {
+									thinkingLevels = getSupportedThinkingLevels(m);
+									imageInput = m.input.includes("image");
+								}
 							} catch {
 								thinkingLevels = undefined;
+								imageInput = undefined;
 							}
 							return {
 								provider: provider.id,
@@ -864,6 +850,7 @@ export class PiBackend {
 								label: model.name,
 								authed: true,
 								thinkingLevels,
+								imageInput,
 							};
 						})
 				: [],
@@ -1005,46 +992,6 @@ export class PiBackend {
 			throw err; // ipcMain.handle，reject 传回 renderer
 		}
 		log.info("channel watch enabled", enabled);
-	}
-
-	/** 视觉代理配置（key 只给存在性，不回传）；未提供配置路径时返回禁用态 */
-	async getVisionConfig(): Promise<VisionConfigInfo> {
-		if (!this.visionConfig) {
-			return {
-				enabled: false,
-				hasKey: false,
-				baseUrl: DEFAULT_VISION_BASE_URL,
-				model: DEFAULT_VISION_MODEL,
-				language: "zh",
-			};
-		}
-		return this.visionConfig.getInfo();
-	}
-
-	/** 保存视觉代理配置（即时生效：扩展 handler 每次调用实时读） */
-	async saveVisionConfig(input: VisionSaveInput): Promise<VisionConfigInfo> {
-		if (!this.visionConfig) return this.getVisionConfig();
-		const info = await this.visionConfig.save(input);
-		log.info("vision config saved", { enabled: info.enabled, hasKey: info.hasKey, model: info.model });
-		return info;
-	}
-
-	/** 连通性测试：1×1 png 实调视觉模型（不看 enabled 开关，配置中即可测） */
-	async testVision(): Promise<VisionTestResult> {
-		if (!this.visionConfig) return { ok: false, message: "vision config unavailable" };
-		const config = await this.visionConfig.getConfig();
-		if (!resolveVisionKey(config.apiKey)) return { ok: false, message: "API key not configured" };
-		try {
-			const reply = await pingVision({ config, language: this.visionConfig.getLanguage() });
-			return { ok: true, message: reply.slice(0, 200) };
-		} catch (err) {
-			return { ok: false, message: err instanceof Error ? err.message : String(err) };
-		}
-	}
-
-	/** 推送界面语言（识别描述语言跟随；内存态，App 启动/切语言时推送） */
-	setVisionLanguage(language: "zh" | "en"): void {
-		this.visionConfig?.setLanguage(language);
 	}
 
 	respondTrust(requestId: string, answer: TrustAnswer): void {

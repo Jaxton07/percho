@@ -4,6 +4,7 @@ import { getPi } from "../../api";
 import { useT } from "../../i18n";
 import { isDraftSessionId, useSessionsStore } from "../../stores/sessions";
 import { useSettingsStore } from "../../stores/settings";
+import { pushToast } from "../../stores/toasts";
 import { useTranscriptStore } from "../../stores/transcript";
 import { buildSendUiError } from "./send-error";
 
@@ -16,6 +17,8 @@ export interface UseComposerSendOptions {
 	followUpQueue: string[];
 	/** 压缩进行中（禁发：SDK 拒绝压缩中的 prompt） */
 	compacting: boolean;
+	/** 当前模型是否支持图片输入（fail-open：未知按支持）；false 且草稿有图时拦截发送 */
+	imagesSupported: boolean;
 	/** 发送前会话是否已在运行（排队失败不回滚工作中状态） */
 	agentActive: boolean;
 	setText: (updater: string | ((prev: string) => string)) => void;
@@ -108,6 +111,11 @@ export function useComposerSend(options: UseComposerSendOptions) {
 		// 压缩中禁发：SDK 拒绝压缩中的 prompt，提前拦截保住草稿
 		if (compacting) {
 			showFeedback(t("composer.compacting"), "warn");
+			return;
+		}
+		// 图片门控：草稿残留图 + 当前模型不支持（如多模态切纯文本后）→ toast 提醒不发送，保住草稿
+		if (images.length > 0 && !options.imagesSupported) {
+			pushToast("warning", "composer.imageUnsupported");
 			return;
 		}
 		// 单条排队上限：已有一条且本次是普通文本则挡住（斜杠命令 streaming 中也可立即执行，不受限）

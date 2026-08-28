@@ -10,9 +10,6 @@ import type {
 	ProviderTestResult,
 	ResourceDiagnosticInfo,
 	SubagentInfo,
-	VisionConfigInfo,
-	VisionSaveInput,
-	VisionTestResult,
 } from "@percho/shared";
 import { create } from "zustand";
 import { getPi } from "../api";
@@ -26,7 +23,6 @@ export type SettingsCategory =
 	| "mcp"
 	| "extensions"
 	| "uiPlugins"
-	| "vision"
 	| "lan"
 	| "about"
 	// 插件自带设置页分类（settings.panel 贡献动态拼接，id = plugin:<pluginName>:<contributionId>）
@@ -49,14 +45,9 @@ interface SettingsStore {
 	contextManagerMode: ContextManagerMode | null;
 	/** channel-watch 跨会话频道唤醒开关（null = 未加载） */
 	channelWatchEnabled: boolean | null;
-	/** 视觉代理配置（null = 未加载） */
-	visionConfig: VisionConfigInfo | null;
-	/** 视觉模型连通性测试中 */
-	visionTesting: boolean;
 	/** 局域网观察服务运行状态（null = 未加载）。 */
 	lanStatus: LanStatus | null;
 	lanSaving: boolean;
-	visionTestResult: VisionTestResult | null;
 	/** 当前活跃会话已加载的 skills（null = 未加载/无会话） */
 	skills: LoadedSkill[] | null;
 	skillDiagnostics: ResourceDiagnosticInfo[];
@@ -87,11 +78,6 @@ interface SettingsStore {
 	setPermissionEnabled: (enabled: boolean) => Promise<void>;
 	setContextManagerMode: (mode: ContextManagerMode) => Promise<void>;
 	setChannelWatchEnabled: (enabled: boolean) => Promise<void>;
-	/** 保存视觉代理配置（返回是否成功；key 留空保持不变） */
-	saveVision: (input: VisionSaveInput) => Promise<boolean>;
-	/** 测试视觉模型连通性（1×1 png 实调） */
-	testVision: () => Promise<void>;
-	clearVisionTestResult: () => void;
 	refreshLanStatus: () => Promise<void>;
 	setLanEnabled: (enabled: boolean) => Promise<void>;
 	setLanRemoteControl: (enabled: boolean) => Promise<void>;
@@ -115,9 +101,6 @@ export const useSettingsStore = create<SettingsStore>((set, get) => {
 		permissionEnabled: null,
 		contextManagerMode: null,
 		channelWatchEnabled: null,
-		visionConfig: null,
-		visionTesting: false,
-		visionTestResult: null,
 		lanStatus: null,
 		lanSaving: false,
 		skills: null,
@@ -155,11 +138,6 @@ export const useSettingsStore = create<SettingsStore>((set, get) => {
 			void getPi()
 				.getChannelWatchConfig()
 				.then((cw) => set({ channelWatchEnabled: cw.enabled }))
-				.catch(() => {});
-			// 视觉代理配置同样本地文件读，独立加载
-			void getPi()
-				.getVisionConfig()
-				.then((visionConfig) => set({ visionConfig }))
 				.catch(() => {});
 			void getPi()
 				.lanGetStatus()
@@ -243,32 +221,6 @@ export const useSettingsStore = create<SettingsStore>((set, get) => {
 				});
 			}
 		},
-
-		saveVision: async (input) => {
-			try {
-				const visionConfig = await getPi().saveVisionConfig(input);
-				set({ visionConfig, visionTestResult: null });
-				return true;
-			} catch (error) {
-				set({ error: error instanceof Error ? error.message : String(error) });
-				return false;
-			}
-		},
-
-		testVision: async () => {
-			set({ visionTesting: true, visionTestResult: null });
-			try {
-				const result = await getPi().testVision();
-				set({ visionTesting: false, visionTestResult: result });
-			} catch (error) {
-				set({
-					visionTesting: false,
-					visionTestResult: { ok: false, message: error instanceof Error ? error.message : String(error) },
-				});
-			}
-		},
-
-		clearVisionTestResult: () => set({ visionTestResult: null }),
 
 		refreshLanStatus: async () => {
 			try {

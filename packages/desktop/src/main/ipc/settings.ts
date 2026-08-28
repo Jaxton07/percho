@@ -4,12 +4,11 @@ import type {
 	CustomProviderUpdateInput,
 	ListProvidersOptions,
 	PermissionAnswer,
-	VisionSaveInput,
 } from "@percho/shared";
 import { IpcChannels } from "@percho/shared";
 import { ipcMain } from "electron";
 
-/** 设置域：provider 设置 + 权限门控配置 + 视觉代理 + 项目信任应答 */
+/** 设置域：provider 设置 + 权限门控配置 + 项目信任应答 */
 export function registerSettingsIpc(backend: PiBackend): void {
 	ipcMain.handle(IpcChannels.SettingsListProviders, (_e, options?: ListProvidersOptions) =>
 		backend.settings.listProviders(options),
@@ -76,14 +75,6 @@ export function registerSettingsIpc(backend: PiBackend): void {
 	ipcMain.handle(IpcChannels.ChannelWatchGetConfig, () => backend.getChannelWatchConfig());
 	ipcMain.handle(IpcChannels.ChannelWatchSetEnabled, (_e, enabled: boolean) =>
 		backend.setChannelWatchEnabled(enabled),
-	);
-	ipcMain.handle(IpcChannels.VisionGetConfig, () => backend.getVisionConfig());
-	ipcMain.handle(IpcChannels.VisionSaveConfig, (_e, input: VisionSaveInput) =>
-		backend.saveVisionConfig(input),
-	);
-	ipcMain.handle(IpcChannels.VisionTest, () => backend.testVision());
-	ipcMain.handle(IpcChannels.VisionSetLanguage, (_e, language: "zh" | "en") =>
-		backend.setVisionLanguage(language),
 	);
 	ipcMain.handle(IpcChannels.TrustRespond, (_e, requestId: string, answer: number) =>
 		backend.respondTrust(requestId, answer),
