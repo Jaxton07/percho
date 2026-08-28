@@ -4,6 +4,7 @@ import { useSessionReadOnly } from "../../hooks/use-session-state";
 import { useT } from "../../i18n";
 import { COMPOSER_FOCUS_EVENT, EMPTY_DRAFT, NEW_SESSION_DRAFT_KEY, useDraftStore } from "../../stores/drafts";
 import { useSessionsStore } from "../../stores/sessions";
+import { pushToast } from "../../stores/toasts";
 import { selectTranscript, useTranscriptStore } from "../../stores/transcript";
 import { ImagePreviewOverlay } from "../chat/ImagePreview";
 import { ArrowUpIcon, PlusIcon, StopIcon } from "../icons";
@@ -33,7 +34,19 @@ export function Composer({ centered = false }: { centered?: boolean }) {
 	const cwd = useSessionsStore((s) => s.cwd);
 	/** 信任决策应答后递增：draft 斜杠菜单按新决策（信任与否）重拉命令 */
 	const trustVersion = useSessionsStore((s) => s.trustVersion);
+	/** 图片门控数据源：会话覆写模型 ?? 全局默认 → models 表查 imageInput（ModelPicker 同款解析） */
+	const models = useSessionsStore((s) => s.models);
+	const currentModel = useSessionsStore((s) => s.currentModel);
+	const activeModel = useSessionsStore(
+		(s) => s.sessions.find((x) => x.sessionId === s.activeSessionId)?.model,
+	);
 	const transcript = useTranscriptStore((s) => selectTranscript(s, activeSessionId));
+	/** 当前模型是否支持图片输入；fail-open：模型未知/字段缺省一律按支持，只拦 imageInput === false */
+	const effectiveModel = activeModel ?? currentModel;
+	const activeModelInfo = effectiveModel
+		? models.find((m) => m.provider === effectiveModel.provider && m.id === effectiveModel.modelId)
+		: undefined;
+	const imagesSupported = activeModelInfo?.imageInput !== false;
 	/** 草稿（文本/图片/命令胶囊）按会话持久：切换会话/空态↔列表态换 Composer 实例不丢、不串会话 */
 	const draftKey = activeSessionId ?? NEW_SESSION_DRAFT_KEY;
 	const draft = useDraftStore((s) => s.bySession[draftKey] ?? EMPTY_DRAFT);
@@ -78,6 +91,7 @@ export function Composer({ centered = false }: { centered?: boolean }) {
 		followUpQueue,
 		compacting,
 		agentActive: transcript.agentActive,
+		imagesSupported,
 		setText,
 		setImages,
 		setAttachments,
@@ -194,6 +208,8 @@ export function Composer({ centered = false }: { centered?: boolean }) {
 
 	const handleFiles = (files: FileList | File[] | null) => {
 		if (!files || files.length === 0) return;
+		// 图片门控入口防御：+ 按钮/粘贴之外的路径不再存在，仍早退兜底
+		if (!imagesSupported) return;
 		for (const file of Array.from(files)) {
 			if (!file.type.startsWith("image/")) continue;
 			const reader = new FileReader();
@@ -220,6 +236,13 @@ export function Composer({ centered = false }: { centered?: boolean }) {
 			}
 		}
 		if (files.length === 0) return;
+		// 图片门控：纯文本模型拦截粘贴（默认行为可能把图片数据塞进文本框，必须 preventDefault）
+		if (!imagesSupported) {
+			e.preventDefault();
+			// 顶栏右侧 toast 卡（不用内联反馈：该提示不阻塞继续输入，卡片可手动关）
+			pushToast("warning", "composer.imageUnsupported");
+			return;
+		}
 		e.preventDefault();
 		handleFiles(files);
 	};
@@ -313,9 +336,10 @@ export function Composer({ centered = false }: { centered?: boolean }) {
 						/>
 						<button
 							type="button"
-							className="-ml-1 -mb-1 flex h-7 w-7 items-center justify-center rounded-lg text-ink-dim transition-colors hover:bg-hover hover:text-ink"
+							className="-ml-1 -mb-1 flex h-7 w-7 items-center justify-center rounded-lg text-ink-dim transition-colors hover:bg-hover hover:text-ink disabled:opacity-30 disabled:hover:bg-transparent"
 							aria-label={t("composer.addImage")}
-							disabled={readOnly}
+							title={!imagesSupported ? t("composer.imageUnsupported") : undefined}
+							disabled={readOnly || !imagesSupported}
 							onClick={() => fileInputRef.current?.click()}
 						>
 							<PlusIcon size={18} />

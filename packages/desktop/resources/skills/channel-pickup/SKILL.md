@@ -10,7 +10,7 @@ description: 从本项目的跨会话沟通频道接手已交接的实施任务�
 ## 开工四步（顺序固定）
 
 1. **读频道**：`.local/agent-work/channel/<主题>/HANDOFF.md`（用户没给主题就 `ls .local/agent-work/channel/` 列出让用户选）。若存在 `REVIEW.md` 也一并读——里面的意见是你工作的一部分。
-2. **读文档**：按 HANDOFF 指定顺序读 spec（`.local/agent-work/spec/`）→ plan（`.local/agent-work/plan/`，旧任务可能在 `.local/docs/design/` 下——以 HANDOFF 里写的路径为准）→ 项目根 `AGENTS.md` + `.local/docs/INDEX.md`。
+2. **读文档**：按 HANDOFF 指定顺序读 spec（`.local/agent-work/spec/`）→ plan（`.local/agent-work/plan/`，路径一律以 HANDOFF 里写的为准）→ 项目根 `AGENTS.md`（含其指路的项目索引，如有）。
 3. **采信事实表**：HANDOFF 里的「已验证事实」是上一会话读源码考证过的，直接用，**禁止重复考证**；真要推翻，先回 channel 留言说明证据。
 4. **订阅频道**：若 channel_subscribe 工具可用，订阅本频道（主题 = 目录名）。订阅后对方会话 channel_post 消息会自动唤醒本会话，无需用户人工传话（只写文件不 post 不会通知你）。
 
@@ -50,6 +50,6 @@ description: 从本项目的跨会话沟通频道接手已交接的实施任务�
 ## 收尾（DONE.md 之前必做）
 
 1. `npm run typecheck && npm run lint && npm run test` 全绿，输出摘要贴进 DONE.md。
-2. 更新 `.local/docs/INDEX.md`：新增/删除/改名的**代码**文件、变化的导出与签名，补进对应清单或速查表。**spec/plan/channel 文档不要加进 INDEX**（索引只标目录不标文件，文档会不定期清理）。
+2. **若项目有索引/导航文档**（`AGENTS.md` 通常会指路）：新增/删除/改名的**代码**文件、变化的导出与签名，补进对应清单或速查表；**spec/plan/channel 文档不要加进去**（索引只标目录不标文件，文档会不定期清理）。项目没有索引就跳过本步，**不要新建**。
 3. 若实施中发现 spec/plan 过时（决策被推翻、边界调整）：在 channel 留言（写 IMPL-NOTES + post 一条）说明，**不要顺手改 spec**——spec 的修改权在发起会话/用户。
 4. **任务终态**：收到对方 `[CLOSED]` 消息 → 查收后退订；本方任务被验收/废弃 → `channel_post({ closed: true })` 告知各方后 `channel_unsubscribe`。

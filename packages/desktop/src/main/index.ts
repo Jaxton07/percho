@@ -178,7 +178,6 @@ app.whenReady().then(async () => {
 	});
 
 	backend = new PiBackend({
-		visionConfigPath: join(app.getPath("userData"), "vision.json"),
 		// 桌面端集成：UI 插件技能目录 + 内置协作 skill 目录（均随包分发）+ 系统提示词段落
 		desktopIntegration: {
 			appendSystemPrompt: UI_PLUGIN_PROMPT,

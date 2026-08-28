@@ -39,7 +39,6 @@ import type {
 import type { TodoItem } from "./todo";
 import type { UiPluginInfo, UiPluginManifest, UiPluginsConfig, UiPluginsEventPayload } from "./ui-plugins";
 import type { UpdateState } from "./update";
-import type { VisionConfigInfo, VisionSaveInput, VisionTestResult } from "./vision";
 
 /** IPC 通道名常量 */
 export const IpcChannels = {
@@ -98,11 +97,6 @@ export const IpcChannels = {
 	SettingsLoginRespond: "settings:loginRespond",
 	/** main → renderer 登录流程事件（event/prompt/prompt-cancel） */
 	SettingsLoginEvent: "settings:loginEvent",
-	/** 视觉代理（外挂图像识别，纯文本模型用） */
-	VisionGetConfig: "vision:getConfig",
-	VisionSaveConfig: "vision:saveConfig",
-	VisionTest: "vision:test",
-	VisionSetLanguage: "vision:setLanguage",
 	/** 局域网观察页（默认关闭、只读服务）。 */
 	LanGetStatus: "lan:getStatus",
 	LanSetEnabled: "lan:setEnabled",
@@ -267,14 +261,6 @@ export interface PiApi {
 	respondProviderLogin(loginId: string, promptId: string, value: string): Promise<void>;
 	/** 订阅登录流程事件（event/prompt/prompt-cancel，按 loginId 归属）；返回取消函数 */
 	onProviderLoginEvent(cb: (payload: LoginEventPayload) => void): () => void;
-	/** 读取视觉代理配置（key 只给存在性，不回传） */
-	getVisionConfig(): Promise<VisionConfigInfo>;
-	/** 保存视觉代理配置（apiKey 留空保持不变，clearApiKey 删除）；即时生效 */
-	saveVisionConfig(input: VisionSaveInput): Promise<VisionConfigInfo>;
-	/** 测试视觉模型连通性（1×1 png 实调） */
-	testVision(): Promise<VisionTestResult>;
-	/** 推送界面语言（识别描述语言跟随；backend 内存态） */
-	setVisionLanguage(language: "zh" | "en"): Promise<void>;
 	/** 读取局域网观察服务状态（URL/二维码只在启用并监听后提供）。 */
 	lanGetStatus(): Promise<LanStatus>;
 	/** 启用或停止局域网只读观察服务；启用时轮换访问 token。 */

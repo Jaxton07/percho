@@ -96,6 +96,3 @@ export {
 	type WebFetchDetails,
 	type WebFetchOptions,
 } from "./tools/webfetch";
-export { describeImage, pingVision, VisionClientError } from "./vision/client";
-export { resolveVisionKey, VisionConfigService } from "./vision/config";
-export { makeVisionProxyExtension, type VisionProxyOptions } from "./vision/proxy-extension";

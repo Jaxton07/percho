@@ -146,6 +146,8 @@ export interface AvailableModel {
 	authed: boolean;
 	/** 该模型支持的思考深度（off/minimal/low/medium/high/xhigh/max 子集）；未提供时 UI 按全量显示 */
 	thinkingLevels?: string[];
+	/** 是否支持图片输入（多模态）；未提供时按支持处理（未知不拦截，fail-open） */
+	imageInput?: boolean;
 }
 
 /** 随消息附带的图片（pi ImageContent；data 为纯 base64，不含 data URL 前缀） */

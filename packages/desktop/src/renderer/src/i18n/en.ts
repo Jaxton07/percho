@@ -54,6 +54,8 @@ export const en: Messages = {
 		modelSwitch: "Switch model",
 		thinkingSwitch: "Switch thinking level",
 		addImage: "Add image",
+		imageUnsupported:
+			"The current model doesn't support image input — remove the image or switch to a multimodal model",
 		removeImage: "Remove image",
 		removeAttachment: "Remove reference",
 		previewImage: "View image",
@@ -198,7 +200,6 @@ export const en: Messages = {
 			mcp: "MCP Plugins",
 			extensions: "Extensions",
 			uiPlugins: "UI Plugins",
-			vision: "Vision",
 			lan: "LAN Observer",
 			about: "About",
 		},
@@ -237,35 +238,6 @@ export const en: Messages = {
 		centerOrb: "Centered status animation",
 		centerOrbHint:
 			"While a task is running, shows an enlarged status animation at the center of the conversation area (above the text, with a translucent scrim dimming whatever is behind it). Only controls the centered animation — the small orb before the Working/Thinking row always stays.",
-		vision: {
-			title: "Vision",
-			hint: "Adds an external vision model for text-only models: images you send are first described by the vision model, then handed to the current reasoning model. Native multimodal models skip this automatically.",
-			privacy:
-				"When enabled, images in the conversation are sent to your configured vision provider for recognition. Do not send images containing sensitive information.",
-			preset: "Vision provider",
-			presetZhipu: "Zhipu GLM-4.6V-Flash (free)",
-			presetZhipuHint:
-				"Free, but may rate-limit (429) at peak hours; failed recognition degrades to a placeholder and retries later.",
-			presetQwen: "Alibaba Qwen3.7-Flash (paid, very cheap)",
-			presetQwenHint:
-				"Generous rate limits, stable; ¥0.2/M input tokens — one screenshot costs far less than a cent.",
-			presetCustom: "Custom",
-			presetCustomHint: "Any OpenAI-compatible multimodal model: fill in base URL and model ID.",
-			keyPlaceholder: "Paste API Key ($ENV_VAR references supported)",
-			keyHintZhipu: "Get an API Key from the bigmodel.cn console ($ENV_VAR references supported)",
-			keyHintQwen:
-				"Get an API Key from Alibaba Cloud Bailian; or enter $DASHSCOPE_API_KEY to reference the env var",
-			keyKeep: "Configured — leave empty to keep",
-			keyClear: "Clear",
-			advanced: "Advanced (base URL / model)",
-			modelLabel: "Model ID",
-			save: "Save",
-			test: "Test connection",
-			testing: "Testing…",
-			saved: "Saved",
-			testOk: "Connected (model replied: {reply})",
-			testFail: "Connection failed: {message}",
-		},
 		lan: {
 			title: "LAN Observer",
 			hint: "View live agent progress from your phone on a trusted local network. Off by default; the access token rotates every time it is enabled.",

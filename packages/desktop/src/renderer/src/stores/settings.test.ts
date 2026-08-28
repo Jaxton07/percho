@@ -6,7 +6,6 @@ const piMock = vi.hoisted(() => ({
 	// refresh() 会并行拉多个本地配置，无关成员给最小 stub
 	getPermissionConfig: vi.fn(() => Promise.resolve({ enabled: true })),
 	getChannelWatchConfig: vi.fn(() => Promise.resolve({ enabled: true })),
-	getVisionConfig: vi.fn(() => Promise.resolve({ hasKey: false })),
 	lanGetStatus: vi.fn(() => Promise.resolve(null)),
 	listProviders: vi.fn(() => Promise.resolve({ providers: [] })),
 	listSubagents: vi.fn(() => Promise.resolve([])),

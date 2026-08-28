@@ -170,13 +170,6 @@ async function sceneSettings() {
 	await sleep(500);
 	await frame("models-2");
 
-	// 视觉面板
-	await ev(
-		`(() => { const s = window.PerchoUI.stores.useSettingsStore.getState(); s.setCategory('vision'); return true; })()`,
-	);
-	await sleep(600);
-	await frame("vision");
-
 	// 通用面板（上下文管理二态 + 权限 + 频道开关）
 	await ev(
 		`(() => { const s = window.PerchoUI.stores.useSettingsStore.getState(); s.setCategory('general'); return true; })()`,

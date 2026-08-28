@@ -53,7 +53,6 @@ And for those who prefer a GUI over a TUI:
 - Draggable multi-session tabs (plus an optional session rail), per-session composer drafts, follow-up queue with undo
 - Built-in subagents — a scout plus your own agent definitions, parallel task fan-outs, and run cards you can click to inspect the sub-session read-only
 - Context evaporation (on by default) — stale tool outputs age into compact stubs, keeping long sessions within budget
-- Vision proxy — when a text-only model meets an image, a vision model describes it inline before it reaches the LLM
 - Unified error system — in-chat error cards with one-click retry, an auto-retry status line, and a crash-proof renderer
 - Solid session workspace — fork any message, recall your own message back into the composer, todo panel, per-turn diff sidebar, slash-command menu and @-file completion
 - Streaming markdown rendering, image previews, message copy
