@@ -32,6 +32,20 @@ export interface UiError {
 /** detail 展示截断上限（防巨错误文本进渲染树） */
 export const DETAIL_MAX_LENGTH = 4096;
 
+/**
+ * 用户主动中断（abort）的错误消息判定。
+ * SDK 把「in-flight 模型请求被用户停止取消」归类为 stopReason="error"，errorMessage 是
+ * AbortError 文案（DOMException："This operation was aborted"；SDK 上层："Request aborted"）。
+ * 这类取消不是真实失败——reducer（live）与 mapping（历史回放）产 LLM 错误卡前必须排除，
+ * 否则用户点停止会被渲染成「模型请求失败」+ 重试按钮（语义误导；实测两次中止分别出现
+ * stopReason="error"/"This operation was aborted" 与 "aborted"/"Request aborted" 两种形态）。
+ * 只匹配「被中止」句式（was aborted / request aborted），不匹配 provider 主动语态的
+ * “provider aborted the request” 类真实错误；即便误判也只是不落卡，detail 不丢失。
+ */
+export function isUserAbortError(errorMessage: string): boolean {
+	return /was aborted|request aborted/i.test(errorMessage);
+}
+
 /** computeLlmError 的归类结果（titleKey/hintKey/source/actions，与 UiError 差别在不含 detail/severity/timestamp） */
 export interface LlmErrorClass {
 	titleKey: string;

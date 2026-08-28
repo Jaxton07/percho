@@ -502,6 +502,17 @@ body {
 	transition: background-color 0.15s ease;
 }
 
+/* 键盘焦点环统一接管（@layer base：可被 utilities 层的 outline-none 覆盖）。
+   不写的话会落到 Chromium UA 默认环 outline:auto——颜色跟随 macOS 系统强调色（如琥珀色），
+   不受设计 token 控制。改为统一用 accent 低饱和描边，仅在 Tab 键盘导航时出现
+   （:focus-visible 对鼠标点击不命中），键盘可达性保留。 */
+@layer base {
+	:focus-visible {
+		outline: 2px solid color-mix(in srgb, var(--color-accent) 35%, transparent);
+		outline-offset: 1px;
+	}
+}
+
 /* 主题就绪（data-theme 写入）前 body 透明：透出窗口 backgroundColor（main 已按主题设置），
    防深色启动时开屏动画底下闪白 */
 :root:not([data-theme]) body {

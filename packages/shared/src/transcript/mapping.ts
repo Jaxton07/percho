@@ -1,4 +1,4 @@
-import { buildLlmUiError, type UiError } from "../errors";
+import { buildLlmUiError, isUserAbortError, type UiError } from "../errors";
 import type { SessionMessage } from "../session";
 import { newSubagentKey, newToolKey } from "./helpers";
 import type { UIMessage, UIToolCall } from "./types";
@@ -80,7 +80,13 @@ export function messagesToUIMessages(messages: SessionMessage[]): UIMessage[] {
 			...(sourceText !== undefined ? { sourceText } : {}),
 		};
 		// 错误轮：partial 正文照常展示（保留），错误卡挂起——连续错误轮合并，非 error 消息或流结束才落卡
-		if (m.stopReason === "error" && typeof m.errorMessage === "string" && m.errorMessage.length > 0) {
+		if (
+			m.stopReason === "error" &&
+			typeof m.errorMessage === "string" &&
+			m.errorMessage.length > 0 &&
+			// 用户主动中断的取消错误（SDK 标成 error）不产卡——与 reducer live 判定同一份排除
+			!isUserAbortError(m.errorMessage)
+		) {
 			pendingError = buildLlmUiError(m.errorMessage, m.timestamp);
 			if (text || m.thinking.length > 0 || tools.length > 0) ui.push(assistant);
 			continue;

@@ -148,10 +148,12 @@ export function MessageList() {
 	// 最后一轮（无下一条 user 行）的 chip 追加到行序列末尾
 	const tailChanges = changeByTurn.get(userRowCount - 1);
 
-	// 已完成轮次保留上提 16px，和普通消息的 8px 净距对齐；当前运行轮不应上提：
-	// MetaGroup 的圆点仍会实时追加，否则 diff 会贴到圆点行上。
-	const renderChip = (tc: TurnChanges, running = false) => (
-		<div key={`turn-diff-${tc.turnIndex}`} className={running ? undefined : "-mt-4"}>
+	// 已完成轮次保留上提 16px，和普通消息的 8px 净距对齐；两条不上提：
+	// ① 当前运行轮——MetaGroup 的圆点仍会实时追加，上提会贴到圆点行上；
+	// ② 前面紧邻的是折叠组（纯工具轮 / 被打断轮无正文，组自带 -mb-4 对消 gap）——
+	//    再上提 16px 会与组的圆点行重叠 8px（组结束圆点仍冻结原位）。
+	const renderChip = (tc: TurnChanges, running = false, afterMetaGroup = false) => (
+		<div key={`turn-diff-${tc.turnIndex}`} className={running || afterMetaGroup ? undefined : "-mt-4"}>
 			<TurnDiffChip changes={tc} entering={tc.turnIndex === enteringTurn} />
 		</div>
 	);
@@ -159,7 +161,11 @@ export function MessageList() {
 	const items: React.ReactNode[] = [];
 	rows.forEach((row, rowIndex) => {
 		const chip = chipBeforeRow.get(rowIndex);
-		if (chip) items.push(renderChip(chip));
+		if (chip) {
+			// 上一行是折叠组（纯工具轮收尾）时，组自带 -mb-4，chip 不再上提（见 renderChip 注释②）
+			const prev = rows[rowIndex - 1];
+			items.push(renderChip(chip, false, prev?.kind === "metaGroup"));
+		}
 		if (row.kind === "metaGroup") {
 			items.push(
 				<MetaGroup
@@ -194,7 +200,10 @@ export function MessageList() {
 			/>,
 		);
 	});
-	if (tailChanges) items.push(renderChip(tailChanges, transcript.agentActive));
+	if (tailChanges) {
+		const last = rows[rows.length - 1];
+		items.push(renderChip(tailChanges, transcript.agentActive, last?.kind === "metaGroup"));
+	}
 
 	return (
 		<div className="relative h-full">

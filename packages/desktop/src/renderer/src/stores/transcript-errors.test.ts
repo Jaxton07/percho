@@ -65,6 +65,24 @@ describe("reducer — LLM 错误卡（决策 D1：agent_end 落卡）", () => {
 		expect(errorCards(s)).toHaveLength(0);
 	});
 
+	it("error + abort 文案不产卡（用户主动中止时 SDK 标成 error 的实测形态）", () => {
+		// DOMException AbortError：中断工具执行后，agent loop 继续发起的 in-flight 请求被取消
+		let s = reduceEvent(emptyTranscript(), turnEnd("error", "This operation was aborted"));
+		s = reduceEvent(s, agentEnd(false));
+		expect(errorCards(s)).toHaveLength(0);
+		expect(s.pendingLlmError).toBeNull();
+		// SDK 上层另一种中止形态
+		s = reduceEvent(emptyTranscript(), turnEnd("error", "Request aborted"));
+		s = reduceEvent(s, agentEnd(false));
+		expect(errorCards(s)).toHaveLength(0);
+	});
+
+	it("含 abort 字样但非取消语义的错误仍产卡（判定只看文案，detail 不丢）", () => {
+		let s = reduceEvent(emptyTranscript(), turnEnd("error", "provider aborted the request: 503"));
+		s = reduceEvent(s, agentEnd(false));
+		expect(errorCards(s)).toHaveLength(1);
+	});
+
 	it("errorMessage 为空串不产卡（防御）", () => {
 		let s = reduceEvent(emptyTranscript(), turnEnd("error", ""));
 		s = reduceEvent(s, agentEnd(false));
@@ -199,6 +217,16 @@ describe("mapping — 历史回放产卡（连续 error 合并）", () => {
 		const noMsg = messagesToUIMessages([asst("error")]); // backend 不会产出此类消息（无内容且无错误信息），防御不产卡
 		expect(noMsg.filter((m) => m.kind === "error")).toHaveLength(0);
 		expect(messagesToUIMessages([asst("stop", undefined, "ok")])).toHaveLength(1);
+	});
+
+	it("error + abort 文案不产卡（回放与 live 同判定）", () => {
+		// DOMException / SDK 中止文案：已落盘的空 assistant 消息回放时不冒错误卡
+		expect(
+			messagesToUIMessages([asst("error", "This operation was aborted")]).filter((m) => m.kind === "error"),
+		).toHaveLength(0);
+		expect(
+			messagesToUIMessages([asst("error", "Request aborted")]).filter((m) => m.kind === "error"),
+		).toHaveLength(0);
 	});
 
 	it("分类：401 → llmAuth / context overflow → llmOverflow（回放与 live 同判定）", () => {
