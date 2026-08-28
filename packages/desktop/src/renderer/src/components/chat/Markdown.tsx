@@ -24,8 +24,15 @@ const CODE_BLOCK_PROPS = {
 	showCollapseButton: false,
 	// 首行灰底修复：库的 monaco 默认值（renderLineHighlight:"none" 等）只对 diff 块生效
 	//（En() 首行 if(!e) return o），普通块裸奔 —— 只读编辑器光标恒停第一行，当前行高亮
-	// 让首行比其他行多一层灰底。显式关掉。
-	monacoOptions: { renderLineHighlight: "none" },
+	// 让首行比其他行多一层灰底。显式关掉。同理关掉右侧概览标尺（overview ruler）——
+	// 光标行在右缘留一枚黑色短杠标记，只读块无导航价值。
+	monacoOptions: {
+		renderLineHighlight: "none",
+		overviewRulerLanes: 0,
+		renderOverviewRuler: false,
+		overviewRulerBorder: false,
+		hideCursorInOverviewRuler: true,
+	},
 } as const;
 
 /** 减速动效偏好：直接关闭 pacing（直出）；库 CSS 自带 animation:none 处理淡入 */
