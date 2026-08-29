@@ -153,6 +153,7 @@ export const en: Messages = {
 		toggle: "Changes sidebar",
 		title: "Changes",
 		filesChanged: "{count} {unit} changed",
+		workedFor: "Worked for {duration}",
 		filesSummary: "{count} files",
 		scopeAll: "All",
 		scopeLatest: "Latest turn",

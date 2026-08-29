@@ -1,4 +1,5 @@
 import type { TurnChanges } from "./turn-files";
+import type { TurnTiming } from "./turn-timings";
 import type { ActivityEntry, SessionTranscriptState, SubagentRunUi, UIMessage, UIToolCall } from "./types";
 
 /**
@@ -43,8 +44,11 @@ export type ChatRow =
 	| {
 			kind: "turnDiff";
 			key: string;
-			changes: TurnChanges;
-			/** 最后一轮且 agent 运行中（桌面包装层样式用） */
+			/** 轮末文件变更（有变更才有；timer 行可无 diff） */
+			changes?: TurnChanges;
+			/** 轮次计时（桌面路径必有；lan-web 不传则行只在有 changes 时出现） */
+			timing?: TurnTiming;
+			/** 最后一轮且 agent 运行中（桌面包装层样式用；timer 跳动信号） */
 			running: boolean;
 			/** 前一行是折叠组（组自带 -mb-4，chip 不再上提） */
 			afterMetaGroup: boolean;
@@ -83,8 +87,10 @@ function committedMetaItem(message: Extract<UIMessage, { kind: "assistant" }>): 
 }
 
 export interface TurnDiffRowsOptions {
-	/** 每轮文件变更（桌面 deriveTurnChanges 产出；不传 = 不生成 turnDiff 行，lan-web 路径） */
+	/** 每轮文件变更（桌面 deriveTurnChanges 产出；不传 = 无 timer 时行退化为有变更才出现，lan-web 路径） */
 	turnChanges?: TurnChanges[];
+	/** 每轮计时（桌面 deriveTurnTimings 产出；不传 = 不产 timer 行） */
+	turnTimings?: TurnTiming[];
 	/** 进场动画目标轮（桌面 MessageList 的 baseline 逻辑算出） */
 	enteringTurn?: number | null;
 }
@@ -133,23 +139,28 @@ export function buildChatRows(
 		metaItems = [];
 	};
 
-	// 轮次文件变更 chip 行（桌面路径）：位置式插入——turn i 的 chip 插到第 i+1 条 user 行之前，
-	// 最后一轮追加到行序列末尾。（不锚消息行：轮末 assistant 无正文时会被吸进折叠组，没有独立行可锚。
-	// streaming 中的轮次工具未固化进 messages，天然不满足「turn_end 后才出现」）
-	const { turnChanges, enteringTurn } = opts ?? {};
+	// 轮末行（桌面路径）：位置式插入——turn i 的行插到第 i+1 条 user 行之前，最后一轮追加到行序列末尾。
+	// （不锚消息行：轮末 assistant 无正文时会被吸进折叠组，没有独立行可锚。streaming 中的轮次工具未固化
+	// 进 messages，天然不满足「turn_end 后才出现」）传了 turnTimings 则每轮必产行（计时恒显，diff 条件渲染）；
+	// 只传 turnChanges（lan-web 老路径）则保持原行为：有文件变更才产行。
+	const { turnChanges, turnTimings, enteringTurn } = opts ?? {};
 	const changeByTurn = turnChanges ? new Map(turnChanges.map((tc) => [tc.turnIndex, tc])) : null;
+	const timingByTurn = turnTimings ? new Map(turnTimings.map((tt) => [tt.turnIndex, tt])) : null;
 	let userRowCount = 0;
-	const pushTurnDiffRow = (tc: TurnChanges, running: boolean): void => {
+	const pushTurnDiffRow = (turnIndex: number, running: boolean): void => {
 		rows.push({
 			kind: "turnDiff",
-			key: `turn-diff-${tc.turnIndex}`,
-			changes: tc,
+			key: `turn-diff-${turnIndex}`,
+			changes: changeByTurn?.get(turnIndex),
+			timing: timingByTurn?.get(turnIndex),
 			running,
 			// 前一行是折叠组（纯工具轮/被打断轮无正文，组自带 -mb-4 对消 gap）→ chip 不再上提
 			afterMetaGroup: rows[rows.length - 1]?.kind === "metaGroup",
-			entering: tc.turnIndex === enteringTurn,
+			entering: turnIndex === enteringTurn,
 		});
 	};
+	const hasFooterRow = (turnIndex: number): boolean =>
+		Boolean(changeByTurn?.get(turnIndex) || timingByTurn?.get(turnIndex));
 
 	for (const message of transcript.messages) {
 		if (message.kind === "subagent") {
@@ -168,9 +179,8 @@ export function buildChatRows(
 		}
 		if (message.kind !== "assistant") {
 			flushMeta();
-			if (message.kind === "user" && changeByTurn) {
-				const tc = changeByTurn.get(userRowCount - 1);
-				if (tc) pushTurnDiffRow(tc, false);
+			if (message.kind === "user" && (changeByTurn || timingByTurn)) {
+				if (hasFooterRow(userRowCount - 1)) pushTurnDiffRow(userRowCount - 1, false);
 				userRowCount++;
 			}
 			rows.push({
@@ -249,10 +259,9 @@ export function buildChatRows(
 	if (streamingSubagentRuns.length > 0) {
 		rows.push({ kind: "streamingSubagents", key: "streaming-subagents", runs: streamingSubagentRuns });
 	}
-	// 最后一轮（无下一条 user 行）的 chip 追加到行序列末尾；running = agent 仍在该轮工作
-	if (changeByTurn) {
-		const tail = changeByTurn.get(userRowCount - 1);
-		if (tail) pushTurnDiffRow(tail, transcript.agentActive);
+	// 最后一轮（无下一条 user 行）的行追加到行序列末尾；running = agent 仍在该轮工作（timer 跳动）
+	if (changeByTurn || timingByTurn) {
+		if (hasFooterRow(userRowCount - 1)) pushTurnDiffRow(userRowCount - 1, transcript.agentActive);
 	}
 	return rows;
 }

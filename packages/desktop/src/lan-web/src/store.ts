@@ -106,6 +106,16 @@ let refetchScheduled = false;
 /** 快照重拉最小间隔（unknown 会话自愈风暴防护；immediate 边界帧不受限） */
 let lastRefetchAt = 0;
 const REFETCH_MIN_INTERVAL_MS = 2500;
+/** 最近一次收到任意帧（含 ping 心跳）的时刻；watchdog 判活数据源。 */
+let lastFrameAt = 0;
+/** 心跳静默超时：超过则判定半开连接，主动断开重连（服务端 PING_MS = 20s） */
+const STALE_MS = 50_000;
+let watchdogTimer: ReturnType<typeof setInterval> | null = null;
+/** 状态迟滞：onerror 后延迟多久才把药丸切成「重连中」（期间 EventSource 自动重连大概率已成功） */
+const RECONNECT_LABEL_DELAY_MS = 3000;
+let reconnectLabelTimer: ReturnType<typeof setTimeout> | null = null;
+/** 当前连接是否经历过断线（决定 onopen 时是否需要重拉快照：断线期间帧丢失，靠快照补齐） */
+let needsRefetchOnOpen = false;
 
 async function fetchSnapshot(): Promise<void> {
 	const token = useLanStore.getState().token;
@@ -143,7 +153,7 @@ function onFrame(frame: LanSseFrame): void {
 	// 中途进入自愈：streamHealing 态下到达 run 提交/终态边界 → 立即重拉快照取回已提交消息
 	if (frame.event === "event" && sessionId && ORPHAN_BOUNDARY_TYPES.has(frame.data.event.type)) {
 		const state = useLanStore.getState();
-		if (state.streamHealing[sessionId] && !state.transcripts[sessionId]?.streaming) {
+		if (state.streamHealing[sessionId] != null && !state.transcripts[sessionId]?.streaming) {
 			scheduleSnapshotRefetch({ immediate: true });
 		}
 	}
@@ -164,39 +174,83 @@ function scheduleSnapshotRefetch(opts?: { immediate?: boolean }): void {
 	}, wait);
 }
 
-/** 建立/重建 SSE 连接（token 变化、logout 时调用）。无 token 时停在输入页。 */
+/** 建立/重建 SSE 连接（token 变化、logout、watchdog 判死时调用）。无 token 时停在输入页。 */
 export function connect(): void {
 	stream?.close();
 	stream = null;
+	cancelReconnectLabel();
 	const token = useLanStore.getState().token;
 	if (!token) {
 		useLanStore.setState({ status: "token" });
+		stopWatchdog();
 		return;
 	}
 	useLanStore.setState({ status: "connecting" });
 	snapshotInFlight = true;
 	preSeedFrames = [];
+	lastFrameAt = Date.now();
 	void fetchSnapshot().catch(() => useLanStore.setState({ status: "reconnecting" }));
 	stream = new EventSource(`/api/stream?t=${encodeURIComponent(token)}`);
 	stream.onopen = () => {
+		lastFrameAt = Date.now();
+		cancelReconnectLabel();
 		useLanStore.setState({ status: "connected" });
-		// 每次（重）连都重拉快照：幂等自愈（spec：snapshot 为权威）
-		if (!snapshotInFlight) {
+		// 断线重连才重拉快照（断线期间的帧永久丢失，快照是唯一补齐手段）；
+		// 首次连接 connect() 已拉过，跳过避免双拉
+		if (needsRefetchOnOpen && !snapshotInFlight) {
 			snapshotInFlight = true;
 			preSeedFrames = [];
 			void fetchSnapshot().catch(() => {});
 		}
+		needsRefetchOnOpen = false;
 	};
 	stream.onerror = () => {
-		useLanStore.setState((state) => (state.status === "token" ? state : { status: "reconnecting" }));
+		// 移动端切网/锁屏/切后台时 OS 杀长连接是常态，EventSource 自动重连通常秒级成功；
+		// 延迟切「重连中」避免药丸闪烁，连上则取消（首连失败也走同一条路径 connecting→reconnecting）
+		needsRefetchOnOpen = true;
+		if (reconnectLabelTimer) return;
+		reconnectLabelTimer = setTimeout(() => {
+			reconnectLabelTimer = null;
+			useLanStore.setState((state) =>
+				state.status === "connected" || state.status === "connecting" ? { status: "reconnecting" } : {},
+			);
+		}, RECONNECT_LABEL_DELAY_MS);
 	};
-	for (const name of ["view", "list", "event", "perm", "perm_resolved"] as const) {
+	for (const name of ["view", "list", "event", "perm", "perm_resolved", "ping"] as const) {
 		stream.addEventListener(name, (e) => {
+			lastFrameAt = Date.now();
+			if (name === "ping") return;
 			try {
 				onFrame({ event: name, data: JSON.parse((e as MessageEvent).data) } as LanSseFrame);
 			} catch {
 				// 坏帧忽略，重连快照兜底
 			}
 		});
+	}
+	startWatchdog();
+}
+
+/** 心跳 watchdog：连接打开但超时无任何帧（含 ping）→ 判定半开连接，主动断开重建。 */
+function startWatchdog(): void {
+	stopWatchdog();
+	watchdogTimer = setInterval(() => {
+		if (!stream || useLanStore.getState().status !== "connected") return;
+		if (Date.now() - lastFrameAt > STALE_MS) {
+			// 状态切 connecting + 主动重连（服务端 20s 心跳不可达即已死，不必等 TCP 超时）
+			useLanStore.setState({ status: "connecting" });
+			connect();
+		}
+	}, 5000);
+}
+
+function stopWatchdog(): void {
+	if (watchdogTimer) clearInterval(watchdogTimer);
+	watchdogTimer = null;
+}
+
+function cancelReconnectLabel(): void {
+	if (reconnectLabelTimer) {
+		clearTimeout(reconnectLabelTimer);
+		reconnectLabelTimer = null;
 	}
 }

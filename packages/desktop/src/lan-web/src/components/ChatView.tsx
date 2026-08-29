@@ -2,6 +2,7 @@ import { buildChatRows } from "@percho/shared";
 import { useCallback, useEffect, useRef } from "react";
 import { t } from "../i18n";
 import { useLanStore } from "../store";
+import { healingTailSuffix } from "../store-pure";
 import { ShieldIcon } from "./icons";
 import { Markdown } from "./Markdown";
 import { MessageItem } from "./MessageItem";
@@ -37,8 +38,9 @@ export function ChatView({
 	const view = useLanStore((s) => s.views[sessionId]);
 	const truncated = useLanStore((s) => s.truncated[sessionId]);
 	const perms = useLanStore((s) => s.pendingPerms[sessionId]);
-	// 中途进入自愈标记（错过 message_start 的 run：流式帧空转，用 view.assistantTail 兑底渲染）
-	const healing = useLanStore((s) => s.streamHealing[sessionId] === true);
+	// 中途进入自愈标记（错过 message_start 的 run：流式帧空转，用 view.assistantTail 的
+	// 尾部新增后缀渲染兑底气泡——种子已含 partial 正文，整段渲染会和消息流重复）
+	const healing = useLanStore((s) => s.streamHealing[sessionId]);
 	const remoteControl = useLanStore((s) => s.remoteControl);
 	const loadTranscript = useLanStore((s) => s.loadTranscript);
 	const seeded = useLanStore((s) => s.seeded);
@@ -134,10 +136,11 @@ export function ChatView({
 					);
 				})}
 				{/* 中途进入兑底：run 在进行但本地无流式容器时，用 view 投影的 assistantTail
-				    渲染实时正文（view 帧 120ms 合帧推送）；run 边界摘标记 + 快照取回已提交消息 */}
-				{healing && view?.assistantTail && (
+				    渲染种子后的新增后缀（healing 计数 = 种子后 text_delta 字节数）；
+				    run 边界摘标记 + 快照取回已提交消息 */}
+				{healing != null && healingTailSuffix(view?.assistantTail, healing) && (
 					<div className="m-assistant">
-						<Markdown text={view.assistantTail} isDark={isDark} streaming />
+						<Markdown text={healingTailSuffix(view?.assistantTail, healing)} isDark={isDark} streaming />
 					</div>
 				)}
 				{(perms ?? []).map((request) => (

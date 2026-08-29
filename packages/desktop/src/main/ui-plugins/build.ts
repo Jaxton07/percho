@@ -71,7 +71,7 @@ export const { version, components, helpers, hooks, stores } = A;
 export const { Button, Dropdown, Tooltip, Markdown, ImagePreview } = A.components;
 export const { summarizeArgs, displayToolName } = A.helpers;
 export const { useT, useContextUsage, useLanguage } = A.hooks;
-export const { useTranscriptStore, useSessionsStore, useUiStore, useProjectsStore, useSettingsStore } = A.stores;`,
+export const { useTranscriptStore, useSessionsStore, useUiStore, useProjectsStore, useSettingsStore, useUiPreferencesStore } = A.stores;`,
 };
 
 /**
@@ -94,8 +94,10 @@ const perchoExternalsPlugin: Plugin = {
 };
 
 /**
- * 静态资产 loader：插件可相对路径导入图片（例 `import idleUrl from "./assets/idle.png"`），
- * esbuild 打成 data URL 内联进产物（CSP img-src 放行 data:）。非相对路径仍走裸导入拦截。
+ * 静态资产 loader：插件可相对路径导入图片与音频（例 `import idleUrl from "./assets/idle.png"`、
+ * `import chimeUrl from "./assets/done.mp3"`），esbuild 打成 data URL 内联进产物
+ * （CSP img-src / media-src 均放行 data:）。非相对路径仍走裸导入拦截。
+ * 音频体积注意：几秒语音的 mp3/m4a 约几十 KB，wav 动辄几 MB，建议有损格式。
  */
 const ASSET_LOADERS: Record<string, "dataurl"> = {
 	".png": "dataurl",
@@ -103,6 +105,11 @@ const ASSET_LOADERS: Record<string, "dataurl"> = {
 	".gif": "dataurl",
 	".jpg": "dataurl",
 	".jpeg": "dataurl",
+	".mp3": "dataurl",
+	".m4a": "dataurl",
+	".aac": "dataurl",
+	".ogg": "dataurl",
+	".wav": "dataurl",
 };
 
 /**

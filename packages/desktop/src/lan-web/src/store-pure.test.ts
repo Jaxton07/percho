@@ -1,7 +1,7 @@
 import type { LanSnapshot, LanSseFrame, LanTranscript, SessionMessage } from "@percho/shared";
 import { describe, expect, it } from "vitest";
 import type { LanAppState } from "./store-pure";
-import { applyFrame, initialLanState, seedSessions, seedTranscript } from "./store-pure";
+import { applyFrame, healingTailSuffix, initialLanState, seedSessions, seedTranscript } from "./store-pure";
 
 const baseView = {
 	sessionId: "s1",
@@ -51,6 +51,23 @@ function eventFrame(sessionId: string, event: Record<string, unknown>, seq: numb
 	return { event: "event", data: { sessionId, event, seq } } as LanSseFrame;
 }
 
+/** 流式进行中的视图（healing 标记的 agentActive 守卫需要） */
+function activeSnapshot(): LanSnapshot {
+	return snapshot({ views: [{ ...baseView, agentActive: true }] });
+}
+
+function deltaFrame(sessionId: string, delta: string, seq: number): LanSseFrame {
+	return eventFrame(
+		sessionId,
+		{
+			type: "message_update",
+			message: { role: "assistant", content: [] },
+			assistantMessageEvent: { type: "text_delta", contentIndex: 0, delta },
+		},
+		seq,
+	);
+}
+
 describe("lan-web store pure functions", () => {
 	it("snapshot seeds transcripts via messagesToUIMessages", () => {
 		const next = seedSessions(initialLanState, snapshot());
@@ -97,67 +114,59 @@ describe("lan-web store pure functions", () => {
 	});
 
 	it("mid-run join: orphan delta flags streamHealing; container rebuild clears it", () => {
-		let state = { ...initialLanState, ...seedSessions(initialLanState, snapshot()) };
-		// 中途进入：错过 message_start，text_delta 在 reducer 空转 → 标记兑底
-		state = {
-			...state,
-			...applyFrame(
-				state,
-				eventFrame(
-					"s1",
-					{
-						type: "message_update",
-						message: { role: "assistant", content: [] },
-						assistantMessageEvent: { type: "text_delta", contentIndex: 0, delta: "你好" },
-					},
-					11,
-				),
-			),
-		};
-		expect(state.streamHealing.s1).toBe(true);
+		let state = { ...initialLanState, ...seedSessions(initialLanState, activeSnapshot()) };
+		// 中途进入：错过 message_start，text_delta 在 reducer 空转 → 标记兑底（值 = 触发帧的新增字节数）
+		state = { ...state, ...applyFrame(state, deltaFrame("s1", "你好", 11)) };
+		expect(state.streamHealing.s1).toBe(2);
 		expect(state.transcripts.s1?.streaming).toBeNull();
+		// 后续空转 delta 继续累加新鲜字节数（气泡差量渲染的数据源）
+		state = { ...state, ...applyFrame(state, deltaFrame("s1", "世界！", 12)) };
+		expect(state.streamHealing.s1).toBe(5);
 		// 容器重建（agent_start）→ 摘标记，后续 delta 正常累积不再误标
-		state = { ...state, ...applyFrame(state, eventFrame("s1", { type: "agent_start" }, 12)) };
+		state = { ...state, ...applyFrame(state, eventFrame("s1", { type: "agent_start" }, 13)) };
 		expect(state.streamHealing.s1).toBeUndefined();
-		state = {
-			...state,
-			...applyFrame(
-				state,
-				eventFrame(
-					"s1",
-					{
-						type: "message_update",
-						message: { role: "assistant", content: [] },
-						assistantMessageEvent: { type: "text_delta", contentIndex: 0, delta: "在" },
-					},
-					13,
-				),
-			),
-		};
+		state = { ...state, ...applyFrame(state, deltaFrame("s1", "在", 14)) };
 		expect(state.streamHealing.s1).toBeUndefined();
 		expect(state.transcripts.s1?.streaming?.text).toBe("在");
 	});
 
 	it("mid-run join: orphan turn_end boundary clears flag (refetch wired in store.ts)", () => {
-		let state = { ...initialLanState, ...seedSessions(initialLanState, snapshot()) };
-		state = {
-			...state,
-			...applyFrame(
-				state,
-				eventFrame(
-					"s1",
-					{
-						type: "message_update",
-						message: { role: "assistant", content: [] },
-						assistantMessageEvent: { type: "text_delta", contentIndex: 0, delta: "x" },
-					},
-					11,
-				),
-			),
-		};
-		expect(state.streamHealing.s1).toBe(true);
+		let state = { ...initialLanState, ...seedSessions(initialLanState, activeSnapshot()) };
+		state = { ...state, ...applyFrame(state, deltaFrame("s1", "x", 11)) };
+		expect(state.streamHealing.s1).toBe(1);
 		state = { ...state, ...applyFrame(state, eventFrame("s1", { type: "turn_end" }, 12)) };
 		expect(state.streamHealing.s1).toBeUndefined();
+	});
+
+	it("orphan delta on idle session does not flag streamHealing (agentActive guard)", () => {
+		let state = { ...initialLanState, ...seedSessions(initialLanState, snapshot()) };
+		state = { ...state, ...applyFrame(state, deltaFrame("s1", "x", 11)) };
+		expect(state.streamHealing.s1).toBeUndefined();
+	});
+
+	it("re-seed clears streamHealing (fresh authoritative state)", () => {
+		let state = { ...initialLanState, ...seedSessions(initialLanState, activeSnapshot()) };
+		state = { ...state, ...applyFrame(state, deltaFrame("s1", "x", 11)) };
+		expect(state.streamHealing.s1).toBe(1);
+		state = { ...state, ...seedSessions(state, activeSnapshot()) };
+		expect(state.streamHealing).toEqual({});
+	});
+
+	describe("healingTailSuffix", () => {
+		it("renders only the fresh suffix of the projected tail", () => {
+			// 种子 partial “Hel”，投影 tail 已长到 “Hello wor” → 只渲染新增的 “lo wor”
+			expect(healingTailSuffix("Hello wor", 5)).toBe("o wor");
+		});
+
+		it("fresh bytes beyond tail length renders whole tail (window slid past seed)", () => {
+			expect(healingTailSuffix("abc", 99)).toBe("abc");
+		});
+
+		it("no fresh bytes or empty tail renders nothing (no duplicated body)", () => {
+			expect(healingTailSuffix("Hello wor", 0)).toBe("");
+			expect(healingTailSuffix(null, 5)).toBe("");
+			expect(healingTailSuffix(undefined, 5)).toBe("");
+		});
 	});
 
 	it("perm frame lifecycle: perm adds, perm_resolved removes", () => {

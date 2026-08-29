@@ -27,6 +27,8 @@ const CLIENT_LIMIT = 5;
 const CLIENT_QUEUE_LIMIT = 256;
 const DIRTY_FLUSH_MS = 120;
 const PING_MS = 20_000;
+/** EventSource 自动重连间隔建议（默认浏览器自定偏慢，显式下发加快重连） */
+const SSE_RETRY_MS = 1500;
 const RECONCILE_MS = 60_000;
 const MAX_PENDING_SESSIONS = 32;
 const MAX_PENDING_EVENTS_PER_SESSION = 64;
@@ -133,6 +135,8 @@ export interface LanObserverServerOptions {
 	iconPng?: Buffer;
 	/** M2 写操作审计日志路径（userData/lan-audit.jsonl；缺省不记录）。 */
 	auditPath?: string;
+	/** 心跳间隔（缺省 PING_MS；测试注入短间隔用）。 */
+	pingMs?: number;
 }
 
 /** 默认关闭时零资源；启动后才订阅 backend 并提供只读 HTTP/SSE 投影。 */
@@ -182,7 +186,12 @@ export class LanObserverServer {
 			this.backend.onPermissionResolved((result) => this.handlePermissionResolved(result)),
 		];
 		this.dirtyTimer = setInterval(() => this.flushDirty(), DIRTY_FLUSH_MS);
-		this.pingTimer = setInterval(() => this.broadcastRaw(": ping\n\n"), PING_MS);
+		// 心跳必须是命名事件帧（注释帧 `: ping` 不触发 EventSource 任何 JS 事件），
+		// 客户端 watchdog 靠它判活：静默半开连接（移动端切网后常见）能在 PING_MS*2.5 内主动重连
+		this.pingTimer = setInterval(
+			() => this.broadcast({ event: "ping", data: { serverTime: Date.now() } }),
+			this.options.pingMs ?? PING_MS,
+		);
 		this.reconcileTimer = setInterval(() => void this.reconcile(), RECONCILE_MS);
 	}
 
@@ -255,10 +264,17 @@ export class LanObserverServer {
 			return this.sendJson(res, 401, { error: "invalid token" });
 		}
 		if (path === "/api/snapshot") {
-			// 先冲刷待合并 delta 再记录序号：客户端丢弃 seq ≤ snapshotSeq 的 event 帧（效果已含在快照内）
-			this.flushAllDeltas();
-			const snapshotSeq = this.seq;
-			const transcripts = await this.collectTranscripts();
+			// 先冲刷待合并 delta 再记录序号：客户端丢弃 seq ≤ snapshotSeq 的 event 帧（效果已含在快照内）。
+			// seq 边界与消息收集须对事件投递原子（getSessionMessages 全链路同步，仅微任务让出，事件在
+			// macrotask 投递插不进来）；稳定性双重校验是保险：若未来链条里混入真实 await，重试一轮取一致快照。
+			let snapshotSeq = 0;
+			let transcripts: LanTranscript[] = [];
+			for (let attempt = 0; attempt < 3; attempt++) {
+				this.flushAllDeltas();
+				snapshotSeq = this.seq;
+				transcripts = await this.collectTranscripts();
+				if (this.seq === snapshotSeq) break;
+			}
 			const snapshot: LanSnapshot = {
 				serverTime: Date.now(),
 				list: this.list,
@@ -390,6 +406,8 @@ export class LanObserverServer {
 		});
 		const client: SseClient = { res, queue: [], blocked: false };
 		this.clients.add(client);
+		// retry 字段：提示 EventSource 断线后按此间隔自动重连（浏览器默认 ~3s，移动端切回时显得久）
+		this.sendRaw(client, `retry: ${SSE_RETRY_MS}\n\n`);
 		this.sendFrame(client, { event: "hello", data: { seq: this.seq } });
 		for (const view of this.views.values()) this.sendFrame(client, this.viewFrame(view));
 		req.on("close", () => this.clients.delete(client));
@@ -574,10 +592,6 @@ export class LanObserverServer {
 
 	private broadcast(frame: LanSseFrame): void {
 		for (const client of this.clients) this.sendFrame(client, frame);
-	}
-
-	private broadcastRaw(payload: string): void {
-		for (const client of this.clients) this.sendRaw(client, payload);
 	}
 
 	private sendFrame(client: SseClient, frame: LanSseFrame): void {

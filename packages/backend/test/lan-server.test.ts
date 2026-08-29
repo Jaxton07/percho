@@ -47,7 +47,7 @@ function backend(): LanObserverBackend {
 async function start(
 	port = 0,
 	observer: LanObserverBackend = backend(),
-	options: { auditPath?: string; remoteControl?: boolean } = {},
+	options: { auditPath?: string; remoteControl?: boolean; pingMs?: number } = {},
 ): Promise<LanObserverServer> {
 	const dir = await mkdtemp(join(tmpdir(), "percho-lan-"));
 	dirs.push(dir);
@@ -56,6 +56,7 @@ async function start(
 	const server = new LanObserverServer(observer, config, {
 		pageHtml: "<h1>observer</h1>",
 		auditPath: options.auditPath,
+		pingMs: options.pingMs,
 	});
 	servers.push(server);
 	await server.start();
@@ -167,6 +168,20 @@ describe("LanObserverServer", () => {
 			views: [{ sessionId: "session-1", assistantTail: "hello", agentActive: true }],
 		});
 		await expect(sse(`http://127.0.0.1:${port}/api/stream?t=${token}`)).resolves.toContain("event: view");
+	});
+
+	it("stream handshake carries retry hint and named ping heartbeat (client watchdog relies on it)", async () => {
+		const server = await start(0, backend(), { pingMs: 50 });
+		const port = server.status().port;
+		const text = await sseCollect(
+			`http://127.0.0.1:${port}/api/stream?t=${token}`,
+			(received) => received.includes("retry: 1500") && received.includes("event: ping"),
+		);
+		expect(text).toContain("retry: 1500");
+		// 心跳必须是命名事件帧：注释帧 `: ping` 不触发 EventSource 任何 JS 事件，客户端无法判活
+		const ping = /event: ping\ndata: (.+)/.exec(text);
+		expect(ping?.[1]).toBeTruthy();
+		expect(JSON.parse(ping?.[1] ?? "{}")).toHaveProperty("serverTime");
 	});
 
 	it("drops unknown subagent events after one bounded seed attempt", async () => {

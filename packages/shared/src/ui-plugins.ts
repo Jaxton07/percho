@@ -63,6 +63,8 @@ export interface UiPluginManifest {
 	slots?: Record<string, string>;
 	/** 区域贡献（往页面加挂组件，一区域可多个堆叠）；slots 与 contributions 至少其一非空 */
 	contributions?: UiPluginContribution[];
+	/** 无头插件（spec §11）：不提供任何组件，加载时调用入口导出 `activate()`（可返回清理函数，禁用/热重载时调用）。slots / contributions / headless 至少其一 */
+	headless?: boolean;
 	/** 可选展示字段 */
 	version?: string;
 	displayName?: string;
@@ -80,6 +82,8 @@ export interface UiPluginInfo {
 	slots: Record<string, string>;
 	/** manifest 声明的区域贡献（未知 region 条目已过滤） */
 	contributions: UiPluginContribution[];
+	/** 无头插件（声明 headless，无槽位/贡献，仅 activate 副作用） */
+	headless?: boolean;
 	enabled: boolean;
 	trusted: boolean;
 	/** manifest 校验失败原因（invalid 时不参与加载） */

@@ -15,6 +15,7 @@ import { useSessionsStore } from "../stores/sessions";
 import { useSettingsStore } from "../stores/settings";
 import { useTranscriptStore } from "../stores/transcript";
 import { useUiStore } from "../stores/ui";
+import { useUiPreferencesStore } from "../stores/ui-preferences";
 import type { PerchoUiApi } from "./env";
 
 /**
@@ -51,5 +52,6 @@ window.PerchoUI = {
 		useUiStore,
 		useProjectsStore,
 		useSettingsStore,
+		useUiPreferencesStore,
 	},
 } satisfies PerchoUiApi;

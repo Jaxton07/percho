@@ -562,3 +562,22 @@ export function LoginIcon({ size = 13, className }: IconProps) {
 		</svg>
 	);
 }
+
+/** 时钟（轮末计时 glyph，lucide clock 风格） */
+export function ClockIcon({ size = 12, className }: IconProps) {
+	return (
+		<svg
+			className={className}
+			width={size}
+			height={size}
+			viewBox="0 0 24 24"
+			{...strokeProps}
+			strokeLinecap="round"
+			strokeLinejoin="round"
+			aria-hidden="true"
+		>
+			<circle cx="12" cy="12" r="9" />
+			<path d="M12 7.5v4.5l3 2" />
+		</svg>
+	);
+}

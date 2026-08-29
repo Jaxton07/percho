@@ -851,6 +851,11 @@ code {
 .turn-diff {
 	font-size: 12.5px;
 }
+/* 纯计时行（无文件变更轮）：幽灵文字，非交互 */
+.turn-diff-plain {
+	font-size: 12.5px;
+	display: flex;
+}
 .turn-diff-head {
 	display: inline-flex;
 	align-items: center;
@@ -866,6 +871,36 @@ code {
 }
 .turn-diff-head::-webkit-details-marker {
 	display: none;
+}
+/* 轮次计时：chip 首位；运行中数字呼吸，结束后随 head 同色定格 */
+.turn-diff-timer {
+	display: inline-flex;
+	align-items: center;
+	gap: 4px;
+	color: var(--color-ink-faint);
+	transition: color 0.15s;
+}
+.turn-diff-timer-num,
+.turn-diff-timer svg {
+	font-variant-numeric: tabular-nums;
+}
+.turn-diff-timer-live {
+	color: var(--color-ink-dim);
+}
+.turn-diff-timer-live .turn-diff-timer-num {
+	animation: turn-timer-breathe 2.2s ease-in-out infinite;
+}
+@keyframes turn-timer-breathe {
+	0%,
+	100% {
+		opacity: 1;
+	}
+	50% {
+		opacity: 0.45;
+	}
+}
+.turn-diff-sep {
+	color: var(--color-ink-faint);
 }
 .turn-diff-stat {
 	font-variant-numeric: tabular-nums;
@@ -1346,6 +1381,9 @@ code {
 	.turn-diff-chev,
 	.diff-file-chev {
 		transition: none;
+	}
+	.turn-diff-timer-live .turn-diff-timer-num {
+		animation: none;
 	}
 }
 

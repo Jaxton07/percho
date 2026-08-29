@@ -142,13 +142,13 @@ function validateManifest(dirName: string, m: Partial<UiPluginManifest>): string
 	if (typeof m.main !== "string" || m.main.includes("..") || !MAIN_RE.test(m.main)) {
 		return "main 非法（须为目录内相对路径，禁止 .. 穿越，后缀 .ts/.tsx/.js/.jsx）";
 	}
-	// slots 与 contributions 至少其一非空（spec §16：slots 不再必填）
+	// slots / contributions / headless 至少其一非空（spec §11/§16：无头插件无组件）
 	const slotsOk = !!m.slots && typeof m.slots === "object" && Object.keys(m.slots).length > 0;
 	if (m.contributions !== undefined && !Array.isArray(m.contributions)) {
 		return "contributions 必须是数组";
 	}
-	if (!slotsOk && (m.contributions?.length ?? 0) === 0) {
-		return "slots 与 contributions 至少其一非空";
+	if (!slotsOk && (m.contributions?.length ?? 0) === 0 && m.headless !== true) {
+		return "slots / contributions / headless 至少其一非空";
 	}
 	if (slotsOk) {
 		for (const [slot, exportName] of Object.entries(m.slots ?? {})) {
@@ -314,6 +314,7 @@ export class UiPluginManager {
 			perchoUi: manifest?.perchoUi,
 			slots: manifest?.slots ?? {},
 			contributions: filterContributions(manifest?.contributions),
+			headless: manifest?.headless === true ? true : undefined,
 			enabled: this.config.plugins[name]?.enabled ?? false,
 			trusted: this.config.plugins[name]?.trusted ?? false,
 			invalidReason: invalidReason ?? undefined,

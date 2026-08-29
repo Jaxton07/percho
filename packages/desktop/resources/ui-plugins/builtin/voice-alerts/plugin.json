@@ -1,0 +1,9 @@
+{
+	"name": "voice-alerts",
+	"version": "0.1.0",
+	"displayName": "语音提醒",
+	"description": "全部会话连续安静数秒（任务完成）或出现权限审批等待时播放提示音；安静窗口过滤跨会话自动循环的噪音。开关即本插件的启用开关。",
+	"perchoUi": 1,
+	"main": "src/index.ts",
+	"headless": true
+}

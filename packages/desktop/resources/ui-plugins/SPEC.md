@@ -78,12 +78,12 @@ import { Button, useT } from "@percho/plugin-api";      // 宿主 API（见 §4�
 import idleUrl from "./assets/idle.png";                // 插件目录内图片资产（见下）
 ```
 
-**图片资产**：相对路径导入 `.png` / `.webp` / `.gif` / `.jpg` / `.jpeg`，构建器（esbuild dataurl loader）
-把文件打成 `data:` URL 字符串内联进产物（默认导出 = URL），CSP `img-src` 放行 `data:`。
-适合桌宠立绘、雪碧图等场景。纪律：
-- 只接受插件目录内的**相对路径**（`./` 或 `../` 开头但不得穿出插件目录）；裸导入图片包名仍失败；
-- 体积即产物体积（base64 再 +33%）：先缩到实际显示尺寸的 2x（Retina）再导入，5 张 760px PNG ≈ 2MB 产物是可接受上限量级；
-- 图片改动同样触发热重载（watch 覆盖 `src/` 整个目录）。
+**图片与音频资产**：相对路径导入图片（`.png` / `.webp` / `.gif` / `.jpg` / `.jpeg`）与音频（`.mp3` / `.m4a` / `.aac` / `.ogg` / `.wav`），构建器（esbuild dataurl loader）
+把文件打成 `data:` URL 字符串内联进产物（默认导出 = URL），CSP `img-src` 与 `media-src` 均放行 `data:`（音频用 `new Audio(url)` 播放）。
+适合桌宠立绘、雪碧图、语音提醒/音效等场景。纪律：
+- 只接受插件目录内的**相对路径**（`./` 或 `../` 开头但不得穿出插件目录）；裸导入图片/音频包名仍失败；
+- 体积即产物体积（base64 再 +33%）：图片先缩到实际显示尺寸的 2x（Retina）再导入，5 张 760px PNG ≈ 2MB 产物是可接受上限量级；音频建议有损格式（几秒语音的 mp3/m4a 约几十 KB，wav 动辄几 MB）；
+- 资产改动同样触发热重载（watch 覆盖整个插件目录，除 dist/）。
 
 **硬约束**：
 
@@ -109,6 +109,7 @@ export const hooks: {
 };
 export const stores: {                      // 宿主 zustand store（与宿主同一实例）
 	useTranscriptStore; useSessionsStore; useUiStore; useProjectsStore; useSettingsStore;
+	useUiPreferencesStore;                   // 应用级 UI 偏好（ui-state.json 持久化：轨道/中央动画等开关）
 };
 ```
 
@@ -193,3 +194,33 @@ z 序：背景 0 < 内容 10 < overlay 20 < 设置弹窗 40 < 信任弹窗/全�
 ### 10.4 示例
 
 `_examples/overlay-pet/`（桌宠：跟 `useTranscriptStore` 的 agentActive 呼吸，CSS transform 动画 + reduced-motion 退化）与 `_examples/token-meter/`（迷你仪表盘：`useContextUsage` + `chat.corner.top-right`）——照抄改即可。
+
+## 11. 无头插件（Phase 4）：不渲染任何组件的常驻副作用
+
+Slot 是「替换组件」，Contribution 是「加挂组件」，Headless 是「零组件」：插件只提供一段常驻逻辑（订阅宿主 store、定时器、播放音频……），适合语音提醒、状态监控、通知桥接类功能。manifest 声明 `"headless": true`（与 slots/contributions 至少其一，可并存——同一插件既替换组件又跑副作用）：
+
+```json
+{
+	"name": "voice-alerts",
+	"perchoUi": 1,
+	"main": "src/index.ts",
+	"headless": true
+}
+```
+
+入口导出 `activate(): (() => void) | void`：插件加载（含热重载重载）时调用；返回的清理函数在**禁用/卸载/热重载替换**时调用（无返回值则无清理）：
+
+```ts
+import { stores } from "@percho/plugin-api";
+
+export function activate() {
+	// 命令式访问宿主 store（无头插件没有组件，不用 hook）
+	const unsub = stores.useTranscriptStore.subscribe(() => { /* ... getState() 取最新 ... */ });
+	return () => unsub(); // 清理：解订阅/关定时器，别留泄漏
+}
+```
+
+纪律：
+- `activate` 抛错或缺导出 → 该插件记为加载失败（等同槽位导出缺失），不炸宿主；清理函数抛错只告警；
+- 与组件插件同一条启用/信任/热重载路径，面板中「无槽位/无贡献」即无头插件；
+- 参考实现：随包内置插件 `builtin/voice-alerts/`（语音提醒）：全局安静检测 + `new Audio(dataUrl)` 播放，开关即插件启用开关（禁用 = 卸载副作用）。

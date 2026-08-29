@@ -149,6 +149,7 @@ export const zh = {
 		toggle: "变更侧栏",
 		title: "变更",
 		filesChanged: "修改了 {count} 个文件",
+		workedFor: "本轮工作 {duration}",
 		filesSummary: "{count} 文件",
 		scopeAll: "全部",
 		scopeLatest: "最近一轮",

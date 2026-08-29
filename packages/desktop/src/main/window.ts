@@ -56,6 +56,9 @@ export function createWindow(theme: "dark" | "light" = "light"): BrowserWindow {
 			contextIsolation: true,
 			nodeIntegration: false,
 			sandbox: true,
+			// 页面不可见（最小化/锁屏/屏保）时不节流 setTimeout 等 timer：
+			// agent 后台跑任务时的提醒计时（voice-alerts 安静窗口）不能被 Chromium 后台节流推迟到每分钟一次
+			backgroundThrottling: false,
 		},
 	});
 

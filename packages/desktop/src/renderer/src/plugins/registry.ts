@@ -56,6 +56,8 @@ interface UiPluginRegistryState {
 	contributions: Record<string, Contribution[]>;
 	/** 插件名 → 连续崩溃次数（≥3 自动禁用） */
 	crashCounts: Record<string, number>;
+	/** 无头插件名 → activate 返回的清理函数（removePlugin 时调用；无清理函数不落 key） */
+	cleanups: Record<string, () => void>;
 	/**
 	 * 插件名 → 加载代数（applyPlugin 对该插件 +1，removePlugin 清除）。
 	 * Slot/RegionHost 用它做错误边界的 key：热重载（remove+apply 被 React 批处理）时换新边界实例，errored 归零。
@@ -65,6 +67,8 @@ interface UiPluginRegistryState {
 	 * 注册一个插件的全部槽位 override（按 manifest.slots + config.assignments 过滤后的
 	 * assignedSlots）与全部区域贡献（manifest.contributions，一区域 N 个堆叠）。
 	 * exportName 在 module 里不存在或不是组件 → 记入 missing 且不注册该项。
+	 * 无头插件（manifest.headless）：调用 module.activate()，返回的清理函数存入 cleanups
+	 * （removePlugin 时调用）；activate 缺失/抛错 → 记入 missing，与槽位缺失同等对待。
 	 */
 	applyPlugin(
 		manifest: UiPluginManifest,
@@ -81,9 +85,34 @@ export const useUiPluginRegistry = create<UiPluginRegistryState>((set, get) => (
 	overrides: {},
 	contributions: {},
 	crashCounts: {},
+	cleanups: {},
 	loadNonces: {},
 	applyPlugin: (manifest, module, assignedSlots) => {
 		const missing: string[] = [];
+		// 无头插件：先调旧清理（防御未 remove 的重复 apply），再 activate；异常不炸宿主
+		const prevCleanup = get().cleanups[manifest.name];
+		if (prevCleanup) {
+			try {
+				prevCleanup();
+			} catch (err) {
+				console.error(`[ui-plugins] ${manifest.name} 旧 cleanup 抛错`, err);
+			}
+		}
+		let cleanup: (() => void) | undefined;
+		if (manifest.headless) {
+			const activate = module.activate;
+			if (typeof activate !== "function") {
+				missing.push("headless → activate");
+			} else {
+				try {
+					const ret = activate();
+					if (typeof ret === "function") cleanup = ret;
+				} catch (err) {
+					console.error(`[ui-plugins] ${manifest.name} activate 抛错`, err);
+					missing.push("headless activate 异常");
+				}
+			}
+		}
 		// 浅拷贝后写新 override：未触碰的槽位保持原对象引用（selector 稳定引用纪律）
 		const overrides = { ...get().overrides };
 		for (const slot of assignedSlots) {
@@ -125,7 +154,10 @@ export const useUiPluginRegistry = create<UiPluginRegistryState>((set, get) => (
 			...get().loadNonces,
 			[manifest.name]: (get().loadNonces[manifest.name] ?? 0) + 1,
 		};
-		set({ overrides, contributions, loadNonces });
+		const cleanups = { ...get().cleanups };
+		if (cleanup) cleanups[manifest.name] = cleanup;
+		else delete cleanups[manifest.name];
+		set({ overrides, contributions, loadNonces, cleanups });
 		return { ok: missing.length === 0, missing };
 	},
 	removePlugin: (pluginName) => {
@@ -143,10 +175,21 @@ export const useUiPluginRegistry = create<UiPluginRegistryState>((set, get) => (
 		}
 		const crashCounts = { ...get().crashCounts };
 		delete crashCounts[pluginName];
+		// 无头插件清理函数：禁用/卸载/热重载前调用；异常只告警（不能炸宿主卸载链）
+		const cleanup = get().cleanups[pluginName];
+		if (cleanup) {
+			try {
+				cleanup();
+			} catch (err) {
+				console.error(`[ui-plugins] ${pluginName} cleanup 抛错`, err);
+			}
+		}
+		const cleanups = { ...get().cleanups };
+		delete cleanups[pluginName];
 		// 注意：loadNonces **不清除**——热重载序列 remove+apply 后若 nonce 从 0 重新计，
 		// Slot/RegionHost 的边界 key（pluginName:nonce）不变，崩溃边界实例永不重建（review 修项 B 的漏洞，
 		// Phase 3 崩溃隔离测试暴露）。nonce 单调递增保证每次热重载 key 必变、errored 归零。
-		set({ overrides, contributions, crashCounts });
+		set({ overrides, contributions, crashCounts, cleanups });
 	},
 	reportCrash: (pluginName) => {
 		const count = (get().crashCounts[pluginName] ?? 0) + 1;

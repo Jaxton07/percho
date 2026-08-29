@@ -1244,6 +1244,54 @@ describe("transcript reducer", () => {
 		} as unknown as AgentSessionEvent);
 		expect(state.streaming?.tools[0]?.diff).toBeUndefined();
 	});
+
+	it("轮次计时：tool_execution_end 盖 endedAt，agent_end/settled 盖 runEndedAt，agent_start 清", () => {
+		let state = emptyTranscript();
+		state = reduceEvent(state, ev("agent_start"));
+		expect(state.runEndedAt).toBeUndefined();
+		state = reduceEvent(state, {
+			type: "message_update",
+			assistantMessageEvent: {
+				type: "toolcall_start",
+				contentIndex: 0,
+				partial: { toolCalls: [{ name: "bash" }] },
+			},
+		} as unknown as AgentSessionEvent);
+		state = reduceEvent(state, {
+			type: "message_update",
+			assistantMessageEvent: {
+				type: "toolcall_end",
+				contentIndex: 0,
+				toolCall: { id: "tc1", name: "bash", arguments: { command: "ls" } },
+			},
+		} as unknown as AgentSessionEvent);
+		const before = Date.now();
+		state = reduceEvent(state, {
+			type: "tool_execution_end",
+			toolCallId: "tc1",
+			toolName: "bash",
+			result: {},
+			isError: false,
+		} as unknown as AgentSessionEvent);
+		expect(state.streaming?.tools[0]?.endedAt).toBeGreaterThanOrEqual(before);
+		state = reduceEvent(state, ev("turn_end"));
+		// 固化后 endedAt 随消息存活（计时派生数据源）
+		const assistant = state.messages[0];
+		if (assistant?.kind !== "assistant") throw new Error("expected assistant");
+		expect(assistant.tools[0]?.endedAt).toBeGreaterThanOrEqual(before);
+		// willRetry=true 是重试中，run 未终结不盖戳
+		state = reduceEvent(state, ev("agent_end", { willRetry: true, messages: [] }));
+		expect(state.runEndedAt).toBeUndefined();
+		const endBefore = Date.now();
+		state = reduceEvent(state, ev("agent_end", { willRetry: false, messages: [] }));
+		expect(state.runEndedAt).toBeGreaterThanOrEqual(endBefore);
+		// 新 run 开工清旧戳
+		state = reduceEvent(state, ev("agent_start"));
+		expect(state.runEndedAt).toBeUndefined();
+		// agent_settled 竞底路径也盖戳
+		state = reduceEvent(state, ev("agent_settled"));
+		expect(state.runEndedAt).toBeGreaterThanOrEqual(endBefore);
+	});
 });
 
 describe("messagesToUIMessages 历史回放", () => {
