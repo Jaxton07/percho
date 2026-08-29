@@ -56,7 +56,7 @@ jobs:
           | macOS (Intel) | `percho-mac-x64.dmg` |
           | Windows | `percho-windows-x64.exe` (installer) or `percho-windows-x64.zip` |
 
-          > Ad-hoc signed (no Developer ID). On macOS, if Gatekeeper blocks the app, right-click it and choose **Open** (or run `xattr -cr "/Applications/Percho.app"`). macOS users can also install/update via Homebrew: `brew install --cask jaxton07/tap/percho` (installed via brew has no Gatekeeper prompt). Windows builds update automatically in-app.
+          > Ad-hoc signed (no Developer ID). On macOS, if Gatekeeper blocks the app, right-click it and choose **Open** (or run `xattr -cr "/Applications/Percho.app"`). Windows builds update automatically in-app.
           EOF
   # 刷新官网（percho-website，Cloudflare Pages）：触发 Deploy Hook 重建，同步版本号与 changelog。
   # 需要 repo secret CF_PAGES_DEPLOY_HOOK（Cloudflare Pages → Settings → Builds → Deploy hooks 创建）；未配置时跳过不影响发布
@@ -73,33 +73,3 @@ jobs:
           else
             echo "CF_PAGES_DEPLOY_HOOK not set, skipping"
           fi
-  # 同步 homebrew tap（Jaxton07/homebrew-tap）：渲染 cask 模板并推送。
-  # 需要 repo secret TAP_GITHUB_TOKEN（能推 homebrew-tap 的 PAT）；未配置时此 job 失败不影响已发布的 Release
-  tap:
-    needs: publish
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/download-artifact@v4
-        with:
-          path: artifacts
-          merge-multiple: true
-      - name: Render & push cask
-        env:
-          GH_TOKEN: ${{ secrets.TAP_GITHUB_TOKEN }}
-        run: |
-          VERSION="${GITHUB_REF_NAME#v}"
-          ARM_SHA=$(sha256sum "artifacts/percho-mac-arm64.zip" | cut -d" " -f1)
-          X64_SHA=$(sha256sum "artifacts/percho-mac-x64.zip" | cut -d" " -f1)
-          git clone --depth 1 "https://x-access-token:${GH_TOKEN}@github.com/Jaxton07/homebrew-tap.git" tap
-          mkdir -p tap/Casks
-          sed -e "s/{{VERSION}}/$VERSION/g" \
-              -e "s/{{SHA256_ARM}}/$ARM_SHA/g" \
-              -e "s/{{SHA256_X64}}/$X64_SHA/g" \
-              packages/desktop/homebrew/percho.rb.template > tap/Casks/percho.rb
-          cd tap
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add Casks/percho.rb
-          git diff --cached --quiet || git commit -m "percho $VERSION"
-          git push
