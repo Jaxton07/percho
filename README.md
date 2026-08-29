@@ -70,8 +70,6 @@ Prebuilt installers are published on the [Releases](https://github.com/Jaxton07/
 | macOS (Intel) | `percho-mac-x64.dmg` |
 | Windows | `percho-windows-x64.exe` (installer) or `percho-windows-x64.zip` |
 
-macOS users can also install with Homebrew: `brew install --cask jaxton07/tap/percho` — no Gatekeeper prompt, and updates flow through brew.
-
 > Builds are ad-hoc signed (no Developer ID certificate). On macOS, the first launch after a download may show **"Apple cannot verify Percho is free from malware"** — that's Gatekeeper blocking an un-notarized app. To open it:
 >
 > 1. **System Settings → Privacy & Security** → scroll to the bottom → click **Open Anyway** next to the Percho entry, then confirm with your password or Touch ID (recommended).
@@ -80,7 +78,7 @@ macOS users can also install with Homebrew: `brew install --cask jaxton07/tap/pe
 >
 > 2. Or in Terminal: `xattr -cr "/Applications/Percho.app"`.
 >
-> Updates are checked in-app. On Windows they download and install there too (click download, then restart). On macOS the ad-hoc signed build cannot self-install, so the app jumps to the Releases page — and a freshly downloaded version will hit Gatekeeper once again (installing via Homebrew avoids this entirely). On Windows, click "More info" → "Run anyway" when SmartScreen appears.
+> Updates are checked in-app. On Windows they download and install there too (click download, then restart). On macOS the ad-hoc signed build cannot self-install, so the app jumps to the Releases page — and a freshly downloaded version will hit Gatekeeper once again. On Windows, click "More info" → "Run anyway" when SmartScreen appears.
 
 ## Configuration
 

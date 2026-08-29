@@ -244,7 +244,7 @@ npm run build       # electron-vite build
 ## 打包与发布
 
 - `packages/desktop/electron-builder.yml` — 打包配置（pi SDK 须在 desktop dependencies、electron 钉精确版、`asarUnpack **/*.node`、**extraResources 镜像 pi SDK 包资源到 `resources/pi-package/`（docs/examples/README/export-html/themes，配合 main 的 PI_PACKAGE_DIR）**、productName 显示名 `Percho` 与 artifactName 产物名解耦、**mac `identity: "-"` adhoc 签名 + `hardenedRuntime: false`**）
- - `.github/workflows/ci.yml`（PR/main 检查，check 名 `check`）/ `.github/workflows/release.yml`（tag 触发，matrix 构建 + publish + homebrew tap 同步 + website job 触发 Cloudflare Pages Deploy Hook 刷新官网，需 secret `CF_PAGES_DEPLOY_HOOK`，未配置自动跳过）
+ - `.github/workflows/ci.yml`（PR/main 检查，check 名 `check`）/ `.github/workflows/release.yml`（tag 触发，matrix 构建 + publish + website job 触发 Cloudflare Pages Deploy Hook 刷新官网，需 secret `CF_PAGES_DEPLOY_HOOK`，未配置自动跳过；homebrew tap 已于 2026-08-28 移除）
 - **完整发版流程与踩坑见 `.local/docs/release.md`**
 
 ## 其他本地文档（不入库）

@@ -71,8 +71,6 @@ percho 把官方 Pi SDK（`@earendil-works/pi-coding-agent`）跑在 Electron �
 | macOS (Intel) | `percho-mac-x64.dmg` |
 | Windows | `percho-windows-x64.exe`（安装器）或 `percho-windows-x64.zip` |
 
-macOS 也可以用 Homebrew 安装：`brew install --cask jaxton07/tap/percho` —— 没有 Gatekeeper 提示，更新走 brew。
-
 > 构建为 adhoc 临时签名（无 Developer ID 证书）。macOS 下载后首次打开可能提示**「Apple 无法验证 Percho 是否包含危害 Mac 安全或泄漏隐私的恶意软件」**—— 这是 Gatekeeper 拦截未公证的 App。按以下方式放行：
 >
 > 1. **系统设置 → 隐私与安全性** → 滚动到底部 → 在 Percho 条目旁点**「仍要打开」**，然后输入密码或 Touch ID 确认（推荐）。
@@ -81,7 +79,7 @@ macOS 也可以用 Homebrew 安装：`brew install --cask jaxton07/tap/percho` �
 >
 > 2. 或在终端执行：`xattr -cr "/Applications/Percho.app"`。
 >
-> 更新在应用内检查。Windows 上也在应用内下载安装（点下载，再点重启）；macOS 上 adhoc 签名的构建无法自动安装，点击会跳到 Releases 页 —— 新下载的版本首次打开还会再被 Gatekeeper 拦一次（用 Homebrew 安装则完全没这个问题）。Windows 上 SmartScreen 提示时点「更多信息」→「仍要运行」。
+> 更新在应用内检查。Windows 上也在应用内下载安装（点下载，再点重启）；macOS 上 adhoc 签名的构建无法自动安装，点击会跳到 Releases 页 —— 新下载的版本首次打开还会再被 Gatekeeper 拦一次。Windows 上 SmartScreen 提示时点「更多信息」→「仍要运行」。
 
 ## 配置
 
