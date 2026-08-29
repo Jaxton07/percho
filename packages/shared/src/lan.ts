@@ -90,6 +90,12 @@ export interface LanSsePermResolvedFrame {
 	data: { sessionId: string; requestId: string; answered: boolean; seq: number };
 }
 
+/** SSE 心跳帧（命名事件，客户端 watchdog 判活数据源；注释帧不触发 EventSource 事件所以不可用）。 */
+export interface LanSsePingFrame {
+	event: "ping";
+	data: { serverTime: number };
+}
+
 /** 局域网观察服务的所有 SSE 数据帧。 */
 export type LanSseFrame =
 	| LanSseHelloFrame
@@ -97,7 +103,8 @@ export type LanSseFrame =
 	| LanSseListFrame
 	| LanSseEventFrame
 	| LanSsePermFrame
-	| LanSsePermResolvedFrame;
+	| LanSsePermResolvedFrame
+	| LanSsePingFrame;
 
 /** snapshot 中单会话的历史消息投影（sanitize 后）。 */
 export interface LanTranscript {

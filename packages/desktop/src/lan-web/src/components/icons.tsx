@@ -65,18 +65,18 @@ export function ArrowUpIcon({ size = 16, className }: IconProps) {
 	);
 }
 
-/** 停止（实心圆角方块） */
-export function StopIcon({ size = 15, className }: IconProps) {
+/** 停止（实心圆角方块；与桌面端同形，满幅 viewBox 让方块占钮面 ~31%） */
+export function StopIcon({ size = 11, className }: IconProps) {
 	return (
 		<svg
 			className={className}
 			width={size}
 			height={size}
-			viewBox="0 0 24 24"
+			viewBox="0 0 10 10"
 			fill="currentColor"
 			aria-hidden="true"
 		>
-			<rect x="7" y="7" width="10" height="10" rx="2.5" />
+			<rect x="0" y="0" width="10" height="10" rx="1.5" />
 		</svg>
 	);
 }

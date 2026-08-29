@@ -719,6 +719,19 @@ body {
 	list-style: none;
 	padding: 2px 0;
 }
+/* 两行变体：第一行状态行，第二行圆点串（与桌面端同构；圆点多时换行，不挤占统计行） */
+.meta-head-col {
+	flex-direction: column;
+	align-items: stretch;
+	gap: 1px;
+}
+.meta-head-row {
+	display: flex;
+	align-items: center;
+	gap: 9px;
+	min-width: 0;
+	min-height: 22px;
+}
 .meta-head::-webkit-details-marker {
 	display: none;
 }
@@ -784,11 +797,16 @@ body {
 	line-height: 20px;
 	will-change: transform;
 }
-/* 完成态：点阵 + 汇总 */
+/* 完成态：点阵（独立行，可换行；展开组时隐藏——展开区已有完整工具卡）+ 汇总 */
 .meta-dots {
 	display: inline-flex;
-	gap: 3.5px;
+	flex-wrap: wrap;
+	gap: 3.5px 3.5px;
 	flex: none;
+	padding: 2px 0;
+}
+.meta-group[open] > summary .meta-dots {
+	display: none;
 }
 .meta-dots i {
 	width: 4.5px;
@@ -1273,9 +1291,14 @@ body {
 	cursor: default;
 	transform: none;
 }
+/* 停止态：与发送同位同款黑白钮（图标换实心方块）；不再用红色（对齐桌面端 bg-ink） */
 .c-btn.stop {
-	background: var(--danger);
-	box-shadow: 0 4px 14px -4px color-mix(in srgb, var(--danger) 45%, transparent);
+	background: var(--ink);
+	color: var(--canvas);
+	box-shadow: var(--card-shadow);
+}
+.c-btn.stop:hover {
+	transform: scale(1.07);
 }
 .composer-readonly {
 	text-align: center;

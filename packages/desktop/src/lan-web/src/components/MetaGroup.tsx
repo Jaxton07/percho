@@ -101,35 +101,42 @@ export function MetaGroup({
 
 	return (
 		<details className="meta-group drawer-details">
-			<summary className="meta-head">
-				{shownWorking ? (
-					<>
-						<span className="wave">
-							<i />
-							<i />
-							<i />
-						</span>
-						<span className="meta-live-label">
-							{isThinking ? t("meta.thinkingLabel") : t("meta.working")}
-						</span>
-						{preview && <TailMarquee text={preview} />}
-					</>
-				) : (
-					<>
-						<span className="meta-dots">
-							{dots.map((dot: MetaDot) => (
-								<i
-									key={dot.key}
-									className={dot.state === "error" ? "err" : dot.state === "running" ? "run" : ""}
-								/>
-							))}
-						</span>
+			{/* 与桌面端同构两行布局：第一行 = 状态行（working 波浪+预览 / worked 分类统计）+ caret；
+			    第二行 = 圆点串（working 期实时追加，worked 后冻结；flex-wrap 换行不挤占状态行；
+			    展开组时隐藏——展开区已有完整工具卡） */}
+			<summary className="meta-head meta-head-col">
+				<div className="meta-head-row">
+					{shownWorking ? (
+						<>
+							<span className="wave">
+								<i />
+								<i />
+								<i />
+							</span>
+							<span className="meta-live-label">
+								{isThinking ? t("meta.thinkingLabel") : t("meta.working")}
+							</span>
+							{preview && <TailMarquee text={preview} />}
+						</>
+					) : (
 						<span className="meta-sum">
 							{segments.length > 0 ? segments.map(summaryLabel).join(" · ") : t("meta.worked")}
 						</span>
-					</>
+					)}
+					<ChevronRightIcon size={13} className="meta-caret" />
+				</div>
+				{/* 圆点行：与桌面端同构——working 期实时追加（run 空心呼吸→done 实心），
+				    结束后随 items 冻结；展开组时隐藏（展开区已有完整工具卡，CSS 控制） */}
+				{dots.length > 0 && (
+					<span className="meta-dots">
+						{dots.map((dot: MetaDot) => (
+							<i
+								key={dot.key}
+								className={dot.state === "error" ? "err" : dot.state === "running" ? "run" : ""}
+							/>
+						))}
+					</span>
 				)}
-				<ChevronRightIcon size={13} className="meta-caret" />
 			</summary>
 			<div className="meta-body">{rows}</div>
 		</details>
