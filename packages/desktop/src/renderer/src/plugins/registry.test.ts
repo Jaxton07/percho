@@ -25,7 +25,13 @@ function manifest(
 const noop = () => null;
 
 beforeEach(() => {
-	useUiPluginRegistry.setState({ overrides: {}, contributions: {}, crashCounts: {}, loadNonces: {} });
+	useUiPluginRegistry.setState({
+		overrides: {},
+		contributions: {},
+		crashCounts: {},
+		loadNonces: {},
+		cleanups: {},
+	});
 });
 
 describe("ui plugin registry", () => {
@@ -283,5 +289,90 @@ describe("ui plugin registry", () => {
 		expect(state.reportCrash("test-plugin")).toBe(false);
 		expect(state.reportCrash("test-plugin")).toBe(false);
 		expect(state.reportCrash("test-plugin")).toBe(true);
+	});
+});
+
+describe("headless plugins", () => {
+	const headlessManifest = (): UiPluginManifest => ({
+		name: "headless-plugin",
+		perchoUi: 1,
+		main: "src/index.ts",
+		headless: true,
+	});
+
+	it("applyPlugin 调用 activate，返回的清理函数存入 cleanups", () => {
+		let cleaned = 0;
+		let activated = 0;
+		const res = useUiPluginRegistry.getState().applyPlugin(
+			headlessManifest(),
+			{
+				activate: () => {
+					activated++;
+					return () => {
+						cleaned++;
+					};
+				},
+			},
+			[],
+		);
+		expect(res).toEqual({ ok: true, missing: [] });
+		expect(activated).toBe(1);
+		expect(useUiPluginRegistry.getState().cleanups["headless-plugin"]).toBeTypeOf("function");
+		expect(cleaned).toBe(0);
+		// removePlugin 调用清理
+		useUiPluginRegistry.getState().removePlugin("headless-plugin");
+		expect(cleaned).toBe(1);
+		expect(useUiPluginRegistry.getState().cleanups["headless-plugin"]).toBeUndefined();
+	});
+
+	it("activate 无返回值（无清理函数）不落 cleanups，removePlugin 不报错", () => {
+		const res = useUiPluginRegistry
+			.getState()
+			.applyPlugin(headlessManifest(), { activate: () => undefined }, []);
+		expect(res.ok).toBe(true);
+		expect(useUiPluginRegistry.getState().cleanups["headless-plugin"]).toBeUndefined();
+		useUiPluginRegistry.getState().removePlugin("headless-plugin");
+	});
+
+	it("activate 缺失或抛错 → 记入 missing（不炸宿主）", () => {
+		const res1 = useUiPluginRegistry.getState().applyPlugin(headlessManifest(), {}, []);
+		expect(res1.ok).toBe(false);
+		expect(res1.missing).toEqual(["headless → activate"]);
+		const res2 = useUiPluginRegistry.getState().applyPlugin(
+			headlessManifest(),
+			{
+				activate: () => {
+					throw new Error("boom");
+				},
+			},
+			[],
+		);
+		expect(res2.ok).toBe(false);
+		expect(res2.missing).toEqual(["headless activate 异常"]);
+		expect(useUiPluginRegistry.getState().cleanups["headless-plugin"]).toBeUndefined();
+	});
+
+	it("重复 apply 未先 remove：旧 cleanup 先被调用（热重载防御）", () => {
+		let cleaned = 0;
+		const activate = () => () => {
+			cleaned++;
+		};
+		useUiPluginRegistry.getState().applyPlugin(headlessManifest(), { activate }, []);
+		useUiPluginRegistry.getState().applyPlugin(headlessManifest(), { activate }, []);
+		expect(cleaned).toBe(1);
+		expect(useUiPluginRegistry.getState().cleanups["headless-plugin"]).toBeTypeOf("function");
+	});
+
+	it("headless 与槽位可并存（插件同时替换组件与跑副作用）", () => {
+		const res = useUiPluginRegistry
+			.getState()
+			.applyPlugin(
+				{ ...manifest({ [UI_SLOTS.TodoPanel]: "A" }, "headless-plugin"), headless: true },
+				{ A: noop, activate: () => () => {} },
+				[UI_SLOTS.TodoPanel],
+			);
+		expect(res.ok).toBe(true);
+		expect(useUiPluginRegistry.getState().overrides[UI_SLOTS.TodoPanel]).toBeDefined();
+		expect(useUiPluginRegistry.getState().cleanups["headless-plugin"]).toBeDefined();
 	});
 });

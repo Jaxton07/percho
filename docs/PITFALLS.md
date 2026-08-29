@@ -104,6 +104,10 @@ pi SDK 必须声明进 `packages/desktop/package.json` dependencies（electron-b
 
 内联 `?? []` 新数组会触发 React error #185 无限渲染（与 0.5.0 事故的 effect 自激是两个不同成因，症状相同）。
 
+### CDP 冒烟往 store 注入状态必须用完整对象形状（2026-08-29）
+
+`cdp-eval` 里 `useSessionsStore.setState({ sessions: [ { sessionId: 'x' } ] })` 这类缺字段注入会炸渲染组件（如 `TabPill` 读 `session.name.split` → TypeError，错误边界兜住但 UI 白屏重挂）。安全手法：**不碰 sessions 列表**，只对 transcript `bySession` 做函数式合并注入完整 SessionEntry 形状（各字段齐备），测完删 key；或先存原 entry 引用、最后还原。同理不要整体覆盖 `bySession`（会抹掉真实会话，App 重载时连锁出错）。
+
 ### UI 文案走 `useT()` + `zh`/`en` 字典（`renderer/src/i18n/`）
 
 新增字符串两个都要加。

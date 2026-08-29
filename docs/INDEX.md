@@ -12,7 +12,7 @@
 - preload 必须保持 CJS（sandbox 限制，见 PITFALLS）
 - 新增 UI 文案：`i18n/zh.ts` + `en.ts` 双字典都要加
 - zustand selector 必须返回稳定引用（模块级空对象/数组；#185 无限渲染，见 PITFALLS）
-- 新增 renderer hook 要暴露给插件 = `hooks/` + `plugins/host-api.ts` + `main/ui-plugins/build.ts` SHIM + `resources/percho-ui.d.ts` 四处同步
+- 新增 renderer hook/store 要暴露给插件 = 源模块 + `plugins/host-api.ts` + `plugins/env.d.ts`（PerchoUiApi）+ `main/ui-plugins/build.ts` SHIM + `resources/percho-ui.d.ts`（必要时 SPEC.md 导出清单）五处同步
 - JSON 持久化一律走 backend `JsonStore`（原子写 + 损坏语义），不自写 fs
 
 ## 总览
@@ -53,7 +53,7 @@ packages/
 | `src/session.ts` | `SessionMeta`、`SessionStats`、`AvailableModel`（可选 `thinkingLevels`/`imageInput`，缺省 fail-open）、`SessionEvent`、`SessionMessage`、`UiState`、`PermissionRequest`、`TrustRequest`、`LoadedResources` 等 | 会话/事件跨进程类型。`SessionEvent` = pi `AgentSessionEvent` ∪ Percho 自有 UI 事件（`subagent_mutex`/`stream_guard_tripped`，不进 trace）；`SessionMessage` union：user/assistant（均带 `entryId` 供 fork/撤回；user 专属 `skill`/`sourceText`）+ `role:"image"`（show_image 回放）+ `role:"subagent"` |
 | `src/transcript/` | `reduceEvent`、`messagesToUIMessages`、`buildChatRows`、`deriveTurnChanges`、`deriveTurnTimings` | **UI 消息状态机（桌面与 lan-web 共用同一份）**：`types`（UIMessage/StreamingState 等）、`helpers`（事件载荷解析）、`reducer`（pi 事件 → UI 状态）、`mapping`（历史回放）、`parse-patch`（unified diff 结构化解析）、`turn-files`（按轮聚合文件变更）、`turn-timings`（按轮计时派生 + runEndedAt 定格）、`chat-rows`（行序列分组 + 轮末行定位规则）、`meta-summary`（工具语义分类统计） |
 | `src/errors.ts` | `UiError`、`classifyLlmError`、`buildLlmUiError`、`buildStreamGuardUiError`、`DETAIL_MAX_LENGTH` | 统一报错信封：错误卡数据源（live reducer / 历史回放 mapping / Composer 内联 / LAN 共用）；`classifyLlmError` 按 401/429/context/网络模式分类，误判只影响标题措辞 |
-| `src/ui-plugins.ts` | `UiPluginManifest`、`UiPluginInfo`、`UiPluginsConfig`、`KNOWN_UI_SLOTS`、`KNOWN_UI_REGIONS`、`UI_PLUGIN_ANCHORS` | UI 插件跨进程类型：manifest / 扫描合成信息 / 持久化配置 / 事件载荷；`KNOWN_*` 供 main 校验，与 renderer `plugins/slots.ts` 对齐（registry.test.ts 断言） |
+| `src/ui-plugins.ts` | `UiPluginManifest`、`UiPluginInfo`、`UiPluginsConfig`、`KNOWN_UI_SLOTS`、`KNOWN_UI_REGIONS`、`UI_PLUGIN_ANCHORS` | UI 插件跨进程类型：manifest（slots/contributions/headless 三选一）/ 扫描合成信息 / 持久化配置 / 事件载荷；`KNOWN_*` 供 main 校验，与 renderer `plugins/slots.ts` 对齐（registry.test.ts 断言） |
 | `src/lan.ts` | `LanObserverConfig`、`LanStatus`、`LanSessionBrief/View`、`LanSseFrame` | 局域网观察页跨进程/HTTP 投影契约 |
 | `src/packages.ts` | `CatalogPackage*`、`NPM_NOT_FOUND_SENTINEL`、`isSubagentPackage` | pi.dev 社区包目录类型（设置页扩展面板用；`isSubagentPackage` 启发式仅供安装警示，非安全边界） |
 | `src/settings.ts` | `ProviderInfo`、`CustomProviderInput`、`KNOWN_APIS`、`LoginAuthPrompt/LoginEventPayload` 等 | provider 设置类型（含订阅登录 OAuth 镜像） |
@@ -137,7 +137,7 @@ src/
 | `src/main/background.ts` | 背景图选图（dialog → 拷贝 `userData/backgrounds/` 并清理旧图） |
 | `src/main/window.ts` | BrowserWindow：sandbox + preload；启动底色跟随主题防白闪（已解析主题经 `?theme=` query 传 renderer）；窗口框架按平台分流（mac hiddenInset / Win frameless+titleBarOverlay / Linux 原生）；导出 `resolveTheme`/`applyChromeTheme` |
 | `src/main/ui-plugins/config.ts` | `ui-plugins.json` 读写（normalize 白名单；assignments 指向失效插件保留） |
-| `src/main/ui-plugins/build.ts` | 插件 esbuild 构建器：`loadEsbuild` 懒加载 + `ESBUILD_BINARY_PATH` 指向 asar.unpacked 真实二进制（打包态坑，升级 esbuild 前重评）；react 系四个 specifier 重写到 `window.PerchoUI` shim（**与 renderer host-api.ts、resources/percho-ui.d.ts 逐名一致**）；图片资产 dataurl 内联 |
+| `src/main/ui-plugins/build.ts` | 插件 esbuild 构建器：`loadEsbuild` 懒加载 + `ESBUILD_BINARY_PATH` 指向 asar.unpacked 真实二进制（打包态坑，升级 esbuild 前重评）；react 系四个 specifier 重写到 `window.PerchoUI` shim（**与 renderer host-api.ts、resources/percho-ui.d.ts 逐名一致**）；图片/音频资产 dataurl 内联（CSP img-src / media-src 均放行 data:） |
 | `src/main/ui-plugins/manager.ts` | UiPluginManager：scanAll（manifest 校验 + 单插件 try 不阻断启动）/ ensureBuilt / fs.watch 300ms 防抖热重载 / seedBuiltinPlugins（resources builtin/ → 用户目录，版本戳幂等）/ seedDocs（SPEC.md + symlink `~/.percho/ui-plugins`）/ filterContributions（校验 region/anchor） |
 | `src/main/lan.ts`（+ `lan-icon.ts`、`ipc/lan.ts`） | LAN observer 接线；观察页 = `src/lan-web/` 独立 vite 单文件产物，`?raw` 内联进 main bundle（**dev 下重 build lan-web 后需重启 dev 实例**，产物不在 electron-vite watch 集） |
 | `src/main/git.ts` | git 分支查询/切换三通道 |
@@ -164,7 +164,7 @@ src/
 | `stores/settings.ts` / `catalog.ts` / `provider-login.ts` | 设置域（providers + 权限门控/上下文管理/channel-watch 开关，乐观更新回滚）/ 社区包目录（300ms 防抖 + seq 防陈旧）/ OAuth 登录状态机（**取消时机 = LoginDialog 卸载 cleanup**；先订阅事件再 invoke） |
 | `stores/projects.ts` / `theme.ts` / `ui.ts` / `ui-preferences.ts` / `update.ts` / `ui-plugins.ts` / `toasts.ts` | 项目页（手动添加的按时间倒排）/ 主题与背景（init 在 render 前 await 防闪烁）/ todo 面板展开 + diff 侧栏开关（内存态）/ 会话轨道 + 中央动画开关（持久化 ui-state）/ 更新态 / UI 插件面板 / 全局 Toast（顶栏右侧，非阻塞自动消失） |
 | `hooks/` | `use-context-usage`（上下文用量，事件驱动刷新）/ `use-language` / `use-session-state`（useSessionReadOnly/useSessionBusy 收敛）/ `use-session-event-bridge`（App 事件桥装配层专用） |
-| `plugins/` | UI 插件运行时：`slots.ts`（槽位名+props 契约单一来源）/ `registry.ts`（zustand：overrides + contributions 堆叠 + 崩溃计数/loadNonces）/ `Slot.tsx`（总开关门控 + PluginBoundary 包裹）/ `RegionHost.tsx`（区域挂载点，容器语义）/ `PluginBoundary.tsx`（class 错误边界，崩溃回退）/ `host-api.ts`（`window.PerchoUI` 挂载，main.tsx render 前 import）/ `loader.ts`（initUiPlugins/reloadAll/computeAssignedSlots） |
+| `plugins/` | UI 插件运行时：`slots.ts`（槽位名+props 契约单一来源）/ `registry.ts`（zustand：overrides + contributions 堆叠 + headless activate/cleanups + 崩溃计数/loadNonces）/ `Slot.tsx`（总开关门控 + PluginBoundary 包裹）/ `RegionHost.tsx`（区域挂载点，容器语义）/ `PluginBoundary.tsx`（class 错误边界，崩溃回退）/ `host-api.ts`（`window.PerchoUI` 挂载，main.tsx render 前 import）/ `loader.ts`（initUiPlugins/reloadAll/computeAssignedSlots） |
 | `i18n/` | zh/en 字典 + `useT()`（文案改这里，双字典） |
 | `styles/globals.css` | Tailwind 入口 + 主题 token（`bg-canvas/bg-surface/ink 灰阶/shadow 三档` 等；组件禁写死色值，一律语义 token）+ markdown/滚动条/动画样式段 |
 
@@ -216,7 +216,8 @@ src/
 | 局域网观察页 | 契约 shared `lan.ts` → backend `lan/` → main `lan.ts` + `ipc/lan.ts` → preload → 设置 `LanObserverPanel.tsx`；浏览器页面 = `desktop/src/lan-web/`（独立 vite 单文件，`?raw` 内联） |
 | 主题 / 背景图 / Markdown 代码块主题 | `stores/theme.ts` + `styles/globals.css`（双套 token）；main `background.ts` + `pi-bg://` 协议（CSP img-src 含 pi-bg:）；UI `settings/AppearancePanel.tsx`；代码块主题走 `Markdown.tsx` 的 isDark + 显式双主题 |
 | Toast | `stores/toasts.ts` + globals.css `.toast` 样式段 |
-| UI 插件（槽位/区域/面板/热重载） | 运行时 `renderer/src/plugins/`；构建/扫描 `main/ui-plugins/`（build/manager/config）；IPC `main/ipc/ui-plugins.ts`；类型 shared `ui-plugins.ts`；规范与内置插件 `desktop/resources/ui-plugins/`（SPEC.md / percho-ui.d.ts / skills / examples / builtin/） |
+| UI 插件（槽位/区域/面板/无头/热重载） | 运行时 `renderer/src/plugins/`（registry：headless activate/cleanup 生命周期）；构建/扫描 `main/ui-plugins/`（build/manager/config）；IPC `main/ipc/ui-plugins.ts`；类型 shared `ui-plugins.ts`；规范与内置插件 `desktop/resources/ui-plugins/`（SPEC.md / percho-ui.d.ts / skills / examples / builtin/，含 voice-alerts 语音提醒） |
+| 语音提醒（任务完成/审批等待播提示音） | 内置无头插件 `resources/ui-plugins/builtin/voice-alerts/`（全局安静检测状态机 + `new Audio(dataUrl)`，激活/清理走 registry headless 生命周期；开关 = UI 插件面板的插件启用）；音频 = 插件 `src/assets/*.mp3` dataurl 内联，替换文件即热重载；主窗口 `backgroundThrottling: false`（锁屏/后台不节流提醒计时） |
 | 新增 IPC 通道 | 见硬约束「四处同步」 |
 | 新增设置面板分类 | 面板文件 + `settings/SettingsDialog.tsx` 的 `PANELS`（插件 settings.panel 贡献不用登记，registry 动态拼接） |
 | 文案 | `i18n/zh.ts` + `en.ts` |

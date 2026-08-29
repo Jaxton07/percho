@@ -149,6 +149,8 @@ declare module "@percho/plugin-api" {
 		useUiStore: unknown;
 		useProjectsStore: unknown;
 		useSettingsStore: unknown;
+		/** 应用级 UI 偏好（ui-state.json 持久化）：sessionRailEnabled / centerOrbEnabled 等 */
+		useUiPreferencesStore: unknown;
 	};
 	// store hooks 顶层便捷导出（与 shim 解构一致，例：import { useSessionsStore } from "@percho/plugin-api"）
 	export const useTranscriptStore: unknown;
@@ -156,12 +158,14 @@ declare module "@percho/plugin-api" {
 	export const useUiStore: unknown;
 	export const useProjectsStore: unknown;
 	export const useSettingsStore: unknown;
+	export const useUiPreferencesStore: unknown;
 	declare const api: unknown;
 	export default api;
 }
 
-/* ---------- 静态图片资产（构建器 dataurl loader 内联为 data: URL，SPEC §3） ---------- */
+/* ---------- 静态资产（构建器 dataurl loader 内联为 data: URL，SPEC §3/§11） ---------- */
 
+/* 图片：CSP img-src data: */
 declare module "*.png" {
 	const url: string;
 	export default url;
@@ -179,6 +183,28 @@ declare module "*.jpg" {
 	export default url;
 }
 declare module "*.jpeg" {
+	const url: string;
+	export default url;
+}
+
+/* 音频：CSP media-src data:，new Audio(url) 播放（语音提醒/音效类插件用） */
+declare module "*.mp3" {
+	const url: string;
+	export default url;
+}
+declare module "*.m4a" {
+	const url: string;
+	export default url;
+}
+declare module "*.wav" {
+	const url: string;
+	export default url;
+}
+declare module "*.ogg" {
+	const url: string;
+	export default url;
+}
+declare module "*.aac" {
 	const url: string;
 	export default url;
 }
