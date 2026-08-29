@@ -1,4 +1,4 @@
-import { buildChatRows, deriveTurnChanges, isAgentWorking } from "@percho/shared";
+import { buildChatRows, deriveTurnChanges, deriveTurnTimings, isAgentWorking } from "@percho/shared";
 import { type MouseEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useT } from "../../i18n";
 import { Slot } from "../../plugins/Slot";
@@ -113,23 +113,34 @@ export function MessageList() {
 		if (e.target instanceof Element && e.target.closest("summary")) updateFollowing(false);
 	};
 
-	// 轮次文件变更：进场动画只给「本会话查看期间新完成的最后一轮」播：基线在切会话/历史重建时对齐，不随渲染更新（防 agent_end 紧随的二次渲染摘掉动画类）；chip 的定位/上提规则全部在 shared buildChatRows 内完成（opts 传入，与 lan-web 同一分组大脑）
+	// 轮次数据：文件变更 + 计时。进场动画只给「本会话查看期间新出现的最后一轮」播：基线在切会话/
+	// 历史重建时对齐，不随渲染更新（防 turn_end 紧随的二次渲染摘掉动画类）；行定位/上提规则全部在
+	// shared buildChatRows 内完成（opts 传入，与 lan-web 同一分组大脑）
 	const turnChanges = useMemo(() => deriveTurnChanges(transcript.messages), [transcript.messages]);
+	const turnTimings = useMemo(
+		() => deriveTurnTimings(transcript.messages, transcript.runEndedAt),
+		[transcript.messages, transcript.runEndedAt],
+	);
 	const turnBaselineRef = useRef({ sid: activeSessionId, count: 0 });
 	if (turnBaselineRef.current.sid !== activeSessionId) {
-		turnBaselineRef.current = { sid: activeSessionId, count: turnChanges.length };
+		turnBaselineRef.current = { sid: activeSessionId, count: turnTimings.length };
 	}
 	const enteringTurn =
-		turnChanges.length > turnBaselineRef.current.count
-			? turnChanges[turnChanges.length - 1]?.turnIndex
+		turnTimings.length > turnBaselineRef.current.count
+			? (turnTimings[turnTimings.length - 1]?.turnIndex ?? null)
 			: null;
 
 	// 行序列由 shared buildChatRows 产出（与 lan-web 同一分组大脑）；此处只做行模型 → JSX 映射。
 	// useMemo：滚动/跟随等本组件局部 state 翻转不重跑（历史长会话单次 ~60µs+）；transcript 每
-	// 次变更（合流后 ≤ 1 次/帧）重跑一次是预期成本；turnChanges/enteringTurn 是 chip 行输入
+	// 次变更（合流后 ≤ 1 次/帧）重跑一次是预期成本；turnChanges/turnTimings/enteringTurn 是轮末行输入
 	const rows = useMemo(
-		() => buildChatRows(transcript, String(activeSessionId), Date.now(), { turnChanges, enteringTurn }),
-		[transcript, activeSessionId, turnChanges, enteringTurn],
+		() =>
+			buildChatRows(transcript, String(activeSessionId), Date.now(), {
+				turnChanges,
+				turnTimings,
+				enteringTurn,
+			}),
+		[transcript, activeSessionId, turnChanges, turnTimings, enteringTurn],
 	);
 
 	const items: React.ReactNode[] = [];
@@ -141,7 +152,12 @@ export function MessageList() {
 			//    再上提 16px 会与组的圆点行重叠 8px（组结束圆点仍冻结原位）。
 			items.push(
 				<div key={row.key} className={row.running || row.afterMetaGroup ? undefined : "-mt-4"}>
-					<TurnDiffChip changes={row.changes} entering={row.entering} />
+					<TurnDiffChip
+						changes={row.changes}
+						timing={row.timing}
+						running={row.running}
+						entering={row.entering}
+					/>
 				</div>,
 			);
 			return;

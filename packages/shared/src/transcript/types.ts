@@ -110,6 +110,9 @@ export interface UIToolCall {
 	/** unified patch（仅 edit 工具成功时由 SDK details.patch 写入；write/其他工具无此字段） */
 	diff?: string;
 	state: "running" | "done" | "error";
+	/** 执行结束时刻（live = reducer 在 tool_execution_end 盖戳；历史 = toolResult entry timestamp 透传）；
+	 * 轮次计时（deriveTurnTimings）用，子代理工具除外（独立行 timestamp 承担） */
+	endedAt?: number;
 	/** content 块绝对索引（toolcall_start 时记录）：与 StreamingState.textBlockIndex 比较判定「正文前/正文后」，
 	 * 保住同 turn 内 text→toolCall 交错的时序；历史回放消息由 backend 预拆分，不带此字段 */
 	blockIndex?: number;
@@ -172,6 +175,9 @@ export interface SessionTranscriptState {
 	pendingLlmError: UiError | null;
 	/** SDK 自动重试瞬时信息（auto_retry_start → 状态行；auto_retry_end/turn_start/agent_settled 清） */
 	retrying: RetryInfo | null;
+	/** 最近一次 agent run 的固化结束时刻（agent_end willRetry=false / agent_settled 盖戳，agent_start 清）；
+	 * 最后一轮计时定格用——晚于最后一条消息落地，取 max 防「运行中末帧 > 定格值」回退 */
+	runEndedAt?: number;
 }
 
 export function emptyTranscript(): SessionTranscriptState {

@@ -143,6 +143,8 @@ export function reduceEvent(state: SessionTranscriptState, event: SessionEvent):
 				phase: "streaming",
 				agentActive: true,
 				streaming: emptyStreaming(),
+				// 新 run 开工：上一 run 的定格戳作废（防旧戳被 max 到新轮）
+				runEndedAt: undefined,
 			};
 		case "turn_start": {
 			// 每轮新的 assistant 消息（多轮工具循环）前重置累积容器并回到 streaming；
@@ -452,6 +454,8 @@ export function reduceEvent(state: SessionTranscriptState, event: SessionEvent):
 					? {
 							...t,
 							state: (event.isError ? "error" : "done") as "error" | "done",
+							// 执行结束时刻（轮次计时 deriveTurnTimings 的结束分量）
+							endedAt: Date.now(),
 							...(editPatch ? { diff: editPatch } : {}),
 						}
 					: t,
@@ -498,6 +502,9 @@ export function reduceEvent(state: SessionTranscriptState, event: SessionEvent):
 				phase: event.willRetry ? "streaming" : "idle",
 				// willRetry 还会继续 → 保持工作中；否则 run 结束（含中止）
 				agentActive: event.willRetry ? state.agentActive : false,
+				// run 真正终结（非重试中）才盖定格戳：agent_end 晚于最后一条消息落地，
+				// 取 max 后保证计时单调不回退
+				...(event.willRetry ? {} : { runEndedAt: Date.now() }),
 			});
 			// 决策 D1：willRetry=true → 继续重试，丢弃本轮的 pending 错误卡；
 			// willRetry=false → 最终失败，落卡（位置 = 该轮 assistant 消息之后）
@@ -507,7 +514,13 @@ export function reduceEvent(state: SessionTranscriptState, event: SessionEvent):
 		case "agent_settled": {
 			// 竞赛路径竞底：agent_end 缺失时（异常流）pending 仍要落卡，不留隐患。
 			// 正常路径 agent_end 已处理（willRetry=false 落卡 / true 丢弃），此处 pending 恒为 null，零成本检查
-			const final = finalizeStreaming({ ...state, phase: "idle", agentActive: false, retrying: null });
+			const final = finalizeStreaming({
+				...state,
+				phase: "idle",
+				agentActive: false,
+				retrying: null,
+				runEndedAt: Date.now(),
+			});
 			return final.pendingLlmError ? commitLlmErrorCard(final, final.pendingLlmError) : final;
 		}
 		case "queue_update":

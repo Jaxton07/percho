@@ -78,6 +78,8 @@ export interface SessionToolCall {
 	output: string;
 	/** unified patch（仅 edit 工具成功时从 toolResult.details.patch 提取；历史回放 diff 侧栏用） */
 	diff?: string;
+	/** 工具执行结束时刻（jsonl toolResult entry 的 timestamp；历史回放轮次计时用） */
+	endedAt?: number;
 	isError: boolean;
 }
 

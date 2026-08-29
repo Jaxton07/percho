@@ -271,6 +271,8 @@ export function toSessionMessages(rawMessages: readonly unknown[]): SessionMessa
 			if (tool) {
 				tool.output = blockText(raw.content);
 				tool.isError = raw.isError === true;
+				// 工具执行结束时刻（entry 自带；轮次计时 deriveTurnTimings 的历史回放数据源）
+				if (typeof raw.timestamp === "number") tool.endedAt = raw.timestamp;
 				// edit：unified patch 提取进 SessionToolCall.diff（diff 侧栏历史回放数据源；模型不可见）
 				if (tool.name === "edit" && !tool.isError) {
 					const patch = (raw.details as { patch?: unknown } | undefined)?.patch;

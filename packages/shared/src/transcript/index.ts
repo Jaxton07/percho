@@ -24,6 +24,7 @@ export {
 	type TurnChanges,
 	type TurnFileChange,
 } from "./turn-files";
+export { deriveTurnTimings, type TurnTiming } from "./turn-timings";
 export {
 	type ActivityEntry,
 	type CompactionUiState,

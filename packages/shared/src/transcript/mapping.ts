@@ -67,6 +67,7 @@ export function messagesToUIMessages(messages: SessionMessage[]): UIMessage[] {
 			args: tool.args,
 			output: tool.output,
 			...(tool.diff ? { diff: tool.diff } : {}),
+			...(tool.endedAt !== undefined ? { endedAt: tool.endedAt } : {}),
 			state: tool.isError ? "error" : "done",
 		}));
 		const assistant: UIMessage = {
