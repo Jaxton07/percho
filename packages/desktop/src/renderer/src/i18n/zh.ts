@@ -196,12 +196,15 @@ export const zh = {
 			skills: "Skills",
 			mcp: "MCP 插件",
 			extensions: "扩展",
-			uiPlugins: "UI 插件",
 			lan: "局域网观察",
 			about: "关于",
 		},
 		language: "语言",
 		languageHint: "默认跟随系统语言",
+		appearance: {
+			tabBasics: "基础",
+			tabUiPlugins: "UI 插件",
+		},
 		theme: "主题",
 		themeHint: "深色模式适合夜间使用，跟随系统则自动切换",
 		themeLight: "浅色",
@@ -381,7 +384,9 @@ export const zh = {
 		},
 		uiPlugins: {
 			title: "UI 插件",
-			masterHint: "总开关：关闭后所有插件立即停用，界面恢复默认组件（插件文件与配置保留）",
+			masterHint:
+				"本机用户目录里的插件可替换工具调用卡、子代理卡、任务列表面板等内置组件；关闭后所有插件立即停用，文件与配置保留。",
+			pluginCount: "{count} 个插件",
 			empty: "还没有任何插件。插件目录在用户数据目录的 ui-plugins 下（agent 可帮你按 SPEC 写插件）",
 			agentHint: "让 percho（agent）按 SPEC 写一个插件，或手动放入插件目录后在这里启用",
 			openDir: "打开目录",

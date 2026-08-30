@@ -26,7 +26,7 @@ export function Switch({
 			disabled={disabled}
 			onClick={() => onCheckedChange(!checked)}
 			className={`relative h-5 w-9 shrink-0 rounded-full transition-colors ${
-				checked ? "bg-ink" : "bg-border-strong"
+				checked ? "bg-ink" : "bg-switch-off"
 			} disabled:cursor-not-allowed disabled:opacity-40 ${className}`}
 			{...props}
 		>

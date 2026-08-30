@@ -200,12 +200,15 @@ export const en: Messages = {
 			skills: "Skills",
 			mcp: "MCP Plugins",
 			extensions: "Extensions",
-			uiPlugins: "UI Plugins",
 			lan: "LAN Observer",
 			about: "About",
 		},
 		language: "Language",
 		languageHint: "Follows system language by default",
+		appearance: {
+			tabBasics: "Basics",
+			tabUiPlugins: "UI Plugins",
+		},
 		theme: "Theme",
 		themeHint: "Dark mode is easier on the eyes at night; System follows your OS setting",
 		themeLight: "Light",
@@ -393,7 +396,8 @@ export const en: Messages = {
 		uiPlugins: {
 			title: "UI Plugins",
 			masterHint:
-				"Master switch: when off, all plugins are disabled immediately and the UI falls back to built-in components (plugin files and config are kept)",
+				"Plugins from your local user directory can replace built-in components such as the tool call card, subagent card, and todo panel; turning the switch off disables them all immediately (files and config are kept)",
+			pluginCount: "{count} plugin(s)",
 			empty:
 				"No plugins yet. The plugin directory lives under ui-plugins in the user data directory (ask an agent to write one following the SPEC)",
 			agentHint:

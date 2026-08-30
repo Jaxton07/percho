@@ -15,7 +15,6 @@ import { LanObserverPanel } from "./LanObserverPanel";
 import { McpPanel } from "./McpPanel";
 import { ProvidersPanel } from "./providers/ProvidersPanel";
 import { SkillsPanel } from "./SkillsPanel";
-import { UiPluginsPanel } from "./UiPluginsPanel";
 
 const STATIC_CATEGORIES = [
 	"general",
@@ -24,7 +23,6 @@ const STATIC_CATEGORIES = [
 	"skills",
 	"mcp",
 	"extensions",
-	"uiPlugins",
 	"lan",
 	"about",
 ] as const satisfies readonly SettingsCategory[];
@@ -37,7 +35,6 @@ const PANELS: Partial<Record<SettingsCategory, ComponentType>> = {
 	skills: SkillsPanel,
 	mcp: McpPanel,
 	extensions: ExtensionsPanel,
-	uiPlugins: UiPluginsPanel,
 	lan: LanObserverPanel,
 	about: AboutPanel,
 };

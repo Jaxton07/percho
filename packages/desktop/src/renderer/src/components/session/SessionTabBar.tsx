@@ -23,7 +23,7 @@ import { useT } from "../../i18n";
 import { useSessionsStore } from "../../stores/sessions";
 import { useTranscriptStore } from "../../stores/transcript";
 import { useUiStore } from "../../stores/ui";
-import { CloseIcon, ComposeIcon, DiffIcon, GridIcon, SubagentIcon } from "../icons";
+import { CloseIcon, ComposeIcon, DiffIcon, ProjectsIcon, SubagentIcon } from "../icons";
 import { sessionLetter, sessionTitle, useSessionStatus } from "./session-status";
 import { UpdateButton } from "./UpdateButton";
 
@@ -85,7 +85,7 @@ function TabPill({
 			{...buttonProps}
 			style={{ touchAction: "none", ...(hidden ? { opacity: 0 } : null) }}
 			className={`no-drag tab-pill group relative flex ${ghost ? "w-52" : "w-full"} cursor-pointer items-center gap-2 rounded-lg px-2.5 py-1.5 text-sm ${
-				isActive ? "bg-border/80 text-ink" : "text-ink-dim hover:bg-hover hover:text-ink"
+				isActive ? "bg-bubble text-ink" : "text-ink-dim hover:bg-hover hover:text-ink"
 			} ${ghost ? "tab-dragging" : ""}`}
 			onClick={ghost ? undefined : buttonProps?.onClick}
 		>
@@ -102,14 +102,12 @@ function TabPill({
 				{!ghost && (
 					<>
 						{/* hover 时尾部雾化渐变：盖住被叉叉重叠的文字尾，突出叉叉。
-						   from 色必须与胶囊背景同款：active 背景是 bg-border/80（border 80% 叠 canvas），
+						   from 色必须与胶囊背景同款：active 背景是 bg-bubble，
 						   直接 from-hover 在深色主题下会比 active 底色浅一档，渐变条会显成方形色块 */}
 						<span
 							aria-hidden="true"
 							className={`pointer-events-none invisible absolute inset-y-0 right-0 w-7 bg-gradient-to-l to-transparent opacity-0 transition-opacity group-hover:visible group-hover:opacity-100 ${
-								isActive
-									? "from-[color-mix(in_oklab,var(--color-border)_80%,var(--color-canvas))]"
-									: "from-hover"
+								isActive ? "from-bubble" : "from-hover"
 							}`}
 						/>
 						<span
@@ -231,12 +229,12 @@ export function SessionTabBar() {
 			<button
 				type="button"
 				className={`no-drag shrink-0 rounded-lg p-1.5 transition-colors ${
-					view === "projects" ? "bg-border/80 text-ink" : "text-ink-dim hover:bg-hover hover:text-ink"
+					view === "projects" ? "bg-bubble text-ink" : "text-ink-dim hover:bg-hover hover:text-ink"
 				}`}
 				onClick={() => setView(view === "projects" ? "chat" : "projects")}
 				aria-label={t("projects.title")}
 			>
-				<GridIcon />
+				<ProjectsIcon />
 			</button>
 			<div
 				ref={scrollerRef}

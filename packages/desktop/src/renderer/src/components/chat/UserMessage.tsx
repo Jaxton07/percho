@@ -33,7 +33,7 @@ export function UserMessage({ message }: { message: Extract<UIMessage, { kind: "
 					</div>
 				)}
 				{message.skill ? (
-					<div className="rounded-2xl rounded-br-md bg-border px-3.5 py-2 text-[14px] leading-relaxed text-ink select-text">
+					<div className="rounded-2xl rounded-br-md bg-bubble px-4 py-2.5 text-[15px] leading-[1.7] text-ink select-text">
 						<div
 							className={
 								message.text
@@ -47,7 +47,7 @@ export function UserMessage({ message }: { message: Extract<UIMessage, { kind: "
 					</div>
 				) : (
 					message.text && (
-						<div className="rounded-2xl rounded-br-md bg-border px-3.5 py-2 text-[14px] leading-relaxed whitespace-pre-wrap break-words text-ink select-text">
+						<div className="rounded-2xl rounded-br-md bg-bubble px-4 py-2.5 text-[15px] leading-[1.7] whitespace-pre-wrap break-words text-ink select-text">
 							{message.text}
 						</div>
 					)

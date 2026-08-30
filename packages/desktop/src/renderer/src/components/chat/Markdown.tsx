@@ -59,7 +59,7 @@ export function Markdown({ text, streaming }: { text: string; streaming?: boolea
 	// 挂载初值锁定：流式中挂载 → 本次生命周期始终启用平滑（含固化后追平）；历史消息挂载 → 永不启用
 	const smoothableRef = useRef<boolean>(Boolean(streaming) && !REDUCED_MOTION);
 	return (
-		<div className="markdown-body text-[14px] leading-relaxed text-ink select-text">
+		<div className="markdown-body text-[15px] leading-[1.75] text-ink select-text">
 			{/* deferNodesUntilVisible=false：markstream 0.0.55 的延迟节点 bug——块数 > initialRenderBatchSize(40)
 			    的节点先渲染为 node-placeholder 占位条，等 IntersectionObserver 标记可见后只写 ref 不触发
 			    re-render（非虚拟化路径）；流式期间靠内容更新顺带刷新，流一停占位条就永久残留。 */}
