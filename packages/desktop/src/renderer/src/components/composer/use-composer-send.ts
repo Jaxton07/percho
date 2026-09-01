@@ -6,6 +6,7 @@ import { isDraftSessionId, useSessionsStore } from "../../stores/sessions";
 import { useSettingsStore } from "../../stores/settings";
 import { pushToast } from "../../stores/toasts";
 import { useTranscriptStore } from "../../stores/transcript";
+import { buildQuoteBlock } from "./quote";
 import { buildSendUiError } from "./send-error";
 
 export interface UseComposerSendOptions {
@@ -13,6 +14,7 @@ export interface UseComposerSendOptions {
 	text: string;
 	images: ImageInput[];
 	attachments: string[];
+	quotes: string[];
 	slashCommand: string | null;
 	followUpQueue: string[];
 	/** 压缩进行中（禁发：SDK 拒绝压缩中的 prompt） */
@@ -24,6 +26,7 @@ export interface UseComposerSendOptions {
 	setText: (updater: string | ((prev: string) => string)) => void;
 	setImages: (updater: ImageInput[] | ((prev: ImageInput[]) => ImageInput[])) => void;
 	setAttachments: (updater: string[] | ((prev: string[]) => string[])) => void;
+	setQuotes: (updater: string[] | ((prev: string[]) => string[])) => void;
 	setSlashCommand: (command: string | null) => void;
 }
 
@@ -100,12 +103,15 @@ export function useComposerSend(options: UseComposerSendOptions) {
 	};
 
 	const handleSend = async () => {
-		const { text, images, attachments, slashCommand, followUpQueue, compacting, agentActive } = options;
-		// @ 引用胶囊拼回文本：slash 胶囊时并入参数（保 /cmd 开头供 SDK 展开），否则独立成行置正文前
+		const { text, images, attachments, quotes, slashCommand, followUpQueue, compacting, agentActive } =
+			options;
+		// 引用胶囊逐条转 blockquote 段落；@ 引用胶囊拼回文本。引用置最前（先给上下文），正文在后
+		const quoteBlock = buildQuoteBlock(quotes);
 		const atText = attachments.map((p) => `@${p}`).join(" ");
-		const content = slashCommand
-			? `/${slashCommand}${atText ? ` ${atText}` : ""}${text.trim() ? ` ${text.trim()}` : ""}`
-			: [atText, text.trim()].filter(Boolean).join("\n");
+		const body = [atText, text.trim()].filter(Boolean).join("\n");
+		const content = [quoteBlock, slashCommand ? `/${slashCommand}${body ? ` ${body}` : ""}` : body]
+			.filter(Boolean)
+			.join("\n\n");
 		// 运行中（streaming）不拦截：prompt 走 followUp 排队；仅防双击重发（sending）
 		if ((!content && images.length === 0) || sending) return;
 		// 压缩中禁发：SDK 拒绝压缩中的 prompt，提前拦截保住草稿
@@ -134,6 +140,7 @@ export function useComposerSend(options: UseComposerSendOptions) {
 			}
 			options.setText("");
 			options.setSlashCommand(null);
+			options.setQuotes([]);
 			try {
 				const handled = await runSlashCommand(content, sessionId);
 				if (handled) return;
@@ -150,12 +157,15 @@ export function useComposerSend(options: UseComposerSendOptions) {
 
 		options.setText("");
 		options.setSlashCommand(null);
+		options.setQuotes([]);
 		setSending(true);
 		setError(null);
 		const sentImages = images;
 		const sentAttachments = attachments;
+		const sentQuotes = quotes;
 		options.setImages([]);
 		options.setAttachments([]);
+		options.setQuotes([]);
 		// 乐观置工作中：agent_start 事件到达前立即显示，失败后回滚
 		useTranscriptStore.getState().markAgentActive(sessionId, true);
 		try {
@@ -165,6 +175,7 @@ export function useComposerSend(options: UseComposerSendOptions) {
 			setError(err instanceof Error ? err.message : String(err));
 			options.setImages(sentImages);
 			options.setAttachments(sentAttachments);
+			options.setQuotes(sentQuotes);
 			// 草稿恢复：发送失败不丢输入（重试按钮/编辑重发都基于它）
 			if (text.trim()) options.setText(text);
 		} finally {

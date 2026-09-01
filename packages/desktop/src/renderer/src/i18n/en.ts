@@ -62,6 +62,12 @@ export const en: Messages = {
 		queueTitle: "Queued",
 		queueRestore: "Take back to editor",
 		queueFull: "A message is already queued — take it back first",
+		removeQuote: "Remove quote",
+	},
+	selection: {
+		addToChat: "Add to chat",
+		continueNew: "Continue in new chat",
+		busyHint: "Fork after the current task finishes",
 	},
 	slash: {
 		noMatch: "No matching commands",

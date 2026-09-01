@@ -7,17 +7,25 @@ export const NEW_SESSION_DRAFT_KEY = "__new__";
 /** 请求聚焦输入框的窗口事件名（撤回回填草稿后由 store 派发，Composer 监听聚焦 textarea） */
 export const COMPOSER_FOCUS_EVENT = "pi:composer-focus";
 
-/** 一份会话草稿：文本 + 图片附件 + slash 命令胶囊 + @ 文件引用胶囊 */
+/** 一份会话草稿：文本 + 图片附件 + slash 命令胶囊 + @ 文件引用胶囊 + 选中引用胶囊 */
 export interface DraftEntry {
 	text: string;
 	images: ImageInput[];
 	slashCommand: string | null;
 	/** @ 文件引用（项目相对路径）；发送时拼回 @path 列表置于正文前 */
 	attachments: string[];
+	/** 选中引用（对话区选中内容弹菜单添加）；发送时逐条转 blockquote 段落置于最前 */
+	quotes: string[];
 }
 
 /** 模块级共享空态（selector 缺省返回，引用稳定防重渲染循环） */
-export const EMPTY_DRAFT: DraftEntry = { text: "", images: [], slashCommand: null, attachments: [] };
+export const EMPTY_DRAFT: DraftEntry = {
+	text: "",
+	images: [],
+	slashCommand: null,
+	attachments: [],
+	quotes: [],
+};
 
 /**
  * 输入框草稿按会话保存。Composer 会在空态（EmptyState 内）与列表态（底部）之间切换实例，
@@ -30,7 +38,13 @@ interface DraftStore {
 }
 
 function isEmpty(entry: DraftEntry): boolean {
-	return !entry.text && entry.images.length === 0 && !entry.slashCommand && entry.attachments.length === 0;
+	return (
+		!entry.text &&
+		entry.images.length === 0 &&
+		!entry.slashCommand &&
+		entry.attachments.length === 0 &&
+		entry.quotes.length === 0
+	);
 }
 
 export const useDraftStore = create<DraftStore>((set) => ({

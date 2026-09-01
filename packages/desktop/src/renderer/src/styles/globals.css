@@ -200,6 +200,44 @@
 	}
 }
 
+/* 选中文字浮出菜单（SelectionToolbar）：淡入 + 朝选区方向微移；按钮为幽灵文字钮 */
+.selection-pop {
+	animation: selection-pop 0.16s cubic-bezier(0.16, 1, 0.3, 1);
+	transform-origin: center;
+}
+@keyframes selection-pop {
+	from {
+		opacity: 0;
+		/* transform 由内联 style 提供 translate 定位，动画只动 opacity/margin 避免覆盖 ——
+		   故用 scale 独立属性（Chromium 支持独立变换属性）不与 translate 冲突 */
+		scale: 0.96;
+	}
+	to {
+		opacity: 1;
+		scale: 1;
+	}
+}
+.selection-menu-btn {
+	padding: 0.25rem 0.625rem;
+	border-radius: 0.5rem;
+	font-size: 13px;
+	line-height: 1.25rem;
+	color: var(--color-ink-2);
+	white-space: nowrap;
+	transition:
+		background-color 0.15s,
+		color 0.15s;
+}
+.selection-menu-btn:hover:not(:disabled) {
+	background-color: var(--color-hover);
+	color: var(--color-ink);
+}
+@media (prefers-reduced-motion: reduce) {
+	.selection-pop {
+		animation: none;
+	}
+}
+
 /* todo 折叠态呼吸灯：颜色取 ink-dim（弱化存在感的中性灰，深浅主题各自反色），仅透明度 + 缩放起伏 */
 .todo-breath-dot {
 	width: 7px;

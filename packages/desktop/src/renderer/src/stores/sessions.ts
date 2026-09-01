@@ -79,8 +79,8 @@ interface SessionsStore {
 	reorderSessions: (fromId: string, toId: string) => void;
 	closeSession: (sessionId: string) => Promise<void>;
 	openFromHistory: (filePath: string) => Promise<void>;
-	/** 在指定 assistant 消息处分叉：新会话以新 tab 打开并切换过去（原会话保留原样） */
-	forkSession: (ref: { entryId?: string; text?: string }) => Promise<void>;
+	/** 在指定 assistant 消息处分叉：新会话以新 tab 打开并切换过去（原会话保留原样）；成功返回新 sessionId */
+	forkSession: (ref: { entryId?: string; text?: string }) => Promise<string | undefined>;
 	/** 撤回一条用户消息：会话回退到该消息之前，文本/图片放回输入框草稿继续编辑 */
 	recallMessage: (ref: { entryId?: string; text?: string; timestamp?: number }) => Promise<void>;
 	/** 重启后恢复上次打开的顶栏会话 */
@@ -254,7 +254,7 @@ export const useSessionsStore = create<SessionsStore>((set, get) => ({
 	forkSession: async (ref) => {
 		const { activeSessionId } = get();
 		// draft 还没有消息，无可分叉（UI 上也到不了这里，防御性拦截）
-		if (!activeSessionId || isDraftSessionId(activeSessionId)) return;
+		if (!activeSessionId || isDraftSessionId(activeSessionId)) return undefined;
 		try {
 			const meta = await getPi().forkSession(activeSessionId, ref);
 			set((state) => ({
@@ -263,8 +263,10 @@ export const useSessionsStore = create<SessionsStore>((set, get) => ({
 			}));
 			await loadSessionBundle(meta.sessionId);
 			persistTabs(get());
+			return meta.sessionId;
 		} catch (error) {
 			set({ error: error instanceof Error ? error.message : String(error) });
+			return undefined;
 		}
 	},
 

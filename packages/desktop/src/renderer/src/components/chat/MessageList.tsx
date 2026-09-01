@@ -10,6 +10,7 @@ import { CenterOrb } from "./CenterOrb";
 import { MessageItem } from "./MessageItem";
 import { MetaGroup } from "./MetaGroup";
 import { RetryNote } from "./RetryNote";
+import { SelectionToolbar } from "./SelectionToolbar";
 import { SubagentRunCard } from "./SubagentRunCard";
 import { TurnDiffChip } from "./TurnDiffChip";
 import { useShownWorking } from "./use-shown-working";
@@ -218,6 +219,8 @@ export function MessageList() {
 					{transcript.retrying && <RetryNote info={transcript.retrying} />}
 				</div>
 			</div>
+			{/* 选中文字浮出菜单：定位在滚动容器内以便判断选区归属（fixed 定位不受父级影响） */}
+			<SelectionToolbar containerRef={scrollRef} />
 			{!following && (
 				<button
 					type="button"

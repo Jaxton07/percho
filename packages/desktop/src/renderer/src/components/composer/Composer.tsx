@@ -14,6 +14,7 @@ import { ContextRing } from "./ContextRing";
 import { ImageTray } from "./ImageTray";
 import { ModelPicker } from "./ModelPicker";
 import { QueueBar } from "./QueueBar";
+import { QuoteChip } from "./QuoteChip";
 import { SendErrorBar } from "./SendErrorBar";
 import { SlashMenu } from "./SlashMenu";
 import { ThinkingPicker } from "./ThinkingPicker";
@@ -50,7 +51,7 @@ export function Composer({ centered = false }: { centered?: boolean }) {
 	/** 草稿（文本/图片/命令胶囊）按会话持久：切换会话/空态↔列表态换 Composer 实例不丢、不串会话 */
 	const draftKey = activeSessionId ?? NEW_SESSION_DRAFT_KEY;
 	const draft = useDraftStore((s) => s.bySession[draftKey] ?? EMPTY_DRAFT);
-	const { text, images, slashCommand, attachments } = draft;
+	const { text, images, slashCommand, attachments, quotes } = draft;
 	const updateDraft = useDraftStore((s) => s.updateDraft);
 	const setText = (updater: string | ((prev: string) => string)) => {
 		updateDraft(draftKey, (d) => ({ ...d, text: typeof updater === "function" ? updater(d.text) : updater }));
@@ -70,6 +71,12 @@ export function Composer({ centered = false }: { centered?: boolean }) {
 			attachments: typeof updater === "function" ? updater(d.attachments) : updater,
 		}));
 	};
+	const setQuotes = (updater: string[] | ((prev: string[]) => string[])) => {
+		updateDraft(draftKey, (d) => ({
+			...d,
+			quotes: typeof updater === "function" ? updater(d.quotes) : updater,
+		}));
+	};
 	const [previewImage, setPreviewImage] = useState<ImageInput | null>(null);
 	const textareaRef = useRef<HTMLTextAreaElement>(null);
 	const boxRef = useRef<HTMLDivElement>(null);
@@ -80,13 +87,18 @@ export function Composer({ centered = false }: { centered?: boolean }) {
 	const compacting = transcript.compacting;
 	/** 输入框有内容：streaming 中按钮从停止切回发送（入队后文本清空自动切回停止） */
 	const hasContent =
-		Boolean(text.trim()) || images.length > 0 || Boolean(slashCommand) || attachments.length > 0;
+		Boolean(text.trim()) ||
+		images.length > 0 ||
+		Boolean(slashCommand) ||
+		attachments.length > 0 ||
+		quotes.length > 0;
 
 	const send = useComposerSend({
 		activeSessionId,
 		text,
 		images,
 		attachments,
+		quotes,
 		slashCommand,
 		followUpQueue,
 		compacting,
@@ -95,6 +107,7 @@ export function Composer({ centered = false }: { centered?: boolean }) {
 		setText,
 		setImages,
 		setAttachments,
+		setQuotes,
 		setSlashCommand,
 	});
 	const { sending, error, setError, feedback, showFeedback, ensureSession, runSlashCommand, handleSend } =
@@ -190,6 +203,7 @@ export function Composer({ centered = false }: { centered?: boolean }) {
 			return;
 		}
 		if (text === "" && (e.key === "Backspace" || e.key === "Delete")) {
+			// 胶囊撤销：视觉由近及远（@ 文件 → slash 命令 → 引用）
 			if (attachments.length > 0) {
 				e.preventDefault();
 				at.handleAttachmentRemove(attachments.length - 1);
@@ -197,6 +211,11 @@ export function Composer({ centered = false }: { centered?: boolean }) {
 			}
 			if (slashCommand) {
 				slash.restoreSlashPill(e);
+				return;
+			}
+			if (quotes.length > 0) {
+				e.preventDefault();
+				setQuotes((prev) => prev.slice(0, -1));
 				return;
 			}
 		}
@@ -284,11 +303,32 @@ export function Composer({ centered = false }: { centered?: boolean }) {
 					onPreview={setPreviewImage}
 					onRemove={(index) => setImages((prev) => prev.filter((_, i) => i !== index))}
 				/>
-				<div className="rounded-2xl border-[0.5px] border-border bg-surface shadow-soft">
-					{slashCommand || attachments.length > 0 ? (
-						<div className="flex flex-wrap items-start gap-1.5 px-4 pt-5 pb-2">
+				<div className="rounded-[20px] border-[0.5px] border-border bg-surface shadow-soft">
+					{/* 引用胶囊区：独占顶部一行贴边（专为选中引用留的位置，不占正文宽度） */}
+					{quotes.length > 0 && (
+						<div className="flex flex-wrap items-center gap-1.5 px-3 pt-2">
+							{quotes.map((quote) => (
+								<QuoteChip
+									key={quote}
+									quote={quote}
+									onRemove={() => setQuotes((prev) => prev.filter((q) => q !== quote))}
+								/>
+							))}
+						</div>
+					)}
+					{/* 正文行：slash/@ 胶囊内联在文本行首（有胶囊时 flex-wrap 同行，否则 textarea 独占整行）；
+					    外层容器恒定渲染，textarea 只切 className 不换位置 → 不重挂、不丢焦点；
+					    无引用时文本贴顶（可编辑区向上扩展），引用行临时加一行、不浪费空间 */}
+					<div className={`px-4 pb-5.5 ${quotes.length > 0 ? "pt-1.5" : "pt-2"}`}>
+						<div
+							className={
+								slashCommand || attachments.length > 0
+									? "flex flex-wrap items-start gap-x-1.5 gap-y-1"
+									: undefined
+							}
+						>
 							{slashCommand && (
-								<span className="mt-0.5 shrink-0 select-none rounded-md bg-border px-2 py-0.5 font-mono text-[12px] leading-5 text-ink-2">
+								<span className="mt-0.5 flex shrink-0 select-none items-center rounded-md bg-surface px-2 py-0.5 font-mono text-[12px] leading-5 text-ink-2 shadow-pop">
 									/{slashCommand}
 								</span>
 							)}
@@ -297,7 +337,9 @@ export function Composer({ centered = false }: { centered?: boolean }) {
 							))}
 							<textarea
 								ref={textareaRef}
-								className="max-h-[200px] min-w-[140px] flex-1 resize-none bg-transparent pt-0.5 text-[14px] leading-relaxed outline-none placeholder:text-ink-faint select-text"
+								className={`max-h-[200px] resize-none bg-transparent text-[14px] leading-relaxed outline-none placeholder:text-ink-faint select-text ${
+									slashCommand || attachments.length > 0 ? "min-w-[140px] flex-1" : "w-full"
+								}`}
 								placeholder={slashCommand ? t("slash.argPlaceholder") : placeholder}
 								value={text}
 								rows={1}
@@ -308,20 +350,7 @@ export function Composer({ centered = false }: { centered?: boolean }) {
 								onPaste={handlePaste}
 							/>
 						</div>
-					) : (
-						<textarea
-							ref={textareaRef}
-							className="max-h-[200px] w-full resize-none rounded-t-2xl px-4 pt-5 pb-2 text-[14px] leading-relaxed bg-transparent outline-none placeholder:text-ink-faint select-text"
-							placeholder={placeholder}
-							value={text}
-							rows={1}
-							disabled={readOnly}
-							onChange={handleTextChange}
-							onKeyDown={handleKeyDown}
-							onSelect={handleSelect}
-							onPaste={handlePaste}
-						/>
-					)}
+					</div>
 					<div className="flex items-center gap-2 px-3 pb-2">
 						<input
 							ref={fileInputRef}

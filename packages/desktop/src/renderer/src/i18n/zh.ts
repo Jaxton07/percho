@@ -59,6 +59,12 @@ export const zh = {
 		queueTitle: "排队中",
 		queueRestore: "取回编辑",
 		queueFull: "已有一条排队消息，取回后再发",
+		removeQuote: "移除引用",
+	},
+	selection: {
+		addToChat: "添加到对话",
+		continueNew: "在新会话继续",
+		busyHint: "当前任务完成后再分叉",
 	},
 	slash: {
 		noMatch: "没有匹配的命令",
