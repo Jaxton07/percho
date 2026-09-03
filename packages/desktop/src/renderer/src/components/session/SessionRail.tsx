@@ -1,10 +1,11 @@
 import type { SessionMeta } from "@percho/shared";
 import { useState } from "react";
 import { useT } from "../../i18n";
+import { isDailyCwd } from "../../lib/daily";
 import { useSessionsStore } from "../../stores/sessions";
 import { useUiStore } from "../../stores/ui";
 import { useUiPreferencesStore } from "../../stores/ui-preferences";
-import { CloseIcon, SubagentIcon } from "../icons";
+import { CloseIcon, CoffeeIcon, SubagentIcon } from "../icons";
 import {
 	type SessionStatus,
 	sessionLetter,
@@ -95,8 +96,10 @@ function RailItem({
 	const t = useT();
 	const status = useSessionStatus(session.sessionId);
 	const closeSession = useSessionsStore((s) => s.closeSession);
-	const title = sessionTitle(session, t("tabbar.untitled"));
+	const title = sessionTitle(session, t("tabbar.untitled"), t("projects.daily"));
 	const dir = sessionProjectDir(session);
+	// 日常空间会话：头像余态换画布底 + 咖啡字形（状态色仍优先，同 TabPill 语义）
+	const daily = isDailyCwd(session.cwd);
 	const stateClass =
 		distance === 0 ? "is-expanded" : distance === 1 ? "is-near-1" : distance === 2 ? "is-near-2" : "";
 	return (
@@ -114,11 +117,21 @@ function RailItem({
 			<span className={`rail-capsule h-[2px] ${railLineClass(status, isActive)}`} aria-hidden="true">
 				<span className="flex min-w-0 flex-1 items-center gap-2 px-2.5">
 					<span
-						className={`relative flex h-4 w-4 shrink-0 items-center justify-center rounded text-[10px] font-semibold text-on-ink ${
-							session.readOnly ? "bg-accent text-on-accent" : railAvatarClass(status, isActive)
+						className={`relative flex h-4 w-4 shrink-0 items-center justify-center rounded text-[10px] font-semibold ${
+							session.readOnly
+								? "bg-accent text-on-accent"
+								: daily && status !== "attention" && status !== "working"
+									? "border border-border-strong bg-canvas text-ink"
+									: railAvatarClass(status, isActive)
 						}`}
 					>
-						{session.readOnly ? <SubagentIcon size={11} /> : sessionLetter(session).toUpperCase()}
+						{session.readOnly ? (
+							<SubagentIcon size={11} />
+						) : daily ? (
+							<CoffeeIcon size={10} />
+						) : (
+							sessionLetter(session).toUpperCase()
+						)}
 						{!session.readOnly && status === "done" && (
 							<span className="absolute -right-0.5 -top-0.5 h-1.5 w-1.5 rounded-full bg-green-500 ring-1 ring-surface" />
 						)}
@@ -153,7 +166,7 @@ function railLineClass(status: SessionStatus, isActive: boolean): string {
 
 /** 展开态胶囊头像（与 TabPill 完全同语义）：审批琥珀 / 工作中墨色呼吸 / 完成未读绿点角标 / 当前更深 */
 function railAvatarClass(status: SessionStatus, isActive: boolean): string {
-	if (status === "attention") return "bg-amber-500";
-	if (status === "working") return "bg-ink tab-avatar-working";
-	return isActive ? "bg-ink" : "bg-ink-faint";
+	if (status === "attention") return "bg-amber-500 text-on-ink";
+	if (status === "working") return "bg-ink text-on-ink tab-avatar-working";
+	return isActive ? "bg-ink text-on-ink" : "bg-ink-faint text-on-ink";
 }

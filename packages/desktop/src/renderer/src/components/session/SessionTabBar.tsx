@@ -20,10 +20,11 @@ import type { ComponentProps } from "react";
 import { useEffect, useRef, useState } from "react";
 import { getPi } from "../../api";
 import { useT } from "../../i18n";
+import { isDailyCwd } from "../../lib/daily";
 import { useSessionsStore } from "../../stores/sessions";
 import { useTranscriptStore } from "../../stores/transcript";
 import { useUiStore } from "../../stores/ui";
-import { CloseIcon, ComposeIcon, DiffIcon, ProjectsIcon, SubagentIcon } from "../icons";
+import { CloseIcon, CoffeeIcon, ComposeIcon, DiffIcon, ProjectsIcon, SubagentIcon } from "../icons";
 import { sessionLetter, sessionTitle, useSessionStatus } from "./session-status";
 import { UpdateButton } from "./UpdateButton";
 
@@ -68,17 +69,21 @@ function TabPill({
 	const closeSession = useSessionsStore((s) => s.closeSession);
 	// 状态订阅与左侧会话轨道共用（优先级：审批 > 工作中 > 完成未读 > 空闲）
 	const status = useSessionStatus(session.sessionId);
-	// 图标字母 = 项目名（cwd 最后一段）首字母；只读子会话改用专属图标，一眼可辨。
+	// 头像字形 = 空间归属（日常 = 咖啡图标，项目 = 目录首字母）；只读子会话专属图标。
+	// 余态底色：日常为画布底 + 细边框（白底黑字，与项目黑底白字反相）；状态色（审批琥珀/工作墨色）优先
+	const daily = isDailyCwd(session.cwd);
 	const letter = sessionLetter(session);
 	const avatarClass = session.readOnly
 		? "bg-accent text-on-accent"
 		: status === "attention"
-			? "bg-amber-500"
+			? "bg-amber-500 text-on-ink"
 			: status === "working"
-				? "bg-ink tab-avatar-working"
-				: isActive
-					? "bg-ink"
-					: "bg-ink-faint";
+				? "bg-ink text-on-ink tab-avatar-working"
+				: daily
+					? "border border-border-strong bg-canvas text-ink"
+					: isActive
+						? "bg-ink text-on-ink"
+						: "bg-ink-faint text-on-ink";
 	return (
 		<button
 			type="button"
@@ -90,15 +95,23 @@ function TabPill({
 			onClick={ghost ? undefined : buttonProps?.onClick}
 		>
 			<span
-				className={`relative flex h-4 w-4 shrink-0 items-center justify-center rounded text-[10px] font-semibold text-on-ink ${avatarClass}`}
+				className={`relative flex h-4 w-4 shrink-0 items-center justify-center rounded text-[10px] font-semibold ${avatarClass}`}
 			>
-				{session.readOnly ? <SubagentIcon size={11} /> : letter.toUpperCase()}
+				{session.readOnly ? (
+					<SubagentIcon size={11} />
+				) : daily ? (
+					<CoffeeIcon size={10} />
+				) : (
+					letter.toUpperCase()
+				)}
 				{!session.readOnly && status === "done" && (
 					<span className="absolute -right-0.5 -top-0.5 h-1.5 w-1.5 rounded-full bg-green-500 ring-1 ring-canvas" />
 				)}
 			</span>
 			<span className="relative min-w-0 flex-1">
-				<span className="block truncate text-left">{sessionTitle(session, t("tabbar.untitled"))}</span>
+				<span className="block truncate text-left">
+					{sessionTitle(session, t("tabbar.untitled"), t("projects.daily"))}
+				</span>
 				{!ghost && (
 					<>
 						{/* hover 时尾部雾化渐变：盖住被叉叉重叠的文字尾，突出叉叉。

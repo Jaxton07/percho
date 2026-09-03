@@ -13,6 +13,7 @@ import { TrustDialog } from "./components/session/TrustDialog";
 import { SettingsDialog } from "./components/settings/SettingsDialog";
 import { Toaster } from "./components/Toaster";
 import { useSessionEventBridge } from "./hooks/use-session-event-bridge";
+import { initDailyDir } from "./lib/daily";
 import { initUiPlugins } from "./plugins/loader";
 import { RegionHost } from "./plugins/RegionHost";
 import { Slot } from "./plugins/Slot";
@@ -56,6 +57,8 @@ export default function App() {
 			useSessionsStore.getState().restoreTabs(),
 		]).then(() => finishSplash());
 		initUpdateStore();
+		// 日常空间目录缓存（pill/轨道/侧栏的空间归属判定依赖；失败静默，入口退化为不显示）
+		void initDailyDir();
 		// UI 插件加载链路（总开关关时只订阅事件，零开销）
 		void initUiPlugins();
 	}, []);

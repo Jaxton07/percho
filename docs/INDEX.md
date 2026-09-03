@@ -131,6 +131,7 @@ src/
 | `src/main/fix-path.ts` | GUI 启动 PATH 修复：Finder/Dock 启动 PATH 无 Homebrew，spawn npm 会 ENOENT；同步追加常见 bin 目录 + 异步 `$SHELL -ilc` 合并（须在 spawn 任何子进程前 import） |
 | `src/main/pi-package-dir.ts` | 打包态 `PI_PACKAGE_DIR = resources/pi-package`（SDK `getPackageDir()` 最优先读它，不缓存）：pi 官方 docs/examples 经 extraResources 装入 |
 | `src/main/dev-agent-dir.ts` | dev/预览态数据隔离：userData 重定向 `*-dev` 后缀 + `PI_CODING_AGENT_DIR = ~/.pi/agent-dev` + 五配置一次性种子拷贝（正式目录零写入） |
+| `src/main/daily.ts` | 日常空间工作台目录（`~/.percho/daily`，全部日常会话的固定 cwd）+ 懒创建；信任链无资源自动信任不弹窗；dev/正式共享工作区（会话列表按 agent dir 天然隔离） |
 | `src/main/ipc/index.ts` | `registerIpc` 组合入口 + backend 事件/updater 状态转发 + UI 插件热重载 watcher 启动。**新增 handler 改对应域文件，不在 index.ts 堆** |
 | `src/main/ipc/{sessions,settings,packages,app,ui-plugins,lan}.ts` | 各域 handler（全部薄委托 backend；ui-plugins 域 handler async await 落盘后才返回） |
 | `src/main/tabs.ts` / `ui-state.ts` | tabs.json / ui-state.json 读写（JsonStore 原子写；ui-state 补丁式合并 + normalize 补缺省） |
@@ -157,6 +158,7 @@ src/
 | `splash-dom.ts` / `splash.ts` / `styles/splash.css` | 开屏动画三件：DOM/粒子参数（`DOT_COUNT`）→ 时长与单次标记（sessionStorage）→ 全部样式与收场编排（改视觉只动这三个文件） |
 | `api.ts` | `getPi()`：window.pi 类型化访问 |
 | `lib/thinking.ts` | `THINKING_LEVELS` 档位表 + `clampThinkingLevel` 就近向上收敛（语义对齐 SDK） |
+| `lib/daily.ts` | 日常空间目录 renderer 缓存：`initDailyDir`（App 启动调一次，幂等）+ `isDailyCwd` 同步判定 + `setDailyDirForTest`；各处共享，不散落路径字符串 |
 | `stores/sessions.ts` | 会话列表/当前会话/cwd/模型。draft 会话（`draft:` 前缀，空 tab 重启消失；发首条消息 `ensureSession` 用 draft cwd 原地转正）；信任前置 ensureProjectTrust（trustVersion 触发重拉）；打开/fork/撤回/restoreTabs 统一 `loadSessionBundle` 三件套（history→queue→todos）；拖拽排序 `reorderSessions` 落 tabs.json |
 | `stores/transcript.ts` | re-export shared reducer + per-session 字段（agentActive/unseenCompletion/todos）；reducer 细节见 shared `src/transcript/` |
 | `stores/event-conflator.ts` | 流式事件合流：纯追加型 delta 按会话/类型拼接 + rAF 每帧最多一次 flush，其余事件边界透传保序（可注入调度器，有测试） |
@@ -177,7 +179,7 @@ src/
 | `composer/` | **Composer**（装配层 ~330 行，键盘事件分发）+ 三 hook：`use-composer-send`（ensureSession 懒创建/followUp 排队/停止先 clearQueue/发送失败草稿回填）、`use-slash-menu`（命令拉取+胶囊回填+导航）、`use-at-completion`（@ token 探测/续钻/胶囊弹回）+ 展示件 QueueBar/ImageTray/AttachmentChip/**QuoteChip**（选中引用胶囊）/SendErrorBar + **ModelPicker** / **ThinkingPicker**（按模型 thinkingLevels 过滤+clamp）/ **SlashMenu** / **AtMenu** / **ContextRing** + 纯函数 `slash-filter`/`at-files`/`send-error`/`quote`（各有测试） |
 | `session/` | **SessionTabBar** + SessionTab/TabPill（状态收拢到头像图标；dnd-kit 拖拽排序，DragOverlay ghost + 轴锁定；拖拽期间退出 drag-region）/ **SessionRail**（左侧会话轨道：细线变形胶囊 + dock 波浪；开关在设置-外观）/ **ApprovalDock**（权限审批：async respond 成功才移除面板，失败保留重试）/ **TrustDialog**（项目信任两选项）/ **UpdateButton**（顶栏更新按钮）/ `session-status`（顶栏与轨道共用的状态/标题纯逻辑） |
 | `settings/` | **SettingsDialog**（PANELS 注册表；分类 = 静态 + 插件 settings.panel 贡献动态拼接）/ **GeneralPanel**（语言/权限门控/上下文管理二态/channel-watch 开关）/ **AppearancePanel**（顶部 Tab 分栏：「基础」=主题三段/背景图/轨道/中央动画，「UI 插件」= 原独立分类并入的 UiPluginsSection：总开关/插件卡/槽位指派，设计稿 .local/design/ux/appearance-ui-plugins）/ **SkillsPanel** / **McpPanel**（SDK 0.84 无 MCP，占位）/ **ExtensionsPanel** + `extensions/`（目录浏览/安装/卸载，subagent 包安装两段式确认）/ **UiPluginsSection**（挂在 AppearancePanel 的 UI 插件 Tab 下） / **LanObserverPanel** / **AboutPanel** / `providers/`（ProvidersPanel + ProviderRow 操作全图标化 / LoginDialog（OAuth 对话框）/ CustomProviderForm + ModelRowsEditor（逐模型行编辑器）/ BuiltinProviderEditForm（内置端点覆写）/ SubagentPanel（子代理模型偏好）+ `model-rows` 纯函数） |
-| `projects/` | ProjectPage / SearchBar / ProjectSidebar / SessionPanel（新会话 = createDraftSession）/ SessionRow（hover 出诊断复制/删除）/ `date-groups` / ProjectBranchPicker（仅 draft 态渲染——真实会话项目绑死不可改）/ `diagnostics`（buildDiagnosticsText 纯文本） |
+| `projects/` | ProjectPage / SearchBar（日常选中时占位词取「日常」）/ ProjectSidebar（内置「日常」空间钉顶条目：canvas 底 + 细边框 + 咖啡 glyph，无删除钮）/ SessionPanel（新会话 = createDraftSession）/ SessionRow（hover 出诊断复制/删除）/ `date-groups` / ProjectBranchPicker（仅 draft 态渲染——真实会话项目绑死不可改；日常 draft 隐藏分支选择器，chip 显示「日常」）/ `diagnostics`（buildDiagnosticsText 纯文本） |
 | `ui/` | Button（ghost/primary × sm/md × danger）/ Dropdown / Switch（统一受控开关，支持 indeterminate）/ **Tooltip**（自定义悬浮提示，新增提示一律用它不用原生 title；右缘元素传 `align="end"` 防幻影横向滚动条） |
 | `icons/` | 内联 SVG 集中管理；`icons.test.ts` 校验所有 path `d` 语法（防残缺数据被 Chromium 丢弃） |
 
@@ -205,6 +207,7 @@ src/
 | 权限审批面板 | `backend/src/permissions/gate.ts`（队列）+ `session/ApprovalDock.tsx`（快捷键 Enter/A/D/Esc；await 成功才移除） |
 | 逐工具权限规则 | `backend/src/permissions/`（求值链在 extension.ts：deny → 临时区 → 多根边界读写分离 → 项目记忆 → ask）+ `project/workspace-store.ts` + `settings/GeneralPanel.tsx`（总开关）；设置页工作区根管理 UI 未实现，手改 workspaces.json |
 | 项目信任 | backend `project/trust.ts` + `trust-loader.ts`；触发点 `stores/sessions.ts`（createDraftSession/setDraftCwd）与 `stores/projects.ts`（addProject）；弹窗 `session/TrustDialog.tsx` |
+| 日常空间（非项目闲聊维度） | main `daily.ts`（目录）+ IPC `app:getDailyDir` → renderer `lib/daily.ts`（缓存/判定）；侧栏钉顶条目 `projects/ProjectSidebar.tsx`（选中后 selectedCwd=dailyDir，右栏/搜索/新会话全复用）；隔离 = `stores/projects.ts` deriveProjects 过滤 + deleteProject 守卫（有 projects.test.ts）；空态 chip `ProjectBranchPicker.tsx`（下拉钉顶「日常」项，draft 日常 ↔ 项目双向切换）；胶囊/轨道咖啡头像 `SessionTabBar.tsx`/`SessionRail.tsx`（余态白底黑字，状态色优先）；设计稿 `.local/design/ux/daily-space/` |
 | 会话分叉 / 撤回 | backend `forkSession`/`recallMessage`（目标解析在 session/messages.ts；**agent 运行或压缩期间均拒绝**）；renderer `stores/sessions.ts`（fork 新 tab 打开并返回新 sessionId；recall 草稿回填 + COMPOSER_FOCUS_EVENT）+ `chat/message-actions.tsx`（ForkButton 挂轮次末段正文/RecallButton 挂用户气泡，运行/压缩期间禁用） |
 | 对话区选中引用 / 引用胶囊 | 弹出菜单 `chat/SelectionToolbar.tsx`（selectionchange 缓存 + mouseup 显示；菜单 onMouseDown preventDefault 保选区；readOnly 不弹，busy 禁 fork）→ 草稿 `quotes: string[]`；胶囊 `composer/QuoteChip.tsx`；发送拼接 `composer/quote.ts`（buildQuoteBlock 置最前 blockquote）；「新会话继续」= forkSession 末条 assistant（entryId 优先/sourceText 兑底）→ 写新会话 draft |
 | todo 面板 + compaction 恢复 | 工具 `tools/todo.ts` + 恢复注入 `tools/todo-reminder.ts` + 读取 `getTodos`；UI `chat/TodoPanel.tsx` + `stores/ui.ts` todoExpanded；reducer 提取 `tool_execution_end`；打开会话恢复 = loadSessionBundle 后 loadTodos |

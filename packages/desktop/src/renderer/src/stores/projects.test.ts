@@ -1,5 +1,6 @@
 import type { SessionMeta } from "@percho/shared";
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it } from "vitest";
+import { setDailyDirForTest } from "../lib/daily";
 import { deriveProjects } from "./projects";
 
 function session(cwd: string, modifiedAt: number): SessionMeta {
@@ -14,6 +15,8 @@ function session(cwd: string, modifiedAt: number): SessionMeta {
 		messageCount: 0,
 	};
 }
+
+const DAILY = "/Users/test/.percho/daily";
 
 describe("deriveProjects", () => {
 	it("手动添加的按添加时间倒排（最新在前）", () => {
@@ -37,5 +40,24 @@ describe("deriveProjects", () => {
 		const allSessions = [session("/a", 100), session("/c", 400)];
 		const out = deriveProjects({ allSessions, addedProjects });
 		expect(out.map((p) => p.cwd)).toEqual(["/b", "/a", "/c"]);
+	});
+});
+
+describe("deriveProjects · 日常空间隔离", () => {
+	afterEach(() => setDailyDirForTest(null));
+
+	it("日常目录的会话不生成项目条目", () => {
+		setDailyDirForTest(DAILY);
+		const out = deriveProjects({ allSessions: [session(DAILY, 100), session("/a", 300)], addedProjects: [] });
+		expect(out.map((p) => p.cwd)).toEqual(["/a"]);
+	});
+	it("日常目录被手动添加过也不生成项目条目", () => {
+		setDailyDirForTest(DAILY);
+		const out = deriveProjects({ allSessions: [], addedProjects: [DAILY, "/a"] });
+		expect(out.map((p) => p.cwd)).toEqual(["/a"]);
+	});
+	it("日常目录未初始化（null）时不过滤任何项目", () => {
+		const out = deriveProjects({ allSessions: [session(DAILY, 100), session("/a", 300)], addedProjects: [] });
+		expect(out).toHaveLength(2);
 	});
 });

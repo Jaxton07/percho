@@ -151,6 +151,25 @@ export function CloseIcon({ size = 10, className }: IconProps) {
 	);
 }
 
+/** 日常空间标识：咖啡杯（闲聊/探索空间；白底黑字使用，与项目条目的黑底字母反相） */
+export function CoffeeIcon({ size = 14, className }: IconProps) {
+	return (
+		<svg
+			className={className}
+			width={size}
+			height={size}
+			viewBox="0 0 24 24"
+			{...strokeProps}
+			strokeLinecap="round"
+			aria-hidden="true"
+		>
+			<path d="M4 8h13v7a5 5 0 0 1-5 5H9a5 5 0 0 1-5-5V8z" />
+			<path d="M17 9h2a2.5 2.5 0 0 1 0 5h-2" />
+			<path d="M8 2.5v2M12 2.5v2" />
+		</svg>
+	);
+}
+
 /** codex 风格「新会话」编辑图标 */
 export function ComposeIcon({ size = 14, className }: IconProps) {
 	return (

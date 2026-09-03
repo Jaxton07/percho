@@ -125,6 +125,8 @@ export const IpcChannels = {
 	AppOpenExternal: "app:openExternal",
 	/** 应用信息（版本/运行时版本/仓库地址，设置关于页用） */
 	AppGetInfo: "app:getInfo",
+	/** 日常空间工作台目录（~/.percho/daily；懒创建后返回，日常会话的固定 cwd） */
+	AppGetDailyDir: "app:getDailyDir",
 	/** 顶栏 tabs 持久化（userData/tabs.json，不依赖 renderer localStorage） */
 	TabsLoad: "tabs:load",
 	TabsSave: "tabs:save",
@@ -295,6 +297,8 @@ export interface PiApi {
 	openExternal(url: string): Promise<void>;
 	/** 读取应用信息（版本/运行时/仓库地址） */
 	getAppInfo(): Promise<AppInfo>;
+	/** 日常空间工作台目录（不存在则懒创建；日常会话的固定 cwd，信任链无资源自动信任） */
+	getDailyDir(): Promise<string>;
 	/** 读取持久化的顶栏 tabs（无数据返回 null） */
 	loadTabs(): Promise<SavedTabs | null>;
 	/** 持久化顶栏 tabs（主进程写 userData/tabs.json） */

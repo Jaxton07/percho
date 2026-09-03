@@ -1,4 +1,5 @@
 import type { SessionMeta } from "@percho/shared";
+import { isDailyCwd } from "../../lib/daily";
 import { useTranscriptStore } from "../../stores/transcript";
 
 /** 会话状态（优先级递减）：等待审批 > 工作中 > 完成未读 > 空闲。顶栏胶囊与左侧轨道共用 */
@@ -16,9 +17,14 @@ export function useSessionStatus(sessionId: string): SessionStatus {
 	});
 }
 
-/** 会话显示标题：用户设置/自动生成名 → 项目目录末级 → 未命名占位 */
-export function sessionTitle(session: SessionMeta, untitledLabel: string): string {
-	return session.name ?? session.cwd.split("/").filter(Boolean).pop() ?? untitledLabel;
+/** 会话显示标题：用户设置/自动生成名 → 项目目录末级（日常空间 → 本地化「日常」）→ 未命名占位 */
+export function sessionTitle(session: SessionMeta, untitledLabel: string, dailyLabel?: string): string {
+	return (
+		session.name ??
+		(isDailyCwd(session.cwd) ? dailyLabel : undefined) ??
+		session.cwd.split("/").filter(Boolean).pop() ??
+		untitledLabel
+	);
 }
 
 /** 项目目录末级名（空串 = 无，如 cwd 为根路径） */

@@ -1,6 +1,7 @@
 import type { SessionMeta } from "@percho/shared";
 import { create } from "zustand";
 import { getPi } from "../api";
+import { initDailyDir, isDailyCwd } from "../lib/daily";
 import { useSessionsStore } from "./sessions";
 
 const ADDED_KEY = "pi-desktop.projects";
@@ -58,7 +59,8 @@ export const useProjectsStore = create<ProjectsStore>((set, get) => ({
 	load: async () => {
 		set({ loading: true });
 		try {
-			const allSessions = await getPi().listAllSessions();
+			// 日常目录与全量会话并行取；目录进 lib/daily 模块缓存（isDailyCwd 同步判定供各组件用）
+			const [allSessions] = await Promise.all([getPi().listAllSessions(), initDailyDir()]);
 			set({ allSessions, loading: false, loaded: true });
 			const { selectedCwd } = get();
 			if (!selectedCwd) {
@@ -102,6 +104,8 @@ export const useProjectsStore = create<ProjectsStore>((set, get) => ({
 	},
 
 	deleteProject: async (cwd) => {
+		// 内置日常空间不可删（侧栏本就不渲染删除钮，这里兜底防 IPC 重放等旁路）
+		if (isDailyCwd(cwd)) return;
 		const { allSessions } = get();
 		for (const session of allSessions.filter((s) => s.cwd === cwd)) {
 			await get().deleteSession(session);
@@ -126,11 +130,11 @@ export const useProjectsStore = create<ProjectsStore>((set, get) => ({
 	},
 }));
 
-/** 项目列表 = 有历史会话的目录 ∪ 手动添加的目录；手动添加的按添加时间倒排（最新在前），未添加过的按最后活动排后 */
+/** 项目列表 = 有历史会话的目录 ∪ 手动添加的目录（日常空间 cwd 除外，它在侧栏单独钉顶）；手动添加的按添加时间倒排（最新在前），未添加过的按最后活动排后 */
 export function deriveProjects(state: Pick<ProjectsStore, "allSessions" | "addedProjects">): ProjectEntry[] {
 	const byCwd = new Map<string, ProjectEntry>();
 	for (const session of state.allSessions) {
-		if (!session.cwd) continue;
+		if (!session.cwd || isDailyCwd(session.cwd)) continue;
 		const name = session.cwd.split("/").filter(Boolean).pop() ?? session.cwd;
 		const modified = session.modifiedAt ?? session.createdAt;
 		const existing = byCwd.get(session.cwd);
@@ -148,6 +152,8 @@ export function deriveProjects(state: Pick<ProjectsStore, "allSessions" | "added
 		}
 	}
 	for (const [idx, cwd] of state.addedProjects.entries()) {
+		// 手动添加列表若混入日常目录（老版本/手改 localStorage）按未添加处理，不生成项目条目
+		if (isDailyCwd(cwd)) continue;
 		const existing = byCwd.get(cwd);
 		if (existing) {
 			existing.addedIndex = idx;

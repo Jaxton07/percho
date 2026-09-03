@@ -94,6 +94,7 @@ const api: PiApi = {
 	checkoutBranch: (cwd, branch) => ipcRenderer.invoke(IpcChannels.ProjectCheckoutBranch, cwd, branch),
 	openExternal: (url) => ipcRenderer.invoke(IpcChannels.AppOpenExternal, url),
 	getAppInfo: () => ipcRenderer.invoke(IpcChannels.AppGetInfo),
+	getDailyDir: () => ipcRenderer.invoke(IpcChannels.AppGetDailyDir),
 	loadTabs: () => ipcRenderer.invoke(IpcChannels.TabsLoad),
 	saveTabs: (tabs) => ipcRenderer.invoke(IpcChannels.TabsSave, tabs),
 	loadUiState: () => ipcRenderer.invoke(IpcChannels.UiStateLoad),

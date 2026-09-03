@@ -1,8 +1,10 @@
 import { useEffect, useMemo, useState } from "react";
 import { getPi } from "../../api";
 import { useT } from "../../i18n";
+import { getDailyDirCached, isDailyCwd } from "../../lib/daily";
 import { deriveProjects, useProjectsStore } from "../../stores/projects";
 import { isDraftSessionId, useSessionsStore } from "../../stores/sessions";
+import { CoffeeIcon } from "../icons";
 import { Dropdown } from "../ui/Dropdown";
 
 /** 空态 Composer 下方：项目目录选择 + git 分支选择（对标 opencode） */
@@ -12,11 +14,17 @@ export function ProjectBranchPicker() {
 	// 真实会话的项目在创建时已绑定、不可更改：只在无会话 / draft（新会话）时提供切换，
 	// 避免选择器看起来能切、实际不生效的假交互
 	if (activeSessionId && !isDraftSessionId(activeSessionId)) return null;
+	// 日常空间目录不是 git 仓库：隐藏分支选择器，只留归属 chip（可下拉切回项目）
+	const daily = isDailyCwd(cwd);
 	return (
 		<div className="flex items-center justify-center gap-2 text-[13px] text-ink-dim">
 			<ProjectPicker />
-			<span className="text-border-strong">/</span>
-			<BranchPicker key={cwd ?? "none"} cwd={cwd} />
+			{!daily && (
+				<>
+					<span className="text-border-strong">/</span>
+					<BranchPicker key={cwd ?? "none"} cwd={cwd} />
+				</>
+			)}
 		</div>
 	);
 }
@@ -33,20 +41,50 @@ function ProjectPicker() {
 		[allSessions, addedProjects],
 	);
 	const name = cwd?.split("/").filter(Boolean).pop();
+	const daily = isDailyCwd(cwd);
+	// 模块缓存（load() 已 await 初始化；空态 EmptyState 挂载即触发 load）
+	const dailyDir = getDailyDirCached();
 
 	return (
 		<Dropdown
 			trigger={
 				<span className="flex items-center gap-1.5">
-					<span className="flex h-4.5 w-4.5 items-center justify-center rounded bg-ink text-[10px] font-semibold text-on-ink">
-						{(name?.[0] ?? "P").toUpperCase()}
-					</span>
-					{name ?? t("projects.selectProject")}
+					{daily ? (
+						<span className="flex h-4.5 w-4.5 items-center justify-center rounded border border-border-strong bg-canvas text-ink">
+							<CoffeeIcon size={10} />
+						</span>
+					) : (
+						<span className="flex h-4.5 w-4.5 items-center justify-center rounded bg-ink text-[10px] font-semibold text-on-ink">
+							{(name?.[0] ?? "P").toUpperCase()}
+						</span>
+					)}
+					{daily ? t("projects.daily") : (name ?? t("projects.selectProject"))}
 				</span>
 			}
 		>
 			{(close) => (
 				<>
+					{/* 日常空间钉顶：draft 可在 日常 ↔ 项目 间双向切换（与侧栏同一空间语义） */}
+					{dailyDir && (
+						<>
+							<button
+								type="button"
+								className={`flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left text-[13px] transition-colors hover:bg-hover ${
+									daily ? "text-ink" : "text-ink-2"
+								}`}
+								onClick={() => {
+									setDraftCwd(dailyDir);
+									close();
+								}}
+							>
+								<span className="flex h-4.5 w-4.5 shrink-0 items-center justify-center rounded border border-border-strong bg-canvas text-ink">
+									<CoffeeIcon size={10} />
+								</span>
+								<span className="truncate">{t("projects.daily")}</span>
+							</button>
+							{projects.length > 0 && <div className="my-0.5 border-t border-border" />}
+						</>
+					)}
 					{projects.map((project) => (
 						<button
 							key={project.cwd}
