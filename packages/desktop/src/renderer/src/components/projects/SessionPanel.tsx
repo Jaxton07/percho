@@ -3,7 +3,7 @@ import { useT } from "../../i18n";
 import { deriveSessions, useProjectsStore } from "../../stores/projects";
 import { useSessionsStore } from "../../stores/sessions";
 import { useUiStore } from "../../stores/ui";
-import { ComposeIcon } from "../icons";
+import { PlusIcon } from "../icons";
 import { groupByDate } from "./date-groups";
 import { SessionRow } from "./SessionRow";
 
@@ -44,7 +44,7 @@ export function SessionPanel() {
 					onClick={newSession}
 					disabled={!selectedCwd}
 				>
-					<ComposeIcon />
+					<PlusIcon />
 					{t("projects.newSession")}
 				</button>
 			</div>

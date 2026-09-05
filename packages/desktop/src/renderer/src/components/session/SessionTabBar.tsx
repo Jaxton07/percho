@@ -24,7 +24,7 @@ import { isDailyCwd } from "../../lib/daily";
 import { useSessionsStore } from "../../stores/sessions";
 import { useTranscriptStore } from "../../stores/transcript";
 import { useUiStore } from "../../stores/ui";
-import { CloseIcon, CoffeeIcon, ComposeIcon, DiffIcon, ProjectsIcon, SubagentIcon } from "../icons";
+import { CloseIcon, CoffeeIcon, DiffIcon, PlusIcon, ProjectsIcon, SubagentIcon } from "../icons";
 import { sessionLetter, sessionTitle, useSessionStatus } from "./session-status";
 import { UpdateButton } from "./UpdateButton";
 
@@ -55,6 +55,7 @@ function TabPill({
 	isActive,
 	ghost = false,
 	hidden = false,
+	ghostWidth,
 	buttonProps,
 }: {
 	session: SessionMeta;
@@ -63,6 +64,9 @@ function TabPill({
 	ghost?: boolean;
 	/** 真实胶囊正被 ghost 接管：隐藏本体但保留布局槽位（邻居让位计算依赖它） */
 	hidden?: boolean;
+	/** ghost 的固定宽度（px）= 拾起瞬间真实胶囊的实测宽：拖拽全程保持原尺寸，
+	    不回弹到 max-w-52 最大形态（标签多被压窄时，变大会显得很跳） */
+	ghostWidth?: number | null;
 	buttonProps?: ComponentProps<"button">;
 }) {
 	const t = useT();
@@ -88,8 +92,12 @@ function TabPill({
 		<button
 			type="button"
 			{...buttonProps}
-			style={{ touchAction: "none", ...(hidden ? { opacity: 0 } : null) }}
-			className={`no-drag tab-pill group relative flex ${ghost ? "w-52" : "w-full"} cursor-pointer items-center gap-2 rounded-lg px-2.5 py-1.5 text-sm ${
+			style={{
+				touchAction: "none",
+				...(ghost ? { width: ghostWidth ?? 208 } : null),
+				...(hidden ? { opacity: 0 } : null),
+			}}
+			className={`no-drag tab-pill group relative flex ${ghost ? "" : "w-full"} cursor-pointer items-center gap-2 rounded-lg px-2.5 py-1.5 text-sm ${
 				isActive ? "bg-bubble text-ink" : "text-ink-dim hover:bg-hover hover:text-ink"
 			} ${ghost ? "tab-dragging" : ""}`}
 			onClick={ghost ? undefined : buttonProps?.onClick}
@@ -152,10 +160,11 @@ function SessionTab({ session, isActive }: { session: SessionMeta; isActive: boo
 		transition: prefersReducedMotion() ? null : { duration: 220, easing: SORT_EASE },
 	});
 	// 动态宽度：flex-1 均分剩余空间（每胶囊 ≤ max-w-52），空间不足时平均压缩（≥ min-w-24），
-	// 全到最短后溢出由外层 scroller 滚动兜底；ghost 拖拽层固定 w-52 不参与 flex 布局
+	// 全到最短后溢出由外层 scroller 滚动兜底；ghost 拖拽层用拾起时的实测宽度（ghostWidth），不参与 flex 布局
 	return (
 		<div
 			ref={setNodeRef}
+			data-tab-id={session.sessionId}
 			className="min-w-24 max-w-52 flex-1"
 			style={{
 				transform: transform ? `translate3d(${transform.x}px, ${transform.y}px, 0)` : undefined,
@@ -195,6 +204,9 @@ export function SessionTabBar() {
 	const toggleDiffSidebar = useUiStore((s) => s.toggleDiffSidebar);
 	const scrollerRef = useRef<HTMLDivElement>(null);
 	const [activeId, setActiveId] = useState<string | null>(null);
+	/** 被拖胶囊拾起时的实测宽度（px）：ghost 全程沿用，保持原胶囊尺寸。
+	    不能读 active.rect.current.initial——dnd-kit 在 onDragStart 之后才填充该 ref，事件回调里恒为 null */
+	const [dragWidth, setDragWidth] = useState<number | null>(null);
 	const activeSession = sessions.find((s) => s.sessionId === activeId);
 	// 拖拽期间：顶栏整体退出窗口拖拽区（胶囊间隙本是 drag-region，指针扫过会被 macOS 当拖窗口吞事件）
 	const dragging = activeId !== null;
@@ -205,6 +217,7 @@ export function SessionTabBar() {
 	);
 	const endDrag = () => {
 		setActiveId(null);
+		setDragWidth(null);
 		setDraggingCursor(false);
 	};
 
@@ -258,6 +271,11 @@ export function SessionTabBar() {
 					collisionDetection={closestCenter}
 					onDragStart={({ active }) => {
 						setActiveId(String(active.id));
+						setDragWidth(
+							document
+								.querySelector(`[data-tab-id="${CSS.escape(String(active.id))}"]`)
+								?.getBoundingClientRect().width ?? null,
+						);
 						setDraggingCursor(true);
 					}}
 					onDragEnd={({ active, over }: DragEndEvent) => {
@@ -284,7 +302,12 @@ export function SessionTabBar() {
 						dropAnimation={prefersReducedMotion() ? null : DROP_ANIMATION}
 					>
 						{activeSession ? (
-							<TabPill session={activeSession} isActive={activeSession.sessionId === activeSessionId} ghost />
+							<TabPill
+								session={activeSession}
+								isActive={activeSession.sessionId === activeSessionId}
+								ghost
+								ghostWidth={dragWidth}
+							/>
 						) : null}
 					</DragOverlay>
 				</DndContext>
@@ -301,7 +324,7 @@ export function SessionTabBar() {
 					}}
 					aria-label={cwd ? t("tabbar.newSession") : t("tabbar.pickProjectFirst")}
 				>
-					<ComposeIcon size={15} />
+					<PlusIcon size={18} />
 				</button>
 			)}
 			{/* diff 侧栏开关：新会话按钮之后，active 态底色区分 */}

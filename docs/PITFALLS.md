@@ -21,6 +21,8 @@
 | 凭证泄漏风险、密钥误提交 | 五 · 绝不打印/提交 API key |
 | LAN 页连接僵死不重连、状态「重连中/已连接」反复跳 | 二 · SSE 心跳必须是命名事件帧 |
 | LAN 对话页正文重复出现在末尾、run 结束又恢复正常 | 二 · 流式增量帧不可重放（healing 兜底差量） |
+| 流式输出时正文「隔一会儿闪一下」、尾部文字半透明往上爬 | 四 · markstream 流式 delta 淡入（已修：8ms 直出覆写） |
+| onDragStart 里拿不到拖拽尺寸（`active.rect.current.initial` 恒 null） | 四 · dnd-kit rect ref 填充晚于 onDragStart |
 
 ## 一、事故复盘（含可复用诊断手法）
 
@@ -107,6 +109,18 @@ pi SDK 必须声明进 `packages/desktop/package.json` dependencies（electron-b
 ### CDP 冒烟往 store 注入状态必须用完整对象形状（2026-08-29）
 
 `cdp-eval` 里 `useSessionsStore.setState({ sessions: [ { sessionId: 'x' } ] })` 这类缺字段注入会炸渲染组件（如 `TabPill` 读 `session.name.split` → TypeError，错误边界兜住但 UI 白屏重挂）。安全手法：**不碰 sessions 列表**，只对 transcript `bySession` 做函数式合并注入完整 SessionEntry 形状（各字段齐备），测完删 key；或先存原 entry 引用、最后还原。同理不要整体覆盖 `bySession`（会抹掉真实会话，App 重载时连锁出错）。
+
+### markstream 流式 delta 淡入 = 正文「闪一下」的根源（2026-09-05 定位，8ms 直出覆写）
+
+症状：流式输出时正文隔几百毫秒整段闪一下。库机制：每次可见文本 commit，新增量包进 `span.text-node-stream-delta` 跑 `opacity:0→1`、280ms 的动画（fade-a/b 交替只为重触发）；动画结束才沉淀合并进普通文本。慢速时只有尾部几十字半透明；**快模型 burst 会进 smooth controller 的 catch-up 模式（backlog>600、≤80 字/commit、30fps、最高 1000cps），每个 fade 窗口堆积一两百字同时从透明往上爬**——就是用户看到的闪。
+
+修复（globals.css `.markdown-body`）：`--stream-update-fade-duration: 8ms`（该变量只喂这一条动画）。**不能用 `animation:none`**：库的 span 沉淀/合并靠 `onAnimationEnd` 触发，禁动画会让 fading span 永远不合并且 `will-change:opacity` 合成层常驻。
+
+已排除的候选（实证手法可复用）：组件 remount / 整树重渲 / 块级 fade-node 重播 / controller.reset 重播（reset 是即时全亮）——给 store 注合成事件（`applyEvent` + 构造 text_delta，参考 `scripts/repro-full.mjs` 思路），页面侧 rAF 采样 `document.getAnimations({subtree:true})` + MutationObserver（removed 节点计数）即可实锤。次级因素：代码块 fence 打开后先渲纯文本 fallback 再换 monaco（空闲时 ~32ms，主线程忙时更长）。
+
+### dnd-kit：`onDragStart` 里 `active.rect.current.initial` 恒为 null（2026-09-05）
+
+`activeRects` 是个 ref，初始 `{initial:null, translated:null}`，**在 onDragStart 分发之后的 effect 里才填充**——事件回调里读到的永远是 null。要拖拽起始尺寸：给可拖节点加 `data-tab-id` 之类的锚点，回调里 `querySelector` 实测（SessionTabBar ghost 宽度就是这么做的）。
 
 ### UI 文案走 `useT()` + `zh`/`en` 字典（`renderer/src/i18n/`）
 
