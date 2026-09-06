@@ -1,4 +1,4 @@
-import type { AvailableModel, SavedTabs, SessionMeta } from "@percho/shared";
+import type { AvailableModel, PermissionMode, SavedTabs, SessionMeta } from "@percho/shared";
 import { messagesToUIMessages } from "@percho/shared";
 import { create } from "zustand";
 import { getPi } from "../api";
@@ -15,23 +15,36 @@ export function isDraftSessionId(sessionId: string | null | undefined): boolean 
 }
 
 /**
- * 打开会话时同步三件套：消息历史（可选跳过 live 态）、排队队列、todo 面板。
- * 取数并行（三写各写 store 不同字段，无交叉读），应用顺序保持 history → queue → todos。
+ * 打开会话时同步四件套：消息历史（可选跳过 live 态）、排队队列、todo 面板、权限模式。
+ * 取数并行（各写 store 不同字段，无交叉读），应用顺序保持 history → queue → todos。
+ * 权限模式对齐后端真值：关 tab 重开后端已归零 default，拉回防 stale（spec permission-mode D1）。
  */
 async function loadSessionBundle(sessionId: string, opts?: { skipHistoryIfLive?: boolean }): Promise<void> {
 	// skip 判定在入口一次性取值：并行发起 IPC 前先确定是否跳过历史（agent 运行中保流式态，见 openFromHistory 注释）
 	const skipHistory =
 		opts?.skipHistoryIfLive === true &&
 		useTranscriptStore.getState().bySession[sessionId]?.agentActive === true;
-	const [history, followUpQueue, todos] = await Promise.all([
+	const [history, followUpQueue, todos, permissionMode] = await Promise.all([
 		skipHistory ? Promise.resolve(null) : getPi().getSessionMessages(sessionId),
 		getPi().getFollowUpMessages(sessionId),
 		getPi().getTodos(sessionId),
+		getPi().getPermissionMode(sessionId),
 	]);
 	const t = useTranscriptStore.getState();
 	if (history) t.loadHistory(sessionId, messagesToUIMessages(history));
 	t.setFollowUpQueue(sessionId, followUpQueue);
 	t.loadTodos(sessionId, todos);
+	applyBackendPermissionMode(sessionId, permissionMode);
+}
+
+/** 后端真值写入本 map（default = 删 key，保持「缺 key = default」语义） */
+function applyBackendPermissionMode(sessionId: string, mode: PermissionMode): void {
+	useSessionsStore.setState((state) => {
+		const permissionModes = { ...state.permissionModes };
+		if (mode === "default") delete permissionModes[sessionId];
+		else permissionModes[sessionId] = mode;
+		return { permissionModes };
+	});
 }
 
 /** toast detail 展示截断（原始错误文本超出只留首段） */
@@ -69,6 +82,8 @@ interface SessionsStore {
 	error: string | null;
 	/** 项目信任决策完成计数：ensureProjectTrust 应答后 +1，驱动 draft 斜杠菜单按新决策重拉 */
 	trustVersion: number;
+	/** 按会话权限模式（缺 key = default；draft id 为 key 的条目是 renderer 内存态，转正时由 ensureSession 应用到后端） */
+	permissionModes: Record<string, PermissionMode>;
 	createSession: (cwd?: string, replaceDraftId?: string) => Promise<void>;
 	/** 新建草稿会话 tab：不触后端、不落盘（空 tab 重启后自动消失），发送首条消息时才用其 cwd 真正创建 */
 	createDraftSession: (cwd?: string) => void;
@@ -91,6 +106,8 @@ interface SessionsStore {
 	loadModels: () => Promise<void>;
 	setCurrentModel: (provider: string, modelId: string) => Promise<void>;
 	setThinkingLevel: (level: string) => Promise<void>;
+	/** 切换会话权限模式（draft 态仅本地；真实会话乐观更新 + 失败回滚 + toast） */
+	setSessionPermissionMode: (sessionId: string, mode: PermissionMode) => Promise<void>;
 }
 
 export const useSessionsStore = create<SessionsStore>((set, get) => ({
@@ -102,6 +119,7 @@ export const useSessionsStore = create<SessionsStore>((set, get) => ({
 	thinkingLevel: "medium",
 	error: null,
 	trustVersion: 0,
+	permissionModes: {},
 
 	createSession: async (cwd, replaceDraftId) => {
 		const targetCwd = cwd ?? get().cwd;
@@ -119,6 +137,10 @@ export const useSessionsStore = create<SessionsStore>((set, get) => ({
 					: [...state.sessions, meta],
 				activeSessionId: meta.sessionId,
 				cwd: targetCwd,
+				// draft 键下的权限模式由 ensureSession 在创建后应用到新 id，这里顺手满档防泄漏
+				permissionModes: replaceDraftId
+					? Object.fromEntries(Object.entries(state.permissionModes).filter(([id]) => id !== replaceDraftId))
+					: state.permissionModes,
 			}));
 			useTranscriptStore.getState().resetSession(meta.sessionId);
 			persistTabs(get());
@@ -229,7 +251,10 @@ export const useSessionsStore = create<SessionsStore>((set, get) => ({
 			const cwd = activeSessionId
 				? (sessions.find((s) => s.sessionId === activeSessionId)?.cwd ?? state.cwd)
 				: state.cwd;
-			return { sessions, activeSessionId, cwd };
+			// 权限模式随会话销毁归零（后端 holder 同点位清理；draft 态本就纯 renderer）
+			const permissionModes = { ...state.permissionModes };
+			delete permissionModes[sessionId];
+			return { sessions, activeSessionId, cwd, permissionModes };
 		});
 		if (!isDraft) persistTabs(get());
 	},
@@ -423,6 +448,42 @@ export const useSessionsStore = create<SessionsStore>((set, get) => ({
 			} catch (error) {
 				set({ error: error instanceof Error ? error.message : String(error) });
 			}
+		}
+	},
+
+	/**
+	 * 切换会话权限模式：draft 态纯 renderer 内存（转正时 ensureSession 应用到后端）；
+	 * 真实会话乐观更新 + IPC 同步，失败回滚 + toast（范式同 setContextManagerMode）。
+	 * 后端为内存态即时生效（每次 tool_call 实时读），无需重升会话。
+	 */
+	setSessionPermissionMode: async (sessionId, mode) => {
+		if (isDraftSessionId(sessionId)) {
+			set((state) => ({
+				permissionModes:
+					mode === "default"
+						? Object.fromEntries(Object.entries(state.permissionModes).filter(([id]) => id !== sessionId))
+						: { ...state.permissionModes, [sessionId]: mode },
+			}));
+			return;
+		}
+		const previous = get().permissionModes[sessionId] ?? "default";
+		set((state) => ({
+			permissionModes:
+				mode === "default"
+					? Object.fromEntries(Object.entries(state.permissionModes).filter(([id]) => id !== sessionId))
+					: { ...state.permissionModes, [sessionId]: mode },
+		}));
+		try {
+			await getPi().setPermissionMode(sessionId, mode);
+		} catch (error) {
+			set((state) => {
+				const permissionModes = { ...state.permissionModes };
+				if (previous === "default") delete permissionModes[sessionId];
+				else permissionModes[sessionId] = previous;
+				return { permissionModes };
+			});
+			console.error("切换权限模式失败", error);
+			pushToast("warning", "toast.permissionModeFailed", errText(error));
 		}
 	},
 }));

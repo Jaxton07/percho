@@ -34,14 +34,19 @@ export {
 	type PermissionRules,
 	patternMatchesToolCall,
 	permissionConfigPath,
-	setPermissionEnabled,
 	splitShellSegments,
 	suggestPattern,
 } from "./permissions";
 export {
+	type PermissionAuditEntry,
+	PermissionAuditLog,
+	permissionAuditPath,
+} from "./permissions/audit";
+export {
 	makePermissionGateExtension,
 	type PermissionConfirm,
 	type PermissionGateOptions,
+	type PermissionModeRef,
 } from "./permissions/extension";
 export { PermissionGate, type PermissionRequestMeta, type PermissionResponder } from "./permissions/gate";
 export { PiBackend, type PiBackendOptions } from "./pi-backend";

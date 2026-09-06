@@ -121,6 +121,10 @@ pi SDK 必须声明进 `packages/desktop/package.json` dependencies（electron-b
 
 `cdp-eval` 里 `useSessionsStore.setState({ sessions: [ { sessionId: 'x' } ] })` 这类缺字段注入会炸渲染组件（如 `TabPill` 读 `session.name.split` → TypeError，错误边界兜住但 UI 白屏重挂）。安全手法：**不碰 sessions 列表**，只对 transcript `bySession` 做函数式合并注入完整 SessionEntry 形状（各字段齐备），测完删 key；或先存原 entry 引用、最后还原。同理不要整体覆盖 `bySession`（会抹掉真实会话，App 重载时连锁出错）。
 
+### CDP 小区域 clip 截图偶发连续 blank，全窗截图正常（2026-09-06，permission-mode 手测）
+
+症状：`Page.captureScreenshot` 带 `clip`（如 composer 底栏 560×95 的小区域）时偶发 4 次重试全 blank；同帧全窗无 clip 截图正常。与 AGENTS.md 已记的「偶发整帧空白」同类合成器瞬时状态，但**小 clip 更易触发且重试也救不回**。对策：能用全窗截图就全窗（事后裁）；必须要小区域时改用 DOM 计算样式断言（`getComputedStyle` 颜色/位置）代替像素级验证，别在重试上耗时。
+
 ### markstream 流式 delta 淡入 = 正文「闪一下」的根源（2026-09-05 定位，8ms 直出覆写）
 
 症状：流式输出时正文隔几百毫秒整段闪一下。库机制：每次可见文本 commit，新增量包进 `span.text-node-stream-delta` 跑 `opacity:0→1`、280ms 的动画（fade-a/b 交替只为重触发）；动画结束才沉淀合并进普通文本。慢速时只有尾部几十字半透明；**快模型 burst 会进 smooth controller 的 catch-up 模式（backlog>600、≤80 字/commit、30fps、最高 1000cps），每个 fade 窗口堆积一两百字同时从透明往上爬**——就是用户看到的闪。

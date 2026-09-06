@@ -14,7 +14,6 @@ import {
 	matchTextFor,
 	mergeWithDefaults,
 	patternMatchesToolCall,
-	setPermissionEnabled,
 	splitShellSegments,
 	suggestPattern,
 } from "../src/permissions";
@@ -308,15 +307,6 @@ describe("配置读写", () => {
 		expect(config.rules.bash).toEqual(DEFAULT_PERMISSION_CONFIG.rules.bash);
 		// 非法的 edit 规则被丢弃后回落到默认的自保护规则表（不再是 undefined）
 		expect(config.rules.edit).toEqual(DEFAULT_PERMISSION_CONFIG.rules.edit);
-		expect(config.rules.read).toBe("deny");
-	});
-
-	it("setPermissionEnabled 保留现有 rules", () => {
-		const dir = makeAgentDir();
-		writeFileSync(join(dir, "permissions.json"), JSON.stringify({ rules: { read: "deny" } }));
-		setPermissionEnabled(dir, false);
-		const config = loadPermissionConfig(dir);
-		expect(config.enabled).toBe(false);
 		expect(config.rules.read).toBe("deny");
 	});
 

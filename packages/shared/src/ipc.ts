@@ -12,6 +12,7 @@ import type {
 	LoadedResources,
 	PermissionAnswer,
 	PermissionConfigInfo,
+	PermissionMode,
 	PermissionRequest,
 	PermissionResolved,
 	QueuedMessages,
@@ -103,9 +104,11 @@ export const IpcChannels = {
 	/** 局域网远程控制二级开关（M2；默认关闭，开观察 ≠ 开控制）。 */
 	LanSetRemoteControl: "lan:setRemoteControl",
 	PermissionRespond: "permission:respond",
-	/** 权限门控配置（设置 UI 开关） */
+	/** 权限门控配置（enabled 解析保留，UI 无入口；chip 逃生舱禁用态感知用） */
 	PermissionGetConfig: "permission:getConfig",
-	PermissionSetEnabled: "permission:setEnabled",
+	/** 会话权限模式（default / fullAccess；内存态，不落盘） */
+	PermissionGetMode: "permission:getMode",
+	PermissionSetMode: "permission:setMode",
 	/** 上下文管理模式二态（设置 UI「通用」面板，默认蒸发） */
 	ContextManagerGetConfig: "contextManager:getConfig",
 	ContextManagerSetMode: "contextManager:setMode",
@@ -270,10 +273,12 @@ export interface PiApi {
 	/** 设置远程控制开关（独立于观察开关；未开观察时允许配置但不生效）。 */
 	lanSetRemoteControl(enabled: boolean): Promise<LanStatus>;
 	respondPermission(requestId: string, answer: PermissionAnswer): Promise<void>;
-	/** 读取权限门控开关状态 */
+	/** 读取权限门控配置（enabled=false = 手改 permissions.json 的隐藏逃生舱态，chip 禁用提示用） */
 	getPermissionConfig(): Promise<PermissionConfigInfo>;
-	/** 设置权限门控开关（即时生效，扩展按 mtime 重读配置） */
-	setPermissionEnabled(enabled: boolean): Promise<void>;
+	/** 读取会话权限模式（default 缺省；关 tab 重开后端已归零，renderer 对齐真值用） */
+	getPermissionMode(sessionId: string): Promise<PermissionMode>;
+	/** 设置会话权限模式（内存态即时生效、不落盘、重启归零） */
+	setPermissionMode(sessionId: string, mode: PermissionMode): Promise<void>;
 	/** 读取上下文管理模式（evaporation / off 二态派生） */
 	getContextManagerConfig(): Promise<ContextManagerConfigInfo>;
 	/** 设置上下文管理模式（写后 ≤2s 生效，无需重开会话） */

@@ -16,7 +16,7 @@ export function ContextRing() {
 	const c = 2 * Math.PI * r;
 
 	return (
-		<div className="group relative -mb-1 flex h-7 items-center">
+		<div className="group relative flex h-7 items-center">
 			<svg
 				width="17"
 				height="17"

@@ -6,13 +6,11 @@ import { Switch } from "../ui/Switch";
 
 const CONTEXT_MANAGER_MODES: ContextManagerMode[] = ["evaporation", "off"];
 
-/** 通用设置面板：语言选择 + 内置权限门控开关 + 上下文管理二态 + channel-watch 开关 */
+/** 通用设置面板：语言选择 + 上下文管理二态 + channel-watch 开关 */
 export function GeneralPanel() {
 	const t = useT();
 	const language = useI18nStore((s) => s.language);
 	const setLanguage = useI18nStore((s) => s.setLanguage);
-	const permissionEnabled = useSettingsStore((s) => s.permissionEnabled);
-	const setPermissionEnabled = useSettingsStore((s) => s.setPermissionEnabled);
 	const contextManagerMode = useSettingsStore((s) => s.contextManagerMode);
 	const setContextManagerMode = useSettingsStore((s) => s.setContextManagerMode);
 	const channelWatchEnabled = useSettingsStore((s) => s.channelWatchEnabled);
@@ -39,19 +37,6 @@ export function GeneralPanel() {
 						</button>
 					))}
 				</div>
-			</div>
-			<div>
-				<div className="flex items-center justify-between gap-4">
-					<h3 className="text-[13px] font-medium text-ink">{t("settings.permissionGate")}</h3>
-					<Switch
-						checked={permissionEnabled === true}
-						disabled={permissionEnabled === null}
-						onCheckedChange={(enabled) => void setPermissionEnabled(enabled)}
-					/>
-				</div>
-				<p className="mt-0.5 text-[11px] leading-relaxed text-ink-faint">
-					{t("settings.permissionGateHint")}
-				</p>
 			</div>
 			<div>
 				<div className="flex items-center justify-between gap-4">

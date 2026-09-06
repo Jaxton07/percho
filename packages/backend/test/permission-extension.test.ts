@@ -1,4 +1,4 @@
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { homedir, tmpdir } from "node:os";
 import { dirname, join, resolve, sep } from "node:path";
 import type {
@@ -8,12 +8,28 @@ import type {
 	ToolCallEvent,
 	ToolCallEventResult,
 } from "@earendil-works/pi-coding-agent";
+import type { PermissionMode } from "@percho/shared";
 import { describe, expect, it } from "vitest";
+import type { PermissionAuditEntry } from "../src/permissions/audit";
+import { permissionAuditPath } from "../src/permissions/audit";
 import { makePermissionGateExtension, type PermissionConfirm } from "../src/permissions/extension";
 import { PermissionGate } from "../src/permissions/gate";
 import { workspaceConfigPath } from "../src/project/workspace-store";
 
 type ToolCallHandler = ExtensionHandler<ToolCallEvent, ToolCallEventResult>;
+
+type PermissionModeRef = { current: PermissionMode };
+
+/** 读取审计文件行（无文件 → 空数组） */
+function readAudit(agentDir: string): PermissionAuditEntry[] {
+	const path = permissionAuditPath(agentDir);
+	if (!existsSync(path)) return [];
+	return readFileSync(path, "utf8")
+		.trim()
+		.split("\n")
+		.filter(Boolean)
+		.map((line) => JSON.parse(line) as PermissionAuditEntry);
+}
 
 interface ConfirmCall {
 	title: string;
@@ -29,11 +45,12 @@ function makeAgentDir(): string {
 }
 
 /** 挂载扩展并返回 tool_call 触发器；confirmAnswer 控制弹窗结果，confirmCalls 捕获元数据；
- * ctx.cwd 缺省 homedir（非临时区基准；临时区豁免测试按需覆盖 cwd） */
+ * ctx.cwd 缺省 homedir（非临时区基准；临时区豁免测试按需覆盖 cwd）；
+ * mode 注入会话权限模式引用（缺省 default，与现状行为一致） */
 function makeHarness(
 	agentDir: string,
 	confirmAnswer: boolean | ((title: string) => boolean) = false,
-	options?: { projectRoot?: string; confirmCalls?: ConfirmCall[]; cwd?: string },
+	options?: { projectRoot?: string; confirmCalls?: ConfirmCall[]; cwd?: string; mode?: PermissionModeRef },
 ) {
 	const confirmCalls = options?.confirmCalls;
 	const confirm: PermissionConfirm | undefined = confirmCalls
@@ -42,7 +59,12 @@ function makeHarness(
 				return typeof confirmAnswer === "function" ? confirmAnswer(title) : confirmAnswer;
 			}
 		: undefined;
-	const extension = makePermissionGateExtension(agentDir, { projectRoot: options?.projectRoot, confirm });
+	const mode = options?.mode;
+	const extension = makePermissionGateExtension(agentDir, {
+		projectRoot: options?.projectRoot,
+		confirm,
+		getMode: mode ? () => mode.current : undefined,
+	});
 	if (typeof extension === "function" || !("factory" in extension)) {
 		throw new Error("expected named inline extension");
 	}
@@ -376,5 +398,109 @@ describe("permission-gate 扩展", () => {
 		const atHome = makeHarness(makeAgentDir(), false, { cwd: homedir() });
 		await expect(atHome.call("bash", { command: "rm -rf sub/x" })).resolves.toMatchObject({ block: true });
 		expect(atHome.confirms).toHaveLength(1);
+	});
+});
+
+describe("权限模式（fullAccess = 一切放行 + 高危审计）", () => {
+	it("fullAccess：ask 规则（rm -rf）放行并审计命中段；不弹窗", async () => {
+		const dir = makeAgentDir();
+		const { call, confirms } = makeHarness(dir, false, { mode: { current: "fullAccess" } });
+		await expect(call("bash", { command: "cd /tmp && ls && rm -rf /etc/xxx" })).resolves.toBeUndefined();
+		expect(confirms).toHaveLength(0);
+		const entries = readAudit(dir);
+		expect(entries).toHaveLength(1);
+		expect(entries[0]).toMatchObject({ tool: "bash", action: "ask", text: "rm -rf /etc/xxx" });
+	});
+
+	it("fullAccess：deny 规则同样降级为记录 + 放行（含自保护规则）", async () => {
+		const dir = makeAgentDir();
+		writeFileSync(
+			join(dir, "permissions.json"),
+			JSON.stringify({ rules: { bash: { "*": "allow", "git push *": "deny" } } }),
+		);
+		const { call, confirms } = makeHarness(dir, false, { mode: { current: "fullAccess" } });
+		await expect(call("bash", { command: "git push origin main" })).resolves.toBeUndefined();
+		await expect(call("write", { path: "/somewhere/auth.json" })).resolves.toBeUndefined();
+		expect(confirms).toHaveLength(0);
+		const entries = readAudit(dir);
+		expect(entries).toHaveLength(2);
+		expect(entries[0]).toMatchObject({ tool: "bash", action: "deny", text: "git push origin main" });
+		expect(entries[1]).toMatchObject({ tool: "write", action: "ask" });
+	});
+
+	it("fullAccess：普通命令放行且无审计行", async () => {
+		const dir = makeAgentDir();
+		const { call } = makeHarness(dir, false, { mode: { current: "fullAccess" } });
+		await expect(call("bash", { command: "ls" })).resolves.toBeUndefined();
+		await expect(call("read", { path: "/etc/hosts" })).resolves.toBeUndefined();
+		expect(readAudit(dir)).toHaveLength(0);
+	});
+
+	it("fullAccess：界外写审计带 boundary 与 resolve 后绝对路径；项目记忆命中不记（口径一致）", async () => {
+		const dir = makeAgentDir();
+		// bash 全 ask + 记忆已放行 npm test*：default 档下记忆命中本就不弹窗，fullAccess 也不应记审计
+		writeFileSync(join(dir, "permissions.json"), JSON.stringify({ rules: { bash: { "*": "ask" } } }));
+		const root = join(dir, "proj");
+		mkdirSync(root, { recursive: true });
+		writeFileSync(
+			workspaceConfigPath(dir),
+			JSON.stringify({
+				version: 1,
+				projects: { [root]: { roots: [], allowed: ["bash: npm test*"] } },
+			}),
+		);
+		const { call } = makeHarness(dir, false, { projectRoot: root, mode: { current: "fullAccess" } });
+		// 记忆命中：不记审计
+		await expect(call("bash", { command: "npm test --watch" })).resolves.toBeUndefined();
+		expect(readAudit(dir)).toHaveLength(0);
+		// 界外写：审计 boundary + resolve 后绝对路径
+		await expect(call("write", { path: "../../../escape-audit.ts" })).resolves.toBeUndefined();
+		// 未记忆的 ask：审计命中段（整串）
+		await expect(call("bash", { command: "npm run build" })).resolves.toBeUndefined();
+		const entries = readAudit(dir);
+		expect(entries).toHaveLength(2);
+		expect(entries[0]).toMatchObject({
+			tool: "write",
+			action: "ask",
+			boundary: "outside-write",
+			text: resolve(root, "../../../escape-audit.ts"),
+		});
+		expect(entries[1]).toMatchObject({ tool: "bash", action: "ask", text: "npm run build" });
+	});
+
+	it("fullAccess：enabled=false 逃生舱仍在（无审计，整体放行）", async () => {
+		const dir = makeAgentDir();
+		writeFileSync(join(dir, "permissions.json"), JSON.stringify({ enabled: false }));
+		const { call } = makeHarness(dir, false, { mode: { current: "fullAccess" } });
+		await expect(call("bash", { command: "rm -rf /" })).resolves.toBeUndefined();
+		expect(readAudit(dir)).toHaveLength(0);
+	});
+
+	it("default 回归：无 getMode 时行为与现状一致（deny block / ask confirm）", async () => {
+		const dir = makeAgentDir();
+		writeFileSync(
+			join(dir, "permissions.json"),
+			JSON.stringify({ rules: { bash: { "*": "allow", "git push *": "deny", "rm -rf *": "ask" } } }),
+		);
+		const { call, confirms } = makeHarness(dir, false);
+		await expect(call("bash", { command: "git push origin main" })).resolves.toMatchObject({ block: true });
+		await expect(call("bash", { command: "rm -rf /etc/x" })).resolves.toMatchObject({ block: true });
+		expect(confirms).toHaveLength(1);
+		expect(readAudit(dir)).toHaveLength(0);
+	});
+
+	it("模式切换即时生效：同 holder default→fullAccess→default，行为逐调用跟随", async () => {
+		const dir = makeAgentDir();
+		const mode: PermissionModeRef = { current: "default" };
+		const { call, confirms } = makeHarness(dir, false, { mode });
+		await expect(call("bash", { command: "rm -rf /etc/x" })).resolves.toMatchObject({ block: true });
+		mode.current = "fullAccess";
+		await expect(call("bash", { command: "rm -rf /etc/x" })).resolves.toBeUndefined();
+		mode.current = "default";
+		await expect(call("bash", { command: "rm -rf /etc/x" })).resolves.toMatchObject({ block: true });
+		expect(confirms).toHaveLength(2);
+		const entries = readAudit(dir);
+		expect(entries).toHaveLength(1);
+		expect(entries[0]).toMatchObject({ action: "ask", tool: "bash" });
 	});
 });

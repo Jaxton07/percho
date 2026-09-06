@@ -62,9 +62,15 @@ export function registerSettingsIpc(backend: PiBackend): void {
 		backend.respondPermission(requestId, answer),
 	);
 	ipcMain.handle(IpcChannels.PermissionGetConfig, () => backend.getPermissionConfig());
-	ipcMain.handle(IpcChannels.PermissionSetEnabled, (_e, enabled: boolean) =>
-		backend.setPermissionEnabled(enabled),
+	ipcMain.handle(IpcChannels.PermissionGetMode, (_e, sessionId: string) =>
+		backend.getSessionPermissionMode(sessionId),
 	);
+	ipcMain.handle(IpcChannels.PermissionSetMode, (_e, sessionId: string, mode: unknown) => {
+		if (mode !== "default" && mode !== "fullAccess") {
+			throw new Error(`invalid permission mode: ${String(mode)}`);
+		}
+		backend.setSessionPermissionMode(sessionId, mode);
+	});
 	ipcMain.handle(IpcChannels.ContextManagerGetConfig, () => backend.getContextManagerConfig());
 	ipcMain.handle(IpcChannels.ContextManagerSetMode, (_e, mode: unknown) => {
 		if (mode !== "evaporation" && mode !== "off") {

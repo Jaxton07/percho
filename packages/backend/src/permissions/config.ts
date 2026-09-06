@@ -1,14 +1,14 @@
 import { existsSync, readFileSync, statSync } from "node:fs";
 import { join } from "node:path";
-import { JsonStore } from "../json-store";
 import { createLogger } from "../log";
 import type { PermissionAction, PermissionOutside, PermissionRule, PermissionRules } from "./pattern";
 
 const log = createLogger("permission-rules");
 
 /**
- * 权限配置读写：~/.pi/agent/permissions.json（enabled + outside + rules），
+ * 权限配置读取：~/.pi/agent/permissions.json（enabled + outside + rules），
  * 文件规则按工具粒度替换默认；非法内容回退默认配置。
+ * enabled 仅手改文件可关（UI 已无入口，spec permission-mode D7 隐藏逃生舱）；本模块不感知会话权限模式（D1：内存态）。
  */
 
 export interface PermissionConfig {
@@ -142,21 +142,6 @@ export function loadPermissionConfig(agentDir: string): PermissionConfig {
 		log.warn("permissions.json 解析失败，使用默认配置", path, err);
 		return mergeWithDefaults({});
 	}
-}
-
-/**
- * 写 enabled 开关（保留现有 rules；无文件时只写 enabled，rules 走默认）。
- * 原子写 + 损坏拒写：文件损坏时抛 JsonStoreCorruptedError（不再重写为仅含 enabled 丢 rules），
- * 调用方 catch 后上抛让 renderer 知道保存失败。
- */
-export function setPermissionEnabled(agentDir: string, enabled: boolean): void {
-	const store = new JsonStore<Record<string, unknown>>({
-		path: permissionConfigPath(agentDir),
-		defaultValue: () => ({}),
-	});
-	store.updateSync((existing) => {
-		existing.enabled = enabled;
-	});
 }
 
 /** mtime 缓存的配置读取：扩展在每次 tool_call 前调用，开关/规则修改即时生效 */

@@ -13,6 +13,7 @@ import { AttachmentChip } from "./AttachmentChip";
 import { ContextRing } from "./ContextRing";
 import { ImageTray } from "./ImageTray";
 import { ModelPicker } from "./ModelPicker";
+import { PermissionPicker } from "./PermissionPicker";
 import { QueueBar } from "./QueueBar";
 import { QuoteChip } from "./QuoteChip";
 import { SendErrorBar } from "./SendErrorBar";
@@ -365,7 +366,7 @@ export function Composer({ centered = false }: { centered?: boolean }) {
 						/>
 						<button
 							type="button"
-							className="-ml-1 -mb-1 flex h-7 w-7 items-center justify-center rounded-lg text-ink-dim transition-colors hover:bg-hover hover:text-ink disabled:opacity-30 disabled:hover:bg-transparent"
+							className="-ml-1 flex h-7 w-7 items-center justify-center rounded-lg text-ink-dim transition-colors hover:bg-hover hover:text-ink disabled:opacity-30 disabled:hover:bg-transparent"
 							aria-label={t("composer.addImage")}
 							title={!imagesSupported ? t("composer.imageUnsupported") : undefined}
 							disabled={readOnly || !imagesSupported}
@@ -373,8 +374,11 @@ export function Composer({ centered = false }: { centered?: boolean }) {
 						>
 							<PlusIcon size={18} />
 						</button>
-						<ContextRing />
+						<div className={readOnly ? "pointer-events-none opacity-40" : undefined}>
+							<PermissionPicker />
+						</div>
 						<div className="flex-1" />
+						<ContextRing />
 						<div className={readOnly ? "pointer-events-none opacity-40" : undefined}>
 							<ModelPicker />
 						</div>

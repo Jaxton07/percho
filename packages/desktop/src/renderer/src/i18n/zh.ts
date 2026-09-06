@@ -60,6 +60,14 @@ export const zh = {
 		queueRestore: "取回编辑",
 		queueFull: "已有一条排队消息，取回后再发",
 		removeQuote: "移除引用",
+		permissionMode: "权限模式",
+		permissionDefault: "默认",
+		permissionFullAccess: "完全访问",
+		permissionDefaultTitle: "默认",
+		permissionDefaultDesc: "按权限规则审批高危操作",
+		permissionFullAccessTitle: "完全访问权限",
+		permissionFullAccessDesc: "不拦截任何操作，高危命令执行留痕审计；仅当前会话生效",
+		permissionGateOff: "内置权限门控已在 permissions.json 中关闭",
 	},
 	selection: {
 		addToChat: "添加到对话",
@@ -224,9 +232,6 @@ export const zh = {
 		backgroundChange: "更换图片",
 		backgroundClear: "清除背景",
 		backgroundDim: "遮罩浓度",
-		permissionGate: "内置权限门控",
-		permissionGateHint:
-			"开启后按规则拦截工具调用：高危命令（rm -rf、sudo、强推等）弹窗确认，其余放行。规则文件 ~/.pi/agent/permissions.json，修改即时生效。关闭可换用自己安装的权限扩展。",
 		contextManager: "上下文管理",
 		contextManagerMode: {
 			evaporation: "蒸发",
@@ -474,6 +479,7 @@ export const zh = {
 		uiStateSaveFailed: "界面设置保存失败",
 		trustFailed: "项目信任检查失败",
 		closeFailed: "关闭会话失败",
+		permissionModeFailed: "切换权限模式失败",
 	},
 };
 

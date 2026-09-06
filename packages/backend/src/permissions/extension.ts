@@ -1,5 +1,6 @@
 import { isAbsolute, relative, resolve } from "node:path";
 import type { InlineExtension } from "@earendil-works/pi-coding-agent";
+import type { PermissionMode } from "@percho/shared";
 import { createLogger } from "../log";
 import { createWorkspacesLoader, suggestRootCandidate } from "../project/workspace-store";
 import {
@@ -11,6 +12,7 @@ import {
 	patternMatchesToolCall,
 	suggestPattern,
 } from ".";
+import { type PermissionAuditEntry, PermissionAuditLog, permissionAuditPath } from "./audit";
 import type { PermissionRequestMeta } from "./gate";
 import { isRmSegment, isTemporaryPath, rmSegmentExempt } from "./tmp-zone";
 
@@ -34,7 +36,12 @@ export interface PermissionGateOptions {
 	projectRoot?: string;
 	/** 直接确认通道（携带元数据）；缺省回退 ctx.ui.confirm（无元数据，弹窗无第四按钮） */
 	confirm?: PermissionConfirm;
+	/** 会话权限模式实时读取（每次 tool_call 调，切换即时生效）；缺省恒 default（与现状行为一致） */
+	getMode?: () => PermissionMode;
 }
+
+/** 按会话权限模式的可变引用（PiBackend 持有 map，随扩展工厂闭包注入求值链） */
+export type PermissionModeRef = { current: PermissionMode };
 
 /**
  * 内置权限门控扩展：只用 pi 公开扩展 API（tool_call 钩子 + 确认通道）。
@@ -47,6 +54,9 @@ export interface PermissionGateOptions {
  *  ③ 项目记忆 workspaces.json allowed[]（allowAlways 持久化）—— 命中放行（可覆盖 ask，不可覆盖 deny）
  *  ④ ask → confirm（带 kind/suggestDir 元数据 → ApprovalDock 第四按钮「允许此目录」）
  * enabled=false 时整体放行（用户换用自己的扩展时关闭本扩展）。
+ * mode=fullAccess（spec permission-mode D2/D4）：求值链照跑，default 档下会被 deny/ask
+ * 的调用降级为「写审计 + 放行」（项目记忆命中的不记，与 default 档口径一致）；deny 与
+ * ask 同样降级——一切放行，含自保护规则（用户明示接受的语义）。
  * 边界检查只覆盖路径工具：bash 无法用路径模式约束（cd 任意跳），符号链接逃逸不在范围。
  */
 export function makePermissionGateExtension(
@@ -59,9 +69,12 @@ export function makePermissionGateExtension(
 		factory: (pi) => {
 			const loadConfig = createPermissionConfigLoader(agentDir);
 			const loadWorkspaces = createWorkspacesLoader(agentDir);
+			const audit = new PermissionAuditLog(permissionAuditPath(agentDir));
 			pi.on("tool_call", async (event, ctx) => {
 				const config = loadConfig();
 				if (!config.enabled) return;
+				// fullAccess：一切放行 + 高危留痕（每次 tool_call 实时读，切换即时生效）
+				const fullAccess = options?.getMode?.() === "fullAccess";
 				const input = (event.input ?? {}) as Record<string, unknown>;
 				const matchText = matchTextFor(event.toolName, input);
 				// 相对路径 resolve 基准：projectRoot ?? ctx.cwd（皆缺时 tmp 豁免仅绝对路径可判，fail-safe）
@@ -79,6 +92,18 @@ export function makePermissionGateExtension(
 					: evaluateRules(config.rules, event.toolName, matchText);
 
 				if (action === "deny") {
+					if (fullAccess) {
+						// D2：deny 同样降级为记录 + 放行（含自保护规则）；审计口径 = 规则命中段/文本
+						audit.record({
+							t: new Date().toISOString(),
+							sessionId: ctx.sessionManager?.getSessionId(),
+							tool: event.toolName,
+							action: "deny",
+							text: (bashResult?.segment ?? matchText ?? JSON.stringify(input)).slice(0, 500),
+							cwd: ctx.cwd,
+						});
+						return;
+					}
 					log.info("tool blocked by rule", event.toolName, { matchText });
 					return {
 						block: true,
@@ -91,6 +116,8 @@ export function makePermissionGateExtension(
 				const isPath = PATH_TOOLS.has(event.toolName);
 				let patternText: string | null = matchText;
 				let outside = false;
+				// 边界类审计来源标注（仅边界改写触发时非空；规则 ask/deny 无此字段）
+				let boundary: PermissionAuditEntry["boundary"];
 				if (isPath && matchText) {
 					// 绝对路径直接用；相对按 base resolve；无 base 无从判定（保持原样，不进任一地理分支）
 					const abs = isAbsolute(matchText)
@@ -104,6 +131,7 @@ export function makePermissionGateExtension(
 						patternText = abs;
 						if (action === "allow") {
 							action = config.outside.temporary;
+							if (action !== "allow") boundary = "temporary";
 						}
 					} else if (projectRoot && abs !== null) {
 						const roots = [projectRoot, ...(loadWorkspaces().projects[projectRoot]?.roots ?? [])];
@@ -117,6 +145,8 @@ export function makePermissionGateExtension(
 							// 读写分离：界外读默认放行（拦读不换安全只损效率），界外写确认
 							if (action === "allow") {
 								action = READ_TOOLS.has(event.toolName) ? config.outside.read : config.outside.write;
+								if (action !== "allow")
+									boundary = READ_TOOLS.has(event.toolName) ? "outside-read" : "outside-write";
 							}
 						}
 					}
@@ -131,6 +161,24 @@ export function makePermissionGateExtension(
 					if (allowed.some((pattern) => patternMatchesToolCall(pattern, event.toolName, patternText))) {
 						return;
 					}
+				}
+
+				// fullAccess：走到这里 = default 档下会弹 confirm 的调用（ask/outside 覆盖），审计后放行。
+				// 记忆命中的已提前 return（不记才与 default 档口径一致）；text = 命中段/resolve 后路径
+				if (fullAccess) {
+					audit.record({
+						t: new Date().toISOString(),
+						sessionId: ctx.sessionManager?.getSessionId(),
+						tool: event.toolName,
+						action: "ask",
+						text: (bashResult?.segment ?? (isPath ? patternText : matchText) ?? JSON.stringify(input)).slice(
+							0,
+							500,
+						),
+						cwd: ctx.cwd,
+						...(boundary ? { boundary } : {}),
+					});
+					return;
 				}
 
 				// 标题 = 记忆模式键。bash 用命中危险段（allowAlways 按标题记忆 = 会话白名单，

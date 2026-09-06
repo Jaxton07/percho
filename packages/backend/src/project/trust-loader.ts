@@ -1,15 +1,16 @@
 import type { InlineExtension, ProjectTrustStore } from "@earendil-works/pi-coding-agent";
 import { DefaultResourceLoader, getAgentDir, SettingsManager } from "@earendil-works/pi-coding-agent";
 import { createLogger } from "../log";
-import type { PermissionConfirm } from "../permissions/extension";
+import type { PermissionConfirm, PermissionModeRef } from "../permissions/extension";
 import { resolveProjectTrust, type TrustOptionInternal } from "./trust";
 
 const log = createLogger("backend");
 
-/** 内置扩展注册编排（cwd + 会话的 confirm 通道拼装 todo-reminder/权限门控/视觉代理；开关逻辑在调用方） */
+/** 内置扩展注册编排（cwd + 会话的 confirm 通道 + 权限模式引用拼装 todo-reminder/权限门控/视觉代理；开关逻辑在调用方） */
 export type ExtensionFactoryBuilder = (
 	cwd: string,
 	confirm: PermissionConfirm | undefined,
+	modeRef?: PermissionModeRef,
 ) => InlineExtension[];
 
 /**
@@ -43,7 +44,7 @@ export class ProjectResourceLoader {
 	 */
 	async load(
 		cwd: string,
-		options?: { askTrust?: boolean; confirm?: PermissionConfirm },
+		options?: { askTrust?: boolean; confirm?: PermissionConfirm; modeRef?: PermissionModeRef },
 	): Promise<{
 		settingsManager: SettingsManager;
 		resourceLoader: DefaultResourceLoader;
@@ -54,7 +55,7 @@ export class ProjectResourceLoader {
 			cwd,
 			agentDir,
 			settingsManager,
-			extensionFactories: this.deps.buildExtensions(cwd, options?.confirm),
+			extensionFactories: this.deps.buildExtensions(cwd, options?.confirm, options?.modeRef),
 			...this.deps.desktopIntegration,
 		});
 		if (this.deps.projectTrust === false) {

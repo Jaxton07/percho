@@ -218,10 +218,13 @@ export interface PermissionResolved {
 	answered: boolean;
 }
 
-/** 权限门控配置（设置 UI 开关；规则全文在 ~/.pi/agent/permissions.json） */
+/** 权限门控配置（enabled=false = 手改 permissions.json 卸载内置门控的隐藏逃生舱，UI 无入口） */
 export interface PermissionConfigInfo {
 	enabled: boolean;
 }
+
+/** 会话权限模式：default = 按规则审批；fullAccess = 一切放行 + 高危调用写审计。按会话内存态，不落盘、不跨会话继承、重启归零。 */
+export type PermissionMode = "default" | "fullAccess";
 
 /** 上下文管理模式（二态；缺省 evaporation。
  * 物理存储 = settings.json 单一决策 key contextEvaporation.enabled

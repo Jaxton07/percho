@@ -30,6 +30,44 @@ export function ErrorCircleIcon({ size = 14, className }: IconProps) {
 	);
 }
 
+/** 盾牌（权限模式默认档 glyph） */
+export function ShieldIcon({ size = 14, className }: IconProps) {
+	return (
+		<svg
+			className={className}
+			width={size}
+			height={size}
+			viewBox="0 0 24 24"
+			{...strokeProps}
+			strokeLinecap="round"
+			strokeLinejoin="round"
+			aria-hidden="true"
+		>
+			<path d="M20 13c0 5-3.5 7.5-7.66 8.95a1 1 0 0 1-.67-.01C7.5 20.5 4 18 4 13V6a1 1 0 0 1 1-1c2 0 4.5-1.2 6.24-2.72a1.17 1.17 0 0 1 1.52 0C14.51 3.81 17 5 19 5a1 1 0 0 1 1 1z" />
+		</svg>
+	);
+}
+
+/** 警告三角（权限模式 fullAccess 档 glyph，warn 色常驻提醒） */
+export function WarningIcon({ size = 14, className }: IconProps) {
+	return (
+		<svg
+			className={className}
+			width={size}
+			height={size}
+			viewBox="0 0 24 24"
+			{...strokeProps}
+			strokeLinecap="round"
+			strokeLinejoin="round"
+			aria-hidden="true"
+		>
+			<path d="M10.29 3.86 1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z" />
+			<path d="M12 9v4" />
+			<path d="M12 17h.01" />
+		</svg>
+	);
+}
+
 /** 右箭头（错误卡展开 chevron） */
 export function ChevronRightIcon({ size = 12, className }: IconProps) {
 	return (

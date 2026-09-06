@@ -38,8 +38,8 @@ interface SettingsStore {
 	loading: boolean;
 	/** 联网刷新模型目录进行中（默认刷新只走本地，见 refreshProvidersFromNetwork） */
 	refreshing: boolean;
-	/** 内置权限门控开关（null = 未加载） */
-	permissionEnabled: boolean | null;
+	/** 内置权限门控已被手改 permissions.json 关闭（逃生舱态；null = 未加载，false 不禁用 chip） */
+	permissionGateOff: boolean | null;
 	/** 上下文管理模式（evaporation / off；null = 未加载） */
 	contextManagerMode: ContextManagerMode | null;
 	/** channel-watch 跨会话频道唤醒开关（null = 未加载） */
@@ -74,7 +74,6 @@ interface SettingsStore {
 	setModelHidden: (provider: string, modelId: string, hidden: boolean) => Promise<void>;
 	setModelsHidden: (provider: string, modelIds: string[], hidden: boolean) => Promise<void>;
 	setSubagentModel: (agent: string, modelRef: string | null) => Promise<void>;
-	setPermissionEnabled: (enabled: boolean) => Promise<void>;
 	setContextManagerMode: (mode: ContextManagerMode) => Promise<void>;
 	setChannelWatchEnabled: (enabled: boolean) => Promise<void>;
 	refreshLanStatus: () => Promise<void>;
@@ -97,7 +96,7 @@ export const useSettingsStore = create<SettingsStore>((set, get) => {
 		subagents: [],
 		loading: false,
 		refreshing: false,
-		permissionEnabled: null,
+		permissionGateOff: null,
 		contextManagerMode: null,
 		channelWatchEnabled: null,
 		lanStatus: null,
@@ -124,9 +123,10 @@ export const useSettingsStore = create<SettingsStore>((set, get) => {
 		refresh: async () => {
 			set({ loading: true });
 			// 权限门控配置是本地文件读，独立加载，不被 provider 列表阻塞
+			// （仅派生 enabled=false 逃生舱态供 chip 禁用提示；开关 UI 已撒，spec permission-mode D7）
 			void getPi()
 				.getPermissionConfig()
-				.then((permission) => set({ permissionEnabled: permission.enabled }))
+				.then((permission) => set({ permissionGateOff: !permission.enabled }))
 				.catch(() => {});
 			// 上下文管理模式二态同样本地文件读，独立加载
 			void getPi()
@@ -179,19 +179,6 @@ export const useSettingsStore = create<SettingsStore>((set, get) => {
 				await useSessionsStore.getState().loadModels();
 			} catch (error) {
 				set({ refreshing: false, error: error instanceof Error ? error.message : String(error) });
-			}
-		},
-
-		setPermissionEnabled: async (enabled) => {
-			const previous = get().permissionEnabled;
-			set({ permissionEnabled: enabled });
-			try {
-				await getPi().setPermissionEnabled(enabled);
-			} catch (error) {
-				set({
-					permissionEnabled: previous,
-					error: error instanceof Error ? error.message : String(error),
-				});
 			}
 		},
 

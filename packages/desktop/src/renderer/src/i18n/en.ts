@@ -63,6 +63,15 @@ export const en: Messages = {
 		queueRestore: "Take back to editor",
 		queueFull: "A message is already queued — take it back first",
 		removeQuote: "Remove quote",
+		permissionMode: "Permission mode",
+		permissionDefault: "Default",
+		permissionFullAccess: "Full access",
+		permissionDefaultTitle: "Default",
+		permissionDefaultDesc: "High-risk operations ask for confirmation per permission rules",
+		permissionFullAccessTitle: "Full access",
+		permissionFullAccessDesc:
+			"Nothing is blocked; high-risk command runs are written to an audit log — current session only",
+		permissionGateOff: "The built-in permission gate is disabled in permissions.json",
 	},
 	selection: {
 		addToChat: "Add to chat",
@@ -228,9 +237,6 @@ export const en: Messages = {
 		backgroundChange: "Change image",
 		backgroundClear: "Remove",
 		backgroundDim: "Overlay opacity",
-		permissionGate: "Built-in permission gate",
-		permissionGateHint:
-			"When on, tool calls are checked against rules: dangerous commands (rm -rf, sudo, force push, etc.) ask for confirmation, everything else runs. Rules live in ~/.pi/agent/permissions.json and apply instantly. Turn off to replace with your own permission extension.",
 		contextManager: "Context management",
 		contextManagerMode: {
 			evaporation: "Evaporation",
@@ -487,5 +493,6 @@ export const en: Messages = {
 		uiStateSaveFailed: "Failed to save UI state",
 		trustFailed: "Failed to check project trust",
 		closeFailed: "Failed to close session",
+		permissionModeFailed: "Failed to switch permission mode",
 	},
 };

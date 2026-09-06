@@ -25,6 +25,7 @@ import type {
 	LoginEventPayload,
 	ModelPrefs,
 	PermissionAnswer,
+	PermissionMode,
 	PermissionRequest,
 	PermissionResolved,
 	SessionEvent,
@@ -46,8 +47,12 @@ import {
 } from "@percho/shared";
 import { createLogger } from "./log";
 import { PackageAdmin } from "./packages/admin";
-import { loadPermissionConfig, setPermissionEnabled as writePermissionEnabled } from "./permissions";
-import { makePermissionGateExtension, type PermissionConfirm } from "./permissions/extension";
+import { loadPermissionConfig } from "./permissions";
+import {
+	makePermissionGateExtension,
+	type PermissionConfirm,
+	type PermissionModeRef,
+} from "./permissions/extension";
 import { PermissionGate } from "./permissions/gate";
 import { walkProjectFiles } from "./project/files";
 import { TrustGate } from "./project/trust";
@@ -148,6 +153,8 @@ export class PiBackend {
 	private readonly trustHandlers = new Set<TrustHandler>();
 	private readonly loginHandlers = new Set<LoginHandler>();
 	private readonly gates = new Map<string, PermissionGate>();
+	/** 按会话权限模式（default 缺省；fullAccess = 一切放行 + 高危审计）：会话创建时随工厂注入，关会话/重启归零 */
+	private readonly permissionModes = new Map<string, PermissionModeRef>();
 	/** 项目信任决策记录（~/.pi/agent/trust.json，与 CLI 共享）+ 信任请求门控 */
 	private readonly trustStore = new ProjectTrustStore(getAgentDir());
 	private readonly trustGate = new TrustGate((req) => this.dispatchTrustRequest(req));
@@ -178,7 +185,7 @@ export class PiBackend {
 			trustStore: this.trustStore,
 			ask: (dir, opts) => this.trustGate.ask(dir, opts),
 			canAsk: () => this.trustHandlers.size > 0,
-			buildExtensions: (cwd, confirm) => this.buildExtensionFactories(cwd, confirm),
+			buildExtensions: (cwd, confirm, modeRef) => this.buildExtensionFactories(cwd, confirm, modeRef),
 			projectTrust: options.projectTrust,
 			desktopIntegration: options.desktopIntegration,
 		});
@@ -220,6 +227,7 @@ export class PiBackend {
 	private buildExtensionFactories(
 		cwd: string,
 		confirm: PermissionConfirm | undefined,
+		modeRef?: PermissionModeRef,
 	): Array<
 		| ReturnType<typeof makeTodoReminderExtension>
 		| ReturnType<typeof makeChannelWatchExtension>
@@ -232,8 +240,15 @@ export class PiBackend {
 		> = [];
 		if (this.options.permissionGates !== false && this.options.permissionExtension !== false) {
 			// confirm 直接桥到 PermissionGate（携带 kind/suggestDir 元数据，驱动「允许此目录」）；
-			// 未提供时扩展自行回退 ctx.ui.confirm（无元数据）
-			factories.push(makePermissionGateExtension(getAgentDir(), { projectRoot: cwd, confirm }));
+			// 未提供时扩展自行回退 ctx.ui.confirm（无元数据）；modeRef 同款闭包注入（D1：
+			// 按会话内存态，每次 tool_call 实时读，无 modeRef 的调用方如 draft 斜杠命令恒 default）
+			factories.push(
+				makePermissionGateExtension(getAgentDir(), {
+					projectRoot: cwd,
+					confirm,
+					getMode: () => modeRef?.current ?? "default",
+				}),
+			);
 		}
 		// 上下文蒸发（默认开启：缺省 mode=evaporation；钩子实时读派生 mode，
 		// 设置页切换后 ≤2s 生效，无需重开会话）。
@@ -322,9 +337,12 @@ export class PiBackend {
 		const gate = new PermissionGate((req) => this.dispatchPermissionRequest(req));
 		// 权限扩展的确认通道直接桥到 gate（携带 kind/suggestDir 元数据，驱动「允许此目录」/持久化）
 		const confirmBridge: PermissionConfirm = (title, message, meta) => gate.confirm(title, message, meta);
+		// 会话权限模式引用：新会话一律 default 起步（D1：不落盘、不继承），随工厂闭包注入求值链
+		const modeRef: PermissionModeRef = { current: "default" };
 
 		const { settingsManager, resourceLoader } = await this.projectLoader.load(cwd, {
 			confirm: confirmBridge,
+			modeRef,
 		});
 		const { session, extensionsResult } = await createAgentSession({
 			cwd,
@@ -351,6 +369,7 @@ export class PiBackend {
 
 		gate.bindSession(session.sessionId);
 		this.gates.set(session.sessionId, gate);
+		this.permissionModes.set(session.sessionId, modeRef);
 		if (this.options.permissionGates !== false) {
 			await session.bindExtensions({
 				uiContext: makeUiContext(gate),
@@ -375,8 +394,11 @@ export class PiBackend {
 		const cwd = sessionManager.getCwd() || process.cwd();
 		const gate = new PermissionGate((req) => this.dispatchPermissionRequest(req));
 		const confirmBridge: PermissionConfirm = (title, message, meta) => gate.confirm(title, message, meta);
+		// 重开历史会话同样 default 起步（D1：模式不随会话文件继承）
+		const modeRef: PermissionModeRef = { current: "default" };
 		const { settingsManager, resourceLoader } = await this.projectLoader.load(cwd, {
 			confirm: confirmBridge,
+			modeRef,
 		});
 		const { session, extensionsResult } = await createAgentSession({
 			sessionManager,
@@ -398,6 +420,7 @@ export class PiBackend {
 		}
 		gate.bindSession(session.sessionId);
 		this.gates.set(session.sessionId, gate);
+		this.permissionModes.set(session.sessionId, modeRef);
 		if (this.options.permissionGates !== false) {
 			await session.bindExtensions({ uiContext: makeUiContext(gate), mode: "tui" });
 		}
@@ -458,6 +481,7 @@ export class PiBackend {
 		entry.session.dispose();
 		this.gates.get(sessionId)?.dispose();
 		this.gates.delete(sessionId);
+		this.permissionModes.delete(sessionId);
 		this.streamGuard.cleanup(sessionId);
 		this.eventRates.delete(sessionId);
 		this.registry.delete(sessionId);
@@ -946,20 +970,22 @@ export class PiBackend {
 		}
 	}
 
-	/** 权限门控配置（设置 UI 开关用；规则全文在 ~/.pi/agent/permissions.json） */
+	/** 权限门控配置（enabled 解析保留；UI 已无开关入口，仅手改 permissions.json 可关 = 隐藏逃生舱） */
 	getPermissionConfig(): { enabled: boolean } {
 		return { enabled: loadPermissionConfig(getAgentDir()).enabled };
 	}
 
-	/** 写 enabled 开关；扩展按 mtime 重读配置，即时生效。损坏拒写时上抛（renderer 需要知道保存失败） */
-	setPermissionEnabled(enabled: boolean): void {
-		try {
-			writePermissionEnabled(getAgentDir(), enabled);
-		} catch (err) {
-			log.error("permissions.json 写入失败（enabled 开关未保存）", err);
-			throw err; // PermissionRespond 是 ipcMain.handle，reject 传回 renderer
-		}
-		log.info("permission gate enabled", enabled);
+	/** 会话权限模式（default 缺省 fail-safe；关 tab 重开后端已归零，renderer 对齐用） */
+	getSessionPermissionMode(sessionId: string): PermissionMode {
+		return this.permissionModes.get(sessionId)?.current ?? "default";
+	}
+
+	/** 切换会话权限模式（内存态即时生效，不落盘；会话不存在时抛可读错误） */
+	setSessionPermissionMode(sessionId: string, mode: PermissionMode): void {
+		const ref = this.permissionModes.get(sessionId);
+		if (!ref) throw new Error(`Session not found: ${sessionId}`);
+		ref.current = mode;
+		log.info("permission mode", sessionId, { mode });
 	}
 
 	/** 上下文管理模式（二态：evaporation / off；单一 key 派生读，缺省蒸发） */

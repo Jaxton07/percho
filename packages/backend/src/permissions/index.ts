@@ -5,6 +5,8 @@
  * - config.ts      permissions.json 读写 + 默认配置（含 PermissionConfig 类型）
  * - tmp-zone.ts    系统临时区判定 + rm 目标提取（地理分区豁免，纯函数）
  */
+
+export { type PermissionAuditEntry, PermissionAuditLog, permissionAuditPath } from "./audit";
 export {
 	collectBashCandidates,
 	extractShellExecArg,
@@ -18,7 +20,6 @@ export {
 	mergeWithDefaults,
 	type PermissionConfig,
 	permissionConfigPath,
-	setPermissionEnabled,
 } from "./config";
 export {
 	evaluateBashCommand,

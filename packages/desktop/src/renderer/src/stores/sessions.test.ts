@@ -16,6 +16,7 @@ const piMock = vi.hoisted(() => ({
 	getSessionMessages: vi.fn(),
 	getFollowUpMessages: vi.fn(() => Promise.resolve([])),
 	getTodos: vi.fn(() => Promise.resolve([])),
+	getPermissionMode: vi.fn(() => Promise.resolve("default" as const)),
 }));
 vi.mock("../api", () => ({ getPi: () => piMock }));
 

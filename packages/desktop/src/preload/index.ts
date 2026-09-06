@@ -77,7 +77,8 @@ const api: PiApi = {
 	respondPermission: (requestId, answer) =>
 		ipcRenderer.invoke(IpcChannels.PermissionRespond, requestId, answer),
 	getPermissionConfig: () => ipcRenderer.invoke(IpcChannels.PermissionGetConfig),
-	setPermissionEnabled: (enabled) => ipcRenderer.invoke(IpcChannels.PermissionSetEnabled, enabled),
+	getPermissionMode: (sessionId) => ipcRenderer.invoke(IpcChannels.PermissionGetMode, sessionId),
+	setPermissionMode: (sessionId, mode) => ipcRenderer.invoke(IpcChannels.PermissionSetMode, sessionId, mode),
 	getContextManagerConfig: () => ipcRenderer.invoke(IpcChannels.ContextManagerGetConfig),
 	setContextManagerMode: (mode) => ipcRenderer.invoke(IpcChannels.ContextManagerSetMode, mode),
 	getChannelWatchConfig: () => ipcRenderer.invoke(IpcChannels.ChannelWatchGetConfig),

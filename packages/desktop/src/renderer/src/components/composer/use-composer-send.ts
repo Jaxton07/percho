@@ -56,11 +56,20 @@ export function useComposerSend(options: UseComposerSendOptions) {
 		const current = state.activeSessionId;
 		if (current && !isDraftSessionId(current)) return current;
 		const draftCwd = current ? state.sessions.find((s) => s.sessionId === current)?.cwd : undefined;
+		// draft 态选过的权限模式：转正后应用到新会话（后端新会话一律 default 起步）
+		const pendingMode = current ? state.permissionModes[current] : undefined;
 		const targetCwd = draftCwd ?? state.cwd;
 		if (!targetCwd) return null;
 		await useSessionsStore.getState().createSession(targetCwd, current ?? undefined);
 		const created = useSessionsStore.getState().activeSessionId;
-		return created && !isDraftSessionId(created) ? created : null;
+		if (created && !isDraftSessionId(created)) {
+			// 失败仅 toast（store 内已提示+回滚），不阻塞发送
+			if (pendingMode && pendingMode !== "default") {
+				await useSessionsStore.getState().setSessionPermissionMode(created, pendingMode);
+			}
+			return created;
+		}
+		return null;
 	};
 
 	/** 执行内置命令（发送以 / 开头文本时的分发；未匹配则透传给 SDK 原生处理模板/skill/扩展命令） */
