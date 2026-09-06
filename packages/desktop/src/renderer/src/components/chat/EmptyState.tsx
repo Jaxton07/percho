@@ -3,6 +3,7 @@ import { useProjectsStore } from "../../stores/projects";
 import { useSessionsStore } from "../../stores/sessions";
 import { Composer } from "../composer/Composer";
 import { ProjectBranchPicker } from "../projects/ProjectBranchPicker";
+import { WordmarkConstruct } from "./WordmarkConstruct";
 
 /** 空态：大字 Logo + 居中输入框 + 项目/分支选择（对标 opencode 新会话页） */
 export function EmptyState() {
@@ -15,7 +16,7 @@ export function EmptyState() {
 
 	return (
 		<div className="flex h-full flex-col items-center justify-center gap-8 px-8 pb-[8vh]">
-			<div className="text-7xl font-extrabold tracking-tight text-ink select-none">Percho</div>
+			<WordmarkConstruct />
 			{error && <p className="max-w-md text-center text-xs text-red-500">{error}</p>}
 			<Composer centered />
 			<ProjectBranchPicker />

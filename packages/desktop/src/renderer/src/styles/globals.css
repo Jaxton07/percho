@@ -52,6 +52,11 @@
 	--color-on-ink: #ffffff;
 	--color-accent: #7c3aed;
 	--color-on-accent: #ffffff;
+	/* 首页字标（手稿构造版 WordmarkConstruct）：字描边 / 主构造线 / 次级虚线 / 标注文字 */
+	--lg-ol: #a1a1aa;
+	--lg-c1: #c9c9d1;
+	--lg-c2: #e0e0e6;
+	--lg-lb: #b0b0b8;
 	/* 「重启」胶囊：很浅的蓝底 + 比背景深一档的中蓝字 */
 	--color-update: #e0f2fe;
 	--color-on-update: #0284c7;
@@ -99,6 +104,11 @@
 	--color-on-ink: #17171a;
 	--color-accent: #8b5cf6;
 	--color-on-accent: #ffffff;
+	/* 首页字标手稿构造版深色：描边与构造线压到 canvas 上刚好可辨的灰 */
+	--lg-ol: #5f5f66;
+	--lg-c1: #35353c;
+	--lg-c2: #2b2b32;
+	--lg-lb: #4a4a52;
 	--color-update: #0c4a6e;
 	--color-on-update: #7dd3fc;
 	--color-err: #f87171;

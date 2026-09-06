@@ -191,6 +191,7 @@ src/
 |---|---|
 | 开屏动画（粒子光团 → 散场） | `renderer/src/styles/splash.css`（全部视觉与编排）+ `splash-dom.ts`（DOM/粒子参数）+ `splash.ts`（时长/单次标记）；首帧主题链 = bootstrap-theme.ts + window.ts + main/index.ts（`?theme=` 传参） |
 | 消息气泡 / 代码块 / 高亮 | `components/chat/`（Markdown 样式覆写在 globals.css `.markdown-body`） |
+| 首页大字 logo（手稿构造字标） | `chat/WordmarkConstruct.tsx`（空心描边 + 制图构造线静态 SVG，canvas 度量字形墨盒后离线固化；改设计重新烘焙）+ globals.css `--lg-ol/c1/c2/lb`（深浅各一套）；设计稿 `.local/design/pi-logo/wordmark.html`（H2 手稿构造） |
 | 报错卡 / 错误分类 | `chat/ErrorNote.tsx` + globals.css（`.error-note*`/`.retry-note`/`.send-error`/`.toast` 段）+ `shared/src/errors.ts`（classifyLlmError 模式表 + 信封构造）+ i18n `error.*`；severity 色改 `--color-err/warn/info`（深浅各一份） |
 | 工作中预览行 / 状态动画 | `chat/PreviewTicker.tsx` + `activity-ticker.ts`（minDwellMs 350）+ `MetaGroup.tsx`（状态行 orb + liveItems）+ `use-sweep-highlight.ts`（统一扫光）+ `use-shown-working.ts`（1500ms 滞后缓冲）+ `CenterOrb.tsx`/`center-orb-draw.ts`（中央版，开关 ui-preferences）+ shared `transcript/meta-summary.ts`（圆点行/统计行） |
 | 输入框 / 发送 / 停止 / 排队 | `composer/Composer.tsx`（装配层）+ `use-composer-send.ts`（发送/停止/取回排队）；草稿持久在 `stores/drafts.ts`；排队事件 `queue_update` + getFollowUpMessages |
