@@ -300,6 +300,7 @@ export const en: Messages = {
 			testFailed: "Test failed: {error}",
 			removeCredential: "Remove credential",
 			login: "Sign in with subscription",
+			loginApiKey: "Sign in",
 			builtinEdit: "Endpoint & key",
 			builtinEditTitle: "Configure {name} endpoint",
 			builtinBaseUrl: "baseUrl (optional; blank = official endpoint)",
@@ -331,11 +332,13 @@ export const en: Messages = {
 		},
 		login: {
 			title: "Subscription sign-in · {name}",
+			apiKeyTitle: "Sign in · {name}",
 			browserHint:
 				"Authorization page opened in your browser. If it doesn't complete automatically, paste the final redirect URL from the browser address bar into the input below",
 			deviceCodeHint: "Enter this code on the verification page",
 			deviceCodeExpires: "Code expires in {minutes} min",
 			waiting: "Waiting for authorization…",
+			waitingInteractive: "Waiting for your input…",
 			submit: "Submit",
 			failed: "Sign-in failed",
 		},

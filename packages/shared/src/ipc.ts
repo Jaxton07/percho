@@ -91,7 +91,7 @@ export const IpcChannels = {
 	SettingsSetSubagentModel: "settings:setSubagentModel",
 	/** 只列内置与用户级 subagent（设置是全局配置，不绑定项目） */
 	SettingsListSubagents: "settings:listSubagents",
-	/** provider 订阅登录（OAuth）；loginId 由 renderer 生成用于事件归属 */
+	/** provider 交互登录（OAuth / api_key，后者如 Google Vertex 的 ADC/服务账号）；loginId 由 renderer 生成用于事件归属 */
 	SettingsLoginStart: "settings:loginStart",
 	SettingsLoginCancel: "settings:loginCancel",
 	SettingsLoginRespond: "settings:loginRespond",
@@ -255,7 +255,7 @@ export interface PiApi {
 	setSubagentModel(agent: string, modelRef: string | null): Promise<ModelPrefs>;
 	/** 列内置与用户级 subagent 定义（不读项目级定义） */
 	listSubagents(): Promise<SubagentInfo[]>;
-	/** 启动 provider 订阅登录（OAuth 浏览器/设备码流）；事件经 onProviderLoginEvent 推送，promise 在流程结束时 resolve（取消不算错误） */
+	/** 启动 provider 交互登录（OAuth 浏览器/设备码流 · api_key 提示/选择流）；事件经 onProviderLoginEvent 推送，promise 在流程结束时 resolve（取消不算错误） */
 	startProviderLogin(loginId: string, providerId: string): Promise<LoginResult>;
 	/** 取消进行中的登录流程（未知 loginId 静默忽略） */
 	cancelProviderLogin(loginId: string): Promise<void>;

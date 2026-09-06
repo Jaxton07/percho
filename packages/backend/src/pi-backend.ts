@@ -162,7 +162,7 @@ export class PiBackend {
 	readonly settings = new SettingsService(() => this.getModelRuntime());
 	/** 用户级模型可见性与子代理模型偏好（独立于 CLI 共用 settings.json）。 */
 	private readonly modelPrefs = new ModelPrefsService(join(getAgentDir(), "model-prefs.json"));
-	/** provider 订阅登录（OAuth）服务，事件经 onLoginEvent 分发 */
+	/** provider 交互登录服务（OAuth + api_key 交互，如 Google Vertex），事件经 onLoginEvent 分发 */
 	readonly login = new LoginService({
 		getRuntime: () => this.getModelRuntime(),
 		send: (payload) => this.dispatchLoginEvent(payload),

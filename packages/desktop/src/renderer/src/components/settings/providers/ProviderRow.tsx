@@ -47,7 +47,7 @@ export function IconAction({
 	);
 }
 
-/** 单个 Provider：配置状态徽章 + 图标操作（测试 / 填 Key / 删除 / 移除凭证） */
+/** 单个 Provider：配置状态徽章 + 图标操作（测试 / 登录（oauth·api_key 交互） / 填 Key / 删除 / 移除凭证） */
 export function ProviderRow({ provider }: { provider: ProviderInfo }) {
 	const t = useT();
 	const removeCredential = useSettingsStore((s) => s.removeCredential);
@@ -129,9 +129,14 @@ export function ProviderRow({ provider }: { provider: ProviderInfo }) {
 						)}
 					</IconAction>
 				)}
-				{provider.oauth && !provider.custom && (
+				{/* label 与 store/backend 的 loginKind 判定同构（oauth 优先）：oauth provider 即使无 loginLabel 也走「订阅登录」文案 */}
+				{!provider.custom && (provider.oauth || provider.apiKeyLogin) && (
 					<IconAction
-						label={provider.oauth.loginLabel ?? t("settings.providers.login")}
+						label={
+							provider.oauth
+								? (provider.oauth.loginLabel ?? t("settings.providers.login"))
+								: t("settings.providers.loginApiKey")
+						}
 						disabled={loginActive}
 						onClick={() => void startLogin(provider)}
 					>

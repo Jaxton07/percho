@@ -123,6 +123,9 @@ export class SettingsService {
 								isSubscription: provider.auth.oauth.isSubscription,
 							}
 						: undefined,
+					// 交互式 api_key 登录（如 Google Vertex：API key/ADC/服务账号三选一）能力标记：UI 据此显示「登录」入口
+					// （与自定义 provider 无关：自定义 provider 的 compose auth 会无条件造出 login，入口由表单承担）
+					...(provider.auth.apiKey?.login ? { apiKeyLogin: true } : {}),
 					// 自定义 provider 回填 baseUrl/api，编辑表单预填用（key 永不回读）
 					...(customEntry
 						? {

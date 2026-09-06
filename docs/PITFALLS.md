@@ -23,6 +23,7 @@
 | LAN 对话页正文重复出现在末尾、run 结束又恢复正常 | 二 · 流式增量帧不可重放（healing 兜底差量） |
 | 流式输出时正文「隔一会儿闪一下」、尾部文字半透明往上爬 | 四 · markstream 流式 delta 淡入（已修：8ms 直出覆写） |
 | onDragStart 里拿不到拖拽尺寸（`active.rect.current.initial` 恒 null） | 四 · dnd-kit rect ref 填充晚于 onDragStart |
+| Google Vertex 填了 key 仍 401「API keys are not supported by this API」 | 二 · Vertex 只支持 ADC/服务账号（api_key 路径必败，桥接层已剔除 api-key 选项） |
 
 ## 一、事故复盘（含可复用诊断手法）
 
@@ -55,6 +56,16 @@ glm-5.3 流式输出病态空白 thinking（纯 `\n    ` 洪流永不终止）�
 `pi-backend.ts` 的 `makeUiContext` 已有全量 no-op 实现（约 25 个成员）——只改 `confirm`，别重写。
 
 ### `Model`/`ThinkingLevel` 类型来自 `@earendil-works/pi-ai`（coding-agent 不 re-export）
+
+### Google Vertex 只接受 ADC/服务账号认证（2026-09-05 实测）
+
+症状：Google Vertex AI 在 UI「编辑」填 Key 后显示已配置，但请求必 401 `"API keys are not supported by this API. Expected OAuth2 access token..."`（`aiplatform.googleapis.com` 的 `PredictionService.StreamGenerateContent`），对照组 Gemini API（`google` provider）同样假 key 是 400 `"API key not valid"`——即 Gemini 端点支持 API key、Vertex 端点明确拒绝。
+
+事实：Vertex 可用的认证 = OAuth2 类（ADC / 服务账号），需 project + location + 凭据文件，且三者当前只经 `auth.json` 的 `env` 字段（CLI `/login` 交互产生，`ModelRuntime.login(providerId, "api_key", ...)` 的 `AuthInteraction`）或进程环境变量（GUI 从 Finder 启动读不到 shell env）。
+
+已修（2026-09-05）：`LoginService` 放宽为支持 api_key 交互登录，`login.ts` 的 `filterAuthSelectOptions` 对 `google-vertex` 剔除必败的 `api-key` 选项；ProviderRow 对 `apiKeyLogin` 标记的内置 provider 显示「登录」入口。复现/验证脚本：`scripts/verify-vertex-auth.mts`（401 事实）与 `scripts/verify-vertex-login.mts`（ADC 交互落盘→configured）。
+
+补充坑：**「已配置」徽章 = auth.json 有条目，不等于凭证真正可用**（pi CodingAgent `getProviderAuthStatus` 的 `storedProviders` 优先判定，不 resolve；CLI 同语义）。Vertex 输错凭据文件路径时列表仍显示「已配置」，发请求才失败——引导用户用「测试」按钮真实验证。
 
 `Model` 有 `name` 无 `label`；`model.provider` 是字符串。
 

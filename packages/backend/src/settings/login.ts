@@ -28,11 +28,33 @@ export interface LoginServiceDeps {
 }
 
 /**
- * Provider 订阅登录（OAuth）服务：把 pi SDK 的 AuthInteraction 桥接成 IPC 事件。
+ * Provider 交互登录服务：把 pi SDK 的 AuthInteraction 桥接成 IPC 事件。
+ * 支持两种登录形态：OAuth（订阅制 provider）+ api_key 交互登录（内置 provider 的 auth.apiKey.login，
+ * 如 Google Vertex 的 API key/ADC/服务账号三选一）。
  * 同一时刻只允许一个登录流程（UI 为模态对话框）；
  * 浏览器回调先完成时 SDK 会 abort 挂起 prompt 的 signal（外部取消），
  * 整体取消/流程结束时回收全部挂起 prompt，防 Promise 泄漏。
  */
+
+/**
+ * Vertex AI 端点（aiplatform.googleapis.com）不接受 API key 认证（仅 OAuth2/ADC/服务账号；
+ * 实测请求返回 401 "API keys are not supported by this API"）。SDK 的 vertexAuth.login 仍提供 api-key
+ * 选项，选了必然失败——桥接层对 google-vertex 剔除该选项（2026-09-05 实测记录，见 PITFALLS）。
+ */
+const VERTEX_UNSUPPORTED_AUTH_OPTIONS: Record<string, string[]> = {
+	"google-vertex": ["api-key"],
+};
+
+/** 纯函数：剔除 provider 已知不可用的认证方式选项（select prompt 分发时调用） */
+export function filterAuthSelectOptions<TOption extends { id: string; label: string; description?: string }>(
+	providerId: string,
+	options: readonly TOption[],
+): readonly TOption[] {
+	const blocked = VERTEX_UNSUPPORTED_AUTH_OPTIONS[providerId];
+	if (!blocked) return options;
+	return options.filter((option) => !blocked.includes(option.id));
+}
+
 export class LoginService {
 	private active: ActiveLogin | undefined;
 
@@ -40,8 +62,12 @@ export class LoginService {
 
 	async startLogin(loginId: string, providerId: string): Promise<LoginResult> {
 		if (!loginId) throw new Error("loginId 不能为空");
+		// 单例登录流：已有进行中的流程时先取消它（renderer 崩溃/刷新后旧 prompt 无人应答会永久占位；
+		// 对话框本身就是模态单例，重新发起必然意味着放弃旧流程），再原子占位。
+		if (this.active) {
+			this.cancel(this.active.loginId);
+		}
 		// check-then-set 必须原子：先占位再 await（getRuntime 是异步的，先 await 会让并发调用双双穿过守卫）
-		if (this.active) throw new Error("已有进行中的登录流程");
 		const login: ActiveLogin = {
 			loginId,
 			providerId,
@@ -55,9 +81,15 @@ export class LoginService {
 			const runtime = await this.deps.getRuntime();
 			const provider = runtime.getProvider(providerId);
 			if (!provider) throw new Error(`未知 provider：${providerId}`);
-			if (!provider.auth.oauth) throw new Error(`${provider.name || providerId} 不支持订阅登录`);
+			// oauth 优先；无 oauth 但有交互式 api_key 登录（如 Google Vertex）走 api_key 交互流程
+			const method = provider.auth.oauth
+				? ("oauth" as const)
+				: provider.auth.apiKey?.login
+					? ("api_key" as const)
+					: undefined;
+			if (!method) throw new Error(`${provider.name || providerId} 不支持登录`);
 			// 凭证持久化由 SDK models.login 内部完成（auth.json + 运行时可用性同步）
-			await runtime.login(providerId, "oauth", {
+			await runtime.login(providerId, method, {
 				signal: login.abort.signal,
 				notify: (event) => this.notify(login, event),
 				prompt: (prompt) => this.prompt(login, prompt),
@@ -96,12 +128,16 @@ export class LoginService {
 		// signal 是 AbortSignal 不可结构化克隆，剥离后跨进程发送；取消经 prompt-cancel 事件表达
 		const wire: LoginAuthPrompt =
 			prompt.type === "select"
-				? { type: "select", message: prompt.message, options: prompt.options }
+				? {
+						type: "select",
+						message: prompt.message,
+						options: filterAuthSelectOptions(login.providerId, prompt.options),
+					}
 				: { type: prompt.type, message: prompt.message, placeholder: prompt.placeholder };
-		this.deps.send({ loginId: login.loginId, kind: "prompt", promptId, prompt: wire });
-
 		return new Promise<string>((resolve, reject) => {
+			// 先登记再通知：send 的同步 handler 立即 respond 也不会丢（防同步时序争用）
 			login.prompts.set(promptId, { resolve, reject });
+			this.deps.send({ loginId: login.loginId, kind: "prompt", promptId, prompt: wire });
 			const onAbort = () => {
 				if (!login.prompts.delete(promptId)) return;
 				this.deps.send({ loginId: login.loginId, kind: "prompt-cancel", promptId });

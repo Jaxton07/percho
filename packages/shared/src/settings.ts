@@ -71,6 +71,8 @@ export interface ProviderInfo {
 	authLabel?: string;
 	/** 支持订阅登录（OAuth）时存在；UI 据此显示「订阅登录」入口 */
 	oauth?: ProviderOAuthInfo;
+	/** 有交互式 api_key 登录（如 Google Vertex 的 ADC/服务账号/API key 三选一）时存在；UI 据此显示「登录」入口 */
+	apiKeyLogin?: boolean;
 	/** 自定义 provider 的 baseUrl（来自 models.json，编辑表单预填用；内置 provider 不填） */
 	baseUrl?: string;
 	/** 自定义 provider 的 api 协议（编辑表单预填用；内置 provider 不填） */

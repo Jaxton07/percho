@@ -5,9 +5,10 @@ import { useProviderLoginStore } from "../../../stores/provider-login";
 import { Button } from "../../ui/Button";
 
 /**
- * 订阅登录（OAuth）对话框：渲染 backend LoginService 桥接来的 AuthInteraction 事件。
+ * 交互登录对话框：渲染 backend LoginService 桥接来的 AuthInteraction 事件。
  * 状态机：auth_url（自动开浏览器 + 手动粘贴兜底）/ device_code（验证码 + SDK 轮询）/
  * select·text·manual_code 提示 / progress·info 状态行 / error 保留展示。
+ * 覆盖两种形态：OAuth 订阅登录 + api_key 交互登录（如 Google Vertex 的 ADC/服务账号）。
  * SDK 提示文案为英文原文（provider 自带），对话框框架文案走 i18n。
  */
 export function LoginDialog() {
@@ -37,7 +38,9 @@ export function LoginDialog() {
 		<div className="fixed inset-0 z-[60] flex items-center justify-center bg-ink/20" role="dialog" aria-modal>
 			<div className="w-[440px] rounded-xl border border-border bg-surface p-4 shadow-dialog">
 				<h3 className="text-sm font-semibold text-ink">
-					{t("settings.login.title", { name: login.providerName })}
+					{t(login.loginKind === "apiKey" ? "settings.login.apiKeyTitle" : "settings.login.title", {
+						name: login.providerName,
+					})}
 				</h3>
 
 				{/* 设备码：验证码 + 验证链接，SDK 侧自行轮询 */}
@@ -129,7 +132,14 @@ export function LoginDialog() {
 				{!login.error && (
 					<div className="mt-3 flex items-center gap-2 text-[11px] text-ink-faint">
 						<span className="h-3 w-3 shrink-0 animate-spin rounded-full border-[1.5px] border-current border-t-transparent" />
-						<span className="truncate">{login.statusLine ?? t("settings.login.waiting")}</span>
+						<span className="truncate">
+							{login.statusLine ??
+								t(
+									login.loginKind === "apiKey"
+										? "settings.login.waitingInteractive"
+										: "settings.login.waiting",
+								)}
+						</span>
 					</div>
 				)}
 
@@ -167,8 +177,9 @@ function PromptInput({
 	useEffect(() => {
 		inputRef.current?.focus();
 	}, []);
-	// manual_code 允许空提交（SDK 按缺省处理），其余空值无意义
-	const allowEmpty = prompt.type === "manual_code";
+	// secret 不许空提交（key 无空值语义）；text/manual_code 允许空（CLI 语义：回车=空串，
+	// 如 Bedrock credential-chain 的 "press Enter to continue"、Vertex 的 project/location）
+	const allowEmpty = prompt.type !== "secret";
 	const submit = () => {
 		if (!allowEmpty && !input.trim()) return;
 		onSubmit(input.trim());
