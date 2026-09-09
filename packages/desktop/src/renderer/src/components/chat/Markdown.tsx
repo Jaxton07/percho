@@ -25,9 +25,19 @@ const CODE_BLOCK_PROPS = {
 	// 首行灰底修复：库的 monaco 默认值（renderLineHighlight:"none" 等）只对 diff 块生效
 	//（En() 首行 if(!e) return o），普通块裸奔 —— 只读编辑器光标恒停第一行，当前行高亮
 	// 让首行比其他行多一层灰底。显式关掉。同理关掉右侧概览标尺（overview ruler）——
-	// 光标行在右缘留一枚黑色短杠标记，只读块无导航价值。
+	// 光标行在右缘留一枚黑色短杠标记，只读块无导航价值。编辑器式 decoration 也关闭：
+	// 全角标点/不可见字符、同词和括号的描边在只读展示里像残留选区，且没有修复动作。
 	monacoOptions: {
 		renderLineHighlight: "none",
+		selectionHighlight: false,
+		occurrencesHighlight: "off",
+		matchBrackets: "never",
+		bracketPairColorization: { enabled: false },
+		unicodeHighlight: {
+			ambiguousCharacters: false,
+			invisibleCharacters: false,
+			nonBasicASCII: false,
+		},
 		overviewRulerLanes: 0,
 		renderOverviewRuler: false,
 		overviewRulerBorder: false,
@@ -35,7 +45,7 @@ const CODE_BLOCK_PROPS = {
 	},
 } as const;
 
-/** 减速动效偏好：直接关闭 pacing（直出）；库 CSS 自带 animation:none 处理淡入 */
+/** 减速动效偏好：关闭 pacing，直接输出 */
 const REDUCED_MOTION =
 	typeof window !== "undefined" && window.matchMedia("(prefers-reduced-motion: reduce)").matches;
 
@@ -48,8 +58,9 @@ const REDUCED_MOTION =
  *    的消息启用——历史/固化后打开的消息直出（mount 初值锁定，否则整篇会重播一遍）。
  *    流式 → turn_end 固化依赖 MessageList 的 key 稳定（StreamingState.id）保持组件不 remount，
  *    controller 才能存活并平滑追平。
- * 2. fade：新块节点 enter 淡入（.28s）+ 文本节点新增内容交替淡入（text-node-stream-delta a/b）。
- * 样式：组件自带 CSS（:where() 零优先级），视觉覆写集中在 globals.css 的 .markdown-body 下。
+ * 2. fade 必须关闭：开启后 smooth controller 每次 commit 都会创建带 opacity/will-change 的临时
+ *    span；高频合成层切换会让整个文本排版区域看起来闪烁。fade=false 走库内稳定文本 span 分支，
+ *    不依赖 animationend 沉淀。样式覆写集中在 globals.css 的 .markdown-body 下。
  * isDark 驱动代码块 shiki 主题（vitesse-light/dark）与容器深浅。注意必须显式传
  * codeBlockLightTheme/codeBlockDarkTheme：不传时 stream-monaco 回退到 themes[0]（默认 vitesse-dark），
  * 浅色模式下代码块也会是深色。
@@ -66,7 +77,7 @@ export function Markdown({ text, streaming }: { text: string; streaming?: boolea
 			<MarkdownRender
 				content={text}
 				final={!streaming}
-				fade={!REDUCED_MOTION}
+				fade={false}
 				smoothStreaming={smoothableRef.current}
 				smoothStreamingOptions={SMOOTH_OPTIONS}
 				isDark={isDark}

@@ -21,7 +21,8 @@
 | 凭证泄漏风险、密钥误提交 | 五 · 绝不打印/提交 API key |
 | LAN 页连接僵死不重连、状态「重连中/已连接」反复跳 | 二 · SSE 心跳必须是命名事件帧 |
 | LAN 对话页正文重复出现在末尾、run 结束又恢复正常 | 二 · 流式增量帧不可重放（healing 兜底差量） |
-| 流式输出时正文「隔一会儿闪一下」、尾部文字半透明往上爬 | 四 · markstream 流式 delta 淡入（已修：8ms 直出覆写） |
+| 流式输出时整个 Markdown 区域随 token 节奏闪烁、尾部文字半透明往上爬 | 四 · markstream fade 的临时合成层（已修：组件 API 关闭 fade） |
+| 代码块顶部两行无法拖选、标点偶发橙色框 | 四 · 悬浮 header 命中层 + Monaco Unicode 高亮 |
 | onDragStart 里拿不到拖拽尺寸（`active.rect.current.initial` 恒 null） | 四 · dnd-kit rect ref 填充晚于 onDragStart |
 | Google Vertex 填了 key 仍 401「API keys are not supported by this API」 | 二 · Vertex 只支持 ADC/服务账号（api_key 路径必败，桥接层已剔除 api-key 选项） |
 
@@ -125,13 +126,19 @@ pi SDK 必须声明进 `packages/desktop/package.json` dependencies（electron-b
 
 症状：`Page.captureScreenshot` 带 `clip`（如 composer 底栏 560×95 的小区域）时偶发 4 次重试全 blank；同帧全窗无 clip 截图正常。与 AGENTS.md 已记的「偶发整帧空白」同类合成器瞬时状态，但**小 clip 更易触发且重试也救不回**。对策：能用全窗截图就全窗（事后裁）；必须要小区域时改用 DOM 计算样式断言（`getComputedStyle` 颜色/位置）代替像素级验证，别在重试上耗时。
 
-### markstream 流式 delta 淡入 = 正文「闪一下」的根源（2026-09-05 定位，8ms 直出覆写）
+### markstream fade 的临时合成层 = 整个 Markdown 区域随流闪烁（2026-09-05 初修，2026-09-08 根治）
 
-症状：流式输出时正文隔几百毫秒整段闪一下。库机制：每次可见文本 commit，新增量包进 `span.text-node-stream-delta` 跑 `opacity:0→1`、280ms 的动画（fade-a/b 交替只为重触发）；动画结束才沉淀合并进普通文本。慢速时只有尾部几十字半透明；**快模型 burst 会进 smooth controller 的 catch-up 模式（backlog>600、≤80 字/commit、30fps、最高 1000cps），每个 fade 窗口堆积一两百字同时从透明往上爬**——就是用户看到的闪。
+症状：流式输出时正文随 token/commit 节奏整块闪一下；慢模型频率低，快模型频率高。库机制：`fade=true` 时每次可见文本 commit 都把新增量包进 `span.text-node-stream-delta`，跑 `opacity:0→1` 动画并带 `will-change:opacity`；动画结束后再沉淀进普通文本。除了尾部直接变淡，高频创建/销毁临时合成层还会让同一文本排版区域的合成/抗锯齿观感一起跳，看起来像整个 Markdown 被重绘。
 
-修复（globals.css `.markdown-body`）：`--stream-update-fade-duration: 8ms`（该变量只喂这一条动画）。**不能用 `animation:none`**：库的 span 沉淀/合并靠 `onAnimationEnd` 触发，禁动画会让 fading span 永远不合并且 `will-change:opacity` 合成层常驻。
+2026-09-05 初修把 `--stream-update-fade-duration` 压到 8ms，只缩短了动画，没有消除临时 span 与合成层切换，仍会按模型输出频率闪。2026-09-08 根治：桌面和 LAN 的 `Markdown` 都从组件 API 传 `fade={false}`，保留 `smoothStreaming` 的 pacing。注意这与 CSS `animation:none` 不同：`fade=false` 会让库直接走稳定文本 span 分支，不创建 fading span，也不依赖 `animationend` 沉淀。
 
-已排除的候选（实证手法可复用）：组件 remount / 整树重渲 / 块级 fade-node 重播 / controller.reset 重播（reset 是即时全亮）——给 store 注合成事件（`applyEvent` + 构造 text_delta，参考 `scripts/repro-full.mjs` 思路），页面侧 rAF 采样 `document.getAnimations({subtree:true})` + MutationObserver（removed 节点计数）即可实锤。次级因素：代码块 fence 打开后先渲纯文本 fallback 再换 monaco（空闲时 ~32ms，主线程忙时更长）。
+已排除的候选（实证手法可复用）：组件 remount / 整树重渲 / 块级 fade-node 重播 / controller.reset 重播（reset 是即时全亮）。给 store 注入合成 `text_delta`，页面侧用 MutationObserver + 节点身份采样 + `animationstart` 监听验证：`.markdown-body` / `.markstream-react` 身份不变，而开启 fade 时每个 smooth commit 都启动 `markstream-react-text-node-stream-update-fade-*`。次级因素：代码块 fence 打开后先渲纯文本 fallback 再换 Monaco（空闲时约 32ms，主线程忙时更长）。
+
+### 代码块顶部不可选 + 标点橙框（2026-09-08）
+
+两个独立原因。顶部不可选：为保留复制按钮而把 `.code-block-header` 绝对定位到代码块顶部，header 实际高 38px，恰好覆盖 18px 行高的前两行；`:hover/:focus-within` 曾把整条 header 设为 `pointer-events:auto`，透明区域也会截获拖选。修复为 header 始终 `pointer-events:none`，仅 `.code-action-btn` 恢复 `pointer-events:auto`。
+
+标点橙框：Monaco 默认 `unicodeHighlight` 会给全角标点、不可见字符和易混淆字符生成 `.unicode-highlight` 描边，模型输出中混入这类字符时看起来像随机残留框选。只读展示没有可执行的修复动作，桌面与 LAN 的 `Markdown.tsx` 都通过 `monacoOptions` 关闭三类 Unicode 高亮，并一并关闭同词、符号 occurrence 和括号匹配 decoration；真实拖选高亮保留。诊断时用 `elementFromPoint` 检查顶部文本命中、`.view-overlays .selected-text` 检查 Monaco 内部选区；不要用 `window.getSelection()` 判断，Monaco 选区不走浏览器 Selection API。
 
 ### dnd-kit：`onDragStart` 里 `active.rect.current.initial` 恒为 null（2026-09-05）
 

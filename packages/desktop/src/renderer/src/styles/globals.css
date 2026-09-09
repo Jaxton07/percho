@@ -693,10 +693,6 @@ code {
 	--link-color: var(--color-accent);
 	/* 库的 rounded-lg 等工具类吃 --ms-radius，CSS 里无默认定义（→ 直角）；在此补上 */
 	--ms-radius: 10px;
-	/* 流式 delta 近乎直出：默认 280ms 从 opacity 0 淡入，快模型 burst（catch-up 模式 ≤80 字/commit）
-	   会让整段文字反复从透明往上爬，观感是「隔一会儿闪一下」。压到 8ms = 视觉直出；
-	   不能用 animation:none——那会截断 animationend，库内的 fading span 沉淀/合并逻辑会停摆。 */
-	--stream-update-fade-duration: 8ms;
 }
 .markdown-body .paragraph-node {
 	margin: 0.55rem 0;
@@ -786,6 +782,10 @@ code {
 .markdown-body .code-block-container:hover .code-block-header,
 .markdown-body .code-block-container:focus-within .code-block-header {
 	opacity: 1;
+}
+/* header 覆盖前两行（38px，代码行高 18px），整层接管鼠标会导致顶部两行无法拖选。
+   保持 header 穿透，只让实际操作按钮恢复命中。 */
+.markdown-body .code-block-header .code-action-btn {
 	pointer-events: auto;
 }
 /* 语言标签胶囊：不展示（设计去语言标签） */
@@ -805,7 +805,8 @@ code {
 		transition: none;
 	}
 }
-/* header 右侧图标按钮：颜色继承自容器（= 编辑器主题前景），只需抹平深蓝底文字按钮 */
+/* header 右侧图标按钮：颜色继承自容器（= 编辑器主题前景），只需抹平深蓝底文字按钮；
+   header 本身 pointer-events:none，只有按钮可命中，避免挡住代码顶部文本。 */
 .markdown-body .code-block-btn {
 	border-color: var(--color-border-strong);
 	background: var(--color-surface);
