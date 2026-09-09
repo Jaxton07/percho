@@ -494,5 +494,12 @@ export const en: Messages = {
 		trustFailed: "Failed to check project trust",
 		closeFailed: "Failed to close session",
 		permissionModeFailed: "Failed to switch permission mode",
+		sessionCreateFailed: "Failed to create session",
+		sessionOpenFailed: "Failed to open session",
+		forkFailed: "Failed to fork session",
+		recallFailed: "Failed to recall message",
+		modelsLoadFailed: "Failed to load models",
+		modelSwitchFailed: "Failed to switch model",
+		thinkingSwitchFailed: "Failed to switch thinking level",
 	},
 };

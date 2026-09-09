@@ -47,10 +47,11 @@ function applyBackendPermissionMode(sessionId: string, mode: PermissionMode): vo
 	});
 }
 
-/** toast detail 展示截断（原始错误文本超出只留首段） */
+/** toast detail 展示：剥掉 Electron IPC 包装前缀（`Error invoking remote method 'x': Error: `），截断只留首段 */
 function errText(error: unknown): string | undefined {
-	const message = error instanceof Error ? error.message : typeof error === "string" ? error : undefined;
+	let message = error instanceof Error ? error.message : typeof error === "string" ? error : undefined;
 	if (!message) return undefined;
+	message = message.replace(/^Error invoking remote method '[^']+':\s*/i, "").replace(/^Error:\s*/i, "");
 	return message.length > 140 ? `${message.slice(0, 140)}…` : message;
 }
 
@@ -79,7 +80,6 @@ interface SessionsStore {
 	models: AvailableModel[];
 	currentModel: { provider: string; modelId: string } | null;
 	thinkingLevel: string;
-	error: string | null;
 	/** 项目信任决策完成计数：ensureProjectTrust 应答后 +1，驱动 draft 斜杠菜单按新决策重拉 */
 	trustVersion: number;
 	/** 按会话权限模式（缺 key = default；draft id 为 key 的条目是 renderer 内存态，转正时由 ensureSession 应用到后端） */
@@ -117,7 +117,6 @@ export const useSessionsStore = create<SessionsStore>((set, get) => ({
 	models: [],
 	currentModel: null,
 	thinkingLevel: "medium",
-	error: null,
 	trustVersion: 0,
 	permissionModes: {},
 
@@ -145,8 +144,9 @@ export const useSessionsStore = create<SessionsStore>((set, get) => ({
 			useTranscriptStore.getState().resetSession(meta.sessionId);
 			persistTabs(get());
 		} catch (error) {
-			// 失败时 draft tab 保留，用户重试即可
-			set({ error: error instanceof Error ? error.message : String(error) });
+			// 失败时 draft tab 保留，用户重试即可；toast 提示（非会话内容，不残留）
+			console.error("创建会话失败", error);
+			pushToast("warning", "toast.sessionCreateFailed", errText(error));
 		}
 	},
 
@@ -272,7 +272,8 @@ export const useSessionsStore = create<SessionsStore>((set, get) => ({
 			await loadSessionBundle(meta.sessionId, { skipHistoryIfLive: true });
 			persistTabs(get());
 		} catch (error) {
-			set({ error: error instanceof Error ? error.message : String(error) });
+			console.error("打开会话失败", error);
+			pushToast("warning", "toast.sessionOpenFailed", errText(error));
 		}
 	},
 
@@ -290,7 +291,8 @@ export const useSessionsStore = create<SessionsStore>((set, get) => ({
 			persistTabs(get());
 			return meta.sessionId;
 		} catch (error) {
-			set({ error: error instanceof Error ? error.message : String(error) });
+			console.error("分叉会话失败", error);
+			pushToast("warning", "toast.forkFailed", errText(error));
 			return undefined;
 		}
 	},
@@ -311,7 +313,8 @@ export const useSessionsStore = create<SessionsStore>((set, get) => ({
 			await loadSessionBundle(activeSessionId);
 			window.dispatchEvent(new CustomEvent(COMPOSER_FOCUS_EVENT));
 		} catch (error) {
-			set({ error: error instanceof Error ? error.message : String(error) });
+			console.error("撤回消息失败", error);
+			pushToast("warning", "toast.recallFailed", errText(error));
 		}
 	},
 
@@ -393,13 +396,21 @@ export const useSessionsStore = create<SessionsStore>((set, get) => ({
 				thinkingLevel: clampedLevel,
 			});
 		} catch (error) {
-			set({ error: error instanceof Error ? error.message : String(error) });
+			console.error("加载模型列表失败", error);
+			pushToast("warning", "toast.modelsLoadFailed", errText(error));
 		}
 	},
 
-	/** 切换当前会话的模型：更新全局默认（新会话用）+ 当前会话（只影响该会话），并同步 SDK */
+	/**
+	 * 切换当前会话的模型：更新全局默认（新会话用）+ 当前会话（只影响该会话），并同步 SDK。
+	 * 乐观更新，SDK 同步失败回滚 + toast（范式同 setSessionPermissionMode）——
+	 * 动作反馈属 toast，不进会话错误卡、不跨会话残留。
+	 */
 	setCurrentModel: async (provider, modelId) => {
 		const { activeSessionId } = get();
+		const previousModel = get().currentModel;
+		const previousLevel = get().thinkingLevel;
+		const previousSession = get().sessions.find((s) => s.sessionId === activeSessionId);
 		// 思考深度跟随新模型能力收缩（就近向上找，找不到再取最高档，与 UI 一致）
 		const nextModel = get().models.find((m) => m.provider === provider && m.id === modelId);
 		let thinkingLevel: string = get().thinkingLevel;
@@ -424,14 +435,34 @@ export const useSessionsStore = create<SessionsStore>((set, get) => ({
 			try {
 				await getPi().setModel(activeSessionId, provider, modelId);
 			} catch (error) {
-				set({ error: error instanceof Error ? error.message : String(error) });
+				// SDK 同步失败（如凭证缺失/模型不可用）：回滚乐观态 + 重新持久化 + toast
+				set((state) => ({
+					currentModel: previousModel,
+					thinkingLevel: previousLevel,
+					sessions: state.sessions.map((s) =>
+						s.sessionId === activeSessionId
+							? {
+									...s,
+									model: previousSession?.model ?? null,
+									thinkingLevel: previousSession?.thinkingLevel ?? null,
+								}
+							: s,
+					),
+				}));
+				getPi()
+					.saveUiState({ currentModel: previousModel, thinkingLevel: previousLevel })
+					.catch((e) => console.error("ui-state 回滚持久化失败", e));
+				console.error("切换模型失败", error);
+				pushToast("warning", "toast.modelSwitchFailed", errText(error));
 			}
 		}
 	},
 
-	/** 切换当前会话的思考深度：更新全局默认 + 当前会话（只影响该会话），并同步 SDK */
+	/** 切换当前会话的思考深度：更新全局默认 + 当前会话（只影响该会话），并同步 SDK（失败回滚 + toast） */
 	setThinkingLevel: async (level) => {
-		const { activeSessionId, currentModel } = get();
+		const { activeSessionId } = get();
+		const previousLevel = get().thinkingLevel;
+		const previousSession = get().sessions.find((s) => s.sessionId === activeSessionId);
 		set((state) => ({
 			thinkingLevel: level,
 			sessions: state.sessions.map((s) =>
@@ -439,14 +470,26 @@ export const useSessionsStore = create<SessionsStore>((set, get) => ({
 			),
 		}));
 		getPi()
-			.saveUiState({ currentModel, thinkingLevel: level })
+			.saveUiState({ thinkingLevel: level })
 			.catch((error) => console.error("ui-state 持久化失败", error));
 		// draft 无后端会话：同上，仅作全局默认
 		if (activeSessionId && !isDraftSessionId(activeSessionId)) {
 			try {
 				await getPi().setThinkingLevel(activeSessionId, level);
 			} catch (error) {
-				set({ error: error instanceof Error ? error.message : String(error) });
+				set((state) => ({
+					thinkingLevel: previousLevel,
+					sessions: state.sessions.map((s) =>
+						s.sessionId === activeSessionId
+							? { ...s, thinkingLevel: previousSession?.thinkingLevel ?? null }
+							: s,
+					),
+				}));
+				getPi()
+					.saveUiState({ thinkingLevel: previousLevel })
+					.catch((e) => console.error("ui-state 回滚持久化失败", e));
+				console.error("切换思考深度失败", error);
+				pushToast("warning", "toast.thinkingSwitchFailed", errText(error));
 			}
 		}
 	},

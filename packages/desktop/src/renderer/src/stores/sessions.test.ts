@@ -21,6 +21,7 @@ const piMock = vi.hoisted(() => ({
 vi.mock("../api", () => ({ getPi: () => piMock }));
 
 import { DRAFT_SESSION_PREFIX, isDraftSessionId, useSessionsStore } from "./sessions";
+import { useToastsStore } from "./toasts";
 import { useTranscriptStore } from "./transcript";
 
 function realMeta(sessionId: string, cwd: string): SessionMeta {
@@ -42,7 +43,6 @@ function resetStore() {
 		models: [],
 		currentModel: null,
 		thinkingLevel: "medium",
-		error: null,
 	});
 }
 
@@ -130,14 +130,21 @@ describe("draft 转正（createSession + replaceDraftId）", () => {
 		});
 	});
 
-	it("创建失败：draft tab 保留，错误透出", async () => {
+	it("创建失败：draft tab 保留，toast 提示（不残留 store 错误态）", async () => {
 		piMock.createSession.mockRejectedValue(new Error("boom"));
 		useSessionsStore.getState().createDraftSession("/proj/a");
 		const draftId = useSessionsStore.getState().activeSessionId;
 		await useSessionsStore.getState().createSession("/proj/a", draftId ?? undefined);
 		const state = useSessionsStore.getState();
 		expect(state.sessions[0]?.sessionId).toBe(draftId);
-		expect(state.error).toBe("boom");
+		expect(
+			useToastsStore
+				.getState()
+				.toasts.some(
+					(t) =>
+						t.severity === "warning" && t.titleKey === "toast.sessionCreateFailed" && t.detail === "boom",
+				),
+		).toBe(true);
 	});
 });
 
@@ -237,7 +244,7 @@ describe("openFromHistory", () => {
 });
 
 describe("forkSession", () => {
-	it("装载三件套失败：error 字段置值（异常穿透）", async () => {
+	it("装载三件套失败：toast 提示（异常穿透不残留 store 错误态）", async () => {
 		piMock.getSessionMessages.mockRejectedValue(new Error("bundle boom"));
 		useSessionsStore.setState({
 			sessions: [realMeta("r1", "/proj")],
@@ -247,7 +254,13 @@ describe("forkSession", () => {
 
 		await useSessionsStore.getState().forkSession({});
 
-		expect(useSessionsStore.getState().error).toBe("bundle boom");
+		expect(
+			useToastsStore
+				.getState()
+				.toasts.some(
+					(t) => t.severity === "warning" && t.titleKey === "toast.forkFailed" && t.detail === "bundle boom",
+				),
+		).toBe(true);
 	});
 });
 

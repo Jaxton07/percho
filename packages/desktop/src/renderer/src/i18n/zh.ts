@@ -480,6 +480,13 @@ export const zh = {
 		trustFailed: "项目信任检查失败",
 		closeFailed: "关闭会话失败",
 		permissionModeFailed: "切换权限模式失败",
+		sessionCreateFailed: "创建会话失败",
+		sessionOpenFailed: "打开会话失败",
+		forkFailed: "分叉会话失败",
+		recallFailed: "撤回消息失败",
+		modelsLoadFailed: "加载模型列表失败",
+		modelSwitchFailed: "切换模型失败",
+		thinkingSwitchFailed: "切换思考深度失败",
 	},
 };
 
