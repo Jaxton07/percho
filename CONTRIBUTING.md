@@ -53,7 +53,7 @@ These are hard-won lessons — please follow them:
 
 ## Releasing
 
-Releases are built by GitHub Actions and published to GitHub Releases (macOS arm64/x64 dmg+zip, Windows x64 nsis+zip):
+Releases are built by GitHub Actions and published to GitHub Releases (macOS arm64/x64 dmg+zip, Windows x64 nsis+zip, Linux x64 AppImage):
 
 1. Bump `version` in `packages/desktop/package.json` and commit.
 2. `git tag vX.Y.Z && git push --tags`

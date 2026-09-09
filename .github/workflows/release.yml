@@ -12,7 +12,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [macos-latest, windows-latest]
+        os: [macos-latest, windows-latest, ubuntu-latest]
     runs-on: ${{ matrix.os }}
     env:
       # 无开发者证书：mac 显式走 adhoc 签名（identity: "-"），禁用 runner 上的证书自动发现
@@ -33,6 +33,7 @@ jobs:
             !packages/desktop/dist/mac
             !packages/desktop/dist/mac-arm64
             !packages/desktop/dist/win-unpacked
+            !packages/desktop/dist/linux-unpacked
           if-no-files-found: error
   publish:
     needs: build
@@ -55,6 +56,7 @@ jobs:
           | macOS (Apple Silicon) | `percho-mac-arm64.dmg` |
           | macOS (Intel) | `percho-mac-x64.dmg` |
           | Windows | `percho-windows-x64.exe` (installer) or `percho-windows-x64.zip` |
+          | Linux (x64) | `percho-linux-x86_64.AppImage` |
 
           > Ad-hoc signed (no Developer ID). On macOS, if Gatekeeper blocks the app, right-click it and choose **Open** (or run `xattr -cr "/Applications/Percho.app"`). Windows builds update automatically in-app.
           EOF

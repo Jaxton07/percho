@@ -57,6 +57,13 @@ win:
     - target: zip
       arch: [x64]
   artifactName: percho-windows-${arch}.${ext}
+linux:
+  executableName: percho
+  category: Development
+  target:
+    - target: AppImage
+      arch: [x64]
+  artifactName: percho-linux-${arch}.${ext}
 nsis:
   oneClick: false
   allowToChangeInstallationDirectory: true

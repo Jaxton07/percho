@@ -12,7 +12,7 @@
   <a href="https://github.com/Jaxton07/percho/actions/workflows/ci.yml"><img src="https://img.shields.io/github/actions/workflow/status/Jaxton07/percho/ci.yml?style=flat-square" alt="CI"></a>
   <a href="https://github.com/Jaxton07/percho"><img src="https://img.shields.io/github/stars/Jaxton07/percho?style=flat-square" alt="Stars"></a>
   <img src="https://img.shields.io/badge/node-%3E%3D22.19-339933?logo=nodedotjs&style=flat-square" alt="Node >=22.19">
-  <img src="https://img.shields.io/badge/platform-macOS%20%7C%20Windows-blue?style=flat-square" alt="macOS | Windows">
+  <img src="https://img.shields.io/badge/platform-macOS%20%7C%20Windows%20%7C%20Linux-blue?style=flat-square" alt="macOS | Windows | Linux">
 </p>
 <p align="center">
   <a href="README.md">English</a> | <a href="README.zh.md">简体中文</a>
@@ -69,6 +69,7 @@ Prebuilt installers are published on the [Releases](https://github.com/Jaxton07/
 | macOS (Apple Silicon) | `percho-mac-arm64.dmg` |
 | macOS (Intel) | `percho-mac-x64.dmg` |
 | Windows | `percho-windows-x64.exe` (installer) or `percho-windows-x64.zip` |
+| Linux (x64) | `percho-linux-x86_64.AppImage` |
 
 > Builds are ad-hoc signed (no Developer ID certificate). On macOS, the first launch after a download may show **"Apple cannot verify Percho is free from malware"** — that's Gatekeeper blocking an un-notarized app. To open it:
 >
