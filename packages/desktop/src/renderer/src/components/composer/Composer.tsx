@@ -7,7 +7,7 @@ import { useSessionsStore } from "../../stores/sessions";
 import { pushToast } from "../../stores/toasts";
 import { selectTranscript, useTranscriptStore } from "../../stores/transcript";
 import { ImagePreviewOverlay } from "../chat/ImagePreview";
-import { ArrowUpIcon, PlusIcon, StopIcon } from "../icons";
+import { ArrowUpIcon, PencilIcon, PlusIcon, StopIcon } from "../icons";
 import { AtMenu } from "./AtMenu";
 import { AttachmentChip } from "./AttachmentChip";
 import { ContextRing } from "./ContextRing";
@@ -43,6 +43,8 @@ export function Composer({ centered = false }: { centered?: boolean }) {
 		(s) => s.sessions.find((x) => x.sessionId === s.activeSessionId)?.model,
 	);
 	const transcript = useTranscriptStore((s) => selectTranscript(s, activeSessionId));
+	/** 扩展 setEditorText 预填来源（一次性提示；用户首次键入清除） */
+	const extensionPrefillSource = transcript.extensionPrefillSource;
 	/** 当前模型是否支持图片输入；fail-open：模型未知/字段缺省一律按支持，只拦 imageInput === false */
 	const effectiveModel = activeModel ?? currentModel;
 	const activeModelInfo = effectiveModel
@@ -179,8 +181,9 @@ export function Composer({ centered = false }: { centered?: boolean }) {
 		return () => window.removeEventListener("pointerdown", onPointerDown);
 	}, [slash.slashOpen, at.atOpen, setSlashDismissed, setAtDismissed]);
 
-	/** 文本变化：重置菜单折叠态 + 探测光标前 @ / slash token（驱动两个菜单） */
+	/** 文本变化：重置菜单折叠态 + 探测光标前 @ / slash token（驱动两个菜单）；同时清预填来源提示 */
 	const handleTextChange = (e: React.ChangeEvent<HTMLTextAreaElement>) => {
+		if (extensionPrefillSource) useTranscriptStore.getState().clearExtensionPrefill(activeSessionId ?? "");
 		slash.setSlashDismissed(false);
 		at.setAtDismissed(false);
 		setText(e.target.value);
@@ -269,7 +272,8 @@ export function Composer({ centered = false }: { centered?: boolean }) {
 
 	return (
 		<div ref={boxRef} className={centered ? "w-full max-w-[760px]" : "shrink-0 px-6 pb-3"}>
-			<div className="mx-auto max-w-[760px]">
+			{/* relative：ImageTray 悬浮层（absolute bottom-full）的定位锚，浮在错误条/菜单/输入框整列之上 */}
+			<div className="relative mx-auto max-w-[760px]">
 				{error && <SendErrorBar error={error} onRetry={() => void handleSend()} />}
 				{feedback && !error && (
 					<p className={`mb-1.5 text-xs ${feedback.tone === "warn" ? "text-amber-500" : "text-ink-dim"}`}>
@@ -298,6 +302,13 @@ export function Composer({ centered = false }: { centered?: boolean }) {
 						text={followUpQueue[0] ?? ""}
 						onRestore={() => void send.handleRestoreQueue(focusTextarea)}
 					/>
+				)}
+				{/* 扩展 setEditorText 预填提示（画板⑩）：一次性来源标注，首次键入即清除 */}
+				{extensionPrefillSource && (
+					<div className="flex items-center gap-1.5 px-1 text-[11px] text-ink-faint">
+						<PencilIcon size={11} />
+						{t("interaction.prefillNote", { source: extensionPrefillSource })}
+					</div>
 				)}
 				<ImageTray
 					images={images}
