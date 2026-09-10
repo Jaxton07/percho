@@ -18,32 +18,32 @@ my-plugin/
 ## 2. 槽位目录 v1 与 props 契约
 
 | 槽位名 | props | 默认组件 |
-|---|---|---|
+| --- | --- | --- |
 | `chat.tool-call-card` | `{ tool: UIToolCall }` | 工具调用卡（折叠行：工具名 + 参数摘要 + 输出） |
 | `chat.subagent-card` | `{ runs: SubagentRunUi[] }` | 子代理独立行（状态点 + 名称 + 点击打开子会话） |
 | `chat.todo-panel` | `{}` | 任务列表面板（右上角胶囊，内部自行取数） |
 
 ```ts
 interface UIToolCall {
-	key: string;      // 本地稳定 id（React key 用）
-	id: string;       // 真实 toolCall id
-	name: string;     // 工具名，如 "bash"
-	args: string;     // 参数摘要（JSON 或纯文本）
-	output: string;   // 执行输出累积
-	state: "running" | "done" | "error";
-	blockIndex?: number;
+ key: string;      // 本地稳定 id（React key 用）
+ id: string;       // 真实 toolCall id
+ name: string;     // 工具名，如 "bash"
+ args: string;     // 参数摘要（JSON 或纯文本）
+ output: string;   // 执行输出累积
+ state: "running" | "done" | "error";
+ blockIndex?: number;
 }
 
 interface SubagentRunUi {
-	key: string;
-	agent: string;
-	task?: string;
-	status: "running" | "done" | "error";
-	model?: string;
-	tokens?: number;
-	exitCode?: number;
-	artifactsDir?: string;
-	sessionFile?: string;
+ key: string;
+ agent: string;
+ task?: string;
+ status: "running" | "done" | "error";
+ model?: string;
+ tokens?: number;
+ exitCode?: number;
+ artifactsDir?: string;
+ sessionFile?: string;
 }
 ```
 
@@ -51,17 +51,18 @@ interface SubagentRunUi {
 
 ```json
 {
-	"name": "my-terminal-card",
-	"version": "0.1.0",
-	"displayName": "终端风工具卡",
-	"description": "把工具调用卡改成终端样式",
-	"perchoUi": 1,
-	"main": "src/index.tsx",
-	"slots": { "chat.tool-call-card": "ToolCallCard" }
+ "name": "my-terminal-card",
+ "version": "0.1.0",
+ "displayName": "终端风工具卡",
+ "description": "把工具调用卡改成终端样式",
+ "perchoUi": 1,
+ "main": "src/index.tsx",
+ "slots": { "chat.tool-call-card": "ToolCallCard" }
 }
 ```
 
 字段规则（任一不满足 → 插件标记「清单无效」，不加载）：
+
 - `name`：必填，`/^[a-z0-9][a-z0-9-]*$/`，**必须与目录名一致**；
 - `perchoUi`：必填，宿主契约版本，当前只接受 `1`；
 - `main`：必填，插件目录内相对路径，**禁止 `..` 穿越**；后缀 `.ts/.tsx/.js/.jsx`；
@@ -81,6 +82,7 @@ import idleUrl from "./assets/idle.png";                // 插件目录内图片
 **图片与音频资产**：相对路径导入图片（`.png` / `.webp` / `.gif` / `.jpg` / `.jpeg`）与音频（`.mp3` / `.m4a` / `.aac` / `.ogg` / `.wav`），构建器（esbuild dataurl loader）
 把文件打成 `data:` URL 字符串内联进产物（默认导出 = URL），CSP `img-src` 与 `media-src` 均放行 `data:`（音频用 `new Audio(url)` 播放）。
 适合桌宠立绘、雪碧图、语音提醒/音效等场景。纪律：
+
 - 只接受插件目录内的**相对路径**（`./` 或 `../` 开头但不得穿出插件目录）；裸导入图片/音频包名仍失败；
 - 体积即产物体积（base64 再 +33%）：图片先缩到实际显示尺寸的 2x（Retina）再导入，5 张 760px PNG ≈ 2MB 产物是可接受上限量级；音频建议有损格式（几秒语音的 mp3/m4a 约几十 KB，wav 动辄几 MB）；
 - 资产改动同样触发热重载（watch 覆盖整个插件目录，除 dist/）。
@@ -98,18 +100,21 @@ import idleUrl from "./assets/idle.png";                // 插件目录内图片
 ```ts
 export const version;                       // 宿主 API 版本（1）
 export const components: {                  // 宿主精选组件（复用，不重造轮子）
-	Button; Dropdown; Tooltip; Markdown; ImagePreview;
+ Button; Dropdown; Tooltip; Markdown; ImagePreview;
 };
 export const helpers: {
-	summarizeArgs(args: string): string;    // 参数摘要（取 command/path/url，流式容错）
-	displayToolName(name: string): string;  // 工具名首字母大写
+ summarizeArgs(args: string): string;    // 参数摘要（取 command/path/url，流式容错）
+ displayToolName(name: string): string;  // 工具名首字母大写
 };
 export const hooks: {
-	useT(): (key: string, params?) => string; // i18n（key 用宿主既有字典，如 "message.working"）
+ useT(): (key: string, params?) => string; // i18n（key 用宿主既有字典，如 "message.working"）
+ useContextUsage(sessionId: string | null): ContextUsageInfo | null; // 上下文用量（圆环数据）
+ useQuota(): QuotaInfo | null; // opencode-go 套餐额度（全局；null = 无订阅，插件应隐藏）
+ useLanguage(): "zh" | "en"; // 插件自有文案跟随中英
 };
 export const stores: {                      // 宿主 zustand store（与宿主同一实例）
-	useTranscriptStore; useSessionsStore; useUiStore; useProjectsStore; useSettingsStore;
-	useUiPreferencesStore;                   // 应用级 UI 偏好（ui-state.json 持久化：轨道/中央动画等开关）
+ useTranscriptStore; useSessionsStore; useUiStore; useProjectsStore; useSettingsStore;
+ useUiPreferencesStore;                   // 应用级 UI 偏好（ui-state.json 持久化：轨道/中央动画等开关）
 };
 ```
 
@@ -150,26 +155,28 @@ Slot 是「替换」，Region/Contribution 是「新增」：插件可以在宿�
 ### 10.1 区域目录 v1 与 manifest
 
 | 区域 | 挂载点 | 定位语义 | 典型用途 |
-|---|---|---|---|
+| --- | --- | --- | --- |
 | `app.background` | App 根、内容列之前 | 绝对填充 z-0 | 动态背景 |
 | `app.overlay` | App 根、内容列之后、弹窗之前 | 每贡献一个 `fixed inset-0 z-20` 容器 + anchor 九宫格对齐 | 桌宠、悬浮物 |
 | `chat.corner.top-left` / `top-right` / `bottom-left` / `bottom-right` | 聊天区 main 内 | `absolute z-20` 同角纵向堆叠（顺序=启用先后） | 小部件 |
+| `composer.footer` | 输入框底部工具行（ContextRing 旁） | 行内横向排列（宿主 flex 行内，不包定位容器） | 额度圆环等行内小部件 |
 | `settings.panel` | 设置弹窗 | 独立分类页（分类标题 = `title`） | 插件配置页 |
 
 z 序：背景 0 < 内容 10 < overlay 20 < 设置弹窗 40 < 信任弹窗/全屏预览 50。**插件层永在弹窗之下**。
 
 ```json
 {
-	"name": "my-pet",
-	"perchoUi": 1,
-	"main": "src/index.tsx",
-	"contributions": [
-		{ "id": "pet", "region": "app.overlay", "anchor": "bottom-right", "export": "Pet", "title": "桌宠" }
-	]
+ "name": "my-pet",
+ "perchoUi": 1,
+ "main": "src/index.tsx",
+ "contributions": [
+  { "id": "pet", "region": "app.overlay", "anchor": "bottom-right", "export": "Pet", "title": "桌宠" }
+ ]
 }
 ```
 
 字段规则（`slots` 与 `contributions` **至少其一非空**）：
+
 - `id`：必填 slug（`/^[a-z0-9][a-z0-9-]*$/`），插件内唯一；
 - `region`：必填，∈ 上表区域；未知区域由宿主告警并忽略该条（不判无效）；
 - `export`：必填，入口 bundle 的具名导出名；
@@ -189,7 +196,8 @@ z 序：背景 0 < 内容 10 < overlay 20 < 设置弹窗 40 < 信任弹窗/全�
 - `settings.panel` 贡献渲染为设置弹窗的独立分类（分类 id `plugin:<name>:<cid>`，标题 = `title`），随插件启停自动增删；
 - 排查：贡献根元素外层的宿主容器挂 `data-plugin="<name>"` 属性（插件无需自己做）；
 - **内置插件**：`resources/ui-plugins/builtin/` 随包分发，应用首次启动/升级时导出到用户插件目录（与用户插件同一条扫描/构建/热重载路径，面板带「内置」badge、启用免二次确认）。**直接改内置副本会在下次升级被覆盖——魔改请把目录改名另存**（`plugin.json` 的 `name` 同步改）；手动删除的目录本版本内不会回来，下次升级重新导出；
-- 新 hooks（`percho-ui.d.ts` 已声明）：`useContextUsage(sessionId)` 返回 `{ tokens, contextWindow, percent }`（事件驱动刷新，token 仪表盘用）；`useLanguage()` 返回 `"zh" | "en"`（插件自有文案跟随中英）。
+- 新 hooks（`percho-ui.d.ts` 已声明）：`useContextUsage(sessionId)` 返回 `{ tokens, contextWindow, percent }`（事件驱动刷新，token 仪表盘用）；`useQuota()` 返回 `{ windows, updatedAt, error? }`（全局额度，无 key/无订阅返回 null，turn 结束刷新 + 60s 轮询，额度圆环用）；`useLanguage()` 返回 `"zh" | "en"`（插件自有文案跟随中英）。
+- `composer.footer` 行内区域：挂在 ContextRing 旁的 flex 行内，贡献组件无 props；需要悬停交互的子树自己开 `pointer-events-auto`（Tooltip 内部已处理）。
 
 ### 10.4 示例
 
@@ -201,10 +209,10 @@ Slot 是「替换组件」，Contribution 是「加挂组件」，Headless 是�
 
 ```json
 {
-	"name": "voice-alerts",
-	"perchoUi": 1,
-	"main": "src/index.ts",
-	"headless": true
+ "name": "voice-alerts",
+ "perchoUi": 1,
+ "main": "src/index.ts",
+ "headless": true
 }
 ```
 
@@ -214,13 +222,14 @@ Slot 是「替换组件」，Contribution 是「加挂组件」，Headless 是�
 import { stores } from "@percho/plugin-api";
 
 export function activate() {
-	// 命令式访问宿主 store（无头插件没有组件，不用 hook）
-	const unsub = stores.useTranscriptStore.subscribe(() => { /* ... getState() 取最新 ... */ });
-	return () => unsub(); // 清理：解订阅/关定时器，别留泄漏
+ // 命令式访问宿主 store（无头插件没有组件，不用 hook）
+ const unsub = stores.useTranscriptStore.subscribe(() => { /* ... getState() 取最新 ... */ });
+ return () => unsub(); // 清理：解订阅/关定时器，别留泄漏
 }
 ```
 
 纪律：
+
 - `activate` 抛错或缺导出 → 该插件记为加载失败（等同槽位导出缺失），不炸宿主；清理函数抛错只告警；
 - 与组件插件同一条启用/信任/热重载路径，面板中「无槽位/无贡献」即无头插件；
 - 参考实现：随包内置插件 `builtin/voice-alerts/`（语音提醒）：全局安静检测 + `new Audio(dataUrl)` 播放，开关即插件启用开关（禁用 = 卸载副作用）。

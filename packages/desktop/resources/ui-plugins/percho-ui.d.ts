@@ -82,6 +82,35 @@ declare module "@percho/plugin-api" {
 		percent: number | null;
 	}
 
+	/** opencode-go 套餐额度窗口 key（5h 滚动 / 日历周 / 计费月） */
+	export type QuotaWindowKey = "rolling" | "weekly" | "monthly";
+
+	/** opencode-go 套餐额度单窗口 */
+	export interface QuotaWindow {
+		key: QuotaWindowKey;
+		/** 短标签（5h / week / month，插件按需本地化） */
+		label: string;
+		/** 已用百分比（0-100） */
+		percent: number;
+		/** ISO 重置时间，无则 null */
+		resetsAt: string | null;
+		/** 估算已用美元（percent × limit），未知为 null */
+		usedUsd: number | null;
+		/** 窗口上限美元（rolling 12 / weekly 30 / monthly 60） */
+		limitUsd: number;
+		status: "ok" | "rate-limited";
+	}
+
+	/**
+	 * opencode-go 套餐额度（main 进程拉官方 API，5 分钟 TTL）。
+	 * null = 无 key/无订阅（插件应隐藏）；error 非空 = 拉取失败（插件可展示错误态）。
+	 */
+	export interface QuotaInfo {
+		windows: QuotaWindow[];
+		updatedAt: number;
+		error?: string;
+	}
+
 	export interface UIToolCall {
 		key: string;
 		id: string;
@@ -140,6 +169,8 @@ declare module "@percho/plugin-api" {
 		useT(): (key: string, params?: Record<string, string | number>) => string;
 		/** 上下文使用量（事件驱动刷新；sessionId 为 null/draft 时返回 null）——token 仪表盘用 */
 		useContextUsage(sessionId: string | null): ContextUsageInfo | null;
+		/** opencode-go 套餐额度（全局；无 key/无订阅返回 null，插件应隐藏；turn 结束刷新 + 60s 轮询）——额度圆环用 */
+		useQuota(): QuotaInfo | null;
 		/** 当前界面语言（"zh" | "en"）——插件自有文案跟随中英 */
 		useLanguage(): "zh" | "en";
 	};

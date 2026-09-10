@@ -8,6 +8,8 @@ import { pushToast } from "../../stores/toasts";
 import { selectTranscript, useTranscriptStore } from "../../stores/transcript";
 import { ImagePreviewOverlay } from "../chat/ImagePreview";
 import { ArrowUpIcon, PencilIcon, PlusIcon, StopIcon } from "../icons";
+import { RegionHost } from "../../plugins/RegionHost";
+import { UI_REGIONS } from "../../plugins/slots";
 import { AtMenu } from "./AtMenu";
 import { AttachmentChip } from "./AttachmentChip";
 import { ContextRing } from "./ContextRing";
@@ -390,6 +392,7 @@ export function Composer({ centered = false }: { centered?: boolean }) {
 						</div>
 						<div className="flex-1" />
 						<ContextRing />
+						<RegionHost region={UI_REGIONS.ComposerFooter} />
 						<div className={readOnly ? "pointer-events-none opacity-40" : undefined}>
 							<ModelPicker />
 						</div>
