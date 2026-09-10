@@ -124,6 +124,25 @@ export const zh = {
 		allowDirHint: "把 {dir} 加入本项目工作区：目录内读写不再逐次确认（持久化到 workspaces.json）",
 		queued: "还有 {count} 个请求排队",
 	},
+	permissionShort: {
+		always: "总是",
+		dir: "此目录",
+	},
+	interaction: {
+		cancel: "取消",
+		submit: "提交",
+		yes: "是",
+		no: "否",
+		queueMore: "还有 {count} 个",
+		hintSelect: "↑↓ 选择 · Enter 确认 · Esc 取消",
+		hintInput: "Enter 提交 · Esc 取消",
+		hintEditor: "⌘Enter 提交 · Esc 取消",
+		hintConfirm: "Enter 确认 · Esc 否",
+		hintPermission: "Enter {allowOnce} · A {always} · Esc {deny}",
+		hintPermissionDir: "Enter {allowOnce} · A {always} · D {dir} · Esc {deny}",
+		timedOutNote: "超时未应答将按「取消」处理",
+		prefillNote: "扩展「{source}」填入了一段草稿",
+	},
 	trust: {
 		title: "信任此项目文件夹？",
 		message:
@@ -480,6 +499,7 @@ export const zh = {
 		trustFailed: "项目信任检查失败",
 		closeFailed: "关闭会话失败",
 		permissionModeFailed: "切换权限模式失败",
+		overflowCollapsed: "还有 {count} 条通知被折叠 · 同源重复已合并",
 		sessionCreateFailed: "创建会话失败",
 		sessionOpenFailed: "打开会话失败",
 		forkFailed: "分叉会话失败",

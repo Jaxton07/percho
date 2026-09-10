@@ -4,7 +4,9 @@ import { join } from "node:path";
 import type { Model, ThinkingLevel } from "@earendil-works/pi-ai";
 import { getSupportedThinkingLevels } from "@earendil-works/pi-ai";
 import {
+	type AgentSession,
 	createAgentSession,
+	type ExtensionError,
 	getAgentDir,
 	ModelRuntime,
 	ProjectTrustStore,
@@ -20,6 +22,11 @@ import type {
 	ContextManagerMode,
 	ContextUsageInfo,
 	CreateSessionOptions,
+	ExtensionDialogRequest,
+	ExtensionDialogResolved,
+	ExtensionDialogRespond,
+	ExtensionEditorTextEvent,
+	ExtensionNotifyEvent,
 	ImageInput,
 	LoadedResources,
 	LoginEventPayload,
@@ -59,6 +66,7 @@ import { TrustGate } from "./project/trust";
 import { ProjectResourceLoader } from "./project/trust-loader";
 import { addAllowedPattern, addWorkspaceRoot } from "./project/workspace-store";
 import { slimBulkyEvent, slimMessageUpdate } from "./session/event-slim";
+import { ExtensionDialogHost } from "./session/extension-dialog-host";
 import {
 	assignEntryIds,
 	blockImages,
@@ -133,6 +141,10 @@ type PermissionHandler = (req: PermissionRequest) => void;
 type PermissionResolvedHandler = (result: PermissionResolved) => void;
 type TrustHandler = (req: TrustRequest) => void;
 type LoginHandler = (payload: LoginEventPayload) => void;
+type ExtensionDialogRequestHandler = (req: ExtensionDialogRequest) => void;
+type ExtensionDialogResolvedHandler = (result: ExtensionDialogResolved) => void;
+type ExtensionNotifyHandler = (event: ExtensionNotifyEvent) => void;
+type ExtensionEditorTextHandler = (event: ExtensionEditorTextEvent) => void;
 
 /**
  * PiBackend：pi SDK 的唯一适配层（门面）。不依赖 Electron，
@@ -152,7 +164,13 @@ export class PiBackend {
 	private readonly permissionResolvedHandlers = new Set<PermissionResolvedHandler>();
 	private readonly trustHandlers = new Set<TrustHandler>();
 	private readonly loginHandlers = new Set<LoginHandler>();
+	private readonly extensionDialogRequestHandlers = new Set<ExtensionDialogRequestHandler>();
+	private readonly extensionDialogResolvedHandlers = new Set<ExtensionDialogResolvedHandler>();
+	private readonly extensionNotifyHandlers = new Set<ExtensionNotifyHandler>();
+	private readonly extensionEditorTextHandlers = new Set<ExtensionEditorTextHandler>();
 	private readonly gates = new Map<string, PermissionGate>();
+	/** 扩展对话框宿主（每会话一个；GUI 停靠槽数据源，GUI-only 不进 LAN） */
+	private readonly dialogs = new Map<string, ExtensionDialogHost>();
 	/** 按会话权限模式（default 缺省；fullAccess = 一切放行 + 高危审计）：会话创建时随工厂注入，关会话/重启归零 */
 	private readonly permissionModes = new Map<string, PermissionModeRef>();
 	/** 项目信任决策记录（~/.pi/agent/trust.json，与 CLI 共享）+ 信任请求门控 */
@@ -271,6 +289,42 @@ export class PiBackend {
 		return factories;
 	}
 
+	/**
+	 * 扩展绑定（无条件，与权限门逃生舱解耦）：对话框宿主 + mode "rpc"（官方半可用语义，
+	 * D9：hasUI=true + 对话框可用 + TUI 专属明确降级）+ onError 接 log/trace。
+	 * 子代理 runner 不走这里（子会话用 makeUiContext({}) 纯 no-op）。
+	 */
+	private async bindSessionExtensions(session: AgentSession, sessionId: string): Promise<void> {
+		const dialogs = new ExtensionDialogHost({
+			onRequest: (req) => this.dispatchExtensionDialogRequest(req),
+			onResolved: (result) => this.dispatchExtensionDialogResolved(result),
+		});
+		dialogs.bind(sessionId);
+		this.dialogs.set(sessionId, dialogs);
+		const recordExtensionError = (err: ExtensionError): void => {
+			log.error("extension error", sessionId, err);
+			try {
+				this.traces.recordCustom(sessionId, "extension_error", {
+					path: err.extensionPath,
+					event: err.event,
+					error: err.error,
+				});
+			} catch {
+				// trace 不可用不影响扩展运行
+			}
+		};
+		await session.bindExtensions({
+			uiContext: makeUiContext({
+				dialogs,
+				onNotify: (message, level, source) =>
+					this.dispatchExtensionNotify({ sessionId, extensionPath: source, message, level }),
+				onEditorText: (text, source) => this.dispatchExtensionEditorText({ sessionId, text, source }),
+			}),
+			mode: "rpc",
+			onError: recordExtensionError,
+		});
+	}
+
 	private async getModelRuntime(): Promise<ModelRuntime> {
 		if (this.modelRuntime) return this.modelRuntime;
 		if (!this.modelPromise) {
@@ -370,12 +424,7 @@ export class PiBackend {
 		gate.bindSession(session.sessionId);
 		this.gates.set(session.sessionId, gate);
 		this.permissionModes.set(session.sessionId, modeRef);
-		if (this.options.permissionGates !== false) {
-			await session.bindExtensions({
-				uiContext: makeUiContext(gate),
-				mode: "tui",
-			});
-		}
+		await this.bindSessionExtensions(session, session.sessionId);
 
 		const unsubscribe = session.subscribe((event) => {
 			autoNameSession(session, event);
@@ -421,9 +470,7 @@ export class PiBackend {
 		gate.bindSession(session.sessionId);
 		this.gates.set(session.sessionId, gate);
 		this.permissionModes.set(session.sessionId, modeRef);
-		if (this.options.permissionGates !== false) {
-			await session.bindExtensions({ uiContext: makeUiContext(gate), mode: "tui" });
-		}
+		await this.bindSessionExtensions(session, session.sessionId);
 		const unsubscribe = session.subscribe((event) => {
 			autoNameSession(session, event);
 			this.emitEvent(session.sessionId, event);
@@ -481,6 +528,9 @@ export class PiBackend {
 		entry.session.dispose();
 		this.gates.get(sessionId)?.dispose();
 		this.gates.delete(sessionId);
+		// pending 对话框按 sessionClosed 结算（广播 resolved 让 renderer 撤卡；扩展 Promise 落取消值）
+		this.dialogs.get(sessionId)?.dispose();
+		this.dialogs.delete(sessionId);
 		this.permissionModes.delete(sessionId);
 		this.streamGuard.cleanup(sessionId);
 		this.eventRates.delete(sessionId);
@@ -934,6 +984,34 @@ export class PiBackend {
 		return () => this.loginHandlers.delete(handler);
 	}
 
+	/** 扩展对话框请求/结算/通知/草稿预填订阅（main 进程转发 renderer 用） */
+	onExtensionDialogRequest(handler: ExtensionDialogRequestHandler): () => void {
+		this.extensionDialogRequestHandlers.add(handler);
+		return () => this.extensionDialogRequestHandlers.delete(handler);
+	}
+
+	onExtensionDialogResolved(handler: ExtensionDialogResolvedHandler): () => void {
+		this.extensionDialogResolvedHandlers.add(handler);
+		return () => this.extensionDialogResolvedHandlers.delete(handler);
+	}
+
+	onExtensionNotify(handler: ExtensionNotifyHandler): () => void {
+		this.extensionNotifyHandlers.add(handler);
+		return () => this.extensionNotifyHandlers.delete(handler);
+	}
+
+	onExtensionEditorText(handler: ExtensionEditorTextHandler): () => void {
+		this.extensionEditorTextHandlers.add(handler);
+		return () => this.extensionEditorTextHandlers.delete(handler);
+	}
+
+	/** renderer 应答扩展对话框（requestId 含 sessionId 全局唯一；非本宿主实例静默忽略，仿 respondPermission 遍历） */
+	respondExtensionDialog(requestId: string, answer: ExtensionDialogRespond): void {
+		for (const dialogs of this.dialogs.values()) {
+			dialogs.respond(requestId, answer);
+		}
+	}
+
 	respondPermission(requestId: string, answer: PermissionAnswer): void {
 		if (answer === "allowDir" || answer === "allowAlways") {
 			// 持久化决策（仅内置权限扩展的请求带 meta）：
@@ -1029,6 +1107,8 @@ export class PiBackend {
 		this.eventHandlers.clear();
 		this.permissionHandlers.clear();
 		this.permissionResolvedHandlers.clear();
+		for (const dialogs of this.dialogs.values()) dialogs.dispose();
+		this.dialogs.clear();
 		this.trustHandlers.clear();
 		this.trustGate.dispose();
 		this.traces.disposeAll();
@@ -1081,6 +1161,46 @@ export class PiBackend {
 		for (const handler of this.loginHandlers) {
 			try {
 				handler(payload);
+			} catch {
+				// 忽略单个处理器异常
+			}
+		}
+	}
+
+	private dispatchExtensionDialogRequest(req: ExtensionDialogRequest): void {
+		for (const handler of this.extensionDialogRequestHandlers) {
+			try {
+				handler(req);
+			} catch {
+				// 忽略单个处理器异常
+			}
+		}
+	}
+
+	private dispatchExtensionDialogResolved(result: ExtensionDialogResolved): void {
+		for (const handler of this.extensionDialogResolvedHandlers) {
+			try {
+				handler(result);
+			} catch {
+				// 忽略单个处理器异常
+			}
+		}
+	}
+
+	private dispatchExtensionNotify(event: ExtensionNotifyEvent): void {
+		for (const handler of this.extensionNotifyHandlers) {
+			try {
+				handler(event);
+			} catch {
+				// 忽略单个处理器异常
+			}
+		}
+	}
+
+	private dispatchExtensionEditorText(event: ExtensionEditorTextEvent): void {
+		for (const handler of this.extensionEditorTextHandlers) {
+			try {
+				handler(event);
 			} catch {
 				// 忽略单个处理器异常
 			}

@@ -144,6 +144,28 @@ const api: PiApi = {
 		ipcRenderer.on(IpcChannels.TrustRequest, listener);
 		return () => ipcRenderer.removeListener(IpcChannels.TrustRequest, listener);
 	},
+	respondExtensionDialog: (requestId, answer) =>
+		ipcRenderer.invoke(IpcChannels.ExtensionDialogRespond, requestId, answer),
+	onExtensionDialogRequest: (cb) => {
+		const listener = (_event: unknown, req: Parameters<typeof cb>[0]) => cb(req);
+		ipcRenderer.on(IpcChannels.ExtensionDialogRequest, listener);
+		return () => ipcRenderer.removeListener(IpcChannels.ExtensionDialogRequest, listener);
+	},
+	onExtensionDialogResolved: (cb) => {
+		const listener = (_event: unknown, result: Parameters<typeof cb>[0]) => cb(result);
+		ipcRenderer.on(IpcChannels.ExtensionDialogResolved, listener);
+		return () => ipcRenderer.removeListener(IpcChannels.ExtensionDialogResolved, listener);
+	},
+	onExtensionNotify: (cb) => {
+		const listener = (_event: unknown, event: Parameters<typeof cb>[0]) => cb(event);
+		ipcRenderer.on(IpcChannels.ExtensionNotify, listener);
+		return () => ipcRenderer.removeListener(IpcChannels.ExtensionNotify, listener);
+	},
+	onExtensionEditorText: (cb) => {
+		const listener = (_event: unknown, event: Parameters<typeof cb>[0]) => cb(event);
+		ipcRenderer.on(IpcChannels.ExtensionEditorText, listener);
+		return () => ipcRenderer.removeListener(IpcChannels.ExtensionEditorText, listener);
+	},
 };
 
 contextBridge.exposeInMainWorld("pi", api);

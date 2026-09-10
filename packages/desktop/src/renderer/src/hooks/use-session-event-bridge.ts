@@ -1,8 +1,10 @@
 import type { SessionEvent, TrustRequest } from "@percho/shared";
 import { useEffect } from "react";
 import { getPi } from "../api";
+import { useDraftStore } from "../stores/drafts";
 import { EventConflator } from "../stores/event-conflator";
 import { useSessionsStore } from "../stores/sessions";
+import { pushExtensionToast } from "../stores/toasts";
 import { useTranscriptStore } from "../stores/transcript";
 import { useUiStore } from "../stores/ui";
 
@@ -43,12 +45,30 @@ export function useSessionEventBridge({
 		const offPermissionResolved = pi.onPermissionResolved((result) => {
 			useTranscriptStore.getState().resolvePermission(result.sessionId, result.requestId);
 		});
+		// 扩展对话框（issue #45）：入队/撤卡 + notify→Toast + 预填→草稿（来源带一次性提示）
+		const offDialogRequest = pi.onExtensionDialogRequest((req) => {
+			useTranscriptStore.getState().addExtensionDialog(req.sessionId, req);
+		});
+		const offDialogResolved = pi.onExtensionDialogResolved((result) => {
+			useTranscriptStore.getState().resolveExtensionDialog(result.sessionId, result.requestId);
+		});
+		const offNotify = pi.onExtensionNotify((event) => {
+			pushExtensionToast(event.level, event.message, event.extensionPath || undefined);
+		});
+		const offEditorText = pi.onExtensionEditorText((event) => {
+			useDraftStore.getState().updateDraft(event.sessionId, (d) => ({ ...d, text: event.text }));
+			useTranscriptStore.getState().markExtensionPrefill(event.sessionId, event.source ?? "");
+		});
 		const offTrust = pi.onTrustRequest(onTrustRequest);
 		return () => {
 			offEvent();
 			conflator.dispose();
 			offPermission();
 			offPermissionResolved();
+			offDialogRequest();
+			offDialogResolved();
+			offNotify();
+			offEditorText();
 			offTrust();
 		};
 	}, [onTrustRequest]);

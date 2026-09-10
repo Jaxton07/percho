@@ -6,7 +6,7 @@ import { MessageList } from "./components/chat/MessageList";
 import { TodoPanel } from "./components/chat/TodoPanel";
 import { DiffSidebar } from "./components/diff/DiffSidebar";
 import { ProjectPage } from "./components/projects/ProjectPage";
-import { ApprovalDock } from "./components/session/ApprovalDock";
+import { DockSlot } from "./components/session/DockSlot";
 import { SessionRail } from "./components/session/SessionRail";
 import { SessionTabBar } from "./components/session/SessionTabBar";
 import { TrustDialog } from "./components/session/TrustDialog";
@@ -102,7 +102,7 @@ export default function App() {
 								<RegionHost region={UI_REGIONS.CornerBottomLeft} />
 								<RegionHost region={UI_REGIONS.CornerBottomRight} />
 							</main>
-							<ApprovalDock sessionId={activeSessionId} hideComposer={showEmpty} />
+							<DockSlot sessionId={activeSessionId} hideComposer={showEmpty} />
 							<SessionRail />
 						</div>
 						<DiffSidebar />

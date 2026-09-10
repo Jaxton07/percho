@@ -216,7 +216,9 @@ export async function runSubagent(deps: RunSubagentDeps, input: RunSubagentInput
 	});
 	// 子会话没有主会话的 message_start 自动命名器；创建后立即把任务首行写进自己的 jsonl。
 	session.setSessionName(subagentSessionName(input.agent.name, input.task));
-	await session.bindExtensions({ uiContext: makeUiContext(deps.gate), mode: "tui" });
+	// 子会话 noExtensions（用户扩展不加载），对话框永远不被触发：makeUiContext({}) 即纯 no-op。
+	// mode 同步改 "rpc"（D9，与主会话一致）；内置权限扩展走 childGateConfirm 直通道，不经 ui.confirm。
+	await session.bindExtensions({ uiContext: makeUiContext({}), mode: "rpc" });
 	const result: SingleResult = {
 		agent: input.agent.name,
 		task: input.task,
