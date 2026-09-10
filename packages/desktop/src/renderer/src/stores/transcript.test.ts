@@ -1,4 +1,4 @@
-import type { AgentSessionEvent } from "@percho/shared";
+import type { AgentSessionEvent, ExtensionDialogRequest } from "@percho/shared";
 import { emptyTranscript, messagesToUIMessages, reduceEvent } from "@percho/shared";
 import { beforeEach, describe, expect, it } from "vitest";
 import { useTranscriptStore } from "./transcript";
@@ -1497,5 +1497,57 @@ describe("transcript store unseenCompletion", () => {
 		expect(entry("s1")?.todos).toEqual([{ content: "a", status: "in_progress" }]);
 		store.loadTodos("s1", []);
 		expect(entry("s1")?.todos).toEqual([]);
+	});
+});
+
+describe("transcript store 扩展对话框/预填（issue #45）", () => {
+	beforeEach(() => {
+		useTranscriptStore.setState({ bySession: {} });
+	});
+
+	function entry(sessionId: string) {
+		return useTranscriptStore.getState().bySession[sessionId];
+	}
+
+	const dialogReq = (id: string): ExtensionDialogRequest => ({
+		id,
+		sessionId: "s1",
+		kind: "select",
+		title: "t",
+		options: ["a", "b"],
+		requestedAt: Date.now(),
+	});
+
+	it("对话框入队/结算；applyEvent 与 loadHistory 不丢队列", () => {
+		const store = useTranscriptStore.getState();
+		store.addExtensionDialog("s1", dialogReq("dlg-s1-0"));
+		store.addExtensionDialog("s1", dialogReq("dlg-s1-1"));
+		expect(entry("s1")?.pendingDialogs).toHaveLength(2);
+		// 事件流应用（任何事件）不丢待应答队列
+		store.applyEvent("s1", ev("agent_start"));
+		expect(entry("s1")?.pendingDialogs).toHaveLength(2);
+		// 结算幂等：同 requestId 两次 resolve 只撤一张
+		store.resolveExtensionDialog("s1", "dlg-s1-0");
+		store.resolveExtensionDialog("s1", "dlg-s1-0");
+		expect(entry("s1")?.pendingDialogs.map((d) => d.id)).toEqual(["dlg-s1-1"]);
+		store.loadHistory("s1", []);
+		expect(entry("s1")?.pendingDialogs.map((d) => d.id)).toEqual(["dlg-s1-1"]);
+	});
+
+	it("预填来源：mark 写入、首次 clearExtensionPrefill 清除（重复清除 no-op）", () => {
+		const store = useTranscriptStore.getState();
+		store.markExtensionPrefill("s1", "qna");
+		expect(entry("s1")?.extensionPrefillSource).toBe("qna");
+		store.clearExtensionPrefill("s1");
+		expect(entry("s1")?.extensionPrefillSource).toBeUndefined();
+		store.clearExtensionPrefill("s1");
+		expect(entry("s1")?.extensionPrefillSource).toBeUndefined();
+		// applyEvent 不丢预填提示
+		store.markExtensionPrefill("s1", "qna");
+		store.applyEvent("s1", ev("agent_start"));
+		expect(entry("s1")?.extensionPrefillSource).toBe("qna");
+		// 空串来源归一为 undefined（无来源不提示）
+		store.markExtensionPrefill("s2", "");
+		expect(entry("s2")?.extensionPrefillSource).toBeUndefined();
 	});
 });

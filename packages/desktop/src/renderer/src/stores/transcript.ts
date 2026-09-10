@@ -1,4 +1,9 @@
-import type { SessionEvent, PermissionRequest as SharedPermissionRequest, TodoItem } from "@percho/shared";
+import type {
+	ExtensionDialogRequest,
+	SessionEvent,
+	PermissionRequest as SharedPermissionRequest,
+	TodoItem,
+} from "@percho/shared";
 import {
 	type ActivityEntry,
 	emptyTranscript,
@@ -19,9 +24,13 @@ export interface PermissionRequest extends SharedPermissionRequest {}
 
 export interface SessionEntry extends SessionTranscriptState {
 	pendingPermissions: PermissionRequest[];
+	/** 扩展对话框待应答队列（InteractionDock 渲染队首；D6 仲裁时权限优先于对话框） */
+	pendingDialogs: ExtensionDialogRequest[];
+	/** setEditorText 预填来源（一次性提示，用户首次键入清除）；undefined = 无提示 */
+	extensionPrefillSource?: string;
 }
 
-const EMPTY_ENTRY: SessionEntry = { ...emptyTranscript(), pendingPermissions: [] };
+const EMPTY_ENTRY: SessionEntry = { ...emptyTranscript(), pendingPermissions: [], pendingDialogs: [] };
 
 /** 空 todo 列表稳定引用（面板 selector 缺省用，禁内联新数组） */
 export const EMPTY_TODOS: TodoItem[] = [];
@@ -36,6 +45,12 @@ interface TranscriptStore {
 	markCompletionSeen: (sessionId: string) => void;
 	addPermission: (sessionId: string, req: PermissionRequest) => void;
 	resolvePermission: (sessionId: string, requestId: string) => void;
+	/** 扩展对话框入队/结算（结算幂等 filter，IPC 应答与 resolved 事件双路径都安全） */
+	addExtensionDialog: (sessionId: string, req: ExtensionDialogRequest) => void;
+	resolveExtensionDialog: (sessionId: string, requestId: string) => void;
+	/** 扩展草稿预填来源提示（setEditorText 写入；用户首次键入清除） */
+	markExtensionPrefill: (sessionId: string, source: string) => void;
+	clearExtensionPrefill: (sessionId: string) => void;
 	resetSession: (sessionId: string) => void;
 	/** 打开历史会话时回放已有消息（不触发 reducer 事件流） */
 	loadHistory: (sessionId: string, messages: UIMessage[]) => void;
@@ -63,6 +78,8 @@ export const useTranscriptStore = create<TranscriptStore>((set) => ({
 						...next,
 						unseenCompletion,
 						pendingPermissions: current?.pendingPermissions ?? [],
+						pendingDialogs: current?.pendingDialogs ?? [],
+						extensionPrefillSource: current?.extensionPrefillSource,
 					},
 				},
 			};
@@ -104,10 +121,61 @@ export const useTranscriptStore = create<TranscriptStore>((set) => ({
 				bySession: {
 					...state.bySession,
 					[sessionId]: {
-						...(current ?? emptyTranscript()),
+						...(current ?? { ...EMPTY_ENTRY }),
 						pendingPermissions: [...(current?.pendingPermissions ?? []), req],
 						phase: "awaiting_permission",
 					},
+				},
+			};
+		});
+	},
+	addExtensionDialog: (sessionId, req) => {
+		set((state) => {
+			const current = state.bySession[sessionId];
+			return {
+				bySession: {
+					...state.bySession,
+					[sessionId]: {
+						...(current ?? { ...EMPTY_ENTRY }),
+						pendingDialogs: [...(current?.pendingDialogs ?? []), req],
+					},
+				},
+			};
+		});
+	},
+	resolveExtensionDialog: (sessionId, requestId) => {
+		set((state) => {
+			const current = state.bySession[sessionId];
+			if (!current) return state;
+			const pendingDialogs = current.pendingDialogs.filter((d) => d.id !== requestId);
+			if (pendingDialogs.length === current.pendingDialogs.length) return state;
+			return {
+				bySession: {
+					...state.bySession,
+					[sessionId]: { ...current, pendingDialogs },
+				},
+			};
+		});
+	},
+	markExtensionPrefill: (sessionId, source) => {
+		set((state) => {
+			const current = state.bySession[sessionId];
+			return {
+				bySession: {
+					...state.bySession,
+					[sessionId]: { ...(current ?? { ...EMPTY_ENTRY }), extensionPrefillSource: source || undefined },
+				},
+			};
+		});
+	},
+	clearExtensionPrefill: (sessionId) => {
+		set((state) => {
+			const current = state.bySession[sessionId];
+			if (!current?.extensionPrefillSource) return state;
+			return {
+				bySession: {
+					...state.bySession,
+					[sessionId]: { ...current, extensionPrefillSource: undefined },
 				},
 			};
 		});
@@ -127,7 +195,10 @@ export const useTranscriptStore = create<TranscriptStore>((set) => ({
 	},
 	resetSession: (sessionId) => {
 		set((state) => ({
-			bySession: { ...state.bySession, [sessionId]: { ...emptyTranscript(), pendingPermissions: [] } },
+			bySession: {
+				...state.bySession,
+				[sessionId]: { ...emptyTranscript(), pendingPermissions: [], pendingDialogs: [] },
+			},
 		}));
 	},
 	loadHistory: (sessionId, messages) => {
@@ -152,6 +223,8 @@ export const useTranscriptStore = create<TranscriptStore>((set) => ({
 						pendingLlmError: null,
 						retrying: null,
 						pendingPermissions: current?.pendingPermissions ?? [],
+						pendingDialogs: current?.pendingDialogs ?? [],
+						extensionPrefillSource: current?.extensionPrefillSource,
 					},
 				},
 			};

@@ -11,6 +11,65 @@ const strokeProps = {
 	strokeWidth: 2,
 } as const;
 
+/** 信息包「i」：（Toast info glyph，ink-faint 近乎隐形） */
+export function InfoIcon({ size = 14, className }: IconProps) {
+	return (
+		<svg
+			className={className}
+			width={size}
+			height={size}
+			viewBox="0 0 24 24"
+			{...strokeProps}
+			strokeLinecap="round"
+			aria-hidden="true"
+		>
+			<circle cx="12" cy="12" r="9" />
+			<path d="M12 11v5" />
+			<circle cx="12" cy="7.8" r="0.7" fill="currentColor" stroke="none" />
+		</svg>
+	);
+}
+
+/** 铅笔（扩展输入卡 / 预填提示 glyph，设计稿 extension-dialogs 画板③⑩） */
+export function PencilIcon({ size = 14, className }: IconProps) {
+	return (
+		<svg
+			className={className}
+			width={size}
+			height={size}
+			viewBox="0 0 24 24"
+			{...strokeProps}
+			strokeLinecap="round"
+			strokeLinejoin="round"
+			aria-hidden="true"
+		>
+			<path d="M12 20h9" />
+			<path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4Z" />
+		</svg>
+	);
+}
+
+/** 文档（扩展多行编辑卡 glyph，设计稿画板④） */
+export function FileTextIcon({ size = 14, className }: IconProps) {
+	return (
+		<svg
+			className={className}
+			width={size}
+			height={size}
+			viewBox="0 0 24 24"
+			{...strokeProps}
+			strokeLinecap="round"
+			strokeLinejoin="round"
+			aria-hidden="true"
+		>
+			<path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
+			<path d="M14 2v6h6" />
+			<path d="M8 13h8" />
+			<path d="M8 17h5" />
+		</svg>
+	);
+}
+
 /** 错误包「！」：（报错卡片 glyph，severity 着色由使用方 text-err/warn/info 控制） */
 export function ErrorCircleIcon({ size = 14, className }: IconProps) {
 	return (

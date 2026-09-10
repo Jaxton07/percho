@@ -6,6 +6,7 @@ import type { LanObserverHandle } from "../lan";
 import type { UiPluginManager } from "../ui-plugins/manager";
 import { onUpdateState } from "../updater";
 import { registerAppIpc } from "./app";
+import { registerExtensionDialogIpc } from "./extension-dialogs";
 import { registerLanIpc } from "./lan";
 import { registerPackagesIpc } from "./packages";
 import { registerSessionsIpc } from "./sessions";
@@ -33,6 +34,7 @@ export function registerIpc(
 	registerSettingsIpc(backend);
 	registerPackagesIpc(backend);
 	registerAppIpc(backend);
+	registerExtensionDialogIpc(backend);
 	registerUiPluginsIpc(uiPluginsManager);
 	registerLanIpc(lan);
 	// 热重载 watcher：插件源码变更 → 重建 → 推 changed 事件（renderer 经 loader reloadPlugin 热替换）
@@ -52,6 +54,19 @@ export function registerIpc(
 	});
 	backend.onTrustRequest((req: TrustRequest) => {
 		sendToRenderer(IpcChannels.TrustRequest, req);
+	});
+	// 扩展对话框四事件：请求/结算/notify/草稿预填（issue #45）
+	backend.onExtensionDialogRequest((req) => {
+		sendToRenderer(IpcChannels.ExtensionDialogRequest, req);
+	});
+	backend.onExtensionDialogResolved((result) => {
+		sendToRenderer(IpcChannels.ExtensionDialogResolved, result);
+	});
+	backend.onExtensionNotify((event) => {
+		sendToRenderer(IpcChannels.ExtensionNotify, event);
+	});
+	backend.onExtensionEditorText((event) => {
+		sendToRenderer(IpcChannels.ExtensionEditorText, event);
 	});
 	backend.onLoginEvent((payload) => {
 		sendToRenderer(IpcChannels.SettingsLoginEvent, payload);
