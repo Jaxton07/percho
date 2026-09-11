@@ -16,6 +16,14 @@ function isSubagentFamily(name: string): boolean {
 	return name !== "subagent" && isSubagentToolName(name);
 }
 
+/** 开关优先级：构造参数（测试/嵌入宿主 override）> 持久偏好 > 默认 true（现状语义，被遮蔽的扩展下次新建/恢复会话恢复）。 */
+export function resolveSubagentPreferBuiltin(
+	option: boolean | undefined,
+	stored: boolean | undefined,
+): boolean {
+	return option ?? stored ?? true;
+}
+
 /** 内置 subagent 后写覆盖同名扩展；其余 subagent_* 工具显式从 active set 移除。 */
 export function applySubagentMutex(
 	session: Pick<AgentSession, "getActiveToolNames" | "setActiveToolsByName">,

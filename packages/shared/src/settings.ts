@@ -26,6 +26,10 @@ export interface ModelPrefs {
 	/** 隐藏的模型 id（provider → modelId 列表）；隐藏不影响已经选中的会话运行 */
 	hiddenModels: Record<string, string[]>;
 	subagentModels: Record<string, string>;
+	/** 逐代理思考深度覆盖（agent name → level）；无键 = 跟随 agent 定义 */
+	subagentThinking?: Record<string, string>;
+	/** 内置 subagent 执行器优先（默认 true）；新会话/恢复会话生效 */
+	subagentPreferBuiltin?: boolean;
 }
 
 /** 设置页可配置的子代理（仅内置与用户级定义，不含项目级）。 */
@@ -33,6 +37,10 @@ export interface SubagentInfo {
 	name: string;
 	description: string;
 	source: "builtin" | "user";
+	/** agent 定义中的合法 thinking 档位（无定义/非法时 undefined） */
+	thinking?: string;
+	/** agent 定义中 thinking 非法时的原文（设置页警示用） */
+	thinkingWarning?: string;
 }
 
 export interface ProviderModelInfo {

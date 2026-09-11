@@ -20,6 +20,8 @@ export interface SubagentRunUi {
 	task?: string;
 	status: "running" | "done" | "error";
 	model?: string;
+	/** 子代理实际生效的思考档位（运行中/完成后均可用） */
+	thinkingLevel?: string;
 	tokens?: number;
 	exitCode?: number;
 	artifactsDir?: string;

@@ -1,7 +1,6 @@
-/** pi 支持的思考深度（顺序即显示顺序，也是档位高低顺序） */
-export const THINKING_LEVELS = ["off", "minimal", "low", "medium", "high", "xhigh", "max"] as const;
+import { THINKING_LEVELS } from "@percho/shared";
 
-export type ThinkingLevel = (typeof THINKING_LEVELS)[number];
+export { THINKING_LEVELS, type ThinkingLevel } from "@percho/shared";
 
 /**
  * 将当前档位收敛到模型支持的档位集合：
@@ -14,6 +13,7 @@ export type ThinkingLevel = (typeof THINKING_LEVELS)[number];
  * 注意：与 SDK clampThinkingLevel 的「反向就近降级」策略不同；这里是「就近向上 +
  * supported 末位回退」。supported 应保证按 THINKING_LEVELS 顺序传入（当前由后端
  * getSupportedThinkingLevels 通过 THINKING_LEVELS 过滤保证）。
+ * 仅 renderer UI（模型选择器）使用；backend 不做收敛、也不 import 本函数（spec R4）。
  */
 export function clampThinkingLevel(level: string, supported: readonly string[]): string {
 	if (supported.length === 0) return level;

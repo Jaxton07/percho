@@ -49,6 +49,8 @@ export const subagentParams = Type.Object({
 export interface MakeSubagentToolDeps {
 	getModelRuntime: () => Promise<ModelRuntime>;
 	getSubagentModel: (agentName: string) => Promise<string | undefined>;
+	/** 设置页的 per-agent 思考深度覆盖；无配置时返回 undefined 并继续走 frontmatter。 */
+	getSubagentThinkingLevel: (agentName: string) => Promise<string | undefined>;
 	gate: PermissionGate;
 	traces: SessionTraces;
 	/** 把运行中子会话事件转发给桌面会话订阅方。 */

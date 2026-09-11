@@ -74,6 +74,10 @@ interface SettingsStore {
 	setModelHidden: (provider: string, modelId: string, hidden: boolean) => Promise<void>;
 	setModelsHidden: (provider: string, modelIds: string[], hidden: boolean) => Promise<void>;
 	setSubagentModel: (agent: string, modelRef: string | null) => Promise<void>;
+	/** 逐代理思考深度覆盖；null = 跟随 agent 定义 */
+	setSubagentThinking: (agent: string, level: string | null) => Promise<void>;
+	/** 内置 subagent 执行器优先（新会话生效） */
+	setSubagentPreferBuiltin: (enabled: boolean) => Promise<void>;
 	setContextManagerMode: (mode: ContextManagerMode) => Promise<void>;
 	setChannelWatchEnabled: (enabled: boolean) => Promise<void>;
 	refreshLanStatus: () => Promise<void>;
@@ -343,6 +347,26 @@ export const useSettingsStore = create<SettingsStore>((set, get) => {
 			const previous = get().modelPrefs;
 			try {
 				const modelPrefs = await getPi().setSubagentModel(agent, modelRef);
+				set({ modelPrefs });
+			} catch (error) {
+				set({ modelPrefs: previous, error: error instanceof Error ? error.message : String(error) });
+			}
+		},
+
+		setSubagentThinking: async (agent, level) => {
+			const previous = get().modelPrefs;
+			try {
+				const modelPrefs = await getPi().setSubagentThinking(agent, level);
+				set({ modelPrefs });
+			} catch (error) {
+				set({ modelPrefs: previous, error: error instanceof Error ? error.message : String(error) });
+			}
+		},
+
+		setSubagentPreferBuiltin: async (enabled) => {
+			const previous = get().modelPrefs;
+			try {
+				const modelPrefs = await getPi().setSubagentPreferBuiltin(enabled);
 				set({ modelPrefs });
 			} catch (error) {
 				set({ modelPrefs: previous, error: error instanceof Error ? error.message : String(error) });

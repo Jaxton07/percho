@@ -50,6 +50,12 @@ export function registerSettingsIpc(backend: PiBackend): void {
 	ipcMain.handle(IpcChannels.SettingsSetSubagentModel, (_e, agent: string, modelRef: string | null) =>
 		backend.setSubagentModel(agent, modelRef),
 	);
+	ipcMain.handle(IpcChannels.SettingsSetSubagentThinking, (_e, agent: string, level: string | null) =>
+		backend.setSubagentThinking(agent, level),
+	);
+	ipcMain.handle(IpcChannels.SettingsSetSubagentPreferBuiltin, (_e, enabled: boolean) =>
+		backend.setSubagentPreferBuiltin(enabled),
+	);
 	ipcMain.handle(IpcChannels.SettingsListSubagents, () => backend.listSubagents());
 	ipcMain.handle(IpcChannels.SettingsLoginStart, (_e, loginId: string, providerId: string) =>
 		backend.login.startLogin(loginId, providerId),

@@ -39,4 +39,68 @@ describe("ModelPrefsService", () => {
 		await writeFile(path, "{broken", "utf8");
 		expect(await service.getPrefs()).toEqual({ hiddenModels: {}, subagentModels: {} });
 	});
+
+	describe("subagentThinking（#47）", () => {
+		it("读写逐代理思考档位；null 删除键", async () => {
+			const { service } = await makeService();
+			expect(await service.getSubagentThinking("scout")).toBeUndefined();
+			await service.setSubagentThinking("scout", "low");
+			expect(await service.getSubagentThinking("scout")).toBe("low");
+			expect(await service.getPrefs()).toEqual({
+				hiddenModels: {},
+				subagentModels: {},
+				subagentThinking: { scout: "low" },
+			});
+			await service.setSubagentThinking("scout", null);
+			expect(await service.getSubagentThinking("scout")).toBeUndefined();
+			// 空 map 不写进 json（向后兼容旧文件形状）
+			expect(await service.getPrefs()).toEqual({ hiddenModels: {}, subagentModels: {} });
+		});
+
+		it("非法档位拒写，脏 json 值读侧白名单丢弃", async () => {
+			const { path, service } = await makeService();
+			await expect(service.setSubagentThinking("scout", "ultra")).rejects.toThrow(/invalid thinking/);
+			await writeFile(
+				path,
+				JSON.stringify({
+					subagentThinking: { scout: "ultra", reviewer: "high", blank: "  " },
+				}),
+				"utf8",
+			);
+			const fresh = new ModelPrefsService(path);
+			expect(await fresh.getPrefs()).toEqual({
+				hiddenModels: {},
+				subagentModels: {},
+				subagentThinking: { reviewer: "high" },
+			});
+		});
+	});
+
+	describe("subagentPreferBuiltin（#47）", () => {
+		it("缺省 true，可写 false 再开关回 true", async () => {
+			const { service } = await makeService();
+			expect(await service.getSubagentPreferBuiltin()).toBe(true);
+			await service.setSubagentPreferBuiltin(false);
+			expect(await service.getSubagentPreferBuiltin()).toBe(false);
+			expect(await service.getPrefs()).toMatchObject({ subagentPreferBuiltin: false });
+			await service.setSubagentPreferBuiltin(true);
+			expect(await service.getSubagentPreferBuiltin()).toBe(true);
+		});
+
+		it("旧 json 无新字段时行为同现状；脏值按 true 处理", async () => {
+			const { path } = await makeService();
+			await writeFile(
+				path,
+				JSON.stringify({ hiddenModels: {}, subagentModels: { scout: "p/m" }, subagentPreferBuiltin: "nope" }),
+				"utf8",
+			);
+			const legacy = new ModelPrefsService(path);
+			expect(await legacy.getSubagentPreferBuiltin()).toBe(true);
+			expect(await legacy.getSubagentModel("scout")).toBe("p/m");
+			expect(await legacy.getPrefs()).toEqual({
+				hiddenModels: {},
+				subagentModels: { scout: "p/m" },
+			});
+		});
+	});
 });

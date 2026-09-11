@@ -9,6 +9,7 @@ import {
 	SessionManager,
 	SettingsManager,
 } from "@earendil-works/pi-coding-agent";
+import { isThinkingLevel, type ThinkingLevel } from "@percho/shared";
 import { makePermissionGateExtension } from "../../permissions/extension";
 import type { PermissionGate, PermissionRequestMeta } from "../../permissions/gate";
 import type { SessionTraces } from "../../session/traces";
@@ -29,6 +30,8 @@ export interface SingleResult {
 	agent: string;
 	task: string;
 	model?: string;
+	/** 子会话实际生效的思考档位（SDK 按模型能力 clamp 后的值；无模型时为 off） */
+	thinkingLevel?: string;
 	exitCode: number;
 	error?: string;
 	content?: string;
@@ -51,6 +54,8 @@ export interface RunSubagentDeps {
 	getModelRuntime: () => Promise<ModelRuntime>;
 	/** 设置页的 per-agent 覆盖；无配置时返回 undefined 并继续走 frontmatter / 父模型。 */
 	getSubagentModel: (agentName: string) => Promise<string | undefined>;
+	/** 设置页的 per-agent 思考深度覆盖；无配置时返回 undefined 并继续走 frontmatter。 */
+	getSubagentThinkingLevel: (agentName: string) => Promise<string | undefined>;
 	gate: PermissionGate;
 	traces: SessionTraces;
 	/** 把运行中子会话事件转发给宿主；未提供时只写 trace（供非桌面宿主使用）。 */
@@ -103,6 +108,18 @@ export async function resolveSubagentModel(
 	fallback: Model<any> | undefined,
 ): Promise<Model<any> | undefined> {
 	return resolveModel(runtime, preference ?? frontmatter, fallback);
+}
+
+/**
+ * 思考深度优先级（spec D2）：设置页 per-agent 覆盖 > agent frontmatter > undefined。
+ * undefined = 不传显式档位，交 SDK 默认链（既有会话 > per-model > 全局默认）并按模型能力 clamp。
+ * 设置页脏值（非 7 档）跳过、回退 frontmatter（model-prefs 读侧已白名单过滤，此处只做兑底）。
+ */
+export function resolveSubagentThinkingLevel(
+	preference: string | undefined,
+	frontmatter: ThinkingLevel | undefined,
+): ThinkingLevel | undefined {
+	return isThinkingLevel(preference) ? preference : frontmatter;
 }
 
 /** 子会话标题对齐主会话命名：任务首行，最多 30 字；加 agent 前缀方便快速检视。 */
@@ -176,6 +193,11 @@ export async function runSubagent(deps: RunSubagentDeps, input: RunSubagentInput
 		input.agent.model,
 		input.model,
 	);
+	// 显式档位覆盖全局默认（SDK 仍会按模型能力 clamp）；undefined = 走 SDK 默认链
+	const thinkingLevel = resolveSubagentThinkingLevel(
+		await deps.getSubagentThinkingLevel(input.agent.name),
+		input.agent.thinking,
+	);
 	const agentDir = getAgentDir();
 	const sessionDir = join(subagentSessionsRoot(agentDir), projectSlug(input.cwd));
 	const childGateConfirm = (title: string, message: string, meta?: PermissionRequestMeta) =>
@@ -208,6 +230,7 @@ export async function runSubagent(deps: RunSubagentDeps, input: RunSubagentInput
 		agentDir,
 		modelRuntime: runtime,
 		model,
+		thinkingLevel,
 		tools: safeTools,
 		customTools,
 		sessionManager,
@@ -223,6 +246,8 @@ export async function runSubagent(deps: RunSubagentDeps, input: RunSubagentInput
 		agent: input.agent.name,
 		task: input.task,
 		model: modelLabel(session.model),
+		// 实际生效档位（SDK clamp 后）；卡片元信息与 jsonl 的 thinking_level_change 一致
+		thinkingLevel: session.thinkingLevel,
 		exitCode: -1,
 		usage: structuredClone(EMPTY_USAGE),
 		artifactPaths: { jsonlPath: session.sessionFile },

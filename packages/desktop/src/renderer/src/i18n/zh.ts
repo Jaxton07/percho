@@ -297,8 +297,15 @@ export const zh = {
 			providers: "Provider 配置",
 			subagents: "Subagent 配置",
 			inherit: "继承主会话模型",
-			subagentHint: "为各个内置或用户级子代理指定模型；不设置时继承发起任务的主会话模型。",
+			subagentHint:
+				"模型与思考深度：设置页指定 > agent 定义 > 默认继承；思考深度没有任何定义时走全局默认档。改动对后续新建的子代理调用生效。",
 			subagentsEmpty: "未发现可配置的子代理",
+			subagentThinkingInherit: "跟随 agent 定义",
+			subagentThinkingInheritWith: "跟随 agent 定义（{level}）",
+			subagentThinkingInvalid: '定义中的 thinking "{value}" 无效，已忽略',
+			subagentExecutorTitle: "优先使用内置 subagent 执行器",
+			subagentExecutorHint: "开启时遮蔽第三方 subagent 扩展的同名工具；仅对新会话（含重开）生效。",
+			subagentExecutorConflictHint: "检测到第三方 subagent 扩展（{names}），当前内置执行器优先。",
 		},
 		providers: {
 			empty: "未发现可用 provider",

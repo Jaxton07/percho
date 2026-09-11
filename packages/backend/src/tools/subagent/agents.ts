@@ -2,6 +2,7 @@ import type { Dirent } from "node:fs";
 import { readdir, readFile } from "node:fs/promises";
 import { join } from "node:path";
 import { getAgentDir } from "@earendil-works/pi-coding-agent";
+import { isThinkingLevel, type ThinkingLevel } from "@percho/shared";
 
 export type AgentSource = "builtin" | "user" | "project";
 
@@ -10,6 +11,10 @@ export interface SubagentDefinition {
 	description: string;
 	tools: string[];
 	model?: string;
+	/** frontmatter `thinking`（合法档位才保留；非法值丢弃并由 thinkingWarning 带原文） */
+	thinking?: ThinkingLevel;
+	/** frontmatter thinking 非法时的原文（设置页警示用；合法/缺失时 undefined） */
+	thinkingWarning?: string;
 	systemPrompt: string;
 	source: AgentSource;
 	path?: string;
@@ -79,11 +84,17 @@ export function parseAgentMarkdown(
 	const description = parseScalar(metadata.get("description") ?? "");
 	const tools = parseTools(metadata.get("tools") ?? "read");
 	const model = parseScalar(metadata.get("model") ?? "") || undefined;
+	// 非法 thinking 不阻断加载：丢弃档位、留原文供设置页提示（spec D3）
+	const rawThinking = parseScalar(metadata.get("thinking") ?? "");
+	const thinking = isThinkingLevel(rawThinking) ? rawThinking : undefined;
+	const thinkingWarning = thinking ? undefined : rawThinking || undefined;
 	return {
 		name,
 		description,
 		tools,
 		model,
+		...(thinking ? { thinking } : {}),
+		...(thinkingWarning ? { thinkingWarning } : {}),
 		systemPrompt: lines
 			.slice(end + 1)
 			.join("\n")

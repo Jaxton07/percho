@@ -9,6 +9,8 @@ export interface SubagentRunData {
 	task?: string;
 	status: "done" | "error";
 	model?: string;
+	/** 子会话实际生效的思考档位（单次运行元信息） */
+	thinkingLevel?: string;
 	/** 子代理消耗的 token 数 */
 	tokens?: number;
 	/** 非 0 表示子代理执行出错 */
@@ -52,6 +54,7 @@ export function extractSubagentRuns(details: unknown): SubagentRunData[] | null 
 		rest: {
 			task?: unknown;
 			model?: unknown;
+			thinkingLevel?: unknown;
 			exitCode?: unknown;
 			error?: unknown;
 			sessionFile?: unknown;
@@ -68,6 +71,7 @@ export function extractSubagentRuns(details: unknown): SubagentRunData[] | null 
 			task,
 			status: exitCode != null && exitCode !== 0 ? "error" : error ? "error" : "done",
 			model: typeof rest.model === "string" ? rest.model : undefined,
+			thinkingLevel: typeof rest.thinkingLevel === "string" ? rest.thinkingLevel : undefined,
 			tokens: typeof rest.tokens === "number" ? rest.tokens : undefined,
 			exitCode,
 			artifactsDir,
@@ -131,6 +135,7 @@ export function extractSubagentRuns(details: unknown): SubagentRunData[] | null 
 		pushRun(agent ?? sessionFile ?? "subagent", {
 			task: r.task,
 			model: r.model,
+			thinkingLevel: r.thinkingLevel,
 			exitCode,
 			error,
 			sessionFile:

@@ -23,6 +23,31 @@ describe("subagent agent definitions", () => {
 		});
 	});
 
+	describe("frontmatter thinking（#47）", () => {
+		it("合法档位保留，且不影响 systemPrompt", () => {
+			const agent = parseAgentMarkdown(
+				`---\nname: scout\ndescription: Code scout\nthinking: high # 覆盖全局默认\n---\n\nInspect files only.`,
+			);
+			expect(agent).toMatchObject({ thinking: "high", systemPrompt: "Inspect files only." });
+			expect(agent?.thinkingWarning).toBeUndefined();
+		});
+
+		it("非法档位丢弃并带原文警示（不阻断加载）", () => {
+			const agent = parseAgentMarkdown(
+				`---\nname: scout\ndescription: Code scout\nthinking: ultra\n---\n\nBody.`,
+			);
+			expect(agent?.thinking).toBeUndefined();
+			expect(agent?.thinkingWarning).toBe("ultra");
+			expect(agent?.systemPrompt).toBe("Body.");
+		});
+
+		it("缺省 thinking 时两项均为 undefined", () => {
+			const agent = parseAgentMarkdown(`---\nname: scout\ndescription: Code scout\n---\n\nBody.`);
+			expect(agent?.thinking).toBeUndefined();
+			expect(agent?.thinkingWarning).toBeUndefined();
+		});
+	});
+
 	it("applies builtin → user → trusted project precedence", async () => {
 		const root = await mkdtemp("/tmp/percho-subagent-agents-");
 		tempDirs.push(root);

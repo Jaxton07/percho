@@ -378,7 +378,12 @@ export function reduceEvent(state: SessionTranscriptState, event: SessionEvent):
 							(update.task == null || run.task === update.task),
 					);
 					const current = index >= 0 ? next[index] : undefined;
-					if (current) next[index] = { ...current, sessionFile: update.sessionFile };
+					if (current)
+						next[index] = {
+							...current,
+							sessionFile: update.sessionFile,
+							...(update.thinkingLevel ? { thinkingLevel: update.thinkingLevel } : {}),
+						};
 				}
 				subagentRuns = next;
 			}

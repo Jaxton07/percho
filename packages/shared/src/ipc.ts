@@ -94,11 +94,13 @@ export const IpcChannels = {
 	SettingsRemoveCustomProvider: "settings:removeCustomProvider",
 	SettingsSetProviderBaseUrl: "settings:setProviderBaseUrl",
 	SettingsTestProvider: "settings:testProvider",
-	/** 用户级模型偏好：隐藏模型 + 子代理模型覆盖 */
+	/** 用户级模型偏好：隐藏模型 + 子代理模型/思考深度覆盖 + 执行器偏好 */
 	SettingsGetModelPrefs: "settings:getModelPrefs",
 	SettingsSetModelHidden: "settings:setModelHidden",
 	SettingsSetModelsHidden: "settings:setModelsHidden",
 	SettingsSetSubagentModel: "settings:setSubagentModel",
+	SettingsSetSubagentThinking: "settings:setSubagentThinking",
+	SettingsSetSubagentPreferBuiltin: "settings:setSubagentPreferBuiltin",
 	/** 只列内置与用户级 subagent（设置是全局配置，不绑定项目） */
 	SettingsListSubagents: "settings:listSubagents",
 	/** provider 交互登录（OAuth / api_key，后者如 Google Vertex 的 ADC/服务账号）；loginId 由 renderer 生成用于事件归属 */
@@ -274,6 +276,10 @@ export interface PiApi {
 	setModelsHidden(provider: string, modelIds: string[], hidden: boolean): Promise<ModelPrefs>;
 	/** 为子代理指定 provider/model；null = 继承父会话模型 */
 	setSubagentModel(agent: string, modelRef: string | null): Promise<ModelPrefs>;
+	/** 为子代理指定思考深度；null = 跟随 agent 定义（无定义时走 SDK 默认链） */
+	setSubagentThinking(agent: string, level: string | null): Promise<ModelPrefs>;
+	/** 内置 subagent 执行器优先；新会话/恢复会话生效（不开会话不受后续变化影响） */
+	setSubagentPreferBuiltin(enabled: boolean): Promise<ModelPrefs>;
 	/** 列内置与用户级 subagent 定义（不读项目级定义） */
 	listSubagents(): Promise<SubagentInfo[]>;
 	/** 启动 provider 交互登录（OAuth 浏览器/设备码流 · api_key 提示/选择流）；事件经 onProviderLoginEvent 推送，promise 在流程结束时 resolve（取消不算错误） */

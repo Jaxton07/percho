@@ -304,8 +304,16 @@ export const en: Messages = {
 			subagents: "Subagent configuration",
 			inherit: "Inherit parent session model",
 			subagentHint:
-				"Choose a model for each built-in or user-level subagent. Unconfigured agents inherit the parent session model.",
+				"Model and thinking depth: settings override > agent definition > inherited default; a thinking depth with no definition falls back to the global default level. Changes apply to subsequent subagent runs.",
 			subagentsEmpty: "No configurable subagents found",
+			subagentThinkingInherit: "Follow agent definition",
+			subagentThinkingInheritWith: "Follow agent definition ({level})",
+			subagentThinkingInvalid: 'Definition thinking "{value}" is invalid and was ignored',
+			subagentExecutorTitle: "Prefer built-in subagent executor",
+			subagentExecutorHint:
+				"When on, third-party subagent extensions' same-named tools are shadowed; applies to new sessions (including reopened).",
+			subagentExecutorConflictHint:
+				"Third-party subagent extension detected ({names}); the built-in executor currently takes precedence.",
 		},
 		providers: {
 			empty: "No providers available",

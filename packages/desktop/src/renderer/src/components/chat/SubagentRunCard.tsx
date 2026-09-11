@@ -1,4 +1,4 @@
-import { useT } from "../../i18n";
+import { type MessageKey, useT } from "../../i18n";
 import { useSessionsStore } from "../../stores/sessions";
 import type { SubagentRunUi } from "../../stores/transcript";
 
@@ -38,6 +38,11 @@ function SubagentRunRow({ run }: { run: SubagentRunUi }) {
 				<span className="h-1.5 w-1.5 shrink-0 rounded-full bg-green-500" />
 			)}
 			<span className="truncate text-[13px] font-semibold text-ink">{displayName(run.agent)}</span>
+			{run.thinkingLevel && (
+				<span className="shrink-0 text-[11px] text-ink-faint">
+					{t(`thinkingLevels.${run.thinkingLevel}` as MessageKey)}
+				</span>
+			)}
 			<span className="shrink-0 text-[11px] text-ink-faint">{statusLabel}</span>
 		</button>
 	);

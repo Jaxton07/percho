@@ -103,7 +103,7 @@ import {
 } from "./tools/context-evaporation";
 import { makeShowImageTool } from "./tools/show-image";
 import { discoverAgents, isSubagentSessionPath, makeSubagentTool } from "./tools/subagent";
-import { applySubagentMutex } from "./tools/subagent/mutex";
+import { applySubagentMutex, resolveSubagentPreferBuiltin } from "./tools/subagent/mutex";
 import { makeTodoTool } from "./tools/todo";
 import { makeTodoReminderExtension } from "./tools/todo-reminder";
 import { makeWebFetchTool } from "./tools/webfetch";
@@ -226,7 +226,7 @@ export class PiBackend {
 	}
 
 	/** 自定义工具 = 调用方传入的 + 内置 webfetch（webFetch:false 关闭）+ show_image + todo + subagent */
-	private buildCustomTools(gate: PermissionGate): ToolDefinition[] {
+	private buildCustomTools(gate: PermissionGate, preferBuiltin: boolean): ToolDefinition[] {
 		const tools = [...(this.options.customTools ?? [])];
 		const webFetch = this.options.webFetch;
 		if (webFetch !== false) {
@@ -234,11 +234,12 @@ export class PiBackend {
 		}
 		tools.push(makeShowImageTool());
 		tools.push(makeTodoTool());
-		if (this.options.subagentPreferBuiltin !== false) {
+		if (preferBuiltin) {
 			tools.push(
 				makeSubagentTool({
 					getModelRuntime: () => this.getModelRuntime(),
 					getSubagentModel: (agentName) => this.modelPrefs.getSubagentModel(agentName),
+					getSubagentThinkingLevel: (agentName) => this.modelPrefs.getSubagentThinking(agentName),
 					gate,
 					traces: this.traces,
 					onEvent: (sessionId, event) => this.emitEvent(sessionId, event),
@@ -246,6 +247,17 @@ export class PiBackend {
 			);
 		}
 		return tools;
+	}
+
+	/**
+	 * 内置 subagent 执行器是否优先：构造参数（测试/嵌入宿主 override）> model-prefs.json 实时值 > true。
+	 * 只影响新会话创建（调用点已 async，故在最早异步点预读一次，避免同步 buildCustomTools 内读盘）。
+	 */
+	private async subagentPreferBuiltin(): Promise<boolean> {
+		return resolveSubagentPreferBuiltin(
+			this.options.subagentPreferBuiltin,
+			await this.modelPrefs.getSubagentPreferBuiltin(),
+		);
 	}
 
 	/**
@@ -414,18 +426,19 @@ export class PiBackend {
 			confirm: confirmBridge,
 			modeRef,
 		});
+		const preferBuiltin = await this.subagentPreferBuiltin();
 		const { session, extensionsResult } = await createAgentSession({
 			cwd,
 			modelRuntime: runtime,
 			model,
 			thinkingLevel: options.thinkingLevel as ThinkingLevel | undefined,
 			tools: this.options.tools,
-			customTools: this.buildCustomTools(gate),
+			customTools: this.buildCustomTools(gate, preferBuiltin),
 			sessionManager: SessionManager.create(cwd),
 			settingsManager,
 			resourceLoader,
 		});
-		const mutex = applySubagentMutex(session, extensionsResult, this.options.subagentPreferBuiltin !== false);
+		const mutex = applySubagentMutex(session, extensionsResult, preferBuiltin);
 		if (mutex.shadowed.length > 0) {
 			log.info("third-party subagent tools shadowed", session.sessionId, mutex);
 			for (const shadowed of mutex.shadowed) {
@@ -465,14 +478,15 @@ export class PiBackend {
 			confirm: confirmBridge,
 			modeRef,
 		});
+		const preferBuiltin = await this.subagentPreferBuiltin();
 		const { session, extensionsResult } = await createAgentSession({
 			sessionManager,
 			modelRuntime: runtime,
 			settingsManager,
 			resourceLoader,
-			customTools: this.buildCustomTools(gate),
+			customTools: this.buildCustomTools(gate, preferBuiltin),
 		});
-		const mutex = applySubagentMutex(session, extensionsResult, this.options.subagentPreferBuiltin !== false);
+		const mutex = applySubagentMutex(session, extensionsResult, preferBuiltin);
 		if (mutex.shadowed.length > 0) {
 			log.info("third-party subagent tools shadowed", session.sessionId, mutex);
 			for (const shadowed of mutex.shadowed) {
@@ -1024,14 +1038,24 @@ export class PiBackend {
 		return this.modelPrefs.setSubagentModel(agent, modelRef);
 	}
 
+	async setSubagentThinking(agent: string, level: string | null): Promise<ModelPrefs> {
+		return this.modelPrefs.setSubagentThinking(agent, level);
+	}
+
+	async setSubagentPreferBuiltin(enabled: boolean): Promise<ModelPrefs> {
+		return this.modelPrefs.setSubagentPreferBuiltin(enabled);
+	}
+
 	async listSubagents(): Promise<SubagentInfo[]> {
 		const agents = await discoverAgents(this.options.defaultCwd ?? process.cwd(), { projectTrusted: false });
 		return agents
 			.filter((agent) => agent.source !== "project")
-			.map(({ name, description, source }) => ({
+			.map(({ name, description, source, thinking, thinkingWarning }) => ({
 				name,
 				description,
 				source: source === "builtin" ? "builtin" : "user",
+				...(thinking ? { thinking } : {}),
+				...(thinkingWarning ? { thinkingWarning } : {}),
 			}));
 	}
 

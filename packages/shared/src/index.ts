@@ -8,6 +8,7 @@ export * from "./session";
 export * from "./settings";
 export * from "./skill-invocation";
 export * from "./subagent";
+export * from "./thinking";
 export * from "./todo";
 export * from "./transcript";
 export * from "./ui-plugins";
