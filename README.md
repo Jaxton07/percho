@@ -80,6 +80,8 @@ Prebuilt installers are published on the [Releases](https://github.com/Jaxton07/
 > 2. Or in Terminal: `xattr -cr "/Applications/Percho.app"`.
 >
 > Updates are checked in-app. On Windows they download and install there too (click download, then restart). On macOS the ad-hoc signed build cannot self-install, so the app jumps to the Releases page — and a freshly downloaded version will hit Gatekeeper once again. On Windows, click "More info" → "Run anyway" when SmartScreen appears.
+>
+> On Linux: make the AppImage executable before first launch (`chmod +x percho-linux-x86_64.AppImage`). On Ubuntu 22.04+/24.04+ and derivatives, install `libfuse2` first — AppImages mount via FUSE 2, which is no longer preinstalled. Linux builds download and install updates in-app.
 
 ## Configuration
 

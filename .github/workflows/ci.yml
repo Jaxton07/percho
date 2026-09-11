@@ -23,3 +23,13 @@ jobs:
       - run: npm run typecheck
       - run: npm run test
       - run: npm run build
+      # 打包冒烟：只解包不出安装器（--dir，此时 electron-builder 不做 publish），
+      # 让打包层回归（electron-builder.yml 解析、files/asarUnpack glob、图标、原生模块 unpack）
+      # 在 PR 阶段暴露，而不是发版打 tag 时才爆。Electron 二进制走缓存。
+      - uses: actions/cache@v4
+        with:
+          path: ~/.cache/electron
+          key: electron-${{ runner.os }}-${{ hashFiles('packages/desktop/package.json') }}
+      - name: Packaging smoke (electron-builder --dir)
+        working-directory: packages/desktop
+        run: npx electron-builder --dir

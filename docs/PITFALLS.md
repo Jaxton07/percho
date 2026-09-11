@@ -17,6 +17,7 @@
 | main 进程 import workspace 包行为异常（外部化/旧产物） | 三 · externalizeDepsPlugin |
 | 打包产物缺 pi SDK、Electron 版本漂移 | 三 · 打包两个坑 |
 | Electron 二进制下载不动、npm 拦 postinstall | 三 · Node/npm 环境 |
+| gh 合并报 workflow scope / fork 首 PR 合不了 | 三 · gh CLI workflow scope |
 | 新增 UI 文案只显示一种语言 | 四 · i18n 双字典 |
 | 凭证泄漏风险、密钥误提交 | 五 · 绝不打印/提交 API key |
 | LAN 页连接僵死不重连、状态「重连中/已连接」反复跳 | 二 · SSE 心跳必须是命名事件帧 |
@@ -112,6 +113,12 @@ main config 用 `exclude: ["@percho/backend", "@percho/shared"]` 并 alias 到�
 ### 打包两个坑
 
 pi SDK 必须声明进 `packages/desktop/package.json` dependencies（electron-builder 只从 desktop 依赖树收集）；electron 必须钉精确版本。发版/CI 细节全在 `.local/docs/release.md`（本地文档，不入库）。
+
+### gh CLI 合并涉及 workflow 的 PR 需要 `workflow` scope（2026-09-11 发现）
+
+`gh pr merge --squash` 报 `refusing to allow an OAuth App to create or update workflow .github/workflows/xxx.yml without workflow scope`：gh 的 OAuth token 默认只有 `repo/gist/read:org`，而**凡 merge 会改动 `.github/workflows/` 下文件的 PR，GitHub API 一律要求 `workflow` scope**。修复：`gh auth refresh -h github.com -s workflow`（设备码流程，浏览器确认，一次性）；或网页 UI 手动合。
+
+连带坑（首贡献者 fork PR 死锁）：fork 首次 PR 的 CI 要在 Actions 页面手动 Approve 才会跑，叠加分支保护「要求 branch up-to-date + 检查通过」→ 三者互等死锁，只能 admin 旁路（`gh pr merge --squash --admin`，同样吃上面的 scope 限制）。同步 fork 分支用 `gh pr update-branch <n>`。
 
 ## 四、Renderer / React
 

@@ -34,6 +34,8 @@ jobs:
             !packages/desktop/dist/mac-arm64
             !packages/desktop/dist/win-unpacked
             !packages/desktop/dist/linux-unpacked
+            # electron-builder 每次构建都会写入的诊断文件，不足发布产物
+            !packages/desktop/dist/builder-debug.yml
           if-no-files-found: error
   publish:
     needs: build
@@ -58,7 +60,7 @@ jobs:
           | Windows | `percho-windows-x64.exe` (installer) or `percho-windows-x64.zip` |
           | Linux (x64) | `percho-linux-x86_64.AppImage` |
 
-          > Ad-hoc signed (no Developer ID). On macOS, if Gatekeeper blocks the app, right-click it and choose **Open** (or run `xattr -cr "/Applications/Percho.app"`). Windows builds update automatically in-app.
+          > Ad-hoc signed (no Developer ID). On macOS, if Gatekeeper blocks the app, right-click it and choose **Open** (or run `xattr -cr "/Applications/Percho.app"`). Windows and Linux builds update automatically in-app. On Linux, `chmod +x` the AppImage before first launch (and install `libfuse2` on Ubuntu 22.04+/24.04+ if it won't start).
           EOF
   # 刷新官网（percho-website，Cloudflare Pages）：触发 Deploy Hook 重建，同步版本号与 changelog。
   # 需要 repo secret CF_PAGES_DEPLOY_HOOK（Cloudflare Pages → Settings → Builds → Deploy hooks 创建）；未配置时跳过不影响发布
