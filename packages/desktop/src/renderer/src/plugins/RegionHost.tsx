@@ -91,6 +91,9 @@ export function RegionHost({ region }: { region: RegionName }) {
 					{list.map(renderContribution)}
 				</div>
 			);
+		case UI_REGIONS.ComposerFooter:
+			// 输入框底部行内区域（ContextRing 旁）：横向排列，不抢 pointer-events（插件需交互自己开 auto）
+			return <>{list.map(renderContribution)}</>;
 		default:
 			// settings.panel 不走 RegionHost（SettingsDialog 动态分类直接读 registry 渲染）
 			return null;

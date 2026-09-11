@@ -9,6 +9,7 @@ import { Dropdown } from "../components/ui/Dropdown";
 import { Tooltip } from "../components/ui/Tooltip";
 import { useContextUsage } from "../hooks/use-context-usage";
 import { useLanguage } from "../hooks/use-language";
+import { useQuota } from "../hooks/use-quota";
 import { useT } from "../i18n";
 import { useProjectsStore } from "../stores/projects";
 import { useSessionsStore } from "../stores/sessions";
@@ -44,6 +45,7 @@ window.PerchoUI = {
 	hooks: {
 		useT,
 		useContextUsage,
+		useQuota,
 		useLanguage,
 	},
 	stores: {

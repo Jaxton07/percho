@@ -70,7 +70,7 @@ export default A;
 export const { version, components, helpers, hooks, stores } = A;
 export const { Button, Dropdown, Tooltip, Markdown, ImagePreview } = A.components;
 export const { summarizeArgs, displayToolName } = A.helpers;
-export const { useT, useContextUsage, useLanguage } = A.hooks;
+export const { useT, useContextUsage, useQuota, useLanguage } = A.hooks;
 export const { useTranscriptStore, useSessionsStore, useUiStore, useProjectsStore, useSettingsStore, useUiPreferencesStore } = A.stores;`,
 };
 
