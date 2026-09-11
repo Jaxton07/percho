@@ -81,6 +81,8 @@ percho 把官方 Pi SDK（`@earendil-works/pi-coding-agent`）跑在 Electron �
 > 2. 或在终端执行：`xattr -cr "/Applications/Percho.app"`。
 >
 > 更新在应用内检查。Windows 上也在应用内下载安装（点下载，再点重启）；macOS 上 adhoc 签名的构建无法自动安装，点击会跳到 Releases 页 —— 新下载的版本首次打开还会再被 Gatekeeper 拦一次。Windows 上 SmartScreen 提示时点「更多信息」→「仍要运行」。
+>
+> Linux：首次运行前给 AppImage 加执行位（`chmod +x percho-linux-x86_64.AppImage`）；Ubuntu 22.04+/24.04+ 及衍生发行版需先安装 `libfuse2`（AppImage 依赖 FUSE 2 挂载，新版系统默认未装）。Linux 版在应用内下载并安装更新。
 
 ## 配置
 
