@@ -1,3 +1,10 @@
+import type {
+	ExtensionDialogRequest,
+	ExtensionDialogResolved,
+	ExtensionDialogRespond,
+	ExtensionEditorTextEvent,
+	ExtensionNotifyEvent,
+} from "./extension-dialog";
 import type { LanStatus } from "./lan";
 import type { CatalogPackageType, CatalogSearchResult, ConfiguredPackageInfo } from "./packages";
 import type {
@@ -104,6 +111,8 @@ export const IpcChannels = {
 	/** 局域网远程控制二级开关（M2；默认关闭，开观察 ≠ 开控制）。 */
 	LanSetRemoteControl: "lan:setRemoteControl",
 	PermissionRespond: "permission:respond",
+	/** 扩展对话框：renderer 应答（requestId 含 sessionId 全局唯一；host 遍历幂等） */
+	ExtensionDialogRespond: "extension-dialog:respond",
 	/** 权限门控配置（enabled 解析保留，UI 无入口；chip 逃生舱禁用态感知用） */
 	PermissionGetConfig: "permission:getConfig",
 	/** 会话权限模式（default / fullAccess；内存态，不落盘） */
@@ -171,6 +180,11 @@ export const IpcChannels = {
 	PermissionResolved: "pi:permission-resolved",
 	/** main → renderer 项目信任请求（会话创建前） */
 	TrustRequest: "pi:trust-request",
+	/** main → renderer 扩展对话框请求/结算 + notify + 草稿预填（issue #45，GUI-only 不进 LAN） */
+	ExtensionDialogRequest: "pi:extension-dialog-request",
+	ExtensionDialogResolved: "pi:extension-dialog-resolved",
+	ExtensionNotify: "pi:extension-notify",
+	ExtensionEditorText: "pi:extension-editor-text",
 } as const;
 
 /** 渲染进程经 preload 暴露的 window.pi 类型 */
@@ -346,4 +360,14 @@ export interface PiApi {
 	onPermissionResolved(cb: (result: PermissionResolved) => void): () => void;
 	/** 订阅项目信任请求；返回取消函数 */
 	onTrustRequest(cb: (req: TrustRequest) => void): () => void;
+	/** 订阅扩展对话框请求（renderer 停靠槽数据源）；返回取消函数 */
+	onExtensionDialogRequest(cb: (req: ExtensionDialogRequest) => void): () => void;
+	/** 订阅扩展对话框结算（应答/超时/中止/会话关闭都会广播，撤卡）；返回取消函数 */
+	onExtensionDialogResolved(cb: (result: ExtensionDialogResolved) => void): () => void;
+	/** 订阅扩展 notify（→ 全局 Toast）；返回取消函数 */
+	onExtensionNotify(cb: (event: ExtensionNotifyEvent) => void): () => void;
+	/** 订阅扩展草稿预填（setEditorText/pasteToEditor → Composer）；返回取消函数 */
+	onExtensionEditorText(cb: (event: ExtensionEditorTextEvent) => void): () => void;
+	/** 应答扩展对话框（宿主按 requestId 归属路由，未知 id 静默忽略） */
+	respondExtensionDialog(requestId: string, answer: ExtensionDialogRespond): Promise<void>;
 }

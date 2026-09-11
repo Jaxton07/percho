@@ -182,6 +182,37 @@
 .approval-composer-enter {
 	animation: approval-enter 0.18s ease-out;
 }
+
+/* 扩展交互停靠卡（extension-dialogs 画板①-⑤）：dock-in 进场 0.28s 微弹，退场同 approval-exit */
+.dock-in {
+	animation: dock-in 0.28s cubic-bezier(0.2, 0.9, 0.3, 1.05);
+}
+.dock-exit {
+	animation: approval-exit 0.15s ease-in forwards;
+}
+@keyframes dock-in {
+	from {
+		transform: translateY(10px) scale(0.99);
+		opacity: 0;
+	}
+	to {
+		transform: translateY(0) scale(1);
+		opacity: 1;
+	}
+}
+
+/* 扩展 notify 溢出折叠条（Toaster）：比 toast 矮一档，无 glyph，近乎一行注脚（画板⑨） */
+.toast-overflow {
+	background: var(--color-surface);
+	border-radius: 13px;
+	box-shadow: var(--shadow-pop);
+	padding: 7px 12px;
+	display: flex;
+	align-items: center;
+	gap: 7px;
+	font-size: 11px;
+	color: var(--color-ink-faint);
+}
 @keyframes approval-enter {
 	from {
 		transform: translateY(10px) scale(0.99);
@@ -205,7 +236,9 @@
 @media (prefers-reduced-motion: reduce) {
 	.approval-enter,
 	.approval-exit,
-	.approval-composer-enter {
+	.approval-composer-enter,
+	.dock-in,
+	.dock-exit {
 		animation: none;
 	}
 }

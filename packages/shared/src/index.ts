@@ -1,4 +1,5 @@
 export * from "./errors";
+export * from "./extension-dialog";
 export * from "./ipc";
 export * from "./lan";
 export * from "./marquee-motion";

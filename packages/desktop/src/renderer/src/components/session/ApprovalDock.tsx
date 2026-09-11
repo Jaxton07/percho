@@ -3,25 +3,19 @@ import { useCallback, useEffect, useState } from "react";
 import { getPi } from "../../api";
 import { useT } from "../../i18n";
 import { useTranscriptStore } from "../../stores/transcript";
-import { Composer } from "../composer/Composer";
-import { Button } from "../ui/Button";
-import { Tooltip } from "../ui/Tooltip";
+import { WarningIcon } from "../icons";
 
-/** 退出动画时长，与 globals.css 的 approval-exit 同步 */
+/** 退出动画时长，与 globals.css 的 dock-exit（approval-exit）同步 */
 const EXIT_MS = 150;
 
 /**
- * 底部交换槽：权限审批面板与 Composer 同位互换（审批中 agent 阻塞，发消息无意义）。
- * 应答立即发给 backend（agent 尽快解锁），面板留 EXIT_MS 播退出动画；
- * 队列中下一个请求以 key 切换重放进入动画。
+ * 权限审批卡（与 Composer 同位互换；应答中 agent 阻塞，发消息无意义）。
+ * 视觉已迁移到 error-system 无边框语言（extension-dialogs 画板⑥，2026-09 拍板）：
+ * amber 三角 glyph 是唯一警示表达，四键全幽灵文字按钮（「允许一次」ink 加重），
+ * 快捷键挪进左侧提示行；行为/通道/记忆逻辑不变（权限仍走 PermissionGate 直通道）。
+ * 应答立即发给 backend（agent 尽快解锁），卡留 EXIT_MS 播退出动画；队列中下一个请求以 key 切换重放进入动画。
  */
-export function ApprovalDock({
-	sessionId,
-	hideComposer,
-}: {
-	sessionId: string | null;
-	hideComposer: boolean;
-}) {
+export function ApprovalDock({ sessionId }: { sessionId: string | null }) {
 	const t = useT();
 	const pending = useTranscriptStore((s) =>
 		sessionId ? s.bySession[sessionId]?.pendingPermissions : undefined,
@@ -91,32 +85,32 @@ export function ApprovalDock({
 		return () => window.removeEventListener("keydown", onKeyDown);
 	}, [shown, leaving, sessionId, respond]);
 
-	if (!shown) {
-		return hideComposer ? null : (
-			// relative z-20：× 删除键 -top-1.5 伸出容器顶 → 落入消息区，须盖过 MessageList 的 z-10
-			<div className="approval-composer-enter relative z-20">
-				<Composer />
-			</div>
-		);
-	}
+	if (!shown) return null;
+
+	const hintParams = {
+		allowOnce: t("permission.allowOnce"),
+		always: t("permissionShort.always"),
+		dir: t("permissionShort.dir"),
+		deny: t("permission.deny"),
+	};
 
 	return (
-		// z-20 同上：审批卡在下方时缩略图 × 同样会伸出容器顶
+		// z-20 同 DockSlot：审批卡在下方时缩略图 × 同样会伸出容器顶
 		<div className="relative z-20 shrink-0 px-6 pb-3">
 			<div className="mx-auto max-w-[760px]">
 				<div
 					key={shown.id}
-					className={`rounded-2xl border-[0.5px] border-border border-l-2 border-l-amber-400 bg-surface px-4 py-3 shadow-soft ${
-						leaving ? "approval-exit" : "approval-enter"
-					}`}
 					role="dialog"
 					aria-modal
+					className={`flex flex-col gap-2.5 rounded-[14px] bg-surface px-3.5 pt-3 pb-2.5 shadow-soft outline-none ${
+						leaving ? "dock-exit" : "dock-in"
+					}`}
 				>
-					<div className="flex items-center gap-2">
-						<span className="text-amber-500" aria-hidden="true">
-							⚠
+					<div className="flex min-h-5 items-center gap-2">
+						<span className="flex-none text-warn" aria-hidden="true">
+							<WarningIcon />
 						</span>
-						<h3 className="min-w-0 flex-1 truncate font-mono text-[13px] font-medium text-ink">
+						<h3 className="min-w-0 flex-1 truncate font-mono text-[13px] font-medium text-ink-2">
 							{shown.title}
 						</h3>
 						{queueCount > 0 && (
@@ -125,36 +119,54 @@ export function ApprovalDock({
 							</span>
 						)}
 					</div>
-					<p className="mt-2 max-h-32 overflow-y-auto rounded-lg bg-hover p-2.5 font-mono text-[12px] leading-relaxed break-all whitespace-pre-wrap text-ink-2 select-text">
+					<p className="max-h-32 overflow-y-auto rounded-lg bg-hover p-2.5 font-mono text-[12px] leading-relaxed break-all whitespace-pre-wrap text-ink-2 select-text">
 						{shown.message}
 					</p>
 					{error && (
-						<p className="mt-2 rounded-lg bg-red-50 px-3 py-2 text-[12px] break-all text-red-600">{error}</p>
+						<p className="rounded-lg bg-hover px-2.5 py-1.5 text-[12px] break-all text-err">{error}</p>
 					)}
-					<div className="mt-3 flex flex-wrap items-center justify-end gap-2">
-						<Button onClick={() => respond("deny")}>
-							{t("permission.deny")}
-							<kbd className="ml-1.5 rounded bg-hover px-1 py-0.5 text-[10px] text-ink-faint">Esc</kbd>
-						</Button>
-						{shown.suggestDir && (
-							<Tooltip label={t("permission.allowDirHint", { dir: shown.suggestDir })}>
-								<Button onClick={() => respond("allowDir")}>
-									{t("permission.allowDir")}
-									<kbd className="ml-1.5 rounded bg-hover px-1 py-0.5 text-[10px] text-ink-faint">D</kbd>
-								</Button>
-							</Tooltip>
-						)}
-						<Button onClick={() => respond("allowAlways")}>
-							{t("permission.allowAlways")}
-							<kbd className="ml-1.5 rounded bg-hover px-1 py-0.5 text-[10px] text-ink-faint">A</kbd>
-						</Button>
-						<Button variant="primary" onClick={() => respond("allow")}>
-							{t("permission.allowOnce")}
-							<kbd className="ml-1.5 rounded bg-on-ink/15 px-1 py-0.5 text-[10px] text-on-ink/80">Enter</kbd>
-						</Button>
+					<div className="flex flex-wrap items-center gap-0.5">
+						<span className="text-[11px] text-ink-faint">
+							{shown.suggestDir
+								? t("interaction.hintPermissionDir", hintParams)
+								: t("interaction.hintPermission", hintParams)}
+						</span>
+						<div className="ml-auto flex flex-wrap items-center gap-0.5">
+							<GhostAction onClick={() => respond("deny")}>{t("permission.deny")}</GhostAction>
+							{shown.suggestDir && (
+								<GhostAction onClick={() => respond("allowDir")}>{t("permission.allowDir")}</GhostAction>
+							)}
+							<GhostAction onClick={() => respond("allowAlways")}>{t("permission.allowAlways")}</GhostAction>
+							<GhostAction strong onClick={() => respond("allow")}>
+								{t("permission.allowOnce")}
+							</GhostAction>
+						</div>
 					</div>
 				</div>
 			</div>
 		</div>
+	);
+}
+
+/** 幽灵文字按钮（error-system 语言）：ink-faint，hover 才现底；主操作 ink 加重 */
+function GhostAction({
+	onClick,
+	strong,
+	children,
+}: {
+	onClick: () => void;
+	strong?: boolean;
+	children: React.ReactNode;
+}) {
+	return (
+		<button
+			type="button"
+			onClick={onClick}
+			className={`rounded-[7px] px-2.5 py-1 text-[12px] transition-colors hover:bg-hover ${
+				strong ? "font-medium text-ink hover:text-ink" : "text-ink-faint hover:text-ink-2"
+			}`}
+		>
+			{children}
+		</button>
 	);
 }

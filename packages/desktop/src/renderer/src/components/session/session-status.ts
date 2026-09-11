@@ -2,7 +2,7 @@ import type { SessionMeta } from "@percho/shared";
 import { isDailyCwd } from "../../lib/daily";
 import { useTranscriptStore } from "../../stores/transcript";
 
-/** 会话状态（优先级递减）：等待审批 > 工作中 > 完成未读 > 空闲。顶栏胶囊与左侧轨道共用 */
+/** 会话状态（优先级递减）：等待审批/应答 > 工作中 > 完成未读 > 空闲。顶栏胶囊与左侧轨道共用 */
 export type SessionStatus = "attention" | "working" | "done" | "idle";
 
 /** 订阅单个会话的运行状态（selector 返回字符串原始值，引用稳定不触发多余渲染） */
@@ -10,7 +10,8 @@ export function useSessionStatus(sessionId: string): SessionStatus {
 	return useTranscriptStore((s): SessionStatus => {
 		const entry = s.bySession[sessionId];
 		if (!entry) return "idle";
-		if (entry.pendingPermissions.length > 0) return "attention";
+		// 有待应答交互（权限或扩展对话框，D6 权限优先）即 amber 呼吸点（extension-dialogs 画板⑧）
+		if (entry.pendingPermissions.length > 0 || entry.pendingDialogs.length > 0) return "attention";
 		if (entry.agentActive) return "working";
 		if (entry.unseenCompletion) return "done";
 		return "idle";
