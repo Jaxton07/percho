@@ -24,6 +24,8 @@ export const UI_REGIONS = {
 	CornerTopRight: "chat.corner.top-right",
 	CornerBottomLeft: "chat.corner.bottom-left",
 	CornerBottomRight: "chat.corner.bottom-right",
+	/** 输入框底部工具行（ContextRing 旁，行内横向排列） */
+	ComposerFooter: "composer.footer",
 	SettingsPanel: "settings.panel",
 } as const;
 export type RegionName = (typeof UI_REGIONS)[keyof typeof UI_REGIONS];

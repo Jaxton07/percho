@@ -23,6 +23,7 @@ import type {
 	PermissionRequest,
 	PermissionResolved,
 	QueuedMessages,
+	QuotaInfo,
 	SavedTabs,
 	SessionEventEnvelope,
 	SessionMessage,
@@ -65,6 +66,7 @@ export const IpcChannels = {
 	SessionCompact: "session:compact",
 	SessionStats: "session:stats",
 	SessionGetContextUsage: "session:getContextUsage",
+	SessionGetQuota: "session:getQuota",
 	SessionClearQueue: "session:clearQueue",
 	SessionGetFollowUpMessages: "session:getFollowUpMessages",
 	SessionListSlashCommands: "session:listSlashCommands",
@@ -212,6 +214,8 @@ export interface PiApi {
 	getStats(sessionId: string): Promise<SessionStats>;
 	/** 当前模型上下文使用（tokens/contextWindow/percent），无会话或未知时返回 null */
 	getContextUsage(sessionId: string): Promise<ContextUsageInfo | null>;
+	/** opencode-go 套餐额度（全局，非会话级；无 key/无订阅时返回 null） */
+	getQuota(): Promise<QuotaInfo | null>;
 	/** 清空运行中排队的消息（steer+followUp 都清），返回被清内容（abort 时还原草稿/队列面板清空按钮用） */
 	clearQueue(sessionId: string): Promise<QueuedMessages>;
 	/** 当前排队的 followUp 消息文本（切换会话回来自恢复队列面板用） */

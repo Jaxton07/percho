@@ -26,6 +26,7 @@ const api: PiApi = {
 		ipcRenderer.invoke(IpcChannels.SessionCompact, sessionId, customInstructions),
 	getStats: (sessionId) => ipcRenderer.invoke(IpcChannels.SessionStats, sessionId),
 	getContextUsage: (sessionId) => ipcRenderer.invoke(IpcChannels.SessionGetContextUsage, sessionId),
+	getQuota: () => ipcRenderer.invoke(IpcChannels.SessionGetQuota),
 	clearQueue: (sessionId) => ipcRenderer.invoke(IpcChannels.SessionClearQueue, sessionId),
 	getFollowUpMessages: (sessionId) => ipcRenderer.invoke(IpcChannels.SessionGetFollowUpMessages, sessionId),
 	listSlashCommands: (sessionId) => ipcRenderer.invoke(IpcChannels.SessionListSlashCommands, sessionId),

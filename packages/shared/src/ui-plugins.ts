@@ -20,6 +20,7 @@ export const KNOWN_UI_REGIONS: string[] = [
 	"chat.corner.top-right",
 	"chat.corner.bottom-left",
 	"chat.corner.bottom-right",
+	"composer.footer",
 	"settings.panel",
 ];
 

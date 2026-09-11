@@ -182,6 +182,35 @@ export interface ContextUsageInfo {
 	percent: number | null;
 }
 
+/** opencode-go 套餐额度窗口 key（5h 滚动 / 日历周 / 计费月） */
+export type QuotaWindowKey = "rolling" | "weekly" | "monthly";
+
+/** opencode-go 套餐额度单窗口 */
+export interface QuotaWindow {
+	key: QuotaWindowKey;
+	/** 短标签（5h / week / month，插件按需本地化） */
+	label: string;
+	/** 已用百分比（0-100） */
+	percent: number;
+	/** ISO 重置时间，无则 null */
+	resetsAt: string | null;
+	/** 估算已用美元（percent × limit），未知为 null */
+	usedUsd: number | null;
+	/** 窗口上限美元（rolling 12 / weekly 30 / monthly 60） */
+	limitUsd: number;
+	status: "ok" | "rate-limited";
+}
+
+/**
+ * opencode-go 套餐额度（main 进程拉官方 API，5 分钟 TTL）。
+ * null = 无 key/无订阅（插件应隐藏）；error 非空 = 拉取失败（插件可展示错误态）。
+ */
+export interface QuotaInfo {
+	windows: QuotaWindow[];
+	updatedAt: number;
+	error?: string;
+}
+
 /** 运行中排队的消息（clearQueue 返回结构；桌面端只用 followUp，steering 恒为空） */
 export interface QueuedMessages {
 	steering: string[];
