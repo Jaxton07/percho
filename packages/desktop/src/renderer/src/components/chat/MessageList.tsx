@@ -1,5 +1,5 @@
 import { buildChatRows, deriveTurnChanges, deriveTurnTimings, isAgentWorking } from "@percho/shared";
-import { type MouseEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { type MouseEvent, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { useT } from "../../i18n";
 import { Slot } from "../../plugins/Slot";
 import { UI_SLOTS } from "../../plugins/slots";
@@ -9,6 +9,7 @@ import { useUiPreferencesStore } from "../../stores/ui-preferences";
 import { CenterOrb } from "./CenterOrb";
 import { MessageItem } from "./MessageItem";
 import { MetaGroup } from "./MetaGroup";
+import { clampWindowStart, expandWindowStart, MOUNT_TRIGGER_PX, tailWindowStart } from "./mount-window";
 import { RetryNote } from "./RetryNote";
 import { SelectionToolbar } from "./SelectionToolbar";
 import { SubagentRunCard } from "./SubagentRunCard";
@@ -26,6 +27,10 @@ const BOTTOM_THRESHOLD = 48;
  * 底部跟随：ResizeObserver 监听内容/容器尺寸（流式追加、图片加载、窗口缩放），
  * 跟随中即时贴底（RO 回调早于 paint，无闪烁）；仅「向上滚动」脱离跟随，回到底部恢复；
  * 用户发出新消息与切换会话时强制回底。脱离跟随时显示浮动回底按钮。
+ *
+ * 挂载窗口（长会话切换性能，见 mount-window.ts）：切到会话只挂尾部一段行，更早的行在用户
+ * 上滑接近顶部时成块补挂（只增不减）。切换瞬间的挂载量与会话长度解耦——两三千条消息的会话
+ * 不再在切换时把主线程冻结一秒。
  */
 export function MessageList() {
 	const t = useT();
@@ -93,20 +98,6 @@ export function MessageList() {
 		pinToBottom();
 	}, [activeSessionId, pinToBottom, updateFollowing]);
 
-	// 仅「向上滚动」脱离跟随（程序性向下贴底/平滑回底不中断跟随）；到达底部恢复。
-	// 压缩/消息重建会让内容变矮、浏览器把 scrollTop 往下钳——高度收缩导致的 top 下降
-	// 不是用户意图，不释放跟随（否则每次 compaction 后跟随静默死亡）；RO 会随即重新贴底。
-	const handleScroll = () => {
-		const el = scrollRef.current;
-		if (!el) return;
-		const heightShrank = el.scrollHeight < lastScrollHeightRef.current;
-		const atBottom = el.scrollHeight - el.scrollTop - el.clientHeight <= BOTTOM_THRESHOLD;
-		if (atBottom) updateFollowing(true);
-		else if (el.scrollTop < lastScrollTopRef.current && !heightShrank) updateFollowing(false);
-		lastScrollTopRef.current = el.scrollTop;
-		lastScrollHeightRef.current = el.scrollHeight;
-	};
-
 	// 展开/折叠任何折叠组（details summary）→ 释放底部跟随：否则贴底 RO 会在高度动画期间
 	// 持续拉回底部，出现「Worked 上移 + 内容下展」两边同动的不稳定感。释放后视口钉在点击处、
 	// 新内容向下展开，与「向上滚动脱离」同一语义（滚回底部即恢复跟随）
@@ -144,8 +135,70 @@ export function MessageList() {
 		[transcript, activeSessionId, turnChanges, turnTimings, enteringTurn],
 	);
 
+	// —— 挂载窗口 ——
+	// 切到会话只挂尾部窗口（会话切换耗时与会话长度解耦）；更早的行在用户上滑接近顶部时成块补挂。
+	// 窗口只增不减：流式/工具结果追加都在尾部，起点不动 → 长会话连挂载规模都保持在窗口量级。
+	const [mountFrom, setMountFrom] = useState(0);
+	const viewSessionRef = useRef<string | null>(null);
+	// 渲染期直接调整派生 state（React 允许、不提交本轮输出）：切会话立即回到尾部窗口。
+	// 本轮同时用 sessionChanged 直接取尾部窗口——被丢弃的那一轮不白算整份行序列。
+	const sessionChanged = viewSessionRef.current !== activeSessionId;
+	if (sessionChanged) {
+		viewSessionRef.current = activeSessionId;
+		setMountFrom(tailWindowStart(rows.length));
+	}
+	const renderedFrom = sessionChanged
+		? tailWindowStart(rows.length)
+		: clampWindowStart(mountFrom, rows.length);
+	const renderedFromRef = useRef(renderedFrom);
+	renderedFromRef.current = renderedFrom;
+	/** 向上补挂前的锚点：旧首行元素 + 其 offsetTop；DOM 更新后按位移补偿 scrollTop（视口内容不动） */
+	const prependAnchorRef = useRef<{ el: Element; top: number } | null>(null);
+
+	/** 补挂一块更早的行；滚动处理器调用（同一事件内重复调用只生效一次：同基于当前 renderedFrom 计算） */
+	const requestEarlierRows = () => {
+		const next = expandWindowStart(renderedFromRef.current, rows.length);
+		if (next === renderedFromRef.current) return; // 已到顶 / 无更早的行
+		const anchor = contentRef.current?.firstElementChild;
+		if (!anchor) return;
+		prependAnchorRef.current = { el: anchor, top: (anchor as HTMLElement).offsetTop };
+		setMountFrom(next);
+	};
+
+	// 仅「向上滚动」脱离跟随（程序性向下贴底/平滑回底不中断跟随）；到达底部恢复。
+	// 压缩/消息重建会让内容变矮、浏览器把 scrollTop 往下钳——高度收缩导致的 top 下降
+	// 不是用户意图，不释放跟随（否则每次 compaction 后跟随静默死亡）；RO 会随即重新贴底。
+	// 同时作为挂载窗口的补挂触发器：接近顶部时向更早的行补挂一块。
+	const handleScroll = () => {
+		const el = scrollRef.current;
+		if (!el) return;
+		const heightShrank = el.scrollHeight < lastScrollHeightRef.current;
+		const atBottom = el.scrollHeight - el.scrollTop - el.clientHeight <= BOTTOM_THRESHOLD;
+		if (atBottom) updateFollowing(true);
+		else if (el.scrollTop < lastScrollTopRef.current && !heightShrank) updateFollowing(false);
+		lastScrollTopRef.current = el.scrollTop;
+		lastScrollHeightRef.current = el.scrollHeight;
+		if (renderedFromRef.current > 0 && el.scrollTop < MOUNT_TRIGGER_PX) requestEarlierRows();
+	};
+
+	// 补挂后把视口钉回原来那行（新内容整块插在视口上方，不补偿就会把当前阅读位置顶下去）。
+	// 用锚点自身位移而非 scrollHeight 差值：后者会被同一提交里尾部的流式追加混淆。
+	// 顺带补一屏下限：窗口里的行特别矮（连续折叠行）时内容填不满视口，继续补挂直到填满或到顶。
+	// biome-ignore lint/correctness/useExhaustiveDependencies: renderedFrom 是刻意的重跑触发器（窗口变化后才需要补偿 / 补足一屏）
+	useLayoutEffect(() => {
+		const el = scrollRef.current;
+		const pending = prependAnchorRef.current;
+		prependAnchorRef.current = null;
+		if (el && pending && pending.el instanceof HTMLElement && pending.el.isConnected) {
+			const delta = pending.el.offsetTop - pending.top;
+			if (delta !== 0) el.scrollTop += delta;
+		}
+		if (el && renderedFromRef.current > 0 && el.scrollHeight <= el.clientHeight) requestEarlierRows();
+	}, [renderedFrom]);
+
 	const items: React.ReactNode[] = [];
-	rows.forEach((row) => {
+	const visibleRows = renderedFrom > 0 ? rows.slice(renderedFrom) : rows;
+	visibleRows.forEach((row) => {
 		if (row.kind === "turnDiff") {
 			// 已完成轮次保留上提 16px，和普通消息的 8px 净距对齐；两条不上提：
 			// ① 当前运行轮（running）——MetaGroup 的圆点仍会实时追加，上提会贴到圆点行上；
@@ -212,7 +265,7 @@ export function MessageList() {
 				ref={scrollRef}
 				onScroll={handleScroll}
 				onClickCapture={handleSummaryToggle}
-				className="chat-scrollbar relative z-10 h-full overflow-x-hidden overflow-y-auto [scrollbar-gutter:stable]"
+				className="chat-scrollbar relative z-10 h-full overflow-x-hidden overflow-y-auto [overflow-anchor:none] [scrollbar-gutter:stable]"
 			>
 				<div ref={contentRef} className="mx-auto flex max-w-[760px] flex-col gap-6 px-6 pt-8 pb-16">
 					{items}
