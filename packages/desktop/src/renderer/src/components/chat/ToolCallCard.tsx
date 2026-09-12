@@ -2,6 +2,74 @@ import { useEffect, useRef, useState } from "react";
 import type { UIToolCall } from "../../stores/transcript";
 import { ExpandArrowIcon } from "../icons";
 
+/**
+ * 溢出测量调度器（模块级共享）：一帧内所有卡片的测量合并成「先读后写」。
+ *
+ * 为什么不在 effect 里直接测：挂载长历史时同一提交里有几百张卡，每张各自读
+ * getBoundingClientRect/clientWidth —— 读与 setState 引发的重渲染交替，会让每次读都
+ * 落在「布局已失效」的状态上，浏览器被迫为每张卡重排整个消息流（实测切到 1278 条消息的
+ * 会话，单是这些测量就 1400+ 次 getBoundingClientRect / 占该次切换耗时的一半）。
+ * 调度器把读取集中到一个 rAF 的读阶段（合并为一次布局），写阶段统一 setState（一次渲染）。
+ */
+interface MeasureEntry {
+	row: HTMLElement;
+	text: HTMLElement;
+	set: (overflowing: boolean) => void;
+}
+
+const measureQueue = new Map<HTMLElement, MeasureEntry>();
+/** rAF 停摆（窗口隐藏/遮挡）时的兜底间隔，与 stores/event-conflator.ts 同一约定 */
+const MEASURE_FALLBACK_MS = 250;
+let measureScheduled = false;
+
+function flushMeasures(): void {
+	measureScheduled = false;
+	const entries = [...measureQueue.values()];
+	measureQueue.clear();
+	const results: Array<[MeasureEntry, boolean]> = [];
+	// 读阶段：不插入任何写入，后续测量命中同一份布局
+	for (const entry of entries) {
+		const { row, text } = entry;
+		if (!row.isConnected || !text.isConnected) continue;
+		const left = text.getBoundingClientRect().left - row.getBoundingClientRect().left;
+		results.push([entry, text.scrollWidth > row.clientWidth - left]);
+	}
+	// 写阶段：一批 setState（React 自动批处理 → 同帧一次渲染）
+	for (const [entry, overflowing] of results) entry.set(overflowing);
+}
+
+function scheduleMeasure(entry: MeasureEntry): void {
+	measureQueue.set(entry.row, entry);
+	if (measureScheduled) return;
+	measureScheduled = true;
+	// rAF 优先（读阶段贴近本帧布局），隐藏态 rAF 停摆时定时器兜底——否则队列会一直卡着不 flush
+	let done = false;
+	const run = () => {
+		if (done) return;
+		done = true;
+		cancelAnimationFrame(raf);
+		clearTimeout(timer);
+		flushMeasures();
+	};
+	const raf = requestAnimationFrame(run);
+	const timer = setTimeout(run, MEASURE_FALLBACK_MS);
+}
+
+/** 行元素 → 测量项（RO 回调要重测的是「已测量过」的行，队列里可能已清空，故另存持久表） */
+const rowEntries = new WeakMap<HTMLElement, MeasureEntry>();
+
+/** 共享 ResizeObserver：行宽/字号变化后重测（原本每张卡一个 RO，长历史下观测器数量随消息数线性增长） */
+const rowResizeObserver =
+	typeof ResizeObserver === "undefined"
+		? null
+		: new ResizeObserver((entries) => {
+				for (const entry of entries) {
+					if (!(entry.target instanceof HTMLElement)) continue;
+					const known = rowEntries.get(entry.target);
+					if (known) scheduleMeasure(known);
+				}
+			});
+
 export function summarizeArgs(args: string): string {
 	if (!args || args === "{}") return "";
 	try {
@@ -37,19 +105,18 @@ export function ToolCallCard({ tool }: { tool: UIToolCall }) {
 	// overflow:hidden 下 scrollWidth 恒为内容全宽，收缩后重测结果依然正确
 	// biome-ignore lint/correctness/useExhaustiveDependencies: summary 是刻意的重跑触发器（effect 内只读 ref，args 流式增长时需重测）
 	useEffect(() => {
-		const check = () => {
-			const el = textRef.current;
-			const row = rowRef.current;
-			if (!el || !row) return;
-			const left = el.getBoundingClientRect().left - row.getBoundingClientRect().left;
-			setOverflowing(el.scrollWidth > row.clientWidth - left);
-		};
-		check();
 		const row = rowRef.current;
-		if (!row) return;
-		const ro = new ResizeObserver(check);
-		ro.observe(row);
-		return () => ro.disconnect();
+		const text = textRef.current;
+		if (!row || !text) return;
+		const entry: MeasureEntry = { row, text, set: setOverflowing };
+		rowEntries.set(row, entry);
+		rowResizeObserver?.observe(row);
+		scheduleMeasure(entry);
+		return () => {
+			measureQueue.delete(row);
+			rowEntries.delete(row);
+			rowResizeObserver?.unobserve(row);
+		};
 	}, [summary]);
 
 	// running 时工具名加高光扫过动画（与 MetaGroup 状态行同款光带渐变）

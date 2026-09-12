@@ -26,6 +26,7 @@
 | 代码块顶部两行无法拖选、标点偶发橙色框 | 四 · 悬浮 header 命中层 + Monaco Unicode 高亮 |
 | onDragStart 里拿不到拖拽尺寸（`active.rect.current.initial` 恒 null） | 四 · dnd-kit rect ref 填充晚于 onDragStart |
 | 报错文案悬在空态页不消失、切新会话还在 | 四 · store 级 error 字段永不清理（已修：改 toast + 乐观回滚） |
+| 切到长会话卡顿约 1 秒、消息多的会话越久越卡 | 四 · 长会话切会话卡顿（挂载窗口 + ToolCallCard 布局抖动）（2026-09-12 修复） |
 | Google Vertex 填了 key 仍 401「API keys are not supported by this API」 | 二 · Vertex 只支持 ADC/服务账号（api_key 路径必败，桥接层已剔除 api-key 选项） |
 
 ## 一、事故复盘（含可复用诊断手法）
@@ -159,6 +160,36 @@ pi SDK 必须声明进 `packages/desktop/package.json` dependencies（electron-b
 ### store 级 `error` 字段永不清理 + 裸字符串渲染 = 报错跨会话残留（2026-09-12 修复）
 
 症状：新会话空态页 Logo 下方永远悬着一条红色报错（如 `Error invoking remote method 'session:setModel': ...`），切会话/新建会话都不消失。根因：`useSessionsStore` 曾有全局 `error` 字段，7 处 catch 写入却无处重置，唯一渲染点是 EmptyState 里一段裸 `<p>`（统一报错系统建立前的遗留）。教训：**会话动作类失败（建/开/分叉/撤回/切模型）是 UI 动作反馈，走 toast（非阻塞自动消失），不进 store 长期态**；乐观更新失败按 `setSessionPermissionMode` 范式回滚。已删字段改 `pushToast` + 乐观回滚；`errText` 顺带剥 Electron IPC 包装前缀（`Error invoking remote method 'x': Error: `）保证 toast detail 可读。后续任何新 catch 不要再往 store 塞裸错误字符串。
+
+### 长会话切会话卡顿（挂载窗口 + ToolCallCard 布局抖动）（2026-09-12 修复）
+
+**症状**：会话跑两三小时后，从顶栏切到这条会话明显卡顿 ~1s（切回声短的会话不卡）。
+
+**实测**（CDP + `Profiler` 采样，生产构建；1278 条消息的会话）：切一次 = 一个 ~900ms 长任务，成本三份——
+
+| 占比 | 来源 | 机制 |
+|---|---|---|
+| ~50% | `ToolCallCard` 溢出测量 | 每张卡在 effect 里读 `getBoundingClientRect`×2 + `clientWidth`，且**每张卡自建一个 ResizeObserver**；几百张卡同一次提交里测量与 setState 引发的重渲染交替，每次读都落在布局已失效状态 → 整个消息流被重排几百次 |
+| ~25% | markdown / monaco 代码块 | 每个历史代码块都在这次提交里初始化（shiki 语法编译 + monaco 实例） |
+| ~25% | React 挂载 1.6 万个 DOM 节点 | 长会话全量挂载 |
+
+**修复**（两处互补，`renderer/src/components/chat/`）：
+
+1. `mount-window.ts` + `MessageList` 挂载窗口：切会话只挂尾部 40 行，更早的行在用户上滑接近顶部（`scrollTop < 1000px`）时成块补挂 30 行；**窗口只增不减**（不做反向回收，避开卸载顶部导致的滚动跳变）。切会话的挂载量与会话长度解耦，实测该场景降到 ~190ms（其中还包含卸载上一个会话的 1.6 万节点）。
+2. `ToolCallCard` 模块级测量调度器：一帧内所有卡片的测量合并成「先读后写」（读集中在一个 rAF 的读阶段 = 一次布局，写统一 setState = 一次渲染），ResizeObserver 从每卡一个改为全卡共享一个。调度器要带定时器兜底（rAF 优先、250ms 定时器兼底，同 `stores/event-conflator.ts` 约定）——否则窗口隐藏时 rAF 停摆，队列会一直卡着不 flush（实测初版就是这个局面：`_sched` 计到 220、`flush` 恒为 0，卡片永远停在「不溢出」态）。
+
+**补挂不能破坏视口位置**（新内容整块插在视口上方会顶走当前阅读位置）：补挂前记下「旧首行元素 + 其 `offsetTop`」，`useLayoutEffect` 里按元素位移补偿 `scrollTop`；
+**补偿用锚点元素位移而非 `scrollHeight` 差值**——差值为会被同一提交里尾部的流式追加污染；滚动容器同时加 `[overflow-anchor:none]` 关掉浏览器自己的滚动锚定，避免两套补偿叠加。实测补挂前后「视口顶部那个元素 + 其 `getBoundingClientRect().top`」完全不变。
+
+**测量手法可复用**（`Profiler` + `Runtime.evaluate`，脚本模式见 AGENTS.md 的 CDP 一节）：① `Profiler.start/stop` 取采样按 `callFrame` 聚合自耗时，比猜快得多（本次一眼看到 338 个样本叫 `getBoundingClientRect`）；② 想知道「谁在强制重排」就在页面里包 `Element.prototype.getBoundingClientRect` / `offsetHeight` getter，采样调用栈字符串；③ 验证窗口类改动用 DOM 探针（`elementFromPoint` + `rect.top` + 行数）而非截图。
+
+**坑**：窗口隐藏（锁屏/最小化/被挡住了）时 rAF 不跑——用 rAF 做等待条件的测量脚本会**永久挂住**（表现为 CDP 调用超时，页面 CPU 却是 0），且滚动的 `scroll` 事件也在渲染生命周期里派发，隐藏态不自动触发（需手动 `dispatchEvent(new Event('scroll'))`）。判断：`document.hidden`。
+
+**解法**：脚本开头补一次 CDP `Emulation.setFocusEmulationEnabled({ enabled: true })`——页面被置为可见（`document.hidden` 变 false）后 rAF 恢复、原生 `scroll` 事件也照常派发，无需再手动 dispatch。
+
+**复核（另一会话在屏验证，2026-09-12；生产构建 `npm run build` + `npx electron . --remote-debugging-port`）**：切 1600 条消息 / 3200 行的会话**首帧 16–20ms**、真实长会话（1278 / 1370 记录）**37–51ms**，长任务均为空；连续 8 次上滑补挂（每次 +30 行）长任务全空；补挂前后视口截图**逐像素一致**（干净单次补挂 3s 观察窗漂移 0.0px；背靠背连续补挂时见过一次 ≤59px ≈ 一行的瞬时位移，来自新挂行的异步定型，可接受）。
+
+挂载窗口的两个已知面：① **切走再切回窗口复位回尾部 40 行**（每次切换成本恒定，不会越用越慢）；② 窗口只增不减 ⇒ 滚过的行一直挂着，DOM 上限 = 该会话全量（换来的好处是不做反向回收、无滚动跳变）。③ 页内查找不受影响：Electron 默认菜单没有 Find、代码也没调 `findInPage`，Cmd+F 本来就没有；将来若做消息搜索，应查 transcript store 而非 DOM，与挂载窗口无关。
 
 ## 五、工程纪律
 
