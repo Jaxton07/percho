@@ -152,8 +152,8 @@ export function MessageList() {
 		: clampWindowStart(mountFrom, rows.length);
 	const renderedFromRef = useRef(renderedFrom);
 	renderedFromRef.current = renderedFrom;
-	/** 向上补挂前的锚点：旧首行元素 + 其 offsetTop；DOM 更新后按位移补偿 scrollTop（视口内容不动） */
-	const prependAnchorRef = useRef<{ el: Element; top: number } | null>(null);
+	/** 补挂前的锚点：旧首行元素 + 它的视口相对 top。DOM 更新后若浏览器滚动锚定没把它钉住，用它补差 */
+	const prependAnchorRef = useRef<{ el: Element; viewportTop: number } | null>(null);
 
 	/** 补挂一块更早的行；滚动处理器调用（同一事件内重复调用只生效一次：同基于当前 renderedFrom 计算） */
 	const requestEarlierRows = () => {
@@ -161,13 +161,18 @@ export function MessageList() {
 		if (next === renderedFromRef.current) return; // 已到顶 / 无更早的行
 		const anchor = contentRef.current?.firstElementChild;
 		if (!anchor) return;
-		prependAnchorRef.current = { el: anchor, top: (anchor as HTMLElement).offsetTop };
+		const scroller = scrollRef.current;
+		if (!scroller) return;
+		prependAnchorRef.current = {
+			el: anchor,
+			viewportTop: anchor.getBoundingClientRect().top - scroller.getBoundingClientRect().top,
+		};
 		setMountFrom(next);
 	};
 
 	// 仅「向上滚动」脱离跟随（程序性向下贴底/平滑回底不中断跟随）；到达底部恢复。
-	// 压缩/消息重建会让内容变矮、浏览器把 scrollTop 往下钳——高度收缩导致的 top 下降
-	// 不是用户意图，不释放跟随（否则每次 compaction 后跟随静默死亡）；RO 会随即重新贴底。
+	// 压缩/消息重建会让内容变矮——高度收缩导致的位置下降不是用户意图，不释放跟随
+	// （否则每次 compaction 后跟随静默死亡）；RO 会随即重新贴底。
 	// 同时作为挂载窗口的补挂触发器：接近顶部时向更早的行补挂一块。
 	const handleScroll = () => {
 		const el = scrollRef.current;
@@ -181,17 +186,21 @@ export function MessageList() {
 		if (renderedFromRef.current > 0 && el.scrollTop < MOUNT_TRIGGER_PX) requestEarlierRows();
 	};
 
-	// 补挂后把视口钉回原来那行（新内容整块插在视口上方，不补偿就会把当前阅读位置顶下去）。
-	// 用锚点自身位移而非 scrollHeight 差值：后者会被同一提交里尾部的流式追加混淆。
+	// 补挂的锚定交给**浏览器滚动锚定**（容器不能加 overflow-anchor: none）：新行整块插在视口上方，
+	// 浏览器会自己把 scrollTop 补回来，且**异步定型的内容**（markdown 先渲染 600px 占位条再收成真实高度、
+	// 图片/monaco 迟到）引起的视口上方高度变化它也会一并补偿——手写补偿只看提交那一刻的高度，
+	// 定型后内容变矮会把位置往下钳，钳到底部还会被误判成「用户到底」而复活跟随（用户会感到上滚被反复拽回底部）。
+	// 这里只兜底一种情况：Chromium 在 scrollTop === 0 时不调整锚点（到顶了没地方调），此时按锚点的
+	// 视口位置漂移补差；浏览器已经钉住时 drift === 0，本段是 no-op，不会与它叠加。
 	// 顺带补一屏下限：窗口里的行特别矮（连续折叠行）时内容填不满视口，继续补挂直到填满或到顶。
-	// biome-ignore lint/correctness/useExhaustiveDependencies: renderedFrom 是刻意的重跑触发器（窗口变化后才需要补偿 / 补足一屏）
+	// biome-ignore lint/correctness/useExhaustiveDependencies: renderedFrom 是刻意的重跑触发器（窗口变化后才需要补差 / 补足一屏）
 	useLayoutEffect(() => {
 		const el = scrollRef.current;
 		const pending = prependAnchorRef.current;
 		prependAnchorRef.current = null;
-		if (el && pending && pending.el instanceof HTMLElement && pending.el.isConnected) {
-			const delta = pending.el.offsetTop - pending.top;
-			if (delta !== 0) el.scrollTop += delta;
+		if (el && pending?.el.isConnected) {
+			const drift = pending.el.getBoundingClientRect().top - pending.viewportTop;
+			if (drift !== 0) el.scrollTop += drift;
 		}
 		if (el && renderedFromRef.current > 0 && el.scrollHeight <= el.clientHeight) requestEarlierRows();
 	}, [renderedFrom]);
@@ -265,7 +274,7 @@ export function MessageList() {
 				ref={scrollRef}
 				onScroll={handleScroll}
 				onClickCapture={handleSummaryToggle}
-				className="chat-scrollbar relative z-10 h-full overflow-x-hidden overflow-y-auto [overflow-anchor:none] [scrollbar-gutter:stable]"
+				className="chat-scrollbar relative z-10 h-full overflow-x-hidden overflow-y-auto [overflow-anchor:auto] [scrollbar-gutter:stable]"
 			>
 				<div ref={contentRef} className="mx-auto flex max-w-[760px] flex-col gap-6 px-6 pt-8 pb-16">
 					{items}
