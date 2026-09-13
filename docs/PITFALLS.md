@@ -27,6 +27,7 @@
 | onDragStart 里拿不到拖拽尺寸（`active.rect.current.initial` 恒 null） | 四 · dnd-kit rect ref 填充晚于 onDragStart |
 | 报错文案悬在空态页不消失、切新会话还在 | 四 · store 级 error 字段永不清理（已修：改 toast + 乐观回滚） |
 | 切到长会话卡顿约 1 秒、消息多的会话越久越卡 | 四 · 长会话切会话卡顿（挂载窗口 + ToolCallCard 布局抖动）（2026-09-12 修复） |
+| 长会话里上滚，位置被反复重置/拽回底部（0.5.7 线上 bug） | 四 · 长会话切会话卡顿 → 二次修复（markstream 占位条缩水 + 手写滚动补偿）（2026-09-13 修复） |
 | Google Vertex 填了 key 仍 401「API keys are not supported by this API」 | 二 · Vertex 只支持 ADC/服务账号（api_key 路径必败，桥接层已剔除 api-key 选项） |
 
 ## 一、事故复盘（含可复用诊断手法）
@@ -178,8 +179,19 @@ pi SDK 必须声明进 `packages/desktop/package.json` dependencies（electron-b
 1. `mount-window.ts` + `MessageList` 挂载窗口：切会话只挂尾部 40 行，更早的行在用户上滑接近顶部（`scrollTop < 1000px`）时成块补挂 30 行；**窗口只增不减**（不做反向回收，避开卸载顶部导致的滚动跳变）。切会话的挂载量与会话长度解耦，实测该场景降到 ~190ms（其中还包含卸载上一个会话的 1.6 万节点）。
 2. `ToolCallCard` 模块级测量调度器：一帧内所有卡片的测量合并成「先读后写」（读集中在一个 rAF 的读阶段 = 一次布局，写统一 setState = 一次渲染），ResizeObserver 从每卡一个改为全卡共享一个。调度器要带定时器兜底（rAF 优先、250ms 定时器兼底，同 `stores/event-conflator.ts` 约定）——否则窗口隐藏时 rAF 停摆，队列会一直卡着不 flush（实测初版就是这个局面：`_sched` 计到 220、`flush` 恒为 0，卡片永远停在「不溢出」态）。
 
-**补挂不能破坏视口位置**（新内容整块插在视口上方会顶走当前阅读位置）：补挂前记下「旧首行元素 + 其 `offsetTop`」，`useLayoutEffect` 里按元素位移补偿 `scrollTop`；
-**补偿用锚点元素位移而非 `scrollHeight` 差值**——差值为会被同一提交里尾部的流式追加污染；滚动容器同时加 `[overflow-anchor:none]` 关掉浏览器自己的滚动锚定，避免两套补偿叠加。实测补挂前后「视口顶部那个元素 + 其 `getBoundingClientRect().top`」完全不变。
+**补挂不能破坏视口位置**（新内容整块插在视口上方会顶走当前阅读位置）：**锚定交给浏览器滚动锚定**（`overflow-anchor` 保持默认 auto，容器绝不能加 `none`），`useLayoutEffect` 里只用「补挂前旧首行的视口相对 top」做漂移兜底（浏览器已钉住时 drift === 0，是 no-op）。
+
+> ⚠️ 初版是反的：容器加 `[overflow-anchor:none]` 关掉浏览器锚定、每次补挂按「旧首行 `offsetTop` 差值」手写补偿 `scrollTop`。这个写法**只看提交那一刻的高度**，而 markstream 的内容是**异步定型**的（见下条），于是有 0.5.7 的线上 bug：用户上滑时被反复拽回底部。验尸结论：**不要把滚动锚定从浏览器手里拿回来。**
+
+**二次修复（2026-09-13，0.5.7 线上 bug：上滑被反复拽回底部）**：症状是「加载长会话后向上滚，位置一直被重置回下面」。根因链：
+
+1. markstream 的行先渲染成一个 **600px 的占位容器**（`.markstream-react.markdown-renderer`），100–300ms 后才收成真实高度（实测 600 → 42–66px）——真实大会话切进去一次就 **-4391px**；补挂进来的 30 行同理，每次再缩 ~2000px。
+2. 容器 `overflow-anchor: none` ⇒ 浏览器不补这个高度变化 ⇒ 视口上方内容变矮就把 `scrollTop` 往下钳（钳到底部）。
+3. `handleScroll` 看到 `atBottom === true` 就 `updateFollowing(true)` 复活跟随 ⇒ 用户被钉在底部，再上滚又被下一次缩水钳回来——「一直重置位置回下面」。
+
+修复：把锚定交回浏览器（它同时补偿「补挂插入」与「异步定型缩水」两类视口上方高度变化），手写补偿只兜底 **Chromium 在 `scrollTop === 0` 时不调整锚点**这一种情况（到顶了没地方调；此时按锚点视口位置漂移补差，残留 ≤ 一行）。A/B 实测（真实轮事件上滚 55 步，检查「视口顶行距尾部的序号单调不降」）：旧实现 **11 次违规**，浏览器锚定 **0 次**。
+
+**验证这类滚动 bug 的可复用不变量**：不要看 `scrollTop` 数值（程序性补偿本来就会大跳），看**视口顶部那一行「距尾部行数」的序号**——用户上滚时它只能单调增大（走向更早的行），任何变小的跳变就是「视口被拽向对话后面/底部」。脚本用 CDP `Input.dispatchMouseEvent({type:'mouseWheel', deltaY:负数})` 产生**真实轮事件**（合成 `scrollTop` 赋值测不出这类 bug；注意 `deltaY` 正值是向下滚，别搞反）。
 
 **测量手法可复用**（`Profiler` + `Runtime.evaluate`，脚本模式见 AGENTS.md 的 CDP 一节）：① `Profiler.start/stop` 取采样按 `callFrame` 聚合自耗时，比猜快得多（本次一眼看到 338 个样本叫 `getBoundingClientRect`）；② 想知道「谁在强制重排」就在页面里包 `Element.prototype.getBoundingClientRect` / `offsetHeight` getter，采样调用栈字符串；③ 验证窗口类改动用 DOM 探针（`elementFromPoint` + `rect.top` + 行数）而非截图。
 
@@ -187,7 +199,7 @@ pi SDK 必须声明进 `packages/desktop/package.json` dependencies（electron-b
 
 **解法**：脚本开头补一次 CDP `Emulation.setFocusEmulationEnabled({ enabled: true })`——页面被置为可见（`document.hidden` 变 false）后 rAF 恢复、原生 `scroll` 事件也照常派发，无需再手动 dispatch。
 
-**复核（另一会话在屏验证，2026-09-12；生产构建 `npm run build` + `npx electron . --remote-debugging-port`）**：切 1600 条消息 / 3200 行的会话**首帧 16–20ms**、真实长会话（1278 / 1370 记录）**37–51ms**，长任务均为空；连续 8 次上滑补挂（每次 +30 行）长任务全空；补挂前后视口截图**逐像素一致**（干净单次补挂 3s 观察窗漂移 0.0px；背靠背连续补挂时见过一次 ≤59px ≈ 一行的瞬时位移，来自新挂行的异步定型，可接受）。
+**复核（生产构建 `npm run build` + `npx electron . --remote-debugging-port`）**：切 1600 条消息 / 3200 行的会话**首帧 16–20ms**、真实长会话（1278 / 1370 记录）**37–51ms**，长任务均为空；连续 8 次上滑补挂（每次 +30 行）长任务全空；贴底跟随时新增行仍贴底。
 
 挂载窗口的两个已知面：① **切走再切回窗口复位回尾部 40 行**（每次切换成本恒定，不会越用越慢）；② 窗口只增不减 ⇒ 滚过的行一直挂着，DOM 上限 = 该会话全量（换来的好处是不做反向回收、无滚动跳变）。③ 页内查找不受影响：Electron 默认菜单没有 Find、代码也没调 `findInPage`，Cmd+F 本来就没有；将来若做消息搜索，应查 transcript store 而非 DOM，与挂载窗口无关。
 
