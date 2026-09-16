@@ -1,9 +1,9 @@
 // @vitest-environment node
 import type { UiPluginContribution } from "@percho/shared";
 import { describe, expect, it } from "vitest";
-import { filterContributions } from "./manager";
+import { filterContributions } from "./manifest";
 
-/** filterContributions 纯函数测试：坏 manifest 的 contributions 防御（B2 配套） */
+/** filterContributions 纯函数测试：坏 manifest 的 contributions 防御（B2 配套；随实现迁至 manifest.ts） */
 
 describe("filterContributions", () => {
 	it("非数组输入（undefined / 对象 / 字符串）→ 空数组", () => {
