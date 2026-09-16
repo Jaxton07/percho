@@ -54,6 +54,7 @@ import {
 	TODO_TOOL_NAME,
 	type TodoItem,
 } from "@percho/shared";
+import { Emitter } from "./emitter";
 import { createLogger } from "./log";
 import { PackageAdmin } from "./packages/admin";
 import { loadPermissionConfig } from "./permissions";
@@ -150,16 +151,6 @@ export interface PiBackendOptions {
 	};
 }
 
-type EventHandler = (sessionId: string, event: SessionEvent) => void;
-type PermissionHandler = (req: PermissionRequest) => void;
-type PermissionResolvedHandler = (result: PermissionResolved) => void;
-type TrustHandler = (req: TrustRequest) => void;
-type LoginHandler = (payload: LoginEventPayload) => void;
-type ExtensionDialogRequestHandler = (req: ExtensionDialogRequest) => void;
-type ExtensionDialogResolvedHandler = (result: ExtensionDialogResolved) => void;
-type ExtensionNotifyHandler = (event: ExtensionNotifyEvent) => void;
-type ExtensionEditorTextHandler = (event: ExtensionEditorTextEvent) => void;
-
 /**
  * PiBackend：pi SDK 的唯一适配层（门面）。不依赖 Electron，
  * 主进程与（未来的）独立 server 均可复用。
@@ -173,15 +164,15 @@ type ExtensionEditorTextHandler = (event: ExtensionEditorTextEvent) => void;
  */
 export class PiBackend {
 	private readonly registry = new SessionRegistry();
-	private readonly eventHandlers = new Set<EventHandler>();
-	private readonly permissionHandlers = new Set<PermissionHandler>();
-	private readonly permissionResolvedHandlers = new Set<PermissionResolvedHandler>();
-	private readonly trustHandlers = new Set<TrustHandler>();
-	private readonly loginHandlers = new Set<LoginHandler>();
-	private readonly extensionDialogRequestHandlers = new Set<ExtensionDialogRequestHandler>();
-	private readonly extensionDialogResolvedHandlers = new Set<ExtensionDialogResolvedHandler>();
-	private readonly extensionNotifyHandlers = new Set<ExtensionNotifyHandler>();
-	private readonly extensionEditorTextHandlers = new Set<ExtensionEditorTextHandler>();
+	private readonly eventEmitter = new Emitter<{ sessionId: string; event: SessionEvent }>();
+	private readonly permissionEmitter = new Emitter<PermissionRequest>();
+	private readonly permissionResolvedEmitter = new Emitter<PermissionResolved>();
+	private readonly trustEmitter = new Emitter<TrustRequest>();
+	private readonly loginEmitter = new Emitter<LoginEventPayload>();
+	private readonly extensionDialogRequestEmitter = new Emitter<ExtensionDialogRequest>();
+	private readonly extensionDialogResolvedEmitter = new Emitter<ExtensionDialogResolved>();
+	private readonly extensionNotifyEmitter = new Emitter<ExtensionNotifyEvent>();
+	private readonly extensionEditorTextEmitter = new Emitter<ExtensionEditorTextEvent>();
 	private readonly gates = new Map<string, PermissionGate>();
 	/** 扩展对话框宿主（每会话一个；GUI 停靠槽数据源，GUI-only 不进 LAN） */
 	private readonly dialogs = new Map<string, ExtensionDialogHost>();
@@ -189,7 +180,7 @@ export class PiBackend {
 	private readonly permissionModes = new Map<string, PermissionModeRef>();
 	/** 项目信任决策记录（~/.pi/agent/trust.json，与 CLI 共享）+ 信任请求门控 */
 	private readonly trustStore = new ProjectTrustStore(getAgentDir());
-	private readonly trustGate = new TrustGate((req) => this.dispatchTrustRequest(req));
+	private readonly trustGate = new TrustGate((req) => this.trustEmitter.emit(req));
 	/** 会话事件 trace（JSONL，离线可重放） */
 	private readonly traces = new SessionTraces();
 	private readonly streamGuard = new StreamGuard();
@@ -206,7 +197,7 @@ export class PiBackend {
 	/** provider 交互登录服务（OAuth + api_key 交互，如 Google Vertex），事件经 onLoginEvent 分发 */
 	readonly login = new LoginService({
 		getRuntime: () => this.getModelRuntime(),
-		send: (payload) => this.dispatchLoginEvent(payload),
+		send: (payload) => this.loginEmitter.emit(payload),
 	});
 	/** 社区包管理（安装/卸载 + 会话热重载） */
 	private readonly packages: PackageAdmin;
@@ -218,7 +209,7 @@ export class PiBackend {
 		this.projectLoader = new ProjectResourceLoader({
 			trustStore: this.trustStore,
 			ask: (dir, opts) => this.trustGate.ask(dir, opts),
-			canAsk: () => this.trustHandlers.size > 0,
+			canAsk: () => this.trustEmitter.size > 0,
 			buildExtensions: (cwd, confirm, modeRef) => this.buildExtensionFactories(cwd, confirm, modeRef),
 			projectTrust: options.projectTrust,
 			desktopIntegration: options.desktopIntegration,
@@ -324,8 +315,8 @@ export class PiBackend {
 	 */
 	private async bindSessionExtensions(session: AgentSession, sessionId: string): Promise<void> {
 		const dialogs = new ExtensionDialogHost({
-			onRequest: (req) => this.dispatchExtensionDialogRequest(req),
-			onResolved: (result) => this.dispatchExtensionDialogResolved(result),
+			onRequest: (req) => this.extensionDialogRequestEmitter.emit(req),
+			onResolved: (result) => this.extensionDialogResolvedEmitter.emit(result),
 		});
 		dialogs.bind(sessionId);
 		this.dialogs.set(sessionId, dialogs);
@@ -345,8 +336,8 @@ export class PiBackend {
 			uiContext: makeUiContext({
 				dialogs,
 				onNotify: (message, level, source) =>
-					this.dispatchExtensionNotify({ sessionId, extensionPath: source, message, level }),
-				onEditorText: (text, source) => this.dispatchExtensionEditorText({ sessionId, text, source }),
+					this.extensionNotifyEmitter.emit({ sessionId, extensionPath: source, message, level }),
+				onEditorText: (text, source) => this.extensionEditorTextEmitter.emit({ sessionId, text, source }),
 			}),
 			mode: "rpc",
 			onError: recordExtensionError,
@@ -379,26 +370,14 @@ export class PiBackend {
 				void this.abort(sessionId).catch(() => {});
 				// 熔断显形：合成 stream_guard_tripped UI 事件（subagent_mutex 同款：union + IPC 转发 +
 				// 不进 trace），reducer 产 warning 条——否则「回复戛然而止」零 UI 信号。
-				// 合成事件直接调 handler 循环，不喂回 streamGuard.inspect（防线不能自触发）。
-				for (const handler of this.eventHandlers) {
-					try {
-						handler(sessionId, { type: "stream_guard_tripped", verdict });
-					} catch {
-						// 事件处理器异常不影响主流程
-					}
-				}
+				// 合成事件直接 emit，不喂回 streamGuard.inspect（防线不能自触发）。
+				this.eventEmitter.emit({ sessionId, event: { type: "stream_guard_tripped", verdict } });
 			}
 			return;
 		}
 		if (event.type !== "subagent_mutex" && event.type !== "stream_guard_tripped")
 			this.traces.record(sessionId, event);
-		for (const handler of this.eventHandlers) {
-			try {
-				handler(sessionId, event);
-			} catch {
-				// 事件处理器异常不影响主流程
-			}
-		}
+		this.eventEmitter.emit({ sessionId, event });
 	}
 
 	async init(): Promise<void> {
@@ -416,7 +395,7 @@ export class PiBackend {
 		const model =
 			options.provider && options.modelId ? runtime.getModel(options.provider, options.modelId) : undefined;
 
-		const gate = new PermissionGate((req) => this.dispatchPermissionRequest(req));
+		const gate = new PermissionGate((req) => this.permissionEmitter.emit(req));
 		// 权限扩展的确认通道直接桥到 gate（携带 kind/suggestDir 元数据，驱动「允许此目录」/持久化）
 		const confirmBridge: PermissionConfirm = (title, message, meta) => gate.confirm(title, message, meta);
 		// 会话权限模式引用：新会话一律 default 起步（D1：不落盘、不继承），随工厂闭包注入求值链
@@ -470,7 +449,7 @@ export class PiBackend {
 		const runtime = await this.getModelRuntime();
 		const sessionManager = SessionManager.open(filePath);
 		const cwd = sessionManager.getCwd() || process.cwd();
-		const gate = new PermissionGate((req) => this.dispatchPermissionRequest(req));
+		const gate = new PermissionGate((req) => this.permissionEmitter.emit(req));
 		const confirmBridge: PermissionConfirm = (title, message, meta) => gate.confirm(title, message, meta);
 		// 重开历史会话同样 default 起步（D1：模式不随会话文件继承）
 		const modeRef: PermissionModeRef = { current: "default" };
@@ -1059,51 +1038,42 @@ export class PiBackend {
 			}));
 	}
 
-	onEvent(handler: EventHandler): () => void {
-		this.eventHandlers.add(handler);
-		return () => this.eventHandlers.delete(handler);
+	onEvent(handler: (sessionId: string, event: SessionEvent) => void): () => void {
+		return this.eventEmitter.subscribe(({ sessionId, event }) => handler(sessionId, event));
 	}
 
-	onPermissionRequest(handler: PermissionHandler): () => void {
-		this.permissionHandlers.add(handler);
-		return () => this.permissionHandlers.delete(handler);
+	onPermissionRequest(handler: (req: PermissionRequest) => void): () => void {
+		return this.permissionEmitter.subscribe(handler);
 	}
 
 	/** 权限请求被桌面端实际应答后通知被动观察者。 */
-	onPermissionResolved(handler: PermissionResolvedHandler): () => void {
-		this.permissionResolvedHandlers.add(handler);
-		return () => this.permissionResolvedHandlers.delete(handler);
+	onPermissionResolved(handler: (result: PermissionResolved) => void): () => void {
+		return this.permissionResolvedEmitter.subscribe(handler);
 	}
 
-	onTrustRequest(handler: TrustHandler): () => void {
-		this.trustHandlers.add(handler);
-		return () => this.trustHandlers.delete(handler);
+	onTrustRequest(handler: (req: TrustRequest) => void): () => void {
+		return this.trustEmitter.subscribe(handler);
 	}
 
-	onLoginEvent(handler: LoginHandler): () => void {
-		this.loginHandlers.add(handler);
-		return () => this.loginHandlers.delete(handler);
+	onLoginEvent(handler: (payload: LoginEventPayload) => void): () => void {
+		return this.loginEmitter.subscribe(handler);
 	}
 
 	/** 扩展对话框请求/结算/通知/草稿预填订阅（main 进程转发 renderer 用） */
-	onExtensionDialogRequest(handler: ExtensionDialogRequestHandler): () => void {
-		this.extensionDialogRequestHandlers.add(handler);
-		return () => this.extensionDialogRequestHandlers.delete(handler);
+	onExtensionDialogRequest(handler: (req: ExtensionDialogRequest) => void): () => void {
+		return this.extensionDialogRequestEmitter.subscribe(handler);
 	}
 
-	onExtensionDialogResolved(handler: ExtensionDialogResolvedHandler): () => void {
-		this.extensionDialogResolvedHandlers.add(handler);
-		return () => this.extensionDialogResolvedHandlers.delete(handler);
+	onExtensionDialogResolved(handler: (result: ExtensionDialogResolved) => void): () => void {
+		return this.extensionDialogResolvedEmitter.subscribe(handler);
 	}
 
-	onExtensionNotify(handler: ExtensionNotifyHandler): () => void {
-		this.extensionNotifyHandlers.add(handler);
-		return () => this.extensionNotifyHandlers.delete(handler);
+	onExtensionNotify(handler: (event: ExtensionNotifyEvent) => void): () => void {
+		return this.extensionNotifyEmitter.subscribe(handler);
 	}
 
-	onExtensionEditorText(handler: ExtensionEditorTextHandler): () => void {
-		this.extensionEditorTextHandlers.add(handler);
-		return () => this.extensionEditorTextHandlers.delete(handler);
+	onExtensionEditorText(handler: (event: ExtensionEditorTextEvent) => void): () => void {
+		return this.extensionEditorTextEmitter.subscribe(handler);
 	}
 
 	/** renderer 应答扩展对话框（requestId 含 sessionId 全局唯一；非本宿主实例静默忽略，仿 respondPermission 遍历） */
@@ -1124,7 +1094,11 @@ export class PiBackend {
 				// 先放行 agent 再持久化（D3）：持久化失败（如 workspaces.json 损坏拒写）只丢记忆不挂会话，
 				// log.error 留痕——fail-open 与 enabled=false 整体放行的既有语义一致
 				gate.respond(requestId, answer);
-				this.dispatchPermissionResolved({ sessionId: gate.getSessionId(), requestId, answered: true });
+				this.permissionResolvedEmitter.emit({
+					sessionId: gate.getSessionId(),
+					requestId,
+					answered: true,
+				});
 				const entry = this.registry.get(gate.getSessionId());
 				if (entry) {
 					try {
@@ -1145,7 +1119,11 @@ export class PiBackend {
 		for (const gate of this.gates.values()) {
 			if (!gate.getRequest(requestId)) continue;
 			gate.respond(requestId, answer);
-			this.dispatchPermissionResolved({ sessionId: gate.getSessionId(), requestId, answered: true });
+			this.permissionResolvedEmitter.emit({
+				sessionId: gate.getSessionId(),
+				requestId,
+				answered: true,
+			});
 		}
 	}
 
@@ -1205,12 +1183,17 @@ export class PiBackend {
 
 	dispose(): void {
 		this.registry.disposeAll();
-		this.eventHandlers.clear();
-		this.permissionHandlers.clear();
-		this.permissionResolvedHandlers.clear();
+		this.eventEmitter.clear();
+		this.permissionEmitter.clear();
+		this.permissionResolvedEmitter.clear();
+		this.trustEmitter.clear();
+		this.loginEmitter.clear();
 		for (const dialogs of this.dialogs.values()) dialogs.dispose();
 		this.dialogs.clear();
-		this.trustHandlers.clear();
+		this.extensionDialogRequestEmitter.clear();
+		this.extensionDialogResolvedEmitter.clear();
+		this.extensionNotifyEmitter.clear();
+		this.extensionEditorTextEmitter.clear();
 		this.trustGate.dispose();
 		this.traces.disposeAll();
 		log.info("backend disposed");
@@ -1226,86 +1209,6 @@ export class PiBackend {
 		const entry = this.registry.get(sessionId);
 		if (!entry) throw new Error(`Session not found: ${sessionId}`);
 		return this.registry.toMeta(entry);
-	}
-
-	private dispatchPermissionRequest(req: PermissionRequest): void {
-		for (const handler of this.permissionHandlers) {
-			try {
-				handler(req);
-			} catch {
-				// 忽略单个处理器异常
-			}
-		}
-	}
-
-	private dispatchPermissionResolved(result: PermissionResolved): void {
-		for (const handler of this.permissionResolvedHandlers) {
-			try {
-				handler(result);
-			} catch {
-				// 忽略单个处理器异常
-			}
-		}
-	}
-
-	private dispatchTrustRequest(req: TrustRequest): void {
-		for (const handler of this.trustHandlers) {
-			try {
-				handler(req);
-			} catch {
-				// 忽略单个处理器异常
-			}
-		}
-	}
-
-	private dispatchLoginEvent(payload: LoginEventPayload): void {
-		for (const handler of this.loginHandlers) {
-			try {
-				handler(payload);
-			} catch {
-				// 忽略单个处理器异常
-			}
-		}
-	}
-
-	private dispatchExtensionDialogRequest(req: ExtensionDialogRequest): void {
-		for (const handler of this.extensionDialogRequestHandlers) {
-			try {
-				handler(req);
-			} catch {
-				// 忽略单个处理器异常
-			}
-		}
-	}
-
-	private dispatchExtensionDialogResolved(result: ExtensionDialogResolved): void {
-		for (const handler of this.extensionDialogResolvedHandlers) {
-			try {
-				handler(result);
-			} catch {
-				// 忽略单个处理器异常
-			}
-		}
-	}
-
-	private dispatchExtensionNotify(event: ExtensionNotifyEvent): void {
-		for (const handler of this.extensionNotifyHandlers) {
-			try {
-				handler(event);
-			} catch {
-				// 忽略单个处理器异常
-			}
-		}
-	}
-
-	private dispatchExtensionEditorText(event: ExtensionEditorTextEvent): void {
-		for (const handler of this.extensionEditorTextHandlers) {
-			try {
-				handler(event);
-			} catch {
-				// 忽略单个处理器异常
-			}
-		}
 	}
 }
 

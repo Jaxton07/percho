@@ -1,11 +1,28 @@
 import {
+	type ExtensionDialogRequest,
+	type ExtensionDialogResolved,
+	type ExtensionEditorTextEvent,
+	type ExtensionNotifyEvent,
 	IpcChannels,
+	type LoginEventPayload,
+	type PermissionRequest,
+	type PermissionResolved,
 	type PiApi,
 	type SessionEventEnvelope,
+	type TrustRequest,
 	type UiPluginsEventPayload,
 	type UpdateState,
 } from "@percho/shared";
 import { contextBridge, ipcRenderer } from "electron";
+
+/** 事件订阅包装：ipcRenderer.on + 返回退订函数（removeListener），payload 透传 */
+function makeSubscription<T>(channel: string): (cb: (payload: T) => void) => () => void {
+	return (cb) => {
+		const listener = (_event: unknown, payload: T) => cb(payload);
+		ipcRenderer.on(channel, listener);
+		return () => ipcRenderer.removeListener(channel, listener);
+	};
+}
 
 const api: PiApi = {
 	platform: process.platform,
@@ -74,11 +91,7 @@ const api: PiApi = {
 	cancelProviderLogin: (loginId) => ipcRenderer.invoke(IpcChannels.SettingsLoginCancel, loginId),
 	respondProviderLogin: (loginId, promptId, value) =>
 		ipcRenderer.invoke(IpcChannels.SettingsLoginRespond, loginId, promptId, value),
-	onProviderLoginEvent: (cb) => {
-		const listener = (_event: unknown, payload: Parameters<typeof cb>[0]) => cb(payload);
-		ipcRenderer.on(IpcChannels.SettingsLoginEvent, listener);
-		return () => ipcRenderer.removeListener(IpcChannels.SettingsLoginEvent, listener);
-	},
+	onProviderLoginEvent: makeSubscription<LoginEventPayload>(IpcChannels.SettingsLoginEvent),
 	respondPermission: (requestId, answer) =>
 		ipcRenderer.invoke(IpcChannels.PermissionRespond, requestId, answer),
 	getPermissionConfig: () => ipcRenderer.invoke(IpcChannels.PermissionGetConfig),
@@ -119,58 +132,18 @@ const api: PiApi = {
 		ipcRenderer.invoke(IpcChannels.UiPluginsAssignSlot, slot, pluginName),
 	uiPluginsRebuild: (name) => ipcRenderer.invoke(IpcChannels.UiPluginsRebuild, name),
 	uiPluginsOpenDir: (name) => ipcRenderer.invoke(IpcChannels.UiPluginsOpenDir, name),
-	onUiPluginsEvent: (cb) => {
-		const listener = (_event: unknown, payload: UiPluginsEventPayload) => cb(payload);
-		ipcRenderer.on(IpcChannels.UiPluginsEvent, listener);
-		return () => ipcRenderer.removeListener(IpcChannels.UiPluginsEvent, listener);
-	},
-	onUpdateEvent: (cb) => {
-		const listener = (_event: unknown, state: UpdateState) => cb(state);
-		ipcRenderer.on(IpcChannels.UpdateEvent, listener);
-		return () => ipcRenderer.removeListener(IpcChannels.UpdateEvent, listener);
-	},
-	onEvent: (cb) => {
-		const listener = (_event: unknown, payload: SessionEventEnvelope) => cb(payload);
-		ipcRenderer.on(IpcChannels.Event, listener);
-		return () => ipcRenderer.removeListener(IpcChannels.Event, listener);
-	},
-	onPermissionRequest: (cb) => {
-		const listener = (_event: unknown, req: Parameters<typeof cb>[0]) => cb(req);
-		ipcRenderer.on(IpcChannels.PermissionRequest, listener);
-		return () => ipcRenderer.removeListener(IpcChannels.PermissionRequest, listener);
-	},
-	onPermissionResolved: (cb) => {
-		const listener = (_event: unknown, result: Parameters<typeof cb>[0]) => cb(result);
-		ipcRenderer.on(IpcChannels.PermissionResolved, listener);
-		return () => ipcRenderer.removeListener(IpcChannels.PermissionResolved, listener);
-	},
-	onTrustRequest: (cb) => {
-		const listener = (_event: unknown, req: Parameters<typeof cb>[0]) => cb(req);
-		ipcRenderer.on(IpcChannels.TrustRequest, listener);
-		return () => ipcRenderer.removeListener(IpcChannels.TrustRequest, listener);
-	},
+	onUiPluginsEvent: makeSubscription<UiPluginsEventPayload>(IpcChannels.UiPluginsEvent),
+	onUpdateEvent: makeSubscription<UpdateState>(IpcChannels.UpdateEvent),
+	onEvent: makeSubscription<SessionEventEnvelope>(IpcChannels.Event),
+	onPermissionRequest: makeSubscription<PermissionRequest>(IpcChannels.PermissionRequest),
+	onPermissionResolved: makeSubscription<PermissionResolved>(IpcChannels.PermissionResolved),
+	onTrustRequest: makeSubscription<TrustRequest>(IpcChannels.TrustRequest),
 	respondExtensionDialog: (requestId, answer) =>
 		ipcRenderer.invoke(IpcChannels.ExtensionDialogRespond, requestId, answer),
-	onExtensionDialogRequest: (cb) => {
-		const listener = (_event: unknown, req: Parameters<typeof cb>[0]) => cb(req);
-		ipcRenderer.on(IpcChannels.ExtensionDialogRequest, listener);
-		return () => ipcRenderer.removeListener(IpcChannels.ExtensionDialogRequest, listener);
-	},
-	onExtensionDialogResolved: (cb) => {
-		const listener = (_event: unknown, result: Parameters<typeof cb>[0]) => cb(result);
-		ipcRenderer.on(IpcChannels.ExtensionDialogResolved, listener);
-		return () => ipcRenderer.removeListener(IpcChannels.ExtensionDialogResolved, listener);
-	},
-	onExtensionNotify: (cb) => {
-		const listener = (_event: unknown, event: Parameters<typeof cb>[0]) => cb(event);
-		ipcRenderer.on(IpcChannels.ExtensionNotify, listener);
-		return () => ipcRenderer.removeListener(IpcChannels.ExtensionNotify, listener);
-	},
-	onExtensionEditorText: (cb) => {
-		const listener = (_event: unknown, event: Parameters<typeof cb>[0]) => cb(event);
-		ipcRenderer.on(IpcChannels.ExtensionEditorText, listener);
-		return () => ipcRenderer.removeListener(IpcChannels.ExtensionEditorText, listener);
-	},
+	onExtensionDialogRequest: makeSubscription<ExtensionDialogRequest>(IpcChannels.ExtensionDialogRequest),
+	onExtensionDialogResolved: makeSubscription<ExtensionDialogResolved>(IpcChannels.ExtensionDialogResolved),
+	onExtensionNotify: makeSubscription<ExtensionNotifyEvent>(IpcChannels.ExtensionNotify),
+	onExtensionEditorText: makeSubscription<ExtensionEditorTextEvent>(IpcChannels.ExtensionEditorText),
 };
 
 contextBridge.exposeInMainWorld("pi", api);
