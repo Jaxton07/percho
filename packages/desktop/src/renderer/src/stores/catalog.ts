@@ -112,7 +112,7 @@ export const useCatalogStore = create<CatalogStore>((set, get) => {
 				return { installingNames: { ...state.installingNames, [name]: true }, installErrors };
 			});
 			try {
-				await getPi().installPackage(name);
+				await getPi().installPackage({ name });
 				await get().refreshConfiguredPackages();
 				// backend 已对非流式会话做 session.reload()，刷新已加载资源列表让「已加载」页同步
 				void useSettingsStore.getState().refresh();
@@ -148,7 +148,7 @@ export const useCatalogStore = create<CatalogStore>((set, get) => {
 				return { removingSources: { ...state.removingSources, [source]: true }, removeErrors };
 			});
 			try {
-				await getPi().removePackage(source, scope);
+				await getPi().removePackage({ source, scope });
 				await get().refreshConfiguredPackages();
 				// backend 已对非流式会话做 session.reload()，刷新已加载资源列表让「已加载」页同步
 				void useSettingsStore.getState().refresh();

@@ -104,7 +104,7 @@ async function optimisticSessionSetting(
 		}));
 	apply(global, sessionPatch);
 	getPi()
-		.saveUiState(uiState)
+		.saveUiState({ state: uiState })
 		.catch((error) => {
 			console.error("ui-state 持久化失败", error);
 			pushToast("warning", "toast.uiStateSaveFailed", errText(error));
@@ -122,7 +122,7 @@ async function optimisticSessionSetting(
 					: { model: null, thinkingLevel: null },
 			);
 			getPi()
-				.saveUiState(previousGlobal)
+				.saveUiState({ state: previousGlobal })
 				.catch((e) => console.error("ui-state 回滚持久化失败", e));
 			console.error(`${label}失败`, error);
 			pushToast("warning", toastKey, errText(error));
@@ -135,8 +135,12 @@ function persistTabs(state: Pick<SessionsStore, "sessions" | "activeSessionId">)
 	try {
 		getPi()
 			.saveTabs({
-				files: [...new Set(state.sessions.map((s) => s.sessionFile).filter((f): f is string => Boolean(f)))],
-				activeFile: state.sessions.find((s) => s.sessionId === state.activeSessionId)?.sessionFile ?? null,
+				tabs: {
+					files: [
+						...new Set(state.sessions.map((s) => s.sessionFile).filter((f): f is string => Boolean(f))),
+					],
+					activeFile: state.sessions.find((s) => s.sessionId === state.activeSessionId)?.sessionFile ?? null,
+				},
 			})
 			.catch((error) => {
 				console.error("tabs 持久化失败", error);

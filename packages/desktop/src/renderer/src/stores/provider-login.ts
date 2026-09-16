@@ -75,7 +75,7 @@ export const useProviderLoginStore = create<ProviderLoginStore>((set, get) => ({
 				set({ login: { ...state, authUrl: { url: event.url, instructions: event.instructions } } });
 				if (!browserOpened) {
 					browserOpened = true;
-					void getPi().openExternal(event.url);
+					void getPi().openExternal({ url: event.url });
 				}
 			} else if (event.type === "device_code") {
 				set({

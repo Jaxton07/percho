@@ -130,8 +130,7 @@ describe("draft 转正（createSession + replaceDraftId）", () => {
 		expect(state.activeSessionId).toBe("real-1");
 		// 转正后落盘 tabs.json
 		expect(piMock.saveTabs).toHaveBeenCalledWith({
-			files: ["/tmp/real-1.jsonl"],
-			activeFile: "/tmp/real-1.jsonl",
+			tabs: { files: ["/tmp/real-1.jsonl"], activeFile: "/tmp/real-1.jsonl" },
 		});
 	});
 
@@ -289,8 +288,7 @@ describe("reorderSessions（拖拽排序）", () => {
 		]);
 		// files 只含真实会话，顺序 = 去掉 draft 后的视觉序
 		expect(piMock.saveTabs).toHaveBeenCalledWith({
-			files: ["/tmp/b.jsonl", "/tmp/a.jsonl"],
-			activeFile: null,
+			tabs: { files: ["/tmp/b.jsonl", "/tmp/a.jsonl"], activeFile: null },
 		});
 	});
 
@@ -338,8 +336,7 @@ describe("乐观会话设置（optimisticSessionSetting 骨架）", () => {
 		expect(useSessionsStore.getState().currentModel).toEqual({ provider: "deepseek", modelId: "v4" });
 		expect(useSessionsStore.getState().sessions[0]?.model).toEqual({ provider: "deepseek", modelId: "v4" });
 		expect(piMock.saveUiState).toHaveBeenCalledWith({
-			currentModel: { provider: "deepseek", modelId: "v4" },
-			thinkingLevel: "medium",
+			state: { currentModel: { provider: "deepseek", modelId: "v4" }, thinkingLevel: "medium" },
 		});
 	});
 
@@ -361,8 +358,7 @@ describe("乐观会话设置（optimisticSessionSetting 骨架）", () => {
 		expect(useSessionsStore.getState().sessions[0]?.model).toEqual(previousModel);
 		expect(useSessionsStore.getState().sessions[0]?.thinkingLevel).toBe("high");
 		expect(piMock.saveUiState).toHaveBeenLastCalledWith({
-			currentModel: previousModel,
-			thinkingLevel: "high",
+			state: { currentModel: previousModel, thinkingLevel: "high" },
 		});
 	});
 

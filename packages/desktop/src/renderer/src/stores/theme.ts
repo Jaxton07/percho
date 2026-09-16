@@ -46,7 +46,7 @@ export const useThemeStore = create<ThemeStore>((set, get) => {
 	const persist = () => {
 		const { mode, background } = get();
 		getPi()
-			.saveUiState({ theme: mode, background })
+			.saveUiState({ state: { theme: mode, background } })
 			.catch((error) => console.error("ui-state 持久化失败", error));
 	};
 

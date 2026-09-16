@@ -53,7 +53,7 @@ export function LoginDialog() {
 						<button
 							type="button"
 							className="mt-1 block w-full truncate text-center text-[11px] text-ink-dim underline underline-offset-2 hover:text-ink"
-							onClick={() => void window.pi.openExternal(deviceCode.verificationUri)}
+							onClick={() => void window.pi.openExternal({ url: deviceCode.verificationUri })}
 						>
 							{deviceCode.verificationUri}
 						</button>
@@ -75,7 +75,7 @@ export function LoginDialog() {
 							type="button"
 							className="mt-1 block w-full truncate text-left font-mono text-[11px] text-ink-dim underline underline-offset-2 hover:text-ink"
 							title={authUrl.url}
-							onClick={() => void window.pi.openExternal(authUrl.url)}
+							onClick={() => void window.pi.openExternal({ url: authUrl.url })}
 						>
 							{authUrl.url}
 						</button>
@@ -120,7 +120,7 @@ export function LoginDialog() {
 								key={link.url}
 								type="button"
 								className="text-[11px] text-ink-dim underline underline-offset-2 hover:text-ink"
-								onClick={() => void window.pi.openExternal(link.url)}
+								onClick={() => void window.pi.openExternal({ url: link.url })}
 							>
 								{link.label ?? link.url}
 							</button>

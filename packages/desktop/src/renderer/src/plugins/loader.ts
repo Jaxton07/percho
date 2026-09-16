@@ -83,7 +83,7 @@ async function reloadAll(): Promise<void> {
 	for (const name of registeredNames) useUiPluginRegistry.getState().removePlugin(name);
 	for (const p of plugins) {
 		if (!p.enabled || !p.trusted || p.invalidReason || p.buildError) continue;
-		const res = await getPi().uiPluginsReadCode(p.name);
+		const res = await getPi().uiPluginsReadCode({ name: p.name });
 		if ("error" in res) {
 			console.warn(`[ui-plugins] ${p.name} 读代码失败:`, res.error);
 			store.setLoadError(p.name, res.error);
@@ -99,7 +99,7 @@ async function reloadPlugin(name: string): Promise<void> {
 	const { config, plugins } = useUiPluginsStore.getState();
 	const p = plugins.find((x) => x.name === name);
 	if (!p?.enabled || !p.trusted || p.invalidReason || p.buildError) return;
-	const res = await getPi().uiPluginsReadCode(name);
+	const res = await getPi().uiPluginsReadCode({ name });
 	if ("error" in res) {
 		console.warn(`[ui-plugins] ${name} 读代码失败:`, res.error);
 		useUiPluginsStore.getState().setLoadError(name, res.error);

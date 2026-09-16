@@ -30,14 +30,14 @@ export const useUiPreferencesStore = create<UiPreferencesStore>((set) => ({
 	setSessionRailEnabled: (enabled) => {
 		set({ sessionRailEnabled: enabled });
 		getPi()
-			.saveUiState({ sessionRailEnabled: enabled })
+			.saveUiState({ state: { sessionRailEnabled: enabled } })
 			.catch((error) => console.error("ui-state 持久化失败", error));
 	},
 
 	setCenterOrbEnabled: (enabled) => {
 		set({ centerOrbEnabled: enabled });
 		getPi()
-			.saveUiState({ centerOrbEnabled: enabled })
+			.saveUiState({ state: { centerOrbEnabled: enabled } })
 			.catch((error) => console.error("ui-state 持久化失败", error));
 	},
 }));

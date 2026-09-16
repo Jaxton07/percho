@@ -34,7 +34,7 @@ function BranchRow() {
 		if (!cwd || !hasContent) return;
 		let cancelled = false;
 		void getPi()
-			.listGitBranches(cwd)
+			.listGitBranches({ cwd })
 			.then((r) => {
 				if (cancelled) return;
 				setBranches(r.branches);

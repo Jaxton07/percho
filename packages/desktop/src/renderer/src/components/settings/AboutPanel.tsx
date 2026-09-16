@@ -45,7 +45,7 @@ export function AboutPanel() {
 
 	const openReleasePage = async (version: string) => {
 		const appInfo = info ?? (await getPi().getAppInfo());
-		void getPi().openExternal(`${appInfo.repoUrl}/releases/tag/v${version}`);
+		void getPi().openExternal({ url: `${appInfo.repoUrl}/releases/tag/v${version}` });
 	};
 
 	const buttonLabel =
@@ -81,7 +81,7 @@ export function AboutPanel() {
 					type="button"
 					className="rounded-lg border border-border px-4 py-1.5 text-[13px] text-ink-2 transition-colors hover:border-border-strong hover:bg-hover hover:text-ink"
 					onClick={() => {
-						if (info?.repoUrl) void getPi().openExternal(info.repoUrl);
+						if (info?.repoUrl) void getPi().openExternal({ url: info.repoUrl });
 					}}
 				>
 					{t("settings.about.sourceCode")}

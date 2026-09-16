@@ -42,10 +42,10 @@ describe("useUiPreferencesStore", () => {
 	it("切换开关即持久化补丁", () => {
 		useUiPreferencesStore.getState().setSessionRailEnabled(true);
 		expect(useUiPreferencesStore.getState().sessionRailEnabled).toBe(true);
-		expect(piMock.saveUiState).toHaveBeenCalledWith({ sessionRailEnabled: true });
+		expect(piMock.saveUiState).toHaveBeenCalledWith({ state: { sessionRailEnabled: true } });
 
 		useUiPreferencesStore.getState().setCenterOrbEnabled(true);
 		expect(useUiPreferencesStore.getState().centerOrbEnabled).toBe(true);
-		expect(piMock.saveUiState).toHaveBeenCalledWith({ centerOrbEnabled: true });
+		expect(piMock.saveUiState).toHaveBeenCalledWith({ state: { centerOrbEnabled: true } });
 	});
 });

@@ -1,11 +1,15 @@
-import type { CatalogPackageType, CatalogSearchResult } from "./packages";
+import type { ExtensionDialogRespond } from "./extension-dialog";
+import type { LanStatus } from "./lan";
+import type { CatalogPackageType, CatalogSearchResult, ConfiguredPackageInfo } from "./packages";
 import type {
+	AppInfo,
 	AvailableModel,
 	ChannelWatchConfigInfo,
 	ContextManagerConfigInfo,
 	ContextManagerMode,
 	ContextUsageInfo,
 	CreateSessionOptions,
+	GitBranches,
 	ImageInput,
 	LoadedResources,
 	PermissionAnswer,
@@ -13,11 +17,13 @@ import type {
 	PermissionMode,
 	QueuedMessages,
 	QuotaInfo,
+	SavedTabs,
 	SessionMessage,
 	SessionMeta,
 	SessionStats,
 	SlashCommandInfo,
 	TrustAnswer,
+	UiState,
 } from "./session";
 import type {
 	CustomProviderInput,
@@ -30,6 +36,7 @@ import type {
 	SubagentInfo,
 } from "./settings";
 import type { TodoItem } from "./todo";
+import type { UiPluginInfo, UiPluginManifest, UiPluginsConfig } from "./ui-plugins";
 
 /**
  * IPC invoke 通道单一事实源（D5）：key（= PiApi 方法名）→ 通道字符串 + 参数/返回类型。
@@ -123,6 +130,31 @@ export const PACKAGES_CHANNELS = {
 		{ query: string; type?: CatalogPackageType | ""; page?: number },
 		CatalogSearchResult
 	>(),
+	/** 安装社区包（npm:<name>，用户级）；成功后热重载非流式活跃会话 */
+	installPackage: ch("packages:install")<{ name: string }, void>(),
+	/** 卸载已配置的包（按 source + scope 移除并持久化）；成功后热重载非流式活跃会话 */
+	removePackage: ch("packages:remove")<{ source: string; scope: "user" | "project" }, void>(),
+	/** 列出 settings.json 已配置的包（「已安装」态匹配用） */
+	listConfiguredPackages: ch("packages:listConfigured")<void, ConfiguredPackageInfo[]>(),
+} as const;
+
+/** LAN 观察域：本机服务开关与远程控制开关 */
+export const LAN_CHANNELS = {
+	/** 读取局域网观察服务状态（URL/二维码只在启用并监听后提供） */
+	lanGetStatus: ch("lan:getStatus")<void, LanStatus>(),
+	/** 启用或停止局域网只读观察服务；启用时轮换访问 token */
+	lanSetEnabled: ch("lan:setEnabled")<{ enabled: boolean }, LanStatus>(),
+	/** 远程控制二级开关（独立于观察开关；未开观察时允许配置但不生效） */
+	lanSetRemoteControl: ch("lan:setRemoteControl")<{ enabled: boolean }, LanStatus>(),
+} as const;
+
+/** 扩展对话框域：renderer 应答（请求/结算/通知为 main→renderer 单向事件，在 index.ts 转发） */
+export const EXTENSION_DIALOG_CHANNELS = {
+	/** 应答扩展对话框（宿主按 requestId 归属路由，未知 id 静默忽略） */
+	respondExtensionDialog: ch("extension-dialog:respond")<
+		{ requestId: string; answer: ExtensionDialogRespond },
+		void
+	>(),
 } as const;
 
 /** 设置域：provider 设置 + 模型偏好 + 登录流程 + 权限/上下文/频道开关 + 信任应答 */
@@ -195,6 +227,57 @@ export const SETTINGS_CHANNELS = {
 export const APP_CHANNELS = {
 	/** 弹保存对话框并写文件；用户取消返回 null，成功返回写入路径 */
 	saveFileDialog: ch("file:saveDialog")<{ defaultName: string; content: string }, string | null>(),
+	/** 目录选择对话框（取消返回 null） */
+	pickDirectory: ch("project:pickDirectory")<void, string | null>(),
+	getGitBranch: ch("project:getGitBranch")<{ cwd: string }, string | null>(),
+	listGitBranches: ch("project:listGitBranches")<{ cwd: string }, GitBranches>(),
+	/** 切换分支；返回切换后的当前分支（失败抛错） */
+	checkoutBranch: ch("project:checkoutBranch")<{ cwd: string; branch: string }, string>(),
+	/** 用系统浏览器打开链接（仅 http(s)，防 file:// 协议滥用） */
+	openExternal: ch("app:openExternal")<{ url: string }, void>(),
+	/** 应用信息（版本/运行时版本/仓库地址，设置关于页用） */
+	getAppInfo: ch("app:getInfo")<void, AppInfo>(),
+	/** 日常空间工作台目录（懒创建后返回；日常会话的固定 cwd） */
+	getDailyDir: ch("app:getDailyDir")<void, string>(),
+	/** 读取持久化的顶栏 tabs（无数据返回 null） */
+	loadTabs: ch("tabs:load")<void, SavedTabs | null>(),
+	/** 持久化顶栏 tabs（主进程写 userData/tabs.json） */
+	saveTabs: ch("tabs:save")<{ tabs: SavedTabs }, void>(),
+	/** 读取持久化 UI 状态（上次使用的模型/思考级别/主题/背景；无数据返回 null） */
+	loadUiState: ch("uiState:load")<void, UiState | null>(),
+	/** 持久化 UI 状态（主进程合并写入 userData/ui-state.json，传补丁即可） */
+	saveUiState: ch("uiState:save")<{ state: Partial<UiState> }, void>(),
+	/** 弹图选框选背景图并拷贝进 userData/backgrounds/；取消返回 null */
+	pickBackgroundImage: ch("background:pick")<void, string | null>(),
+	/** 检查更新（纯检查：发现新版只提示不下载） */
+	checkForUpdates: ch("update:check")<void, void>(),
+	/** 下载更新（已发现新版→下载；未发现→先检查）；仅用户显式点击触发 */
+	downloadUpdate: ch("update:download")<void, void>(),
+	/** 重启并安装已下载的更新 */
+	installUpdate: ch("update:install")<void, void>(),
+} as const;
+
+/** UI 插件域：配置读写 / 列表 / 构建 / 代码读取 / 目录打开（参数校验在 handler 内） */
+export const UI_PLUGINS_CHANNELS = {
+	/** 读 UI 插件全局配置（总开关/启用信任表/槽位指派） */
+	uiPluginsGetConfig: ch("uiPlugins:getConfig")<void, UiPluginsConfig>(),
+	/** 设 UI 插件全局总开关 */
+	uiPluginsSetEnabled: ch("uiPlugins:setEnabled")<{ enabled: boolean }, void>(),
+	/** 列 UI 插件（含 enabled/trusted/buildError/invalidReason） */
+	uiPluginsList: ch("uiPlugins:list")<void, UiPluginInfo[]>(),
+	/** 读插件构建产物（name 必须是扫描到的合法插件名，禁路径） */
+	uiPluginsReadCode: ch("uiPlugins:readCode")<
+		{ name: string },
+		{ manifest: UiPluginManifest; code: string } | { error: string }
+	>(),
+	/** 启用/停用单个插件（启用=信任，同步落盘） */
+	uiPluginsSetPluginEnabled: ch("uiPlugins:setPluginEnabled")<{ name: string; enabled: boolean }, void>(),
+	/** 槽位指派（pluginName=null 取消指派） */
+	uiPluginsAssignSlot: ch("uiPlugins:assignSlot")<{ slot: string; pluginName: string | null }, void>(),
+	/** 重新构建插件（构建失败返回错误信息，旧产物保留） */
+	uiPluginsRebuild: ch("uiPlugins:rebuild")<{ name: string }, { ok: true } | { ok: false; error: string }>(),
+	/** 打开插件目录（不传 name 开根目录；shell.openPath） */
+	uiPluginsOpenDir: ch("uiPlugins:openDir")<{ name?: string }, void>(),
 } as const;
 
 /** 已表化通道全集（分批迁移，终态 = 全部 invoke 通道） */
@@ -203,6 +286,9 @@ export const CHANNEL_TABLE = {
 	...SETTINGS_CHANNELS,
 	...PACKAGES_CHANNELS,
 	...APP_CHANNELS,
+	...LAN_CHANNELS,
+	...EXTENSION_DIALOG_CHANNELS,
+	...UI_PLUGINS_CHANNELS,
 } as const;
 
 export type ChannelTable = typeof CHANNEL_TABLE;
@@ -251,66 +337,8 @@ const EVENT_CHANNELS = {
 	UiPluginsEvent: "uiPlugins:event",
 } as const;
 
-/**
- * 迁移期：尚未表化的 invoke 通道（终态删除；每批迁移从这移进上面的子表）。
- * key 保持旧 PascalCase 形态以最小化未迁移域 diff。
- */
-const LEGACY_INVOKE_CHANNELS = {
-	PackagesInstall: "packages:install",
-	PackagesRemove: "packages:remove",
-	PackagesListConfigured: "packages:listConfigured",
-	LanGetStatus: "lan:getStatus",
-	LanSetEnabled: "lan:setEnabled",
-	/** 局域网远程控制二级开关（M2；默认关闭，开观察 ≠ 开控制）。 */
-	LanSetRemoteControl: "lan:setRemoteControl",
-	/** 扩展对话框：renderer 应答（requestId 含 sessionId 全局唯一；host 遍历幂等） */
-	ExtensionDialogRespond: "extension-dialog:respond",
-	ProjectPickDirectory: "project:pickDirectory",
-	ProjectGetGitBranch: "project:getGitBranch",
-	ProjectListGitBranches: "project:listGitBranches",
-	ProjectCheckoutBranch: "project:checkoutBranch",
-	AppOpenExternal: "app:openExternal",
-	/** 应用信息（版本/运行时版本/仓库地址，设置关于页用） */
-	AppGetInfo: "app:getInfo",
-	/** 日常空间工作台目录（~/.percho/daily；懒创建后返回，日常会话的固定 cwd） */
-	AppGetDailyDir: "app:getDailyDir",
-	/** 顶栏 tabs 持久化（userData/tabs.json，不依赖 renderer localStorage） */
-	TabsLoad: "tabs:load",
-	TabsSave: "tabs:save",
-	/** 应用 UI 状态持久化（userData/ui-state.json：上次使用的模型/思考级别 + 主题/背景） */
-	UiStateLoad: "uiState:load",
-	UiStateSave: "uiState:save",
-	/** 自定义背景：弹图选框并拷贝进 userData/backgrounds/，返回文件名（取消返回 null） */
-	BackgroundPick: "background:pick",
-	/** 检查更新（纯检查：发现新版只提示不下载） */
-	UpdateCheck: "update:check",
-	/** 下载更新（已发现新版→下载；未发现→先检查）；仅用户显式点击触发 */
-	UpdateDownload: "update:download",
-	/** 重启并安装已下载的更新 */
-	UpdateInstall: "update:install",
-	UiPluginsGetConfig: "uiPlugins:getConfig",
-	/** UI 插件：设全局总开关 */
-	UiPluginsSetEnabled: "uiPlugins:setEnabled",
-	/** UI 插件：列插件（含状态） */
-	UiPluginsList: "uiPlugins:list",
-	/** UI 插件：读构建产物代码 */
-	UiPluginsReadCode: "uiPlugins:readCode",
-	/** UI 插件：启用/停用单个插件（启用=信任） */
-	UiPluginsSetPluginEnabled: "uiPlugins:setPluginEnabled",
-	/** UI 插件：槽位指派（pluginName=null 取消指派） */
-	UiPluginsAssignSlot: "uiPlugins:assignSlot",
-	/** UI 插件：重新构建 */
-	UiPluginsRebuild: "uiPlugins:rebuild",
-	/** UI 插件：打开插件目录（shell.openPath） */
-	UiPluginsOpenDir: "uiPlugins:openDir",
-} as const;
-
-/**
- * 全通道字符串常量：事件通道 + 表化 invoke（camelCase key = PiApi 方法名）+ 迁移期遗留。
- * 迁移完成后 LEGACY_INVOKE_CHANNELS 段删除。
- */
+/** 全通道字符串常量：main→renderer 事件通道 + 表化 invoke（key = PiApi 方法名） */
 export const IpcChannels = Object.freeze({
 	...EVENT_CHANNELS,
 	...channelsFromTable(CHANNEL_TABLE),
-	...LEGACY_INVOKE_CHANNELS,
 });

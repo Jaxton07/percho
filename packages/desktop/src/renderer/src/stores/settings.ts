@@ -223,7 +223,7 @@ export const useSettingsStore = create<SettingsStore>((set, get) => {
 		setLanEnabled: async (enabled) => {
 			set({ lanSaving: true });
 			try {
-				const lanStatus = await getPi().lanSetEnabled(enabled);
+				const lanStatus = await getPi().lanSetEnabled({ enabled });
 				set({ lanStatus, lanSaving: false });
 			} catch (error) {
 				set({ lanSaving: false, error: error instanceof Error ? error.message : String(error) });
@@ -233,7 +233,7 @@ export const useSettingsStore = create<SettingsStore>((set, get) => {
 		setLanRemoteControl: async (enabled) => {
 			set({ lanSaving: true });
 			try {
-				const lanStatus = await getPi().lanSetRemoteControl(enabled);
+				const lanStatus = await getPi().lanSetRemoteControl({ enabled });
 				set({ lanStatus, lanSaving: false });
 			} catch (error) {
 				set({ lanSaving: false, error: error instanceof Error ? error.message : String(error) });
