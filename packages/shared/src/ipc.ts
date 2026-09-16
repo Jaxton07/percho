@@ -48,155 +48,30 @@ import type {
 import type { TodoItem } from "./todo";
 import type { UiPluginInfo, UiPluginManifest, UiPluginsConfig, UiPluginsEventPayload } from "./ui-plugins";
 import type { UpdateState } from "./update";
+import { CHANNEL_TABLE, type InvokeApi } from "./ipc-channels";
 
-/** IPC 通道名常量 */
-export const IpcChannels = {
-	SessionCreate: "session:create",
-	SessionList: "session:list",
-	SessionListAll: "session:listAll",
-	SessionOpen: "session:open",
-	SessionClose: "session:close",
-	SessionDelete: "session:delete",
-	SessionPrompt: "session:prompt",
-	SessionAbort: "session:abort",
-	SessionSetModel: "session:setModel",
-	SessionSetThinkingLevel: "session:setThinkingLevel",
-	SessionGetMessages: "session:getMessages",
-	SessionGetTodos: "session:getTodos",
-	SessionCompact: "session:compact",
-	SessionStats: "session:stats",
-	SessionGetContextUsage: "session:getContextUsage",
-	SessionGetQuota: "session:getQuota",
-	SessionClearQueue: "session:clearQueue",
-	SessionGetFollowUpMessages: "session:getFollowUpMessages",
-	SessionListSlashCommands: "session:listSlashCommands",
-	/** 无会话斜杠命令列表（draft 新会话按 cwd 拉取；信任未决不弹窗，只含用户级资源） */
-	SessionListSlashCommandsForCwd: "session:listSlashCommandsForCwd",
-	SessionSetName: "session:setName",
-	SessionExport: "session:export",
-	SessionFork: "session:fork",
-	/** 撤回用户消息（回退到该消息之前，内容放回输入框） */
-	SessionRecall: "session:recall",
-	/** 已加载资源（skills/扩展，设置页展示用） */
-	SessionGetLoadedResources: "session:getLoadedResources",
-	/** pi.dev 社区包目录（设置页扩展面板浏览/安装用） */
-	PackagesSearchCatalog: "packages:searchCatalog",
-	PackagesInstall: "packages:install",
-	PackagesRemove: "packages:remove",
-	PackagesListConfigured: "packages:listConfigured",
-	FileSaveDialog: "file:saveDialog",
-	ModelsList: "models:list",
-	SettingsListProviders: "settings:listProviders",
-	SettingsSaveApiKey: "settings:saveApiKey",
-	SettingsRemoveCredential: "settings:removeCredential",
-	SettingsAddCustomProvider: "settings:addCustomProvider",
-	SettingsUpdateCustomProvider: "settings:updateCustomProvider",
-	SettingsRemoveCustomProvider: "settings:removeCustomProvider",
-	SettingsSetProviderBaseUrl: "settings:setProviderBaseUrl",
-	SettingsTestProvider: "settings:testProvider",
-	/** 用户级模型偏好：隐藏模型 + 子代理模型/思考深度覆盖 + 执行器偏好 */
-	SettingsGetModelPrefs: "settings:getModelPrefs",
-	SettingsSetModelHidden: "settings:setModelHidden",
-	SettingsSetModelsHidden: "settings:setModelsHidden",
-	SettingsSetSubagentModel: "settings:setSubagentModel",
-	SettingsSetSubagentThinking: "settings:setSubagentThinking",
-	SettingsSetSubagentPreferBuiltin: "settings:setSubagentPreferBuiltin",
-	/** 只列内置与用户级 subagent（设置是全局配置，不绑定项目） */
-	SettingsListSubagents: "settings:listSubagents",
-	/** provider 交互登录（OAuth / api_key，后者如 Google Vertex 的 ADC/服务账号）；loginId 由 renderer 生成用于事件归属 */
-	SettingsLoginStart: "settings:loginStart",
-	SettingsLoginCancel: "settings:loginCancel",
-	SettingsLoginRespond: "settings:loginRespond",
-	/** main → renderer 登录流程事件（event/prompt/prompt-cancel） */
-	SettingsLoginEvent: "settings:loginEvent",
-	/** 局域网观察页（默认关闭、只读服务）。 */
-	LanGetStatus: "lan:getStatus",
-	LanSetEnabled: "lan:setEnabled",
-	/** 局域网远程控制二级开关（M2；默认关闭，开观察 ≠ 开控制）。 */
-	LanSetRemoteControl: "lan:setRemoteControl",
-	PermissionRespond: "permission:respond",
-	/** 扩展对话框：renderer 应答（requestId 含 sessionId 全局唯一；host 遍历幂等） */
-	ExtensionDialogRespond: "extension-dialog:respond",
-	/** 权限门控配置（enabled 解析保留，UI 无入口；chip 逃生舱禁用态感知用） */
-	PermissionGetConfig: "permission:getConfig",
-	/** 会话权限模式（default / fullAccess；内存态，不落盘） */
-	PermissionGetMode: "permission:getMode",
-	PermissionSetMode: "permission:setMode",
-	/** 上下文管理模式二态（设置 UI「通用」面板，默认蒸发） */
-	ContextManagerGetConfig: "contextManager:getConfig",
-	ContextManagerSetMode: "contextManager:setMode",
-	/** channel-watch 跨会话频道唤醒开关（设置 UI「通用」面板） */
-	ChannelWatchGetConfig: "channelWatch:getConfig",
-	ChannelWatchSetEnabled: "channelWatch:setEnabled",
-	/** 项目信任应答（选项下标） */
-	TrustRespond: "trust:respond",
-	/** 项目信任前置决策（添加项目/切换 draft cwd 时调用，未决则弹窗） */
-	ProjectEnsureTrust: "project:ensureTrust",
-	ProjectPickDirectory: "project:pickDirectory",
-	ProjectGetGitBranch: "project:getGitBranch",
-	ProjectListGitBranches: "project:listGitBranches",
-	ProjectCheckoutBranch: "project:checkoutBranch",
-	/** @ 补全数据源：项目文件相对路径列表（目录带尾 /） */
-	ProjectListFiles: "project:listFiles",
-	AppOpenExternal: "app:openExternal",
-	/** 应用信息（版本/运行时版本/仓库地址，设置关于页用） */
-	AppGetInfo: "app:getInfo",
-	/** 日常空间工作台目录（~/.percho/daily；懒创建后返回，日常会话的固定 cwd） */
-	AppGetDailyDir: "app:getDailyDir",
-	/** 顶栏 tabs 持久化（userData/tabs.json，不依赖 renderer localStorage） */
-	TabsLoad: "tabs:load",
-	TabsSave: "tabs:save",
-	/** 应用 UI 状态持久化（userData/ui-state.json：上次使用的模型/思考级别 + 主题/背景） */
-	UiStateLoad: "uiState:load",
-	UiStateSave: "uiState:save",
-	/** 自定义背景：弹图选框并拷贝进 userData/backgrounds/，返回文件名（取消返回 null） */
-	BackgroundPick: "background:pick",
-	/** 检查更新（纯检查：发现新版只提示不下载） */
-	UpdateCheck: "update:check",
-	/** 下载更新（已发现新版→下载；未发现→先检查）；仅用户显式点击触发 */
-	UpdateDownload: "update:download",
-	/** 重启并安装已下载的更新 */
-	UpdateInstall: "update:install",
-	/** main → renderer 更新状态 */
-	UpdateEvent: "update:event",
-	/** UI 插件：读全局配置 */
-	UiPluginsGetConfig: "uiPlugins:getConfig",
-	/** UI 插件：设全局总开关 */
-	UiPluginsSetEnabled: "uiPlugins:setEnabled",
-	/** UI 插件：列插件（含状态） */
-	UiPluginsList: "uiPlugins:list",
-	/** UI 插件：读构建产物代码 */
-	UiPluginsReadCode: "uiPlugins:readCode",
-	/** UI 插件：启用/停用单个插件（启用=信任） */
-	UiPluginsSetPluginEnabled: "uiPlugins:setPluginEnabled",
-	/** UI 插件：槽位指派（pluginName=null 取消指派） */
-	UiPluginsAssignSlot: "uiPlugins:assignSlot",
-	/** UI 插件：重新构建 */
-	UiPluginsRebuild: "uiPlugins:rebuild",
-	/** UI 插件：打开插件目录（shell.openPath） */
-	UiPluginsOpenDir: "uiPlugins:openDir",
-	/** main → renderer UI 插件事件（changed/config） */
-	UiPluginsEvent: "uiPlugins:event",
-	/** main → renderer 事件 */
-	Event: "pi:event",
-	PermissionRequest: "pi:permission-request",
-	/** main → renderer 权限请求已裁决（含 LAN 远程应答；桌面端据此撤卡） */
-	PermissionResolved: "pi:permission-resolved",
-	/** main → renderer 项目信任请求（会话创建前） */
-	TrustRequest: "pi:trust-request",
-	/** main → renderer 扩展对话框请求/结算 + notify + 草稿预填（issue #45，GUI-only 不进 LAN） */
-	ExtensionDialogRequest: "pi:extension-dialog-request",
-	ExtensionDialogResolved: "pi:extension-dialog-resolved",
-	ExtensionNotify: "pi:extension-notify",
-	ExtensionEditorText: "pi:extension-editor-text",
-} as const;
+export {
+	type AnyChannelDef,
+	CHANNEL_TABLE,
+	ch,
+	type ChannelCtor,
+	type ChannelDef,
+	IpcChannels,
+	type InvokeApi,
+	type InvokeHandlers,
+	PACKAGES_CHANNELS,
+	SESSION_CHANNELS,
+} from "./ipc-channels";
 
-/** 渲染进程经 preload 暴露的 window.pi 类型 */
-export interface PiApi {
+
+/**
+ * 渲染进程经 preload 暴露的 window.pi 类型。
+ * invoke 成员：表化通道由 InvokeApi<CHANNEL_TABLE> 推导（shared/ipc-channels.ts 单一事实源，
+ * key = 方法名）；表外成员（订阅 on*、platform）与迁移期遗留 invoke 在下方手写。
+ */
+export interface PiApi extends InvokeApi<typeof CHANNEL_TABLE> {
 	/** 运行平台（preload 同步注入，供 renderer 按平台分流 UI：如顶栏红绿灯/窗口按钮留白） */
 	readonly platform: "darwin" | "win32" | "linux" | (string & {});
-	createSession(options: CreateSessionOptions): Promise<SessionMeta>;
-	listSessions(cwd?: string): Promise<SessionMeta[]>;
 	/** 跨全部项目目录枚举历史会话（项目管理页用） */
 	listAllSessions(): Promise<SessionMeta[]>;
 	openSession(filePath: string): Promise<SessionMeta>;
@@ -206,7 +81,6 @@ export interface PiApi {
 	/** 发送消息；images 为随消息附带的图片（base64） */
 	prompt(sessionId: string, text: string, images?: ImageInput[]): Promise<void>;
 	abort(sessionId: string): Promise<void>;
-	setModel(sessionId: string, provider: string, modelId: string): Promise<void>;
 	setThinkingLevel(sessionId: string, level: string): Promise<void>;
 	/** 读取会话历史消息（打开历史会话时回放） */
 	getSessionMessages(sessionId: string): Promise<SessionMessage[]>;
@@ -216,8 +90,6 @@ export interface PiApi {
 	getStats(sessionId: string): Promise<SessionStats>;
 	/** 当前模型上下文使用（tokens/contextWindow/percent），无会话或未知时返回 null */
 	getContextUsage(sessionId: string): Promise<ContextUsageInfo | null>;
-	/** opencode-go 套餐额度（全局，非会话级；无 key/无订阅时返回 null） */
-	getQuota(): Promise<QuotaInfo | null>;
 	/** 清空运行中排队的消息（steer+followUp 都清），返回被清内容（abort 时还原草稿/队列面板清空按钮用） */
 	clearQueue(sessionId: string): Promise<QueuedMessages>;
 	/** 当前排队的 followUp 消息文本（切换会话回来自恢复队列面板用） */
@@ -246,8 +118,6 @@ export interface PiApi {
 	): Promise<{ text: string; images: ImageInput[] }>;
 	/** 读取会话已加载的资源（skills/扩展；设置页展示用） */
 	getLoadedResources(sessionId: string): Promise<LoadedResources>;
-	/** 搜索 pi.dev 社区包目录（服务端模糊匹配名称/描述/作者，50 条/页） */
-	searchCatalog(query: string, type?: CatalogPackageType | "", page?: number): Promise<CatalogSearchResult>;
 	/** 安装社区包（npm:<name>，用户级）；成功后热重载非流式活跃会话 */
 	installPackage(name: string): Promise<void>;
 	/** 卸载已配置的包（按 source + scope 移除并持久化）；成功后热重载非流式活跃会话 */

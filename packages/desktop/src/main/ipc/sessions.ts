@@ -1,16 +1,19 @@
 import type { PiBackend } from "@percho/backend";
 import type { ImageInput } from "@percho/shared";
-import { IpcChannels } from "@percho/shared";
+import { IpcChannels, SESSION_CHANNELS } from "@percho/shared";
 import { ipcMain } from "electron";
+import { registerInvokeHandlers } from "./invoke";
 
 /** 会话域：Session* 通道（生命周期/提示/导出/fork/撤回）+ 模型列表 + 项目文件/信任 */
 export function registerSessionsIpc(backend: PiBackend): void {
-	ipcMain.handle(
-		IpcChannels.SessionCreate,
-		(_e, options: { cwd: string; provider?: string; modelId?: string; thinkingLevel?: string }) =>
-			backend.createSession(options),
-	);
-	ipcMain.handle(IpcChannels.SessionList, (_e, cwd?: string) => backend.listSessions(cwd));
+	// 已表化通道（shared/ipc-channels.ts SESSION_CHANNELS）：handler 与通道定义同源校验
+	registerInvokeHandlers(SESSION_CHANNELS, {
+		createSession: ({ options }) => backend.createSession(options),
+		listSessions: ({ cwd }) => backend.listSessions(cwd),
+		getQuota: () => backend.getQuota(),
+		setModel: ({ sessionId, provider, modelId }) => backend.setModel(sessionId, provider, modelId),
+	});
+
 	ipcMain.handle(IpcChannels.SessionListAll, () => backend.listAllSessions());
 	ipcMain.handle(IpcChannels.SessionOpen, (_e, filePath: string) => backend.openSession(filePath));
 	ipcMain.handle(IpcChannels.SessionClose, (_e, sessionId: string) => backend.closeSession(sessionId));
@@ -21,9 +24,6 @@ export function registerSessionsIpc(backend: PiBackend): void {
 		backend.prompt(sessionId, text, images),
 	);
 	ipcMain.handle(IpcChannels.SessionAbort, (_e, sessionId: string) => backend.abort(sessionId));
-	ipcMain.handle(IpcChannels.SessionSetModel, (_e, sessionId: string, provider: string, modelId: string) =>
-		backend.setModel(sessionId, provider, modelId),
-	);
 	ipcMain.handle(IpcChannels.SessionSetThinkingLevel, (_e, sessionId: string, level: string) =>
 		backend.setThinkingLevel(sessionId, level),
 	);
@@ -34,7 +34,6 @@ export function registerSessionsIpc(backend: PiBackend): void {
 	ipcMain.handle(IpcChannels.SessionGetContextUsage, (_e, sessionId: string) =>
 		backend.getContextUsage(sessionId),
 	);
-	ipcMain.handle(IpcChannels.SessionGetQuota, () => backend.getQuota());
 	ipcMain.handle(IpcChannels.SessionClearQueue, (_e, sessionId: string) => backend.clearQueue(sessionId));
 	ipcMain.handle(IpcChannels.SessionGetFollowUpMessages, (_e, sessionId: string) =>
 		backend.getFollowUpMessages(sessionId),

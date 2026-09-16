@@ -121,7 +121,7 @@ describe("draft 转正（createSession + replaceDraftId）", () => {
 		await useSessionsStore.getState().createSession("/proj/b", draftId);
 
 		const state = useSessionsStore.getState();
-		expect(piMock.createSession).toHaveBeenCalledWith({ cwd: "/proj/b", thinkingLevel: "medium" });
+		expect(piMock.createSession).toHaveBeenCalledWith({ options: { cwd: "/proj/b", thinkingLevel: "medium" } });
 		expect(state.sessions).toHaveLength(2);
 		expect(state.sessions[1]?.sessionId).toBe("real-1");
 		expect(state.sessions[1]?.cwd).toBe("/proj/b");
@@ -332,7 +332,7 @@ describe("乐观会话设置（optimisticSessionSetting 骨架）", () => {
 			activeSessionId: "s1",
 		});
 		await useSessionsStore.getState().setCurrentModel("deepseek", "v4");
-		expect(piMock.setModel).toHaveBeenCalledWith("s1", "deepseek", "v4");
+		expect(piMock.setModel).toHaveBeenCalledWith({ sessionId: "s1", provider: "deepseek", modelId: "v4" });
 		expect(useSessionsStore.getState().currentModel).toEqual({ provider: "deepseek", modelId: "v4" });
 		expect(useSessionsStore.getState().sessions[0]?.model).toEqual({ provider: "deepseek", modelId: "v4" });
 		expect(piMock.saveUiState).toHaveBeenCalledWith({

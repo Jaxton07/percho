@@ -1,8 +1,10 @@
 import {
+	CHANNEL_TABLE,
 	type ExtensionDialogRequest,
 	type ExtensionDialogResolved,
 	type ExtensionEditorTextEvent,
 	type ExtensionNotifyEvent,
+	type InvokeApi,
 	IpcChannels,
 	type LoginEventPayload,
 	type PermissionRequest,
@@ -24,10 +26,17 @@ function makeSubscription<T>(channel: string): (cb: (payload: T) => void) => () 
 	};
 }
 
+/** 表化 invoke 通道：循环注册（args 单对象透传；通道定义 = shared/ipc-channels.ts 单一事实源） */
+const invokeApi = Object.fromEntries(
+	Object.entries(CHANNEL_TABLE).map(([key, def]) => [
+		key,
+		(args: unknown) => ipcRenderer.invoke(def.channel, args),
+	]),
+) as InvokeApi<typeof CHANNEL_TABLE>;
+
 const api: PiApi = {
 	platform: process.platform,
-	createSession: (options) => ipcRenderer.invoke(IpcChannels.SessionCreate, options),
-	listSessions: (cwd) => ipcRenderer.invoke(IpcChannels.SessionList, cwd),
+	...invokeApi,
 	listAllSessions: () => ipcRenderer.invoke(IpcChannels.SessionListAll),
 	openSession: (filePath) => ipcRenderer.invoke(IpcChannels.SessionOpen, filePath),
 	closeSession: (sessionId) => ipcRenderer.invoke(IpcChannels.SessionClose, sessionId),
@@ -35,15 +44,12 @@ const api: PiApi = {
 		ipcRenderer.invoke(IpcChannels.SessionDelete, sessionId, sessionFile),
 	prompt: (sessionId, text, images) => ipcRenderer.invoke(IpcChannels.SessionPrompt, sessionId, text, images),
 	abort: (sessionId) => ipcRenderer.invoke(IpcChannels.SessionAbort, sessionId),
-	setModel: (sessionId, provider, modelId) =>
-		ipcRenderer.invoke(IpcChannels.SessionSetModel, sessionId, provider, modelId),
 	setThinkingLevel: (sessionId, level) =>
 		ipcRenderer.invoke(IpcChannels.SessionSetThinkingLevel, sessionId, level),
 	compact: (sessionId, customInstructions) =>
 		ipcRenderer.invoke(IpcChannels.SessionCompact, sessionId, customInstructions),
 	getStats: (sessionId) => ipcRenderer.invoke(IpcChannels.SessionStats, sessionId),
 	getContextUsage: (sessionId) => ipcRenderer.invoke(IpcChannels.SessionGetContextUsage, sessionId),
-	getQuota: () => ipcRenderer.invoke(IpcChannels.SessionGetQuota),
 	clearQueue: (sessionId) => ipcRenderer.invoke(IpcChannels.SessionClearQueue, sessionId),
 	getFollowUpMessages: (sessionId) => ipcRenderer.invoke(IpcChannels.SessionGetFollowUpMessages, sessionId),
 	listSlashCommands: (sessionId) => ipcRenderer.invoke(IpcChannels.SessionListSlashCommands, sessionId),
@@ -53,8 +59,6 @@ const api: PiApi = {
 	forkSession: (sessionId, ref) => ipcRenderer.invoke(IpcChannels.SessionFork, sessionId, ref),
 	recallMessage: (sessionId, ref) => ipcRenderer.invoke(IpcChannels.SessionRecall, sessionId, ref),
 	getLoadedResources: (sessionId) => ipcRenderer.invoke(IpcChannels.SessionGetLoadedResources, sessionId),
-	searchCatalog: (query, type, page) =>
-		ipcRenderer.invoke(IpcChannels.PackagesSearchCatalog, query, type, page),
 	installPackage: (name) => ipcRenderer.invoke(IpcChannels.PackagesInstall, name),
 	removePackage: (source, scope) => ipcRenderer.invoke(IpcChannels.PackagesRemove, source, scope),
 	listConfiguredPackages: () => ipcRenderer.invoke(IpcChannels.PackagesListConfigured),

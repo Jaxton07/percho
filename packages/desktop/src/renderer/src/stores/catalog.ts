@@ -86,7 +86,7 @@ export const useCatalogStore = create<CatalogStore>((set, get) => {
 					: { catalogSeq: seq, catalogLoading: true, catalogError: null },
 			);
 			try {
-				const result = await getPi().searchCatalog(catalogQuery, catalogType, page);
+				const result = await getPi().searchCatalog({ query: catalogQuery, type: catalogType, page });
 				if (get().catalogSeq !== seq) return; // 已有更新的搜索，丢弃陈旧响应
 				set((state) => ({
 					catalogPackages: append ? [...state.catalogPackages, ...result.packages] : result.packages,

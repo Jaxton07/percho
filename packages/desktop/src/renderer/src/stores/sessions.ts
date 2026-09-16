@@ -202,9 +202,11 @@ export const useSessionsStore = create<SessionsStore>((set, get) => ({
 		if (!targetCwd) return;
 		try {
 			const meta = await getPi().createSession({
-				cwd: targetCwd,
-				...get().currentModel,
-				thinkingLevel: get().thinkingLevel,
+				options: {
+					cwd: targetCwd,
+					...get().currentModel,
+					thinkingLevel: get().thinkingLevel,
+				},
 			});
 			set((state) => ({
 				// draft 转正式会话：原地替换保持 tab 位置；普通新建则追加
@@ -505,7 +507,7 @@ export const useSessionsStore = create<SessionsStore>((set, get) => ({
 			global: { currentModel: { provider, modelId }, thinkingLevel },
 			sessionPatch: { model: { provider, modelId }, thinkingLevel },
 			uiState: { currentModel: { provider, modelId }, thinkingLevel },
-			sync: (sessionId) => getPi().setModel(sessionId, provider, modelId),
+			sync: (sessionId) => getPi().setModel({ sessionId, provider, modelId }),
 		}));
 	},
 
