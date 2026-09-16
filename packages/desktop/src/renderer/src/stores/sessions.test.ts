@@ -395,7 +395,7 @@ describe("permissionModes「缺 key = default」语义", () => {
 		});
 		await useSessionsStore.getState().setSessionPermissionMode("s1", "default");
 		expect(useSessionsStore.getState().permissionModes).toEqual({});
-		expect(piMock.setPermissionMode).toHaveBeenCalledWith("s1", "default");
+		expect(piMock.setPermissionMode).toHaveBeenCalledWith({ sessionId: "s1", mode: "default" });
 	});
 
 	it("draft 会话模式纯 renderer：不调 IPC", async () => {

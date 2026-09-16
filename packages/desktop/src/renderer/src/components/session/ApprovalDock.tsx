@@ -52,7 +52,7 @@ export function ApprovalDock({ sessionId }: { sessionId: string | null }) {
 			setSending(true);
 			setError(null);
 			try {
-				await getPi().respondPermission(shown.id, answer);
+				await getPi().respondPermission({ requestId: shown.id, answer });
 				resolvePermission(sessionId, shown.id);
 			} catch (err) {
 				setError(err instanceof Error ? err.message : String(err));

@@ -40,48 +40,10 @@ const api: PiApi = {
 	installPackage: (name) => ipcRenderer.invoke(IpcChannels.PackagesInstall, name),
 	removePackage: (source, scope) => ipcRenderer.invoke(IpcChannels.PackagesRemove, source, scope),
 	listConfiguredPackages: () => ipcRenderer.invoke(IpcChannels.PackagesListConfigured),
-	listProviders: (options) => ipcRenderer.invoke(IpcChannels.SettingsListProviders, options),
-	saveApiKey: (providerId, key) => ipcRenderer.invoke(IpcChannels.SettingsSaveApiKey, providerId, key),
-	removeCredential: (providerId) => ipcRenderer.invoke(IpcChannels.SettingsRemoveCredential, providerId),
-	addCustomProvider: (input) => ipcRenderer.invoke(IpcChannels.SettingsAddCustomProvider, input),
-	updateCustomProvider: (input) => ipcRenderer.invoke(IpcChannels.SettingsUpdateCustomProvider, input),
-	removeCustomProvider: (providerId) =>
-		ipcRenderer.invoke(IpcChannels.SettingsRemoveCustomProvider, providerId),
-	setProviderBaseUrl: (providerId, baseUrl, apiKey) =>
-		ipcRenderer.invoke(IpcChannels.SettingsSetProviderBaseUrl, providerId, baseUrl, apiKey),
-	testProvider: (providerId, modelId) =>
-		ipcRenderer.invoke(IpcChannels.SettingsTestProvider, providerId, modelId),
-	getModelPrefs: () => ipcRenderer.invoke(IpcChannels.SettingsGetModelPrefs),
-	setModelHidden: (provider, modelId, hidden) =>
-		ipcRenderer.invoke(IpcChannels.SettingsSetModelHidden, provider, modelId, hidden),
-	setModelsHidden: (provider, modelIds, hidden) =>
-		ipcRenderer.invoke(IpcChannels.SettingsSetModelsHidden, provider, modelIds, hidden),
-	setSubagentModel: (agent, modelRef) =>
-		ipcRenderer.invoke(IpcChannels.SettingsSetSubagentModel, agent, modelRef),
-	setSubagentThinking: (agent, level) =>
-		ipcRenderer.invoke(IpcChannels.SettingsSetSubagentThinking, agent, level),
-	setSubagentPreferBuiltin: (enabled) =>
-		ipcRenderer.invoke(IpcChannels.SettingsSetSubagentPreferBuiltin, enabled),
-	listSubagents: () => ipcRenderer.invoke(IpcChannels.SettingsListSubagents),
-	startProviderLogin: (loginId, providerId) =>
-		ipcRenderer.invoke(IpcChannels.SettingsLoginStart, loginId, providerId),
-	cancelProviderLogin: (loginId) => ipcRenderer.invoke(IpcChannels.SettingsLoginCancel, loginId),
-	respondProviderLogin: (loginId, promptId, value) =>
-		ipcRenderer.invoke(IpcChannels.SettingsLoginRespond, loginId, promptId, value),
 	onProviderLoginEvent: makeSubscription<LoginEventPayload>(IpcChannels.SettingsLoginEvent),
-	respondPermission: (requestId, answer) =>
-		ipcRenderer.invoke(IpcChannels.PermissionRespond, requestId, answer),
-	getPermissionConfig: () => ipcRenderer.invoke(IpcChannels.PermissionGetConfig),
-	getPermissionMode: (sessionId) => ipcRenderer.invoke(IpcChannels.PermissionGetMode, sessionId),
-	setPermissionMode: (sessionId, mode) => ipcRenderer.invoke(IpcChannels.PermissionSetMode, sessionId, mode),
-	getContextManagerConfig: () => ipcRenderer.invoke(IpcChannels.ContextManagerGetConfig),
-	setContextManagerMode: (mode) => ipcRenderer.invoke(IpcChannels.ContextManagerSetMode, mode),
-	getChannelWatchConfig: () => ipcRenderer.invoke(IpcChannels.ChannelWatchGetConfig),
-	setChannelWatchEnabled: (enabled) => ipcRenderer.invoke(IpcChannels.ChannelWatchSetEnabled, enabled),
 	lanGetStatus: () => ipcRenderer.invoke(IpcChannels.LanGetStatus),
 	lanSetEnabled: (enabled) => ipcRenderer.invoke(IpcChannels.LanSetEnabled, enabled),
 	lanSetRemoteControl: (enabled) => ipcRenderer.invoke(IpcChannels.LanSetRemoteControl, enabled),
-	respondTrust: (requestId, answer) => ipcRenderer.invoke(IpcChannels.TrustRespond, requestId, answer),
 	pickDirectory: () => ipcRenderer.invoke(IpcChannels.ProjectPickDirectory),
 	getGitBranch: (cwd) => ipcRenderer.invoke(IpcChannels.ProjectGetGitBranch, cwd),
 	listGitBranches: (cwd) => ipcRenderer.invoke(IpcChannels.ProjectListGitBranches, cwd),

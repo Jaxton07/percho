@@ -1,17 +1,34 @@
 import type { CatalogPackageType, CatalogSearchResult } from "./packages";
 import type {
 	AvailableModel,
+	ChannelWatchConfigInfo,
+	ContextManagerConfigInfo,
+	ContextManagerMode,
 	ContextUsageInfo,
 	CreateSessionOptions,
 	ImageInput,
 	LoadedResources,
+	PermissionAnswer,
+	PermissionConfigInfo,
+	PermissionMode,
 	QueuedMessages,
 	QuotaInfo,
 	SessionMessage,
 	SessionMeta,
 	SessionStats,
 	SlashCommandInfo,
+	TrustAnswer,
 } from "./session";
+import type {
+	CustomProviderInput,
+	CustomProviderUpdateInput,
+	ListProvidersOptions,
+	LoginResult,
+	ModelPrefs,
+	ProviderInfo,
+	ProviderTestResult,
+	SubagentInfo,
+} from "./settings";
 import type { TodoItem } from "./todo";
 
 /**
@@ -108,6 +125,72 @@ export const PACKAGES_CHANNELS = {
 	>(),
 } as const;
 
+/** 设置域：provider 设置 + 模型偏好 + 登录流程 + 权限/上下文/频道开关 + 信任应答 */
+export const SETTINGS_CHANNELS = {
+	/** 列出 provider（默认只走内置目录+本地缓存；forceNetwork 时联网拉最新模型目录） */
+	listProviders: ch("settings:listProviders")<{ options?: ListProvidersOptions }, ProviderInfo[]>(),
+	saveApiKey: ch("settings:saveApiKey")<{ providerId: string; key: string }, void>(),
+	removeCredential: ch("settings:removeCredential")<{ providerId: string }, void>(),
+	addCustomProvider: ch("settings:addCustomProvider")<{ input: CustomProviderInput }, void>(),
+	/** 更新自定义 provider（ID 不可改；apiKey 留空保持不变） */
+	updateCustomProvider: ch("settings:updateCustomProvider")<{ input: CustomProviderUpdateInput }, void>(),
+	removeCustomProvider: ch("settings:removeCustomProvider")<{ providerId: string }, void>(),
+	/** 内置 provider 的可选 baseUrl 覆写（不写 models，共享官方模型列表）；baseUrl 空串 = 清除覆写回官方 */
+	setProviderBaseUrl: ch("settings:setProviderBaseUrl")<
+		{ providerId: string; baseUrl: string; apiKey?: string },
+		void
+	>(),
+	testProvider: ch("settings:testProvider")<{ providerId: string; modelId?: string }, ProviderTestResult>(),
+	/** 用户级模型偏好：隐藏模型 + 子代理模型/思考深度覆盖 + 执行器偏好 */
+	getModelPrefs: ch("settings:getModelPrefs")<void, ModelPrefs>(),
+	/** 设置模型在选择器中的可见性；隐藏不影响已经选中的会话运行 */
+	setModelHidden: ch("settings:setModelHidden")<
+		{ provider: string; modelId: string; hidden: boolean },
+		ModelPrefs
+	>(),
+	/** 批量设置一组模型可见性（一键全隐藏/全显示某 provider 的全部模型）；一次写盘 */
+	setModelsHidden: ch("settings:setModelsHidden")<
+		{ provider: string; modelIds: string[]; hidden: boolean },
+		ModelPrefs
+	>(),
+	/** 为子代理指定 provider/model；null = 继承父会话模型 */
+	setSubagentModel: ch("settings:setSubagentModel")<{ agent: string; modelRef: string | null }, ModelPrefs>(),
+	/** 为子代理指定思考深度；null = 跟随 agent 定义（无定义时走 SDK 默认链） */
+	setSubagentThinking: ch("settings:setSubagentThinking")<
+		{ agent: string; level: string | null },
+		ModelPrefs
+	>(),
+	/** 内置 subagent 执行器优先；新会话/恢复会话生效 */
+	setSubagentPreferBuiltin: ch("settings:setSubagentPreferBuiltin")<{ enabled: boolean }, ModelPrefs>(),
+	/** 只列内置与用户级 subagent（设置是全局配置，不绑定项目） */
+	listSubagents: ch("settings:listSubagents")<void, SubagentInfo[]>(),
+	/** 启动 provider 交互登录（事件经 onProviderLoginEvent 推送，流程结束 resolve，取消不算错误） */
+	startProviderLogin: ch("settings:loginStart")<{ loginId: string; providerId: string }, LoginResult>(),
+	/** 取消进行中的登录流程（未知 loginId 静默忽略） */
+	cancelProviderLogin: ch("settings:loginCancel")<{ loginId: string }, void>(),
+	/** 应答登录过程中的输入/选择提示（promptId 已被外部取消时静默忽略） */
+	respondProviderLogin: ch("settings:loginRespond")<
+		{ loginId: string; promptId: string; value: string },
+		void
+	>(),
+	/** 权限请求应答（requestId 全局唯一，gate 遍历幂等） */
+	respondPermission: ch("permission:respond")<{ requestId: string; answer: PermissionAnswer }, void>(),
+	/** 读取权限门控配置（enabled=false = 手改 permissions.json 的隐藏逃生舱态，chip 禁用提示用） */
+	getPermissionConfig: ch("permission:getConfig")<void, PermissionConfigInfo>(),
+	/** 读取会话权限模式（default 缺省；关 tab 重开后端已归零，renderer 对齐真值用） */
+	getPermissionMode: ch("permission:getMode")<{ sessionId: string }, PermissionMode>(),
+	/** 设置会话权限模式（内存态即时生效、不落盘、重启归零） */
+	setPermissionMode: ch("permission:setMode")<{ sessionId: string; mode: PermissionMode }, void>(),
+	/** 读取上下文管理模式（evaporation / off 二态派生） */
+	getContextManagerConfig: ch("contextManager:getConfig")<void, ContextManagerConfigInfo>(),
+	setContextManagerMode: ch("contextManager:setMode")<{ mode: ContextManagerMode }, void>(),
+	/** channel-watch 跨会话频道唤醒开关 */
+	getChannelWatchConfig: ch("channelWatch:getConfig")<void, ChannelWatchConfigInfo>(),
+	setChannelWatchEnabled: ch("channelWatch:setEnabled")<{ enabled: boolean }, void>(),
+	/** 项目信任请求应答（选项下标） */
+	respondTrust: ch("trust:respond")<{ requestId: string; answer: TrustAnswer }, void>(),
+} as const;
+
 /** 应用域：窗口级功能（对话框/背景/更新/tabs/ui-state/git/外链等，多为非透传 handler） */
 export const APP_CHANNELS = {
 	/** 弹保存对话框并写文件；用户取消返回 null，成功返回写入路径 */
@@ -117,6 +200,7 @@ export const APP_CHANNELS = {
 /** 已表化通道全集（分批迁移，终态 = 全部 invoke 通道） */
 export const CHANNEL_TABLE = {
 	...SESSION_CHANNELS,
+	...SETTINGS_CHANNELS,
 	...PACKAGES_CHANNELS,
 	...APP_CHANNELS,
 } as const;
@@ -175,47 +259,12 @@ const LEGACY_INVOKE_CHANNELS = {
 	PackagesInstall: "packages:install",
 	PackagesRemove: "packages:remove",
 	PackagesListConfigured: "packages:listConfigured",
-	SettingsListProviders: "settings:listProviders",
-	SettingsSaveApiKey: "settings:saveApiKey",
-	SettingsRemoveCredential: "settings:removeCredential",
-	SettingsAddCustomProvider: "settings:addCustomProvider",
-	SettingsUpdateCustomProvider: "settings:updateCustomProvider",
-	SettingsRemoveCustomProvider: "settings:removeCustomProvider",
-	SettingsSetProviderBaseUrl: "settings:setProviderBaseUrl",
-	SettingsTestProvider: "settings:testProvider",
-	/** 用户级模型偏好：隐藏模型 + 子代理模型/思考深度覆盖 + 执行器偏好 */
-	SettingsGetModelPrefs: "settings:getModelPrefs",
-	SettingsSetModelHidden: "settings:setModelHidden",
-	SettingsSetModelsHidden: "settings:setModelsHidden",
-	SettingsSetSubagentModel: "settings:setSubagentModel",
-	SettingsSetSubagentThinking: "settings:setSubagentThinking",
-	SettingsSetSubagentPreferBuiltin: "settings:setSubagentPreferBuiltin",
-	/** 只列内置与用户级 subagent（设置是全局配置，不绑定项目） */
-	SettingsListSubagents: "settings:listSubagents",
-	/** provider 交互登录（OAuth / api_key）；loginId 由 renderer 生成用于事件归属 */
-	SettingsLoginStart: "settings:loginStart",
-	SettingsLoginCancel: "settings:loginCancel",
-	SettingsLoginRespond: "settings:loginRespond",
 	LanGetStatus: "lan:getStatus",
 	LanSetEnabled: "lan:setEnabled",
 	/** 局域网远程控制二级开关（M2；默认关闭，开观察 ≠ 开控制）。 */
 	LanSetRemoteControl: "lan:setRemoteControl",
-	PermissionRespond: "permission:respond",
 	/** 扩展对话框：renderer 应答（requestId 含 sessionId 全局唯一；host 遍历幂等） */
 	ExtensionDialogRespond: "extension-dialog:respond",
-	/** 权限门控配置（enabled 解析保留，UI 无入口；chip 逃生舱禁用态感知用） */
-	PermissionGetConfig: "permission:getConfig",
-	/** 会话权限模式（default / fullAccess；内存态，不落盘） */
-	PermissionGetMode: "permission:getMode",
-	PermissionSetMode: "permission:setMode",
-	/** 上下文管理模式二态（设置 UI「通用」面板，默认蒸发） */
-	ContextManagerGetConfig: "contextManager:getConfig",
-	ContextManagerSetMode: "contextManager:setMode",
-	/** channel-watch 跨会话频道唤醒开关（设置 UI「通用」面板） */
-	ChannelWatchGetConfig: "channelWatch:getConfig",
-	ChannelWatchSetEnabled: "channelWatch:setEnabled",
-	/** 项目信任应答（选项下标） */
-	TrustRespond: "trust:respond",
 	ProjectPickDirectory: "project:pickDirectory",
 	ProjectGetGitBranch: "project:getGitBranch",
 	ProjectListGitBranches: "project:listGitBranches",

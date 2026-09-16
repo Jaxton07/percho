@@ -28,7 +28,7 @@ async function loadSessionBundle(sessionId: string, opts?: { skipHistoryIfLive?:
 		skipHistory ? Promise.resolve(null) : getPi().getSessionMessages({ sessionId }),
 		getPi().getFollowUpMessages({ sessionId }),
 		getPi().getTodos({ sessionId }),
-		getPi().getPermissionMode(sessionId),
+		getPi().getPermissionMode({ sessionId }),
 	]);
 	// TOCTOU 复核：await 期间会话转为 live（如恰好有 prompt 竞态）时丢弃迟到历史，
 	// 防旧快照覆盖刚建立的流式态（queue/todo/permissionMode 是幂等快照，照常应用）
@@ -529,7 +529,7 @@ export const useSessionsStore = create<SessionsStore>((set, get) => ({
 		const previous = get().permissionModes[sessionId] ?? "default";
 		set((state) => ({ permissionModes: withPermissionMode(state.permissionModes, sessionId, mode) }));
 		try {
-			await getPi().setPermissionMode(sessionId, mode);
+			await getPi().setPermissionMode({ sessionId, mode });
 		} catch (error) {
 			set((state) => ({ permissionModes: withPermissionMode(state.permissionModes, sessionId, previous) }));
 			console.error("切换权限模式失败", error);

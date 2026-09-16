@@ -64,7 +64,7 @@ export default function App() {
 	}, []);
 
 	const respondTrust = (requestId: string, optionIndex: number) => {
-		void getPi().respondTrust(requestId, optionIndex);
+		void getPi().respondTrust({ requestId, answer: optionIndex });
 		setTrustRequests((prev) => prev.filter((req) => req.id !== requestId));
 	};
 
