@@ -26,7 +26,6 @@ interface ToastsState {
 	pushExtension: (severity: ToastSeverity, message: string, source?: string) => void;
 	dismiss: (id: string) => void;
 	/** 自动消失出口（push 的定时器调用；应用/扩展 toast 通用） */
-	removeToast: (id: string) => void;
 }
 
 let nextToastId = 0;
@@ -52,7 +51,7 @@ export const useToastsStore = create<ToastsState>()((set, get) => ({
 			timestamp: Date.now(),
 		};
 		set((state) => ({ toasts: [...state.toasts.slice(-3), toast] }));
-		setTimeout(() => get().removeToast(toast.id), TOAST_TTL_MS);
+		setTimeout(() => get().dismiss(toast.id), TOAST_TTL_MS);
 	},
 	pushExtension: (severity, message, source) => {
 		const now = Date.now();
@@ -77,7 +76,7 @@ export const useToastsStore = create<ToastsState>()((set, get) => ({
 			const visible = state.toasts.filter((t) => t.titleText !== undefined);
 			let toasts = state.toasts;
 			let overflowCount = state.overflowCount;
-			// 溢出折叠：最老的扩展卡退出可见栈，计数 +1（它退场时计数 -1，见 removeToast）
+			// 溢出折叠：最老的扩展卡退出可见栈，计数 +1（它退场时计数 -1，见 dismiss）
 			const oldest = visible[0];
 			if (visible.length >= EXT_VISIBLE_CAP && oldest) {
 				toasts = toasts.filter((t) => t.id !== oldest.id);
@@ -85,10 +84,9 @@ export const useToastsStore = create<ToastsState>()((set, get) => ({
 			}
 			return { toasts: [...toasts, toast], overflowCount };
 		});
-		setTimeout(() => get().removeToast(toast.id), TOAST_TTL_MS);
+		setTimeout(() => get().dismiss(toast.id), TOAST_TTL_MS);
 	},
-	dismiss: (id) => get().removeToast(id),
-	removeToast: (id) => {
+	dismiss: (id) => {
 		set((state) => {
 			const toast = state.toasts.find((t) => t.id === id);
 			if (!toast) return state;

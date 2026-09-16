@@ -1,6 +1,6 @@
 import type { ImageInput } from "@percho/shared";
 import { useEffect, useRef, useState } from "react";
-import { useSessionReadOnly } from "../../hooks/use-session-state";
+import { useActiveModelInfo, useSessionReadOnly } from "../../hooks/use-session-state";
 import { useT } from "../../i18n";
 import { RegionHost } from "../../plugins/RegionHost";
 import { UI_REGIONS } from "../../plugins/slots";
@@ -38,20 +38,12 @@ export function Composer({ centered = false }: { centered?: boolean }) {
 	const cwd = useSessionsStore((s) => s.cwd);
 	/** 信任决策应答后递增：draft 斜杠菜单按新决策（信任与否）重拉命令 */
 	const trustVersion = useSessionsStore((s) => s.trustVersion);
-	/** 图片门控数据源：会话覆写模型 ?? 全局默认 → models 表查 imageInput（ModelPicker 同款解析） */
-	const models = useSessionsStore((s) => s.models);
-	const currentModel = useSessionsStore((s) => s.currentModel);
-	const activeModel = useSessionsStore(
-		(s) => s.sessions.find((x) => x.sessionId === s.activeSessionId)?.model,
-	);
 	const transcript = useTranscriptStore((s) => selectTranscript(s, activeSessionId));
 	/** 扩展 setEditorText 预填来源（一次性提示；用户首次键入清除） */
 	const extensionPrefillSource = transcript.extensionPrefillSource;
+	/** 图片门控数据源：当前生效模型（会话覆写 ?? 全局默认 → models 表解析，useActiveModelInfo 收拢点） */
+	const activeModelInfo = useActiveModelInfo();
 	/** 当前模型是否支持图片输入；fail-open：模型未知/字段缺省一律按支持，只拦 imageInput === false */
-	const effectiveModel = activeModel ?? currentModel;
-	const activeModelInfo = effectiveModel
-		? models.find((m) => m.provider === effectiveModel.provider && m.id === effectiveModel.modelId)
-		: undefined;
 	const imagesSupported = activeModelInfo?.imageInput !== false;
 	/** 草稿（文本/图片/命令胶囊）按会话持久：切换会话/空态↔列表态换 Composer 实例不丢、不串会话 */
 	const draftKey = activeSessionId ?? NEW_SESSION_DRAFT_KEY;

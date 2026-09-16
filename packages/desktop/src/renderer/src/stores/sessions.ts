@@ -30,8 +30,11 @@ async function loadSessionBundle(sessionId: string, opts?: { skipHistoryIfLive?:
 		getPi().getTodos(sessionId),
 		getPi().getPermissionMode(sessionId),
 	]);
+	// TOCTOU 复核：await 期间会话转为 live（如恰好有 prompt 竞态）时丢弃迟到历史，
+	// 防旧快照覆盖刚建立的流式态（queue/todo/permissionMode 是幂等快照，照常应用）
+	const liveNow = useTranscriptStore.getState().bySession[sessionId]?.agentActive === true;
 	const t = useTranscriptStore.getState();
-	if (history) t.loadHistory(sessionId, messagesToUIMessages(history));
+	if (history && !liveNow) t.loadHistory(sessionId, messagesToUIMessages(history));
 	t.setFollowUpQueue(sessionId, followUpQueue);
 	t.loadTodos(sessionId, todos);
 	applyBackendPermissionMode(sessionId, permissionMode);
@@ -39,12 +42,24 @@ async function loadSessionBundle(sessionId: string, opts?: { skipHistoryIfLive?:
 
 /** 后端真值写入本 map（default = 删 key，保持「缺 key = default」语义） */
 function applyBackendPermissionMode(sessionId: string, mode: PermissionMode): void {
-	useSessionsStore.setState((state) => {
-		const permissionModes = { ...state.permissionModes };
-		if (mode === "default") delete permissionModes[sessionId];
-		else permissionModes[sessionId] = mode;
-		return { permissionModes };
-	});
+	useSessionsStore.setState((state) => ({
+		permissionModes: withPermissionMode(state.permissionModes, sessionId, mode),
+	}));
+}
+
+/**
+ * 权限模式 map 变异 helper（D4）：default = 删 key 的「缺 key = default」语义单点化，
+ * 应用/乐观写入/回滚/会话销毁四处共用。
+ */
+function withPermissionMode(
+	map: Record<string, PermissionMode>,
+	sessionId: string,
+	mode: PermissionMode,
+): Record<string, PermissionMode> {
+	const next = { ...map };
+	if (mode === "default") delete next[sessionId];
+	else next[sessionId] = mode;
+	return next;
 }
 
 /** toast detail 展示：剥掉 Electron IPC 包装前缀（`Error invoking remote method 'x': Error: `），截断只留首段 */
@@ -53,6 +68,68 @@ function errText(error: unknown): string | undefined {
 	if (!message) return undefined;
 	message = message.replace(/^Error invoking remote method '[^']+':\s*/i, "").replace(/^Error:\s*/i, "");
 	return message.length > 140 ? `${message.slice(0, 140)}…` : message;
+}
+
+/**
+ * 乐观会话设置骨架（D4，setCurrentModel/setThinkingLevel 共用）：
+ * 快照 → 乐观写（全局字段 + 当前会话条目 + ui-state 持久化）→ 真实会话 IPC 同步 →
+ * 失败整体回滚（乐观态 + ui-state 重新持久化）+ toast。draft 无后端会话：只作全局默认，创建时生效。
+ */
+async function optimisticSessionSetting(
+	label: string,
+	toastKey: "toast.modelSwitchFailed" | "toast.thinkingSwitchFailed",
+	compute: () => {
+		/** 乐观写入的全局字段（currentModel / thinkingLevel） */
+		global: { currentModel?: { provider: string; modelId: string } | null; thinkingLevel?: string };
+		/** 乐观写入当前会话条目的补丁（model / thinkingLevel） */
+		sessionPatch: { model?: { provider: string; modelId: string } | null; thinkingLevel?: string | null };
+		/** saveUiState 载荷（乐观与回滚各一次） */
+		uiState: { currentModel?: { provider: string; modelId: string } | null; thinkingLevel?: string };
+		/** 真实会话的 SDK 同步 */
+		sync: (sessionId: string) => Promise<void>;
+	},
+): Promise<void> {
+	const s = useSessionsStore.getState();
+	const { activeSessionId } = s;
+	const previousGlobal = { currentModel: s.currentModel, thinkingLevel: s.thinkingLevel };
+	const previousSession = s.sessions.find((x) => x.sessionId === activeSessionId);
+	const { global, sessionPatch, uiState, sync } = compute();
+	const apply = (
+		g: { currentModel?: { provider: string; modelId: string } | null; thinkingLevel?: string },
+		patch: { model?: { provider: string; modelId: string } | null; thinkingLevel?: string | null },
+	) =>
+		useSessionsStore.setState((state) => ({
+			...g,
+			sessions: state.sessions.map((x) =>
+				x.sessionId === activeSessionId ? { ...x, ...patch } : x,
+			),
+		}));
+	apply(global, sessionPatch);
+	getPi()
+		.saveUiState(uiState)
+		.catch((error) => {
+			console.error("ui-state 持久化失败", error);
+			pushToast("warning", "toast.uiStateSaveFailed", errText(error));
+		});
+	// draft 无后端会话：选择只作为全局默认，创建时随 createSession 生效
+	if (activeSessionId && !isDraftSessionId(activeSessionId)) {
+		try {
+			await sync(activeSessionId);
+		} catch (error) {
+			// SDK 同步失败（如凭证缺失/模型不可用）：回滚乐观态 + 重新持久化 + toast
+			apply(
+				previousGlobal,
+				previousSession
+				? { model: previousSession.model, thinkingLevel: previousSession.thinkingLevel }
+				: { model: null, thinkingLevel: null },
+			);
+			getPi()
+				.saveUiState(previousGlobal)
+				.catch((e) => console.error("ui-state 回滚持久化失败", e));
+			console.error(`${label}失败`, error);
+			pushToast("warning", toastKey, errText(error));
+		}
+	}
 }
 
 /** 顶栏打开的会话持久化（重启恢复用）；由主进程写 userData/tabs.json，不依赖 renderer localStorage */
@@ -138,7 +215,7 @@ export const useSessionsStore = create<SessionsStore>((set, get) => ({
 				cwd: targetCwd,
 				// draft 键下的权限模式由 ensureSession 在创建后应用到新 id，这里顺手满档防泄漏
 				permissionModes: replaceDraftId
-					? Object.fromEntries(Object.entries(state.permissionModes).filter(([id]) => id !== replaceDraftId))
+					? withPermissionMode(state.permissionModes, replaceDraftId, "default")
 					: state.permissionModes,
 			}));
 			useTranscriptStore.getState().resetSession(meta.sessionId);
@@ -206,6 +283,17 @@ export const useSessionsStore = create<SessionsStore>((set, get) => ({
 			const session = state.sessions.find((s) => s.sessionId === sessionId);
 			return { activeSessionId: sessionId, cwd: session?.cwd ?? state.cwd };
 		});
+		// 懒加载兑底（D4）：目标会话无 transcript 数据时补拉四件套（restoreTabs 恢复失败的 tab、
+		// 事件桥断连期间的切换等都经此路径自愈；已有数据零成本短路）
+		if (
+			!isDraftSessionId(sessionId) &&
+			useTranscriptStore.getState().bySession[sessionId] === undefined
+		) {
+			void loadSessionBundle(sessionId).catch((error) => {
+				console.error("切换会话时补拉数据失败", error);
+				pushToast("warning", "toast.sessionOpenFailed", errText(error));
+			});
+		}
 		// 切到 draft 不落盘：tabs.json 保持指向最近的真实会话（draft 重启后本就会消失）
 		if (!isDraftSessionId(sessionId)) persistTabs(get());
 	},
@@ -252,8 +340,7 @@ export const useSessionsStore = create<SessionsStore>((set, get) => ({
 				? (sessions.find((s) => s.sessionId === activeSessionId)?.cwd ?? state.cwd)
 				: state.cwd;
 			// 权限模式随会话销毁归零（后端 holder 同点位清理；draft 态本就纯 renderer）
-			const permissionModes = { ...state.permissionModes };
-			delete permissionModes[sessionId];
+			const permissionModes = withPermissionMode(state.permissionModes, sessionId, "default");
 			return { sessions, activeSessionId, cwd, permissionModes };
 		});
 		if (!isDraft) persistTabs(get());
@@ -407,91 +494,29 @@ export const useSessionsStore = create<SessionsStore>((set, get) => ({
 	 * 动作反馈属 toast，不进会话错误卡、不跨会话残留。
 	 */
 	setCurrentModel: async (provider, modelId) => {
-		const { activeSessionId } = get();
-		const previousModel = get().currentModel;
-		const previousLevel = get().thinkingLevel;
-		const previousSession = get().sessions.find((s) => s.sessionId === activeSessionId);
 		// 思考深度跟随新模型能力收缩（就近向上找，找不到再取最高档，与 UI 一致）
-		const nextModel = get().models.find((m) => m.provider === provider && m.id === modelId);
-		let thinkingLevel: string = get().thinkingLevel;
+		const state = get();
+		const nextModel = state.models.find((m) => m.provider === provider && m.id === modelId);
+		let thinkingLevel = state.thinkingLevel;
 		if (nextModel?.thinkingLevels && nextModel.thinkingLevels.length > 0) {
 			thinkingLevel = clampThinkingLevel(thinkingLevel, nextModel.thinkingLevels);
 		}
-		set((state) => ({
-			currentModel: { provider, modelId },
-			thinkingLevel,
-			sessions: state.sessions.map((s) =>
-				s.sessionId === activeSessionId ? { ...s, model: { provider, modelId }, thinkingLevel } : s,
-			),
+		await optimisticSessionSetting("切换模型", "toast.modelSwitchFailed", () => ({
+			global: { currentModel: { provider, modelId }, thinkingLevel },
+			sessionPatch: { model: { provider, modelId }, thinkingLevel },
+			uiState: { currentModel: { provider, modelId }, thinkingLevel },
+			sync: (sessionId) => getPi().setModel(sessionId, provider, modelId),
 		}));
-		getPi()
-			.saveUiState({ currentModel: { provider, modelId }, thinkingLevel })
-			.catch((error) => {
-				console.error("ui-state 持久化失败", error);
-				pushToast("warning", "toast.uiStateSaveFailed", errText(error));
-			});
-		// draft 无后端会话：模型选择只作为全局默认，创建时随 createSession 生效
-		if (activeSessionId && !isDraftSessionId(activeSessionId)) {
-			try {
-				await getPi().setModel(activeSessionId, provider, modelId);
-			} catch (error) {
-				// SDK 同步失败（如凭证缺失/模型不可用）：回滚乐观态 + 重新持久化 + toast
-				set((state) => ({
-					currentModel: previousModel,
-					thinkingLevel: previousLevel,
-					sessions: state.sessions.map((s) =>
-						s.sessionId === activeSessionId
-							? {
-									...s,
-									model: previousSession?.model ?? null,
-									thinkingLevel: previousSession?.thinkingLevel ?? null,
-								}
-							: s,
-					),
-				}));
-				getPi()
-					.saveUiState({ currentModel: previousModel, thinkingLevel: previousLevel })
-					.catch((e) => console.error("ui-state 回滚持久化失败", e));
-				console.error("切换模型失败", error);
-				pushToast("warning", "toast.modelSwitchFailed", errText(error));
-			}
-		}
 	},
 
 	/** 切换当前会话的思考深度：更新全局默认 + 当前会话（只影响该会话），并同步 SDK（失败回滚 + toast） */
 	setThinkingLevel: async (level) => {
-		const { activeSessionId } = get();
-		const previousLevel = get().thinkingLevel;
-		const previousSession = get().sessions.find((s) => s.sessionId === activeSessionId);
-		set((state) => ({
-			thinkingLevel: level,
-			sessions: state.sessions.map((s) =>
-				s.sessionId === activeSessionId ? { ...s, thinkingLevel: level } : s,
-			),
+		await optimisticSessionSetting("切换思考深度", "toast.thinkingSwitchFailed", () => ({
+			global: { thinkingLevel: level },
+			sessionPatch: { thinkingLevel: level },
+			uiState: { thinkingLevel: level },
+			sync: (sessionId) => getPi().setThinkingLevel(sessionId, level),
 		}));
-		getPi()
-			.saveUiState({ thinkingLevel: level })
-			.catch((error) => console.error("ui-state 持久化失败", error));
-		// draft 无后端会话：同上，仅作全局默认
-		if (activeSessionId && !isDraftSessionId(activeSessionId)) {
-			try {
-				await getPi().setThinkingLevel(activeSessionId, level);
-			} catch (error) {
-				set((state) => ({
-					thinkingLevel: previousLevel,
-					sessions: state.sessions.map((s) =>
-						s.sessionId === activeSessionId
-							? { ...s, thinkingLevel: previousSession?.thinkingLevel ?? null }
-							: s,
-					),
-				}));
-				getPi()
-					.saveUiState({ thinkingLevel: previousLevel })
-					.catch((e) => console.error("ui-state 回滚持久化失败", e));
-				console.error("切换思考深度失败", error);
-				pushToast("warning", "toast.thinkingSwitchFailed", errText(error));
-			}
-		}
 	},
 
 	/**
@@ -501,30 +526,15 @@ export const useSessionsStore = create<SessionsStore>((set, get) => ({
 	 */
 	setSessionPermissionMode: async (sessionId, mode) => {
 		if (isDraftSessionId(sessionId)) {
-			set((state) => ({
-				permissionModes:
-					mode === "default"
-						? Object.fromEntries(Object.entries(state.permissionModes).filter(([id]) => id !== sessionId))
-						: { ...state.permissionModes, [sessionId]: mode },
-			}));
+			set((state) => ({ permissionModes: withPermissionMode(state.permissionModes, sessionId, mode) }));
 			return;
 		}
 		const previous = get().permissionModes[sessionId] ?? "default";
-		set((state) => ({
-			permissionModes:
-				mode === "default"
-					? Object.fromEntries(Object.entries(state.permissionModes).filter(([id]) => id !== sessionId))
-					: { ...state.permissionModes, [sessionId]: mode },
-		}));
+		set((state) => ({ permissionModes: withPermissionMode(state.permissionModes, sessionId, mode) }));
 		try {
 			await getPi().setPermissionMode(sessionId, mode);
 		} catch (error) {
-			set((state) => {
-				const permissionModes = { ...state.permissionModes };
-				if (previous === "default") delete permissionModes[sessionId];
-				else permissionModes[sessionId] = previous;
-				return { permissionModes };
-			});
+			set((state) => ({ permissionModes: withPermissionMode(state.permissionModes, sessionId, previous) }));
 			console.error("切换权限模式失败", error);
 			pushToast("warning", "toast.permissionModeFailed", errText(error));
 		}
