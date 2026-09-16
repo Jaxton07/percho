@@ -37,7 +37,7 @@ export function useAtCompletion(options: UseAtCompletionOptions) {
 		if (!atToken || !cwd || atFilesCwd === cwd) return;
 		let cancelled = false;
 		void getPi()
-			.listProjectFiles(cwd)
+			.listProjectFiles({ cwd })
 			.then((list) => {
 				if (cancelled) return;
 				setAtFiles(list);

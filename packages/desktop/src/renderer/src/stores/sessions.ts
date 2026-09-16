@@ -25,9 +25,9 @@ async function loadSessionBundle(sessionId: string, opts?: { skipHistoryIfLive?:
 		opts?.skipHistoryIfLive === true &&
 		useTranscriptStore.getState().bySession[sessionId]?.agentActive === true;
 	const [history, followUpQueue, todos, permissionMode] = await Promise.all([
-		skipHistory ? Promise.resolve(null) : getPi().getSessionMessages(sessionId),
-		getPi().getFollowUpMessages(sessionId),
-		getPi().getTodos(sessionId),
+		skipHistory ? Promise.resolve(null) : getPi().getSessionMessages({ sessionId }),
+		getPi().getFollowUpMessages({ sessionId }),
+		getPi().getTodos({ sessionId }),
 		getPi().getPermissionMode(sessionId),
 	]);
 	// TOCTOU 复核：await 期间会话转为 live（如恰好有 prompt 竞态）时丢弃迟到历史，
@@ -100,9 +100,7 @@ async function optimisticSessionSetting(
 	) =>
 		useSessionsStore.setState((state) => ({
 			...g,
-			sessions: state.sessions.map((x) =>
-				x.sessionId === activeSessionId ? { ...x, ...patch } : x,
-			),
+			sessions: state.sessions.map((x) => (x.sessionId === activeSessionId ? { ...x, ...patch } : x)),
 		}));
 	apply(global, sessionPatch);
 	getPi()
@@ -120,8 +118,8 @@ async function optimisticSessionSetting(
 			apply(
 				previousGlobal,
 				previousSession
-				? { model: previousSession.model, thinkingLevel: previousSession.thinkingLevel }
-				: { model: null, thinkingLevel: null },
+					? { model: previousSession.model, thinkingLevel: previousSession.thinkingLevel }
+					: { model: null, thinkingLevel: null },
 			);
 			getPi()
 				.saveUiState(previousGlobal)
@@ -234,7 +232,7 @@ export const useSessionsStore = create<SessionsStore>((set, get) => ({
 		if (!targetCwd) return;
 		// 信任前置：未决项目立即弹窗（结果落 trust.json），draft 拉斜杠命令/转正建会话直接命中缓存
 		void getPi()
-			.ensureProjectTrust(targetCwd)
+			.ensureProjectTrust({ cwd: targetCwd })
 			.then(() => set((s) => ({ trustVersion: s.trustVersion + 1 })))
 			.catch((error) => {
 				console.error("项目信任检查失败", error);
@@ -262,7 +260,7 @@ export const useSessionsStore = create<SessionsStore>((set, get) => ({
 	setDraftCwd: (cwd) => {
 		// 同 createDraftSession：cwd 变化即前置信任决策
 		void getPi()
-			.ensureProjectTrust(cwd)
+			.ensureProjectTrust({ cwd })
 			.then(() => set((s) => ({ trustVersion: s.trustVersion + 1 })))
 			.catch((error) => {
 				console.error("项目信任检查失败", error);
@@ -287,10 +285,7 @@ export const useSessionsStore = create<SessionsStore>((set, get) => ({
 		});
 		// 懒加载兑底（D4）：目标会话无 transcript 数据时补拉四件套（restoreTabs 恢复失败的 tab、
 		// 事件桥断连期间的切换等都经此路径自愈；已有数据零成本短路）
-		if (
-			!isDraftSessionId(sessionId) &&
-			useTranscriptStore.getState().bySession[sessionId] === undefined
-		) {
+		if (!isDraftSessionId(sessionId) && useTranscriptStore.getState().bySession[sessionId] === undefined) {
 			void loadSessionBundle(sessionId).catch((error) => {
 				console.error("切换会话时补拉数据失败", error);
 				pushToast("warning", "toast.sessionOpenFailed", errText(error));
@@ -324,7 +319,7 @@ export const useSessionsStore = create<SessionsStore>((set, get) => ({
 		// draft 没有后端会话，纯本地移除
 		if (!isDraft) {
 			try {
-				await getPi().closeSession(sessionId);
+				await getPi().closeSession({ sessionId });
 			} catch (error) {
 				// 会话关闭失败：UI 状态保留（用户可重试），显形不静默（曾「点了没反应」）
 				console.error("关闭会话失败", error);
@@ -350,7 +345,7 @@ export const useSessionsStore = create<SessionsStore>((set, get) => ({
 
 	openFromHistory: async (filePath) => {
 		try {
-			const meta = await getPi().openSession(filePath);
+			const meta = await getPi().openSession({ filePath });
 			set((state) => ({
 				sessions: [...state.sessions.filter((s) => s.sessionId !== meta.sessionId), meta],
 				activeSessionId: meta.sessionId,
@@ -371,7 +366,7 @@ export const useSessionsStore = create<SessionsStore>((set, get) => ({
 		// draft 还没有消息，无可分叉（UI 上也到不了这里，防御性拦截）
 		if (!activeSessionId || isDraftSessionId(activeSessionId)) return undefined;
 		try {
-			const meta = await getPi().forkSession(activeSessionId, ref);
+			const meta = await getPi().forkSession({ sessionId: activeSessionId, ref });
 			set((state) => ({
 				sessions: [...state.sessions.filter((s) => s.sessionId !== meta.sessionId), meta],
 				activeSessionId: meta.sessionId,
@@ -391,7 +386,7 @@ export const useSessionsStore = create<SessionsStore>((set, get) => ({
 		// draft 还没有消息，无可撤回（UI 上也到不了这里，防御性拦截）
 		if (!activeSessionId || isDraftSessionId(activeSessionId)) return;
 		try {
-			const recalled = await getPi().recallMessage(activeSessionId, ref);
+			const recalled = await getPi().recallMessage({ sessionId: activeSessionId, ref });
 			// 内容回填草稿：已有草稿文本时换行拼接（与排队取回一致），图片追加在尾部
 			useDraftStore.getState().updateDraft(activeSessionId, (d) => ({
 				...d,
@@ -415,7 +410,7 @@ export const useSessionsStore = create<SessionsStore>((set, get) => ({
 		let activeId: string | null = null;
 		for (const file of saved.files) {
 			try {
-				const meta = await getPi().openSession(file);
+				const meta = await getPi().openSession({ filePath: file });
 				if (seen.has(meta.sessionId)) continue;
 				seen.add(meta.sessionId);
 				opened.push(meta);
@@ -517,7 +512,7 @@ export const useSessionsStore = create<SessionsStore>((set, get) => ({
 			global: { thinkingLevel: level },
 			sessionPatch: { thinkingLevel: level },
 			uiState: { thinkingLevel: level },
-			sync: (sessionId) => getPi().setThinkingLevel(sessionId, level),
+			sync: (sessionId) => getPi().setThinkingLevel({ sessionId, level }),
 		}));
 	},
 

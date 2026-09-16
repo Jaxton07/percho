@@ -81,7 +81,7 @@ export function useComposerSend(options: UseComposerSendOptions) {
 			case "compact":
 				// 失败不在输入框上方报错：对话区压缩分割线（compaction_end error）已完整呈现
 				try {
-					await pi.compact(sessionId, arg || undefined);
+					await pi.compact({ sessionId, customInstructions: arg || undefined });
 					showFeedback(t("slash.feedback.compacted"));
 				} catch {
 					// 静默，理由见上
@@ -89,7 +89,7 @@ export function useComposerSend(options: UseComposerSendOptions) {
 				return true;
 			case "name":
 				if (arg) {
-					await pi.setSessionName(sessionId, arg);
+					await pi.setSessionName({ sessionId, name: arg });
 					showFeedback(t("slash.feedback.renamed", { name: arg }));
 					return true;
 				}
@@ -97,8 +97,11 @@ export function useComposerSend(options: UseComposerSendOptions) {
 				return true;
 			case "export": {
 				const format = arg === "html" ? "html" : arg === "jsonl" ? "jsonl" : "jsonl";
-				const contentOut = await pi.exportSession(sessionId, format);
-				const path = await pi.saveFileDialog(`pi-session-${Date.now()}.${format}`, contentOut);
+				const contentOut = await pi.exportSession({ sessionId, format });
+				const path = await pi.saveFileDialog({
+					defaultName: `pi-session-${Date.now()}.${format}`,
+					content: contentOut,
+				});
 				showFeedback(path ? t("slash.feedback.exported", { path }) : t("slash.feedback.exportCancelled"));
 				return true;
 			}
@@ -178,7 +181,11 @@ export function useComposerSend(options: UseComposerSendOptions) {
 		// 乐观置工作中：agent_start 事件到达前立即显示，失败后回滚
 		useTranscriptStore.getState().markAgentActive(sessionId, true);
 		try {
-			await getPi().prompt(sessionId, content, sentImages.length > 0 ? sentImages : undefined);
+			await getPi().prompt({
+				sessionId,
+				text: content,
+				images: sentImages.length > 0 ? sentImages : undefined,
+			});
 		} catch (err) {
 			useTranscriptStore.getState().markAgentActive(sessionId, wasActive);
 			setError(err instanceof Error ? err.message : String(err));
@@ -197,12 +204,12 @@ export function useComposerSend(options: UseComposerSendOptions) {
 		const { activeSessionId, setText } = options;
 		if (!activeSessionId || isDraftSessionId(activeSessionId)) return;
 		useTranscriptStore.getState().setFollowUpQueue(activeSessionId, []); // 乐观清面板
-		const cleared = await getPi().clearQueue(activeSessionId);
+		const cleared = await getPi().clearQueue({ sessionId: activeSessionId });
 		if (cleared.followUp.length > 0) {
 			const restored = cleared.followUp.join("\n");
 			setText((prev) => (prev ? `${prev}\n${restored}` : restored));
 		}
-		await getPi().abort(activeSessionId);
+		await getPi().abort({ sessionId: activeSessionId });
 	};
 
 	/** 取回排队消息：清队列（SDK 侧 queue_update 随后对齐），内容放回输入框继续编辑 */
@@ -210,7 +217,7 @@ export function useComposerSend(options: UseComposerSendOptions) {
 		const { activeSessionId, setText } = options;
 		if (!activeSessionId || isDraftSessionId(activeSessionId)) return;
 		useTranscriptStore.getState().setFollowUpQueue(activeSessionId, []); // 乐观清面板
-		const cleared = await getPi().clearQueue(activeSessionId);
+		const cleared = await getPi().clearQueue({ sessionId: activeSessionId });
 		const restored = cleared.followUp[0];
 		if (restored) setText((prev) => (prev ? `${prev}\n${restored}` : restored));
 		requestAnimationFrame(focus);

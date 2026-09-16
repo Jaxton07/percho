@@ -44,8 +44,7 @@ export function ModelPicker() {
 	}, [models]);
 
 	const label =
-		current?.label ??
-		(current ? `${current.provider}/${current.id}` : t("composer.modelDefault"));
+		current?.label ?? (current ? `${current.provider}/${current.id}` : t("composer.modelDefault"));
 
 	return (
 		<div ref={ref} className="relative">

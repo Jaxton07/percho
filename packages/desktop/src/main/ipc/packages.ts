@@ -1,5 +1,4 @@
 import type { PiBackend } from "@percho/backend";
-import type { CatalogPackageType } from "@percho/shared";
 import { IpcChannels, PACKAGES_CHANNELS } from "@percho/shared";
 import { ipcMain } from "electron";
 import { registerInvokeHandlers } from "./invoke";

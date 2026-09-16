@@ -121,7 +121,9 @@ describe("draft 转正（createSession + replaceDraftId）", () => {
 		await useSessionsStore.getState().createSession("/proj/b", draftId);
 
 		const state = useSessionsStore.getState();
-		expect(piMock.createSession).toHaveBeenCalledWith({ options: { cwd: "/proj/b", thinkingLevel: "medium" } });
+		expect(piMock.createSession).toHaveBeenCalledWith({
+			options: { cwd: "/proj/b", thinkingLevel: "medium" },
+		});
 		expect(state.sessions).toHaveLength(2);
 		expect(state.sessions[1]?.sessionId).toBe("real-1");
 		expect(state.sessions[1]?.cwd).toBe("/proj/b");
@@ -167,7 +169,7 @@ describe("closeSession", () => {
 	it("关闭真实会话：正常走后端并落盘", async () => {
 		useSessionsStore.setState({ sessions: [realMeta("r1", "/proj/a")], activeSessionId: "r1" });
 		await useSessionsStore.getState().closeSession("r1");
-		expect(piMock.closeSession).toHaveBeenCalledWith("r1");
+		expect(piMock.closeSession).toHaveBeenCalledWith({ sessionId: "r1" });
 		expect(piMock.saveTabs).toHaveBeenCalled();
 	});
 
@@ -344,7 +346,9 @@ describe("乐观会话设置（optimisticSessionSetting 骨架）", () => {
 	it("切模型失败：全局 + 会话条目整体回滚，ui-state 以旧值重新持久化", async () => {
 		const previousModel = { provider: "deepseek", modelId: "v4" };
 		useSessionsStore.setState({
-			models: [{ provider: "anthropic", providerName: "Anthropic", id: "sonnet", label: "Sonnet", authed: true }],
+			models: [
+				{ provider: "anthropic", providerName: "Anthropic", id: "sonnet", label: "Sonnet", authed: true },
+			],
 			sessions: [{ ...realMeta("s1", "/p"), model: previousModel, thinkingLevel: "high" }],
 			activeSessionId: "s1",
 			currentModel: previousModel,
@@ -405,7 +409,10 @@ describe("permissionModes「缺 key = default」语义", () => {
 
 describe("switchSession 懒加载兑底", () => {
 	it("目标会话无 transcript 数据时补拉四件套；已有数据不重复拉取", async () => {
-		useSessionsStore.setState({ sessions: [realMeta("s1", "/p"), realMeta("s2", "/p")], activeSessionId: "s2" });
+		useSessionsStore.setState({
+			sessions: [realMeta("s1", "/p"), realMeta("s2", "/p")],
+			activeSessionId: "s2",
+		});
 		// s2 有数据（已有 entry）→ 切换不触发补拉
 		useTranscriptStore.getState().setFollowUpQueue("s2", ["pending"]);
 		piMock.getSessionMessages.mockClear();
@@ -415,7 +422,7 @@ describe("switchSession 懒加载兑底", () => {
 
 		// s1 无任何 entry → 切换触发补拉
 		useSessionsStore.getState().switchSession("s1");
-		await vi.waitFor(() => expect(piMock.getSessionMessages).toHaveBeenCalledWith("s1"));
+		await vi.waitFor(() => expect(piMock.getSessionMessages).toHaveBeenCalledWith({ sessionId: "s1" }));
 		expect(useSessionsStore.getState().activeSessionId).toBe("s1");
 	});
 });

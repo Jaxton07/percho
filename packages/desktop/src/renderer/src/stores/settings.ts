@@ -156,7 +156,7 @@ export const useSettingsStore = create<SettingsStore>((set, get) => {
 				// 已加载资源按当前活跃会话（其项目）展示；无会话或 draft（未真正创建）时为 null（面板显示空态）
 				const activeSessionId = useSessionsStore.getState().activeSessionId;
 				if (activeSessionId && !isDraftSessionId(activeSessionId)) {
-					const resources = await getPi().getLoadedResources(activeSessionId);
+					const resources = await getPi().getLoadedResources({ sessionId: activeSessionId });
 					// 竞态守卫：await 期间活跃会话已切换则丢弃（防把 A 项目的资源写到 B 会话的面板）
 					if (useSessionsStore.getState().activeSessionId === activeSessionId) {
 						set({

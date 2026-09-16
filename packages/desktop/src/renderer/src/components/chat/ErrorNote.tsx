@@ -50,7 +50,7 @@ export function ErrorNote({
 		const images = user.images;
 		useTranscriptStore.getState().markAgentActive(sessionId, true);
 		try {
-			await getPi().prompt(sessionId, text, images.length > 0 ? images : undefined);
+			await getPi().prompt({ sessionId, text, images: images.length > 0 ? images : undefined });
 			// 重发受理：切回该会话（若在看别的会话）
 			useSessionsStore.getState().switchSession(sessionId);
 		} catch {
@@ -109,7 +109,7 @@ export function ErrorNote({
 							className={`error-note-act${action === "retry" ? " strong" : ""}`}
 							onClick={() => {
 								if (action === "retry") void retry();
-								else if (action === "compact" && sessionId) void getPi().compact(sessionId);
+								else if (action === "compact" && sessionId) void getPi().compact({ sessionId });
 								else if (action === "openSettings") useSettingsStore.getState().openWith();
 								else if (action === "copyDetail") void copyDetail();
 							}}

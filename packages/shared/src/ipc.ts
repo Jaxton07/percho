@@ -5,31 +5,22 @@ import type {
 	ExtensionEditorTextEvent,
 	ExtensionNotifyEvent,
 } from "./extension-dialog";
+import type { CHANNEL_TABLE, InvokeApi } from "./ipc-channels";
 import type { LanStatus } from "./lan";
-import type { CatalogPackageType, CatalogSearchResult, ConfiguredPackageInfo } from "./packages";
+import type { ConfiguredPackageInfo } from "./packages";
 import type {
 	AppInfo,
 	ChannelWatchConfigInfo,
 	ContextManagerConfigInfo,
 	ContextManagerMode,
-	ContextUsageInfo,
-	CreateSessionOptions,
 	GitBranches,
-	ImageInput,
-	LoadedResources,
 	PermissionAnswer,
 	PermissionConfigInfo,
 	PermissionMode,
 	PermissionRequest,
 	PermissionResolved,
-	QueuedMessages,
-	QuotaInfo,
 	SavedTabs,
 	SessionEventEnvelope,
-	SessionMessage,
-	SessionMeta,
-	SessionStats,
-	SlashCommandInfo,
 	TrustAnswer,
 	TrustRequest,
 	UiState,
@@ -45,24 +36,22 @@ import type {
 	ProviderTestResult,
 	SubagentInfo,
 } from "./settings";
-import type { TodoItem } from "./todo";
 import type { UiPluginInfo, UiPluginManifest, UiPluginsConfig, UiPluginsEventPayload } from "./ui-plugins";
 import type { UpdateState } from "./update";
-import { CHANNEL_TABLE, type InvokeApi } from "./ipc-channels";
 
 export {
 	type AnyChannelDef,
+	APP_CHANNELS,
 	CHANNEL_TABLE,
-	ch,
 	type ChannelCtor,
 	type ChannelDef,
-	IpcChannels,
+	ch,
 	type InvokeApi,
 	type InvokeHandlers,
+	IpcChannels,
 	PACKAGES_CHANNELS,
 	SESSION_CHANNELS,
 } from "./ipc-channels";
-
 
 /**
  * 渲染进程经 preload 暴露的 window.pi 类型。
@@ -72,61 +61,12 @@ export {
 export interface PiApi extends InvokeApi<typeof CHANNEL_TABLE> {
 	/** 运行平台（preload 同步注入，供 renderer 按平台分流 UI：如顶栏红绿灯/窗口按钮留白） */
 	readonly platform: "darwin" | "win32" | "linux" | (string & {});
-	/** 跨全部项目目录枚举历史会话（项目管理页用） */
-	listAllSessions(): Promise<SessionMeta[]>;
-	openSession(filePath: string): Promise<SessionMeta>;
-	closeSession(sessionId: string): Promise<void>;
-	/** 删除会话（含磁盘 jsonl 文件，不可恢复） */
-	deleteSession(sessionId: string, sessionFile?: string): Promise<void>;
-	/** 发送消息；images 为随消息附带的图片（base64） */
-	prompt(sessionId: string, text: string, images?: ImageInput[]): Promise<void>;
-	abort(sessionId: string): Promise<void>;
-	setThinkingLevel(sessionId: string, level: string): Promise<void>;
-	/** 读取会话历史消息（打开历史会话时回放） */
-	getSessionMessages(sessionId: string): Promise<SessionMessage[]>;
-	/** 读取会话当前 todo 列表（最后一条 todo 工具结果，或 compaction 后恢复的 reminder 消息；无则空数组） */
-	getTodos(sessionId: string): Promise<TodoItem[]>;
-	compact(sessionId: string, customInstructions?: string): Promise<void>;
-	getStats(sessionId: string): Promise<SessionStats>;
-	/** 当前模型上下文使用（tokens/contextWindow/percent），无会话或未知时返回 null */
-	getContextUsage(sessionId: string): Promise<ContextUsageInfo | null>;
-	/** 清空运行中排队的消息（steer+followUp 都清），返回被清内容（abort 时还原草稿/队列面板清空按钮用） */
-	clearQueue(sessionId: string): Promise<QueuedMessages>;
-	/** 当前排队的 followUp 消息文本（切换会话回来自恢复队列面板用） */
-	getFollowUpMessages(sessionId: string): Promise<string[]>;
-	/** 列出斜杠命令（内置 + prompt 模板 + skill + 扩展命令） */
-	listSlashCommands(sessionId: string): Promise<SlashCommandInfo[]>;
-	/** 无会话列出斜杠命令（draft 新会话用；信任未决的项目不弹窗，只含用户级资源） */
-	listSlashCommandsForCwd(cwd: string): Promise<SlashCommandInfo[]>;
-	/** 设置会话显示名（触发 session_info_changed 事件） */
-	setSessionName(sessionId: string, name: string): Promise<void>;
-	/** 导出会话内容（HTML/JSONL），返回文件内容文本 */
-	exportSession(sessionId: string, format: "html" | "jsonl"): Promise<string>;
-	/**
-	 * 在指定 assistant 消息处分叉：生成以其为结尾的新会话并切换过去（原会话文件保留）。
-	 * ref.entryId 精确定位（历史消息）；缺省时按 ref.text 从分支尾部匹配最近一条同文 assistant 消息。
-	 * 运行或压缩中的会话拒绝 fork。返回新会话 meta。
-	 */
-	forkSession(sessionId: string, ref: { entryId?: string; text?: string }): Promise<SessionMeta>;
-	/**
-	 * 撤回一条用户消息：会话回退到该消息发送之前（被撤回内容在文件中保留为侧枝），
-	 * 文本与图片返回给调用方放回输入框。运行或压缩中的会话拒绝撤回。
-	 */
-	recallMessage(
-		sessionId: string,
-		ref: { entryId?: string; text?: string; timestamp?: number },
-	): Promise<{ text: string; images: ImageInput[] }>;
-	/** 读取会话已加载的资源（skills/扩展；设置页展示用） */
-	getLoadedResources(sessionId: string): Promise<LoadedResources>;
 	/** 安装社区包（npm:<name>，用户级）；成功后热重载非流式活跃会话 */
 	installPackage(name: string): Promise<void>;
 	/** 卸载已配置的包（按 source + scope 移除并持久化）；成功后热重载非流式活跃会话 */
 	removePackage(source: string, scope: "user" | "project"): Promise<void>;
 	/** 列出 settings.json 已配置的包（「已安装」态匹配用） */
 	listConfiguredPackages(): Promise<ConfiguredPackageInfo[]>;
-	/** 弹保存对话框并写文件；用户取消返回 null，成功返回写入路径 */
-	saveFileDialog(defaultName: string, content: string): Promise<string | null>;
-	listModels(): Promise<import("./session").AvailableModel[]>;
 	/** 列出 provider（默认只走内置目录+本地缓存；forceNetwork 时联网拉最新模型目录） */
 	listProviders(options?: ListProvidersOptions): Promise<ProviderInfo[]>;
 	saveApiKey(providerId: string, key: string): Promise<void>;
@@ -183,11 +123,7 @@ export interface PiApi extends InvokeApi<typeof CHANNEL_TABLE> {
 	setChannelWatchEnabled(enabled: boolean): Promise<void>;
 	/** 应答项目信任请求（optionIndex 为 TrustRequest.options 下标） */
 	respondTrust(requestId: string, answer: TrustAnswer): Promise<void>;
-	/** 项目信任前置决策（选目录/切 draft cwd 时调用；未决弹窗，结果落 trust.json） */
-	ensureProjectTrust(cwd: string): Promise<boolean>;
 	pickDirectory(): Promise<string | null>;
-	/** @ 补全数据源：项目文件相对路径列表（目录带尾 /，TTL 缓存） */
-	listProjectFiles(cwd?: string): Promise<string[]>;
 	getGitBranch(cwd: string): Promise<string | null>;
 	listGitBranches(cwd: string): Promise<GitBranches>;
 	/** 切换分支；返回切换后的当前分支（失败抛错） */

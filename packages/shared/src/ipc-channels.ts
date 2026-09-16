@@ -1,5 +1,18 @@
 import type { CatalogPackageType, CatalogSearchResult } from "./packages";
-import type { CreateSessionOptions, QuotaInfo, SessionMeta } from "./session";
+import type {
+	AvailableModel,
+	ContextUsageInfo,
+	CreateSessionOptions,
+	ImageInput,
+	LoadedResources,
+	QueuedMessages,
+	QuotaInfo,
+	SessionMessage,
+	SessionMeta,
+	SessionStats,
+	SlashCommandInfo,
+} from "./session";
+import type { TodoItem } from "./todo";
 
 /**
  * IPC invoke 通道单一事实源（D5）：key（= PiApi 方法名）→ 通道字符串 + 参数/返回类型。
@@ -40,6 +53,50 @@ export const SESSION_CHANNELS = {
 	getQuota: ch("session:getQuota")<void, QuotaInfo | null>(),
 	/** 设置当前会话模型（同步 SDK；失败 renderer 回滚） */
 	setModel: ch("session:setModel")<{ sessionId: string; provider: string; modelId: string }, void>(),
+	/** 跨全部项目目录枚举历史会话（项目管理页用，含活跃） */
+	listAllSessions: ch("session:listAll")<void, SessionMeta[]>(),
+	openSession: ch("session:open")<{ filePath: string }, SessionMeta>(),
+	closeSession: ch("session:close")<{ sessionId: string }, void>(),
+	/** 删除会话（含磁盘 jsonl 文件，不可恢复） */
+	deleteSession: ch("session:delete")<{ sessionId: string; sessionFile?: string }, void>(),
+	/** 发送消息；images 为随消息附带的图片（base64） */
+	prompt: ch("session:prompt")<{ sessionId: string; text: string; images?: ImageInput[] }, void>(),
+	abort: ch("session:abort")<{ sessionId: string }, void>(),
+	setThinkingLevel: ch("session:setThinkingLevel")<{ sessionId: string; level: string }, void>(),
+	/** 读取会话历史消息（打开历史会话时回放） */
+	getSessionMessages: ch("session:getMessages")<{ sessionId: string }, SessionMessage[]>(),
+	/** 读取会话当前 todo 列表（无则空数组） */
+	getTodos: ch("session:getTodos")<{ sessionId: string }, TodoItem[]>(),
+	compact: ch("session:compact")<{ sessionId: string; customInstructions?: string }, void>(),
+	getStats: ch("session:stats")<{ sessionId: string }, SessionStats>(),
+	/** 当前模型上下文使用（无会话或未知时返回 null） */
+	getContextUsage: ch("session:getContextUsage")<{ sessionId: string }, ContextUsageInfo | null>(),
+	/** 清空运行中排队的消息，返回被清内容（还原草稿用） */
+	clearQueue: ch("session:clearQueue")<{ sessionId: string }, QueuedMessages>(),
+	getFollowUpMessages: ch("session:getFollowUpMessages")<{ sessionId: string }, string[]>(),
+	listSlashCommands: ch("session:listSlashCommands")<{ sessionId: string }, SlashCommandInfo[]>(),
+	/** 无会话斜杠命令列表（draft 新会话按 cwd 拉取；信任未决不弹窗，只含用户级资源） */
+	listSlashCommandsForCwd: ch("session:listSlashCommandsForCwd")<{ cwd?: string }, SlashCommandInfo[]>(),
+	setSessionName: ch("session:setName")<{ sessionId: string; name: string }, void>(),
+	exportSession: ch("session:export")<{ sessionId: string; format: "html" | "jsonl" }, string>(),
+	/** fork：以 ref 定位分支点新建会话 */
+	forkSession: ch("session:fork")<
+		{ sessionId: string; ref: { entryId?: string; text?: string } },
+		SessionMeta
+	>(),
+	/** 撤回用户消息（回退到该消息之前，内容放回输入框） */
+	recallMessage: ch("session:recall")<
+		{ sessionId: string; ref: { entryId?: string; text?: string; timestamp?: number } },
+		{ text: string; images: ImageInput[] }
+	>(),
+	/** 读取会话已加载的资源（skills/扩展；设置页展示用） */
+	getLoadedResources: ch("session:getLoadedResources")<{ sessionId: string }, LoadedResources>(),
+	/** 可用模型列表（providers × models，含 authed/thinkingLevels/imageInput 元数据） */
+	listModels: ch("models:list")<void, AvailableModel[]>(),
+	/** @ 补全数据源：项目文件相对路径列表（目录带尾 /） */
+	listProjectFiles: ch("project:listFiles")<{ cwd?: string }, string[]>(),
+	/** 项目信任前置决策（添加项目/切换 draft cwd 时调用，未决则弹窗） */
+	ensureProjectTrust: ch("project:ensureTrust")<{ cwd: string }, boolean>(),
 } as const;
 
 /** 社区包域：pi.dev 目录搜索 + 安装/卸载 + 已配置清单 */
@@ -51,10 +108,17 @@ export const PACKAGES_CHANNELS = {
 	>(),
 } as const;
 
+/** 应用域：窗口级功能（对话框/背景/更新/tabs/ui-state/git/外链等，多为非透传 handler） */
+export const APP_CHANNELS = {
+	/** 弹保存对话框并写文件；用户取消返回 null，成功返回写入路径 */
+	saveFileDialog: ch("file:saveDialog")<{ defaultName: string; content: string }, string | null>(),
+} as const;
+
 /** 已表化通道全集（分批迁移，终态 = 全部 invoke 通道） */
 export const CHANNEL_TABLE = {
 	...SESSION_CHANNELS,
 	...PACKAGES_CHANNELS,
+	...APP_CHANNELS,
 } as const;
 
 export type ChannelTable = typeof CHANNEL_TABLE;
@@ -108,35 +172,9 @@ const EVENT_CHANNELS = {
  * key 保持旧 PascalCase 形态以最小化未迁移域 diff。
  */
 const LEGACY_INVOKE_CHANNELS = {
-	SessionListAll: "session:listAll",
-	SessionOpen: "session:open",
-	SessionClose: "session:close",
-	SessionDelete: "session:delete",
-	SessionPrompt: "session:prompt",
-	SessionAbort: "session:abort",
-	SessionSetThinkingLevel: "session:setThinkingLevel",
-	SessionGetMessages: "session:getMessages",
-	SessionGetTodos: "session:getTodos",
-	SessionCompact: "session:compact",
-	SessionStats: "session:stats",
-	SessionGetContextUsage: "session:getContextUsage",
-	SessionClearQueue: "session:clearQueue",
-	SessionGetFollowUpMessages: "session:getFollowUpMessages",
-	SessionListSlashCommands: "session:listSlashCommands",
-	/** 无会话斜杠命令列表（draft 新会话按 cwd 拉取；信任未决不弹窗，只含用户级资源） */
-	SessionListSlashCommandsForCwd: "session:listSlashCommandsForCwd",
-	SessionSetName: "session:setName",
-	SessionExport: "session:export",
-	SessionFork: "session:fork",
-	/** 撤回用户消息（回退到该消息之前，内容放回输入框） */
-	SessionRecall: "session:recall",
-	/** 已加载资源（skills/扩展，设置页展示用） */
-	SessionGetLoadedResources: "session:getLoadedResources",
 	PackagesInstall: "packages:install",
 	PackagesRemove: "packages:remove",
 	PackagesListConfigured: "packages:listConfigured",
-	FileSaveDialog: "file:saveDialog",
-	ModelsList: "models:list",
 	SettingsListProviders: "settings:listProviders",
 	SettingsSaveApiKey: "settings:saveApiKey",
 	SettingsRemoveCredential: "settings:removeCredential",
@@ -178,14 +216,10 @@ const LEGACY_INVOKE_CHANNELS = {
 	ChannelWatchSetEnabled: "channelWatch:setEnabled",
 	/** 项目信任应答（选项下标） */
 	TrustRespond: "trust:respond",
-	/** 项目信任前置决策（添加项目/切换 draft cwd 时调用，未决则弹窗） */
-	ProjectEnsureTrust: "project:ensureTrust",
 	ProjectPickDirectory: "project:pickDirectory",
 	ProjectGetGitBranch: "project:getGitBranch",
 	ProjectListGitBranches: "project:listGitBranches",
 	ProjectCheckoutBranch: "project:checkoutBranch",
-	/** @ 补全数据源：项目文件相对路径列表（目录带尾 /） */
-	ProjectListFiles: "project:listFiles",
 	AppOpenExternal: "app:openExternal",
 	/** 应用信息（版本/运行时版本/仓库地址，设置关于页用） */
 	AppGetInfo: "app:getInfo",
