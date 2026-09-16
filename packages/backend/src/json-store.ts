@@ -205,10 +205,4 @@ export class JsonStore<T> {
 	writeSync(value: T): void {
 		this.writeInternalSync(value);
 	}
-
-	/**
-	 * 实例无持有资源（队列在模块级、settle 后自动清理），dispose 为契约占位：
-	 * 供未来加 watcher/句柄时对齐调用方生命周期，当前调用是安全的 no-op。
-	 */
-	dispose(): void {}
 }

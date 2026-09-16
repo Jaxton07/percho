@@ -36,25 +36,25 @@ export function registerSettingsIpc(backend: PiBackend): void {
 	ipcMain.handle(IpcChannels.SettingsTestProvider, (_e, providerId: string, modelId?: string) =>
 		backend.settings.testProvider(providerId, modelId),
 	);
-	ipcMain.handle(IpcChannels.SettingsGetModelPrefs, () => backend.getModelPrefs());
+	ipcMain.handle(IpcChannels.SettingsGetModelPrefs, () => backend.modelPrefs.getPrefs());
 	ipcMain.handle(
 		IpcChannels.SettingsSetModelHidden,
 		(_e, provider: string, modelId: string, hidden: boolean) =>
-			backend.setModelHidden(provider, modelId, hidden),
+			backend.modelPrefs.setModelHidden(provider, modelId, hidden),
 	);
 	ipcMain.handle(
 		IpcChannels.SettingsSetModelsHidden,
 		(_e, provider: string, modelIds: string[], hidden: boolean) =>
-			backend.setModelsHidden(provider, modelIds, hidden),
+			backend.modelPrefs.setModelsHidden(provider, modelIds, hidden),
 	);
 	ipcMain.handle(IpcChannels.SettingsSetSubagentModel, (_e, agent: string, modelRef: string | null) =>
-		backend.setSubagentModel(agent, modelRef),
+		backend.modelPrefs.setSubagentModel(agent, modelRef),
 	);
 	ipcMain.handle(IpcChannels.SettingsSetSubagentThinking, (_e, agent: string, level: string | null) =>
-		backend.setSubagentThinking(agent, level),
+		backend.modelPrefs.setSubagentThinking(agent, level),
 	);
 	ipcMain.handle(IpcChannels.SettingsSetSubagentPreferBuiltin, (_e, enabled: boolean) =>
-		backend.setSubagentPreferBuiltin(enabled),
+		backend.modelPrefs.setSubagentPreferBuiltin(enabled),
 	);
 	ipcMain.handle(IpcChannels.SettingsListSubagents, () => backend.listSubagents());
 	ipcMain.handle(IpcChannels.SettingsLoginStart, (_e, loginId: string, providerId: string) =>
