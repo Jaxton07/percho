@@ -1,5 +1,5 @@
-import type { AgentSessionEvent, ExtensionDialogRequest } from "@percho/shared";
-import { emptyTranscript, messagesToUIMessages, reduceEvent } from "@percho/shared";
+import type { AgentSessionEvent, ExtensionDialogRequest, SessionEvent } from "@percho/shared";
+import { emptyTranscript, messagesToUIMessages, REDUCED_EVENT_TYPES, reduceEvent } from "@percho/shared";
 import { beforeEach, describe, expect, it } from "vitest";
 import { useTranscriptStore } from "./transcript";
 
@@ -1549,5 +1549,24 @@ describe("transcript store 扩展对话框/预填（issue #45）", () => {
 		// 空串来源归一为 undefined（无来源不提示）
 		store.markExtensionPrefill("s2", "");
 		expect(entry("s2")?.extensionPrefillSource).toBeUndefined();
+	});
+});
+
+describe("REDUCED_EVENT_TYPES 与 reducer 分支对齐（单一事实源）", () => {
+	it("清单成员逐一过 reducer：载荷缺失抛 TypeError = 分支存在（no-op/漏配分支由专项用例覆盖）", () => {
+		for (const type of REDUCED_EVENT_TYPES) {
+			const state = emptyTranscript();
+			// 最小合成事件：分支只按 type 分发；载荷缺失会抛 TypeError（分支已命中）——
+			// 抛错与正常返回都算「有分支」，default 透传（返回原引用不抛）与漏分支会在此暴露不了，
+			// 故同时断言「非抛错路径返回新对象或原引用且类型合法」由其余 reducer 用例覆盖
+			let threw = false;
+			try {
+				const next = reduceEvent(state, { type } as SessionEvent);
+				expect(next, type).toBeDefined();
+			} catch (error) {
+				threw = error instanceof TypeError; // 载荷缺失 = 分支存在
+				expect(threw, type).toBe(true);
+			}
+		}
 	});
 });

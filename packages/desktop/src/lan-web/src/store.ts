@@ -1,13 +1,6 @@
-import type { LanSseFrame, LanTranscript } from "@percho/shared";
+import type { LanSseFrame, LanTranscriptHistory } from "@percho/shared";
 import { create } from "zustand";
-import {
-	applyFrame,
-	initialLanState,
-	type LanAppState,
-	ORPHAN_BOUNDARY_TYPES,
-	seedSessions,
-	seedTranscript,
-} from "./store-pure";
+import { applyFrame, initialLanState, type LanAppState, seedSessions, seedTranscript } from "./store-pure";
 
 export type { LanAppState } from "./store-pure";
 
@@ -52,7 +45,7 @@ export const useLanStore = create<LanStore>((set) => ({
 				return;
 			}
 			if (!res.ok) return;
-			const entry = (await res.json()) as LanTranscript;
+			const entry = (await res.json()) as LanTranscriptHistory;
 			useLanStore.setState((state) => seedTranscript(state, entry));
 		} catch {
 			// 网络失败：保持「加载中」，下次进入会话重试
@@ -149,13 +142,6 @@ function onFrame(frame: LanSseFrame): void {
 	if (sessionId && !useLanStore.getState().transcripts[sessionId]) {
 		scheduleSnapshotRefetch();
 		return;
-	}
-	// 中途进入自愈：streamHealing 态下到达 run 提交/终态边界 → 立即重拉快照取回已提交消息
-	if (frame.event === "event" && sessionId && ORPHAN_BOUNDARY_TYPES.has(frame.data.event.type)) {
-		const state = useLanStore.getState();
-		if (state.streamHealing[sessionId] != null && !state.transcripts[sessionId]?.streaming) {
-			scheduleSnapshotRefetch({ immediate: true });
-		}
 	}
 	useLanStore.setState((state) => applyFrame(state, frame));
 }

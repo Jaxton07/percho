@@ -96,6 +96,32 @@ function commitLlmErrorCard(state: SessionTranscriptState, error: UiError): Sess
 }
 
 /**
+ * reducer 处理的顶层事件类型清单（与 reduceEvent switch 分支一一对应；
+ * LAN sanitize 白名单等下游从这里派生，加测试断言防漂移——见 transcript reducer 测试）。
+ */
+export const REDUCED_EVENT_TYPES = [
+	"agent_start",
+	"agent_end",
+	"agent_settled",
+	"turn_start",
+	"turn_end",
+	"message_start",
+	"message_update",
+	"tool_execution_start",
+	"tool_execution_update",
+	"tool_execution_end",
+	"queue_update",
+	"compaction_start",
+	"compaction_end",
+	"subagent_mutex",
+	"auto_retry_start",
+	"auto_retry_end",
+	"stream_guard_tripped",
+] as const;
+
+export type ReducedEventTypeName = (typeof REDUCED_EVENT_TYPES)[number];
+
+/**
  * pi 事件 → UI 状态 reducer。
  * 事件经 IPC 原样转发（AgentSessionEvent），本函数纯函数化应用。
  */

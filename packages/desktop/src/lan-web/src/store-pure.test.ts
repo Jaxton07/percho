@@ -1,7 +1,7 @@
-import type { LanSnapshot, LanSseFrame, LanTranscript, SessionMessage } from "@percho/shared";
+import type { LanSnapshot, LanSseFrame, LanTranscriptHistory, SessionTranscriptState } from "@percho/shared";
 import { describe, expect, it } from "vitest";
 import type { LanAppState } from "./store-pure";
-import { applyFrame, healingTailSuffix, initialLanState, seedSessions, seedTranscript } from "./store-pure";
+import { applyFrame, initialLanState, seedSessions, seedTranscript } from "./store-pure";
 
 const baseView = {
 	sessionId: "s1",
@@ -27,17 +27,14 @@ function snapshot(overrides: Partial<LanSnapshot> = {}): LanSnapshot {
 		transcripts: [
 			{
 				sessionId: "s1",
-				messages: [
-					{ role: "user", text: "你好", thinking: "", tools: [], images: [], timestamp: 1 },
-					{
-						role: "assistant",
-						text: "你好！**有什么**可以帮你？",
-						thinking: "",
-						tools: [],
-						images: [],
-						timestamp: 2,
-					},
-				] as SessionMessage[],
+				state: {
+					messages: [
+						{ kind: "user", text: "你好", timestamp: 1 },
+						{ kind: "assistant", text: "你好！**有什么**可以帮你？", timestamp: 2 },
+					],
+					agentActive: false,
+					streaming: null,
+				} as unknown as SessionTranscriptState,
 				truncated: false,
 			},
 		],
@@ -51,9 +48,22 @@ function eventFrame(sessionId: string, event: Record<string, unknown>, seq: numb
 	return { event: "event", data: { sessionId, event, seq } } as LanSseFrame;
 }
 
-/** 流式进行中的视图（healing 标记的 agentActive 守卫需要） */
+/** 流式进行中的快照：投影 state 含 in-flight 流式容器（服务端 reducer 驱动，D6 核心） */
 function activeSnapshot(): LanSnapshot {
-	return snapshot({ views: [{ ...baseView, agentActive: true }] });
+	return snapshot({
+		views: [{ ...baseView, agentActive: true }],
+		transcripts: [
+			{
+				sessionId: "s1",
+				state: {
+					messages: [],
+					agentActive: true,
+					streaming: { text: "你好", tools: [], activity: [], rawToolOutputs: {} },
+				} as unknown as SessionTranscriptState,
+				truncated: false,
+			},
+		],
+	});
 }
 
 function deltaFrame(sessionId: string, delta: string, seq: number): LanSseFrame {
@@ -113,62 +123,6 @@ describe("lan-web store pure functions", () => {
 		expect(state.transcripts.s1?.agentActive).toBe(false);
 	});
 
-	it("mid-run join: orphan delta flags streamHealing; container rebuild clears it", () => {
-		let state = { ...initialLanState, ...seedSessions(initialLanState, activeSnapshot()) };
-		// 中途进入：错过 message_start，text_delta 在 reducer 空转 → 标记兑底（值 = 触发帧的新增字节数）
-		state = { ...state, ...applyFrame(state, deltaFrame("s1", "你好", 11)) };
-		expect(state.streamHealing.s1).toBe(2);
-		expect(state.transcripts.s1?.streaming).toBeNull();
-		// 后续空转 delta 继续累加新鲜字节数（气泡差量渲染的数据源）
-		state = { ...state, ...applyFrame(state, deltaFrame("s1", "世界！", 12)) };
-		expect(state.streamHealing.s1).toBe(5);
-		// 容器重建（agent_start）→ 摘标记，后续 delta 正常累积不再误标
-		state = { ...state, ...applyFrame(state, eventFrame("s1", { type: "agent_start" }, 13)) };
-		expect(state.streamHealing.s1).toBeUndefined();
-		state = { ...state, ...applyFrame(state, deltaFrame("s1", "在", 14)) };
-		expect(state.streamHealing.s1).toBeUndefined();
-		expect(state.transcripts.s1?.streaming?.text).toBe("在");
-	});
-
-	it("mid-run join: orphan turn_end boundary clears flag (refetch wired in store.ts)", () => {
-		let state = { ...initialLanState, ...seedSessions(initialLanState, activeSnapshot()) };
-		state = { ...state, ...applyFrame(state, deltaFrame("s1", "x", 11)) };
-		expect(state.streamHealing.s1).toBe(1);
-		state = { ...state, ...applyFrame(state, eventFrame("s1", { type: "turn_end" }, 12)) };
-		expect(state.streamHealing.s1).toBeUndefined();
-	});
-
-	it("orphan delta on idle session does not flag streamHealing (agentActive guard)", () => {
-		let state = { ...initialLanState, ...seedSessions(initialLanState, snapshot()) };
-		state = { ...state, ...applyFrame(state, deltaFrame("s1", "x", 11)) };
-		expect(state.streamHealing.s1).toBeUndefined();
-	});
-
-	it("re-seed clears streamHealing (fresh authoritative state)", () => {
-		let state = { ...initialLanState, ...seedSessions(initialLanState, activeSnapshot()) };
-		state = { ...state, ...applyFrame(state, deltaFrame("s1", "x", 11)) };
-		expect(state.streamHealing.s1).toBe(1);
-		state = { ...state, ...seedSessions(state, activeSnapshot()) };
-		expect(state.streamHealing).toEqual({});
-	});
-
-	describe("healingTailSuffix", () => {
-		it("renders only the fresh suffix of the projected tail", () => {
-			// 种子 partial “Hel”，投影 tail 已长到 “Hello wor” → 只渲染新增的 “lo wor”
-			expect(healingTailSuffix("Hello wor", 5)).toBe("o wor");
-		});
-
-		it("fresh bytes beyond tail length renders whole tail (window slid past seed)", () => {
-			expect(healingTailSuffix("abc", 99)).toBe("abc");
-		});
-
-		it("no fresh bytes or empty tail renders nothing (no duplicated body)", () => {
-			expect(healingTailSuffix("Hello wor", 0)).toBe("");
-			expect(healingTailSuffix(null, 5)).toBe("");
-			expect(healingTailSuffix(undefined, 5)).toBe("");
-		});
-	});
-
 	it("perm frame lifecycle: perm adds, perm_resolved removes", () => {
 		let state = { ...initialLanState, ...seedSessions(initialLanState, snapshot()) };
 		const request = {
@@ -199,7 +153,7 @@ describe("lan-web store pure functions", () => {
 		expect(state.pendingPerms.s1).toHaveLength(0);
 	});
 
-	it("view frame updates status bits on existing transcript", () => {
+	it("view frame updates views only (transcript stays reducer-authoritative)", () => {
 		let state = { ...initialLanState, ...seedSessions(initialLanState, snapshot()) };
 		state = {
 			...state,
@@ -212,8 +166,20 @@ describe("lan-web store pure functions", () => {
 				},
 			}),
 		};
-		expect(state.transcripts.s1?.agentActive).toBe(true);
+		// D6：状态位从服务端投影派生（与服务端 reducer 同源），客户端 transcript 不回写——
+		// 双写只会制造第二事实源（原 mid-run healing 层的根因）
+		expect(state.views.s1?.agentActive).toBe(true);
 		expect(state.views.s1?.currentTool).toBe("bash");
+		expect(state.transcripts.s1?.agentActive).toBe(false);
+	});
+
+	it("mid-run join: snapshot carries streaming container, deltas append seamlessly", () => {
+		// D6 核心场景：中途进入观察——服务端投影含 in-flight 流式容器，
+		// 种子后到达的 delta 直接续接，无需 healing 兜底层
+		let state = { ...initialLanState, ...seedSessions(initialLanState, activeSnapshot()) };
+		expect(state.transcripts.s1?.streaming?.text).toBe("你好");
+		state = { ...state, ...applyFrame(state, deltaFrame("s1", "，世界", 11)) };
+		expect(state.transcripts.s1?.streaming?.text).toBe("你好，世界");
 	});
 
 	it("snapshot seeds pendingPermissions (M2 远程应答种子)", () => {
@@ -260,7 +226,7 @@ describe("lan-web store pure functions", () => {
 	});
 
 	it("seedTranscript seeds history session on demand, never overwrites existing", () => {
-		const entry: LanTranscript = {
+		const entry: LanTranscriptHistory = {
 			sessionId: "hist-1",
 			messages: [{ role: "user", text: "旧消息", thinking: "", tools: [], images: [], timestamp: 1 }],
 			truncated: true,

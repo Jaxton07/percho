@@ -1,12 +1,14 @@
 import { timingSafeEqual } from "node:crypto";
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
 import type {
+	LanPendingPermission,
 	LanSessionBrief,
 	LanSessionView,
 	LanSnapshot,
 	LanSseFrame,
 	LanStatus,
-	LanTranscript,
+	LanTranscriptHistory,
+	LanTranscriptProjection,
 	PermissionRequest,
 	SessionEvent,
 	SessionMessage,
@@ -18,8 +20,10 @@ import {
 	applyEvent,
 	applyPermissionRequest,
 	applyPermissionResolved,
-	type LanPendingPermission,
-	seedView,
+	deriveView,
+	type SessionProjection,
+	sanitizeProjectionForWire,
+	seedProjection,
 } from "./projector";
 import { sanitizeSessionEvent, sanitizeSessionMessage } from "./sanitize";
 
@@ -143,7 +147,7 @@ export interface LanObserverServerOptions {
 export class LanObserverServer {
 	private server: Server | null = null;
 	private port: number | null = null;
-	private readonly views = new Map<string, LanSessionView>();
+	private readonly projections = new Map<string, SessionProjection>();
 	private readonly dirty = new Set<string>();
 	/** 首个事件到达而尚未完成快照种子的会话，逐会话有界缓存。 */
 	private readonly pendingEvents = new Map<string, SessionEvent[]>();
@@ -210,7 +214,7 @@ export class LanObserverServer {
 		const server = this.server;
 		this.server = null;
 		this.port = null;
-		this.views.clear();
+		this.projections.clear();
 		this.dirty.clear();
 		this.pendingEvents.clear();
 		this.seedInFlight.clear();
@@ -268,17 +272,17 @@ export class LanObserverServer {
 			// seq 边界与消息收集须对事件投递原子（getSessionMessages 全链路同步，仅微任务让出，事件在
 			// macrotask 投递插不进来）；稳定性双重校验是保险：若未来链条里混入真实 await，重试一轮取一致快照。
 			let snapshotSeq = 0;
-			let transcripts: LanTranscript[] = [];
+			let transcripts: LanTranscriptProjection[] = [];
 			for (let attempt = 0; attempt < 3; attempt++) {
 				this.flushAllDeltas();
 				snapshotSeq = this.seq;
-				transcripts = await this.collectTranscripts();
+				transcripts = this.collectTranscripts();
 				if (this.seq === snapshotSeq) break;
 			}
 			const snapshot: LanSnapshot = {
 				serverTime: Date.now(),
 				list: this.list,
-				views: [...this.views.values()],
+				views: [...this.projections].map(([id, projection]) => deriveView(id, projection)),
 				transcripts,
 				pendingPermissions: this.backend.getPendingPermissionRequests(),
 				remoteControl: this.config.cached()?.remoteControl ?? false,
@@ -296,7 +300,7 @@ export class LanObserverServer {
 		if (transcriptId) {
 			const messages = await this.backend.peekSessionMessages(transcriptId);
 			if (!messages) return this.sendJson(res, 404, { error: "session not found" });
-			const transcript: LanTranscript = {
+			const transcript: LanTranscriptHistory = {
 				sessionId: transcriptId,
 				messages: messages.slice(-TRANSCRIPT_TAIL_LIMIT).map(sanitizeSessionMessage),
 				truncated: messages.length > TRANSCRIPT_TAIL_LIMIT,
@@ -409,16 +413,16 @@ export class LanObserverServer {
 		// retry 字段：提示 EventSource 断线后按此间隔自动重连（浏览器默认 ~3s，移动端切回时显得久）
 		this.sendRaw(client, `retry: ${SSE_RETRY_MS}\n\n`);
 		this.sendFrame(client, { event: "hello", data: { seq: this.seq } });
-		for (const view of this.views.values()) this.sendFrame(client, this.viewFrame(view));
+		for (const [sessionId, projection] of this.projections)
+			this.sendFrame(client, this.viewFrame(deriveView(sessionId, projection)));
 		req.on("close", () => this.clients.delete(client));
 		res.on("drain", () => this.flushClient(client));
 	}
 
 	private handleEvent(sessionId: string, event: SessionEvent): void {
-		const view = this.views.get(sessionId);
-		if (view) {
-			this.views.set(sessionId, applyEvent(view, event));
-			this.dirty.add(sessionId);
+		if (this.projections.has(sessionId)) {
+			// 投影与广播同链：sanitize → delta 微批 → projectEvent（reduce + 帧广播一次完成，
+			// 客户端收到的每一帧都已同步进服务端投影，重连快照无缝续接）
 			this.relayEvent(sessionId, event);
 			return;
 		} // 子代理子会话也会转发原生事件，却不在 listAllSessions（物理隔离）中；
@@ -435,14 +439,15 @@ export class LanObserverServer {
 		void this.seedSession(sessionId);
 	}
 
-	/** 已知活跃会话的事件 sanitize 后转发 event 帧；delta 类 50ms 微批拼接，其余即时。 */
+	/** 已知活跃会话的事件 sanitize 后转发 event 帧；delta 类 50ms 微批拼接，其余即时。
+	 *  帧广播与投影更新同点完成（projectEvent）。 */
 	private relayEvent(sessionId: string, event: SessionEvent): void {
 		const sanitized = sanitizeSessionEvent(event);
 		if (!sanitized) return;
 		const delta = deltaKind(sanitized);
 		if (!delta) {
 			this.flushDelta(sessionId);
-			this.broadcast({ event: "event", data: { sessionId, event: sanitized, seq: ++this.seq } });
+			this.projectEvent(sessionId, sanitized);
 			return;
 		}
 		const pending = this.deltaBatches.get(sessionId);
@@ -456,37 +461,42 @@ export class LanObserverServer {
 		this.deltaBatches.set(sessionId, { event: sanitized, timer });
 	}
 
+	/** sanitize 后事件驱动投影（shared reducer）并广播同帧（seq 同步递增）。 */
+	private projectEvent(sessionId: string, sanitized: SessionEvent): void {
+		const projection = this.projections.get(sessionId);
+		if (!projection) return;
+		this.projections.set(sessionId, applyEvent(projection, sanitized));
+		this.dirty.add(sessionId);
+		this.broadcast({ event: "event", data: { sessionId, event: sanitized, seq: ++this.seq } });
+	}
+
 	private flushDelta(sessionId: string): void {
 		const batch = this.deltaBatches.get(sessionId);
 		if (!batch) return;
 		clearTimeout(batch.timer);
 		this.deltaBatches.delete(sessionId);
-		this.broadcast({ event: "event", data: { sessionId, event: batch.event, seq: ++this.seq } });
+		this.projectEvent(sessionId, batch.event);
 	}
 
 	private flushAllDeltas(): void {
 		for (const sessionId of [...this.deltaBatches.keys()]) this.flushDelta(sessionId);
 	}
 
-	private async collectTranscripts(): Promise<LanTranscript[]> {
-		return Promise.all(
-			[...this.views.keys()].map(async (sessionId) => {
-				const messages = await this.backend.getSessionMessages(sessionId).catch(() => [] as SessionMessage[]);
-				return {
-					sessionId,
-					messages: messages.slice(-TRANSCRIPT_TAIL_LIMIT).map(sanitizeSessionMessage),
-					truncated: messages.length > TRANSCRIPT_TAIL_LIMIT,
-				};
-			}),
-		);
+	/** 活跃会话投影快照（共享 reducer 态 + in-flight 容器，客户端直接种子；
+	 *  收集为同步快照——投影在内存，seq 一致性由调用处 flushAllDeltas + 重试保障）。 */
+	private collectTranscripts(): LanTranscriptProjection[] {
+		return [...this.projections].map(([sessionId, projection]) => {
+			const { state, truncated } = sanitizeProjectionForWire(projection, TRANSCRIPT_TAIL_LIMIT);
+			return { sessionId, state, truncated };
+		});
 	}
 
 	private handlePermissionRequest(req: PermissionRequest): void {
 		// perm 帧即时转发（M2 远程应答依赖 requestId；快照种子也从 gate 快照补）
 		this.broadcast({ event: "perm", data: { sessionId: req.sessionId, request: req, seq: ++this.seq } });
-		const view = this.views.get(req.sessionId);
-		if (view) {
-			this.views.set(req.sessionId, applyPermissionRequest(view, req));
+		const projection = this.projections.get(req.sessionId);
+		if (projection) {
+			this.projections.set(req.sessionId, applyPermissionRequest(projection, req));
 			this.dirty.add(req.sessionId);
 			return;
 		}
@@ -499,9 +509,9 @@ export class LanObserverServer {
 		answered: boolean;
 	}): void {
 		this.broadcast({ event: "perm_resolved", data: { ...result, seq: ++this.seq } });
-		const view = this.views.get(result.sessionId);
-		if (!view) return;
-		this.views.set(result.sessionId, applyPermissionResolved(view));
+		const projection = this.projections.get(result.sessionId);
+		if (!projection) return;
+		this.projections.set(result.sessionId, applyPermissionResolved(projection));
 		this.dirty.add(result.sessionId);
 	}
 
@@ -515,7 +525,7 @@ export class LanObserverServer {
 		const activeIds = new Set(
 			sessions.filter((session) => session.active).map((session) => session.sessionId),
 		);
-		for (const id of this.views.keys()) if (!activeIds.has(id)) this.views.delete(id);
+		for (const id of this.projections.keys()) if (!activeIds.has(id)) this.projections.delete(id);
 		await Promise.all([...activeIds].map((sessionId) => this.seedSession(sessionId, sessions)));
 		if (listChanged) this.broadcast(this.listFrame());
 	}
@@ -524,7 +534,7 @@ export class LanObserverServer {
 		sessionId: string,
 		sessions?: Awaited<ReturnType<LanObserverBackend["listAllSessions"]>>,
 	): Promise<void> {
-		if (this.views.has(sessionId) || (!sessions && this.unseedableSessions.has(sessionId)))
+		if (this.projections.has(sessionId) || (!sessions && this.unseedableSessions.has(sessionId)))
 			return Promise.resolve();
 		const existing = this.seedInFlight.get(sessionId);
 		if (existing) return existing;
@@ -537,7 +547,7 @@ export class LanObserverServer {
 		sessionId: string,
 		sessions?: Awaited<ReturnType<LanObserverBackend["listAllSessions"]>>,
 	): Promise<void> {
-		if (this.views.has(sessionId)) return;
+		if (this.projections.has(sessionId)) return;
 		const all = sessions ?? (await this.backend.listAllSessions());
 		const meta = all.find((session) => session.sessionId === sessionId && session.active);
 		if (!meta) {
@@ -552,10 +562,24 @@ export class LanObserverServer {
 			this.backend.getStats(sessionId).catch(() => null),
 			this.backend.getSessionMessages(sessionId).catch(() => []),
 		]);
-		let view = seedView(meta, runtime, todos, stats, assistantTail(messages), pending);
-		for (const event of this.pendingEvents.get(sessionId) ?? []) view = applyEvent(view, event);
+		// 种子消息经 sanitize 后映射（与 LAN 客户端历史拉取同净化标准）；pendingEvents 原始事件
+		// replay 走 sanitize → reduce（projectEvent 不广播，种子期无订阅者续帧需求）
+		let projection = seedProjection(
+			sessionId,
+			meta.name ?? sessionId,
+			meta.cwd,
+			runtime,
+			todos,
+			stats,
+			messages.slice(-TRANSCRIPT_TAIL_LIMIT).map(sanitizeSessionMessage),
+			pending,
+		);
+		for (const event of this.pendingEvents.get(sessionId) ?? []) {
+			const sanitized = sanitizeSessionEvent(event);
+			if (sanitized) projection = applyEvent(projection, sanitized);
+		}
 		this.pendingEvents.delete(sessionId);
-		this.views.set(sessionId, view);
+		this.projections.set(sessionId, projection);
 		this.dirty.add(sessionId);
 	}
 
@@ -576,8 +600,8 @@ export class LanObserverServer {
 
 	private flushDirty(): void {
 		for (const sessionId of this.dirty) {
-			const view = this.views.get(sessionId);
-			if (view) this.broadcast(this.viewFrame(view));
+			const projection = this.projections.get(sessionId);
+			if (projection) this.broadcast(this.viewFrame(deriveView(sessionId, projection)));
 		}
 		this.dirty.clear();
 	}
@@ -631,13 +655,6 @@ function toBrief(
 		modifiedAt: session.modifiedAt ?? session.createdAt,
 		readOnly: session.readOnly || undefined,
 	};
-}
-
-function assistantTail(messages: SessionMessage[]): string | null {
-	for (const message of [...messages].reverse()) {
-		if (message.role === "assistant" && message.text) return message.text.slice(-2048);
-	}
-	return null;
 }
 
 /** 可微批合并的 delta 事件（message_update 的 text/thinking/toolcall delta）；key = 类型+块位置。 */
