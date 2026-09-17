@@ -139,11 +139,13 @@ export function ModelPicker() {
 										inputRef.current?.focus();
 									}}
 								>
-									<CloseIcon size={10} />
+									<CloseIcon size={12} />
 								</button>
 							</Tooltip>
 						)}
 					</div>
+					{/* 搜索行与列表的 1px 细分隔线（设计稿 .picker-rule，列表内容不跟搜索行粘一起） */}
+					<div className="mx-1 mb-1 h-px bg-border" />
 					{flat.length === 0 && (
 						<div className="px-2 py-3 text-center text-xs text-ink-faint">
 							{query === "" ? t("settings.providers.empty") : t("composer.modelSearchEmpty")}
