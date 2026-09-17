@@ -34,6 +34,7 @@
 | 浮层/菜单退场闪回（节点被提前卸载）、二级浮层输入框没聚焦 | 四 · 浮层退场时序与焦点接管（2026-09-17） |
 | 右键菜单贴边溢出视口、滚动后浮层脱锚 | 四 · 右键菜单定位与脱锚（2026-09-17） |
 | Google Vertex 填了 key 仍 401「API keys are not supported by this API」 | 二 · Vertex 只支持 ADC/服务账号（api_key 路径必败，桥接层已剔除 api-key 选项） |
+| 跨会话频道里对方迟迟不查收、回复总晚一整轮（实施在改文件、review 却在跑回归） | 二 · sendUserMessage 默认 followUp = 等对方 turn 结束才投递（2026-09-17） |
 
 ## 一、事故复盘（含可复用诊断手法）
 
@@ -102,6 +103,21 @@ LAN observer 最初用 SSE 注释帧 `: ping` 做心跳——注释按规范不�
 LAN 页重连/中途进入时，快照种子经 `messagesToUIMessages` 重建——**SDK 的 in-flight partial assistant 消息就在 `session.messages` 里**（`agent.state.messages` 实时含流式中对象），种子含 partial 正文但无流式容器；后续 `text_delta` 是增量（reducer 累积语义），无容器时整体空转 → `applyFrame` 误标 `streamHealing` → ChatView 底部渲染 `view.assistantTail` 兜底气泡 → **同一段正文两份**（消息流一份 + 底部一份），直到 run 边界摘标记 + 立即重拉快照才恢复。用户观感：「正文重放拼到末尾，新事件来了又正常」。
 
 修复：`streamHealing` 从 boolean 升级为「种子后新到 text_delta 字节数」计数器（`store-pure.ts`），兜底气泡只渲染 `assistantTail` 尾部新增后缀（`healingTailSuffix`）——种子已含的不重复，文字持续 live；标记加 `view.agentActive` 守卫（空闲会话的陈旧帧不标记/不触发边界重拉）；重种子时清空标记。**教训**：增量语义的帧不能靠重放/重种子恢复，必须给「已应用多少」一个显式边界（seq 或字节计数）。
+
+### `sendUserMessage` 默认 followUp = 等对方 turn 结束才投递（2026-09-17，跨会话协作踩到）
+
+两种投递模式语义差得很远（`pi-coding-agent/dist/core/agent-session.d.ts:369-383`）：
+
+| 模式 | 投递时机 |
+|---|---|
+| `followUp`（channel-watch 现行用的） | **agent 没有更多 tool call 时才送达** —— 对方一个长 turn 里完全收不到 |
+| `steer` | 当前这批 tool 执行完、下一次 LLM 调用前送达（不切断正在跑的 tool） |
+
+踩到的现象：实施会话「阶段干完 post 一条 → 接着往下干」，review 的意见只能等它 turn 结束才到，本该约束过程的提醒变成事后返工（真实案例：review 要求「每批跑双向 assignable 检查」到达时阶段已做完，只能补审计）；同时 review 在实施改文件的当口跑回归，测到中间态、结论不可信。
+
+修复（2026-09-17，改 **skill 协议**而非代码）：跨会话协作改成**阶段门**——阶段边界 `git commit` + IMPL-NOTES + `channel_post`，然后**turn 必须结束**（不再调工具）；对方回话时实施已停手（turn 结束 → followUp 立即投递），工作区也静止（review 的回归结论可信）。见 `packages/desktop/resources/skills/channel-pickup/SKILL.md`「阶段门」节。
+
+**教训**：想让另一个会话及时收到消息，先看它的 turn 什么时候结束——`followUp` 的送达时机由**对方**的 turn 边界决定，不由发送方决定；要「立即送达」只有 `steer`（GUI 里用户自己发的消息目前也走 followUp 排队，`pi-backend.ts:572`）。所以「让双方停在同一节奏上」比引入锁/快照沙箱便宜得多。
 
 ## 三、构建 · 打包 · 环境
 

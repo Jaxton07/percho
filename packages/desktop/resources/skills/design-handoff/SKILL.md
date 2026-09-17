@@ -1,6 +1,6 @@
 ---
 name: design-handoff
-description: 为本项目设计新功能/系统并交接给新会话实施：先调研验证（读代码和 SDK 源码落实事实，不靠猜），产出 spec（.local/agent-work/spec/）+ 实施 plan（.local/agent-work/plan/），创建跨会话沟通频道（.local/agent-work/channel/<主题>/HANDOFF.md），最后按项目文档约定收尾（更新索引，如有）。当用户要求「设计 XX」「写 spec 和 plan」「做 handoff / 交接给新会话」「安排新会话实施」时使用。
+description: 为本项目设计新功能/系统并交接给新会话实施：先调研验证（读代码和 SDK 源码落实事实，不靠猜），产出 spec（.local/agent-work/spec/）+ 实施 plan（.local/agent-work/plan/），创建跨会话沟通频道（.local/agent-work/channel/<主题>/HANDOFF.md，沟通协议 = 双边阶段门：实施 post 后停手等 review，review 回完也停手等实施），最后按项目文档约定收尾（更新索引，如有）。当用户要求「设计 XX」「写 spec 和 plan」「做 handoff / 交接给新会话」「安排新会话实施」时使用。
 ---
 
 # 设计 + 交接流程（发起会话用）
@@ -54,8 +54,12 @@ description: 为本项目设计新功能/系统并交接给新会话实施：先
 
 - 实施会话：进度/卡点/决策追加写 `IMPL-NOTES.md`（倒序、每条带日期时间、标注阶段）；完成后写 `DONE.md`（验收清单逐项打勾 + 改动文件清单 + 自测记录）
 - review 方：意见追加写 `REVIEW.md`；实施会话开工前先读它（存在的话）
+- **阶段门（双边交替，最重要的一条）**：阶段完成 = `git commit`（本地、不 push）+ 写 IMPL-NOTES + `channel_post`（摘要带 `阶段 N 完成 · commit <短 hash> · 下一步计划`）→ **停手**（turn 结束，不再调工具，等对方回话）。review 收到唤醒后跑回归/审查 → 写 REVIEW.md → **一条** post 回复（必须明确表态：放行 / 不放行·要改什么 / 放行连做哪几阶段）→ 再停手等实施回应。双方**交替推进，不并行**。
+  - 为什么：agent 的 turn 不结束，对方的 post 就送不进来（投递机制是「agent 没有更多工具调用时才送达」）；实施停手 = 工作区静止，review 的回归结论才可信；不停手就是边改边测，测到中间态等于白测。
+  - 代价是串行、少一点吞吐，换来零冲突 + 结论可信——这个取舍是本协议的前提。
+- 实施侧的完整说明在 `channel-pickup` skill（阶段门、收到回复后一次读全、例外放行）；HANDOFF 里只写结论，不重复细节。
 - spec/plan 与代码现状冲突 → 停下来在 channel 留言，**不要自由发挥**
-- **channel_post = 通知对方**：文件写入本身不产生通知。写完一组 channel 文件后 `channel_post({ topic, message })` 一条摘要（一次做完一组修改再发）；纯排版/无信息量的变更不要 post——避免无谓唤醒甚至乒乓
+- **channel_post = 通知对方**：文件写入本身不产生通知。写完一组 channel 文件后 `channel_post({ topic, message })` 一条摘要（一次做完一组修改再发）；纯排版/无信息量的变更不要 post——避免无谓唤醒甚至乒乓。**禁止碎 post 分多次回评论**：每次 post 都唤醒对方一次、逼它重启一个 turn，碎着发就是让双方反复重启。
 - **终态退订**：任务终态（验收通过/废弃）时发起方 `channel_post({ topic, message, closed: true })`；订阅方查收后 `channel_unsubscribe(topic)` 退出频道
 
 ## 第 4 步：收尾
@@ -63,6 +67,8 @@ description: 为本项目设计新功能/系统并交接给新会话实施：先
 **不要把 spec/plan 文件写进项目索引**——agent 协作产物随任务生灭、会不定期清理，索引里至多标 `.local/agent-work/` 目录一行，不标其下的 spec/plan/channel 单个文件。HANDOFF.md 里有完整路径，可发现性靠频道目录本身。项目没有索引文档？不要为此新建。
 
 交付后（用户开了实施会话后）：你用 channel_post 发的消息会自动唤醒实施会话查收——需要传达新信息时**写文件 + post 一条摘要即可**（IMPL-NOTES 回应、REVIEW 意见），不必等用户传话；但同样遵守「无信息量不 post」。
+
+**你作为 review 方的节奏**（交付后你自己也留在频道里）：收到实施「阶段 N 完成」的唤醒 → 此时工作区是静止的，正是跑回归/看 diff 的窗口（不要在这个窗口之外跑测试去赌——结论不可信）→ 写 REVIEW.md → **一条** post 回复明确表态 → 停手等实施回应。不要在实施干活期间反复 post 意见：它收不到，只会等 turn 结束后一并涌来，而那时它已经多干了一轮。
 
 回复用户：交付物清单 + 关键决策摘要 + 「新会话从 channel 的 HANDOFF.md 进」。
 
@@ -72,3 +78,5 @@ description: 为本项目设计新功能/系统并交接给新会话实施：先
 - 未验证的 API 断言直接写进设计当事实
 - HANDOFF 引用「见上面的讨论」——新会话没有上面
 - 频道高频碎 post / 无信息量 post——每次 post 都唤醒对方，乒乓就是这么烧起来的（写文件本身不通知，post 才通知）
+- 阶段干完顺手开下一阶段——review 会在流动的工作区上验证，结论作废；对方的意见也要晚一轮才到你
+- 协议里只写「post 后等 review」而不写怎么算停手——必须写死「turn 结束、不再调工具」，否则模型会顺手再干一点
