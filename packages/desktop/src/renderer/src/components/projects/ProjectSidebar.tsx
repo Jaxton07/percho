@@ -74,7 +74,7 @@ export function ProjectSidebar() {
 				<button
 					type="button"
 					className="flex w-full items-center gap-2.5 rounded-lg px-2.5 py-1.5 text-[13px] text-ink-dim transition-colors hover:bg-hover hover:text-ink"
-					onClick={() => void getPi().openExternal(APP_REPO_URL)}
+					onClick={() => void getPi().openExternal({ url: APP_REPO_URL })}
 				>
 					<HelpIcon />
 					{t("projects.help")}

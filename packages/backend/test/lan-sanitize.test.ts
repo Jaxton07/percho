@@ -1,4 +1,9 @@
-import { LAN_IMAGE_PLACEHOLDER, type SessionEvent, type SessionMessage } from "@percho/shared";
+import {
+	LAN_IMAGE_PLACEHOLDER,
+	REDUCED_EVENT_TYPES,
+	type SessionEvent,
+	type SessionMessage,
+} from "@percho/shared";
 import { describe, expect, it } from "vitest";
 import { sanitizeSessionEvent, sanitizeSessionMessage } from "../src/lan/sanitize";
 
@@ -164,5 +169,26 @@ describe("sanitizeSessionEvent", () => {
 	it("passes through simple lifecycle events unchanged", () => {
 		const event = { type: "agent_start" } as SessionEvent;
 		expect(sanitizeSessionEvent(event)).toBe(event);
+	});
+});
+
+describe("FORWARDABLE 派生自 REDUCED_EVENT_TYPES（单一事实源）", () => {
+	it("白名单 = reducer 处理集 - LAN 排除项（auto_retry_* + stream_guard_tripped），增减事件类型时两侧同步", () => {
+		// 经 sanitizeSessionEvent 行为探测（白名单不导出，行为即契约）：
+		// reducer 处理且未被排除的类型必须通过；被排除与非 reducer 类型必须被丢弃
+		const reduced = [...REDUCED_EVENT_TYPES];
+		const excluded = new Set(["auto_retry_start", "auto_retry_end", "stream_guard_tripped"]);
+		for (const type of reduced) {
+			// 最小合成事件：载荷字段可能缺失（sanitize 内部访问会抛 TypeError）——
+			// 抛错 = 白名单放行后进入转换逻辑 = 分支存在，与「被丢弃返回 null」区分
+			let pass = false;
+			try {
+				pass = sanitizeSessionEvent({ type } as SessionEvent) != null;
+			} catch {
+				pass = true;
+			}
+			expect(pass, type).toBe(!excluded.has(type));
+		}
+		expect(sanitizeSessionEvent({ type: "session_info" } as SessionEvent)).toBeNull();
 	});
 });

@@ -19,8 +19,10 @@ export interface BackgroundSettings {
 
 /** 应用 UI 状态持久化（重启恢复用，主进程写 userData/ui-state.json）：新会话复用上次的模型/思考级别；主题与背景设置 */
 export interface UiState {
-	currentModel: { provider: string; modelId: string } | null;
-	thinkingLevel: string;
+	/** 上次使用的模型（新会话/draft 起步跟随；语义 = 跟随最近选择，不是独立的「默认模型」设置） */
+	lastUsedModel: { provider: string; modelId: string } | null;
+	/** 上次使用的思考深度（同 lastUsedModel 的跟随语义） */
+	lastUsedThinkingLevel: string;
 	theme: ThemeMode;
 	background: BackgroundSettings;
 	/** 左侧会话轨道开关（聊天页左侧短线悬停展开标题，见 SessionRail；旧版本文件缺省为 false） */
@@ -83,59 +85,58 @@ export interface SessionToolCall {
 	isError: boolean;
 }
 
-/** 历史 user 消息（打开历史会话时回放用；不依赖 pi 内部类型） */
-export interface SessionUserMessage {
-	role: "user";
+/** user/assistant 历史消息公共基座（两形态同构字段收敛；专用字段在子接口） */
+interface SessionBaseMessage {
 	text: string;
 	thinking: string;
 	tools: SessionToolCall[];
-	/** user 消息附带的图片 */
+	/** 消息附带的图片 */
 	images: ImageInput[];
 	timestamp: number;
-	/** 会话树中的 entry id（撤回精确定位用，匹配失败时缺省） */
+	/** 会话树中的 entry id（撤回/fork 精确定位用，匹配失败时缺省） */
 	entryId?: string;
-	/** 已展开 skill 的安全展示信息（不含正文或路径） */
-	skill?: SkillInvocationDisplay;
-	/** 已持久化的完整文本（skill 展开或展示净化后保留）；只供撤回匹配，绝不能展示、复制或进入可访问文本 */
+	/** 已持久化的完整文本（skill 展开或展示净化后保留）；只供撤回/fork 匹配，绝不能展示、复制或进入可访问文本 */
 	sourceText?: string;
 }
 
+/** 历史 user 消息（打开历史会话时回放用；不依赖 pi 内部类型） */
+export interface SessionUserMessage extends SessionBaseMessage {
+	role: "user";
+	/** 已展开 skill 的安全展示信息（不含正文或路径） */
+	skill?: SkillInvocationDisplay;
+}
+
 /** 历史 assistant 消息（打开历史会话时回放用；不依赖 pi 内部类型） */
-export interface SessionAssistantMessage {
+export interface SessionAssistantMessage extends SessionBaseMessage {
 	role: "assistant";
-	text: string;
-	thinking: string;
-	tools: SessionToolCall[];
-	images: ImageInput[];
-	timestamp: number;
-	/** 会话树中的 entry id（fork 精确定位用，匹配失败时缺省） */
-	entryId?: string;
-	/** 已持久化的完整正文（展示净化后保留）；只供 fork fallback 匹配，绝不能展示、复制或进入可访问文本 */
-	sourceText?: string;
 	/** 停因原样透传（仅 "error" 被消费，历史回放错误卡数据源；旧会话文件无此字段 → undefined → 不产卡） */
 	stopReason?: string;
 	/** LLM 错误详情（stopReason==="error" 时存在；历史回放错误卡 detail 数据源） */
 	errorMessage?: string;
 }
 
+/** show_image 工具主动展示给用户的图片（独立消息，不进工具卡） */
+export interface SessionImageMessage {
+	role: "image";
+	images: ImageInput[];
+	/** 原文件路径（工具参数，仅调试用） */
+	paths: string[];
+	timestamp: number;
+}
+
+/** subagent 工具调用的结果（独立消息，不进工具卡折叠区） */
+export interface SessionSubagentMessage {
+	role: "subagent";
+	runs: SubagentRunData[];
+	timestamp: number;
+}
+
 /** 历史会话消息（打开历史会话时回放用；不依赖 pi 内部类型） */
 export type SessionMessage =
 	| SessionUserMessage
 	| SessionAssistantMessage
-	| {
-			/** show_image 工具主动展示给用户的图片（独立消息，不进工具卡） */
-			role: "image";
-			images: ImageInput[];
-			/** 原文件路径（工具参数，仅调试用） */
-			paths: string[];
-			timestamp: number;
-	  }
-	| {
-			/** subagent 工具调用的结果（独立消息，不进工具卡折叠区） */
-			role: "subagent";
-			runs: SubagentRunData[];
-			timestamp: number;
-	  };
+	| SessionImageMessage
+	| SessionSubagentMessage;
 
 export interface AvailableModel {
 	provider: string;

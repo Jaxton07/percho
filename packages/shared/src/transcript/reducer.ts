@@ -1,4 +1,4 @@
-import { buildLlmUiError, buildStreamGuardUiError, isUserAbortError, type UiError } from "../errors";
+import { buildStreamGuardUiError, type UiError } from "../errors";
 import type { ImageInput, SessionEvent } from "../session";
 import { parseExpandedSkillInvocation } from "../skill-invocation";
 import { extractSubagentRuns } from "../subagent";
@@ -16,7 +16,130 @@ import {
 	updateThinkingActivity,
 	updateToolActivity,
 } from "./helpers";
-import type { CompactionUiState, SessionTranscriptState, SubagentRunUi, UIMessage } from "./types";
+import { buildRoundErrorCard, isLlmErrorRound } from "./llm-errors";
+import type {
+	CompactionUiState,
+	SessionTranscriptState,
+	StreamingState,
+	SubagentRunUi,
+	UIMessage,
+	UIToolCall,
+} from "./types";
+
+/** 追加一条消息（messages 展开微样板收敛；输入 state 其余字段原样保留） */
+function appendMessage(state: SessionTranscriptState, message: UIMessage): SessionTranscriptState {
+	return { ...state, messages: [...state.messages, message] };
+}
+
+/** 流式容器变换（守卫 + spread 微样板收敛）：无容器/容器未变均返回原 state 引用（no-op 契约） */
+function withStreaming(
+	state: SessionTranscriptState,
+	fn: (streaming: StreamingState) => StreamingState,
+): SessionTranscriptState {
+	if (!state.streaming) return state;
+	const streaming = fn(state.streaming);
+	if (streaming === state.streaming) return state;
+	return { ...state, streaming };
+}
+
+/** 按 toolCallId 定点补丁工具条目（无命中原样返回） */
+function patchStreamingTool(
+	tools: UIToolCall[],
+	toolCallId: string,
+	patch: (tool: UIToolCall) => UIToolCall,
+): UIToolCall[] {
+	return tools.map((t) => (t.id === toolCallId ? patch(t) : t));
+}
+
+/** message_update 二级分派：流式容器内文本/思考/工具调用增量（无容器分支由 withStreaming 守卫） */
+/** message_update 的载荷（SDK 流式增量事件） */
+type AssistantStreamEvent = Extract<SessionEvent, { type: "message_update" }>["assistantMessageEvent"];
+
+function applyAssistantMessageUpdate(streaming: StreamingState, e: AssistantStreamEvent): StreamingState {
+	switch (e.type) {
+		case "text_delta": {
+			const text = streaming.text + e.delta;
+			return {
+				...streaming,
+				text,
+				// 首个非空正文块位置 = 正文起点锚
+				textBlockIndex: text ? (streaming.textBlockIndex ?? e.contentIndex) : null,
+			};
+		}
+		case "thinking_delta":
+			return {
+				...streaming,
+				thinking: streaming.thinking + e.delta,
+				activity: updateThinkingActivity(streaming.activity, e.contentIndex, (text) => text + e.delta),
+			};
+		case "toolcall_start": {
+			const name = toolNameFromPartial(e.partial, e.contentIndex);
+			const tools = [
+				...streaming.tools,
+				{
+					key: newToolKey(),
+					id: "",
+					name,
+					args: "",
+					output: "",
+					state: "running" as const,
+					blockIndex: e.contentIndex,
+				},
+			];
+			return {
+				...streaming,
+				tools,
+				toolByContentIndex: {
+					...streaming.toolByContentIndex,
+					[e.contentIndex]: tools.length - 1,
+				},
+				activeToolIndex: tools.length - 1,
+				activity: [
+					...streaming.activity,
+					{ id: `c${e.contentIndex}`, kind: "tool" as const, name, args: "" },
+				],
+			};
+		}
+		case "toolcall_delta": {
+			const tools = [...streaming.tools];
+			const idx =
+				streaming.toolByContentIndex[e.contentIndex] ??
+				(streaming.activeToolIndex >= 0 ? streaming.activeToolIndex : tools.length - 1);
+			const tool = tools[idx];
+			if (!tool) return streaming;
+			tools[idx] = { ...tool, args: tool.args + e.delta };
+			return {
+				...streaming,
+				tools,
+				activity: updateToolActivity(streaming.activity, e.contentIndex, (a) => a + e.delta),
+			};
+		}
+		case "toolcall_end": {
+			const tools = [...streaming.tools];
+			const idx =
+				streaming.toolByContentIndex[e.contentIndex] ??
+				(streaming.activeToolIndex >= 0 ? streaming.activeToolIndex : tools.length - 1);
+			const target = idx >= 0 ? idx : tools.findIndex((t) => t.id === e.toolCall.id);
+			const tool = tools[target];
+			if (!tool) return streaming;
+			const args = parseArgs(e.toolCall.arguments);
+			tools[target] = {
+				...tool,
+				id: e.toolCall.id,
+				name: e.toolCall.name || tool.name,
+				args,
+			};
+			const activity = streaming.activity.map((entry) =>
+				entry.id === `c${e.contentIndex}` && entry.kind === "tool"
+					? { ...entry, name: e.toolCall.name || entry.name, args }
+					: entry,
+			);
+			return { ...streaming, tools, activity, activeToolIndex: -1 };
+		}
+		default:
+			return streaming;
+	}
+}
 
 function finalizeStreaming(state: SessionTranscriptState): SessionTranscriptState {
 	const { streaming, messages } = state;
@@ -96,6 +219,32 @@ function commitLlmErrorCard(state: SessionTranscriptState, error: UiError): Sess
 }
 
 /**
+ * reducer 处理的顶层事件类型清单（与 reduceEvent switch 分支一一对应；
+ * LAN sanitize 白名单等下游从这里派生，加测试断言防漂移——见 transcript reducer 测试）。
+ */
+export const REDUCED_EVENT_TYPES = [
+	"agent_start",
+	"agent_end",
+	"agent_settled",
+	"turn_start",
+	"turn_end",
+	"message_start",
+	"message_update",
+	"tool_execution_start",
+	"tool_execution_update",
+	"tool_execution_end",
+	"queue_update",
+	"compaction_start",
+	"compaction_end",
+	"subagent_mutex",
+	"auto_retry_start",
+	"auto_retry_end",
+	"stream_guard_tripped",
+] as const;
+
+export type ReducedEventTypeName = (typeof REDUCED_EVENT_TYPES)[number];
+
+/**
  * pi 事件 → UI 状态 reducer。
  * 事件经 IPC 原样转发（AgentSessionEvent），本函数纯函数化应用。
  */
@@ -106,14 +255,16 @@ export function reduceEvent(state: SessionTranscriptState, event: SessionEvent):
 			// 先 finalize 再落卡——熔断发生在流式中途（message_update 触发），partial 正文必须先固化在卡前
 			const card = buildStreamGuardUiError(event.verdict);
 			const final = finalizeStreaming(state);
-			return {
-				...final,
-				pendingLlmError: null,
-				messages: [
-					...final.messages,
-					{ kind: "error" as const, id: newMessageId(), text: "", timestamp: card.timestamp, error: card },
-				],
-			};
+			return appendMessage(
+				{ ...final, pendingLlmError: null },
+				{
+					kind: "error" as const,
+					id: newMessageId(),
+					text: "",
+					timestamp: card.timestamp,
+					error: card,
+				},
+			);
 		}
 		case "subagent_mutex": {
 			// 同一扩展的通知只保留一条：每次 openSession 都会重发互斥事件，而 loadHistory 会保留系统通知
@@ -123,19 +274,13 @@ export function reduceEvent(state: SessionTranscriptState, event: SessionEvent):
 				)
 			)
 				return state;
-			return {
-				...state,
-				messages: [
-					...state.messages,
-					{
-						kind: "system" as const,
-						id: newMessageId(),
-						text: "",
-						timestamp: Date.now(),
-						mutex: { extensionPath: event.extensionPath, tools: event.tools },
-					},
-				],
-			};
+			return appendMessage(state, {
+				kind: "system" as const,
+				id: newMessageId(),
+				text: "",
+				timestamp: Date.now(),
+				mutex: { extensionPath: event.extensionPath, tools: event.tools },
+			});
 		}
 		case "agent_start":
 			return {
@@ -201,143 +346,43 @@ export function reduceEvent(state: SessionTranscriptState, event: SessionEvent):
 				],
 			};
 		}
-		case "message_update": {
-			const streaming = state.streaming;
-			if (!streaming) return state;
-			const e = event.assistantMessageEvent;
-			switch (e.type) {
-				case "text_delta": {
-					const text = streaming.text + e.delta;
+		case "message_update":
+			return withStreaming(state, (streaming) =>
+				applyAssistantMessageUpdate(streaming, event.assistantMessageEvent),
+			);
+		case "tool_execution_start":
+			return withStreaming(state, (streaming) => {
+				// subagent：单代理或 parallel tasks 都从折叠区移出建独立工作中行；
+				// management（action）/workflowScript（可能后台）/subagent_wait 不走独立行。
+				const startArgs = (event.args ?? {}) as {
+					action?: unknown;
+					agent?: unknown;
+					task?: unknown;
+					tasks?: Array<{ agent?: unknown; task?: unknown }>;
+				};
+				const parallelTasks = Array.isArray(startArgs.tasks) ? startArgs.tasks : [];
+				const runInputs =
+					event.toolName === "subagent" && startArgs.action == null
+						? typeof startArgs.agent === "string"
+							? [{ agent: startArgs.agent, task: startArgs.task }]
+							: parallelTasks.filter((task) => typeof task.agent === "string")
+						: [];
+				if (runInputs.length > 0) {
+					const start = streaming.subagentRuns.length;
+					const runs: SubagentRunUi[] = runInputs.map((input, index) => ({
+						key: `${event.toolCallId}:${index}`,
+						agent: typeof input.agent === "string" && input.agent.length > 0 ? input.agent : "subagent",
+						task: typeof input.task === "string" && input.task.length > 0 ? input.task : undefined,
+						status: "running",
+					}));
+					// ticker 摘条（spec §9.0）：subagent 不进 Working 预览行——toolcall_start 已在
+					// activity 留了 `c${blockIndex}` 条目，移出折叠区时同步摘除
+					const removedTool = streaming.tools.find((t) => t.id === event.toolCallId);
+					const activity =
+						removedTool?.blockIndex != null
+							? streaming.activity.filter((a) => a.id !== `c${removedTool.blockIndex}`)
+							: streaming.activity;
 					return {
-						...state,
-						streaming: {
-							...streaming,
-							text,
-							// 首个非空正文块位置 = 正文起点锚
-							textBlockIndex: text ? (streaming.textBlockIndex ?? e.contentIndex) : null,
-						},
-					};
-				}
-				case "thinking_delta":
-					return {
-						...state,
-						streaming: {
-							...streaming,
-							thinking: streaming.thinking + e.delta,
-							activity: updateThinkingActivity(streaming.activity, e.contentIndex, (text) => text + e.delta),
-						},
-					};
-				case "toolcall_start": {
-					const name = toolNameFromPartial(e.partial, e.contentIndex);
-					const tools = [
-						...streaming.tools,
-						{
-							key: newToolKey(),
-							id: "",
-							name,
-							args: "",
-							output: "",
-							state: "running" as const,
-							blockIndex: e.contentIndex,
-						},
-					];
-					const toolByContentIndex = {
-						...streaming.toolByContentIndex,
-						[e.contentIndex]: tools.length - 1,
-					};
-					return {
-						...state,
-						streaming: {
-							...streaming,
-							tools,
-							toolByContentIndex,
-							activeToolIndex: tools.length - 1,
-							activity: [
-								...streaming.activity,
-								{ id: `c${e.contentIndex}`, kind: "tool" as const, name, args: "" },
-							],
-						},
-					};
-				}
-				case "toolcall_delta": {
-					const tools = [...streaming.tools];
-					const idx =
-						streaming.toolByContentIndex[e.contentIndex] ??
-						(streaming.activeToolIndex >= 0 ? streaming.activeToolIndex : tools.length - 1);
-					const tool = tools[idx];
-					if (!tool) return state;
-					tools[idx] = { ...tool, args: tool.args + e.delta };
-					return {
-						...state,
-						streaming: {
-							...streaming,
-							tools,
-							activity: updateToolActivity(streaming.activity, e.contentIndex, (a) => a + e.delta),
-						},
-					};
-				}
-				case "toolcall_end": {
-					const tools = [...streaming.tools];
-					const idx =
-						streaming.toolByContentIndex[e.contentIndex] ??
-						(streaming.activeToolIndex >= 0 ? streaming.activeToolIndex : tools.length - 1);
-					const target = idx >= 0 ? idx : tools.findIndex((t) => t.id === e.toolCall.id);
-					const tool = tools[target];
-					if (!tool) return state;
-					const args = parseArgs(e.toolCall.arguments);
-					tools[target] = {
-						...tool,
-						id: e.toolCall.id,
-						name: e.toolCall.name || tool.name,
-						args,
-					};
-					const activity = streaming.activity.map((entry) =>
-						entry.id === `c${e.contentIndex}` && entry.kind === "tool"
-							? { ...entry, name: e.toolCall.name || entry.name, args }
-							: entry,
-					);
-					return { ...state, streaming: { ...streaming, tools, activity, activeToolIndex: -1 } };
-				}
-				default:
-					return state;
-			}
-		}
-		case "tool_execution_start": {
-			const streaming = state.streaming;
-			if (!streaming) return state;
-			// subagent：单代理或 parallel tasks 都从折叠区移出建独立工作中行；
-			// management（action）/workflowScript（可能后台）/subagent_wait 不走独立行。
-			const startArgs = (event.args ?? {}) as {
-				action?: unknown;
-				agent?: unknown;
-				task?: unknown;
-				tasks?: Array<{ agent?: unknown; task?: unknown }>;
-			};
-			const parallelTasks = Array.isArray(startArgs.tasks) ? startArgs.tasks : [];
-			const runInputs =
-				event.toolName === "subagent" && startArgs.action == null
-					? typeof startArgs.agent === "string"
-						? [{ agent: startArgs.agent, task: startArgs.task }]
-						: parallelTasks.filter((task) => typeof task.agent === "string")
-					: [];
-			if (runInputs.length > 0) {
-				const start = streaming.subagentRuns.length;
-				const runs: SubagentRunUi[] = runInputs.map((input, index) => ({
-					key: `${event.toolCallId}:${index}`,
-					agent: typeof input.agent === "string" && input.agent.length > 0 ? input.agent : "subagent",
-					task: typeof input.task === "string" && input.task.length > 0 ? input.task : undefined,
-					status: "running",
-				}));
-				// ticker 摘条（spec §9.0）：subagent 不进 Working 预览行——toolcall_start 已在
-				// activity 留了 `c${blockIndex}` 条目，移出折叠区时同步摘除
-				const removedTool = streaming.tools.find((t) => t.id === event.toolCallId);
-				const activity =
-					removedTool?.blockIndex != null
-						? streaming.activity.filter((a) => a.id !== `c${removedTool.blockIndex}`)
-						: streaming.activity;
-				return {
-					...state,
-					streaming: {
 						...streaming,
 						tools: streaming.tools.filter((t) => t.id !== event.toolCallId),
 						activity,
@@ -346,66 +391,66 @@ export function reduceEvent(state: SessionTranscriptState, event: SessionEvent):
 							...streaming.subagentByToolCallId,
 							[event.toolCallId]: { start, count: runs.length },
 						},
-					},
-				};
-			}
-			const tools = streaming.tools.map((t) =>
-				t.id === event.toolCallId ? { ...t, state: "running" as const } : t,
-			);
-			return { ...state, streaming: { ...streaming, tools } };
-		}
-		case "tool_execution_update": {
-			const streaming = state.streaming;
-			if (!streaming) return state;
-			const delta = extractExecutionDelta(event.partialResult);
-			const placement = streaming.subagentByToolCallId[event.toolCallId];
-			const progress = placement
-				? extractSubagentRuns((event.partialResult as { details?: unknown } | null | undefined)?.details)
-				: null;
-			let subagentRuns = streaming.subagentRuns;
-			if (placement && progress) {
-				// 子会话在 runner 创建后立即通过 partialResult 上报 sessionFile；只回填路径，
-				// 保住 running 状态（其 exitCode=-1，不能被 extract 的 error 判定覆盖）。
-				const next = [...subagentRuns];
-				for (const update of progress) {
-					if (!update.sessionFile) continue;
-					const index = next.findIndex(
-						(run, i) =>
-							i >= placement.start &&
-							i < placement.start + placement.count &&
-							run.sessionFile == null &&
-							run.agent === update.agent &&
-							(update.task == null || run.task === update.task),
-					);
-					const current = index >= 0 ? next[index] : undefined;
-					if (current)
-						next[index] = {
-							...current,
-							sessionFile: update.sessionFile,
-							...(update.thinkingLevel ? { thinkingLevel: update.thinkingLevel } : {}),
-						};
+					};
 				}
-				subagentRuns = next;
-			}
-			if (!delta && subagentRuns === streaming.subagentRuns) return state;
-			const rawToolOutputs = delta
-				? {
-						...streaming.rawToolOutputs,
-						[event.toolCallId]:
-							(streaming.rawToolOutputs?.[event.toolCallId] ??
-								streaming.tools.find((tool) => tool.id === event.toolCallId)?.output ??
-								"") + delta,
+				return {
+					...streaming,
+					tools: patchStreamingTool(streaming.tools, event.toolCallId, (t) => ({
+						...t,
+						state: "running" as const,
+					})),
+				};
+			});
+		case "tool_execution_update":
+			return withStreaming(state, (streaming) => {
+				const delta = extractExecutionDelta(event.partialResult);
+				const placement = streaming.subagentByToolCallId[event.toolCallId];
+				const progress = placement
+					? extractSubagentRuns((event.partialResult as { details?: unknown } | null | undefined)?.details)
+					: null;
+				let subagentRuns = streaming.subagentRuns;
+				if (placement && progress) {
+					// 子会话在 runner 创建后立即通过 partialResult 上报 sessionFile；只回填路径，
+					// 保住 running 状态（其 exitCode=-1，不能被 extract 的 error 判定覆盖）。
+					const next = [...subagentRuns];
+					for (const update of progress) {
+						if (!update.sessionFile) continue;
+						const index = next.findIndex(
+							(run, i) =>
+								i >= placement.start &&
+								i < placement.start + placement.count &&
+								run.sessionFile == null &&
+								run.agent === update.agent &&
+								(update.task == null || run.task === update.task),
+						);
+						const current = index >= 0 ? next[index] : undefined;
+						if (current)
+							next[index] = {
+								...current,
+								sessionFile: update.sessionFile,
+								...(update.thinkingLevel ? { thinkingLevel: update.thinkingLevel } : {}),
+							};
 					}
-				: streaming.rawToolOutputs;
-			const tools = delta
-				? streaming.tools.map((tool) =>
-						tool.id === event.toolCallId
-							? { ...tool, output: rawToolOutputs?.[event.toolCallId] ?? "" }
-							: tool,
-					)
-				: streaming.tools;
-			return { ...state, streaming: { ...streaming, tools, rawToolOutputs, subagentRuns } };
-		}
+					subagentRuns = next;
+				}
+				if (!delta && subagentRuns === streaming.subagentRuns) return streaming;
+				const rawToolOutputs = delta
+					? {
+							...streaming.rawToolOutputs,
+							[event.toolCallId]:
+								(streaming.rawToolOutputs?.[event.toolCallId] ??
+									streaming.tools.find((tool) => tool.id === event.toolCallId)?.output ??
+									"") + delta,
+						}
+					: streaming.rawToolOutputs;
+				const tools = delta
+					? patchStreamingTool(streaming.tools, event.toolCallId, (tool) => ({
+							...tool,
+							output: rawToolOutputs?.[event.toolCallId] ?? "",
+						}))
+					: streaming.tools;
+				return { ...streaming, tools, rawToolOutputs, subagentRuns };
+			});
 		case "tool_execution_end": {
 			// todo 工具：全量替换会话任务列表（含空数组=清空）。不随 turn_end 清理、
 			// 不被 loadHistory 重置 —— 在 streaming 守卫之前处理，容错无流式容器的情况
@@ -454,17 +499,13 @@ export function reduceEvent(state: SessionTranscriptState, event: SessionEvent):
 			}
 			// edit 工具成功 → 存 unified patch（turn-diff chip / diff 侧栏数据源）
 			const editPatch = event.toolName === "edit" && !event.isError ? extractEditPatch(event.result) : null;
-			const tools = streaming.tools.map((t) =>
-				t.id === event.toolCallId
-					? {
-							...t,
-							state: (event.isError ? "error" : "done") as "error" | "done",
-							// 执行结束时刻（轮次计时 deriveTurnTimings 的结束分量）
-							endedAt: Date.now(),
-							...(editPatch ? { diff: editPatch } : {}),
-						}
-					: t,
-			);
+			const tools = patchStreamingTool(streaming.tools, event.toolCallId, (t) => ({
+				...t,
+				state: (event.isError ? "error" : "done") as "error" | "done",
+				// 执行结束时刻（轮次计时 deriveTurnTimings 的结束分量）
+				endedAt: Date.now(),
+				...(editPatch ? { diff: editPatch } : {}),
+			}));
 			// show_image：图片先入 pendingImages 缓冲，turn_end 固化时排在 assistant 消息之后
 			const shown = event.toolName === "show_image" && !event.isError ? extractShowImage(event.result) : null;
 			return {
@@ -487,17 +528,11 @@ export function reduceEvent(state: SessionTranscriptState, event: SessionEvent):
 		case "turn_end": {
 			const final = finalizeStreaming({ ...state, phase: "idle" });
 			// LLM 错误轮：不当场落卡，挂 pending 等 agent_end 的 willRetry 判定（决策 D1：
-			// SDK 每个 retry 轮都发 turn_end(error)，只有最终失败才落卡）
+			// SDK 每个 retry 轮都发 turn_end(error)，只有最终失败才落卡；判定与 replay 路径
+			// 共用 isLlmErrorRound——live/replay 唯一事实源，llm-errors.ts）
 			const message = event.message as { role?: unknown; stopReason?: unknown; errorMessage?: unknown };
-			if (
-				message?.role === "assistant" &&
-				message.stopReason === "error" &&
-				typeof message.errorMessage === "string" &&
-				message.errorMessage.length > 0 &&
-				// 用户主动中断的取消错误（SDK 标成 error）不产卡：这是中断不是失败（见 errors.ts 判定注释）
-				!isUserAbortError(message.errorMessage)
-			) {
-				return { ...final, pendingLlmError: buildLlmUiError(message.errorMessage) };
+			if (isLlmErrorRound(message)) {
+				return { ...final, pendingLlmError: buildRoundErrorCard(message) };
 			}
 			return final;
 		}
@@ -573,7 +608,7 @@ export function reduceEvent(state: SessionTranscriptState, event: SessionEvent):
 				timestamp: Date.now(),
 				compact: info,
 			};
-			return { ...state, compacting: false, messages: [...state.messages, entry] };
+			return appendMessage({ ...state, compacting: false }, entry);
 		}
 		default:
 			return state;

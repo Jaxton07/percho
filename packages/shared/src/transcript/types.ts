@@ -29,33 +29,30 @@ export interface SubagentRunUi {
 	sessionFile?: string;
 }
 
+/** user/assistant UI 消息公共基座（两形态同构字段收敛；专用字段在分支内联） */
+interface UIBaseMessage {
+	id: string;
+	text: string;
+	timestamp: number;
+	/** 会话树 entry id（仅历史回放消息有；撤回/fork 精确定位，缺省时按文本+时间戳兑底） */
+	entryId?: string;
+	/** 完整持久化文本（skill 展开或展示净化后保留），仅供撤回/fork 匹配；绝不能渲染、复制或进入可访问文本 */
+	sourceText?: string;
+}
+
 /** 单条 UI 消息 */
 export type UIMessage =
-	| {
+	| (UIBaseMessage & {
 			kind: "user";
-			id: string;
-			text: string;
 			images: ImageInput[];
-			timestamp: number;
-			/** 会话树 entry id（仅历史回放消息有；撤回精确定位，缺省时按文本+时间戳兑底） */
-			entryId?: string;
 			/** 已展开 skill 的安全展示信息（不含正文或路径） */
 			skill?: SkillInvocationDisplay;
-			/** 完整持久化文本（skill 展开或展示净化后保留），仅供撤回匹配；绝不能渲染、复制或进入可访问文本 */
-			sourceText?: string;
-	  }
-	| {
+	  })
+	| (UIBaseMessage & {
 			kind: "assistant";
-			id: string;
-			text: string;
 			thinking: string;
 			tools: UIToolCall[];
-			timestamp: number;
-			/** 会话树 entry id（仅历史回放消息有；fork 精确定位，缺省时 fork 按正文文本兜底） */
-			entryId?: string;
-			/** 完整持久化正文（展示净化后保留），仅供 fork fallback 匹配；绝不能渲染、复制或进入可访问文本 */
-			sourceText?: string;
-	  }
+	  })
 	| {
 			/** 错误卡（live 与历史回放共用的统一报错信封；派生消息，不持久化 — text 恒为空串，渲染走 error） */
 			kind: "error";

@@ -4,17 +4,18 @@ import {
 	type LanSessionView,
 	type LanSnapshot,
 	type LanSseFrame,
-	type LanTranscript,
+	type LanTranscriptHistory,
 	messagesToUIMessages,
 	type PermissionRequest,
 	reduceEvent,
-	type SessionEvent,
 	type SessionTranscriptState,
 } from "@percho/shared";
 
-/**
+/*
  * lan-web 数据层纯函数：snapshot 种子 + SSE 帧迁移，驱动 shared transcript reducer
  * （与桌面端同一份）。与 EventSource 接线（store.ts）分离，可直接单测。
+ * 快照携带服务端投影态（含 in-flight 流式容器）——种子后事件帧无缝续接，
+ * 无需 mid-run 自愈层。
  */
 
 export type ConnStatus = "token" | "connecting" | "connected" | "reconnecting";
@@ -32,11 +33,6 @@ export interface LanAppState {
 	truncated: Record<string, boolean>;
 	/** 未决权限请求（含 requestId；perm/perm_resolved 帧驱动）。 */
 	pendingPerms: Record<string, PermissionRequest[]>;
-	/** 中途进入/重连重种子（错过 message_start，种子无流式容器）导致流式事件帧空转的会话标记。
-	 *  值 = 种子后新到的 text_delta 字节数（0 = 标记但无新正文）：ChatView 据此用 view.assistantTail
-	 *  的尾部新增后缀渲染兜底气泡（种子已含 in-flight partial 正文，整段重渲染会和消息流重复——
-	 *  只渲染增长部分）；容器重建或 run 边界时摘除。 */
-	streamHealing: Record<string, number>;
 	/** 当前选中的会话（null = 会话列表页）。 */
 	selected: string | null;
 	/** 最近一次快照的服务端帧序号（event 帧去重边界）。 */
@@ -55,27 +51,20 @@ export const initialLanState: LanAppState = {
 	transcripts: {},
 	truncated: {},
 	pendingPerms: {},
-	streamHealing: {},
 	selected: null,
 	snapshotSeq: 0,
 	seeded: false,
 };
 
-/** snapshot → 状态种子（幂等；重连重拉即整体重置自愈）。 */
+/** snapshot → 状态种子（幂等；重连重拉即整体重置自愈）。
+ *  transcripts 直接取服务端投影态（shared reducer 驱动、含 in-flight 流式容器）。 */
 export function seedSessions(state: LanAppState, snap: LanSnapshot): Partial<LanAppState> {
 	const views: Record<string, LanSessionView> = {};
 	for (const view of snap.views) views[view.sessionId] = view;
 	const transcripts: Record<string, SessionTranscriptState> = {};
 	const truncated: Record<string, boolean> = {};
 	for (const entry of snap.transcripts) {
-		const view = views[entry.sessionId];
-		transcripts[entry.sessionId] = {
-			...emptyTranscript(),
-			messages: messagesToUIMessages(entry.messages),
-			agentActive: view?.agentActive ?? false,
-			compacting: view?.compacting ?? false,
-			todos: view?.todos ?? [],
-		};
+		transcripts[entry.sessionId] = entry.state;
 		truncated[entry.sessionId] = entry.truncated;
 	}
 	// 保留 selected（仍存在的话），否则回落到列表页
@@ -83,8 +72,7 @@ export function seedSessions(state: LanAppState, snap: LanSnapshot): Partial<Lan
 		state.selected && (views[state.selected] || snap.list.some((s) => s.sessionId === state.selected))
 			? state.selected
 			: null;
-	// 未决权限种子（perm 帧的补充；快照权威 → 整体重置）；healing 标记一并清除：
-	// 重种子自带完整消息，旧标记只会让兜底气泡与消息流重复（首个空转 delta 会按需重新标记）
+	// 未决权限种子（perm 帧的补充；快照权威 → 整体重置）
 	const pendingPerms: Record<string, PermissionRequest[]> = {};
 	for (const request of snap.pendingPermissions ?? []) {
 		const bucket = pendingPerms[request.sessionId] ?? [];
@@ -97,37 +85,11 @@ export function seedSessions(state: LanAppState, snap: LanSnapshot): Partial<Lan
 		transcripts,
 		truncated,
 		pendingPerms,
-		streamHealing: {},
 		selected,
 		snapshotSeq: snap.snapshotSeq,
 		remoteControl: snap.remoteControl,
 		seeded: true,
 	};
-}
-
-/** 无流式容器时在 reducer 空转、据此判定「中途进入」的事件类型。 */
-const ORPHAN_EVENT_TYPES = new Set([
-	"message_update",
-	"tool_execution_start",
-	"tool_execution_update",
-	"tool_execution_end",
-	"turn_end",
-]);
-
-/** run 提交/终态边界：streamHealing 态下到达 → 摘标记 + 接线层立即重拉快照取回已提交消息。 */
-export const ORPHAN_BOUNDARY_TYPES = new Set(["turn_end", "agent_end", "agent_settled"]);
-
-/** healing 标记初始化：text_delta 帧触发的空转记下其字节数（它就是种子后的第一段新增正文）。 */
-function healingCounterInit(event: SessionEvent): number {
-	return event.type === "message_update" && event.assistantMessageEvent.type === "text_delta"
-		? event.assistantMessageEvent.delta.length
-		: 0;
-}
-
-/** 兑底气泡差量：从投影 assistantTail 尾部截取种子后新增的 freshBytes 字节（0/空 → 空串不渲染）。 */
-export function healingTailSuffix(tail: string | null | undefined, freshBytes: number): string {
-	if (!tail || freshBytes <= 0) return "";
-	return tail.slice(-Math.min(freshBytes, tail.length));
 }
 
 /** SSE 帧 → 状态迁移（event 帧带 seq 去重；view/list 全量幂等）。 */ export function applyFrame(
@@ -140,64 +102,18 @@ export function healingTailSuffix(tail: string | null | undefined, freshBytes: n
 			return {}; // 心跳不携带状态（判活由接线层 lastFrameAt 记录）
 		case "list":
 			return { list: frame.data.list };
-		case "view": {
-			const { sessionId, view } = frame.data;
-			const prev = state.transcripts[sessionId];
-			// view 帧携带状态位；活跃会话的 transcript 同步状态位/todos
-			const transcripts = prev
-				? {
-						...state.transcripts,
-						[sessionId]: {
-							...prev,
-							agentActive: view.agentActive,
-							compacting: view.compacting,
-							todos: view.todos,
-						},
-					}
-				: state.transcripts;
-			return { views: { ...state.views, [sessionId]: view }, transcripts };
-		}
+		case "view":
+			// view 帧 = 服务端派生视图快照（六状态字段都从服务端投影派生，客户端 transcript 即权威态，
+			// 无需回写状态位——投影与服务端 reducer 同源，双写只会制造第二事实源）
+			return { views: { ...state.views, [frame.data.sessionId]: frame.data.view } };
 		case "event": {
 			const { sessionId, event, seq } = frame.data;
 			// 快照去重边界：效果已含在快照种子内
 			if (seq <= state.snapshotSeq) return {};
-			const known = state.transcripts[sessionId] != null;
+			if (state.transcripts[sessionId] == null) return {};
 			const prev = state.transcripts[sessionId] ?? emptyTranscript();
 			const next = reduceEvent(prev, event);
-			const healing = state.streamHealing[sessionId];
-			if (next === prev) {
-				if (!known) return {};
-				if (healing == null) {
-					// 中途进入/重连重种子错过 message_start：流式帧空转 → 标记兜底。
-					// 仅 run 进行中（view.agentActive）才标：空闲会话的陈旧帧不值得标，也不该触发边界重拉
-					if (
-						!prev.streaming &&
-						state.views[sessionId]?.agentActive === true &&
-						ORPHAN_EVENT_TYPES.has(event.type)
-					) {
-						return {
-							streamHealing: { ...state.streamHealing, [sessionId]: healingCounterInit(event) },
-						};
-					}
-					return {};
-				}
-				// healing 中继续空转：text_delta 累加新鲜字节数（气泡只渲染增长后缀，防正文重复）
-				if (event.type === "message_update" && event.assistantMessageEvent.type === "text_delta") {
-					return {
-						streamHealing: {
-							...state.streamHealing,
-							[sessionId]: healing + event.assistantMessageEvent.delta.length,
-						},
-					};
-				}
-				return {};
-			}
-			// 容器重建（agent_start/turn_start/message_start）或 run 边界 → 摘标记
-			if (healing != null && (next.streaming != null || ORPHAN_BOUNDARY_TYPES.has(event.type))) {
-				const streamHealing = { ...state.streamHealing };
-				delete streamHealing[sessionId];
-				return { transcripts: { ...state.transcripts, [sessionId]: next }, streamHealing };
-			}
+			if (next === prev) return {};
 			return { transcripts: { ...state.transcripts, [sessionId]: next } };
 		}
 		case "perm": {
@@ -220,8 +136,8 @@ export function healingTailSuffix(tail: string | null | undefined, freshBytes: n
 	}
 }
 
-/** 单会话 transcript 按需种子（历史会话点开时拉取；已有种子/流式进行时不覆盖）。 */
-export function seedTranscript(state: LanAppState, entry: LanTranscript): Partial<LanAppState> {
+/** 单会话 transcript 按需种子（历史会话点开时拉取；已有种子不覆盖）。 */
+export function seedTranscript(state: LanAppState, entry: LanTranscriptHistory): Partial<LanAppState> {
 	if (state.transcripts[entry.sessionId]) return {};
 	const view = state.views[entry.sessionId];
 	return {

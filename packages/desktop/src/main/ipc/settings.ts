@@ -1,94 +1,39 @@
 import type { PiBackend } from "@percho/backend";
-import type {
-	CustomProviderInput,
-	CustomProviderUpdateInput,
-	ListProvidersOptions,
-	PermissionAnswer,
-} from "@percho/shared";
-import { IpcChannels } from "@percho/shared";
-import { ipcMain } from "electron";
+import { SETTINGS_CHANNELS } from "@percho/shared";
+import { registerInvokeHandlers } from "./invoke";
 
 /** 设置域：provider 设置 + 权限门控配置 + 项目信任应答 */
 export function registerSettingsIpc(backend: PiBackend): void {
-	ipcMain.handle(IpcChannels.SettingsListProviders, (_e, options?: ListProvidersOptions) =>
-		backend.settings.listProviders(options),
-	);
-	ipcMain.handle(IpcChannels.SettingsSaveApiKey, (_e, providerId: string, key: string) =>
-		backend.settings.saveApiKey(providerId, key),
-	);
-	ipcMain.handle(IpcChannels.SettingsRemoveCredential, (_e, providerId: string) =>
-		backend.settings.removeCredential(providerId),
-	);
-	ipcMain.handle(IpcChannels.SettingsAddCustomProvider, (_e, input: CustomProviderInput) =>
-		backend.settings.addCustomProvider(input),
-	);
-	ipcMain.handle(IpcChannels.SettingsUpdateCustomProvider, (_e, input: CustomProviderUpdateInput) =>
-		backend.settings.updateCustomProvider(input),
-	);
-	ipcMain.handle(IpcChannels.SettingsRemoveCustomProvider, (_e, providerId: string) =>
-		backend.settings.removeCustomProvider(providerId),
-	);
-	ipcMain.handle(
-		IpcChannels.SettingsSetProviderBaseUrl,
-		(_e, providerId: string, baseUrl: string, apiKey?: string) =>
+	registerInvokeHandlers(SETTINGS_CHANNELS, {
+		listProviders: ({ options }) => backend.settings.listProviders(options),
+		saveApiKey: ({ providerId, key }) => backend.settings.saveApiKey(providerId, key),
+		removeCredential: ({ providerId }) => backend.settings.removeCredential(providerId),
+		addCustomProvider: ({ input }) => backend.settings.addCustomProvider(input),
+		updateCustomProvider: ({ input }) => backend.settings.updateCustomProvider(input),
+		removeCustomProvider: ({ providerId }) => backend.settings.removeCustomProvider(providerId),
+		setProviderBaseUrl: ({ providerId, baseUrl, apiKey }) =>
 			backend.settings.setProviderBaseUrl(providerId, baseUrl, apiKey),
-	);
-	ipcMain.handle(IpcChannels.SettingsTestProvider, (_e, providerId: string, modelId?: string) =>
-		backend.settings.testProvider(providerId, modelId),
-	);
-	ipcMain.handle(IpcChannels.SettingsGetModelPrefs, () => backend.getModelPrefs());
-	ipcMain.handle(
-		IpcChannels.SettingsSetModelHidden,
-		(_e, provider: string, modelId: string, hidden: boolean) =>
-			backend.setModelHidden(provider, modelId, hidden),
-	);
-	ipcMain.handle(
-		IpcChannels.SettingsSetModelsHidden,
-		(_e, provider: string, modelIds: string[], hidden: boolean) =>
-			backend.setModelsHidden(provider, modelIds, hidden),
-	);
-	ipcMain.handle(IpcChannels.SettingsSetSubagentModel, (_e, agent: string, modelRef: string | null) =>
-		backend.setSubagentModel(agent, modelRef),
-	);
-	ipcMain.handle(IpcChannels.SettingsSetSubagentThinking, (_e, agent: string, level: string | null) =>
-		backend.setSubagentThinking(agent, level),
-	);
-	ipcMain.handle(IpcChannels.SettingsSetSubagentPreferBuiltin, (_e, enabled: boolean) =>
-		backend.setSubagentPreferBuiltin(enabled),
-	);
-	ipcMain.handle(IpcChannels.SettingsListSubagents, () => backend.listSubagents());
-	ipcMain.handle(IpcChannels.SettingsLoginStart, (_e, loginId: string, providerId: string) =>
-		backend.login.startLogin(loginId, providerId),
-	);
-	ipcMain.handle(IpcChannels.SettingsLoginCancel, (_e, loginId: string) => backend.login.cancel(loginId));
-	ipcMain.handle(IpcChannels.SettingsLoginRespond, (_e, loginId: string, promptId: string, value: string) =>
-		backend.login.respond(loginId, promptId, value),
-	);
-	ipcMain.handle(IpcChannels.PermissionRespond, (_e, requestId: string, answer: PermissionAnswer) =>
-		backend.respondPermission(requestId, answer),
-	);
-	ipcMain.handle(IpcChannels.PermissionGetConfig, () => backend.getPermissionConfig());
-	ipcMain.handle(IpcChannels.PermissionGetMode, (_e, sessionId: string) =>
-		backend.getSessionPermissionMode(sessionId),
-	);
-	ipcMain.handle(IpcChannels.PermissionSetMode, (_e, sessionId: string, mode: unknown) => {
-		if (mode !== "default" && mode !== "fullAccess") {
-			throw new Error(`invalid permission mode: ${String(mode)}`);
-		}
-		backend.setSessionPermissionMode(sessionId, mode);
+		testProvider: ({ providerId, modelId }) => backend.settings.testProvider(providerId, modelId),
+		getModelPrefs: () => backend.modelPrefs.getPrefs(),
+		setModelHidden: ({ provider, modelId, hidden }) =>
+			backend.modelPrefs.setModelHidden(provider, modelId, hidden),
+		setModelsHidden: ({ provider, modelIds, hidden }) =>
+			backend.modelPrefs.setModelsHidden(provider, modelIds, hidden),
+		setSubagentModel: ({ agent, modelRef }) => backend.modelPrefs.setSubagentModel(agent, modelRef),
+		setSubagentThinking: ({ agent, level }) => backend.modelPrefs.setSubagentThinking(agent, level),
+		setSubagentPreferBuiltin: ({ enabled }) => backend.modelPrefs.setSubagentPreferBuiltin(enabled),
+		listSubagents: () => backend.listSubagents(),
+		startProviderLogin: ({ loginId, providerId }) => backend.login.startLogin(loginId, providerId),
+		cancelProviderLogin: ({ loginId }) => backend.login.cancel(loginId),
+		respondProviderLogin: ({ loginId, promptId, value }) => backend.login.respond(loginId, promptId, value),
+		respondPermission: ({ requestId, answer }) => backend.respondPermission(requestId, answer),
+		getPermissionConfig: () => backend.getPermissionConfig(),
+		getPermissionMode: ({ sessionId }) => backend.getSessionPermissionMode(sessionId),
+		setPermissionMode: ({ sessionId, mode }) => backend.setSessionPermissionMode(sessionId, mode),
+		getContextManagerConfig: () => backend.getContextManagerConfig(),
+		setContextManagerMode: ({ mode }) => backend.setContextManagerMode(mode),
+		getChannelWatchConfig: () => backend.getChannelWatchConfig(),
+		setChannelWatchEnabled: ({ enabled }) => backend.setChannelWatchEnabled(enabled),
+		respondTrust: ({ requestId, answer }) => backend.respondTrust(requestId, answer),
 	});
-	ipcMain.handle(IpcChannels.ContextManagerGetConfig, () => backend.getContextManagerConfig());
-	ipcMain.handle(IpcChannels.ContextManagerSetMode, (_e, mode: unknown) => {
-		if (mode !== "evaporation" && mode !== "off") {
-			throw new Error(`invalid context manager mode: ${String(mode)}`);
-		}
-		backend.setContextManagerMode(mode);
-	});
-	ipcMain.handle(IpcChannels.ChannelWatchGetConfig, () => backend.getChannelWatchConfig());
-	ipcMain.handle(IpcChannels.ChannelWatchSetEnabled, (_e, enabled: boolean) =>
-		backend.setChannelWatchEnabled(enabled),
-	);
-	ipcMain.handle(IpcChannels.TrustRespond, (_e, requestId: string, answer: number) =>
-		backend.respondTrust(requestId, answer),
-	);
 }

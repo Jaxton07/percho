@@ -9,16 +9,23 @@ function uiStateFilePath(): string {
 	return join(app.getPath("userData"), "ui-state.json");
 }
 
-function uiStateStore(): JsonStore<Partial<UiState> | null> {
-	return new JsonStore<Partial<UiState> | null>({
+/** 旧版（2026-09 前）文件字段：读取时迁移进 lastUsed*，下次保存随 normalize 重建自然清除 */
+type UiStateFileShape = Partial<UiState> & {
+	currentModel?: { provider: string; modelId: string } | null;
+	thinkingLevel?: string;
+};
+
+function uiStateStore(): JsonStore<UiStateFileShape | null> {
+	return new JsonStore<UiStateFileShape | null>({
 		path: uiStateFilePath(),
 		defaultValue: () => null,
 	});
 }
 
 /** 字段校验 + 默认值填充（旧版本文件缺 theme/background 时补齐） */
-function normalize(parsed: Partial<UiState>): UiState {
-	const model = parsed.currentModel;
+function normalize(parsed: UiStateFileShape): UiState {
+	const model = parsed.lastUsedModel ?? parsed.currentModel;
+	const level = parsed.lastUsedThinkingLevel ?? parsed.thinkingLevel;
 	const theme =
 		parsed.theme === "light" || parsed.theme === "dark" || parsed.theme === "system"
 			? parsed.theme
@@ -27,8 +34,8 @@ function normalize(parsed: Partial<UiState>): UiState {
 	const dim =
 		typeof background?.dim === "number" && background.dim >= 0 && background.dim <= 1 ? background.dim : 0.8;
 	return {
-		currentModel: model ? { provider: model.provider, modelId: model.modelId } : null,
-		thinkingLevel: typeof parsed.thinkingLevel === "string" ? parsed.thinkingLevel : "medium",
+		lastUsedModel: model ? { provider: model.provider, modelId: model.modelId } : null,
+		lastUsedThinkingLevel: typeof level === "string" ? level : "medium",
 		theme,
 		background: { image: typeof background?.image === "string" ? background.image : null, dim },
 		sessionRailEnabled: typeof parsed.sessionRailEnabled === "boolean" ? parsed.sessionRailEnabled : false,
@@ -40,7 +47,7 @@ function normalize(parsed: Partial<UiState>): UiState {
 export async function loadUiState(): Promise<UiState | null> {
 	const parsed = await uiStateStore().read();
 	if (!parsed) return null;
-	const model = parsed.currentModel;
+	const model = parsed.lastUsedModel ?? parsed.currentModel;
 	if (model && typeof model.provider !== "string") return null;
 	if (model && typeof model.modelId !== "string") return null;
 	return normalize(parsed);

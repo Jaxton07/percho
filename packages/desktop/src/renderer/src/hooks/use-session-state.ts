@@ -1,5 +1,19 @@
+import type { AvailableModel } from "@percho/shared";
 import { useSessionsStore } from "../stores/sessions";
 import { useTranscriptStore } from "../stores/transcript";
+
+/**
+ * 当前生效模型的完整信息（D4 收拢点）：会话覆写 ?? 全局默认 → models 表解析。
+ * Composer（图片门控）/ ModelPicker / ThinkingPicker 三处共用，替代各自手写解析。
+ */
+export function useActiveModelInfo(): AvailableModel | undefined {
+	return useSessionsStore((s) => {
+		const sessionModel = s.sessions.find((x) => x.sessionId === s.activeSessionId)?.model;
+		const effective = sessionModel ?? s.lastUsedModel;
+		if (!effective) return undefined;
+		return s.models.find((m) => m.provider === effective.provider && m.id === effective.modelId);
+	});
+}
 
 /** 活跃会话是否只读（subagent 产物检视）；无会话 = false */
 export function useSessionReadOnly(): boolean {

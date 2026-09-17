@@ -35,7 +35,7 @@ export function useContextUsage(sessionId: string | null): ContextUsageInfo | nu
 			return;
 		}
 		try {
-			const next = await getPi().getContextUsage(sessionId);
+			const next = await getPi().getContextUsage({ sessionId });
 			if (!cancelledRef.current) setUsage(next);
 		} catch {
 			if (!cancelledRef.current) setUsage(null);

@@ -75,7 +75,7 @@ export const useProviderLoginStore = create<ProviderLoginStore>((set, get) => ({
 				set({ login: { ...state, authUrl: { url: event.url, instructions: event.instructions } } });
 				if (!browserOpened) {
 					browserOpened = true;
-					void getPi().openExternal(event.url);
+					void getPi().openExternal({ url: event.url });
 				}
 			} else if (event.type === "device_code") {
 				set({
@@ -95,7 +95,7 @@ export const useProviderLoginStore = create<ProviderLoginStore>((set, get) => ({
 			}
 		});
 		try {
-			const result = await getPi().startProviderLogin(loginId, provider.id);
+			const result = await getPi().startProviderLogin({ loginId, providerId: provider.id });
 			if (result.ok) {
 				set({ login: null });
 				// 凭证已持久化并同步运行时：刷新 provider 徽章 + 模型选择器
@@ -136,7 +136,7 @@ export const useProviderLoginStore = create<ProviderLoginStore>((set, get) => ({
 		if (!state?.pendingPrompt) return;
 		const { promptId } = state.pendingPrompt;
 		try {
-			await getPi().respondProviderLogin(state.loginId, promptId, value);
+			await getPi().respondProviderLogin({ loginId: state.loginId, promptId, value });
 			set((s) => {
 				if (!s.login?.pendingPrompt || s.login.pendingPrompt.promptId !== promptId) return {};
 				return { login: { ...s.login, pendingPrompt: undefined } };
@@ -150,7 +150,7 @@ export const useProviderLoginStore = create<ProviderLoginStore>((set, get) => ({
 	cancelProviderLogin: () => {
 		const state = get().login;
 		if (!state) return;
-		void getPi().cancelProviderLogin(state.loginId);
+		void getPi().cancelProviderLogin({ loginId: state.loginId });
 	},
 
 	dismissLogin: () => set({ login: null }),

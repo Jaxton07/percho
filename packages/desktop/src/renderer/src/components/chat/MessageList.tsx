@@ -125,14 +125,35 @@ export function MessageList() {
 	// 行序列由 shared buildChatRows 产出（与 lan-web 同一分组大脑）；此处只做行模型 → JSX 映射。
 	// useMemo：滚动/跟随等本组件局部 state 翻转不重跑（历史长会话单次 ~60µs+）；transcript 每
 	// 次变更（合流后 ≤ 1 次/帧）重跑一次是预期成本；turnChanges/turnTimings/enteringTurn 是轮末行输入
+	// 订阅收窄（ChatRowsInput）：rows 只随 messages/streaming/agentActive/runEndedAt 重算——
+	// todos/pendingPermissions 等同会话其它字段更新（新 entry 引用）不再触发全量 buildChatRows
 	const rows = useMemo(
 		() =>
-			buildChatRows(transcript, String(activeSessionId), Date.now(), {
-				turnChanges,
-				turnTimings,
-				enteringTurn,
-			}),
-		[transcript, activeSessionId, turnChanges, turnTimings, enteringTurn],
+			buildChatRows(
+				{
+					messages: transcript.messages,
+					streaming,
+					agentActive: transcript.agentActive,
+					runEndedAt: transcript.runEndedAt,
+				},
+				String(activeSessionId),
+				Date.now(),
+				{
+					turnChanges,
+					turnTimings,
+					enteringTurn,
+				},
+			),
+		[
+			transcript.messages,
+			streaming,
+			transcript.agentActive,
+			transcript.runEndedAt,
+			activeSessionId,
+			turnChanges,
+			turnTimings,
+			enteringTurn,
+		],
 	);
 
 	// —— 挂载窗口 ——
@@ -187,9 +208,10 @@ export function MessageList() {
 	};
 
 	// 补挂的锚定交给**浏览器滚动锚定**（容器不能加 overflow-anchor: none）：新行整块插在视口上方，
-	// 浏览器会自己把 scrollTop 补回来，且**异步定型的内容**（markdown 先渲染 600px 占位条再收成真实高度、
-	// 图片/monaco 迟到）引起的视口上方高度变化它也会一并补偿——手写补偿只看提交那一刻的高度，
+	// 浏览器会自己把 scrollTop 补回来，且**异步定型的内容**（monaco 迟到定型、图片加载）引起的
+	// 视口上方高度变化它也会一并补偿——手写补偿只看提交那一刻的高度，
 	// 定型后内容变矮会把位置往下钳，钳到底部还会被误判成「用户到底」而复活跟随（用户会感到上滚被反复拽回底部）。
+	// （markstream 容器原本的 content-visibility 600px 估值占位也是这类异步高度源，已在 globals.css 关掉）
 	// 这里只兜底一种情况：Chromium 在 scrollTop === 0 时不调整锚点（到顶了没地方调），此时按锚点的
 	// 视口位置漂移补差；浏览器已经钉住时 drift === 0，本段是 no-op，不会与它叠加。
 	// 顺带补一屏下限：窗口里的行特别矮（连续折叠行）时内容填不满视口，继续补挂直到填满或到顶。

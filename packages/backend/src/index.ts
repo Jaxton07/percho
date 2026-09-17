@@ -9,9 +9,9 @@ export {
 	applyEvent as applyLanEvent,
 	applyPermissionRequest as applyLanPermissionRequest,
 	applyPermissionResolved as applyLanPermissionResolved,
-	type LanPendingPermission,
-	type LanSessionRuntime,
-	seedView as seedLanView,
+	deriveView as deriveLanView,
+	type SessionProjection,
+	seedProjection as seedLanProjection,
 } from "./lan/projector";
 export { type LanObserverBackend, LanObserverServer, type LanObserverServerOptions } from "./lan/server";
 export { createLogger, initLogging, type Logger } from "./log";

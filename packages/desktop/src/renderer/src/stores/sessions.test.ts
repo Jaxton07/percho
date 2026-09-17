@@ -13,10 +13,11 @@ const piMock = vi.hoisted(() => ({
 	ensureProjectTrust: vi.fn(() => Promise.resolve(true)),
 	openSession: vi.fn(),
 	forkSession: vi.fn(),
-	getSessionMessages: vi.fn(),
+	getSessionMessages: vi.fn(() => Promise.resolve([])),
 	getFollowUpMessages: vi.fn(() => Promise.resolve([])),
 	getTodos: vi.fn(() => Promise.resolve([])),
 	getPermissionMode: vi.fn(() => Promise.resolve("default" as const)),
+	setPermissionMode: vi.fn(() => Promise.resolve()),
 }));
 vi.mock("../api", () => ({ getPi: () => piMock }));
 
@@ -41,8 +42,10 @@ function resetStore() {
 		activeSessionId: null,
 		cwd: null,
 		models: [],
-		currentModel: null,
-		thinkingLevel: "medium",
+		lastUsedModel: null,
+		lastUsedThinkingLevel: "medium",
+		trustVersion: 0,
+		permissionModes: {},
 	});
 }
 
@@ -118,15 +121,16 @@ describe("draft 转正（createSession + replaceDraftId）", () => {
 		await useSessionsStore.getState().createSession("/proj/b", draftId);
 
 		const state = useSessionsStore.getState();
-		expect(piMock.createSession).toHaveBeenCalledWith({ cwd: "/proj/b", thinkingLevel: "medium" });
+		expect(piMock.createSession).toHaveBeenCalledWith({
+			options: { cwd: "/proj/b", thinkingLevel: "medium" },
+		});
 		expect(state.sessions).toHaveLength(2);
 		expect(state.sessions[1]?.sessionId).toBe("real-1");
 		expect(state.sessions[1]?.cwd).toBe("/proj/b");
 		expect(state.activeSessionId).toBe("real-1");
 		// 转正后落盘 tabs.json
 		expect(piMock.saveTabs).toHaveBeenCalledWith({
-			files: ["/tmp/real-1.jsonl"],
-			activeFile: "/tmp/real-1.jsonl",
+			tabs: { files: ["/tmp/real-1.jsonl"], activeFile: "/tmp/real-1.jsonl" },
 		});
 	});
 
@@ -164,7 +168,7 @@ describe("closeSession", () => {
 	it("关闭真实会话：正常走后端并落盘", async () => {
 		useSessionsStore.setState({ sessions: [realMeta("r1", "/proj/a")], activeSessionId: "r1" });
 		await useSessionsStore.getState().closeSession("r1");
-		expect(piMock.closeSession).toHaveBeenCalledWith("r1");
+		expect(piMock.closeSession).toHaveBeenCalledWith({ sessionId: "r1" });
 		expect(piMock.saveTabs).toHaveBeenCalled();
 	});
 
@@ -284,8 +288,7 @@ describe("reorderSessions（拖拽排序）", () => {
 		]);
 		// files 只含真实会话，顺序 = 去掉 draft 后的视觉序
 		expect(piMock.saveTabs).toHaveBeenCalledWith({
-			files: ["/tmp/b.jsonl", "/tmp/a.jsonl"],
-			activeFile: null,
+			tabs: { files: ["/tmp/b.jsonl", "/tmp/a.jsonl"], activeFile: null },
 		});
 	});
 
@@ -310,13 +313,112 @@ describe("reorderSessions（拖拽排序）", () => {
 });
 
 describe("模型/思考级别", () => {
-	it("draft 下切换模型：只更新全局默认与 draft 条目，不调后端 setModel", async () => {
+	it("draft 下切换模型：只记跟随值与 draft 条目，不调后端 setModel", async () => {
 		useSessionsStore.getState().createDraftSession("/proj/a");
 		await useSessionsStore.getState().setCurrentModel("p", "m");
 		const state = useSessionsStore.getState();
 		expect(piMock.setModel).not.toHaveBeenCalled();
-		expect(state.currentModel).toEqual({ provider: "p", modelId: "m" });
+		expect(state.lastUsedModel).toEqual({ provider: "p", modelId: "m" });
 		expect(state.sessions[0]?.model).toEqual({ provider: "p", modelId: "m" });
 		expect(piMock.saveUiState).toHaveBeenCalled();
+	});
+});
+
+describe("乐观会话设置（optimisticSessionSetting 骨架）", () => {
+	it("切模型成功：跟随值 + 会话条目乐观更新，ui-state 持久化", async () => {
+		useSessionsStore.setState({
+			models: [{ provider: "deepseek", providerName: "DeepSeek", id: "v4", label: "V4", authed: true }],
+			sessions: [realMeta("s1", "/p")],
+			activeSessionId: "s1",
+		});
+		await useSessionsStore.getState().setCurrentModel("deepseek", "v4");
+		expect(piMock.setModel).toHaveBeenCalledWith({ sessionId: "s1", provider: "deepseek", modelId: "v4" });
+		expect(useSessionsStore.getState().lastUsedModel).toEqual({ provider: "deepseek", modelId: "v4" });
+		expect(useSessionsStore.getState().sessions[0]?.model).toEqual({ provider: "deepseek", modelId: "v4" });
+		expect(piMock.saveUiState).toHaveBeenCalledWith({
+			state: { lastUsedModel: { provider: "deepseek", modelId: "v4" }, lastUsedThinkingLevel: "medium" },
+		});
+	});
+
+	it("切模型失败：跟随值 + 会话条目整体回滚，ui-state 以旧值重新持久化", async () => {
+		const previousModel = { provider: "deepseek", modelId: "v4" };
+		useSessionsStore.setState({
+			models: [
+				{ provider: "anthropic", providerName: "Anthropic", id: "sonnet", label: "Sonnet", authed: true },
+			],
+			sessions: [{ ...realMeta("s1", "/p"), model: previousModel, thinkingLevel: "high" }],
+			activeSessionId: "s1",
+			lastUsedModel: previousModel,
+			lastUsedThinkingLevel: "high",
+		});
+		piMock.setModel.mockRejectedValueOnce(new Error("no key"));
+		await useSessionsStore.getState().setCurrentModel("anthropic", "sonnet");
+		expect(useSessionsStore.getState().lastUsedModel).toEqual(previousModel);
+		expect(useSessionsStore.getState().lastUsedThinkingLevel).toBe("high");
+		expect(useSessionsStore.getState().sessions[0]?.model).toEqual(previousModel);
+		expect(useSessionsStore.getState().sessions[0]?.thinkingLevel).toBe("high");
+		expect(piMock.saveUiState).toHaveBeenLastCalledWith({
+			state: { lastUsedModel: previousModel, lastUsedThinkingLevel: "high" },
+		});
+	});
+
+	it("切思考深度失败：回滚（setThinkingLevel 路径同骨架）", async () => {
+		useSessionsStore.setState({
+			sessions: [{ ...realMeta("s1", "/p"), thinkingLevel: "low" }],
+			activeSessionId: "s1",
+			lastUsedThinkingLevel: "low",
+		});
+		piMock.setThinkingLevel.mockRejectedValueOnce(new Error("boom"));
+		await useSessionsStore.getState().setThinkingLevel("high");
+		expect(useSessionsStore.getState().lastUsedThinkingLevel).toBe("low");
+		expect(useSessionsStore.getState().sessions[0]?.thinkingLevel).toBe("low");
+	});
+});
+
+describe("permissionModes「缺 key = default」语义", () => {
+	it("真实会话乐观置非 default，失败回滚到 default 时删 key", async () => {
+		useSessionsStore.setState({ sessions: [realMeta("s1", "/p")], activeSessionId: "s1" });
+		piMock.setPermissionMode.mockRejectedValueOnce(new Error("boom"));
+		await useSessionsStore.getState().setSessionPermissionMode("s1", "fullAccess");
+		expect(useSessionsStore.getState().permissionModes).toEqual({});
+	});
+
+	it("成功置 default = 显式删 key（不留 'default' 字面值）", async () => {
+		useSessionsStore.setState({
+			sessions: [realMeta("s1", "/p")],
+			activeSessionId: "s1",
+			permissionModes: { s1: "fullAccess" },
+		});
+		await useSessionsStore.getState().setSessionPermissionMode("s1", "default");
+		expect(useSessionsStore.getState().permissionModes).toEqual({});
+		expect(piMock.setPermissionMode).toHaveBeenCalledWith({ sessionId: "s1", mode: "default" });
+	});
+
+	it("draft 会话模式纯 renderer：不调 IPC", async () => {
+		const draftId = `${DRAFT_SESSION_PREFIX}x`;
+		useSessionsStore.setState({ sessions: [realMeta(draftId, "/p")], activeSessionId: draftId });
+		await useSessionsStore.getState().setSessionPermissionMode(draftId, "fullAccess");
+		expect(useSessionsStore.getState().permissionModes).toEqual({ [draftId]: "fullAccess" });
+		expect(piMock.setPermissionMode).not.toHaveBeenCalled();
+	});
+});
+
+describe("switchSession 懒加载兑底", () => {
+	it("目标会话无 transcript 数据时补拉四件套；已有数据不重复拉取", async () => {
+		useSessionsStore.setState({
+			sessions: [realMeta("s1", "/p"), realMeta("s2", "/p")],
+			activeSessionId: "s2",
+		});
+		// s2 有数据（已有 entry）→ 切换不触发补拉
+		useTranscriptStore.getState().setFollowUpQueue("s2", ["pending"]);
+		piMock.getSessionMessages.mockClear();
+		useSessionsStore.getState().switchSession("s2");
+		await vi.waitFor(() => expect(useSessionsStore.getState().activeSessionId).toBe("s2"));
+		expect(piMock.getSessionMessages).not.toHaveBeenCalled();
+
+		// s1 无任何 entry → 切换触发补拉
+		useSessionsStore.getState().switchSession("s1");
+		await vi.waitFor(() => expect(piMock.getSessionMessages).toHaveBeenCalledWith({ sessionId: "s1" }));
+		expect(useSessionsStore.getState().activeSessionId).toBe("s1");
 	});
 });

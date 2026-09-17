@@ -45,7 +45,7 @@ describe("settings store：contextManagerMode（乐观更新 + 失败回滚）",
 	it("切换成功：乐观更新生效", async () => {
 		useSettingsStore.setState({ contextManagerMode: "off" });
 		await useSettingsStore.getState().setContextManagerMode("evaporation");
-		expect(piMock.setContextManagerMode).toHaveBeenCalledWith("evaporation");
+		expect(piMock.setContextManagerMode).toHaveBeenCalledWith({ mode: "evaporation" });
 		expect(useSettingsStore.getState().contextManagerMode).toBe("evaporation");
 		expect(useSettingsStore.getState().error).toBeNull();
 	});

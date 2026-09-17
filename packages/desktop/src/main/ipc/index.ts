@@ -1,5 +1,4 @@
 import type { PiBackend } from "@percho/backend";
-import type { PermissionRequest, PermissionResolved, TrustRequest } from "@percho/shared";
 import { IpcChannels } from "@percho/shared";
 import { BrowserWindow } from "electron";
 import type { LanObserverHandle } from "../lan";
@@ -19,6 +18,11 @@ export function sendToRenderer(channel: string, payload: unknown): void {
 	if (window && !window.isDestroyed()) {
 		window.webContents.send(channel, payload);
 	}
+}
+
+/** 订阅 backend/updater 事件并透传转发 renderer（payload 不变形的转发统一走这里） */
+function forward<T>(subscribe: (handler: (payload: T) => void) => void, channel: string): void {
+	subscribe((payload) => sendToRenderer(channel, payload));
 }
 
 /**
@@ -42,36 +46,19 @@ export function registerIpc(
 		sendToRenderer(IpcChannels.UiPluginsEvent, { kind: "changed", name });
 	});
 
+	// onEvent 载荷是 (sessionId, event) → 信封封装，不透明传，单行保留
 	backend.onEvent((sessionId, event) => {
 		sendToRenderer(IpcChannels.Event, { sessionId, event });
 	});
-	backend.onPermissionRequest((req: PermissionRequest) => {
-		sendToRenderer(IpcChannels.PermissionRequest, req);
-	});
+	forward(backend.onPermissionRequest.bind(backend), IpcChannels.PermissionRequest);
 	// 权限裁决也回投渲染端：LAN 远程应答 / 其他来源应答时桌面卡片要同步撤掉
-	backend.onPermissionResolved((result: PermissionResolved) => {
-		sendToRenderer(IpcChannels.PermissionResolved, result);
-	});
-	backend.onTrustRequest((req: TrustRequest) => {
-		sendToRenderer(IpcChannels.TrustRequest, req);
-	});
+	forward(backend.onPermissionResolved.bind(backend), IpcChannels.PermissionResolved);
+	forward(backend.onTrustRequest.bind(backend), IpcChannels.TrustRequest);
 	// 扩展对话框四事件：请求/结算/notify/草稿预填（issue #45）
-	backend.onExtensionDialogRequest((req) => {
-		sendToRenderer(IpcChannels.ExtensionDialogRequest, req);
-	});
-	backend.onExtensionDialogResolved((result) => {
-		sendToRenderer(IpcChannels.ExtensionDialogResolved, result);
-	});
-	backend.onExtensionNotify((event) => {
-		sendToRenderer(IpcChannels.ExtensionNotify, event);
-	});
-	backend.onExtensionEditorText((event) => {
-		sendToRenderer(IpcChannels.ExtensionEditorText, event);
-	});
-	backend.onLoginEvent((payload) => {
-		sendToRenderer(IpcChannels.SettingsLoginEvent, payload);
-	});
-	onUpdateState((state) => {
-		sendToRenderer(IpcChannels.UpdateEvent, state);
-	});
+	forward(backend.onExtensionDialogRequest.bind(backend), IpcChannels.ExtensionDialogRequest);
+	forward(backend.onExtensionDialogResolved.bind(backend), IpcChannels.ExtensionDialogResolved);
+	forward(backend.onExtensionNotify.bind(backend), IpcChannels.ExtensionNotify);
+	forward(backend.onExtensionEditorText.bind(backend), IpcChannels.ExtensionEditorText);
+	forward(backend.onLoginEvent.bind(backend), IpcChannels.SettingsLoginEvent);
+	forward(onUpdateState, IpcChannels.UpdateEvent);
 }

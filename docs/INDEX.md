@@ -8,7 +8,7 @@
 
 - renderer 绝不 import pi 包，只经 `window.pi`（preload）通信
 - `packages/backend/src/pi-backend.ts` 是唯一 import pi SDK 的地方（钉 0.84.3）
-- 新增 IPC 四处同步：`shared/src/ipc.ts` → `desktop/src/preload/index.ts` → `main/ipc/`（按域选文件）→ backend；事件转发在 `main/ipc/index.ts`
+- 新增 IPC：通道进 `shared/src/ipc-channels.ts` 对应域子表（key=方法名，args/ret 类型随表）→ 域文件 `registerInvokeHandlers` 一行 handler → preload/main 自动接线（事件通道仍在 EVENT_CHANNELS 手写段）；事件转发在 `main/ipc/index.ts`
 - preload 必须保持 CJS（sandbox 限制，见 PITFALLS）
 - 新增 UI 文案：`i18n/zh.ts` + `en.ts` 双字典都要加
 - zustand selector 必须返回稳定引用（模块级空对象/数组；#185 无限渲染，见 PITFALLS）
@@ -51,9 +51,10 @@ packages/
 
 | 文件 | 关键导出 | 职责 |
 |---|---|---|
-| `src/ipc.ts` | `IpcChannels`、`PiApi` | 通道名常量 + `window.pi` 完整类型（sessions/settings/packages/app/ui-plugins/lan/login 全域通道 + 同步属性 `platform`） |
+| `src/ipc-channels.ts` | `CHANNEL_TABLE`、`ch`、`IpcChannels`、`InvokeApi`/`InvokeHandlers` | **IPC invoke 通道单一事实源**：key（=PiApi 方法名）→ 通道字符串 + args/ret 类型；按域子表（SESSION/SETTINGS/PACKAGES/APP/LAN/EXTENSION_DIALOG/UI_PLUGINS）；EVENT_CHANNELS 段 = main→renderer 单向事件（PascalCase 手写） |
+| `src/ipc.ts` | `PiApi` | `window.pi` 完整类型：invoke 成员由 `InvokeApi<CHANNEL_TABLE>` 推导 + 订阅 on* ×11 与 `platform` 手写 |
 | `src/session.ts` | `SessionMeta`、`SessionStats`、`AvailableModel`（可选 `thinkingLevels`/`imageInput`，缺省 fail-open）、`SessionEvent`、`SessionMessage`、`UiState`、`PermissionRequest`、`PermissionMode`（default/fullAccess）、`TrustRequest`、`LoadedResources` 等 | 会话/事件跨进程类型。`SessionEvent` = pi `AgentSessionEvent` ∪ Percho 自有 UI 事件（`subagent_mutex`/`stream_guard_tripped`，不进 trace）；`SessionMessage` union：user/assistant（均带 `entryId` 供 fork/撤回；user 专属 `skill`/`sourceText`）+ `role:"image"`（show_image 回放）+ `role:"subagent"` |
-| `src/transcript/` | `reduceEvent`、`messagesToUIMessages`、`buildChatRows`、`deriveTurnChanges`、`deriveTurnTimings` | **UI 消息状态机（桌面与 lan-web 共用同一份）**：`types`（UIMessage/StreamingState 等）、`helpers`（事件载荷解析）、`reducer`（pi 事件 → UI 状态）、`mapping`（历史回放）、`parse-patch`（unified diff 结构化解析）、`turn-files`（按轮聚合文件变更）、`turn-timings`（按轮计时派生 + runEndedAt 定格）、`chat-rows`（行序列分组 + 轮末行定位规则）、`meta-summary`（工具语义分类统计） |
+| `src/transcript/` | `reduceEvent`、`messagesToUIMessages`、`buildChatRows`、`deriveTurnChanges`、`deriveTurnTimings` | **UI 消息状态机（桌面与 lan-web 共用同一份）**：`types`（UIMessage/StreamingState 等）、`helpers`（事件载荷解析）、`reducer`（pi 事件 → UI 状态）、`mapping`（历史回放）、`parse-patch`（unified diff 结构化解析）、`turn-files`（按轮聚合文件变更）、`turn-timings`（按轮计时派生 + runEndedAt 定格）、`chat-rows`（行序列分组 + 轮末行定位规则；入参 `ChatRowsInput` 四字段收窄）、`llm-errors`（LLM 错误轮判定 live/replay 共用）、`meta-summary`（工具语义分类统计） |
 | `src/errors.ts` | `UiError`、`classifyLlmError`、`buildLlmUiError`、`buildStreamGuardUiError`、`DETAIL_MAX_LENGTH` | 统一报错信封：错误卡数据源（live reducer / 历史回放 mapping / Composer 内联 / LAN 共用）；`classifyLlmError` 按 401/429/context/网络模式分类，误判只影响标题措辞 |
 | `src/ui-plugins.ts` | `UiPluginManifest`、`UiPluginInfo`、`UiPluginsConfig`、`KNOWN_UI_SLOTS`、`KNOWN_UI_REGIONS`、`UI_PLUGIN_ANCHORS` | UI 插件跨进程类型：manifest（slots/contributions/headless 三选一）/ 扫描合成信息 / 持久化配置 / 事件载荷；`KNOWN_*` 供 main 校验，与 renderer `plugins/slots.ts` 对齐（registry.test.ts 断言） |
 | `src/lan.ts` | `LanObserverConfig`、`LanStatus`、`LanSessionBrief/View`、`LanSseFrame` | 局域网观察页跨进程/HTTP 投影契约 |
@@ -74,6 +75,7 @@ packages/
 src/
 ├── index.ts            barrel
 ├── pi-backend.ts       门面：会话生命周期 + 各域薄委托（desktop main 只 import 这里）
+├── emitter.ts          泛型订阅/分发原语（9 套事件管线共用，per-handler try-catch 隔离）
 ├── json-store.ts       统一 JSON 持久化原语
 ├── slash-commands.ts   斜杠命令清单（纯函数）
 ├── log.ts              结构化日志
@@ -81,17 +83,22 @@ src/
 ├── session/            registry / naming / messages / trace+traces / event-slim+stream-guard / rates / ui-context / extension-dialog-host
 ├── permissions/        index(barrel) / bash-chain / pattern / config / tmp-zone / gate / extension / audit
 ├── project/            trust / trust-loader / workspace-store / files
-├── settings/           settings / model-prefs / login
+├── settings/           settings / model-prefs / login / quota
 ├── packages/           admin / catalog
 └── tools/              show-image / todo / todo-reminder / webfetch / subagent / context-evaporation / channel-watch
 ```
 
 | 文件 | 关键导出 | 职责 |
 |---|---|---|
-| `src/pi-backend.ts` | `PiBackend` | **门面**：create/open/close/delete/prompt（followUp 排队，preflight 回执见 `use-composer-send`）/abort/fork/recall/compact/stats/listModels（附 `thinkingLevels`/`imageInput`）/会话权限模式（`permissionModes` map 内存态 + get/setSessionPermissionMode，随 buildExtensionFactories 闭包注入扩展）/事件与权限·信任分发（respondPermission **先 gate.respond 放行再持久化**，持久化失败只 log 不挂会话）。`buildCustomTools(gate, preferBuiltin)` 注册 webfetch+show_image+todo+subagent（preferBuiltin 优先级：构造参数 > model-prefs 实时值 > true）；`buildExtensionFactories` 注册序 = context 钩子链序：权限门控 → 上下文蒸发 → channel-watch → todo-reminder（最后，注入不被折叠）；subagent 子会话 `noExtensions`。`sessions-subagents/` 下会话记 readOnly，prompt/fork/recall/setModel 一律 throw |
+| `src/pi-backend.ts` | `PiBackend` | **门面**：create/open/close/delete/prompt（followUp 排队，preflight 回执见 `use-composer-send`）/abort/fork/recall/compact/stats/listModels（附 `thinkingLevels`/`imageInput`）/会话权限模式（`registry entry.modeRef` 内存态 + get/setSessionPermissionMode，随 buildExtensionFactories 闭包注入扩展）/事件与权限·信任分发（emitter.ts 统一原语，9 emitter）（respondPermission **先 gate.respond 放行再持久化**，持久化失败只 log 不挂会话）。`buildCustomTools(gate, preferBuiltin)` 注册 webfetch+show_image+todo+subagent（preferBuiltin 优先级：构造参数 > model-prefs 实时值 > true）；`buildExtensionFactories` 注册序 = context 钩子链序：权限门控 → 上下文蒸发 → channel-watch → todo-reminder（最后，注入不被折叠）；subagent 子会话 `noExtensions`。`sessions-subagents/` 下会话记 readOnly，prompt/fork/recall/setModel 一律 throw |
 | `src/json-store.ts` | `JsonStore`、`JsonStoreCorruptedError` | 统一 JSON 持久化：tmp+rename 原子写；read 损坏回退默认、update 损坏抛 CorruptedError 拒写；async 版 per-path 队列串行化、sync 变体热路径用；缓存/normalize 不进本层 |
 | `src/slash-commands.ts` | `BUILTIN_SLASH_COMMANDS` | 内置静态表（compact/name/export/settings）+ 模板/skill/扩展命令映射（纯函数） |
 | `src/log.ts` | `createLogger`、`initLogging` | 结构化日志：按天落盘 `main-<本地日期>.log`（`PI_LOG_LEVEL`/`PI_LOG_DIR`） |
+| `src/emitter.ts` | `Emitter<T>` | 泛型订阅/分发：subscribe 返回退订、emit per-handler try-catch、clear/size（canAsk 探测）；PiBackend 9 套事件管线共用 |
+| `src/session/registry.ts` | `SessionRegistry`、`RegisteredSession` | sessionId → AgentSession 单条记录（session/unsubscribe/cwd/readOnly + **gate/dialogs/modeRef 会话级状态随 entry 生命周期**）；delete/disposeAll 做 entry 级清理 |
+| `src/settings/quota.ts` | `QuotaService`、`makeQuotaService` | opencode-go 套餐额度：官方 API + 5min TTL 缓存（无 key null / HTTP 失败带 error 空窗体） |
+| `src/lan/projector.ts` | `SessionProjection`、`seedProjection`、`applyEvent`、`deriveView` | LAN 会话投影 = **sanitize 事件流驱动的 shared reducer 态**（单一事实源）+ 非 reducer 底座（name/cwd/stats/lastActivity/pendingPermission）；agentActive/todos/currentTool/assistantTail/lastError 全派生，无第二状态机 |
+| `src/lan/sanitize.ts` | `sanitizeSessionEvent/Message` | LAN 出网净化；事件白名单 = shared `REDUCED_EVENT_TYPES` − LAN 排除集（auto_retry_*/stream_guard_tripped，单一事实源派生） |
 | `src/session/messages.ts` | `toSessionMessages`、`resolveRecallEntryId`、`resolveForkEntryId`、`block*` | pi 消息 → SessionMessage 解析（纯函数，可独立单测）：toolResult 回填、show_image/subagent 提取、edit `details.patch` → `SessionToolCall.diff`、entryId 配对（user·assistant 分表防同 ms 碰撞）；fork/recall 目标解析 |
 | `src/session/traces.ts` + `trace.ts` | `SessionTraces`、`TraceRecorder` | trace 生命周期 / 批量落盘（500ms/128 条 flush；单事件 >512KB 截断标记、按字节轮转——加固背景见 PITFALLS 0.4.6） |
 | `src/session/event-slim.ts` | `slimMessageUpdate`、`slimBulkyEvent` | 事件瘦身（emitEvent 单点）：剥流式 delta 携带的全量快照、剥 image base64/截断超长 text；details 与终态消息不动（事故背景见 PITFALLS） |
@@ -120,7 +127,7 @@ src/
 | `src/settings/login.ts` | `LoginService` | provider 交互登录桥接：AuthInteraction → IPC 事件（prompt 挂起等 renderer 应答；浏览器先到则拒挂起 prompt）。支持 OAuth + api_key 交互登录（如 Google Vertex）；`filterAuthSelectOptions` 对 google-vertex 剔除必败的 api-key 选项（Vertex 不接受 API key，见 PITFALLS） |
 | `src/packages/admin.ts` | `PackageAdmin` | 社区包搜索/安装/卸载/已配置清单 + 装卸后对非流式会话热重载（对齐 CLI /reload）；npm ENOENT 转带哨兵的可读错误 |
 | `src/packages/catalog.ts` | `fetchPackageCatalog` | pi.dev 目录抓取：无 JSON API，解析 SSR HTML 的 `<article data-package-card>` |
-| `src/lan/` | `LanObserverServer`、`seedView`/`applyEvent` | 局域网只读观察：userData 配置 + token 轮换、纯会话投影、GET-only HTTP+SSE（timingSafeEqual、5 客户端上限、合帧） |
+| `src/lan/server.ts` | `LanObserverServer` | 局域网只读观察：userData 配置 + token 轮换、GET-only HTTP+SSE（timingSafeEqual、5 客户端上限、delta 微批合帧）；projectEvent = 投影更新与帧广播同点（快照带 in-flight 容器，重连无缝） |
 
 **可观测性**：每会话事件 trace + 关键操作日志（create/open/close/prompt/abort/compact）；main 进程还监听 renderer 崩溃/unresponsive/console。排查 UI 状态问题：`npx tsx scripts/replay-trace.mts --last` 确定性复现。
 
@@ -138,14 +145,16 @@ src/
 | `src/main/pi-package-dir.ts` | 打包态 `PI_PACKAGE_DIR = resources/pi-package`（SDK `getPackageDir()` 最优先读它，不缓存）：pi 官方 docs/examples 经 extraResources 装入 |
 | `src/main/dev-agent-dir.ts` | dev/预览态数据隔离：userData 重定向 `*-dev` 后缀 + `PI_CODING_AGENT_DIR = ~/.pi/agent-dev` + 五配置一次性种子拷贝（正式目录零写入） |
 | `src/main/daily.ts` | 日常空间工作台目录（`~/.percho/daily`，全部日常会话的固定 cwd）+ 懒创建；信任链无资源自动信任不弹窗；dev/正式共享工作区（会话列表按 agent dir 天然隔离） |
-| `src/main/ipc/index.ts` | `registerIpc` 组合入口 + backend 事件/updater 状态转发 + UI 插件热重载 watcher 启动。**新增 handler 改对应域文件，不在 index.ts 堆** |
-| `src/main/ipc/{sessions,settings,packages,app,ui-plugins,lan}.ts` | 各域 handler（全部薄委托 backend；ui-plugins 域 handler async await 落盘后才返回） |
+| `src/main/ipc/index.ts` | `registerIpc` 组合入口 + backend 事件/updater 状态转发（`forward()` 单行透传）+ UI 插件热重载 watcher 启动。**新增通道：进 `shared/src/ipc-channels.ts` 对应域子表 + 域文件 handler 一行，preload/main 自动接线** |
+| `src/main/ipc/{sessions,settings,packages,app,ui-plugins,lan}.ts` + `invoke.ts` | 各域 handler（`registerInvokeHandlers(子表, {...})` 表驱动注册；ui-plugins 域 handler async await 落盘后才返回；17 非透传 handler 的逻辑体就在各域 map 内） |
 | `src/main/tabs.ts` / `ui-state.ts` | tabs.json / ui-state.json 读写（JsonStore 原子写；ui-state 补丁式合并 + normalize 补缺省） |
 | `src/main/background.ts` | 背景图选图（dialog → 拷贝 `userData/backgrounds/` 并清理旧图） |
 | `src/main/window.ts` | BrowserWindow：sandbox + preload；启动底色跟随主题防白闪（已解析主题经 `?theme=` query 传 renderer）；窗口框架按平台分流（mac hiddenInset / Win frameless+titleBarOverlay / Linux 原生）；导出 `resolveTheme`/`applyChromeTheme` |
 | `src/main/ui-plugins/config.ts` | `ui-plugins.json` 读写（normalize 白名单；assignments 指向失效插件保留） |
 | `src/main/ui-plugins/build.ts` | 插件 esbuild 构建器：`loadEsbuild` 懒加载 + `ESBUILD_BINARY_PATH` 指向 asar.unpacked 真实二进制（打包态坑，升级 esbuild 前重评）；react 系四个 specifier 重写到 `window.PerchoUI` shim（**与 renderer host-api.ts、resources/percho-ui.d.ts 逐名一致**）；图片/音频资产 dataurl 内联（CSP img-src / media-src 均放行 data:） |
-| `src/main/ui-plugins/manager.ts` | UiPluginManager：scanAll（manifest 校验 + 单插件 try 不阻断启动）/ ensureBuilt / fs.watch 300ms 防抖热重载 / seedBuiltinPlugins（resources builtin/ → 用户目录，版本戳幂等）/ seedDocs（SPEC.md + symlink `~/.percho/ui-plugins`）/ filterContributions（校验 region/anchor） |
+| `src/main/ui-plugins/manager.ts` | UiPluginManager 编排：scanAll / ensureBuilt / fs.watch 300ms 防抖热重载 / config（manifest 校验与 contributions 过滤在 manifest.ts，种子在 seeder.ts，目录树工具在 fs-tree.ts） |
+| `src/main/ui-plugins/{manifest,fs-tree,seeder}.ts` | manifest 校验+过滤+读取（纯函数域）/ copyTree+sameTree+newestMtime / pluginsDir+seedBuiltinPlugins+seedDocs+uiPluginsResourcesDir（从 manager 拆出，D7） |
+| `src/main/renderer-watchdog.ts` | `attachRendererWatchdog(backend)`：崩溃熔断+自动 reload（短窗高频转人工对话框）/ console 错误签名去重 / 60s 心跳+临终快照（从 main/index.ts 抽出，index 回归纯装配） |
 | `src/main/lan.ts`（+ `lan-icon.ts`、`ipc/lan.ts`） | LAN observer 接线；观察页 = `src/lan-web/` 独立 vite 单文件产物，`?raw` 内联进 main bundle（**dev 下重 build lan-web 后需重启 dev 实例**，产物不在 electron-vite watch 集） |
 | `src/main/git.ts` | git 分支查询/切换三通道 |
 | `src/main/update-policy.ts` / `updater.ts` | 更新决策纯函数（不 import electron 可单测）/ electron-updater 封装：发现新版只提示，点击才下载，下载完点「重启」安装；mac adhoc = manual 模式跳 release 页；定时静默检查只查不下载；autoUpdater 用 createRequire 取（CJS 导出） |

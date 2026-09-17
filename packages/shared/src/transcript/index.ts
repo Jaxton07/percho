@@ -17,7 +17,7 @@ export {
 	type ToolCategory,
 } from "./meta-summary";
 export { type PatchHunk, type PatchLine, parsePatch, patchStat } from "./parse-patch";
-export { reduceEvent } from "./reducer";
+export { REDUCED_EVENT_TYPES, type ReducedEventTypeName, reduceEvent } from "./reducer";
 export {
 	type DiffSection,
 	deriveTurnChanges,

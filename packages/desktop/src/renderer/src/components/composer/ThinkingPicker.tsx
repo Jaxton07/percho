@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from "react";
+import { useActiveModelInfo } from "../../hooks/use-session-state";
 import { useT } from "../../i18n";
 import { clampThinkingLevel, THINKING_LEVELS } from "../../lib/thinking";
 import { useSessionsStore } from "../../stores/sessions";
@@ -15,10 +16,10 @@ function levelLabel(t: ReturnType<typeof useT>, level: string): string {
 /** 输入框思考深度切换：chip 按钮 + 上弹单选列表（每个会话独立持有，未设置回退全局默认） */
 export function ThinkingPicker() {
 	const t = useT();
-	const thinkingLevel = useSessionsStore((s) => s.thinkingLevel);
+	const thinkingLevel = useSessionsStore((s) => s.lastUsedThinkingLevel);
 	const activeSession = useSessionsStore((s) => s.sessions.find((x) => x.sessionId === s.activeSessionId));
-	const models = useSessionsStore((s) => s.models);
-	const globalCurrentModel = useSessionsStore((s) => s.currentModel);
+	// 当前会话覆写 ?? 全局默认 → models 表解析（useActiveModelInfo 收拢点）
+	const model = useActiveModelInfo();
 	const setThinkingLevel = useSessionsStore((s) => s.setThinkingLevel);
 	const [open, setOpen] = useState(false);
 	const ref = useRef<HTMLDivElement>(null);
@@ -41,10 +42,6 @@ export function ThinkingPicker() {
 
 	const effective = activeSession?.thinkingLevel ?? thinkingLevel;
 	// 当前会话模型实际支持的思考深度（模型配置下发）；缺省按全量显示
-	const currentModelRef = activeSession?.model ?? globalCurrentModel;
-	const model = models.find(
-		(m) => m.provider === currentModelRef?.provider && m.id === currentModelRef?.modelId,
-	);
 	const supported =
 		model?.thinkingLevels && model.thinkingLevels.length > 0 ? model.thinkingLevels : [...THINKING_LEVELS];
 	// 当前级别超出模型能力（如切模型后遗留）→ 就近向上找，否则取 supported 最高档

@@ -54,7 +54,7 @@ describe("catalog store：防抖搜索", () => {
 
 		await vi.advanceTimersByTimeAsync(1);
 		expect(piMock.searchCatalog).toHaveBeenCalledTimes(1);
-		expect(piMock.searchCatalog).toHaveBeenCalledWith("cat", "", 1);
+		expect(piMock.searchCatalog).toHaveBeenCalledWith({ query: "cat", type: "", page: 1 });
 	});
 });
 

@@ -35,7 +35,7 @@ class PluginBoundary extends Component<PluginBoundaryProps, PluginBoundaryState>
 		console.error(`[ui-plugins] 插件 ${pluginName} 在 ${label} 崩溃`, error);
 		if (useUiPluginRegistry.getState().reportCrash(pluginName)) {
 			console.warn(`[ui-plugins] 插件 ${pluginName} 连续崩溃达到阈值，自动禁用`);
-			void getPi().uiPluginsSetPluginEnabled(pluginName, false);
+			void getPi().uiPluginsSetPluginEnabled({ name: pluginName, enabled: false });
 		}
 	}
 

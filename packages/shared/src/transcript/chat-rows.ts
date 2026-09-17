@@ -1,6 +1,6 @@
 import type { TurnChanges } from "./turn-files";
 import type { TurnTiming } from "./turn-timings";
-import type { ActivityEntry, SessionTranscriptState, SubagentRunUi, UIMessage, UIToolCall } from "./types";
+import type { ActivityEntry, StreamingState, SubagentRunUi, UIMessage, UIToolCall } from "./types";
 
 /**
  * 聊天行构建（transcript → 渲染行序列）：桌面 MessageList 与 lan-web ChatView 共享的
@@ -60,13 +60,21 @@ export type ChatRow =
  * agentWorking：agent 运行中且正文未出现 → 折叠组标题 working；
  * 正文已出但工具/子代理还在跑时不熄灯（执行发生在 message_end 之后、turn_end 之前）。
  */
-export function isAgentWorking(transcript: SessionTranscriptState): boolean {
-	const streaming = transcript.streaming;
+/** buildChatRows/isAgentWorking 的最小输入（订阅收窄：调用方只订阅这四个字段，其余 transcript 字段变化不触发重算） */
+export interface ChatRowsInput {
+	messages: UIMessage[];
+	streaming: StreamingState | null;
+	agentActive: boolean;
+	runEndedAt?: number;
+}
+
+export function isAgentWorking(input: Pick<ChatRowsInput, "agentActive" | "streaming">): boolean {
+	const { streaming } = input;
 	const hasRunningWork = Boolean(
 		streaming?.tools.some((t) => t.state === "running") ||
 			streaming?.subagentRuns.some((r) => r.status === "running"),
 	);
-	return transcript.agentActive && (!streaming?.text || hasRunningWork);
+	return input.agentActive && (!streaming?.text || hasRunningWork);
 }
 
 /**
@@ -96,7 +104,7 @@ export interface TurnDiffRowsOptions {
 }
 
 export function buildChatRows(
-	transcript: SessionTranscriptState,
+	transcript: ChatRowsInput,
 	sessionId: string,
 	now: number = Date.now(),
 	opts?: TurnDiffRowsOptions,

@@ -61,9 +61,9 @@ export function useSlashMenu(options: UseSlashMenuOptions) {
 		}
 		const request = isDraftSessionId(activeSessionId)
 			? cwd
-				? getPi().listSlashCommandsForCwd(cwd)
+				? getPi().listSlashCommandsForCwd({ cwd })
 				: null
-			: getPi().listSlashCommands(activeSessionId);
+			: getPi().listSlashCommands({ sessionId: activeSessionId });
 		if (!request) {
 			setSlashCommands([]);
 			return;

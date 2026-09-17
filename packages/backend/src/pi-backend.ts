@@ -5,20 +5,21 @@ import type { Model, ThinkingLevel } from "@earendil-works/pi-ai";
 import { getSupportedThinkingLevels } from "@earendil-works/pi-ai";
 import {
 	type AgentSession,
+	type CreateAgentSessionResult,
 	createAgentSession,
+	type DefaultResourceLoader,
 	type ExtensionError,
 	getAgentDir,
 	ModelRuntime,
 	ProjectTrustStore,
 	type SessionEntry,
+	type SessionInfo,
 	SessionManager,
+	type SettingsManager,
 	type ToolDefinition,
 } from "@earendil-works/pi-coding-agent";
 import type {
 	AvailableModel,
-	CatalogPackageType,
-	CatalogSearchResult,
-	ConfiguredPackageInfo,
 	ContextManagerMode,
 	ContextUsageInfo,
 	CreateSessionOptions,
@@ -30,13 +31,11 @@ import type {
 	ImageInput,
 	LoadedResources,
 	LoginEventPayload,
-	ModelPrefs,
 	PermissionAnswer,
 	PermissionMode,
 	PermissionRequest,
 	PermissionResolved,
 	QuotaInfo,
-	QuotaWindowKey,
 	SessionEvent,
 	SessionMessage,
 	SessionMeta,
@@ -54,6 +53,7 @@ import {
 	TODO_TOOL_NAME,
 	type TodoItem,
 } from "@percho/shared";
+import { Emitter } from "./emitter";
 import { createLogger } from "./log";
 import { PackageAdmin } from "./packages/admin";
 import { loadPermissionConfig } from "./permissions";
@@ -88,6 +88,7 @@ import { SessionTraces } from "./session/traces";
 import { makeUiContext } from "./session/ui-context";
 import { LoginService } from "./settings/login";
 import { ModelPrefsService } from "./settings/model-prefs";
+import { makeQuotaService } from "./settings/quota";
 import { SettingsService } from "./settings/settings";
 import { slashCommandsForLoader, slashCommandsForSession } from "./slash-commands";
 import {
@@ -110,17 +111,23 @@ import { makeWebFetchTool } from "./tools/webfetch";
 
 const log = createLogger("backend");
 
-/** opencode-go 套餐额度：官方 API（main 进程直调，renderer 沙箱禁网） */
-const QUOTA_ENDPOINT = "https://opencode.ai/zen/go/v1/usage";
-const QUOTA_PROVIDER = "opencode-go";
-const QUOTA_TTL_MS = 300_000;
-/** 官方文档额度（美元）：5 小时滚动 / 日历周 / 计费月 */
-const QUOTA_WINDOW_LIMIT_USD: Record<QuotaWindowKey, number> = { rolling: 12, weekly: 30, monthly: 60 };
-const QUOTA_WINDOW_LABEL: Record<QuotaWindowKey, string> = {
-	rolling: "5h",
-	weekly: "week",
-	monthly: "month",
-};
+/** SessionManager 磁盘枚举项 → SessionMeta（listSessions/listAllSessions 共用） */
+function sessionInfoToMeta(
+	info: SessionInfo,
+	opts: { cwdFallback: string; active: boolean; readOnly?: boolean },
+): SessionMeta {
+	return {
+		sessionId: info.id,
+		sessionFile: info.path,
+		cwd: info.cwd || opts.cwdFallback,
+		name: info.name,
+		active: opts.active,
+		readOnly: opts.readOnly || undefined,
+		messageCount: info.messageCount,
+		createdAt: info.created.getTime(),
+		modifiedAt: info.modified.getTime(),
+	};
+}
 
 export interface PiBackendOptions {
 	/** 默认工作目录（createSession 未指定时使用） */
@@ -150,46 +157,37 @@ export interface PiBackendOptions {
 	};
 }
 
-type EventHandler = (sessionId: string, event: SessionEvent) => void;
-type PermissionHandler = (req: PermissionRequest) => void;
-type PermissionResolvedHandler = (result: PermissionResolved) => void;
-type TrustHandler = (req: TrustRequest) => void;
-type LoginHandler = (payload: LoginEventPayload) => void;
-type ExtensionDialogRequestHandler = (req: ExtensionDialogRequest) => void;
-type ExtensionDialogResolvedHandler = (result: ExtensionDialogResolved) => void;
-type ExtensionNotifyHandler = (event: ExtensionNotifyEvent) => void;
-type ExtensionEditorTextHandler = (event: ExtensionEditorTextEvent) => void;
-
 /**
  * PiBackend：pi SDK 的唯一适配层（门面）。不依赖 Electron，
  * 主进程与（未来的）独立 server 均可复用。
  *
  * 领域实现拆在同包模块（各文件单一职责）：
  * - slash-commands.ts     斜杠命令清单（内置/模板/skill/扩展）
- * - session-messages.ts   pi 消息 → SessionMessage 解析与 entryId 配对（fork/recall/回放共用）
- * - package-admin.ts      社区包安装/卸载/搜索 + 会话热重载
- * - project-trust-loader.ts 两阶段项目资源加载 + 信任决策
- * - session-trace.ts      会话事件 trace 生命周期
+ * - session/messages.ts   pi 消息 → SessionMessage 解析与 entryId 配对（fork/recall/回放共用）
+ * - packages/admin.ts     社区包安装/卸载/搜索 + 会话热重载
+ * - project/trust-loader.ts 两阶段项目资源加载 + 信任决策
+ * - session/traces.ts     会话事件 trace 生命周期
+ * - emitter.ts            泛型订阅/分发原语（9 套事件管线共用）
+ * - settings/quota.ts     opencode-go 套餐额度（TTL 缓存 + 官方 API）
  */
 export class PiBackend {
 	private readonly registry = new SessionRegistry();
-	private readonly eventHandlers = new Set<EventHandler>();
-	private readonly permissionHandlers = new Set<PermissionHandler>();
-	private readonly permissionResolvedHandlers = new Set<PermissionResolvedHandler>();
-	private readonly trustHandlers = new Set<TrustHandler>();
-	private readonly loginHandlers = new Set<LoginHandler>();
-	private readonly extensionDialogRequestHandlers = new Set<ExtensionDialogRequestHandler>();
-	private readonly extensionDialogResolvedHandlers = new Set<ExtensionDialogResolvedHandler>();
-	private readonly extensionNotifyHandlers = new Set<ExtensionNotifyHandler>();
-	private readonly extensionEditorTextHandlers = new Set<ExtensionEditorTextHandler>();
-	private readonly gates = new Map<string, PermissionGate>();
-	/** 扩展对话框宿主（每会话一个；GUI 停靠槽数据源，GUI-only 不进 LAN） */
-	private readonly dialogs = new Map<string, ExtensionDialogHost>();
-	/** 按会话权限模式（default 缺省；fullAccess = 一切放行 + 高危审计）：会话创建时随工厂注入，关会话/重启归零 */
-	private readonly permissionModes = new Map<string, PermissionModeRef>();
+	/** 用户级模型可见性与子代理模型偏好（独立于 CLI 共用 settings.json）。readonly 直暴露 */
+	readonly modelPrefs = new ModelPrefsService(join(getAgentDir(), "model-prefs.json"));
+	/** 社区包管理（安装/卸载 + 会话热重载）。readonly 直暴露 */
+	readonly packages: PackageAdmin;
+	private readonly eventEmitter = new Emitter<{ sessionId: string; event: SessionEvent }>();
+	private readonly permissionEmitter = new Emitter<PermissionRequest>();
+	private readonly permissionResolvedEmitter = new Emitter<PermissionResolved>();
+	private readonly trustEmitter = new Emitter<TrustRequest>();
+	private readonly loginEmitter = new Emitter<LoginEventPayload>();
+	private readonly extensionDialogRequestEmitter = new Emitter<ExtensionDialogRequest>();
+	private readonly extensionDialogResolvedEmitter = new Emitter<ExtensionDialogResolved>();
+	private readonly extensionNotifyEmitter = new Emitter<ExtensionNotifyEvent>();
+	private readonly extensionEditorTextEmitter = new Emitter<ExtensionEditorTextEvent>();
 	/** 项目信任决策记录（~/.pi/agent/trust.json，与 CLI 共享）+ 信任请求门控 */
 	private readonly trustStore = new ProjectTrustStore(getAgentDir());
-	private readonly trustGate = new TrustGate((req) => this.dispatchTrustRequest(req));
+	private readonly trustGate = new TrustGate((req) => this.trustEmitter.emit(req));
 	/** 会话事件 trace（JSONL，离线可重放） */
 	private readonly traces = new SessionTraces();
 	private readonly streamGuard = new StreamGuard();
@@ -197,19 +195,15 @@ export class PiBackend {
 	private readonly eventRates = new EventRateTracker();
 	private modelRuntime: ModelRuntime | undefined;
 	private modelPromise: Promise<ModelRuntime> | undefined;
-	/** opencode-go 额度缓存（官方 API 5 分钟 TTL；错误不缓存） */
-	private quotaCache: { at: number; data: QuotaInfo } | null = null;
 	/** 设置页（provider/模型/凭证配置）服务 */
 	readonly settings = new SettingsService(() => this.getModelRuntime());
-	/** 用户级模型可见性与子代理模型偏好（独立于 CLI 共用 settings.json）。 */
-	private readonly modelPrefs = new ModelPrefsService(join(getAgentDir(), "model-prefs.json"));
+	/** opencode-go 套餐额度（TTL 缓存；无 key 返回 null） */
+	private readonly quota = makeQuotaService(() => this.getModelRuntime());
 	/** provider 交互登录服务（OAuth + api_key 交互，如 Google Vertex），事件经 onLoginEvent 分发 */
 	readonly login = new LoginService({
 		getRuntime: () => this.getModelRuntime(),
-		send: (payload) => this.dispatchLoginEvent(payload),
+		send: (payload) => this.loginEmitter.emit(payload),
 	});
-	/** 社区包管理（安装/卸载 + 会话热重载） */
-	private readonly packages: PackageAdmin;
 	/** 项目资源两阶段加载 + 信任决策 */
 	private readonly projectLoader: ProjectResourceLoader;
 
@@ -218,7 +212,7 @@ export class PiBackend {
 		this.projectLoader = new ProjectResourceLoader({
 			trustStore: this.trustStore,
 			ask: (dir, opts) => this.trustGate.ask(dir, opts),
-			canAsk: () => this.trustHandlers.size > 0,
+			canAsk: () => this.trustEmitter.size > 0,
 			buildExtensions: (cwd, confirm, modeRef) => this.buildExtensionFactories(cwd, confirm, modeRef),
 			projectTrust: options.projectTrust,
 			desktopIntegration: options.desktopIntegration,
@@ -322,13 +316,15 @@ export class PiBackend {
 	 * D9：hasUI=true + 对话框可用 + TUI 专属明确降级）+ onError 接 log/trace。
 	 * 子代理 runner 不走这里（子会话用 makeUiContext({}) 纯 no-op）。
 	 */
-	private async bindSessionExtensions(session: AgentSession, sessionId: string): Promise<void> {
+	private async bindSessionExtensions(
+		session: AgentSession,
+		sessionId: string,
+	): Promise<ExtensionDialogHost> {
 		const dialogs = new ExtensionDialogHost({
-			onRequest: (req) => this.dispatchExtensionDialogRequest(req),
-			onResolved: (result) => this.dispatchExtensionDialogResolved(result),
+			onRequest: (req) => this.extensionDialogRequestEmitter.emit(req),
+			onResolved: (result) => this.extensionDialogResolvedEmitter.emit(result),
 		});
 		dialogs.bind(sessionId);
-		this.dialogs.set(sessionId, dialogs);
 		const recordExtensionError = (err: ExtensionError): void => {
 			log.error("extension error", sessionId, err);
 			try {
@@ -345,12 +341,13 @@ export class PiBackend {
 			uiContext: makeUiContext({
 				dialogs,
 				onNotify: (message, level, source) =>
-					this.dispatchExtensionNotify({ sessionId, extensionPath: source, message, level }),
-				onEditorText: (text, source) => this.dispatchExtensionEditorText({ sessionId, text, source }),
+					this.extensionNotifyEmitter.emit({ sessionId, extensionPath: source, message, level }),
+				onEditorText: (text, source) => this.extensionEditorTextEmitter.emit({ sessionId, text, source }),
 			}),
 			mode: "rpc",
 			onError: recordExtensionError,
 		});
+		return dialogs;
 	}
 
 	private async getModelRuntime(): Promise<ModelRuntime> {
@@ -379,26 +376,14 @@ export class PiBackend {
 				void this.abort(sessionId).catch(() => {});
 				// 熔断显形：合成 stream_guard_tripped UI 事件（subagent_mutex 同款：union + IPC 转发 +
 				// 不进 trace），reducer 产 warning 条——否则「回复戛然而止」零 UI 信号。
-				// 合成事件直接调 handler 循环，不喂回 streamGuard.inspect（防线不能自触发）。
-				for (const handler of this.eventHandlers) {
-					try {
-						handler(sessionId, { type: "stream_guard_tripped", verdict });
-					} catch {
-						// 事件处理器异常不影响主流程
-					}
-				}
+				// 合成事件直接 emit，不喂回 streamGuard.inspect（防线不能自触发）。
+				this.eventEmitter.emit({ sessionId, event: { type: "stream_guard_tripped", verdict } });
 			}
 			return;
 		}
 		if (event.type !== "subagent_mutex" && event.type !== "stream_guard_tripped")
 			this.traces.record(sessionId, event);
-		for (const handler of this.eventHandlers) {
-			try {
-				handler(sessionId, event);
-			} catch {
-				// 事件处理器异常不影响主流程
-			}
-		}
+		this.eventEmitter.emit({ sessionId, event });
 	}
 
 	async init(): Promise<void> {
@@ -415,53 +400,20 @@ export class PiBackend {
 		const cwd = options.cwd || this.options.defaultCwd || process.cwd();
 		const model =
 			options.provider && options.modelId ? runtime.getModel(options.provider, options.modelId) : undefined;
-
-		const gate = new PermissionGate((req) => this.dispatchPermissionRequest(req));
-		// 权限扩展的确认通道直接桥到 gate（携带 kind/suggestDir 元数据，驱动「允许此目录」/持久化）
-		const confirmBridge: PermissionConfirm = (title, message, meta) => gate.confirm(title, message, meta);
-		// 会话权限模式引用：新会话一律 default 起步（D1：不落盘、不继承），随工厂闭包注入求值链
-		const modeRef: PermissionModeRef = { current: "default" };
-
-		const { settingsManager, resourceLoader } = await this.projectLoader.load(cwd, {
-			confirm: confirmBridge,
-			modeRef,
+		const session = await this.wireSession(cwd, undefined, async (deps) => {
+			const { settingsManager, resourceLoader } = await deps.load();
+			return createAgentSession({
+				cwd,
+				modelRuntime: runtime,
+				model,
+				thinkingLevel: options.thinkingLevel as ThinkingLevel | undefined,
+				tools: this.options.tools,
+				customTools: this.buildCustomTools(deps.gate, deps.preferBuiltin),
+				sessionManager: SessionManager.create(cwd),
+				settingsManager,
+				resourceLoader,
+			});
 		});
-		const preferBuiltin = await this.subagentPreferBuiltin();
-		const { session, extensionsResult } = await createAgentSession({
-			cwd,
-			modelRuntime: runtime,
-			model,
-			thinkingLevel: options.thinkingLevel as ThinkingLevel | undefined,
-			tools: this.options.tools,
-			customTools: this.buildCustomTools(gate, preferBuiltin),
-			sessionManager: SessionManager.create(cwd),
-			settingsManager,
-			resourceLoader,
-		});
-		const mutex = applySubagentMutex(session, extensionsResult, preferBuiltin);
-		if (mutex.shadowed.length > 0) {
-			log.info("third-party subagent tools shadowed", session.sessionId, mutex);
-			for (const shadowed of mutex.shadowed) {
-				this.emitEvent(session.sessionId, {
-					type: "subagent_mutex",
-					extensionPath: shadowed.extensionPath,
-					tools: shadowed.tools,
-				});
-			}
-		}
-
-		gate.bindSession(session.sessionId);
-		this.gates.set(session.sessionId, gate);
-		this.permissionModes.set(session.sessionId, modeRef);
-		await this.bindSessionExtensions(session, session.sessionId);
-
-		const unsubscribe = session.subscribe((event) => {
-			autoNameSession(session, event);
-			this.emitEvent(session.sessionId, event);
-		});
-		this.registry.add({ session, unsubscribe, cwd });
-		await this.traces.start(session.sessionId, session.sessionManager.getSessionDir());
-
 		log.info("session created", session.sessionId, { cwd });
 		return this.toMetaOrThrow(session.sessionId);
 	}
@@ -470,22 +422,55 @@ export class PiBackend {
 		const runtime = await this.getModelRuntime();
 		const sessionManager = SessionManager.open(filePath);
 		const cwd = sessionManager.getCwd() || process.cwd();
-		const gate = new PermissionGate((req) => this.dispatchPermissionRequest(req));
+		// 子代理产物目录下的会话文件 = 只读检视（spec §8.1：防能力静默漂移/递归绕过）。
+		// 其运行 trace 由 runner 管理，检视页不可写，故不另建 recorder（避免覆盖运行中的 recorder）。
+		const readOnly = isSubagentSessionPath(filePath);
+		const session = await this.wireSession(cwd, readOnly, async (deps) => {
+			const { settingsManager, resourceLoader } = await deps.load();
+			return createAgentSession({
+				sessionManager,
+				modelRuntime: runtime,
+				// 与 create 对称应用工具白名单（F1 修复；SDK 仅在初始激活工具集层面消费，
+				// 会话文件不持久化工具开关，重开无状态冲突）
+				tools: this.options.tools,
+				settingsManager,
+				resourceLoader,
+				customTools: this.buildCustomTools(deps.gate, deps.preferBuiltin),
+			});
+		});
+		log.info("session opened", session.sessionId, { file: filePath });
+		return this.toMetaOrThrow(session.sessionId);
+	}
+
+	/**
+	 * create/open 共有接线：权限三件套（gate/confirmBridge/modeRef）→ 资源加载 → 会话构造
+	 * （差异项由 makeSession 提供：create 传 model/tools/thinkingLevel 与新 manager；open 传
+	 * 既有 manager + tools，model/thinkingLevel 有意不传——SDK 缺省时从会话文件恢复，
+	 * 传了反而覆盖用户原选择，见 sdk.js 恢复分支）→
+	 * subagent mutex 通知 → 扩展绑定 → 订阅/注册（gate/dialogs/modeRef 随 entry 单记录）→ trace。
+	 */
+	private async wireSession(
+		cwd: string,
+		readOnly: boolean | undefined,
+		makeSession: (deps: {
+			gate: PermissionGate;
+			preferBuiltin: boolean;
+			/** 两阶段资源加载（信任决策走 projectLoader 既有链路）；懒执行：makeSession 决定时机 */
+			load: () => Promise<{ settingsManager: SettingsManager; resourceLoader: DefaultResourceLoader }>;
+		}) => Promise<CreateAgentSessionResult>,
+	): Promise<AgentSession> {
+		const gate = new PermissionGate((req) => this.permissionEmitter.emit(req));
+		// 权限扩展的确认通道直接桥到 gate（携带 kind/suggestDir 元数据，驱动「允许此目录」/持久化）
 		const confirmBridge: PermissionConfirm = (title, message, meta) => gate.confirm(title, message, meta);
-		// 重开历史会话同样 default 起步（D1：模式不随会话文件继承）
+		// 会话权限模式引用：一律 default 起步（D1：不落盘、不继承），随工厂闭包注入求值链
 		const modeRef: PermissionModeRef = { current: "default" };
-		const { settingsManager, resourceLoader } = await this.projectLoader.load(cwd, {
-			confirm: confirmBridge,
-			modeRef,
-		});
+		let loaded: { settingsManager: SettingsManager; resourceLoader: DefaultResourceLoader } | undefined;
+		const load = async () => {
+			loaded ??= await this.projectLoader.load(cwd, { confirm: confirmBridge, modeRef });
+			return loaded;
+		};
 		const preferBuiltin = await this.subagentPreferBuiltin();
-		const { session, extensionsResult } = await createAgentSession({
-			sessionManager,
-			modelRuntime: runtime,
-			settingsManager,
-			resourceLoader,
-			customTools: this.buildCustomTools(gate, preferBuiltin),
-		});
+		const { session, extensionsResult } = await makeSession({ gate, preferBuiltin, load });
 		const mutex = applySubagentMutex(session, extensionsResult, preferBuiltin);
 		if (mutex.shadowed.length > 0) {
 			log.info("third-party subagent tools shadowed", session.sessionId, mutex);
@@ -498,73 +483,61 @@ export class PiBackend {
 			}
 		}
 		gate.bindSession(session.sessionId);
-		this.gates.set(session.sessionId, gate);
-		this.permissionModes.set(session.sessionId, modeRef);
-		await this.bindSessionExtensions(session, session.sessionId);
+		const dialogs = await this.bindSessionExtensions(session, session.sessionId);
 		const unsubscribe = session.subscribe((event) => {
 			autoNameSession(session, event);
 			this.emitEvent(session.sessionId, event);
 		});
-		// 子代理产物目录下的会话文件 = 只读检视（spec §8.1：防能力静默漂移/递归绕过）。
-		// 其运行 trace 由 runner 管理，检视页不可写，故不另建 recorder（避免覆盖运行中的 recorder）。
-		const readOnly = isSubagentSessionPath(filePath);
-		this.registry.add({ session, unsubscribe, cwd, readOnly: readOnly || undefined });
+		this.registry.add({
+			session,
+			unsubscribe,
+			cwd,
+			gate,
+			dialogs,
+			modeRef,
+			readOnly: readOnly || undefined,
+		});
 		if (!readOnly) await this.traces.start(session.sessionId, session.sessionManager.getSessionDir());
-		log.info("session opened", session.sessionId, { file: filePath });
-		return this.toMetaOrThrow(session.sessionId);
+		return session;
 	}
 
 	async listSessions(cwd?: string): Promise<SessionMeta[]> {
 		const target = cwd || this.options.defaultCwd || process.cwd();
-		const infos = await SessionManager.list(target);
-		const activeIds = new Set(this.registry.list().map((e) => e.session.sessionId));
-		return infos
+		const activeIds = this.activeSessionIds();
+		return (await SessionManager.list(target))
 			.filter((info) => !activeIds.has(info.id))
-			.map((info) => ({
-				sessionId: info.id,
-				sessionFile: info.path,
-				cwd: info.cwd || target,
-				name: info.name,
-				active: false,
-				messageCount: info.messageCount,
-				createdAt: info.created.getTime(),
-				modifiedAt: info.modified.getTime(),
-			}));
+			.map((info) => sessionInfoToMeta(info, { cwdFallback: target, active: false }));
 	}
 
 	/** 跨全部项目目录枚举会话（项目管理页用，含活跃会话） */
 	async listAllSessions(): Promise<SessionMeta[]> {
-		const infos = await SessionManager.listAll();
-		const activeIds = new Set(this.registry.list().map((e) => e.session.sessionId));
-		return infos
+		const activeIds = this.activeSessionIds();
+		return (await SessionManager.listAll())
 			.filter((info) => info.cwd)
-			.map((info) => ({
-				sessionId: info.id,
-				sessionFile: info.path,
-				cwd: info.cwd || "",
-				name: info.name,
-				active: activeIds.has(info.id),
-				// subagent 产物会话只读（LAN 列表/写端点禁用判定用）
-				readOnly: isSubagentSessionPath(info.path) || undefined,
-				messageCount: info.messageCount,
-				createdAt: info.created.getTime(),
-				modifiedAt: info.modified.getTime(),
-			}));
+			.map((info) =>
+				sessionInfoToMeta(info, {
+					cwdFallback: "",
+					active: activeIds.has(info.id),
+					// subagent 产物会话只读（LAN 列表/写端点禁用判定用）
+					readOnly: isSubagentSessionPath(info.path) || undefined,
+				}),
+			);
+	}
+
+	private activeSessionIds(): Set<string> {
+		return new Set(this.registry.list().map((e) => e.session.sessionId));
 	}
 
 	async closeSession(sessionId: string): Promise<void> {
 		const entry = this.registry.get(sessionId);
 		if (!entry) return;
 		entry.session.dispose();
-		this.gates.get(sessionId)?.dispose();
-		this.gates.delete(sessionId);
-		// pending 对话框按 sessionClosed 结算（广播 resolved 让 renderer 撤卡；扩展 Promise 落取消值）
-		this.dialogs.get(sessionId)?.dispose();
-		this.dialogs.delete(sessionId);
-		this.permissionModes.delete(sessionId);
+		// entry 级清理：unsubscribe + gate/dialogs dispose（pending 对话框按 sessionClosed 结算，
+		// 广播 resolved 让 renderer 撤卡；扩展 Promise 落取消值）
+		this.registry.delete(sessionId);
+		// 全局键控子系统（本就独立于 registry）
 		this.streamGuard.cleanup(sessionId);
 		this.eventRates.delete(sessionId);
-		this.registry.delete(sessionId);
 		await this.traces.stop(sessionId);
 		log.info("session closed", sessionId);
 	}
@@ -582,8 +555,7 @@ export class PiBackend {
 	}
 
 	async prompt(sessionId: string, text: string, images?: ImageInput[]): Promise<void> {
-		const entry = this.requireSession(sessionId);
-		if (entry.readOnly) throw new Error("Session is read-only (subagent transcript)");
+		const entry = this.requireWritable(sessionId);
 		log.info("prompt", sessionId, { text: text.slice(0, 120), images: images?.length ?? 0 });
 		// session.prompt() 非流式路径会 await 整个 run（直到 agent_settled）；渲染端只需要
 		// “已受理/已入队”回执——用 preflightResult 提前返回，否则 IPC 挂一整轮，渲染端
@@ -644,8 +616,7 @@ export class PiBackend {
 	}
 
 	async setModel(sessionId: string, provider: string, modelId: string): Promise<void> {
-		const entry = this.requireSession(sessionId);
-		if (entry.readOnly) throw new Error("Session is read-only (subagent transcript)");
+		const entry = this.requireWritable(sessionId);
 		const runtime = await this.getModelRuntime();
 		const model = runtime.getModel(provider, modelId);
 		if (!model) throw new Error(`Model not found: ${provider}/${modelId}`);
@@ -653,14 +624,12 @@ export class PiBackend {
 	}
 
 	async setThinkingLevel(sessionId: string, level: string): Promise<void> {
-		const entry = this.requireSession(sessionId);
-		if (entry.readOnly) throw new Error("Session is read-only (subagent transcript)");
+		const entry = this.requireWritable(sessionId);
 		entry.session.setThinkingLevel(level as ThinkingLevel);
 	}
 
 	async compact(sessionId: string, customInstructions?: string): Promise<void> {
-		const entry = this.requireSession(sessionId);
-		if (entry.readOnly) throw new Error("Cannot compact a read-only subagent transcript");
+		const entry = this.requireWritable(sessionId);
 		log.info("compact", sessionId);
 		await entry.session.compact(customInstructions);
 	}
@@ -694,7 +663,7 @@ export class PiBackend {
 	/** 全部未决权限请求的只读快照（LAN Observer 等被动观察者用）。 */
 	/** 全部未决权限请求快照（含 requestId；LAN 观察/远程应答与桌面共用） */
 	getPendingPermissionRequests(): PermissionRequest[] {
-		return [...this.gates.values()].flatMap((gate) => gate.listPending());
+		return this.registry.list().flatMap(({ gate }) => gate.listPending());
 	}
 
 	/** 当前模型上下文使用情况；刚压缩后 tokens 未知（null），会话无模型时 percent 为 null */
@@ -705,65 +674,9 @@ export class PiBackend {
 		return { tokens: usage.tokens, contextWindow: usage.contextWindow, percent: usage.percent };
 	}
 
-	/**
-	 * opencode-go 套餐额度（全局，非会话级）：main 进程直调官方 API。
-	 * 5 分钟 TTL；无 key/无订阅返回 null（插件隐藏）；HTTP/网络失败返回带 error 的空窗体。
-	 */
+	/** opencode-go 套餐额度（实现在 settings/quota.ts：TTL 缓存 + 官方 API） */
 	async getQuota(): Promise<QuotaInfo | null> {
-		const now = Date.now();
-		if (this.quotaCache && now - this.quotaCache.at < QUOTA_TTL_MS) return this.quotaCache.data;
-		let apiKey: string | undefined;
-		try {
-			const runtime = await this.getModelRuntime();
-			const auth = await runtime.getAuth(QUOTA_PROVIDER);
-			apiKey = auth?.auth.apiKey;
-		} catch {
-			apiKey = undefined;
-		}
-		if (!apiKey) return null;
-		try {
-			const controller = new AbortController();
-			const timer = setTimeout(() => controller.abort(), 10_000);
-			let res: Response;
-			try {
-				res = await fetch(QUOTA_ENDPOINT, {
-					headers: { Authorization: `Bearer ${apiKey}`, Accept: "application/json" },
-					signal: controller.signal,
-				});
-			} finally {
-				clearTimeout(timer);
-			}
-			if (!res.ok) {
-				const err: QuotaInfo = { windows: [], updatedAt: now, error: `HTTP ${res.status}` };
-				this.quotaCache = { at: now, data: err };
-				return err;
-			}
-			const data = (await res.json()) as {
-				usage?: Record<string, { percent?: number; resetsAt?: string; status?: string }>;
-			};
-			const usage = data?.usage ?? {};
-			const windows: QuotaInfo["windows"] = [];
-			for (const key of ["rolling", "weekly", "monthly"] as const) {
-				const w = usage[key];
-				if (!w || typeof w !== "object") continue;
-				const percent = Math.min(100, Math.max(0, Number(w.percent) || 0));
-				windows.push({
-					key,
-					label: QUOTA_WINDOW_LABEL[key] ?? key,
-					percent,
-					resetsAt: w.resetsAt ?? null,
-					usedUsd: QUOTA_WINDOW_LIMIT_USD[key] > 0 ? (percent / 100) * QUOTA_WINDOW_LIMIT_USD[key] : null,
-					limitUsd: QUOTA_WINDOW_LIMIT_USD[key] ?? 0,
-					status: w.status === "rate-limited" || percent >= 100 ? "rate-limited" : "ok",
-				});
-			}
-			const info: QuotaInfo = { windows, updatedAt: now };
-			this.quotaCache = { at: now, data: info };
-			return info;
-		} catch (e) {
-			const message = e instanceof Error ? e.message : String(e);
-			return { windows: [], updatedAt: now, error: message };
-		}
+		return this.quota.get();
 	}
 
 	/** 列出斜杠命令：内置（标记 supported）+ prompt 模板 + skill + 扩展命令 */
@@ -830,34 +743,9 @@ export class PiBackend {
 		};
 	}
 
-	/** 搜索 pi.dev 社区包目录（设置页扩展面板浏览用） */
-	async searchPackages(
-		query: string,
-		type?: CatalogPackageType | "",
-		page?: number,
-	): Promise<CatalogSearchResult> {
-		return this.packages.searchPackages(query, type, page);
-	}
-
-	/** 列出 settings.json 已配置的包（「已安装」态匹配用） */
-	async listConfiguredPackages(): Promise<ConfiguredPackageInfo[]> {
-		return this.packages.listConfiguredPackages();
-	}
-
-	/** 安装社区包（npm:<name>，用户级）；成功后热重载非流式活跃会话，扩展立即生效 */
-	async installPackage(name: string): Promise<void> {
-		return this.packages.installPackage(name);
-	}
-
-	/** 卸载已配置的包（按 source + scope 移除并持久化）；成功后热重载非流式活跃会话 */
-	async removePackage(source: string, scope: "user" | "project"): Promise<void> {
-		return this.packages.removePackage(source, scope);
-	}
-
 	/** 设置会话显示名（触发 session_info_changed 事件） */
 	async setSessionName(sessionId: string, name: string): Promise<void> {
-		const entry = this.requireSession(sessionId);
-		if (entry.readOnly) throw new Error("Cannot rename a read-only subagent transcript");
+		const entry = this.requireWritable(sessionId);
 		entry.session.setSessionName(name);
 	}
 
@@ -920,8 +808,7 @@ export class PiBackend {
 	 * （刚完成的流式消息还没有 entryId，走文本兜底）。
 	 */
 	async forkSession(sessionId: string, ref: { entryId?: string; text?: string }): Promise<SessionMeta> {
-		const entry = this.requireSession(sessionId);
-		if (entry.readOnly) throw new Error("Cannot fork a read-only subagent transcript");
+		const entry = this.requireWritable(sessionId);
 		if (entry.session.isStreaming || entry.session.isCompacting) {
 			throw new Error("Cannot fork while the agent is running or context is compacting");
 		}
@@ -952,8 +839,7 @@ export class PiBackend {
 		sessionId: string,
 		ref: { entryId?: string; text?: string; timestamp?: number },
 	): Promise<{ text: string; images: ImageInput[] }> {
-		const entry = this.requireSession(sessionId);
-		if (entry.readOnly) throw new Error("Cannot recall in a read-only subagent transcript");
+		const entry = this.requireWritable(sessionId);
 		if (entry.session.isStreaming || entry.session.isCompacting) {
 			throw new Error("Cannot recall while the agent is running or context is compacting");
 		}
@@ -1022,30 +908,6 @@ export class PiBackend {
 		);
 	}
 
-	async getModelPrefs(): Promise<ModelPrefs> {
-		return this.modelPrefs.getPrefs();
-	}
-
-	async setModelHidden(provider: string, modelId: string, hidden: boolean): Promise<ModelPrefs> {
-		return this.modelPrefs.setModelHidden(provider, modelId, hidden);
-	}
-
-	async setModelsHidden(provider: string, modelIds: string[], hidden: boolean): Promise<ModelPrefs> {
-		return this.modelPrefs.setModelsHidden(provider, modelIds, hidden);
-	}
-
-	async setSubagentModel(agent: string, modelRef: string | null): Promise<ModelPrefs> {
-		return this.modelPrefs.setSubagentModel(agent, modelRef);
-	}
-
-	async setSubagentThinking(agent: string, level: string | null): Promise<ModelPrefs> {
-		return this.modelPrefs.setSubagentThinking(agent, level);
-	}
-
-	async setSubagentPreferBuiltin(enabled: boolean): Promise<ModelPrefs> {
-		return this.modelPrefs.setSubagentPreferBuiltin(enabled);
-	}
-
 	async listSubagents(): Promise<SubagentInfo[]> {
 		const agents = await discoverAgents(this.options.defaultCwd ?? process.cwd(), { projectTrusted: false });
 		return agents
@@ -1059,56 +921,47 @@ export class PiBackend {
 			}));
 	}
 
-	onEvent(handler: EventHandler): () => void {
-		this.eventHandlers.add(handler);
-		return () => this.eventHandlers.delete(handler);
+	onEvent(handler: (sessionId: string, event: SessionEvent) => void): () => void {
+		return this.eventEmitter.subscribe(({ sessionId, event }) => handler(sessionId, event));
 	}
 
-	onPermissionRequest(handler: PermissionHandler): () => void {
-		this.permissionHandlers.add(handler);
-		return () => this.permissionHandlers.delete(handler);
+	onPermissionRequest(handler: (req: PermissionRequest) => void): () => void {
+		return this.permissionEmitter.subscribe(handler);
 	}
 
 	/** 权限请求被桌面端实际应答后通知被动观察者。 */
-	onPermissionResolved(handler: PermissionResolvedHandler): () => void {
-		this.permissionResolvedHandlers.add(handler);
-		return () => this.permissionResolvedHandlers.delete(handler);
+	onPermissionResolved(handler: (result: PermissionResolved) => void): () => void {
+		return this.permissionResolvedEmitter.subscribe(handler);
 	}
 
-	onTrustRequest(handler: TrustHandler): () => void {
-		this.trustHandlers.add(handler);
-		return () => this.trustHandlers.delete(handler);
+	onTrustRequest(handler: (req: TrustRequest) => void): () => void {
+		return this.trustEmitter.subscribe(handler);
 	}
 
-	onLoginEvent(handler: LoginHandler): () => void {
-		this.loginHandlers.add(handler);
-		return () => this.loginHandlers.delete(handler);
+	onLoginEvent(handler: (payload: LoginEventPayload) => void): () => void {
+		return this.loginEmitter.subscribe(handler);
 	}
 
 	/** 扩展对话框请求/结算/通知/草稿预填订阅（main 进程转发 renderer 用） */
-	onExtensionDialogRequest(handler: ExtensionDialogRequestHandler): () => void {
-		this.extensionDialogRequestHandlers.add(handler);
-		return () => this.extensionDialogRequestHandlers.delete(handler);
+	onExtensionDialogRequest(handler: (req: ExtensionDialogRequest) => void): () => void {
+		return this.extensionDialogRequestEmitter.subscribe(handler);
 	}
 
-	onExtensionDialogResolved(handler: ExtensionDialogResolvedHandler): () => void {
-		this.extensionDialogResolvedHandlers.add(handler);
-		return () => this.extensionDialogResolvedHandlers.delete(handler);
+	onExtensionDialogResolved(handler: (result: ExtensionDialogResolved) => void): () => void {
+		return this.extensionDialogResolvedEmitter.subscribe(handler);
 	}
 
-	onExtensionNotify(handler: ExtensionNotifyHandler): () => void {
-		this.extensionNotifyHandlers.add(handler);
-		return () => this.extensionNotifyHandlers.delete(handler);
+	onExtensionNotify(handler: (event: ExtensionNotifyEvent) => void): () => void {
+		return this.extensionNotifyEmitter.subscribe(handler);
 	}
 
-	onExtensionEditorText(handler: ExtensionEditorTextHandler): () => void {
-		this.extensionEditorTextHandlers.add(handler);
-		return () => this.extensionEditorTextHandlers.delete(handler);
+	onExtensionEditorText(handler: (event: ExtensionEditorTextEvent) => void): () => void {
+		return this.extensionEditorTextEmitter.subscribe(handler);
 	}
 
 	/** renderer 应答扩展对话框（requestId 含 sessionId 全局唯一；非本宿主实例静默忽略，仿 respondPermission 遍历） */
 	respondExtensionDialog(requestId: string, answer: ExtensionDialogRespond): void {
-		for (const dialogs of this.dialogs.values()) {
+		for (const { dialogs } of this.registry.list()) {
 			dialogs.respond(requestId, answer);
 		}
 	}
@@ -1118,13 +971,17 @@ export class PiBackend {
 			// 持久化决策（仅内置权限扩展的请求带 meta）：
 			// allowDir → 根加入 workspaces.json（本次与后续均按界内处置）；
 			// allowAlways → 模式键记入当前项目的 allowed[]（跨会话生效）
-			for (const gate of this.gates.values()) {
+			for (const { gate } of this.registry.list()) {
 				const req = gate.getRequest(requestId);
 				if (!req) continue;
 				// 先放行 agent 再持久化（D3）：持久化失败（如 workspaces.json 损坏拒写）只丢记忆不挂会话，
 				// log.error 留痕——fail-open 与 enabled=false 整体放行的既有语义一致
 				gate.respond(requestId, answer);
-				this.dispatchPermissionResolved({ sessionId: gate.getSessionId(), requestId, answered: true });
+				this.permissionResolvedEmitter.emit({
+					sessionId: gate.getSessionId(),
+					requestId,
+					answered: true,
+				});
 				const entry = this.registry.get(gate.getSessionId());
 				if (entry) {
 					try {
@@ -1142,10 +999,14 @@ export class PiBackend {
 			}
 			return;
 		}
-		for (const gate of this.gates.values()) {
+		for (const { gate } of this.registry.list()) {
 			if (!gate.getRequest(requestId)) continue;
 			gate.respond(requestId, answer);
-			this.dispatchPermissionResolved({ sessionId: gate.getSessionId(), requestId, answered: true });
+			this.permissionResolvedEmitter.emit({
+				sessionId: gate.getSessionId(),
+				requestId,
+				answered: true,
+			});
 		}
 	}
 
@@ -1156,14 +1017,14 @@ export class PiBackend {
 
 	/** 会话权限模式（default 缺省 fail-safe；关 tab 重开后端已归零，renderer 对齐用） */
 	getSessionPermissionMode(sessionId: string): PermissionMode {
-		return this.permissionModes.get(sessionId)?.current ?? "default";
+		return this.registry.get(sessionId)?.modeRef.current ?? "default";
 	}
 
 	/** 切换会话权限模式（内存态即时生效，不落盘；会话不存在时抛可读错误） */
 	setSessionPermissionMode(sessionId: string, mode: PermissionMode): void {
-		const ref = this.permissionModes.get(sessionId);
-		if (!ref) throw new Error(`Session not found: ${sessionId}`);
-		ref.current = mode;
+		const entry = this.registry.get(sessionId);
+		if (!entry) throw new Error(`Session not found: ${sessionId}`);
+		entry.modeRef.current = mode;
 		log.info("permission mode", sessionId, { mode });
 	}
 
@@ -1205,12 +1066,15 @@ export class PiBackend {
 
 	dispose(): void {
 		this.registry.disposeAll();
-		this.eventHandlers.clear();
-		this.permissionHandlers.clear();
-		this.permissionResolvedHandlers.clear();
-		for (const dialogs of this.dialogs.values()) dialogs.dispose();
-		this.dialogs.clear();
-		this.trustHandlers.clear();
+		this.eventEmitter.clear();
+		this.permissionEmitter.clear();
+		this.permissionResolvedEmitter.clear();
+		this.trustEmitter.clear();
+		this.loginEmitter.clear();
+		this.extensionDialogRequestEmitter.clear();
+		this.extensionDialogResolvedEmitter.clear();
+		this.extensionNotifyEmitter.clear();
+		this.extensionEditorTextEmitter.clear();
 		this.trustGate.dispose();
 		this.traces.disposeAll();
 		log.info("backend disposed");
@@ -1222,90 +1086,17 @@ export class PiBackend {
 		return entry;
 	}
 
+	/** 只读会话（subagent 产物检视）写操作统一守卫；可写时返回 entry */
+	private requireWritable(sessionId: string) {
+		const entry = this.requireSession(sessionId);
+		if (entry.readOnly) throw new Error("Session is read-only (subagent transcript)");
+		return entry;
+	}
+
 	private toMetaOrThrow(sessionId: string): SessionMeta {
 		const entry = this.registry.get(sessionId);
 		if (!entry) throw new Error(`Session not found: ${sessionId}`);
 		return this.registry.toMeta(entry);
-	}
-
-	private dispatchPermissionRequest(req: PermissionRequest): void {
-		for (const handler of this.permissionHandlers) {
-			try {
-				handler(req);
-			} catch {
-				// 忽略单个处理器异常
-			}
-		}
-	}
-
-	private dispatchPermissionResolved(result: PermissionResolved): void {
-		for (const handler of this.permissionResolvedHandlers) {
-			try {
-				handler(result);
-			} catch {
-				// 忽略单个处理器异常
-			}
-		}
-	}
-
-	private dispatchTrustRequest(req: TrustRequest): void {
-		for (const handler of this.trustHandlers) {
-			try {
-				handler(req);
-			} catch {
-				// 忽略单个处理器异常
-			}
-		}
-	}
-
-	private dispatchLoginEvent(payload: LoginEventPayload): void {
-		for (const handler of this.loginHandlers) {
-			try {
-				handler(payload);
-			} catch {
-				// 忽略单个处理器异常
-			}
-		}
-	}
-
-	private dispatchExtensionDialogRequest(req: ExtensionDialogRequest): void {
-		for (const handler of this.extensionDialogRequestHandlers) {
-			try {
-				handler(req);
-			} catch {
-				// 忽略单个处理器异常
-			}
-		}
-	}
-
-	private dispatchExtensionDialogResolved(result: ExtensionDialogResolved): void {
-		for (const handler of this.extensionDialogResolvedHandlers) {
-			try {
-				handler(result);
-			} catch {
-				// 忽略单个处理器异常
-			}
-		}
-	}
-
-	private dispatchExtensionNotify(event: ExtensionNotifyEvent): void {
-		for (const handler of this.extensionNotifyHandlers) {
-			try {
-				handler(event);
-			} catch {
-				// 忽略单个处理器异常
-			}
-		}
-	}
-
-	private dispatchExtensionEditorText(event: ExtensionEditorTextEvent): void {
-		for (const handler of this.extensionEditorTextHandlers) {
-			try {
-				handler(event);
-			} catch {
-				// 忽略单个处理器异常
-			}
-		}
 	}
 }
 

@@ -81,7 +81,7 @@ export const useProjectsStore = create<ProjectsStore>((set, get) => ({
 		if (!cwd) return;
 		// 信任前置：添加项目即决策（未决弹窗，结果落 trust.json），之后建 draft/会话不再弹
 		void getPi()
-			.ensureProjectTrust(cwd)
+			.ensureProjectTrust({ cwd })
 			.catch(() => {});
 		const added = get().addedProjects;
 		if (!added.includes(cwd)) {
@@ -93,7 +93,7 @@ export const useProjectsStore = create<ProjectsStore>((set, get) => ({
 	},
 
 	deleteSession: async (session) => {
-		await getPi().deleteSession(session.sessionId, session.sessionFile);
+		await getPi().deleteSession({ sessionId: session.sessionId, sessionFile: session.sessionFile });
 		const sessionsState = useSessionsStore.getState();
 		if (sessionsState.sessions.some((s) => s.sessionId === session.sessionId)) {
 			await sessionsState.closeSession(session.sessionId);

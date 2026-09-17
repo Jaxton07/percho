@@ -130,7 +130,7 @@ function BranchPicker({ cwd }: { cwd: string | null }) {
 		if (!cwd) return;
 		let cancelled = false;
 		void getPi()
-			.listGitBranches(cwd)
+			.listGitBranches({ cwd })
 			.then((result) => {
 				if (cancelled) return;
 				setBranches(result.branches);
@@ -167,7 +167,7 @@ function BranchPicker({ cwd }: { cwd: string | null }) {
 								onClick={() => {
 									if (branch !== current && cwd) {
 										void getPi()
-											.checkoutBranch(cwd, branch)
+											.checkoutBranch({ cwd, branch })
 											.then(setCurrent)
 											.catch((e: unknown) => setError(e instanceof Error ? e.message : String(e)));
 									}

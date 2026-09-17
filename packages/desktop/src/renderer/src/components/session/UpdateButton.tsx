@@ -18,7 +18,7 @@ export function UpdateButton() {
 
 	const openReleasePage = async (version: string) => {
 		const info = await getPi().getAppInfo();
-		void getPi().openExternal(`${info.repoUrl}/releases/tag/v${version}`);
+		void getPi().openExternal({ url: `${info.repoUrl}/releases/tag/v${version}` });
 	};
 
 	const label =

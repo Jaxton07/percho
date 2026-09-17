@@ -20,7 +20,7 @@ import { create } from "zustand";
 export type { ActivityEntry, SessionPhase, StreamingState, SubagentRunUi, UIMessage, UIToolCall };
 
 /** 跨进程完整请求（含 kind/suggestDir）；App 订阅转发时缺省字段补齐 */
-export interface PermissionRequest extends SharedPermissionRequest {}
+export type PermissionRequest = SharedPermissionRequest;
 
 export interface SessionEntry extends SessionTranscriptState {
 	pendingPermissions: PermissionRequest[];
@@ -194,12 +194,14 @@ export const useTranscriptStore = create<TranscriptStore>((set) => ({
 		});
 	},
 	resetSession: (sessionId) => {
-		set((state) => ({
-			bySession: {
-				...state.bySession,
-				[sessionId]: { ...emptyTranscript(), pendingPermissions: [], pendingDialogs: [] },
-			},
-		}));
+		// 删 key 而非写空 entry：读取点全部走 `?? EMPTY_ENTRY` / `?.`（selectTranscript 兜底），
+		// 「会话无数据」状态与从未打开过的会话一致，也是 switchSession 懒加载的判定依据
+		set((state) => {
+			if (!(sessionId in state.bySession)) return state;
+			const bySession = { ...state.bySession };
+			delete bySession[sessionId];
+			return { bySession };
+		});
 	},
 	loadHistory: (sessionId, messages) => {
 		set((state) => {

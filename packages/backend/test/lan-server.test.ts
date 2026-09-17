@@ -28,7 +28,8 @@ function backend(): LanObserverBackend {
 	};
 	return {
 		listAllSessions: async () => [session],
-		getSessionMessages: async () => [{ role: "assistant", text: "hello" }] as never,
+		getSessionMessages: async () =>
+			[{ role: "assistant", text: "hello", thinking: "", tools: [], images: [], timestamp: 1 }] as never,
 		getTodos: async () => [{ content: "ship", status: "in_progress" }],
 		getStats: async () => ({ inputTokens: 1, outputTokens: 2, cost: 0.01 }),
 		listActiveSessionRuntime: () => [{ sessionId: session.sessionId, streaming: true, compacting: false }],
@@ -253,10 +254,13 @@ describe("LanObserverServer", () => {
 		const transcript = snapshot.transcripts[0];
 		expect(transcript.sessionId).toBe("session-1");
 		expect(transcript.truncated).toBe(false);
-		const user = transcript.messages[0];
+		// D6：快照携带服务端投影态（shared reducer 产物，含 in-flight 容器位）；sourceText 不出网
+		const user = transcript.state.messages[0];
 		expect(user.sourceText).toBeUndefined();
 		expect(user.images[0].data).toBe("lan-image-stripped");
-		expect(transcript.messages[1].text).toBe("hello");
+		expect(transcript.state.messages[1].text).toBe("hello");
+		// runtime 快照 streaming=true → 种子投影 agentActive 同步为 true
+		expect(transcript.state.agentActive).toBe(true);
 	});
 
 	it("relays sanitized event frames for known sessions with 50ms delta batching", async () => {

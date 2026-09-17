@@ -12,9 +12,13 @@ function makeEntry(
 	entry: RegisteredSession;
 	dispose: ReturnType<typeof vi.fn>;
 	unsubscribe: ReturnType<typeof vi.fn>;
+	gateDispose: ReturnType<typeof vi.fn>;
+	dialogsDispose: ReturnType<typeof vi.fn>;
 } {
 	const dispose = vi.fn();
 	const unsubscribe = vi.fn();
+	const gateDispose = vi.fn();
+	const dialogsDispose = vi.fn();
 	const session = {
 		sessionId,
 		sessionFile,
@@ -25,9 +29,18 @@ function makeEntry(
 		dispose,
 	};
 	return {
-		entry: { session, unsubscribe, cwd: "/tmp" } as unknown as RegisteredSession,
+		entry: {
+			session,
+			unsubscribe,
+			cwd: "/tmp",
+			gate: { dispose: gateDispose },
+			dialogs: { dispose: dialogsDispose },
+			modeRef: { current: "default" },
+		} as unknown as RegisteredSession,
 		dispose,
 		unsubscribe,
+		gateDispose,
+		dialogsDispose,
 	};
 }
 
@@ -42,7 +55,7 @@ afterEach(() => {
 });
 
 describe("SessionRegistry disposeAll（B8：与 closeSession 对称）", () => {
-	it("逐会话 unsubscribe + session.dispose 并清空", () => {
+	it("逐会话 unsubscribe + gate/dialogs/session dispose 并清空", () => {
 		const registry = new SessionRegistry();
 		const a = makeEntry("a", join(dir, "a.jsonl"));
 		const b = makeEntry("b", join(dir, "b.jsonl"));
@@ -53,6 +66,8 @@ describe("SessionRegistry disposeAll（B8：与 closeSession 对称）", () => {
 
 		expect(a.dispose).toHaveBeenCalledOnce();
 		expect(a.unsubscribe).toHaveBeenCalledOnce();
+		expect(a.gateDispose).toHaveBeenCalledOnce();
+		expect(a.dialogsDispose).toHaveBeenCalledOnce();
 		expect(b.dispose).toHaveBeenCalledOnce();
 		expect(b.unsubscribe).toHaveBeenCalledOnce();
 		expect(registry.has("a")).toBe(false);
@@ -66,9 +81,13 @@ describe("SessionRegistry disposeAll（B8：与 closeSession 对称）", () => {
 		registry.add(a.entry);
 		registry.delete("a");
 
+		expect(a.gateDispose).toHaveBeenCalledOnce();
+		expect(a.dialogsDispose).toHaveBeenCalledOnce();
+
 		registry.disposeAll();
 
 		expect(a.dispose).not.toHaveBeenCalled();
+		expect(a.gateDispose).toHaveBeenCalledOnce();
 	});
 });
 

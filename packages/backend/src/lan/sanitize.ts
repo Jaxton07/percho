@@ -1,4 +1,9 @@
-import { LAN_IMAGE_PLACEHOLDER, type SessionEvent, type SessionMessage } from "@percho/shared";
+import {
+	LAN_IMAGE_PLACEHOLDER,
+	REDUCED_EVENT_TYPES,
+	type SessionEvent,
+	type SessionMessage,
+} from "@percho/shared";
 
 /**
  * LAN 白名单投影（spec §5.5）：剥除手机端不需要且敏感的字段——
@@ -9,23 +14,15 @@ import { LAN_IMAGE_PLACEHOLDER, type SessionEvent, type SessionMessage } from "@
 
 const PLACEHOLDER_IMAGE = { data: LAN_IMAGE_PLACEHOLDER, mimeType: "image/x-lan-stripped" };
 
-/** 客户端真实消费的事件类型白名单（= shared transcript reducer 处理的类型）；其余一律丢弃。 */
-const FORWARDABLE_EVENTS = new Set([
-	"agent_start",
-	"turn_start",
-	"message_start",
-	"message_update",
-	"tool_execution_start",
-	"tool_execution_update",
-	"tool_execution_end",
-	"turn_end",
-	"agent_end",
-	"agent_settled",
-	"queue_update",
-	"compaction_start",
-	"compaction_end",
-	"subagent_mutex",
-]);
+/**
+ * LAN 事件白名单 = shared reducer 处理集（REDUCED_EVENT_TYPES 单一事实源）减去 LAN 不需要的：
+ * - auto_retry_*：GUI 重试提示是桌面增值信息，LAN 视图不消费
+ * - stream_guard_tripped：GUI-only 合成事件（LAN 端 agent_end 已表达「回复终止」）
+ */
+const LAN_EXCLUDED_EVENT_TYPES = new Set(["auto_retry_start", "auto_retry_end", "stream_guard_tripped"]);
+const FORWARDABLE_EVENTS = new Set<string>(
+	REDUCED_EVENT_TYPES.filter((type) => !LAN_EXCLUDED_EVENT_TYPES.has(type)),
+);
 
 function placeholderImages(images: unknown): { data: string; mimeType: string }[] {
 	if (!Array.isArray(images)) return [];

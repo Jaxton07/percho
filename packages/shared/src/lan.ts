@@ -1,5 +1,6 @@
 import type { PermissionRequest, SessionMessage } from "./session";
 import type { TodoItem } from "./todo";
+import type { SessionTranscriptState } from "./transcript";
 
 /** 局域网观察服务的持久化配置（token 在每次启用时轮换）。 */
 export interface LanObserverConfig {
@@ -38,6 +39,13 @@ export interface LanSessionBrief {
 }
 
 /** 手机观察页使用的单个活跃会话只读投影。 */
+/** 待审批权限卡（LAN 观察视图投影；title/message 为脱敏摘要） */
+export interface LanPendingPermission {
+	title: string;
+	message: string;
+	kind: string;
+}
+
 export interface LanSessionView {
 	sessionId: string;
 	name: string;
@@ -107,7 +115,18 @@ export type LanSseFrame =
 	| LanSsePingFrame;
 
 /** snapshot 中单会话的历史消息投影（sanitize 后）。 */
-export interface LanTranscript {
+/** GET /api/snapshot.transcripts[]：活跃会话的服务端投影态（shared reducer 驱动，含 in-flight 流式容器，
+ *  客户端直接种子后续事件帧无缝续接——不再需要 mid-run 自愈层）。 */
+export interface LanTranscriptProjection {
+	sessionId: string;
+	/** 服务端投影（sanitize 事件流驱动；messages 尾部 cap 100 条、已剥 sourceText 等不出网字段） */
+	state: SessionTranscriptState;
+	/** 被 cap 截断 = true（客户端显示「仅显示最近消息」）。 */
+	truncated: boolean;
+}
+
+/** GET /api/sessions/:id/transcript 响应：历史会话按需拉取（无活跃投影，客户端 messagesToUIMessages 种子）。 */
+export interface LanTranscriptHistory {
 	sessionId: string;
 	/** sanitize 后的历史消息，尾部 cap 100 条。 */
 	messages: SessionMessage[];
@@ -120,7 +139,7 @@ export interface LanSnapshot {
 	serverTime: number;
 	list: LanSessionBrief[];
 	views: LanSessionView[];
-	transcripts: LanTranscript[];
+	transcripts: LanTranscriptProjection[];
 	/** 未决权限请求（含 requestId；M2 远程应答的种子，perm 帧的补充）。 */
 	pendingPermissions?: PermissionRequest[];
 	remoteControl: boolean;

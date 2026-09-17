@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
+import { useActiveModelInfo } from "../../hooks/use-session-state";
 import { useT } from "../../i18n";
 import { useSessionsStore } from "../../stores/sessions";
 import { CheckIcon, ChevronDownIcon } from "../icons";
@@ -7,8 +8,8 @@ import { CheckIcon, ChevronDownIcon } from "../icons";
 export function ModelPicker() {
 	const t = useT();
 	const models = useSessionsStore((s) => s.models);
-	const currentModel = useSessionsStore((s) => s.currentModel);
-	const activeSession = useSessionsStore((s) => s.sessions.find((x) => x.sessionId === s.activeSessionId));
+	// 每个会话独立持有模型：当前会话覆写 ?? 全局默认 → models 表解析（useActiveModelInfo 收拢点）
+	const current = useActiveModelInfo() ?? null;
 	const setCurrentModel = useSessionsStore((s) => s.setCurrentModel);
 	const [open, setOpen] = useState(false);
 	const ref = useRef<HTMLDivElement>(null);
@@ -29,16 +30,6 @@ export function ModelPicker() {
 		};
 	}, [open]);
 
-	// 每个会话独立持有模型：优先显示当前会话的模型，未设置（内存/旧会话）回退全局默认
-	const effective = activeSession?.model ?? currentModel;
-	const current = useMemo(
-		() =>
-			effective
-				? (models.find((m) => m.provider === effective.provider && m.id === effective.modelId) ?? null)
-				: null,
-		[models, effective],
-	);
-
 	const groups = useMemo(() => {
 		const map = new Map<string, { name: string; items: typeof models }>();
 		for (const m of models) {
@@ -53,7 +44,7 @@ export function ModelPicker() {
 	}, [models]);
 
 	const label =
-		current?.label ?? (effective ? `${effective.provider}/${effective.modelId}` : t("composer.modelDefault"));
+		current?.label ?? (current ? `${current.provider}/${current.id}` : t("composer.modelDefault"));
 
 	return (
 		<div ref={ref} className="relative">
@@ -78,7 +69,7 @@ export function ModelPicker() {
 								{group.name}
 							</div>
 							{group.items.map((m) => {
-								const selected = effective?.provider === m.provider && effective.modelId === m.id;
+								const selected = current?.provider === m.provider && current.id === m.id;
 								return (
 									<button
 										key={`${m.provider}/${m.id}`}

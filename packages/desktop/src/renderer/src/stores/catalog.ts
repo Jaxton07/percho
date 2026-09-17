@@ -86,7 +86,7 @@ export const useCatalogStore = create<CatalogStore>((set, get) => {
 					: { catalogSeq: seq, catalogLoading: true, catalogError: null },
 			);
 			try {
-				const result = await getPi().searchCatalog(catalogQuery, catalogType, page);
+				const result = await getPi().searchCatalog({ query: catalogQuery, type: catalogType, page });
 				if (get().catalogSeq !== seq) return; // 已有更新的搜索，丢弃陈旧响应
 				set((state) => ({
 					catalogPackages: append ? [...state.catalogPackages, ...result.packages] : result.packages,
@@ -112,7 +112,7 @@ export const useCatalogStore = create<CatalogStore>((set, get) => {
 				return { installingNames: { ...state.installingNames, [name]: true }, installErrors };
 			});
 			try {
-				await getPi().installPackage(name);
+				await getPi().installPackage({ name });
 				await get().refreshConfiguredPackages();
 				// backend 已对非流式会话做 session.reload()，刷新已加载资源列表让「已加载」页同步
 				void useSettingsStore.getState().refresh();
@@ -148,7 +148,7 @@ export const useCatalogStore = create<CatalogStore>((set, get) => {
 				return { removingSources: { ...state.removingSources, [source]: true }, removeErrors };
 			});
 			try {
-				await getPi().removePackage(source, scope);
+				await getPi().removePackage({ source, scope });
 				await get().refreshConfiguredPackages();
 				// backend 已对非流式会话做 session.reload()，刷新已加载资源列表让「已加载」页同步
 				void useSettingsStore.getState().refresh();

@@ -38,23 +38,23 @@ export const useUiPluginsStore = create<UiPluginsStore>((set, get) => ({
 		}
 	},
 	setMaster: async (enabled) => {
-		await getPi().uiPluginsSetEnabled(enabled);
+		await getPi().uiPluginsSetEnabled({ enabled });
 		await get().loadAll();
 	},
 	setPluginEnabled: async (name, enabled) => {
-		await getPi().uiPluginsSetPluginEnabled(name, enabled);
+		await getPi().uiPluginsSetPluginEnabled({ name, enabled });
 		await get().loadAll();
 	},
 	assignSlot: async (slot, pluginName) => {
-		await getPi().uiPluginsAssignSlot(slot, pluginName);
+		await getPi().uiPluginsAssignSlot({ slot, pluginName });
 		await get().loadAll();
 	},
 	rebuild: async (name) => {
-		await getPi().uiPluginsRebuild(name);
+		await getPi().uiPluginsRebuild({ name });
 		await get().loadAll();
 	},
 	openDir: async (name) => {
-		await getPi().uiPluginsOpenDir(name);
+		await getPi().uiPluginsOpenDir({ name });
 	},
 	setLoadError: (name, error) => {
 		set((state) => {

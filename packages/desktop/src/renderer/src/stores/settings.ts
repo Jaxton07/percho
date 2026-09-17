@@ -148,7 +148,7 @@ export const useSettingsStore = create<SettingsStore>((set, get) => {
 				.catch(() => {});
 			try {
 				const [providers, modelPrefs, subagents] = await Promise.all([
-					getPi().listProviders(),
+					getPi().listProviders({}),
 					getPi().getModelPrefs(),
 					getPi().listSubagents(),
 				]);
@@ -156,7 +156,7 @@ export const useSettingsStore = create<SettingsStore>((set, get) => {
 				// 已加载资源按当前活跃会话（其项目）展示；无会话或 draft（未真正创建）时为 null（面板显示空态）
 				const activeSessionId = useSessionsStore.getState().activeSessionId;
 				if (activeSessionId && !isDraftSessionId(activeSessionId)) {
-					const resources = await getPi().getLoadedResources(activeSessionId);
+					const resources = await getPi().getLoadedResources({ sessionId: activeSessionId });
 					// 竞态守卫：await 期间活跃会话已切换则丢弃（防把 A 项目的资源写到 B 会话的面板）
 					if (useSessionsStore.getState().activeSessionId === activeSessionId) {
 						set({
@@ -177,7 +177,7 @@ export const useSettingsStore = create<SettingsStore>((set, get) => {
 		refreshProvidersFromNetwork: async () => {
 			set({ refreshing: true, error: null });
 			try {
-				const providers = await getPi().listProviders({ forceNetwork: true });
+				const providers = await getPi().listProviders({ options: { forceNetwork: true } });
 				set({ providers, refreshing: false });
 				// runtime 已持有最新目录，本地刷新模型选择器数据即可
 				await useSessionsStore.getState().loadModels();
@@ -190,7 +190,7 @@ export const useSettingsStore = create<SettingsStore>((set, get) => {
 			const previous = get().contextManagerMode;
 			set({ contextManagerMode: mode });
 			try {
-				await getPi().setContextManagerMode(mode);
+				await getPi().setContextManagerMode({ mode });
 			} catch (error) {
 				set({
 					contextManagerMode: previous,
@@ -203,7 +203,7 @@ export const useSettingsStore = create<SettingsStore>((set, get) => {
 			const previous = get().channelWatchEnabled;
 			set({ channelWatchEnabled: enabled });
 			try {
-				await getPi().setChannelWatchEnabled(enabled);
+				await getPi().setChannelWatchEnabled({ enabled });
 			} catch (error) {
 				set({
 					channelWatchEnabled: previous,
@@ -223,7 +223,7 @@ export const useSettingsStore = create<SettingsStore>((set, get) => {
 		setLanEnabled: async (enabled) => {
 			set({ lanSaving: true });
 			try {
-				const lanStatus = await getPi().lanSetEnabled(enabled);
+				const lanStatus = await getPi().lanSetEnabled({ enabled });
 				set({ lanStatus, lanSaving: false });
 			} catch (error) {
 				set({ lanSaving: false, error: error instanceof Error ? error.message : String(error) });
@@ -233,7 +233,7 @@ export const useSettingsStore = create<SettingsStore>((set, get) => {
 		setLanRemoteControl: async (enabled) => {
 			set({ lanSaving: true });
 			try {
-				const lanStatus = await getPi().lanSetRemoteControl(enabled);
+				const lanStatus = await getPi().lanSetRemoteControl({ enabled });
 				set({ lanStatus, lanSaving: false });
 			} catch (error) {
 				set({ lanSaving: false, error: error instanceof Error ? error.message : String(error) });
@@ -242,7 +242,7 @@ export const useSettingsStore = create<SettingsStore>((set, get) => {
 
 		saveKey: async (providerId, key) => {
 			try {
-				await getPi().saveApiKey(providerId, key);
+				await getPi().saveApiKey({ providerId, key });
 				await afterMutation();
 			} catch (error) {
 				set({ error: error instanceof Error ? error.message : String(error) });
@@ -251,7 +251,7 @@ export const useSettingsStore = create<SettingsStore>((set, get) => {
 
 		removeCredential: async (providerId) => {
 			try {
-				await getPi().removeCredential(providerId);
+				await getPi().removeCredential({ providerId });
 				await afterMutation();
 			} catch (error) {
 				set({ error: error instanceof Error ? error.message : String(error) });
@@ -260,7 +260,7 @@ export const useSettingsStore = create<SettingsStore>((set, get) => {
 
 		addCustom: async (input) => {
 			try {
-				await getPi().addCustomProvider(input);
+				await getPi().addCustomProvider({ input });
 				await afterMutation();
 			} catch (error) {
 				set({ error: error instanceof Error ? error.message : String(error) });
@@ -270,7 +270,7 @@ export const useSettingsStore = create<SettingsStore>((set, get) => {
 
 		updateCustom: async (input) => {
 			try {
-				await getPi().updateCustomProvider(input);
+				await getPi().updateCustomProvider({ input });
 				await afterMutation();
 			} catch (error) {
 				set({ error: error instanceof Error ? error.message : String(error) });
@@ -280,7 +280,7 @@ export const useSettingsStore = create<SettingsStore>((set, get) => {
 
 		removeCustom: async (providerId) => {
 			try {
-				await getPi().removeCustomProvider(providerId);
+				await getPi().removeCustomProvider({ providerId });
 				await afterMutation();
 			} catch (error) {
 				set({ error: error instanceof Error ? error.message : String(error) });
@@ -289,7 +289,7 @@ export const useSettingsStore = create<SettingsStore>((set, get) => {
 
 		setProviderBaseUrl: async (providerId, baseUrl, apiKey) => {
 			try {
-				await getPi().setProviderBaseUrl(providerId, baseUrl, apiKey);
+				await getPi().setProviderBaseUrl({ providerId, baseUrl, apiKey });
 				await afterMutation();
 			} catch (error) {
 				set({ error: error instanceof Error ? error.message : String(error) });
@@ -309,7 +309,7 @@ export const useSettingsStore = create<SettingsStore>((set, get) => {
 			// 先本地更新，开关圆点不必等待 Electron IPC 往返；失败时以磁盘实际状态回滚。
 			set({ modelPrefs: { ...base, hiddenModels } });
 			try {
-				await getPi().setModelHidden(provider, modelId, hidden);
+				await getPi().setModelHidden({ provider, modelId, hidden });
 				await useSessionsStore.getState().loadModels();
 			} catch (error) {
 				const modelPrefs = await getPi()
@@ -333,7 +333,7 @@ export const useSettingsStore = create<SettingsStore>((set, get) => {
 			// 先本地更新（一次 IPC 写盘，不逐个往返）；失败时以磁盘实际状态回滚。
 			set({ modelPrefs: { ...base, hiddenModels } });
 			try {
-				await getPi().setModelsHidden(provider, modelIds, hidden);
+				await getPi().setModelsHidden({ provider, modelIds, hidden });
 				await useSessionsStore.getState().loadModels();
 			} catch (error) {
 				const modelPrefs = await getPi()
@@ -346,7 +346,7 @@ export const useSettingsStore = create<SettingsStore>((set, get) => {
 		setSubagentModel: async (agent, modelRef) => {
 			const previous = get().modelPrefs;
 			try {
-				const modelPrefs = await getPi().setSubagentModel(agent, modelRef);
+				const modelPrefs = await getPi().setSubagentModel({ agent, modelRef });
 				set({ modelPrefs });
 			} catch (error) {
 				set({ modelPrefs: previous, error: error instanceof Error ? error.message : String(error) });
@@ -356,7 +356,7 @@ export const useSettingsStore = create<SettingsStore>((set, get) => {
 		setSubagentThinking: async (agent, level) => {
 			const previous = get().modelPrefs;
 			try {
-				const modelPrefs = await getPi().setSubagentThinking(agent, level);
+				const modelPrefs = await getPi().setSubagentThinking({ agent, level });
 				set({ modelPrefs });
 			} catch (error) {
 				set({ modelPrefs: previous, error: error instanceof Error ? error.message : String(error) });
@@ -366,7 +366,7 @@ export const useSettingsStore = create<SettingsStore>((set, get) => {
 		setSubagentPreferBuiltin: async (enabled) => {
 			const previous = get().modelPrefs;
 			try {
-				const modelPrefs = await getPi().setSubagentPreferBuiltin(enabled);
+				const modelPrefs = await getPi().setSubagentPreferBuiltin({ enabled });
 				set({ modelPrefs });
 			} catch (error) {
 				set({ modelPrefs: previous, error: error instanceof Error ? error.message : String(error) });
@@ -376,7 +376,7 @@ export const useSettingsStore = create<SettingsStore>((set, get) => {
 		test: async (providerId) => {
 			set((state) => ({ testResults: { ...state.testResults, [providerId]: "testing" } }));
 			try {
-				const result = await getPi().testProvider(providerId);
+				const result = await getPi().testProvider({ providerId });
 				set((state) => ({ testResults: { ...state.testResults, [providerId]: result } }));
 			} catch (error) {
 				set((state) => ({

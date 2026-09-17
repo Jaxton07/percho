@@ -1,6 +1,7 @@
-import { buildLlmUiError, isUserAbortError, type UiError } from "../errors";
+import type { UiError } from "../errors";
 import type { SessionMessage } from "../session";
 import { newSubagentKey, newToolKey } from "./helpers";
+import { buildRoundErrorCard, isLlmErrorRound } from "./llm-errors";
 import type { UIMessage, UIToolCall } from "./types";
 
 /** 历史消息 → UI 消息（打开历史会话时回放；backend 已按 entryId 配对、正文/工具拆分） */
@@ -81,14 +82,9 @@ export function messagesToUIMessages(messages: SessionMessage[]): UIMessage[] {
 			...(sourceText !== undefined ? { sourceText } : {}),
 		};
 		// 错误轮：partial 正文照常展示（保留），错误卡挂起——连续错误轮合并，非 error 消息或流结束才落卡
-		if (
-			m.stopReason === "error" &&
-			typeof m.errorMessage === "string" &&
-			m.errorMessage.length > 0 &&
-			// 用户主动中断的取消错误（SDK 标成 error）不产卡——与 reducer live 判定同一份排除
-			!isUserAbortError(m.errorMessage)
-		) {
-			pendingError = buildLlmUiError(m.errorMessage, m.timestamp);
+		// 判定与 reducer live 路径共用 isLlmErrorRound（决策 D1 单一事实源，llm-errors.ts）
+		if (isLlmErrorRound(m)) {
+			pendingError = buildRoundErrorCard(m, m.timestamp);
 			if (text || m.thinking.length > 0 || tools.length > 0) ui.push(assistant);
 			continue;
 		}

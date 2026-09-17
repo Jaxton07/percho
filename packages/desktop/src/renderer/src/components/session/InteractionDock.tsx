@@ -125,7 +125,7 @@ export function InteractionDock({ sessionId }: { sessionId: string | null }) {
 			setSending(true);
 			setError(null);
 			try {
-				await getPi().respondExtensionDialog(shown.id, answer);
+				await getPi().respondExtensionDialog({ requestId: shown.id, answer });
 				resolveExtensionDialog(sessionId, shown.id);
 			} catch (err) {
 				setError(err instanceof Error ? err.message : String(err));
