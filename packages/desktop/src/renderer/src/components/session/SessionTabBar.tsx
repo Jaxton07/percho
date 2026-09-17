@@ -17,14 +17,28 @@ import {
 } from "@dnd-kit/sortable";
 import type { SessionMeta } from "@percho/shared";
 import type { ComponentProps } from "react";
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { getPi } from "../../api";
 import { useT } from "../../i18n";
 import { isDailyCwd } from "../../lib/daily";
-import { useSessionsStore } from "../../stores/sessions";
+import { isDraftSessionId, partitionSessionsByPin, useSessionsStore } from "../../stores/sessions";
+import { useToastsStore } from "../../stores/toasts";
 import { useTranscriptStore } from "../../stores/transcript";
 import { useUiStore } from "../../stores/ui";
-import { CloseIcon, CoffeeIcon, DiffIcon, PlusIcon, ProjectsIcon, SubagentIcon } from "../icons";
+import { useUiPreferencesStore } from "../../stores/ui-preferences";
+import {
+	CloseIcon,
+	CoffeeIcon,
+	DiffIcon,
+	PencilIcon,
+	PinIcon,
+	PlusIcon,
+	ProjectsIcon,
+	SubagentIcon,
+} from "../icons";
+import { ContextMenu, type ContextMenuItem } from "../ui/ContextMenu";
+import type { MenuAnchor } from "../ui/place-menu";
+import { RenamePopover } from "./RenamePopover";
 import { sessionLetter, sessionTitle, useSessionStatus } from "./session-status";
 import { UpdateButton } from "./UpdateButton";
 
@@ -42,9 +56,21 @@ const DROP_ANIMATION = { duration: 180, easing: SORT_EASE };
 
 const prefersReducedMotion = (): boolean => window.matchMedia("(prefers-reduced-motion: reduce)").matches;
 
+/** 触发元素的视口矩形 → 浮层锚点（菜单锚在下沿左对齐，定位规则见 place-menu） */
+function anchorOfElement(el: Element): MenuAnchor {
+	const rect = el.getBoundingClientRect();
+	return { left: rect.left, top: rect.top, width: rect.width, height: rect.height };
+}
+
 /** 拖拽中的全局 cursor（指针常在胶囊外的间隙上，须挂在根元素） */
 function setDraggingCursor(on: boolean): void {
 	document.documentElement.classList.toggle("tab-dragging-cursor", on);
+}
+
+/** 右键菜单/重命名浮层共用的锚点状态：目标会话 + 触发胶囊的视口矩形 */
+interface AnchorState {
+	sessionId: string;
+	anchor: MenuAnchor;
 }
 
 /** 胶囊视觉（presentational）：真实胶囊与拖拽 ghost 共用一份渲染。
@@ -56,6 +82,7 @@ function TabPill({
 	ghost = false,
 	hidden = false,
 	ghostWidth,
+	contextOpen = false,
 	buttonProps,
 }: {
 	session: SessionMeta;
@@ -67,10 +94,14 @@ function TabPill({
 	/** ghost 的固定宽度（px）= 拾起瞬间真实胶囊的实测宽：拖拽全程保持原尺寸，
 	    不回弹到 max-w-52 最大形态（标签多被压窄时，变大会显得很跳） */
 	ghostWidth?: number | null;
+	/** 右键菜单/重命名浮层打开中：右键没有 :hover，需显式保留触发态底色 */
+	contextOpen?: boolean;
 	buttonProps?: ComponentProps<"button">;
 }) {
 	const t = useT();
 	const closeSession = useSessionsStore((s) => s.closeSession);
+	// 置顶标记：顶栏会滚动、顺序会被拖动，必须有常显 glyph（不是只靠排序表达）
+	const pinned = useUiPreferencesStore((s) => s.pinnedSessions.includes(session.sessionId));
 	// 状态订阅与左侧会话轨道共用（优先级：审批 > 工作中 > 完成未读 > 空闲）
 	const status = useSessionStatus(session.sessionId);
 	// 头像字形 = 空间归属（日常 = 咖啡图标，项目 = 目录首字母）；只读子会话专属图标。
@@ -98,10 +129,19 @@ function TabPill({
 				...(hidden ? { opacity: 0 } : null),
 			}}
 			className={`no-drag tab-pill group relative flex ${ghost ? "" : "w-full"} cursor-pointer items-center gap-2 rounded-lg px-2.5 py-1.5 text-sm ${
-				isActive ? "bg-bubble text-ink" : "text-ink-dim hover:bg-hover hover:text-ink"
+				contextOpen
+					? "bg-hover text-ink"
+					: isActive
+						? "bg-bubble text-ink"
+						: "text-ink-dim hover:bg-hover hover:text-ink"
 			} ${ghost ? "tab-dragging" : ""}`}
 			onClick={ghost ? undefined : buttonProps?.onClick}
 		>
+			{pinned && !session.readOnly && (
+				<span className="flex shrink-0 text-ink-faint" aria-hidden="true">
+					<PinIcon size={11} />
+				</span>
+			)}
 			<span
 				className={`relative flex h-4 w-4 shrink-0 items-center justify-center rounded text-[10px] font-semibold ${avatarClass}`}
 			>
@@ -151,7 +191,18 @@ function TabPill({
 /** 单个会话 tab：几何层（useSortable 的 transform/transition）在 wrapper div 上按 dnd-kit 协议
  *  原样应用——transition 含 "none" 帧时绝不能覆盖成动画，那是 FLIP 布点帧（覆盖会造成落位回闪）；
  *  拖拽本体隐藏、由 DragOverlay 的 ghost 跟随指针（见 DRAG_MODIFIERS 注释） */
-function SessionTab({ session, isActive }: { session: SessionMeta; isActive: boolean }) {
+function SessionTab({
+	session,
+	isActive,
+	contextOpen,
+	onContextMenu,
+}: {
+	session: SessionMeta;
+	isActive: boolean;
+	/** 右键菜单/重命名浮层打开中（触发胶囊保持 hover 底） */
+	contextOpen: boolean;
+	onContextMenu: (sessionId: string, anchor: MenuAnchor) => void;
+}) {
 	const switchSession = useSessionsStore((s) => s.switchSession);
 	const setView = useUiStore((s) => s.setView);
 	const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({
@@ -175,9 +226,15 @@ function SessionTab({ session, isActive }: { session: SessionMeta; isActive: boo
 				session={session}
 				isActive={isActive}
 				hidden={isDragging}
+				contextOpen={contextOpen}
 				buttonProps={{
 					...attributes,
 					...listeners,
+					// 右键不触发拖拽：PointerSensor 只认主键（button=0），此处再 preventDefault 掉系统菜单
+					onContextMenu: (e) => {
+						e.preventDefault();
+						onContextMenu(session.sessionId, anchorOfElement(e.currentTarget));
+					},
 					onClick: () => {
 						switchSession(session.sessionId);
 						setView("chat");
@@ -204,6 +261,57 @@ export function SessionTabBar() {
 	const toggleDiffSidebar = useUiStore((s) => s.toggleDiffSidebar);
 	const scrollerRef = useRef<HTMLDivElement>(null);
 	const [activeId, setActiveId] = useState<string | null>(null);
+	const pinnedSessions = useUiPreferencesStore((s) => s.pinnedSessions);
+	const togglePin = useUiPreferencesStore((s) => s.togglePin);
+	/** 右键菜单：目标会话 + 触发胶囊矩形（null = 关闭） */
+	const [menu, setMenu] = useState<AnchorState | null>(null);
+	/** 重命名浮层：与菜单同锚点，菜单选中后菜单卸载、浮层同帧展开 */
+	const [renaming, setRenaming] = useState<AnchorState | null>(null);
+	// 展示顺序：置顶区在左（拖拽只改 tabs.json 原始顺序，分区由纯函数表达）
+	const orderedSessions = partitionSessionsByPin(sessions, pinnedSessions);
+	const closeMenu = useCallback(() => setMenu(null), []);
+	/** 取消置顶/置顶：新置顶挪到胶囊列表最左（视觉上直接进置顶区） */
+	const handleTogglePin = (sessionId: string) => {
+		const first = sessions[0];
+		if (!pinnedSessions.includes(sessionId) && first && first.sessionId !== sessionId) {
+			reorderSessions(sessionId, first.sessionId);
+		}
+		togglePin(sessionId);
+	};
+	/** 重命名落盘：活跃会话靠 session_info_changed 事件回流，历史会话无事件 → 本地立即更新（幂等） */
+	const submitRename = (sessionId: string, name: string) => {
+		if (!name) return; // 空值 = 保持原名（与系统重命名一致，不报错）
+		getPi()
+			.setSessionName({ sessionId, name })
+			.then(() => useSessionsStore.getState().updateSessionName(sessionId, name))
+			.catch((error) => {
+				console.error("重命名失败", error);
+				useToastsStore.getState().push("error", "toast.sessionRenameFailed");
+			});
+	};
+	/** 右键菜单项：重命名 + 置顶（draft 与只读子会话没有可持久化的会话，不给置顶入口） */
+	const contextMenuItems = (sessionId: string): ContextMenuItem[] => {
+		const session = sessions.find((s) => s.sessionId === sessionId);
+		const pinSuffix = session && !session.readOnly && !isDraftSessionId(sessionId);
+		return [
+			{
+				key: "rename",
+				label: t("tabbar.rename"),
+				icon: <PencilIcon size={13} />,
+				onSelect: () => setRenaming(menu),
+			},
+			...(pinSuffix
+				? [
+						{
+							key: "pin",
+							label: pinnedSessions.includes(sessionId) ? t("tabbar.unpin") : t("tabbar.pin"),
+							icon: <PinIcon size={13} />,
+							onSelect: () => handleTogglePin(sessionId),
+						},
+					]
+				: []),
+		];
+	};
 	/** 被拖胶囊拾起时的实测宽度（px）：ghost 全程沿用，保持原胶囊尺寸。
 	    不能读 active.rect.current.initial——dnd-kit 在 onDragStart 之后才填充该 ref，事件回调里恒为 null */
 	const [dragWidth, setDragWidth] = useState<number | null>(null);
@@ -286,12 +394,23 @@ export function SessionTabBar() {
 					}}
 					onDragCancel={endDrag}
 				>
-					<SortableContext items={sessions.map((s) => s.sessionId)} strategy={horizontalListSortingStrategy}>
-						{sessions.map((session) => (
+					<SortableContext
+						items={orderedSessions.map((s) => s.sessionId)}
+						strategy={horizontalListSortingStrategy}
+					>
+						{orderedSessions.map((session) => (
 							<SessionTab
 								key={session.sessionId}
 								session={session}
 								isActive={session.sessionId === activeSessionId}
+								contextOpen={
+									menu?.sessionId === session.sessionId || renaming?.sessionId === session.sessionId
+								}
+								onContextMenu={(sessionId, anchor) => {
+									// 换一个胶囊右键：覆盖旧菜单（同一时刻只存在一层）
+									setRenaming(null);
+									setMenu({ sessionId, anchor });
+								}}
 							/>
 						))}
 					</SortableContext>
@@ -339,6 +458,21 @@ export function SessionTabBar() {
 				>
 					<DiffIcon size={16} />
 				</button>
+			)}
+			{menu !== null && (
+				<ContextMenu anchor={menu.anchor} items={contextMenuItems(menu.sessionId)} onClose={closeMenu} />
+			)}
+			{renaming !== null && (
+				<RenamePopover
+					anchor={renaming.anchor}
+					value={sessions.find((s) => s.sessionId === renaming.sessionId)?.name ?? ""}
+					onCommit={(name) => {
+						// 先卸载浮层（退场动画已跑完），再落盘；失败只 toast，不回滚浮层
+						setRenaming(null);
+						submitRename(renaming.sessionId, name);
+					}}
+					onCancel={() => setRenaming(null)}
+				/>
 			)}
 		</div>
 	);

@@ -82,6 +82,7 @@ import {
 import { autoNameSession } from "./session/naming";
 import { EventRateTracker } from "./session/rates";
 import { type EventForwarder, SessionRegistry } from "./session/registry";
+import { renameSessionFile } from "./session/rename";
 import { StreamGuard } from "./session/stream-guard";
 import { TraceRecorder } from "./session/trace";
 import { SessionTraces } from "./session/traces";
@@ -743,10 +744,20 @@ export class PiBackend {
 		};
 	}
 
-	/** 设置会话显示名（触发 session_info_changed 事件） */
+	/** 设置会话显示名：活跃会话走 SDK（自动发 session_info_changed）；历史会话离线写会话文件（无事件，渲染端本地更新标题） */
 	async setSessionName(sessionId: string, name: string): Promise<void> {
-		const entry = this.requireWritable(sessionId);
-		entry.session.setSessionName(name);
+		const entry = this.registry.get(sessionId);
+		if (entry) {
+			if (entry.readOnly) throw new Error("Session is read-only (subagent transcript)");
+			entry.session.setSessionName(name);
+			return;
+		}
+		// 历史会话（顶栏没打开的）：从磁盘枚举拿到文件路径，离线追加 session_info（与 CLI /name 同源）
+		const meta = (await this.listAllSessions()).find((s) => s.sessionId === sessionId);
+		if (!meta) throw new Error(`Session not found: ${sessionId}`);
+		if (meta.readOnly) throw new Error("Session is read-only (subagent transcript)");
+		if (!meta.sessionFile) throw new Error(`Session has no file: ${sessionId}`);
+		renameSessionFile(meta.sessionFile, name);
 	}
 
 	/** 导出会话内容（HTML/JSONL）；返回文件内容，由调用方保存 */

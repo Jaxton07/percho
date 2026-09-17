@@ -7,15 +7,29 @@ interface UiPreferencesStore {
 	sessionRailEnabled: boolean;
 	/** 中央状态动画：任务运行时对话区中央显示放大 orb（z-20 文字层之上 + canvas 一体遮罩压文字）；与 Working/Thinking 行前小 orb 解耦，小 orb 恒显示 */
 	centerOrbEnabled: boolean;
+	/** 置顶会话（id，新置顶在前）：只影响本机展示顺序，不写会话文件、不同步 */
+	pinnedSessions: string[];
 	/** 启动时从 ui-state.json 恢复（main.tsx 在 render 前 await，避免开关状态闪现） */
 	init: () => Promise<void>;
 	setSessionRailEnabled: (enabled: boolean) => void;
 	setCenterOrbEnabled: (enabled: boolean) => void;
+	/** 置顶 / 取消置顶（新置顶排最左） */
+	togglePin: (sessionId: string) => void;
+	/** 清理单个会话的置顶（删除会话时调用；不在列表里则无副作用） */
+	unpin: (sessionId: string) => void;
 }
 
-export const useUiPreferencesStore = create<UiPreferencesStore>((set) => ({
+/** 持久化补丁（失败只记日志：偏好丢失不影响使用，弹 toast 反而更吵） */
+function persist(pinnedSessions: string[]): void {
+	getPi()
+		.saveUiState({ state: { pinnedSessions } })
+		.catch((error) => console.error("ui-state 持久化失败", error));
+}
+
+export const useUiPreferencesStore = create<UiPreferencesStore>((set, get) => ({
 	sessionRailEnabled: false,
 	centerOrbEnabled: false,
+	pinnedSessions: [],
 
 	init: async () => {
 		const saved = await getPi()
@@ -24,6 +38,7 @@ export const useUiPreferencesStore = create<UiPreferencesStore>((set) => ({
 		set({
 			sessionRailEnabled: saved?.sessionRailEnabled ?? false,
 			centerOrbEnabled: saved?.centerOrbEnabled ?? false,
+			pinnedSessions: saved?.pinnedSessions ?? [],
 		});
 	},
 
@@ -39,5 +54,22 @@ export const useUiPreferencesStore = create<UiPreferencesStore>((set) => ({
 		getPi()
 			.saveUiState({ state: { centerOrbEnabled: enabled } })
 			.catch((error) => console.error("ui-state 持久化失败", error));
+	},
+
+	togglePin: (sessionId) => {
+		const current = get().pinnedSessions;
+		const next = current.includes(sessionId)
+			? current.filter((id) => id !== sessionId)
+			: [sessionId, ...current];
+		set({ pinnedSessions: next });
+		persist(next);
+	},
+
+	unpin: (sessionId) => {
+		const current = get().pinnedSessions;
+		if (!current.includes(sessionId)) return;
+		const next = current.filter((id) => id !== sessionId);
+		set({ pinnedSessions: next });
+		persist(next);
 	},
 }));

@@ -697,3 +697,23 @@ export function ClockIcon({ size = 12, className }: IconProps) {
 		</svg>
 	);
 }
+
+/** 图钉（置顶标记 11px / 菜单项 13px，设计稿 issue-55 画板①；笔尖朝下 + 针） */
+export function PinIcon({ size = 11, className }: IconProps) {
+	return (
+		<svg
+			className={className}
+			width={size}
+			height={size}
+			viewBox="0 0 24 24"
+			{...strokeProps}
+			strokeLinecap="round"
+			strokeLinejoin="round"
+			aria-hidden="true"
+		>
+			<path d="M7 4h10" />
+			<path d="M9.7 4v6.2L7.2 12.9v1.6h9.6v-1.6l-2.5-2.7V4" />
+			<path d="M12 14.5V20.5" />
+		</svg>
+	);
+}

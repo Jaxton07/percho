@@ -2,7 +2,8 @@ import type { SessionMeta } from "@percho/shared";
 import { create } from "zustand";
 import { getPi } from "../api";
 import { initDailyDir, isDailyCwd } from "../lib/daily";
-import { useSessionsStore } from "./sessions";
+import { partitionSessionsByPin, useSessionsStore } from "./sessions";
+import { useUiPreferencesStore } from "./ui-preferences";
 
 const ADDED_KEY = "pi-desktop.projects";
 
@@ -94,6 +95,8 @@ export const useProjectsStore = create<ProjectsStore>((set, get) => ({
 
 	deleteSession: async (session) => {
 		await getPi().deleteSession({ sessionId: session.sessionId, sessionFile: session.sessionFile });
+		// 置顶列表清理：会话没了就没人能取消置顶，留着会变成永久残留 id
+		useUiPreferencesStore.getState().unpin(session.sessionId);
 		const sessionsState = useSessionsStore.getState();
 		if (sessionsState.sessions.some((s) => s.sessionId === session.sessionId)) {
 			await sessionsState.closeSession(session.sessionId);
@@ -170,14 +173,18 @@ export function deriveProjects(state: Pick<ProjectsStore, "allSessions" | "added
 	return [...byCwd.values()].sort((a, b) => b.addedIndex - a.addedIndex || b.lastActive - a.lastActive);
 }
 
-/** 选中项目下按搜索过滤后的会话（按最后活动倒序） */
+/** 选中项目下按搜索过滤后的会话：置顶分区在左，其余按最后活动倒序。
+ *  置顶列表来自 ui-preferences（local ∩ app 偏好），不进本 store 避免两份状态 */
 export function deriveSessions(
-	state: Pick<ProjectsStore, "allSessions" | "selectedCwd" | "search">,
+	state: Pick<ProjectsStore, "allSessions" | "selectedCwd" | "search"> & {
+		pinnedSessions: readonly string[];
+	},
 ): SessionMeta[] {
 	if (!state.selectedCwd) return [];
 	const query = state.search.trim().toLowerCase();
-	return state.allSessions
+	const filtered = state.allSessions
 		.filter((s) => s.cwd === state.selectedCwd)
 		.filter((s) => !query || (s.name ?? "").toLowerCase().includes(query) || s.sessionId.includes(query))
 		.sort((a, b) => (b.modifiedAt ?? b.createdAt) - (a.modifiedAt ?? a.createdAt));
+	return partitionSessionsByPin(filtered, state.pinnedSessions);
 }

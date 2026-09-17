@@ -15,6 +15,22 @@ export function isDraftSessionId(sessionId: string | null | undefined): boolean 
 }
 
 /**
+ * 顶栏展示顺序：置顶分区在左（内部保持既有顺序，可拖动互换），其余按原顺序跟在后面。
+ * 稳定分区而非排序：拖拽只改 tabs.json 的原始顺序，置顶区与非置顶区的相对位置由本函数表达。
+ * 未知 id（会话已被外部删除）直接忽略。
+ */
+export function partitionSessionsByPin(
+	sessions: SessionMeta[],
+	pinnedSessions: readonly string[],
+): SessionMeta[] {
+	if (pinnedSessions.length === 0) return sessions;
+	const pinned = new Set(pinnedSessions);
+	const pinnedList = sessions.filter((s) => pinned.has(s.sessionId));
+	if (pinnedList.length === 0) return sessions;
+	return [...pinnedList, ...sessions.filter((s) => !pinned.has(s.sessionId))];
+}
+
+/**
  * 打开会话时同步四件套：消息历史（可选跳过 live 态）、排队队列、todo 面板、权限模式。
  * 取数并行（各写 store 不同字段，无交叉读），应用顺序保持 history → queue → todos。
  * 权限模式对齐后端真值：关 tab 重开后端已归零 default，拉回防 stale（spec permission-mode D1）。

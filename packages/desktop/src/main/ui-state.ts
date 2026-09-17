@@ -40,6 +40,10 @@ function normalize(parsed: UiStateFileShape): UiState {
 		background: { image: typeof background?.image === "string" ? background.image : null, dim },
 		sessionRailEnabled: typeof parsed.sessionRailEnabled === "boolean" ? parsed.sessionRailEnabled : false,
 		centerOrbEnabled: typeof parsed.centerOrbEnabled === "boolean" ? parsed.centerOrbEnabled : false,
+		// 置顶列表：脏值（手改文件/旧版本）过滤成非空字符串数组（渲染侧另会忽略未知 id）
+		pinnedSessions: Array.isArray(parsed.pinnedSessions)
+			? parsed.pinnedSessions.filter((id): id is string => typeof id === "string" && id !== "")
+			: [],
 	};
 }
 
