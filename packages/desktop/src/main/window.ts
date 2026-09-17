@@ -4,6 +4,14 @@ import { BrowserWindow, nativeTheme, shell } from "electron";
 
 const __dirname = import.meta.dirname;
 
+/** 应用是否正在退出（⌘Q / 菜单「退出」/ Dock 右键退出时由 before-quit 置位） */
+let quitting = false;
+
+/** before-quit 调用：置位后 close 事件不再被拦截（macOS 关窗隐藏态也要能让 ⌘Q 真退出） */
+export function markQuitting(): void {
+	quitting = true;
+}
+
 /** 窗口启动底色跟随主题，避免深色模式下启动白闪（也是开屏动画的底色）。与 renderer bg-canvas 同色 */
 function windowBackground(theme: "dark" | "light"): string {
 	return theme === "dark" ? "#17171a" : "#fafafa";
@@ -63,6 +71,13 @@ export function createWindow(theme: "dark" | "light" = "light"): BrowserWindow {
 	});
 
 	window.on("ready-to-show", () => window.show());
+
+	// macOS：红点/⌘W = 收起窗口（应用继续跑，Dock/菜单栏可恢复）；非 darwin 保持关窗即退出
+	window.on("close", (event) => {
+		if (process.platform !== "darwin" || quitting) return;
+		event.preventDefault();
+		window.hide();
+	});
 
 	window.webContents.setWindowOpenHandler((details) => {
 		void shell.openExternal(details.url);

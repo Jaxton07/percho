@@ -12,7 +12,7 @@ import { attachRendererWatchdog } from "./renderer-watchdog";
 import { UiPluginManager, uiPluginsResourcesDir } from "./ui-plugins/manager";
 import { loadUiState } from "./ui-state";
 import { initUpdater, scheduleAutoUpdateCheck } from "./updater";
-import { applyChromeTheme, createWindow, resolveTheme } from "./window";
+import { applyChromeTheme, createWindow, markQuitting, resolveTheme } from "./window";
 
 const log = createLogger("main");
 let backend: PiBackend;
@@ -83,7 +83,15 @@ app.whenReady().then(async () => {
 	createWindow(resolveTheme(uiState?.theme));
 
 	app.on("activate", () => {
-		if (BrowserWindow.getAllWindows().length === 0) createWindow(resolveTheme(uiState?.theme));
+		const [win] = BrowserWindow.getAllWindows();
+		// macOS 关窗只是隐藏窗口：点 Dock 图标要把原窗口（含会话与草稿）原样带回来
+		if (win) {
+			if (win.isMinimized()) win.restore();
+			win.show();
+			win.focus();
+			return;
+		}
+		createWindow(resolveTheme(uiState?.theme));
 	});
 });
 
@@ -92,6 +100,8 @@ app.on("window-all-closed", () => {
 });
 
 app.on("before-quit", () => {
+	// 先放行 close 拦截：否则 macOS 下 ⌘Q 会被当成「关窗 → 隐藏」而退不掉
+	markQuitting();
 	void lanObserver?.stop();
 	backend?.dispose();
 	uiPluginsManager?.disposeWatcher();
