@@ -270,6 +270,14 @@ export function SessionTabBar() {
 	// 展示顺序：置顶区在左（拖拽只改 tabs.json 原始顺序，分区由纯函数表达）
 	const orderedSessions = partitionSessionsByPin(sessions, pinnedSessions);
 	const closeMenu = useCallback(() => setMenu(null), []);
+	/** 打开胶囊右键菜单：draft（纯前端 id，后端没有该会话）与只读子会话（后端拒绝写）上的动作全都会失败，
+	 *  所以**干脆不给菜单**（review B1：宁可没有入口，也不给必然弹 toast 的入口） */
+	const openMenu = (sessionId: string, anchor: MenuAnchor) => {
+		const session = sessions.find((s) => s.sessionId === sessionId);
+		if (!session || session.readOnly || isDraftSessionId(sessionId)) return;
+		setRenaming(null); // 换一个胶囊右键：覆盖旧菜单（同一时刻只存在一层）
+		setMenu({ sessionId, anchor });
+	};
 	/** 取消置顶/置顶：新置顶挪到胶囊列表最左（视觉上直接进置顶区） */
 	const handleTogglePin = (sessionId: string) => {
 		const first = sessions[0];
@@ -289,10 +297,8 @@ export function SessionTabBar() {
 				useToastsStore.getState().push("error", "toast.sessionRenameFailed");
 			});
 	};
-	/** 右键菜单项：重命名 + 置顶（draft 与只读子会话没有可持久化的会话，不给置顶入口） */
+	/** 右键菜单项：重命名 + 置顶（不可持久化的会话在 openMenu 就拦住了，这里只处理可写会话） */
 	const contextMenuItems = (sessionId: string): ContextMenuItem[] => {
-		const session = sessions.find((s) => s.sessionId === sessionId);
-		const pinSuffix = session && !session.readOnly && !isDraftSessionId(sessionId);
 		return [
 			{
 				key: "rename",
@@ -300,16 +306,12 @@ export function SessionTabBar() {
 				icon: <PencilIcon size={13} />,
 				onSelect: () => setRenaming(menu),
 			},
-			...(pinSuffix
-				? [
-						{
-							key: "pin",
-							label: pinnedSessions.includes(sessionId) ? t("tabbar.unpin") : t("tabbar.pin"),
-							icon: <PinIcon size={13} />,
-							onSelect: () => handleTogglePin(sessionId),
-						},
-					]
-				: []),
+			{
+				key: "pin",
+				label: pinnedSessions.includes(sessionId) ? t("tabbar.unpin") : t("tabbar.pin"),
+				icon: <PinIcon size={13} />,
+				onSelect: () => handleTogglePin(sessionId),
+			},
 		];
 	};
 	/** 被拖胶囊拾起时的实测宽度（px）：ghost 全程沿用，保持原胶囊尺寸。
@@ -406,11 +408,7 @@ export function SessionTabBar() {
 								contextOpen={
 									menu?.sessionId === session.sessionId || renaming?.sessionId === session.sessionId
 								}
-								onContextMenu={(sessionId, anchor) => {
-									// 换一个胶囊右键：覆盖旧菜单（同一时刻只存在一层）
-									setRenaming(null);
-									setMenu({ sessionId, anchor });
-								}}
+								onContextMenu={(sessionId, anchor) => openMenu(sessionId, anchor)}
 							/>
 						))}
 					</SortableContext>

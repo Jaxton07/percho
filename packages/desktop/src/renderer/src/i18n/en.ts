@@ -212,7 +212,6 @@ export const en: Messages = {
 		open: "Open File",
 		reveal: "Reveal in Finder",
 		copyPath: "Copy Path",
-		more: "More actions",
 	},
 	projects: {
 		title: "Spaces",

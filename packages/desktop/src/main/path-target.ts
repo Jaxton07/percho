@@ -24,7 +24,8 @@ const WRAPPERS: readonly [string, string][] = [
 /** 行号锚点：`:12` / `:12:5` / `#L12` / `#L12-L20` / `#L12C5`（只剥尾部，`C:\a\b.ts` 不受影响） */
 const LINE_SUFFIXES = [/:\d+(?::\d+)?$/, /#L\d+(?:[-–]L?\d+)?(?:C\d+)?$/i];
 
-/** percent-decoding（`%20`/中文编码）：非法转义（如文件名里的 `100%`）保持原样 */
+/** percent-decoding（`%20`/中文编码）：非法转义（如文件名里的 `100%`）保持原样。
+ *  已知取舍：文件名真的带字面 `%xx`（如 `a%2Fb.ts`）会被误解码 —— 与「URL 编码路径要还原」相比概率极低，不做两次探测 */
 function decodePercent(text: string): string {
 	if (!text.includes("%")) return text;
 	try {

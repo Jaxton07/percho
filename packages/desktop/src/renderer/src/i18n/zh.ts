@@ -207,7 +207,6 @@ export const zh = {
 		open: "打开文件",
 		reveal: "在访达中显示",
 		copyPath: "复制路径",
-		more: "更多操作",
 	},
 	projects: {
 		title: "空间",

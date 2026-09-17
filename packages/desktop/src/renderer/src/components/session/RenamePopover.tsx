@@ -63,17 +63,20 @@ export function RenamePopover({
 			else onCancel();
 		}, EXIT_MS);
 	};
+	// 监听器只挂一次：finish 闭包有每次都变的 text/closing，用 ref 拿最新版（直接依赖 finish 会导致每敲一键重挂两个 window 监听）
+	const finishRef = useRef(finish);
+	finishRef.current = finish;
 
 	useEffect(() => {
 		const onPointerDown = (e: PointerEvent) => {
 			if (ref.current?.contains(e.target as Node)) return;
 			// 点浮层外 = 提交（与系统重命名一致）
-			finish(true);
+			finishRef.current(true);
 		};
 		const onKeyDown = (e: KeyboardEvent) => {
 			if (e.key === "Escape") {
 				e.stopPropagation();
-				finish(false);
+				finishRef.current(false);
 			}
 		};
 		window.addEventListener("pointerdown", onPointerDown, true);
@@ -82,7 +85,7 @@ export function RenamePopover({
 			window.removeEventListener("pointerdown", onPointerDown, true);
 			window.removeEventListener("keydown", onKeyDown, true);
 		};
-	});
+	}, []);
 
 	return createPortal(
 		<div
