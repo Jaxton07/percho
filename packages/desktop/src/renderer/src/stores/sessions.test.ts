@@ -42,8 +42,8 @@ function resetStore() {
 		activeSessionId: null,
 		cwd: null,
 		models: [],
-		currentModel: null,
-		thinkingLevel: "medium",
+		lastUsedModel: null,
+		lastUsedThinkingLevel: "medium",
 		trustVersion: 0,
 		permissionModes: {},
 	});
@@ -313,19 +313,19 @@ describe("reorderSessions（拖拽排序）", () => {
 });
 
 describe("模型/思考级别", () => {
-	it("draft 下切换模型：只更新全局默认与 draft 条目，不调后端 setModel", async () => {
+	it("draft 下切换模型：只记跟随值与 draft 条目，不调后端 setModel", async () => {
 		useSessionsStore.getState().createDraftSession("/proj/a");
 		await useSessionsStore.getState().setCurrentModel("p", "m");
 		const state = useSessionsStore.getState();
 		expect(piMock.setModel).not.toHaveBeenCalled();
-		expect(state.currentModel).toEqual({ provider: "p", modelId: "m" });
+		expect(state.lastUsedModel).toEqual({ provider: "p", modelId: "m" });
 		expect(state.sessions[0]?.model).toEqual({ provider: "p", modelId: "m" });
 		expect(piMock.saveUiState).toHaveBeenCalled();
 	});
 });
 
 describe("乐观会话设置（optimisticSessionSetting 骨架）", () => {
-	it("切模型成功：全局 + 会话条目乐观更新，ui-state 持久化", async () => {
+	it("切模型成功：跟随值 + 会话条目乐观更新，ui-state 持久化", async () => {
 		useSessionsStore.setState({
 			models: [{ provider: "deepseek", providerName: "DeepSeek", id: "v4", label: "V4", authed: true }],
 			sessions: [realMeta("s1", "/p")],
@@ -333,14 +333,14 @@ describe("乐观会话设置（optimisticSessionSetting 骨架）", () => {
 		});
 		await useSessionsStore.getState().setCurrentModel("deepseek", "v4");
 		expect(piMock.setModel).toHaveBeenCalledWith({ sessionId: "s1", provider: "deepseek", modelId: "v4" });
-		expect(useSessionsStore.getState().currentModel).toEqual({ provider: "deepseek", modelId: "v4" });
+		expect(useSessionsStore.getState().lastUsedModel).toEqual({ provider: "deepseek", modelId: "v4" });
 		expect(useSessionsStore.getState().sessions[0]?.model).toEqual({ provider: "deepseek", modelId: "v4" });
 		expect(piMock.saveUiState).toHaveBeenCalledWith({
-			state: { currentModel: { provider: "deepseek", modelId: "v4" }, thinkingLevel: "medium" },
+			state: { lastUsedModel: { provider: "deepseek", modelId: "v4" }, lastUsedThinkingLevel: "medium" },
 		});
 	});
 
-	it("切模型失败：全局 + 会话条目整体回滚，ui-state 以旧值重新持久化", async () => {
+	it("切模型失败：跟随值 + 会话条目整体回滚，ui-state 以旧值重新持久化", async () => {
 		const previousModel = { provider: "deepseek", modelId: "v4" };
 		useSessionsStore.setState({
 			models: [
@@ -348,17 +348,17 @@ describe("乐观会话设置（optimisticSessionSetting 骨架）", () => {
 			],
 			sessions: [{ ...realMeta("s1", "/p"), model: previousModel, thinkingLevel: "high" }],
 			activeSessionId: "s1",
-			currentModel: previousModel,
-			thinkingLevel: "high",
+			lastUsedModel: previousModel,
+			lastUsedThinkingLevel: "high",
 		});
 		piMock.setModel.mockRejectedValueOnce(new Error("no key"));
 		await useSessionsStore.getState().setCurrentModel("anthropic", "sonnet");
-		expect(useSessionsStore.getState().currentModel).toEqual(previousModel);
-		expect(useSessionsStore.getState().thinkingLevel).toBe("high");
+		expect(useSessionsStore.getState().lastUsedModel).toEqual(previousModel);
+		expect(useSessionsStore.getState().lastUsedThinkingLevel).toBe("high");
 		expect(useSessionsStore.getState().sessions[0]?.model).toEqual(previousModel);
 		expect(useSessionsStore.getState().sessions[0]?.thinkingLevel).toBe("high");
 		expect(piMock.saveUiState).toHaveBeenLastCalledWith({
-			state: { currentModel: previousModel, thinkingLevel: "high" },
+			state: { lastUsedModel: previousModel, lastUsedThinkingLevel: "high" },
 		});
 	});
 
@@ -366,11 +366,11 @@ describe("乐观会话设置（optimisticSessionSetting 骨架）", () => {
 		useSessionsStore.setState({
 			sessions: [{ ...realMeta("s1", "/p"), thinkingLevel: "low" }],
 			activeSessionId: "s1",
-			thinkingLevel: "low",
+			lastUsedThinkingLevel: "low",
 		});
 		piMock.setThinkingLevel.mockRejectedValueOnce(new Error("boom"));
 		await useSessionsStore.getState().setThinkingLevel("high");
-		expect(useSessionsStore.getState().thinkingLevel).toBe("low");
+		expect(useSessionsStore.getState().lastUsedThinkingLevel).toBe("low");
 		expect(useSessionsStore.getState().sessions[0]?.thinkingLevel).toBe("low");
 	});
 });

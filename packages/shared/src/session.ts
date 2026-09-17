@@ -19,8 +19,10 @@ export interface BackgroundSettings {
 
 /** 应用 UI 状态持久化（重启恢复用，主进程写 userData/ui-state.json）：新会话复用上次的模型/思考级别；主题与背景设置 */
 export interface UiState {
-	currentModel: { provider: string; modelId: string } | null;
-	thinkingLevel: string;
+	/** 上次使用的模型（新会话/draft 起步跟随；语义 = 跟随最近选择，不是独立的「默认模型」设置） */
+	lastUsedModel: { provider: string; modelId: string } | null;
+	/** 上次使用的思考深度（同 lastUsedModel 的跟随语义） */
+	lastUsedThinkingLevel: string;
 	theme: ThemeMode;
 	background: BackgroundSettings;
 	/** 左侧会话轨道开关（聊天页左侧短线悬停展开标题，见 SessionRail；旧版本文件缺省为 false） */

@@ -16,7 +16,7 @@ function levelLabel(t: ReturnType<typeof useT>, level: string): string {
 /** 输入框思考深度切换：chip 按钮 + 上弹单选列表（每个会话独立持有，未设置回退全局默认） */
 export function ThinkingPicker() {
 	const t = useT();
-	const thinkingLevel = useSessionsStore((s) => s.thinkingLevel);
+	const thinkingLevel = useSessionsStore((s) => s.lastUsedThinkingLevel);
 	const activeSession = useSessionsStore((s) => s.sessions.find((x) => x.sessionId === s.activeSessionId));
 	// 当前会话覆写 ?? 全局默认 → models 表解析（useActiveModelInfo 收拢点）
 	const model = useActiveModelInfo();

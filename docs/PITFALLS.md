@@ -27,6 +27,7 @@
 | onDragStart 里拿不到拖拽尺寸（`active.rect.current.initial` 恒 null） | 四 · dnd-kit rect ref 填充晚于 onDragStart |
 | 报错文案悬在空态页不消失、切新会话还在 | 四 · store 级 error 字段永不清理（已修：改 toast + 乐观回滚） |
 | 切到长会话卡顿约 1 秒、消息多的会话越久越卡 | 四 · 长会话切会话卡顿（挂载窗口 + ToolCallCard 布局抖动）（2026-09-12 修复） |
+| 已完成会话上滚滚不动、要大力滚，贴底还吸附（0.5.8 线上 bug） | 四 · 长会话切会话卡顿 → 三次修复（markstream content-visibility 600px 估值占位）（2026-09-16 修复） |
 | 长会话里上滚，位置被反复重置/拽回底部（0.5.7 线上 bug） | 四 · 长会话切会话卡顿 → 二次修复（markstream 占位条缩水 + 手写滚动补偿）（2026-09-13 修复） |
 | Google Vertex 填了 key 仍 401「API keys are not supported by this API」 | 二 · Vertex 只支持 ADC/服务账号（api_key 路径必败，桥接层已剔除 api-key 选项） |
 
@@ -192,6 +193,12 @@ pi SDK 必须声明进 `packages/desktop/package.json` dependencies（electron-b
 修复：把锚定交回浏览器（它同时补偿「补挂插入」与「异步定型缩水」两类视口上方高度变化），手写补偿只兜底 **Chromium 在 `scrollTop === 0` 时不调整锚点**这一种情况（到顶了没地方调；此时按锚点视口位置漂移补差，残留 ≤ 一行）。A/B 实测（真实轮事件上滚 55 步，检查「视口顶行距尾部的序号单调不降」）：旧实现 **11 次违规**，浏览器锚定 **0 次**。
 
 **验证这类滚动 bug 的可复用不变量**：不要看 `scrollTop` 数值（程序性补偿本来就会大跳），看**视口顶部那一行「距尾部行数」的序号**——用户上滚时它只能单调增大（走向更早的行），任何变小的跳变就是「视口被拽向对话后面/底部」。脚本用 CDP `Input.dispatchMouseEvent({type:'mouseWheel', deltaY:负数})` 产生**真实轮事件**（合成 `scrollTop` 赋值测不出这类 bug；注意 `deltaY` 正值是向下滚，别搞反）。
+
+**三次修复（2026-09-16，0.5.8 线上 bug：已完成会话上滚滚不动、贴底吸附）**：二次修复把锚定交回浏览器后，「被重置回底部」没了，但遗留「上滚被顶住」——根因是对 600px 占位的诊断不完整：那不是挂载时的一次性「异步定型」，而是 markstream-react 容器 CSS `:where(.markstream-react).markdown-renderer{contain:layout; content-visibility:auto; contain-intrinsic-size:800px 600px}`——**视口外的每条消息都按固定 600px 估值占位（无 `auto` 记忆），滚近才恢复真实高度，滚远又退回 600px，双向往复**。上滚时真实高度 ≫600 的消息进入渲染窗口突然「长高」，浏览器滚动锚定为保持视口稳定把 scrollTop 往下推，抵消用户滚动（实测一轮 -120 的滚轮：内容 +605px，scrollTop 净 +486）；被推回距底 ≤48px 还会复活跟随 → RO 钉底，即「吸附」。「大力滚」能上去只是因为快速跳过了估值失真区。为何只有个别会话中招：消息真实高度大多 <600 时会话是「缩水助推上滚」几乎无感；含超长正文（如实测 5393 字分析文）的会话才是「长高顶回」。
+
+修复：`globals.css` 加覆写（库全走 `:where()` 零优先级，普通选择器即可压掉）——`.markdown-body .markdown-renderer` 与 `.markdown-body .code-block-container`（同款 `content-visibility:auto` + 180px 估值，同机理）均设 `content-visibility:visible; contain-intrinsic-size:none`。只停「跳过渲染」，布局隔离（contain）保留；长会话渲染成本控制本就由挂载窗口承担。修后实测：滚轮 -120 × N 步长精确无回弹，scrollHeight 全程稳定。
+
+**诊断手法增量**：抓「谁在变高」用两轮全量后代 `offsetHeight` 快照 diff（滚动前后各一份，按挂载序号对齐），一眼定位到 600→42 的 `.markstream-react` 容器；再回库 CSS 里 grep `contain-intrinsic-size` 即破案。复现/验证脚本：`.local/debug/repro-scroll.mjs`、`what-grows.mjs`。
 
 **测量手法可复用**（`Profiler` + `Runtime.evaluate`，脚本模式见 AGENTS.md 的 CDP 一节）：① `Profiler.start/stop` 取采样按 `callFrame` 聚合自耗时，比猜快得多（本次一眼看到 338 个样本叫 `getBoundingClientRect`）；② 想知道「谁在强制重排」就在页面里包 `Element.prototype.getBoundingClientRect` / `offsetHeight` getter，采样调用栈字符串；③ 验证窗口类改动用 DOM 探针（`elementFromPoint` + `rect.top` + 行数）而非截图。
 

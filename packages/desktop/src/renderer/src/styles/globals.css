@@ -727,6 +727,20 @@ code {
 	/* 库的 rounded-lg 等工具类吃 --ms-radius，CSS 里无默认定义（→ 直角）；在此补上 */
 	--ms-radius: 10px;
 }
+/* 关掉库对整容器/代码块的 content-visibility:auto 跳过渲染：contain-intrinsic-size 是固定估值
+   （消息 600px / 代码块 180px，无 auto 记忆），视口外一律按估值占位、滚近才恢复真实高度——
+   真实高度远超估值的消息在上滚进入渲染窗口时突然「长高」，浏览器滚动锚定把视口往下推，
+   表现为上滚被顶住、偶发被拽回吸底（2026-09-16 实测复现，见 PITFALLS）。
+   长会话的渲染成本控制由挂载窗口（mount-window）承担，不依赖库这层跳过。
+   content-visibility:visible 只停跳过，contain:layout/content 的布局隔离仍然保留。 */
+.markdown-body .markdown-renderer {
+	content-visibility: visible;
+	contain-intrinsic-size: none;
+}
+.markdown-body .code-block-container {
+	content-visibility: visible;
+	contain-intrinsic-size: none;
+}
 .markdown-body .paragraph-node {
 	margin: 0.55rem 0;
 }

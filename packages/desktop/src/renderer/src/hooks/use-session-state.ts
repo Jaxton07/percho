@@ -9,7 +9,7 @@ import { useTranscriptStore } from "../stores/transcript";
 export function useActiveModelInfo(): AvailableModel | undefined {
 	return useSessionsStore((s) => {
 		const sessionModel = s.sessions.find((x) => x.sessionId === s.activeSessionId)?.model;
-		const effective = sessionModel ?? s.currentModel;
+		const effective = sessionModel ?? s.lastUsedModel;
 		if (!effective) return undefined;
 		return s.models.find((m) => m.provider === effective.provider && m.id === effective.modelId);
 	});

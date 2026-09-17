@@ -72,30 +72,33 @@ function errText(error: unknown): string | undefined {
 
 /**
  * 乐观会话设置骨架（D4，setCurrentModel/setThinkingLevel 共用）：
- * 快照 → 乐观写（全局字段 + 当前会话条目 + ui-state 持久化）→ 真实会话 IPC 同步 →
- * 失败整体回滚（乐观态 + ui-state 重新持久化）+ toast。draft 无后端会话：只作全局默认，创建时生效。
+ * 快照 → 乐观写（跟随字段 + 当前会话条目 + ui-state 持久化）→ 真实会话 IPC 同步 →
+ * 失败整体回滚（乐观态 + ui-state 重新持久化）+ toast。draft 无后端会话：只记跟随值，创建时生效。
  */
 async function optimisticSessionSetting(
 	label: string,
 	toastKey: "toast.modelSwitchFailed" | "toast.thinkingSwitchFailed",
 	compute: () => {
-		/** 乐观写入的全局字段（currentModel / thinkingLevel） */
-		global: { currentModel?: { provider: string; modelId: string } | null; thinkingLevel?: string };
+		/** 乐观写入的跟随字段（lastUsedModel / lastUsedThinkingLevel） */
+		global: { lastUsedModel?: { provider: string; modelId: string } | null; lastUsedThinkingLevel?: string };
 		/** 乐观写入当前会话条目的补丁（model / thinkingLevel） */
 		sessionPatch: { model?: { provider: string; modelId: string } | null; thinkingLevel?: string | null };
 		/** saveUiState 载荷（乐观与回滚各一次） */
-		uiState: { currentModel?: { provider: string; modelId: string } | null; thinkingLevel?: string };
+		uiState: { lastUsedModel?: { provider: string; modelId: string } | null; lastUsedThinkingLevel?: string };
 		/** 真实会话的 SDK 同步 */
 		sync: (sessionId: string) => Promise<void>;
 	},
 ): Promise<void> {
 	const s = useSessionsStore.getState();
 	const { activeSessionId } = s;
-	const previousGlobal = { currentModel: s.currentModel, thinkingLevel: s.thinkingLevel };
+	const previousGlobal = {
+		lastUsedModel: s.lastUsedModel,
+		lastUsedThinkingLevel: s.lastUsedThinkingLevel,
+	};
 	const previousSession = s.sessions.find((x) => x.sessionId === activeSessionId);
 	const { global, sessionPatch, uiState, sync } = compute();
 	const apply = (
-		g: { currentModel?: { provider: string; modelId: string } | null; thinkingLevel?: string },
+		g: { lastUsedModel?: { provider: string; modelId: string } | null; lastUsedThinkingLevel?: string },
 		patch: { model?: { provider: string; modelId: string } | null; thinkingLevel?: string | null },
 	) =>
 		useSessionsStore.setState((state) => ({
@@ -109,7 +112,7 @@ async function optimisticSessionSetting(
 			console.error("ui-state 持久化失败", error);
 			pushToast("warning", "toast.uiStateSaveFailed", errText(error));
 		});
-	// draft 无后端会话：选择只作为全局默认，创建时随 createSession 生效
+	// draft 无后端会话：选择只记为跟随值，创建时随 createSession 生效
 	if (activeSessionId && !isDraftSessionId(activeSessionId)) {
 		try {
 			await sync(activeSessionId);
@@ -157,8 +160,9 @@ interface SessionsStore {
 	activeSessionId: string | null;
 	cwd: string | null;
 	models: AvailableModel[];
-	currentModel: { provider: string; modelId: string } | null;
-	thinkingLevel: string;
+	/** 上次使用的模型/思考深度（新会话与 draft 起步跟随；持久化 ui-state.json，语义 = 跟随最近选择，非独立默认设置） */
+	lastUsedModel: { provider: string; modelId: string } | null;
+	lastUsedThinkingLevel: string;
 	/** 项目信任决策完成计数：ensureProjectTrust 应答后 +1，驱动 draft 斜杠菜单按新决策重拉 */
 	trustVersion: number;
 	/** 按会话权限模式（缺 key = default；draft id 为 key 的条目是 renderer 内存态，转正时由 ensureSession 应用到后端） */
@@ -194,8 +198,8 @@ export const useSessionsStore = create<SessionsStore>((set, get) => ({
 	activeSessionId: null,
 	cwd: null,
 	models: [],
-	currentModel: null,
-	thinkingLevel: "medium",
+	lastUsedModel: null,
+	lastUsedThinkingLevel: "medium",
 	trustVersion: 0,
 	permissionModes: {},
 
@@ -206,8 +210,8 @@ export const useSessionsStore = create<SessionsStore>((set, get) => ({
 			const meta = await getPi().createSession({
 				options: {
 					cwd: targetCwd,
-					...get().currentModel,
-					thinkingLevel: get().thinkingLevel,
+					...get().lastUsedModel,
+					thinkingLevel: get().lastUsedThinkingLevel,
 				},
 			});
 			set((state) => ({
@@ -246,8 +250,8 @@ export const useSessionsStore = create<SessionsStore>((set, get) => ({
 		const draft: SessionMeta = {
 			sessionId: `${DRAFT_SESSION_PREFIX}${crypto.randomUUID()}`,
 			cwd: targetCwd,
-			model: get().currentModel,
-			thinkingLevel: get().thinkingLevel,
+			model: get().lastUsedModel,
+			thinkingLevel: get().lastUsedThinkingLevel,
 			active: true,
 			messageCount: 0,
 			createdAt: now,
@@ -458,30 +462,30 @@ export const useSessionsStore = create<SessionsStore>((set, get) => ({
 			// 复用上次使用的模型/思考级别（失效则回退到第一个可用模型）
 			const saved = await getPi().loadUiState();
 			const savedModel =
-				saved?.currentModel &&
+				saved?.lastUsedModel &&
 				models.some(
-					(m) => m.provider === saved.currentModel?.provider && m.id === saved.currentModel?.modelId,
+					(m) => m.provider === saved.lastUsedModel?.provider && m.id === saved.lastUsedModel?.modelId,
 				)
-					? saved.currentModel
+					? saved.lastUsedModel
 					: null;
-			const current = get().currentModel;
+			const current = get().lastUsedModel;
 			const fallback = models.find((m) => m.authed) ?? models[0];
-			const nextCurrentModel =
+			const nextLastUsedModel =
 				savedModel ?? current ?? (fallback ? { provider: fallback.provider, modelId: fallback.id } : null);
 			// 持久化级别也按当前选中模型的能力夹紧（避免恢复后 store 与 UI/SDK 实际生效值不一致）
-			const nextModelRecord = nextCurrentModel
-				? models.find((m) => m.provider === nextCurrentModel.provider && m.id === nextCurrentModel.modelId)
+			const nextModelRecord = nextLastUsedModel
+				? models.find((m) => m.provider === nextLastUsedModel.provider && m.id === nextLastUsedModel.modelId)
 				: undefined;
 			const supportedLevels = nextModelRecord?.thinkingLevels;
-			const rawLevel = saved?.thinkingLevel ?? get().thinkingLevel;
+			const rawLevel = saved?.lastUsedThinkingLevel ?? get().lastUsedThinkingLevel;
 			const clampedLevel =
 				supportedLevels && supportedLevels.length > 0
 					? clampThinkingLevel(rawLevel, supportedLevels)
 					: rawLevel;
 			set({
 				models,
-				currentModel: nextCurrentModel,
-				thinkingLevel: clampedLevel,
+				lastUsedModel: nextLastUsedModel,
+				lastUsedThinkingLevel: clampedLevel,
 			});
 		} catch (error) {
 			console.error("加载模型列表失败", error);
@@ -490,7 +494,7 @@ export const useSessionsStore = create<SessionsStore>((set, get) => ({
 	},
 
 	/**
-	 * 切换当前会话的模型：更新全局默认（新会话用）+ 当前会话（只影响该会话），并同步 SDK。
+	 * 切换当前会话的模型：更新跟随记录（新会话起步用）+ 当前会话（只影响该会话），并同步 SDK。
 	 * 乐观更新，SDK 同步失败回滚 + toast（范式同 setSessionPermissionMode）——
 	 * 动作反馈属 toast，不进会话错误卡、不跨会话残留。
 	 */
@@ -498,24 +502,24 @@ export const useSessionsStore = create<SessionsStore>((set, get) => ({
 		// 思考深度跟随新模型能力收缩（就近向上找，找不到再取最高档，与 UI 一致）
 		const state = get();
 		const nextModel = state.models.find((m) => m.provider === provider && m.id === modelId);
-		let thinkingLevel = state.thinkingLevel;
+		let thinkingLevel = state.lastUsedThinkingLevel;
 		if (nextModel?.thinkingLevels && nextModel.thinkingLevels.length > 0) {
 			thinkingLevel = clampThinkingLevel(thinkingLevel, nextModel.thinkingLevels);
 		}
 		await optimisticSessionSetting("切换模型", "toast.modelSwitchFailed", () => ({
-			global: { currentModel: { provider, modelId }, thinkingLevel },
+			global: { lastUsedModel: { provider, modelId }, lastUsedThinkingLevel: thinkingLevel },
 			sessionPatch: { model: { provider, modelId }, thinkingLevel },
-			uiState: { currentModel: { provider, modelId }, thinkingLevel },
+			uiState: { lastUsedModel: { provider, modelId }, lastUsedThinkingLevel: thinkingLevel },
 			sync: (sessionId) => getPi().setModel({ sessionId, provider, modelId }),
 		}));
 	},
 
-	/** 切换当前会话的思考深度：更新全局默认 + 当前会话（只影响该会话），并同步 SDK（失败回滚 + toast） */
+	/** 切换当前会话的思考深度：更新跟随记录 + 当前会话（只影响该会话），并同步 SDK（失败回滚 + toast） */
 	setThinkingLevel: async (level) => {
 		await optimisticSessionSetting("切换思考深度", "toast.thinkingSwitchFailed", () => ({
-			global: { thinkingLevel: level },
+			global: { lastUsedThinkingLevel: level },
 			sessionPatch: { thinkingLevel: level },
-			uiState: { thinkingLevel: level },
+			uiState: { lastUsedThinkingLevel: level },
 			sync: (sessionId) => getPi().setThinkingLevel({ sessionId, level }),
 		}));
 	},
