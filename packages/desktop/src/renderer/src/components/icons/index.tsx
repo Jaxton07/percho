@@ -717,3 +717,21 @@ export function PinIcon({ size = 11, className }: IconProps) {
 		</svg>
 	);
 }
+
+/** 三点「更多」glyph（文件行 hover 浮出的右键菜单入口，设计稿 v2：18px 容器 + ink-faint） */
+export function MoreIcon({ size = 14, className }: IconProps) {
+	return (
+		<svg
+			className={className}
+			width={size}
+			height={size}
+			viewBox="0 0 24 24"
+			fill="currentColor"
+			aria-hidden="true"
+		>
+			<circle cx="5" cy="12" r="1.7" />
+			<circle cx="12" cy="12" r="1.7" />
+			<circle cx="19" cy="12" r="1.7" />
+		</svg>
+	);
+}

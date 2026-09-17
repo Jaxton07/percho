@@ -203,6 +203,12 @@ export const zh = {
 	todo: {
 		title: "任务清单",
 	},
+	pathMenu: {
+		open: "打开文件",
+		reveal: "在访达中显示",
+		copyPath: "复制路径",
+		more: "更多操作",
+	},
 	projects: {
 		title: "空间",
 		daily: "日常",
@@ -523,6 +529,10 @@ export const zh = {
 		modelSwitchFailed: "切换模型失败",
 		thinkingSwitchFailed: "切换思考深度失败",
 		sessionRenameFailed: "重命名失败",
+		pathOpenFailed: "无法打开文件",
+		pathRevealFailed: "无法在访达中显示",
+		pathCopyFailed: "复制路径失败",
+		pathCopied: "已复制绝对路径",
 	},
 };
 

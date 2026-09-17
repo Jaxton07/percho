@@ -208,6 +208,12 @@ export const en: Messages = {
 	todo: {
 		title: "Todo List",
 	},
+	pathMenu: {
+		open: "Open File",
+		reveal: "Reveal in Finder",
+		copyPath: "Copy Path",
+		more: "More actions",
+	},
 	projects: {
 		title: "Spaces",
 		daily: "Daily",
@@ -538,5 +544,9 @@ export const en: Messages = {
 		modelSwitchFailed: "Failed to switch model",
 		thinkingSwitchFailed: "Failed to switch thinking level",
 		sessionRenameFailed: "Failed to rename session",
+		pathOpenFailed: "Could not open file",
+		pathRevealFailed: "Could not reveal in Finder",
+		pathCopyFailed: "Could not copy path",
+		pathCopied: "Absolute path copied",
 	},
 };

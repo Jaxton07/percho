@@ -27,12 +27,17 @@ function clamp(value: number, min: number, max: number): number {
 	return Math.min(Math.max(value, min), Math.max(min, max));
 }
 
+/** 触发元素的视口矩形 → 浮层锚点（各处 contextmenu 处理器统一入口） */
+export function anchorOfElement(el: Element): MenuAnchor {
+	const rect = el.getBoundingClientRect();
+	return { left: rect.left, top: rect.top, width: rect.width, height: rect.height };
+}
+
 /**
  * 右键菜单/重命名浮层定位（纯函数，可单测）：锚在触发元素**下沿左对齐**；
  * 右侧放不下 → 左翻（浮层右缘贴触发元素右缘）；下方放不下且上方够 → 上翻；
  * 最后统一夹进视口内边距，保证任何窗口尺寸下都可见。
- */
-export function placeMenu(
+ */ export function placeMenu(
 	anchor: MenuAnchor,
 	size: MenuSize,
 	viewport: ViewportSize,

@@ -1853,3 +1853,31 @@ code {
 		animation: none;
 	}
 }
+
+/* ============================================================
+   文件行「⋯」更多按钮（issue #55 ⑤）：hover 该行才浮出，点开与右键同一套菜单。
+   容器给足 18px，别让 +N −M 数字压到点上（设计稿实测踩过）
+   ============================================================ */
+.turn-diff-more,
+.diff-file-more {
+	flex: none;
+	width: 18px;
+	display: flex;
+	align-items: center;
+	justify-content: center;
+	color: var(--color-ink-faint);
+	opacity: 0;
+	transition: opacity 0.12s ease;
+	cursor: pointer;
+}
+.turn-diff-more {
+	margin-left: 2px;
+}
+.turn-diff-file:hover .turn-diff-more,
+.diff-file-head:hover .diff-file-more {
+	opacity: 1;
+}
+.turn-diff-more:hover,
+.diff-file-more:hover {
+	color: var(--color-ink);
+}

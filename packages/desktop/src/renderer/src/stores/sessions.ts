@@ -2,6 +2,7 @@ import type { AvailableModel, PermissionMode, SavedTabs, SessionMeta } from "@pe
 import { messagesToUIMessages } from "@percho/shared";
 import { create } from "zustand";
 import { getPi } from "../api";
+import { errText } from "../lib/error-text";
 import { clampThinkingLevel } from "../lib/thinking";
 import { COMPOSER_FOCUS_EVENT, useDraftStore } from "./drafts";
 import { pushToast } from "./toasts";
@@ -76,14 +77,6 @@ function withPermissionMode(
 	if (mode === "default") delete next[sessionId];
 	else next[sessionId] = mode;
 	return next;
-}
-
-/** toast detail 展示：剥掉 Electron IPC 包装前缀（`Error invoking remote method 'x': Error: `），截断只留首段 */
-function errText(error: unknown): string | undefined {
-	let message = error instanceof Error ? error.message : typeof error === "string" ? error : undefined;
-	if (!message) return undefined;
-	message = message.replace(/^Error invoking remote method '[^']+':\s*/i, "").replace(/^Error:\s*/i, "");
-	return message.length > 140 ? `${message.slice(0, 140)}…` : message;
 }
 
 /**

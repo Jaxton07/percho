@@ -5,6 +5,7 @@ import { app, BrowserWindow, dialog, nativeTheme, shell } from "electron";
 import { pickBackgroundImage } from "../background";
 import { ensureDailyDir } from "../daily";
 import { checkoutBranch, getGitBranch, listGitBranches } from "../git";
+import { resolveExistingPath } from "../path-target";
 import { loadTabs, saveTabs } from "../tabs";
 import { loadUiState, saveUiState } from "../ui-state";
 import { checkForUpdates, downloadUpdate, installUpdate } from "../updater";
@@ -46,6 +47,15 @@ export function registerAppIpc(_backend: PiBackend): void {
 		openExternal: ({ url }) => {
 			// 只允许 http(s) 链接，防 file:// 等协议滥用
 			if (typeof url === "string" && /^https?:\/\//.test(url)) return shell.openExternal(url);
+		},
+		// 三个路径动作共用一套解析（相对/~/file:// 锚点归一，不存在直接抛错 → toast 显示原因）
+		resolvePath: ({ target, cwd }) => resolveExistingPath(target, cwd),
+		openPath: async ({ target, cwd }) => {
+			const error = await shell.openPath(resolveExistingPath(target, cwd));
+			if (error) throw new Error(error);
+		},
+		revealPath: ({ target, cwd }) => {
+			shell.showItemInFolder(resolveExistingPath(target, cwd));
 		},
 		getAppInfo: () => ({
 			name: app.getName(),

@@ -1,6 +1,9 @@
 import { type PatchHunk, parsePatch, type TurnFileChange } from "@percho/shared";
 import { type CSSProperties, Fragment, useEffect, useMemo, useRef, useState } from "react";
 import { useT } from "../../i18n";
+import { MoreIcon } from "../icons";
+import { FilePathMenu } from "../ui/FilePathMenu";
+import { anchorOfElement, type MenuAnchor } from "../ui/place-menu";
 
 /** 单卡 diff 超过此行数先折叠（「展开全部」按钮兜底），防长 diff 一次渲染刷屏 */
 const COLLAPSE_LINES = 120;
@@ -121,9 +124,20 @@ function WriteView({ content }: { content: string }) {
  * <details> 非受控（drawer-details 抽屉动画）；内容体每次展开重挂（key=openCount）让行 stagger 重播。
  * chip 跳转由 DiffSidebar 直接操作 DOM（open=true + scrollIntoView + jump-flash），不经 props。
  */
-export function DiffFileCard({ file, defaultOpen }: { file: TurnFileChange; defaultOpen: boolean }) {
+export function DiffFileCard({
+	file,
+	defaultOpen,
+	cwd,
+}: {
+	file: TurnFileChange;
+	defaultOpen: boolean;
+	/** 会话工作目录（相对路径解析基准） */
+	cwd: string | null;
+}) {
 	const ref = useRef<HTMLDetailsElement>(null);
 	const [openCount, setOpenCount] = useState(0);
+	/** 文件卡头部右键/「⋯」菜单锚点（null = 关闭） */
+	const [menuAnchor, setMenuAnchor] = useState<MenuAnchor | null>(null);
 
 	// 非受控初值：挂载后补 open（不能用 open prop——React 重渲染会覆盖用户/程序的 DOM 侧切换）
 	// biome-ignore lint/correctness/useExhaustiveDependencies: 仅挂载时应用一次初值
@@ -140,7 +154,14 @@ export function DiffFileCard({ file, defaultOpen }: { file: TurnFileChange; defa
 				if (e.currentTarget.open) setOpenCount((c) => c + 1);
 			}}
 		>
-			<summary className="diff-file-head [&::-webkit-details-marker]:hidden">
+			{/* biome-ignore lint/a11y/noStaticElementInteractions: <summary> 本身就是 details 的交互头（左键折叠），右键菜单是附加入口 */}
+			<summary
+				className="diff-file-head [&::-webkit-details-marker]:hidden"
+				onContextMenu={(e) => {
+					e.preventDefault();
+					setMenuAnchor(anchorOfElement(e.currentTarget));
+				}}
+			>
 				<svg
 					width="12"
 					height="12"
@@ -162,6 +183,18 @@ export function DiffFileCard({ file, defaultOpen }: { file: TurnFileChange; defa
 				<span className="turn-diff-stat">
 					<span className="turn-diff-added">+{file.added}</span>{" "}
 					<span className="turn-diff-removed">−{file.removed}</span>
+				</span>
+				{/* hover 浮出的「⋯」：右键的可发现入口，与右键共用同一菜单（左键折叠仍是卡片主操作） */}
+				<span
+					className="diff-file-more"
+					aria-hidden="true"
+					onClick={(e) => {
+						e.preventDefault();
+						e.stopPropagation();
+						setMenuAnchor(anchorOfElement(e.currentTarget));
+					}}
+				>
+					<MoreIcon />
 				</span>
 				<span className="diff-file-chev" aria-hidden="true">
 					<svg
@@ -190,6 +223,9 @@ export function DiffFileCard({ file, defaultOpen }: { file: TurnFileChange; defa
 					</Fragment>
 				))}
 			</div>
+			{menuAnchor && (
+				<FilePathMenu target={file.path} cwd={cwd} anchor={menuAnchor} onClose={() => setMenuAnchor(null)} />
+			)}
 		</details>
 	);
 }

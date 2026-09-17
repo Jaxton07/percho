@@ -235,6 +235,12 @@ export const APP_CHANNELS = {
 	checkoutBranch: ch("project:checkoutBranch")<{ cwd: string; branch: string }, string>(),
 	/** 用系统浏览器打开链接（仅 http(s)，防 file:// 协议滥用） */
 	openExternal: ch("app:openExternal")<{ url: string }, void>(),
+	/** 解析文件路径为绝对路径（相对/`~`/`file://`/带 `:行:列` 锚点均可；不存在抛错） */
+	resolvePath: ch("app:resolvePath")<{ target: string; cwd: string | null }, string>(),
+	/** 用系统默认应用打开文件（路径解析同上；打开失败把系统报错抛给渲染端） */
+	openPath: ch("app:openPath")<{ target: string; cwd: string | null }, void>(),
+	/** 在系统文件管理器中显示该文件（macOS = 访达；路径解析同上） */
+	revealPath: ch("app:revealPath")<{ target: string; cwd: string | null }, void>(),
 	/** 应用信息（版本/运行时版本/仓库地址，设置关于页用） */
 	getAppInfo: ch("app:getInfo")<void, AppInfo>(),
 	/** 日常空间工作台目录（懒创建后返回；日常会话的固定 cwd） */
