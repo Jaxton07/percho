@@ -1,8 +1,11 @@
 import type { TurnChanges, TurnTiming } from "@percho/shared";
-import { useEffect, useReducer } from "react";
+import { useEffect, useReducer, useState } from "react";
 import { useT } from "../../i18n";
+import { useSessionsStore } from "../../stores/sessions";
 import { useUiStore } from "../../stores/ui";
-import { ClockIcon } from "../icons";
+import { ClockIcon, MoreIcon } from "../icons";
+import { FilePathMenu } from "../ui/FilePathMenu";
+import { anchorOfElement, type MenuAnchor } from "../ui/place-menu";
 
 /** en 复数单位（与 MetaGroup 的 pluralUnit 同规则） */
 const pluralUnit = (n: number, one: string, many: string) => (n === 1 ? one : many);
@@ -69,6 +72,10 @@ export function TurnDiffChip({
 	const t = useT();
 	const setDiffSidebarOpen = useUiStore((s) => s.setDiffSidebarOpen);
 	const setDiffFocus = useUiStore((s) => s.setDiffFocus);
+	/** 相对路径文件行的解析基准（变更行里的路径是模型原样给出的，可能是相对的） */
+	const cwd = useSessionsStore((s) => s.cwd);
+	/** 文件行右键菜单：记住打开的那一行（target + 锚点） */
+	const [menu, setMenu] = useState<{ path: string; anchor: MenuAnchor } | null>(null);
 	const enterCls = entering ? " turn-diff-enter" : "";
 
 	// 无变更轮：纯计时行（非交互，不占 details）
@@ -124,6 +131,10 @@ export function TurnDiffChip({
 						type="button"
 						className="turn-diff-file"
 						onClick={() => jumpTo(f.sections[0]?.toolCallKey)}
+						onContextMenu={(e) => {
+							e.preventDefault();
+							setMenu({ path: f.path, anchor: anchorOfElement(e.currentTarget) });
+						}}
 					>
 						<span className="turn-diff-path" title={f.path}>
 							{/* LRM 前缀：RTL 截断时防路径开头的 "/" 被 bidi 算法甩到行尾 */}
@@ -133,9 +144,24 @@ export function TurnDiffChip({
 							<span className="turn-diff-added">+{f.added}</span>{" "}
 							<span className="turn-diff-removed">−{f.removed}</span>
 						</span>
+						{/* hover 浮出的「⋯」：右键的可发现入口，与右键共用同一菜单。
+						    主操作仍是左键跳 diff，这里是冗余入口（与胶囊叉叉同款：aria-hidden 的鼠标增强）。 */}
+						<span
+							className="turn-diff-more"
+							aria-hidden="true"
+							onClick={(e) => {
+								e.stopPropagation();
+								setMenu({ path: f.path, anchor: anchorOfElement(e.currentTarget) });
+							}}
+						>
+							<MoreIcon />
+						</span>
 					</button>
 				))}
 			</div>
+			{menu && (
+				<FilePathMenu target={menu.path} cwd={cwd} anchor={menu.anchor} onClose={() => setMenu(null)} />
+			)}
 		</details>
 	);
 }

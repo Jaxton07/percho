@@ -18,6 +18,10 @@ export const zh = {
 		untitled: "新会话",
 		settings: "设置",
 		close: "关闭会话（不删除）",
+		rename: "重命名",
+		renamePlaceholder: "会话名称",
+		pin: "置顶",
+		unpin: "取消置顶",
 	},
 	update: {
 		checkForUpdates: "检查更新",
@@ -49,6 +53,9 @@ export const zh = {
 		send: "发送",
 		hint: "Enter 发送 · Shift+Enter 换行",
 		modelDefault: "选择模型",
+		modelSearchPlaceholder: "搜索模型…",
+		modelSearchEmpty: "没有匹配的模型",
+		modelSearchClear: "清空搜索",
 		modelSwitch: "切换模型",
 		thinkingSwitch: "切换思考深度",
 		addImage: "添加图片",
@@ -196,6 +203,11 @@ export const zh = {
 	todo: {
 		title: "任务清单",
 	},
+	pathMenu: {
+		open: "打开文件",
+		reveal: "在访达中显示",
+		copyPath: "复制路径",
+	},
 	projects: {
 		title: "空间",
 		daily: "日常",
@@ -204,6 +216,7 @@ export const zh = {
 		newSession: "新建会话",
 		addProject: "添加项目",
 		noSessions: "暂无会话",
+		pinned: "置顶",
 		noProjects: "暂无项目，点击右上角添加",
 		today: "今天",
 		yesterday: "昨天",
@@ -514,6 +527,11 @@ export const zh = {
 		modelsLoadFailed: "加载模型列表失败",
 		modelSwitchFailed: "切换模型失败",
 		thinkingSwitchFailed: "切换思考深度失败",
+		sessionRenameFailed: "重命名失败",
+		pathOpenFailed: "无法打开文件",
+		pathRevealFailed: "无法在访达中显示",
+		pathCopyFailed: "复制路径失败",
+		pathCopied: "已复制绝对路径",
 	},
 };
 

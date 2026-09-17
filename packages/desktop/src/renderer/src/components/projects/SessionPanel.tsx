@@ -3,30 +3,33 @@ import { useT } from "../../i18n";
 import { deriveSessions, useProjectsStore } from "../../stores/projects";
 import { useSessionsStore } from "../../stores/sessions";
 import { useUiStore } from "../../stores/ui";
+import { useUiPreferencesStore } from "../../stores/ui-preferences";
 import { PlusIcon } from "../icons";
-import { groupByDate } from "./date-groups";
+import { groupSessions } from "./date-groups";
 import { SessionRow } from "./SessionRow";
 
 const GROUP_LABELS = {
+	pinned: "projects.pinned",
 	today: "projects.today",
 	yesterday: "projects.yesterday",
 	earlier: "projects.earlier",
 } as const;
 
-/** 右侧会话面板：新会话按钮 + 按日期分组的会话列表 */
+/** 右侧会话面板：新会话按钮 + 置顶/按日期分组的会话列表 */
 export function SessionPanel() {
 	const t = useT();
 	const selectedCwd = useProjectsStore((s) => s.selectedCwd);
 	const search = useProjectsStore((s) => s.search);
 	const allSessions = useProjectsStore((s) => s.allSessions);
+	const pinnedSessions = useUiPreferencesStore((s) => s.pinnedSessions);
 	const sessions = useMemo(
-		() => deriveSessions({ allSessions, selectedCwd, search }),
-		[allSessions, selectedCwd, search],
+		() => deriveSessions({ allSessions, selectedCwd, search, pinnedSessions }),
+		[allSessions, selectedCwd, search, pinnedSessions],
 	);
 	const createDraftSession = useSessionsStore((s) => s.createDraftSession);
 	const setView = useUiStore((s) => s.setView);
 
-	const groups = groupByDate(sessions);
+	const groups = useMemo(() => groupSessions(sessions, pinnedSessions), [sessions, pinnedSessions]);
 
 	const newSession = () => {
 		if (!selectedCwd) return;

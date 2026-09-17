@@ -1811,3 +1811,73 @@ code {
 		animation: none;
 	}
 }
+
+/* ============================================================
+   会话重命名浮层进出场（issue #55）：菜单下方同位置展开的二级面
+   进场 160ms 缩放淡入（与全站 pop 同曲线），退场 120ms 反向下沉。
+   退场必须 forwards：RenamePopover 的 EXIT_MS(120) 与之同步，动画跑完前严禁卸载节点
+   ============================================================ */
+.pop-in {
+	animation: pop-in 160ms cubic-bezier(0.16, 1, 0.3, 1);
+	transform-origin: top left;
+}
+.pop-out {
+	animation: pop-out 120ms ease-in forwards;
+	transform-origin: top left;
+}
+@keyframes pop-in {
+	from {
+		opacity: 0;
+		transform: translateY(6px) scale(0.96);
+		filter: blur(1.5px);
+	}
+	to {
+		opacity: 1;
+		transform: none;
+		filter: none;
+	}
+}
+@keyframes pop-out {
+	from {
+		opacity: 1;
+	}
+	to {
+		opacity: 0;
+		transform: translateY(4px) scale(0.97);
+		filter: blur(1px);
+	}
+}
+@media (prefers-reduced-motion: reduce) {
+	.pop-in,
+	.pop-out {
+		animation: none;
+	}
+}
+
+/* ============================================================
+   文件行「⋯」更多按钮（issue #55 ⑤）：hover 该行才浮出，点开与右键同一套菜单。
+   容器给足 18px，别让 +N −M 数字压到点上（设计稿实测踩过）
+   ============================================================ */
+.turn-diff-more,
+.diff-file-more {
+	flex: none;
+	width: 18px;
+	display: flex;
+	align-items: center;
+	justify-content: center;
+	color: var(--color-ink-faint);
+	opacity: 0;
+	transition: opacity 0.12s ease;
+	cursor: pointer;
+}
+.turn-diff-more {
+	margin-left: 2px;
+}
+.turn-diff-file:hover .turn-diff-more,
+.diff-file-head:hover .diff-file-more {
+	opacity: 1;
+}
+.turn-diff-more:hover,
+.diff-file-more:hover {
+	color: var(--color-ink);
+}

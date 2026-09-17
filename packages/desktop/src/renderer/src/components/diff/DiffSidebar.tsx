@@ -101,6 +101,7 @@ export function DiffSidebar() {
 	const diffFocus = useUiStore((s) => s.diffFocus);
 	const clearDiffFocus = useUiStore((s) => s.clearDiffFocus);
 	const activeSessionId = useSessionsStore((s) => s.activeSessionId);
+	const sessionCwd = useSessionsStore((s) => s.cwd);
 	const messages = useTranscriptStore((s) =>
 		activeSessionId ? s.bySession[activeSessionId]?.messages : undefined,
 	);
@@ -192,6 +193,7 @@ export function DiffSidebar() {
 									<DiffFileCard
 										key={`${tc.turnIndex}:${f.path}`}
 										file={f}
+										cwd={sessionCwd}
 										/* 默认只展开「最近一轮组的第一张卡」，其余收起 */
 										defaultOpen={gi === 0 && fi === 0}
 									/>

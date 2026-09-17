@@ -29,6 +29,10 @@
 | 切到长会话卡顿约 1 秒、消息多的会话越久越卡 | 四 · 长会话切会话卡顿（挂载窗口 + ToolCallCard 布局抖动）（2026-09-12 修复） |
 | 已完成会话上滚滚不动、要大力滚，贴底还吸附（0.5.8 线上 bug） | 四 · 长会话切会话卡顿 → 三次修复（markstream content-visibility 600px 估值占位）（2026-09-16 修复） |
 | 长会话里上滚，位置被反复重置/拽回底部（0.5.7 线上 bug） | 四 · 长会话切会话卡顿 → 二次修复（markstream 占位条缩水 + 手写滚动补偿）（2026-09-13 修复） |
+| 改了 `src/main/` 但 app 行为没变（dev 不重建主进程） | 三 · electron-vite dev 主进程 watcher 不可依赖（2026-09-17） |
+| 关窗后 renderer 还活着、`visibilityState` 仍是 visible；用 `window.close()` 测不出关窗拦截 | 四 · macOS 关窗 = 隐藏窗口（2026-09-17） |
+| 浮层/菜单退场闪回（节点被提前卸载）、二级浮层输入框没聚焦 | 四 · 浮层退场时序与焦点接管（2026-09-17） |
+| 右键菜单贴边溢出视口、滚动后浮层脱锚 | 四 · 右键菜单定位与脱锚（2026-09-17） |
 | Google Vertex 填了 key 仍 401「API keys are not supported by this API」 | 二 · Vertex 只支持 ADC/服务账号（api_key 路径必败，桥接层已剔除 api-key 选项） |
 
 ## 一、事故复盘（含可复用诊断手法）
@@ -101,6 +105,19 @@ LAN 页重连/中途进入时，快照种子经 `messagesToUIMessages` 重建—
 
 ## 三、构建 · 打包 · 环境
 
+### electron-vite dev 主进程 watcher 不可依赖：改 `src/main/` 后必须验产物（2026-09-17 实测）
+
+症状：改了 `packages/desktop/src/main/` 下的文件（尝试过 `window.ts` 与新增的 `path-target.ts`），行为毫无变化——因为 `out/main/index.js` **根本没重建**（本会话早先同类型编辑又确实重建过，所以是「不可依赖」而不是「一定不工作」）。renderer 侧 HMR 正常（日志有 `hmr update`），只有主进程那一侧哑火。
+
+诊断（两行定生死）：
+
+```bash
+grep -c "<你刚写的新字符串>" packages/desktop/out/main/index.js   # 0 = 旧产物在跑
+tail -5 .local/dev-logs/dev*.log                                    # 没有 “built in” = 没重建
+```
+
+做法：要测主进程改动就 **重启 dev server**（`pkill -f "electron-vite dev" && pkill -f "MacOS/Electron ."` 再起），别把「改了没生效」误判成自己代码写错了。另：main 侧改动也会让当前 dev 进程的 IPC 通道表变旧——renderer 调新通道会报 `No handler registered`。
+
 ### preload 必须是 CJS
 
 sandbox 下渲染进程不加载 electron-vite 默认的 ESM 产物。config 强制 `format: "cjs", entryFileNames: "index.cjs"`；`main/window.ts` 加载 `../preload/index.cjs`。
@@ -124,6 +141,12 @@ pi SDK 必须声明进 `packages/desktop/package.json` dependencies（electron-b
 连带坑（首贡献者 fork PR 死锁）：fork 首次 PR 的 CI 要在 Actions 页面手动 Approve 才会跑，叠加分支保护「要求 branch up-to-date + 检查通过」→ 三者互等死锁，只能 admin 旁路（`gh pr merge --squash --admin`，同样吃上面的 scope 限制）。同步 fork 分支用 `gh pr update-branch <n>`。
 
 ## 四、Renderer / React
+
+### 鼠标事件 + `:hover`：合成 MouseEvent 不算 hover，要用 CDP 真实鼠标（2026-09-17）
+
+验证 hover 才出现的 UI（如文件行的「⋯」按钮）时，`el.dispatchEvent(new MouseEvent("mouseover"))` 只能触发 React 的 `onMouseEnter`，**CSS `:hover` 不生效**（`el.matches(":hover")` 仍 false），读到的 `opacity` 是 0、截图里永远看不到那个按钮。
+
+做法：用 CDP `Input.dispatchMouseEvent({ type: "mouseMoved", x, y })` 派发真实鼠标移动（元素中心坐标，视口 CSS px），撤开时先 `Emulation.setFocusEmulationEnabled({ enabled: true })`（否则失焦/遮挡态不更新 hover）。可参考临时脚本 `.local/dev-logs/hover-check.mjs`（打印 hover 前后的 `matches(':hover')` + 计算样式并截图）。
 
 ### Zustand selector 必须返回稳定引用（模块级 `EMPTY_ENTRY`）
 
@@ -209,6 +232,29 @@ pi SDK 必须声明进 `packages/desktop/package.json` dependencies（electron-b
 **复核（生产构建 `npm run build` + `npx electron . --remote-debugging-port`）**：切 1600 条消息 / 3200 行的会话**首帧 16–20ms**、真实长会话（1278 / 1370 记录）**37–51ms**，长任务均为空；连续 8 次上滑补挂（每次 +30 行）长任务全空；贴底跟随时新增行仍贴底。
 
 挂载窗口的两个已知面：① **切走再切回窗口复位回尾部 40 行**（每次切换成本恒定，不会越用越慢）；② 窗口只增不减 ⇒ 滚过的行一直挂着，DOM 上限 = 该会话全量（换来的好处是不做反向回收、无滚动跳变）。③ 页内查找不受影响：Electron 默认菜单没有 Find、代码也没调 `findInPage`，Cmd+F 本来就没有；将来若做消息搜索，应查 transcript store 而非 DOM，与挂载窗口无关。
+
+### macOS 关窗 = 隐藏窗口：三个反直觉点（2026-09-17，issue #55）
+
+行为：macOS 下点红点/⌘W → `preventDefault() + win.hide()`（app 继续跑，Dock 点回原窗口原状态）；⌘Q / 菜单退出仍要真退。
+
+1. **hide 后 renderer 侧状态不可信**：`win.hide()` 之后 `document.visibilityState` **仍是 `"visible"`**，CDP `/json/list` 里 target 也照旧在，renderer 里看不到任何「我藏了」的信号。判断窗口是否隐藏只能回主进程（`win.isVisible()` / `isDestroyed()`）；renderer 侧写「隐藏时暂停 XX」的逻辑一定失效。反之：hide 后 renderer 确实还在跑（`backgroundThrottling: false` 下 100ms 定时器 3 秒 tick 32 次），流式事件不断。
+2. **renderer 的 `window.close()` 不走 `BrowserWindow` 的 `close` 事件**：主进程 `win.close()` 会被 `close` 监听器拦下并隐藏（Electron 文档：与用户点关闭按钮同效，这是正确的测法），但 renderer 里调 `window.close()` 直接把窗口**销毁**（进程还在、`window-all-closed` 在 darwin 不退出）——**不要拿它测关窗拦截**。本项目仓库无 `window.close()` 调用，不影响用户路径。
+3. **拦截了 `close` 就必须给「真退出」留后门**：否则 ⌘Q 也会被拦成「隐藏」而退不掉。做法：模块级 `quitting` 标志 + `app.on("before-quit", () => markQuitting())` 首行置位，`close` 处理器里 `if (process.platform !== "darwin" || quitting) return;`。验证手法：主进程里先 `win.close()` 确认「未销毁未可见 + 同 target + renderer 变量还在」，再 `app.quit()` 确认进程真的退出。
+
+（主进程侧调试：dev 起 `--inspect=9229`，Node inspector 接上去 `Runtime.evaluate` 直接调 `BrowserWindow`/`app`；临时脚本 `.local/dev-logs/main-eval.mjs`。）
+
+### 浮层退场时序与焦点接管（2026-09-17，issue #55）
+
+- **退场动画必须等满再卸载**：`pop-out`（120ms，`forwards`）靠动画停在透明态，若节点提前卸载就会**闪回原样**（PreviewTicker 同坑）。约定：CSS 时长与组件里的 `EXIT_MS` 常量一对一，`setTimeout` 到点才调 `onCommit/onCancel`。
+- **二级浮层抢焦点不能靠 `autoFocus`**：从菜单项点开的浮层里放输入框时，菜单节点在这一次点击里被卸载，浏览器会把焦点丢回 `body`，`autoFocus` 在 commit 阶段抛出的 `focus()` 被 click 收尾抹掉（实测 `document.activeElement !== input`、`selectionStart===selectionEnd`）。做法：挂载后 `requestAnimationFrame(() => { input.focus(); input.select(); })`。
+- **退场动画的逐帧截图要劫持卸载定时器**：`document.getAnimations()` 全 `pause()` 只冻结动画时钟，`setTimeout` 照旧跑——退场帧还没截完节点就没了。手法：截图前把 `window.setTimeout` 换成一个「短延时全部缓存、手动触发」的版本，截完再还原并执行缓存回调。
+
+### 右键菜单定位与脱锚（2026-09-17，issue #55）
+
+- 菜单/浮层一律 **portal 到 `document.body` + `position: fixed`**：挂在被 `overflow: hidden/auto` 的祖先里会被裁切。
+- 定位收成纯函数（`components/ui/place-menu.ts`）：锚点 = 触发元素 `getBoundingClientRect()`，规则 = 下沿左对齐 → 超右缘左翻（右缘贴触发元素右缘）→ 下方放不下且上方够则上翻 → 最后夹进视口内边距。**先渲染再测量**：菜单高度取决于行数，`useLayoutEffect` 里量完再 `setState` 定位，测量前整层 `visibility: hidden` 防抖动。
+- **滚动/改变窗口尺寸就关菜单**（而不是重定位）：祖先滚动容器可能有很多层，跟踪成本远大于收益；不关会「菜单挂在原地、触发元素跑了」。
+- `preventDefault()` 在 `contextmenu` 里必写（否则同时弹系统菜单）；dnd-kit 的 `PointerSensor` 只认主键，右键不会误触发拖拽。
 
 ## 五、工程纪律
 

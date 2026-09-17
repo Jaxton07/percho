@@ -21,7 +21,7 @@ const piMock = vi.hoisted(() => ({
 }));
 vi.mock("../api", () => ({ getPi: () => piMock }));
 
-import { DRAFT_SESSION_PREFIX, isDraftSessionId, useSessionsStore } from "./sessions";
+import { DRAFT_SESSION_PREFIX, isDraftSessionId, partitionSessionsByPin, useSessionsStore } from "./sessions";
 import { useToastsStore } from "./toasts";
 import { useTranscriptStore } from "./transcript";
 
@@ -61,6 +61,24 @@ describe("isDraftSessionId", () => {
 		expect(isDraftSessionId("real-1")).toBe(false);
 		expect(isDraftSessionId(null)).toBe(false);
 		expect(isDraftSessionId(undefined)).toBe(false);
+	});
+});
+
+describe("partitionSessionsByPin", () => {
+	const list = ["a", "b", "c", "d"].map((id) => realMeta(id, "/p"));
+	const ids = (sessions: SessionMeta[]) => sessions.map((s) => s.sessionId);
+
+	it("无置顶时原样返回（同一引用）", () => {
+		expect(partitionSessionsByPin(list, [])).toBe(list);
+	});
+
+	it("置顶区在左，内部保持既有顺序（可拖动互换）", () => {
+		expect(ids(partitionSessionsByPin(list, ["c", "a"]))).toEqual(["a", "c", "b", "d"]);
+	});
+
+	it("未知 id（会话已被外部删除）忽略，不生成空槽", () => {
+		expect(ids(partitionSessionsByPin(list, ["ghost", "b"]))).toEqual(["b", "a", "c", "d"]);
+		expect(partitionSessionsByPin(list, ["ghost"])).toBe(list);
 	});
 });
 

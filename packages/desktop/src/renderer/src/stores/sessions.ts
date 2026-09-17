@@ -2,6 +2,7 @@ import type { AvailableModel, PermissionMode, SavedTabs, SessionMeta } from "@pe
 import { messagesToUIMessages } from "@percho/shared";
 import { create } from "zustand";
 import { getPi } from "../api";
+import { errText } from "../lib/error-text";
 import { clampThinkingLevel } from "../lib/thinking";
 import { COMPOSER_FOCUS_EVENT, useDraftStore } from "./drafts";
 import { pushToast } from "./toasts";
@@ -12,6 +13,22 @@ export const DRAFT_SESSION_PREFIX = "draft:";
 
 export function isDraftSessionId(sessionId: string | null | undefined): boolean {
 	return typeof sessionId === "string" && sessionId.startsWith(DRAFT_SESSION_PREFIX);
+}
+
+/**
+ * 顶栏展示顺序：置顶分区在左（内部保持既有顺序，可拖动互换），其余按原顺序跟在后面。
+ * 稳定分区而非排序：拖拽只改 tabs.json 的原始顺序，置顶区与非置顶区的相对位置由本函数表达。
+ * 未知 id（会话已被外部删除）直接忽略。
+ */
+export function partitionSessionsByPin(
+	sessions: SessionMeta[],
+	pinnedSessions: readonly string[],
+): SessionMeta[] {
+	if (pinnedSessions.length === 0) return sessions;
+	const pinned = new Set(pinnedSessions);
+	const pinnedList = sessions.filter((s) => pinned.has(s.sessionId));
+	if (pinnedList.length === 0) return sessions;
+	return [...pinnedList, ...sessions.filter((s) => !pinned.has(s.sessionId))];
 }
 
 /**
@@ -60,14 +77,6 @@ function withPermissionMode(
 	if (mode === "default") delete next[sessionId];
 	else next[sessionId] = mode;
 	return next;
-}
-
-/** toast detail 展示：剥掉 Electron IPC 包装前缀（`Error invoking remote method 'x': Error: `），截断只留首段 */
-function errText(error: unknown): string | undefined {
-	let message = error instanceof Error ? error.message : typeof error === "string" ? error : undefined;
-	if (!message) return undefined;
-	message = message.replace(/^Error invoking remote method '[^']+':\s*/i, "").replace(/^Error:\s*/i, "");
-	return message.length > 140 ? `${message.slice(0, 140)}…` : message;
 }
 
 /**

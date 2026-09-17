@@ -20,6 +20,10 @@ export const en: Messages = {
 		untitled: "New session",
 		settings: "Settings",
 		close: "Close session (keep on disk)",
+		rename: "Rename",
+		renamePlaceholder: "Session name",
+		pin: "Pin",
+		unpin: "Unpin",
 	},
 	update: {
 		checkForUpdates: "Check for updates",
@@ -51,6 +55,9 @@ export const en: Messages = {
 		send: "Send",
 		hint: "Enter to send · Shift+Enter for newline",
 		modelDefault: "Select model",
+		modelSearchPlaceholder: "Search models…",
+		modelSearchEmpty: "No matching models",
+		modelSearchClear: "Clear search",
 		modelSwitch: "Switch model",
 		thinkingSwitch: "Switch thinking level",
 		addImage: "Add image",
@@ -201,6 +208,11 @@ export const en: Messages = {
 	todo: {
 		title: "Todo List",
 	},
+	pathMenu: {
+		open: "Open File",
+		reveal: "Reveal in Finder",
+		copyPath: "Copy Path",
+	},
 	projects: {
 		title: "Spaces",
 		daily: "Daily",
@@ -210,6 +222,7 @@ export const en: Messages = {
 		addProject: "Add project",
 		noSessions: "No sessions yet",
 		noProjects: "No projects yet — add one from the top right",
+		pinned: "Pinned",
 		today: "Today",
 		yesterday: "Yesterday",
 		earlier: "Earlier",
@@ -529,5 +542,10 @@ export const en: Messages = {
 		modelsLoadFailed: "Failed to load models",
 		modelSwitchFailed: "Failed to switch model",
 		thinkingSwitchFailed: "Failed to switch thinking level",
+		sessionRenameFailed: "Failed to rename session",
+		pathOpenFailed: "Could not open file",
+		pathRevealFailed: "Could not reveal in Finder",
+		pathCopyFailed: "Could not copy path",
+		pathCopied: "Absolute path copied",
 	},
 };
