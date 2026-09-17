@@ -430,6 +430,9 @@ export class PiBackend {
 			return createAgentSession({
 				sessionManager,
 				modelRuntime: runtime,
+				// 与 create 对称应用工具白名单（F1 修复；SDK 仅在初始激活工具集层面消费，
+				// 会话文件不持久化工具开关，重开无状态冲突）
+				tools: this.options.tools,
 				settingsManager,
 				resourceLoader,
 				customTools: this.buildCustomTools(deps.gate, deps.preferBuiltin),
@@ -441,8 +444,9 @@ export class PiBackend {
 
 	/**
 	 * create/open 共有接线：权限三件套（gate/confirmBridge/modeRef）→ 资源加载 → 会话构造
-	 * （差异项由 makeSession 提供：create 传 model/tools/thinkingLevel 与新 manager，open 传
-	 * 既有 manager——F1 漂移（open 不传 tools/thinkingLevel）原样保留，是否有意未知）→
+	 * （差异项由 makeSession 提供：create 传 model/tools/thinkingLevel 与新 manager；open 传
+	 * 既有 manager + tools，model/thinkingLevel 有意不传——SDK 缺省时从会话文件恢复，
+	 * 传了反而覆盖用户原选择，见 sdk.js 恢复分支）→
 	 * subagent mutex 通知 → 扩展绑定 → 订阅/注册（gate/dialogs/modeRef 随 entry 单记录）→ trace。
 	 */
 	private async wireSession(
