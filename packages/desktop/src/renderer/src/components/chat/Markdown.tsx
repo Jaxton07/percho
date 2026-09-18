@@ -1,7 +1,12 @@
 import MarkdownRender, { type SmoothMarkdownStreamOptions } from "markstream-react";
 import "markstream-react/index.css";
+// KaTeX 只在公式出现时才会被 markstream 动态 import（mermaid 的依赖里也有 katex）；
+// 它的 CSS 必须显式引入：缺了它 katex-mathml 层不会被隐藏，公式会重影地多一份 MathML 文本。
+import "katex/dist/katex.min.css";
 import { useRef } from "react";
 import { useThemeStore } from "../../stores/theme";
+// 副作用 import：MermaidBlock 在模块加载时向 markstream 注册 mermaid 节点的自定义组件（见该文件末尾）
+import "./MermaidBlock";
 
 /**
  * 平滑输出速率参数（markstream 内置 smooth streaming controller，grapheme 级 pacing）：

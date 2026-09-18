@@ -24,6 +24,9 @@
 | LAN 对话页正文重复出现在末尾、run 结束又恢复正常 | 二 · 流式增量帧不可重放（healing 兜底差量） |
 | 流式输出时整个 Markdown 区域随 token 节奏闪烁、尾部文字半透明往上爬 | 四 · markstream fade 的临时合成层（已修：组件 API 关闭 fade） |
 | 代码块顶部两行无法拖选、标点偶发橙色框 | 四 · 悬浮 header 命中层 + Monaco Unicode 高亮 |
+| mermaid 代码块只显示源码卡不渲染、图表挤成一行不换行 | 四 · mermaid 卡接入（optional peer dep + isStrict + 失败态静默）（2026-09-18） |
+| markstream 自定节点组件传 `customComponents` prop 无效 | 四 · mermaid 卡接入 → 接入点 1（只有全局 `setCustomComponents`） |
+| 公式渲染成两份文字（`E = mc²E = mc2`） | 四 · mermaid 卡接入 → 接入点 6（缺 katex CSS） |
 | onDragStart 里拿不到拖拽尺寸（`active.rect.current.initial` 恒 null） | 四 · dnd-kit rect ref 填充晚于 onDragStart |
 | 报错文案悬在空态页不消失、切新会话还在 | 四 · store 级 error 字段永不清理（已修：改 toast + 乐观回滚） |
 | 切到长会话卡顿约 1 秒、消息多的会话越久越卡 | 四 · 长会话切会话卡顿（挂载窗口 + ToolCallCard 布局抖动）（2026-09-12 修复） |
@@ -189,6 +192,31 @@ pi SDK 必须声明进 `packages/desktop/package.json` dependencies（electron-b
 两个独立原因。顶部不可选：为保留复制按钮而把 `.code-block-header` 绝对定位到代码块顶部，header 实际高 38px，恰好覆盖 18px 行高的前两行；`:hover/:focus-within` 曾把整条 header 设为 `pointer-events:auto`，透明区域也会截获拖选。修复为 header 始终 `pointer-events:none`，仅 `.code-action-btn` 恢复 `pointer-events:auto`。
 
 标点橙框：Monaco 默认 `unicodeHighlight` 会给全角标点、不可见字符和易混淆字符生成 `.unicode-highlight` 描边，模型输出中混入这类字符时看起来像随机残留框选。只读展示没有可执行的修复动作，桌面与 LAN 的 `Markdown.tsx` 都通过 `monacoOptions` 关闭三类 Unicode 高亮，并一并关闭同词、符号 occurrence 和括号匹配 decoration；真实拖选高亮保留。诊断时用 `elementFromPoint` 检查顶部文本命中、`.view-overlays .selected-text` 检查 Monaco 内部选区；不要用 `window.getSelection()` 判断，Monaco 选区不走浏览器 Selection API。
+
+### mermaid 卡接入：六个接入点（2026-09-18，对话区支持 mermaid 渲染）
+
+起点症状：对话里的 mermaid 代码块只有一张「源码卡」，无图。根因：`markstream-react` 把 mermaid 当 **optional peer dependency**（库内是 `await import("mermaid")`），没装时 Vite 会生成 `assets/__vite-optional-peer-dep_mermaid_markstream-react_false-*.js`（内容就是 `throw new Error('Could not resolve "mermaid"')`），动态 import 抛错 → 库里 catch 后 warn → 降级成源码卡。**同类**: `katex` / `@antv/infographic` / `@terrastruct/d2` 同样没装（搜 `out/renderer/assets/__vite-optional-peer-dep_*` 一眼看清哪些能力没接）。
+
+修复：`packages/desktop` 装 `mermaid@^11.17.2`（markstream 要求 `>=11`，12.0 刚发别上）。mermaid 发布形态是 core + 每图表类型单独动态 import，Vite 会切成 mermaid.core + 一堆图表 chunk，**只在出现图表时才拉**；代价是 assets +7MB（首屏无影响）。新增 `chat/MermaidBlock.tsx` + globals.css 末尾两段 mermaid 样式。
+
+**接入点 1 · 接管必须走全局 `setCustomComponents`**。mermaid 块在库里就是 `code_block` + language=mermaid，分发时按**语言名**在自定义组件表里查，而那张表只有全局入口：`NodeRendererProps` 上没有 `customComponents`（写了 TS 报 "Property 'customComponents' does not exist"），也不读 `streamingComponents`。正解：`setCustomComponents({ mermaid: MermaidBlock })`（模块级注册一次，会 bump revision，已挂载的渲染器自动重渲）。自定组件收到的是 `{node, isDark, ...mermaidProps}`——**没有 `loading` prop**，流式判定得读 `node.loading`。
+
+**接入点 2 · `isStrict` 默认 true，会把 `<br/>` 吃掉**。库默认 `isStrict: true` → mermaid `flowchart.htmlLabels:false` → 节点标签走纯 SVG text 路径，`<br/>` 被丢弃：多行标签挤成一行并溢出框（一开始还以为是 mermaid 不支持未加引号的 `<br/>`，实测加不加引号都能换行，真正的开关是这里）。传 `isStrict: false`（loose）即修复换行；安全性不牺牲：库插入前会过 `stream-markdown-parser` 的 `scrubSvgElement`/`toSafeSvgElement`，它把 foreignObject 拍平成 `<text>+<tspan>`（实测渲染后 foreignObject 计数为 0），HTML 标签不会进 DOM。
+
+**接入点 3 · parse 失败是完全静默的**。库的链路是「先 parse 校验，过不了就放弃」（`Ie` 里 catch 后只尝试 prefix 渲染），`mermaid-error` 那栏只在 **render 阶段**抛错时才有，parse 失败连错误文本都不写 → 界面上剩一个空白框（`data-markstream-mode` 永远停在 `pending`）。修法：在包装组件里自己 `await import("mermaid")` 再 `parse` 一遍（**必须动态 import**，静态 import 会把 mermaid 拉进主 bundle），失败就换 Percho 报错卡（复用 `.error-note*` + `.drawer-details`，内容 = 渲染失败 + 可展开源码 + 复制）。两个坑：① 源码要先按库的规则归一化（`]::x`→`]:::`、`:::subgraphNode`→`::subgraphNode`），否则会把库能渲染的图误判成失败；② 库不可用时（LAN 版把 mermaid alias 成空 stub）`parse` 不是函数，**不要判失败**，交给库自己降级成源码卡。另用 `onRenderError` 收 render 阶段失败（返回 `true` = 已接管，库不再画自己的错误行）。流式保护：`node.loading` 为真时不做校验，且校验带 400ms 防抖、源码一变就清旧失败态。
+
+**接入点 4 · 高度是估算写死的 inline style**。库给预览区写 `style="height: 450px; max-height: 500px"` + `min-h-[360px]`（用 `estimatedPreviewHeightPx` 估），实测它跟真实 svg 高度差很多（450 vs 243、500 vs 345）：图小留一大片空白、图高直接被 `overflow:hidden` 裁掉。修法（两层，缺一不可）：
+
+1. `.markdown-body .md-mermaid .mermaid-block div:has(> [data-mermaid-wrapper])` 上 `height:auto/min-height:0/max-height:min(620px,70vh)` + `!important`（压 inline style）；
+2. `[data-mermaid-wrapper]{position:static}` —— 库把 wrapper 定成 `absolute inset-0`，不改成文档流就永远撑不开容器。顺手 `pointer-events:none`：缩放/拖拽关掉后（`showZoomControls:false`）剩下的拖拽是僵尸交互（能把图拖出可视区且无重置）。
+
+全屏弹层里是同一套结构（`.mermaid-modal-content`，portal 到 body，选择器**不能**挂 `.markdown-body`），实测不进同样的覆盖会看到 svg 374px 被截在 360px 容器里。
+
+**接入点 5 · 工具栏与文案**。header 里装着全部按钮，`showHeader:false` 会连复制一起消失；所以样式上做悬浮（`position:absolute` + `opacity:0`，`:hover/:focus-within` 才显形；`> div:first-child` 是图标+Mermaid 标签，隐藏；`justify-content:flex-end` 把工具组靠右）——**命中层同「代码块顶部不可选」那条**：header 整层 `pointer-events:none`，只让按钮恢复 `auto`。按钮开关走 props（`showModeToggle/showCopyButton/showFullscreenButton` 留，`showCollapseButton/showExportButton/showZoomControls` 关）。库的 UI 文案（Preview/Source/Copy/Close）走 `setDefaultI18nMap`（全局字典，17 个 key 全给，否则 TS 不过），但「Rendering diagram…」是**硬编码英文**，只能 CSS 变量 + `::after` 顶掉（组件侧把 i18n 文案塞进 `--md-mermaid-rendering`）。
+
+**接入点 6 · 顺带把 katex 带进来了**。装 mermaid 会装上它依赖的 katex，于是公式从「显示源码」变成「渲染」——但 `katex/dist/katex.min.css` 没引入时 `.katex-mathml` 层不会被隐藏，公式**重影**成 `E = mc²E = mc2`。已显式声明 katex 依赖 + 在 `Markdown.tsx` 引入 CSS。生产（file:// + CSP `font-src 'self' data:`）实测字体能加载：20 个 KaTeX face 注册、用到的 3 个 status=loaded，无 CSP 违规。
+
+**验证手法（可复用）**：seed 一条含图表/公式/故意写坏的 mermaid 的会话 + CDP 截图；CSS `:hover` 只认真实指针，必须 `Input.dispatchMouseEvent({type:'mouseMoved'})`（合成 MouseEvent 只触发 JS handler，见上文那条）；想通过 dev 输入框发真请求时，注意 composer 是受控组件且**第一个 textarea 是 `.ime-text-area`（readOnly，IME 辅助层）**，要定位真正的 composer（`.max-h-[200px]`）并用 `Input.insertText`。本案未能用真实模型做流式复验（dev 的 `~/.pi/agent-dev/auth.json` 已失效，401），近似做法是造一条「围栏没闭合」的会话：实测正常出图、无误判。LAN 版仍是源码卡（它有自己的 `Markdown.tsx`，mermaid/katex 都被 alias 成空 stub，单文件体积不受影响）。
 
 ### dnd-kit：`onDragStart` 里 `active.rect.current.initial` 恒为 null（2026-09-05）
 
