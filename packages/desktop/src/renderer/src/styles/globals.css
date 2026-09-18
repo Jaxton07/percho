@@ -1881,3 +1881,232 @@ code {
 .diff-file-more:hover {
 	color: var(--color-ink);
 }
+
+/* ============================================================
+   mermaid 全屏层（markstream 通过 portal 挂到 document.body，选择器不能挂 .markdown-body）
+   同全站浮层语言：无边框 surface 面 + shadow-pop；`html body` 前缀保证压过库里的 :where() 规则
+   ============================================================ */
+html body .markstream-react.mermaid-modal-overlay {
+	/* 遮罩跟全屏看图一致用纯黑（ImagePreview 的 bg-black/80 同语言）；不是主题色，不参与 token 切换 */
+	background: rgb(0 0 0 / 0.62);
+	backdrop-filter: blur(2px);
+}
+html body .markstream-react .mermaid-modal-panel {
+	border-radius: 16px;
+	background: var(--color-surface);
+	color: var(--color-ink);
+	box-shadow: var(--shadow-pop);
+}
+html body .markstream-react .mermaid-modal-header {
+	justify-content: flex-end;
+	border-bottom: none;
+	padding: 10px 10px 4px;
+}
+html body .markstream-react .mermaid-modal-title {
+	/* 标题只留「Mermaid 预览」的品牌感：与关闭按钮同排、字号降一档 */
+	font-size: 13px;
+	font-weight: 500;
+	color: var(--color-ink-2);
+	letter-spacing: -0.01em;
+	margin-right: auto;
+}
+html body .markstream-react .mermaid-modal-close {
+	font-family: inherit;
+	font-size: 11.5px;
+	color: var(--color-ink-faint);
+	background: none;
+	border: none;
+	border-radius: 7px;
+	padding: 4px 8px;
+	cursor: pointer;
+	transition:
+		color 0.14s ease,
+		background 0.14s ease;
+}
+html body .markstream-react .mermaid-modal-close:hover {
+	color: var(--color-ink);
+	background: var(--color-hover);
+}
+html body .markstream-react .mermaid-modal-body {
+	padding: 4px 16px 16px;
+	background: transparent;
+}
+/* 弹层里的预览容器跟卡片同源：库同样按估算写死 360px 高 + 灰底，实测 svg 374px 进去被
+   overflow:hidden 裁掉一截。同样改成跟着图走，底色交回面板 */
+.mermaid-modal-content div:has(> [data-mermaid-wrapper]) {
+	/* biome-ignore lint/complexity/noImportantStyles: 必须压过库写入的 inline height / max-height */
+	height: auto !important;
+	/* biome-ignore lint/complexity/noImportantStyles: 同上（库的 min-h-[360px] 工具类） */
+	min-height: 0 !important;
+	/* biome-ignore lint/complexity/noImportantStyles: 同上 */
+	max-height: calc(100vh - 190px) !important;
+	overflow: auto;
+	padding: 4px 0 8px;
+	background: transparent;
+}
+.mermaid-modal-content [data-mermaid-wrapper] {
+	position: static;
+	cursor: default;
+	pointer-events: none; /* 弹层只做看图，拖拽平移是僵尸交互（无缩放也无重置） */
+}
+
+/* ============================================================
+   mermaid 图表卡（components/chat/MermaidBlock.tsx）
+   语言与代码块一致：无边框浮层卡 + hover 才浮现的工具栏。
+   header DOM 必须保留（按钮在里面），只做视觉悬浮化；库的选择器都是
+   :where(.markstream-react) 零/低优先级，这里用 .markdown-body .md-mermaid 压过去。
+   ============================================================ */
+.markdown-body .md-mermaid {
+	margin: 1rem 0; /* 与库的 my-4 对齐 */
+}
+.markdown-body .md-mermaid .mermaid-block {
+	position: relative; /* 悬浮 header 的定位参照 */
+	border: none;
+	border-radius: 12px;
+	background: var(--color-surface);
+	color: var(--color-ink);
+	margin: 0;
+	margin-inline: 8px; /* 同代码块：给 shadow-soft 留外扩空间，阴影四周完整 */
+	box-shadow: var(--shadow-soft);
+}
+/* 工具栏：header 悬浮 —— 常态隐身（图就是图），hover / 键盘聚焦时浮现 */
+.markdown-body .md-mermaid .mermaid-block-header {
+	position: absolute;
+	top: 0;
+	left: 0;
+	right: 0;
+	z-index: 2;
+	padding: 6px 8px;
+	/* 隐藏左侧「icon + Mermaid」标签后只剩工具组：靠右（库是 justify-between） */
+	justify-content: flex-end;
+	/* biome-ignore lint/complexity/noImportantStyles: 必须压过 isDark 分支的 bg-gray-800/50 工具类 */
+	background: transparent !important;
+	border-bottom: none;
+	opacity: 0;
+	pointer-events: none;
+	transition: opacity 0.18s ease;
+}
+.markdown-body .md-mermaid .mermaid-block:hover .mermaid-block-header,
+.markdown-body .md-mermaid .mermaid-block:focus-within .mermaid-block-header {
+	opacity: 1;
+}
+/* 标签胶囊（Mermaid 文字 + 图标）不展示：设计语言里语言标签一律不要 */
+.markdown-body .md-mermaid .mermaid-block-header > div:first-child {
+	display: none;
+}
+/* header 覆盖着图的上沿，整层接管鼠标会挡拖选/挡图；只让按钮恢复命中 */
+.markdown-body .md-mermaid .mermaid-block-header button {
+	pointer-events: auto;
+}
+@media (prefers-reduced-motion: reduce) {
+	.markdown-body .md-mermaid .mermaid-block-header {
+		transition: none;
+	}
+}
+/* 预览 / 源码 分段控件：幽灵文字式，选中项加深，不用库里的白底蓝字 */
+.markdown-body .md-mermaid .mermaid-block-header > div:nth-child(2) {
+	background: transparent;
+	border-radius: 8px;
+	gap: 2px;
+	padding: 0;
+	margin-right: 2px;
+}
+.markdown-body .md-mermaid .mermaid-block-header > div:nth-child(2) button {
+	font-size: 11.5px;
+	font-weight: 450;
+	color: var(--color-ink-faint);
+	background: transparent;
+	border-radius: 7px;
+	padding: 4px 8px;
+	transition:
+		color 0.14s ease,
+		background 0.14s ease;
+}
+.markdown-body .md-mermaid .mermaid-block-header > div:nth-child(2) button:hover {
+	color: var(--color-ink-2);
+	background: var(--color-hover);
+}
+.markdown-body .md-mermaid .mermaid-block-header > div:nth-child(2) button[class~="bg-white"] {
+	color: var(--color-ink);
+	background: var(--color-hover);
+	box-shadow: none;
+}
+/* 操作按钮（复制 / 全屏）：半透明胶囊 + 毛玻璃，同代码块 code-action-btn */
+.markdown-body .md-mermaid .mermaid-action-btn {
+	border: 1px solid var(--color-border);
+	border-radius: 6px;
+	background: color-mix(in srgb, var(--color-canvas) 72%, transparent);
+	backdrop-filter: blur(8px);
+	padding: 5px;
+	color: var(--color-ink-2);
+}
+.markdown-body .md-mermaid .mermaid-action-btn:hover {
+	background: var(--color-hover);
+	color: var(--color-ink);
+}
+/* 预览区：库按估算写死 inline height（最小 360px、最大 500px）——图小时留一大片空白、图高时直接被裁。
+   改成跟着 svg 走：把 wrapper 从 absolute 放回文档流才能撑开容器，高度/上限交给这里。 */
+.markdown-body .md-mermaid .mermaid-block div:has(> [data-mermaid-wrapper]) {
+	/* biome-ignore lint/complexity/noImportantStyles: 必须压过库写入的 inline height / max-height */
+	height: auto !important;
+	/* biome-ignore lint/complexity/noImportantStyles: 同上（库的 min-h-[360px] 工具类） */
+	min-height: 0 !important;
+	/* biome-ignore lint/complexity/noImportantStyles: 同上 */
+	max-height: min(620px, 70vh) !important;
+	overflow: auto;
+	padding: 20px 16px;
+	background: transparent;
+}
+.markdown-body .md-mermaid [data-mermaid-wrapper] {
+	position: static;
+	cursor: default;
+	pointer-events: none; /* 缩放/拖拽已关（showZoomControls:false），避免"把图拖出可视区"的僵尸交互 */
+}
+/* 渲染中行：库的文案是硬编码英文，隐藏它、用组件传进来的 i18n 变量顶上 */
+.markdown-body .md-mermaid .mermaid-loading {
+	justify-content: center;
+	gap: 6px;
+	padding: 0;
+	margin-top: 10px;
+	font-size: 11.5px;
+	color: var(--color-ink-faint);
+}
+.markdown-body .md-mermaid .mermaid-loading span:last-child {
+	font-size: 0;
+}
+.markdown-body .md-mermaid .mermaid-loading span:last-child::after {
+	content: var(--md-mermaid-rendering, "Rendering diagram…");
+	font-size: 11.5px;
+}
+.markdown-body .md-mermaid .mermaid-spinner {
+	width: 13px;
+	height: 13px;
+	border-width: 1.5px;
+	border-color: var(--color-border-strong);
+	border-top-color: var(--color-ink-faint);
+}
+/* 源码视图（切到 Source）：跟代码块同一套中性表面 + 等宽字号，不用库的深色气泡、也不是 14px */
+.markdown-body .md-mermaid .mermaid-block div:has(> pre) {
+	background: var(--color-hover);
+	color: var(--color-ink-dim);
+}
+.markdown-body .md-mermaid .mermaid-block pre {
+	font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace;
+	font-size: 12.5px;
+	line-height: 1.7;
+}
+/* 渲染失败：换成 Percho 报错卡（glyph + 标题 + 可展开源码，复用 .error-note* 同款样式） */
+.markdown-body .md-mermaid[data-failed] .mermaid-block {
+	display: none;
+}
+.markdown-body .md-mermaid .md-mermaid-fail {
+	margin-inline: 8px;
+}
+/* 失败卡标题不能被右侧超长的 parse 报错挤掉（error-note 里标题/元信息一起收缩） */
+.markdown-body .md-mermaid .md-mermaid-fail .error-note-title {
+	flex: none;
+}
+.markdown-body .md-mermaid .md-mermaid-fail-code {
+	max-height: 220px;
+	margin: 0;
+}
