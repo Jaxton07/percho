@@ -5,14 +5,10 @@ import { toggleInList } from "../lib/sidebar-groups";
 
 /** 应用级 UI 偏好（持久化在 ui-state.json，与主题/背景同源；主进程 normalize 负责旧文件缺省） */
 interface UiPreferencesStore {
-	/** 左侧会话轨道：聊天页左侧短线悬停展开标题，快速切换会话（默认关，顶栏胶囊不受影响） */
-	sessionRailEnabled: boolean;
 	/** 中央状态动画：任务运行时对话区中央显示放大 orb（z-20 文字层之上 + canvas 一体遮罩压文字）；与 Working/Thinking 行前小 orb 解耦，小 orb 恒显示 */
 	centerOrbEnabled: boolean;
 	/** 置顶会话（id，新置顶在前）：只影响本机展示顺序，不写会话文件、不同步 */
 	pinnedSessions: string[];
-	/** 会话列表位置：顶栏胶囊（默认）/ 对话页左上角悬浮面板（互斥，见 FloatingSessionList） */
-	sessionListMode: "tabbar" | "floating";
 	/** 顶栏显隐（设置页开关，默认开）：关闭后导航全落在左侧栏 */
 	topBarVisible: boolean;
 	/** 左侧栏收起（宽 0，彻底藏起；只有顶栏最左按钮能改，默认展开） */
@@ -23,12 +19,9 @@ interface UiPreferencesStore {
 	pinnedProjects: string[];
 	/** 启动时从 ui-state.json 恢复（main.tsx 在 render 前 await，避免开关状态闪现） */
 	init: () => Promise<void>;
-	setSessionRailEnabled: (enabled: boolean) => void;
 	setCenterOrbEnabled: (enabled: boolean) => void;
 	/** 置顶 / 取消置顶（新置顶排最左） */
 	togglePin: (sessionId: string) => void;
-	/** 切换会话列表位置（顶栏胶囊 ↔ 悬浮面板） */
-	setSessionListMode: (mode: "tabbar" | "floating") => void;
 	setTopBarVisible: (visible: boolean) => void;
 	/** 收起 / 展开左侧栏（宽 240 ↔ 0） */
 	toggleSidebarCollapsed: () => void;
@@ -48,10 +41,8 @@ function persistPatch(patch: Partial<UiState>): void {
 }
 
 export const useUiPreferencesStore = create<UiPreferencesStore>((set, get) => ({
-	sessionRailEnabled: false,
 	centerOrbEnabled: false,
 	pinnedSessions: [],
-	sessionListMode: "tabbar",
 	topBarVisible: true,
 	sidebarCollapsed: false,
 	expandedGroups: [],
@@ -62,10 +53,8 @@ export const useUiPreferencesStore = create<UiPreferencesStore>((set, get) => ({
 			.loadUiState()
 			.catch(() => null);
 		set({
-			sessionRailEnabled: saved?.sessionRailEnabled ?? false,
 			centerOrbEnabled: saved?.centerOrbEnabled ?? false,
 			pinnedSessions: saved?.pinnedSessions ?? [],
-			sessionListMode: saved?.sessionListMode ?? "tabbar",
 			topBarVisible: saved?.topBarVisible ?? true,
 			sidebarCollapsed: saved?.sidebarCollapsed ?? false,
 			expandedGroups: saved?.expandedGroups ?? [],
@@ -73,19 +62,9 @@ export const useUiPreferencesStore = create<UiPreferencesStore>((set, get) => ({
 		});
 	},
 
-	setSessionRailEnabled: (enabled) => {
-		set({ sessionRailEnabled: enabled });
-		persistPatch({ sessionRailEnabled: enabled });
-	},
-
 	setCenterOrbEnabled: (enabled) => {
 		set({ centerOrbEnabled: enabled });
 		persistPatch({ centerOrbEnabled: enabled });
-	},
-
-	setSessionListMode: (mode) => {
-		set({ sessionListMode: mode });
-		persistPatch({ sessionListMode: mode });
 	},
 
 	setTopBarVisible: (visible) => {

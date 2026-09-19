@@ -1,8 +1,9 @@
 import { useEffect, useRef } from "react";
 import { createPortal } from "react-dom";
+import { CloseIcon } from "../icons";
 
 /**
- * 通用确认弹窗（破坏性操作用）：极淡蒙层 + 无边框卡片，点卡片外 / Esc / 右上 ✕ = 取消。
+ * 通用确认弹窗（破坏性操作用）：极淡蒙层 + 细边框卡片（设计稿画板 D ④），点卡片外 / Esc / 右上 ✕ = 取消。
  * 层级 z-[60]：要压过 z-50 的右键菜单（调用方顺序：菜单项 onSelect 先关菜单再开本弹窗）。
  * 文案与动作由调用方给（i18n 在调用侧），本组件不含任何中文。
  */
@@ -63,7 +64,7 @@ export function ConfirmDialog({
 					onClick={onCancel}
 					aria-label={closeLabel ?? cancelLabel}
 				>
-					✕
+					<CloseIcon size={14} />
 				</button>
 				<div className="mt-[18px] flex justify-end gap-2">
 					<button

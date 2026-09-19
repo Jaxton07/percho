@@ -239,6 +239,12 @@ export const en: Messages = {
 		reveal: "Reveal in Finder",
 		copyPath: "Copy Path",
 	},
+	sessionMenu: {
+		copyDiagnostics: "Copy diagnostics",
+		delete: "Delete session",
+		deleteTitle: "Delete this session?",
+		deleteDesc: "Its transcript and session file will be deleted permanently. This cannot be undone.",
+	},
 	sidebar: {
 		title: "Navigation",
 		search: "Search sessions",
@@ -263,28 +269,9 @@ export const en: Messages = {
 		noSessions: "No sessions",
 	},
 	projects: {
-		title: "Spaces",
 		daily: "Daily",
-		sectionProjects: "Projects",
-		search: "Search sessions in {project}",
-		newSession: "New session",
-		addProject: "Add project",
-		noSessions: "No sessions yet",
-		noProjects: "No projects yet — add one from the top right",
-		pinned: "Pinned",
-		today: "Today",
-		yesterday: "Yesterday",
-		earlier: "Earlier",
-		help: "Help",
 		untitled: "Untitled session",
-		messages: "{count} messages",
-		delete: "Delete session",
-		confirmDelete: "Click again to confirm",
-		copyDiagnostics: "Copy diagnostics",
-		deleteProject: "Delete project",
-		confirmDeleteProject: "Click again to confirm",
 		selectProject: "Pick project directory",
-		branch: "Branch",
 		noGit: "No Git",
 	},
 	settings: {
@@ -331,14 +318,9 @@ export const en: Messages = {
 		channelWatch: "Cross-session channel collaboration (channel-watch)",
 		channelWatchHint:
 			"After a session subscribes to a channel it watches .local/agent-work/channel/<topic>/ for file updates; writes from another session wake this session to pick them up (per the HANDOFF.md protocol). Subscriptions persist via appendEntry and restore on session reopen; built-in loop protection. On by default, fully effective for trusted projects.",
-		sessionListMode: "Session list position",
-		sessionListModeHint:
-			"Top bar (default): sessions live as capsules in the title bar, draggable to reorder. Floating: the capsules hide, and a button at the top-left of the chat view toggles a floating panel (handy with many sessions and a clean title bar).",
-		sessionListModeTabbar: "Top bar",
-		sessionListModeFloating: "Floating",
-		sessionRail: "Left session rail",
-		sessionRailHint:
-			"Shows a vertically centered track of session lines on the left of the chat view; hover or focus a line and it grows into a floating capsule (project icon + title) — click to switch. The top tab bar stays unchanged; turn off to hide it.",
+		topBar: "Show top bar",
+		topBarHint:
+			"The top bar holds the session pills and the current-changes toggle; turn it off and all navigation moves to the left sidebar (its settings entry lives at the sidebar bottom).",
 		centerOrb: "Centered status animation",
 		centerOrbHint:
 			"While a task is running, shows an enlarged status animation at the center of the conversation area (above the text, with a translucent scrim dimming whatever is behind it). Only controls the centered animation — the small orb before the Working/Thinking row always stays.",

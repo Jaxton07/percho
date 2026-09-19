@@ -31,7 +31,11 @@ export type SidebarGroup = {
 	expanded: boolean;
 };
 
-export type SidebarProjectEntry = SidebarGroup & { pinned: boolean };
+export type SidebarProjectEntry = SidebarGroup & {
+	pinned: boolean;
+	/** 该项目下的会话总数（**不受搜索过滤**）：移除项目的确认文案要写真实数字，不能写当前筛选后的 */
+	totalSessions: number;
+};
 
 export type SidebarGroupsResult = {
 	daily: SidebarGroup | null;
@@ -137,6 +141,7 @@ export function deriveSidebarGroups(input: SidebarGroupsInput): SidebarGroupsRes
 				sessions: groupSessions(sessions, pinnedSessions),
 				expanded: isExpanded(project.cwd),
 				pinned: pinnedSet.has(project.cwd),
+				totalSessions: project.sessionCount,
 			};
 		}),
 		projectsExpanded: input.expandedGroups.length > 0 ? expandedKeys.includes(PROJECTS_GROUP_KEY) : true,

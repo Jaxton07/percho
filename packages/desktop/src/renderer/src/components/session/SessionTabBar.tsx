@@ -24,7 +24,7 @@ import { partitionSessionsByPin, useSessionsStore } from "../../stores/sessions"
 import { useTranscriptStore } from "../../stores/transcript";
 import { useUiStore } from "../../stores/ui";
 import { useUiPreferencesStore } from "../../stores/ui-preferences";
-import { CloseIcon, DiffIcon, ListIcon, PanelLeftIcon, PinIcon, PlusIcon, ProjectsIcon } from "../icons";
+import { CloseIcon, DiffIcon, PanelLeftIcon, PinIcon, PlusIcon } from "../icons";
 import { ContextMenu, type ContextMenuItem } from "../ui/ContextMenu";
 import type { MenuAnchor } from "../ui/place-menu";
 import { RenamePopover } from "./RenamePopover";
@@ -167,7 +167,6 @@ function SessionTab({
 	onContextMenu: (sessionId: string, anchor: MenuAnchor) => void;
 }) {
 	const switchSession = useSessionsStore((s) => s.switchSession);
-	const setView = useUiStore((s) => s.setView);
 	const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({
 		id: session.sessionId,
 		// 自定义让位/落位节奏；reduced-motion 传 null = dnd-kit 不再给出过渡串
@@ -200,7 +199,6 @@ function SessionTab({
 					},
 					onClick: () => {
 						switchSession(session.sessionId);
-						setView("chat");
 					},
 				}}
 			/>
@@ -218,16 +216,10 @@ export function SessionTabBar() {
 	const createDraftSession = useSessionsStore((s) => s.createDraftSession);
 	const reorderSessions = useSessionsStore((s) => s.reorderSessions);
 	const cwd = useSessionsStore((s) => s.cwd);
-	const view = useUiStore((s) => s.view);
-	const setView = useUiStore((s) => s.setView);
 	const diffSidebarOpen = useUiStore((s) => s.diffSidebarOpen);
 	const toggleDiffSidebar = useUiStore((s) => s.toggleDiffSidebar);
 	const sidebarCollapsed = useUiPreferencesStore((s) => s.sidebarCollapsed);
 	const toggleSidebarCollapsed = useUiPreferencesStore((s) => s.toggleSidebarCollapsed);
-	// 会话列表位置：悬浮模式下胶囊区整体收起，改为左侧的触发按钮 + 左上角悬浮面板（见 FloatingSessionList）
-	const sessionListMode = useUiPreferencesStore((s) => s.sessionListMode);
-	const floatingListOpen = useUiStore((s) => s.floatingListOpen);
-	const toggleFloatingListOpen = useUiStore((s) => s.toggleFloatingListOpen);
 	const [activeId, setActiveId] = useState<string | null>(null);
 	/** 胶囊区横向滚动的滚轮监听：用回调 ref 而非 useEffect + ref 对象——悬浮模式下 scroller 不渲染，
 	 *  回调 ref 在挂载/卸载时天然重挂监听（React 19 支持返回清理函数，不用手写依赖数组） */
@@ -284,12 +276,12 @@ export function SessionTabBar() {
 		setDraggingCursor(false);
 	};
 
-	// 正在查看的会话：完成未读标记立即清除（覆盖切 tab 与 projects ↔ chat 视图切换）
+	// 正在查看的会话：完成未读标记立即清除
 	useEffect(() => {
-		if (activeSessionId && view === "chat") {
+		if (activeSessionId) {
 			useTranscriptStore.getState().markCompletionSeen(activeSessionId);
 		}
-	}, [activeSessionId, view]);
+	}, [activeSessionId]);
 
 	// macOS 左侧为红绿灯留 80px；Windows 右侧为窗口按钮覆盖层留 140px（3 × 46px 取整）
 	const chromePadding =
@@ -310,122 +302,87 @@ export function SessionTabBar() {
 			>
 				<PanelLeftIcon size={16} />
 			</button>
+			{/* 胶囊区（含拖拽排序）：flex-1 吃掉中间剩余宽度 */}
+			<div
+				ref={attachScroller}
+				className="flex min-w-0 flex-1 items-center gap-1 overflow-x-scroll [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
+			>
+				<DndContext
+					sensors={sensors}
+					collisionDetection={closestCenter}
+					onDragStart={({ active }) => {
+						setActiveId(String(active.id));
+						setDragWidth(
+							document
+								.querySelector(`[data-tab-id="${CSS.escape(String(active.id))}"]`)
+								?.getBoundingClientRect().width ?? null,
+						);
+						setDraggingCursor(true);
+					}}
+					onDragEnd={({ active, over }: DragEndEvent) => {
+						endDrag();
+						if (over && active.id !== over.id) {
+							reorderSessions(String(active.id), String(over.id));
+						}
+					}}
+					onDragCancel={endDrag}
+				>
+					<SortableContext
+						items={orderedSessions.map((s) => s.sessionId)}
+						strategy={horizontalListSortingStrategy}
+					>
+						{orderedSessions.map((session) => (
+							<SessionTab
+								key={session.sessionId}
+								session={session}
+								isActive={session.sessionId === activeSessionId}
+								contextOpen={
+									menu?.sessionId === session.sessionId || renaming?.sessionId === session.sessionId
+								}
+								onContextMenu={(sessionId, anchor) => openMenu(sessionId, anchor)}
+							/>
+						))}
+					</SortableContext>
+					{/* 拖拽 ghost：fixed 定位（不参与滚动区域 → 不会撑大 scrollWidth），
+					    落位时 fade 回槽位，真实胶囊同时 fade in（.tab-pill 的 opacity 过渡） */}
+					<DragOverlay
+						modifiers={DRAG_MODIFIERS}
+						dropAnimation={prefersReducedMotion() ? null : DROP_ANIMATION}
+					>
+						{activeSession ? (
+							<TabPill
+								session={activeSession}
+								isActive={activeSession.sessionId === activeSessionId}
+								ghost
+								ghostWidth={dragWidth}
+							/>
+						) : null}
+					</DragOverlay>
+				</DndContext>
+			</div>
+			<UpdateButton />
 			<button
 				type="button"
-				className={`no-drag shrink-0 rounded-lg p-1.5 transition-colors ${
-					view === "projects" ? "bg-bubble text-ink" : "text-ink-dim hover:bg-hover hover:text-ink"
-				}`}
-				onClick={() => setView(view === "projects" ? "chat" : "projects")}
-				aria-label={t("projects.title")}
+				className="no-drag shrink-0 rounded-lg p-1.5 text-ink-dim transition-colors hover:bg-hover hover:text-ink"
+				onClick={() => {
+					// 只建内存 draft tab（空 tab 重启自动消失）；发送首条消息时才真正创建后端会话
+					createDraftSession();
+				}}
+				aria-label={cwd ? t("tabbar.newSession") : t("tabbar.pickProjectFirst")}
 			>
-				<ProjectsIcon />
+				<PlusIcon size={18} />
 			</button>
-			{/* 悬浮会话列表触发按钮（“项目”右侧，仅悬浮模式 + 对话视图 + 有会话时出现）：
-			   与项目按钮同款样式，开态 = bg-bubble；data 属性供面板的点外关闭识别（见 FloatingSessionList） */}
-			{sessionListMode === "floating" && view !== "projects" && sessions.length > 0 && (
-				<button
-					type="button"
-					data-floating-list-trigger=""
-					className={`no-drag shrink-0 rounded-lg p-1.5 transition-colors ${
-						floatingListOpen ? "bg-bubble text-ink" : "text-ink-dim hover:bg-hover hover:text-ink"
-					}`}
-					onClick={toggleFloatingListOpen}
-					aria-label={t("tabbar.sessionList")}
-				>
-					<ListIcon />
-				</button>
-			)}
-			{/* 胶囊区（含拖拽排序）：悬浮模式整体不收组——留空占位撑开 flex-1，
-			   否则 UpdateButton/+ /diff 会从右端滑到左侧触发按钮旁边 */}
-			{sessionListMode === "tabbar" ? (
-				<div
-					ref={attachScroller}
-					className="flex min-w-0 flex-1 items-center gap-1 overflow-x-scroll [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
-				>
-					<DndContext
-						sensors={sensors}
-						collisionDetection={closestCenter}
-						onDragStart={({ active }) => {
-							setActiveId(String(active.id));
-							setDragWidth(
-								document
-									.querySelector(`[data-tab-id="${CSS.escape(String(active.id))}"]`)
-									?.getBoundingClientRect().width ?? null,
-							);
-							setDraggingCursor(true);
-						}}
-						onDragEnd={({ active, over }: DragEndEvent) => {
-							endDrag();
-							if (over && active.id !== over.id) {
-								reorderSessions(String(active.id), String(over.id));
-							}
-						}}
-						onDragCancel={endDrag}
-					>
-						<SortableContext
-							items={orderedSessions.map((s) => s.sessionId)}
-							strategy={horizontalListSortingStrategy}
-						>
-							{orderedSessions.map((session) => (
-								<SessionTab
-									key={session.sessionId}
-									session={session}
-									isActive={session.sessionId === activeSessionId}
-									contextOpen={
-										menu?.sessionId === session.sessionId || renaming?.sessionId === session.sessionId
-									}
-									onContextMenu={(sessionId, anchor) => openMenu(sessionId, anchor)}
-								/>
-							))}
-						</SortableContext>
-						{/* 拖拽 ghost：fixed 定位（不参与滚动区域 → 不会撑大 scrollWidth），
-					    落位时 fade 回槽位，真实胶囊同时 fade in（.tab-pill 的 opacity 过渡） */}
-						<DragOverlay
-							modifiers={DRAG_MODIFIERS}
-							dropAnimation={prefersReducedMotion() ? null : DROP_ANIMATION}
-						>
-							{activeSession ? (
-								<TabPill
-									session={activeSession}
-									isActive={activeSession.sessionId === activeSessionId}
-									ghost
-									ghostWidth={dragWidth}
-								/>
-							) : null}
-						</DragOverlay>
-					</DndContext>
-				</div>
-			) : (
-				<div className="min-w-0 flex-1" />
-			)}
-			<UpdateButton />
-			{view !== "projects" && (
-				<button
-					type="button"
-					className="no-drag shrink-0 rounded-lg p-1.5 text-ink-dim transition-colors hover:bg-hover hover:text-ink"
-					onClick={() => {
-						// 只建内存 draft tab（空 tab 重启自动消失）；发送首条消息时才真正创建后端会话
-						createDraftSession();
-						setView("chat");
-					}}
-					aria-label={cwd ? t("tabbar.newSession") : t("tabbar.pickProjectFirst")}
-				>
-					<PlusIcon size={18} />
-				</button>
-			)}
 			{/* diff 侧栏开关：新会话按钮之后，active 态底色区分 */}
-			{view !== "projects" && (
-				<button
-					type="button"
-					className={`no-drag relative shrink-0 rounded-lg p-1.5 transition-colors ${
-						diffSidebarOpen ? "bg-hover text-ink" : "text-ink-dim hover:bg-hover hover:text-ink"
-					}`}
-					onClick={toggleDiffSidebar}
-					aria-label={t("diff.toggle")}
-				>
-					<DiffIcon size={16} />
-				</button>
-			)}
+			<button
+				type="button"
+				className={`no-drag relative shrink-0 rounded-lg p-1.5 transition-colors ${
+					diffSidebarOpen ? "bg-hover text-ink" : "text-ink-dim hover:bg-hover hover:text-ink"
+				}`}
+				onClick={toggleDiffSidebar}
+				aria-label={t("diff.toggle")}
+			>
+				<DiffIcon size={16} />
+			</button>
 			{menu !== null && (
 				<ContextMenu anchor={menu.anchor} items={contextMenuItems(menu.sessionId)} onClose={closeMenu} />
 			)}

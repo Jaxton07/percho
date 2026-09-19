@@ -20,7 +20,7 @@ export interface ContextMenuItem {
  * 锚在触发元素下沿左对齐，超右缘左翻、下方不足上翻（定位规则在 place-menu）。
  * 关闭：点浮层外（pointerdown 捕获）/ Esc / 选中任一项 / 滚动与窗口尺寸变化（防浮层脱锚）。
  * 外观：`rounded-xl border border-border bg-surface p-1 shadow-pop` 的有边框卡片（与左栏共用一套，
- * 不再有 veil 渐变变体）；项高 30px、图标与文字各 13px、危险项红字、分隔线 `h-px bg-border`。
+ * 不再有 veil 渐变变体）；项高 30px、图标与文字各 13px、危险项红字**且图标同红**、分隔线 `h-px bg-border`。
  */
 export function ContextMenu({
 	anchor,
@@ -78,7 +78,11 @@ export function ContextMenu({
 				}}
 			>
 				{item.icon !== undefined && (
-					<span className="flex shrink-0 text-ink-dim transition-colors group-hover/item:text-ink">
+					<span
+						className={`flex shrink-0 transition-colors ${
+							item.danger ? "text-red-600" : "text-ink-dim group-hover/item:text-ink"
+						}`}
+					>
 						{item.icon}
 					</span>
 				)}

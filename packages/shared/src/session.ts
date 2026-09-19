@@ -25,8 +25,6 @@ export interface UiState {
 	lastUsedThinkingLevel: string;
 	theme: ThemeMode;
 	background: BackgroundSettings;
-	/** 左侧会话轨道开关（聊天页左侧短线悬停展开标题，见 SessionRail；旧版本文件缺省为 false） */
-	sessionRailEnabled: boolean;
 	/** 中央状态动画开关（任务运行时对话区中央显示放大 orb，盖文字层之上 + 半透明遮罩压暗身后文字；与状态行小 orb 解耦；旧版本文件缺省为 false） */
 	centerOrbEnabled: boolean;
 	/** 置顶会话 id（新置顶在前；只存 app 本地 ui-state.json，不写会话文件、不跨设备同步；已删除的会话 id 由写侧清理） */
@@ -42,8 +40,6 @@ export interface UiState {
 	expandedGroups: string[];
 	/** 置顶项目 cwd（新置顶在前，决定左侧栏项目区排序） */
 	pinnedProjects: string[];
-	/** 会话列表位置：顶栏胶囊（默认）/ 对话页左上角悬浮面板；旧版本文件缺省为 "tabbar" */
-	sessionListMode: "tabbar" | "floating";
 }
 
 /** 会话元数据（IPC 往返用，独立于 pi 内部类型） */

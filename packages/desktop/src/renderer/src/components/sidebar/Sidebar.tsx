@@ -26,6 +26,7 @@ export function Sidebar() {
 	const search = useProjectsStore((s) => s.search);
 	const allSessions = useProjectsStore((s) => s.allSessions);
 	const addedProjects = useProjectsStore((s) => s.addedProjects);
+	const deleteProject = useProjectsStore((s) => s.deleteProject);
 	const activeSessionId = useSessionsStore((s) => s.activeSessionId);
 	const { toggleGroup } = useExpandedGroups();
 
@@ -68,6 +69,7 @@ export function Sidebar() {
 						onToggle={() => toggleGroup(PROJECTS_GROUP_KEY, defaults)}
 						onToggleGroup={onToggleGroup}
 						onTogglePin={toggleProjectPin}
+						onRemoveProject={(cwd) => void deleteProject(cwd)}
 					/>
 					{empty && (
 						<p className="px-1.5 py-6 text-center text-[12px] text-ink-faint">

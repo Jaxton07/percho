@@ -16,6 +16,7 @@ export function ProjectSection({
 	onToggle,
 	onToggleGroup,
 	onTogglePin,
+	onRemoveProject,
 }: {
 	projects: SidebarProjectEntry[];
 	expanded: boolean;
@@ -23,6 +24,7 @@ export function ProjectSection({
 	onToggle: () => void;
 	onToggleGroup: (key: string) => void;
 	onTogglePin: (cwd: string) => void;
+	onRemoveProject: (cwd: string) => void;
 }) {
 	const t = useT();
 	const addProject = useProjectsStore((s) => s.addProject);
@@ -57,8 +59,10 @@ export function ProjectSection({
 						group={project}
 						activeSessionId={activeSessionId}
 						pinned={project.pinned}
+						totalSessions={project.totalSessions}
 						onToggle={onToggleGroup}
 						onTogglePin={onTogglePin}
+						onRemove={() => onRemoveProject(project.cwd)}
 					/>
 				))}
 		</div>

@@ -26,8 +26,8 @@ function session(id: string, cwd: string, modifiedAt: number, name = `会话 ${i
 	return { sessionId: id, cwd, name, active: false, messageCount: 1, createdAt: 0, modifiedAt };
 }
 
-function project(cwd: string, addedIndex = -1, lastActive = 0): ProjectEntry {
-	return { cwd, name: cwd.split("/").pop() ?? cwd, sessionCount: 0, lastActive, addedIndex };
+function project(cwd: string, addedIndex = -1, lastActive = 0, sessionCount = 0): ProjectEntry {
+	return { cwd, name: cwd.split("/").pop() ?? cwd, sessionCount, lastActive, addedIndex };
 }
 
 function derive(overrides: Partial<SidebarGroupsInput> = {}) {
@@ -65,11 +65,13 @@ describe("deriveSidebarGroups · 组内排序", () => {
 describe("deriveSidebarGroups · 项目区排序", () => {
 	it("置顶项目按 pinnedProjects 顺序排前，其余保持 deriveProjects 的输出顺序", () => {
 		const result = derive({
-			projects: [project(P1, 1), project(P2, 0), project("/work/gamma", -1, 900)],
+			projects: [project(P1, 1, 0, 3), project(P2, 0, 0, 5), project("/work/gamma", -1, 900, 1)],
 			pinnedProjects: [P2],
 		});
 		expect(result.projects.map((p) => p.cwd)).toEqual([P2, P1, "/work/gamma"]);
 		expect(result.projects.map((p) => p.pinned)).toEqual([true, false, false]);
+		// totalSessions 取 deriveProjects 给的原始数（搜索过滤后也保持真实值，供移除确认文案用）
+		expect(result.projects.map((p) => p.totalSessions)).toEqual([5, 3, 1]);
 	});
 
 	it("pinnedProjects 里的陌生 cwd 直接忽略", () => {

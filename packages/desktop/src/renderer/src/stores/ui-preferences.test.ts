@@ -12,70 +12,86 @@ import { useUiPreferencesStore } from "./ui-preferences";
 beforeEach(() => {
 	vi.clearAllMocks();
 	useUiPreferencesStore.setState({
-		sessionRailEnabled: false,
 		centerOrbEnabled: false,
 		pinnedSessions: [],
-		sessionListMode: "tabbar",
+		topBarVisible: true,
+		sidebarCollapsed: false,
+		expandedGroups: [],
+		pinnedProjects: [],
 	});
 });
 
 describe("useUiPreferencesStore", () => {
 	it("默认关闭（旧版本 ui-state 无该字段）", () => {
-		expect(useUiPreferencesStore.getState().sessionRailEnabled).toBe(false);
 		expect(useUiPreferencesStore.getState().centerOrbEnabled).toBe(false);
 	});
 
 	it("init 从 ui-state 恢复开关", async () => {
-		piMock.loadUiState.mockResolvedValue({ sessionRailEnabled: true, centerOrbEnabled: true });
+		piMock.loadUiState.mockResolvedValue({ centerOrbEnabled: true });
 		await useUiPreferencesStore.getState().init();
-		expect(useUiPreferencesStore.getState().sessionRailEnabled).toBe(true);
 		expect(useUiPreferencesStore.getState().centerOrbEnabled).toBe(true);
 	});
 
 	it("init 加载失败或字段缺失时回落默认关闭", async () => {
 		piMock.loadUiState.mockRejectedValue(new Error("no file"));
 		await useUiPreferencesStore.getState().init();
-		expect(useUiPreferencesStore.getState().sessionRailEnabled).toBe(false);
 		expect(useUiPreferencesStore.getState().centerOrbEnabled).toBe(false);
 
 		piMock.loadUiState.mockResolvedValue({});
 		await useUiPreferencesStore.getState().init();
-		expect(useUiPreferencesStore.getState().sessionRailEnabled).toBe(false);
 		expect(useUiPreferencesStore.getState().centerOrbEnabled).toBe(false);
 	});
 
 	it("切换开关即持久化补丁", () => {
-		useUiPreferencesStore.getState().setSessionRailEnabled(true);
-		expect(useUiPreferencesStore.getState().sessionRailEnabled).toBe(true);
-		expect(piMock.saveUiState).toHaveBeenCalledWith({ state: { sessionRailEnabled: true } });
-
 		useUiPreferencesStore.getState().setCenterOrbEnabled(true);
 		expect(useUiPreferencesStore.getState().centerOrbEnabled).toBe(true);
 		expect(piMock.saveUiState).toHaveBeenCalledWith({ state: { centerOrbEnabled: true } });
 	});
 
-	describe("会话列表位置", () => {
-		it("默认顶栏（旧版本 ui-state 无该字段）", async () => {
-			expect(useUiPreferencesStore.getState().sessionListMode).toBe("tabbar");
-
+	describe("左侧栏", () => {
+		it("默认展开 + 显示顶栏（旧版本 ui-state 无这些字段）", async () => {
 			piMock.loadUiState.mockResolvedValue({});
 			await useUiPreferencesStore.getState().init();
-			expect(useUiPreferencesStore.getState().sessionListMode).toBe("tabbar");
+			const state = useUiPreferencesStore.getState();
+			expect(state.topBarVisible).toBe(true);
+			expect(state.sidebarCollapsed).toBe(false);
+			expect(state.expandedGroups).toEqual([]);
+			expect(state.pinnedProjects).toEqual([]);
 		});
 
-		it("init 恢复悬浮模式", async () => {
-			piMock.loadUiState.mockResolvedValue({ sessionListMode: "floating" });
+		it("init 恢复收起态 / 顶栏显隐 / 展开分组 / 置顶项目", async () => {
+			piMock.loadUiState.mockResolvedValue({
+				topBarVisible: false,
+				sidebarCollapsed: true,
+				expandedGroups: ["__projects__", "/work/alpha"],
+				pinnedProjects: ["/work/alpha"],
+			});
 			await useUiPreferencesStore.getState().init();
-			expect(useUiPreferencesStore.getState().sessionListMode).toBe("floating");
+			const state = useUiPreferencesStore.getState();
+			expect(state.topBarVisible).toBe(false);
+			expect(state.sidebarCollapsed).toBe(true);
+			expect(state.expandedGroups).toEqual(["__projects__", "/work/alpha"]);
+			expect(state.pinnedProjects).toEqual(["/work/alpha"]);
 		});
 
-		it("切换即落盘补丁", () => {
-			useUiPreferencesStore.getState().setSessionListMode("floating");
-			expect(useUiPreferencesStore.getState().sessionListMode).toBe("floating");
-			expect(piMock.saveUiState).toHaveBeenCalledWith({ state: { sessionListMode: "floating" } });
+		it("四项各自落盘补丁（顶栏显隐 / 收起 / 展开分组 / 项目置顶）", () => {
+			const store = useUiPreferencesStore.getState();
+			store.setTopBarVisible(false);
+			expect(piMock.saveUiState).toHaveBeenLastCalledWith({ state: { topBarVisible: false } });
 
-			useUiPreferencesStore.getState().setSessionListMode("tabbar");
-			expect(piMock.saveUiState).toHaveBeenLastCalledWith({ state: { sessionListMode: "tabbar" } });
+			store.toggleSidebarCollapsed();
+			expect(useUiPreferencesStore.getState().sidebarCollapsed).toBe(true);
+			expect(piMock.saveUiState).toHaveBeenLastCalledWith({ state: { sidebarCollapsed: true } });
+
+			store.setExpandedGroups(["__projects__"]);
+			expect(piMock.saveUiState).toHaveBeenLastCalledWith({ state: { expandedGroups: ["__projects__"] } });
+
+			store.toggleProjectPin("/work/alpha");
+			expect(useUiPreferencesStore.getState().pinnedProjects).toEqual(["/work/alpha"]);
+			expect(piMock.saveUiState).toHaveBeenLastCalledWith({ state: { pinnedProjects: ["/work/alpha"] } });
+
+			store.toggleProjectPin("/work/alpha");
+			expect(useUiPreferencesStore.getState().pinnedProjects).toEqual([]);
 		});
 	});
 

@@ -45,7 +45,6 @@ function normalize(parsed: UiStateFileShape): UiState {
 		lastUsedThinkingLevel: typeof level === "string" ? level : "medium",
 		theme,
 		background: { image: typeof background?.image === "string" ? background.image : null, dim },
-		sessionRailEnabled: typeof parsed.sessionRailEnabled === "boolean" ? parsed.sessionRailEnabled : false,
 		centerOrbEnabled: typeof parsed.centerOrbEnabled === "boolean" ? parsed.centerOrbEnabled : false,
 		// 置顶列表：脏值（手改文件/旧版本）过滤成非空字符串数组（渲染侧另会忽略未知 id）
 		pinnedSessions: stringArray(parsed.pinnedSessions),
@@ -53,7 +52,6 @@ function normalize(parsed: UiStateFileShape): UiState {
 		sidebarCollapsed: typeof parsed.sidebarCollapsed === "boolean" ? parsed.sidebarCollapsed : false,
 		expandedGroups: stringArray(parsed.expandedGroups),
 		pinnedProjects: stringArray(parsed.pinnedProjects),
-		sessionListMode: parsed.sessionListMode === "floating" ? "floating" : "tabbar",
 	};
 }
 

@@ -1,7 +1,6 @@
 import { useT } from "../../i18n";
 import { useProjectsStore } from "../../stores/projects";
 import { useSessionsStore } from "../../stores/sessions";
-import { useUiStore } from "../../stores/ui";
 import { useUiPreferencesStore } from "../../stores/ui-preferences";
 import { PlusIcon, SearchIcon } from "../icons";
 
@@ -18,7 +17,6 @@ export function SidebarHeader({ platform }: { platform: string }) {
 	const topBarVisible = useUiPreferencesStore((s) => s.topBarVisible);
 	const createDraftSession = useSessionsStore((s) => s.createDraftSession);
 	const cwd = useSessionsStore((s) => s.cwd);
-	const setView = useUiStore((s) => s.setView);
 	const chromePadding = platform === "darwin" ? "pl-20" : platform === "win32" ? "pr-[140px]" : "";
 
 	return (
@@ -31,7 +29,6 @@ export function SidebarHeader({ platform }: { platform: string }) {
 						onClick={() => {
 							// 只建内存 draft tab（空 tab 重启自动消失）；发送首条消息时才真正创建后端会话
 							createDraftSession();
-							setView("chat");
 						}}
 						aria-label={cwd ? t("sidebar.newSession") : t("tabbar.pickProjectFirst")}
 					>

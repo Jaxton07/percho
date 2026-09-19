@@ -5,10 +5,7 @@ import { EmptyState } from "./components/chat/EmptyState";
 import { MessageList } from "./components/chat/MessageList";
 import { TodoPanel } from "./components/chat/TodoPanel";
 import { DiffSidebar } from "./components/diff/DiffSidebar";
-import { ProjectPage } from "./components/projects/ProjectPage";
 import { DockSlot } from "./components/session/DockSlot";
-import { FloatingSessionList } from "./components/session/FloatingSessionList";
-import { SessionRail } from "./components/session/SessionRail";
 import { SessionTabBar } from "./components/session/SessionTabBar";
 import { TrustDialog } from "./components/session/TrustDialog";
 import { SettingsDialog } from "./components/settings/SettingsDialog";
@@ -24,7 +21,7 @@ import { finishSplash } from "./splash";
 import { useSessionsStore } from "./stores/sessions";
 import { backgroundImageUrl, useThemeStore } from "./stores/theme";
 import { useTranscriptStore } from "./stores/transcript";
-import { useUiStore } from "./stores/ui";
+import { useUiPreferencesStore } from "./stores/ui-preferences";
 import { initUpdateStore } from "./stores/update";
 
 /**
@@ -36,7 +33,7 @@ import { initUpdateStore } from "./stores/update";
 
 export default function App() {
 	const activeSessionId = useSessionsStore((s) => s.activeSessionId);
-	const view = useUiStore((s) => s.view);
+	const topBarVisible = useUiPreferencesStore((s) => s.topBarVisible);
 	// 订阅收敛为原始值（selector 返回 boolean → 仅在值翻转时重渲染）：App 子树（TabBar/MessageList/
 	// TodoPanel/DiffSidebar/…）无 memo，若订阅 transcript 对象会随每条流式 delta 全量级联重渲染
 	const showEmpty = useTranscriptStore((s) => {
@@ -84,34 +81,26 @@ export default function App() {
 			{/* 背景贡献层：与自定义背景图同层同规则（z-0，界面默认不透明时不可见），内容列（z-10）之前 */}
 			<RegionHost region={UI_REGIONS.AppBackground} />
 			<div className="relative z-10 flex h-full flex-col">
-				<SessionTabBar />
-				{view === "projects" ? (
-					<div className="min-h-0 flex-1">
-						<ProjectPage />
+				{topBarVisible && <SessionTabBar />}
+				<div className="relative flex min-h-0 flex-1">
+					<Sidebar />
+					<div className="relative flex min-w-0 flex-1 flex-col">
+						{/* 顶栏隐藏时聊天列顶部补一条 12px 隐形拖拽带（顶栏原本承担拖窗职责）；
+						    中间列保底 380 = 宽度账本（画板 C），右栏挤不下时已由 DiffSidebar 自己转浮层 */}
+						{!topBarVisible && <div className="drag-region h-3 shrink-0" />}
+						<main className="relative min-h-0 flex-1">
+							{showEmpty ? <EmptyState /> : <MessageList />}
+							<Slot name={UI_SLOTS.TodoPanel} props={{}} fallback={TodoPanel} />
+							{/* 聊天区四角贡献层（top-right 与 TodoPanel 同角，容器已预留 pt-12） */}
+							<RegionHost region={UI_REGIONS.CornerTopLeft} />
+							<RegionHost region={UI_REGIONS.CornerTopRight} />
+							<RegionHost region={UI_REGIONS.CornerBottomLeft} />
+							<RegionHost region={UI_REGIONS.CornerBottomRight} />
+						</main>
+						<DockSlot sessionId={activeSessionId} hideComposer={showEmpty} />
 					</div>
-				) : (
-					/* SessionRail 以整列（tab bar 以下全视口）为定位基准：不在 main 内，
-					   否则输入框（ApprovalDock）高度变化会压缩 main，轨道垂直居中随之漂移。
-					   外层 flex-row：**最前是常驻左侧栏**（push 式，聊天列自然被挤窄），末尾挂 DiffSidebar */
-					<div className="relative flex min-h-0 flex-1">
-						<Sidebar />
-						<div className="relative flex min-w-0 flex-1 flex-col">
-							<main className="relative min-h-0 flex-1">
-								{showEmpty ? <EmptyState /> : <MessageList />}
-								<Slot name={UI_SLOTS.TodoPanel} props={{}} fallback={TodoPanel} />
-								{/* 聊天区四角贡献层（top-right 与 TodoPanel 同角，容器已预留 pt-12） */}
-								<RegionHost region={UI_REGIONS.CornerTopLeft} />
-								<RegionHost region={UI_REGIONS.CornerTopRight} />
-								<RegionHost region={UI_REGIONS.CornerBottomLeft} />
-								<RegionHost region={UI_REGIONS.CornerBottomRight} />
-							</main>
-							<DockSlot sessionId={activeSessionId} hideComposer={showEmpty} />
-							<SessionRail />
-							<FloatingSessionList />
-						</div>
-						<DiffSidebar />
-					</div>
-				)}
+					<DiffSidebar />
+				</div>
 			</div>
 			{/* 悬浮贡献层：内容列之后、设置弹窗之前（z-20 < z-40，插件层永在弹窗之下） */}
 			<RegionHost region={UI_REGIONS.AppOverlay} />

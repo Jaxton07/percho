@@ -415,167 +415,6 @@
 	}
 }
 
-/* 左侧会话轨道（设置 → 外观开关，可选交互）：聊天页左侧垂直居中一列**直角细线**（codex 风），
-   悬停/聚焦时原地「变形」为悬浮胶囊，上下邻居按行距分级跟涨成**半大/迷你胶囊**（dock 波浪：
-   展开 208×32 → ±1 胶囊 104×24（内容可见、标题裁断） → ±2 迷你空胶囊 44×14 → 细线），
-   状态类 is-expanded/is-near-1/is-near-2 由 JS 按行距下发（比 :has 链易控：呼吸/内容显隐按距离精确开关）。
-   **行高同步分级撑开（16 → 40/32/20 = 胶囊 + 留白）**：按钮在文档流内，行一撑上下邻居自然让位，
-   胶囊各行其道互不叠压；行高与胶囊同时长同曲线伸缩，任何时刻胶囊都不会超出行。
-   变形是两阶段时序（transition 取「目标态」的定义，正反向可分别配时序）：
-   展开/跟涨 = 先在小尺寸上 90ms 翻色/翻圆角（深色线 → 白胶囊），再回弹放大（340/300/280ms 随档位递减）；
-   收起 = 先 260ms 收缩（仍是白胶囊），颜色/圆角延迟 150ms 到接近尾声才变回细线。
-   避免旧版「深色线拉长到一半才闪白」的颜色逆变闪烁。 */
-/* 行高波浪：transition 同样取目标态定义（收起走基线 260ms） */
-.session-rail-item {
-	transition: height 260ms cubic-bezier(0.34, 1.15, 0.64, 1);
-}
-.session-rail-item.is-expanded {
-	height: 40px;
-	transition: height 340ms cubic-bezier(0.34, 1.25, 0.64, 1);
-}
-.session-rail-item.is-near-1 {
-	height: 32px;
-	transition: height 300ms cubic-bezier(0.34, 1.25, 0.64, 1);
-}
-.session-rail-item.is-near-2 {
-	height: 20px;
-	transition: height 280ms cubic-bezier(0.34, 1.25, 0.64, 1);
-}
-.session-rail-item .rail-capsule {
-	position: absolute;
-	left: 6px;
-	top: 50%;
-	display: flex;
-	align-items: center;
-	/* 无 padding：否则 border-box 下收起态高度被 padding 撑成 12px，就不是一条线了。
-	   内距在内容包裹层（JSX 的 px-2.5），收起时随内容一起被 overflow 裁掉 */
-	border-radius: 0;
-	overflow: hidden;
-	transform: translateY(-50%);
-	/* 收起（目标态 = 细线）：尺寸先走，颜色/圆角延迟到收缩近尾声再翻 */
-	transition:
-		width 260ms cubic-bezier(0.34, 1.15, 0.64, 1),
-		height 260ms cubic-bezier(0.34, 1.15, 0.64, 1),
-		background-color 80ms ease 150ms,
-		border-radius 80ms ease 150ms,
-		box-shadow 120ms ease;
-}
-/* 波浪档位 z 序：展开浮最上，±1 压 ±2 压细线（胶囊比行距大，会覆盖邻行） */
-.session-rail-item.is-expanded {
-	z-index: 10;
-}
-.session-rail-item.is-near-1 {
-	z-index: 6;
-}
-.session-rail-item.is-near-2 {
-	z-index: 4;
-}
-.session-rail-item.is-expanded .rail-capsule {
-	/* 与顶栏胶囊同宽（w-52）；窄窗口按视口收缩，不越过右缘 */
-	width: min(208px, calc(100vw - 40px));
-	height: 32px;
-	border-radius: 9999px;
-	background-color: var(--color-surface);
-	box-shadow: var(--shadow-pop);
-	/* 展开（目标态 = 胶囊）：颜色/圆角 90ms 先行（趁尺寸还小），尺寸随后 340ms 回弹放大，阴影最后到 */
-	transition:
-		width 340ms cubic-bezier(0.34, 1.25, 0.64, 1),
-		height 340ms cubic-bezier(0.34, 1.25, 0.64, 1),
-		background-color 90ms ease,
-		border-radius 90ms ease,
-		box-shadow 220ms ease 80ms;
-}
-/* ±1：一半大的胶囊（104×24），头像+标题可见（裁断出预览感），柔阴影 */
-.session-rail-item.is-near-1 .rail-capsule {
-	width: 104px;
-	height: 24px;
-	border-radius: 9999px;
-	background-color: var(--color-surface);
-	box-shadow: var(--shadow-soft);
-	transition:
-		width 300ms cubic-bezier(0.34, 1.25, 0.64, 1),
-		height 300ms cubic-bezier(0.34, 1.25, 0.64, 1),
-		background-color 90ms ease 20ms,
-		border-radius 90ms ease 20ms,
-		box-shadow 180ms ease 60ms;
-}
-/* ±2：迷你空胶囊（44×14），纯波形过渡元素，不显示内容 */
-.session-rail-item.is-near-2 .rail-capsule {
-	width: 44px;
-	height: 14px;
-	border-radius: 9999px;
-	background-color: var(--color-surface);
-	box-shadow: var(--shadow-soft);
-	transition:
-		width 280ms cubic-bezier(0.34, 1.25, 0.64, 1),
-		height 280ms cubic-bezier(0.34, 1.25, 0.64, 1),
-		background-color 90ms ease 20ms,
-		border-radius 90ms ease 20ms,
-		box-shadow 150ms ease 50ms;
-}
-/* 胶囊内容（图标 + 标题）：展开/±1 时等翻色完成后渐入，配合裁剪逐步揭示；
-   收起/进 ±2 时 120ms 淡出（快于收缩），不留空胶囊 */
-.session-rail-item .rail-capsule > * {
-	opacity: 0;
-	transition: opacity 120ms ease;
-}
-.session-rail-item.is-expanded .rail-capsule > * {
-	opacity: 1;
-	transition: opacity 180ms ease 110ms;
-}
-.session-rail-item.is-near-1 .rail-capsule > * {
-	opacity: 1;
-	transition: opacity 160ms ease 70ms;
-}
-/* 胶囊末尾的关闭 ×：仅展开态可见可点（同顶栏 group-hover 语义；±1/±2 只是波浪预览不给操作），
-   点击 stopPropagation 不触发切换；closeSession 后顶栏/轨道同读 sessions 数组，天然双向同步。
-   宽度 0→16 与胶囊同曲线「长出来」（margin-left 负值抵消 gap），±1 预览标题不被挤占 */
-.session-rail-item .rail-close {
-	width: 0;
-	margin-left: -8px;
-	opacity: 0;
-	pointer-events: none;
-	transition:
-		width 260ms cubic-bezier(0.34, 1.15, 0.64, 1),
-		margin-left 260ms cubic-bezier(0.34, 1.15, 0.64, 1),
-		opacity 100ms ease;
-}
-.session-rail-item.is-expanded .rail-close {
-	width: 16px;
-	margin-left: 0;
-	opacity: 1;
-	pointer-events: auto;
-	transition:
-		width 340ms cubic-bezier(0.34, 1.25, 0.64, 1),
-		margin-left 340ms cubic-bezier(0.34, 1.25, 0.64, 1),
-		opacity 180ms ease 110ms;
-}
-/* 呼吸只作用于收起态的细线；展开/跟涨成白胶囊后由内部头像的 tab-avatar-working 承担（整个白胶囊闪透明度会像故障） */
-.session-rail-item:not(.is-expanded):not(.is-near-1):not(.is-near-2) .rail-working {
-	animation: avatar-breathe 3.2s ease-in-out infinite;
-}
-@media (prefers-reduced-motion: reduce) {
-	/* 各档位 transition 定义在更高优先级的状态选择器里，必须逐档同优先级覆盖才压得住 */
-	.session-rail-item,
-	.session-rail-item.is-expanded,
-	.session-rail-item.is-near-1,
-	.session-rail-item.is-near-2,
-	.session-rail-item .rail-capsule,
-	.session-rail-item.is-expanded .rail-capsule,
-	.session-rail-item.is-near-1 .rail-capsule,
-	.session-rail-item.is-near-2 .rail-capsule,
-	.session-rail-item .rail-capsule > *,
-	.session-rail-item.is-expanded .rail-capsule > *,
-	.session-rail-item.is-near-1 .rail-capsule > *,
-	.session-rail-item .rail-close,
-	.session-rail-item.is-expanded .rail-close {
-		transition: none;
-	}
-	.session-rail-item:not(.is-expanded):not(.is-near-1):not(.is-near-2) .rail-working {
-		animation: none;
-	}
-}
-
 html,
 body,
 #root {
@@ -1112,13 +951,23 @@ code {
 	height: 100%;
 	display: flex;
 	flex-direction: column;
+	/* 收起时内容层跟着左移淡出（与右栏 `.diff-sidebar-in` 同款错峰）：
+	   只裁不淡会在动画中段露出半截字 */
+	transition:
+		opacity 0.3s 0.08s,
+		transform 0.38s 0.06s cubic-bezier(0.32, 0.72, 0, 1);
+}
+.sidebar.is-collapsed .sidebar-inner {
+	opacity: 0;
+	transform: translateX(-28px);
 }
 /* 会话行状态点：工作中 = 墨色呼吸（与顶栏胶囊头像同一套节拍与时长） */
 .sidebar-dot-working {
 	animation: avatar-breathe 3.2s ease-in-out infinite;
 }
 @media (prefers-reduced-motion: reduce) {
-	.sidebar {
+	.sidebar,
+	.sidebar-inner {
 		transition: none;
 	}
 	.sidebar-dot-working {
@@ -1139,6 +988,23 @@ code {
 .diff-sidebar.open {
 	width: min(420px, 38vw);
 	border-left-color: var(--color-border);
+}
+/* 窄窗浮层（宽度账本见 useDiffSidebarOverlay）：push 会压破聊天列 380 保底，
+   所以脱离文档流叠在聊天列右缘——浮层用 surface 实底 + 左圆角 + shadow-pop 分层（不靠边框） */
+.diff-sidebar.is-overlay {
+	position: absolute;
+	inset-block: 0;
+	right: 0;
+	z-index: 30;
+	border-left-width: 0;
+}
+.diff-sidebar.is-overlay.open {
+	border-left-width: 0;
+	border-radius: 12px 0 0 12px;
+	box-shadow: var(--shadow-pop);
+}
+.diff-sidebar.is-overlay .diff-sidebar-in {
+	background: var(--color-surface);
 }
 .diff-sidebar-in {
 	width: min(420px, 38vw);
@@ -2139,89 +2005,4 @@ body > div.markstream-react.ms-tooltip[role="tooltip"]:not(.tooltip-element) {
 .markdown-body .md-mermaid .md-mermaid-fail-code {
 	max-height: 220px;
 	margin: 0;
-}
-
-/* ============================================================
-   悬浮会话列表（floating-session-list）：对话页左上角的实色面板。
-   三层分离（实现关键）：
-     .float-list          —— 定位壳（absolute top-left，不参与布局，z-30）
-       .float-list-shadow —— 阴影层：filter: drop-shadow 施加在「mask 之后的 alpha」上，
-                             阴影随边缘一起渐隐，不会出现硬边矩形投影（box-shadow 会被 mask 裁成硬边）
-         .float-list-veil —— 背景层：实色 surface（不镂空，聊天内容不透进）+ 两条线性 mask intersect
-       .float-list-body   —— 内容层：不吃 veil 的 mask（否则边缘裁字），只做滚动区上下缘内容渐隐
-   ============================================================ */
-.float-list-shadow {
-	position: absolute;
-	inset: 0;
-	filter: drop-shadow(0 10px 28px rgba(0, 0, 0, 0.13)) drop-shadow(0 2px 6px rgba(0, 0, 0, 0.05));
-}
-[data-theme="dark"] .float-list-shadow {
-	filter: drop-shadow(0 10px 28px rgba(0, 0, 0, 0.5)) drop-shadow(0 0 12px rgba(255, 255, 255, 0.05));
-}
-.float-list-veil {
-	position: absolute;
-	inset: 0;
-	border-radius: 16px;
-	background: var(--color-surface);
-	/* 左右渐隐带 30/38、上 16、下 28：行内容（头像与标题）直接伸进渐隐带内，边缘才看得出「溶入画布」 */
-	mask-image:
-		linear-gradient(to right, transparent, #000 30px, #000 calc(100% - 38px), transparent),
-		linear-gradient(to bottom, transparent, #000 16px, #000 calc(100% - 28px), transparent);
-	mask-composite: intersect;
-	-webkit-mask-composite: source-in;
-}
-/* 滚动区上下缘内容渐隐（列表超出时提示还有更多；行内容本身就压在渐隐带内） */
-.float-list-scroll {
-	mask-image: linear-gradient(to bottom, transparent, #000 14px, #000 calc(100% - 18px), transparent);
-}
-/* 行尾关闭 ×：仅 hover / 键盘聚焦该行时浮现。用 opacity + pointer-events 而非 display，
-   藏起来时不可点、但 Tab 仍能聚焦（聚焦后 focus-within 让它现身） */
-.float-item-close {
-	opacity: 0;
-	pointer-events: none;
-	transition: opacity 0.12s ease;
-}
-.float-item:hover .float-item-close,
-.float-item:focus-within .float-item-close {
-	opacity: 1;
-	pointer-events: auto;
-}
-
-/* 展开 220ms 弹出曲线 / 收起 150ms 加速；收起必须跑完才卸载（closing 状态 + onAnimationEnd），
-   提前卸载会闪回（RenamePopover 同坑）。方向是从上方落下 —— 不复用 pop-in（那是从下方 +6px 进场） */
-.fl-in {
-	animation: fl-in 220ms cubic-bezier(0.16, 1, 0.3, 1);
-	transform-origin: top left;
-}
-.fl-out {
-	animation: fl-out 150ms ease-in forwards;
-	transform-origin: top left;
-}
-@keyframes fl-in {
-	from {
-		opacity: 0;
-		transform: translateY(-6px) scale(0.98);
-		filter: blur(1.5px);
-	}
-	to {
-		opacity: 1;
-		transform: none;
-		filter: none;
-	}
-}
-@keyframes fl-out {
-	from {
-		opacity: 1;
-	}
-	to {
-		opacity: 0;
-		transform: translateY(-4px) scale(0.98);
-		filter: blur(1px);
-	}
-}
-@media (prefers-reduced-motion: reduce) {
-	.fl-in,
-	.fl-out {
-		animation: none;
-	}
 }
