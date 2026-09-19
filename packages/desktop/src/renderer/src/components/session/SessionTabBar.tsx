@@ -24,7 +24,7 @@ import { partitionSessionsByPin, useSessionsStore } from "../../stores/sessions"
 import { useTranscriptStore } from "../../stores/transcript";
 import { useUiStore } from "../../stores/ui";
 import { useUiPreferencesStore } from "../../stores/ui-preferences";
-import { CloseIcon, DiffIcon, ListIcon, PinIcon, PlusIcon, ProjectsIcon } from "../icons";
+import { CloseIcon, DiffIcon, ListIcon, PanelLeftIcon, PinIcon, PlusIcon, ProjectsIcon } from "../icons";
 import { ContextMenu, type ContextMenuItem } from "../ui/ContextMenu";
 import type { MenuAnchor } from "../ui/place-menu";
 import { RenamePopover } from "./RenamePopover";
@@ -222,6 +222,8 @@ export function SessionTabBar() {
 	const setView = useUiStore((s) => s.setView);
 	const diffSidebarOpen = useUiStore((s) => s.diffSidebarOpen);
 	const toggleDiffSidebar = useUiStore((s) => s.toggleDiffSidebar);
+	const sidebarCollapsed = useUiPreferencesStore((s) => s.sidebarCollapsed);
+	const toggleSidebarCollapsed = useUiPreferencesStore((s) => s.toggleSidebarCollapsed);
 	// 会话列表位置：悬浮模式下胶囊区整体收起，改为左侧的触发按钮 + 左上角悬浮面板（见 FloatingSessionList）
 	const sessionListMode = useUiPreferencesStore((s) => s.sessionListMode);
 	const floatingListOpen = useUiStore((s) => s.floatingListOpen);
@@ -297,6 +299,17 @@ export function SessionTabBar() {
 		<div
 			className={`${dragging ? "" : "drag-region"} flex h-12 shrink-0 items-center gap-1 border-b border-border bg-canvas ${chromePadding}`}
 		>
+			{/* 左栏开合（右栏 diff 图标的镜像）：开态底色区分；左栏收起后展开也靠它，设置入口就在左栏里 */}
+			<button
+				type="button"
+				className={`no-drag shrink-0 rounded-lg p-1.5 transition-colors ${
+					sidebarCollapsed ? "text-ink-dim hover:bg-hover hover:text-ink" : "bg-hover text-ink"
+				}`}
+				onClick={toggleSidebarCollapsed}
+				aria-label={sidebarCollapsed ? t("sidebar.expand") : t("sidebar.collapse")}
+			>
+				<PanelLeftIcon size={16} />
+			</button>
 			<button
 				type="button"
 				className={`no-drag shrink-0 rounded-lg p-1.5 transition-colors ${
