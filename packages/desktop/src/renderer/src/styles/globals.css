@@ -1919,13 +1919,11 @@ html body .markstream-react .mermaid-modal-close {
 	border-radius: 7px;
 	padding: 4px 8px;
 	cursor: pointer;
-	transition:
-		color 0.14s ease,
-		background 0.14s ease;
 }
+/* 库自带 hover 底色（:where 低优先级版是 #94a3b829 + opacity），这里只做中和：全层按钮不响应 hover */
 html body .markstream-react .mermaid-modal-close:hover {
-	color: var(--color-ink);
-	background: var(--color-hover);
+	background: transparent;
+	opacity: 1;
 }
 html body .markstream-react .mermaid-modal-body {
 	padding: 4px 16px 16px;
@@ -2003,7 +2001,7 @@ html body .markstream-react .mermaid-modal-body {
 		transition: none;
 	}
 }
-/* 预览 / 源码 分段控件：幽灵文字式，选中项加深，不用库里的白底蓝字 */
+/* 预览 / 源码 分段控件：幽灵文字式，选中项只靠颜色+字重区分（不要底胶囊，也不响应 hover） */
 .markdown-body .md-mermaid .mermaid-block-header > div:nth-child(2) {
 	background: transparent;
 	border-radius: 8px;
@@ -2018,20 +2016,15 @@ html body .markstream-react .mermaid-modal-body {
 	background: transparent;
 	border-radius: 7px;
 	padding: 4px 8px;
-	transition:
-		color 0.14s ease,
-		background 0.14s ease;
 }
-.markdown-body .md-mermaid .mermaid-block-header > div:nth-child(2) button:hover {
-	color: var(--color-ink-2);
-	background: var(--color-hover);
-}
+/* 选中态：库的 bg-white / 蓝色 --active 都压成透明，只用 ink 加重 */
 .markdown-body .md-mermaid .mermaid-block-header > div:nth-child(2) button[class~="bg-white"] {
+	font-weight: 500;
 	color: var(--color-ink);
-	background: var(--color-hover);
+	background: transparent;
 	box-shadow: none;
 }
-/* 操作按钮（复制 / 全屏）：半透明胶囊 + 毛玻璃，同代码块 code-action-btn */
+/* 操作按钮（复制 / 全屏）：半透明胶囊 + 毛玻璃，同代码块 code-action-btn；不响应 hover */
 .markdown-body .md-mermaid .mermaid-action-btn {
 	border: 1px solid var(--color-border);
 	border-radius: 6px;
@@ -2039,10 +2032,6 @@ html body .markstream-react .mermaid-modal-body {
 	backdrop-filter: blur(8px);
 	padding: 5px;
 	color: var(--color-ink-2);
-}
-.markdown-body .md-mermaid .mermaid-action-btn:hover {
-	background: var(--color-hover);
-	color: var(--color-ink);
 }
 /* 预览区：库按估算写死 inline height（最小 360px、最大 500px）——图小时留一大片空白、图高时直接被裁。
    改成跟着 svg 走：把 wrapper 从 absolute 放回文档流才能撑开容器，高度/上限交给这里。 */
