@@ -19,6 +19,10 @@ interface UiStore {
 	diffSidebarOpen: boolean;
 	setDiffSidebarOpen: (open: boolean) => void;
 	toggleDiffSidebar: () => void;
+	/** 悬浮会话列表开合（内存态，不持久化；只在设置 = 悬浮模式时有意义，见 FloatingSessionList） */
+	floatingListOpen: boolean;
+	setFloatingListOpen: (open: boolean) => void;
+	toggleFloatingListOpen: () => void;
 	/** chip 跳转侧栏的聚焦目标（侧栏消费后清除） */
 	diffFocus: DiffFocus | null;
 	setDiffFocus: (sectionKey: string) => void;
@@ -36,6 +40,9 @@ export const useUiStore = create<UiStore>((set) => ({
 	diffSidebarOpen: false,
 	setDiffSidebarOpen: (open) => set({ diffSidebarOpen: open }),
 	toggleDiffSidebar: () => set((state) => ({ diffSidebarOpen: !state.diffSidebarOpen })),
+	floatingListOpen: false,
+	setFloatingListOpen: (open) => set({ floatingListOpen: open }),
+	toggleFloatingListOpen: () => set((state) => ({ floatingListOpen: !state.floatingListOpen })),
 	diffFocus: null,
 	setDiffFocus: (sectionKey) =>
 		set((state) => ({ diffFocus: { sectionKey, nonce: (state.diffFocus?.nonce ?? 0) + 1 } })),

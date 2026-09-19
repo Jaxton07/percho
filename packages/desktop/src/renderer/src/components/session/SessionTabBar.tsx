@@ -17,29 +17,20 @@ import {
 } from "@dnd-kit/sortable";
 import type { SessionMeta } from "@percho/shared";
 import type { ComponentProps } from "react";
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { getPi } from "../../api";
 import { useT } from "../../i18n";
-import { isDailyCwd } from "../../lib/daily";
 import { isDraftSessionId, partitionSessionsByPin, useSessionsStore } from "../../stores/sessions";
 import { useToastsStore } from "../../stores/toasts";
 import { useTranscriptStore } from "../../stores/transcript";
 import { useUiStore } from "../../stores/ui";
 import { useUiPreferencesStore } from "../../stores/ui-preferences";
-import {
-	CloseIcon,
-	CoffeeIcon,
-	DiffIcon,
-	PencilIcon,
-	PinIcon,
-	PlusIcon,
-	ProjectsIcon,
-	SubagentIcon,
-} from "../icons";
+import { CloseIcon, DiffIcon, ListIcon, PencilIcon, PinIcon, PlusIcon, ProjectsIcon } from "../icons";
 import { ContextMenu, type ContextMenuItem } from "../ui/ContextMenu";
 import type { MenuAnchor } from "../ui/place-menu";
 import { RenamePopover } from "./RenamePopover";
-import { sessionLetter, sessionTitle, useSessionStatus } from "./session-status";
+import { SessionAvatar } from "./SessionAvatar";
+import { sessionTitle, useSessionStatus } from "./session-status";
 import { UpdateButton } from "./UpdateButton";
 
 /** 拖拽让位/落位的减速曲线（浏览器标签同款手感） */
@@ -102,23 +93,8 @@ function TabPill({
 	const closeSession = useSessionsStore((s) => s.closeSession);
 	// 置顶标记：顶栏会滚动、顺序会被拖动，必须有常显 glyph（不是只靠排序表达）
 	const pinned = useUiPreferencesStore((s) => s.pinnedSessions.includes(session.sessionId));
-	// 状态订阅与左侧会话轨道共用（优先级：审批 > 工作中 > 完成未读 > 空闲）
+	// 状态订阅与左侧会话轨道共用（优先级：审批 > 工作中 > 完成未读 > 空闲）；头像渲染也共用（SessionAvatar）
 	const status = useSessionStatus(session.sessionId);
-	// 头像字形 = 空间归属（日常 = 咖啡图标，项目 = 目录首字母）；只读子会话专属图标。
-	// 余态底色：日常为画布底 + 细边框（白底黑字，与项目黑底白字反相）；状态色（审批琥珀/工作墨色）优先
-	const daily = isDailyCwd(session.cwd);
-	const letter = sessionLetter(session);
-	const avatarClass = session.readOnly
-		? "bg-accent text-on-accent"
-		: status === "attention"
-			? "bg-amber-500 text-on-ink"
-			: status === "working"
-				? "bg-ink text-on-ink tab-avatar-working"
-				: daily
-					? "border border-border-strong bg-canvas text-ink"
-					: isActive
-						? "bg-ink text-on-ink"
-						: "bg-ink-faint text-on-ink";
 	return (
 		<button
 			type="button"
@@ -142,20 +118,7 @@ function TabPill({
 					<PinIcon size={11} />
 				</span>
 			)}
-			<span
-				className={`relative flex h-4 w-4 shrink-0 items-center justify-center rounded text-[10px] font-semibold ${avatarClass}`}
-			>
-				{session.readOnly ? (
-					<SubagentIcon size={11} />
-				) : daily ? (
-					<CoffeeIcon size={10} />
-				) : (
-					letter.toUpperCase()
-				)}
-				{!session.readOnly && status === "done" && (
-					<span className="absolute -right-0.5 -top-0.5 h-1.5 w-1.5 rounded-full bg-green-500 ring-1 ring-canvas" />
-				)}
-			</span>
+			<SessionAvatar session={session} status={status} isActive={isActive} dotRing="ring-canvas" />
 			<span className="relative min-w-0 flex-1">
 				<span className="block truncate text-left">
 					{sessionTitle(session, t("tabbar.untitled"), t("projects.daily"))}
@@ -259,8 +222,27 @@ export function SessionTabBar() {
 	const setView = useUiStore((s) => s.setView);
 	const diffSidebarOpen = useUiStore((s) => s.diffSidebarOpen);
 	const toggleDiffSidebar = useUiStore((s) => s.toggleDiffSidebar);
-	const scrollerRef = useRef<HTMLDivElement>(null);
+	// 会话列表位置：悬浮模式下胶囊区整体收起，改为左侧的触发按钮 + 左上角悬浮面板（见 FloatingSessionList）
+	const sessionListMode = useUiPreferencesStore((s) => s.sessionListMode);
+	const floatingListOpen = useUiStore((s) => s.floatingListOpen);
+	const toggleFloatingListOpen = useUiStore((s) => s.toggleFloatingListOpen);
 	const [activeId, setActiveId] = useState<string | null>(null);
+	/** 胶囊区横向滚动的滚轮监听：用回调 ref 而非 useEffect + ref 对象——悬浮模式下 scroller 不渲染，
+	 *  回调 ref 在挂载/卸载时天然重挂监听（React 19 支持返回清理函数，不用手写依赖数组） */
+	const attachScroller = useCallback((el: HTMLDivElement | null) => {
+		if (!el) return;
+		const onWheel = (e: WheelEvent) => {
+			const scrollable = el.scrollWidth > el.clientWidth;
+			if (!scrollable) return;
+			const dx = Math.abs(e.deltaX) > Math.abs(e.deltaY) ? e.deltaX : e.deltaY;
+			if (dx === 0) return;
+			e.preventDefault();
+			el.scrollLeft += dx;
+		};
+		el.addEventListener("wheel", onWheel, { passive: false });
+		return () => el.removeEventListener("wheel", onWheel);
+	}, []);
+
 	const pinnedSessions = useUiPreferencesStore((s) => s.pinnedSessions);
 	const togglePin = useUiPreferencesStore((s) => s.togglePin);
 	/** 右键菜单：目标会话 + 触发胶囊矩形（null = 关闭） */
@@ -338,22 +320,6 @@ export function SessionTabBar() {
 		}
 	}, [activeSessionId, view]);
 
-	// 鼠标滚轮（垂直）→ tab 横向滚动
-	useEffect(() => {
-		const el = scrollerRef.current;
-		if (!el) return;
-		const onWheel = (e: WheelEvent) => {
-			const scrollable = el.scrollWidth > el.clientWidth;
-			if (!scrollable) return;
-			const dx = Math.abs(e.deltaX) > Math.abs(e.deltaY) ? e.deltaX : e.deltaY;
-			if (dx === 0) return;
-			e.preventDefault();
-			el.scrollLeft += dx;
-		};
-		el.addEventListener("wheel", onWheel, { passive: false });
-		return () => el.removeEventListener("wheel", onWheel);
-	}, []);
-
 	// macOS 左侧为红绿灯留 80px；Windows 右侧为窗口按钮覆盖层留 140px（3 × 46px 取整）
 	const chromePadding =
 		platform === "darwin" ? "pl-20 pr-3" : platform === "win32" ? "pl-3 pr-[140px]" : "pl-3 pr-3";
@@ -372,63 +338,84 @@ export function SessionTabBar() {
 			>
 				<ProjectsIcon />
 			</button>
-			<div
-				ref={scrollerRef}
-				className="flex min-w-0 flex-1 items-center gap-1 overflow-x-scroll [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
-			>
-				<DndContext
-					sensors={sensors}
-					collisionDetection={closestCenter}
-					onDragStart={({ active }) => {
-						setActiveId(String(active.id));
-						setDragWidth(
-							document
-								.querySelector(`[data-tab-id="${CSS.escape(String(active.id))}"]`)
-								?.getBoundingClientRect().width ?? null,
-						);
-						setDraggingCursor(true);
-					}}
-					onDragEnd={({ active, over }: DragEndEvent) => {
-						endDrag();
-						if (over && active.id !== over.id) {
-							reorderSessions(String(active.id), String(over.id));
-						}
-					}}
-					onDragCancel={endDrag}
+			{/* 悬浮会话列表触发按钮（“项目”右侧，仅悬浮模式 + 对话视图 + 有会话时出现）：
+			   与项目按钮同款样式，开态 = bg-bubble；data 属性供面板的点外关闭识别（见 FloatingSessionList） */}
+			{sessionListMode === "floating" && view !== "projects" && sessions.length > 0 && (
+				<button
+					type="button"
+					data-floating-list-trigger=""
+					className={`no-drag shrink-0 rounded-lg p-1.5 transition-colors ${
+						floatingListOpen ? "bg-bubble text-ink" : "text-ink-dim hover:bg-hover hover:text-ink"
+					}`}
+					onClick={toggleFloatingListOpen}
+					aria-label={t("tabbar.sessionList")}
 				>
-					<SortableContext
-						items={orderedSessions.map((s) => s.sessionId)}
-						strategy={horizontalListSortingStrategy}
+					<ListIcon />
+				</button>
+			)}
+			{/* 胶囊区（含拖拽排序）：悬浮模式整体不收组——留空占位撑开 flex-1，
+			   否则 UpdateButton/+ /diff 会从右端滑到左侧触发按钮旁边 */}
+			{sessionListMode === "tabbar" ? (
+				<div
+					ref={attachScroller}
+					className="flex min-w-0 flex-1 items-center gap-1 overflow-x-scroll [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
+				>
+					<DndContext
+						sensors={sensors}
+						collisionDetection={closestCenter}
+						onDragStart={({ active }) => {
+							setActiveId(String(active.id));
+							setDragWidth(
+								document
+									.querySelector(`[data-tab-id="${CSS.escape(String(active.id))}"]`)
+									?.getBoundingClientRect().width ?? null,
+							);
+							setDraggingCursor(true);
+						}}
+						onDragEnd={({ active, over }: DragEndEvent) => {
+							endDrag();
+							if (over && active.id !== over.id) {
+								reorderSessions(String(active.id), String(over.id));
+							}
+						}}
+						onDragCancel={endDrag}
 					>
-						{orderedSessions.map((session) => (
-							<SessionTab
-								key={session.sessionId}
-								session={session}
-								isActive={session.sessionId === activeSessionId}
-								contextOpen={
-									menu?.sessionId === session.sessionId || renaming?.sessionId === session.sessionId
-								}
-								onContextMenu={(sessionId, anchor) => openMenu(sessionId, anchor)}
-							/>
-						))}
-					</SortableContext>
-					{/* 拖拽 ghost：fixed 定位（不参与滚动区域 → 不会撑大 scrollWidth），
+						<SortableContext
+							items={orderedSessions.map((s) => s.sessionId)}
+							strategy={horizontalListSortingStrategy}
+						>
+							{orderedSessions.map((session) => (
+								<SessionTab
+									key={session.sessionId}
+									session={session}
+									isActive={session.sessionId === activeSessionId}
+									contextOpen={
+										menu?.sessionId === session.sessionId || renaming?.sessionId === session.sessionId
+									}
+									onContextMenu={(sessionId, anchor) => openMenu(sessionId, anchor)}
+								/>
+							))}
+						</SortableContext>
+						{/* 拖拽 ghost：fixed 定位（不参与滚动区域 → 不会撑大 scrollWidth），
 					    落位时 fade 回槽位，真实胶囊同时 fade in（.tab-pill 的 opacity 过渡） */}
-					<DragOverlay
-						modifiers={DRAG_MODIFIERS}
-						dropAnimation={prefersReducedMotion() ? null : DROP_ANIMATION}
-					>
-						{activeSession ? (
-							<TabPill
-								session={activeSession}
-								isActive={activeSession.sessionId === activeSessionId}
-								ghost
-								ghostWidth={dragWidth}
-							/>
-						) : null}
-					</DragOverlay>
-				</DndContext>
-			</div>
+						<DragOverlay
+							modifiers={DRAG_MODIFIERS}
+							dropAnimation={prefersReducedMotion() ? null : DROP_ANIMATION}
+						>
+							{activeSession ? (
+								<TabPill
+									session={activeSession}
+									isActive={activeSession.sessionId === activeSessionId}
+									ghost
+									ghostWidth={dragWidth}
+								/>
+							) : null}
+						</DragOverlay>
+					</DndContext>
+				</div>
+			) : (
+				<div className="min-w-0 flex-1" />
+			)}
 			<UpdateButton />
 			{view !== "projects" && (
 				<button

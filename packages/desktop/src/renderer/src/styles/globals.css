@@ -2106,3 +2106,98 @@ body > div.markstream-react.ms-tooltip[role="tooltip"]:not(.tooltip-element) {
 	max-height: 220px;
 	margin: 0;
 }
+
+/* ============================================================
+   悬浮会话列表（floating-session-list）：对话页左上角的实色面板。
+   三层分离（实现关键）：
+     .float-list          —— 定位壳（absolute top-left，不参与布局，z-30）
+       .float-list-shadow —— 阴影层：filter: drop-shadow 施加在「mask 之后的 alpha」上，
+                             阴影随边缘一起渐隐，不会出现硬边矩形投影（box-shadow 会被 mask 裁成硬边）
+         .float-list-veil —— 背景层：实色 surface（不镂空，聊天内容不透进）+ 两条线性 mask intersect
+       .float-list-body   —— 内容层：不吃 veil 的 mask（否则边缘裁字），只做滚动区上下缘内容渐隐
+   ============================================================ */
+.float-list-shadow {
+	position: absolute;
+	inset: 0;
+	filter: drop-shadow(0 10px 28px rgba(0, 0, 0, 0.13)) drop-shadow(0 2px 6px rgba(0, 0, 0, 0.05));
+}
+[data-theme="dark"] .float-list-shadow {
+	filter: drop-shadow(0 10px 28px rgba(0, 0, 0, 0.5)) drop-shadow(0 0 12px rgba(255, 255, 255, 0.05));
+}
+.float-list-veil {
+	position: absolute;
+	inset: 0;
+	border-radius: 16px;
+	background: var(--color-surface);
+	/* 左右渐隐带 30/38、上 16、下 28：行内容（头像与标题）直接伸进渐隐带内，边缘才看得出「溶入画布」 */
+	mask-image:
+		linear-gradient(to right, transparent, #000 30px, #000 calc(100% - 38px), transparent),
+		linear-gradient(to bottom, transparent, #000 16px, #000 calc(100% - 28px), transparent);
+	mask-composite: intersect;
+	-webkit-mask-composite: source-in;
+}
+/* 右键菜单 veil 变体：同一套语言，渐隐带收窄适配小尺寸 */
+.float-menu-veil {
+	border-radius: 12px;
+	background: var(--color-surface);
+	mask-image:
+		linear-gradient(to right, transparent, #000 12px, #000 calc(100% - 12px), transparent),
+		linear-gradient(to bottom, transparent, #000 10px, #000 calc(100% - 12px), transparent);
+	mask-composite: intersect;
+	-webkit-mask-composite: source-in;
+}
+/* 滚动区上下缘内容渐隐（列表超出时提示还有更多；行内容本身就压在渐隐带内） */
+.float-list-scroll {
+	mask-image: linear-gradient(to bottom, transparent, #000 14px, #000 calc(100% - 18px), transparent);
+}
+/* 行尾关闭 ×：仅 hover / 键盘聚焦该行时浮现。用 opacity + pointer-events 而非 display，
+   藏起来时不可点、但 Tab 仍能聚焦（聚焦后 focus-within 让它现身） */
+.float-item-close {
+	opacity: 0;
+	pointer-events: none;
+	transition: opacity 0.12s ease;
+}
+.float-item:hover .float-item-close,
+.float-item:focus-within .float-item-close {
+	opacity: 1;
+	pointer-events: auto;
+}
+
+/* 展开 220ms 弹出曲线 / 收起 150ms 加速；收起必须跑完才卸载（closing 状态 + onAnimationEnd），
+   提前卸载会闪回（RenamePopover 同坑）。方向是从上方落下 —— 不复用 pop-in（那是从下方 +6px 进场） */
+.fl-in {
+	animation: fl-in 220ms cubic-bezier(0.16, 1, 0.3, 1);
+	transform-origin: top left;
+}
+.fl-out {
+	animation: fl-out 150ms ease-in forwards;
+	transform-origin: top left;
+}
+@keyframes fl-in {
+	from {
+		opacity: 0;
+		transform: translateY(-6px) scale(0.98);
+		filter: blur(1.5px);
+	}
+	to {
+		opacity: 1;
+		transform: none;
+		filter: none;
+	}
+}
+@keyframes fl-out {
+	from {
+		opacity: 1;
+	}
+	to {
+		opacity: 0;
+		transform: translateY(-4px) scale(0.98);
+		filter: blur(1px);
+	}
+}
+@media (prefers-reduced-motion: reduce) {
+	.fl-in,
+	.fl-out {
+		animation: none;
+	}
+}

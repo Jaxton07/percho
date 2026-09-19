@@ -7,6 +7,7 @@ import { TodoPanel } from "./components/chat/TodoPanel";
 import { DiffSidebar } from "./components/diff/DiffSidebar";
 import { ProjectPage } from "./components/projects/ProjectPage";
 import { DockSlot } from "./components/session/DockSlot";
+import { FloatingSessionList } from "./components/session/FloatingSessionList";
 import { SessionRail } from "./components/session/SessionRail";
 import { SessionTabBar } from "./components/session/SessionTabBar";
 import { TrustDialog } from "./components/session/TrustDialog";
@@ -104,6 +105,7 @@ export default function App() {
 							</main>
 							<DockSlot sessionId={activeSessionId} hideComposer={showEmpty} />
 							<SessionRail />
+							<FloatingSessionList />
 						</div>
 						<DiffSidebar />
 					</div>

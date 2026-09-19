@@ -239,6 +239,28 @@ export function ProjectsIcon({ size = 15, className }: IconProps) {
 	);
 }
 
+/** 会话列表（顶栏悬浮会话列表触发按钮，设计稿 .local/design/ux/floating-session-list）：左侧圆点 + 三行横线 */
+export function ListIcon({ size = 16, className }: IconProps) {
+	return (
+		<svg
+			className={className}
+			width={size}
+			height={size}
+			viewBox="0 0 24 24"
+			{...strokeProps}
+			strokeLinecap="round"
+			aria-hidden="true"
+		>
+			<path d="M9 6h10" />
+			<path d="M9 12h10" />
+			<path d="M9 18h10" />
+			<circle cx="5" cy="6" r="1.3" fill="currentColor" stroke="none" />
+			<circle cx="5" cy="12" r="1.3" fill="currentColor" stroke="none" />
+			<circle cx="5" cy="18" r="1.3" fill="currentColor" stroke="none" />
+		</svg>
+	);
+}
+
 /** 关闭/删除（×） */
 export function CloseIcon({ size = 10, className }: IconProps) {
 	return (
