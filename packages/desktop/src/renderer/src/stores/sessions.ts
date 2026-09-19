@@ -32,6 +32,32 @@ export function partitionSessionsByPin(
 }
 
 /**
+ * 顶栏展示集（v8 定稿）：**置顶表驱动**——顶栏胶囊 = 置顶的会话（不管它的 tab 开没开）+ 未命名的 draft。
+ * 用户：顶栏之前是「打开的会话全进去」= 唯一的会话总表，胶囊越来越多；现在左栏承担总表，
+ * 顶栏只放真正需要盯的会话。
+ * - **不能只从 tabs 里筛**：会话被置顶、但 tab 已关（或本次启动没恢复）时，只筛 tabs 会把它藏掉，
+ *   用户会看到「已置顶却不在顶栏」——所以置顶会话的 meta 从 tabs → 历史两边找，点击时自动开。
+ * - 顺序 = `pinnedSessions` 自己的顺序（置顶即插队到最左，拖动排序改的也是它）。
+ * - **draft 例外**：未命名的新会话还没落盘、左栏历史里也查不到，不展示就彻底没地方能表示它；
+ *   发出首条消息转正后它就离开顶栏（要留在顶栏则置顶）。
+ * - 置顶表里查不到 meta 的 id（会话已删）直接跳过，不生成空胶囊。
+ */
+export function selectBarSessions(
+	tabs: readonly SessionMeta[],
+	pinnedSessions: readonly string[],
+	history: readonly SessionMeta[],
+): SessionMeta[] {
+	const byId = new Map<string, SessionMeta>();
+	for (const s of history) byId.set(s.sessionId, s);
+	// tabs 覆盖历史同名项：名称/状态以当前打开实例为准
+	for (const s of tabs) byId.set(s.sessionId, s);
+	const pinned = pinnedSessions.map((id) => byId.get(id)).filter((s): s is SessionMeta => s !== undefined);
+	const pinnedSet = new Set(pinnedSessions);
+	const drafts = tabs.filter((s) => isDraftSessionId(s.sessionId) && !pinnedSet.has(s.sessionId));
+	return [...pinned, ...drafts];
+}
+
+/**
  * 打开会话时同步四件套：消息历史（可选跳过 live 态）、排队队列、todo 面板、权限模式。
  * 取数并行（各写 store 不同字段，无交叉读），应用顺序保持 history → queue → todos。
  * 权限模式对齐后端真值：关 tab 重开后端已归零 default，拉回防 stale（spec permission-mode D1）。
@@ -182,8 +208,6 @@ interface SessionsStore {
 	/** 设置新会话的目标项目目录；活跃 tab 是 draft 时同步更新其条目（切 tab 往返不丢选择） */
 	setDraftCwd: (cwd: string) => void;
 	switchSession: (sessionId: string) => void;
-	/** 拖拽排序顶栏胶囊：调整 sessions 数组顺序并落盘（tabs.json 的 files 本就保序，重启按新序恢复） */
-	reorderSessions: (fromId: string, toId: string) => void;
 	closeSession: (sessionId: string) => Promise<void>;
 	openFromHistory: (filePath: string) => Promise<void>;
 	/** 在指定 assistant 消息处分叉：新会话以新 tab 打开并切换过去（原会话保留原样）；成功返回新 sessionId */
@@ -316,20 +340,6 @@ export const useSessionsStore = create<SessionsStore>((set, get) => ({
 		set((state) => ({
 			sessions: state.sessions.map((s) => (s.sessionId === sessionId ? { ...s, name } : s)),
 		})),
-
-	reorderSessions: (fromId, toId) => {
-		const { sessions } = get();
-		const from = sessions.findIndex((s) => s.sessionId === fromId);
-		const to = sessions.findIndex((s) => s.sessionId === toId);
-		if (from < 0 || to < 0 || from === to) return;
-		const next = [...sessions];
-		const [moved] = next.splice(from, 1);
-		if (!moved) return;
-		next.splice(to, 0, moved);
-		set({ sessions: next });
-		// draft 无 sessionFile 会被过滤，落盘的是真实会话的新视觉顺序
-		persistTabs(get());
-	},
 
 	closeSession: async (sessionId) => {
 		const isDraft = isDraftSessionId(sessionId);

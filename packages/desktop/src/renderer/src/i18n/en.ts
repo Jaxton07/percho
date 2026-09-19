@@ -25,6 +25,7 @@ export const en: Messages = {
 		pin: "Pin",
 		unpin: "Unpin",
 		sessionList: "Session list",
+		pinnedOnlyHint: "Pinned sessions show up here (right-click one in the sidebar to pin)",
 	},
 	floatingList: {
 		title: "Sessions",

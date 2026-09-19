@@ -21,7 +21,13 @@ const piMock = vi.hoisted(() => ({
 }));
 vi.mock("../api", () => ({ getPi: () => piMock }));
 
-import { DRAFT_SESSION_PREFIX, isDraftSessionId, partitionSessionsByPin, useSessionsStore } from "./sessions";
+import {
+	DRAFT_SESSION_PREFIX,
+	isDraftSessionId,
+	partitionSessionsByPin,
+	selectBarSessions,
+	useSessionsStore,
+} from "./sessions";
 import { useToastsStore } from "./toasts";
 import { useTranscriptStore } from "./transcript";
 
@@ -79,6 +85,43 @@ describe("partitionSessionsByPin", () => {
 	it("未知 id（会话已被外部删除）忽略，不生成空槽", () => {
 		expect(ids(partitionSessionsByPin(list, ["ghost", "b"]))).toEqual(["b", "a", "c", "d"]);
 		expect(partitionSessionsByPin(list, ["ghost"])).toBe(list);
+	});
+});
+
+describe("selectBarSessions（顶栏 = 置顶表驱动 + draft）", () => {
+	const tabs = [realMeta("a", "/p"), realMeta("b", "/p"), realMeta("c", "/p")];
+	const history = [...tabs, realMeta("h1", "/p"), realMeta("h2", "/p")];
+	const ids = (sessions: SessionMeta[]) => sessions.map((s) => s.sessionId);
+
+	it("未置顶的已打开会话不进顶栏（顶栏不再是会话总表）", () => {
+		expect(ids(selectBarSessions(tabs, [], history))).toEqual([]);
+		expect(ids(selectBarSessions(tabs, ["c"], history))).toEqual(["c"]);
+	});
+
+	it("已置顶但 tab 未打开的会话仍要显示（meta 从历史找）—— 否则会出现「已置顶却不在顶栏」", () => {
+		expect(ids(selectBarSessions(tabs, ["h2", "a"], history))).toEqual(["h2", "a"]);
+	});
+
+	it("顺序 = pinnedSessions 自己的顺序（新置顶在前，拖拽改的也是它）", () => {
+		expect(ids(selectBarSessions(tabs, ["c", "a", "b"], history))).toEqual(["c", "a", "b"]);
+	});
+
+	it("同名会话以 tabs 实例为准（名称/状态取当前打开的那份）", () => {
+		const renamed = { ...realMeta("a", "/p"), name: "新名字" };
+		const out = selectBarSessions([renamed], ["a"], history);
+		expect(out[0]?.name).toBe("新名字");
+	});
+
+	it("未命名的 draft 永远展示（它还没落盘、左栏历史里也查不到），并排在置顶之后", () => {
+		const draft = realMeta(`${DRAFT_SESSION_PREFIX}x`, "/p");
+		expect(ids(selectBarSessions([...tabs, draft], ["c"], history))).toEqual([
+			"c",
+			`${DRAFT_SESSION_PREFIX}x`,
+		]);
+	});
+
+	it("置顶表里的未知 id（会话已删）直接跳过，不生成空胶囊", () => {
+		expect(ids(selectBarSessions(tabs, ["ghost", "b"], history))).toEqual(["b"]);
 	});
 });
 
@@ -283,50 +326,6 @@ describe("forkSession", () => {
 					(t) => t.severity === "warning" && t.titleKey === "toast.forkFailed" && t.detail === "bundle boom",
 				),
 		).toBe(true);
-	});
-});
-
-describe("reorderSessions（拖拽排序）", () => {
-	const draftMeta = (name: string): SessionMeta => ({
-		...realMeta(name, "/p"),
-		sessionId: `${DRAFT_SESSION_PREFIX}x`,
-		sessionFile: undefined,
-	});
-
-	it("向后拖：a 跨过 draft 到末尾，并按新视觉序落盘", () => {
-		useSessionsStore.setState({
-			sessions: [realMeta("a", "/p"), draftMeta("dx"), realMeta("b", "/p")],
-			cwd: "/p",
-		});
-		useSessionsStore.getState().reorderSessions("a", "b");
-		expect(useSessionsStore.getState().sessions.map((s) => s.sessionId)).toEqual([
-			`${DRAFT_SESSION_PREFIX}x`,
-			"b",
-			"a",
-		]);
-		// files 只含真实会话，顺序 = 去掉 draft 后的视觉序
-		expect(piMock.saveTabs).toHaveBeenCalledWith({
-			tabs: { files: ["/tmp/b.jsonl", "/tmp/a.jsonl"], activeFile: null },
-		});
-	});
-
-	it("向前拖：插入到目标原索引，中间项整体右移（arrayMove 语义，与落位视觉一致）", () => {
-		useSessionsStore.setState({ sessions: [realMeta("a", "/p"), draftMeta("dx"), realMeta("b", "/p")] });
-		useSessionsStore.getState().reorderSessions("b", "a");
-		expect(useSessionsStore.getState().sessions.map((s) => s.sessionId)).toEqual([
-			"b",
-			"a",
-			`${DRAFT_SESSION_PREFIX}x`,
-		]);
-	});
-
-	it("原地/未知 id 不变序也不落盘", () => {
-		useSessionsStore.setState({ sessions: [realMeta("a", "/p"), realMeta("b", "/p")] });
-		useSessionsStore.getState().reorderSessions("a", "a");
-		useSessionsStore.getState().reorderSessions("nope", "b");
-		useSessionsStore.getState().reorderSessions("a", "nope");
-		expect(useSessionsStore.getState().sessions.map((s) => s.sessionId)).toEqual(["a", "b"]);
-		expect(piMock.saveTabs).not.toHaveBeenCalled();
 	});
 });
 

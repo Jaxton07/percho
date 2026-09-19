@@ -23,6 +23,8 @@ export const zh = {
 		pin: "置顶",
 		unpin: "取消置顶",
 		sessionList: "会话列表",
+		// 顶栏 v8 起只显示置顶会话：空态提示（否则用户会以为顶栏坏了）
+		pinnedOnlyHint: "置顶的会话会显示在这里（左栏会话上右键可置顶）",
 	},
 	floatingList: {
 		title: "会话",

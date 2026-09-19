@@ -1,6 +1,7 @@
 import type { SessionMeta } from "@percho/shared";
 import type { MouseEvent as ReactMouseEvent } from "react";
 import { useT } from "../../i18n";
+import { PinIcon } from "../icons";
 import { sessionTitle, useSessionStatus } from "../session/session-status";
 import type { MenuAnchor } from "../ui/place-menu";
 
@@ -15,16 +16,20 @@ const DOT_CLASS: Record<string, string> = {
 /**
  * 左侧栏会话行：无头像（项目归属已由所在分组表达）、单行文字 + 行尾状态点。
  * 点击 = 打开 / 切换会话（`openSession` 同一条路径）；右键菜单由调用方接线（复用 session-menu）。
- * v6 定稿：字号 13.5px / 行高 31px，缩进 30px = 6(行内边距) + 16(图标槽) + 8(gap) 与项目名左对齐。
+ * v6 定稿：字号 13.5px / 行高 31px。
+ * v8：置顶的行在**行首图标槽**里出一枚 12px 图钉（用户：置顶后没任何区分度）。槽位是
+ * 固定 16×16（`px-1.5` + 16 + `gap-2` = 30px），所以带不带图钉，标题左缘恒在 30px（与项目名对齐）。
  */
 export function SessionRow({
 	session,
 	active,
+	pinned = false,
 	onSelect,
 	onContextMenu,
 }: {
 	session: SessionMeta;
 	active: boolean;
+	pinned?: boolean;
 	onSelect: () => void;
 	onContextMenu?: (anchor: MenuAnchor) => void;
 }) {
@@ -34,7 +39,7 @@ export function SessionRow({
 		<button
 			type="button"
 			title={sessionTitle(session, t("projects.untitled"), t("projects.daily"))}
-			className={`flex h-[31px] w-full items-center gap-2 rounded-[7px] pr-1.5 pl-[30px] text-left text-[13.5px] ${
+			className={`flex h-[31px] w-full items-center gap-2 rounded-[7px] px-1.5 text-left text-[13.5px] ${
 				active ? "bg-bubble font-medium text-ink" : "text-ink-2 hover:bg-hover hover:text-ink"
 			}`}
 			onClick={onSelect}
@@ -48,6 +53,10 @@ export function SessionRow({
 					: undefined
 			}
 		>
+			{/* 图标槽：置顶才放图钉，不带图钉时占位不空转（保证标题 x 恒定） */}
+			<span className="grid h-4 w-4 shrink-0 place-items-center text-ink-faint" aria-hidden="true">
+				{pinned && <PinIcon size={12} />}
+			</span>
 			<span className="min-w-0 flex-1 truncate">
 				{sessionTitle(session, t("projects.untitled"), t("projects.daily"))}
 			</span>

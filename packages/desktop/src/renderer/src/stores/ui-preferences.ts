@@ -7,7 +7,7 @@ import { toggleInList } from "../lib/sidebar-groups";
 interface UiPreferencesStore {
 	/** 中央状态动画：任务运行时对话区中央显示放大 orb（z-20 文字层之上 + canvas 一体遮罩压文字）；与 Working/Thinking 行前小 orb 解耦，小 orb 恒显示 */
 	centerOrbEnabled: boolean;
-	/** 置顶会话（id，新置顶在前）：只影响本机展示顺序，不写会话文件、不同步 */
+	/** 置顶会话（id，新置顶在前）：**v8 起就是顶栏胶囊的内容**（左栏只靠图钉标记，不改顺序） */
 	pinnedSessions: string[];
 	/** 顶栏显隐（设置页开关，默认开）：关闭后导航全落在左侧栏 */
 	topBarVisible: boolean;
@@ -31,6 +31,8 @@ interface UiPreferencesStore {
 	toggleProjectPin: (cwd: string) => void;
 	/** 清理单个会话的置顶（删除会话时调用；不在列表里则无副作用） */
 	unpin: (sessionId: string) => void;
+	/** 拖动排序顶栏胶囊（v8）：改的也是 pinnedSessions 顺序，不动 tabs.json */
+	reorderPinned: (fromId: string, toId: string) => void;
 }
 
 /** 持久化补丁（失败只记日志：偏好丢失不影响使用，弹 toast 反而更吵） */
@@ -99,6 +101,23 @@ export const useUiPreferencesStore = create<UiPreferencesStore>((set, get) => ({
 		const current = get().pinnedSessions;
 		if (!current.includes(sessionId)) return;
 		const next = current.filter((id) => id !== sessionId);
+		set({ pinnedSessions: next });
+		persistPatch({ pinnedSessions: next });
+	},
+
+	/**
+	 * 拖拽排序（v8）：顶栏胶囊内容 = 置顶表，所以拖动改的是 pinnedSessions 顺序，
+	 * **不再**改 tabs.json（tabs 顺序变成纯打开历史，与顶栏无关）。
+	 */
+	reorderPinned: (fromId, toId) => {
+		const current = get().pinnedSessions;
+		const from = current.indexOf(fromId);
+		const to = current.indexOf(toId);
+		if (from < 0 || to < 0 || from === to) return;
+		const next = [...current];
+		const [moved] = next.splice(from, 1);
+		if (!moved) return;
+		next.splice(to, 0, moved);
 		set({ pinnedSessions: next });
 		persistPatch({ pinnedSessions: next });
 	},

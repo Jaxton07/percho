@@ -20,7 +20,8 @@ import type { ComponentProps } from "react";
 import { useCallback, useEffect, useState } from "react";
 import { getPi } from "../../api";
 import { useT } from "../../i18n";
-import { partitionSessionsByPin, useSessionsStore } from "../../stores/sessions";
+import { useProjectsStore } from "../../stores/projects";
+import { isDraftSessionId, selectBarSessions, useSessionsStore } from "../../stores/sessions";
 import { useTranscriptStore } from "../../stores/transcript";
 import { useUiStore } from "../../stores/ui";
 import { useUiPreferencesStore } from "../../stores/ui-preferences";
@@ -74,6 +75,7 @@ function TabPill({
 	hidden = false,
 	ghostWidth,
 	contextOpen = false,
+	open = false,
 	buttonProps,
 }: {
 	session: SessionMeta;
@@ -82,6 +84,8 @@ function TabPill({
 	ghost?: boolean;
 	/** 真实胶囊正被 ghost 接管：隐藏本体但保留布局槽位（邻居让位计算依赖它） */
 	hidden?: boolean;
+	/** 该会话的 tab 已打开（v8）：顶栏会展示「已置顶但 tab 未打开」的会话，叉叉（关闭 tab）只对已打开的才有意义 */
+	open?: boolean;
 	/** ghost 的固定宽度（px）= 拾起瞬间真实胶囊的实测宽：拖拽全程保持原尺寸，
 	    不回弹到 max-w-52 最大形态（标签多被压窄时，变大会显得很跳） */
 	ghostWidth?: number | null;
@@ -123,7 +127,7 @@ function TabPill({
 				<span className="block truncate text-left">
 					{sessionTitle(session, t("tabbar.untitled"), t("projects.daily"))}
 				</span>
-				{!ghost && (
+				{!ghost && open && (
 					<>
 						{/* hover 时尾部雾化渐变：盖住被叉叉重叠的文字尾，突出叉叉。
 						   from 色必须与胶囊背景同款：active 背景是 bg-bubble，
@@ -157,16 +161,21 @@ function TabPill({
 function SessionTab({
 	session,
 	isActive,
+	open,
 	contextOpen,
 	onContextMenu,
 }: {
 	session: SessionMeta;
 	isActive: boolean;
+	/** tab 是否已打开（顶栏会展示未打开但已置顶的会话） */
+	open: boolean;
 	/** 右键菜单/重命名浮层打开中（触发胶囊保持 hover 底） */
 	contextOpen: boolean;
 	onContextMenu: (sessionId: string, anchor: MenuAnchor) => void;
 }) {
 	const switchSession = useSessionsStore((s) => s.switchSession);
+	// v8：顶栏里可能是「已置顶但 tab 未打开」的会话，点击要能把它开起来（openSession 一条路兼容两种情况）
+	const openSession = useProjectsStore((s) => s.openSession);
 	const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({
 		id: session.sessionId,
 		// 自定义让位/落位节奏；reduced-motion 传 null = dnd-kit 不再给出过渡串
@@ -188,6 +197,7 @@ function SessionTab({
 				session={session}
 				isActive={isActive}
 				hidden={isDragging}
+				open={open}
 				contextOpen={contextOpen}
 				buttonProps={{
 					...attributes,
@@ -198,7 +208,9 @@ function SessionTab({
 						onContextMenu(session.sessionId, anchorOfElement(e.currentTarget));
 					},
 					onClick: () => {
-						switchSession(session.sessionId);
+						// draft（内存态、后端没有该会话）只能切；其余走 openSession（已打开则切、未打开则从历史开）
+						if (isDraftSessionId(session.sessionId)) switchSession(session.sessionId);
+						else void openSession(session);
 					},
 				}}
 			/>
@@ -214,7 +226,7 @@ export function SessionTabBar() {
 	const sessions = useSessionsStore((s) => s.sessions);
 	const activeSessionId = useSessionsStore((s) => s.activeSessionId);
 	const createDraftSession = useSessionsStore((s) => s.createDraftSession);
-	const reorderSessions = useSessionsStore((s) => s.reorderSessions);
+
 	const cwd = useSessionsStore((s) => s.cwd);
 	const diffSidebarOpen = useUiStore((s) => s.diffSidebarOpen);
 	const toggleDiffSidebar = useUiStore((s) => s.toggleDiffSidebar);
@@ -238,12 +250,16 @@ export function SessionTabBar() {
 	}, []);
 
 	const pinnedSessions = useUiPreferencesStore((s) => s.pinnedSessions);
+	const reorderPinned = useUiPreferencesStore((s) => s.reorderPinned);
+	// 历史列表：顶栏要能展示「已置顶但 tab 未打开」的会话，它们只存在于历史里
+	const allSessions = useProjectsStore((s) => s.allSessions);
 	/** 右键菜单：目标会话 + 触发胶囊矩形（null = 关闭） */
 	const [menu, setMenu] = useState<AnchorState | null>(null);
 	/** 重命名浮层：与菜单同锚点，菜单选中后菜单卸载、浮层同帧展开 */
 	const [renaming, setRenaming] = useState<AnchorState | null>(null);
-	// 展示顺序：置顶区在左（拖拽只改 tabs.json 原始顺序，分区由纯函数表达）
-	const orderedSessions = partitionSessionsByPin(sessions, pinnedSessions);
+	// 展示集（v8）：置顶表驱动（不看 tab 开没开）+ 未命名 draft
+	const barSessions = selectBarSessions(sessions, pinnedSessions, allSessions);
+	const openIds = new Set(sessions.map((s) => s.sessionId));
 	const closeMenu = useCallback(() => setMenu(null), []);
 	/** 打开胶囊右键菜单：draft（纯前端 id，后端没有该会话）与只读子会话（后端拒绝写）上的动作全都会失败，
 	 *  所以**干脆不给菜单**（review B1：宁可没有入口，也不给必然弹 toast 的入口） */
@@ -307,6 +323,12 @@ export function SessionTabBar() {
 				ref={attachScroller}
 				className="flex min-w-0 flex-1 items-center gap-1 overflow-x-scroll [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
 			>
+				{/* 空态提示（v8）：顶栏只放置顶会话，初学者很容易以为顶栏坏了 */}
+				{barSessions.length === 0 && (
+					<span className="min-w-0 truncate pl-1 text-[12px] text-ink-faint">
+						{t("tabbar.pinnedOnlyHint")}
+					</span>
+				)}
 				<DndContext
 					sensors={sensors}
 					collisionDetection={closestCenter}
@@ -322,20 +344,22 @@ export function SessionTabBar() {
 					onDragEnd={({ active, over }: DragEndEvent) => {
 						endDrag();
 						if (over && active.id !== over.id) {
-							reorderSessions(String(active.id), String(over.id));
+							// v8：拖的是置顶表顺序（顶栏内容 = 置顶表），不再动 tabs.json
+							reorderPinned(String(active.id), String(over.id));
 						}
 					}}
 					onDragCancel={endDrag}
 				>
 					<SortableContext
-						items={orderedSessions.map((s) => s.sessionId)}
+						items={barSessions.map((s) => s.sessionId)}
 						strategy={horizontalListSortingStrategy}
 					>
-						{orderedSessions.map((session) => (
+						{barSessions.map((session) => (
 							<SessionTab
 								key={session.sessionId}
 								session={session}
 								isActive={session.sessionId === activeSessionId}
+								open={openIds.has(session.sessionId)}
 								contextOpen={
 									menu?.sessionId === session.sessionId || renaming?.sessionId === session.sessionId
 								}

@@ -739,21 +739,22 @@ export function ClockIcon({ size = 12, className }: IconProps) {
 }
 
 /** 图钉（置顶标记 11px / 菜单项 13px，设计稿 issue-55 画板①；笔尖朝下 + 针） */
-export function PinIcon({ size = 11, className }: IconProps) {
+/**
+ * 图钉（置顶标记）：用户指定的 filled 斜图钉（`assets` 同族图标，同 `expand.svg`）。
+ * v8 起四处共用这一枚（顶栏胶囊 11 / 左栏会话行 12 / 左栏项目行 12 / 菜单项 13）——
+ * 旧的描边竖图钉在白底上区分度不够，置顶后看不出哪行被置顶。
+ */
+export function PinIcon({ size = 12, className }: IconProps) {
 	return (
 		<svg
 			className={className}
 			width={size}
 			height={size}
-			viewBox="0 0 24 24"
-			{...strokeProps}
-			strokeLinecap="round"
-			strokeLinejoin="round"
+			viewBox="0 0 1024 1024"
+			fill="currentColor"
 			aria-hidden="true"
 		>
-			<path d="M7 4h10" />
-			<path d="M9.7 4v6.2L7.2 12.9v1.6h9.6v-1.6l-2.5-2.7V4" />
-			<path d="M12 14.5V20.5" />
+			<path d="M145.109 873.435l334.744-265.387 133.539 142.032c0 0 55.744 15.19 59.175-26.999l-3.432-143.776 197.831-228.207 86.174-5.006c0 0 67.611-13.614 18.618-72.729l-241.763-243.395c0 0-65.868-8.439-60.861 52.369v65.926l-224.776 191.137-138.6 8.381c0 0-50.736 16.875-32.176 60.864l130.218 128.476-258.694 336.319z" />
 		</svg>
 	);
 }

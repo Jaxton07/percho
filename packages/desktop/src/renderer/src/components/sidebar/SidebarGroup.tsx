@@ -45,11 +45,12 @@ export function SidebarGroup({
 			/>
 			{group.expanded &&
 				(group.sessions.length > 0 ? (
-					group.sessions.map(({ session }) => (
+					group.sessions.map(({ session, pinned }) => (
 						<SessionRow
 							key={session.sessionId}
 							session={session}
 							active={session.sessionId === activeSessionId}
+							pinned={pinned}
 							onSelect={() => void openSession(session)}
 							onContextMenu={(anchor) => sessionMenu.open(session, anchor)}
 						/>

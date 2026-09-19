@@ -41,6 +41,7 @@
 | 逐帧截图全是空白/同一张陈旧图、rAF 像停摆 | 四 · 合成器空帧与「暂停动画不出新帧」（2026-09-19 补） |
 | 验证脚本读出「旋转没生效」（`transform: none`）但界面明明转了 | 四 · Tailwind 4 的 `rotate-*` 走 `rotate` 属性不是 `transform`（2026-09-19） |
 | 脚本里手动删了 React 的节点，随后整页「界面出现异常」（removeChild 报错） | 四 · 别手拆 React 管理的 DOM（含 portal 浮层）（2026-09-19） |
+| 左栏有图钉、顶栏却没有胶囊（「置顶了但不显示」） | 四 · 顶栏内容要由置顶表驱动，别从 tabs 里筛（2026-09-19） |
 | hover 才现的控件刚截完图就点不到、点击静默落空 | 四 · 鼠标事件 + `:hover` → 补「截图会清掉 hover」（2026-09-19） |
 | 改完自定义 hook 后整页报「Rendered fewer hooks than expected」 | 四 · HMR 改 hook 数量会假报错（2026-09-19） |
 | 清理 dev 进程后端口还占着、CDP 连上但页面全空 | 五 · `pkill -f` 杀 Electron 会留下孤儿 main（2026-09-19） |
@@ -200,6 +201,14 @@ pi SDK 必须声明进 `packages/desktop/package.json` dependencies（electron-b
 症状：脚本里为了「关掉菜单」写了 `document.querySelector('[role="menuitem"]').parentElement.remove()`，几秒后整页被错误边界接管，报 `Failed to execute 'removeChild' on 'Node': The node to be removed is not a child of this node`（Percho 界面显示「界面出现异常」），于是后续所有量值全部落空、极易当成自己刚改的代码把页面治崩了。
 
 做法：**只走组件自己的关闭路径**（`window.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape" }))`、或派发 `pointerdown` 到 body 让点外关闭生效）。同理：React portal（右键菜单 / 确认弹窗 / toast）里的节点一律不手动增删；要重置页面直接 `Page.reload`。
+
+### 顶栏内容 = 置顶表驱动，别从 tabs 里筛（2026-09-19）
+
+症状：把「顶栏只显示置顶会话」实现成 `tabs.filter(s => pinned.has(s.id))` 后，用户会碰到 **左栏会话行有图钉、顶栏却没有那个胶囊**（我验收时真踩到）：只要那个会话的 tab 被叉叉关过（或本次启动没恢复它），它就不在 `tabs` 里，于是被悄悄藏掉——“置顶”看起来失效了。
+
+做法：置顶表的 id **逐个到 `tabs` → 历史（`allSessions`）里取 meta**（tabs 优先，名称/状态更新），取不到才跳过（会话已删）；点击时 `openSession` 一条路兼容“已打开就切 / 未打开就从历史开”。同理：叉叉（关 tab）只在“确实有 tab”时才该显示，否则就是假入口。
+
+本轮同时删掉了旧模型里“置顶顺带把会话挪到 tabs 最前”这套副作用（顶栏顺序改由 `pinnedSessions` 表达，`reorderSessions` 已无引用，一并删）。
 
 ### HMR 下改自定义 hook 的 hook 数量会假报错（2026-09-19）
 

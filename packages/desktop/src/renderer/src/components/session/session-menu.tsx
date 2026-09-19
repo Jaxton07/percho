@@ -21,15 +21,12 @@ export function canOpenSessionMenu(session: SessionMeta | undefined): boolean {
 	return !!session && !session.readOnly && !isDraftSessionId(session.sessionId);
 }
 
-/** 置顶 / 取消置顶：新置顶顺带挪到会话列表最前（视觉上直接进置顶区；draft 无 sessionFile 只参与内存序） */
+/**
+ * 置顶 / 取消置顶（v8）：只动 `pinnedSessions`（新置顶自动排最左）——顶栏胶囊内容 = 置顶表，
+ * 所以**不再**顺带重排 tabs（旧模型靠把会话挪到 tabs 最前才会进顶栏置顶区）。
+ */
 export function toggleSessionPin(sessionId: string): void {
-	const { sessions, reorderSessions } = useSessionsStore.getState();
-	const { pinnedSessions, togglePin } = useUiPreferencesStore.getState();
-	const first = sessions[0];
-	if (!pinnedSessions.includes(sessionId) && first && first.sessionId !== sessionId) {
-		reorderSessions(sessionId, first.sessionId);
-	}
-	togglePin(sessionId);
+	useUiPreferencesStore.getState().togglePin(sessionId);
 }
 
 /** 重命名落盘：活跃会话靠 session_info_changed 事件回流，历史会话无事件 → 本地立即更新（幂等）。
