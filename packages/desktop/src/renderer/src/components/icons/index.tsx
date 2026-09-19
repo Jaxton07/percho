@@ -637,6 +637,27 @@ export function FolderIcon({ size = 13, className }: IconProps) {
 	);
 }
 
+/**
+ * 文件夹已展开（前盖外翻）：与 FolderIcon **同视盒 / 同线宽 / 同圆角**，只换内部结构。
+ * 左栏项目行用它替换「展开变 chevron」——形状不再跳变，展开态仍是「文件夹」语义（v7 定稿）。
+ */
+export function FolderOpenIcon({ size = 13, className }: IconProps) {
+	return (
+		<svg
+			className={className}
+			width={size}
+			height={size}
+			viewBox="0 0 24 24"
+			{...strokeProps}
+			strokeLinecap="round"
+			strokeLinejoin="round"
+			aria-hidden="true"
+		>
+			<path d="m6 14 1.45-2.9A2 2 0 0 1 9.24 10H20a2 2 0 0 1 1.94 2.5l-1.55 6a2 2 0 0 1-1.94 1.5H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h3.93a2 2 0 0 1 1.66.9l.82 1.2a2 2 0 0 0 1.66.9H18a2 2 0 0 1 2 2v2" />
+		</svg>
+	);
+}
+
 /** 下载（顶栏更新按钮 / 更新进度环内图标） */
 export function DownloadIcon({ size = 14, className }: IconProps) {
 	return (

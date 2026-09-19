@@ -4,7 +4,6 @@ import type { ProjectEntry } from "../stores/projects";
 import { setDailyDirForTest } from "./daily";
 import {
 	deriveSidebarGroups,
-	PROJECTS_GROUP_KEY,
 	type SidebarGroupsInput,
 	toggleExpandedGroup,
 	toggleInList,
@@ -81,7 +80,7 @@ describe("deriveSidebarGroups · 项目区排序", () => {
 });
 
 describe("deriveSidebarGroups · 展开推断", () => {
-	it("无用户记录：只展开当前会话所在组 + 项目小标", () => {
+	it("无用户记录：只展开当前会话所在组（「项目」小标 v7 起不可折叠，不再进默认集）", () => {
 		const result = derive({
 			sessions: [session("a", P1, 100), session("b", P2, 200), session("c", DAILY, 300)],
 			projects: [project(P1), project(P2)],
@@ -91,9 +90,14 @@ describe("deriveSidebarGroups · 展开推断", () => {
 			[P1, true],
 			[P2, false],
 		]);
-		expect(result.projectsExpanded).toBe(true);
 		expect(result.daily?.expanded).toBe(false);
-		expect(result.defaultExpandedKeys).toEqual([PROJECTS_GROUP_KEY, P1]);
+		expect(result.defaultExpandedKeys).toEqual([P1]);
+	});
+
+	it("无当前会话：默认展开集为空（不会误展开任何组）", () => {
+		const result = derive({ sessions: [session("a", P1, 100)], projects: [project(P1)] });
+		expect(result.defaultExpandedKeys).toEqual([]);
+		expect(result.projects.map((p) => p.expanded)).toEqual([false]);
 	});
 
 	it("有用户记录：完全以记录为准（当前组被折叠也尊重）", () => {
@@ -107,7 +111,16 @@ describe("deriveSidebarGroups · 展开推断", () => {
 			[P1, false],
 			[P2, true],
 		]);
-		expect(result.projectsExpanded).toBe(false);
+	});
+
+	it("历史遗留的 __projects__ 值不匹配任何组，不报错也不影响其它组（无需数据迁移）", () => {
+		const result = derive({
+			sessions: [session("a", P1, 100)],
+			projects: [project(P1)],
+			activeSessionId: "a",
+			expandedGroups: ["__projects__"],
+		});
+		expect(result.projects.map((p) => p.expanded)).toEqual([false]);
 	});
 });
 
@@ -162,8 +175,8 @@ describe("toggleInList / toggleExpandedGroup", () => {
 	});
 
 	it("展开切换：无记录时以默认集为起点翻转，不误伤其它组", () => {
-		expect(toggleExpandedGroup([], P2, [PROJECTS_GROUP_KEY, P1])).toEqual([PROJECTS_GROUP_KEY, P1, P2]);
-		expect(toggleExpandedGroup([PROJECTS_GROUP_KEY, P1], P1, [])).toEqual([PROJECTS_GROUP_KEY]);
+		expect(toggleExpandedGroup([], P2, [P1])).toEqual([P1, P2]);
+		expect(toggleExpandedGroup([P1], P1, [])).toEqual([]);
 		expect(toggleExpandedGroup([P1], P2, [P1])).toEqual([P1, P2]);
 	});
 });

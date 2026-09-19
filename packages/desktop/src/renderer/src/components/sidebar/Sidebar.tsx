@@ -1,7 +1,7 @@
 import { useMemo } from "react";
 import { getPi } from "../../api";
 import { useT } from "../../i18n";
-import { deriveSidebarGroups, PROJECTS_GROUP_KEY } from "../../lib/sidebar-groups";
+import { deriveSidebarGroups } from "../../lib/sidebar-groups";
 import { deriveProjects, useProjectsStore } from "../../stores/projects";
 import { useSessionsStore } from "../../stores/sessions";
 import { useUiPreferencesStore } from "../../stores/ui-preferences";
@@ -64,9 +64,7 @@ export function Sidebar() {
 					)}
 					<ProjectSection
 						projects={data.projects}
-						expanded={data.projectsExpanded}
 						activeSessionId={activeSessionId}
-						onToggle={() => toggleGroup(PROJECTS_GROUP_KEY, defaults)}
 						onToggleGroup={onToggleGroup}
 						onTogglePin={toggleProjectPin}
 						onRemoveProject={(cwd) => void deleteProject(cwd)}

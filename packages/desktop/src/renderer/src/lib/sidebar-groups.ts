@@ -7,10 +7,10 @@ import { getDailyDirCached } from "./daily";
  * 左侧栏的纯派生层：把「全量历史会话 + 项目表 + 偏好」算成可直接渲染的分组数组。
  * 纪律：不 import React、不读写持久化、不调 IPC —— 组件只做展示，展开/置顶状态一律由调用方传入。
  * 两个共用纯助手也放这里：`toggleInList`（置顶切换，会话与项目共用）、`toggleExpandedGroup`（展开切换）。
+ *
+ * v7：「项目」小标不再可折叠（只是固定标题分割区）——`PROJECTS_GROUP_KEY` / `projectsExpanded` 已删；
+ * `expandedGroups` 里可能残留的历史值 `__projects__` 不会匹配任何 cwd，自然失效，无需数据迁移。
  */
-
-/** 「项目」小标（整段折叠）在 expandedGroups 里的专用 key：带 `__` 包裹，与真实 cwd（绝对路径）不会冲突 */
-export const PROJECTS_GROUP_KEY = "__projects__";
 
 export type SidebarSession = {
 	session: SessionMeta;
@@ -40,7 +40,6 @@ export type SidebarProjectEntry = SidebarGroup & {
 export type SidebarGroupsResult = {
 	daily: SidebarGroup | null;
 	projects: SidebarProjectEntry[];
-	projectsExpanded: boolean;
 	/** 无用户记录时的默认展开集（= 默认推断结果），供 useExpandedGroups 在用户首次开合时当起点 */
 	defaultExpandedKeys: string[];
 };
@@ -80,7 +79,7 @@ function groupSessions(list: readonly SessionMeta[], pinned: ReadonlySet<string>
  * 「其余按 lastActive 倒序」，与同段「直接用 deriveProjects 的输出」互斥，取后者）。
  * 组内 = 置顶会话在前，其余按最后活动倒序。
  *
- * 展开推断：`expandedGroups` 为空（用户没手动开合过）→ 只展开当前会话所在组 + 项目小标；
+ * 展开推断：`expandedGroups` 为空（用户没手动开合过）→ 只展开当前会话所在组；
  * 非空 → 完全以记录为准（用户把当前组折叠了也尊重）。
  *
  * 搜索：命中为空的分组整体隐藏（含日常组），避免满屏空组。
@@ -101,7 +100,7 @@ export function deriveSidebarGroups(input: SidebarGroupsInput): SidebarGroupsRes
 	const activeCwd = input.activeSessionId
 		? (input.sessions.find((session) => session.sessionId === input.activeSessionId)?.cwd ?? null)
 		: null;
-	const defaultExpandedKeys = activeCwd ? [PROJECTS_GROUP_KEY, activeCwd] : [PROJECTS_GROUP_KEY];
+	const defaultExpandedKeys = activeCwd ? [activeCwd] : [];
 	const expandedKeys = input.expandedGroups.length > 0 ? input.expandedGroups : defaultExpandedKeys;
 	const isExpanded = (key: string) => expandedKeys.includes(key);
 
@@ -144,7 +143,6 @@ export function deriveSidebarGroups(input: SidebarGroupsInput): SidebarGroupsRes
 				totalSessions: project.sessionCount,
 			};
 		}),
-		projectsExpanded: input.expandedGroups.length > 0 ? expandedKeys.includes(PROJECTS_GROUP_KEY) : true,
 		defaultExpandedKeys,
 	};
 }
