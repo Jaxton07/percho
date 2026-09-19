@@ -13,10 +13,14 @@ function session(sessionId: string, modifiedAt: number): SessionMeta {
 	};
 }
 
-const now = Date.now();
-const today = now - 60_000;
-const yesterday = now - 30 * 60 * 60 * 1000;
-const earlier = now - 5 * 24 * 60 * 60 * 1000;
+// 分组边界是「本地零点」，fixture 也锚到本地零点：早先用 now - 30h 这类相对量，本地时间
+// 不足 6 点时「昨天」会落到前天（CI 跑在 UTC 凌晨必挂：01:19 UTC 实测 3 条红）。
+const startOfToday = new Date();
+startOfToday.setHours(0, 0, 0, 0);
+const base = startOfToday.getTime();
+const today = base + 60_000; // 今天 00:01
+const yesterday = base - 60_000; // 昨天 23:59
+const earlier = base - 5 * 24 * 60 * 60 * 1000; // 5 天前
 
 describe("groupByDate", () => {
 	it("按今天/昨天/更早分组且空组剔除", () => {
