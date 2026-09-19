@@ -18,6 +18,10 @@ export const zh = {
 		untitled: "新会话",
 		settings: "设置",
 		close: "关闭会话（不删除）",
+		/** v9：胶囊叉叉 = 取消置顶 + 从顶栏清除（会话本身不删、tab 也不关） */
+		unpinFromBar: "取消置顶并从顶栏移除",
+		/** v9：draft 还没置顶过，叉叉就是丢弃这个新会话 */
+		discardDraft: "放弃这个新会话",
 		rename: "重命名",
 		renamePlaceholder: "会话名称",
 		pin: "置顶",
@@ -249,9 +253,7 @@ export const zh = {
 		daily: "日常",
 		projectsSection: "项目",
 		addProject: "添加项目",
-		newSession: "新建会话",
 		settings: "设置",
-		diff: "本轮改动",
 		collapse: "收起导航栏",
 		expand: "展开导航栏",
 		more: "项目操作",
@@ -314,8 +316,9 @@ export const zh = {
 		channelWatch: "跨会话频道协作（channel-watch）",
 		channelWatchHint:
 			"会话订阅频道后自动监听 .local/agent-work/channel/<主题>/ 的文件更新，另一会话写入时唤醒本会话查收（按 HANDOFF.md 沟通协议）。订阅经 appendEntry 持久化，重开会话自动恢复；内置防环保护。默认开启，对已信任项目完全生效。",
-		topBar: "显示顶栏",
-		topBarHint: "顶栏含会话胶囊与本轮改动开关；关掉后导航全在左侧栏（设置入口也在左栏底部）。",
+		topBar: "顶栏显示会话",
+		topBarHint:
+			"顶栏常驻（窗口拖动、左栏开合、本轮改动都在这里）；关掉后顶栏不再显示置顶的会话胶囊，会话都在左侧栏。",
 		centerOrb: "居中放大状态动画",
 		centerOrbHint:
 			"任务运行时在对话区域中央显示放大的状态动画（盖在文字之上，半透明遮罩压暗身后文字——工作时专心看动画即可）。只控制中央动画，Working/Thinking 状态行前的小动画始终显示。",

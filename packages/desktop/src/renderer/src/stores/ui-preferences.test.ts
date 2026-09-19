@@ -14,7 +14,7 @@ beforeEach(() => {
 	useUiPreferencesStore.setState({
 		centerOrbEnabled: false,
 		pinnedSessions: [],
-		topBarVisible: true,
+		barSessionsVisible: true,
 		sidebarCollapsed: false,
 		expandedGroups: [],
 		pinnedProjects: [],
@@ -53,7 +53,7 @@ describe("useUiPreferencesStore", () => {
 			piMock.loadUiState.mockResolvedValue({});
 			await useUiPreferencesStore.getState().init();
 			const state = useUiPreferencesStore.getState();
-			expect(state.topBarVisible).toBe(true);
+			expect(state.barSessionsVisible).toBe(true);
 			expect(state.sidebarCollapsed).toBe(false);
 			expect(state.expandedGroups).toEqual([]);
 			expect(state.pinnedProjects).toEqual([]);
@@ -61,14 +61,14 @@ describe("useUiPreferencesStore", () => {
 
 		it("init 恢复收起态 / 顶栏显隐 / 展开分组 / 置顶项目", async () => {
 			piMock.loadUiState.mockResolvedValue({
-				topBarVisible: false,
+				barSessionsVisible: false,
 				sidebarCollapsed: true,
 				expandedGroups: ["__projects__", "/work/alpha"],
 				pinnedProjects: ["/work/alpha"],
 			});
 			await useUiPreferencesStore.getState().init();
 			const state = useUiPreferencesStore.getState();
-			expect(state.topBarVisible).toBe(false);
+			expect(state.barSessionsVisible).toBe(false);
 			expect(state.sidebarCollapsed).toBe(true);
 			expect(state.expandedGroups).toEqual(["__projects__", "/work/alpha"]);
 			expect(state.pinnedProjects).toEqual(["/work/alpha"]);
@@ -76,8 +76,8 @@ describe("useUiPreferencesStore", () => {
 
 		it("四项各自落盘补丁（顶栏显隐 / 收起 / 展开分组 / 项目置顶）", () => {
 			const store = useUiPreferencesStore.getState();
-			store.setTopBarVisible(false);
-			expect(piMock.saveUiState).toHaveBeenLastCalledWith({ state: { topBarVisible: false } });
+			store.setBarSessionsVisible(false);
+			expect(piMock.saveUiState).toHaveBeenLastCalledWith({ state: { barSessionsVisible: false } });
 
 			store.toggleSidebarCollapsed();
 			expect(useUiPreferencesStore.getState().sidebarCollapsed).toBe(true);

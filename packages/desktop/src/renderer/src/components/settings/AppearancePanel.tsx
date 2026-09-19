@@ -29,8 +29,8 @@ function AppearanceBasics() {
 	const pickBackground = useThemeStore((s) => s.pickBackground);
 	const clearBackground = useThemeStore((s) => s.clearBackground);
 	const setBackgroundDim = useThemeStore((s) => s.setBackgroundDim);
-	const topBarVisible = useUiPreferencesStore((s) => s.topBarVisible);
-	const setTopBarVisible = useUiPreferencesStore((s) => s.setTopBarVisible);
+	const barSessionsVisible = useUiPreferencesStore((s) => s.barSessionsVisible);
+	const setBarSessionsVisible = useUiPreferencesStore((s) => s.setBarSessionsVisible);
 	const centerOrbEnabled = useUiPreferencesStore((s) => s.centerOrbEnabled);
 	const setCenterOrbEnabled = useUiPreferencesStore((s) => s.setCenterOrbEnabled);
 
@@ -111,7 +111,7 @@ function AppearanceBasics() {
 			<div>
 				<div className="flex items-center justify-between gap-4">
 					<h3 className="text-[13px] font-medium text-ink">{t("settings.topBar")}</h3>
-					<Switch checked={topBarVisible} onCheckedChange={setTopBarVisible} />
+					<Switch checked={barSessionsVisible} onCheckedChange={setBarSessionsVisible} />
 				</div>
 				<p className="mt-0.5 text-[11px] leading-relaxed text-ink-faint">{t("settings.topBarHint")}</p>
 			</div>

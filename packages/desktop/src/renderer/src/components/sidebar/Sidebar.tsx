@@ -1,5 +1,4 @@
 import { useMemo } from "react";
-import { getPi } from "../../api";
 import { useT } from "../../i18n";
 import { deriveSidebarGroups } from "../../lib/sidebar-groups";
 import { deriveProjects, useProjectsStore } from "../../stores/projects";
@@ -57,7 +56,7 @@ export function Sidebar() {
 			inert={collapsed}
 		>
 			<div className="sidebar-inner">
-				<SidebarHeader platform={getPi().platform} />
+				<SidebarHeader />
 				<div className="min-h-0 flex-1 overflow-x-hidden overflow-y-auto px-2 pt-0.5 pb-2.5 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
 					{data.daily && (
 						<SidebarGroup group={data.daily} activeSessionId={activeSessionId} onToggle={onToggleGroup} />

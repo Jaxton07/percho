@@ -21,7 +21,6 @@ import { finishSplash } from "./splash";
 import { useSessionsStore } from "./stores/sessions";
 import { backgroundImageUrl, useThemeStore } from "./stores/theme";
 import { useTranscriptStore } from "./stores/transcript";
-import { useUiPreferencesStore } from "./stores/ui-preferences";
 import { initUpdateStore } from "./stores/update";
 
 /**
@@ -33,7 +32,6 @@ import { initUpdateStore } from "./stores/update";
 
 export default function App() {
 	const activeSessionId = useSessionsStore((s) => s.activeSessionId);
-	const topBarVisible = useUiPreferencesStore((s) => s.topBarVisible);
 	// 订阅收敛为原始值（selector 返回 boolean → 仅在值翻转时重渲染）：App 子树（TabBar/MessageList/
 	// TodoPanel/DiffSidebar/…）无 memo，若订阅 transcript 对象会随每条流式 delta 全量级联重渲染
 	const showEmpty = useTranscriptStore((s) => {
@@ -81,13 +79,13 @@ export default function App() {
 			{/* 背景贡献层：与自定义背景图同层同规则（z-0，界面默认不透明时不可见），内容列（z-10）之前 */}
 			<RegionHost region={UI_REGIONS.AppBackground} />
 			<div className="relative z-10 flex h-full flex-col">
-				{topBarVisible && <SessionTabBar />}
+				{/* 顶栏常驻（v9）：它承担窗口拖动 / 左栏开合 / 变更侧栏入口，不再整条隐藏；
+				   设置里的开关只控制「是否显示置顶会话胶囊」（见 SessionTabBar） */}
+				<SessionTabBar />
 				<div className="relative flex min-h-0 flex-1">
 					<Sidebar />
 					<div className="relative flex min-w-0 flex-1 flex-col">
-						{/* 顶栏隐藏时聊天列顶部补一条 12px 隐形拖拽带（顶栏原本承担拖窗职责）；
-						    中间列保底 380 = 宽度账本（画板 C），右栏挤不下时已由 DiffSidebar 自己转浮层 */}
-						{!topBarVisible && <div className="drag-region h-3 shrink-0" />}
+						{/* 中间列保底 380 = 宽度账本（画板 C），右栏挤不下时已由 DiffSidebar 自己转浮层 */}
 						<main className="relative min-h-0 flex-1">
 							{showEmpty ? <EmptyState /> : <MessageList />}
 							<Slot name={UI_SLOTS.TodoPanel} props={{}} fallback={TodoPanel} />

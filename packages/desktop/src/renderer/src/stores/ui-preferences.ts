@@ -10,7 +10,8 @@ interface UiPreferencesStore {
 	/** 置顶会话（id，新置顶在前）：**v8 起就是顶栏胶囊的内容**（左栏只靠图钉标记，不改顺序） */
 	pinnedSessions: string[];
 	/** 顶栏显隐（设置页开关，默认开）：关闭后导航全落在左侧栏 */
-	topBarVisible: boolean;
+	/** 顶栏是否显示置顶会话胶囊（顶栏本身常驻；设置页「顶栏显示会话」） */
+	barSessionsVisible: boolean;
 	/** 左侧栏收起（宽 0，彻底藏起；只有顶栏最左按钮能改，默认展开） */
 	sidebarCollapsed: boolean;
 	/** 左侧栏已展开的分组 key；空数组 = 用户没手动开合过（走 Sidebar 的默认推断，见 lib/sidebar-groups） */
@@ -22,7 +23,7 @@ interface UiPreferencesStore {
 	setCenterOrbEnabled: (enabled: boolean) => void;
 	/** 置顶 / 取消置顶（新置顶排最左） */
 	togglePin: (sessionId: string) => void;
-	setTopBarVisible: (visible: boolean) => void;
+	setBarSessionsVisible: (visible: boolean) => void;
 	/** 收起 / 展开左侧栏（宽 240 ↔ 0） */
 	toggleSidebarCollapsed: () => void;
 	/** 覆盖左侧栏展开分组（开合一个组的起点由 useExpandedGroups 算好，见 lib/sidebar-groups） */
@@ -45,7 +46,7 @@ function persistPatch(patch: Partial<UiState>): void {
 export const useUiPreferencesStore = create<UiPreferencesStore>((set, get) => ({
 	centerOrbEnabled: false,
 	pinnedSessions: [],
-	topBarVisible: true,
+	barSessionsVisible: true,
 	sidebarCollapsed: false,
 	expandedGroups: [],
 	pinnedProjects: [],
@@ -57,7 +58,7 @@ export const useUiPreferencesStore = create<UiPreferencesStore>((set, get) => ({
 		set({
 			centerOrbEnabled: saved?.centerOrbEnabled ?? false,
 			pinnedSessions: saved?.pinnedSessions ?? [],
-			topBarVisible: saved?.topBarVisible ?? true,
+			barSessionsVisible: saved?.barSessionsVisible ?? true,
 			sidebarCollapsed: saved?.sidebarCollapsed ?? false,
 			expandedGroups: saved?.expandedGroups ?? [],
 			pinnedProjects: saved?.pinnedProjects ?? [],
@@ -69,9 +70,9 @@ export const useUiPreferencesStore = create<UiPreferencesStore>((set, get) => ({
 		persistPatch({ centerOrbEnabled: enabled });
 	},
 
-	setTopBarVisible: (visible) => {
-		set({ topBarVisible: visible });
-		persistPatch({ topBarVisible: visible });
+	setBarSessionsVisible: (visible) => {
+		set({ barSessionsVisible: visible });
+		persistPatch({ barSessionsVisible: visible });
 	},
 
 	toggleSidebarCollapsed: () => {

@@ -75,7 +75,6 @@ function TabPill({
 	hidden = false,
 	ghostWidth,
 	contextOpen = false,
-	open = false,
 	buttonProps,
 }: {
 	session: SessionMeta;
@@ -84,8 +83,6 @@ function TabPill({
 	ghost?: boolean;
 	/** 真实胶囊正被 ghost 接管：隐藏本体但保留布局槽位（邻居让位计算依赖它） */
 	hidden?: boolean;
-	/** 该会话的 tab 已打开（v8）：顶栏会展示「已置顶但 tab 未打开」的会话，叉叉（关闭 tab）只对已打开的才有意义 */
-	open?: boolean;
 	/** ghost 的固定宽度（px）= 拾起瞬间真实胶囊的实测宽：拖拽全程保持原尺寸，
 	    不回弹到 max-w-52 最大形态（标签多被压窄时，变大会显得很跳） */
 	ghostWidth?: number | null;
@@ -95,6 +92,8 @@ function TabPill({
 }) {
 	const t = useT();
 	const closeSession = useSessionsStore((s) => s.closeSession);
+	// v9：叉叉 = 取消置顶 + 从顶栏清除（会话不删、tab 也不关）；draft 例外（它不是“置顶”，叉叉就是丢弃这个新会话）
+	const unpin = useUiPreferencesStore((s) => s.unpin);
 	// 置顶标记：顶栏会滚动、顺序会被拖动，必须有常显 glyph（不是只靠排序表达）
 	const pinned = useUiPreferencesStore((s) => s.pinnedSessions.includes(session.sessionId));
 	// 状态订阅与左侧会话轨道共用（优先级：审批 > 工作中 > 完成未读 > 空闲）；头像渲染也共用（SessionAvatar）
@@ -127,7 +126,7 @@ function TabPill({
 				<span className="block truncate text-left">
 					{sessionTitle(session, t("tabbar.untitled"), t("projects.daily"))}
 				</span>
-				{!ghost && open && (
+				{!ghost && (
 					<>
 						{/* hover 时尾部雾化渐变：盖住被叉叉重叠的文字尾，突出叉叉。
 						   from 色必须与胶囊背景同款：active 背景是 bg-bubble，
@@ -141,9 +140,15 @@ function TabPill({
 						<span
 							className="invisible absolute right-0 top-1/2 -translate-y-1/2 p-1 text-ink-dim opacity-0 transition-opacity hover:text-ink group-hover:visible group-hover:opacity-100"
 							aria-hidden="true"
+							/* 胶囊本体是 button，这里不能再塞 button（嵌套非法）→ 用 codebase 同款做法：装饰 span + aria-hidden，
+							   语义提示走原生 title（同 SessionRow），语义入口靠胶囊右键菜单的「取消置顶」 */
+							title={
+								isDraftSessionId(session.sessionId) ? t("tabbar.discardDraft") : t("tabbar.unpinFromBar")
+							}
 							onClick={(e) => {
 								e.stopPropagation();
-								void closeSession(session.sessionId);
+								if (isDraftSessionId(session.sessionId)) void closeSession(session.sessionId);
+								else unpin(session.sessionId);
 							}}
 						>
 							<CloseIcon />
@@ -161,14 +166,11 @@ function TabPill({
 function SessionTab({
 	session,
 	isActive,
-	open,
 	contextOpen,
 	onContextMenu,
 }: {
 	session: SessionMeta;
 	isActive: boolean;
-	/** tab 是否已打开（顶栏会展示未打开但已置顶的会话） */
-	open: boolean;
 	/** 右键菜单/重命名浮层打开中（触发胶囊保持 hover 底） */
 	contextOpen: boolean;
 	onContextMenu: (sessionId: string, anchor: MenuAnchor) => void;
@@ -197,7 +199,6 @@ function SessionTab({
 				session={session}
 				isActive={isActive}
 				hidden={isDragging}
-				open={open}
 				contextOpen={contextOpen}
 				buttonProps={{
 					...attributes,
@@ -251,15 +252,16 @@ export function SessionTabBar() {
 
 	const pinnedSessions = useUiPreferencesStore((s) => s.pinnedSessions);
 	const reorderPinned = useUiPreferencesStore((s) => s.reorderPinned);
+	// v9：顶栏常驻，这个开关只决定「顶栏要不要出置顶会话胶囊」
+	const barSessionsVisible = useUiPreferencesStore((s) => s.barSessionsVisible);
 	// 历史列表：顶栏要能展示「已置顶但 tab 未打开」的会话，它们只存在于历史里
 	const allSessions = useProjectsStore((s) => s.allSessions);
 	/** 右键菜单：目标会话 + 触发胶囊矩形（null = 关闭） */
 	const [menu, setMenu] = useState<AnchorState | null>(null);
 	/** 重命名浮层：与菜单同锚点，菜单选中后菜单卸载、浮层同帧展开 */
 	const [renaming, setRenaming] = useState<AnchorState | null>(null);
-	// 展示集（v8）：置顶表驱动（不看 tab 开没开）+ 未命名 draft
-	const barSessions = selectBarSessions(sessions, pinnedSessions, allSessions);
-	const openIds = new Set(sessions.map((s) => s.sessionId));
+	// 展示集（v8）：置顶表驱动（不看 tab 开没开）+ 未命名 draft；v9：设置里的开关只控制「显不显这些胶囊」
+	const barSessions = barSessionsVisible ? selectBarSessions(sessions, pinnedSessions, allSessions) : [];
 	const closeMenu = useCallback(() => setMenu(null), []);
 	/** 打开胶囊右键菜单：draft（纯前端 id，后端没有该会话）与只读子会话（后端拒绝写）上的动作全都会失败，
 	 *  所以**干脆不给菜单**（review B1：宁可没有入口，也不给必然弹 toast 的入口） */
@@ -323,8 +325,9 @@ export function SessionTabBar() {
 				ref={attachScroller}
 				className="flex min-w-0 flex-1 items-center gap-1 overflow-x-scroll [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
 			>
-				{/* 空态提示（v8）：顶栏只放置顶会话，初学者很容易以为顶栏坏了 */}
-				{barSessions.length === 0 && (
+				{/* 空态提示（v8）：顶栏只放置顶会话，初学者很容易以为顶栏坏了；
+				   开关关掉时不提示（那是用户的明确选择，不是“空”） */}
+				{barSessionsVisible && barSessions.length === 0 && (
 					<span className="min-w-0 truncate pl-1 text-[12px] text-ink-faint">
 						{t("tabbar.pinnedOnlyHint")}
 					</span>
@@ -359,7 +362,6 @@ export function SessionTabBar() {
 								key={session.sessionId}
 								session={session}
 								isActive={session.sessionId === activeSessionId}
-								open={openIds.has(session.sessionId)}
 								contextOpen={
 									menu?.sessionId === session.sessionId || renaming?.sessionId === session.sessionId
 								}

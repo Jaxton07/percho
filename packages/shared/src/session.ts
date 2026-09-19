@@ -29,8 +29,11 @@ export interface UiState {
 	centerOrbEnabled: boolean;
 	/** 置顶会话 id（新置顶在前；只存 app 本地 ui-state.json，不写会话文件、不跨设备同步；已删除的会话 id 由写侧清理） */
 	pinnedSessions: string[];
-	/** 顶栏显隐（设置页开关）：关闭后导航全落在左侧栏；旧版本文件缺省为 true */
-	topBarVisible: boolean;
+	/**
+	 * 顶栏**是否显示置顶会话的胶囊**（顶栏本身常驻：窗口拖动、左栏开合、变更侧栏入口都在这里）。
+	 * 关闭后顶栏不再出胶囊，会话全在左侧栏；旧版本文件的 `topBarVisible` 已废弃（缺省 true）。
+	 */
+	barSessionsVisible: boolean;
 	/** 左侧栏收起（宽 0，彻底藏起；只有顶栏最左按钮能改）；旧版本文件缺省为 false */
 	sidebarCollapsed: boolean;
 	/**

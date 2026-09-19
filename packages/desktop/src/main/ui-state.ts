@@ -48,7 +48,8 @@ function normalize(parsed: UiStateFileShape): UiState {
 		centerOrbEnabled: typeof parsed.centerOrbEnabled === "boolean" ? parsed.centerOrbEnabled : false,
 		// 置顶列表：脏值（手改文件/旧版本）过滤成非空字符串数组（渲染侧另会忽略未知 id）
 		pinnedSessions: stringArray(parsed.pinnedSessions),
-		topBarVisible: typeof parsed.topBarVisible === "boolean" ? parsed.topBarVisible : true,
+		// 顶栏是否显示置顶会话胶囊（旧字段 topBarVisible 已废弃：顶栏现在常驻，不再整条隐藏）
+		barSessionsVisible: typeof parsed.barSessionsVisible === "boolean" ? parsed.barSessionsVisible : true,
 		sidebarCollapsed: typeof parsed.sidebarCollapsed === "boolean" ? parsed.sidebarCollapsed : false,
 		expandedGroups: stringArray(parsed.expandedGroups),
 		pinnedProjects: stringArray(parsed.pinnedProjects),

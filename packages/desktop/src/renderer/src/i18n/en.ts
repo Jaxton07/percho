@@ -20,6 +20,8 @@ export const en: Messages = {
 		untitled: "New session",
 		settings: "Settings",
 		close: "Close session (keep on disk)",
+		unpinFromBar: "Unpin and remove from the top bar",
+		discardDraft: "Discard this new session",
 		rename: "Rename",
 		renamePlaceholder: "Session name",
 		pin: "Pin",
@@ -252,9 +254,7 @@ export const en: Messages = {
 		daily: "Daily",
 		projectsSection: "Projects",
 		addProject: "Add project",
-		newSession: "New session",
 		settings: "Settings",
-		diff: "Current changes",
 		collapse: "Collapse sidebar",
 		expand: "Expand sidebar",
 		more: "Project actions",
@@ -319,9 +319,9 @@ export const en: Messages = {
 		channelWatch: "Cross-session channel collaboration (channel-watch)",
 		channelWatchHint:
 			"After a session subscribes to a channel it watches .local/agent-work/channel/<topic>/ for file updates; writes from another session wake this session to pick them up (per the HANDOFF.md protocol). Subscriptions persist via appendEntry and restore on session reopen; built-in loop protection. On by default, fully effective for trusted projects.",
-		topBar: "Show top bar",
+		topBar: "Show sessions in the top bar",
 		topBarHint:
-			"The top bar holds the session pills and the current-changes toggle; turn it off and all navigation moves to the left sidebar (its settings entry lives at the sidebar bottom).",
+			"The top bar is always there (window dragging, sidebar toggle, current changes). Turn this off and it simply stops showing pinned-session pills — every session stays in the left sidebar.",
 		centerOrb: "Centered status animation",
 		centerOrbHint:
 			"While a task is running, shows an enlarged status animation at the center of the conversation area (above the text, with a translucent scrim dimming whatever is behind it). Only controls the centered animation — the small orb before the Working/Thinking row always stays.",
