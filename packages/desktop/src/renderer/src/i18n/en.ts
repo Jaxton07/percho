@@ -24,6 +24,10 @@ export const en: Messages = {
 		renamePlaceholder: "Session name",
 		pin: "Pin",
 		unpin: "Unpin",
+		sessionList: "Session list",
+	},
+	floatingList: {
+		title: "Sessions",
 	},
 	update: {
 		checkForUpdates: "Check for updates",
@@ -304,6 +308,11 @@ export const en: Messages = {
 		channelWatch: "Cross-session channel collaboration (channel-watch)",
 		channelWatchHint:
 			"After a session subscribes to a channel it watches .local/agent-work/channel/<topic>/ for file updates; writes from another session wake this session to pick them up (per the HANDOFF.md protocol). Subscriptions persist via appendEntry and restore on session reopen; built-in loop protection. On by default, fully effective for trusted projects.",
+		sessionListMode: "Session list position",
+		sessionListModeHint:
+			"Top bar (default): sessions live as capsules in the title bar, draggable to reorder. Floating: the capsules hide, and a button at the top-left of the chat view toggles a floating panel (handy with many sessions and a clean title bar).",
+		sessionListModeTabbar: "Top bar",
+		sessionListModeFloating: "Floating",
 		sessionRail: "Left session rail",
 		sessionRailHint:
 			"Shows a vertically centered track of session lines on the left of the chat view; hover or focus a line and it grows into a floating capsule (project icon + title) — click to switch. The top tab bar stays unchanged; turn off to hide it.",

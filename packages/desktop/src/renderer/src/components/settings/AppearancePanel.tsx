@@ -20,6 +20,12 @@ const APPEARANCE_TABS = [
 	{ id: "uiPlugins", labelKey: "settings.appearance.tabUiPlugins" },
 ] as const;
 
+/** 会话列表位置：顶栏胶囊 / 左上角悬浮面板（二选一，悬浮面板见 FloatingSessionList） */
+const SESSION_LIST_MODES = [
+	{ id: "tabbar", labelKey: "settings.sessionListModeTabbar" },
+	{ id: "floating", labelKey: "settings.sessionListModeFloating" },
+] as const;
+
 /** 基础子页：主题模式 + 自定义背景图（选图/清除/遮罩浓度）+ 两个界面开关 */
 function AppearanceBasics() {
 	const t = useT();
@@ -33,6 +39,8 @@ function AppearanceBasics() {
 	const setSessionRailEnabled = useUiPreferencesStore((s) => s.setSessionRailEnabled);
 	const centerOrbEnabled = useUiPreferencesStore((s) => s.centerOrbEnabled);
 	const setCenterOrbEnabled = useUiPreferencesStore((s) => s.setCenterOrbEnabled);
+	const sessionListMode = useUiPreferencesStore((s) => s.sessionListMode);
+	const setSessionListMode = useUiPreferencesStore((s) => s.setSessionListMode);
 
 	return (
 		<div className="flex flex-col gap-6">
@@ -107,6 +115,26 @@ function AppearanceBasics() {
 						</span>
 					</div>
 				)}
+			</div>
+			<div>
+				<h3 className="text-[13px] font-medium text-ink">{t("settings.sessionListMode")}</h3>
+				<p className="mt-0.5 text-[11px] leading-relaxed text-ink-faint">
+					{t("settings.sessionListModeHint")}
+				</p>
+				<div className="mt-2 flex w-fit rounded-lg bg-hover p-0.5">
+					{SESSION_LIST_MODES.map((m) => (
+						<button
+							key={m.id}
+							type="button"
+							className={`rounded-md px-3 py-1 text-[12px] transition-colors ${
+								sessionListMode === m.id ? "bg-surface text-ink shadow-sm" : "text-ink-dim hover:text-ink-2"
+							}`}
+							onClick={() => setSessionListMode(m.id)}
+						>
+							{t(m.labelKey)}
+						</button>
+					))}
+				</div>
 			</div>
 			<div>
 				<div className="flex items-center justify-between gap-4">

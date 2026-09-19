@@ -9,12 +9,16 @@ interface UiPreferencesStore {
 	centerOrbEnabled: boolean;
 	/** 置顶会话（id，新置顶在前）：只影响本机展示顺序，不写会话文件、不同步 */
 	pinnedSessions: string[];
+	/** 会话列表位置：顶栏胶囊（默认）/ 对话页左上角悬浮面板（互斥，见 FloatingSessionList） */
+	sessionListMode: "tabbar" | "floating";
 	/** 启动时从 ui-state.json 恢复（main.tsx 在 render 前 await，避免开关状态闪现） */
 	init: () => Promise<void>;
 	setSessionRailEnabled: (enabled: boolean) => void;
 	setCenterOrbEnabled: (enabled: boolean) => void;
 	/** 置顶 / 取消置顶（新置顶排最左） */
 	togglePin: (sessionId: string) => void;
+	/** 切换会话列表位置（顶栏胶囊 ↔ 悬浮面板） */
+	setSessionListMode: (mode: "tabbar" | "floating") => void;
 	/** 清理单个会话的置顶（删除会话时调用；不在列表里则无副作用） */
 	unpin: (sessionId: string) => void;
 }
@@ -30,6 +34,7 @@ export const useUiPreferencesStore = create<UiPreferencesStore>((set, get) => ({
 	sessionRailEnabled: false,
 	centerOrbEnabled: false,
 	pinnedSessions: [],
+	sessionListMode: "tabbar",
 
 	init: async () => {
 		const saved = await getPi()
@@ -39,6 +44,7 @@ export const useUiPreferencesStore = create<UiPreferencesStore>((set, get) => ({
 			sessionRailEnabled: saved?.sessionRailEnabled ?? false,
 			centerOrbEnabled: saved?.centerOrbEnabled ?? false,
 			pinnedSessions: saved?.pinnedSessions ?? [],
+			sessionListMode: saved?.sessionListMode ?? "tabbar",
 		});
 	},
 
@@ -53,6 +59,13 @@ export const useUiPreferencesStore = create<UiPreferencesStore>((set, get) => ({
 		set({ centerOrbEnabled: enabled });
 		getPi()
 			.saveUiState({ state: { centerOrbEnabled: enabled } })
+			.catch((error) => console.error("ui-state 持久化失败", error));
+	},
+
+	setSessionListMode: (mode) => {
+		set({ sessionListMode: mode });
+		getPi()
+			.saveUiState({ state: { sessionListMode: mode } })
 			.catch((error) => console.error("ui-state 持久化失败", error));
 	},
 

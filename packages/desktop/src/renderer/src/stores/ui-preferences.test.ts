@@ -11,7 +11,12 @@ import { useUiPreferencesStore } from "./ui-preferences";
 
 beforeEach(() => {
 	vi.clearAllMocks();
-	useUiPreferencesStore.setState({ sessionRailEnabled: false, centerOrbEnabled: false, pinnedSessions: [] });
+	useUiPreferencesStore.setState({
+		sessionRailEnabled: false,
+		centerOrbEnabled: false,
+		pinnedSessions: [],
+		sessionListMode: "tabbar",
+	});
 });
 
 describe("useUiPreferencesStore", () => {
@@ -47,6 +52,31 @@ describe("useUiPreferencesStore", () => {
 		useUiPreferencesStore.getState().setCenterOrbEnabled(true);
 		expect(useUiPreferencesStore.getState().centerOrbEnabled).toBe(true);
 		expect(piMock.saveUiState).toHaveBeenCalledWith({ state: { centerOrbEnabled: true } });
+	});
+
+	describe("会话列表位置", () => {
+		it("默认顶栏（旧版本 ui-state 无该字段）", async () => {
+			expect(useUiPreferencesStore.getState().sessionListMode).toBe("tabbar");
+
+			piMock.loadUiState.mockResolvedValue({});
+			await useUiPreferencesStore.getState().init();
+			expect(useUiPreferencesStore.getState().sessionListMode).toBe("tabbar");
+		});
+
+		it("init 恢复悬浮模式", async () => {
+			piMock.loadUiState.mockResolvedValue({ sessionListMode: "floating" });
+			await useUiPreferencesStore.getState().init();
+			expect(useUiPreferencesStore.getState().sessionListMode).toBe("floating");
+		});
+
+		it("切换即落盘补丁", () => {
+			useUiPreferencesStore.getState().setSessionListMode("floating");
+			expect(useUiPreferencesStore.getState().sessionListMode).toBe("floating");
+			expect(piMock.saveUiState).toHaveBeenCalledWith({ state: { sessionListMode: "floating" } });
+
+			useUiPreferencesStore.getState().setSessionListMode("tabbar");
+			expect(piMock.saveUiState).toHaveBeenLastCalledWith({ state: { sessionListMode: "tabbar" } });
+		});
 	});
 
 	describe("置顶会话", () => {

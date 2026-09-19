@@ -22,6 +22,10 @@ export const zh = {
 		renamePlaceholder: "会话名称",
 		pin: "置顶",
 		unpin: "取消置顶",
+		sessionList: "会话列表",
+	},
+	floatingList: {
+		title: "会话",
 	},
 	update: {
 		checkForUpdates: "检查更新",
@@ -300,6 +304,11 @@ export const zh = {
 		channelWatch: "跨会话频道协作（channel-watch）",
 		channelWatchHint:
 			"会话订阅频道后自动监听 .local/agent-work/channel/<主题>/ 的文件更新，另一会话写入时唤醒本会话查收（按 HANDOFF.md 沟通协议）。订阅经 appendEntry 持久化，重开会话自动恢复；内置防环保护。默认开启，对已信任项目完全生效。",
+		sessionListMode: "会话列表位置",
+		sessionListModeHint:
+			"顶栏胶囊（默认）：会话以胶囊形式排布在标题栏，可拖拽排序。悬浮：顶栏胶囊隐藏，改在对话页左上角用按钮开合悬浮面板（适合开会话很多、又想要干净标题栏时）。",
+		sessionListModeTabbar: "顶栏",
+		sessionListModeFloating: "悬浮",
 		sessionRail: "左侧会话轨道",
 		sessionRailHint:
 			"在聊天页左侧居中显示一列会话短线：悬停或聚焦时短线展开为悬浮胶囊（项目图标 + 会话标题），点击快速切换。顶栏会话胶囊保持不变，关闭后完全隐藏。",

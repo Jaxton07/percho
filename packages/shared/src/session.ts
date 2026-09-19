@@ -31,6 +31,8 @@ export interface UiState {
 	centerOrbEnabled: boolean;
 	/** 置顶会话 id（新置顶在前；只存 app 本地 ui-state.json，不写会话文件、不跨设备同步；已删除的会话 id 由写侧清理） */
 	pinnedSessions: string[];
+	/** 会话列表位置：顶栏胶囊（默认）/ 对话页左上角悬浮面板；旧版本文件缺省为 "tabbar" */
+	sessionListMode: "tabbar" | "floating";
 }
 
 /** 会话元数据（IPC 往返用，独立于 pi 内部类型） */

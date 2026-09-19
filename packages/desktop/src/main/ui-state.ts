@@ -44,6 +44,7 @@ function normalize(parsed: UiStateFileShape): UiState {
 		pinnedSessions: Array.isArray(parsed.pinnedSessions)
 			? parsed.pinnedSessions.filter((id): id is string => typeof id === "string" && id !== "")
 			: [],
+		sessionListMode: parsed.sessionListMode === "floating" ? "floating" : "tabbar",
 	};
 }
 
