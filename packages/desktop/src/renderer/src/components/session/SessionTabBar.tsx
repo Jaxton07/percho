@@ -20,16 +20,16 @@ import type { ComponentProps } from "react";
 import { useCallback, useEffect, useState } from "react";
 import { getPi } from "../../api";
 import { useT } from "../../i18n";
-import { isDraftSessionId, partitionSessionsByPin, useSessionsStore } from "../../stores/sessions";
-import { useToastsStore } from "../../stores/toasts";
+import { partitionSessionsByPin, useSessionsStore } from "../../stores/sessions";
 import { useTranscriptStore } from "../../stores/transcript";
 import { useUiStore } from "../../stores/ui";
 import { useUiPreferencesStore } from "../../stores/ui-preferences";
-import { CloseIcon, DiffIcon, ListIcon, PencilIcon, PinIcon, PlusIcon, ProjectsIcon } from "../icons";
+import { CloseIcon, DiffIcon, ListIcon, PinIcon, PlusIcon, ProjectsIcon } from "../icons";
 import { ContextMenu, type ContextMenuItem } from "../ui/ContextMenu";
 import type { MenuAnchor } from "../ui/place-menu";
 import { RenamePopover } from "./RenamePopover";
 import { SessionAvatar } from "./SessionAvatar";
+import { canOpenSessionMenu, renameSession, sessionMenuItems } from "./session-menu";
 import { sessionTitle, useSessionStatus } from "./session-status";
 import { UpdateButton } from "./UpdateButton";
 
@@ -244,7 +244,6 @@ export function SessionTabBar() {
 	}, []);
 
 	const pinnedSessions = useUiPreferencesStore((s) => s.pinnedSessions);
-	const togglePin = useUiPreferencesStore((s) => s.togglePin);
 	/** 右键菜单：目标会话 + 触发胶囊矩形（null = 关闭） */
 	const [menu, setMenu] = useState<AnchorState | null>(null);
 	/** 重命名浮层：与菜单同锚点，菜单选中后菜单卸载、浮层同帧展开 */
@@ -255,47 +254,17 @@ export function SessionTabBar() {
 	/** 打开胶囊右键菜单：draft（纯前端 id，后端没有该会话）与只读子会话（后端拒绝写）上的动作全都会失败，
 	 *  所以**干脆不给菜单**（review B1：宁可没有入口，也不给必然弹 toast 的入口） */
 	const openMenu = (sessionId: string, anchor: MenuAnchor) => {
-		const session = sessions.find((s) => s.sessionId === sessionId);
-		if (!session || session.readOnly || isDraftSessionId(sessionId)) return;
+		if (!canOpenSessionMenu(sessions.find((s) => s.sessionId === sessionId))) return;
 		setRenaming(null); // 换一个胶囊右键：覆盖旧菜单（同一时刻只存在一层）
 		setMenu({ sessionId, anchor });
 	};
-	/** 取消置顶/置顶：新置顶挪到胶囊列表最左（视觉上直接进置顶区） */
-	const handleTogglePin = (sessionId: string) => {
-		const first = sessions[0];
-		if (!pinnedSessions.includes(sessionId) && first && first.sessionId !== sessionId) {
-			reorderSessions(sessionId, first.sessionId);
-		}
-		togglePin(sessionId);
-	};
-	/** 重命名落盘：活跃会话靠 session_info_changed 事件回流，历史会话无事件 → 本地立即更新（幂等） */
-	const submitRename = (sessionId: string, name: string) => {
-		if (!name) return; // 空值 = 保持原名（与系统重命名一致，不报错）
-		getPi()
-			.setSessionName({ sessionId, name })
-			.then(() => useSessionsStore.getState().updateSessionName(sessionId, name))
-			.catch((error) => {
-				console.error("重命名失败", error);
-				useToastsStore.getState().push("error", "toast.sessionRenameFailed");
-			});
-	};
-	/** 右键菜单项：重命名 + 置顶（不可持久化的会话在 openMenu 就拦住了，这里只处理可写会话） */
-	const contextMenuItems = (sessionId: string): ContextMenuItem[] => {
-		return [
-			{
-				key: "rename",
-				label: t("tabbar.rename"),
-				icon: <PencilIcon size={13} />,
-				onSelect: () => setRenaming(menu),
-			},
-			{
-				key: "pin",
-				label: pinnedSessions.includes(sessionId) ? t("tabbar.unpin") : t("tabbar.pin"),
-				icon: <PinIcon size={13} />,
-				onSelect: () => handleTogglePin(sessionId),
-			},
-		];
-	};
+	/** 右键菜单项（重命名 + 置顶/取消置顶）：规则与动作在 components/session/session-menu.tsx，与悬浮面板共用一份 */
+	const contextMenuItems = (sessionId: string): ContextMenuItem[] =>
+		sessionMenuItems(t, {
+			sessionId,
+			pinned: pinnedSessions.includes(sessionId),
+			onRename: () => setRenaming(menu),
+		});
 	/** 被拖胶囊拾起时的实测宽度（px）：ghost 全程沿用，保持原胶囊尺寸。
 	    不能读 active.rect.current.initial——dnd-kit 在 onDragStart 之后才填充该 ref，事件回调里恒为 null */
 	const [dragWidth, setDragWidth] = useState<number | null>(null);
@@ -454,7 +423,7 @@ export function SessionTabBar() {
 					onCommit={(name) => {
 						// 先卸载浮层（退场动画已跑完），再落盘；失败只 toast，不回滚浮层
 						setRenaming(null);
-						submitRename(renaming.sessionId, name);
+						renameSession(renaming.sessionId, name);
 					}}
 					onCancel={() => setRenaming(null)}
 				/>

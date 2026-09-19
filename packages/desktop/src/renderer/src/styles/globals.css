@@ -2136,9 +2136,9 @@ body > div.markstream-react.ms-tooltip[role="tooltip"]:not(.tooltip-element) {
 	mask-composite: intersect;
 	-webkit-mask-composite: source-in;
 }
-/* 右键菜单 veil 变体：同一套语言，渐隐带收窄适配小尺寸 */
+/* 右键菜单 veil 变体：同一套语言（沿用设计稿与面板同款 16px 圆角），渐隐带收窄适配小尺寸 */
 .float-menu-veil {
-	border-radius: 12px;
+	border-radius: 16px;
 	background: var(--color-surface);
 	mask-image:
 		linear-gradient(to right, transparent, #000 12px, #000 calc(100% - 12px), transparent),

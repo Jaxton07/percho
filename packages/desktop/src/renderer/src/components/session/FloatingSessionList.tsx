@@ -5,7 +5,11 @@ import { partitionSessionsByPin, useSessionsStore } from "../../stores/sessions"
 import { useUiStore } from "../../stores/ui";
 import { useUiPreferencesStore } from "../../stores/ui-preferences";
 import { CloseIcon, PlusIcon } from "../icons";
+import { ContextMenu } from "../ui/ContextMenu";
+import type { MenuAnchor } from "../ui/place-menu";
+import { RenamePopover } from "./RenamePopover";
 import { SessionAvatar } from "./SessionAvatar";
+import { canOpenSessionMenu, renameSession, sessionMenuItems } from "./session-menu";
 import { sessionTitle, useSessionStatus } from "./session-status";
 
 /**
@@ -29,6 +33,9 @@ export function FloatingSessionList() {
 	const createDraftSession = useSessionsStore((s) => s.createDraftSession);
 	/** DOM 相位：null = 未挂载；open 翻 false 先播退场动画，跑完（onAnimationEnd）才卸载 */
 	const [phase, setPhase] = useState<"in" | "out" | null>(null);
+	/** 行右键菜单 / 重命名浮层：菜单锚点 = 右键指针坐标（与顶栏的胶囊锚点不同，面板是就地临时菜单） */
+	const [menu, setMenu] = useState<{ sessionId: string; anchor: MenuAnchor } | null>(null);
+	const [renaming, setRenaming] = useState<{ sessionId: string; anchor: MenuAnchor } | null>(null);
 
 	useEffect(() => {
 		setPhase((prev) => (open ? "in" : prev === null ? null : "out"));
@@ -40,9 +47,11 @@ export function FloatingSessionList() {
 	}, [mode, view, sessions.length, setOpen]);
 
 	// 点面板外 / Esc 收起。pointerdown 用捕获阶段（与 ContextMenu 一致）；顶栏触发按钮自己负责开合，
-	// 这里排除掉它——否则同一次点击会「先收起再开」（stale 的 open 判断打起来）
+	// 这里排除掉它——否则同一次点击会「先收起再开」（stale 的 open 判断打起来）。
+	// 右键菜单/重命名浮层开着时整块让位：浮层是叠在面板上的上一层，点外/Esc 应先收浮层
+	// （两者自己处理点外与 Esc），此时若面板也收，会把浮层连着面板一起拆掉
 	useEffect(() => {
-		if (!open) return;
+		if (!open || menu || renaming) return;
 		const onPointerDown = (e: PointerEvent) => {
 			const target = e.target as Element | null;
 			if (target?.closest("[data-floating-list]") || target?.closest("[data-floating-list-trigger]")) return;
@@ -57,7 +66,7 @@ export function FloatingSessionList() {
 			window.removeEventListener("pointerdown", onPointerDown, true);
 			window.removeEventListener("keydown", onKeyDown, true);
 		};
-	}, [open, setOpen]);
+	}, [open, setOpen, menu, renaming]);
 
 	// 模式切回顶栏：整块直接撤掉（面板在设置弹窗后面，不需要退场动画）
 	if (phase === null || mode !== "floating") return null;
@@ -105,10 +114,42 @@ export function FloatingSessionList() {
 								setOpen(false);
 							}}
 							onClose={() => void useSessionsStore.getState().closeSession(session.sessionId)}
+							onContextMenu={(point) => {
+								// draft / 只读会话不给菜单（不给必然失败的入口，与顶栏同规则）
+								if (!canOpenSessionMenu(session)) return;
+								setRenaming(null);
+								setMenu({ sessionId: session.sessionId, anchor: point });
+							}}
 						/>
 					))}
 				</div>
 			</div>
+			{/* 菜单与重命名浮层 portal 到 body（同锚点：菜单消失的位置就是浮层出现的位置），
+			    用面板的 veil 语言而不是硬边浮层 */}
+			{menu && (
+				<ContextMenu
+					variant="veil"
+					anchor={menu.anchor}
+					onClose={() => setMenu(null)}
+					items={sessionMenuItems(t, {
+						sessionId: menu.sessionId,
+						pinned: pinnedSessions.includes(menu.sessionId),
+						onRename: () => setRenaming(menu),
+					})}
+				/>
+			)}
+			{renaming && (
+				<RenamePopover
+					anchor={renaming.anchor}
+					value={sessions.find((s) => s.sessionId === renaming.sessionId)?.name ?? ""}
+					onCommit={(name) => {
+						// 先卸载浮层（退场动画已跑完），再落盘；失败只 toast，不回滚浮层（同顶栏）
+						setRenaming(null);
+						renameSession(renaming.sessionId, name);
+					}}
+					onCancel={() => setRenaming(null)}
+				/>
+			)}
 		</div>
 	);
 }
@@ -119,10 +160,13 @@ function FloatingRow({
 	session,
 	onSelect,
 	onClose,
+	onContextMenu,
 }: {
 	session: SessionMeta;
 	onSelect: () => void;
 	onClose: () => void;
+	/** 右键：回调拿到指针锚点（菜单左上角就落在点击处，与顶栏胶囊的胶囊锚点不同） */
+	onContextMenu: (point: MenuAnchor) => void;
 }) {
 	const t = useT();
 	const status = useSessionStatus(session.sessionId);
@@ -136,6 +180,10 @@ function FloatingRow({
 				isActive ? "font-medium text-ink" : "text-ink-faint hover:text-ink-2"
 			}`}
 			onClick={onSelect}
+			onContextMenu={(e) => {
+				e.preventDefault();
+				onContextMenu({ left: e.clientX, top: e.clientY, width: 0, height: 0 });
+			}}
 		>
 			<SessionAvatar session={session} status={status} isActive={isActive} size={18} />
 			<span className="min-w-0 flex-1 truncate">
