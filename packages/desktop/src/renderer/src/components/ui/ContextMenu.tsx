@@ -1,36 +1,36 @@
-import type { ReactNode } from "react";
-import { useEffect, useLayoutEffect, useRef, useState } from "react";
+import { Fragment, type ReactNode, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { type MenuAnchor, placeMenu } from "./place-menu";
 
-/** 菜单项规格（设计语言：无边框、无分隔线、无危险色 —— 危险操作不进本组件） */
+/** 菜单项规格（设计语言：有边框卡片 + 分隔线 + 危险红项，设计稿画板 D） */
 export interface ContextMenuItem {
 	key: string;
 	label: string;
 	/** 13px 图标（颜色由组件统一给 ink-dim → hover ink） */
 	icon?: ReactNode;
+	/** 危险项（删除类）：红字；hover 仍是 bg-hover 底，不改成 ink */
+	danger?: boolean;
+	/** 在本项之前画一条分隔线（分隔常规操作与危险操作） */
+	separatorBefore?: boolean;
 	onSelect: () => void;
 }
 
 /**
- * 通用右键菜单（会话胶囊 / 轮末文件行 / 悬浮会话列表共用）：portal 到 body（不被 tabbar 的 overflow 裁剪），
+ * 通用右键菜单（会话胶囊 / 轮末文件行 / 左侧栏会话行共用）：portal 到 body（不被 tabbar 的 overflow 裁剪），
  * 锚在触发元素下沿左对齐，超右缘左翻、下方不足上翻（定位规则在 place-menu）。
  * 关闭：点浮层外（pointerdown 捕获）/ Esc / 选中任一项 / 滚动与窗口尺寸变化（防浮层脱锚）。
- * 外观两变体："pop"（默认，硬边浮层 shadow-pop）/ "veil"（实色 + 四边渐隐，跟悬浮会话列表同一套语言）。
+ * 外观：`rounded-xl border border-border bg-surface p-1 shadow-pop` 的有边框卡片（与左栏共用一套，
+ * 不再有 veil 渐变变体）；项高 30px、图标与文字各 13px、危险项红字、分隔线 `h-px bg-border`。
  */
 export function ContextMenu({
 	anchor,
 	items,
 	onClose,
-	variant = "pop",
 }: {
 	anchor: MenuAnchor;
 	items: ContextMenuItem[];
 	onClose: () => void;
-	/** "pop" = 顶栏胶囊/文件行的硬边浮层；"veil" = 实色 + 四边渐隐（悬浮面板行），且菜单项无 hover 底色 */
-	variant?: "pop" | "veil";
 }) {
-	const veil = variant === "veil";
 	const ref = useRef<HTMLDivElement>(null);
 	const [pos, setPos] = useState<{ x: number; y: number } | null>(null);
 
@@ -64,47 +64,40 @@ export function ContextMenu({
 	}, [onClose]);
 
 	const renderRow = (item: ContextMenuItem) => (
-		<button
-			key={item.key}
-			type="button"
-			role="menuitem"
-			className={`group/item flex h-7 w-full items-center gap-2 text-left text-[13px] text-ink-2 transition-colors hover:text-ink ${
-				veil ? "px-4" : "rounded-lg px-2 hover:bg-hover"
-			}`}
-			onClick={() => {
-				item.onSelect();
-				onClose();
-			}}
-		>
-			{item.icon !== undefined && (
-				<span className="flex shrink-0 text-ink-dim transition-colors group-hover/item:text-ink">
-					{item.icon}
-				</span>
-			)}
-			<span className="truncate">{item.label}</span>
-		</button>
+		<Fragment key={item.key}>
+			{item.separatorBefore && <div className="mx-1.5 my-1 h-px bg-border" />}
+			<button
+				type="button"
+				role="menuitem"
+				className={`group/item flex h-[30px] w-full items-center gap-[10px] rounded-[7px] px-2 text-left text-[13px] transition-colors hover:bg-hover ${
+					item.danger ? "text-red-600" : "text-ink-2 hover:text-ink"
+				}`}
+				onClick={() => {
+					item.onSelect();
+					onClose();
+				}}
+			>
+				{item.icon !== undefined && (
+					<span className="flex shrink-0 text-ink-dim transition-colors group-hover/item:text-ink">
+						{item.icon}
+					</span>
+				)}
+				<span className="truncate">{item.label}</span>
+			</button>
+		</Fragment>
 	);
 	return createPortal(
 		<div
 			ref={ref}
 			role="menu"
-			className={
-				veil ? "no-drag fixed z-50 w-32" : "no-drag fixed z-50 w-44 rounded-xl bg-surface p-1 shadow-pop"
-			}
+			className="no-drag fixed z-50 w-44 rounded-xl border border-border bg-surface p-1 shadow-pop"
 			style={{
 				left: pos?.x ?? 0,
 				top: pos?.y ?? 0,
 				visibility: pos ? "visible" : "hidden",
 			}}
 		>
-			{/* veil 变体：与悬浮面板同一套三层分离 —— 外层吃 drop-shadow、veil 层吃 mask、内容层不吃 mask
-			   （菜单体积极小，渐隐带收窄到左右 12 / 上 10 / 下 12，见 globals.css 的 .float-menu-veil） */}
-			{veil && (
-				<div className="float-list-shadow">
-					<div className="float-menu-veil" />
-				</div>
-			)}
-			<div className={veil ? "relative px-1 pt-[13px] pb-[15px]" : "contents"}>{items.map(renderRow)}</div>
+			{items.map(renderRow)}
 		</div>,
 		document.body,
 	);

@@ -22,6 +22,13 @@ function uiStateStore(): JsonStore<UiStateFileShape | null> {
 	});
 }
 
+/** 字符串数组字段校验：非数组 → 丢弃，非字符串/空串元素 → 过滤（渲染侧另会忽略未知 id） */
+function stringArray(value: unknown): string[] {
+	return Array.isArray(value)
+		? value.filter((item): item is string => typeof item === "string" && item !== "")
+		: [];
+}
+
 /** 字段校验 + 默认值填充（旧版本文件缺 theme/background 时补齐） */
 function normalize(parsed: UiStateFileShape): UiState {
 	const model = parsed.lastUsedModel ?? parsed.currentModel;
@@ -41,9 +48,11 @@ function normalize(parsed: UiStateFileShape): UiState {
 		sessionRailEnabled: typeof parsed.sessionRailEnabled === "boolean" ? parsed.sessionRailEnabled : false,
 		centerOrbEnabled: typeof parsed.centerOrbEnabled === "boolean" ? parsed.centerOrbEnabled : false,
 		// 置顶列表：脏值（手改文件/旧版本）过滤成非空字符串数组（渲染侧另会忽略未知 id）
-		pinnedSessions: Array.isArray(parsed.pinnedSessions)
-			? parsed.pinnedSessions.filter((id): id is string => typeof id === "string" && id !== "")
-			: [],
+		pinnedSessions: stringArray(parsed.pinnedSessions),
+		topBarVisible: typeof parsed.topBarVisible === "boolean" ? parsed.topBarVisible : true,
+		sidebarCollapsed: typeof parsed.sidebarCollapsed === "boolean" ? parsed.sidebarCollapsed : false,
+		expandedGroups: stringArray(parsed.expandedGroups),
+		pinnedProjects: stringArray(parsed.pinnedProjects),
 		sessionListMode: parsed.sessionListMode === "floating" ? "floating" : "tabbar",
 	};
 }

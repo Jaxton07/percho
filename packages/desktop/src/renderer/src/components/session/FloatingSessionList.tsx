@@ -124,11 +124,10 @@ export function FloatingSessionList() {
 					))}
 				</div>
 			</div>
-			{/* 菜单与重命名浮层 portal 到 body（同锚点：菜单消失的位置就是浮层出现的位置），
-			    用面板的 veil 语言而不是硬边浮层 */}
+			{/* 菜单与重命名浮层 portal 到 body（同锚点：菜单消失的位置就是浮层出现的位置）；
+			    菜单统一走有边框卡片外观（本面板自身在阶段 3 退役） */}
 			{menu && (
 				<ContextMenu
-					variant="veil"
 					anchor={menu.anchor}
 					onClose={() => setMenu(null)}
 					items={sessionMenuItems(t, {

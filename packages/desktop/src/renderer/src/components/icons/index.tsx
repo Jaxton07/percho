@@ -325,6 +325,25 @@ export function DiffIcon({ size = 15, className }: IconProps) {
 	);
 }
 
+/** 左侧栏开合（左栏面板图形；DiffIcon 的 x 镜像 —— 竖线 24−14.2=9.8，外框/描边/尺寸与相邻图标一致） */
+export function PanelLeftIcon({ size = 15, className }: IconProps) {
+	return (
+		<svg
+			className={className}
+			width={size}
+			height={size}
+			viewBox="0 0 24 24"
+			{...strokeProps}
+			strokeWidth={1.8}
+			strokeLinecap="round"
+			aria-hidden="true"
+		>
+			<rect x="2.8" y="3.8" width="18.4" height="16.4" rx="2.5" />
+			<path d="M9.8 3.8v16.4" />
+		</svg>
+	);
+}
+
 /** 加号 */
 export function PlusIcon({ size = 14, className }: IconProps) {
 	return (

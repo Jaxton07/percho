@@ -31,6 +31,17 @@ export interface UiState {
 	centerOrbEnabled: boolean;
 	/** 置顶会话 id（新置顶在前；只存 app 本地 ui-state.json，不写会话文件、不跨设备同步；已删除的会话 id 由写侧清理） */
 	pinnedSessions: string[];
+	/** 顶栏显隐（设置页开关）：关闭后导航全落在左侧栏；旧版本文件缺省为 true */
+	topBarVisible: boolean;
+	/** 左侧栏收起（宽 0，彻底藏起；只有顶栏最左按钮能改）；旧版本文件缺省为 false */
+	sidebarCollapsed: boolean;
+	/**
+	 * 左侧栏已展开的分组 key（日常 cwd + 各项目 cwd + 项目小标专用 key）= 用户手动开合过的记录。
+	 * **空数组 = 无用户记录** → 走默认推断（只展开当前会话所在组）；一旦有记录就完全以它为准。
+	 */
+	expandedGroups: string[];
+	/** 置顶项目 cwd（新置顶在前，决定左侧栏项目区排序） */
+	pinnedProjects: string[];
 	/** 会话列表位置：顶栏胶囊（默认）/ 对话页左上角悬浮面板；旧版本文件缺省为 "tabbar" */
 	sessionListMode: "tabbar" | "floating";
 }

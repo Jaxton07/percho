@@ -2136,16 +2136,6 @@ body > div.markstream-react.ms-tooltip[role="tooltip"]:not(.tooltip-element) {
 	mask-composite: intersect;
 	-webkit-mask-composite: source-in;
 }
-/* 右键菜单 veil 变体：同一套语言（沿用设计稿与面板同款 16px 圆角），渐隐带收窄适配小尺寸 */
-.float-menu-veil {
-	border-radius: 16px;
-	background: var(--color-surface);
-	mask-image:
-		linear-gradient(to right, transparent, #000 12px, #000 calc(100% - 12px), transparent),
-		linear-gradient(to bottom, transparent, #000 10px, #000 calc(100% - 12px), transparent);
-	mask-composite: intersect;
-	-webkit-mask-composite: source-in;
-}
 /* 滚动区上下缘内容渐隐（列表超出时提示还有更多；行内容本身就压在渐隐带内） */
 .float-list-scroll {
 	mask-image: linear-gradient(to bottom, transparent, #000 14px, #000 calc(100% - 18px), transparent);
