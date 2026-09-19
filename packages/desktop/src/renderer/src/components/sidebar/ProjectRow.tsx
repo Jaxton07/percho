@@ -12,6 +12,10 @@ import { projectMenuItems } from "./ProjectMenu";
  * «⋯» 是行的**兄弟节点**（绝对定位浮在行右端）而不是嵌套 button——避免 button 套 button。
  * 「移除项目」走二次确认（ConfirmDialog，z-60 压过菜单）：菜单项 onSelect 先执行（开弹窗）、ContextMenu
  * 随后自己关闭，所以视觉上是「菜单消失 → 弹窗已在」；文案里的会话条数用 totalSessions（不受搜索影响）。
+ *
+ * 图标槽：folder(16) / chevron(14) / 咖啡(16) / 图钉都装在 **16×16 固定容器**里居中
+ * （v6 定稿）：图标自身宽度不同曾把标题顶得左右跳，现在文字 x 恒定；会话行缩进 6+16+8=30 也不变。
+ * 字号：项目名/日常名 14px/500（行高 34），见画板 E 的 v6 表。
  */
 export function ProjectRow({
 	label,
@@ -53,18 +57,18 @@ export function ProjectRow({
 				type="button"
 				aria-expanded={expanded}
 				title={label}
-				className={`flex h-[30px] w-full items-center gap-2 rounded-[7px] px-1.5 text-[13px] text-ink-2 group-hover/row:bg-hover group-hover/row:text-ink ${
+				className={`flex h-[34px] w-full items-center gap-2 rounded-[7px] px-1.5 text-[14px] text-ink-2 group-hover/row:bg-hover group-hover/row:text-ink ${
 					expanded ? "text-ink" : ""
 				}`}
 				onClick={onToggle}
 			>
-				<span className="flex shrink-0 items-center" aria-hidden="true">
+				<span className="grid h-4 w-4 shrink-0 place-items-center" aria-hidden="true">
 					{icon}
 				</span>
 				<span className="min-w-0 flex-1 truncate text-left font-medium">{label}</span>
 				{pinned && (
-					<span className="flex shrink-0 text-ink-faint" aria-hidden="true">
-						<PinIcon size={11} />
+					<span className="grid h-4 w-4 shrink-0 place-items-center text-ink-faint" aria-hidden="true">
+						<PinIcon size={12} />
 					</span>
 				)}
 			</button>

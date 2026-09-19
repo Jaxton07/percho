@@ -37,14 +37,14 @@ export function SidebarHeader({ platform }: { platform: string }) {
 				</div>
 			)}
 			<div className="flex shrink-0 items-center gap-1.5 px-2.5 pt-2.5 pb-2">
-				<div className="flex h-7 min-w-0 flex-1 items-center gap-1.5 rounded-lg bg-hover px-2">
+				<div className="flex h-8 min-w-0 flex-1 items-center gap-1.5 rounded-lg bg-hover px-2">
 					<SearchIcon size={13} className="shrink-0 text-ink-faint" />
 					<input
 						type="search"
 						value={search}
 						onChange={(e) => setSearch(e.target.value)}
 						placeholder={t("sidebar.search")}
-						className="min-w-0 flex-1 bg-transparent text-[12px] text-ink-2 outline-none placeholder:text-ink-faint [&::-webkit-search-cancel-button]:hidden"
+						className="min-w-0 flex-1 bg-transparent text-[13px] text-ink-2 outline-none placeholder:text-ink-faint [&::-webkit-search-cancel-button]:hidden"
 					/>
 				</div>
 			</div>

@@ -14,7 +14,8 @@ const DOT_CLASS: Record<string, string> = {
 
 /**
  * 左侧栏会话行：无头像（项目归属已由所在分组表达）、单行文字 + 行尾状态点。
- * 点击 = 打开 / 切换会话（`openSession` 同一条路径）；右键菜单由调用方接线（阶段 3 复用 session-menu）。
+ * 点击 = 打开 / 切换会话（`openSession` 同一条路径）；右键菜单由调用方接线（复用 session-menu）。
+ * v6 定稿：字号 13.5px / 行高 31px，缩进 30px = 6(行内边距) + 16(图标槽) + 8(gap) 与项目名左对齐。
  */
 export function SessionRow({
 	session,
@@ -33,7 +34,7 @@ export function SessionRow({
 		<button
 			type="button"
 			title={sessionTitle(session, t("projects.untitled"), t("projects.daily"))}
-			className={`flex h-[27px] w-full items-center gap-2 rounded-[7px] pr-1.5 pl-[30px] text-left text-[12.5px] ${
+			className={`flex h-[31px] w-full items-center gap-2 rounded-[7px] pr-1.5 pl-[30px] text-left text-[13.5px] ${
 				active ? "bg-bubble font-medium text-ink" : "text-ink-2 hover:bg-hover hover:text-ink"
 			}`}
 			onClick={onSelect}
@@ -52,7 +53,7 @@ export function SessionRow({
 			</span>
 			{status !== "idle" && (
 				<span
-					className={`mr-0.5 h-1.5 w-1.5 shrink-0 rounded-full ${DOT_CLASS[status]}`}
+					className={`mr-0.5 h-[7px] w-[7px] shrink-0 rounded-full ${DOT_CLASS[status]}`}
 					aria-hidden="true"
 				/>
 			)}

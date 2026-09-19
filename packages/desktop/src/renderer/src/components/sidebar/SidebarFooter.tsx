@@ -14,7 +14,7 @@ export function SidebarFooter() {
 	const diffSidebarOpen = useUiStore((s) => s.diffSidebarOpen);
 	const toggleDiffSidebar = useUiStore((s) => s.toggleDiffSidebar);
 	const setSettingsOpen = useSettingsStore((s) => s.setOpen);
-	const item = "flex h-7 w-full items-center gap-[9px] rounded-[7px] px-2 text-[12.5px] transition-colors";
+	const item = "flex h-8 w-full items-center gap-[9px] rounded-[7px] px-2 text-[13.5px] transition-colors";
 	return (
 		<div className="flex shrink-0 flex-col gap-px border-t border-border p-2">
 			{!topBarVisible && (

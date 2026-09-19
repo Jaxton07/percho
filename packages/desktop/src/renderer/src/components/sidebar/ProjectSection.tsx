@@ -30,7 +30,7 @@ export function ProjectSection({
 	const addProject = useProjectsStore((s) => s.addProject);
 	return (
 		<div>
-			<div className="group/sect mt-2 flex h-7 items-center gap-[5px] rounded-[7px] px-[6px] text-[11px] tracking-[0.03em] text-ink-faint">
+			<div className="group/sect mt-2 flex h-8 items-center gap-[5px] rounded-[7px] px-[6px] text-[15px] font-medium text-ink-dim">
 				<button
 					type="button"
 					aria-expanded={expanded}
