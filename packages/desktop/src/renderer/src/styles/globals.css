@@ -989,6 +989,18 @@ code {
 	width: min(420px, 38vw);
 	border-left-color: var(--color-border);
 }
+.diff-sidebar-in {
+	width: min(420px, 38vw);
+	height: 100%;
+	display: flex;
+	flex-direction: column;
+	background: var(--color-canvas);
+	opacity: 0;
+	transform: translateX(28px);
+	transition:
+		opacity 0.3s 0.08s,
+		transform 0.38s 0.06s cubic-bezier(0.32, 0.72, 0, 1);
+}
 /* 窄窗浮层（宽度账本见 useDiffSidebarOverlay）：push 会压破聊天列 380 保底，
    所以脱离文档流叠在聊天列右缘——浮层用 surface 实底 + 左圆角 + shadow-pop 分层（不靠边框） */
 .diff-sidebar.is-overlay {
@@ -1005,18 +1017,6 @@ code {
 }
 .diff-sidebar.is-overlay .diff-sidebar-in {
 	background: var(--color-surface);
-}
-.diff-sidebar-in {
-	width: min(420px, 38vw);
-	height: 100%;
-	display: flex;
-	flex-direction: column;
-	background: var(--color-canvas);
-	opacity: 0;
-	transform: translateX(28px);
-	transition:
-		opacity 0.3s 0.08s,
-		transform 0.38s 0.06s cubic-bezier(0.32, 0.72, 0, 1);
 }
 .diff-sidebar.open .diff-sidebar-in {
 	opacity: 1;

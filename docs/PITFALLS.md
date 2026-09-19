@@ -38,6 +38,10 @@
 | 右键菜单贴边溢出视口、滚动后浮层脱锚 | 四 · 右键菜单定位与脱锚（2026-09-17） |
 | Google Vertex 填了 key 仍 401「API keys are not supported by this API」 | 二 · Vertex 只支持 ADC/服务账号（api_key 路径必败，桥接层已剔除 api-key 选项） |
 | 跨会话频道里对方迟迟不查收、回复总晚一整轮（实施在改文件、review 却在跑回归） | 二 · sendUserMessage 默认 followUp = 等对方 turn 结束才投递（2026-09-17） |
+| 逐帧截图全是空白/同一张陈旧图、rAF 像停摆 | 四 · 合成器空帧与「暂停动画不出新帧」（2026-09-19 补） |
+| hover 才现的控件刚截完图就点不到、点击静默落空 | 四 · 鼠标事件 + `:hover` → 补「截图会清掉 hover」（2026-09-19） |
+| 改完自定义 hook 后整页报「Rendered fewer hooks than expected」 | 四 · HMR 改 hook 数量会假报错（2026-09-19） |
+| 清理 dev 进程后端口还占着、CDP 连上但页面全空 | 五 · `pkill -f` 杀 Electron 会留下孤儿 main（2026-09-19） |
 
 ## 一、事故复盘（含可复用诊断手法）
 
@@ -167,6 +171,26 @@ pi SDK 必须声明进 `packages/desktop/package.json` dependencies（electron-b
 
 做法：用 CDP `Input.dispatchMouseEvent({ type: "mouseMoved", x, y })` 派发真实鼠标移动（元素中心坐标，视口 CSS px），撤开时先 `Emulation.setFocusEmulationEnabled({ enabled: true })`（否则失焦/遮挡态不更新 hover）。可参考临时脚本 `.local/dev-logs/hover-check.mjs`（打印 hover 前后的 `matches(':hover')` + 计算样式并截图）。
 
+**2026-09-19 补（左栏项目行的「⋯」实测，连踩三次才看清）**：
+
+1. **`Page.captureScreenshot` 会把 hover 状态清掉**：截完图 `:hover` 链变空、目标元素的 `pointer-events` 回落 `none`（截图前读到的 `auto` 不再成立）。于是「hover → 截图 → 接着点它」的顺序会**静默落空**（点击落在 `pointer-events: none` 上，不报错也不生效）。
+2. **对同一坐标的 `mouseMoved` 不会重算 hover**：截图后想恢复 hover，直接再发一次相同坐标无效 —— 必须**先挪开一点（如 −60px）再挪回来**。
+3. `mousePressed` 与 `mouseReleased` 之间**贴太紧偶发不合成 `click`**，验证点击行为时中间留 ~70ms 更稳。
+
+### CDP 驱动 Electron dev 应用的能力边界（2026-09-19，左栏任务实测）
+
+这几条决定「哪些 UI 行为能用脚本验、哪些必须人工」：
+
+- **`Browser.setWindowBounds` / `Browser.getWindowForTarget` 在 Electron 下未实现**（method not found）。想真改窗口尺寸就用页面里的 `window.resizeTo(w, h)` —— Electron 支持，`window.innerWidth` 会真的变（本任务用它验了右栏 push ↔ 浮层的 1100 / 1000 / 900 三档）。
+- **CDP 注入的鼠标事件不会驱动 `-webkit-app-region: drag` 的窗口拖拽**：程序化拖不动窗口（连改造前就存在的顶栏拖拽区也拖不动），所以「无边框窗口的自定义拖拽带还能不能拖」**只能人工确认**；脚本只能验到 `getComputedStyle(el).webkitAppRegion === "drag"` 且元素尺寸非零。
+- `Input.dispatchMouseEvent` 坐标是**视口 CSS px**；`Page.captureScreenshot` 的 `clip` 也是 CSS px，输出像素 = clip × DPR。
+
+### HMR 下改自定义 hook 的 hook 数量会假报错（2026-09-19）
+
+症状：改动一个自定义 hook（如给 `useExpandedGroups` 减/加一个 `useState`）后，整页被错误边界接管，控制台报「Rendered fewer hooks than expected. This may be caused by an accidental early return statement」，栈指向**使用该 hook 的组件**（如 `Sidebar`）而不是 hook 自身。
+
+原因：Fast Refresh 用新模块重渲染已有组件实例，hook 序号与上一次渲染对不上 —— **这是 HMR 假象，不是真 bug**（reload 一次即好）。判断依据：错误只在热更新那一刻出现、刷新后不复现。别为此改业务代码，先 reload。
+
 ### Zustand selector 必须返回稳定引用（模块级 `EMPTY_ENTRY`）
 
 内联 `?? []` 新数组会触发 React error #185 无限渲染（与 0.5.0 事故的 effect 自激是两个不同成因，症状相同）。
@@ -178,6 +202,12 @@ pi SDK 必须声明进 `packages/desktop/package.json` dependencies（electron-b
 ### CDP 小区域 clip 截图偶发连续 blank，全窗截图正常（2026-09-06，permission-mode 手测）
 
 症状：`Page.captureScreenshot` 带 `clip`（如 composer 底栏 560×95 的小区域）时偶发 4 次重试全 blank；同帧全窗无 clip 截图正常。与 AGENTS.md 已记的「偶发整帧空白」同类合成器瞬时状态，但**小 clip 更易触发且重试也救不回**。对策：能用全窗截图就全窗（事后裁）；必须要小区域时改用 DOM 计算样式断言（`getComputedStyle` 颜色/位置）代替像素级验证，别在重试上耗时。
+
+**2026-09-19 补（左栏任务实测，找到主因与一套稳的做法）**：
+
+- **主因是窗口被遮挡/未聚焦**：此时合成器给的是陈旧或整帧空白的表面，脚本里以 rAF 为等待条件会**永久挂住**（页面 CPU 却是 0）。开场先 `Emulation.setFocusEmulationEnabled({ enabled: true })` 就能恢复 rAF 与常规截图（本任务 12 帧逐帧 + 十几张验收截图全部零空白）。
+- **动画被 `pause()` 后合成器不再产新帧**：这时 `fromSurface: true`（默认）与 `false` 拿到的分别是**同一张空白/陈旧图**，逐帧 scrub（pause + `currentTime = t`）**拿不到画面**——样式确实在变（`getComputedStyle` 每帧不同），像素却不变。另外 `fromSurface: false` 会**忽略 `clip`**（只能拿全窗）。
+- **要逐帧就「按 CSS 参数复现每一步」**：读 `transition-duration / timing-function / delay` 与两端取值，按缓动函数算出该时刻的 `width / opacity / transform`，关掉过渡后写成 inline style 再截 —— 每一步都是真实 CSS 值的真实渲染，且不暂停任何动画（合成器照常出帧）。参考实现：`scripts/shoot-sidebar.mjs`（左栏 240↔0 开合，双向 24 帧）。
 
 ### markstream fade 的临时合成层 = 整个 Markdown 区域随流闪烁（2026-09-05 初修，2026-09-08 根治）
 
@@ -301,6 +331,19 @@ pi SDK 必须声明进 `packages/desktop/package.json` dependencies（electron-b
 - `preventDefault()` 在 `contextmenu` 里必写（否则同时弹系统菜单）；dnd-kit 的 `PointerSensor` 只认主键，右键不会误触发拖拽。
 
 ## 五、工程纪律
+
+### `pkill -f` 杀 Electron 会留下孤儿 main 进程（2026-09-19）
+
+症状：用 `pkill -f "MacOS/Electron ."` 这类**带通配的匹配**清理 dev 实例后，renderer/GPU 等 helper 被杀掉、main 进程却继续活着 —— 它仍占着调试端口（9224）与 dev userData，表现为「CDP 连得上、`document.body.innerHTML` 却是空字符串」，极易误判成代码把页面渲崩了。
+
+做法：按**项目路径**精确匹配再杀，一次清干净：
+
+```sh
+pgrep -f "percho/node_modules/electron" | xargs -r kill -9
+pgrep -f "electron-vite" | xargs -r kill -9
+```
+
+另外同时起两个 dev 实例时，只有**先启动**那个能绑上调试端口（后起的静默失败）；排查前先 `ps -eo pid,lstart,command | grep MacOS/Electron` 数一下进程。
 
 ### 绝不打印/提交 API key
 
