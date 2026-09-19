@@ -2033,6 +2033,13 @@ html body .markstream-react .mermaid-modal-body {
 	padding: 5px;
 	color: var(--color-ink-2);
 }
+/* 库给这套按钮挂的是「命令式 tooltip 单例」：onMouseEnter 直接调它内部的 He()，showTooltips 这个
+   prop 管不到（所以那个开关对此处无效）。它会在悬停 300ms 后弹出白底+灰边框的 ms-tooltip。
+   只隐藏这个单例：它不带 tooltip-element 类，而走 showTooltips 的 React Tooltip（代码块/图片）
+   带该类，不受影响。库只控 opacity，不设 display，所以一条 display:none 就够。 */
+body > div.markstream-react.ms-tooltip[role="tooltip"]:not(.tooltip-element) {
+	display: none;
+}
 /* 预览区：库按估算写死 inline height（最小 360px、最大 500px）——图小时留一大片空白、图高时直接被裁。
    改成跟着 svg 走：把 wrapper 从 absolute 放回文档流才能撑开容器，高度/上限交给这里。 */
 .markdown-body .md-mermaid .mermaid-block div:has(> [data-mermaid-wrapper]) {
