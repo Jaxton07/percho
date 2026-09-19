@@ -48,11 +48,10 @@ export default function App() {
 
 	// 一次性 bootstrap：开屏就绪信号 + 更新状态 + UI 插件加载
 	useEffect(() => {
-		// 开屏就绪信号：首批数据（模型列表 + 恢复标签页）settle 后绽放收場（finishSplash 幂等）
-		void Promise.allSettled([
-			useSessionsStore.getState().loadModels(),
-			useSessionsStore.getState().restoreTabs(),
-		]).then(() => finishSplash());
+		// 开屏就绪信号：首批数据（模型列表）settle 后收场（finishSplash 幂等）。
+		// v10：**不再恢复上次打开的会话**（启动纯空 = 新会话页，与 pi 原生 / Codex 一致）；
+		// 历史全在左栏，点一下才按需加载
+		void Promise.allSettled([useSessionsStore.getState().loadModels()]).then(() => finishSplash());
 		initUpdateStore();
 		// 日常空间目录缓存（pill/轨道/侧栏的空间归属判定依赖；失败静默，入口退化为不显示）
 		void initDailyDir();

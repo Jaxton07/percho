@@ -5,7 +5,6 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 const piMock = vi.hoisted(() => ({
 	createSession: vi.fn(),
 	closeSession: vi.fn(),
-	saveTabs: vi.fn(() => Promise.resolve()),
 	setModel: vi.fn(),
 	setThinkingLevel: vi.fn(),
 	saveUiState: vi.fn(() => Promise.resolve()),
@@ -136,7 +135,6 @@ describe("createDraftSession", () => {
 		expect(state.sessions[0]?.sessionFile).toBeUndefined();
 		expect(state.activeSessionId).toBe(state.sessions[0]?.sessionId);
 		expect(piMock.createSession).not.toHaveBeenCalled();
-		expect(piMock.saveTabs).not.toHaveBeenCalled();
 	});
 
 	it("支持显式 cwd（项目页新会话入口）", () => {
@@ -189,10 +187,8 @@ describe("draft 转正（createSession + replaceDraftId）", () => {
 		expect(state.sessions[1]?.sessionId).toBe("real-1");
 		expect(state.sessions[1]?.cwd).toBe("/proj/b");
 		expect(state.activeSessionId).toBe("real-1");
-		// 转正后落盘 tabs.json
-		expect(piMock.saveTabs).toHaveBeenCalledWith({
-			tabs: { files: ["/tmp/real-1.jsonl"], activeFile: "/tmp/real-1.jsonl" },
-		});
+		// v10：不再落盘打开列表（启动纯空，见 spec §12）
+		expect(piMock.openSession).not.toHaveBeenCalled();
 	});
 
 	it("创建失败：draft tab 保留，toast 提示（不残留 store 错误态）", async () => {
@@ -221,7 +217,6 @@ describe("closeSession", () => {
 		await useSessionsStore.getState().closeSession(draftId);
 		const state = useSessionsStore.getState();
 		expect(piMock.closeSession).not.toHaveBeenCalled();
-		expect(piMock.saveTabs).not.toHaveBeenCalled();
 		expect(state.sessions).toHaveLength(0);
 		expect(state.activeSessionId).toBeNull();
 	});
@@ -230,7 +225,6 @@ describe("closeSession", () => {
 		useSessionsStore.setState({ sessions: [realMeta("r1", "/proj/a")], activeSessionId: "r1" });
 		await useSessionsStore.getState().closeSession("r1");
 		expect(piMock.closeSession).toHaveBeenCalledWith({ sessionId: "r1" });
-		expect(piMock.saveTabs).toHaveBeenCalled();
 	});
 
 	it("关闭跨项目激活会话：cwd 同步切到剩余会话的项目（B5）", async () => {
@@ -272,11 +266,9 @@ describe("switchSession", () => {
 		vi.clearAllMocks();
 		useSessionsStore.getState().switchSession("r1");
 		expect(useSessionsStore.getState().cwd).toBe("/proj/a");
-		expect(piMock.saveTabs).toHaveBeenCalledTimes(1);
 
 		useSessionsStore.getState().switchSession(draftId);
 		expect(useSessionsStore.getState().cwd).toBe("/proj/b");
-		expect(piMock.saveTabs).toHaveBeenCalledTimes(1);
 	});
 });
 

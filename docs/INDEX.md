@@ -43,7 +43,7 @@ packages/
 
 依赖补丁：`patches/` + patch-package（root devDep + postinstall）。目前一处 `thinking-orbs+0.3.1.patch`（移除 IntersectionObserver+visibilitychange 门控，Win11 恢复事件丢失会冻住 rAF）。改法：手改 `node_modules/thinking-orbs/dist/index.{es.js,cjs}` 两份 → `npx patch-package thinking-orbs`；升级该包前重评补丁是否仍需要。
 
-数据与凭证：用户数据在 `~/.pi/agent/`（sessions/*.jsonl、auth.json、models.json、trust.json、workspaces.json），与 CLI pi 共享；**dev/预览态自动隔离**到 `~/.pi/agent-dev/`（`main/dev-agent-dir.ts`，含五配置种子拷贝）。会话事件 trace 在 `sessions/<dir>/traces/trace-<sessionId>.jsonl`。应用自身数据在 Electron `userData/`：tabs.json、ui-state.json、backgrounds/（renderer 经 `pi-bg://background/<文件名>` 协议加载，main 注册）。
+数据与凭证：用户数据在 `~/.pi/agent/`（sessions/*.jsonl、auth.json、models.json、trust.json、workspaces.json），与 CLI pi 共享；**dev/预览态自动隔离**到 `~/.pi/agent-dev/`（`main/dev-agent-dir.ts`，含五配置种子拷贝）。会话事件 trace 在 `sessions/<dir>/traces/trace-<sessionId>.jsonl`。应用自身数据在 Electron `userData/`：ui-state.json、backgrounds/（v10 起没有 tabs.json）（renderer 经 `pi-bg://background/<文件名>` 协议加载，main 注册）。
 
 ## packages/shared — IPC 契约层
 
@@ -147,7 +147,7 @@ src/
 | `src/main/daily.ts` | 日常空间工作台目录（`~/.percho/daily`，全部日常会话的固定 cwd）+ 懒创建；信任链无资源自动信任不弹窗；dev/正式共享工作区（会话列表按 agent dir 天然隔离） |
 | `src/main/ipc/index.ts` | `registerIpc` 组合入口 + backend 事件/updater 状态转发（`forward()` 单行透传）+ UI 插件热重载 watcher 启动。**新增通道：进 `shared/src/ipc-channels.ts` 对应域子表 + 域文件 handler 一行，preload/main 自动接线** |
 | `src/main/ipc/{sessions,settings,packages,app,ui-plugins,lan}.ts` + `invoke.ts` | 各域 handler（`registerInvokeHandlers(子表, {...})` 表驱动注册；ui-plugins 域 handler async await 落盘后才返回；17 非透传 handler 的逻辑体就在各域 map 内） |
-| `src/main/tabs.ts` / `ui-state.ts` | tabs.json / ui-state.json 读写（JsonStore 原子写；ui-state 补丁式合并 + normalize 补缺省） |
+| `src/main/ui-state.ts` | ui-state.json 读写（JsonStore 原子写；补丁式合并 + normalize 补缺省）。**v10 起没有 tabs.json**：不再持久化「打开列表」 |
 | `src/main/background.ts` | 背景图选图（dialog → 拷贝 `userData/backgrounds/` 并清理旧图） |
 | `src/main/window.ts` | BrowserWindow：sandbox + preload；启动底色跟随主题防白闪（已解析主题经 `?theme=` query 传 renderer）；窗口框架按平台分流（mac hiddenInset / Win frameless+titleBarOverlay / Linux 原生）；**macOS 关窗 = 隐藏窗口**（`close` 事件 `preventDefault + hide()`，`index.ts` 的 `before-quit` 调 `markQuitting()` 放行 ⌘Q；`activate` 恢复 show+focus）；导出 `resolveTheme`/`applyChromeTheme`/`markQuitting` |
 | `src/main/path-target.ts` | 文件路径归一（纯函数，含 11 例单测）：剥成对包裹符与 `:行:列`/`#L12` 锚点 → `file://` 与 `%` 解码 → `~` 展开 → 相对路径按会话 cwd 解析；`resolveExistingPath` 带存在性检查（不存在抛 `Path not found: <绝对路径>`）。消费方 = `app:resolvePath`/`openPath`/`revealPath` 三通道（文件行右键菜单） |
@@ -177,7 +177,7 @@ src/
 | `lib/daily.ts` | 日常空间目录 renderer 缓存：`initDailyDir`（App 启动调一次，幂等）+ `isDailyCwd` 同步判定 + `setDailyDirForTest`；各处共享，不散落路径字符串 |
 | `lib/sidebar-groups.ts` | 左栏纯派生层（有单测）：`deriveSidebarGroups`（历史会话 + 项目表 → 日常/项目分组、置顶排序、搜索过滤、展开态推断）+ `toggleInList`（置顶切换）+ `toggleExpandedGroup`（首次开合以派生层默认集为起点）。「项目」小标 v7 起不可折叠，不再有 `PROJECTS_GROUP_KEY` 这类专用 key |
 | `lib/diagnostics.ts` | `buildDiagnosticsText`（会话诊断纯文本，供「复制诊断信息」用；从 `components/projects/` 移入） |
-| `stores/sessions.ts` | 会话列表/当前会话/cwd/模型/权限模式（`permissionModes` map，缺 key = default；draft 态纯 renderer，转正 ensureSession 应用到后端）。draft 会话（`draft:` 前缀，空 tab 重启消失；发首条消息 `ensureSession` 用 draft cwd 原地转正）；信任前置 ensureProjectTrust（trustVersion 触发重拉）；打开/fork/撤回/restoreTabs 统一 `loadSessionBundle` 四件套（history→queue→todos→permissionMode 对齐后端）；**`selectBarSessions`（v8）算顶栏展示集 = 置顶表（meta 从 tabs → `allSessions` 兜底）+ 未命名 draft** |
+| `stores/sessions.ts` | 会话列表/当前会话/cwd/模型/权限模式（`permissionModes` map，缺 key = default；draft 态纯 renderer，转正 ensureSession 应用到后端）。draft 会话（`draft:` 前缀，空 tab 重启消失；发首条消息 `ensureSession` 用 draft cwd 原地转正）；信任前置 ensureProjectTrust（trustVersion 触发重拉）；打开（含从历史按需打开）/fork/撤回统一 `loadSessionBundle` 四件套（history→queue→todos→permissionMode 对齐后端）；**`selectBarSessions`（v8）算顶栏展示集 = 置顶表（meta 从 tabs → `allSessions` 兜底）+ 未命名 draft**；**v10 起不持久化打开列表**——启动纯空（新会话页），会话只在你点开时才加载，退出即清（与 pi 原生 `AgentSessionRuntime` 的"单会话按需替换"对齐） |
 | `stores/transcript.ts` | re-export shared reducer + per-session 字段（agentActive/unseenCompletion/todos）；reducer 细节见 shared `src/transcript/` |
 | `stores/event-conflator.ts` | 流式事件合流：纯追加型 delta 按会话/类型拼接 + rAF 每帧最多一次 flush，其余事件边界透传保序（可注入调度器，有测试） |
 | `stores/drafts.ts` | 草稿（文本/图片/slash 胶囊/@ 引用 attachments/选中引用 quotes）按会话持久 + `COMPOSER_FOCUS_EVENT`（撤回回填后聚焦输入框） |

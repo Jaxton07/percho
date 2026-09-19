@@ -3,11 +3,6 @@ import type { SkillInvocationDisplay } from "./skill-invocation";
 import type { SubagentRunData } from "./subagent";
 
 /** 顶栏打开的会话持久化（重启恢复用，由主进程写入 userData/tabs.json） */
-export interface SavedTabs {
-	files: string[];
-	activeFile: string | null;
-}
-
 /** 主题模式：system = 跟随系统 prefers-color-scheme */
 export type ThemeMode = "light" | "dark" | "system";
 

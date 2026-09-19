@@ -1,4 +1,4 @@
-import type { AvailableModel, PermissionMode, SavedTabs, SessionMeta } from "@percho/shared";
+import type { AvailableModel, PermissionMode, SessionMeta } from "@percho/shared";
 import { messagesToUIMessages } from "@percho/shared";
 import { create } from "zustand";
 import { getPi } from "../api";
@@ -169,27 +169,6 @@ async function optimisticSessionSetting(
 }
 
 /** 顶栏打开的会话持久化（重启恢复用）；由主进程写 userData/tabs.json，不依赖 renderer localStorage */
-function persistTabs(state: Pick<SessionsStore, "sessions" | "activeSessionId">): void {
-	try {
-		getPi()
-			.saveTabs({
-				tabs: {
-					files: [
-						...new Set(state.sessions.map((s) => s.sessionFile).filter((f): f is string => Boolean(f))),
-					],
-					activeFile: state.sessions.find((s) => s.sessionId === state.activeSessionId)?.sessionFile ?? null,
-				},
-			})
-			.catch((error) => {
-				console.error("tabs 持久化失败", error);
-				pushToast("warning", "toast.tabsSaveFailed", errText(error));
-			});
-	} catch (error) {
-		console.error("tabs 持久化失败", error);
-		pushToast("warning", "toast.tabsSaveFailed", errText(error));
-	}
-}
-
 interface SessionsStore {
 	sessions: SessionMeta[];
 	activeSessionId: string | null;
@@ -214,8 +193,6 @@ interface SessionsStore {
 	forkSession: (ref: { entryId?: string; text?: string }) => Promise<string | undefined>;
 	/** 撤回一条用户消息：会话回退到该消息之前，文本/图片放回输入框草稿继续编辑 */
 	recallMessage: (ref: { entryId?: string; text?: string; timestamp?: number }) => Promise<void>;
-	/** 重启后恢复上次打开的顶栏会话 */
-	restoreTabs: () => Promise<void>;
 	/** 自动命名等事件带来的标题变更 */
 	updateSessionName: (sessionId: string, name: string | undefined) => void;
 	pickDirectory: () => Promise<void>;
@@ -260,7 +237,6 @@ export const useSessionsStore = create<SessionsStore>((set, get) => ({
 					: state.permissionModes,
 			}));
 			useTranscriptStore.getState().resetSession(meta.sessionId);
-			persistTabs(get());
 		} catch (error) {
 			// 失败时 draft tab 保留，用户重试即可；toast 提示（非会话内容，不残留）
 			console.error("创建会话失败", error);
@@ -295,7 +271,6 @@ export const useSessionsStore = create<SessionsStore>((set, get) => ({
 			activeSessionId: draft.sessionId,
 			cwd: targetCwd,
 		}));
-		// 不 persistTabs：draft 无 sessionFile 本就会被过滤，tabs.json 保持指向最近的真实会话
 	},
 
 	setDraftCwd: (cwd) => {
@@ -324,7 +299,7 @@ export const useSessionsStore = create<SessionsStore>((set, get) => ({
 			const session = state.sessions.find((s) => s.sessionId === sessionId);
 			return { activeSessionId: sessionId, cwd: session?.cwd ?? state.cwd };
 		});
-		// 懒加载兑底（D4）：目标会话无 transcript 数据时补拉四件套（restoreTabs 恢复失败的 tab、
+		// 懒加载兜底（D4）：目标会话无 transcript 数据时补拉四件套（从历史打开、
 		// 事件桥断连期间的切换等都经此路径自愈；已有数据零成本短路）
 		if (!isDraftSessionId(sessionId) && useTranscriptStore.getState().bySession[sessionId] === undefined) {
 			void loadSessionBundle(sessionId).catch((error) => {
@@ -333,7 +308,6 @@ export const useSessionsStore = create<SessionsStore>((set, get) => ({
 			});
 		}
 		// 切到 draft 不落盘：tabs.json 保持指向最近的真实会话（draft 重启后本就会消失）
-		if (!isDraftSessionId(sessionId)) persistTabs(get());
 	},
 
 	updateSessionName: (sessionId, name) =>
@@ -367,7 +341,6 @@ export const useSessionsStore = create<SessionsStore>((set, get) => ({
 			const permissionModes = withPermissionMode(state.permissionModes, sessionId, "default");
 			return { sessions, activeSessionId, cwd, permissionModes };
 		});
-		if (!isDraft) persistTabs(get());
 	},
 
 	openFromHistory: async (filePath) => {
@@ -381,7 +354,6 @@ export const useSessionsStore = create<SessionsStore>((set, get) => ({
 			// 运行中子会话的事件已按其 sessionId 实时转发；保留已有流式态，
 			// 否则会在点击卡片时把 agent_start 建立的进度视图重置为静态历史。
 			await loadSessionBundle(meta.sessionId, { skipHistoryIfLive: true });
-			persistTabs(get());
 		} catch (error) {
 			console.error("打开会话失败", error);
 			pushToast("warning", "toast.sessionOpenFailed", errText(error));
@@ -399,7 +371,6 @@ export const useSessionsStore = create<SessionsStore>((set, get) => ({
 				activeSessionId: meta.sessionId,
 			}));
 			await loadSessionBundle(meta.sessionId);
-			persistTabs(get());
 			return meta.sessionId;
 		} catch (error) {
 			console.error("分叉会话失败", error);
@@ -427,46 +398,6 @@ export const useSessionsStore = create<SessionsStore>((set, get) => ({
 			console.error("撤回消息失败", error);
 			pushToast("warning", "toast.recallFailed", errText(error));
 		}
-	},
-
-	restoreTabs: async () => {
-		const saved: SavedTabs | null = await getPi().loadTabs();
-		if (!saved || saved.files.length === 0) return;
-		const opened: SessionMeta[] = [];
-		const seen = new Set<string>();
-		let activeId: string | null = null;
-		for (const file of saved.files) {
-			try {
-				const meta = await getPi().openSession({ filePath: file });
-				if (seen.has(meta.sessionId)) continue;
-				seen.add(meta.sessionId);
-				opened.push(meta);
-				if (meta.sessionFile === saved.activeFile) activeId = meta.sessionId;
-			} catch {
-				// 会话文件已被删除等：跳过
-			}
-		}
-		// 每个会话三件套并行取（原先 3×N 次串行往返，首启时长期占住主线程 → 开屏掉帧）
-		await Promise.all(
-			opened.map(async (meta) => {
-				try {
-					await loadSessionBundle(meta.sessionId);
-				} catch {
-					// 单会话数据取不到不影响其它 tab 恢复
-				}
-			}),
-		);
-		if (opened.length === 0) return;
-		const lastOpened = opened[opened.length - 1];
-		if (!lastOpened) return;
-		set((state) => {
-			const existing = state.sessions.filter((s) => !opened.some((o) => o.sessionId === s.sessionId));
-			const sessions = [...existing, ...opened];
-			const activeSessionId = activeId ?? lastOpened.sessionId;
-			const cwd = sessions.find((s) => s.sessionId === activeSessionId)?.cwd ?? null;
-			return { sessions, activeSessionId, cwd };
-		});
-		persistTabs(get());
 	},
 
 	pickDirectory: async () => {
