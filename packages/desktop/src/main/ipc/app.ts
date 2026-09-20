@@ -6,7 +6,6 @@ import { pickBackgroundImage } from "../background";
 import { ensureDailyDir } from "../daily";
 import { checkoutBranch, getGitBranch, listGitBranches } from "../git";
 import { resolveExistingPath } from "../path-target";
-import { loadTabs, saveTabs } from "../tabs";
 import { loadUiState, saveUiState } from "../ui-state";
 import { checkForUpdates, downloadUpdate, installUpdate } from "../updater";
 import { registerInvokeHandlers } from "./invoke";
@@ -69,8 +68,6 @@ export function registerAppIpc(_backend: PiBackend): void {
 		}),
 		// 日常空间目录下发（懒创建；会话创建由 renderer 走既有 draft/createSession 流程）
 		getDailyDir: () => ensureDailyDir(),
-		loadTabs: () => loadTabs(),
-		saveTabs: ({ tabs }) => saveTabs(tabs),
 		loadUiState: () => loadUiState(),
 		saveUiState: ({ state }) => {
 			// 主题变更 → 对齐 main 原生主题（themeSource 赋值触发 updated 事件，窗口底色/Windows 按钮覆盖层随之刷新）

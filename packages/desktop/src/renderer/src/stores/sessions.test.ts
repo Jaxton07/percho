@@ -4,8 +4,8 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 /** window.pi 的 mock：sessions store 经 getPi() 访问，测试环境无 preload 注入 */
 const piMock = vi.hoisted(() => ({
 	createSession: vi.fn(),
-	closeSession: vi.fn(),
-	saveTabs: vi.fn(() => Promise.resolve()),
+	// 默认「后端同意关」；拒绝语义（agent 在跑）见 closeSession 的守卫用例
+	closeSession: vi.fn(() => Promise.resolve({ closed: true })),
 	setModel: vi.fn(),
 	setThinkingLevel: vi.fn(),
 	saveUiState: vi.fn(() => Promise.resolve()),
@@ -21,9 +21,16 @@ const piMock = vi.hoisted(() => ({
 }));
 vi.mock("../api", () => ({ getPi: () => piMock }));
 
-import { DRAFT_SESSION_PREFIX, isDraftSessionId, partitionSessionsByPin, useSessionsStore } from "./sessions";
+import {
+	DRAFT_SESSION_PREFIX,
+	isDraftSessionId,
+	partitionSessionsByPin,
+	selectBarSessions,
+	useSessionsStore,
+} from "./sessions";
 import { useToastsStore } from "./toasts";
 import { useTranscriptStore } from "./transcript";
+import { useUiPreferencesStore } from "./ui-preferences";
 
 function realMeta(sessionId: string, cwd: string): SessionMeta {
 	return {
@@ -82,6 +89,43 @@ describe("partitionSessionsByPin", () => {
 	});
 });
 
+describe("selectBarSessions（顶栏 = 置顶表驱动 + draft）", () => {
+	const tabs = [realMeta("a", "/p"), realMeta("b", "/p"), realMeta("c", "/p")];
+	const history = [...tabs, realMeta("h1", "/p"), realMeta("h2", "/p")];
+	const ids = (sessions: SessionMeta[]) => sessions.map((s) => s.sessionId);
+
+	it("未置顶的已打开会话不进顶栏（顶栏不再是会话总表）", () => {
+		expect(ids(selectBarSessions(tabs, [], history))).toEqual([]);
+		expect(ids(selectBarSessions(tabs, ["c"], history))).toEqual(["c"]);
+	});
+
+	it("已置顶但 tab 未打开的会话仍要显示（meta 从历史找）—— 否则会出现「已置顶却不在顶栏」", () => {
+		expect(ids(selectBarSessions(tabs, ["h2", "a"], history))).toEqual(["h2", "a"]);
+	});
+
+	it("顺序 = pinnedSessions 自己的顺序（新置顶在前，拖拽改的也是它）", () => {
+		expect(ids(selectBarSessions(tabs, ["c", "a", "b"], history))).toEqual(["c", "a", "b"]);
+	});
+
+	it("同名会话以 tabs 实例为准（名称/状态取当前打开的那份）", () => {
+		const renamed = { ...realMeta("a", "/p"), name: "新名字" };
+		const out = selectBarSessions([renamed], ["a"], history);
+		expect(out[0]?.name).toBe("新名字");
+	});
+
+	it("未命名的 draft 永远展示（它还没落盘、左栏历史里也查不到），并排在置顶之后", () => {
+		const draft = realMeta(`${DRAFT_SESSION_PREFIX}x`, "/p");
+		expect(ids(selectBarSessions([...tabs, draft], ["c"], history))).toEqual([
+			"c",
+			`${DRAFT_SESSION_PREFIX}x`,
+		]);
+	});
+
+	it("置顶表里的未知 id（会话已删）直接跳过，不生成空胶囊", () => {
+		expect(ids(selectBarSessions(tabs, ["ghost", "b"], history))).toEqual(["b"]);
+	});
+});
+
 describe("createDraftSession", () => {
 	it("只建内存 draft tab：不触后端、不落盘", () => {
 		useSessionsStore.setState({ cwd: "/proj/a" });
@@ -93,7 +137,6 @@ describe("createDraftSession", () => {
 		expect(state.sessions[0]?.sessionFile).toBeUndefined();
 		expect(state.activeSessionId).toBe(state.sessions[0]?.sessionId);
 		expect(piMock.createSession).not.toHaveBeenCalled();
-		expect(piMock.saveTabs).not.toHaveBeenCalled();
 	});
 
 	it("支持显式 cwd（项目页新会话入口）", () => {
@@ -146,10 +189,8 @@ describe("draft 转正（createSession + replaceDraftId）", () => {
 		expect(state.sessions[1]?.sessionId).toBe("real-1");
 		expect(state.sessions[1]?.cwd).toBe("/proj/b");
 		expect(state.activeSessionId).toBe("real-1");
-		// 转正后落盘 tabs.json
-		expect(piMock.saveTabs).toHaveBeenCalledWith({
-			tabs: { files: ["/tmp/real-1.jsonl"], activeFile: "/tmp/real-1.jsonl" },
-		});
+		// v10：不再落盘打开列表（启动纯空，见 spec §12）
+		expect(piMock.openSession).not.toHaveBeenCalled();
 	});
 
 	it("创建失败：draft tab 保留，toast 提示（不残留 store 错误态）", async () => {
@@ -178,7 +219,6 @@ describe("closeSession", () => {
 		await useSessionsStore.getState().closeSession(draftId);
 		const state = useSessionsStore.getState();
 		expect(piMock.closeSession).not.toHaveBeenCalled();
-		expect(piMock.saveTabs).not.toHaveBeenCalled();
 		expect(state.sessions).toHaveLength(0);
 		expect(state.activeSessionId).toBeNull();
 	});
@@ -187,7 +227,6 @@ describe("closeSession", () => {
 		useSessionsStore.setState({ sessions: [realMeta("r1", "/proj/a")], activeSessionId: "r1" });
 		await useSessionsStore.getState().closeSession("r1");
 		expect(piMock.closeSession).toHaveBeenCalledWith({ sessionId: "r1" });
-		expect(piMock.saveTabs).toHaveBeenCalled();
 	});
 
 	it("关闭跨项目激活会话：cwd 同步切到剩余会话的项目（B5）", async () => {
@@ -200,6 +239,33 @@ describe("closeSession", () => {
 		const state = useSessionsStore.getState();
 		expect(state.activeSessionId).toBe("r1");
 		expect(state.cwd).toBe("/proj/a");
+	});
+
+	it("后端拒绝（agent 在跑/等审批）→ 渲染层状态原样保留（事务语义，不留半个动作）", async () => {
+		useSessionsStore.setState({
+			sessions: [realMeta("r1", "/proj/a")],
+			activeSessionId: "r1",
+			cwd: "/proj/a",
+		});
+		useTranscriptStore.getState().loadHistory("r1", []); // 造一个已装载的 transcript 条目
+		piMock.closeSession.mockResolvedValueOnce({ closed: false });
+
+		const result = await useSessionsStore.getState().closeSession("r1");
+
+		expect(result).toEqual({ closed: false });
+		const state = useSessionsStore.getState();
+		expect(state.sessions.map((s) => s.sessionId)).toEqual(["r1"]); // 条目还在
+		expect(state.activeSessionId).toBe("r1");
+		// transcript 也没被清（不能出现「后端还活着、前端已消失」）
+		expect(useTranscriptStore.getState().bySession.r1).toBeDefined();
+	});
+
+	it("后端异常（抛错）→ 同样保留状态并提示，不静默", async () => {
+		useSessionsStore.setState({ sessions: [realMeta("r1", "/proj/a")], activeSessionId: "r1" });
+		piMock.closeSession.mockRejectedValueOnce(new Error("boom"));
+		const result = await useSessionsStore.getState().closeSession("r1");
+		expect(result).toEqual({ closed: false });
+		expect(useSessionsStore.getState().sessions.map((s) => s.sessionId)).toEqual(["r1"]);
 	});
 
 	it("关闭后台会话：active 与 cwd 不变", async () => {
@@ -229,11 +295,9 @@ describe("switchSession", () => {
 		vi.clearAllMocks();
 		useSessionsStore.getState().switchSession("r1");
 		expect(useSessionsStore.getState().cwd).toBe("/proj/a");
-		expect(piMock.saveTabs).toHaveBeenCalledTimes(1);
 
 		useSessionsStore.getState().switchSession(draftId);
 		expect(useSessionsStore.getState().cwd).toBe("/proj/b");
-		expect(piMock.saveTabs).toHaveBeenCalledTimes(1);
 	});
 });
 
@@ -250,6 +314,29 @@ describe("openFromHistory", () => {
 		expect(piMock.getTodos).toHaveBeenCalledTimes(1);
 		expect(useTranscriptStore.getState().bySession["sub-1"]?.agentActive).toBe(true);
 		expect(useSessionsStore.getState().activeSessionId).toBe("sub-1");
+	});
+
+	it("打开会话时用本机记住的档位盖过后端默认值（D7）", async () => {
+		piMock.openSession.mockResolvedValue(realMeta("hist-2", "/proj"));
+		piMock.getSessionMessages.mockResolvedValue([]);
+		piMock.getPermissionMode.mockResolvedValue("default");
+		useUiPreferencesStore.setState({ sessionPermissionModes: { "hist-2": "fullAccess" } });
+
+		await useSessionsStore.getState().openFromHistory("/tmp/hist-2.jsonl");
+
+		expect(piMock.setPermissionMode).toHaveBeenCalledWith({ sessionId: "hist-2", mode: "fullAccess" });
+		expect(useSessionsStore.getState().permissionModes["hist-2"]).toBe("fullAccess");
+	});
+
+	it("没有记录时保持后端默认值（新会话/fork 不受影响）", async () => {
+		piMock.openSession.mockResolvedValue(realMeta("hist-3", "/proj"));
+		piMock.getSessionMessages.mockResolvedValue([]);
+		piMock.getPermissionMode.mockResolvedValue("default");
+		useUiPreferencesStore.setState({ sessionPermissionModes: {} });
+
+		await useSessionsStore.getState().openFromHistory("/tmp/hist-3.jsonl");
+
+		expect(piMock.setPermissionMode).not.toHaveBeenCalled();
 	});
 
 	it("非 live 会话：历史/队列/todo 各恰好装载一次", async () => {
@@ -283,50 +370,6 @@ describe("forkSession", () => {
 					(t) => t.severity === "warning" && t.titleKey === "toast.forkFailed" && t.detail === "bundle boom",
 				),
 		).toBe(true);
-	});
-});
-
-describe("reorderSessions（拖拽排序）", () => {
-	const draftMeta = (name: string): SessionMeta => ({
-		...realMeta(name, "/p"),
-		sessionId: `${DRAFT_SESSION_PREFIX}x`,
-		sessionFile: undefined,
-	});
-
-	it("向后拖：a 跨过 draft 到末尾，并按新视觉序落盘", () => {
-		useSessionsStore.setState({
-			sessions: [realMeta("a", "/p"), draftMeta("dx"), realMeta("b", "/p")],
-			cwd: "/p",
-		});
-		useSessionsStore.getState().reorderSessions("a", "b");
-		expect(useSessionsStore.getState().sessions.map((s) => s.sessionId)).toEqual([
-			`${DRAFT_SESSION_PREFIX}x`,
-			"b",
-			"a",
-		]);
-		// files 只含真实会话，顺序 = 去掉 draft 后的视觉序
-		expect(piMock.saveTabs).toHaveBeenCalledWith({
-			tabs: { files: ["/tmp/b.jsonl", "/tmp/a.jsonl"], activeFile: null },
-		});
-	});
-
-	it("向前拖：插入到目标原索引，中间项整体右移（arrayMove 语义，与落位视觉一致）", () => {
-		useSessionsStore.setState({ sessions: [realMeta("a", "/p"), draftMeta("dx"), realMeta("b", "/p")] });
-		useSessionsStore.getState().reorderSessions("b", "a");
-		expect(useSessionsStore.getState().sessions.map((s) => s.sessionId)).toEqual([
-			"b",
-			"a",
-			`${DRAFT_SESSION_PREFIX}x`,
-		]);
-	});
-
-	it("原地/未知 id 不变序也不落盘", () => {
-		useSessionsStore.setState({ sessions: [realMeta("a", "/p"), realMeta("b", "/p")] });
-		useSessionsStore.getState().reorderSessions("a", "a");
-		useSessionsStore.getState().reorderSessions("nope", "b");
-		useSessionsStore.getState().reorderSessions("a", "nope");
-		expect(useSessionsStore.getState().sessions.map((s) => s.sessionId)).toEqual(["a", "b"]);
-		expect(piMock.saveTabs).not.toHaveBeenCalled();
 	});
 });
 
@@ -412,6 +455,22 @@ describe("permissionModes「缺 key = default」语义", () => {
 		expect(piMock.setPermissionMode).toHaveBeenCalledWith({ sessionId: "s1", mode: "default" });
 	});
 
+	it("成功置非 default → 记忆落盘（D7：按会话持久化）", async () => {
+		useSessionsStore.setState({ sessions: [realMeta("s1", "/p")], activeSessionId: "s1" });
+		await useSessionsStore.getState().setSessionPermissionMode("s1", "fullAccess");
+		expect(piMock.saveUiState).toHaveBeenLastCalledWith({
+			state: { sessionPermissionModes: { s1: "fullAccess" } },
+		});
+	});
+
+	it("失败回滚时不记（D7：只记成功的档位）", async () => {
+		useSessionsStore.setState({ sessions: [realMeta("s1", "/p")], activeSessionId: "s1" });
+		useUiPreferencesStore.setState({ sessionPermissionModes: {} });
+		piMock.setPermissionMode.mockRejectedValueOnce(new Error("boom"));
+		await useSessionsStore.getState().setSessionPermissionMode("s1", "fullAccess");
+		expect(useUiPreferencesStore.getState().sessionPermissionModes).toEqual({});
+	});
+
 	it("draft 会话模式纯 renderer：不调 IPC", async () => {
 		const draftId = `${DRAFT_SESSION_PREFIX}x`;
 		useSessionsStore.setState({ sessions: [realMeta(draftId, "/p")], activeSessionId: draftId });
@@ -438,5 +497,52 @@ describe("switchSession 懒加载兑底", () => {
 		useSessionsStore.getState().switchSession("s1");
 		await vi.waitFor(() => expect(piMock.getSessionMessages).toHaveBeenCalledWith({ sessionId: "s1" }));
 		expect(useSessionsStore.getState().activeSessionId).toBe("s1");
+	});
+});
+
+describe("记住上次项目目录（lastCwd）", () => {
+	// ui-preferences 是模块级单例，用例之间要显式清干净（store.setLastCwd 同值会短路，否则后续断言看不到写盘）
+	beforeEach(() => useUiPreferencesStore.setState({ lastCwd: null }));
+
+	it("从历史打开会话后记住该项目（重启启动页预填）", async () => {
+		piMock.openSession.mockResolvedValue(realMeta("h1", "/work/alpha"));
+		piMock.getSessionMessages.mockResolvedValue([]);
+		await useSessionsStore.getState().openFromHistory("/work/alpha/s.jsonl");
+		expect(useUiPreferencesStore.getState().lastCwd).toBe("/work/alpha");
+		expect(piMock.saveUiState).toHaveBeenLastCalledWith({ state: { lastCwd: "/work/alpha" } });
+	});
+
+	it("切会话后记住该会话的项目", () => {
+		useSessionsStore.setState({
+			sessions: [realMeta("a", "/work/alpha"), realMeta("b", "/work/beta")],
+			activeSessionId: "a",
+		});
+		useSessionsStore.getState().switchSession("b");
+		expect(piMock.saveUiState).toHaveBeenLastCalledWith({ state: { lastCwd: "/work/beta" } });
+	});
+
+	it("新建会话（draft 转正）后记住该项目", async () => {
+		piMock.createSession.mockResolvedValue(realMeta("real-1", "/work/gamma"));
+		await useSessionsStore.getState().createSession("/work/gamma");
+		expect(piMock.saveUiState).toHaveBeenLastCalledWith({ state: { lastCwd: "/work/gamma" } });
+	});
+
+	it("在选择器里选项目（setDraftCwd）后立刻记住：首启选完项目没发消息就退出，下次也不用重选", () => {
+		useSessionsStore.getState().createDraftSession("/work/alpha");
+		piMock.saveUiState.mockClear();
+		useSessionsStore.getState().setDraftCwd("/work/beta");
+		expect(useUiPreferencesStore.getState().lastCwd).toBe("/work/beta");
+		expect(piMock.saveUiState).toHaveBeenLastCalledWith({ state: { lastCwd: "/work/beta" } });
+	});
+
+	it("同项目不重复写盘（避免切会话时刷 ui-state）", () => {
+		useUiPreferencesStore.setState({ lastCwd: "/work/alpha" });
+		useSessionsStore.setState({
+			sessions: [realMeta("a", "/work/alpha"), realMeta("b", "/work/alpha")],
+			activeSessionId: "a",
+		});
+		vi.clearAllMocks();
+		useSessionsStore.getState().switchSession("b");
+		expect(piMock.saveUiState).not.toHaveBeenCalled();
 	});
 });

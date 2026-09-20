@@ -164,7 +164,12 @@ export function useComposerSend(options: UseComposerSendOptions) {
 		} else if (!sessionId || isDraftSessionId(sessionId)) {
 			// 无会话或 draft tab：用其 cwd 真正创建（draft 原地转正）
 			sessionId = await ensureSession();
-			if (!sessionId) return;
+			if (!sessionId) {
+				// v10 启动纯空：开机就是新会话页，没选项目目录时 ensureSession 返回 null。
+				// 以前这里静默 return（当时启动都带 cwd，踩不到），现在这是开机第一步，必须给反馈
+				showFeedback(t("slash.feedback.noSession"), "warn");
+				return;
+			}
 		}
 
 		options.setText("");

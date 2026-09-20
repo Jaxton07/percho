@@ -5,15 +5,15 @@ import { EmptyState } from "./components/chat/EmptyState";
 import { MessageList } from "./components/chat/MessageList";
 import { TodoPanel } from "./components/chat/TodoPanel";
 import { DiffSidebar } from "./components/diff/DiffSidebar";
-import { ProjectPage } from "./components/projects/ProjectPage";
 import { DockSlot } from "./components/session/DockSlot";
-import { SessionRail } from "./components/session/SessionRail";
 import { SessionTabBar } from "./components/session/SessionTabBar";
 import { TrustDialog } from "./components/session/TrustDialog";
 import { SettingsDialog } from "./components/settings/SettingsDialog";
+import { Sidebar } from "./components/sidebar/Sidebar";
 import { Toaster } from "./components/Toaster";
 import { useSessionEventBridge } from "./hooks/use-session-event-bridge";
 import { initDailyDir } from "./lib/daily";
+import { useSessionGc } from "./lib/use-session-gc";
 import { initUiPlugins } from "./plugins/loader";
 import { RegionHost } from "./plugins/RegionHost";
 import { Slot } from "./plugins/Slot";
@@ -22,7 +22,7 @@ import { finishSplash } from "./splash";
 import { useSessionsStore } from "./stores/sessions";
 import { backgroundImageUrl, useThemeStore } from "./stores/theme";
 import { useTranscriptStore } from "./stores/transcript";
-import { useUiStore } from "./stores/ui";
+import { useUiPreferencesStore } from "./stores/ui-preferences";
 import { initUpdateStore } from "./stores/update";
 
 /**
@@ -34,7 +34,6 @@ import { initUpdateStore } from "./stores/update";
 
 export default function App() {
 	const activeSessionId = useSessionsStore((s) => s.activeSessionId);
-	const view = useUiStore((s) => s.view);
 	// 订阅收敛为原始值（selector 返回 boolean → 仅在值翻转时重渲染）：App 子树（TabBar/MessageList/
 	// TodoPanel/DiffSidebar/…）无 memo，若订阅 transcript 对象会随每条流式 delta 全量级联重渲染
 	const showEmpty = useTranscriptStore((s) => {
@@ -50,12 +49,18 @@ export default function App() {
 	useSessionEventBridge({ onTrustRequest: pushTrustRequest });
 
 	// 一次性 bootstrap：开屏就绪信号 + 更新状态 + UI 插件加载
+	// 会话内存策略（K=3 热会话 + 受保护不卸）：全局挂一次，策略细节在 lib/session-gc.ts
+	useSessionGc();
+
 	useEffect(() => {
-		// 开屏就绪信号：首批数据（模型列表 + 恢复标签页）settle 后绽放收場（finishSplash 幂等）
-		void Promise.allSettled([
-			useSessionsStore.getState().loadModels(),
-			useSessionsStore.getState().restoreTabs(),
-		]).then(() => finishSplash());
+		// 上次项目目录：启动即预填（用户不用重选项目）。**只带 cwd，不恢复任何会话**——
+		// v10 启动仍是纯空会话页，历史全在左栏。偏好已在 main.tsx render 前 init 完毕，这里同步可用。
+		const lastCwd = useUiPreferencesStore.getState().lastCwd;
+		if (lastCwd) useSessionsStore.setState({ cwd: lastCwd });
+		// 开屏就绪信号：首批数据（模型列表）settle 后收场（finishSplash 幂等）。
+		// v10：**不再恢复上次打开的会话**（启动纯空 = 新会话页，与 pi 原生 / Codex 一致）；
+		// 历史全在左栏，点一下才按需加载
+		void Promise.allSettled([useSessionsStore.getState().loadModels()]).then(() => finishSplash());
 		initUpdateStore();
 		// 日常空间目录缓存（pill/轨道/侧栏的空间归属判定依赖；失败静默，入口退化为不显示）
 		void initDailyDir();
@@ -82,32 +87,26 @@ export default function App() {
 			{/* 背景贡献层：与自定义背景图同层同规则（z-0，界面默认不透明时不可见），内容列（z-10）之前 */}
 			<RegionHost region={UI_REGIONS.AppBackground} />
 			<div className="relative z-10 flex h-full flex-col">
+				{/* 顶栏常驻（v9）：它承担窗口拖动 / 左栏开合 / 变更侧栏入口，不再整条隐藏；
+				   设置里的开关只控制「是否显示置顶会话胶囊」（见 SessionTabBar） */}
 				<SessionTabBar />
-				{view === "projects" ? (
-					<div className="min-h-0 flex-1">
-						<ProjectPage />
+				<div className="relative flex min-h-0 flex-1">
+					<Sidebar />
+					<div className="relative flex min-w-0 flex-1 flex-col">
+						{/* 中间列保底 380 = 宽度账本（画板 C），右栏挤不下时已由 DiffSidebar 自己转浮层 */}
+						<main className="relative min-h-0 flex-1">
+							{showEmpty ? <EmptyState /> : <MessageList />}
+							<Slot name={UI_SLOTS.TodoPanel} props={{}} fallback={TodoPanel} />
+							{/* 聊天区四角贡献层（top-right 与 TodoPanel 同角，容器已预留 pt-12） */}
+							<RegionHost region={UI_REGIONS.CornerTopLeft} />
+							<RegionHost region={UI_REGIONS.CornerTopRight} />
+							<RegionHost region={UI_REGIONS.CornerBottomLeft} />
+							<RegionHost region={UI_REGIONS.CornerBottomRight} />
+						</main>
+						<DockSlot sessionId={activeSessionId} hideComposer={showEmpty} />
 					</div>
-				) : (
-					/* SessionRail 以整列（tab bar 以下全视口）为定位基准：不在 main 内，
-					   否则输入框（ApprovalDock）高度变化会压缩 main，轨道垂直居中随之漂移。
-					   外层 flex-row：末尾挂 DiffSidebar（push 式，聊天列自然压缩） */
-					<div className="relative flex min-h-0 flex-1">
-						<div className="relative flex min-w-0 flex-1 flex-col">
-							<main className="relative min-h-0 flex-1">
-								{showEmpty ? <EmptyState /> : <MessageList />}
-								<Slot name={UI_SLOTS.TodoPanel} props={{}} fallback={TodoPanel} />
-								{/* 聊天区四角贡献层（top-right 与 TodoPanel 同角，容器已预留 pt-12） */}
-								<RegionHost region={UI_REGIONS.CornerTopLeft} />
-								<RegionHost region={UI_REGIONS.CornerTopRight} />
-								<RegionHost region={UI_REGIONS.CornerBottomLeft} />
-								<RegionHost region={UI_REGIONS.CornerBottomRight} />
-							</main>
-							<DockSlot sessionId={activeSessionId} hideComposer={showEmpty} />
-							<SessionRail />
-						</div>
-						<DiffSidebar />
-					</div>
-				)}
+					<DiffSidebar />
+				</div>
 			</div>
 			{/* 悬浮贡献层：内容列之后、设置弹窗之前（z-20 < z-40，插件层永在弹窗之下） */}
 			<RegionHost region={UI_REGIONS.AppOverlay} />

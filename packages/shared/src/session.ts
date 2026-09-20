@@ -3,11 +3,6 @@ import type { SkillInvocationDisplay } from "./skill-invocation";
 import type { SubagentRunData } from "./subagent";
 
 /** 顶栏打开的会话持久化（重启恢复用，由主进程写入 userData/tabs.json） */
-export interface SavedTabs {
-	files: string[];
-	activeFile: string | null;
-}
-
 /** 主题模式：system = 跟随系统 prefers-color-scheme */
 export type ThemeMode = "light" | "dark" | "system";
 
@@ -25,12 +20,34 @@ export interface UiState {
 	lastUsedThinkingLevel: string;
 	theme: ThemeMode;
 	background: BackgroundSettings;
-	/** 左侧会话轨道开关（聊天页左侧短线悬停展开标题，见 SessionRail；旧版本文件缺省为 false） */
-	sessionRailEnabled: boolean;
 	/** 中央状态动画开关（任务运行时对话区中央显示放大 orb，盖文字层之上 + 半透明遮罩压暗身后文字；与状态行小 orb 解耦；旧版本文件缺省为 false） */
 	centerOrbEnabled: boolean;
 	/** 置顶会话 id（新置顶在前；只存 app 本地 ui-state.json，不写会话文件、不跨设备同步；已删除的会话 id 由写侧清理） */
 	pinnedSessions: string[];
+	/**
+	 * **按会话记住的权限模式**（只存非 `default` 的项，切回默认就删键）。
+	 * 只存 app 本地 ui-state.json，**不写进 pi 的会话 jsonl**（那是 SDK 文件格式）；新会话/fork 仍从 default 起步。
+	 */
+	sessionPermissionModes: Record<string, PermissionMode>;
+	/**
+	 * 顶栏**是否显示置顶会话的胶囊**（顶栏本身常驻：窗口拖动、左栏开合、变更侧栏入口都在这里）。
+	 * 关闭后顶栏不再出胶囊，会话全在左侧栏；旧版本文件的 `topBarVisible` 已废弃（缺省 true）。
+	 */
+	barSessionsVisible: boolean;
+	/** 左侧栏收起（宽 0，彻底藏起；只有顶栏最左按钮能改）；旧版本文件缺省为 false */
+	sidebarCollapsed: boolean;
+	/**
+	 * 左侧栏已展开的分组 key（日常 cwd + 各项目 cwd + 项目小标专用 key）= 用户手动开合过的记录。
+	 * **空数组 = 无用户记录** → 走默认推断（只展开当前会话所在组）；一旦有记录就完全以它为准。
+	 */
+	expandedGroups: string[];
+	/** 置顶项目 cwd（新置顶在前，决定左侧栏项目区排序） */
+	pinnedProjects: string[];
+	/**
+	 * 上次使用的项目目录（重启后启动页预填用）。**只记目录、不恢复任何会话**：
+	 * v10 起启动仍然是纯空会话页（与 pi 原生/Codex 一致），这里只让用户不用重选项目。
+	 */
+	lastCwd: string | null;
 }
 
 /** 会话元数据（IPC 往返用，独立于 pi 内部类型） */

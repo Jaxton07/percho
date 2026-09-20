@@ -1,7 +1,5 @@
 import { create } from "zustand";
 
-export type AppView = "chat" | "projects";
-
 /** chip → 侧栏跳转目标（nonce 保证重复跳同文件也重触发） */
 export interface DiffFocus {
 	/** 目标文件卡的首个 section key（TurnFileChange.sections[0].toolCallKey） */
@@ -10,8 +8,6 @@ export interface DiffFocus {
 }
 
 interface UiStore {
-	view: AppView;
-	setView: (view: AppView) => void;
 	/** todo 面板展开态（按会话，切换会话互不影响；不含持久化） */
 	todoExpanded: Record<string, boolean>;
 	toggleTodoExpanded: (sessionId: string) => void;
@@ -25,9 +21,8 @@ interface UiStore {
 	clearDiffFocus: () => void;
 }
 
+/** 界面态里只放「不跨会话、不落盘」的瞬时开关；持久化偏好一律走 ui-preferences */
 export const useUiStore = create<UiStore>((set) => ({
-	view: "chat",
-	setView: (view) => set({ view }),
 	todoExpanded: {},
 	toggleTodoExpanded: (sessionId) =>
 		set((state) => ({

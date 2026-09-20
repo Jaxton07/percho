@@ -57,3 +57,6 @@ export function useT() {
 	const language = useI18nStore((s) => s.language);
 	return (key: MessageKey, params?: Record<string, string | number>) => translate(language, key, params);
 }
+
+/** t 的类型（把 t 当参数传进模块级函数时用，如 session-menu 的菜单项构造） */
+export type Translate = ReturnType<typeof useT>;

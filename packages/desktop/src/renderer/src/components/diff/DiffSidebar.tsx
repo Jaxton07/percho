@@ -7,6 +7,7 @@ import { useTranscriptStore } from "../../stores/transcript";
 import { useUiStore } from "../../stores/ui";
 import { CloseIcon } from "../icons";
 import { DiffFileCard } from "./DiffFileCard";
+import { useDiffSidebarOverlay } from "./useDiffSidebarOverlay";
 
 /** 空 turn 列表稳定引用（selector/useMemo 缺省，禁内联新数组） */
 const EMPTY_TURNS: TurnChanges[] = [];
@@ -89,7 +90,8 @@ function BranchRow() {
 }
 
 /**
- * 右侧 diff 栏（push 式，宽度 0 ↔ 420px 过渡，聊天列自然压缩）。
+ * 右侧 diff 栏（宽度 0 ↔ 420px 过渡，聊天列自然压缩）。
+ * 窄窗（可用宽放不下「380 保底 + 右栏」）自动转浮层叠在聊天列上，点外/Esc 收起（见 useDiffSidebarOverlay）。
  * 按轮次倒序分组（最近一轮在上）；分段开关「全部 / 最近一轮」；
  * chip 跳转 = stores/ui.ts 的 diffFocus → 这里直接操作 DOM（开卡片 + 滚动定位 + 闪烁）。
  * 开关状态内存态不持久化（重启统一关闭，用户已定）。
@@ -118,6 +120,27 @@ export function DiffSidebar() {
 	const totalRemoved = visibleTurns.reduce((s, tc) => s + tc.totalRemoved, 0);
 	const bodyRef = useRef<HTMLDivElement>(null);
 
+	const overlay = useDiffSidebarOverlay();
+	const asideRef = useRef<HTMLElement>(null);
+
+	// 浮层模式的「点外收起」+ Esc：push 模式不接（右栏是常驻分栏，点聊天区不该关它）
+	useEffect(() => {
+		if (!overlay || !open) return;
+		const onPointerDown = (e: PointerEvent) => {
+			if (e.target instanceof Node && asideRef.current?.contains(e.target)) return;
+			setOpen(false);
+		};
+		const onKeyDown = (e: KeyboardEvent) => {
+			if (e.key === "Escape") setOpen(false);
+		};
+		window.addEventListener("pointerdown", onPointerDown);
+		window.addEventListener("keydown", onKeyDown);
+		return () => {
+			window.removeEventListener("pointerdown", onPointerDown);
+			window.removeEventListener("keydown", onKeyDown);
+		};
+	}, [overlay, open, setOpen]);
+
 	// chip → 侧栏跳转：目标不在当前分段时先切「全部」（effect 随 visibleTurns 变化重跑），再定位
 	useEffect(() => {
 		if (!diffFocus) return;
@@ -145,7 +168,11 @@ export function DiffSidebar() {
 	}, [diffFocus, visibleTurns, clearDiffFocus]);
 
 	return (
-		<aside className={`diff-sidebar${open ? " open" : ""}`} aria-hidden={!open}>
+		<aside
+			ref={asideRef}
+			className={`diff-sidebar${open ? " open" : ""}${overlay ? " is-overlay" : ""}`}
+			aria-hidden={!open}
+		>
 			<div className="diff-sidebar-in">
 				<div className="diff-side-head">
 					<span className="diff-side-title">{t("diff.title")}</span>

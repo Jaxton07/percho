@@ -6,7 +6,6 @@ import { EventConflator } from "../stores/event-conflator";
 import { useSessionsStore } from "../stores/sessions";
 import { pushExtensionToast } from "../stores/toasts";
 import { useTranscriptStore } from "../stores/transcript";
-import { useUiStore } from "../stores/ui";
 
 /**
  * 会话事件桥：把 main 转发的事件流接进 renderer stores（App 装配层专用 hook）。
@@ -25,10 +24,8 @@ export function useSessionEventBridge({
 		const conflator = new EventConflator({
 			apply: (sessionId, event) => {
 				useTranscriptStore.getState().applyEvent(sessionId, event, {
-					// 正被查看（活跃 tab 且 chat 视图）的会话完成时不打未读标记
-					isActiveViewing:
-						useSessionsStore.getState().activeSessionId === sessionId &&
-						useUiStore.getState().view === "chat",
+					// 正被查看（= 当前活跃 tab）的会话完成时不打未读标记
+					isActiveViewing: useSessionsStore.getState().activeSessionId === sessionId,
 				});
 			},
 		});

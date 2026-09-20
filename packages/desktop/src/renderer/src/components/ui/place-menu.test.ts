@@ -43,6 +43,17 @@ describe("placeMenu", () => {
 		expect(x).toBe(400 - 264 - 6);
 	});
 
+	it("指针锚点（⋯ 菜单 / 右键菜单，width/height = 0）：左缘贴指针 x、顶边贴指针 y + 4", () => {
+		// v7 回归护栏：旧写法把按钮的 20px 高度当 anchor.height 传进来 → 菜单多往下掉 20px
+		const pointer: MenuAnchor = { left: 228, top: 117, width: 0, height: 0 };
+		expect(placeMenu(pointer, menu, viewport)).toEqual({ x: 228, y: 121 });
+	});
+
+	it("指针锚点贴右缘 → 左翻（菜单右缘贴指针）", () => {
+		const pointer: MenuAnchor = { left: 1180, top: 40, width: 0, height: 0 };
+		expect(placeMenu(pointer, menu, viewport)).toEqual({ x: 1180 - 176, y: 44 });
+	});
+
 	it("gap 可定制（重命名浮层 8px）", () => {
 		expect(placeMenu(anchor({}), menu, viewport, { gap: 8 }).y).toBe(136);
 	});

@@ -20,7 +20,7 @@ const APPEARANCE_TABS = [
 	{ id: "uiPlugins", labelKey: "settings.appearance.tabUiPlugins" },
 ] as const;
 
-/** 基础子页：主题模式 + 自定义背景图（选图/清除/遮罩浓度）+ 两个界面开关 */
+/** 基础子页：主题模式 + 自定义背景图（选图/清除/遮罩浓度）+ 显示顶栏 + 中央动画 */
 function AppearanceBasics() {
 	const t = useT();
 	const mode = useThemeStore((s) => s.mode);
@@ -29,8 +29,8 @@ function AppearanceBasics() {
 	const pickBackground = useThemeStore((s) => s.pickBackground);
 	const clearBackground = useThemeStore((s) => s.clearBackground);
 	const setBackgroundDim = useThemeStore((s) => s.setBackgroundDim);
-	const sessionRailEnabled = useUiPreferencesStore((s) => s.sessionRailEnabled);
-	const setSessionRailEnabled = useUiPreferencesStore((s) => s.setSessionRailEnabled);
+	const barSessionsVisible = useUiPreferencesStore((s) => s.barSessionsVisible);
+	const setBarSessionsVisible = useUiPreferencesStore((s) => s.setBarSessionsVisible);
 	const centerOrbEnabled = useUiPreferencesStore((s) => s.centerOrbEnabled);
 	const setCenterOrbEnabled = useUiPreferencesStore((s) => s.setCenterOrbEnabled);
 
@@ -110,10 +110,10 @@ function AppearanceBasics() {
 			</div>
 			<div>
 				<div className="flex items-center justify-between gap-4">
-					<h3 className="text-[13px] font-medium text-ink">{t("settings.sessionRail")}</h3>
-					<Switch checked={sessionRailEnabled} onCheckedChange={setSessionRailEnabled} />
+					<h3 className="text-[13px] font-medium text-ink">{t("settings.topBar")}</h3>
+					<Switch checked={barSessionsVisible} onCheckedChange={setBarSessionsVisible} />
 				</div>
-				<p className="mt-0.5 text-[11px] leading-relaxed text-ink-faint">{t("settings.sessionRailHint")}</p>
+				<p className="mt-0.5 text-[11px] leading-relaxed text-ink-faint">{t("settings.topBarHint")}</p>
 			</div>
 			<div>
 				<div className="flex items-center justify-between gap-4">

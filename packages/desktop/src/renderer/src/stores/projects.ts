@@ -38,6 +38,8 @@ interface ProjectsStore {
 	loading: boolean;
 	loaded: boolean;
 	load: () => Promise<void>;
+	/** 重命名成功后同步历史列表（见实现处注释） */
+	applySessionName: (sessionId: string, name: string) => void;
 	select: (cwd: string | null) => void;
 	setSearch: (search: string) => void;
 	addProject: () => Promise<void>;
@@ -93,10 +95,19 @@ export const useProjectsStore = create<ProjectsStore>((set, get) => ({
 		set({ selectedCwd: cwd });
 	},
 
+	/** 重命名成功后同步历史列表：左栏会话行标题取自 `allSessions`，不同步就会「胶囊新名 / 左栏旧名」并存 */
+	applySessionName: (sessionId, name) => {
+		set((state) => ({
+			allSessions: state.allSessions.map((s) => (s.sessionId === sessionId ? { ...s, name } : s)),
+		}));
+	},
+
 	deleteSession: async (session) => {
 		await getPi().deleteSession({ sessionId: session.sessionId, sessionFile: session.sessionFile });
 		// 置顶列表清理：会话没了就没人能取消置顶，留着会变成永久残留 id
 		useUiPreferencesStore.getState().unpin(session.sessionId);
+		// D7：权限模式记录同理（与置顶并列；卸载/关会话**不**清，那是「记住」的意义）
+		useUiPreferencesStore.getState().forgetPermissionMode(session.sessionId);
 		const sessionsState = useSessionsStore.getState();
 		if (sessionsState.sessions.some((s) => s.sessionId === session.sessionId)) {
 			await sessionsState.closeSession(session.sessionId);

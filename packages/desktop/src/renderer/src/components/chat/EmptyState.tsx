@@ -1,7 +1,7 @@
 import { useEffect } from "react";
 import { useProjectsStore } from "../../stores/projects";
 import { Composer } from "../composer/Composer";
-import { ProjectBranchPicker } from "../projects/ProjectBranchPicker";
+import { ProjectBranchPicker } from "../session/ProjectBranchPicker";
 import { WordmarkConstruct } from "./WordmarkConstruct";
 
 /** 空态：大字 Logo + 居中输入框 + 项目/分支选择（对标 opencode 新会话页） */

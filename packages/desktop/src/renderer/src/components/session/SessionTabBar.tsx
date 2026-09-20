@@ -17,29 +17,21 @@ import {
 } from "@dnd-kit/sortable";
 import type { SessionMeta } from "@percho/shared";
 import type { ComponentProps } from "react";
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { getPi } from "../../api";
 import { useT } from "../../i18n";
-import { isDailyCwd } from "../../lib/daily";
-import { isDraftSessionId, partitionSessionsByPin, useSessionsStore } from "../../stores/sessions";
-import { useToastsStore } from "../../stores/toasts";
+import { useProjectsStore } from "../../stores/projects";
+import { isDraftSessionId, selectBarSessions, useSessionsStore } from "../../stores/sessions";
 import { useTranscriptStore } from "../../stores/transcript";
 import { useUiStore } from "../../stores/ui";
 import { useUiPreferencesStore } from "../../stores/ui-preferences";
-import {
-	CloseIcon,
-	CoffeeIcon,
-	DiffIcon,
-	PencilIcon,
-	PinIcon,
-	PlusIcon,
-	ProjectsIcon,
-	SubagentIcon,
-} from "../icons";
+import { CloseIcon, DiffIcon, PanelLeftIcon, PinIcon, PlusIcon } from "../icons";
 import { ContextMenu, type ContextMenuItem } from "../ui/ContextMenu";
 import type { MenuAnchor } from "../ui/place-menu";
 import { RenamePopover } from "./RenamePopover";
-import { sessionLetter, sessionTitle, useSessionStatus } from "./session-status";
+import { SessionAvatar } from "./SessionAvatar";
+import { canOpenSessionMenu, renameSession, sessionMenuItems } from "./session-menu";
+import { sessionTitle, useSessionStatus } from "./session-status";
 import { UpdateButton } from "./UpdateButton";
 
 /** 拖拽让位/落位的减速曲线（浏览器标签同款手感） */
@@ -100,25 +92,12 @@ function TabPill({
 }) {
 	const t = useT();
 	const closeSession = useSessionsStore((s) => s.closeSession);
+	// v9：叉叉 = 取消置顶 + 从顶栏清除（会话不删、tab 也不关）；draft 例外（它不是“置顶”，叉叉就是丢弃这个新会话）
+	const unpin = useUiPreferencesStore((s) => s.unpin);
 	// 置顶标记：顶栏会滚动、顺序会被拖动，必须有常显 glyph（不是只靠排序表达）
 	const pinned = useUiPreferencesStore((s) => s.pinnedSessions.includes(session.sessionId));
-	// 状态订阅与左侧会话轨道共用（优先级：审批 > 工作中 > 完成未读 > 空闲）
+	// 状态订阅与左侧会话轨道共用（优先级：审批 > 工作中 > 完成未读 > 空闲）；头像渲染也共用（SessionAvatar）
 	const status = useSessionStatus(session.sessionId);
-	// 头像字形 = 空间归属（日常 = 咖啡图标，项目 = 目录首字母）；只读子会话专属图标。
-	// 余态底色：日常为画布底 + 细边框（白底黑字，与项目黑底白字反相）；状态色（审批琥珀/工作墨色）优先
-	const daily = isDailyCwd(session.cwd);
-	const letter = sessionLetter(session);
-	const avatarClass = session.readOnly
-		? "bg-accent text-on-accent"
-		: status === "attention"
-			? "bg-amber-500 text-on-ink"
-			: status === "working"
-				? "bg-ink text-on-ink tab-avatar-working"
-				: daily
-					? "border border-border-strong bg-canvas text-ink"
-					: isActive
-						? "bg-ink text-on-ink"
-						: "bg-ink-faint text-on-ink";
 	return (
 		<button
 			type="button"
@@ -142,20 +121,7 @@ function TabPill({
 					<PinIcon size={11} />
 				</span>
 			)}
-			<span
-				className={`relative flex h-4 w-4 shrink-0 items-center justify-center rounded text-[10px] font-semibold ${avatarClass}`}
-			>
-				{session.readOnly ? (
-					<SubagentIcon size={11} />
-				) : daily ? (
-					<CoffeeIcon size={10} />
-				) : (
-					letter.toUpperCase()
-				)}
-				{!session.readOnly && status === "done" && (
-					<span className="absolute -right-0.5 -top-0.5 h-1.5 w-1.5 rounded-full bg-green-500 ring-1 ring-canvas" />
-				)}
-			</span>
+			<SessionAvatar session={session} status={status} isActive={isActive} dotRing="ring-canvas" />
 			<span className="relative min-w-0 flex-1">
 				<span className="block truncate text-left">
 					{sessionTitle(session, t("tabbar.untitled"), t("projects.daily"))}
@@ -174,9 +140,15 @@ function TabPill({
 						<span
 							className="invisible absolute right-0 top-1/2 -translate-y-1/2 p-1 text-ink-dim opacity-0 transition-opacity hover:text-ink group-hover:visible group-hover:opacity-100"
 							aria-hidden="true"
+							/* 胶囊本体是 button，这里不能再塞 button（嵌套非法）→ 用 codebase 同款做法：装饰 span + aria-hidden，
+							   语义提示走原生 title（同 SessionRow），语义入口靠胶囊右键菜单的「取消置顶」 */
+							title={
+								isDraftSessionId(session.sessionId) ? t("tabbar.discardDraft") : t("tabbar.unpinFromBar")
+							}
 							onClick={(e) => {
 								e.stopPropagation();
-								void closeSession(session.sessionId);
+								if (isDraftSessionId(session.sessionId)) void closeSession(session.sessionId);
+								else unpin(session.sessionId);
 							}}
 						>
 							<CloseIcon />
@@ -204,7 +176,8 @@ function SessionTab({
 	onContextMenu: (sessionId: string, anchor: MenuAnchor) => void;
 }) {
 	const switchSession = useSessionsStore((s) => s.switchSession);
-	const setView = useUiStore((s) => s.setView);
+	// v8：顶栏里可能是「已置顶但 tab 未打开」的会话，点击要能把它开起来（openSession 一条路兼容两种情况）
+	const openSession = useProjectsStore((s) => s.openSession);
 	const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({
 		id: session.sessionId,
 		// 自定义让位/落位节奏；reduced-motion 传 null = dnd-kit 不再给出过渡串
@@ -236,8 +209,9 @@ function SessionTab({
 						onContextMenu(session.sessionId, anchorOfElement(e.currentTarget));
 					},
 					onClick: () => {
-						switchSession(session.sessionId);
-						setView("chat");
+						// draft（内存态、后端没有该会话）只能切；其余走 openSession（已打开则切、未打开则从历史开）
+						if (isDraftSessionId(session.sessionId)) switchSession(session.sessionId);
+						else void openSession(session);
 					},
 				}}
 			/>
@@ -253,67 +227,56 @@ export function SessionTabBar() {
 	const sessions = useSessionsStore((s) => s.sessions);
 	const activeSessionId = useSessionsStore((s) => s.activeSessionId);
 	const createDraftSession = useSessionsStore((s) => s.createDraftSession);
-	const reorderSessions = useSessionsStore((s) => s.reorderSessions);
+
 	const cwd = useSessionsStore((s) => s.cwd);
-	const view = useUiStore((s) => s.view);
-	const setView = useUiStore((s) => s.setView);
 	const diffSidebarOpen = useUiStore((s) => s.diffSidebarOpen);
 	const toggleDiffSidebar = useUiStore((s) => s.toggleDiffSidebar);
-	const scrollerRef = useRef<HTMLDivElement>(null);
+	const sidebarCollapsed = useUiPreferencesStore((s) => s.sidebarCollapsed);
+	const toggleSidebarCollapsed = useUiPreferencesStore((s) => s.toggleSidebarCollapsed);
 	const [activeId, setActiveId] = useState<string | null>(null);
+	/** 胶囊区横向滚动的滚轮监听：用回调 ref 而非 useEffect + ref 对象——悬浮模式下 scroller 不渲染，
+	 *  回调 ref 在挂载/卸载时天然重挂监听（React 19 支持返回清理函数，不用手写依赖数组） */
+	const attachScroller = useCallback((el: HTMLDivElement | null) => {
+		if (!el) return;
+		const onWheel = (e: WheelEvent) => {
+			const scrollable = el.scrollWidth > el.clientWidth;
+			if (!scrollable) return;
+			const dx = Math.abs(e.deltaX) > Math.abs(e.deltaY) ? e.deltaX : e.deltaY;
+			if (dx === 0) return;
+			e.preventDefault();
+			el.scrollLeft += dx;
+		};
+		el.addEventListener("wheel", onWheel, { passive: false });
+		return () => el.removeEventListener("wheel", onWheel);
+	}, []);
+
 	const pinnedSessions = useUiPreferencesStore((s) => s.pinnedSessions);
-	const togglePin = useUiPreferencesStore((s) => s.togglePin);
+	const reorderPinned = useUiPreferencesStore((s) => s.reorderPinned);
+	// v9：顶栏常驻，这个开关只决定「顶栏要不要出置顶会话胶囊」
+	const barSessionsVisible = useUiPreferencesStore((s) => s.barSessionsVisible);
+	// 历史列表：顶栏要能展示「已置顶但 tab 未打开」的会话，它们只存在于历史里
+	const allSessions = useProjectsStore((s) => s.allSessions);
 	/** 右键菜单：目标会话 + 触发胶囊矩形（null = 关闭） */
 	const [menu, setMenu] = useState<AnchorState | null>(null);
 	/** 重命名浮层：与菜单同锚点，菜单选中后菜单卸载、浮层同帧展开 */
 	const [renaming, setRenaming] = useState<AnchorState | null>(null);
-	// 展示顺序：置顶区在左（拖拽只改 tabs.json 原始顺序，分区由纯函数表达）
-	const orderedSessions = partitionSessionsByPin(sessions, pinnedSessions);
+	// 展示集（v8）：置顶表驱动（不看 tab 开没开）+ 未命名 draft；v9：设置里的开关只控制「显不显这些胶囊」
+	const barSessions = barSessionsVisible ? selectBarSessions(sessions, pinnedSessions, allSessions) : [];
 	const closeMenu = useCallback(() => setMenu(null), []);
 	/** 打开胶囊右键菜单：draft（纯前端 id，后端没有该会话）与只读子会话（后端拒绝写）上的动作全都会失败，
 	 *  所以**干脆不给菜单**（review B1：宁可没有入口，也不给必然弹 toast 的入口） */
 	const openMenu = (sessionId: string, anchor: MenuAnchor) => {
-		const session = sessions.find((s) => s.sessionId === sessionId);
-		if (!session || session.readOnly || isDraftSessionId(sessionId)) return;
+		if (!canOpenSessionMenu(sessions.find((s) => s.sessionId === sessionId))) return;
 		setRenaming(null); // 换一个胶囊右键：覆盖旧菜单（同一时刻只存在一层）
 		setMenu({ sessionId, anchor });
 	};
-	/** 取消置顶/置顶：新置顶挪到胶囊列表最左（视觉上直接进置顶区） */
-	const handleTogglePin = (sessionId: string) => {
-		const first = sessions[0];
-		if (!pinnedSessions.includes(sessionId) && first && first.sessionId !== sessionId) {
-			reorderSessions(sessionId, first.sessionId);
-		}
-		togglePin(sessionId);
-	};
-	/** 重命名落盘：活跃会话靠 session_info_changed 事件回流，历史会话无事件 → 本地立即更新（幂等） */
-	const submitRename = (sessionId: string, name: string) => {
-		if (!name) return; // 空值 = 保持原名（与系统重命名一致，不报错）
-		getPi()
-			.setSessionName({ sessionId, name })
-			.then(() => useSessionsStore.getState().updateSessionName(sessionId, name))
-			.catch((error) => {
-				console.error("重命名失败", error);
-				useToastsStore.getState().push("error", "toast.sessionRenameFailed");
-			});
-	};
-	/** 右键菜单项：重命名 + 置顶（不可持久化的会话在 openMenu 就拦住了，这里只处理可写会话） */
-	const contextMenuItems = (sessionId: string): ContextMenuItem[] => {
-		return [
-			{
-				key: "rename",
-				label: t("tabbar.rename"),
-				icon: <PencilIcon size={13} />,
-				onSelect: () => setRenaming(menu),
-			},
-			{
-				key: "pin",
-				label: pinnedSessions.includes(sessionId) ? t("tabbar.unpin") : t("tabbar.pin"),
-				icon: <PinIcon size={13} />,
-				onSelect: () => handleTogglePin(sessionId),
-			},
-		];
-	};
+	/** 右键菜单项（重命名 + 置顶/取消置顶）：规则与动作在 components/session/session-menu.tsx，与悬浮面板共用一份 */
+	const contextMenuItems = (sessionId: string): ContextMenuItem[] =>
+		sessionMenuItems(t, {
+			sessionId,
+			pinned: pinnedSessions.includes(sessionId),
+			onRename: () => setRenaming(menu),
+		});
 	/** 被拖胶囊拾起时的实测宽度（px）：ghost 全程沿用，保持原胶囊尺寸。
 	    不能读 active.rect.current.initial——dnd-kit 在 onDragStart 之后才填充该 ref，事件回调里恒为 null */
 	const [dragWidth, setDragWidth] = useState<number | null>(null);
@@ -331,28 +294,12 @@ export function SessionTabBar() {
 		setDraggingCursor(false);
 	};
 
-	// 正在查看的会话：完成未读标记立即清除（覆盖切 tab 与 projects ↔ chat 视图切换）
+	// 正在查看的会话：完成未读标记立即清除
 	useEffect(() => {
-		if (activeSessionId && view === "chat") {
+		if (activeSessionId) {
 			useTranscriptStore.getState().markCompletionSeen(activeSessionId);
 		}
-	}, [activeSessionId, view]);
-
-	// 鼠标滚轮（垂直）→ tab 横向滚动
-	useEffect(() => {
-		const el = scrollerRef.current;
-		if (!el) return;
-		const onWheel = (e: WheelEvent) => {
-			const scrollable = el.scrollWidth > el.clientWidth;
-			if (!scrollable) return;
-			const dx = Math.abs(e.deltaX) > Math.abs(e.deltaY) ? e.deltaX : e.deltaY;
-			if (dx === 0) return;
-			e.preventDefault();
-			el.scrollLeft += dx;
-		};
-		el.addEventListener("wheel", onWheel, { passive: false });
-		return () => el.removeEventListener("wheel", onWheel);
-	}, []);
+	}, [activeSessionId]);
 
 	// macOS 左侧为红绿灯留 80px；Windows 右侧为窗口按钮覆盖层留 140px（3 × 46px 取整）
 	const chromePadding =
@@ -362,20 +309,29 @@ export function SessionTabBar() {
 		<div
 			className={`${dragging ? "" : "drag-region"} flex h-12 shrink-0 items-center gap-1 border-b border-border bg-canvas ${chromePadding}`}
 		>
+			{/* 左栏开合（右栏 diff 图标的镜像）：开态底色区分；左栏收起后展开也靠它，设置入口就在左栏里 */}
 			<button
 				type="button"
 				className={`no-drag shrink-0 rounded-lg p-1.5 transition-colors ${
-					view === "projects" ? "bg-bubble text-ink" : "text-ink-dim hover:bg-hover hover:text-ink"
+					sidebarCollapsed ? "text-ink-dim hover:bg-hover hover:text-ink" : "bg-hover text-ink"
 				}`}
-				onClick={() => setView(view === "projects" ? "chat" : "projects")}
-				aria-label={t("projects.title")}
+				onClick={toggleSidebarCollapsed}
+				aria-label={sidebarCollapsed ? t("sidebar.expand") : t("sidebar.collapse")}
 			>
-				<ProjectsIcon />
+				<PanelLeftIcon size={16} />
 			</button>
+			{/* 胶囊区（含拖拽排序）：flex-1 吃掉中间剩余宽度 */}
 			<div
-				ref={scrollerRef}
+				ref={attachScroller}
 				className="flex min-w-0 flex-1 items-center gap-1 overflow-x-scroll [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
 			>
+				{/* 空态提示（v8）：顶栏只放置顶会话，初学者很容易以为顶栏坏了；
+				   开关关掉时不提示（那是用户的明确选择，不是“空”） */}
+				{barSessionsVisible && barSessions.length === 0 && (
+					<span className="min-w-0 truncate pl-1 text-[12px] text-ink-faint">
+						{t("tabbar.pinnedOnlyHint")}
+					</span>
+				)}
 				<DndContext
 					sensors={sensors}
 					collisionDetection={closestCenter}
@@ -391,16 +347,17 @@ export function SessionTabBar() {
 					onDragEnd={({ active, over }: DragEndEvent) => {
 						endDrag();
 						if (over && active.id !== over.id) {
-							reorderSessions(String(active.id), String(over.id));
+							// v8：拖的是置顶表顺序（顶栏内容 = 置顶表），不再动 tabs.json
+							reorderPinned(String(active.id), String(over.id));
 						}
 					}}
 					onDragCancel={endDrag}
 				>
 					<SortableContext
-						items={orderedSessions.map((s) => s.sessionId)}
+						items={barSessions.map((s) => s.sessionId)}
 						strategy={horizontalListSortingStrategy}
 					>
-						{orderedSessions.map((session) => (
+						{barSessions.map((session) => (
 							<SessionTab
 								key={session.sessionId}
 								session={session}
@@ -430,33 +387,28 @@ export function SessionTabBar() {
 				</DndContext>
 			</div>
 			<UpdateButton />
-			{view !== "projects" && (
-				<button
-					type="button"
-					className="no-drag shrink-0 rounded-lg p-1.5 text-ink-dim transition-colors hover:bg-hover hover:text-ink"
-					onClick={() => {
-						// 只建内存 draft tab（空 tab 重启自动消失）；发送首条消息时才真正创建后端会话
-						createDraftSession();
-						setView("chat");
-					}}
-					aria-label={cwd ? t("tabbar.newSession") : t("tabbar.pickProjectFirst")}
-				>
-					<PlusIcon size={18} />
-				</button>
-			)}
+			<button
+				type="button"
+				className="no-drag shrink-0 rounded-lg p-1.5 text-ink-dim transition-colors hover:bg-hover hover:text-ink"
+				onClick={() => {
+					// 只建内存 draft tab（空 tab 重启自动消失）；发送首条消息时才真正创建后端会话
+					createDraftSession();
+				}}
+				aria-label={cwd ? t("tabbar.newSession") : t("tabbar.pickProjectFirst")}
+			>
+				<PlusIcon size={18} />
+			</button>
 			{/* diff 侧栏开关：新会话按钮之后，active 态底色区分 */}
-			{view !== "projects" && (
-				<button
-					type="button"
-					className={`no-drag relative shrink-0 rounded-lg p-1.5 transition-colors ${
-						diffSidebarOpen ? "bg-hover text-ink" : "text-ink-dim hover:bg-hover hover:text-ink"
-					}`}
-					onClick={toggleDiffSidebar}
-					aria-label={t("diff.toggle")}
-				>
-					<DiffIcon size={16} />
-				</button>
-			)}
+			<button
+				type="button"
+				className={`no-drag relative shrink-0 rounded-lg p-1.5 transition-colors ${
+					diffSidebarOpen ? "bg-hover text-ink" : "text-ink-dim hover:bg-hover hover:text-ink"
+				}`}
+				onClick={toggleDiffSidebar}
+				aria-label={t("diff.toggle")}
+			>
+				<DiffIcon size={16} />
+			</button>
 			{menu !== null && (
 				<ContextMenu anchor={menu.anchor} items={contextMenuItems(menu.sessionId)} onClose={closeMenu} />
 			)}
@@ -467,7 +419,7 @@ export function SessionTabBar() {
 					onCommit={(name) => {
 						// 先卸载浮层（退场动画已跑完），再落盘；失败只 toast，不回滚浮层
 						setRenaming(null);
-						submitRename(renaming.sessionId, name);
+						renameSession(renaming.sessionId, name);
 					}}
 					onCancel={() => setRenaming(null)}
 				/>

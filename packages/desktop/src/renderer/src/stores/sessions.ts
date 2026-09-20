@@ -1,4 +1,4 @@
-import type { AvailableModel, PermissionMode, SavedTabs, SessionMeta } from "@percho/shared";
+import type { AvailableModel, PermissionMode, SessionMeta } from "@percho/shared";
 import { messagesToUIMessages } from "@percho/shared";
 import { create } from "zustand";
 import { getPi } from "../api";
@@ -7,6 +7,7 @@ import { clampThinkingLevel } from "../lib/thinking";
 import { COMPOSER_FOCUS_EVENT, useDraftStore } from "./drafts";
 import { pushToast } from "./toasts";
 import { useTranscriptStore } from "./transcript";
+import { useUiPreferencesStore } from "./ui-preferences";
 
 /** 草稿会话 id 前缀：新会话 tab 的占位条目，只存在于 renderer 内存，后端永远不会看到 */
 export const DRAFT_SESSION_PREFIX = "draft:";
@@ -29,6 +30,32 @@ export function partitionSessionsByPin(
 	const pinnedList = sessions.filter((s) => pinned.has(s.sessionId));
 	if (pinnedList.length === 0) return sessions;
 	return [...pinnedList, ...sessions.filter((s) => !pinned.has(s.sessionId))];
+}
+
+/**
+ * 顶栏展示集（v8 定稿）：**置顶表驱动**——顶栏胶囊 = 置顶的会话（不管它的 tab 开没开）+ 未命名的 draft。
+ * 用户：顶栏之前是「打开的会话全进去」= 唯一的会话总表，胶囊越来越多；现在左栏承担总表，
+ * 顶栏只放真正需要盯的会话。
+ * - **不能只从 tabs 里筛**：会话被置顶、但 tab 已关（或本次启动没恢复）时，只筛 tabs 会把它藏掉，
+ *   用户会看到「已置顶却不在顶栏」——所以置顶会话的 meta 从 tabs → 历史两边找，点击时自动开。
+ * - 顺序 = `pinnedSessions` 自己的顺序（置顶即插队到最左，拖动排序改的也是它）。
+ * - **draft 例外**：未命名的新会话还没落盘、左栏历史里也查不到，不展示就彻底没地方能表示它；
+ *   发出首条消息转正后它就离开顶栏（要留在顶栏则置顶）。
+ * - 置顶表里查不到 meta 的 id（会话已删）直接跳过，不生成空胶囊。
+ */
+export function selectBarSessions(
+	tabs: readonly SessionMeta[],
+	pinnedSessions: readonly string[],
+	history: readonly SessionMeta[],
+): SessionMeta[] {
+	const byId = new Map<string, SessionMeta>();
+	for (const s of history) byId.set(s.sessionId, s);
+	// tabs 覆盖历史同名项：名称/状态以当前打开实例为准
+	for (const s of tabs) byId.set(s.sessionId, s);
+	const pinned = pinnedSessions.map((id) => byId.get(id)).filter((s): s is SessionMeta => s !== undefined);
+	const pinnedSet = new Set(pinnedSessions);
+	const drafts = tabs.filter((s) => isDraftSessionId(s.sessionId) && !pinnedSet.has(s.sessionId));
+	return [...pinned, ...drafts];
 }
 
 /**
@@ -55,6 +82,17 @@ async function loadSessionBundle(sessionId: string, opts?: { skipHistoryIfLive?:
 	t.setFollowUpQueue(sessionId, followUpQueue);
 	t.loadTodos(sessionId, todos);
 	applyBackendPermissionMode(sessionId, permissionMode);
+	// D7：本机记住过的档位盖过后端默认值（后端 mode 不落盘，重启/卸载重开后恒为 default）。
+	// 这里 await 而不是 fire-and-forget：保证「打开完就是正确档位」，验收才能确定性断言。
+	const remembered = useUiPreferencesStore.getState().sessionPermissionModes[sessionId];
+	if (remembered && remembered !== permissionMode) {
+		try {
+			await getPi().setPermissionMode({ sessionId, mode: remembered });
+			applyBackendPermissionMode(sessionId, remembered);
+		} catch (error) {
+			console.warn("恢复会话权限模式失败", error);
+		}
+	}
 }
 
 /** 后端真值写入本 map（default = 删 key，保持「缺 key = default」语义） */
@@ -142,28 +180,18 @@ async function optimisticSessionSetting(
 	}
 }
 
-/** 顶栏打开的会话持久化（重启恢复用）；由主进程写 userData/tabs.json，不依赖 renderer localStorage */
-function persistTabs(state: Pick<SessionsStore, "sessions" | "activeSessionId">): void {
-	try {
-		getPi()
-			.saveTabs({
-				tabs: {
-					files: [
-						...new Set(state.sessions.map((s) => s.sessionFile).filter((f): f is string => Boolean(f))),
-					],
-					activeFile: state.sessions.find((s) => s.sessionId === state.activeSessionId)?.sessionFile ?? null,
-				},
-			})
-			.catch((error) => {
-				console.error("tabs 持久化失败", error);
-				pushToast("warning", "toast.tabsSaveFailed", errText(error));
-			});
-	} catch (error) {
-		console.error("tabs 持久化失败", error);
-		pushToast("warning", "toast.tabsSaveFailed", errText(error));
-	}
+/**
+ * 记住「上次项目目录」（重启后启动页预填，用户不用重选项目）。
+ * 只写 cwd、**不恢复任何会话**（v10 启动纯空不变）；同值短路，避免切会话时频繁写 ui-state。
+ * 四个调用点 = 新建会话（发首条消息转正）/ 切会话 / 从历史打开 / 在选择器里选项目，
+ * 即「用户当前真的在用哪个项目」（选择器选过即表态，见 REVIEW 阶段 1 补丁）。
+ */
+function rememberCwd(cwd: string | null): void {
+	if (!cwd) return;
+	useUiPreferencesStore.getState().setLastCwd(cwd);
 }
 
+/** 顶栏打开的会话持久化（重启恢复用）；由主进程写 userData/tabs.json，不依赖 renderer localStorage */
 interface SessionsStore {
 	sessions: SessionMeta[];
 	activeSessionId: string | null;
@@ -176,22 +204,25 @@ interface SessionsStore {
 	trustVersion: number;
 	/** 按会话权限模式（缺 key = default；draft id 为 key 的条目是 renderer 内存态，转正时由 ensureSession 应用到后端） */
 	permissionModes: Record<string, PermissionMode>;
+	/**
+	 * 最近使用时刻（毫秒，内存策略 LRU 打点）：打开/新建/切走时更新，卸载/关闭时删表项。
+	 * 只活在本次进程（不落盘）：重启后一个会话都没打开，本来也没有 LRU 可言。
+	 */
+	lastUsedAt: Record<string, number>;
 	createSession: (cwd?: string, replaceDraftId?: string) => Promise<void>;
 	/** 新建草稿会话 tab：不触后端、不落盘（空 tab 重启后自动消失），发送首条消息时才用其 cwd 真正创建 */
 	createDraftSession: (cwd?: string) => void;
 	/** 设置新会话的目标项目目录；活跃 tab 是 draft 时同步更新其条目（切 tab 往返不丢选择） */
 	setDraftCwd: (cwd: string) => void;
 	switchSession: (sessionId: string) => void;
-	/** 拖拽排序顶栏胶囊：调整 sessions 数组顺序并落盘（tabs.json 的 files 本就保序，重启按新序恢复） */
-	reorderSessions: (fromId: string, toId: string) => void;
-	closeSession: (sessionId: string) => Promise<void>;
+	closeSession: (sessionId: string) => Promise<{ closed: boolean }>;
+	/** 自动卸载（内存策略用，见实现处注释；与 closeSession 行为一致） */
+	unloadSession: (sessionId: string) => Promise<{ closed: boolean }>;
 	openFromHistory: (filePath: string) => Promise<void>;
 	/** 在指定 assistant 消息处分叉：新会话以新 tab 打开并切换过去（原会话保留原样）；成功返回新 sessionId */
 	forkSession: (ref: { entryId?: string; text?: string }) => Promise<string | undefined>;
 	/** 撤回一条用户消息：会话回退到该消息之前，文本/图片放回输入框草稿继续编辑 */
 	recallMessage: (ref: { entryId?: string; text?: string; timestamp?: number }) => Promise<void>;
-	/** 重启后恢复上次打开的顶栏会话 */
-	restoreTabs: () => Promise<void>;
 	/** 自动命名等事件带来的标题变更 */
 	updateSessionName: (sessionId: string, name: string | undefined) => void;
 	pickDirectory: () => Promise<void>;
@@ -211,6 +242,7 @@ export const useSessionsStore = create<SessionsStore>((set, get) => ({
 	lastUsedThinkingLevel: "medium",
 	trustVersion: 0,
 	permissionModes: {},
+	lastUsedAt: {},
 
 	createSession: async (cwd, replaceDraftId) => {
 		const targetCwd = cwd ?? get().cwd;
@@ -234,9 +266,10 @@ export const useSessionsStore = create<SessionsStore>((set, get) => ({
 				permissionModes: replaceDraftId
 					? withPermissionMode(state.permissionModes, replaceDraftId, "default")
 					: state.permissionModes,
+				lastUsedAt: { ...state.lastUsedAt, [meta.sessionId]: Date.now() },
 			}));
 			useTranscriptStore.getState().resetSession(meta.sessionId);
-			persistTabs(get());
+			rememberCwd(targetCwd);
 		} catch (error) {
 			// 失败时 draft tab 保留，用户重试即可；toast 提示（非会话内容，不残留）
 			console.error("创建会话失败", error);
@@ -270,8 +303,8 @@ export const useSessionsStore = create<SessionsStore>((set, get) => ({
 			sessions: [...state.sessions, draft],
 			activeSessionId: draft.sessionId,
 			cwd: targetCwd,
+			lastUsedAt: { ...state.lastUsedAt, [draft.sessionId]: Date.now() },
 		}));
-		// 不 persistTabs：draft 无 sessionFile 本就会被过滤，tabs.json 保持指向最近的真实会话
 	},
 
 	setDraftCwd: (cwd) => {
@@ -293,14 +326,20 @@ export const useSessionsStore = create<SessionsStore>((set, get) => ({
 			}
 			return { cwd };
 		});
+		// 在选择器里选过项目 = 用户明确表态要用它：立刻记住（典型场景：首启选了项目、还没发消息就退出）
+		rememberCwd(cwd);
 	},
 
 	switchSession: (sessionId) => {
 		set((state) => {
 			const session = state.sessions.find((s) => s.sessionId === sessionId);
-			return { activeSessionId: sessionId, cwd: session?.cwd ?? state.cwd };
+			return {
+				activeSessionId: sessionId,
+				cwd: session?.cwd ?? state.cwd,
+				lastUsedAt: { ...state.lastUsedAt, [sessionId]: Date.now() },
+			};
 		});
-		// 懒加载兑底（D4）：目标会话无 transcript 数据时补拉四件套（restoreTabs 恢复失败的 tab、
+		// 懒加载兜底（D4）：目标会话无 transcript 数据时补拉四件套（从历史打开、
 		// 事件桥断连期间的切换等都经此路径自愈；已有数据零成本短路）
 		if (!isDraftSessionId(sessionId) && useTranscriptStore.getState().bySession[sessionId] === undefined) {
 			void loadSessionBundle(sessionId).catch((error) => {
@@ -308,8 +347,8 @@ export const useSessionsStore = create<SessionsStore>((set, get) => ({
 				pushToast("warning", "toast.sessionOpenFailed", errText(error));
 			});
 		}
+		rememberCwd(get().cwd);
 		// 切到 draft 不落盘：tabs.json 保持指向最近的真实会话（draft 重启后本就会消失）
-		if (!isDraftSessionId(sessionId)) persistTabs(get());
 	},
 
 	updateSessionName: (sessionId, name) =>
@@ -317,31 +356,20 @@ export const useSessionsStore = create<SessionsStore>((set, get) => ({
 			sessions: state.sessions.map((s) => (s.sessionId === sessionId ? { ...s, name } : s)),
 		})),
 
-	reorderSessions: (fromId, toId) => {
-		const { sessions } = get();
-		const from = sessions.findIndex((s) => s.sessionId === fromId);
-		const to = sessions.findIndex((s) => s.sessionId === toId);
-		if (from < 0 || to < 0 || from === to) return;
-		const next = [...sessions];
-		const [moved] = next.splice(from, 1);
-		if (!moved) return;
-		next.splice(to, 0, moved);
-		set({ sessions: next });
-		// draft 无 sessionFile 会被过滤，落盘的是真实会话的新视觉顺序
-		persistTabs(get());
-	},
-
 	closeSession: async (sessionId) => {
 		const isDraft = isDraftSessionId(sessionId);
 		// draft 没有后端会话，纯本地移除
 		if (!isDraft) {
 			try {
-				await getPi().closeSession({ sessionId });
+				const { closed } = await getPi().closeSession({ sessionId });
+				// 后端拒绝（agent 在跑 / 等审批）：**渲染层状态必须原样保留** —— 事务语义，
+				// 不能出现「后端会话还在、前端条目已消失」的半个动作（内存策略也会看走眼）
+				if (!closed) return { closed: false };
 			} catch (error) {
 				// 会话关闭失败：UI 状态保留（用户可重试），显形不静默（曾「点了没反应」）
 				console.error("关闭会话失败", error);
 				pushToast("warning", "toast.closeFailed", errText(error));
-				return;
+				return { closed: false };
 			}
 		}
 		useTranscriptStore.getState().resetSession(sessionId);
@@ -355,10 +383,19 @@ export const useSessionsStore = create<SessionsStore>((set, get) => ({
 				: state.cwd;
 			// 权限模式随会话销毁归零（后端 holder 同点位清理；draft 态本就纯 renderer）
 			const permissionModes = withPermissionMode(state.permissionModes, sessionId, "default");
-			return { sessions, activeSessionId, cwd, permissionModes };
+			// LRU 打点随会话一起清（表项留着就是泄漏：只会积攒不再打开的 id）
+			const lastUsedAt = { ...state.lastUsedAt };
+			delete lastUsedAt[sessionId];
+			return { sessions, activeSessionId, cwd, permissionModes, lastUsedAt };
 		});
-		if (!isDraft) persistTabs(get());
+		return { closed: true };
 	},
+
+	/** 自动卸载（内存策略专用）：语义与 closeSession 完全一致，只是把调用点区分开——
+	 *  「用户主动关/删」走 closeSession，「内存策略判定该卸」走这里（便于日后单独调整任一侧）。
+	 *  受保护会话不会走到这里（保护判定在 lib/session-gc.ts 的 isProtected）；
+	 *  返回 `closed=false` 表示后端拒绝（竞态：策略判定后它恰好又开始跑了）。 */
+	unloadSession: (sessionId) => get().closeSession(sessionId),
 
 	openFromHistory: async (filePath) => {
 		try {
@@ -367,11 +404,13 @@ export const useSessionsStore = create<SessionsStore>((set, get) => ({
 				sessions: [...state.sessions.filter((s) => s.sessionId !== meta.sessionId), meta],
 				activeSessionId: meta.sessionId,
 				cwd: meta.cwd,
+				lastUsedAt: { ...state.lastUsedAt, [meta.sessionId]: Date.now() },
 			}));
+			// 先记 cwd 再拉数据：即便随后装载失败（下面的 catch），用户「在用哪个项目」的事实也已经成立
+			rememberCwd(meta.cwd);
 			// 运行中子会话的事件已按其 sessionId 实时转发；保留已有流式态，
 			// 否则会在点击卡片时把 agent_start 建立的进度视图重置为静态历史。
 			await loadSessionBundle(meta.sessionId, { skipHistoryIfLive: true });
-			persistTabs(get());
 		} catch (error) {
 			console.error("打开会话失败", error);
 			pushToast("warning", "toast.sessionOpenFailed", errText(error));
@@ -389,7 +428,6 @@ export const useSessionsStore = create<SessionsStore>((set, get) => ({
 				activeSessionId: meta.sessionId,
 			}));
 			await loadSessionBundle(meta.sessionId);
-			persistTabs(get());
 			return meta.sessionId;
 		} catch (error) {
 			console.error("分叉会话失败", error);
@@ -417,46 +455,6 @@ export const useSessionsStore = create<SessionsStore>((set, get) => ({
 			console.error("撤回消息失败", error);
 			pushToast("warning", "toast.recallFailed", errText(error));
 		}
-	},
-
-	restoreTabs: async () => {
-		const saved: SavedTabs | null = await getPi().loadTabs();
-		if (!saved || saved.files.length === 0) return;
-		const opened: SessionMeta[] = [];
-		const seen = new Set<string>();
-		let activeId: string | null = null;
-		for (const file of saved.files) {
-			try {
-				const meta = await getPi().openSession({ filePath: file });
-				if (seen.has(meta.sessionId)) continue;
-				seen.add(meta.sessionId);
-				opened.push(meta);
-				if (meta.sessionFile === saved.activeFile) activeId = meta.sessionId;
-			} catch {
-				// 会话文件已被删除等：跳过
-			}
-		}
-		// 每个会话三件套并行取（原先 3×N 次串行往返，首启时长期占住主线程 → 开屏掉帧）
-		await Promise.all(
-			opened.map(async (meta) => {
-				try {
-					await loadSessionBundle(meta.sessionId);
-				} catch {
-					// 单会话数据取不到不影响其它 tab 恢复
-				}
-			}),
-		);
-		if (opened.length === 0) return;
-		const lastOpened = opened[opened.length - 1];
-		if (!lastOpened) return;
-		set((state) => {
-			const existing = state.sessions.filter((s) => !opened.some((o) => o.sessionId === s.sessionId));
-			const sessions = [...existing, ...opened];
-			const activeSessionId = activeId ?? lastOpened.sessionId;
-			const cwd = sessions.find((s) => s.sessionId === activeSessionId)?.cwd ?? null;
-			return { sessions, activeSessionId, cwd };
-		});
-		persistTabs(get());
 	},
 
 	pickDirectory: async () => {
@@ -547,6 +545,8 @@ export const useSessionsStore = create<SessionsStore>((set, get) => ({
 		set((state) => ({ permissionModes: withPermissionMode(state.permissionModes, sessionId, mode) }));
 		try {
 			await getPi().setPermissionMode({ sessionId, mode });
+			// D7：IPC 成功才记（失败回滚不记）；传 default 则会删键
+			useUiPreferencesStore.getState().rememberPermissionMode(sessionId, mode);
 		} catch (error) {
 			set((state) => ({ permissionModes: withPermissionMode(state.permissionModes, sessionId, previous) }));
 			console.error("切换权限模式失败", error);

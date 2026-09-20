@@ -38,6 +38,15 @@
 | 右键菜单贴边溢出视口、滚动后浮层脱锚 | 四 · 右键菜单定位与脱锚（2026-09-17） |
 | Google Vertex 填了 key 仍 401「API keys are not supported by this API」 | 二 · Vertex 只支持 ADC/服务账号（api_key 路径必败，桥接层已剔除 api-key 选项） |
 | 跨会话频道里对方迟迟不查收、回复总晚一整轮（实施在改文件、review 却在跑回归） | 二 · sendUserMessage 默认 followUp = 等对方 turn 结束才投递（2026-09-17） |
+| 逐帧截图全是空白/同一张陈旧图、rAF 像停摆 | 四 · 合成器空帧与「暂停动画不出新帧」（2026-09-19 补） |
+| 验证脚本读出「旋转没生效」（`transform: none`）但界面明明转了 | 四 · Tailwind 4 的 `rotate-*` 走 `rotate` 属性不是 `transform`（2026-09-19） |
+| 脚本里手动删了 React 的节点，随后整页「界面出现异常」（removeChild 报错） | 四 · 别手拆 React 管理的 DOM（含 portal 浮层）（2026-09-19） |
+| 用渲染层 JS 堆证明「卸载会话能省内存」，结论反了 | 四 · 渲染层的大头是模块级基建，不是会话数据（2026-09-20） |
+| 左栏有图钉、顶栏却没有胶囊（「置顶了但不显示」） | 四 · 顶栏内容要由置顶表驱动，别从 tabs 里筛（2026-09-19） |
+| 后端日志出现 `context-evaporation` / stale ctx 报错 | 二 · 删除正在跑的会话会留 stale ctx（既有现象，2026-09-20 记录） |
+| hover 才现的控件刚截完图就点不到、点击静默落空 | 四 · 鼠标事件 + `:hover` → 补「截图会清掉 hover」（2026-09-19） |
+| 改完自定义 hook 后整页报「Rendered fewer hooks than expected」 | 四 · HMR 改 hook 数量会假报错（2026-09-19） |
+| 清理 dev 进程后端口还占着、CDP 连上但页面全空 | 五 · `pkill -f` 杀 Electron 会留下孤儿 main（2026-09-19） |
 
 ## 一、事故复盘（含可复用诊断手法）
 
@@ -167,6 +176,70 @@ pi SDK 必须声明进 `packages/desktop/package.json` dependencies（electron-b
 
 做法：用 CDP `Input.dispatchMouseEvent({ type: "mouseMoved", x, y })` 派发真实鼠标移动（元素中心坐标，视口 CSS px），撤开时先 `Emulation.setFocusEmulationEnabled({ enabled: true })`（否则失焦/遮挡态不更新 hover）。可参考临时脚本 `.local/dev-logs/hover-check.mjs`（打印 hover 前后的 `matches(':hover')` + 计算样式并截图）。
 
+**2026-09-19 补（左栏项目行的「⋯」实测，连踩三次才看清）**：
+
+1. **`Page.captureScreenshot` 会把 hover 状态清掉**：截完图 `:hover` 链变空、目标元素的 `pointer-events` 回落 `none`（截图前读到的 `auto` 不再成立）。于是「hover → 截图 → 接着点它」的顺序会**静默落空**（点击落在 `pointer-events: none` 上，不报错也不生效）。
+2. **对同一坐标的 `mouseMoved` 不会重算 hover**：截图后想恢复 hover，直接再发一次相同坐标无效 —— 必须**先挪开一点（如 −60px）再挪回来**。
+3. `mousePressed` 与 `mouseReleased` 之间**贴太紧偶发不合成 `click`**，验证点击行为时中间留 ~70ms 更稳。
+
+### CDP 驱动 Electron dev 应用的能力边界（2026-09-19，左栏任务实测）
+
+这几条决定「哪些 UI 行为能用脚本验、哪些必须人工」：
+
+- **`Browser.setWindowBounds` / `Browser.getWindowForTarget` 在 Electron 下未实现**（method not found）。想真改窗口尺寸就用页面里的 `window.resizeTo(w, h)` —— Electron 支持，`window.innerWidth` 会真的变（本任务用它验了右栏 push ↔ 浮层的 1100 / 1000 / 900 三档）。
+- **CDP 注入的鼠标事件不会驱动 `-webkit-app-region: drag` 的窗口拖拽**：程序化拖不动窗口（连改造前就存在的顶栏拖拽区也拖不动），所以「无边框窗口的自定义拖拽带还能不能拖」**只能人工确认**；脚本只能验到 `getComputedStyle(el).webkitAppRegion === "drag"` 且元素尺寸非零。
+- `Input.dispatchMouseEvent` 坐标是**视口 CSS px**；`Page.captureScreenshot` 的 `clip` 也是 CSS px，输出像素 = clip × DPR。
+
+### Tailwind 4 的 `rotate-*` 走 CSS `rotate` 属性，不是 `transform`（2026-09-19）
+
+症状：验证脚本用 `getComputedStyle(svg).transform` 判断「展开箭头有没有转 90°」，拿到 `"none"`、推断「样式没生效」——但截图里箭头明明是朝下的。
+
+原因：Tailwind 4 的 `rotate-90` 编译成 **`rotate: 90deg`**（新式独立变换属性），`translate-*` / `scale-*` 同理，所以老的 `transform` 读写看不到它们；`transition-transform` 也会展开成 `transition: transform, translate, scale, rotate`。
+
+做法：读 `getComputedStyle(el).rotate`（或直接断言 `transitionProperty` 含 `rotate`）。**同理**：判断元素是否位移别只看 `transform`，`translate-*` 也一样。
+
+### 别手拆 React 管理的 DOM：`removeChild` 暴雷（含 portal 浮层）（2026-09-19）
+
+症状：脚本里为了「关掉菜单」写了 `document.querySelector('[role="menuitem"]').parentElement.remove()`，几秒后整页被错误边界接管，报 `Failed to execute 'removeChild' on 'Node': The node to be removed is not a child of this node`（Percho 界面显示「界面出现异常」），于是后续所有量值全部落空、极易当成自己刚改的代码把页面治崩了。
+
+做法：**只走组件自己的关闭路径**（`window.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape" }))`、或派发 `pointerdown` 到 body 让点外关闭生效）。同理：React portal（右键菜单 / 确认弹窗 / toast）里的节点一律不手动增删；要重置页面直接 `Page.reload`。
+
+### 删除正在跑的会话会在后端留 stale ctx 报错（2026-09-20，既有现象）
+
+症状：对一个**正在跑 agent** 的会话执行「删除会话」，后端日志会出现 `context-evaporation` / stale ctx 一类报错。原因：`deleteSession` = `closeSession()` + 删文件，**不先 `abort()`**（内存策略那轮核实过：`PiBackend.deleteSession` → `disposeSession` + unlink，没有 abort 步骤）。后果仅限日志噪音（会话确实被删掉了），但排查别的上下文蒸发问题时会误导。
+
+现状：**属既有行为、未修**（删除是用户明确意图，行为本身是对的；缺的是先 abort 再 dispose 这一步）。要修的话：删除路径显式 `await entry.session.abort()` 再 `disposeSession`。
+
+### 顶栏内容 = 置顶表驱动，别从 tabs 里筛（2026-09-19）
+
+症状：把「顶栏只显示置顶会话」实现成 `tabs.filter(s => pinned.has(s.id))` 后，用户会碰到 **左栏会话行有图钉、顶栏却没有那个胶囊**（我验收时真踩到）：只要那个会话的 tab 被叉叉关过（或本次启动没恢复它），它就不在 `tabs` 里，于是被悄悄藏掉——“置顶”看起来失效了。
+
+做法：置顶表的 id **逐个到 `tabs` → 历史（`allSessions`）里取 meta**（tabs 优先，名称/状态更新），取不到才跳过（会话已删）；点击时 `openSession` 一条路兼容“已打开就切 / 未打开就从历史开”。同理：叉叉（关 tab）只在“确实有 tab”时才该显示，否则就是假入口。
+
+本轮同时删掉了旧模型里“置顶顺带把会话挪到 tabs 最前”这套副作用（顶栏顺序改由 `pinnedSessions` 表达，`reorderSessions` 已无引用，一并删）。
+
+### 渲染层 JS 堆的大头是模块级基建，不是会话数据（2026-09-20）
+
+背景：要给「会话常驻内存」做自动卸载，先验「卸载后渲染层 JS 堆能不能降」。结论：**降不下来——但原因不在会话**。
+
+实测（dev，开 6 个最重会话 273/266/67/66/64/64 条）：打开时堆 105MB → 6 个全卸载 + 强制 GC 后 **97–99MB**，只回收 7–9MB（8%）。逐个边际：273 条 +12MB、266 条 **+4MB**、第 4 个之后 **0~1MB**。堆快照聚合（`.local/tmp/heap-snapshot.mjs` + `aggregate-heap.mjs`）显示全卸载后堆里还剩：
+
+- **`JSArrayBufferData` +83.7MB** —— markstream 内置 shiki/oniguruma **wasm** 堆；
+- `ExternalStringData` +22MB、`array(object elements)` +12MB；
+- 大量 textmate 语法对象（`CaptureRule` / `BeginEndRule` / `MatchRule` / `_RegExpSource`）与 base64 语法/sourcemap 字符串。
+
+这些是**代码高亮 / 编辑器基建**（shiki/oniguruma + mermaid + 懒加载 monaco），首次渲染代码块/图表时加载后常驻**模块级单例**，与「开着哪些会话」无关。
+
+教训：**别用渲染层的 `performance.memory` 判断「会话内存」的收益**——先取堆快照把「基建」与「会话数据」分开；真要量化收益，看**主进程 RSS**（本项目的 pi SDK 会话 ≈ **+31MB/会话**：8 个会话 251 → 498MB，全部 dispose 后回落 167–320MB）。
+
+同批已知未定位项（另案）：三轮「开 6 → 全关 + 强制 GC」后堆仍缓慢上爬 ~5MB/轮，疑似 markstream 内容缓存 / React 侧残留。
+
+### HMR 下改自定义 hook 的 hook 数量会假报错（2026-09-19）
+
+症状：改动一个自定义 hook（如给 `useExpandedGroups` 减/加一个 `useState`）后，整页被错误边界接管，控制台报「Rendered fewer hooks than expected. This may be caused by an accidental early return statement」，栈指向**使用该 hook 的组件**（如 `Sidebar`）而不是 hook 自身。
+
+原因：Fast Refresh 用新模块重渲染已有组件实例，hook 序号与上一次渲染对不上 —— **这是 HMR 假象，不是真 bug**（reload 一次即好）。判断依据：错误只在热更新那一刻出现、刷新后不复现。别为此改业务代码，先 reload。
+
 ### Zustand selector 必须返回稳定引用（模块级 `EMPTY_ENTRY`）
 
 内联 `?? []` 新数组会触发 React error #185 无限渲染（与 0.5.0 事故的 effect 自激是两个不同成因，症状相同）。
@@ -178,6 +251,12 @@ pi SDK 必须声明进 `packages/desktop/package.json` dependencies（electron-b
 ### CDP 小区域 clip 截图偶发连续 blank，全窗截图正常（2026-09-06，permission-mode 手测）
 
 症状：`Page.captureScreenshot` 带 `clip`（如 composer 底栏 560×95 的小区域）时偶发 4 次重试全 blank；同帧全窗无 clip 截图正常。与 AGENTS.md 已记的「偶发整帧空白」同类合成器瞬时状态，但**小 clip 更易触发且重试也救不回**。对策：能用全窗截图就全窗（事后裁）；必须要小区域时改用 DOM 计算样式断言（`getComputedStyle` 颜色/位置）代替像素级验证，别在重试上耗时。
+
+**2026-09-19 补（左栏任务实测，找到主因与一套稳的做法）**：
+
+- **主因是窗口被遮挡/未聚焦**：此时合成器给的是陈旧或整帧空白的表面，脚本里以 rAF 为等待条件会**永久挂住**（页面 CPU 却是 0）。开场先 `Emulation.setFocusEmulationEnabled({ enabled: true })` 就能恢复 rAF 与常规截图（本任务 12 帧逐帧 + 十几张验收截图全部零空白）。
+- **动画被 `pause()` 后合成器不再产新帧**：这时 `fromSurface: true`（默认）与 `false` 拿到的分别是**同一张空白/陈旧图**，逐帧 scrub（pause + `currentTime = t`）**拿不到画面**——样式确实在变（`getComputedStyle` 每帧不同），像素却不变。另外 `fromSurface: false` 会**忽略 `clip`**（只能拿全窗）。
+- **要逐帧就「按 CSS 参数复现每一步」**：读 `transition-duration / timing-function / delay` 与两端取值，按缓动函数算出该时刻的 `width / opacity / transform`，关掉过渡后写成 inline style 再截 —— 每一步都是真实 CSS 值的真实渲染，且不暂停任何动画（合成器照常出帧）。参考实现：`scripts/shoot-sidebar.mjs`（左栏 240↔0 开合，双向 24 帧）。
 
 ### markstream fade 的临时合成层 = 整个 Markdown 区域随流闪烁（2026-09-05 初修，2026-09-08 根治）
 
@@ -301,6 +380,27 @@ pi SDK 必须声明进 `packages/desktop/package.json` dependencies（electron-b
 - `preventDefault()` 在 `contextmenu` 里必写（否则同时弹系统菜单）；dnd-kit 的 `PointerSensor` 只认主键，右键不会误触发拖拽。
 
 ## 五、工程纪律
+
+### 别用 `npm run lint | tail -2` 判断「lint 通过」（2026-09-20）
+
+症状：本地看 `npm run lint | tail -2` 只见 "No fixes applied." + "Checked N files"，判定全绿 → 推 PR → **CI 在 `Run npm run lint` 立刻挂**，报 3 个 **format** 错误（多余空行、超长行）。
+
+两个原因叠在一起：① biome 的「Found N errors」打在输出**中部**，`tail` 正好看不到；② **管道会把 `$?` 换成 `tail` 的（恒为 0）**，退出码再也反映不了 lint 结果。
+
+做法：`npm run lint > /tmp/lint.log 2>&1; echo "exit=$?"`，**exit code 与 `Found ... errors` 一起判**；PR 前至少跑「lint + typecheck + test + build」四件套（**format 错误 test 抓不到**）。另外 `npm run lint -- --write` 自动修完之后，若又用手写/脚本插入了新代码（本会话就是 python 插测试块），那些新代码仍是未格式化状态 → 改完要重跑并以 exit code 复核。
+
+### `pkill -f` 杀 Electron 会留下孤儿 main 进程（2026-09-19）
+
+症状：用 `pkill -f "MacOS/Electron ."` 这类**带通配的匹配**清理 dev 实例后，renderer/GPU 等 helper 被杀掉、main 进程却继续活着 —— 它仍占着调试端口（9224）与 dev userData，表现为「CDP 连得上、`document.body.innerHTML` 却是空字符串」，极易误判成代码把页面渲崩了。
+
+做法：按**项目路径**精确匹配再杀，一次清干净：
+
+```sh
+pgrep -f "percho/node_modules/electron" | xargs -r kill -9
+pgrep -f "electron-vite" | xargs -r kill -9
+```
+
+另外同时起两个 dev 实例时，只有**先启动**那个能绑上调试端口（后起的静默失败）；排查前先 `ps -eo pid,lstart,command | grep MacOS/Electron` 数一下进程。
 
 ### 绝不打印/提交 API key
 

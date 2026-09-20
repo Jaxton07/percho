@@ -80,4 +80,13 @@ describe("icons/index.tsx 内联 SVG path 数据", () => {
 			.filter(Boolean);
 		expect(errors).toEqual([]);
 	});
+
+	// PanelLeftIcon 是 DiffIcon 的镜像（设计稿画板 D）：竖线 24−14.2=9.8，两侧留白对称。
+	// 两个图标各只有一条 path（竖线），直接断言数值防手改漂移
+	it("PanelLeftIcon 竖线为 DiffIcon 的镜像值（24−14.2=9.8）", () => {
+		const diffPath = source.match(/DiffIcon[\s\S]*?<path d="([^"]+)"/)?.[1];
+		const panelPath = source.match(/PanelLeftIcon[\s\S]*?<path d="([^"]+)"/)?.[1];
+		expect(diffPath).toBe("M14.2 3.8v16.4");
+		expect(panelPath).toBe("M9.8 3.8v16.4");
+	});
 });

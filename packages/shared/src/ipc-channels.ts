@@ -17,7 +17,6 @@ import type {
 	PermissionMode,
 	QueuedMessages,
 	QuotaInfo,
-	SavedTabs,
 	SessionMessage,
 	SessionMeta,
 	SessionStats,
@@ -80,7 +79,9 @@ export const SESSION_CHANNELS = {
 	/** 跨全部项目目录枚举历史会话（项目管理页用，含活跃） */
 	listAllSessions: ch("session:listAll")<void, SessionMeta[]>(),
 	openSession: ch("session:open")<{ filePath: string }, SessionMeta>(),
-	closeSession: ch("session:close")<{ sessionId: string }, void>(),
+	// closed=false = 后端拒绝（agent 正在跑/等审批，见 PiBackend.closeSession 的 isStreaming 守卫）；
+	// 没有该会话（已关/从未打开）也算 closed=true（幂等「它就是没在跑」）
+	closeSession: ch("session:close")<{ sessionId: string }, { closed: boolean }>(),
 	/** 删除会话（含磁盘 jsonl 文件，不可恢复） */
 	deleteSession: ch("session:delete")<{ sessionId: string; sessionFile?: string }, void>(),
 	/** 发送消息；images 为随消息附带的图片（base64） */
@@ -246,9 +247,7 @@ export const APP_CHANNELS = {
 	/** 日常空间工作台目录（懒创建后返回；日常会话的固定 cwd） */
 	getDailyDir: ch("app:getDailyDir")<void, string>(),
 	/** 读取持久化的顶栏 tabs（无数据返回 null） */
-	loadTabs: ch("tabs:load")<void, SavedTabs | null>(),
 	/** 持久化顶栏 tabs（主进程写 userData/tabs.json） */
-	saveTabs: ch("tabs:save")<{ tabs: SavedTabs }, void>(),
 	/** 读取持久化 UI 状态（上次使用的模型/思考级别/主题/背景；无数据返回 null） */
 	loadUiState: ch("uiState:load")<void, UiState | null>(),
 	/** 持久化 UI 状态（主进程合并写入 userData/ui-state.json，传补丁即可） */
