@@ -47,6 +47,10 @@
 | hover 才现的控件刚截完图就点不到、点击静默落空 | 四 · 鼠标事件 + `:hover` → 补「截图会清掉 hover」（2026-09-19） |
 | 改完自定义 hook 后整页报「Rendered fewer hooks than expected」 | 四 · HMR 改 hook 数量会假报错（2026-09-19） |
 | 清理 dev 进程后端口还占着、CDP 连上但页面全空 | 五 · `pkill -f` 杀 Electron 会留下孤儿 main（2026-09-19） |
+| 组里最后一个展开的项目折不掉、切会话又自己展开（空数组身兼两义） | 四 · 空数组不能同时当「未初始化」与「有效空值」（2026-09-20） |
+| 打开模型选择器后整页向左偷跑、左栏与顶栏左侧按钮被挤/裁切 | 四 · absolute 弹层越界 + autoFocus = 整页横向偷跑（2026-09-20） |
+| CDP 量测得出「弹层在视口内、也没滚动」但界面明明错位（量错元素） | 四 · 同章节「量测三纪律」（2026-09-20） |
+| 量测脚本报「draft 没进左栏」，实际是我的选择器点到了分组头 | 四 · 同章节「量测三纪律」→ 侧栏行选择器（2026-09-20） |
 
 ## 一、事故复盘（含可复用诊断手法）
 
@@ -218,6 +222,30 @@ pi SDK 必须声明进 `packages/desktop/package.json` dependencies（electron-b
 
 本轮同时删掉了旧模型里“置顶顺带把会话挪到 tabs 最前”这套副作用（顶栏顺序改由 `pinnedSessions` 表达，`reorderSessions` 已无引用，一并删）。
 
+### 空数组不能同时当「未初始化」与「有效空值」（2026-09-20，sidebar-draft-picker-fixes）
+
+症状：左栏「当前项目是最后一个展开组时，把它折了会立即又展开」；切会话/重渲染也会“自己弹回来”。
+
+根因：展开态只有一个字段 `expandedGroups: string[]`，而推导层把它写成 `expandedGroups.length > 0 ? expandedGroups : defaultExpandedKeys`——**`[]` 被当成“用户还没开合过”**。于是用户真把最后一组折了（存 `[]`）后，下一次派生又回退到默认集（当前会话所在组），折叠永远存不住。同类陷阱：将来任何一个“空集合 = 无操作”的存储字段都会重踩。
+
+修法：**加显式的“用户动过”位**（`expandedGroupsTouched`，shared UiState + main normalize 迁移 + store 单补丁原子写两字段）——`false` 才走默认推断，`true` 时 `[]` 就是“全部折叠”。迁移规则：旧文件缺该字段时按现有记录是否非空推断（非空 ≈ 已操作）。
+
+顺带一并修掉的同源问题：`toggleExpandedGroup(current, key, defaults)` 旧实现用 `current.length > 0 ? current : defaults` 当起点，**全部折叠后再点开一个组会把默认集（当前会话所在组）一起拉出来**——起点同样必须由 touched 位决定（参数化后补了用例）。
+
+### absolute 弹层越界 + autoFocus = 整页横向偷跑（2026-09-20，sidebar-draft-picker-fixes）
+
+症状（用户报）：打开 composer 的模型选择器后，**整页向左偏移**，左栏与顶栏左侧按钮被挤压/裁切（实测顶栏最左按钮 left 从 80 被推到 72，窄窗口 44.5）。
+
+量测（dev + CDP，1100/900/700px 窗口均复现）：弹层 `left-0 w-72` 从按钮左缘向右展开 → 面板右缘越出视口约 12px；搜索框 `autoFocus` 后 Chromium 会把聚焦元素滚进视口，**被滚的容器是 `#root`**（`#root.scrollLeft` 0 → 8/35.5）。`html, body, #root { overflow: hidden }` **拦不住程序性滚动**——它只挡用户滚动，所以“有 overflow:hidden 就不会跑”是错的假设。
+
+修法：弹层改成贴着触发按钮的**另一侧**展开（`right-0`），让矩形落在视口内（659→947 < 1100）；修后三处根 scrollLeft 恒 0、左栏宽恒 240、顶栏按钮零位移。若矩形仍放不下，才考虑 `place-menu.ts` 那套“先渲染再量、越界翻转”的浮层定位（issue #55 方案），**不要只加 overflow:hidden 或靠 clip**。
+
+**量测三纪律**（本次都踩过，会造成假绿/假红）：
+
+1. **selector 要限定作用域**：composer 里 tooltip 也是 `div.absolute.bottom-full`（宽 157 vs 弹层 288），全局 `querySelector` 会把 tooltip 当弹层面，得出“在视口内、没滚动”的假绿；必须取**触发按钮的兄弟节点**。
+2. **扫多档窗口宽**：1100px 下越界 11.8px 恰好勉强可看，900/700px 才明显；只看默认尺寸容易放过。`window.resizeTo(w,h)` 在 Electron dev 里可用（`Browser.setWindowBounds` 未实现）。另外 mvp 窗口 `minWidth: 640`，扫到 700 就够了。
+3. **侧栏行不能按标题分辨**：分组头（`h-[34px]`）与会话行（`h-[31px]`）**都带 title 且文字相同**，按文本找会把分组头当会话行（本次真误点了分组头 → 把项目组折了 → 误判“draft 没进左栏”）。会话行用 `className.includes("h-[31px]")`；两者都拿不准时，优先拿 store 状态（页面内 `await import("/src/stores/*.ts")` 拿到的是应用在用的同一个模块实例）来交叉验证，别只信 DOM 推断。
+
 ### 渲染层 JS 堆的大头是模块级基建，不是会话数据（2026-09-20）
 
 背景：要给「会话常驻内存」做自动卸载，先验「卸载后渲染层 JS 堆能不能降」。结论：**降不下来——但原因不在会话**。
@@ -380,6 +408,14 @@ pi SDK 必须声明进 `packages/desktop/package.json` dependencies（electron-b
 - `preventDefault()` 在 `contextmenu` 里必写（否则同时弹系统菜单）；dnd-kit 的 `PointerSensor` 只认主键，右键不会误触发拖拽。
 
 ## 五、工程纪律
+
+### renderer 单测跑在 node 环境：测不了 i18n 与返回 JSX 的模块函数（2026-09-20）
+
+症状：给 `session-menu.test.ts` 加一条“draft 菜单只有一项”用例后，整个测试文件报 `TypeError: Cannot read properties of undefined (reading 'getItem')`（`i18n/index.ts` 的 `detectLanguage` 读 `localStorage`），改成不 import i18n 后变成 `React is not defined`（但 builder 返回的 JSX 用的是自动 runtime，模块里没 `import React`）。
+
+原因：本仓 vitest 无 config（`electron.vite.config.ts` 不被 vitest 读取），环境是默认的 **node**：无 DOM/localStorage，且 esbuild 把 `.tsx` 编译成 `React.createElement`（classic）→ 一调就炸。
+
+对策（本期采用）：**把决策抽成不碰 JSX 的纯函数再测**（如 `sidebarMenuKind()`、`discardDraft()`），JSX 菜单项本身交给 CDP 手测（真跑一遍比单测更接近用户行为）。若真需要渲染测试，得单独引入 jsdom + `esbuild: { jsx: "automatic" }`（新增 `packages/desktop/vitest.config.ts`），**别为一个 builder 就改全局测试环境**。
 
 ### 别用 `npm run lint | tail -2` 判断「lint 通过」（2026-09-20）
 
