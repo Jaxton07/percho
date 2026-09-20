@@ -411,9 +411,9 @@ pi SDK 必须声明进 `packages/desktop/package.json` dependencies（electron-b
 
 ### renderer 单测跑在 node 环境：测不了 i18n 与返回 JSX 的模块函数（2026-09-20）
 
-症状：给 `session-menu.test.ts` 加一条“draft 菜单只有一项”用例后，整个测试文件报 `TypeError: Cannot read properties of undefined (reading 'getItem')`（`i18n/index.ts` 的 `detectLanguage` 读 `localStorage`），改成不 import i18n 后变成 `React is not defined`（但 builder 返回的 JSX 用的是自动 runtime，模块里没 `import React`）。
+症状：给 `session-menu.test.ts` 加一条“draft 菜单只有一项”用例后，整个测试文件报 `TypeError: Cannot read properties of undefined (reading 'getItem')`（`i18n/index.ts` 的 `detectLanguage` 读 `localStorage`），改成不 import i18n 后变成 `React is not defined`（应用构建（ vite plugin-react）与 tsconfig 预期 **automatic** JSX runtime，所以源码里没有 `import React`；但 Vitest 这条路径把 `.tsx` 编成 `React.createElement` 的 **classic** 形式，于是调用 builder 时 `React` 不在作用域）。
 
-原因：本仓 vitest 无 config（`electron.vite.config.ts` 不被 vitest 读取），环境是默认的 **node**：无 DOM/localStorage，且 esbuild 把 `.tsx` 编译成 `React.createElement`（classic）→ 一调就炸。
+原因：本仓 vitest 无 config（`electron.vite.config.ts` 不被 vitest 读取），环境是默认的 **node**：无 DOM/localStorage，且 esbuild 把 `.tsx` 编译成 `React.createElement`（classic）→ 一调就炸（上游：应用构建预期 automatic，两边 JSX runtime 不一致）。
 
 对策（本期采用）：**把决策抽成不碰 JSX 的纯函数再测**（如 `sidebarMenuKind()`、`discardDraft()`），JSX 菜单项本身交给 CDP 手测（真跑一遍比单测更接近用户行为）。若真需要渲染测试，得单独引入 jsdom + `esbuild: { jsx: "automatic" }`（新增 `packages/desktop/vitest.config.ts`），**别为一个 builder 就改全局测试环境**。
 
