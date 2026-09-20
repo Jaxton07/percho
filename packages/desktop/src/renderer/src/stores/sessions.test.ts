@@ -925,8 +925,11 @@ describe("单例新会话 draft（newSessionDraft）", () => {
 	});
 
 	it("draft 已从当前会话继承模型：loadModels 不得改成「全局最近」那一个", async () => {
+		// A = 当前会话的模型（draft 继承它），B = 全局最近值；两个都是列表里的合法模型，
+		// 这样才只验证「快照优先于全局最近」，不搅进「失效模型回退」语义。
 		piMock.listModels.mockImplementation(() =>
 			Promise.resolve([
+				{ provider: "pA", providerName: "ProviderA", id: "mA", label: "Model A", authed: true },
 				{ provider: "deepseek", providerName: "DeepSeek", id: "v4", label: "V4", authed: true },
 			]),
 		);
@@ -947,7 +950,7 @@ describe("单例新会话 draft（newSessionDraft）", () => {
 		expect(dstore().newSessionDraft?.model).toEqual({ provider: "pA", modelId: "mA" });
 	});
 
-	it("用户已在 draft 上改过思考档位：loadModels 不得回写模型时把该选择一起覆盖", async () => {
+	it("用户已在 draft 上改过思考档位：loadModels 仍补空模型，但不得覆盖该档位", async () => {
 		piMock.listModels.mockImplementation(() =>
 			Promise.resolve([
 				{
@@ -972,6 +975,8 @@ describe("单例新会话 draft（newSessionDraft）", () => {
 
 		await useSessionsStore.getState().loadModels();
 
+		// dirty 必须分字段：改过思考不等于改过模型——模型仍要按默认补齐，思考选择不被回写
+		expect(dstore().newSessionDraft?.model).toEqual({ provider: "deepseek", modelId: "v4" });
 		expect(dstore().newSessionDraft?.thinkingLevel).toBe("high");
 	});
 });
