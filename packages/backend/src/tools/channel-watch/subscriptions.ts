@@ -22,8 +22,30 @@ export interface SubsPayload {
 }
 
 /** 构造 appendEntry 载荷（全量快照，排序稳定便于测试） */
-export function buildSubsPayload(topics: Iterable<string>): SubsPayload {
+export function buildSubsPayload(
+	topics: Iterable<string>,
+	cursors?: ReadonlyMap<string, string | null>,
+): SubsPayload {
+	// 阶段 0.1 占位 seam：cursors 载荷生成见 plan 阶段 2.1（此处不实现）
+	void cursors;
 	return { topics: [...topics].sort() };
+}
+
+/**
+ * 恢复结果：topics + 每个 topic 的 cursor。
+ * **`cursors` 里没有 key = 未知基线（旧 payload）**，与值 `null`（确认当时文件不存在）语义不同。
+ */
+export interface RestoredSubscriptions {
+	topics: string[];
+	cursors: Map<string, string | null>;
+}
+
+/**
+ * 从会话 entries 恢复「订阅 + 游标」完整状态（spec §6.3/§6.4）。
+ * 阶段 0.1 占位 seam：真实解析（last-wins / 脏值容错 / missing≠null）见 plan 阶段 2.1。
+ */
+export function restoreSubscriptionState(_entries: unknown): RestoredSubscriptions {
+	throw new Error("restoreSubscriptionState 尚未实现（plan 阶段 2.1）");
 }
 
 /**

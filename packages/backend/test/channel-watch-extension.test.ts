@@ -11,6 +11,7 @@ import { contentHash } from "../src/tools/channel-watch/guard";
 import { formatPostEntry } from "../src/tools/channel-watch/post";
 import {
 	buildSubsPayload,
+	restoreSubscriptionState,
 	restoreSubscriptions,
 	SUBSCRIPTION_CUSTOM_TYPE,
 	type SubsPayload,
@@ -519,6 +520,93 @@ describe("channel_post", () => {
 // 以下用例为阶段 0 红测：固定契约，实现见 plan 阶段 1～2。
 // ---------------------------------------------------------------------------
 
+describe("P1 · restoreSubscriptionState 纯解析契约（spec §6.3）", () => {
+	it("payload 往返：带 cursors 的快照排序稳定，且只保留仍在 topics 中的 key", () => {
+		const payload = buildSubsPayload(
+			["b", "a"],
+			new Map<string, string | null>([
+				["b", "h2"],
+				["a", null],
+				["gone", "h9"],
+			]),
+		);
+		expect(payload).toEqual({ topics: ["a", "b"], cursors: { a: null, b: "h2" } });
+
+		const restored = restoreSubscriptionState(payloadEntries(payload));
+		expect(restored.topics).toEqual(["a", "b"]);
+		expect(restored.cursors.has("a")).toBe(true);
+		expect(restored.cursors.get("a")).toBeNull();
+		expect(restored.cursors.get("b")).toBe("h2");
+	});
+
+	it("last-wins：最后一条合法 entry 同时覆盖 topics 与 cursors（旧 cursor 不残留）", () => {
+		const restored = restoreSubscriptionState([
+			{
+				type: "custom",
+				customType: SUBSCRIPTION_CUSTOM_TYPE,
+				data: { topics: ["a"], cursors: { a: "h1" } },
+			},
+			{
+				type: "custom",
+				customType: SUBSCRIPTION_CUSTOM_TYPE,
+				data: { topics: ["b"], cursors: { b: "h2" } },
+			},
+		]);
+		expect(restored.topics).toEqual(["b"]);
+		expect([...restored.cursors]).toEqual([["b", "h2"]]);
+	});
+
+	it("游标 key 缺失（legacy topics-only）与显式 null 可区分", () => {
+		const legacy = restoreSubscriptionState(subsEntries(["a"]));
+		expect(legacy.topics).toEqual(["a"]);
+		expect(legacy.cursors.size).toBe(0); // 未知基线：首次恢复不补历史
+		expect(legacy.cursors.has("a")).toBe(false);
+
+		const explicitNull = restoreSubscriptionState(subsEntries(["a"], { a: null }));
+		expect(explicitNull.cursors.has("a")).toBe(true);
+		expect(explicitNull.cursors.get("a")).toBeNull(); // 已知「当时文件不存在」：之后创建要补投
+	});
+
+	it("脏 cursor 值被忽略，但合法 topics 不能因此丢失", () => {
+		const restored = restoreSubscriptionState([
+			{
+				type: "custom",
+				customType: SUBSCRIPTION_CUSTOM_TYPE,
+				data: { topics: ["a", "b", "", 7], cursors: { a: 123, b: "h" } },
+			},
+		]);
+		expect(restored.topics).toEqual(["a", "b"]);
+		expect([...restored.cursors]).toEqual([["b", "h"]]);
+	});
+
+	it("不在最终 topics 中的 cursor key 被过滤（退订不留幽灵基线）", () => {
+		const restored = restoreSubscriptionState([
+			{
+				type: "custom",
+				customType: SUBSCRIPTION_CUSTOM_TYPE,
+				data: { topics: ["a"], cursors: { a: "h1", gone: "h9" } },
+			},
+		]);
+		expect(restored.topics).toEqual(["a"]);
+		expect([...restored.cursors]).toEqual([["a", "h1"]]);
+	});
+
+	it("中途非法 entry 不覆盖此前合法完整快照（既有 last-wins 纪律）", () => {
+		const restored = restoreSubscriptionState([
+			{
+				type: "custom",
+				customType: SUBSCRIPTION_CUSTOM_TYPE,
+				data: { topics: ["a"], cursors: { a: "h1" } },
+			},
+			{ type: "custom", customType: SUBSCRIPTION_CUSTOM_TYPE }, // data 缺失
+			{ type: "custom", customType: SUBSCRIPTION_CUSTOM_TYPE, data: { topics: "oops" } }, // topics 非数组
+			{ type: "message", message: { role: "user", content: "hi" } }, // 非订阅 entry
+		]);
+		expect(restored.topics).toEqual(["a"]);
+		expect([...restored.cursors]).toEqual([["a", "h1"]]);
+	});
+});
+
 describe("P1 · onSubscriptionsChanged 订阅快照上报", () => {
 	it("session_start 恢复 / subscribe / unsubscribe / shutdown 各上报一次有效快照（传的是副本）", async () => {
 		const cwd = join(testRoot, "snapshot-cb");
@@ -712,6 +800,35 @@ describe("P1 · 恢复补投（catch-up）", () => {
 		expect(lastPayload(pi).cursors).toEqual({ t1: persisted });
 		await pi.emit({ type: "session_shutdown" }, makeFakeCtx());
 
+		const again = await wireCur({ cwd, entries: payloadEntries(lastPayload(pi)) });
+		await sleep(200);
+		expect(again.pi.wakes).toHaveLength(0);
+	});
+
+	it("本会话 write/edit 自写被抑制时仍推进并持久化 cursor；shutdown/resume 不自唤醒", async () => {
+		const cwd = join(testRoot, "self-write-cursor");
+		const { pi } = await wireCur({ cwd });
+		await subscribe(pi, "t1");
+		await subscribe(pi, "t2");
+
+		for (const [topic, toolName] of [
+			["t1", "write"],
+			["t2", "edit"],
+		] as const) {
+			await mkdir(topicDir(cwd, topic), { recursive: true });
+			const mf = messagesFile(cwd, topic);
+			// 模拟本会话 write/edit 工具调用（tool_call 事件）+ 真实落盘
+			await pi.emit(
+				{ type: "tool_call", toolName, toolCallId: `tc-${topic}`, input: { path: mf, content: "x" } },
+				makeFakeCtx(),
+			);
+			await writeFile(mf, "x\n");
+			await sleep(200);
+			expect(pi.wakes.filter((w) => w.includes(`[channel:${topic}]`))).toHaveLength(0);
+			expect(lastPayload(pi).cursors?.[topic]).toBe(contentHash("x\n"));
+		}
+
+		await pi.emit({ type: "session_shutdown" }, makeFakeCtx());
 		const again = await wireCur({ cwd, entries: payloadEntries(lastPayload(pi)) });
 		await sleep(200);
 		expect(again.pi.wakes).toHaveLength(0);

@@ -25,6 +25,13 @@ export {
 	topicDir,
 	validateTopic,
 } from "./init";
-export { buildSubsPayload, restoreSubscriptions, SUBSCRIPTION_CUSTOM_TYPE } from "./subscriptions";
+export {
+	buildSubsPayload,
+	type RestoredSubscriptions,
+	restoreSubscriptionState,
+	restoreSubscriptions,
+	SUBSCRIPTION_CUSTOM_TYPE,
+	type SubsPayload,
+} from "./subscriptions";
 export { makeChannelTools } from "./tools";
 export { ChannelWatcher, parseWatchFilename } from "./watcher";

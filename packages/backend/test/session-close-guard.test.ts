@@ -138,6 +138,12 @@ describe("PiBackend · 频道订阅快照查询", () => {
 		expect(backend.getChannelSubscriptionSessionIds()).toEqual([]);
 	});
 
+	it("查询只返回仍在 registry 的会话：孤儿键（回调/构造失败残留）不得影响 GC", () => {
+		const { backend } = makeBackend("alive", false, undefined, ["t1"]);
+		backend.reportChannelSubscriptions("ghost", new Set(["t1"]));
+		expect(backend.getChannelSubscriptionSessionIds()).toEqual(["alive"]);
+	});
+
 	it("dispose 后无残留（扩展 shutdown 回调之外的双保险）", async () => {
 		const { backend } = makeBackend("s3", false, undefined, ["t1"]);
 		await backend.closeSession("s3", "user");
