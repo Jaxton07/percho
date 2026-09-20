@@ -1,4 +1,5 @@
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { AgentSession } from "@earendil-works/pi-coding-agent";
 import { afterAll, describe, expect, it, vi } from "vitest";
@@ -9,7 +10,9 @@ import type { SessionRegistry } from "../src/session/registry";
  * `closeSession` 的 isStreaming 守卫（内存策略的最后一道门）与删除路径的绕行。
  * 用 stub session 注入私有 registry（同 prompt-ack.test.ts 手法）：不触网、不依赖 SDK/凭证。
  */
-const root = mkdtempSync(join(process.cwd(), ".local/tmp/close-guard-"));
+// OS 临时目录（同 test/permission-extension.test.ts 的约定）：**不要**用 `process.cwd()/.local/tmp`
+// —— workspace 脚本的 cwd 是 packages/backend，仓根跑与包内跑不一致会让整个文件加载失败（= 测试静默不跑）
+const root = mkdtempSync(join(tmpdir(), "pi-close-guard-"));
 afterAll(() => rmSync(root, { recursive: true, force: true }));
 
 function makeBackend(sessionId: string, streaming: boolean, sessionFile?: string) {

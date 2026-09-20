@@ -13,8 +13,10 @@ import { pickUnloadCandidates, type SessionGcEntry } from "./session-gc";
  * 空闲热会话保留数（K=3，用户拍板）。想调体验改这里。
  */
 const KEEP = 3;
-/** 兜底 tick 间隔（也是「晾过 idleTimeoutMs 才卸」这条规则的最坏延迟） */
-const TICK_MS = 60_000;
+/** 兜底 tick 间隔（也是「晾过 idleTimeoutMs 才卸」这条规则的最坏延迟）。
+ * 20s 而非 60s：爆发期的会话变化判定会被 `freshMs` 挡住，之后只能等 tick —— 60s 时实测最坏
+ * 53s 才回收；20s 让「浏览完」最多 20s 收敛，代价只是每 20s 读一次 state（可忽略）。 */
+const TICK_MS = 20_000;
 
 function entryOf(sessionId: string): SessionGcEntry | undefined {
 	const entry = useTranscriptStore.getState().bySession[sessionId];
