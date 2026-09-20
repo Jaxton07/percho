@@ -1,6 +1,6 @@
 import { join } from "node:path";
 import { createLogger, JsonStore } from "@percho/backend";
-import type { UiState } from "@percho/shared";
+import type { PermissionMode, UiState } from "@percho/shared";
 import { app } from "electron";
 
 const log = createLogger("ui-state");
@@ -29,6 +29,19 @@ function stringArray(value: unknown): string[] {
 		: [];
 }
 
+/**
+ * 按会话记住的权限模式：只收已知枚举值，且**丢掉 `default`**（写侧本就不存，脏文件也归一化掉，文件不会越用越大）。
+ */
+function permissionModeMap(value: unknown): Record<string, PermissionMode> {
+	if (!value || typeof value !== "object" || Array.isArray(value)) return {};
+	const out: Record<string, PermissionMode> = {};
+	for (const [sessionId, mode] of Object.entries(value as Record<string, unknown>)) {
+		if (sessionId === "") continue;
+		if (mode === "fullAccess") out[sessionId] = mode;
+	}
+	return out;
+}
+
 /** 字段校验 + 默认值填充（旧版本文件缺 theme/background 时补齐） */
 function normalize(parsed: UiStateFileShape): UiState {
 	const model = parsed.lastUsedModel ?? parsed.currentModel;
@@ -48,6 +61,7 @@ function normalize(parsed: UiStateFileShape): UiState {
 		centerOrbEnabled: typeof parsed.centerOrbEnabled === "boolean" ? parsed.centerOrbEnabled : false,
 		// 置顶列表：脏值（手改文件/旧版本）过滤成非空字符串数组（渲染侧另会忽略未知 id）
 		pinnedSessions: stringArray(parsed.pinnedSessions),
+		sessionPermissionModes: permissionModeMap(parsed.sessionPermissionModes),
 		// 顶栏是否显示置顶会话胶囊（旧字段 topBarVisible 已废弃：顶栏现在常驻，不再整条隐藏）
 		barSessionsVisible: typeof parsed.barSessionsVisible === "boolean" ? parsed.barSessionsVisible : true,
 		sidebarCollapsed: typeof parsed.sidebarCollapsed === "boolean" ? parsed.sidebarCollapsed : false,

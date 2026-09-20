@@ -106,6 +106,8 @@ export const useProjectsStore = create<ProjectsStore>((set, get) => ({
 		await getPi().deleteSession({ sessionId: session.sessionId, sessionFile: session.sessionFile });
 		// 置顶列表清理：会话没了就没人能取消置顶，留着会变成永久残留 id
 		useUiPreferencesStore.getState().unpin(session.sessionId);
+		// D7：权限模式记录同理（与置顶并列；卸载/关会话**不**清，那是「记住」的意义）
+		useUiPreferencesStore.getState().forgetPermissionMode(session.sessionId);
 		const sessionsState = useSessionsStore.getState();
 		if (sessionsState.sessions.some((s) => s.sessionId === session.sessionId)) {
 			await sessionsState.closeSession(session.sessionId);

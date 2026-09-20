@@ -1,4 +1,3 @@
-import type { PermissionMode } from "@percho/shared";
 
 /**
  * 会话内存驻留策略（**纯函数**：不 import React、不调 IPC、不读时钟——`now` 由调用方传入）。
@@ -44,8 +43,6 @@ export interface SessionGcOpen {
 	lastUsedAt: number;
 	/** draft（还没落盘的内存 tab） */
 	isDraft: boolean;
-	/** 权限模式：`sessions.permissionModes[sid] ?? "default"` */
-	permissionMode: PermissionMode;
 	/** 消息条数（磁盘元数据，打开时读一次）：与 transcript 条数取大值判断「有没有会话文件」 */
 	messageCount: number;
 }
@@ -93,8 +90,8 @@ export function isProtected(item: SessionGcOpen, entry: SessionGcEntry | undefin
 	// 判据取「磁盘 meta」与「transcript 实时条数」的较大值 —— 只信 meta 会把本次进程内
 	// 新建的会话（meta 恒 0）永远保护住，策略等于失效。
 	if (item.messageCount === 0 && (entry?.messageCount ?? 0) === 0) return true;
-	// 权限模式权威源在后端会话内存且不落盘（重启归零是有意的安全设计）：卸掉会静默降级回默认
-	if (item.permissionMode !== "default") return true;
+	// 注：权限模式曾在保护清单里（当时后端 mode 不落盘，卸载会静默降级）；D7 把它改成
+	// 「按会话持久化 + 打开时恢复」后，这里不再需要保护 → 非默认档位的会话也能被回收。
 	if (!entry) return false;
 	return (
 		entry.agentActive ||

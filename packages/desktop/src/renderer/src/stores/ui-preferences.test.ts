@@ -167,3 +167,33 @@ describe("useUiPreferencesStore", () => {
 		});
 	});
 });
+
+describe("sessionPermissionModes 持久化（D7）", () => {
+	beforeEach(() => {
+		useUiPreferencesStore.setState({ sessionPermissionModes: {} });
+	});
+
+	it("非 default 写入并落盘；同值短路不重复写盘", () => {
+		useUiPreferencesStore.getState().rememberPermissionMode("s1", "fullAccess");
+		expect(useUiPreferencesStore.getState().sessionPermissionModes).toEqual({ s1: "fullAccess" });
+		expect(piMock.saveUiState).toHaveBeenLastCalledWith({ state: { sessionPermissionModes: { s1: "fullAccess" } } });
+		const calls = piMock.saveUiState.mock.calls.length;
+		useUiPreferencesStore.getState().rememberPermissionMode("s1", "fullAccess");
+		expect(piMock.saveUiState.mock.calls.length).toBe(calls);
+	});
+
+	it("切回 default = 删键（且不动其他会话）", () => {
+		useUiPreferencesStore.setState({ sessionPermissionModes: { s1: "fullAccess", s2: "fullAccess" } });
+		useUiPreferencesStore.getState().rememberPermissionMode("s1", "default");
+		expect(useUiPreferencesStore.getState().sessionPermissionModes).toEqual({ s2: "fullAccess" });
+	});
+
+	it("删除会话时 forget 清键；不存在的 id 无副作用（不写盘）", () => {
+		useUiPreferencesStore.setState({ sessionPermissionModes: { s1: "fullAccess" } });
+		useUiPreferencesStore.getState().forgetPermissionMode("s1");
+		expect(useUiPreferencesStore.getState().sessionPermissionModes).toEqual({});
+		const calls = piMock.saveUiState.mock.calls.length;
+		useUiPreferencesStore.getState().forgetPermissionMode("ghost");
+		expect(piMock.saveUiState.mock.calls.length).toBe(calls);
+	});
+});

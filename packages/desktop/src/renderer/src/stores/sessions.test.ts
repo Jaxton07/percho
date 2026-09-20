@@ -316,6 +316,29 @@ describe("openFromHistory", () => {
 		expect(useSessionsStore.getState().activeSessionId).toBe("sub-1");
 	});
 
+	it("打开会话时用本机记住的档位盖过后端默认值（D7）", async () => {
+		piMock.openSession.mockResolvedValue(realMeta("hist-2", "/proj"));
+		piMock.getSessionMessages.mockResolvedValue([]);
+		piMock.getPermissionMode.mockResolvedValue("default");
+		useUiPreferencesStore.setState({ sessionPermissionModes: { "hist-2": "fullAccess" } });
+
+		await useSessionsStore.getState().openFromHistory("/tmp/hist-2.jsonl");
+
+		expect(piMock.setPermissionMode).toHaveBeenCalledWith({ sessionId: "hist-2", mode: "fullAccess" });
+		expect(useSessionsStore.getState().permissionModes["hist-2"]).toBe("fullAccess");
+	});
+
+	it("没有记录时保持后端默认值（新会话/fork 不受影响）", async () => {
+		piMock.openSession.mockResolvedValue(realMeta("hist-3", "/proj"));
+		piMock.getSessionMessages.mockResolvedValue([]);
+		piMock.getPermissionMode.mockResolvedValue("default");
+		useUiPreferencesStore.setState({ sessionPermissionModes: {} });
+
+		await useSessionsStore.getState().openFromHistory("/tmp/hist-3.jsonl");
+
+		expect(piMock.setPermissionMode).not.toHaveBeenCalled();
+	});
+
 	it("非 live 会话：历史/队列/todo 各恰好装载一次", async () => {
 		piMock.openSession.mockResolvedValue(realMeta("hist-1", "/proj"));
 		piMock.getSessionMessages.mockResolvedValue([]);
@@ -430,6 +453,22 @@ describe("permissionModes「缺 key = default」语义", () => {
 		await useSessionsStore.getState().setSessionPermissionMode("s1", "default");
 		expect(useSessionsStore.getState().permissionModes).toEqual({});
 		expect(piMock.setPermissionMode).toHaveBeenCalledWith({ sessionId: "s1", mode: "default" });
+	});
+
+	it("成功置非 default → 记忆落盘（D7：按会话持久化）", async () => {
+		useSessionsStore.setState({ sessions: [realMeta("s1", "/p")], activeSessionId: "s1" });
+		await useSessionsStore.getState().setSessionPermissionMode("s1", "fullAccess");
+		expect(piMock.saveUiState).toHaveBeenLastCalledWith({
+			state: { sessionPermissionModes: { s1: "fullAccess" } },
+		});
+	});
+
+	it("失败回滚时不记（D7：只记成功的档位）", async () => {
+		useSessionsStore.setState({ sessions: [realMeta("s1", "/p")], activeSessionId: "s1" });
+		useUiPreferencesStore.setState({ sessionPermissionModes: {} });
+		piMock.setPermissionMode.mockRejectedValueOnce(new Error("boom"));
+		await useSessionsStore.getState().setSessionPermissionMode("s1", "fullAccess");
+		expect(useUiPreferencesStore.getState().sessionPermissionModes).toEqual({});
 	});
 
 	it("draft 会话模式纯 renderer：不调 IPC", async () => {

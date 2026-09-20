@@ -1,4 +1,4 @@
-import type { UiState } from "@percho/shared";
+import type { PermissionMode, UiState } from "@percho/shared";
 import { create } from "zustand";
 import { getPi } from "../api";
 import { toggleInList } from "../lib/sidebar-groups";
@@ -9,6 +9,8 @@ interface UiPreferencesStore {
 	centerOrbEnabled: boolean;
 	/** 置顶会话（id，新置顶在前）：**v8 起就是顶栏胶囊的内容**（左栏只靠图钉标记，不改顺序） */
 	pinnedSessions: string[];
+	/** 按会话记住的权限模式（只存非 default；见 spec/permission-mode.md D7） */
+	sessionPermissionModes: Record<string, PermissionMode>;
 	/** 顶栏显隐（设置页开关，默认开）：关闭后导航全落在左侧栏 */
 	/** 顶栏是否显示置顶会话胶囊（顶栏本身常驻；设置页「顶栏显示会话」） */
 	barSessionsVisible: boolean;
@@ -34,6 +36,13 @@ interface UiPreferencesStore {
 	toggleProjectPin: (cwd: string) => void;
 	/** 清理单个会话的置顶（删除会话时调用；不在列表里则无副作用） */
 	unpin: (sessionId: string) => void;
+	/**
+	 * 记住会话的权限模式（D7）：非 `default` 写入（同值短路），传 `default` 则删键。
+	 * 调用点：`setSessionPermissionMode` **IPC 成功后**（失败回滚不记）。
+	 */
+	rememberPermissionMode: (sessionId: string, mode: PermissionMode) => void;
+	/** 删除会话时清掉它的权限模式记录（与 `unpin` 并列） */
+	forgetPermissionMode: (sessionId: string) => void;
 	/** 拖动排序顶栏胶囊（v8）：改的也是 pinnedSessions 顺序，不动 tabs.json */
 	reorderPinned: (fromId: string, toId: string) => void;
 	/** 记住上次项目目录（切会话/打开会话/建会话时由 sessions store 调；同值不重复写盘） */
@@ -50,6 +59,7 @@ function persistPatch(patch: Partial<UiState>): void {
 export const useUiPreferencesStore = create<UiPreferencesStore>((set, get) => ({
 	centerOrbEnabled: false,
 	pinnedSessions: [],
+	sessionPermissionModes: {},
 	barSessionsVisible: true,
 	sidebarCollapsed: false,
 	expandedGroups: [],
@@ -63,6 +73,7 @@ export const useUiPreferencesStore = create<UiPreferencesStore>((set, get) => ({
 		set({
 			centerOrbEnabled: saved?.centerOrbEnabled ?? false,
 			pinnedSessions: saved?.pinnedSessions ?? [],
+			sessionPermissionModes: saved?.sessionPermissionModes ?? {},
 			barSessionsVisible: saved?.barSessionsVisible ?? true,
 			sidebarCollapsed: saved?.sidebarCollapsed ?? false,
 			expandedGroups: saved?.expandedGroups ?? [],
@@ -116,6 +127,31 @@ export const useUiPreferencesStore = create<UiPreferencesStore>((set, get) => ({
 		const next = current.filter((id) => id !== sessionId);
 		set({ pinnedSessions: next });
 		persistPatch({ pinnedSessions: next });
+	},
+
+	rememberPermissionMode: (sessionId, mode) => {
+		const current = get().sessionPermissionModes;
+		if (mode === "default") {
+			if (!(sessionId in current)) return;
+			const next = { ...current };
+			delete next[sessionId];
+			set({ sessionPermissionModes: next });
+			persistPatch({ sessionPermissionModes: next });
+			return;
+		}
+		if (current[sessionId] === mode) return;
+		const next = { ...current, [sessionId]: mode };
+		set({ sessionPermissionModes: next });
+		persistPatch({ sessionPermissionModes: next });
+	},
+
+	forgetPermissionMode: (sessionId) => {
+		const current = get().sessionPermissionModes;
+		if (!(sessionId in current)) return;
+		const next = { ...current };
+		delete next[sessionId];
+		set({ sessionPermissionModes: next });
+		persistPatch({ sessionPermissionModes: next });
 	},
 
 	/**

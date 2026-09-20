@@ -49,7 +49,6 @@ export function useSessionGc(): void {
 						// 缺打点理论不可达（每个进 sessions 的路径都打点）；真缺了当「最久未用」处理
 						lastUsedAt: state.lastUsedAt[session.sessionId] ?? 0,
 						isDraft: isDraftSessionId(session.sessionId),
-						permissionMode: state.permissionModes[session.sessionId] ?? "default",
 						// 磁盘元数据（打开时读一次；本次进程内新建的会话恒为 0）：与 transcript 实时条数
 						// 一起交给纯层判「有没有会话文件」，见 lib/session-gc.ts 的 isProtected
 						messageCount: session.messageCount,

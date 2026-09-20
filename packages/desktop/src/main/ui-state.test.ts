@@ -52,3 +52,27 @@ describe("lastCwd 白名单", () => {
 		expect(existsSync(file())).toBe(true);
 	});
 });
+
+describe("sessionPermissionModes 白名单（D7：按会话记住权限模式）", () => {
+	it("只收 fullAccess，且丢掉 default 与非法值", async () => {
+		writeFileSync(
+			file(),
+			JSON.stringify({
+				sessionPermissionModes: { a: "fullAccess", b: "default", c: "root", d: 3, "": "fullAccess" },
+			}),
+		);
+		expect((await loadUiState())?.sessionPermissionModes).toEqual({ a: "fullAccess" });
+	});
+
+	it("非对象（数组/字符串/数字/null）一律落成 {}，不炸启动", async () => {
+		for (const raw of ['{"sessionPermissionModes":[]}', '{"sessionPermissionModes":"x"}', '{"sessionPermissionModes":7}', '{"sessionPermissionModes":null}', "{}"]) {
+			writeFileSync(file(), raw);
+			expect((await loadUiState())?.sessionPermissionModes).toEqual({});
+		}
+	});
+
+	it("写入后读回：非默认档位保留", async () => {
+		await saveUiState({ sessionPermissionModes: { s1: "fullAccess" } });
+		expect((await loadUiState())?.sessionPermissionModes).toEqual({ s1: "fullAccess" });
+	});
+});

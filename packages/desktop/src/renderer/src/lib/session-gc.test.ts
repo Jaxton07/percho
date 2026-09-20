@@ -22,7 +22,7 @@ const IDLE_ENTRY: SessionGcEntry = {
 const NOW = 1_000_000_000;
 
 function session(sessionId: string, lastUsedAt: number, extra: Partial<SessionGcOpen> = {}): SessionGcOpen {
-	return { sessionId, lastUsedAt, isDraft: false, permissionMode: "default", messageCount: 4, ...extra };
+	return { sessionId, lastUsedAt, isDraft: false, messageCount: 4, ...extra };
 }
 
 function input(over: Partial<SessionGcInput> = {}): SessionGcInput {
@@ -59,18 +59,6 @@ describe("pickUnloadCandidates · 单条保护条件", () => {
 		).toEqual([]);
 	});
 
-	it("等权限审批 / 等扩展应答不卸", () => {
-		expect(
-			ids({
-				open: [session("perm", NOW - 10_000_000), session("dialog", NOW - 10_000_000)],
-				entryOf: (id) =>
-					id === "perm"
-						? { ...IDLE_ENTRY, pendingPermissions: [{ id: "p1" }] }
-						: { ...IDLE_ENTRY, pendingDialogs: [{ id: "d1" }] },
-			}),
-		).toEqual([]);
-	});
-
 	it("有排队跟发不卸（队列只活在后端内存，卸了就丢）", () => {
 		expect(
 			ids({
@@ -90,12 +78,20 @@ describe("pickUnloadCandidates · 单条保护条件", () => {
 		).toEqual([]);
 	});
 
-	it("draft 不卸（内存 tab，卸了就是「关掉」）", () => {
-		expect(ids({ open: [session("draft:x", NOW - 10_000_000, { isDraft: true })] })).toEqual([]);
+	it("等权限审批 / 等扩展应答不卸", () => {
+		expect(
+			ids({
+				open: [session("perm", NOW - 10_000_000), session("dialog", NOW - 10_000_000)],
+				entryOf: (id) =>
+					id === "perm"
+						? { ...IDLE_ENTRY, pendingPermissions: [{ id: "p1" }] }
+						: { ...IDLE_ENTRY, pendingDialogs: [{ id: "d1" }] },
+			}),
+		).toEqual([]);
 	});
 
-	it("权限模式非 default 不卸（模式不落盘，卸掉会静默降级回默认）", () => {
-		expect(ids({ open: [session("full", NOW - 10_000_000, { permissionMode: "fullAccess" })] })).toEqual([]);
+	it("draft 不卸（内存 tab，卸了就是「关掉」）", () => {
+		expect(ids({ open: [session("draft:x", NOW - 10_000_000, { isDraft: true })] })).toEqual([]);
 	});
 
 	it("0 消息会话不卸（还没有会话文件，磁盘历史里查不到，卸掉 = 条目消失）", () => {
@@ -144,7 +140,6 @@ describe("pickUnloadCandidates · 单条保护条件", () => {
 		expect(isProtected(session("a", NOW, { messageCount: 0 }), { ...IDLE_ENTRY, messageCount: 2 })).toBe(
 			false,
 		);
-		expect(isProtected(session("a", NOW, { permissionMode: "fullAccess" }), IDLE_ENTRY)).toBe(true);
 	});
 });
 

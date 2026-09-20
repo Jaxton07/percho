@@ -25,6 +25,11 @@ export interface UiState {
 	/** 置顶会话 id（新置顶在前；只存 app 本地 ui-state.json，不写会话文件、不跨设备同步；已删除的会话 id 由写侧清理） */
 	pinnedSessions: string[];
 	/**
+	 * **按会话记住的权限模式**（只存非 `default` 的项，切回默认就删键）。
+	 * 只存 app 本地 ui-state.json，**不写进 pi 的会话 jsonl**（那是 SDK 文件格式）；新会话/fork 仍从 default 起步。
+	 */
+	sessionPermissionModes: Record<string, PermissionMode>;
+	/**
 	 * 顶栏**是否显示置顶会话的胶囊**（顶栏本身常驻：窗口拖动、左栏开合、变更侧栏入口都在这里）。
 	 * 关闭后顶栏不再出胶囊，会话全在左侧栏；旧版本文件的 `topBarVisible` 已废弃（缺省 true）。
 	 */

@@ -82,6 +82,17 @@ async function loadSessionBundle(sessionId: string, opts?: { skipHistoryIfLive?:
 	t.setFollowUpQueue(sessionId, followUpQueue);
 	t.loadTodos(sessionId, todos);
 	applyBackendPermissionMode(sessionId, permissionMode);
+	// D7：本机记住过的档位盖过后端默认值（后端 mode 不落盘，重启/卸载重开后恒为 default）。
+	// 这里 await 而不是 fire-and-forget：保证「打开完就是正确档位」，验收才能确定性断言。
+	const remembered = useUiPreferencesStore.getState().sessionPermissionModes[sessionId];
+	if (remembered && remembered !== permissionMode) {
+		try {
+			await getPi().setPermissionMode({ sessionId, mode: remembered });
+			applyBackendPermissionMode(sessionId, remembered);
+		} catch (error) {
+			console.warn("恢复会话权限模式失败", error);
+		}
+	}
 }
 
 /** 后端真值写入本 map（default = 删 key，保持「缺 key = default」语义） */
@@ -534,6 +545,8 @@ export const useSessionsStore = create<SessionsStore>((set, get) => ({
 		set((state) => ({ permissionModes: withPermissionMode(state.permissionModes, sessionId, mode) }));
 		try {
 			await getPi().setPermissionMode({ sessionId, mode });
+			// D7：IPC 成功才记（失败回滚不记）；传 default 则会删键
+			useUiPreferencesStore.getState().rememberPermissionMode(sessionId, mode);
 		} catch (error) {
 			set((state) => ({ permissionModes: withPermissionMode(state.permissionModes, sessionId, previous) }));
 			console.error("切换权限模式失败", error);
