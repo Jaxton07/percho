@@ -384,11 +384,11 @@ export function SessionTabBar() {
 				type="button"
 				className="no-drag shrink-0 rounded-lg p-1.5 text-ink-dim transition-colors hover:bg-hover hover:text-ink"
 				onClick={() => {
-					// 单例 draft：已在会话里则切回新会话页（领号 + cwd 回到 draft 目录），
-					// 已经在新会话页则只是聚焦输入框（内容与配置一律保留，不再造第二份 draft）
-					const alreadyOnDraftPage = useSessionsStore.getState().activeSessionId === null;
+					// 单例 draft：已有 draft 就回到它（内容与配置一律保留，并聚焦输入框）；
+					// 没有 draft（转正刚消费掉、或启动首帧）才新建一份
+					const hadDraft = useSessionsStore.getState().newSessionDraft !== null;
 					activateNewSessionDraft();
-					if (alreadyOnDraftPage) window.dispatchEvent(new CustomEvent(COMPOSER_FOCUS_EVENT));
+					if (hadDraft) window.dispatchEvent(new CustomEvent(COMPOSER_FOCUS_EVENT));
 				}}
 				aria-label={cwd ? t("tabbar.newSession") : t("tabbar.pickProjectFirst")}
 			>
