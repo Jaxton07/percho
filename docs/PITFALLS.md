@@ -41,6 +41,7 @@
 | 逐帧截图全是空白/同一张陈旧图、rAF 像停摆 | 四 · 合成器空帧与「暂停动画不出新帧」（2026-09-19 补） |
 | 验证脚本读出「旋转没生效」（`transform: none`）但界面明明转了 | 四 · Tailwind 4 的 `rotate-*` 走 `rotate` 属性不是 `transform`（2026-09-19） |
 | 脚本里手动删了 React 的节点，随后整页「界面出现异常」（removeChild 报错） | 四 · 别手拆 React 管理的 DOM（含 portal 浮层）（2026-09-19） |
+| 用渲染层 JS 堆证明「卸载会话能省内存」，结论反了 | 四 · 渲染层的大头是模块级基建，不是会话数据（2026-09-20） |
 | 左栏有图钉、顶栏却没有胶囊（「置顶了但不显示」） | 四 · 顶栏内容要由置顶表驱动，别从 tabs 里筛（2026-09-19） |
 | hover 才现的控件刚截完图就点不到、点击静默落空 | 四 · 鼠标事件 + `:hover` → 补「截图会清掉 hover」（2026-09-19） |
 | 改完自定义 hook 后整页报「Rendered fewer hooks than expected」 | 四 · HMR 改 hook 数量会假报错（2026-09-19） |
@@ -209,6 +210,22 @@ pi SDK 必须声明进 `packages/desktop/package.json` dependencies（electron-b
 做法：置顶表的 id **逐个到 `tabs` → 历史（`allSessions`）里取 meta**（tabs 优先，名称/状态更新），取不到才跳过（会话已删）；点击时 `openSession` 一条路兼容“已打开就切 / 未打开就从历史开”。同理：叉叉（关 tab）只在“确实有 tab”时才该显示，否则就是假入口。
 
 本轮同时删掉了旧模型里“置顶顺带把会话挪到 tabs 最前”这套副作用（顶栏顺序改由 `pinnedSessions` 表达，`reorderSessions` 已无引用，一并删）。
+
+### 渲染层 JS 堆的大头是模块级基建，不是会话数据（2026-09-20）
+
+背景：要给「会话常驻内存」做自动卸载，先验「卸载后渲染层 JS 堆能不能降」。结论：**降不下来——但原因不在会话**。
+
+实测（dev，开 6 个最重会话 273/266/67/66/64/64 条）：打开时堆 105MB → 6 个全卸载 + 强制 GC 后 **97–99MB**，只回收 7–9MB（8%）。逐个边际：273 条 +12MB、266 条 **+4MB**、第 4 个之后 **0~1MB**。堆快照聚合（`.local/tmp/heap-snapshot.mjs` + `aggregate-heap.mjs`）显示全卸载后堆里还剩：
+
+- **`JSArrayBufferData` +83.7MB** —— markstream 内置 shiki/oniguruma **wasm** 堆；
+- `ExternalStringData` +22MB、`array(object elements)` +12MB；
+- 大量 textmate 语法对象（`CaptureRule` / `BeginEndRule` / `MatchRule` / `_RegExpSource`）与 base64 语法/sourcemap 字符串。
+
+这些是**代码高亮 / 编辑器基建**（shiki/oniguruma + mermaid + 懒加载 monaco），首次渲染代码块/图表时加载后常驻**模块级单例**，与「开着哪些会话」无关。
+
+教训：**别用渲染层的 `performance.memory` 判断「会话内存」的收益**——先取堆快照把「基建」与「会话数据」分开；真要量化收益，看**主进程 RSS**（本项目的 pi SDK 会话 ≈ **+31MB/会话**：8 个会话 251 → 498MB，全部 dispose 后回落 167–320MB）。
+
+同批已知未定位项（另案）：三轮「开 6 → 全关 + 强制 GC」后堆仍缓慢上爬 ~5MB/轮，疑似 markstream 内容缓存 / React 侧残留。
 
 ### HMR 下改自定义 hook 的 hook 数量会假报错（2026-09-19）
 
