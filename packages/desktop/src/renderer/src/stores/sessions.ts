@@ -138,7 +138,10 @@ function applyBackendPermissionMode(sessionId: string, mode: PermissionMode): vo
 /**
  * 后端会话被重建（GC 竞态恢复）后把权限档位拉回：新构造的会话一律 default 起步（D1：不落盘、不继承），
  * 而 renderer 里还持有用户选过的档位——不拉回就会出现「UI 显示 fullAccess、后端按 default 走」的静默偏差。
- * 失败只 warn：档位不同步不能把恢复流程整个搞挂。
+ *
+ * 拉回失败时必须把 renderer 拉回 default（而不是保留旧档）：UI 永远反映 backend 真值，
+ * 否则用户看到 fullAccess、实际后端在按 default 索要确认——静默权限分叉比多一个 toast 危险得多。
+ * 持久偏好（uiPreferences.sessionPermissionModes）不动，下次打开/重启还能重试。
  */
 async function restorePermissionMode(sessionId: string): Promise<void> {
 	const mode = useSessionsStore.getState().permissionModes[sessionId];
@@ -147,6 +150,8 @@ async function restorePermissionMode(sessionId: string): Promise<void> {
 		await getPi().setPermissionMode({ sessionId, mode });
 	} catch (error) {
 		console.warn("恢复会话权限模式失败", error);
+		applyBackendPermissionMode(sessionId, "default");
+		pushToast("warning", "toast.permissionModeFailed", errText(error));
 	}
 }
 

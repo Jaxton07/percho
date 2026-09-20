@@ -838,6 +838,31 @@ describe("GC close 在途的选择竞态（spec D5）", () => {
 		expect(useSessionsStore.getState().permissionModes.b).toBe("fullAccess");
 	});
 
+	it("reopen 成功后权限档位恢复失败：返回 closed:false，但 renderer 回落 default（不能显示后端没执行的档位）", async () => {
+		useSessionsStore.setState({
+			sessions: [realMeta("a", "/p"), realMeta("b", "/p")],
+			activeSessionId: "a",
+			cwd: "/p",
+			permissionModes: { b: "fullAccess" },
+		});
+		const closing = deferred<{ closed: boolean }>();
+		piMock.closeSession.mockImplementationOnce(() => closing.promise);
+		piMock.openSession.mockResolvedValueOnce(realMeta("b", "/p"));
+		piMock.setPermissionMode.mockRejectedValueOnce(new Error("mode boom"));
+		useTranscriptStore.getState().setFollowUpQueue("b", ["kept"]);
+
+		const unloading = useSessionsStore.getState().unloadSession("b");
+		useSessionsStore.getState().switchSession("b");
+		closing.resolve({ closed: true });
+		const result = await unloading;
+
+		// 后端会话已重建成功 → GC 仍视为没卸成；但不能因此把后端真值（default）藏在 UI 后面
+		expect(result).toEqual({ closed: false });
+		expect(useSessionsStore.getState().permissionModes.b).toBeUndefined();
+		expect(toastKeys()).toContain("toast.permissionModeFailed");
+		expect(useSessionsStore.getState().sessions.map((s) => s.sessionId)).toEqual(["a", "b"]);
+	});
+
 	it("reopen 失败：不留幽灵 active（按正常关闭清理并显形提示）", async () => {
 		useSessionsStore.setState({
 			sessions: [realMeta("a", "/p"), realMeta("b", "/p")],
