@@ -3,6 +3,7 @@ import { messagesToUIMessages } from "@percho/shared";
 import { create } from "zustand";
 import { getPi } from "../api";
 import { errText } from "../lib/error-text";
+import { isPrimaryNavigationSession } from "../lib/session-visibility";
 import { clampThinkingLevel } from "../lib/thinking";
 import { COMPOSER_FOCUS_EVENT, useDraftStore } from "./drafts";
 import { pushToast } from "./toasts";
@@ -102,7 +103,13 @@ export function selectBarSessions(
 	for (const s of history) byId.set(s.sessionId, s);
 	// tabs 覆盖历史同名项：名称/状态以当前打开实例为准
 	for (const s of tabs) byId.set(s.sessionId, s);
-	return pinnedSessions.map((id) => byId.get(id)).filter((s): s is SessionMeta => s !== undefined);
+	return (
+		pinnedSessions
+			.map((id) => byId.get(id))
+			// 纵深防御：置顶表里可能残留只读子会话（旧 ui-state / 手改）——不生成只读胶囊。
+			// 与左栏同一道判据（lib/session-visibility），不要各写一份
+			.filter((s): s is SessionMeta => s !== undefined && isPrimaryNavigationSession(s))
+	);
 }
 
 /**
