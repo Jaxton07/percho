@@ -43,6 +43,7 @@
 | 脚本里手动删了 React 的节点，随后整页「界面出现异常」（removeChild 报错） | 四 · 别手拆 React 管理的 DOM（含 portal 浮层）（2026-09-19） |
 | 用渲染层 JS 堆证明「卸载会话能省内存」，结论反了 | 四 · 渲染层的大头是模块级基建，不是会话数据（2026-09-20） |
 | 左栏有图钉、顶栏却没有胶囊（「置顶了但不显示」） | 四 · 顶栏内容要由置顶表驱动，别从 tabs 里筛（2026-09-19） |
+| 后端日志出现 `context-evaporation` / stale ctx 报错 | 二 · 删除正在跑的会话会留 stale ctx（既有现象，2026-09-20 记录） |
 | hover 才现的控件刚截完图就点不到、点击静默落空 | 四 · 鼠标事件 + `:hover` → 补「截图会清掉 hover」（2026-09-19） |
 | 改完自定义 hook 后整页报「Rendered fewer hooks than expected」 | 四 · HMR 改 hook 数量会假报错（2026-09-19） |
 | 清理 dev 进程后端口还占着、CDP 连上但页面全空 | 五 · `pkill -f` 杀 Electron 会留下孤儿 main（2026-09-19） |
@@ -202,6 +203,12 @@ pi SDK 必须声明进 `packages/desktop/package.json` dependencies（electron-b
 症状：脚本里为了「关掉菜单」写了 `document.querySelector('[role="menuitem"]').parentElement.remove()`，几秒后整页被错误边界接管，报 `Failed to execute 'removeChild' on 'Node': The node to be removed is not a child of this node`（Percho 界面显示「界面出现异常」），于是后续所有量值全部落空、极易当成自己刚改的代码把页面治崩了。
 
 做法：**只走组件自己的关闭路径**（`window.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape" }))`、或派发 `pointerdown` 到 body 让点外关闭生效）。同理：React portal（右键菜单 / 确认弹窗 / toast）里的节点一律不手动增删；要重置页面直接 `Page.reload`。
+
+### 删除正在跑的会话会在后端留 stale ctx 报错（2026-09-20，既有现象）
+
+症状：对一个**正在跑 agent** 的会话执行「删除会话」，后端日志会出现 `context-evaporation` / stale ctx 一类报错。原因：`deleteSession` = `closeSession()` + 删文件，**不先 `abort()`**（内存策略那轮核实过：`PiBackend.deleteSession` → `disposeSession` + unlink，没有 abort 步骤）。后果仅限日志噪音（会话确实被删掉了），但排查别的上下文蒸发问题时会误导。
+
+现状：**属既有行为、未修**（删除是用户明确意图，行为本身是对的；缺的是先 abort 再 dispose 这一步）。要修的话：删除路径显式 `await entry.session.abort()` 再 `disposeSession`。
 
 ### 顶栏内容 = 置顶表驱动，别从 tabs 里筛（2026-09-19）
 
