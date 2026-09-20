@@ -172,7 +172,8 @@ async function optimisticSessionSetting(
 /**
  * 记住「上次项目目录」（重启后启动页预填，用户不用重选项目）。
  * 只写 cwd、**不恢复任何会话**（v10 启动纯空不变）；同值短路，避免切会话时频繁写 ui-state。
- * 三个调用点 = 新建会话（发首条消息转正）/ 切会话 / 从历史打开，即「用户当前真的在用哪个项目」。
+ * 四个调用点 = 新建会话（发首条消息转正）/ 切会话 / 从历史打开 / 在选择器里选项目，
+ * 即「用户当前真的在用哪个项目」（选择器选过即表态，见 REVIEW 阶段 1 补丁）。
  */
 function rememberCwd(cwd: string | null): void {
 	if (!cwd) return;
@@ -304,6 +305,8 @@ export const useSessionsStore = create<SessionsStore>((set, get) => ({
 			}
 			return { cwd };
 		});
+		// 在选择器里选过项目 = 用户明确表态要用它：立刻记住（典型场景：首启选了项目、还没发消息就退出）
+		rememberCwd(cwd);
 	},
 
 	switchSession: (sessionId) => {

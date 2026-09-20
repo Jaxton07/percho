@@ -460,6 +460,14 @@ describe("记住上次项目目录（lastCwd）", () => {
 		expect(piMock.saveUiState).toHaveBeenLastCalledWith({ state: { lastCwd: "/work/gamma" } });
 	});
 
+	it("在选择器里选项目（setDraftCwd）后立刻记住：首启选完项目没发消息就退出，下次也不用重选", () => {
+		useSessionsStore.getState().createDraftSession("/work/alpha");
+		piMock.saveUiState.mockClear();
+		useSessionsStore.getState().setDraftCwd("/work/beta");
+		expect(useUiPreferencesStore.getState().lastCwd).toBe("/work/beta");
+		expect(piMock.saveUiState).toHaveBeenLastCalledWith({ state: { lastCwd: "/work/beta" } });
+	});
+
 	it("同项目不重复写盘（避免切会话时刷 ui-state）", () => {
 		useUiPreferencesStore.setState({ lastCwd: "/work/alpha" });
 		useSessionsStore.setState({
