@@ -62,7 +62,12 @@ describe("expandedGroupsTouched 迁移与读写（空数组不再兼任「未操
 	});
 
 	it("缺字段 + 空/非法记录 → false（旧版无法区分，只能继续按未操作处理）", async () => {
-		for (const raw of ['{"expandedGroups":[]}', "{}", '{"expandedGroups":"x"}', '{"expandedGroups":[1,""]}']) {
+		for (const raw of [
+			'{"expandedGroups":[]}',
+			"{}",
+			'{"expandedGroups":"x"}',
+			'{"expandedGroups":[1,""]}',
+		]) {
 			writeFileSync(file(), raw);
 			expect((await loadUiState())?.expandedGroupsTouched, raw).toBe(false);
 		}
