@@ -204,9 +204,9 @@ interface SessionsStore {
 	/** 设置新会话的目标项目目录；活跃 tab 是 draft 时同步更新其条目（切 tab 往返不丢选择） */
 	setDraftCwd: (cwd: string) => void;
 	switchSession: (sessionId: string) => void;
-	closeSession: (sessionId: string) => Promise<void>;
+	closeSession: (sessionId: string) => Promise<{ closed: boolean }>;
 	/** 自动卸载（内存策略用，见实现处注释；与 closeSession 行为一致） */
-	unloadSession: (sessionId: string) => Promise<void>;
+	unloadSession: (sessionId: string) => Promise<{ closed: boolean }>;
 	openFromHistory: (filePath: string) => Promise<void>;
 	/** 在指定 assistant 消息处分叉：新会话以新 tab 打开并切换过去（原会话保留原样）；成功返回新 sessionId */
 	forkSession: (ref: { entryId?: string; text?: string }) => Promise<string | undefined>;
@@ -350,12 +350,15 @@ export const useSessionsStore = create<SessionsStore>((set, get) => ({
 		// draft 没有后端会话，纯本地移除
 		if (!isDraft) {
 			try {
-				await getPi().closeSession({ sessionId });
+				const { closed } = await getPi().closeSession({ sessionId });
+				// 后端拒绝（agent 在跑 / 等审批）：**渲染层状态必须原样保留** —— 事务语义，
+				// 不能出现「后端会话还在、前端条目已消失」的半个动作（内存策略也会看走眼）
+				if (!closed) return { closed: false };
 			} catch (error) {
 				// 会话关闭失败：UI 状态保留（用户可重试），显形不静默（曾「点了没反应」）
 				console.error("关闭会话失败", error);
 				pushToast("warning", "toast.closeFailed", errText(error));
-				return;
+				return { closed: false };
 			}
 		}
 		useTranscriptStore.getState().resetSession(sessionId);
@@ -374,14 +377,14 @@ export const useSessionsStore = create<SessionsStore>((set, get) => ({
 			delete lastUsedAt[sessionId];
 			return { sessions, activeSessionId, cwd, permissionModes, lastUsedAt };
 		});
+		return { closed: true };
 	},
 
 	/** 自动卸载（内存策略专用）：语义与 closeSession 完全一致，只是把调用点区分开——
 	 *  「用户主动关/删」走 closeSession，「内存策略判定该卸」走这里（便于日后单独调整任一侧）。
-	 *  受保护会话不会走到这里（保护判定在 lib/session-gc.ts 的 isProtected）。 */
-	unloadSession: async (sessionId) => {
-		await get().closeSession(sessionId);
-	},
+	 *  受保护会话不会走到这里（保护判定在 lib/session-gc.ts 的 isProtected）；
+	 *  返回 `closed=false` 表示后端拒绝（竞态：策略判定后它恰好又开始跑了）。 */
+	unloadSession: (sessionId) => get().closeSession(sessionId),
 
 	openFromHistory: async (filePath) => {
 		try {

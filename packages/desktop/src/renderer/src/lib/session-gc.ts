@@ -72,7 +72,12 @@ export interface UnloadCandidate {
 
 export const GC_DEFAULTS = {
 	keep: 3,
-	freshMs: 10_000,
+	/**
+	 * 刚用过的不卸（防「已发送、run 未起」的竞态）。3s 足够盖住「发送 → agent_start」这段
+	 * （实测不到 1s），同时把「连开多个会话」的峰值窗口压到可接受：10s 时十连开会堆到 ~+370MB
+	 * 才回落，3s 后被新开的会话自然触发回收（见 REVIEW 10:37 裁决）。
+	 */
+	freshMs: 3_000,
 	idleTimeoutMs: 300_000,
 } as const;
 

@@ -4,7 +4,8 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 /** window.pi 的 mock：sessions store 经 getPi() 访问，测试环境无 preload 注入 */
 const piMock = vi.hoisted(() => ({
 	createSession: vi.fn(),
-	closeSession: vi.fn(),
+	// 默认「后端同意关」；拒绝语义（agent 在跑）见 closeSession 的守卫用例
+	closeSession: vi.fn(() => Promise.resolve({ closed: true })),
 	setModel: vi.fn(),
 	setThinkingLevel: vi.fn(),
 	saveUiState: vi.fn(() => Promise.resolve()),
@@ -238,6 +239,33 @@ describe("closeSession", () => {
 		const state = useSessionsStore.getState();
 		expect(state.activeSessionId).toBe("r1");
 		expect(state.cwd).toBe("/proj/a");
+	});
+
+	it("后端拒绝（agent 在跑/等审批）→ 渲染层状态原样保留（事务语义，不留半个动作）", async () => {
+		useSessionsStore.setState({
+			sessions: [realMeta("r1", "/proj/a")],
+			activeSessionId: "r1",
+			cwd: "/proj/a",
+		});
+		useTranscriptStore.getState().loadHistory("r1", []); // 造一个已装载的 transcript 条目
+		piMock.closeSession.mockResolvedValueOnce({ closed: false });
+
+		const result = await useSessionsStore.getState().closeSession("r1");
+
+		expect(result).toEqual({ closed: false });
+		const state = useSessionsStore.getState();
+		expect(state.sessions.map((s) => s.sessionId)).toEqual(["r1"]); // 条目还在
+		expect(state.activeSessionId).toBe("r1");
+		// transcript 也没被清（不能出现「后端还活着、前端已消失」）
+		expect(useTranscriptStore.getState().bySession.r1).toBeDefined();
+	});
+
+	it("后端异常（抛错）→ 同样保留状态并提示，不静默", async () => {
+		useSessionsStore.setState({ sessions: [realMeta("r1", "/proj/a")], activeSessionId: "r1" });
+		piMock.closeSession.mockRejectedValueOnce(new Error("boom"));
+		const result = await useSessionsStore.getState().closeSession("r1");
+		expect(result).toEqual({ closed: false });
+		expect(useSessionsStore.getState().sessions.map((s) => s.sessionId)).toEqual(["r1"]);
 	});
 
 	it("关闭后台会话：active 与 cwd 不变", async () => {

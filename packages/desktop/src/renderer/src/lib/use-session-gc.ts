@@ -62,8 +62,12 @@ export function useSessionGc(): void {
 					const latest = useSessionsStore.getState();
 					if (latest.activeSessionId === sessionId) continue;
 					if (!latest.sessions.some((s) => s.sessionId === sessionId)) continue;
-					if (import.meta.env.DEV) console.debug("[session-gc] unload", sessionId, `reason=${reason}`);
-					await latest.unloadSession(sessionId);
+					// 日志打在**成功之后**：后端在跑会拒绝（closed=false），打在前面会误报「已卸载」
+					const { closed } = await latest.unloadSession(sessionId);
+					if (import.meta.env.DEV) {
+						if (closed) console.debug("[session-gc] unload", sessionId, `reason=${reason}`);
+						else console.debug("[session-gc] skipped", sessionId, `reason=${reason} refused-by-backend`);
+					}
 				}
 			} finally {
 				running = false;

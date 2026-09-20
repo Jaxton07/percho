@@ -534,15 +534,17 @@ export class PiBackend {
 	 * 内存策略（自动卸载）靠这道兵底兼固（策略层已保护，这里是最后一道门）。
 	 * 自动卸载走同一个方法：行为与主动关完全一致，只是调用点分开（renderer 侧 `unloadSession`）。
 	 */
-	async closeSession(sessionId: string): Promise<void> {
+	async closeSession(sessionId: string): Promise<{ closed: boolean }> {
 		const entry = this.registry.get(sessionId);
-		if (!entry) return;
+		// 没有该会话 = 它本来就没在跑（幂等成功）：调用方该照常清掉自己的会话条目
+		if (!entry) return { closed: true };
 		if (entry.session.isStreaming) {
 			// 等审批也在此列（实测 isStreaming 两态都为 true）：用户切走/自动卸载都不能把这一轮掐掉
 			log.warn("closeSession ignored: streaming", sessionId);
-			return;
+			return { closed: false };
 		}
 		await this.disposeSession(entry);
+		return { closed: true };
 	}
 
 	/** 真正的处置：dispose + registry/全局键控子系统清理（closeSession 与 deleteSession 共用） */
