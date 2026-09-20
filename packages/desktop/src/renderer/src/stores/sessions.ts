@@ -644,8 +644,9 @@ export const useSessionsStore = create<SessionsStore>((set, get) => ({
 						}))
 					: state.newSessionDraft;
 			// 新会话页的 cwd 真相是 draft.cwd（项目选择器 / Sidebar activeCwd / promotion 都读它）：
-			// 不能留下「页面显示 A 项目、promotion 却按 B 项目建会话」的分叉
-			const cwd = activeSessionId === null ? (newSessionDraft?.cwd ?? fallbackCwd) : fallbackCwd;
+			// 严格镜像它（**含 null**）—— 不能回退到被关闭会话的项目，
+			// 否则又回到「页面/promotion 两处说法」（draft 还没选项目时 store.cwd 也得是 null）
+			const cwd = activeSessionId === null ? (newSessionDraft?.cwd ?? null) : fallbackCwd;
 			// 权限模式随会话销毁归零（后端 holder 同点位清理）
 			const permissionModes = withPermissionMode(state.permissionModes, sessionId, "default");
 			// LRU 打点随会话一起清（表项留着就是泄漏：只会积攒不再打开的 id）

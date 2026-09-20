@@ -1278,6 +1278,27 @@ describe("不变式：新会话页（active === null）必须有可用 draft", (
 		expect(state.newSessionDraft?.cwd).toBe("/proj/draft");
 	});
 
+	it("已有 cwd=null 的 draft 时关掉最后一个真实会话：store.cwd 严格镜像 draft.cwd（含 null）", async () => {
+		// 开机（无 lastCwd）那份：cwd 为空，从未选过项目
+		useSessionsStore.setState({ cwd: null });
+		useSessionsStore.getState().activateNewSessionDraft();
+		expect(useSessionsStore.getState().newSessionDraft?.cwd).toBeNull();
+
+		// 用户打开一个真实会话（它的项目是 /proj/opened）再把它关掉
+		useSessionsStore.setState({
+			sessions: [realMeta("opened", "/proj/opened")],
+			activeSessionId: "opened",
+			cwd: "/proj/opened",
+		});
+		await useSessionsStore.getState().closeSession("opened");
+
+		const state = useSessionsStore.getState();
+		expect(state.activeSessionId).toBeNull();
+		// 关键：draft 还没选项目 → store.cwd 也得是 null，不能回退成被关闭会话的项目
+		expect(state.newSessionDraft?.cwd).toBeNull();
+		expect(state.cwd).toBeNull();
+	});
+
 	it("转正途中点「＋」回新会话页 → 迟到的转正结果消费掉 draft 后必须立刻补一份", async () => {
 		const created = deferred<SessionMeta>();
 		piMock.createSession.mockImplementationOnce(() => created.promise);
