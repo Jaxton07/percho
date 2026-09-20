@@ -37,10 +37,17 @@ export interface UiState {
 	/** 左侧栏收起（宽 0，彻底藏起；只有顶栏最左按钮能改）；旧版本文件缺省为 false */
 	sidebarCollapsed: boolean;
 	/**
-	 * 左侧栏已展开的分组 key（日常 cwd + 各项目 cwd + 项目小标专用 key）= 用户手动开合过的记录。
-	 * **空数组 = 无用户记录** → 走默认推断（只展开当前会话所在组）；一旦有记录就完全以它为准。
+	 * 左侧栏已展开的分组 key（日常 cwd + 各项目 cwd）= 用户手动开合过的记录。
+	 * 空数组的含义**只由 `expandedGroupsTouched` 决定**（空 = 全部折叠 / 未操作）。
 	 */
 	expandedGroups: string[];
+	/**
+	 * 展开态是否已被用户手动开合过：
+	 * `false` = 没操作过 → 走默认推断（只展开当前会话所在组），`expandedGroups` 此时只是空值；
+	 * `true` = 完全以 `expandedGroups` 为准，**空数组合法表示「全部折叠」**。
+	 * 旧文件缺该字段时按 `expandedGroups` 是否非空推断（旧版非空记录即「以用户选择为准」）。
+	 */
+	expandedGroupsTouched: boolean;
 	/** 置顶项目 cwd（新置顶在前，决定左侧栏项目区排序） */
 	pinnedProjects: string[];
 	/**

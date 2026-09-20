@@ -53,6 +53,8 @@ function normalize(parsed: UiStateFileShape): UiState {
 	const background = parsed.background;
 	const dim =
 		typeof background?.dim === "number" && background.dim >= 0 && background.dim <= 1 ? background.dim : 0.8;
+	// 展开态：先清洗数组，再用它推断缺字段时的 touched（旧版「非空记录 = 已操作」语义）
+	const expandedGroups = stringArray(parsed.expandedGroups);
 	return {
 		lastUsedModel: model ? { provider: model.provider, modelId: model.modelId } : null,
 		lastUsedThinkingLevel: typeof level === "string" ? level : "medium",
@@ -65,7 +67,12 @@ function normalize(parsed: UiStateFileShape): UiState {
 		// 顶栏是否显示置顶会话胶囊（旧字段 topBarVisible 已废弃：顶栏现在常驻，不再整条隐藏）
 		barSessionsVisible: typeof parsed.barSessionsVisible === "boolean" ? parsed.barSessionsVisible : true,
 		sidebarCollapsed: typeof parsed.sidebarCollapsed === "boolean" ? parsed.sidebarCollapsed : false,
-		expandedGroups: stringArray(parsed.expandedGroups),
+		expandedGroups,
+		// 显式布尔优先（含显式 false 配空数组）；缺字段/脏值才按清洗后的记录是否非空推断
+		expandedGroupsTouched:
+			typeof parsed.expandedGroupsTouched === "boolean"
+				? parsed.expandedGroupsTouched
+				: expandedGroups.length > 0,
 		pinnedProjects: stringArray(parsed.pinnedProjects),
 		// 上次项目目录：只收非空字符串（旧文件/脏值 → null）
 		lastCwd: typeof parsed.lastCwd === "string" && parsed.lastCwd.length > 0 ? parsed.lastCwd : null,

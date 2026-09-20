@@ -54,7 +54,10 @@ export type SidebarGroupsInput = {
 	activeSessionId: string | null;
 	pinnedSessions: readonly string[];
 	pinnedProjects: readonly string[];
+	/** 已展开的分组 key（**含义由 `expandedGroupsTouched` 决定**） */
 	expandedGroups: readonly string[];
+	/** false = 用户还没手动开合过（走默认推断，`expandedGroups` 不参与）；true = 完全以 `expandedGroups` 为准（空数组 = 全部折叠） */
+	expandedGroupsTouched: boolean;
 };
 
 function matchesSearch(session: SessionMeta, query: string): boolean {
@@ -79,8 +82,9 @@ function groupSessions(list: readonly SessionMeta[], pinned: ReadonlySet<string>
  * 「其余按 lastActive 倒序」，与同段「直接用 deriveProjects 的输出」互斥，取后者）。
  * 组内 = 置顶会话在前，其余按最后活动倒序。
  *
- * 展开推断：`expandedGroups` 为空（用户没手动开合过）→ 只展开当前会话所在组；
- * 非空 → 完全以记录为准（用户把当前组折叠了也尊重）。
+ * 展开推断：`expandedGroupsTouched === false`（用户从没手动开合过）→ 只展开当前会话所在组；
+ * `true` → 完全以 `expandedGroups` 为准（把当前组折了也尊重，**空数组 = 全部折叠**）。
+ * 旧版拿「空数组」兼任两种含义，导致最后一个展开组折不掉（见 spec D4）。
  *
  * 搜索：命中为空的分组整体隐藏（含日常组），避免满屏空组。
  */
@@ -101,7 +105,8 @@ export function deriveSidebarGroups(input: SidebarGroupsInput): SidebarGroupsRes
 		? (input.sessions.find((session) => session.sessionId === input.activeSessionId)?.cwd ?? null)
 		: null;
 	const defaultExpandedKeys = activeCwd ? [activeCwd] : [];
-	const expandedKeys = input.expandedGroups.length > 0 ? input.expandedGroups : defaultExpandedKeys;
+	// 展开态的唯一判据是 touched 位，不是「数组空不空」：空数组合法表示「用户把最后一组也折了」
+	const expandedKeys = input.expandedGroupsTouched ? input.expandedGroups : defaultExpandedKeys;
 	const isExpanded = (key: string) => expandedKeys.includes(key);
 
 	const dailyCwd = getDailyDirCached();
@@ -153,14 +158,18 @@ export function toggleInList(list: readonly string[], id: string): string[] {
 }
 
 /**
- * 展开 / 折叠一个分组（纯逻辑）：`current` 为空 = 用户还没手动开合过，
- * 以 `defaults`（派生层给的默认展开集）为起点再翻转 —— 否则首次点开某个组会把当前组一起折掉。
+ * 展开 / 折叠一个分组（纯逻辑）：以 `touched` 判据——用户还没操作过就用 `defaults`
+ * （派生层给的默认展开集）当起点再翻转，否则在用户的现有记录上翻转。
+ * 后者是关键：touched=true 且记录为空（全部折叠）时，点一个组应当**只展开它**，
+ * 不能再回退默认集（否则会把当前会话所在组一起拉出来）。
+ * `touched` 缺省按 `current.length > 0` 推断，兼容旧调用（旧版非空记录即「已操作」）。
  */
 export function toggleExpandedGroup(
 	current: readonly string[],
 	key: string,
 	defaults: readonly string[],
+	touched: boolean = current.length > 0,
 ): string[] {
-	const base = current.length > 0 ? [...current] : [...defaults];
+	const base = touched ? [...current] : [...defaults];
 	return base.includes(key) ? base.filter((item) => item !== key) : [...base, key];
 }

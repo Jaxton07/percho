@@ -19,6 +19,7 @@ export function Sidebar() {
 	const t = useT();
 	const collapsed = useUiPreferencesStore((s) => s.sidebarCollapsed);
 	const expandedGroups = useUiPreferencesStore((s) => s.expandedGroups);
+	const expandedGroupsTouched = useUiPreferencesStore((s) => s.expandedGroupsTouched);
 	const pinnedProjects = useUiPreferencesStore((s) => s.pinnedProjects);
 	const pinnedSessions = useUiPreferencesStore((s) => s.pinnedSessions);
 	const toggleProjectPin = useUiPreferencesStore((s) => s.toggleProjectPin);
@@ -40,8 +41,18 @@ export function Sidebar() {
 				pinnedSessions,
 				pinnedProjects,
 				expandedGroups,
+				expandedGroupsTouched,
 			}),
-		[allSessions, addedProjects, search, activeSessionId, pinnedSessions, pinnedProjects, expandedGroups],
+		[
+			allSessions,
+			addedProjects,
+			search,
+			activeSessionId,
+			pinnedSessions,
+			pinnedProjects,
+			expandedGroups,
+			expandedGroupsTouched,
+		],
 	);
 
 	// 首次开合的起点由派生层给（当前会话所在组 + 项目小标），组件不自己再算一遍

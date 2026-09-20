@@ -9,12 +9,6 @@ vi.mock("../api", () => ({ getPi: () => piMock }));
 
 import { useUiPreferencesStore } from "./ui-preferences";
 
-/** 展开态「用户已操作」位（阶段 1 落进 store）：字段落地前用受控读取，避免测试引用未声明成员 */
-function readTouched(): boolean | undefined {
-	return (useUiPreferencesStore.getState() as unknown as { expandedGroupsTouched?: boolean })
-		.expandedGroupsTouched;
-}
-
 beforeEach(() => {
 	vi.clearAllMocks();
 	useUiPreferencesStore.setState({
@@ -23,6 +17,7 @@ beforeEach(() => {
 		barSessionsVisible: true,
 		sidebarCollapsed: false,
 		expandedGroups: [],
+		expandedGroupsTouched: false,
 		pinnedProjects: [],
 		lastCwd: null,
 	});
@@ -108,19 +103,19 @@ describe("useUiPreferencesStore", () => {
 		it("init 恢复 touched 位：显式 true + 空数组 = 用户已全部折叠", async () => {
 			piMock.loadUiState.mockResolvedValue({ expandedGroupsTouched: true, expandedGroups: [] });
 			await useUiPreferencesStore.getState().init();
-			expect(readTouched()).toBe(true);
+			expect(useUiPreferencesStore.getState().expandedGroupsTouched).toBe(true);
 			expect(useUiPreferencesStore.getState().expandedGroups).toEqual([]);
 		});
 
 		it("init 缺字段 = false（旧文件按「未操作」处理，继续走默认推断）", async () => {
 			piMock.loadUiState.mockResolvedValue({ expandedGroups: [] });
 			await useUiPreferencesStore.getState().init();
-			expect(readTouched()).toBe(false);
+			expect(useUiPreferencesStore.getState().expandedGroupsTouched).toBe(false);
 		});
 
 		it("setExpandedGroups 同步置 touched=true，并以单个补丁原子落盘两字段", () => {
 			useUiPreferencesStore.getState().setExpandedGroups([]);
-			expect(readTouched()).toBe(true);
+			expect(useUiPreferencesStore.getState().expandedGroupsTouched).toBe(true);
 			expect(piMock.saveUiState).toHaveBeenLastCalledWith({
 				state: { expandedGroups: [], expandedGroupsTouched: true },
 			});

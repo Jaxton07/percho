@@ -34,11 +34,10 @@ function derive(overrides: Partial<SidebarGroupsInput> = {}) {
 }
 
 /**
- * 展开态「用户已操作」位（阶段 1 落进 `SidebarGroupsInput`）：这里先经**变量**传入（对象字面量会被
- * 多余属性检查拦住），字段落地后即为正式入参。所有用例显式给值，不依赖实现里的缺省推断。
+ * 展开态「用户已操作」位：所有用例**显式给值**，不依赖实现里的缺省推断。
  */
 function deriveWithTouched(overrides: Partial<SidebarGroupsInput>, expandedGroupsTouched: boolean) {
-	const input = {
+	return deriveSidebarGroups({
 		sessions: [],
 		projects: [],
 		search: "",
@@ -48,8 +47,7 @@ function deriveWithTouched(overrides: Partial<SidebarGroupsInput>, expandedGroup
 		expandedGroups: [],
 		...overrides,
 		expandedGroupsTouched,
-	};
-	return deriveSidebarGroups(input);
+	});
 }
 
 describe("deriveSidebarGroups · 组内排序", () => {
@@ -174,6 +172,22 @@ describe("deriveSidebarGroups · 展开状态 touched 位", () => {
 		const second = deriveWithTouched({ ...base, expandedGroups: next }, true);
 		expect(second.projects.map((p) => [p.cwd, p.expanded])).toEqual([[P1, false]]);
 	});
+
+	it("touched=true 时切换当前会话：不自动展开任何组（新当前组也保持折叠）", () => {
+		const result = deriveWithTouched(
+			{
+				sessions: [session("a", P1, 100), session("b", P2, 200)],
+				projects: [project(P1), project(P2)],
+				activeSessionId: "b",
+				expandedGroups: [],
+			},
+			true,
+		);
+		expect(result.projects.map((p) => [p.cwd, p.expanded])).toEqual([
+			[P1, false],
+			[P2, false],
+		]);
+	});
 });
 
 describe("deriveSidebarGroups · 搜索过滤", () => {
@@ -227,8 +241,13 @@ describe("toggleInList / toggleExpandedGroup", () => {
 	});
 
 	it("展开切换：无记录时以默认集为起点翻转，不误伤其它组", () => {
-		expect(toggleExpandedGroup([], P2, [P1])).toEqual([P1, P2]);
-		expect(toggleExpandedGroup([P1], P1, [])).toEqual([]);
-		expect(toggleExpandedGroup([P1], P2, [P1])).toEqual([P1, P2]);
+		expect(toggleExpandedGroup([], P2, [P1], false)).toEqual([P1, P2]);
+		expect(toggleExpandedGroup([P1], P1, [], true)).toEqual([]);
+		expect(toggleExpandedGroup([P1], P2, [P1], true)).toEqual([P1, P2]);
+	});
+
+	it("已操作过（touched=true）且记录为空（全部折叠）：再点一个组只展开它，不能回退默认集", () => {
+		// 这是「折了最后一个组后又点开一个组」的场景：起点必须是空记录，否则会把当前会话所在组一起拉出来
+		expect(toggleExpandedGroup([], P2, [P1], true)).toEqual([P2]);
 	});
 });
