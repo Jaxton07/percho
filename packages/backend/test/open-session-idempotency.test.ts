@@ -4,7 +4,9 @@ import { join } from "node:path";
 import type { AgentSession, ModelRuntime } from "@earendil-works/pi-coding-agent";
 import { SessionManager } from "@earendil-works/pi-coding-agent";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { PermissionGate } from "../src/permissions/gate";
 import { PiBackend } from "../src/pi-backend";
+import { ExtensionDialogHost } from "../src/session/extension-dialog-host";
 import type { RegisteredSession, SessionRegistry } from "../src/session/registry";
 
 /**
@@ -105,5 +107,62 @@ describe("PiBackend.openSession 幂等（spec D4）", () => {
 		expect(registry.list()).toHaveLength(1);
 		expect(registry.get("sess-open")).toBe(entry);
 		expect(load).not.toHaveBeenCalled();
+	});
+});
+
+describe("PiBackend.wireSession 注册冲突（D4 最后防线）", () => {
+	it("同 sessionId 已被占住：抛错，并把刚构造的实例拆干净（订阅/gate/dialogs/session）", async () => {
+		const file = writeSessionFile(dir, "sess-dup");
+		const backend = new PiBackend({
+			projectTrust: false,
+			permissionGates: false,
+			subagentPreferBuiltin: false,
+		});
+		const registry = (backend as unknown as { registry: SessionRegistry }).registry;
+		// 先占住 sessionId（模拟并发/别名路径：另一个 entry 已经在册）
+		const holder = entryFor(file, "sess-dup");
+		registry.add(holder);
+
+		const unsubscribe = vi.fn();
+		const dispose = vi.fn();
+		const gateDispose = vi.spyOn(PermissionGate.prototype, "dispose");
+		const dialogsDispose = vi.spyOn(ExtensionDialogHost.prototype, "dispose");
+		const session = {
+			sessionId: "sess-dup",
+			sessionFile: file,
+			sessionName: undefined,
+			model: null,
+			thinkingLevel: "medium",
+			messages: [],
+			sessionManager: SessionManager.open(file),
+			subscribe: () => unsubscribe,
+			bindExtensions: () => Promise.resolve(),
+			dispose,
+		};
+		const wire = (
+			backend as unknown as {
+				wireSession: (cwd: string, readOnly: undefined, make: () => Promise<unknown>) => Promise<unknown>;
+			}
+		).wireSession.bind(backend);
+
+		await expect(
+			wire("/tmp/project", undefined, async () => ({
+				session,
+				extensionsResult: { extensions: [], errors: [] },
+			})),
+		).rejects.toThrow(/already registered/);
+
+		try {
+			expect(unsubscribe).toHaveBeenCalledTimes(1);
+			expect(gateDispose).toHaveBeenCalledTimes(1);
+			expect(dialogsDispose).toHaveBeenCalledTimes(1);
+			expect(dispose).toHaveBeenCalledTimes(1);
+			// 占位 entry 原样保留（没有被静默替换），registry 里也不会多出第二条
+			expect(registry.get("sess-dup")).toBe(holder);
+			expect(registry.list()).toHaveLength(1);
+		} finally {
+			gateDispose.mockRestore();
+			dialogsDispose.mockRestore();
+		}
 	});
 });

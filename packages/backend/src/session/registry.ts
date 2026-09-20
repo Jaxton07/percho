@@ -23,7 +23,17 @@ export interface RegisteredSession {
 export class SessionRegistry {
 	private readonly sessions = new Map<string, RegisteredSession>();
 
+	/**
+	 * 注册会话。同 sessionId 重复 add **同一个 entry** = 幂等；
+	 * 不同 entry = 抛错，**绝不静默覆盖**：覆盖会把第一份实例的订阅/gate/dialogs 全泄漏，
+	 * 而且再没人能 dispose 它。正常主路径走不到这里（`PiBackend.openSession` 在构造前就按
+	 * sessionId 短路），这是并发/别名路径的最后防线；调用方负责清理刚构造的实例（见 wireSession）。
+	 */
 	add(entry: RegisteredSession): void {
+		const existing = this.sessions.get(entry.session.sessionId);
+		if (existing && existing !== entry) {
+			throw new Error(`Session already registered: ${entry.session.sessionId}`);
+		}
 		this.sessions.set(entry.session.sessionId, entry);
 	}
 

@@ -815,6 +815,29 @@ describe("GC close 在途的选择竞态（spec D5）", () => {
 		expect(useSessionsStore.getState().sessions.map((s) => s.sessionId)).toEqual(["a"]);
 	});
 
+	it("reopen 成功后把 renderer 持有的权限档位拉回新 backend 会话（重开一律 default 起步）", async () => {
+		useSessionsStore.setState({
+			sessions: [realMeta("a", "/p"), realMeta("b", "/p")],
+			activeSessionId: "a",
+			cwd: "/p",
+			permissionModes: { b: "fullAccess" },
+		});
+		const closing = deferred<{ closed: boolean }>();
+		piMock.closeSession.mockImplementationOnce(() => closing.promise);
+		piMock.openSession.mockResolvedValueOnce(realMeta("b", "/p"));
+		// b 已有 transcript（真实场景：它是被 GC 判定可卸的已打开会话）→ 切换不触发懒加载
+		useTranscriptStore.getState().setFollowUpQueue("b", ["kept"]);
+
+		const unloading = useSessionsStore.getState().unloadSession("b");
+		useSessionsStore.getState().switchSession("b");
+		closing.resolve({ closed: true });
+		const result = await unloading;
+
+		expect(result).toEqual({ closed: false });
+		expect(piMock.setPermissionMode).toHaveBeenCalledWith({ sessionId: "b", mode: "fullAccess" });
+		expect(useSessionsStore.getState().permissionModes.b).toBe("fullAccess");
+	});
+
 	it("reopen 失败：不留幽灵 active（按正常关闭清理并显形提示）", async () => {
 		useSessionsStore.setState({
 			sessions: [realMeta("a", "/p"), realMeta("b", "/p")],

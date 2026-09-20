@@ -1,6 +1,6 @@
 import { existsSync } from "node:fs";
 import { readFile, unlink } from "node:fs/promises";
-import { join } from "node:path";
+import { join, resolve } from "node:path";
 import type { Model, ThinkingLevel } from "@earendil-works/pi-ai";
 import { getSupportedThinkingLevels } from "@earendil-works/pi-ai";
 import {
@@ -84,6 +84,7 @@ import { autoNameSession } from "./session/naming";
 import { EventRateTracker } from "./session/rates";
 import { type EventForwarder, type RegisteredSession, SessionRegistry } from "./session/registry";
 import { renameSessionFile } from "./session/rename";
+import { KeyedSingleFlight } from "./session/single-flight";
 import { StreamGuard } from "./session/stream-guard";
 import { TraceRecorder } from "./session/trace";
 import { SessionTraces } from "./session/traces";
@@ -174,6 +175,8 @@ export interface PiBackendOptions {
  */
 export class PiBackend {
 	private readonly registry = new SessionRegistry();
+	/** open 的 single-flight（key = 规范化绝对路径）：同文件并发 open 共享一次构造（spec D4） */
+	private readonly openFlights = new KeyedSingleFlight<SessionMeta>();
 	/**
 	 * 已加载会话的频道订阅快照（spec §6.1/§6.2）：sessionId → 有效运行态 topic 集，
 	 * 由 channel-watch 扩展经 `reportChannelSubscriptions` 维护（只存 topic 名）。
@@ -433,12 +436,30 @@ export class PiBackend {
 		return this.toMetaOrThrow(session.sessionId);
 	}
 
+	/**
+	 * 打开会话（幂等 + single-flight，spec D4）：
+	 * - key = 规范化绝对路径 → 同一文件并发 open 共享一次构造；
+	 * - 已在 registry 的 sessionId 直接返回现有 entry 的最新 meta，**不构造第二实例**
+	 *   （短路在资源加载/扩展构造之前，重复 open 不再重复 subscribe/trace）；
+	 * - 失败（含构造失败）必清 in-flight key → 可重试。
+	 */
 	async openSession(filePath: string): Promise<SessionMeta> {
-		const runtime = await this.getModelRuntime();
-		const sessionManager = SessionManager.open(filePath);
-		const cwd = sessionManager.getCwd() || process.cwd();
+		const key = resolve(filePath);
+		return this.openFlights.run(key, () => this.openSessionOnce(key));
+	}
+
+	private async openSessionOnce(filePath: string): Promise<SessionMeta> {
+		// 读 header 拿到 sessionId（只读文件头，不构造会话）后先查 registry：
 		// 子代理产物目录下的会话文件 = 只读检视（spec §8.1：防能力静默漂移/递归绕过）。
 		// 其运行 trace 由 runner 管理，检视页不可写，故不另建 recorder（避免覆盖运行中的 recorder）。
+		const sessionManager = SessionManager.open(filePath);
+		const existing = this.registry.get(sessionManager.getSessionId());
+		if (existing) {
+			log.info("session open short-circuited", sessionManager.getSessionId(), { file: filePath });
+			return this.registry.toMeta(existing);
+		}
+		const runtime = await this.getModelRuntime();
+		const cwd = sessionManager.getCwd() || process.cwd();
 		const readOnly = isSubagentSessionPath(filePath);
 		const session = await this.wireSession(cwd, readOnly, async (deps) => {
 			const { settingsManager, resourceLoader } = await deps.load();
@@ -503,15 +524,28 @@ export class PiBackend {
 			autoNameSession(session, event);
 			this.emitEvent(session.sessionId, event);
 		});
-		this.registry.add({
-			session,
-			unsubscribe,
-			cwd,
-			gate,
-			dialogs,
-			modeRef,
-			readOnly: readOnly || undefined,
-		});
+		try {
+			this.registry.add({
+				session,
+				unsubscribe,
+				cwd,
+				gate,
+				dialogs,
+				modeRef,
+				readOnly: readOnly || undefined,
+			});
+		} catch (error) {
+			// registry 的最后防线（同 sessionId 已被别的 entry 占住，如并发/别名路径）：
+			// 刚构造的这份必须当场拆干净（订阅/gate/dialogs/session），不能只抛错把资源泄漏出去
+			unsubscribe();
+			gate.dispose();
+			dialogs.dispose();
+			session.dispose();
+			log.error("session register conflicted; constructed instance disposed", {
+				sessionId: session.sessionId,
+			});
+			throw error;
+		}
 		if (!readOnly) await this.traces.start(session.sessionId, session.sessionManager.getSessionDir());
 		return session;
 	}

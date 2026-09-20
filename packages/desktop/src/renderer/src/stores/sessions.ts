@@ -136,6 +136,21 @@ function applyBackendPermissionMode(sessionId: string, mode: PermissionMode): vo
 }
 
 /**
+ * 后端会话被重建（GC 竞态恢复）后把权限档位拉回：新构造的会话一律 default 起步（D1：不落盘、不继承），
+ * 而 renderer 里还持有用户选过的档位——不拉回就会出现「UI 显示 fullAccess、后端按 default 走」的静默偏差。
+ * 失败只 warn：档位不同步不能把恢复流程整个搞挂。
+ */
+async function restorePermissionMode(sessionId: string): Promise<void> {
+	const mode = useSessionsStore.getState().permissionModes[sessionId];
+	if (!mode || mode === "default") return;
+	try {
+		await getPi().setPermissionMode({ sessionId, mode });
+	} catch (error) {
+		console.warn("恢复会话权限模式失败", error);
+	}
+}
+
+/**
  * 权限模式 map 变异 helper（D4）：default = 删 key 的「缺 key = default」语义单点化，
  * 应用/乐观写入/回滚/会话销毁四处共用。
  */
@@ -219,13 +234,17 @@ async function optimisticSessionSetting(
  * settle（无论成败）后立即清 key，失败可以重试；不同文件互不影响。
  * 返回 null = 失败（提示已在共享链里报过，调用者不再重复报）。
  *
+ * `loadBundle: false`（GC 竞态恢复专用）：只重建 backend 会话、刷新 meta，**不**重载磁盘历史——
+ * idle transcript 必须原样保留（GC 不能把用户看到的对话内容重置成历史快照）。
+ * 已有在途请求时用先到者的选项（不会重复发 IPC，也不会多跑一次 bundle）。
+ *
  * 模块级 Map 只存正在执行的 Promise，不落盘、不进 store：没有任何「仅测试用的 reset 入口」。
  */
-function ensureOpenSession(filePath: string): Promise<SessionMeta | null> {
+function ensureOpenSession(filePath: string, opts?: { loadBundle?: boolean }): Promise<SessionMeta | null> {
 	const key = filePath.trim();
 	const existing = openInFlight.get(key);
 	if (existing) return existing;
-	const promise = ensureOpenSessionInner(key).finally(() => {
+	const promise = ensureOpenSessionInner(key, opts?.loadBundle !== false).finally(() => {
 		if (openInFlight.get(key) === promise) openInFlight.delete(key);
 	});
 	openInFlight.set(key, promise);
@@ -234,7 +253,7 @@ function ensureOpenSession(filePath: string): Promise<SessionMeta | null> {
 
 const openInFlight = new Map<string, Promise<SessionMeta | null>>();
 
-async function ensureOpenSessionInner(filePath: string): Promise<SessionMeta | null> {
+async function ensureOpenSessionInner(filePath: string, loadBundle: boolean): Promise<SessionMeta | null> {
 	let meta: SessionMeta;
 	try {
 		meta = await getPi().openSession({ filePath });
@@ -249,6 +268,7 @@ async function ensureOpenSessionInner(filePath: string): Promise<SessionMeta | n
 		sessions: [...state.sessions.filter((s) => s.sessionId !== meta.sessionId), meta],
 		lastUsedAt: { ...state.lastUsedAt, [meta.sessionId]: Date.now() },
 	}));
+	if (!loadBundle) return meta;
 	try {
 		// 运行中子会话的事件已按其 sessionId 实时转发；保留已有流式态，
 		// 否则会在点击卡片时把 agent_start 建立的进度视图重置为静态历史。
@@ -465,6 +485,18 @@ export const useSessionsStore = create<SessionsStore>((set, get) => ({
 				// 后端拒绝（agent 在跑 / 等审批）：**渲染层状态必须原样保留** —— 事务语义，
 				// 不能出现「后端会话还在、前端条目已消失」的半个动作（内存策略也会看走眼）
 				if (!closed) return { closed: false };
+				// 自动卸载的选择竞态（spec D5）：策略判定「可卸」时它还不是 active，
+				// 但 close 在我们这个 await 里真的关掉了它 —— 此时用户刚好选中了它。
+				// 那样就把用户刚点的会话换成空白/消失 —— 所以重新打开后端会话，而不是把 UI 抹掉。
+				// 只重建 backend（loadBundle:false）：**不**重载磁盘历史，idle transcript 原样保留。
+				if (intent === "gc" && get().activeSessionId === sessionId) {
+					const file = get().sessions.find((s) => s.sessionId === sessionId)?.sessionFile;
+					if (file && (await ensureOpenSession(file, { loadBundle: false }))) {
+						await restorePermissionMode(sessionId);
+						return { closed: false };
+					}
+					// 恢复失败（或没有会话文件）：下面的常规清理照走；提示已由共享 open 链报过一次
+				}
 			} catch (error) {
 				// 会话关闭失败：UI 状态保留（用户可重试），显形不静默（曾「点了没反应」）
 				console.error("关闭会话失败", error);
