@@ -13,6 +13,11 @@ vi.mock("electron", () => ({ app: { getPath: () => env.dir } }));
 
 import { loadUiState, saveUiState } from "./ui-state";
 
+/** 展开态「用户已操作」位（阶段 1 落进 shared UiState）：字段落地前用受控读取，避免测试引用未声明成员 */
+function touched(state: Awaited<ReturnType<typeof loadUiState>>): boolean | undefined {
+	return (state as unknown as { expandedGroupsTouched?: boolean } | null)?.expandedGroupsTouched;
+}
+
 let root = "";
 const file = () => join(root, "ui-state.json");
 
@@ -50,6 +55,44 @@ describe("lastCwd 白名单", () => {
 		expect(state?.lastCwd).toBe("/work/beta");
 		expect(state?.pinnedSessions).toEqual(["s1"]);
 		expect(existsSync(file())).toBe(true);
+	});
+});
+
+describe("expandedGroupsTouched 迁移与读写（空数组不再兼任「未操作」）", () => {
+	it("缺字段 + 非空记录 → 推断为 true（旧版非空记录仍是「完全以用户选择为准」）", async () => {
+		writeFileSync(file(), JSON.stringify({ expandedGroups: ["/work/alpha"] }));
+		const state = await loadUiState();
+		expect(touched(state)).toBe(true);
+		expect(state?.expandedGroups).toEqual(["/work/alpha"]);
+	});
+
+	it("缺字段 + 空/非法记录 → false（旧版无法区分，只能继续按未操作处理）", async () => {
+		for (const raw of ['{"expandedGroups":[]}', "{}", '{"expandedGroups":"x"}', '{"expandedGroups":[1,""]}']) {
+			writeFileSync(file(), raw);
+			expect(touched(await loadUiState()), raw).toBe(false);
+		}
+	});
+
+	it("显式布尔值优先（含显式 false 配空数组、显式 true 配非空记录）", async () => {
+		writeFileSync(file(), JSON.stringify({ expandedGroups: [], expandedGroupsTouched: true }));
+		expect(touched(await loadUiState())).toBe(true);
+
+		writeFileSync(file(), JSON.stringify({ expandedGroups: ["/work/alpha"], expandedGroupsTouched: false }));
+		expect(touched(await loadUiState())).toBe(false);
+
+		// 非布尔脏值 → 按缺字段语义推断（这里记录非空 → true）
+		writeFileSync(file(), JSON.stringify({ expandedGroups: ["/work/alpha"], expandedGroupsTouched: "yes" }));
+		expect(touched(await loadUiState())).toBe(true);
+	});
+
+	it("保存补丁：显式空数组 + touched=true 能原样写盘读回（全部折叠可持久化）", async () => {
+		const patch = { expandedGroups: [] as string[], expandedGroupsTouched: true };
+		await saveUiState(patch);
+		await saveUiState({ pinnedSessions: ["s1"] }); // 后续补丁不能把 touched 洗掉
+		const state = await loadUiState();
+		expect(touched(state)).toBe(true);
+		expect(state?.expandedGroups).toEqual([]);
+		expect(state?.pinnedSessions).toEqual(["s1"]);
 	});
 });
 
