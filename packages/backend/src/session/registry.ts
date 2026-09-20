@@ -1,9 +1,9 @@
-import { statSync } from "node:fs";
 import type { AgentSession, AgentSessionEvent } from "@earendil-works/pi-coding-agent";
 import type { SessionMeta } from "@percho/shared";
 import type { PermissionModeRef } from "../permissions/extension";
 import type { PermissionGate } from "../permissions/gate";
 import type { ExtensionDialogHost } from "./extension-dialog-host";
+import { deriveSessionTimes, fallbackSessionTimes } from "./meta";
 
 export interface RegisteredSession {
 	session: AgentSession;
@@ -51,15 +51,12 @@ export class SessionRegistry {
 
 	toMeta(entry: RegisteredSession): SessionMeta {
 		const { session, cwd } = entry;
-		// createdAt 用会话文件创建时刻（fork = fork 时刻，语义真实）；SDK 无活跃会话 created 访问器
-		let createdAt = Date.now();
-		if (session.sessionFile) {
-			try {
-				createdAt = statSync(session.sessionFile).birthtimeMs;
-			} catch {
-				// 文件不存在/异常回退当前时刻
-			}
-		}
+		// 时间口径唯一出处见 meta.ts（spec D1）：header + entries 权威（与 SDK 磁盘枚举同语义，
+		// 不能用文件 birthtime/mtime 替代——复制/恢复文件会改 birthtime，channel cursor 等
+		// custom entry 也不该影响排序）；只有 header 读不出来时才退化到文件时间。
+		const times =
+			deriveSessionTimes(session.sessionManager.getHeader(), session.sessionManager.getEntries()) ??
+			fallbackSessionTimes(session.sessionFile);
 		return {
 			sessionId: session.sessionId,
 			sessionFile: session.sessionFile,
@@ -70,7 +67,8 @@ export class SessionRegistry {
 			thinkingLevel: session.thinkingLevel,
 			active: true,
 			messageCount: session.messages.length,
-			createdAt,
+			createdAt: times.createdAt,
+			modifiedAt: times.modifiedAt,
 			readOnly: entry.readOnly || undefined,
 		};
 	}

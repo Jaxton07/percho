@@ -1,6 +1,8 @@
 import { mkdtempSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import type { SessionEntry, SessionHeader, SessionManager } from "@earendil-works/pi-coding-agent";
+import { SessionManager as RealSessionManager } from "@earendil-works/pi-coding-agent";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { type RegisteredSession, SessionRegistry } from "../src/session/registry";
 
@@ -91,24 +93,72 @@ describe("SessionRegistry disposeAll（B8：与 closeSession 对称）", () => {
 	});
 });
 
-describe("SessionRegistry toMeta createdAt（D7：会话文件 birthtime）", () => {
-	it("createdAt 取会话文件 birthtimeMs", () => {
-		const file = join(dir, "session.jsonl");
-		writeFileSync(file, "{}\n", "utf8");
+describe("SessionRegistry toMeta 时间字段（spec D1 取代 D7 的 birthtime 语义）", () => {
+	const CREATED_ISO = "2020-01-01T00:00:00.000Z";
+	const USER_TS = Date.parse("2021-03-04T05:06:07.000Z");
+
+	/** 把 makeEntry 的桩 session 换上一个真的/替身的 sessionManager（时间字段的唯一来源） */
+	function entryWithManager(sessionId: string, file: string, manager: unknown): RegisteredSession {
+		const { entry } = makeEntry(sessionId, file);
+		return {
+			...entry,
+			session: { ...(entry.session as unknown as object), sessionManager: manager },
+		} as unknown as RegisteredSession;
+	}
+
+	/** 按真实 pi 会话文件格式写一份会话（header + 逐行 entry） */
+	function writeSession(id: string, entries: unknown[]): string {
+		const file = join(dir, `${id}.jsonl`);
+		const header = JSON.stringify({ type: "session", version: 3, id, timestamp: CREATED_ISO, cwd: "/tmp" });
+		const body = entries.map((entry) => JSON.stringify(entry));
+		writeFileSync(file, `${[header, ...body].join("\n")}\n`, "utf8");
+		return file;
+	}
+
+	it("createdAt 取 session header 时间（刻意不是文件 birthtime）", () => {
+		// 契约迁移：D7 旧口径用 birthtimeMs，复制/恢复文件就会改「创建时间」；D1 改为 header 权威
+		const file = writeSession("header-session", [
+			{
+				type: "message",
+				id: "m1",
+				parentId: null,
+				timestamp: "2021-03-04T05:06:07.000Z",
+				message: { role: "user", content: "hi", timestamp: USER_TS },
+			},
+		]);
 		const registry = new SessionRegistry();
-		const { entry } = makeEntry("s1", file);
+		const entry = entryWithManager("s1", file, RealSessionManager.open(file));
 		registry.add(entry);
 
 		const meta = registry.toMeta(entry);
-		expect(meta.createdAt).toBe(statSync(file).birthtimeMs);
+
+		expect(meta.createdAt).toBe(Date.parse(CREATED_ISO));
+		expect(meta.createdAt).not.toBe(statSync(file).birthtimeMs);
+		expect(meta.modifiedAt).toBe(USER_TS);
 	});
 
-	it("会话文件不存在时回退当前时刻（不抛错）", () => {
+	it("header 读不出来（异常路径）：回退文件 mtime（不再用 birthtime）", () => {
+		const file = join(dir, "no-header.jsonl");
+		writeFileSync(file, "{}\n", "utf8");
 		const registry = new SessionRegistry();
-		const { entry } = makeEntry("s1", join(dir, "missing.jsonl"));
+		const manager = { getHeader: (): SessionHeader | null => null, getEntries: (): SessionEntry[] => [] };
+		const entry = entryWithManager("s1", file, manager as unknown as SessionManager);
+		registry.add(entry);
+
+		const meta = registry.toMeta(entry);
+
+		expect(meta.createdAt).toBe(statSync(file).mtimeMs);
+		expect(meta.modifiedAt).toBe(statSync(file).mtimeMs);
+	});
+
+	it("header 与文件都不可用时回退当前时刻（不抛错）", () => {
+		const registry = new SessionRegistry();
+		const manager = { getHeader: (): SessionHeader | null => null, getEntries: (): SessionEntry[] => [] };
+		const entry = entryWithManager("s1", join(dir, "missing.jsonl"), manager as unknown as SessionManager);
 
 		const before = Date.now();
 		const meta = registry.toMeta(entry);
+
 		expect(meta.createdAt).toBeGreaterThanOrEqual(before);
 		expect(meta.createdAt).toBeLessThanOrEqual(Date.now());
 	});

@@ -45,9 +45,26 @@ export type SidebarGroupsResult = {
 };
 
 /**
+ * 同 ID 合并（spec D1）：运行态字段（name/model/active/messageCount/readOnly…）以**内存**为准，
+ * 但**稳定时间字段**不能被不完整的活跃 meta 抹掉：
+ *
+ * - `createdAt`：历史（磁盘 header 时间）是权威值。活跃 meta 曾经用文件 birthtime，复制/恢复会话文件就会变；
+ * - `modifiedAt`：内存 meta 缺活动时间（老 registry meta）时**保留历史值**。丢了它排序键会从
+ *   `modifiedAt` 掉到 `createdAt`（`groupSessions` 的 `modifiedAt ?? createdAt`），
+ *   于是「点一下历史行，它就跳到别处」——同一个会话并未真的产生新活动。
+ */
+function mergeSessionMeta(history: SessionMeta, memory: SessionMeta): SessionMeta {
+	return {
+		...memory,
+		createdAt: history.createdAt,
+		modifiedAt: memory.modifiedAt ?? history.modifiedAt,
+	};
+}
+
+/**
  * 左栏数据源合并：**磁盘历史（`projects.allSessions`）+ 当前内存会话（`sessions.sessions`）**。
- * 内存项按 `sessionId` 覆盖历史项（名称/模型/状态以当前实例为准），历史项保持原顺序，
- * 内存独有项（draft、刚创建还没落盘的真实会话）按内存顺序补在后面。**不负责排序**：
+ * 内存项按 `sessionId` 覆盖历史项（名称/模型/状态以当前实例为准，时间字段走 `mergeSessionMeta` 合并），
+ * 历史项保持原顺序，内存独有项（draft、刚创建还没落盘的真实会话）按内存顺序补在后面。**不负责排序**：
  * 组内排序统一由 `groupSessions` 做（最后活动倒序 + 置顶分区）。
  *
  * 为什么不只拼 draft：draft 发首条消息时会在 `sessions` 里**原地替换**成真实会话，
@@ -61,7 +78,10 @@ export function mergeSidebarSessions(
 	// Map 保序：覆盖同 id 不会改变它原有的插入位置（历史顺序不被改写）
 	const byId = new Map<string, SessionMeta>();
 	for (const session of history) byId.set(session.sessionId, session);
-	for (const session of memory) byId.set(session.sessionId, session);
+	for (const session of memory) {
+		const previous = byId.get(session.sessionId);
+		byId.set(session.sessionId, previous ? mergeSessionMeta(previous, session) : session);
+	}
 	return [...byId.values()];
 }
 
