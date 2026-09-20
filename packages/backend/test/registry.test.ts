@@ -113,3 +113,32 @@ describe("SessionRegistry toMeta createdAt（D7：会话文件 birthtime）", ()
 		expect(meta.createdAt).toBeLessThanOrEqual(Date.now());
 	});
 });
+
+// ---------------------------------------------------------------------------
+// 阶段 0 红测（spec sidebar-session-switch-stability D4）：add 不得静默覆盖同 sessionId 的旧 entry ——
+// 覆盖 = 第一份实例的订阅/gate/dialogs 全部泄漏（且没人再能 dispose 它）。
+// 防住这条才能让「open 幂等」有意义（构造前短路 + 注册处兜底）。实现见 plan 阶段 3.1。
+// ---------------------------------------------------------------------------
+
+describe("SessionRegistry.add 幂等兜底", () => {
+	it("同一 sessionId 再 add 不同 entry：抛错，不静默替换旧 entry", () => {
+		const registry = new SessionRegistry();
+		const first = makeEntry("dup", join(dir, "dup.jsonl"));
+		const second = makeEntry("dup", join(dir, "dup.jsonl"));
+		registry.add(first.entry);
+
+		expect(() => registry.add(second.entry)).toThrow();
+
+		expect(registry.get("dup")).toBe(first.entry);
+		expect(registry.list()).toHaveLength(1);
+	});
+
+	it("同 sessionId 重复 add 同一个 entry：幂等（不抛错）", () => {
+		const registry = new SessionRegistry();
+		const first = makeEntry("dup", join(dir, "dup.jsonl"));
+		registry.add(first.entry);
+
+		expect(() => registry.add(first.entry)).not.toThrow();
+		expect(registry.list()).toHaveLength(1);
+	});
+});

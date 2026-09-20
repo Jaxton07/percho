@@ -58,6 +58,8 @@ function resetStore() {
 
 beforeEach(() => {
 	vi.clearAllMocks();
+	// openSession 的 mockImplementation 是持久实现（clearAllMocks 不清），用例之间必须显式复位
+	piMock.openSession.mockReset();
 	resetStore();
 	useTranscriptStore.setState({ bySession: {} });
 });
@@ -565,5 +567,282 @@ describe("unloadSession（自动 GC）的 intent 标记", () => {
 		await useSessionsStore.getState().closeSession("r2");
 
 		expect(piMock.closeSession).toHaveBeenCalledWith({ sessionId: "r2" });
+	});
+});
+
+// ---------------------------------------------------------------------------
+// 阶段 0 红测（spec sidebar-session-switch-stability D2/D3/D5、§5 导航 / GC）：
+// ① 异步导航 latest-wins（旧 open/create/fork 迟到不得抢回 active）
+// ② 同 sessionFile 的 open single-flight（同一文件同时只发一次 IPC、bundle 不并发重复）
+// ③ GC close 在途时用户选中被卸载会话 → close 返回后 reopen 恢复，而不是把它抹掉
+// 实现见 plan 阶段 2 / 3。
+// ---------------------------------------------------------------------------
+
+/** 手写 deferred：要精确控制「异步动作什么时候返回」，才能复现点击与响应的交错 */
+function deferred<T>() {
+	let resolve!: (value: T) => void;
+	let reject!: (error: unknown) => void;
+	const promise = new Promise<T>((res, rej) => {
+		resolve = res;
+		reject = rej;
+	});
+	return { promise, resolve, reject };
+}
+
+function toastKeys(): string[] {
+	return useToastsStore
+		.getState()
+		.toasts.filter((t) => t.titleKey !== undefined)
+		.map((t) => `${t.titleKey}`);
+}
+
+describe("导航 latest-wins：最后一次点击获胜（spec D2）", () => {
+	beforeEach(() => useToastsStore.setState({ toasts: [] }));
+
+	it("旧 open 迟到不得抢回 active：点击未加载 A → 切到已加载 B → A 才返回", async () => {
+		const opened = deferred<SessionMeta>();
+		piMock.openSession.mockImplementationOnce(() => opened.promise);
+		useSessionsStore.setState({ sessions: [realMeta("b", "/p")], activeSessionId: "b", cwd: "/p" });
+
+		const opening = useSessionsStore.getState().openFromHistory("/p/a.jsonl");
+		useSessionsStore.getState().switchSession("b");
+		opened.resolve(realMeta("a", "/p"));
+		await opening;
+
+		const state = useSessionsStore.getState();
+		expect(state.activeSessionId).toBe("b");
+		expect(state.cwd).toBe("/p");
+		// 旧 open 成功仍可成为「已加载的后台会话」：latest-wins 只限制谁能激活
+		expect(state.sessions.map((s) => s.sessionId).sort()).toEqual(["a", "b"]);
+	});
+
+	it("连续 open A / C：响应正序或逆序返回，最终都停在最后一次点击的 C", async () => {
+		for (const order of ["a-then-c", "c-then-a"] as const) {
+			resetStore();
+			const a = deferred<SessionMeta>();
+			const c = deferred<SessionMeta>();
+			piMock.openSession.mockImplementation((args: { filePath: string }) =>
+				args.filePath.includes("/a.jsonl") ? a.promise : c.promise,
+			);
+
+			const openingA = useSessionsStore.getState().openFromHistory("/p/a.jsonl");
+			const openingC = useSessionsStore.getState().openFromHistory("/p/c.jsonl");
+			if (order === "a-then-c") {
+				a.resolve(realMeta("a", "/p"));
+				await openingA;
+				c.resolve(realMeta("c", "/p"));
+				await openingC;
+			} else {
+				c.resolve(realMeta("c", "/p"));
+				await openingC;
+				a.resolve(realMeta("a", "/p"));
+				await openingA;
+			}
+
+			expect(useSessionsStore.getState().activeSessionId).toBe("c");
+		}
+	});
+
+	it("draft 转正（createSession）迟到不得覆盖后续 switch（新会话仍进 tabs）", async () => {
+		const created = deferred<SessionMeta>();
+		piMock.createSession.mockImplementationOnce(() => created.promise);
+		useSessionsStore.getState().createDraftSession("/p");
+		const draftId = useSessionsStore.getState().activeSessionId;
+		if (!draftId) throw new Error("no draft");
+		useSessionsStore.setState((state) => ({ sessions: [...state.sessions, realMeta("b", "/p")] }));
+
+		const creating = useSessionsStore.getState().createSession("/p", draftId);
+		useSessionsStore.getState().switchSession("b");
+		created.resolve(realMeta("new-1", "/p"));
+		await creating;
+
+		const state = useSessionsStore.getState();
+		expect(state.activeSessionId).toBe("b");
+		expect(state.cwd).toBe("/p");
+		expect(state.sessions.map((s) => s.sessionId)).toContain("new-1");
+	});
+
+	it("fork 迟到不得覆盖后续 switch（新会话进 tabs，但不抢 active）", async () => {
+		useSessionsStore.setState({
+			sessions: [realMeta("r1", "/p"), realMeta("r2", "/p")],
+			activeSessionId: "r1",
+			cwd: "/p",
+		});
+		const forked = deferred<SessionMeta>();
+		piMock.forkSession.mockImplementationOnce(() => forked.promise);
+
+		const forking = useSessionsStore.getState().forkSession({ entryId: "e1" });
+		useSessionsStore.getState().switchSession("r2");
+		forked.resolve(realMeta("f1", "/p"));
+
+		// fork 事实上发生了：仍要返回新 id 供调用方使用
+		expect(await forking).toBe("f1");
+		const state = useSessionsStore.getState();
+		expect(state.activeSessionId).toBe("r2");
+		expect(state.sessions.map((s) => s.sessionId)).toContain("f1");
+	});
+
+	it("旧 open 失败不得回滚用户的新选择（新选择仍在，且只提示一次）", async () => {
+		const opened = deferred<SessionMeta>();
+		piMock.openSession.mockImplementationOnce(() => opened.promise);
+		useSessionsStore.setState({ sessions: [realMeta("b", "/p")], activeSessionId: "b", cwd: "/p" });
+
+		const opening = useSessionsStore.getState().openFromHistory("/p/a.jsonl");
+		useSessionsStore.getState().switchSession("b");
+		opened.reject(new Error("open boom"));
+		await opening;
+
+		expect(useSessionsStore.getState().activeSessionId).toBe("b");
+		expect(useSessionsStore.getState().cwd).toBe("/p");
+	});
+});
+
+describe("同 sessionFile 的 open single-flight（spec D3）", () => {
+	beforeEach(() => useToastsStore.setState({ toasts: [] }));
+
+	it("同一文件双击：只发一次 IPC，bundle 不并发重复装载，最终 active = 该会话", async () => {
+		const opened = deferred<SessionMeta>();
+		piMock.openSession.mockImplementation(() => opened.promise);
+
+		const first = useSessionsStore.getState().openFromHistory("/p/a.jsonl");
+		const second = useSessionsStore.getState().openFromHistory("/p/a.jsonl");
+		expect(piMock.openSession).toHaveBeenCalledTimes(1);
+		opened.resolve(realMeta("a", "/p"));
+		await Promise.all([first, second]);
+
+		expect(useSessionsStore.getState().activeSessionId).toBe("a");
+		expect(piMock.getSessionMessages).toHaveBeenCalledTimes(1);
+		expect(useSessionsStore.getState().sessions.filter((s) => s.sessionId === "a")).toHaveLength(1);
+	});
+
+	it("共享请求失败只 toast 一次（不因调用者数量重复刷屏），且 in-flight 清空可重试", async () => {
+		const opened = deferred<SessionMeta>();
+		piMock.openSession
+			.mockImplementationOnce(() => opened.promise)
+			.mockImplementationOnce(() => Promise.resolve(realMeta("a", "/p")));
+
+		const failing = useSessionsStore.getState().openFromHistory("/p/a.jsonl");
+		const failingToo = useSessionsStore.getState().openFromHistory("/p/a.jsonl");
+		opened.reject(new Error("boom"));
+		await Promise.all([failing, failingToo]);
+
+		expect(toastKeys().filter((key) => key === "toast.sessionOpenFailed")).toHaveLength(1);
+		expect(useSessionsStore.getState().activeSessionId).toBeNull();
+
+		// settle 后 key 已清：再次点击会重新 open
+		await useSessionsStore.getState().openFromHistory("/p/a.jsonl");
+		expect(piMock.openSession).toHaveBeenCalledTimes(2);
+		expect(useSessionsStore.getState().activeSessionId).toBe("a");
+	});
+
+	it("不同文件并发 open 各自独立（single-flight 只按文件去重）", async () => {
+		piMock.openSession.mockImplementation((args: { filePath: string }) =>
+			Promise.resolve(realMeta(args.filePath.includes("/a.jsonl") ? "a" : "c", "/p")),
+		);
+
+		await Promise.all([
+			useSessionsStore.getState().openFromHistory("/p/a.jsonl"),
+			useSessionsStore.getState().openFromHistory("/p/c.jsonl"),
+		]);
+
+		expect(piMock.openSession).toHaveBeenCalledTimes(2);
+		expect(
+			useSessionsStore
+				.getState()
+				.sessions.map((s) => s.sessionId)
+				.sort(),
+		).toEqual(["a", "c"]);
+	});
+});
+
+describe("GC close 在途的选择竞态（spec D5）", () => {
+	beforeEach(() => useToastsStore.setState({ toasts: [] }));
+
+	it("close 在途期间用户切到该会话：关闭成功后自动 reopen，保留 transcript/active，返回 closed:false", async () => {
+		useSessionsStore.setState({
+			sessions: [realMeta("a", "/p"), realMeta("b", "/p")],
+			activeSessionId: "a",
+			cwd: "/p",
+		});
+		// transcript 侧标记：reopen 恢复不能 reset 已有数据
+		useTranscriptStore.getState().setFollowUpQueue("b", ["kept"]);
+		const closing = deferred<{ closed: boolean }>();
+		piMock.closeSession.mockImplementationOnce(() => closing.promise);
+		piMock.openSession.mockResolvedValueOnce(realMeta("b", "/p"));
+
+		const unloading = useSessionsStore.getState().unloadSession("b");
+		useSessionsStore.getState().switchSession("b");
+		closing.resolve({ closed: true });
+		const result = await unloading;
+
+		// 后端已关又重建 → GC 这一轮视为「没卸成」，而不是让 renderer 删掉用户刚选的会话
+		expect(result).toEqual({ closed: false });
+		expect(piMock.openSession).toHaveBeenCalledWith({ filePath: "/tmp/b.jsonl" });
+		const state = useSessionsStore.getState();
+		expect(state.activeSessionId).toBe("b");
+		expect(state.sessions.map((s) => s.sessionId)).toEqual(["a", "b"]);
+		expect(useTranscriptStore.getState().bySession.b?.followUpQueue).toEqual(["kept"]);
+	});
+
+	it("close 在途期间用户切到别处：正常卸载（closed:true、条目移除，不 reopen）", async () => {
+		useSessionsStore.setState({
+			sessions: [realMeta("a", "/p"), realMeta("b", "/p")],
+			activeSessionId: "a",
+			cwd: "/p",
+		});
+		const closing = deferred<{ closed: boolean }>();
+		piMock.closeSession.mockImplementationOnce(() => closing.promise);
+
+		const unloading = useSessionsStore.getState().unloadSession("b");
+		useSessionsStore.getState().switchSession("a");
+		closing.resolve({ closed: true });
+
+		expect(await unloading).toEqual({ closed: true });
+		expect(piMock.openSession).not.toHaveBeenCalled();
+		expect(useSessionsStore.getState().sessions.map((s) => s.sessionId)).toEqual(["a"]);
+	});
+
+	it("reopen 失败：不留幽灵 active（按正常关闭清理并显形提示）", async () => {
+		useSessionsStore.setState({
+			sessions: [realMeta("a", "/p"), realMeta("b", "/p")],
+			activeSessionId: "a",
+			cwd: "/p",
+		});
+		const closing = deferred<{ closed: boolean }>();
+		piMock.closeSession.mockImplementationOnce(() => closing.promise);
+		piMock.openSession.mockRejectedValueOnce(new Error("reopen boom"));
+
+		const unloading = useSessionsStore.getState().unloadSession("b");
+		useSessionsStore.getState().switchSession("b");
+		closing.resolve({ closed: true });
+		const result = await unloading;
+
+		expect(result).toEqual({ closed: true });
+		const state = useSessionsStore.getState();
+		expect(state.sessions.map((s) => s.sessionId)).toEqual(["a"]);
+		expect(state.activeSessionId).toBe("a");
+		expect(toastKeys()).toContain("toast.sessionOpenFailed");
+	});
+
+	it("reopen 在途期间用户又切走：不得抢回 active（恢复不是新的用户导航）", async () => {
+		useSessionsStore.setState({
+			sessions: [realMeta("a", "/p"), realMeta("b", "/p"), realMeta("c", "/p")],
+			activeSessionId: "a",
+			cwd: "/p",
+		});
+		const closing = deferred<{ closed: boolean }>();
+		const reopening = deferred<SessionMeta>();
+		piMock.closeSession.mockImplementationOnce(() => closing.promise);
+		piMock.openSession.mockImplementationOnce(() => reopening.promise);
+
+		const unloading = useSessionsStore.getState().unloadSession("b");
+		useSessionsStore.getState().switchSession("b");
+		closing.resolve({ closed: true });
+		await vi.waitFor(() => expect(piMock.openSession).toHaveBeenCalledTimes(1));
+		useSessionsStore.getState().switchSession("c");
+		reopening.resolve(realMeta("b", "/p"));
+
+		expect(await unloading).toEqual({ closed: false });
+		expect(useSessionsStore.getState().activeSessionId).toBe("c");
 	});
 });

@@ -267,6 +267,73 @@ describe("mergeSidebarSessions（磁盘历史 + 当前内存会话）", () => {
 	});
 });
 
+// ---------------------------------------------------------------------------
+// 阶段 0 红测（spec sidebar-session-switch-stability D1 / §5 排序）：
+// 内存 meta 覆盖历史 meta 时不得丢掉稳定时间字段，否则左栏排序键从 modifiedAt 掉到 createdAt、行跳动。
+// 实现见 plan 阶段 1.2。
+// ---------------------------------------------------------------------------
+
+describe("mergeSidebarSessions · 稳定时间字段（打开/卸载不改变行位置）", () => {
+	it("内存同 ID 缺 modifiedAt：保留历史活动时间；createdAt 用历史权威值（不信内存的运行态时间）", () => {
+		const history: SessionMeta = { ...session("h1", P1, 900), createdAt: 100, messageCount: 3 };
+		// 活跃会话 meta：registry 目前只给 createdAt（且是文件 birthtime），没有 modifiedAt
+		const memory: SessionMeta = {
+			sessionId: "h1",
+			cwd: P1,
+			active: true,
+			messageCount: 5,
+			createdAt: 5_000,
+		};
+		const merged = mergeSidebarSessions([history], [memory]);
+
+		expect(merged).toHaveLength(1);
+		expect(merged[0]?.modifiedAt).toBe(900);
+		expect(merged[0]?.createdAt).toBe(100);
+		// 运行态字段仍以内存为准
+		expect(merged[0]?.messageCount).toBe(5);
+		expect(merged[0]?.active).toBe(true);
+	});
+
+	it("内存给了 modifiedAt 就以内存的为准（会话真的产生了新活动）", () => {
+		const merged = mergeSidebarSessions(
+			[{ ...session("h1", P1, 900), createdAt: 100 }],
+			[{ sessionId: "h1", cwd: P1, active: true, messageCount: 1, createdAt: 100, modifiedAt: 1_500 }],
+		);
+		expect(merged[0]?.modifiedAt).toBe(1_500);
+	});
+
+	it("打开前后派生顺序完全一致（点击历史行不再下移）", () => {
+		const hist = [session("a", P1, 900), session("b", P1, 800), session("c", P1, 700)];
+		const before = derive({ sessions: hist, projects: [project(P1)] });
+		const orderBefore = before.projects[0]?.sessions.map((s) => s.session.sessionId);
+
+		// 用户点了 b：b 变成「内存活跃会话」，内存 meta 无 modifiedAt（registry 现状）
+		const merged = mergeSidebarSessions(hist, [
+			{ sessionId: "b", cwd: P1, active: true, messageCount: 2, createdAt: 5_000 },
+		]);
+		const after = derive({ sessions: merged, projects: [project(P1)] });
+
+		expect(orderBefore).toEqual(["a", "b", "c"]);
+		expect(after.projects[0]?.sessions.map((s) => s.session.sessionId)).toEqual(orderBefore);
+	});
+
+	it("置顶分区顺序不受合并影响（置顶仍在最前，按 pinnedSessions 顺序）", () => {
+		const hist = [session("a", P1, 900), session("b", P1, 800), session("c", P1, 700)];
+		const merged = mergeSidebarSessions(hist, [
+			{ sessionId: "c", cwd: P1, active: true, messageCount: 2, createdAt: 5_000 },
+		]);
+		const result = derive({ sessions: merged, projects: [project(P1)], pinnedSessions: ["c"] });
+		const alpha = result.projects.find((p) => p.cwd === P1);
+		expect(alpha?.sessions.map((s) => s.session.sessionId)).toEqual(["c", "a", "b"]);
+		expect(alpha?.sessions.map((s) => s.pinned)).toEqual([true, false, false]);
+	});
+
+	it("无历史对应（同 ID 只出现在内存：draft / 刚创建）时不做字段兜底，保持原样", () => {
+		const draft = session("draft:x", P1, 300);
+		expect(mergeSidebarSessions([session("h1", P1, 100)], [draft])[1]).toBe(draft);
+	});
+});
+
 describe("toggleInList / toggleExpandedGroup", () => {
 	it("置顶切换：新置顶排最前，取消则移除", () => {
 		expect(toggleInList([], "a")).toEqual(["a"]);
