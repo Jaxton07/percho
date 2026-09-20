@@ -7,6 +7,7 @@ import { clampThinkingLevel } from "../lib/thinking";
 import { COMPOSER_FOCUS_EVENT, useDraftStore } from "./drafts";
 import { pushToast } from "./toasts";
 import { useTranscriptStore } from "./transcript";
+import { useUiPreferencesStore } from "./ui-preferences";
 
 /** 草稿会话 id 前缀：新会话 tab 的占位条目，只存在于 renderer 内存，后端永远不会看到 */
 export const DRAFT_SESSION_PREFIX = "draft:";
@@ -168,6 +169,16 @@ async function optimisticSessionSetting(
 	}
 }
 
+/**
+ * 记住「上次项目目录」（重启后启动页预填，用户不用重选项目）。
+ * 只写 cwd、**不恢复任何会话**（v10 启动纯空不变）；同值短路，避免切会话时频繁写 ui-state。
+ * 三个调用点 = 新建会话（发首条消息转正）/ 切会话 / 从历史打开，即「用户当前真的在用哪个项目」。
+ */
+function rememberCwd(cwd: string | null): void {
+	if (!cwd) return;
+	useUiPreferencesStore.getState().setLastCwd(cwd);
+}
+
 /** 顶栏打开的会话持久化（重启恢复用）；由主进程写 userData/tabs.json，不依赖 renderer localStorage */
 interface SessionsStore {
 	sessions: SessionMeta[];
@@ -237,6 +248,7 @@ export const useSessionsStore = create<SessionsStore>((set, get) => ({
 					: state.permissionModes,
 			}));
 			useTranscriptStore.getState().resetSession(meta.sessionId);
+			rememberCwd(targetCwd);
 		} catch (error) {
 			// 失败时 draft tab 保留，用户重试即可；toast 提示（非会话内容，不残留）
 			console.error("创建会话失败", error);
@@ -307,6 +319,7 @@ export const useSessionsStore = create<SessionsStore>((set, get) => ({
 				pushToast("warning", "toast.sessionOpenFailed", errText(error));
 			});
 		}
+		rememberCwd(get().cwd);
 		// 切到 draft 不落盘：tabs.json 保持指向最近的真实会话（draft 重启后本就会消失）
 	},
 
@@ -351,6 +364,8 @@ export const useSessionsStore = create<SessionsStore>((set, get) => ({
 				activeSessionId: meta.sessionId,
 				cwd: meta.cwd,
 			}));
+			// 先记 cwd 再拉数据：即便随后装载失败（下面的 catch），用户「在用哪个项目」的事实也已经成立
+			rememberCwd(meta.cwd);
 			// 运行中子会话的事件已按其 sessionId 实时转发；保留已有流式态，
 			// 否则会在点击卡片时把 agent_start 建立的进度视图重置为静态历史。
 			await loadSessionBundle(meta.sessionId, { skipHistoryIfLive: true });

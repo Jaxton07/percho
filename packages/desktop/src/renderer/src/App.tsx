@@ -21,6 +21,7 @@ import { finishSplash } from "./splash";
 import { useSessionsStore } from "./stores/sessions";
 import { backgroundImageUrl, useThemeStore } from "./stores/theme";
 import { useTranscriptStore } from "./stores/transcript";
+import { useUiPreferencesStore } from "./stores/ui-preferences";
 import { initUpdateStore } from "./stores/update";
 
 /**
@@ -48,6 +49,10 @@ export default function App() {
 
 	// 一次性 bootstrap：开屏就绪信号 + 更新状态 + UI 插件加载
 	useEffect(() => {
+		// 上次项目目录：启动即预填（用户不用重选项目）。**只带 cwd，不恢复任何会话**——
+		// v10 启动仍是纯空会话页，历史全在左栏。偏好已在 main.tsx render 前 init 完毕，这里同步可用。
+		const lastCwd = useUiPreferencesStore.getState().lastCwd;
+		if (lastCwd) useSessionsStore.setState({ cwd: lastCwd });
 		// 开屏就绪信号：首批数据（模型列表）settle 后收场（finishSplash 幂等）。
 		// v10：**不再恢复上次打开的会话**（启动纯空 = 新会话页，与 pi 原生 / Codex 一致）；
 		// 历史全在左栏，点一下才按需加载

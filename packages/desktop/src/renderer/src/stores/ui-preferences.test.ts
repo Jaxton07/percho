@@ -18,6 +18,7 @@ beforeEach(() => {
 		sidebarCollapsed: false,
 		expandedGroups: [],
 		pinnedProjects: [],
+		lastCwd: null,
 	});
 });
 
@@ -92,6 +93,36 @@ describe("useUiPreferencesStore", () => {
 
 			store.toggleProjectPin("/work/alpha");
 			expect(useUiPreferencesStore.getState().pinnedProjects).toEqual([]);
+		});
+	});
+
+	describe("上次项目目录（lastCwd）", () => {
+		it("默认 null（旧版本 ui-state 无该字段）", async () => {
+			expect(useUiPreferencesStore.getState().lastCwd).toBeNull();
+
+			piMock.loadUiState.mockResolvedValue({});
+			await useUiPreferencesStore.getState().init();
+			expect(useUiPreferencesStore.getState().lastCwd).toBeNull();
+		});
+
+		it("init 恢复上次项目目录", async () => {
+			piMock.loadUiState.mockResolvedValue({ lastCwd: "/work/alpha" });
+			await useUiPreferencesStore.getState().init();
+			expect(useUiPreferencesStore.getState().lastCwd).toBe("/work/alpha");
+		});
+
+		it("setLastCwd 落盘；同值不重复写（切会话高频调用）、传 null 可清空", () => {
+			useUiPreferencesStore.getState().setLastCwd("/work/alpha");
+			expect(useUiPreferencesStore.getState().lastCwd).toBe("/work/alpha");
+			expect(piMock.saveUiState).toHaveBeenLastCalledWith({ state: { lastCwd: "/work/alpha" } });
+
+			vi.clearAllMocks();
+			useUiPreferencesStore.getState().setLastCwd("/work/alpha");
+			expect(piMock.saveUiState).not.toHaveBeenCalled();
+
+			useUiPreferencesStore.getState().setLastCwd(null);
+			expect(useUiPreferencesStore.getState().lastCwd).toBeNull();
+			expect(piMock.saveUiState).toHaveBeenLastCalledWith({ state: { lastCwd: null } });
 		});
 	});
 

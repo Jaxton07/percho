@@ -29,6 +29,7 @@ import {
 } from "./sessions";
 import { useToastsStore } from "./toasts";
 import { useTranscriptStore } from "./transcript";
+import { useUiPreferencesStore } from "./ui-preferences";
 
 function realMeta(sessionId: string, cwd: string): SessionMeta {
 	return {
@@ -429,5 +430,44 @@ describe("switchSession 懒加载兑底", () => {
 		useSessionsStore.getState().switchSession("s1");
 		await vi.waitFor(() => expect(piMock.getSessionMessages).toHaveBeenCalledWith({ sessionId: "s1" }));
 		expect(useSessionsStore.getState().activeSessionId).toBe("s1");
+	});
+});
+
+describe("记住上次项目目录（lastCwd）", () => {
+	// ui-preferences 是模块级单例，用例之间要显式清干净（store.setLastCwd 同值会短路，否则后续断言看不到写盘）
+	beforeEach(() => useUiPreferencesStore.setState({ lastCwd: null }));
+
+	it("从历史打开会话后记住该项目（重启启动页预填）", async () => {
+		piMock.openSession.mockResolvedValue(realMeta("h1", "/work/alpha"));
+		piMock.getSessionMessages.mockResolvedValue([]);
+		await useSessionsStore.getState().openFromHistory("/work/alpha/s.jsonl");
+		expect(useUiPreferencesStore.getState().lastCwd).toBe("/work/alpha");
+		expect(piMock.saveUiState).toHaveBeenLastCalledWith({ state: { lastCwd: "/work/alpha" } });
+	});
+
+	it("切会话后记住该会话的项目", () => {
+		useSessionsStore.setState({
+			sessions: [realMeta("a", "/work/alpha"), realMeta("b", "/work/beta")],
+			activeSessionId: "a",
+		});
+		useSessionsStore.getState().switchSession("b");
+		expect(piMock.saveUiState).toHaveBeenLastCalledWith({ state: { lastCwd: "/work/beta" } });
+	});
+
+	it("新建会话（draft 转正）后记住该项目", async () => {
+		piMock.createSession.mockResolvedValue(realMeta("real-1", "/work/gamma"));
+		await useSessionsStore.getState().createSession("/work/gamma");
+		expect(piMock.saveUiState).toHaveBeenLastCalledWith({ state: { lastCwd: "/work/gamma" } });
+	});
+
+	it("同项目不重复写盘（避免切会话时刷 ui-state）", () => {
+		useUiPreferencesStore.setState({ lastCwd: "/work/alpha" });
+		useSessionsStore.setState({
+			sessions: [realMeta("a", "/work/alpha"), realMeta("b", "/work/alpha")],
+			activeSessionId: "a",
+		});
+		vi.clearAllMocks();
+		useSessionsStore.getState().switchSession("b");
+		expect(piMock.saveUiState).not.toHaveBeenCalled();
 	});
 });

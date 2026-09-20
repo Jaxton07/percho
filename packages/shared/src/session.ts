@@ -38,6 +38,11 @@ export interface UiState {
 	expandedGroups: string[];
 	/** 置顶项目 cwd（新置顶在前，决定左侧栏项目区排序） */
 	pinnedProjects: string[];
+	/**
+	 * 上次使用的项目目录（重启后启动页预填用）。**只记目录、不恢复任何会话**：
+	 * v10 起启动仍然是纯空会话页（与 pi 原生/Codex 一致），这里只让用户不用重选项目。
+	 */
+	lastCwd: string | null;
 }
 
 /** 会话元数据（IPC 往返用，独立于 pi 内部类型） */

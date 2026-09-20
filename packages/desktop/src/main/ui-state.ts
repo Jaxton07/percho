@@ -53,6 +53,8 @@ function normalize(parsed: UiStateFileShape): UiState {
 		sidebarCollapsed: typeof parsed.sidebarCollapsed === "boolean" ? parsed.sidebarCollapsed : false,
 		expandedGroups: stringArray(parsed.expandedGroups),
 		pinnedProjects: stringArray(parsed.pinnedProjects),
+		// 上次项目目录：只收非空字符串（旧文件/脏值 → null）
+		lastCwd: typeof parsed.lastCwd === "string" && parsed.lastCwd.length > 0 ? parsed.lastCwd : null,
 	};
 }
 

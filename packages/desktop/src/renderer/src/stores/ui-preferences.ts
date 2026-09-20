@@ -18,6 +18,8 @@ interface UiPreferencesStore {
 	expandedGroups: string[];
 	/** 置顶项目 cwd（新置顶在前，决定左侧栏项目区排序） */
 	pinnedProjects: string[];
+	/** 上次使用的项目目录（重启后启动页预填；只记目录、不恢复会话）；null = 未记过 */
+	lastCwd: string | null;
 	/** 启动时从 ui-state.json 恢复（main.tsx 在 render 前 await，避免开关状态闪现） */
 	init: () => Promise<void>;
 	setCenterOrbEnabled: (enabled: boolean) => void;
@@ -34,6 +36,8 @@ interface UiPreferencesStore {
 	unpin: (sessionId: string) => void;
 	/** 拖动排序顶栏胶囊（v8）：改的也是 pinnedSessions 顺序，不动 tabs.json */
 	reorderPinned: (fromId: string, toId: string) => void;
+	/** 记住上次项目目录（切会话/打开会话/建会话时由 sessions store 调；同值不重复写盘） */
+	setLastCwd: (cwd: string | null) => void;
 }
 
 /** 持久化补丁（失败只记日志：偏好丢失不影响使用，弹 toast 反而更吵） */
@@ -50,6 +54,7 @@ export const useUiPreferencesStore = create<UiPreferencesStore>((set, get) => ({
 	sidebarCollapsed: false,
 	expandedGroups: [],
 	pinnedProjects: [],
+	lastCwd: null,
 
 	init: async () => {
 		const saved = await getPi()
@@ -62,6 +67,7 @@ export const useUiPreferencesStore = create<UiPreferencesStore>((set, get) => ({
 			sidebarCollapsed: saved?.sidebarCollapsed ?? false,
 			expandedGroups: saved?.expandedGroups ?? [],
 			pinnedProjects: saved?.pinnedProjects ?? [],
+			lastCwd: saved?.lastCwd ?? null,
 		});
 	},
 
@@ -73,6 +79,12 @@ export const useUiPreferencesStore = create<UiPreferencesStore>((set, get) => ({
 	setBarSessionsVisible: (visible) => {
 		set({ barSessionsVisible: visible });
 		persistPatch({ barSessionsVisible: visible });
+	},
+
+	setLastCwd: (cwd) => {
+		if (get().lastCwd === cwd) return;
+		set({ lastCwd: cwd });
+		persistPatch({ lastCwd: cwd });
 	},
 
 	toggleSidebarCollapsed: () => {
