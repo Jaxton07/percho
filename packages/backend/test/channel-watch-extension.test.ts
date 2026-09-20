@@ -1,7 +1,7 @@
 import { appendFile, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import {
 	buildWakeMessage,
 	type ChannelWatchOptions,
@@ -258,7 +258,11 @@ describe("extension 全链路", () => {
 		const { pi } = await wire({ cwd });
 		const r = await subscribe(pi, "t1");
 		expect(r.content[0]?.text).toContain("已订阅频道 [t1]");
-		expect(pi.appended.at(-1)).toEqual({ customType: SUBSCRIPTION_CUSTOM_TYPE, data: { topics: ["t1"] } });
+		expect(pi.appended.at(-1)).toEqual({
+			customType: SUBSCRIPTION_CUSTOM_TYPE,
+			// 全量快照从阶段 2 起带 cursors（首次订阅尚无文件 → 基线 null）
+			data: { topics: ["t1"], cursors: { t1: null } },
+		});
 		// init 已建目录
 		await mkdir(join(cwd, ".local/agent-work/channel/t1"), { recursive: true });
 		// 写文件 ≠ 通知：非 MESSAGES 文件静默（多文件写入不再产生多条唤醒）
@@ -326,7 +330,11 @@ describe("extension 全链路", () => {
 		await subscribe(pi, "t1");
 		const unsub = pi.tools.find((t) => t.name === "channel_unsubscribe");
 		await unsub?.execute("tc2", { topic: "t1" });
-		expect(pi.appended.at(-1)).toEqual({ customType: SUBSCRIPTION_CUSTOM_TYPE, data: { topics: [] } });
+		expect(pi.appended.at(-1)).toEqual({
+			customType: SUBSCRIPTION_CUSTOM_TYPE,
+			// 退订最后一个 topic：订阅集与游标一起清空（不留幽灵基线）
+			data: { topics: [], cursors: {} },
+		});
 		// 对端 post 也不唤醒（无订阅）
 		await mkdir(join(cwd, ".local/agent-work/channel/t1"), { recursive: true });
 		await writeFile(join(cwd, ".local/agent-work/channel/t1/MESSAGES.md"), "## t\n\nx\n\n---\n");
@@ -890,5 +898,80 @@ describe("P1 · watcher single-flight", () => {
 		await writeFile(messagesFile(cwd, "t1"), "hello\n");
 		await sleep(250);
 		expect(pi.wakes.filter((w) => w.includes("[channel:t1]"))).toHaveLength(1);
+	});
+
+	it("启动失败：promise 清空、订阅不报错，下次订阅能重试成功（不把失败缓存住）", async () => {
+		const cwd = join(testRoot, "watcher-retry");
+		let attempts = 0;
+		const { pi } = await wire({
+			cwd,
+			watcherFactory: (o) => {
+				attempts += 1;
+				if (attempts === 1) {
+					// 第一次：start 直接拒（模拟 fs.watch / 轮询初始化失败）
+					return {
+						start: () => Promise.reject(new Error("watch boom")),
+						stop: () => {},
+						mode: "idle",
+					} as unknown as ChannelWatcher;
+				}
+				return new ChannelWatcher({ ...o, debounceMs: 20, pollIntervalMs: 20 });
+			},
+		});
+		const r1 = await subscribe(pi, "t1");
+		expect(r1.content[0]?.text).toContain("已订阅频道 [t1]"); // 启动失败不影响订阅本身
+		const r2 = await subscribe(pi, "t2");
+		expect(r2.content[0]?.text).toContain("已订阅频道 [t2]");
+		expect(attempts).toBe(2); // 失败那轮的 promise 已清空 → 真的重试了
+
+		// 重试后的实例真在工作（写文件能唤醒）
+		await mkdir(topicDir(cwd, "t2"), { recursive: true });
+		await writeFile(messagesFile(cwd, "t2"), "after-retry\n");
+		await sleep(250);
+		expect(pi.wakes.filter((w) => w.includes("[channel:t2]"))).toHaveLength(1);
+	});
+
+	it("启动期间 shutdown：完成后自停，不留孤儿 watcher；之后还能重新起", async () => {
+		const cwd = join(testRoot, "watcher-orphan");
+		const stop = vi.fn();
+		let releaseStart: (() => void) | undefined;
+		let startEntered: (() => void) | undefined;
+		const entered = new Promise<void>((resolve) => {
+			startEntered = resolve;
+		});
+		let attempts = 0;
+		const { pi } = await wire({
+			cwd,
+			watcherFactory: (o) => {
+				attempts += 1;
+				if (attempts === 1) {
+					return {
+						start: () => {
+							startEntered?.();
+							return new Promise<"watch">((resolve) => {
+								releaseStart = () => resolve("watch");
+							});
+						},
+						stop,
+						mode: "idle",
+					} as unknown as ChannelWatcher;
+				}
+				return new ChannelWatcher({ ...o, debounceMs: 20, pollIntervalMs: 20 });
+			},
+		});
+		const tool = pi.tools.find((t) => t.name === "channel_subscribe");
+		if (!tool) throw new Error("channel_subscribe 未注册");
+		const pending = tool.execute("c1", { topic: "t1" });
+		await entered; // 确定已走到 start()
+
+		await pi.emit({ type: "session_shutdown" }, makeFakeCtx());
+		releaseStart?.();
+		await pending;
+		expect(stop).toHaveBeenCalledTimes(1); // 作废的那一轮在 start 返回后自停
+
+		// 不留死结：再次 session_start（shutdown 后 trusted 已置 false）后订阅能起新实例
+		await pi.emit({ type: "session_start" }, makeFakeCtx());
+		await subscribe(pi, "t2");
+		expect(attempts).toBe(2);
 	});
 });
