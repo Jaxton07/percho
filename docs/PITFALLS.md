@@ -38,6 +38,8 @@
 | 右键菜单贴边溢出视口、滚动后浮层脱锚 | 四 · 右键菜单定位与脱锚（2026-09-17） |
 | Google Vertex 填了 key 仍 401「API keys are not supported by this API」 | 二 · Vertex 只支持 ADC/服务账号（api_key 路径必败，桥接层已剔除 api-key 选项） |
 | 跨会话频道里对方迟迟不查收、回复总晚一整轮（实施在改文件、review 却在跑回归） | 二 · sendUserMessage 默认 followUp = 等对方 turn 结束才投递（2026-09-17） |
+| 新会话页的 picker 改动「点了没反应」、promotion 用的项目/模型和页面显示的不是一回事 | 五 · 新会话页不变式：active=null ⇒ 必有 draft，且 cwd 严格镜像 draft.cwd（2026-09-20） |
+| CDP 验收脚本里想注入 IPC 失败/统计调用次数，改写 `window.pi` 却毫无反应 | 五 · contextBridge 暴露的 API 在页面里只读（2026-09-20） |
 | 逐帧截图全是空白/同一张陈旧图、rAF 像停摆 | 四 · 合成器空帧与「暂停动画不出新帧」（2026-09-19 补） |
 | 验证脚本读出「旋转没生效」（`transform: none`）但界面明明转了 | 四 · Tailwind 4 的 `rotate-*` 走 `rotate` 属性不是 `transform`（2026-09-19） |
 | 脚本里手动删了 React 的节点，随后整页「界面出现异常」（removeChild 报错） | 四 · 别手拆 React 管理的 DOM（含 portal 浮层）（2026-09-19） |
@@ -481,7 +483,7 @@ pi SDK 必须声明进 `packages/desktop/package.json` dependencies（electron-b
 
 原因：本仓 vitest 无 config（`electron.vite.config.ts` 不被 vitest 读取），环境是默认的 **node**：无 DOM/localStorage，且 esbuild 把 `.tsx` 编译成 `React.createElement`（classic）→ 一调就炸（上游：应用构建预期 automatic，两边 JSX runtime 不一致）。
 
-对策（本期采用）：**把决策抽成不碰 JSX 的纯函数再测**（如 `sidebarMenuKind()`、`discardDraft()`），JSX 菜单项本身交给 CDP 手测（真跑一遍比单测更接近用户行为）。若真需要渲染测试，得单独引入 jsdom + `esbuild: { jsx: "automatic" }`（新增 `packages/desktop/vitest.config.ts`），**别为一个 builder 就改全局测试环境**。
+对策（本期采用）：**把决策抽成不碰 JSX 的纯函数再测**（如 `sidebarMenuKind()`、`canOpenSessionMenu()`；当时举例的 `discardDraft()` 已随单例 draft 重构删除，见 2026-09-20 单例 draft 条目），JSX 菜单项本身交给 CDP 手测（真跑一遍比单测更接近用户行为）。若真需要渲染测试，得单独引入 jsdom + `esbuild: { jsx: "automatic" }`（新增 `packages/desktop/vitest.config.ts`），**别为一个 builder 就改全局测试环境**。
 
 ### 别用 `npm run lint | tail -2` 判断「lint 通过」（2026-09-20）
 
@@ -503,6 +505,33 @@ pgrep -f "electron-vite" | xargs -r kill -9
 ```
 
 另外同时起两个 dev 实例时，只有**先启动**那个能绑上调试端口（后起的静默失败）；排查前先 `ps -eo pid,lstart,command | grep MacOS/Electron` 数一下进程。
+
+### 新会话页不变式：`activeSessionId === null` ⇒ 必有 draft，且 cwd 严格镜像 draft.cwd（2026-09-20，单例 draft 重构）
+
+症状（本仓单例 draft 重构中连栽三轮 review，都是同一个根因的不同侧面）：
+
+1. 新会话页（`activeSessionId === null`）却没有 draft —— 此时模型/思考/权限 picker 会把选择写进「不存在的东西」，用户看到**点了没反应**（静默丢失）。
+   触发路径：关掉最后一个真实会话、promotion 迟到且用户此刻正停在新会话页。
+2. 有 draft 但 `store.cwd` 与 `draft.cwd` 分叉 —— 页面/左栏 `activeCwd` 按 A 项目展开，promotion 却按 B 项目建会话；`draft.cwd === null`（还没选项目）时更隐蔽：store.cwd 回退成了上个会话的项目。
+
+原因：把「当前页面的配置真相」和「当前会话」当成两份独立状态维护。`cwd` 尤其容易分叉 —— 它是 store 的全局字段，同时又由 draft 承载。
+
+对策（现已落地，改动 store 时守住）：
+
+- **唯一来源**：新会话的 cwd/模型/思考/权限只存在 `newSessionDraft` 里；`store.cwd` 在新会话页**严格镜像 `draft.cwd`（含 null，不回退到别的会话）**。
+- **不变式要主动维护**：store 初始化即建一份 draft；`closeSession` 关掉最后一个会话、promotion 消费掉 draft 后若用户仍在新会话页，都必须**立刻补种**一份。
+- **写 `cwd` 的所有路径都得盘一遍**：本仓共 6 处（init / switchSession / openFromHistory / promotion 成功与迟到 / activateNewSessionDraft / setDraftCwd），当时只有 `closeSession` 漏了。
+- 单测里直接把这三者（`activeSessionId` / `draft.cwd` / `store.cwd`）**一起断言**，别只断言其中一个。
+
+### contextBridge 暴露的 API 在页面里只读：CDP 验收脚本注不进 IPC 失败（2026-09-20）
+
+症状：想在 CDP 验收里 `window.pi.createSession = ...` 注入失败/数调用次数 —— 赋值**静默无效**（`window.pi.createSession === orig` 仍成立），也 `Object.defineProperty` 不了（`{ writable: false, configurable: false }`）。同理 `getPi()` 所在的 ESM 模块命名空间也改不动。
+
+对策：
+
+- **失败路径**改用「受控失败路径」：例如把新会话 draft 的 `cwd` 置成 null（= 用户还没选项目）走 `createSession()` 的 null 返回分支，或直接在单测里 mock。**别指望在页面里拦 IPC**。
+- **成功路径的 IPC 计数**：数主进程日志（本仓 backend 每次建会话会打 `session created`，脚本按行数取差），或用应用的 store 状态断言（页面内 `await import("/src/stores/*.ts")` 拿到的就是应用在用的同一份实例）。
+- 需要「点真实子代理卡」这类依赖模型行为的场景，优先找**历史回放**入口：历史里已有子代理运行的父会话，打开它 → transcript 重放出卡片 → 点它，同样落到只读检视页，且完全确定性（子会话文件在 `<agentDir>/sessions-subagents/`，后端按路径判定 `readOnly`）。现场真跑一次 subagent 依赖凭证可用，dev 里常 401 拿不到可点卡片。
 
 ### 绝不打印/提交 API key
 
