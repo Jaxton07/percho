@@ -381,6 +381,14 @@ pi SDK 必须声明进 `packages/desktop/package.json` dependencies（electron-b
 
 ## 五、工程纪律
 
+### 别用 `npm run lint | tail -2` 判断「lint 通过」（2026-09-20）
+
+症状：本地看 `npm run lint | tail -2` 只见 "No fixes applied." + "Checked N files"，判定全绿 → 推 PR → **CI 在 `Run npm run lint` 立刻挂**，报 3 个 **format** 错误（多余空行、超长行）。
+
+两个原因叠在一起：① biome 的「Found N errors」打在输出**中部**，`tail` 正好看不到；② **管道会把 `$?` 换成 `tail` 的（恒为 0）**，退出码再也反映不了 lint 结果。
+
+做法：`npm run lint > /tmp/lint.log 2>&1; echo "exit=$?"`，**exit code 与 `Found ... errors` 一起判**；PR 前至少跑「lint + typecheck + test + build」四件套（**format 错误 test 抓不到**）。另外 `npm run lint -- --write` 自动修完之后，若又用手写/脚本插入了新代码（本会话就是 python 插测试块），那些新代码仍是未格式化状态 → 改完要重跑并以 exit code 复核。
+
 ### `pkill -f` 杀 Electron 会留下孤儿 main 进程（2026-09-19）
 
 症状：用 `pkill -f "MacOS/Electron ."` 这类**带通配的匹配**清理 dev 实例后，renderer/GPU 等 helper 被杀掉、main 进程却继续活着 —— 它仍占着调试端口（9224）与 dev userData，表现为「CDP 连得上、`document.body.innerHTML` 却是空字符串」，极易误判成代码把页面渲崩了。

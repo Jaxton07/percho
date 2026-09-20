@@ -65,7 +65,13 @@ describe("sessionPermissionModes 白名单（D7：按会话记住权限模式）
 	});
 
 	it("非对象（数组/字符串/数字/null）一律落成 {}，不炸启动", async () => {
-		for (const raw of ['{"sessionPermissionModes":[]}', '{"sessionPermissionModes":"x"}', '{"sessionPermissionModes":7}', '{"sessionPermissionModes":null}', "{}"]) {
+		for (const raw of [
+			'{"sessionPermissionModes":[]}',
+			'{"sessionPermissionModes":"x"}',
+			'{"sessionPermissionModes":7}',
+			'{"sessionPermissionModes":null}',
+			"{}",
+		]) {
 			writeFileSync(file(), raw);
 			expect((await loadUiState())?.sessionPermissionModes).toEqual({});
 		}

@@ -176,7 +176,9 @@ describe("sessionPermissionModes 持久化（D7）", () => {
 	it("非 default 写入并落盘；同值短路不重复写盘", () => {
 		useUiPreferencesStore.getState().rememberPermissionMode("s1", "fullAccess");
 		expect(useUiPreferencesStore.getState().sessionPermissionModes).toEqual({ s1: "fullAccess" });
-		expect(piMock.saveUiState).toHaveBeenLastCalledWith({ state: { sessionPermissionModes: { s1: "fullAccess" } } });
+		expect(piMock.saveUiState).toHaveBeenLastCalledWith({
+			state: { sessionPermissionModes: { s1: "fullAccess" } },
+		});
 		const calls = piMock.saveUiState.mock.calls.length;
 		useUiPreferencesStore.getState().rememberPermissionMode("s1", "fullAccess");
 		expect(piMock.saveUiState.mock.calls.length).toBe(calls);
