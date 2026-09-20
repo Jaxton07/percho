@@ -17,6 +17,24 @@ export function isDraftSessionId(sessionId: string | null | undefined): boolean 
 }
 
 /**
+ * 新会话 draft（renderer 全局唯一编辑态，spec §5.1）：**不进 `sessions`、不落盘、不触后端**。
+ * 整个 renderer 最多一份，`activeSessionId === null` 时它就是当前页面；首条消息 promotion 时
+ * 用这份快照建真实会话（快照优先于全局「最近使用」值）。
+ */
+export interface NewSessionDraftConfig {
+	/** 目标项目目录；null = 还没选（可进入新会话页，但发不出去） */
+	cwd: string | null;
+	/** 起步模型；null = 还没定（等模型列表加载或用户选择补上） */
+	model: { provider: string; modelId: string } | null;
+	thinkingLevel: string;
+	permissionMode: PermissionMode;
+	/** 模型是否已定（会话快照或用户选择）：false 时 loadModels 才用默认值补 */
+	modelResolved: boolean;
+	/** 思考档位是否已定。**与 modelResolved 分开**：只改过档位不得阻止模型补齐（反之亦然） */
+	thinkingResolved: boolean;
+}
+
+/**
  * 顶栏展示顺序：置顶分区在左（内部保持既有顺序，可拖动互换），其余按原顺序跟在后面。
  * 稳定分区而非排序：拖拽只改 tabs.json 的原始顺序，置顶区与非置顶区的相对位置由本函数表达。
  * 未知 id（会话已被外部删除）直接忽略。
@@ -183,6 +201,10 @@ async function optimisticSessionSetting(
 		global: { lastUsedModel?: { provider: string; modelId: string } | null; lastUsedThinkingLevel?: string };
 		/** 乐观写入当前会话条目的补丁（model / thinkingLevel） */
 		sessionPatch: { model?: { provider: string; modelId: string } | null; thinkingLevel?: string | null };
+		/** draft 页（activeSessionId === null）写 newSessionDraft 的补丁；draft 不调 IPC */
+		draftPatch: Partial<
+			Pick<NewSessionDraftConfig, "model" | "thinkingLevel" | "modelResolved" | "thinkingResolved">
+		>;
 		/** saveUiState 载荷（乐观与回滚各一次） */
 		uiState: { lastUsedModel?: { provider: string; modelId: string } | null; lastUsedThinkingLevel?: string };
 		/** 真实会话的 SDK 同步 */
@@ -196,40 +218,54 @@ async function optimisticSessionSetting(
 		lastUsedThinkingLevel: s.lastUsedThinkingLevel,
 	};
 	const previousSession = s.sessions.find((x) => x.sessionId === activeSessionId);
-	const { global, sessionPatch, uiState, sync } = compute();
+	const previousDraft = s.newSessionDraft;
+	const { global, sessionPatch, draftPatch, uiState, sync } = compute();
 	const apply = (
 		g: { lastUsedModel?: { provider: string; modelId: string } | null; lastUsedThinkingLevel?: string },
 		patch: { model?: { provider: string; modelId: string } | null; thinkingLevel?: string | null },
+		draft: Partial<
+			Pick<NewSessionDraftConfig, "model" | "thinkingLevel" | "modelResolved" | "thinkingResolved">
+		>,
 	) =>
 		useSessionsStore.setState((state) => ({
 			...g,
 			sessions: state.sessions.map((x) => (x.sessionId === activeSessionId ? { ...x, ...patch } : x)),
+			// draft 页没有会话条目可写：选择落在 draft 配置上（promotion 时随快照生效）
+			newSessionDraft: state.newSessionDraft ? { ...state.newSessionDraft, ...draft } : null,
 		}));
-	apply(global, sessionPatch);
+	apply(global, sessionPatch, draftPatch);
 	getPi()
 		.saveUiState({ state: uiState })
 		.catch((error) => {
 			console.error("ui-state 持久化失败", error);
 			pushToast("warning", "toast.uiStateSaveFailed", errText(error));
 		});
-	// draft 无后端会话：选择只记为跟随值，创建时随 createSession 生效
-	if (activeSessionId && !isDraftSessionId(activeSessionId)) {
-		try {
-			await sync(activeSessionId);
-		} catch (error) {
-			// SDK 同步失败（如凭证缺失/模型不可用）：回滚乐观态 + 重新持久化 + toast
-			apply(
-				previousGlobal,
-				previousSession
-					? { model: previousSession.model, thinkingLevel: previousSession.thinkingLevel }
-					: { model: null, thinkingLevel: null },
-			);
-			getPi()
-				.saveUiState({ state: previousGlobal })
-				.catch((e) => console.error("ui-state 回滚持久化失败", e));
-			console.error(`${label}失败`, error);
-			pushToast("warning", toastKey, errText(error));
-		}
+	// draft 页（activeSessionId === null）没有后端会话：选择只写 draft 配置 + 跟随值，不调 SDK。
+	// （isDraftSessionId 分支是旧伪 draft 的兼容，阶段 3 随 isDraftSessionId 一起删）
+	if (activeSessionId === null || isDraftSessionId(activeSessionId)) return;
+	try {
+		await sync(activeSessionId);
+	} catch (error) {
+		// SDK 同步失败（如凭证缺失/模型不可用）：回滚乐观态 + 重新持久化 + toast
+		apply(
+			previousGlobal,
+			previousSession
+				? { model: previousSession.model, thinkingLevel: previousSession.thinkingLevel }
+				: { model: null, thinkingLevel: null },
+			previousDraft
+				? {
+						model: previousDraft.model,
+						thinkingLevel: previousDraft.thinkingLevel,
+						modelResolved: previousDraft.modelResolved,
+						thinkingResolved: previousDraft.thinkingResolved,
+					}
+				: {},
+		);
+		getPi()
+			.saveUiState({ state: previousGlobal })
+			.catch((e) => console.error("ui-state 回滚持久化失败", e));
+		console.error(`${label}失败`, error);
+		pushToast("warning", toastKey, errText(error));
 	}
 }
 
@@ -298,18 +334,78 @@ function rememberCwd(cwd: string | null): void {
 	useUiPreferencesStore.getState().setLastCwd(cwd);
 }
 
+/** 信任前置：未决项目弹窗（结果落 trust.json），draft 拉斜杠命令/promotion 建会话直接命中缓存 */
+function ensureTrust(cwd: string): void {
+	void getPi()
+		.ensureProjectTrust({ cwd })
+		.then(() => useSessionsStore.setState((s) => ({ trustVersion: s.trustVersion + 1 })))
+		.catch((error) => {
+			console.error("项目信任检查失败", error);
+			pushToast("warning", "toast.trustFailed", errText(error));
+		});
+}
+
+/** promotion 的 single-flight：同一 draft 的并发发送/命令只共享一次后端 createSession */
+let promotionInFlight: Promise<string | null> | null = null;
+
+/**
+ * draft → 真实会话：用 draft **快照**建会话（模型/思考优先当前会话，而非全局「最近使用」），
+ * 成功才消费 draft（失败保留 draft 与输入内容，用户重试就行）；promotion 会切到新会话 = 用户导航，
+ * 所以先领号：迟到结果只落 sessions、不抢焦点/cwd。
+ */
+async function promoteDraft(draft: NewSessionDraftConfig): Promise<string | null> {
+	const targetCwd = draft.cwd;
+	if (!targetCwd) return null;
+	const token = claimActivation();
+	try {
+		const meta = await getPi().createSession({
+			options: {
+				cwd: targetCwd,
+				...(draft.model ?? {}),
+				thinkingLevel: draft.thinkingLevel,
+			},
+		});
+		// 权限档位取「此刻」的 draft 值：create 在途时用户可能刚改过（入口快照会漏掉这一改）
+		const pendingMode = useSessionsStore.getState().newSessionDraft?.permissionMode ?? draft.permissionMode;
+		useSessionsStore.setState((state) => {
+			const rest = {
+				// 消费 draft：转正成功后新会话页不再留草稿（下次「＋」再按当时的会话快照新建一份）
+				newSessionDraft: null,
+				sessions: [...state.sessions, meta],
+				lastUsedAt: { ...state.lastUsedAt, [meta.sessionId]: Date.now() },
+			};
+			// 迟到（用户已切到别的会话）：新会话仍进 sessions，但不抢焦点/cwd
+			return isLatestActivation(token) ? { ...rest, activeSessionId: meta.sessionId, cwd: targetCwd } : rest;
+		});
+		useTranscriptStore.getState().resetSession(meta.sessionId);
+		if (isLatestActivation(token)) rememberCwd(targetCwd);
+		// draft 上选过的权限档位：后端新会话一律 default 起步，这里补上（失败只 toast，不回滚转正）
+		if (pendingMode !== "default") {
+			await useSessionsStore.getState().setSessionPermissionMode(meta.sessionId, pendingMode);
+		}
+		return meta.sessionId;
+	} catch (error) {
+		// 失败：draft 与输入内容都保留，用户重试即可；toast 提示（非会话内容，不残留）
+		console.error("创建会话失败", error);
+		pushToast("warning", "toast.sessionCreateFailed", errText(error));
+		return null;
+	}
+}
+
 /** 顶栏打开的会话持久化（重启恢复用）；由主进程写 userData/tabs.json，不依赖 renderer localStorage */
 interface SessionsStore {
 	sessions: SessionMeta[];
 	activeSessionId: string | null;
 	cwd: string | null;
 	models: AvailableModel[];
+	/** 全局唯一的新会话 draft；null = 当前已有真实会话（或还没初始化） */
+	newSessionDraft: NewSessionDraftConfig | null;
 	/** 上次使用的模型/思考深度（新会话与 draft 起步跟随；持久化 ui-state.json，语义 = 跟随最近选择，非独立默认设置） */
 	lastUsedModel: { provider: string; modelId: string } | null;
 	lastUsedThinkingLevel: string;
 	/** 项目信任决策完成计数：ensureProjectTrust 应答后 +1，驱动 draft 斜杠菜单按新决策重拉 */
 	trustVersion: number;
-	/** 按会话权限模式（缺 key = default；draft id 为 key 的条目是 renderer 内存态，转正时由 ensureSession 应用到后端） */
+	/** 按会话权限模式（缺 key = default）；draft 的档位在 `newSessionDraft.permissionMode` 里，不占本表 */
 	permissionModes: Record<string, PermissionMode>;
 	/**
 	 * 最近使用时刻（毫秒，内存策略 LRU 打点）：打开/新建/切走时更新，卸载/关闭时删表项。
@@ -317,15 +413,21 @@ interface SessionsStore {
 	 */
 	lastUsedAt: Record<string, number>;
 	/**
-	 * 真正创建后端会话（draft 转正走这里）。返回新会话 id；失败返回 null。
+	 * promotion：把当前 draft 变成真实会话（首条消息/斜杠命令触发）。返回新会话 id；
+	 * 没 draft / draft 无 cwd → null（调用方据此中止发送）；失败也返回 null 但**保留 draft**（可重试）。
 	 * **调用方必须用返回值定位新会话**，不能读 `activeSessionId`：创建是异步的，
 	 * 期间用户可能已切走（latest-wins 下新会话可能不抢焦点），读 active 会拿到别人的 id。
 	 */
-	createSession: (cwd?: string, replaceDraftId?: string) => Promise<string | null>;
-	/** 新建草稿会话 tab：不触后端、不落盘（空 tab 重启后自动消失），发送首条消息时才用其 cwd 真正创建 */
-	createDraftSession: (cwd?: string) => void;
-	/** 设置新会话的目标项目目录；活跃 tab 是 draft 时同步更新其条目（切 tab 往返不丢选择） */
+	createSession: () => Promise<string | null>;
+	/**
+	 * 激活新会话页（顶栏「＋」/ 启动初始化）。已有 draft 时**只激活、不覆盖任何配置**
+	 * （`cwd` 参数只在新建一份 draft 时作为起点，避免把在选择器里选过的目录冲掉）。
+	 */
+	activateNewSessionDraft: (cwd?: string) => void;
+	/** 设置新会话的目标项目目录（项目选择器）；draft 没有就一直只记全局默认 */
 	setDraftCwd: (cwd: string) => void;
+	/** draft 的权限档位（纯 renderer，promotion 时才应用到后端会话） */
+	setDraftPermissionMode: (mode: PermissionMode) => void;
 	switchSession: (sessionId: string) => void;
 	closeSession: (sessionId: string, intent?: SessionCloseIntent) => Promise<{ closed: boolean }>;
 	/** 自动卸载（内存策略专用，见实现处注释）；传 intent="gc" 让后端区分自动 GC 与用户意图 */
@@ -341,7 +443,7 @@ interface SessionsStore {
 	loadModels: () => Promise<void>;
 	setCurrentModel: (provider: string, modelId: string) => Promise<void>;
 	setThinkingLevel: (level: string) => Promise<void>;
-	/** 切换会话权限模式（draft 态仅本地；真实会话乐观更新 + 失败回滚 + toast） */
+	/** 切换会话权限模式（真实会话乐观更新 + 失败回滚 + toast；draft 走 setDraftPermissionMode） */
 	setSessionPermissionMode: (sessionId: string, mode: PermissionMode) => Promise<void>;
 }
 
@@ -350,106 +452,68 @@ export const useSessionsStore = create<SessionsStore>((set, get) => ({
 	activeSessionId: null,
 	cwd: null,
 	models: [],
+	newSessionDraft: null,
 	lastUsedModel: null,
 	lastUsedThinkingLevel: "medium",
 	trustVersion: 0,
 	permissionModes: {},
 	lastUsedAt: {},
 
-	createSession: async (cwd, replaceDraftId) => {
-		const targetCwd = cwd ?? get().cwd;
-		if (!targetCwd) return null;
-		// 新建会话（含 draft 转正）会切到新会话 = 用户导航：先领号
-		const token = claimActivation();
-		try {
-			const meta = await getPi().createSession({
-				options: {
-					cwd: targetCwd,
-					...get().lastUsedModel,
-					thinkingLevel: get().lastUsedThinkingLevel,
-				},
-			});
-			set((state) => {
-				// draft 转正式会话：原地替换保持 tab 位置；普通新建则追加
-				const sessions = replaceDraftId
-					? state.sessions.map((s) => (s.sessionId === replaceDraftId ? meta : s))
-					: [...state.sessions, meta];
-				const rest = {
-					// draft 键下的权限模式由 ensureSession 在创建后应用到新 id，这里顺手满档防泄漏
-					permissionModes: replaceDraftId
-						? withPermissionMode(state.permissionModes, replaceDraftId, "default")
-						: state.permissionModes,
-					lastUsedAt: { ...state.lastUsedAt, [meta.sessionId]: Date.now() },
-				};
-				// 迟到（用户已切到别的会话）：新会话仍进 tabs，但不抢焦点/cwd
-				return isLatestActivation(token)
-					? { ...rest, sessions, activeSessionId: meta.sessionId, cwd: targetCwd }
-					: { ...rest, sessions };
-			});
-			useTranscriptStore.getState().resetSession(meta.sessionId);
-			if (isLatestActivation(token)) rememberCwd(targetCwd);
-			return meta.sessionId;
-		} catch (error) {
-			// 失败时 draft tab 保留，用户重试即可；toast 提示（非会话内容，不残留）
-			console.error("创建会话失败", error);
-			pushToast("warning", "toast.sessionCreateFailed", errText(error));
-			return null;
-		}
+	// promotion：draft → 真实会话。single-flight 用模块级 Promise（同 openInFlight 模式：
+	// 不落盘、不进 store、settle 只清自己那条），发送与斜杠命令共享同一次 createSession
+	createSession: () => {
+		const draft = get().newSessionDraft;
+		// 没 draft / 还没选项目 = 没什么可转正：不静默建会话，由调用方中止发送并提示
+		if (!draft?.cwd) return Promise.resolve(null);
+		if (promotionInFlight) return promotionInFlight;
+		const promise = promoteDraft(draft).finally(() => {
+			if (promotionInFlight === promise) promotionInFlight = null;
+		});
+		promotionInFlight = promise;
+		return promise;
 	},
 
-	createDraftSession: (cwd) => {
-		const targetCwd = cwd ?? get().cwd;
-		if (!targetCwd) return;
-		// 信任前置：未决项目立即弹窗（结果落 trust.json），draft 拉斜杠命令/转正建会话直接命中缓存
-		void getPi()
-			.ensureProjectTrust({ cwd: targetCwd })
-			.then(() => set((s) => ({ trustVersion: s.trustVersion + 1 })))
-			.catch((error) => {
-				console.error("项目信任检查失败", error);
-				pushToast("warning", "toast.trustFailed", errText(error));
-			});
-		const now = Date.now();
-		const draft: SessionMeta = {
-			sessionId: `${DRAFT_SESSION_PREFIX}${crypto.randomUUID()}`,
+	activateNewSessionDraft: (cwd) => {
+		const state = get();
+		const existing = state.newSessionDraft;
+		const activeSession = state.sessions.find((s) => s.sessionId === state.activeSessionId);
+		// 已有 draft：只激活，不覆盖任何配置（cwd 参数只用作「新建一份」的起点，否则会把选过的目录冲掉）
+		const targetCwd = existing ? existing.cwd : (cwd ?? activeSession?.cwd ?? state.cwd);
+		// 从真实会话回到新会话页 = 用户导航：先领号（在途 open/create/fork 作废）。
+		// 已经在 draft 页时页面没变，**不领号**：否则 promotion 在途的结果会被误判成「用户不要它了」，
+		// 落地成「draft 已消费、页面还停在空白新会话页」
+		if (state.activeSessionId !== null) claimActivation();
+		set({
+			activeSessionId: null,
 			cwd: targetCwd,
-			model: get().lastUsedModel,
-			thinkingLevel: get().lastUsedThinkingLevel,
-			active: true,
-			messageCount: 0,
-			createdAt: now,
-			modifiedAt: now,
-		};
-		// 同步导航：领号后一切在途 open/create/fork 立即过期（点新会话后又碰旧行不会反弹）
-		claimActivation();
-		set((state) => ({
-			sessions: [...state.sessions, draft],
-			activeSessionId: draft.sessionId,
-			cwd: targetCwd,
-			lastUsedAt: { ...state.lastUsedAt, [draft.sessionId]: Date.now() },
-		}));
+			newSessionDraft: existing ?? {
+				cwd: targetCwd,
+				// 起步值优先当前会话快照（不是全局「最近使用」），用户切会话后的新会话跟随手上这个项目
+				model: activeSession?.model ?? state.lastUsedModel,
+				thinkingLevel: activeSession?.thinkingLevel ?? state.lastUsedThinkingLevel,
+				permissionMode: "default",
+				modelResolved: (activeSession?.model ?? state.lastUsedModel) != null,
+				thinkingResolved: true,
+			},
+		});
+		if (targetCwd) ensureTrust(targetCwd);
 	},
 
 	setDraftCwd: (cwd) => {
-		// 同 createDraftSession：cwd 变化即前置信任决策
-		void getPi()
-			.ensureProjectTrust({ cwd })
-			.then(() => set((s) => ({ trustVersion: s.trustVersion + 1 })))
-			.catch((error) => {
-				console.error("项目信任检查失败", error);
-				pushToast("warning", "toast.trustFailed", errText(error));
-			});
-		set((state) => {
-			const active = state.sessions.find((s) => s.sessionId === state.activeSessionId);
-			if (active && isDraftSessionId(active.sessionId)) {
-				return {
-					cwd,
-					sessions: state.sessions.map((s) => (s.sessionId === active.sessionId ? { ...s, cwd } : s)),
-				};
-			}
-			return { cwd };
-		});
+		// cwd 变化即前置信任决策
+		ensureTrust(cwd);
+		set((state) => ({
+			cwd,
+			newSessionDraft: state.newSessionDraft ? { ...state.newSessionDraft, cwd } : state.newSessionDraft,
+		}));
 		// 在选择器里选过项目 = 用户明确表态要用它：立刻记住（典型场景：首启选了项目、还没发消息就退出）
 		rememberCwd(cwd);
+	},
+
+	setDraftPermissionMode: (mode) => {
+		set((state) => ({
+			newSessionDraft: state.newSessionDraft ? { ...state.newSessionDraft, permissionMode: mode } : null,
+		}));
 	},
 
 	switchSession: (sessionId) => {
@@ -622,10 +686,28 @@ export const useSessionsStore = create<SessionsStore>((set, get) => ({
 				supportedLevels && supportedLevels.length > 0
 					? clampThinkingLevel(rawLevel, supportedLevels)
 					: rawLevel;
+			// draft 的起步模型：已定（会话快照/用户选过）就保留，没定就用刚解析出的默认值
+			const draft = get().newSessionDraft;
+			const draftModel = draft?.modelResolved ? draft.model : nextLastUsedModel;
+			const draftModelRecord = draftModel
+				? models.find((m) => m.provider === draftModel.provider && m.id === draftModel.modelId)
+				: undefined;
 			set({
 				models,
 				lastUsedModel: nextLastUsedModel,
 				lastUsedThinkingLevel: clampedLevel,
+				// draft 起步值（spec §5.1）：**分字段**判断已定/未定——
+				// 模型未定时用默认值补；档位已定的仍要按所选模型的能力夹紧（与全局/会话同一套规则）
+				newSessionDraft: draft
+					? {
+							...draft,
+							model: draftModel,
+							thinkingLevel: clampThinkingLevel(
+								draft.thinkingResolved ? draft.thinkingLevel : clampedLevel,
+								draftModelRecord?.thinkingLevels ?? [],
+							),
+						}
+					: null,
 			});
 		} catch (error) {
 			console.error("加载模型列表失败", error);
@@ -649,6 +731,13 @@ export const useSessionsStore = create<SessionsStore>((set, get) => ({
 		await optimisticSessionSetting("切换模型", "toast.modelSwitchFailed", () => ({
 			global: { lastUsedModel: { provider, modelId }, lastUsedThinkingLevel: thinkingLevel },
 			sessionPatch: { model: { provider, modelId }, thinkingLevel },
+			// draft 页：选择写进 draft 配置（两个 resolved 位分字段置位，互不干扰）
+			draftPatch: {
+				model: { provider, modelId },
+				thinkingLevel,
+				modelResolved: true,
+				thinkingResolved: true,
+			},
 			uiState: { lastUsedModel: { provider, modelId }, lastUsedThinkingLevel: thinkingLevel },
 			sync: (sessionId) => getPi().setModel({ sessionId, provider, modelId }),
 		}));
@@ -659,6 +748,8 @@ export const useSessionsStore = create<SessionsStore>((set, get) => ({
 		await optimisticSessionSetting("切换思考深度", "toast.thinkingSwitchFailed", () => ({
 			global: { lastUsedThinkingLevel: level },
 			sessionPatch: { thinkingLevel: level },
+			// draft 页：只置「档位已定」，**不得**碰 modelResolved（改档位 ≠ 改模型，模型仍要能按默认补齐）
+			draftPatch: { thinkingLevel: level, thinkingResolved: true },
 			uiState: { lastUsedThinkingLevel: level },
 			sync: (sessionId) => getPi().setThinkingLevel({ sessionId, level }),
 		}));

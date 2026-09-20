@@ -20,6 +20,7 @@ import type { ComponentProps } from "react";
 import { useCallback, useEffect, useState } from "react";
 import { getPi } from "../../api";
 import { useT } from "../../i18n";
+import { COMPOSER_FOCUS_EVENT } from "../../stores/drafts";
 import { useProjectsStore } from "../../stores/projects";
 import { selectBarSessions, useSessionsStore } from "../../stores/sessions";
 import { useTranscriptStore } from "../../stores/transcript";
@@ -218,7 +219,7 @@ export function SessionTabBar() {
 	const platform = getPi().platform;
 	const sessions = useSessionsStore((s) => s.sessions);
 	const activeSessionId = useSessionsStore((s) => s.activeSessionId);
-	const createDraftSession = useSessionsStore((s) => s.createDraftSession);
+	const activateNewSessionDraft = useSessionsStore((s) => s.activateNewSessionDraft);
 
 	const cwd = useSessionsStore((s) => s.cwd);
 	const diffSidebarOpen = useUiStore((s) => s.diffSidebarOpen);
@@ -383,8 +384,11 @@ export function SessionTabBar() {
 				type="button"
 				className="no-drag shrink-0 rounded-lg p-1.5 text-ink-dim transition-colors hover:bg-hover hover:text-ink"
 				onClick={() => {
-					// 只建内存 draft tab（空 tab 重启自动消失）；发送首条消息时才真正创建后端会话
-					createDraftSession();
+					// 单例 draft：已在会话里则切回新会话页（领号 + cwd 回到 draft 目录），
+					// 已经在新会话页则只是聚焦输入框（内容与配置一律保留，不再造第二份 draft）
+					const alreadyOnDraftPage = useSessionsStore.getState().activeSessionId === null;
+					activateNewSessionDraft();
+					if (alreadyOnDraftPage) window.dispatchEvent(new CustomEvent(COMPOSER_FOCUS_EVENT));
 				}}
 				aria-label={cwd ? t("tabbar.newSession") : t("tabbar.pickProjectFirst")}
 			>

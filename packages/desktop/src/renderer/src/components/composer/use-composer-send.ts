@@ -50,25 +50,18 @@ export function useComposerSend(options: UseComposerSendOptions) {
 		feedbackTimer.current = setTimeout(() => setFeedback(null), 2500);
 	};
 
-	/** 确保有活跃会话（无会话或 draft 时用其 cwd 真正创建，draft tab 原地转正），返回 sessionId */
+	/** 确保有活跃会话（draft 页则把 draft 转正），返回 sessionId */
 	const ensureSession = async (): Promise<string | null> => {
-		const state = useSessionsStore.getState();
-		const current = state.activeSessionId;
+		const current = useSessionsStore.getState().activeSessionId;
 		if (current && !isDraftSessionId(current)) return current;
-		const draftCwd = current ? state.sessions.find((s) => s.sessionId === current)?.cwd : undefined;
-		// draft 态选过的权限模式：转正后应用到新会话（后端新会话一律 default 起步）
-		const pendingMode = current ? state.permissionModes[current] : undefined;
-		const targetCwd = draftCwd ?? state.cwd;
-		if (!targetCwd) return null;
-		// 用返回值定位新会话，不读 activeSessionId：创建期间用户可能已切走，
-		// 此时新会话仍在后台存在（latest-wins 不让它抢焦点），读 active 会把消息与权限模式发到别人身上
-		const created = await useSessionsStore.getState().createSession(targetCwd, current ?? undefined);
-		if (!created) return null;
-		// 失败仅 toast（store 内已提示+回滚），不阻塞发送
-		if (pendingMode && pendingMode !== "default") {
-			await useSessionsStore.getState().setSessionPermissionMode(created, pendingMode);
+		// draft 页：promotion 用 draft 快照建真实会话（模型/思考/权限都从 `newSessionDraft` 取，
+		// 调用方不再自己拼 cwd/权限）。无 draft 的防御态（调用顺序异常）先建一份再转正。
+		if (!useSessionsStore.getState().newSessionDraft) {
+			useSessionsStore.getState().activateNewSessionDraft();
 		}
-		return created;
+		// 用返回值定位新会话，不读 activeSessionId：创建期间用户可能已切走，
+		// 此时新会话仍在后台存在（latest-wins 不让它抢焦点），读 active 会把消息发到别人身上
+		return useSessionsStore.getState().createSession();
 	};
 
 	/** 执行内置命令（发送以 / 开头文本时的分发；未匹配则透传给 SDK 原生处理模板/skill/扩展命令） */

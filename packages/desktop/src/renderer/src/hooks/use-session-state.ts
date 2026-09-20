@@ -3,13 +3,15 @@ import { useSessionsStore } from "../stores/sessions";
 import { useTranscriptStore } from "../stores/transcript";
 
 /**
- * 当前生效模型的完整信息（D4 收拢点）：会话覆写 ?? 全局默认 → models 表解析。
+ * 当前生效模型的完整信息（D4 收拢点）：
+ * 真实会话 = 会话覆写 ?? 全局默认；draft 页（`activeSessionId === null`）= draft 配置里的起步模型。
  * Composer（图片门控）/ ModelPicker / ThinkingPicker 三处共用，替代各自手写解析。
  */
 export function useActiveModelInfo(): AvailableModel | undefined {
 	return useSessionsStore((s) => {
 		const sessionModel = s.sessions.find((x) => x.sessionId === s.activeSessionId)?.model;
-		const effective = sessionModel ?? s.lastUsedModel;
+		const effective =
+			s.activeSessionId === null ? s.newSessionDraft?.model : (sessionModel ?? s.lastUsedModel);
 		if (!effective) return undefined;
 		return s.models.find((m) => m.provider === effective.provider && m.id === effective.modelId);
 	});

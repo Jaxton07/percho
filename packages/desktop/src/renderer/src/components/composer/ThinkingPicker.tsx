@@ -18,6 +18,10 @@ export function ThinkingPicker() {
 	const t = useT();
 	const thinkingLevel = useSessionsStore((s) => s.lastUsedThinkingLevel);
 	const activeSession = useSessionsStore((s) => s.sessions.find((x) => x.sessionId === s.activeSessionId));
+	// draft 页没有会话条目：档位读 draft 配置（起步值已按「会话快照 ?? 最近使用」定好）
+	const draftThinkingLevel = useSessionsStore((s) =>
+		s.activeSessionId === null ? s.newSessionDraft?.thinkingLevel : undefined,
+	);
 	// 当前会话覆写 ?? 全局默认 → models 表解析（useActiveModelInfo 收拢点）
 	const model = useActiveModelInfo();
 	const setThinkingLevel = useSessionsStore((s) => s.setThinkingLevel);
@@ -40,7 +44,7 @@ export function ThinkingPicker() {
 		};
 	}, [open]);
 
-	const effective = activeSession?.thinkingLevel ?? thinkingLevel;
+	const effective = draftThinkingLevel ?? activeSession?.thinkingLevel ?? thinkingLevel;
 	// 当前会话模型实际支持的思考深度（模型配置下发）；缺省按全量显示
 	const supported =
 		model?.thinkingLevels && model.thinkingLevels.length > 0 ? model.thinkingLevels : [...THINKING_LEVELS];

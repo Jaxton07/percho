@@ -50,20 +50,17 @@ export function useSlashMenu(options: UseSlashMenuOptions) {
 		!slashDismissed;
 	const slashQuery = slashOpen ? slashToken.query : "";
 
-	// 会话切换时重新拉取命令列表（模板/skill 随项目变化）；draft 无后端会话，按 cwd 拉
+	// 会话切换时重新拉取命令列表（模板/skill 随项目变化）；draft 页没有后端会话，按 cwd 拉
 	// （三类命令只依赖资源加载器；项目信任已在选目录时经 ensureProjectTrust 决策落盘，
 	// 应答后 trustVersion 递增触发重拉，把项目级资源补进菜单）
 	// biome-ignore lint/correctness/useExhaustiveDependencies: trustVersion 是刻意的触发依赖（信任应答后重拉），effect 体内不引用
 	useEffect(() => {
-		if (!activeSessionId) {
-			setSlashCommands([]);
-			return;
-		}
-		const request = isDraftSessionId(activeSessionId)
-			? cwd
-				? getPi().listSlashCommandsForCwd({ cwd })
-				: null
-			: getPi().listSlashCommands({ sessionId: activeSessionId });
+		const request =
+			activeSessionId && !isDraftSessionId(activeSessionId)
+				? getPi().listSlashCommands({ sessionId: activeSessionId })
+				: cwd
+					? getPi().listSlashCommandsForCwd({ cwd })
+					: null;
 		if (!request) {
 			setSlashCommands([]);
 			return;
