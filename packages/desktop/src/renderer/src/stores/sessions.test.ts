@@ -1,4 +1,4 @@
-import type { SessionEvent, SessionMeta } from "@percho/shared";
+import type { PermissionMode, SessionEvent, SessionMeta } from "@percho/shared";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 /** window.pi 的 mock：sessions store 经 getPi() 访问，测试环境无 preload 注入 */
@@ -43,7 +43,16 @@ function realMeta(sessionId: string, cwd: string): SessionMeta {
 	};
 }
 
+/**
+ * 阶段 0 红测专用：draft 契约字段尚未声明（阶段 1 落地），直接 setState 会 typecheck 报错。
+ * 阶段 1 实现后删除本 helper，改为直接写 store 字段。
+ */
+function setDraftRaw(patch: Record<string, unknown>): void {
+	(useSessionsStore.setState as unknown as (p: Record<string, unknown>) => void)(patch);
+}
+
 function resetStore() {
+	setDraftRaw({ newSessionDraft: null });
 	useSessionsStore.setState({
 		sessions: [],
 		activeSessionId: null,
@@ -123,6 +132,12 @@ describe("selectBarSessions（顶栏 = 置顶表驱动）", () => {
 
 	it("置顶表里的未知 id（会话已删）直接跳过，不生成空胶囊", () => {
 		expect(ids(selectBarSessions(tabs, ["ghost", "b"], history))).toEqual(["b"]);
+	});
+
+	// 阶段 0 红测（spec §6.3）：tmp subagent 检视会话不该出现在顶栏。
+	it("只读子会话（脏置顶 / 手改 ui-state）被防御性过滤，不生成只读胶囊", () => {
+		const sub = { ...realMeta("sub-1", "/p"), readOnly: true };
+		expect(ids(selectBarSessions([sub], ["sub-1"], [sub]))).toEqual([]);
 	});
 });
 
@@ -905,5 +920,199 @@ describe("GC close 在途的选择竞态（spec D5）", () => {
 
 		expect(await unloading).toEqual({ closed: false });
 		expect(useSessionsStore.getState().activeSessionId).toBe("c");
+	});
+});
+
+// ---------------------------------------------------------------------------
+// 阶段 0 红测（spec singleton-draft-subagent-nav §5、plan 阶段 1）：
+// ① 新会话 = renderer 全局唯一 draft（`activeSessionId === null`），不再是 `draft:` 伪 SessionMeta；
+// ② 点击「＋」最多激活/创建一个 draft，已有 draft 必须保留内容与配置；
+// ③ 首条消息 promotion：吃 draft 快照（不用全局最近值）+ single-flight + latest-wins + 失败保留。
+// 下方 cast 是阶段 0 的临时契约类型（新 API 尚未实现），阶段 1 落地后删除。
+// ---------------------------------------------------------------------------
+
+/** draft 配置契约（spec §5.1 NewSessionDraftConfig） */
+type DraftConfigShape = {
+	cwd: string | null;
+	model: { provider: string; modelId: string } | null;
+	thinkingLevel: string;
+	permissionMode: PermissionMode;
+};
+
+type NewDraftApi = {
+	newSessionDraft: DraftConfigShape | null;
+	activateNewSessionDraft: (cwd?: string) => void;
+	setDraftPermissionMode: (mode: PermissionMode) => void;
+};
+
+function dstore(): NewDraftApi & ReturnType<typeof useSessionsStore.getState> {
+	return useSessionsStore.getState() as unknown as NewDraftApi & ReturnType<typeof useSessionsStore.getState>;
+}
+
+describe("单例新会话 draft（newSessionDraft）", () => {
+	it("activateNewSessionDraft 不往 sessions 加条目：draft 只是 renderer 编辑态", () => {
+		useSessionsStore.setState({ cwd: "/proj/a" });
+		dstore().activateNewSessionDraft();
+		const state = dstore();
+		expect(state.sessions).toEqual([]);
+		expect(state.activeSessionId).toBeNull();
+		expect(state.newSessionDraft?.cwd).toBe("/proj/a");
+		expect(state.newSessionDraft?.permissionMode).toBe("default");
+		expect(piMock.createSession).not.toHaveBeenCalled();
+	});
+
+	it("从当前真实会话快照 cwd/model/thinking（全局最近值是另一套，不得采用）", () => {
+		useSessionsStore.setState({
+			sessions: [
+				{ ...realMeta("a", "/proj/alpha"), model: { provider: "pA", modelId: "mA" }, thinkingLevel: "high" },
+			],
+			activeSessionId: "a",
+			cwd: "/proj/alpha",
+			lastUsedModel: { provider: "pB", modelId: "mB" },
+			lastUsedThinkingLevel: "low",
+		});
+		dstore().activateNewSessionDraft();
+		const draft = dstore().newSessionDraft;
+		expect(draft?.cwd).toBe("/proj/alpha");
+		expect(draft?.model).toEqual({ provider: "pA", modelId: "mA" });
+		expect(draft?.thinkingLevel).toBe("high");
+	});
+
+	it("已在 draft 时再点「＋」：返回同一 draft，内容与配置都不覆盖", () => {
+		useSessionsStore.setState({ cwd: "/proj/a" });
+		dstore().activateNewSessionDraft();
+		dstore().setDraftCwd("/proj/b");
+		dstore().setDraftPermissionMode("fullAccess");
+		// 用户临时切到真实会话，再点「＋」回到 draft
+		useSessionsStore.setState((state) => ({
+			sessions: [...state.sessions, realMeta("r1", "/proj/a")],
+			activeSessionId: "r1",
+		}));
+		dstore().activateNewSessionDraft();
+		const state = dstore();
+		expect(state.activeSessionId).toBeNull();
+		expect(state.newSessionDraft?.cwd).toBe("/proj/b");
+		expect(state.newSessionDraft?.permissionMode).toBe("fullAccess");
+		expect(state.sessions.map((s) => s.sessionId)).toEqual(["r1"]);
+	});
+
+	it("无 cwd 也能进入 draft（newSessionDraft.cwd === null，不静默 no-op）", () => {
+		dstore().activateNewSessionDraft();
+		expect(dstore().newSessionDraft?.cwd).toBeNull();
+		expect(dstore().activeSessionId).toBeNull();
+	});
+
+	it("draft 权限模式写在 draft 配置里：不占 permissionModes map、不调 IPC", () => {
+		dstore().activateNewSessionDraft();
+		dstore().setDraftPermissionMode("fullAccess");
+		expect(dstore().newSessionDraft?.permissionMode).toBe("fullAccess");
+		expect(dstore().permissionModes).toEqual({});
+		expect(piMock.setPermissionMode).not.toHaveBeenCalled();
+	});
+
+	it("draft 态切换模型/思考深度：只改 draft 配置与最近使用偏好，不调后端", async () => {
+		dstore().activateNewSessionDraft();
+		await dstore().setCurrentModel("p", "m");
+		await dstore().setThinkingLevel("high");
+		expect(piMock.setModel).not.toHaveBeenCalled();
+		expect(piMock.setThinkingLevel).not.toHaveBeenCalled();
+		expect(dstore().newSessionDraft?.model).toEqual({ provider: "p", modelId: "m" });
+		expect(dstore().newSessionDraft?.thinkingLevel).toBe("high");
+		expect(dstore().lastUsedModel).toEqual({ provider: "p", modelId: "m" });
+		expect(dstore().lastUsedThinkingLevel).toBe("high");
+	});
+});
+
+describe("promotion：首条消息把 draft 转成真实会话", () => {
+	beforeEach(() => useToastsStore.setState({ toasts: [] }));
+
+	it("用 draft 快照创建：当前会话模型 A 优先于全局最近 B", async () => {
+		piMock.createSession.mockResolvedValue(realMeta("new-1", "/proj/alpha"));
+		useSessionsStore.setState({
+			sessions: [
+				{ ...realMeta("a", "/proj/alpha"), model: { provider: "pA", modelId: "mA" }, thinkingLevel: "high" },
+			],
+			activeSessionId: "a",
+			cwd: "/proj/alpha",
+			lastUsedModel: { provider: "pB", modelId: "mB" },
+			lastUsedThinkingLevel: "low",
+		});
+		dstore().activateNewSessionDraft();
+
+		expect(await dstore().createSession()).toBe("new-1");
+
+		expect(piMock.createSession).toHaveBeenCalledTimes(1);
+		expect(piMock.createSession).toHaveBeenCalledWith({
+			options: { cwd: "/proj/alpha", provider: "pA", modelId: "mA", thinkingLevel: "high" },
+		});
+		const state = dstore();
+		expect(state.newSessionDraft).toBeNull();
+		expect(state.sessions.map((s) => s.sessionId)).toEqual(["a", "new-1"]);
+		expect(state.activeSessionId).toBe("new-1");
+		expect(state.cwd).toBe("/proj/alpha");
+	});
+
+	it("并发两次（发送 + 命令）共享一次 pi.createSession，返回同一个 id", async () => {
+		const created = deferred<SessionMeta>();
+		piMock.createSession.mockImplementationOnce(() => created.promise);
+		useSessionsStore.setState({ cwd: "/proj/a" });
+		dstore().activateNewSessionDraft();
+
+		const first = dstore().createSession();
+		const second = dstore().createSession();
+		expect(piMock.createSession).toHaveBeenCalledTimes(1);
+		created.resolve(realMeta("new-1", "/proj/a"));
+
+		expect(await first).toBe("new-1");
+		expect(await second).toBe("new-1");
+		expect(dstore().sessions.filter((s) => s.sessionId === "new-1")).toHaveLength(1);
+	});
+
+	it("创建失败：draft 与配置完整保留，重试会重新发 IPC", async () => {
+		piMock.createSession
+			.mockRejectedValueOnce(new Error("boom"))
+			.mockResolvedValueOnce(realMeta("new-1", "/proj/a"));
+		dstore().activateNewSessionDraft("/proj/a");
+		dstore().setDraftPermissionMode("fullAccess");
+
+		expect(await dstore().createSession()).toBeNull();
+
+		const afterFail = dstore();
+		expect(afterFail.newSessionDraft?.cwd).toBe("/proj/a");
+		expect(afterFail.newSessionDraft?.permissionMode).toBe("fullAccess");
+		expect(afterFail.activeSessionId).toBeNull();
+		expect(toastKeys()).toContain("toast.sessionCreateFailed");
+
+		expect(await dstore().createSession()).toBe("new-1");
+		expect(piMock.createSession).toHaveBeenCalledTimes(2);
+	});
+
+	it("创建在途时用户切走：真实 meta 仍进 sessions 且 draft 被消费，但不抢 active/cwd", async () => {
+		const created = deferred<SessionMeta>();
+		piMock.createSession.mockImplementationOnce(() => created.promise);
+		useSessionsStore.setState({ sessions: [realMeta("b", "/proj/b")], activeSessionId: "b", cwd: "/proj/b" });
+		dstore().activateNewSessionDraft("/proj/a");
+
+		const promoting = dstore().createSession();
+		useSessionsStore.getState().switchSession("b");
+		created.resolve(realMeta("new-1", "/proj/a"));
+
+		expect(await promoting).toBe("new-1");
+		const state = dstore();
+		expect(state.activeSessionId).toBe("b");
+		expect(state.cwd).toBe("/proj/b");
+		expect(state.sessions.map((s) => s.sessionId)).toContain("new-1");
+		expect(state.newSessionDraft).toBeNull();
+	});
+
+	it("draft 非 default 权限模式：创建成功后应用到新会话", async () => {
+		piMock.createSession.mockResolvedValue(realMeta("new-1", "/proj/a"));
+		dstore().activateNewSessionDraft("/proj/a");
+		dstore().setDraftPermissionMode("fullAccess");
+
+		await dstore().createSession();
+
+		expect(piMock.setPermissionMode).toHaveBeenCalledWith({ sessionId: "new-1", mode: "fullAccess" });
+		expect(dstore().permissionModes["new-1"]).toBe("fullAccess");
 	});
 });

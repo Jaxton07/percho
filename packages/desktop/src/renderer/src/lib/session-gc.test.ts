@@ -90,9 +90,8 @@ describe("pickUnloadCandidates · 单条保护条件", () => {
 		).toEqual([]);
 	});
 
-	it("draft 不卸（内存 tab，卸了就是「关掉」）", () => {
-		expect(ids({ open: [session("draft:x", NOW - 10_000_000, { isDraft: true })] })).toEqual([]);
-	});
+	// 阶段 0（spec singleton-draft-subagent-nav §8）：新会话 draft 不再进 sessions，
+	// 因此 GC 侧不再有伪 draft 特例（`isDraft` 字段的分类与删除见 plan 阶段 3）。
 
 	it("0 消息会话不卸（还没有会话文件，磁盘历史里查不到，卸掉 = 条目消失）", () => {
 		expect(ids({ open: [session("empty", NOW - 10_000_000, { messageCount: 0 })] })).toEqual([]);

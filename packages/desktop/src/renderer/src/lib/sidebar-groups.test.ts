@@ -1,7 +1,9 @@
 import type { SessionMeta } from "@percho/shared";
 import { afterEach, describe, expect, it } from "vitest";
 import type { ProjectEntry } from "../stores/projects";
+import { deriveProjects } from "../stores/projects";
 import { setDailyDirForTest } from "./daily";
+import * as sidebarGroupsModule from "./sidebar-groups";
 import {
 	deriveSidebarGroups,
 	mergeSidebarSessions,
@@ -22,6 +24,23 @@ const P2 = "/work/beta";
 setDailyDirForTest(DAILY);
 afterEach(() => setDailyDirForTest(DAILY));
 
+/**
+ * 阶段 0 红测（spec singleton-draft-subagent-nav §6.2）：`SidebarGroupsInput` 改为显式接收 `activeCwd`，
+ * 不再从可见 sessions 反查 active id 得到 cwd（只读子会话被过滤掉后那条路会丢信息）。
+ * 这里用交叉类型：阶段 2 实现后字段就是 SidebarGroupsInput 自己的字段，测试无需再改。
+ */
+type SidebarInput = SidebarGroupsInput & { activeCwd: string | null };
+
+/**
+ * 阶段 0 红测：`isPrimaryNavigationSession` 在阶段 2 落地。
+ * 用命名空间取（缺失时为 undefined），避免「导入不存在的导出」导致整个文件挂掉。
+ */
+const isPrimaryNavigationSession = (
+	sidebarGroupsModule as unknown as {
+		isPrimaryNavigationSession?: (session: SessionMeta) => boolean;
+	}
+).isPrimaryNavigationSession as (session: SessionMeta) => boolean;
+
 function session(id: string, cwd: string, modifiedAt: number, name = `会话 ${id}`): SessionMeta {
 	return { sessionId: id, cwd, name, active: false, messageCount: 1, createdAt: 0, modifiedAt };
 }
@@ -30,19 +49,21 @@ function project(cwd: string, addedIndex = -1, lastActive = 0, sessionCount = 0)
 	return { cwd, name: cwd.split("/").pop() ?? cwd, sessionCount, lastActive, addedIndex };
 }
 
-function derive(overrides: Partial<SidebarGroupsInput> = {}) {
+function derive(overrides: Partial<SidebarInput> = {}) {
 	return deriveWithTouched(overrides, false);
 }
 
 /**
  * 展开态「用户已操作」位：所有用例**显式给值**，不依赖实现里的缺省推断。
+ * `activeCwd` 也显式给（阶段 0 起契约就是「调用方传当前会话所在目录」）。
  */
-function deriveWithTouched(overrides: Partial<SidebarGroupsInput>, expandedGroupsTouched: boolean) {
+function deriveWithTouched(overrides: Partial<SidebarInput>, expandedGroupsTouched: boolean) {
 	return deriveSidebarGroups({
 		sessions: [],
 		projects: [],
 		search: "",
 		activeSessionId: null,
+		activeCwd: null,
 		pinnedSessions: [],
 		pinnedProjects: [],
 		expandedGroups: [],
@@ -94,6 +115,7 @@ describe("deriveSidebarGroups · 展开推断", () => {
 			sessions: [session("a", P1, 100), session("b", P2, 200), session("c", DAILY, 300)],
 			projects: [project(P1), project(P2)],
 			activeSessionId: "a",
+			activeCwd: P1,
 		});
 		expect(result.projects.map((p) => [p.cwd, p.expanded])).toEqual([
 			[P1, true],
@@ -143,7 +165,7 @@ describe("deriveSidebarGroups · 展开推断", () => {
 describe("deriveSidebarGroups · 展开状态 touched 位", () => {
 	it("touched=false + 空记录：按默认推断只展开当前会话所在组", () => {
 		const result = deriveWithTouched(
-			{ sessions: [session("a", P1, 100)], projects: [project(P1)], activeSessionId: "a" },
+			{ sessions: [session("a", P1, 100)], projects: [project(P1)], activeSessionId: "a", activeCwd: P1 },
 			false,
 		);
 		expect(result.projects.map((p) => [p.cwd, p.expanded])).toEqual([[P1, true]]);
@@ -151,7 +173,7 @@ describe("deriveSidebarGroups · 展开状态 touched 位", () => {
 
 	it("touched=true + 空记录：空数组合法 = 全部折叠（不能再被当成「未操作」回退默认集）", () => {
 		const result = deriveWithTouched(
-			{ sessions: [session("a", P1, 100)], projects: [project(P1)], activeSessionId: "a" },
+			{ sessions: [session("a", P1, 100)], projects: [project(P1)], activeSessionId: "a", activeCwd: P1 },
 			true,
 		);
 		expect(result.projects.map((p) => [p.cwd, p.expanded])).toEqual([[P1, false]]);
@@ -164,6 +186,7 @@ describe("deriveSidebarGroups · 展开状态 touched 位", () => {
 			sessions: [session("a", P1, 100)],
 			projects: [project(P1)],
 			activeSessionId: "a",
+			activeCwd: P1,
 		};
 		const first = deriveWithTouched(base, false);
 		expect(first.defaultExpandedKeys).toEqual([P1]);
@@ -244,24 +267,25 @@ describe("mergeSidebarSessions（磁盘历史 + 当前内存会话）", () => {
 		expect(merged.find((s) => s.sessionId === "h2")?.name).toBe("改过的名字");
 	});
 
-	it("内存独有项全部保留（draft、刚创建还没进历史的真实会话），顺序不被改写", () => {
-		const merged = mergeSidebarSessions(hist, [session("draft:x", P1, 300), session("fresh", P1, 400)]);
-		expect(merged.map((s) => s.sessionId)).toEqual(["h1", "h2", "draft:x", "fresh"]);
+	it("内存独有项全部保留（刚创建还没进历史的真实会话），顺序不被改写", () => {
+		const merged = mergeSidebarSessions(hist, [session("fresh-0", P1, 300), session("fresh", P1, 400)]);
+		expect(merged.map((s) => s.sessionId)).toEqual(["h1", "h2", "fresh-0", "fresh"]);
 	});
 
 	it("无内存会话时等于历史（顺序不变）", () => {
 		expect(mergeSidebarSessions(hist, []).map((s) => s.sessionId)).toEqual(["h1", "h2"]);
 	});
 
-	it("合并结果直接驱动派生：draft 落在所属项目的分组里（draft 的 cwd 尚无历史时也成组）", () => {
-		const merged = mergeSidebarSessions(hist, [session("draft:x", P2, 300)]);
+	it("合并结果直接驱动派生：内存独有会话落在所属项目的分组里（cwd 尚无历史时也成组）", () => {
+		const merged = mergeSidebarSessions(hist, [session("fresh-1", P2, 300)]);
 		const result = derive({
 			sessions: merged,
 			projects: [project(P1), project(P2)],
-			activeSessionId: "draft:x",
+			activeSessionId: "fresh-1",
+			activeCwd: P2,
 		});
 		expect(result.projects.find((p) => p.cwd === P2)?.sessions.map((s) => s.session.sessionId)).toEqual([
-			"draft:x",
+			"fresh-1",
 		]);
 		expect(result.defaultExpandedKeys).toEqual([P2]);
 	});
@@ -328,9 +352,71 @@ describe("mergeSidebarSessions · 稳定时间字段（打开/卸载不改变行
 		expect(alpha?.sessions.map((s) => s.pinned)).toEqual([true, false, false]);
 	});
 
-	it("无历史对应（同 ID 只出现在内存：draft / 刚创建）时不做字段兜底，保持原样", () => {
-		const draft = session("draft:x", P1, 300);
-		expect(mergeSidebarSessions([session("h1", P1, 100)], [draft])[1]).toBe(draft);
+	it("无历史对应（同 ID 只出现在内存：刚创建的真实会话）时不做字段兜底，保持原样", () => {
+		const fresh = session("fresh-2", P1, 300);
+		expect(mergeSidebarSessions([session("h1", P1, 100)], [fresh])[1]).toBe(fresh);
+	});
+});
+
+// ---------------------------------------------------------------------------
+// 阶段 0 红测（spec singleton-draft-subagent-nav §6、plan 阶段 2）：
+// 临时 subagent 检视会话只从**导航投影**过滤（内存 sessions / backend registry 不动），
+// 过滤后的集合同时喂给 deriveProjects 与 deriveSidebarGroups；默认展开改用显式 activeCwd。
+// ---------------------------------------------------------------------------
+
+describe("导航投影：只读子会话不进左栏", () => {
+	/**
+	 * 与 Sidebar 的装配顺序一致：历史 + 内存合并 → 统一过滤 → 同一份集合喂给 deriveProjects
+	 * 与 deriveSidebarGroups（阶段 2 实现；本用例同时钉住「计数/搜索/幽灵组同源」）。
+	 */
+	function navigation(history: SessionMeta[], memory: SessionMeta[], extra: Partial<SidebarInput> = {}) {
+		const merged = mergeSidebarSessions(history, memory);
+		const sessions = merged.filter((item) => isPrimaryNavigationSession(item));
+		const projects = deriveProjects({ allSessions: sessions, addedProjects: [] });
+		return { sessions, result: derive({ sessions, projects, ...extra }) };
+	}
+
+	it("isPrimaryNavigationSession：readOnly 子会话被排除，主会话保留", () => {
+		expect(isPrimaryNavigationSession(session("main", P1, 100))).toBe(true);
+		expect(isPrimaryNavigationSession({ ...session("sub", P1, 100), readOnly: true })).toBe(false);
+	});
+
+	it("只读子会话不计项目数量、不参与搜索、不生成幽灵项目组", () => {
+		const sub = { ...session("sub-1", P2, 500, "子代理检视"), readOnly: true };
+		const { sessions, result } = navigation([session("main", P1, 100)], [sub]);
+
+		expect(sessions.map((s) => s.sessionId)).toEqual(["main"]);
+		// P2 只有一条只读子会话：不该因此凭空长出一个项目组
+		expect(result.projects.map((p) => p.cwd)).toEqual([P1]);
+		expect(result.projects[0]?.totalSessions).toBe(1);
+
+		const searched = navigation([session("main", P1, 100)], [sub], { search: "子代理" });
+		expect(searched.result.projects).toEqual([]);
+	});
+
+	it("activeCwd 显式传入：active 会话本身被过滤出导航集合时仍能展开它所在项目（subagent 检视页）", () => {
+		const sub = { ...session("sub-1", P2, 500), readOnly: true };
+		const { result } = navigation([session("main", P1, 100)], [sub], {
+			activeSessionId: "sub-1",
+			activeCwd: P2,
+		});
+		expect(result.defaultExpandedKeys).toEqual([P2]);
+		expect(result.projects.find((p) => p.cwd === P2)).toBeUndefined();
+	});
+
+	it("activeCwd 为 null（新会话 draft 页）：默认展开集为空，不误展开任何组", () => {
+		const { result } = navigation([session("main", P1, 100)], [], {
+			activeSessionId: null,
+			activeCwd: null,
+		});
+		expect(result.defaultExpandedKeys).toEqual([]);
+	});
+
+	it("刚创建的普通真实会话仍由 mergeSidebarSessions 补进左栏（历史还没刷新的窗口）", () => {
+		const fresh = { ...session("fresh-1", P2, 900), messageCount: 0 };
+		const { result } = navigation([session("main", P1, 100)], [fresh], {});
+		const beta = result.projects.find((p) => p.cwd === P2);
+		expect(beta?.sessions.map((s) => s.session.sessionId)).toEqual(["fresh-1"]);
 	});
 });
 
