@@ -193,6 +193,11 @@ interface SessionsStore {
 	trustVersion: number;
 	/** 按会话权限模式（缺 key = default；draft id 为 key 的条目是 renderer 内存态，转正时由 ensureSession 应用到后端） */
 	permissionModes: Record<string, PermissionMode>;
+	/**
+	 * 最近使用时刻（毫秒，内存策略 LRU 打点）：打开/新建/切走时更新，卸载/关闭时删表项。
+	 * 只活在本次进程（不落盘）：重启后一个会话都没打开，本来也没有 LRU 可言。
+	 */
+	lastUsedAt: Record<string, number>;
 	createSession: (cwd?: string, replaceDraftId?: string) => Promise<void>;
 	/** 新建草稿会话 tab：不触后端、不落盘（空 tab 重启后自动消失），发送首条消息时才用其 cwd 真正创建 */
 	createDraftSession: (cwd?: string) => void;
@@ -200,6 +205,8 @@ interface SessionsStore {
 	setDraftCwd: (cwd: string) => void;
 	switchSession: (sessionId: string) => void;
 	closeSession: (sessionId: string) => Promise<void>;
+	/** 自动卸载（内存策略用，见实现处注释；与 closeSession 行为一致） */
+	unloadSession: (sessionId: string) => Promise<void>;
 	openFromHistory: (filePath: string) => Promise<void>;
 	/** 在指定 assistant 消息处分叉：新会话以新 tab 打开并切换过去（原会话保留原样）；成功返回新 sessionId */
 	forkSession: (ref: { entryId?: string; text?: string }) => Promise<string | undefined>;
@@ -224,6 +231,7 @@ export const useSessionsStore = create<SessionsStore>((set, get) => ({
 	lastUsedThinkingLevel: "medium",
 	trustVersion: 0,
 	permissionModes: {},
+	lastUsedAt: {},
 
 	createSession: async (cwd, replaceDraftId) => {
 		const targetCwd = cwd ?? get().cwd;
@@ -247,6 +255,7 @@ export const useSessionsStore = create<SessionsStore>((set, get) => ({
 				permissionModes: replaceDraftId
 					? withPermissionMode(state.permissionModes, replaceDraftId, "default")
 					: state.permissionModes,
+				lastUsedAt: { ...state.lastUsedAt, [meta.sessionId]: Date.now() },
 			}));
 			useTranscriptStore.getState().resetSession(meta.sessionId);
 			rememberCwd(targetCwd);
@@ -283,6 +292,7 @@ export const useSessionsStore = create<SessionsStore>((set, get) => ({
 			sessions: [...state.sessions, draft],
 			activeSessionId: draft.sessionId,
 			cwd: targetCwd,
+			lastUsedAt: { ...state.lastUsedAt, [draft.sessionId]: Date.now() },
 		}));
 	},
 
@@ -312,7 +322,11 @@ export const useSessionsStore = create<SessionsStore>((set, get) => ({
 	switchSession: (sessionId) => {
 		set((state) => {
 			const session = state.sessions.find((s) => s.sessionId === sessionId);
-			return { activeSessionId: sessionId, cwd: session?.cwd ?? state.cwd };
+			return {
+				activeSessionId: sessionId,
+				cwd: session?.cwd ?? state.cwd,
+				lastUsedAt: { ...state.lastUsedAt, [sessionId]: Date.now() },
+			};
 		});
 		// 懒加载兜底（D4）：目标会话无 transcript 数据时补拉四件套（从历史打开、
 		// 事件桥断连期间的切换等都经此路径自愈；已有数据零成本短路）
@@ -355,8 +369,18 @@ export const useSessionsStore = create<SessionsStore>((set, get) => ({
 				: state.cwd;
 			// 权限模式随会话销毁归零（后端 holder 同点位清理；draft 态本就纯 renderer）
 			const permissionModes = withPermissionMode(state.permissionModes, sessionId, "default");
-			return { sessions, activeSessionId, cwd, permissionModes };
+			// LRU 打点随会话一起清（表项留着就是泄漏：只会积攒不再打开的 id）
+			const lastUsedAt = { ...state.lastUsedAt };
+			delete lastUsedAt[sessionId];
+			return { sessions, activeSessionId, cwd, permissionModes, lastUsedAt };
 		});
+	},
+
+	/** 自动卸载（内存策略专用）：语义与 closeSession 完全一致，只是把调用点区分开——
+	 *  「用户主动关/删」走 closeSession，「内存策略判定该卸」走这里（便于日后单独调整任一侧）。
+	 *  受保护会话不会走到这里（保护判定在 lib/session-gc.ts 的 isProtected）。 */
+	unloadSession: async (sessionId) => {
+		await get().closeSession(sessionId);
 	},
 
 	openFromHistory: async (filePath) => {
@@ -366,6 +390,7 @@ export const useSessionsStore = create<SessionsStore>((set, get) => ({
 				sessions: [...state.sessions.filter((s) => s.sessionId !== meta.sessionId), meta],
 				activeSessionId: meta.sessionId,
 				cwd: meta.cwd,
+				lastUsedAt: { ...state.lastUsedAt, [meta.sessionId]: Date.now() },
 			}));
 			// 先记 cwd 再拉数据：即便随后装载失败（下面的 catch），用户「在用哪个项目」的事实也已经成立
 			rememberCwd(meta.cwd);

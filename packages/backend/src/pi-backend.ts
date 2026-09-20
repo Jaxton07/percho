@@ -81,7 +81,7 @@ import {
 } from "./session/messages";
 import { autoNameSession } from "./session/naming";
 import { EventRateTracker } from "./session/rates";
-import { type EventForwarder, SessionRegistry } from "./session/registry";
+import { type EventForwarder, type RegisteredSession, SessionRegistry } from "./session/registry";
 import { renameSessionFile } from "./session/rename";
 import { StreamGuard } from "./session/stream-guard";
 import { TraceRecorder } from "./session/trace";
@@ -529,9 +529,25 @@ export class PiBackend {
 		return new Set(this.registry.list().map((e) => e.session.sessionId));
 	}
 
+	/**
+	 * 关会话（**用户主动关**）：agent 还在跑（含等审批）时拒绝——run 中途把后端会话 dispose 会直接掐断本轮，
+	 * 内存策略（自动卸载）靠这道兵底兼固（策略层已保护，这里是最后一道门）。
+	 * 自动卸载走同一个方法：行为与主动关完全一致，只是调用点分开（renderer 侧 `unloadSession`）。
+	 */
 	async closeSession(sessionId: string): Promise<void> {
 		const entry = this.registry.get(sessionId);
 		if (!entry) return;
+		if (entry.session.isStreaming) {
+			// 等审批也在此列（实测 isStreaming 两态都为 true）：用户切走/自动卸载都不能把这一轮掐掉
+			log.warn("closeSession ignored: streaming", sessionId);
+			return;
+		}
+		await this.disposeSession(entry);
+	}
+
+	/** 真正的处置：dispose + registry/全局键控子系统清理（closeSession 与 deleteSession 共用） */
+	private async disposeSession(entry: RegisteredSession): Promise<void> {
+		const sessionId = entry.session.sessionId;
 		entry.session.dispose();
 		// entry 级清理：unsubscribe + gate/dialogs dispose（pending 对话框按 sessionClosed 结算，
 		// 广播 resolved 让 renderer 撤卡；扩展 Promise 落取消值）
@@ -548,7 +564,9 @@ export class PiBackend {
 		const entry = this.registry.get(sessionId);
 		const sessionDir = entry?.session.sessionManager.getSessionDir();
 		const file = sessionFile ?? entry?.session.sessionManager.getSessionFile();
-		if (entry) await this.closeSession(sessionId);
+		// 显式删除是用户的明确意图（既有行为：即便正跑着也删），**绕开 closeSession 的 isStreaming 拒绝**，
+		// 否则会变成「拒绝 dispose 但磁盘文件照删」的跛脚状态（阶段 0 实测确认这条路径不先 abort）
+		if (entry) await this.disposeSession(entry);
 		if (!file) throw new Error(`Session file not found: ${sessionId}`);
 		await unlink(file);
 		if (sessionDir) await TraceRecorder.removeAll(sessionDir, sessionId);

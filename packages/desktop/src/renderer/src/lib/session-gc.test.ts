@@ -16,6 +16,7 @@ const IDLE_ENTRY: SessionGcEntry = {
 	unseenCompletion: false,
 	compacting: false,
 	followUpQueue: [],
+	messageCount: 0,
 };
 
 const NOW = 1_000_000_000;
@@ -118,12 +119,31 @@ describe("pickUnloadCandidates · 单条保护条件", () => {
 		expect(ids({ open: [session("fresh", NOW - 1000), session("warm", NOW - 60_000)], keep: 1 })).toEqual([]);
 	});
 
+	it("磁盘 meta 是 0 但 transcript 已有消息（本次进程内新建的会话）→ 可以卸（回归：只信 meta 就永不卸载）", () => {
+		const open = [
+			session("new", NOW - 80_000, { messageCount: 0 }),
+			session("b", NOW - 60_000),
+			session("c", NOW - 40_000),
+			session("d", NOW - 20_000),
+			session("e", NOW - 15_000),
+		];
+		// transcript 也还没消息（真·空会话，没有会话文件）→ 保护它，卸的是别人
+		expect(ids({ open })).toEqual(["b"]);
+		// transcript 有 3 条 → 它是可卸的，且最久未用 → 自己被选走
+		expect(
+			ids({ open, entryOf: (id) => (id === "new" ? { ...IDLE_ENTRY, messageCount: 3 } : IDLE_ENTRY) }),
+		).toEqual(["new", "b"]);
+	});
+
 	it("isProtected 是保护条件的唯一事实源（接线层复用同一份判断）", () => {
 		expect(isProtected(session("a", NOW), IDLE_ENTRY)).toBe(false);
 		expect(isProtected(session("a", NOW), undefined)).toBe(false); // 还没装载 transcript = 空闲
 		expect(isProtected(session("a", NOW), { ...IDLE_ENTRY, agentActive: true })).toBe(true);
 		expect(isProtected(session("a", NOW, { isDraft: true }), IDLE_ENTRY)).toBe(true);
 		expect(isProtected(session("a", NOW, { messageCount: 0 }), IDLE_ENTRY)).toBe(true);
+		expect(isProtected(session("a", NOW, { messageCount: 0 }), { ...IDLE_ENTRY, messageCount: 2 })).toBe(
+			false,
+		);
 		expect(isProtected(session("a", NOW, { permissionMode: "fullAccess" }), IDLE_ENTRY)).toBe(true);
 	});
 });

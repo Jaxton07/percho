@@ -13,6 +13,7 @@ import { Sidebar } from "./components/sidebar/Sidebar";
 import { Toaster } from "./components/Toaster";
 import { useSessionEventBridge } from "./hooks/use-session-event-bridge";
 import { initDailyDir } from "./lib/daily";
+import { useSessionGc } from "./lib/use-session-gc";
 import { initUiPlugins } from "./plugins/loader";
 import { RegionHost } from "./plugins/RegionHost";
 import { Slot } from "./plugins/Slot";
@@ -48,6 +49,9 @@ export default function App() {
 	useSessionEventBridge({ onTrustRequest: pushTrustRequest });
 
 	// 一次性 bootstrap：开屏就绪信号 + 更新状态 + UI 插件加载
+	// 会话内存策略（K=3 热会话 + 受保护不卸）：全局挂一次，策略细节在 lib/session-gc.ts
+	useSessionGc();
+
 	useEffect(() => {
 		// 上次项目目录：启动即预填（用户不用重选项目）。**只带 cwd，不恢复任何会话**——
 		// v10 启动仍是纯空会话页，历史全在左栏。偏好已在 main.tsx render 前 init 完毕，这里同步可用。

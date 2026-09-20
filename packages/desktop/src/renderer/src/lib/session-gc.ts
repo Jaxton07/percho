@@ -29,6 +29,12 @@ export interface SessionGcEntry {
 	compacting: boolean;
 	/** 排队跟发（**只活在后端会话内存里、不落盘**，卸载即丢） */
 	followUpQueue: string[];
+	/**
+	 * transcript 里已知的消息条数。与 `item.messageCount`（磁盘元数据，只在打开时读一次）**取较大值**判断
+	 * 「有没有会话文件」——本次进程内新建的会话 meta 恒为 0（store 不随流式事件更新），只看 meta 会把它
+	 * 永远当成空会话而永不卸载（阶段 3 真机验收抓到的真 bug）。
+	 */
+	messageCount: number;
 }
 
 /** `sessions` store 里的一个打开中的会话（会话侧字段） */
@@ -40,7 +46,7 @@ export interface SessionGcOpen {
 	isDraft: boolean;
 	/** 权限模式：`sessions.permissionModes[sid] ?? "default"` */
 	permissionMode: PermissionMode;
-	/** 消息条数：0 条 = 还没有会话文件（磁盘历史里查不到） */
+	/** 消息条数（磁盘元数据，打开时读一次）：与 transcript 条数取大值判断「有没有会话文件」 */
 	messageCount: number;
 }
 
@@ -78,8 +84,10 @@ export const GC_DEFAULTS = {
 export function isProtected(item: SessionGcOpen, entry: SessionGcEntry | undefined): boolean {
 	if (item.isDraft) return true;
 	// 0 消息会话还没有会话文件（SDK 只在追加 entry 时才建文件）：磁盘历史里查不到它，
-	// 卸掉 = 会话条目从 UI 消失、用户刚选的模型/档位丢失（审计实测）
-	if (item.messageCount === 0) return true;
+	// 卸掉 = 会话条目从 UI 消失、用户刚选的模型/档位丢失（审计实测）。
+	// 判据取「磁盘 meta」与「transcript 实时条数」的较大值 —— 只信 meta 会把本次进程内
+	// 新建的会话（meta 恒 0）永远保护住，策略等于失效。
+	if (item.messageCount === 0 && (entry?.messageCount ?? 0) === 0) return true;
 	// 权限模式权威源在后端会话内存且不落盘（重启归零是有意的安全设计）：卸掉会静默降级回默认
 	if (item.permissionMode !== "default") return true;
 	if (!entry) return false;
