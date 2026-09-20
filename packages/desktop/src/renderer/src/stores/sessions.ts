@@ -518,9 +518,11 @@ export const useSessionsStore = create<SessionsStore>((set, get) => ({
 		const state = get();
 		const existing = state.newSessionDraft;
 		if (existing) {
-			// 已有 draft：只激活，不覆盖任何配置（cwd 参数只用作「新建一份」的起点，否则会把选过的目录冲掉）
-			// 例外：初始化/补种出来的 draft 还没选项目（cwd === null）时接受这个起点
-			const targetCwd = existing.cwd ?? cwd ?? null;
+			// 已有 draft：只激活，不覆盖任何配置（否则会把选过的项目/模型冲掉）。
+			// 只有「还没选项目」的那份（开机初始化/补种出来的，cwd === null）要继承当前上下文：
+			// 显式 cwd → 当前真实会话 cwd → 全局 cwd（与新建一份时的优先级一致）
+			const activeSession = state.sessions.find((s) => s.sessionId === state.activeSessionId);
+			const targetCwd = existing.cwd ?? cwd ?? activeSession?.cwd ?? state.cwd;
 			// 从真实会话回到新会话页 = 用户导航：先领号（在途 open/create/fork 作废）。
 			// 已经在 draft 页时页面没变，**不领号**：否则 promotion 在途的结果会被误判成「用户不要它了」，
 			// 落地成「draft 已消费、页面还停在空白新会话页」
@@ -631,20 +633,29 @@ export const useSessionsStore = create<SessionsStore>((set, get) => ({
 			const activeSessionId =
 				state.activeSessionId === sessionId ? (sessions[0]?.sessionId ?? null) : state.activeSessionId;
 			// 切 active 后 cwd 同步到新活跃会话的项目（否则跨项目关会话后 cwd 残留旧项目，新建会话归属错）（B5）
-			const cwd = activeSessionId
+			const fallbackCwd = activeSessionId
 				? (sessions.find((s) => s.sessionId === activeSessionId)?.cwd ?? state.cwd)
 				: state.cwd;
+			// 关掉最后一个会话 = 回到新会话页：不变式要求这里必须有 draft，否则新会话页的
+			// picker 写入会静默丢失。起步快照取刚关掉的那个会话（与「＋」同一套语义）；
+			// 已有后台 draft 则保留它（配置不拿被关会话覆盖）
+			const newSessionDraft =
+				activeSessionId === null
+					? (state.newSessionDraft ??
+						makeDraft(state, {
+							cwd: fallbackCwd,
+							model: closing?.model,
+							thinkingLevel: closing?.thinkingLevel,
+						}))
+					: state.newSessionDraft;
+			// 新会话页的 cwd 真相是 draft.cwd（项目选择器 / Sidebar activeCwd / promotion 都读它）：
+			// 不能留下「页面显示 A 项目、promotion 却按 B 项目建会话」的分叉
+			const cwd = activeSessionId === null ? (newSessionDraft?.cwd ?? fallbackCwd) : fallbackCwd;
 			// 权限模式随会话销毁归零（后端 holder 同点位清理）
 			const permissionModes = withPermissionMode(state.permissionModes, sessionId, "default");
 			// LRU 打点随会话一起清（表项留着就是泄漏：只会积攒不再打开的 id）
 			const lastUsedAt = { ...state.lastUsedAt };
 			delete lastUsedAt[sessionId];
-			// 关掉最后一个会话 = 回到新会话页：不变式要求这里必须有 draft，否则新会话页的
-			// picker 写入会静默丢失。起步快照取刚关掉的那个会话（与「＋」同一套语义）
-			const newSessionDraft =
-				activeSessionId === null && !state.newSessionDraft
-					? makeDraft(state, { cwd, model: closing?.model, thinkingLevel: closing?.thinkingLevel })
-					: state.newSessionDraft;
 			return { sessions, activeSessionId, cwd, permissionModes, lastUsedAt, newSessionDraft };
 		});
 		return { closed: true };

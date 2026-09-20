@@ -924,6 +924,29 @@ describe("单例新会话 draft（newSessionDraft）", () => {
 		expect(draft?.model).toEqual({ provider: "deepseek", modelId: "v4" });
 	});
 
+	it("开机的空 draft（cwd === null）→ 先打开真实会话 → 点「＋」：继承当前会话项目，不空着", () => {
+		// 开机那份：没有 lastCwd，cwd 为空
+		useSessionsStore.setState({ cwd: null });
+		useSessionsStore.getState().activateNewSessionDraft();
+		expect(useSessionsStore.getState().newSessionDraft?.cwd).toBeNull();
+
+		// 用户先从历史打开一个真实会话
+		useSessionsStore.setState({
+			sessions: [realMeta("h1", "/proj/from-history")],
+			activeSessionId: "h1",
+			cwd: "/proj/from-history",
+		});
+		useSessionsStore.getState().switchSession("h1");
+
+		useSessionsStore.getState().activateNewSessionDraft();
+
+		const state = useSessionsStore.getState();
+		expect(state.activeSessionId).toBeNull();
+		expect(state.newSessionDraft?.cwd).toBe("/proj/from-history");
+		expect(state.cwd).toBe("/proj/from-history");
+		expect(piMock.ensureProjectTrust).toHaveBeenCalledWith({ cwd: "/proj/from-history" });
+	});
+
 	it("未选项目的 draft（cwd === null）接受「＋」/启动传进来的起点 cwd，已选的仍不覆盖", () => {
 		useSessionsStore.setState({ cwd: null });
 		useSessionsStore.getState().activateNewSessionDraft();
@@ -1247,8 +1270,12 @@ describe("不变式：新会话页（active === null）必须有可用 draft", (
 
 		await useSessionsStore.getState().closeSession("only");
 
-		expect(useSessionsStore.getState().activeSessionId).toBeNull();
-		expect(useSessionsStore.getState().newSessionDraft).toEqual(draft);
+		const state = useSessionsStore.getState();
+		expect(state.activeSessionId).toBeNull();
+		expect(state.newSessionDraft).toEqual(draft);
+		// cwd 必须镜像 draft.cwd：否则页面/activeCwd 显示 A 项目、promotion 却按 B 项目建会话
+		expect(state.cwd).toBe("/proj/draft");
+		expect(state.newSessionDraft?.cwd).toBe("/proj/draft");
 	});
 
 	it("转正途中点「＋」回新会话页 → 迟到的转正结果消费掉 draft 后必须立刻补一份", async () => {
