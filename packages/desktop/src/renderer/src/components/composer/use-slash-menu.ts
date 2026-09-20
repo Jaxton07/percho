@@ -2,7 +2,6 @@ import type { SlashCommandInfo } from "@percho/shared";
 import { type RefObject, useEffect, useState } from "react";
 import { getPi } from "../../api";
 import { useT } from "../../i18n";
-import { isDraftSessionId } from "../../stores/sessions";
 import { extractSlashToken, filterCommands, removeSlashToken, type SlashToken } from "./slash-filter";
 
 export interface UseSlashMenuOptions {
@@ -50,17 +49,17 @@ export function useSlashMenu(options: UseSlashMenuOptions) {
 		!slashDismissed;
 	const slashQuery = slashOpen ? slashToken.query : "";
 
-	// 会话切换时重新拉取命令列表（模板/skill 随项目变化）；draft 页没有后端会话，按 cwd 拉
+	// 会话切换时重新拉取命令列表（模板/skill 随项目变化）；新会话页没有后端会话，按 cwd 拉
 	// （三类命令只依赖资源加载器；项目信任已在选目录时经 ensureProjectTrust 决策落盘，
 	// 应答后 trustVersion 递增触发重拉，把项目级资源补进菜单）
 	// biome-ignore lint/correctness/useExhaustiveDependencies: trustVersion 是刻意的触发依赖（信任应答后重拉），effect 体内不引用
 	useEffect(() => {
-		const request =
-			activeSessionId && !isDraftSessionId(activeSessionId)
-				? getPi().listSlashCommands({ sessionId: activeSessionId })
-				: cwd
-					? getPi().listSlashCommandsForCwd({ cwd })
-					: null;
+		// 真实会话按 sessionId 拉（命令与项目的资源加载器绑定）；新会话页按 draft 的 cwd 拉
+		const request = activeSessionId
+			? getPi().listSlashCommands({ sessionId: activeSessionId })
+			: cwd
+				? getPi().listSlashCommandsForCwd({ cwd })
+				: null;
 		if (!request) {
 			setSlashCommands([]);
 			return;

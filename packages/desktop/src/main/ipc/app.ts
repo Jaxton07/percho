@@ -66,7 +66,7 @@ export function registerAppIpc(_backend: PiBackend): void {
 			arch: process.arch,
 			repoUrl: REPO_URL,
 		}),
-		// 日常空间目录下发（懒创建；会话创建由 renderer 走既有 draft/createSession 流程）
+		// 日常空间目录下发（懒创建；会话创建由 renderer 走新会话页 → promotion 流程）
 		getDailyDir: () => ensureDailyDir(),
 		loadUiState: () => loadUiState(),
 		saveUiState: ({ state }) => {

@@ -6,8 +6,6 @@ import { useUiPreferencesStore } from "../../stores/ui-preferences";
 import { RenamePopover } from "../session/RenamePopover";
 import {
 	copySessionDiagnostics,
-	discardDraft,
-	draftSessionMenuItems,
 	renameSession,
 	sessionMenuItems,
 	sidebarMenuKind,
@@ -18,8 +16,7 @@ import type { MenuAnchor } from "../ui/place-menu";
 
 /**
  * 左侧栏会话行的右键菜单状态机（菜单 → 改名气泡 → 删除确认三层，都在这里，行组件只管文案与状态点）。
- * 「能不能弹」与「有哪些项」跟顶栏胶囊共用 `session-menu.tsx`，两处行为不会漂移；
- * 例外是 draft：它走左栏专属的 `draftSessionMenuItems`（只有「丢弃新会话」一项）。
+ * 「能不能弹」与「有哪些项」跟顶栏胶囊共用 `session-menu.tsx`，两处行为不会漂移。
  * 返回的 `element` 由分组挂到自己的子树里（portal 到 body，放哪都不影响定位）。
  */
 export function useSessionMenu() {
@@ -31,12 +28,10 @@ export function useSessionMenu() {
 	const [deleting, setDeleting] = useState<SessionMeta | null>(null);
 
 	const open = (session: SessionMeta, anchor: MenuAnchor) => {
-		// draft / 只读子会话的判定在纯函数里（sidebarMenuKind，有单测）；none 就不弹菜单
+		// 只读子会话 / 找不到会话的判定在纯函数里（sidebarMenuKind，有单测）；none 就不弹菜单
 		if (sidebarMenuKind(session) === "none") return;
 		setMenu({ session, anchor });
 	};
-
-	const kind = menu ? sidebarMenuKind(menu.session) : "none";
 
 	const element = (
 		<>
@@ -44,17 +39,13 @@ export function useSessionMenu() {
 				<ContextMenu
 					anchor={menu.anchor}
 					onClose={() => setMenu(null)}
-					items={
-						kind === "draft"
-							? draftSessionMenuItems(t, { onDiscard: () => discardDraft(menu.session.sessionId) })
-							: sessionMenuItems(t, {
-									sessionId: menu.session.sessionId,
-									pinned: pinnedSessions.includes(menu.session.sessionId),
-									onRename: () => setRenaming({ session: menu.session, anchor: menu.anchor }),
-									onCopyDiagnostics: () => void copySessionDiagnostics(menu.session),
-									onDelete: () => setDeleting(menu.session),
-								})
-					}
+					items={sessionMenuItems(t, {
+						sessionId: menu.session.sessionId,
+						pinned: pinnedSessions.includes(menu.session.sessionId),
+						onRename: () => setRenaming({ session: menu.session, anchor: menu.anchor }),
+						onCopyDiagnostics: () => void copySessionDiagnostics(menu.session),
+						onDelete: () => setDeleting(menu.session),
+					})}
 				/>
 			)}
 			{renaming && (

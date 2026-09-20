@@ -18,12 +18,6 @@ describe("canOpenSessionMenu", () => {
 	it("找不到会话（已关闭）不给菜单", () => {
 		expect(canOpenSessionMenu(undefined)).toBe(false);
 	});
-
-	// 阶段 0 红测（spec singleton-draft-subagent-nav §8）：draft 不再是 SessionMeta，
-	// 因此没有任何 id 需要被「draft 专用」特判。
-	it("draft: 前缀的 id 已不存在特例：一切非只读会话都给菜单", () => {
-		expect(canOpenSessionMenu(meta({ sessionId: "draft:1" }))).toBe(true);
-	});
 });
 
 describe("sidebarMenuKind（左栏行右键菜单的形态判定）", () => {
@@ -31,9 +25,5 @@ describe("sidebarMenuKind（左栏行右键菜单的形态判定）", () => {
 		expect(sidebarMenuKind(meta({}))).toBe("session");
 		expect(sidebarMenuKind(meta({ readOnly: true }))).toBe("none");
 		expect(sidebarMenuKind(undefined)).toBe("none");
-	});
-
-	it("新会话 draft 已不进左栏，不再存在 draft 形态", () => {
-		expect(sidebarMenuKind(meta({ sessionId: "draft:1" }))).toBe("session");
 	});
 });

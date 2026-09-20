@@ -20,7 +20,7 @@ function openSession(
 	lastUsedAt: number,
 	extra: Partial<SessionGcOpen> = {},
 ): SessionGcOpen {
-	return { sessionId, lastUsedAt, isDraft: false, messageCount: 4, ...extra };
+	return { sessionId, lastUsedAt, messageCount: 4, ...extra };
 }
 
 function makeDeps(

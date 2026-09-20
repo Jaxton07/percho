@@ -2,7 +2,7 @@ import type { ImageInput, UiError } from "@percho/shared";
 import { useEffect, useRef, useState } from "react";
 import { getPi } from "../../api";
 import { useT } from "../../i18n";
-import { isDraftSessionId, useSessionsStore } from "../../stores/sessions";
+import { useSessionsStore } from "../../stores/sessions";
 import { useSettingsStore } from "../../stores/settings";
 import { pushToast } from "../../stores/toasts";
 import { useTranscriptStore } from "../../stores/transcript";
@@ -53,10 +53,10 @@ export function useComposerSend(options: UseComposerSendOptions) {
 		feedbackTimer.current = setTimeout(() => setFeedback(null), 2500);
 	};
 
-	/** 确保有活跃会话（draft 页则把 draft 转正），返回 sessionId */
+	/** 确保有活跃会话（新会话页则把那唯一一份 draft 转正），返回 sessionId */
 	const ensureSession = async (): Promise<string | null> => {
 		const current = useSessionsStore.getState().activeSessionId;
-		if (current && !isDraftSessionId(current)) return current;
+		if (current) return current;
 		// draft 页：promotion 用 draft 快照建真实会话（模型/思考/权限都从 `newSessionDraft` 取，
 		// 调用方不再自己拼 cwd/权限）。无 draft 的防御态（调用顺序异常）先建一份再转正。
 		if (!useSessionsStore.getState().newSessionDraft) {
@@ -140,8 +140,8 @@ export function useComposerSend(options: UseComposerSendOptions) {
 				return;
 			}
 			// 未匹配的内置命令：落回正常发送（SDK 原生处理模板/技能/扩展命令）
-		} else if (!sessionId || isDraftSessionId(sessionId)) {
-			// 新会话页（无 active，或历史遗留的伪 draft id）：先 promotion 出真实会话再发
+		} else if (!sessionId) {
+			// 新会话页（没有 active）：先把 draft 转正成真实会话再发
 			sessionId = await ensureSession();
 			if (!sessionId) {
 				// v10 启动纯空：开机就是新会话页，没选项目目录时 ensureSession 返回 null。
@@ -223,7 +223,7 @@ export function useComposerSend(options: UseComposerSendOptions) {
 	/** 停止：先清排队（避免 abort 后 SDK 把排队消息投递出去）并还原为草稿，再中止 */
 	const handleStop = async () => {
 		const { activeSessionId, setText } = options;
-		if (!activeSessionId || isDraftSessionId(activeSessionId)) return;
+		if (!activeSessionId) return;
 		useTranscriptStore.getState().setFollowUpQueue(activeSessionId, []); // 乐观清面板
 		const cleared = await getPi().clearQueue({ sessionId: activeSessionId });
 		if (cleared.followUp.length > 0) {
@@ -236,7 +236,7 @@ export function useComposerSend(options: UseComposerSendOptions) {
 	/** 取回排队消息：清队列（SDK 侧 queue_update 随后对齐），内容放回输入框继续编辑 */
 	const handleRestoreQueue = async (focus: () => void) => {
 		const { activeSessionId, setText } = options;
-		if (!activeSessionId || isDraftSessionId(activeSessionId)) return;
+		if (!activeSessionId) return;
 		useTranscriptStore.getState().setFollowUpQueue(activeSessionId, []); // 乐观清面板
 		const cleared = await getPi().clearQueue({ sessionId: activeSessionId });
 		const restored = cleared.followUp[0];

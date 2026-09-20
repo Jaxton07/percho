@@ -67,12 +67,12 @@ function mergeSessionMeta(history: SessionMeta, memory: SessionMeta): SessionMet
 /**
  * 左栏数据源合并：**磁盘历史（`projects.allSessions`）+ 当前内存会话（`sessions.sessions`）**。
  * 内存项按 `sessionId` 覆盖历史项（名称/模型/状态以当前实例为准，时间字段走 `mergeSessionMeta` 合并），
- * 历史项保持原顺序，内存独有项（draft、刚创建还没落盘的真实会话）按内存顺序补在后面。**不负责排序**：
+ * 历史项保持原顺序，内存独有项（刚创建、还没进历史的真实会话）按内存顺序补在后面。**不负责排序**：
  * 组内排序统一由 `groupSessions` 做（最后活动倒序 + 置顶分区）。
  *
- * 为什么不只拼 draft：draft 发首条消息时会在 `sessions` 里**原地替换**成真实会话，
- * 而它此刻还没进 `allSessions`（历史要重新拉取）——只拼 draft 会让左栏行在这段缝隙里消失。
- * 合并全部内存会话就从根上消除了这个状态缺口（spec D2）。
+ * 为什么必须合并内存会话：新会话 promotion 成真实会话后，`sessions` 里立刻有了它，
+ * 而 `allSessions`（磁盘历史）要等下次重拉才更新——只吃历史会让左栏行在这段缝隙里消失。
+ * 合并全部内存会话从根上消除了这个状态缺口（spec D2）。新会话页没有会话条目，靠 `activeCwd` 展开当前组。
  */
 export function mergeSidebarSessions(
 	history: readonly SessionMeta[],

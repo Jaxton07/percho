@@ -22,10 +22,7 @@ const IDLE_ENTRY: SessionGcEntry = {
 const NOW = 1_000_000_000;
 
 function session(sessionId: string, lastUsedAt: number, extra: Partial<SessionGcOpen> = {}): SessionGcOpen {
-	// 阶段 0：测试侧先删净旧 draft 契约，因此不再构造 `isDraft`。
-	// 生产类型 `SessionGcOpen.isDraft` 的删除见 plan 阶段 3（阶段 0 不动生产代码）——
-	// 到那之前用断言抹平这个「测试先删、类型还没删」的短暂错位。
-	return { sessionId, lastUsedAt, messageCount: 4, ...extra } as SessionGcOpen;
+	return { sessionId, lastUsedAt, messageCount: 4, ...extra };
 }
 
 function input(over: Partial<SessionGcInput> = {}): SessionGcInput {
@@ -92,10 +89,6 @@ describe("pickUnloadCandidates · 单条保护条件", () => {
 			}),
 		).toEqual([]);
 	});
-
-	// 阶段 0（spec singleton-draft-subagent-nav §8）：新会话 draft 不再进 sessions，
-	// 因此 GC 侧不再有伪 draft 特例（生产侧 `SessionGcOpen.isDraft` 字段的删除见 plan 阶段 3，
-	// 测试侧同样不再构造该字段）。
 
 	it("0 消息会话不卸（还没有会话文件，磁盘历史里查不到，卸掉 = 条目消失）", () => {
 		expect(ids({ open: [session("empty", NOW - 10_000_000, { messageCount: 0 })] })).toEqual([]);

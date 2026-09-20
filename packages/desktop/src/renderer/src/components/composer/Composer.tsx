@@ -36,7 +36,7 @@ export function Composer({ centered = false }: { centered?: boolean }) {
 	/** 只读会话（subagent 产物检视）：输入/发送/图片全禁，模型与思考档位选择器置灰 */
 	const readOnly = useSessionReadOnly();
 	const cwd = useSessionsStore((s) => s.cwd);
-	/** 信任决策应答后递增：draft 斜杠菜单按新决策（信任与否）重拉命令 */
+	/** 信任决策应答后递增：新会话页的斜杠菜单按新决策（信任与否）重拉命令 */
 	const trustVersion = useSessionsStore((s) => s.trustVersion);
 	const transcript = useTranscriptStore((s) => selectTranscript(s, activeSessionId));
 	/** 扩展 setEditorText 预填来源（一次性提示；用户首次键入清除） */
@@ -45,7 +45,7 @@ export function Composer({ centered = false }: { centered?: boolean }) {
 	const activeModelInfo = useActiveModelInfo();
 	/** 当前模型是否支持图片输入；fail-open：模型未知/字段缺省一律按支持，只拦 imageInput === false */
 	const imagesSupported = activeModelInfo?.imageInput !== false;
-	/** 草稿（文本/图片/命令胶囊）按会话持久：切换会话/空态↔列表态换 Composer 实例不丢、不串会话 */
+	/** 输入内容（文本/图片/命令胶囊）按会话持久：真实会话用 sessionId、新会话页用固定 key，不丢也不串 */
 	const draftKey = activeSessionId ?? NEW_SESSION_DRAFT_KEY;
 	const draft = useDraftStore((s) => s.bySession[draftKey] ?? EMPTY_DRAFT);
 	const { text, images, slashCommand, attachments, quotes } = draft;

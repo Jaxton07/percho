@@ -764,7 +764,7 @@ describe("GC close 在途的选择竞态（spec D5）", () => {
 
 // ---------------------------------------------------------------------------
 // 阶段 0/1 契约（spec singleton-draft-subagent-nav §5）：
-// ① 新会话 = renderer 全局唯一 draft（`activeSessionId === null`），不再是 `draft:` 伪 SessionMeta；
+// ① 新会话 = renderer 全局唯一 draft（`activeSessionId === null`），不再有伪 SessionMeta 占位条目；
 // ② 点击「＋」最多激活/创建一个 draft，已有 draft 必须保留内容与配置；
 // ③ 首条消息 promotion：吃 draft 入口快照 + single-flight + latest-wins + 失败保留。
 // ---------------------------------------------------------------------------

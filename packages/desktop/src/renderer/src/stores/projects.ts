@@ -93,7 +93,7 @@ export const useProjectsStore = create<ProjectsStore>((set, get) => ({
 	addProject: async () => {
 		const cwd = await getPi().pickDirectory();
 		if (!cwd) return;
-		// 信任前置：添加项目即决策（未决弹窗，结果落 trust.json），之后建 draft/会话不再弹
+		// 信任前置：添加项目即决策（未决弹窗，结果落 trust.json），之后在新会话页/建会话都不再弹
 		void getPi()
 			.ensureProjectTrust({ cwd })
 			.catch(() => {});

@@ -10,13 +10,6 @@ import { pushToast } from "./toasts";
 import { useTranscriptStore } from "./transcript";
 import { useUiPreferencesStore } from "./ui-preferences";
 
-/** 草稿会话 id 前缀：新会话 tab 的占位条目，只存在于 renderer 内存，后端永远不会看到 */
-export const DRAFT_SESSION_PREFIX = "draft:";
-
-export function isDraftSessionId(sessionId: string | null | undefined): boolean {
-	return typeof sessionId === "string" && sessionId.startsWith(DRAFT_SESSION_PREFIX);
-}
-
 /**
  * 新会话 draft（renderer 全局唯一编辑态，spec §5.1）：**不进 `sessions`、不落盘、不触后端**。
  * 整个 renderer 最多一份，`activeSessionId === null` 时它就是当前页面；首条消息 promotion 时
@@ -86,9 +79,9 @@ export function partitionSessionsByPin(
 }
 
 /**
- * 顶栏展示集（v8 定稿）：**严格 = 置顶表**——顶栏胶囊就是置顶会话（不管它的 tab 开没开，也不管它是 draft）。
+ * 顶栏展示集（v8 定稿）：**严格 = 置顶表**——顶栏胶囊就是置顶会话（不管它的 tab 开没开）。
  * 用户：顶栏之前是「打开的会话全进去」= 唯一的会话总表，胶囊越来越多；现在左栏承担总表，
- * 顶栏只放真正需要盯的会话（draft 的导航与丢弃都在左栏，见 spec D1/D3）。
+ * 顶栏只放真正需要盯的会话（新会话的导航在左栏与顶栏「＋」，见 spec D1/D3）。
  * - **不能只从 tabs 里筛**：会话被置顶、但 tab 已关（或本次启动没恢复）时，只筛 tabs 会把它藏掉，
  *   用户会看到「已置顶却不在顶栏」——所以置顶会话的 meta 从 tabs → 历史两边找，点击时自动开。
  * - 顺序 = `pinnedSessions` 自己的顺序（置顶即插队到最左，拖动排序改的也是它）。
@@ -232,7 +225,8 @@ function withPermissionMode(
 /**
  * 乐观会话设置骨架（D4，setCurrentModel/setThinkingLevel 共用）：
  * 快照 → 乐观写（跟随字段 + 当前会话条目 + ui-state 持久化）→ 真实会话 IPC 同步 →
- * 失败整体回滚（乐观态 + ui-state 重新持久化）+ toast。draft 无后端会话：只记跟随值，创建时生效。
+ * 失败整体回滚（乐观态 + ui-state 重新持久化）+ toast。新会话页（activeSessionId === null）没有
+ * 后端会话：只写 draft 配置 + 跟随值，promotion 时随入口快照生效。
  */
 async function optimisticSessionSetting(
 	label: string,
@@ -283,9 +277,8 @@ async function optimisticSessionSetting(
 			console.error("ui-state 持久化失败", error);
 			pushToast("warning", "toast.uiStateSaveFailed", errText(error));
 		});
-	// draft 页（activeSessionId === null）没有后端会话：选择只写 draft 配置 + 跟随值，不调 SDK。
-	// （isDraftSessionId 分支是旧伪 draft 的兼容，阶段 3 随 isDraftSessionId 一起删）
-	if (onDraftPage || isDraftSessionId(activeSessionId)) return;
+	// 新会话页（activeSessionId === null）没有后端会话：选择只写 draft 配置 + 跟随值，不调 SDK
+	if (onDraftPage) return;
 	try {
 		await sync(activeSessionId);
 	} catch (error) {
@@ -589,14 +582,13 @@ export const useSessionsStore = create<SessionsStore>((set, get) => ({
 		});
 		// 懒加载兜底（D4）：目标会话无 transcript 数据时补拉四件套（从历史打开、
 		// 事件桥断连期间的切换等都经此路径自愈；已有数据零成本短路）
-		if (!isDraftSessionId(sessionId) && useTranscriptStore.getState().bySession[sessionId] === undefined) {
+		if (useTranscriptStore.getState().bySession[sessionId] === undefined) {
 			void loadSessionBundle(sessionId).catch((error) => {
 				console.error("切换会话时补拉数据失败", error);
 				pushToast("warning", "toast.sessionOpenFailed", errText(error));
 			});
 		}
 		rememberCwd(get().cwd);
-		// 切到 draft 不落盘：tabs.json 保持指向最近的真实会话（draft 重启后本就会消失）
 	},
 
 	updateSessionName: (sessionId, name) =>
@@ -605,33 +597,29 @@ export const useSessionsStore = create<SessionsStore>((set, get) => ({
 		})),
 
 	closeSession: async (sessionId, intent) => {
-		const isDraft = isDraftSessionId(sessionId);
-		// draft 没有后端会话，纯本地移除
-		if (!isDraft) {
-			try {
-				// intent 只在本轮是「内存策略自动卸载」时带上，用户主动关不传（保持既有语义）
-				const { closed } = await getPi().closeSession(intent ? { sessionId, intent } : { sessionId });
-				// 后端拒绝（agent 在跑 / 等审批）：**渲染层状态必须原样保留** —— 事务语义，
-				// 不能出现「后端会话还在、前端条目已消失」的半个动作（内存策略也会看走眼）
-				if (!closed) return { closed: false };
-				// 自动卸载的选择竞态（spec D5）：策略判定「可卸」时它还不是 active，
-				// 但 close 在我们这个 await 里真的关掉了它 —— 此时用户刚好选中了它。
-				// 那样就把用户刚点的会话换成空白/消失 —— 所以重新打开后端会话，而不是把 UI 抹掉。
-				// 只重建 backend（loadBundle:false）：**不**重载磁盘历史，idle transcript 原样保留。
-				if (intent === "gc" && get().activeSessionId === sessionId) {
-					const file = get().sessions.find((s) => s.sessionId === sessionId)?.sessionFile;
-					if (file && (await ensureOpenSession(file, { loadBundle: false }))) {
-						await restorePermissionMode(sessionId);
-						return { closed: false };
-					}
-					// 恢复失败（或没有会话文件）：下面的常规清理照走；提示已由共享 open 链报过一次
+		try {
+			// intent 只在本轮是「内存策略自动卸载」时带上，用户主动关不传（保持既有语义）
+			const { closed } = await getPi().closeSession(intent ? { sessionId, intent } : { sessionId });
+			// 后端拒绝（agent 在跑 / 等审批）：**渲染层状态必须原样保留** —— 事务语义，
+			// 不能出现「后端会话还在、前端条目已消失」的半个动作（内存策略也会看走眼）
+			if (!closed) return { closed: false };
+			// 自动卸载的选择竞态（spec D5）：策略判定「可卸」时它还不是 active，
+			// 但 close 在我们这个 await 里真的关掉了它 —— 此时用户刚好选中了它。
+			// 那样就把用户刚点的会话换成空白/消失 —— 所以重新打开后端会话，而不是把 UI 抹掉。
+			// 只重建 backend（loadBundle:false）：**不**重载磁盘历史，idle transcript 原样保留。
+			if (intent === "gc" && get().activeSessionId === sessionId) {
+				const file = get().sessions.find((s) => s.sessionId === sessionId)?.sessionFile;
+				if (file && (await ensureOpenSession(file, { loadBundle: false }))) {
+					await restorePermissionMode(sessionId);
+					return { closed: false };
 				}
-			} catch (error) {
-				// 会话关闭失败：UI 状态保留（用户可重试），显形不静默（曾「点了没反应」）
-				console.error("关闭会话失败", error);
-				pushToast("warning", "toast.closeFailed", errText(error));
-				return { closed: false };
+				// 恢复失败（或没有会话文件）：下面的常规清理照走；提示已由共享 open 链报过一次
 			}
+		} catch (error) {
+			// 会话关闭失败：UI 状态保留（用户可重试），显形不静默（曾「点了没反应」）
+			console.error("关闭会话失败", error);
+			pushToast("warning", "toast.closeFailed", errText(error));
+			return { closed: false };
 		}
 		useTranscriptStore.getState().resetSession(sessionId);
 		set((state) => {
@@ -688,8 +676,8 @@ export const useSessionsStore = create<SessionsStore>((set, get) => ({
 
 	forkSession: async (ref) => {
 		const { activeSessionId } = get();
-		// draft 还没有消息，无可分叉（UI 上也到不了这里，防御性拦截）
-		if (!activeSessionId || isDraftSessionId(activeSessionId)) return undefined;
+		// 新会话页还没有消息，无可分叉（UI 上也到不了这里，防御性拦截）
+		if (!activeSessionId) return undefined;
 		// 分叉成功会切到新会话 = 用户导航：先领号
 		const token = claimActivation();
 		try {
@@ -711,8 +699,8 @@ export const useSessionsStore = create<SessionsStore>((set, get) => ({
 
 	recallMessage: async (ref) => {
 		const { activeSessionId } = get();
-		// draft 还没有消息，无可撤回（UI 上也到不了这里，防御性拦截）
-		if (!activeSessionId || isDraftSessionId(activeSessionId)) return;
+		// 新会话页还没有消息，无可撤回（UI 上也到不了这里，防御性拦截）
+		if (!activeSessionId) return;
 		try {
 			const recalled = await getPi().recallMessage({ sessionId: activeSessionId, ref });
 			// 内容回填草稿：已有草稿文本时换行拼接（与排队取回一致），图片追加在尾部
@@ -732,7 +720,7 @@ export const useSessionsStore = create<SessionsStore>((set, get) => ({
 
 	pickDirectory: async () => {
 		const cwd = await getPi().pickDirectory();
-		// 走 setDraftCwd：活跃 tab 是 draft 时同步更新其条目
+		// 走 setDraftCwd：同时更新 draft 配置与全局 cwd（新会话归属哪个项目只看这一处）
 		if (cwd) get().setDraftCwd(cwd);
 	},
 
@@ -832,15 +820,11 @@ export const useSessionsStore = create<SessionsStore>((set, get) => ({
 	},
 
 	/**
-	 * 切换会话权限模式：draft 态纯 renderer 内存（转正时 ensureSession 应用到后端）；
-	 * 真实会话乐观更新 + IPC 同步，失败回滚 + toast（范式同 setContextManagerMode）。
+	 * 切换会话权限模式：乐观更新 + IPC 同步，失败回滚 + toast（范式同 setContextManagerMode）。
+	 * 新会话页的档位不走这里（它存在 `newSessionDraft.permissionMode`，promotion 后由 store 应用）。
 	 * 后端为内存态即时生效（每次 tool_call 实时读），无需重升会话。
 	 */
 	setSessionPermissionMode: async (sessionId, mode) => {
-		if (isDraftSessionId(sessionId)) {
-			set((state) => ({ permissionModes: withPermissionMode(state.permissionModes, sessionId, mode) }));
-			return;
-		}
 		const previous = get().permissionModes[sessionId] ?? "default";
 		set((state) => ({ permissionModes: withPermissionMode(state.permissionModes, sessionId, mode) }));
 		try {

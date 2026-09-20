@@ -1,7 +1,6 @@
 import type { SessionMeta } from "@percho/shared";
 import type { MouseEvent as ReactMouseEvent } from "react";
 import { useT } from "../../i18n";
-import { isDraftSessionId } from "../../stores/sessions";
 import { PinIcon } from "../icons";
 import { sessionTitle, useSessionStatus } from "../session/session-status";
 import type { MenuAnchor } from "../ui/place-menu";
@@ -36,10 +35,7 @@ export function SessionRow({
 }) {
 	const t = useT();
 	const status = useSessionStatus(session.sessionId);
-	// draft 还没落盘、也没有名字：固定显示「新会话」（后来真的有名字了才回落到 sessionTitle）
-	const title = isDraftSessionId(session.sessionId)
-		? t("sidebar.newSession")
-		: sessionTitle(session, t("projects.untitled"), t("projects.daily"));
+	const title = sessionTitle(session, t("projects.untitled"), t("projects.daily"));
 	return (
 		<button
 			type="button"

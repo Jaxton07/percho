@@ -8,7 +8,7 @@
  * 这次进程里的」一律不能卸（跑了会中断、排队的消息在后端内存里、权限模式不落盘、0 消息会话
  * 连会话文件都还没有）。依据见 spec `session-memory-policy.md` §3 决策 3 与阶段 0 审计。
  *
- * 顺序语义（单测逐条钉住）：① 先剔除受保护 / draft / 活跃 / `freshMs` 内用过的；
+ * 顺序语义（单测逐条钉住）：① 先剔除受保护 / 活跃 / `freshMs` 内用过的；
  * ② 剩余按 `lastUsedAt` **最久未用在前**排序；③ 保留前 `keep` 个最新的，其余是候选；
  * ④ 某会话 `now - lastUsedAt > idleTimeoutMs` 时，即使还在 keep 名额内也照样候选（兜底超时）。
  */
@@ -40,8 +40,6 @@ export interface SessionGcOpen {
 	sessionId: string;
 	/** 最近使用时刻（切会话/打开/新建时打点；毫秒） */
 	lastUsedAt: number;
-	/** draft（还没落盘的内存 tab） */
-	isDraft: boolean;
 	/** 消息条数（磁盘元数据，打开时读一次）：与 transcript 条数取大值判断「有没有会话文件」 */
 	messageCount: number;
 	/**
@@ -84,11 +82,10 @@ export const GC_DEFAULTS = {
 
 /**
  * 保护判定（受保护会话**不占 K 名额**、永不卸载）。
- * 会话侧三条：draft / 0 消息 / 权限模式非 default；transcript 侧六条见 `SessionGcEntry`。
- * 导出给单测与接线层复用（接线层算候选时无需重复这套判断）。
+ * 会话侧两条：0 消息 / 频道订阅（权限模式那条已随 D7 落盘退出保护清单）；
+ * transcript 侧六条见 `SessionGcEntry`。导出给单测与接线层复用（接线层算候选时无需重复这套判断）。
  */
 export function isProtected(item: SessionGcOpen, entry: SessionGcEntry | undefined): boolean {
-	if (item.isDraft) return true;
 	// 有频道订阅 = 明确驻留语义（spec channel-watch retention §6.2）：卸载会停 watcher，
 	// 会话从此收不到频道唤醒——用户显式订阅了就该留在内存里（退订即恢复普通 GC 资格）。
 	if (item.hasChannelSubscriptions) return true;

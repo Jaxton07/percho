@@ -92,8 +92,7 @@ function TabPill({
 	buttonProps?: ComponentProps<"button">;
 }) {
 	const t = useT();
-	// v9：叉叉 = 取消置顶 + 从顶栏清除（会话不删、tab 也不关）。顶栏严格只放置顶会话，
-	// draft 已不再进顶栏（其名题与丢弃入口都在左栏，见 spec D1/D3）
+	// v9：叉叉 = 取消置顶 + 从顶栏清除（会话不删、tab 也不关）。顶栏严格只放置顶会话
 	const unpin = useUiPreferencesStore((s) => s.unpin);
 	// 置顶标记：顶栏会滚动、顺序会被拖动，必须有常显 glyph（不是只靠排序表达）
 	const pinned = useUiPreferencesStore((s) => s.pinnedSessions.includes(session.sessionId));
@@ -253,10 +252,10 @@ export function SessionTabBar() {
 	const [menu, setMenu] = useState<AnchorState | null>(null);
 	/** 重命名浮层：与菜单同锚点，菜单选中后菜单卸载、浮层同帧展开 */
 	const [renaming, setRenaming] = useState<AnchorState | null>(null);
-	// 展示集（v8）：置顶表驱动（不看 tab 开没开）+ 未命名 draft；v9：设置里的开关只控制「显不显这些胶囊」
+	// 展示集（v8）：置顶表驱动（不看 tab 开没开）；v9：设置里的开关只控制「显不显这些胶囊」
 	const barSessions = barSessionsVisible ? selectBarSessions(sessions, pinnedSessions, allSessions) : [];
 	const closeMenu = useCallback(() => setMenu(null), []);
-	/** 打开胶囊右键菜单：draft（纯前端 id，后端没有该会话）与只读子会话（后端拒绝写）上的动作全都会失败，
+	/** 打开胶囊右键菜单：只读子会话（后端拒绝写）上的动作全都会失败，
 	 *  所以**干脆不给菜单**（review B1：宁可没有入口，也不给必然弹 toast 的入口） */
 	const openMenu = (sessionId: string, anchor: MenuAnchor) => {
 		if (!canOpenSessionMenu(sessions.find((s) => s.sessionId === sessionId))) return;

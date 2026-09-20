@@ -2,7 +2,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { useSessionBusy, useSessionReadOnly } from "../../hooks/use-session-state";
 import { useT } from "../../i18n";
 import { COMPOSER_FOCUS_EVENT, useDraftStore } from "../../stores/drafts";
-import { isDraftSessionId, useSessionsStore } from "../../stores/sessions";
+import { useSessionsStore } from "../../stores/sessions";
 import { useTranscriptStore } from "../../stores/transcript";
 
 /** 菜单与选区的间距 */
@@ -136,7 +136,7 @@ export function SelectionToolbar({ containerRef }: { containerRef: React.RefObje
 	};
 
 	const continueInNewChat = async () => {
-		if (!pending || busy || forking || !activeSessionId || isDraftSessionId(activeSessionId)) return;
+		if (!pending || busy || forking || !activeSessionId) return;
 		const messages = useTranscriptStore.getState().bySession[activeSessionId]?.messages ?? [];
 		const lastAssistant = [...messages].reverse().find((m) => m.kind === "assistant");
 		if (!lastAssistant) return;
