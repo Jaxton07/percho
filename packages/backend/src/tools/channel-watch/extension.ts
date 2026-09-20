@@ -1,14 +1,14 @@
 import { readFile } from "node:fs/promises";
-import { basename, isAbsolute, join, resolve } from "node:path";
+import { isAbsolute, join, resolve } from "node:path";
 import type { ExtensionContext, InlineExtension } from "@earendil-works/pi-coding-agent";
 import { createLogger } from "../../log";
 import { readChannelWatchEnabled } from "./config";
 import { contentHash, LoopGuard } from "./guard";
-import { channelRoot, ensureAgentWorkInit, validateTopic } from "./init";
+import { channelRoot, ensureAgentWorkInit, topicDir, validateTopic } from "./init";
 import { appendPost, MESSAGES_FILE } from "./post";
-import { buildSubsPayload, restoreSubscriptions, SUBSCRIPTION_CUSTOM_TYPE } from "./subscriptions";
+import { buildSubsPayload, restoreSubscriptionState, SUBSCRIPTION_CUSTOM_TYPE } from "./subscriptions";
 import { makeChannelTools } from "./tools";
-import { type ChannelWatchEvent, ChannelWatcher } from "./watcher";
+import { type ChannelWatchEvent, ChannelWatcher, type ChannelWatcherOptions } from "./watcher";
 
 const log = createLogger("channel-watch");
 
@@ -18,11 +18,13 @@ const log = createLogger("channel-watch");
  * sendUserMessage 唤醒本会话按协议查收（仅 MESSAGES.md 触发唤醒，其余频道文件静默）。
  *
  * 接线一览（钩子全 try/catch 绝不 throw）：
- * - session_start：开关 → trusted 门 → 目录协议 init（首次 notify）→ 恢复订阅（appendEntry）
- *   → 非空订阅惰性起 watcher → 注册三工具（幂等）
+ * - session_start：开关 → trusted 门 → 目录协议 init（首次 notify）→ 恢复订阅+游标（appendEntry）
+ *   → 非空订阅惰性起 watcher（single-flight）→ 上报有效订阅快照（enabled+trusted 才计入）
+ *   → 逐 topic 对账补投（离线期间的新消息）
  * - input：真人/rpc 消息介入 → 清乒乓计数（source!=="extension"）
- * - tool_call：write/edit 目标 → guard.markSelfWrite（自写抑制）
- * - watcher onEvent：订阅过滤 → 仅 MESSAGES.md → 读文件 hash → guard.shouldDeliver（自写/hash/暂停）
+ * - tool_call：write/edit 目标 → guard.markSelfWrite + 记「写前磁盘版本」（自写推进 cursor 的前置条件）
+ * - watcher onEvent：订阅过滤 → **仅 `<topic>/MESSAGES.md`** → 读文件 hash → 跨 await 复查生命周期
+ *   → cursor 去重 → guard.shouldDeliver（自写/hash/暂停）→ 投递
  *   → sendUserMessage({deliverAs:"followUp"})（流式中排队、空闲立即——SDK prompt 语义）
  *   → recordDelivered（hash 快照 + 乒乓计数，上限触发暂停 + notify）
  * - session_shutdown：watcher.stop + guard.reset（幂等）
@@ -46,6 +48,25 @@ export interface ChannelWatchOptions {
 	sendWake?: (text: string) => void;
 	/** notify（测试注入；缺省 lastCtx.ui.notify） */
 	notify?: (text: string) => void;
+	/**
+	 * 有效运行态订阅快照变化回调（spec §6.1；PiBackend 记录用）。
+	 * 触发点：session_start 恢复完成后（含空集）、subscribe、unsubscribe、session_shutdown。
+	 * 阶段 0 只固定注入点，调用点见 plan 阶段 1.1。
+	 */
+	onSubscriptionsChanged?: (sessionId: string, topics: ReadonlySet<string>) => void;
+	/** watcher 工厂（缺省 new ChannelWatcher；测试注入短防抖，生产默认 3s/5s 不变） */
+	watcherFactory?: (options: ChannelWatcherOptions) => ChannelWatcher;
+	/** 读内容 hash（缺省读文件，不存在 → null；测试注入可复现「基线读取 ↔ watcher 就绪」竞态） */
+	readFileHash?: (absPath: string) => Promise<string | null>;
+}
+
+/** 读文件内容 hash（文件不存在/不可读 → null）。阶段 0 只是把注入点接上，语义与改动前一致 */
+async function defaultReadFileHash(absPath: string): Promise<string | null> {
+	try {
+		return contentHash(await readFile(absPath, "utf8"));
+	} catch {
+		return null;
+	}
 }
 
 export function makeChannelWatchExtension(options: ChannelWatchOptions): InlineExtension {
@@ -56,6 +77,9 @@ export function makeChannelWatchExtension(options: ChannelWatchOptions): InlineE
 			const guard = new LoopGuard({ now: options.now });
 			const sendWake =
 				options.sendWake ?? ((text: string) => pi.sendUserMessage(text, { deliverAs: "followUp" }));
+			const readHash = options.readFileHash ?? defaultReadFileHash;
+			const makeWatcher =
+				options.watcherFactory ?? ((opts: ChannelWatcherOptions) => new ChannelWatcher(opts));
 
 			// --- 会话闭包状态 ---
 			let active = false;
@@ -64,6 +88,19 @@ export function makeChannelWatchExtension(options: ChannelWatchOptions): InlineE
 			let lastCtx: ExtensionContext | null = null;
 			let toolsBound = false;
 			const subscriptions = new Set<string>();
+			/**
+			 * topic → 最后已确认的 `MESSAGES.md` 内容 hash | null（null = 确认当时文件不存在）。
+			 * 与订阅集同一份持久快照：每次推进都 append 全量（spec §6.3/§6.5）。key 缺失 = 未知基线。
+			 */
+			const cursors = new Map<string, string | null>();
+			/**
+			 * 自写前的磁盘版本（topic → hash|null）：write/edit 的 tool_call 在工具真正落盘**之前**记录。
+			 * 自写抑制只有在这个值等于当前 cursor 时才能推进 cursor（= 期间没有未确认的外部变化）。
+			 */
+			const selfWritePreVersion = new Map<string, string | null>();
+			/** watcher 世代：stop/shutdown 时 +1，用于作废「启动中」的那一轮（不挂孤儿 watcher） */
+			let watcherEpoch = 0;
+			let watcherPromise: Promise<void> | null = null;
 
 			const notify = (text: string): void => {
 				try {
@@ -89,11 +126,143 @@ export function makeChannelWatchExtension(options: ChannelWatchOptions): InlineE
 				}
 			};
 
+			/** 完整 sessionId（上报 backend 订阅快照的 key，必须与 registry 一致；取不到不算错） */
+			const fullSessionId = (): string | undefined => {
+				try {
+					return lastCtx?.sessionManager.getSessionId();
+				} catch {
+					return undefined;
+				}
+			};
+
+			/**
+			 * 上报「有效运行态订阅」快照（spec §6.1）：只有 enabled + trusted 才计入——
+			 * 未启用/未受信任的会话根本收不到唤醒，不该因此被永久排除在内存回收之外。
+			 * 只传副本（调用方不能反向改到本闭包的订阅集）；回调抛错只记日志，绝不打断订阅/发消息/生命周期。
+			 */
+			const reportSubscriptions = (): void => {
+				const onChanged = options.onSubscriptionsChanged;
+				if (!onChanged) return;
+				try {
+					const sessionId = fullSessionId();
+					if (!sessionId) {
+						log.warn("订阅快照未上报：拿不到 sessionId");
+						return;
+					}
+					onChanged(sessionId, new Set(active && trusted ? subscriptions : []));
+				} catch (err) {
+					log.warn("订阅快照上报失败", {
+						error: err instanceof Error ? err.message : String(err),
+					});
+				}
+			};
+
 			const persist = (): void => {
 				try {
-					pi.appendEntry(SUBSCRIPTION_CUSTOM_TYPE, buildSubsPayload(subscriptions));
+					// 全量快照 = topics + cursors（两者必须一起写：分开写会出现「新订阅配旧游标」的中间态）
+					pi.appendEntry(SUBSCRIPTION_CUSTOM_TYPE, buildSubsPayload(subscriptions, cursors));
 				} catch (err) {
 					log.warn("订阅 appendEntry 失败", {
+						error: err instanceof Error ? err.message : String(err),
+					});
+				}
+			};
+
+			/** 订阅频道主文件绝对路径（已 normalize：可与 tool_call 的 resolve 结果直接比较） */
+			const messagesPath = (topic: string): string => resolve(topicDir(options.cwd, topic), MESSAGES_FILE);
+
+			/**
+			 * 本会话当前是否仍处于「可工作的有效运行态」（enabled + trusted + 至少一个订阅）。
+			 * **所有跨 await 的续体都要复查它**：await 期间可能发生 shutdown、退订、
+			 * 甚至 watcher 重建，若不复查就会出现幽灵投递/幽灵 cursor/孤儿 watcher（REVIEW 2.1 阻塞 2）。
+			 */
+			const isLive = (): boolean => active && trusted && subscriptions.size > 0;
+
+			/** abs 路径若正是某个已订阅频道的主消息文件，返回该 topic（其余一律 null） */
+			const subscribedTopicOfPath = (abs: string): string | null => {
+				for (const topic of subscriptions) {
+					if (messagesPath(topic) === abs) return topic;
+				}
+				return null;
+			};
+
+			/** 当前版本（文件不存在/不可读 → null） */
+			const currentHash = (topic: string): Promise<string | null> => readHash(messagesPath(topic));
+
+			/**
+			 * 推进 cursor 并落盘（at-least-once：落盘失败只告警，内存保留——重启后允许重复提醒，
+			 * 不允许静默漏提醒）。值未变不写 JSONL。
+			 */
+			const advanceCursor = (topic: string, hash: string | null): void => {
+				if (cursors.has(topic) && cursors.get(topic) === hash) return;
+				cursors.set(topic, hash);
+				persist();
+			};
+
+			/**
+			 * 投递一次唤醒（live 与恢复补投共用的唯一入口）：sendWake → guard 记账（乒乓保护不变）
+			 * → 推进 cursor。`sendUserMessage` 是同步 void，无 throw 视为已受理（spec §6.5）。
+			 */
+			const deliverWake = (topic: string, relPath: string, hash: string): void => {
+				sendWake(buildWakeMessage(topic));
+				log.info("channel 唤醒已投递", { sessionId: shortId(), topic, relPath });
+				const pausedNow = guard.recordDelivered(topic, relPath, hash);
+				advanceCursor(topic, hash);
+				if (pausedNow) {
+					notify(
+						`channel-watch：频道 [${topic}] 10 分钟内互触发达到上限，已暂停该频道的自动唤醒（防 token 环烧）。如需恢复，让模型重新执行 channel_subscribe(${topic})。`,
+					);
+				}
+			};
+
+			/**
+			 * 自写抑制后的 cursor 处理（spec §6.5 + REVIEW 2.1 阻塞 1）：**只有写前磁盘版本就等于当前 cursor**
+			 * （= 期间没有未确认的外部变化）才能直接推进。否则保留 pending：直接推进会将
+			 * 「对端已写、本会话还没被提醒」的内容永久吞掉（paused 期间的写入、或落在防抖窗口里的外部写入）。
+			 * pending 会在下一次外部变化/live 事件/重新 subscribe/session_start 对账时被命中并补投一次。
+			 */
+			const advanceAfterSelfWrite = (topic: string, hash: string): void => {
+				const before = selfWritePreVersion.get(topic);
+				selfWritePreVersion.delete(topic); // 用完即弃（下次 write/edit 重新记录）
+				if (before !== undefined && before === cursors.get(topic)) {
+					advanceCursor(topic, hash);
+					return;
+				}
+				log.info("自写抑制但保留 pending", {
+					sessionId: shortId(),
+					topic,
+					reason: before === undefined ? "pre-version-unknown" : "unconfirmed-external-change",
+				});
+			};
+
+			/**
+			 * 单 topic 版本对账（session_start 恢复后 / 首次订阅 watcher 就绪后）：
+			 * - 已知 cursor 与当前版本不同 → 补投一次（离线期间的写入）；
+			 * - cursor key 缺失（旧载荷）→ 只记基线，不补历史；
+			 * - 文件不存在 → 不唤醒，cursor 记为 null；
+			 * - 期间 live 已投递（cursor 变了）→ 直接让位，避免重复与 cursor 回退。
+			 */
+			const reconcileTopic = async (topic: string): Promise<void> => {
+				try {
+					if (!subscriptions.has(topic)) return;
+					const before = cursors.get(topic);
+					const hash = await currentHash(topic);
+					// 跨 await 复查：退订/生命周期结束 → 不投递也不复活 cursor
+					if (!isLive() || !subscriptions.has(topic)) return;
+					if (cursors.get(topic) !== before) return;
+					if (before === hash) return;
+					if (hash === null) {
+						advanceCursor(topic, null);
+						return;
+					}
+					if (before === undefined) {
+						advanceCursor(topic, hash);
+						return;
+					}
+					deliverWake(topic, `${topic}/${MESSAGES_FILE}`, hash);
+				} catch (err) {
+					log.warn("channel-watch 补投对账失败", {
+						topic,
 						error: err instanceof Error ? err.message : String(err),
 					});
 				}
@@ -102,37 +271,52 @@ export function makeChannelWatchExtension(options: ChannelWatchOptions): InlineE
 			const onWatchEvent = (event: ChannelWatchEvent): void => {
 				try {
 					if (!active || !subscriptions.has(event.topic)) return;
-					// 触发收窄（spec channel-post）：仅 MESSAGES.md 投递唤醒，其余频道文件静默
-					if (basename(event.relPath) !== MESSAGES_FILE) return;
+					// 只接受频道根目录下的主消息文件：`<topic>/MESSAGES.md`
+					// （嵌套同名文件 topic/sub/MESSAGES.md 不是频道主文件，不得唤醒也不得污染 cursor）
+					if (event.relPath !== `${event.topic}/${MESSAGES_FILE}`) return;
 					const abs = join(channelRoot(options.cwd), event.relPath);
 					void (async () => {
-						let hash: string;
+						// fire-and-forget 分支内部必须完整 catch（不得漏出 unhandled rejection）
 						try {
-							hash = contentHash(await readFile(abs, "utf8"));
-						} catch {
-							return; // 文件已删/不可读：无内容可比，跳过（删除场景无「查收」语义）
-						}
-						const decision = guard.shouldDeliver(event.topic, event.relPath, hash, abs);
-						if (!decision.deliver) {
-							log.info("唤醒抑制", {
-								sessionId: shortId(),
-								topic: event.topic,
-								relPath: event.relPath,
-								reason: decision.reason,
+							const hash = await readHash(abs);
+							// 跨 await 复查：退订/shutdown 落在读 hash 期间 → 既不投递也不改 cursor
+							if (!isLive() || !subscriptions.has(event.topic)) return;
+							if (hash === null) {
+								// 文件被删/不可读：不唤醒；已知 cursor 则推进为 null（未来重建能识别为变化）
+								if (cursors.has(event.topic) && cursors.get(event.topic) !== null) {
+									advanceCursor(event.topic, null);
+								}
+								return;
+							}
+							// live 先比 cursor（跨重启的持久去重）：同 hash 直接抑制
+							if (cursors.get(event.topic) === hash) {
+								log.info("唤醒抑制", {
+									sessionId: shortId(),
+									topic: event.topic,
+									reason: "cursor-unchanged",
+								});
+								return;
+							}
+							const decision = guard.shouldDeliver(event.topic, event.relPath, hash, abs);
+							if (!decision.deliver) {
+								log.info("唤醒抑制", {
+									sessionId: shortId(),
+									topic: event.topic,
+									reason: decision.reason,
+								});
+								// 自写抑制：那是本会话自己的写入，无需唤醒；cursor 是否可直接推进看写前版本
+								// （仅当写前版本 == cursor，即期间无未确认外部变化时才能跟到 hash）
+								if (decision.reason === "self-write") {
+									advanceAfterSelfWrite(event.topic, hash);
+								}
+								// paused：不推进（显式重新 subscribe 后可合并补投一次）
+								return;
+							}
+							deliverWake(event.topic, event.relPath, hash);
+						} catch (err) {
+							log.warn("channel-watch 事件处理失败", {
+								error: err instanceof Error ? err.message : String(err),
 							});
-							return;
-						}
-						sendWake(buildWakeMessage(event.topic));
-						log.info("channel 唤醒已投递", {
-							sessionId: shortId(),
-							topic: event.topic,
-							relPath: event.relPath,
-						});
-						const pausedNow = guard.recordDelivered(event.topic, event.relPath, hash);
-						if (pausedNow) {
-							notify(
-								`channel-watch：频道 [${event.topic}] 10 分钟内互触发达到上限，已暂停该频道的自动唤醒（防 token 环烧）。如需恢复，让模型重新执行 channel_subscribe(${event.topic})。`,
-							);
 						}
 					})();
 				} catch (err) {
@@ -142,20 +326,69 @@ export function makeChannelWatchExtension(options: ChannelWatchOptions): InlineE
 				}
 			};
 
-			const ensureWatcher = async (): Promise<void> => {
-				if (watcher) return;
-				const w = new ChannelWatcher({
-					channelRoot: channelRoot(options.cwd),
-					onEvent: onWatchEvent,
-				});
-				const mode = await w.start(); // fs.watch 失败自动降级轮询，无 failed 分支
-				watcher = w;
-				log.info("channel watcher 启动", { mode, root: channelRoot(options.cwd) });
+			/**
+			 * 启动 watcher（**single-flight**，spec §6.6）：并发 subscribe/session_start 只创建一个实例；
+			 * 失败不抛（清空 promise，下次订阅可重试）；启动期间 shutdown 已作废本轮 → 停掉自己，不挂孤儿。
+			 */
+			const ensureWatcher = (): Promise<void> => {
+				if (!isLive()) return Promise.resolve(); // 无有效订阅/未受信任/已 shutdown：不起 watcher
+				if (watcher) return Promise.resolve();
+				if (watcherPromise) return watcherPromise;
+				const epoch = watcherEpoch;
+				let w: ChannelWatcher;
+				try {
+					w = makeWatcher({
+						channelRoot: channelRoot(options.cwd),
+						onEvent: onWatchEvent,
+					});
+				} catch (err) {
+					// 工厂同步抛错也要隔开（钩子不得 throw）
+					log.warn("channel watcher 工厂失败，下次订阅重试", {
+						error: err instanceof Error ? err.message : String(err),
+					});
+					return Promise.resolve();
+				}
+				const run = (async () => {
+					try {
+						const mode = await w.start(); // fs.watch 失败自动降级轮询，无 failed 分支
+						// 跨 await 复查：启动期间 shutdown/退订 → 停掉自己，不挂孤儿
+						if (epoch !== watcherEpoch || !isLive()) {
+							try {
+								w.stop();
+							} catch (err) {
+								log.warn("丢弃的 watcher 停止失败", {
+									error: err instanceof Error ? err.message : String(err),
+								});
+							}
+							return;
+						}
+						watcher = w;
+						log.info("channel watcher 启动", { mode, root: channelRoot(options.cwd) });
+					} catch (err) {
+						log.warn("channel watcher 启动失败，下次订阅重试", {
+							error: err instanceof Error ? err.message : String(err),
+						});
+					}
+				})();
+				watcherPromise = run;
+				// 清理引用：用双 handler 的 then（而非 `void run.finally(...)`——finally 会派生出新 promise，
+				// 若 run 意外 reject 会变成未处理拒绝）；只在还是自己这一轮时清空
+				const settle = (): void => {
+					if (watcherPromise === run) watcherPromise = null;
+				};
+				run.then(settle, settle);
+				return run;
 			};
 
 			const stopWatcher = (): void => {
+				watcherEpoch += 1; // 作废「启动中」的那一轮（它会在 start 返回后自停）
+				watcherPromise = null; // 让下一次 ensureWatcher 能真起新实例
 				if (watcher) {
-					watcher.stop();
+					try {
+						watcher.stop();
+					} catch (err) {
+						log.warn("watcher 停止失败", { error: err instanceof Error ? err.message : String(err) });
+					}
 					watcher = null;
 				}
 			};
@@ -166,7 +399,7 @@ export function makeChannelWatchExtension(options: ChannelWatchOptions): InlineE
 				for (const tool of makeChannelTools({
 					cwd: options.cwd,
 					getSubscriptions: () => new Set(subscriptions),
-					subscribe(topic) {
+					subscribe: async (topic) => {
 						const invalid = validateTopic(topic);
 						if (invalid) return { ok: false, error: invalid };
 						if (!trusted) {
@@ -178,8 +411,23 @@ export function makeChannelWatchExtension(options: ChannelWatchOptions): InlineE
 						const resumed = guard.isPaused(topic);
 						guard.resumeTopic(topic);
 						subscriptions.add(topic);
+						// 首次订阅：先把当前版本记为基线（已有历史不提醒），再起 watcher，最后二次对账：
+						// 「读基线 ↔ watcher 就绪」之间写入的新消息不能丢（spec §6.4）
+						if (!cursors.has(topic)) {
+							const baseline = await currentHash(topic);
+							// 跨 await 复查：（a）期间可能已被 live/另一个并发 subscribe 推进——陈旧基线不得回退；
+							// （b）期间可能已退订或 shutdown——此时写回就是幽灵状态
+							if (!isLive() || !subscriptions.has(topic)) return { ok: true, resumed };
+							if (!cursors.has(topic)) cursors.set(topic, baseline);
+						}
+						if (!isLive() || !subscriptions.has(topic)) return { ok: true, resumed };
 						persist();
-						void ensureWatcher();
+						reportSubscriptions();
+						await ensureWatcher();
+						// 跨 await 复查（shutdown/退订可能落在基线读或 watcher 启动期间）
+						if (!isLive() || !subscriptions.has(topic)) return { ok: true, resumed };
+						// 二次对账：封住启动竞态；也是 paused 恢复后的「合并补投一次」入口（§6.5）
+						await reconcileTopic(topic);
 						return { ok: true, resumed };
 					},
 					async post(topic, message, closed) {
@@ -191,10 +439,34 @@ export function makeChannelWatchExtension(options: ChannelWatchOptions): InlineE
 						}
 						try {
 							const sessionId = lastCtx?.sessionManager.getSessionId();
-							const file = await appendPost(options.cwd, { topic, message, closed, sessionId });
+							const file = messagesPath(topic);
+							// 帖前版本：只有「本会话已确认到帖前版本」时，post 才能把 cursor 推到帖后版本
+							const before = subscriptions.has(topic) ? await readHash(file) : null;
+							await appendPost(options.cwd, { topic, message, closed, sessionId });
 							// appendFile 不经 write/edit tool_call 钩子，手动标记自写
 							// （否则「自订阅频道自 post」会自我唤醒）
 							guard.markSelfWrite(file);
+							// 跨 await 复查订阅状态（期间可能退订/已 shutdown）
+							if (isLive() && subscriptions.has(topic)) {
+								try {
+									if (before === cursors.get(topic)) {
+										// 帖前磁盘版本就是 cursor（含「文件不存在且 cursor 也是 null」）→ 帖子不含未确认
+										// 外部内容，可直接推进（避免 shutdown 死在 watcher 防抖前时把自己的写入当离线补投）
+										const after = await readHash(file);
+										if (after !== null && isLive() && subscriptions.has(topic)) {
+											advanceCursor(topic, after);
+										}
+									} else {
+										// 帖前磁盘版本 ≠ cursor：帖子里混着未确认的外部内容（paused 期间的对端写入 /
+										// 落在防抖窗口里的写入）→ 保留 pending，交给下一次 live 事件或对账补投
+										log.info("post 后保留 pending cursor", { sessionId: shortId(), topic });
+									}
+								} catch (err) {
+									log.warn("post 后推进 cursor 失败（后续对账会收敛）", {
+										error: err instanceof Error ? err.message : String(err),
+									});
+								}
+							}
 							return { ok: true };
 						} catch (err) {
 							return { ok: false, error: err instanceof Error ? err.message : String(err) };
@@ -203,7 +475,9 @@ export function makeChannelWatchExtension(options: ChannelWatchOptions): InlineE
 					unsubscribe(topic) {
 						if (!subscriptions.delete(topic)) return { ok: false, error: `未订阅频道 [${topic}]` };
 						guard.forgetTopic(topic);
+						cursors.delete(topic); // 退订不留幽灵基线（重订时才重读基线）
 						persist();
+						reportSubscriptions();
 						if (subscriptions.size === 0) stopWatcher();
 						return { ok: true };
 					},
@@ -215,13 +489,16 @@ export function makeChannelWatchExtension(options: ChannelWatchOptions): InlineE
 
 			// --- 生命周期 ---
 			pi.on("session_start", async (_event, ctx) => {
+				// 先取 ctx：disabled/untrusted 分支也要能上报（空集）
+				lastCtx = ctx;
 				try {
 					if (!enabled()) {
 						active = false;
+						trusted = false;
+						reportSubscriptions();
 						return;
 					}
 					active = true;
-					lastCtx = ctx;
 					trusted = ctx.isProjectTrusted() === true;
 					if (trusted) {
 						const init = await ensureAgentWorkInit(options.cwd);
@@ -234,8 +511,10 @@ export function makeChannelWatchExtension(options: ChannelWatchOptions): InlineE
 					// 恢复订阅（resume/restart）；appendEntry 只在文件存在时有意义（冒烟 V3：
 					// 首条 assistant 前不落盘——但订阅必发生在对话后，resume 场景文件必存在）
 					try {
-						const restored = restoreSubscriptions(ctx.sessionManager.getEntries());
-						for (const topic of restored) subscriptions.add(topic);
+						// 订阅 + 游标一起恢复（last-wins 全量快照；旧载荷只有 topics = 未知基线）
+						const restored = restoreSubscriptionState(ctx.sessionManager.getEntries());
+						for (const topic of restored.topics) subscriptions.add(topic);
+						for (const [topic, hash] of restored.cursors) cursors.set(topic, hash);
 					} catch (err) {
 						log.warn("订阅恢复失败（按空订阅处理）", {
 							error: err instanceof Error ? err.message : String(err),
@@ -250,12 +529,21 @@ export function makeChannelWatchExtension(options: ChannelWatchOptions): InlineE
 						subscriptions: subscriptions.size,
 						watcher: watcher?.mode ?? "idle",
 					});
+					// 恢复完成后再上报（含空集）：backend 据此把本会话标为「有频道订阅」
+					reportSubscriptions();
+					// watcher 就绪后逐 topic 对账（spec §6.4）：已知 cursor 不同 → 每 topic 补投一次；
+					// 旧载荷只建基线；会话离线期间的写入在这里被补上
+					if (trusted && subscriptions.size > 0) {
+						for (const topic of subscriptions) await reconcileTopic(topic);
+					}
 				} catch (err) {
 					// init/恢复失败 → 降级为不激活（会话照常）
 					active = false;
+					trusted = false;
 					log.error("channel-watch session_start 失败，降级关闭", {
 						error: err instanceof Error ? err.message : String(err),
 					});
+					reportSubscriptions();
 				}
 			});
 
@@ -271,16 +559,24 @@ export function makeChannelWatchExtension(options: ChannelWatchOptions): InlineE
 			});
 
 			// 自写抑制：write/edit 目标路径（bash 写入不可靠，由 hash 去重 + 防抖兜底）
-			pi.on("tool_call", (event) => {
+			pi.on("tool_call", async (event) => {
 				try {
 					if (event.toolName !== "write" && event.toolName !== "edit") return undefined;
 					const input = event.input as { path?: unknown; file?: unknown };
 					const raw = typeof input?.path === "string" ? input.path : input?.file;
 					if (typeof raw !== "string" || raw.length === 0) return undefined;
-					const abs = isAbsolute(raw) ? raw : resolve(options.cwd, raw);
+					const abs = isAbsolute(raw) ? resolve(raw) : resolve(options.cwd, raw);
 					guard.markSelfWrite(abs);
+					// 记「写前磁盘版本」：工具还没真正落盘，此刻读到的是写入前的版本。
+					// 只对我们订阅的频道主消息文件记（其他路径的自写与 cursor 无关）。
+					const topic = subscribedTopicOfPath(abs);
+					if (topic) selfWritePreVersion.set(topic, await readHash(abs));
 					return undefined;
-				} catch {
+				} catch (err) {
+					// 钩子不得 throw（读盘失败只影响自写推进判断，一律按「写前版本未知」保守处理）
+					log.warn("tool_call 自写标记失败", {
+						error: err instanceof Error ? err.message : String(err),
+					});
 					return undefined;
 				}
 			});
@@ -290,6 +586,9 @@ export function makeChannelWatchExtension(options: ChannelWatchOptions): InlineE
 					stopWatcher();
 					guard.reset();
 					active = false;
+					trusted = false;
+					// 上报空集：会话已不驻留，订阅保护随之解除（backend 也有 dispose 兜底）
+					reportSubscriptions();
 				} catch (err) {
 					log.warn("channel-watch shutdown 清理失败", {
 						error: err instanceof Error ? err.message : String(err),

@@ -1,15 +1,23 @@
 import { appendFile, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import { buildWakeMessage, makeChannelWatchExtension } from "../src/tools/channel-watch/extension";
+import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
+import {
+	buildWakeMessage,
+	type ChannelWatchOptions,
+	makeChannelWatchExtension,
+} from "../src/tools/channel-watch/extension";
+import { contentHash } from "../src/tools/channel-watch/guard";
 import { formatPostEntry } from "../src/tools/channel-watch/post";
 import {
 	buildSubsPayload,
+	restoreSubscriptionState,
 	restoreSubscriptions,
 	SUBSCRIPTION_CUSTOM_TYPE,
+	type SubsPayload,
 } from "../src/tools/channel-watch/subscriptions";
 import { makeChannelTools } from "../src/tools/channel-watch/tools";
+import { ChannelWatcher } from "../src/tools/channel-watch/watcher";
 
 /** 假 pi：记录 handler / 工具注册 / appendEntry / 唤醒消息 */
 function makeFakePi() {
@@ -73,13 +81,24 @@ function sleep(ms: number): Promise<void> {
 	return new Promise((r) => setTimeout(r, ms));
 }
 
-async function wire(opts: { cwd: string; trusted?: boolean; entries?: unknown[]; enabled?: boolean }) {
+async function wire(opts: {
+	cwd: string;
+	trusted?: boolean;
+	entries?: unknown[];
+	enabled?: boolean;
+	onSubscriptionsChanged?: ChannelWatchOptions["onSubscriptionsChanged"];
+	readFileHash?: ChannelWatchOptions["readFileHash"];
+	watcherFactory?: ChannelWatchOptions["watcherFactory"];
+}) {
 	const pi = makeFakePi();
 	const ext = makeChannelWatchExtension({
 		agentDir,
 		cwd: opts.cwd,
 		isEnabled: () => opts.enabled ?? true,
 		notify: (t) => notifications.push(t),
+		onSubscriptionsChanged: opts.onSubscriptionsChanged,
+		readFileHash: opts.readFileHash,
+		watcherFactory: opts.watcherFactory,
 	});
 	(ext as { factory: (pi: unknown) => void }).factory(pi);
 	const ctx = makeFakeCtx(opts.entries ?? [], opts.trusted ?? true);
@@ -87,11 +106,92 @@ async function wire(opts: { cwd: string; trusted?: boolean; entries?: unknown[];
 	return { pi };
 }
 
+/** 频道目录（生产路径 `.local/agent-work/channel/<topic>`） */
+function topicDir(cwd: string, topic: string): string {
+	return join(cwd, ".local/agent-work/channel", topic);
+}
+
+/** 频道主文件 MESSAGES.md */
+function messagesFile(cwd: string, topic: string): string {
+	return join(topicDir(cwd, topic), "MESSAGES.md");
+}
+
+/** 造一条 channel-subs entry（不给 cursors = legacy topics-only 形态） */
+function subsEntries(topics: string[], cursors?: Record<string, string | null>): unknown[] {
+	return [
+		{
+			type: "custom",
+			customType: SUBSCRIPTION_CUSTOM_TYPE,
+			data: cursors ? { topics, cursors } : { topics },
+		},
+	];
+}
+
+/** 把一条快照包成 entries（模拟「扩展自己 append 的快照 → 再次 resume」） */
+function payloadEntries(payload: SubsPayload): unknown[] {
+	return [{ type: "custom", customType: SUBSCRIPTION_CUSTOM_TYPE, data: payload }];
+}
+
+/** 最后一条 appendEntry 的订阅快照 */
+function lastPayload(pi: ReturnType<typeof makeFakePi>): SubsPayload {
+	const entry = pi.appended.at(-1);
+	if (!entry) throw new Error("没有任何 appendEntry 记录");
+	return entry.data as SubsPayload;
+}
+
+/** 真实读文件算 hash（文件不存在 → null） */
+async function contentHashOrNull(absPath: string): Promise<string | null> {
+	try {
+		return contentHash(await readFile(absPath, "utf8"));
+	} catch {
+		return null;
+	}
+}
+
+/**
+ * P1 契约测试接线：watcher 防抖 3s → 20ms（生产默认值不变，只由测试注入），
+ * 并透传新契约的注入点（订阅快照回调 / hash 读取 / watcher 工厂）。
+ */
+async function wireCur(opts: {
+	cwd: string;
+	entries?: unknown[];
+	trusted?: boolean;
+	enabled?: boolean;
+	onSubscriptionsChanged?: ChannelWatchOptions["onSubscriptionsChanged"];
+	readFileHash?: ChannelWatchOptions["readFileHash"];
+}) {
+	let watcherCount = 0;
+	const { pi } = await wire({
+		...opts,
+		watcherFactory: (o) => {
+			watcherCount += 1;
+			return new ChannelWatcher({ ...o, debounceMs: 20, pollIntervalMs: 20 });
+		},
+	});
+	return { pi, watcherCount: () => watcherCount };
+}
+
 /** 订阅（经工具 execute 全链路） */
 async function subscribe(pi: ReturnType<typeof makeFakePi>, topic: string) {
 	const tool = pi.tools.find((t) => t.name === "channel_subscribe");
 	if (!tool) throw new Error("channel_subscribe 未注册");
 	return (await tool.execute("tc1", { topic })) as { content: Array<{ type: "text"; text: string }> };
+}
+
+/** 退订（经工具 execute 全链路） */
+async function unsubscribe(pi: ReturnType<typeof makeFakePi>, topic: string) {
+	const tool = pi.tools.find((t) => t.name === "channel_unsubscribe");
+	if (!tool) throw new Error("channel_unsubscribe 未注册");
+	return (await tool.execute("tu1", { topic })) as { content: Array<{ type: "text"; text: string }> };
+}
+
+/** 发消息（经工具 execute 全链路） */
+async function post(pi: ReturnType<typeof makeFakePi>, topic: string, message: string) {
+	const tool = pi.tools.find((t) => t.name === "channel_post");
+	if (!tool) throw new Error("channel_post 未注册");
+	return (await tool.execute("tp1", { topic, message })) as {
+		content: Array<{ type: "text"; text: string }>;
+	};
 }
 
 describe("subscriptions 持久化", () => {
@@ -158,7 +258,11 @@ describe("extension 全链路", () => {
 		const { pi } = await wire({ cwd });
 		const r = await subscribe(pi, "t1");
 		expect(r.content[0]?.text).toContain("已订阅频道 [t1]");
-		expect(pi.appended.at(-1)).toEqual({ customType: SUBSCRIPTION_CUSTOM_TYPE, data: { topics: ["t1"] } });
+		expect(pi.appended.at(-1)).toEqual({
+			customType: SUBSCRIPTION_CUSTOM_TYPE,
+			// 全量快照从阶段 2 起带 cursors（首次订阅尚无文件 → 基线 null）
+			data: { topics: ["t1"], cursors: { t1: null } },
+		});
 		// init 已建目录
 		await mkdir(join(cwd, ".local/agent-work/channel/t1"), { recursive: true });
 		// 写文件 ≠ 通知：非 MESSAGES 文件静默（多文件写入不再产生多条唤醒）
@@ -226,7 +330,11 @@ describe("extension 全链路", () => {
 		await subscribe(pi, "t1");
 		const unsub = pi.tools.find((t) => t.name === "channel_unsubscribe");
 		await unsub?.execute("tc2", { topic: "t1" });
-		expect(pi.appended.at(-1)).toEqual({ customType: SUBSCRIPTION_CUSTOM_TYPE, data: { topics: [] } });
+		expect(pi.appended.at(-1)).toEqual({
+			customType: SUBSCRIPTION_CUSTOM_TYPE,
+			// 退订最后一个 topic：订阅集与游标一起清空（不留幽灵基线）
+			data: { topics: [], cursors: {} },
+		});
 		// 对端 post 也不唤醒（无订阅）
 		await mkdir(join(cwd, ".local/agent-work/channel/t1"), { recursive: true });
 		await writeFile(join(cwd, ".local/agent-work/channel/t1/MESSAGES.md"), "## t\n\nx\n\n---\n");
@@ -413,4 +521,703 @@ describe("channel_post", () => {
 		expect(r.content[0]?.text).toContain("发送失败");
 		expect(r.content[0]?.text).toContain("受信任");
 	}, 60_000);
+});
+
+// ---------------------------------------------------------------------------
+// P1 契约（spec §6.1/§6.3–§6.6）：持久 cursor、离线补投、订阅快照上报、watcher single-flight
+// 以下用例为阶段 0 红测：固定契约，实现见 plan 阶段 1～2。
+// ---------------------------------------------------------------------------
+
+describe("P1 · restoreSubscriptionState 纯解析契约（spec §6.3）", () => {
+	it("payload 往返：带 cursors 的快照排序稳定，且只保留仍在 topics 中的 key", () => {
+		const payload = buildSubsPayload(
+			["b", "a"],
+			new Map<string, string | null>([
+				["b", "h2"],
+				["a", null],
+				["gone", "h9"],
+			]),
+		);
+		expect(payload).toEqual({ topics: ["a", "b"], cursors: { a: null, b: "h2" } });
+
+		const restored = restoreSubscriptionState(payloadEntries(payload));
+		expect(restored.topics).toEqual(["a", "b"]);
+		expect(restored.cursors.has("a")).toBe(true);
+		expect(restored.cursors.get("a")).toBeNull();
+		expect(restored.cursors.get("b")).toBe("h2");
+	});
+
+	it("last-wins：最后一条合法 entry 同时覆盖 topics 与 cursors（旧 cursor 不残留）", () => {
+		const restored = restoreSubscriptionState([
+			{
+				type: "custom",
+				customType: SUBSCRIPTION_CUSTOM_TYPE,
+				data: { topics: ["a"], cursors: { a: "h1" } },
+			},
+			{
+				type: "custom",
+				customType: SUBSCRIPTION_CUSTOM_TYPE,
+				data: { topics: ["b"], cursors: { b: "h2" } },
+			},
+		]);
+		expect(restored.topics).toEqual(["b"]);
+		expect([...restored.cursors]).toEqual([["b", "h2"]]);
+	});
+
+	it("游标 key 缺失（legacy topics-only）与显式 null 可区分", () => {
+		const legacy = restoreSubscriptionState(subsEntries(["a"]));
+		expect(legacy.topics).toEqual(["a"]);
+		expect(legacy.cursors.size).toBe(0); // 未知基线：首次恢复不补历史
+		expect(legacy.cursors.has("a")).toBe(false);
+
+		const explicitNull = restoreSubscriptionState(subsEntries(["a"], { a: null }));
+		expect(explicitNull.cursors.has("a")).toBe(true);
+		expect(explicitNull.cursors.get("a")).toBeNull(); // 已知「当时文件不存在」：之后创建要补投
+	});
+
+	it("脏 cursor 值被忽略，但合法 topics 不能因此丢失", () => {
+		const restored = restoreSubscriptionState([
+			{
+				type: "custom",
+				customType: SUBSCRIPTION_CUSTOM_TYPE,
+				data: { topics: ["a", "b", "", 7], cursors: { a: 123, b: "h" } },
+			},
+		]);
+		expect(restored.topics).toEqual(["a", "b"]);
+		expect([...restored.cursors]).toEqual([["b", "h"]]);
+	});
+
+	it("不在最终 topics 中的 cursor key 被过滤（退订不留幽灵基线）", () => {
+		const restored = restoreSubscriptionState([
+			{
+				type: "custom",
+				customType: SUBSCRIPTION_CUSTOM_TYPE,
+				data: { topics: ["a"], cursors: { a: "h1", gone: "h9" } },
+			},
+		]);
+		expect(restored.topics).toEqual(["a"]);
+		expect([...restored.cursors]).toEqual([["a", "h1"]]);
+	});
+
+	it("中途非法 entry 不覆盖此前合法完整快照（既有 last-wins 纪律）", () => {
+		const restored = restoreSubscriptionState([
+			{
+				type: "custom",
+				customType: SUBSCRIPTION_CUSTOM_TYPE,
+				data: { topics: ["a"], cursors: { a: "h1" } },
+			},
+			{ type: "custom", customType: SUBSCRIPTION_CUSTOM_TYPE }, // data 缺失
+			{ type: "custom", customType: SUBSCRIPTION_CUSTOM_TYPE, data: { topics: "oops" } }, // topics 非数组
+			{ type: "message", message: { role: "user", content: "hi" } }, // 非订阅 entry
+		]);
+		expect(restored.topics).toEqual(["a"]);
+		expect([...restored.cursors]).toEqual([["a", "h1"]]);
+	});
+});
+
+describe("P1 · onSubscriptionsChanged 订阅快照上报", () => {
+	it("session_start 恢复 / subscribe / unsubscribe / shutdown 各上报一次有效快照（传的是副本）", async () => {
+		const cwd = join(testRoot, "snapshot-cb");
+		const calls: Array<{ id: string; topics: string[] }> = [];
+		const seen: ReadonlySet<string>[] = [];
+		const { pi } = await wire({
+			cwd,
+			entries: subsEntries(["t1"]),
+			onSubscriptionsChanged: (sessionId, topics) => {
+				calls.push({ id: sessionId, topics: [...topics].sort() });
+				seen.push(topics);
+			},
+		});
+		expect(calls).toEqual([{ id: "s-test", topics: ["t1"] }]);
+
+		await subscribe(pi, "t2");
+		expect(calls.at(-1)).toEqual({ id: "s-test", topics: ["t1", "t2"] });
+
+		await unsubscribe(pi, "t1");
+		expect(calls.at(-1)).toEqual({ id: "s-test", topics: ["t2"] });
+		// 防御性副本：先前上报的快照不能随后续变化改动（否则 backend 快照会“自动”跟着变）
+		expect([...(seen[1] as ReadonlySet<string>)]).toEqual(["t1", "t2"]);
+
+		await pi.emit({ type: "session_shutdown" }, makeFakeCtx());
+		expect(calls.at(-1)).toEqual({ id: "s-test", topics: [] });
+	});
+
+	it("disabled / untrusted 上报空集（不受保护的订阅不进入 backend 快照）", async () => {
+		const offCalls: string[][] = [];
+		await wire({
+			cwd: join(testRoot, "snapshot-off"),
+			enabled: false,
+			onSubscriptionsChanged: (_id, topics) => offCalls.push([...topics]),
+		});
+		expect(offCalls.at(-1)).toEqual([]);
+
+		const untrustedCalls: string[][] = [];
+		await wire({
+			cwd: join(testRoot, "snapshot-untrusted"),
+			trusted: false,
+			entries: subsEntries(["t1"]),
+			onSubscriptionsChanged: (_id, topics) => untrustedCalls.push([...topics]),
+		});
+		expect(untrustedCalls.at(-1)).toEqual([]);
+	});
+
+	it("回调抛错只记日志：不破坏 subscribe/post/shutdown 生命周期", async () => {
+		const cwd = join(testRoot, "snapshot-throw");
+		let calls = 0;
+		const { pi } = await wire({
+			cwd,
+			onSubscriptionsChanged: () => {
+				calls += 1;
+				throw new Error("回调炸了");
+			},
+		});
+		const r = await subscribe(pi, "t1");
+		expect(calls).toBeGreaterThan(0);
+		expect(r.content[0]?.text).toContain("已订阅频道 [t1]");
+		expect(lastPayload(pi).topics).toEqual(["t1"]);
+	});
+});
+
+describe("P1 · 首次订阅基线与 watcher 就绪竞态", () => {
+	it("首次订阅已有 MESSAGES.md：0 条旧历史提醒，只记基线；订阅建立后内容变化只投一次", async () => {
+		const cwd = join(testRoot, "first-sub");
+		await mkdir(topicDir(cwd, "t1"), { recursive: true });
+		const mf = messagesFile(cwd, "t1");
+		await writeFile(mf, "old\n");
+
+		const { pi } = await wireCur({ cwd });
+		await subscribe(pi, "t1");
+		expect(pi.wakes).toHaveLength(0);
+		expect(lastPayload(pi).cursors).toEqual({ t1: contentHash("old\n") });
+
+		await appendFile(mf, "new\n");
+		await sleep(200);
+		expect(pi.wakes).toHaveLength(1);
+		expect(lastPayload(pi).cursors).toEqual({ t1: contentHash("old\nnew\n") });
+	});
+
+	it("订阅建立竞态：基线读取与 watcher 就绪之间的写入补投一次，且不被随后的 watcher 事件重复投递", async () => {
+		const cwd = join(testRoot, "sub-race");
+		await mkdir(topicDir(cwd, "t1"), { recursive: true });
+		const mf = messagesFile(cwd, "t1");
+		let reads = 0;
+		const { pi } = await wireCur({
+			cwd,
+			readFileHash: async (abs) => {
+				reads += 1;
+				// 第 1 次读 = 订阅基线（文件尚不存在 → null）；第 2 次读 = 订阅后的版本复检
+				if (reads === 2 && abs === mf) await writeFile(mf, "race\n");
+				return contentHashOrNull(abs);
+			},
+		});
+		await subscribe(pi, "t1");
+		await sleep(250);
+		expect(reads).toBeGreaterThanOrEqual(2);
+		expect(pi.wakes).toHaveLength(1);
+		expect(lastPayload(pi).cursors).toEqual({ t1: contentHash("race\n") });
+	});
+
+	it("订阅时文件不存在：cursor 记 null（不是 key 缺失）", async () => {
+		const cwd = join(testRoot, "null-baseline");
+		const { pi } = await wireCur({ cwd });
+		await subscribe(pi, "t1");
+		expect(lastPayload(pi)).toEqual({ topics: ["t1"], cursors: { t1: null } });
+	});
+});
+
+describe("P1 · 恢复补投（catch-up）", () => {
+	it("cursor 与当前内容不同 → 补投一条；用推进后的快照再恢复 → 0 条", async () => {
+		const cwd = join(testRoot, "catchup-once");
+		await mkdir(topicDir(cwd, "t1"), { recursive: true });
+		await writeFile(messagesFile(cwd, "t1"), "v2\n");
+
+		const { pi } = await wireCur({ cwd, entries: subsEntries(["t1"], { t1: "stale-hash" }) });
+		await sleep(80);
+		expect(pi.wakes).toHaveLength(1);
+		expect(pi.wakes[0]).toContain("[channel:t1]");
+		expect(lastPayload(pi).cursors).toEqual({ t1: contentHash("v2\n") });
+
+		await pi.emit({ type: "session_shutdown" }, makeFakeCtx());
+		const again = await wireCur({ cwd, entries: payloadEntries(lastPayload(pi)) });
+		await sleep(80);
+		expect(again.pi.wakes).toHaveLength(0);
+	});
+
+	it("legacy topics-only（无 cursors key）：只建基线不补历史，并持久化升级后的快照", async () => {
+		const cwd = join(testRoot, "legacy-baseline");
+		await mkdir(topicDir(cwd, "t1"), { recursive: true });
+		const mf = messagesFile(cwd, "t1");
+		await writeFile(mf, "v1\n");
+
+		const { pi } = await wireCur({ cwd, entries: subsEntries(["t1"]) });
+		await sleep(80);
+		expect(pi.wakes).toHaveLength(0);
+		expect(lastPayload(pi).cursors).toEqual({ t1: contentHash("v1\n") });
+
+		// 基线已建立 → 之后的变化照常提醒
+		await appendFile(mf, "v2\n");
+		await sleep(200);
+		expect(pi.wakes).toHaveLength(1);
+	});
+
+	it("cursor=null 且文件在会话关闭期间创建 → 恢复补投一次", async () => {
+		const cwd = join(testRoot, "null-then-created");
+		const { pi } = await wireCur({ cwd });
+		await subscribe(pi, "t1");
+		expect(lastPayload(pi).cursors).toEqual({ t1: null });
+		await pi.emit({ type: "session_shutdown" }, makeFakeCtx());
+
+		await mkdir(topicDir(cwd, "t1"), { recursive: true });
+		await writeFile(messagesFile(cwd, "t1"), "offline\n");
+
+		const again = await wireCur({ cwd, entries: payloadEntries(lastPayload(pi)) });
+		await sleep(80);
+		expect(again.pi.wakes).toHaveLength(1);
+		expect(lastPayload(again.pi).cursors).toEqual({ t1: contentHash("offline\n") });
+	});
+
+	it("文件从存在变为不存在：不唤醒且 cursor 更新为 null；重新创建后再变化可提醒", async () => {
+		const cwd = join(testRoot, "file-deleted");
+		await mkdir(topicDir(cwd, "t1"), { recursive: true });
+		const mf = messagesFile(cwd, "t1");
+		await writeFile(mf, "v1\n");
+		const legacy = subsEntries(["t1"], { t1: contentHash("v1\n") });
+		const first = await wireCur({ cwd, entries: legacy });
+		await sleep(80);
+		expect(first.pi.wakes).toHaveLength(0);
+		await first.pi.emit({ type: "session_shutdown" }, makeFakeCtx());
+
+		await rm(mf);
+		const second = await wireCur({ cwd, entries: legacy });
+		await sleep(80);
+		expect(second.pi.wakes).toHaveLength(0);
+		expect(lastPayload(second.pi).cursors).toEqual({ t1: null });
+
+		await writeFile(mf, "recreated\n");
+		const third = await wireCur({ cwd, entries: payloadEntries(lastPayload(second.pi)) });
+		await sleep(80);
+		expect(third.pi.wakes).toHaveLength(1);
+	});
+
+	it("本会话 post 后 shutdown/resume：0 条自我补投（post 主动推进 cursor）", async () => {
+		const cwd = join(testRoot, "self-post-cursor");
+		const { pi } = await wireCur({ cwd });
+		await subscribe(pi, "t1");
+		await post(pi, "t1", "给自己的备注");
+		const persisted = contentHash(await readFile(messagesFile(cwd, "t1"), "utf8"));
+		expect(lastPayload(pi).cursors).toEqual({ t1: persisted });
+		await pi.emit({ type: "session_shutdown" }, makeFakeCtx());
+
+		const again = await wireCur({ cwd, entries: payloadEntries(lastPayload(pi)) });
+		await sleep(200);
+		expect(again.pi.wakes).toHaveLength(0);
+	});
+
+	it("本会话 write/edit 自写被抑制时仍推进并持久化 cursor；shutdown/resume 不自唤醒", async () => {
+		const cwd = join(testRoot, "self-write-cursor");
+		const { pi } = await wireCur({ cwd });
+		await subscribe(pi, "t1");
+		await subscribe(pi, "t2");
+
+		for (const [topic, toolName] of [
+			["t1", "write"],
+			["t2", "edit"],
+		] as const) {
+			await mkdir(topicDir(cwd, topic), { recursive: true });
+			const mf = messagesFile(cwd, topic);
+			// 模拟本会话 write/edit 工具调用（tool_call 事件）+ 真实落盘
+			await pi.emit(
+				{ type: "tool_call", toolName, toolCallId: `tc-${topic}`, input: { path: mf, content: "x" } },
+				makeFakeCtx(),
+			);
+			await writeFile(mf, "x\n");
+			await sleep(200);
+			expect(pi.wakes.filter((w) => w.includes(`[channel:${topic}]`))).toHaveLength(0);
+			expect(lastPayload(pi).cursors?.[topic]).toBe(contentHash("x\n"));
+		}
+
+		await pi.emit({ type: "session_shutdown" }, makeFakeCtx());
+		const again = await wireCur({ cwd, entries: payloadEntries(lastPayload(pi)) });
+		await sleep(200);
+		expect(again.pi.wakes).toHaveLength(0);
+	});
+
+	it("paused 期间的写入不推进 cursor；显式重新 subscribe 后合并补投一次", async () => {
+		const cwd = join(testRoot, "paused-cursor");
+		const { pi } = await wireCur({ cwd });
+		await subscribe(pi, "t1");
+		const mf = messagesFile(cwd, "t1");
+		// 订阅时目录还不存在（首次写入由对端建立）：这里先建目录再逐次写入
+		await mkdir(topicDir(cwd, "t1"), { recursive: true });
+		for (let i = 0; i < 6; i++) {
+			await writeFile(mf, `v${i}\n`);
+			await sleep(150);
+		}
+		// 前 6 次投递，第 6 次触发乒乓暂停
+		expect(pi.wakes).toHaveLength(6);
+		expect(lastPayload(pi).cursors).toEqual({ t1: contentHash("v5\n") });
+
+		await writeFile(mf, "v6\n");
+		await sleep(150);
+		await writeFile(mf, "v7\n");
+		await sleep(150);
+		expect(pi.wakes).toHaveLength(6); // 暂停中不投递
+		expect(lastPayload(pi).cursors).toEqual({ t1: contentHash("v5\n") }); // 也不推进 cursor
+
+		await subscribe(pi, "t1"); // 显式重新订阅 → 恢复暂停 + 合并补投一次
+		await sleep(80);
+		expect(pi.wakes).toHaveLength(7);
+		expect(lastPayload(pi).cursors).toEqual({ t1: contentHash("v7\n") });
+	});
+
+	it("unsubscribe 删除 cursor（不给幽灵复活留基线）", async () => {
+		const cwd = join(testRoot, "unsub-cursor");
+		const { pi } = await wireCur({ cwd });
+		await subscribe(pi, "t1");
+		await subscribe(pi, "t2");
+		await unsubscribe(pi, "t1");
+		expect(lastPayload(pi).topics).toEqual(["t2"]);
+		expect(lastPayload(pi).cursors).not.toHaveProperty("t1");
+	});
+});
+
+describe("P1 · watcher single-flight", () => {
+	it("并发 subscribe 只创建一个 watcher；同一内容变化不重复投递", async () => {
+		const cwd = join(testRoot, "single-flight");
+		const { pi, watcherCount } = await wireCur({ cwd });
+		const tool = pi.tools.find((t) => t.name === "channel_subscribe");
+		if (!tool) throw new Error("channel_subscribe 未注册");
+		await Promise.all([
+			tool.execute("c1", { topic: "t1" }),
+			tool.execute("c2", { topic: "t1" }),
+			tool.execute("c3", { topic: "t2" }),
+		]);
+		expect(watcherCount()).toBe(1);
+
+		await mkdir(topicDir(cwd, "t1"), { recursive: true });
+		await writeFile(messagesFile(cwd, "t1"), "hello\n");
+		await sleep(250);
+		expect(pi.wakes.filter((w) => w.includes("[channel:t1]"))).toHaveLength(1);
+	});
+
+	it("启动失败：promise 清空、订阅不报错，下次订阅能重试成功（不把失败缓存住）", async () => {
+		const cwd = join(testRoot, "watcher-retry");
+		let attempts = 0;
+		const { pi } = await wire({
+			cwd,
+			watcherFactory: (o) => {
+				attempts += 1;
+				if (attempts === 1) {
+					// 第一次：start 直接拒（模拟 fs.watch / 轮询初始化失败）
+					return {
+						start: () => Promise.reject(new Error("watch boom")),
+						stop: () => {},
+						mode: "idle",
+					} as unknown as ChannelWatcher;
+				}
+				return new ChannelWatcher({ ...o, debounceMs: 20, pollIntervalMs: 20 });
+			},
+		});
+		const r1 = await subscribe(pi, "t1");
+		expect(r1.content[0]?.text).toContain("已订阅频道 [t1]"); // 启动失败不影响订阅本身
+		const r2 = await subscribe(pi, "t2");
+		expect(r2.content[0]?.text).toContain("已订阅频道 [t2]");
+		expect(attempts).toBe(2); // 失败那轮的 promise 已清空 → 真的重试了
+
+		// 重试后的实例真在工作（写文件能唤醒）
+		await mkdir(topicDir(cwd, "t2"), { recursive: true });
+		await writeFile(messagesFile(cwd, "t2"), "after-retry\n");
+		await sleep(250);
+		expect(pi.wakes.filter((w) => w.includes("[channel:t2]"))).toHaveLength(1);
+	});
+
+	it("启动期间 shutdown：完成后自停，不留孤儿 watcher；之后还能重新起", async () => {
+		const cwd = join(testRoot, "watcher-orphan");
+		const stop = vi.fn();
+		let releaseStart: (() => void) | undefined;
+		let startEntered: (() => void) | undefined;
+		const entered = new Promise<void>((resolve) => {
+			startEntered = resolve;
+		});
+		let attempts = 0;
+		const { pi } = await wire({
+			cwd,
+			watcherFactory: (o) => {
+				attempts += 1;
+				if (attempts === 1) {
+					return {
+						start: () => {
+							startEntered?.();
+							return new Promise<"watch">((resolve) => {
+								releaseStart = () => resolve("watch");
+							});
+						},
+						stop,
+						mode: "idle",
+					} as unknown as ChannelWatcher;
+				}
+				return new ChannelWatcher({ ...o, debounceMs: 20, pollIntervalMs: 20 });
+			},
+		});
+		const tool = pi.tools.find((t) => t.name === "channel_subscribe");
+		if (!tool) throw new Error("channel_subscribe 未注册");
+		const pending = tool.execute("c1", { topic: "t1" });
+		await entered; // 确定已走到 start()
+
+		await pi.emit({ type: "session_shutdown" }, makeFakeCtx());
+		releaseStart?.();
+		await pending;
+		expect(stop).toHaveBeenCalledTimes(1); // 作废的那一轮在 start 返回后自停
+
+		// 不留死结：再次 session_start（shutdown 后 trusted 已置 false）后订阅能起新实例
+		await pi.emit({ type: "session_start" }, makeFakeCtx());
+		await subscribe(pi, "t2");
+		expect(attempts).toBe(2);
+	});
+});
+
+// ---------------------------------------------------------------------------
+// 阶段 2.1（REVIEW 2026-09-20 17:58 的阻塞 1/2/3）：持久投递竞态
+// 以下用例先红后修：钉住「自写不得跨过未确认的外部版本」「跨 await 续体服从最新生命周期」
+// 「只认 topic 根目录的主消息文件」三条不变量。
+// ---------------------------------------------------------------------------
+
+/** 轮询等待条件成立（避免用真实防抖时长凑时序） */
+async function waitFor(predicate: () => boolean, timeoutMs = 2000): Promise<void> {
+	const deadline = Date.now() + timeoutMs;
+	while (Date.now() < deadline) {
+		if (predicate()) return;
+		await sleep(10);
+	}
+	throw new Error("waitFor 超时");
+}
+
+describe("P2.1 · 阻塞 1：自写不得跨过未确认的外部版本", () => {
+	it("paused 期间的外部变化 + 本会话 post：cursor 保留 pending，重新 subscribe 合并补投恰好一次", async () => {
+		const cwd = join(testRoot, "post-pending");
+		const { pi } = await wireCur({ cwd });
+		await subscribe(pi, "t1");
+		const mf = messagesFile(cwd, "t1");
+		await mkdir(topicDir(cwd, "t1"), { recursive: true });
+
+		// 前 6 次变化投递，第 6 次触发乒乓暂停（之后外部写入被抑制且不推进 cursor）
+		for (let i = 0; i < 6; i++) {
+			await writeFile(mf, `v${i}\n`);
+			await sleep(150);
+		}
+		expect(pi.wakes).toHaveLength(6);
+		const stuck = contentHash("v5\n");
+		expect(lastPayload(pi).cursors).toEqual({ t1: stuck });
+
+		await writeFile(mf, "v6\n");
+		await sleep(150);
+		await writeFile(mf, "v7\n");
+		await sleep(150);
+		expect(pi.wakes).toHaveLength(6);
+
+		// 本会话 post：写前磁盘版本（v7）已超前 cursor（v5）→ 不得直接推进
+		await post(pi, "t1", "本会话的话");
+		expect(lastPayload(pi).cursors).toEqual({ t1: stuck });
+
+		// 重新 subscribe 恢复 → 合并补投恰好一次
+		await subscribe(pi, "t1");
+		await sleep(80);
+		expect(pi.wakes).toHaveLength(7);
+		expect(lastPayload(pi).cursors).toEqual({ t1: contentHash(await readFile(mf, "utf8")) });
+	});
+
+	it("自写前的磁盘版本已超前 cursor（外部变化尚未确认）→ 不被 self-write 吞掉", async () => {
+		const cwd = join(testRoot, "selfwrite-pending");
+		await mkdir(topicDir(cwd, "t1"), { recursive: true });
+		const mf = messagesFile(cwd, "t1");
+		await writeFile(mf, "v1\n");
+
+		// 注入读序：watcher 对本文件的下一次读返回陈旧版本（模拟「外部写入尚未被确认」）
+		let staleOnce = false;
+		const { pi } = await wireCur({
+			cwd,
+			readFileHash: async (abs) => {
+				if (abs === mf && staleOnce) {
+					staleOnce = false;
+					return contentHash("v1\n");
+				}
+				return contentHashOrNull(abs);
+			},
+		});
+		await subscribe(pi, "t1");
+		const seen = contentHash("v1\n");
+		expect(lastPayload(pi).cursors).toEqual({ t1: seen });
+
+		// 对端写 v2：watcher 读到陈旧值 → 不投递，cursor 仍停在 v1（磁盘已超前）
+		staleOnce = true;
+		await writeFile(mf, "v2\n");
+		await sleep(200);
+		expect(pi.wakes).toHaveLength(0);
+		expect(lastPayload(pi).cursors).toEqual({ t1: seen });
+
+		// 本会话 edit 自写：写前版本 v2 ≠ cursor v1 → 不得直接推进（否则外部 v2 被永久吞掉）
+		await pi.emit(
+			{ type: "tool_call", toolName: "edit", toolCallId: "te1", input: { path: mf, content: "self\n" } },
+			makeFakeCtx(),
+		);
+		await writeFile(mf, "v2\nself\n");
+		await sleep(200);
+		expect(pi.wakes).toHaveLength(0); // 自写不唤醒
+		expect(lastPayload(pi).cursors).toEqual({ t1: seen }); // 也不跨过未确认的 v2
+
+		// 重新 subscribe → 合并补投恰好一次
+		await subscribe(pi, "t1");
+		await sleep(80);
+		expect(pi.wakes).toHaveLength(1);
+		expect(lastPayload(pi).cursors).toEqual({ t1: contentHash(await readFile(mf, "utf8")) });
+	});
+});
+
+describe("P2.1 · 阻塞 2：跨 await 续体服从最新生命周期状态", () => {
+	it("同 topic 并发 subscribe：陈旧基线读不回退 cursor、不双投", async () => {
+		const cwd = join(testRoot, "concurrent-baseline");
+		let reads = 0;
+		let releaseStale: (() => void) | undefined;
+		const staleGate = new Promise<void>((resolve) => {
+			releaseStale = resolve;
+		});
+		const { pi } = await wireCur({
+			cwd,
+			readFileHash: async () => {
+				reads += 1;
+				if (reads === 1) return contentHash("v1\n");
+				if (reads === 2) {
+					await staleGate; // 挂住第二个 subscribe 的基线读，等第一个走完一整轮
+					return contentHash("v1\n"); // 陈旧值（磁盘上已是 v2）
+				}
+				return contentHash("v2\n");
+			},
+		});
+		const tool = pi.tools.find((t) => t.name === "channel_subscribe");
+		if (!tool) throw new Error("channel_subscribe 未注册");
+
+		const first = tool.execute("c1", { topic: "t1" });
+		const second = tool.execute("c2", { topic: "t1" });
+		await waitFor(() => pi.wakes.length === 1); // 第一个 subscribe 已补投（cursor 推进到 v2）
+		releaseStale?.();
+		await Promise.all([first, second]);
+		await sleep(80);
+
+		expect(pi.wakes).toHaveLength(1); // 不双投
+		expect(lastPayload(pi).cursors).toEqual({ t1: contentHash("v2\n") }); // 不被陈旧基线读回退
+	});
+
+	it("订阅等 hash 期间退订：不 persist、不起 watcher、不复活 cursor", async () => {
+		const cwd = join(testRoot, "unsub-during-baseline");
+		await mkdir(topicDir(cwd, "t1"), { recursive: true });
+		await writeFile(messagesFile(cwd, "t1"), "v1\n");
+		let release: (() => void) | undefined;
+		let reads = 0;
+		const { pi, watcherCount } = await wireCur({
+			cwd,
+			readFileHash: async (abs) => {
+				reads += 1;
+				if (reads === 1) {
+					await new Promise<void>((resolve) => {
+						release = resolve;
+					});
+				}
+				return contentHashOrNull(abs);
+			},
+		});
+		const subTool = pi.tools.find((t) => t.name === "channel_subscribe");
+		const unsubTool = pi.tools.find((t) => t.name === "channel_unsubscribe");
+		if (!subTool || !unsubTool) throw new Error("工具未注册");
+
+		const pending = subTool.execute("c1", { topic: "t1" });
+		await waitFor(() => reads >= 1);
+		await unsubTool.execute("u1", { topic: "t1" });
+		const appendedAfterUnsub = pi.appended.length;
+		release?.();
+		await pending;
+		await sleep(200);
+
+		expect(watcherCount()).toBe(0); // 不起孤儿 watcher
+		expect(pi.wakes).toHaveLength(0); // 不投递
+		expect(pi.appended).toHaveLength(appendedAfterUnsub); // 不 persist（不复活 cursor）
+		expect(lastPayload(pi)).toEqual({ topics: [], cursors: {} });
+	});
+
+	it("订阅等 hash 期间 shutdown：不起 watcher、不投递、不 persist", async () => {
+		const cwd = join(testRoot, "shutdown-during-baseline");
+		await mkdir(topicDir(cwd, "t1"), { recursive: true });
+		await writeFile(messagesFile(cwd, "t1"), "v1\n");
+		let release: (() => void) | undefined;
+		let reads = 0;
+		const { pi, watcherCount } = await wireCur({
+			cwd,
+			readFileHash: async (abs) => {
+				reads += 1;
+				if (reads === 1) {
+					await new Promise<void>((resolve) => {
+						release = resolve;
+					});
+				}
+				return contentHashOrNull(abs);
+			},
+		});
+		const subTool = pi.tools.find((t) => t.name === "channel_subscribe");
+		if (!subTool) throw new Error("channel_subscribe 未注册");
+
+		const pending = subTool.execute("c1", { topic: "t1" });
+		await waitFor(() => reads >= 1);
+		await pi.emit({ type: "session_shutdown" }, makeFakeCtx());
+		const appendedAfterShutdown = pi.appended.length;
+		release?.();
+		await pending;
+		await sleep(200);
+
+		expect(watcherCount()).toBe(0);
+		expect(pi.wakes).toHaveLength(0);
+		expect(pi.appended).toHaveLength(appendedAfterShutdown);
+	});
+
+	it("watcher 读 hash 期间退订：不投递、不复活 cursor", async () => {
+		const cwd = join(testRoot, "unsub-during-watch");
+		let pendingRead: (() => void) | undefined;
+		let armHang = false;
+		const { pi } = await wireCur({
+			cwd,
+			readFileHash: async (abs) => {
+				if (armHang) {
+					armHang = false;
+					await new Promise<void>((resolve) => {
+						pendingRead = resolve;
+					});
+				}
+				return contentHashOrNull(abs);
+			},
+		});
+		await subscribe(pi, "t1");
+		await mkdir(topicDir(cwd, "t1"), { recursive: true });
+
+		armHang = true; // 挂住下次 hash 读（= watcher 事件路径）
+		await writeFile(messagesFile(cwd, "t1"), "external\n");
+		await waitFor(() => pendingRead !== undefined);
+		await unsubscribe(pi, "t1");
+		pendingRead?.();
+		await sleep(200);
+
+		expect(pi.wakes).toHaveLength(0);
+		expect(lastPayload(pi)).toEqual({ topics: [], cursors: {} }); // cursor 不被复活
+	});
+});
+
+describe("P2.1 · 阻塞 3：只接受 topic 根目录的主消息文件", () => {
+	it("topic/sub/MESSAGES.md 既不唤醒也不污染 cursor", async () => {
+		const cwd = join(testRoot, "nested-messages");
+		const { pi } = await wireCur({ cwd });
+		await subscribe(pi, "t1"); // 基线：主文件不存在 → null
+		await mkdir(join(topicDir(cwd, "t1"), "sub"), { recursive: true });
+		await writeFile(join(topicDir(cwd, "t1"), "sub", "MESSAGES.md"), "nested\n");
+		await sleep(250);
+
+		expect(pi.wakes).toHaveLength(0);
+		expect(lastPayload(pi)).toEqual({ topics: ["t1"], cursors: { t1: null } });
+	});
 });

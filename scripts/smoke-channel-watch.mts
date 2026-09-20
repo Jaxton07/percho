@@ -1,5 +1,6 @@
 // 阶段 0 冒烟：channel-watch（跨会话频道协作）集成前提验证。
-// 断言依据 .local/docs/design/plan/channel-automation-plan.md（V1–V6）。
+// 断言依据：V1–V6 = .local/docs/design/plan/channel-automation-plan.md；
+// V7–V8 = .local/agent-work/spec/channel-watch-retention-catchup.md（订阅保护 + 持久游标/离线补投）
 // 用法：
 //   npx tsx scripts/smoke-channel-watch.mts v4     # fs.watch recursive（无模型）
 //   npx tsx scripts/smoke-channel-watch.mts v5     # skill seed 目录约定（无模型）
@@ -7,11 +8,14 @@
 //   npx tsx scripts/smoke-channel-watch.mts v1     # sendUserMessage 空闲唤醒（真实模型）
 //   npx tsx scripts/smoke-channel-watch.mts v2     # sendUserMessage 运行中排队（真实模型）
 //   npx tsx scripts/smoke-channel-watch.mts v3     # appendEntry 持久化读回（真实模型）
-//   npx tsx scripts/smoke-channel-watch.mts all    # 按依赖序全跑
+//   npx tsx scripts/smoke-channel-watch.mts v7     # 订阅快照上报 + GC intent 守卫（无模型）
+//   npx tsx scripts/smoke-channel-watch.mts v8     # 关闭重开补投一次、不重复（无模型）
+//   npx tsx scripts/smoke-channel-watch.mts all    # 按依赖序全跑（含 v7/v8）
 // 仅使用 dev agent 目录（~/.pi/agent-dev），正式目录零写入。
 import { appendFile, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { watch } from "node:fs";
-import { homedir } from "node:os";
+import { randomUUID } from "node:crypto";
+import { homedir, tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { performance } from "node:perf_hooks";
 
@@ -45,6 +49,105 @@ function pickModel(runtime: InstanceType<typeof ModelRuntime>, spec: string) {
 	const model = runtime.getModel(provider, id);
 	if (!model) throw new Error(`model not found: ${spec}`);
 	return model;
+}
+
+// ---------- V7/V8 共用：PiBackend / channel-watch 扩展 ----------
+
+const { makeChannelWatchExtension } = await import("../packages/backend/src/tools/channel-watch/extension.ts");
+const { contentHash } = await import("../packages/backend/src/tools/channel-watch/guard.ts");
+const { PiBackend } = await import("../packages/backend/src/index.ts");
+
+/** 手写最小会话文件（V3 实证的格式）：header + 一条 channel-subs 订阅快照 */
+function sessionFileText(opts: {
+	sessionId: string;
+	cwd: string;
+	subs: { topics: string[]; cursors: Record<string, string | null> };
+}): string {
+	const ts = new Date().toISOString();
+	return (
+		[
+			JSON.stringify({ type: "session", version: 3, id: opts.sessionId, timestamp: ts, cwd: opts.cwd }),
+			JSON.stringify({
+				type: "custom",
+				customType: "channel-subs",
+				data: opts.subs,
+				id: "smoke-subs-1",
+				parentId: null,
+				timestamp: ts,
+			}),
+		].join("\n") + "\n"
+	);
+}
+
+/** 读会话文件里最后一条 channel-subs 快照（游标推进的证据） */
+async function lastSubsPayload(file: string): Promise<{ topics: string[]; cursors?: Record<string, string | null> }> {
+	const raw = await readFile(file, "utf8");
+	const lines = raw.trim().split("\n");
+	for (let i = lines.length - 1; i >= 0; i--) {
+		const entry = JSON.parse(lines[i]) as { type?: string; customType?: string; data?: unknown };
+		if (entry.type === "custom" && entry.customType === "channel-subs") {
+			return entry.data as { topics: string[]; cursors?: Record<string, string | null> };
+		}
+	}
+	throw new Error("会话文件里没有 channel-subs entry");
+}
+
+async function waitUntil(predicate: () => boolean, timeoutMs: number): Promise<boolean> {
+	const deadline = performance.now() + timeoutMs;
+	while (performance.now() < deadline) {
+		if (predicate()) return true;
+		await sleep(50);
+	}
+	return false;
+}
+
+/** 用真 AgentSession + 真 channel-watch 扩展开一个会话（wake/快照都注入 sink，不需要 provider） */
+async function openWatchedSession(opts: {
+	runtime: InstanceType<typeof ModelRuntime>;
+	project: string;
+	sessionsDir: string;
+	sessionFile?: string;
+	sinks: { wakes: string[]; reports: Array<{ sessionId: string; topics: string[] }> };
+}) {
+	const ext = makeChannelWatchExtension({
+		agentDir,
+		cwd: opts.project,
+		isEnabled: () => true,
+		sendWake: (text) => opts.sinks.wakes.push(text),
+		notify: () => {},
+		onSubscriptionsChanged: (sessionId, topics) =>
+			opts.sinks.reports.push({ sessionId, topics: [...topics].sort() }),
+	});
+	const settingsManager = SettingsManager.create(opts.project, agentDir, { projectTrusted: false });
+	const loader = new DefaultResourceLoader({
+		cwd: opts.project,
+		agentDir,
+		settingsManager,
+		noExtensions: true,
+		noSkills: true,
+		noPromptTemplates: true,
+		extensionFactories: [ext] as never,
+	});
+	// 项目受信：channel-watch 的 init/恢复/watcher 都只在 trusted 时工作
+	await loader.reload({ resolveProjectTrust: async () => true });
+	const sessionManager = opts.sessionFile
+		? SessionManager.open(opts.sessionFile)
+		: SessionManager.create(opts.project, opts.sessionsDir);
+	const result = await createAgentSession({
+		cwd: opts.project,
+		modelRuntime: opts.runtime,
+		model: pickModel(opts.runtime, "deepseek/deepseek-v4-flash"),
+		tools: undefined,
+		sessionManager,
+		settingsManager,
+		resourceLoader: loader,
+	});
+	await result.session.bindExtensions({ mode: "rpc" });
+	return {
+		session: result.session,
+		sessionFile: result.session.sessionFile,
+		dispose: () => result.session.dispose(),
+	};
 }
 
 /** 探针扩展：存 ExtensionAPI 引用，记录 session_start 的 reason / trust / entries */
@@ -453,21 +556,145 @@ async function phaseV3(runtime: InstanceType<typeof ModelRuntime>) {
 	}
 }
 
+
+// ---------- V7：订阅快照上报 + GC intent 守卫（真 PiBackend 链路，无模型） ----------
+
+async function phaseV7() {
+	const root = await mkdtemp(join(tmpdir(), "percho-smoke-cw-v7-"));
+	const project = join(root, "project");
+	const sessionsDir = join(root, "sessions");
+	try {
+		await mkdir(join(project, ".local", "agent-work", "channel", "t1"), { recursive: true });
+		await mkdir(sessionsDir, { recursive: true });
+		const sessionId = randomUUID();
+		const sessionFile = join(sessionsDir, `${sessionId}.jsonl`);
+		// 预先写一条 channel-subs 快照（模拟「上次订阅过 t1 的会话文件」）；
+		// cursor=null + 无 MESSAGES.md = 无变化 → 恢复不会补投（无需 provider 就能验证整条链）
+		await writeFile(
+			sessionFile,
+			sessionFileText({ sessionId, cwd: project, subs: { topics: ["t1"], cursors: { t1: null } } }),
+			"utf8",
+		);
+
+		const backend = new PiBackend({ defaultCwd: project, projectTrust: false, permissionExtension: false });
+		await backend.init();
+		try {
+			const meta = await backend.openSession(sessionFile);
+			const reported = await waitUntil(
+				() => backend.getChannelSubscriptionSessionIds().includes(meta.sessionId),
+				8000,
+			);
+			if (!reported) throw new Error("V7: 恢复后订阅快照未上报（扩展 → PiBackend 链路断）");
+			console.log(`[V7] 恢复后快照: ${JSON.stringify(backend.getChannelSubscriptionSessionIds())}`);
+
+			const gc = await backend.closeSession(meta.sessionId, "gc");
+			if (gc.closed !== false) throw new Error(`V7: intent:"gc" 应被订阅守卫拒绝，实测 ${JSON.stringify(gc)}`);
+			if (!backend.getChannelSubscriptionSessionIds().includes(meta.sessionId)) {
+				throw new Error("V7: 被拒后订阅快照不应被清空");
+			}
+			console.log("[V7] intent:'gc' 被拒（会话仍在 registry，快照仍在）");
+
+			const user = await backend.closeSession(meta.sessionId, "user");
+			if (user.closed !== true) throw new Error(`V7: intent:"user" 应正常关闭，实测 ${JSON.stringify(user)}`);
+			const leftover = backend.getChannelSubscriptionSessionIds();
+			if (leftover.length !== 0) throw new Error(`V7: dispose 后快照应无残留，实测 ${JSON.stringify(leftover)}`);
+			console.log("[V7] PASS: 订阅恢复 → 快照上报 → intent:'gc' 拒绝 → intent:'user' 放行 → dispose 无残留");
+		} finally {
+			backend.dispose();
+		}
+	} finally {
+		await rm(root, { recursive: true, force: true });
+	}
+}
+
+// ---------- V8：关闭重开后对离线变化补投一次、重开不重复（真 session_start + 真 appendEntry） ----------
+
+async function phaseV8(runtime: InstanceType<typeof ModelRuntime>) {
+	const root = await mkdtemp(join(tmpdir(), "percho-smoke-cw-v8-"));
+	const project = join(root, "project");
+	const sessionsDir = join(root, "sessions");
+	const topicDir = join(project, ".local", "agent-work", "channel", "t1");
+	const messages = join(topicDir, "MESSAGES.md");
+	try {
+		await mkdir(topicDir, { recursive: true });
+		await mkdir(sessionsDir, { recursive: true });
+		await writeFile(messages, "v1\n", "utf8");
+		const h1 = contentHash("v1\n");
+		const sessionId = randomUUID();
+		const sessionFile = join(sessionsDir, `${sessionId}.jsonl`);
+		await writeFile(
+			sessionFile,
+			sessionFileText({ sessionId, cwd: project, subs: { topics: ["t1"], cursors: { t1: h1 } } }),
+			"utf8",
+		);
+
+		// 开 1：cursor == 磁盘版本 → 不补投（恢复路径跑通且不误报）
+		const first = { wakes: [] as string[], reports: [] as Array<{ sessionId: string; topics: string[] }> };
+		const a = await openWatchedSession({ runtime, project, sessionsDir, sessionFile, sinks: first });
+		await sleep(800);
+		if (first.wakes.length !== 0) throw new Error(`V8: 已同步会话不应补投，实测 ${JSON.stringify(first.wakes)}`);
+		if (first.reports.at(-1)?.topics.join(",") !== "t1") {
+			throw new Error(`V8: 恢复后订阅快照应为 [t1]，实测 ${JSON.stringify(first.reports)}`);
+		}
+		console.log(`[V8] 开 1（cursor==磁盘）: wakes=0，快照=${JSON.stringify(first.reports.at(-1)?.topics)}`);
+		a.dispose(); // session_shutdown → 停 watcher
+		await sleep(300);
+
+		// 会话关闭期间对端写入（离线变化）
+		await writeFile(messages, "v2\n", "utf8");
+		const h2 = contentHash("v2\n");
+
+		// 开 2：重开同一会话 → 补投恰好一次 + cursor 推进落盘
+		const second = { wakes: [] as string[], reports: [] as Array<{ sessionId: string; topics: string[] }> };
+		const b = await openWatchedSession({ runtime, project, sessionsDir, sessionFile, sinks: second });
+		await sleep(800);
+		if (second.wakes.length !== 1) {
+			throw new Error(`V8: 离线变化应补投恰好一次，实测 ${second.wakes.length} 次：${JSON.stringify(second.wakes)}`);
+		}
+		if (!second.wakes[0]?.includes("[channel:t1]")) {
+			throw new Error(`V8: 唤醒文案缺少 [channel:t1]：${second.wakes[0]}`);
+		}
+		const persisted = await lastSubsPayload(sessionFile);
+		if (persisted.cursors?.t1 !== h2) {
+			throw new Error(`V8: 补投后 cursor 未推进落盘：${JSON.stringify(persisted)}`);
+		}
+		console.log(`[V8] 开 2（离线变化）: wakes=1，cursor 已推进落盘（${String(h2).slice(0, 8)}…）`);
+		b.dispose();
+		await sleep(300);
+
+		// 开 3：用推进后的快照再重开 → 不重复补投
+		const third = { wakes: [] as string[], reports: [] as Array<{ sessionId: string; topics: string[] }> };
+		const c = await openWatchedSession({ runtime, project, sessionsDir, sessionFile, sinks: third });
+		await sleep(800);
+		if (third.wakes.length !== 0) {
+			throw new Error(`V8: 重复补投了 ${third.wakes.length} 次：${JSON.stringify(third.wakes)}`);
+		}
+		c.dispose();
+		console.log("[V8] PASS: 离线变化补投恰好一次、游标落盘、重开不重复");
+	} finally {
+		await rm(root, { recursive: true, force: true });
+	}
+}
+
 // ---------- main ----------
 
 async function main() {
 	const phase = process.argv[2] ?? "all";
 	if (phase === "v4") return phaseV4();
 	if (phase === "v5") return phaseV5();
+	if (phase === "v7") return phaseV7();
 	const runtime = await setup();
 	try {
-		if (phase === "v6") await phaseV6(runtime);
+		if (phase === "v8") await phaseV8(runtime);
+		else if (phase === "v6") await phaseV6(runtime);
 		else if (phase === "v1") await phaseV1(runtime);
 		else if (phase === "v2") await phaseV2(runtime);
 		else if (phase === "v3") await phaseV3(runtime);
 		else if (phase === "all") {
 			await phaseV4();
 			await phaseV5();
+			await phaseV7();
+			await phaseV8(runtime);
 			await phaseV6(runtime);
 			await phaseV1(runtime);
 			await phaseV2(runtime);

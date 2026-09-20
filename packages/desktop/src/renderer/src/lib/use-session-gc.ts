@@ -1,14 +1,17 @@
 import { useEffect } from "react";
+import { getPi } from "../api";
 import { isDraftSessionId, useSessionsStore } from "../stores/sessions";
 import { useTranscriptStore } from "../stores/transcript";
-import { pickUnloadCandidates, type SessionGcEntry } from "./session-gc";
+import type { SessionGcEntry } from "./session-gc";
+import { runSessionGcRound } from "./session-gc-run";
 
 /**
- * 会话内存策略接线层：把 `lib/session-gc.ts` 的纯判定接到 store 上（判定逻辑全在那边，这里只订阅与执行）。
+ * 会话内存策略接线层：把 store/IPC 接到 `lib/session-gc-run.ts` 的一轮编排上
+ * （判定与 fail-safe 语义全在那边，这里只订阅与时序）。
  *
  * **为什么不订阅 transcript**：`bySession` 每来一个 token 就变一次，订阅它等于每个 token 白跑一轮判定。
- * 改为「挂载跑一次 + 60s 兜底 tick + 只订阅 sessions/activeSessionId」，回调里一律 `getState()` 现读
- * （60s tick 也保证 `idleTimeoutMs` 那条时间规则会随真实时间推进而生效）。
+ * 改为「挂载跑一次 + 20s 兜底 tick + 只订阅 sessions/activeSessionId」，回调里一律 `getState()` 现读
+ * （tick 也保证 `idleTimeoutMs` 那条时间规则会随真实时间推进而生效）。
  *
  * 空闲热会话保留数（K=3，用户拍板）。想调体验改这里。
  */
@@ -41,35 +44,29 @@ export function useSessionGc(): void {
 			if (running) return;
 			running = true;
 			try {
-				const state = useSessionsStore.getState();
-				const candidates = pickUnloadCandidates({
-					activeSessionId: state.activeSessionId,
-					open: state.sessions.map((session) => ({
-						sessionId: session.sessionId,
-						// 缺打点理论不可达（每个进 sessions 的路径都打点）；真缺了当「最久未用」处理
-						lastUsedAt: state.lastUsedAt[session.sessionId] ?? 0,
-						isDraft: isDraftSessionId(session.sessionId),
-						// 磁盘元数据（打开时读一次；本次进程内新建的会话恒为 0）：与 transcript 实时条数
-						// 一起交给纯层判「有没有会话文件」，见 lib/session-gc.ts 的 isProtected
-						messageCount: session.messageCount,
-					})),
+				await runSessionGcRound({
+					getOpen: () => {
+						const state = useSessionsStore.getState();
+						return {
+							activeSessionId: state.activeSessionId,
+							open: state.sessions.map((session) => ({
+								sessionId: session.sessionId,
+								// 缺打点理论不可达（每个进 sessions 的路径都打点）；真缺了当「最久未用」处理
+								lastUsedAt: state.lastUsedAt[session.sessionId] ?? 0,
+								isDraft: isDraftSessionId(session.sessionId),
+								// 磁盘元数据（打开时读一次；本次进程内新建的会话恒为 0）：与 transcript 实时条数
+								// 一起交给纯层判「有没有会话文件」，见 lib/session-gc.ts 的 isProtected；
+								// hasChannelSubscriptions 由本轮编排从 backend 快照映射进来
+								messageCount: session.messageCount,
+							})),
+						};
+					},
 					entryOf,
+					listSubscriptionSessionIds: () => getPi().getChannelSubscriptionSessionIds(),
+					unload: (sessionId) => useSessionsStore.getState().unloadSession(sessionId),
 					now: Date.now(),
 					keep: KEEP,
 				});
-
-				for (const { sessionId, reason } of candidates) {
-					// 算完候选到真正卸载之间，用户可能正好切过来、会话也可能已被关掉 → 逐个再确认一次
-					const latest = useSessionsStore.getState();
-					if (latest.activeSessionId === sessionId) continue;
-					if (!latest.sessions.some((s) => s.sessionId === sessionId)) continue;
-					// 日志打在**成功之后**：后端在跑会拒绝（closed=false），打在前面会误报「已卸载」
-					const { closed } = await latest.unloadSession(sessionId);
-					if (import.meta.env.DEV) {
-						if (closed) console.debug("[session-gc] unload", sessionId, `reason=${reason}`);
-						else console.debug("[session-gc] skipped", sessionId, `reason=${reason} refused-by-backend`);
-					}
-				}
 			} finally {
 				running = false;
 			}

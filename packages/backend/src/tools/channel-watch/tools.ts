@@ -22,7 +22,7 @@ export interface ChannelToolDeps {
 	/** 项目根（会话 cwd） */
 	cwd: string;
 	/** 订阅一个频道（extension 闭包：改订阅集 + appendEntry + 惰性激活 watcher + 恢复暂停） */
-	subscribe(topic: string): SubscribeOutcome;
+	subscribe(topic: string): Promise<SubscribeOutcome>;
 	/** 退订（空集时停 watcher；guard.forgetTopic） */
 	unsubscribe(topic: string): { ok: boolean; error?: string };
 	/** 发消息到频道（extension 闭包：append MESSAGES.md + guard.markSelfWrite 自写抑制） */
@@ -65,7 +65,7 @@ export function makeChannelTools(deps: ChannelToolDeps): ToolDefinition[] {
 			const topic = String((params as { topic?: unknown }).topic ?? "").trim();
 			const invalid = validateTopic(topic);
 			if (invalid) return textResult(`订阅失败：${invalid}`);
-			const result = deps.subscribe(topic);
+			const result = await deps.subscribe(topic);
 			if (!result.ok) return textResult(`订阅失败：${result.error ?? "未知错误"}`);
 			const resumedNote = result.resumed ? "（该频道此前因频繁互触发被暂停，本次订阅已恢复）" : "";
 			return textResult(

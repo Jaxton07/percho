@@ -44,6 +44,11 @@ export interface SessionGcOpen {
 	isDraft: boolean;
 	/** 消息条数（磁盘元数据，打开时读一次）：与 transcript 条数取大值判断「有没有会话文件」 */
 	messageCount: number;
+	/**
+	 * 该会话在 backend 有有效频道订阅（GC 每轮拉一次订阅会话 ID 快照算出）。
+	 * 缺省 false = 不受保护；保护判定见 `isProtected`（阶段 1 接入）。
+	 */
+	hasChannelSubscriptions?: boolean;
 }
 
 export interface SessionGcInput {
@@ -84,6 +89,9 @@ export const GC_DEFAULTS = {
  */
 export function isProtected(item: SessionGcOpen, entry: SessionGcEntry | undefined): boolean {
 	if (item.isDraft) return true;
+	// 有频道订阅 = 明确驻留语义（spec channel-watch retention §6.2）：卸载会停 watcher，
+	// 会话从此收不到频道唤醒——用户显式订阅了就该留在内存里（退订即恢复普通 GC 资格）。
+	if (item.hasChannelSubscriptions) return true;
 	// 0 消息会话还没有会话文件（SDK 只在追加 entry 时才建文件）：磁盘历史里查不到它，
 	// 卸掉 = 会话条目从 UI 消失、用户刚选的模型/档位丢失（审计实测）。
 	// 判据取「磁盘 meta」与「transcript 实时条数」的较大值 —— 只信 meta 会把本次进程内
