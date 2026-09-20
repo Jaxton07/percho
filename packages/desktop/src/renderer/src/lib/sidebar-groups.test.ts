@@ -404,9 +404,17 @@ describe("导航投影：只读子会话不进左栏", () => {
 		expect(result.projects.find((p) => p.cwd === P2)).toBeUndefined();
 	});
 
-	it("activeCwd 为 null（新会话 draft 页）：默认展开集为空，不误展开任何组", () => {
+	it("尚无当前目录（新会话 draft 还没选项目）：默认展开集为空，不误展开任何组", () => {
 		const { result } = navigation([session("main", P1, 100)], [], {
 			activeSessionId: null,
+			activeCwd: null,
+		});
+		expect(result.defaultExpandedKeys).toEqual([]);
+	});
+
+	it("activeCwd 显式为 null 时不得回退去可见 sessions 里反查 active 的 cwd", () => {
+		const { result } = navigation([session("main", P1, 100), session("a", P2, 200)], [], {
+			activeSessionId: "a",
 			activeCwd: null,
 		});
 		expect(result.defaultExpandedKeys).toEqual([]);

@@ -18,16 +18,14 @@ const piMock = vi.hoisted(() => ({
 	getTodos: vi.fn(() => Promise.resolve([])),
 	getPermissionMode: vi.fn(() => Promise.resolve("default" as const)),
 	setPermissionMode: vi.fn(() => Promise.resolve()),
+	// loadModels 的输入（阶段 0 的 draft 默认模型补齐用例）：无类型 mock，用例内 mockImplementation 喂数据
+	listModels: vi.fn(),
+	loadUiState: vi.fn(),
 }));
 vi.mock("../api", () => ({ getPi: () => piMock }));
 
-import {
-	DRAFT_SESSION_PREFIX,
-	isDraftSessionId,
-	partitionSessionsByPin,
-	selectBarSessions,
-	useSessionsStore,
-} from "./sessions";
+import { NEW_SESSION_DRAFT_KEY, useDraftStore } from "./drafts";
+import { partitionSessionsByPin, selectBarSessions, useSessionsStore } from "./sessions";
 import { useToastsStore } from "./toasts";
 import { useTranscriptStore } from "./transcript";
 import { useUiPreferencesStore } from "./ui-preferences";
@@ -63,6 +61,7 @@ function resetStore() {
 		trustVersion: 0,
 		permissionModes: {},
 	});
+	useDraftStore.setState({ bySession: {} });
 }
 
 beforeEach(() => {
@@ -71,15 +70,6 @@ beforeEach(() => {
 	piMock.openSession.mockReset();
 	resetStore();
 	useTranscriptStore.setState({ bySession: {} });
-});
-
-describe("isDraftSessionId", () => {
-	it("识别 draft 前缀 id", () => {
-		expect(isDraftSessionId(`${DRAFT_SESSION_PREFIX}abc`)).toBe(true);
-		expect(isDraftSessionId("real-1")).toBe(false);
-		expect(isDraftSessionId(null)).toBe(false);
-		expect(isDraftSessionId(undefined)).toBe(false);
-	});
 });
 
 describe("partitionSessionsByPin", () => {
@@ -124,10 +114,10 @@ describe("selectBarSessions（顶栏 = 置顶表驱动）", () => {
 		expect(out[0]?.name).toBe("新名字");
 	});
 
-	it("draft 不进顶栏：无置顶时即使存在 draft 也返回空（顶栏严格 = 置顶表）", () => {
-		const draft = realMeta(`${DRAFT_SESSION_PREFIX}x`, "/p");
-		expect(ids(selectBarSessions([...tabs, draft], [], history))).toEqual([]);
-		expect(ids(selectBarSessions([...tabs, draft], ["c"], history))).toEqual(["c"]);
+	it("未置顶的已打开会话不进顶栏：顶栏严格 = 置顶表（新会话 draft 根本不在 sessions）", () => {
+		const fresh = realMeta("fresh-1", "/p");
+		expect(ids(selectBarSessions([...tabs, fresh], [], history))).toEqual([]);
+		expect(ids(selectBarSessions([...tabs, fresh], ["c"], history))).toEqual(["c"]);
 	});
 
 	it("置顶表里的未知 id（会话已删）直接跳过，不生成空胶囊", () => {
@@ -141,103 +131,7 @@ describe("selectBarSessions（顶栏 = 置顶表驱动）", () => {
 	});
 });
 
-describe("createDraftSession", () => {
-	it("只建内存 draft tab：不触后端、不落盘", () => {
-		useSessionsStore.setState({ cwd: "/proj/a" });
-		useSessionsStore.getState().createDraftSession();
-		const state = useSessionsStore.getState();
-		expect(state.sessions).toHaveLength(1);
-		expect(isDraftSessionId(state.sessions[0]?.sessionId)).toBe(true);
-		expect(state.sessions[0]?.cwd).toBe("/proj/a");
-		expect(state.sessions[0]?.sessionFile).toBeUndefined();
-		expect(state.activeSessionId).toBe(state.sessions[0]?.sessionId);
-		expect(piMock.createSession).not.toHaveBeenCalled();
-	});
-
-	it("支持显式 cwd（项目页新会话入口）", () => {
-		useSessionsStore.setState({ cwd: "/proj/a" });
-		useSessionsStore.getState().createDraftSession("/proj/b");
-		expect(useSessionsStore.getState().sessions[0]?.cwd).toBe("/proj/b");
-		expect(useSessionsStore.getState().cwd).toBe("/proj/b");
-	});
-
-	it("无 cwd 时 no-op", () => {
-		useSessionsStore.getState().createDraftSession();
-		expect(useSessionsStore.getState().sessions).toHaveLength(0);
-	});
-});
-
-describe("setDraftCwd", () => {
-	it("活跃 tab 是 draft：同步更新 draft 条目与全局 cwd", () => {
-		useSessionsStore.getState().createDraftSession("/proj/a");
-		useSessionsStore.getState().setDraftCwd("/proj/b");
-		const state = useSessionsStore.getState();
-		expect(state.sessions[0]?.cwd).toBe("/proj/b");
-		expect(state.cwd).toBe("/proj/b");
-	});
-
-	it("活跃 tab 是真实会话：只改全局默认，不动会话条目", () => {
-		useSessionsStore.setState({ sessions: [realMeta("r1", "/proj/a")], activeSessionId: "r1" });
-		useSessionsStore.getState().setDraftCwd("/proj/b");
-		const state = useSessionsStore.getState();
-		expect(state.sessions[0]?.cwd).toBe("/proj/a");
-		expect(state.cwd).toBe("/proj/b");
-	});
-});
-
-describe("draft 转正（createSession + replaceDraftId）", () => {
-	it("用 draft 的 cwd 创建后端会话，原地替换保持 tab 位置", async () => {
-		piMock.createSession.mockResolvedValue(realMeta("real-1", "/proj/b"));
-		useSessionsStore.getState().createDraftSession("/proj/a");
-		useSessionsStore.getState().createDraftSession("/proj/a");
-		const draftId = useSessionsStore.getState().activeSessionId;
-		if (!draftId) throw new Error("no draft");
-		useSessionsStore.getState().setDraftCwd("/proj/b");
-
-		await useSessionsStore.getState().createSession("/proj/b", draftId);
-
-		const state = useSessionsStore.getState();
-		expect(piMock.createSession).toHaveBeenCalledWith({
-			options: { cwd: "/proj/b", thinkingLevel: "medium" },
-		});
-		expect(state.sessions).toHaveLength(2);
-		expect(state.sessions[1]?.sessionId).toBe("real-1");
-		expect(state.sessions[1]?.cwd).toBe("/proj/b");
-		expect(state.activeSessionId).toBe("real-1");
-		// v10：不再落盘打开列表（启动纯空，见 spec §12）
-		expect(piMock.openSession).not.toHaveBeenCalled();
-	});
-
-	it("创建失败：draft tab 保留，toast 提示（不残留 store 错误态）", async () => {
-		piMock.createSession.mockRejectedValue(new Error("boom"));
-		useSessionsStore.getState().createDraftSession("/proj/a");
-		const draftId = useSessionsStore.getState().activeSessionId;
-		await useSessionsStore.getState().createSession("/proj/a", draftId ?? undefined);
-		const state = useSessionsStore.getState();
-		expect(state.sessions[0]?.sessionId).toBe(draftId);
-		expect(
-			useToastsStore
-				.getState()
-				.toasts.some(
-					(t) =>
-						t.severity === "warning" && t.titleKey === "toast.sessionCreateFailed" && t.detail === "boom",
-				),
-		).toBe(true);
-	});
-});
-
 describe("closeSession", () => {
-	it("关闭 draft：纯本地移除，不调后端、不落盘", async () => {
-		useSessionsStore.getState().createDraftSession("/proj/a");
-		const draftId = useSessionsStore.getState().activeSessionId;
-		if (!draftId) throw new Error("no draft");
-		await useSessionsStore.getState().closeSession(draftId);
-		const state = useSessionsStore.getState();
-		expect(piMock.closeSession).not.toHaveBeenCalled();
-		expect(state.sessions).toHaveLength(0);
-		expect(state.activeSessionId).toBeNull();
-	});
-
 	it("关闭真实会话：正常走后端并落盘", async () => {
 		useSessionsStore.setState({ sessions: [realMeta("r1", "/proj/a")], activeSessionId: "r1" });
 		await useSessionsStore.getState().closeSession("r1");
@@ -297,22 +191,14 @@ describe("closeSession", () => {
 });
 
 describe("switchSession", () => {
-	it("切到 draft：cwd 恢复为 draft 的目录，但不落盘；切回真实会话恢复并落盘", () => {
+	it("切到真实会话：cwd 跟随该会话的项目", () => {
 		useSessionsStore.setState({
 			sessions: [realMeta("r1", "/proj/a")],
 			activeSessionId: "r1",
 			cwd: "/proj/a",
 		});
-		useSessionsStore.getState().createDraftSession("/proj/b");
-		const draftId = useSessionsStore.getState().activeSessionId;
-		if (!draftId) throw new Error("no draft");
-
-		vi.clearAllMocks();
 		useSessionsStore.getState().switchSession("r1");
 		expect(useSessionsStore.getState().cwd).toBe("/proj/a");
-
-		useSessionsStore.getState().switchSession(draftId);
-		expect(useSessionsStore.getState().cwd).toBe("/proj/b");
 	});
 });
 
@@ -385,18 +271,6 @@ describe("forkSession", () => {
 					(t) => t.severity === "warning" && t.titleKey === "toast.forkFailed" && t.detail === "bundle boom",
 				),
 		).toBe(true);
-	});
-});
-
-describe("模型/思考级别", () => {
-	it("draft 下切换模型：只记跟随值与 draft 条目，不调后端 setModel", async () => {
-		useSessionsStore.getState().createDraftSession("/proj/a");
-		await useSessionsStore.getState().setCurrentModel("p", "m");
-		const state = useSessionsStore.getState();
-		expect(piMock.setModel).not.toHaveBeenCalled();
-		expect(state.lastUsedModel).toEqual({ provider: "p", modelId: "m" });
-		expect(state.sessions[0]?.model).toEqual({ provider: "p", modelId: "m" });
-		expect(piMock.saveUiState).toHaveBeenCalled();
 	});
 });
 
@@ -485,14 +359,6 @@ describe("permissionModes「缺 key = default」语义", () => {
 		await useSessionsStore.getState().setSessionPermissionMode("s1", "fullAccess");
 		expect(useUiPreferencesStore.getState().sessionPermissionModes).toEqual({});
 	});
-
-	it("draft 会话模式纯 renderer：不调 IPC", async () => {
-		const draftId = `${DRAFT_SESSION_PREFIX}x`;
-		useSessionsStore.setState({ sessions: [realMeta(draftId, "/p")], activeSessionId: draftId });
-		await useSessionsStore.getState().setSessionPermissionMode(draftId, "fullAccess");
-		expect(useSessionsStore.getState().permissionModes).toEqual({ [draftId]: "fullAccess" });
-		expect(piMock.setPermissionMode).not.toHaveBeenCalled();
-	});
 });
 
 describe("switchSession 懒加载兑底", () => {
@@ -536,16 +402,19 @@ describe("记住上次项目目录（lastCwd）", () => {
 		expect(piMock.saveUiState).toHaveBeenLastCalledWith({ state: { lastCwd: "/work/beta" } });
 	});
 
-	it("新建会话（draft 转正）后记住该项目", async () => {
-		piMock.createSession.mockResolvedValue(realMeta("real-1", "/work/gamma"));
-		await useSessionsStore.getState().createSession("/work/gamma");
+	it("首条消息 promotion 成功后记住该项目", async () => {
+		piMock.createSession.mockResolvedValue(realMeta("new-1", "/work/gamma"));
+		dstore().activateNewSessionDraft("/work/gamma");
+		await dstore().createSession();
+		expect(useUiPreferencesStore.getState().lastCwd).toBe("/work/gamma");
 		expect(piMock.saveUiState).toHaveBeenLastCalledWith({ state: { lastCwd: "/work/gamma" } });
 	});
 
 	it("在选择器里选项目（setDraftCwd）后立刻记住：首启选完项目没发消息就退出，下次也不用重选", () => {
-		useSessionsStore.getState().createDraftSession("/work/alpha");
+		dstore().activateNewSessionDraft("/work/alpha");
 		piMock.saveUiState.mockClear();
-		useSessionsStore.getState().setDraftCwd("/work/beta");
+		dstore().setDraftCwd("/work/beta");
+		expect(dstore().newSessionDraft?.cwd).toBe("/work/beta");
 		expect(useUiPreferencesStore.getState().lastCwd).toBe("/work/beta");
 		expect(piMock.saveUiState).toHaveBeenLastCalledWith({ state: { lastCwd: "/work/beta" } });
 	});
@@ -658,36 +527,14 @@ describe("导航 latest-wins：最后一次点击获胜（spec D2）", () => {
 		}
 	});
 
-	it("draft 转正（createSession）迟到不得覆盖后续 switch（新会话仍进 tabs）", async () => {
-		const created = deferred<SessionMeta>();
-		piMock.createSession.mockImplementationOnce(() => created.promise);
-		useSessionsStore.getState().createDraftSession("/p");
-		const draftId = useSessionsStore.getState().activeSessionId;
-		if (!draftId) throw new Error("no draft");
-		useSessionsStore.setState((state) => ({ sessions: [...state.sessions, realMeta("b", "/p")] }));
-
-		const creating = useSessionsStore.getState().createSession("/p", draftId);
-		useSessionsStore.getState().switchSession("b");
-		created.resolve(realMeta("new-1", "/p"));
-		const createdId = await creating;
-
-		// 迟到的创建仍要把新会话 id 交给调用方（发送方按返回值定位，不读 active）
-		expect(createdId).toBe("new-1");
-		const state = useSessionsStore.getState();
-		expect(state.activeSessionId).toBe("b");
-		expect(state.cwd).toBe("/p");
-		expect(state.sessions.map((s) => s.sessionId)).toContain("new-1");
-	});
-
-	it("createSession 失败返回 null（调用方据此中止发送），且不动 active/cwd", async () => {
-		piMock.createSession.mockRejectedValueOnce(new Error("create boom"));
+	it("无 draft 时 createSession 返回 null（调用方据此中止发送），不发 IPC、不动 active/cwd", async () => {
 		useSessionsStore.setState({ sessions: [realMeta("b", "/p")], activeSessionId: "b", cwd: "/p" });
 
-		expect(await useSessionsStore.getState().createSession("/p")).toBeNull();
+		expect(await dstore().createSession()).toBeNull();
 
+		expect(piMock.createSession).not.toHaveBeenCalled();
 		expect(useSessionsStore.getState().activeSessionId).toBe("b");
 		expect(useSessionsStore.getState().cwd).toBe("/p");
-		expect(toastKeys()).toContain("toast.sessionCreateFailed");
 	});
 
 	it("fork 迟到不得覆盖后续 switch（新会话进 tabs，但不抢 active）", async () => {
@@ -961,6 +808,12 @@ describe("单例新会话 draft（newSessionDraft）", () => {
 		expect(piMock.createSession).not.toHaveBeenCalled();
 	});
 
+	it("激活 draft 即前置项目信任决策（结果落 trust.json，斜杠命令/需求转正直接命中缓存）", () => {
+		useSessionsStore.setState({ cwd: "/proj/a" });
+		dstore().activateNewSessionDraft();
+		expect(piMock.ensureProjectTrust).toHaveBeenCalledWith({ cwd: "/proj/a" });
+	});
+
 	it("从当前真实会话快照 cwd/model/thinking（全局最近值是另一套，不得采用）", () => {
 		useSessionsStore.setState({
 			sessions: [
@@ -978,22 +831,53 @@ describe("单例新会话 draft（newSessionDraft）", () => {
 		expect(draft?.thinkingLevel).toBe("high");
 	});
 
-	it("已在 draft 时再点「＋」：返回同一 draft，内容与配置都不覆盖", () => {
+	it("已在 draft 时再点「＋」：返回同一 draft，配置与输入内容都不覆盖（离开 → 真实 switchSession → 回来）", () => {
 		useSessionsStore.setState({ cwd: "/proj/a" });
 		dstore().activateNewSessionDraft();
 		dstore().setDraftCwd("/proj/b");
 		dstore().setDraftPermissionMode("fullAccess");
-		// 用户临时切到真实会话，再点「＋」回到 draft
-		useSessionsStore.setState((state) => ({
-			sessions: [...state.sessions, realMeta("r1", "/proj/a")],
+		useDraftStore.getState().updateDraft(NEW_SESSION_DRAFT_KEY, (d) => ({ ...d, text: "半包需求" }));
+		// 用户切到真实会话（真实动作，不用裸 setState 绕开要验证的路径）
+		useSessionsStore.setState({
+			sessions: [realMeta("r1", "/proj/a")],
 			activeSessionId: "r1",
-		}));
+			cwd: "/proj/a",
+		});
+		useSessionsStore.getState().switchSession("r1");
+
 		dstore().activateNewSessionDraft();
+
 		const state = dstore();
 		expect(state.activeSessionId).toBeNull();
 		expect(state.newSessionDraft?.cwd).toBe("/proj/b");
 		expect(state.newSessionDraft?.permissionMode).toBe("fullAccess");
+		expect(state.cwd).toBe("/proj/b");
 		expect(state.sessions.map((s) => s.sessionId)).toEqual(["r1"]);
+		expect(useDraftStore.getState().bySession[NEW_SESSION_DRAFT_KEY]?.text).toBe("半包需求");
+	});
+
+	it("draft 输入内容（文字/图片/slash/引用）挂在全局新会话草稿键上，再次激活不重置", () => {
+		useSessionsStore.setState({ cwd: "/proj/a" });
+		const draftStore = useDraftStore.getState();
+		draftStore.updateDraft(NEW_SESSION_DRAFT_KEY, () => ({
+			text: "接着上一句",
+			images: [{ data: "AAAA", mimeType: "image/png" }],
+			slashCommand: "compact",
+			attachments: ["src/a.ts"],
+			quotes: ["引用段落"],
+		}));
+
+		dstore().activateNewSessionDraft();
+		expect(useDraftStore.getState().bySession[NEW_SESSION_DRAFT_KEY]).toEqual({
+			text: "接着上一句",
+			images: [{ data: "AAAA", mimeType: "image/png" }],
+			slashCommand: "compact",
+			attachments: ["src/a.ts"],
+			quotes: ["引用段落"],
+		});
+
+		dstore().activateNewSessionDraft();
+		expect(useDraftStore.getState().bySession[NEW_SESSION_DRAFT_KEY]?.text).toBe("接着上一句");
 	});
 
 	it("无 cwd 也能进入 draft（newSessionDraft.cwd === null，不静默 no-op）", () => {
@@ -1020,6 +904,75 @@ describe("单例新会话 draft（newSessionDraft）", () => {
 		expect(dstore().newSessionDraft?.thinkingLevel).toBe("high");
 		expect(dstore().lastUsedModel).toEqual({ provider: "p", modelId: "m" });
 		expect(dstore().lastUsedThinkingLevel).toBe("high");
+	});
+
+	it("初始 draft 无可继承模型：loadModels 补最近（或首个可用）模型", async () => {
+		piMock.listModels.mockImplementation(() =>
+			Promise.resolve([
+				{ provider: "deepseek", providerName: "DeepSeek", id: "v4", label: "V4", authed: true },
+			]),
+		);
+		piMock.loadUiState.mockImplementation(() =>
+			Promise.resolve({ lastUsedModel: { provider: "deepseek", modelId: "v4" } }),
+		);
+
+		dstore().activateNewSessionDraft();
+		expect(dstore().newSessionDraft?.model).toBeNull();
+
+		await useSessionsStore.getState().loadModels();
+
+		expect(dstore().newSessionDraft?.model).toEqual({ provider: "deepseek", modelId: "v4" });
+	});
+
+	it("draft 已从当前会话继承模型：loadModels 不得改成「全局最近」那一个", async () => {
+		piMock.listModels.mockImplementation(() =>
+			Promise.resolve([
+				{ provider: "deepseek", providerName: "DeepSeek", id: "v4", label: "V4", authed: true },
+			]),
+		);
+		piMock.loadUiState.mockImplementation(() =>
+			Promise.resolve({ lastUsedModel: { provider: "deepseek", modelId: "v4" } }),
+		);
+		useSessionsStore.setState({
+			sessions: [
+				{ ...realMeta("a", "/proj/a"), model: { provider: "pA", modelId: "mA" }, thinkingLevel: "high" },
+			],
+			activeSessionId: "a",
+			cwd: "/proj/a",
+		});
+
+		dstore().activateNewSessionDraft();
+		await useSessionsStore.getState().loadModels();
+
+		expect(dstore().newSessionDraft?.model).toEqual({ provider: "pA", modelId: "mA" });
+	});
+
+	it("用户已在 draft 上改过思考档位：loadModels 不得回写模型时把该选择一起覆盖", async () => {
+		piMock.listModels.mockImplementation(() =>
+			Promise.resolve([
+				{
+					provider: "deepseek",
+					providerName: "DeepSeek",
+					id: "v4",
+					label: "V4",
+					authed: true,
+					thinkingLevels: ["low", "medium", "high"],
+				},
+			]),
+		);
+		piMock.loadUiState.mockImplementation(() =>
+			Promise.resolve({
+				lastUsedModel: { provider: "deepseek", modelId: "v4" },
+				lastUsedThinkingLevel: "low",
+			}),
+		);
+
+		dstore().activateNewSessionDraft();
+		await useSessionsStore.getState().setThinkingLevel("high");
+
+		await useSessionsStore.getState().loadModels();
+
+		expect(dstore().newSessionDraft?.thinkingLevel).toBe("high");
 	});
 });
 
@@ -1068,12 +1021,13 @@ describe("promotion：首条消息把 draft 转成真实会话", () => {
 		expect(dstore().sessions.filter((s) => s.sessionId === "new-1")).toHaveLength(1);
 	});
 
-	it("创建失败：draft 与配置完整保留，重试会重新发 IPC", async () => {
+	it("创建失败：draft 与配置、输入内容完整保留，重试会重新发 IPC", async () => {
 		piMock.createSession
 			.mockRejectedValueOnce(new Error("boom"))
 			.mockResolvedValueOnce(realMeta("new-1", "/proj/a"));
 		dstore().activateNewSessionDraft("/proj/a");
 		dstore().setDraftPermissionMode("fullAccess");
+		useDraftStore.getState().updateDraft(NEW_SESSION_DRAFT_KEY, (d) => ({ ...d, text: "别丢了我" }));
 
 		expect(await dstore().createSession()).toBeNull();
 
@@ -1081,6 +1035,7 @@ describe("promotion：首条消息把 draft 转成真实会话", () => {
 		expect(afterFail.newSessionDraft?.cwd).toBe("/proj/a");
 		expect(afterFail.newSessionDraft?.permissionMode).toBe("fullAccess");
 		expect(afterFail.activeSessionId).toBeNull();
+		expect(useDraftStore.getState().bySession[NEW_SESSION_DRAFT_KEY]?.text).toBe("别丢了我");
 		expect(toastKeys()).toContain("toast.sessionCreateFailed");
 
 		expect(await dstore().createSession()).toBe("new-1");
@@ -1114,5 +1069,39 @@ describe("promotion：首条消息把 draft 转成真实会话", () => {
 
 		expect(piMock.setPermissionMode).toHaveBeenCalledWith({ sessionId: "new-1", mode: "fullAccess" });
 		expect(dstore().permissionModes["new-1"]).toBe("fullAccess");
+	});
+
+	it("draft.cwd === null：返回 null 且不发 IPC（等用户在项目选择器里选目录）", async () => {
+		dstore().activateNewSessionDraft();
+
+		expect(await dstore().createSession()).toBeNull();
+
+		expect(piMock.createSession).not.toHaveBeenCalled();
+		expect(dstore().newSessionDraft?.cwd).toBeNull();
+		expect(dstore().activeSessionId).toBeNull();
+	});
+
+	it("promotion 在途时再点「＋」：复用同一 draft、不产生第二次 create、不覆盖配置与内容", async () => {
+		const created = deferred<SessionMeta>();
+		piMock.createSession.mockImplementationOnce(() => created.promise);
+		useSessionsStore.setState({ cwd: "/proj/a" });
+		dstore().activateNewSessionDraft();
+		dstore().setDraftPermissionMode("fullAccess");
+		useDraftStore.getState().updateDraft(NEW_SESSION_DRAFT_KEY, (d) => ({ ...d, text: "首条消息" }));
+
+		const promoting = dstore().createSession();
+		dstore().activateNewSessionDraft("/proj/other");
+
+		// 同一份 draft：cwd / 权限模式 / 内容都不被重置
+		expect(dstore().newSessionDraft?.cwd).toBe("/proj/a");
+		expect(dstore().newSessionDraft?.permissionMode).toBe("fullAccess");
+		expect(useDraftStore.getState().bySession[NEW_SESSION_DRAFT_KEY]?.text).toBe("首条消息");
+		expect(piMock.createSession).toHaveBeenCalledTimes(1);
+
+		created.resolve(realMeta("new-1", "/proj/a"));
+		expect(await promoting).toBe("new-1");
+		// 在途 re-activate 不是新的用户导航：转正成功后仍要落在新会话上
+		expect(dstore().activeSessionId).toBe("new-1");
+		expect(dstore().newSessionDraft).toBeNull();
 	});
 });
