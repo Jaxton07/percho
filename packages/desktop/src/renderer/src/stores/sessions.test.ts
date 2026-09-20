@@ -654,12 +654,25 @@ describe("导航 latest-wins：最后一次点击获胜（spec D2）", () => {
 		const creating = useSessionsStore.getState().createSession("/p", draftId);
 		useSessionsStore.getState().switchSession("b");
 		created.resolve(realMeta("new-1", "/p"));
-		await creating;
+		const createdId = await creating;
 
+		// 迟到的创建仍要把新会话 id 交给调用方（发送方按返回值定位，不读 active）
+		expect(createdId).toBe("new-1");
 		const state = useSessionsStore.getState();
 		expect(state.activeSessionId).toBe("b");
 		expect(state.cwd).toBe("/p");
 		expect(state.sessions.map((s) => s.sessionId)).toContain("new-1");
+	});
+
+	it("createSession 失败返回 null（调用方据此中止发送），且不动 active/cwd", async () => {
+		piMock.createSession.mockRejectedValueOnce(new Error("create boom"));
+		useSessionsStore.setState({ sessions: [realMeta("b", "/p")], activeSessionId: "b", cwd: "/p" });
+
+		expect(await useSessionsStore.getState().createSession("/p")).toBeNull();
+
+		expect(useSessionsStore.getState().activeSessionId).toBe("b");
+		expect(useSessionsStore.getState().cwd).toBe("/p");
+		expect(toastKeys()).toContain("toast.sessionCreateFailed");
 	});
 
 	it("fork 迟到不得覆盖后续 switch（新会话进 tabs，但不抢 active）", async () => {

@@ -60,16 +60,15 @@ export function useComposerSend(options: UseComposerSendOptions) {
 		const pendingMode = current ? state.permissionModes[current] : undefined;
 		const targetCwd = draftCwd ?? state.cwd;
 		if (!targetCwd) return null;
-		await useSessionsStore.getState().createSession(targetCwd, current ?? undefined);
-		const created = useSessionsStore.getState().activeSessionId;
-		if (created && !isDraftSessionId(created)) {
-			// 失败仅 toast（store 内已提示+回滚），不阻塞发送
-			if (pendingMode && pendingMode !== "default") {
-				await useSessionsStore.getState().setSessionPermissionMode(created, pendingMode);
-			}
-			return created;
+		// 用返回值定位新会话，不读 activeSessionId：创建期间用户可能已切走，
+		// 此时新会话仍在后台存在（latest-wins 不让它抢焦点），读 active 会把消息与权限模式发到别人身上
+		const created = await useSessionsStore.getState().createSession(targetCwd, current ?? undefined);
+		if (!created) return null;
+		// 失败仅 toast（store 内已提示+回滚），不阻塞发送
+		if (pendingMode && pendingMode !== "default") {
+			await useSessionsStore.getState().setSessionPermissionMode(created, pendingMode);
 		}
-		return null;
+		return created;
 	};
 
 	/** 执行内置命令（发送以 / 开头文本时的分发；未匹配则透传给 SDK 原生处理模板/skill/扩展命令） */

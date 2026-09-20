@@ -54,11 +54,49 @@ export function selectBarSessions(
 }
 
 /**
+ * 进程内单调激活序号（spec D2）：**用户导航动作一开始**就领号（不能等 IPC 返回才领，否则表达不了点击顺序）。
+ * 异步动作返回时只有「自己领的号仍是最新」才允许写 `activeSessionId/cwd/rememberCwd`；
+ * 过期的仍可落数据（sessions 条目、transcript 装载），但不得抄回焦点。
+ *
+ * 不落盘、不进 store：重启后一个在途动作都没有，序号归零无意义；测试间保留递增即可。
+ */
+let activationSeq = 0;
+
+function claimActivation(): number {
+	activationSeq += 1;
+	return activationSeq;
+}
+
+/** 领号后所有更早的在途导航立即失效（同步 `switchSession` 因此天然淘汰在飞的 open/create/fork） */
+function isLatestActivation(token: number): boolean {
+	return token === activationSeq;
+}
+
+/** 同会话在途的 bundle 装载（key = sessionId） */
+const bundleInFlight = new Map<string, Promise<void>>();
+
+/**
  * 打开会话时同步四件套：消息历史（可选跳过 live 态）、排队队列、todo 面板、权限模式。
  * 取数并行（各写 store 不同字段，无交叉读），应用顺序保持 history → queue → todos。
  * 权限模式对齐后端真值：关 tab 重开后端已归零 default，拉回防 stale（spec permission-mode D1）。
+ *
+ * 同会话同时在途时复用同一个 Promise（spec D3，见 `ensureOpenSession`）：open 完成时 meta 会先落进
+ * `sessions`，用户这时再点那一行就走 `switchSession` 的懒加载，两条路会撞车重复拉四件套。
  */
-async function loadSessionBundle(sessionId: string, opts?: { skipHistoryIfLive?: boolean }): Promise<void> {
+function loadSessionBundle(sessionId: string, opts?: { skipHistoryIfLive?: boolean }): Promise<void> {
+	const existing = bundleInFlight.get(sessionId);
+	if (existing) return existing;
+	const promise = loadSessionBundleInner(sessionId, opts).finally(() => {
+		if (bundleInFlight.get(sessionId) === promise) bundleInFlight.delete(sessionId);
+	});
+	bundleInFlight.set(sessionId, promise);
+	return promise;
+}
+
+async function loadSessionBundleInner(
+	sessionId: string,
+	opts?: { skipHistoryIfLive?: boolean },
+): Promise<void> {
 	// skip 判定在入口一次性取值：并行发起 IPC 前先确定是否跳过历史（agent 运行中保流式态，见 openFromHistory 注释）
 	const skipHistory =
 		opts?.skipHistoryIfLive === true &&
@@ -176,6 +214,55 @@ async function optimisticSessionSetting(
 }
 
 /**
+ * 共享 open pipeline（spec D3）：key = 规范化 sessionFile（trim）。同一文件在途时复用同一个 Promise，
+ * 因此「同一文件双击只发一次 IPC + 只装载一次 bundle + 失败只 toast 一次」；
+ * settle（无论成败）后立即清 key，失败可以重试；不同文件互不影响。
+ * 返回 null = 失败（提示已在共享链里报过，调用者不再重复报）。
+ *
+ * 模块级 Map 只存正在执行的 Promise，不落盘、不进 store：没有任何「仅测试用的 reset 入口」。
+ */
+function ensureOpenSession(filePath: string): Promise<SessionMeta | null> {
+	const key = filePath.trim();
+	const existing = openInFlight.get(key);
+	if (existing) return existing;
+	const promise = ensureOpenSessionInner(key).finally(() => {
+		if (openInFlight.get(key) === promise) openInFlight.delete(key);
+	});
+	openInFlight.set(key, promise);
+	return promise;
+}
+
+const openInFlight = new Map<string, Promise<SessionMeta | null>>();
+
+async function ensureOpenSessionInner(filePath: string): Promise<SessionMeta | null> {
+	let meta: SessionMeta;
+	try {
+		meta = await getPi().openSession({ filePath });
+	} catch (error) {
+		console.error("打开会话失败", error);
+		pushToast("warning", "toast.sessionOpenFailed", errText(error));
+		return null;
+	}
+	// 数据先落：meta 进 tabs + LRU 打点 —— 这些与「谁抢到焦点」无关（由调用者的 token 决定）。
+	// lastUsedAt 必须在数据路径打：用户确实点了这一行，不然 GC 会把它当成「从没用过」。
+	useSessionsStore.setState((state) => ({
+		sessions: [...state.sessions.filter((s) => s.sessionId !== meta.sessionId), meta],
+		lastUsedAt: { ...state.lastUsedAt, [meta.sessionId]: Date.now() },
+	}));
+	try {
+		// 运行中子会话的事件已按其 sessionId 实时转发；保留已有流式态，
+		// 否则会在点击卡片时把 agent_start 建立的进度视图重置为静态历史。
+		await loadSessionBundle(meta.sessionId, { skipHistoryIfLive: true });
+	} catch (error) {
+		// 会话已经打开了（后端在内存里、meta 在 tabs）：数据装载失败只能提示，
+		// 不能当成「打开失败」——否则用户点了行却什么都没发生。
+		console.error("装载会话数据失败", error);
+		pushToast("warning", "toast.sessionOpenFailed", errText(error));
+	}
+	return meta;
+}
+
+/**
  * 记住「上次项目目录」（重启后启动页预填，用户不用重选项目）。
  * 只写 cwd、**不恢复任何会话**（v10 启动纯空不变）；同值短路，避免切会话时频繁写 ui-state。
  * 四个调用点 = 新建会话（发首条消息转正）/ 切会话 / 从历史打开 / 在选择器里选项目，
@@ -204,7 +291,12 @@ interface SessionsStore {
 	 * 只活在本次进程（不落盘）：重启后一个会话都没打开，本来也没有 LRU 可言。
 	 */
 	lastUsedAt: Record<string, number>;
-	createSession: (cwd?: string, replaceDraftId?: string) => Promise<void>;
+	/**
+	 * 真正创建后端会话（draft 转正走这里）。返回新会话 id；失败返回 null。
+	 * **调用方必须用返回值定位新会话**，不能读 `activeSessionId`：创建是异步的，
+	 * 期间用户可能已切走（latest-wins 下新会话可能不抢焦点），读 active 会拿到别人的 id。
+	 */
+	createSession: (cwd?: string, replaceDraftId?: string) => Promise<string | null>;
 	/** 新建草稿会话 tab：不触后端、不落盘（空 tab 重启后自动消失），发送首条消息时才用其 cwd 真正创建 */
 	createDraftSession: (cwd?: string) => void;
 	/** 设置新会话的目标项目目录；活跃 tab 是 draft 时同步更新其条目（切 tab 往返不丢选择） */
@@ -241,7 +333,9 @@ export const useSessionsStore = create<SessionsStore>((set, get) => ({
 
 	createSession: async (cwd, replaceDraftId) => {
 		const targetCwd = cwd ?? get().cwd;
-		if (!targetCwd) return;
+		if (!targetCwd) return null;
+		// 新建会话（含 draft 转正）会切到新会话 = 用户导航：先领号
+		const token = claimActivation();
 		try {
 			const meta = await getPi().createSession({
 				options: {
@@ -250,25 +344,31 @@ export const useSessionsStore = create<SessionsStore>((set, get) => ({
 					thinkingLevel: get().lastUsedThinkingLevel,
 				},
 			});
-			set((state) => ({
+			set((state) => {
 				// draft 转正式会话：原地替换保持 tab 位置；普通新建则追加
-				sessions: replaceDraftId
+				const sessions = replaceDraftId
 					? state.sessions.map((s) => (s.sessionId === replaceDraftId ? meta : s))
-					: [...state.sessions, meta],
-				activeSessionId: meta.sessionId,
-				cwd: targetCwd,
-				// draft 键下的权限模式由 ensureSession 在创建后应用到新 id，这里顺手满档防泄漏
-				permissionModes: replaceDraftId
-					? withPermissionMode(state.permissionModes, replaceDraftId, "default")
-					: state.permissionModes,
-				lastUsedAt: { ...state.lastUsedAt, [meta.sessionId]: Date.now() },
-			}));
+					: [...state.sessions, meta];
+				const rest = {
+					// draft 键下的权限模式由 ensureSession 在创建后应用到新 id，这里顺手满档防泄漏
+					permissionModes: replaceDraftId
+						? withPermissionMode(state.permissionModes, replaceDraftId, "default")
+						: state.permissionModes,
+					lastUsedAt: { ...state.lastUsedAt, [meta.sessionId]: Date.now() },
+				};
+				// 迟到（用户已切到别的会话）：新会话仍进 tabs，但不抢焦点/cwd
+				return isLatestActivation(token)
+					? { ...rest, sessions, activeSessionId: meta.sessionId, cwd: targetCwd }
+					: { ...rest, sessions };
+			});
 			useTranscriptStore.getState().resetSession(meta.sessionId);
-			rememberCwd(targetCwd);
+			if (isLatestActivation(token)) rememberCwd(targetCwd);
+			return meta.sessionId;
 		} catch (error) {
 			// 失败时 draft tab 保留，用户重试即可；toast 提示（非会话内容，不残留）
 			console.error("创建会话失败", error);
 			pushToast("warning", "toast.sessionCreateFailed", errText(error));
+			return null;
 		}
 	},
 
@@ -294,6 +394,8 @@ export const useSessionsStore = create<SessionsStore>((set, get) => ({
 			createdAt: now,
 			modifiedAt: now,
 		};
+		// 同步导航：领号后一切在途 open/create/fork 立即过期（点新会话后又碰旧行不会反弹）
+		claimActivation();
 		set((state) => ({
 			sessions: [...state.sessions, draft],
 			activeSessionId: draft.sessionId,
@@ -326,6 +428,8 @@ export const useSessionsStore = create<SessionsStore>((set, get) => ({
 	},
 
 	switchSession: (sessionId) => {
+		// 同步导航：先领号，在途的 open/create/fork 全部作废（latest-wins 的另一半）
+		claimActivation();
 		set((state) => {
 			const session = state.sessions.find((s) => s.sessionId === sessionId);
 			return {
@@ -395,36 +499,31 @@ export const useSessionsStore = create<SessionsStore>((set, get) => ({
 	unloadSession: (sessionId) => get().closeSession(sessionId, "gc"),
 
 	openFromHistory: async (filePath) => {
-		try {
-			const meta = await getPi().openSession({ filePath });
-			set((state) => ({
-				sessions: [...state.sessions.filter((s) => s.sessionId !== meta.sessionId), meta],
-				activeSessionId: meta.sessionId,
-				cwd: meta.cwd,
-				lastUsedAt: { ...state.lastUsedAt, [meta.sessionId]: Date.now() },
-			}));
-			// 先记 cwd 再拉数据：即便随后装载失败（下面的 catch），用户「在用哪个项目」的事实也已经成立
-			rememberCwd(meta.cwd);
-			// 运行中子会话的事件已按其 sessionId 实时转发；保留已有流式态，
-			// 否则会在点击卡片时把 agent_start 建立的进度视图重置为静态历史。
-			await loadSessionBundle(meta.sessionId, { skipHistoryIfLive: true });
-		} catch (error) {
-			console.error("打开会话失败", error);
-			pushToast("warning", "toast.sessionOpenFailed", errText(error));
-		}
+		// 先领号再发请求：这次点击就是当前最新意图（同文件双击则第二次领号，自然胜出）
+		const token = claimActivation();
+		const meta = await ensureOpenSession(filePath);
+		// 失败已由共享链报过一次；这里的提前返回同时保证不对用户的新选择做任何回滚
+		if (!meta || !isLatestActivation(token)) return;
+		set({ activeSessionId: meta.sessionId, cwd: meta.cwd });
+		// 先记 cwd 再拉数据：即便随后装载失败，用户「在用哪个项目」的事实也已经成立
+		rememberCwd(meta.cwd);
 	},
 
 	forkSession: async (ref) => {
 		const { activeSessionId } = get();
 		// draft 还没有消息，无可分叉（UI 上也到不了这里，防御性拦截）
 		if (!activeSessionId || isDraftSessionId(activeSessionId)) return undefined;
+		// 分叉成功会切到新会话 = 用户导航：先领号
+		const token = claimActivation();
 		try {
 			const meta = await getPi().forkSession({ sessionId: activeSessionId, ref });
-			set((state) => ({
-				sessions: [...state.sessions.filter((s) => s.sessionId !== meta.sessionId), meta],
-				activeSessionId: meta.sessionId,
-			}));
+			set((state) => {
+				const sessions = [...state.sessions.filter((s) => s.sessionId !== meta.sessionId), meta];
+				// 迟到：新会话仍进 tabs，但不抢焦点
+				return isLatestActivation(token) ? { sessions, activeSessionId: meta.sessionId } : { sessions };
+			});
 			await loadSessionBundle(meta.sessionId);
+			// fork 事实已发生：即便已不是最新意图也要把新 id 交给调用方
 			return meta.sessionId;
 		} catch (error) {
 			console.error("分叉会话失败", error);
