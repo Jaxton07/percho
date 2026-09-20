@@ -115,8 +115,12 @@ export function ModelPicker() {
 				<span className="truncate">{label}</span>
 				<ChevronDownIcon className={open ? "rotate-180 transition-transform" : "transition-transform"} />
 			</button>
+			{/* 右对齐（不是 left-0）：模型按钮就在 composer 右侧，288px 弹层向左展开才能留在视口内。
+			    旧版 left-0 会让面板右缘越出视口约 12px（1100/900/700px 窗口实测均如此），
+			    配合搜索框 autoFocus 触发 Chromium 对 #root 的程序性横向滚动（overflow:hidden 拦不住）：
+			    窄窗口下实测根横滚约 35.5px，顶栏最左按钮 left 从 80 被挤到 72（1100px）/44.5（窄窗口）。 */}
 			{open && (
-				<div className="absolute bottom-full left-0 z-30 mb-1 w-72 rounded-xl bg-surface p-1 shadow-pop">
+				<div className="absolute right-0 bottom-full z-30 mb-1 w-72 rounded-xl bg-surface p-1 shadow-pop">
 					<div className="flex items-center gap-1.5 rounded-lg px-2 py-1.5">
 						<SearchIcon size={13} className="shrink-0 text-ink-faint" />
 						<input

@@ -89,7 +89,7 @@ describe("partitionSessionsByPin", () => {
 	});
 });
 
-describe("selectBarSessions（顶栏 = 置顶表驱动 + draft）", () => {
+describe("selectBarSessions（顶栏 = 置顶表驱动）", () => {
 	const tabs = [realMeta("a", "/p"), realMeta("b", "/p"), realMeta("c", "/p")];
 	const history = [...tabs, realMeta("h1", "/p"), realMeta("h2", "/p")];
 	const ids = (sessions: SessionMeta[]) => sessions.map((s) => s.sessionId);
@@ -113,12 +113,10 @@ describe("selectBarSessions（顶栏 = 置顶表驱动 + draft）", () => {
 		expect(out[0]?.name).toBe("新名字");
 	});
 
-	it("未命名的 draft 永远展示（它还没落盘、左栏历史里也查不到），并排在置顶之后", () => {
+	it("draft 不进顶栏：无置顶时即使存在 draft 也返回空（顶栏严格 = 置顶表）", () => {
 		const draft = realMeta(`${DRAFT_SESSION_PREFIX}x`, "/p");
-		expect(ids(selectBarSessions([...tabs, draft], ["c"], history))).toEqual([
-			"c",
-			`${DRAFT_SESSION_PREFIX}x`,
-		]);
+		expect(ids(selectBarSessions([...tabs, draft], [], history))).toEqual([]);
+		expect(ids(selectBarSessions([...tabs, draft], ["c"], history))).toEqual(["c"]);
 	});
 
 	it("置顶表里的未知 id（会话已删）直接跳过，不生成空胶囊", () => {

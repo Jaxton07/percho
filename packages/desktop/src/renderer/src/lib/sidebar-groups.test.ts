@@ -4,6 +4,7 @@ import type { ProjectEntry } from "../stores/projects";
 import { setDailyDirForTest } from "./daily";
 import {
 	deriveSidebarGroups,
+	mergeSidebarSessions,
 	type SidebarGroupsInput,
 	toggleExpandedGroup,
 	toggleInList,
@@ -30,6 +31,13 @@ function project(cwd: string, addedIndex = -1, lastActive = 0, sessionCount = 0)
 }
 
 function derive(overrides: Partial<SidebarGroupsInput> = {}) {
+	return deriveWithTouched(overrides, false);
+}
+
+/**
+ * 展开态「用户已操作」位：所有用例**显式给值**，不依赖实现里的缺省推断。
+ */
+function deriveWithTouched(overrides: Partial<SidebarGroupsInput>, expandedGroupsTouched: boolean) {
 	return deriveSidebarGroups({
 		sessions: [],
 		projects: [],
@@ -39,6 +47,7 @@ function derive(overrides: Partial<SidebarGroupsInput> = {}) {
 		pinnedProjects: [],
 		expandedGroups: [],
 		...overrides,
+		expandedGroupsTouched,
 	});
 }
 
@@ -100,13 +109,16 @@ describe("deriveSidebarGroups · 展开推断", () => {
 		expect(result.projects.map((p) => p.expanded)).toEqual([false]);
 	});
 
-	it("有用户记录：完全以记录为准（当前组被折叠也尊重）", () => {
-		const result = derive({
-			sessions: [session("a", P1, 100), session("b", P2, 200)],
-			projects: [project(P1), project(P2)],
-			activeSessionId: "a",
-			expandedGroups: [P2],
-		});
+	it("有用户记录（touched=true）：完全以记录为准（当前组被折叠也尊重）", () => {
+		const result = deriveWithTouched(
+			{
+				sessions: [session("a", P1, 100), session("b", P2, 200)],
+				projects: [project(P1), project(P2)],
+				activeSessionId: "a",
+				expandedGroups: [P2],
+			},
+			true,
+		);
 		expect(result.projects.map((p) => [p.cwd, p.expanded])).toEqual([
 			[P1, false],
 			[P2, true],
@@ -114,13 +126,68 @@ describe("deriveSidebarGroups · 展开推断", () => {
 	});
 
 	it("历史遗留的 __projects__ 值不匹配任何组，不报错也不影响其它组（无需数据迁移）", () => {
-		const result = derive({
+		// 遗留非空记录 → 迁移推断为「用户操作过」（touched=true），但值本身不匹配任何组
+		const result = deriveWithTouched(
+			{
+				sessions: [session("a", P1, 100)],
+				projects: [project(P1)],
+				activeSessionId: "a",
+				expandedGroups: ["__projects__"],
+			},
+			true,
+		);
+		expect(result.projects.map((p) => p.expanded)).toEqual([false]);
+	});
+});
+
+describe("deriveSidebarGroups · 展开状态 touched 位", () => {
+	it("touched=false + 空记录：按默认推断只展开当前会话所在组", () => {
+		const result = deriveWithTouched(
+			{ sessions: [session("a", P1, 100)], projects: [project(P1)], activeSessionId: "a" },
+			false,
+		);
+		expect(result.projects.map((p) => [p.cwd, p.expanded])).toEqual([[P1, true]]);
+	});
+
+	it("touched=true + 空记录：空数组合法 = 全部折叠（不能再被当成「未操作」回退默认集）", () => {
+		const result = deriveWithTouched(
+			{ sessions: [session("a", P1, 100)], projects: [project(P1)], activeSessionId: "a" },
+			true,
+		);
+		expect(result.projects.map((p) => [p.cwd, p.expanded])).toEqual([[P1, false]]);
+		// 默认集仍照常给出（供首次开合当起点），只是不再参与展开推断
+		expect(result.defaultExpandedKeys).toEqual([P1]);
+	});
+
+	it("折叠最后一个展开组 → 再派生：保持全部折叠（切会话/重渲染不复活）", () => {
+		const base = {
 			sessions: [session("a", P1, 100)],
 			projects: [project(P1)],
 			activeSessionId: "a",
-			expandedGroups: ["__projects__"],
-		});
-		expect(result.projects.map((p) => p.expanded)).toEqual([false]);
+		};
+		const first = deriveWithTouched(base, false);
+		expect(first.defaultExpandedKeys).toEqual([P1]);
+		// 用户点当前项目：toggle 以默认集为起点翻转 → []（store 同时置 touched=true）
+		const next = toggleExpandedGroup([], P1, first.defaultExpandedKeys);
+		expect(next).toEqual([]);
+		const second = deriveWithTouched({ ...base, expandedGroups: next }, true);
+		expect(second.projects.map((p) => [p.cwd, p.expanded])).toEqual([[P1, false]]);
+	});
+
+	it("touched=true 时切换当前会话：不自动展开任何组（新当前组也保持折叠）", () => {
+		const result = deriveWithTouched(
+			{
+				sessions: [session("a", P1, 100), session("b", P2, 200)],
+				projects: [project(P1), project(P2)],
+				activeSessionId: "b",
+				expandedGroups: [],
+			},
+			true,
+		);
+		expect(result.projects.map((p) => [p.cwd, p.expanded])).toEqual([
+			[P1, false],
+			[P2, false],
+		]);
 	});
 });
 
@@ -167,6 +234,39 @@ describe("deriveSidebarGroups · 日常组归属", () => {
 	});
 });
 
+describe("mergeSidebarSessions（磁盘历史 + 当前内存会话）", () => {
+	const hist = [session("h1", P1, 100), session("h2", P1, 200)];
+
+	it("内存项按 sessionId 覆盖历史项（改名/模型等以当前实例为准），不产生重复行", () => {
+		const renamed = { ...session("h2", P1, 200), name: "改过的名字" };
+		const merged = mergeSidebarSessions(hist, [renamed]);
+		expect(merged.map((s) => s.sessionId)).toEqual(["h1", "h2"]);
+		expect(merged.find((s) => s.sessionId === "h2")?.name).toBe("改过的名字");
+	});
+
+	it("内存独有项全部保留（draft、刚创建还没进历史的真实会话），顺序不被改写", () => {
+		const merged = mergeSidebarSessions(hist, [session("draft:x", P1, 300), session("fresh", P1, 400)]);
+		expect(merged.map((s) => s.sessionId)).toEqual(["h1", "h2", "draft:x", "fresh"]);
+	});
+
+	it("无内存会话时等于历史（顺序不变）", () => {
+		expect(mergeSidebarSessions(hist, []).map((s) => s.sessionId)).toEqual(["h1", "h2"]);
+	});
+
+	it("合并结果直接驱动派生：draft 落在所属项目的分组里（draft 的 cwd 尚无历史时也成组）", () => {
+		const merged = mergeSidebarSessions(hist, [session("draft:x", P2, 300)]);
+		const result = derive({
+			sessions: merged,
+			projects: [project(P1), project(P2)],
+			activeSessionId: "draft:x",
+		});
+		expect(result.projects.find((p) => p.cwd === P2)?.sessions.map((s) => s.session.sessionId)).toEqual([
+			"draft:x",
+		]);
+		expect(result.defaultExpandedKeys).toEqual([P2]);
+	});
+});
+
 describe("toggleInList / toggleExpandedGroup", () => {
 	it("置顶切换：新置顶排最前，取消则移除", () => {
 		expect(toggleInList([], "a")).toEqual(["a"]);
@@ -175,8 +275,13 @@ describe("toggleInList / toggleExpandedGroup", () => {
 	});
 
 	it("展开切换：无记录时以默认集为起点翻转，不误伤其它组", () => {
-		expect(toggleExpandedGroup([], P2, [P1])).toEqual([P1, P2]);
-		expect(toggleExpandedGroup([P1], P1, [])).toEqual([]);
-		expect(toggleExpandedGroup([P1], P2, [P1])).toEqual([P1, P2]);
+		expect(toggleExpandedGroup([], P2, [P1], false)).toEqual([P1, P2]);
+		expect(toggleExpandedGroup([P1], P1, [], true)).toEqual([]);
+		expect(toggleExpandedGroup([P1], P2, [P1], true)).toEqual([P1, P2]);
+	});
+
+	it("已操作过（touched=true）且记录为空（全部折叠）：再点一个组只展开它，不能回退默认集", () => {
+		// 这是「折了最后一个组后又点开一个组」的场景：起点必须是空记录，否则会把当前会话所在组一起拉出来
+		expect(toggleExpandedGroup([], P2, [P1], true)).toEqual([P2]);
 	});
 });

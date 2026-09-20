@@ -16,8 +16,10 @@ interface UiPreferencesStore {
 	barSessionsVisible: boolean;
 	/** 左侧栏收起（宽 0，彻底藏起；只有顶栏最左按钮能改，默认展开） */
 	sidebarCollapsed: boolean;
-	/** 左侧栏已展开的分组 key；空数组 = 用户没手动开合过（走 Sidebar 的默认推断，见 lib/sidebar-groups） */
+	/** 左侧栏已展开的分组 key；含义由 `expandedGroupsTouched` 决定（见 shared UiState，空数组不再兼任「未操作」） */
 	expandedGroups: string[];
+	/** 展开态是否已被用户手动开合过（false = 走 Sidebar 的默认推断，true = 空数组合法表示全部折叠） */
+	expandedGroupsTouched: boolean;
 	/** 置顶项目 cwd（新置顶在前，决定左侧栏项目区排序） */
 	pinnedProjects: string[];
 	/** 上次使用的项目目录（重启后启动页预填；只记目录、不恢复会话）；null = 未记过 */
@@ -30,7 +32,8 @@ interface UiPreferencesStore {
 	setBarSessionsVisible: (visible: boolean) => void;
 	/** 收起 / 展开左侧栏（宽 240 ↔ 0） */
 	toggleSidebarCollapsed: () => void;
-	/** 覆盖左侧栏展开分组（开合一个组的起点由 useExpandedGroups 算好，见 lib/sidebar-groups） */
+	/** 左侧栏开合一个分组（由 useExpandedGroups 算好新的展开集）：**同时置 touched 位**，
+	 *  空数组合法表示「用户把最后一组也折了」（旧版空数组只能表示「没操作过」） */
 	setExpandedGroups: (groups: string[]) => void;
 	/** 置顶 / 取消置顶项目（新置顶排最前） */
 	toggleProjectPin: (cwd: string) => void;
@@ -62,7 +65,10 @@ export const useUiPreferencesStore = create<UiPreferencesStore>((set, get) => ({
 	sessionPermissionModes: {},
 	barSessionsVisible: true,
 	sidebarCollapsed: false,
+	/** 左侧栏展开分组的记录（`setExpandedGroups` 同时置 touched 位） */
 	expandedGroups: [],
+	expandedGroupsTouched: false,
+	/** 置顶项目 cwd（新置顶在前，决定左侧栏项目区排序） */
 	pinnedProjects: [],
 	lastCwd: null,
 
@@ -77,6 +83,7 @@ export const useUiPreferencesStore = create<UiPreferencesStore>((set, get) => ({
 			barSessionsVisible: saved?.barSessionsVisible ?? true,
 			sidebarCollapsed: saved?.sidebarCollapsed ?? false,
 			expandedGroups: saved?.expandedGroups ?? [],
+			expandedGroupsTouched: saved?.expandedGroupsTouched ?? false,
 			pinnedProjects: saved?.pinnedProjects ?? [],
 			lastCwd: saved?.lastCwd ?? null,
 		});
@@ -105,8 +112,9 @@ export const useUiPreferencesStore = create<UiPreferencesStore>((set, get) => ({
 	},
 
 	setExpandedGroups: (groups) => {
-		set({ expandedGroups: groups });
-		persistPatch({ expandedGroups: groups });
+		// 一次 set + 一个补丁同时写两个字段：分开写会出现「记录已存但 touched 没存」的中间态（重启后语义反转）
+		set({ expandedGroups: groups, expandedGroupsTouched: true });
+		persistPatch({ expandedGroups: groups, expandedGroupsTouched: true });
 	},
 
 	togglePin: (sessionId) => {

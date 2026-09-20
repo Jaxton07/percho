@@ -1,6 +1,7 @@
 import type { SessionMeta } from "@percho/shared";
 import type { MouseEvent as ReactMouseEvent } from "react";
 import { useT } from "../../i18n";
+import { isDraftSessionId } from "../../stores/sessions";
 import { PinIcon } from "../icons";
 import { sessionTitle, useSessionStatus } from "../session/session-status";
 import type { MenuAnchor } from "../ui/place-menu";
@@ -35,10 +36,14 @@ export function SessionRow({
 }) {
 	const t = useT();
 	const status = useSessionStatus(session.sessionId);
+	// draft 还没落盘、也没有名字：固定显示「新会话」（后来真的有名字了才回落到 sessionTitle）
+	const title = isDraftSessionId(session.sessionId)
+		? t("sidebar.newSession")
+		: sessionTitle(session, t("projects.untitled"), t("projects.daily"));
 	return (
 		<button
 			type="button"
-			title={sessionTitle(session, t("projects.untitled"), t("projects.daily"))}
+			title={title}
 			className={`flex h-[31px] w-full items-center gap-2 rounded-[7px] px-1.5 text-left text-[13.5px] ${
 				active ? "bg-bubble font-medium text-ink" : "text-ink-2 hover:bg-hover hover:text-ink"
 			}`}
@@ -57,9 +62,7 @@ export function SessionRow({
 			<span className="grid h-4 w-4 shrink-0 place-items-center text-ink-faint" aria-hidden="true">
 				{pinned && <PinIcon size={12} />}
 			</span>
-			<span className="min-w-0 flex-1 truncate">
-				{sessionTitle(session, t("projects.untitled"), t("projects.daily"))}
-			</span>
+			<span className="min-w-0 flex-1 truncate">{title}</span>
 			{status !== "idle" && (
 				<span
 					className={`mr-0.5 h-[7px] w-[7px] shrink-0 rounded-full ${DOT_CLASS[status]}`}
