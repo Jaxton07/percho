@@ -173,6 +173,12 @@ export interface PiBackendOptions {
  */
 export class PiBackend {
 	private readonly registry = new SessionRegistry();
+	/**
+	 * 已加载会话的频道订阅快照（spec §6.1/§6.2）：sessionId → 有效运行态 topic 集，
+	 * 由 channel-watch 扩展经 `reportChannelSubscriptions` 维护（只存 topic 名）。
+	 * 阶段 0 只建管道，GC 守卫/查询 IPC 见 plan 阶段 1。
+	 */
+	private readonly channelSubscriptionIds = new Map<string, Set<string>>();
 	/** 用户级模型可见性与子代理模型偏好（独立于 CLI 共用 settings.json）。readonly 直暴露 */
 	readonly modelPrefs = new ModelPrefsService(join(getAgentDir(), "model-prefs.json"));
 	/** 社区包管理（安装/卸载 + 会话热重载）。readonly 直暴露 */
@@ -530,11 +536,26 @@ export class PiBackend {
 	}
 
 	/**
+	 * channel-watch 扩展回调入口（spec §6.1）：上报该会话当前的「有效运行态订阅」快照。
+	 * 只存 topic 名（不存消息内容）；空集 = 移出快照（退订最后一个 topic 即恢复普通 GC 资格）。
+	 * 这里只存取快照，不做保护策略（策略在 closeSession 的 intent 守卫与 renderer 纯策略层）。
+	 */
+	reportChannelSubscriptions(sessionId: string, topics: ReadonlySet<string>): void {
+		if (topics.size === 0) this.channelSubscriptionIds.delete(sessionId);
+		else this.channelSubscriptionIds.set(sessionId, new Set(topics));
+	}
+
+	/** renderer GC 查询用（spec §6.2）：当前有有效频道订阅的会话 ID（顺序不构成契约） */
+	getChannelSubscriptionSessionIds(): string[] {
+		return [...this.channelSubscriptionIds.keys()];
+	}
+
+	/**
 	 * 关会话（**用户主动关**）：agent 还在跑（含等审批）时拒绝——run 中途把后端会话 dispose 会直接掐断本轮，
 	 * 内存策略（自动卸载）靠这道兵底兼固（策略层已保护，这里是最后一道门）。
 	 * 自动卸载走同一个方法：行为与主动关完全一致，只是调用点分开（renderer 侧 `unloadSession`）。
 	 */
-	async closeSession(sessionId: string): Promise<{ closed: boolean }> {
+	async closeSession(sessionId: string, _intent?: "user" | "gc"): Promise<{ closed: boolean }> {
 		const entry = this.registry.get(sessionId);
 		// 没有该会话 = 它本来就没在跑（幂等成功）：调用方该照常清掉自己的会话条目
 		if (!entry) return { closed: true };

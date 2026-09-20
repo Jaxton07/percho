@@ -11,6 +11,14 @@ export const SUBSCRIPTION_CUSTOM_TYPE = "channel-subs";
 
 export interface SubsPayload {
 	topics: string[];
+	/**
+	 * topic → 最后已确认的 `MESSAGES.md` 内容 hash。
+	 * - string：最后已确认的内容 hash；
+	 * - `null`：确认当时文件不存在；
+	 * - **key 缺失**：旧版（只有 topics）/未知基线，不等价于 `null`；
+	 * 只保留仍在 topics 中的安全 topic。
+	 */
+	cursors?: Record<string, string | null>;
 }
 
 /** 构造 appendEntry 载荷（全量快照，排序稳定便于测试） */

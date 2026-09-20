@@ -544,3 +544,26 @@ describe("记住上次项目目录（lastCwd）", () => {
 		expect(piMock.saveUiState).not.toHaveBeenCalled();
 	});
 });
+
+// ---------------------------------------------------------------------------
+// P0（spec channel-watch-retention-catchup §6.2）：自动卸载与用户关闭走不同 intent
+// 阶段 0 红测：固定契约，实现见 plan 阶段 1.2。
+// ---------------------------------------------------------------------------
+
+describe("unloadSession（自动 GC）的 intent 标记", () => {
+	it("自动卸载传 intent:'gc'（后端据此区分自动 GC 与用户意图，只对 GC 做订阅守卫）", async () => {
+		useSessionsStore.setState({ sessions: [realMeta("r1", "/proj/a")], activeSessionId: null });
+
+		await useSessionsStore.getState().unloadSession("r1");
+
+		expect(piMock.closeSession).toHaveBeenCalledWith({ sessionId: "r1", intent: "gc" });
+	});
+
+	it("用户主动关闭不传 intent（保持既有语义：订阅不挡用户）", async () => {
+		useSessionsStore.setState({ sessions: [realMeta("r2", "/proj/a")], activeSessionId: null });
+
+		await useSessionsStore.getState().closeSession("r2");
+
+		expect(piMock.closeSession).toHaveBeenCalledWith({ sessionId: "r2" });
+	});
+});

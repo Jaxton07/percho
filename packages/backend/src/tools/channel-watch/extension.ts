@@ -8,7 +8,7 @@ import { channelRoot, ensureAgentWorkInit, validateTopic } from "./init";
 import { appendPost, MESSAGES_FILE } from "./post";
 import { buildSubsPayload, restoreSubscriptions, SUBSCRIPTION_CUSTOM_TYPE } from "./subscriptions";
 import { makeChannelTools } from "./tools";
-import { type ChannelWatchEvent, ChannelWatcher } from "./watcher";
+import { type ChannelWatchEvent, ChannelWatcher, type ChannelWatcherOptions } from "./watcher";
 
 const log = createLogger("channel-watch");
 
@@ -46,6 +46,25 @@ export interface ChannelWatchOptions {
 	sendWake?: (text: string) => void;
 	/** notify（测试注入；缺省 lastCtx.ui.notify） */
 	notify?: (text: string) => void;
+	/**
+	 * 有效运行态订阅快照变化回调（spec §6.1；PiBackend 记录用）。
+	 * 触发点：session_start 恢复完成后（含空集）、subscribe、unsubscribe、session_shutdown。
+	 * 阶段 0 只固定注入点，调用点见 plan 阶段 1.1。
+	 */
+	onSubscriptionsChanged?: (sessionId: string, topics: ReadonlySet<string>) => void;
+	/** watcher 工厂（缺省 new ChannelWatcher；测试注入短防抖，生产默认 3s/5s 不变） */
+	watcherFactory?: (options: ChannelWatcherOptions) => ChannelWatcher;
+	/** 读内容 hash（缺省读文件，不存在 → null；测试注入可复现「基线读取 ↔ watcher 就绪」竞态） */
+	readFileHash?: (absPath: string) => Promise<string | null>;
+}
+
+/** 读文件内容 hash（文件不存在/不可读 → null）。阶段 0 只是把注入点接上，语义与改动前一致 */
+async function defaultReadFileHash(absPath: string): Promise<string | null> {
+	try {
+		return contentHash(await readFile(absPath, "utf8"));
+	} catch {
+		return null;
+	}
 }
 
 export function makeChannelWatchExtension(options: ChannelWatchOptions): InlineExtension {
@@ -56,6 +75,9 @@ export function makeChannelWatchExtension(options: ChannelWatchOptions): InlineE
 			const guard = new LoopGuard({ now: options.now });
 			const sendWake =
 				options.sendWake ?? ((text: string) => pi.sendUserMessage(text, { deliverAs: "followUp" }));
+			const readHash = options.readFileHash ?? defaultReadFileHash;
+			const makeWatcher =
+				options.watcherFactory ?? ((opts: ChannelWatcherOptions) => new ChannelWatcher(opts));
 
 			// --- 会话闭包状态 ---
 			let active = false;
@@ -106,12 +128,9 @@ export function makeChannelWatchExtension(options: ChannelWatchOptions): InlineE
 					if (basename(event.relPath) !== MESSAGES_FILE) return;
 					const abs = join(channelRoot(options.cwd), event.relPath);
 					void (async () => {
-						let hash: string;
-						try {
-							hash = contentHash(await readFile(abs, "utf8"));
-						} catch {
-							return; // 文件已删/不可读：无内容可比，跳过（删除场景无「查收」语义）
-						}
+						const hash = await readHash(abs);
+						// 文件已删/不可读：无内容可比，跳过（删除场景无「查收」语义）
+						if (hash === null) return;
 						const decision = guard.shouldDeliver(event.topic, event.relPath, hash, abs);
 						if (!decision.deliver) {
 							log.info("唤醒抑制", {
@@ -144,7 +163,7 @@ export function makeChannelWatchExtension(options: ChannelWatchOptions): InlineE
 
 			const ensureWatcher = async (): Promise<void> => {
 				if (watcher) return;
-				const w = new ChannelWatcher({
+				const w = makeWatcher({
 					channelRoot: channelRoot(options.cwd),
 					onEvent: onWatchEvent,
 				});

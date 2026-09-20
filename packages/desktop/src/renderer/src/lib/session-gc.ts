@@ -44,6 +44,11 @@ export interface SessionGcOpen {
 	isDraft: boolean;
 	/** 消息条数（磁盘元数据，打开时读一次）：与 transcript 条数取大值判断「有没有会话文件」 */
 	messageCount: number;
+	/**
+	 * 该会话在 backend 有有效频道订阅（GC 每轮拉一次订阅会话 ID 快照算出）。
+	 * 缺省 false = 不受保护；保护判定见 `isProtected`（阶段 1 接入）。
+	 */
+	hasChannelSubscriptions?: boolean;
 }
 
 export interface SessionGcInput {
