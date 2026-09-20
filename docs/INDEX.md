@@ -32,7 +32,7 @@ packages/
 | `scripts/smoke-error-events.mts` | 报错系统冒烟：本地 HTTP 伪造 provider（401/429）驱动 PiBackend，零凭证离线 |
 | `scripts/smoke-subagent.mts` | subagent 冒烟 |
 | `scripts/smoke-evaporation-ui.mjs` | 蒸发设置二态 CDP 冒烟（dev 实例带 `--remote-debugging-port=9224` 运行后执行） |
-| `scripts/smoke-channel-watch.mts` | channel-watch 机制冒烟 V1–V6 |
+| `scripts/smoke-channel-watch.mts` | channel-watch 机制冒烟 V1–V8：V1–V3 需真实模型；**V4–V8 零凭证离线**（V6 扩展钩子/todo 工具、V7 订阅快照上报 + GC intent 守卫走真 PiBackend、V8 关重开后离线变化补投一次＋游标落盘） |
 | `scripts/replay-trace.mts` | 事件 trace 离线重放（`--last` 自动找最新；排查 UI 状态问题首选） |
 | `scripts/replay-evaporation.mts` | 上下文蒸发离线 replay 调参（误杀率/体积曲线；`--core` 与线上实现同构对比；默认数据指 `.local/replay-data/sessions` 副本，指向正式 `~/.pi/agent` 会直接 abort） |
 | `scripts/verify-vertex-auth.mts` | google-vertex 认证链路隔离验证（临时 `PI_CODING_AGENT_DIR`，不碰正式配置）：api_key 路径会 401「API keys are not supported by this API」→ 只有 ADC/服务账号可用 |
