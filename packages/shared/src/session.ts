@@ -282,6 +282,13 @@ export interface PermissionConfigInfo {
 /** 会话权限模式：default = 按规则审批；fullAccess = 一切放行 + 高危调用写审计。按会话内存态，不落盘、不跨会话继承、重启归零。 */
 export type PermissionMode = "default" | "fullAccess";
 
+/**
+ * 关闭会话的调用意图：
+ * - `user`（缺省）= 用户主动关闭/删除，订阅不能绑架用户；
+ * - `gc` = renderer 内存策略的自动卸载，有频道订阅时后端拒绝（订阅 = 明确驻留语义）。
+ */
+export type SessionCloseIntent = "user" | "gc";
+
 /** 上下文管理模式（二态；缺省 evaporation。
  * 物理存储 = settings.json 单一决策 key contextEvaporation.enabled
  * （缺整个 key 或 enabled≠false → evaporation；遗留 acpCompressionEnabled 键读侧忽略、写侧顺带清除） */

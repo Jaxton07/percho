@@ -1,4 +1,4 @@
-import type { AvailableModel, PermissionMode, SessionMeta } from "@percho/shared";
+import type { AvailableModel, PermissionMode, SessionCloseIntent, SessionMeta } from "@percho/shared";
 import { messagesToUIMessages } from "@percho/shared";
 import { create } from "zustand";
 import { getPi } from "../api";
@@ -210,8 +210,8 @@ interface SessionsStore {
 	/** 设置新会话的目标项目目录；活跃 tab 是 draft 时同步更新其条目（切 tab 往返不丢选择） */
 	setDraftCwd: (cwd: string) => void;
 	switchSession: (sessionId: string) => void;
-	closeSession: (sessionId: string) => Promise<{ closed: boolean }>;
-	/** 自动卸载（内存策略用，见实现处注释；与 closeSession 行为一致） */
+	closeSession: (sessionId: string, intent?: SessionCloseIntent) => Promise<{ closed: boolean }>;
+	/** 自动卸载（内存策略专用，见实现处注释）；传 intent="gc" 让后端区分自动 GC 与用户意图 */
 	unloadSession: (sessionId: string) => Promise<{ closed: boolean }>;
 	openFromHistory: (filePath: string) => Promise<void>;
 	/** 在指定 assistant 消息处分叉：新会话以新 tab 打开并切换过去（原会话保留原样）；成功返回新 sessionId */
@@ -351,12 +351,13 @@ export const useSessionsStore = create<SessionsStore>((set, get) => ({
 			sessions: state.sessions.map((s) => (s.sessionId === sessionId ? { ...s, name } : s)),
 		})),
 
-	closeSession: async (sessionId) => {
+	closeSession: async (sessionId, intent) => {
 		const isDraft = isDraftSessionId(sessionId);
 		// draft 没有后端会话，纯本地移除
 		if (!isDraft) {
 			try {
-				const { closed } = await getPi().closeSession({ sessionId });
+				// intent 只在本轮是「内存策略自动卸载」时带上，用户主动关不传（保持既有语义）
+				const { closed } = await getPi().closeSession(intent ? { sessionId, intent } : { sessionId });
 				// 后端拒绝（agent 在跑 / 等审批）：**渲染层状态必须原样保留** —— 事务语义，
 				// 不能出现「后端会话还在、前端条目已消失」的半个动作（内存策略也会看走眼）
 				if (!closed) return { closed: false };
@@ -386,11 +387,12 @@ export const useSessionsStore = create<SessionsStore>((set, get) => ({
 		return { closed: true };
 	},
 
-	/** 自动卸载（内存策略专用）：语义与 closeSession 完全一致，只是把调用点区分开——
-	 *  「用户主动关/删」走 closeSession，「内存策略判定该卸」走这里（便于日后单独调整任一侧）。
-	 *  受保护会话不会走到这里（保护判定在 lib/session-gc.ts 的 isProtected）；
-	 *  返回 `closed=false` 表示后端拒绝（竞态：策略判定后它恰好又开始跑了）。 */
-	unloadSession: (sessionId) => get().closeSession(sessionId),
+	/** 自动卸载（内存策略专用）：与 closeSession 同一套行为，只是把调用点与意图区分开——
+	 *  「用户主动关/删」走 closeSession（intent 缺省 = user），「内存策略判定该卸」走这里并带 intent="gc"：
+	 *  后端据此对「有频道订阅」的会话拒绝（订阅 = 明确驻留语义，见 spec channel-watch retention）。
+	 *  受保护会话不会走到这里（保护判定在 lib/session-gc.ts 的 isProtected，订阅条件也在那边）；
+	 *  返回 `closed=false` 表示后端拒绝（竞态：策略判定后它恰好又开始跑了/刚订阅了）。 */
+	unloadSession: (sessionId) => get().closeSession(sessionId, "gc"),
 
 	openFromHistory: async (filePath) => {
 		try {

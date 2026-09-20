@@ -19,7 +19,7 @@ const log = createLogger("channel-watch");
  *
  * 接线一览（钩子全 try/catch 绝不 throw）：
  * - session_start：开关 → trusted 门 → 目录协议 init（首次 notify）→ 恢复订阅（appendEntry）
- *   → 非空订阅惰性起 watcher → 注册三工具（幂等）
+ *   → 非空订阅惰性起 watcher → 注册三工具（幂等）→ 上报有效订阅快照（enabled+trusted 才计入）
  * - input：真人/rpc 消息介入 → 清乒乓计数（source!=="extension"）
  * - tool_call：write/edit 目标 → guard.markSelfWrite（自写抑制）
  * - watcher onEvent：订阅过滤 → 仅 MESSAGES.md → 读文件 hash → guard.shouldDeliver（自写/hash/暂停）
@@ -111,6 +111,37 @@ export function makeChannelWatchExtension(options: ChannelWatchOptions): InlineE
 				}
 			};
 
+			/** 完整 sessionId（上报 backend 订阅快照的 key，必须与 registry 一致；取不到不算错） */
+			const fullSessionId = (): string | undefined => {
+				try {
+					return lastCtx?.sessionManager.getSessionId();
+				} catch {
+					return undefined;
+				}
+			};
+
+			/**
+			 * 上报「有效运行态订阅」快照（spec §6.1）：只有 enabled + trusted 才计入——
+			 * 未启用/未受信任的会话根本收不到唤醒，不该因此被永久排除在内存回收之外。
+			 * 只传副本（调用方不能反向改到本闭包的订阅集）；回调抛错只记日志，绝不打断订阅/发消息/生命周期。
+			 */
+			const reportSubscriptions = (): void => {
+				const onChanged = options.onSubscriptionsChanged;
+				if (!onChanged) return;
+				try {
+					const sessionId = fullSessionId();
+					if (!sessionId) {
+						log.warn("订阅快照未上报：拿不到 sessionId");
+						return;
+					}
+					onChanged(sessionId, new Set(active && trusted ? subscriptions : []));
+				} catch (err) {
+					log.warn("订阅快照上报失败", {
+						error: err instanceof Error ? err.message : String(err),
+					});
+				}
+			};
+
 			const persist = (): void => {
 				try {
 					pi.appendEntry(SUBSCRIPTION_CUSTOM_TYPE, buildSubsPayload(subscriptions));
@@ -198,6 +229,7 @@ export function makeChannelWatchExtension(options: ChannelWatchOptions): InlineE
 						guard.resumeTopic(topic);
 						subscriptions.add(topic);
 						persist();
+						reportSubscriptions();
 						void ensureWatcher();
 						return { ok: true, resumed };
 					},
@@ -223,6 +255,7 @@ export function makeChannelWatchExtension(options: ChannelWatchOptions): InlineE
 						if (!subscriptions.delete(topic)) return { ok: false, error: `未订阅频道 [${topic}]` };
 						guard.forgetTopic(topic);
 						persist();
+						reportSubscriptions();
 						if (subscriptions.size === 0) stopWatcher();
 						return { ok: true };
 					},
@@ -234,13 +267,16 @@ export function makeChannelWatchExtension(options: ChannelWatchOptions): InlineE
 
 			// --- 生命周期 ---
 			pi.on("session_start", async (_event, ctx) => {
+				// 先取 ctx：disabled/untrusted 分支也要能上报（空集）
+				lastCtx = ctx;
 				try {
 					if (!enabled()) {
 						active = false;
+						trusted = false;
+						reportSubscriptions();
 						return;
 					}
 					active = true;
-					lastCtx = ctx;
 					trusted = ctx.isProjectTrusted() === true;
 					if (trusted) {
 						const init = await ensureAgentWorkInit(options.cwd);
@@ -269,12 +305,16 @@ export function makeChannelWatchExtension(options: ChannelWatchOptions): InlineE
 						subscriptions: subscriptions.size,
 						watcher: watcher?.mode ?? "idle",
 					});
+					// 恢复完成后上报（含空集）：backend 据此把本会话标为「有频道订阅」
+					reportSubscriptions();
 				} catch (err) {
 					// init/恢复失败 → 降级为不激活（会话照常）
 					active = false;
+					trusted = false;
 					log.error("channel-watch session_start 失败，降级关闭", {
 						error: err instanceof Error ? err.message : String(err),
 					});
+					reportSubscriptions();
 				}
 			});
 
@@ -309,6 +349,9 @@ export function makeChannelWatchExtension(options: ChannelWatchOptions): InlineE
 					stopWatcher();
 					guard.reset();
 					active = false;
+					trusted = false;
+					// 上报空集：会话已不驻留，订阅保护随之解除（backend 也有 dispose 兜底）
+					reportSubscriptions();
 				} catch (err) {
 					log.warn("channel-watch shutdown 清理失败", {
 						error: err instanceof Error ? err.message : String(err),

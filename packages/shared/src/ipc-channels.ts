@@ -17,6 +17,7 @@ import type {
 	PermissionMode,
 	QueuedMessages,
 	QuotaInfo,
+	SessionCloseIntent,
 	SessionMessage,
 	SessionMeta,
 	SessionStats,
@@ -79,9 +80,13 @@ export const SESSION_CHANNELS = {
 	/** 跨全部项目目录枚举历史会话（项目管理页用，含活跃） */
 	listAllSessions: ch("session:listAll")<void, SessionMeta[]>(),
 	openSession: ch("session:open")<{ filePath: string }, SessionMeta>(),
-	// closed=false = 后端拒绝（agent 正在跑/等审批，见 PiBackend.closeSession 的 isStreaming 守卫）；
+	// closed=false = 后端拒绝（agent 正在跑/等审批，见 PiBackend.closeSession 的 isStreaming 守卫；
+	// intent:"gc" 且有频道订阅时也拒绝，见 channel-watch retention）；
 	// 没有该会话（已关/从未打开）也算 closed=true（幂等「它就是没在跑」）
-	closeSession: ch("session:close")<{ sessionId: string }, { closed: boolean }>(),
+	closeSession: ch("session:close")<
+		{ sessionId: string; intent?: SessionCloseIntent },
+		{ closed: boolean }
+	>(),
 	/** 删除会话（含磁盘 jsonl 文件，不可恢复） */
 	deleteSession: ch("session:delete")<{ sessionId: string; sessionFile?: string }, void>(),
 	/** 发送消息；images 为随消息附带的图片（base64） */
@@ -116,6 +121,11 @@ export const SESSION_CHANNELS = {
 	>(),
 	/** 读取会话已加载的资源（skills/扩展；设置页展示用） */
 	getLoadedResources: ch("session:getLoadedResources")<{ sessionId: string }, LoadedResources>(),
+	/**
+	 * 有有效频道订阅的**已加载**会话 ID（renderer 内存策略保护用；顺序不构成契约）。
+	 * 会话被卸载/关闭后不再返回（backend 快照同步清理）。
+	 */
+	getChannelSubscriptionSessionIds: ch("session:getChannelSubscriptionSessionIds")<void, string[]>(),
 	/** 可用模型列表（providers × models，含 authed/thinkingLevels/imageInput 元数据） */
 	listModels: ch("models:list")<void, AvailableModel[]>(),
 	/** @ 补全数据源：项目文件相对路径列表（目录带尾 /） */
