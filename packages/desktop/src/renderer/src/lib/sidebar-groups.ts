@@ -44,6 +44,27 @@ export type SidebarGroupsResult = {
 	defaultExpandedKeys: string[];
 };
 
+/**
+ * 左栏数据源合并：**磁盘历史（`projects.allSessions`）+ 当前内存会话（`sessions.sessions`）**。
+ * 内存项按 `sessionId` 覆盖历史项（名称/模型/状态以当前实例为准），历史项保持原顺序，
+ * 内存独有项（draft、刚创建还没落盘的真实会话）按内存顺序补在后面。**不负责排序**：
+ * 组内排序统一由 `groupSessions` 做（最后活动倒序 + 置顶分区）。
+ *
+ * 为什么不只拼 draft：draft 发首条消息时会在 `sessions` 里**原地替换**成真实会话，
+ * 而它此刻还没进 `allSessions`（历史要重新拉取）——只拼 draft 会让左栏行在这段缝隙里消失。
+ * 合并全部内存会话就从根上消除了这个状态缺口（spec D2）。
+ */
+export function mergeSidebarSessions(
+	history: readonly SessionMeta[],
+	memory: readonly SessionMeta[],
+): SessionMeta[] {
+	// Map 保序：覆盖同 id 不会改变它原有的插入位置（历史顺序不被改写）
+	const byId = new Map<string, SessionMeta>();
+	for (const session of history) byId.set(session.sessionId, session);
+	for (const session of memory) byId.set(session.sessionId, session);
+	return [...byId.values()];
+}
+
 export type SidebarGroupsInput = {
 	/** 全量历史会话（含未打开的） */
 	sessions: readonly SessionMeta[];

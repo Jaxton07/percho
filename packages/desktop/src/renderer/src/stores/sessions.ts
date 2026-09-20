@@ -33,14 +33,12 @@ export function partitionSessionsByPin(
 }
 
 /**
- * 顶栏展示集（v8 定稿）：**置顶表驱动**——顶栏胶囊 = 置顶的会话（不管它的 tab 开没开）+ 未命名的 draft。
+ * 顶栏展示集（v8 定稿）：**严格 = 置顶表**——顶栏胶囊就是置顶会话（不管它的 tab 开没开，也不管它是 draft）。
  * 用户：顶栏之前是「打开的会话全进去」= 唯一的会话总表，胶囊越来越多；现在左栏承担总表，
- * 顶栏只放真正需要盯的会话。
+ * 顶栏只放真正需要盯的会话（draft 的导航与丢弃都在左栏，见 spec D1/D3）。
  * - **不能只从 tabs 里筛**：会话被置顶、但 tab 已关（或本次启动没恢复）时，只筛 tabs 会把它藏掉，
  *   用户会看到「已置顶却不在顶栏」——所以置顶会话的 meta 从 tabs → 历史两边找，点击时自动开。
  * - 顺序 = `pinnedSessions` 自己的顺序（置顶即插队到最左，拖动排序改的也是它）。
- * - **draft 例外**：未命名的新会话还没落盘、左栏历史里也查不到，不展示就彻底没地方能表示它；
- *   发出首条消息转正后它就离开顶栏（要留在顶栏则置顶）。
  * - 置顶表里查不到 meta 的 id（会话已删）直接跳过，不生成空胶囊。
  */
 export function selectBarSessions(
@@ -52,10 +50,7 @@ export function selectBarSessions(
 	for (const s of history) byId.set(s.sessionId, s);
 	// tabs 覆盖历史同名项：名称/状态以当前打开实例为准
 	for (const s of tabs) byId.set(s.sessionId, s);
-	const pinned = pinnedSessions.map((id) => byId.get(id)).filter((s): s is SessionMeta => s !== undefined);
-	const pinnedSet = new Set(pinnedSessions);
-	const drafts = tabs.filter((s) => isDraftSessionId(s.sessionId) && !pinnedSet.has(s.sessionId));
-	return [...pinned, ...drafts];
+	return pinnedSessions.map((id) => byId.get(id)).filter((s): s is SessionMeta => s !== undefined);
 }
 
 /**

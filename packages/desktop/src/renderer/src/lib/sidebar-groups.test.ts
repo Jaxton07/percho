@@ -4,6 +4,7 @@ import type { ProjectEntry } from "../stores/projects";
 import { setDailyDirForTest } from "./daily";
 import {
 	deriveSidebarGroups,
+	mergeSidebarSessions,
 	type SidebarGroupsInput,
 	toggleExpandedGroup,
 	toggleInList,
@@ -230,6 +231,39 @@ describe("deriveSidebarGroups · 日常组归属", () => {
 
 		setDailyDirForTest(null);
 		expect(derive({ sessions: [session("a", DAILY, 100)] }).daily).toBeNull();
+	});
+});
+
+describe("mergeSidebarSessions（磁盘历史 + 当前内存会话）", () => {
+	const hist = [session("h1", P1, 100), session("h2", P1, 200)];
+
+	it("内存项按 sessionId 覆盖历史项（改名/模型等以当前实例为准），不产生重复行", () => {
+		const renamed = { ...session("h2", P1, 200), name: "改过的名字" };
+		const merged = mergeSidebarSessions(hist, [renamed]);
+		expect(merged.map((s) => s.sessionId)).toEqual(["h1", "h2"]);
+		expect(merged.find((s) => s.sessionId === "h2")?.name).toBe("改过的名字");
+	});
+
+	it("内存独有项全部保留（draft、刚创建还没进历史的真实会话），顺序不被改写", () => {
+		const merged = mergeSidebarSessions(hist, [session("draft:x", P1, 300), session("fresh", P1, 400)]);
+		expect(merged.map((s) => s.sessionId)).toEqual(["h1", "h2", "draft:x", "fresh"]);
+	});
+
+	it("无内存会话时等于历史（顺序不变）", () => {
+		expect(mergeSidebarSessions(hist, []).map((s) => s.sessionId)).toEqual(["h1", "h2"]);
+	});
+
+	it("合并结果直接驱动派生：draft 落在所属项目的分组里（draft 的 cwd 尚无历史时也成组）", () => {
+		const merged = mergeSidebarSessions(hist, [session("draft:x", P2, 300)]);
+		const result = derive({
+			sessions: merged,
+			projects: [project(P1), project(P2)],
+			activeSessionId: "draft:x",
+		});
+		expect(result.projects.find((p) => p.cwd === P2)?.sessions.map((s) => s.session.sessionId)).toEqual([
+			"draft:x",
+		]);
+		expect(result.defaultExpandedKeys).toEqual([P2]);
 	});
 });
 

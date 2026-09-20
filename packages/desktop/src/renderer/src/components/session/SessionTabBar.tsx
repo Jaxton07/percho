@@ -21,7 +21,7 @@ import { useCallback, useEffect, useState } from "react";
 import { getPi } from "../../api";
 import { useT } from "../../i18n";
 import { useProjectsStore } from "../../stores/projects";
-import { isDraftSessionId, selectBarSessions, useSessionsStore } from "../../stores/sessions";
+import { selectBarSessions, useSessionsStore } from "../../stores/sessions";
 import { useTranscriptStore } from "../../stores/transcript";
 import { useUiStore } from "../../stores/ui";
 import { useUiPreferencesStore } from "../../stores/ui-preferences";
@@ -91,8 +91,8 @@ function TabPill({
 	buttonProps?: ComponentProps<"button">;
 }) {
 	const t = useT();
-	const closeSession = useSessionsStore((s) => s.closeSession);
-	// v9：叉叉 = 取消置顶 + 从顶栏清除（会话不删、tab 也不关）；draft 例外（它不是“置顶”，叉叉就是丢弃这个新会话）
+	// v9：叉叉 = 取消置顶 + 从顶栏清除（会话不删、tab 也不关）。顶栏严格只放置顶会话，
+	// draft 已不再进顶栏（其名题与丢弃入口都在左栏，见 spec D1/D3）
 	const unpin = useUiPreferencesStore((s) => s.unpin);
 	// 置顶标记：顶栏会滚动、顺序会被拖动，必须有常显 glyph（不是只靠排序表达）
 	const pinned = useUiPreferencesStore((s) => s.pinnedSessions.includes(session.sessionId));
@@ -142,13 +142,10 @@ function TabPill({
 							aria-hidden="true"
 							/* 胶囊本体是 button，这里不能再塞 button（嵌套非法）→ 用 codebase 同款做法：装饰 span + aria-hidden，
 							   语义提示走原生 title（同 SessionRow），语义入口靠胶囊右键菜单的「取消置顶」 */
-							title={
-								isDraftSessionId(session.sessionId) ? t("tabbar.discardDraft") : t("tabbar.unpinFromBar")
-							}
+							title={t("tabbar.unpinFromBar")}
 							onClick={(e) => {
 								e.stopPropagation();
-								if (isDraftSessionId(session.sessionId)) void closeSession(session.sessionId);
-								else unpin(session.sessionId);
+								unpin(session.sessionId);
 							}}
 						>
 							<CloseIcon />
@@ -175,8 +172,7 @@ function SessionTab({
 	contextOpen: boolean;
 	onContextMenu: (sessionId: string, anchor: MenuAnchor) => void;
 }) {
-	const switchSession = useSessionsStore((s) => s.switchSession);
-	// v8：顶栏里可能是「已置顶但 tab 未打开」的会话，点击要能把它开起来（openSession 一条路兼容两种情况）
+	// 顶栏里可能是「已置顶但 tab 未打开」的会话，点击要能把它开起来（openSession 一条路兼容两种情况）
 	const openSession = useProjectsStore((s) => s.openSession);
 	const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({
 		id: session.sessionId,
@@ -208,11 +204,7 @@ function SessionTab({
 						e.preventDefault();
 						onContextMenu(session.sessionId, anchorOfElement(e.currentTarget));
 					},
-					onClick: () => {
-						// draft（内存态、后端没有该会话）只能切；其余走 openSession（已打开则切、未打开则从历史开）
-						if (isDraftSessionId(session.sessionId)) switchSession(session.sessionId);
-						else void openSession(session);
-					},
+					onClick: () => void openSession(session),
 				}}
 			/>
 		</div>

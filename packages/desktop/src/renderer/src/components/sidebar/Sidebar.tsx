@@ -1,6 +1,6 @@
 import { useMemo } from "react";
 import { useT } from "../../i18n";
-import { deriveSidebarGroups } from "../../lib/sidebar-groups";
+import { deriveSidebarGroups, mergeSidebarSessions } from "../../lib/sidebar-groups";
 import { deriveProjects, useProjectsStore } from "../../stores/projects";
 import { useSessionsStore } from "../../stores/sessions";
 import { useUiPreferencesStore } from "../../stores/ui-preferences";
@@ -28,14 +28,21 @@ export function Sidebar() {
 	const addedProjects = useProjectsStore((s) => s.addedProjects);
 	const deleteProject = useProjectsStore((s) => s.deleteProject);
 	const activeSessionId = useSessionsStore((s) => s.activeSessionId);
+	// 内存会话（含 draft、刚创建还没进历史的会话）：与磁盘历史合并成左栏数据源（spec D2，纯函数有单测）
+	const memorySessions = useSessionsStore((s) => s.sessions);
 	const { toggleGroup } = useExpandedGroups();
+
+	const mergedSessions = useMemo(
+		() => mergeSidebarSessions(allSessions, memorySessions),
+		[allSessions, memorySessions],
+	);
 
 	const data = useMemo(
 		() =>
 			deriveSidebarGroups({
-				sessions: allSessions,
-				// 项目表复用项目页那套派生（已排除日常目录、含「只有会话」与「手动添加」两类）
-				projects: deriveProjects({ allSessions, addedProjects }),
+				sessions: mergedSessions,
+				// 项目表也用合并结果：draft 的目录若还没历史会话，要靠它才能成组
+				projects: deriveProjects({ allSessions: mergedSessions, addedProjects }),
 				search,
 				activeSessionId,
 				pinnedSessions,
@@ -44,7 +51,7 @@ export function Sidebar() {
 				expandedGroupsTouched,
 			}),
 		[
-			allSessions,
+			mergedSessions,
 			addedProjects,
 			search,
 			activeSessionId,

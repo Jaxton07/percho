@@ -18,10 +18,7 @@ export const zh = {
 		untitled: "新会话",
 		settings: "设置",
 		close: "关闭会话（不删除）",
-		/** v9：胶囊叉叉 = 取消置顶 + 从顶栏清除（会话本身不删、tab 也不关） */
 		unpinFromBar: "取消置顶并从顶栏移除",
-		/** v9：draft 还没置顶过，叉叉就是丢弃这个新会话 */
-		discardDraft: "放弃这个新会话",
 		rename: "重命名",
 		renamePlaceholder: "会话名称",
 		pin: "置顶",
@@ -246,10 +243,14 @@ export const zh = {
 		delete: "删除会话",
 		deleteTitle: "删除会话？",
 		deleteDesc: "该会话的记录与文件会被永久删除，无法恢复。",
+		/** draft 专用：只丢内存里的占位会话，不删磁盘文件、不碰后端（走纯本地分支） */
+		discardDraft: "丢弃新会话",
 	},
 	sidebar: {
 		title: "导航",
 		search: "搜索会话",
+		/** 未落盘的 draft 在左栏的固定标题（它还没名字，也不该显示 uuid） */
+		newSession: "新会话",
 		daily: "日常",
 		projectsSection: "项目",
 		addProject: "添加项目",
