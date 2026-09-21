@@ -29,7 +29,11 @@ export interface ProjectEntry {
 }
 
 interface ProjectsStore {
-	/** 磁盘上的全部历史会话（跨项目） */
+	/**
+	 * **会话目录**（跨项目）：存在性的唯一来源。内容 = 上次全量对账的磁盘历史 ∪ 本进程经手过的会话
+	 * （新建/打开/fork，见 `absorbOpenSessions` 的写穿）。左栏分组与顶栏置顶胶囊都只认它 +
+	 * 内存运行态叠加，所以「内存被 GC 卸掉」不会让任何行消失。
+	 */
 	allSessions: SessionMeta[];
 	/** 手动添加过的项目目录（持久化 localStorage） */
 	addedProjects: string[];
@@ -74,6 +78,10 @@ export const useProjectsStore = create<ProjectsStore>((set, get) => ({
 			// latest-wins：更晚的 load 已经发起 → 这份旧快照直接丢弃（loading 由最新那次收尾）
 			if (seq !== loadSeq) return;
 			set({ allSessions, loading: false, loaded: true });
+			// 对账是**替换**语义（磁盘是存在性的权威），但内存里经手过的会话不能因此掉出目录：
+			// 0 消息会话此时还没有会话文件（SDK 追加首条 entry 才落盘），磁盘快照里必然没有它 ——
+			// 补回来才不会在随后被内存策略卸载时从 UI 消失
+			absorbOpenSessions(useSessionsStore.getState().sessions);
 			const { selectedCwd } = get();
 			if (!selectedCwd) {
 				const projects = deriveProjects(get());
@@ -154,6 +162,31 @@ export const useProjectsStore = create<ProjectsStore>((set, get) => ({
 		await sessionsState.openFromHistory(session.sessionFile ?? "");
 	},
 }));
+
+/**
+ * 目录写穿：把内存里目录还没有的会话补进去（**只补缺、不覆盖**——磁盘权威的最小改动）。
+ *
+ * 为什么必须有这一层：磁盘历史只在「进新会话页 / 启动」时整表重拉，是**旧账**；而新建出来的会话
+ * 必然比那次快照晚（快照是在它诞生之前拉的）。这段时间里它只活在内存 `sessions` 里，靠
+ * `mergeSidebarSessions` 的合并撑着左栏行。内存策略（GC）一卸载它，内存里没了、旧账里也没有 →
+ * 行凭空消失（2026-09-21 实测事故）。写穿把「存在性」提前落到目录，卸载就只是撤掉运行态。
+ *
+ * 不覆盖的理由：`createdAt/modifiedAt` 等稳定字段以磁盘为准（内存 meta 可能缺字段，盖上去会让
+ * 排序键掉到 createdAt、行在打开/卸载时伪移动）；运行态字段本就在读取时由合并覆盖。
+ */
+function absorbOpenSessions(open: readonly SessionMeta[]): void {
+	const state = useProjectsStore.getState();
+	const known = new Set(state.allSessions.map((session) => session.sessionId));
+	const missing = open.filter((session) => !known.has(session.sessionId));
+	if (missing.length === 0) return;
+	useProjectsStore.setState({ allSessions: [...state.allSessions, ...missing] });
+}
+
+// 写穿接线：**只此一处** —— 任何「会话进入内存」的路径（新建/打开/fork/从历史打开）都经它落目录，
+// 将来新增路径也不会漏（不依赖各调用点自觉）。放在这里是因为依赖方向就是 projects → sessions。
+useSessionsStore.subscribe((state, prev) => {
+	if (state.sessions !== prev.sessions) absorbOpenSessions(state.sessions);
+});
 
 /** 项目列表 = 有历史会话的目录 ∪ 手动添加的目录（日常空间 cwd 除外，它在侧栏单独钉顶）；手动添加的按添加时间倒排（最新在前），未添加过的按最后活动排后 */
 export function deriveProjects(state: Pick<ProjectsStore, "allSessions" | "addedProjects">): ProjectEntry[] {

@@ -63,6 +63,9 @@
 | 快速连点两行，界面停在先点的那一行（或过一会才被抢回） | 四 · 异步导航必须 latest-wins（令牌 + 共享 open pipeline）（2026-09-20） |
 | 同一会话文件并发 open 后订阅/扩展/trace 翻倍、旧实例泄漏 | 二 · openSession 幂等：registry 短路 + single-flight + add 不静默覆盖（2026-09-20） |
 | 复制/恢复过会话文件后，它在列表里的时间/位置全变了 | 二 · 同章节「birthtime 不是会话创建时间」 |
+| 新建的会话过一阵突然从左侧栏消失（点「＋」/重启后又回来） | 四 · 会话目录写穿：行存不存在不能依赖内存（2026-09-21） |
+| 给 store 加模块级订阅后，某些入口报 `Cannot read properties of undefined (reading 'subscribe')` | 四 · 同章节「renderer 模块图不许有环」（2026-09-21） |
+| 反复被 GC 卸载的已置顶会话，顶栏胶囊也一起消失了 | 四 · 同章节「写穿」：胶囊与左栏同源（tabs → 目录兜底） |
 
 ## 一、事故复盘（含可复用诊断手法）
 
@@ -503,6 +506,26 @@ pi SDK 必须声明进 `packages/desktop/package.json` dependencies（electron-b
 - **同一文件共享一个 open pipeline**（模块级 in-flight Map，key = 规范化路径）：双击只发一次 IPC、失败只 toast 一次、settle 后必清 key（否则失败后永远重试不了）；bundle 装载再按 sessionId 去重（open 完成时 meta 会先落进 tabs，用户再点那一行走的是懒加载，两条路会撞车）；
 - **异步创建/分叉要把新 id 作为返回值交给调用方**，禁止“创建完读 active 拿 id”；
 - 自动卸载（GC）的“关完成”要**复检 active**：关的过程中用户可能刚好选中了这个会话（判定“可卸”时它还不是 active），此时应当**重新打开后端会话**而不是把它从 UI 抹掉——只重建 backend、不重载磁盘历史（否则 idle transcript 会被历史快照覆盖），不写 `activeSessionId`、不领新令牌。
+
+### 会话目录写穿：左栏「行存不存在」不能依赖内存（2026-09-21）
+
+症状：新建的会话先好好地待在左栏，过一阵（切走到别的会话后）**突然消失**；点「＋」进新会话页后又出现。顶栏置顶胶囊如果指着它，也会一起没。
+
+链路（`main-<日期>.log` 实证，含精确到秒的复现）：
+
+1. 左栏行的数据源是「磁盘历史快照 + 内存会话」合并；而磁盘历史（`projects.allSessions`）**只在进新会话页（`EmptyState` 挂载）时整表重拉**。
+2. `17:19:05` 用户点「＋」→ 拉快照（**必然早于它接下来要建的那个会话**）；`17:20:35` 首条消息才建出会话 → 它只活在内存里，靠合并撑着左栏那一行。
+3. `18:11:26` 用户切走 → 它不再是 active → 内存策略（GC）下一轮立刻卸它（`lastUsedAt` 只在「打开/切到/新建」打点，发消息不打点，所以时间戳一直停在 17:20，一离开 active 就命中 5 分钟超时）→ 内存里没了、旧快照里也没有 → **行凭空消失**。日志里就一行 `session closed <id>`，无任何删除语义。
+4. `18:18:43` 再点「＋」→ 又拉一次快照 → 行回来。
+
+对策（已落地）：**目录是存在性的唯一来源，会话一进内存就写穿进去**。`stores/projects.ts` 底部一处 `useSessionsStore.subscribe`（会话一进内存就补进目录，**只补缺不覆盖**，磁盘权威的时间字段不被内存 meta 盖掉）+ `load()` 结尾再补一次（`0` 消息会话还没有会话文件，重拉的快照必然没有它）。内存 `sessions` 自此只负责运行态；GC 卸载 = 只撤运行态，不撤存在性。单测：`stores/projects.test.ts` 的「会话目录写穿」四例（含「卸载后左栏行仍在」）+ `lib/sidebar-groups.test.ts`。
+
+连带两个教训：
+
+- **推导链条里任何一环「旧」，整条结论都不可信**：spec 里曾写着「左栏列的是磁盘历史，所以卸载不会让任何列表缺项」——这句话在快照新鲜时成立，而快照并不保证新鲜（`session-memory-policy.md` §1 已标注修正）。审查这类断言时要问「这份数据的**新鲜度**由谁保证」。
+- **renderer 模块图不许有环**：写穿用一个模块级订阅，立刻在「`sessions` 先进」的入口（三个 store 单测）报 `Cannot read properties of undefined (reading 'subscribe')`——环 `projects → sessions → ui-preferences → sidebar-groups → projects` 让 `projects` 的模块体在 `sessions` 未求值完时执行。环的成因只是 3 行纯函数 `toggleInList` 挂在 `sidebar-groups` 上（已拆成叶模块 `lib/toggle-in-list.ts`）。防线：`src/renderer/src/import-cycles.test.ts` 扫全图断言 0 环（本仓当时为 0，含 `import type`）。
+
+复现手法（可复用）：dev 实例 + CDP 直接驱 store 走真实入口（`.local/dev-logs/repro-session-catalog.mjs`）：`createSession()`（真实 promotion）→ `activateNewSessionDraft()` 切走 → `unloadSession(id)`（GC 真实入口）→ 断言 `inMemory=false` 但 `inCatalog=true` 且 `document.querySelector('[data-session-id=…]')` 仍在。**侧栏按组渲染，断言前要先展开该会话所在项目的组**（`setExpandedGroups([...groups, cwd])`），否则“行不在 DOM 里”是假阴性。
 
 ## 五、工程纪律
 

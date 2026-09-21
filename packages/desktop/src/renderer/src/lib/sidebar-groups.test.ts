@@ -11,7 +11,6 @@ import {
 	type SidebarGroupsInput,
 	type SidebarNavigationInput,
 	toggleExpandedGroup,
-	toggleInList,
 } from "./sidebar-groups";
 
 /**
@@ -417,13 +416,7 @@ describe("导航投影：只读子会话不进左栏", () => {
 	});
 });
 
-describe("toggleInList / toggleExpandedGroup", () => {
-	it("置顶切换：新置顶排最前，取消则移除", () => {
-		expect(toggleInList([], "a")).toEqual(["a"]);
-		expect(toggleInList(["a"], "b")).toEqual(["b", "a"]);
-		expect(toggleInList(["b", "a"], "a")).toEqual(["b"]);
-	});
-
+describe("toggleExpandedGroup", () => {
 	it("展开切换：无记录时以默认集为起点翻转，不误伤其它组", () => {
 		expect(toggleExpandedGroup([], P2, [P1], false)).toEqual([P1, P2]);
 		expect(toggleExpandedGroup([P1], P1, [], true)).toEqual([]);

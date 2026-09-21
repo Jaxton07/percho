@@ -1,7 +1,7 @@
 import type { PermissionMode, UiState } from "@percho/shared";
 import { create } from "zustand";
 import { getPi } from "../api";
-import { toggleInList } from "../lib/sidebar-groups";
+import { toggleInList } from "../lib/toggle-in-list";
 
 /** 应用级 UI 偏好（持久化在 ui-state.json，与主题/背景同源；主进程 normalize 负责旧文件缺省） */
 interface UiPreferencesStore {
