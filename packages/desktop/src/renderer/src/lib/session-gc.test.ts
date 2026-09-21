@@ -22,7 +22,7 @@ const IDLE_ENTRY: SessionGcEntry = {
 const NOW = 1_000_000_000;
 
 function session(sessionId: string, lastUsedAt: number, extra: Partial<SessionGcOpen> = {}): SessionGcOpen {
-	return { sessionId, lastUsedAt, isDraft: false, messageCount: 4, ...extra };
+	return { sessionId, lastUsedAt, messageCount: 4, ...extra };
 }
 
 function input(over: Partial<SessionGcInput> = {}): SessionGcInput {
@@ -90,10 +90,6 @@ describe("pickUnloadCandidates · 单条保护条件", () => {
 		).toEqual([]);
 	});
 
-	it("draft 不卸（内存 tab，卸了就是「关掉」）", () => {
-		expect(ids({ open: [session("draft:x", NOW - 10_000_000, { isDraft: true })] })).toEqual([]);
-	});
-
 	it("0 消息会话不卸（还没有会话文件，磁盘历史里查不到，卸掉 = 条目消失）", () => {
 		expect(ids({ open: [session("empty", NOW - 10_000_000, { messageCount: 0 })] })).toEqual([]);
 	});
@@ -135,7 +131,6 @@ describe("pickUnloadCandidates · 单条保护条件", () => {
 		expect(isProtected(session("a", NOW), IDLE_ENTRY)).toBe(false);
 		expect(isProtected(session("a", NOW), undefined)).toBe(false); // 还没装载 transcript = 空闲
 		expect(isProtected(session("a", NOW), { ...IDLE_ENTRY, agentActive: true })).toBe(true);
-		expect(isProtected(session("a", NOW, { isDraft: true }), IDLE_ENTRY)).toBe(true);
 		expect(isProtected(session("a", NOW, { messageCount: 0 }), IDLE_ENTRY)).toBe(true);
 		expect(isProtected(session("a", NOW, { messageCount: 0 }), { ...IDLE_ENTRY, messageCount: 2 })).toBe(
 			false,

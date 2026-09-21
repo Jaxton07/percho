@@ -1,7 +1,10 @@
 <p align="center">
-  <img src="docs/icon.svg" alt="percho logo" width="128">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="docs/assets/img/readme-hero-dark.svg">
+    <img src="docs/assets/img/readme-hero-light.svg" alt="Percho — geometric construction wordmark and pyramid" width="100%">
+  </picture>
 </p>
-<h1 align="center">percho</h1>
+<h1 align="center">Percho</h1>
 <p align="center">
   Highly customizable desktop GUI for the <a href="https://www.npmjs.com/package/@earendil-works/pi-coding-agent">Pi coding agent</a> — the same engine as the Pi CLI, in a clean visual interface. Multi-session chat, visual tool approvals, built-in subagents, UI plugins, and custom themes.
 </p>
@@ -22,7 +25,11 @@
 
 ## Demo
 
-![percho welcome page with the whale maid desk pet](docs/assets/img/percho_pet.png)
+![Percho new-session page](docs/assets/img/chat_001.png)
+
+![Percho project and session sidebar](docs/assets/img/chat_002.png)
+
+![Percho per-turn diff sidebar](docs/assets/img/chat_003.png)
 
 ![UI plugins settings — the whale maid desk pet ships built in](docs/assets/img/percho_ui_plugins.png)
 
@@ -34,13 +41,9 @@
 
 ![Chat with custom background image in dark theme](docs/assets/img/chat_img_bg_show_img.png)
 
-**Settings — providers & models**
+## Why Percho?
 
-![Settings page demo](docs/assets/img/demo-settings.gif)
-
-## Why percho?
-
-percho embeds the official Pi SDK (`@earendil-works/pi-coding-agent`) in the Electron main process. It is **not a fork and not a reimplementation** — it runs the same engine as the Pi CLI and inherits Pi's native strengths:
+Percho embeds the official Pi SDK (`@earendil-works/pi-coding-agent`) in the Electron main process. It is **not a fork and not a reimplementation** — it runs the same engine as the Pi CLI and inherits Pi's native strengths:
 
 - **Extensibility** — TypeScript extensions, skills, and prompt templates installed for the Pi CLI work here too, including project-local ones (with a trust prompt before loading). Adapt Pi to your workflows, no forking required.
 - **Shared configuration** — same `~/.pi/agent/` directory as the CLI: sessions, auth, and model settings carry over. Start a session in the terminal, continue it in the GUI.
@@ -50,15 +53,15 @@ And for those who prefer a GUI over a TUI:
 
 - Highly customizable UI — swap tool-call cards, drop in desk-pet overlays (two whale-maid pets ship built in), or extend the settings panel via UI plugins
 - Visual permission gates — approve or deny each tool call from a dock, backed by a per-tool rule engine
-- Draggable multi-session tabs (plus an optional session rail), per-session composer drafts, follow-up queue with undo
+- A collapsible project/session sidebar, draggable pinned-session pills, per-session composer drafts, and a follow-up queue with undo
 - Built-in subagents — a scout plus your own agent definitions, parallel task fan-outs, and run cards you can click to inspect the sub-session read-only
 - Context evaporation (on by default) — stale tool outputs age into compact stubs, keeping long sessions within budget
-- Unified error system — in-chat error cards with one-click retry, an auto-retry status line, and a crash-proof renderer
-- Solid session workspace — fork any message, recall your own message back into the composer, todo panel, per-turn diff sidebar, slash-command menu and @-file completion
+- Unified error system — in-chat error cards with one-click retry, an auto-retry status line, and full-page renderer crash recovery
+- Solid session workspace — fork from assistant turns or selected context, recall your own message back into the composer, todo panel, per-turn diff sidebar, slash-command menu and @-file completion
 - Streaming markdown rendering, image previews, message copy
 - Agent-initiated image display — a built-in `show_image` tool lets the agent deliberately show you images inline (single or grouped), without turning every tool result into noise
 - Custom background image with adjustable overlay dimming, light/dark/system themes
-- LAN observer — watch a session read-only from a phone or tablet browser via QR code
+- LAN companion — monitor sessions from a phone or tablet browser via QR code; optionally enable remote prompts, stop generation, and allow-once/deny approval decisions
 
 ## Download
 
@@ -83,10 +86,6 @@ Prebuilt installers are published on the [Releases](https://github.com/Jaxton07/
 >
 > On Linux: make the AppImage executable before first launch (`chmod +x percho-linux-x86_64.AppImage`). On Ubuntu 22.04+/24.04+ and derivatives, install `libfuse2` first — AppImages mount via FUSE 2, which is no longer preinstalled. Linux builds download and install updates in-app.
 
-## Configuration
-
-API keys are never stored in this repo or written into the app bundle. `~/.pi/agent/models.json` references environment variables (e.g. `$AI_OPS_API_KEY`) and keys stay in your shell environment. If you already use the Pi CLI, your existing setup just works.
-
 ## Development
 
 Prerequisites: **Node.js >= 22.19**.
@@ -102,7 +101,7 @@ See [CONTRIBUTING.md](CONTRIBUTING.md) for the full guide. If you are in China a
 
 ## Disclaimer
 
-percho is a community project. It is **not** built by or affiliated with the Pi team (earendil-works).
+Percho is a community project. It is **not** built by or affiliated with the Pi team (earendil-works).
 
 ## License
 

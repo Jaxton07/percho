@@ -51,6 +51,12 @@ interface ProjectsStore {
 	openSession: (session: SessionMeta) => Promise<void>;
 }
 
+/**
+ * 列表刷新的单调序号（spec D6）：旧请求（含比新请求早发却晚回、或晚失败的那次）不得覆盖新请求的
+ * `allSessions/loading/loaded`。模块级：不落盘、不进 store，重载归零也无意义。
+ */
+let loadSeq = 0;
+
 export const useProjectsStore = create<ProjectsStore>((set, get) => ({
 	allSessions: [],
 	addedProjects: loadAddedProjects(),
@@ -60,10 +66,13 @@ export const useProjectsStore = create<ProjectsStore>((set, get) => ({
 	loaded: false,
 
 	load: async () => {
+		const seq = ++loadSeq;
 		set({ loading: true });
 		try {
 			// 日常目录与全量会话并行取；目录进 lib/daily 模块缓存（isDailyCwd 同步判定供各组件用）
 			const [allSessions] = await Promise.all([getPi().listAllSessions(), initDailyDir()]);
+			// latest-wins：更晚的 load 已经发起 → 这份旧快照直接丢弃（loading 由最新那次收尾）
+			if (seq !== loadSeq) return;
 			set({ allSessions, loading: false, loaded: true });
 			const { selectedCwd } = get();
 			if (!selectedCwd) {
@@ -71,6 +80,8 @@ export const useProjectsStore = create<ProjectsStore>((set, get) => ({
 				if (projects[0]) set({ selectedCwd: projects[0].cwd });
 			}
 		} catch {
+			// 旧请求失败也不得插手：既不能覆盖新结果，也不能提前把新请求的 loading 置 false
+			if (seq !== loadSeq) return;
 			set({ loading: false, loaded: true });
 		}
 	},
@@ -82,7 +93,7 @@ export const useProjectsStore = create<ProjectsStore>((set, get) => ({
 	addProject: async () => {
 		const cwd = await getPi().pickDirectory();
 		if (!cwd) return;
-		// 信任前置：添加项目即决策（未决弹窗，结果落 trust.json），之后建 draft/会话不再弹
+		// 信任前置：添加项目即决策（未决弹窗，结果落 trust.json），之后在新会话页/建会话都不再弹
 		void getPi()
 			.ensureProjectTrust({ cwd })
 			.catch(() => {});

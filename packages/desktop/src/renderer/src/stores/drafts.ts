@@ -1,7 +1,10 @@
 import type { ImageInput } from "@percho/shared";
 import { create } from "zustand";
 
-/** 无活跃会话（未创建的新会话）时的草稿 key */
+/**
+ * 新会话页（`activeSessionId === null`）的草稿 key。
+ * 单例 draft：全局只有这一份新会话内容，新建/再点「＋」/promotion 前后都不换 key。
+ */
 export const NEW_SESSION_DRAFT_KEY = "__new__";
 
 /** 请求聚焦输入框的窗口事件名（撤回回填草稿后由 store 派发，Composer 监听聚焦 textarea） */

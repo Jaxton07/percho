@@ -38,6 +38,8 @@
 | 右键菜单贴边溢出视口、滚动后浮层脱锚 | 四 · 右键菜单定位与脱锚（2026-09-17） |
 | Google Vertex 填了 key 仍 401「API keys are not supported by this API」 | 二 · Vertex 只支持 ADC/服务账号（api_key 路径必败，桥接层已剔除 api-key 选项） |
 | 跨会话频道里对方迟迟不查收、回复总晚一整轮（实施在改文件、review 却在跑回归） | 二 · sendUserMessage 默认 followUp = 等对方 turn 结束才投递（2026-09-17） |
+| 新会话页的 picker 改动「点了没反应」、promotion 用的项目/模型和页面显示的不是一回事 | 五 · 新会话页不变式：active=null ⇒ 必有 draft，且 cwd 严格镜像 draft.cwd（2026-09-20） |
+| CDP 验收脚本里想注入 IPC 失败/统计调用次数，改写 `window.pi` 却毫无反应 | 五 · contextBridge 暴露的 API 在页面里只读（2026-09-20） |
 | 逐帧截图全是空白/同一张陈旧图、rAF 像停摆 | 四 · 合成器空帧与「暂停动画不出新帧」（2026-09-19 补） |
 | 验证脚本读出「旋转没生效」（`transform: none`）但界面明明转了 | 四 · Tailwind 4 的 `rotate-*` 走 `rotate` 属性不是 `transform`（2026-09-19） |
 | 脚本里手动删了 React 的节点，随后整页「界面出现异常」（removeChild 报错） | 四 · 别手拆 React 管理的 DOM（含 portal 浮层）（2026-09-19） |
@@ -54,6 +56,10 @@
 | 打开模型选择器后整页向左偷跑、左栏与顶栏左侧按钮被挤/裁切 | 四 · absolute 弹层越界 + autoFocus = 整页横向偷跑（2026-09-20） |
 | CDP 量测得出「弹层在视口内、也没滚动」但界面明明错位（量错元素） | 四 · 同章节「量测三纪律」（2026-09-20） |
 | 量测脚本报「draft 没进左栏」，实际是我的选择器点到了分组头 | 四 · 同章节「量测三纪律」→ 侧栏行选择器（2026-09-20） |
+| 点一下历史会话行，它在左栏里跳到别处（卸载后又跳回） | 四 · 内存 meta 覆盖历史 meta = 排序键漂移到 createdAt（2026-09-20） |
+| 快速连点两行，界面停在先点的那一行（或过一会才被抢回） | 四 · 异步导航必须 latest-wins（令牌 + 共享 open pipeline）（2026-09-20） |
+| 同一会话文件并发 open 后订阅/扩展/trace 翻倍、旧实例泄漏 | 二 · openSession 幂等：registry 短路 + single-flight + add 不静默覆盖（2026-09-20） |
+| 复制/恢复过会话文件后，它在列表里的时间/位置全变了 | 二 · 同章节「birthtime 不是会话创建时间」 |
 
 ## 一、事故复盘（含可复用诊断手法）
 
@@ -148,6 +154,29 @@ LAN 页重连/中途进入时，快照种子经 `messagesToUIMessages` 重建—
 4. **所有跨 `await` 的续体都要复查生命周期**（`active/trusted/订阅`）：shutdown/退订完全可能落在「读盘 ↔ 起 watcher」之间，不复查就会出现幽灵投递、幽灵游标、孤儿 watcher。watcher 的 single-flight 推荐用 `p.then(settle, settle)` 而不是 `void p.finally(settle)`——`finally` 会派生新 promise，`p` 意外 reject 时变成未处理拒绝。
 
 **本期未覆盖的已知限制（缺口）**：轮询降级模式的删除检测（`readdir` 快照里不含被删文件）与 watcher root 目录被删后重建——这两种异常场景下 watcher 会**漏事件**（订阅会话仍在，但那一次变化不会投递），不影响本期主故障（会话被卸载导致订阅整个消失）的验收，但它们是真实缺口、本期明确不修，不要当成「不是 bug」。
+
+### openSession 幂等：registry 短路 + single-flight + `add` 不静默覆盖（2026-09-20，sidebar-session-switch-stability）
+
+症状：同一个会话文件被重复打开（renderer 双击同一行、sidebar 与「子代理跑卡」两条路同时开、别处再调一次 open）后，这个会话的**订阅/扩展/trace 全变成两份**；关闭它只 dispose 掉后注册的那一份，前一份变成没人能关的活会话（内存、watcher、事件转发都翻倍）。查日志能看到同一 sessionId 的 `session opened` 出现两次。
+
+根因有两层，都要堵：
+
+1. `SessionRegistry.add()` 原来是 `Map.set` —— **静默覆盖**旧 entry，旧实例没人再持有引用，永远不会被 dispose；
+2. `PiBackend.openSession()` 每次都从头构造 AgentSession，**从不回头看 registry**（哪怕这个 sessionId 已经在内存里）。
+
+对策（三层，缺一层都可能漏）：
+
+- `openSession` 用 **`resolve(filePath)` 规范化绝对路径做 key** 跑 single-flight（同一文件并发 open 共享一次构造；settle 后必清 key → 失败可重试）；
+- 取到 header 拿到 sessionId 后**先查 registry，命中就直接返回现有 entry 的 meta**（`toMeta`）——短路必须放在 `getModelRuntime()`/资源 loader/扩展构造**之前**，否则照样白构造一遍；
+- `registry.add()` 改成同 entry 幂等、**不同 entry 同 sessionId 抛错**；`wireSession` 里接住这个错，把刚构造的 `unsubscribe/gate.dispose/dialogs.dispose/session.dispose` 全做掉再重抛（这是并发/别名路径的最后防线，不能只抛错把资源漏出去）。
+
+### birthtime 不是会话创建时间（2026-09-20，sidebar-session-switch-stability）
+
+症状：复制/恢复/迁移过会话文件（或从别的机器拷回来）后，这个会话在列表里的“创建时间”变成今天、置底或置顶、排序也乱；另一个更隐蔽的版本是我们把“内存活跃会话”的 meta 直接覆盖磁盘 meta，**一打开某个会话它就从列表当前位置跳走**（详情见四 · 内存 meta 覆盖历史 meta）。
+
+根因：`statSync(file).birthtimeMs` 被当成 `createdAt` 用。birthtime 是**文件诞生时间**，copy/restore 就变，跟会话本身没关系；而 SDK 自己用的是 session header 的 `timestamp`（`buildSessionInfo()`：`created = header.timestamp`、`modified = user/assistant 消息最大活动时间`）。
+
+对策：活跃会话的时间字段只从**会话内容**取（header + entries，见 `backend/src/session/meta.ts`），`stat`/`Date.now()` 只在 header 读不出来时兜底，且**兜底也优先 mtime 而不是 birthtime**。自己实现枚举时，`custom`/`toolResult` 类 entry 一律不算活动——否则 channel cursor 之类的扩展写入会把会话顶到最前。
 
 ## 三、构建 · 打包 · 环境
 
@@ -421,6 +450,31 @@ pi SDK 必须声明进 `packages/desktop/package.json` dependencies（electron-b
 - **滚动/改变窗口尺寸就关菜单**（而不是重定位）：祖先滚动容器可能有很多层，跟踪成本远大于收益；不关会「菜单挂在原地、触发元素跑了」。
 - `preventDefault()` 在 `contextmenu` 里必写（否则同时弹系统菜单）；dnd-kit 的 `PointerSensor` 只认主键，右键不会误触发拖拽。
 
+### 内存 meta 覆盖历史 meta = 排序键漂移到 createdAt，行会“自己跳”（2026-09-20，sidebar-session-switch-stability）
+
+症状：点开左栏某条历史会话，那一行**当场移到别处**（项目里第 3 行 → 第 22 行）；等它被自动卸载（或关掉再开另一个），又跳回原位。用户描述成“点一下行就乱跳”。
+
+根因：左栏数据来自两份来源合并且**同 ID 后者整体覆盖前者**——磁盘历史（有完整 `modifiedAt`）与内存活跃会话（当时只有 `createdAt`，且是文件 birthtime）。合并且丢掉 `modifiedAt` 后，排序键 `modifiedAt ?? createdAt` 就从「最后活动时间」掉到「当时才诞生的 birthtime」——于是行位置随“打没打开”变。
+
+对策：
+
+- 同 ID 合并要分字段：运行态字段（name/model/active/messageCount）以内存为准，但 **`createdAt` 取历史权威值、内存缺 `modifiedAt` 时保留历史值**（`lib/sidebar-groups.ts` 的 `mergeSessionMeta`）；
+- 更根上的一步是**让内存 meta 自己带正确的 `modifiedAt`**（后端 `toMeta` 改从 header/entries 算，见二 · birthtime 那条）——两层都要，上游漏一个字段下游不该跟着错；
+- 回归验收不要只看“值对不对”：**记录点击前后这一行的 `top` 与序号**（CDP 读 `[data-session-id]` 顺序即可），比对比快照更能发现“位置漂移”。
+
+### 异步导航必须 latest-wins（令牌 + 共享 open pipeline）（2026-09-20，sidebar-session-switch-stability）
+
+症状：快速点两行（或点一行再切回已加载的会话），界面**停在先点的那一行**——第一次点击的 `openSession` 后到，把刚切走的 `activeSessionId` 又写了回去；极端情况下还会把 `cwd` 一起带回旧项目。
+
+根因：所有导航入口都是 `await IPC → set({activeSessionId, cwd, lastUsedAt})`，没有任何措施区分“这是不是我最后一次点击带来的结果”。更阴的一点：`createSession` 不返回新会话 id、调用方改写 `activeSessionId` 取回它（为了拿权限模式/发首条消息）——一旦 latest-wins 生效，调用方就会拿到**别人的** sessionId（消息和权限模式发错会话），所以「改导航语义」必须同步审计所有调用点。
+
+对策：
+
+- 导航动作**入口就领**一个进程内单调令牌（不能等 IPC 回来才领，否则表达不了点击顺序）；异步返回时只有令牌仍是最新才写 `activeSessionId/cwd`，过期的只落数据（meta 进 tabs、bundle 装载）；同步切换（`switchSession`）领号即可瞬间作废所有在飞的 open/create/fork；
+- **同一文件共享一个 open pipeline**（模块级 in-flight Map，key = 规范化路径）：双击只发一次 IPC、失败只 toast 一次、settle 后必清 key（否则失败后永远重试不了）；bundle 装载再按 sessionId 去重（open 完成时 meta 会先落进 tabs，用户再点那一行走的是懒加载，两条路会撞车）；
+- **异步创建/分叉要把新 id 作为返回值交给调用方**，禁止“创建完读 active 拿 id”；
+- 自动卸载（GC）的“关完成”要**复检 active**：关的过程中用户可能刚好选中了这个会话（判定“可卸”时它还不是 active），此时应当**重新打开后端会话**而不是把它从 UI 抹掉——只重建 backend、不重载磁盘历史（否则 idle transcript 会被历史快照覆盖），不写 `activeSessionId`、不领新令牌。
+
 ## 五、工程纪律
 
 ### renderer 单测跑在 node 环境：测不了 i18n 与返回 JSX 的模块函数（2026-09-20）
@@ -429,7 +483,7 @@ pi SDK 必须声明进 `packages/desktop/package.json` dependencies（electron-b
 
 原因：本仓 vitest 无 config（`electron.vite.config.ts` 不被 vitest 读取），环境是默认的 **node**：无 DOM/localStorage，且 esbuild 把 `.tsx` 编译成 `React.createElement`（classic）→ 一调就炸（上游：应用构建预期 automatic，两边 JSX runtime 不一致）。
 
-对策（本期采用）：**把决策抽成不碰 JSX 的纯函数再测**（如 `sidebarMenuKind()`、`discardDraft()`），JSX 菜单项本身交给 CDP 手测（真跑一遍比单测更接近用户行为）。若真需要渲染测试，得单独引入 jsdom + `esbuild: { jsx: "automatic" }`（新增 `packages/desktop/vitest.config.ts`），**别为一个 builder 就改全局测试环境**。
+对策（本期采用）：**把决策抽成不碰 JSX 的纯函数再测**（如 `sidebarMenuKind()`、`canOpenSessionMenu()`；当时举例的 `discardDraft()` 已随单例 draft 重构删除，见 2026-09-20 单例 draft 条目），JSX 菜单项本身交给 CDP 手测（真跑一遍比单测更接近用户行为）。若真需要渲染测试，得单独引入 jsdom + `esbuild: { jsx: "automatic" }`（新增 `packages/desktop/vitest.config.ts`），**别为一个 builder 就改全局测试环境**。
 
 ### 别用 `npm run lint | tail -2` 判断「lint 通过」（2026-09-20）
 
@@ -451,6 +505,33 @@ pgrep -f "electron-vite" | xargs -r kill -9
 ```
 
 另外同时起两个 dev 实例时，只有**先启动**那个能绑上调试端口（后起的静默失败）；排查前先 `ps -eo pid,lstart,command | grep MacOS/Electron` 数一下进程。
+
+### 新会话页不变式：`activeSessionId === null` ⇒ 必有 draft，且 cwd 严格镜像 draft.cwd（2026-09-20，单例 draft 重构）
+
+症状（本仓单例 draft 重构中连栽三轮 review，都是同一个根因的不同侧面）：
+
+1. 新会话页（`activeSessionId === null`）却没有 draft —— 此时模型/思考/权限 picker 会把选择写进「不存在的东西」，用户看到**点了没反应**（静默丢失）。
+   触发路径：关掉最后一个真实会话、promotion 迟到且用户此刻正停在新会话页。
+2. 有 draft 但 `store.cwd` 与 `draft.cwd` 分叉 —— 页面/左栏 `activeCwd` 按 A 项目展开，promotion 却按 B 项目建会话；`draft.cwd === null`（还没选项目）时更隐蔽：store.cwd 回退成了上个会话的项目。
+
+原因：把「当前页面的配置真相」和「当前会话」当成两份独立状态维护。`cwd` 尤其容易分叉 —— 它是 store 的全局字段，同时又由 draft 承载。
+
+对策（现已落地，改动 store 时守住）：
+
+- **唯一来源**：新会话的 cwd/模型/思考/权限只存在 `newSessionDraft` 里；`store.cwd` 在新会话页**严格镜像 `draft.cwd`（含 null，不回退到别的会话）**。
+- **不变式要主动维护**：store 初始化即建一份 draft；`closeSession` 关掉最后一个会话、promotion 消费掉 draft 后若用户仍在新会话页，都必须**立刻补种**一份。
+- **写 `cwd` 的所有路径都得盘一遍**：本仓共 6 处（init / switchSession / openFromHistory / promotion 成功与迟到 / activateNewSessionDraft / setDraftCwd），当时只有 `closeSession` 漏了。
+- 单测里直接把这三者（`activeSessionId` / `draft.cwd` / `store.cwd`）**一起断言**，别只断言其中一个。
+
+### contextBridge 暴露的 API 在页面里只读：CDP 验收脚本注不进 IPC 失败（2026-09-20）
+
+症状：想在 CDP 验收里 `window.pi.createSession = ...` 注入失败/数调用次数 —— 赋值**静默无效**（`window.pi.createSession === orig` 仍成立），也 `Object.defineProperty` 不了（`{ writable: false, configurable: false }`）。同理 `getPi()` 所在的 ESM 模块命名空间也改不动。
+
+对策：
+
+- **失败路径**改用「受控失败路径」：例如把新会话 draft 的 `cwd` 置成 null（= 用户还没选项目）走 `createSession()` 的 null 返回分支，或直接在单测里 mock。**别指望在页面里拦 IPC**。
+- **成功路径的 IPC 计数**：数主进程日志（本仓 backend 每次建会话会打 `session created`，脚本按行数取差），或用应用的 store 状态断言（页面内 `await import("/src/stores/*.ts")` 拿到的就是应用在用的同一份实例）。
+- 需要「点真实子代理卡」这类依赖模型行为的场景，优先找**历史回放**入口：历史里已有子代理运行的父会话，打开它 → transcript 重放出卡片 → 点它，同样落到只读检视页，且完全确定性（子会话文件在 `<agentDir>/sessions-subagents/`，后端按路径判定 `readOnly`）。现场真跑一次 subagent 依赖凭证可用，dev 里常 401 拿不到可点卡片。
 
 ### 绝不打印/提交 API key
 

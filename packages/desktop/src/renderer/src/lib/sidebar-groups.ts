@@ -1,7 +1,10 @@
 import type { SessionMeta } from "@percho/shared";
-import type { ProjectEntry } from "../stores/projects";
+import { deriveProjects, type ProjectEntry } from "../stores/projects";
 import { partitionSessionsByPin } from "../stores/sessions";
 import { getDailyDirCached } from "./daily";
+import { isPrimaryNavigationSession } from "./session-visibility";
+
+export { isPrimaryNavigationSession };
 
 /**
  * 左侧栏的纯派生层：把「全量历史会话 + 项目表 + 偏好」算成可直接渲染的分组数组。
@@ -45,14 +48,31 @@ export type SidebarGroupsResult = {
 };
 
 /**
+ * 同 ID 合并（spec D1）：运行态字段（name/model/active/messageCount/readOnly…）以**内存**为准，
+ * 但**稳定时间字段**不能被不完整的活跃 meta 抹掉：
+ *
+ * - `createdAt`：历史（磁盘 header 时间）是权威值。活跃 meta 曾经用文件 birthtime，复制/恢复会话文件就会变；
+ * - `modifiedAt`：内存 meta 缺活动时间（老 registry meta）时**保留历史值**。丢了它排序键会从
+ *   `modifiedAt` 掉到 `createdAt`（`groupSessions` 的 `modifiedAt ?? createdAt`），
+ *   于是「点一下历史行，它就跳到别处」——同一个会话并未真的产生新活动。
+ */
+function mergeSessionMeta(history: SessionMeta, memory: SessionMeta): SessionMeta {
+	return {
+		...memory,
+		createdAt: history.createdAt,
+		modifiedAt: memory.modifiedAt ?? history.modifiedAt,
+	};
+}
+
+/**
  * 左栏数据源合并：**磁盘历史（`projects.allSessions`）+ 当前内存会话（`sessions.sessions`）**。
- * 内存项按 `sessionId` 覆盖历史项（名称/模型/状态以当前实例为准），历史项保持原顺序，
- * 内存独有项（draft、刚创建还没落盘的真实会话）按内存顺序补在后面。**不负责排序**：
+ * 内存项按 `sessionId` 覆盖历史项（名称/模型/状态以当前实例为准，时间字段走 `mergeSessionMeta` 合并），
+ * 历史项保持原顺序，内存独有项（刚创建、还没进历史的真实会话）按内存顺序补在后面。**不负责排序**：
  * 组内排序统一由 `groupSessions` 做（最后活动倒序 + 置顶分区）。
  *
- * 为什么不只拼 draft：draft 发首条消息时会在 `sessions` 里**原地替换**成真实会话，
- * 而它此刻还没进 `allSessions`（历史要重新拉取）——只拼 draft 会让左栏行在这段缝隙里消失。
- * 合并全部内存会话就从根上消除了这个状态缺口（spec D2）。
+ * 为什么必须合并内存会话：新会话 promotion 成真实会话后，`sessions` 里立刻有了它，
+ * 而 `allSessions`（磁盘历史）要等下次重拉才更新——只吃历史会让左栏行在这段缝隙里消失。
+ * 合并全部内存会话从根上消除了这个状态缺口（spec D2）。新会话页没有会话条目，靠 `activeCwd` 展开当前组。
  */
 export function mergeSidebarSessions(
 	history: readonly SessionMeta[],
@@ -61,23 +81,47 @@ export function mergeSidebarSessions(
 	// Map 保序：覆盖同 id 不会改变它原有的插入位置（历史顺序不被改写）
 	const byId = new Map<string, SessionMeta>();
 	for (const session of history) byId.set(session.sessionId, session);
-	for (const session of memory) byId.set(session.sessionId, session);
+	for (const session of memory) {
+		const previous = byId.get(session.sessionId);
+		byId.set(session.sessionId, previous ? mergeSessionMeta(previous, session) : session);
+	}
 	return [...byId.values()];
 }
 
 export type SidebarGroupsInput = {
-	/** 全量历史会话（含未打开的） */
+	/** 全量历史会话（含未打开的）；**调用方应先过 `isPrimaryNavigationSession`**（见 `deriveSidebarNavigation`） */
 	sessions: readonly SessionMeta[];
 	/** 项目表：**复用 `deriveProjects(projectsStore)` 的输出**（已排除日常目录、已含「只有会话」与「手动添加」两类） */
 	projects: readonly ProjectEntry[];
 	/** 搜索词（与 `deriveSessions` 同规则：命中名称或 sessionId，空串不过滤） */
 	search: string;
-	activeSessionId: string | null;
+	/**
+	 * 当前会话所在目录（新会话页 = draft 的目录），只用来算默认展开组。
+	 * **显式传入、不从 `sessions` 反查**：只读子会话会被导航投影过滤掉，反查会丢信息；
+	 * 传 `null` 就是「没有当前目录」（如新会话页还没选项目），不得回退去反查。
+	 */
+	activeCwd: string | null;
 	pinnedSessions: readonly string[];
 	pinnedProjects: readonly string[];
 	/** 已展开的分组 key（**含义由 `expandedGroupsTouched` 决定**） */
 	expandedGroups: readonly string[];
 	/** false = 用户还没手动开合过（走默认推断，`expandedGroups` 不参与）；true = 完全以 `expandedGroups` 为准（空数组 = 全部折叠） */
+	expandedGroupsTouched: boolean;
+};
+
+/** `deriveSidebarNavigation` 的输入：左栏需要的两个数据源（历史 + 内存）+ 项目表 + 偏好 */
+export type SidebarNavigationInput = {
+	/** 磁盘历史（`projects.allSessions`） */
+	history: readonly SessionMeta[];
+	/** 当前内存会话（`sessions.sessions`，含刚创建还没进历史的真实会话与只读子会话） */
+	memory: readonly SessionMeta[];
+	/** 手动添加过的项目目录（`projects.addedProjects`） */
+	addedProjects: string[];
+	search: string;
+	activeCwd: string | null;
+	pinnedSessions: readonly string[];
+	pinnedProjects: readonly string[];
+	expandedGroups: readonly string[];
 	expandedGroupsTouched: boolean;
 };
 
@@ -122,10 +166,8 @@ export function deriveSidebarGroups(input: SidebarGroupsInput): SidebarGroupsRes
 	}
 
 	const pinnedSessions = new Set(input.pinnedSessions);
-	const activeCwd = input.activeSessionId
-		? (input.sessions.find((session) => session.sessionId === input.activeSessionId)?.cwd ?? null)
-		: null;
-	const defaultExpandedKeys = activeCwd ? [activeCwd] : [];
+	// 默认展开组只能来自显式 activeCwd：从 sessions 里反查 active 会因只读子会话被过滤而丢信息
+	const defaultExpandedKeys = input.activeCwd ? [input.activeCwd] : [];
 	// 展开态的唯一判据是 touched 位，不是「数组空不空」：空数组合法表示「用户把最后一组也折了」
 	const expandedKeys = input.expandedGroupsTouched ? input.expandedGroups : defaultExpandedKeys;
 	const isExpanded = (key: string) => expandedKeys.includes(key);
@@ -171,6 +213,36 @@ export function deriveSidebarGroups(input: SidebarGroupsInput): SidebarGroupsRes
 		}),
 		defaultExpandedKeys,
 	};
+}
+
+/**
+ * 历史 + 内存合并后，只留进导航的主会话（只读子会话检视态不进左栏，spec §6）。
+ * **过滤只发生在投影层**：store 里那份会话仍然活着（事件/transcript/关闭都靠它）。
+ */
+export function primaryNavigationSessions(
+	history: readonly SessionMeta[],
+	memory: readonly SessionMeta[],
+): SessionMeta[] {
+	return mergeSidebarSessions(history, memory).filter(isPrimaryNavigationSession);
+}
+
+/**
+ * 左栏装配（Sidebar 与单测**共用同一条路径**，不在测试里手抄装配顺序）：
+ * 历史 + 内存合并 → 统一过滤只读子会话 → **同一份集合**同时喂给项目表与分组派生。
+ * 项目表必须也用过滤后的集合：否则只读子会话所在目录会凭空长出一个（计数虚高的）项目组。
+ */
+export function deriveSidebarNavigation(input: SidebarNavigationInput): SidebarGroupsResult {
+	const sessions = primaryNavigationSessions(input.history, input.memory);
+	return deriveSidebarGroups({
+		sessions,
+		projects: deriveProjects({ allSessions: sessions, addedProjects: input.addedProjects }),
+		search: input.search,
+		activeCwd: input.activeCwd,
+		pinnedSessions: input.pinnedSessions,
+		pinnedProjects: input.pinnedProjects,
+		expandedGroups: input.expandedGroups,
+		expandedGroupsTouched: input.expandedGroupsTouched,
+	});
 }
 
 /** 置顶 / 取消置顶（新置顶排最前）：会话与项目共用，store 与组件都走它，别各写一套 */

@@ -3,7 +3,7 @@ import { getPi } from "../../api";
 import { useT } from "../../i18n";
 import { getDailyDirCached, isDailyCwd } from "../../lib/daily";
 import { deriveProjects, useProjectsStore } from "../../stores/projects";
-import { isDraftSessionId, useSessionsStore } from "../../stores/sessions";
+import { useSessionsStore } from "../../stores/sessions";
 import { CoffeeIcon } from "../icons";
 import { Dropdown } from "../ui/Dropdown";
 
@@ -11,9 +11,9 @@ import { Dropdown } from "../ui/Dropdown";
 export function ProjectBranchPicker() {
 	const cwd = useSessionsStore((s) => s.cwd);
 	const activeSessionId = useSessionsStore((s) => s.activeSessionId);
-	// 真实会话的项目在创建时已绑定、不可更改：只在无会话 / draft（新会话）时提供切换，
+	// 真实会话的项目在创建时已绑定、不可更改：只在新会话页（无 active）提供切换，
 	// 避免选择器看起来能切、实际不生效的假交互
-	if (activeSessionId && !isDraftSessionId(activeSessionId)) return null;
+	if (activeSessionId) return null;
 	// 日常空间目录不是 git 仓库：隐藏分支选择器，只留归属 chip（可下拉切回项目）
 	const daily = isDailyCwd(cwd);
 	return (
@@ -64,7 +64,7 @@ function ProjectPicker() {
 		>
 			{(close) => (
 				<>
-					{/* 日常空间钉顶：draft 可在 日常 ↔ 项目 间双向切换（与侧栏同一空间语义） */}
+					{/* 日常空间钉顶：新会话页可在 日常 ↔ 项目 间双向切换（与侧栏同一空间语义） */}
 					{dailyDir && (
 						<>
 							<button
@@ -93,7 +93,7 @@ function ProjectPicker() {
 								project.cwd === cwd ? "text-ink" : "text-ink-2"
 							}`}
 							onClick={() => {
-								// draft 场景下同步更新 draft 条目的 cwd，发送首条消息时即用此目录创建
+								// 写进 draft 配置（同时记住 lastCwd）：发送首条消息时即用这个目录创建
 								setDraftCwd(project.cwd);
 								close();
 							}}

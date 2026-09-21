@@ -1,7 +1,6 @@
 import type { ContextUsageInfo } from "@percho/shared";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { getPi } from "../api";
-import { isDraftSessionId } from "../stores/sessions";
 
 /** 触发刷新的事件类型（流式 delta 类高频事件不刷新） */
 const REFRESH_EVENTS = new Set([
@@ -20,7 +19,7 @@ function isRefreshEvent(type: string): boolean {
 
 /**
  * 上下文使用量 hook（事件驱动刷新）：给定会话 id，返回 { tokens, contextWindow, percent }。
- * sessionId 为 null / draft（后端无此会话）时返回 null。ContextRing 与插件 host API 共用，
+ * sessionId 为 null（新会话页，后端还没有这个会话）时返回 null。ContextRing 与插件 host API 共用，
  * 抽自 ContextRing（行为零变化）。
  */
 export function useContextUsage(sessionId: string | null): ContextUsageInfo | null {
@@ -29,8 +28,8 @@ export function useContextUsage(sessionId: string | null): ContextUsageInfo | nu
 	const cancelledRef = useRef(false);
 
 	const refresh = useCallback(async () => {
-		// draft 在后端不存在，无上下文用量可查
-		if (!sessionId || isDraftSessionId(sessionId)) {
+		// 新会话页（null）在后端还不存在，无上下文用量可查
+		if (!sessionId) {
 			setUsage(null);
 			return;
 		}

@@ -3,7 +3,7 @@ import { getPi } from "../../api";
 import type { Translate } from "../../i18n";
 import { buildDiagnosticsText } from "../../lib/diagnostics";
 import { useProjectsStore } from "../../stores/projects";
-import { isDraftSessionId, useSessionsStore } from "../../stores/sessions";
+import { useSessionsStore } from "../../stores/sessions";
 import { useToastsStore } from "../../stores/toasts";
 import { useUiPreferencesStore } from "../../stores/ui-preferences";
 import { CopyIcon, PencilIcon, PinIcon, TrashIcon } from "../icons";
@@ -12,48 +12,24 @@ import type { ContextMenuItem } from "../ui/ContextMenu";
 /**
  * 会话菜单的共用规则（顶栏胶囊、悬浮会话列表、左侧栏会话行调同一份，行为必须一致）：
  * 能不能弹、菜单项、以及置顶 / 重命名 / 复制诊断 / 删除四个动作。
- * 为什么单独一个模块：draft（纯前端 id）与只读子会话（后端拒绝写）都要拦、置顶要顺带重排、
+ * 为什么单独一个模块：只读子会话（后端拒绝写）要拦、置顶要顺带重排、
  * 重命名失败要弹 toast —— 复制三份迟早漂移。
+ *
+ * 新会话还没有后端对象、也不进左栏，所以这里不存在「新会话」形态的菜单。
  */
 
-/** draft（后端没有该会话）与只读子会话（后端拒绝写）上的动作全会失败 → 通用菜单不给。
- *  draft 在左栏有自己的**最小菜单**（只有一项「丢弃新会话」，见 `draftSessionMenuItems`），
- *  不要为了左栏放开这里让 draft 进通用菜单（spec D3）。 */
+/** 只读子会话（后端拒绝写）上的动作全会失败 → 通用菜单不给；找不到会话同样不给。 */
 export function canOpenSessionMenu(session: SessionMeta | undefined): boolean {
-	return !!session && !session.readOnly && !isDraftSessionId(session.sessionId);
+	return !!session && !session.readOnly;
 }
 
 /**
  * 左栏会话行的右键菜单形态（纯逻辑，便于单测；组件只负责按形态渲染）：
- * - `draft`：draft 专属最小菜单（只有「丢弃新会话」）；
  * - `session`：普通真实会话的完整菜单；
  * - `none`：找不到会话或只读子会话，不给菜单。
  */
-export function sidebarMenuKind(session: SessionMeta | undefined): "draft" | "session" | "none" {
-	if (!session) return "none";
-	if (isDraftSessionId(session.sessionId)) return "draft";
+export function sidebarMenuKind(session: SessionMeta | undefined): "session" | "none" {
 	return canOpenSessionMenu(session) ? "session" : "none";
-}
-
-/**
- * draft 左栏行的右键菜单：**只有「丢弃新会话」这一项**（spec D3）。
- * 重命名/置顶/复制诊断/删后端会话对 draft 都无意义或必败，一律不给；只读子会话仍完全无菜单。
- */
-export function draftSessionMenuItems(t: Translate, options: { onDiscard: () => void }): ContextMenuItem[] {
-	return [
-		{
-			key: "discardDraft",
-			label: t("sessionMenu.discardDraft"),
-			icon: <TrashIcon size={13} />,
-			danger: true,
-			onSelect: options.onDiscard,
-		},
-	];
-}
-
-/** 丢弃 draft：纯本地移除（draft 没有任何后端对象），不弹确认——与旧顶栏胶囊叉号同语义 */
-export function discardDraft(sessionId: string): void {
-	void useSessionsStore.getState().closeSession(sessionId);
 }
 
 /**

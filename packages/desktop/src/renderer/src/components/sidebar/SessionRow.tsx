@@ -1,7 +1,6 @@
 import type { SessionMeta } from "@percho/shared";
 import type { MouseEvent as ReactMouseEvent } from "react";
 import { useT } from "../../i18n";
-import { isDraftSessionId } from "../../stores/sessions";
 import { PinIcon } from "../icons";
 import { sessionTitle, useSessionStatus } from "../session/session-status";
 import type { MenuAnchor } from "../ui/place-menu";
@@ -36,13 +35,13 @@ export function SessionRow({
 }) {
 	const t = useT();
 	const status = useSessionStatus(session.sessionId);
-	// draft 还没落盘、也没有名字：固定显示「新会话」（后来真的有名字了才回落到 sessionTitle）
-	const title = isDraftSessionId(session.sessionId)
-		? t("sidebar.newSession")
-		: sessionTitle(session, t("projects.untitled"), t("projects.daily"));
+	const title = sessionTitle(session, t("projects.untitled"), t("projects.daily"));
 	return (
 		<button
 			type="button"
+			// 可测试性只读属性（spec §6：CDP 按 sessionId 定位行，而不是靠标题文本匹配；纯属性，不影响视觉/交互）
+			data-session-id={session.sessionId}
+			data-session-active={active ? "true" : "false"}
 			title={title}
 			className={`flex h-[31px] w-full items-center gap-2 rounded-[7px] px-1.5 text-left text-[13.5px] ${
 				active ? "bg-bubble font-medium text-ink" : "text-ink-2 hover:bg-hover hover:text-ink"

@@ -246,12 +246,10 @@ export const en: Messages = {
 		delete: "Delete session",
 		deleteTitle: "Delete this session?",
 		deleteDesc: "Its transcript and session file will be deleted permanently. This cannot be undone.",
-		discardDraft: "Discard new session",
 	},
 	sidebar: {
 		title: "Navigation",
 		search: "Search sessions",
-		newSession: "New session",
 		daily: "Daily",
 		projectsSection: "Projects",
 		addProject: "Add project",

@@ -243,14 +243,10 @@ export const zh = {
 		delete: "删除会话",
 		deleteTitle: "删除会话？",
 		deleteDesc: "该会话的记录与文件会被永久删除，无法恢复。",
-		/** draft 专用：只丢内存里的占位会话，不删磁盘文件、不碰后端（走纯本地分支） */
-		discardDraft: "丢弃新会话",
 	},
 	sidebar: {
 		title: "导航",
 		search: "搜索会话",
-		/** 未落盘的 draft 在左栏的固定标题（它还没名字，也不该显示 uuid） */
-		newSession: "新会话",
 		daily: "日常",
 		projectsSection: "项目",
 		addProject: "添加项目",

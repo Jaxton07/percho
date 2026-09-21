@@ -2,12 +2,13 @@ import type { ImageInput, UiError } from "@percho/shared";
 import { useEffect, useRef, useState } from "react";
 import { getPi } from "../../api";
 import { useT } from "../../i18n";
-import { isDraftSessionId, useSessionsStore } from "../../stores/sessions";
+import { useSessionsStore } from "../../stores/sessions";
 import { useSettingsStore } from "../../stores/settings";
 import { pushToast } from "../../stores/toasts";
 import { useTranscriptStore } from "../../stores/transcript";
 import { buildQuoteBlock } from "./quote";
 import { buildSendUiError } from "./send-error";
+import { createSendGuard } from "./send-guard";
 
 export interface UseComposerSendOptions {
 	activeSessionId: string | null;
@@ -40,6 +41,8 @@ export function useComposerSend(options: UseComposerSendOptions) {
 	const [error, setErrorState] = useState<UiError | null>(null);
 	const [feedback, setFeedback] = useState<{ message: string; tone: "info" | "warn" } | null>(null);
 	const feedbackTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+	/** 发送的同步锁（见 send-guard.ts：state 挡不住 await 窗口里的重复触发） */
+	const sendGuard = useRef(createSendGuard());
 
 	/** 统一信封：发送失败也走 UiError（内联条 + 与消息流错误卡同语言）；传 null 清除 */
 	const setError = (message: string | null) => setErrorState(message ? buildSendUiError(message) : null);
@@ -50,26 +53,18 @@ export function useComposerSend(options: UseComposerSendOptions) {
 		feedbackTimer.current = setTimeout(() => setFeedback(null), 2500);
 	};
 
-	/** 确保有活跃会话（无会话或 draft 时用其 cwd 真正创建，draft tab 原地转正），返回 sessionId */
+	/** 确保有活跃会话（新会话页则把那唯一一份 draft 转正），返回 sessionId */
 	const ensureSession = async (): Promise<string | null> => {
-		const state = useSessionsStore.getState();
-		const current = state.activeSessionId;
-		if (current && !isDraftSessionId(current)) return current;
-		const draftCwd = current ? state.sessions.find((s) => s.sessionId === current)?.cwd : undefined;
-		// draft 态选过的权限模式：转正后应用到新会话（后端新会话一律 default 起步）
-		const pendingMode = current ? state.permissionModes[current] : undefined;
-		const targetCwd = draftCwd ?? state.cwd;
-		if (!targetCwd) return null;
-		await useSessionsStore.getState().createSession(targetCwd, current ?? undefined);
-		const created = useSessionsStore.getState().activeSessionId;
-		if (created && !isDraftSessionId(created)) {
-			// 失败仅 toast（store 内已提示+回滚），不阻塞发送
-			if (pendingMode && pendingMode !== "default") {
-				await useSessionsStore.getState().setSessionPermissionMode(created, pendingMode);
-			}
-			return created;
+		const current = useSessionsStore.getState().activeSessionId;
+		if (current) return current;
+		// draft 页：promotion 用 draft 快照建真实会话（模型/思考/权限都从 `newSessionDraft` 取，
+		// 调用方不再自己拼 cwd/权限）。无 draft 的防御态（调用顺序异常）先建一份再转正。
+		if (!useSessionsStore.getState().newSessionDraft) {
+			useSessionsStore.getState().activateNewSessionDraft();
 		}
-		return null;
+		// 用返回值定位新会话，不读 activeSessionId：创建期间用户可能已切走，
+		// 此时新会话仍在后台存在（latest-wins 不让它抢焦点），读 active 会把消息发到别人身上
+		return useSessionsStore.getState().createSession();
 	};
 
 	/** 执行内置命令（发送以 / 开头文本时的分发；未匹配则透传给 SDK 原生处理模板/skill/扩展命令） */
@@ -114,35 +109,19 @@ export function useComposerSend(options: UseComposerSendOptions) {
 		}
 	};
 
-	const handleSend = async () => {
-		const { text, images, attachments, quotes, slashCommand, followUpQueue, compacting, agentActive } =
-			options;
-		// 引用胶囊逐条转 blockquote 段落；@ 引用胶囊拼回文本。引用置最前（先给上下文），正文在后
-		const quoteBlock = buildQuoteBlock(quotes);
-		const atText = attachments.map((p) => `@${p}`).join(" ");
-		const body = [atText, text.trim()].filter(Boolean).join("\n");
-		const content = [quoteBlock, slashCommand ? `/${slashCommand}${body ? ` ${body}` : ""}` : body]
-			.filter(Boolean)
-			.join("\n\n");
-		// 运行中（streaming）不拦截：prompt 走 followUp 排队；仅防双击重发（sending）
-		if ((!content && images.length === 0) || sending) return;
-		// 压缩中禁发：SDK 拒绝压缩中的 prompt，提前拦截保住草稿
-		if (compacting) {
-			showFeedback(t("composer.compacting"), "warn");
-			return;
-		}
-		// 图片门控：草稿残留图 + 当前模型不支持（如多模态切纯文本后）→ toast 提醒不发送，保住草稿
-		if (images.length > 0 && !options.imagesSupported) {
-			pushToast("warning", "composer.imageUnsupported");
-			return;
-		}
-		// 单条排队上限：已有一条且本次是普通文本则挡住（斜杠命令 streaming 中也可立即执行，不受限）
-		if (followUpQueue.length >= 1 && !content.startsWith("/")) {
-			showFeedback(t("composer.queueFull"), "warn");
-			return;
-		}
-		const wasActive = agentActive;
-
+	/**
+	 * 真正的一轮发送（同步锁内）。从「确保有会话」到 prompt 落地都可能 await，
+	 * 调用方必须先抢 `sendGuard` 再进来（见 handleSend 尾部的注释）。
+	 */
+	const sendNow = async (sent: {
+		content: string;
+		text: string;
+		images: ImageInput[];
+		attachments: string[];
+		quotes: string[];
+		wasActive: boolean;
+	}): Promise<void> => {
+		const { content, text, images, attachments, quotes, wasActive } = sent;
 		let sessionId = options.activeSessionId;
 		if (content.startsWith("/") && images.length === 0) {
 			sessionId = await ensureSession();
@@ -161,8 +140,8 @@ export function useComposerSend(options: UseComposerSendOptions) {
 				return;
 			}
 			// 未匹配的内置命令：落回正常发送（SDK 原生处理模板/技能/扩展命令）
-		} else if (!sessionId || isDraftSessionId(sessionId)) {
-			// 无会话或 draft tab：用其 cwd 真正创建（draft 原地转正）
+		} else if (!sessionId) {
+			// 新会话页（没有 active）：先把 draft 转正成真实会话再发
 			sessionId = await ensureSession();
 			if (!sessionId) {
 				// v10 启动纯空：开机就是新会话页，没选项目目录时 ensureSession 返回 null。
@@ -204,10 +183,47 @@ export function useComposerSend(options: UseComposerSendOptions) {
 		}
 	};
 
+	const handleSend = async () => {
+		const { text, images, attachments, quotes, slashCommand, followUpQueue, compacting, agentActive } =
+			options;
+		// 引用胶囊逐条转 blockquote 段落；@ 引用胶囊拼回文本。引用置最前（先给上下文），正文在后
+		const quoteBlock = buildQuoteBlock(quotes);
+		const atText = attachments.map((p) => `@${p}`).join(" ");
+		const body = [atText, text.trim()].filter(Boolean).join("\n");
+		const content = [quoteBlock, slashCommand ? `/${slashCommand}${body ? ` ${body}` : ""}` : body]
+			.filter(Boolean)
+			.join("\n\n");
+		// 运行中（streaming）不拦截：prompt 走 followUp 排队；仅防双击重发（sending）
+		if ((!content && images.length === 0) || sending) return;
+		// 压缩中禁发：SDK 拒绝压缩中的 prompt，提前拦截保住草稿
+		if (compacting) {
+			showFeedback(t("composer.compacting"), "warn");
+			return;
+		}
+		// 图片门控：草稿残留图 + 当前模型不支持（如多模态切纯文本后）→ toast 提醒不发送，保住草稿
+		if (images.length > 0 && !options.imagesSupported) {
+			pushToast("warning", "composer.imageUnsupported");
+			return;
+		}
+		// 单条排队上限：已有一条且本次是普通文本则挡住（斜杠命令 streaming 中也可立即执行，不受限）
+		if (followUpQueue.length >= 1 && !content.startsWith("/")) {
+			showFeedback(t("composer.queueFull"), "warn");
+			return;
+		}
+		// 同步锁：`sending` 下一帧才生效，挡不住「draft 页要先 await 转正」这个窗口里的第二次触发
+		// （两次 Enter 会共享同一次 createSession，然后各自 prompt 一遍 = 同一句话发两次）
+		if (!sendGuard.current.tryAcquire()) return;
+		try {
+			await sendNow({ content, text, images, attachments, quotes, wasActive: agentActive });
+		} finally {
+			sendGuard.current.release();
+		}
+	};
+
 	/** 停止：先清排队（避免 abort 后 SDK 把排队消息投递出去）并还原为草稿，再中止 */
 	const handleStop = async () => {
 		const { activeSessionId, setText } = options;
-		if (!activeSessionId || isDraftSessionId(activeSessionId)) return;
+		if (!activeSessionId) return;
 		useTranscriptStore.getState().setFollowUpQueue(activeSessionId, []); // 乐观清面板
 		const cleared = await getPi().clearQueue({ sessionId: activeSessionId });
 		if (cleared.followUp.length > 0) {
@@ -220,7 +236,7 @@ export function useComposerSend(options: UseComposerSendOptions) {
 	/** 取回排队消息：清队列（SDK 侧 queue_update 随后对齐），内容放回输入框继续编辑 */
 	const handleRestoreQueue = async (focus: () => void) => {
 		const { activeSessionId, setText } = options;
-		if (!activeSessionId || isDraftSessionId(activeSessionId)) return;
+		if (!activeSessionId) return;
 		useTranscriptStore.getState().setFollowUpQueue(activeSessionId, []); // 乐观清面板
 		const cleared = await getPi().clearQueue({ sessionId: activeSessionId });
 		const restored = cleared.followUp[0];

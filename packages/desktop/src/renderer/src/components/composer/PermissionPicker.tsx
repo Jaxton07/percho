@@ -17,8 +17,14 @@ const MODES: PermissionMode[] = ["default", "fullAccess"];
 export function PermissionPicker() {
 	const t = useT();
 	const activeSessionId = useSessionsStore((s) => s.activeSessionId);
-	const mode = useSessionsStore((s) => s.permissionModes[s.activeSessionId ?? ""] ?? "default");
+	// 档位按会话隔离；draft 页（无会话）读 draft 配置里的档位，promotion 时随快照生效
+	const mode = useSessionsStore((s) =>
+		s.activeSessionId === null
+			? (s.newSessionDraft?.permissionMode ?? "default")
+			: (s.permissionModes[s.activeSessionId] ?? "default"),
+	);
 	const setSessionPermissionMode = useSessionsStore((s) => s.setSessionPermissionMode);
+	const setDraftPermissionMode = useSessionsStore((s) => s.setDraftPermissionMode);
 	const gateOff = useSettingsStore((s) => s.permissionGateOff);
 	const [open, setOpen] = useState(false);
 	const ref = useRef<HTMLDivElement>(null);
@@ -77,7 +83,9 @@ export function PermissionPicker() {
 									selected ? "text-ink" : "text-ink-2 hover:bg-hover"
 								}`}
 								onClick={() => {
+									// draft 页没有后端会话：先写 draft 配置，promotion 后由 store 应用到新会话
 									if (activeSessionId) void setSessionPermissionMode(activeSessionId, m);
+									else setDraftPermissionMode(m);
 									setOpen(false);
 								}}
 							>

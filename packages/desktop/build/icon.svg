@@ -1,0 +1,39 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="0 0 1024 1024">
+	<title>Percho</title>
+	<defs>
+		<filter id="shadow" x="-20%" y="-20%" width="140%" height="150%">
+			<feDropShadow dx="0" dy="18" stdDeviation="24" flood-color="#19191c" flood-opacity="0.14" />
+		</filter>
+	</defs>
+
+	<rect x="64" y="64" width="896" height="896" rx="220" fill="#fff" filter="url(#shadow)" />
+	<rect x="64.5" y="64.5" width="895" height="895" rx="219.5" fill="none" stroke="#323236" stroke-opacity="0.05" />
+
+	<g transform="translate(170 170) scale(2.85)">
+		<!-- 1:φ 外接矩形与制图轴 -->
+		<g fill="none" stroke="#cfd0d6" stroke-width="0.8" stroke-dasharray="3 3">
+			<rect x="43" y="54" width="154" height="95.2" />
+			<path d="M24 120h192M120 20v200" />
+		</g>
+		<path d="M40 50v8M200 50v8M40 145v8M200 145v8M116 17h8M116 217h8" fill="none" stroke="#cfd0d6" stroke-width="0.8" />
+
+		<!-- 四棱锥主体 -->
+		<path d="M120 33 42 146l76 44 81-51L120 33Z" fill="none" stroke="#8e8e96" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" />
+		<path d="M120 33 121 103M121 103l-3 87" fill="none" stroke="#8e8e96" stroke-width="1.45" stroke-linecap="round" stroke-linejoin="round" />
+		<path d="M42 146 121 103 199 139" fill="none" stroke="#b9bac1" stroke-width="1.1" stroke-dasharray="3 3" />
+
+		<!-- 高度 0.618 的等比透视切面 -->
+		<path d="M72 103 120 77l49 22-50 31-47-27Z" fill="none" stroke="#a4a5ad" stroke-width="1" stroke-dasharray="3.5 3.5" />
+		<path d="M72 103 120 130 169 99M120 77v53" fill="none" stroke="#cfd0d6" stroke-width="0.8" stroke-dasharray="3 3" />
+
+		<!-- 比例标注 -->
+		<path d="M207 33v157M203 33h8M203 93h8M203 190h8" fill="none" stroke="#cfd0d6" stroke-width="0.8" />
+		<g fill="#a4a4ac" font-family="Georgia, 'Times New Roman', serif" font-size="7.5" font-style="italic">
+			<text x="214" y="96">0.382</text>
+			<text x="214" y="146">0.618</text>
+			<text x="179" y="145">φ</text>
+			<text x="49" y="51">1 : φ</text>
+		</g>
+	</g>
+</svg>
