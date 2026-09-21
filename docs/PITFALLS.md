@@ -16,6 +16,7 @@
 | preload 加载失败（sandbox 下 require is not defined） | 三 · preload 必须 CJS |
 | main 进程 import workspace 包行为异常（外部化/旧产物） | 三 · externalizeDepsPlugin |
 | 打包产物缺 pi SDK、Electron 版本漂移 | 三 · 打包两个坑 |
+| Release 的 macOS job 在 `electron-vite build` 末尾 exit 134 / JavaScript heap out of memory | 三 · Release renderer 构建要显式提高 Node 堆上限（2026-09-21） |
 | Electron 二进制下载不动、npm 拦 postinstall | 三 · Node/npm 环境 |
 | gh 合并报 workflow scope / fork 首 PR 合不了 | 三 · gh CLI workflow scope |
 | 新增 UI 文案只显示一种语言 | 四 · i18n 双字典 |
@@ -209,6 +210,14 @@ main config 用 `exclude: ["@percho/backend", "@percho/shared"]` 并 alias 到�
 ### 打包两个坑
 
 pi SDK 必须声明进 `packages/desktop/package.json` dependencies（electron-builder 只从 desktop 依赖树收集）；electron 必须钉精确版本。发版/CI 细节全在 `.local/docs/release.md`（本地文档，不入库）。
+
+### Release renderer 构建要显式提高 Node 堆上限（2026-09-21）
+
+症状：本机 `npm run build` 正常，GitHub Release 的 `macos-latest` job 却在 `electron-vite build` 接近输出 chunk 时以 `exit 134` 失败；日志末尾是 `Ineffective mark-compacts near heap limit` / `JavaScript heap out of memory`，堆停在约 2.0GB。Linux/Windows 同一时刻可能仍在正常打包。
+
+原因：renderer 同时包含 Mermaid、KaTeX、Monaco 与大量懒加载语言/chunk，Rollup 在 macOS arm64 runner 上的峰值超过 Node 默认 old-space 上限；这不是 electron-builder、签名或应用运行时内存问题，盲目重跑不可靠。
+
+修复：Release workflow 的 build job 统一设置 `NODE_OPTIONS: "--max-old-space-size=4096"`，让三个矩阵平台使用同一构建口径。遇到类似 `134` 先看日志最后的 V8 GC 段，不要把前面的 Rollup annotation warning 当成根因。失败标签按 `.local/docs/release.md` 流程删远端 tag、让修复提交进入新 tag 后重跑，不能只 rerun 指向旧 workflow 的 run。
 
 ### gh CLI 合并涉及 workflow 的 PR 需要 `workflow` scope（2026-09-11 发现）
 

@@ -17,6 +17,8 @@ jobs:
     env:
       # 无开发者证书：mac 显式走 adhoc 签名（identity: "-"），禁用 runner 上的证书自动发现
       CSC_IDENTITY_AUTO_DISCOVERY: "false"
+      # renderer 含 Mermaid/KaTeX/Monaco 大量懒加载 chunk；macOS arm64 runner 的 Node 默认约 2GB 堆会 OOM
+      NODE_OPTIONS: "--max-old-space-size=4096"
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
