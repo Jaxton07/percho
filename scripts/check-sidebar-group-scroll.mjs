@@ -5,7 +5,7 @@
  *   cd packages/desktop && npx electron-vite dev -- --remote-debugging-port=9224
  *   （`npm run dev -- --remote-debugging-port=9224` 不行：npm 会把参数吞掉）
  *
- * 用法：node scripts/check-sidebar-group-scroll.mjs
+ * 用法：node scripts/check-sidebar-group-scroll.mjs（CDP_PORT 可换端口，必须是 1–65535 的纯数字）
  * 退出码：0 全部断言通过 / 1 有断言失败 / 2 环境不满足（无法判定，见提示）
  *
  * 纪律：
@@ -20,29 +20,35 @@
  * - 至少有一个溢出列表（> 8 行）与一个不溢出列表（≤ 8 行）。
  *   当前 dev 数据（`~/.pi/agent-dev`）默认满足；若没有，用隔离的 dev agent dir 造临时会话即可。
  */
-import { execSync } from "node:child_process";
+const EXIT_OK = 0;
+const EXIT_FAIL = 1;
+const EXIT_ENV = 2;
 
-const PORT = process.env.CDP_PORT ?? "9224";
+/** 端口来自环境变量且会被拼进 URL：必须是 1–65535 的纯数字，非法值当环境错误退出 */
+const RAW_PORT = process.env.CDP_PORT ?? "9224";
+if (!/^\d+$/.test(RAW_PORT) || Number(RAW_PORT) < 1 || Number(RAW_PORT) > 65535) {
+	console.error(`CDP_PORT 非法（${JSON.stringify(RAW_PORT)}）：应为 1–65535 的纯数字（退出码 ${EXIT_ENV}）`);
+	process.exit(EXIT_ENV);
+}
+const PORT = Number(RAW_PORT);
+
 /** 与 SidebarSessionList 的常量一致；改那边必须同步这里（验收口径） */
 const MAX_ROWS = 8;
 const ROW_HEIGHT = 31;
 const PROJECT_ROW_HEIGHT = 34;
 const LIST_MAX_HEIGHT = MAX_ROWS * ROW_HEIGHT;
 
-const EXIT_OK = 0;
-const EXIT_FAIL = 1;
-const EXIT_ENV = 2;
-
 /* ---------- CDP 连接 ---------- */
 async function findPage(timeoutMs = 20000) {
 	const deadline = Date.now() + timeoutMs;
 	while (Date.now() < deadline) {
 		try {
-			const list = JSON.parse(execSync(`curl -s http://127.0.0.1:${PORT}/json`).toString());
+			const res = await fetch(`http://127.0.0.1:${PORT}/json`, { signal: AbortSignal.timeout(3000) });
+			const list = await res.json();
 			const found = list.find((x) => x.type === "page" && x.webSocketDebuggerUrl);
 			if (found) return found;
 		} catch {
-			/* 端口未绑：下一轮 */
+			/* 端口未绑/非 JSON：下一轮 */
 		}
 		await new Promise((r) => setTimeout(r, 400));
 	}
