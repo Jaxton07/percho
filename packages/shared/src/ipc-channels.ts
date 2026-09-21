@@ -270,6 +270,12 @@ export const APP_CHANNELS = {
 	downloadUpdate: ch("update:download")<void, void>(),
 	/** 重启并安装已下载的更新 */
 	installUpdate: ch("update:install")<void, void>(),
+	/** 渲染端声明「退出确认由我接管」（App 挂载时置位）——未接管时 main 关窗直接放行 */
+	setQuitGuard: ch("app:setQuitGuard")<{ enabled: boolean }, void>(),
+	/** 渲染端回执「退出确认窗已上屏」→ main 撤掉兑底计时（超时 = 渲染进程卡死，直接放行退出） */
+	quitDialogShown: ch("app:quitDialogShown")<void, void>(),
+	/** 用户在退出确认弹窗点了「退出」→ main 置 quitting 后真退 */
+	confirmQuit: ch("app:confirmQuit")<void, void>(),
 } as const;
 
 /** UI 插件域：配置读写 / 列表 / 构建 / 代码读取 / 目录打开（参数校验在 handler 内） */
@@ -350,6 +356,8 @@ const EVENT_CHANNELS = {
 	UpdateEvent: "update:event",
 	/** UI 插件事件（changed/config） */
 	UiPluginsEvent: "uiPlugins:event",
+	/** 用户点了关闭窗口且 main 已拦下（等渲染端弹退出确认）；payload 为空 */
+	QuitRequested: "app:quit-requested",
 } as const;
 
 /** 全通道字符串常量：main→renderer 事件通道 + 表化 invoke（key = PiApi 方法名） */

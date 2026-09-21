@@ -14,6 +14,11 @@ export const en: Messages = {
 		desc: "A rendering error occurred: {detail}",
 		reload: "Reload",
 	},
+	quitConfirm: {
+		title: "Quit Percho",
+		desc: "Any task that is currently running will be terminated.",
+		confirm: "Quit",
+	},
 	tabbar: {
 		newSession: "New session",
 		pickProjectFirst: "Pick a project directory first",

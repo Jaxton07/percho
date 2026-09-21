@@ -12,6 +12,11 @@ export const zh = {
 		desc: "渲染层发生错误：{detail}",
 		reload: "重新加载",
 	},
+	quitConfirm: {
+		title: "退出 Percho",
+		desc: "退出后，当前正在进行的任务会终止。",
+		confirm: "退出",
+	},
 	tabbar: {
 		newSession: "新建会话",
 		pickProjectFirst: "请先选择项目目录",

@@ -36,6 +36,7 @@
 | 长会话里上滚，位置被反复重置/拽回底部（0.5.7 线上 bug） | 四 · 长会话切会话卡顿 → 二次修复（markstream 占位条缩水 + 手写滚动补偿）（2026-09-13 修复） |
 | 改了 `src/main/` 但 app 行为没变（dev 不重建主进程） | 三 · electron-vite dev 主进程 watcher 不可依赖（2026-09-17） |
 | 关窗后 renderer 还活着、`visibilityState` 仍是 visible；用 `window.close()` 测不出关窗拦截 | 四 · macOS 关窗 = 隐藏窗口（2026-09-17） |
+| 拦下关窗后窗口再也关不掉；渲染进程死循环也收不到 `unresponsive` 事件 | 四 · 关窗拦截必须留「渲染进程卡死」兑底（2026-09-21） |
 | 浮层/菜单退场闪回（节点被提前卸载）、二级浮层输入框没聚焦 | 四 · 浮层退场时序与焦点接管（2026-09-17） |
 | 右键菜单贴边溢出视口、滚动后浮层脱锚 | 四 · 右键菜单定位与脱锚（2026-09-17） |
 | Google Vertex 填了 key 仍 401「API keys are not supported by this API」 | 二 · Vertex 只支持 ADC/服务账号（api_key 路径必败，桥接层已剔除 api-key 选项） |
@@ -444,6 +445,16 @@ pi SDK 必须声明进 `packages/desktop/package.json` dependencies（electron-b
 **根因**：右栏原来在同一 flex 行里做 `width: 0 → min(420px, 38vw)` 的 420ms push 过渡。每个动画帧都会改变聊天列宽度，迫使 Markdown 重新换行和整列布局；`MessageList` 的 ResizeObserver 又会在跟随底部时逐帧调用 `scrollTo`。实测一次开栏约 52 次布局、42–50 次贴底滚动；隐藏 diff 内容改善很小，强制脱离布局后 LayoutDuration 从约 37–43ms 降到 3–5ms，说明瓶颈不在 diff 行本身。
 
 **修复**：右栏统一为绝对定位浮层抽屉，宽度固定，进退只动画 `transform/opacity`；聊天列完全不改宽。点击聊天区不自动关闭，保留顶栏开关、面板关闭按钮和 Esc，便于边看消息边核对变更。不要用 `max-width`、grid 列宽或另一种尺寸属性代替 `width`——它们仍然逐帧触发布局；要丝滑必须让运动留在合成层。
+
+### 关窗拦截必须留「渲染进程卡死」兑底：`unresponsive` 靠不住（2026-09-21，issue #71）
+
+背景：Windows 点 ✕ = 退出（微软惯例，不改），只在退出前弹一句「退出后正在跑的任务会终止」让用户自己决定。三条都是踩出来的：
+
+1. **`webContents.on("unresponsive")` 不能当「渲染进程卡死」的判据**：renderer 里投一个死循环（CDP `Runtime.evaluate` 跑 `while(true){}`，回包永不到）后等 20s，主进程**没收到任何 `unresponsive` 事件**（macOS 实测；`render-process-gone` 只管真崩溃）。只信它的话，卡死时 `close` 被拦下却没人弹窗——窗口从此关不掉，只能上任务管理器，**比误点退出更糟**。
+2. **正确做法 = 「上屏回执 + 超时放行」**：main 发 `app:quit-requested` 后起 1.5s 计时，renderer 的弹窗组件在 `useEffect` 里回一条 `app:quitDialogShown`（放在组件而非事件订阅处：提交后才有 DOM，才是真「上屏」）；回执到了就撤计时交回用户，超时就 `quitting = true; app.quit()` 退回原行为。实测：卡死 → 1.5s 后自动退出，不会卡住。
+3. **还要一个「没人接管」的默认放行**：renderer 挂载时才置 guard（`app:setQuitGuard`），未置位（页面还没挂上 / 崩成错误页）就照旧关窗即退；弹窗组件必须挂在 `AppErrorBoundary` **外面**，否则 App 崩成错误页时它一起没了，又变成「拦下来但没人弹窗」。
+
+验证手法（本机 macOS，靠两条临时改动模拟 Windows 分支）：main 里 `process.platform` 判断临时放宽 + 加个临时 IPC `test:closeWindow` 走 **main 侧** `win.close()`—— **不要用 renderer 的 `window.close()`**（它会直接销毁窗口，不走 `close` 事件，见上一节）。脚本留档 `.local/verify/quit-confirm-check.mjs`。另外：`PERCHO_QUIT_TEST_CLOSE_MS` 那类「到点自动关窗」的临时计时器必须在 `ready-to-show` 之后才起，否则窗口还没显示就关了，看着像「拦截失效」。
 
 ### macOS 关窗 = 隐藏窗口：三个反直觉点（2026-09-17，issue #55）
 

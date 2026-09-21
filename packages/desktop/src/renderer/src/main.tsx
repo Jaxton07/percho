@@ -2,6 +2,7 @@ import { StrictMode } from "react";
 import { createRoot } from "react-dom/client";
 import App from "./App";
 import { AppErrorBoundary } from "./components/AppErrorBoundary";
+import { QuitConfirmDialog } from "./components/ui/QuitConfirmDialog";
 // 宿主 API 挂载（副作用）：必须在任何插件代码可能运行之前执行，因此置于 theme store init 之前
 import "./plugins/host-api";
 // monaco 缺失服务补注册（副作用，详见文件头）：代码块编辑器 UNKNOWN service 报错修复
@@ -25,6 +26,9 @@ void Promise.all([useThemeStore.getState().init(), useUiPreferencesStore.getStat
 			<AppErrorBoundary>
 				<App />
 			</AppErrorBoundary>
+			{/* 退出确认弹窗挂在边界「外面」：App 崩成错误页时它仍要在场——
+			    否则 Windows 上点 ✕ 会被拦下却没人弹窗，窗口从此关不掉（见 stores/app-quit.ts） */}
+			<QuitConfirmDialog />
 		</StrictMode>,
 	);
 });

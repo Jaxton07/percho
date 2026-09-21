@@ -14,6 +14,7 @@ export function ConfirmDialog({
 	cancelLabel,
 	closeLabel,
 	danger = false,
+	autoFocusConfirm = false,
 	onConfirm,
 	onCancel,
 }: {
@@ -25,10 +26,19 @@ export function ConfirmDialog({
 	closeLabel?: string;
 	/** 确认按钮走危险红（删除类操作） */
 	danger?: boolean;
+	/** 弹窗打开即把焦点给确认按钮（Enter 直接确认）。默认关：破坏性操作不该被一个回车顺手做掉 */
+	autoFocusConfirm?: boolean;
 	onConfirm: () => void;
 	onCancel: () => void;
 }) {
 	const ref = useRef<HTMLDivElement>(null);
+	const confirmRef = useRef<HTMLButtonElement>(null);
+
+	// 默认焦点（仅 autoFocusConfirm 时）：走显式 focus() 而非 autoFocus 属性——
+	// 属性版会被 lint/a11y/noAutofocus 拦，行为也不如这里可控（只在需要时焦点）
+	useEffect(() => {
+		if (autoFocusConfirm) confirmRef.current?.focus();
+	}, [autoFocusConfirm]);
 
 	useEffect(() => {
 		const onPointerDown = (e: PointerEvent) => {
@@ -79,6 +89,7 @@ export function ConfirmDialog({
 						className={`flex h-8 items-center rounded-[9px] px-3.5 text-[13px] font-medium transition-colors ${
 							danger ? "bg-red-600/12 text-red-600 hover:bg-red-600/20" : "bg-ink text-on-ink hover:bg-ink-2"
 						}`}
+						ref={confirmRef}
 						onClick={onConfirm}
 					>
 						{confirmLabel}
