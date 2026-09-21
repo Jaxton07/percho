@@ -74,7 +74,11 @@ export function Sidebar() {
 		>
 			<div className="sidebar-inner">
 				<SidebarHeader />
-				<div className="min-h-0 flex-1 overflow-x-hidden overflow-y-auto px-2 pt-0.5 pb-2.5 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
+				{/* 左栏唯一的外层滚动容器：验收脚本用 `data-sidebar-scroll-root` 定位它（纯属性，无视觉影响） */}
+				<div
+					data-sidebar-scroll-root=""
+					className="min-h-0 flex-1 overflow-x-hidden overflow-y-auto px-2 pt-0.5 pb-2.5 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
+				>
 					{data.daily && (
 						<SidebarGroup group={data.daily} activeSessionId={activeSessionId} onToggle={onToggleGroup} />
 					)}
