@@ -1,5 +1,6 @@
 import type { ImageInput } from "@percho/shared";
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
+import { getPi } from "../../api";
 import { useActiveModelInfo, useSessionReadOnly } from "../../hooks/use-session-state";
 import { useT } from "../../i18n";
 import { RegionHost } from "../../plugins/RegionHost";
@@ -13,6 +14,7 @@ import { ArrowUpIcon, PencilIcon, PlusIcon, StopIcon } from "../icons";
 import { AtMenu } from "./AtMenu";
 import { AttachmentChip } from "./AttachmentChip";
 import { ContextRing } from "./ContextRing";
+import { resolveDroppedFilePaths } from "./drop-files";
 import { ImageTray } from "./ImageTray";
 import { ModelPicker } from "./ModelPicker";
 import { PermissionPicker } from "./PermissionPicker";
@@ -68,6 +70,16 @@ export function Composer({ centered = false }: { centered?: boolean }) {
 			attachments: typeof updater === "function" ? updater(d.attachments) : updater,
 		}));
 	};
+	const appendAttachments = useCallback(
+		(paths: string[]) => {
+			if (paths.length === 0) return;
+			updateDraft(draftKey, (d) => ({
+				...d,
+				attachments: [...new Set([...d.attachments, ...paths])],
+			}));
+		},
+		[draftKey, updateDraft],
+	);
 	const setQuotes = (updater: string[] | ((prev: string[]) => string[])) => {
 		updateDraft(draftKey, (d) => ({
 			...d,
@@ -159,6 +171,28 @@ export function Composer({ centered = false }: { centered?: boolean }) {
 		window.addEventListener(COMPOSER_FOCUS_EVENT, onFocusRequest);
 		return () => window.removeEventListener(COMPOSER_FOCUS_EVENT, onFocusRequest);
 	}, []);
+
+	// Electron sandbox 中 File.path 已移除；preload 通过 webUtils 恢复原生路径并送入现有附件管线。
+	useEffect(() => {
+		if (readOnly) return;
+		const containsFiles = (event: DragEvent) => event.dataTransfer?.types.includes("Files") ?? false;
+		const onDragOver = (event: DragEvent) => {
+			if (!containsFiles(event)) return;
+			event.preventDefault();
+			if (event.dataTransfer) event.dataTransfer.dropEffect = "copy";
+		};
+		const onDrop = (event: DragEvent) => {
+			if (!containsFiles(event) || !event.dataTransfer) return;
+			event.preventDefault();
+			appendAttachments(resolveDroppedFilePaths(event.dataTransfer.files, getPi().getPathForFile));
+		};
+		window.addEventListener("dragover", onDragOver);
+		window.addEventListener("drop", onDrop);
+		return () => {
+			window.removeEventListener("dragover", onDragOver);
+			window.removeEventListener("drop", onDrop);
+		};
+	}, [appendAttachments, readOnly]);
 
 	// 点击输入框容器外部时收起命令/文件面板（文本保留；继续输入时恢复）
 	const { setSlashDismissed } = slash;

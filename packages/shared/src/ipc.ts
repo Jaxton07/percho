@@ -36,6 +36,8 @@ export {
 export interface PiApi extends InvokeApi<typeof CHANNEL_TABLE> {
 	/** 运行平台（preload 同步注入，供 renderer 按平台分流 UI：如顶栏红绿灯/窗口按钮留白） */
 	readonly platform: "darwin" | "win32" | "linux" | (string & {});
+	/** Electron 沙箱渲染器中的 File 不再带 path；由 preload 同步解析原生拖入文件路径。 */
+	getPathForFile(file: unknown): string;
 	/** 订阅登录流程事件（event/prompt/prompt-cancel，按 loginId 归属）；返回取消函数 */
 	onProviderLoginEvent(cb: (payload: LoginEventPayload) => void): () => void;
 	/** 订阅更新状态（checking/available/downloading/downloaded/error）；返回取消函数 */
