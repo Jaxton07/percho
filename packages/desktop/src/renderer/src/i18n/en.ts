@@ -254,6 +254,8 @@ export const en: Messages = {
 	},
 	sidebar: {
 		title: "Navigation",
+		newSession: "New session",
+		newSessionInProject: "New session in {name}",
 		search: "Search sessions",
 		daily: "Daily",
 		projectsSection: "Projects",

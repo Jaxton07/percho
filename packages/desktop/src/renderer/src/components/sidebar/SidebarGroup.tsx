@@ -1,6 +1,8 @@
 import { useT } from "../../i18n";
 import type { SidebarGroup as Group } from "../../lib/sidebar-groups";
+import { COMPOSER_FOCUS_EVENT } from "../../stores/drafts";
 import { useProjectsStore } from "../../stores/projects";
+import { useSessionsStore } from "../../stores/sessions";
 import { ProjectRow } from "./ProjectRow";
 import { useSessionMenu } from "./SessionMenu";
 import { SessionRow } from "./SessionRow";
@@ -30,7 +32,12 @@ export function SidebarGroup({
 }) {
 	const t = useT();
 	const openSession = useProjectsStore((s) => s.openSession);
+	const activateNewSessionDraftForCwd = useSessionsStore((s) => s.activateNewSessionDraftForCwd);
 	const sessionMenu = useSessionMenu();
+	const openNewSession = () => {
+		activateNewSessionDraftForCwd(group.cwd);
+		requestAnimationFrame(() => window.dispatchEvent(new CustomEvent(COMPOSER_FOCUS_EVENT)));
+	};
 	return (
 		<div>
 			<ProjectRow
@@ -40,6 +47,7 @@ export function SidebarGroup({
 				pinned={pinned}
 				totalSessions={totalSessions}
 				onToggle={() => onToggle(group.key)}
+				onNewSession={openNewSession}
 				onTogglePin={onTogglePin ? () => onTogglePin(group.cwd) : undefined}
 				onRemove={onRemove}
 			/>

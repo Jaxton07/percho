@@ -787,7 +787,7 @@ describe("单例新会话 draft（newSessionDraft）", () => {
 		expect(piMock.ensureProjectTrust).toHaveBeenCalledWith({ cwd: "/proj/a" });
 	});
 
-	it("从当前真实会话快照 cwd/model/thinking（全局最近值是另一套，不得采用）", () => {
+	it("从当前真实会话快照 cwd/model/thinking/permission（全局最近值是另一套，不得采用）", () => {
 		useSessionsStore.setState({
 			sessions: [
 				{ ...realMeta("a", "/proj/alpha"), model: { provider: "pA", modelId: "mA" }, thinkingLevel: "high" },
@@ -796,37 +796,128 @@ describe("单例新会话 draft（newSessionDraft）", () => {
 			cwd: "/proj/alpha",
 			lastUsedModel: { provider: "pB", modelId: "mB" },
 			lastUsedThinkingLevel: "low",
+			permissionModes: { a: "fullAccess" },
 		});
 		useSessionsStore.getState().activateNewSessionDraft();
 		const draft = useSessionsStore.getState().newSessionDraft;
 		expect(draft?.cwd).toBe("/proj/alpha");
 		expect(draft?.model).toEqual({ provider: "pA", modelId: "mA" });
 		expect(draft?.thinkingLevel).toBe("high");
+		expect(draft?.permissionMode).toBe("fullAccess");
 	});
 
-	it("已在 draft 时再点「＋」：返回同一 draft，配置与输入内容都不覆盖（离开 → 真实 switchSession → 回来）", () => {
-		useSessionsStore.setState({ cwd: "/proj/a" });
+	it("已有后台 draft 时从真实会话点「＋」：配置改用当前会话快照，输入内容仍保留", () => {
+		useSessionsStore.setState({ cwd: "/proj/old" });
 		useSessionsStore.getState().activateNewSessionDraft();
-		useSessionsStore.getState().setDraftCwd("/proj/b");
-		useSessionsStore.getState().setDraftPermissionMode("fullAccess");
+		useSessionsStore.getState().setDraftCwd("/proj/old-draft");
 		useDraftStore.getState().updateDraft(NEW_SESSION_DRAFT_KEY, (d) => ({ ...d, text: "半包需求" }));
-		// 用户切到真实会话（真实动作，不用裸 setState 绕开要验证的路径）
 		useSessionsStore.setState({
-			sessions: [realMeta("r1", "/proj/a")],
+			sessions: [
+				{
+					...realMeta("r1", "/proj/current"),
+					model: { provider: "current-provider", modelId: "current-model" },
+					thinkingLevel: "high",
+				},
+			],
 			activeSessionId: "r1",
-			cwd: "/proj/a",
+			cwd: "/proj/current",
+			permissionModes: { r1: "fullAccess" },
 		});
-		useSessionsStore.getState().switchSession("r1");
 
 		useSessionsStore.getState().activateNewSessionDraft();
 
 		const state = useSessionsStore.getState();
 		expect(state.activeSessionId).toBeNull();
-		expect(state.newSessionDraft?.cwd).toBe("/proj/b");
-		expect(state.newSessionDraft?.permissionMode).toBe("fullAccess");
-		expect(state.cwd).toBe("/proj/b");
+		expect(state.cwd).toBe("/proj/current");
+		expect(state.newSessionDraft).toMatchObject({
+			cwd: "/proj/current",
+			model: { provider: "current-provider", modelId: "current-model" },
+			thinkingLevel: "high",
+			permissionMode: "fullAccess",
+		});
 		expect(state.sessions.map((s) => s.sessionId)).toEqual(["r1"]);
 		expect(useDraftStore.getState().bySession[NEW_SESSION_DRAFT_KEY]?.text).toBe("半包需求");
+	});
+
+	it("项目行新建：复用全局 draft，只改投 cwd，配置与输入内容都保留", () => {
+		useSessionsStore.setState({ cwd: "/proj/a" });
+		useSessionsStore.getState().activateNewSessionDraft();
+		useSessionsStore.getState().setDraftPermissionMode("fullAccess");
+		useSessionsStore.setState((state) => ({
+			newSessionDraft: state.newSessionDraft
+				? {
+						...state.newSessionDraft,
+						model: { provider: "p", modelId: "m" },
+						thinkingLevel: "high",
+					}
+				: null,
+		}));
+		useDraftStore.getState().updateDraft(NEW_SESSION_DRAFT_KEY, (draft) => ({
+			...draft,
+			text: "保留这段需求",
+			attachments: ["src/a.ts"],
+		}));
+
+		const beforeGeneration = useSessionsStore.getState().newSessionDraft?.generation;
+		useSessionsStore.getState().activateNewSessionDraftForCwd("/proj/b");
+
+		const state = useSessionsStore.getState();
+		expect(state.activeSessionId).toBeNull();
+		expect(state.cwd).toBe("/proj/b");
+		expect(state.newSessionDraft).toMatchObject({
+			cwd: "/proj/b",
+			model: { provider: "p", modelId: "m" },
+			thinkingLevel: "high",
+			permissionMode: "fullAccess",
+		});
+		expect(state.newSessionDraft?.generation).not.toBe(beforeGeneration);
+		expect(useDraftStore.getState().bySession[NEW_SESSION_DRAFT_KEY]).toMatchObject({
+			text: "保留这段需求",
+			attachments: ["src/a.ts"],
+		});
+		expect(piMock.ensureProjectTrust).toHaveBeenCalledWith({ cwd: "/proj/b" });
+		expect(piMock.createSession).not.toHaveBeenCalled();
+	});
+
+	it("项目行新建：当前没有 draft 时按指定 cwd 创建一份，并继承真实会话模型", () => {
+		useSessionsStore.setState({
+			sessions: [
+				{ ...realMeta("r1", "/proj/a"), model: { provider: "p", modelId: "m" }, thinkingLevel: "high" },
+			],
+			activeSessionId: "r1",
+			cwd: "/proj/a",
+			newSessionDraft: null,
+		});
+
+		useSessionsStore.getState().activateNewSessionDraftForCwd("/proj/b");
+
+		const state = useSessionsStore.getState();
+		expect(state.activeSessionId).toBeNull();
+		expect(state.newSessionDraft).toMatchObject({
+			cwd: "/proj/b",
+			model: { provider: "p", modelId: "m" },
+			thinkingLevel: "high",
+		});
+	});
+
+	it("项目行改投是最新导航：旧 cwd 的 promotion 迟到不得覆盖新 draft 或抢回焦点", async () => {
+		useSessionsStore.setState({ cwd: "/proj/a" });
+		useSessionsStore.getState().activateNewSessionDraft();
+		const creating = deferred<SessionMeta>();
+		piMock.createSession.mockImplementationOnce(() => creating.promise);
+		const oldPromotion = useSessionsStore.getState().createSession();
+
+		useSessionsStore.getState().activateNewSessionDraftForCwd("/proj/b");
+		const newGeneration = useSessionsStore.getState().newSessionDraft?.generation;
+		creating.resolve(realMeta("old-created", "/proj/a"));
+		expect(await oldPromotion).toBe("old-created");
+
+		const state = useSessionsStore.getState();
+		expect(state.activeSessionId).toBeNull();
+		expect(state.cwd).toBe("/proj/b");
+		expect(state.newSessionDraft?.cwd).toBe("/proj/b");
+		expect(state.newSessionDraft?.generation).toBe(newGeneration);
+		expect(state.sessions.map((session) => session.sessionId)).toContain("old-created");
 	});
 
 	it("draft 输入内容（文字/图片/slash/引用）挂在全局新会话草稿键上，再次激活不重置", () => {
@@ -1320,6 +1411,7 @@ describe("不变式：新会话页（active === null）必须有可用 draft", (
 		expect(state.sessions.map((s) => s.sessionId)).toContain("new-1");
 		// 关键：不能留下「空白新会话页 + 没有 draft」的破态（否则 picker 写入静默丢失）
 		expect(state.newSessionDraft).not.toBeNull();
-		expect(state.newSessionDraft?.cwd).toBe("/proj/a");
+		// 顶部新会话以点击时正在查看的 B 会话为模板。
+		expect(state.newSessionDraft?.cwd).toBe("/proj/b");
 	});
 });

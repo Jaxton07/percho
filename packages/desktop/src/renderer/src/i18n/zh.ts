@@ -251,6 +251,8 @@ export const zh = {
 	},
 	sidebar: {
 		title: "导航",
+		newSession: "新会话",
+		newSessionInProject: "在 {name} 中新建会话",
 		search: "搜索会话",
 		daily: "日常",
 		projectsSection: "项目",
