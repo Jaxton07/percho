@@ -951,8 +951,7 @@ code {
 	height: 100%;
 	display: flex;
 	flex-direction: column;
-	/* 收起时内容层跟着左移淡出（与右栏 `.diff-sidebar-in` 同款错峰）：
-	   只裁不淡会在动画中段露出半截字 */
+	/* 收起时内容层跟着左移淡出：只裁不淡会在动画中段露出半截字 */
 	transition:
 		opacity 0.3s 0.08s,
 		transform 0.38s 0.06s cubic-bezier(0.32, 0.72, 0, 1);
@@ -975,52 +974,38 @@ code {
 	}
 }
 
-/* ---- 右侧 diff 栏（push 式宽度过渡 + 内容错峰淡入） ---- */
+/* ---- 右侧 diff 浮层抽屉 ----
+   只动画 transform/opacity，不改聊天列宽度：有内容的长会话也不会逐帧重排 Markdown、
+   触发 MessageList ResizeObserver 贴底。面板常驻 DOM，关闭态移出视口并禁用命中。 */
 .diff-sidebar {
-	flex: none;
-	width: 0;
-	overflow: hidden;
-	border-left: 1px solid transparent;
-	transition:
-		width 0.42s cubic-bezier(0.32, 0.72, 0, 1),
-		border-color 0.2s;
-}
-.diff-sidebar.open {
-	width: min(420px, 38vw);
-	border-left-color: var(--color-border);
-}
-.diff-sidebar-in {
-	width: min(420px, 38vw);
-	height: 100%;
-	display: flex;
-	flex-direction: column;
-	background: var(--color-canvas);
-	opacity: 0;
-	transform: translateX(28px);
-	transition:
-		opacity 0.3s 0.08s,
-		transform 0.38s 0.06s cubic-bezier(0.32, 0.72, 0, 1);
-}
-/* 窄窗浮层（宽度账本见 useDiffSidebarOverlay）：push 会压破聊天列 380 保底，
-   所以脱离文档流叠在聊天列右缘——浮层用 surface 实底 + 左圆角 + shadow-pop 分层（不靠边框） */
-.diff-sidebar.is-overlay {
 	position: absolute;
 	inset-block: 0;
 	right: 0;
 	z-index: 30;
-	border-left-width: 0;
-}
-.diff-sidebar.is-overlay.open {
-	border-left-width: 0;
+	width: min(420px, 38vw);
+	overflow: hidden;
 	border-radius: 12px 0 0 12px;
+	background: var(--color-canvas);
 	box-shadow: var(--shadow-pop);
+	opacity: 0.98;
+	transform: translate3d(calc(100% + 28px), 0, 0);
+	pointer-events: none;
+	will-change: transform;
+	transition:
+		transform 0.34s cubic-bezier(0.32, 0.72, 0, 1),
+		opacity 0.18s ease;
 }
-.diff-sidebar.is-overlay .diff-sidebar-in {
-	background: var(--color-surface);
-}
-.diff-sidebar.open .diff-sidebar-in {
+.diff-sidebar.open {
 	opacity: 1;
-	transform: none;
+	transform: translate3d(0, 0, 0);
+	pointer-events: auto;
+}
+.diff-sidebar-in {
+	width: 100%;
+	height: 100%;
+	display: flex;
+	flex-direction: column;
+	background: var(--color-canvas);
 }
 .diff-side-head {
 	flex: none;

@@ -95,7 +95,7 @@ export default function App() {
 				<div className="relative flex min-h-0 flex-1">
 					<Sidebar />
 					<div className="relative flex min-w-0 flex-1 flex-col">
-						{/* 中间列保底 380 = 宽度账本（画板 C），右栏挤不下时已由 DiffSidebar 自己转浮层 */}
+						{/* 右侧 DiffSidebar 是独立浮层，不参与中间聊天列宽度与布局动画。 */}
 						<main className="relative min-h-0 flex-1">
 							{showEmpty ? <EmptyState /> : <MessageList />}
 							<Slot name={UI_SLOTS.TodoPanel} props={{}} fallback={TodoPanel} />
