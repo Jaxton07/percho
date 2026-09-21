@@ -1,0 +1,56 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" width="1600" height="460" viewBox="0 0 1600 460" role="img" aria-label="Percho">
+	<defs>
+		<radialGradient id="paper" cx="78%" cy="42%" r="70%">
+			<stop offset="0" stop-color="#ffffff" />
+			<stop offset="1" stop-color="#f4f4f3" />
+		</radialGradient>
+		<filter id="softShadow" x="-30%" y="-30%" width="160%" height="170%">
+			<feDropShadow dx="0" dy="10" stdDeviation="16" flood-color="#000" flood-opacity="0.11" />
+		</filter>
+		<clipPath id="frame"><rect width="1600" height="460" rx="30" /></clipPath>
+	</defs>
+
+	<g clip-path="url(#frame)">
+		<rect width="1600" height="460" fill="url(#paper)" />
+
+		<!-- 极淡坐标底，只在边缘出现 -->
+		<g fill="none" stroke="#dedfe3" stroke-width="1" opacity="0.7">
+			<path d="M0 72H1600M0 388H1600" />
+			<path d="M72 0V460M1528 0V460" />
+		</g>
+
+		<!-- 左侧：直接嵌入对话空白页 WordmarkConstruct 的正式 SVG -->
+		<svg x="58" y="24" width="900" height="412" viewBox="150 85 470 250" preserveAspectRatio="xMidYMid meet"><line x1="178.7" y1="132.5" x2="570.9" y2="132.5" style="stroke:#c9cad0" stroke-width="0.85"></line><path d="M 178.7 129.9 V 135.1 M 570.9 129.9 V 135.1" style="stroke:#c9cad0" stroke-width="0.85"></path><text x="579.4" y="135.1" style="font:7.6499999999999995px ui-monospace,'SF Mono',Menlo,monospace;fill:#92929a">cap</text><line x1="178.7" y1="147.5" x2="570.9" y2="147.5" style="stroke:#c9cad0" stroke-width="0.85"></line><path d="M 178.7 144.9 V 150.1 M 570.9 144.9 V 150.1" style="stroke:#c9cad0" stroke-width="0.85"></path><text x="579.4" y="150.1" style="font:7.6499999999999995px ui-monospace,'SF Mono',Menlo,monospace;fill:#92929a">x</text><line x1="178.7" y1="198.9" x2="570.9" y2="198.9" style="stroke:#c9cad0" stroke-width="0.85"></line><path d="M 178.7 196.3 V 201.5 M 570.9 196.3 V 201.5" style="stroke:#c9cad0" stroke-width="0.85"></path><text x="579.4" y="201.5" style="font:7.6499999999999995px ui-monospace,'SF Mono',Menlo,monospace;fill:#92929a">base</text><line x1="178.7" y1="132.5" x2="570.9" y2="132.5" style="stroke:#dedfe3" stroke-width="0.85" stroke-dasharray="3.4 2.55"></line><rect x="226.3" y="132.5" width="297" height="66.4" fill="none" style="stroke:#dedfe3" stroke-width="0.85" stroke-dasharray="3.4 2.55"></rect><line x1="409.8" y1="103.6" x2="409.8" y2="227.8" style="stroke:#c9cad0" stroke-width="0.85"></line><path d="M 406.8 132.5 H 412.8 M 409.8 129.5 V 135.5" style="stroke:#c9cad0" stroke-width="0.85" fill="none"></path><path d="M 406.8 198.9 H 412.8 M 409.8 195.9 V 201.9" style="stroke:#c9cad0" stroke-width="0.85" fill="none"></path><text x="403" y="117.2" text-anchor="end" style="font:italic 11.049999999999999px Georgia,'Times New Roman',serif;fill:#92929a">φ</text><rect x="472.7" y="147.5" width="51" height="51" fill="none" style="stroke:#c9cad0" stroke-width="0.85"></rect><circle cx="498.2" cy="173" r="25.5" fill="none" style="stroke:#c9cad0" stroke-width="0.85"></circle><circle cx="498.2" cy="173" r="14.3" fill="none" style="stroke:#dedfe3" stroke-width="0.85" stroke-dasharray="3.4 2.55"></circle><path d="M 458.4 173 H 538 M 498.2 133.2 V 212.8" style="stroke:#dedfe3" stroke-width="0.85" stroke-dasharray="3.4 2.55"></path><path d="M 472.7 147.5 L 523.7 198.5 M 523.7 147.5 L 472.7 198.5" style="stroke:#dedfe3" stroke-width="0.85" stroke-dasharray="3.4 2.55"></path><circle cx="244.1" cy="165.7" r="33.2" fill="none" style="stroke:#dedfe3" stroke-width="0.85" stroke-dasharray="3.4 2.55"></circle><circle cx="244.1" cy="165.7" r="16.6" fill="none" style="stroke:#dedfe3" stroke-width="0.85" stroke-dasharray="3.4 2.55"></circle><line x1="280.5" y1="290.7" x2="467.5" y2="290.7" style="stroke:#dedfe3" stroke-width="0.85"></line><text x="374" y="311.1" text-anchor="middle" style="font:italic 11.049999999999999px Georgia,'Times New Roman',serif;fill:#92929a">Percho · costruzione geometrica — 1 : φ</text><text x="222.3" y="198.9" style="font:800 91.8px -apple-system,BlinkMacSystemFont,'SF Pro Text',sans-serif;letter-spacing:0.85px;fill:none;stroke:#777780;stroke-width:1.5;stroke-linejoin:round">Percho</text></svg>
+
+		<!-- 中央分界：把字标与空间体分开 -->
+		<path d="M1000 64V396" fill="none" stroke="#c9cad0" stroke-width="1" />
+		<path d="M993 64h14M993 396h14" fill="none" stroke="#c9cad0" stroke-width="1" />
+
+		<!-- 右侧：不再使用方形图标，而是展开成大型建筑结构 -->
+		<g transform="translate(1032 -14) scale(2.05)">
+			<rect x="43" y="54" width="154" height="95.2" fill="none" stroke="#c9cad0" stroke-width="0.75" stroke-dasharray="3 3" />
+			<path d="M24 120h192M120 20v200" fill="none" stroke="#c9cad0" stroke-width="0.75" stroke-dasharray="3 3" />
+			<path d="M120 33 42 146l76 44 81-51L120 33Z" fill="none" stroke="#777780" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" />
+			<path d="M120 33 121 103M121 103l-3 87" fill="none" stroke="#a0a0a8" stroke-width="1.35" stroke-linecap="round" />
+			<path d="M42 146 121 103 199 139" fill="none" stroke="#a0a0a8" stroke-width="1" stroke-dasharray="3 3" />
+			<path d="M72 103 120 77l49 22-50 31-47-27Z" fill="none" stroke="#a0a0a8" stroke-width="0.9" stroke-dasharray="3.5 3.5" />
+			<path d="M72 103 120 130 169 99M120 77v53" fill="none" stroke="#c9cad0" stroke-width="0.75" stroke-dasharray="3 3" />
+			<path d="M207 33v157M203 33h8M203 93h8M203 190h8" fill="none" stroke="#c9cad0" stroke-width="0.75" />
+			<g fill="#92929a" font-family="Georgia, 'Times New Roman', serif" font-size="7.2" font-style="italic">
+				<text x="214" y="96">0.382</text><text x="214" y="146">0.618</text><text x="179" y="145">φ</text><text x="49" y="51">1 : φ</text>
+			</g>
+		</g>
+
+		<!-- 右下角缩略 APP 图标：从横幅空间回收到产品 -->
+		<g transform="translate(1432 342)" filter="url(#softShadow)">
+			<rect width="86" height="86" rx="21" fill="#ffffff" />
+			<rect x="0.5" y="0.5" width="85" height="85" rx="20.5" fill="none" stroke="#2b2b2f" stroke-opacity="0.06" />
+			<g transform="translate(13 13) scale(.25)">
+				<path d="M120 33 42 146l76 44 81-51L120 33Z" fill="none" stroke="#8e8e96" stroke-width="5" stroke-linejoin="round" />
+				<path d="M120 33 121 103M121 103l-3 87" fill="none" stroke="#8e8e96" stroke-width="3" />
+				<path d="M42 146 121 103 199 139M72 103 120 77l49 22-50 31-47-27Z" fill="none" stroke="#b4b5bc" stroke-width="2.3" stroke-dasharray="6 6" />
+			</g>
+		</g>
+	</g>
+</svg>

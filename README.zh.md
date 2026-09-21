@@ -1,7 +1,10 @@
 <p align="center">
-  <img src="docs/icon.svg" alt="percho logo" width="128">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="docs/assets/img/readme-hero-dark.svg">
+    <img src="docs/assets/img/readme-hero-light.svg" alt="Percho 几何构造字标与立体金字塔" width="100%">
+  </picture>
 </p>
-<h1 align="center">percho</h1>
+<h1 align="center">Percho</h1>
 <p align="center">
   高度自定义的 <a href="https://www.npmjs.com/package/@earendil-works/pi-coding-agent">Pi coding agent</a> 桌面端 GUI —— 与 Pi CLI 同源同引擎，干净清爽的视觉界面。多会话聊天、可视化工具审批、内置子代理、UI 插件、自定义主题。
 </p>
@@ -22,7 +25,11 @@
 
 ## 演示
 
-![percho 欢迎页与鲸鱼娘桌宠](docs/assets/img/percho_pet.png)
+![Percho 新会话页](docs/assets/img/chat_001.png)
+
+![Percho 项目与会话侧栏](docs/assets/img/chat_002.png)
+
+![Percho 逐轮改动侧栏](docs/assets/img/chat_003.png)
 
 ![设置 —— UI 插件管理，内置鲸鱼娘桌宠](docs/assets/img/percho_ui_plugins.png)
 
@@ -34,13 +41,9 @@
 
 ![深色主题下带自定义背景的聊天页](docs/assets/img/chat_img_bg_show_img.png)
 
-**设置页 —— 模型与 Provider**
+## 为什么选择 Percho？
 
-![设置页演示](docs/assets/img/demo-settings.gif)
-
-## 为什么选择 percho？
-
-percho 把官方 Pi SDK（`@earendil-works/pi-coding-agent`）跑在 Electron 主进程里。**不是 fork，也不是重新实现** —— 它和 Pi CLI 用的是同一套引擎，完整继承 Pi 的原生优势：
+Percho 把官方 Pi SDK（`@earendil-works/pi-coding-agent`）跑在 Electron 主进程里。**不是 fork，也不是重新实现** —— 它和 Pi CLI 用的是同一套引擎，完整继承 Pi 的原生优势：
 
 - **可扩展性** —— 为 Pi CLI 安装的 TypeScript 扩展、Skills、Prompt 模板在这里同样生效，包括项目级资源（加载前会有信任确认）。让 Pi 适应你的工作流，无需 fork。
 - **配置共享** —— 与 CLI 共用 `~/.pi/agent/` 目录：会话、认证、模型配置全部互通。终端里开的会话，可以在 GUI 里继续。
@@ -50,16 +53,15 @@ percho 把官方 Pi SDK（`@earendil-works/pi-coding-agent`）跑在 Electron �
 
 - 高度自定义界面 —— UI 插件可替换工具调用卡、添加桌宠浮层（内置鲸鱼娘 + Q 版两只）、扩展设置面板
 - 可视化权限审批 —— 在底部审批坞里逐个批准/拒绝工具调用，背后是逐工具的规则引擎
-- 多会话顶栏标签（可拖拽排序，可选左侧会话轨道）、逐会话输入草稿、可撤销的跟进消息队列
+- 可折叠的项目/会话侧栏、可拖拽排序的顶部置顶会话、逐会话输入草稿、可撤销的跟进消息队列
 - 内置子代理 —— 自带 scout 与自定义 agent 定义、并行任务拆分，点开运行卡片即可只读检视子会话
 - 上下文蒸发（默认开启）—— 到龄的工具输出自动蒸发为紧凑 stub，长会话不超预算
-- 视觉代理 —— 纯文本模型遇到图片时，由视觉模型先识别成描述再交给 LLM
-- 统一报错系统 —— 对话内错误卡一键重试、自动重试状态行、全屏崩坏兜底
-- 扎实的会话工作台 —— 任意消息分叉、撤回自己的消息回输入框、todo 面板、逐轮 diff 侧栏、斜杠命令面板、@ 文件补全
+- 统一报错系统 —— 对话内错误卡一键重试、自动重试状态行、渲染进程全屏崩溃恢复
+- 扎实的会话工作台 —— 从助手回复或选中的上下文分叉、撤回自己的消息回输入框、todo 面板、逐轮 diff 侧栏、斜杠命令面板、@ 文件补全
 - 流式 Markdown 渲染、图片预览、消息复制
 - Agent 主动发图 —— 内置 `show_image` 工具让 agent 在需要时把图片（单张或成组）直接显示到对话区，而不是把所有工具结果都变成噪音
 - 自定义背景图与遮罩透明度，浅色/深色/跟随系统主题
-- 局域网观察 —— 手机/平板浏览器扫二维码即可只读查看会话进度
+- 局域网伴侣 —— 手机/平板浏览器扫码查看会话；可选开启远程发送、停止生成，以及允许一次/拒绝权限请求
 
 ## 下载
 
@@ -84,10 +86,6 @@ percho 把官方 Pi SDK（`@earendil-works/pi-coding-agent`）跑在 Electron �
 >
 > Linux：首次运行前给 AppImage 加执行位（`chmod +x percho-linux-x86_64.AppImage`）；Ubuntu 22.04+/24.04+ 及衍生发行版需先安装 `libfuse2`（AppImage 依赖 FUSE 2 挂载，新版系统默认未装）。Linux 版在应用内下载并安装更新。
 
-## 配置
-
-API key 不会存入本仓库，也不会打进安装包。`~/.pi/agent/models.json` 通过环境变量引用（如 `$AI_OPS_API_KEY`），key 只存在于你的 shell 环境中。如果你已经在用 Pi CLI，现有配置开箱即用。
-
 ## 开发
 
 前置要求：**Node.js >= 22.19**。
@@ -103,7 +101,7 @@ npm workspaces monorepo，三个包：`packages/shared`（IPC 契约）、`packa
 
 ## 声明
 
-percho 是社区项目，**并非** Pi 团队（earendil-works）官方出品，也与其无任何隶属关系。
+Percho 是社区项目，**并非** Pi 团队（earendil-works）官方出品，也与其无任何隶属关系。
 
 ## License
 

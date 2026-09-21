@@ -129,7 +129,7 @@ src/
 | `src/settings/login.ts` | `LoginService` | provider 交互登录桥接：AuthInteraction → IPC 事件（prompt 挂起等 renderer 应答；浏览器先到则拒挂起 prompt）。支持 OAuth + api_key 交互登录（如 Google Vertex）；`filterAuthSelectOptions` 对 google-vertex 剔除必败的 api-key 选项（Vertex 不接受 API key，见 PITFALLS） |
 | `src/packages/admin.ts` | `PackageAdmin` | 社区包搜索/安装/卸载/已配置清单 + 装卸后对非流式会话热重载（对齐 CLI /reload）；npm ENOENT 转带哨兵的可读错误 |
 | `src/packages/catalog.ts` | `fetchPackageCatalog` | pi.dev 目录抓取：无 JSON API，解析 SSR HTML 的 `<article data-package-card>` |
-| `src/lan/server.ts` | `LanObserverServer` | 局域网只读观察：userData 配置 + token 轮换、GET-only HTTP+SSE（timingSafeEqual、5 客户端上限、delta 微批合帧）；projectEvent = 投影更新与帧广播同点（快照带 in-flight 容器，重连无缝） |
+| `src/lan/server.ts` | `LanObserverServer` | 局域网观察与可选远程控制：userData 配置 + token 轮换、HTTP+SSE（timingSafeEqual、5 客户端上限、delta 微批合帧）；远程发送/停止/允许一次或拒绝由独立 `remoteControl` 开关保护；projectEvent = 投影更新与帧广播同点（快照带 in-flight 容器，重连无缝） |
 
 **可观测性**：每会话事件 trace + 关键操作日志（create/open/close/prompt/abort/compact）；main 进程还监听 renderer 崩溃/unresponsive/console。排查 UI 状态问题：`npx tsx scripts/replay-trace.mts --last` 确定性复现。
 
@@ -214,6 +214,8 @@ src/
 | 开屏动画（粒子光团 → 散场） | `renderer/src/styles/splash.css`（全部视觉与编排）+ `splash-dom.ts`（DOM/粒子参数）+ `splash.ts`（时长/单次标记）；首帧主题链 = bootstrap-theme.ts + window.ts + main/index.ts（`?theme=` 传参） |
 | 消息气泡 / 代码块 / mermaid 图 / 高亮 | `components/chat/`（Markdown 样式覆写在 globals.css `.markdown-body`；mermaid 卡在 `chat/MermaidBlock.tsx` + globals.css 末尾两段 `mermaid` 段） |
 | 首页大字 logo（手稿构造字标） | `chat/WordmarkConstruct.tsx`（空心描边 + 制图构造线静态 SVG，canvas 度量字形墨盒后离线固化；改设计重新烘焙）+ globals.css `--lg-ol/c1/c2/lb`（深浅各一套）；设计稿 `.local/design/pi-logo/wordmark.html`（H2 手稿构造） |
+| APP / LAN 图标 | SVG 母版 `packages/desktop/build/icon.svg` → 桌面打包入口 `build/icon.png`（1024px RGBA）；LAN/PWA 同图缩至 512px、pngquant 后内联在 `main/lan-icon.ts`；方向稿 `.local/design/pi-logo/index.html` |
+| README 顶部横幅 | 正式浅/深 SVG：`docs/assets/img/readme-hero-{light,dark}.svg`，`README.md` / `README.zh.md` 用 `<picture>` 随系统主题切换；生成器 `.local/design/readme-header-v2/build.mjs` 直接读取空白页 `WordmarkConstruct.tsx` 的同一份字标 SVG |
 | 报错卡 / 错误分类 | `chat/ErrorNote.tsx` + globals.css（`.error-note*`/`.retry-note`/`.send-error`/`.toast` 段）+ `shared/src/errors.ts`（classifyLlmError 模式表 + 信封构造）+ i18n `error.*`；severity 色改 `--color-err/warn/info`（深浅各一份） |
 | 工作中预览行 / 状态动画 | `chat/PreviewTicker.tsx` + `activity-ticker.ts`（minDwellMs 350）+ `MetaGroup.tsx`（状态行 orb + liveItems）+ `use-sweep-highlight.ts`（统一扫光）+ `use-shown-working.ts`（1500ms 滞后缓冲）+ `CenterOrb.tsx`/`center-orb-draw.ts`（中央版，开关 ui-preferences）+ shared `transcript/meta-summary.ts`（圆点行/统计行） |
 | 输入框 / 发送 / 停止 / 排队 | `composer/Composer.tsx`（装配层）+ `use-composer-send.ts`（发送/停止/取回排队）；草稿持久在 `stores/drafts.ts`；排队事件 `queue_update` + getFollowUpMessages |
