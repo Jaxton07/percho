@@ -50,6 +50,8 @@
 | 左栏有图钉、顶栏却没有胶囊（「置顶了但不显示」） | 四 · 顶栏内容要由置顶表驱动，别从 tabs 里筛（2026-09-19） |
 | 后端日志出现 `context-evaporation` / stale ctx 报错 | 二 · 删除正在跑的会话会留 stale ctx（既有现象，2026-09-20 记录） |
 | hover 才现的控件刚截完图就点不到、点击静默落空 | 四 · 鼠标事件 + `:hover` → 补「截图会清掉 hover」（2026-09-19） |
+| 某个区域内滚轮完全失灵（内层没内容、外层也不滚）；给不溢出的滚动容器挂了 `overscroll-behavior: contain` | 四 · 嵌套滚动的归属验证 + contain 吞 wheel（2026-09-21） |
+| CDP wheel 验证“滚动该归谁”时假失败/假绿（落点被浮层盖住、或拿赋 `scrollTop` 冒充滚动） | 四 · 同章节「验证滚动归属的三条纪律」（2026-09-21） |
 | 改完自定义 hook 后整页报「Rendered fewer hooks than expected」 | 四 · HMR 改 hook 数量会假报错（2026-09-19） |
 | 清理 dev 进程后端口还占着、CDP 连上但页面全空 | 五 · `pkill -f` 杀 Electron 会留下孤儿 main（2026-09-19） |
 | 跨会话频道订阅后，会话被卸载/关闭期间的消息永久丢失（或反过来重复提醒） | 二 · 长生命周期订阅不能挂在可被自动 GC 的会话上（2026-09-20） |
@@ -242,6 +244,28 @@ pi SDK 必须声明进 `packages/desktop/package.json` dependencies（electron-b
 1. **`Page.captureScreenshot` 会把 hover 状态清掉**：截完图 `:hover` 链变空、目标元素的 `pointer-events` 回落 `none`（截图前读到的 `auto` 不再成立）。于是「hover → 截图 → 接着点它」的顺序会**静默落空**（点击落在 `pointer-events: none` 上，不报错也不生效）。
 2. **对同一坐标的 `mouseMoved` 不会重算 hover**：截图后想恢复 hover，直接再发一次相同坐标无效 —— 必须**先挪开一点（如 −60px）再挪回来**。
 3. `mousePressed` 与 `mouseReleased` 之间**贴太紧偶发不合成 `click`**，验证点击行为时中间留 ~70ms 更稳。
+4. **`mouseWheel` 的落点必须真的在目标容器上，且不能被刚弹出的浮层盖住**：右键菜单挂在指针处，紧接着朝“列表中心”派 wheel 很可能落在**菜单**上（菜单不可滚）→ 容器`scrollTop` 纹丝不动，看起来像“滚动了但菜单没关”的假失败。做法：先算出浮层矩形，再在目标容器里挑一个不被遮挡的点，并**同时断言容器 `scrollTop` 真的变了**（否则这条断言本来就不能判定）。实例：`scripts/check-sidebar-group-scroll.mjs` 的“滚动后菜单关闭”那一步。
+
+### 嵌套滚动的归属验证 + `overscroll-behavior: contain` 会吞掉滚轮（2026-09-21，左栏分组列表限高）
+
+症状：给一个**不溢出**的滚动容器（`overflow-y:auto` 但 `scrollHeight === clientHeight`）挂 `overscroll-behavior-y: contain` 后，指针停在该区域时**滚轮完全失灵**——该容器滚不动（没内容），**外层祖先也不滚**（contain 把滚动链剪断了）。用户观感：会话列表里“滚不动”，而旁边的项目标题区一切正常。
+
+实测（Electron dev 真实页 + CDP 真实 wheel，探针四组对照）：
+
+| 元素 | 内容 | `overscroll-behavior-y` | 在内层 wheel | 结论 |
+|---|---|---|---|---|
+| A | 溢出 | contain | 内层滚 | 正常 |
+| B | 溢出，已到底 | contain | 内层不动、**外层也不动** | 这就是我们要的不穿透 |
+| E | **不溢出** | **contain** | **内外都不动（wheel 被吞）** | 坑 |
+| F | 不溢出 | auto | 外层滚 | 对照，证明锅在 contain |
+
+做法：**`contain` 只在“确实会溢出”时才挂，且与该状态标记（如 `data-scrollable`）用同一个布尔值驱动**，别写两套判据（否则探针与真实行为会分叉）。溢出时需要 contain（边界不穿透），不溢出时必须让它为 `auto`（滚轮交给外层）。实测落地见 `components/sidebar/SidebarSessionList.tsx`。
+
+**验证滚动归属的三条纪律**（都真踩过）：
+
+1. **不能拿「直接赋 `scrollTop`」冒充滚动**：它绕过滚动链，结论必然假绿。真实 wheel 用 `Input.dispatchMouseEvent({ type: "mouseWheel", deltaY })`（先 `mouseMoved` 到目标上——命中区决定滚动链）。赋 `scrollTop` 只用来把容器**预置**到中部/底部。
+2. **落点要落在外层可视区内且不被浮层遮挡**（见上一条鼠标纪律 4）。
+3. **读数前等滚动落定**：轮播/平滑滚动是异步的，等“连续两次读数相同”再断言（别固定 sleep 猜时间）。
 
 ### CDP 驱动 Electron dev 应用的能力边界（2026-09-19，左栏任务实测）
 

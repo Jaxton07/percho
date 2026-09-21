@@ -5,7 +5,7 @@ import { SessionRow } from "./SessionRow";
 
 /** 会话列表的空间上限：8 个完整会话行（不露半行，避免把裁切误认成布局错误） */
 export const SIDEBAR_SESSION_LIST_MAX_ROWS = 8;
-/** 会话行高的唯一权威值在本组件常量里；`SessionRow` 的 `h-[31px]` 必须与它同步 */
+/** 会话行高的布局常量（与 `SessionRow` 的固定行高 `h-[31px]` 配套；改行高要同时改两处） */
 export const SIDEBAR_SESSION_ROW_HEIGHT = 31;
 
 /**
