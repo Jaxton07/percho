@@ -30,6 +30,7 @@
 | onDragStart 里拿不到拖拽尺寸（`active.rect.current.initial` 恒 null） | 四 · dnd-kit rect ref 填充晚于 onDragStart |
 | 报错文案悬在空态页不消失、切新会话还在 | 四 · store 级 error 字段永不清理（已修：改 toast + 乐观回滚） |
 | 切到长会话卡顿约 1 秒、消息多的会话越久越卡 | 四 · 长会话切会话卡顿（挂载窗口 + ToolCallCard 布局抖动）（2026-09-12 修复） |
+| 有内容的会话开右侧变更栏掉帧，新会话却丝滑 | 四 · 右侧栏 width push 动画导致聊天区逐帧重排（2026-09-21） |
 | 已完成会话上滚滚不动、要大力滚，贴底还吸附（0.5.8 线上 bug） | 四 · 长会话切会话卡顿 → 三次修复（markstream content-visibility 600px 估值占位）（2026-09-16 修复） |
 | 长会话里上滚，位置被反复重置/拽回底部（0.5.7 线上 bug） | 四 · 长会话切会话卡顿 → 二次修复（markstream 占位条缩水 + 手写滚动补偿）（2026-09-13 修复） |
 | 改了 `src/main/` 但 app 行为没变（dev 不重建主进程） | 三 · electron-vite dev 主进程 watcher 不可依赖（2026-09-17） |
@@ -426,6 +427,14 @@ pi SDK 必须声明进 `packages/desktop/package.json` dependencies（electron-b
 **复核（生产构建 `npm run build` + `npx electron . --remote-debugging-port`）**：切 1600 条消息 / 3200 行的会话**首帧 16–20ms**、真实长会话（1278 / 1370 记录）**37–51ms**，长任务均为空；连续 8 次上滑补挂（每次 +30 行）长任务全空；贴底跟随时新增行仍贴底。
 
 挂载窗口的两个已知面：① **切走再切回窗口复位回尾部 40 行**（每次切换成本恒定，不会越用越慢）；② 窗口只增不减 ⇒ 滚过的行一直挂着，DOM 上限 = 该会话全量（换来的好处是不做反向回收、无滚动跳变）。③ 页内查找不受影响：Electron 默认菜单没有 Find、代码也没调 `findInPage`，Cmd+F 本来就没有；将来若做消息搜索，应查 transcript store 而非 DOM，与挂载窗口无关。
+
+### 右侧栏 width push 动画导致聊天区逐帧重排（2026-09-21）
+
+**症状**：新会话页打开/收起变更栏很顺，有消息内容的会话明显掉帧；内容越长越明显。
+
+**根因**：右栏原来在同一 flex 行里做 `width: 0 → min(420px, 38vw)` 的 420ms push 过渡。每个动画帧都会改变聊天列宽度，迫使 Markdown 重新换行和整列布局；`MessageList` 的 ResizeObserver 又会在跟随底部时逐帧调用 `scrollTo`。实测一次开栏约 52 次布局、42–50 次贴底滚动；隐藏 diff 内容改善很小，强制脱离布局后 LayoutDuration 从约 37–43ms 降到 3–5ms，说明瓶颈不在 diff 行本身。
+
+**修复**：右栏统一为绝对定位浮层抽屉，宽度固定，进退只动画 `transform/opacity`；聊天列完全不改宽。点击聊天区不自动关闭，保留顶栏开关、面板关闭按钮和 Esc，便于边看消息边核对变更。不要用 `max-width`、grid 列宽或另一种尺寸属性代替 `width`——它们仍然逐帧触发布局；要丝滑必须让运动留在合成层。
 
 ### macOS 关窗 = 隐藏窗口：三个反直觉点（2026-09-17，issue #55）
 
