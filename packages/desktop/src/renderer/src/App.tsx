@@ -19,6 +19,7 @@ import { RegionHost } from "./plugins/RegionHost";
 import { Slot } from "./plugins/Slot";
 import { UI_REGIONS, UI_SLOTS } from "./plugins/slots";
 import { finishSplash } from "./splash";
+import { initAppQuit } from "./stores/app-quit";
 import { useSessionsStore } from "./stores/sessions";
 import { backgroundImageUrl, useThemeStore } from "./stores/theme";
 import { useTranscriptStore } from "./stores/transcript";
@@ -64,6 +65,8 @@ export default function App() {
 		// 历史全在左栏，点一下才按需加载
 		void Promise.allSettled([useSessionsStore.getState().loadModels()]).then(() => finishSplash());
 		initUpdateStore();
+		// 退出确认（Windows）：挂载即向 main 声明接管，点 ✕ 才会拦下来弹窗
+		initAppQuit();
 		// 日常空间目录缓存（pill/轨道/侧栏的空间归属判定依赖；失败静默，入口退化为不显示）
 		void initDailyDir();
 		// UI 插件加载链路（总开关关时只订阅事件，零开销）

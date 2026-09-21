@@ -410,7 +410,12 @@ async function promoteDraft(draft: NewSessionDraftConfig): Promise<string | null
 			// 必须马上补一份，维持「新会话页必有 draft」不变式（否则 picker 的写入会静默丢失）
 			return {
 				...landed,
-				newSessionDraft: state.activeSessionId === null ? makeDraft(state, { cwd: state.cwd }) : null,
+				// 用户可能已通过项目行把同一份全局 draft 改投到另一个 cwd；迟到的旧 promotion
+				// 只能补「确实不存在」的 draft，不能覆盖这份更新后的新意图。
+				newSessionDraft:
+					state.activeSessionId === null
+						? (state.newSessionDraft ?? makeDraft(state, { cwd: state.cwd }))
+						: null,
 			};
 		});
 		useTranscriptStore.getState().resetSession(meta.sessionId);
@@ -457,10 +462,15 @@ interface SessionsStore {
 	 */
 	createSession: () => Promise<string | null>;
 	/**
-	 * 激活新会话页（顶栏「＋」/ 启动初始化）。已有 draft 时**只激活、不覆盖任何配置**
-	 * （`cwd` 参数只在新建一份 draft 时作为起点，避免把在选择器里选过的目录冲掉）。
+	 * 激活新会话页（顶栏「＋」/ 启动初始化）。当前有真实会话时以它的项目/模型/思考/权限为起点；
+	 * 已经在 draft 页时只激活、不覆盖用户选过的配置（`cwd` 参数只给未选项目的启动 draft 补起点）。
 	 */
 	activateNewSessionDraft: (cwd?: string) => void;
+	/**
+	 * 从项目行进入新会话：仍复用全局唯一 draft，但明确把它改投到指定 cwd。
+	 * 与无参数入口不同，这里 cwd 是用户显式选择，必须覆盖已有 draft 的项目。
+	 */
+	activateNewSessionDraftForCwd: (cwd: string) => void;
 	/** 设置新会话的目标项目目录（项目选择器）；draft 没有就一直只记全局默认 */
 	setDraftCwd: (cwd: string) => void;
 	/** draft 的权限档位（纯 renderer，promotion 时才应用到后端会话） */
@@ -516,17 +526,29 @@ export const useSessionsStore = create<SessionsStore>((set, get) => ({
 
 	activateNewSessionDraft: (cwd) => {
 		const state = get();
+		const activeSession = state.sessions.find((s) => s.sessionId === state.activeSessionId);
+		if (activeSession) {
+			// 从真实会话点顶部「新会话」：Codex 语义是以**当前对话**为模板，而不是回到后台 draft
+			// 之前记住的项目。输入内容仍挂在全局 NEW_SESSION_DRAFT_KEY 上，不会因此丢失。
+			// 显式 cwd 只供启动/内部调用覆盖目录；UI 顶部入口不传，因此自然采用当前会话 cwd。
+			const targetCwd = cwd ?? activeSession.cwd;
+			claimActivation();
+			const nextDraft = makeDraft(state, {
+				cwd: targetCwd,
+				model: activeSession.model ?? state.lastUsedModel,
+				thinkingLevel: activeSession.thinkingLevel,
+			});
+			nextDraft.permissionMode = state.permissionModes[activeSession.sessionId] ?? "default";
+			set({ activeSessionId: null, cwd: targetCwd, newSessionDraft: nextDraft });
+			ensureTrust(targetCwd);
+			return;
+		}
+
 		const existing = state.newSessionDraft;
 		if (existing) {
-			// 已有 draft：只激活，不覆盖任何配置（否则会把选过的项目/模型冲掉）。
-			// 只有「还没选项目」的那份（开机初始化/补种出来的，cwd === null）要继承当前上下文：
-			// 显式 cwd → 当前真实会话 cwd → 全局 cwd（与新建一份时的优先级一致）
-			const activeSession = state.sessions.find((s) => s.sessionId === state.activeSessionId);
-			const targetCwd = existing.cwd ?? cwd ?? activeSession?.cwd ?? state.cwd;
-			// 从真实会话回到新会话页 = 用户导航：先领号（在途 open/create/fork 作废）。
-			// 已经在 draft 页时页面没变，**不领号**：否则 promotion 在途的结果会被误判成「用户不要它了」，
-			// 落地成「draft 已消费、页面还停在空白新会话页」
-			if (state.activeSessionId !== null) claimActivation();
+			// 已经在 draft 页：再次点击只激活，不覆盖用户在 draft 内选过的配置。
+			// 只有「还没选项目」的那份（开机初始化/补种出来的，cwd === null）接受启动传入的 cwd。
+			const targetCwd = existing.cwd ?? cwd ?? state.cwd;
 			set({
 				activeSessionId: null,
 				cwd: targetCwd,
@@ -535,21 +557,34 @@ export const useSessionsStore = create<SessionsStore>((set, get) => ({
 			if (targetCwd) ensureTrust(targetCwd);
 			return;
 		}
-		const activeSession = state.sessions.find((s) => s.sessionId === state.activeSessionId);
-		const targetCwd = cwd ?? activeSession?.cwd ?? state.cwd;
-		if (state.activeSessionId !== null) claimActivation();
+
+		const targetCwd = cwd ?? state.cwd;
 		set({
 			activeSessionId: null,
 			cwd: targetCwd,
-			newSessionDraft: makeDraft(state, {
-				cwd: targetCwd,
-				// 起步值优先当前会话快照（不是全局「最近使用」）；没会话来源时两项都留「未定」，
-				// 由 loadModels 用持久化偏好回填（thinking 不能拿占位 medium 当用户选择）
-				model: activeSession?.model ?? state.lastUsedModel,
-				thinkingLevel: activeSession?.thinkingLevel,
-			}),
+			newSessionDraft: makeDraft(state, { cwd: targetCwd }),
 		});
 		if (targetCwd) ensureTrust(targetCwd);
+	},
+
+	activateNewSessionDraftForCwd: (cwd) => {
+		const state = get();
+		const activeSession = state.sessions.find((s) => s.sessionId === state.activeSessionId);
+		// 与普通「＋」不同，项目行点击即使已经在 draft 页也是一次新的导航意图：
+		// 淘汰在途 open/create/fork，且换 generation，避免旧 cwd 的 promotion single-flight 被复用。
+		claimActivation();
+		const existing = state.newSessionDraft;
+		draftGenerationSeq += existing ? 1 : 0;
+		const newSessionDraft = existing
+			? { ...existing, cwd, generation: draftGenerationSeq }
+			: makeDraft(state, {
+					cwd,
+					model: activeSession?.model ?? state.lastUsedModel,
+					thinkingLevel: activeSession?.thinkingLevel,
+				});
+		set({ activeSessionId: null, cwd, newSessionDraft });
+		ensureTrust(cwd);
+		rememberCwd(cwd);
 	},
 
 	setDraftCwd: (cwd) => {

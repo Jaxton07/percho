@@ -646,7 +646,12 @@ export class PiBackend {
 		// 否则会变成「拒绝 dispose 但磁盘文件照删」的跛脚状态（阶段 0 实测确认这条路径不先 abort）
 		if (entry) await this.disposeSession(entry);
 		if (!file) throw new Error(`Session file not found: ${sessionId}`);
-		await unlink(file);
+		// 文件可能还不存在：0 消息会话（首条 prompt 没过 preflight）只有**计划路径**，SDK 要等
+		// 追加第一条 entry 才落盘。这类会话在左栏有行（目录也记着它，见 renderer stores/projects.ts
+		// 的写穿），删掉它应当照常成功——幂等：本来就没有文件 = 已经是「不存在」状态。
+		await unlink(file).catch((error: NodeJS.ErrnoException) => {
+			if (error.code !== "ENOENT") throw error;
+		});
 		if (sessionDir) await TraceRecorder.removeAll(sessionDir, sessionId);
 		log.info("session deleted", sessionId);
 	}

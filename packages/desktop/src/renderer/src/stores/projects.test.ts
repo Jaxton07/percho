@@ -9,7 +9,9 @@ const piMock = vi.hoisted(() => ({
 vi.mock("../api", () => ({ getPi: () => piMock }));
 
 import { setDailyDirForTest } from "../lib/daily";
+import { deriveSidebarNavigation } from "../lib/sidebar-groups";
 import { deriveProjects, useProjectsStore } from "./projects";
+import { useSessionsStore } from "./sessions";
 
 function session(cwd: string, modifiedAt: number): SessionMeta {
 	return {
@@ -90,6 +92,77 @@ function deferred<T>() {
 function ids(): string[] {
 	return useProjectsStore.getState().allSessions.map((s) => s.sessionId);
 }
+
+/**
+ * 会话目录写穿（2026-09-21 事故修复）：
+ * 「左栏/顶栏行存在不存在」必须由目录 `allSessions` 决定，内存 `sessions` 只管运行态。
+ * 事故链路：磁盘历史只在进新会话页时整表重拉（是旧账，必然早于新建出来的会话）→ 新会话只活在内存里 →
+ * 内存策略（GC）卸载它 → 内存没了、旧账里也没有 → 行凭空消失；点「＋」重拉一次才回来。
+ */
+describe("会话目录写穿（存在性只依赖目录）", () => {
+	function freshMeta(id: string, cwd: string): SessionMeta {
+		// 后端 createSession 刚返回的 meta（0 消息：会话文件还没落盘，但路径已定）
+		return {
+			sessionId: id,
+			cwd,
+			name: "新会话",
+			sessionFile: `${cwd}/${id}.jsonl`,
+			active: true,
+			messageCount: 0,
+			createdAt: 500,
+			modifiedAt: 500,
+		};
+	}
+
+	beforeEach(() => {
+		vi.clearAllMocks();
+		useProjectsStore.setState({ allSessions: [], selectedCwd: null, search: "" });
+		useSessionsStore.setState({ sessions: [], activeSessionId: null, cwd: null });
+	});
+
+	it("会话一进内存（新建/打开）就写进目录 —— 哪怕磁盘快照比它更旧", () => {
+		useProjectsStore.setState({ allSessions: [session("/p", 100)] });
+		useSessionsStore.setState({ sessions: [freshMeta("new-1", "/p")] });
+		expect(ids()).toEqual(["/p-100", "new-1"]);
+	});
+
+	it("只补缺：磁盘已有的同 id 项不被内存 meta 覆盖（时间字段仍是磁盘权威值）", () => {
+		useProjectsStore.setState({ allSessions: [session("/p", 100)] });
+		const sameId = { ...freshMeta("/p-100", "/p"), createdAt: 999, modifiedAt: 999, name: "内存名" };
+		useSessionsStore.setState({ sessions: [sameId] });
+		expect(useProjectsStore.getState().allSessions).toHaveLength(1);
+		expect(useProjectsStore.getState().allSessions[0]?.modifiedAt).toBe(100);
+	});
+
+	it("全量对账（load）不把内存里经手过的会话挤出目录", async () => {
+		// 磁盘上一个都没有：0 消息会话还没会话文件，重拉必然拿不到它
+		piMock.listAllSessions.mockResolvedValue([]);
+		useSessionsStore.setState({ sessions: [freshMeta("new-1", "/p")] });
+		await useProjectsStore.getState().load();
+		expect(ids()).toEqual(["new-1"]);
+	});
+
+	it("被内存策略卸载后目录仍有它：左栏行不消失", () => {
+		// 1) 新建出来的会话进内存 → 写穿目录（此刻磁盘快照里没有它）
+		useSessionsStore.setState({ sessions: [freshMeta("new-1", "/p")] });
+		// 2) GC 卸载 = 从内存移除（closeSession 的清理路径）
+		useSessionsStore.setState({ sessions: [] });
+		// 3) 左栏派生照旧能渲染这一行（Sidebar 走的就是同一条装配路径）
+		const nav = deriveSidebarNavigation({
+			history: useProjectsStore.getState().allSessions,
+			memory: [],
+			addedProjects: [],
+			search: "",
+			activeCwd: null,
+			pinnedSessions: ["new-1"],
+			pinnedProjects: [],
+			expandedGroups: ["/p"],
+			expandedGroupsTouched: true,
+		});
+		const rows = nav.projects.flatMap((project) => project.sessions.map((row) => row.session.sessionId));
+		expect(rows).toEqual(["new-1"]);
+	});
+});
 
 describe("projects.load latest-wins（spec D6）", () => {
 	beforeEach(() => {

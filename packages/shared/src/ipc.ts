@@ -42,6 +42,8 @@ export interface PiApi extends InvokeApi<typeof CHANNEL_TABLE> {
 	onUpdateEvent(cb: (state: UpdateState) => void): () => void;
 	/** 订阅 UI 插件事件（changed/config）；返回取消函数 */
 	onUiPluginsEvent(cb: (payload: UiPluginsEventPayload) => void): () => void;
+	/** 订阅「用户点了关闭窗口」（Windows 点 ✕，main 已拦下，等弹退出确认）；返回取消函数 */
+	onQuitRequested(cb: () => void): () => void;
 	/** 订阅会话事件；返回取消函数 */
 	onEvent(cb: (payload: SessionEventEnvelope) => void): () => void;
 	onPermissionRequest(cb: (req: PermissionRequest) => void): () => void;

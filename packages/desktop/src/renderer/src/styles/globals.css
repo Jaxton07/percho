@@ -964,6 +964,27 @@ code {
 .sidebar-dot-working {
 	animation: avatar-breathe 3.2s ease-in-out infinite;
 }
+/* 组内会话列表的边缘淡出：上下两侧各自按「那个方向还有内容」开关（属性由组件按滚动位置写），
+   把硬裁切换成渐变。淡出高度是唯一旋钮；遮罩是 alpha 逆罩、不引入任何颜色，所以深浅色主题共用一套。
+   #000 在这里是逆罩的「不透明」取值，不是设计色值。 */
+.sidebar-session-list {
+	--session-list-fade: 12px;
+}
+.sidebar-session-list[data-fade-top="true"] {
+	mask-image: linear-gradient(to bottom, transparent 0, #000 var(--session-list-fade));
+}
+.sidebar-session-list[data-fade-bottom="true"] {
+	mask-image: linear-gradient(to top, transparent 0, #000 var(--session-list-fade));
+}
+.sidebar-session-list[data-fade-top="true"][data-fade-bottom="true"] {
+	mask-image: linear-gradient(
+		to bottom,
+		transparent 0,
+		#000 var(--session-list-fade),
+		#000 calc(100% - var(--session-list-fade)),
+		transparent 100%
+	);
+}
 @media (prefers-reduced-motion: reduce) {
 	.sidebar,
 	.sidebar-inner {

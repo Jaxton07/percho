@@ -8,6 +8,7 @@ import { checkoutBranch, getGitBranch, listGitBranches } from "../git";
 import { resolveExistingPath } from "../path-target";
 import { loadUiState, saveUiState } from "../ui-state";
 import { checkForUpdates, downloadUpdate, installUpdate } from "../updater";
+import { ackQuitDialog, setQuitGuard } from "../window";
 import { registerInvokeHandlers } from "./invoke";
 
 /** 项目仓库地址（帮助跳转 + 关于页） */
@@ -78,5 +79,12 @@ export function registerAppIpc(_backend: PiBackend): void {
 		checkForUpdates: () => checkForUpdates(),
 		downloadUpdate: () => downloadUpdate(),
 		installUpdate: () => installUpdate(),
+		// 退出确认（Windows）：渲染端挂载后接管 guard，点 ✕ 才会被拦下弹窗
+		setQuitGuard: ({ enabled }) => setQuitGuard(enabled),
+		quitDialogShown: () => ackQuitDialog(),
+		confirmQuit: () => {
+			// 与 ⌘Q 同一条路：app.quit() 触发 before-quit → markQuitting() → close 不再被拦
+			app.quit();
+		},
 	});
 }

@@ -7,9 +7,8 @@ import { isPrimaryNavigationSession } from "./session-visibility";
 export { isPrimaryNavigationSession };
 
 /**
- * 左侧栏的纯派生层：把「全量历史会话 + 项目表 + 偏好」算成可直接渲染的分组数组。
+ * 左侧栏的纯派生层：把「会话目录 + 项目表 + 偏好」算成可直接渲染的分组数组。
  * 纪律：不 import React、不读写持久化、不调 IPC —— 组件只做展示，展开/置顶状态一律由调用方传入。
- * 两个共用纯助手也放这里：`toggleInList`（置顶切换，会话与项目共用）、`toggleExpandedGroup`（展开切换）。
  *
  * v7：「项目」小标不再可折叠（只是固定标题分割区）——`PROJECTS_GROUP_KEY` / `projectsExpanded` 已删；
  * `expandedGroups` 里可能残留的历史值 `__projects__` 不会匹配任何 cwd，自然失效，无需数据迁移。
@@ -65,14 +64,16 @@ function mergeSessionMeta(history: SessionMeta, memory: SessionMeta): SessionMet
 }
 
 /**
- * 左栏数据源合并：**磁盘历史（`projects.allSessions`）+ 当前内存会话（`sessions.sessions`）**。
- * 内存项按 `sessionId` 覆盖历史项（名称/模型/状态以当前实例为准，时间字段走 `mergeSessionMeta` 合并），
- * 历史项保持原顺序，内存独有项（刚创建、还没进历史的真实会话）按内存顺序补在后面。**不负责排序**：
- * 组内排序统一由 `groupSessions` 做（最后活动倒序 + 置顶分区）。
+ * 左栏数据源合并：**会话目录（`projects.allSessions`）+ 当前内存会话（`sessions.sessions`）**。
+ * 内存项按 `sessionId` 覆盖目录项（名称/模型/状态以当前实例为准，时间字段走 `mergeSessionMeta` 合并），
+ * 目录项保持原顺序，内存独有项按内存顺序补在后面。**不负责排序**：组内排序统一由 `groupSessions` 做
+ * （最后活动倒序 + 置顶分区）。
  *
- * 为什么必须合并内存会话：新会话 promotion 成真实会话后，`sessions` 里立刻有了它，
- * 而 `allSessions`（磁盘历史）要等下次重拉才更新——只吃历史会让左栏行在这段缝隙里消失。
- * 合并全部内存会话从根上消除了这个状态缺口（spec D2）。新会话页没有会话条目，靠 `activeCwd` 展开当前组。
+ * ⚠️ **「行存不存在」的判断依据是目录，不是内存**：会话一进内存就被写穿进目录
+ * （`stores/projects.ts` 的 `absorbOpenSessions`），所以 GC 卸载内存不会让行消失。下面的
+ * 「内存独有项补在后面」只是兜时序的防御（模块加载早期订阅还没装、测试里直接 setState），
+ * **别再把它当存在性的依靠** —— 2026-09-21 的事故正是「新建的会话只活在内存里 + 被 GC 卸载」
+ * = 行凭空消失。新会话页没有会话条目，靠 `activeCwd` 展开当前组。
  */
 export function mergeSidebarSessions(
 	history: readonly SessionMeta[],
@@ -89,7 +90,7 @@ export function mergeSidebarSessions(
 }
 
 export type SidebarGroupsInput = {
-	/** 全量历史会话（含未打开的）；**调用方应先过 `isPrimaryNavigationSession`**（见 `deriveSidebarNavigation`） */
+	/** 会话目录（`projects.allSessions`：磁盘历史 ∪ 本进程经手过的会话）；**调用方应先过 `isPrimaryNavigationSession`**（见 `deriveSidebarNavigation`） */
 	sessions: readonly SessionMeta[];
 	/** 项目表：**复用 `deriveProjects(projectsStore)` 的输出**（已排除日常目录、已含「只有会话」与「手动添加」两类） */
 	projects: readonly ProjectEntry[];
@@ -111,9 +112,9 @@ export type SidebarGroupsInput = {
 
 /** `deriveSidebarNavigation` 的输入：左栏需要的两个数据源（历史 + 内存）+ 项目表 + 偏好 */
 export type SidebarNavigationInput = {
-	/** 磁盘历史（`projects.allSessions`） */
+	/** 会话目录（`projects.allSessions`）：行存在性的唯一来源 */
 	history: readonly SessionMeta[];
-	/** 当前内存会话（`sessions.sessions`，含刚创建还没进历史的真实会话与只读子会话） */
+	/** 当前内存会话（`sessions.sessions`）：只负责叠运行态与补还没落盘的新会话 */
 	memory: readonly SessionMeta[];
 	/** 手动添加过的项目目录（`projects.addedProjects`） */
 	addedProjects: string[];
@@ -243,11 +244,6 @@ export function deriveSidebarNavigation(input: SidebarNavigationInput): SidebarG
 		expandedGroups: input.expandedGroups,
 		expandedGroupsTouched: input.expandedGroupsTouched,
 	});
-}
-
-/** 置顶 / 取消置顶（新置顶排最前）：会话与项目共用，store 与组件都走它，别各写一套 */
-export function toggleInList(list: readonly string[], id: string): string[] {
-	return list.includes(id) ? list.filter((item) => item !== id) : [id, ...list];
 }
 
 /**

@@ -36,6 +36,7 @@
 | 长会话里上滚，位置被反复重置/拽回底部（0.5.7 线上 bug） | 四 · 长会话切会话卡顿 → 二次修复（markstream 占位条缩水 + 手写滚动补偿）（2026-09-13 修复） |
 | 改了 `src/main/` 但 app 行为没变（dev 不重建主进程） | 三 · electron-vite dev 主进程 watcher 不可依赖（2026-09-17） |
 | 关窗后 renderer 还活着、`visibilityState` 仍是 visible；用 `window.close()` 测不出关窗拦截 | 四 · macOS 关窗 = 隐藏窗口（2026-09-17） |
+| 拦下关窗后窗口再也关不掉；渲染进程死循环也收不到 `unresponsive` 事件 | 四 · 关窗拦截必须留「渲染进程卡死」兑底（2026-09-21） |
 | 浮层/菜单退场闪回（节点被提前卸载）、二级浮层输入框没聚焦 | 四 · 浮层退场时序与焦点接管（2026-09-17） |
 | 右键菜单贴边溢出视口、滚动后浮层脱锚 | 四 · 右键菜单定位与脱锚（2026-09-17） |
 | Google Vertex 填了 key 仍 401「API keys are not supported by this API」 | 二 · Vertex 只支持 ADC/服务账号（api_key 路径必败，桥接层已剔除 api-key 选项） |
@@ -49,6 +50,9 @@
 | 左栏有图钉、顶栏却没有胶囊（「置顶了但不显示」） | 四 · 顶栏内容要由置顶表驱动，别从 tabs 里筛（2026-09-19） |
 | 后端日志出现 `context-evaporation` / stale ctx 报错 | 二 · 删除正在跑的会话会留 stale ctx（既有现象，2026-09-20 记录） |
 | hover 才现的控件刚截完图就点不到、点击静默落空 | 四 · 鼠标事件 + `:hover` → 补「截图会清掉 hover」（2026-09-19） |
+| 某个区域内滚轮完全失灵（内层没内容、外层也不滚）；给不溢出的滚动容器挂了 `overscroll-behavior: contain` | 四 · 嵌套滚动的归属验证 + contain 吞 wheel（2026-09-21） |
+| CDP wheel 验证“滚动该归谁”时假失败/假绿（落点被浮层盖住、或拿赋 `scrollTop` 冒充滚动） | 四 · 同章节「验证滚动归属的三条纪律」（2026-09-21） |
+| 命令式写的 DOM 属性过一会儿变回旧值/初值（React 重渲染冲掉） | 四 · 别手拆 React 管理的 DOM → 补「命令式改 JSX 已声明属性」（2026-09-21） |
 | 改完自定义 hook 后整页报「Rendered fewer hooks than expected」 | 四 · HMR 改 hook 数量会假报错（2026-09-19） |
 | 清理 dev 进程后端口还占着、CDP 连上但页面全空 | 五 · `pkill -f` 杀 Electron 会留下孤儿 main（2026-09-19） |
 | 跨会话频道订阅后，会话被卸载/关闭期间的消息永久丢失（或反过来重复提醒） | 二 · 长生命周期订阅不能挂在可被自动 GC 的会话上（2026-09-20） |
@@ -62,6 +66,9 @@
 | 快速连点两行，界面停在先点的那一行（或过一会才被抢回） | 四 · 异步导航必须 latest-wins（令牌 + 共享 open pipeline）（2026-09-20） |
 | 同一会话文件并发 open 后订阅/扩展/trace 翻倍、旧实例泄漏 | 二 · openSession 幂等：registry 短路 + single-flight + add 不静默覆盖（2026-09-20） |
 | 复制/恢复过会话文件后，它在列表里的时间/位置全变了 | 二 · 同章节「birthtime 不是会话创建时间」 |
+| 新建的会话过一阵突然从左侧栏消失（点「＋」/重启后又回来） | 四 · 会话目录写穿：行存不存在不能依赖内存（2026-09-21） |
+| 给 store 加模块级订阅后，某些入口报 `Cannot read properties of undefined (reading 'subscribe')` | 四 · 同章节「renderer 模块图不许有环」（2026-09-21） |
+| 反复被 GC 卸载的已置顶会话，顶栏胶囊也一起消失了 | 四 · 同章节「写穿」：胶囊与左栏同源（tabs → 目录兜底） |
 
 ## 一、事故复盘（含可复用诊断手法）
 
@@ -238,6 +245,28 @@ pi SDK 必须声明进 `packages/desktop/package.json` dependencies（electron-b
 1. **`Page.captureScreenshot` 会把 hover 状态清掉**：截完图 `:hover` 链变空、目标元素的 `pointer-events` 回落 `none`（截图前读到的 `auto` 不再成立）。于是「hover → 截图 → 接着点它」的顺序会**静默落空**（点击落在 `pointer-events: none` 上，不报错也不生效）。
 2. **对同一坐标的 `mouseMoved` 不会重算 hover**：截图后想恢复 hover，直接再发一次相同坐标无效 —— 必须**先挪开一点（如 −60px）再挪回来**。
 3. `mousePressed` 与 `mouseReleased` 之间**贴太紧偶发不合成 `click`**，验证点击行为时中间留 ~70ms 更稳。
+4. **`mouseWheel` 的落点必须真的在目标容器上，且不能被刚弹出的浮层盖住**：右键菜单挂在指针处，紧接着朝“列表中心”派 wheel 很可能落在**菜单**上（菜单不可滚）→ 容器`scrollTop` 纹丝不动，看起来像“滚动了但菜单没关”的假失败。做法：先算出浮层矩形，再在目标容器里挑一个不被遮挡的点，并**同时断言容器 `scrollTop` 真的变了**（否则这条断言本来就不能判定）。实例：`scripts/check-sidebar-group-scroll.mjs` 的“滚动后菜单关闭”那一步。
+
+### 嵌套滚动的归属验证 + `overscroll-behavior: contain` 会吞掉滚轮（2026-09-21，左栏分组列表限高）
+
+症状：给一个**不溢出**的滚动容器（`overflow-y:auto` 但 `scrollHeight === clientHeight`）挂 `overscroll-behavior-y: contain` 后，指针停在该区域时**滚轮完全失灵**——该容器滚不动（没内容），**外层祖先也不滚**（contain 把滚动链剪断了）。用户观感：会话列表里“滚不动”，而旁边的项目标题区一切正常。
+
+实测（Electron dev 真实页 + CDP 真实 wheel，探针四组对照）：
+
+| 元素 | 内容 | `overscroll-behavior-y` | 在内层 wheel | 结论 |
+|---|---|---|---|---|
+| A | 溢出 | contain | 内层滚 | 正常 |
+| B | 溢出，已到底 | contain | 内层不动、**外层也不动** | 这就是我们要的不穿透 |
+| E | **不溢出** | **contain** | **内外都不动（wheel 被吞）** | 坑 |
+| F | 不溢出 | auto | 外层滚 | 对照，证明锅在 contain |
+
+做法：**`contain` 只在“确实会溢出”时才挂，且与该状态标记（如 `data-scrollable`）用同一个布尔值驱动**，别写两套判据（否则探针与真实行为会分叉）。溢出时需要 contain（边界不穿透），不溢出时必须让它为 `auto`（滚轮交给外层）。实测落地见 `components/sidebar/SidebarSessionList.tsx`。
+
+**验证滚动归属的三条纪律**（都真踩过）：
+
+1. **不能拿「直接赋 `scrollTop`」冒充滚动**：它绕过滚动链，结论必然假绿。真实 wheel 用 `Input.dispatchMouseEvent({ type: "mouseWheel", deltaY })`（先 `mouseMoved` 到目标上——命中区决定滚动链）。赋 `scrollTop` 只用来把容器**预置**到中部/底部。
+2. **落点要落在外层可视区内且不被浮层遮挡**（见上一条鼠标纪律 4）。
+3. **读数前等滚动落定**：轮播/平滑滚动是异步的，等“连续两次读数相同”再断言（别固定 sleep 猜时间）。
 
 ### CDP 驱动 Electron dev 应用的能力边界（2026-09-19，左栏任务实测）
 
@@ -260,6 +289,8 @@ pi SDK 必须声明进 `packages/desktop/package.json` dependencies（electron-b
 症状：脚本里为了「关掉菜单」写了 `document.querySelector('[role="menuitem"]').parentElement.remove()`，几秒后整页被错误边界接管，报 `Failed to execute 'removeChild' on 'Node': The node to be removed is not a child of this node`（Percho 界面显示「界面出现异常」），于是后续所有量值全部落空、极易当成自己刚改的代码把页面治崩了。
 
 做法：**只走组件自己的关闭路径**（`window.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape" }))`、或派发 `pointerdown` 到 body 让点外关闭生效）。同理：React portal（右键菜单 / 确认弹窗 / toast）里的节点一律不手动增删；要重置页面直接 `Page.reload`。
+
+**2026-09-21 补（反方向的同类坑：命令式改 JSX 已声明的属性）**：想在滚动中把状态写成 DOM 属性时，如果那属性**在 JSX 里声明过**（如 `data-fade-top={...}`），再用 `el.dataset.fadeTop = ...` 命令改，**React 下一次重渲染会把它冲回声明值**，而你的 effect 依赖没变、不会重跑——于是属性停在错误的旧值上（或初值上），肉眼与脚本都难归因。两条出路：① 属性**完全不在 JSX 出现**，由 effect 独占增删（`delete el.dataset.x` 清干净）——本次采用；② 属性交给 React 独占，resize/scroll 推进 state（会逐次 re-render，列表类组件别选）。注意：React 不会动它不认识的属性，所以“在 JSX 里没声明”的写法是安全的。
 
 ### 删除正在跑的会话会在后端留 stale ctx 报错（2026-09-20，既有现象）
 
@@ -445,6 +476,16 @@ pi SDK 必须声明进 `packages/desktop/package.json` dependencies（electron-b
 
 **修复**：右栏统一为绝对定位浮层抽屉，宽度固定，进退只动画 `transform/opacity`；聊天列完全不改宽。点击聊天区不自动关闭，保留顶栏开关、面板关闭按钮和 Esc，便于边看消息边核对变更。不要用 `max-width`、grid 列宽或另一种尺寸属性代替 `width`——它们仍然逐帧触发布局；要丝滑必须让运动留在合成层。
 
+### 关窗拦截必须留「渲染进程卡死」兑底：`unresponsive` 靠不住（2026-09-21，issue #71）
+
+背景：Windows 点 ✕ = 退出（微软惯例，不改），只在退出前弹一句「退出后正在跑的任务会终止」让用户自己决定。三条都是踩出来的：
+
+1. **`webContents.on("unresponsive")` 不能当「渲染进程卡死」的判据**：renderer 里投一个死循环（CDP `Runtime.evaluate` 跑 `while(true){}`，回包永不到）后等 20s，主进程**没收到任何 `unresponsive` 事件**（macOS 实测；`render-process-gone` 只管真崩溃）。只信它的话，卡死时 `close` 被拦下却没人弹窗——窗口从此关不掉，只能上任务管理器，**比误点退出更糟**。
+2. **正确做法 = 「上屏回执 + 超时放行」**：main 发 `app:quit-requested` 后起 1.5s 计时，renderer 的弹窗组件在 `useEffect` 里回一条 `app:quitDialogShown`（放在组件而非事件订阅处：提交后才有 DOM，才是真「上屏」）；回执到了就撤计时交回用户，超时就 `quitting = true; app.quit()` 退回原行为。实测：卡死 → 1.5s 后自动退出，不会卡住。
+3. **还要一个「没人接管」的默认放行**：renderer 挂载时才置 guard（`app:setQuitGuard`），未置位（页面还没挂上 / 崩成错误页）就照旧关窗即退；弹窗组件必须挂在 `AppErrorBoundary` **外面**，否则 App 崩成错误页时它一起没了，又变成「拦下来但没人弹窗」。
+
+验证手法（本机 macOS，靠两条临时改动模拟 Windows 分支）：main 里 `process.platform` 判断临时放宽 + 加个临时 IPC `test:closeWindow` 走 **main 侧** `win.close()`—— **不要用 renderer 的 `window.close()`**（它会直接销毁窗口，不走 `close` 事件，见上一节）。脚本留档 `.local/verify/quit-confirm-check.mjs`。另外：`PERCHO_QUIT_TEST_CLOSE_MS` 那类「到点自动关窗」的临时计时器必须在 `ready-to-show` 之后才起，否则窗口还没显示就关了，看着像「拦截失效」。
+
 ### macOS 关窗 = 隐藏窗口：三个反直觉点（2026-09-17，issue #55）
 
 行为：macOS 下点红点/⌘W → `preventDefault() + win.hide()`（app 继续跑，Dock 点回原窗口原状态）；⌘Q / 菜单退出仍要真退。
@@ -492,6 +533,26 @@ pi SDK 必须声明进 `packages/desktop/package.json` dependencies（electron-b
 - **同一文件共享一个 open pipeline**（模块级 in-flight Map，key = 规范化路径）：双击只发一次 IPC、失败只 toast 一次、settle 后必清 key（否则失败后永远重试不了）；bundle 装载再按 sessionId 去重（open 完成时 meta 会先落进 tabs，用户再点那一行走的是懒加载，两条路会撞车）；
 - **异步创建/分叉要把新 id 作为返回值交给调用方**，禁止“创建完读 active 拿 id”；
 - 自动卸载（GC）的“关完成”要**复检 active**：关的过程中用户可能刚好选中了这个会话（判定“可卸”时它还不是 active），此时应当**重新打开后端会话**而不是把它从 UI 抹掉——只重建 backend、不重载磁盘历史（否则 idle transcript 会被历史快照覆盖），不写 `activeSessionId`、不领新令牌。
+
+### 会话目录写穿：左栏「行存不存在」不能依赖内存（2026-09-21）
+
+症状：新建的会话先好好地待在左栏，过一阵（切走到别的会话后）**突然消失**；点「＋」进新会话页后又出现。顶栏置顶胶囊如果指着它，也会一起没。
+
+链路（`main-<日期>.log` 实证，含精确到秒的复现）：
+
+1. 左栏行的数据源是「磁盘历史快照 + 内存会话」合并；而磁盘历史（`projects.allSessions`）**只在进新会话页（`EmptyState` 挂载）时整表重拉**。
+2. `17:19:05` 用户点「＋」→ 拉快照（**必然早于它接下来要建的那个会话**）；`17:20:35` 首条消息才建出会话 → 它只活在内存里，靠合并撑着左栏那一行。
+3. `18:11:26` 用户切走 → 它不再是 active → 内存策略（GC）下一轮立刻卸它（`lastUsedAt` 只在「打开/切到/新建」打点，发消息不打点，所以时间戳一直停在 17:20，一离开 active 就命中 5 分钟超时）→ 内存里没了、旧快照里也没有 → **行凭空消失**。日志里就一行 `session closed <id>`，无任何删除语义。
+4. `18:18:43` 再点「＋」→ 又拉一次快照 → 行回来。
+
+对策（已落地）：**目录是存在性的唯一来源，会话一进内存就写穿进去**。`stores/projects.ts` 底部一处 `useSessionsStore.subscribe`（会话一进内存就补进目录，**只补缺不覆盖**，磁盘权威的时间字段不被内存 meta 盖掉）+ `load()` 结尾再补一次（`0` 消息会话还没有会话文件，重拉的快照必然没有它）。内存 `sessions` 自此只负责运行态；GC 卸载 = 只撤运行态，不撤存在性。单测：`stores/projects.test.ts` 的「会话目录写穿」四例（含「卸载后左栏行仍在」）+ `lib/sidebar-groups.test.ts`。
+
+连带两个教训：
+
+- **推导链条里任何一环「旧」，整条结论都不可信**：spec 里曾写着「左栏列的是磁盘历史，所以卸载不会让任何列表缺项」——这句话在快照新鲜时成立，而快照并不保证新鲜（`session-memory-policy.md` §1 已标注修正）。审查这类断言时要问「这份数据的**新鲜度**由谁保证」。
+- **renderer 模块图不许有环**：写穿用一个模块级订阅，立刻在「`sessions` 先进」的入口（三个 store 单测）报 `Cannot read properties of undefined (reading 'subscribe')`——环 `projects → sessions → ui-preferences → sidebar-groups → projects` 让 `projects` 的模块体在 `sessions` 未求值完时执行。环的成因只是 3 行纯函数 `toggleInList` 挂在 `sidebar-groups` 上（已拆成叶模块 `lib/toggle-in-list.ts`）。防线：`src/renderer/src/import-cycles.test.ts` 扫全图断言 0 环（本仓当时为 0，含 `import type`）。
+
+复现手法（可复用）：dev 实例 + CDP 直接驱 store 走真实入口（`.local/dev-logs/repro-session-catalog.mjs`）：`createSession()`（真实 promotion）→ `activateNewSessionDraft()` 切走 → `unloadSession(id)`（GC 真实入口）→ 断言 `inMemory=false` 但 `inCatalog=true` 且 `document.querySelector('[data-session-id=…]')` 仍在。**侧栏按组渲染，断言前要先展开该会话所在项目的组**（`setExpandedGroups([...groups, cwd])`），否则“行不在 DOM 里”是假阴性。
 
 ## 五、工程纪律
 

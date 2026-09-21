@@ -39,6 +39,7 @@ const api: PiApi = {
 	...invokeApi,
 	onProviderLoginEvent: makeSubscription<LoginEventPayload>(IpcChannels.SettingsLoginEvent),
 	onUiPluginsEvent: makeSubscription<UiPluginsEventPayload>(IpcChannels.UiPluginsEvent),
+	onQuitRequested: makeSubscription<void>(IpcChannels.QuitRequested),
 	onUpdateEvent: makeSubscription<UpdateState>(IpcChannels.UpdateEvent),
 	onEvent: makeSubscription<SessionEventEnvelope>(IpcChannels.Event),
 	onPermissionRequest: makeSubscription<PermissionRequest>(IpcChannels.PermissionRequest),

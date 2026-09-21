@@ -383,8 +383,8 @@ export function SessionTabBar() {
 				type="button"
 				className="no-drag shrink-0 rounded-lg p-1.5 text-ink-dim transition-colors hover:bg-hover hover:text-ink"
 				onClick={() => {
-					// 单例 draft：已有 draft 就回到它（内容与配置一律保留，并聚焦输入框）；
-					// 没有 draft（转正刚消费掉、或启动首帧）才新建一份
+					// 单例 draft：从真实会话进入时按当前会话项目/模型等配置起步；
+					// 已经在 draft 页再次点击则原样保留，并聚焦输入框
 					const hadDraft = useSessionsStore.getState().newSessionDraft !== null;
 					activateNewSessionDraft();
 					if (hadDraft) window.dispatchEvent(new CustomEvent(COMPOSER_FOCUS_EVENT));
