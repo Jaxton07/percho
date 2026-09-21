@@ -52,6 +52,7 @@
 | hover 才现的控件刚截完图就点不到、点击静默落空 | 四 · 鼠标事件 + `:hover` → 补「截图会清掉 hover」（2026-09-19） |
 | 某个区域内滚轮完全失灵（内层没内容、外层也不滚）；给不溢出的滚动容器挂了 `overscroll-behavior: contain` | 四 · 嵌套滚动的归属验证 + contain 吞 wheel（2026-09-21） |
 | CDP wheel 验证“滚动该归谁”时假失败/假绿（落点被浮层盖住、或拿赋 `scrollTop` 冒充滚动） | 四 · 同章节「验证滚动归属的三条纪律」（2026-09-21） |
+| 命令式写的 DOM 属性过一会儿变回旧值/初值（React 重渲染冲掉） | 四 · 别手拆 React 管理的 DOM → 补「命令式改 JSX 已声明属性」（2026-09-21） |
 | 改完自定义 hook 后整页报「Rendered fewer hooks than expected」 | 四 · HMR 改 hook 数量会假报错（2026-09-19） |
 | 清理 dev 进程后端口还占着、CDP 连上但页面全空 | 五 · `pkill -f` 杀 Electron 会留下孤儿 main（2026-09-19） |
 | 跨会话频道订阅后，会话被卸载/关闭期间的消息永久丢失（或反过来重复提醒） | 二 · 长生命周期订阅不能挂在可被自动 GC 的会话上（2026-09-20） |
@@ -288,6 +289,8 @@ pi SDK 必须声明进 `packages/desktop/package.json` dependencies（electron-b
 症状：脚本里为了「关掉菜单」写了 `document.querySelector('[role="menuitem"]').parentElement.remove()`，几秒后整页被错误边界接管，报 `Failed to execute 'removeChild' on 'Node': The node to be removed is not a child of this node`（Percho 界面显示「界面出现异常」），于是后续所有量值全部落空、极易当成自己刚改的代码把页面治崩了。
 
 做法：**只走组件自己的关闭路径**（`window.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape" }))`、或派发 `pointerdown` 到 body 让点外关闭生效）。同理：React portal（右键菜单 / 确认弹窗 / toast）里的节点一律不手动增删；要重置页面直接 `Page.reload`。
+
+**2026-09-21 补（反方向的同类坑：命令式改 JSX 已声明的属性）**：想在滚动中把状态写成 DOM 属性时，如果那属性**在 JSX 里声明过**（如 `data-fade-top={...}`），再用 `el.dataset.fadeTop = ...` 命令改，**React 下一次重渲染会把它冲回声明值**，而你的 effect 依赖没变、不会重跑——于是属性停在错误的旧值上（或初值上），肉眼与脚本都难归因。两条出路：① 属性**完全不在 JSX 出现**，由 effect 独占增删（`delete el.dataset.x` 清干净）——本次采用；② 属性交给 React 独占，resize/scroll 推进 state（会逐次 re-render，列表类组件别选）。注意：React 不会动它不认识的属性，所以“在 JSX 里没声明”的写法是安全的。
 
 ### 删除正在跑的会话会在后端留 stale ctx 报错（2026-09-20，既有现象）
 

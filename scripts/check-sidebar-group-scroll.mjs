@@ -9,8 +9,8 @@
  * 退出码：0 全部断言通过 / 1 有断言失败 / 2 环境不满足（无法判定，见提示）
  *
  * 纪律：
- * - 一律用 `data-sidebar-scroll-root` / `data-sidebar-session-list` / `[data-session-id]` 与
  *   **DOM 相邻关系**定位元素，不按中文/英文标题文案匹配（分组头与会话行文字会相同）；
+ * - 边缘淡出按 `data-fade-top` / `data-fade-bottom` 两个属性 + computed `mask-image` 判定；
  * - 滚动归属用 **CDP 真实 wheel**（`Input.dispatchMouseEvent` type=mouseWheel）验证，
  *   不用直接赋 scrollTop 冒充滚动（赋 scrollTop 只用于把容器预置到中部/边界）；
  * - 只读测量；结束时把外层与内层 scrollTop 复位为 0。
@@ -374,7 +374,96 @@ for (const l of fit) {
 	);
 }
 
-/* ---------- 3. 收尾：复位 ---------- */
+/* ---------- 3. 边缘淡出（上下渐隐）---------- */
+console.log("\n=== 3. 边缘淡出 ===");
+
+/** 读取淡出状态：属性 + computed mask + 可调变量 + 淡出条内是否还能命中会话行 */
+function readFade(index) {
+	return evalJs(`(() => {
+		const root = document.querySelector("[data-sidebar-scroll-root]");
+		const el = document.querySelectorAll("[data-sidebar-session-list]")[${index}];
+		const cs = getComputedStyle(el);
+		const r = el.getBoundingClientRect();
+		const a = root.getBoundingClientRect();
+		// 在顶部淡出条里（盒子顶 +4px）取一点，看命中是不是还在列表里
+		const y = Math.min(r.top + 4, a.bottom - 4);
+		const hit = document.elementFromPoint(r.left + 60, y);
+		return JSON.stringify({
+			fadeTop: el.dataset.fadeTop,
+			fadeBottom: el.dataset.fadeBottom,
+			mask: cs.maskImage,
+			fadeVar: cs.getPropertyValue("--session-list-fade").trim(),
+			hitInsideList: !!hit && el.contains(hit),
+		});
+	})()`).then(JSON.parse);
+}
+
+/** 遮罩“有作用”的判据：非 none 且含一个完全透明的色站（不依赖算出的具体序列化顺序） */
+const maskActive = (mask) => mask !== "none" && mask.includes("rgba(0, 0, 0, 0)");
+
+for (const l of overflow) {
+	const label = `列表#${l.i}（${l.rowCount} 行）`;
+
+	let s = await (async () => {
+		await reset();
+		return readFade(l.i);
+	})();
+	check(
+		`${label} 静止在顶：只下边缘渐隐（还有内容在下面）`,
+		s.fadeTop === "false" && s.fadeBottom === "true" && maskActive(s.mask),
+		`fadeTop=${s.fadeTop} fadeBottom=${s.fadeBottom} mask=${s.mask.slice(0, 46)}…`,
+	);
+	check(
+		`${label} 淡出高度来自 CSS 变量（非硬编码在类名里）`,
+		/^[\d.]+px$/.test(s.fadeVar) && Number.parseFloat(s.fadeVar) > 0,
+		`--session-list-fade=${s.fadeVar || "(未定义)"}`,
+	);
+
+	s = await (async () => {
+		await evalJs(
+			`(() => { const el = document.querySelectorAll("[data-sidebar-session-list]")[${l.i}]; el.scrollTop = Math.round((el.scrollHeight - el.clientHeight) / 2); return true; })()`,
+		);
+		await settle();
+		return readFade(l.i);
+	})();
+	check(
+		`${label} 滚到中部：上下都渐隐`,
+		s.fadeTop === "true" && s.fadeBottom === "true" && maskActive(s.mask),
+		`fadeTop=${s.fadeTop} fadeBottom=${s.fadeBottom}`,
+	);
+	check(
+		`${label} 淡出条内的会话行仍可命中（遮罩只画不挡）`,
+		s.hitInsideList === true,
+		`elementFromPoint(淡出条内) 落在列表内=${s.hitInsideList}`,
+	);
+
+	s = await (async () => {
+		await evalJs(
+			`(() => { const el = document.querySelectorAll("[data-sidebar-session-list]")[${l.i}]; el.scrollTop = el.scrollHeight; return true; })()`,
+		);
+		await settle();
+		return readFade(l.i);
+	})();
+	check(
+		`${label} 滚到底：只上边缘渐隐`,
+		s.fadeTop === "true" && s.fadeBottom === "false" && maskActive(s.mask),
+		`fadeTop=${s.fadeTop} fadeBottom=${s.fadeBottom}`,
+	);
+}
+
+for (const l of fit) {
+	const s = await (async () => {
+		await reset();
+		return readFade(l.i);
+	})();
+	check(
+		`列表#${l.i}（${l.rowCount} 行，不溢出）无淡出：两面都干净`,
+		s.fadeTop === undefined && s.fadeBottom === undefined && s.mask === "none",
+		`fadeTop=${s.fadeTop} fadeBottom=${s.fadeBottom} mask=${s.mask}`,
+	);
+}
+
+/* ---------- 4. 收尾：复位 ---------- */
 await reset();
 const end = await positions();
 check(
