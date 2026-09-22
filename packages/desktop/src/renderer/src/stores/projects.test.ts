@@ -162,6 +162,17 @@ describe("会话目录写穿（存在性只依赖目录）", () => {
 		const rows = nav.projects.flatMap((project) => project.sessions.map((row) => row.session.sessionId));
 		expect(rows).toEqual(["new-1"]);
 	});
+
+	it("自动命名写回目录后，GC 卸载不会退回项目目录名", () => {
+		const unnamed = { ...freshMeta("new-1", "/work/percho"), name: undefined };
+		useSessionsStore.setState({ sessions: [unnamed] });
+
+		// 对应 session_info_changed 的目录投影同步。
+		useProjectsStore.getState().applySessionName("new-1", "用户第一条消息");
+		useSessionsStore.setState({ sessions: [] });
+
+		expect(useProjectsStore.getState().allSessions[0]?.name).toBe("用户第一条消息");
+	});
 });
 
 describe("projects.load latest-wins（spec D6）", () => {

@@ -43,7 +43,7 @@ interface ProjectsStore {
 	loaded: boolean;
 	load: () => Promise<void>;
 	/** 重命名成功后同步历史列表（见实现处注释） */
-	applySessionName: (sessionId: string, name: string) => void;
+	applySessionName: (sessionId: string, name: string | undefined) => void;
 	select: (cwd: string | null) => void;
 	setSearch: (search: string) => void;
 	addProject: () => Promise<void>;

@@ -172,7 +172,7 @@ src/
 
 | 文件/目录 | 职责 |
 |---|---|
-| `main.tsx` / `App.tsx` | 入口 / 视图切换（chat/projects）+ 事件桥：onEvent → `EventConflator` rAF 合流 → transcript store（桥在 `hooks/use-session-event-bridge.ts`）。订阅纪律：App 只订阅原始值（子树无 memo，订阅 transcript 对象会随每条流式 delta 全级联） |
+| `main.tsx` / `App.tsx` | 入口 / 视图切换（chat/projects）+ 事件桥：onEvent → `EventConflator` rAF 合流 → transcript store（桥在 `hooks/use-session-event-bridge.ts`；`session_info_changed` 同步 sessions + projects 两份名称投影，防 GC 后标题回退）。订阅纪律：App 只订阅原始值（子树无 memo，订阅 transcript 对象会随每条流式 delta 全级联） |
 | `bootstrap-theme.ts` | 首帧前写 `data-theme`（读 `?theme=` query，防开屏闪色） |
 | `monaco-contribs.ts` | monaco worker 接管 + 懒加载服务补注册（出现新 UNKNOWN service 报错时按同法在此补模块） |
 | `splash-dom.ts` / `splash.ts` / `styles/splash.css` | 开屏动画三件：DOM/粒子参数（`DOT_COUNT`）→ 时长与单次标记（sessionStorage）→ 全部样式与收场编排（改视觉只动这三个文件） |

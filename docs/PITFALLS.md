@@ -67,6 +67,7 @@
 | 同一会话文件并发 open 后订阅/扩展/trace 翻倍、旧实例泄漏 | 二 · openSession 幂等：registry 短路 + single-flight + add 不静默覆盖（2026-09-20） |
 | 复制/恢复过会话文件后，它在列表里的时间/位置全变了 | 二 · 同章节「birthtime 不是会话创建时间」 |
 | 新建的会话过一阵突然从左侧栏消失（点「＋」/重启后又回来） | 四 · 会话目录写穿：行存不存在不能依赖内存（2026-09-21） |
+| 左栏会话标题在项目目录名（如 `percho`）与首条用户消息之间反复切换 | 四 · 同章节「名称也要写回目录投影」（2026-09-22） |
 | 给 store 加模块级订阅后，某些入口报 `Cannot read properties of undefined (reading 'subscribe')` | 四 · 同章节「renderer 模块图不许有环」（2026-09-21） |
 | 反复被 GC 卸载的已置顶会话，顶栏胶囊也一起消失了 | 四 · 同章节「写穿」：胶囊与左栏同源（tabs → 目录兜底） |
 
@@ -546,6 +547,8 @@ pi SDK 必须声明进 `packages/desktop/package.json` dependencies（electron-b
 4. `18:18:43` 再点「＋」→ 又拉一次快照 → 行回来。
 
 对策（已落地）：**目录是存在性的唯一来源，会话一进内存就写穿进去**。`stores/projects.ts` 底部一处 `useSessionsStore.subscribe`（会话一进内存就补进目录，**只补缺不覆盖**，磁盘权威的时间字段不被内存 meta 盖掉）+ `load()` 结尾再补一次（`0` 消息会话还没有会话文件，重拉的快照必然没有它）。内存 `sessions` 自此只负责运行态；GC 卸载 = 只撤运行态，不撤存在性。单测：`stores/projects.test.ts` 的「会话目录写穿」四例（含「卸载后左栏行仍在」）+ `lib/sidebar-groups.test.ts`。
+
+**名称也要写回目录投影（2026-09-22）**：新建会话的首份 meta 尚未命名，写穿目录后才由首条用户消息触发 `session_info_changed`。若事件只更新内存 `sessions`，会话在内存时标题正确；GC 卸载后只剩目录里的 `name: undefined`，`sessionTitle()` 就回退到 cwd 末级名（本次为 `percho`）；再次打开后内存 meta 从磁盘读到正确名称，于是标题又变回首条消息，形成反复切换。修复是在事件桥同时更新 `sessions` 与 `projects.allSessions`；显式重命名原本就采用同样的双投影同步。回归用例覆盖「自动命名写回后 GC 卸载仍保留名称」。
 
 连带两个教训：
 
