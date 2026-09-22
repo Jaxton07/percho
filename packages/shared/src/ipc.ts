@@ -31,7 +31,7 @@ export {
 /**
  * 渲染进程经 preload 暴露的 window.pi 类型。
  * invoke 成员：表化通道由 InvokeApi<CHANNEL_TABLE> 推导（shared/ipc-channels.ts 单一事实源，
- * key = 方法名）；表外成员（订阅 on*、platform）与迁移期遗留 invoke 在下方手写。
+ * key = 方法名）；表外成员（订阅 on*、platform、getPathForFile）在下方手写。
  */
 export interface PiApi extends InvokeApi<typeof CHANNEL_TABLE> {
 	/** 运行平台（preload 同步注入，供 renderer 按平台分流 UI：如顶栏红绿灯/窗口按钮留白） */

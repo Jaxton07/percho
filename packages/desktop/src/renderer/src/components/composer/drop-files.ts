@@ -9,8 +9,8 @@ export function resolveDroppedFilePaths(
 	const paths = new Set<string>();
 	for (const file of Array.from(files)) {
 		try {
-			const path = getPathForFile(file).trim();
-			if (path) paths.add(path);
+			const path = getPathForFile(file);
+			if (path.length > 0) paths.add(path);
 		} catch {
 			// Ignore values that are not native File objects instead of breaking the drop event.
 		}

@@ -10,6 +10,12 @@ describe("resolveDroppedFilePaths", () => {
 		expect(getPathForFile).toHaveBeenCalledTimes(4);
 	});
 
+	it("preserves whitespace that is part of a native path", () => {
+		const path = "/tmp/report.pdf ";
+
+		expect(resolveDroppedFilePaths([{ path }], (file) => (file as { path: string }).path)).toEqual([path]);
+	});
+
 	it("ignores invalid drop entries instead of aborting the entire batch", () => {
 		const bad = {};
 		const good = {};
