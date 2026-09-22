@@ -42,7 +42,6 @@ export function SessionRow({
 			// 可测试性只读属性（spec §6：CDP 按 sessionId 定位行，而不是靠标题文本匹配；纯属性，不影响视觉/交互）
 			data-session-id={session.sessionId}
 			data-session-active={active ? "true" : "false"}
-			title={title}
 			className={`flex h-[31px] w-full items-center gap-2 rounded-[7px] px-1.5 text-left text-[13.5px] ${
 				active ? "bg-bubble font-medium text-ink" : "text-ink-2 hover:bg-hover hover:text-ink"
 			}`}

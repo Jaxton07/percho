@@ -53,15 +53,29 @@ export function SidebarGroup({
 				onTogglePin={onTogglePin ? () => onTogglePin(group.cwd) : undefined}
 				onRemove={onRemove}
 			/>
-			{group.expanded && (
-				<SidebarSessionList
-					sessions={group.sessions}
-					activeSessionId={activeSessionId}
-					emptyLabel={t("sidebar.noSessions")}
-					onSelect={(session) => void openSession(session)}
-					onContextMenu={(session, anchor) => sessionMenu.open(session, anchor)}
-				/>
-			)}
+			<div
+				data-sidebar-group-content={group.expanded ? "expanded" : "collapsed"}
+				className={`sidebar-group-content ${group.expanded ? "is-expanded" : ""}`}
+				aria-hidden={!group.expanded}
+				inert={!group.expanded}
+				onTransitionEnd={(event) => {
+					if (event.target !== event.currentTarget || event.propertyName !== "grid-template-rows") return;
+					if (!group.expanded) {
+						const list = event.currentTarget.querySelector<HTMLElement>("[data-sidebar-session-list]");
+						if (list) list.scrollTop = 0;
+					}
+				}}
+			>
+				<div className="sidebar-group-content-inner">
+					<SidebarSessionList
+						sessions={group.sessions}
+						activeSessionId={activeSessionId}
+						emptyLabel={t("sidebar.noSessions")}
+						onSelect={(session) => void openSession(session)}
+						onContextMenu={(session, anchor) => sessionMenu.open(session, anchor)}
+					/>
+				</div>
+			</div>
 			{sessionMenu.element}
 		</div>
 	);
