@@ -101,7 +101,7 @@ function note(text) {
 const READ_SNAPSHOT = `(() => {
 	const root = document.querySelector("[data-sidebar-scroll-root]");
 	if (!root) return JSON.stringify({ error: "no-scroll-root" });
-	const lists = [...root.querySelectorAll("[data-sidebar-session-list]")];
+	const lists = [...root.querySelectorAll('[data-sidebar-group-content="expanded"] [data-sidebar-session-list]')];
 	return JSON.stringify({
 		root: {
 			clientH: root.clientHeight,
@@ -113,8 +113,9 @@ const READ_SNAPSHOT = `(() => {
 		lists: lists.map((el, i) => {
 			const cs = getComputedStyle(el);
 			const rows = [...el.querySelectorAll("[data-session-id]")];
-			// 分组标题行：用 DOM 相邻关系（分组根 div 里的 aria-expanded 按钮），不按文案匹配
-			const title = el.parentElement ? el.parentElement.querySelector("button[aria-expanded]") : null;
+			// 分组标题行：从动画容器回到它的前一个兄弟 ProjectRow，不按文案匹配
+			const content = el.closest("[data-sidebar-group-content]");
+			const title = content?.previousElementSibling?.querySelector("button[aria-expanded]") ?? null;
 			return {
 				i,
 				scrollable: el.dataset.scrollable === "true",
@@ -144,7 +145,7 @@ function snapshot() {
 function positions() {
 	return evalJs(`(() => {
 	const root = document.querySelector("[data-sidebar-scroll-root]");
-	const lists = [...root.querySelectorAll("[data-sidebar-session-list]")];
+	const lists = [...root.querySelectorAll('[data-sidebar-group-content="expanded"] [data-sidebar-session-list]')];
 	return JSON.stringify({ outer: root.scrollTop, lists: lists.map((l) => l.scrollTop) });
 })()`).then(JSON.parse);
 }
@@ -153,7 +154,7 @@ function reset() {
 	return evalJs(`(() => {
 	const root = document.querySelector("[data-sidebar-scroll-root]");
 	root.scrollTop = 0;
-	for (const l of root.querySelectorAll("[data-sidebar-session-list]")) l.scrollTop = 0;
+	for (const l of root.querySelectorAll('[data-sidebar-group-content="expanded"] [data-sidebar-session-list]')) l.scrollTop = 0;
 	return true;
 })()`);
 }
@@ -161,7 +162,7 @@ function reset() {
 /** 把某个内层预置到中部（用于「非边界位置」的手势；不是用它代替 wheel） */
 function presetListTop(index, cssExpr) {
 	return evalJs(`(() => {
-	const l = document.querySelectorAll("[data-sidebar-session-list]")[${index}];
+	const l = document.querySelectorAll('[data-sidebar-group-content="expanded"] [data-sidebar-session-list]')[${index}];
 	l.scrollTop = ${cssExpr};
 	return l.scrollTop;
 })()`);
@@ -220,9 +221,10 @@ async function wheel(selectorExpr, deltaY, times = 1) {
 	await settle();
 }
 
-const listExpr = (i) => `document.querySelectorAll("[data-sidebar-session-list]")[${i}]`;
+const listExpr = (i) =>
+	`document.querySelectorAll('[data-sidebar-group-content="expanded"] [data-sidebar-session-list]')[${i}]`;
 const titleExpr = (i) =>
-	`document.querySelectorAll("[data-sidebar-session-list]")[${i}].parentElement.querySelector("button[aria-expanded]")`;
+	`${listExpr(i)}.closest("[data-sidebar-group-content]").previousElementSibling.querySelector("button[aria-expanded]")`;
 
 /* ---------- 1. 结构与尺寸契约 ---------- */
 console.log("=== 1. 结构与尺寸 ===");
@@ -381,7 +383,7 @@ console.log("\n=== 3. 边缘淡出 ===");
 function readFade(index) {
 	return evalJs(`(() => {
 		const root = document.querySelector("[data-sidebar-scroll-root]");
-		const el = document.querySelectorAll("[data-sidebar-session-list]")[${index}];
+		const el = document.querySelectorAll('[data-sidebar-group-content="expanded"] [data-sidebar-session-list]')[${index}];
 		const cs = getComputedStyle(el);
 		const r = el.getBoundingClientRect();
 		const a = root.getBoundingClientRect();
@@ -421,7 +423,7 @@ for (const l of overflow) {
 
 	s = await (async () => {
 		await evalJs(
-			`(() => { const el = document.querySelectorAll("[data-sidebar-session-list]")[${l.i}]; el.scrollTop = Math.round((el.scrollHeight - el.clientHeight) / 2); return true; })()`,
+			`(() => { const el = document.querySelectorAll('[data-sidebar-group-content="expanded"] [data-sidebar-session-list]')[${l.i}]; el.scrollTop = Math.round((el.scrollHeight - el.clientHeight) / 2); return true; })()`,
 		);
 		await settle();
 		return readFade(l.i);
@@ -439,7 +441,7 @@ for (const l of overflow) {
 
 	s = await (async () => {
 		await evalJs(
-			`(() => { const el = document.querySelectorAll("[data-sidebar-session-list]")[${l.i}]; el.scrollTop = el.scrollHeight; return true; })()`,
+			`(() => { const el = document.querySelectorAll('[data-sidebar-group-content="expanded"] [data-sidebar-session-list]')[${l.i}]; el.scrollTop = el.scrollHeight; return true; })()`,
 		);
 		await settle();
 		return readFade(l.i);
