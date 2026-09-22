@@ -219,7 +219,7 @@ export const useTranscriptStore = create<TranscriptStore>((set) => ({
 						unseenCompletion: false,
 						compacting: false,
 						followUpQueue: current?.followUpQueue ?? [],
-						// loadHistory 只换消息流（compaction 后对齐 pi 裁剪），todo 列表保留
+						// loadHistory 只换消息流（backend 回放会话树完整分支），todo 列表保留
 						todos: current?.todos ?? [],
 						// 错误卡派生自消息流本身，pending 状态不穿越回放
 						pendingLlmError: null,

@@ -71,14 +71,13 @@ import { addAllowedPattern, addWorkspaceRoot } from "./project/workspace-store";
 import { slimBulkyEvent, slimMessageUpdate } from "./session/event-slim";
 import { ExtensionDialogHost } from "./session/extension-dialog-host";
 import {
-	assignEntryIds,
 	blockImages,
 	blockText,
 	type RawMessage,
 	readSessionMessagesFromContent,
 	resolveForkEntryId,
 	resolveRecallEntryId,
-	toSessionMessages,
+	toBranchSessionMessages,
 } from "./session/messages";
 import { autoNameSession } from "./session/naming";
 import { EventRateTracker } from "./session/rates";
@@ -867,13 +866,10 @@ export class PiBackend {
 		return format === "html" ? entry.session.exportToHtml() : entry.session.exportToJsonl();
 	}
 
-	/** 读取会话历史消息（打开历史会话时回放给 UI） */
+	/** 读取会话树当前分支的完整历史（compaction 只裁模型上下文，不裁 UI 历史） */
 	async getSessionMessages(sessionId: string): Promise<SessionMessage[]> {
 		const entry = this.requireSession(sessionId);
-		const messages = toSessionMessages(entry.session.messages);
-		// 配对消息与会话树 entry id（assistant 供 fork 定位、user 供撤回定位）
-		assignEntryIds(messages, entry.session.sessionManager.getBranch());
-		return messages;
+		return toBranchSessionMessages(entry.session.sessionManager.getBranch());
 	}
 
 	/**

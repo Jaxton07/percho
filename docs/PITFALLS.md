@@ -68,6 +68,7 @@
 | 复制/恢复过会话文件后，它在列表里的时间/位置全变了 | 二 · 同章节「birthtime 不是会话创建时间」 |
 | 新建的会话过一阵突然从左侧栏消失（点「＋」/重启后又回来） | 四 · 会话目录写穿：行存不存在不能依赖内存（2026-09-21） |
 | 左栏会话标题在项目目录名（如 `percho`）与首条用户消息之间反复切换 | 四 · 同章节「名称也要写回目录投影」（2026-09-22） |
+| 会话压缩后当时历史还在，过段时间重新打开却只剩压缩后的内容 | 四 · UI 历史不能读取被压缩的模型上下文（2026-09-22） |
 | 给 store 加模块级订阅后，某些入口报 `Cannot read properties of undefined (reading 'subscribe')` | 四 · 同章节「renderer 模块图不许有环」（2026-09-21） |
 | 反复被 GC 卸载的已置顶会话，顶栏胶囊也一起消失了 | 四 · 同章节「写穿」：胶囊与左栏同源（tabs → 目录兜底） |
 
@@ -556,6 +557,14 @@ pi SDK 必须声明进 `packages/desktop/package.json` dependencies（electron-b
 - **renderer 模块图不许有环**：写穿用一个模块级订阅，立刻在「`sessions` 先进」的入口（三个 store 单测）报 `Cannot read properties of undefined (reading 'subscribe')`——环 `projects → sessions → ui-preferences → sidebar-groups → projects` 让 `projects` 的模块体在 `sessions` 未求值完时执行。环的成因只是 3 行纯函数 `toggleInList` 挂在 `sidebar-groups` 上（已拆成叶模块 `lib/toggle-in-list.ts`）。防线：`src/renderer/src/import-cycles.test.ts` 扫全图断言 0 环（本仓当时为 0，含 `import type`）。
 
 复现手法（可复用）：dev 实例 + CDP 直接驱 store 走真实入口（`.local/dev-logs/repro-session-catalog.mjs`）：`createSession()`（真实 promotion）→ `activateNewSessionDraft()` 切走 → `unloadSession(id)`（GC 真实入口）→ 断言 `inMemory=false` 但 `inCatalog=true` 且 `document.querySelector('[data-session-id=…]')` 仍在。**侧栏按组渲染，断言前要先展开该会话所在项目的组**（`setExpandedGroups([...groups, cwd])`），否则“行不在 DOM 里”是假阴性。
+
+### UI 历史不能读取被压缩的模型上下文（2026-09-22）
+
+症状：执行 compaction 后，当前界面的旧消息仍完整；过一段时间切走再回来，压缩前的大段内容却消失。目标会话文件有 1319 行、当前分支 1253 条 message entry，但两次压缩后 `AgentSession.messages` 只剩 251 条上下文消息；日志中的 GC close/open 正好对应“过段时间”这个触发点。
+
+根因：实时 `compaction_end` 已刻意只追加分割线、不重置 UI，所以当下正常；但 GC 卸载再打开时，`getSessionMessages()` 错把 `AgentSession.messages` 当历史数据源。这个属性是**给模型下一轮请求使用的裁剪上下文**，不是完整会话历史。完整历史一直在 JSONL 会话树当前分支里，并未丢失。
+
+对策：UI 回放统一读取 `sessionManager.getBranch()` 的全部 `message` entry，再转换并配对 entryId；模型调用仍使用 SDK 自己的 `session.messages`，两种语义不混用。文件只读透视也复用同一个 branch 转换函数。回归测试必须真实插入 compaction entry，并证明模型上下文缩短的同时 UI 历史仍包含压缩前消息。
 
 ## 五、工程纪律
 
