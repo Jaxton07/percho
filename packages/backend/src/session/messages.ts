@@ -180,16 +180,26 @@ export function readSessionMessagesFromContent(content: string): SessionMessage[
 	for (const entry of entries) {
 		if (entry.type !== "session") byId.set(entry.id, entry);
 	}
-	const branch: (typeof entries)[number][] = [];
+	const branch: SessionEntry[] = [];
 	let cursor = entries.length > 0 ? entries[entries.length - 1] : null;
 	while (cursor && cursor.type !== "session") {
 		branch.unshift(cursor);
 		cursor = cursor.parentId ? (byId.get(cursor.parentId) ?? null) : null;
 	}
+	return toBranchSessionMessages(branch);
+}
+
+/**
+ * 当前会话树分支 → UI 历史消息。必须读取 getBranch() 的完整持久历史，而不是
+ * AgentSession.messages（后者是发给模型的上下文，compaction 后会裁掉旧消息）。
+ */
+export function toBranchSessionMessages(branch: readonly SessionEntry[]): SessionMessage[] {
 	const raw = branch
 		.filter((entry): entry is SessionMessageEntry => entry.type === "message")
 		.map((entry) => entry.message);
-	return toSessionMessages(raw);
+	const messages = toSessionMessages(raw);
+	assignEntryIds(messages, branch);
+	return messages;
 }
 
 /**
