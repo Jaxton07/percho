@@ -3,6 +3,7 @@ import { useEffect } from "react";
 import { getPi } from "../api";
 import { useDraftStore } from "../stores/drafts";
 import { EventConflator } from "../stores/event-conflator";
+import { useProjectsStore } from "../stores/projects";
 import { useSessionsStore } from "../stores/sessions";
 import { pushExtensionToast } from "../stores/toasts";
 import { useTranscriptStore } from "../stores/transcript";
@@ -32,7 +33,10 @@ export function useSessionEventBridge({
 		const offEvent = pi.onEvent(({ sessionId, event }: { sessionId: string; event: SessionEvent }) => {
 			if (event.type === "session_info_changed") {
 				useSessionsStore.getState().updateSessionName(sessionId, event.name);
-				return; // 会话名走 sessions store；reducer 对该类型本就无操作
+				// 新会话先以「未命名」meta 写穿进目录，首条消息随后才触发自动命名。
+				// 目录也必须同步，否则 GC 卸载内存项后，左栏会退回 cwd 末级名（如 percho）。
+				useProjectsStore.getState().applySessionName(sessionId, event.name);
+				return; // 会话名走 sessions + projects 两份投影；reducer 对该类型本就无操作
 			}
 			conflator.push(sessionId, event);
 		});

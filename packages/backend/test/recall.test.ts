@@ -1,7 +1,7 @@
 import type { Message } from "@earendil-works/pi-ai";
 import { SessionManager } from "@earendil-works/pi-coding-agent";
 import { describe, expect, it } from "vitest";
-import { resolveRecallEntryId } from "../src/session/messages";
+import { resolveRecallEntryId, toBranchSessionMessages } from "../src/session/messages";
 
 /** 构造带两条用户消息（+一条回复在中间）的内存会话，返回 manager 与 entry id */
 function makeSession() {
@@ -57,6 +57,31 @@ describe("resolveRecallEntryId（撤回目标解析）", () => {
 		sm.branch(first);
 		expect(() => resolveRecallEntryId(sm, { text: "第二条" })).toThrow(/not found/);
 		expect(resolveRecallEntryId(sm, { text: "第一条" })).toBe(first);
+	});
+});
+
+describe("压缩后的 UI 历史", () => {
+	it("读取完整会话树分支，而不是被 compaction 裁剪的模型上下文", () => {
+		const sm = SessionManager.inMemory();
+		sm.appendMessage({ role: "user", content: "压缩前第一条", timestamp: 1 } satisfies Message);
+		sm.appendMessage({ role: "user", content: "压缩前第二条", timestamp: 2 } satisfies Message);
+		const kept = sm.appendMessage({
+			role: "user",
+			content: "压缩前保留条目",
+			timestamp: 3,
+		} satisfies Message);
+		sm.appendCompaction("模型上下文摘要", kept, 10_000);
+		sm.appendMessage({ role: "user", content: "压缩后消息", timestamp: 4 } satisfies Message);
+
+		const uiHistory = toBranchSessionMessages(sm.getBranch());
+		expect(uiHistory.map((message) => message.text)).toEqual([
+			"压缩前第一条",
+			"压缩前第二条",
+			"压缩前保留条目",
+			"压缩后消息",
+		]);
+		// SDK 上下文确实已缩短，证明测试没有把两种数据源混为一谈。
+		expect(sm.buildSessionContext().messages.length).toBeLessThan(4);
 	});
 });
 
