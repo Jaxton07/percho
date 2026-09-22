@@ -15,7 +15,7 @@ import {
 	type UiPluginsEventPayload,
 	type UpdateState,
 } from "@percho/shared";
-import { contextBridge, ipcRenderer } from "electron";
+import { contextBridge, ipcRenderer, webUtils } from "electron";
 
 /** 事件订阅包装：ipcRenderer.on + 返回退订函数（removeListener），payload 透传 */
 function makeSubscription<T>(channel: string): (cb: (payload: T) => void) => () => void {
@@ -36,6 +36,7 @@ const invokeApi = Object.fromEntries(
 
 const api: PiApi = {
 	platform: process.platform,
+	getPathForFile: (file) => webUtils.getPathForFile(file as Parameters<typeof webUtils.getPathForFile>[0]),
 	...invokeApi,
 	onProviderLoginEvent: makeSubscription<LoginEventPayload>(IpcChannels.SettingsLoginEvent),
 	onUiPluginsEvent: makeSubscription<UiPluginsEventPayload>(IpcChannels.UiPluginsEvent),
