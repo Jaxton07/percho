@@ -10,6 +10,7 @@
 |---|---|
 | 全 app 卡死、日志/磁盘分钟级 GB 暴涨、renderer unresponsive | 一 · 0.4.6 冻结事故 |
 | 流式期间白屏、`error #185`、无限重渲染整树卸载 | 一 · 0.5.0 白屏事故；四 · Zustand selector（#185 另一成因） |
+| 点击对话里的相对文件链接后白屏 | 四 · Markdown 相对链接会导航 app 主窗口（2026-09-23） |
 | 扩展注册的工具模型用不了、模型说「工具列表为 none」 | 二 · createAgentSession tools 白名单 |
 | 设置页永久 Loading、模型列表为空 | 二 · runtime.refresh 网络挂起 / getAvailable 返回空 |
 | 权限 confirm 弹窗不生效 | 二 · bindExtensions 注入点 |
@@ -235,6 +236,12 @@ pi SDK 必须声明进 `packages/desktop/package.json` dependencies（electron-b
 连带坑（首贡献者 fork PR 死锁）：fork 首次 PR 的 CI 要在 Actions 页面手动 Approve 才会跑，叠加分支保护「要求 branch up-to-date + 检查通过」→ 三者互等死锁，只能 admin 旁路（`gh pr merge --squash --admin`，同样吃上面的 scope 限制）。同步 fork 分支用 `gh pr update-branch <n>`。
 
 ## 四、Renderer / React
+
+### Markdown 相对链接会导航 app 主窗口 → 白屏（2026-09-23）
+
+症状：点击助手消息里的 `[报告](.local/docs/html/report.html)` 后，聊天界面整页空白；不是 React #185，也不是会话损坏。`markstream-react` 输出普通 `<a href=".local/...">`，没有 `_blank`；Chromium 把它相对于 `app.asar/out/renderer/index.html`（dev 时是 Vite URL）解析，直接替换主窗口，目标文件不在应用包内于是白屏。原来的 `setWindowOpenHandler` 仅拦新窗口，**不拦同窗口导航**。
+
+修复：`main/window.ts` 用 `will-navigate` 兜底拒绝页面发起的导航；`chat/Markdown.tsx` 委托处理正文锚点，经 `markdown-link.ts` 分类：http(s) 用系统浏览器，本地文件用 `openPath` 按当前会话 cwd 解析（缺 cwd 的相对路径报错，不误用进程 cwd），锚点保留原生页内行为。`setWindowOpenHandler` 同时限制为只外开 http(s)，不能把任意协议交给 shell。路径不存在时显示 toast，窗口不会离开聊天页。
 
 ### 鼠标事件 + `:hover`：合成 MouseEvent 不算 hover，要用 CDP 真实鼠标（2026-09-17）
 

@@ -125,8 +125,12 @@ export function createWindow(theme: "dark" | "light" = "light"): BrowserWindow {
 		}, QUIT_ACK_TIMEOUT_MS);
 	});
 
+	// 聊天中的相对链接不能导航主窗口：否则按 app.asar/out/renderer/ 解析，找不到即白屏。
+	// will-navigate 仅针对页面发起的导航，不拦启动时的 loadURL/loadFile。
+	window.webContents.on("will-navigate", (event) => event.preventDefault());
 	window.webContents.setWindowOpenHandler((details) => {
-		void shell.openExternal(details.url);
+		// 新窗口也不交给 Electron 内嵌打开；仅安全的网页协议交给系统浏览器。
+		if (/^https?:\/\//i.test(details.url)) void shell.openExternal(details.url);
 		return { action: "deny" };
 	});
 

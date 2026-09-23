@@ -3,8 +3,13 @@ import "markstream-react/index.css";
 // KaTeX 只在公式出现时才会被 markstream 动态 import（mermaid 的依赖里也有 katex）；
 // 它的 CSS 必须显式引入：缺了它 katex-mathml 层不会被隐藏，公式会重影地多一份 MathML 文本。
 import "katex/dist/katex.min.css";
-import { useRef } from "react";
+import { type MouseEvent, useRef } from "react";
+import { getPi } from "../../api";
+import { errText } from "../../lib/error-text";
+import { useSessionsStore } from "../../stores/sessions";
 import { useThemeStore } from "../../stores/theme";
+import { pushToast } from "../../stores/toasts";
+import { classifyMarkdownLink } from "./markdown-link";
 // 副作用 import：MermaidBlock 在模块加载时向 markstream 注册 mermaid 节点的自定义组件（见该文件末尾）
 import "./MermaidBlock";
 
@@ -72,10 +77,34 @@ const REDUCED_MOTION =
  */
 export function Markdown({ text, streaming }: { text: string; streaming?: boolean }) {
 	const isDark = useThemeStore((s) => s.resolved === "dark");
+	const cwd = useSessionsStore((s) => s.cwd);
+	const onLinkClick = (event: MouseEvent<HTMLDivElement>) => {
+		const anchor = event.target instanceof Element ? event.target.closest("a[href]") : null;
+		if (!anchor || !event.currentTarget.contains(anchor)) return;
+		const href = anchor.getAttribute("href");
+		if (!href) return;
+		const link = classifyMarkdownLink(href);
+		if (link.kind === "anchor") return;
+		// 包括 Cmd/Ctrl 点击的默认行为都不应把应用页面导航走；主进程另有兜底拦截。
+		event.preventDefault();
+		if (link.kind === "unsupported") return;
+		const operation =
+			link.kind === "external"
+				? getPi().openExternal({ url: link.url })
+				: cwd || link.target.startsWith("/") || link.target.startsWith("~") || /^file:\/\//i.test(link.target)
+					? getPi().openPath({ target: link.target, cwd })
+					: Promise.reject(new Error("No session working directory for relative link"));
+		void operation.catch((error: unknown) => {
+			pushToast("error", "toast.pathOpenFailed", errText(error));
+		});
+	};
 	// 挂载初值锁定：流式中挂载 → 本次生命周期始终启用平滑（含固化后追平）；历史消息挂载 → 永不启用
 	const smoothableRef = useRef<boolean>(Boolean(streaming) && !REDUCED_MOTION);
 	return (
-		<div className="markdown-body text-[15px] leading-[1.75] text-ink select-text">
+		// 委托给库动态生成的 <a>；键盘 Enter 在锚点上会合成 click，无需给容器伪造交互角色。
+		// biome-ignore lint/a11y/noStaticElementInteractions: 容器只代理内部原生可交互锚点
+		// biome-ignore lint/a11y/useKeyWithClickEvents: 锚点的键盘 Enter 原生派发 click，同一路径处理
+		<div className="markdown-body text-[15px] leading-[1.75] text-ink select-text" onClick={onLinkClick}>
 			{/* deferNodesUntilVisible=false：markstream 0.0.55 的延迟节点 bug——块数 > initialRenderBatchSize(40)
 			    的节点先渲染为 node-placeholder 占位条，等 IntersectionObserver 标记可见后只写 ref 不触发
 			    re-render（非虚拟化路径）；流式期间靠内容更新顺带刷新，流一停占位条就永久残留。 */}
