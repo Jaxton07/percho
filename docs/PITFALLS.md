@@ -254,7 +254,8 @@ pi SDK 必须声明进 `packages/desktop/package.json` dependencies（electron-b
 1. **`Page.captureScreenshot` 会把 hover 状态清掉**：截完图 `:hover` 链变空、目标元素的 `pointer-events` 回落 `none`（截图前读到的 `auto` 不再成立）。于是「hover → 截图 → 接着点它」的顺序会**静默落空**（点击落在 `pointer-events: none` 上，不报错也不生效）。
 2. **对同一坐标的 `mouseMoved` 不会重算 hover**：截图后想恢复 hover，直接再发一次相同坐标无效 —— 必须**先挪开一点（如 −60px）再挪回来**。
 3. `mousePressed` 与 `mouseReleased` 之间**贴太紧偶发不合成 `click`**，验证点击行为时中间留 ~70ms 更稳。
-4. **`mouseWheel` 的落点必须真的在目标容器上，且不能被刚弹出的浮层盖住**：右键菜单挂在指针处，紧接着朝“列表中心”派 wheel 很可能落在**菜单**上（菜单不可滚）→ 容器`scrollTop` 纹丝不动，看起来像“滚动了但菜单没关”的假失败。做法：先算出浮层矩形，再在目标容器里挑一个不被遮挡的点，并**同时断言容器 `scrollTop` 真的变了**（否则这条断言本来就不能判定）。实例：`scripts/check-sidebar-group-scroll.mjs` 的“滚动后菜单关闭”那一步。
+4. **合成 `mouseover` 会污染后续命中测试**：`dispatchEvent(new MouseEvent("mouseover"))` 派发的**合成**事件同样会把 `:hover` 链点亮，而且**不会自己消失** —— 后面用 `document.elementFromPoint()` 量「收起态覆盖层是否挡住正文」时，会误判成「挡住了」（实测：轨道项本来 24px 宽，却报 x=300 命中轨道）。做法：量命中区之前先对**所有**相关元素派发一次 `mouseout`（或等一次真实 `Input.dispatchMouseEvent` 把指针挪走），再读 `elementFromPoint`。
+5. **`mouseWheel` 的落点必须真的在目标容器上，且不能被刚弹出的浮层盖住**：右键菜单挂在指针处，紧接着朝“列表中心”派 wheel 很可能落在**菜单**上（菜单不可滚）→ 容器`scrollTop` 纹丝不动，看起来像“滚动了但菜单没关”的假失败。做法：先算出浮层矩形，再在目标容器里挑一个不被遮挡的点，并**同时断言容器 `scrollTop` 真的变了**（否则这条断言本来就不能判定）。实例：`scripts/check-sidebar-group-scroll.mjs` 的“滚动后菜单关闭”那一步。
 
 ### 嵌套滚动的归属验证 + `overscroll-behavior: contain` 会吞掉滚轮（2026-09-21，左栏分组列表限高）
 
@@ -517,6 +518,14 @@ pi SDK 必须声明进 `packages/desktop/package.json` dependencies（electron-b
 - 定位收成纯函数（`components/ui/place-menu.ts`）：锚点 = 触发元素 `getBoundingClientRect()`，规则 = 下沿左对齐 → 超右缘左翻（右缘贴触发元素右缘）→ 下方放不下且上方够则上翻 → 最后夹进视口内边距。**先渲染再测量**：菜单高度取决于行数，`useLayoutEffect` 里量完再 `setState` 定位，测量前整层 `visibility: hidden` 防抖动。
 - **滚动/改变窗口尺寸就关菜单**（而不是重定位）：祖先滚动容器可能有很多层，跟踪成本远大于收益；不关会「菜单挂在原地、触发元素跑了」。
 - `preventDefault()` 在 `contextmenu` 里必写（否则同时弹系统菜单）；dnd-kit 的 `PointerSensor` 只认主键，右键不会误触发拖拽。
+
+### dev 改 store 后「界面没反应」：HMR 重建了 zustand 模块实例（2026-09-28，session-workspace 阶段 3）
+
+症状：dev 里改完 `stores/*.ts` 继续手验，**点了会话说「不出胶囊」**、点 × 没反应、组件像是拿到了空状态 —— 但代码与单测都对，重启 dev 后一切正常。
+
+原因：Vite HMR 让 store 模块**重新求值**，于是产生了**新的** zustand store 实例；旧实例上已经写进去的状态（成员表、`activeSessionId` 订阅等）留在旧闭包里，而 React 组件被新模块重新渲染后订阅的是新实例 → 看起来「状态凭空丢了」。订阅式接线（`useSessionsStore.subscribe(...)` 这类模块级副作用）也会被重新注册一遍。
+
+做法：**任何 store/接线改动后的手验，先整体重启 dev（杀掉 electron-vite 与 Electron 再起），不要在 HMR 后的页面上判断功能对错**；CDP 验收脚本也应在重启后的干净页面跑。判断当前页是不是被 HMR 污染过：看 dev 日志有没有 `hmr update` 记录（或直接重来一次）。
 
 ### 内存 meta 覆盖历史 meta = 排序键漂移到 createdAt，行会“自己跳”（2026-09-20，sidebar-session-switch-stability）
 

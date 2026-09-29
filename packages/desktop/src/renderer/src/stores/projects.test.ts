@@ -5,13 +5,24 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 const piMock = vi.hoisted(() => ({
 	listAllSessions: vi.fn(),
 	getDailyDir: vi.fn(() => Promise.resolve(null)),
+	// 用户入口 openSession / deleteSession 会走这些 IPC（其余四件套的拉取见 sessions store）
+	openSession: vi.fn(),
+	deleteSession: vi.fn(() => Promise.resolve()),
+	closeSession: vi.fn(() => Promise.resolve({ closed: true })),
+	getSessionMessages: vi.fn(() => Promise.resolve([])),
+	getFollowUpMessages: vi.fn(() => Promise.resolve([])),
+	getTodos: vi.fn(() => Promise.resolve([])),
+	getPermissionMode: vi.fn(() => Promise.resolve("default" as const)),
+	saveUiState: vi.fn(() => Promise.resolve()),
 }));
 vi.mock("../api", () => ({ getPi: () => piMock }));
 
 import { setDailyDirForTest } from "../lib/daily";
 import { deriveSidebarNavigation } from "../lib/sidebar-groups";
 import { deriveProjects, useProjectsStore } from "./projects";
+import { useSessionWorkspaceStore } from "./session-workspace";
 import { useSessionsStore } from "./sessions";
+import { useUiPreferencesStore } from "./ui-preferences";
 
 function session(cwd: string, modifiedAt: number): SessionMeta {
 	return {
@@ -236,5 +247,168 @@ describe("projects.load latest-wins（spec D6）", () => {
 		await loadB;
 		expect(ids()).toEqual(["/p-400"]);
 		expect(useProjectsStore.getState().loading).toBe(false);
+	});
+});
+
+// ---------------------------------------------------------------------------
+// 临时会话工作区接线（阶段 2）：`openSession` 是**用户入口**（左栏行 / 顶栏胶囊），
+// 点开的会话进工作区；只读子代理检视不进；删除会话顺带把成员移出。
+// ---------------------------------------------------------------------------
+describe("工作区接线 · projects", () => {
+	const memberIds = () => useSessionWorkspaceStore.getState().members.map((m) => m.sessionId);
+	const loaded = (id: string, file = `/tmp/${id}.jsonl`): SessionMeta => ({
+		...session("/p", 1),
+		sessionId: id,
+		sessionFile: file,
+		active: true,
+	});
+
+	beforeEach(() => {
+		vi.clearAllMocks();
+		piMock.listAllSessions.mockReset();
+		piMock.openSession.mockReset();
+		useSessionWorkspaceStore.setState({ members: [], activeFile: null, epoch: 0 });
+		useProjectsStore.setState({
+			allSessions: [],
+			selectedCwd: null,
+			search: "",
+			loading: false,
+			loaded: false,
+		});
+		useSessionsStore.setState({ sessions: [], activeSessionId: null, cwd: null, lastUsedAt: {} });
+		useUiPreferencesStore.setState({
+			barSessionsVisible: true,
+			sessionRailEnabled: false,
+			pinnedSessions: [],
+		});
+	});
+
+	it("用户点未加载会话：加入工作区（插在当前成员右侧）并走按需打开", async () => {
+		useSessionWorkspaceStore.getState().addMember({ file: "/tmp/m1.jsonl", sessionId: "m1" });
+		piMock.openSession.mockResolvedValue(loaded("h1"));
+
+		await useProjectsStore.getState().openSession(loaded("h1"));
+
+		expect(memberIds()).toEqual(["m1", "h1"]);
+		expect(useSessionsStore.getState().activeSessionId).toBe("h1");
+		expect(piMock.openSession).toHaveBeenCalledWith({ filePath: "/tmp/h1.jsonl" });
+	});
+
+	it("打开失败（文件已删/后端拒绝）：不入工作区 —— 不留点不开的假胶囊，也不抢 activeFile", async () => {
+		useSessionWorkspaceStore.getState().addMember({ file: "/tmp/m1.jsonl", sessionId: "m1" });
+		piMock.openSession.mockRejectedValue(new Error("ENOENT"));
+
+		await useProjectsStore.getState().openSession(loaded("gone"));
+
+		expect(memberIds()).toEqual(["m1"]);
+		expect(useSessionWorkspaceStore.getState().activeFile).toBe("/tmp/m1.jsonl");
+		expect(useSessionsStore.getState().activeSessionId).toBeNull();
+	});
+
+	it("在途两个 open（A 先点、B 后点，A 迟到成功）：两条都入表且 A 在前；迟到者不抢 activeFile", async () => {
+		useSessionWorkspaceStore.getState().addMember({ file: "/tmp/m0.jsonl", sessionId: "m0" });
+		const a = deferred<SessionMeta>();
+		const b = deferred<SessionMeta>();
+		piMock.openSession.mockImplementation(({ filePath }: { filePath: string }) =>
+			filePath === "/tmp/a.jsonl" ? a.promise : b.promise,
+		);
+
+		const openA = useProjectsStore.getState().openSession(loaded("a"));
+		const openB = useProjectsStore.getState().openSession(loaded("b"));
+		// B 先回：它就是当前（用户在看的那个）
+		b.resolve(loaded("b"));
+		await openB;
+		expect(useSessionsStore.getState().activeSessionId).toBe("b");
+		expect(memberIds()).toEqual(["m0", "b"]);
+
+		// A 迟到：仍入表（用户确实点过它），落在点击时的锚点 m0 右侧，但不把当前拉过去
+		a.resolve(loaded("a"));
+		await openA;
+		expect(memberIds()).toEqual(["m0", "a", "b"]);
+		expect(useSessionsStore.getState().activeSessionId).toBe("b");
+		expect(useSessionWorkspaceStore.getState().activeFile).toBe("/tmp/b.jsonl");
+	});
+
+	it("在途两个 open：先点的失败、后点的成功 → 只留后点那条", async () => {
+		useSessionWorkspaceStore.getState().addMember({ file: "/tmp/m0.jsonl", sessionId: "m0" });
+		const a = deferred<SessionMeta>();
+		piMock.openSession.mockImplementation(({ filePath }: { filePath: string }) =>
+			filePath === "/tmp/a.jsonl" ? a.promise : Promise.resolve(loaded("b")),
+		);
+
+		const openA = useProjectsStore.getState().openSession(loaded("a"));
+		await useProjectsStore.getState().openSession(loaded("b"));
+		a.reject(new Error("ENOENT"));
+		await openA;
+
+		expect(memberIds()).toEqual(["m0", "b"]);
+		expect(useSessionsStore.getState().activeSessionId).toBe("b");
+	});
+
+	describe("目录 latest-wins（adoptCatalog 参与排号）", () => {
+		it("在飞的旧 load 晚回：不得把恢复采纳的新快照盖回去", async () => {
+			const stale = deferred<SessionMeta[]>();
+			piMock.listAllSessions.mockImplementation(() => stale.promise);
+			const loading = useProjectsStore.getState().load();
+
+			// 启动恢复链自己读到一份新快照并采纳
+			useProjectsStore.getState().adoptCatalog([loaded("fresh")]);
+			expect(useProjectsStore.getState().allSessions.map((s) => s.sessionId)).toEqual(["fresh"]);
+
+			stale.resolve([loaded("stale")]);
+			await loading;
+			expect(useProjectsStore.getState().allSessions.map((s) => s.sessionId)).toEqual(["fresh"]);
+		});
+
+		it("采纳之后的 load 仍能生效（后发起的请求序号更大）", async () => {
+			useProjectsStore.getState().adoptCatalog([loaded("old")]);
+			piMock.listAllSessions.mockResolvedValue([loaded("newer")]);
+
+			await useProjectsStore.getState().load();
+
+			expect(useProjectsStore.getState().allSessions.map((s) => s.sessionId)).toEqual(["newer"]);
+		});
+	});
+
+	it("用户点已加载会话：切过去 + 只激活（不动已有顺序）", () => {
+		useSessionsStore.setState({ sessions: [loaded("m1"), loaded("m2")], activeSessionId: null });
+		useSessionWorkspaceStore.getState().addMember({ file: "/tmp/m1.jsonl", sessionId: "m1" });
+		useSessionWorkspaceStore.getState().addMember({ file: "/tmp/m2.jsonl", sessionId: "m2" });
+
+		void useProjectsStore.getState().openSession(loaded("m1"));
+
+		expect(memberIds()).toEqual(["m1", "m2"]);
+		expect(useSessionsStore.getState().activeSessionId).toBe("m1");
+		expect(piMock.openSession).not.toHaveBeenCalled();
+	});
+
+	it("只读子代理检视：不进工作区（与左栏、胶囊同一道判据）", async () => {
+		piMock.openSession.mockResolvedValue({ ...loaded("sub-1"), readOnly: true });
+
+		await useProjectsStore.getState().openSession({ ...loaded("sub-1"), readOnly: true });
+
+		expect(memberIds()).toEqual([]);
+	});
+
+	it("×（移出工作区）不调后端、不改置顶：关会话/删除/取消置顶都不是它的事", () => {
+		useSessionWorkspaceStore.getState().addMember({ file: "/tmp/m1.jsonl", sessionId: "m1" });
+		useUiPreferencesStore.setState({ pinnedSessions: ["m1"] });
+
+		useSessionWorkspaceStore.getState().removeMember("m1");
+
+		expect(memberIds()).toEqual([]);
+		expect(piMock.closeSession).not.toHaveBeenCalled();
+		expect(piMock.deleteSession).not.toHaveBeenCalled();
+		expect(useUiPreferencesStore.getState().pinnedSessions).toEqual(["m1"]);
+	});
+
+	it("删除会话：顺带移出工作区成员（关会话/卸载不清，只有删除清）", async () => {
+		useSessionWorkspaceStore.getState().addMember({ file: "/tmp/m1.jsonl", sessionId: "m1" });
+		useSessionWorkspaceStore.getState().addMember({ file: "/tmp/m2.jsonl", sessionId: "m2" });
+
+		await useProjectsStore.getState().deleteSession(loaded("m1"));
+
+		expect(memberIds()).toEqual(["m2"]);
+		expect(piMock.deleteSession).toHaveBeenCalledWith({ sessionId: "m1", sessionFile: "/tmp/m1.jsonl" });
 	});
 });

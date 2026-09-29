@@ -25,13 +25,17 @@ export const en: Messages = {
 		untitled: "New session",
 		settings: "Settings",
 		close: "Close session (keep on disk)",
-		unpinFromBar: "Unpin and remove from the top bar",
+		removeFromWorkspace: "Remove from workspace (session stays open)",
 		rename: "Rename",
 		renamePlaceholder: "Session name",
 		pin: "Pin",
 		unpin: "Unpin",
 		sessionList: "Session list",
-		pinnedOnlyHint: "Pinned sessions show up here (right-click one in the sidebar to pin)",
+		workspaceHint: "Sessions you open show up here (× only removes them from the workspace)",
+	},
+	rail: {
+		ariaLabel:
+			"Session rail: use the arrow keys to move between entries; press Delete or Backspace to remove the current entry from the workspace (the session stays open)",
 	},
 	floatingList: {
 		title: "Sessions",
@@ -327,7 +331,10 @@ export const en: Messages = {
 			"After a session subscribes to a channel it watches .local/agent-work/channel/<topic>/ for file updates; writes from another session wake this session to pick them up (per the HANDOFF.md protocol). Subscriptions persist via appendEntry and restore on session reopen; built-in loop protection. On by default, fully effective for trusted projects.",
 		topBar: "Show sessions in the top bar",
 		topBarHint:
-			"The top bar is always there (window dragging, sidebar toggle, current changes). Turn this off and it simply stops showing pinned-session pills — every session stays in the left sidebar.",
+			"The top bar is always there (window dragging, sidebar toggle, current changes). Turn this off and it simply stops showing the temporary-workspace pills — every session stays in the left sidebar.",
+		sessionRail: "Left session rail",
+		sessionRailHint:
+			"A column of short lines at the left edge of the chat area (off by default): hover or focus expands one into a capsule with its title and status. The rail and the top bar show the same temporary workspace; turning both off clears it (running tasks are unaffected — they just stop being recorded).",
 		centerOrb: "Centered status animation",
 		centerOrbHint:
 			"While a task is running, shows an enlarged status animation at the center of the conversation area (above the text, with a translucent scrim dimming whatever is behind it). Only controls the centered animation — the small orb before the Working/Thinking row always stays.",

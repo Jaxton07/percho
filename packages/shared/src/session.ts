@@ -2,7 +2,17 @@ import type { AgentSessionEvent as PiAgentSessionEvent } from "@earendil-works/p
 import type { SkillInvocationDisplay } from "./skill-invocation";
 import type { SubagentRunData } from "./subagent";
 
-/** 顶栏打开的会话持久化（重启恢复用，由主进程写入 userData/tabs.json） */
+/**
+ * 临时会话工作区快照（跨重启保留）：有序的会话文件路径 + 最后查看的那一个。
+ * 成员**独立于** `sessions`（后端装载集合会被内存策略卸载）与 `pinnedSessions`（长期收藏标记）。
+ */
+export interface SessionWorkspaceSnapshot {
+	/** 会话文件路径（有序：新成员插在当前成员右侧）。同一路径只出现一次 */
+	files: string[];
+	/** 最后查看的成员文件；必须 ∈ `files`（不在其中一律归一化为 null） */
+	activeFile: string | null;
+}
+
 /** 主题模式：system = 跟随系统 prefers-color-scheme */
 export type ThemeMode = "light" | "dark" | "system";
 
@@ -30,10 +40,20 @@ export interface UiState {
 	 */
 	sessionPermissionModes: Record<string, PermissionMode>;
 	/**
-	 * 顶栏**是否显示置顶会话的胶囊**（顶栏本身常驻：窗口拖动、左栏开合、变更侧栏入口都在这里）。
+	 * 顶栏**是否显示临时会话工作区的胶囊**（顶栏本身常驻：窗口拖动、左栏开合、变更侧栏入口都在这里）。
 	 * 关闭后顶栏不再出胶囊，会话全在左侧栏；旧版本文件的 `topBarVisible` 已废弃（缺省 true）。
 	 */
 	barSessionsVisible: boolean;
+	/**
+	 * 左侧会话短线轨道开关（缺省 false = 不显示）。与 `barSessionsVisible` 相互独立：
+	 * 只关一处不清空工作区；**两处都关掉**才清空快照并停止采集。
+	 */
+	sessionRailEnabled: boolean;
+	/**
+	 * 临时会话工作区快照（缺省空）。存的是**文件路径**而不是内存会话：重启只按需加载
+	 * `activeFile` 一条，其余成员靠历史目录投影画胶囊。
+	 */
+	sessionWorkspace: SessionWorkspaceSnapshot;
 	/** 左侧栏收起（宽 0，彻底藏起；只有顶栏最左按钮能改）；旧版本文件缺省为 false */
 	sidebarCollapsed: boolean;
 	/**

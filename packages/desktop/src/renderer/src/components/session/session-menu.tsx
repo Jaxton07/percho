@@ -10,10 +10,12 @@ import { CopyIcon, PencilIcon, PinIcon, TrashIcon } from "../icons";
 import type { ContextMenuItem } from "../ui/ContextMenu";
 
 /**
- * 会话菜单的共用规则（顶栏胶囊、悬浮会话列表、左侧栏会话行调同一份，行为必须一致）：
+ * 会话菜单的共用规则（顶栏胶囊、悬浮会话列表、左侧栏会话行调这一份，行为必须一致；左侧轨道目前不挂菜单）：
  * 能不能弹、菜单项、以及置顶 / 重命名 / 复制诊断 / 删除四个动作。
- * 为什么单独一个模块：只读子会话（后端拒绝写）要拦、置顶要顺带重排、
- * 重命名失败要弹 toast —— 复制三份迟早漂移。
+ * 为什么单独一个模块：只读子会话（后端拒绝写）要拦、重命名失败要弹 toast —— 复制三份迟早漂移。
+ *
+ * 「置顶 / 取消置顶」的**作用范围只有左栏**（v12 起顶栏胶囊与左侧轨道是临时会话工作区：置顶不改内容、不改顺序）。
+ * 注意区分：图钉 **glyph 仍会**出现在顶栏胶囊与轨道展开胶囊上 —— 那是「这个会话被置顶了」的状态展示，不是排序依据。
  *
  * 新会话还没有后端对象、也不进左栏，所以这里不存在「新会话」形态的菜单。
  */
@@ -33,15 +35,15 @@ export function sidebarMenuKind(session: SessionMeta | undefined): "session" | "
 }
 
 /**
- * 置顶 / 取消置顶（v8）：只动 `pinnedSessions`（新置顶自动排最左）——顶栏胶囊内容 = 置顶表，
- * 所以**不再**顺带重排 tabs（旧模型靠把会话挪到 tabs 最前才会进顶栏置顶区）。
+ * 置顶 / 取消置顶：只动 `pinnedSessions`（新置顶自动排最左）。**v12 起置顶只影响左栏**
+ * （顶栏胶囊与左侧轨道是临时会话工作区，顺序由工作区成员表定），所以更不需要顺带重排 tabs。
  */
 export function toggleSessionPin(sessionId: string): void {
 	useUiPreferencesStore.getState().togglePin(sessionId);
 }
 
 /** 重命名落盘：活跃会话靠 session_info_changed 事件回流，历史会话无事件 → 本地立即更新（幂等）。
- *  两份拷贝都要同步：`sessions`（顶栏胶囊）与 `projects.allSessions`（左栏会话行），
+ *  两份拷贝都要同步：`sessions`（内存会话/胶囊详情）与 `projects.allSessions`（左栏会话行与未加载胶囊的 meta），
  *  只更新一边会出现「胶囊新名 / 左栏旧名」并存（阶段 3 实测踩到）。 */
 export function renameSession(sessionId: string, name: string): void {
 	if (!name) return; // 空值 = 保持原名（与系统重命名一致，不报错）

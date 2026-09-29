@@ -6,6 +6,7 @@ import { MessageList } from "./components/chat/MessageList";
 import { TodoPanel } from "./components/chat/TodoPanel";
 import { DiffSidebar } from "./components/diff/DiffSidebar";
 import { DockSlot } from "./components/session/DockSlot";
+import { SessionRail } from "./components/session/SessionRail";
 import { SessionTabBar } from "./components/session/SessionTabBar";
 import { TrustDialog } from "./components/session/TrustDialog";
 import { SettingsDialog } from "./components/settings/SettingsDialog";
@@ -20,6 +21,7 @@ import { Slot } from "./plugins/Slot";
 import { UI_REGIONS, UI_SLOTS } from "./plugins/slots";
 import { finishSplash } from "./splash";
 import { initAppQuit } from "./stores/app-quit";
+import { restoreSessionWorkspace } from "./stores/session-workspace-restore";
 import { useSessionsStore } from "./stores/sessions";
 import { backgroundImageUrl, useThemeStore } from "./stores/theme";
 import { useTranscriptStore } from "./stores/transcript";
@@ -64,6 +66,9 @@ export default function App() {
 		// v10：**不再恢复上次打开的会话**（启动纯空 = 新会话页，与 pi 原生 / Codex 一致）；
 		// 历史全在左栏，点一下才按需加载
 		void Promise.allSettled([useSessionsStore.getState().loadModels()]).then(() => finishSplash());
+		// 临时会话工作区恢复：fire-and-forget，不阻塞开屏（splash 仍由上面的 loadModels 链收场）。
+		// 它会自己等历史目录对账；只按需加载 activeFile 一条，且不抢用户已做出的导航
+		void restoreSessionWorkspace();
 		initUpdateStore();
 		// 退出确认（Windows）：挂载即向 main 声明接管，点 ✕ 才会拦下来弹窗
 		initAppQuit();
@@ -98,6 +103,9 @@ export default function App() {
 				<div className="relative flex min-h-0 flex-1">
 					<Sidebar />
 					<div className="relative flex min-w-0 flex-1 flex-col">
+						{/* 左侧会话轨道（临时工作区）：挂在 main + DockSlot 的父容器上，定位基准是 tab bar 以下的整列内容区——
+						    输入框高度变化不压缩它的居中参考系；收起态是纯覆盖层，不占宽、不挤压聊天布局（设置里默认关） */}
+						<SessionRail />
 						{/* 右侧 DiffSidebar 是独立浮层，不参与中间聊天列宽度与布局动画。 */}
 						<main className="relative min-h-0 flex-1">
 							{showEmpty ? <EmptyState /> : <MessageList />}

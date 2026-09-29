@@ -12,8 +12,10 @@ interface UiPreferencesStore {
 	/** 按会话记住的权限模式（只存非 default；见 spec/permission-mode.md D7） */
 	sessionPermissionModes: Record<string, PermissionMode>;
 	/** 顶栏显隐（设置页开关，默认开）：关闭后导航全落在左侧栏 */
-	/** 顶栏是否显示置顶会话胶囊（顶栏本身常驻；设置页「顶栏显示会话」） */
+	/** 顶栏是否显示临时会话工作区胶囊（顶栏本身常驻；设置页「顶栏显示会话」） */
 	barSessionsVisible: boolean;
+	/** 左侧会话短线轨道开关（设置页，默认**关**）；与顶栏开关各自独立，两个都关则清空工作区 */
+	sessionRailEnabled: boolean;
 	/** 左侧栏收起（宽 0，彻底藏起；只有顶栏最左按钮能改，默认展开） */
 	sidebarCollapsed: boolean;
 	/** 左侧栏已展开的分组 key；含义由 `expandedGroupsTouched` 决定（见 shared UiState，空数组不再兼任「未操作」） */
@@ -30,6 +32,8 @@ interface UiPreferencesStore {
 	/** 置顶 / 取消置顶（新置顶排最左） */
 	togglePin: (sessionId: string) => void;
 	setBarSessionsVisible: (visible: boolean) => void;
+	/** 左侧会话轨道开关（关掉最后一处时由 workspace store 侧订阅清空工作区，见 session-workspace.ts） */
+	setSessionRailEnabled: (enabled: boolean) => void;
 	/** 收起 / 展开左侧栏（宽 240 ↔ 0） */
 	toggleSidebarCollapsed: () => void;
 	/** 左侧栏开合一个分组（由 useExpandedGroups 算好新的展开集）：**同时置 touched 位**，
@@ -46,8 +50,6 @@ interface UiPreferencesStore {
 	rememberPermissionMode: (sessionId: string, mode: PermissionMode) => void;
 	/** 删除会话时清掉它的权限模式记录（与 `unpin` 并列） */
 	forgetPermissionMode: (sessionId: string) => void;
-	/** 拖动排序顶栏胶囊（v8）：改的也是 pinnedSessions 顺序，不动 tabs.json */
-	reorderPinned: (fromId: string, toId: string) => void;
 	/** 记住上次项目目录（切会话/打开会话/建会话时由 sessions store 调；同值不重复写盘） */
 	setLastCwd: (cwd: string | null) => void;
 }
@@ -64,6 +66,7 @@ export const useUiPreferencesStore = create<UiPreferencesStore>((set, get) => ({
 	pinnedSessions: [],
 	sessionPermissionModes: {},
 	barSessionsVisible: true,
+	sessionRailEnabled: false,
 	sidebarCollapsed: false,
 	/** 左侧栏展开分组的记录（`setExpandedGroups` 同时置 touched 位） */
 	expandedGroups: [],
@@ -81,6 +84,7 @@ export const useUiPreferencesStore = create<UiPreferencesStore>((set, get) => ({
 			pinnedSessions: saved?.pinnedSessions ?? [],
 			sessionPermissionModes: saved?.sessionPermissionModes ?? {},
 			barSessionsVisible: saved?.barSessionsVisible ?? true,
+			sessionRailEnabled: saved?.sessionRailEnabled ?? false,
 			sidebarCollapsed: saved?.sidebarCollapsed ?? false,
 			expandedGroups: saved?.expandedGroups ?? [],
 			expandedGroupsTouched: saved?.expandedGroupsTouched ?? false,
@@ -97,6 +101,11 @@ export const useUiPreferencesStore = create<UiPreferencesStore>((set, get) => ({
 	setBarSessionsVisible: (visible) => {
 		set({ barSessionsVisible: visible });
 		persistPatch({ barSessionsVisible: visible });
+	},
+
+	setSessionRailEnabled: (enabled) => {
+		set({ sessionRailEnabled: enabled });
+		persistPatch({ sessionRailEnabled: enabled });
 	},
 
 	setLastCwd: (cwd) => {
@@ -160,22 +169,5 @@ export const useUiPreferencesStore = create<UiPreferencesStore>((set, get) => ({
 		delete next[sessionId];
 		set({ sessionPermissionModes: next });
 		persistPatch({ sessionPermissionModes: next });
-	},
-
-	/**
-	 * 拖拽排序（v8）：顶栏胶囊内容 = 置顶表，所以拖动改的是 pinnedSessions 顺序，
-	 * **不再**改 tabs.json（tabs 顺序变成纯打开历史，与顶栏无关）。
-	 */
-	reorderPinned: (fromId, toId) => {
-		const current = get().pinnedSessions;
-		const from = current.indexOf(fromId);
-		const to = current.indexOf(toId);
-		if (from < 0 || to < 0 || from === to) return;
-		const next = [...current];
-		const [moved] = next.splice(from, 1);
-		if (!moved) return;
-		next.splice(to, 0, moved);
-		set({ pinnedSessions: next });
-		persistPatch({ pinnedSessions: next });
 	},
 }));
