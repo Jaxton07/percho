@@ -128,7 +128,7 @@ export function useSlashMenu(options: UseSlashMenuOptions) {
 
 	/** 按下标选中菜单项（无匹配时落回正常发送） */
 	const handleSlashPickByIndex = (index: number) => {
-		const flat = filterCommands(slashCommands, slashQuery);
+		const flat = filterCommands(slashCommands, slashQuery, t);
 		const command = flat[Math.min(index, flat.length - 1)] ?? undefined;
 		if (command) {
 			void confirmCommand(command);
@@ -139,7 +139,7 @@ export function useSlashMenu(options: UseSlashMenuOptions) {
 
 	/** Tab 补全：确认选中命令为胶囊（不触发内置立即执行），菜单随之关闭 */
 	const handleSlashTabComplete = () => {
-		const flat = filterCommands(slashCommands, slashQuery);
+		const flat = filterCommands(slashCommands, slashQuery, t);
 		const command = flat[Math.min(slashSelected, flat.length - 1)] ?? flat[0];
 		if (!command) return;
 		void confirmCommand(command, { allowInline: false });

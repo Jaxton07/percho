@@ -102,7 +102,7 @@ export const components: {                  // 宿主精选组件（复用，不
 };
 export const helpers: {
 	summarizeArgs(args: string): string;    // 参数摘要（取 command/path/url，流式容错）
-	displayToolName(name: string): string;  // 工具名首字母大写
+	displayToolName(name: string): string;  // 内置工具名跟随宿主语言，第三方工具名原样保留
 };
 export const hooks: {
 	useT(): (key: string, params?) => string; // i18n（key 用宿主既有字典，如 "message.working"）

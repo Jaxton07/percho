@@ -102,6 +102,12 @@ export const en: Messages = {
 	slash: {
 		noMatch: "No matching commands",
 		argPlaceholder: "Type arguments…",
+		builtin: {
+			compact: { label: "compact", description: "Compress session context", argumentHint: "[focus]" },
+			name: { label: "name", description: "Set session display name", argumentHint: "<name>" },
+			export: { label: "export", description: "Export session (.html/.jsonl)", argumentHint: "[path]" },
+			settings: { label: "settings", description: "Open settings" },
+		},
 		group: {
 			builtin: "Built-in",
 			template: "Templates",
@@ -241,6 +247,23 @@ export const en: Messages = {
 	},
 	tool: {
 		running: "Running…",
+		names: {
+			read: "Read",
+			edit: "Edit",
+			write: "Write",
+			bash: "Bash",
+			ls: "Ls",
+			glob: "Glob",
+			grep: "Grep",
+			webfetch: "Webfetch",
+			show_image: "Show_image",
+			todo: "Todo",
+			subagent: "Subagent",
+			channel_subscribe: "Channel_subscribe",
+			channel_unsubscribe: "Channel_unsubscribe",
+			channel_post: "Channel_post",
+			channel_list: "Channel_list",
+		},
 	},
 	todo: {
 		title: "Todo List",

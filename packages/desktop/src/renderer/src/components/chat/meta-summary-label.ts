@@ -1,11 +1,11 @@
 import type { SummarySegment } from "@percho/shared";
 import type { useT } from "../../i18n";
-import { displayName } from "./ToolCallCard";
+import { displayName } from "./tool-label";
 
 /** en 复数单位（zh 模板不含 {unit} 占位，参数传入即被忽略） */
 const pluralUnit = (n: number, one: string, many: string) => (n === 1 ? one : many);
 
-/** 汇总段文案：已知类目走 i18n 模板；other 显示 原名 ×N（无需翻译） */
+/** 汇总段文案：已知类目走 i18n 模板；other 的内置工具名走翻译，第三方工具保留原名 */
 export function summaryLabel(t: ReturnType<typeof useT>, seg: SummarySegment): string {
 	switch (seg.category) {
 		case "read":
@@ -24,6 +24,6 @@ export function summaryLabel(t: ReturnType<typeof useT>, seg: SummarySegment): s
 				unit: pluralUnit(seg.count, "subagent", "subagents"),
 			});
 		default:
-			return `${displayName(seg.name)} ×${seg.count}`;
+			return `${displayName(seg.name, t)} ×${seg.count}`;
 	}
 }

@@ -22,6 +22,7 @@ import { QueueBar } from "./QueueBar";
 import { QuoteChip } from "./QuoteChip";
 import { SendErrorBar } from "./SendErrorBar";
 import { SlashMenu } from "./SlashMenu";
+import { slashPresentation } from "./slash-label";
 import { useAtCompletion } from "./use-at-completion";
 import { useComposerSend } from "./use-composer-send";
 import { useSlashMenu } from "./use-slash-menu";
@@ -168,6 +169,9 @@ export function Composer({ centered = false }: { centered?: boolean }) {
 		showFeedback,
 		setError,
 	});
+
+	const selectedSlashCommand = slash.slashCommands.find((command) => command.name === slashCommand);
+	const slashLabel = selectedSlashCommand ? slashPresentation(selectedSlashCommand, t).label : slashCommand;
 
 	const at = useAtCompletion({
 		cwd,
@@ -396,7 +400,7 @@ export function Composer({ centered = false }: { centered?: boolean }) {
 						>
 							{slashCommand && (
 								<span className="mt-0.5 flex shrink-0 select-none items-center rounded-md bg-surface px-2 py-0.5 font-mono text-[12px] leading-5 text-ink-2 shadow-pop">
-									/{slashCommand}
+									{slashLabel !== slashCommand && <span className="mr-1.5">{slashLabel}</span>}/{slashCommand}
 								</span>
 							)}
 							{attachments.map((path, index) => (

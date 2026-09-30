@@ -1,7 +1,8 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { useT } from "../../i18n";
 import { type ActivityTickerSnapshot, createActivityTicker } from "./activity-ticker";
 import { StreamingMarquee } from "./StreamingMarquee";
-import { displayName } from "./ToolCallCard";
+import { displayName } from "./tool-label";
 
 /** 预览条目（由 MetaGroup 从流式 activity 派生，按到达顺序） */
 export type LivePreviewItem =
@@ -21,10 +22,11 @@ function ThinkingPreviewRow({ text }: { text: string }) {
 
 /** 工具名保持固定，参数原文作为流式正文横移；不沿用 ToolCallCard 的摘要逻辑。 */
 function ToolPreviewRow({ name, text }: { name: string; text: string }) {
+	const t = useT();
 	return (
 		<div className="flex min-w-0 items-center gap-2 py-0.5">
 			<span data-shimmer-name className="sweep-target shrink-0 font-mono text-[13px] text-ink-working">
-				{displayName(name)}
+				{displayName(name, t)}
 			</span>
 			{text && <StreamingMarquee text={text} />}
 		</div>

@@ -87,6 +87,14 @@ describe("summarizeCategories", () => {
 		expect(summarizeCategories([{ tools: [tool("read")] }], 0)).toHaveLength(1);
 	});
 
+	it("show_image 不入完成摘要，保留明细与圆点（含失败调用）", () => {
+		const items = [{ tools: [tool("show_image"), tool("read"), tool("show_image", "error", "failed")] }];
+		expect(summarizeCategories(items)).toEqual([{ key: "read", category: "read", name: "read", count: 1 }]);
+		expect(summarizeCategories([{ tools: [tool("show_image")] }])).toEqual([]);
+		expect(items[0]?.tools).toHaveLength(3);
+		expect(dotsFromItems(items)).toHaveLength(3);
+	});
+
 	it("error 工具照常计数（失败态由圆点行标识）", () => {
 		const segs = summarizeCategories([{ tools: [tool("bash", "error")] }]);
 		expect(segs).toEqual([{ key: "bash", category: "bash", name: "bash", count: 1 }]);

@@ -2,6 +2,7 @@ import type { SlashCommandInfo } from "@percho/shared";
 import { useEffect, useRef } from "react";
 import { useT } from "../../i18n";
 import { filterCommands, SOURCE_ORDER } from "./slash-filter";
+import { slashPresentation } from "./slash-label";
 
 /** 斜杠命令补全面板：纯展示，分组（内置/模板/skill/扩展），受控选中与回调由 Composer 驱动 */
 export function SlashMenu({
@@ -20,7 +21,7 @@ export function SlashMenu({
 }) {
 	const t = useT();
 	const listRef = useRef<HTMLDivElement>(null);
-	const filtered = filterCommands(commands, query);
+	const filtered = filterCommands(commands, query, t);
 	const groups = SOURCE_ORDER.map((source) => ({
 		source,
 		items: filtered.filter((c) => c.source === source),
@@ -62,6 +63,7 @@ export function SlashMenu({
 						{t(`slash.group.${group.source}`)}
 					</p>
 					{group.items.map((command) => {
+						const { label, description, argumentHint } = slashPresentation(command, t);
 						const index = flat.indexOf(command);
 						const unsupported = !command.supported;
 						return (
@@ -75,12 +77,11 @@ export function SlashMenu({
 								onMouseEnter={() => onSelectedIndexChange(index)}
 								onClick={() => onPick(command)}
 							>
-								<span className="font-mono text-ink-dim">/{command.name}</span>
-								<span className="min-w-0 flex-1 truncate text-ink-faint">{command.description}</span>
-								{command.argumentHint && (
-									<span className="shrink-0 font-mono text-[11px] text-border-strong">
-										{command.argumentHint}
-									</span>
+								{label !== command.name && <span className="shrink-0 text-ink-2">{label}</span>}
+								<span className="shrink-0 font-mono text-ink-dim">/{command.name}</span>
+								<span className="min-w-0 flex-1 truncate text-ink-faint">{description}</span>
+								{argumentHint && (
+									<span className="shrink-0 font-mono text-[11px] text-border-strong">{argumentHint}</span>
 								)}
 							</button>
 						);

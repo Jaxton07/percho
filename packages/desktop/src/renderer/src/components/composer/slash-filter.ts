@@ -1,4 +1,6 @@
 import type { SlashCommandInfo } from "@percho/shared";
+import type { Translate } from "../../i18n";
+import { slashPresentation } from "./slash-label";
 
 export const SOURCE_ORDER: SlashCommandInfo["source"][] = ["builtin", "template", "skill", "extension"];
 
@@ -37,9 +39,18 @@ export function removeSlashToken(text: string, token: SlashToken): string {
 
 /** 过滤后的命令列表（按来源分组顺序拍平；skill 子串命中排在最后）
  *  非 skill 命令维持前缀匹配；skill 命令额外支持去 skill: 前缀后的前缀/子串匹配 */
-export function filterCommands(commands: SlashCommandInfo[], query: string): SlashCommandInfo[] {
+export function filterCommands(
+	commands: SlashCommandInfo[],
+	query: string,
+	t?: Translate,
+): SlashCommandInfo[] {
 	if (!query) return commands;
-	const rest = commands.filter((c) => c.source !== "skill" && c.name.startsWith(query));
+	const rest = commands.filter(
+		(c) =>
+			c.source !== "skill" &&
+			(c.name.startsWith(query) ||
+				(c.source === "builtin" && t && slashPresentation(c, t).label.startsWith(query))),
+	);
 	const prefixSkills: SlashCommandInfo[] = [];
 	const substringSkills: SlashCommandInfo[] = [];
 	for (const skill of commands) {

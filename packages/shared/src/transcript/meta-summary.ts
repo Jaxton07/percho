@@ -67,7 +67,8 @@ export function summarizeCategories(
 	const segments = new Map<string, SummarySegment>();
 	for (const item of items) {
 		for (const tool of item.tools) {
-			if (EXCLUDED_TOOLS.has(tool.name)) continue;
+			// show_image 的图片已在正文外展示，工具仍保留在展开明细与圆点序列中。
+			if (EXCLUDED_TOOLS.has(tool.name) || tool.name === "show_image") continue;
 			const category = categoryOf(tool.name);
 			const key = category === "other" ? tool.name : category;
 			const existing = segments.get(key);

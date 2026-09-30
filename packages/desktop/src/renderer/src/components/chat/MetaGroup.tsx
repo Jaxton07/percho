@@ -141,7 +141,9 @@ export const MetaGroup = memo(function MetaGroup({
 	/** 单条已结束（如正文前的思考）直接裸行展示，不套 "已完成 · 1" 外壳；-mb-4 与包装组一致：
 	 * 与后续正文净距 8px（容器 gap-6 - 16px），单行/成组间距统一 */
 	// 纯子代理调用不带普通 tool/thinking，仍须保留折叠状态行作为卡片的时间锚点。
-	const showWrapper = count >= 2 || shownWorking || subagentCount > 0;
+	// show_image 即使是唯一工具也只放在折叠明细，不能走单条裸行展示。
+	const hasShowImage = items.some((item) => item.tools.some((tool) => tool.name === "show_image"));
+	const showWrapper = count >= 2 || shownWorking || subagentCount > 0 || hasShowImage;
 	if (!showWrapper) {
 		return <div className="-mb-4 flex flex-col gap-1.5">{rows}</div>;
 	}

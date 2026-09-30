@@ -1,6 +1,10 @@
 import { useEffect, useRef, useState } from "react";
+import { useT } from "../../i18n";
 import type { UIToolCall } from "../../stores/transcript";
 import { ExpandArrowIcon } from "../icons";
+import { displayName } from "./tool-label";
+
+export { displayName } from "./tool-label";
 
 /**
  * 溢出测量调度器（模块级共享）：一帧内所有卡片的测量合并成「先读后写」。
@@ -91,10 +95,10 @@ export function summarizeArgs(args: string): string {
 	return trimmed.length < args.length ? `${trimmed}…` : trimmed;
 }
 
-export const displayName = (name: string) => name.charAt(0).toUpperCase() + name.slice(1);
-
 /** 工具调用行：无边框、默认折叠；折叠态 = 工具名 + 执行对象（单行渐变截断），展开显示完整参数与结果 */
 export function ToolCallCard({ tool }: { tool: UIToolCall }) {
+	const t = useT();
+	const name = displayName(tool.name, t);
 	const summary = summarizeArgs(tool.args);
 	/** 内容是否超过一行（决定渐变 + 箭头是否贴行尾） */
 	const [overflowing, setOverflowing] = useState(false);
@@ -103,7 +107,7 @@ export function ToolCallCard({ tool }: { tool: UIToolCall }) {
 
 	// 挂载时 args 可能为空（流式 toolcall，textRef 未渲染）→ 随 summary 变化重测；
 	// overflow:hidden 下 scrollWidth 恒为内容全宽，收缩后重测结果依然正确
-	// biome-ignore lint/correctness/useExhaustiveDependencies: summary 是刻意的重跑触发器（effect 内只读 ref，args 流式增长时需重测）
+	// biome-ignore lint/correctness/useExhaustiveDependencies: summary/name 是重测触发器（参数增长、切换语言时名称宽度变化）
 	useEffect(() => {
 		const row = rowRef.current;
 		const text = textRef.current;
@@ -117,7 +121,7 @@ export function ToolCallCard({ tool }: { tool: UIToolCall }) {
 			rowEntries.delete(row);
 			rowResizeObserver?.unobserve(row);
 		};
-	}, [summary]);
+	}, [summary, name]);
 
 	// running 时工具名加高光扫过动画（与 MetaGroup 状态行同款光带渐变）
 	const nameClass = `shrink-0 font-mono text-[13px] font-semibold text-ink-dim transition-colors group-hover/row:text-ink${
@@ -132,7 +136,7 @@ export function ToolCallCard({ tool }: { tool: UIToolCall }) {
 				ref={rowRef}
 				className="group/row flex cursor-pointer items-center gap-2 py-0.5 select-none [&::-webkit-details-marker]:hidden"
 			>
-				<span className={nameClass}>{displayName(tool.name)}</span>
+				<span className={nameClass}>{name}</span>
 				{summary && (
 					<span
 						ref={textRef}
