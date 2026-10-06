@@ -112,10 +112,10 @@ describe("mcp.json 读写（spec §4.8）", () => {
 
 		const result = await listMcpServers({
 			projectTrusted: false,
-			toolsByServer: new Map([["demo", ["mcp__demo__echo"]]]),
+			toolsByServer: new Map([["demo", [{ name: "mcp__demo__echo", readOnly: true }]]]),
 		});
 
-		expect(result.global[0]?.tools).toEqual(["mcp__demo__echo"]);
+		expect(result.global[0]?.tools).toEqual([{ name: "mcp__demo__echo", readOnly: true }]);
 	});
 
 	it("项目级配置只在受信项目读；写入项目级在未受信时被拒", async () => {

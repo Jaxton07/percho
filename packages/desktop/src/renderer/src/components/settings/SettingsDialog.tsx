@@ -12,7 +12,7 @@ import { AppearancePanel } from "./AppearancePanel";
 import { ExtensionsPanel } from "./extensions/ExtensionsPanel";
 import { GeneralPanel } from "./GeneralPanel";
 import { LanObserverPanel } from "./LanObserverPanel";
-import { McpPanel } from "./McpPanel";
+import { McpPanel } from "./mcp/McpPanel";
 import { ProvidersPanel } from "./providers/ProvidersPanel";
 import { SkillsPanel } from "./SkillsPanel";
 

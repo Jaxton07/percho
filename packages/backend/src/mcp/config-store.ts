@@ -4,7 +4,9 @@ import { getAgentDir } from "@earendil-works/pi-coding-agent";
 import type {
 	McpConfigListResult,
 	McpExposure,
+	McpGlobalNotice,
 	McpServerView,
+	McpToolView,
 	McpTransportView,
 	McpUpsertInput,
 } from "@percho/shared";
@@ -70,7 +72,8 @@ function toViews(
 	raw: unknown,
 	source: "user" | "project",
 	errors: string[],
-	toolsByServer: Map<string, string[]>,
+	toolsByServer: Map<string, McpToolView[]>,
+	noticesByServer: Map<string, { error?: string; needsAuth?: boolean; authUrl?: string }>,
 ): McpServerView[] {
 	const servers = (raw as McpFile | null | undefined)?.mcpServers;
 	if (servers === undefined) return [];
@@ -96,6 +99,9 @@ function toViews(
 			exposure: exposureRaw ?? "codemode", // 官方默认（core/mcp-servers.js: config.exposure ?? "codemode"）
 			toolExposure: toolExposureOf(entry.toolExposure),
 			tools: toolsByServer.get(name) ?? [],
+			error: noticesByServer.get(name)?.error,
+			needsAuth: noticesByServer.get(name)?.needsAuth || undefined,
+			authUrl: noticesByServer.get(name)?.authUrl,
 		});
 	}
 	return views;
@@ -110,7 +116,8 @@ async function readServersFile(
 	path: string,
 	source: "user" | "project",
 	errors: string[],
-	toolsByServer: Map<string, string[]>,
+	toolsByServer: Map<string, McpToolView[]>,
+	noticesByServer: Map<string, { error?: string; needsAuth?: boolean; authUrl?: string }>,
 ): Promise<McpServerView[]> {
 	let text: string;
 	try {
@@ -127,37 +134,49 @@ async function readServersFile(
 		errors.push(`${path} 解析失败：${err instanceof Error ? err.message : String(err)}`);
 		return [];
 	}
-	return toViews(parsed, source, errors, toolsByServer);
+	return toViews(parsed, source, errors, toolsByServer, noticesByServer);
 }
 
 /** 列全局 + 项目级 server（项目级仅受信时读，与官方 trust-manager 同款） */
 export async function listMcpServers(options: {
 	cwd?: string;
 	projectTrusted: boolean;
-	toolsByServer?: Map<string, string[]>;
+	toolsByServer?: Map<string, McpToolView[]>;
+	/** 官方 notify 带来的每台 server 的失效原因 / 需登录（面板「查看原因 / 登录」用） */
+	noticesByServer?: Map<string, { error?: string; needsAuth?: boolean; authUrl?: string }>;
+	/** 官方 notify 里不带 server 名的全局提示 */
+	globalNotice?: McpGlobalNotice;
 }): Promise<McpConfigListResult> {
 	const errors: string[] = [];
-	const tools = options.toolsByServer ?? new Map<string, string[]>();
+	const tools = options.toolsByServer ?? new Map<string, McpToolView[]>();
+	const notices =
+		options.noticesByServer ?? new Map<string, { error?: string; needsAuth?: boolean; authUrl?: string }>();
 	const globalPath = globalMcpPath();
-	const global = await readServersFile(globalPath, "user", errors, tools);
+	const global = await readServersFile(globalPath, "user", errors, tools, notices);
 	const result: McpConfigListResult = {
 		global,
 		project: [],
 		errors,
 		projectTrusted: options.projectTrusted,
+		notice: options.globalNotice,
 		globalPath,
 	};
 	if (!options.cwd || !options.projectTrusted) return result;
 	const projectPath = projectMcpPath(options.cwd);
 	result.projectPath = projectPath;
-	result.project = await readServersFile(projectPath, "project", errors, tools);
+	result.project = await readServersFile(projectPath, "project", errors, tools, notices);
 	return result;
 }
 
 /** 新增/编辑一个 server（source = scope）；返回写入后的列表（面板一次调用拿到新状态） */
 export async function upsertMcpServer(
 	input: McpUpsertInput,
-	context: { projectTrusted: boolean; toolsByServer?: Map<string, string[]> },
+	context: {
+		projectTrusted: boolean;
+		toolsByServer?: Map<string, McpToolView[]>;
+		noticesByServer?: Map<string, { error?: string; needsAuth?: boolean; authUrl?: string }>;
+		globalNotice?: McpGlobalNotice;
+	},
 ): Promise<McpConfigListResult> {
 	const name = input.name.trim();
 	if (!name) throw new Error("Server 名称不能为空");
@@ -207,6 +226,8 @@ export async function upsertMcpServer(
 		cwd: input.cwd,
 		projectTrusted: context.projectTrusted,
 		toolsByServer: context.toolsByServer,
+		noticesByServer: context.noticesByServer,
+		globalNotice: context.globalNotice,
 	});
 }
 

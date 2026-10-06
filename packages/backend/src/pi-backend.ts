@@ -34,9 +34,12 @@ import type {
 	LoadedResources,
 	LoginEventPayload,
 	McpConfigListResult,
+	McpGlobalNotice,
 	McpMutationResult,
 	McpReloadReport,
-	McpToolsChangedPayload,
+	McpServerStatus,
+	McpServersChangedPayload,
+	McpToolView,
 	McpUpsertInput,
 	PermissionAnswer,
 	PermissionMode,
@@ -63,6 +66,7 @@ import {
 import { Emitter } from "./emitter";
 import { createLogger } from "./log";
 import { listMcpServers, removeMcpServer, upsertMcpServer } from "./mcp/config-store";
+import { parseMcpNotice } from "./mcp/notices";
 import { PackageAdmin } from "./packages/admin";
 import { loadPermissionConfig } from "./permissions";
 import {
@@ -112,7 +116,7 @@ import {
 	reportEvapBatch,
 	writeContextManagerMode,
 } from "./tools/context-evaporation";
-import { groupMcpTools, makeMcpInventoryExtension } from "./tools/mcp-inventory";
+import { collectMcpTools, makeMcpInventoryExtension } from "./tools/mcp-inventory";
 import { makeShowImageTool } from "./tools/show-image";
 import { discoverAgents, isSubagentSessionPath, makeSubagentTool } from "./tools/subagent";
 import { applySubagentMutex, resolveSubagentPreferBuiltin } from "./tools/subagent/mutex";
@@ -209,10 +213,14 @@ export class PiBackend {
 	private readonly extensionDialogResolvedEmitter = new Emitter<ExtensionDialogResolved>();
 	private readonly extensionNotifyEmitter = new Emitter<ExtensionNotifyEvent>();
 	private readonly extensionEditorTextEmitter = new Emitter<ExtensionEditorTextEvent>();
-	/** MCP 运行态工具集变化（spec §4.8.1：面板刷新用） */
-	private readonly mcpToolsChangedEmitter = new Emitter<McpToolsChangedPayload>();
-	/** 最近一次聚合的「server → 工具名」（面板初次打开时不必等下一个 turn） */
-	private mcpToolsByServer = new Map<string, string[]>();
+	/** MCP 运行态变化（spec §4.8.1：面板刷新用） */
+	private readonly mcpServersChangedEmitter = new Emitter<McpServersChangedPayload>();
+	/** 最近一次聚合的「server → 工具（带只读标记）」（面板初次打开时不必等下一个 turn） */
+	private mcpToolsByServer = new Map<string, McpToolView[]>();
+	/** 官方 notify 给出的每台 server 的失效原因 / 需登录（key = server 名） */
+	private mcpServerNotices = new Map<string, { error?: string; needsAuth?: boolean; authUrl?: string }>();
+	/** 官方 notify 里不带 server 名的全局提示 */
+	private mcpGlobalNotice: McpGlobalNotice | undefined;
 	/** 项目信任决策记录（~/.pi/agent/trust.json，与 CLI 共享）+ 信任请求门控 */
 	private readonly trustStore = new ProjectTrustStore(getAgentDir());
 	private readonly trustGate = new TrustGate((req) => this.trustEmitter.emit(req));
@@ -357,7 +365,7 @@ export class PiBackend {
 		// todo-reminder 最后：compaction 后恢复注入的任务列表不被上游折叠
 		factories.push(makeTodoReminderExtension());
 		// MCP 运行态聚合（spec §4.8.1）：三个时机聚合 `mcp__<server>__<tool>`，集合变化才发事件给面板
-		factories.push(makeMcpInventoryExtension((servers) => this.emitMcpToolsChanged(servers)));
+		factories.push(makeMcpInventoryExtension((servers) => this.emitMcpServersChanged(servers)));
 		return factories;
 	}
 
@@ -390,8 +398,10 @@ export class PiBackend {
 		await session.bindExtensions({
 			uiContext: makeUiContext({
 				dialogs,
-				onNotify: (message, level, source) =>
-					this.extensionNotifyEmitter.emit({ sessionId, extensionPath: source, message, level }),
+				onNotify: (message, level, source) => {
+					this.handleMcpNotice(sessionId, message);
+					this.extensionNotifyEmitter.emit({ sessionId, extensionPath: source, message, level });
+				},
 				onEditorText: (text, source) => this.extensionEditorTextEmitter.emit({ sessionId, text, source }),
 			}),
 			mode: "rpc",
@@ -1138,19 +1148,82 @@ export class PiBackend {
 		return this.trustEmitter.subscribe(handler);
 	}
 
-	/** MCP 运行态工具集变化订阅（main 转发 renderer 制面板用） */
-	onMcpToolsChanged(handler: (payload: McpToolsChangedPayload) => void): () => void {
-		return this.mcpToolsChangedEmitter.subscribe(handler);
+	/** MCP 运行态变化订阅（每 server 的工具 + 失效原因 + 全局提示；main 转发 renderer 面板用） */
+	onMcpServersChanged(handler: (payload: McpServersChangedPayload) => void): () => void {
+		return this.mcpServersChangedEmitter.subscribe(handler);
 	}
 
 	onLoginEvent(handler: (payload: LoginEventPayload) => void): () => void {
 		return this.loginEmitter.subscribe(handler);
 	}
 
-	/** MCP 运行态聚合回调入口（扩展侧调用）：缓存 + 广播 */
-	private emitMcpToolsChanged(servers: McpToolsChangedPayload["servers"]): void {
-		this.mcpToolsByServer = new Map(servers.map((s) => [s.name, s.tools]));
-		this.mcpToolsChangedEmitter.emit({ servers });
+	/** MCP 运行态聚合回调入口（扩展侧调用）：缓存工具集 + 广播（附官方 notify 带来的失效原因） */
+	private emitMcpServersChanged(servers: McpServerStatus[]): void {
+		this.mcpToolsByServer = new Map(servers.map((server) => [server.name, server.tools]));
+		this.emitMcpStatus();
+	}
+
+	/** 广播当前运行态（工具集来自缓存/实时聚合，原因来自 notify 缓存） */
+	private emitMcpStatus(): void {
+		const tools = this.mcpToolsMap();
+		const names = new Set([...tools.keys(), ...this.mcpServerNotices.keys()]);
+		const servers: McpServerStatus[] = [...names].sort().map((name) => {
+			const notice = this.mcpServerNotices.get(name);
+			return {
+				name,
+				tools: tools.get(name) ?? [],
+				error: notice?.error,
+				needsAuth: notice?.needsAuth || undefined,
+				authUrl: notice?.authUrl,
+			};
+		});
+		this.mcpServersChangedEmitter.emit({ servers, notice: this.mcpGlobalNotice });
+	}
+
+	/**
+	 * 官方 mcp 扩展的 notify 分流（spec §7.6）：面板要显示「失败原因 / 需要登录 / 工具不可达」，
+	 * 而官方没有状态 API —— 它在这三种时机 notify 结构化文本，按 `mcp/notices.ts` 的形状解析，
+	 * 解析不出来就**不猜**（回落到「未连上」档）。有变化才广播，避免重复刷面板。
+	 */
+	private handleMcpNotice(sessionId: string, message: string): void {
+		const update = parseMcpNotice(message);
+		if (!update) return;
+		let changed = false;
+		for (const entry of update.servers) {
+			const current = this.mcpServerNotices.get(entry.name) ?? {};
+			if (entry.clear) {
+				if (this.mcpServerNotices.delete(entry.name)) changed = true;
+				continue;
+			}
+			const next = {
+				error: entry.error,
+				needsAuth: entry.needsAuth || undefined,
+				authUrl: entry.authUrl ?? (entry.needsAuth ? current.authUrl : undefined),
+			};
+			if (
+				current.error !== next.error ||
+				current.needsAuth !== next.needsAuth ||
+				current.authUrl !== next.authUrl
+			) {
+				this.mcpServerNotices.set(entry.name, next);
+				changed = true;
+			}
+		}
+		if (update.global !== undefined) {
+			if (update.global === null) {
+				if (this.mcpGlobalNotice) {
+					this.mcpGlobalNotice = undefined;
+					changed = true;
+				}
+			} else if (this.mcpGlobalNotice?.message !== update.global.message) {
+				this.mcpGlobalNotice = update.global;
+				changed = true;
+			}
+		}
+		if (changed) {
+			log.info("mcp notice", sessionId, { message: message.slice(0, 120) });
+			this.emitMcpStatus();
+		}
 	}
 
 	/**
@@ -1159,13 +1232,17 @@ export class PiBackend {
 	 * 只信缓存会在「刚重连／面板刚打开」时显示空集（实测踩到）。所以这里以 registry 里各会话的
 	 * `getAllTools()` 为准（晚合并覆盖早值），事件缓存只作没有活跃会话时的兜底。
 	 */
-	private mcpToolsMap(): Map<string, string[]> {
-		const merged = new Map<string, string[]>(this.mcpToolsByServer);
+	private mcpToolsMap(): Map<string, McpToolView[]> {
+		const merged = new Map<string, McpToolView[]>(this.mcpToolsByServer);
 		for (const entry of this.registry.list()) {
 			try {
-				for (const [name, tools] of groupMcpTools(entry.session.getAllTools().map((tool) => tool.name))) {
-					merged.set(name, tools);
-				}
+				const tools = collectMcpTools(
+					entry.session.getAllTools().map((tool) => ({
+						name: tool.name,
+						readOnly: tool.annotations?.readOnlyHint === true,
+					})),
+				);
+				for (const [name, list] of tools) merged.set(name, list);
 			} catch (err) {
 				log.warn("mcp tools aggregate failed", entry.session.sessionId, err);
 			}
@@ -1183,6 +1260,8 @@ export class PiBackend {
 			cwd,
 			projectTrusted: this.isProjectTrusted(cwd),
 			toolsByServer: this.mcpToolsMap(),
+			noticesByServer: this.mcpServerNotices,
+			globalNotice: this.mcpGlobalNotice,
 		});
 	}
 
@@ -1192,7 +1271,12 @@ export class PiBackend {
 		const projectTrusted = this.isProjectTrusted(cwd);
 		const config = await upsertMcpServer(
 			{ ...input, cwd },
-			{ projectTrusted, toolsByServer: this.mcpToolsMap() },
+			{
+				projectTrusted,
+				toolsByServer: this.mcpToolsMap(),
+				noticesByServer: this.mcpServerNotices,
+				globalNotice: this.mcpGlobalNotice,
+			},
 		);
 		const reload = await this.reloadSessionsForCwd(input.scope === "project" ? cwd : undefined);
 		return { config, reload };

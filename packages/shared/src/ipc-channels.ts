@@ -368,8 +368,8 @@ const EVENT_CHANNELS = {
 	ExtensionDialogResolved: "pi:extension-dialog-resolved",
 	ExtensionNotify: "pi:extension-notify",
 	ExtensionEditorText: "pi:extension-editor-text",
-	/** MCP 运行态工具变化（按 server 聚合的 mcp__<server>__<tool>；面板刷新用） */
-	McpToolsChanged: "mcp:toolsChanged",
+	/** MCP 运行态变化（每 server 的工具 + 失效原因 + 全局提示；面板刷新用） */
+	McpServersChanged: "mcp:serversChanged",
 	/** 登录流程事件（event/prompt/prompt-cancel） */
 	SettingsLoginEvent: "settings:loginEvent",
 	/** 更新状态 */

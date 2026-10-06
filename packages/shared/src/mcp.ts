@@ -17,6 +17,36 @@ export type McpTransportView =
 	| { kind: "url"; url: string }
 	| { kind: "unknown" };
 
+/** 单个 MCP 工具（官方 `ToolInfo.annotations.readOnlyHint` 映射过来） */
+export interface McpToolView {
+	name: string;
+	/** 只读（免确认）；false/undefined = 会改动 → 调用要确认 */
+	readOnly?: boolean;
+}
+
+/**
+ * server 的运行态（由 mcp-inventory 扩展聚合，随 `mcp.servers:changed` 推给面板）。
+ * 状态口径：
+ * - `tools.length > 0` → 已连上；`enabled:false` → 停用；`needsAuth` → 需要授权；
+ * - `error` → 官方 notify 里的「需要处理」原文（`failed: …`）；其余 = 未连上（没开会话 / 正在连 / deferred 未激活）。
+ */
+export interface McpServerStatus {
+	name: string;
+	tools: McpToolView[];
+	/** 官方 notify「MCP servers need attention」里该 server 的原因原文 */
+	error?: string;
+	/** 官方连接状态 = needs-auth（远程 server 需要 OAuth 登录） */
+	needsAuth?: boolean;
+	/** 官方 notify 里给出的授权页 URL（面板「登录」按钮用它打开系统浏览器） */
+	authUrl?: string;
+}
+
+/** 面板顶部的全局提示（官方 notify 里不针对单个 server 的那类，如配置错误 / 工具不可达） */
+export interface McpGlobalNotice {
+	level: "info" | "warning" | "error";
+	message: string;
+}
+
 /** 单个 MCP server 的视图（配置 + 运行态合流） */
 export interface McpServerView {
 	name: string;
@@ -30,8 +60,14 @@ export interface McpServerView {
 	exposure: McpExposure;
 	/** 逐工具覆盖（原样呈现） */
 	toolExposure?: Record<string, McpExposure>;
-	/** 运行态：已注册的工具名（`mcp__<server>__<tool>`；未连上/未加载为空数组） */
-	tools: string[];
+	/** 运行态：已注册的工具（`mcp__<server>__<tool>` → `{name, readOnly}`；未连上为空数组） */
+	tools: McpToolView[];
+	/** 运行态：官方 notify 里的失败原因（与 McpServerStatus.error 同源） */
+	error?: string;
+	/** 运行态：需要 OAuth 登录 */
+	needsAuth?: boolean;
+	/** 运行态：官方给出的授权页 URL（点「登录」时打开） */
+	authUrl?: string;
 }
 
 /** `mcp.config:list` 结果 */
@@ -42,6 +78,8 @@ export interface McpConfigListResult {
 	errors: string[];
 	/** 项目级配置只有受信项目才读（官方 trust-manager 同款） */
 	projectTrusted: boolean;
+	/** 官方 notify 里不带 server 名的全局提示（MCP 加载失败 / 工具不可达等） */
+	notice?: McpGlobalNotice;
 	globalPath: string;
 	projectPath?: string;
 }
@@ -60,9 +98,10 @@ export interface McpUpsertInput {
 	exposure?: McpExposure;
 }
 
-/** `mcp.tools:changed` 事件载荷（只带按 server 聚合的工具名） */
-export interface McpToolsChangedPayload {
-	servers: { name: string; tools: string[] }[];
+/** `mcp.servers:changed` 事件载荷（运行态：每个 server 的工具 + 失效原因 + 全局提示） */
+export interface McpServersChangedPayload {
+	servers: McpServerStatus[];
+	notice?: McpGlobalNotice;
 }
 
 /** MCP 工具名前缀（官方 `extensions/mcp/tools.js`：`mcp__<server>__<tool>`） */
