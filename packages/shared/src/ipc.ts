@@ -5,6 +5,7 @@ import type {
 	ExtensionNotifyEvent,
 } from "./extension-dialog";
 import type { CHANNEL_TABLE, InvokeApi } from "./ipc-channels";
+import type { McpToolsChangedPayload } from "./mcp";
 import type { PermissionRequest, PermissionResolved, SessionEventEnvelope, TrustRequest } from "./session";
 import type { LoginEventPayload } from "./settings";
 import type { UiPluginsEventPayload } from "./ui-plugins";
@@ -60,4 +61,6 @@ export interface PiApi extends InvokeApi<typeof CHANNEL_TABLE> {
 	onExtensionNotify(cb: (event: ExtensionNotifyEvent) => void): () => void;
 	/** 订阅扩展草稿预填（setEditorText/pasteToEditor → Composer）；返回取消函数 */
 	onExtensionEditorText(cb: (event: ExtensionEditorTextEvent) => void): () => void;
+	/** MCP 运行态工具集变化（面板刷新用） */
+	onMcpToolsChanged(cb: (payload: McpToolsChangedPayload) => void): () => void;
 }

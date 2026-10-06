@@ -60,5 +60,6 @@ export function registerIpc(
 	forward(backend.onExtensionNotify.bind(backend), IpcChannels.ExtensionNotify);
 	forward(backend.onExtensionEditorText.bind(backend), IpcChannels.ExtensionEditorText);
 	forward(backend.onLoginEvent.bind(backend), IpcChannels.SettingsLoginEvent);
+	forward(backend.onMcpToolsChanged.bind(backend), IpcChannels.McpToolsChanged);
 	forward(onUpdateState, IpcChannels.UpdateEvent);
 }

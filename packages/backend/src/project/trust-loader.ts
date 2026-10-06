@@ -7,6 +7,21 @@ import { resolveProjectTrust, type TrustOptionInternal } from "./trust";
 
 const log = createLogger("backend");
 
+/**
+ * 内置扩展注册顺序（**这段顺序就是语义，别调换**）：同组内**先注册者赢**
+ * （`getAllRegisteredTools()` 里 `if (!toolsByName.has(name)) set(…)`）——所以我们先、官方内置后，
+ * 我们（权限门控 / 蒸发 / todo-reminder / channel-watch）才能赢同名。
+ * 另一面：我们**不**标 `replaceable`，官方三个内置都标了 —— 将来官方内置若真与我们同名
+ * （如 1.1 加了官方 `todo`），被 `omitReplacedExtensions` 挤出局的是官方那个，不是我们。
+ * 有单测锁这条顺序（`test/builtin-extensions.test.ts`）。
+ */
+export function composeExtensionFactories(
+	ours: InlineExtension[],
+	deps: { openUrl?: (url: string) => void | Promise<void> },
+): InlineExtension[] {
+	return [...ours, ...builtinExtensions(deps)];
+}
+
 /** 内置扩展注册编排（cwd + 会话的 confirm 通道 + 权限模式引用拼装 todo-reminder/权限门控/视觉代理；开关逻辑在调用方） */
 export type ExtensionFactoryBuilder = (
 	cwd: string,
@@ -58,12 +73,10 @@ export class ProjectResourceLoader {
 			cwd,
 			agentDir,
 			settingsManager,
-			// 内置扩展在前、我们的在后：同名覆盖时我们的（权限门控 / 蒸发 / todo-reminder / channel-watch）优先
-			// （官方 tool-search/codemode 的元数据带 replaceable，装第三方同名扩展时它们自己让位）
-			extensionFactories: [
-				...builtinExtensions({ openUrl: this.deps.openUrl }),
-				...this.deps.buildExtensions(cwd, options?.confirm, options?.modeRef),
-			],
+			extensionFactories: composeExtensionFactories(
+				this.deps.buildExtensions(cwd, options?.confirm, options?.modeRef),
+				{ openUrl: this.deps.openUrl },
+			),
 			...this.deps.desktopIntegration,
 		});
 		if (this.deps.projectTrust === false) {

@@ -71,9 +71,11 @@ describe("工具名称中文投影", () => {
 			expect(displayName(name, t)).toBe(label);
 			expect(displayName(name, translator("en"))).not.toContain("tool.names.");
 		}
-		for (const name of ["mcp", "mcp__server__search", "custom_tool", "toString"]) {
+		for (const name of ["mcp", "custom_tool", "toString"]) {
 			expect(displayName(name, t)).toBe(name);
 		}
+		// MCP 工具是唯一的例外：保留 server 命名空间（`mcp__<server>__<tool>` → `server › tool`）
+		expect(displayName("mcp__server__search", t)).toBe("server › search");
 	});
 	it("插件 API 单参数调用跟随当前语言", () => {
 		expect(displayName("show_image")).toBe("展示图片");

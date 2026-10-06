@@ -235,13 +235,19 @@ LAN 页重连/中途进入时，快照种子经 `messagesToUIMessages` 重建—
    逆命题同样重要：**新建未发消息的会话改名是合法操作**（`appendSessionInfo` 写内存，首条消息落盘时
    一起写入，不丢名）——不要加 `if (!sessionFile) throw` 这种「尚未落盘」拦截，会给正常路径加假错误。
 
-- **`replaceable` 不是万灵药（同名工具争抢的真相）**：`InlineExtension.replaceable: true` 只能表达「**我让位**」
-  （`omitReplacedExtensions`：若任何**非 replaceable** 扩展注册了同名工具，本扩展被整个略过），
-  没法表达「**我优先**」。而且同名工具归谁取决于**注册顺序：先注册者赢**，后注册的那个报
-  `Tool "x" conflicts with …` 进 `extensionsResult.errors`（会显示在扩展面板）；
-  而 inline 扩展恒排在盘上扩展**之后**（`loadFinalExtensionSet`: `[...盘上, ...inline]`）
-  ——所以「内置优先」档无法靠 inline 扩展实现，必须走 `customTools`（它在扩展工具**之后**合并，能赢）。
-  想让第三方同名工具让位，仍是 `customTools` 后写覆盖 + `setActiveToolsByName` 停用其家族工具。
+- **同名工具到底谁赢：`replaceable` 管「让位」，`自定义 < 扩展` 管「优先」**（2026-10-06 修正过一次说法）
+  三条机制各管一段，别混：
+  1. **`replaceable` 只表达「我让位」**：`omitReplacedExtensions` 里若**任何非 replaceable 扩展**注册了同名
+     工具，带 `replaceable: true` 的那个扩展**整个被略过**（与两者谁先注册无关）。所以想让位就标
+     `replaceable`，想优先就**别标**（我们自己的扩展一律不标，官方内置三个都标了 —— 将来同名被挤出去的是官方）。
+  2. **双方都非 replaceable 时：同组内先注册者赢**（`getAllRegisteredTools()` 里
+     `if (!toolsByName.has(name)) set(…)`），后注册的那个报 `Tool "x" conflicts with …` 进
+     `extensionsResult.errors`（会显示在扩展面板）。而 inline 扩展恒排在盘上扩展**之后**
+     （`loadFinalExtensionSet`: `[...盘上, ...inline]`）——**所以第三方盘上扩展的同名工具天然压过我们**，
+     光靠「注册顺序」救不回来。
+  3. **`customTools` 是另一层，且能覆盖扩展工具**（agent-session 里 `allCustomTools = [...扩展工具, ...customTools]`
+     之后无条件 set）——「内置 subagent 优先」档就是靠它实现的（见 `tools/subagent/mutex.ts`）。
+    一句话：**让别人让位 → `replaceable`；让我赢 → `customTools`；注册顺序只在「都非 replaceable」时有意义。**
 - **models.json 里任何 key 都是独立 provider 行**：内置 provider 改名（azure）后，用户盘上旧键
   `azure-openai-responses` 仍会被 SDK 当**自定义 provider** 列出来（带着它的 baseUrl），不会自动合并；
   所以 `SettingsService` 里做了读侧归一（旧键条目仍算「覆写内置」），但不主动改盘。

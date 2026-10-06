@@ -30,6 +30,7 @@ packages/
 | 脚本 | 用途 |
 |---|---|
 | `scripts/smoke-backend.mts` | 真实 SDK 冒烟（需 `AI_OPS_API_KEY`） |
+| `scripts/fake-mcp-server.mjs` | **最小 MCP stdio server 夹具**（零依赖手写 JSON-RPC 2.0）：装不上官方 `@modelcontextprotocol/sdk` 时端到端验证 MCP（面板/exposure/tool_search/权限声明层）；暴露 `echo`（带 `readOnlyHint: true`）与 `nuke`（无声明）；头部注释含用法与 `mcp.json` 片段；**不进任何默认配置** |
 | `scripts/smoke-sdk-1.0.mts` | **SDK 升级事实核对冒烟（零凭证、零网络）**：9 条断言钉住 1.0.4 的能力面（版本按 `import.meta.resolve` 判，**不要用 `mod.VERSION`**——打包态它读 `PI_PACKAGE_DIR` 的 pi-package 版本），含三个内置扩展工厂 / `findById` / quickjs-wasm / `refreshContext` / azure 改名 / 内置 provider 数。升 SDK 后先跑它 |
 | `scripts/smoke-error-events.mts` | 报错系统冒烟：本地 HTTP 伪造 provider（401/429）驱动 PiBackend，零凭证离线 |
 | `scripts/smoke-subagent.mts` | subagent 冒烟 |
@@ -84,12 +85,13 @@ src/
 ├── slash-commands.ts   斜杠命令清单（纯函数）
 ├── log.ts              结构化日志
 ├── lan/                局域网观察：config / projector / server（+ audit / sanitize）
+├── mcp/                mcp.json 读写与面板视图（config-store；连接/环境变量展开都归官方 mcp 扩展）
 ├── session/            registry / meta / single-flight / naming / messages / hydration-gate / trace+traces / event-slim+stream-guard / rates / ui-context / extension-dialog-host
 ├── permissions/        index(barrel) / bash-chain / pattern / config / annotations / tmp-zone / gate / extension / audit
 ├── project/            trust / trust-loader / builtin-extensions / workspace-store / files
 ├── settings/           settings / model-prefs / login / quota
 ├── packages/           admin / catalog
-└── tools/              show-image / todo / todo-reminder / webfetch / subagent / context-evaporation / channel-watch
+└── tools/              show-image / todo / todo-reminder / webfetch / subagent / context-evaporation / channel-watch / mcp-inventory
 ```
 
 | 文件 | 关键导出 | 职责 |
@@ -254,6 +256,7 @@ src/
 | 会话权限模式（默认/完全访问） | 后端：`pi-backend.ts`（`permissionModes` map 内存态 + `get/setSessionPermissionMode`）+ `permissions/extension.ts`（fullAccess 审计分支）+ `permissions/audit.ts`；IPC：`PermissionGetMode/SetMode`；前端：`composer/PermissionPicker.tsx`（chip；新会话页读写 `newSessionDraft.permissionMode`）+ `stores/sessions.ts`（真实会话走 `permissionModes` map，promotion 成功后把 draft 档位应用到新 id）+ `use-composer-send.ts`。**模式不写进 permissions.json、不被新会话继承（spec D1）；D7：按会话持久化到 ui-state.json 的 sessionPermissionModes（只存非 default，切回默认即删键），打开会话时 await 恢复——重启/内存回收后重开同一会话保住原档位，新会话与 fork 仍从 default 起步** |
 | 逐工具权限规则 | `backend/src/permissions/`（求值链在 extension.ts：deny → 声明层（`annotations.ts`）→ 临时区 → 多根边界读写分离 → 项目记忆 → ask）+ `project/workspace-store.ts`；enabled=false 只能手改 permissions.json（UI 无入口的逃生舱）；设置页工作区根管理 UI 未实现，手改 workspaces.json |
 | 非内置工具的默认动作（MCP / 第三方扩展） | `backend/src/permissions/annotations.ts`：`annotations.readOnlyHint === true` → allow，否则 **ask**（声明缺失/为写一律 ask）；受信内置（SDK 自带名单 + `<sdk:…>`/`<inline:…>` 源）不参与声明层；显式工具名规则优先；MCP 工具名 `mcp__*` 与内置 mcp 扩展的工具都不受信（spec §3.1-7） |
+| MCP 服务器（配置 + 面板） | `backend/src/mcp/config-store.ts`（mcp.json 读写：全局 `<agentDir>/mcp.json` + 受信项目 `<cwd>/.pi/mcp.json`；新建 server 写 `exposure: "deferred"`、新建文件写顶层 `autoEnableCodemode: false`；**不实现连接**、不做环境变量展开）+ `tools/mcp-inventory.ts`（三个时机聚合 `mcp__<server>__<tool>`，变化才发 `mcp.tools:changed`）+ renderer `stores/mcp.ts` + `components/settings/McpPanel.tsx`（增删改 / 一键改 deferred / 重连；连接失败与登录提示一律官方 notify 文本）；工具名在卡片上呈现为 `server › tool`（`chat/tool-label.ts`） |
 | 项目信任 | backend `project/trust.ts` + `trust-loader.ts`；触发点 `stores/sessions.ts`（activateNewSessionDraft/setDraftCwd）与 `stores/projects.ts`（addProject）；弹窗 `session/TrustDialog.tsx` |
 | 日常空间（非项目闲聊维度） | main `daily.ts`（目录）+ IPC `app:getDailyDir` → renderer `lib/daily.ts`（缓存/判定）；侧栏钉顶分组 `components/sidebar/*`（`lib/sidebar-groups.ts` 里 `isDailyCwd` 的会话归「日常」组，label 取 i18n `projects.daily`）；隔离 = `stores/projects.ts` deriveProjects 过滤 + deleteProject 守卫（有 projects.test.ts）；空态 chip `session/ProjectBranchPicker.tsx`（下拉钉顶「日常」项，新会话页可在 日常 ↔ 项目 双向切换）；胶囊咖啡头像 `SessionTabBar.tsx`（余态白底黑字，状态色优先）；设计稿 `.local/design/ux/daily-space/` |
 | 会话分叉 / 撤回 | backend `forkSession`/`recallMessage`（目标解析在 session/messages.ts；**agent 运行或压缩期间均拒绝**；撤回走 SDK `navigateTree`，仅「悬挂的用户消息」那个分支手动回退 leaf，**必须补 `session.refreshContext()`**——navigateTree 末尾会自己刷，绕过它就得自己刷，见 PITFALLS）；renderer `stores/sessions.ts`（fork 新 tab 打开并返回新 sessionId；recall 草稿回填 + COMPOSER_FOCUS_EVENT）+ `chat/message-actions.tsx`（ForkButton 挂轮次末段正文/RecallButton 挂用户气泡，运行/压缩期间禁用） |

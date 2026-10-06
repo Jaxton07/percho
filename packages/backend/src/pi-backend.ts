@@ -10,12 +10,14 @@ import {
 	type DefaultResourceLoader,
 	type ExtensionError,
 	getAgentDir,
+	hasTrustRequiringProjectResources,
 	ModelRuntime,
 	ProjectTrustStore,
 	type SessionEntry,
 	type SessionInfo,
 	SessionManager,
-	type SettingsManager,
+	SettingsManager,
+	type SettingsManager as SettingsManagerType,
 	type ToolDefinition,
 } from "@earendil-works/pi-coding-agent";
 import type {
@@ -31,6 +33,9 @@ import type {
 	ImageInput,
 	LoadedResources,
 	LoginEventPayload,
+	McpConfigListResult,
+	McpToolsChangedPayload,
+	McpUpsertInput,
 	PermissionAnswer,
 	PermissionMode,
 	PermissionRequest,
@@ -55,6 +60,7 @@ import {
 } from "@percho/shared";
 import { Emitter } from "./emitter";
 import { createLogger } from "./log";
+import { listMcpServers, removeMcpServer, upsertMcpServer } from "./mcp/config-store";
 import { PackageAdmin } from "./packages/admin";
 import { loadPermissionConfig } from "./permissions";
 import {
@@ -104,6 +110,7 @@ import {
 	reportEvapBatch,
 	writeContextManagerMode,
 } from "./tools/context-evaporation";
+import { groupMcpTools, makeMcpInventoryExtension } from "./tools/mcp-inventory";
 import { makeShowImageTool } from "./tools/show-image";
 import { discoverAgents, isSubagentSessionPath, makeSubagentTool } from "./tools/subagent";
 import { applySubagentMutex, resolveSubagentPreferBuiltin } from "./tools/subagent/mutex";
@@ -200,6 +207,10 @@ export class PiBackend {
 	private readonly extensionDialogResolvedEmitter = new Emitter<ExtensionDialogResolved>();
 	private readonly extensionNotifyEmitter = new Emitter<ExtensionNotifyEvent>();
 	private readonly extensionEditorTextEmitter = new Emitter<ExtensionEditorTextEvent>();
+	/** MCP 运行态工具集变化（spec §4.8.1：面板刷新用） */
+	private readonly mcpToolsChangedEmitter = new Emitter<McpToolsChangedPayload>();
+	/** 最近一次聚合的「server → 工具名」（面板初次打开时不必等下一个 turn） */
+	private mcpToolsByServer = new Map<string, string[]>();
 	/** 项目信任决策记录（~/.pi/agent/trust.json，与 CLI 共享）+ 信任请求门控 */
 	private readonly trustStore = new ProjectTrustStore(getAgentDir());
 	private readonly trustGate = new TrustGate((req) => this.trustEmitter.emit(req));
@@ -343,6 +354,8 @@ export class PiBackend {
 		);
 		// todo-reminder 最后：compaction 后恢复注入的任务列表不被上游折叠
 		factories.push(makeTodoReminderExtension());
+		// MCP 运行态聚合（spec §4.8.1）：三个时机聚合 `mcp__<server>__<tool>`，集合变化才发事件给面板
+		factories.push(makeMcpInventoryExtension((servers) => this.emitMcpToolsChanged(servers)));
 		return factories;
 	}
 
@@ -509,7 +522,7 @@ export class PiBackend {
 			gate: PermissionGate;
 			preferBuiltin: boolean;
 			/** 两阶段资源加载（信任决策走 projectLoader 既有链路）；懒执行：makeSession 决定时机 */
-			load: () => Promise<{ settingsManager: SettingsManager; resourceLoader: DefaultResourceLoader }>;
+			load: () => Promise<{ settingsManager: SettingsManagerType; resourceLoader: DefaultResourceLoader }>;
 		}) => Promise<CreateAgentSessionResult>,
 	): Promise<AgentSession> {
 		const gate = new PermissionGate((req) => this.permissionEmitter.emit(req));
@@ -517,7 +530,7 @@ export class PiBackend {
 		const confirmBridge: PermissionConfirm = (title, message, meta) => gate.confirm(title, message, meta);
 		// 会话权限模式引用：一律 default 起步（D1：不落盘、不继承），随工厂闭包注入求值链
 		const modeRef: PermissionModeRef = { current: "default" };
-		let loaded: { settingsManager: SettingsManager; resourceLoader: DefaultResourceLoader } | undefined;
+		let loaded: { settingsManager: SettingsManagerType; resourceLoader: DefaultResourceLoader } | undefined;
 		const load = async () => {
 			loaded ??= await this.projectLoader.load(cwd, { confirm: confirmBridge, modeRef });
 			return loaded;
@@ -1123,8 +1136,115 @@ export class PiBackend {
 		return this.trustEmitter.subscribe(handler);
 	}
 
+	/** MCP 运行态工具集变化订阅（main 转发 renderer 制面板用） */
+	onMcpToolsChanged(handler: (payload: McpToolsChangedPayload) => void): () => void {
+		return this.mcpToolsChangedEmitter.subscribe(handler);
+	}
+
 	onLoginEvent(handler: (payload: LoginEventPayload) => void): () => void {
 		return this.loginEmitter.subscribe(handler);
+	}
+
+	/** MCP 运行态聚合回调入口（扩展侧调用）：缓存 + 广播 */
+	private emitMcpToolsChanged(servers: McpToolsChangedPayload["servers"]): void {
+		this.mcpToolsByServer = new Map(servers.map((s) => [s.name, s.tools]));
+		this.mcpToolsChangedEmitter.emit({ servers });
+	}
+
+	/**
+	 * MCP 面板：当前「server → 工具名」。**事件缓存 + 实时聚合合流**：
+	 * 官方 mcp 扩展在 `session_start` 之后才异步连上服务器，而我们的事件只在三个钩子上报——
+	 * 只信缓存会在「刚重连／面板刚打开」时显示空集（实测踩到）。所以这里以 registry 里各会话的
+	 * `getAllTools()` 为准（晚合并覆盖早值），事件缓存只作没有活跃会话时的兜底。
+	 */
+	private mcpToolsMap(): Map<string, string[]> {
+		const merged = new Map<string, string[]>(this.mcpToolsByServer);
+		for (const entry of this.registry.list()) {
+			try {
+				for (const [name, tools] of groupMcpTools(entry.session.getAllTools().map((tool) => tool.name))) {
+					merged.set(name, tools);
+				}
+			} catch (err) {
+				log.warn("mcp tools aggregate failed", entry.session.sessionId, err);
+			}
+		}
+		return merged;
+	}
+
+	/**
+	 * MCP 配置列表（spec §5：全局 + 项目级；项目级仅受信时读）。
+	 * 只做 JSON 读写 + 形状校验，连接与 `${VAR}` 展开都交给官方 mcp 扩展。
+	 */
+	async getMcpConfig(options: { cwd?: string } = {}): Promise<McpConfigListResult> {
+		const cwd = options.cwd ?? this.options.defaultCwd;
+		return listMcpServers({
+			cwd,
+			projectTrusted: this.isProjectTrusted(cwd),
+			toolsByServer: this.mcpToolsMap(),
+		});
+	}
+
+	/** 新增/编辑一个 MCP server；写盘后 reload 受影响会话，让官方扩展重读配置 */
+	async upsertMcpServer(input: McpUpsertInput): Promise<McpConfigListResult> {
+		const cwd = input.cwd ?? this.options.defaultCwd;
+		const projectTrusted = this.isProjectTrusted(cwd);
+		const result = await upsertMcpServer(
+			{ ...input, cwd },
+			{ projectTrusted, toolsByServer: this.mcpToolsMap() },
+		);
+		await this.reloadSessionsForCwd(input.scope === "project" ? cwd : undefined);
+		return result;
+	}
+
+	/**
+	 * 重连（面板入口）：reload 会话 → 官方 mcp 扩展重读 mcp.json、重连 server。
+	 * 对应官方 `/mcp` 的 reconnect；连接失败/需要登录一律以官方 notify 文本呈现（面板不自己解析）。
+	 */
+	async reloadMcpServers(input: { cwd?: string } = {}): Promise<McpConfigListResult> {
+		const cwd = input.cwd ?? this.options.defaultCwd;
+		await this.reloadSessionsForCwd(undefined); // 全局配置影响所有会话；项目级配置 cwd 过滤留给未来细分
+		return this.getMcpConfig({ cwd });
+	}
+
+	/** 删除一个 MCP server（写盘后 reload） */
+	async removeMcpServer(input: {
+		scope: "user" | "project";
+		cwd?: string;
+		name: string;
+	}): Promise<McpConfigListResult> {
+		const cwd = input.cwd ?? this.options.defaultCwd;
+		await removeMcpServer({ ...input, cwd });
+		await this.reloadSessionsForCwd(input.scope === "project" ? cwd : undefined);
+		return this.getMcpConfig({ cwd });
+	}
+
+	/**
+	 * 项目是否受信（项目级 mcp.json 只在受信项目读，与官方 trust-manager 同款）。
+	 * **同步且无副作用**：列表型 API 不能在这里弹信任窗（那是 session 打开时的行为）——
+	 * 已存决策为准；未决且项目确有需信任资源时，只有 default `always` 才算受信（否则面板显示「未受信」）。
+	 */
+	private isProjectTrusted(cwd: string | undefined): boolean {
+		if (!cwd) return false;
+		if (!hasTrustRequiringProjectResources(cwd)) return true; // 没有项目级资源 = 无需信任
+		const decision = this.trustStore.get(cwd);
+		if (decision !== null) return decision;
+		const settingsManager = SettingsManager.create(cwd, getAgentDir(), { projectTrusted: false });
+		return settingsManager.getDefaultProjectTrust() === "always";
+	}
+
+	/**
+	 * mcp.json 变更后重载会话：官方 mcp 扩展在 `session_start`/reload 时读配置，不 reload 看不到新 server。
+	 * `cwd` 给定 = 只重载该项目下的会话（项目级配置只影响它们）；缺省 = 全局配置，重载全部。
+	 */
+	private async reloadSessionsForCwd(cwd: string | undefined): Promise<void> {
+		for (const entry of this.registry.list()) {
+			if (cwd && entry.cwd !== cwd) continue;
+			try {
+				await entry.session.reload();
+			} catch (err) {
+				log.warn("session reload failed", entry.session.sessionId, err);
+			}
+		}
 	}
 
 	/** 扩展对话框请求/结算/通知/草稿预填订阅（main 进程转发 renderer 用） */
