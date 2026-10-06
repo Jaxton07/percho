@@ -54,6 +54,8 @@ export function makeTodoTool(): ToolDefinition<typeof todoParams> {
 	return defineTool({
 		name: TODO_TOOL_NAME,
 		label: "Todo",
+		// 只改会话内的任务列表（UI 状态），不动环境 → 只读；与硬编码分类同源（见 permissions/annotations.ts）
+		annotations: { readOnlyHint: true },
 		description:
 			"Maintain a task list for complex multi-step work (long refactors, multi-file features, multi-step investigations). Call with the FULL updated list on every change — the list fully replaces the previous one (there is no read tool; the latest list is always visible in this result). Keep at most ONE item in_progress at a time, mark items completed as soon as they are done, and pass an empty list when the whole task is finished.",
 		promptSnippet: "todo({todos})",

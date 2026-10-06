@@ -60,6 +60,8 @@ export function makeShowImageTool(): ToolDefinition<typeof showImageParams> {
 	// defineTool：官方 1.0.4 的类型收窄入口（execute 参数由 TParams 推导）
 	return defineTool({
 		name: "show_image",
+		// 只在 UI 里显示图片，不动环境
+		annotations: { readOnlyHint: true },
 		label: "Show Image",
 		description:
 			"Display image files to the user in the chat UI. Use ONLY when the user explicitly asks to see images, or when showing visual content is clearly necessary (e.g. screenshots or plots you just produced). Do NOT call this for every image you read. When showing multiple related images, pass them ALL in one call's paths array instead of calling repeatedly. The images are shown to the user but NOT added to your context — if you need to see the image content yourself, use the read tool instead.",

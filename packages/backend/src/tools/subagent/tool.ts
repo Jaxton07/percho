@@ -157,6 +157,8 @@ export function makeSubagentTool(deps: MakeSubagentToolDeps): ToolDefinition {
 	// defineTool：官方 1.0.4 的类型收窄入口（execute 参数由 TParams 推导）
 	return defineTool({
 		name: "subagent",
+		// 子会话会跑工具（可能改环境），且它不带权限扩展 → 这里如实声明为写且可破坏
+		annotations: { readOnlyHint: false, destructiveHint: true },
 		label: "Subagent",
 		description:
 			"Delegate a self-contained read-only or project-scoped task to an isolated subagent session. Use {agent, task} for one run or {tasks:[{agent, task}, ...]} for parallel exploration (up to 8 tasks, 4 at once). Built-in agent: scout. More agents may be defined in ~/.pi/agent/agents/. The subagent returns only its final conclusion while its full session remains available from the result card.",

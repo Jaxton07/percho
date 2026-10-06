@@ -255,6 +255,11 @@ LAN 页重连/中途进入时，快照种子经 `messagesToUIMessages` 重建—
   要判版本用 `import.meta.resolve("@earendil-works/pi-coding-agent")` 再往上找 package.json
   （`scripts/smoke-sdk-1.0.mts` 断言 1）。该包 exports 只有 `import` 条件，`createRequire(...).resolve`
   会直接 `ERR_PACKAGE_PATH_NOT_EXPORTED`。
+- **`getAllTools()` 不在 `ExtensionContext` 上**：1.0.4 的 `pi.getAllTools()`（返回 `ToolInfo[]`，带
+  `annotations` 与 `sourceInfo`）挂在 **ExtensionAPI** 上，`pi.on("tool_call", (event, ctx) => …)` 的 `ctx`
+  里没有它 —— 要在工厂闭包里直接用 `pi`（`permissions/extension.ts` 就是这么拿工具声明的）。
+  `sourceInfo.path` 的取值：SDK 自带 `builtin:<name>`、Percho customTools `<sdk:<name>>`、
+  inline 扩展 `<inline:<name>>`、盘上扩展是文件路径、MCP 服务器工具挂在 `builtin:mcp` 且名字是 `mcp__<server>__<tool>`。
 - **手写 `agent.state.messages` 已彻底无效**：1.0.4 的请求上下文由 `buildSessionProjection()` 在
   `prepareRequest` 里逐次重建；`agent.state.messages` 只是个「公开 transcript」缓存（`_refreshFinalizedContext()`
   写它）。撤回（`recallMessage`）里那个绕过 `navigateTree` 的**悬挂用户消息分支**必须自己补

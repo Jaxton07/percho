@@ -58,6 +58,8 @@ export function makeChannelTools(deps: ChannelToolDeps): ToolDefinition[] {
 	const subscribe = defineTool({
 		name: "channel_subscribe",
 		label: "Subscribe channel",
+		// 会写订阅状态（本地文件）→ 非只读；被订阅方之后能唤醒本会话，但不删改任何内容
+		annotations: { readOnlyHint: false, destructiveHint: false },
 		description:
 			"订阅一个协作频道（.local/agent-work/channel/<topic>）。订阅后另一会话用 channel_post 向该频道发消息时，本会话会收到一行唤醒提醒。topic 为频道目录名。",
 		promptSnippet: "channel_subscribe({ topic }) — 订阅协作频道，接收文件更新唤醒",
@@ -84,6 +86,7 @@ export function makeChannelTools(deps: ChannelToolDeps): ToolDefinition[] {
 	const unsubscribe = defineTool({
 		name: "channel_unsubscribe",
 		label: "Unsubscribe channel",
+		annotations: { readOnlyHint: false, destructiveHint: false },
 		description: "退订一个协作频道，不再接收该频道的消息唤醒。",
 		promptSnippet: "channel_unsubscribe({ topic }) — 退订频道",
 		parameters: unsubscribeParams,
@@ -98,6 +101,8 @@ export function makeChannelTools(deps: ChannelToolDeps): ToolDefinition[] {
 	const post = defineTool({
 		name: "channel_post",
 		label: "Post channel message",
+		// 追加写频道 MESSAGES.md、并唤醒订阅方（只增不改）
+		annotations: { readOnlyHint: false, destructiveHint: false },
 		description:
 			"向协作频道发一条消息（追加到 .local/agent-work/channel/<topic>/MESSAGES.md）。订阅该频道的会话会自动收到唤醒查收。写完一组频道文件后调一次 post 通知对方——只写文件不发 post 不会通知。closed=true 表示任务/频道终态，订阅方查收后将退订。",
 		promptSnippet: "channel_post({ topic, message, closed? }) — 向频道发消息并唤醒订阅者",
@@ -125,6 +130,7 @@ export function makeChannelTools(deps: ChannelToolDeps): ToolDefinition[] {
 	const list = defineTool({
 		name: "channel_list",
 		label: "List channels",
+		annotations: { readOnlyHint: true },
 		description: "列出本项目全部协作频道与本会话的订阅状态（含因频繁互触发被暂停的频道）。",
 		promptSnippet: "channel_list() — 列出频道与订阅状态",
 		parameters: Type.Object({}),

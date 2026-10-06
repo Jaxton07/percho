@@ -12,6 +12,7 @@ import {
 	patternMatchesToolCall,
 	suggestPattern,
 } from ".";
+import { applyToolAnnotationsRule } from "./annotations";
 import { type PermissionAuditEntry, PermissionAuditLog, permissionAuditPath } from "./audit";
 import type { PermissionRequestMeta } from "./gate";
 import { isRmSegment, isTemporaryPath, rmSegmentExempt } from "./tmp-zone";
@@ -90,6 +91,13 @@ export function makePermissionGateExtension(
 				let action: PermissionAction = bashResult
 					? bashResult.action
 					: evaluateRules(config.rules, event.toolName, matchText);
+
+				// 声明层（1.0.4 ToolAnnotations，spec §3.1-7）：非内置工具没声明 readOnlyHint 就 ask。
+				// 放在规则求值之后、deny 判定之前的 allow 分支上：只会 allow → ask 收紧，
+				// 显式规则（含用户改过的）不受影响；受信内置工具直接短路，不查工具表。
+				action = applyToolAnnotationsRule(config.rules, event.toolName, action, (name) =>
+					pi.getAllTools().find((tool) => tool.name === name),
+				);
 
 				if (action === "deny") {
 					if (fullAccess) {

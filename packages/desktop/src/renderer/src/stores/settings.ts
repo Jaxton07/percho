@@ -85,6 +85,13 @@ interface SettingsStore {
 	setLanRemoteControl: (enabled: boolean) => Promise<void>;
 }
 
+/** Electron `invoke` 的失败信息带前缀（`Error invoking remote method '<channel>': Error: `），
+ *  剥掉它只留后端原文 —— 表单校验提示（provider ID 非法 / 旧 provider 已改名 等）才读得懂 */
+function errorMessage(error: unknown): string {
+	const raw = error instanceof Error ? error.message : String(error);
+	return raw.replace(/^Error invoking remote method '[^']*':\s*(?:Error:\s*)?/, "");
+}
+
 export const useSettingsStore = create<SettingsStore>((set, get) => {
 	/** 变更后刷新 provider 列表与模型选择器数据 */
 	const afterMutation = async () => {
@@ -216,7 +223,7 @@ export const useSettingsStore = create<SettingsStore>((set, get) => {
 			try {
 				set({ lanStatus: await getPi().lanGetStatus() });
 			} catch (error) {
-				set({ error: error instanceof Error ? error.message : String(error) });
+				set({ error: errorMessage(error) });
 			}
 		},
 
@@ -245,7 +252,7 @@ export const useSettingsStore = create<SettingsStore>((set, get) => {
 				await getPi().saveApiKey({ providerId, key });
 				await afterMutation();
 			} catch (error) {
-				set({ error: error instanceof Error ? error.message : String(error) });
+				set({ error: errorMessage(error) });
 			}
 		},
 
@@ -254,7 +261,7 @@ export const useSettingsStore = create<SettingsStore>((set, get) => {
 				await getPi().removeCredential({ providerId });
 				await afterMutation();
 			} catch (error) {
-				set({ error: error instanceof Error ? error.message : String(error) });
+				set({ error: errorMessage(error) });
 			}
 		},
 
@@ -263,7 +270,7 @@ export const useSettingsStore = create<SettingsStore>((set, get) => {
 				await getPi().addCustomProvider({ input });
 				await afterMutation();
 			} catch (error) {
-				set({ error: error instanceof Error ? error.message : String(error) });
+				set({ error: errorMessage(error) });
 				throw error;
 			}
 		},
@@ -273,7 +280,7 @@ export const useSettingsStore = create<SettingsStore>((set, get) => {
 				await getPi().updateCustomProvider({ input });
 				await afterMutation();
 			} catch (error) {
-				set({ error: error instanceof Error ? error.message : String(error) });
+				set({ error: errorMessage(error) });
 				throw error;
 			}
 		},
@@ -283,7 +290,7 @@ export const useSettingsStore = create<SettingsStore>((set, get) => {
 				await getPi().removeCustomProvider({ providerId });
 				await afterMutation();
 			} catch (error) {
-				set({ error: error instanceof Error ? error.message : String(error) });
+				set({ error: errorMessage(error) });
 			}
 		},
 
@@ -292,7 +299,7 @@ export const useSettingsStore = create<SettingsStore>((set, get) => {
 				await getPi().setProviderBaseUrl({ providerId, baseUrl, apiKey });
 				await afterMutation();
 			} catch (error) {
-				set({ error: error instanceof Error ? error.message : String(error) });
+				set({ error: errorMessage(error) });
 				throw error;
 			}
 		},

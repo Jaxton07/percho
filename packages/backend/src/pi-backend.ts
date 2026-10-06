@@ -891,8 +891,13 @@ export class PiBackend {
 	}
 
 	/**
-	 * 未加载会话的文件路径：给了 cwd 就 `SessionManager.findById` 精确查表，否则回退全量枚举
-	 * （LAN 历史透视路径只有 sessionId、没有 cwd —— 保留枚举兜底，正确性不变）。
+	 * 未加载会话的文件路径：给了 cwd 就 `SessionManager.findById` 精确查表（只扫该项目的会话目录），
+	 * 否则回退全量枚举。
+	 *
+	 * 为何保留枚举兜底：LAN 历史透视（`/api/sessions/:id/transcript` → `peekSessionMessages`）只有
+	 * sessionId —— 路由是纯 id 形式，服务端拿不到会话的 cwd；要让 LAN 也走精确查表得给路由加
+	 * `?cwd=`（LAN 网页端手上确实有 brief.cwd）并改客户端，为这点延迟收益改 LAN 协议不划算
+	 * （已与 review 确认保留兜底）。UI 热路径（改名）永远带 cwd，不会走到枚举。
 	 */
 	private async findUnloadedSessionFile(sessionId: string, cwd?: string): Promise<string | undefined> {
 		if (cwd) {
