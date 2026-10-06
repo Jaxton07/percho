@@ -484,6 +484,9 @@ export const zh = {
 			makeDeferred: "改为 deferred",
 			toolsCount: "{count} 个工具",
 			noTools: "未连上 / 工具未声明",
+			reconnectRunning: "当前会话正在运行：重连会打断它，等这轮结束再点",
+			reloadApplied: "已重连 {count} 个空闲会话",
+			reloadSkipped: "已写入配置：{count} 个会话正在运行，未重连（空闲后生效）；已重连 {reloaded} 个",
 			noActiveSession:
 				"当前没有打开的会话：server 的连接状态与工具清单要等会话里报告（打开一个会话或点「重连」）",
 			enabled: "启用",

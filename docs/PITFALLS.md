@@ -172,7 +172,7 @@ LAN 页重连/中途进入时，快照种子经 `messagesToUIMessages` 重建—
 
 它的**位置天然正确**：`appendCompaction` 追加在当时 leaf 之后，所以按分支顺序把它插回消息流，分割线就落在"当时压缩的那一处"（实测 1833 条 entry 的分支上两条分别落在 145/1121、484/1121，前后消息 timestamp 单调）。
 
-**形状（SDK 0.84.3 实测 20 条）**：`{ type, id, parentId, timestamp(ISO 串), summary, firstKeptEntryId, tokensBefore, details:{readFiles,modifiedFiles}, usage, fromHook }`。**没有 `reason`**（手动/阈值/溢出都不记），**也没有压缩后估值**（`estimatedTokensAfter` 只在事件里）——所以回放的分割线只能显示「已压缩上下文 · 压缩前 156.4k」+ 可展开摘要（摘要是同一条字符串，展开内容与实时一致）。想与实时逐字一致（带原因 + `x → y`），只能自己在 `compaction_end` 时补写一条 `custom` entry（`appendCustomEntry` 不进 LLM 上下文，撤回标记 `message-recalled` 同款）。
+**形状（SDK 0.84.3 实测 20 条；1.0.4 多一个 `systemMessage`（压缩边界的完整 prompt/tool 状态），其余字段不变）**：`{ type, id, parentId, timestamp(ISO 串), summary, firstKeptEntryId, tokensBefore, details:{readFiles,modifiedFiles}, usage, fromHook }`。**没有 `reason`**（手动/阈值/溢出都不记），**也没有压缩后估值**（`estimatedTokensAfter` 只在事件里）——所以回放的分割线只能显示「已压缩上下文 · 压缩前 156.4k」+ 可展开摘要（摘要是同一条字符串，展开内容与实时一致）。想与实时逐字一致（带原因 + `x → y`），只能自己在 `compaction_end` 时补写一条 `custom` entry（`appendCustomEntry` 不进 LLM 上下文，撤回标记 `message-recalled` 同款）。
 
 **加 role 的连带坑**：`SessionMessage` 新增 role 时，LAN 的 `sanitizeSessionMessage` 会把未知 role 落进最后那个 subagent 分支（`message.runs.map` 直接抛错）——新 role 必须在里面显式加分支。
 

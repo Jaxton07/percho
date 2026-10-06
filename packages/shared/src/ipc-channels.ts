@@ -1,6 +1,6 @@
 import type { ExtensionDialogRespond } from "./extension-dialog";
 import type { LanStatus } from "./lan";
-import type { McpConfigListResult, McpUpsertInput } from "./mcp";
+import type { McpConfigListResult, McpMutationResult, McpUpsertInput } from "./mcp";
 import type { CatalogPackageType, CatalogSearchResult, ConfiguredPackageInfo } from "./packages";
 import type {
 	AppInfo,
@@ -158,13 +158,13 @@ export const MCP_CHANNELS = {
 	/** 读全局 + 项目级 mcp.json（项目级只在受信项目读，与官方 trust-manager 同款） */
 	mcpConfigList: ch("mcp:configList")<{ cwd?: string }, McpConfigListResult>(),
 	/** 新增/编辑一个 server（新建默认写 exposure: "deferred"；新建文件时顶层写 autoEnableCodemode: false） */
-	mcpConfigUpsert: ch("mcp:configUpsert")<McpUpsertInput, McpConfigListResult>(),
+	mcpConfigUpsert: ch("mcp:configUpsert")<McpUpsertInput, McpMutationResult>(),
 	/** 重连：reload 会话让官方 mcp 扩展重读配置并重连（面板「重连」入口） */
-	mcpConfigReload: ch("mcp:configReload")<{ cwd?: string }, McpConfigListResult>(),
-	/** 删除一个 server（按 name + scope） */
+	mcpConfigReload: ch("mcp:configReload")<{ cwd?: string }, McpMutationResult>(),
+	/** 删除一个 server（按 name + scope）；运行中的会话跳过重连并回报 */
 	mcpConfigRemove: ch("mcp:configRemove")<
 		{ scope: "user" | "project"; cwd?: string; name: string },
-		McpConfigListResult
+		McpMutationResult
 	>(),
 } as const;
 

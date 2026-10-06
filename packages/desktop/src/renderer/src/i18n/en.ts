@@ -495,6 +495,10 @@ export const en: Messages = {
 			makeDeferred: "Use deferred",
 			toolsCount: "{count} tools",
 			noTools: "Not connected / tools undeclared",
+			reconnectRunning: "This session is running — reconnecting would interrupt it; retry when the turn ends",
+			reloadApplied: "Reconnected {count} idle session(s)",
+			reloadSkipped:
+				"Config saved: {count} session(s) are running and were not reconnected (takes effect when idle); {reloaded} reconnected",
 			noActiveSession:
 				"No open session: server connection state and tool inventory are reported from sessions (open one or hit Reconnect)",
 			enabled: "Enabled",

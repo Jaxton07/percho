@@ -90,3 +90,22 @@ export function groupMcpTools(toolNames: readonly string[]): Map<string, string[
 	for (const list of grouped.values()) list.sort();
 	return grouped;
 }
+
+/**
+ * 写盘/重连后的会话 reload 报告。
+ *
+ * ⚠️ 运行中（streaming/compacting）的会话**必须跳过**：`AgentSession.reload()` 内部没有运行中守卫、
+ * 也不 abort 在跑的 turn，但会 `emitSessionShutdown` —— 官方 mcp 扩展收到就**关掉全部连接**。
+ * 于是「在别的会话跑长任务时顺手改一下 MCP 配置」会静默打断那个任务（失败还被 catch 吞掉）。
+ * 跳过并把名单回给 UI 才是诚实的做法（面板据此提示「空闲后生效」）。
+ */
+export interface McpReloadReport {
+	reloaded: number;
+	skipped: { sessionId: string; reason: "streaming" | "compacting" }[];
+}
+
+/** 写盘类 MCP 动作的结果：新配置 + 哪些会话没跟着重连 */
+export interface McpMutationResult {
+	config: McpConfigListResult;
+	reload: McpReloadReport;
+}

@@ -4,6 +4,7 @@ import { getPi } from "../../api";
 import { useT } from "../../i18n";
 import { useMcpStore } from "../../stores/mcp";
 import { useSessionsStore } from "../../stores/sessions";
+import { selectTranscript, useTranscriptStore } from "../../stores/transcript";
 
 /** 表单状态（新建/编辑共用；空串 = 未填） */
 interface ServerForm {
@@ -29,7 +30,7 @@ const EMPTY_FORM: ServerForm = {
 const inputClass =
 	"w-full rounded-lg border border-border px-2.5 py-1.5 text-[12px] outline-none focus:border-ink-faint";
 const ghostButton =
-	"rounded-full px-2 py-0.5 text-[11px] text-ink-faint transition-colors hover:bg-hover hover:text-ink-2";
+	"rounded-full px-2 py-0.5 text-[11px] text-ink-faint transition-colors hover:bg-hover hover:text-ink-2 disabled:opacity-40 disabled:hover:bg-transparent disabled:hover:text-ink-faint";
 
 /** 传输方式一行摘要（stdio: command args / 远程: url） */
 export function transportSummary(server: McpServerView): string {
@@ -70,6 +71,11 @@ function ToolsInfo({ server }: { server: McpServerView }) {
 function ServerRow({ server }: { server: McpServerView }) {
 	const t = useT();
 	const { upsert, remove, reload } = useMcpStore();
+	// 运行中（streaming）不重连：reload 会 session_shutdown → 官方 mcp 扩展关连接、旧 runner 被废弃（见后端注释）
+	const activeId = useSessionsStore((s) => s.activeSessionId);
+	const running = useTranscriptStore((s) =>
+		activeId ? selectTranscript(s, activeId).phase === "streaming" : false,
+	);
 	const [editing, setEditing] = useState(false);
 	const [form, setForm] = useState<ServerForm | null>(null);
 	const [confirmRemove, setConfirmRemove] = useState(false);
@@ -126,7 +132,13 @@ function ServerRow({ server }: { server: McpServerView }) {
 						{t("settings.mcp.makeDeferred")}
 					</button>
 				)}
-				<button type="button" className={ghostButton} onClick={() => void reload(currentCwd())}>
+				<button
+					type="button"
+					className={`${ghostButton} whitespace-nowrap`}
+					disabled={running}
+					title={running ? t("settings.mcp.reconnectRunning") : undefined}
+					onClick={() => void reload(currentCwd())}
+				>
 					{t("settings.mcp.reconnect")}
 				</button>
 				<button type="button" className={`${ghostButton} whitespace-nowrap`} onClick={startEdit}>
@@ -345,7 +357,7 @@ function Section({ title, servers }: { title: string; servers: McpServerView[] }
 /** MCP 设置面板：mcp.json 的增删改 + 运行态工具集（连接与 ${VAR} 展开都交给官方内置 mcp 扩展） */
 export function McpPanel() {
 	const t = useT();
-	const { config, loading, load, applyToolsChanged } = useMcpStore();
+	const { config, loading, load, applyToolsChanged, lastReload } = useMcpStore();
 	const sessions = useSessionsStore((s) => s.sessions);
 	const activeSessionId = useSessionsStore((s) => s.activeSessionId);
 	const cwd = sessions.find((s) => s.sessionId === activeSessionId)?.cwd;
@@ -405,6 +417,16 @@ export function McpPanel() {
 				<AddServer />
 				<span className="text-[11px] text-ink-faint">{t("settings.mcp.reconnectHint")}</span>
 			</div>
+			{lastReload && (
+				<p className="mt-2 text-[11px] text-ink-faint">
+					{lastReload.skipped.length === 0
+						? t("settings.mcp.reloadApplied", { count: lastReload.reloaded })
+						: t("settings.mcp.reloadSkipped", {
+								count: lastReload.skipped.length,
+								reloaded: lastReload.reloaded,
+							})}
+				</p>
+			)}
 		</div>
 	);
 }

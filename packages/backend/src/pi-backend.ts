@@ -34,6 +34,8 @@ import type {
 	LoadedResources,
 	LoginEventPayload,
 	McpConfigListResult,
+	McpMutationResult,
+	McpReloadReport,
 	McpToolsChangedPayload,
 	McpUpsertInput,
 	PermissionAnswer,
@@ -1184,26 +1186,26 @@ export class PiBackend {
 		});
 	}
 
-	/** 新增/编辑一个 MCP server；写盘后 reload 受影响会话，让官方扩展重读配置 */
-	async upsertMcpServer(input: McpUpsertInput): Promise<McpConfigListResult> {
+	/** 新增/编辑一个 MCP server；写盘后 reload 空闲会话（运行中的跳过并回报，见 reloadSessionsForCwd） */
+	async upsertMcpServer(input: McpUpsertInput): Promise<McpMutationResult> {
 		const cwd = input.cwd ?? this.options.defaultCwd;
 		const projectTrusted = this.isProjectTrusted(cwd);
-		const result = await upsertMcpServer(
+		const config = await upsertMcpServer(
 			{ ...input, cwd },
 			{ projectTrusted, toolsByServer: this.mcpToolsMap() },
 		);
-		await this.reloadSessionsForCwd(input.scope === "project" ? cwd : undefined);
-		return result;
+		const reload = await this.reloadSessionsForCwd(input.scope === "project" ? cwd : undefined);
+		return { config, reload };
 	}
 
 	/**
 	 * 重连（面板入口）：reload 会话 → 官方 mcp 扩展重读 mcp.json、重连 server。
 	 * 对应官方 `/mcp` 的 reconnect；连接失败/需要登录一律以官方 notify 文本呈现（面板不自己解析）。
 	 */
-	async reloadMcpServers(input: { cwd?: string } = {}): Promise<McpConfigListResult> {
+	async reloadMcpServers(input: { cwd?: string } = {}): Promise<McpMutationResult> {
 		const cwd = input.cwd ?? this.options.defaultCwd;
-		await this.reloadSessionsForCwd(undefined); // 全局配置影响所有会话；项目级配置 cwd 过滤留给未来细分
-		return this.getMcpConfig({ cwd });
+		const reload = await this.reloadSessionsForCwd(undefined); // 全局配置影响所有会话
+		return { config: await this.getMcpConfig({ cwd }), reload };
 	}
 
 	/** 删除一个 MCP server（写盘后 reload） */
@@ -1211,11 +1213,11 @@ export class PiBackend {
 		scope: "user" | "project";
 		cwd?: string;
 		name: string;
-	}): Promise<McpConfigListResult> {
+	}): Promise<McpMutationResult> {
 		const cwd = input.cwd ?? this.options.defaultCwd;
 		await removeMcpServer({ ...input, cwd });
-		await this.reloadSessionsForCwd(input.scope === "project" ? cwd : undefined);
-		return this.getMcpConfig({ cwd });
+		const reload = await this.reloadSessionsForCwd(input.scope === "project" ? cwd : undefined);
+		return { config: await this.getMcpConfig({ cwd }), reload };
 	}
 
 	/**
@@ -1235,16 +1237,34 @@ export class PiBackend {
 	/**
 	 * mcp.json 变更后重载会话：官方 mcp 扩展在 `session_start`/reload 时读配置，不 reload 看不到新 server。
 	 * `cwd` 给定 = 只重载该项目下的会话（项目级配置只影响它们）；缺省 = 全局配置，重载全部。
+	 *
+	 * ❗**必须跳过运行中的会话**：`AgentSession.reload()` 内部既没有 `isStreaming` 守卫也不 abort
+	 * 在跑的 turn，却会 `emitSessionShutdown` —— 官方 mcp 扩展收到就关掉全部连接、旧 runner 被
+	 * invalidate。用户在别的会话跑长任务时顺手改一下 MCP 配置，就会静默打断那个任务
+	 * （失败还被 catch 吞掉 → 用户视角"点了没反应"）。跳过并把名单回给 UI（空闲后生效）。
+	 * 与 `forkSession` 用的同一把守卫。
 	 */
-	private async reloadSessionsForCwd(cwd: string | undefined): Promise<void> {
+	private async reloadSessionsForCwd(cwd: string | undefined): Promise<McpReloadReport> {
+		const skipped: McpReloadReport["skipped"] = [];
+		let reloaded = 0;
 		for (const entry of this.registry.list()) {
 			if (cwd && entry.cwd !== cwd) continue;
+			const { isStreaming, isCompacting } = entry.session;
+			if (isStreaming || isCompacting) {
+				skipped.push({
+					sessionId: entry.session.sessionId,
+					reason: isStreaming ? "streaming" : "compacting",
+				});
+				continue;
+			}
 			try {
 				await entry.session.reload();
+				reloaded++;
 			} catch (err) {
 				log.warn("session reload failed", entry.session.sessionId, err);
 			}
 		}
+		return { reloaded, skipped };
 	}
 
 	/** 扩展对话框请求/结算/通知/草稿预填订阅（main 进程转发 renderer 用） */

@@ -1,5 +1,6 @@
 import type {
 	McpConfigListResult,
+	McpReloadReport,
 	McpServerView,
 	McpToolsChangedPayload,
 	McpUpsertInput,
@@ -14,6 +15,8 @@ interface McpStore {
 	loading: boolean;
 	/** 运行态「server → 工具名」快照（由 mcp.tools:changed 事件维护，初次打开时为空） */
 	toolsByServer: Record<string, string[]>;
+	/** 最近一次写盘/重连的 reload 结果（面板据此提示「已重连」或「运行中的会话空闲后生效」） */
+	lastReload: McpReloadReport | null;
 	load: (cwd?: string) => Promise<void>;
 	upsert: (input: McpUpsertInput) => Promise<void>;
 	remove: (input: { scope: "user" | "project"; cwd?: string; name: string }) => Promise<void>;
@@ -37,6 +40,7 @@ export const useMcpStore = create<McpStore>((set, get) => ({
 	config: null,
 	loading: false,
 	toolsByServer: {},
+	lastReload: null,
 
 	load: async (cwd) => {
 		set({ loading: true });
@@ -51,18 +55,18 @@ export const useMcpStore = create<McpStore>((set, get) => ({
 	},
 
 	upsert: async (input) => {
-		const config = await getPi().mcpConfigUpsert(input);
-		set({ config: mergeTools(config, get().toolsByServer) });
+		const { config, reload } = await getPi().mcpConfigUpsert(input);
+		set({ config: mergeTools(config, get().toolsByServer), lastReload: reload });
 	},
 
 	remove: async (input) => {
-		const config = await getPi().mcpConfigRemove(input);
-		set({ config: mergeTools(config, get().toolsByServer) });
+		const { config, reload } = await getPi().mcpConfigRemove(input);
+		set({ config: mergeTools(config, get().toolsByServer), lastReload: reload });
 	},
 
 	reload: async (cwd) => {
-		const config = await getPi().mcpConfigReload({ cwd });
-		set({ config: mergeTools(config, get().toolsByServer) });
+		const { config, reload } = await getPi().mcpConfigReload({ cwd });
+		set({ config: mergeTools(config, get().toolsByServer), lastReload: reload });
 	},
 
 	applyToolsChanged: ({ servers }) => {
