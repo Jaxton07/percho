@@ -7,7 +7,7 @@
 ## 硬约束（改代码前必知）
 
 - renderer 绝不 import pi 包，只经 `window.pi`（preload）通信
-- `packages/backend/src/pi-backend.ts` 是唯一 import pi SDK 的地方（钉 0.84.3）
+- `packages/backend/src/pi-backend.ts` 是唯一 import pi SDK 的地方（钉 1.0.4）
 - 新增 IPC：通道进 `shared/src/ipc-channels.ts` 对应域子表（key=方法名，args/ret 类型随表）→ 域文件 `registerInvokeHandlers` 一行 handler → preload/main 自动接线（事件通道仍在 EVENT_CHANNELS 手写段）；事件转发在 `main/ipc/index.ts`
 - preload 必须保持 CJS（sandbox 限制，见 PITFALLS）
 - 新增 UI 文案：`i18n/zh.ts` + `en.ts` 双字典都要加
@@ -30,6 +30,7 @@ packages/
 | 脚本 | 用途 |
 |---|---|
 | `scripts/smoke-backend.mts` | 真实 SDK 冒烟（需 `AI_OPS_API_KEY`） |
+| `scripts/smoke-sdk-1.0.mts` | **SDK 升级事实核对冒烟（零凭证、零网络）**：9 条断言钉住 1.0.4 的能力面（版本按 `import.meta.resolve` 判，**不要用 `mod.VERSION`**——打包态它读 `PI_PACKAGE_DIR` 的 pi-package 版本），含三个内置扩展工厂 / `findById` / quickjs-wasm / `refreshContext` / azure 改名 / 内置 provider 数。升 SDK 后先跑它 |
 | `scripts/smoke-error-events.mts` | 报错系统冒烟：本地 HTTP 伪造 provider（401/429）驱动 PiBackend，零凭证离线 |
 | `scripts/smoke-subagent.mts` | subagent 冒烟 |
 | `scripts/smoke-evaporation-ui.mjs` | 蒸发设置二态 CDP 冒烟（dev 实例带 `--remote-debugging-port=9224` 运行后执行） |
@@ -254,7 +255,7 @@ src/
 | 逐工具权限规则 | `backend/src/permissions/`（求值链在 extension.ts：deny → 临时区 → 多根边界读写分离 → 项目记忆 → ask）+ `project/workspace-store.ts`；enabled=false 只能手改 permissions.json（UI 无入口的逃生舱）；设置页工作区根管理 UI 未实现，手改 workspaces.json |
 | 项目信任 | backend `project/trust.ts` + `trust-loader.ts`；触发点 `stores/sessions.ts`（activateNewSessionDraft/setDraftCwd）与 `stores/projects.ts`（addProject）；弹窗 `session/TrustDialog.tsx` |
 | 日常空间（非项目闲聊维度） | main `daily.ts`（目录）+ IPC `app:getDailyDir` → renderer `lib/daily.ts`（缓存/判定）；侧栏钉顶分组 `components/sidebar/*`（`lib/sidebar-groups.ts` 里 `isDailyCwd` 的会话归「日常」组，label 取 i18n `projects.daily`）；隔离 = `stores/projects.ts` deriveProjects 过滤 + deleteProject 守卫（有 projects.test.ts）；空态 chip `session/ProjectBranchPicker.tsx`（下拉钉顶「日常」项，新会话页可在 日常 ↔ 项目 双向切换）；胶囊咖啡头像 `SessionTabBar.tsx`（余态白底黑字，状态色优先）；设计稿 `.local/design/ux/daily-space/` |
-| 会话分叉 / 撤回 | backend `forkSession`/`recallMessage`（目标解析在 session/messages.ts；**agent 运行或压缩期间均拒绝**）；renderer `stores/sessions.ts`（fork 新 tab 打开并返回新 sessionId；recall 草稿回填 + COMPOSER_FOCUS_EVENT）+ `chat/message-actions.tsx`（ForkButton 挂轮次末段正文/RecallButton 挂用户气泡，运行/压缩期间禁用） |
+| 会话分叉 / 撤回 | backend `forkSession`/`recallMessage`（目标解析在 session/messages.ts；**agent 运行或压缩期间均拒绝**；撤回走 SDK `navigateTree`，仅「悬挂的用户消息」那个分支手动回退 leaf，**必须补 `session.refreshContext()`**——navigateTree 末尾会自己刷，绕过它就得自己刷，见 PITFALLS）；renderer `stores/sessions.ts`（fork 新 tab 打开并返回新 sessionId；recall 草稿回填 + COMPOSER_FOCUS_EVENT）+ `chat/message-actions.tsx`（ForkButton 挂轮次末段正文/RecallButton 挂用户气泡，运行/压缩期间禁用） |
 | 对话区选中引用 / 引用胶囊 | 弹出菜单 `chat/SelectionToolbar.tsx`（selectionchange 缓存 + mouseup 显示；菜单 onMouseDown preventDefault 保选区；readOnly 不弹，busy 禁 fork）→ 草稿 `quotes: string[]`；胶囊 `composer/QuoteChip.tsx`；发送拼接 `composer/quote.ts`（buildQuoteBlock 置最前 blockquote）；「新会话继续」= forkSession 末条 assistant（entryId 优先/sourceText 兑底）→ 写新会话页输入区（`__new__` 草稿） |
 | 长会话渲染性能（切会话卡顿 / 首屏挂载量） | 窗口策略 `chat/mount-window.ts`（纯函数 + 测试；常量在 `chat/MessageList.tsx`）；**补挂的视口锚定交给浏览器滚动锚定**（容器 `overflow-anchor` 保持默认，别加 `none`），手写补偿只兜底 `scrollTop === 0` 时浏览器不锚定的情况（按旧首行视口位置漂移补差）；工具卡溢出测量调度器在 `chat/ToolCallCard.tsx`（共享测量队列 + 共享 ResizeObserver）。背景与实测数字见 PITFALLS「长会话切会话卡顿」（含 0.5.7 上滑被拽回底部那次二次修复） |
 | todo 面板 + compaction 恢复 | 工具 `tools/todo.ts` + 恢复注入 `tools/todo-reminder.ts` + 读取 `getTodos`；UI `chat/TodoPanel.tsx` + `stores/ui.ts` todoExpanded；reducer 提取 `tool_execution_end`；打开会话恢复 = loadSessionBundle 后 loadTodos |

@@ -14,6 +14,9 @@
 | 比像素核验视觉时取样偏了、以为改动没生效 | 四 · CDP `clip.scale` 再乘一次 DPR（2026-09-29） |
 | 改了滚动条宽度但截图里看不到，以为没生效 | 四 · CDP 截图不绘制滚动条，只能力槽宽（2026-09-29） |
 | 扩展注册的工具模型用不了、模型说「工具列表为 none」 | 二 · createAgentSession tools 白名单 |
+| 升 SDK 后 `tsc` 全绿但测试红、只红一两条 | 二 · SDK 升级 0.84.3 → 1.0.4：typecheck 全绿 ≠ 无行为变化（2026-10-06） |
+| 要判断「会话落盘了没」/ 新建未发消息的会话改名 | 二 · 同上（`sessionFile` 路径先行、文件延迟落盘） |
+| 撤回后上下文还带着被撤回的消息 / 消息数不变 | 二 · 同上（手写 `agent.state.messages` 已无效；手动回退 leaf 要补 `refreshContext()`） |
 | 设置页永久 Loading、模型列表为空 | 二 · runtime.refresh 网络挂起 / getAvailable 返回空 |
 | 权限 confirm 弹窗不生效 | 二 · bindExtensions 注入点 |
 | preload 加载失败（sandbox 下 require is not defined） | 三 · preload 必须 CJS |
@@ -206,6 +209,46 @@ LAN 页重连/中途进入时，快照种子经 `messagesToUIMessages` 重建—
 根因：`statSync(file).birthtimeMs` 被当成 `createdAt` 用。birthtime 是**文件诞生时间**，copy/restore 就变，跟会话本身没关系；而 SDK 自己用的是 session header 的 `timestamp`（`buildSessionInfo()`：`created = header.timestamp`、`modified = user/assistant 消息最大活动时间`）。
 
 对策：活跃会话的时间字段只从**会话内容**取（header + entries，见 `backend/src/session/meta.ts`），`stat`/`Date.now()` 只在 header 读不出来时兜底，且**兜底也优先 mtime 而不是 birthtime**。自己实现枚举时，`custom`/`toolResult` 类 entry 一律不算活动——否则 channel cursor 之类的扩展写入会把会话顶到最前。
+
+### SDK 升级 0.84.3 → 1.0.4：typecheck 全绿 ≠ 无行为变化（2026-10-06，pi-sdk-1.0-upgrade）
+
+症状：依赖升到 1.0.4 后 `tsc` 零报错（`pi-backend.ts` 里的调用一行没改也编得过），但 `npm run test` 有两
+条红（`backend/test/compaction-image.test.ts`，`expected ["string"] to deeply equal ["text"]`）。升 SDK 时
+「编译过 = 没事」不成立，必须跑全量测试 + 手测。
+
+三条静默行为变化（都在类型上不报错）：
+
+1. **compaction 摘要请求的 context 形状变了**：`buildSummarizationContext()` 走新的 `normalizeContext()`，
+   `systemPrompt` 被归一成 `messages[0]` 的 `role:"system"` 消息、content 是**纯字符串**（0.84.3 是独立的
+   `systemPrompt` 字段，messages 里只有 block 数组的 user 消息）。断言「每条 message 的 content 都是 text
+   block 数组」的测试因此红。→ 按「纯文本」语义断言：content 是字符串 或 只含 text block 的数组，
+   且任何 image block 都判回归。
+2. **`context` 钩子的 wire 从此不含 system 消息**：1.0.4 在调 handler 前 `filter(m => m.role !== "system")`、
+   返回时 `restoreSystemMessages()` 复原（`core/extensions/runner.js` 的 `emitContext`）；0.84.3 是直接透传。
+   **但对我们的蒸发无影响**：`extractMessageParts()` 对 `role:"system"` 一直返回 `[]`，system 从来没进过
+   part/cum → offset 口径（`usage − wire 估算`）自动补偿，不需要改代码。
+   对拍证据：同一 20 个会话样本，`scripts/replay-evaporation.mts --core`（仓库内实现）与其内置基线
+   **逐字节一致**（`diff -r out-baseline out-core`）。
+3. **`sessionFile` = 路径先行、文件内容延迟**：`SessionManager` 构造函数在 create 时就分配好路径，但
+   **文件要等首条 user/assistant 消息才写**（`_hasConversation()` 门控 `_persist`）。所以 `sessionFile` 有值
+   ≠ 已落盘，判断落盘一律用 `existsSync`（`tools/subagent/runner.ts` 的 jsonlPath 就是这么做的）。
+   逆命题同样重要：**新建未发消息的会话改名是合法操作**（`appendSessionInfo` 写内存，首条消息落盘时
+   一起写入，不丢名）——不要加 `if (!sessionFile) throw` 这种「尚未落盘」拦截，会给正常路径加假错误。
+
+另两条升级期踩到的：
+
+- **版本号不能用 `mod.VERSION` 判**：SDK 的 `VERSION = getPackageDir()/package.json` 的 version，而 `getPackageDir()`
+  **优先读环境变量 `PI_PACKAGE_DIR`**。Percho 打包态把它指到 app 内的 pi-package 镜像，且这个变量会
+  **被在 Percho 会话里跑的子进程继承**——所以在 Percho 里跑 `npx tsx …`，`mod.VERSION` 报的是随包分发的
+  pi-package 版本（如 0.84.3），与 `node_modules` 里真正 resolve 到的 SDK（1.0.4）无关。
+  要判版本用 `import.meta.resolve("@earendil-works/pi-coding-agent")` 再往上找 package.json
+  （`scripts/smoke-sdk-1.0.mts` 断言 1）。该包 exports 只有 `import` 条件，`createRequire(...).resolve`
+  会直接 `ERR_PACKAGE_PATH_NOT_EXPORTED`。
+- **手写 `agent.state.messages` 已彻底无效**：1.0.4 的请求上下文由 `buildSessionProjection()` 在
+  `prepareRequest` 里逐次重建；`agent.state.messages` 只是个「公开 transcript」缓存（`_refreshFinalizedContext()`
+  写它）。撤回（`recallMessage`）里那个绕过 `navigateTree` 的**悬挂用户消息分支**必须自己补
+  `session.refreshContext()`——`navigateTree` 末尾内部会刷，不刷则 `session.messages`（UI 的 messageCount、
+  `_findLastAssistantMessage()` 驱动的 compaction 判定）停在撤回前 = 幽灵消息。
 
 ## 三、构建 · 打包 · 环境
 

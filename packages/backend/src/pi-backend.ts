@@ -681,7 +681,9 @@ export class PiBackend {
 		// sending 状态被占住，运行中的 followUp 排队发送被防重发守卫静默拦截。
 		// preflight 前抛错（无模型/无 key/compaction 中）照常 reject 传给渲染端；
 		// ack 之后 run 期错误不再回传（走事件流呈现），then 的 reject 在已 resolve 后为 no-op。
-		// preflightResult(false) 只在 SDK catch 里紧随 throw 触发，不据此 reject，真实错误经 throw 传递。
+		// 1.0.4 契约：disposition ∈ "handled" | "queued" | "started"，三者都是「已受理」→ 全部 resolve；
+		// **被拒时 SDK 不再回调**（0.84.3 的 preflightResult(false) 已删），真实错误只经下面的 reject 回传。
+		// 三种 disposition 不往 IPC 传：渲染端的「已排队」区分靠 queue_update 事件，传个无人消费的值只是死契约。
 		await new Promise<void>((resolve, reject) => {
 			entry.session
 				.prompt(text, {
@@ -693,8 +695,13 @@ export class PiBackend {
 						data: image.data,
 						mimeType: image.mimeType,
 					})),
-					preflightResult: (ok) => {
-						if (ok) resolve();
+					preflightResult: (disposition) => {
+						switch (disposition) {
+							case "handled": // 扩展命令已就地处理，本轮不会再有模型响应
+							case "queued": // steer/followUp 已入队
+							case "started": // 正常开跑
+								resolve();
+						}
 					},
 				})
 				.then(
@@ -867,6 +874,8 @@ export class PiBackend {
 		const entry = this.registry.get(sessionId);
 		if (entry) {
 			if (entry.readOnly) throw new Error("Session is read-only (subagent transcript)");
+			// 新建未发消息的会话改名**是合法操作**：sessionFile（路径）建会话时就有，SDK 把 session_info
+			// 追加进内存 fileEntries，首条 user 消息落盘时一起写入（不丢名）。所以这里不加 !sessionFile 拦。
 			entry.session.setSessionName(name);
 			return;
 		}
@@ -874,6 +883,7 @@ export class PiBackend {
 		const meta = (await this.listAllSessions()).find((s) => s.sessionId === sessionId);
 		if (!meta) throw new Error(`Session not found: ${sessionId}`);
 		if (meta.readOnly) throw new Error("Session is read-only (subagent transcript)");
+		// 磁盘枚举出来的项必有路径（info.path）；纯防御分支
 		if (!meta.sessionFile) throw new Error(`Session has no file: ${sessionId}`);
 		renameSessionFile(meta.sessionFile, name);
 	}
@@ -985,10 +995,16 @@ export class PiBackend {
 		const images = blockImages(message.content);
 		if (sm.getLeafId() === targetId) {
 			// 悬挂的用户消息（发出后无任何回复，entry 即当前 leaf）：navigateTree 视为 no-op，
-			// 手动回退 leaf 并同步内存上下文（与 navigateTree 内部做的事一致）
+			// 手动回退 leaf。
+			// 1.0.4 起不要再手写 `agent.state.messages = sm.buildSessionContext().messages`：
+			// 请求上下文由 SessionManager 投影在 prepareRequest 里逐次重建（SDK 内部 _refreshFinalizedContext 收尾）。
 			if (target.parentId) sm.branch(target.parentId);
 			else sm.resetLeaf();
-			entry.session.agent.state.messages = sm.buildSessionContext().messages;
+			// 但这条分支绕过了 navigateTree 的收尾（navigateTree 末尾会 _refreshFinalizedContext），
+			// 不刷新会让 session.messages（= agent.state.messages）停在撤回前：下一轮 prompt 的
+			// compaction 判定（_findLastAssistantMessage）与 UI 的 messageCount 会读到幽灵消息。
+			// 用官方公开原语刷新（与 navigateTree 内部同一件事）。
+			entry.session.refreshContext();
 		} else {
 			const result = await entry.session.navigateTree(targetId);
 			if (result.cancelled) throw new Error("Recall was cancelled by an extension");

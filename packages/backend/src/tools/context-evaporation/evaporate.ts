@@ -529,7 +529,9 @@ export interface EvapCallContext {
 	/** 真实 usage（getContextUsage().tokens）；null → 内部估算兜底（compaction 后首轮等）。
 	 *  真实 usage 与 wire 文本估算的差值（system prompt + 工具 schema + 估算器偏差）
 	 *  作为 offset 锚定批停机尺度：usage 驱动触发，批处理目标按「wire 估算 + offset」
-	 *  投影后续 usage（蒸发 savings ≈ 1:1 体现到 usage）。null 时 offset = 0（replay 语义） */
+	 *  投影后续 usage（蒸发 savings ≈ 1:1 体现到 usage）。null 时 offset = 0（replay 语义）
+	 *  注：1.0.4 起 SDK 在调 context 钩子前就过滤掉 system 消息（返回值再复原），
+	 *  所以 wire 本来就是对话消息子集（单测锁定：带不带 system 决策逐字一致）。 */
 	usageTokens: number | null;
 }
 

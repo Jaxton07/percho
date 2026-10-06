@@ -40,7 +40,12 @@ function makeBackend(session: Partial<AgentSession> = {}): PiBackend {
 	const backend = new PiBackend({ projectTrust: false, permissionGates: false });
 	const registry = (backend as unknown as { registry: SessionRegistry }).registry;
 	registry.add({
-		session: { sessionId: "active-1", setSessionName: () => {}, ...session } as unknown as AgentSession,
+		session: {
+			sessionId: "active-1",
+			setSessionName: () => {},
+			sessionFile,
+			...session,
+		} as unknown as AgentSession,
 		unsubscribe: () => {},
 		cwd: "/tmp/project",
 	});
@@ -114,5 +119,26 @@ describe("PiBackend.setSessionName 分支", () => {
 		vi.spyOn(backend, "listAllSessions").mockResolvedValue([meta({ readOnly: true })]);
 
 		await expect(backend.setSessionName("hist-1", "x")).rejects.toThrow("read-only");
+	});
+
+	// 新建未发消息的会话：sessionFile（路径）建会话时就有，SDK 把 session_info 写内存、
+	// 首条消息落盘时一起写入 → 改名是合法操作，不得因 sessionFile 为空而拦（手测 1c/1d 实测）
+	it("活跃会话 sessionFile 缺失（内存 manager）也走 SDK 改名，不做落盘前置拦", async () => {
+		const setSessionName = vi.fn();
+		const backend = makeBackend({
+			sessionFile: undefined,
+			setSessionName,
+		} as unknown as Partial<AgentSession>);
+
+		await backend.setSessionName("active-1", "x");
+
+		expect(setSessionName).toHaveBeenCalledWith("x");
+	});
+
+	it("历史元信息缺文件路径（磁盘枚举不会出现）→ 保留防御性报错", async () => {
+		const backend = makeBackend();
+		vi.spyOn(backend, "listAllSessions").mockResolvedValue([meta({ sessionFile: undefined })]);
+
+		await expect(backend.setSessionName("hist-1", "x")).rejects.toThrow("has no file");
 	});
 });

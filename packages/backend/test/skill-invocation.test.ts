@@ -87,7 +87,8 @@ describe("PiBackend skill recall", () => {
 				isStreaming: false,
 				isCompacting: false,
 				sessionManager,
-				agent: { state: {} },
+				// 悬挂分支手动回退 leaf 后用官方原语刷新公开 transcript（见 PiBackend.recallMessage）
+				refreshContext: () => {},
 			} as never,
 			unsubscribe: () => {},
 			cwd: "/tmp",
