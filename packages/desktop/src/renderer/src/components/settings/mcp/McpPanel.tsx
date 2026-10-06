@@ -57,18 +57,28 @@ function Group({ title, path, children }: { title: string; path?: string; childr
 	);
 }
 
-/** 当前活跃项目的 cwd（项目级配置写这里） */
-function useActiveCwd(): string | undefined {
-	const sessions = useSessionsStore((s) => s.sessions);
-	const activeSessionId = useSessionsStore((s) => s.activeSessionId);
-	return sessions.find((s) => s.sessionId === activeSessionId)?.cwd;
+/**
+ * 项目上下文：读 sessions store 的 `cwd`（切会话 / 选项目时由 store 维护，与左栏 activeCwd 同一事实源）。
+ *
+ * 先前是「在 sessions 列表里按 activeSessionId 找 cwd」，但列表是异步加载的子集：刚打开会话、
+ * 列表还没跟上时找不到那条 → cwd 为 undefined → 面板误报「当前没有打开的会话」（实测踩过）。
+ * 这里分两个概念：配置读写用 `cwd`；运行态（连接/工具清单）靠会话上报，用 `hasSession` 判断。
+ */
+function useProjectCwd(): string | undefined {
+	return useSessionsStore((s) => s.cwd ?? undefined);
+}
+
+/** 是否有活跃会话（运行态报告来源）：draft 新会话页为 null */
+function useHasActiveSession(): boolean {
+	return useSessionsStore((s) => s.activeSessionId !== null);
 }
 
 /** MCP 设置面板：mcp.json 的增删改 + 运行态（连接/工具/失效原因）。连接与授权都交给官方内置 mcp 扩展 */
 export function McpPanel() {
 	const t = useT();
 	const { config, loading, load, notice, lastReload, applyServersChanged } = useMcpStore();
-	const cwd = useActiveCwd();
+	const cwd = useProjectCwd();
+	const hasSession = useHasActiveSession();
 	/** 二级页面（不是浮层）：列表 ↔ 添加/编辑/粘贴 JSON —— 返回按钮在左上角 */
 	const [view, setView] = useState<
 		{ mode: "add" } | { mode: "edit"; server: McpServerView } | { mode: "paste" } | null
@@ -239,7 +249,9 @@ export function McpPanel() {
 					{config && !config.projectTrusted && config.projectPath && (
 						<p className="px-2.5 text-[11px] text-ink-faint">{t("settings.mcp.projectUntrusted")}</p>
 					)}
-					{!cwd && <p className="px-2.5 text-[11px] text-ink-faint">{t("settings.mcp.noActiveSession")}</p>}
+					{!hasSession && (
+						<p className="px-2.5 text-[11px] text-ink-faint">{t("settings.mcp.noActiveSession")}</p>
+					)}
 				</div>
 			)}
 

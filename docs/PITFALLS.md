@@ -12,6 +12,7 @@
 | 流式期间白屏、`error #185`、无限重渲染整树卸载 | 一 · 0.5.0 白屏事故；四 · Zustand selector（#185 另一成因） |
 | 点击对话里的相对文件链接后白屏 | 四 · Markdown 相对链接会导航 app 主窗口（2026-09-23） |
 | 比像素核验视觉时取样偏了、以为改动没生效 | 四 · CDP `clip.scale` 再乘一次 DPR（2026-09-29） |
+| 弹窗蒙层只盖住一列 / 卡片被左栏「吃掉」半边 / 测量位置却是对的 | 四 · `.edge-fade` 的 mask 把 fixed 浮层的绘制裁在容器盒里（2026-10-06） |
 | 改了滚动条宽度但截图里看不到，以为没生效 | 四 · CDP 截图不绘制滚动条，只能力槽宽（2026-09-29） |
 | 扩展注册的工具模型用不了、模型说「工具列表为 none」 | 二 · createAgentSession tools 白名单 |
 | 升 SDK 后 `tsc` 全绿但测试红、只红一两条 | 二 · SDK 升级 0.84.3 → 1.0.4：typecheck 全绿 ≠ 无行为变化（2026-10-06） |
@@ -401,6 +402,32 @@ pi SDK 必须声明进 `packages/desktop/package.json` dependencies（electron-b
 比像素做视觉核验（强度/亮度/对齐）时踩过：`clip: { width: 300, height: 112, scale: 2 }` 在本机（DPR 2）拿到的是 **1200×448**，即 4x——按 2x 反推 CSS 坐标会让取样带整体偏移，看上去像"遮罩没生效"。要么统一 `scale: 1`（输出 = 2x，CSS 像素 × 2），要么把换算写成 `clip × scale × devicePixelRatio` 并断言一次实际尺寸。
 
 顺带一条可比对的核验手法：**同一滚动位置、同一 clip，只切被测属性（如 `dataset.fadeTop` 置 false），逐行取均值比亮度差**——比人眼看截图可靠（实测淡出带内 +24.9，带外 +0.0）。
+
+### `.edge-fade` 的 mask 会把容器内 fixed 浮层的绘制裁在容器盒里（2026-10-06，设置弹窗登录框事故）
+
+**症状**（用户报的）：设置 → 模型 → 点某 provider 的「登录」，登录弹窗只显示右半边（左边被设置弹窗的左导航「遮住」），
+而且**蒙层只盖住右侧内容列**——设置顶栏、左侧导航都不跟着变暗。
+最迷惑的是：`getBoundingClientRect()` 量出来蒙层 **= 整个视口**（0,0,innerWidth,innerHeight），`position:fixed` 也没跑偏。
+
+**根因**：要理解 mask 的作用域 —— **mask 作用于元素及其整个绘制子树**，且蒙版图像只覆盖该元素自己的盒子；
+元素盒子之外的绘制一律被 mask 掉（等于被裁）。设置弹窗右列这次加上了滚动边界淡出（`.edge-fade` + `use-edge-fade`），
+滚动时容器带上 `mask-image: linear-gradient(...)`；而 `LoginDialog` 是挂在 `ProvidersPanel` 里的
+`fixed inset-0` 蒙层 —— 铺满视口的矩形，**只有落在容器盒内的那部分画得出来**：
+右列那一块 = 蒙层（所以只有它变暗），卡片超出容器盒的左半边 = 直接被裁掉，露出下面不透明（未被 mask）的左导航。
+注意与 `filter` / `transform` 的差别：那两者会成为 fixed 的**包含块**（rect 就错了），mask 不改包含块，**rect 是对的、只有像素不对**。
+
+**修复**：fixed 浮层一律 `createPortal(..., document.body)`（本项目既有约定：ConfirmDialog / ContextMenu /
+RenamePopover / ImagePreview 都是这么做的，`LoginDialog` 漏了）。z-index 上 `z-[60] > 设置弹窗 z-40` 也对上了。
+
+**两道免复发的守卫**（`.local/tmp/check-settings-chrome.mjs`，改前跑会红、改后绿）：
+
+1. **结构不变量**：任何 `getComputedStyle(el).maskImage !== "none"` 的 `.edge-fade` 容器内，
+   不得存在 `position: fixed` 后代（改前 `fixedCount=1` 精确点名了那个蒙层）；
+2. **像素断言**：开/关登录弹窗各截一张全窗图，采样「设置顶栏」与「左导航」两点，亮度都必须变暗
+   （改前 Δ=0/0 —— 蒙层根本没盖到；改后 Δ=-37/-46）。
+
+**连带教训**：写这类像素对比脚本前，先关掉上一次跑残留的浮层（弹出的框会一直留着并串进本次截图，
+我曾据此误判过一次）；采样点用 `--points` 模式直接读像素，别靠肉眼看截图。
 
 ### Tailwind 4 的 `rotate-*` 走 CSS `rotate` 属性，不是 `transform`（2026-09-19）
 
