@@ -274,6 +274,13 @@ LAN 页重连/中途进入时，快照种子经 `messagesToUIMessages` 重建—
 
 ## 三、构建 · 打包 · 环境
 
+### 取证别用 `asar extract-file`：它把文件解到**当前工作目录**（2026-10-06）
+
+`npx asar extract-file <app.asar> <内部路径>` 会把那一个文件按 basename 丢在**当前 cwd** —— 在仓库里跑就会掉垃圾文件、
+还会让 `biome check` 多报一条 warning（实测：`packages/desktop/index-DKGAA7vc.js`，差点被当成漏提交）。
+**批量取证一律用 `npx asar extract <app.asar> .local/tmp/<dir>`**（整包解到临时目录，再 grep）。验包照旧按 AGENTS.md：
+`npm run build` 之后 `electron-builder`，再 `asar extract` + 按改动关键词 grep `out/renderer/assets/index-*.js`。
+
 ### electron-vite dev 主进程 watcher 不可依赖：改 `src/main/` 后必须验产物（2026-09-17 实测）
 
 症状：改了 `packages/desktop/src/main/` 下的文件（尝试过 `window.ts` 与新增的 `path-target.ts`），行为毫无变化——因为 `out/main/index.js` **根本没重建**（本会话早先同类型编辑又确实重建过，所以是「不可依赖」而不是「一定不工作」）。renderer 侧 HMR 正常（日志有 `hmr update`），只有主进程那一侧哑火。
