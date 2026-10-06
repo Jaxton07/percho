@@ -13,6 +13,22 @@ import { JsonStore } from "../json-store";
 /** 内置 provider id 集合：models.json 里配置的 ID 命中它 = 「覆写内置」（有官方模型列表可共享），否则是全新自定义 provider */
 const BUILTIN_PROVIDER_IDS = new Set(builtinProviders().map((p) => p.id));
 
+/**
+ * 1.0.4 内置 provider 改名的**读侧归一**：runtime id → 旧的 models.json 键。
+ * `azure-openai-responses` 在 1.0.4 改名为 `azure`（能力不变，官方 changelog）；
+ * 用户 models.json 里那位旧键的覆写条目若不一，就会从「覆写内置」变成孤儿自定义 provider
+ * （UI 提示错、基址不再被认作内置覆写）。**只在读侧归一**（判定 + 表单回填），
+ * 不主动改盘：用户下次编辑基址/表单时自然落到新 id，旧键随写路径清掉（见 removeCustomProvider
+ * / setProviderBaseUrl）。
+ */
+const LEGACY_PROVIDER_IDS: Record<string, string> = { azure: "azure-openai-responses" };
+
+/** 旧内置 id 不再允许作为**输入**（会造出孤儿重复 provider）：直接提示新 id */
+function assertNotLegacyProviderId(id: string): void {
+	const renamed = Object.entries(LEGACY_PROVIDER_IDS).find(([, legacy]) => legacy === id);
+	if (renamed) throw new Error(`${id} 已改名为 ${renamed[0]}（pi 1.0），请用新 ID`);
+}
+
 /** percho 表单管理的字段（用户输入决定，可被清空删除）；其余顶层字段（pi 手写的 apiKey/headers/compat 等）更新时保留，防编辑丢配置 */
 const MANAGED_PROVIDER_FIELDS = ["name", "baseUrl", "api", "models"] as const;
 
@@ -101,15 +117,22 @@ export class SettingsService {
 			.getProviders()
 			.map((provider) => {
 				const status = runtime.getProviderAuthStatus(provider.id);
-				const customEntry = customs[provider.id] as JsonObject | undefined;
+				// models.json 条目：优先当前 id，缺失时回看旧 id（1.0.4 改名的内置，见 LEGACY_PROVIDER_IDS）
+				const legacyId = LEGACY_PROVIDER_IDS[provider.id];
+				const entryKey = customIds.has(provider.id)
+					? provider.id
+					: legacyId && customIds.has(legacyId)
+						? legacyId
+						: undefined;
+				const customEntry = entryKey ? (customs[entryKey] as JsonObject | undefined) : undefined;
 				const modelMeta = this.customModelMeta(customEntry);
 				return {
 					id: provider.id,
 					name: provider.name || provider.id,
-					custom: customIds.has(provider.id),
+					custom: entryKey !== undefined,
 					// 覆写 = models.json 条目存在、有 baseUrl 且 id 为内置（仅填 key 不算覆写）；全新 id = 真自定义
 					overridesBuiltin:
-						(customIds.has(provider.id) &&
+						(entryKey !== undefined &&
 							typeof customEntry?.baseUrl === "string" &&
 							BUILTIN_PROVIDER_IDS.has(provider.id)) ||
 						undefined,
@@ -239,6 +262,7 @@ export class SettingsService {
 		const id = input.id.trim();
 		if (!id) throw new Error("Provider ID 不能为空");
 		if (!/^[a-z0-9][a-z0-9-_]*$/i.test(id)) throw new Error("Provider ID 只能包含字母、数字、-、_");
+		assertNotLegacyProviderId(id);
 
 		this.assertModelsMeaningful(
 			id,
@@ -269,6 +293,7 @@ export class SettingsService {
 	async updateCustomProvider(input: CustomProviderUpdateInput): Promise<void> {
 		const id = input.id.trim();
 		if (!id) throw new Error("Provider ID 不能为空");
+		assertNotLegacyProviderId(id);
 
 		this.assertModelsMeaningful(
 			id,
@@ -314,12 +339,15 @@ export class SettingsService {
 		}
 		await jsonStoreFor(this.modelsJsonPath).update((draft) => {
 			const providers = (draft.providers as JsonObject | undefined) ?? {};
-			const entry = providers[id] as JsonObject | undefined;
+			const legacyId = LEGACY_PROVIDER_IDS[id];
+			// 旧 id 条目当作本 provider 的现值读取，写入时归到新 id（编辑即迁移，不留孤儿）
+			const entry = (providers[id] ?? (legacyId ? providers[legacyId] : undefined)) as JsonObject | undefined;
 			if (trimmedBase) {
 				providers[id] = { ...entry, baseUrl: trimmedBase };
 			} else if (entry) {
 				delete providers[id];
 			}
+			if (legacyId) delete providers[legacyId];
 			draft.providers = providers;
 		});
 
@@ -334,15 +362,13 @@ export class SettingsService {
 	}
 
 	async removeCustomProvider(providerId: string): Promise<void> {
-		const data = await readJsonFile(this.modelsJsonPath);
-		const providers = (data.providers as JsonObject | undefined) ?? {};
-		if (providerId in providers) {
-			await jsonStoreFor(this.modelsJsonPath).update((draft) => {
-				const p = (draft.providers as JsonObject | undefined) ?? {};
-				delete p[providerId];
-				draft.providers = p;
-			});
-		}
+		const legacyId = LEGACY_PROVIDER_IDS[providerId];
+		await jsonStoreFor(this.modelsJsonPath).update((draft) => {
+			const p = (draft.providers as JsonObject | undefined) ?? {};
+			delete p[providerId];
+			if (legacyId) delete p[legacyId]; // 旧 id 条目一并清掉，不留孤儿
+			draft.providers = p;
+		});
 		const auth = await readJsonFile(this.authPath);
 		if (providerId in auth) {
 			await jsonStoreFor(this.authPath, 0o600).update((draft) => {

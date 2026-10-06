@@ -235,6 +235,17 @@ LAN 页重连/中途进入时，快照种子经 `messagesToUIMessages` 重建—
    逆命题同样重要：**新建未发消息的会话改名是合法操作**（`appendSessionInfo` 写内存，首条消息落盘时
    一起写入，不丢名）——不要加 `if (!sessionFile) throw` 这种「尚未落盘」拦截，会给正常路径加假错误。
 
+- **`replaceable` 不是万灵药（同名工具争抢的真相）**：`InlineExtension.replaceable: true` 只能表达「**我让位**」
+  （`omitReplacedExtensions`：若任何**非 replaceable** 扩展注册了同名工具，本扩展被整个略过），
+  没法表达「**我优先**」。而且同名工具归谁取决于**注册顺序：先注册者赢**，后注册的那个报
+  `Tool "x" conflicts with …` 进 `extensionsResult.errors`（会显示在扩展面板）；
+  而 inline 扩展恒排在盘上扩展**之后**（`loadFinalExtensionSet`: `[...盘上, ...inline]`）
+  ——所以「内置优先」档无法靠 inline 扩展实现，必须走 `customTools`（它在扩展工具**之后**合并，能赢）。
+  想让第三方同名工具让位，仍是 `customTools` 后写覆盖 + `setActiveToolsByName` 停用其家族工具。
+- **models.json 里任何 key 都是独立 provider 行**：内置 provider 改名（azure）后，用户盘上旧键
+  `azure-openai-responses` 仍会被 SDK 当**自定义 provider** 列出来（带着它的 baseUrl），不会自动合并；
+  所以 `SettingsService` 里做了读侧归一（旧键条目仍算「覆写内置」），但不主动改盘。
+
 另两条升级期踩到的：
 
 - **版本号不能用 `mod.VERSION` 判**：SDK 的 `VERSION = getPackageDir()/package.json` 的 version，而 `getPackageDir()`

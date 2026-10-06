@@ -1,4 +1,4 @@
-import type { AgentToolResult, ToolDefinition } from "@earendil-works/pi-coding-agent";
+import { type AgentToolResult, defineTool, type ToolDefinition } from "@earendil-works/pi-coding-agent";
 import { TODO_TOOL_NAME, type TodoItem } from "@percho/shared";
 import { Type } from "typebox";
 
@@ -50,7 +50,8 @@ const todoParams = Type.Object({
  * compaction 后由 todo-reminder 扩展自动重新注入。
  */
 export function makeTodoTool(): ToolDefinition<typeof todoParams> {
-	return {
+	// defineTool：官方 1.0.4 的类型收窄入口（execute 参数由 TParams 推导，不再靠上下文猜测）
+	return defineTool({
 		name: TODO_TOOL_NAME,
 		label: "Todo",
 		description:
@@ -72,5 +73,5 @@ export function makeTodoTool(): ToolDefinition<typeof todoParams> {
 				details: { todos },
 			};
 		},
-	};
+	});
 }

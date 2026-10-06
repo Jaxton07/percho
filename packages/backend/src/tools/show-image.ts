@@ -1,7 +1,7 @@
 import { readFile, stat } from "node:fs/promises";
 import { homedir } from "node:os";
 import { extname, isAbsolute, join, resolve } from "node:path";
-import type { AgentToolResult, ToolDefinition } from "@earendil-works/pi-coding-agent";
+import { type AgentToolResult, defineTool, type ToolDefinition } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
 
 /** 单图上限：details 里带 base64 会进 jsonl 与模型无关，但过大文件拖慢 IPC/渲染 */
@@ -57,7 +57,8 @@ export interface ShowImageDetails {
  * 模型要看图内容应使用 read 工具。
  */
 export function makeShowImageTool(): ToolDefinition<typeof showImageParams> {
-	return {
+	// defineTool：官方 1.0.4 的类型收窄入口（execute 参数由 TParams 推导）
+	return defineTool({
 		name: "show_image",
 		label: "Show Image",
 		description:
@@ -105,5 +106,5 @@ export function makeShowImageTool(): ToolDefinition<typeof showImageParams> {
 				details: { paths: [...params.paths], images },
 			};
 		},
-	};
+	});
 }

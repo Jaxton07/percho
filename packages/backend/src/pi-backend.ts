@@ -50,7 +50,6 @@ import {
 	extractTodos,
 	formatSkillCommand,
 	parseExpandedSkillInvocation,
-	TODO_REMINDER_CUSTOM_TYPE,
 	TODO_TOOL_NAME,
 	type TodoItem,
 } from "@percho/shared";
@@ -869,8 +868,12 @@ export class PiBackend {
 		};
 	}
 
-	/** 设置会话显示名：活跃会话走 SDK（自动发 session_info_changed）；历史会话离线写会话文件（无事件，渲染端本地更新标题） */
-	async setSessionName(sessionId: string, name: string): Promise<void> {
+	/**
+	 * 设置会话显示名：活跃会话走 SDK（自动发 session_info_changed）；历史会话离线写会话文件（无事件，渲染端本地更新标题）。
+	 * 历史会话优先 `SessionManager.findById(cwd, id)` 精确查表（1.0.4 新增：只扫该项目的会话目录、
+	 * 不加载正文），替掉原来的 `listAllSessions()` 全量枚举（会话多时读全部 header，数百毫秒）。
+	 */
+	async setSessionName(sessionId: string, name: string, cwd?: string): Promise<void> {
 		const entry = this.registry.get(sessionId);
 		if (entry) {
 			if (entry.readOnly) throw new Error("Session is read-only (subagent transcript)");
@@ -879,13 +882,24 @@ export class PiBackend {
 			entry.session.setSessionName(name);
 			return;
 		}
-		// 历史会话（顶栏没打开的）：从磁盘枚举拿到文件路径，离线追加 session_info（与 CLI /name 同源）
-		const meta = (await this.listAllSessions()).find((s) => s.sessionId === sessionId);
-		if (!meta) throw new Error(`Session not found: ${sessionId}`);
-		if (meta.readOnly) throw new Error("Session is read-only (subagent transcript)");
-		// 磁盘枚举出来的项必有路径（info.path）；纯防御分支
-		if (!meta.sessionFile) throw new Error(`Session has no file: ${sessionId}`);
-		renameSessionFile(meta.sessionFile, name);
+		// 历史会话（顶栏没打开的）：离线追加 session_info（与 CLI /name 同源）
+		const file = await this.findUnloadedSessionFile(sessionId, cwd);
+		if (!file) throw new Error(`Session not found: ${sessionId}`);
+		// subagent 产物会话只读（与 listAllSessions 的 readOnly 判定同一谓词）
+		if (isSubagentSessionPath(file)) throw new Error("Session is read-only (subagent transcript)");
+		renameSessionFile(file, name);
+	}
+
+	/**
+	 * 未加载会话的文件路径：给了 cwd 就 `SessionManager.findById` 精确查表，否则回退全量枚举
+	 * （LAN 历史透视路径只有 sessionId、没有 cwd —— 保留枚举兜底，正确性不变）。
+	 */
+	private async findUnloadedSessionFile(sessionId: string, cwd?: string): Promise<string | undefined> {
+		if (cwd) {
+			const file = SessionManager.findById(cwd, sessionId);
+			if (file) return file;
+		}
+		return (await this.listAllSessions()).find((s) => s.sessionId === sessionId)?.sessionFile;
 	}
 
 	/** 导出会话内容（HTML/JSONL）；返回文件内容，由调用方保存 */
@@ -909,12 +923,12 @@ export class PiBackend {
 	 * LAN 历史会话只读透视：活跃会话走 registry（同 getSessionMessages）；
 	 * 未打开的会话纯解析文件（不开 SessionManager，零副作用零写盘）。不存在返回 null。
 	 */
-	async peekSessionMessages(sessionId: string): Promise<SessionMessage[] | null> {
+	async peekSessionMessages(sessionId: string, cwd?: string): Promise<SessionMessage[] | null> {
 		if (this.registry.get(sessionId)) return this.getSessionMessages(sessionId);
-		const meta = (await this.listAllSessions()).find((s) => s.sessionId === sessionId);
-		if (!meta?.sessionFile) return null;
+		const file = await this.findUnloadedSessionFile(sessionId, cwd);
+		if (!file) return null;
 		try {
-			const content = await readFile(meta.sessionFile, "utf8");
+			const content = await readFile(file, "utf8");
 			return readSessionMessagesFromContent(content);
 		} catch {
 			return null;
@@ -922,19 +936,20 @@ export class PiBackend {
 	}
 
 	/**
-	 * 读取会话当前 todo 列表：扫 session.messages（裁剪后的上下文）找最后一条
-	 * todo 工具结果的 details，或最后一条 todo-reminder custom message 的 details
-	 * （compaction 后注入的恢复消息；toolResult 已被截断时兜底）。都没有返回 []。
+	 * 读取会话当前 todo 列表：扫**会话分支**（`getBranch()` = 权威历史，含被压缩掉的部分）
+	 * 找最后一条 todo 工具结果的 details。没有返回 []。
+	 * 1.0.4 起**不能**再扫 `session.messages`：那是 `agent.state.messages` = 压缩后的请求投影，
+	 * 压缩一发生 todo 工具结果就没了（旧实现靠 todo-reminder 注入的 custom message 兜底，
+	 * 但那条只在 wire 上、不落 entry；现在 reminder 只服务模型上下文）。
 	 */
 	async getTodos(sessionId: string): Promise<TodoItem[]> {
 		const entry = this.requireSession(sessionId);
-		for (const raw of [...entry.session.messages].reverse()) {
-			const m = raw as RawMessage;
+		const branch = entry.session.sessionManager.getBranch();
+		for (let i = branch.length - 1; i >= 0; i--) {
+			const item = branch[i];
+			if (item?.type !== "message") continue;
+			const m = item.message as RawMessage;
 			if (m.role === "toolResult" && m.toolName === TODO_TOOL_NAME && !m.isError) {
-				const todos = extractTodos(m.details);
-				if (todos) return todos;
-			}
-			if (m.role === "custom" && m.customType === TODO_REMINDER_CUSTOM_TYPE) {
 				const todos = extractTodos(m.details);
 				if (todos) return todos;
 			}
@@ -975,6 +990,11 @@ export class PiBackend {
 	 * 保留为侧枝，不删除），同时重建内存 LLM 上下文；随后追加 message-recalled custom entry
 	 * （不进上下文、不进消息列表）把 leaf 移动持久化，避免重启后旧分支回来。
 	 * 文本与图片从目标 entry 提取后返回，调用方放回输入框继续编辑。
+	 *
+	 * ❗ 纪律（1.0.4）：**任何直接改 SessionManager leaf 的路径**（branch/resetLeaf/navigateTree 之外的
+	 * 手写回退）都必须在改完 leaf 后自己调 `session.refreshContext()`——navigateTree 内部末尾会刷，
+	 * 绕过它就没别人刷，`session.messages`（= agent.state.messages，UI messageCount 与 compaction 判定都读它）
+	 * 会停在旧值 = 幽灵消息。本文件只有下面的「悬挂用户消息」分支属于这类，新增请照此办理。
 	 */
 	async recallMessage(
 		sessionId: string,

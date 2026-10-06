@@ -1,9 +1,10 @@
-import type {
-	AgentSessionEvent,
-	AgentToolResult,
-	ExtensionContext,
-	ModelRuntime,
-	ToolDefinition,
+import {
+	type AgentSessionEvent,
+	type AgentToolResult,
+	defineTool,
+	type ExtensionContext,
+	type ModelRuntime,
+	type ToolDefinition,
 } from "@earendil-works/pi-coding-agent";
 import { type Static, Type } from "typebox";
 import type { PermissionGate } from "../../permissions/gate";
@@ -153,7 +154,8 @@ async function confirmProjectAgents(
 
 /** 内置进程内 subagent 工具：single + bounded parallel，子会话深度固定为 1。 */
 export function makeSubagentTool(deps: MakeSubagentToolDeps): ToolDefinition {
-	return {
+	// defineTool：官方 1.0.4 的类型收窄入口（execute 参数由 TParams 推导）
+	return defineTool({
 		name: "subagent",
 		label: "Subagent",
 		description:
@@ -239,5 +241,5 @@ export function makeSubagentTool(deps: MakeSubagentToolDeps): ToolDefinition {
 			const results = filled();
 			return finalizeSubagentResult(mode, results);
 		},
-	};
+	});
 }

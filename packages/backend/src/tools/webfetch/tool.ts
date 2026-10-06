@@ -1,4 +1,4 @@
-import type { AgentToolResult, ToolDefinition } from "@earendil-works/pi-coding-agent";
+import { type AgentToolResult, defineTool, type ToolDefinition } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
 import { htmlToText } from "./html-to-text";
 import { assertPublicUrl, type Cidr, FAKE_IP_CIDR, parseCidr } from "./ip-guard";
@@ -139,7 +139,8 @@ function rewriteUrl(url: string): string {
 
 export function makeWebFetchTool(options: WebFetchOptions = {}): ToolDefinition<typeof webFetchParams> {
 	const allowRanges = [FAKE_IP_CIDR, ...(options.allowRanges ?? []).map(parseCidr)];
-	return {
+	// defineTool：官方 1.0.4 的类型收窄入口（execute 参数由 TParams 推导）
+	return defineTool({
 		name: "webfetch",
 		label: "Web Fetch",
 		description:
@@ -200,5 +201,5 @@ export function makeWebFetchTool(options: WebFetchOptions = {}): ToolDefinition<
 				},
 			};
 		},
-	};
+	});
 }

@@ -109,7 +109,8 @@ export const SESSION_CHANNELS = {
 	listSlashCommands: ch("session:listSlashCommands")<{ sessionId: string }, SlashCommandInfo[]>(),
 	/** 无会话斜杠命令列表（draft 新会话按 cwd 拉取；信任未决不弹窗，只含用户级资源） */
 	listSlashCommandsForCwd: ch("session:listSlashCommandsForCwd")<{ cwd?: string }, SlashCommandInfo[]>(),
-	setSessionName: ch("session:setName")<{ sessionId: string; name: string }, void>(),
+	/** 改会话名；历史会话走离线写会话文件，`cwd` 用于精确定位文件（见 PiBackend.setSessionName） */
+	setSessionName: ch("session:setName")<{ sessionId: string; name: string; cwd?: string }, void>(),
 	exportSession: ch("session:export")<{ sessionId: string; format: "html" | "jsonl" }, string>(),
 	/** fork：以 ref 定位分支点新建会话 */
 	forkSession: ch("session:fork")<
