@@ -510,6 +510,7 @@ export const zh = {
 				"该包提供 subagent 能力。Percho 已内置并深度适配 subagent，安装后其同名工具将由内置实现接管。",
 			subagentInstallConfirm: "内置将接管，确认安装",
 			subagentBuiltin: "subagent 已由内置接管",
+			unavailableBuiltin: "该内置扩展在本客户端不可用",
 			loadErrors: "{count} 个扩展加载失败",
 			hidden: "隐藏",
 		},

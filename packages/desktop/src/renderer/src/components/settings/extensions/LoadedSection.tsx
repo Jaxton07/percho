@@ -8,7 +8,10 @@ import { ExtensionRow } from "./rows";
 export function LoadedSection() {
 	const t = useT();
 	const extensions = useSettingsStore((s) => s.extensions);
-	const errors = useSettingsStore((s) => s.extensionErrors);
+	const diagnostics = useSettingsStore((s) => s.extensionErrors);
+	// 1.0.4：诊断分两档 —— info（不阻塞的说明，如未接的官方内置扩展）走灰字，error 才走红块
+	const errors = diagnostics.filter((d) => d.level !== "info");
+	const notices = diagnostics.filter((d) => d.level === "info");
 	const configuredPackages = useCatalogStore((s) => s.configuredPackages);
 
 	// 已加载扩展的 source 命中已配置包 → 可卸载（source 为 npm:/git: 等安装源时）
@@ -27,7 +30,7 @@ export function LoadedSection() {
 	}
 	return (
 		<div>
-			{extensions.length === 0 && errors.length === 0 ? (
+			{extensions.length === 0 && diagnostics.length === 0 ? (
 				<p className="py-8 text-center text-[13px] text-ink-faint">{t("settings.extensions.empty")}</p>
 			) : (
 				<ul className="divide-y divide-border">
@@ -37,6 +40,15 @@ export function LoadedSection() {
 							extension={extension}
 							configured={configuredBySource.get(extension.source) ?? null}
 						/>
+					))}
+				</ul>
+			)}
+			{notices.length > 0 && (
+				<ul className="mt-4 space-y-1">
+					{notices.map((notice) => (
+						<li key={notice.path} className="text-[11px] leading-relaxed text-ink-faint">
+							<span className="font-mono">{notice.path}</span> — {t("settings.extensions.unavailableBuiltin")}
+						</li>
 					))}
 				</ul>
 			)}

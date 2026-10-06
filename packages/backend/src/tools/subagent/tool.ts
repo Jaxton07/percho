@@ -158,6 +158,7 @@ export function makeSubagentTool(deps: MakeSubagentToolDeps): ToolDefinition {
 	return defineTool({
 		name: "subagent",
 		// 子会话会跑工具（可能改环境），且它不带权限扩展 → 这里如实声明为写且可破坏
+		// （声明不参与本机弹窗判定：自研工具在权限门控里走「内置短路」，见 permissions/annotations.ts）
 		annotations: { readOnlyHint: false, destructiveHint: true },
 		label: "Subagent",
 		description:

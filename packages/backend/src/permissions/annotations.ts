@@ -11,6 +11,10 @@ import type { PermissionAction, PermissionRules } from "./pattern";
  * 立场（spec 原文）：annotations 是**工具作者声明**、官方明确**未验证**，不能当放行依据；
  * 信任边界本就在「用户自己装了这台 server」上，声明只用来把「只读 vs 会改动」分开以降低打扰。
  * 所以：声明缺失 / 声明为写 → 一律 ask；声明只读 → 才免打扰。
+ *
+ * ⚠️ Percho 自研工具声明了 annotations（task 15），但**对本门控不生效** —— 它们在
+ * `isTrustedBuiltinTool` 里被短路成内置（走既有硬编码分类）。声明是给展示/未来消费者/一致性的，
+ * 改自研工具的 annotations 不会改变本机弹窗行为（要改行为请改这里的判定或 permissions.json 规则）。
  */
 
 /** SDK 自带工具名（`builtin:<name>`，1.0.4 实测清单）：命中即走硬编码分类，不受声明层影响。

@@ -2,6 +2,7 @@ import type { InlineExtension, ProjectTrustStore } from "@earendil-works/pi-codi
 import { DefaultResourceLoader, getAgentDir, SettingsManager } from "@earendil-works/pi-coding-agent";
 import { createLogger } from "../log";
 import type { PermissionConfirm, PermissionModeRef } from "../permissions/extension";
+import { builtinExtensions } from "./builtin-extensions";
 import { resolveProjectTrust, type TrustOptionInternal } from "./trust";
 
 const log = createLogger("backend");
@@ -35,6 +36,8 @@ export class ProjectResourceLoader {
 				appendSystemPrompt: string[];
 				additionalSkillPaths: string[];
 			};
+			/** 官方内置扩展（codemode/tool-search/mcp）的 OAuth 授权页打开方式（桌面端 = shell.openExternal） */
+			openUrl?: (url: string) => void | Promise<void>;
 		},
 	) {}
 
@@ -55,7 +58,12 @@ export class ProjectResourceLoader {
 			cwd,
 			agentDir,
 			settingsManager,
-			extensionFactories: this.deps.buildExtensions(cwd, options?.confirm, options?.modeRef),
+			// 内置扩展在前、我们的在后：同名覆盖时我们的（权限门控 / 蒸发 / todo-reminder / channel-watch）优先
+			// （官方 tool-search/codemode 的元数据带 replaceable，装第三方同名扩展时它们自己让位）
+			extensionFactories: [
+				...builtinExtensions({ openUrl: this.deps.openUrl }),
+				...this.deps.buildExtensions(cwd, options?.confirm, options?.modeRef),
+			],
 			...this.deps.desktopIntegration,
 		});
 		if (this.deps.projectTrust === false) {

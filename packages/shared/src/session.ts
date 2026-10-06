@@ -432,7 +432,8 @@ export interface LoadedResources {
 	skills: LoadedSkill[];
 	skillDiagnostics: ResourceDiagnosticInfo[];
 	extensions: LoadedExtension[];
-	extensionErrors: { path: string; error: string }[];
+	/** 扩展加载诊断。`level`：error = 真错误（红块），info = 不阻塞的说明（灰字，如未接的官方内置扩展） */
+	extensionErrors: { path: string; error: string; level: "error" | "info" }[];
 }
 
 /** Percho 自己产生的会话 UI 事件（不进入 pi 子会话 trace）。 */

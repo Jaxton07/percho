@@ -522,6 +522,7 @@ export const en: Messages = {
 				"This package provides subagent capabilities. Percho already includes a deeply integrated built-in subagent; its same-named tools will be taken over after installation.",
 			subagentInstallConfirm: "Built-in takes over — install anyway",
 			subagentBuiltin: "subagent handled by built-in",
+			unavailableBuiltin: "This built-in extension is not available in this client",
 			loadErrors: "{count} extensions failed to load",
 			hidden: "Hidden",
 		},

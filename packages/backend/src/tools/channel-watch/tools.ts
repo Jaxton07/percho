@@ -59,6 +59,7 @@ export function makeChannelTools(deps: ChannelToolDeps): ToolDefinition[] {
 		name: "channel_subscribe",
 		label: "Subscribe channel",
 		// 会写订阅状态（本地文件）→ 非只读；被订阅方之后能唤醒本会话，但不删改任何内容
+		// （声明不参与本机弹窗判定：自研工具在权限门控里走「内置短路」，见 permissions/annotations.ts）
 		annotations: { readOnlyHint: false, destructiveHint: false },
 		description:
 			"订阅一个协作频道（.local/agent-work/channel/<topic>）。订阅后另一会话用 channel_post 向该频道发消息时，本会话会收到一行唤醒提醒。topic 为频道目录名。",

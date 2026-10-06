@@ -52,7 +52,7 @@ interface SettingsStore {
 	skillDiagnostics: ResourceDiagnosticInfo[];
 	/** 当前活跃会话已加载的扩展（null = 未加载/无会话） */
 	extensions: LoadedExtension[] | null;
-	extensionErrors: { path: string; error: string }[];
+	extensionErrors: { path: string; error: string; level: "error" | "info" }[];
 	/** providerId → 测试结果（"testing" 表示进行中） */
 	testResults: Record<string, ProviderTestResult | "testing">;
 	error: string | null;

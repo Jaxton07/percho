@@ -157,6 +157,11 @@ export interface PiBackendOptions {
 		appendSystemPrompt: string[];
 		additionalSkillPaths: string[];
 	};
+	/**
+	 * 打开外部链接（官方内置扩展用；桌面端传 `shell.openExternal`）：
+	 * 目前是 MCP 的 OAuth 授权页（spec §4.2）。缺省 → 官方内置扩展自行回落到平台默认浏览器。
+	 */
+	openExternal?: (url: string) => void | Promise<void>;
 }
 
 /**
@@ -229,6 +234,7 @@ export class PiBackend {
 			buildExtensions: (cwd, confirm, modeRef) => this.buildExtensionFactories(cwd, confirm, modeRef),
 			projectTrust: options.projectTrust,
 			desktopIntegration: options.desktopIntegration,
+			openUrl: options.openExternal,
 		});
 	}
 
@@ -864,7 +870,14 @@ export class PiBackend {
 				flagsCount: ext.flags.size,
 				shortcutsCount: ext.shortcuts.size,
 			})),
-			extensionErrors: extResult.errors,
+			// 未接的官方内置扩展（如 llama.cpp 没有从包根导出）只降级为 info：不弹红、不阻塞会话。
+			// 官方一旦导出 builtInExtensions，把对应工厂补进 project/builtin-extensions.ts 即可消掉这条。
+			extensionErrors: extResult.errors.map((item) => ({
+				...item,
+				level: item.error.startsWith("Unknown built-in extension: builtin:")
+					? ("info" as const)
+					: ("error" as const),
+			})),
 		};
 	}
 
