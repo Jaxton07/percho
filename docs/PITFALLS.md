@@ -12,8 +12,12 @@
 | 流式期间白屏、`error #185`、无限重渲染整树卸载 | 一 · 0.5.0 白屏事故；四 · Zustand selector（#185 另一成因） |
 | 点击对话里的相对文件链接后白屏 | 四 · Markdown 相对链接会导航 app 主窗口（2026-09-23） |
 | 比像素核验视觉时取样偏了、以为改动没生效 | 四 · CDP `clip.scale` 再乘一次 DPR（2026-09-29） |
+| 弹窗蒙层只盖住一列 / 卡片被左栏「吃掉」半边 / 测量位置却是对的 | 四 · `.edge-fade` 的 mask 把 fixed 浮层的绘制裁在容器盒里（2026-10-06） |
 | 改了滚动条宽度但截图里看不到，以为没生效 | 四 · CDP 截图不绘制滚动条，只能力槽宽（2026-09-29） |
 | 扩展注册的工具模型用不了、模型说「工具列表为 none」 | 二 · createAgentSession tools 白名单 |
+| 升 SDK 后 `tsc` 全绿但测试红、只红一两条 | 二 · SDK 升级 0.84.3 → 1.0.4：typecheck 全绿 ≠ 无行为变化（2026-10-06） |
+| 要判断「会话落盘了没」/ 新建未发消息的会话改名 | 二 · 同上（`sessionFile` 路径先行、文件延迟落盘） |
+| 撤回后上下文还带着被撤回的消息 / 消息数不变 | 二 · 同上（手写 `agent.state.messages` 已无效；手动回退 leaf 要补 `refreshContext()`） |
 | 设置页永久 Loading、模型列表为空 | 二 · runtime.refresh 网络挂起 / getAvailable 返回空 |
 | 权限 confirm 弹窗不生效 | 二 · bindExtensions 注入点 |
 | preload 加载失败（sandbox 下 require is not defined） | 三 · preload 必须 CJS |
@@ -169,7 +173,7 @@ LAN 页重连/中途进入时，快照种子经 `messagesToUIMessages` 重建—
 
 它的**位置天然正确**：`appendCompaction` 追加在当时 leaf 之后，所以按分支顺序把它插回消息流，分割线就落在"当时压缩的那一处"（实测 1833 条 entry 的分支上两条分别落在 145/1121、484/1121，前后消息 timestamp 单调）。
 
-**形状（SDK 0.84.3 实测 20 条）**：`{ type, id, parentId, timestamp(ISO 串), summary, firstKeptEntryId, tokensBefore, details:{readFiles,modifiedFiles}, usage, fromHook }`。**没有 `reason`**（手动/阈值/溢出都不记），**也没有压缩后估值**（`estimatedTokensAfter` 只在事件里）——所以回放的分割线只能显示「已压缩上下文 · 压缩前 156.4k」+ 可展开摘要（摘要是同一条字符串，展开内容与实时一致）。想与实时逐字一致（带原因 + `x → y`），只能自己在 `compaction_end` 时补写一条 `custom` entry（`appendCustomEntry` 不进 LLM 上下文，撤回标记 `message-recalled` 同款）。
+**形状（SDK 0.84.3 实测 20 条；1.0.4 多一个 `systemMessage`（压缩边界的完整 prompt/tool 状态），其余字段不变）**：`{ type, id, parentId, timestamp(ISO 串), summary, firstKeptEntryId, tokensBefore, details:{readFiles,modifiedFiles}, usage, fromHook }`。**没有 `reason`**（手动/阈值/溢出都不记），**也没有压缩后估值**（`estimatedTokensAfter` 只在事件里）——所以回放的分割线只能显示「已压缩上下文 · 压缩前 156.4k」+ 可展开摘要（摘要是同一条字符串，展开内容与实时一致）。想与实时逐字一致（带原因 + `x → y`），只能自己在 `compaction_end` 时补写一条 `custom` entry（`appendCustomEntry` 不进 LLM 上下文，撤回标记 `message-recalled` 同款）。
 
 **加 role 的连带坑**：`SessionMessage` 新增 role 时，LAN 的 `sanitizeSessionMessage` 会把未知 role 落进最后那个 subagent 分支（`message.runs.map` 直接抛错）——新 role 必须在里面显式加分支。
 
@@ -207,7 +211,87 @@ LAN 页重连/中途进入时，快照种子经 `messagesToUIMessages` 重建—
 
 对策：活跃会话的时间字段只从**会话内容**取（header + entries，见 `backend/src/session/meta.ts`），`stat`/`Date.now()` 只在 header 读不出来时兜底，且**兜底也优先 mtime 而不是 birthtime**。自己实现枚举时，`custom`/`toolResult` 类 entry 一律不算活动——否则 channel cursor 之类的扩展写入会把会话顶到最前。
 
+### SDK 升级 0.84.3 → 1.0.4：typecheck 全绿 ≠ 无行为变化（2026-10-06，pi-sdk-1.0-upgrade）
+
+症状：依赖升到 1.0.4 后 `tsc` 零报错（`pi-backend.ts` 里的调用一行没改也编得过），但 `npm run test` 有两
+条红（`backend/test/compaction-image.test.ts`，`expected ["string"] to deeply equal ["text"]`）。升 SDK 时
+「编译过 = 没事」不成立，必须跑全量测试 + 手测。
+
+三条静默行为变化（都在类型上不报错）：
+
+1. **compaction 摘要请求的 context 形状变了**：`buildSummarizationContext()` 走新的 `normalizeContext()`，
+   `systemPrompt` 被归一成 `messages[0]` 的 `role:"system"` 消息、content 是**纯字符串**（0.84.3 是独立的
+   `systemPrompt` 字段，messages 里只有 block 数组的 user 消息）。断言「每条 message 的 content 都是 text
+   block 数组」的测试因此红。→ 按「纯文本」语义断言：content 是字符串 或 只含 text block 的数组，
+   且任何 image block 都判回归。
+2. **`context` 钩子的 wire 从此不含 system 消息**：1.0.4 在调 handler 前 `filter(m => m.role !== "system")`、
+   返回时 `restoreSystemMessages()` 复原（`core/extensions/runner.js` 的 `emitContext`）；0.84.3 是直接透传。
+   **但对我们的蒸发无影响**：`extractMessageParts()` 对 `role:"system"` 一直返回 `[]`，system 从来没进过
+   part/cum → offset 口径（`usage − wire 估算`）自动补偿，不需要改代码。
+   对拍证据：同一 20 个会话样本，`scripts/replay-evaporation.mts --core`（仓库内实现）与其内置基线
+   **逐字节一致**（`diff -r out-baseline out-core`）。
+3. **`sessionFile` = 路径先行、文件内容延迟**：`SessionManager` 构造函数在 create 时就分配好路径，但
+   **文件要等首条 user/assistant 消息才写**（`_hasConversation()` 门控 `_persist`）。所以 `sessionFile` 有值
+   ≠ 已落盘，判断落盘一律用 `existsSync`（`tools/subagent/runner.ts` 的 jsonlPath 就是这么做的）。
+   逆命题同样重要：**新建未发消息的会话改名是合法操作**（`appendSessionInfo` 写内存，首条消息落盘时
+   一起写入，不丢名）——不要加 `if (!sessionFile) throw` 这种「尚未落盘」拦截，会给正常路径加假错误。
+
+- **同名工具到底谁赢：`replaceable` 管「让位」，`自定义 < 扩展` 管「优先」**（2026-10-06 修正过一次说法）
+  三条机制各管一段，别混：
+  1. **`replaceable` 只表达「我让位」**：`omitReplacedExtensions` 里若**任何非 replaceable 扩展**注册了同名
+     工具，带 `replaceable: true` 的那个扩展**整个被略过**（与两者谁先注册无关）。所以想让位就标
+     `replaceable`，想优先就**别标**（我们自己的扩展一律不标，官方内置三个都标了 —— 将来同名被挤出去的是官方）。
+  2. **双方都非 replaceable 时：同组内先注册者赢**（`getAllRegisteredTools()` 里
+     `if (!toolsByName.has(name)) set(…)`），后注册的那个报 `Tool "x" conflicts with …` 进
+     `extensionsResult.errors`（会显示在扩展面板）。而 inline 扩展恒排在盘上扩展**之后**
+     （`loadFinalExtensionSet`: `[...盘上, ...inline]`）——**所以第三方盘上扩展的同名工具天然压过我们**，
+     光靠「注册顺序」救不回来。
+  3. **`customTools` 是另一层，且能覆盖扩展工具**（agent-session 里 `allCustomTools = [...扩展工具, ...customTools]`
+     之后无条件 set）——「内置 subagent 优先」档就是靠它实现的（见 `tools/subagent/mutex.ts`）。
+    一句话：**让别人让位 → `replaceable`；让我赢 → `customTools`；注册顺序只在「都非 replaceable」时有意义。**
+- **models.json 里任何 key 都是独立 provider 行**：内置 provider 改名（azure）后，用户盘上旧键
+  `azure-openai-responses` 仍会被 SDK 当**自定义 provider** 列出来（带着它的 baseUrl），不会自动合并；
+  所以 `SettingsService` 里做了读侧归一（旧键条目仍算「覆写内置」），但不主动改盘。
+
+另两条升级期踩到的：
+
+- **版本号不能用 `mod.VERSION` 判**：SDK 的 `VERSION = getPackageDir()/package.json` 的 version，而 `getPackageDir()`
+  **优先读环境变量 `PI_PACKAGE_DIR`**。Percho 打包态把它指到 app 内的 pi-package 镜像，且这个变量会
+  **被在 Percho 会话里跑的子进程继承**——所以在 Percho 里跑 `npx tsx …`，`mod.VERSION` 报的是随包分发的
+  pi-package 版本（如 0.84.3），与 `node_modules` 里真正 resolve 到的 SDK（1.0.4）无关。
+  要判版本用 `import.meta.resolve("@earendil-works/pi-coding-agent")` 再往上找 package.json
+  （`scripts/smoke-sdk-1.0.mts` 断言 1）。该包 exports 只有 `import` 条件，`createRequire(...).resolve`
+  会直接 `ERR_PACKAGE_PATH_NOT_EXPORTED`。
+- **`getAllTools()` 不在 `ExtensionContext` 上**：1.0.4 的 `pi.getAllTools()`（返回 `ToolInfo[]`，带
+  `annotations` 与 `sourceInfo`）挂在 **ExtensionAPI** 上，`pi.on("tool_call", (event, ctx) => …)` 的 `ctx`
+  里没有它 —— 要在工厂闭包里直接用 `pi`（`permissions/extension.ts` 就是这么拿工具声明的）。
+  `sourceInfo.path` 的取值：SDK 自带 `builtin:<name>`、Percho customTools `<sdk:<name>>`、
+  inline 扩展 `<inline:<name>>`、盘上扩展是文件路径、MCP 服务器工具挂在 `builtin:mcp` 且名字是 `mcp__<server>__<tool>`。
+- **手写 `agent.state.messages` 已彻底无效**：1.0.4 的请求上下文由 `buildSessionProjection()` 在
+  `prepareRequest` 里逐次重建；`agent.state.messages` 只是个「公开 transcript」缓存（`_refreshFinalizedContext()`
+  写它）。撤回（`recallMessage`）里那个绕过 `navigateTree` 的**悬挂用户消息分支**必须自己补
+  `session.refreshContext()`——`navigateTree` 末尾内部会刷，不刷则 `session.messages`（UI 的 messageCount、
+  `_findLastAssistantMessage()` 驱动的 compaction 判定）停在撤回前 = 幽灵消息。
+
 ## 三、构建 · 打包 · 环境
+
+### 关 dev 应用要杀 Electron 子进程，只 `pkill electron-vite` 会留下僵尸占住调试端口（2026-10-06）
+
+症状：重启 `electron-vite dev -- --remote-debugging-port=9224` 后，CDP 连上却拿到 `chrome-error://chromewebdata/`
+（`document.body.innerText` 为空、`button` 一个都没有），脚本报「设置弹窗打不开」。
+根因：`pkill -f "electron-vite dev"` 只杀了 vite 包装进程，**Electron 主进程/渲染进程是它的子进程，会留下来继续活着**，
+而新实例的 devtools 服务器起不来（`bind() failed: Address already in use (48)` + `Cannot start http server for devtools`），
+于是 9224 上应答的仍是**旧实例**（它的 renderer 早已死掉，只剩错误页）。
+处理：杀干净再起 —— `pkill -f "<repo>/node_modules/electron/dist"`（**不要**用 `pkill -f Electron`，会连带干掉用户的正式版），
+`lsof -nP -iTCP:9224 -sTCP:LISTEN` 确认为空；`pgrep -fl Electron` 里除 `/Applications/*` 之外的残留也要清。
+自检小抄：连上后先 `location.href`，是 `chrome-error://` 就说明连错了实例，别怀疑业务代码。
+
+### 取证别用 `asar extract-file`：它把文件解到**当前工作目录**（2026-10-06）
+
+`npx asar extract-file <app.asar> <内部路径>` 会把那一个文件按 basename 丢在**当前 cwd** —— 在仓库里跑就会掉垃圾文件、
+还会让 `biome check` 多报一条 warning（实测：`packages/desktop/index-DKGAA7vc.js`，差点被当成漏提交）。
+**批量取证一律用 `npx asar extract <app.asar> .local/tmp/<dir>`**（整包解到临时目录，再 grep）。验包照旧按 AGENTS.md：
+`npm run build` 之后 `electron-builder`，再 `asar extract` + 按改动关键词 grep `out/renderer/assets/index-*.js`。
 
 ### electron-vite dev 主进程 watcher 不可依赖：改 `src/main/` 后必须验产物（2026-09-17 实测）
 
@@ -318,6 +402,32 @@ pi SDK 必须声明进 `packages/desktop/package.json` dependencies（electron-b
 比像素做视觉核验（强度/亮度/对齐）时踩过：`clip: { width: 300, height: 112, scale: 2 }` 在本机（DPR 2）拿到的是 **1200×448**，即 4x——按 2x 反推 CSS 坐标会让取样带整体偏移，看上去像"遮罩没生效"。要么统一 `scale: 1`（输出 = 2x，CSS 像素 × 2），要么把换算写成 `clip × scale × devicePixelRatio` 并断言一次实际尺寸。
 
 顺带一条可比对的核验手法：**同一滚动位置、同一 clip，只切被测属性（如 `dataset.fadeTop` 置 false），逐行取均值比亮度差**——比人眼看截图可靠（实测淡出带内 +24.9，带外 +0.0）。
+
+### `.edge-fade` 的 mask 会把容器内 fixed 浮层的绘制裁在容器盒里（2026-10-06，设置弹窗登录框事故）
+
+**症状**（用户报的）：设置 → 模型 → 点某 provider 的「登录」，登录弹窗只显示右半边（左边被设置弹窗的左导航「遮住」），
+而且**蒙层只盖住右侧内容列**——设置顶栏、左侧导航都不跟着变暗。
+最迷惑的是：`getBoundingClientRect()` 量出来蒙层 **= 整个视口**（0,0,innerWidth,innerHeight），`position:fixed` 也没跑偏。
+
+**根因**：要理解 mask 的作用域 —— **mask 作用于元素及其整个绘制子树**，且蒙版图像只覆盖该元素自己的盒子；
+元素盒子之外的绘制一律被 mask 掉（等于被裁）。设置弹窗右列这次加上了滚动边界淡出（`.edge-fade` + `use-edge-fade`），
+滚动时容器带上 `mask-image: linear-gradient(...)`；而 `LoginDialog` 是挂在 `ProvidersPanel` 里的
+`fixed inset-0` 蒙层 —— 铺满视口的矩形，**只有落在容器盒内的那部分画得出来**：
+右列那一块 = 蒙层（所以只有它变暗），卡片超出容器盒的左半边 = 直接被裁掉，露出下面不透明（未被 mask）的左导航。
+注意与 `filter` / `transform` 的差别：那两者会成为 fixed 的**包含块**（rect 就错了），mask 不改包含块，**rect 是对的、只有像素不对**。
+
+**修复**：fixed 浮层一律 `createPortal(..., document.body)`（本项目既有约定：ConfirmDialog / ContextMenu /
+RenamePopover / ImagePreview 都是这么做的，`LoginDialog` 漏了）。z-index 上 `z-[60] > 设置弹窗 z-40` 也对上了。
+
+**两道免复发的守卫**（`.local/tmp/check-settings-chrome.mjs`，改前跑会红、改后绿）：
+
+1. **结构不变量**：任何 `getComputedStyle(el).maskImage !== "none"` 的 `.edge-fade` 容器内，
+   不得存在 `position: fixed` 后代（改前 `fixedCount=1` 精确点名了那个蒙层）；
+2. **像素断言**：开/关登录弹窗各截一张全窗图，采样「设置顶栏」与「左导航」两点，亮度都必须变暗
+   （改前 Δ=0/0 —— 蒙层根本没盖到；改后 Δ=-37/-46）。
+
+**连带教训**：写这类像素对比脚本前，先关掉上一次跑残留的浮层（弹出的框会一直留着并串进本次截图，
+我曾据此误判过一次）；采样点用 `--points` 模式直接读像素，别靠肉眼看截图。
 
 ### Tailwind 4 的 `rotate-*` 走 CSS `rotate` 属性，不是 `transform`（2026-09-19）
 

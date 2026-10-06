@@ -86,7 +86,12 @@ export interface SessionModelRef {
 
 export interface SessionMeta {
 	sessionId: string;
-	/** 会话文件路径（持久化会话）；内存会话为 undefined */
+	/**
+	 * 会话文件**路径**（持久化会话在 create 时就分配好——SDK `session-manager.js` 构造函数；
+	 * 内存 manager（inMemory）无路径 = undefined）。
+	 * ⚠️ 路径有值 ≠ 磁盘有文件：1.0.4 起要等首条 user/assistant 消息才**写入文件**
+	 * （`_hasConversation` 门控 `_persist`）——判断「落盘了没」一律用 `existsSync`，不要看本字段。
+	 */
 	sessionFile?: string;
 	cwd: string;
 	/** 会话标题（用户设置或自动生成） */
@@ -427,7 +432,8 @@ export interface LoadedResources {
 	skills: LoadedSkill[];
 	skillDiagnostics: ResourceDiagnosticInfo[];
 	extensions: LoadedExtension[];
-	extensionErrors: { path: string; error: string }[];
+	/** 扩展加载诊断。`level`：error = 真错误（红块），info = 不阻塞的说明（灰字，如未接的官方内置扩展） */
+	extensionErrors: { path: string; error: string; level: "error" | "info" }[];
 }
 
 /** Percho 自己产生的会话 UI 事件（不进入 pi 子会话 trace）。 */

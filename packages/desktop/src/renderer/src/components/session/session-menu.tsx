@@ -42,13 +42,21 @@ export function toggleSessionPin(sessionId: string): void {
 	useUiPreferencesStore.getState().togglePin(sessionId);
 }
 
+/** 会话 cwd：后端离线改名靠它精确查会话文件（未加载会话只在目录投影 `allSessions` 里）。 */
+function sessionCwd(sessionId: string): string | undefined {
+	return (
+		useSessionsStore.getState().sessions.find((s) => s.sessionId === sessionId)?.cwd ??
+		useProjectsStore.getState().allSessions.find((s) => s.sessionId === sessionId)?.cwd
+	);
+}
+
 /** 重命名落盘：活跃会话靠 session_info_changed 事件回流，历史会话无事件 → 本地立即更新（幂等）。
  *  两份拷贝都要同步：`sessions`（内存会话/胶囊详情）与 `projects.allSessions`（左栏会话行与未加载胶囊的 meta），
  *  只更新一边会出现「胶囊新名 / 左栏旧名」并存（阶段 3 实测踩到）。 */
 export function renameSession(sessionId: string, name: string): void {
 	if (!name) return; // 空值 = 保持原名（与系统重命名一致，不报错）
 	getPi()
-		.setSessionName({ sessionId, name })
+		.setSessionName({ sessionId, name, cwd: sessionCwd(sessionId) })
 		.then(() => {
 			useSessionsStore.getState().updateSessionName(sessionId, name);
 			useProjectsStore.getState().applySessionName(sessionId, name);

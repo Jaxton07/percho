@@ -10,12 +10,14 @@ import {
 	type DefaultResourceLoader,
 	type ExtensionError,
 	getAgentDir,
+	hasTrustRequiringProjectResources,
 	ModelRuntime,
 	ProjectTrustStore,
 	type SessionEntry,
 	type SessionInfo,
 	SessionManager,
-	type SettingsManager,
+	SettingsManager,
+	type SettingsManager as SettingsManagerType,
 	type ToolDefinition,
 } from "@earendil-works/pi-coding-agent";
 import type {
@@ -31,6 +33,14 @@ import type {
 	ImageInput,
 	LoadedResources,
 	LoginEventPayload,
+	McpConfigListResult,
+	McpGlobalNotice,
+	McpMutationResult,
+	McpReloadReport,
+	McpServerStatus,
+	McpServersChangedPayload,
+	McpToolView,
+	McpUpsertInput,
 	PermissionAnswer,
 	PermissionMode,
 	PermissionRequest,
@@ -50,12 +60,13 @@ import {
 	extractTodos,
 	formatSkillCommand,
 	parseExpandedSkillInvocation,
-	TODO_REMINDER_CUSTOM_TYPE,
 	TODO_TOOL_NAME,
 	type TodoItem,
 } from "@percho/shared";
 import { Emitter } from "./emitter";
 import { createLogger } from "./log";
+import { listMcpServers, removeMcpServer, upsertMcpServer } from "./mcp/config-store";
+import { parseMcpNotice } from "./mcp/notices";
 import { PackageAdmin } from "./packages/admin";
 import { loadPermissionConfig } from "./permissions";
 import {
@@ -105,6 +116,7 @@ import {
 	reportEvapBatch,
 	writeContextManagerMode,
 } from "./tools/context-evaporation";
+import { collectMcpTools, makeMcpInventoryExtension } from "./tools/mcp-inventory";
 import { makeShowImageTool } from "./tools/show-image";
 import { discoverAgents, isSubagentSessionPath, makeSubagentTool } from "./tools/subagent";
 import { applySubagentMutex, resolveSubagentPreferBuiltin } from "./tools/subagent/mutex";
@@ -158,6 +170,11 @@ export interface PiBackendOptions {
 		appendSystemPrompt: string[];
 		additionalSkillPaths: string[];
 	};
+	/**
+	 * 打开外部链接（官方内置扩展用；桌面端传 `shell.openExternal`）：
+	 * 目前是 MCP 的 OAuth 授权页（spec §4.2）。缺省 → 官方内置扩展自行回落到平台默认浏览器。
+	 */
+	openExternal?: (url: string) => void | Promise<void>;
 }
 
 /**
@@ -196,6 +213,14 @@ export class PiBackend {
 	private readonly extensionDialogResolvedEmitter = new Emitter<ExtensionDialogResolved>();
 	private readonly extensionNotifyEmitter = new Emitter<ExtensionNotifyEvent>();
 	private readonly extensionEditorTextEmitter = new Emitter<ExtensionEditorTextEvent>();
+	/** MCP 运行态变化（spec §4.8.1：面板刷新用） */
+	private readonly mcpServersChangedEmitter = new Emitter<McpServersChangedPayload>();
+	/** 最近一次聚合的「server → 工具（带只读标记）」（面板初次打开时不必等下一个 turn） */
+	private mcpToolsByServer = new Map<string, McpToolView[]>();
+	/** 官方 notify 给出的每台 server 的失效原因 / 需登录（key = server 名） */
+	private mcpServerNotices = new Map<string, { error?: string; needsAuth?: boolean; authUrl?: string }>();
+	/** 官方 notify 里不带 server 名的全局提示 */
+	private mcpGlobalNotice: McpGlobalNotice | undefined;
 	/** 项目信任决策记录（~/.pi/agent/trust.json，与 CLI 共享）+ 信任请求门控 */
 	private readonly trustStore = new ProjectTrustStore(getAgentDir());
 	private readonly trustGate = new TrustGate((req) => this.trustEmitter.emit(req));
@@ -230,6 +255,7 @@ export class PiBackend {
 			buildExtensions: (cwd, confirm, modeRef) => this.buildExtensionFactories(cwd, confirm, modeRef),
 			projectTrust: options.projectTrust,
 			desktopIntegration: options.desktopIntegration,
+			openUrl: options.openExternal,
 		});
 	}
 
@@ -338,6 +364,8 @@ export class PiBackend {
 		);
 		// todo-reminder 最后：compaction 后恢复注入的任务列表不被上游折叠
 		factories.push(makeTodoReminderExtension());
+		// MCP 运行态聚合（spec §4.8.1）：三个时机聚合 `mcp__<server>__<tool>`，集合变化才发事件给面板
+		factories.push(makeMcpInventoryExtension((servers) => this.emitMcpServersChanged(servers)));
 		return factories;
 	}
 
@@ -370,8 +398,10 @@ export class PiBackend {
 		await session.bindExtensions({
 			uiContext: makeUiContext({
 				dialogs,
-				onNotify: (message, level, source) =>
-					this.extensionNotifyEmitter.emit({ sessionId, extensionPath: source, message, level }),
+				onNotify: (message, level, source) => {
+					this.handleMcpNotice(sessionId, message);
+					this.extensionNotifyEmitter.emit({ sessionId, extensionPath: source, message, level });
+				},
 				onEditorText: (text, source) => this.extensionEditorTextEmitter.emit({ sessionId, text, source }),
 			}),
 			mode: "rpc",
@@ -504,7 +534,7 @@ export class PiBackend {
 			gate: PermissionGate;
 			preferBuiltin: boolean;
 			/** 两阶段资源加载（信任决策走 projectLoader 既有链路）；懒执行：makeSession 决定时机 */
-			load: () => Promise<{ settingsManager: SettingsManager; resourceLoader: DefaultResourceLoader }>;
+			load: () => Promise<{ settingsManager: SettingsManagerType; resourceLoader: DefaultResourceLoader }>;
 		}) => Promise<CreateAgentSessionResult>,
 	): Promise<AgentSession> {
 		const gate = new PermissionGate((req) => this.permissionEmitter.emit(req));
@@ -512,7 +542,7 @@ export class PiBackend {
 		const confirmBridge: PermissionConfirm = (title, message, meta) => gate.confirm(title, message, meta);
 		// 会话权限模式引用：一律 default 起步（D1：不落盘、不继承），随工厂闭包注入求值链
 		const modeRef: PermissionModeRef = { current: "default" };
-		let loaded: { settingsManager: SettingsManager; resourceLoader: DefaultResourceLoader } | undefined;
+		let loaded: { settingsManager: SettingsManagerType; resourceLoader: DefaultResourceLoader } | undefined;
 		const load = async () => {
 			loaded ??= await this.projectLoader.load(cwd, { confirm: confirmBridge, modeRef });
 			return loaded;
@@ -681,7 +711,9 @@ export class PiBackend {
 		// sending 状态被占住，运行中的 followUp 排队发送被防重发守卫静默拦截。
 		// preflight 前抛错（无模型/无 key/compaction 中）照常 reject 传给渲染端；
 		// ack 之后 run 期错误不再回传（走事件流呈现），then 的 reject 在已 resolve 后为 no-op。
-		// preflightResult(false) 只在 SDK catch 里紧随 throw 触发，不据此 reject，真实错误经 throw 传递。
+		// 1.0.4 契约：disposition ∈ "handled" | "queued" | "started"，三者都是「已受理」→ 全部 resolve；
+		// **被拒时 SDK 不再回调**（0.84.3 的 preflightResult(false) 已删），真实错误只经下面的 reject 回传。
+		// 三种 disposition 不往 IPC 传：渲染端的「已排队」区分靠 queue_update 事件，传个无人消费的值只是死契约。
 		await new Promise<void>((resolve, reject) => {
 			entry.session
 				.prompt(text, {
@@ -693,8 +725,13 @@ export class PiBackend {
 						data: image.data,
 						mimeType: image.mimeType,
 					})),
-					preflightResult: (ok) => {
-						if (ok) resolve();
+					preflightResult: (disposition) => {
+						switch (disposition) {
+							case "handled": // 扩展命令已就地处理，本轮不会再有模型响应
+							case "queued": // steer/followUp 已入队
+							case "started": // 正常开跑
+								resolve();
+						}
 					},
 				})
 				.then(
@@ -858,24 +895,54 @@ export class PiBackend {
 				flagsCount: ext.flags.size,
 				shortcutsCount: ext.shortcuts.size,
 			})),
-			extensionErrors: extResult.errors,
+			// 未接的官方内置扩展（如 llama.cpp 没有从包根导出）只降级为 info：不弹红、不阻塞会话。
+			// 官方一旦导出 builtInExtensions，把对应工厂补进 project/builtin-extensions.ts 即可消掉这条。
+			extensionErrors: extResult.errors.map((item) => ({
+				...item,
+				level: item.error.startsWith("Unknown built-in extension: builtin:")
+					? ("info" as const)
+					: ("error" as const),
+			})),
 		};
 	}
 
-	/** 设置会话显示名：活跃会话走 SDK（自动发 session_info_changed）；历史会话离线写会话文件（无事件，渲染端本地更新标题） */
-	async setSessionName(sessionId: string, name: string): Promise<void> {
+	/**
+	 * 设置会话显示名：活跃会话走 SDK（自动发 session_info_changed）；历史会话离线写会话文件（无事件，渲染端本地更新标题）。
+	 * 历史会话优先 `SessionManager.findById(cwd, id)` 精确查表（1.0.4 新增：只扫该项目的会话目录、
+	 * 不加载正文），替掉原来的 `listAllSessions()` 全量枚举（会话多时读全部 header，数百毫秒）。
+	 */
+	async setSessionName(sessionId: string, name: string, cwd?: string): Promise<void> {
 		const entry = this.registry.get(sessionId);
 		if (entry) {
 			if (entry.readOnly) throw new Error("Session is read-only (subagent transcript)");
+			// 新建未发消息的会话改名**是合法操作**：sessionFile（路径）建会话时就有，SDK 把 session_info
+			// 追加进内存 fileEntries，首条 user 消息落盘时一起写入（不丢名）。所以这里不加 !sessionFile 拦。
 			entry.session.setSessionName(name);
 			return;
 		}
-		// 历史会话（顶栏没打开的）：从磁盘枚举拿到文件路径，离线追加 session_info（与 CLI /name 同源）
-		const meta = (await this.listAllSessions()).find((s) => s.sessionId === sessionId);
-		if (!meta) throw new Error(`Session not found: ${sessionId}`);
-		if (meta.readOnly) throw new Error("Session is read-only (subagent transcript)");
-		if (!meta.sessionFile) throw new Error(`Session has no file: ${sessionId}`);
-		renameSessionFile(meta.sessionFile, name);
+		// 历史会话（顶栏没打开的）：离线追加 session_info（与 CLI /name 同源）
+		const file = await this.findUnloadedSessionFile(sessionId, cwd);
+		if (!file) throw new Error(`Session not found: ${sessionId}`);
+		// subagent 产物会话只读（与 listAllSessions 的 readOnly 判定同一谓词）
+		if (isSubagentSessionPath(file)) throw new Error("Session is read-only (subagent transcript)");
+		renameSessionFile(file, name);
+	}
+
+	/**
+	 * 未加载会话的文件路径：给了 cwd 就 `SessionManager.findById` 精确查表（只扫该项目的会话目录），
+	 * 否则回退全量枚举。
+	 *
+	 * 为何保留枚举兜底：LAN 历史透视（`/api/sessions/:id/transcript` → `peekSessionMessages`）只有
+	 * sessionId —— 路由是纯 id 形式，服务端拿不到会话的 cwd；要让 LAN 也走精确查表得给路由加
+	 * `?cwd=`（LAN 网页端手上确实有 brief.cwd）并改客户端，为这点延迟收益改 LAN 协议不划算
+	 * （已与 review 确认保留兜底）。UI 热路径（改名）永远带 cwd，不会走到枚举。
+	 */
+	private async findUnloadedSessionFile(sessionId: string, cwd?: string): Promise<string | undefined> {
+		if (cwd) {
+			const file = SessionManager.findById(cwd, sessionId);
+			if (file) return file;
+		}
+		return (await this.listAllSessions()).find((s) => s.sessionId === sessionId)?.sessionFile;
 	}
 
 	/** 导出会话内容（HTML/JSONL）；返回文件内容，由调用方保存 */
@@ -899,12 +966,12 @@ export class PiBackend {
 	 * LAN 历史会话只读透视：活跃会话走 registry（同 getSessionMessages）；
 	 * 未打开的会话纯解析文件（不开 SessionManager，零副作用零写盘）。不存在返回 null。
 	 */
-	async peekSessionMessages(sessionId: string): Promise<SessionMessage[] | null> {
+	async peekSessionMessages(sessionId: string, cwd?: string): Promise<SessionMessage[] | null> {
 		if (this.registry.get(sessionId)) return this.getSessionMessages(sessionId);
-		const meta = (await this.listAllSessions()).find((s) => s.sessionId === sessionId);
-		if (!meta?.sessionFile) return null;
+		const file = await this.findUnloadedSessionFile(sessionId, cwd);
+		if (!file) return null;
 		try {
-			const content = await readFile(meta.sessionFile, "utf8");
+			const content = await readFile(file, "utf8");
 			return readSessionMessagesFromContent(content);
 		} catch {
 			return null;
@@ -912,19 +979,20 @@ export class PiBackend {
 	}
 
 	/**
-	 * 读取会话当前 todo 列表：扫 session.messages（裁剪后的上下文）找最后一条
-	 * todo 工具结果的 details，或最后一条 todo-reminder custom message 的 details
-	 * （compaction 后注入的恢复消息；toolResult 已被截断时兜底）。都没有返回 []。
+	 * 读取会话当前 todo 列表：扫**会话分支**（`getBranch()` = 权威历史，含被压缩掉的部分）
+	 * 找最后一条 todo 工具结果的 details。没有返回 []。
+	 * 1.0.4 起**不能**再扫 `session.messages`：那是 `agent.state.messages` = 压缩后的请求投影，
+	 * 压缩一发生 todo 工具结果就没了（旧实现靠 todo-reminder 注入的 custom message 兜底，
+	 * 但那条只在 wire 上、不落 entry；现在 reminder 只服务模型上下文）。
 	 */
 	async getTodos(sessionId: string): Promise<TodoItem[]> {
 		const entry = this.requireSession(sessionId);
-		for (const raw of [...entry.session.messages].reverse()) {
-			const m = raw as RawMessage;
+		const branch = entry.session.sessionManager.getBranch();
+		for (let i = branch.length - 1; i >= 0; i--) {
+			const item = branch[i];
+			if (item?.type !== "message") continue;
+			const m = item.message as RawMessage;
 			if (m.role === "toolResult" && m.toolName === TODO_TOOL_NAME && !m.isError) {
-				const todos = extractTodos(m.details);
-				if (todos) return todos;
-			}
-			if (m.role === "custom" && m.customType === TODO_REMINDER_CUSTOM_TYPE) {
 				const todos = extractTodos(m.details);
 				if (todos) return todos;
 			}
@@ -965,6 +1033,11 @@ export class PiBackend {
 	 * 保留为侧枝，不删除），同时重建内存 LLM 上下文；随后追加 message-recalled custom entry
 	 * （不进上下文、不进消息列表）把 leaf 移动持久化，避免重启后旧分支回来。
 	 * 文本与图片从目标 entry 提取后返回，调用方放回输入框继续编辑。
+	 *
+	 * ❗ 纪律（1.0.4）：**任何直接改 SessionManager leaf 的路径**（branch/resetLeaf/navigateTree 之外的
+	 * 手写回退）都必须在改完 leaf 后自己调 `session.refreshContext()`——navigateTree 内部末尾会刷，
+	 * 绕过它就没别人刷，`session.messages`（= agent.state.messages，UI messageCount 与 compaction 判定都读它）
+	 * 会停在旧值 = 幽灵消息。本文件只有下面的「悬挂用户消息」分支属于这类，新增请照此办理。
 	 */
 	async recallMessage(
 		sessionId: string,
@@ -985,10 +1058,16 @@ export class PiBackend {
 		const images = blockImages(message.content);
 		if (sm.getLeafId() === targetId) {
 			// 悬挂的用户消息（发出后无任何回复，entry 即当前 leaf）：navigateTree 视为 no-op，
-			// 手动回退 leaf 并同步内存上下文（与 navigateTree 内部做的事一致）
+			// 手动回退 leaf。
+			// 1.0.4 起不要再手写 `agent.state.messages = sm.buildSessionContext().messages`：
+			// 请求上下文由 SessionManager 投影在 prepareRequest 里逐次重建（SDK 内部 _refreshFinalizedContext 收尾）。
 			if (target.parentId) sm.branch(target.parentId);
 			else sm.resetLeaf();
-			entry.session.agent.state.messages = sm.buildSessionContext().messages;
+			// 但这条分支绕过了 navigateTree 的收尾（navigateTree 末尾会 _refreshFinalizedContext），
+			// 不刷新会让 session.messages（= agent.state.messages）停在撤回前：下一轮 prompt 的
+			// compaction 判定（_findLastAssistantMessage）与 UI 的 messageCount 会读到幽灵消息。
+			// 用官方公开原语刷新（与 navigateTree 内部同一件事）。
+			entry.session.refreshContext();
 		} else {
 			const result = await entry.session.navigateTree(targetId);
 			if (result.cancelled) throw new Error("Recall was cancelled by an extension");
@@ -1069,8 +1148,207 @@ export class PiBackend {
 		return this.trustEmitter.subscribe(handler);
 	}
 
+	/** MCP 运行态变化订阅（每 server 的工具 + 失效原因 + 全局提示；main 转发 renderer 面板用） */
+	onMcpServersChanged(handler: (payload: McpServersChangedPayload) => void): () => void {
+		return this.mcpServersChangedEmitter.subscribe(handler);
+	}
+
 	onLoginEvent(handler: (payload: LoginEventPayload) => void): () => void {
 		return this.loginEmitter.subscribe(handler);
+	}
+
+	/** MCP 运行态聚合回调入口（扩展侧调用）：缓存工具集 + 广播（附官方 notify 带来的失效原因） */
+	private emitMcpServersChanged(servers: McpServerStatus[]): void {
+		this.mcpToolsByServer = new Map(servers.map((server) => [server.name, server.tools]));
+		this.emitMcpStatus();
+	}
+
+	/** 广播当前运行态（工具集来自缓存/实时聚合，原因来自 notify 缓存） */
+	private emitMcpStatus(): void {
+		const tools = this.mcpToolsMap();
+		const names = new Set([...tools.keys(), ...this.mcpServerNotices.keys()]);
+		const servers: McpServerStatus[] = [...names].sort().map((name) => {
+			const notice = this.mcpServerNotices.get(name);
+			return {
+				name,
+				tools: tools.get(name) ?? [],
+				error: notice?.error,
+				needsAuth: notice?.needsAuth || undefined,
+				authUrl: notice?.authUrl,
+			};
+		});
+		this.mcpServersChangedEmitter.emit({ servers, notice: this.mcpGlobalNotice });
+	}
+
+	/**
+	 * 官方 mcp 扩展的 notify 分流（spec §7.6）：面板要显示「失败原因 / 需要登录 / 工具不可达」，
+	 * 而官方没有状态 API —— 它在这三种时机 notify 结构化文本，按 `mcp/notices.ts` 的形状解析，
+	 * 解析不出来就**不猜**（回落到「未连上」档）。有变化才广播，避免重复刷面板。
+	 */
+	private handleMcpNotice(sessionId: string, message: string): void {
+		const update = parseMcpNotice(message);
+		if (!update) return;
+		let changed = false;
+		for (const entry of update.servers) {
+			const current = this.mcpServerNotices.get(entry.name) ?? {};
+			if (entry.clear) {
+				if (this.mcpServerNotices.delete(entry.name)) changed = true;
+				continue;
+			}
+			const next = {
+				error: entry.error,
+				needsAuth: entry.needsAuth || undefined,
+				authUrl: entry.authUrl ?? (entry.needsAuth ? current.authUrl : undefined),
+			};
+			if (
+				current.error !== next.error ||
+				current.needsAuth !== next.needsAuth ||
+				current.authUrl !== next.authUrl
+			) {
+				this.mcpServerNotices.set(entry.name, next);
+				changed = true;
+			}
+		}
+		if (update.global !== undefined) {
+			if (update.global === null) {
+				if (this.mcpGlobalNotice) {
+					this.mcpGlobalNotice = undefined;
+					changed = true;
+				}
+			} else if (this.mcpGlobalNotice?.message !== update.global.message) {
+				this.mcpGlobalNotice = update.global;
+				changed = true;
+			}
+		}
+		if (changed) {
+			log.info("mcp notice", sessionId, { message: message.slice(0, 120) });
+			this.emitMcpStatus();
+		}
+	}
+
+	/**
+	 * MCP 面板：当前「server → 工具名」。**事件缓存 + 实时聚合合流**：
+	 * 官方 mcp 扩展在 `session_start` 之后才异步连上服务器，而我们的事件只在三个钩子上报——
+	 * 只信缓存会在「刚重连／面板刚打开」时显示空集（实测踩到）。所以这里以 registry 里各会话的
+	 * `getAllTools()` 为准（晚合并覆盖早值），事件缓存只作没有活跃会话时的兜底。
+	 */
+	private mcpToolsMap(): Map<string, McpToolView[]> {
+		const merged = new Map<string, McpToolView[]>(this.mcpToolsByServer);
+		for (const entry of this.registry.list()) {
+			try {
+				const tools = collectMcpTools(
+					entry.session.getAllTools().map((tool) => ({
+						name: tool.name,
+						readOnly: tool.annotations?.readOnlyHint === true,
+					})),
+				);
+				for (const [name, list] of tools) merged.set(name, list);
+			} catch (err) {
+				log.warn("mcp tools aggregate failed", entry.session.sessionId, err);
+			}
+		}
+		return merged;
+	}
+
+	/**
+	 * MCP 配置列表（spec §5：全局 + 项目级；项目级仅受信时读）。
+	 * 只做 JSON 读写 + 形状校验，连接与 `${VAR}` 展开都交给官方 mcp 扩展。
+	 */
+	async getMcpConfig(options: { cwd?: string } = {}): Promise<McpConfigListResult> {
+		const cwd = options.cwd ?? this.options.defaultCwd;
+		return listMcpServers({
+			cwd,
+			projectTrusted: this.isProjectTrusted(cwd),
+			toolsByServer: this.mcpToolsMap(),
+			noticesByServer: this.mcpServerNotices,
+			globalNotice: this.mcpGlobalNotice,
+		});
+	}
+
+	/** 新增/编辑一个 MCP server；写盘后 reload 空闲会话（运行中的跳过并回报，见 reloadSessionsForCwd） */
+	async upsertMcpServer(input: McpUpsertInput): Promise<McpMutationResult> {
+		const cwd = input.cwd ?? this.options.defaultCwd;
+		const projectTrusted = this.isProjectTrusted(cwd);
+		const config = await upsertMcpServer(
+			{ ...input, cwd },
+			{
+				projectTrusted,
+				toolsByServer: this.mcpToolsMap(),
+				noticesByServer: this.mcpServerNotices,
+				globalNotice: this.mcpGlobalNotice,
+			},
+		);
+		const reload = await this.reloadSessionsForCwd(input.scope === "project" ? cwd : undefined);
+		return { config, reload };
+	}
+
+	/**
+	 * 重连（面板入口）：reload 会话 → 官方 mcp 扩展重读 mcp.json、重连 server。
+	 * 对应官方 `/mcp` 的 reconnect；连接失败/需要登录一律以官方 notify 文本呈现（面板不自己解析）。
+	 */
+	async reloadMcpServers(input: { cwd?: string } = {}): Promise<McpMutationResult> {
+		const cwd = input.cwd ?? this.options.defaultCwd;
+		const reload = await this.reloadSessionsForCwd(undefined); // 全局配置影响所有会话
+		return { config: await this.getMcpConfig({ cwd }), reload };
+	}
+
+	/** 删除一个 MCP server（写盘后 reload） */
+	async removeMcpServer(input: {
+		scope: "user" | "project";
+		cwd?: string;
+		name: string;
+	}): Promise<McpMutationResult> {
+		const cwd = input.cwd ?? this.options.defaultCwd;
+		await removeMcpServer({ ...input, cwd });
+		const reload = await this.reloadSessionsForCwd(input.scope === "project" ? cwd : undefined);
+		return { config: await this.getMcpConfig({ cwd }), reload };
+	}
+
+	/**
+	 * 项目是否受信（项目级 mcp.json 只在受信项目读，与官方 trust-manager 同款）。
+	 * **同步且无副作用**：列表型 API 不能在这里弹信任窗（那是 session 打开时的行为）——
+	 * 已存决策为准；未决且项目确有需信任资源时，只有 default `always` 才算受信（否则面板显示「未受信」）。
+	 */
+	private isProjectTrusted(cwd: string | undefined): boolean {
+		if (!cwd) return false;
+		if (!hasTrustRequiringProjectResources(cwd)) return true; // 没有项目级资源 = 无需信任
+		const decision = this.trustStore.get(cwd);
+		if (decision !== null) return decision;
+		const settingsManager = SettingsManager.create(cwd, getAgentDir(), { projectTrusted: false });
+		return settingsManager.getDefaultProjectTrust() === "always";
+	}
+
+	/**
+	 * mcp.json 变更后重载会话：官方 mcp 扩展在 `session_start`/reload 时读配置，不 reload 看不到新 server。
+	 * `cwd` 给定 = 只重载该项目下的会话（项目级配置只影响它们）；缺省 = 全局配置，重载全部。
+	 *
+	 * ❗**必须跳过运行中的会话**：`AgentSession.reload()` 内部既没有 `isStreaming` 守卫也不 abort
+	 * 在跑的 turn，却会 `emitSessionShutdown` —— 官方 mcp 扩展收到就关掉全部连接、旧 runner 被
+	 * invalidate。用户在别的会话跑长任务时顺手改一下 MCP 配置，就会静默打断那个任务
+	 * （失败还被 catch 吞掉 → 用户视角"点了没反应"）。跳过并把名单回给 UI（空闲后生效）。
+	 * 与 `forkSession` 用的同一把守卫。
+	 */
+	private async reloadSessionsForCwd(cwd: string | undefined): Promise<McpReloadReport> {
+		const skipped: McpReloadReport["skipped"] = [];
+		let reloaded = 0;
+		for (const entry of this.registry.list()) {
+			if (cwd && entry.cwd !== cwd) continue;
+			const { isStreaming, isCompacting } = entry.session;
+			if (isStreaming || isCompacting) {
+				skipped.push({
+					sessionId: entry.session.sessionId,
+					reason: isStreaming ? "streaming" : "compacting",
+				});
+				continue;
+			}
+			try {
+				await entry.session.reload();
+				reloaded++;
+			} catch (err) {
+				log.warn("session reload failed", entry.session.sessionId, err);
+			}
+		}
+		return { reloaded, skipped };
 	}
 
 	/** 扩展对话框请求/结算/通知/草稿预填订阅（main 进程转发 renderer 用） */

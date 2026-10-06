@@ -712,6 +712,31 @@ code {
 	);
 }
 
+/* 淡出分隔线的竖直版（同一条语言，旋转 90°）：在容器**右边缘**画一条发丝线，中间实、两端淡出。
+   用在左栏 / 设置弹窗左导航与内容的分界（替代 `border-r`）。
+   `--rule-solid` = 中段实线占整条高度的比例（默认 50% = 上下各 25% 都在淡，淡出要够长才看得出）。
+   注意：渐变里直接写 `var(--color-rule)`——别把它抽成 :root 上的自定义属性，自定义属性里的 var()
+   在**声明它的元素**上求值，抽上去会锁死浅色取值（深色主题沿用浅色线）。 */
+.fade-rule-v {
+	position: relative;
+	--rule-solid: 50%;
+}
+.fade-rule-v::after {
+	content: "";
+	position: absolute;
+	top: 0;
+	bottom: 0;
+	right: 0;
+	width: 1px;
+	background: linear-gradient(
+		to bottom,
+		transparent 0%,
+		var(--color-rule) calc(50% - var(--rule-solid) / 2),
+		var(--color-rule) calc(50% + var(--rule-solid) / 2),
+		transparent 100%
+	);
+}
+
 /* 滚动边界淡出：把边界的硬裁切换成渐变（顶栏下 = 对话正文上沿、左栏底部 = 会话列表下沿，
    也就是原来那两条 1px 实线的位置）。两侧各自只在「那个方向还有内容」时淡出，属性由
    lib/use-edge-fade.ts 按滚动位置写；不溢出的容器不挂属性，边缘保持干净。
@@ -1270,25 +1295,8 @@ code {
 	overflow: hidden;
 	background: var(--color-canvas);
 	transition: width 0.4s cubic-bezier(0.32, 0.72, 0, 1);
-	/* 与对话区的分界不再用 1px 实线 border：改成**中段实、两头淡出**的发丝线（同 `.fade-rule` 语言，竖直用）。
-	   border 换成伪元素后内容区宽了 1px（border-box 下原来被 border 吃掉那 1px），总宽不变。
-	   中段实线长度占比是唯一旋钮（50% = 上下各 25% 都在淡）。 */
-	--sidebar-rule-solid: 50%;
-}
-.sidebar::after {
-	content: "";
-	position: absolute;
-	top: 0;
-	bottom: 0;
-	right: 0;
-	width: 1px;
-	background: linear-gradient(
-		to bottom,
-		transparent 0%,
-		var(--color-rule) calc(50% - var(--sidebar-rule-solid) / 2),
-		var(--color-rule) calc(50% + var(--sidebar-rule-solid) / 2),
-		transparent 100%
-	);
+	/* 与对话区的分界不再用 1px 实线 border：改成**中段实、两头淡出**的发丝线 —— 就是 `.fade-rule-v`
+	   （标记里挂在同一个元素上，原先这段是自己复刻一份渐变，现已并到那个类里）。 */
 }
 /* 收起：宽度归 0，发丝线一起不画（只宽 0 会留一条 1px 的线；聊天列能不能拿到那 1px 与收起前一致） */
 .sidebar.is-collapsed {

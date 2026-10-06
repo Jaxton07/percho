@@ -1,6 +1,6 @@
 # pi 扩展 UI 交互调研与 Percho GUI 适配方案（issue #45）
 
-> 日期：2026-09-09（当前版本 v0.5.6，SDK 钉 0.84.3）
+> 日期：2026-09-09（当前版本 v0.5.6，SDK 钉 1.0.4）
 > 调研范围：pi 官方 docs（`resources/pi-package/docs/extensions.md`、`rpc.md`）、SDK 实际类型与三种模式实现（`node_modules/@earendil-works/pi-coding-agent/dist/`）、Percho 现状代码、已装热门扩展的真实用法。
 > 结论先行：**pi 扩展的所有 UI 交互收敛为一份 ~30 方法的 `ExtensionUIContext` 契约，进程内嵌入的宿主（Percho）只需实现这个对象即可全面接管**；其中真正的高频刚需是 4 个阻塞对话框 + 1 个通知，其余按「诚实降级」分层处理。
 

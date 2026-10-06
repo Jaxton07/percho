@@ -643,3 +643,35 @@ describe("tier2Scope=gt4k：小输出不 stub", () => {
 		expect(resultText(messages, 6)).toContain("已淘汰");
 	});
 });
+
+// ---------- 1.0.4 wire 口径（system 消息不参与） ----------
+
+describe("system 消息不进蒸发口径（1.0.4 起 context 钩子过滤 + 复原）", () => {
+	it("wire 带不带 system，决策集与批次信息逐字一致", () => {
+		// 1.0.4 的 SDK 在调 context 钩子前过滤掉 system 消息（返回时 restoreSystemMessages 复原），
+		// 0.84.3 的 wire 本来也只有对话消息 → 升级不改变蒸发锚定口径。
+		// 同时锁住「system 从不进 part 提取」：即使将来官方改口径把它传进来，也不该影响决策。
+		const system: EvapWireMessage = { role: "system", content: "你是 pi，可用工具见下……", timestamp: 0 };
+		const conv: EvapWireMessage[] = [
+			ballast(20000),
+			userText("读文件"),
+			assistantToolCall("c1", "read", { path: "/tmp/a.ts" }),
+			toolResult("c1", "read", readLines(40)),
+			userText("继续"),
+		];
+		// 同一分母 + 同一固定 usage（usage 驱动的 offset 锚定由此可比）
+		const windowTokens = windowFor(conv, 70);
+		const usageTokens = Math.round(totalTokens(conv) * 0.75);
+		const stateA = createEvapState();
+		const stateB = createEvapState();
+
+		const withSystem = evap([system, ...conv], stateA, windowTokens, usageTokens);
+		const without = evap(conv, stateB, windowTokens, usageTokens);
+
+		expect(withSystem.batch).toEqual(without.batch);
+		expect([...stateA.decisions.entries()].sort()).toEqual([...stateB.decisions.entries()].sort());
+		// 未参与蒸发的 system 消息原样保留（对象身份不变，SDK 复原逻辑才不会撞车）
+		expect(withSystem.messages[0]).toBe(system);
+		expect(withSystem.messages.slice(1)).toEqual(without.messages);
+	});
+});

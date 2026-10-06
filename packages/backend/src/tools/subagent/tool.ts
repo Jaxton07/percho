@@ -1,9 +1,10 @@
-import type {
-	AgentSessionEvent,
-	AgentToolResult,
-	ExtensionContext,
-	ModelRuntime,
-	ToolDefinition,
+import {
+	type AgentSessionEvent,
+	type AgentToolResult,
+	defineTool,
+	type ExtensionContext,
+	type ModelRuntime,
+	type ToolDefinition,
 } from "@earendil-works/pi-coding-agent";
 import { type Static, Type } from "typebox";
 import type { PermissionGate } from "../../permissions/gate";
@@ -153,8 +154,12 @@ async function confirmProjectAgents(
 
 /** 内置进程内 subagent 工具：single + bounded parallel，子会话深度固定为 1。 */
 export function makeSubagentTool(deps: MakeSubagentToolDeps): ToolDefinition {
-	return {
+	// defineTool：官方 1.0.4 的类型收窄入口（execute 参数由 TParams 推导）
+	return defineTool({
 		name: "subagent",
+		// 子会话会跑工具（可能改环境），且它不带权限扩展 → 这里如实声明为写且可破坏
+		// （声明不参与本机弹窗判定：自研工具在权限门控里走「内置短路」，见 permissions/annotations.ts）
+		annotations: { readOnlyHint: false, destructiveHint: true },
 		label: "Subagent",
 		description:
 			"Delegate a self-contained read-only or project-scoped task to an isolated subagent session. Use {agent, task} for one run or {tasks:[{agent, task}, ...]} for parallel exploration (up to 8 tasks, 4 at once). Built-in agent: scout. More agents may be defined in ~/.pi/agent/agents/. The subagent returns only its final conclusion while its full session remains available from the result card.",
@@ -239,5 +244,5 @@ export function makeSubagentTool(deps: MakeSubagentToolDeps): ToolDefinition {
 			const results = filled();
 			return finalizeSubagentResult(mode, results);
 		},
-	};
+	});
 }

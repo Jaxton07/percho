@@ -1,4 +1,4 @@
-import type { ToolDefinition } from "@earendil-works/pi-coding-agent";
+import { defineTool, type ToolDefinition } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
 import { channelRoot, validateTopic } from "./init";
 
@@ -54,15 +54,19 @@ function textResult(text: string): { content: Array<{ type: "text"; text: string
 }
 
 export function makeChannelTools(deps: ChannelToolDeps): ToolDefinition[] {
-	const subscribe: ToolDefinition<typeof subscribeParams> = {
+	// defineTool：参数由 schema 推导，不再需要 `params as { topic?: unknown }` 手写断言
+	const subscribe = defineTool({
 		name: "channel_subscribe",
 		label: "Subscribe channel",
+		// 会写订阅状态（本地文件）→ 非只读；被订阅方之后能唤醒本会话，但不删改任何内容
+		// （声明不参与本机弹窗判定：自研工具在权限门控里走「内置短路」，见 permissions/annotations.ts）
+		annotations: { readOnlyHint: false, destructiveHint: false },
 		description:
 			"订阅一个协作频道（.local/agent-work/channel/<topic>）。订阅后另一会话用 channel_post 向该频道发消息时，本会话会收到一行唤醒提醒。topic 为频道目录名。",
 		promptSnippet: "channel_subscribe({ topic }) — 订阅协作频道，接收文件更新唤醒",
 		parameters: subscribeParams,
 		async execute(_toolCallId, params) {
-			const topic = String((params as { topic?: unknown }).topic ?? "").trim();
+			const topic = params.topic.trim();
 			const invalid = validateTopic(topic);
 			if (invalid) return textResult(`订阅失败：${invalid}`);
 			const result = await deps.subscribe(topic);
@@ -78,36 +82,39 @@ export function makeChannelTools(deps: ChannelToolDeps): ToolDefinition[] {
 					.join("\n"),
 			);
 		},
-	};
+	});
 
-	const unsubscribe: ToolDefinition<typeof unsubscribeParams> = {
+	const unsubscribe = defineTool({
 		name: "channel_unsubscribe",
 		label: "Unsubscribe channel",
+		annotations: { readOnlyHint: false, destructiveHint: false },
 		description: "退订一个协作频道，不再接收该频道的消息唤醒。",
 		promptSnippet: "channel_unsubscribe({ topic }) — 退订频道",
 		parameters: unsubscribeParams,
 		async execute(_toolCallId, params) {
-			const topic = String((params as { topic?: unknown }).topic ?? "").trim();
+			const topic = params.topic.trim();
 			const result = deps.unsubscribe(topic);
 			if (!result.ok) return textResult(`退订失败：${result.error ?? "未知错误"}`);
 			return textResult(`已退订频道 [${topic}]。`);
 		},
-	};
+	});
 
-	const post: ToolDefinition<typeof postParams> = {
+	const post = defineTool({
 		name: "channel_post",
 		label: "Post channel message",
+		// 追加写频道 MESSAGES.md、并唤醒订阅方（只增不改）
+		annotations: { readOnlyHint: false, destructiveHint: false },
 		description:
 			"向协作频道发一条消息（追加到 .local/agent-work/channel/<topic>/MESSAGES.md）。订阅该频道的会话会自动收到唤醒查收。写完一组频道文件后调一次 post 通知对方——只写文件不发 post 不会通知。closed=true 表示任务/频道终态，订阅方查收后将退订。",
 		promptSnippet: "channel_post({ topic, message, closed? }) — 向频道发消息并唤醒订阅者",
 		parameters: postParams,
 		async execute(_toolCallId, params) {
-			const topic = String((params as { topic?: unknown }).topic ?? "").trim();
+			const topic = params.topic.trim();
 			const invalid = validateTopic(topic);
 			if (invalid) return textResult(`发送失败：${invalid}`);
-			const message = String((params as { message?: unknown }).message ?? "").trim();
+			const message = params.message.trim();
 			if (message.length === 0) return textResult("发送失败：message 不能为空");
-			const closed = (params as { closed?: unknown }).closed === true;
+			const closed = params.closed === true;
 			const result = await deps.post(topic, message, closed);
 			if (!result.ok) return textResult(`发送失败：${result.error ?? "未知错误"}`);
 			const lines = [
@@ -119,11 +126,12 @@ export function makeChannelTools(deps: ChannelToolDeps): ToolDefinition[] {
 			}
 			return textResult(lines.join("\n"));
 		},
-	};
+	});
 
-	const list: ToolDefinition<ReturnType<typeof Type.Object>> = {
+	const list = defineTool({
 		name: "channel_list",
 		label: "List channels",
+		annotations: { readOnlyHint: true },
 		description: "列出本项目全部协作频道与本会话的订阅状态（含因频繁互触发被暂停的频道）。",
 		promptSnippet: "channel_list() — 列出频道与订阅状态",
 		parameters: Type.Object({}),
@@ -151,7 +159,7 @@ export function makeChannelTools(deps: ChannelToolDeps): ToolDefinition[] {
 			});
 			return textResult([`频道根：${root}`, ...lines].join("\n"));
 		},
-	};
+	});
 
 	return [subscribe, unsubscribe, post, list];
 }

@@ -1,4 +1,4 @@
-import type { AgentToolResult, ToolDefinition } from "@earendil-works/pi-coding-agent";
+import { type AgentToolResult, defineTool, type ToolDefinition } from "@earendil-works/pi-coding-agent";
 import { TODO_TOOL_NAME, type TodoItem } from "@percho/shared";
 import { Type } from "typebox";
 
@@ -50,9 +50,12 @@ const todoParams = Type.Object({
  * compaction 后由 todo-reminder 扩展自动重新注入。
  */
 export function makeTodoTool(): ToolDefinition<typeof todoParams> {
-	return {
+	// defineTool：官方 1.0.4 的类型收窄入口（execute 参数由 TParams 推导，不再靠上下文猜测）
+	return defineTool({
 		name: TODO_TOOL_NAME,
 		label: "Todo",
+		// 只改会话内的任务列表（UI 状态），不动环境 → 只读；与硬编码分类同源（见 permissions/annotations.ts）
+		annotations: { readOnlyHint: true },
 		description:
 			"Maintain a task list for complex multi-step work (long refactors, multi-file features, multi-step investigations). Call with the FULL updated list on every change — the list fully replaces the previous one (there is no read tool; the latest list is always visible in this result). Keep at most ONE item in_progress at a time, mark items completed as soon as they are done, and pass an empty list when the whole task is finished.",
 		promptSnippet: "todo({todos})",
@@ -72,5 +75,5 @@ export function makeTodoTool(): ToolDefinition<typeof todoParams> {
 				details: { todos },
 			};
 		},
-	};
+	});
 }

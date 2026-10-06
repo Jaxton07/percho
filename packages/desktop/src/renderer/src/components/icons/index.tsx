@@ -442,6 +442,26 @@ export function UndoIcon({ size = 14, className }: IconProps) {
 	);
 }
 
+/** 返回 / 上一级（左箭头）—— 设置二级页面的左上角入口 */
+export function ArrowLeftIcon({ size = 14, className }: IconProps) {
+	return (
+		<svg
+			className={className}
+			width={size}
+			height={size}
+			viewBox="0 0 24 24"
+			{...strokeProps}
+			strokeWidth={1.8}
+			strokeLinecap="round"
+			strokeLinejoin="round"
+			aria-hidden="true"
+		>
+			<path d="M19 12H5" />
+			<path d="m11 18-6-6 6-6" />
+		</svg>
+	);
+}
+
 /** 停止（方块） */
 export function StopIcon({ size = 10, className }: IconProps) {
 	return (

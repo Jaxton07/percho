@@ -53,6 +53,9 @@ export class PackageAdmin {
 				cwd,
 				agentDir: getAgentDir(),
 				settingsManager: SettingsManager.create(cwd, getAgentDir()),
+				// 已注册的内置扩展名（1.0.4）：包解析时能把 `+builtin:tool-search` 这类条目认成已知内置；
+				// 未知的 builtin:<name>（如未接的 llama.cpp）只降级为 info 说明，不阻塞（见 getLoadedResources）
+				builtinExtensions: ["codemode", "tool-search", "mcp"],
 			});
 		}
 		return this.packageManager;

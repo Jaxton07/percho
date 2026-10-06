@@ -7,6 +7,7 @@ import type {
 	ExtensionHandler,
 	ToolCallEvent,
 	ToolCallEventResult,
+	ToolInfo,
 } from "@earendil-works/pi-coding-agent";
 import type { PermissionMode } from "@percho/shared";
 import { describe, expect, it } from "vitest";
@@ -44,13 +45,31 @@ function makeAgentDir(): string {
 	return dir;
 }
 
+/** 造 getAllTools() 的条目（只填判定用得到的字段） */
+function toolInfo(name: string, options: { path?: string; readOnlyHint?: boolean } = {}): ToolInfo {
+	return {
+		name,
+		description: "x",
+		parameters: {},
+		sourceInfo: { path: options.path ?? `builtin:${name}` },
+		annotations: options.readOnlyHint === undefined ? undefined : { readOnlyHint: options.readOnlyHint },
+	} as unknown as ToolInfo;
+}
+
 /** 挂载扩展并返回 tool_call 触发器；confirmAnswer 控制弹窗结果，confirmCalls 捕获元数据；
  * ctx.cwd 缺省 homedir（非临时区基准；临时区豁免测试按需覆盖 cwd）；
- * mode 注入会话权限模式引用（缺省 default，与现状行为一致） */
+ * mode 注入会话权限模式引用（缺省 default，与现状行为一致）；
+ * tools 喂给 pi.getAllTools()（非内置工具的声明层判定用它，缺省空表 = 一律 ask） */
 function makeHarness(
 	agentDir: string,
 	confirmAnswer: boolean | ((title: string) => boolean) = false,
-	options?: { projectRoot?: string; confirmCalls?: ConfirmCall[]; cwd?: string; mode?: PermissionModeRef },
+	options?: {
+		projectRoot?: string;
+		confirmCalls?: ConfirmCall[];
+		cwd?: string;
+		mode?: PermissionModeRef;
+		tools?: ToolInfo[];
+	},
 ) {
 	const confirmCalls = options?.confirmCalls;
 	const confirm: PermissionConfirm | undefined = confirmCalls
@@ -73,6 +92,7 @@ function makeHarness(
 		on: (event: string, h: ToolCallHandler) => {
 			if (event === "tool_call") handler = h;
 		},
+		getAllTools: () => options?.tools ?? [],
 	};
 	extension.factory(pi as unknown as ExtensionAPI);
 	if (!handler) throw new Error("tool_call handler not registered");
@@ -275,12 +295,86 @@ describe("permission-gate 扩展", () => {
 		}
 	});
 
-	it("自定义工具吃工具名级规则", async () => {
+	it("工具名级规则优先；未声明的非内置工具默认 ask", async () => {
 		const dir = makeAgentDir();
 		writeFileSync(join(dir, "permissions.json"), JSON.stringify({ rules: { my_tool: "deny" } }));
-		const { call } = makeHarness(dir);
+		const { call, confirms } = makeHarness(dir);
+		// 显式 deny → 直接 block，不进声明层
 		await expect(call("my_tool", { foo: 1 })).resolves.toMatchObject({ block: true });
-		await expect(call("other_tool", { foo: 1 })).resolves.toBeUndefined();
+		// 无显式规则 + 工具表里没有/没声明 readOnlyHint → 声明层收紧为 ask（默认确认拒绝 → block）
+		await expect(call("other_tool", { foo: 1 })).resolves.toMatchObject({ block: true });
+		expect(confirms).toHaveLength(1);
+	});
+
+	it("非内置工具的声明层：MCP 只读放行、写/无声明弹窗（spec §3.1-7）", async () => {
+		const dir = makeAgentDir();
+		const { call, confirms } = makeHarness(dir, true, {
+			tools: [
+				toolInfo("mcp__docs__search", { path: "builtin:mcp", readOnlyHint: true }),
+				toolInfo("mcp__docs__write", { path: "builtin:mcp" }),
+				toolInfo("mcp__docs__edit", { path: "builtin:mcp", readOnlyHint: false }),
+			],
+		});
+
+		await expect(call("mcp__docs__search", { q: "x" })).resolves.toBeUndefined();
+		expect(confirms).toHaveLength(0);
+		await expect(call("mcp__docs__write", { q: "x" })).resolves.toBeUndefined();
+		await expect(call("mcp__docs__edit", { q: "x" })).resolves.toBeUndefined();
+		expect(confirms).toHaveLength(2);
+	});
+
+	it("第三方盘上扩展的工具（无 annotations）→ 弹窗", async () => {
+		const dir = makeAgentDir();
+		const { call, confirms } = makeHarness(dir, true, {
+			tools: [toolInfo("third_party_tool", { path: "/Users/x/.pi/agent/extensions/ext.ts" })],
+		});
+
+		await expect(call("third_party_tool", {})).resolves.toBeUndefined();
+		expect(confirms).toHaveLength(1);
+	});
+
+	it("受信内置不受声明层影响：Percho 自研工具声明为写也直接放行", async () => {
+		const dir = makeAgentDir();
+		const { call, confirms } = makeHarness(dir, false, {
+			tools: [
+				toolInfo("channel_post", { path: "<inline:channel-watch>", readOnlyHint: false }),
+				toolInfo("subagent", { path: "<sdk:subagent>", readOnlyHint: false }),
+				toolInfo("todo", { path: "<sdk:todo>", readOnlyHint: true }),
+			],
+		});
+
+		await expect(call("channel_post", { topic: "t", message: "m" })).resolves.toBeUndefined();
+		await expect(call("subagent", { task: "x" })).resolves.toBeUndefined();
+		await expect(call("todo", { todos: [] })).resolves.toBeUndefined();
+		expect(confirms).toHaveLength(0);
+	});
+
+	it("codemode 默认动作是 ask（1.0.4 新增内置扩展的默认规则）", async () => {
+		const dir = makeAgentDir();
+		const { call, confirms } = makeHarness(dir, true, {
+			tools: [toolInfo("codemode", { path: "builtin:codemode" })],
+		});
+
+		await expect(call("codemode", { code: "1" })).resolves.toBeUndefined();
+		expect(confirms).toHaveLength(1);
+	});
+
+	it("MCP 工具也吃显式规则：规则 allow 时不弹窗、规则 deny 时直接 block", async () => {
+		const dir = makeAgentDir();
+		writeFileSync(
+			join(dir, "permissions.json"),
+			JSON.stringify({ rules: { mcp__docs__search: "allow", mcp__docs__write: "deny" } }),
+		);
+		const { call, confirms } = makeHarness(dir, false, {
+			tools: [
+				toolInfo("mcp__docs__search", { path: "builtin:mcp", readOnlyHint: true }),
+				toolInfo("mcp__docs__write", { path: "builtin:mcp" }),
+			],
+		});
+
+		await expect(call("mcp__docs__search", {})).resolves.toBeUndefined();
+		await expect(call("mcp__docs__write", {})).resolves.toMatchObject({ block: true });
+		expect(confirms).toHaveLength(0);
 	});
 
 	it("ask 走 PermissionGate：allowAlways 后同模式不再弹窗", async () => {

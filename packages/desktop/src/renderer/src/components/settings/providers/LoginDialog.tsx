@@ -1,5 +1,6 @@
 import type { LoginAuthPrompt } from "@percho/shared";
 import { useEffect, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import { useT } from "../../../i18n";
 import { useProviderLoginStore } from "../../../stores/provider-login";
 import { Button } from "../../ui/Button";
@@ -34,9 +35,12 @@ export function LoginDialog() {
 	const { pendingPrompt, deviceCode, authUrl, infoLinks } = login;
 	const prompt = pendingPrompt?.prompt;
 
-	return (
+	// 必须 portal 到 body：本组件挂在 ProvidersPanel 里，而设置弹窗右列是滚动容器且带 `.edge-fade`
+	// （mask）。mask 会把它内部画的东西全裁在容器盒里 —— 不 portal 的话这个 `fixed inset-0` 蒙层
+	// 只盖住右列（顶栏/左导航不暗），弹窗卡片左半边也会被裁掉（实测踩过，见 docs/PITFALLS.md）。
+	return createPortal(
 		<div className="fixed inset-0 z-[60] flex items-center justify-center bg-ink/20" role="dialog" aria-modal>
-			<div className="w-[440px] rounded-xl border border-border bg-surface p-4 shadow-dialog">
+			<div className="w-[440px] rounded-xl bg-surface p-4 shadow-dialog">
 				<h3 className="text-sm font-semibold text-ink">
 					{t(login.loginKind === "apiKey" ? "settings.login.apiKeyTitle" : "settings.login.title", {
 						name: login.providerName,
@@ -159,7 +163,8 @@ export function LoginDialog() {
 					)}
 				</div>
 			</div>
-		</div>
+		</div>,
+		document.body,
 	);
 }
 

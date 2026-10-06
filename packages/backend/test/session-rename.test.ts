@@ -3,7 +3,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { Message } from "@earendil-works/pi-ai";
 import type { AgentSession } from "@earendil-works/pi-coding-agent";
-import { SessionManager } from "@earendil-works/pi-coding-agent";
+import { getAgentDir, SessionManager } from "@earendil-works/pi-coding-agent";
 import type { SessionMeta } from "@percho/shared";
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import { PiBackend } from "../src/pi-backend";
@@ -40,7 +40,12 @@ function makeBackend(session: Partial<AgentSession> = {}): PiBackend {
 	const backend = new PiBackend({ projectTrust: false, permissionGates: false });
 	const registry = (backend as unknown as { registry: SessionRegistry }).registry;
 	registry.add({
-		session: { sessionId: "active-1", setSessionName: () => {}, ...session } as unknown as AgentSession,
+		session: {
+			sessionId: "active-1",
+			setSessionName: () => {},
+			sessionFile,
+			...session,
+		} as unknown as AgentSession,
 		unsubscribe: () => {},
 		cwd: "/tmp/project",
 	});
@@ -93,13 +98,36 @@ describe("PiBackend.setSessionName 分支", () => {
 		await expect(backend.setSessionName("active-1", "x")).rejects.toThrow("read-only");
 	});
 
-	it("历史会话走离线文件写（registry 未命中）", async () => {
+	it("历史会话走离线文件写（registry 未命中）——无 cwd 时回退枚举", async () => {
 		const backend = makeBackend();
 		vi.spyOn(backend, "listAllSessions").mockResolvedValue([meta({})]);
 
 		await backend.setSessionName("hist-1", "历史改名");
 
 		expect(SessionManager.open(sessionFile).getSessionName()).toBe("历史改名");
+	});
+
+	// 1.0.4 新增 findById：只扫该项目的会话目录，不读全部会话 header（会话多时是数百毫秒的差别）
+	it("历史会话带 cwd → 走 findById 精确查表，不做全量枚举", async () => {
+		const backend = makeBackend();
+		const findById = vi.spyOn(SessionManager, "findById").mockReturnValue(sessionFile);
+		const listAll = vi.spyOn(backend, "listAllSessions").mockResolvedValue([]);
+
+		await backend.setSessionName("hist-1", "精确查表改名", "/tmp/project");
+
+		expect(findById).toHaveBeenCalledWith("/tmp/project", "hist-1");
+		expect(listAll).not.toHaveBeenCalled();
+		expect(SessionManager.open(sessionFile).getSessionName()).toBe("精确查表改名");
+	});
+
+	it("带 cwd 但 findById 查不到 → 回退枚举（投影与磁盘不一致时的兜底）", async () => {
+		const backend = makeBackend();
+		vi.spyOn(SessionManager, "findById").mockReturnValue(undefined);
+		vi.spyOn(backend, "listAllSessions").mockResolvedValue([meta({})]);
+
+		await backend.setSessionName("hist-1", "回退改名", "/tmp/other");
+
+		expect(SessionManager.open(sessionFile).getSessionName()).toBe("回退改名");
 	});
 
 	it("历史会话不存在 → 抛 Session not found", async () => {
@@ -109,10 +137,33 @@ describe("PiBackend.setSessionName 分支", () => {
 		await expect(backend.setSessionName("ghost", "x")).rejects.toThrow("Session not found");
 	});
 
-	it("历史的只读子会话（subagent 产物）拒绝改名", async () => {
+	it("历史的只读子会话（sessionFile 落在 sessions-subagents/）拒绝改名", async () => {
 		const backend = makeBackend();
-		vi.spyOn(backend, "listAllSessions").mockResolvedValue([meta({ readOnly: true })]);
+		// 只读判定靠 isSubagentSessionPath（前缀匹配 agent dir 下的 sessions-subagents）
+		const subagentFile = join(getAgentDir(), "sessions-subagents", "sub.jsonl");
+		vi.spyOn(backend, "listAllSessions").mockResolvedValue([meta({ sessionFile: subagentFile })]);
 
 		await expect(backend.setSessionName("hist-1", "x")).rejects.toThrow("read-only");
+	});
+
+	// 新建未发消息的会话：sessionFile（路径）建会话时就有，SDK 把 session_info 写内存、
+	// 首条消息落盘时一起写入 → 改名是合法操作，不得因 sessionFile 为空而拦（手测 1c/1d 实测）
+	it("活跃会话 sessionFile 缺失（内存 manager）也走 SDK 改名，不做落盘前置拦", async () => {
+		const setSessionName = vi.fn();
+		const backend = makeBackend({
+			sessionFile: undefined,
+			setSessionName,
+		} as unknown as Partial<AgentSession>);
+
+		await backend.setSessionName("active-1", "x");
+
+		expect(setSessionName).toHaveBeenCalledWith("x");
+	});
+
+	it("历史元信息缺文件路径（磁盘枚举不会出现）→ 报 Session not found", async () => {
+		const backend = makeBackend();
+		vi.spyOn(backend, "listAllSessions").mockResolvedValue([meta({ sessionFile: undefined })]);
+
+		await expect(backend.setSessionName("hist-1", "x")).rejects.toThrow("Session not found");
 	});
 });

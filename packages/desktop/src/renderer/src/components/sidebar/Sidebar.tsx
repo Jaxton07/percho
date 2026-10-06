@@ -74,7 +74,7 @@ export function Sidebar() {
 
 	return (
 		<aside
-			className={`sidebar ${collapsed ? "is-collapsed" : ""}`}
+			className={`sidebar fade-rule-v ${collapsed ? "is-collapsed" : ""}`}
 			aria-label={t("sidebar.title")}
 			inert={collapsed}
 		>

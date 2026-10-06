@@ -1,6 +1,7 @@
-import type { ComponentType } from "react";
-import { useMemo } from "react";
+import type { ComponentType, CSSProperties } from "react";
+import { useMemo, useRef } from "react";
 import { useT } from "../../i18n";
+import { useEdgeFade } from "../../lib/use-edge-fade";
 import { PluginBoundary } from "../../plugins/PluginBoundary";
 import { EMPTY_CONTRIBUTIONS } from "../../plugins/RegionHost";
 import { type Contribution, useUiPluginRegistry } from "../../plugins/registry";
@@ -12,7 +13,7 @@ import { AppearancePanel } from "./AppearancePanel";
 import { ExtensionsPanel } from "./extensions/ExtensionsPanel";
 import { GeneralPanel } from "./GeneralPanel";
 import { LanObserverPanel } from "./LanObserverPanel";
-import { McpPanel } from "./McpPanel";
+import { McpPanel } from "./mcp/McpPanel";
 import { ProvidersPanel } from "./providers/ProvidersPanel";
 import { SkillsPanel } from "./SkillsPanel";
 
@@ -55,10 +56,17 @@ function findPluginContribution(category: SettingsCategory, list: Contribution[]
 	return list?.find((c) => c.pluginName === pluginName && c.id === contributionId) ?? null;
 }
 
-/** 设置弹窗：左侧分类导航 + 右侧内容，两列均可独立滚动；plugin 分类由 registry 动态拼接 */
+/** 设置弹窗：只在打开时挂载（弹窗体里的滚动容器需要在挂载时就能拿到 ref —— useEdgeFade 不会因
+    元素后出现而重跑） */
 export function SettingsDialog() {
-	const t = useT();
 	const open = useSettingsStore((s) => s.open);
+	if (!open) return null;
+	return <SettingsDialogBody />;
+}
+
+/** 弹窗体：左侧分类导航 + 右侧内容，两列均可独立滚动；plugin 分类由 registry 动态拼接 */
+function SettingsDialogBody() {
+	const t = useT();
 	const setOpen = useSettingsStore((s) => s.setOpen);
 	const category = useSettingsStore((s) => s.category);
 	const setCategory = useSettingsStore((s) => s.setCategory);
@@ -76,14 +84,19 @@ export function SettingsDialog() {
 		[category, pluginCategories],
 	);
 
-	if (!open) return null;
+	// 两列各自是滚动容器：分割线只留左导航右缘那条（`.fade-rule-v`），内容区的边界改由滚动淡出表达
+	const navRef = useRef<HTMLElement>(null);
+	const contentRef = useRef<HTMLDivElement>(null);
+	useEdgeFade(navRef);
+	useEdgeFade(contentRef);
 
 	const Panel = PANELS[category];
 
 	return (
 		<div className="fixed inset-0 z-40 flex items-center justify-center bg-ink/20" role="dialog" aria-modal>
-			<div className="flex h-[70vh] w-[720px] flex-col overflow-hidden rounded-xl border border-border bg-surface shadow-dialog">
-				<div className="flex shrink-0 items-center justify-between border-b border-border px-4 py-3">
+			<div className="flex h-[70vh] w-[720px] flex-col overflow-hidden rounded-xl bg-surface shadow-dialog">
+				{/* 顶栏底边不画 1px 实线（与对话页顶栏同一决策）：下面的内容滚动时用边界淡出区分 */}
+				<div className="flex shrink-0 items-center justify-between px-4 py-3">
 					<h2 className="text-sm font-semibold text-ink">{t("settings.title")}</h2>
 					<button
 						type="button"
@@ -95,7 +108,12 @@ export function SettingsDialog() {
 					</button>
 				</div>
 				<div className="flex min-h-0 flex-1">
-					<nav className="w-44 shrink-0 overflow-y-auto border-r border-border p-2">
+					{/* 与内容的分界：中段实、两头淡出的发丝线（`.fade-rule-v`，同左栏） */}
+					<nav
+						ref={navRef}
+						className="fade-rule-v edge-fade w-44 shrink-0 overflow-y-auto p-2"
+						style={{ "--edge-fade-size": "16px" } as CSSProperties}
+					>
 						{STATIC_CATEGORIES.map((id) => (
 							<button
 								key={id}
@@ -129,7 +147,11 @@ export function SettingsDialog() {
 							);
 						})}
 					</nav>
-					<div className="min-w-0 flex-1 overflow-y-auto overflow-x-hidden px-4 py-3">
+					<div
+						ref={contentRef}
+						className="edge-fade min-w-0 flex-1 overflow-y-auto overflow-x-hidden px-4 py-3"
+						style={{ "--edge-fade-size": "20px" } as CSSProperties}
+					>
 						{Panel ? (
 							<Panel />
 						) : activePluginContribution ? (

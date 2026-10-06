@@ -186,3 +186,79 @@ describe("SettingsService provider mutations", () => {
 		).rejects.toThrow("baseUrl");
 	});
 });
+
+describe("内置 provider 改名读侧归一（azure-openai-responses → azure，pi 1.0.4）", () => {
+	function fakeRuntime(providerIds: string[]) {
+		return {
+			refresh: vi.fn().mockResolvedValue({ aborted: false }),
+			getProviders: () => providerIds.map((id) => ({ id, name: id, auth: {} })),
+			getProviderAuthStatus: () => ({ configured: true, source: "api_key", label: "API key" }),
+			getModels: () => [{ id: "gpt-5", name: "GPT-5" }],
+		} as unknown as ModelRuntime;
+	}
+
+	function modelJson(providers: Record<string, unknown>) {
+		files.set("/agent/models.json", JSON.stringify({ providers }));
+	}
+
+	beforeEach(() => files.clear());
+
+	it("models.json 里旧 id 的覆写条目仍判为「覆写内置」并回填表单", async () => {
+		// 官方 1.0.4 把该内置 provider 改名 azure；用户盘上还是旧键，不归一就会退化成孤儿自定义 provider
+		modelJson({ "azure-openai-responses": { baseUrl: "https://my.example/v1" } });
+		const settings = new SettingsService(async () => fakeRuntime(["azure"]));
+
+		const azure = (await settings.listProviders()).find((p) => p.id === "azure");
+
+		expect(azure).toMatchObject({
+			custom: true,
+			overridesBuiltin: true,
+			baseUrl: "https://my.example/v1",
+		});
+	});
+
+	it("新 id 已存在时优先用新 id 的条目（旧键只作兜底）", async () => {
+		modelJson({
+			azure: { baseUrl: "https://new.example/v1" },
+			"azure-openai-responses": { baseUrl: "https://old.example/v1" },
+		});
+		const settings = new SettingsService(async () => fakeRuntime(["azure"]));
+
+		const azure = (await settings.listProviders()).find((p) => p.id === "azure");
+		expect(azure?.baseUrl).toBe("https://new.example/v1");
+	});
+
+	it("旧 id 作为新增输入被拒（提示新 id，避免造出孤儿重复 provider）", async () => {
+		const settings = new SettingsService(async () => fakeRuntime([]));
+
+		await expect(
+			settings.addCustomProvider({
+				id: "azure-openai-responses",
+				baseUrl: "https://x.example/v1",
+				api: "openai-responses",
+				models: [{ id: "gpt-5" }],
+			}),
+		).rejects.toThrow(/已改名为 azure/);
+	});
+
+	it("编辑基址（新 id）把旧键条目并过来，不留孤儿", async () => {
+		modelJson({ "azure-openai-responses": { baseUrl: "https://old.example/v1", headers: { a: "b" } } });
+		const settings = new SettingsService(async () => fakeRuntime(["azure"]));
+
+		await settings.setProviderBaseUrl("azure", "https://new.example/v1");
+
+		expect(JSON.parse(files.get("/agent/models.json") ?? "{}").providers).toEqual({
+			azure: { headers: { a: "b" }, baseUrl: "https://new.example/v1" },
+		});
+	});
+
+	it("删除 provider 连旧键一起清掉", async () => {
+		modelJson({ "azure-openai-responses": { baseUrl: "https://old.example/v1" } });
+		files.set("/agent/auth.json", JSON.stringify({}));
+		const settings = new SettingsService(async () => fakeRuntime(["azure"]));
+
+		await settings.removeCustomProvider("azure");
+
+		expect(JSON.parse(files.get("/agent/models.json") ?? "{}").providers).toEqual({});
+	});
+});

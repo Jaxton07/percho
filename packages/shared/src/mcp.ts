@@ -1,0 +1,150 @@
+/**
+ * MCP（Model Context Protocol）配置与运行态视图 —— 1.0.4 官方内置扩展接入后的宿主侧契约。
+ *
+ * 分工（spec §4.8 / §4.8.1）：
+ * - **配置**：官方读 `<agentDir>/mcp.json`（用户级）与受信项目的 `<cwd>/.pi/mcp.json`（项目级）；
+ *   我们只做 JSON 读写 + 形状校验 + 面板呈现，**不实现连接、不做 `${VAR}` 展开**（展开交给官方）。
+ * - **运行态**：官方扩展注册的工具名为 `mcp__<server>__<tool>`；我们的聚合扩展在
+ *   `session_start`/`before_agent_start`/`turn_end` 调 `getAllTools()` 过滤前缀，集合变化时发事件。
+ */
+
+/** 官方 `McpExposure`（server 级 / 逐工具覆盖都用它）；**缺省 = "codemode"**（不是 direct） */
+export type McpExposure = "direct" | "model-only" | "codemode" | "deferred" | "hidden";
+
+/** 传输方式（面板只做展示与表单，不解析 `${VAR}`） */
+export type McpTransportView =
+	| { kind: "stdio"; command: string; args?: string[] }
+	| { kind: "url"; url: string }
+	| { kind: "unknown" };
+
+/** 单个 MCP 工具（官方 `ToolInfo.annotations.readOnlyHint` 映射过来） */
+export interface McpToolView {
+	name: string;
+	/** 只读（免确认）；false/undefined = 会改动 → 调用要确认 */
+	readOnly?: boolean;
+}
+
+/**
+ * server 的运行态（由 mcp-inventory 扩展聚合，随 `mcp.servers:changed` 推给面板）。
+ * 状态口径：
+ * - `tools.length > 0` → 已连上；`enabled:false` → 停用；`needsAuth` → 需要授权；
+ * - `error` → 官方 notify 里的「需要处理」原文（`failed: …`）；其余 = 未连上（没开会话 / 正在连 / deferred 未激活）。
+ */
+export interface McpServerStatus {
+	name: string;
+	tools: McpToolView[];
+	/** 官方 notify「MCP servers need attention」里该 server 的原因原文 */
+	error?: string;
+	/** 官方连接状态 = needs-auth（远程 server 需要 OAuth 登录） */
+	needsAuth?: boolean;
+	/** 官方 notify 里给出的授权页 URL（面板「登录」按钮用它打开系统浏览器） */
+	authUrl?: string;
+}
+
+/** 面板顶部的全局提示（官方 notify 里不针对单个 server 的那类，如配置错误 / 工具不可达） */
+export interface McpGlobalNotice {
+	level: "info" | "warning" | "error";
+	message: string;
+}
+
+/** 单个 MCP server 的视图（配置 + 运行态合流） */
+export interface McpServerView {
+	name: string;
+	source: "user" | "project";
+	transport: McpTransportView;
+	description?: string;
+	enabled: boolean;
+	/** 配置里显式写的 exposure；缺省 undefined = 走官方默认 codemode */
+	exposureRaw?: McpExposure;
+	/** 生效的 exposure（exposureRaw ?? "codemode"） */
+	exposure: McpExposure;
+	/** 逐工具覆盖（原样呈现） */
+	toolExposure?: Record<string, McpExposure>;
+	/** 运行态：已注册的工具（`mcp__<server>__<tool>` → `{name, readOnly}`；未连上为空数组） */
+	tools: McpToolView[];
+	/** 运行态：官方 notify 里的失败原因（与 McpServerStatus.error 同源） */
+	error?: string;
+	/** 运行态：需要 OAuth 登录 */
+	needsAuth?: boolean;
+	/** 运行态：官方给出的授权页 URL（点「登录」时打开） */
+	authUrl?: string;
+}
+
+/** `mcp.config:list` 结果 */
+export interface McpConfigListResult {
+	global: McpServerView[];
+	project: McpServerView[];
+	/** 配置文件形状/读写错误（面板红字展示，不阻塞会话） */
+	errors: string[];
+	/** 项目级配置只有受信项目才读（官方 trust-manager 同款） */
+	projectTrusted: boolean;
+	/** 官方 notify 里不带 server 名的全局提示（MCP 加载失败 / 工具不可达等） */
+	notice?: McpGlobalNotice;
+	globalPath: string;
+	projectPath?: string;
+}
+
+/** `mcp.config:upsert` 入参（新增/编辑一个 server；缺省 transport 字段保持不变） */
+export interface McpUpsertInput {
+	scope: "user" | "project";
+	cwd?: string;
+	name: string;
+	command?: string;
+	args?: string[];
+	url?: string;
+	description?: string;
+	enabled?: boolean;
+	/** 不传 = 新建时写 "deferred"（spec §4.8），编辑时保持原值 */
+	exposure?: McpExposure;
+}
+
+/** `mcp.servers:changed` 事件载荷（运行态：每个 server 的工具 + 失效原因 + 全局提示） */
+export interface McpServersChangedPayload {
+	servers: McpServerStatus[];
+	notice?: McpGlobalNotice;
+}
+
+/** MCP 工具名前缀（官方 `extensions/mcp/tools.js`：`mcp__<server>__<tool>`） */
+export const MCP_TOOL_PREFIX = "mcp__";
+
+/** 解析 MCP 工具名：`mcp__<server>__<tool>` → `{ server, tool }`；不是 MCP 工具则 undefined */
+export function parseMcpToolName(toolName: string): { server: string; tool: string } | undefined {
+	if (!toolName.startsWith(MCP_TOOL_PREFIX)) return undefined;
+	const rest = toolName.slice(MCP_TOOL_PREFIX.length);
+	const sep = rest.indexOf("__");
+	if (sep <= 0 || sep + 2 >= rest.length) return undefined;
+	return { server: rest.slice(0, sep), tool: rest.slice(sep + 2) };
+}
+
+/** 按 server 聚合 MCP 工具名（面板数据源） */
+export function groupMcpTools(toolNames: readonly string[]): Map<string, string[]> {
+	const grouped = new Map<string, string[]>();
+	for (const name of toolNames) {
+		const parsed = parseMcpToolName(name);
+		if (!parsed) continue;
+		const list = grouped.get(parsed.server) ?? [];
+		list.push(name);
+		grouped.set(parsed.server, list);
+	}
+	for (const list of grouped.values()) list.sort();
+	return grouped;
+}
+
+/**
+ * 写盘/重连后的会话 reload 报告。
+ *
+ * ⚠️ 运行中（streaming/compacting）的会话**必须跳过**：`AgentSession.reload()` 内部没有运行中守卫、
+ * 也不 abort 在跑的 turn，但会 `emitSessionShutdown` —— 官方 mcp 扩展收到就**关掉全部连接**。
+ * 于是「在别的会话跑长任务时顺手改一下 MCP 配置」会静默打断那个任务（失败还被 catch 吞掉）。
+ * 跳过并把名单回给 UI 才是诚实的做法（面板据此提示「空闲后生效」）。
+ */
+export interface McpReloadReport {
+	reloaded: number;
+	skipped: { sessionId: string; reason: "streaming" | "compacting" }[];
+}
+
+/** 写盘类 MCP 动作的结果：新配置 + 哪些会话没跟着重连 */
+export interface McpMutationResult {
+	config: McpConfigListResult;
+	reload: McpReloadReport;
+}

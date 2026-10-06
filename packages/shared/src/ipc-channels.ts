@@ -1,5 +1,6 @@
 import type { ExtensionDialogRespond } from "./extension-dialog";
 import type { LanStatus } from "./lan";
+import type { McpConfigListResult, McpMutationResult, McpUpsertInput } from "./mcp";
 import type { CatalogPackageType, CatalogSearchResult, ConfiguredPackageInfo } from "./packages";
 import type {
 	AppInfo,
@@ -109,7 +110,8 @@ export const SESSION_CHANNELS = {
 	listSlashCommands: ch("session:listSlashCommands")<{ sessionId: string }, SlashCommandInfo[]>(),
 	/** 无会话斜杠命令列表（draft 新会话按 cwd 拉取；信任未决不弹窗，只含用户级资源） */
 	listSlashCommandsForCwd: ch("session:listSlashCommandsForCwd")<{ cwd?: string }, SlashCommandInfo[]>(),
-	setSessionName: ch("session:setName")<{ sessionId: string; name: string }, void>(),
+	/** 改会话名；历史会话走离线写会话文件，`cwd` 用于精确定位文件（见 PiBackend.setSessionName） */
+	setSessionName: ch("session:setName")<{ sessionId: string; name: string; cwd?: string }, void>(),
 	exportSession: ch("session:export")<{ sessionId: string; format: "html" | "jsonl" }, string>(),
 	/** fork：以 ref 定位分支点新建会话 */
 	forkSession: ch("session:fork")<
@@ -149,6 +151,21 @@ export const PACKAGES_CHANNELS = {
 	removePackage: ch("packages:remove")<{ source: string; scope: "user" | "project" }, void>(),
 	/** 列出 settings.json 已配置的包（「已安装」态匹配用） */
 	listConfiguredPackages: ch("packages:listConfigured")<void, ConfiguredPackageInfo[]>(),
+} as const;
+
+/** MCP 域：官方内置扩展的 mcp.json 读写（连接/展开交给官方；工具运行态走 mcp.tools:changed 事件） */
+export const MCP_CHANNELS = {
+	/** 读全局 + 项目级 mcp.json（项目级只在受信项目读，与官方 trust-manager 同款） */
+	mcpConfigList: ch("mcp:configList")<{ cwd?: string }, McpConfigListResult>(),
+	/** 新增/编辑一个 server（新建默认写 exposure: "deferred"；新建文件时顶层写 autoEnableCodemode: false） */
+	mcpConfigUpsert: ch("mcp:configUpsert")<McpUpsertInput, McpMutationResult>(),
+	/** 重连：reload 会话让官方 mcp 扩展重读配置并重连（面板「重连」入口） */
+	mcpConfigReload: ch("mcp:configReload")<{ cwd?: string }, McpMutationResult>(),
+	/** 删除一个 server（按 name + scope）；运行中的会话跳过重连并回报 */
+	mcpConfigRemove: ch("mcp:configRemove")<
+		{ scope: "user" | "project"; cwd?: string; name: string },
+		McpMutationResult
+	>(),
 } as const;
 
 /** LAN 观察域：本机服务开关与远程控制开关 */
@@ -306,6 +323,7 @@ export const CHANNEL_TABLE = {
 	...SESSION_CHANNELS,
 	...SETTINGS_CHANNELS,
 	...PACKAGES_CHANNELS,
+	...MCP_CHANNELS,
 	...APP_CHANNELS,
 	...LAN_CHANNELS,
 	...EXTENSION_DIALOG_CHANNELS,
@@ -350,6 +368,8 @@ const EVENT_CHANNELS = {
 	ExtensionDialogResolved: "pi:extension-dialog-resolved",
 	ExtensionNotify: "pi:extension-notify",
 	ExtensionEditorText: "pi:extension-editor-text",
+	/** MCP 运行态变化（每 server 的工具 + 失效原因 + 全局提示；面板刷新用） */
+	McpServersChanged: "mcp:serversChanged",
 	/** 登录流程事件（event/prompt/prompt-cancel） */
 	SettingsLoginEvent: "settings:loginEvent",
 	/** 更新状态 */

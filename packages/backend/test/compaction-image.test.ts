@@ -6,6 +6,10 @@ import { describe, expect, it } from "vitest";
  * 但 generateSummaryWithUsage/generateTurnPrefixSummary 在 convertToLlm 之后
  * 还会 serializeConversation 成纯文本 prompt。这个测试把该行为钉住：
  * 文本模型 + 含图历史触发压缩时，摘要请求里不能出现 image block。
+ *
+ * 1.0.4 变化：`normalizeContext()` 把 systemPrompt 归一成 messages[0] 的 system 消息
+ * （content 是**纯字符串**），0.84.3 则是单独的 systemPrompt 字段。断言因此按「纯文本」语义看：
+ * 内容要么是字符串、要么是只含 text block 的数组；任何 image block 都判回归。
  */
 const IMAGE = {
 	type: "image" as const,
@@ -52,12 +56,16 @@ function makeStreamFn(calls: CapturedRequest[]) {
 
 function expectTextOnlyPrompt(request: CapturedRequest): void {
 	expect(JSON.stringify(request).includes('"type":"image"')).toBe(false);
+	let textMessageCount = 0;
 	for (const message of request.messages) {
-		const types = Array.isArray(message.content)
-			? message.content.map((block) => (block as { type?: unknown }).type)
-			: [typeof message.content];
-		expect(types).toEqual(["text"]);
+		if (typeof message.content === "string") continue; // system 消息（1.0.4 归一为字符串）
+		expect(Array.isArray(message.content)).toBe(true);
+		const types = (message.content as { type?: unknown }[]).map((block) => block.type);
+		expect(types.every((type) => type === "text")).toBe(true);
+		if (types.length > 0) textMessageCount++;
 	}
+	// 至少有真正的文本 prompt 消息，避免断言在空请求上白过
+	expect(textMessageCount).toBeGreaterThan(0);
 }
 
 describe("compaction summary request image handling", () => {

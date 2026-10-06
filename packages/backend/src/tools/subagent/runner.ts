@@ -309,7 +309,8 @@ export async function runSubagent(deps: RunSubagentDeps, input: RunSubagentInput
 	if (result.usage.totalTokens.tokens === 0) {
 		result.usage.totalTokens.tokens = result.usage.input + result.usage.output;
 	}
-	// 子会话在任何消息落盘前失败时 sessionFile 不存在——不给卡片一个打不开的点击目标
+	// 子会话在任何消息落盘前失败时文件还没写盘（1.0.4：路径早在 create 时就分配、文件要等首条消息）
+	// ——不给卡片一个打不开的点击目标；判据是 existsSync，不是 sessionFile 有无
 	if (result.artifactPaths.jsonlPath && !existsSync(result.artifactPaths.jsonlPath)) {
 		result.artifactPaths = {};
 	}

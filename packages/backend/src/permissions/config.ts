@@ -62,6 +62,10 @@ export const DEFAULT_PERMISSION_CONFIG: PermissionConfig = {
 			"*auth.json*": "ask",
 			"*trust.json*": "ask",
 		},
+		// codemode（1.0.4 内置扩展）：脚本不透明，等同 bash 的 `sudo *` 档 —— 默认必确认。
+		// 官方用工具自带的 confirmation hook 做「默认 ask、可被 always-allow 覆盖」，我们在规则层做到同等效果
+		// （ask 命中后走 PermissionGate，allowAlways 会写项目记忆覆盖它）。
+		codemode: "ask",
 		// 同自保护：edit/write 改权限/信任/凭证文件必确认（路径模式尾缀匹配）
 		...Object.fromEntries(
 			["edit", "write"].map((tool) => [

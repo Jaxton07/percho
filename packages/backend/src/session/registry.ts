@@ -64,12 +64,15 @@ export class SessionRegistry {
 		// 时间口径唯一出处见 meta.ts（spec D1）：header + entries 权威（与 SDK 磁盘枚举同语义，
 		// 不能用文件 birthtime/mtime 替代——复制/恢复文件会改 birthtime，channel cursor 等
 		// custom entry 也不该影响排序）；只有 header 读不出来时才退化到文件时间。
+		// ⚠️ `sessionFile` 为空只出现在内存 manager（SessionManager.inMemory）：持久化会话的路径在
+		// create 时就分配好（SDK session-manager 构造函数），但**文件内容**要等首条 user/assistant
+		// 消息才落盘（1.0.4 的 `_hasConversation` 门控 `_persist`）——“是否落盘”一律用 existsSync。
 		const times =
 			deriveSessionTimes(session.sessionManager.getHeader(), session.sessionManager.getEntries()) ??
 			fallbackSessionTimes(session.sessionFile);
 		return {
 			sessionId: session.sessionId,
-			sessionFile: session.sessionFile,
+			sessionFile: session.sessionFile, // 内存 manager 才为空，见上（路径≠已落盘）
 			cwd,
 			name: session.sessionName,
 			modelLabel: session.model?.name,

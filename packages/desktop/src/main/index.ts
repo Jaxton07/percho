@@ -4,7 +4,7 @@ import "./fix-path";
 import { join } from "node:path";
 import { pathToFileURL } from "node:url";
 import { createLogger, initLogging, PiBackend } from "@percho/backend";
-import { app, BrowserWindow, Menu, nativeTheme, net, protocol } from "electron";
+import { app, BrowserWindow, Menu, nativeTheme, net, protocol, shell } from "electron";
 import { backgroundsDir } from "./background";
 import { registerIpc } from "./ipc";
 import { initLanObserver, type LanObserverHandle } from "./lan";
@@ -55,6 +55,8 @@ app.whenReady().then(async () => {
 
 	backend = new PiBackend({
 		// 桌面端集成：UI 插件技能目录 + 内置协作 skill 目录（均随包分发）+ 系统提示词段落
+		// MCP OAuth 授权页交给系统浏览器（官方内置 mcp 扩展用；缺省则扩展自行回落到平台默认浏览器）
+		openExternal: (url) => shell.openExternal(url),
 		desktopIntegration: {
 			appendSystemPrompt: UI_PLUGIN_PROMPT,
 			additionalSkillPaths: [

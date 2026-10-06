@@ -4,7 +4,7 @@ import { PiBackend } from "../src/pi-backend";
 import type { SessionRegistry } from "../src/session/registry";
 
 interface PromptOptions {
-	preflightResult?: (ok: boolean) => void;
+	preflightResult?: (disposition: "handled" | "queued" | "started") => void;
 }
 type PromptFn = (text: string, options?: PromptOptions) => Promise<void>;
 
@@ -21,28 +21,30 @@ function makeBackend(sessionId: string, prompt: PromptFn): PiBackend {
 }
 
 describe("PiBackend.prompt 受理回执", () => {
-	it("preflight ack 后立即返回，不等 run 结束", async () => {
-		let releaseRun!: () => void;
-		const runGate = new Promise<void>((r) => {
-			releaseRun = r;
-		});
-		const backend = makeBackend("s1", (_text, options) => {
-			options?.preflightResult?.(true);
-			return runGate; // run 永不结束也不影响返回
-		});
+	it.each(["handled", "queued", "started"] as const)(
+		"preflight(%s) 后立即返回，不等 run 结束",
+		async (disposition) => {
+			let releaseRun!: () => void;
+			const runGate = new Promise<void>((r) => {
+				releaseRun = r;
+			});
+			const backend = makeBackend("s1", (_text, options) => {
+				options?.preflightResult?.(disposition);
+				return runGate; // run 永不结束也不影响返回
+			});
 
-		await expect(backend.prompt("s1", "hi")).resolves.toBeUndefined();
-		releaseRun();
-	});
+			await expect(backend.prompt("s1", "hi")).resolves.toBeUndefined();
+			releaseRun();
+		},
+	);
 
 	it("无 preflight 直接返回（SDK if (!messages) return 保险路径）也放行", async () => {
 		const backend = makeBackend("s1", async () => {});
 		await expect(backend.prompt("s1", "hi")).resolves.toBeUndefined();
 	});
 
-	it("preflight 前抛错：reject 传真实错误（非泛化 preflight 文案）", async () => {
-		const backend = makeBackend("s1", async (_text, options) => {
-			options?.preflightResult?.(false); // SDK 顺序：先 preflight(false) 再 throw
+	it("preflight 前抛错：reject 传真实错误（1.0.4 被拒不再回调 preflight）", async () => {
+		const backend = makeBackend("s1", async () => {
 			throw new Error("Authentication failed for provider");
 		});
 
@@ -51,7 +53,7 @@ describe("PiBackend.prompt 受理回执", () => {
 
 	it("ack 之后 run 期失败不回传、无 unhandled rejection", async () => {
 		const backend = makeBackend("s1", (_text, options) => {
-			options?.preflightResult?.(true);
+			options?.preflightResult?.("started");
 			return Promise.reject(new Error("run failed"));
 		});
 

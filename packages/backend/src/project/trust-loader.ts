@@ -2,9 +2,25 @@ import type { InlineExtension, ProjectTrustStore } from "@earendil-works/pi-codi
 import { DefaultResourceLoader, getAgentDir, SettingsManager } from "@earendil-works/pi-coding-agent";
 import { createLogger } from "../log";
 import type { PermissionConfirm, PermissionModeRef } from "../permissions/extension";
+import { builtinExtensions } from "./builtin-extensions";
 import { resolveProjectTrust, type TrustOptionInternal } from "./trust";
 
 const log = createLogger("backend");
+
+/**
+ * 内置扩展注册顺序（**这段顺序就是语义，别调换**）：同组内**先注册者赢**
+ * （`getAllRegisteredTools()` 里 `if (!toolsByName.has(name)) set(…)`）——所以我们先、官方内置后，
+ * 我们（权限门控 / 蒸发 / todo-reminder / channel-watch）才能赢同名。
+ * 另一面：我们**不**标 `replaceable`，官方三个内置都标了 —— 将来官方内置若真与我们同名
+ * （如 1.1 加了官方 `todo`），被 `omitReplacedExtensions` 挤出局的是官方那个，不是我们。
+ * 有单测锁这条顺序（`test/builtin-extensions.test.ts`）。
+ */
+export function composeExtensionFactories(
+	ours: InlineExtension[],
+	deps: { openUrl?: (url: string) => void | Promise<void> },
+): InlineExtension[] {
+	return [...ours, ...builtinExtensions(deps)];
+}
 
 /** 内置扩展注册编排（cwd + 会话的 confirm 通道 + 权限模式引用拼装 todo-reminder/权限门控/视觉代理；开关逻辑在调用方） */
 export type ExtensionFactoryBuilder = (
@@ -35,6 +51,8 @@ export class ProjectResourceLoader {
 				appendSystemPrompt: string[];
 				additionalSkillPaths: string[];
 			};
+			/** 官方内置扩展（codemode/tool-search/mcp）的 OAuth 授权页打开方式（桌面端 = shell.openExternal） */
+			openUrl?: (url: string) => void | Promise<void>;
 		},
 	) {}
 
@@ -55,7 +73,10 @@ export class ProjectResourceLoader {
 			cwd,
 			agentDir,
 			settingsManager,
-			extensionFactories: this.deps.buildExtensions(cwd, options?.confirm, options?.modeRef),
+			extensionFactories: composeExtensionFactories(
+				this.deps.buildExtensions(cwd, options?.confirm, options?.modeRef),
+				{ openUrl: this.deps.openUrl },
+			),
 			...this.deps.desktopIntegration,
 		});
 		if (this.deps.projectTrust === false) {

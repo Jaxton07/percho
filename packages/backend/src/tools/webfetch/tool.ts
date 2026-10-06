@@ -1,4 +1,4 @@
-import type { AgentToolResult, ToolDefinition } from "@earendil-works/pi-coding-agent";
+import { type AgentToolResult, defineTool, type ToolDefinition } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
 import { htmlToText } from "./html-to-text";
 import { assertPublicUrl, type Cidr, FAKE_IP_CIDR, parseCidr } from "./ip-guard";
@@ -139,8 +139,11 @@ function rewriteUrl(url: string): string {
 
 export function makeWebFetchTool(options: WebFetchOptions = {}): ToolDefinition<typeof webFetchParams> {
 	const allowRanges = [FAKE_IP_CIDR, ...(options.allowRanges ?? []).map(parseCidr)];
-	return {
+	// defineTool：官方 1.0.4 的类型收窄入口（execute 参数由 TParams 推导）
+	return defineTool({
 		name: "webfetch",
+		// 只读取网页，不修改环境；但目标是开放世界（公网）
+		annotations: { readOnlyHint: true, openWorldHint: true },
 		label: "Web Fetch",
 		description:
 			"Fetch a public web page (http/https) and return its readable text content as markdown, with navigation/footer boilerplate stripped. Use for documentation, articles, and other public pages. GitHub file (blob) pages are fetched as raw source. Refuses private or internal addresses. Truncates content to maxChars characters. Binary content (PDF, images, archives) is not extracted.",
@@ -200,5 +203,5 @@ export function makeWebFetchTool(options: WebFetchOptions = {}): ToolDefinition<
 				},
 			};
 		},
-	};
+	});
 }
