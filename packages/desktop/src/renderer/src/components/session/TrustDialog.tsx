@@ -25,7 +25,7 @@ export function TrustDialog({
 
 	return (
 		<div className="fixed inset-0 z-50 flex items-center justify-center bg-ink/20" role="dialog" aria-modal>
-			<div className="w-[440px] rounded-xl border border-border bg-surface p-4 shadow-dialog">
+			<div className="w-[440px] rounded-xl bg-surface p-4 shadow-dialog">
 				<h3 className="text-sm font-semibold text-ink">{t("trust.title")}</h3>
 				<p className="mt-1.5 rounded-lg bg-hover px-2.5 py-1.5 font-mono text-[12px] break-all text-ink-2 select-text">
 					{request.cwd}

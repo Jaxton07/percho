@@ -64,7 +64,7 @@ export function ConfirmDialog({
 				role="dialog"
 				aria-modal="true"
 				aria-label={title}
-				className="relative w-[392px] rounded-2xl border border-border bg-surface px-[22px] pt-5 pb-4 shadow-dialog"
+				className="relative w-[392px] rounded-2xl bg-surface px-[22px] pt-5 pb-4 shadow-dialog"
 			>
 				<h2 className="pr-6 text-[19px] font-bold tracking-[-0.01em] text-ink">{title}</h2>
 				<p className="mt-2 text-[13px] leading-[1.7] text-ink-dim">{description}</p>

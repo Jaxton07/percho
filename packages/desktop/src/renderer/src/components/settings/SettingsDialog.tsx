@@ -94,7 +94,7 @@ function SettingsDialogBody() {
 
 	return (
 		<div className="fixed inset-0 z-40 flex items-center justify-center bg-ink/20" role="dialog" aria-modal>
-			<div className="flex h-[70vh] w-[720px] flex-col overflow-hidden rounded-xl border border-border bg-surface shadow-dialog">
+			<div className="flex h-[70vh] w-[720px] flex-col overflow-hidden rounded-xl bg-surface shadow-dialog">
 				{/* 顶栏底边不画 1px 实线（与对话页顶栏同一决策）：下面的内容滚动时用边界淡出区分 */}
 				<div className="flex shrink-0 items-center justify-between px-4 py-3">
 					<h2 className="text-sm font-semibold text-ink">{t("settings.title")}</h2>

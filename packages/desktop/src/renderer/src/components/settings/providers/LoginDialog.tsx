@@ -36,7 +36,7 @@ export function LoginDialog() {
 
 	return (
 		<div className="fixed inset-0 z-[60] flex items-center justify-center bg-ink/20" role="dialog" aria-modal>
-			<div className="w-[440px] rounded-xl border border-border bg-surface p-4 shadow-dialog">
+			<div className="w-[440px] rounded-xl bg-surface p-4 shadow-dialog">
 				<h3 className="text-sm font-semibold text-ink">
 					{t(login.loginKind === "apiKey" ? "settings.login.apiKeyTitle" : "settings.login.title", {
 						name: login.providerName,
