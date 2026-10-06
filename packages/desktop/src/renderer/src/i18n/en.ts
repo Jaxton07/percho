@@ -561,6 +561,8 @@ export const en: Messages = {
 				"model-only": "Model only: visible to the model, not callable from scripts.",
 				hidden: "Hidden: registered but exposed to neither model nor scripts (temporarily disable a server).",
 			},
+			advancedHint:
+				"Need env vars, working directory and other advanced options? Edit mcp.json directly (paths are under Config files in the footer).",
 			needName: "Server name is required",
 			needTransport: "Fill command (stdio) or url (remote)",
 			loading: "Loading…",

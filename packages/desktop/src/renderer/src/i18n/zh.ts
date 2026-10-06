@@ -544,6 +544,7 @@ export const zh = {
 				"model-only": "仅模型（model-only）：只在模型工具表里出现，脚本调用不了。",
 				hidden: "隐藏（hidden）：注册但不暴露给模型与脚本（临时停用某台服务器时用）。",
 			},
+			advancedHint: "需要环境变量、工作目录等高级项？直接编辑 mcp.json（页脚「配置文件」里有路径）。",
 			needName: "请填 server 名称",
 			needTransport: "请填 command（stdio）或 url（远程）",
 			loading: "读取中…",

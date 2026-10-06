@@ -5,6 +5,7 @@ import { useT } from "../../../i18n";
 import { useMcpStore } from "../../../stores/mcp";
 import { useSessionsStore } from "../../../stores/sessions";
 import { selectTranscript, useTranscriptStore } from "../../../stores/transcript";
+import { ChevronRightIcon } from "../../icons";
 import { serverState, toolsSummary, transportSummary } from "./pure";
 
 /** 状态点：7px 圆点 —— 全行只有这一枚 coloring glyph（设计稿 §3） */
@@ -100,10 +101,13 @@ export function ServerRow({
 				{state === "error" && (
 					<button
 						type="button"
-						className={`${ghostStrong} shrink-0`}
+						className={`${ghostStrong} flex shrink-0 items-center gap-1 whitespace-nowrap`}
 						onClick={() => setReasonOpen((v) => !v)}
 					>
-						{reasonOpen ? t("settings.mcp.hideReason") : `${t("settings.mcp.viewReason")} ⌄`}
+						<ChevronRightIcon
+							className={reasonOpen ? "rotate-90 transition-transform" : "transition-transform"}
+						/>
+						{reasonOpen ? t("settings.mcp.hideReason") : t("settings.mcp.viewReason")}
 					</button>
 				)}
 				{state === "needs-auth" && !loginWaiting && (

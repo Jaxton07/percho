@@ -5,8 +5,9 @@ import { useT } from "../../../i18n";
 import { useMcpStore } from "../../../stores/mcp";
 import { useSessionsStore } from "../../../stores/sessions";
 import { selectTranscript, useTranscriptStore } from "../../../stores/transcript";
+import { ChevronRightIcon, PlusIcon } from "../../icons";
 import { filterServers, showSearch, sortServers, toolsSummary } from "./pure";
-import { PasteJsonPopover, ServerEditor } from "./ServerEditor";
+import { PasteJsonPage, ServerEditorPage } from "./ServerEditorPage";
 import { ServerRow } from "./ServerRow";
 
 /** 顶部一条常显提示（官方 notify 的全局信息 / 运行中重连）：bg-hover 圆角条 + 一枚 glyph */
@@ -68,8 +69,10 @@ export function McpPanel() {
 	const t = useT();
 	const { config, loading, load, notice, lastReload, applyServersChanged } = useMcpStore();
 	const cwd = useActiveCwd();
-	const [editing, setEditing] = useState<{ server?: McpServerView } | null>(null);
-	const [pasting, setPasting] = useState(false);
+	/** 二级页面（不是浮层）：列表 ↔ 添加/编辑/粘贴 JSON —— 返回按钮在左上角 */
+	const [view, setView] = useState<
+		{ mode: "add" } | { mode: "edit"; server: McpServerView } | { mode: "paste" } | null
+	>(null);
 	const [query, setQuery] = useState("");
 	const [runningDismissed, setRunningDismissed] = useState(false);
 	const [pathsOpen, setPathsOpen] = useState(false);
@@ -88,6 +91,7 @@ export function McpPanel() {
 	}, [applyServersChanged]);
 
 	const servers = sortServers([...(config?.global ?? []), ...(config?.project ?? [])]);
+	const projectTrusted = config?.projectTrusted ?? false;
 	const toolCount = servers.reduce((sum, server) => sum + (toolsSummary(server.tools)?.count ?? 0), 0);
 	const connected = servers.filter((server) => serverStateConnected(server)).length;
 	const visible = (servers: McpServerView[]) => filterServers(sortServers(servers), query);
@@ -97,6 +101,23 @@ export function McpPanel() {
 	}
 
 	const hasServers = (config?.global.length ?? 0) + (config?.project.length ?? 0) > 0;
+
+	if (view) {
+		return (
+			<div className="flex min-h-full flex-col pb-2">
+				{view.mode === "paste" ? (
+					<PasteJsonPage cwd={cwd} onBack={() => setView(null)} />
+				) : (
+					<ServerEditorPage
+						server={view.mode === "edit" ? view.server : undefined}
+						cwd={cwd}
+						projectTrusted={projectTrusted}
+						onBack={() => setView(null)}
+					/>
+				)}
+			</div>
+		);
+	}
 
 	return (
 		<div className="relative flex min-h-full flex-col pb-2">
@@ -112,13 +133,10 @@ export function McpPanel() {
 				</div>
 				<button
 					type="button"
-					className="shrink-0 rounded-full px-2.5 py-1 text-[11px] text-ink-faint transition-colors hover:bg-hover hover:text-ink-2"
-					onClick={() => {
-						setPasting(false);
-						setEditing({});
-					}}
+					className="flex shrink-0 items-center gap-1 whitespace-nowrap rounded-full px-2.5 py-1 text-[11px] text-ink-faint transition-colors hover:bg-hover hover:text-ink-2"
+					onClick={() => setView({ mode: "add" })}
 				>
-					＋ {t("settings.mcp.addServer")}
+					<PlusIcon size={12} /> {t("settings.mcp.addServer")}
 				</button>
 			</div>
 
@@ -176,14 +194,14 @@ export function McpPanel() {
 						<button
 							type="button"
 							className="rounded-full bg-ink px-3.5 py-1.5 text-[11.5px] text-canvas"
-							onClick={() => setEditing({})}
+							onClick={() => setView({ mode: "add" })}
 						>
 							{t("settings.mcp.addServer")}
 						</button>
 						<button
 							type="button"
 							className="rounded-full px-2.5 py-1 text-[11.5px] text-ink-faint transition-colors hover:bg-hover hover:text-ink-2"
-							onClick={() => setPasting(true)}
+							onClick={() => setView({ mode: "paste" })}
 						>
 							{t("settings.mcp.pasteJson")}
 						</button>
@@ -201,7 +219,7 @@ export function McpPanel() {
 									key={`user:${server.name}`}
 									server={server}
 									cwd={cwd}
-									onEdit={(s) => setEditing({ server: s })}
+									onEdit={(s) => setView({ mode: "edit", server: s })}
 								/>
 							))}
 						</Group>
@@ -213,7 +231,7 @@ export function McpPanel() {
 									key={`project:${server.name}`}
 									server={server}
 									cwd={cwd}
-									onEdit={(s) => setEditing({ server: s })}
+									onEdit={(s) => setView({ mode: "edit", server: s })}
 								/>
 							))}
 						</Group>
@@ -229,10 +247,13 @@ export function McpPanel() {
 			<div className="mt-auto flex items-center gap-2 pt-4">
 				<button
 					type="button"
-					className="rounded-full px-1.5 py-0.5 text-[11px] text-ink-faint transition-colors hover:bg-hover hover:text-ink-2"
+					className="flex items-center gap-1 rounded-full py-0.5 pl-1 pr-2 text-[11px] text-ink-faint transition-colors hover:bg-hover hover:text-ink-2"
 					onClick={() => setPathsOpen((v) => !v)}
 				>
-					{t("settings.mcp.configFiles")} {pathsOpen ? "⌃" : "⌄"}
+					<ChevronRightIcon
+						className={pathsOpen ? "rotate-90 transition-transform" : "transition-transform"}
+					/>
+					{t("settings.mcp.configFiles")}
 				</button>
 				<span className="flex-1" />
 				{lastReload && (
@@ -265,17 +286,6 @@ export function McpPanel() {
 					<p className="text-[11px] leading-relaxed text-ink-faint">{t("settings.mcp.reloadExplain")}</p>
 				</div>
 			)}
-
-			{/* 浮层：编辑器 / 粘贴 JSON */}
-			{editing && (
-				<ServerEditor
-					server={editing.server}
-					cwd={cwd}
-					projectTrusted={config?.projectTrusted ?? false}
-					onClose={() => setEditing(null)}
-				/>
-			)}
-			{pasting && <PasteJsonPopover cwd={cwd} onClose={() => setPasting(false)} />}
 		</div>
 	);
 }

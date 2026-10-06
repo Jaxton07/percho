@@ -31,7 +31,9 @@ describe("parseMcpNotice（官方 mcp notify → 面板状态）", () => {
 	});
 
 	it("登录生命周期：Sign in → needsAuth；Signed in → 清除标记", () => {
-		expect(parseMcpNotice('Sign in to MCP server "github" in your browser:\nhttps://github.com/login/device')).toEqual({
+		expect(
+			parseMcpNotice('Sign in to MCP server "github" in your browser:\nhttps://github.com/login/device'),
+		).toEqual({
 			servers: [{ name: "github", needsAuth: true, authUrl: "https://github.com/login/device" }],
 		});
 		expect(parseMcpNotice('Signed in to MCP server "github" (7 tools).')).toEqual({
