@@ -5,9 +5,8 @@ import { useMcpStore } from "../../../stores/mcp";
 import { ArrowLeftIcon } from "../../icons";
 import { parsePastedServers } from "./pure";
 
-/** 暴露档位：三档常用平铺 + 「更多」放冷门两档（设计稿决策点 3） */
-const PRIMARY_EXPOSURES: McpExposure[] = ["deferred", "codemode", "direct"];
-const MORE_EXPOSURES: McpExposure[] = ["model-only", "hidden"];
+/** 暴露档位：五档全部平铺（总共就 5 个，折叠反而多一次点击；设计稿 v1.2） */
+const EXPOSURES: McpExposure[] = ["deferred", "codemode", "direct", "model-only", "hidden"];
 
 interface FormState {
 	name: string;
@@ -117,7 +116,6 @@ export function ServerEditorPage({
 	const t = useT();
 	const { upsert } = useMcpStore();
 	const [form, setForm] = useState<FormState>(() => formOf(server));
-	const [moreOpen, setMoreOpen] = useState(MORE_EXPOSURES.includes(formOf(server).exposure));
 	const [error, setError] = useState<string | null>(null);
 	const [saving, setSaving] = useState(false);
 
@@ -158,8 +156,6 @@ export function ServerEditorPage({
 			setSaving(false);
 		}
 	};
-
-	const exposures = moreOpen ? [...PRIMARY_EXPOSURES, ...MORE_EXPOSURES] : PRIMARY_EXPOSURES;
 
 	return (
 		<div className="flex min-h-full flex-col pb-2">
@@ -272,21 +268,12 @@ export function ServerEditorPage({
 				<div>
 					<span className={label}>{t("settings.mcp.exposure")}</span>
 					<Segmented
-						value={form.exposure as McpExposure | "more"}
-						options={[
-							...exposures.map((exposure) => ({
-								value: exposure as McpExposure | "more",
-								label: t(`settings.mcp.exposureShort.${exposure}`),
-							})),
-							...(moreOpen ? [] : [{ value: "more" as McpExposure | "more", label: t("settings.mcp.more") }]),
-						]}
-						onChange={(value) => {
-							if (value === "more") {
-								setMoreOpen(true);
-								return;
-							}
-							setForm({ ...form, exposure: value });
-						}}
+						value={form.exposure}
+						options={EXPOSURES.map((exposure) => ({
+							value: exposure,
+							label: t(`settings.mcp.exposureShort.${exposure}`),
+						}))}
+						onChange={(exposure) => setForm({ ...form, exposure })}
 					/>
 					<p className={hint}>{t(`settings.mcp.exposureExplain.${form.exposure}`)}</p>
 				</div>

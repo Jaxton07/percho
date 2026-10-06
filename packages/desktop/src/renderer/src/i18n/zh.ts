@@ -528,7 +528,6 @@ export const zh = {
 			url: "URL",
 			description: "说明",
 			exposure: "工具暴露方式",
-			more: "更多 ⌄",
 			exposureShort: {
 				deferred: "按需激活",
 				codemode: "仅脚本",

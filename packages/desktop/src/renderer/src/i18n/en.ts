@@ -544,7 +544,6 @@ export const en: Messages = {
 			url: "URL",
 			description: "Description",
 			exposure: "Tool exposure",
-			more: "More ⌄",
 			exposureShort: {
 				deferred: "Deferred",
 				codemode: "Scripts only",

@@ -274,6 +274,17 @@ LAN 页重连/中途进入时，快照种子经 `messagesToUIMessages` 重建—
 
 ## 三、构建 · 打包 · 环境
 
+### 关 dev 应用要杀 Electron 子进程，只 `pkill electron-vite` 会留下僵尸占住调试端口（2026-10-06）
+
+症状：重启 `electron-vite dev -- --remote-debugging-port=9224` 后，CDP 连上却拿到 `chrome-error://chromewebdata/`
+（`document.body.innerText` 为空、`button` 一个都没有），脚本报「设置弹窗打不开」。
+根因：`pkill -f "electron-vite dev"` 只杀了 vite 包装进程，**Electron 主进程/渲染进程是它的子进程，会留下来继续活着**，
+而新实例的 devtools 服务器起不来（`bind() failed: Address already in use (48)` + `Cannot start http server for devtools`），
+于是 9224 上应答的仍是**旧实例**（它的 renderer 早已死掉，只剩错误页）。
+处理：杀干净再起 —— `pkill -f "<repo>/node_modules/electron/dist"`（**不要**用 `pkill -f Electron`，会连带干掉用户的正式版），
+`lsof -nP -iTCP:9224 -sTCP:LISTEN` 确认为空；`pgrep -fl Electron` 里除 `/Applications/*` 之外的残留也要清。
+自检小抄：连上后先 `location.href`，是 `chrome-error://` 就说明连错了实例，别怀疑业务代码。
+
 ### 取证别用 `asar extract-file`：它把文件解到**当前工作目录**（2026-10-06）
 
 `npx asar extract-file <app.asar> <内部路径>` 会把那一个文件按 basename 丢在**当前 cwd** —— 在仓库里跑就会掉垃圾文件、
