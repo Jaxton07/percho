@@ -13,6 +13,7 @@
 | 点击对话里的相对文件链接后白屏 | 四 · Markdown 相对链接会导航 app 主窗口（2026-09-23） |
 | 比像素核验视觉时取样偏了、以为改动没生效 | 四 · CDP `clip.scale` 再乘一次 DPR（2026-09-29） |
 | 拖动类脚本跑完后界面卡在「拖动中」（光标仍是 col-resize、之后再拖也不动） | 四 · CDP 合成拖拽的两个卡死姿势（2026-10-07） |
+| 侧栏拖宽后把手抓不住 / 行末按钮点不到，**截图看却完全正常** | 四 · 比列宽更宽的内容溢出吃 pointer 事件（2026-10-07） |
 | hover 态截图时有时无、想稳定截出 hover 视觉 | 四 · 同上（`CSS.forcePseudoState` 钉伪类）（2026-10-07） |
 | 绝对定位「撑满父容器」的元素命中区高度是 0（`<hr>` 尤其） | 四 · Tailwind preflight 的 `hr { height: 0 }` 盖掉 `top/bottom: 0`（2026-10-07） |
 | 脚本复位 inline style 后组件样式莫名回退（React 写的 CSS 变量被抹） | 四 · 别用 `cssText = ""` 复位（2026-10-07） |
@@ -421,6 +422,22 @@ pi SDK 必须声明进 `packages/desktop/package.json` dependencies（electron-b
 - **② 松手坐标跑出视口同样丢 `pointerup`**：拖到最左时终点 `x` 是负数（例：从 480 拖到 240，把手在 x=236 → 终点 -4），`mouseReleased` 在视口外没人接。
 - **修法（两条都要）**：量测通道**一律不截图**，截图通道挪到最后；每次拖完都在**把手当前位置**补一次 release（有捕获就到把手，没捕获时那个坐标也落在把手命中区里）。验收脚本里 `V2-m` 专门盯这条回归。
 - 顺带：**`CSS.forcePseudoState({ nodeId, forcedPseudoClasses: ["hover"] })` 能稳定钉住 hover**（截图不会清掉它，`::after`/`:has()` 都跟着变），所以「hover 态截图」用它而不是反复发 `mouseMoved`（后者对同一坐标不重算 hover，见上一条；且截图前后 `:hover` 链可能被清）。`DOM.querySelector` 的参数名是 **`nodeId`**（写成 `root` 会 `Invalid parameters`）。
+
+### 比列宽更宽的内容会「溢出吃 pointer 事件」：截图看不出来的点击死区（2026-10-07，X2）
+
+**症状**：左侧栏拖宽到 480 后**再想拖回来就拖不动了**（把手抓不住）；同一区间里行末的「＋ / ⋯」等控件也点不到。截图完全正常 —— 溢出的那块要么是透明的、要么本来就被不透明的左栏盖在下面看不见。
+
+**机制**：聊天页空态的 logo 块是固定 **748px 居中**，聊天列窄于 748 时它向**两侧**溢出；DOM 里它在左栏之后 ⇒ 溢出的透明矩形**照样参与命中测试**，把左栏右缘一整条（侧栏 480 时实测 **82px**）变成点击死区。触发区不极端：窗口宽 < 748 + 侧栏宽 就中招（1064 的窗口下侧栏 > 316px 就开始），而应用默认窗口 1100 ⇒ 拖到约 388 就会踩到。
+
+**诊断（可复用）**：
+
+- 最直接：`document.elementsFromPoint(把手中心)[0]` 打出的是**聊天列里的 `svg`**（logo）而不是把手 —— 一眼定位。
+- **别用截图/像素对比判这类问题**：遮挡在像素上不可见。要判「有没有死区」就用 `elementFromPoint`/`elementsFromPoint`（浏览器自己的命中测试），或真的合成一次点击。
+- 扫描时的坑：`getBoundingClientRect()` 非零 ≠ 可见 —— 折叠分组（`grid 0fr` + `overflow: hidden`）与滚动出可视区的行，其子元素 rect 仍是正常尺寸却**根本不参与命中**，会被误判成「被遮挡」。判据要加上「未被 `overflow != visible` 的祖先裁掉」的预筛（`scripts/verify-layout-freedom.mjs` 的 HIT_STACK 就是这么写的）。
+
+**修法**：给左栏 `z-index: 1`（它已是 `position: relative`）。视觉零变化 —— 栏内无 fixed/portal、根级浮层（设置弹窗/Toaster）在更外层节点，前后对比截图只有 173 px、单通道 ≤ 5/255 的 wordmark 抗锯齿差异。
+
+**回归断言**：`scripts/verify-layout-freedom.mjs` 的 `V2-n`（把手中心最上层就是把手）、`V2-o`（栏内可见控件中心命中都落在栏内）、`V2-p`（拖到 480 松手后仍能重抓拖回）—— **修前全红、修后全绿**（把 `z-index` 临时改回 `auto` 实测过）。
 
 ### Tailwind preflight 的 `hr { height: 0 }` 会盖掉 `top: 0; bottom: 0`（2026-10-07，拖拽把手命中区高度 0）
 

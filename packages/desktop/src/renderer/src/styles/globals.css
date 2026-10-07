@@ -1296,6 +1296,12 @@ code {
 	width: var(--sidebar-render-width, 240px);
 	overflow: hidden;
 	background: var(--color-canvas);
+	/* **必须压住右邻居**（X2，2026-10-07）：聊天列里有些内容会比列宽更宽（聊天页空态的 748px logo 块居中 →
+	   窄于 748 时向两侧溢出），**溢出的透明部分照样吃 pointer 事件**，不压住时它会盖掉贴本栏右缘的 8px
+	   把手命中区与行末控件（侧栏越宽越容易触发：聊天列 < 748 ⇔ 窗口 1064 时侧栏 > 316px 就开始了）。
+	   本栏背景不透明且 logo 溢出的那片本来就看不见 → 抬到 z-index 1 **视觉零变化**（对比截图见 IMPL-NOTES X2）。
+	   根级浮层（设置弹窗 / Toaster / 插件 overlay）在更外层节点、z 更高，不受影响；栏内没有 fixed/portal。 */
+	z-index: 1;
 	transition: width 0.4s cubic-bezier(0.32, 0.72, 0, 1);
 	/* 与对话区的分界不再用 1px 实线 border：改成**中段实、两头淡出**的发丝线 —— 就是 `.fade-rule-v`
 	   （标记里挂在同一个元素上，原先这段是自己复刻一份渐变，现已并到那个类里）。 */

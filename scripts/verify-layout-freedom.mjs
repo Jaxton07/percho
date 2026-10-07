@@ -285,6 +285,67 @@ const TOGGLE_SIDEBAR = `(() => {
 	return true;
 })()`;
 
+/**
+ * 命中层探针（X2 回归）：检查侧栏里**真正可见**的可交互元素有没有被**栏外**的东西盖住。
+ *
+ * 为什么要有它：聊天列里比列宽更宽的内容（聊天页空态的 748px logo 块）会向两侧溢出，**溢出的透明部分
+ * 照样吃 pointer 事件** —— 实测侧栏 480 时整条右缘 82px 变成点击死区（把手也抓不住），而截图完全看不出来。
+ *
+ * 两条判据（2026-10-07 第一版判据误报后修正，见 IMPL-NOTES X2）：
+ *  1. 预筛「未被祖先裁掉」：元素中心若落在某个 `overflow != visible` 的祖先盒外（折叠分组 `0fr` + `hidden`、
+ *     滚动出可视区），它本来就不可见 —— 那不是遮挡，跳过；
+ *  2. 判据用 `sb.contains(top)` 而**不是** `top === el`：栏内自己那层（行尾 hover 才显示的 ⋯ 可能带
+ *     `pointer-events: none`）不算遮挡，只有**来自栏外**的元素才算 —— 正是 X2 的形状。
+ */
+const HIT_STACK = `(() => {
+	const sb = document.querySelector(".sidebar");
+	const handle = document.querySelector("[data-sidebar-resize-handle]");
+	const sbRect = sb.getBoundingClientRect();
+	const hr = handle.getBoundingClientRect();
+	const topAtHandle = document.elementsFromPoint(Math.round(hr.left + hr.width / 2), Math.round(hr.top + hr.height / 2))[0];
+	const describe = (el) => (el ? el.tagName.toLowerCase() + (typeof el.className === "string" && el.className ? "." + el.className.split(/\\s+/).filter(Boolean).slice(0, 2).join(".") : "") : "null");
+	const clippedByAncestor = (el, x, y) => {
+		let node = el.parentElement;
+		while (node && node !== document.body) {
+			const cs = getComputedStyle(node);
+			if (cs.overflowX !== "visible" || cs.overflowY !== "visible") {
+				const r = node.getBoundingClientRect();
+				if (x < r.left || x > r.right || y < r.top || y > r.bottom) return true;
+			}
+			node = node.parentElement;
+		}
+		return false;
+	};
+	const controls = [...sb.querySelectorAll("button, a, input, select, textarea, [role='button']")];
+	let visibleScanned = 0;
+	const blocked = [];
+	for (const el of controls) {
+		const r = el.getBoundingClientRect();
+		if (r.width <= 0 || r.height <= 0) continue;
+		const x = Math.round(r.left + r.width / 2);
+		const y = Math.round(r.top + r.height / 2);
+		if (x < 0 || y < 0 || x > window.innerWidth || y > window.innerHeight) continue;
+		if (clippedByAncestor(el, x, y)) continue;
+		visibleScanned++;
+		const top = document.elementFromPoint(x, y);
+		if (!(top && sb.contains(top))) {
+			blocked.push({
+				label: (el.getAttribute("aria-label") || el.textContent || "").trim().slice(0, 20),
+				right: Math.round(r.right),
+				top: describe(top),
+				topOutsideSidebar: !!top && !sb.contains(top),
+			});
+		}
+	}
+	return JSON.stringify({
+		topAtHandle: describe(topAtHandle),
+		topIsHandle: topAtHandle === handle || handle.contains(topAtHandle),
+		scannedControls: controls.length,
+		visibleScanned,
+		blocked,
+	});
+})()`;
+
 const IS_COLLAPSED = `document.querySelector(".sidebar").classList.contains("is-collapsed")`;
 
 /**
@@ -360,6 +421,9 @@ async function dragBy(page, delta, { y = DRAG_Y, steps = 1, between } = {}) {
 	await dispatchMouse(page, "mouseMoved", Math.max(1, Math.round(geom.x)), y);
 	await sleep(60);
 	await dispatchMouse(page, "mousePressed", Math.max(1, Math.round(geom.x)), y, { buttons: 1 });
+	// 预热：等 React 把 `is-resizing`（关过渡）提交完再开始量 —— 第一步若抢在同一帧里，
+	// 过渡还没关，会量出一次假滞后（2026-10-07 首次在 HMR 后立刻跑 all 时误报过一次 40px）
+	await page.evalJs(SETTLE);
 	await page.evalJs(SETTLE);
 	const step = delta / steps;
 	const samples = [];
@@ -674,6 +738,32 @@ async function v2Drag(page, { isProbe }) {
 		"V2-l 松手后 dev ui-state.json 里的 sidebarWidth = 拖动结果",
 		persisted?.sidebarWidth === SIDEBAR_MAX_WIDTH,
 		`文件值 = ${JSON.stringify(persisted?.sidebarWidth)}`,
+	);
+
+	/* ---- 命中层（X2，2026-10-07）：侧栏越宽越容易被聊天列里溢出的透明块吃掉右缘 ---- */
+	for (const width of [SIDEBAR_DEFAULT_WIDTH, 360, SIDEBAR_MAX_WIDTH]) {
+		await setUserWidth(page, width, { isProbe });
+		await sleep(700);
+		const hit = JSON.parse(await page.evalJs(HIT_STACK));
+		check(`V2-n 侧栏 ${width}px：把手中心最上层就是把手自己`, hit.topIsHandle, `最上层 = ${hit.topAtHandle}`);
+		check(
+			`V2-o 侧栏 ${width}px：栏内可见控件无一点击死区`,
+			hit.visibleScanned > 0 && hit.blocked.length === 0,
+			hit.blocked.length
+				? `被栏外元素盖住：${JSON.stringify(hit.blocked.slice(0, 6))}${hit.blocked.length > 6 ? ` …共 ${hit.blocked.length} 个` : ""}`
+				: `测了 ${hit.visibleScanned}/${hit.scannedControls} 个可见控件（已排除被祖先裁掉的），无栏外遮挡`,
+		);
+	}
+
+	// 松手后**重新抓**（X2 的核心复现路径）：拖动中指针被 capture 锁定不做命中测试，只有重抓才暴露遮挡
+	await setUserWidth(page, SIDEBAR_MAX_WIDTH, { isProbe });
+	await sleep(700);
+	const regrab = await dragBy(page, -120, { steps: 4 });
+	const regrabWidth = regrab.settled.sidebarWidth;
+	check(
+		"V2-p 拖到 480 松手后仍能重新抓住把手拖回来（X2 回归）",
+		Math.abs(regrabWidth - (SIDEBAR_MAX_WIDTH - 120)) < 8,
+		`重抓左拖 120px 后 = ${regrabWidth}px（期望 ≈ ${SIDEBAR_MAX_WIDTH - 120}）`,
 	);
 
 	/* ---- 截图通道（放在最后：截图会打断进行中的指针捕获，量测已经做完，卡住也不影响断言） ---- */
