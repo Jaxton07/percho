@@ -93,6 +93,31 @@ function extensionCommands(extensions: Extension[]): SlashCommandInfo[] {
 	});
 }
 
+/**
+ * 拼装四类命令（两态共用）。跨来源同名时只保留执行时真正命中的那条，按实际分发顺序先到先得：
+ * 内置（渲染端 runSlashCommand 先拦截）→ 扩展（SDK prompt() 先查扩展命令）→ skill（/skill: 先于模板展开）→ 模板。
+ * 被占名的条目选中也只会跑胜出者，列出来只会造成歧义，所以不列；扩展之间的 :N 消歧在此之前已完成。
+ */
+function mergeCommands(
+	templates: SlashCommandInfo[],
+	skills: SlashCommandInfo[],
+	extensions: SlashCommandInfo[],
+): SlashCommandInfo[] {
+	const taken = new Set<string>();
+	const claim = (commands: SlashCommandInfo[]) =>
+		commands.filter((command) => {
+			if (taken.has(command.name)) return false;
+			taken.add(command.name);
+			return true;
+		});
+	// 认领顺序即优先级；返回仍按菜单分组顺序（内置/模板/skill/扩展）
+	const builtin = claim(BUILTIN_SLASH_COMMANDS);
+	const extensionsKept = claim(extensions);
+	const skillsKept = claim(skills);
+	const templatesKept = claim(templates);
+	return [...builtin, ...templatesKept, ...skillsKept, ...extensionsKept];
+}
+
 /** 会话态清单：内置 + 模板 + skill + 扩展命令（runner 反映 bindExtensions 后的运行时注册与重名去重） */
 export function slashCommandsForSession(session: AgentSession): SlashCommandInfo[] {
 	const extensions: SlashCommandInfo[] = session.extensionRunner.getRegisteredCommands().map((command) => ({
@@ -101,20 +126,18 @@ export function slashCommandsForSession(session: AgentSession): SlashCommandInfo
 		source: "extension",
 		supported: true,
 	}));
-	return [
-		...BUILTIN_SLASH_COMMANDS,
-		...templateCommands(session.resourceLoader),
-		...skillCommands(session.resourceLoader),
-		...extensions,
-	];
+	return mergeCommands(
+		templateCommands(session.resourceLoader),
+		skillCommands(session.resourceLoader),
+		extensions,
+	);
 }
 
 /** 无会话态清单（draft 补全数据源）：只依赖 DefaultResourceLoader，扩展命令取加载期注册 */
 export function slashCommandsForLoader(loader: ResourceLoader): SlashCommandInfo[] {
-	return [
-		...BUILTIN_SLASH_COMMANDS,
-		...templateCommands(loader),
-		...skillCommands(loader),
-		...extensionCommands(loader.getExtensions().extensions),
-	];
+	return mergeCommands(
+		templateCommands(loader),
+		skillCommands(loader),
+		extensionCommands(loader.getExtensions().extensions),
+	);
 }

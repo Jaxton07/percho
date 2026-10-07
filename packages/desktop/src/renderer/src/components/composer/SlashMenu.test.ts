@@ -1,6 +1,6 @@
 import type { SlashCommandInfo } from "@percho/shared";
 import { describe, expect, it } from "vitest";
-import { filterCommands } from "./slash-filter";
+import { filterCommands, SOURCE_ORDER } from "./slash-filter";
 
 function cmd(name: string, source: SlashCommandInfo["source"]): SlashCommandInfo {
 	return { name, description: "", source, supported: true };
@@ -44,5 +44,20 @@ describe("filterCommands", () => {
 	});
 	it("无匹配返回空", () => {
 		expect(filterCommands(commands, "zzzz")).toEqual([]);
+	});
+	it("顺序与菜单分组一致：Enter/Tab 按下标取到的就是高亮的那条", () => {
+		const mixed: SlashCommandInfo[] = [
+			cmd("skill:sync-docs", "skill"),
+			cmd("skill:easy", "skill"),
+			cmd("sync", "extension"),
+		];
+		const result = filterCommands(mixed, "sy");
+		expect(result).toEqual([
+			cmd("skill:sync-docs", "skill"),
+			cmd("skill:easy", "skill"),
+			cmd("sync", "extension"),
+		]);
+		// SlashMenu 按 SOURCE_ORDER 分组渲染，use-slash-menu 直接按下标取 filterCommands 的结果
+		expect(result).toEqual(SOURCE_ORDER.flatMap((source) => result.filter((c) => c.source === source)));
 	});
 });
