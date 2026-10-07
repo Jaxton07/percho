@@ -35,7 +35,7 @@ function TodoRow({ todo, spinnerPaused }: { todo: TodoItem; spinnerPaused?: bool
 		return (
 			<li className="flex items-start gap-2 rounded-md px-2 py-1">
 				<TodoCompleteIcon size={14} className="mt-[3px] shrink-0 text-green-500" />
-				<span className="min-w-0 flex-1 break-words text-[13px] leading-5 text-ink-dim line-through">
+				<span className="min-w-0 flex-1 break-words text-ui-13 leading-5 text-ink-dim line-through">
 					{todo.content}
 				</span>
 			</li>
@@ -50,7 +50,7 @@ function TodoRow({ todo, spinnerPaused }: { todo: TodoItem; spinnerPaused?: bool
 						spinnerPaused ? "text-ink-faint [animation-play-state:paused]" : "text-ink-2"
 					}`}
 				/>
-				<span className="min-w-0 flex-1 break-words text-[13px] leading-5 text-ink font-medium">
+				<span className="min-w-0 flex-1 break-words text-ui-13 leading-5 text-ink font-medium">
 					{todo.content}
 				</span>
 			</li>
@@ -59,7 +59,7 @@ function TodoRow({ todo, spinnerPaused }: { todo: TodoItem; spinnerPaused?: bool
 	return (
 		<li className="flex items-start gap-2 rounded-md px-2 py-1">
 			<TodoPendingIcon size={14} className="mt-[3px] shrink-0 text-ink-faint" />
-			<span className="min-w-0 flex-1 break-words text-[13px] leading-5 text-ink-2">{todo.content}</span>
+			<span className="min-w-0 flex-1 break-words text-ui-13 leading-5 text-ink-2">{todo.content}</span>
 		</li>
 	);
 }
@@ -103,8 +103,8 @@ export function TodoPanel() {
 						className={`todo-breath-dot ${agentActive ? "" : "todo-breath-dot-paused"}`}
 						aria-hidden="true"
 					/>
-					<span className="shrink-0 text-[13px] font-medium text-ink-dim">{t("todo.title")}</span>
-					<span className="shrink-0 text-[11px] tabular-nums text-ink-faint">
+					<span className="shrink-0 text-ui-13 font-medium text-ink-dim">{t("todo.title")}</span>
+					<span className="shrink-0 text-ui-11 tabular-nums text-ink-faint">
 						{done}/{todos.length}
 					</span>
 					<span className="ml-auto shrink-0">

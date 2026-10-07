@@ -25,17 +25,17 @@ function Notice({
 	return (
 		<div className="flex items-center gap-2.5 rounded-[10px] bg-hover px-3 py-2">
 			<span
-				className={`flex h-[13px] w-[13px] shrink-0 items-center justify-center rounded-full text-[10px] leading-none ${
+				className={`flex h-[13px] w-[13px] shrink-0 items-center justify-center rounded-full text-ui-10 leading-none ${
 					glyph === "err" ? "text-err" : glyph === "warn" ? "text-ink-2" : "text-ink-faint"
 				}`}
 			>
 				{glyph === "err" ? "!" : glyph === "warn" ? "!" : "i"}
 			</span>
-			<span className="flex-1 text-[11.5px] leading-relaxed text-ink-2">{message}</span>
+			<span className="flex-1 text-ui-115 leading-relaxed text-ink-2">{message}</span>
 			{action && (
 				<button
 					type="button"
-					className="rounded-full px-2 py-0.5 text-[11px] text-ink-faint transition-colors hover:bg-hover hover:text-ink-2"
+					className="rounded-full px-2 py-0.5 text-ui-11 text-ink-faint transition-colors hover:bg-hover hover:text-ink-2"
 					onClick={onAction}
 				>
 					{action}
@@ -49,8 +49,8 @@ function Group({ title, path, children }: { title: string; path?: string; childr
 	return (
 		<div>
 			<div className="flex items-baseline gap-2 px-2.5 pb-0.5">
-				<span className="text-[11px] text-ink-faint">{title}</span>
-				{path && <span className="truncate font-mono text-[11px] text-ink-faint">{path}</span>}
+				<span className="text-ui-11 text-ink-faint">{title}</span>
+				{path && <span className="truncate font-mono text-ui-11 text-ink-faint">{path}</span>}
 			</div>
 			{children}
 		</div>
@@ -107,7 +107,7 @@ export function McpPanel() {
 	const visible = (servers: McpServerView[]) => filterServers(sortServers(servers), query);
 
 	if (!config && loading) {
-		return <p className="py-8 text-center text-[13px] text-ink-faint">{t("settings.mcp.loading")}</p>;
+		return <p className="py-8 text-center text-ui-13 text-ink-faint">{t("settings.mcp.loading")}</p>;
 	}
 
 	const hasServers = (config?.global.length ?? 0) + (config?.project.length ?? 0) > 0;
@@ -134,8 +134,8 @@ export function McpPanel() {
 			{/* 面板头：只回答「连上几台 / 几个工具」 */}
 			<div className="flex items-start gap-3">
 				<div className="min-w-0 flex-1">
-					<h3 className="text-[13px] font-medium text-ink-2">{t("settings.mcp.title")}</h3>
-					<p className="mt-0.5 text-[11px] text-ink-faint">
+					<h3 className="text-ui-13 font-medium text-ink-2">{t("settings.mcp.title")}</h3>
+					<p className="mt-0.5 text-ui-11 text-ink-faint">
 						{hasServers
 							? t("settings.mcp.summary", { connected, total: servers.length, tools: toolCount })
 							: t("settings.mcp.hint")}
@@ -143,7 +143,7 @@ export function McpPanel() {
 				</div>
 				<button
 					type="button"
-					className="flex shrink-0 items-center gap-1 whitespace-nowrap rounded-full px-2.5 py-1 text-[11px] text-ink-faint transition-colors hover:bg-hover hover:text-ink-2"
+					className="flex shrink-0 items-center gap-1 whitespace-nowrap rounded-full px-2.5 py-1 text-ui-11 text-ink-faint transition-colors hover:bg-hover hover:text-ink-2"
 					onClick={() => setView({ mode: "add" })}
 				>
 					<PlusIcon size={12} /> {t("settings.mcp.addServer")}
@@ -176,7 +176,7 @@ export function McpPanel() {
 			{config && config.errors.length > 0 && (
 				<ul className="mt-2.5 space-y-1">
 					{config.errors.map((error) => (
-						<li key={error} className="text-[11px] text-err">
+						<li key={error} className="text-ui-11 text-err">
 							{error}
 						</li>
 					))}
@@ -186,7 +186,7 @@ export function McpPanel() {
 			{/* 搜索：服务器 > 8 个才出现 */}
 			{showSearch(servers) && (
 				<input
-					className="mt-3 w-full rounded-[9px] border border-border bg-canvas px-2.5 py-1.5 text-[12px] text-ink outline-none placeholder:text-ink-faint focus:border-ink-faint"
+					className="mt-3 w-full rounded-[9px] border border-border bg-canvas px-2.5 py-1.5 text-ui-12 text-ink outline-none placeholder:text-ink-faint focus:border-ink-faint"
 					value={query}
 					placeholder={t("settings.mcp.searchPlaceholder")}
 					onChange={(event) => setQuery(event.target.value)}
@@ -196,21 +196,21 @@ export function McpPanel() {
 			{/* 空态 */}
 			{!hasServers && (
 				<div className="flex flex-1 flex-col items-center justify-center gap-2 px-6 py-10 text-center">
-					<p className="text-[13px] text-ink-2">{t("settings.mcp.emptyTitle")}</p>
-					<p className="max-w-[380px] text-[11.5px] leading-relaxed text-ink-faint">
+					<p className="text-ui-13 text-ink-2">{t("settings.mcp.emptyTitle")}</p>
+					<p className="max-w-[380px] text-ui-115 leading-relaxed text-ink-faint">
 						{t("settings.mcp.emptyDesc")}
 					</p>
 					<div className="mt-1.5 flex items-center gap-1.5">
 						<button
 							type="button"
-							className="rounded-full bg-ink px-3.5 py-1.5 text-[11.5px] text-canvas"
+							className="rounded-full bg-ink px-3.5 py-1.5 text-ui-115 text-canvas"
 							onClick={() => setView({ mode: "add" })}
 						>
 							{t("settings.mcp.addServer")}
 						</button>
 						<button
 							type="button"
-							className="rounded-full px-2.5 py-1 text-[11.5px] text-ink-faint transition-colors hover:bg-hover hover:text-ink-2"
+							className="rounded-full px-2.5 py-1 text-ui-115 text-ink-faint transition-colors hover:bg-hover hover:text-ink-2"
 							onClick={() => setView({ mode: "paste" })}
 						>
 							{t("settings.mcp.pasteJson")}
@@ -247,10 +247,10 @@ export function McpPanel() {
 						</Group>
 					)}
 					{config && !config.projectTrusted && config.projectPath && (
-						<p className="px-2.5 text-[11px] text-ink-faint">{t("settings.mcp.projectUntrusted")}</p>
+						<p className="px-2.5 text-ui-11 text-ink-faint">{t("settings.mcp.projectUntrusted")}</p>
 					)}
 					{!hasSession && (
-						<p className="px-2.5 text-[11px] text-ink-faint">{t("settings.mcp.noActiveSession")}</p>
+						<p className="px-2.5 text-ui-11 text-ink-faint">{t("settings.mcp.noActiveSession")}</p>
 					)}
 				</div>
 			)}
@@ -259,7 +259,7 @@ export function McpPanel() {
 			<div className="mt-auto flex items-center gap-2 pt-4">
 				<button
 					type="button"
-					className="flex items-center gap-1 rounded-full py-0.5 pl-1 pr-2 text-[11px] text-ink-faint transition-colors hover:bg-hover hover:text-ink-2"
+					className="flex items-center gap-1 rounded-full py-0.5 pl-1 pr-2 text-ui-11 text-ink-faint transition-colors hover:bg-hover hover:text-ink-2"
 					onClick={() => setPathsOpen((v) => !v)}
 				>
 					<ChevronRightIcon
@@ -269,7 +269,7 @@ export function McpPanel() {
 				</button>
 				<span className="flex-1" />
 				{lastReload && (
-					<span className="text-[11px] text-ink-faint">
+					<span className="text-ui-11 text-ink-faint">
 						{lastReload.skipped.length === 0
 							? t("settings.mcp.reloadApplied", { count: lastReload.reloaded })
 							: t("settings.mcp.reloadSkipped", {
@@ -281,21 +281,21 @@ export function McpPanel() {
 			</div>
 			{pathsOpen && config && (
 				<div className="mt-1 flex flex-col gap-1">
-					<div className="flex items-center gap-2 font-mono text-[11.5px] text-ink-dim">
-						<span className="w-[52px] shrink-0 text-[11px] text-ink-faint">
+					<div className="flex items-center gap-2 font-mono text-ui-115 text-ink-dim">
+						<span className="w-[52px] shrink-0 text-ui-11 text-ink-faint">
 							{t("settings.mcp.pathGlobal")}
 						</span>
 						<span className="truncate">{config.globalPath}</span>
 					</div>
 					{config.projectPath && (
-						<div className="flex items-center gap-2 font-mono text-[11.5px] text-ink-dim">
-							<span className="w-[52px] shrink-0 text-[11px] text-ink-faint">
+						<div className="flex items-center gap-2 font-mono text-ui-115 text-ink-dim">
+							<span className="w-[52px] shrink-0 text-ui-11 text-ink-faint">
 								{t("settings.mcp.pathProject")}
 							</span>
 							<span className="truncate">{config.projectPath}</span>
 						</div>
 					)}
-					<p className="text-[11px] leading-relaxed text-ink-faint">{t("settings.mcp.reloadExplain")}</p>
+					<p className="text-ui-11 leading-relaxed text-ink-faint">{t("settings.mcp.reloadExplain")}</p>
 				</div>
 			)}
 		</div>

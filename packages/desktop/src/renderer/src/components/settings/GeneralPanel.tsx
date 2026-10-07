@@ -19,14 +19,14 @@ export function GeneralPanel() {
 	return (
 		<div className="flex flex-col gap-6">
 			<div>
-				<h3 className="text-[13px] font-medium text-ink">{t("settings.language")}</h3>
-				<p className="mt-0.5 text-[11px] text-ink-faint">{t("settings.languageHint")}</p>
+				<h3 className="text-ui-13 font-medium text-ink">{t("settings.language")}</h3>
+				<p className="mt-0.5 text-ui-11 text-ink-faint">{t("settings.languageHint")}</p>
 				<div className="mt-2 flex gap-2">
 					{(["zh", "en"] as Language[]).map((lang) => (
 						<button
 							key={lang}
 							type="button"
-							className={`rounded-lg border px-3 py-1.5 text-[13px] transition-colors ${
+							className={`rounded-lg border px-3 py-1.5 text-ui-13 transition-colors ${
 								language === lang
 									? "border-ink bg-ink text-on-ink"
 									: "border-border text-ink-2 hover:border-border-strong hover:bg-hover"
@@ -40,14 +40,14 @@ export function GeneralPanel() {
 			</div>
 			<div>
 				<div className="flex items-center justify-between gap-4">
-					<h3 className="text-[13px] font-medium text-ink">{t("settings.contextManager")}</h3>
+					<h3 className="text-ui-13 font-medium text-ink">{t("settings.contextManager")}</h3>
 					<div className="flex gap-2">
 						{CONTEXT_MANAGER_MODES.map((mode) => (
 							<button
 								key={mode}
 								type="button"
 								disabled={contextManagerMode === null}
-								className={`rounded-lg border px-3 py-1.5 text-[13px] transition-colors disabled:opacity-50 ${
+								className={`rounded-lg border px-3 py-1.5 text-ui-13 transition-colors disabled:opacity-50 ${
 									contextManagerMode === mode
 										? "border-ink bg-ink text-on-ink"
 										: "border-border text-ink-2 hover:border-border-strong hover:bg-hover"
@@ -59,20 +59,20 @@ export function GeneralPanel() {
 						))}
 					</div>
 				</div>
-				<p className="mt-0.5 text-[11px] leading-relaxed text-ink-faint">
+				<p className="mt-0.5 text-ui-11 leading-relaxed text-ink-faint">
 					{contextManagerMode ? t(`settings.contextManagerHint.${contextManagerMode}`) : ""}
 				</p>
 			</div>
 			<div>
 				<div className="flex items-center justify-between gap-4">
-					<h3 className="text-[13px] font-medium text-ink">{t("settings.channelWatch")}</h3>
+					<h3 className="text-ui-13 font-medium text-ink">{t("settings.channelWatch")}</h3>
 					<Switch
 						checked={channelWatchEnabled === true}
 						disabled={channelWatchEnabled === null}
 						onCheckedChange={(enabled) => void setChannelWatchEnabled(enabled)}
 					/>
 				</div>
-				<p className="mt-0.5 text-[11px] leading-relaxed text-ink-faint">{t("settings.channelWatchHint")}</p>
+				<p className="mt-0.5 text-ui-11 leading-relaxed text-ink-faint">{t("settings.channelWatchHint")}</p>
 			</div>
 		</div>
 	);

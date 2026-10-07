@@ -41,7 +41,7 @@ export function LoginDialog() {
 	return createPortal(
 		<div className="fixed inset-0 z-[60] flex items-center justify-center bg-ink/20" role="dialog" aria-modal>
 			<div className="w-[440px] rounded-xl bg-surface p-4 shadow-dialog">
-				<h3 className="text-sm font-semibold text-ink">
+				<h3 className="text-ui-14 leading-[calc(1.25_/_0.875)] font-semibold text-ink">
 					{t(login.loginKind === "apiKey" ? "settings.login.apiKeyTitle" : "settings.login.title", {
 						name: login.providerName,
 					})}
@@ -50,19 +50,19 @@ export function LoginDialog() {
 				{/* 设备码：验证码 + 验证链接，SDK 侧自行轮询 */}
 				{deviceCode && (
 					<div className="mt-3 rounded-lg bg-hover px-3 py-2.5">
-						<p className="text-[11px] text-ink-faint">{t("settings.login.deviceCodeHint")}</p>
-						<p className="mt-1 select-all text-center font-mono text-lg font-semibold tracking-widest text-ink">
+						<p className="text-ui-11 text-ink-faint">{t("settings.login.deviceCodeHint")}</p>
+						<p className="mt-1 select-all text-center font-mono text-ui-18 leading-[calc(1.75_/_1.125)] font-semibold tracking-widest text-ink">
 							{deviceCode.userCode}
 						</p>
 						<button
 							type="button"
-							className="mt-1 block w-full truncate text-center text-[11px] text-ink-dim underline underline-offset-2 hover:text-ink"
+							className="mt-1 block w-full truncate text-center text-ui-11 text-ink-dim underline underline-offset-2 hover:text-ink"
 							onClick={() => void window.pi.openExternal({ url: deviceCode.verificationUri })}
 						>
 							{deviceCode.verificationUri}
 						</button>
 						{deviceCode.expiresInSeconds ? (
-							<p className="mt-1 text-center text-[10px] text-ink-faint">
+							<p className="mt-1 text-center text-ui-10 text-ink-faint">
 								{t("settings.login.deviceCodeExpires", {
 									minutes: Math.ceil(deviceCode.expiresInSeconds / 60),
 								})}
@@ -74,25 +74,23 @@ export function LoginDialog() {
 				{/* 浏览器授权：已自动打开，URL 可点击/复制兜底 */}
 				{authUrl && (
 					<div className="mt-3 rounded-lg bg-hover px-3 py-2.5">
-						<p className="text-[11px] text-ink-2">{t("settings.login.browserHint")}</p>
+						<p className="text-ui-11 text-ink-2">{t("settings.login.browserHint")}</p>
 						<button
 							type="button"
-							className="mt-1 block w-full truncate text-left font-mono text-[11px] text-ink-dim underline underline-offset-2 hover:text-ink"
+							className="mt-1 block w-full truncate text-left font-mono text-ui-11 text-ink-dim underline underline-offset-2 hover:text-ink"
 							title={authUrl.url}
 							onClick={() => void window.pi.openExternal({ url: authUrl.url })}
 						>
 							{authUrl.url}
 						</button>
-						{authUrl.instructions && (
-							<p className="mt-1 text-[10px] text-ink-faint">{authUrl.instructions}</p>
-						)}
+						{authUrl.instructions && <p className="mt-1 text-ui-10 text-ink-faint">{authUrl.instructions}</p>}
 					</div>
 				)}
 
 				{/* 选择提示（如 codex 的浏览器/设备码二选一） */}
 				{prompt?.type === "select" && (
 					<div className="mt-3">
-						<p className="text-[12px] text-ink-2">{prompt.message}</p>
+						<p className="text-ui-12 text-ink-2">{prompt.message}</p>
 						<div className="mt-2 flex flex-col items-stretch gap-1.5">
 							{prompt.options.map((option) => (
 								<Button
@@ -103,7 +101,7 @@ export function LoginDialog() {
 								>
 									{option.label}
 									{option.description && (
-										<span className="ml-1 text-[11px] opacity-70">{option.description}</span>
+										<span className="ml-1 text-ui-11 opacity-70">{option.description}</span>
 									)}
 								</Button>
 							))}
@@ -123,7 +121,7 @@ export function LoginDialog() {
 							<button
 								key={link.url}
 								type="button"
-								className="text-[11px] text-ink-dim underline underline-offset-2 hover:text-ink"
+								className="text-ui-11 text-ink-dim underline underline-offset-2 hover:text-ink"
 								onClick={() => void window.pi.openExternal({ url: link.url })}
 							>
 								{link.label ?? link.url}
@@ -134,7 +132,7 @@ export function LoginDialog() {
 
 				{/* 状态行：等待中 spinner + 最新 progress/info 文案 */}
 				{!login.error && (
-					<div className="mt-3 flex items-center gap-2 text-[11px] text-ink-faint">
+					<div className="mt-3 flex items-center gap-2 text-ui-11 text-ink-faint">
 						<span className="h-3 w-3 shrink-0 animate-spin rounded-full border-[1.5px] border-current border-t-transparent" />
 						<span className="truncate">
 							{login.statusLine ??
@@ -148,7 +146,7 @@ export function LoginDialog() {
 				)}
 
 				{login.error && (
-					<p className="mt-3 rounded-lg bg-red-50 px-3 py-2 text-[12px] break-all text-red-600">
+					<p className="mt-3 rounded-lg bg-red-50 px-3 py-2 text-ui-12 break-all text-red-600">
 						{t("settings.login.failed")}：{login.error}
 					</p>
 				)}
@@ -192,12 +190,12 @@ function PromptInput({
 
 	return (
 		<div className="mt-3">
-			<p className="text-[12px] text-ink-2">{prompt.message}</p>
+			<p className="text-ui-12 text-ink-2">{prompt.message}</p>
 			<div className="mt-2 flex items-center gap-2">
 				<input
 					ref={inputRef}
 					type={prompt.type === "secret" ? "password" : "text"}
-					className="min-w-0 flex-1 rounded-lg border border-border px-2.5 py-1.5 text-[12px] outline-none focus:border-ink-faint"
+					className="min-w-0 flex-1 rounded-lg border border-border px-2.5 py-1.5 text-ui-12 outline-none focus:border-ink-faint"
 					placeholder={prompt.placeholder}
 					value={input}
 					onChange={(e) => setInput(e.target.value)}

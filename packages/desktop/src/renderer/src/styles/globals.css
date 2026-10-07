@@ -1,4 +1,5 @@
 @import "tailwindcss";
+@import "./typography.css";
 
 /* dark: 工具类挂到 data-theme（手动切换），不走 prefers-color-scheme */
 @custom-variant dark (&:where([data-theme="dark"], [data-theme="dark"] *));
@@ -223,7 +224,7 @@
 	display: flex;
 	align-items: center;
 	gap: 7px;
-	font-size: 11px;
+	font-size: calc(11px * var(--fs-ui-scale, 1));
 	color: var(--color-ink-faint);
 }
 @keyframes approval-enter {
@@ -276,8 +277,8 @@
 .selection-menu-btn {
 	padding: 0.25rem 0.625rem;
 	border-radius: 0.5rem;
-	font-size: 13px;
-	line-height: 1.25rem;
+	font-size: calc(13px * var(--fs-ui-scale, 1));
+	line-height: calc(20px * var(--fs-ui-scale, 1));
 	color: var(--color-ink-2);
 	white-space: nowrap;
 	transition:
@@ -610,7 +611,7 @@ body {
 		sans-serif;
 	background: var(--color-canvas);
 	color: var(--color-ink);
-	font-size: 14px;
+	font-size: calc(14px * var(--fs-ui-scale, 1));
 	-webkit-font-smoothing: antialiased;
 	user-select: none;
 	transition: background-color 0.15s ease;
@@ -959,24 +960,24 @@ code {
 }
 .markdown-body .heading-1 {
 	margin: 0.9rem 0 0.35rem;
-	font-size: 1.25rem;
+	font-size: calc(20px * var(--fs-ui-scale, 1));
 	line-height: 1.4;
 }
 .markdown-body .heading-2 {
 	margin: 0.85rem 0 0.35rem;
-	font-size: 1.125rem;
+	font-size: calc(18px * var(--fs-ui-scale, 1));
 	line-height: 1.4;
 }
 .markdown-body .heading-3 {
 	margin: 0.65rem 0 0.3rem;
-	font-size: 1rem;
+	font-size: calc(16px * var(--fs-ui-scale, 1));
 	line-height: 1.4;
 }
 .markdown-body .heading-4,
 .markdown-body .heading-5,
 .markdown-body .heading-6 {
 	margin: 0.6rem 0 0.3rem;
-	font-size: 0.9375rem;
+	font-size: calc(15px * var(--fs-ui-scale, 1));
 }
 .markdown-body .link-node {
 	text-decoration: underline;
@@ -1084,7 +1085,7 @@ code {
    补齐等宽字体与主题色表面，加载瞬间不突兀 */
 .markdown-body .code-fallback-plain {
 	font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace;
-	font-size: 12.5px;
+	font-size: calc(12.5px * var(--fs-code-scale, 1));
 	padding: 0.75rem 1rem;
 }
 .markdown-body .inline-code {
@@ -1092,10 +1093,10 @@ code {
 	border-radius: 0.25rem;
 	background: var(--markdown-code-bg);
 	color: var(--markdown-code-text);
-	font-size: 12.5px;
+	font-size: calc(12.5px * var(--fs-code-scale, 1));
 }
 .markdown-body .table-node {
-	font-size: 13px;
+	font-size: calc(13px * var(--fs-ui-scale, 1));
 }
 .markdown-body .table-node th,
 .markdown-body .table-node td {
@@ -1156,11 +1157,11 @@ code {
 
 /* ---- 轮末 chip ---- */
 .turn-diff {
-	font-size: 12.5px;
+	font-size: calc(12.5px * var(--fs-ui-scale, 1));
 }
 /* 纯计时行（无文件变更轮）：幽灵文字，非交互 */
 .turn-diff-plain {
-	font-size: 12.5px;
+	font-size: calc(12.5px * var(--fs-ui-scale, 1));
 	display: flex;
 }
 .turn-diff-head {
@@ -1259,7 +1260,7 @@ code {
 	background: none;
 	cursor: pointer;
 	font-family: inherit;
-	font-size: 12px;
+	font-size: calc(12px * var(--fs-ui-scale, 1));
 	color: var(--color-ink-2);
 	transition: background 0.12s;
 	text-align: left;
@@ -1273,7 +1274,7 @@ code {
 .turn-diff-path,
 .diff-file-path {
 	font-family: ui-monospace, "SF Mono", SFMono-Regular, Menlo, Consolas, monospace;
-	font-size: 11.5px;
+	font-size: calc(11.5px * var(--fs-ui-scale, 1));
 	overflow: hidden;
 	text-overflow: ellipsis;
 	white-space: nowrap;
@@ -1440,7 +1441,7 @@ code {
 	padding: 12px 14px 6px;
 }
 .diff-side-title {
-	font-size: 13px;
+	font-size: calc(13px * var(--fs-ui-scale, 1));
 	font-weight: 600;
 	color: var(--color-ink);
 }
@@ -1458,7 +1459,7 @@ code {
 	max-width: 100%;
 	padding: 3px 6px;
 	border-radius: 6px;
-	font-size: 11.5px;
+	font-size: calc(11.5px * var(--fs-ui-scale, 1));
 	color: var(--color-ink-faint);
 	transition:
 		color 0.15s,
@@ -1495,7 +1496,7 @@ code {
 	gap: 8px;
 	padding: 5px 8px;
 	border-radius: 6px;
-	font-size: 13px;
+	font-size: calc(13px * var(--fs-ui-scale, 1));
 	color: var(--color-ink-2);
 }
 .diff-branch-item.on {
@@ -1520,7 +1521,7 @@ code {
 	white-space: nowrap;
 }
 .diff-side-sum {
-	font-size: 11.5px;
+	font-size: calc(11.5px * var(--fs-ui-scale, 1));
 	color: var(--color-ink-dim);
 	font-variant-numeric: tabular-nums;
 	white-space: nowrap;
@@ -1536,7 +1537,7 @@ code {
 	border: none;
 	background: none;
 	font-family: inherit;
-	font-size: 11px;
+	font-size: calc(11px * var(--fs-ui-scale, 1));
 	color: var(--color-ink-dim);
 	padding: 2px 9px;
 	border-radius: 5px;
@@ -1578,7 +1579,7 @@ code {
 	padding: 40px 20px;
 	text-align: center;
 	color: var(--color-ink-faint);
-	font-size: 12px;
+	font-size: calc(12px * var(--fs-ui-scale, 1));
 }
 
 /* 轮次分组 */
@@ -1601,7 +1602,7 @@ code {
 	align-items: baseline;
 	gap: 8px;
 	padding: 2px 4px 6px;
-	font-size: 11.5px;
+	font-size: calc(11.5px * var(--fs-ui-scale, 1));
 	color: var(--color-ink-faint);
 }
 .diff-tg-title {
@@ -1665,7 +1666,7 @@ code {
 	color: var(--color-ink-2);
 }
 .diff-file-head .turn-diff-stat {
-	font-size: 11px;
+	font-size: calc(11px * var(--fs-ui-scale, 1));
 	flex: none;
 }
 .diff-file-chev {
@@ -1689,8 +1690,8 @@ code {
    min-width: max-content 保留长代码的横向滚动。 */
 .diff-table {
 	font-family: ui-monospace, "SF Mono", SFMono-Regular, Menlo, Consolas, monospace;
-	font-size: 11px;
-	line-height: 20px;
+	font-size: calc(11px * var(--fs-code-scale, 1));
+	line-height: calc(20px * var(--fs-code-scale, 1));
 	min-width: max-content;
 	width: 100%;
 }
@@ -1706,7 +1707,7 @@ code {
 	text-align: right;
 	color: var(--color-ink-faint);
 	user-select: none;
-	font-size: 10px;
+	font-size: calc(10px * var(--fs-code-scale, 1));
 	padding-right: 6px;
 	background: color-mix(in srgb, var(--color-hover) 55%, transparent);
 }
@@ -1743,7 +1744,7 @@ code {
 .diff-hunk {
 	background: color-mix(in srgb, var(--color-hover) 70%, transparent);
 	color: var(--color-ink-faint);
-	font-size: 10px;
+	font-size: calc(10px * var(--fs-code-scale, 1));
 	padding: 2px 10px;
 	user-select: none;
 }
@@ -1770,7 +1771,7 @@ code {
 	border-top: 1px dashed var(--color-border);
 	background: none;
 	font-family: ui-monospace, "SF Mono", SFMono-Regular, Menlo, Consolas, monospace;
-	font-size: 10.5px;
+	font-size: calc(10.5px * var(--fs-code-scale, 1));
 	color: var(--color-ink-faint);
 	padding: 5px;
 	cursor: pointer;
@@ -1782,8 +1783,8 @@ code {
 .diff-fallback {
 	margin: 0;
 	padding: 8px 10px;
-	font-size: 11px;
-	line-height: 18px;
+	font-size: calc(11px * var(--fs-code-scale, 1));
+	line-height: calc(18px * var(--fs-code-scale, 1));
 	white-space: pre-wrap;
 	word-break: break-all;
 	color: var(--color-ink-2);
@@ -1855,13 +1856,13 @@ code {
 	display: block;
 }
 .error-note-title {
-	font-size: 13px;
+	font-size: calc(13px * var(--fs-ui-scale, 1));
 	font-weight: 500;
 	color: var(--color-ink-2);
 	letter-spacing: -0.01em;
 }
 .error-note-meta {
-	font-size: 11px;
+	font-size: calc(11px * var(--fs-ui-scale, 1));
 	color: var(--color-ink-faint);
 	font-variant-numeric: tabular-nums;
 	white-space: nowrap;
@@ -1894,7 +1895,7 @@ code {
 }
 .error-note-detail {
 	font-family: ui-monospace, "SF Mono", SFMono-Regular, Menlo, Consolas, monospace;
-	font-size: 11.5px;
+	font-size: calc(11.5px * var(--fs-ui-scale, 1));
 	line-height: 1.7;
 	color: var(--color-ink-dim);
 	background: var(--color-hover);
@@ -1908,7 +1909,7 @@ code {
 	cursor: text;
 }
 .error-note-hint {
-	font-size: 12px;
+	font-size: calc(12px * var(--fs-ui-scale, 1));
 	color: var(--color-ink-dim);
 	line-height: 1.6;
 }
@@ -1920,7 +1921,7 @@ code {
 }
 .error-note-act {
 	font-family: inherit;
-	font-size: 12px;
+	font-size: calc(12px * var(--fs-ui-scale, 1));
 	font-weight: 450;
 	color: var(--color-ink-faint);
 	background: none;
@@ -1951,7 +1952,7 @@ code {
 	background: var(--color-hover);
 }
 .error-note-copied {
-	font-size: 11px;
+	font-size: calc(11px * var(--fs-ui-scale, 1));
 	color: var(--color-ink-faint);
 	opacity: 0;
 	transition: opacity 0.2s;
@@ -1981,12 +1982,12 @@ code {
 	color: var(--color-err);
 }
 .send-error .se-title {
-	font-size: 13px;
+	font-size: calc(13px * var(--fs-ui-scale, 1));
 	font-weight: 500;
 	color: var(--color-ink-2);
 }
 .send-error .se-sub {
-	font-size: 11px;
+	font-size: calc(11px * var(--fs-ui-scale, 1));
 	color: var(--color-ink-faint);
 	margin-top: 1px;
 }
@@ -1994,7 +1995,7 @@ code {
 	margin-left: auto;
 	flex: none;
 	font-family: inherit;
-	font-size: 12px;
+	font-size: calc(12px * var(--fs-ui-scale, 1));
 	font-weight: 500;
 	color: var(--color-ink);
 	background: none;
@@ -2020,7 +2021,7 @@ code {
 	display: flex;
 	align-items: center;
 	gap: 7px;
-	font-size: 12px;
+	font-size: calc(12px * var(--fs-ui-scale, 1));
 	color: var(--color-ink-faint);
 }
 .retry-note svg {
@@ -2085,13 +2086,13 @@ code {
 	display: block;
 }
 .toast .t-title {
-	font-size: 12.5px;
+	font-size: calc(12.5px * var(--fs-ui-scale, 1));
 	font-weight: 500;
 	color: var(--color-ink-2);
 	line-height: 1.45;
 }
 .toast .t-sub {
-	font-size: 11px;
+	font-size: calc(11px * var(--fs-ui-scale, 1));
 	color: var(--color-ink-faint);
 	margin-top: 2px;
 	line-height: 1.5;
@@ -2214,7 +2215,7 @@ html body .markstream-react .mermaid-modal-header {
 }
 html body .markstream-react .mermaid-modal-title {
 	/* 标题只留「Mermaid 预览」的品牌感：与关闭按钮同排、字号降一档 */
-	font-size: 13px;
+	font-size: calc(13px * var(--fs-ui-scale, 1));
 	font-weight: 500;
 	color: var(--color-ink-2);
 	letter-spacing: -0.01em;
@@ -2222,7 +2223,7 @@ html body .markstream-react .mermaid-modal-title {
 }
 html body .markstream-react .mermaid-modal-close {
 	font-family: inherit;
-	font-size: 11.5px;
+	font-size: calc(11.5px * var(--fs-ui-scale, 1));
 	color: var(--color-ink-faint);
 	background: none;
 	border: none;
@@ -2320,7 +2321,7 @@ html body .markstream-react .mermaid-modal-body {
 	margin-right: 2px;
 }
 .markdown-body .md-mermaid .mermaid-block-header > div:nth-child(2) button {
-	font-size: 11.5px;
+	font-size: calc(11.5px * var(--fs-ui-scale, 1));
 	font-weight: 450;
 	color: var(--color-ink-faint);
 	background: transparent;
@@ -2374,7 +2375,7 @@ body > div.markstream-react.ms-tooltip[role="tooltip"]:not(.tooltip-element) {
 	gap: 6px;
 	padding: 0;
 	margin-top: 10px;
-	font-size: 11.5px;
+	font-size: calc(11.5px * var(--fs-ui-scale, 1));
 	color: var(--color-ink-faint);
 }
 .markdown-body .md-mermaid .mermaid-loading span:last-child {
@@ -2382,7 +2383,7 @@ body > div.markstream-react.ms-tooltip[role="tooltip"]:not(.tooltip-element) {
 }
 .markdown-body .md-mermaid .mermaid-loading span:last-child::after {
 	content: var(--md-mermaid-rendering, "Rendering diagram…");
-	font-size: 11.5px;
+	font-size: calc(11.5px * var(--fs-ui-scale, 1));
 }
 .markdown-body .md-mermaid .mermaid-spinner {
 	width: 13px;
@@ -2398,7 +2399,7 @@ body > div.markstream-react.ms-tooltip[role="tooltip"]:not(.tooltip-element) {
 }
 .markdown-body .md-mermaid .mermaid-block pre {
 	font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace;
-	font-size: 12.5px;
+	font-size: calc(12.5px * var(--fs-code-scale, 1));
 	line-height: 1.7;
 }
 /* 渲染失败：换成 Percho 报错卡（glyph + 标题 + 可展开源码，复用 .error-note* 同款样式） */

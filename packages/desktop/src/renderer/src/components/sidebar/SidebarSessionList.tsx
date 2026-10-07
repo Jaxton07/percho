@@ -35,7 +35,7 @@ export function SidebarSessionList({
 	onContextMenu: (session: SessionMeta, anchor: MenuAnchor) => void;
 }) {
 	if (sessions.length === 0) {
-		return <p className="py-1 pl-[30px] text-[12px] text-ink-faint">{emptyLabel}</p>;
+		return <p className="py-1 pl-[30px] text-ui-12 text-ink-faint">{emptyLabel}</p>;
 	}
 	return (
 		<div>
@@ -58,7 +58,7 @@ export function SidebarSessionList({
 				<button
 					type="button"
 					data-sidebar-show-more=""
-					className="flex h-[31px] w-full items-center rounded-[7px] pl-[30px] text-left text-[12px] text-ink-faint transition-colors hover:bg-hover hover:text-ink-2 focus-visible:bg-hover focus-visible:text-ink-2"
+					className="flex h-[31px] w-full items-center rounded-[7px] pl-[30px] text-left text-ui-12 text-ink-faint transition-colors hover:bg-hover hover:text-ink-2 focus-visible:bg-hover focus-visible:text-ink-2"
 					onClick={onShowMore}
 				>
 					{showMoreLabel}

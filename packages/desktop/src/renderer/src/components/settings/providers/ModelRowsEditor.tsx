@@ -4,7 +4,7 @@ import { Tooltip } from "../../ui/Tooltip";
 import { EMPTY_MODEL_ROW, type ModelRow, parseTokenCount, splitPastedModelIds } from "./model-rows";
 
 const inputClass =
-	"w-full rounded-lg border border-border px-2.5 py-1.5 text-[12px] outline-none focus:border-ink-faint disabled:cursor-not-allowed disabled:text-ink-faint";
+	"w-full rounded-lg border border-border px-2.5 py-1.5 text-ui-12 outline-none focus:border-ink-faint disabled:cursor-not-allowed disabled:text-ink-faint";
 
 /** 模型行编辑器：每行一个模型；ctx/out 留空跟随 SDK 默认（128k/16k），非法值红框且禁止保存 */
 export function ModelRowsEditor({
@@ -59,7 +59,7 @@ export function ModelRowsEditor({
 		<button
 			type="button"
 			aria-pressed={active}
-			className={`shrink-0 rounded-md border px-1.5 py-1 text-[10px] transition-colors ${
+			className={`shrink-0 rounded-md border px-1.5 py-1 text-ui-10 transition-colors ${
 				active ? "border-ink-faint bg-hover text-ink" : "border-border text-ink-faint hover:text-ink-dim"
 			}`}
 			onClick={onToggle}
@@ -112,7 +112,7 @@ export function ModelRowsEditor({
 			<div className="flex items-center gap-3">
 				<button
 					type="button"
-					className="rounded-md px-1.5 py-1 text-[11px] text-ink-dim transition-colors hover:bg-hover"
+					className="rounded-md px-1.5 py-1 text-ui-11 text-ink-dim transition-colors hover:bg-hover"
 					onClick={() => onChange([...rows, { ...EMPTY_MODEL_ROW }])}
 				>
 					{t("settings.providers.addModelRow")}
@@ -120,18 +120,18 @@ export function ModelRowsEditor({
 				{rows.some((row) => row.id.trim()) && (
 					<button
 						type="button"
-						className="rounded-md px-1.5 py-1 text-[11px] text-ink-dim transition-colors hover:bg-hover"
+						className="rounded-md px-1.5 py-1 text-ui-11 text-ink-dim transition-colors hover:bg-hover"
 						onClick={() => onChange([{ ...EMPTY_MODEL_ROW }])}
 					>
 						{t("settings.providers.clearModelRows")}
 					</button>
 				)}
 			</div>
-			<p className="mt-1 text-[10px] leading-relaxed text-ink-faint">
+			<p className="mt-1 text-ui-10 leading-relaxed text-ink-faint">
 				{t("settings.providers.customModelsHint")}
 			</p>
 			{rows.every((row) => !row.id.trim()) && (
-				<p className="mt-1 text-[10px] leading-relaxed text-ink-dim">
+				<p className="mt-1 text-ui-10 leading-relaxed text-ink-dim">
 					{t("settings.providers.customModelsEmptyHint")}
 				</p>
 			)}

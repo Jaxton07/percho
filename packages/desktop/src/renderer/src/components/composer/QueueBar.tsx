@@ -6,8 +6,8 @@ export function QueueBar({ text, onRestore }: { text: string; onRestore: () => v
 	const t = useT();
 	return (
 		<div className="group/queue relative mb-1.5 flex items-center gap-2 overflow-hidden rounded-xl bg-surface px-3 py-1.5 shadow-soft">
-			<span className="shrink-0 text-[12px] text-ink-faint">{t("composer.queueTitle")}</span>
-			<span className="min-w-0 flex-1 truncate text-[13px] text-ink-2">{text}</span>
+			<span className="shrink-0 text-ui-12 text-ink-faint">{t("composer.queueTitle")}</span>
+			<span className="min-w-0 flex-1 truncate text-ui-13 text-ink-2">{text}</span>
 			{/* 撤销层：hover 行才显示；渐变模糊压住下方文字，仅镂空图标可点（防误点） */}
 			<div className="pointer-events-none absolute inset-y-0 right-0 flex w-14 items-center justify-end pr-2.5 opacity-0 transition-opacity group-hover/queue:opacity-100">
 				<span

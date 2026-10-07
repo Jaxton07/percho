@@ -27,7 +27,7 @@ export function ProvidersPanel() {
 					<button
 						key={id}
 						type="button"
-						className={`px-2.5 py-1.5 text-[12px] transition-colors ${
+						className={`px-2.5 py-1.5 text-ui-12 transition-colors ${
 							tab === id ? "border-b-2 border-ink text-ink" : "text-ink-faint hover:text-ink"
 						}`}
 						onClick={() => setTab(id)}
@@ -41,7 +41,7 @@ export function ProvidersPanel() {
 			) : (
 				<>
 					<div className="mb-2 flex items-center justify-between gap-2">
-						<p className="text-[11px] text-ink-faint">{t("settings.providers.catalogHint")}</p>
+						<p className="text-ui-11 text-ink-faint">{t("settings.providers.catalogHint")}</p>
 						<IconAction
 							label={t("settings.providers.refresh")}
 							align="end"
@@ -55,9 +55,9 @@ export function ProvidersPanel() {
 							)}
 						</IconAction>
 					</div>
-					{error && <p className="mb-2 rounded-lg bg-red-50 px-3 py-2 text-[12px] text-red-600">{error}</p>}
+					{error && <p className="mb-2 rounded-lg bg-red-50 px-3 py-2 text-ui-12 text-red-600">{error}</p>}
 					{loading && providers.length === 0 ? (
-						<p className="py-8 text-center text-[13px] text-ink-faint">{t("settings.loading")}</p>
+						<p className="py-8 text-center text-ui-13 text-ink-faint">{t("settings.loading")}</p>
 					) : (
 						<ProviderList providers={providers} />
 					)}
@@ -72,7 +72,7 @@ export function ProvidersPanel() {
 function ProviderList({ providers }: { providers: ProviderInfo[] }) {
 	const t = useT();
 	if (providers.length === 0) {
-		return <p className="py-4 text-center text-[13px] text-ink-faint">{t("settings.providers.empty")}</p>;
+		return <p className="py-4 text-center text-ui-13 text-ink-faint">{t("settings.providers.empty")}</p>;
 	}
 	return (
 		<ul className="divide-y divide-border">

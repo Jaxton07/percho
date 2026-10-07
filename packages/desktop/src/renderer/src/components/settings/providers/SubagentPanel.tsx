@@ -7,7 +7,7 @@ import { useSettingsStore } from "../../../stores/settings";
 import { Switch } from "../../ui/Switch";
 
 const SELECT_CLASS =
-	"w-full rounded-lg border border-border bg-surface px-2.5 py-1.5 text-[12px] text-ink outline-none focus:border-ink-faint";
+	"w-full rounded-lg border border-border bg-surface px-2.5 py-1.5 text-ui-12 text-ink outline-none focus:border-ink-faint";
 
 /** 已配置包中疑似提供 subagent 能力的（npm: 前缀剥掉后按启发式判定，spec D5）。 */
 function subagentPackageNames(packages: { source: string }[] | null): string[] {
@@ -39,7 +39,7 @@ export function SubagentPanel() {
 	}, [configuredPackages, refreshConfiguredPackages]);
 
 	if (loading && prefs === null) {
-		return <p className="py-8 text-center text-[13px] text-ink-faint">{t("settings.loading")}</p>;
+		return <p className="py-8 text-center text-ui-13 text-ink-faint">{t("settings.loading")}</p>;
 	}
 
 	const preferBuiltin = prefs?.subagentPreferBuiltin !== false;
@@ -50,26 +50,26 @@ export function SubagentPanel() {
 		<div>
 			<div className="mb-4">
 				<div className="flex items-center justify-between gap-4">
-					<h3 className="text-[13px] font-medium text-ink">{t("settings.models.subagentExecutorTitle")}</h3>
+					<h3 className="text-ui-13 font-medium text-ink">{t("settings.models.subagentExecutorTitle")}</h3>
 					<Switch
 						checked={preferBuiltin}
 						disabled={prefs === null}
 						onCheckedChange={(enabled) => void setSubagentPreferBuiltin(enabled)}
 					/>
 				</div>
-				<p className="mt-0.5 text-[11px] leading-relaxed text-ink-faint">
+				<p className="mt-0.5 text-ui-11 leading-relaxed text-ink-faint">
 					{t("settings.models.subagentExecutorHint")}
 				</p>
 				{preferBuiltin && conflicts.length > 0 && (
-					<p className="mt-0.5 text-[11px] leading-relaxed text-ink-faint">
+					<p className="mt-0.5 text-ui-11 leading-relaxed text-ink-faint">
 						{t("settings.models.subagentExecutorConflictHint", { names: conflicts.join(", ") })}
 					</p>
 				)}
 			</div>
 
-			<p className="mb-3 text-[11px] text-ink-faint">{t("settings.models.subagentHint")}</p>
+			<p className="mb-3 text-ui-11 text-ink-faint">{t("settings.models.subagentHint")}</p>
 			{subagents.length === 0 ? (
-				<p className="py-4 text-center text-[13px] text-ink-faint">{t("settings.models.subagentsEmpty")}</p>
+				<p className="py-4 text-center text-ui-13 text-ink-faint">{t("settings.models.subagentsEmpty")}</p>
 			) : (
 				<ul className="divide-y divide-border">
 					{subagents.map((agent) => {
@@ -79,8 +79,8 @@ export function SubagentPanel() {
 						return (
 							<li key={agent.name} className="py-3">
 								<div className="mb-1.5">
-									<p className="text-[13px] font-medium text-ink">{agent.name}</p>
-									{agent.description && <p className="text-[11px] text-ink-faint">{agent.description}</p>}
+									<p className="text-ui-13 font-medium text-ink">{agent.name}</p>
+									{agent.description && <p className="text-ui-11 text-ink-faint">{agent.description}</p>}
 								</div>
 								<div className="grid grid-cols-[minmax(0,1fr)_auto] gap-2">
 									<select
@@ -116,7 +116,7 @@ export function SubagentPanel() {
 									</select>
 								</div>
 								{agent.thinkingWarning && (
-									<p className="mt-1 text-[11px] text-ink-faint">
+									<p className="mt-1 text-ui-11 text-ink-faint">
 										{t("settings.models.subagentThinkingInvalid", { value: agent.thinkingWarning })}
 									</p>
 								)}

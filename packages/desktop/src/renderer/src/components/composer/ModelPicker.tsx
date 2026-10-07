@@ -122,7 +122,7 @@ export function ModelPicker() {
 		<div ref={ref} className="relative">
 			<button
 				type="button"
-				className="flex max-w-[208px] items-center gap-1 rounded-full px-2.5 py-1 text-xs text-ink-dim transition-colors hover:bg-hover hover:text-ink"
+				className="flex max-w-[208px] items-center gap-1 rounded-full px-2.5 py-1 text-ui-12 leading-[calc(1_/_0.75)] text-ink-dim transition-colors hover:bg-hover hover:text-ink"
 				onClick={() => setOpen((v) => !v)}
 			>
 				{/* 模型名先截断，档位后缀永不截断（否则长模型名下看不到当前档位） */}
@@ -150,7 +150,7 @@ export function ModelPicker() {
 							onChange={(e) => setQuery(e.target.value)}
 							onKeyDown={onSearchKeyDown}
 							placeholder={t("composer.modelSearchPlaceholder")}
-							className="w-full bg-transparent text-xs text-ink placeholder:text-ink-faint focus:outline-none"
+							className="w-full bg-transparent text-ui-12 leading-[calc(1_/_0.75)] text-ink placeholder:text-ink-faint focus:outline-none"
 						/>
 						{query !== "" && (
 							<Tooltip label={t("composer.modelSearchClear")}>
@@ -170,7 +170,7 @@ export function ModelPicker() {
 					{/* 分隔不用实线：1px 两端淡出的渐变（搜索行下 / 列表下各一条） */}
 					<div className="fade-rule mb-1" />
 					{flat.length === 0 && (
-						<div className="px-2 py-3 text-center text-xs text-ink-faint">
+						<div className="px-2 py-3 text-center text-ui-12 leading-[calc(1_/_0.75)] text-ink-faint">
 							{query === "" ? t("settings.providers.empty") : t("composer.modelSearchEmpty")}
 						</div>
 					)}
@@ -183,7 +183,7 @@ export function ModelPicker() {
 					>
 						{filtered.map((group) => (
 							<div key={group.name}>
-								<div className="px-2 pt-2 pb-1 text-[10px] font-medium tracking-wide text-ink-faint uppercase">
+								<div className="px-2 pt-2 pb-1 text-ui-10 font-medium tracking-wide text-ink-faint uppercase">
 									{group.name}
 								</div>
 								{group.items.map((m) => {
@@ -195,7 +195,7 @@ export function ModelPicker() {
 											key={key}
 											type="button"
 											data-model-key={key}
-											className={`flex w-full items-center justify-between gap-2 rounded-lg px-2 py-1.5 text-left text-xs transition-colors ${
+											className={`flex w-full items-center justify-between gap-2 rounded-lg px-2 py-1.5 text-left text-ui-12 leading-[calc(1_/_0.75)] transition-colors ${
 												selected ? "text-ink" : "text-ink-2 hover:text-ink"
 											} ${active ? "bg-hover" : "hover:bg-hover"}`}
 											onMouseEnter={() => setActiveKey(key)}

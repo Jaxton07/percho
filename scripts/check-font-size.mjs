@@ -11,6 +11,8 @@
  * **用法**（需要 dev 的脚本：`cd packages/desktop && npx electron-vite dev -- --remote-debugging-port=9224`，
  * 注意 `npm run dev -- --xxx` 会被 npm 吞掉参数）：
  *   node scripts/check-font-size.mjs inventory [outFile]   # 扫描硬编码字号清单（不需要 dev）
+ *   node scripts/check-font-size.mjs inventory --expect-zero  # 迁移后口径：断言源码零残留
+ *   node scripts/check-font-size.mjs reconcile [oraclePath]  # 拿阶段 0 清单逐处对账「换成了对的那个 token」
  *   node scripts/check-font-size.mjs seed-state            # 写固定 ui-state.json（**必须先停 dev**，首次会备份原文件）
  *   node scripts/check-font-size.mjs restore-state         # 还原 pre-work 偏好（**必须先停 dev**）
  *   node scripts/check-font-size.mjs seed-fixtures         # 写样本会话（**必须先停 dev**）
@@ -126,7 +128,7 @@ function scanInventory() {
 	};
 }
 
-function runInventory(outFile) {
+function runInventory(outFile, { expectZero = false } = {}) {
 	const inv = scanInventory();
 	const out = outFile ?? join(TMP_DIR, "inventory.json");
 	mkdirSync(resolve(out, ".."), { recursive: true });
@@ -137,7 +139,30 @@ function runInventory(outFile) {
 	console.log(`globals.css font-size：${inv.globalsFontSize.total} 处`);
 	console.log(`→ ${relative(REPO, out)}`);
 
-	// 断言与 spec §7 事实表一致：不一致说明代码变了，比对基准与迁移清单都要重新核对
+	// 迁移后口径：源码里不能再有硬编码字号（硬编码的 px 字号一律应已换成 typography.css 的 token）
+	if (expectZero) {
+		const leftovers = [
+			...inv.px.sites.map((s) => `${s.file}:${s.line} text-[${s.value}px]`),
+			...inv.rem.sites.map((s) => `${s.file}:${s.line} text-${s.value}`),
+		];
+		const globalsNotMigrated = inv.globalsFontSize.sites.filter(
+			(s) => !/font-size:\s*(calc\([\d.]+px \* var\(--fs-(ui|code)-scale, 1\)\)|0);/.test(s.value),
+		);
+		if (leftovers.length > 0 || globalsNotMigrated.length > 0) {
+			for (const item of leftovers.slice(0, 20)) console.error(`✗ 残留：${item}`);
+			for (const item of globalsNotMigrated.slice(0, 20))
+				console.error(`✗ 未迁移：globals.css:${item.line} ${item.value}`);
+			fail(
+				`源码仍有硬编码字号：组件 ${leftovers.length} 处 / globals.css ${globalsNotMigrated.length} 处（期望 0）`,
+			);
+		}
+		console.log(
+			`✓ 源码零残留：组件 text-[Npx] 0 处 · rem 基类 0 处 · globals.css ${inv.globalsFontSize.sites.length} 处均为 calc(var) 或 0`,
+		);
+		return;
+	}
+
+	// 迁移前口径：断言与 spec §7 事实表一致（不一致说明代码变了，比对基准与迁移清单都要重新核对）
 	const expectedPx = {
 		11: 102,
 		13: 85,
@@ -167,6 +192,103 @@ function runInventory(outFile) {
 		fail("inventory 与 spec §7 事实表不一致：先确认代码是否被改过，再更新事实表与迁移清单");
 	}
 	console.log("✓ inventory 与 spec §7 事实表逐项一致");
+}
+
+/* ==========================================================================
+ * 1b. reconcile：拿阶段 0 的 inventory.json 当 oracle 做**逐处**源码对账
+ * ========================================================================== */
+
+/**
+ * 「零残留」只能证明**没有剩下**硬编码，不能证明**每一处都换成了对的那个 token**（
+ * 比如把 `text-[13px]` 误换成 `text-ui-12` 也是零残留）。所以再拿阶段 0 的清单当 oracle 做三层对账：
+ *
+ * 1. **逐位置**：原行号 ±3 行窗口内必现对应 token（不能按行号精确匹配：迁移后行变长，biome 会把
+ *    JSX 属性换行；rem 基类那一批还允许「字体 token + 原有 leading-*」这一种例外）
+ * 2. **逐值总数**：token 出现次数 == oracle 里该 px 值的处数 + 由 rem 基类换算来的处数（每处各消耗一个、没多没少）
+ * 3. **globals.css 逐块**：按选择器块核（插了 `@import` 行后行号整体下移，所以不用行号）
+ */
+function runReconcile(oraclePath) {
+	const oracleFile = oraclePath ?? join(TMP_DIR, "evidence/inventory.json");
+	if (!existsSync(oracleFile)) fail(`找不到 oracle：${oracleFile}（先跑 inventory，或传入路径）`, 2);
+	const oracle = JSON.parse(readFileSync(oracleFile, "utf8"));
+	const pxToken = (px) => `text-ui-${px.replace(".", "")}`;
+	const REM_TOKEN = {
+		xs: "text-ui-12 leading-[calc(1_/_0.75)]",
+		sm: "text-ui-14 leading-[calc(1.25_/_0.875)]",
+		lg: "text-ui-18 leading-[calc(1.75_/_1.125)]",
+	};
+	const problems = [];
+	const fileCache = new Map();
+	const linesOf = (file) => {
+		if (!fileCache.has(file)) fileCache.set(file, readFileSync(join(REPO, file), "utf8").split("\n"));
+		return fileCache.get(file);
+	};
+	const around = (file, line, radius = 3) =>
+		linesOf(file)
+			.slice(Math.max(0, line - 1 - radius), line + radius)
+			.join("\n");
+
+	for (const site of oracle.px.sites) {
+		const token = pxToken(site.value);
+		if (!around(site.file, site.line).includes(token))
+			problems.push(`${site.file}:${site.line}（±3 行）找不到 ${token}`);
+	}
+	for (const site of oracle.rem.sites) {
+		const token = REM_TOKEN[site.value];
+		const fontToken = token.split(" ")[0];
+		const around_ = around(site.file, site.line);
+		// 例外：原处本来就另有 `leading-*`（如 `text-xs leading-relaxed`）时，rem 基类那份行高本来就被盖住，
+		// 迁移就不该再插一行 leading（否则同一元素上两个 leading-* 打架）—— 只要字体 token 在、且行高由
+		// 我们插的 calc 或原有 leading-* 提供就算过。
+		const leadingOk =
+			around_.includes(token) ||
+			(around_.includes(fontToken) && /leading-(relaxed|normal|snug|tight|loose|none|\[)/.test(around_));
+		if (!leadingOk) problems.push(`${site.file}:${site.line}（±3 行）找不到 ${token}`);
+	}
+
+	// 逐值总数：token 出现次数 == oracle 里该值的 px 处数 + 由 rem 基类换来的处数
+	const joined = walkTsx(RENDERER_SRC)
+		.map((file) => readFileSync(file, "utf8"))
+		.join("\n");
+	const REM_TOKEN_OF_VALUE = { xs: "12", sm: "14", lg: "18" };
+	const expectedByValue = new Map(oracle.px.values);
+	for (const site of oracle.rem.sites) {
+		const value = REM_TOKEN_OF_VALUE[site.value];
+		expectedByValue.set(value, (expectedByValue.get(value) ?? 0) + 1);
+	}
+	for (const [value, count] of expectedByValue) {
+		const token = pxToken(value);
+		const actual = [...joined.matchAll(new RegExp(`${token}\\b`, "g"))].length;
+		if (actual !== count)
+			problems.push(`token ${token} 实占 ${actual} 处，期望 ${count} 处（oracle 该 px 处数 + rem 基类换算）`);
+	}
+
+	// globals.css：按选择器块核
+	const css = readFileSync(join(RENDERER_SRC, "styles/globals.css"), "utf8").split("\n");
+	const blockOf = (selector) => {
+		const startIndex = css.findIndex((l) => l.trim() === `${selector} {`);
+		if (startIndex < 0) return null;
+		const end = css.findIndex((l, i) => i > startIndex && l.trim() === "}");
+		return css.slice(startIndex, end).join("\n");
+	};
+	for (const site of oracle.globalsFontSize.sites) {
+		if (site.value.includes("font-size: 0")) continue; // 白名单（藏文本保可访问性）
+		const block = blockOf(site.selector);
+		if (!block) {
+			problems.push(`globals.css 找不到选择器块：${site.selector}`);
+			continue;
+		}
+		if (!/font-size: calc\([\d.]+px \* var\(--fs-(ui|code)-scale, 1\)\);/.test(block))
+			problems.push(`globals.css ${site.selector} 未迁成 calc(var)：${site.value}`);
+	}
+	if (problems.length > 0) {
+		for (const p of problems.slice(0, 25)) console.error(`✗ ${p}`);
+		fail(`${problems.length} 处与阶段 0 清单不符（oracle=${relative(REPO, oracleFile)}）`);
+	}
+	console.log(
+		`✓ 源码对账通过：${oracle.px.sites.length} 处 px 字号 + ${oracle.rem.sites.length} 处 rem 基类逐位置命中，` +
+			`${oracle.px.values.length} 个值的 token 总数逐一相等，globals.css ${oracle.globalsFontSize.sites.length} 处逐块命中 calc(var)`,
+	);
 }
 
 /* ==========================================================================
@@ -767,8 +889,12 @@ const SCENES = [
  * 不设任何容差；像素比对降为第二判据（拓「非字号类」的连带变化，如误改 padding/层序）。
  *
  * 收什么（`entries`）：**含直接文本子节点的元素**（文本最终都落在这些节点的字号/行高/盒子上），每条记
- * path + 文本前缀 + rect + fontSize + lineHeight；另加一条合成项 `@scroller:chat`（滚动容器的
- * rect 与 scrollHeight/clientHeight，用来拓「整体排版变高/变矮」这类只有祖先看得出的变化）。
+ * path（`tag:nth-child(i)` 链，**不含 class**）+ 文本前缀 + cls + rect + fontSize + lineHeight；
+ * 另加一条合成项 `@scroller:chat`（滚动容器的 rect 与 scrollHeight/clientHeight，用来拓「整体排版变高/变矮」这类只有祖先看得出的变化）。
+ *
+ * 为什么不把 class 放进 path：本任务的迁移**就是改 class**（`text-[13px]` → `text-ui-13`），带 class 的
+ * path 会让同一颗树的每个节点都“改名” → 主判据被 400+ 条假差异淹没。class 仍存在 `cls` 字段里（打印
+ * 差异时给人看），但**不参与比对**；比对只认「结构位置 + rect/字号/行高/文本」，这正是要钉的东西。
  *
  * 排除什么（都写在这里，便于复核）：
  * - `.toast` / `.toast-overflow`：扩展通知是时间相关浮层
@@ -783,10 +909,10 @@ const SCENES = [
 const COLLECT_GEOMETRY = `(() => {
 	const SKIP = ".toast, .toast-overflow, .turn-diff-timer, .turn-diff-timer-num";
 	const round = (v) => Math.round(v * 100) / 100;
-	const tag = (el) => {
-		const cls = (el.getAttribute("class") || "").trim().split(/\\s+/).slice(0, 2).filter(Boolean).join(".");
-		return el.tagName.toLowerCase() + (el.id ? "#" + el.id : "") + (cls ? "." + cls : "");
-	};
+	/** path 段只用 tag（+id）：**不带 class** —— 本任务的迁移就是改 class（text-[13px] → text-ui-13），
+	 *  带 class 的话每次改名都会让 path 变化、整棵树被报成「消失+新增」。class 另存 cls 字段供人看。 */
+	const tag = (el) => el.tagName.toLowerCase() + (el.id ? "#" + el.id : "");
+	const clsOf = (el) => (el.getAttribute("class") || "").trim().split(/\\s+/).slice(0, 2).filter(Boolean).join(".");
 	const ownText = (el) =>
 		[...el.childNodes]
 			.filter((n) => n.nodeType === 3)
@@ -805,6 +931,7 @@ const COLLECT_GEOMETRY = `(() => {
 			const cs = getComputedStyle(el);
 			out.push({
 				path,
+				cls: clsOf(el),
 				text,
 				rect: { x: round(rect.x), y: round(rect.y), w: round(rect.width), h: round(rect.height) },
 				fontSize: cs.fontSize,
@@ -824,7 +951,7 @@ const COLLECT_GEOMETRY = `(() => {
 			const text = ownText(el);
 			if (isRoot || text) {
 				const cs = getComputedStyle(el);
-				excluded.push({ path, text, fontSize: cs.fontSize, lineHeight: cs.lineHeight });
+				excluded.push({ path, cls: clsOf(el), text, fontSize: cs.fontSize, lineHeight: cs.lineHeight });
 			}
 			[...el.children].forEach((c, i) => walkExcluded(c, path + ">" + tag(c) + ":nth-child(" + (i + 1) + ")", false));
 		};
@@ -836,6 +963,7 @@ const COLLECT_GEOMETRY = `(() => {
 		const rect = scroller.getBoundingClientRect();
 		out.push({
 			path: "@scroller:chat",
+			cls: clsOf(scroller),
 			text: "",
 			rect: { x: round(rect.x), y: round(rect.y), w: round(rect.width), h: round(rect.height) },
 			fontSize: getComputedStyle(scroller).fontSize,
@@ -904,40 +1032,45 @@ async function runSceneWalk(outDir, { capture = true } = {}) {
 	await cdp.evaluate(RESET_TOASTS); // 上次走查可能留下了固定 toast（防重跑时场景 1 卡在等 toast 退场）
 
 	const scenes = [];
-	for (const scene of SCENES) {
-		console.log(`▸ ${scene.id}：${scene.desc}`);
-		const extra = (await scene.setup(cdp)) ?? {};
-		if (!scene.keepsToast) await waitForNoToasts(cdp);
-		await cdp.evaluate(FRAME_FIX); // 场景切换可能带来新挂载的动画/过渡，重新冻结一次
-		await cdp.evaluate(BLUR);
-		const parked = await parkMouse(cdp, viewport);
-		if (!parked.clean)
-			console.log(`  ⚠ 没有完全干净的鼠标停点，停于 ${parked.hover}（两次跑一致，不影响可比性）`);
-		await cdp.evaluate(SETTLE);
-		const raw = await settleGeometry(cdp);
-		const geometry = JSON.parse(raw);
-		const record = { id: scene.id, desc: scene.desc, park: parked, ...extra, geometry };
-		const excludedNote =
-			geometry.excluded.length > 0 ? `｜排除项（只比字号行高）${geometry.excluded.length} 条` : "";
-		if (capture) {
-			const file = join(outDir, `${scene.id}.png`);
-			const shot = await captureStable(cdp, file, viewport);
-			record.file = file;
-			record.bytes = shot.bytes;
-			record.frames = shot.frames;
-			record.sha256 = shot.sha256;
-			console.log(
-				`  已存 ${scene.id}.png（${Math.round(shot.bytes / 1024)}KB, ${shot.frames} 帧内稳定）｜几何 ${geometry.count} 条${excludedNote}`,
-			);
-		} else {
-			console.log(`  几何 ${geometry.count} 条${excludedNote}（未截图）`);
+	// 场景循环整体放进 try/finally：中途抛错（等待超时等）也要把固定 toast 拆掉、还原 setTimeout，
+	// 否则那条 toast 会常驻 dev 页面，下一次走查的场景 1 会卡在「等 toast 退场」上。
+	try {
+		for (const scene of SCENES) {
+			console.log(`▸ ${scene.id}：${scene.desc}`);
+			const extra = (await scene.setup(cdp)) ?? {};
+			if (!scene.keepsToast) await waitForNoToasts(cdp);
+			await cdp.evaluate(FRAME_FIX); // 场景切换可能带来新挂载的动画/过渡，重新冻结一次
+			await cdp.evaluate(BLUR);
+			const parked = await parkMouse(cdp, viewport);
+			if (!parked.clean)
+				console.log(`  ⚠ 没有完全干净的鼠标停点，停于 ${parked.hover}（两次跑一致，不影响可比性）`);
+			await cdp.evaluate(SETTLE);
+			const raw = await settleGeometry(cdp);
+			const geometry = JSON.parse(raw);
+			const record = { id: scene.id, desc: scene.desc, park: parked, ...extra, geometry };
+			const excludedNote =
+				geometry.excluded.length > 0 ? `｜排除项（只比字号行高）${geometry.excluded.length} 条` : "";
+			if (capture) {
+				const file = join(outDir, `${scene.id}.png`);
+				const shot = await captureStable(cdp, file, viewport);
+				record.file = file;
+				record.bytes = shot.bytes;
+				record.frames = shot.frames;
+				record.sha256 = shot.sha256;
+				console.log(
+					`  已存 ${scene.id}.png（${Math.round(shot.bytes / 1024)}KB, ${shot.frames} 帧内稳定）｜几何 ${geometry.count} 条${excludedNote}`,
+				);
+			} else {
+				console.log(`  几何 ${geometry.count} 条${excludedNote}（未截图）`);
+			}
+			scenes.push(record);
 		}
-		scenes.push(record);
+	} finally {
+		// 收尾一律尽力而为：失败也不该盖住原始错误
+		await cdp.evaluate(RESET_TOASTS).catch(() => {});
+		await cdp.evaluate(`window.PerchoUI.stores.useSettingsStore.getState().setOpen(false)`).catch(() => {});
+		cdp.ws.close();
 	}
-
-	await cdp.evaluate(RESET_TOASTS); // 拆掉场景 06 的固定 toast，并还原 setTimeout
-	await cdp.evaluate(`window.PerchoUI.stores.useSettingsStore.getState().setOpen(false)`);
-	cdp.ws.close();
 
 	const geometryDoc = {
 		kind: "font-size-geometry",
@@ -957,7 +1090,7 @@ async function runSceneWalk(outDir, { capture = true } = {}) {
 
 async function runBaseline(outDir) {
 	const { viewport, scenes, geometryDoc } = await runSceneWalk(outDir, { capture: true });
-	const geometrySha = sha256(JSON.stringify(geometryDoc.scenes));
+	const geometrySha = geometryFingerprint(geometryDoc.scenes);
 
 	const manifest = {
 		kind: "font-size-baseline",
@@ -1132,7 +1265,7 @@ function readGeometryDir(dir) {
 	if (!existsSync(file)) return null;
 	const doc = JSON.parse(readFileSync(file, "utf8"));
 	if (doc.kind !== "font-size-geometry") fail(`geometry.json 类型不对：${file}`);
-	doc.sha256 = sha256(JSON.stringify(doc.scenes));
+	doc.sha256 = geometryFingerprint(doc.scenes);
 	return doc;
 }
 
@@ -1140,12 +1273,55 @@ const fmtEntry = (entry) =>
 	(entry.rect ? `rect(${entry.rect.x},${entry.rect.y},${entry.rect.w}×${entry.rect.h}) ` : "") +
 	`${entry.fontSize}/${entry.lineHeight}` +
 	(entry.scroll ? ` scroll(${entry.scroll.top}/${entry.scroll.height}/${entry.scroll.client})` : "") +
+	(entry.cls ? ` [${entry.cls}]` : "") +
 	(entry.text ? ` “${entry.text}”` : "");
 
 /**
+ * 比对用的 path 归一化：**去掉 class**，只留 `tag#id:nth-child(i)` 链。
+ * 两个原因：（1）迁移本身改 class，不能让改名算差异；（2）阶段 0 早期版本的 geometry.json
+ * （path 里带 class）也要能直接对比，不靠重拍基线。
+ */
+const normalizePath = (path) =>
+	path
+		.split(">")
+		.map((segment) => {
+			const prefix = /^@excluded:\d+:/.exec(segment)?.[0] ?? (segment.startsWith("@") ? segment : "");
+			if (prefix === segment) return segment; // @scroller:chat 这类合成项原样保留
+			const body = segment.slice(prefix.length);
+			const nth = /:nth-child\(\d+\)$/.exec(body)?.[0] ?? "";
+			const head = nth ? body.slice(0, -nth.length) : body;
+			const tag = /^[a-z0-9-]+/i.exec(head)?.[0] ?? head;
+			const id = /^#[^.]*/.exec(head.slice(tag.length))?.[0] ?? "";
+			return prefix + tag + id + nth;
+		})
+		.join(">");
+
+/** 参与判等/立指纹的字段（**不含 cls**：class 是迁移的产物，不是渲染结果） */
+const projectEntry = (entry) => {
+	const out = {};
+	if (entry.rect) out.rect = entry.rect;
+	out.fontSize = entry.fontSize;
+	out.lineHeight = entry.lineHeight;
+	if (entry.scroll) out.scroll = entry.scroll;
+	out.text = entry.text;
+	return out;
+};
+
+/** 几何指纹：`[归一化 path, 判据字段]` 的有序数组（顺序 = DOM 序，位置变化也算差异） */
+const geometryFingerprint = (scenes) =>
+	sha256(
+		JSON.stringify(
+			scenes.map((s) => ({
+				id: s.id,
+				entries: s.entries.map((e) => [normalizePath(e.path), projectEntry(e)]),
+				excluded: (s.excluded ?? []).map((e) => [normalizePath(e.path), projectEntry(e)]),
+			})),
+		),
+	);
+
+/**
  * 主判据：两份几何清单**逐字段相等**（值已 round 到 0.01px，不设任何容差）。
- * 按 path 对齐（nth-child 链天然唯一），分开报「新增 / 消失 / 变化」——比按序号比好读。
- *
+ * 按**归一化 path** 对齐（nth-child 链天然唯一），分开报「新增 / 消失 / 变化」——比按序号比好读。
  * 一并比 `excluded`（被排除子树的字号/行高，无 rect）。
  */
 function compareGeometry(beforeGeom, afterGeom, beforeDir, afterDir) {
@@ -1153,7 +1329,7 @@ function compareGeometry(beforeGeom, afterGeom, beforeDir, afterDir) {
 		const total = beforeGeom.scenes.reduce((n, s) => n + s.count, 0);
 		const excluded = beforeGeom.scenes.reduce((n, s) => n + (s.excluded?.length ?? 0), 0);
 		console.log(
-			`✓ 几何清单逐字段相等（sha256 ${beforeGeom.sha256.slice(0, 16)}：${total} 条元素 + ${excluded} 条排除项字号）`,
+			`✓ 几何清单逐字段相等（指纹 ${beforeGeom.sha256.slice(0, 16)}：${total} 条元素 + ${excluded} 条排除项字号）`,
 		);
 		return 0;
 	}
@@ -1168,9 +1344,10 @@ function compareGeometry(beforeGeom, afterGeom, beforeDir, afterDir) {
 			["元素", bScene.entries, aScene.entries],
 			["排除项字号", bScene.excluded ?? [], aScene.excluded ?? []],
 		]) {
-			const aMap = new Map(aList.map((e) => [e.path, e]));
+			const key = (entry) => normalizePath(entry.path);
+			const aMap = new Map(aList.map((e) => [key(e), e]));
 			for (const bEntry of bList) {
-				const aEntry = aMap.get(bEntry.path);
+				const aEntry = aMap.get(key(bEntry));
 				if (!aEntry) {
 					problems.push({
 						scene: bScene.id,
@@ -1181,8 +1358,8 @@ function compareGeometry(beforeGeom, afterGeom, beforeDir, afterDir) {
 					});
 					continue;
 				}
-				aMap.delete(bEntry.path);
-				if (JSON.stringify(aEntry) !== JSON.stringify(bEntry)) {
+				aMap.delete(key(bEntry));
+				if (JSON.stringify(projectEntry(aEntry)) !== JSON.stringify(projectEntry(bEntry))) {
 					problems.push({
 						scene: bScene.id,
 						kind: `${label}变化`,
@@ -1305,7 +1482,10 @@ const flags = new Set(process.argv.slice(2).filter((a) => a.startsWith("--")));
 try {
 	switch (mode) {
 		case "inventory":
-			runInventory(arg);
+			runInventory(arg, { expectZero: flags.has("--expect-zero") });
+			break;
+		case "reconcile":
+			runReconcile(arg);
 			break;
 		case "seed-fixtures":
 			seedFixtures();
@@ -1337,7 +1517,7 @@ try {
 			break;
 		default:
 			fail(
-				"用法：inventory [outFile] | seed-state | restore-state | seed-fixtures | clean-fixtures | baseline <outDir> | geometry <outDir> | compare <beforeDir> <afterDir> [--pixel-only] | diff <a.png> <b.png>（见文件头）",
+				"用法：inventory [outFile] [--expect-zero] | reconcile [oraclePath] | seed-state | restore-state | seed-fixtures | clean-fixtures | baseline <outDir> | geometry <outDir> | compare <beforeDir> <afterDir> [--pixel-only] | diff <a.png> <b.png>（见文件头）",
 				2,
 			);
 	}

@@ -26,11 +26,11 @@ export function TrustDialog({
 	return (
 		<div className="fixed inset-0 z-50 flex items-center justify-center bg-ink/20" role="dialog" aria-modal>
 			<div className="w-[440px] rounded-xl bg-surface p-4 shadow-dialog">
-				<h3 className="text-sm font-semibold text-ink">{t("trust.title")}</h3>
-				<p className="mt-1.5 rounded-lg bg-hover px-2.5 py-1.5 font-mono text-[12px] break-all text-ink-2 select-text">
+				<h3 className="text-ui-14 leading-[calc(1.25_/_0.875)] font-semibold text-ink">{t("trust.title")}</h3>
+				<p className="mt-1.5 rounded-lg bg-hover px-2.5 py-1.5 font-mono text-ui-12 break-all text-ink-2 select-text">
 					{request.cwd}
 				</p>
-				<p className="mt-2 text-[12px] leading-relaxed text-ink-2">{t("trust.message")}</p>
+				<p className="mt-2 text-ui-12 leading-relaxed text-ink-2">{t("trust.message")}</p>
 				<div className="mt-4 flex flex-col items-stretch gap-1.5">
 					{request.options.map((option, index) => (
 						<Button
@@ -45,7 +45,7 @@ export function TrustDialog({
 					))}
 				</div>
 				{requests.length > 1 && (
-					<p className="mt-2 text-[11px] text-ink-faint">
+					<p className="mt-2 text-ui-11 text-ink-faint">
 						{t("trust.queued", { count: requests.length - 1 })}
 					</p>
 				)}

@@ -35,7 +35,7 @@ export function AtMenu({
 
 	if (files.length === 0) {
 		return (
-			<div className="mb-1.5 rounded-lg border border-border bg-surface py-2 text-center text-xs text-ink-faint shadow-pop">
+			<div className="mb-1.5 rounded-lg border border-border bg-surface py-2 text-center text-ui-12 leading-[calc(1_/_0.75)] text-ink-faint shadow-pop">
 				{t("at.noMatch")}
 			</div>
 		);
@@ -56,7 +56,7 @@ export function AtMenu({
 						key={path}
 						type="button"
 						data-index={index}
-						className={`flex w-full items-center gap-2 px-3 py-1.5 text-left text-[13px] transition-colors ${
+						className={`flex w-full items-center gap-2 px-3 py-1.5 text-left text-ui-13 transition-colors ${
 							index === active ? "bg-hover text-ink" : "text-ink-2 hover:bg-hover"
 						}`}
 						onMouseEnter={() => onSelectedIndexChange(index)}

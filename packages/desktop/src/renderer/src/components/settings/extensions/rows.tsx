@@ -41,7 +41,7 @@ function UninstallButton({ source, scope }: { source: string; scope: "user" | "p
 		return (
 			<button
 				type="button"
-				className="rounded-lg px-2 py-1 text-[12px] font-medium text-red-500 transition-colors hover:text-red-600 disabled:opacity-40"
+				className="rounded-lg px-2 py-1 text-ui-12 font-medium text-red-500 transition-colors hover:text-red-600 disabled:opacity-40"
 				disabled={removing}
 				onClick={() => void removeConfiguredPackage(source, scope)}
 				onMouseLeave={() => setConfirming(false)}
@@ -82,7 +82,7 @@ function ScopeBadge({ scope }: { scope: ResourceScope }) {
 				: "settings.extensions.scopeUser";
 	return (
 		<span
-			className={`shrink-0 rounded px-1.5 py-0.5 text-[10px] font-medium ${
+			className={`shrink-0 rounded px-1.5 py-0.5 text-ui-10 font-medium ${
 				scope === "project" ? "bg-accent/10 text-accent" : "bg-hover text-ink-2"
 			}`}
 		>
@@ -92,7 +92,7 @@ function ScopeBadge({ scope }: { scope: ResourceScope }) {
 }
 
 function Stat({ label }: { label: string }) {
-	return <span className="text-[10px] text-ink-faint">{label}</span>;
+	return <span className="text-ui-10 text-ink-faint">{label}</span>;
 }
 
 export function ExtensionRow({
@@ -106,14 +106,14 @@ export function ExtensionRow({
 	return (
 		<li className="py-2.5">
 			<div className="flex items-center gap-2">
-				<span className="min-w-0 flex-1 truncate text-[13px] font-medium text-ink">{extension.name}</span>
+				<span className="min-w-0 flex-1 truncate text-ui-13 font-medium text-ink">{extension.name}</span>
 				{extension.hidden && (
-					<span className="shrink-0 rounded px-1.5 py-0.5 text-[10px] text-ink-faint">
+					<span className="shrink-0 rounded px-1.5 py-0.5 text-ui-10 text-ink-faint">
 						{t("settings.extensions.hidden")}
 					</span>
 				)}
 				{extension.tools.some(isSubagentToolName) && (
-					<span className="shrink-0 rounded bg-accent/10 px-1.5 py-0.5 text-[10px] text-accent">
+					<span className="shrink-0 rounded bg-accent/10 px-1.5 py-0.5 text-ui-10 text-accent">
 						{t("settings.extensions.subagentBuiltin")}
 					</span>
 				)}
@@ -134,7 +134,7 @@ export function ExtensionRow({
 					<Stat label={t("settings.extensions.shortcuts", { count: extension.shortcutsCount })} />
 				)}
 			</div>
-			<p className="mt-1 truncate font-mono text-[10px] text-ink-faint">{extension.path}</p>
+			<p className="mt-1 truncate font-mono text-ui-10 text-ink-faint">{extension.path}</p>
 		</li>
 	);
 }
@@ -143,7 +143,7 @@ export function ExtensionRow({
 function TypeBadge({ type }: { type: string }) {
 	return (
 		<span
-			className={`shrink-0 rounded px-1.5 py-0.5 text-[10px] font-medium ${
+			className={`shrink-0 rounded px-1.5 py-0.5 text-ui-10 font-medium ${
 				type === "extension" ? "bg-accent/10 text-accent" : "bg-hover text-ink-2"
 			}`}
 		>
@@ -182,21 +182,21 @@ export function CatalogRow({
 		<li className="flex items-start gap-3 py-2.5">
 			<div className="min-w-0 flex-1">
 				<div className="flex items-center gap-1.5">
-					<span className="min-w-0 truncate text-[13px] font-medium text-ink">{pkg.name}</span>
+					<span className="min-w-0 truncate text-ui-13 font-medium text-ink">{pkg.name}</span>
 					{pkg.types.map((type) => (
 						<TypeBadge key={type} type={type} />
 					))}
 				</div>
 				{pkg.description && (
-					<p className="mt-0.5 line-clamp-2 text-[12px] leading-relaxed text-ink-dim">{pkg.description}</p>
+					<p className="mt-0.5 line-clamp-2 text-ui-12 leading-relaxed text-ink-dim">{pkg.description}</p>
 				)}
-				<div className="mt-1 flex items-center gap-2 text-[10px] text-ink-faint">
+				<div className="mt-1 flex items-center gap-2 text-ui-10 text-ink-faint">
 					{pkg.author && <span>{pkg.author}</span>}
 					{pkg.author && <span aria-hidden>·</span>}
 					<span>{t("settings.extensions.downloadsPerMonth", { count: formatDownloads(pkg.downloads) })}</span>
 				</div>
 				{installError && (
-					<p className="mt-1 text-[11px] text-red-500">
+					<p className="mt-1 text-ui-11 text-red-500">
 						{installError.includes(NPM_NOT_FOUND_SENTINEL)
 							? t("settings.extensions.npmNotFound")
 							: installError}
@@ -206,7 +206,7 @@ export function CatalogRow({
 			<div className="shrink-0 pt-0.5">
 				{configured ? (
 					<div className="flex items-center gap-0.5">
-						<span className="inline-flex items-center gap-1 px-1.5 py-1 text-[12px] text-ink-faint">
+						<span className="inline-flex items-center gap-1 px-1.5 py-1 text-ui-12 text-ink-faint">
 							<CheckIcon size={11} />
 							{t("settings.extensions.installed")}
 						</span>
@@ -233,7 +233,7 @@ export function CatalogRow({
 							)}
 						</Button>
 						{warnConfirming && (
-							<p className="max-w-56 text-right text-[11px] leading-snug text-ink-dim">
+							<p className="max-w-56 text-right text-ui-11 leading-snug text-ink-dim">
 								{t("settings.extensions.subagentInstallWarning")}
 							</p>
 						)}

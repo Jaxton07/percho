@@ -25,7 +25,7 @@ export function AttachmentChip({ path, onRemove }: { path: string; onRemove: () 
 	}, []);
 
 	const chip = (
-		<span className="mt-0.5 flex max-w-[150px] select-none items-center gap-1 rounded-md bg-surface px-2 py-0.5 font-mono text-[12px] leading-5 text-blue-700 shadow-pop dark:text-blue-300">
+		<span className="mt-0.5 flex max-w-[150px] select-none items-center gap-1 rounded-md bg-surface px-2 py-0.5 font-mono text-ui-12 leading-5 text-blue-700 shadow-pop dark:text-blue-300">
 			<span aria-hidden="true">@</span>
 			<span ref={pathRef} className="min-w-0 truncate" style={{ direction: "rtl", textAlign: "left" }}>
 				{path}

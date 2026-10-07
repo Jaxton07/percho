@@ -97,7 +97,9 @@ function SettingsDialogBody() {
 			<div className="flex h-[70vh] w-[720px] flex-col overflow-hidden rounded-xl bg-surface shadow-dialog">
 				{/* 顶栏底边不画 1px 实线（与对话页顶栏同一决策）：下面的内容滚动时用边界淡出区分 */}
 				<div className="flex shrink-0 items-center justify-between px-4 py-3">
-					<h2 className="text-sm font-semibold text-ink">{t("settings.title")}</h2>
+					<h2 className="text-ui-14 leading-[calc(1.25_/_0.875)] font-semibold text-ink">
+						{t("settings.title")}
+					</h2>
 					<button
 						type="button"
 						className="rounded-lg px-2 py-1 text-ink-faint transition-colors hover:bg-hover hover:text-ink-2"
@@ -118,7 +120,7 @@ function SettingsDialogBody() {
 							<button
 								key={id}
 								type="button"
-								className={`mb-0.5 w-full rounded-lg px-3 py-2 text-left text-[13px] transition-colors ${
+								className={`mb-0.5 w-full rounded-lg px-3 py-2 text-left text-ui-13 transition-colors ${
 									category === id
 										? "bg-hover font-medium text-ink"
 										: "text-ink-dim hover:bg-hover hover:text-ink"
@@ -135,7 +137,7 @@ function SettingsDialogBody() {
 								<button
 									key={id}
 									type="button"
-									className={`mb-0.5 w-full rounded-lg px-3 py-2 text-left text-[13px] transition-colors ${
+									className={`mb-0.5 w-full rounded-lg px-3 py-2 text-left text-ui-13 transition-colors ${
 										category === id
 											? "bg-hover font-medium text-ink"
 											: "text-ink-dim hover:bg-hover hover:text-ink"
@@ -166,7 +168,7 @@ function SettingsDialogBody() {
 								<activePluginContribution.component />
 							</PluginBoundary>
 						) : (
-							<p className="py-8 text-center text-[13px] text-ink-faint">{t("settings.comingSoon")}</p>
+							<p className="py-8 text-center text-ui-13 text-ink-faint">{t("settings.comingSoon")}</p>
 						)}
 					</div>
 				</div>

@@ -38,7 +38,7 @@ function EnableButton({ plugin }: { plugin: UiPluginInfo }) {
 		return (
 			<button
 				type="button"
-				className="rounded-lg px-2 py-1 text-[12px] font-medium text-err transition-colors hover:bg-hover"
+				className="rounded-lg px-2 py-1 text-ui-12 font-medium text-err transition-colors hover:bg-hover"
 				onClick={() => {
 					clearTimeout(timerRef.current);
 					void setPluginEnabled(plugin.name, true);
@@ -52,7 +52,7 @@ function EnableButton({ plugin }: { plugin: UiPluginInfo }) {
 	return (
 		<button
 			type="button"
-			className="rounded-lg px-2 py-1 text-[12px] font-medium text-ink-2 transition-colors hover:bg-hover"
+			className="rounded-lg px-2 py-1 text-ui-12 font-medium text-ink-2 transition-colors hover:bg-hover"
 			onClick={() => {
 				setConfirming(true);
 				clearTimeout(timerRef.current);
@@ -99,9 +99,9 @@ function PluginRow({ plugin }: { plugin: UiPluginInfo }) {
 		<div className="rounded-xl bg-surface p-3 shadow-soft">
 			<div className="flex items-center gap-2">
 				<span className={`h-2 w-2 shrink-0 rounded-full ${statusDot}`} />
-				<span className="truncate text-[13px] font-medium text-ink">{plugin.displayName ?? plugin.name}</span>
+				<span className="truncate text-ui-13 font-medium text-ink">{plugin.displayName ?? plugin.name}</span>
 				{plugin.builtin && (
-					<span className="shrink-0 rounded-md border border-border px-1 text-[10px] leading-[15px] text-ink-faint">
+					<span className="shrink-0 rounded-md border border-border px-1 text-ui-10 leading-[1.5] text-ink-faint">
 						{t("settings.uiPlugins.builtinBadge")}
 					</span>
 				)}
@@ -109,7 +109,7 @@ function PluginRow({ plugin }: { plugin: UiPluginInfo }) {
 					{plugin.enabled ? (
 						<button
 							type="button"
-							className="rounded-lg px-2 py-1 text-[12px] font-medium text-ink-2 transition-colors hover:bg-hover"
+							className="rounded-lg px-2 py-1 text-ui-12 font-medium text-ink-2 transition-colors hover:bg-hover"
 							onClick={() => void setPluginEnabled(plugin.name, false)}
 						>
 							{t("settings.uiPlugins.disable")}
@@ -147,14 +147,14 @@ function PluginRow({ plugin }: { plugin: UiPluginInfo }) {
 					</Tooltip>
 				</div>
 			</div>
-			<div className="mt-0.5 truncate pl-4 text-[11px] text-ink-faint">
+			<div className="mt-0.5 truncate pl-4 text-ui-11 text-ink-faint">
 				<span className="font-mono">{plugin.name}</span>
 				{plugin.version ? ` · v${plugin.version}` : ""}
 				{slotNames ? ` · ${t("settings.uiPlugins.slotsLabel")} ${slotNames}` : ""}
 				{contributionNames ? ` · ${t("settings.uiPlugins.contributionsLabel")} ${contributionNames}` : ""}
 			</div>
 			{errorText && (
-				<div className="ml-4 mt-2 rounded-lg bg-hover px-2.5 py-1.5 font-mono text-[11px] leading-relaxed break-words whitespace-pre-wrap text-ink-dim select-text">
+				<div className="ml-4 mt-2 rounded-lg bg-hover px-2.5 py-1.5 font-mono text-ui-11 leading-relaxed break-words whitespace-pre-wrap text-ink-dim select-text">
 					<div className="font-sans text-err">{errorLabel}</div>
 					{errorText}
 				</div>
@@ -178,8 +178,8 @@ function AssignmentSection() {
 	if (contested.length === 0) return null;
 	return (
 		<div>
-			<h3 className="text-[13px] font-medium text-ink">{t("settings.uiPlugins.assignmentTitle")}</h3>
-			<p className="mt-0.5 text-[11px] text-ink-faint">{t("settings.uiPlugins.assignmentHint")}</p>
+			<h3 className="text-ui-13 font-medium text-ink">{t("settings.uiPlugins.assignmentTitle")}</h3>
+			<p className="mt-0.5 text-ui-11 text-ink-faint">{t("settings.uiPlugins.assignmentHint")}</p>
 			<div className="mt-2 flex flex-col gap-2">
 				{contested.map((slot) => {
 					const contenders = plugins.filter((p) => p.slots[slot] !== undefined);
@@ -187,10 +187,10 @@ function AssignmentSection() {
 					return (
 						<div key={slot} className="rounded-xl bg-surface px-3 py-2 shadow-soft">
 							<div className="flex items-center justify-between gap-2">
-								<span className="text-[12px] text-ink-2">{t((SLOT_KEYS[slot] ?? slot) as MessageKey)}</span>
+								<span className="text-ui-12 text-ink-2">{t((SLOT_KEYS[slot] ?? slot) as MessageKey)}</span>
 								<Dropdown
 									trigger={
-										<span className="text-[12px] text-ink">
+										<span className="text-ui-12 text-ink">
 											{current ?? t("settings.uiPlugins.assignmentNone")}
 										</span>
 									}
@@ -201,7 +201,7 @@ function AssignmentSection() {
 												<button
 													key={p.name}
 													type="button"
-													className={`block w-full rounded-lg px-2 py-1 text-left text-[12px] transition-colors hover:bg-hover ${
+													className={`block w-full rounded-lg px-2 py-1 text-left text-ui-12 transition-colors hover:bg-hover ${
 														current === p.name ? "text-accent" : "text-ink"
 													}`}
 													onClick={() => {
@@ -214,7 +214,7 @@ function AssignmentSection() {
 											))}
 											<button
 												type="button"
-												className="block w-full rounded-lg px-2 py-1 text-left text-[12px] text-ink-faint transition-colors hover:bg-hover"
+												className="block w-full rounded-lg px-2 py-1 text-left text-ui-12 text-ink-faint transition-colors hover:bg-hover"
 												onClick={() => {
 													void assignSlot(slot, null);
 													close();
@@ -252,15 +252,13 @@ export function UiPluginsSection() {
 	return (
 		<div>
 			<div className="flex items-center justify-between gap-4">
-				<h3 className="text-[13px] font-medium text-ink">{t("settings.uiPlugins.title")}</h3>
+				<h3 className="text-ui-13 font-medium text-ink">{t("settings.uiPlugins.title")}</h3>
 				<Switch checked={config.enabled} onCheckedChange={(enabled) => void setMaster(enabled)} />
 			</div>
-			<p className="mt-0.5 text-[11px] leading-relaxed text-ink-faint">
-				{t("settings.uiPlugins.masterHint")}
-			</p>
+			<p className="mt-0.5 text-ui-11 leading-relaxed text-ink-faint">{t("settings.uiPlugins.masterHint")}</p>
 
 			{!config.enabled ? (
-				<p className="mt-2.5 text-[11px] text-ink-faint">
+				<p className="mt-2.5 text-ui-11 text-ink-faint">
 					{t("settings.uiPlugins.pluginCount", { count: plugins.length })} ·{" "}
 					<button
 						type="button"
@@ -272,11 +270,11 @@ export function UiPluginsSection() {
 				</p>
 			) : plugins.length === 0 ? (
 				<div className="px-4 py-6 text-center">
-					<p className="text-[12px] leading-relaxed text-ink-2">{t("settings.uiPlugins.empty")}</p>
-					<p className="mt-1 text-[11px] text-ink-faint">{t("settings.uiPlugins.agentHint")}</p>
+					<p className="text-ui-12 leading-relaxed text-ink-2">{t("settings.uiPlugins.empty")}</p>
+					<p className="mt-1 text-ui-11 text-ink-faint">{t("settings.uiPlugins.agentHint")}</p>
 					<button
 						type="button"
-						className="mt-3 rounded-lg px-2.5 py-1.5 text-[12px] font-medium text-ink-dim transition-colors hover:bg-hover hover:text-ink"
+						className="mt-3 rounded-lg px-2.5 py-1.5 text-ui-12 font-medium text-ink-dim transition-colors hover:bg-hover hover:text-ink"
 						onClick={() => void openDir()}
 					>
 						{t("settings.uiPlugins.openDir")}

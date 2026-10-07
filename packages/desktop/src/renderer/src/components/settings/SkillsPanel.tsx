@@ -13,7 +13,7 @@ function ScopeBadge({ scope }: { scope: ResourceScope }) {
 				: "settings.skills.scopeUser";
 	return (
 		<span
-			className={`shrink-0 rounded px-1.5 py-0.5 text-[10px] font-medium ${
+			className={`shrink-0 rounded px-1.5 py-0.5 text-ui-10 font-medium ${
 				scope === "project" ? "bg-accent/10 text-accent" : "bg-hover text-ink-2"
 			}`}
 		>
@@ -27,18 +27,18 @@ function SkillRow({ skill }: { skill: LoadedSkill }) {
 	return (
 		<li className="py-2.5">
 			<div className="flex items-center gap-2">
-				<span className="min-w-0 flex-1 truncate text-[13px] font-medium text-ink">{skill.name}</span>
+				<span className="min-w-0 flex-1 truncate text-ui-13 font-medium text-ink">{skill.name}</span>
 				{skill.disableModelInvocation && (
-					<span className="shrink-0 rounded px-1.5 py-0.5 text-[10px] text-ink-faint">
+					<span className="shrink-0 rounded px-1.5 py-0.5 text-ui-10 text-ink-faint">
 						{t("settings.skills.manualOnly")}
 					</span>
 				)}
 				<ScopeBadge scope={skill.scope} />
 			</div>
 			{skill.description && (
-				<p className="mt-0.5 line-clamp-2 text-[12px] leading-relaxed text-ink-dim">{skill.description}</p>
+				<p className="mt-0.5 line-clamp-2 text-ui-12 leading-relaxed text-ink-dim">{skill.description}</p>
 			)}
-			<p className="mt-1 truncate font-mono text-[10px] text-ink-faint">{skill.path}</p>
+			<p className="mt-1 truncate font-mono text-ui-10 text-ink-faint">{skill.path}</p>
 		</li>
 	);
 }
@@ -51,15 +51,15 @@ export function SkillsPanel() {
 
 	if (skills === null) {
 		return (
-			<p className="py-8 text-center text-[13px] text-ink-faint">{t("settings.skills.emptyNoSession")}</p>
+			<p className="py-8 text-center text-ui-13 text-ink-faint">{t("settings.skills.emptyNoSession")}</p>
 		);
 	}
 	return (
 		<div>
-			<h3 className="text-[13px] font-medium text-ink">{t("settings.skills.title")}</h3>
-			<p className="mt-0.5 text-[11px] text-ink-faint">{t("settings.skills.hint")}</p>
+			<h3 className="text-ui-13 font-medium text-ink">{t("settings.skills.title")}</h3>
+			<p className="mt-0.5 text-ui-11 text-ink-faint">{t("settings.skills.hint")}</p>
 			{skills.length === 0 ? (
-				<p className="py-8 text-center text-[13px] text-ink-faint">{t("settings.skills.empty")}</p>
+				<p className="py-8 text-center text-ui-13 text-ink-faint">{t("settings.skills.empty")}</p>
 			) : (
 				<ul className="mt-3 divide-y divide-border">
 					{skills.map((skill) => (
@@ -69,10 +69,10 @@ export function SkillsPanel() {
 			)}
 			{diagnostics.length > 0 && (
 				<div className="mt-4">
-					<p className="text-[11px] font-medium text-ink-2">{t("settings.skills.diagnostics")}</p>
+					<p className="text-ui-11 font-medium text-ink-2">{t("settings.skills.diagnostics")}</p>
 					<ul className="mt-1 space-y-1">
 						{diagnostics.map((d) => (
-							<li key={d.path ?? d.message} className="text-[11px] leading-relaxed text-ink-dim">
+							<li key={d.path ?? d.message} className="text-ui-11 leading-relaxed text-ink-dim">
 								<span className={d.type === "error" ? "text-red-500" : "text-amber-500"}>{d.type}</span>
 								{" — "}
 								{d.message}

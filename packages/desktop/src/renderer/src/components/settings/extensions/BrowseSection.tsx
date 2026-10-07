@@ -47,7 +47,7 @@ export function BrowseSection() {
 			<div className="relative">
 				<SearchIcon className="absolute left-3 top-1/2 -translate-y-1/2 text-ink-faint" />
 				<input
-					className="w-full rounded-lg bg-hover/80 py-2 pl-9 pr-3 text-[13px] outline-none placeholder:text-ink-faint focus:bg-hover"
+					className="w-full rounded-lg bg-hover/80 py-2 pl-9 pr-3 text-ui-13 outline-none placeholder:text-ink-faint focus:bg-hover"
 					placeholder={t("settings.extensions.searchPlaceholder")}
 					value={query}
 					onChange={(e) => setCatalogQuery(e.target.value)}
@@ -58,7 +58,7 @@ export function BrowseSection() {
 					<button
 						key={id || "all"}
 						type="button"
-						className={`rounded-full px-2.5 py-1 text-[11px] transition-colors ${
+						className={`rounded-full px-2.5 py-1 text-ui-11 transition-colors ${
 							type === id ? "bg-ink font-medium text-on-ink" : "bg-hover text-ink-dim hover:text-ink"
 						}`}
 						onClick={() => setCatalogType(id)}
@@ -68,17 +68,17 @@ export function BrowseSection() {
 				))}
 			</div>
 			{loading ? (
-				<p className="py-8 text-center text-[13px] text-ink-faint">{t("settings.extensions.loading")}</p>
+				<p className="py-8 text-center text-ui-13 text-ink-faint">{t("settings.extensions.loading")}</p>
 			) : error ? (
 				<div className="py-8 text-center">
-					<p className="text-[13px] text-ink-faint">{t("settings.extensions.catalogError")}</p>
-					<p className="mt-1 text-[11px] text-ink-faint">{error}</p>
+					<p className="text-ui-13 text-ink-faint">{t("settings.extensions.catalogError")}</p>
+					<p className="mt-1 text-ui-11 text-ink-faint">{error}</p>
 					<Button size="sm" className="mt-3" onClick={() => void searchCatalog(false)}>
 						{t("settings.extensions.retry")}
 					</Button>
 				</div>
 			) : packages.length === 0 ? (
-				<p className="py-8 text-center text-[13px] text-ink-faint">{t("settings.extensions.noResults")}</p>
+				<p className="py-8 text-center text-ui-13 text-ink-faint">{t("settings.extensions.noResults")}</p>
 			) : (
 				<>
 					<ul className="mt-1 divide-y divide-border">

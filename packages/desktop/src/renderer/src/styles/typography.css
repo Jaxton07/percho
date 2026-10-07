@@ -1,0 +1,100 @@
+/**
+ * 字号表 —— **本项目字号的唯一事实源**（spec D10）。
+ *
+ * 任何要写字号的地方（组件 class、globals.css、插件规范）都从这里取，不要手写 `text-[13px]`。
+ * 新增一个字号 = 在下面 `@layer utilities` 里加一个类（命名规则：去掉小数点，如 `-105` = 10.5px），
+ * 然后在 `globals.css` 里改成 `calc(<px> * var(--fs-ui-scale, 1))` / `var(--fs-code-scale, 1)`。
+ * 守护测试 `typography.test.ts` 会拦住往组件里写死的 px 字号。
+ *
+ * ## 两层乘数
+ *
+ * - `--fs-ui-scale`：界面字号乘数。用在本文件全部 `-*` 类 + `globals.css` 的界面类（38 处 font-size）。
+ * - `--fs-code-scale`：代码字号乘数。用在 `globals.css` 里代码族的 7 处 font-size（内联 `code` / 常文代码块 fallback /
+ *   diff 正文与行号 / mermaid 源码 pre）；monaco 编辑器内部字号的量**不经过 CSS**（阶段 3 用 `monacoOptions` 按平台基线算，见 spec D4.4）。
+ *
+ * 两个变量都由 renderer 的 `ui-preferences` store 写在 `document.documentElement.style`，默认 1
+ * （即「默认档 = 迁移前的现状」，这是本功能的安全网：默认档必须与改动前逐像素一致）。
+ * CSS 里一律带兜底值 `var(--fs-ui-scale, 1)`，变量没注入时也等于现状。
+ *
+ * ## ⚠️ @import 顺序是硬要求
+ *
+ * `globals.css` 顶部必须是：
+ *
+ * ```css
+ * @import "tailwindcss";
+ * @import "./typography.css";
+ * ```
+ *
+ * 反过来（本文件先于 tailwindcss）会让层序变成 `utilities` 在 `base` **之前**，
+ * 于是 Tailwind preflight 的 `font: inherit` 会把我们整层的字号压掉 —— 按钮/输入框上尤其明显
+ * （阶段 0 探针实测：层序颠倒时 `<button class="text-ui-13">` 的计算字号是继承值，不是 13px）。
+ *
+ * ## 现值 ↔ token 对照（迁移前 → 迁移后，默认档完全等价）
+ *
+ * | 原写法 | token 类 | 默认档计算值 |
+ * | --- | --- | --- |
+ * | `text-[10px]` | `.text-ui-10` | 10px |
+ * | `text-[10.5px]` | `.text-ui-105` | 10.5px |
+ * | `text-[11px]` | `.text-ui-11` | 11px |
+ * | `text-[11.5px]` | `.text-ui-115` | 11.5px |
+ * | `text-[12px]` | `.text-ui-12` | 12px |
+ * | `text-[12.5px]` | `.text-ui-125` | 12.5px |
+ * | `text-[13px]` | `.text-ui-13` | 13px |
+ * | `text-[13.5px]` | `.text-ui-135` | 13.5px |
+ * | `text-[14px]` | `.text-ui-14` | 14px |
+ * | `text-[15px]` | `.text-ui-15` | 15px |
+ * | `text-[16px]` | `.text-ui-16` | 16px |
+ * | `text-[19px]` | `.text-ui-19` | 19px |
+ * | `text-xs`（12px + 行高 16px） | `.text-ui-12 leading-[1.3333]` | 12px / 16px |
+ * | `text-sm`（14px + 行高 20px） | `.text-ui-14 leading-[1.4286]` | 14px / 20px |
+ * | `text-lg`（18px + 行高 28px） | `.text-ui-18 leading-[1.5556]` | 18px / 28px |
+ * | （18px，仅 rem 类换算用） | `.text-ui-18` | 18px |
+ * | Markdown 标题 `1.25/1.125/1/0.9375rem` | `calc(20px/18px/16px/15px * var(--fs-ui-scale, 1))` | 20/18/16/15px |
+ */
+
+:root {
+	--fs-ui-scale: 1;
+	--fs-code-scale: 1;
+}
+
+@layer utilities {
+	.text-ui-10 {
+		font-size: calc(10px * var(--fs-ui-scale, 1));
+	}
+	.text-ui-105 {
+		font-size: calc(10.5px * var(--fs-ui-scale, 1));
+	}
+	.text-ui-11 {
+		font-size: calc(11px * var(--fs-ui-scale, 1));
+	}
+	.text-ui-115 {
+		font-size: calc(11.5px * var(--fs-ui-scale, 1));
+	}
+	.text-ui-12 {
+		font-size: calc(12px * var(--fs-ui-scale, 1));
+	}
+	.text-ui-125 {
+		font-size: calc(12.5px * var(--fs-ui-scale, 1));
+	}
+	.text-ui-13 {
+		font-size: calc(13px * var(--fs-ui-scale, 1));
+	}
+	.text-ui-135 {
+		font-size: calc(13.5px * var(--fs-ui-scale, 1));
+	}
+	.text-ui-14 {
+		font-size: calc(14px * var(--fs-ui-scale, 1));
+	}
+	.text-ui-15 {
+		font-size: calc(15px * var(--fs-ui-scale, 1));
+	}
+	.text-ui-16 {
+		font-size: calc(16px * var(--fs-ui-scale, 1));
+	}
+	.text-ui-18 {
+		font-size: calc(18px * var(--fs-ui-scale, 1));
+	}
+	.text-ui-19 {
+		font-size: calc(19px * var(--fs-ui-scale, 1));
+	}
+}

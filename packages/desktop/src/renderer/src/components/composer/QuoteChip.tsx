@@ -11,8 +11,8 @@ export function QuoteChip({ quote, onRemove }: { quote: string; onRemove: () => 
 	const t = useT();
 	const summary = quoteSummary(quote);
 	const chip = (
-		<span className="flex max-w-[180px] select-none items-center gap-1 rounded-md bg-surface px-2 py-0.5 text-[12px] leading-5 text-ink-2 shadow-pop">
-			<span aria-hidden="true" className="font-serif text-[13px] leading-none text-ink-faint">
+		<span className="flex max-w-[180px] select-none items-center gap-1 rounded-md bg-surface px-2 py-0.5 text-ui-12 leading-5 text-ink-2 shadow-pop">
+			<span aria-hidden="true" className="font-serif text-ui-13 leading-none text-ink-faint">
 				&ldquo;
 			</span>
 			<span className="min-w-0 truncate">{summary}</span>

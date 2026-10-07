@@ -17,7 +17,7 @@ export function ProjectBranchPicker() {
 	// 日常空间目录不是 git 仓库：隐藏分支选择器，只留归属 chip（可下拉切回项目）
 	const daily = isDailyCwd(cwd);
 	return (
-		<div className="flex items-center justify-center gap-2 text-[13px] text-ink-dim">
+		<div className="flex items-center justify-center gap-2 text-ui-13 text-ink-dim">
 			<ProjectPicker />
 			{!daily && (
 				<>
@@ -54,7 +54,7 @@ function ProjectPicker() {
 							<CoffeeIcon size={10} />
 						</span>
 					) : (
-						<span className="flex h-4.5 w-4.5 items-center justify-center rounded bg-ink text-[10px] font-semibold text-on-ink">
+						<span className="flex h-4.5 w-4.5 items-center justify-center rounded bg-ink text-ui-10 font-semibold text-on-ink">
 							{(name?.[0] ?? "P").toUpperCase()}
 						</span>
 					)}
@@ -69,7 +69,7 @@ function ProjectPicker() {
 						<>
 							<button
 								type="button"
-								className={`flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left text-[13px] transition-colors hover:bg-hover ${
+								className={`flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left text-ui-13 transition-colors hover:bg-hover ${
 									daily ? "text-ink" : "text-ink-2"
 								}`}
 								onClick={() => {
@@ -89,7 +89,7 @@ function ProjectPicker() {
 						<button
 							key={project.cwd}
 							type="button"
-							className={`flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left text-[13px] transition-colors hover:bg-hover ${
+							className={`flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left text-ui-13 transition-colors hover:bg-hover ${
 								project.cwd === cwd ? "text-ink" : "text-ink-2"
 							}`}
 							onClick={() => {
@@ -98,7 +98,7 @@ function ProjectPicker() {
 								close();
 							}}
 						>
-							<span className="flex h-4.5 w-4.5 shrink-0 items-center justify-center rounded bg-ink-faint text-[10px] font-semibold text-on-ink">
+							<span className="flex h-4.5 w-4.5 shrink-0 items-center justify-center rounded bg-ink-faint text-ui-10 font-semibold text-on-ink">
 								{(project.name[0] ?? "P").toUpperCase()}
 							</span>
 							<span className="truncate">{project.name}</span>
@@ -106,7 +106,7 @@ function ProjectPicker() {
 					))}
 					<button
 						type="button"
-						className="mt-0.5 flex w-full items-center gap-2 rounded-md border-t border-border px-2 py-1.5 text-left text-[13px] text-ink-dim transition-colors hover:bg-hover"
+						className="mt-0.5 flex w-full items-center gap-2 rounded-md border-t border-border px-2 py-1.5 text-left text-ui-13 text-ink-dim transition-colors hover:bg-hover"
 						onClick={() => {
 							void pickDirectory();
 							close();
@@ -161,7 +161,7 @@ function BranchPicker({ cwd }: { cwd: string | null }) {
 							<button
 								key={branch}
 								type="button"
-								className={`flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left text-[13px] transition-colors hover:bg-hover ${
+								className={`flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left text-ui-13 transition-colors hover:bg-hover ${
 									branch === current ? "font-medium text-ink" : "text-ink-2"
 								}`}
 								onClick={() => {
@@ -181,7 +181,7 @@ function BranchPicker({ cwd }: { cwd: string | null }) {
 					</>
 				)}
 			</Dropdown>
-			{error && <span className="text-[11px] text-red-500">{error}</span>}
+			{error && <span className="text-ui-11 text-red-500">{error}</span>}
 		</>
 	);
 }

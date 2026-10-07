@@ -13,14 +13,14 @@ class ErrorFallback extends Component<{ error: Error; t: TFunc }> {
 		const { error, t } = this.props;
 		return (
 			<div className="flex h-full flex-col items-center justify-center gap-3 bg-canvas px-6 text-center">
-				<div className="text-[13px] font-medium text-ink">{t("appError.title")}</div>
-				<p className="max-w-md text-[12px] leading-relaxed text-ink-faint">
+				<div className="text-ui-13 font-medium text-ink">{t("appError.title")}</div>
+				<p className="max-w-md text-ui-12 leading-relaxed text-ink-faint">
 					{t("appError.desc", { detail: String(error.message ?? error) })}
 				</p>
 				<button
 					type="button"
 					onClick={() => window.location.reload()}
-					className="rounded-lg bg-ink px-4 py-1.5 text-[12px] font-medium text-surface transition-opacity hover:opacity-80"
+					className="rounded-lg bg-ink px-4 py-1.5 text-ui-12 font-medium text-surface transition-opacity hover:opacity-80"
 				>
 					{t("appError.reload")}
 				</button>

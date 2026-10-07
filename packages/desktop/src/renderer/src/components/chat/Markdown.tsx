@@ -104,7 +104,7 @@ export function Markdown({ text, streaming }: { text: string; streaming?: boolea
 		// 委托给库动态生成的 <a>；键盘 Enter 在锚点上会合成 click，无需给容器伪造交互角色。
 		// biome-ignore lint/a11y/noStaticElementInteractions: 容器只代理内部原生可交互锚点
 		// biome-ignore lint/a11y/useKeyWithClickEvents: 锚点的键盘 Enter 原生派发 click，同一路径处理
-		<div className="markdown-body text-[15px] leading-[1.75] text-ink select-text" onClick={onLinkClick}>
+		<div className="markdown-body text-ui-15 leading-[1.75] text-ink select-text" onClick={onLinkClick}>
 			{/* deferNodesUntilVisible=false：markstream 0.0.55 的延迟节点 bug——块数 > initialRenderBatchSize(40)
 			    的节点先渲染为 node-placeholder 占位条，等 IntersectionObserver 标记可见后只写 ref 不触发
 			    re-render（非虚拟化路径）；流式期间靠内容更新顺带刷新，流一停占位条就永久残留。 */}
