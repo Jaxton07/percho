@@ -12,6 +12,18 @@
 | 流式期间白屏、`error #185`、无限重渲染整树卸载 | 一 · 0.5.0 白屏事故；四 · Zustand selector（#185 另一成因） |
 | 点击对话里的相对文件链接后白屏 | 四 · Markdown 相对链接会导航 app 主窗口（2026-09-23） |
 | 比像素核验视觉时取样偏了、以为改动没生效 | 四 · CDP `clip.scale` 再乘一次 DPR（2026-09-29） |
+| 拖动类脚本跑完后界面卡在「拖动中」（光标仍是 col-resize、之后再拖也不动） | 四 · CDP 合成拖拽的两个卡死姿势（2026-10-07） |
+| 侧栏拖宽后把手抓不住 / 行末按钮点不到，**截图看却完全正常** | 四 · 比列宽更宽的内容溢出吃 pointer 事件（2026-10-07） |
+| 侧栏拖一次后**整窗光标卡在 col-resize**、之后再也拖不动（刷新才恢复） | 四 · 拖拽只挂 pointerup 会在「窗口外松手」后永久卡死（2026-10-07） |
+| 脚本判定「没生效」但代码明明改了 / 文件里是新值而界面是旧值 | 四 · dev 里 HMR 会让 store 订阅冻结，验收前要硬重启（2026-10-07） |
+| hover 态截图时有时无、想稳定截出 hover 视觉 | 四 · 同上（`CSS.forcePseudoState` 钉伪类）（2026-10-07） |
+| 绝对定位「撑满父容器」的元素命中区高度是 0（`<hr>` 尤其） | 四 · Tailwind preflight 的 `hr { height: 0 }` 盖掉 `top/bottom: 0`（2026-10-07） |
+| 脚本复位 inline style 后组件样式莫名回退（React 写的 CSS 变量被抹） | 四 · 别用 `cssText = ""` 复位（2026-10-07） |
+| 重启后窗口跑到屏幕左边约 221px（位置记忆看似失效） | 六 · macOS 首次 `show()` 会把窗口 x 抬到 ≥221（2026-10-07） |
+| 最大化状态下退出，重启窗口变成超大 / 位置超出屏幕 | 六 · 持久化窗口 bounds 必须用 `getNormalBounds()`（2026-10-07） |
+| 监听窗口位置/尺寸变化收不到事件（`resized`/`moved` 从不触发） | 六 · macOS 只来 `resize`/`move`，且一次动作可能来好几次（2026-10-07） |
+| 极端情况丢偏好：关窗瞬间的那次写盘 | 六 · 退出兜底要同步写（`updateSync`），但它不参与写盘队列（2026-10-07） |
+| `npm run test` 偶发红、失败点在 backend `channel-watch-extension.test.ts` | 三 · 既有 flaky：cursor 落盘竞态（2026-10-07） |
 | 弹窗蒙层只盖住一列 / 卡片被左栏「吃掉」半边 / 测量位置却是对的 | 四 · `.edge-fade` 的 mask 把 fixed 浮层的绘制裁在容器盒里（2026-10-06） |
 | 改了滚动条宽度但截图里看不到，以为没生效 | 四 · CDP 截图不绘制滚动条，只能力槽宽（2026-09-29） |
 | 扩展注册的工具模型用不了、模型说「工具列表为 none」 | 二 · createAgentSession tools 白名单 |
@@ -286,6 +298,18 @@ LAN 页重连/中途进入时，快照种子经 `messagesToUIMessages` 重建—
 `lsof -nP -iTCP:9224 -sTCP:LISTEN` 确认为空；`pgrep -fl Electron` 里除 `/Applications/*` 之外的残留也要清。
 自检小抄：连上后先 `location.href`，是 `chrome-error://` 就说明连错了实例，别怀疑业务代码。
 
+**2026-10-07 补第二种形状（更阴）**：端口空着再起，**新实例仍可能绑失败**（没查清谁还占着），此时脚本会**静默连到那个旧实例**上跑完一整轮；等旧实例一死，就剩下一个「进程在、9224/9229 都不监听」的僵尸 —— 后续脚本全报连不上，看起来像「dev 自己崩了」。判据：起完立刻 `grep -c "DevTools listening"` 或 `grep "address already in use" <dev 日志>`，**有后者就说明本轮实例没绑上**，别接着跑。`.local/tmp/layout-freedom/devctl.sh` 的 `start_dev` 已按这个判据加固（起前查端口 + 起后查日志）。
+
+### `npm run test` 偶发失败：backend `channel-watch-extension.test.ts` 的 cursor 落盘竞态（**既有 flaky，2026-10-07 定位，未修**）
+
+症状：`npm run test`（`--workspaces` 串跑两包）偶发红，失败点是
+`packages/backend/test/channel-watch-extension.test.ts:936`「catch-up cursor 持久化」—— 第 934 行 `sleep(200)`
+后读 cursor，偶尔还没写完就断言。**连跑 6 次失 2 次**（2026-10-07 layout-freedom 终验时由 reviewer 发现；同一次会话里我自己那次恰好绿）。
+
+判定：**与本任务无关的既有 flaky**（未触碰 backend / channel-watch），修它要动 channel-watch 的落盘时序、有回归风险 ⇒ 当时明确**不修**，只记录。
+
+**给下次的用法**：遇到它失败**先单独重跑**该文件确认是这条路，别误判成自己刚改的代码有问题；要根治得把 `sleep(200)` 换成轮询等待落盘（超出当时范围）。
+
 ### 取证别用 `asar extract-file`：它把文件解到**当前工作目录**（2026-10-06）
 
 `npx asar extract-file <app.asar> <内部路径>` 会把那一个文件按 basename 丢在**当前 cwd** —— 在仓库里跑就会掉垃圾文件、
@@ -388,10 +412,80 @@ pi SDK 必须声明进 `packages/desktop/package.json` dependencies（electron-b
 - **`Browser.setWindowBounds` / `Browser.getWindowForTarget` 在 Electron 下未实现**（method not found）。想真改窗口尺寸就用页面里的 `window.resizeTo(w, h)` —— Electron 支持，`window.innerWidth` 会真的变（本任务用它验了右栏 push ↔ 浮层的 1100 / 1000 / 900 三档）。
 - **CDP 注入的鼠标事件不会驱动 `-webkit-app-region: drag` 的窗口拖拽**：程序化拖不动窗口（连改造前就存在的顶栏拖拽区也拖不动），所以「无边框窗口的自定义拖拽带还能不能拖」**只能人工确认**；脚本只能验到 `getComputedStyle(el).webkitAppRegion === "drag"` 且元素尺寸非零。
 - `Input.dispatchMouseEvent` 坐标是**视口 CSS px**；`Page.captureScreenshot` 的 `clip` 也是 CSS px，输出像素 = clip × DPR。
+- **`Page.captureScreenshot` 会打断进行中的指针捕获**（拖动中截图 ⇒ 拖动态卡死），以及合成鼠标的两个其它坑，见「CDP 合成拖拽的两个卡死姿势」（2026-10-07）。
 - **CDP 键盘事件要触发原生 `<button>` 激活，必须 `type: "keyDown"` 且带 `text`**（2026-09-29 实测，验「行末『显示更多』按钮能用 Enter 触发」时踩到）：
   Enter → `{ type: "keyDown", key: "Enter", code: "Enter", windowsVirtualKeyCode: 13, nativeVirtualKeyCode: 13, text: "\r", unmodifiedText: "\r" }` + `keyUp`；
   只发 `rawKeyDown` 会**照常派发 keydown 事件落到监听器上、但不产生 click**（页面里能收到 `keydown:Enter`，行为却像没按），看着像「按钮坏了」。
   Space 同样要给 `text: " "`。验证键盘可达性时别忘了分两步断言：**能聚焦**（`el.focus()` 后 `document.activeElement === el`，折叠态 `inert` 下应为 false）与**能触发**。
+
+### CDP 合成拖拽的两个卡死姿势：截图打断指针捕获 / 松手坐标跑出视口（2026-10-07，layout-freedom 阶段 1 实测）
+
+做「拖左栏宽度」的验收脚本时，`Page.captureScreenshot` 与放错松手坐标都能把页面**永久留在拖动态**：`is-resizing` 类摘不掉、`body` 光标仍是 `col-resize`、之后再怎么拖都不动（React 组件里的 `draggingRef` 卡在 true，`pointerdown` 直接 return）。当时表现为「同一套断言单独跑全绿、`all` 跑连挂 8 条」。
+
+- **① 截图会打断进行中的指针捕获**：拖到一半调 `Page.captureScreenshot`，之后 `pointermove` 不再送到把手（捕获没了 → 事件落到光标下的别处），`pointerup` 也丢，于是 `finish()` 永不执行。
+- **② 松手坐标跑出视口同样丢 `pointerup`**：拖到最左时终点 `x` 是负数（例：从 480 拖到 240，把手在 x=236 → 终点 -4），`mouseReleased` 在视口外没人接。
+- **修法（两条都要）**：量测通道**一律不截图**，截图通道挪到最后；每次拖完都在**把手当前位置**补一次 release（有捕获就到把手，没捕获时那个坐标也落在把手命中区里）。验收脚本里 `V2-m` 专门盯这条回归。
+- 顺带：**`CSS.forcePseudoState({ nodeId, forcedPseudoClasses: ["hover"] })` 能稳定钉住 hover**（截图不会清掉它，`::after`/`:has()` 都跟着变），所以「hover 态截图」用它而不是反复发 `mouseMoved`（后者对同一坐标不重算 hover，见上一条；且截图前后 `:hover` 链可能被清）。`DOM.querySelector` 的参数名是 **`nodeId`**（写成 `root` 会 `Invalid parameters`）。
+
+### 拖拽只挂 `pointerup` 会在「窗口外松手」后永久卡死（2026-10-07，X3）
+
+**症状**（用户报的）：拖一次左栏宽度后，**整窗光标一直是 `col-resize`**、`is-resizing` 摘不掉、之后**再也拖不动**，要刷新页面才恢复。
+
+**机制**：指针在**窗口外**松手时，`mouseup` 交给的是光标下那个窗口/应用，**页面收不到 `pointerup`**（拖到屏幕边缘继续拖最容易发生）。只监听 `pointerup` / `pointercancel` 的实现就永远等不到收尾信号，拖动态一直挂着。
+
+**修法（三条兜底都要，`SidebarResizeHandle` 里都有）**：
+
+1. **`onPointerMove` 里 `event.buttons === 0` → 收尾**（主路径：用户把鼠标移回窗口内立刻自愈）；
+2. `onLostPointerCapture` → 收尾（捕获真丢时的官方信号）；
+3. `window` 的 `blur` / `document` 的 `visibilitychange` → 收尾（切窗口/切应用时松手）。
+
+配套：收尾函数要**幂等**（所有路径都走同一个 `finish()`，重复调用无副作用），否则会重复落盘/重复 `setState`。
+
+**验收这个 bug 的坑（重要）**：
+
+- **CDP 无法忠实模拟「OS 没送 mouseup」**：`Input.dispatchMouseEvent` 的 `buttons` 会直接改 Chromium 的按键状态，所以合成事件里 Chromium 可能自己补发 `pointerup`，让修复前的代码也「看起来正常」。
+- 所以**别用「手改成 disabled 的版本」当对照**（我这么干过，结论一度自相矛盾）—— 要用**真正的上一个 commit** 当对照：`git show HEAD:<file> > <file>` 切过去跑一遍断言，修前应全红、修后应全绿。实测：修复前 V2-q/r/s/t 四条全红 + review 的 `repro-lostup.mjs` 显示「仍卡着 / 拖不动」。
+- 另注意 CDP 的 `button` 与 `buttons` 要一致：`type: "mouseMoved"` 且 `buttons: 0` 时 `button` 必须给 `"none"`，给 `"left"` 的话 Chromium 会当成「左键仍按着」（`event.buttons` 还是 1），于是 `buttons === 0` 这条兜底**测不出来**，很容易误判成产品 bug。
+
+### dev 里 HMR 会让 store 订阅冻结：验收前要硬重启（2026-10-07，差点误判）
+
+**症状**：改了代码、HMR 热更后，界面上某些值**再也不跟随 store 变化**了 —— 例：`ui-state.json` 里 `sidebarWidth` 是 280，页面上侧栏却一直是 320（连拖动都不动了）。看起来像新写的派生逻辑坏了。
+
+**诊断手法**（一次定位）：从 DOM 拿 React 自己的 props/state，和文件/真实输入对账 ——
+
+```js
+const el = document.querySelector(".sidebar");
+const pk = Object.keys(el).find((k) => k.startsWith("__reactProps$"));
+el[pk].style; // => {"--sidebar-render-width":"320px"} ← React「最后一次渲染」给的值
+```
+
+再配合 `git show HEAD:<file>` 切回上一个 commit 跑同一段脚本，就能区分「代码问题」与「热更后运行时状态坏了」。
+
+**结论/纪律**：**验收脚本一律在硬重启（`stop_dev` → `start_dev`）之后跑**，别在热更过的实例上得结论。`devctl.sh` 已按这个用。（同类教训：HMR 之后 `ResizeObserver`/订阅这类「effect 只在挂载时建立」的东西最容易出这种假象。）
+
+### 比列宽更宽的内容会「溢出吃 pointer 事件」：截图看不出来的点击死区（2026-10-07，X2）
+
+**症状**：左侧栏拖宽到 480 后**再想拖回来就拖不动了**（把手抓不住）；同一区间里行末的「＋ / ⋯」等控件也点不到。截图完全正常 —— 溢出的那块要么是透明的、要么本来就被不透明的左栏盖在下面看不见。
+
+**机制**：聊天页空态的 logo 块是固定 **748px 居中**，聊天列窄于 748 时它向**两侧**溢出；DOM 里它在左栏之后 ⇒ 溢出的透明矩形**照样参与命中测试**，把左栏右缘一整条（侧栏 480 时实测 **82px**）变成点击死区。触发区不极端：窗口宽 < 748 + 侧栏宽 就中招（1064 的窗口下侧栏 > 316px 就开始），而应用默认窗口 1100 ⇒ 拖到约 388 就会踩到。
+
+**诊断（可复用）**：
+
+- 最直接：`document.elementsFromPoint(把手中心)[0]` 打出的是**聊天列里的 `svg`**（logo）而不是把手 —— 一眼定位。
+- **别用截图/像素对比判这类问题**：遮挡在像素上不可见。要判「有没有死区」就用 `elementFromPoint`/`elementsFromPoint`（浏览器自己的命中测试），或真的合成一次点击。
+- 扫描时的坑：`getBoundingClientRect()` 非零 ≠ 可见 —— 折叠分组（`grid 0fr` + `overflow: hidden`）与滚动出可视区的行，其子元素 rect 仍是正常尺寸却**根本不参与命中**，会被误判成「被遮挡」。判据要加上「未被 `overflow != visible` 的祖先裁掉」的预筛（`scripts/verify-layout-freedom.mjs` 的 HIT_STACK 就是这么写的）。
+
+**修法**：给左栏 `z-index: 1`（它已是 `position: relative`）。视觉零变化 —— 栏内无 fixed/portal、根级浮层（设置弹窗/Toaster）在更外层节点，前后对比截图只有 173 px、单通道 ≤ 5/255 的 wordmark 抗锯齿差异。
+
+**回归断言**：`scripts/verify-layout-freedom.mjs` 的 `V2-n`（把手中心最上层就是把手）、`V2-o`（栏内可见控件中心命中都落在栏内）、`V2-p`（拖到 480 松手后仍能重抓拖回）—— **修前全红、修后全绿**（把 `z-index` 临时改回 `auto` 实测过）。
+
+### Tailwind preflight 的 `hr { height: 0 }` 会盖掉 `top: 0; bottom: 0`（2026-10-07，拖拽把手命中区高度 0）
+
+给左栏把手用 `<hr>`（图它的隐式 role = `separator`）时写了 `position: absolute; top: 0; bottom: 0; width: 8px`，**命中区高度却是 0**：Tailwind preflight 给 `hr` 定了具名 `height: 0`，具名高度优先于 `top/bottom` 的约束解析（over-constrained），于是「撑满父容器」失效。CDP 合成鼠标落在它上面根本命不中（表现为「拖不动」）。**修法：显式 `height: auto`**（顺手把 preflight 的 `margin`/`border-top-width` 也清掉）。
+
+### 脚本复位 inline style 别用 `cssText = ""`（2026-10-07，shoot-sidebar 踩到）
+
+`shoot-sidebar.mjs` 的 RESET 原本 `sb.style.cssText = ""`。侧栏宽度改成由 React 写在 `.sidebar` 上的 `--sidebar-render-width` 驱动后，这一句会把**变量一起抹掉**——脚本跑完侧栏掉回 CSS 兜底值 240，直到下一次 React 渲染才纠正（表现为「跑完脚本界面宽度不对」）。修法：按属性 `removeProperty("width")` / `removeProperty("transition")` 精确清理。
 
 ### CDP 截图不绘制滚动条：只能力槽宽（2026-09-29）
 
@@ -822,3 +916,28 @@ pgrep -f "electron-vite" | xargs -r kill -9
 ### 已开源：github.com/Jaxton07/percho
 
 git remote 走 SSH（本机直连 github.com:443 不通）。`main` 有分支保护（PR + CI `check` 必过 + squash merge），Release 由 tag 触发（`.github/workflows/release.yml`）。
+
+## 六、Electron 主进程 · 窗口
+
+### 持久化窗口 bounds 必须用 `getNormalBounds()`（2026-10-07，layout-freedom P1-B）
+
+`getBounds()` 在窗口**最大化/全屏**时返回的是**最大化后的尺寸**（实测：普通态 940×660 → 最大化后 `getBounds()` 1512×859、`getNormalBounds()` 仍是 940×660）。把它写进 ui-state 后，下次启动会按「1512×859 + 原 x/y」构造窗口 —— 用户看到的是一个超出屏幕的普通窗口，看着像「窗口尺寸记忆坏了」。
+
+配套两条同样重要：
+
+- **退出兜底要同步写**：防抖窗口（400ms）内点 ✕ 直接 `app.quit()`，异步写盘队列可能来不及。用 `JsonStore.updateSync`（`saveUiStateSync`）在 `close` 回调里同步补一次，并且 **try/catch 只记日志**（写偏好失败绝不能阻塞退出）。
+- **`updateSync` 不参与 async per-path 串行队列**（队列是模块级 Map）：所以它只用于退出兜底，别当常规写入路径（与队列里的写在 read-modify-write 上有交错可能，概率低、后果轻：丢一侧字段一次，下次写自愈）。
+
+### macOS 首次 `show()` 会把窗口 x 抬到 ≥221 DIP（2026-10-07，layout-freedom，X1）
+
+症状：把窗口拖到屏幕最左（x < 221）→ 退出 → 重启，窗口跑到 **x=221**，看着像「位置记忆失效」。实测（主进程探针 + 2ms 采样）：
+
+- 构造函数传的 x 是**被接受的**（`show()` 之前 `getBounds().x === 180`），但 `show()` 一执行就被抬到 221；
+- 同样输入下把宽度给到 1300 也只得到 1291（= 1512-221），说明是系统的「窗口必须留在屏上」约束，不是我们传参错了；
+- 对照组（关掉校准）从 `show()` 后的第一个采样就是 221（到 500ms 都没变）；开校准后**第一个采样（16ms）已经是 180** —— `show()` 与 `setBounds()` 在同一 tick 内完成，中间没有渲染机会。
+
+修法（`window.ts` 的 `ready-to-show`）：显示后比对 x/y，不一致就 `setBounds(记录的 bounds)`（**已显示**的窗口不受该约束）。注意这是 macOS 行为，其它平台 diff 为 0 时是 no-op。
+
+### macOS 窗口只有 `resize` / `move`：`resized` / `moved` 一次都不来（2026-10-07，layout-freedom）
+
+`window.resizeTo(w, h)` 期间在主进程挂 `resized` / `moved` 探针，实测 **0 次触发**（spec 里一度写着 macOS 上 `moved` 是 `move` 的别名，实际连别名都不触发）；同时单次 `resizeTo` 会来 **1~3 次** `resize`。结论：**只监听 `resize` + `move`，并且必须防抖**（否则拖窗口一路写盘）。

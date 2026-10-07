@@ -1,7 +1,14 @@
 import { join } from "node:path";
 import { createLogger, JsonStore } from "@percho/backend";
-import type { PermissionMode, SessionWorkspaceSnapshot, UiState } from "@percho/shared";
+import {
+	clampSidebarWidth,
+	type PermissionMode,
+	type Rect,
+	type SessionWorkspaceSnapshot,
+	type UiState,
+} from "@percho/shared";
 import { app } from "electron";
+import { WINDOW_MIN_HEIGHT, WINDOW_MIN_WIDTH } from "./window-bounds";
 
 const log = createLogger("ui-state");
 
@@ -74,6 +81,27 @@ function workspaceSnapshot(
 	return { files, activeFile: active !== "" && files.includes(active) ? active : null };
 }
 
+/**
+ * 窗口 bounds 清洗：四项都有限且不小于最小尺寸才收下，否则 `null`。
+ * **不做屏幕校验**（模块约定：这里不 import `electron.screen`）——「这块屏还在不在」由启动时的
+ * `sanitizeWindowBounds()` 决定（那时进程就绪、拿得到 screen）。x/y 允许负值（左侧副屏）。
+ */
+function windowBounds(value: unknown): Rect | null {
+	if (!value || typeof value !== "object" || Array.isArray(value)) return null;
+	const raw = value as Partial<Rect>;
+	const { x, y, width, height } = raw;
+	if (
+		typeof x !== "number" ||
+		typeof y !== "number" ||
+		typeof width !== "number" ||
+		typeof height !== "number"
+	)
+		return null;
+	if (![x, y, width, height].every((n) => Number.isFinite(n))) return null;
+	if (width < WINDOW_MIN_WIDTH || height < WINDOW_MIN_HEIGHT) return null;
+	return { x: Math.round(x), y: Math.round(y), width: Math.round(width), height: Math.round(height) };
+}
+
 /** 字段校验 + 默认值填充（旧版本文件缺 theme/background 时补齐） */
 function normalize(parsed: UiStateFileShape): UiState {
 	const model = parsed.lastUsedModel ?? parsed.currentModel;
@@ -106,6 +134,9 @@ function normalize(parsed: UiStateFileShape): UiState {
 		sessionRailEnabled,
 		sessionWorkspace: workspaceSnapshot(parsed.sessionWorkspace, barSessionsVisible, sessionRailEnabled),
 		sidebarCollapsed: typeof parsed.sidebarCollapsed === "boolean" ? parsed.sidebarCollapsed : false,
+		// 侧栏宽度：脏值/越界一律归一化（手改文件、未来改上下界都在这里归一；renderer 只做渲染期夹紧、不回写）
+		sidebarWidth: clampSidebarWidth(parsed.sidebarWidth),
+		windowBounds: windowBounds(parsed.windowBounds),
 		expandedGroups,
 		// 显式布尔优先（含显式 false 配空数组）；缺字段/脏值才按清洗后的记录是否非空推断
 		expandedGroupsTouched:
@@ -136,5 +167,23 @@ export async function saveUiState(patch: Partial<UiState>): Promise<void> {
 	} catch (err) {
 		log.error("ui-state save failed", err);
 		throw err;
+	}
+}
+
+/**
+ * **同步**写一次（退出兜底用）：`updateSync` 不走异步写盘队列，能在 `close` 事件里把最后一份 bounds
+ * 落盘（Windows 点 ✕ 直接 `app.quit()`，异步写可能来不及）。
+ * 与 `saveUiState` 不同：**绝不上抛** —— 写偏好失败不能阻塞退出，只记日志。
+ *
+ * 前提（已知、可接受）：`updateSync` **不参与** `JsonStore` 的 async per-path 串行队列，所以理论上与队列里的写
+ * 存在 read-modify-write 交错（例：renderer 刚提交 `sidebarWidth` 时关窗 → 同步读旧文件写回 → 队列那次后完成
+ * 把 `windowBounds` 盖掉）。概率低（要 400ms 窗口内两次写撞上）、后果轻（丢一侧字段一次，下次写自愈），
+ * 且退出路径上串行化没意义 —— 所以**只用于退出兜底**，不要拿去当常规写入路径。
+ */
+export function saveUiStateSync(patch: Partial<UiState>): void {
+	try {
+		uiStateStore().updateSync((draft) => normalize({ ...(draft ?? {}), ...patch }));
+	} catch (err) {
+		log.error("ui-state sync save failed", err);
 	}
 }

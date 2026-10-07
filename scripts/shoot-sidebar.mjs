@@ -137,10 +137,17 @@ const READ_SPEC = `(() => {
 		};
 	};
 	const collapsed = sb.classList.contains('is-collapsed');
+	// 展开宽不再硬编码 240：读 renderer 写在这个元素上的渲染宽变量（用户可拖到 200~480）。
+	// 收起态该变量仍在（React 收起时也留着它），所以两端都能取到同一个值。
+	const expandedWidth =
+		Number.parseFloat(getComputedStyle(sb).getPropertyValue('--sidebar-render-width')) ||
+		sb.getBoundingClientRect().width ||
+		240;
 	return JSON.stringify({
 		startCollapsed: collapsed,
-		widthFrom: collapsed ? 0 : 240,
-		widthTo: collapsed ? 240 : 0,
+		expandedWidth,
+		widthFrom: collapsed ? 0 : expandedWidth,
+		widthTo: collapsed ? expandedWidth : 0,
 		sidebar: read(sb),
 		inner: read(inner),
 		// 收起态 = opacity 0 / translateX(-28px)；展开态 = opacity 1 / none（与 .sidebar-inner 的 CSS 对应）
@@ -188,10 +195,16 @@ const APPLY_STEP = `((spec, t) => {
 	return JSON.stringify({ t, width: getComputedStyle(sb).width, opacity: getComputedStyle(inner).opacity, x: x.toFixed(2) });
 })`;
 
+// 只摘掉本脚本自己写上去的那几个属性（**不能** `cssText = ''`：那会把 React 写的
+// `--sidebar-render-width` 一起抹掉，之后侧栏会掉回 CSS 兜底值 240，直到下次 React 渲染）
 const RESET = `(() => {
 	const sb = document.querySelector('.sidebar');
-	sb.style.cssText = '';
-	sb.querySelector('.sidebar-inner').style.cssText = '';
+	sb.style.removeProperty('transition');
+	sb.style.removeProperty('width');
+	const inner = sb.querySelector('.sidebar-inner');
+	inner.style.removeProperty('transition');
+	inner.style.removeProperty('opacity');
+	inner.style.removeProperty('transform');
 	return true;
 })`;
 

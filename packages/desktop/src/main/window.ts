@@ -1,6 +1,14 @@
 import { join } from "node:path";
-import { IpcChannels, type ThemeMode } from "@percho/shared";
+import { IpcChannels, type Rect, type ThemeMode } from "@percho/shared";
 import { app, BrowserWindow, nativeTheme, shell } from "electron";
+import { saveUiState, saveUiStateSync } from "./ui-state";
+import {
+	BOUNDS_SAVE_DEBOUNCE_MS,
+	WINDOW_DEFAULT_HEIGHT,
+	WINDOW_DEFAULT_WIDTH,
+	WINDOW_MIN_HEIGHT,
+	WINDOW_MIN_WIDTH,
+} from "./window-bounds";
 
 const __dirname = import.meta.dirname;
 
@@ -15,6 +23,46 @@ let quitting = false;
 let quitGuard = false;
 /** 等「弹窗已上屏」回执的兑底计时（详见 close 分支） */
 let quitAckTimer: NodeJS.Timeout | undefined;
+
+/* ---------------- 窗口位置/尺寸持久化（spec layout-freedom §5.1/§5.2） ---------------- */
+
+/** 防抖计时：拖动/缩放途中 resize+move 连绵不断，不能每帧写盘 */
+let boundsTimer: NodeJS.Timeout | undefined;
+/** 最后一次动过的窗口（退出兕底用；多窗口场景取最后一个即可，本应用实际只会开一个） */
+let boundsWindow: BrowserWindow | null = null;
+
+/** 真正落盘：**必须 `getNormalBounds()`** —— `getBounds()` 在最大化/全屏时返回的是最大化尺寸，
+ *  写进文件后下次启动会还愿成「超出屏幕的普通窗口」（spec §8 事实 1） */
+function persistBounds(window: BrowserWindow | null): void {
+	if (!window || window.isDestroyed()) return;
+	void saveUiState({ windowBounds: window.getNormalBounds() }).catch(() => {
+		/* saveUiState 已记日志（UiStateSave 是 handle 调用），这里只是不把 rejection 抛到 unhandled */
+	});
+}
+
+/** 防抖调度：多次变化只写最后一次 */
+function scheduleBoundsPersist(window: BrowserWindow): void {
+	boundsWindow = window;
+	if (boundsTimer) clearTimeout(boundsTimer);
+	boundsTimer = setTimeout(() => {
+		boundsTimer = undefined;
+		persistBounds(boundsWindow);
+	}, BOUNDS_SAVE_DEBOUNCE_MS);
+}
+
+/**
+ * 退出兜底：清掉待写的计时器并**同步**写一次。
+ * 为什么必须有：防抖窗口内直接退出（Windows 点 ✕ = `app.quit()`）时异步写可能来不及落盘；
+ * `updateSync` 不走异步写盘队列（spec §8 事实 5），能在 `close` 回调里真写完。
+ */
+function flushBounds(): void {
+	if (!boundsTimer) return;
+	clearTimeout(boundsTimer);
+	boundsTimer = undefined;
+	const window = boundsWindow;
+	if (!window || window.isDestroyed()) return;
+	saveUiStateSync({ windowBounds: window.getNormalBounds() });
+}
 
 /** before-quit 调用：置位后 close 事件不再被拦截（macOS 关窗隐藏态也要能让 ⌘Q 真退出） */
 export function markQuitting(): void {
@@ -64,12 +112,14 @@ export function applyChromeTheme(mode: ThemeMode): void {
 	}
 }
 
-export function createWindow(theme: "dark" | "light" = "light"): BrowserWindow {
+export function createWindow(theme: "dark" | "light" = "light", bounds: Rect | null = null): BrowserWindow {
 	const window = new BrowserWindow({
-		width: 1100,
-		height: 750,
-		minWidth: 640,
-		minHeight: 480,
+		// 有持久化 bounds 就用它（已过 `sanitizeWindowBounds` 屏幕校验），否则走默认尺寸 + 系统摆放
+		...(bounds
+			? { x: bounds.x, y: bounds.y, width: bounds.width, height: bounds.height }
+			: { width: WINDOW_DEFAULT_WIDTH, height: WINDOW_DEFAULT_HEIGHT }),
+		minWidth: WINDOW_MIN_WIDTH,
+		minHeight: WINDOW_MIN_HEIGHT,
 		show: false,
 		// macOS：hiddenInset 红绿灯嵌入顶栏；Windows：frameless + 右上角系统按钮覆盖层；
 		// Linux 不支持覆盖层，保留原生框架（不指定 titleBarStyle）
@@ -91,7 +141,20 @@ export function createWindow(theme: "dark" | "light" = "light"): BrowserWindow {
 		},
 	});
 
-	window.on("ready-to-show", () => window.show());
+	window.on("ready-to-show", () => {
+		window.show();
+		// macOS 首次 show() 会把窗口 x 抬到 ≥221 DIP（≈15% 屏宽，详见 docs/PITFALLS.md 与 IMPL-NOTES X1）——
+		// 传参没错，是系统的窗口位置约束。**已显示的窗口 setBounds 不受此限**，所以显示后校准一次。
+		// show() 与本句同一 tick 完成（中间没有渲染机会），不会看到「先从 221 跳到目标位」（实测见 IMPL-NOTES）。
+		if (bounds && (window.getBounds().x !== bounds.x || window.getBounds().y !== bounds.y)) {
+			window.setBounds(bounds);
+		}
+	});
+
+	// 位置/尺寸记忆：拖动、缩放都走这两条事件（**不要**依赖 `resized`/`moved` —— 实测 macOS 上
+	// `window.resizeTo` 只来 `resize`，`resized`/`moved` 一次都不来，见 IMPL-NOTES 阶段 1）
+	window.on("resize", () => scheduleBoundsPersist(window));
+	window.on("move", () => scheduleBoundsPersist(window));
 
 	// 新文档开始加载（重载/HMR）→ 旧 guard 失效，等 renderer 重新挂载后再接管
 	window.webContents.on("did-start-loading", () => {
@@ -104,6 +167,9 @@ export function createWindow(theme: "dark" | "light" = "light"): BrowserWindow {
 	//   让用户看到「退出后正在跑的任务会终止」再决定
 	// - Linux：关窗即退，行为不变
 	window.on("close", (event) => {
+		// 先兜底把待写的 bounds 同步落盘（无论哪个平台、无论下面拦不拦关窗），
+		// 拦下来（macOS 隐藏 / Windows 等确认弹窗）也不影响：写的是当前真实 bounds
+		flushBounds();
 		if (quitting) return;
 		if (process.platform === "darwin") {
 			event.preventDefault();

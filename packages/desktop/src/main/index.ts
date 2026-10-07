@@ -4,7 +4,7 @@ import "./fix-path";
 import { join } from "node:path";
 import { pathToFileURL } from "node:url";
 import { createLogger, initLogging, PiBackend } from "@percho/backend";
-import { app, BrowserWindow, Menu, nativeTheme, net, protocol, shell } from "electron";
+import { app, BrowserWindow, Menu, nativeTheme, net, protocol, screen, shell } from "electron";
 import { backgroundsDir } from "./background";
 import { registerIpc } from "./ipc";
 import { initLanObserver, type LanObserverHandle } from "./lan";
@@ -13,6 +13,7 @@ import { UiPluginManager, uiPluginsResourcesDir } from "./ui-plugins/manager";
 import { loadUiState } from "./ui-state";
 import { initUpdater, scheduleAutoUpdateCheck } from "./updater";
 import { applyChromeTheme, createWindow, markQuitting, resolveTheme } from "./window";
+import { sanitizeWindowBounds } from "./window-bounds";
 
 const log = createLogger("main");
 let backend: PiBackend;
@@ -82,7 +83,13 @@ app.whenReady().then(async () => {
 	const uiState = await loadUiState();
 	// main 进程原生主题与 app 设置对齐（Windows 窗口按钮覆盖层/后续主题切换的 system 解析依赖它）
 	nativeTheme.themeSource = uiState?.theme ?? "system";
-	createWindow(resolveTheme(uiState?.theme));
+	// 窗口位置/尺寸记忆：写盘时只保证尺寸合法，「这块屏还在不在」在这里校验（进程就绪后才能取 screen）——
+	// 拔屏/换屏后的旧 bounds 会被判空或夹回可见区，不会把窗口开到看不见的地方
+	const initialBounds = sanitizeWindowBounds(
+		uiState?.windowBounds ?? null,
+		screen.getAllDisplays().map((display) => display.workArea),
+	);
+	createWindow(resolveTheme(uiState?.theme), initialBounds);
 
 	app.on("activate", () => {
 		const [win] = BrowserWindow.getAllWindows();
@@ -93,7 +100,7 @@ app.whenReady().then(async () => {
 			win.focus();
 			return;
 		}
-		createWindow(resolveTheme(uiState?.theme));
+		createWindow(resolveTheme(uiState?.theme), initialBounds);
 	});
 });
 
