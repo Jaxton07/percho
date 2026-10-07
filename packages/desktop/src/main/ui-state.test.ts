@@ -272,3 +272,50 @@ describe("sidebarWidth 白名单（用户意图宽度）", () => {
 		expect(state?.pinnedSessions).toEqual(["s1"]);
 	});
 });
+
+describe("windowBounds 白名单（normal 态窗口位置与尺寸）", () => {
+	it("缺字段 / 没记过 → null", async () => {
+		writeFileSync(file(), "{}");
+		expect((await loadUiState())?.windowBounds).toBeNull();
+	});
+
+	it("合法值原样保留（含 x/y 为负的左侧副屏）", async () => {
+		writeFileSync(file(), '{"windowBounds":{"x":-1000,"y":40,"width":900,"height":620}}');
+		expect((await loadUiState())?.windowBounds).toEqual({ x: -1000, y: 40, width: 900, height: 620 });
+	});
+
+	it("小于最小尺寸 → null（否则窗口构造会失败）", async () => {
+		writeFileSync(file(), '{"windowBounds":{"x":0,"y":0,"width":639,"height":620}}');
+		expect((await loadUiState())?.windowBounds).toBeNull();
+		writeFileSync(file(), '{"windowBounds":{"x":0,"y":0,"width":900,"height":479}}');
+		expect((await loadUiState())?.windowBounds).toBeNull();
+	});
+
+	it("字段缺失 / 类型不对 / 非有限数 → null", async () => {
+		for (const raw of [
+			'{"windowBounds":{"x":0,"y":0,"width":900}}',
+			'{"windowBounds":{"x":"0","y":0,"width":900,"height":620}}',
+			'{"windowBounds":{"x":0,"y":0,"width":null,"height":620}}',
+			'{"windowBounds":[]}',
+			'{"windowBounds":"x"}',
+			'{"windowBounds":7}',
+			'{"windowBounds":null}',
+		]) {
+			writeFileSync(file(), raw);
+			expect((await loadUiState())?.windowBounds, raw).toBeNull();
+		}
+	});
+
+	it("小数取整（窗口尺寸本来就是整数，脏文件也不写成浮点）", async () => {
+		writeFileSync(file(), '{"windowBounds":{"x":10.6,"y":20.2,"width":900.4,"height":620.5}}');
+		expect((await loadUiState())?.windowBounds).toEqual({ x: 11, y: 20, width: 900, height: 621 });
+	});
+
+	it("保存补丁：写一次能读回；后续补丁不冲掉它", async () => {
+		await saveUiState({ windowBounds: { x: 50, y: 60, width: 900, height: 620 } });
+		await saveUiState({ pinnedSessions: ["s1"] });
+		const state = await loadUiState();
+		expect(state?.windowBounds).toEqual({ x: 50, y: 60, width: 900, height: 620 });
+		expect(state?.pinnedSessions).toEqual(["s1"]);
+	});
+});

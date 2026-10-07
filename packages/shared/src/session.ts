@@ -22,6 +22,14 @@ export interface BackgroundSettings {
 	dim: number;
 }
 
+/** 矩形（位置 + 尺寸）：窗口 bounds 与屏幕 workArea 共用同一形状（与 Electron `Rectangle` 结构同构，可直接互传） */
+export interface Rect {
+	x: number;
+	y: number;
+	width: number;
+	height: number;
+}
+
 /** 应用 UI 状态持久化（重启恢复用，主进程写 userData/ui-state.json）：新会话复用上次的模型/思考级别；主题与背景设置 */
 export interface UiState {
 	/** 上次使用的模型（新会话/draft 起步跟随；语义 = 跟随最近选择，不是独立的「默认模型」设置） */
@@ -76,6 +84,12 @@ export interface UiState {
 	expandedGroupsTouched: boolean;
 	/** 置顶项目 cwd（新置顶在前，决定左侧栏项目区排序） */
 	pinnedProjects: string[];
+	/**
+	 * 上次退出时的窗口位置与尺寸（**normal 态**：最大化/最小化/全屏时记的也是普通态，见 `getNormalBounds()`）。
+	 * null = 没记过，或读回时发现它已不在任何屏幕的可视区内（拔屏/换屏 → 回退默认尺寸与系统摆放）。
+	 * 只由 main 写；启动时的屏幕校验在 `main/window-bounds.ts`（渲染端不参与）。
+	 */
+	windowBounds: Rect | null;
 	/**
 	 * 上次使用的项目目录（重启后启动页预填用）。**只记目录、不恢复任何会话**：
 	 * v10 起启动仍然是纯空会话页（与 pi 原生/Codex 一致），这里只让用户不用重选项目。

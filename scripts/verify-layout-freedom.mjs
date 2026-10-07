@@ -6,9 +6,13 @@
  *   （注意：`npm run dev -- --xxx` 不行，npm 会把参数当自己的 config 吞掉）
  *
  * 用法：
- *   node scripts/verify-layout-freedom.mjs v1-css|v2-drag|v3-bounds|all [--stage0]
+ *   node scripts/verify-layout-freedom.mjs all [--stage0]      # V1 宽度方案 + V2 拖动 + V3 窗口事件/落盘
+ *   node scripts/verify-layout-freedom.mjs v1-css|v2-drag|v3-bounds|v4-window|v5-frames
  *   `--stage0`：阶段 0 语义 —— V3 的「落盘 windowBounds」这一环尚不存在（阶段 2 才写），
  *   该子断言记 SKIP 而不是 FAIL。阶段 2 之后不加该参数，端到端必须真绿。
+ *
+ *   `v4-window` 会**主动退出 dev**（验证退出兜底同步写），所以必须放在最后跑、跑完重启 dev；
+ *   `v5-frames` 是 R5 的观察项（连续缩放窗口时的帧间隔），只报数不判定。
  *
  * 断言各自的用意：
  *   V1 宽度方案：`--sidebar-render-width`（renderer 派生的**渲染宽**）能否与既有 400ms 过渡、
@@ -38,9 +42,9 @@
  * 退出码：0 全绿 / 1 有断言失败 / 2 环境不满足（端口不通等）。
  */
 import { execSync } from "node:child_process";
-import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { mkdirSync, readFileSync, watch, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 
 const PAGE_PORT = process.env.CDP_PORT ?? "9224";
 const MAIN_PORT = process.env.CDP_MAIN_PORT ?? "9229";
@@ -139,7 +143,8 @@ const SETTLE = `new Promise((r) => requestAnimationFrame(() => requestAnimationF
 const measureExpr = (extra = "") =>
 	`(() => { const sb = document.querySelector(".sidebar"); const parent = sb.parentElement; const chat = parent.children[1];
 	const rect = sb.getBoundingClientRect(); const inner = sb.querySelector(".sidebar-inner").getBoundingClientRect();
-	const clipped = [...sb.querySelectorAll("button, a, input, select, textarea, [role='button']")]
+	const controls = [...sb.querySelectorAll("button, a, input, select, textarea, [role='button']")];
+	const clipped = controls
 		.filter((el) => { const r = el.getBoundingClientRect(); return (r.width > 0 || r.height > 0) && (r.right > rect.right + 1 || r.left < rect.left - 1); })
 		.map((el) => ({ label: ((el.getAttribute("aria-label") || el.textContent || "").trim().slice(0, 24)), right: Math.round(el.getBoundingClientRect().right) }));
 	return JSON.stringify({
@@ -153,6 +158,7 @@ const measureExpr = (extra = "") =>
 		chatWidth: chat ? chat.getBoundingClientRect().width : null,
 		varValue: sb.style.getPropertyValue("--sidebar-render-width"),
 		handleCount: sb.querySelectorAll("[data-sidebar-resize-handle]").length,
+		scannedControls: controls.length,
 		clippedControls: clipped,
 		docScrollWidth: document.documentElement.scrollWidth,
 		docClientWidth: document.documentElement.clientWidth,
@@ -423,8 +429,10 @@ async function v1Css(page, { isProbe }) {
 	check("V1-c 常态聊天列 ≥ 320px", m.chatWidth >= CHAT_MIN_WIDTH - 1, `实测 ${m.chatWidth?.toFixed(1)}px`);
 	check(
 		"V1-d 常态无控件越过侧栏右缘",
-		m.clippedControls.length === 0,
-		m.clippedControls.length ? `越界：${JSON.stringify(m.clippedControls)}` : "0 个",
+		m.scannedControls > 0 && m.clippedControls.length === 0,
+		m.clippedControls.length
+			? `越界：${JSON.stringify(m.clippedControls)}`
+			: `扫到 ${m.scannedControls} 个可交互元素，越界 0 个`,
 	);
 
 	// 折叠中：过渡必须还在动（width 未瞬间归零）
@@ -474,8 +482,10 @@ async function v1Css(page, { isProbe }) {
 	);
 	check(
 		"V1-k【R1】窄窗无控件被裁（越界控件 0 个）",
-		m.clippedControls.length === 0,
-		m.clippedControls.length ? `越界：${JSON.stringify(m.clippedControls)}` : "0 个",
+		m.scannedControls > 0 && m.clippedControls.length === 0,
+		m.clippedControls.length
+			? `越界：${JSON.stringify(m.clippedControls)}`
+			: `扫到 ${m.scannedControls} 个可交互元素，越界 0 个`,
 	);
 	check(
 		"V1-l 窄窗聊天列 ≥ 320px（不被挤没）",
@@ -805,6 +815,247 @@ async function v3Bounds(page) {
 	main.close();
 }
 
+/* ---------------- V4：窗口 bounds 生命周期（会主动退出 dev，务必放最后） ---------------- */
+
+const FRAME_SAMPLER = (frames) => `(async () => {
+	const deltas = [];
+	let prev = performance.now();
+	await new Promise((resolve) => {
+		let n = 0;
+		const tick = () => {
+			const now = performance.now();
+			deltas.push(now - prev);
+			prev = now;
+			if (++n >= ${frames}) return resolve();
+			requestAnimationFrame(tick);
+		};
+		requestAnimationFrame(tick);
+	});
+	deltas.shift();
+	const sum = deltas.reduce((a, b) => a + b, 0);
+	return JSON.stringify({
+		frames: deltas.length,
+		avg: Number((sum / deltas.length).toFixed(2)),
+		max: Number(Math.max(...deltas).toFixed(2)),
+		over25ms: deltas.filter((d) => d > 25).length,
+	});
+})()`;
+
+const MAIN_SET_WIDTH = (width) =>
+	`(() => {
+	const { BrowserWindow } = process.mainModule.require("electron");
+	const win = BrowserWindow.getAllWindows()[0];
+	win.setBounds({ ...win.getNormalBounds(), width: ${width} });
+	return true;
+})()`;
+
+/** 读 ui-state.json（带容错） */
+function readUiState() {
+	try {
+		return JSON.parse(readFileSync(DEV_UI_STATE, "utf8"));
+	} catch {
+		return null;
+	}
+}
+
+/**
+ * 盯住 ui-state.json 的写入次数：JsonStore 是「写临时文件 + rename」，所以目标文件的
+ * 每个 rename 事件 = 一次真实落盘（tmp 文件名的事件被过滤掉）。
+ */
+function watchUiStateWrites() {
+	const events = [];
+	const stateDir = dirname(DEV_UI_STATE);
+	const watcher = watch(stateDir, (_type, filename) => {
+		if (filename === "ui-state.json") events.push(Date.now());
+	});
+	return { events, close: () => watcher.close() };
+}
+
+async function v4Window() {
+	console.log("\n=== V4 窗口 bounds 生命周期（结尾会主动退出 dev）===");
+	let main;
+	try {
+		main = await connect(MAIN_PORT, (t) => t.webSocketDebuggerUrl);
+		await main.send("Runtime.enable");
+	} catch (error) {
+		skip("V4 主进程探针", `${error.message}（dev 未带 --inspect=${MAIN_PORT}？）`);
+		return;
+	}
+
+	// ① 防抖：连续 20 次改 bounds（25ms 一次）只能落盘很少次
+	const watcher = watchUiStateWrites();
+	await main.evalJs(`(async () => {
+		const { BrowserWindow } = process.mainModule.require("electron");
+		const win = BrowserWindow.getAllWindows()[0];
+		for (let i = 0; i < 20; i++) {
+			win.setBounds({ x: 200 + i, y: 60, width: 900 + i * 2, height: 620 });
+			await new Promise((r) => setTimeout(r, 25));
+		}
+		return true;
+	})()`);
+	await sleep(BOUNDS_SAVE_DEBOUNCE_MS + 900);
+	const burstWrites = watcher.events.length;
+	check(
+		"V4-a 连续 20 次窗口变化只落盘极少次（防抖生效）",
+		burstWrites >= 1 && burstWrites <= 3,
+		`${burstWrites} 次写入（20 次变化 / 防抖 ${BOUNDS_SAVE_DEBOUNCE_MS}ms；不防抖会是 20 次）`,
+	);
+	const afterBurst = readUiState();
+	check(
+		"V4-b 防抖后落盘的是**最后一次** bounds",
+		afterBurst?.windowBounds?.width === 900 + 19 * 2,
+		`文件值 = ${JSON.stringify(afterBurst?.windowBounds)}（期望宽 ${900 + 19 * 2}）`,
+	);
+
+	// ② 最大化不污染：文件里必须还是 normal 尺寸（getBounds 会给最大化尺寸）
+	const beforeMax = readUiState()?.windowBounds;
+	const maxState = JSON.parse(
+		await main.evalJs(`(async () => {
+			const { BrowserWindow } = process.mainModule.require("electron");
+			const win = BrowserWindow.getAllWindows()[0];
+			win.maximize();
+			await new Promise((r) => setTimeout(r, 900));
+			return JSON.stringify({ bounds: win.getBounds(), normal: win.getNormalBounds(), maximized: win.isMaximized() });
+		})()`),
+	);
+	await sleep(BOUNDS_SAVE_DEBOUNCE_MS + 400);
+	const afterMax = readUiState()?.windowBounds;
+	check(
+		"V4-c 最大化时 getBounds ≠ getNormalBounds（测试本身非空转）",
+		maxState.maximized && JSON.stringify(maxState.bounds) !== JSON.stringify(maxState.normal),
+		`getBounds ${JSON.stringify(maxState.bounds)} vs normal ${JSON.stringify(maxState.normal)}`,
+	);
+	check(
+		"V4-d【关键】最大化**不污染**落盘 bounds（写的必须是 normal 态）",
+		afterMax?.width === beforeMax?.width && afterMax?.height === beforeMax?.height,
+		`最大化前后文件值：${JSON.stringify(beforeMax)} → ${JSON.stringify(afterMax)}`,
+	);
+
+	// ③ 最小化同样不污染
+	await main.evalJs(`(async () => {
+		const { BrowserWindow } = process.mainModule.require("electron");
+		const win = BrowserWindow.getAllWindows()[0];
+		win.unmaximize();
+		await new Promise((r) => setTimeout(r, 600));
+		win.minimize();
+		await new Promise((r) => setTimeout(r, 700));
+		win.restore();
+		await new Promise((r) => setTimeout(r, 400));
+		return true;
+	})()`);
+	await sleep(BOUNDS_SAVE_DEBOUNCE_MS + 400);
+	const restored = JSON.parse(
+		await main.evalJs(`(() => {
+			const { BrowserWindow } = process.mainModule.require("electron");
+			return JSON.stringify(BrowserWindow.getAllWindows()[0].getNormalBounds());
+		})()`),
+	);
+	check(
+		"V4-e 最小化/还原不污染落盘 bounds",
+		JSON.stringify(restored) === JSON.stringify(afterMax),
+		`还原后 normal = ${JSON.stringify(restored)}，文件值 = ${JSON.stringify(readUiState()?.windowBounds)}`,
+	);
+
+	// ④ 退出兜底：防抖窗口内直接退出，靠 close 里的同步写兜住
+	watcher.events.length = 0;
+	const quitTarget = { x: 222, y: 66, width: 940, height: 660 };
+	await main.evalJs(`(() => {
+		const { BrowserWindow } = process.mainModule.require("electron");
+		const win = BrowserWindow.getAllWindows()[0];
+		win.setBounds({ x: ${quitTarget.x}, y: ${quitTarget.y}, width: ${quitTarget.width}, height: ${quitTarget.height} });
+		return true;
+	})()`);
+	await sleep(80); // 远小于防抖 400ms：这时异步写还没发生
+	const beforeQuit = readUiState()?.windowBounds ?? null;
+	console.log(`  退出前文件值 = ${JSON.stringify(beforeQuit)}（应还没写出新 bounds）`);
+	// 触发优雅退出：before-quit → close（我们在这里同步 flush）
+	main
+		.evalJs(`(() => { process.mainModule.require("electron").app.quit(); return true; })()`)
+		.catch(() => {});
+	await sleep(3500);
+	const afterQuit = readUiState()?.windowBounds ?? null;
+	watcher.close();
+	check(
+		"V4-f【关键】退出兜底：防抖未到就退出，close 里同步写保住最后一次 bounds",
+		afterQuit?.width === quitTarget.width && afterQuit?.height === quitTarget.height,
+		`退出后文件值 = ${JSON.stringify(afterQuit)}（期望 ${JSON.stringify(quitTarget)}）`,
+	);
+	// 主进程退出前会等 inspector 断开，所以先放开连接再轮询端口
+	main.close();
+	let exited = false;
+	for (let i = 0; i < 16; i++) {
+		try {
+			execSync(`lsof -ti:${PAGE_PORT}`, { stdio: "pipe" });
+		} catch {
+			exited = true;
+			break;
+		}
+		await sleep(500);
+	}
+	console.log(`  dev 主进程：${exited ? "已退出" : "仍在运行"} —— 跑其它子命令前先重启 dev`);
+}
+
+/* ---------------- V5：R5 观察项 —— 连续缩放窗口时的帧间隔 ---------------- */
+
+async function v5Frames(page, { isProbe }) {
+	console.log("\n=== V5 连续缩放窗口的帧间隔（R5 观察项，只报数不判定）===");
+	let main;
+	try {
+		main = await connect(MAIN_PORT, (t) => t.webSocketDebuggerUrl);
+		await main.send("Runtime.enable");
+	} catch (error) {
+		skip("V5 主进程探针", `${error.message}（dev 未带 --inspect=${MAIN_PORT}？）`);
+		return;
+	}
+	await page.evalJs(RESIZE_WINDOW(WIDE_WINDOW.width, WIDE_WINDOW.height));
+	await sleep(600);
+
+	const runCase = async (label, userWidth, windowWidths) => {
+		await setUserWidth(page, userWidth, { isProbe });
+		await sleep(700);
+		await page.evalJs(RESIZE_WINDOW(windowWidths[0], 750));
+		await sleep(700);
+		const framesPromise = page.send("Runtime.evaluate", {
+			expression: FRAME_SAMPLER(120),
+			returnByValue: true,
+			awaitPromise: true,
+		});
+		for (let i = 0; i < 60; i++) {
+			await main.evalJs(MAIN_SET_WIDTH(windowWidths[i % windowWidths.length]));
+			await sleep(25);
+		}
+		const { result } = await framesPromise;
+		const stats = JSON.parse(result.value);
+		const renders = JSON.parse(
+			await page.evalJs(`(() => {
+				const sb = document.querySelector(".sidebar");
+				return JSON.stringify({ render: parseFloat(getComputedStyle(sb).width), userVar: sb.style.getPropertyValue("--sidebar-render-width") });
+			})()`),
+		);
+		console.log(
+			`  ${label}：帧 ${stats.frames} / 平均 ${stats.avg}ms / 最大 ${stats.max}ms / >25ms ${stats.over25ms} 帧（末帧侧栏 ${renders.render}px）`,
+		);
+		return stats;
+	};
+
+	const jitter = [700, 768];
+	const changing = await runCase(
+		"A 用户值 480 + 窗口 700↔768（渲染宽每帧变 → Sidebar 每帧重渲染）",
+		480,
+		jitter,
+	);
+	const constant = await runCase("B 用户值 240 + 同一窗口抖动（渲染宽恒 240 → 不重渲染）", 240, jitter);
+	record(
+		"A/B 帧间隔对比（R5：宽窗不够时 renderWidth 每帧变是否拖慢渲染）",
+		null,
+		`A 平均 ${changing.avg}ms / >25ms ${changing.over25ms} 帧；B 平均 ${constant.avg}ms / >25ms ${constant.over25ms} 帧`,
+	);
+	await page.evalJs(RESIZE_WINDOW(WIDE_WINDOW.width, WIDE_WINDOW.height));
+	await main.evalJs(MAIN_SET_WIDTH(WIDE_WINDOW.width));
+	await sleep(500);
+	main.close();
+}
+
 /* ---------------- 主流程 ---------------- */
 const mode = process.argv[2] ?? "all";
 const page = await connect(PAGE_PORT, (t) => t.type === "page" && t.webSocketDebuggerUrl);
@@ -825,8 +1076,11 @@ try {
 	if (mode === "v1-css" || mode === "all") await v1Css(page, { isProbe });
 	if (mode === "v2-drag" || mode === "all") await v2Drag(page, { isProbe });
 	if (mode === "v3-bounds" || mode === "all") await v3Bounds(page);
+	if (mode === "v5-frames") await v5Frames(page, { isProbe });
+	if (mode === "v4-window") await v4Window();
 } finally {
-	await page.evalJs(CLEANUP);
+	// v4 会主动退出 dev（页面连接已断），给收尾加超时，别让它把整轮结果卡住
+	await Promise.race([page.evalJs(CLEANUP).catch(() => {}), sleep(1500)]);
 	page.close();
 }
 
