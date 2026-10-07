@@ -290,6 +290,7 @@ export const en: Messages = {
 		settings: "Settings",
 		collapse: "Collapse sidebar",
 		expand: "Expand sidebar",
+		resizeHandle: "Resize navigation sidebar",
 		more: "Project actions",
 		pin: "Pin",
 		unpin: "Unpin",

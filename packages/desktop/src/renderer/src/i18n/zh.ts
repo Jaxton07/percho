@@ -288,6 +288,7 @@ export const zh = {
 		settings: "设置",
 		collapse: "收起导航栏",
 		expand: "展开导航栏",
+		resizeHandle: "调整导航栏宽度",
 		more: "项目操作",
 		pin: "置顶",
 		unpin: "取消置顶",

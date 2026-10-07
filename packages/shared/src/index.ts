@@ -8,6 +8,7 @@ export * from "./mcp";
 export * from "./packages";
 export * from "./session";
 export * from "./settings";
+export * from "./sidebar";
 export * from "./skill-invocation";
 export * from "./subagent";
 export * from "./thinking";

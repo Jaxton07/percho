@@ -57,6 +57,12 @@ export interface UiState {
 	/** 左侧栏收起（宽 0，彻底藏起；只有顶栏最左按钮能改）；旧版本文件缺省为 false */
 	sidebarCollapsed: boolean;
 	/**
+	 * 左侧栏宽度（px）= **用户意图值**，取值域 `[SIDEBAR_MIN_WIDTH, SIDEBAR_MAX_WIDTH]`（`src/sidebar.ts`）。
+	 * 缺省/脏值回 `SIDEBAR_DEFAULT_WIDTH`；读回时按同一组上下界 clamp（main `ui-state.ts` 的 normalize）。
+	 * 它**不是**实际渲染宽：窗口太窄时渲染宽还要被「容器宽 - 聊天列最小宽」夹紧，那是 renderer 的渲染期派生值（`lib/sidebar-width.ts`），不回写这里。
+	 */
+	sidebarWidth: number;
+	/**
 	 * 左侧栏已展开的分组 key（日常 cwd + 各项目 cwd）= 用户手动开合过的记录。
 	 * 空数组的含义**只由 `expandedGroupsTouched` 决定**（空 = 全部折叠 / 未操作）。
 	 */

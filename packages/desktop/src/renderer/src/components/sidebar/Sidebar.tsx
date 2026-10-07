@@ -1,4 +1,4 @@
-import { type CSSProperties, useMemo, useRef } from "react";
+import { type CSSProperties, useMemo, useRef, useState } from "react";
 import { useT } from "../../i18n";
 import { deriveSidebarNavigation } from "../../lib/sidebar-groups";
 import { useEdgeFade } from "../../lib/use-edge-fade";
@@ -9,7 +9,9 @@ import { ProjectSection } from "./ProjectSection";
 import { SidebarFooter } from "./SidebarFooter";
 import { SidebarGroup } from "./SidebarGroup";
 import { SidebarHeader } from "./SidebarHeader";
+import { SidebarResizeHandle } from "./SidebarResizeHandle";
 import { useSidebarBatching } from "./useSidebarBatching";
+import { useSidebarRenderWidth } from "./useSidebarRenderWidth";
 
 /**
  * 左侧栏容器（Codex 式常驻导航）：只做「取 store 数据 → 调纯函数派生 → 分发 props」，
@@ -17,10 +19,18 @@ import { useSidebarBatching } from "./useSidebarBatching";
  * 所以过渡期间内容只被推走、不被横向挤压）。收起时整栏 `inert`：不接指针也不进 Tab 序。
  * 「每组 6 条 + 显示更多」与搜索临时展开的**内存态**在 `useSidebarBatching`（不持久化、不新增 IPC），
  * 本组件只负责把它和派生结果一起分发下去。宽度与开合动画不受分批影响。
+ *
+ * 宽度：store 里的 `sidebarWidth` 是**用户意图值**，这里用 `useSidebarRenderWidth` 派生出**渲染宽**
+ * （容器宽不够时二次夹紧），写成 `--sidebar-render-width` 由 `.sidebar` 与 `.sidebar-inner` **共用**——
+ * 内外层不同值的话，窄窗下内层右侧会被 overflow:hidden 硬裁掉功能控件（见 lib/sidebar-width.ts）。
  */
 export function Sidebar() {
 	const t = useT();
 	const collapsed = useUiPreferencesStore((s) => s.sidebarCollapsed);
+	const sidebarWidth = useUiPreferencesStore((s) => s.sidebarWidth);
+	const [resizing, setResizing] = useState(false);
+	const asideRef = useRef<HTMLElement>(null);
+	const renderWidth = useSidebarRenderWidth(sidebarWidth, asideRef);
 	const expandedGroups = useUiPreferencesStore((s) => s.expandedGroups);
 	const expandedGroupsTouched = useUiPreferencesStore((s) => s.expandedGroupsTouched);
 	const pinnedProjects = useUiPreferencesStore((s) => s.pinnedProjects);
@@ -74,10 +84,14 @@ export function Sidebar() {
 
 	return (
 		<aside
-			className={`sidebar fade-rule-v ${collapsed ? "is-collapsed" : ""}`}
+			ref={asideRef}
+			className={`sidebar fade-rule-v ${collapsed ? "is-collapsed" : ""} ${resizing ? "is-resizing" : ""}`}
+			style={{ "--sidebar-render-width": `${renderWidth}px` } as CSSProperties}
 			aria-label={t("sidebar.title")}
 			inert={collapsed}
 		>
+			{/* 折叠态不渲染把手：宽度已归 0，它会被裁看不见，还会多一个 Tab 序 */}
+			{!collapsed && <SidebarResizeHandle value={renderWidth} onResizingChange={setResizing} />}
 			<div className="sidebar-inner">
 				<SidebarHeader />
 				{/* 左栏唯一的外层滚动容器：验收脚本用 `data-sidebar-scroll-root` 定位它（纯属性，无视觉影响） */}

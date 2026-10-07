@@ -226,3 +226,49 @@ describe("sessionPermissionModes 白名单（D7：按会话记住权限模式）
 		expect((await loadUiState())?.sessionPermissionModes).toEqual({ s1: "fullAccess" });
 	});
 });
+
+describe("sidebarWidth 白名单（用户意图宽度）", () => {
+	it("缺字段 → 默认 240（旧文件/没拖过的用户）", async () => {
+		writeFileSync(file(), "{}");
+		expect((await loadUiState())?.sidebarWidth).toBe(240);
+	});
+
+	it("上下界原样保留（200 / 480 都合法）", async () => {
+		await saveUiState({ sidebarWidth: 200 });
+		expect((await loadUiState())?.sidebarWidth).toBe(200);
+		await saveUiState({ sidebarWidth: 480 });
+		expect((await loadUiState())?.sidebarWidth).toBe(480);
+	});
+
+	it("越界（手改文件/未来改上下界）读回时 clamp 而不是丢弃", async () => {
+		writeFileSync(file(), '{"sidebarWidth":100}');
+		expect((await loadUiState())?.sidebarWidth).toBe(200);
+		writeFileSync(file(), '{"sidebarWidth":900}');
+		expect((await loadUiState())?.sidebarWidth).toBe(480);
+	});
+
+	it("非有限数一律回默认（字符串/null/数组/NaN）", async () => {
+		for (const raw of [
+			'{"sidebarWidth":"300"}',
+			'{"sidebarWidth":null}',
+			'{"sidebarWidth":[]}',
+			'{"sidebarWidth":true}',
+		]) {
+			writeFileSync(file(), raw);
+			expect((await loadUiState())?.sidebarWidth, raw).toBe(240);
+		}
+	});
+
+	it("小数取整（拖拽可能算出小数）", async () => {
+		writeFileSync(file(), '{"sidebarWidth":312.6}');
+		expect((await loadUiState())?.sidebarWidth).toBe(313);
+	});
+
+	it("保存补丁不冲掉其它字段、也不被其它补丁冲掉", async () => {
+		await saveUiState({ sidebarWidth: 320 });
+		await saveUiState({ pinnedSessions: ["s1"] });
+		const state = await loadUiState();
+		expect(state?.sidebarWidth).toBe(320);
+		expect(state?.pinnedSessions).toEqual(["s1"]);
+	});
+});

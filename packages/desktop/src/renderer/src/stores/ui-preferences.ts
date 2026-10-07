@@ -1,4 +1,4 @@
-import type { PermissionMode, UiState } from "@percho/shared";
+import { clampSidebarWidth, type PermissionMode, SIDEBAR_DEFAULT_WIDTH, type UiState } from "@percho/shared";
 import { create } from "zustand";
 import { getPi } from "../api";
 import { toggleInList } from "../lib/toggle-in-list";
@@ -18,6 +18,11 @@ interface UiPreferencesStore {
 	sessionRailEnabled: boolean;
 	/** 左侧栏收起（宽 0，彻底藏起；只有顶栏最左按钮能改，默认展开） */
 	sidebarCollapsed: boolean;
+	/**
+	 * 左侧栏宽度（px）= **用户意图值**（拖拽的落点，越界已在写入时 clamp）。
+	 * 它不是渲染宽：渲染宽 = 它再被「容器宽 - 聊天列最小宽」夹紧（`lib/sidebar-width.ts`），不回写这里。
+	 */
+	sidebarWidth: number;
 	/** 左侧栏已展开的分组 key；含义由 `expandedGroupsTouched` 决定（见 shared UiState，空数组不再兼任「未操作」） */
 	expandedGroups: string[];
 	/** 展开态是否已被用户手动开合过（false = 走 Sidebar 的默认推断，true = 空数组合法表示全部折叠） */
@@ -36,6 +41,13 @@ interface UiPreferencesStore {
 	setSessionRailEnabled: (enabled: boolean) => void;
 	/** 收起 / 展开左侧栏（宽 240 ↔ 0） */
 	toggleSidebarCollapsed: () => void;
+	/**
+	 * 拖动中的逐帧预览：只 `set` 内存、**不落盘**（每帧一次 IPC + 原子写会把写盘队列打爆）。
+	 * 入参是用户意图值，越界在这里夹紧。落盘交 `commitSidebarWidth`（`pointerup` 调）。
+	 */
+	previewSidebarWidth: (width: number) => void;
+	/** 把当前 `sidebarWidth` 落盘一次（拖拽收尾调；幂等，未拖动时调也没坏处） */
+	commitSidebarWidth: () => void;
 	/** 左侧栏开合一个分组（由 useExpandedGroups 算好新的展开集）：**同时置 touched 位**，
 	 *  空数组合法表示「用户把最后一组也折了」（旧版空数组只能表示「没操作过」） */
 	setExpandedGroups: (groups: string[]) => void;
@@ -68,6 +80,7 @@ export const useUiPreferencesStore = create<UiPreferencesStore>((set, get) => ({
 	barSessionsVisible: true,
 	sessionRailEnabled: false,
 	sidebarCollapsed: false,
+	sidebarWidth: SIDEBAR_DEFAULT_WIDTH,
 	/** 左侧栏展开分组的记录（`setExpandedGroups` 同时置 touched 位） */
 	expandedGroups: [],
 	expandedGroupsTouched: false,
@@ -86,6 +99,7 @@ export const useUiPreferencesStore = create<UiPreferencesStore>((set, get) => ({
 			barSessionsVisible: saved?.barSessionsVisible ?? true,
 			sessionRailEnabled: saved?.sessionRailEnabled ?? false,
 			sidebarCollapsed: saved?.sidebarCollapsed ?? false,
+			sidebarWidth: clampSidebarWidth(saved?.sidebarWidth),
 			expandedGroups: saved?.expandedGroups ?? [],
 			expandedGroupsTouched: saved?.expandedGroupsTouched ?? false,
 			pinnedProjects: saved?.pinnedProjects ?? [],
@@ -118,6 +132,14 @@ export const useUiPreferencesStore = create<UiPreferencesStore>((set, get) => ({
 		const collapsed = !get().sidebarCollapsed;
 		set({ sidebarCollapsed: collapsed });
 		persistPatch({ sidebarCollapsed: collapsed });
+	},
+
+	previewSidebarWidth: (width) => {
+		set({ sidebarWidth: clampSidebarWidth(width) });
+	},
+
+	commitSidebarWidth: () => {
+		persistPatch({ sidebarWidth: get().sidebarWidth });
 	},
 
 	setExpandedGroups: (groups) => {

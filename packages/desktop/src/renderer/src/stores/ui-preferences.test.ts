@@ -17,6 +17,7 @@ beforeEach(() => {
 		barSessionsVisible: true,
 		sessionRailEnabled: false,
 		sidebarCollapsed: false,
+		sidebarWidth: 240,
 		expandedGroups: [],
 		expandedGroupsTouched: false,
 		pinnedProjects: [],
@@ -247,5 +248,42 @@ describe("sessionPermissionModes 持久化（D7）", () => {
 		const calls = piMock.saveUiState.mock.calls.length;
 		useUiPreferencesStore.getState().forgetPermissionMode("ghost");
 		expect(piMock.saveUiState.mock.calls.length).toBe(calls);
+	});
+});
+
+describe("侧栏宽度（用户意图值）", () => {
+	it("默认 240（旧版本 ui-state 无该字段）", () => {
+		expect(useUiPreferencesStore.getState().sidebarWidth).toBe(240);
+	});
+
+	it("init 从 ui-state 恢复；脏值回落 240", async () => {
+		piMock.loadUiState.mockResolvedValue({ sidebarWidth: 320 });
+		await useUiPreferencesStore.getState().init();
+		expect(useUiPreferencesStore.getState().sidebarWidth).toBe(320);
+
+		piMock.loadUiState.mockResolvedValue({ sidebarWidth: "480" });
+		await useUiPreferencesStore.getState().init();
+		expect(useUiPreferencesStore.getState().sidebarWidth).toBe(240);
+	});
+
+	it("拖动预览只改内存，一次 IPC 都不发（每帧写盘会打爆写盘队列）", () => {
+		useUiPreferencesStore.getState().previewSidebarWidth(300);
+		useUiPreferencesStore.getState().previewSidebarWidth(340);
+		expect(useUiPreferencesStore.getState().sidebarWidth).toBe(340);
+		expect(piMock.saveUiState).not.toHaveBeenCalled();
+	});
+
+	it("预览也夹紧（越界拖不出范围）", () => {
+		useUiPreferencesStore.getState().previewSidebarWidth(100);
+		expect(useUiPreferencesStore.getState().sidebarWidth).toBe(200);
+		useUiPreferencesStore.getState().previewSidebarWidth(999);
+		expect(useUiPreferencesStore.getState().sidebarWidth).toBe(480);
+	});
+
+	it("松手落盘一次，写的是当前值", () => {
+		useUiPreferencesStore.getState().previewSidebarWidth(360);
+		useUiPreferencesStore.getState().commitSidebarWidth();
+		expect(piMock.saveUiState).toHaveBeenCalledTimes(1);
+		expect(piMock.saveUiState).toHaveBeenCalledWith({ state: { sidebarWidth: 360 } });
 	});
 });

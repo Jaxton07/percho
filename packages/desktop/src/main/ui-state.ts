@@ -1,6 +1,11 @@
 import { join } from "node:path";
 import { createLogger, JsonStore } from "@percho/backend";
-import type { PermissionMode, SessionWorkspaceSnapshot, UiState } from "@percho/shared";
+import {
+	clampSidebarWidth,
+	type PermissionMode,
+	type SessionWorkspaceSnapshot,
+	type UiState,
+} from "@percho/shared";
 import { app } from "electron";
 
 const log = createLogger("ui-state");
@@ -106,6 +111,8 @@ function normalize(parsed: UiStateFileShape): UiState {
 		sessionRailEnabled,
 		sessionWorkspace: workspaceSnapshot(parsed.sessionWorkspace, barSessionsVisible, sessionRailEnabled),
 		sidebarCollapsed: typeof parsed.sidebarCollapsed === "boolean" ? parsed.sidebarCollapsed : false,
+		// 侧栏宽度：脏值/越界一律归一化（手改文件、未来改上下界都在这里归一；renderer 只做渲染期夹紧、不回写）
+		sidebarWidth: clampSidebarWidth(parsed.sidebarWidth),
 		expandedGroups,
 		// 显式布尔优先（含显式 false 配空数组）；缺字段/脏值才按清洗后的记录是否非空推断
 		expandedGroupsTouched:

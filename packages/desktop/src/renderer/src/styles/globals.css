@@ -1287,16 +1287,57 @@ code {
 /* ---- chip ---- */
 
 /* ---- 左侧栏（Codex 式常驻导航）：push 式宽度过渡，收起 = 宽 0 彻底藏起（不留图标条）。
-   内层固定 240 宽：过渡期间内容被整体推走而不是被横向挤压（否则文字会边缩边换行） ---- */
+   宽度一律吃 `--sidebar-render-width`（renderer 算好的渲染宽，内外层**必须同一个值**：
+   只夹外层的话窄窗下内层右侧会被 overflow:hidden 硬裁，被裁的正是行末那些功能控件，见 lib/sidebar-width.ts）。
+   内层保持这一档的固定宽：过渡期间内容被整体推走而不是被横向挤压（否则文字会边缩边换行） ---- */
 .sidebar {
 	position: relative;
 	flex: none;
-	width: 240px;
+	width: var(--sidebar-render-width, 240px);
 	overflow: hidden;
 	background: var(--color-canvas);
 	transition: width 0.4s cubic-bezier(0.32, 0.72, 0, 1);
 	/* 与对话区的分界不再用 1px 实线 border：改成**中段实、两头淡出**的发丝线 —— 就是 `.fade-rule-v`
 	   （标记里挂在同一个元素上，原先这段是自己复刻一份渐变，现已并到那个类里）。 */
+}
+/* 拖动中关过渡：不关的话宽度会滞后指针近 100px 并在松手后追一段（阶段 0 实测：滞后 94px / 追赶 500ms） */
+.sidebar.is-resizing {
+	transition: none;
+}
+/* 把手的可见反馈 = **同一条**分界发丝线本身：hover / 拖动中把中段实线拉长、提到 ink 灰阶（不新增第二条竖线）。
+   hover 那条件加 `:not(.is-resizing)`：否则拖动中指针也在把手上，hover 规则特异性更高会盖掉拖动色 */
+.sidebar:has(.sidebar-resize-handle:hover):not(.is-resizing)::after {
+	background: linear-gradient(
+		to bottom,
+		transparent 0%,
+		var(--color-ink-faint) 18%,
+		var(--color-ink-faint) 82%,
+		transparent 100%
+	);
+}
+.sidebar.is-resizing::after {
+	background: linear-gradient(
+		to bottom,
+		transparent 0%,
+		var(--color-ink-dim) 10%,
+		var(--color-ink-dim) 90%,
+		transparent 100%
+	);
+}
+/* 把手：贴右缘内侧的 8px 透明命中区（不改变观感，只改光标与命中范围）。
+   `<hr>` 的浏览器默认边框/外边距要清掉；**高度必须显式 `auto`** —— Tailwind preflight 给 `hr` 定了
+   `height: 0`，只写 `top/bottom: 0` 会被这条具名高度覆盖，命中区高度 0 = 拖不到（CDP 合成事件也命中不了） */
+.sidebar-resize-handle {
+	position: absolute;
+	top: 0;
+	bottom: 0;
+	right: 0;
+	height: auto;
+	width: 8px;
+	margin: 0;
+	border: 0;
+	cursor: col-resize;
+	touch-action: none;
 }
 /* 收起：宽度归 0，发丝线一起不画（只宽 0 会留一条 1px 的线；聊天列能不能拿到那 1px 与收起前一致） */
 .sidebar.is-collapsed {
@@ -1306,7 +1347,7 @@ code {
 	display: none;
 }
 .sidebar-inner {
-	width: 240px;
+	width: var(--sidebar-render-width, 240px);
 	height: 100%;
 	display: flex;
 	flex-direction: column;
