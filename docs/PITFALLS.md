@@ -296,6 +296,8 @@ LAN 页重连/中途进入时，快照种子经 `messagesToUIMessages` 重建—
 `lsof -nP -iTCP:9224 -sTCP:LISTEN` 确认为空；`pgrep -fl Electron` 里除 `/Applications/*` 之外的残留也要清。
 自检小抄：连上后先 `location.href`，是 `chrome-error://` 就说明连错了实例，别怀疑业务代码。
 
+**2026-10-07 补第二种形状（更阴）**：端口空着再起，**新实例仍可能绑失败**（没查清谁还占着），此时脚本会**静默连到那个旧实例**上跑完一整轮；等旧实例一死，就剩下一个「进程在、9224/9229 都不监听」的僵尸 —— 后续脚本全报连不上，看起来像「dev 自己崩了」。判据：起完立刻 `grep -c "DevTools listening"` 或 `grep "address already in use" <dev 日志>`，**有后者就说明本轮实例没绑上**，别接着跑。`.local/tmp/layout-freedom/devctl.sh` 的 `start_dev` 已按这个判据加固（起前查端口 + 起后查日志）。
+
 ### `npm run test` 偶发失败：backend `channel-watch-extension.test.ts` 的 cursor 落盘竞态（**既有 flaky，2026-10-07 定位，未修**）
 
 症状：`npm run test`（`--workspaces` 串跑两包）偶发红，失败点是
