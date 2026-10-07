@@ -494,6 +494,10 @@ el[pk].style; // => {"--sidebar-render-width":"320px"} ← React「最后一次�
 要真把把手压住，容器得先进入 step 8（自身成为定位元素），当前 CSS 里不存在这个条件。
 （对照 X2：那次是「聊天列溢出盖住整条左栏」，修在 `.sidebar` 的 `z-index`；**是否同为栏内竞争，目前无证据**。）
 
+**为什么当初会认定是 mask（两次单点探针互相矛盾）**：在那台被污染的 dev 上，同一个探针量到「`mask-image` 生效时命中 = 容器；把它置 `none` 后命中 = 把手」——
+看起来就是因果，于是写成了结论。干净环境里同样的构造却量到「mask 生效、命中仍是把手」。**两次矛盾恰恰说明：单点探针（尤其在已被脚本反复改过的实例上）不足以定因果** ——
+下次先存下那一刻的 `getComputedStyle(容器).position`、把手 rect、`pointer-events` 与 `document.elementsFromPoint(把手中心)` 全链，再谈机制。
+
 **已知的两个方向（供下次复现时先查）**：
 1. 那一刻滚动容器是不是定位元素（`getComputedStyle(容器).position` 不是 `static` ⇒ 它就落到 step 8，而它在把手**之后**入树）；
 2. 把手的命中区高度是不是退化为 0（`hr` 与 preflight `height: 0` 那一条，见本文件），或在 `{!collapsed && …}` 下压根没渲染。
