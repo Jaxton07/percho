@@ -14,7 +14,7 @@
 | 比像素核验视觉时取样偏了、以为改动没生效 | 四 · CDP `clip.scale` 再乘一次 DPR（2026-09-29） |
 | 拖动类脚本跑完后界面卡在「拖动中」（光标仍是 col-resize、之后再拖也不动） | 四 · CDP 合成拖拽的两个卡死姿势（2026-10-07） |
 | 侧栏拖宽后把手抓不住 / 行末按钮点不到，**截图看却完全正常** | 四 · 比列宽更宽的内容溢出吃 pointer 事件（2026-10-07） |
-| `verify-layout-freedom` 的 V2 拖拽断言一片红（把手点不到） | 四 · 左栏列表「可滚 + 淡出生效」时 `.edge-fade` 的 mask 盖住把手（**2026-10-07，窄条件；常态 43/0**） |
+| `verify-layout-freedom` 的 V2 拖拽断言一片红（把手点不到） | 四 · 左栏把手偶尔命中不到 / V2 断言一片红（**2026-10-07，成因未定位；常态 43/0**） |
 | 改了代码字号档位，monaco 代码块字号纹丝不动 | 四 · monaco 只在创建编辑器时应用 options（字号必须在 props 变化时重建代码块） |
 | 注入页面的探针函数报 `SyntaxError: missing ) after argument list` | 四 · 把含反引号/`${}` 的函数塞进模板串注入（要 JSON 后再 eval） |
 | 侧栏拖一次后**整窗光标卡在 col-resize**、之后再也拖不动（刷新才恢复） | 四 · 拖拽只挂 pointerup 会在「窗口外松手」后永久卡死（2026-10-07） |
@@ -482,23 +482,29 @@ el[pk].style; // => {"--sidebar-render-width":"320px"} ← React「最后一次�
 
 **回归断言**：`scripts/verify-layout-freedom.mjs` 的 `V2-n`（把手中心最上层就是把手）、`V2-o`（栏内可见控件中心命中都落在栏内）、`V2-p`（拖到 480 松手后仍能重抓拖回）—— **修前全红、修后全绿**（把 `z-index` 临时改回 `auto` 实测过）。
 
-### 左栏列表「可滚 + 淡出生效」时，`.edge-fade` 的滚动容器会盖住 8px 拖拽把手（2026-10-07 定位；**窄条件**）
+### 左栏把手偶尔命中不到 / `verify-layout-freedom` 的 V2 断言一片红（2026-10-07，**成因未定位**、常态 43/0）
 
 **症状**：`scripts/verify-layout-freedom.mjs` 的 `V2-n`（把手中心最上层就是把手自己）与 `V2-p`（重抓把手拖回）一片红；
 `elementFromPoint(把手中心)` 拿到的是 `div.edge-fade`（左栏滚动容器）而不是 `hr.sidebar-resize-handle`。
 
-**机制**：`.edge-fade` 在**有内容可滚且滚到该侧边界**时会给容器加 `mask-image`（滚动边界淡出），而 **`mask-image` 会创建层叠上下文** ⇒
-该容器变成一个原子层，按 DOM 顺序压在只写 `position: absolute`、`z-index: auto` 的 8px 把手之上。把该容器的 `maskImage` 临时置 `none` 后命中立刻恢复 ✓
-（对照 `verify-layout-freedom.mjs` 的 X2 修复：那次是「聊天列溢出盖住整条左栏」，修在 `.sidebar` 的 `z-index`；**这是栏内的第二个成因**）。
+**一个已被实测否掉的猜想（勿再照抄）**：当时猜是「`.edge-fade` 滚到边界时加 `mask-image` ⇒ 创建层叠上下文 ⇒ 按 DOM 序压在绝对定位把手上」。
+**复审方补测（2026-10-07）把触发条件强行凑齐后否掉了它**：往左栏注入内容使列表可滚（`scrollHeight 1125 / clientHeight 564`）、
+`data-fade-bottom="true"`、`mask-image ≠ none`，此时 `elementFromPoint(把手中心)` **仍是 `hr.sidebar-resize-handle`**。
+原因：`.edge-fade` **没有任何 `position` 规则**（是 `static` 流内元素），它按流内步骤绘制，而绝对定位的把手在 step 8，天然在它**之上**；
+要真把把手压住，容器得先进入 step 8（自身成为定位元素），当前 CSS 里不存在这个条件。
+（对照 X2：那次是「聊天列溢出盖住整条左栏」，修在 `.sidebar` 的 `z-index`；**是否同为栏内竞争，目前无证据**。）
 
-**触发条件很窄，所以时有时无**：只在「左栏列表可滚 → 滚到边界 → mask 生效」时出现。
-实测：做完验收时 dev 的左栏（我的样本会话 + 展开的分组）刚好把这个条件凑齐 → 12 条红；
-把 dev 硬重启、回到常态（`sidebarWidth` 480、样本会话清理后左栏不再溢出）→ `verify-layout-freedom.mjs all` **PASS 43 / FAIL 0 / SKIP 1**，
+**已知的两个方向（供下次复现时先查）**：
+1. 那一刻滚动容器是不是定位元素（`getComputedStyle(容器).position` 不是 `static` ⇒ 它就落到 step 8，而它在把手**之后**入树）；
+2. 把手的命中区高度是不是退化为 0（`hr` 与 preflight `height: 0` 那一条，见本文件），或在 `{!collapsed && …}` 下压根没渲染。
+
+**触发条件很窄，所以时有时无**：验收当时 dev 的左栏（样本会话 + 展开的分组）刚好能复现 → 12 条红；
+把 dev 硬重启、回到常态 → `verify-layout-freedom.mjs all` **PASS 43 / FAIL 0 / SKIP 1**，
 此刻左栏 `scrollHeight == clientHeight`、`mask-image: none`、把手命中正常。
 
-**结论与建议**：这是**真实的**窄条件缺陷（不是任何功能引入的：左栏/把手相关代码在本任务里一行没动），但常态下摸不到。
-真要彻底消除脆弱面，一行即可：`.sidebar-resize-handle { z-index: 1 }`（把手是 `.sidebar` 的直接子元素，抬一层就够）；
-改完用「把某个分组展开到列表可滚 + 滚到边界」构造状态复跑 `V2-n/V2-p` 就能验。（本次**未改**，因为它属于左栏拖拽特性，不在「自定义字号」范围内。）
+**结论与建议**：现象真实，但**成因未定位**（不是本次「自定义字号」引入的：左栏/把手相关代码这次一行未改；也解释不了「只在该实例上红」）。
+若下次真复现，**先把那一刻的 `getComputedStyle` / rect 存下来**（那个实例的状态一旦消失就再也查不了——本次就是这样）。
+真要加固，一行即可：`.sidebar-resize-handle { z-index: 1 }`（把手是 `.sidebar` 的直接子元素，抬一层就够）。（本次**未改**，因为它属于左栏拖拽特性。）
 
 **顺手记两条验收纪律（这次我因此误报过一轮「既有 bug」）**：
 1. **CDP 验收前停 dev → 硬重启**：长期跑着的实例状态已被历次脚本改过（store、inline style、滚动位置、HMR），红不一定是产品问题。
