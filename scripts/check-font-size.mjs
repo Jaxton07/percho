@@ -27,6 +27,7 @@
  *   node scripts/check-font-size.mjs code-sizes                # 代码字号四档实测（monaco/内联/diff/界面文字对照）
  *   node scripts/check-font-size.mjs presets <outDir> ui|code   # 四档截图矩阵（ui-12 / ui-13 / … 或 code-11 / …）
  *   node scripts/check-font-size.mjs overflow                   # 每档不裁切/不溢出断言（不依赖截图）
+ *   node scripts/check-font-size.mjs change-cost                # 换档代价（真实会话：耗时/帧间隔/跳位）+ 顺序无关性
  *
  * 判据两层：**主 = 几何清单**（每个含文本元素的 rect/字号/行高 + 被排除子树的字号行高，round 0.01px 后逐字段相等，无容差），
  * **次 = 像素**（拓非字号类的连带变化；允许抗锯齿级抖动，理由见下）。缺 geometry.json 时主判据直接判失败（除非显式 `--pixel-only`）。
@@ -547,8 +548,19 @@ function cleanFixtures() {
 		console.log(`  已删除：${relative(REPO, item.file)}`);
 	}
 	rmSync(FIXTURE_MANIFEST);
+	// 会话目录里除样本外还有 app 写的 traces/ 子目录 → 不能只看「目录空不空」；
+	// 先确认没有别的 .jsonl，再把整个目录删掉（连同 traces）
 	const dir = resolve(manifest.files[0].file, "..");
-	if (existsSync(dir) && readdirSync(dir).length === 0) rmSync(dir, { recursive: true });
+	if (existsSync(dir)) {
+		const others = readdirSync(dir).filter((f) => f.endsWith(".jsonl"));
+		if (others.length > 0) fail(`样本目录里还有别的会话文件，拒绝整目录删除：${others.join(", ")}`);
+		rmSync(dir, { recursive: true });
+		console.log(`  已删除样本会话目录：${dir}`);
+	}
+	if (existsSync(FIXTURE_CWD)) {
+		rmSync(FIXTURE_CWD, { recursive: true });
+		console.log(`  已删除样本 cwd：${FIXTURE_CWD}`);
+	}
 	console.log("样本已清理");
 }
 
@@ -2073,6 +2085,200 @@ async function runOverflow() {
 }
 
 /* ==========================================================================
+ * 10. change-cost：换档位的代价（真实会话里的重建耗时 / 帧间隔）与顺序无关性
+ * ========================================================================== */
+
+/**
+ * 为什么要有这条：代码字号换档位会**重建**该消息的 markdown 子树（见 PITFALLS 的 monaco 条目），
+ * 所以要量清楚「用户能感知到什么」：切档到全部生效要多久、掉几帧、有没有跳位；以及换档位与切会话的
+ * 先后顺序是否都正确。plan 明确「只记录不优化」，这里就是记录用的探针（读 `evidence/change-cost.json`）。
+ */
+const MONACO_STATE = `(() => {
+	const lines = [...document.querySelectorAll(".monaco-editor .view-line")];
+	return JSON.stringify({
+		editors: document.querySelectorAll(".monaco-editor").length,
+		lines: lines.length,
+		sizes: [...new Set(lines.map((l) => getComputedStyle(l).fontSize))],
+		scrollTop: Math.round(document.querySelector(".chat-scrollbar")?.scrollTop ?? -1),
+		scrollHeight: document.querySelector(".chat-scrollbar")?.scrollHeight ?? -1,
+	});
+})()`;
+
+/** 真实会话里有 monaco 的那个：按**文件尾部 300KB** 的 fence 数挑（尾部=最近消息=一打开就在挂载窗口里） */
+function pickSessionWithTailCode() {
+	const root = join(DEV_AGENT_DIR, "sessions");
+	const candidates = [];
+	for (const dir of readdirSync(root)) {
+		const full = join(root, dir);
+		if (!statSync(full).isDirectory()) continue;
+		for (const file of readdirSync(full)) {
+			if (!file.endsWith(".jsonl")) continue;
+			const path = join(full, file);
+			const size = statSync(path).size;
+			if (size < 100_000 || size > 6_000_000) continue;
+			const tail = readFileSync(path).subarray(-300_000).toString("utf8");
+			const fences = Math.floor((tail.match(/```/g) ?? []).length / 2);
+			if (fences >= 2) candidates.push({ path, size, fences });
+		}
+	}
+	candidates.sort((a, b) => b.fences - a.fences || b.size - a.size);
+	return candidates;
+}
+
+async function runChangeCost() {
+	const candidates = pickSessionWithTailCode();
+	if (candidates.length === 0) fail("找不到「最近消息里有代码块」的真实会话（样本会话不算）", 2);
+	const cdp = await connect();
+	await cdp.send("Emulation.setFocusEmulationEnabled", { enabled: true });
+	const read = async () => JSON.parse(await cdp.evaluate(MONACO_STATE));
+	const meta = await cdp
+		.evaluate(
+			`(async () => { const list = await window.pi.listAllSessions(); return JSON.stringify(list.map((s) => ({ id: s.sessionId, file: s.sessionFile }))); })()`,
+		)
+		.then(JSON.parse);
+
+	/** 打开并滚到能看到 monaco 的位置（真实长会话有挂载窗口，底部往往看不到代码块） */
+	const open = async (session) => {
+		await cdp.evaluate(
+			`window.PerchoUI.stores.useProjectsStore.getState().openSession(${JSON.stringify({ sessionFile: session.file, sessionId: session.id })})`,
+		);
+		await sleep(3500);
+		for (let i = 0; i < 24; i++) {
+			const state = await read();
+			if (state.editors > 0) return state;
+			await cdp.evaluate(
+				`(() => { const sc = document.querySelector(".chat-scrollbar"); if (!sc) return false; sc.scrollTop = Math.max(0, sc.scrollTop - 700); return true; })()`,
+			);
+			await sleep(400);
+		}
+		return read();
+	};
+
+	const results = { candidates: candidates.slice(0, 4), switches: [], order: {} };
+	let target = null;
+	for (const c of candidates) {
+		const found = meta.find((m) => m.file === c.path);
+		if (!found) continue;
+		const state = await open(found);
+		if (state.editors > 0) {
+			target = { ...c, ...found };
+			console.log(
+				`样本会话：${c.path.split("/").pop()}（尾部 ${c.fences} 个代码块）→ 可见 ${state.editors} 个 monaco / ${state.lines} 行`,
+			);
+			break;
+		}
+		console.log(`  ${c.fences} 个尾部代码块的会话可见区没 monaco，试下一个`);
+	}
+	if (!target) fail("候选会话的可见区都没有 monaco", 2);
+
+	/** 设档位 → 等到所有可见 monaco 行都变成目标字号；同时记录期间最长帧间隔 */
+	const measure = async (axis, px, expectedMonacoSize) => {
+		const before = await read();
+		await cdp.evaluate(`(() => {
+			window.__frameWatch = { max: 0, last: performance.now(), stop: false };
+			const tick = (t) => { const w = window.__frameWatch; if (w.stop) return; w.max = Math.max(w.max, t - w.last); w.last = t; requestAnimationFrame(tick); };
+			requestAnimationFrame(tick);
+			return true;
+		})()`);
+		const t0 = Date.now();
+		await cdp.evaluate(
+			`window.PerchoUI.stores.useUiPreferencesStore.getState().${axis === "code" ? "setCodeFontSize" : "setUiFontSize"}(${px})`,
+		);
+		let elapsed = null;
+		for (let i = 0; i < 200; i++) {
+			await sleep(40);
+			const now = await read();
+			const ok = axis === "code" ? now.sizes.every((x) => x === `${expectedMonacoSize}px`) : true;
+			if (ok && now.sizes.length > 0) {
+				elapsed = Date.now() - t0;
+				break;
+			}
+		}
+		const after = await read();
+		const maxFrameGapMs = await cdp.evaluate(
+			`(() => { window.__frameWatch.stop = true; return Math.round(window.__frameWatch.max); })()`,
+		);
+		const row = {
+			axis,
+			px,
+			elapsedMs: elapsed,
+			maxFrameGapMs,
+			editorsBefore: before.editors,
+			editorsAfter: after.editors,
+			linesBefore: before.lines,
+			linesAfter: after.lines,
+			sizesAfter: after.sizes,
+			scrollJump: after.scrollTop - before.scrollTop,
+		};
+		console.log(
+			`  ${axis}-${px}: ${row.elapsedMs}ms / 最长帧间隔 ${row.maxFrameGapMs}ms / monaco ${row.editorsAfter} 个 ${row.linesAfter} 行 / 字号 ${row.sizesAfter.join("/")} / scrollJump ${row.scrollJump}`,
+		);
+		if (row.elapsedMs === null)
+			problems.push(`${axis}-${px} 没等到目标字号（sizes=${row.sizesAfter.join("/")}）`);
+		return row;
+	};
+
+	const problems = [];
+	for (const [px, expected] of [
+		[16, 15],
+		[11, 11],
+		[12.5, 12],
+	]) {
+		results.switches.push(await measure("code", px, expected));
+	}
+	results.switches.push(await measure("ui", 17, 0)); // 对照：界面字号不重建
+	await cdp.evaluate(`window.PerchoUI.stores.useUiPreferencesStore.getState().setUiFontSize(13)`);
+
+	// 顺序无关性：用「真实会话（有 monaco）+ 代码样本」两个会话交替
+	const fixture = FIXTURES.find((f) => f.key === "code");
+	const openFixture = async () => {
+		await cdp.evaluate(
+			`window.PerchoUI.stores.useProjectsStore.getState().openSession(${JSON.stringify({ sessionFile: fixtureFile(fixture), sessionId: fixture.sessionId })})`,
+		);
+		await sleep(2500);
+	};
+	await cdp.evaluate(`window.PerchoUI.stores.useUiPreferencesStore.getState().setCodeFontSize(16)`);
+	await openFixture();
+	results.order.setThenSwitch = await read(); // 先改字号 → 新挂载的必须是新档位（15px）
+	await cdp.evaluate(`window.PerchoUI.stores.useUiPreferencesStore.getState().setCodeFontSize(11)`);
+	await sleep(800);
+	results.order.switchThenSet = await read(); // 已挂载后改字号 → 11px
+	await cdp.evaluate(`window.PerchoUI.stores.useUiPreferencesStore.getState().setCodeFontSize(14)`);
+	await sleep(800);
+	results.order.twoOpenCurrent = await read(); // 两个会话都在工作区：当前必须是 13px
+	await open(target);
+	results.order.twoOpenOther = await read(); // 切回另一个（上次挂载时是 16 档）→ 也必须是 13px
+	for (const [name, state] of Object.entries(results.order)) {
+		console.log(
+			`  顺序-${name}: monaco ${state.editors} 个 ${state.lines} 行 / 字号 ${state.sizes.join("/")}`,
+		);
+		if (state.lines === 0) problems.push(`顺序-${name} 没有可见代码块，量不到字号`);
+	}
+	const expectOrder = {
+		setThenSwitch: "15px",
+		switchThenSet: "11px",
+		twoOpenCurrent: "13px",
+		twoOpenOther: "13px",
+	};
+	for (const [name, want] of Object.entries(expectOrder)) {
+		const got = results.order[name].sizes;
+		if (!got.includes(want)) problems.push(`顺序-${name} 期望含 ${want}，实测 ${got.join("/")}`);
+	}
+
+	await cdp.evaluate(`window.PerchoUI.stores.useUiPreferencesStore.getState().setCodeFontSize(12.5)`);
+	cdp.ws.close();
+	const file = join(TMP_DIR, "evidence/change-cost.json");
+	mkdirSync(resolve(file, ".."), { recursive: true });
+	writeFileSync(file, `${JSON.stringify(results, null, 2)}\n`, "utf8");
+	console.log(`→ ${relative(REPO, file)}`);
+	if (problems.length > 0) {
+		for (const p of problems) console.error(`✗ ${p}`);
+		fail("换档代价/顺序无关性未过（见上）");
+	}
+	console.log("✓ 切档耗时/帧间隔已记录；顺序无关性四条断言全过");
+}
+
+/* ==========================================================================
  * 入口
  * ========================================================================== */
 
@@ -2109,6 +2315,9 @@ try {
 			if (!arg) fail("geometry 需要 outDir：node scripts/check-font-size.mjs geometry <outDir>", 2);
 			await runGeometry(resolve(arg), { fromStore: flags.has("--from-store") });
 			break;
+		case "change-cost":
+			await runChangeCost();
+			break;
 		case "presets":
 			if (!arg || !arg2) fail("presets 需要：presets <outDir> <ui|code>", 2);
 			await runPresets(arg, arg2);
@@ -2140,7 +2349,7 @@ try {
 			break;
 		default:
 			fail(
-				"用法：inventory [outFile] [--expect-zero] | reconcile [oraclePath] | seed-state | restore-state | seed-fixtures | clean-fixtures | baseline <outDir> [--from-store] | geometry <outDir> [--from-store] | compare <beforeDir> <afterDir> [--pixel-only] [--allow-change=<sceneId,...>] | diff <a.png> <b.png> | presets <outDir> <ui|code> | overflow | code-sizes | side-by-side <before> <after> <sceneId> [out.png]（见文件头）",
+				"用法：inventory [outFile] [--expect-zero] | reconcile [oraclePath] | seed-state | restore-state | seed-fixtures | clean-fixtures | baseline <outDir> [--from-store] | geometry <outDir> [--from-store] | compare <beforeDir> <afterDir> [--pixel-only] [--allow-change=<sceneId,...>] | diff <a.png> <b.png> | presets <outDir> <ui|code> | overflow | change-cost | code-sizes | side-by-side <before> <after> <sceneId> [out.png]（见文件头）",
 				2,
 			);
 	}

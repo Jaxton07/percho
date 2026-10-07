@@ -14,7 +14,7 @@
 | 比像素核验视觉时取样偏了、以为改动没生效 | 四 · CDP `clip.scale` 再乘一次 DPR（2026-09-29） |
 | 拖动类脚本跑完后界面卡在「拖动中」（光标仍是 col-resize、之后再拖也不动） | 四 · CDP 合成拖拽的两个卡死姿势（2026-10-07） |
 | 侧栏拖宽后把手抓不住 / 行末按钮点不到，**截图看却完全正常** | 四 · 比列宽更宽的内容溢出吃 pointer 事件（2026-10-07） |
-| `verify-layout-freedom` 的 V2 拖拽断言又红了、把手点在别的元素上 | 四 · `.edge-fade` 的 mask 让滚动容器压住左栏把手（**2026-10-07 定位，未修**） |
+| `verify-layout-freedom` 的 V2 拖拽断言一片红（把手点不到） | 四 · 长期跑着的 dev 状态污染 → 误报成「既有 bug」（**2026-10-07 复盘：硬重启后 43/44 全绿**） |
 | 改了代码字号档位，monaco 代码块字号纹丝不动 | 四 · monaco 只在创建编辑器时应用 options（字号必须在 props 变化时重建代码块） |
 | 注入页面的探针函数报 `SyntaxError: missing ) after argument list` | 四 · 把含反引号/`${}` 的函数塞进模板串注入（要 JSON 后再 eval） |
 | 侧栏拖一次后**整窗光标卡在 col-resize**、之后再也拖不动（刷新才恢复） | 四 · 拖拽只挂 pointerup 会在「窗口外松手」后永久卡死（2026-10-07） |
@@ -482,23 +482,23 @@ el[pk].style; // => {"--sidebar-render-width":"320px"} ← React「最后一次�
 
 **回归断言**：`scripts/verify-layout-freedom.mjs` 的 `V2-n`（把手中心最上层就是把手）、`V2-o`（栏内可见控件中心命中都落在栏内）、`V2-p`（拖到 480 松手后仍能重抓拖回）—— **修前全红、修后全绿**（把 `z-index` 临时改回 `auto` 实测过）。
 
-### `.edge-fade` 的 mask 让滚动容器压住左栏把手：V2 拖拽断言二次变红（2026-10-07 定位，**未修**）
+### 拿长期跑着的 dev 做 CDP 验收 → 我把「状态污染」误报成了「既有 bug」（2026-10-07 复盘）
 
-**症状**：左栏把手拖不动了 —— `document.elementFromPoint(把手中心)` 拿到的是 `div.edge-fade`（左栏的滚动容器）而不是 `hr.sidebar-resize-handle`；`scripts/verify-layout-freedom.mjs` 的 `V2-n`（把手中心最上层就是把手）与 `V2-p`（拖到 480 后仍能重抓拖回）**全红**，而同一份断言在 X2 修复后是全绿的。
+**经过**：做「自定义字号」收尾回归时跑 `verify-layout-freedom.mjs all`，`V2-n`（把手中心最上层就是把手自己）在 240/360/480 三种宽度全红，
+`elementFromPoint(把手中心)` 稳定返回 `div.edge-fade`（左栏滚动容器）而不是 `hr.sidebar-resize-handle`；我临时把该容器的 `mask-image` 摘掉，命中就恢复了 ——
+于是判定为「`.edge-fade` 的 mask 建了层叠上下文、压住 8px 把手」这个**产品 bug**，还写进了本文件。
 
-**机制**（与 X2 不是同一个原因，是**第二个**「把手被盖住」的成因）：X2 修的是「左栏整体被聊天列溢出盖住」→ `z-index: 1` 加在 `.sidebar` 上。但**栏内**还有一层竞争：滚出滚动边界时 `.edge-fade` 会给左栏滚动容器加 `mask-image`（横向/纵向淡出），而 **`mask-image` 会创建层叠上下文** ⇒ 这个容器变成一个原子层，按 DOM 顺序（在把手之后）**压住**只写了 `position: absolute` 的 8px 把手。只在**淡出生效时**（列表可滚且滚到了边界 —— 也就是长会话列表的常态）才出现，所以时有时无、截图完全正常。
+**复核（同一脚本、同一个 dev 应用，只差「硬重启」这一步）**：把 dev 停掉、重起、`sidebarWidth` 设为常态 480 后再跑 → **合计 44 条：PASS 43 / FAIL 0 / SKIP 1**，
+`V2-n` 在 **240 / 360 / 480 全部 ✅**、`V2-p` ✅。⇒ 之前那批红是**长期 dev 实例（一路 HMR / 被脚本反复改过 store 与 inline style）的状态污染**，
+不是产品缺陷；`elementFromPoint` 那条「证据」也是在被污染的状态里量的（mask 摘掉后命中恢复，只能说明**当时那一刻**层叠顺序如此）。
 
-**复现（不必跑脚本，两行）**：
-```js
-const h = document.querySelector("[data-sidebar-resize-handle]").getBoundingClientRect();
-document.elementFromPoint(h.left + h.width / 2, h.top + 100);           // → div.edge-fade（被盖住）
-document.querySelector(".sidebar .edge-fade").style.maskImage = "none";  // 临时摘掉 mask
-document.elementFromPoint(h.left + h.width / 2, h.top + 100);           // → hr.sidebar-resize-handle ✓
-```
+**教训（正是本文件另一条「dev 里 HMR 会让 store 订阅冻结：验收前要硬重启」的同一类）**：
+1. **CDP 验收前先停 dev → 重起**，尤其跑过一轮截图/注入/改过 store 的实例；「同一实例接着跑」得到的红不能直接当产品结论。
+2. 单点探针（`elementFromPoint` / 临时改一条 CSS 看是否恢复）只能证明**那一刻**的因果，**不能替代**跑一遍完整脚本 —— 本次就是单点探针把结论带偏了。
+3. 报「既有 bug」之前，至少做一次「干净重启后仍复现」的确认；否则一律写成「疑似，待干净环境复核」。
 
-**建议修法**（二选一，都是 1 行级）：① `.sidebar-resize-handle { z-index: 1 }`（把手是 `.sidebar` 的直接子元素，抬一层即够）；② 把把手移出被 mask 的容器 / 让容器不建层叠上下文（`isolation` 之类改不回来，mask 必建）。修完请重跑 `node scripts/verify-layout-freedom.mjs all` 的 V2 段（需 dev 带 `9224 + --inspect=9229` 双端口）。
-
-**未修的原因**：本条目是**做「自定义字号」时跑阶段 4 回归发现的**，与字号改动无关（`globals.css` 的非字号行 diff 为空，字号 token 也不可能影响层叠顺序）。修它属于左栏拖拽特性的范围，留给对应会话（或用户拍板顺手修）。
+**顺带留一条（可选加固，非必需）**：`.edge-fade` 的 mask 确实会创建层叠上下文，而左栏把手是 8px 宽、`z-index: auto`、贴在滚动容器右缘 ——
+理论上存在「被同栏内滚动容器压住」的脆弱面。若哪天真的复现抓不住把手，一行 `.sidebar-resize-handle { z-index: 1 }` 即可（本次**未改**，因为没有可复现的故障）。
 
 ### Tailwind preflight 的 `hr { height: 0 }` 会盖掉 `top: 0; bottom: 0`（2026-10-07，拖拽把手命中区高度 0）
 
@@ -526,6 +526,8 @@ document.elementFromPoint(h.left + h.width / 2, h.top + 100);           // → h
 
 **代价（实测，真实会话 9 个 monaco / 42 行可见）**：切档到全部生效 **98–131ms**，期间**最长帧间隔 50–58ms**（约掉 1 帧）；对照：只改界面字号（不重建）**47–55ms / 42ms**。
 另两条连带影响：① 卡片内的局部视图态会被重置（如 mermaid 卡的「源码/预览」切回预览）；② 内容高度变化会让贴底的滚动位置位移（实测 scrollTop +250px，视觉上底部保持贴底，不是跳位 bug）。
+
+**查证手法（本次被骗过一次，记一笔）**：**在压缩产物里找「某方法有没有被调用」不能用 `rg "updateOptions\("`** —— minified 里是 `a.updateOptions)||r.call(a, …)`，属性访问后面跟的是 `)` 而不是 `(`。要 `rg -o "updateOptions" <bundle>` 再逐个看上下文（第一版结论「库里没有任何 updateOptions 调用」就是这么来的）。
 
 **另一个容易踩的坑**：monaco 的 `.monaco-scrollable-element.scrollWidth` 是 **16777214** 的占位值（内部最大宽 hack），拿它判「有没有横向溢出」会永远为真；要判横向滚动请读它自己的 `.scrollbar.horizontal` 的 computed `visibility`。
 
