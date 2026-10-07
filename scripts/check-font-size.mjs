@@ -18,10 +18,11 @@
  *   node scripts/check-font-size.mjs baseline <outDir>     # 5 场景截图 + 几何清单 + sha256（dev 需在跑）
  *   node scripts/check-font-size.mjs geometry <outDir>     # 只要几何清单（主判据，不截图；dev 需在跑）
  *   node scripts/check-font-size.mjs compare <before> <after>  # 逐像素判等（默认档零差异，spec D8）
+ *   node scripts/check-font-size.mjs compare <before> <after> --pixel-only  # 只跑像素（写明主判据未跑）
  *   node scripts/check-font-size.mjs diff <a.png> <b.png>  # 单图差异统计（像素数/占比/最大通道差/包围盒）
  *
- * 判据两层：**主 = 几何清单**（每个含文本元素的 rect/字号/行高，round 0.01px 后逐字段相等，无容差），
- * **次 = 像素**（拓非字号类的连带变化；允许抗锯齿级抖动，理由见下）。
+ * 判据两层：**主 = 几何清单**（每个含文本元素的 rect/字号/行高 + 被排除子树的字号行高，round 0.01px 后逐字段相等，无容差），
+ * **次 = 像素**（拓非字号类的连带变化；允许抗锯齿级抖动，理由见下）。缺 geometry.json 时主判据直接判失败（除非显式 `--pixel-only`）。
  *
  * 一次完整跑：停 dev → `seed-state` → `seed-fixtures` → 启 dev → `baseline .local/tmp/font-size/before`
  * （目录只在启动时读一次，所以 seed 后必须重启 dev）。
@@ -638,6 +639,48 @@ async function openFixture(cdp, key) {
 	return meta;
 }
 
+/**
+ * 造一条**固定内容、不会自己消失**的 toast（场景 06 专用）。
+ *
+ * 为什么要这么麻烦：`.toast` / `.t-title` / `.t-sub` 在 46 行 CSS 里都有字号（12.5px / 11px），
+ * 但它们平时总是已退场的浮层 —— 不主动造一条，这整块字体就“改了也没人管”。
+ *
+ * 做法：toasts store 不在 `PerchoUI.stores` 宿主 API 里，但 dev 下 Vite 的模块表让
+ * `import("/src/stores/toasts.ts")` 拿到的是**同一个单例**（仅 dev 可用，本脚本本来就只在 dev 跑）。
+ * TTL 是 store 里写死的 `setTimeout(..., 4500)`：把它屏蔽掉，toast 就待在页面上不会攒。
+ * 收尾用 `RESET_TOASTS` 还原 setTimeout 并逐条 dismiss（否则下次 baseline 的场景 1 会卡在等 toast 退场）。
+ */
+const TOASTS_MODULE = "/src/stores/toasts.ts";
+
+async function pushFixedToast(cdp) {
+	await cdp.evaluate(`(() => {
+		if (!window.__fontSizeCheckRealSetTimeout) {
+			const real = window.setTimeout;
+			window.__fontSizeCheckRealSetTimeout = real;
+			window.setTimeout = (fn, ms, ...rest) => (ms === 4500 ? 0 : real(fn, ms, ...rest));
+		}
+		return true;
+	})()`);
+	const count = await cdp.evaluate(`(async () => {
+		const m = await import(${JSON.stringify(TOASTS_MODULE)});
+		m.useToastsStore.getState().push("warning", "toast.closeFailed", "font-size fixture · 固定内容");
+		return m.useToastsStore.getState().toasts.length;
+	})()`);
+	if (count !== 1) throw new Error(`期望恰好 1 条 toast，实际 ${count} 条`);
+}
+
+/** 还原 setTimeout 并清空所有 toast（每次走查开头与结尾各调一次，保证可反复跑） */
+const RESET_TOASTS = `(async () => {
+	if (window.__fontSizeCheckRealSetTimeout) {
+		window.setTimeout = window.__fontSizeCheckRealSetTimeout;
+		delete window.__fontSizeCheckRealSetTimeout;
+	}
+	const m = await import(${JSON.stringify(TOASTS_MODULE)});
+	const store = m.useToastsStore.getState();
+	for (const t of store.toasts) store.dismiss(t.id);
+	return m.useToastsStore.getState().toasts.length;
+})()`;
+
 /** 5 个场景：覆盖 spec 里最容易被字号迁移漏掉的几类文本 */
 const SCENES = [
 	{
@@ -699,6 +742,20 @@ const SCENES = [
 			return { fixture: meta.name };
 		},
 	},
+	{
+		id: "06-toast",
+		// 这条场景的 toast 是被钉住的（TTL 被屏蔽），所以主循环不能再等它退场
+		keepsToast: true,
+		desc: "通知卡（.toast / .t-title / .t-sub / 严重度 glyph —— 其余场景里它总是已退场的浮层）",
+		setup: async (cdp) => {
+			const meta = await openFixture(cdp, "markdown");
+			await waitFor(cdp, visible(".markdown-body table"), "markdown 表格");
+			await waitForNoToasts(cdp); // 先等扩展通知（channel-watch）退场，免得两条混在一起（这条在推 pin 之前）
+			await pushFixedToast(cdp);
+			await waitFor(cdp, `document.querySelectorAll(".toast").length === 1`, "固定内容的 toast 出现");
+			return { fixture: `${meta.name} + 固定 toast（t-title/t-sub）` };
+		},
+	},
 ];
 
 /**
@@ -709,34 +766,40 @@ const SCENES = [
  * 或浅色文本上的回归可能整块被噪声吞掉。所以主判据换成这份清单：round 到 0.01px 后**逐字段相等**，
  * 不设任何容差；像素比对降为第二判据（拓「非字号类」的连带变化，如误改 padding/层序）。
  *
- * 收什么：**含直接文本子节点的元素**（文本最终都落在这些节点的字号/行高/盒子上），每条记
+ * 收什么（`entries`）：**含直接文本子节点的元素**（文本最终都落在这些节点的字号/行高/盒子上），每条记
  * path + 文本前缀 + rect + fontSize + lineHeight；另加一条合成项 `@scroller:chat`（滚动容器的
  * rect 与 scrollHeight/clientHeight，用来拓「整体排版变高/变矮」这类只有祖先看得出的变化）。
  *
  * 排除什么（都写在这里，便于复核）：
- * - `.toast` / `.toast-overflow`：扩展通知是时间相关浮层（脚本已等它们离场，但保险起见连子树不管）
+ * - `.toast` / `.toast-overflow`：扩展通知是时间相关浮层
  * - `.turn-diff-timer` / `.turn-diff-timer-num`：轮末计时数字（回放里是静态的，运行时会跳秒）
  * - 非元素节点、文本为空白或长度为 0 的节点
- * - 不做其他排除：display:none / 推出视口的元素**照收**（rect 全是 0 或视口外坐标也稳定）——
+ * - **只**排除不稳的 rect，**不**排除字号/行高：这些子树里含文本的元素进 `excluded`（只记
+ *   fontSize/lineHeight，不记 rect）——否则「排除」就变成「这里改了字号没人管」。真要拓它们的
+ *   盒子/像素，看 06-toast 场景（把一条固定内容的 toast 钉住，连像素一起收）。
+ * - 除此之外不做排除：display:none / 推出视口的元素**照收**（rect 全是 0 或视口外坐标也稳定）——
  *   右侧变更浮层关着时就在视口外（x=1320），它的 rect 同样是确定性信号，不要为了「好看」滤掉。
  */
 const COLLECT_GEOMETRY = `(() => {
 	const SKIP = ".toast, .toast-overflow, .turn-diff-timer, .turn-diff-timer-num";
 	const round = (v) => Math.round(v * 100) / 100;
-	const out = [];
 	const tag = (el) => {
 		const cls = (el.getAttribute("class") || "").trim().split(/\\s+/).slice(0, 2).filter(Boolean).join(".");
 		return el.tagName.toLowerCase() + (el.id ? "#" + el.id : "") + (cls ? "." + cls : "");
 	};
-	const walk = (el, path) => {
-		if (el.matches(SKIP)) return;
-		const children = [...el.children];
-		const text = [...el.childNodes]
+	const ownText = (el) =>
+		[...el.childNodes]
 			.filter((n) => n.nodeType === 3)
 			.map((n) => n.textContent.trim())
 			.filter(Boolean)
 			.join(" ")
 			.slice(0, 40);
+	const out = [];
+	const excluded = [];
+	const walk = (el, path) => {
+		if (el.matches(SKIP)) return;
+		const children = [...el.children];
+		const text = ownText(el);
 		if (text) {
 			const rect = el.getBoundingClientRect();
 			const cs = getComputedStyle(el);
@@ -751,6 +814,23 @@ const COLLECT_GEOMETRY = `(() => {
 		children.forEach((child, i) => walk(child, path + ">" + tag(child) + ":nth-child(" + (i + 1) + ")"));
 	};
 	[...document.body.children].forEach((child, i) => walk(child, tag(child) + ":nth-child(" + (i + 1) + ")"));
+
+	// 被排除的子树：只收字号/行高（rect 不稳），但也是判据的一部分
+	let rootIndex = 0;
+	for (const root of document.querySelectorAll(SKIP)) {
+		if (root.parentElement?.closest(SKIP)) continue; // 只从最外层开始，免得子节点被重复收一遍
+		rootIndex += 1;
+		const walkExcluded = (el, path, isRoot) => {
+			const text = ownText(el);
+			if (isRoot || text) {
+				const cs = getComputedStyle(el);
+				excluded.push({ path, text, fontSize: cs.fontSize, lineHeight: cs.lineHeight });
+			}
+			[...el.children].forEach((c, i) => walkExcluded(c, path + ">" + tag(c) + ":nth-child(" + (i + 1) + ")", false));
+		};
+		walkExcluded(root, "@excluded:" + rootIndex + ":" + tag(root), true);
+	}
+
 	const scroller = document.querySelector(".chat-scrollbar");
 	if (scroller) {
 		const rect = scroller.getBoundingClientRect();
@@ -763,7 +843,7 @@ const COLLECT_GEOMETRY = `(() => {
 			scroll: { top: round(scroller.scrollTop), height: round(scroller.scrollHeight), client: round(scroller.clientHeight) },
 		});
 	}
-	return JSON.stringify({ count: out.length, entries: out });
+	return JSON.stringify({ count: out.length, entries: out, excluded });
 })()`;
 
 /**
@@ -821,12 +901,13 @@ async function runSceneWalk(outDir, { capture = true } = {}) {
 
 	await cdp.evaluate(FRAME_FIX);
 	await waitFor(cdp, `document.querySelector(".sidebar")`, "主界面");
+	await cdp.evaluate(RESET_TOASTS); // 上次走查可能留下了固定 toast（防重跑时场景 1 卡在等 toast 退场）
 
 	const scenes = [];
 	for (const scene of SCENES) {
 		console.log(`▸ ${scene.id}：${scene.desc}`);
 		const extra = (await scene.setup(cdp)) ?? {};
-		await waitForNoToasts(cdp);
+		if (!scene.keepsToast) await waitForNoToasts(cdp);
 		await cdp.evaluate(FRAME_FIX); // 场景切换可能带来新挂载的动画/过渡，重新冻结一次
 		await cdp.evaluate(BLUR);
 		const parked = await parkMouse(cdp, viewport);
@@ -836,6 +917,8 @@ async function runSceneWalk(outDir, { capture = true } = {}) {
 		const raw = await settleGeometry(cdp);
 		const geometry = JSON.parse(raw);
 		const record = { id: scene.id, desc: scene.desc, park: parked, ...extra, geometry };
+		const excludedNote =
+			geometry.excluded.length > 0 ? `｜排除项（只比字号行高）${geometry.excluded.length} 条` : "";
 		if (capture) {
 			const file = join(outDir, `${scene.id}.png`);
 			const shot = await captureStable(cdp, file, viewport);
@@ -844,14 +927,15 @@ async function runSceneWalk(outDir, { capture = true } = {}) {
 			record.frames = shot.frames;
 			record.sha256 = shot.sha256;
 			console.log(
-				`  已存 ${scene.id}.png（${Math.round(shot.bytes / 1024)}KB, ${shot.frames} 帧内稳定）｜几何 ${geometry.count} 条`,
+				`  已存 ${scene.id}.png（${Math.round(shot.bytes / 1024)}KB, ${shot.frames} 帧内稳定）｜几何 ${geometry.count} 条${excludedNote}`,
 			);
 		} else {
-			console.log(`  几何 ${geometry.count} 条（未截图）`);
+			console.log(`  几何 ${geometry.count} 条${excludedNote}（未截图）`);
 		}
 		scenes.push(record);
 	}
 
+	await cdp.evaluate(RESET_TOASTS); // 拆掉场景 06 的固定 toast，并还原 setTimeout
 	await cdp.evaluate(`window.PerchoUI.stores.useSettingsStore.getState().setOpen(false)`);
 	cdp.ws.close();
 
@@ -864,6 +948,7 @@ async function runSceneWalk(outDir, { capture = true } = {}) {
 			desc: s.desc,
 			count: s.geometry.count,
 			entries: s.geometry.entries,
+			excluded: s.geometry.excluded,
 		})),
 	};
 	writeFileSync(join(outDir, "geometry.json"), `${JSON.stringify(geometryDoc, null, 1)}\n`, "utf8");
@@ -891,6 +976,7 @@ async function runBaseline(outDir) {
 			sha256: s.sha256,
 			park: s.park,
 			geometryCount: s.geometry.count,
+			excludedCount: s.geometry.excluded.length,
 		})),
 	};
 	writeFileSync(join(outDir, "manifest.json"), `${JSON.stringify(manifest, null, 2)}\n`, "utf8");
@@ -900,7 +986,7 @@ async function runBaseline(outDir) {
 		"utf8",
 	);
 	console.log(
-		`\n✓ 5 张基线图 + 几何清单 → ${relative(REPO, outDir)}（manifest.json / geometry.json / sha256.txt）`,
+		`\n✓ ${scenes.length} 张截图 + 几何清单 → ${relative(REPO, outDir)}（manifest.json / geometry.json / sha256.txt）`,
 	);
 	for (const s of scenes) console.log(`  ${s.sha256.slice(0, 16)}  ${s.id}.png`);
 	console.log(`  几何清单 sha256 ${geometrySha.slice(0, 16)}（主判据，compare 里逐字段相等）`);
@@ -1051,22 +1137,23 @@ function readGeometryDir(dir) {
 }
 
 const fmtEntry = (entry) =>
-	`rect(${entry.rect.x},${entry.rect.y},${entry.rect.w}×${entry.rect.h}) ${entry.fontSize}/${entry.lineHeight}` +
+	(entry.rect ? `rect(${entry.rect.x},${entry.rect.y},${entry.rect.w}×${entry.rect.h}) ` : "") +
+	`${entry.fontSize}/${entry.lineHeight}` +
 	(entry.scroll ? ` scroll(${entry.scroll.top}/${entry.scroll.height}/${entry.scroll.client})` : "") +
 	(entry.text ? ` “${entry.text}”` : "");
 
 /**
  * 主判据：两份几何清单**逐字段相等**（值已 round 到 0.01px，不设任何容差）。
  * 按 path 对齐（nth-child 链天然唯一），分开报「新增 / 消失 / 变化」——比按序号比好读。
+ *
+ * 一并比 `excluded`（被排除子树的字号/行高，无 rect）。
  */
 function compareGeometry(beforeGeom, afterGeom, beforeDir, afterDir) {
-	if (!beforeGeom || !afterGeom) {
-		console.log("⚠ 两侧不同时具备 geometry.json → 主判据跳过，只看像素（需要主判据就重跑 baseline）");
-		return null;
-	}
 	if (beforeGeom.sha256 === afterGeom.sha256) {
+		const total = beforeGeom.scenes.reduce((n, s) => n + s.count, 0);
+		const excluded = beforeGeom.scenes.reduce((n, s) => n + (s.excluded?.length ?? 0), 0);
 		console.log(
-			`✓ 几何清单逐字段相等（sha256 ${beforeGeom.sha256.slice(0, 16)}，共 ${beforeGeom.scenes.reduce((n, s) => n + s.count, 0)} 条）`,
+			`✓ 几何清单逐字段相等（sha256 ${beforeGeom.sha256.slice(0, 16)}：${total} 条元素 + ${excluded} 条排除项字号）`,
 		);
 		return 0;
 	}
@@ -1077,38 +1164,43 @@ function compareGeometry(beforeGeom, afterGeom, beforeDir, afterDir) {
 			problems.push({ scene: bScene.id, kind: "场景缺失", path: "-", before: "", after: "" });
 			continue;
 		}
-		const aMap = new Map(aScene.entries.map((e) => [e.path, e]));
-		for (const bEntry of bScene.entries) {
-			const aEntry = aMap.get(bEntry.path);
-			if (!aEntry) {
-				problems.push({
-					scene: bScene.id,
-					kind: "消失",
-					path: bEntry.path,
-					before: fmtEntry(bEntry),
-					after: "",
-				});
-				continue;
+		for (const [label, bList, aList] of [
+			["元素", bScene.entries, aScene.entries],
+			["排除项字号", bScene.excluded ?? [], aScene.excluded ?? []],
+		]) {
+			const aMap = new Map(aList.map((e) => [e.path, e]));
+			for (const bEntry of bList) {
+				const aEntry = aMap.get(bEntry.path);
+				if (!aEntry) {
+					problems.push({
+						scene: bScene.id,
+						kind: `${label}消失`,
+						path: bEntry.path,
+						before: fmtEntry(bEntry),
+						after: "",
+					});
+					continue;
+				}
+				aMap.delete(bEntry.path);
+				if (JSON.stringify(aEntry) !== JSON.stringify(bEntry)) {
+					problems.push({
+						scene: bScene.id,
+						kind: `${label}变化`,
+						path: bEntry.path,
+						before: fmtEntry(bEntry),
+						after: fmtEntry(aEntry),
+					});
+				}
 			}
-			aMap.delete(bEntry.path);
-			if (JSON.stringify(aEntry) !== JSON.stringify(bEntry)) {
+			for (const aEntry of aMap.values()) {
 				problems.push({
 					scene: bScene.id,
-					kind: "变化",
-					path: bEntry.path,
-					before: fmtEntry(bEntry),
+					kind: `${label}新增`,
+					path: aEntry.path,
+					before: "",
 					after: fmtEntry(aEntry),
 				});
 			}
-		}
-		for (const aEntry of aMap.values()) {
-			problems.push({
-				scene: bScene.id,
-				kind: "新增",
-				path: aEntry.path,
-				before: "",
-				after: fmtEntry(aEntry),
-			});
 		}
 	}
 	console.log(
@@ -1124,7 +1216,11 @@ function compareGeometry(beforeGeom, afterGeom, beforeDir, afterDir) {
 	return problems.length;
 }
 
-function runCompare(beforeDir, afterDir) {
+/**
+ * 两层判据 + 成功话术按**实际跑过的**判据拼（避免「主判据没跑却宜称逐字段相等」的假绿）。
+ * 缺 geometry.json 时默认直接失败；确实只想比像素要显式 `--pixel-only`，且输出里会写明主判据未跑。
+ */
+function runCompare(beforeDir, afterDir, { pixelOnly = false } = {}) {
 	const before = readBaseline(resolve(beforeDir));
 	const after = readBaseline(resolve(afterDir));
 	console.log(`before: ${beforeDir}（HEAD ${before.manifest.gitHead}）`);
@@ -1136,12 +1232,22 @@ function runCompare(beforeDir, afterDir) {
 	}
 
 	// 判据 1（主）：确定性几何清单
-	const geometryProblems = compareGeometry(
-		readGeometryDir(resolve(beforeDir)),
-		readGeometryDir(resolve(afterDir)),
-		resolve(beforeDir),
-		resolve(afterDir),
-	);
+	let geometryProblems = null;
+	if (pixelOnly) {
+		console.log("⚠ --pixel-only：**主判据（几何清单）未跑**，下面只是一层像素比对");
+	} else {
+		const beforeGeom = readGeometryDir(resolve(beforeDir));
+		const afterGeom = readGeometryDir(resolve(afterDir));
+		const missing = [];
+		if (!beforeGeom) missing.push(`${relative(REPO, resolve(beforeDir))}/geometry.json`);
+		if (!afterGeom) missing.push(`${relative(REPO, resolve(afterDir))}/geometry.json`);
+		if (missing.length > 0) {
+			fail(
+				`主判据跑不了：缺 ${missing.join("、")}（旧目录没有清单）。\n  → 用当前脚本重跑 baseline 生成带清单的目录；确实只想比像素就显式加 --pixel-only`,
+			);
+		}
+		geometryProblems = compareGeometry(beforeGeom, afterGeom, resolve(beforeDir), resolve(afterDir));
+	}
 
 	// 判据 2：像素（拓非字号类的连带变化；允许抗锯齿级抖动）
 	let failed = 0;
@@ -1176,11 +1282,10 @@ function runCompare(beforeDir, afterDir) {
 
 	if (geometryProblems) fail(`几何清单有 ${geometryProblems} 处不等（主判据未过）`);
 	if (failed > 0) fail(`${failed} 张有实质差异（像素判据未过）`);
-	console.log(
-		jitter > 0
-			? `\n✓ 默认档零差异通过（另 ${jitter} 张仅抗锯齿级抖动，主判据几何清单已逐字段相等）`
-			: "\n✓ 默认档零差异通过：几何清单逐字段相等 + 逐像素一致",
-	);
+	const criteria = ["逐像素一致" + (jitter > 0 ? `（另 ${jitter} 张仅抗锯齿级抖动，已判一致）` : "")];
+	if (pixelOnly) criteria.unshift("（仅像素判据：主判据未跑）");
+	else criteria.unshift("几何清单逐字段相等");
+	console.log(`\n✓ 默认档零差异通过：${criteria.join(" + ")}`);
 }
 
 function runDiff(fileA, fileB) {
@@ -1195,7 +1300,8 @@ function runDiff(fileA, fileB) {
  * 入口
  * ========================================================================== */
 
-const [mode, arg, arg2] = process.argv.slice(2);
+const [mode, arg, arg2] = process.argv.slice(2).filter((a) => !a.startsWith("--"));
+const flags = new Set(process.argv.slice(2).filter((a) => a.startsWith("--")));
 try {
 	switch (mode) {
 		case "inventory":
@@ -1222,8 +1328,8 @@ try {
 			await runGeometry(resolve(arg));
 			break;
 		case "compare":
-			if (!arg || !arg2) fail("compare 需要两个目录：compare <beforeDir> <afterDir>", 2);
-			runCompare(arg, arg2);
+			if (!arg || !arg2) fail("compare 需要两个目录：compare <beforeDir> <afterDir> [--pixel-only]", 2);
+			runCompare(arg, arg2, { pixelOnly: flags.has("--pixel-only") });
 			break;
 		case "diff":
 			if (!arg || !arg2) fail("diff 需要两张图：diff <a.png> <b.png>", 2);
@@ -1231,7 +1337,7 @@ try {
 			break;
 		default:
 			fail(
-				"用法：inventory [outFile] | seed-state | restore-state | seed-fixtures | clean-fixtures | baseline <outDir> | geometry <outDir> | compare <beforeDir> <afterDir> | diff <a.png> <b.png>（见文件头）",
+				"用法：inventory [outFile] | seed-state | restore-state | seed-fixtures | clean-fixtures | baseline <outDir> | geometry <outDir> | compare <beforeDir> <afterDir> [--pixel-only] | diff <a.png> <b.png>（见文件头）",
 				2,
 			);
 	}
