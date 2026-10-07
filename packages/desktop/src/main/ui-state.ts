@@ -1,7 +1,9 @@
 import { join } from "node:path";
 import { createLogger, JsonStore } from "@percho/backend";
 import {
+	clampCodeFontSize,
 	clampSidebarWidth,
+	clampUiFontSize,
 	type PermissionMode,
 	type Rect,
 	type SessionWorkspaceSnapshot,
@@ -136,6 +138,9 @@ function normalize(parsed: UiStateFileShape): UiState {
 		sidebarCollapsed: typeof parsed.sidebarCollapsed === "boolean" ? parsed.sidebarCollapsed : false,
 		// 侧栏宽度：脏值/越界一律归一化（手改文件、未来改上下界都在这里归一；renderer 只做渲染期夹紧、不回写）
 		sidebarWidth: clampSidebarWidth(parsed.sidebarWidth),
+		// 字号档位：脏值/缺字段一律回落基准档（13 / 12.5 => 乘数 1，等于迁移前现状）
+		uiFontSize: clampUiFontSize(parsed.uiFontSize),
+		codeFontSize: clampCodeFontSize(parsed.codeFontSize),
 		windowBounds: windowBounds(parsed.windowBounds),
 		expandedGroups,
 		// 显式布尔优先（含显式 false 配空数组）；缺字段/脏值才按清洗后的记录是否非空推断

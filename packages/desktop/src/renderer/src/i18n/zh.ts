@@ -329,6 +329,18 @@ export const zh = {
 		},
 		theme: "主题",
 		themeHint: "深色模式适合夜间使用，跟随系统则自动切换",
+
+		fontSize: "字号",
+		fontSizeHint: "调整界面与代码的文字大小；图标、间距与布局尺寸不受影响",
+		fontSizeUi: "界面字号",
+		fontSizeCode: "代码字号",
+		/** 「完整支持」标记：档位全部落在受支持范围内时显示；代码一行额外带实心点（review 口径） */
+		fontSizeFullSupport: "完整支持",
+		fontSizeCodeFullSupport: "完整支持 ●",
+		fontSizePreset12: "小",
+		fontSizePresetDefault: "默认",
+		fontSizePresetLarge: "大",
+		fontSizePresetLarger: "更大",
 		themeLight: "浅色",
 		themeDark: "深色",
 		themeSystem: "跟随系统",

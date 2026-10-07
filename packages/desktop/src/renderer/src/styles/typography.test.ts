@@ -1,6 +1,7 @@
 import { readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
+import { FONT_SIZE_TOKENS } from "@percho/shared";
 import { describe, expect, it } from "vitest";
 
 /**
@@ -14,22 +15,14 @@ const srcDir = fileURLToPath(new URL("../", import.meta.url));
 const typography = readFileSync(join(stylesDir, "typography.css"), "utf8");
 const globals = readFileSync(join(stylesDir, "globals.css"), "utf8");
 
-/** 全部合法 token → 它的 px 值（名字规则：去掉小数点，如 text-ui-105 = 10.5px） */
-const TOKEN_PX = {
-	"text-ui-10": 10,
-	"text-ui-105": 10.5,
-	"text-ui-11": 11,
-	"text-ui-115": 11.5,
-	"text-ui-12": 12,
-	"text-ui-125": 12.5,
-	"text-ui-13": 13,
-	"text-ui-135": 13.5,
-	"text-ui-14": 14,
-	"text-ui-15": 15,
-	"text-ui-16": 16,
-	"text-ui-18": 18,
-	"text-ui-19": 19,
-};
+/**
+ * 全部合法 token → px 值。**取值集合来自 `shared/typography.ts` 的 `FONT_SIZE_TOKENS`**（spec D9.3：
+ * 守护测试断言 token 定义表与 shared 里声明的取值集合一致 —— 防「加了字号却忘了加 token」以及反过来）。
+ * 名字规则：去掉小数点（`text-ui-105` = 10.5px）。
+ */
+const TOKEN_PX = Object.fromEntries(
+	FONT_SIZE_TOKENS.map((px) => [`text-ui-${String(px).replace(".", "")}`, px]),
+);
 
 function walk(dir: string, out: string[] = []): string[] {
 	for (const entry of readdirSync(dir, { withFileTypes: true })) {
@@ -52,7 +45,7 @@ describe("字号 token（typography.css）", () => {
 	});
 
 	it("每个 font-size 都是 calc(px * var(--fs-ui-scale, 1))，没有裸 px", () => {
-		const sizes = [...typography.matchAll(/font-size:\s*([^;]+);/g)].map((m) => m[1].trim());
+		const sizes = [...typography.matchAll(/font-size:\s*([^;]+);/g)].map((m) => (m[1] ?? "").trim());
 		expect(sizes.length).toBe(Object.keys(TOKEN_PX).length);
 		for (const size of sizes) {
 			expect(size).toMatch(/^calc\([\d.]+px \* var\(--fs-ui-scale, 1\)\)$/);
@@ -75,7 +68,7 @@ describe("globals.css", () => {
 	});
 
 	it("每一处 font-size 都走 calc(var) 或白名单里的 0", () => {
-		const sizes = [...globals.matchAll(/^\s*font-size:\s*([^;]+);/gm)].map((m) => m[1].trim());
+		const sizes = [...globals.matchAll(/^\s*font-size:\s*([^;]+);/gm)].map((m) => (m[1] ?? "").trim());
 		expect(sizes.length).toBeGreaterThan(40); // 迁移前实测 46 处，别让整段被误删
 		for (const size of sizes) {
 			expect(size === "0" || /^calc\([\d.]+px \* var\(--fs-(ui|code)-scale, 1\)\)$/.test(size)).toBe(true);
@@ -85,7 +78,7 @@ describe("globals.css", () => {
 	it("绝对行高只在三处，且都跟着字号一起缩（否则大档会裁切）", () => {
 		// 只看绝对量（px / rem）：无单位倍数（如 leading-x）天然随字号缩，不用管
 		const lineHeights = [...globals.matchAll(/^\s*line-height:\s*([^;]+);/gm)]
-			.map((m) => m[1].trim())
+			.map((m) => (m[1] ?? "").trim())
 			.filter((value) => /px|rem/.test(value));
 		expect(lineHeights).toEqual([
 			"calc(20px * var(--fs-ui-scale, 1))",

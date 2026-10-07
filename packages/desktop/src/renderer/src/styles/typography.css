@@ -44,11 +44,11 @@
  * | `text-[14px]` | `.text-ui-14` | 14px |
  * | `text-[15px]` | `.text-ui-15` | 15px |
  * | `text-[16px]` | `.text-ui-16` | 16px |
+ * | （18px：`text-lg` 那档，见下表末三行） | `.text-ui-18` | 18px |
  * | `text-[19px]` | `.text-ui-19` | 19px |
- * | `text-xs`（12px + 行高 16px） | `.text-ui-12 leading-[1.3333]` | 12px / 16px |
- * | `text-sm`（14px + 行高 20px） | `.text-ui-14 leading-[1.4286]` | 14px / 20px |
- * | `text-lg`（18px + 行高 28px） | `.text-ui-18 leading-[1.5556]` | 18px / 28px |
- * | （18px，仅 rem 类换算用） | `.text-ui-18` | 18px |
+ * | `text-xs`（12px + 行高 16px） | `.text-ui-12 leading-[calc(1_/_0.75)]` | 12px / 16px |
+ * | `text-sm`（14px + 行高 20px） | `.text-ui-14 leading-[calc(1.25_/_0.875)]` | 14px / 20px |
+ * | `text-lg`（18px + 行高 28px） | `.text-ui-18 leading-[calc(1.75_/_1.125)]` | 18px / 28px |
  * | Markdown 标题 `1.25/1.125/1/0.9375rem` | `calc(20px/18px/16px/15px * var(--fs-ui-scale, 1))` | 20/18/16/15px |
  */
 

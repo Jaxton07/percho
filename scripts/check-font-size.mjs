@@ -22,6 +22,8 @@
  *   node scripts/check-font-size.mjs compare <before> <after>  # 逐像素判等（默认档零差异，spec D8）
  *   node scripts/check-font-size.mjs compare <before> <after> --pixel-only  # 只跑像素（写明主判据未跑）
  *   node scripts/check-font-size.mjs diff <a.png> <b.png>  # 单图差异统计（像素数/占比/最大通道差/包围盒）
+ *   node scripts/check-font-size.mjs compare b a --allow-change=04-settings-appearance  # 该场景只比字号取值集合
+ *   node scripts/check-font-size.mjs side-by-side b a 04-settings-appearance out.png  # 并排图 + 差异红框
  *
  * 判据两层：**主 = 几何清单**（每个含文本元素的 rect/字号/行高 + 被排除子树的字号行高，round 0.01px 后逐字段相等，无容差），
  * **次 = 像素**（拓非字号类的连带变化；允许抗锯齿级抖动，理由见下）。缺 geometry.json 时主判据直接判失败（除非显式 `--pixel-only`）。
@@ -40,7 +42,7 @@ import { createHash } from "node:crypto";
 import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join, relative, resolve } from "node:path";
-import { inflateSync } from "node:zlib";
+import { deflateSync, inflateSync } from "node:zlib";
 
 const REPO = resolve(import.meta.dirname, "..");
 const RENDERER_SRC = join(REPO, "packages/desktop/src/renderer/src");
@@ -619,9 +621,19 @@ async function waitFor(cdp, expression, label, timeoutMs = 20000) {
 }
 
 /** 冻结所有时间相关像素：动画、过渡、光标闪烁（两次跑都冻，差异才只可能来自字号） */
-const FRAME_FIX = `(() => {
-	document.documentElement.style.setProperty("--fs-ui-scale", "1");
-	document.documentElement.style.setProperty("--fs-code-scale", "1");
+/**
+ * 冻结时间相关像素 + 把字号乘数钉到指定值。
+ *
+ * `--from-store` 时不覆盖（拍「设置项真的改了界面」的证据）：`scales = null` 表示沿用 app 当前值。
+ * 覆盖过就要还回去 —— 见 `RESTORE_SCALES`。
+ */
+const frameFix = (scales) => `(() => {
+	${
+		scales
+			? `document.documentElement.style.setProperty("--fs-ui-scale", ${JSON.stringify(String(scales.ui))});
+	document.documentElement.style.setProperty("--fs-code-scale", ${JSON.stringify(String(scales.code))});`
+			: ""
+	}
 	if (!document.getElementById("font-size-check-freeze")) {
 		const el = document.createElement("style");
 		el.id = "font-size-check-freeze";
@@ -629,6 +641,28 @@ const FRAME_FIX = `(() => {
 		document.head.appendChild(el);
 	}
 	return true;
+})()`;
+
+/** 读当前生效的两个乘数（写进 manifest；compare 会要求两次跑的档位一致） */
+const READ_SCALES = `JSON.stringify({
+	ui: getComputedStyle(document.documentElement).getPropertyValue("--fs-ui-scale").trim() || "1",
+	code: getComputedStyle(document.documentElement).getPropertyValue("--fs-code-scale").trim() || "1",
+})`;
+
+/**
+ * 把覆盖过的乘数还给 app：直接删掉 inline 覆盖是不够的（那样会回落到 CSS 兜底 1，
+ * 而 store 里可能是 17px），所以用 store 的 setter 触发一次「重算 + 重写变量」。
+ * setter 对相同值会 early-return，所以先写一个必然不同的值（0 会被 clamp 到最小档）。
+ */
+const RESTORE_SCALES = `(() => {
+	const store = window.PerchoUI?.stores?.useUiPreferencesStore;
+	if (!store) return "no-store";
+	const { uiFontSize, codeFontSize } = store.getState();
+	store.getState().setUiFontSize(0);
+	store.getState().setCodeFontSize(0);
+	store.getState().setUiFontSize(uiFontSize);
+	store.getState().setCodeFontSize(codeFontSize);
+	return "restored";
 })()`;
 
 const BLUR = `(() => {
@@ -998,7 +1032,7 @@ async function settleGeometry(cdp, attempts = 8) {
  * 一次走查**同时**收几何清单与截图，保证两者描述的是同一帧状态。
  * @param {{ capture?: boolean }} options capture=false 时只收几何（轻量重跑用）
  */
-async function runSceneWalk(outDir, { capture = true } = {}) {
+async function runSceneWalk(outDir, { capture = true, fromStore = false } = {}) {
 	const missing = FIXTURES.filter((f) => !existsSync(fixtureFile(f)));
 	if (missing.length > 0)
 		fail(`样本会话缺失（${missing.map((m) => m.key).join(", ")}）：先停 dev → seed-fixtures → 启 dev`, 2);
@@ -1027,7 +1061,11 @@ async function runSceneWalk(outDir, { capture = true } = {}) {
 	if (absent.length > 0)
 		fail(`样本会话不在会话列表里（${absent.map((a) => a.key).join(", ")}）：seed 后没重启 dev？`, 2);
 
-	await cdp.evaluate(FRAME_FIX);
+	// 档位：默认把两个乘数钉到 1（= 默认档，与阶段 0/1 的基线可比）；--from-store 则沿用 app 当前值
+	const scales = fromStore ? null : { ui: 1, code: 1 };
+	await cdp.evaluate(frameFix(scales));
+	// 档位读在这一刻（写/覆盖都已完成）；注意**必须在 ws.close 之前**读，否则 promise 永不 settle
+	const effectiveScales = JSON.parse(await cdp.evaluate(READ_SCALES));
 	await waitFor(cdp, `document.querySelector(".sidebar")`, "主界面");
 	await cdp.evaluate(RESET_TOASTS); // 上次走查可能留下了固定 toast（防重跑时场景 1 卡在等 toast 退场）
 
@@ -1039,7 +1077,7 @@ async function runSceneWalk(outDir, { capture = true } = {}) {
 			console.log(`▸ ${scene.id}：${scene.desc}`);
 			const extra = (await scene.setup(cdp)) ?? {};
 			if (!scene.keepsToast) await waitForNoToasts(cdp);
-			await cdp.evaluate(FRAME_FIX); // 场景切换可能带来新挂载的动画/过渡，重新冻结一次
+			await cdp.evaluate(frameFix(scales)); // 场景切换可能带来新挂载的动画/过渡，重新冻结一次
 			await cdp.evaluate(BLUR);
 			const parked = await parkMouse(cdp, viewport);
 			if (!parked.clean)
@@ -1067,6 +1105,7 @@ async function runSceneWalk(outDir, { capture = true } = {}) {
 		}
 	} finally {
 		// 收尾一律尽力而为：失败也不该盖住原始错误
+		if (!fromStore) await cdp.evaluate(RESTORE_SCALES).catch(() => {});
 		await cdp.evaluate(RESET_TOASTS).catch(() => {});
 		await cdp.evaluate(`window.PerchoUI.stores.useSettingsStore.getState().setOpen(false)`).catch(() => {});
 		cdp.ws.close();
@@ -1076,6 +1115,7 @@ async function runSceneWalk(outDir, { capture = true } = {}) {
 		kind: "font-size-geometry",
 		version: 1,
 		viewport,
+		scales: effectiveScales,
 		scenes: scenes.map((s) => ({
 			id: s.id,
 			desc: s.desc,
@@ -1088,8 +1128,8 @@ async function runSceneWalk(outDir, { capture = true } = {}) {
 	return { viewport, scenes, geometryDoc };
 }
 
-async function runBaseline(outDir) {
-	const { viewport, scenes, geometryDoc } = await runSceneWalk(outDir, { capture: true });
+async function runBaseline(outDir, { fromStore = false } = {}) {
+	const { viewport, scenes, geometryDoc } = await runSceneWalk(outDir, { capture: true, fromStore });
 	const geometrySha = geometryFingerprint(geometryDoc.scenes);
 
 	const manifest = {
@@ -1098,6 +1138,7 @@ async function runBaseline(outDir) {
 		createdAt: new Date().toISOString(),
 		gitHead: execFileSync("git", ["rev-parse", "--short", "HEAD"], { cwd: REPO }).toString().trim(),
 		viewport,
+		scales: geometryDoc.scales,
 		geometrySha,
 		shots: scenes.map((s) => ({
 			id: s.id,
@@ -1122,16 +1163,137 @@ async function runBaseline(outDir) {
 		`\n✓ ${scenes.length} 张截图 + 几何清单 → ${relative(REPO, outDir)}（manifest.json / geometry.json / sha256.txt）`,
 	);
 	for (const s of scenes) console.log(`  ${s.sha256.slice(0, 16)}  ${s.id}.png`);
+	console.log(
+		`  档位 --fs-ui-scale=${geometryDoc.scales.ui} · --fs-code-scale=${geometryDoc.scales.code}（compare 要求两次跑一致）`,
+	);
 	console.log(`  几何清单 sha256 ${geometrySha.slice(0, 16)}（主判据，compare 里逐字段相等）`);
 }
 
-async function runGeometry(outDir) {
-	await runSceneWalk(outDir, { capture: false });
+async function runGeometry(outDir, options) {
+	await runSceneWalk(outDir, { capture: false, ...options });
 	console.log(`\n✓ 几何清单 → ${relative(REPO, join(outDir, "geometry.json"))}（只要清单、不截图时用它）`);
 }
 
 /* ==========================================================================
- * 6. compare / diff：两次 baseline 的逐像素判等
+ * 6b. PNG 编码（只为了 `side-by-side` 拼图）：8bit RGB、无 filter、零依赖（node:zlib）
+ * ========================================================================== */
+
+const CRC_TABLE = (() => {
+	const table = new Int32Array(256);
+	for (let n = 0; n < 256; n++) {
+		let c = n;
+		for (let k = 0; k < 8; k++) c = c & 1 ? 0xedb88320 ^ (c >>> 1) : c >>> 1;
+		table[n] = c;
+	}
+	return table;
+})();
+
+function crc32(buf) {
+	let c = 0xffffffff;
+	for (const byte of buf) c = CRC_TABLE[(c ^ byte) & 0xff] ^ (c >>> 8);
+	return (c ^ 0xffffffff) >>> 0;
+}
+
+function pngChunk(type, data) {
+	const length = Buffer.alloc(4);
+	length.writeUInt32BE(data.length);
+	const body = Buffer.concat([Buffer.from(type, "ascii"), data]);
+	const crc = Buffer.alloc(4);
+	crc.writeUInt32BE(crc32(body));
+	return Buffer.concat([length, body, crc]);
+}
+
+/** rgb：长度 width*height*3 的 Buffer */
+function encodePng(width, height, rgb) {
+	const ihdr = Buffer.alloc(13);
+	ihdr.writeUInt32BE(width, 0);
+	ihdr.writeUInt32BE(height, 4);
+	ihdr[8] = 8; // bit depth
+	ihdr[9] = 2; // color type: truecolor
+	const raw = Buffer.alloc(height * (1 + width * 3));
+	for (let y = 0; y < height; y++) {
+		raw[y * (1 + width * 3)] = 0; // filter: none
+		rgb.copy(raw, y * (1 + width * 3) + 1, y * width * 3, (y + 1) * width * 3);
+	}
+	return Buffer.concat([
+		Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]),
+		pngChunk("IHDR", ihdr),
+		pngChunk("IDAT", deflateSync(raw)),
+		pngChunk("IEND", Buffer.alloc(0)),
+	]);
+}
+
+/** RGBA（decodePng 的输出）→ RGB（只丢掉 alpha，截图不透明） */
+const rgbaToRgb = (img) => {
+	const rgb = Buffer.alloc(img.width * img.height * 3);
+	for (let i = 0, j = 0; i < img.data.length; i += 4, j += 3) {
+		rgb[j] = img.data[i];
+		rgb[j + 1] = img.data[i + 1];
+		rgb[j + 2] = img.data[i + 2];
+	}
+	return rgb;
+};
+
+/**
+ * 并排图 + 差异包围盒（review 验收口径：预期变化的场景要看「差异只来自新加的东西」）。
+ * 左 = before，右 = after，右侧把差异包围盒描成红框（设备 px，与 clip 同尺度）。
+ */
+function runSideBySide(beforeDir, afterDir, sceneId, outFile) {
+	const before = decodePng(readFileSync(join(resolve(beforeDir), `${sceneId}.png`)));
+	const after = decodePng(readFileSync(join(resolve(afterDir), `${sceneId}.png`)));
+	if (before.width !== after.width || before.height !== after.height) fail("两张图尺寸不同，没法并排");
+	const stats = pngDiff(
+		join(resolve(beforeDir), `${sceneId}.png`),
+		join(resolve(afterDir), `${sceneId}.png`),
+	);
+	const gap = 16;
+	const width = before.width * 2 + gap;
+	const height = before.height;
+	const out = Buffer.alloc(width * height * 3, 24); // 深色分隔带
+	const beforeRgb = rgbaToRgb(before);
+	const afterRgb = rgbaToRgb(after);
+	const put = (rgb, offsetX) => {
+		for (let y = 0; y < height; y++) {
+			rgb.copy(out, (y * width + offsetX) * 3, y * before.width * 3, (y + 1) * before.width * 3);
+		}
+	};
+	put(beforeRgb, 0);
+	put(afterRgb, before.width + gap);
+	if (!stats.sizeMismatch && stats.pixels > 0) {
+		const [x0, y0, x1, y1] = stats.bbox;
+		const stroke = (x, y) => {
+			if (x < 0 || y < 0 || x >= width || y >= height) return;
+			const i = (y * width + x) * 3;
+			out[i] = 255;
+			out[i + 1] = 64;
+			out[i + 2] = 64;
+		};
+		const baseX = before.width + gap;
+		for (let x = x0; x <= x1; x++) {
+			stroke(baseX + x, y0);
+			stroke(baseX + x, y1);
+		}
+		for (let y = y0; y <= y1; y++) {
+			stroke(baseX + x0, y);
+			stroke(baseX + x1, y);
+		}
+	}
+	const file = resolve(outFile ?? join(TMP_DIR, "evidence", `${sceneId}-side-by-side.png`));
+	mkdirSync(resolve(file, ".."), { recursive: true });
+	writeFileSync(file, encodePng(width, height, out));
+	console.log(`左 = ${relative(REPO, resolve(beforeDir))} ｜ 右 = ${relative(REPO, resolve(afterDir))}`);
+	console.log(
+		stats.pixels === 0
+			? "两图逐像素相同（无差异）"
+			: `差异 ${stats.pixels} px（${(stats.ratio * 100).toFixed(3)}%，最大通道差 ${stats.maxDelta}），` +
+					`包围盒 ${stats.bbox} 设备 px = ${stats.bbox.map((v) => Math.round(v / 2)).join(",")} CSS px`,
+	);
+	console.log(`→ ${relative(REPO, file)}`);
+	return file;
+}
+
+/* ==========================================================================
+ * 7. compare / diff：两次 baseline 的逐像素判等
  * ========================================================================== */
 
 /**
@@ -1324,7 +1486,7 @@ const geometryFingerprint = (scenes) =>
  * 按**归一化 path** 对齐（nth-child 链天然唯一），分开报「新增 / 消失 / 变化」——比按序号比好读。
  * 一并比 `excluded`（被排除子树的字号/行高，无 rect）。
  */
-function compareGeometry(beforeGeom, afterGeom, beforeDir, afterDir) {
+function compareGeometry(beforeGeom, afterGeom, beforeDir, afterDir, allowChange = new Set()) {
 	if (beforeGeom.sha256 === afterGeom.sha256) {
 		const total = beforeGeom.scenes.reduce((n, s) => n + s.count, 0);
 		const excluded = beforeGeom.scenes.reduce((n, s) => n + (s.excluded?.length ?? 0), 0);
@@ -1338,6 +1500,38 @@ function compareGeometry(beforeGeom, afterGeom, beforeDir, afterDir) {
 		const aScene = afterGeom.scenes.find((s) => s.id === bScene.id);
 		if (!aScene) {
 			problems.push({ scene: bScene.id, kind: "场景缺失", path: "-", before: "", after: "" });
+			continue;
+		}
+		// 「预期变化」的场景（如设置面板加了新分组）：布局本来就该变，所以不逐元素比 rect，
+		// 只断言**字号/行高取值集合**没变 —— 防的是「顺手把某处字号也改了」。
+		if (allowChange.has(bScene.id)) {
+			const values = (scene) => ({
+				fontSize: new Set([...scene.entries, ...(scene.excluded ?? [])].map((e) => e.fontSize)),
+				lineHeight: new Set([...scene.entries, ...(scene.excluded ?? [])].map((e) => e.lineHeight)),
+			});
+			const b = values(bScene);
+			const a = values(aScene);
+			for (const key of ["fontSize", "lineHeight"]) {
+				const missing = [...b[key]].filter((v) => !a[key].has(v));
+				const added = [...a[key]].filter((v) => !b[key].has(v));
+				if (missing.length > 0 || added.length > 0) {
+					problems.push({
+						scene: bScene.id,
+						kind: `${key} 取值集合变了`,
+						path: "(预期变化场景：只比取值集合)",
+						before: `少了 [${missing.join(", ")}]`,
+						after: `多了 [${added.join(", ")}]`,
+					});
+				}
+			}
+			const bKeys = new Set(bScene.entries.map((e) => normalizePath(e.path)));
+			const aKeys = new Set(aScene.entries.map((e) => normalizePath(e.path)));
+			const moved = [...bKeys].filter((k) => aKeys.has(k)).length;
+			console.log(
+				`ℹ ${bScene.id}（预期变化）：元素 ${bScene.entries.length}→${aScene.entries.length} 条，` +
+					`沿用 ${moved} 条、新增 ${aScene.entries.length - moved} 条、消失 ${bScene.entries.length - moved} 条；` +
+					`字号取值集合 ${b.fontSize.size} 个、行高 ${b.lineHeight.size} 个（已逐一比对）`,
+			);
 			continue;
 		}
 		for (const [label, bList, aList] of [
@@ -1380,6 +1574,7 @@ function compareGeometry(beforeGeom, afterGeom, beforeDir, afterDir) {
 			}
 		}
 	}
+	if (problems.length === 0) return 0;
 	console.log(
 		`✗ 几何清单不等：${problems.length} 处（before ${relative(REPO, beforeDir)} / after ${relative(REPO, afterDir)}）`,
 	);
@@ -1397,7 +1592,7 @@ function compareGeometry(beforeGeom, afterGeom, beforeDir, afterDir) {
  * 两层判据 + 成功话术按**实际跑过的**判据拼（避免「主判据没跑却宜称逐字段相等」的假绿）。
  * 缺 geometry.json 时默认直接失败；确实只想比像素要显式 `--pixel-only`，且输出里会写明主判据未跑。
  */
-function runCompare(beforeDir, afterDir, { pixelOnly = false } = {}) {
+function runCompare(beforeDir, afterDir, { pixelOnly = false, allowChange = [] } = {}) {
 	const before = readBaseline(resolve(beforeDir));
 	const after = readBaseline(resolve(afterDir));
 	console.log(`before: ${beforeDir}（HEAD ${before.manifest.gitHead}）`);
@@ -1406,6 +1601,12 @@ function runCompare(beforeDir, afterDir, { pixelOnly = false } = {}) {
 	const vb = after.manifest.viewport;
 	if (va.width !== vb.width || va.height !== vb.height || va.dpr !== vb.dpr) {
 		fail(`视口不一致（${JSON.stringify(va)} vs ${JSON.stringify(vb)}）：整图和清单都不可比`);
+	}
+	// 档位（--fs-ui-scale / --fs-code-scale）不同就不是同一张界面，别拿去逐像素比
+	const sb = before.manifest.scales ?? { ui: "1", code: "1" };
+	const sa = after.manifest.scales ?? { ui: "1", code: "1" };
+	if (sb.ui !== sa.ui || sb.code !== sa.code) {
+		fail(`字号档位不一致（ui ${sb.ui}→${sa.ui} / code ${sb.code}→${sa.code}）：两次跑的不是同一档，不可比`);
 	}
 
 	// 判据 1（主）：确定性几何清单
@@ -1423,7 +1624,13 @@ function runCompare(beforeDir, afterDir, { pixelOnly = false } = {}) {
 				`主判据跑不了：缺 ${missing.join("、")}（旧目录没有清单）。\n  → 用当前脚本重跑 baseline 生成带清单的目录；确实只想比像素就显式加 --pixel-only`,
 			);
 		}
-		geometryProblems = compareGeometry(beforeGeom, afterGeom, resolve(beforeDir), resolve(afterDir));
+		geometryProblems = compareGeometry(
+			beforeGeom,
+			afterGeom,
+			resolve(beforeDir),
+			resolve(afterDir),
+			new Set(allowChange),
+		);
 	}
 
 	// 判据 2：像素（拓非字号类的连带变化；允许抗锯齿级抖动）
@@ -1438,6 +1645,14 @@ function runCompare(beforeDir, afterDir, { pixelOnly = false } = {}) {
 		}
 		if (a.sha256 === b.sha256) {
 			console.log(`✓ ${b.id} 逐像素一致`);
+			continue;
+		}
+		if (allowChange.includes(b.id)) {
+			const info = pngDiff(join(resolve(beforeDir), `${b.id}.png`), join(resolve(afterDir), `${a.id}.png`));
+			console.log(
+				`ℹ ${b.id}（预期变化，像素差异只报不判）：${info.pixels} px（${(info.ratio * 100).toFixed(3)}%），` +
+					`包围盒 ${info.bbox} 设备 px；并排图：node scripts/check-font-size.mjs side-by-side ${beforeDir} ${afterDir} ${b.id}`,
+			);
 			continue;
 		}
 		const stats = pngDiff(join(resolve(beforeDir), `${b.id}.png`), join(resolve(afterDir), `${a.id}.png`));
@@ -1463,6 +1678,11 @@ function runCompare(beforeDir, afterDir, { pixelOnly = false } = {}) {
 	if (pixelOnly) criteria.unshift("（仅像素判据：主判据未跑）");
 	else criteria.unshift("几何清单逐字段相等");
 	console.log(`\n✓ 默认档零差异通过：${criteria.join(" + ")}`);
+	if (allowChange.length > 0) {
+		console.log(
+			`  （${allowChange.join("、")} 按 --allow-change 口径判：结构可变，字号/行高取值集合已逐一相等）`,
+		);
+	}
 }
 
 function runDiff(fileA, fileB) {
@@ -1477,7 +1697,8 @@ function runDiff(fileA, fileB) {
  * 入口
  * ========================================================================== */
 
-const [mode, arg, arg2] = process.argv.slice(2).filter((a) => !a.startsWith("--"));
+const positional = process.argv.slice(2).filter((a) => !a.startsWith("--"));
+const [mode, arg, arg2, arg3, arg4] = positional;
 const flags = new Set(process.argv.slice(2).filter((a) => a.startsWith("--")));
 try {
 	switch (mode) {
@@ -1501,23 +1722,34 @@ try {
 			break;
 		case "baseline":
 			if (!arg) fail("baseline 需要 outDir：node scripts/check-font-size.mjs baseline <outDir>", 2);
-			await runBaseline(resolve(arg));
+			await runBaseline(resolve(arg), { fromStore: flags.has("--from-store") });
 			break;
 		case "geometry":
 			if (!arg) fail("geometry 需要 outDir：node scripts/check-font-size.mjs geometry <outDir>", 2);
-			await runGeometry(resolve(arg));
+			await runGeometry(resolve(arg), { fromStore: flags.has("--from-store") });
 			break;
 		case "compare":
 			if (!arg || !arg2) fail("compare 需要两个目录：compare <beforeDir> <afterDir> [--pixel-only]", 2);
-			runCompare(arg, arg2, { pixelOnly: flags.has("--pixel-only") });
+			runCompare(arg, arg2, {
+				pixelOnly: flags.has("--pixel-only"),
+				allowChange: [...flags]
+					.filter((f) => f.startsWith("--allow-change="))
+					.flatMap((f) => f.slice("--allow-change=".length).split(","))
+					.filter(Boolean),
+			});
 			break;
 		case "diff":
 			if (!arg || !arg2) fail("diff 需要两张图：diff <a.png> <b.png>", 2);
 			runDiff(arg, arg2);
 			break;
+		case "side-by-side":
+			if (!arg || !arg2 || !arg3)
+				fail("side-by-side 需要：side-by-side <before> <after> <sceneId> [out.png]", 2);
+			runSideBySide(arg, arg2, arg3, arg4);
+			break;
 		default:
 			fail(
-				"用法：inventory [outFile] [--expect-zero] | reconcile [oraclePath] | seed-state | restore-state | seed-fixtures | clean-fixtures | baseline <outDir> | geometry <outDir> | compare <beforeDir> <afterDir> [--pixel-only] | diff <a.png> <b.png>（见文件头）",
+				"用法：inventory [outFile] [--expect-zero] | reconcile [oraclePath] | seed-state | restore-state | seed-fixtures | clean-fixtures | baseline <outDir> [--from-store] | geometry <outDir> [--from-store] | compare <beforeDir> <afterDir> [--pixel-only] [--allow-change=<sceneId,...>] | diff <a.png> <b.png> | side-by-side <before> <after> <sceneId> [out.png]（见文件头）",
 				2,
 			);
 	}

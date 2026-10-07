@@ -9,8 +9,20 @@ vi.mock("../api", () => ({ getPi: () => piMock }));
 
 import { useUiPreferencesStore } from "./ui-preferences";
 
+/**
+ * vitest 跑在 node 环境（本仓库没装 jsdom）：`init()` 会把字号档位写成 CSS 变量，
+ * 所以这里 stub 一个只记录写入的最小 document（只到「写了哪两个变量」这一层）。
+ */
+const fontVars = new Map<string, string>();
+vi.stubGlobal("document", {
+	documentElement: {
+		style: { setProperty: (key: string, value: string) => fontVars.set(key, value) },
+	},
+});
+
 beforeEach(() => {
 	vi.clearAllMocks();
+	fontVars.clear();
 	useUiPreferencesStore.setState({
 		centerOrbEnabled: false,
 		pinnedSessions: [],
@@ -22,6 +34,8 @@ beforeEach(() => {
 		expandedGroupsTouched: false,
 		pinnedProjects: [],
 		lastCwd: null,
+		uiFontSize: 13,
+		codeFontSize: 12.5,
 	});
 });
 
@@ -292,5 +306,34 @@ describe("侧栏宽度（用户意图值）", () => {
 		useUiPreferencesStore.getState().commitSidebarWidth();
 		expect(piMock.saveUiState).toHaveBeenCalledTimes(1);
 		expect(piMock.saveUiState).toHaveBeenCalledWith({ state: { sidebarWidth: 360 } });
+	});
+});
+
+describe("字号档位", () => {
+	it("init 从 ui-state 恢复档位并立刻写 CSS 变量（首帧前生效）", async () => {
+		piMock.loadUiState.mockResolvedValue({ uiFontSize: 17, codeFontSize: 14 });
+		await useUiPreferencesStore.getState().init();
+		expect(useUiPreferencesStore.getState().uiFontSize).toBe(17);
+		expect(useUiPreferencesStore.getState().codeFontSize).toBe(14);
+		expect(fontVars.get("--fs-ui-scale")).toBe(String(17 / 13));
+		expect(fontVars.get("--fs-code-scale")).toBe(String(14 / 12.5));
+	});
+
+	it("脏值/缺字段回落基准档，且变量是 1（= 迁移前现状）", async () => {
+		piMock.loadUiState.mockResolvedValue({ uiFontSize: "17", codeFontSize: null });
+		await useUiPreferencesStore.getState().init();
+		expect(useUiPreferencesStore.getState().uiFontSize).toBe(13);
+		expect(useUiPreferencesStore.getState().codeFontSize).toBe(12.5);
+		expect(fontVars.get("--fs-ui-scale")).toBe("1");
+	});
+
+	it("切档位：立即写变量 + 落盘；相同值不重复写盘", async () => {
+		useUiPreferencesStore.getState().setUiFontSize(15);
+		expect(fontVars.get("--fs-ui-scale")).toBe(String(15 / 13));
+		expect(piMock.saveUiState).toHaveBeenCalledWith({ state: { uiFontSize: 15 } });
+
+		piMock.saveUiState.mockClear();
+		useUiPreferencesStore.getState().setUiFontSize(15);
+		expect(piMock.saveUiState).not.toHaveBeenCalled();
 	});
 });
