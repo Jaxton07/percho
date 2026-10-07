@@ -15,9 +15,13 @@
  *   node scripts/check-font-size.mjs restore-state         # 还原 pre-work 偏好（**必须先停 dev**）
  *   node scripts/check-font-size.mjs seed-fixtures         # 写样本会话（**必须先停 dev**）
  *   node scripts/check-font-size.mjs clean-fixtures        # 清样本（**必须先停 dev**）
- *   node scripts/check-font-size.mjs baseline <outDir>     # 5 场景截图 + sha256 清单（dev 需在跑）
+ *   node scripts/check-font-size.mjs baseline <outDir>     # 5 场景截图 + 几何清单 + sha256（dev 需在跑）
+ *   node scripts/check-font-size.mjs geometry <outDir>     # 只要几何清单（主判据，不截图；dev 需在跑）
  *   node scripts/check-font-size.mjs compare <before> <after>  # 逐像素判等（默认档零差异，spec D8）
  *   node scripts/check-font-size.mjs diff <a.png> <b.png>  # 单图差异统计（像素数/占比/最大通道差/包围盒）
+ *
+ * 判据两层：**主 = 几何清单**（每个含文本元素的 rect/字号/行高，round 0.01px 后逐字段相等，无容差），
+ * **次 = 像素**（拓非字号类的连带变化；允许抗锯齿级抖动，理由见下）。
  *
  * 一次完整跑：停 dev → `seed-state` → `seed-fixtures` → 启 dev → `baseline .local/tmp/font-size/before`
  * （目录只在启动时读一次，所以 seed 后必须重启 dev）。
@@ -697,7 +701,96 @@ const SCENES = [
 	},
 ];
 
-async function runBaseline(outDir) {
+/**
+ * 确定性几何清单（默认档零差异的**主判据**）：把「含文本的元素」的位置/尺寸/字号/行高抓成 JSON。
+ *
+ * 为什么需要它：像素比对有一个抗锯齿噪声底（跨 dev 进程偶发 3~1200 px，见文件头），为了不被噪声底
+ * 卡住而设的 0.05% 容差又只有 2.7× 余量（实测一处 1px 字号改动 = 6058 px / 0.1377%）—— 落在小元素
+ * 或浅色文本上的回归可能整块被噪声吞掉。所以主判据换成这份清单：round 到 0.01px 后**逐字段相等**，
+ * 不设任何容差；像素比对降为第二判据（拓「非字号类」的连带变化，如误改 padding/层序）。
+ *
+ * 收什么：**含直接文本子节点的元素**（文本最终都落在这些节点的字号/行高/盒子上），每条记
+ * path + 文本前缀 + rect + fontSize + lineHeight；另加一条合成项 `@scroller:chat`（滚动容器的
+ * rect 与 scrollHeight/clientHeight，用来拓「整体排版变高/变矮」这类只有祖先看得出的变化）。
+ *
+ * 排除什么（都写在这里，便于复核）：
+ * - `.toast` / `.toast-overflow`：扩展通知是时间相关浮层（脚本已等它们离场，但保险起见连子树不管）
+ * - `.turn-diff-timer` / `.turn-diff-timer-num`：轮末计时数字（回放里是静态的，运行时会跳秒）
+ * - 非元素节点、文本为空白或长度为 0 的节点
+ * - 不做其他排除：display:none / 推出视口的元素**照收**（rect 全是 0 或视口外坐标也稳定）——
+ *   右侧变更浮层关着时就在视口外（x=1320），它的 rect 同样是确定性信号，不要为了「好看」滤掉。
+ */
+const COLLECT_GEOMETRY = `(() => {
+	const SKIP = ".toast, .toast-overflow, .turn-diff-timer, .turn-diff-timer-num";
+	const round = (v) => Math.round(v * 100) / 100;
+	const out = [];
+	const tag = (el) => {
+		const cls = (el.getAttribute("class") || "").trim().split(/\\s+/).slice(0, 2).filter(Boolean).join(".");
+		return el.tagName.toLowerCase() + (el.id ? "#" + el.id : "") + (cls ? "." + cls : "");
+	};
+	const walk = (el, path) => {
+		if (el.matches(SKIP)) return;
+		const children = [...el.children];
+		const text = [...el.childNodes]
+			.filter((n) => n.nodeType === 3)
+			.map((n) => n.textContent.trim())
+			.filter(Boolean)
+			.join(" ")
+			.slice(0, 40);
+		if (text) {
+			const rect = el.getBoundingClientRect();
+			const cs = getComputedStyle(el);
+			out.push({
+				path,
+				text,
+				rect: { x: round(rect.x), y: round(rect.y), w: round(rect.width), h: round(rect.height) },
+				fontSize: cs.fontSize,
+				lineHeight: cs.lineHeight,
+			});
+		}
+		children.forEach((child, i) => walk(child, path + ">" + tag(child) + ":nth-child(" + (i + 1) + ")"));
+	};
+	[...document.body.children].forEach((child, i) => walk(child, tag(child) + ":nth-child(" + (i + 1) + ")"));
+	const scroller = document.querySelector(".chat-scrollbar");
+	if (scroller) {
+		const rect = scroller.getBoundingClientRect();
+		out.push({
+			path: "@scroller:chat",
+			text: "",
+			rect: { x: round(rect.x), y: round(rect.y), w: round(rect.width), h: round(rect.height) },
+			fontSize: getComputedStyle(scroller).fontSize,
+			lineHeight: getComputedStyle(scroller).lineHeight,
+			scroll: { top: round(scroller.scrollTop), height: round(scroller.scrollHeight), client: round(scroller.clientHeight) },
+		});
+	}
+	return JSON.stringify({ count: out.length, entries: out });
+})()`;
+
+/**
+ * 收集几何清单并**等到它自己稳定**：同一份清单连续两次逐字节相同才返回。
+ *
+ * 为什么必须等：monaco 的语法高亮是异步的（先纯文本、后按 token 重切 span），刚挂载时同一行可能
+ * 少/多一个 `span.mtkN` —— 实测就是这一点让「同一份代码两个进程」的清单出现 1 处差异，
+ * 而它也是那 1199 px 抗锯齿抖动的真因（同一行同一位置）。清单不稳，主判据就不成立。
+ */
+async function settleGeometry(cdp, attempts = 8) {
+	let raw = await cdp.evaluate(COLLECT_GEOMETRY);
+	for (let i = 1; i < attempts; i++) {
+		await sleep(350);
+		const next = await cdp.evaluate(COLLECT_GEOMETRY);
+		if (next === raw) return raw;
+		raw = next;
+	}
+	console.log(`  ⚠ 几何清单 ${attempts} 次仍未稳定（异步渲染没收敛？），拿最后一版继续`);
+	return raw;
+}
+
+/**
+ * 场景走查（已处理：固定视口 → 逐个场景 setup → 等 toast 离场 → 重冻动画 → 移鼠标到干净点）：
+ * 一次走查**同时**收几何清单与截图，保证两者描述的是同一帧状态。
+ * @param {{ capture?: boolean }} options capture=false 时只收几何（轻量重跑用）
+ */
+async function runSceneWalk(outDir, { capture = true } = {}) {
 	const missing = FIXTURES.filter((f) => !existsSync(fixtureFile(f)));
 	if (missing.length > 0)
 		fail(`样本会话缺失（${missing.map((m) => m.key).join(", ")}）：先停 dev → seed-fixtures → 启 dev`, 2);
@@ -705,7 +798,7 @@ async function runBaseline(outDir) {
 	const cdp = await connect();
 	await cdp.send("Emulation.setFocusEmulationEnabled", { enabled: true });
 
-	// 固定视口：两轮必须是同一个尺寸，否则整图不可比
+	// 固定视口：两轮必须是同一个尺寸，否则整图和几何清单都不可比
 	await cdp.evaluate(`window.resizeTo(${VIEWPORT.width}, ${VIEWPORT.height})`);
 	await sleep(800);
 	const viewport = await cdp
@@ -719,17 +812,17 @@ async function runBaseline(outDir) {
 	);
 
 	// 样本是否真的被 app 看见（目录只在启动时读一次）
-	const visible = await cdp.evaluate(
-		`(async () => { const list = await window.pi.listAllSessions(); return list.map((s) => s.sessionId); })()`,
+	const known = await cdp.evaluate(
+		`(async () => { const list = await window.pi.listAllSessions({}); return list.map((s) => s.sessionId); })()`,
 	);
-	const absent = FIXTURES.filter((f) => !visible.includes(f.sessionId));
+	const absent = FIXTURES.filter((f) => !known.includes(f.sessionId));
 	if (absent.length > 0)
 		fail(`样本会话不在会话列表里（${absent.map((a) => a.key).join(", ")}）：seed 后没重启 dev？`, 2);
 
 	await cdp.evaluate(FRAME_FIX);
 	await waitFor(cdp, `document.querySelector(".sidebar")`, "主界面");
 
-	const shots = [];
+	const scenes = [];
 	for (const scene of SCENES) {
 		console.log(`▸ ${scene.id}：${scene.desc}`);
 		const extra = (await scene.setup(cdp)) ?? {};
@@ -740,32 +833,82 @@ async function runBaseline(outDir) {
 		if (!parked.clean)
 			console.log(`  ⚠ 没有完全干净的鼠标停点，停于 ${parked.hover}（两次跑一致，不影响可比性）`);
 		await cdp.evaluate(SETTLE);
-		const file = join(outDir, `${scene.id}.png`);
-		const shot = await captureStable(cdp, file, viewport);
-		console.log(`  已存 ${scene.id}.png（${Math.round(shot.bytes / 1024)}KB, ${shot.frames} 帧内稳定）`);
-		shots.push({ id: scene.id, desc: scene.desc, file, park: parked, ...extra, ...shot });
+		const raw = await settleGeometry(cdp);
+		const geometry = JSON.parse(raw);
+		const record = { id: scene.id, desc: scene.desc, park: parked, ...extra, geometry };
+		if (capture) {
+			const file = join(outDir, `${scene.id}.png`);
+			const shot = await captureStable(cdp, file, viewport);
+			record.file = file;
+			record.bytes = shot.bytes;
+			record.frames = shot.frames;
+			record.sha256 = shot.sha256;
+			console.log(
+				`  已存 ${scene.id}.png（${Math.round(shot.bytes / 1024)}KB, ${shot.frames} 帧内稳定）｜几何 ${geometry.count} 条`,
+			);
+		} else {
+			console.log(`  几何 ${geometry.count} 条（未截图）`);
+		}
+		scenes.push(record);
 	}
 
 	await cdp.evaluate(`window.PerchoUI.stores.useSettingsStore.getState().setOpen(false)`);
 	cdp.ws.close();
 
+	const geometryDoc = {
+		kind: "font-size-geometry",
+		version: 1,
+		viewport,
+		scenes: scenes.map((s) => ({
+			id: s.id,
+			desc: s.desc,
+			count: s.geometry.count,
+			entries: s.geometry.entries,
+		})),
+	};
+	writeFileSync(join(outDir, "geometry.json"), `${JSON.stringify(geometryDoc, null, 1)}\n`, "utf8");
+	return { viewport, scenes, geometryDoc };
+}
+
+async function runBaseline(outDir) {
+	const { viewport, scenes, geometryDoc } = await runSceneWalk(outDir, { capture: true });
+	const geometrySha = sha256(JSON.stringify(geometryDoc.scenes));
+
 	const manifest = {
 		kind: "font-size-baseline",
-		version: 1,
+		version: 2,
 		createdAt: new Date().toISOString(),
 		gitHead: execFileSync("git", ["rev-parse", "--short", "HEAD"], { cwd: REPO }).toString().trim(),
 		viewport,
-		shots,
+		geometrySha,
+		shots: scenes.map((s) => ({
+			id: s.id,
+			desc: s.desc,
+			fixture: s.fixture,
+			file: s.file,
+			bytes: s.bytes,
+			frames: s.frames,
+			sha256: s.sha256,
+			park: s.park,
+			geometryCount: s.geometry.count,
+		})),
 	};
 	writeFileSync(join(outDir, "manifest.json"), `${JSON.stringify(manifest, null, 2)}\n`, "utf8");
 	writeFileSync(
 		join(outDir, "sha256.txt"),
-		`${shots.map((s) => `${s.sha256}  ${s.id}.png`).join("\n")}\n`,
+		`${geometrySha}  geometry.json\n${scenes.map((s) => `${s.sha256}  ${s.id}.png`).join("\n")}\n`,
 		"utf8",
 	);
-	console.log(`\n✓ 5 张基线图 → ${relative(REPO, outDir)}（含 manifest.json 与 sha256.txt）`);
-	for (const s of shots) console.log(`  ${s.sha256.slice(0, 16)}  ${s.id}.png`);
-	console.log("\n比对：manifest.json 的 viewport 必须一致，逐图 sha256 必须一致（不一致处用像素差异定位）。");
+	console.log(
+		`\n✓ 5 张基线图 + 几何清单 → ${relative(REPO, outDir)}（manifest.json / geometry.json / sha256.txt）`,
+	);
+	for (const s of scenes) console.log(`  ${s.sha256.slice(0, 16)}  ${s.id}.png`);
+	console.log(`  几何清单 sha256 ${geometrySha.slice(0, 16)}（主判据，compare 里逐字段相等）`);
+}
+
+async function runGeometry(outDir) {
+	await runSceneWalk(outDir, { capture: false });
+	console.log(`\n✓ 几何清单 → ${relative(REPO, join(outDir, "geometry.json"))}（只要清单、不截图时用它）`);
 }
 
 /* ==========================================================================
@@ -897,6 +1040,90 @@ function readBaseline(dir) {
 	return { manifest, shots };
 }
 
+/** 读一份 geometry.json（没有则返回 null：老目录只有截图时退化为纯像素判据） */
+function readGeometryDir(dir) {
+	const file = join(dir, "geometry.json");
+	if (!existsSync(file)) return null;
+	const doc = JSON.parse(readFileSync(file, "utf8"));
+	if (doc.kind !== "font-size-geometry") fail(`geometry.json 类型不对：${file}`);
+	doc.sha256 = sha256(JSON.stringify(doc.scenes));
+	return doc;
+}
+
+const fmtEntry = (entry) =>
+	`rect(${entry.rect.x},${entry.rect.y},${entry.rect.w}×${entry.rect.h}) ${entry.fontSize}/${entry.lineHeight}` +
+	(entry.scroll ? ` scroll(${entry.scroll.top}/${entry.scroll.height}/${entry.scroll.client})` : "") +
+	(entry.text ? ` “${entry.text}”` : "");
+
+/**
+ * 主判据：两份几何清单**逐字段相等**（值已 round 到 0.01px，不设任何容差）。
+ * 按 path 对齐（nth-child 链天然唯一），分开报「新增 / 消失 / 变化」——比按序号比好读。
+ */
+function compareGeometry(beforeGeom, afterGeom, beforeDir, afterDir) {
+	if (!beforeGeom || !afterGeom) {
+		console.log("⚠ 两侧不同时具备 geometry.json → 主判据跳过，只看像素（需要主判据就重跑 baseline）");
+		return null;
+	}
+	if (beforeGeom.sha256 === afterGeom.sha256) {
+		console.log(
+			`✓ 几何清单逐字段相等（sha256 ${beforeGeom.sha256.slice(0, 16)}，共 ${beforeGeom.scenes.reduce((n, s) => n + s.count, 0)} 条）`,
+		);
+		return 0;
+	}
+	const problems = [];
+	for (const bScene of beforeGeom.scenes) {
+		const aScene = afterGeom.scenes.find((s) => s.id === bScene.id);
+		if (!aScene) {
+			problems.push({ scene: bScene.id, kind: "场景缺失", path: "-", before: "", after: "" });
+			continue;
+		}
+		const aMap = new Map(aScene.entries.map((e) => [e.path, e]));
+		for (const bEntry of bScene.entries) {
+			const aEntry = aMap.get(bEntry.path);
+			if (!aEntry) {
+				problems.push({
+					scene: bScene.id,
+					kind: "消失",
+					path: bEntry.path,
+					before: fmtEntry(bEntry),
+					after: "",
+				});
+				continue;
+			}
+			aMap.delete(bEntry.path);
+			if (JSON.stringify(aEntry) !== JSON.stringify(bEntry)) {
+				problems.push({
+					scene: bScene.id,
+					kind: "变化",
+					path: bEntry.path,
+					before: fmtEntry(bEntry),
+					after: fmtEntry(aEntry),
+				});
+			}
+		}
+		for (const aEntry of aMap.values()) {
+			problems.push({
+				scene: bScene.id,
+				kind: "新增",
+				path: aEntry.path,
+				before: "",
+				after: fmtEntry(aEntry),
+			});
+		}
+	}
+	console.log(
+		`✗ 几何清单不等：${problems.length} 处（before ${relative(REPO, beforeDir)} / after ${relative(REPO, afterDir)}）`,
+	);
+	for (const p of problems.slice(0, 20)) {
+		console.log(`  [${p.scene}] ${p.kind} ${p.path}`);
+		if (p.before) console.log(`      before: ${p.before}`);
+		if (p.after) console.log(`      after : ${p.after}`);
+	}
+	if (problems.length > 20)
+		console.log(`  …另有 ${problems.length - 20} 处（完整清单见 geometry.json 对比）`);
+	return problems.length;
+}
+
 function runCompare(beforeDir, afterDir) {
 	const before = readBaseline(resolve(beforeDir));
 	const after = readBaseline(resolve(afterDir));
@@ -905,12 +1132,22 @@ function runCompare(beforeDir, afterDir) {
 	const va = before.manifest.viewport;
 	const vb = after.manifest.viewport;
 	if (va.width !== vb.width || va.height !== vb.height || va.dpr !== vb.dpr) {
-		fail(`视口不一致（${JSON.stringify(va)} vs ${JSON.stringify(vb)}）：整图不可比`);
+		fail(`视口不一致（${JSON.stringify(va)} vs ${JSON.stringify(vb)}）：整图和清单都不可比`);
 	}
+
+	// 判据 1（主）：确定性几何清单
+	const geometryProblems = compareGeometry(
+		readGeometryDir(resolve(beforeDir)),
+		readGeometryDir(resolve(afterDir)),
+		resolve(beforeDir),
+		resolve(afterDir),
+	);
+
+	// 判据 2：像素（拓非字号类的连带变化；允许抗锯齿级抖动）
 	let failed = 0;
 	let jitter = 0;
-	for (const b of before.shots) {
-		const a = after.shots.find((s) => s.id === b.id);
+	for (const b of before.manifest.shots) {
+		const a = after.manifest.shots.find((s) => s.id === b.id);
 		if (!a) {
 			console.log(`✗ ${b.id}：after 缺少这一张`);
 			failed += 1;
@@ -920,7 +1157,7 @@ function runCompare(beforeDir, afterDir) {
 			console.log(`✓ ${b.id} 逐像素一致`);
 			continue;
 		}
-		const stats = pngDiff(b.file, a.file);
+		const stats = pngDiff(join(resolve(beforeDir), `${b.id}.png`), join(resolve(afterDir), `${a.id}.png`));
 		if (stats.sizeMismatch) {
 			console.log(`✗ ${b.id} 图尺寸不同（${stats.sizeA} vs ${stats.sizeB}）`);
 			failed += 1;
@@ -936,11 +1173,13 @@ function runCompare(beforeDir, afterDir) {
 			failed += 1;
 		}
 	}
-	if (failed > 0) fail(`${failed} 张有实质差异（默认档安全网未过）`);
+
+	if (geometryProblems) fail(`几何清单有 ${geometryProblems} 处不等（主判据未过）`);
+	if (failed > 0) fail(`${failed} 张有实质差异（像素判据未过）`);
 	console.log(
 		jitter > 0
-			? `\n✓ 无实质差异（另有 ${jitter} 张仅抗锯齿级抖动，见上）`
-			: "\n✓ 全部场景逐像素一致：默认档渲染与改动前零差异",
+			? `\n✓ 默认档零差异通过（另 ${jitter} 张仅抗锯齿级抖动，主判据几何清单已逐字段相等）`
+			: "\n✓ 默认档零差异通过：几何清单逐字段相等 + 逐像素一致",
 	);
 }
 
@@ -978,6 +1217,10 @@ try {
 			if (!arg) fail("baseline 需要 outDir：node scripts/check-font-size.mjs baseline <outDir>", 2);
 			await runBaseline(resolve(arg));
 			break;
+		case "geometry":
+			if (!arg) fail("geometry 需要 outDir：node scripts/check-font-size.mjs geometry <outDir>", 2);
+			await runGeometry(resolve(arg));
+			break;
 		case "compare":
 			if (!arg || !arg2) fail("compare 需要两个目录：compare <beforeDir> <afterDir>", 2);
 			runCompare(arg, arg2);
@@ -988,7 +1231,7 @@ try {
 			break;
 		default:
 			fail(
-				"用法：inventory [outFile] | seed-state | restore-state | seed-fixtures | clean-fixtures | baseline <outDir> | compare <beforeDir> <afterDir> | diff <a.png> <b.png>（见文件头）",
+				"用法：inventory [outFile] | seed-state | restore-state | seed-fixtures | clean-fixtures | baseline <outDir> | geometry <outDir> | compare <beforeDir> <afterDir> | diff <a.png> <b.png>（见文件头）",
 				2,
 			);
 	}
