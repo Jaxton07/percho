@@ -52,6 +52,17 @@ describe("字号 token（typography.css）", () => {
 		}
 	});
 
+	it("字号表只此一份：globals.css（及其他样式文件）里不许定义 .text-ui-* 类", () => {
+		// 唯一事实源（spec D10）：token 只能在这里定义；要新增字号就加到本文件 + shared/typography.ts 的 FONT_SIZE_TOKENS
+		const cssFiles = walk(stylesDir).filter(
+			(file) => file.endsWith(".css") && !file.endsWith("typography.css"),
+		);
+		const offenders = cssFiles.flatMap((file) =>
+			[...readFileSync(file, "utf8").matchAll(/\.text-ui-\d+\s*\{/g)].map((m) => `${file}: ${m[0]}`),
+		);
+		expect(offenders).toEqual([]);
+	});
+
 	it("两个乘数变量的兜底值都是 1（默认档 = 迁移前现状）", () => {
 		expect(typography).toMatch(/--fs-ui-scale: 1;/);
 		expect(typography).toMatch(/--fs-code-scale: 1;/);

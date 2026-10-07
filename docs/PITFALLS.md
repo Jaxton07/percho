@@ -14,6 +14,9 @@
 | 比像素核验视觉时取样偏了、以为改动没生效 | 四 · CDP `clip.scale` 再乘一次 DPR（2026-09-29） |
 | 拖动类脚本跑完后界面卡在「拖动中」（光标仍是 col-resize、之后再拖也不动） | 四 · CDP 合成拖拽的两个卡死姿势（2026-10-07） |
 | 侧栏拖宽后把手抓不住 / 行末按钮点不到，**截图看却完全正常** | 四 · 比列宽更宽的内容溢出吃 pointer 事件（2026-10-07） |
+| `verify-layout-freedom` 的 V2 拖拽断言又红了、把手点在别的元素上 | 四 · `.edge-fade` 的 mask 让滚动容器压住左栏把手（**2026-10-07 定位，未修**） |
+| 改了代码字号档位，monaco 代码块字号纹丝不动 | 四 · monaco 只在创建编辑器时应用 options（字号必须在 props 变化时重建代码块） |
+| 注入页面的探针函数报 `SyntaxError: missing ) after argument list` | 四 · 把含反引号/`${}` 的函数塞进模板串注入（要 JSON 后再 eval） |
 | 侧栏拖一次后**整窗光标卡在 col-resize**、之后再也拖不动（刷新才恢复） | 四 · 拖拽只挂 pointerup 会在「窗口外松手」后永久卡死（2026-10-07） |
 | 脚本判定「没生效」但代码明明改了 / 文件里是新值而界面是旧值 | 四 · dev 里 HMR 会让 store 订阅冻结，验收前要硬重启（2026-10-07） |
 | hover 态截图时有时无、想稳定截出 hover 视觉 | 四 · 同上（`CSS.forcePseudoState` 钉伪类）（2026-10-07） |
@@ -479,6 +482,24 @@ el[pk].style; // => {"--sidebar-render-width":"320px"} ← React「最后一次�
 
 **回归断言**：`scripts/verify-layout-freedom.mjs` 的 `V2-n`（把手中心最上层就是把手）、`V2-o`（栏内可见控件中心命中都落在栏内）、`V2-p`（拖到 480 松手后仍能重抓拖回）—— **修前全红、修后全绿**（把 `z-index` 临时改回 `auto` 实测过）。
 
+### `.edge-fade` 的 mask 让滚动容器压住左栏把手：V2 拖拽断言二次变红（2026-10-07 定位，**未修**）
+
+**症状**：左栏把手拖不动了 —— `document.elementFromPoint(把手中心)` 拿到的是 `div.edge-fade`（左栏的滚动容器）而不是 `hr.sidebar-resize-handle`；`scripts/verify-layout-freedom.mjs` 的 `V2-n`（把手中心最上层就是把手）与 `V2-p`（拖到 480 后仍能重抓拖回）**全红**，而同一份断言在 X2 修复后是全绿的。
+
+**机制**（与 X2 不是同一个原因，是**第二个**「把手被盖住」的成因）：X2 修的是「左栏整体被聊天列溢出盖住」→ `z-index: 1` 加在 `.sidebar` 上。但**栏内**还有一层竞争：滚出滚动边界时 `.edge-fade` 会给左栏滚动容器加 `mask-image`（横向/纵向淡出），而 **`mask-image` 会创建层叠上下文** ⇒ 这个容器变成一个原子层，按 DOM 顺序（在把手之后）**压住**只写了 `position: absolute` 的 8px 把手。只在**淡出生效时**（列表可滚且滚到了边界 —— 也就是长会话列表的常态）才出现，所以时有时无、截图完全正常。
+
+**复现（不必跑脚本，两行）**：
+```js
+const h = document.querySelector("[data-sidebar-resize-handle]").getBoundingClientRect();
+document.elementFromPoint(h.left + h.width / 2, h.top + 100);           // → div.edge-fade（被盖住）
+document.querySelector(".sidebar .edge-fade").style.maskImage = "none";  // 临时摘掉 mask
+document.elementFromPoint(h.left + h.width / 2, h.top + 100);           // → hr.sidebar-resize-handle ✓
+```
+
+**建议修法**（二选一，都是 1 行级）：① `.sidebar-resize-handle { z-index: 1 }`（把手是 `.sidebar` 的直接子元素，抬一层即够）；② 把把手移出被 mask 的容器 / 让容器不建层叠上下文（`isolation` 之类改不回来，mask 必建）。修完请重跑 `node scripts/verify-layout-freedom.mjs all` 的 V2 段（需 dev 带 `9224 + --inspect=9229` 双端口）。
+
+**未修的原因**：本条目是**做「自定义字号」时跑阶段 4 回归发现的**，与字号改动无关（`globals.css` 的非字号行 diff 为空，字号 token 也不可能影响层叠顺序）。修它属于左栏拖拽特性的范围，留给对应会话（或用户拍板顺手修）。
+
 ### Tailwind preflight 的 `hr { height: 0 }` 会盖掉 `top: 0; bottom: 0`（2026-10-07，拖拽把手命中区高度 0）
 
 给左栏把手用 `<hr>`（图它的隐式 role = `separator`）时写了 `position: absolute; top: 0; bottom: 0; width: 8px`，**命中区高度却是 0**：Tailwind preflight 给 `hr` 定了具名 `height: 0`，具名高度优先于 `top/bottom` 的约束解析（over-constrained），于是「撑满父容器」失效。CDP 合成鼠标落在它上面根本命不中（表现为「拖不动」）。**修法：显式 `height: auto`**（顺手把 preflight 的 `margin`/`border-top-width` 也清掉）。
@@ -486,6 +507,17 @@ el[pk].style; // => {"--sidebar-render-width":"320px"} ← React「最后一次�
 ### 脚本复位 inline style 别用 `cssText = ""`（2026-10-07，shoot-sidebar 踩到）
 
 `shoot-sidebar.mjs` 的 RESET 原本 `sb.style.cssText = ""`。侧栏宽度改成由 React 写在 `.sidebar` 上的 `--sidebar-render-width` 驱动后，这一句会把**变量一起抹掉**——脚本跑完侧栏掉回 CSS 兜底值 240，直到下一次 React 渲染才纠正（表现为「跑完脚本界面宽度不对」）。修法：按属性 `removeProperty("width")` / `removeProperty("transition")` 精确清理。
+
+### monaco 只在创建编辑器时应用 `options`：换字号必须重建代码块（2026-10-07，自定义字号阶段 3）
+
+**症状**：改了「代码字号」档位后，monaco 代码块的字号/行高**纹丝不动**（`.view-lines` 上的 inline `12px/18px` 不变），而同一份档位下内联 code / diff 表都跟着变了。
+
+**两个坑叠在一起**：
+
+1. **传参路径**：本项目把 monaco 选项塞在 `codeBlockProps.monacoOptions` 里 —— 但 markstream 的当前 dist chunk 里，内置代码块是从 `codeBlockThemes.monacoOptions`（对应 prop `codeBlockMonacoOptions`）取值的，且**后者在展开顺序上会覆盖前者**（`.d.ts` 里两个 prop 都在，极易看岔）。
+2. **库内部没有 `updateOptions` 调用**（`rg -o "updateOptions\(" node_modules/markstream-react/dist/*.js` 为空）⇒ 只换 `monacoOptions` 对象的身份（哪怕 `useMemo` 换了）对**已挂载**的编辑器无效；只「重开同一个会话」也不会重建代码块（内容相同 → React 复用同一棵树），必须让 key 变。
+
+**修法**：`<MarkdownRender key={`code-font-${codeFontSize}`} …>` —— 换档位时重建该消息的 markdown 子树（代价：流式中改档位会重放当前消息的打字机动画；设置项用户极少动）。另注意：monaco 的基准字号/行高比是**平台相关**的（darwin 12 / 其他 14；黄金比 1.5 / 1.35，下限 8），换算见 `renderer/src/lib/typography.ts`。
 
 ### CDP 截图不绘制滚动条：只能力槽宽（2026-09-29）
 

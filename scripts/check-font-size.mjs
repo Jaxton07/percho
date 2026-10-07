@@ -25,6 +25,8 @@
  *   node scripts/check-font-size.mjs compare b a --allow-change=04-settings-appearance  # 该场景只比字号取值集合
  *   node scripts/check-font-size.mjs side-by-side b a 04-settings-appearance out.png  # 并排图 + 差异红框
  *   node scripts/check-font-size.mjs code-sizes                # 代码字号四档实测（monaco/内联/diff/界面文字对照）
+ *   node scripts/check-font-size.mjs presets <outDir> ui|code   # 四档截图矩阵（ui-12 / ui-13 / … 或 code-11 / …）
+ *   node scripts/check-font-size.mjs overflow                   # 每档不裁切/不溢出断言（不依赖截图）
  *
  * 判据两层：**主 = 几何清单**（每个含文本元素的 rect/字号/行高 + 被排除子树的字号行高，round 0.01px 后逐字段相等，无容差），
  * **次 = 像素**（拓非字号类的连带变化；允许抗锯齿级抖动，理由见下）。缺 geometry.json 时主判据直接判失败（除非显式 `--pixel-only`）。
@@ -210,7 +212,7 @@ function runInventory(outFile, { expectZero = false } = {}) {
  * 2. **逐值总数**：token 出现次数 == oracle 里该 px 值的处数 + 由 rem 基类换算来的处数（每处各消耗一个、没多没少）
  * 3. **globals.css 逐块**：按选择器块核（插了 `@import` 行后行号整体下移，所以不用行号）
  */
-function runReconcile(oraclePath) {
+function runReconcile(oraclePath, { at = null } = {}) {
 	const oracleFile = oraclePath ?? join(TMP_DIR, "evidence/inventory.json");
 	if (!existsSync(oracleFile)) fail(`找不到 oracle：${oracleFile}（先跑 inventory，或传入路径）`, 2);
 	const oracle = JSON.parse(readFileSync(oracleFile, "utf8"));
@@ -222,10 +224,17 @@ function runReconcile(oraclePath) {
 	};
 	const problems = [];
 	const fileCache = new Map();
-	const linesOf = (file) => {
-		if (!fileCache.has(file)) fileCache.set(file, readFileSync(join(REPO, file), "utf8").split("\n"));
+	/** `--at=<git-ref>` 时从 git 读该提交的源码（对账的应是「迁移那一次」的树；之后代码会合法增长） */
+	const sourceOf = (file) => {
+		if (!fileCache.has(file)) {
+			const text = at
+				? execFileSync("git", ["show", `${at}:${file}`], { cwd: REPO }).toString()
+				: readFileSync(join(REPO, file), "utf8");
+			fileCache.set(file, text.split("\n"));
+		}
 		return fileCache.get(file);
 	};
+	const linesOf = (file) => sourceOf(file);
 	const around = (file, line, radius = 3) =>
 		linesOf(file)
 			.slice(Math.max(0, line - 1 - radius), line + radius)
@@ -250,8 +259,17 @@ function runReconcile(oraclePath) {
 	}
 
 	// 逐值总数：token 出现次数 == oracle 里该值的 px 处数 + 由 rem 基类换来的处数
-	const joined = walkTsx(RENDERER_SRC)
-		.map((file) => readFileSync(file, "utf8"))
+	const joined = (
+		at
+			? execFileSync("git", ["ls-tree", "-r", "--name-only", at, "--", "packages/desktop/src/renderer/src"], {
+					cwd: REPO,
+				})
+					.toString()
+					.split("\n")
+					.filter((f) => f.endsWith(".tsx"))
+			: walkTsx(RENDERER_SRC).map((f) => relative(REPO, f))
+	)
+		.map((file) => sourceOf(file).join("\n"))
 		.join("\n");
 	const REM_TOKEN_OF_VALUE = { xs: "12", sm: "14", lg: "18" };
 	const expectedByValue = new Map(oracle.px.values);
@@ -267,7 +285,7 @@ function runReconcile(oraclePath) {
 	}
 
 	// globals.css：按选择器块核
-	const css = readFileSync(join(RENDERER_SRC, "styles/globals.css"), "utf8").split("\n");
+	const css = sourceOf("packages/desktop/src/renderer/src/styles/globals.css");
 	const blockOf = (selector) => {
 		const startIndex = css.findIndex((l) => l.trim() === `${selector} {`);
 		if (startIndex < 0) return null;
@@ -1806,6 +1824,206 @@ async function runCodeSizes() {
 }
 
 /* ==========================================================================
+ * 9. presets：四档截图矩阵 / overflow：每档不裁切不溢出
+ * ========================================================================== */
+
+/** 档位表由 `shared/typography.ts` 定义（那份有单测守着）；这里是脚本侧镜像 —— 漂移会被第 3 条断言抓出来 */
+const UI_PRESETS = [12, 13, 15, 17];
+const CODE_PRESETS = [11, 12.5, 14, 16];
+
+/** 把档位写进 store（走 app 自己的换算，脚本不重复实现乘数） */
+const setPresetVia = (axis, px) =>
+	`(() => {
+		const store = window.PerchoUI.stores.useUiPreferencesStore.getState();
+		${axis === "code" ? `store.setCodeFontSize(${px});` : `store.setUiFontSize(${px});`}
+		return JSON.stringify({
+			uiFontSize: window.PerchoUI.stores.useUiPreferencesStore.getState().uiFontSize,
+			codeFontSize: window.PerchoUI.stores.useUiPreferencesStore.getState().codeFontSize,
+			varUi: getComputedStyle(document.documentElement).getPropertyValue("--fs-ui-scale").trim(),
+			varCode: getComputedStyle(document.documentElement).getPropertyValue("--fs-code-scale").trim(),
+		});
+	})()`;
+
+/**
+ * 把探针函数注入页面求值。**不能直接 `${fn.toString()}()` 塞进模板串**：探针自身含反引号与 `${}`，
+ * 会被外层模板先求值（实测 SyntaxError: missing ) after argument list）。所以先 JSON 成字符串再 eval。
+ */
+const callInPage = (fn, arg) =>
+	`JSON.stringify(eval(${JSON.stringify(`(${fn.toString()})(${JSON.stringify(arg ?? null)})`)}))`;
+
+/** 每档截图：ui-12 / ui-13 / ... 或 code-11 / code-12.5 / ... */
+async function runPresets(outDir, axis) {
+	const presets = axis === "code" ? CODE_PRESETS : UI_PRESETS;
+	const dirs = [];
+	for (const px of presets) {
+		const dir = join(resolve(outDir), `${axis}-${px}`);
+		const cdp = await connect();
+		await cdp.send("Emulation.setFocusEmulationEnabled", { enabled: true });
+		// 先把「另一轴」钉回基准：矩阵每一格的语义是「本轴档位 × 另轴默认」，否则上一轮的残留会混进来
+		await cdp.evaluate(`(() => {
+			const store = window.PerchoUI.stores.useUiPreferencesStore.getState();
+			store.setUiFontSize(13);
+			store.setCodeFontSize(12.5);
+			return true;
+		})()`);
+		const applied = JSON.parse(await cdp.evaluate(setPresetVia(axis, px)));
+		const expectedKey = axis === "code" ? "codeFontSize" : "uiFontSize";
+		if (applied[expectedKey] !== px)
+			fail(`档位没设上：期望 ${expectedKey}=${px}，实际 ${applied[expectedKey]}`);
+		cdp.ws.close();
+		console.log(`▸ ${axis}-${px} → --fs-ui-scale=${applied.varUi} · --fs-code-scale=${applied.varCode}`);
+		// 走 runBaseline（而不是 runSceneWalk）：矩阵目录也要有 manifest / sha256，才能被 compare 独立复核
+		await runBaseline(dir, { fromStore: true });
+		dirs.push({ px, dir, scales: applied });
+	}
+	// 矩阵跑完把两个档位都还原成基准（下一次跑别的轴时才知道另轴是默认值）
+	const restore = await connect();
+	await restore.evaluate(`(() => {
+		const s = window.PerchoUI.stores.useUiPreferencesStore.getState();
+		s.setUiFontSize(13);
+		s.setCodeFontSize(12.5);
+		return true;
+	})()`);
+	restore.ws.close();
+	console.log(
+		`\n✓ ${axis} 四档截图 → ${relative(REPO, resolve(outDir))}（${dirs.map((d) => `${axis}-${d.px}`).join(" / ")}）`,
+	);
+}
+
+/**
+ * 每档的不裁切/不溢出断言（不依赖截图）。选择器写死在下面，都是「固定高容器」这类一处漏就看得出问题的地方；
+ * 每条都打印实测值，便于 review 时核对阈值。
+ */
+const OVERFLOW_PROBES = (scope) => {
+	const round = (v) => Math.round(v * 100) / 100;
+	const results = [];
+	const push = (name, ok, detail) => results.push({ name, ok, detail });
+	const fits = (name, el) => {
+		if (!el) {
+			push(name, false, "元素不存在");
+			return;
+		}
+		push(
+			name,
+			!(el.scrollHeight > el.clientHeight + 1),
+			`scrollHeight ${el.scrollHeight} vs clientHeight ${el.clientHeight}`,
+		);
+	};
+	const noWide = (name, el) => {
+		if (!el) {
+			push(name, false, "元素不存在");
+			return;
+		}
+		push(
+			name,
+			!(el.scrollWidth > el.clientWidth + 1),
+			`scrollWidth ${el.scrollWidth} vs clientWidth ${el.clientWidth}`,
+		);
+	};
+
+	const doc = document.documentElement;
+	push(
+		"页面无横向溢出",
+		doc.scrollWidth <= doc.clientWidth + 1,
+		`scrollWidth ${doc.scrollWidth} vs clientWidth ${doc.clientWidth}`,
+	);
+
+	// 固定高容器：字号变大后文字被裁就是这里露出来（会话行 h-[31px]、顶栏胶囊、composer 输入壳）
+	fits("会话行（h-[31px]）", document.querySelector("[data-session-id]"));
+	fits("顶栏会话胶囊", document.querySelector(".tab-pill"));
+	fits("composer 输入壳", document.querySelector('div[class*="rounded-[20px]"]'));
+
+	// 设置弹窗 + 字号 chip 行（只在 panel 阶段查：chat 阶段弹窗是关着的）
+	const dialog = scope === "panel" ? document.querySelector('[role="dialog"]') : null;
+	if (scope === "panel") {
+		noWide("设置弹窗无横向溢出", dialog);
+		noWide("设置面板主体无横向溢出", dialog?.querySelector(".overflow-y-auto"));
+	}
+	const chip = dialog?.querySelector("button[aria-pressed]");
+	const chipRow = chip?.closest("div.flex.gap-2");
+	if (chipRow) {
+		const host = chipRow.parentElement;
+		const rowRect = chipRow.getBoundingClientRect();
+		push(
+			"字号 chip 行不超出容器",
+			rowRect.right <= host.getBoundingClientRect().right + 1,
+			`chip 右 ${round(rowRect.right)} vs 容器右 ${round(host.getBoundingClientRect().right)}`,
+		);
+		const tops = new Set(
+			[...chipRow.querySelectorAll("button[aria-pressed]")].map((c) =>
+				Math.round(c.getBoundingClientRect().top),
+			),
+		);
+		push("字号 chip 不换行", tops.size <= 1, `行数 ${tops.size}`);
+	} else if (scope === "panel") {
+		push("字号 chip 行", false, "找不到 chip（设置面板没打开？）");
+	}
+
+	const monaco = document.querySelector(".monaco-editor");
+	if (monaco) {
+		const lines = document.querySelector(".monaco-editor .view-lines");
+		const hb = document.querySelector(".monaco-editor .scrollbar.horizontal");
+		push(
+			"monaco 内容不被裁切",
+			!lines || lines.getBoundingClientRect().height <= monaco.getBoundingClientRect().height + 1,
+			`内容高 ${round(lines?.getBoundingClientRect().height ?? 0)} vs 容器高 ${round(monaco.getBoundingClientRect().height)}`,
+		);
+		push(
+			"monaco 无横向滚动条",
+			!hb || getComputedStyle(hb).visibility === "hidden",
+			hb ? `visibility ${getComputedStyle(hb).visibility}` : "无横滚动条元素",
+		);
+	}
+	return results;
+};
+
+async function runOverflow() {
+	const missing = FIXTURES.filter((f) => !existsSync(fixtureFile(f)));
+	if (missing.length > 0) fail("样本会话缺失：先停 dev → seed-fixtures → 启 dev", 2);
+	const cdp = await connect();
+	await cdp.send("Emulation.setFocusEmulationEnabled", { enabled: true });
+	const rows = [];
+	let failures = 0;
+	try {
+		// 每个界面档都要看：面板（含 chip 行）+ 会话页（含 monaco）
+		for (const axis of ["ui", "code"]) {
+			for (const px of axis === "code" ? CODE_PRESETS : UI_PRESETS) {
+				await cdp.evaluate(setPresetVia(axis, px));
+				await sleep(200);
+				await cdp.evaluate(`window.PerchoUI.stores.useSettingsStore.getState().openWith("appearance")`);
+				await sleep(500);
+				const panelResults = await cdp.evaluate(callInPage(OVERFLOW_PROBES, "panel"));
+				await cdp.evaluate(`window.PerchoUI.stores.useSettingsStore.getState().setOpen(false)`);
+				await openFixture(cdp, "code");
+				await sleep(1200);
+				const chatResults = await cdp.evaluate(callInPage(OVERFLOW_PROBES, "chat"));
+				const label = `${axis}-${px}`;
+				for (const item of [...JSON.parse(panelResults), ...JSON.parse(chatResults)]) {
+					rows.push({ preset: label, ...item });
+					if (!item.ok) failures += 1;
+					console.log(`${item.ok ? "✓" : "✗"} [${label}] ${item.name} —— ${item.detail}`);
+				}
+			}
+		}
+	} finally {
+		await cdp
+			.evaluate(`window.PerchoUI.stores.useUiPreferencesStore.getState().setUiFontSize(13)`)
+			.catch(() => {});
+		await cdp
+			.evaluate(`window.PerchoUI.stores.useUiPreferencesStore.getState().setCodeFontSize(12.5)`)
+			.catch(() => {});
+		await cdp.evaluate(`window.PerchoUI.stores.useSettingsStore.getState().setOpen(false)`).catch(() => {});
+		cdp.ws.close();
+	}
+	const file = join(TMP_DIR, "evidence/overflow.json");
+	mkdirSync(resolve(file, ".."), { recursive: true });
+	writeFileSync(file, `${JSON.stringify({ rows }, null, 2)}\n`, "utf8");
+	console.log(`→ ${relative(REPO, file)}`);
+	if (failures > 0) fail(`${failures} 条溢出/裁切断言未过（见上）`);
+	console.log(`✓ ${rows.length} 条断言全过（4 界面档 × 2 场景 + 4 代码档）`);
+}
+
+/* ==========================================================================
  * 入口
  * ========================================================================== */
 
@@ -1818,7 +2036,9 @@ try {
 			runInventory(arg, { expectZero: flags.has("--expect-zero") });
 			break;
 		case "reconcile":
-			runReconcile(arg);
+			runReconcile(arg, {
+				at: [...flags].find((f) => f.startsWith("--at="))?.slice("--at=".length) ?? null,
+			});
 			break;
 		case "seed-fixtures":
 			seedFixtures();
@@ -1839,6 +2059,13 @@ try {
 		case "geometry":
 			if (!arg) fail("geometry 需要 outDir：node scripts/check-font-size.mjs geometry <outDir>", 2);
 			await runGeometry(resolve(arg), { fromStore: flags.has("--from-store") });
+			break;
+		case "presets":
+			if (!arg || !arg2) fail("presets 需要：presets <outDir> <ui|code>", 2);
+			await runPresets(arg, arg2);
+			break;
+		case "overflow":
+			await runOverflow();
 			break;
 		case "code-sizes":
 			await runCodeSizes();
@@ -1864,7 +2091,7 @@ try {
 			break;
 		default:
 			fail(
-				"用法：inventory [outFile] [--expect-zero] | reconcile [oraclePath] | seed-state | restore-state | seed-fixtures | clean-fixtures | baseline <outDir> [--from-store] | geometry <outDir> [--from-store] | compare <beforeDir> <afterDir> [--pixel-only] [--allow-change=<sceneId,...>] | diff <a.png> <b.png> | code-sizes | side-by-side <before> <after> <sceneId> [out.png]（见文件头）",
+				"用法：inventory [outFile] [--expect-zero] | reconcile [oraclePath] | seed-state | restore-state | seed-fixtures | clean-fixtures | baseline <outDir> [--from-store] | geometry <outDir> [--from-store] | compare <beforeDir> <afterDir> [--pixel-only] [--allow-change=<sceneId,...>] | diff <a.png> <b.png> | presets <outDir> <ui|code> | overflow | code-sizes | side-by-side <before> <after> <sceneId> [out.png]（见文件头）",
 				2,
 			);
 	}
