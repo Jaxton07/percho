@@ -510,14 +510,24 @@ document.elementFromPoint(h.left + h.width / 2, h.top + 100);           // → h
 
 ### monaco 只在创建编辑器时应用 `options`：换字号必须重建代码块（2026-10-07，自定义字号阶段 3）
 
-**症状**：改了「代码字号」档位后，monaco 代码块的字号/行高**纹丝不动**（`.view-lines` 上的 inline `12px/18px` 不变），而同一份档位下内联 code / diff 表都跟着变了。
+**症状**：改了「代码字号」档位后，monaco 代码块的字号/行高**纹丝不动**（`.view-lines` 上的 inline `12px / 18px` 不变），而同一档位下内联 code / diff 表都跟着变了。
 
-**两个坑叠在一起**：
+**机制**（库内部实测，`node_modules/markstream-react/dist/*.js`）：
 
-1. **传参路径**：本项目把 monaco 选项塞在 `codeBlockProps.monacoOptions` 里 —— 但 markstream 的当前 dist chunk 里，内置代码块是从 `codeBlockThemes.monacoOptions`（对应 prop `codeBlockMonacoOptions`）取值的，且**后者在展开顺序上会覆盖前者**（`.d.ts` 里两个 prop 都在，极易看岔）。
-2. **库内部没有 `updateOptions` 调用**（`rg -o "updateOptions\(" node_modules/markstream-react/dist/*.js` 为空）⇒ 只换 `monacoOptions` 对象的身份（哪怕 `useMemo` 换了）对**已挂载**的编辑器无效；只「重开同一个会话」也不会重建代码块（内容相同 → React 复用同一棵树），必须让 key 变。
+1. **参数是从 `codeBlockProps` 传进去的（这是当前生效的路径）**：内置代码块被渲染成
+   `P(Pn, { …, monacoOptions: codeBlockThemes?.monacoOptions, …, ...omit(codeBlockProps, ["langs"]) })`
+   —— `codeBlockProps` 的展开在 `monacoOptions` **之后**，所以 `codeBlockProps.monacoOptions` **覆盖** `codeBlockThemes.monacoOptions`（后者对应 prop `codeBlockMonacoOptions`）。
+   即：本项目把 monaco 选项写在 `codeBlockProps.monacoOptions` 里是对的；两个 prop 都在 `.d.ts` 里，极易看岔方向。
+2. **`fontSize` 只在编辑器创建路径里应用一次**：全库 `updateOptions` 只有 3 处 —— ① `automaticLayout` 变化时；② 编辑器创建路径 `updateOptions({ fontSize: p, automaticLayout: false })`（即创建时那一次）；③ 内置「字号 +/-」按钮路径 `updateOptions({ fontSize: Be })`（取决于开关，本项目 `showFontSizeButtons: false` 关掉了）。
+   ⇒ 运行时**没有**任何东西会跟着 props 重算 fontSize；只换 `monacoOptions` 对象身份（哪怕 `useMemo`）对**已挂载**的编辑器无效。
+   顺带：③ 也说明「对活编辑器 `updateOptions({ fontSize })` 是安全的」—— 将来若重建代价不可接受，可以走这条路（需要拿到 editor 句柄，库没暴露）。
 
-**修法**：`<MarkdownRender key={`code-font-${codeFontSize}`} …>` —— 换档位时重建该消息的 markdown 子树（代价：流式中改档位会重放当前消息的打字机动画；设置项用户极少动）。另注意：monaco 的基准字号/行高比是**平台相关**的（darwin 12 / 其他 14；黄金比 1.5 / 1.35，下限 8），换算见 `renderer/src/lib/typography.ts`。
+**修法**：`<MarkdownRender key={`code-font-${codeFontSize}`} …>` —— 换档位时重建该消息的 markdown 子树。
+
+**代价（实测，真实会话 9 个 monaco / 42 行可见）**：切档到全部生效 **98–131ms**，期间**最长帧间隔 50–58ms**（约掉 1 帧）；对照：只改界面字号（不重建）**47–55ms / 42ms**。
+另两条连带影响：① 卡片内的局部视图态会被重置（如 mermaid 卡的「源码/预览」切回预览）；② 内容高度变化会让贴底的滚动位置位移（实测 scrollTop +250px，视觉上底部保持贴底，不是跳位 bug）。
+
+**另一个容易踩的坑**：monaco 的 `.monaco-scrollable-element.scrollWidth` 是 **16777214** 的占位值（内部最大宽 hack），拿它判「有没有横向溢出」会永远为真；要判横向滚动请读它自己的 `.scrollbar.horizontal` 的 computed `visibility`。
 
 ### CDP 截图不绘制滚动条：只能力槽宽（2026-09-29）
 

@@ -397,6 +397,22 @@ const FIXTURES = [
 		assistant: CODE_SAMPLE,
 	},
 	{
+		key: "mermaid",
+		sessionId: "01a0ffff-fontsize-baseline-0000-000000000004",
+		name: "字号基线 · mermaid",
+		iso: "2026-10-07T10:15:00.000Z",
+		user: "mermaid 样本：图表卡（源码视图的字号应跟代码字号档位）",
+		assistant: [
+			"一句话铺垫，然后一张小图。",
+			"",
+			"```mermaid",
+			"graph TD",
+			"  A[字号档位] --> B[界面字号]",
+			"  A --> C[代码字号]",
+			"```",
+		].join("\n"),
+	},
+	{
 		key: "tools",
 		sessionId: "01a0ffff-fontsize-baseline-0000-000000000003",
 		name: "字号基线 · 工具卡与 diff",
@@ -1766,6 +1782,7 @@ async function runCodeSizes() {
 
 	const presets = [11, 12.5, 14, 16];
 	const rows = [];
+	const problems = [];
 	try {
 		for (const px of presets) {
 			await cdp.evaluate(`window.PerchoUI.stores.useUiPreferencesStore.getState().setCodeFontSize(${px})`);
@@ -1794,6 +1811,39 @@ async function runCodeSizes() {
 			console.log(`  代码字号 ${px}px → diff 表 ${measured.diffTable} / hunk ${measured.diffHunk}`);
 		}
 		await cdp.evaluate(`window.PerchoUI.stores.useUiStore.getState().setDiffSidebarOpen(false)`);
+
+		// 阶段 C：mermaid 源码视图（`.mermaid-block pre` 走 --fs-code-scale）。
+		// **只测不比**：mermaid 是异步渲染（SVG/字体/布局都会抖），绝不进 baseline/geometry 的零差异判据；
+		// 这里只量 computed font-size + 留一张逐档截图给人工看。
+		await openFixture(cdp, "mermaid");
+		await waitFor(cdp, visible(".mermaid-block"), "mermaid 图表卡");
+		await sleep(1500); // 等 mermaid 渲染完（异步）
+		/** 切到源码视图（换档位会重建 markdown 子树 → 卡片回到预览态，每档都要重切一次） */
+		const showMermaidSource = async () => {
+			await cdp.evaluate(`(() => {
+				const src = [...document.querySelectorAll(".mermaid-block button")].find((b) => b.textContent.trim() === "源码");
+				src?.click();
+				return true;
+			})()`);
+			await waitFor(cdp, visible(".mermaid-block pre"), "mermaid 源码视图");
+		};
+		await showMermaidSource();
+		for (const px of presets) {
+			await cdp.evaluate(`window.PerchoUI.stores.useUiPreferencesStore.getState().setCodeFontSize(${px})`);
+			await sleep(400);
+			await showMermaidSource(); // 重建后要重新切（这本身也是「重建代价」的一条：视图态会被重置）
+			const font = await cdp.evaluate(
+				`(() => { const el = document.querySelector(".mermaid-block pre"); return el ? getComputedStyle(el).fontSize : null; })()`,
+			);
+			{
+				const row = rows.find((r) => r.codeFontSize === px);
+				if (row) row.mermaidSourceFontSize = font;
+			}
+			console.log(`  代码字号 ${px}px → mermaid 源码 pre ${font}`);
+			if (font !== `${px}px`) problems.push(`mermaid 源码字号 ${font} != 档位 ${px}px`);
+			const shot = await cdp.send("Page.captureScreenshot", { format: "png" });
+			writeFileSync(join(TMP_DIR, `evidence/mermaid-code-${px}.png`), Buffer.from(shot.data, "base64"));
+		}
 	} finally {
 		await cdp
 			.evaluate(`window.PerchoUI.stores.useUiPreferencesStore.getState().setCodeFontSize(12.5)`)
@@ -1802,8 +1852,7 @@ async function runCodeSizes() {
 		cdp.ws.close();
 	}
 
-	// 判据：monaco 跟随、代码表面跟随、界面文字不动、无横向溢出、行高 ≥ monaco 下限
-	const problems = [];
+	// 判据：monaco 跟随、代码表面跟随、界面文字不动、无横向溢出、mermaid 源码跟随档位
 	const uiTexts = new Set(rows.map((r) => r.uiBodyText));
 	const sidebarTexts = new Set(rows.map((r) => r.uiSidebarTitle));
 	if (uiTexts.size !== 1) problems.push(`对话正文随代码字号变了：${[...uiTexts].join(" / ")}`);
