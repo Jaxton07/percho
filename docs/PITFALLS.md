@@ -20,6 +20,7 @@
 | 最大化状态下退出，重启窗口变成超大 / 位置超出屏幕 | 六 · 持久化窗口 bounds 必须用 `getNormalBounds()`（2026-10-07） |
 | 监听窗口位置/尺寸变化收不到事件（`resized`/`moved` 从不触发） | 六 · macOS 只来 `resize`/`move`，且一次动作可能来好几次（2026-10-07） |
 | 极端情况丢偏好：关窗瞬间的那次写盘 | 六 · 退出兜底要同步写（`updateSync`），但它不参与写盘队列（2026-10-07） |
+| `npm run test` 偶发红、失败点在 backend `channel-watch-extension.test.ts` | 三 · 既有 flaky：cursor 落盘竞态（2026-10-07） |
 | 弹窗蒙层只盖住一列 / 卡片被左栏「吃掉」半边 / 测量位置却是对的 | 四 · `.edge-fade` 的 mask 把 fixed 浮层的绘制裁在容器盒里（2026-10-06） |
 | 改了滚动条宽度但截图里看不到，以为没生效 | 四 · CDP 截图不绘制滚动条，只能力槽宽（2026-09-29） |
 | 扩展注册的工具模型用不了、模型说「工具列表为 none」 | 二 · createAgentSession tools 白名单 |
@@ -293,6 +294,16 @@ LAN 页重连/中途进入时，快照种子经 `messagesToUIMessages` 重建—
 处理：杀干净再起 —— `pkill -f "<repo>/node_modules/electron/dist"`（**不要**用 `pkill -f Electron`，会连带干掉用户的正式版），
 `lsof -nP -iTCP:9224 -sTCP:LISTEN` 确认为空；`pgrep -fl Electron` 里除 `/Applications/*` 之外的残留也要清。
 自检小抄：连上后先 `location.href`，是 `chrome-error://` 就说明连错了实例，别怀疑业务代码。
+
+### `npm run test` 偶发失败：backend `channel-watch-extension.test.ts` 的 cursor 落盘竞态（**既有 flaky，2026-10-07 定位，未修**）
+
+症状：`npm run test`（`--workspaces` 串跑两包）偶发红，失败点是
+`packages/backend/test/channel-watch-extension.test.ts:936`「catch-up cursor 持久化」—— 第 934 行 `sleep(200)`
+后读 cursor，偶尔还没写完就断言。**连跑 6 次失 2 次**（2026-10-07 layout-freedom 终验时由 reviewer 发现；同一次会话里我自己那次恰好绿）。
+
+判定：**与本任务无关的既有 flaky**（未触碰 backend / channel-watch），修它要动 channel-watch 的落盘时序、有回归风险 ⇒ 当时明确**不修**，只记录。
+
+**给下次的用法**：遇到它失败**先单独重跑**该文件确认是这条路，别误判成自己刚改的代码有问题；要根治得把 `sleep(200)` 换成轮询等待落盘（超出当时范围）。
 
 ### 取证别用 `asar extract-file`：它把文件解到**当前工作目录**（2026-10-06）
 
