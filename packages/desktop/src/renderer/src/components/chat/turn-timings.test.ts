@@ -151,4 +151,95 @@ describe("buildChatRows 轮末行（timer 行）", () => {
 		expect(tail.running).toBe(true);
 		expect(tail.timing).toEqual({ turnIndex: 1, startedAt: 8000 });
 	});
+
+	it("轮末的 system 行（压缩分割线）排在计时行下面 —— 分割线不该插在计时行上面", () => {
+		// 手动 /compact：上一轮已结束（agentActive=false），模型里就只剩「正文 + 压缩分割线」
+		const messages: UIMessage[] = [
+			user("u1", 1000),
+			assistant("a1", 5000),
+			{
+				kind: "system",
+				id: "n1",
+				text: "",
+				timestamp: 6000,
+				compact: { status: "running", reason: "manual" },
+			},
+		];
+		const transcript = { ...emptyTranscript(), messages };
+		const rows = buildChatRows(transcript, "s1", Date.now(), {
+			turnTimings: deriveTurnTimings(messages),
+		});
+		// 顺序：用户 → 正文 → 计时行 → 分割线（分割线在最下面）
+		expect(rows.map((r) => (r.kind === "message" ? r.message.kind : r.kind))).toEqual([
+			"user",
+			"assistant",
+			"turnDiff",
+			"system",
+		]);
+	});
+
+	it("运行中压缩（agentActive=true）：空 working 指示行跟着通知块一起留在计时行下面", () => {
+		const messages: UIMessage[] = [
+			user("u1", 1000),
+			assistant("a1", 5000),
+			{ kind: "system", id: "n1", text: "", timestamp: 6000, compact: { status: "running" } },
+		];
+		const transcript = { ...emptyTranscript(), messages, agentActive: true };
+		const rows = buildChatRows(transcript, "s1", Date.now(), {
+			turnTimings: deriveTurnTimings(messages),
+		});
+		expect(rows.map((r) => (r.kind === "message" ? r.message.id : r.kind))).toEqual([
+			"u1",
+			"a1",
+			"turnDiff",
+			"n1",
+			"metaGroup",
+		]);
+	});
+
+	it("轮末连续多条 system 行都落到计时行下面（保持原有相对顺序）", () => {
+		const messages: UIMessage[] = [
+			user("u1", 1000),
+			assistant("a1", 5000),
+			{ kind: "system", id: "n1", text: "", timestamp: 6000, compact: { status: "running" } },
+			{
+				kind: "system",
+				id: "n2",
+				text: "",
+				timestamp: 6100,
+				mutex: { extensionPath: "/x/y.ts", tools: ["read"] },
+			},
+		];
+		const transcript = { ...emptyTranscript(), messages };
+		const rows = buildChatRows(transcript, "s1", Date.now(), {
+			turnTimings: deriveTurnTimings(messages),
+		});
+		expect(rows.map((r) => (r.kind === "message" ? r.message.id : r.kind))).toEqual([
+			"u1",
+			"a1",
+			"turnDiff",
+			"n1",
+			"n2",
+		]);
+	});
+
+	it("轮中间的 system 行不动：后面还有本轮正文时，计时行仍在该轮内容之后", () => {
+		const messages: UIMessage[] = [
+			user("u1", 1000),
+			assistant("a1", 5000),
+			{ kind: "system", id: "n1", text: "", timestamp: 5500, compact: { status: "running" } },
+			assistant("a2", 7000),
+		];
+		const transcript = { ...emptyTranscript(), messages };
+		const rows = buildChatRows(transcript, "s1", Date.now(), {
+			turnTimings: deriveTurnTimings(messages),
+		});
+		expect(rows.map((r) => (r.kind === "message" ? r.message.id : r.kind))).toEqual([
+			"u1",
+			"a1",
+			"n1",
+			"a2",
+			"turnDiff",
+		]);
+	});
 });

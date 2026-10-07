@@ -147,7 +147,8 @@ export function buildChatRows(
 		metaItems = [];
 	};
 
-	// 轮末行（桌面路径）：位置式插入——turn i 的行插到第 i+1 条 user 行之前，最后一轮追加到行序列末尾。
+	// 轮末行（桌面路径）：位置式插入——turn i 的行插到第 i+1 条 user 行之前，最后一轮追加到行序列末尾；
+	// 尾部若有 system 通知行（压缩分割线等），则插到它们**前面**（通知是轮结束后的事，详见 footerInsertAt）。
 	// （不锚消息行：轮末 assistant 无正文时会被吸进折叠组，没有独立行可锚。streaming 中的轮次工具未固化
 	// 进 messages，天然不满足「turn_end 后才出现」）传了 turnTimings 则每轮必产行（计时恒显，diff 条件渲染）；
 	// 只传 turnChanges（lan-web 老路径）则保持原行为：有文件变更才产行。
@@ -155,15 +156,38 @@ export function buildChatRows(
 	const changeByTurn = turnChanges ? new Map(turnChanges.map((tc) => [tc.turnIndex, tc])) : null;
 	const timingByTurn = turnTimings ? new Map(turnTimings.map((tt) => [tt.turnIndex, tt])) : null;
 	let userRowCount = 0;
+	/**
+	 * 轮末行的插入点：放到尾部的「通知块」之前。
+	 *
+	 * 计时行是这一轮的收尾，而 system 行（压缩分割线 / 互斥提示）说的是轮结束后发生的事，
+	 * 应该落在计时行**下面**（用户反馈：压缩分割线不该插在计时行上面）。
+	 * 块内还允许夹带「无内容的 working 指示行」—— agent 运行中压缩时，flushMeta 会追一条空组，
+	 * 它属于正在发生的事，跟 system 行一起留在计时行下面。
+	 * 尾部**没有 system 行**时不挪（否则会把普通的 thinking 指示行翻到计时行下面）。
+	 */
+	const footerInsertAt = (): number => {
+		let start = rows.length;
+		let hasSystem = false;
+		while (start > 0) {
+			const prev = rows[start - 1];
+			const isSystem = prev?.kind === "message" && prev.message.kind === "system";
+			const isEmptyMeta = prev?.kind === "metaGroup" && prev.items.length === 0 && prev.subagentCount === 0;
+			if (!isSystem && !isEmptyMeta) break;
+			if (isSystem) hasSystem = true;
+			start--;
+		}
+		return hasSystem ? start : rows.length;
+	};
 	const pushTurnDiffRow = (turnIndex: number, running: boolean): void => {
-		rows.push({
+		const at = footerInsertAt();
+		rows.splice(at, 0, {
 			kind: "turnDiff",
 			key: `turn-diff-${turnIndex}`,
 			changes: changeByTurn?.get(turnIndex),
 			timing: timingByTurn?.get(turnIndex),
 			running,
 			// 前一行是折叠组（纯工具轮/被打断轮无正文，组自带 -mb-4 对消 gap）→ chip 不再上提
-			afterMetaGroup: rows[rows.length - 1]?.kind === "metaGroup",
+			afterMetaGroup: rows[at - 1]?.kind === "metaGroup",
 			entering: turnIndex === enteringTurn,
 		});
 	};
