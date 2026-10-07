@@ -141,7 +141,15 @@ export function createWindow(theme: "dark" | "light" = "light", bounds: Rect | n
 		},
 	});
 
-	window.on("ready-to-show", () => window.show());
+	window.on("ready-to-show", () => {
+		window.show();
+		// macOS 首次 show() 会把窗口 x 抬到 ≥221 DIP（≈15% 屏宽，详见 docs/PITFALLS.md 与 IMPL-NOTES X1）——
+		// 传参没错，是系统的窗口位置约束。**已显示的窗口 setBounds 不受此限**，所以显示后校准一次。
+		// show() 与本句同一 tick 完成（中间没有渲染机会），不会看到「先从 221 跳到目标位」（实测见 IMPL-NOTES）。
+		if (bounds && (window.getBounds().x !== bounds.x || window.getBounds().y !== bounds.y)) {
+			window.setBounds(bounds);
+		}
+	});
 
 	// 位置/尺寸记忆：拖动、缩放都走这两条事件（**不要**依赖 `resized`/`moved` —— 实测 macOS 上
 	// `window.resizeTo` 只来 `resize`，`resized`/`moved` 一次都不来，见 IMPL-NOTES 阶段 1）

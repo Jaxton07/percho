@@ -174,6 +174,11 @@ export async function saveUiState(patch: Partial<UiState>): Promise<void> {
  * **同步**写一次（退出兜底用）：`updateSync` 不走异步写盘队列，能在 `close` 事件里把最后一份 bounds
  * 落盘（Windows 点 ✕ 直接 `app.quit()`，异步写可能来不及）。
  * 与 `saveUiState` 不同：**绝不上抛** —— 写偏好失败不能阻塞退出，只记日志。
+ *
+ * 前提（已知、可接受）：`updateSync` **不参与** `JsonStore` 的 async per-path 串行队列，所以理论上与队列里的写
+ * 存在 read-modify-write 交错（例：renderer 刚提交 `sidebarWidth` 时关窗 → 同步读旧文件写回 → 队列那次后完成
+ * 把 `windowBounds` 盖掉）。概率低（要 400ms 窗口内两次写撞上）、后果轻（丢一侧字段一次，下次写自愈），
+ * 且退出路径上串行化没意义 —— 所以**只用于退出兜底**，不要拿去当常规写入路径。
  */
 export function saveUiStateSync(patch: Partial<UiState>): void {
 	try {
