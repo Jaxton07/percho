@@ -16,8 +16,8 @@ const PRESET_LABEL_KEYS = [
 ] as const;
 
 /**
- * 一排档位 chip（字号设置用）：形状/配色沿用上面主题选择器的按钮，
- * 悬停用 Tooltip 给该档位的精确 px（档位名只表达相对大小）。
+ * 一排档位 chip（字号设置用）：形状/配色沿用上面主题选择器的按钮。
+ * 档位名只表达相对大小，精确 px 由行尾的动态数值 + 每档 hover 的 Tooltip 给出。
  */
 function FontSizeChips({
 	presets,
@@ -113,16 +113,12 @@ function AppearanceBasics() {
 				<div className="mt-3 flex items-center gap-3">
 					<span className="w-20 shrink-0 text-ui-12 text-ink-dim">{t("settings.fontSizeUi")}</span>
 					<FontSizeChips presets={UI_FONT_SIZE_PRESETS} value={uiFontSize} onChange={setUiFontSize} />
-					<span className="text-ui-11 leading-relaxed text-ink-faint">
-						{t("settings.fontSizeFullSupport")}
-					</span>
+					<span className="font-mono text-ui-115 text-ink-dim">{formatFontSize(uiFontSize)}</span>
 				</div>
 				<div className="mt-3 flex items-center gap-3">
 					<span className="w-20 shrink-0 text-ui-12 text-ink-dim">{t("settings.fontSizeCode")}</span>
 					<FontSizeChips presets={CODE_FONT_SIZE_PRESETS} value={codeFontSize} onChange={setCodeFontSize} />
-					<span className="text-ui-11 leading-relaxed text-ink-faint">
-						{t("settings.fontSizeCodeFullSupport")}
-					</span>
+					<span className="font-mono text-ui-115 text-ink-dim">{formatFontSize(codeFontSize)}</span>
 				</div>
 			</div>
 			<div>

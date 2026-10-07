@@ -13,7 +13,14 @@ import {
 	uiFontScale,
 } from "@percho/shared";
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { applyFontScales, CODE_FONT_SCALE_VAR, UI_FONT_SCALE_VAR } from "./typography";
+import {
+	applyFontScales,
+	CODE_FONT_SCALE_VAR,
+	monacoBaseFontSize,
+	monacoFontSizeFor,
+	monacoLineHeightFor,
+	UI_FONT_SCALE_VAR,
+} from "./typography";
 
 /**
  * vitest 跑在 node 环境（本仓库没装 jsdom），所以这里自己 stub 一个最小 `document`：
@@ -35,7 +42,7 @@ beforeEach(() => {
  * token 那侧（`calc(px * var(...))`）由 `styles/typography.test.ts` 守着。
  */
 describe("档位定义", () => {
-	it("两行档位各自 4 档，都在上下界内（面板上标「完整支持」的依据）", () => {
+	it("两行档位各自 4 档，且都在 clamp 上下界内（面板上每档都可选，不会被夹）", () => {
 		expect(UI_FONT_SIZE_PRESETS).toHaveLength(4);
 		expect(CODE_FONT_SIZE_PRESETS).toHaveLength(4);
 		for (const px of UI_FONT_SIZE_PRESETS) {
@@ -105,5 +112,38 @@ describe("显示文本", () => {
 		expect(formatFontSize(13)).toBe("13px");
 		expect(formatFontSize(12.5)).toBe("12.5px");
 		expect(formatFontSize(10.5)).toBe("10.5px");
+	});
+});
+
+describe("monaco 代码块度量（spec D4.4）", () => {
+	it("基准字号照 monaco 的平台默认：darwin 12 / 其他 14", () => {
+		expect(monacoBaseFontSize("darwin")).toBe(12);
+		expect(monacoBaseFontSize("win32")).toBe(14);
+		expect(monacoBaseFontSize("linux")).toBe(14);
+	});
+
+	it("基准档恰好是 monaco 自己的默认值（12 / 18 = 迁移前 .view-lines 上的 inline style）", () => {
+		expect(monacoFontSizeFor(12.5, "darwin")).toBe(12);
+		expect(monacoLineHeightFor(12, "darwin")).toBe(18);
+	});
+
+	it("四档取整：darwin 11 / 12 / 13 / 15px（11.5→11 走 round）", () => {
+		expect(CODE_FONT_SIZE_PRESETS.map((px) => monacoFontSizeFor(px, "darwin"))).toEqual([11, 12, 13, 15]);
+	});
+
+	it("行高按平台黄金比：darwin 1.5 / 其他 1.35，且不低于 monaco 的下限 8", () => {
+		expect(monacoLineHeightFor(12, "darwin")).toBe(18);
+		expect(monacoLineHeightFor(14, "darwin")).toBe(21);
+		expect(monacoLineHeightFor(14, "win32")).toBe(19);
+		expect(monacoLineHeightFor(1, "darwin")).toBe(8);
+	});
+
+	it("非 darwin 档位按 14 基准换算（切换平台不会退回默认字号）", () => {
+		expect(CODE_FONT_SIZE_PRESETS.map((px) => monacoFontSizeFor(px, "linux"))).toEqual([12, 14, 16, 18]);
+	});
+
+	it("脏档位走同一套 clamp（不会算出离谱字号）", () => {
+		expect(monacoFontSizeFor(Number.NaN, "darwin")).toBe(12);
+		expect(monacoFontSizeFor(999, "darwin")).toBe(Math.round((12 * 20) / 12.5));
 	});
 });

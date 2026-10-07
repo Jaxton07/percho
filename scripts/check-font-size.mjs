@@ -24,6 +24,7 @@
  *   node scripts/check-font-size.mjs diff <a.png> <b.png>  # 单图差异统计（像素数/占比/最大通道差/包围盒）
  *   node scripts/check-font-size.mjs compare b a --allow-change=04-settings-appearance  # 该场景只比字号取值集合
  *   node scripts/check-font-size.mjs side-by-side b a 04-settings-appearance out.png  # 并排图 + 差异红框
+ *   node scripts/check-font-size.mjs code-sizes                # 代码字号四档实测（monaco/内联/diff/界面文字对照）
  *
  * 判据两层：**主 = 几何清单**（每个含文本元素的 rect/字号/行高 + 被排除子树的字号行高，round 0.01px 后逐字段相等，无容差），
  * **次 = 像素**（拓非字号类的连带变化；允许抗锯齿级抖动，理由见下）。缺 geometry.json 时主判据直接判失败（除非显式 `--pixel-only`）。
@@ -1694,6 +1695,117 @@ function runDiff(fileA, fileB) {
 }
 
 /* ==========================================================================
+ * 8. code-sizes：代码字号四档的实测（monaco 内联度量 / 代码表面 / 界面文字对照）
+ * ========================================================================== */
+
+/**
+ * 量什么、为什么：
+ * - monaco 的字号/行高是它**自己**以 inline style 写在 `.view-lines` 上的（阶段 0 探针：`12px/18px`），
+ *   所以要直接读那条 inline style + `.view-line` 的计算值，而不是我们的 token；
+ * - 代码表面（内联 code / diff 表 / mermaid 源码 pre）走 `--fs-code-scale`，读计算字号；
+ * - **界面文字必须一动不动**（对话正文 / 侧栏标题）—— 这是「代码字号只影响代码」的判据；
+ * - 裁切：比较 `.view-lines` 的实际高度与 monaco 容器高度（库会把容器设成内容高，若内容被裁，
+ *   这里会出现 lines 高 > 容器高）。
+ */
+const MEASURE_CODE_SIZES = `(() => {
+	const cs = (el) => (el ? getComputedStyle(el) : null);
+	const num = (v) => (v ? Math.round(Number.parseFloat(v) * 100) / 100 : null);
+	const viewLines = document.querySelector(".monaco-editor .view-lines");
+	const editor = document.querySelector(".monaco-editor");
+	const line = document.querySelector(".monaco-editor .view-line");
+	const scroller = document.querySelector(".monaco-editor .monaco-scrollable-element");
+	return JSON.stringify({
+		monacoInlineStyle: viewLines ? viewLines.getAttribute("style") : null,
+		monacoFontSize: num(cs(line)?.fontSize),
+		monacoLineHeight: num(cs(line)?.lineHeight),
+		lineCount: document.querySelectorAll(".monaco-editor .view-line").length,
+		viewLinesHeight: num(viewLines?.getBoundingClientRect().height),
+		editorHeight: num(editor?.getBoundingClientRect().height),
+		scrollerWidth: num(scroller?.getBoundingClientRect().width),
+		// 横向「溢出」要读 monaco 自己的横滚动条可见性：scrollWidth 在 monaco 里是 16777214 的占位
+		// （内部最大宽 hack），照它判会永远为真。可见 = 真的出现了横向滚动。
+		horizontalScrollbar: (() => {
+			const hb = document.querySelector(".monaco-editor .scrollbar.horizontal");
+			return hb ? getComputedStyle(hb).visibility !== "hidden" : false;
+		})(),
+		inlineCode: num(cs(document.querySelector(".markdown-body .inline-code"))?.fontSize),
+		diffTable: num(cs(document.querySelector(".diff-table"))?.fontSize),
+		diffHunk: num(cs(document.querySelector(".diff-hunk"))?.fontSize),
+		uiBodyText: num(cs(document.querySelector(".markdown-body p"))?.fontSize),
+		uiSidebarTitle: num(cs(document.querySelector("[data-session-id] .truncate"))?.fontSize),
+	});
+})()`;
+
+async function runCodeSizes() {
+	const missing = FIXTURES.filter((f) => !existsSync(fixtureFile(f)));
+	if (missing.length > 0) fail(`样本会话缺失：先停 dev → seed-fixtures → 启 dev`, 2);
+	const cdp = await connect();
+	await cdp.send("Emulation.setFocusEmulationEnabled", { enabled: true });
+	await cdp.evaluate(frameFix(null));
+	await openFixture(cdp, "code");
+	await waitFor(cdp, visible(".monaco-editor"), "monaco 代码块");
+	await cdp.evaluate(RESET_TOASTS).catch(() => {});
+
+	const presets = [11, 12.5, 14, 16];
+	const rows = [];
+	try {
+		for (const px of presets) {
+			await cdp.evaluate(`window.PerchoUI.stores.useUiPreferencesStore.getState().setCodeFontSize(${px})`);
+			await sleep(900); // 等 monaco 重排（updateOptions + 内容高度重算）
+			const measured = JSON.parse(await cdp.evaluate(MEASURE_CODE_SIZES));
+			rows.push({ codeFontSize: px, ...measured });
+			console.log(
+				`代码字号 ${px}px → monaco ${measured.monacoFontSize}/${measured.monacoLineHeight}（${measured.lineCount} 行，块高 ${measured.editorHeight}，` +
+					`内容高 ${measured.viewLinesHeight}，横滚动条 ${measured.horizontalScrollbar}）｜ 内联 code ${measured.inlineCode} ｜ ` +
+					`对话正文 ${measured.uiBodyText}（不变）｜ 侧栏标题 ${measured.uiSidebarTitle}（不变）`,
+			);
+		}
+		// 阶段 B：diff 表（走 `--fs-code-scale`、不经 monaco）—— 换成工具体样本 + 打开变更浮层
+		await openFixture(cdp, "tools");
+		await cdp.evaluate(`window.PerchoUI.stores.useUiStore.getState().setDiffSidebarOpen(true)`);
+		await sleep(800);
+		for (const px of presets) {
+			await cdp.evaluate(`window.PerchoUI.stores.useUiPreferencesStore.getState().setCodeFontSize(${px})`);
+			await sleep(350);
+			const measured = JSON.parse(await cdp.evaluate(MEASURE_CODE_SIZES));
+			const row = rows.find((r) => r.codeFontSize === px);
+			if (row) {
+				row.diffTable = measured.diffTable;
+				row.diffHunk = measured.diffHunk;
+			}
+			console.log(`  代码字号 ${px}px → diff 表 ${measured.diffTable} / hunk ${measured.diffHunk}`);
+		}
+		await cdp.evaluate(`window.PerchoUI.stores.useUiStore.getState().setDiffSidebarOpen(false)`);
+	} finally {
+		await cdp
+			.evaluate(`window.PerchoUI.stores.useUiPreferencesStore.getState().setCodeFontSize(12.5)`)
+			.catch(() => {});
+		await cdp.evaluate(RESET_TOASTS).catch(() => {});
+		cdp.ws.close();
+	}
+
+	// 判据：monaco 跟随、代码表面跟随、界面文字不动、无横向溢出、行高 ≥ monaco 下限
+	const problems = [];
+	const uiTexts = new Set(rows.map((r) => r.uiBodyText));
+	const sidebarTexts = new Set(rows.map((r) => r.uiSidebarTitle));
+	if (uiTexts.size !== 1) problems.push(`对话正文随代码字号变了：${[...uiTexts].join(" / ")}`);
+	if (sidebarTexts.size !== 1) problems.push(`侧栏标题随代码字号变了：${[...sidebarTexts].join(" / ")}`);
+	if (rows[0].monacoFontSize === rows[rows.length - 1].monacoFontSize) problems.push("monaco 字号没有跟随");
+	if (rows.some((r) => r.horizontalScrollbar)) problems.push("出现了横向滚动条（wordWrap 失效）");
+	if (rows.some((r) => r.viewLinesHeight > r.editorHeight + 1)) problems.push("代码内容高于容器（裁切）");
+	if (new Set(rows.map((r) => r.diffTable)).size !== rows.length) problems.push("diff 表字号没有逐档变化");
+	const file = join(TMP_DIR, "evidence/code-sizes.json");
+	mkdirSync(resolve(file, ".."), { recursive: true });
+	writeFileSync(file, `${JSON.stringify({ rows }, null, 2)}\n`, "utf8");
+	console.log(`→ ${relative(REPO, file)}`);
+	if (problems.length > 0) {
+		for (const p of problems) console.error(`✗ ${p}`);
+		fail("代码字号实测未过（见上）");
+	}
+	console.log("✓ 四档实测通过：monaco / 内联 code / diff 跟随；界面文字不动；无横向溢出与裁切");
+}
+
+/* ==========================================================================
  * 入口
  * ========================================================================== */
 
@@ -1728,6 +1840,9 @@ try {
 			if (!arg) fail("geometry 需要 outDir：node scripts/check-font-size.mjs geometry <outDir>", 2);
 			await runGeometry(resolve(arg), { fromStore: flags.has("--from-store") });
 			break;
+		case "code-sizes":
+			await runCodeSizes();
+			break;
 		case "compare":
 			if (!arg || !arg2) fail("compare 需要两个目录：compare <beforeDir> <afterDir> [--pixel-only]", 2);
 			runCompare(arg, arg2, {
@@ -1749,7 +1864,7 @@ try {
 			break;
 		default:
 			fail(
-				"用法：inventory [outFile] [--expect-zero] | reconcile [oraclePath] | seed-state | restore-state | seed-fixtures | clean-fixtures | baseline <outDir> [--from-store] | geometry <outDir> [--from-store] | compare <beforeDir> <afterDir> [--pixel-only] [--allow-change=<sceneId,...>] | diff <a.png> <b.png> | side-by-side <before> <after> <sceneId> [out.png]（见文件头）",
+				"用法：inventory [outFile] [--expect-zero] | reconcile [oraclePath] | seed-state | restore-state | seed-fixtures | clean-fixtures | baseline <outDir> [--from-store] | geometry <outDir> [--from-store] | compare <beforeDir> <afterDir> [--pixel-only] [--allow-change=<sceneId,...>] | diff <a.png> <b.png> | code-sizes | side-by-side <before> <after> <sceneId> [out.png]（见文件头）",
 				2,
 			);
 	}

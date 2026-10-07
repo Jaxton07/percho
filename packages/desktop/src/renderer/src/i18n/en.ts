@@ -338,8 +338,6 @@ export const en: Messages = {
 		fontSizeHint: "Adjust UI and code text size; icons, spacing and layout stay unchanged",
 		fontSizeUi: "UI font size",
 		fontSizeCode: "Code font size",
-		fontSizeFullSupport: "Fully supported",
-		fontSizeCodeFullSupport: "Fully supported ●",
 		fontSizePreset12: "Small",
 		fontSizePresetDefault: "Default",
 		fontSizePresetLarge: "Large",

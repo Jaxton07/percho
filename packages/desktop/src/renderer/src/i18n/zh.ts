@@ -334,9 +334,6 @@ export const zh = {
 		fontSizeHint: "调整界面与代码的文字大小；图标、间距与布局尺寸不受影响",
 		fontSizeUi: "界面字号",
 		fontSizeCode: "代码字号",
-		/** 「完整支持」标记：档位全部落在受支持范围内时显示；代码一行额外带实心点（review 口径） */
-		fontSizeFullSupport: "完整支持",
-		fontSizeCodeFullSupport: "完整支持 ●",
 		fontSizePreset12: "小",
 		fontSizePresetDefault: "默认",
 		fontSizePresetLarge: "大",

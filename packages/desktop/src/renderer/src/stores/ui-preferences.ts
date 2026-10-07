@@ -46,7 +46,7 @@ interface UiPreferencesStore {
 	 * 生效方式是写 CSS 变量 `--fs-ui-scale`（`lib/typography.ts`），改一次整树跟随、不需重渲染。
 	 */
 	uiFontSize: number;
-	/** 代码字号（px）：基准 12.5。阶段 2 只落盘 + 面板，写 `--fs-code-scale` 的接线在阶段 3 */
+	/** 代码字号（px）：基准 12.5。影响代码块 / 内联 code / diff / mermaid 源码（界面文字不受影响） */
 	codeFontSize: number;
 	/** 启动时从 ui-state.json 恢复（main.tsx 在 render 前 await，避免开关状态闪现） */
 	init: () => Promise<void>;
@@ -83,7 +83,7 @@ interface UiPreferencesStore {
 	setLastCwd: (cwd: string | null) => void;
 	/** 切换界面字号（脏值/越界在 clamp 里收口）；立即写 CSS 变量 + 落盘 */
 	setUiFontSize: (px: number) => void;
-	/** 切换代码字号（本阶段只落盘；阶段 3 接 monaco / 内联 code / diff / mermaid） */
+	/** 切换代码字号：写 `--fs-code-scale`（内联 code / 代码块 / diff / mermaid）+ monaco 由 Markdown.tsx 传 options */
 	setCodeFontSize: (px: number) => void;
 }
 
@@ -169,7 +169,7 @@ export const useUiPreferencesStore = create<UiPreferencesStore>((set, get) => ({
 		const next = clampCodeFontSize(px);
 		if (next === get().codeFontSize) return;
 		set({ codeFontSize: next });
-		// 阶段 3 才接 `--fs-code-scale`（monaco / 内联 code / diff / mermaid）；现在只落盘 + 面板显示
+		applyFontScales(get().uiFontSize, next);
 		persistPatch({ codeFontSize: next });
 	},
 
