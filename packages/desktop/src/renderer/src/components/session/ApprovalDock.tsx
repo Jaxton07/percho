@@ -110,23 +110,23 @@ export function ApprovalDock({ sessionId }: { sessionId: string | null }) {
 						<span className="flex-none text-warn" aria-hidden="true">
 							<WarningIcon />
 						</span>
-						<h3 className="min-w-0 flex-1 truncate font-mono text-[13px] font-medium text-ink-2">
+						<h3 className="min-w-0 flex-1 truncate font-mono text-ui-13 font-medium text-ink-2">
 							{shown.title}
 						</h3>
 						{queueCount > 0 && (
-							<span className="shrink-0 text-[11px] text-ink-faint">
+							<span className="shrink-0 text-ui-11 text-ink-faint">
 								{t("permission.queued", { count: queueCount })}
 							</span>
 						)}
 					</div>
-					<p className="max-h-32 overflow-y-auto rounded-lg bg-hover p-2.5 font-mono text-[12px] leading-relaxed break-all whitespace-pre-wrap text-ink-2 select-text">
+					<p className="max-h-32 overflow-y-auto rounded-lg bg-hover p-2.5 font-mono text-ui-12 leading-relaxed break-all whitespace-pre-wrap text-ink-2 select-text">
 						{shown.message}
 					</p>
 					{error && (
-						<p className="rounded-lg bg-hover px-2.5 py-1.5 text-[12px] break-all text-err">{error}</p>
+						<p className="rounded-lg bg-hover px-2.5 py-1.5 text-ui-12 break-all text-err">{error}</p>
 					)}
 					<div className="flex flex-wrap items-center gap-0.5">
-						<span className="text-[11px] text-ink-faint">
+						<span className="text-ui-11 text-ink-faint">
 							{shown.suggestDir
 								? t("interaction.hintPermissionDir", hintParams)
 								: t("interaction.hintPermission", hintParams)}
@@ -162,7 +162,7 @@ function GhostAction({
 		<button
 			type="button"
 			onClick={onClick}
-			className={`rounded-[7px] px-2.5 py-1 text-[12px] transition-colors hover:bg-hover ${
+			className={`rounded-[7px] px-2.5 py-1 text-ui-12 transition-colors hover:bg-hover ${
 				strong ? "font-medium text-ink hover:text-ink" : "text-ink-faint hover:text-ink-2"
 			}`}
 		>

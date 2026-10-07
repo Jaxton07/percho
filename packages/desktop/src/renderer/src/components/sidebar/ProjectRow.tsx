@@ -65,7 +65,7 @@ export function ProjectRow({
 				type="button"
 				aria-expanded={expanded}
 				title={label}
-				className={`flex h-[34px] w-full items-center gap-2 rounded-[7px] px-1.5 pr-12 text-[14px] text-ink-2 group-hover/row:bg-hover group-hover/row:text-ink ${
+				className={`flex h-[34px] w-full items-center gap-2 rounded-[7px] px-1.5 pr-12 text-ui-14 text-ink-2 group-hover/row:bg-hover group-hover/row:text-ink ${
 					expanded ? "text-ink" : ""
 				}`}
 				onClick={onToggle}

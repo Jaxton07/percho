@@ -58,8 +58,8 @@ export function ThinkingSlider({ level, supported }: { level: string; supported:
 	return (
 		<div className={`flex flex-col gap-[7px] px-2 pt-1 pb-2 ${locked ? "opacity-70" : ""}`}>
 			<div className="flex items-baseline justify-between px-0.5">
-				<span className="text-[11px] text-ink-faint">{t("composer.thinkingDepth")}</span>
-				<span className="text-[13px] font-medium text-ink-2">{t(thinkingLevelKey(level))}</span>
+				<span className="text-ui-11 text-ink-faint">{t("composer.thinkingDepth")}</span>
+				<span className="text-ui-13 font-medium text-ink-2">{t(thinkingLevelKey(level))}</span>
 			</div>
 			<div className="think-slider" data-dragging={dragging ? "true" : "false"}>
 				<div className="think-track" />

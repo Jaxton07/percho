@@ -11,14 +11,14 @@ export function ExtensionsPanel() {
 
 	return (
 		<div>
-			<h3 className="text-[13px] font-medium text-ink">{t("settings.extensions.title")}</h3>
-			<p className="mt-0.5 text-[11px] text-ink-faint">{t("settings.extensions.hint")}</p>
+			<h3 className="text-ui-13 font-medium text-ink">{t("settings.extensions.title")}</h3>
+			<p className="mt-0.5 text-ui-11 text-ink-faint">{t("settings.extensions.hint")}</p>
 			<div className="mt-3 flex rounded-lg bg-hover p-0.5">
 				{(["browse", "loaded"] as const).map((id) => (
 					<button
 						key={id}
 						type="button"
-						className={`flex-1 rounded-md px-3 py-1 text-[12px] transition-colors ${
+						className={`flex-1 rounded-md px-3 py-1 text-ui-12 transition-colors ${
 							tab === id ? "bg-surface font-medium text-ink shadow-sm" : "text-ink-dim hover:text-ink"
 						}`}
 						onClick={() => setExtensionsTab(id)}

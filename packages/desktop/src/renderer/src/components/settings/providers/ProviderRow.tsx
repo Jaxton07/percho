@@ -76,20 +76,20 @@ export function ProviderRow({ provider }: { provider: ProviderInfo }) {
 			<div className="flex items-center gap-1">
 				<div className="min-w-0 flex-1">
 					<div className="flex items-center gap-1.5">
-						<span className="truncate text-[13px] font-medium text-ink">{provider.name}</span>
+						<span className="truncate text-ui-13 font-medium text-ink">{provider.name}</span>
 						{provider.overridesBuiltin ? (
-							<span className="rounded bg-hover px-1.5 py-0.5 text-[10px] text-ink-dim">
+							<span className="rounded bg-hover px-1.5 py-0.5 text-ui-10 text-ink-dim">
 								{t("settings.providers.overrideBuiltin")}
 							</span>
 						) : provider.custom ? (
-							<span className="rounded bg-hover px-1.5 py-0.5 text-[10px] text-ink-dim">
+							<span className="rounded bg-hover px-1.5 py-0.5 text-ui-10 text-ink-dim">
 								{t("settings.providers.custom")}
 							</span>
 						) : null}
 					</div>
-					<div className="mt-0.5 flex items-center gap-1 text-[11px] text-ink-faint">
+					<div className="mt-0.5 flex items-center gap-1 text-ui-11 text-ink-faint">
 						{provider.overridesBuiltin && provider.baseUrl && (
-							<span className="mr-1 max-w-[220px] truncate text-[10px] text-ink-dim" title={provider.baseUrl}>
+							<span className="mr-1 max-w-[220px] truncate text-ui-10 text-ink-dim" title={provider.baseUrl}>
 								→ {provider.baseUrl}
 							</span>
 						)}
@@ -110,7 +110,7 @@ export function ProviderRow({ provider }: { provider: ProviderInfo }) {
 					</div>
 				</div>
 				<span
-					className={`mr-1 shrink-0 rounded-full px-2 py-0.5 text-[11px] ${
+					className={`mr-1 shrink-0 rounded-full px-2 py-0.5 text-ui-11 ${
 						provider.configured ? "bg-emerald-50 text-emerald-600" : "bg-hover text-ink-faint"
 					}`}
 				>
@@ -196,7 +196,7 @@ export function ProviderRow({ provider }: { provider: ProviderInfo }) {
 			</div>
 			{testResult && testResult !== "testing" && (
 				<p
-					className={`mt-1.5 rounded-lg px-2.5 py-1.5 text-[11px] ${
+					className={`mt-1.5 rounded-lg px-2.5 py-1.5 text-ui-11 ${
 						testResult.ok ? "bg-emerald-50 text-emerald-600" : "bg-red-50 text-red-600"
 					}`}
 				>
@@ -207,7 +207,7 @@ export function ProviderRow({ provider }: { provider: ProviderInfo }) {
 			)}
 			{provider.configured && modelsOpen && provider.models.length > 0 && (
 				<div className="mt-2 rounded-lg bg-hover/60 px-2.5 py-2">
-					<p className="mb-1 text-[10px] font-medium text-ink-faint">
+					<p className="mb-1 text-ui-10 font-medium text-ink-faint">
 						{t("settings.providers.modelVisibility")}
 					</p>
 					<ul className="space-y-0.5">
@@ -215,7 +215,7 @@ export function ProviderRow({ provider }: { provider: ProviderInfo }) {
 							const visible = !hiddenModelIds.includes(model.id);
 							return (
 								<li key={model.id}>
-									<div className="flex items-center gap-2 rounded px-1 py-1 text-[11px] text-ink-dim hover:bg-surface">
+									<div className="flex items-center gap-2 rounded px-1 py-1 text-ui-11 text-ink-dim hover:bg-surface">
 										<span className="min-w-0 flex-1 truncate">{model.name}</span>
 										<Switch
 											checked={visible}

@@ -330,7 +330,9 @@ export function Composer({ centered = false }: { centered?: boolean }) {
 			<div className="relative mx-auto max-w-[760px]">
 				{error && <SendErrorBar error={error} onRetry={() => void handleSend()} />}
 				{feedback && !error && (
-					<p className={`mb-1.5 text-xs ${feedback.tone === "warn" ? "text-amber-500" : "text-ink-dim"}`}>
+					<p
+						className={`mb-1.5 text-ui-12 leading-[calc(1_/_0.75)] ${feedback.tone === "warn" ? "text-amber-500" : "text-ink-dim"}`}
+					>
 						{feedback.message}
 					</p>
 				)}
@@ -359,7 +361,7 @@ export function Composer({ centered = false }: { centered?: boolean }) {
 				)}
 				{/* 扩展 setEditorText 预填提示（画板⑩）：一次性来源标注，首次键入即清除 */}
 				{extensionPrefillSource && (
-					<div className="flex items-center gap-1.5 px-1 text-[11px] text-ink-faint">
+					<div className="flex items-center gap-1.5 px-1 text-ui-11 text-ink-faint">
 						<PencilIcon size={11} />
 						{t("interaction.prefillNote", { source: extensionPrefillSource })}
 					</div>
@@ -399,7 +401,7 @@ export function Composer({ centered = false }: { centered?: boolean }) {
 							}
 						>
 							{slashCommand && (
-								<span className="mt-0.5 flex shrink-0 select-none items-center rounded-md bg-surface px-2 py-0.5 font-mono text-[12px] leading-5 text-ink-2 shadow-pop">
+								<span className="mt-0.5 flex shrink-0 select-none items-center rounded-md bg-surface px-2 py-0.5 font-mono text-ui-12 leading-5 text-ink-2 shadow-pop">
 									{slashLabel !== slashCommand && <span className="mr-1.5">{slashLabel}</span>}/{slashCommand}
 								</span>
 							)}
@@ -408,7 +410,7 @@ export function Composer({ centered = false }: { centered?: boolean }) {
 							))}
 							<textarea
 								ref={textareaRef}
-								className={`max-h-[200px] resize-none bg-transparent text-[14px] leading-relaxed outline-none placeholder:text-ink-faint select-text thin-scrollbar ${
+								className={`max-h-[200px] resize-none bg-transparent text-ui-14 leading-relaxed outline-none placeholder:text-ink-faint select-text thin-scrollbar ${
 									slashCommand || attachments.length > 0 ? "min-w-[140px] flex-1" : "w-full"
 								}`}
 								placeholder={slashCommand ? t("slash.argPlaceholder") : placeholder}

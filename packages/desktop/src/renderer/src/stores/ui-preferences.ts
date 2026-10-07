@@ -1,7 +1,17 @@
-import { clampSidebarWidth, type PermissionMode, SIDEBAR_DEFAULT_WIDTH, type UiState } from "@percho/shared";
+import {
+	CODE_FONT_SIZE_BASE,
+	clampCodeFontSize,
+	clampSidebarWidth,
+	clampUiFontSize,
+	type PermissionMode,
+	SIDEBAR_DEFAULT_WIDTH,
+	UI_FONT_SIZE_BASE,
+	type UiState,
+} from "@percho/shared";
 import { create } from "zustand";
 import { getPi } from "../api";
 import { toggleInList } from "../lib/toggle-in-list";
+import { applyFontScales } from "../lib/typography";
 
 /** 应用级 UI 偏好（持久化在 ui-state.json，与主题/背景同源；主进程 normalize 负责旧文件缺省） */
 interface UiPreferencesStore {
@@ -31,6 +41,13 @@ interface UiPreferencesStore {
 	pinnedProjects: string[];
 	/** 上次使用的项目目录（重启后启动页预填；只记目录、不恢复会话）；null = 未记过 */
 	lastCwd: string | null;
+	/**
+	 * 界面字号（px，档位取值见 shared/typography.ts）：基准 13。
+	 * 生效方式是写 CSS 变量 `--fs-ui-scale`（`lib/typography.ts`），改一次整树跟随、不需重渲染。
+	 */
+	uiFontSize: number;
+	/** 代码字号（px）：基准 12.5。影响代码块 / 内联 code / diff / mermaid 源码（界面文字不受影响） */
+	codeFontSize: number;
 	/** 启动时从 ui-state.json 恢复（main.tsx 在 render 前 await，避免开关状态闪现） */
 	init: () => Promise<void>;
 	setCenterOrbEnabled: (enabled: boolean) => void;
@@ -64,6 +81,10 @@ interface UiPreferencesStore {
 	forgetPermissionMode: (sessionId: string) => void;
 	/** 记住上次项目目录（切会话/打开会话/建会话时由 sessions store 调；同值不重复写盘） */
 	setLastCwd: (cwd: string | null) => void;
+	/** 切换界面字号（脏值/越界在 clamp 里收口）；立即写 CSS 变量 + 落盘 */
+	setUiFontSize: (px: number) => void;
+	/** 切换代码字号：写 `--fs-code-scale`（内联 code / 代码块 / diff / mermaid）+ monaco 由 Markdown.tsx 传 options */
+	setCodeFontSize: (px: number) => void;
 }
 
 /** 持久化补丁（失败只记日志：偏好丢失不影响使用，弹 toast 反而更吵） */
@@ -87,11 +108,15 @@ export const useUiPreferencesStore = create<UiPreferencesStore>((set, get) => ({
 	/** 置顶项目 cwd（新置顶在前，决定左侧栏项目区排序） */
 	pinnedProjects: [],
 	lastCwd: null,
+	uiFontSize: UI_FONT_SIZE_BASE,
+	codeFontSize: CODE_FONT_SIZE_BASE,
 
 	init: async () => {
 		const saved = await getPi()
 			.loadUiState()
 			.catch(() => null);
+		const uiFontSize = clampUiFontSize(saved?.uiFontSize);
+		const codeFontSize = clampCodeFontSize(saved?.codeFontSize);
 		set({
 			centerOrbEnabled: saved?.centerOrbEnabled ?? false,
 			pinnedSessions: saved?.pinnedSessions ?? [],
@@ -104,7 +129,11 @@ export const useUiPreferencesStore = create<UiPreferencesStore>((set, get) => ({
 			expandedGroupsTouched: saved?.expandedGroupsTouched ?? false,
 			pinnedProjects: saved?.pinnedProjects ?? [],
 			lastCwd: saved?.lastCwd ?? null,
+			uiFontSize,
+			codeFontSize,
 		});
+		// **首帧前生效**：main.tsx 在 render 前 await init，所以这里写完变量才画第一帧，不会闪一下默认字号
+		applyFontScales(uiFontSize, codeFontSize);
 	},
 
 	setCenterOrbEnabled: (enabled) => {
@@ -126,6 +155,22 @@ export const useUiPreferencesStore = create<UiPreferencesStore>((set, get) => ({
 		if (get().lastCwd === cwd) return;
 		set({ lastCwd: cwd });
 		persistPatch({ lastCwd: cwd });
+	},
+
+	setUiFontSize: (px) => {
+		const next = clampUiFontSize(px);
+		if (next === get().uiFontSize) return;
+		set({ uiFontSize: next });
+		applyFontScales(next, get().codeFontSize);
+		persistPatch({ uiFontSize: next });
+	},
+
+	setCodeFontSize: (px) => {
+		const next = clampCodeFontSize(px);
+		if (next === get().codeFontSize) return;
+		set({ codeFontSize: next });
+		applyFontScales(get().uiFontSize, next);
+		persistPatch({ codeFontSize: next });
 	},
 
 	toggleSidebarCollapsed: () => {

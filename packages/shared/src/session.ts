@@ -71,6 +71,16 @@ export interface UiState {
 	 */
 	sidebarWidth: number;
 	/**
+	 * 界面字号（px）：基准 13（= 迁移前现状，乘数 1），四档 12 / 13 / 15 / 17（shared/typography.ts）。
+	 * 影响全部界面文字（含对话正文），图标与布局尺寸不受影响。
+	 */
+	uiFontSize: number;
+	/**
+	 * 代码字号（px）：基准 12.5，四档 11 / 12.5 / 14 / 16。
+	 * 影响 monaco 代码块 / 内联 code / diff / mermaid 源码。
+	 */
+	codeFontSize: number;
+	/**
 	 * 左侧栏已展开的分组 key（日常 cwd + 各项目 cwd）= 用户手动开合过的记录。
 	 * 空数组的含义**只由 `expandedGroupsTouched` 决定**（空 = 全部折叠 / 未操作）。
 	 */

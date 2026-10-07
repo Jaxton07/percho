@@ -27,7 +27,7 @@ export function ProjectSection({
 	const addProject = useProjectsStore((s) => s.addProject);
 	return (
 		<div>
-			<div className="group/sect mt-2 flex h-8 items-center gap-[5px] rounded-[7px] px-[6px] text-[15px] font-medium text-ink-dim">
+			<div className="group/sect mt-2 flex h-8 items-center gap-[5px] rounded-[7px] px-[6px] text-ui-15 font-medium text-ink-dim">
 				<span className="min-w-0 flex-1 truncate">{t("sidebar.projectsSection")}</span>
 				<button
 					type="button"

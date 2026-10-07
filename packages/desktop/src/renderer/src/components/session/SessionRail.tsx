@@ -188,7 +188,7 @@ function RailItem({
 						</span>
 					)}
 					<span
-						className={`relative flex h-4 w-4 shrink-0 items-center justify-center rounded text-[10px] font-semibold ${
+						className={`relative flex h-4 w-4 shrink-0 items-center justify-center rounded text-ui-10 font-semibold ${
 							daily && status !== "attention" && status !== "working"
 								? "border border-border-strong bg-canvas text-ink"
 								: railAvatarClass(status, isActive)
@@ -199,7 +199,9 @@ function RailItem({
 							<span className="absolute -right-0.5 -top-0.5 h-1.5 w-1.5 rounded-full bg-green-500 ring-1 ring-surface" />
 						)}
 					</span>
-					<span className="min-w-0 flex-1 truncate text-left text-sm text-ink">{title}</span>
+					<span className="min-w-0 flex-1 truncate text-left text-ui-14 leading-[calc(1.25_/_0.875)] text-ink">
+						{title}
+					</span>
 					{/* ×（仅展开态可见可点，CSS rail-close 控 opacity + pointer-events）：span 而非 button
 					    （外层已是 button），stopPropagation 防触发切换；语义 = 移出工作区（不关会话）。
 					    键盘等价操作是条目上的 Delete/Backspace（见外层 onKeyDown + aria-keyshortcuts） */}

@@ -3,12 +3,14 @@ import "markstream-react/index.css";
 // KaTeX 只在公式出现时才会被 markstream 动态 import（mermaid 的依赖里也有 katex）；
 // 它的 CSS 必须显式引入：缺了它 katex-mathml 层不会被隐藏，公式会重影地多一份 MathML 文本。
 import "katex/dist/katex.min.css";
-import { type MouseEvent, useRef } from "react";
+import { type MouseEvent, useMemo, useRef } from "react";
 import { getPi } from "../../api";
 import { errText } from "../../lib/error-text";
+import { monacoFontSizeFor, monacoLineHeightFor } from "../../lib/typography";
 import { useSessionsStore } from "../../stores/sessions";
 import { useThemeStore } from "../../stores/theme";
 import { pushToast } from "../../stores/toasts";
+import { useUiPreferencesStore } from "../../stores/ui-preferences";
 import { classifyMarkdownLink } from "./markdown-link";
 // 副作用 import：MermaidBlock 在模块加载时向 markstream 注册 mermaid 节点的自定义组件（见该文件末尾）
 import "./MermaidBlock";
@@ -25,7 +27,7 @@ const SMOOTH_OPTIONS: SmoothMarkdownStreamOptions = {
 	// 其余（targetLatencyMs 900 / catchUpLatencyMs 350 / catchUpThreshold 600 / max 1000cps）用默认
 };
 
-const CODE_BLOCK_PROPS = {
+const CODE_BLOCK_PROPS_BASE = {
 	// 标题栏在视觉上被 CSS 悬浮化（见 globals.css），这里只裁掉多余按钮：字号三键/全屏/预览/折叠，
 	// 保留复制。不能用 showHeader:false——它会连复制按钮一起去掉。
 	showFontSizeButtons: false,
@@ -100,15 +102,36 @@ export function Markdown({ text, streaming }: { text: string; streaming?: boolea
 	};
 	// 挂载初值锁定：流式中挂载 → 本次生命周期始终启用平滑（含固化后追平）；历史消息挂载 → 永不启用
 	const smoothableRef = useRef<boolean>(Boolean(streaming) && !REDUCED_MOTION);
+	// 代码块字号（spec D4.4）：monaco 的字号/行高是它自己以 inline style 写在 .view-lines 上的，
+	// 不经过我们的 CSS 变量，所以只能在这里按档位算好传进去（darwin 基准 12px / 行高比 1.5）。
+	// **必须 useMemo**：markstream 的 renderCtx memo 依赖 codeBlockProps 的对象身份，
+	// 每次 render 新建对象会让流式期间大量子树重渲染。
+	const codeFontSize = useUiPreferencesStore((s) => s.codeFontSize);
+	const codeBlockProps = useMemo(() => {
+		const fontSize = monacoFontSizeFor(codeFontSize, getPi().platform);
+		return {
+			...CODE_BLOCK_PROPS_BASE,
+			monacoOptions: {
+				...CODE_BLOCK_PROPS_BASE.monacoOptions,
+				fontSize,
+				lineHeight: monacoLineHeightFor(fontSize, getPi().platform),
+			},
+		};
+	}, [codeFontSize]);
 	return (
 		// 委托给库动态生成的 <a>；键盘 Enter 在锚点上会合成 click，无需给容器伪造交互角色。
 		// biome-ignore lint/a11y/noStaticElementInteractions: 容器只代理内部原生可交互锚点
 		// biome-ignore lint/a11y/useKeyWithClickEvents: 锚点的键盘 Enter 原生派发 click，同一路径处理
-		<div className="markdown-body text-[15px] leading-[1.75] text-ink select-text" onClick={onLinkClick}>
+		<div className="markdown-body text-ui-15 leading-[1.75] text-ink select-text" onClick={onLinkClick}>
+			{/* key 里带 codeFontSize：monaco 的字号/行高**只在编辑器创建时**应用（库内没有 updateOptions
+			    调用，`monacoOptions` 换了也不会生效），所以换代码字号时必须让代码块重新挂载。
+			    代价：改档位会重建这一条消息的 markdown 子树（设置项，用户极少动；流式中改会重放当前
+			    消息的打字机动画）。key 只随 codeFontSize 变，流式期间稳定。 */}
 			{/* deferNodesUntilVisible=false：markstream 0.0.55 的延迟节点 bug——块数 > initialRenderBatchSize(40)
 			    的节点先渲染为 node-placeholder 占位条，等 IntersectionObserver 标记可见后只写 ref 不触发
 			    re-render（非虚拟化路径）；流式期间靠内容更新顺带刷新，流一停占位条就永久残留。 */}
 			<MarkdownRender
+				key={`code-font-${codeFontSize}`}
 				content={text}
 				final={!streaming}
 				fade={false}
@@ -117,7 +140,7 @@ export function Markdown({ text, streaming }: { text: string; streaming?: boolea
 				isDark={isDark}
 				codeBlockLightTheme="vitesse-light"
 				codeBlockDarkTheme="vitesse-dark"
-				codeBlockProps={CODE_BLOCK_PROPS}
+				codeBlockProps={codeBlockProps}
 				deferNodesUntilVisible={false}
 			/>
 		</div>

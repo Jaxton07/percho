@@ -25,13 +25,13 @@ export function LoadedSection() {
 
 	if (extensions === null) {
 		return (
-			<p className="py-8 text-center text-[13px] text-ink-faint">{t("settings.extensions.emptyNoSession")}</p>
+			<p className="py-8 text-center text-ui-13 text-ink-faint">{t("settings.extensions.emptyNoSession")}</p>
 		);
 	}
 	return (
 		<div>
 			{extensions.length === 0 && diagnostics.length === 0 ? (
-				<p className="py-8 text-center text-[13px] text-ink-faint">{t("settings.extensions.empty")}</p>
+				<p className="py-8 text-center text-ui-13 text-ink-faint">{t("settings.extensions.empty")}</p>
 			) : (
 				<ul className="divide-y divide-border">
 					{extensions.map((extension) => (
@@ -46,7 +46,7 @@ export function LoadedSection() {
 			{notices.length > 0 && (
 				<ul className="mt-4 space-y-1">
 					{notices.map((notice) => (
-						<li key={notice.path} className="text-[11px] leading-relaxed text-ink-faint">
+						<li key={notice.path} className="text-ui-11 leading-relaxed text-ink-faint">
 							<span className="font-mono">{notice.path}</span> — {t("settings.extensions.unavailableBuiltin")}
 						</li>
 					))}
@@ -54,12 +54,12 @@ export function LoadedSection() {
 			)}
 			{errors.length > 0 && (
 				<div className="mt-4 rounded-lg bg-red-50 px-3 py-2">
-					<p className="text-[11px] font-medium text-red-600">
+					<p className="text-ui-11 font-medium text-red-600">
 						{t("settings.extensions.loadErrors", { count: errors.length })}
 					</p>
 					<ul className="mt-1 space-y-1">
 						{errors.map((err) => (
-							<li key={err.path} className="text-[11px] leading-relaxed text-red-500">
+							<li key={err.path} className="text-ui-11 leading-relaxed text-red-500">
 								<span className="font-mono">{err.path}</span> — {err.error}
 							</li>
 						))}

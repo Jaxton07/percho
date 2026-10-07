@@ -118,7 +118,7 @@ export function Sidebar() {
 						}}
 					/>
 					{empty && (
-						<p className="px-1.5 py-6 text-center text-[12px] text-ink-faint">
+						<p className="px-1.5 py-6 text-center text-ui-12 text-ink-faint">
 							{search ? t("sidebar.searchEmpty") : t("sidebar.noSessions")}
 						</p>
 					)}

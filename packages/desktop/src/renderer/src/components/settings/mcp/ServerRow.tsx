@@ -34,7 +34,7 @@ function StateWord({ state }: { state: ReturnType<typeof serverState> }) {
 					? "settings.mcp.state.disabled"
 					: "settings.mcp.state.idle";
 	return (
-		<span className={`shrink-0 text-[11px] ${state === "error" ? "text-err" : "text-ink-faint"}`}>
+		<span className={`shrink-0 text-ui-11 ${state === "error" ? "text-err" : "text-ink-faint"}`}>
 			{t(key)}
 		</span>
 	);
@@ -69,8 +69,8 @@ export function ServerRow({
 				? t("settings.mcp.transportUrl")
 				: t("settings.mcp.transportUnknown");
 	const ghost =
-		"rounded-full px-2 py-0.5 text-[11px] text-ink-faint transition-colors hover:bg-hover hover:text-ink-2 disabled:opacity-40 disabled:hover:bg-transparent";
-	const ghostStrong = "rounded-full px-2 py-0.5 text-[11px] text-ink transition-colors hover:bg-hover";
+		"rounded-full px-2 py-0.5 text-ui-11 text-ink-faint transition-colors hover:bg-hover hover:text-ink-2 disabled:opacity-40 disabled:hover:bg-transparent";
+	const ghostStrong = "rounded-full px-2 py-0.5 text-ui-11 text-ink transition-colors hover:bg-hover";
 
 	return (
 		<div
@@ -80,17 +80,17 @@ export function ServerRow({
 		>
 			<div className="flex items-center gap-2">
 				<StateDot state={state} />
-				<span className={`text-[13px] ${server.enabled ? "text-ink-2" : "text-ink-faint"}`}>
+				<span className={`text-ui-13 ${server.enabled ? "text-ink-2" : "text-ink-faint"}`}>
 					{server.name}
 				</span>
 				<span
-					className={`shrink-0 rounded-full bg-hover px-2 py-0.5 font-mono text-[11px] ${
+					className={`shrink-0 rounded-full bg-hover px-2 py-0.5 font-mono text-ui-11 ${
 						server.exposure === "deferred" ? "text-ink-2" : "text-ink-faint"
 					}`}
 				>
 					{server.exposure}
 				</span>
-				<span className="shrink-0 whitespace-nowrap text-[11px] text-ink-faint">{transportWord}</span>
+				<span className="shrink-0 whitespace-nowrap text-ui-11 text-ink-faint">{transportWord}</span>
 				<StateWord state={state} />
 				<span className="flex-1" />
 				{summary && (
@@ -149,7 +149,7 @@ export function ServerRow({
 					</button>
 					<button
 						type="button"
-						className="rounded-full px-2 py-0.5 text-[11px] text-ink-faint transition-colors hover:bg-hover hover:text-err"
+						className="rounded-full px-2 py-0.5 text-ui-11 text-ink-faint transition-colors hover:bg-hover hover:text-err"
 						onClick={() => setConfirming(true)}
 					>
 						{t("settings.mcp.remove")}
@@ -158,12 +158,12 @@ export function ServerRow({
 			</div>
 
 			{command && (
-				<p className="mt-1 truncate pl-[15px] font-mono text-[11.5px] text-ink-dim" title={command}>
+				<p className="mt-1 truncate pl-[15px] font-mono text-ui-115 text-ink-dim" title={command}>
 					{command}
 				</p>
 			)}
 			{(server.description || (summary && summary.readOnly > 0) || (running && server.enabled)) && (
-				<div className="mt-0.5 flex items-center gap-2 pl-[15px] text-[11px] text-ink-faint">
+				<div className="mt-0.5 flex items-center gap-2 pl-[15px] text-ui-11 text-ink-faint">
 					{server.description && <span className="truncate">{server.description}</span>}
 					{server.description && summary && summary.readOnly > 0 && (
 						<span className="text-ink-faint/60">·</span>
@@ -177,14 +177,14 @@ export function ServerRow({
 
 			{toolsOpen && summary && (
 				<div className="mb-1 ml-[15px] mt-2 rounded-[10px] bg-hover px-3 py-2.5">
-					<div className="mb-1.5 text-[11px] text-ink-faint">
+					<div className="mb-1.5 text-ui-11 text-ink-faint">
 						{t("settings.mcp.toolsTitle", { count: summary.count })}
 					</div>
 					<div className="flex flex-col gap-1">
 						{server.tools.map((tool) => (
-							<div key={tool.name} className="flex items-center gap-2 font-mono text-[11.5px] text-ink-dim">
+							<div key={tool.name} className="flex items-center gap-2 font-mono text-ui-115 text-ink-dim">
 								<span className="text-ink-2">{tool.name.replace(/^mcp__[^_]+__/, "")}</span>
-								<span className="font-sans text-[11px] text-ink-faint">
+								<span className="font-sans text-ui-11 text-ink-faint">
 									{tool.readOnly ? t("settings.mcp.toolReadOnly") : t("settings.mcp.toolWrite")}
 								</span>
 							</div>
@@ -195,14 +195,14 @@ export function ServerRow({
 
 			{reasonOpen && server.error && (
 				<div className="mb-1 ml-[15px] mt-2 rounded-[10px] bg-hover px-3 py-2.5">
-					<div className="mb-1.5 text-[11px] text-ink-faint">{t("settings.mcp.reasonTitle")}</div>
-					<p className="whitespace-pre-wrap font-mono text-[11.5px] text-ink-dim">{server.error}</p>
-					<p className="mt-2 text-[11px] text-ink-faint">{t("settings.mcp.reasonHint")}</p>
+					<div className="mb-1.5 text-ui-11 text-ink-faint">{t("settings.mcp.reasonTitle")}</div>
+					<p className="whitespace-pre-wrap font-mono text-ui-115 text-ink-dim">{server.error}</p>
+					<p className="mt-2 text-ui-11 text-ink-faint">{t("settings.mcp.reasonHint")}</p>
 				</div>
 			)}
 
 			{(loginWaiting || (state === "needs-auth" && reasonOpen)) && (
-				<div className="mb-1 ml-[15px] mt-2 flex items-start gap-2 rounded-[10px] bg-hover px-3 py-2.5 text-[11.5px] text-ink-dim">
+				<div className="mb-1 ml-[15px] mt-2 flex items-start gap-2 rounded-[10px] bg-hover px-3 py-2.5 text-ui-115 text-ink-dim">
 					{loginWaiting && (
 						<span className="mt-[3px] h-2.5 w-2.5 shrink-0 animate-spin rounded-full border border-ink-faint border-t-ink-2" />
 					)}
@@ -210,7 +210,7 @@ export function ServerRow({
 						{server.authUrl ? (
 							<>
 								<span>{t("settings.mcp.loginWaiting")}</span>
-								<p className="mt-1 break-all font-mono text-[11px] text-ink-faint">{server.authUrl}</p>
+								<p className="mt-1 break-all font-mono text-ui-11 text-ink-faint">{server.authUrl}</p>
 							</>
 						) : (
 							<span>{t("settings.mcp.loginManual")}</span>
@@ -224,7 +224,7 @@ export function ServerRow({
 
 			{confirming && (
 				<div className="mb-1 ml-[15px] mt-2 flex items-center gap-2 rounded-[10px] bg-hover px-3 py-2">
-					<span className="flex-1 text-[11.5px] text-ink-2">
+					<span className="flex-1 text-ui-115 text-ink-2">
 						{t("settings.mcp.deleteAsk", { name: server.name })}
 					</span>
 					<button type="button" className={ghost} onClick={() => setConfirming(false)}>
@@ -232,7 +232,7 @@ export function ServerRow({
 					</button>
 					<button
 						type="button"
-						className="rounded-full px-2 py-0.5 text-[11px] text-err transition-colors hover:bg-hover"
+						className="rounded-full px-2 py-0.5 text-ui-11 text-err transition-colors hover:bg-hover"
 						onClick={() => {
 							setConfirming(false);
 							void remove({ scope: server.source, cwd, name: server.name });

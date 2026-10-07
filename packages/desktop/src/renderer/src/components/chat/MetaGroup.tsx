@@ -20,12 +20,12 @@ function ThinkingRow({ thinking }: { thinking: string }) {
 	return (
 		<details className="group/dets drawer-details">
 			<summary className="group/row flex cursor-pointer items-center gap-2 py-0.5 select-none [&::-webkit-details-marker]:hidden">
-				<span className="shrink-0 text-[13px] font-semibold text-ink-faint transition-colors group-hover/row:text-ink">
+				<span className="shrink-0 text-ui-13 font-semibold text-ink-faint transition-colors group-hover/row:text-ink">
 					{t("message.thinking")}
 				</span>
 				<ExpandArrowIcon className="shrink-0 text-ink-faint opacity-0 transition-[opacity,transform,color] group-hover/row:opacity-100 group-hover/row:text-ink-2 group-open/dets:rotate-90" />
 			</summary>
-			<div className="py-1 pl-4 text-[13px] leading-relaxed whitespace-pre-wrap break-words text-ink-dim select-text">
+			<div className="py-1 pl-4 text-ui-13 leading-relaxed whitespace-pre-wrap break-words text-ink-dim select-text">
 				{thinking}
 			</div>
 		</details>
@@ -161,7 +161,7 @@ export const MetaGroup = memo(function MetaGroup({
 									<ThinkingOrb state={orbState} size={20} paused={false} />
 									<span
 										ref={labelRef}
-										className="sweep-target text-[14px] font-bold text-ink-working transition-colors group-hover/row:text-ink"
+										className="sweep-target text-ui-14 font-bold text-ink-working transition-colors group-hover/row:text-ink"
 									>
 										{t(labelKey)}
 									</span>
@@ -173,7 +173,7 @@ export const MetaGroup = memo(function MetaGroup({
 							</>
 						) : segments.length > 0 ? (
 							/* worked 态标题 = 分类统计（原展开区速读行提上来）；单行截断，hover 变色提示可展开 */
-							<span className="min-w-0 flex-1 truncate text-[13px] text-ink-dim transition-colors group-hover/row:text-ink">
+							<span className="min-w-0 flex-1 truncate text-ui-13 text-ink-dim transition-colors group-hover/row:text-ink">
 								{segments.map((seg, i) => (
 									<Fragment key={seg.key}>
 										{i > 0 && <span className="opacity-50"> · </span>}
@@ -184,7 +184,7 @@ export const MetaGroup = memo(function MetaGroup({
 						) : (
 							<span
 								ref={labelRef}
-								className="text-[14px] font-bold text-ink-dim transition-colors group-hover/row:text-ink"
+								className="text-ui-14 font-bold text-ink-dim transition-colors group-hover/row:text-ink"
 							>
 								{t("message.worked")}
 							</span>

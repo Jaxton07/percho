@@ -37,13 +37,13 @@ function SubagentRunRow({ run }: { run: SubagentRunUi }) {
 			) : (
 				<span className="h-1.5 w-1.5 shrink-0 rounded-full bg-green-500" />
 			)}
-			<span className="truncate text-[13px] font-semibold text-ink">{displayName(run.agent)}</span>
+			<span className="truncate text-ui-13 font-semibold text-ink">{displayName(run.agent)}</span>
 			{run.thinkingLevel && (
-				<span className="shrink-0 text-[11px] text-ink-faint">
+				<span className="shrink-0 text-ui-11 text-ink-faint">
 					{t(`thinkingLevels.${run.thinkingLevel}` as MessageKey)}
 				</span>
 			)}
-			<span className="shrink-0 text-[11px] text-ink-faint">{statusLabel}</span>
+			<span className="shrink-0 text-ui-11 text-ink-faint">{statusLabel}</span>
 		</button>
 	);
 }

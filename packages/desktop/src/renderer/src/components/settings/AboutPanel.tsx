@@ -57,18 +57,18 @@ export function AboutPanel() {
 
 	return (
 		<div className="flex flex-col items-center gap-1.5 py-10 text-center">
-			<div className="flex h-12 w-12 items-center justify-center rounded-xl bg-ink text-[16px] font-bold text-on-ink">
+			<div className="flex h-12 w-12 items-center justify-center rounded-xl bg-ink text-ui-16 font-bold text-on-ink">
 				P
 			</div>
-			<p className="mt-2 text-[14px] font-semibold text-ink">{info?.name ?? "Percho"}</p>
-			<p className="text-[11px] text-ink-faint">{t("settings.about.poweredBy")}</p>
-			<p className="mt-2 font-mono text-[12px] text-ink-dim">
+			<p className="mt-2 text-ui-14 font-semibold text-ink">{info?.name ?? "Percho"}</p>
+			<p className="text-ui-11 text-ink-faint">{t("settings.about.poweredBy")}</p>
+			<p className="mt-2 font-mono text-ui-12 text-ink-dim">
 				{t("settings.about.version")} {info?.version ?? "…"}
 			</p>
 			<div className="mt-4 flex items-center gap-2">
 				<button
 					type="button"
-					className="rounded-lg border border-border px-4 py-1.5 text-[13px] text-ink-2 transition-colors hover:border-border-strong hover:bg-hover hover:text-ink"
+					className="rounded-lg border border-border px-4 py-1.5 text-ui-13 text-ink-2 transition-colors hover:border-border-strong hover:bg-hover hover:text-ink"
 					onClick={() => {
 						if (state?.phase === "downloaded") void getPi().installUpdate();
 						else if (state?.phase === "available" && state.manual) void openReleasePage(state.version);
@@ -79,7 +79,7 @@ export function AboutPanel() {
 				</button>
 				<button
 					type="button"
-					className="rounded-lg border border-border px-4 py-1.5 text-[13px] text-ink-2 transition-colors hover:border-border-strong hover:bg-hover hover:text-ink"
+					className="rounded-lg border border-border px-4 py-1.5 text-ui-13 text-ink-2 transition-colors hover:border-border-strong hover:bg-hover hover:text-ink"
 					onClick={() => {
 						if (info?.repoUrl) void getPi().openExternal({ url: info.repoUrl });
 					}}
@@ -87,7 +87,7 @@ export function AboutPanel() {
 					{t("settings.about.sourceCode")}
 				</button>
 			</div>
-			{statusText && <p className="mt-1 text-[11px] text-ink-faint">{statusText}</p>}
+			{statusText && <p className="mt-1 text-ui-11 text-ink-faint">{statusText}</p>}
 		</div>
 	);
 }

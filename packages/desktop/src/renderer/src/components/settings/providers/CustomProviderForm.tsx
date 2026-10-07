@@ -37,7 +37,7 @@ function toInput(form: ProviderFormState): CustomProviderInput {
 }
 
 const inputClass =
-	"w-full rounded-lg border border-border px-2.5 py-1.5 text-[12px] outline-none focus:border-ink-faint disabled:cursor-not-allowed disabled:text-ink-faint";
+	"w-full rounded-lg border border-border px-2.5 py-1.5 text-ui-12 outline-none focus:border-ink-faint disabled:cursor-not-allowed disabled:text-ink-faint";
 
 /** 自定义 provider 配置表单（添加/编辑共用）：id/baseUrl/api/模型列表/Key。根节点无外边距，由调用方控制间距 */
 function ProviderConfigForm({
@@ -89,7 +89,7 @@ function ProviderConfigForm({
 
 	return (
 		<div className="rounded-xl border border-border p-3">
-			<h3 className="text-[13px] font-medium text-ink">{title}</h3>
+			<h3 className="text-ui-13 font-medium text-ink">{title}</h3>
 			<div className="mt-2 grid grid-cols-2 gap-2">
 				{lockId ? (
 					<Tooltip label={t("settings.providers.customIdLocked")} className="w-full">
@@ -129,14 +129,14 @@ function ProviderConfigForm({
 			<div className="mt-2 flex justify-end gap-2">
 				<button
 					type="button"
-					className="rounded-lg px-3 py-1.5 text-[12px] text-ink-dim transition-colors hover:bg-hover"
+					className="rounded-lg px-3 py-1.5 text-ui-12 text-ink-dim transition-colors hover:bg-hover"
 					onClick={onCancel}
 				>
 					{t("common.cancel")}
 				</button>
 				<button
 					type="button"
-					className="rounded-lg bg-ink px-3 py-1.5 text-[12px] font-medium text-on-ink transition-colors hover:bg-ink-2 disabled:opacity-40"
+					className="rounded-lg bg-ink px-3 py-1.5 text-ui-12 font-medium text-on-ink transition-colors hover:bg-ink-2 disabled:opacity-40"
 					onClick={() => void submit()}
 					disabled={submitting || !form.id.trim() || !form.baseUrl.trim() || !rowsValid(form.models)}
 				>
@@ -157,7 +157,7 @@ export function CustomProviderForm() {
 		return (
 			<button
 				type="button"
-				className="mt-3 w-full rounded-lg border border-dashed border-border py-2 text-[13px] text-ink-dim transition-colors hover:border-border-strong hover:bg-hover"
+				className="mt-3 w-full rounded-lg border border-dashed border-border py-2 text-ui-13 text-ink-dim transition-colors hover:border-border-strong hover:bg-hover"
 				onClick={() => setShow(true)}
 			>
 				{t("settings.providers.addCustom")}

@@ -14,7 +14,7 @@ type CurrentSlot = LivePreviewItem;
 /** thinking 行的固定身份在 MetaGroup；此处只显示对应的流式正文。 */
 function ThinkingPreviewRow({ text }: { text: string }) {
 	return (
-		<div className="flex min-w-0 items-center py-0.5 text-[13px] text-ink-dim">
+		<div className="flex min-w-0 items-center py-0.5 text-ui-13 text-ink-dim">
 			<StreamingMarquee text={text} />
 		</div>
 	);
@@ -25,7 +25,7 @@ function ToolPreviewRow({ name, text }: { name: string; text: string }) {
 	const t = useT();
 	return (
 		<div className="flex min-w-0 items-center gap-2 py-0.5">
-			<span data-shimmer-name className="sweep-target shrink-0 font-mono text-[13px] text-ink-working">
+			<span data-shimmer-name className="sweep-target shrink-0 font-mono text-ui-13 text-ink-working">
 				{displayName(name, t)}
 			</span>
 			{text && <StreamingMarquee text={text} />}

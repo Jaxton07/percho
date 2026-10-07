@@ -13,7 +13,7 @@ export function SidebarFooter() {
 		<div className="flex shrink-0 flex-col gap-px p-2">
 			<button
 				type="button"
-				className="flex h-8 w-full items-center gap-[9px] rounded-[7px] px-2 text-[13.5px] text-ink-dim transition-colors hover:bg-hover hover:text-ink"
+				className="flex h-8 w-full items-center gap-[9px] rounded-[7px] px-2 text-ui-135 text-ink-dim transition-colors hover:bg-hover hover:text-ink"
 				onClick={() => setSettingsOpen(true)}
 			>
 				<GearIcon size={14} />

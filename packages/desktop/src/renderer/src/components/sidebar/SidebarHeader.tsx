@@ -24,7 +24,7 @@ export function SidebarHeader() {
 		<div className="flex shrink-0 flex-col gap-1 px-2.5 pt-2.5 pb-2">
 			<button
 				type="button"
-				className="flex h-9 w-full items-center gap-2 rounded-lg px-2 text-[14px] font-medium text-ink-2 transition-colors hover:bg-hover hover:text-ink"
+				className="flex h-9 w-full items-center gap-2 rounded-lg px-2 text-ui-14 font-medium text-ink-2 transition-colors hover:bg-hover hover:text-ink"
 				onClick={openNewSession}
 			>
 				<EditIcon size={17} className="shrink-0" />
@@ -37,7 +37,7 @@ export function SidebarHeader() {
 					value={search}
 					onChange={(e) => setSearch(e.target.value)}
 					placeholder={t("sidebar.search")}
-					className="min-w-0 flex-1 bg-transparent text-[13px] text-ink-2 outline-none placeholder:text-ink-faint [&::-webkit-search-cancel-button]:hidden"
+					className="min-w-0 flex-1 bg-transparent text-ui-13 text-ink-2 outline-none placeholder:text-ink-faint [&::-webkit-search-cancel-button]:hidden"
 				/>
 			</div>
 		</div>

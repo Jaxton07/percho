@@ -45,12 +45,12 @@ function formOf(server?: McpServerView): FormState {
 }
 
 const input =
-	"w-full rounded-[9px] border border-border bg-canvas px-2.5 py-1.5 text-[12px] text-ink outline-none placeholder:text-ink-faint focus:border-ink-faint";
-const monoInput = `${input} font-mono text-[11.5px]`;
-const label = "mb-1 block text-[11px] text-ink-faint";
-const hint = "mt-1 text-[10.5px] leading-relaxed text-ink-faint";
+	"w-full rounded-[9px] border border-border bg-canvas px-2.5 py-1.5 text-ui-12 text-ink outline-none placeholder:text-ink-faint focus:border-ink-faint";
+const monoInput = `${input} font-mono text-ui-115`;
+const label = "mb-1 block text-ui-11 text-ink-faint";
+const hint = "mt-1 text-ui-105 leading-relaxed text-ink-faint";
 const ghost =
-	"rounded-full px-2.5 py-1 text-[11.5px] text-ink-faint transition-colors hover:bg-hover hover:text-ink-2";
+	"rounded-full px-2.5 py-1 text-ui-115 text-ink-faint transition-colors hover:bg-hover hover:text-ink-2";
 
 /** 分段控件（当前值一眼可见，比下拉直观） */
 function Segmented<T extends string>({
@@ -69,7 +69,7 @@ function Segmented<T extends string>({
 					key={option.value}
 					type="button"
 					disabled={option.disabled}
-					className={`rounded-full px-2.5 py-1 text-[11px] transition-colors disabled:opacity-40 ${
+					className={`rounded-full px-2.5 py-1 text-ui-11 transition-colors disabled:opacity-40 ${
 						option.value === value ? "bg-ink text-canvas" : "bg-hover text-ink-faint hover:text-ink-2"
 					}`}
 					onClick={() => onChange(option.value)}
@@ -87,13 +87,13 @@ export function BackBar({ title, onBack }: { title: string; onBack: () => void }
 		<div className="mb-4">
 			<button
 				type="button"
-				className="flex items-center gap-1 rounded-full py-0.5 pr-2 text-[11.5px] text-ink-faint transition-colors hover:bg-hover hover:text-ink-2"
+				className="flex items-center gap-1 rounded-full py-0.5 pr-2 text-ui-115 text-ink-faint transition-colors hover:bg-hover hover:text-ink-2"
 				onClick={onBack}
 			>
 				<ArrowLeftIcon size={13} />
 				<span>返回</span>
 			</button>
-			<h3 className="mt-2 text-[15px] font-medium text-ink">{title}</h3>
+			<h3 className="mt-2 text-ui-15 font-medium text-ink">{title}</h3>
 		</div>
 	);
 }
@@ -280,7 +280,7 @@ export function ServerEditorPage({
 			</div>
 
 			<p className={`${hint} mt-4`}>{t("settings.mcp.advancedHint")}</p>
-			{error && <p className="mt-3 text-[11.5px] text-err">{error}</p>}
+			{error && <p className="mt-3 text-ui-115 text-err">{error}</p>}
 
 			<div className="mt-auto flex items-center gap-1.5 pt-6">
 				<span className="flex-1" />
@@ -290,7 +290,7 @@ export function ServerEditorPage({
 				<button
 					type="button"
 					disabled={saving}
-					className="rounded-full bg-ink px-3.5 py-1.5 text-[11.5px] text-canvas disabled:opacity-50"
+					className="rounded-full bg-ink px-3.5 py-1.5 text-ui-115 text-canvas disabled:opacity-50"
 					onClick={() => void save()}
 				>
 					{t("settings.mcp.save")}
@@ -342,7 +342,7 @@ export function PasteJsonPage({ cwd, onBack }: { cwd?: string; onBack: () => voi
 				}}
 			/>
 			<p className={hint}>{t("settings.mcp.pasteJsonHint")}</p>
-			{error && <p className="mt-2 text-[11.5px] text-err">{error}</p>}
+			{error && <p className="mt-2 text-ui-115 text-err">{error}</p>}
 			<div className="mt-auto flex items-center gap-1.5 pt-6">
 				<span className="flex-1" />
 				<button type="button" className={ghost} onClick={onBack}>
@@ -351,7 +351,7 @@ export function PasteJsonPage({ cwd, onBack }: { cwd?: string; onBack: () => voi
 				<button
 					type="button"
 					disabled={saving || text.trim().length === 0}
-					className="rounded-full bg-ink px-3.5 py-1.5 text-[11.5px] text-canvas disabled:opacity-50"
+					className="rounded-full bg-ink px-3.5 py-1.5 text-ui-115 text-canvas disabled:opacity-50"
 					onClick={() => void save()}
 				>
 					{t("settings.mcp.pasteJsonSave")}

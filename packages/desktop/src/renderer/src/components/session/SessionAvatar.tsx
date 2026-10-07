@@ -25,7 +25,7 @@ export function SessionAvatar({
 	dotRing?: "ring-canvas" | "ring-surface";
 }) {
 	const daily = isDailyCwd(session.cwd);
-	const box = size === 18 ? "h-[18px] w-[18px] rounded-[5px] text-[10.5px]" : "h-4 w-4 rounded text-[10px]";
+	const box = size === 18 ? "h-[18px] w-[18px] rounded-[5px] text-ui-105" : "h-4 w-4 rounded text-ui-10";
 	return (
 		<span
 			className={`relative flex shrink-0 items-center justify-center font-semibold ${box} ${sessionAvatarClass(

@@ -124,11 +124,11 @@ export function ToolCallCard({ tool }: { tool: UIToolCall }) {
 	}, [summary, name]);
 
 	// running 时工具名加高光扫过动画（与 MetaGroup 状态行同款光带渐变）
-	const nameClass = `shrink-0 font-mono text-[13px] font-semibold text-ink-dim transition-colors group-hover/row:text-ink${
+	const nameClass = `shrink-0 font-mono text-ui-13 font-semibold text-ink-dim transition-colors group-hover/row:text-ink${
 		tool.state === "running" ? " shimmer-sweep" : ""
 	}`;
 	const summaryClass =
-		"relative overflow-hidden whitespace-nowrap font-mono text-[12px] text-ink-faint transition-colors group-hover/row:text-ink";
+		"relative overflow-hidden whitespace-nowrap font-mono text-ui-12 text-ink-faint transition-colors group-hover/row:text-ink";
 
 	return (
 		<details className="group/dets drawer-details">
@@ -149,7 +149,7 @@ export function ToolCallCard({ tool }: { tool: UIToolCall }) {
 					</span>
 				)}
 				{tool.state === "running" && summary && (
-					<span className="shrink-0 font-mono text-[12px] text-ink-faint transition-colors group-hover/row:text-ink-2">
+					<span className="shrink-0 font-mono text-ui-12 text-ink-faint transition-colors group-hover/row:text-ink-2">
 						…
 					</span>
 				)}
@@ -157,12 +157,12 @@ export function ToolCallCard({ tool }: { tool: UIToolCall }) {
 			</summary>
 			<div className="flex flex-col gap-1.5 py-1 pl-4">
 				{tool.args && (
-					<pre className="max-h-56 overflow-y-auto font-mono text-[12px] leading-relaxed break-all whitespace-pre-wrap text-ink-dim select-text">
+					<pre className="max-h-56 overflow-y-auto font-mono text-ui-12 leading-relaxed break-all whitespace-pre-wrap text-ink-dim select-text">
 						{tool.args}
 					</pre>
 				)}
 				{tool.output && (
-					<pre className="max-h-56 overflow-y-auto font-mono text-[12px] leading-relaxed break-all whitespace-pre-wrap text-ink-2 select-text">
+					<pre className="max-h-56 overflow-y-auto font-mono text-ui-12 leading-relaxed break-all whitespace-pre-wrap text-ink-2 select-text">
 						{tool.output}
 					</pre>
 				)}

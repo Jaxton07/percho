@@ -48,7 +48,7 @@ export function PermissionPicker() {
 	const chip = (
 		<button
 			type="button"
-			className={`flex items-center gap-1 rounded-full px-2.5 py-1 text-xs transition-colors hover:bg-hover ${
+			className={`flex items-center gap-1 rounded-full px-2.5 py-1 text-ui-12 leading-[calc(1_/_0.75)] transition-colors hover:bg-hover ${
 				mode === "fullAccess" ? "text-warn hover:text-warn" : "text-ink-dim hover:text-ink"
 			} ${gateOff ? "cursor-not-allowed opacity-40 hover:bg-transparent" : ""}`}
 			aria-label={t("composer.permissionMode")}
@@ -98,12 +98,12 @@ export function PermissionPicker() {
 									<ShieldIcon size={13} className="mt-0.5 shrink-0 text-ink-dim" />
 								)}
 								<span className="min-w-0 flex-1">
-									<span className="block text-xs font-medium">
+									<span className="block text-ui-12 leading-[calc(1_/_0.75)] font-medium">
 										{m === "fullAccess"
 											? t("composer.permissionFullAccessTitle")
 											: t("composer.permissionDefaultTitle")}
 									</span>
-									<span className="mt-0.5 block text-[11px] leading-relaxed text-ink-faint">
+									<span className="mt-0.5 block text-ui-11 leading-relaxed text-ink-faint">
 										{m === "fullAccess"
 											? t("composer.permissionFullAccessDesc")
 											: t("composer.permissionDefaultDesc")}

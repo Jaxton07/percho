@@ -116,7 +116,7 @@ function TabPill({
 				...(ghost ? { width: ghostWidth ?? 208 } : null),
 				...(hidden ? { opacity: 0 } : null),
 			}}
-			className={`no-drag tab-pill group relative flex ${ghost ? "" : "w-full"} cursor-pointer items-center gap-2 rounded-full px-2.5 py-1.5 text-sm ${
+			className={`no-drag tab-pill group relative flex ${ghost ? "" : "w-full"} cursor-pointer items-center gap-2 rounded-full px-2.5 py-1.5 text-ui-14 leading-[calc(1.25_/_0.875)] ${
 				contextOpen
 					? "bg-hover text-ink"
 					: isActive

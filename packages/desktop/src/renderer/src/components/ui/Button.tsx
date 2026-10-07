@@ -5,8 +5,8 @@ type Size = "sm" | "md";
 type Tone = "default" | "danger";
 
 const SIZE: Record<Size, string> = {
-	sm: "rounded-lg px-2 py-1 text-[12px]",
-	md: "rounded-lg px-3 py-1.5 text-[13px]",
+	sm: "rounded-lg px-2 py-1 text-ui-12",
+	md: "rounded-lg px-3 py-1.5 text-ui-13",
 };
 
 const TONE: Record<Tone, Record<Variant, string>> = {

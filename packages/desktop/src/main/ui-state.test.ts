@@ -319,3 +319,51 @@ describe("windowBounds 白名单（normal 态窗口位置与尺寸）", () => {
 		expect(state?.pinnedSessions).toEqual(["s1"]);
 	});
 });
+
+describe("字号档位（uiFontSize / codeFontSize）", () => {
+	it("旧文件没有这两个字段 → 落基准档（13 / 12.5，乘数 1 = 迁移前现状）", async () => {
+		writeFileSync(file(), "{}");
+		const state = await loadUiState();
+		expect(state?.uiFontSize).toBe(13);
+		expect(state?.codeFontSize).toBe(12.5);
+	});
+
+	it("合法档位原样保留（含整数与半档）", async () => {
+		writeFileSync(file(), JSON.stringify({ uiFontSize: 17, codeFontSize: 11 }));
+		const state = await loadUiState();
+		expect(state?.uiFontSize).toBe(17);
+		expect(state?.codeFontSize).toBe(11);
+	});
+
+	it("脏值（非有限数/字符串/null）→ 基准档，不炸启动", async () => {
+		for (const raw of [
+			'{"uiFontSize":"13","codeFontSize":"12.5"}',
+			'{"uiFontSize":null,"codeFontSize":null}',
+			'{"uiFontSize":true,"codeFontSize":[]}',
+			'{"uiFontSize":[],"codeFontSize":{}}',
+		]) {
+			writeFileSync(file(), raw);
+			const state = await loadUiState();
+			expect(state?.uiFontSize, raw).toBe(13);
+			expect(state?.codeFontSize, raw).toBe(12.5);
+		}
+	});
+
+	it("越界夹到上下界（手改 json 也不会把界面搞坏）", async () => {
+		writeFileSync(file(), JSON.stringify({ uiFontSize: 99, codeFontSize: 1 }));
+		expect((await loadUiState())?.uiFontSize).toBe(19);
+		expect((await loadUiState())?.codeFontSize).toBe(9);
+		writeFileSync(file(), JSON.stringify({ uiFontSize: 0, codeFontSize: 100 }));
+		expect((await loadUiState())?.uiFontSize).toBe(11);
+		expect((await loadUiState())?.codeFontSize).toBe(20);
+	});
+
+	it("保存补丁能写回并读回（重启后保持）", async () => {
+		writeFileSync(file(), "{}");
+		await saveUiState({ uiFontSize: 15 });
+		await saveUiState({ codeFontSize: 14 });
+		const state = await loadUiState();
+		expect(state?.uiFontSize).toBe(15);
+		expect(state?.codeFontSize).toBe(14);
+	});
+});

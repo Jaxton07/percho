@@ -69,7 +69,7 @@ export function ContextMenu({
 			<button
 				type="button"
 				role="menuitem"
-				className={`group/item flex h-[30px] w-full items-center gap-[10px] rounded-[7px] px-2 text-left text-[13px] transition-colors hover:bg-hover ${
+				className={`group/item flex h-[30px] w-full items-center gap-[10px] rounded-[7px] px-2 text-left text-ui-13 transition-colors hover:bg-hover ${
 					item.danger ? "text-red-600" : "text-ink-2 hover:text-ink"
 				}`}
 				onClick={() => {

@@ -29,7 +29,7 @@ function GhostAction({
 		<button
 			type="button"
 			onClick={onClick}
-			className={`rounded-[7px] px-2.5 py-1 text-[12px] transition-colors hover:bg-hover ${
+			className={`rounded-[7px] px-2.5 py-1 text-ui-12 transition-colors hover:bg-hover ${
 				strong ? "font-medium text-ink hover:text-ink" : "text-ink-faint hover:text-ink-2"
 			}`}
 		>
@@ -53,13 +53,13 @@ function HeadMeta({ request, queueCount }: { request: ExtensionDialogRequest; qu
 	return (
 		<>
 			{remainingSec !== null && (
-				<span className="inline-flex shrink-0 items-center gap-1 text-[11px] text-ink-faint tabular-nums">
+				<span className="inline-flex shrink-0 items-center gap-1 text-ui-11 text-ink-faint tabular-nums">
 					<ClockIcon size={11} />
 					{remainingSec}s
 				</span>
 			)}
 			{queueCount > 0 && (
-				<span className="shrink-0 text-[11px] text-ink-faint">
+				<span className="shrink-0 text-ui-11 text-ink-faint">
 					{t("interaction.queueMore", { count: queueCount })}
 				</span>
 			)}
@@ -197,7 +197,7 @@ export function InteractionDock({ sessionId }: { sessionId: string | null }) {
 						<span className="flex-none text-accent" aria-hidden="true">
 							<Glyph />
 						</span>
-						<h3 className="min-w-0 flex-1 truncate text-[13px] font-medium tracking-[-0.01em] text-ink-2">
+						<h3 className="min-w-0 flex-1 truncate text-ui-13 font-medium tracking-[-0.01em] text-ink-2">
 							{shown.title}
 						</h3>
 						<HeadMeta request={shown} queueCount={queueCount} />
@@ -212,11 +212,11 @@ export function InteractionDock({ sessionId }: { sessionId: string | null }) {
 									type="button"
 									onClick={() => void respond({ value: option })}
 									onMouseEnter={() => setHighlight(i)}
-									className={`flex items-baseline gap-2 rounded-[9px] px-2.5 py-1.5 text-left text-[13px] text-ink-2 transition-colors ${
+									className={`flex items-baseline gap-2 rounded-[9px] px-2.5 py-1.5 text-left text-ui-13 text-ink-2 transition-colors ${
 										i === highlight ? "bg-hover" : ""
 									}`}
 								>
-									<span className="w-3 flex-none text-right text-[10.5px] text-ink-faint tabular-nums">
+									<span className="w-3 flex-none text-right text-ui-105 text-ink-faint tabular-nums">
 										{i + 1}
 									</span>
 									<span className="min-w-0 break-words">{option}</span>
@@ -242,20 +242,20 @@ export function InteractionDock({ sessionId }: { sessionId: string | null }) {
 					)}
 
 					{shown.kind === "confirm" && shown.message && (
-						<p className="text-[13px] leading-relaxed break-words whitespace-pre-wrap text-ink-2">
+						<p className="text-ui-13 leading-relaxed break-words whitespace-pre-wrap text-ink-2">
 							{shown.message}
 						</p>
 					)}
 
 					{error && (
-						<p className="rounded-lg bg-hover px-2.5 py-1.5 text-[12px] break-all text-err">{error}</p>
+						<p className="rounded-lg bg-hover px-2.5 py-1.5 text-ui-12 break-all text-err">{error}</p>
 					)}
 
 					<div className="flex items-center gap-0.5">
-						<span className="text-[11px] text-ink-faint">{hint}</span>
+						<span className="text-ui-11 text-ink-faint">{hint}</span>
 						<div className="ml-auto flex items-center gap-0.5">
 							{shown.timeoutMs !== undefined && (
-								<span className="mr-1 text-[11px] text-ink-faint">{t("interaction.timedOutNote")}</span>
+								<span className="mr-1 text-ui-11 text-ink-faint">{t("interaction.timedOutNote")}</span>
 							)}
 							{shown.kind === "confirm" ? (
 								<>
@@ -311,7 +311,7 @@ function InputBody({
 				ref={inputRef}
 				type="text"
 				placeholder={placeholder}
-				className="min-w-0 flex-1 border-none bg-transparent text-[13.5px] text-ink outline-none placeholder:text-ink-faint"
+				className="min-w-0 flex-1 border-none bg-transparent text-ui-135 text-ink outline-none placeholder:text-ink-faint"
 				onKeyDown={(e) => {
 					if (e.key === "Enter") {
 						// 阻止冒泡到卡片层（卡片层 Enter 只在 select 用）
@@ -341,7 +341,7 @@ function EditorBody({
 			defaultValue={prefill}
 			spellCheck={false}
 			rows={4}
-			className="max-h-[200px] min-h-24 w-full resize-none rounded-[10px] bg-hover px-2.5 py-2 font-mono text-[12.5px] leading-relaxed break-words whitespace-pre-wrap text-ink-2 outline-none focus:ring-1 focus:ring-border-strong"
+			className="max-h-[200px] min-h-24 w-full resize-none rounded-[10px] bg-hover px-2.5 py-2 font-mono text-ui-125 leading-relaxed break-words whitespace-pre-wrap text-ink-2 outline-none focus:ring-1 focus:ring-border-strong"
 			onKeyDown={(e) => {
 				if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) {
 					e.preventDefault();

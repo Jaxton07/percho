@@ -46,7 +46,7 @@ export function SlashMenu({
 
 	if (flat.length === 0) {
 		return (
-			<div className="mb-1.5 rounded-lg border border-border bg-surface py-2 text-center text-xs text-ink-faint shadow-pop">
+			<div className="mb-1.5 rounded-lg border border-border bg-surface py-2 text-center text-ui-12 leading-[calc(1_/_0.75)] text-ink-faint shadow-pop">
 				{t("slash.noMatch")}
 			</div>
 		);
@@ -59,7 +59,7 @@ export function SlashMenu({
 		>
 			{groups.map((group) => (
 				<div key={group.source}>
-					<p className="px-3 pt-2 pb-1 text-[11px] font-medium text-ink-faint">
+					<p className="px-3 pt-2 pb-1 text-ui-11 font-medium text-ink-faint">
 						{t(`slash.group.${group.source}`)}
 					</p>
 					{group.items.map((command) => {
@@ -71,7 +71,7 @@ export function SlashMenu({
 								key={`${command.source}:${command.name}`}
 								type="button"
 								data-index={index}
-								className={`flex w-full items-center gap-2 px-3 py-1.5 text-left text-[13px] transition-colors ${
+								className={`flex w-full items-center gap-2 px-3 py-1.5 text-left text-ui-13 transition-colors ${
 									index === active ? "bg-hover text-ink" : "text-ink-2 hover:bg-hover"
 								} ${unsupported ? "cursor-not-allowed opacity-50" : ""}`}
 								onMouseEnter={() => onSelectedIndexChange(index)}
@@ -81,7 +81,7 @@ export function SlashMenu({
 								<span className="shrink-0 font-mono text-ink-dim">/{command.name}</span>
 								<span className="min-w-0 flex-1 truncate text-ink-faint">{description}</span>
 								{argumentHint && (
-									<span className="shrink-0 font-mono text-[11px] text-border-strong">{argumentHint}</span>
+									<span className="shrink-0 font-mono text-ui-11 text-border-strong">{argumentHint}</span>
 								)}
 							</button>
 						);
