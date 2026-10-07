@@ -380,12 +380,17 @@ async function shot(page, name, clip, attempts = 4) {
 
 /* ---------------- 鼠标（真实输入管线：pointer capture 才能生效） ---------------- */
 async function dispatchMouse(page, type, x, y, extra = {}) {
+	// `button` 必须与 `buttons` 一致：moved 且 buttons=0 时要给 `"none"`，否则 Chromium 会把这次 move 当成
+	// 「左键仍按着」（实测：`button:"left" + buttons:0` 送出的 pointermove 里 `buttons` 仍是 1，
+	// 于是 X3 的「松手丢失后靠 buttons===0 自愈」这条测不出来 —— 差点误判成产品 bug）
+	const buttons = extra.buttons ?? (type === "mouseMoved" ? 0 : 1);
 	await page.send("Input.dispatchMouseEvent", {
 		type,
 		x,
 		y,
-		button: "left",
+		button: type === "mouseMoved" && buttons === 0 ? "none" : "left",
 		clickCount: type === "mouseMoved" ? 0 : 1,
+		buttons,
 		...extra,
 	});
 }
@@ -583,6 +588,116 @@ async function v1Css(page, { isProbe }) {
 	);
 }
 
+/* ---------------- X3：收尾兜底（指针在窗口外松手 ⇒ pointerup 丢失） ---------------- */
+
+/** 按下把手并拖到视口外，返回起始几何（三个场景共用的起手式） */
+async function beginDragOut(page, { release = "none" } = {}) {
+	await page.evalJs(RESET_DRAG_STATE);
+	await recoverDrag(page);
+	await setUserWidth(page, SIDEBAR_DEFAULT_WIDTH, { isProbe });
+	await sleep(650);
+	const geom = JSON.parse(await page.evalJs(HANDLE_GEOM));
+	// 记下 pointerId，后面模拟「捕获丢失」要用
+	await page.evalJs(`(() => {
+		const h = document.querySelector("[data-sidebar-resize-handle]");
+		h.addEventListener("pointerdown", (e) => { window.__lfPointerId = e.pointerId; }, true);
+		return true;
+	})()`);
+	await dispatchMouse(page, "mouseMoved", 5, DRAG_Y - 60);
+	await dispatchMouse(page, "mouseMoved", Math.round(geom.x), DRAG_Y);
+	await sleep(80);
+	await dispatchMouse(page, "mousePressed", Math.round(geom.x), DRAG_Y, { buttons: 1 });
+	await page.evalJs(SETTLE);
+	// 往左拖到视口外（x < 0）
+	for (const x of [geom.x - 40, 20, -40, -80]) {
+		await dispatchMouse(page, "mouseMoved", Math.max(-80, Math.round(x)), DRAG_Y, { buttons: 1 });
+		await sleep(25);
+	}
+	if (release === "outside") {
+		// 注意：CDP 发到视口外的 `mouseReleased` **仍会送达页面**（实测 window/handle 都收到 pointerup），
+		// 所以它模拟不了真机「在窗口外松手」。真机复现要**完全不发 release**（release: "none"），
+		// 这也正是 review 的 `repro-lostup.mjs` 的做法。
+		await dispatchMouse(page, "mouseReleased", -80, DRAG_Y, { buttons: 0 });
+		await sleep(200);
+	}
+	const state = JSON.parse(await page.evalJs(measureExpr()));
+	return { geom, state };
+}
+
+/** 按下把手并在**窗口内**小幅拖动（隔离测试用：不出窗就不会有 Chromium 自己发的 cancel/lostcapture） */
+async function beginDragInside(page, dx = 40) {
+	await page.evalJs(RESET_DRAG_STATE);
+	await recoverDrag(page);
+	await setUserWidth(page, SIDEBAR_DEFAULT_WIDTH, { isProbe });
+	await sleep(650);
+	const geom = JSON.parse(await page.evalJs(HANDLE_GEOM));
+	await dispatchMouse(page, "mouseMoved", 5, DRAG_Y + 40);
+	await dispatchMouse(page, "mouseMoved", Math.round(geom.x), DRAG_Y);
+	await sleep(80);
+	await dispatchMouse(page, "mousePressed", Math.round(geom.x), DRAG_Y, { buttons: 1 });
+	await page.evalJs(SETTLE);
+	await dispatchMouse(page, "mouseMoved", Math.round(geom.x + dx), DRAG_Y, { buttons: 1 });
+	await page.evalJs(SETTLE);
+	const state = JSON.parse(await page.evalJs(measureExpr()));
+	return { geom, dragging: state.resizing, x: Math.round(geom.x + dx) };
+}
+
+/** 场景 A：松手事件丢失 → 鼠标移回窗口（`buttons === 0` 的 move）必须自愈 */
+async function scenarioLostPointerUp(page) {
+	const { state: stuck } = await beginDragOut(page);
+	for (const x of [40, 120, 200]) {
+		await dispatchMouse(page, "mouseMoved", x, DRAG_Y, { buttons: 0 });
+		await sleep(60);
+	}
+	await sleep(250);
+	const healed = JSON.parse(await page.evalJs(measureExpr()));
+	const cursorAfterHeal = await page.evalJs("document.body.style.cursor");
+	const after = await dragBy(page, 80, { steps: 4 });
+	return {
+		stuckBefore: stuck.resizing,
+		healed: !healed.resizing && cursorAfterHeal === "",
+		canDragAfter: after.settled.sidebarWidth > healed.sidebarWidth + 40,
+		widths: `${stuck.sidebarWidth} → ${healed.sidebarWidth} → ${after.settled.sidebarWidth}`,
+	};
+}
+
+/**
+ * 场景 B：指针捕获丢失（`lostpointercapture`）必须立刻收尾。
+ * 为什么要**派发合成事件**而不是调 `releasePointerCapture()`：实测 Chromium 里脚本调用它只把捕获丢掉、
+ * **不触发** `lostpointercapture`（那种情况下靠 `buttons === 0` 的 move 兜）。这里测的是**处理器接线**。
+ */
+async function scenarioLostPointerCapture(page) {
+	const { dragging, x } = await beginDragInside(page);
+	const dispatched = await page.evalJs(`(() => {
+		const h = document.querySelector("[data-sidebar-resize-handle]");
+		return h.dispatchEvent(new PointerEvent("lostpointercapture", { bubbles: true, pointerId: window.__lfPointerId }));
+	})()`);
+	await sleep(250);
+	const after = JSON.parse(await page.evalJs(measureExpr()));
+	await recoverDrag(page);
+	return { dragging, dispatched, finished: !after.resizing, x };
+}
+
+/** 场景 C：拖动中窗口失焦（blur / visibilitychange）必须收尾 */
+async function scenarioWindowBlur(page) {
+	const { dragging } = await beginDragInside(page);
+	await page.evalJs(`(() => { window.dispatchEvent(new Event("blur")); return true; })()`);
+	await sleep(250);
+	const after = JSON.parse(await page.evalJs(measureExpr()));
+	await recoverDrag(page);
+	return { dragging, finished: !after.resizing };
+}
+
+/** 场景 D：拖动中收到 `buttons === 0` 的 move（用户在外面松手后把鼠标移回来的形状）必须收尾 */
+async function scenarioZeroButtonsMove(page) {
+	const { dragging, x } = await beginDragInside(page);
+	await dispatchMouse(page, "mouseMoved", x + 60, DRAG_Y, { buttons: 0 });
+	await sleep(250);
+	const after = JSON.parse(await page.evalJs(measureExpr()));
+	await recoverDrag(page);
+	return { dragging, finished: !after.resizing };
+}
+
 /* ---------------- V2：拖动期关过渡不跳帧 ---------------- */
 async function v2Drag(page, { isProbe }) {
 	console.log(`\n=== V2 拖动（${isProbe ? "探针把手（阶段 0 用法）" : "真实把手"}）===`);
@@ -740,6 +855,32 @@ async function v2Drag(page, { isProbe }) {
 		`文件值 = ${JSON.stringify(persisted?.sidebarWidth)}`,
 	);
 
+	/* ---- 收尾兜底（X3，2026-10-07）：只有 pointerup/pointercancel 时会永久卡在拖动态 ---- */
+	const lostUp = await scenarioLostPointerUp(page);
+	check(
+		"V2-q【X3】松手事件丢失后能自愈（鼠标移回窗口即收尾，之后还能正常拖）",
+		lostUp.stuckBefore && lostUp.healed && lostUp.canDragAfter,
+		`丢失后卡住=${lostUp.stuckBefore}（预期 true，这一步本来就没有任何信号）→ 移回后自愈=${lostUp.healed} → 再拖=${lostUp.canDragAfter}；宽度 ${lostUp.widths}`,
+	);
+	const lostCapture = await scenarioLostPointerCapture(page);
+	check(
+		"V2-r【X3】指针捕获丢失即刻收尾（lostpointercapture 兜底）",
+		lostCapture.dragging && lostCapture.dispatched && lostCapture.finished,
+		`拖动中=${lostCapture.dragging} 派发 lostpointercapture=${lostCapture.dispatched} → 收尾=${lostCapture.finished}（Chromium 里脚本调 releasePointerCapture 不触发该事件，故用合成事件测接线）`,
+	);
+	const blurred = await scenarioWindowBlur(page);
+	check(
+		"V2-s【X3】窗口失焦即刻收尾（blur / visibilitychange 兜底）",
+		blurred.dragging && blurred.finished,
+		`拖动中=${blurred.dragging} → blur 后收尾=${blurred.finished}`,
+	);
+	const zeroButtons = await scenarioZeroButtonsMove(page);
+	check(
+		"V2-t【X3】拖动中收到 buttons=0 的 move 即刻收尾（窗外松手后把鼠标移回来的形状）",
+		zeroButtons.dragging && zeroButtons.finished,
+		`拖动中=${zeroButtons.dragging} → buttons=0 的 move 后收尾=${zeroButtons.finished}`,
+	);
+
 	/* ---- 命中层（X2，2026-10-07）：侧栏越宽越容易被聊天列里溢出的透明块吃掉右缘 ---- */
 	for (const width of [SIDEBAR_DEFAULT_WIDTH, 360, SIDEBAR_MAX_WIDTH]) {
 		await setUserWidth(page, width, { isProbe });
@@ -751,7 +892,7 @@ async function v2Drag(page, { isProbe }) {
 			hit.visibleScanned > 0 && hit.blocked.length === 0,
 			hit.blocked.length
 				? `被栏外元素盖住：${JSON.stringify(hit.blocked.slice(0, 6))}${hit.blocked.length > 6 ? ` …共 ${hit.blocked.length} 个` : ""}`
-				: `测了 ${hit.visibleScanned}/${hit.scannedControls} 个可见控件（已排除被祖先裁掉的），无栏外遮挡`,
+				: `测了 $hit.visibleScanned/${hit.scannedControls} 个可见控件（已排除被祖先裁掉的），无栏外遮挡`,
 		);
 	}
 

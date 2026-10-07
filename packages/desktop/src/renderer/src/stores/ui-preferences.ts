@@ -135,7 +135,10 @@ export const useUiPreferencesStore = create<UiPreferencesStore>((set, get) => ({
 	},
 
 	previewSidebarWidth: (width) => {
-		set({ sidebarWidth: clampSidebarWidth(width) });
+		const next = clampSidebarWidth(width);
+		// 同值短路：拖动中每帧 set 同一个值只会白白触发一次渲染（订阅方拿到的 state 对象会变）
+		if (next === get().sidebarWidth) return;
+		set({ sidebarWidth: next });
 	},
 
 	commitSidebarWidth: () => {

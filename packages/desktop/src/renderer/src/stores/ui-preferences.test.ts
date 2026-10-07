@@ -280,6 +280,13 @@ describe("侧栏宽度（用户意图值）", () => {
 		expect(useUiPreferencesStore.getState().sidebarWidth).toBe(480);
 	});
 
+	it("预览同值不触发渲染（同值短路：state 对象引用不变）", () => {
+		useUiPreferencesStore.getState().previewSidebarWidth(300);
+		const before = useUiPreferencesStore.getState();
+		useUiPreferencesStore.getState().previewSidebarWidth(300);
+		expect(useUiPreferencesStore.getState()).toBe(before);
+	});
+
 	it("松手落盘一次，写的是当前值", () => {
 		useUiPreferencesStore.getState().previewSidebarWidth(360);
 		useUiPreferencesStore.getState().commitSidebarWidth();

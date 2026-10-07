@@ -14,6 +14,8 @@
 | 比像素核验视觉时取样偏了、以为改动没生效 | 四 · CDP `clip.scale` 再乘一次 DPR（2026-09-29） |
 | 拖动类脚本跑完后界面卡在「拖动中」（光标仍是 col-resize、之后再拖也不动） | 四 · CDP 合成拖拽的两个卡死姿势（2026-10-07） |
 | 侧栏拖宽后把手抓不住 / 行末按钮点不到，**截图看却完全正常** | 四 · 比列宽更宽的内容溢出吃 pointer 事件（2026-10-07） |
+| 侧栏拖一次后**整窗光标卡在 col-resize**、之后再也拖不动（刷新才恢复） | 四 · 拖拽只挂 pointerup 会在「窗口外松手」后永久卡死（2026-10-07） |
+| 脚本判定「没生效」但代码明明改了 / 文件里是新值而界面是旧值 | 四 · dev 里 HMR 会让 store 订阅冻结，验收前要硬重启（2026-10-07） |
 | hover 态截图时有时无、想稳定截出 hover 视觉 | 四 · 同上（`CSS.forcePseudoState` 钉伪类）（2026-10-07） |
 | 绝对定位「撑满父容器」的元素命中区高度是 0（`<hr>` 尤其） | 四 · Tailwind preflight 的 `hr { height: 0 }` 盖掉 `top/bottom: 0`（2026-10-07） |
 | 脚本复位 inline style 后组件样式莫名回退（React 写的 CSS 变量被抹） | 四 · 别用 `cssText = ""` 复位（2026-10-07） |
@@ -424,6 +426,42 @@ pi SDK 必须声明进 `packages/desktop/package.json` dependencies（electron-b
 - **② 松手坐标跑出视口同样丢 `pointerup`**：拖到最左时终点 `x` 是负数（例：从 480 拖到 240，把手在 x=236 → 终点 -4），`mouseReleased` 在视口外没人接。
 - **修法（两条都要）**：量测通道**一律不截图**，截图通道挪到最后；每次拖完都在**把手当前位置**补一次 release（有捕获就到把手，没捕获时那个坐标也落在把手命中区里）。验收脚本里 `V2-m` 专门盯这条回归。
 - 顺带：**`CSS.forcePseudoState({ nodeId, forcedPseudoClasses: ["hover"] })` 能稳定钉住 hover**（截图不会清掉它，`::after`/`:has()` 都跟着变），所以「hover 态截图」用它而不是反复发 `mouseMoved`（后者对同一坐标不重算 hover，见上一条；且截图前后 `:hover` 链可能被清）。`DOM.querySelector` 的参数名是 **`nodeId`**（写成 `root` 会 `Invalid parameters`）。
+
+### 拖拽只挂 `pointerup` 会在「窗口外松手」后永久卡死（2026-10-07，X3）
+
+**症状**（用户报的）：拖一次左栏宽度后，**整窗光标一直是 `col-resize`**、`is-resizing` 摘不掉、之后**再也拖不动**，要刷新页面才恢复。
+
+**机制**：指针在**窗口外**松手时，`mouseup` 交给的是光标下那个窗口/应用，**页面收不到 `pointerup`**（拖到屏幕边缘继续拖最容易发生）。只监听 `pointerup` / `pointercancel` 的实现就永远等不到收尾信号，拖动态一直挂着。
+
+**修法（三条兜底都要，`SidebarResizeHandle` 里都有）**：
+
+1. **`onPointerMove` 里 `event.buttons === 0` → 收尾**（主路径：用户把鼠标移回窗口内立刻自愈）；
+2. `onLostPointerCapture` → 收尾（捕获真丢时的官方信号）；
+3. `window` 的 `blur` / `document` 的 `visibilitychange` → 收尾（切窗口/切应用时松手）。
+
+配套：收尾函数要**幂等**（所有路径都走同一个 `finish()`，重复调用无副作用），否则会重复落盘/重复 `setState`。
+
+**验收这个 bug 的坑（重要）**：
+
+- **CDP 无法忠实模拟「OS 没送 mouseup」**：`Input.dispatchMouseEvent` 的 `buttons` 会直接改 Chromium 的按键状态，所以合成事件里 Chromium 可能自己补发 `pointerup`，让修复前的代码也「看起来正常」。
+- 所以**别用「手改成 disabled 的版本」当对照**（我这么干过，结论一度自相矛盾）—— 要用**真正的上一个 commit** 当对照：`git show HEAD:<file> > <file>` 切过去跑一遍断言，修前应全红、修后应全绿。实测：修复前 V2-q/r/s/t 四条全红 + review 的 `repro-lostup.mjs` 显示「仍卡着 / 拖不动」。
+- 另注意 CDP 的 `button` 与 `buttons` 要一致：`type: "mouseMoved"` 且 `buttons: 0` 时 `button` 必须给 `"none"`，给 `"left"` 的话 Chromium 会当成「左键仍按着」（`event.buttons` 还是 1），于是 `buttons === 0` 这条兜底**测不出来**，很容易误判成产品 bug。
+
+### dev 里 HMR 会让 store 订阅冻结：验收前要硬重启（2026-10-07，差点误判）
+
+**症状**：改了代码、HMR 热更后，界面上某些值**再也不跟随 store 变化**了 —— 例：`ui-state.json` 里 `sidebarWidth` 是 280，页面上侧栏却一直是 320（连拖动都不动了）。看起来像新写的派生逻辑坏了。
+
+**诊断手法**（一次定位）：从 DOM 拿 React 自己的 props/state，和文件/真实输入对账 ——
+
+```js
+const el = document.querySelector(".sidebar");
+const pk = Object.keys(el).find((k) => k.startsWith("__reactProps$"));
+el[pk].style; // => {"--sidebar-render-width":"320px"} ← React「最后一次渲染」给的值
+```
+
+再配合 `git show HEAD:<file>` 切回上一个 commit 跑同一段脚本，就能区分「代码问题」与「热更后运行时状态坏了」。
+
+**结论/纪律**：**验收脚本一律在硬重启（`stop_dev` → `start_dev`）之后跑**，别在热更过的实例上得结论。`devctl.sh` 已按这个用。（同类教训：HMR 之后 `ResizeObserver`/订阅这类「effect 只在挂载时建立」的东西最容易出这种假象。）
 
 ### 比列宽更宽的内容会「溢出吃 pointer 事件」：截图看不出来的点击死区（2026-10-07，X2）
 
