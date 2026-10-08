@@ -22,6 +22,13 @@ describe("categoryOf", () => {
 		expect(categoryOf("editor")).toBe("other");
 		expect(categoryOf("show_image")).toBe("other");
 	});
+
+	it("MCP 工具（mcp__<server>__<tool>）归 mcp；前缀不成形的仍归 other", () => {
+		expect(categoryOf("mcp__blender__look")).toBe("mcp");
+		expect(categoryOf("mcp__blender")).toBe("other");
+		expect(categoryOf("mcp__")).toBe("other");
+		expect(categoryOf("mcp__blender__")).toBe("other");
+	});
 });
 
 describe("dotsFromItems", () => {
@@ -98,5 +105,44 @@ describe("summarizeCategories", () => {
 	it("error 工具照常计数（失败态由圆点行标识）", () => {
 		const segs = summarizeCategories([{ tools: [tool("bash", "error")] }]);
 		expect(segs).toEqual([{ key: "bash", category: "bash", name: "bash", count: 1 }]);
+	});
+
+	it("同一 MCP server 的不同工具归并为一段，名字取 server", () => {
+		const segs = summarizeCategories([
+			{
+				tools: [
+					tool("mcp__blender__execute_blender_code"),
+					tool("mcp__blender__look", "done", "b2"),
+					tool("mcp__blender__get_scene_info", "done", "b3"),
+				],
+			},
+		]);
+		expect(segs).toEqual([
+			{
+				key: "mcp:blender",
+				category: "mcp",
+				name: "mcp__blender__execute_blender_code",
+				server: "blender",
+				count: 3,
+			},
+		]);
+	});
+
+	it("不同 MCP server 各自成段（首见顺序），与内置/第三方段共存", () => {
+		const segs = summarizeCategories([
+			{ tools: [tool("read"), tool("mcp__blender__look")] },
+			{ tools: [tool("mcp__github__list_issues"), tool("mcp__blender__look", "done", "b2")] },
+		]);
+		expect(segs.map((s) => [s.key, s.count])).toEqual([
+			["read", 1],
+			["mcp:blender", 2],
+			["mcp:github", 1],
+		]);
+		expect(segs[1]?.server).toBe("blender");
+	});
+
+	it("MCP 段不产 server 字段以外的脏键（other 段无 server）", () => {
+		const [seg] = summarizeCategories([{ tools: [tool("webfetch")] }]);
+		expect(seg && "server" in seg).toBe(false);
 	});
 });

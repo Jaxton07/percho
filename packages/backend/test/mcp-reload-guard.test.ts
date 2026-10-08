@@ -1,13 +1,40 @@
+import { mkdirSync, mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import type { AgentSession } from "@earendil-works/pi-coding-agent";
-import { describe, expect, it, vi } from "vitest";
-import { PiBackend } from "../src/pi-backend";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { SessionRegistry } from "../src/session/registry";
 
 /**
  * mcp.json 变更后的 reload 守卫（REVIEW §3）：运行中（streaming/compacting）的会话必须**跳过**。
  * `AgentSession.reload()` 没有运行中守卫、不 abort 在跑的 turn，却会 `emitSessionShutdown`
  * → 官方 mcp 扩展收到就关掉全部连接、旧 runner 被废弃：在别的会话跑长任务时改配置会静默打断它。
+ *
+ * ❗**必须隔离 agentDir**：`upsertMcpServer` 会真的写「全局 `<agentDir>/mcp.json`」。不 mock
+ * `getAgentDir` 就写开发者真实的 `~/.pi/agent/mcp.json` —— 而且断言一旦失败，用例后半段的
+ * remove 不会执行，测试用的 `demo` 就**永久残留在真实配置里**（2026-10-08 实测踩到：本地
+ * 配了 blender server → 全局列表断言失败 → 残留）。隔离写法与 `mcp-config.test.ts` 一致。
  */
+const agentDir = vi.hoisted(() => ({ value: "" }));
+
+vi.mock("@earendil-works/pi-coding-agent", async (importOriginal) => {
+	const actual = await importOriginal<typeof import("@earendil-works/pi-coding-agent")>();
+	return { ...actual, getAgentDir: () => agentDir.value };
+});
+
+const { PiBackend } = await import("../src/pi-backend");
+
+let root = "";
+
+beforeEach(() => {
+	root = mkdtempSync(join(tmpdir(), "percho-mcp-reload-guard-"));
+	agentDir.value = join(root, "agent");
+	mkdirSync(agentDir.value, { recursive: true });
+});
+
+afterEach(() => {
+	rmSync(root, { recursive: true, force: true });
+});
 function stubSession(options: { sessionId: string; isStreaming?: boolean; isCompacting?: boolean }) {
 	const reload = vi.fn().mockResolvedValue(undefined);
 	const session = {

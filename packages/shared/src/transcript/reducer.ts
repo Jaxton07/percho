@@ -326,25 +326,37 @@ export function reduceEvent(state: SessionTranscriptState, event: SessionEvent):
 							mimeType: (c as { mimeType?: string }).mimeType ?? "image/png",
 						}))
 				: [];
-			return {
-				...state,
-				messages: [
-					...state.messages,
-					{
-						kind: "user",
-						id: newMessageId(),
-						text: invocation ? (invocation.args ?? "") : text,
-						images,
-						timestamp: event.message.timestamp ?? Date.now(),
-						...(invocation
-							? {
-									skill: { name: invocation.name, args: invocation.args },
-									sourceText: text,
-								}
-							: {}),
-					},
-				],
+			const message: UIMessage = {
+				kind: "user",
+				id: newMessageId(),
+				text: invocation ? (invocation.args ?? "") : text,
+				images,
+				timestamp: event.message.timestamp ?? Date.now(),
+				...(invocation
+					? {
+							skill: { name: invocation.name, args: invocation.args },
+							sourceText: text,
+						}
+					: {}),
 			};
+			// 乐观回显认领：本次发送已本地插了一条同位置气泡（appendOptimisticUserMessage），
+			// 权威消息到达就**原位替换**（不追加）——气泡不闪、不重排，缩略图换成权威那版。
+			// 判据：存在 pending 用户消息，且它之后**没有再插过用户消息**（中间可能夹了 system 通知行，忽略）；
+			// 只有空闲发送才插 pending，而运行中发送走队列、队列在本次用户消息之后才 drain，所以它一定还尾着。
+			const pendingIndex = findLastIndex(state.messages, (m) => m.kind === "user" && m.pending === true);
+			const claimable =
+				pendingIndex >= 0 && !state.messages.slice(pendingIndex + 1).some((m) => m.kind === "user");
+			if (claimable) {
+				return {
+					...state,
+					messages: [
+						...state.messages.slice(0, pendingIndex),
+						message,
+						...state.messages.slice(pendingIndex + 1),
+					],
+				};
+			}
+			return { ...state, messages: [...state.messages, message] };
 		}
 		case "message_update":
 			return withStreaming(state, (streaming) =>

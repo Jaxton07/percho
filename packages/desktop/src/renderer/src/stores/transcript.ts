@@ -1,13 +1,16 @@
 import type {
 	ExtensionDialogRequest,
+	ImageInput,
 	SessionEvent,
 	PermissionRequest as SharedPermissionRequest,
 	TodoItem,
 } from "@percho/shared";
 import {
 	type ActivityEntry,
+	appendOptimisticUserMessage,
 	emptyTranscript,
 	reduceEvent,
+	removeOptimisticUserMessage,
 	type SessionPhase,
 	type SessionTranscriptState,
 	type StreamingState,
@@ -41,6 +44,10 @@ interface TranscriptStore {
 	applyEvent: (sessionId: string, event: SessionEvent, opts?: { isActiveViewing?: boolean }) => void;
 	/** 乐观置 agent 运行状态（发送消息后立即置 true，失败/结束后置 false 修正） */
 	markAgentActive: (sessionId: string, active: boolean) => void;
+	/** 发送瞬间插入乐观用户气泡（返回本地 id，供发送失败时撤回；详见 shared/transcript/pending-user.ts） */
+	appendOptimisticUser: (sessionId: string, input: { text: string; images: ImageInput[] }) => string;
+	/** 发送失败撤回乐观气泡（已认领的不动） */
+	removeOptimisticUser: (sessionId: string, id: string) => void;
 	/** 清除完成未读标记（切到该会话/回到 chat 视图时调用） */
 	markCompletionSeen: (sessionId: string) => void;
 	addPermission: (sessionId: string, req: PermissionRequest) => void;
@@ -100,6 +107,26 @@ export const useTranscriptStore = create<TranscriptStore>((set) => ({
 					},
 				},
 			};
+		});
+	},
+	appendOptimisticUser: (sessionId, input) => {
+		let id = "";
+		set((state) => {
+			// 新会话第一条时 entry 还不存在（首个事件才建）——自己补建，否则乐观气泡无处可放
+			const current = state.bySession[sessionId] ?? EMPTY_ENTRY;
+			const pending = appendOptimisticUserMessage(current, input);
+			id = pending.id;
+			return { bySession: { ...state.bySession, [sessionId]: { ...current, ...pending.state } } };
+		});
+		return id;
+	},
+	removeOptimisticUser: (sessionId, id) => {
+		set((state) => {
+			const current = state.bySession[sessionId];
+			if (!current) return state;
+			const next = removeOptimisticUserMessage(current, id);
+			if (next === current) return state;
+			return { bySession: { ...state.bySession, [sessionId]: { ...current, ...next } } };
 		});
 	},
 	markCompletionSeen: (sessionId) => {

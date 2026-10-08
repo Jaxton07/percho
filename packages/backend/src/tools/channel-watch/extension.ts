@@ -48,7 +48,7 @@ export interface ChannelWatchOptions {
 	sendWake?: (text: string) => void;
 	/** 恢复订阅的 watcher/离线对账须等首次 UI 历史回放；不在 SDK session_start 中 await。 */
 	waitForHistoryReady?: (sessionId: string) => Promise<boolean>;
-	/** backend dispose() 不发 session_shutdown；绑定会话级清理以停 watcher、作废在途补投。 */
+	/** 宿主绑定的会话级清理（关会话时显式调用，与 `session_shutdown` 双保险）：停 watcher、作废在途补投，幂等。 */
 	onSessionCleanup?: (cleanup: () => void) => void;
 	/** 丢弃与当前 registry entry 不匹配的启动续体（含同 ID 构造冲突）。 */
 	isSessionAlive?: (sessionId: string) => boolean;
@@ -559,7 +559,7 @@ export function makeChannelWatchExtension(options: ChannelWatchOptions): InlineE
 							try {
 								if (options.waitForHistoryReady) {
 									const allowed = await options.waitForHistoryReady(ctx.sessionManager.getSessionId());
-									if (!allowed) return; // backend dispose() 不触发 session_shutdown
+									if (!allowed) return; // 会话已处置（gate 被 cancel）：别启动孤儿 watcher
 								}
 								if (epoch !== startupEpoch || !isLive()) return;
 								await ensureWatcher();

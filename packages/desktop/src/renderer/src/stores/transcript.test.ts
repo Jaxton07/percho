@@ -1,5 +1,12 @@
 import type { AgentSessionEvent, ExtensionDialogRequest, SessionEvent } from "@percho/shared";
-import { emptyTranscript, messagesToUIMessages, REDUCED_EVENT_TYPES, reduceEvent } from "@percho/shared";
+import {
+	appendOptimisticUserMessage,
+	emptyTranscript,
+	messagesToUIMessages,
+	REDUCED_EVENT_TYPES,
+	reduceEvent,
+	removeOptimisticUserMessage,
+} from "@percho/shared";
 import { beforeEach, describe, expect, it } from "vitest";
 import { useTranscriptStore } from "./transcript";
 
@@ -46,6 +53,75 @@ describe("transcript reducer", () => {
 		} as unknown as AgentSessionEvent);
 		expect(state.messages).toHaveLength(1);
 		expect(state.messages[0]).toMatchObject({ kind: "user", text: "你好" });
+	});
+
+	describe("乐观用户气泡（发送瞬间回显，权威消息原位认领）", () => {
+		const userStart = (text: string, images = 0) =>
+			({
+				type: "message_start",
+				message: {
+					role: "user",
+					content: [
+						{ type: "text", text },
+						...Array.from({ length: images }, () => ({ type: "image", data: "AAAA", mimeType: "image/png" })),
+					],
+					timestamp: 1720000000000,
+				},
+			}) as unknown as AgentSessionEvent;
+
+		it("权威消息到达时原位替换，不重复、不改变顺序", () => {
+			let state = appendOptimisticUserMessage(emptyTranscript(), {
+				text: "看下图",
+				images: [{ data: "AAAA", mimeType: "image/png" }],
+			}).state;
+			expect(state.messages).toHaveLength(1);
+			expect(state.messages[0]).toMatchObject({ kind: "user", text: "看下图", pending: true });
+
+			state = reduceEvent(state, userStart("看下图", 1));
+			expect(state.messages).toHaveLength(1);
+			// 认领后 pending 清掉（找回按钮重新可用），其余字段以权威为准
+			expect(state.messages[0]).toMatchObject({ kind: "user", text: "看下图", timestamp: 1720000000000 });
+			expect((state.messages[0] as { pending?: boolean }).pending).toBeUndefined();
+			expect((state.messages[0] as { images: unknown[] }).images).toHaveLength(1);
+		});
+
+		it("认领保留位置：乐观气泡前面已有消息时仍原位替换", () => {
+			let state = reduceEvent(emptyTranscript(), userStart("上一条"));
+			state = appendOptimisticUserMessage(state, { text: "这一条", images: [] }).state;
+			state = reduceEvent(state, userStart("这一条"));
+			expect(state.messages.map((m) => (m.kind === "user" ? m.text : m.kind))).toEqual(["上一条", "这一条"]);
+		});
+
+		it("中间夹了 system 通知行照样认领（只遮掉夹上来的其他用户消息）", () => {
+			let state = appendOptimisticUserMessage(emptyTranscript(), { text: "看下图", images: [] }).state;
+			state = reduceEvent(state, { type: "subagent_mutex", extensionPath: "/tmp/x.ts", tools: ["subagent"] });
+			state = reduceEvent(state, userStart("看下图"));
+			expect(state.messages.map((m) => (m.kind === "user" ? m.text : m.kind))).toEqual(["看下图", "system"]);
+		});
+
+		it("外来用户消息先到 → 它会占用 pending 槽位（位置判据的已知取舍），本次消息随后正常追加", () => {
+			// 位置判据不比对文本（skill/模板展开后文本会变，比不了）——代价就是这条尾巴上的极端情形：
+			// 扩展注入的 user 消息若恰好在图片缩放那几百 ms 里抢到前面，会占据乐观气泡的位置。
+			// 选择接受：两条都在、随后 loadHistory 会按服务端顺序重建，而比对文本会把 skill 展开误判成不匹配。
+			let state = appendOptimisticUserMessage(emptyTranscript(), { text: "我的", images: [] }).state;
+			state = reduceEvent(state, userStart("别人的"));
+			state = reduceEvent(state, userStart("我的"));
+			expect(state.messages.map((m) => (m.kind === "user" ? m.text : m.kind))).toEqual(["别人的", "我的"]);
+		});
+
+		it("没有 pending 时照常追加（历史回放/多端同步不受影响）", () => {
+			const state = reduceEvent(emptyTranscript(), userStart("普通发送"));
+			expect(state.messages).toHaveLength(1);
+			expect((state.messages[0] as { pending?: boolean }).pending).toBeUndefined();
+		});
+
+		it("撤回只删未认领的那条", () => {
+			const first = appendOptimisticUserMessage(emptyTranscript(), { text: "发失败的", images: [] });
+			expect(removeOptimisticUserMessage(first.state, first.id).messages).toHaveLength(0);
+
+			const claimed = reduceEvent(first.state, userStart("发失败的"));
+			expect(removeOptimisticUserMessage(claimed, first.id).messages).toHaveLength(1);
+		});
 	});
 
 	it("canonical skill 用户消息紧凑投影，并保留 sourceText 供撤回定位", () => {
@@ -1518,6 +1594,55 @@ describe("transcript store unseenCompletion", () => {
 		expect(entry("s1")?.todos).toEqual([{ content: "a", status: "in_progress" }]);
 		store.loadTodos("s1", []);
 		expect(entry("s1")?.todos).toEqual([]);
+	});
+});
+
+describe("transcript store 乐观用户气泡", () => {
+	beforeEach(() => {
+		useTranscriptStore.setState({ bySession: {} });
+	});
+
+	function entry(sessionId: string) {
+		return useTranscriptStore.getState().bySession[sessionId];
+	}
+
+	it("新会话（entry 尚未建）也能插入；返回的 id 可用于删除", () => {
+		const id = useTranscriptStore.getState().appendOptimisticUser("s1", { text: "看下图", images: [] });
+		expect(entry("s1")?.messages).toHaveLength(1);
+		expect(entry("s1")?.messages[0]).toMatchObject({ kind: "user", text: "看下图", pending: true });
+		useTranscriptStore.getState().removeOptimisticUser("s1", id);
+		expect(entry("s1")?.messages).toHaveLength(0);
+	});
+
+	it("权威 message_start 到达后原位认领（不重复、pending 清除）", () => {
+		const store = useTranscriptStore.getState();
+		store.appendOptimisticUser("s1", { text: "看下图", images: [] });
+		store.applyEvent("s1", {
+			type: "message_start",
+			message: { role: "user", content: [{ type: "text", text: "看下图" }], timestamp: 42 },
+		} as unknown as AgentSessionEvent);
+		expect(entry("s1")?.messages).toHaveLength(1);
+		expect(entry("s1")?.messages[0]).toMatchObject({ kind: "user", text: "看下图", timestamp: 42 });
+		const claimed = entry("s1")?.messages[0] as { pending?: boolean } | undefined;
+		expect(claimed?.pending).toBeUndefined();
+	});
+
+	it("删除已认领的 id 是 no-op（失败回滚跑到认领之后也不误删）", () => {
+		const store = useTranscriptStore.getState();
+		const id = store.appendOptimisticUser("s1", { text: "你好", images: [] });
+		store.applyEvent("s1", {
+			type: "message_start",
+			message: { role: "user", content: [{ type: "text", text: "你好" }] },
+		} as unknown as AgentSessionEvent);
+		useTranscriptStore.getState().removeOptimisticUser("s1", id);
+		expect(entry("s1")?.messages).toHaveLength(1);
+	});
+
+	it("loadHistory 整体替换 → 未认领的乐观气泡自然消失", () => {
+		const store = useTranscriptStore.getState();
+		store.appendOptimisticUser("s1", { text: "没发出去", images: [] });
+		store.loadHistory("s1", []);
+		expect(entry("s1")?.messages).toHaveLength(0);
 	});
 });
 

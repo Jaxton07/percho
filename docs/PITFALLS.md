@@ -35,6 +35,9 @@
 | 撤回后上下文还带着被撤回的消息 / 消息数不变 | 二 · 同上（手写 `agent.state.messages` 已无效；手动回退 leaf 要补 `refreshContext()`） |
 | 设置页永久 Loading、模型列表为空 | 二 · runtime.refresh 网络挂起 / getAvailable 返回空 |
 | 权限 confirm 弹窗不生效 | 二 · bindExtensions 注入点 |
+| 关掉会话后 MCP server 子进程（`uvx`/`node`）仍常驻、还占着上游连接 | 二 · `AgentSession.dispose()` 不发 `session_shutdown`（2026-10-08） |
+| 粘贴截图发给模型后，输入框的图立刻消失、对话区却要 ~1s 才出现气泡 | 二 · 带图发送时气泡「姗姗来迟」：SDK 在构造用户消息前先缩放附件（2026-10-08） |
+| 上一条的另一半：Agent 跑着的时候发大图不会被缩放（可能撞 provider 5MB 上限） | 二 · 同上（队列路径不归一化附件） |
 | preload 加载失败（sandbox 下 require is not defined） | 三 · preload 必须 CJS |
 | main 进程 import workspace 包行为异常（外部化/旧产物） | 三 · externalizeDepsPlugin |
 | 打包产物缺 pi SDK、Electron 版本漂移 | 三 · 打包两个坑 |
@@ -287,6 +290,77 @@ LAN 页重连/中途进入时，快照种子经 `messagesToUIMessages` 重建—
   写它）。撤回（`recallMessage`）里那个绕过 `navigateTree` 的**悬挂用户消息分支**必须自己补
   `session.refreshContext()`——`navigateTree` 末尾内部会刷，不刷则 `session.messages`（UI 的 messageCount、
   `_findLastAssistantMessage()` 驱动的 compaction 判定）停在撤回前 = 幽灵消息。
+
+### `AgentSession.dispose()` 不发 `session_shutdown` —— 漏 MCP 子进程（2026-10-08）
+
+症状：在 Percho 里开过又关掉的会话，它的 MCP stdio server 一直活着（`uvx mcp-for-blender` + 它的
+python 子进程各留一份），还占着上游（Blender 的 9876）连接；**只有整个 app 退出才清**。开 N 个会话堆 N 份。
+
+根因两层：
+
+1. SDK 的 `AgentSession.dispose()` **只 `invalidate()` 扩展 runner、不发 `session_shutdown`**
+   （pi 1.0.4 `core/agent-session.js:988`：abort → `_extensionRunner.invalidate()` → 断连 → `cleanupSessionResources()`）。
+2. 官方内置扩展里**只有 mcp** 靠这个事件释放资源（整包 bundle 里 `pi.on("session_shutdown", …)` 只出现一处，
+   就是 MCP 的「关掉全部连接」）。codemode / tool-search 都没注册。
+
+于是 `dispose()` 之后 MCP 连接对象还挂在扩展内存里，子进程没人收。
+
+诊断手法（可复用）：**拿宿主日志对齐子进程启动时刻**。Percho 的 `main-YYYY-MM-DD.log` 里有
+`session created/opened/closed` 时间戳，`ps -o pid=,ppid=,lstart= -p <pid>` 给子进程绝对启动时刻 ——
+两者一对就能看出「会话已 closed 但子进程还活着」。再用两次对照实验钉因果：
+单纯 `dispose()` 后子进程存活；`dispose()` 前先 `emit({type:"session_shutdown"})` 则被回收。
+⚠️ 判子进程归属别只看时间戳对得上：`ps eww -p <pid>` 看环境变量 —— 带
+`__CFBundleIdentifier=<app 的 bundle id>` 且**没有** `PI_SESSION_ID` 的，才是宿主主进程直接 spawn 的
+（会话 MCP server）；pi 会话内 bash 起的子进程会带 `PI_SESSION_ID`。
+
+修复 `packages/backend/src/session/shutdown.ts` 的 `emitSessionShutdown(session)`：在 `session.dispose()`
+**之前**发事件。这正是官方 `AgentSessionRuntime.dispose()` 的做法（`core/agent-session-runtime.js`：
+`await emitSessionShutdownEvent(this.session.extensionRunner, {type:"session_shutdown",reason:"quit"})`
+之后才 `this.session.dispose()`）—— 但那个内部函数**没从包根导出**（exports map 只开
+`.`/`./rpc-entry`/`./client`/`./experimental/plugin`，deep import 会 `ERR_PACKAGE_PATH_NOT_EXPORTED`），
+所以走公开 API 等价复现：`session.extensionRunner` 是 **public getter**（`agent-session.d.ts:906`），
+`ExtensionRunner` 从包根导出。两个调用点语义不同：
+
+- `PiBackend.disposeSession`（closeSession / deleteSession）→ **await**，且 `.catch()` 兜住：
+  派发失败不能阻断处置，否则后面的 registry/gate/traces 清理全会漏掉。
+- `SessionRegistry.disposeAll`（`before-quit` 的**同步**收尾，Electron 不等 async quit 钩子）→ fire-and-forget。
+  够用：`connection.close()` 里 kill 子进程是同步段发出的；且 app 整体退出时子进程另有 **stdin EOF 兜底**
+  （实测：父进程死后 `uvx` 自己退出，但**别依赖它** —— 那是 server 自己的实现细节）。
+
+❗**加这个事件会「首次」触发一批原本从不执行的 handler**，改动前必须查清影响面：
+`grep -o 'on("session_shutdown"' <bundle>` 只有一处（MCP）；Percho 侧只有 channel-watch，
+它的 `cleanup()` 幂等且本就有 modeRef 路径兜底，重复执行无害。
+回归测试 `packages/backend/test/session-shutdown.test.ts`（三条：顺序 / emit 失败不阻断 dispose / disposeAll 也发）。
+
+### 带图发送时气泡「姗姗来迟」：SDK 在**构造用户消息前**先缩放附件（2026-10-08）
+
+**症状**：粘贴截图 → 回车 → 输入框里的图立刻被清空，但对话区要 ~1s 才出现用户气泡与缩略图（观感上就是「发出去了却半天没反应」）。
+
+**成因**（SDK 1.0.4）：`AgentSession._normalizePromptImages()`（`core/agent-session.js:1598`）在 `messages.push({role:"user",…})` **之前** `await` 每个附件的 `processImage()` —— Photon WASM 在**每个附件各起一个 worker**（`utils/image-resize.js`）做 EXIF 摆正 + Lanczos3 缩放 + PNG/JPEG 各种编码试一遍取更小。渲染端那时**没有乐观用户消息**，所以这段时间对话区里什么都没有。
+
+**实测**（真实 Electron 主进程跑 SDK 同一条 worker 路径 / 历史日志×trace 配对）：
+
+| 场景 | 耗时 |
+|---|---|
+| 无图发送（对照组） | 中位 **3ms** |
+| 图在限内（≤2000px，≤4.5MB base64） | **20–83ms**（不缩也要付「起 worker + 实例化 WASM + 解码」） |
+| 全屏 Retina 截图（2122×1420 → 2000，要缩） | **758–1089ms/张** |
+| 同一条消息 2 张截图 | 串行 **≈1.7s** |
+
+注意是 **SDK 升级才引入**的：0.84.3 不处理 prompt 附件（升级前实测 0–5ms）——「以前没这感觉」对得上。
+
+**修复（本仓，2026-10-08）**：
+
+1. **乐观用户气泡**：发送瞬间本地插一条同位置气泡（shared `transcript/pending-user.ts` + reducer 的 `message_start(user)` 认领分支：**末尾是 pending 用户消息就原位替换而非追加**），失败 `removeOptimisticUser` 撤回。只在**空闲发送**时插（运行中发送走队列、QueueBar 已在显示排队行；斜杠命令可能根本不产生用户消息，也跳过）。
+2. **附件粘贴/选图时就预缩放**：`renderer/lib/image-attachment.ts`（+ 纯函数 `image-fit.ts`）把附件先缩到 ≤2000px / ≤4.5MB base64，SDK 于是只走「已在限内」快路径。阈值**镜像** SDK `utils/image-resize-core.js` 的 `DEFAULT_OPTIONS`（模型目录 1125 条 `inputLimits.images.resize` 全是这一组）；不镜像也只会退化成「SDK 再缩一次」。
+   ⚠️ 预缩放把「粘图→可发」从毫秒级拉到几百 ms（冷启动首次 ~400ms，热态 ~200ms），于是出现一个新窗口：**粘图后立刻回车会赶在预处理之前**。Composer 用 `preparingRef` 收集在途 promise，发送前 `await` 它们再调**最新一份** `handleSend`（`latestSendRef`，否则读到的还是旧 images）——不然图会静默丢掉。
+
+验收（dev）：塞 2880×1800 / 5.42MB PNG → 托盘缩略图 194–413ms 出现 2000×1250 JPEG 0.17MB，SDK 侧不再出现 `[Image: original …]` 提示（= 真没再缩）；点发送 → **14–15ms** 气泡出现，主进程侧 prompt→用户消息事件 **75–93ms**（修复前同类截图 ~1064ms）。
+
+**诊断手法（可复用）**：拿 `logs/main-*.log` 的 `prompt <sessionId> {…,"images":N}` 时间戳，与 `traces/trace-<id>.jsonl` 里 `message_start(role=user).ts` 配对做差 —— **必须用消息文本前缀配对**，否则会张冠李戴；并且**新会话第一条**本身带 0.1–0.8s 冷启动（n=30，p90 381ms），别把这笔算到图片账上。
+另：`image/jpeg` 的附件是 SDK 缩完重编码的结果 —— 会话 jsonl 里 user 消息文本尾部带 `[Image: original WxH, displayed at WxH…]` 就说明**真缩过**（我们预缩放后这条提示就不再出现）。
+
+❗**同一个坑的另一半**：streaming 中发送走队列路径时**完全不归一化附件**（`_queueFollowUp`/`_queueSteer` 直接把原图塞进 content，`core/agent-session.js:1729-1750`）——「Agent 跑着的时候粘一张大图」会绕过缩放直接进历史，可能顶到 provider 的 5MB/尺寸上限让整段对话报错。我们没改这条（改动面在 SDK），先记着。
 
 ## 三、构建 · 打包 · 环境
 

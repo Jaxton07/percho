@@ -1,8 +1,9 @@
 /**
  * 只协调「打开后恢复的频道唤醒」与 renderer 首次历史回放。不能在 SDK session_start
  * 中 await renderer：openSession 尚未返回，renderer 根本无从 ACK。
- * 无 renderer（backend/LAN/崩溃）时超时放行，避免频道永久静默；关闭返回 false，
- * 防止 SDK dispose() 不发送 session_shutdown 时，迟到的等待续体启动孤儿 watcher。
+ * 无 renderer（backend/LAN/崩溃）时超时放行，避免频道永久静默；会话处置
+ * （disposeSession 里 `historyGate.cancel`）返回 false，防止迟到的等待续体在 dispose
+ * 之后启动孤儿 watcher。
  */
 export class SessionHydrationGate {
 	private readonly pending = new Map<

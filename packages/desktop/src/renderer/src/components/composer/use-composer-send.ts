@@ -163,6 +163,17 @@ export function useComposerSend(options: UseComposerSendOptions) {
 		options.setQuotes([]);
 		// 乐观置工作中：agent_start 事件到达前立即显示，失败后回滚
 		useTranscriptStore.getState().markAgentActive(sessionId, true);
+		// 乐观回显用户气泡：带图发送时 SDK 在构造用户消息**之前**先做图片归一化
+		// （Photon 缩放，全屏截图 ~1s/张，见 docs/PITFALLS.md「附件图片延迟」），
+		// 那段时间气泡只能空着等——先本地插一条，权威 message_start 到达时原位认领。
+		// 跳过斜杠命令（本地命令可能根本不产生用户消息，气泡会赖着不走）与排队发送
+		// （运行中发送走 SDK 队列，QueueBar 已在显式排队，再插气泡就重复了）。
+		const optimisticId =
+			wasActive || content.startsWith("/")
+				? null
+				: useTranscriptStore
+						.getState()
+						.appendOptimisticUser(sessionId, { text: content, images: sentImages });
 		try {
 			await getPi().prompt({
 				sessionId,
@@ -170,6 +181,7 @@ export function useComposerSend(options: UseComposerSendOptions) {
 				images: sentImages.length > 0 ? sentImages : undefined,
 			});
 		} catch (err) {
+			if (optimisticId) useTranscriptStore.getState().removeOptimisticUser(sessionId, optimisticId);
 			useTranscriptStore.getState().markAgentActive(sessionId, wasActive);
 			setError(err instanceof Error ? err.message : String(err));
 			options.setImages(sentImages);

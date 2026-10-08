@@ -55,11 +55,14 @@ export function UserMessage({ message }: { message: Extract<UIMessage, { kind: "
 						{(message.skill || message.text) && (
 							<CopyButton text={message.skill ? formatSkillCommand(message.skill) : message.text} />
 						)}
-						<RecallButton
-							entryId={message.entryId}
-							matchText={message.sourceText ?? message.text}
-							timestamp={message.timestamp}
-						/>
+						{/* pending（乐观回显、权威消息未到）时不给「撤回」：后端还没这条消息，点了只会报错 */}
+						{!message.pending && (
+							<RecallButton
+								entryId={message.entryId}
+								matchText={message.sourceText ?? message.text}
+								timestamp={message.timestamp}
+							/>
+						)}
 					</div>
 				)}
 			</div>

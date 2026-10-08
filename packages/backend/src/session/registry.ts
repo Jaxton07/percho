@@ -4,6 +4,7 @@ import type { PermissionModeRef } from "../permissions/extension";
 import type { PermissionGate } from "../permissions/gate";
 import type { ExtensionDialogHost } from "./extension-dialog-host";
 import { deriveSessionTimes, fallbackSessionTimes } from "./meta";
+import { emitSessionShutdown } from "./shutdown";
 
 export interface RegisteredSession {
 	session: AgentSession;
@@ -93,6 +94,11 @@ export class SessionRegistry {
 			entry.unsubscribe();
 			entry.gate.dispose();
 			entry.dialogs.dispose();
+			// 先把 session_shutdown 送给扩展（详见 emitSessionShutdown 注释），否则 MCP stdio
+			// 子进程不会被回收。这条路径是 `before-quit` 的**同步**收尾（Electron 不会等 async
+			// quit 钩子），所以只能 fire-and-forget —— 够用：`connection.close()` 里 kill 子进程
+			// 是同步段发出的，剩下的等待交给进程消亡接管。
+			emitSessionShutdown(entry.session).catch(() => {});
 			entry.session.dispose();
 			this.sessions.delete(sessionId);
 		}
