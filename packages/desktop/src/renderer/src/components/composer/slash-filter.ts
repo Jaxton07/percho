@@ -62,5 +62,7 @@ export function filterCommands(
 			substringSkills.push(skill);
 		}
 	}
-	return [...rest, ...prefixSkills, ...substringSkills];
+	const matched = [...rest, ...prefixSkills, ...substringSkills];
+	// SlashMenu 按 SOURCE_ORDER 分组渲染，Enter/Tab 按下标取这里的结果：两边顺序必须一致
+	return SOURCE_ORDER.flatMap((source) => matched.filter((c) => c.source === source));
 }
