@@ -35,6 +35,7 @@
 | 撤回后上下文还带着被撤回的消息 / 消息数不变 | 二 · 同上（手写 `agent.state.messages` 已无效；手动回退 leaf 要补 `refreshContext()`） |
 | 设置页永久 Loading、模型列表为空 | 二 · runtime.refresh 网络挂起 / getAvailable 返回空 |
 | 权限 confirm 弹窗不生效 | 二 · bindExtensions 注入点 |
+| 关掉会话后 MCP server 子进程（`uvx`/`node`）仍常驻、还占着上游连接 | 二 · `AgentSession.dispose()` 不发 `session_shutdown`（2026-10-08） |
 | preload 加载失败（sandbox 下 require is not defined） | 三 · preload 必须 CJS |
 | main 进程 import workspace 包行为异常（外部化/旧产物） | 三 · externalizeDepsPlugin |
 | 打包产物缺 pi SDK、Electron 版本漂移 | 三 · 打包两个坑 |
@@ -287,6 +288,47 @@ LAN 页重连/中途进入时，快照种子经 `messagesToUIMessages` 重建—
   写它）。撤回（`recallMessage`）里那个绕过 `navigateTree` 的**悬挂用户消息分支**必须自己补
   `session.refreshContext()`——`navigateTree` 末尾内部会刷，不刷则 `session.messages`（UI 的 messageCount、
   `_findLastAssistantMessage()` 驱动的 compaction 判定）停在撤回前 = 幽灵消息。
+
+### `AgentSession.dispose()` 不发 `session_shutdown` —— 漏 MCP 子进程（2026-10-08）
+
+症状：在 Percho 里开过又关掉的会话，它的 MCP stdio server 一直活着（`uvx mcp-for-blender` + 它的
+python 子进程各留一份），还占着上游（Blender 的 9876）连接；**只有整个 app 退出才清**。开 N 个会话堆 N 份。
+
+根因两层：
+
+1. SDK 的 `AgentSession.dispose()` **只 `invalidate()` 扩展 runner、不发 `session_shutdown`**
+   （pi 1.0.4 `core/agent-session.js:988`：abort → `_extensionRunner.invalidate()` → 断连 → `cleanupSessionResources()`）。
+2. 官方内置扩展里**只有 mcp** 靠这个事件释放资源（整包 bundle 里 `pi.on("session_shutdown", …)` 只出现一处，
+   就是 MCP 的「关掉全部连接」）。codemode / tool-search 都没注册。
+
+于是 `dispose()` 之后 MCP 连接对象还挂在扩展内存里，子进程没人收。
+
+诊断手法（可复用）：**拿宿主日志对齐子进程启动时刻**。Percho 的 `main-YYYY-MM-DD.log` 里有
+`session created/opened/closed` 时间戳，`ps -o pid=,ppid=,lstart= -p <pid>` 给子进程绝对启动时刻 ——
+两者一对就能看出「会话已 closed 但子进程还活着」。再用两次对照实验钉因果：
+单纯 `dispose()` 后子进程存活；`dispose()` 前先 `emit({type:"session_shutdown"})` 则被回收。
+⚠️ 判子进程归属别只看时间戳对得上：`ps eww -p <pid>` 看环境变量 —— 带
+`__CFBundleIdentifier=<app 的 bundle id>` 且**没有** `PI_SESSION_ID` 的，才是宿主主进程直接 spawn 的
+（会话 MCP server）；pi 会话内 bash 起的子进程会带 `PI_SESSION_ID`。
+
+修复 `packages/backend/src/session/shutdown.ts` 的 `emitSessionShutdown(session)`：在 `session.dispose()`
+**之前**发事件。这正是官方 `AgentSessionRuntime.dispose()` 的做法（`core/agent-session-runtime.js`：
+`await emitSessionShutdownEvent(this.session.extensionRunner, {type:"session_shutdown",reason:"quit"})`
+之后才 `this.session.dispose()`）—— 但那个内部函数**没从包根导出**（exports map 只开
+`.`/`./rpc-entry`/`./client`/`./experimental/plugin`，deep import 会 `ERR_PACKAGE_PATH_NOT_EXPORTED`），
+所以走公开 API 等价复现：`session.extensionRunner` 是 **public getter**（`agent-session.d.ts:906`），
+`ExtensionRunner` 从包根导出。两个调用点语义不同：
+
+- `PiBackend.disposeSession`（closeSession / deleteSession）→ **await**，且 `.catch()` 兜住：
+  派发失败不能阻断处置，否则后面的 registry/gate/traces 清理全会漏掉。
+- `SessionRegistry.disposeAll`（`before-quit` 的**同步**收尾，Electron 不等 async quit 钩子）→ fire-and-forget。
+  够用：`connection.close()` 里 kill 子进程是同步段发出的；且 app 整体退出时子进程另有 **stdin EOF 兜底**
+  （实测：父进程死后 `uvx` 自己退出，但**别依赖它** —— 那是 server 自己的实现细节）。
+
+❗**加这个事件会「首次」触发一批原本从不执行的 handler**，改动前必须查清影响面：
+`grep -o 'on("session_shutdown"' <bundle>` 只有一处（MCP）；Percho 侧只有 channel-watch，
+它的 `cleanup()` 幂等且本就有 modeRef 路径兜底，重复执行无害。
+回归测试 `packages/backend/test/session-shutdown.test.ts`（三条：顺序 / emit 失败不阻断 dispose / disposeAll 也发）。
 
 ## 三、构建 · 打包 · 环境
 

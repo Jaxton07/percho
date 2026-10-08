@@ -91,7 +91,7 @@ src/
 ├── log.ts              结构化日志
 ├── lan/                局域网观察：config / projector / server（+ audit / sanitize）
 ├── mcp/                config-store（mcp.json 读写 + 面板视图）/ notices（官方 notify 文本 → 失败原因、需登录、授权 URL）
-├── session/            registry / meta / single-flight / naming / messages / hydration-gate / trace+traces / event-slim+stream-guard / rates / ui-context / extension-dialog-host
+├── session/            registry / shutdown / meta / single-flight / naming / messages / hydration-gate / trace+traces / event-slim+stream-guard / rates / ui-context / extension-dialog-host
 ├── permissions/        index(barrel) / bash-chain / pattern / config / annotations / tmp-zone / gate / extension / audit
 ├── project/            trust / trust-loader / builtin-extensions / workspace-store / files
 ├── settings/           settings / model-prefs / login / quota
@@ -108,6 +108,7 @@ src/
 | `src/emitter.ts` | `Emitter<T>` | 泛型订阅/分发：subscribe 返回退订、emit per-handler try-catch、clear/size（canAsk 探测）；PiBackend 9 套事件管线共用 |
 | `src/session/hydration-gate.ts` | `SessionHydrationGate` | 每会话启动期频道唤醒屏障：首次历史 ACK 放行；15s 超时避免无 renderer 的后台会话永久静默，关闭时返回 false 阻止孤儿 watcher；同会话 SDK reload 无需二次 ACK；配合频道扩展的异步启动（不得在 SDK `session_start` await renderer） |
 | `src/session/registry.ts` | `SessionRegistry`、`RegisteredSession` | sessionId → AgentSession 单条记录（session/unsubscribe/cwd/readOnly + **gate/dialogs/modeRef 会话级状态随 entry 生命周期**）；`add` 同 entry 幂等、**不同 entry 同 sessionId 抛错（不静默覆盖，防旧实例订阅/gate/dialogs 泄漏）**；delete/disposeAll 做 entry 级清理；`toMeta` 时间字段走 `session/meta.ts` |
+| `src/session/shutdown.ts` | `emitSessionShutdown` | **会话终结必须先发 `session_shutdown`、再 `session.dispose()`**：SDK 的 `AgentSession.dispose()` 只 `invalidate()` 扩展 runner、**不发这个事件**（pi 1.0.4 `agent-session.js:988`），而官方内置扩展里**只有 mcp** 靠它释放资源 —— 漏发会让 MCP stdio 子进程永久常驻（关掉会话只减少内存里的 runner，`uvx` 那棵子树照旧活着并占着连接）。官方 `AgentSessionRuntime.dispose()` 就是「先 emit 再 dispose」，这里用**公开 API** 等价复现（`session.extensionRunner` 是 public getter，`ExtensionRunner` 从包根导出；内部的 `emitSessionShutdownEvent` 没导出）。调用点：`PiBackend.disposeSession`（await + catch 兜底，派发失败不能阻断后续清理）、`SessionRegistry.disposeAll`（`before-quit` 同步路径，fire-and-forget） |
 | `src/session/meta.ts` | `deriveSessionTimes`、`fallbackSessionTimes` | **会话时间字段唯一口径**（与 SDK `buildSessionInfo` 对齐）：`createdAt` = session header 时间（**不是** 文件 birthtime/mtime——复制/恢复文件会改它）；`modifiedAt` = user/assistant 消息最大活动时间（message 数值 timestamp 优先、entry timestamp 兜底、无消息=created，custom/toolResult 一律不算）；header 读不出来才 `fallbackSessionTimes`（文件 mtime → 当前时刻） |
 | `src/session/single-flight.ts` | `KeyedSingleFlight<T>` | 按 key 的并发 single-flight：同 key 在途复用同一个 Promise，settle（成败都算）后**只清自己那条**（旧 Promise 不删后继请求）；`PiBackend.openSession` 按**规范化绝对路径**用它，保证同一会话文件并发 open 只构造一次 |
 | `src/settings/quota.ts` | `QuotaService`、`makeQuotaService` | opencode-go 套餐额度：官方 API + 5min TTL 缓存（无 key null / HTTP 失败带 error 空窗体） |

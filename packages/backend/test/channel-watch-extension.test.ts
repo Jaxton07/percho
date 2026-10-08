@@ -778,10 +778,48 @@ describe("P1 · 恢复补投（catch-up）", () => {
 		await sleep(80);
 		expect(pi.wakes).toHaveLength(0);
 		alive = false;
-		cleanup(); // SDK dispose 本身不发 session_shutdown
+		cleanup(); // 纯显式路径：不依赖 session_shutdown（双路径写法见下一个用例）
 		await appendFile(messagesFile(cwd, "t1"), "v2\n");
 		await sleep(100);
 		expect(pi.wakes).toHaveLength(0);
+	});
+
+	it("显式 cleanup 之后再收 session_shutdown：双路径幂等，不产生额外唤醒", async () => {
+		// PiBackend.disposeSession 的真实顺序：先显式 cleanup（modeRef 路径，因 SDK dispose 不发事件
+		// 而必须保留），再由 emitSessionShutdown 触发扩展的 session_shutdown —— 两条都会跑。
+		const cwd = join(testRoot, "history-double-cleanup");
+		await mkdir(topicDir(cwd, "t1"), { recursive: true });
+		await writeFile(messagesFile(cwd, "t1"), "v1\n");
+		let alive = false;
+		let release = () => {};
+		let cleanup = () => {};
+		const ready = new Promise<boolean>((resolve) => {
+			release = () => resolve(true);
+		});
+		const { pi } = await wire({
+			cwd,
+			entries: subsEntries(["t1"], { t1: contentHash("v1\n") }),
+			waitForHistoryReady: () => ready,
+			isSessionAlive: () => alive,
+			onSessionCleanup: (fn) => {
+				cleanup = fn;
+			},
+		});
+		alive = true;
+		release();
+		await sleep(80);
+
+		cleanup();
+		alive = false;
+		await pi.emit({ type: "session_shutdown" }, makeFakeCtx());
+
+		// 双路径跑完仍然干净：再动频道也不唤醒、不再往会话里追加订阅 entry
+		const wakes = pi.wakes.length;
+		const appended = pi.appended.length;
+		await appendFile(messagesFile(cwd, "t1"), "v2\n");
+		await sleep(120);
+		expect(pi.wakes).toHaveLength(wakes);
+		expect(pi.appended).toHaveLength(appended);
 	});
 
 	it("backend dispose 未触发 shutdown 时，取消屏障也不允许孤儿 watcher", async () => {

@@ -95,6 +95,7 @@ import { autoNameSession } from "./session/naming";
 import { EventRateTracker } from "./session/rates";
 import { type EventForwarder, type RegisteredSession, SessionRegistry } from "./session/registry";
 import { renameSessionFile } from "./session/rename";
+import { emitSessionShutdown } from "./session/shutdown";
 import { KeyedSingleFlight } from "./session/single-flight";
 import { StreamGuard } from "./session/stream-guard";
 import { TraceRecorder } from "./session/trace";
@@ -228,7 +229,11 @@ export class PiBackend {
 	private readonly traces = new SessionTraces();
 	private readonly streamGuard = new StreamGuard();
 	private readonly historyGate = new SessionHydrationGate();
-	/** SDK dispose 不触发 session_shutdown；按会话 modeRef 精确停掉其频道 watcher。 */
+	/**
+	 * 频道 watcher 的会话级清理（按 modeRef 键控）。
+	 * ❗SDK 的 `dispose()` **不发 `session_shutdown`**（pi 1.0.4），所以 disposeSession 里除了
+	 * emit 该事件（见 `session/shutdown.ts`）仍显式调这里 —— 两道都触发时 cleanup 幂等，重复无害。
+	 */
 	private readonly channelWatchCleanups = new WeakMap<PermissionModeRef, () => void>();
 	/** 每会话事件速率（60s 窗口；心跳/临终快照数据源） */
 	private readonly eventRates = new EventRateTracker();
@@ -670,6 +675,16 @@ export class PiBackend {
 		const sessionId = entry.session.sessionId;
 		this.channelWatchCleanups.get(entry.modeRef)?.();
 		this.channelWatchCleanups.delete(entry.modeRef);
+		// 先把 session_shutdown 送给扩展，再 dispose（详见 emitSessionShutdown 注释）：
+		// SDK 的 dispose() 不发这个事件，而官方 mcp 扩展只在它里面关 MCP stdio 子进程 ——
+		// 顺序反了就漏子进程，也会让扩展拿到的 ctx 已失效。
+		// 派发失败只记日志、不阻断处置（否则下面的 registry/gate/traces 清理全会漏掉）。
+		await emitSessionShutdown(entry.session).catch((error: unknown) => {
+			log.warn("session_shutdown 派发失败，继续处置会话", {
+				sessionId,
+				error: error instanceof Error ? error.message : String(error),
+			});
+		});
 		entry.session.dispose();
 		this.historyGate.cancel(sessionId);
 		// entry 级清理：unsubscribe + gate/dialogs dispose（pending 对话框按 sessionClosed 结算，
