@@ -13,7 +13,7 @@ import { TailMarquee } from "./TailMarquee";
 import { ToolCard } from "./ToolCard";
 import { useShownWorking } from "./use-shown-working";
 
-/** 汇总段文案（lan-web 迷你字典；other 段显示 原名 ×N） */
+/** 汇总段文案（lan-web 迷你字典；mcp 段按 server 归并成 `blender ×3`，other 段显示 原名 ×N） */
 function summaryLabel(seg: SummarySegment): string {
 	switch (seg.category) {
 		case "read":
@@ -26,6 +26,8 @@ function summaryLabel(seg: SummarySegment): string {
 			return t("meta.search", { n: seg.count });
 		case "bash":
 			return t("meta.bash", { n: seg.count });
+		case "mcp":
+			return `${seg.server ?? seg.name} ×${seg.count}`;
 		case "subagent":
 			return t("meta.subagents", { n: seg.count });
 		default:
