@@ -47,6 +47,11 @@ export type UIMessage =
 			images: ImageInput[];
 			/** 已展开 skill 的安全展示信息（不含正文或路径） */
 			skill?: SkillInvocationDisplay;
+			/**
+			 * 乐观回显：发送瞬间本地插入、等权威 `message_start(user)` 到达时**原位认领**（见 reducer）。
+			 * 仅 UI 态——不入历史、不入 trace、不写盘；认出后即清。
+			 */
+			pending?: boolean;
 	  })
 	| (UIBaseMessage & {
 			kind: "assistant";

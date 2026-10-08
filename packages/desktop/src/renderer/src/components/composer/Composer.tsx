@@ -3,6 +3,7 @@ import { type MouseEvent as ReactMouseEvent, useCallback, useEffect, useRef, use
 import { getPi } from "../../api";
 import { useActiveModelInfo, useSessionReadOnly } from "../../hooks/use-session-state";
 import { useT } from "../../i18n";
+import { prepareImageAttachment } from "../../lib/image-attachment";
 import { RegionHost } from "../../plugins/RegionHost";
 import { UI_REGIONS } from "../../plugins/slots";
 import { COMPOSER_FOCUS_EVENT, EMPTY_DRAFT, NEW_SESSION_DRAFT_KEY, useDraftStore } from "../../stores/drafts";
@@ -128,6 +129,20 @@ export function Composer({ centered = false }: { centered?: boolean }) {
 	});
 	const { sending, error, setError, feedback, showFeedback, ensureSession, runSlashCommand, handleSend } =
 		send;
+	// 附件预处理（缩图）在途的 promise：发送前要等它们落地，否则「粘图立刻回车」会把图丢了
+	// （预处理要几百 ms，以前 FileReader 只需几 ms，这个窗口可忽略；现在不能）
+	const preparingRef = useRef<Promise<unknown>[]>([]);
+	// 每次渲染刷新：等完预处理后要调**最新一份** handleSend，才读得到刚 setImages 进去的图
+	const latestSendRef = useRef(handleSend);
+	latestSendRef.current = handleSend;
+	const sendWhenReady = async () => {
+		if (preparingRef.current.length > 0) {
+			const inFlight = preparingRef.current;
+			preparingRef.current = [];
+			await Promise.all(inFlight);
+		}
+		await latestSendRef.current();
+	};
 	const focusTextarea = () => textareaRef.current?.focus();
 
 	/**
@@ -165,7 +180,8 @@ export function Composer({ centered = false }: { centered?: boolean }) {
 		textareaRef,
 		ensureSession,
 		runSlashCommand,
-		handleSend,
+		// 斜杠菜单的 skill/模板命令也要等附件预处理（它们同样可能带图）
+		handleSend: sendWhenReady,
 		showFeedback,
 		setError,
 	});
@@ -279,7 +295,7 @@ export function Composer({ centered = false }: { centered?: boolean }) {
 		}
 		if (e.key === "Enter" && !e.shiftKey && !e.nativeEvent.isComposing) {
 			e.preventDefault();
-			void handleSend();
+			void sendWhenReady();
 		}
 	};
 
@@ -289,15 +305,16 @@ export function Composer({ centered = false }: { centered?: boolean }) {
 		if (!imagesSupported) return;
 		for (const file of Array.from(files)) {
 			if (!file.type.startsWith("image/")) continue;
-			const reader = new FileReader();
-			reader.onload = () => {
-				const result = reader.result;
-				if (typeof result !== "string") return;
-				const comma = result.indexOf(",");
-				if (comma === -1) return;
-				setImages((prev) => [...prev, { data: result.slice(comma + 1), mimeType: file.type }]);
-			};
-			reader.readAsDataURL(file);
+			// 在粘贴/选择时就先把图缩到模型规格（见 lib/image-attachment.ts）：
+			// 发送路径上的 SDK 归一化于是只需解码量尺寸（~20-40ms）而不是真缩一遍（~0.8–1.1s）。
+			// 失败一律退回原图，不丢附件；在途 promise 交给 preparingRef，回车会等它。
+			const prepared = prepareImageAttachment(file).then((image) => {
+				setImages((prev) => [...prev, image]);
+			});
+			preparingRef.current.push(prepared);
+			void prepared.finally(() => {
+				preparingRef.current = preparingRef.current.filter((p) => p !== prepared);
+			});
 		}
 	};
 
@@ -328,7 +345,7 @@ export function Composer({ centered = false }: { centered?: boolean }) {
 		<div ref={boxRef} className={centered ? "w-full max-w-[760px]" : "shrink-0 px-6 pb-3"}>
 			{/* relative：ImageTray 悬浮层（absolute bottom-full）的定位锚，浮在错误条/菜单/输入框整列之上 */}
 			<div className="relative mx-auto max-w-[760px]">
-				{error && <SendErrorBar error={error} onRetry={() => void handleSend()} />}
+				{error && <SendErrorBar error={error} onRetry={() => void sendWhenReady()} />}
 				{feedback && !error && (
 					<p
 						className={`mb-1.5 text-ui-12 leading-[calc(1_/_0.75)] ${feedback.tone === "warn" ? "text-amber-500" : "text-ink-dim"}`}
@@ -469,7 +486,7 @@ export function Composer({ centered = false }: { centered?: boolean }) {
 								type="button"
 								className="flex h-8 w-8 items-center justify-center rounded-full bg-ink text-on-ink transition-colors hover:bg-ink-2 disabled:opacity-30"
 								disabled={readOnly || !hasContent || sending}
-								onClick={() => void handleSend()}
+								onClick={() => void sendWhenReady()}
 								aria-label={t("composer.send")}
 							>
 								<ArrowUpIcon size={20} />
