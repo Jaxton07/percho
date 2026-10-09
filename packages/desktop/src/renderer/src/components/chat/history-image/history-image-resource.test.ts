@@ -20,6 +20,7 @@ const image = (seed: string): ImageInput => ({ mimeType: "image/png", data: `dat
 
 class FakeWorker {
 	posted: ThumbnailRequest[] = [];
+	responded = new Set<number>();
 	terminated = 0;
 	throwOnPost = false;
 	private messageListeners: ((event: { data: ThumbnailResponse }) => void)[] = [];
@@ -40,6 +41,7 @@ class FakeWorker {
 	}
 
 	emit(response: ThumbnailResponse): void {
+		this.responded.add(response.requestId);
 		for (const listener of [...this.messageListeners]) listener({ data: response });
 	}
 
@@ -69,6 +71,27 @@ function lastRequestOf(worker: FakeWorker): ThumbnailRequest {
 	const request = worker.posted[worker.posted.length - 1];
 	if (!request) throw new Error("没有投递过任务");
 	return request;
+}
+
+/** 已投递但**尚未回应**的 requestId：单飞不变量就断言这个集合的大小 ≤ 1 */
+function outstandingRequests(worker: FakeWorker): number[] {
+	return worker.posted
+		.map((request) => request.requestId)
+		.filter((requestId) => !worker.responded.has(requestId));
+}
+
+/** 把 48 个 slot 用「非可见 ready」填满，供让位/回收类用例复用 */
+function fillActiveBuffer(
+	service: ReturnType<typeof createThumbnailService>,
+	workers: FakeWorker[],
+	count: number,
+) {
+	const handles = [];
+	for (let index = 0; index < count; index += 1) {
+		handles.push(service.acquire(image(`bulk-${index}`), { visible: false }));
+	}
+	for (let index = 0; index < count; index += 1) workerOf(workers).completeLast();
+	return handles;
 }
 
 function workerOf(workers: FakeWorker[]): FakeWorker {
@@ -358,6 +381,20 @@ describe("缩略图服务：去重 / 缓存 / URL 生命周期", () => {
 		expect(service.stats().waiting).toBe(0);
 	});
 
+	it("复审给的原始复现：ready 之后 setVisible(true) 不得再投递一次（R2-1）", () => {
+		const { service, worker } = fakeService();
+		const handle = service.acquire(image("repro"));
+		worker().completeLast();
+		const ready = handle.getSnapshot();
+		expect(ready.status).toBe("ready");
+		expect(worker().posted).toHaveLength(1);
+		handle.setVisible(true);
+		handle.setVisible(true);
+		expect(worker().posted).toHaveLength(1);
+		expect(handle.getSnapshot()).toEqual(ready);
+		expect(handle.getSnapshot().url).not.toBeNull();
+	});
+
 	it("真实可见等 slot 而预算已满：回收最老的非可见 ready 让位，不超过预算", () => {
 		const { service, workers, revokedUrls } = fakeService();
 		const total = service.stats().active + ACTIVE_SLOT_LIMIT;
@@ -378,6 +415,23 @@ describe("缩略图服务：去重 / 缓存 / URL 生命周期", () => {
 		expect(revokedUrls.length).toBe(1);
 		workerOf(workers).completeLast();
 		expect(visible.getSnapshot().status).toBe("ready");
+	});
+
+	it("回收只挑非可见项：先被 setVisible 变成可见的 ready 不会被当作让位对象（R2-1×R2-2）", () => {
+		const { service, workers, worker } = fakeService();
+		const buffers = fillActiveBuffer(service, workers, ACTIVE_SLOT_LIMIT);
+		const kept = buffers[1] as ReturnType<typeof service.acquire>;
+		kept.setVisible(true);
+		const before = kept.getSnapshot();
+		expect(service.stats().active).toBe(ACTIVE_SLOT_LIMIT);
+		const newcomer = service.acquire(image("newcomer"));
+		expect(service.stats().reclaimed).toBe(1);
+		// 让位的是最老的非可见项（bulk-0），不是刚变可见的 bulk-1
+		expect(kept.getSnapshot()).toEqual(before);
+		expect(kept.getSnapshot().status).toBe("ready");
+		expect(buffers[0]?.getSnapshot()).toMatchObject({ status: "idle", url: null });
+		worker().completeLast();
+		expect(newcomer.getSnapshot().status).toBe("ready");
 	});
 
 	it("缓冲请求超过队列上限：等待队列不超过 48，其余落在队列外，有空位会补上", () => {
@@ -590,6 +644,150 @@ describe("缩略图服务：取消 / 迟到 / 超时 / 重置 / 同步失败", (
 		expect(service.stats().keys).toBe(1);
 	});
 
+	it("重入保护：demote 通知里再 acquire，也不会出现两条在途投递（R2B-1）", () => {
+		const { service, workers, worker } = fakeService();
+		const handles = fillActiveBuffer(service, workers, ACTIVE_SLOT_LIMIT);
+		const victim = handles[0] as ReturnType<typeof service.acquire>;
+		const reentered: { handle: ReturnType<typeof service.acquire> | null } = { handle: null };
+		victim.subscribe(() => {
+			if (reentered.handle || victim.getSnapshot().status !== "idle") return;
+			// 在被 demote 的通知里重入服务
+			reentered.handle = service.acquire(image("inner-visible"));
+		});
+		const outer = service.acquire(image("outer-visible"));
+		if (!reentered.handle) throw new Error("没有重入成功");
+		const inner = reentered.handle as ReturnType<typeof service.acquire>;
+		// 单飞不变量：任何时刻未完成的投递 ≤ 1，且 pending 没被覆盖
+		expect(outstandingRequests(worker()).length).toBeLessThanOrEqual(1);
+		expect(service.stats().inFlight).toBe(true);
+		for (let round = 0; round < 4 && outstandingRequests(worker()).length > 0; round += 1) {
+			expect(outstandingRequests(worker()).length).toBeLessThanOrEqual(1);
+			worker().completeLast();
+		}
+		for (
+			let round = 0;
+			round < 4 &&
+			(outer.getSnapshot().status !== "ready" ||
+				(inner as ReturnType<typeof service.acquire>).getSnapshot().status !== "ready");
+			round += 1
+		) {
+			worker().completeLast();
+		}
+		expect(outstandingRequests(worker()).length).toBeLessThanOrEqual(1);
+		expect(outer.getSnapshot().status).toBe("ready");
+		expect((inner as unknown as ReturnType<typeof service.acquire>).getSnapshot().status).toBe("ready");
+		expect(service.stats().active).toBeLessThanOrEqual(ACTIVE_SLOT_LIMIT);
+	});
+
+	it("重入保护：loading 通知里 release，在途结果照旧丢弃且队列继续推进（R2B-1）", () => {
+		const { service, worker } = fakeService();
+		const inFlight = service.acquire(image("first"));
+		const waiting = service.acquire(image("second"));
+		const queued = service.acquire(image("third"));
+		waiting.subscribe(() => {
+			if (waiting.getSnapshot().status === "loading") waiting.release();
+		});
+		worker().completeLast(); // first 完成 → 派发 second → loading 通知里把它释放掉
+		expect(outstandingRequests(worker()).length).toBeLessThanOrEqual(1);
+		worker().completeLast(); // second 的响应：已无订阅者 → 丢弃
+		expect(service.stats().lateDropped).toBeGreaterThanOrEqual(1);
+		// 第三个照常被派发（队列没有被卡住）
+		expect(worker().posted.some((request) => request.image.data === "data-third")).toBe(true);
+		worker().completeLast();
+		expect(queued.getSnapshot().status).toBe("ready");
+		expect(inFlight.getSnapshot().status).toBe("ready");
+	});
+
+	it("重入保护：loading 通知里 reset，在途结果不影响新会话，服务可继续用（R2B-1）", () => {
+		const { service, workers, worker } = fakeService();
+		service.acquire(image("before-reset"));
+		const waiting = service.acquire(image("reset-trigger"));
+		let resetOnce = false;
+		waiting.subscribe(() => {
+			if (resetOnce || waiting.getSnapshot().status !== "loading") return;
+			resetOnce = true;
+			service.reset();
+		});
+		worker().completeLast();
+		expect(service.stats()).toMatchObject({ keys: 0, inFlight: false, urls: 0, active: 0 });
+		const stale = lastRequestOf(worker()).requestId;
+		worker().emit({
+			requestId: stale,
+			ok: true,
+			blob: new Blob([new Uint8Array(10)], { type: "image/png" }),
+			width: 1,
+			height: 1,
+		});
+		const next = service.acquire(image("after-reset"));
+		expect(next.getSnapshot().status).toBe("loading");
+		expect(workers.length).toBeGreaterThanOrEqual(2);
+		workerOf(workers).completeLast();
+		expect(next.getSnapshot().status).toBe("ready");
+	});
+
+	it("重入保护：ready 通知里 acquire，同样只有一条在途（R2B-1）", () => {
+		const { service, worker } = fakeService();
+		const first = service.acquire(image("ready-trigger"));
+		const reentered: { handle: ReturnType<typeof service.acquire> | null } = { handle: null };
+		first.subscribe(() => {
+			if (reentered.handle || first.getSnapshot().status !== "ready") return;
+			reentered.handle = service.acquire(image("ready-inner"));
+		});
+		worker().completeLast();
+		if (!reentered.handle) throw new Error("没有重入成功");
+		const inner = reentered.handle as ReturnType<typeof service.acquire>;
+		expect(outstandingRequests(worker()).length).toBeLessThanOrEqual(1);
+		for (let round = 0; round < 3 && inner.getSnapshot().status !== "ready"; round += 1) {
+			expect(outstandingRequests(worker()).length).toBeLessThanOrEqual(1);
+			worker().completeLast();
+		}
+		expect(inner.getSnapshot().status).toBe("ready");
+	});
+
+	it("release 之后句柄彻底失效：快照惰性、订阅无效、重复 release 无害", () => {
+		const { service, worker, revokedUrls } = fakeService();
+		const handle = service.acquire(image("released"));
+		worker().completeLast();
+		const listener = vi.fn();
+		handle.subscribe(listener);
+		handle.release();
+		expect(handle.getSnapshot()).toMatchObject({ status: "idle", url: null });
+		const stop = handle.subscribe(listener);
+		expect(typeof stop).toBe("function");
+		stop();
+		handle.release();
+		handle.setVisible(true);
+		handle.retry();
+		expect(listener).not.toHaveBeenCalled();
+		expect(revokedUrls).toHaveLength(1);
+		expect(service.stats().keys).toBe(0);
+	});
+
+	it("缓存命中后不再重复计入非活跃缓存（cacheEntries/cacheBytes 归零，release 再回写）", () => {
+		const { service, worker } = fakeService();
+		const source = image("cache-accounting");
+		const handle = service.acquire(source);
+		worker().completeLast();
+		handle.release();
+		expect(service.stats().cacheEntries).toBe(1);
+		expect(service.stats().cacheBytes).toBeGreaterThan(0);
+		const again = service.acquire(source);
+		expect(again.getSnapshot().status).toBe("ready");
+		expect(service.stats()).toMatchObject({ cacheEntries: 0, cacheBytes: 0 });
+		again.release();
+		expect(service.stats().cacheEntries).toBe(1);
+	});
+
+	it("快照引用稳定：ready 后同 key 再来订阅者不改快照对象（避免无变化重渲染）", () => {
+		const { service, worker } = fakeService();
+		const source = image("stable-snapshot");
+		const first = service.acquire(source);
+		worker().completeLast();
+		const before = first.getSnapshot();
+		const second = service.acquire(source);
+		expect(second.getSnapshot()).toBe(before);
+	});
+
 	it("单飞：只有一个在途任务，完成一个才发下一个", () => {
 		const { service, worker } = fakeService();
 		service.acquire(image("q1"));
@@ -703,17 +901,20 @@ describe("共享 IntersectionObserver（加载范围 vs 真实可视区）", () 
 		const stopFirst = observer.observe(target, () => {
 			firstCount += 1;
 		});
+		// 新订阅者会立刻拿到当前已知状态（false/false 初态），所以这里各 1 次
+		expect(firstCount).toBe(1);
 		const stopSecond = observer.observe(target, () => {
 			secondCount += 1;
 		});
-		fake.emitIntersection(target, true);
-		expect(firstCount).toBe(1);
 		expect(secondCount).toBe(1);
+		fake.emitIntersection(target, true);
+		expect(firstCount).toBe(2);
+		expect(secondCount).toBe(2);
 		stopFirst();
 		fake.emitIntersection(target, false);
 		fake.emitIntersection(target, true);
-		expect(firstCount).toBe(1);
-		expect(secondCount).toBe(3);
+		expect(firstCount).toBe(2);
+		expect(secondCount).toBe(4);
 		stopSecond();
 		expect(observer.stats()).toEqual({ targets: 0, observers: 0, viewportSubscriptions: 0 });
 		expect(fake.disconnected()).toBe(1);
@@ -722,6 +923,70 @@ describe("共享 IntersectionObserver（加载范围 vs 真实可视区）", () 
 		const stopAgain = observer.observe(target, () => {});
 		expect(observer.stats()).toEqual({ targets: 1, observers: 1, viewportSubscriptions: 1 });
 		stopAgain();
+	});
+
+	it("已存在 target 的新订阅者立即拿到当前状态，且不重复通知老订阅者（R2B-2）", () => {
+		const fake = setup();
+		const observer = createHistoryImageObserver({
+			root: fake.root,
+			createObserver: fake.createObserver,
+			subscribeViewportChange: fake.subscribeViewportChange,
+			readRect: fake.readRect,
+		});
+		const target = { id: "in-view" } as unknown as Element;
+		fake.rects.set(target, { top: 100, bottom: 200 });
+		const firstStates: HistoryImageVisibility[] = [];
+		observer.observe(target, (state) => firstStates.push(state));
+		fake.emitIntersection(target, true);
+		expect(firstStates.at(-1)).toEqual({ inLoadRange: true, inViewport: true });
+		expect(firstStates).toHaveLength(2);
+
+		const secondStates: HistoryImageVisibility[] = [];
+		observer.observe(target, (state) => secondStates.push(state));
+		// 第二个订阅者立刻拿到 {true,true}，而不是停在默认 false
+		expect(secondStates).toEqual([{ inLoadRange: true, inViewport: true }]);
+		// 老订阅者没有被这次初始化重复通知
+		expect(firstStates).toHaveLength(2);
+	});
+
+	it("初态就是 false/false 时，新订阅者同样拿到确定初态（R2B-2）", () => {
+		const fake = setup();
+		const observer = createHistoryImageObserver({
+			root: fake.root,
+			createObserver: fake.createObserver,
+			subscribeViewportChange: fake.subscribeViewportChange,
+			readRect: fake.readRect,
+		});
+		const target = { id: "out-of-range" } as unknown as Element;
+		fake.rects.set(target, { top: 5000, bottom: 5100 });
+		const first: HistoryImageVisibility[] = [];
+		observer.observe(target, (state) => first.push(state));
+		const second: HistoryImageVisibility[] = [];
+		observer.observe(target, (state) => second.push(state));
+		expect(first).toEqual([{ inLoadRange: false, inViewport: false }]);
+		expect(second).toEqual([{ inLoadRange: false, inViewport: false }]);
+		fake.emitIntersection(target, true);
+		expect(first.at(-1)).toEqual({ inLoadRange: true, inViewport: false });
+		expect(second.at(-1)).toEqual({ inLoadRange: true, inViewport: false });
+	});
+
+	it("第二人退订不影响第一人继续收状态（R2B-2）", () => {
+		const fake = setup();
+		const observer = createHistoryImageObserver({
+			root: fake.root,
+			createObserver: fake.createObserver,
+			subscribeViewportChange: fake.subscribeViewportChange,
+			readRect: fake.readRect,
+		});
+		const target = { id: "shared-target" } as unknown as Element;
+		fake.rects.set(target, { top: 300, bottom: 400 });
+		const firstStates: HistoryImageVisibility[] = [];
+		observer.observe(target, (state) => firstStates.push(state));
+		const stopSecond = observer.observe(target, () => {});
+		stopSecond();
+		expect(observer.stats().targets).toBe(1);
+		fake.emitIntersection(target, true);
+		expect(firstStates.at(-1)).toEqual({ inLoadRange: true, inViewport: true });
 	});
 
 	it("同一 root 复用同一个实例", () => {

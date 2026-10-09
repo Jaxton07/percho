@@ -9,7 +9,10 @@
  * 其余纪律：
  * - 同一元素重复订阅不许互相删除（一个元素可能被多个订阅者观察）→ 每个元素一个回调集合；
  * - 所有元素都退订时 `disconnect()`：断开 IO 并移除滚动/尺寸监听，不留下全局监听；
- * - 视口可见性只在**已进入加载范围的元素**上重算（滚动时不做全历史扫描），用滚动/尺寸事件 + rAF 合帧。
+ * - 视口可见性只在**已进入加载范围的元素**上重算（滚动时不做全历史扫描），用滚动/尺寸事件 + rAF 合帧；
+ *   注意：滚动容器自身尺寸变化（Composer 长高、侧栏开合）不一定伴随 window resize —— 阶段 3 接线 root 时
+ *   要加一个共享 ResizeObserver 观察 root，变化时触发同一条 refresh（本文件已把 refresh 收在一处，接得上）；
+ * - `disconnect` 是 owner 级拆除（比如列表卸载），组件只调用自己 `observe` 返回的 stop。
  */
 import { VIEWPORT_ROOT_MARGIN_PX } from "./constants";
 
@@ -21,7 +24,7 @@ export interface HistoryImageVisibility {
 }
 
 export interface HistoryImageObserver {
-	/** 返回取消订阅函数 */
+	/** 返回取消订阅函数（组件用自己的 stop 退订；`disconnect` 留给 owner 销毁时整体拆除） */
 	observe(target: Element, onChange: (state: HistoryImageVisibility) => void): () => void;
 	disconnect(): void;
 	stats(): { targets: number; observers: number; viewportSubscriptions: number };
@@ -145,6 +148,10 @@ export function createHistoryImageObserver(options: HistoryImageObserverOptions)
 			}
 			const current = record;
 			current.callbacks.add(onChange);
+			// 新订阅者立刻拿到**当前已知状态**（含 false/false 初态）：否则在没有任何 scroll/resize/IO
+			// 边界变化时，第二个订阅者会一直停在默认 false 上（阶段 3 同元素换图/重订阅会卡在占位）。
+			// 只投递给新订阅者，不为初始化它去通知别人，也不重建 IO。
+			onChange({ inLoadRange: current.inLoadRange, inViewport: current.inViewport });
 			return () => {
 				const existing = targets.get(target);
 				if (!existing) return;
