@@ -5,6 +5,7 @@ import { UI_SLOTS } from "../../plugins/slots";
 import type { UIMessage } from "../../stores/transcript";
 import { AssistantMessage } from "./AssistantMessage";
 import { ErrorNote } from "./ErrorNote";
+import { modeForImageCount } from "./history-image-layout";
 import { ImagePreviewOverlay, imageSrc } from "./ImagePreview";
 import { CopyButton, ForkButton } from "./message-actions";
 import { SubagentRunCard } from "./SubagentRunCard";
@@ -38,15 +39,8 @@ export const MessageItem = memo(function MessageItem({
 	if (message.kind === "image") {
 		// show_image 发图：assistant 侧独立图片块，点击全屏预览。
 		// 单图自然比例；多图统一正方形缩略图按数量分档（一行优先，超出 flex-wrap 换行）
-		const count = message.images.length;
-		const sizeClass =
-			count === 1
-				? "max-h-36 max-w-48 object-contain"
-				: count <= 3
-					? "h-24 w-24 object-cover"
-					: count <= 6
-						? "h-20 w-20 object-cover"
-						: "h-16 w-16 object-cover";
+		// 尺寸档位与稳定外盒统一走 history-image-layout（尺寸挂外盒，img 只负责盒内填充）
+		const mode = modeForImageCount(message.images.length);
 		return (
 			<div>
 				<div className="flex flex-wrap gap-2">
@@ -55,10 +49,17 @@ export const MessageItem = memo(function MessageItem({
 							// biome-ignore lint/suspicious/noArrayIndexKey: 图片列表不可变
 							key={index}
 							type="button"
-							className="overflow-hidden rounded-xl border border-border"
+							className={`${mode.box} overflow-hidden rounded-xl border border-border`}
 							onClick={() => setPreviewIndex(index)}
 						>
-							<img src={imageSrc(image)} alt={t("message.image")} className={sizeClass} />
+							<img
+								src={imageSrc(image)}
+								alt={t("message.image")}
+								className={mode.img}
+								/* 历史图片：滚动近处才加载、解码让出主线程；尺寸由外盒固定，加载不改变行高 */
+								loading="lazy"
+								decoding="async"
+							/>
 						</button>
 					))}
 				</div>

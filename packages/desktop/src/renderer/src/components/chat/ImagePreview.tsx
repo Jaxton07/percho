@@ -66,6 +66,7 @@ export function ImagePreviewOverlay({
 				src={imageSrc(current)}
 				alt={t("message.image")}
 				className="max-h-full max-w-full rounded-lg object-contain"
+				decoding="async"
 			/>
 			{count > 1 && (
 				<span className="absolute top-4 right-5 rounded-full bg-black/50 px-2.5 py-1 text-ui-11 text-white/80 select-none">

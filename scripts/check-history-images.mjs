@@ -13,7 +13,8 @@
  *
  * 用法：
  *   node scripts/check-history-images.mjs probe      # 阶段 0 技术门：worker 加载策略 × CSP × 格式 × 吞吐（dev 与 build 都要各跑一次）
- *   node scripts/check-history-images.mjs baseline   # 阶段 0 独立对照基线（≥3 轮/场景，冷启动）
+ *   node scripts/check-history-images.mjs baseline   # 阶段 0 独立对照基线（≥3 轮/场景，页面冷态）
+ *   node scripts/check-history-images.mjs geometry   # 阶段 1 静态/几何验收：外盒 rect / 行高 / scrollHeight 不随加载变化（含失败态）+ 窄窗不横滚
  *   通用参数：--rounds=<n>、--scenarios=<key,key>、--out=<file>、--label=<名字>
  *
  * 退出码：0 成功 / 1 断言失败或脚本异常 / 2 环境不满足（连不上 CDP、页面状态不对）
@@ -27,6 +28,7 @@
  * - 只读 dev 隔离目录；合成历史只进 renderer 内存，不写盘、不碰正式 `~/.pi/agent`；
  *   临时产物只写 `.local/tmp/history-image-performance/`。
  */
+import { existsSync } from "node:fs";
 import { copyFile, mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -54,6 +56,9 @@ const PAGE_PORT = process.env.CDP_PORT ?? "9224";
 const MAIN_PORT = process.env.CDP_MAIN_PORT ?? "9229";
 const CALL_TIMEOUT_MS = 30_000;
 const LONG_TIMEOUT_MS = 300_000;
+
+/** 故障注入：只用于验「门会红灯」与「异常路径清理到位」，正常跑不带 */
+const FAULTS = ["worker", "plan"];
 
 const EXIT_OK = 0;
 const EXIT_FAIL = 1;
@@ -321,6 +326,7 @@ window.__hip = (() => {
 		return {
 			imgCount: imgs.length,
 			loadedCount: loaded.length,
+			failedCount: imgs.filter((img) => img.complete && img.naturalWidth === 0).length,
 			naturalPixels: loaded.reduce((sum, img) => sum + img.naturalWidth * img.naturalHeight, 0),
 			maxNaturalSide: loaded.reduce((max, img) => Math.max(max, img.naturalWidth, img.naturalHeight), 0),
 			scrollHeight: sc ? sc.scrollHeight : null,
@@ -422,6 +428,70 @@ window.__hip = (() => {
 		const samples = anchor.samples.slice();
 		state.anchor = null;
 		return samples;
+	}
+
+	/* ---------- 几何快照（阶段 1 验收：外盒/行高不随加载变化） ---------- */
+	// 元素身份跨快照对齐：挂载窗口只在顶部插入，同一 DOM 元素会被反复看到
+	const elementIds = new WeakMap();
+	let elementIdSeq = 0;
+	const elementId = (element) => {
+		let id = elementIds.get(element);
+		if (!id) {
+			id = ++elementIdSeq;
+			elementIds.set(element, id);
+		}
+		return id;
+	};
+
+	function geometrySnapshot() {
+		const sc = scroller();
+		if (!sc) return null;
+		const content = sc.firstElementChild;
+		const scRect = sc.getBoundingClientRect();
+		const imgs = Array.from(sc.querySelectorAll("img"));
+		return {
+			time: Math.round(performance.now()),
+			scrollTop: Math.round(sc.scrollTop),
+			scrollHeight: sc.scrollHeight,
+			clientHeight: sc.clientHeight,
+			scrollWidth: sc.scrollWidth,
+			clientWidth: sc.clientWidth,
+			mountedRows: content ? content.children.length : 0,
+			scroller: { left: Math.round(scRect.left), right: Math.round(scRect.right) },
+			images: imgs.map((img) => {
+				const box = img.parentElement;
+				const boxRect = box ? box.getBoundingClientRect() : null;
+				const imgRect = img.getBoundingClientRect();
+				let row = img;
+				while (row.parentElement && row.parentElement !== content) row = row.parentElement;
+				return {
+					id: elementId(img),
+					boxId: box ? elementId(box) : null,
+					rowId: row ? elementId(row) : null,
+					loaded: img.complete && img.naturalWidth > 0,
+					failed: img.complete && img.naturalWidth === 0,
+					boxW: boxRect ? Math.round(boxRect.width * 10) / 10 : null,
+					boxH: boxRect ? Math.round(boxRect.height * 10) / 10 : null,
+					imgW: Math.round(imgRect.width * 10) / 10,
+					imgH: Math.round(imgRect.height * 10) / 10,
+					// 外盒父容器的可用宽度：窄窗下「该不该缩到 spec 以下」就看它
+					parentWidth: box?.parentElement ? box.parentElement.clientWidth : null,
+					right: Math.round(imgRect.right * 10) / 10,
+					rowHeight: row ? row.offsetHeight : null,
+					naturalW: img.naturalWidth,
+					naturalH: img.naturalHeight,
+				};
+			}),
+		};
+	}
+
+	/** 坏数据池：验「失败态也不改变外盒几何」（data URL 里塞非法 base64 → img 解码失败） */
+	function makeBrokenFixtures({ pool = "broken", count = 1 }) {
+		state.pools[pool] = Array.from({ length: count }, () => ({
+			mimeType: "image/png",
+			data: "!!!not-base64!!!",
+		}));
+		return { pool, count };
 	}
 
 	/* ---------- 合成历史（计时之外生成；每轮冷启动后重建） ---------- */
@@ -572,6 +642,21 @@ window.__hip = (() => {
 			mark("switch:end:" + ids[i % ids.length]);
 		}
 		return state.marks.slice();
+	}
+
+	/** 异常路径取证：锚点采样器/合成会话/图片 DOM 有没有残留 */
+	async function debugState() {
+		const { useSessionsStore } = await import("/src/stores/sessions.ts");
+		const { useTranscriptStore } = await import("/src/stores/transcript.ts");
+		const sc = scroller();
+		return {
+			anchorRecorderActive: Boolean(state.anchor),
+			trackedSessions: state.sessionIds.length,
+			pools: Object.keys(state.pools).length,
+			loadedSessions: Object.keys(useTranscriptStore.getState().bySession).length,
+			activeSessionId: useSessionsStore.getState().activeSessionId ?? null,
+			domImages: sc ? sc.querySelectorAll("img").length : null,
+		};
 	}
 
 	async function resetAll() {
@@ -808,11 +893,14 @@ window.__hip = (() => {
 		anchorProgress,
 		stopAnchorRecorder,
 		makeFixtures,
+		makeBrokenFixtures,
+		geometrySnapshot,
 		beginRound,
 		scrollUpAll,
 		switchMeasure,
 		resetAll,
 		clearSessions,
+		debugState,
 		workerProbe,
 	};
 })();
@@ -910,7 +998,11 @@ function evaluateProbeReport(report, consoleEntries, { sentinel }) {
 	const byName = new Map((report.strategies ?? []).map((strategy) => [strategy.name, strategy]));
 
 	// 「0 违规」只有在**捕获本身可信**时才算证据：先看哨兵有没有抓到已知违规
-	add("csp:capture-live", "mandatory", sentinel?.detected === true, sentinel?.samples ?? []);
+	// 哨兵必须由真实 Log/console 条目证伪「捕获链路是活的」；样本带 source 供审计
+	add("csp:capture-live", "mandatory", sentinel?.detected === true, {
+		sources: sentinel?.sources ?? [],
+		samples: sentinel?.samples ?? [],
+	});
 	const violations = cspViolations(consoleEntries);
 	add(
 		"csp:no-violation",
@@ -1206,39 +1298,65 @@ async function runCspSentinel(page) {
 	await page.eval(`(() => { fetch("https://csp-sentinel.invalid/probe").catch(() => {}); return true; })()`);
 	await sleep(700);
 	const hits = cspViolations(page.consoleEntries());
-	return { detected: hits.length > 0, samples: hits.slice(0, 3).map((hit) => hit.text.slice(0, 200)) };
+	return {
+		detected: hits.length > 0,
+		sources: [...new Set(hits.map((hit) => hit.source))],
+		samples: hits.slice(0, 3).map((hit) => ({
+			source: hit.source,
+			level: hit.level,
+			text: hit.text.slice(0, 200),
+		})),
+	};
 }
 
 async function runProbe(page, opts) {
-	// 每次探针都冷启动：CSP / worker 加载都是「页面文档级」事实，不能拿上一次导航的旧文档当证据
-	await reloadApp(page);
-	const env = await page.call("window.__hip.env()");
-	const isPreview = env.protocol === "file:";
-	let sameOriginUrl = null;
-	if (isPreview) {
-		await copyFile(PROBE_WORKER_PATH, join(OUT_RENDERER_DIR, PREVIEW_PROBE_NAME));
-		sameOriginUrl = `./${PREVIEW_PROBE_NAME}`;
-	} else {
-		sameOriginUrl = `/@fs${PROBE_WORKER_PATH}`;
-	}
-	const blobSource = await readFile(PROBE_WORKER_PATH, "utf8");
-	await page.eval(`window.__hipBlobSource = ${JSON.stringify(blobSource)}; true`);
-
-	const strategies = [
-		{ name: "same-origin-classic", url: sameOriginUrl },
-		{ name: "same-origin-module", url: sameOriginUrl, type: "module" },
-		{ name: "blob-classic" },
-		{ name: "blob-module", type: "module" },
-	];
-
 	const started = Date.now();
+	let env = null;
+	let isPreview = false;
+	let sameOriginUrl = null;
 	let sentinel = null;
 	let gifBytes = 0;
 	let report = null;
 	let consoleEntries = [];
 	let evaluation = { checks: [], failures: [] };
 	let selfTest = { cases: [], failed: [] };
+	let cleanup = null;
+	// try 从**第一行**开始：拷进产物目录的临时 worker 必须在任何异常路径上都被删掉
+	// （包括 reload/取值/拷贝/读文件失败——这些以前都在 try 外面）
 	try {
+		// 每次探针都冷启动：CSP / worker 加载都是「页面文档级」事实，不能拿上一次导航的旧文档当证据
+		await reloadApp(page);
+		env = await page.call("window.__hip.env()");
+		isPreview = env.protocol === "file:";
+		if (isPreview) {
+			if (opts.fault === "worker") {
+				// 故意写一份语法/加载必失败的 worker：验门会红灯 + finally 仍清掉这个临时文件
+				await writeFile(
+					join(OUT_RENDERER_DIR, PREVIEW_PROBE_NAME),
+					'throw new Error("fault injection: probe worker");\n',
+					"utf8",
+				);
+			} else {
+				await copyFile(PROBE_WORKER_PATH, join(OUT_RENDERER_DIR, PREVIEW_PROBE_NAME));
+			}
+			sameOriginUrl = `./${PREVIEW_PROBE_NAME}`;
+		} else {
+			sameOriginUrl =
+				opts.fault === "worker" ? `/@fs${PROBE_WORKER_PATH}.missing` : `/@fs${PROBE_WORKER_PATH}`;
+		}
+		const blobSource =
+			opts.fault === "worker"
+				? 'throw new Error("fault injection: blob worker");\n'
+				: await readFile(PROBE_WORKER_PATH, "utf8");
+		await page.eval(`window.__hipBlobSource = ${JSON.stringify(blobSource)}; true`);
+
+		const strategies = [
+			{ name: "same-origin-classic", url: sameOriginUrl },
+			{ name: "same-origin-module", url: sameOriginUrl, type: "module" },
+			{ name: "blob-classic" },
+			{ name: "blob-module", type: "module" },
+		];
+
 		sentinel = await runCspSentinel(page);
 		page.clearEvents();
 		gifBytes = await installGifFixture(page);
@@ -1250,8 +1368,9 @@ async function runProbe(page, opts) {
 		evaluation = evaluateProbeReport(report, consoleEntries, { sentinel });
 		selfTest = selfTestProbeGate();
 	} finally {
-		// 探针 worker 是临时拷进产物目录的，别让它有留在包里的机会
+		// 探针 worker 是临时拷进产物目录的，别让它有留在包里的机会；删完当场自证
 		if (isPreview) await rm(join(OUT_RENDERER_DIR, PREVIEW_PROBE_NAME), { force: true });
+		cleanup = { tempWorkerRemoved: !existsSync(join(OUT_RENDERER_DIR, PREVIEW_PROBE_NAME)) };
 	}
 
 	const summary = {
@@ -1265,6 +1384,8 @@ async function runProbe(page, opts) {
 		sameOriginUrl,
 		gifFixtureBytes: gifBytes,
 		sentinel,
+		cleanup,
+		fault: opts.fault ?? null,
 		report,
 		checks: evaluation.checks,
 		failures: evaluation.failures,
@@ -1309,6 +1430,7 @@ async function runProbe(page, opts) {
 	console.log(`GIF：${JSON.stringify(report.strategies[0]?.gif)}`);
 	console.log(`CSP 哨兵：${JSON.stringify(sentinel)}`);
 	console.log(`CSP 正式违规条目：${summary.cspViolations.length}`);
+	console.log(`临时产物体检：${JSON.stringify(cleanup)}${opts.fault ? ` · 故障注入 ${opts.fault}` : ""}`);
 
 	console.log("\n门断言：");
 	for (const check of evaluation.checks) {
@@ -1341,7 +1463,15 @@ async function runProbe(page, opts) {
 
 const BASELINE_SCENARIOS = [
 	{ key: "none", kind: "text", count: 0, width: 0, height: 0, blocks: 20, label: "无图对照（20 条文本）" },
-	{ key: "user-40-2000", kind: "user", count: 40, width: 2000, height: 1250, label: "用户附件 40×2000" },
+	{
+		key: "user-40-2000",
+		kind: "user",
+		count: 40,
+		width: 2000,
+		height: 1250,
+		expectsExpansion: true,
+		label: "用户附件 40×2000",
+	},
 	{
 		key: "user-120-2000",
 		kind: "user",
@@ -1358,6 +1488,7 @@ const BASELINE_SCENARIOS = [
 		count: 120,
 		width: 2000,
 		height: 1250,
+		expectsExpansion: true,
 		label: "show_image 120×2000",
 	},
 	{ key: "show-40-4k", kind: "image", count: 40, width: 3840, height: 2160, label: "show_image 40×4K" },
@@ -1449,7 +1580,11 @@ async function wheelExpandProbe(page, { requireGrowth = 0, maxSteps = 240, stepM
 		}
 		previousRows = last?.mountedRows ?? previousRows;
 		const atTop = (last?.scrollTop ?? 1) <= 2;
-		if (growth >= requireGrowth && (atTop || sinceGrowth > 40)) break;
+		// 已拿够补挂次数后：到顶就收工；长时间不再补挂（且没有需要继续等的目标）才收工。
+		// 注意 requireGrowth=0 时不能用「多少步没补挂就放弃」提前退出：
+		// 行高变大后到顶前可能就要滚 40+ 步，早退会根本碰不到补挂触发区（实测踩过）。
+		if (atTop && growth >= requireGrowth) break;
+		if (requireGrowth > 0 && growth >= requireGrowth && sinceGrowth > 60) break;
 	}
 	const samples = await page.call("window.__hip.stopAnchorRecorder()");
 	const analysis = analyzeAnchor(samples);
@@ -1535,6 +1670,7 @@ function makeGoodBaselineEntry(scenario) {
 			scrollHeight: 12000,
 			imgCount: scenario.count,
 			loadedCount: scenario.count,
+			failedCount: 0,
 			blank: false,
 			errorBoundary: false,
 		},
@@ -1587,10 +1723,18 @@ function baselineSelfTest() {
 		true,
 	);
 	check(
-		"已挂图未全部加载",
+		"一张图都没加载进来",
 		longScenario,
 		(entry) => {
-			entry.final.loadedCount = longScenario.count - 1;
+			entry.final.loadedCount = 0;
+		},
+		true,
+	);
+	check(
+		"有图片处于失败态",
+		longScenario,
+		(entry) => {
+			entry.final.failedCount = 1;
 		},
 		true,
 	);
@@ -1684,12 +1828,16 @@ function evaluateBaselineEntry(scenario, entry) {
 			entry.final?.imgCount === scenario.count,
 			`${entry.final?.imgCount}/${scenario.count}`,
 		);
+		// 阶段 1 起列表图走 loading="lazy"：程序性置顶跳过的中间图**允许**还没加载，
+		// 所以这里只要求「确实有图加载进来、且没有一张处于失败态」。
+		// 「加载过的图最终都能加载」由 geometry 模式的 images:state-transition-observed 覆盖。
 		add(
-			"images:loaded",
+			"images:loaded-some",
 			"mandatory",
-			entry.final?.imgCount > 0 && entry.final?.loadedCount === entry.final?.imgCount,
+			entry.final?.loadedCount > 0,
 			`${entry.final?.loadedCount}/${entry.final?.imgCount}`,
 		);
+		add("images:no-failure", "mandatory", (entry.final?.failedCount ?? 0) === 0, entry.final?.failedCount);
 	} else {
 		add("images:none-expected", "mandatory", entry.final?.imgCount === 0, entry.final?.imgCount);
 	}
@@ -1725,110 +1873,118 @@ function evaluateBaselineEntry(scenario, entry) {
 /**
  * 快速切会话样本：两个已挂满的会话（40×4K show_image ↔ 40×2000 用户图）来回切 6 次，
  * 按打点把帧间隔切开，看单次切换的长任务/帧间隔成本（就绪后的切换不是冷启动）。
+ * 全过程 finally 收尾：内存轮询、锚点采样器、renderer 里的合成会话都不能留在异常路径上。
  */
 async function runSwitchRound(page, main, round) {
 	const sessionA = `hip-switch-a-r${round}-${Date.now()}`;
 	const sessionB = `hip-switch-b-r${round}-${Date.now()}`;
-	await reloadApp(page);
-	await setViewport(page, VIEWPORT.width, VIEWPORT.height);
-	const cleared = await page.call("window.__hip.clearSessions()", 30_000);
-	const fixtures = [];
-	fixtures.push(
-		await page.call(
-			`window.__hip.makeFixtures(${JSON.stringify({ pool: "A", kind: "png", count: 40, width: 3840, height: 2160, tag: `switchA-r${round}` })})`,
-			LONG_TIMEOUT_MS,
-		),
-	);
-	fixtures.push(
-		await page.call(
-			`window.__hip.makeFixtures(${JSON.stringify({ pool: "B", kind: "jpeg", count: 40, width: 2000, height: 1250, tag: `switchB-r${round}` })})`,
-			LONG_TIMEOUT_MS,
-		),
-	);
-	const planA = Array.from({ length: 40 }, () => ({ kind: "image", imageCount: 1 }));
-	const planB = Array.from({ length: 40 }, () => ({ kind: "user", imageCount: 1 }));
 	const poller = startMemoryPoll(main);
+	try {
+		await reloadApp(page);
+		await setViewport(page, VIEWPORT.width, VIEWPORT.height);
+		const cleared = await page.call("window.__hip.clearSessions()", 30_000);
+		const fixtures = [];
+		fixtures.push(
+			await page.call(
+				`window.__hip.makeFixtures(${JSON.stringify({ pool: "A", kind: "png", count: 40, width: 3840, height: 2160, tag: `switchA-r${round}` })})`,
+				LONG_TIMEOUT_MS,
+			),
+		);
+		fixtures.push(
+			await page.call(
+				`window.__hip.makeFixtures(${JSON.stringify({ pool: "B", kind: "jpeg", count: 40, width: 2000, height: 1250, tag: `switchB-r${round}` })})`,
+				LONG_TIMEOUT_MS,
+			),
+		);
+		const planA = Array.from({ length: 40 }, () => ({ kind: "image", imageCount: 1 }));
+		const planB = Array.from({ length: 40 }, () => ({ kind: "user", imageCount: 1 }));
 
-	const mountedA = await page.call(
-		`window.__hip.beginRound(${JSON.stringify({ sessionId: sessionA, plan: planA, pool: "A" })})`,
-		60_000,
-	);
-	await sleep(2500);
-	await page.call("window.__hip.scrollUpAll({ steps: 6, stepMs: 300 })", 60_000);
-	await sleep(1500);
-	await page.call(`window.__hip.mark("phase:mount:end")`);
-	const mountedB = await page.call(
-		`window.__hip.beginRound(${JSON.stringify({
-			sessionId: sessionB,
-			plan: planB,
-			pool: "B",
-			keepProbe: true,
-			phaseLabel: "phase:loadB:start",
-		})})`,
-		60_000,
-	);
-	await sleep(2500);
-	await page.call("window.__hip.scrollUpAll({ steps: 6, stepMs: 300 })", 60_000);
-	await sleep(1500);
-	const beforeSwitch = await page.call("window.__hip.metrics()");
-	await page.call(`window.__hip.mark("phase:loadB:end")`);
+		const mountedA = await page.call(
+			`window.__hip.beginRound(${JSON.stringify({ sessionId: sessionA, plan: planA, pool: "A" })})`,
+			60_000,
+		);
+		await sleep(2500);
+		await page.call("window.__hip.scrollUpAll({ steps: 6, stepMs: 300 })", 60_000);
+		await sleep(1500);
+		await page.call(`window.__hip.mark("phase:mount:end")`);
+		const mountedB = await page.call(
+			`window.__hip.beginRound(${JSON.stringify({
+				sessionId: sessionB,
+				plan: planB,
+				pool: "B",
+				keepProbe: true,
+				phaseLabel: "phase:loadB:start",
+			})})`,
+			60_000,
+		);
+		await sleep(2500);
+		await page.call("window.__hip.scrollUpAll({ steps: 6, stepMs: 300 })", 60_000);
+		await sleep(1500);
+		const beforeSwitch = await page.call("window.__hip.metrics()");
+		await page.call(`window.__hip.mark("phase:loadB:end")`);
 
-	await page.call(
-		`window.__hip.switchMeasure(${JSON.stringify({ ids: [sessionA, sessionB], times: 6, holdMs: 900 })})`,
-		60_000,
-	);
-	const probe = await page.call("window.__hip.stopProbe()");
-	const final = await page.call("window.__hip.metrics()");
-	const peak = await poller.stop();
+		await page.call(
+			`window.__hip.switchMeasure(${JSON.stringify({ ids: [sessionA, sessionB], times: 6, holdMs: 900 })})`,
+			60_000,
+		);
+		const probe = await page.call("window.__hip.stopProbe()");
+		const final = await page.call("window.__hip.metrics()");
+		const peak = await poller.stop();
 
-	const switches = segmentByMarks(probe);
-	const checks = [];
-	const add = (id, level, ok, detail) => {
-		checks.push({ id, level, ok: Boolean(ok), detail: detail === undefined ? null : detail });
-	};
-	add(
-		"switch:phases-sampled",
-		"mandatory",
-		probe.marks.some((item) => item.label === "phase:loadB:end"),
-		probe.marks.map((item) => item.label),
-	);
-	add("switch:count", "mandatory", switches.length === 6, switches.length);
-	add(
-		"switch:frames-sampled",
-		"mandatory",
-		switches.every((item) => item.maxFrameGapMs !== null && item.frameCount > 0),
-		switches.map((item) => item.frameCount),
-	);
-	add("main:metrics", "mandatory", peak.length > 0, peak.length);
-	add("page:not-blank", "mandatory", final?.blank === false && final?.errorBoundary === false, {
-		blank: final?.blank,
-		errorBoundary: final?.errorBoundary,
-	});
-	await page.call("window.__hip.resetAll()", 30_000);
-	return {
-		round,
-		clearedSessions: cleared,
-		fixtures,
-		mountedA,
-		mountedB,
-		beforeSwitch,
-		switches,
-		probe: {
-			maxFrameGapMs: probe.maxFrameGapMs,
-			maxLongTaskMs: probe.maxLongTaskMs,
-			longTaskCount: probe.longTaskCount,
-			jsHeapMb: probe.jsHeapMb,
-			phases: {
-				loadA: segmentBetween(probe, "phase:mount:start", "phase:mount:end"),
-				loadB: segmentBetween(probe, "phase:loadB:start", "phase:loadB:end"),
+		const switches = segmentByMarks(probe);
+		const loadA = segmentBetween(probe, "phase:mount:start", "phase:mount:end");
+		const loadB = segmentBetween(probe, "phase:loadB:start", "phase:loadB:end");
+		const checks = [];
+		const add = (id, level, ok, detail) => {
+			checks.push({ id, level, ok: Boolean(ok), detail: detail === undefined ? null : detail });
+		};
+		add(
+			"switch:phases-sampled",
+			"mandatory",
+			loadA.missingMarks !== true &&
+				loadB.missingMarks !== true &&
+				loadA.frameCount > 0 &&
+				loadB.frameCount > 0,
+			{ loadA, loadB, marks: probe.marks.map((item) => item.label) },
+		);
+		add("switch:count", "mandatory", switches.length === 6, switches.length);
+		add(
+			"switch:frames-sampled",
+			"mandatory",
+			switches.every((item) => item.maxFrameGapMs !== null && item.frameCount > 0),
+			switches.map((item) => item.frameCount),
+		);
+		add("main:metrics", "mandatory", peak.length > 0, peak.length);
+		add("page:not-blank", "mandatory", final?.blank === false && final?.errorBoundary === false, {
+			blank: final?.blank,
+			errorBoundary: final?.errorBoundary,
+		});
+		return {
+			round,
+			clearedSessions: cleared,
+			fixtures,
+			mountedA,
+			mountedB,
+			beforeSwitch,
+			switches,
+			probe: {
+				maxFrameGapMs: probe.maxFrameGapMs,
+				maxLongTaskMs: probe.maxLongTaskMs,
+				longTaskCount: probe.longTaskCount,
+				jsHeapMb: probe.jsHeapMb,
+				phases: { loadA, loadB },
 			},
-		},
-		final,
-		peakRss: peak.slice(0, 6),
-		rendererPeakRssMb: (peak.find((metric) => metric.type === "Tab") ?? peak[0])?.rssMb ?? null,
-		checks,
-		failures: checks.filter((check) => check.level === "mandatory" && !check.ok),
-	};
+			final,
+			peakRss: peak.slice(0, 6),
+			rendererPeakRssMb: (peak.find((metric) => metric.type === "Tab") ?? peak[0])?.rssMb ?? null,
+			checks,
+			failures: checks.filter((check) => check.level === "mandatory" && !check.ok),
+		};
+	} finally {
+		await page.call("window.__hip.stopAnchorRecorder()", 30_000).catch(() => {});
+		await poller.stop().catch(() => {});
+		await page.call("window.__hip.resetAll()", 30_000).catch(() => {});
+	}
 }
 
 /** 把切会话那轮的帧间隔按 switch:begin / switch:end:<id> 打点切开 */
@@ -1886,7 +2042,9 @@ async function runBaseline(page, main, opts) {
 		scenarios: [],
 		mainMetrics: true,
 		memorySampleIntervalMs: 250,
+		fault: opts.fault ?? null,
 		assertions,
+		cleanup: null,
 	};
 	const write = async () => {
 		await mkdir(TMP_DIR, { recursive: true });
@@ -1939,9 +2097,10 @@ async function runBaseline(page, main, opts) {
 				})})`,
 				LONG_TIMEOUT_MS,
 			);
-			const plan = planForScenario(scenario);
+			const plan = opts.fault === "plan" ? null : planForScenario(scenario);
 			const poller = startMemoryPoll(main);
 			let entry = null;
+			let roundError = null;
 			try {
 				const mounted = await page.call(
 					`window.__hip.beginRound(${JSON.stringify({ sessionId, plan, pool: "main" })})`,
@@ -1990,11 +2149,27 @@ async function runBaseline(page, main, opts) {
 					peakRss: peak.slice(0, 6),
 					rendererPeakRssMb: rendererPeak ? rendererPeak.rssMb : null,
 				};
+			} catch (error) {
+				roundError = error;
 			} finally {
 				// 出错也必须收尾：停采样、停内存轮询、把 renderer 里的合成会话清掉
 				await page.call("window.__hip.stopAnchorRecorder()", 30_000).catch(() => {});
 				await poller.stop().catch(() => {});
 				await page.call("window.__hip.resetAll()", 30_000).catch(() => {});
+				// 收尾之后再问一次页面：异常路径到底有没有留下采样器/会话/图片 DOM
+				report.cleanup = await page
+					.call("window.__hip.debugState()", 30_000)
+					.catch((error) => ({ error: String(error) }));
+			}
+			if (roundError) {
+				report.aborted = {
+					scenario: scenario.key,
+					round,
+					error: String(roundError?.message ?? roundError),
+					cleanupAfterAbort: report.cleanup,
+				};
+				await write();
+				throw roundError;
 			}
 			const verdict = evaluateBaselineEntry(scenario, entry);
 			entry.checks = verdict.checks;
@@ -2023,6 +2198,11 @@ async function runBaseline(page, main, opts) {
 		}
 	}
 	await reloadApp(page);
+	// 异常路径清理取证：每轮都在 finally 里停采样器/停内存轮询/清合成会话，跑到最后再问一次页面
+	report.cleanup = await page
+		.call("window.__hip.debugState()", 30_000)
+		.catch((error) => ({ error: String(error) }));
+	console.log(`\n异常路径清理体检：${JSON.stringify(report.cleanup)}`);
 	console.log(
 		`\n基线有效性断言：${assertions.checks - assertions.failures.length}/${assertions.checks} 通过`,
 	);
@@ -2040,6 +2220,445 @@ async function runBaseline(page, main, opts) {
 	return { exitCode: EXIT_OK, report };
 }
 
+/* --------------------------------------------------------------- geometry */
+
+/**
+ * 阶段 1 静态/几何验收：**外盒 rect、行高、同一挂载窗口内的 scrollHeight 都不随图片加载变化**。
+ * 用真实 wheel 推进（不是程序性赋值），每一步取一份几何快照，元素身份靠页面侧 WeakMap 对齐。
+ * 另外覆盖失败态（坏数据）与窄窗不横滚。
+ */
+const GEOMETRY_SCENARIOS = [
+	{
+		key: "single-4k",
+		label: "单图 4K ×120（稳定外盒）",
+		kind: "image",
+		count: 120,
+		width: 3840,
+		height: 2160,
+		expectBox: { width: 192, height: 144 },
+		expectsDeferral: true,
+	},
+	{
+		key: "grid-9",
+		label: "单条 9 图（2000 宽）",
+		kind: "image",
+		count: 9,
+		width: 2000,
+		height: 1250,
+		plan: [{ kind: "image", imageCount: 9 }],
+		expectBox: { width: 64, height: 64 },
+	},
+	{
+		key: "user-120",
+		label: "用户附件 120×2000（64 方格）",
+		kind: "user",
+		count: 120,
+		width: 2000,
+		height: 1250,
+		expectBox: { width: 64, height: 64 },
+		expectsDeferral: true,
+	},
+	{
+		key: "broken-1",
+		label: "单图坏数据（失败态）",
+		broken: true,
+		plan: [{ kind: "image", imageCount: 1 }],
+		images: 1,
+		expectBox: { width: 192, height: 144 },
+	},
+	{
+		key: "broken-9",
+		label: "9 图坏数据（失败态）",
+		broken: true,
+		plan: [{ kind: "image", imageCount: 9 }],
+		images: 9,
+		expectBox: { width: 64, height: 64 },
+	},
+];
+
+const NARROW_VIEWPORT = { width: 420, height: 800 };
+
+const dimKey = (width, height) => `${width}×${height}`;
+
+/** 跨快照对齐每个元素的尺寸：同一元素尺寸出现两种取值 = 几何被加载状态改了 */
+function analyzeGeometry(snapshots) {
+	const images = new Map();
+	const rows = new Map();
+	for (const snapshot of snapshots) {
+		for (const image of snapshot.images) {
+			let record = images.get(image.id);
+			if (!record) {
+				record = {
+					id: image.id,
+					boxKeys: new Set(),
+					imgKeys: new Set(),
+					rowIds: new Set(),
+					states: new Set(),
+				};
+				images.set(image.id, record);
+			}
+			if (image.boxW !== null) record.boxKeys.add(dimKey(image.boxW, image.boxH));
+			record.imgKeys.add(dimKey(image.imgW, image.imgH));
+			record.rowIds.add(image.rowId);
+			record.states.add(image.loaded ? "loaded" : image.failed ? "failed" : "unloaded");
+			let row = rows.get(image.rowId);
+			if (!row) {
+				row = { id: image.rowId, heights: new Set() };
+				rows.set(image.rowId, row);
+			}
+			row.heights.add(image.rowHeight);
+		}
+	}
+	const scrollGroups = new Map();
+	const scrollViolations = [];
+	for (const snapshot of snapshots) {
+		const group = snapshot.mountedRows;
+		if (!scrollGroups.has(group)) scrollGroups.set(group, snapshot);
+		else {
+			const base = scrollGroups.get(group);
+			if (Math.abs(base.scrollHeight - snapshot.scrollHeight) > 1) {
+				scrollViolations.push({
+					mountedRows: group,
+					from: base.scrollHeight,
+					to: snapshot.scrollHeight,
+					label: snapshot.label,
+				});
+			}
+		}
+	}
+	const list = [...images.values()];
+	return {
+		imageCount: list.length,
+		rowCount: rows.size,
+		boxInstability: list
+			.filter((record) => record.boxKeys.size > 1)
+			.map((record) => ({ id: record.id, box: [...record.boxKeys] })),
+		imgInstability: list
+			.filter((record) => record.imgKeys.size > 1)
+			.map((record) => ({ id: record.id, img: [...record.imgKeys] })),
+		rowInstability: [...rows.values()]
+			.filter((row) => row.heights.size > 1)
+			.map((row) => ({ id: row.id, heights: [...row.heights] })),
+		scrollViolations,
+		// 同一元素既见过未加载又见过已加载（或失败）→ 证明「加载前后都观察到了」，不是空断言
+		stateTransitions: list.filter((record) => record.states.has("unloaded") && record.states.size > 1).length,
+		states: list.reduce((acc, record) => {
+			const state = [...record.states].sort().join("+");
+			acc[state] = (acc[state] ?? 0) + 1;
+			return acc;
+		}, {}),
+		boxKeys: [...new Set(list.flatMap((record) => [...record.boxKeys]))],
+	};
+}
+
+async function runGeometryScenario(page, scenario) {
+	const sessionId = `hip-geom-${scenario.key}-${Date.now()}`;
+	await reloadApp(page);
+	await setViewport(page, VIEWPORT.width, VIEWPORT.height);
+	const cleared = await page.call("window.__hip.clearSessions()", 30_000);
+	const plan =
+		scenario.plan ?? Array.from({ length: scenario.count }, () => ({ kind: scenario.kind, imageCount: 1 }));
+	let fixture = null;
+	if (scenario.broken) {
+		fixture = await page.call(
+			`window.__hip.makeBrokenFixtures(${JSON.stringify({ pool: "main", count: scenario.images })})`,
+			30_000,
+		);
+	} else {
+		fixture = await page.call(
+			`window.__hip.makeFixtures(${JSON.stringify({
+				pool: "main",
+				kind: scenario.kind === "user" ? "jpeg" : "png",
+				count: scenario.count,
+				width: scenario.width,
+				height: scenario.height,
+				tag: `geom-${scenario.key}`,
+			})})`,
+			LONG_TIMEOUT_MS,
+		);
+	}
+	const expectedImages = scenario.images ?? scenario.count;
+	const mounted = await page.call(
+		`window.__hip.beginRound(${JSON.stringify({ sessionId, plan, pool: "main" })})`,
+		60_000,
+	);
+	const snapshots = [];
+	const take = async (label) => {
+		const snapshot = await page.call("window.__hip.geometrySnapshot()", 30_000);
+		if (snapshot) snapshots.push({ label, ...snapshot });
+		return snapshot;
+	};
+	try {
+		// 1) 挂载后立刻取一份：此时离视口远的图应当还没加载（lazy 生效的直接证据）
+		await sleep(500);
+		await take("mount");
+		// 2) 真实 wheel 一路往上，每一步取快照（加载状态与几何同时变化）
+		const rect = await page.call("window.__hip.scrollRect()");
+		let lastRows = snapshots[0]?.mountedRows ?? 0;
+		let growth = 0;
+		let steps = 0;
+		// 内容一屏放得下 → 没有可滚的东西，不空转 160 步（否则每个小样本白等 25 秒）
+		const overflowing = (snapshots[0]?.scrollHeight ?? 0) > (snapshots[0]?.clientHeight ?? 0) + 1;
+		const wheelBudget = overflowing ? 160 : 0;
+		for (steps = 1; steps <= wheelBudget; steps++) {
+			await page.send("Input.dispatchMouseEvent", {
+				type: "mouseWheel",
+				x: rect.x,
+				y: rect.y,
+				deltaX: 0,
+				deltaY: -240,
+				modifiers: 0,
+			});
+			await sleep(160);
+			if (steps % 2 === 0) {
+				const snapshot = await take(`wheel${steps}`);
+				if (snapshot && snapshot.mountedRows > lastRows) growth += 1;
+				lastRows = snapshot?.mountedRows ?? lastRows;
+			}
+			const top = await page.call("window.__hip.anchorProgress()");
+			if ((top?.scrollTop ?? 1) <= 2 && growth >= 2) break;
+		}
+		await take("settled");
+		// 3) 窄窗不横滚：① 真实窗口能到的最窄（macOS 把最小宽夹在 640）
+		//    ② CDP 设备度量覆盖到 320 / 240（真窄窗靠 window.resizeTo 到不了，必须用 Emulation）
+		//    每次改完视口都重新取几何快照与文档宽度，断言的是「窄窗下也不横滚」而不是「设过参数」
+		const narrowWindow = await setViewport(page, NARROW_VIEWPORT.width, NARROW_VIEWPORT.height);
+		await sleep(600);
+		const narrowWindowSnapshot = await take("narrow-window");
+		const narrowSamples = [];
+		const sampleNarrow = async (label, width) => {
+			await page.send("Emulation.setDeviceMetricsOverride", {
+				width,
+				height: 800,
+				deviceScaleFactor: 1,
+				mobile: false,
+			});
+			await sleep(600);
+			const snapshot = await take(label);
+			const doc = await page.eval(
+				"({ docScrollWidth: document.documentElement.scrollWidth, innerWidth: window.innerWidth, bodyScrollWidth: document.body.scrollWidth })",
+			);
+			const expectedWidth = (image) =>
+				image.parentWidth === null
+					? scenario.expectBox.width
+					: Math.min(scenario.expectBox.width, image.parentWidth);
+			// 规则：宽 = min(spec 宽, 外盒父容器可用宽)（有地方就保持 spec，没地方就收缩不横滚）
+			//       高 = spec 高（高度恒定是「行高不随加载/视口变」的最后一道闸）
+			const offSpec = snapshot.images
+				.filter(
+					(image) =>
+						image.boxW === null ||
+						Math.abs(image.boxW - expectedWidth(image)) > 0.5 ||
+						Math.abs(image.boxH - scenario.expectBox.height) > 0.5,
+				)
+				.map((image) => ({
+					id: image.id,
+					box: dimKey(image.boxW, image.boxH),
+					expectedWidth: expectedWidth(image),
+				}));
+			const sample = {
+				label,
+				width,
+				scrollWidth: snapshot.scrollWidth,
+				clientWidth: snapshot.clientWidth,
+				doc,
+				overflowingImages: snapshot.images.filter((image) => image.right > snapshot.scroller.right + 1)
+					.length,
+				offSpec: offSpec.slice(0, 5),
+				boxKeys: [
+					...new Set(
+						snapshot.images.flatMap((image) => (image.boxW === null ? [] : [dimKey(image.boxW, image.boxH)])),
+					),
+				],
+			};
+			sample.ok =
+				sample.scrollWidth <= sample.clientWidth + 1 &&
+				doc.docScrollWidth <= doc.innerWidth + 1 &&
+				sample.overflowingImages === 0 &&
+				sample.offSpec.length === 0;
+			narrowSamples.push(sample);
+			return sample;
+		};
+		await sampleNarrow("narrow-320", 320);
+		await sampleNarrow("narrow-240", 240);
+		await page.send("Emulation.clearDeviceMetricsOverride");
+		await sleep(300);
+		// 窄窗是**另一个视口**（行会被 flex-wrap 换行），不能混进「同视口几何稳定性」的分析
+		const analysis = analyzeGeometry(snapshots.filter((snapshot) => !snapshot.label.startsWith("narrow")));
+		const narrowBoxKeys = [
+			...new Set(
+				narrowWindowSnapshot.images.flatMap((image) =>
+					image.boxW === null ? [] : [dimKey(image.boxW, image.boxH)],
+				),
+			),
+		];
+		const checks = [];
+		const add = (id, level, ok, detail) => {
+			checks.push({ id, level, ok: Boolean(ok), detail: detail === undefined ? null : detail });
+		};
+		const expectedKey = dimKey(scenario.expectBox.width, scenario.expectBox.height);
+		add(
+			"images:seen",
+			"mandatory",
+			analysis.imageCount === expectedImages,
+			`${analysis.imageCount}/${expectedImages}`,
+		);
+		// 反空断言：必须真的观察到「未加载 → 已加载/失败」的转变，否则「几何稳定」没有证据力
+		// 反空断言：有离屏图的场景必须真的观察到「未加载 → 已加载/失败」，否则「几何稳定」没有证据力；
+		// 单屏放得下的场景（1 图 / 9 图）没有可观察的延迟，那就只记录不打红
+		add(
+			"images:state-transition-observed",
+			scenario.expectsDeferral ? "mandatory" : "informational",
+			analysis.stateTransitions > 0,
+			{
+				transitions: analysis.stateTransitions,
+				states: analysis.states,
+				reason: scenario.expectsDeferral ? null : "内容一屏放得下，没有离屏图可推迟",
+			},
+		);
+		add(
+			"geometry:box-stable",
+			"mandatory",
+			analysis.boxInstability.length === 0,
+			analysis.boxInstability.slice(0, 5),
+		);
+		add(
+			"geometry:img-stable",
+			"mandatory",
+			analysis.imgInstability.length === 0,
+			analysis.imgInstability.slice(0, 5),
+		);
+		add(
+			"geometry:row-stable",
+			"mandatory",
+			analysis.rowInstability.length === 0,
+			analysis.rowInstability.slice(0, 5),
+		);
+		add(
+			"scroll:stable-per-window",
+			"mandatory",
+			analysis.scrollViolations.length === 0,
+			analysis.scrollViolations.slice(0, 5),
+		);
+		add(
+			"geometry:box-matches-spec",
+			"mandatory",
+			analysis.boxKeys.length === 1 && analysis.boxKeys[0] === expectedKey,
+			{
+				expected: expectedKey,
+				actual: analysis.boxKeys,
+			},
+		);
+		if (scenario.broken) {
+			add(
+				"broken:all-failed",
+				"mandatory",
+				Object.keys(analysis.states).every((state) => state === "failed" || state === "failed+unloaded"),
+				analysis.states,
+			);
+		} else {
+			add(
+				"images:no-error-state",
+				"mandatory",
+				!Object.keys(analysis.states).some((state) => state.includes("failed")),
+				analysis.states,
+			);
+		}
+		add(
+			"narrow:no-horizontal-overflow",
+			"mandatory",
+			narrowSamples.every((sample) => sample.ok),
+			narrowSamples.filter((sample) => !sample.ok),
+		);
+		// lazy 是否真的推迟了加载：记录（挂载后仍未加载的张数）
+		const atMount = snapshots[0].images.filter((image) => !image.loaded && !image.failed).length;
+		add("lazy:deferred-at-mount", "informational", atMount > 0, atMount);
+		await page.call("window.__hip.resetAll()", 30_000);
+		return {
+			key: scenario.key,
+			label: scenario.label,
+			fixture,
+			clearedSessions: cleared,
+			mounted,
+			expectedBox: scenario.expectBox,
+			steps,
+			growth,
+			snapshots: snapshots.map((snapshot) => ({
+				label: snapshot.label,
+				time: snapshot.time,
+				scrollTop: snapshot.scrollTop,
+				scrollHeight: snapshot.scrollHeight,
+				mountedRows: snapshot.mountedRows,
+				imageCount: snapshot.images.length,
+				loadedCount: snapshot.images.filter((image) => image.loaded).length,
+				unloadedCount: snapshot.images.filter((image) => !image.loaded && !image.failed).length,
+				failedCount: snapshot.images.filter((image) => image.failed).length,
+			})),
+			analysis,
+			narrow: {
+				windowMin: narrowWindow,
+				windowMinSnapshot: {
+					scrollWidth: narrowWindowSnapshot.scrollWidth,
+					clientWidth: narrowWindowSnapshot.clientWidth,
+					boxKeys: narrowBoxKeys,
+				},
+				emulated: narrowSamples,
+			},
+			checks,
+			failures: checks.filter((check) => check.level === "mandatory" && !check.ok),
+		};
+	} finally {
+		await setViewport(page, VIEWPORT.width, VIEWPORT.height).catch(() => {});
+		await page.call("window.__hip.resetAll()", 30_000).catch(() => {});
+	}
+}
+
+async function runGeometry(page, opts) {
+	const env = await page.call("window.__hip.env()");
+	if (env.protocol === "file:") {
+		console.error("[env] geometry 模式需要 dev 实例（要 import /src/stores/*）");
+		return { exitCode: EXIT_ENV };
+	}
+	const scenarios = GEOMETRY_SCENARIOS.filter(
+		(scenario) => !opts.scenarios || opts.scenarios.includes(scenario.key),
+	);
+	const report = {
+		mode: "geometry",
+		label: opts.label ?? null,
+		startedAt: new Date().toISOString(),
+		env,
+		viewport: await setViewport(page, VIEWPORT.width, VIEWPORT.height),
+		scenarios: [],
+	};
+	const write = async () => {
+		await mkdir(TMP_DIR, { recursive: true });
+		await writeFile(opts.out, JSON.stringify(report, null, 2));
+	};
+	const failures = [];
+	for (const scenario of scenarios) {
+		const entry = await runGeometryScenario(page, scenario);
+		report.scenarios.push(entry);
+		failures.push(...entry.failures.map((failure) => `${scenario.key}: ${failure.id}`));
+		await write();
+		console.log(
+			[
+				`[${scenario.key}] ${scenario.label}`,
+				`图 ${entry.mounted.images} 张（外盒 ${entry.analysis.boxKeys.join("/")}）`,
+				`快照 ${entry.snapshots.length} 份（状态 ${JSON.stringify(entry.analysis.states)}）`,
+				`滚轮 ${entry.steps} 步 / 补挂 ${entry.growth} 次`,
+				`窄窗 真实 ${entry.narrow.windowMin.w}px / 模拟 ${entry.narrow.emulated.map((sample) => `${sample.width}px·${sample.ok ? "无横滚" : "溢出"}`).join(" ")}`,
+				entry.failures.length
+					? `断言失败 ${entry.failures.map((failure) => failure.id).join(",")}`
+					: "断言全过",
+			].join(" · "),
+		);
+	}
+	report.failures = failures;
+	await write();
+	console.log(`\n几何验收断言：${failures.length === 0 ? "全部通过" : `${failures.length} 条失败`}`);
+	return { exitCode: failures.length === 0 ? EXIT_OK : EXIT_FAIL, report };
+}
+
 /* -------------------------------------------------------------------- main */
 
 function parseArgs(argv) {
@@ -2049,16 +2668,23 @@ function parseArgs(argv) {
 		else if (arg.startsWith("--label=")) opts.label = arg.slice(8);
 		else if (arg.startsWith("--out=")) opts.out = arg.slice(6);
 		else if (arg.startsWith("--scenarios=")) opts.scenarios = arg.slice(12).split(",").filter(Boolean);
-		else console.warn(`[warn] 忽略未知参数：${arg}`);
+		else if (arg.startsWith("--fault=")) {
+			const fault = arg.slice(8);
+			if (!FAULTS.includes(fault)) {
+				console.error(`[env] 未知故障注入：${fault}（可选 ${FAULTS.join(" / ")}）`);
+				process.exit(EXIT_ENV);
+			}
+			opts.fault = fault;
+		} else console.warn(`[warn] 忽略未知参数：${arg}`);
 	}
 	return opts;
 }
 
 async function main() {
 	const opts = parseArgs(process.argv.slice(2));
-	if (opts.mode !== "probe" && opts.mode !== "baseline") {
+	if (opts.mode !== "probe" && opts.mode !== "baseline" && opts.mode !== "geometry") {
 		console.error(
-			"用法：node scripts/check-history-images.mjs <probe|baseline> [--rounds=3] [--scenarios=a,b]",
+			"用法：node scripts/check-history-images.mjs <probe|baseline|geometry> [--rounds=3] [--scenarios=a,b] [--label=x] [--fault=worker|plan]",
 		);
 		process.exit(EXIT_ENV);
 	}
@@ -2091,6 +2717,10 @@ async function main() {
 			exitCode = result.exitCode;
 			await mkdir(TMP_DIR, { recursive: true });
 			await writeFile(out, JSON.stringify(result.summary, null, 2));
+		} else if (opts.mode === "geometry") {
+			opts.out = out;
+			const result = await runGeometry(page, opts);
+			exitCode = result.exitCode;
 		} else {
 			opts.out = out;
 			const result = await runBaseline(page, mainCdp, opts);

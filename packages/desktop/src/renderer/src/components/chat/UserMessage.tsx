@@ -2,6 +2,7 @@ import { formatSkillCommand } from "@percho/shared";
 import { useState } from "react";
 import { useT } from "../../i18n";
 import type { UIMessage } from "../../stores/transcript";
+import { ATTACHMENT_IMAGE_MODE } from "./history-image-layout";
 import { ImagePreviewOverlay, imageSrc } from "./ImagePreview";
 import { CopyButton, RecallButton } from "./message-actions";
 
@@ -20,13 +21,16 @@ export function UserMessage({ message }: { message: Extract<UIMessage, { kind: "
 								// biome-ignore lint/suspicious/noArrayIndexKey: 缩略图列表不可变（删除为整列表替换）
 								key={index}
 								type="button"
-								className="h-16 w-16 overflow-hidden rounded-lg border border-border"
+								className={`${ATTACHMENT_IMAGE_MODE.box} overflow-hidden rounded-lg border border-border`}
 								onClick={() => setPreviewIndex(index)}
 							>
 								<img
 									src={imageSrc(image)}
 									alt={`${t("composer.previewImage")} ${index + 1}`}
-									className="h-full w-full object-cover"
+									className={ATTACHMENT_IMAGE_MODE.img}
+									/* 历史图片：滚动近处才加载、解码让出主线程；尺寸由外盒固定，加载不改变行高 */
+									loading="lazy"
+									decoding="async"
 								/>
 							</button>
 						))}
