@@ -112,6 +112,8 @@ export function createThumbnailService(options: ThumbnailServiceOptions = {}) {
 	let worker: Worker | null = null;
 	let pending: PendingTask | null = null;
 	let pumpScheduled = false;
+	/** reset 换代会让既有句柄全部失效；消费方（组件）据此重建接线，否则会永远停在占位 */
+	const resetListeners = new Set<() => void>();
 	let pumping = false;
 	let pumpRequested = false;
 
@@ -459,6 +461,13 @@ export function createThumbnailService(options: ThumbnailServiceOptions = {}) {
 		records.clear();
 		registry.clear();
 		cache.clear();
+		for (const listener of [...resetListeners]) {
+			try {
+				listener();
+			} catch {
+				// 消费方回调异常不能打断 reset 本身
+			}
+		}
 	}
 
 	function stats(): ThumbnailServiceStats {
@@ -475,7 +484,15 @@ export function createThumbnailService(options: ThumbnailServiceOptions = {}) {
 		};
 	}
 
-	return { acquire, reset, stats };
+	/** 订阅「换代」（reset）：回调异常被吞掉；返回取消函数 */
+	function subscribeReset(listener: () => void): () => void {
+		resetListeners.add(listener);
+		return () => {
+			resetListeners.delete(listener);
+		};
+	}
+
+	return { acquire, reset, subscribeReset, stats };
 }
 
 export type ThumbnailService = ReturnType<typeof createThumbnailService>;

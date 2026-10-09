@@ -17,6 +17,8 @@ import { useSessionsStore } from "../../stores/sessions";
 import { selectTranscript, useTranscriptStore } from "../../stores/transcript";
 import { useUiPreferencesStore } from "../../stores/ui-preferences";
 import { CenterOrb } from "./CenterOrb";
+import { HistoryImageRootProvider } from "./history-image/history-image-root";
+import { thumbnailService } from "./history-image/history-image-service";
 import { MessageItem } from "./MessageItem";
 import { MetaGroup } from "./MetaGroup";
 import { clampWindowStart, expandWindowStart, MOUNT_TRIGGER_PX, tailWindowStart } from "./mount-window";
@@ -63,6 +65,9 @@ export function MessageList() {
 
 	const scrollRef = useRef<HTMLDivElement>(null);
 	const contentRef = useRef<HTMLDivElement>(null);
+	// 历史图片的私有 root：滚动容器元素本身。用 state 而不是只存 ref —— 挂载顺序上
+	// 后代 effect 需要拿到**已存在**的 DOM 元素才能建立观察，state 变化会触发它们重跑
+	const [historyImageRoot, setHistoryImageRoot] = useState<HTMLElement | null>(null);
 	// 对话正文的边界淡出：**只淡上沿**（在顶栏下渐隐）——
 	// 下沿紧贴输入框，那里不要淡出（用户明确不要）；28px < 内容区 pt-8（32px），
 	// 所以静止在顶时只会淡到空白内边距，不会咬正文
@@ -106,6 +111,13 @@ export function MessageList() {
 	}, [lastUserMessageId, pinToBottom, updateFollowing]);
 
 	// 切换会话 → 回到底部并恢复跟随
+	// 切会话：缩略图服务换代（terminate worker、清队列/在途/缓存），旧句柄随组件卸载释放；
+	// 不做这一步也能靠组件卸载清掉订阅，但 worker 在途任务与 LRU 会跨会话残留
+	// biome-ignore lint/correctness/useExhaustiveDependencies: activeSessionId 是刻意的重跑触发器
+	useEffect(() => {
+		thumbnailService().reset();
+	}, [activeSessionId]);
+
 	// biome-ignore lint/correctness/useExhaustiveDependencies: activeSessionId 是刻意的重跑触发器（切换会话时重新贴底）
 	useEffect(() => {
 		updateFollowing(true);
@@ -307,15 +319,21 @@ export function MessageList() {
 			{/* relative z-10：无背景；CenterOrb（z-20）连同其 canvas 遮罩盖在本层之上（工作中场景），
 			    交互不受影响（orb 整层 pointer-events-none） */}
 			<div
-				ref={scrollRef}
+				ref={(element) => {
+					scrollRef.current = element;
+					setHistoryImageRoot((previous) => (previous === element ? previous : element));
+				}}
 				onScroll={handleScroll}
 				onClickCapture={handleSummaryToggle}
 				style={{ "--edge-fade-size": "28px" } as CSSProperties}
 				className="edge-fade chat-scrollbar relative z-10 h-full overflow-x-hidden overflow-y-auto [overflow-anchor:auto] [scrollbar-gutter:stable]"
 			>
 				<div ref={contentRef} className="mx-auto flex max-w-[760px] flex-col gap-6 px-6 pt-8 pb-16">
-					{items}
-					{transcript.retrying && <RetryNote info={transcript.retrying} />}
+					{/* root 私有接线：历史图片靠它判断「是否在滚动容器可视区内」，拿不到就只渲染占位 */}
+					<HistoryImageRootProvider root={historyImageRoot}>
+						{items}
+						{transcript.retrying && <RetryNote info={transcript.retrying} />}
+					</HistoryImageRootProvider>
 				</div>
 			</div>
 			{/* 选中文字浮出菜单：定位在滚动容器内以便判断选区归属（fixed 定位不受父级影响） */}

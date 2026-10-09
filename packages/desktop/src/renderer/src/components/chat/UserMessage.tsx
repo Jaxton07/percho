@@ -2,8 +2,9 @@ import { formatSkillCommand } from "@percho/shared";
 import { useState } from "react";
 import { useT } from "../../i18n";
 import type { UIMessage } from "../../stores/transcript";
+import { HistoryImage } from "./history-image/HistoryImage";
 import { ATTACHMENT_IMAGE_MODE } from "./history-image-layout";
-import { ImagePreviewOverlay, imageSrc } from "./ImagePreview";
+import { ImagePreviewOverlay } from "./ImagePreview";
 import { CopyButton, RecallButton } from "./message-actions";
 
 /** 用户消息气泡：缩略图 + skill 调用气泡 + 文本气泡 + 操作行（复制/撤回）+ 全屏预览 */
@@ -17,22 +18,16 @@ export function UserMessage({ message }: { message: Extract<UIMessage, { kind: "
 				{message.images.length > 0 && (
 					<div className="mb-1.5 flex flex-wrap justify-end gap-1.5">
 						{message.images.map((image, index) => (
-							<button
+							<HistoryImage
 								// biome-ignore lint/suspicious/noArrayIndexKey: 缩略图列表不可变（删除为整列表替换）
 								key={index}
-								type="button"
-								className={`${ATTACHMENT_IMAGE_MODE.box} overflow-hidden rounded-lg border border-border`}
-								onClick={() => setPreviewIndex(index)}
-							>
-								<img
-									src={imageSrc(image)}
-									alt={`${t("composer.previewImage")} ${index + 1}`}
-									className={ATTACHMENT_IMAGE_MODE.img}
-									/* 历史图片：滚动近处才加载、解码让出主线程；尺寸由外盒固定，加载不改变行高 */
-									loading="lazy"
-									decoding="async"
-								/>
-							</button>
+								image={image}
+								boxClass={ATTACHMENT_IMAGE_MODE.box}
+								imgClass={ATTACHMENT_IMAGE_MODE.img}
+								extraClass="rounded-lg border border-border"
+								alt={`${t("composer.previewImage")} ${index + 1}`}
+								onOpen={() => setPreviewIndex(index)}
+							/>
 						))}
 					</div>
 				)}

@@ -27,7 +27,13 @@ export interface HistoryImageObserver {
 	/** 返回取消订阅函数（组件用自己的 stop 退订；`disconnect` 留给 owner 销毁时整体拆除） */
 	observe(target: Element, onChange: (state: HistoryImageVisibility) => void): () => void;
 	disconnect(): void;
-	stats(): { targets: number; observers: number; viewportSubscriptions: number };
+	stats(): {
+		targets: number;
+		inRange: number;
+		observers: number;
+		viewportSubscriptions: number;
+		rootResizeSubscriptions: number;
+	};
 }
 
 export interface HistoryImageObserverOptions {
@@ -40,6 +46,8 @@ export interface HistoryImageObserverOptions {
 	) => IntersectionObserver;
 	/** 只为单测注入：监听「可能改变可视区」的事件（滚动/尺寸），返回取消函数 */
 	subscribeViewportChange?: (onChange: () => void) => () => void;
+	/** 只为单测注入：观察 root 自身尺寸变化，返回取消函数 */
+	observeRootResize?: (onChange: () => void) => () => void;
 	/** 只为单测注入：几何读取 */
 	readRect?: (element: Element) => { top: number; bottom: number };
 }
@@ -58,8 +66,11 @@ export function createHistoryImageObserver(options: HistoryImageObserverOptions)
 		options.readRect ??
 		((element: Element) => element.getBoundingClientRect() as DOMRect as { top: number; bottom: number });
 	const targets = new Map<Element, TargetRecord>();
+	/** 只在**加载范围内**的元素上做视口几何扫描（滚动时不做全历史扫描） */
+	const inRange = new Set<Element>();
 	let observer: IntersectionObserver | null = null;
 	let unsubscribeViewport: (() => void) | null = null;
+	let unsubscribeRootResize: (() => void) | null = null;
 
 	function subscribeViewportChange(onChange: () => void): () => void {
 		if (options.subscribeViewportChange) return options.subscribeViewportChange(onChange);
@@ -80,6 +91,18 @@ export function createHistoryImageObserver(options: HistoryImageObserverOptions)
 		};
 	}
 
+	/**
+	 * root **自身尺寸**变化（Composer 长高、侧栏开合、字号档位、窗口缩放）不一定伴随 window resize，
+	 * 所以用 ResizeObserver 观察 root，变化走同一条 refresh（共享一个，随 IO 一起建/拆）。
+	 */
+	function subscribeRootResize(onChange: () => void): () => void {
+		if (options.observeRootResize) return options.observeRootResize(onChange);
+		if (typeof ResizeObserver === "undefined") return () => {};
+		const resizeObserver = new ResizeObserver(() => onChange());
+		resizeObserver.observe(options.root);
+		return () => resizeObserver.disconnect();
+	}
+
 	function isInViewport(target: Element): boolean {
 		const rect = readRect(target);
 		const rootRect = readRect(options.root);
@@ -96,8 +119,9 @@ export function createHistoryImageObserver(options: HistoryImageObserverOptions)
 
 	/** 只在「已进入加载范围」的元素上重算真实可见性（不做全历史扫描） */
 	function refreshViewport(): void {
-		for (const [target, record] of targets) {
-			if (!record.inLoadRange) continue;
+		for (const target of inRange) {
+			const record = targets.get(target);
+			if (!record?.inLoadRange) continue;
 			const next = isInViewport(target);
 			if (next === record.inViewport) continue;
 			record.inViewport = next;
@@ -117,6 +141,8 @@ export function createHistoryImageObserver(options: HistoryImageObserverOptions)
 					if (record.inLoadRange === inLoadRange && record.inViewport === inViewport) continue;
 					record.inLoadRange = inLoadRange;
 					record.inViewport = inViewport;
+					if (inLoadRange) inRange.add(entry.target);
+					else inRange.delete(entry.target);
 					emit(entry.target, record);
 				}
 			},
@@ -127,6 +153,7 @@ export function createHistoryImageObserver(options: HistoryImageObserverOptions)
 			},
 		);
 		if (!unsubscribeViewport) unsubscribeViewport = subscribeViewportChange(refreshViewport);
+		if (!unsubscribeRootResize) unsubscribeRootResize = subscribeRootResize(refreshViewport);
 		return observer;
 	}
 
@@ -135,7 +162,10 @@ export function createHistoryImageObserver(options: HistoryImageObserverOptions)
 		observer = null;
 		unsubscribeViewport?.();
 		unsubscribeViewport = null;
+		unsubscribeRootResize?.();
+		unsubscribeRootResize = null;
 		targets.clear();
+		inRange.clear();
 	}
 
 	return {
@@ -159,6 +189,7 @@ export function createHistoryImageObserver(options: HistoryImageObserverOptions)
 				if (existing.callbacks.size > 0) return;
 				observer?.unobserve(target);
 				targets.delete(target);
+				inRange.delete(target);
 				// 没有观察对象了就整体断开，别留 IO 与全局监听
 				if (targets.size === 0) disconnect();
 			};
@@ -166,8 +197,10 @@ export function createHistoryImageObserver(options: HistoryImageObserverOptions)
 		disconnect,
 		stats: () => ({
 			targets: targets.size,
+			inRange: inRange.size,
 			observers: observer ? 1 : 0,
 			viewportSubscriptions: unsubscribeViewport ? 1 : 0,
+			rootResizeSubscriptions: unsubscribeRootResize ? 1 : 0,
 		}),
 	};
 }

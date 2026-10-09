@@ -204,6 +204,9 @@ export const en: Messages = {
 		summaryBash: "Ran {n} {unit}",
 		summarySubagents: "{n} {unit} dispatched",
 		image: "View image",
+		imagePending: "Image not loaded yet",
+		imageRetry: "Reload",
+		imageLoadError: "Image failed to load",
 		subagent: {
 			running: "Working",
 			done: "Done",

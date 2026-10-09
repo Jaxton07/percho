@@ -28,6 +28,9 @@
 | 极端情况丢偏好：关窗瞬间的那次写盘 | 六 · 退出兜底要同步写（`updateSync`），但它不参与写盘队列（2026-10-07） |
 | `npm run test` 偶发红、失败点在 backend `channel-watch-extension.test.ts` | 三 · 既有 flaky：cursor 落盘竞态（2026-10-07） |
 | 弹窗蒙层只盖住一列 / 卡片被左栏「吃掉」半边 / 测量位置却是对的 | 四 · `.edge-fade` 的 mask 把 fixed 浮层的绘制裁在容器盒里（2026-10-06） |
+| `new Worker(new URL(...))` 在 dev 能跑、打包后功能静默失效（产物里根本没有 worker chunk） | 四 · 历史图 worker：`new Worker(new URL(...))` 在 app build 不出 chunk（要用 `?worker`）＋ 认产物别用 API 名（2026-10-09） |
+| 图片缩略图服务偶尔出现「两条任务同时在跑」、预算统计对不上 | 四 · 同上（通知里重入服务会绕过单飞） |
+| 切会话后历史图永远停在占位、刷新才恢复 | 四 · 同上（`reset()` 换代让已挂载组件的句柄失效） |
 | 改了滚动条宽度但截图里看不到，以为没生效 | 四 · CDP 截图不绘制滚动条，只能力槽宽（2026-09-29） |
 | 扩展注册的工具模型用不了、模型说「工具列表为 none」 | 二 · createAgentSession tools 白名单 |
 | 升 SDK 后 `tsc` 全绿但测试红、只红一两条 | 二 · SDK 升级 0.84.3 → 1.0.4：typecheck 全绿 ≠ 无行为变化（2026-10-06） |
@@ -1075,3 +1078,28 @@ git remote 走 SSH（本机直连 github.com:443 不通）。`main` 有分支保
 ### macOS 窗口只有 `resize` / `move`：`resized` / `moved` 一次都不来（2026-10-07，layout-freedom）
 
 `window.resizeTo(w, h)` 期间在主进程挂 `resized` / `moved` 探针，实测 **0 次触发**（spec 里一度写着 macOS 上 `moved` 是 `move` 的别名，实际连别名都不触发）；同时单次 `resizeTo` 会来 **1~3 次** `resize`。结论：**只监听 `resize` + `move`，并且必须防抖**（否则拖窗口一路写盘）。
+
+## 四 · 历史图缩略图（#97 阶段 2/3 期间踩到，2026-10-09）
+
+**1）`new Worker(new URL("./x.worker.ts", import.meta.url), { type: "module" })` 在 dev 能跑，app build 里却不出 chunk。**
+现象：dev 一切正常；`npm run build` 后 `out/renderer/assets` 里没有该 worker，页面里的缩略图静默停在占位/错误。
+成因有两层，容易误判：① Vite 只在 dev 注入 `?worker_file&type=module` 路径，build 的 worker 静态分析没命中这种写法；
+② 阶段 2 那个模块当时**没有任何入口引用**，本来就会被 tree-shake 掉——两者叠在一起时，"改了写法还是没出 chunk" 会让人怀疑写法没生效。
+修法：改用仓库既有的 `import Worker from "./x.worker.ts?worker"`（Monaco worker 同款），接线后 app 产物里确实出现 `history-image.worker-*.js`。
+**认产物别用 API 名**（`OffscreenCanvas`/`createImageBitmap`/`convertToBlob` 四个一起也照样命中 Monaco 的 `ts.worker`），要用本 worker 源码里独有的字面量（如错误文案）。
+
+**2）通知里重入服务会绕过「单飞」。**
+现象：`stats().inFlight` 只认一条，但实际投递了两条（id 递增到 50 而预算只有 48），偶发多解一张图。
+成因：`dispatch` 原先**先 notify 再建立 pending**；listener（渲染层）在通知里 `acquire()`/`release()` 会同步重入 `pump()`，此时 `pending` 还是 null，
+于是又派发一条把前一条覆盖。`reclaimSlot → demote → notify` 同理。
+修法：① `dispatch` **先建「在途所有权」（pending + timer）再暴露 loading 通知**；② `pump` 加**重入闸门 + 排空循环**（重入只置位，由最外层继续跑）；
+③ 回收成功后复检 `generation` 与 `records.get(key) === record`——回收通知里 listener 同步 `reset()` 时，外层会拿着旧 record 把**旧代的图**投出去（实测踩到）。
+
+**3）`reset()` 换代（切会话）会让已挂载组件的句柄失效，界面永远停在占位。**
+现象：切会话后新会话的图全部是占位，刷新页面才恢复。
+成因：React 的 effect 顺序是**子先父后**——新会话的行组件先挂载并 `acquire`，父级 `MessageList` 的 `useEffect([activeSessionId])` 才执行 `thumbnailService().reset()`，
+换代把刚建立的句柄全部作废；组件不会自己重跑（deps 没变）。
+修法：服务暴露 `subscribeReset()`，组件订阅它并在换代后重建接线（effect 依赖里加一个 generation 计数）。同理，任何"外部清缓存"都必须让消费者可感知。
+
+**4）其他两条小坑**：`loading="lazy"` 的缩略图离屏时 `naturalWidth` 是 0（脚本断言尺寸前要先滚进可视区或区分"未解码"）；dev 里对产品模块 `import()` 拿到的可能是**另一份模块实例**（HMR `?t=` 后缀），
+用它读单例统计会得到全 0——验收统计优先用 DOM 可观测口径（外盒 `data-history-image` 状态），模块统计只作参考。

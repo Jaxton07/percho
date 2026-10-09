@@ -841,6 +841,17 @@ describe("缩略图服务：取消 / 迟到 / 超时 / 重置 / 同步失败", (
 		expect(second.getSnapshot()).toBe(before);
 	});
 
+	it("reset 会通知订阅者（组件据此重建接线），取消后不再通知", () => {
+		const { service } = fakeService();
+		const listener = vi.fn();
+		const stop = service.subscribeReset(listener);
+		service.reset();
+		expect(listener).toHaveBeenCalledTimes(1);
+		stop();
+		service.reset();
+		expect(listener).toHaveBeenCalledTimes(1);
+	});
+
 	it("单飞：只有一个在途任务，完成一个才发下一个", () => {
 		const { service, worker } = fakeService();
 		service.acquire(image("q1"));
@@ -873,10 +884,19 @@ describe("共享 IntersectionObserver（加载范围 vs 真实可视区）", () 
 			thresholds: [],
 			takeRecords: () => [],
 		} as unknown as IntersectionObserver;
+		let rootResizeSubscriptions = 0;
 		return {
 			root,
 			rects,
 			observed,
+			observeRootResize: (cb: () => void) => {
+				void cb;
+				rootResizeSubscriptions += 1;
+				return () => {
+					rootResizeSubscriptions -= 1;
+				};
+			},
+			rootResizeSubscriptions: () => rootResizeSubscriptions,
 			init: () => init,
 			disconnected: () => disconnected,
 			viewportSubscriptions: () => viewportSubscriptions,
@@ -906,11 +926,18 @@ describe("共享 IntersectionObserver（加载范围 vs 真实可视区）", () 
 			root: fake.root,
 			createObserver: fake.createObserver,
 			subscribeViewportChange: fake.subscribeViewportChange,
+			observeRootResize: fake.observeRootResize,
 			readRect: fake.readRect,
 		});
 		observer.observe({ id: "a" } as unknown as Element, () => {});
 		observer.observe({ id: "b" } as unknown as Element, () => {});
-		expect(observer.stats()).toEqual({ targets: 2, observers: 1, viewportSubscriptions: 1 });
+		expect(observer.stats()).toEqual({
+			targets: 2,
+			inRange: 0,
+			observers: 1,
+			viewportSubscriptions: 1,
+			rootResizeSubscriptions: 1,
+		});
 		expect(fake.init()?.root).toBe(fake.root);
 		expect(fake.init()?.rootMargin).toBe("400px 0px 400px 0px");
 	});
@@ -921,6 +948,7 @@ describe("共享 IntersectionObserver（加载范围 vs 真实可视区）", () 
 			root: fake.root,
 			createObserver: fake.createObserver,
 			subscribeViewportChange: fake.subscribeViewportChange,
+			observeRootResize: fake.observeRootResize,
 			readRect: fake.readRect,
 		});
 		const target = { id: "below" } as unknown as Element;
@@ -945,6 +973,7 @@ describe("共享 IntersectionObserver（加载范围 vs 真实可视区）", () 
 			root: fake.root,
 			createObserver: fake.createObserver,
 			subscribeViewportChange: fake.subscribeViewportChange,
+			observeRootResize: fake.observeRootResize,
 			readRect: fake.readRect,
 		});
 		const target = { id: "dup" } as unknown as Element;
@@ -969,12 +998,24 @@ describe("共享 IntersectionObserver（加载范围 vs 真实可视区）", () 
 		expect(firstCount).toBe(2);
 		expect(secondCount).toBe(4);
 		stopSecond();
-		expect(observer.stats()).toEqual({ targets: 0, observers: 0, viewportSubscriptions: 0 });
+		expect(observer.stats()).toEqual({
+			targets: 0,
+			inRange: 0,
+			observers: 0,
+			viewportSubscriptions: 0,
+			rootResizeSubscriptions: 0,
+		});
 		expect(fake.disconnected()).toBe(1);
 		// 断开后再订阅会重建
 		fake.rects.set(target, { top: 10, bottom: 20 });
 		const stopAgain = observer.observe(target, () => {});
-		expect(observer.stats()).toEqual({ targets: 1, observers: 1, viewportSubscriptions: 1 });
+		expect(observer.stats()).toEqual({
+			targets: 1,
+			inRange: 0,
+			observers: 1,
+			viewportSubscriptions: 1,
+			rootResizeSubscriptions: 1,
+		});
 		stopAgain();
 	});
 
@@ -984,6 +1025,7 @@ describe("共享 IntersectionObserver（加载范围 vs 真实可视区）", () 
 			root: fake.root,
 			createObserver: fake.createObserver,
 			subscribeViewportChange: fake.subscribeViewportChange,
+			observeRootResize: fake.observeRootResize,
 			readRect: fake.readRect,
 		});
 		const target = { id: "in-view" } as unknown as Element;
@@ -1008,6 +1050,7 @@ describe("共享 IntersectionObserver（加载范围 vs 真实可视区）", () 
 			root: fake.root,
 			createObserver: fake.createObserver,
 			subscribeViewportChange: fake.subscribeViewportChange,
+			observeRootResize: fake.observeRootResize,
 			readRect: fake.readRect,
 		});
 		const target = { id: "out-of-range" } as unknown as Element;
@@ -1029,6 +1072,7 @@ describe("共享 IntersectionObserver（加载范围 vs 真实可视区）", () 
 			root: fake.root,
 			createObserver: fake.createObserver,
 			subscribeViewportChange: fake.subscribeViewportChange,
+			observeRootResize: fake.observeRootResize,
 			readRect: fake.readRect,
 		});
 		const target = { id: "shared-target" } as unknown as Element;
@@ -1040,6 +1084,60 @@ describe("共享 IntersectionObserver（加载范围 vs 真实可视区）", () 
 		expect(observer.stats().targets).toBe(1);
 		fake.emitIntersection(target, true);
 		expect(firstStates.at(-1)).toEqual({ inLoadRange: true, inViewport: true });
+	});
+
+	it("root 自身尺寸变化（不伴随 window resize）也会重算可见性（阶段 3 接线要求）", () => {
+		const fake = setup();
+		const resize = { run: null as (() => void) | null };
+		const observer = createHistoryImageObserver({
+			root: fake.root,
+			createObserver: fake.createObserver,
+			subscribeViewportChange: fake.subscribeViewportChange,
+			observeRootResize: (cb) => {
+				resize.run = cb;
+				return () => {
+					resize.run = null;
+				};
+			},
+			readRect: fake.readRect,
+		});
+		const target = { id: "resize" } as unknown as Element;
+		fake.rects.set(target, { top: 900, bottom: 1000 });
+		const states: HistoryImageVisibility[] = [];
+		observer.observe(target, (state) => states.push(state));
+		fake.emitIntersection(target, true);
+		expect(states.at(-1)).toEqual({ inLoadRange: true, inViewport: false });
+		// root 变矮/目标被顶进可视区，但没有任何 scroll/resize 事件
+		fake.rects.set(fake.root, { top: 0, bottom: 1200 });
+		fake.rects.set(target, { top: 1000, bottom: 1100 });
+		resize.run?.();
+		expect(states.at(-1)).toEqual({ inLoadRange: true, inViewport: true });
+		observer.disconnect();
+		expect(observer.stats()).toMatchObject({ rootResizeSubscriptions: 0 });
+	});
+
+	it("视口重算只扫「加载范围内」的元素（滚动不做全历史扫描）", () => {
+		const fake = setup();
+		const observer = createHistoryImageObserver({
+			root: fake.root,
+			createObserver: fake.createObserver,
+			subscribeViewportChange: fake.subscribeViewportChange,
+			observeRootResize: fake.observeRootResize,
+			readRect: fake.readRect,
+		});
+		const far = { id: "far" } as unknown as Element;
+		fake.rects.set(far, { top: 200, bottom: 300 });
+		let farCallbacks = 0;
+		observer.observe(far, () => {
+			farCallbacks += 1;
+		});
+		// 从未进入加载范围 → inRange 不包含它
+		expect(observer.stats().inRange).toBe(0);
+		const before = farCallbacks;
+		// 几何变化 + 滚动触发：它不该被扫描到（仍在范围外，IO 没报过命中）
+		fake.rects.set(far, { top: 400, bottom: 500 });
+		fake.triggerViewport();
+		expect(farCallbacks).toBe(before);
 	});
 
 	it("同一 root 复用同一个实例", () => {

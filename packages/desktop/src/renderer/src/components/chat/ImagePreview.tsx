@@ -59,6 +59,7 @@ export function ImagePreviewOverlay({
 	return createPortal(
 		<button
 			type="button"
+			data-image-preview="open"
 			className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 p-8"
 			onClick={onClose}
 		>

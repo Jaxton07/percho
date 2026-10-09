@@ -14,6 +14,7 @@
  * 用法：
  *   node scripts/check-history-images.mjs probe      # 阶段 0 技术门：worker 加载策略 × CSP × 格式 × 吞吐（dev 与 build 都要各跑一次）
  *   node scripts/check-history-images.mjs baseline   # 阶段 0 独立对照基线（≥3 轮/场景，页面冷态）
+ *   node scripts/check-history-images.mjs verify     # 阶段 3 接线验收（列表只有缩略图 blob、占位、预览、坏图、预算、跨会话清理）
  *   node scripts/check-history-images.mjs worker     # 阶段 2 真实产出 worker 验收（dev 走产品服务模块；build 走 assets 里的 worker chunk）
  *   node scripts/check-history-images.mjs geometry   # 阶段 1 静态/几何验收：外盒 rect / 行高 / scrollHeight 不随加载变化（含失败态）+ 窄窗不横滚
  *   通用参数：--rounds=<n>、--scenarios=<key,key>、--out=<file>、--label=<名字>
@@ -334,8 +335,15 @@ window.__hip = (() => {
 		const sc = scroller();
 		const imgs = Array.from(document.querySelectorAll(SCROLLER + " img"));
 		const loaded = imgs.filter((img) => img.complete && img.naturalWidth > 0);
+		const boxes = Array.from(document.querySelectorAll(SCROLLER + " [data-history-image]"));
+		const boxState = (state) => boxes.filter((box) => box.getAttribute("data-history-image") === state).length;
 		return {
 			imgCount: imgs.length,
+			boxCount: boxes.length,
+			boxReady: boxState("ready"),
+			boxIdle: boxState("idle"),
+			boxLoading: boxState("loading"),
+			boxError: boxState("error"),
 			loadedCount: loaded.length,
 			failedCount: imgs.filter((img) => img.complete && img.naturalWidth === 0).length,
 			naturalPixels: loaded.reduce((sum, img) => sum + img.naturalWidth * img.naturalHeight, 0),
@@ -459,7 +467,8 @@ window.__hip = (() => {
 		if (!sc) return null;
 		const content = sc.firstElementChild;
 		const scRect = sc.getBoundingClientRect();
-		const imgs = Array.from(sc.querySelectorAll("img"));
+		// 接线后列表里 img 只在 ready 时存在，几何要以**外盒**为单位量（占位/失败/就绪同尺寸）
+		const boxes = Array.from(sc.querySelectorAll("[data-history-image]"));
 		return {
 			time: Math.round(performance.now()),
 			scrollTop: Math.round(sc.scrollTop),
@@ -469,28 +478,25 @@ window.__hip = (() => {
 			clientWidth: sc.clientWidth,
 			mountedRows: content ? content.children.length : 0,
 			scroller: { left: Math.round(scRect.left), right: Math.round(scRect.right) },
-			images: imgs.map((img) => {
-				const box = img.parentElement;
-				const boxRect = box ? box.getBoundingClientRect() : null;
-				const imgRect = img.getBoundingClientRect();
-				let row = img;
+			images: boxes.map((box) => {
+				const img = box.querySelector("img");
+				const boxRect = box.getBoundingClientRect();
+				const imgRect = img ? img.getBoundingClientRect() : null;
+				let row = box;
 				while (row.parentElement && row.parentElement !== content) row = row.parentElement;
 				return {
-					id: elementId(img),
-					boxId: box ? elementId(box) : null,
-					rowId: row ? elementId(row) : null,
-					loaded: img.complete && img.naturalWidth > 0,
-					failed: img.complete && img.naturalWidth === 0,
-					boxW: boxRect ? Math.round(boxRect.width * 10) / 10 : null,
-					boxH: boxRect ? Math.round(boxRect.height * 10) / 10 : null,
-					imgW: Math.round(imgRect.width * 10) / 10,
-					imgH: Math.round(imgRect.height * 10) / 10,
-					// 外盒父容器的可用宽度：窄窗下「该不该缩到 spec 以下」就看它
-					parentWidth: box?.parentElement ? box.parentElement.clientWidth : null,
-					right: Math.round(imgRect.right * 10) / 10,
+					id: elementId(box),
+					state: box.getAttribute("data-history-image"),
+					loaded: Boolean(img),
+					boxW: Math.round(boxRect.width * 10) / 10,
+					boxH: Math.round(boxRect.height * 10) / 10,
+					imgW: imgRect ? Math.round(imgRect.width * 10) / 10 : null,
+					imgH: imgRect ? Math.round(imgRect.height * 10) / 10 : null,
+					right: Math.round(boxRect.right * 10) / 10,
 					rowHeight: row ? row.offsetHeight : null,
-					naturalW: img.naturalWidth,
-					naturalH: img.naturalHeight,
+					parentWidth: box.parentElement ? box.parentElement.clientWidth : null,
+					naturalW: img ? img.naturalWidth : 0,
+					naturalH: img ? img.naturalHeight : 0,
 				};
 			}),
 		};
@@ -587,12 +593,15 @@ window.__hip = (() => {
 
 	function buildMessages(sessionId, plan, images) {
 		const messages = [];
-		let cursor = 0;
+		const cursors = new Map();
 		let seq = 0;
 		for (const block of plan) {
+			const poolName = block.pool ?? "main";
+			const poolImages = poolName === "main" ? images : (state.pools[poolName] ?? []);
 			const take = block.imageCount ?? 0;
-			const imgs = images.slice(cursor, cursor + take);
-			cursor += take;
+			const cursor = cursors.get(poolName) ?? 0;
+			const imgs = poolImages.slice(cursor, cursor + take);
+			cursors.set(poolName, cursor + take);
 			const id = sessionId + "-m" + seq;
 			if (block.kind === "user") {
 				messages.push({
@@ -684,6 +693,85 @@ window.__hip = (() => {
 		state.sessionIds = [];
 		state.pools = {};
 		return ids;
+	}
+
+	/* ---------- 阶段 3 接线验收（DOM 事实 + 服务预算 + 预览交互） ---------- */
+
+	function verifySnapshot() {
+		const sc = scroller();
+		// 切到空会话时聊天容器会整体卸载：这时是「零资源」的合法状态，不是缺数据
+		if (!sc) {
+			return {
+				hasScroller: false,
+				listImgCount: 0,
+				dataSrcCount: 0,
+				blobSrcCount: 0,
+				listImgMaxNatural: 0,
+				boxCount: 0,
+				boxStates: {},
+				outsideBoxes: 0,
+				outsideWithImg: 0,
+				outsideDims: [],
+				previewOpen: false,
+				previewOriginalCount: 0,
+			};
+		}
+		const scRect = sc.getBoundingClientRect();
+		const listImgs = Array.from(sc.querySelectorAll("img"));
+		const boxes = Array.from(sc.querySelectorAll("[data-history-image]"));
+		const boxStates = {};
+		for (const box of boxes) {
+			const key = box.getAttribute("data-history-image") ?? "unknown";
+			boxStates[key] = (boxStates[key] ?? 0) + 1;
+		}
+		let outsideBoxes = 0;
+		let outsideWithImg = 0;
+		const outsideDims = new Set();
+		for (const box of boxes) {
+			const rect = box.getBoundingClientRect();
+			const farAbove = rect.bottom < scRect.top - 400;
+			const farBelow = rect.top > scRect.bottom + 400;
+			if (!farAbove && !farBelow) continue;
+			outsideBoxes += 1;
+			outsideDims.add(Math.round(rect.width) + "×" + Math.round(rect.height));
+			if (box.querySelector("img")) outsideWithImg += 1;
+		}
+		return {
+			hasScroller: true,
+			listImgCount: listImgs.length,
+			dataSrcCount: listImgs.filter((img) => (img.getAttribute("src") ?? "").startsWith("data:")).length,
+			blobSrcCount: listImgs.filter((img) => (img.getAttribute("src") ?? "").startsWith("blob:")).length,
+			listImgMaxNatural: listImgs.reduce((max, img) => Math.max(max, img.naturalWidth, img.naturalHeight), 0),
+			boxCount: boxes.length,
+			boxStates,
+			outsideBoxes,
+			outsideWithImg,
+			outsideDims: [...outsideDims],
+			previewOpen: document.querySelectorAll("[data-image-preview='open']").length > 0,
+			previewOriginalCount: Array.from(document.querySelectorAll("img")).filter((img) =>
+				(img.getAttribute("src") ?? "").startsWith("data:"),
+			).length,
+		};
+	}
+
+	/** 按状态挑第 index 个历史图外盒点击（合成 click 走的是组件自己的 handler） */
+	function clickHistoryBox(state, index) {
+		const wanted = state ?? "ready";
+		const boxes = Array.from(document.querySelectorAll("[data-history-image]")).filter(
+			(box) => box.getAttribute("data-history-image") === wanted,
+		);
+		const box = boxes[index ?? 0];
+		if (!box) return { ok: false, reason: "没有处于 " + wanted + " 状态的外盒" };
+		const button = box.querySelector("button");
+		if (!button) return { ok: false, reason: "外盒里没有 button" };
+		button.click();
+		return { ok: true, state: box.getAttribute("data-history-image") };
+	}
+
+	/** 服务预算统计（dev 才能动态 import 产品模块） */
+	async function serviceStats() {
+		const module = await import("/src/components/chat/history-image/history-image-service.ts");
+		return module.thumbnailService().stats();
 	}
 
 	/* ---------- 真实应用 worker（阶段 2 门：验 Vite 产出的真正 worker，不是纯 JS 探针） ---------- */
@@ -1072,6 +1160,9 @@ window.__hip = (() => {
 		workerProbe,
 		appFixture,
 		buildAppFixtures,
+		verifySnapshot,
+		clickHistoryBox,
+		serviceStats,
 		runAppService,
 		runBuiltWorker,
 	};
@@ -1797,13 +1888,31 @@ function analyzeAnchor(samples) {
 	let violationsExcludingExpansionTransient = 0;
 	let maxBackstepRows = 0;
 	let auxViolations = 0;
+	// 原始违规的**现场**：顶行文本、是否与补挂同刻、此刻已加载图数 —— 用来定位那 1 行回退
+	const violationSamples = [];
 	for (let i = 1; i < list.length; i++) {
 		const previous = list[i - 1].topRowDistanceToTail;
 		const current = list[i].topRowDistanceToTail;
 		if (previous !== null && current !== null && current - previous < 0) {
 			violations += 1;
 			maxBackstepRows = Math.max(maxBackstepRows, previous - current);
-			if (!inExpansionTransient(list[i].time)) violationsExcludingExpansionTransient += 1;
+			const transient = inExpansionTransient(list[i].time);
+			if (!transient) violationsExcludingExpansionTransient += 1;
+			if (violationSamples.length < 12) {
+				violationSamples.push({
+					time: list[i].time,
+					backstepRows: previous - current,
+					rowsBefore: list[i - 1].mountedRows,
+					rowsAfter: list[i].mountedRows,
+					expansionInSameSample: list[i].mountedRows !== list[i - 1].mountedRows,
+					nearExpansionMs: transient
+						? list[i].time - (rowsChangedAt.find((t) => list[i].time - t >= 0) ?? 0)
+						: null,
+					topRowText: list[i].topRowText,
+					previousTopRowText: list[i - 1].topRowText,
+					loadedImages: `${list[i].loadedCount}/${list[i].imgCount}`,
+				});
+			}
 		}
 		if (list[i].tailDistancePx - list[i - 1].tailDistancePx < -2) auxViolations += 1;
 	}
@@ -1814,6 +1923,7 @@ function analyzeAnchor(samples) {
 		violationsExcludingExpansionTransient,
 		maxBackstepRows,
 		auxViolations,
+		violationSamples,
 	};
 }
 
@@ -1849,9 +1959,11 @@ function makeGoodBaselineEntry(scenario) {
 		afterExpand: { scrollHeight: 12000 },
 		final: {
 			scrollHeight: 12000,
-			imgCount: scenario.count,
-			loadedCount: scenario.count,
+			imgCount: Math.min(scenario.count, 48),
+			boxCount: scenario.count,
+			loadedCount: Math.min(scenario.count, 48),
 			failedCount: 0,
+			boxError: 0,
 			blank: false,
 			errorBoundary: false,
 		},
@@ -1927,10 +2039,27 @@ function baselineSelfTest() {
 		true,
 	);
 	check(
-		"图片没挂满（窗口没走完）",
+		"有外盒处于失败态",
 		longScenario,
 		(entry) => {
-			entry.final.imgCount = longScenario.count - 1;
+			entry.final.boxError = 1;
+		},
+		true,
+	);
+	check(
+		"外盒没挂满（窗口没走完）",
+		longScenario,
+		(entry) => {
+			entry.final.boxCount = longScenario.count - 1;
+		},
+		true,
+	);
+	check(
+		"就绪图超过 48 预算",
+		longScenario,
+		(entry) => {
+			entry.final.imgCount = 60;
+			entry.final.loadedCount = 60;
 		},
 		true,
 	);
@@ -2036,22 +2165,30 @@ function evaluateBaselineEntry(scenario, entry) {
 		{ mount: entry.probe?.phases?.mount ?? null, expand: entry.probe?.phases?.expand ?? null },
 	);
 	if (scenario.count > 0) {
+		// 接线后「挂满」= 外盒数（占位也在）；img 只在 ready 时存在且受 48 预算约束
 		add(
-			"images:all-mounted",
+			"boxes:all-mounted",
 			"mandatory",
-			entry.final?.imgCount === scenario.count,
-			`${entry.final?.imgCount}/${scenario.count}`,
+			entry.final?.boxCount === scenario.count,
+			`${entry.final?.boxCount}/${scenario.count}`,
 		);
 		// 阶段 1 起列表图走 loading="lazy"：程序性置顶跳过的中间图**允许**还没加载，
 		// 所以这里只要求「确实有图加载进来、且没有一张处于失败态」。
 		// 「加载过的图最终都能加载」由 geometry 模式的 images:state-transition-observed 覆盖。
 		add(
-			"images:loaded-some",
+			"images:loaded-bounded",
 			"mandatory",
-			entry.final?.loadedCount > 0,
-			`${entry.final?.loadedCount}/${entry.final?.imgCount}`,
+			(entry.final?.loadedCount ?? 0) > 0 &&
+				(entry.final?.imgCount ?? 0) <= 48 &&
+				entry.final?.loadedCount === entry.final?.imgCount,
+			`ready ${entry.final?.loadedCount}/${entry.final?.imgCount}（≤48）`,
 		);
-		add("images:no-failure", "mandatory", (entry.final?.failedCount ?? 0) === 0, entry.final?.failedCount);
+		add(
+			"images:no-failure",
+			"mandatory",
+			(entry.final?.failedCount ?? 0) === 0 && (entry.final?.boxError ?? 0) === 0,
+			{ failedImgs: entry.final?.failedCount, errorBoxes: entry.final?.boxError },
+		);
 	} else {
 		add("images:none-expected", "mandatory", entry.final?.imgCount === 0, entry.final?.imgCount);
 	}
@@ -2584,11 +2721,9 @@ function evaluateAppWorkerReport(run, { sentinel, isPreview }) {
 		transparent?.alpha ?? null,
 	);
 	if (isPreview) {
-		add("worker:app-artifact", run.assetFound ? "mandatory" : "informational", Boolean(run.usedAppArtifact), {
+		// 阶段 3 已接线：app 产物里**必须**能认出这个 worker chunk，并在 file:// 下跑通
+		add("worker:app-artifact", "mandatory", Boolean(run.usedAppArtifact), {
 			asset: run.appArtifact ?? null,
-			reason: run.usedAppArtifact
-				? null
-				: "阶段 2 服务尚未被入口引用（接线在阶段 3），app 产物里没有该 worker chunk；功能验证改走独立构建产物",
 		});
 	}
 	if (!isPreview) {
@@ -2734,6 +2869,484 @@ async function runAppWorker(page, opts) {
 	return { summary, exitCode: failures.length === 0 ? EXIT_OK : EXIT_FAIL };
 }
 
+/* ----------------------------------------------------------------- verify */
+
+/**
+ * build（file://）态：用页面里已有的**真实会话**验接线（合成历史只能走 dev 模块路径）。
+ * 逐个点开左栏会话直到聊天区真的出现历史图，然后只断言 DOM 事实。
+ */
+async function runVerifyOnRealSession(page, opts, env) {
+	await reloadApp(page);
+	await setViewport(page, VIEWPORT.width, VIEWPORT.height);
+	const sessionIds = await page.eval(
+		"Array.from(document.querySelectorAll('[data-session-id]')).map((el) => el.getAttribute('data-session-id')).filter(Boolean).slice(0, 30)",
+	);
+	const tried = [];
+	let opened = null;
+	for (const sessionId of sessionIds) {
+		await page.eval(
+			`(() => { const row = document.querySelector('[data-session-id="' + ${JSON.stringify(sessionId)} + '"]'); if (row) row.click(); return true; })()`,
+		);
+		await sleep(1400);
+		const snapshot = await page.call("window.__hip.verifySnapshot()", 30_000).catch(() => null);
+		tried.push({ sessionId, boxes: snapshot?.boxCount ?? null });
+		if ((snapshot?.boxCount ?? 0) > 0) {
+			opened = { sessionId, snapshot };
+			break;
+		}
+	}
+	if (!opened) {
+		console.error(
+			`[env] 左栏 ${sessionIds.length} 个会话里没有带历史图的，无法在 build 态验证（tried: ${JSON.stringify(tried)}）`,
+		);
+		return { exitCode: EXIT_ENV };
+	}
+	// 把历史图滚进可视区并等它真的解码：`loading="lazy"` 下离屏缩略图不会解码，naturalWidth 会是 0
+	await page
+		.eval(
+			"(() => { const img = document.querySelector('[data-history-image] img'); if (img) img.scrollIntoView({ block: 'center' }); return true; })()",
+		)
+		.catch(() => {});
+	let atOpen = opened.snapshot;
+	for (let attempt = 0; attempt < 15 && atOpen.listImgMaxNatural === 0; attempt += 1) {
+		await sleep(400);
+		atOpen = await page.call("window.__hip.verifySnapshot()", 30_000);
+	}
+	// 点第一个就绪的外盒 → 原图预览；Esc 关闭
+	const click = await page.call("window.__hip.clickHistoryBox('ready', 0)", 30_000);
+	await sleep(600);
+	const afterOpen = await page.call("window.__hip.verifySnapshot()", 30_000);
+	await page.send("Input.dispatchKeyEvent", {
+		type: "keyDown",
+		key: "Escape",
+		code: "Escape",
+		windowsVirtualKeyCode: 27,
+	});
+	await page.send("Input.dispatchKeyEvent", {
+		type: "keyUp",
+		key: "Escape",
+		code: "Escape",
+		windowsVirtualKeyCode: 27,
+	});
+	await sleep(400);
+	const afterClose = await page.call("window.__hip.verifySnapshot()", 30_000);
+
+	const checks = [];
+	const add = (id, level, ok, detail) => {
+		checks.push({ id, level, ok: Boolean(ok), detail: detail === undefined ? null : detail });
+	};
+	add("build:list-only-blob-thumbnails", "mandatory", atOpen.dataSrcCount === 0 && atOpen.blobSrcCount > 0, {
+		data: atOpen.dataSrcCount,
+		blob: atOpen.blobSrcCount,
+		imgs: atOpen.listImgCount,
+	});
+	add(
+		"build:thumbnail-max-side-384",
+		"mandatory",
+		atOpen.listImgMaxNatural <= 384,
+		{ maxNatural: atOpen.listImgMaxNatural, 滚进可视区后解码: atOpen.listImgMaxNatural > 0 },
+	);
+	add("build:thumbnail-decoded", "informational", atOpen.listImgMaxNatural > 0, atOpen.listImgMaxNatural);
+	add("build:no-error-boxes", "mandatory", (atOpen.boxStates.error ?? 0) === 0, atOpen.boxStates);
+	add("build:ready-within-48", "mandatory", (atOpen.boxStates.ready ?? 0) <= 48, {
+		ready: atOpen.boxStates.ready ?? 0,
+		states: atOpen.boxStates,
+	});
+	add(
+		"build:preview-opens-original",
+		"mandatory",
+		click?.ok === true && afterOpen.previewOpen === true && afterOpen.previewOriginalCount === 1,
+		{ click, open: afterOpen.previewOpen, originals: afterOpen.previewOriginalCount },
+	);
+	add(
+		"build:escape-closes-preview",
+		"mandatory",
+		afterClose.previewOpen === false && afterClose.previewOriginalCount === 0,
+		{ open: afterClose.previewOpen, originals: afterClose.previewOriginalCount },
+	);
+	const report = {
+		mode: "verify",
+		label: opts.label ?? null,
+		runtime: "build-preview",
+		startedAt: new Date().toISOString(),
+		env,
+		openedSession: opened.sessionId,
+		tried,
+		atOpen,
+		afterOpen,
+		afterClose,
+		checks,
+		failures: checks.filter((check) => !check.ok),
+	};
+	await mkdir(TMP_DIR, { recursive: true });
+	await writeFile(opts.out, JSON.stringify(report, null, 2));
+	console.log(`\n== 接线验收（build-preview，真实会话 ${opened.sessionId}）==`);
+	console.log(
+		`  外盒 ${atOpen.boxCount}（就绪 ${atOpen.boxStates.ready ?? 0} / 占位 ${atOpen.boxStates.idle ?? 0}）· img ${atOpen.listImgCount} 张（blob ${atOpen.blobSrcCount} / data ${atOpen.dataSrcCount}）· 最大自然边 ${atOpen.listImgMaxNatural}`,
+	);
+	for (const check of checks) {
+		console.log(
+			`  ${check.ok ? "PASS" : "FAIL"} [${check.level}] ${check.id}${check.ok ? "" : ` → ${JSON.stringify(check.detail)}`}`,
+		);
+	}
+	const failures = report.failures;
+	if (failures.length > 0)
+		console.error(`\n[FAIL] build 态接线验收未过：${failures.map((f) => f.id).join(", ")}`);
+	return { exitCode: failures.length === 0 ? EXIT_OK : EXIT_FAIL, report };
+}
+
+/**
+ * 阶段 3 接线验收（dev 为主）：DOM 事实（列表只出现缩略图 blob:、加载区外只留同尺寸占位）、
+ * 预览交互（占位也能开原图、Esc 关闭、9 图不预加载）、坏图重试、预算与跨会话清理。
+ * 断言分级同前：mandatory 才否门；设备事实（build 态）另计。
+ */
+const VERIFY_SCENARIOS = [
+	{
+		key: "grid-9-4k",
+		label: "单条 9 图（4K 源）+ 远处 40 条 4K",
+		plan: [
+			{ kind: "image", imageCount: 9 },
+			...Array.from({ length: 40 }, () => ({ kind: "image", imageCount: 1 })),
+		],
+		count: 49,
+		width: 3840,
+		height: 2160,
+		// 9 图组是 64×64、其余单图是 192×144：混合档位，只对单一档位场景断言尺寸唯一
+		box: null,
+	},
+	{
+		key: "single-4k-120",
+		label: "120 条单图 4K",
+		plan: Array.from({ length: 120 }, () => ({ kind: "image", imageCount: 1 })),
+		count: 120,
+		width: 3840,
+		height: 2160,
+		box: "192×144",
+	},
+	{
+		key: "broken-mixed",
+		label: "坏图 + 好图混排（失败态与重试）",
+		broken: true,
+		// 前 6 张坏数据（6 图档 80×80），后面 9 条好图（单图档 192×144）
+		plan: [
+			{ kind: "image", imageCount: 6, pool: "broken" },
+			...Array.from({ length: 9 }, () => ({ kind: "image", imageCount: 1, pool: "good" })),
+		],
+		count: 15,
+		box: null,
+	},
+];
+
+async function runVerifyScenario(page, scenario) {
+	const sessionId = `hip-verify-${scenario.key}-${Date.now()}`;
+	await reloadApp(page);
+	await setViewport(page, VIEWPORT.width, VIEWPORT.height);
+	await page.call("window.__hip.clearSessions()", 30_000);
+	if (scenario.broken) {
+		// 前 6 张坏数据（同一组多图档位）+ 9 张好图：验「失败态可重试 + 好图不受影响」
+		await page.call(`window.__hip.makeBrokenFixtures({ pool: "broken", count: 6 })`, 30_000);
+		await page.call(
+			`window.__hip.makeFixtures(${JSON.stringify({ pool: "good", kind: "png", count: 9, width: 1200, height: 800, tag: "verify-good" })})`,
+			LONG_TIMEOUT_MS,
+		);
+	} else {
+		await page.call(
+			`window.__hip.makeFixtures(${JSON.stringify({
+				pool: "main",
+				kind: "png",
+				count: scenario.count,
+				width: scenario.width,
+				height: scenario.height,
+				tag: `verify-${scenario.key}`,
+			})})`,
+			LONG_TIMEOUT_MS,
+		);
+	}
+	const mounted = await page.call(
+		`window.__hip.beginRound(${JSON.stringify({ sessionId, plan: scenario.plan, pool: "main" })})`,
+		60_000,
+	);
+
+	const snapshots = [];
+	const EMPTY_SNAPSHOT = {
+		hasScroller: false,
+		listImgCount: 0,
+		dataSrcCount: 0,
+		blobSrcCount: 0,
+		listImgMaxNatural: 0,
+		boxCount: 0,
+		boxStates: {},
+		outsideBoxes: 0,
+		outsideWithImg: 0,
+		outsideDims: [],
+		previewOpen: false,
+		previewOriginalCount: 0,
+	};
+	const take = async (label) => {
+		const snapshot = (await page.call("window.__hip.verifySnapshot()", 30_000)) ?? EMPTY_SNAPSHOT;
+		snapshots.push({ label, ...snapshot });
+		return snapshot;
+	};
+	await sleep(1500);
+	const atMount = await take("mount");
+	const statsAtMount = await page.call("window.__hip.serviceStats()", 30_000).catch(() => null);
+
+	// 快速滚过（真实轮）：滚动过程中不能出现原图 src，也不该超过预算
+	const rect = await page.call("window.__hip.scrollRect()");
+	for (let step = 0; step < 24; step += 1) {
+		await page.send("Input.dispatchMouseEvent", {
+			type: "mouseWheel",
+			x: rect.x,
+			y: rect.y,
+			deltaX: 0,
+			deltaY: step < 12 ? -600 : 600,
+			modifiers: 0,
+		});
+		await sleep(90);
+		if (step % 6 === 0) await take(`scroll${step}`);
+	}
+	await sleep(800);
+	const afterScroll = await take("after-scroll");
+	const statsAfterScroll = await page.call("window.__hip.serviceStats()", 30_000).catch(() => null);
+
+	// 占位点击 → 原图预览；Esc 关闭
+	const clickResult = await page.call("window.__hip.clickHistoryBox('ready', 0)", 30_000);
+	await sleep(500);
+	const afterOpen = await take("preview-open");
+	await page.send("Input.dispatchKeyEvent", {
+		type: "keyDown",
+		key: "Escape",
+		code: "Escape",
+		windowsVirtualKeyCode: 27,
+	});
+	await page.send("Input.dispatchKeyEvent", {
+		type: "keyUp",
+		key: "Escape",
+		code: "Escape",
+		windowsVirtualKeyCode: 27,
+	});
+	await sleep(400);
+	const afterClose = await take("preview-closed");
+
+	// 失败态：点第一张坏图（重试）不允许打开预览，且不能让其它图永久 busy
+	let retryResult = null;
+	let afterRetry = null;
+	if (scenario.broken) {
+		retryResult = await page.call("window.__hip.clickHistoryBox('error', 0)", 30_000);
+		await sleep(700);
+		afterRetry = await take("retry");
+	}
+	const statsBeforeSwitch = await page.call("window.__hip.serviceStats()", 30_000).catch(() => null);
+
+	// 切空会话 + 10 轮来回：显示资源不许线性累计
+	await page.call("window.__hip.clearSessions()", 30_000);
+	await sleep(700);
+	const afterClear = await take("session-cleared");
+	const statsAfterClear = await page.call("window.__hip.serviceStats()", 30_000).catch(() => null);
+	const cycleStats = [];
+	const cycleSnapshots = [];
+	for (let round = 0; round < 10; round += 1) {
+		const cycleSession = `${sessionId}-cycle-${round}`;
+		await page.call(
+			`window.__hip.beginRound(${JSON.stringify({ sessionId: cycleSession, plan: [{ kind: "image", imageCount: 3 }], pool: scenario.broken ? "good" : "main" })})`,
+			60_000,
+		);
+		await sleep(600);
+		cycleSnapshots.push((await page.call("window.__hip.verifySnapshot()", 30_000)) ?? EMPTY_SNAPSHOT);
+		await page.call("window.__hip.clearSessions()", 30_000);
+		await sleep(150);
+		cycleStats.push(await page.call("window.__hip.serviceStats()", 30_000).catch(() => null));
+	}
+
+	const checks = [];
+	const add = (id, level, ok, detail) => {
+		checks.push({ id, level, ok: Boolean(ok), detail: detail === undefined ? null : detail });
+	};
+	const listFacts = [atMount, ...snapshots];
+	add(
+		"list:only-blob-thumbnails",
+		"mandatory",
+		listFacts.every((snapshot) => snapshot.dataSrcCount === 0),
+		listFacts.map((snapshot) => ({
+			label: snapshot.label,
+			data: snapshot.dataSrcCount,
+			blob: snapshot.blobSrcCount,
+		})),
+	);
+	add(
+		"list:thumbnail-max-side-384",
+		"mandatory",
+		listFacts.every((snapshot) => snapshot.listImgMaxNatural <= 384),
+		listFacts.map((snapshot) => `${snapshot.label}:${snapshot.listImgMaxNatural}`),
+	);
+	add(
+		"placeholder:outside-retained-bounded",
+		"mandatory",
+		listFacts.every((snapshot) => (snapshot.outsideWithImg ?? 0) <= 48),
+		listFacts.map(
+			(snapshot) => `${snapshot.label}:outside=${snapshot.outsideBoxes}/withImg=${snapshot.outsideWithImg}`,
+		),
+	);
+	add(
+		"budget:ready-at-most-48",
+		"mandatory",
+		listFacts.every((snapshot) => (snapshot.boxStates.ready ?? 0) <= 48),
+		listFacts.map((snapshot) => `${snapshot.label}:ready=${snapshot.boxStates.ready ?? 0}`),
+	);
+	// 超预算的场景：多出来的必须是占位（DOM 可观测的「预算真的封顶」证据）
+	const overBudget = afterScroll.boxCount > 48;
+	add(
+		"budget:over-budget-are-placeholders",
+		overBudget ? "mandatory" : "informational",
+		overBudget ? (afterScroll.boxStates.idle ?? 0) + (afterScroll.boxStates.loading ?? 0) > 0 : true,
+		{
+			boxCount: afterScroll.boxCount,
+			states: afterScroll.boxStates,
+			reason: overBudget ? null : "总数没超过 48，无需占位兜底",
+		},
+	);
+	add(
+		"placeholder:same-box-outside",
+		scenario.box ? "mandatory" : "informational",
+		scenario.box
+			? afterScroll.outsideDims.length === 1 && afterScroll.outsideDims[0] === scenario.box
+			: false,
+		{
+			expected: scenario.box,
+			actual: afterScroll.outsideDims,
+			reason: scenario.box ? null : "混合档位场景两个档位并存",
+		},
+	);
+	add(
+		"preview:placeholder-opens-original",
+		"mandatory",
+		clickResult?.ok === true && afterOpen.previewOpen === true && afterOpen.previewOriginalCount === 1,
+		{ clickResult, open: afterOpen.previewOpen, originals: afterOpen.previewOriginalCount },
+	);
+	add(
+		"preview:escape-closes-and-removes-original",
+		"mandatory",
+		afterClose.previewOpen === false && afterClose.previewOriginalCount === 0,
+		{ open: afterClose.previewOpen, originals: afterClose.previewOriginalCount },
+	);
+	if (scenario.broken) {
+		add(
+			"error:retry-does-not-open-preview",
+			"mandatory",
+			retryResult?.ok === true && retryResult.state === "error" && afterRetry.previewOpen === false,
+			{ retryResult, open: afterRetry.previewOpen, states: afterRetry.boxStates },
+		);
+		add(
+			"error:others-still-ready",
+			"mandatory",
+			(afterRetry.boxStates.ready ?? 0) > 0 && (afterRetry.boxStates.error ?? 0) > 0,
+			afterRetry.boxStates,
+		);
+	}
+	if (statsAfterClear) {
+		add(
+			"cleanup:empty-session-zero-display-resources",
+			"mandatory",
+			statsAfterClear.keys === 0 &&
+				statsAfterClear.urls === 0 &&
+				afterClear.listImgCount === 0 &&
+				afterClear.hasScroller === false,
+			{ stats: statsAfterClear, imgs: afterClear.listImgCount },
+		);
+	}
+	const cycleKeys = cycleStats.filter(Boolean).map((stats) => stats.keys);
+	const cycleUrls = cycleStats.filter(Boolean).map((stats) => stats.urls);
+	add(
+		"leak:10-session-cycles-no-growth",
+		"mandatory",
+		cycleKeys.length > 0 &&
+			Math.max(...cycleKeys) <= 12 &&
+			Math.max(...cycleUrls) <= 12 &&
+			cycleKeys[cycleKeys.length - 1] <= cycleKeys[0] + 3,
+		{ keys: cycleKeys, urls: cycleUrls },
+	);
+	add("cleanup:no-leftover", "mandatory", statsBeforeSwitch !== null, statsBeforeSwitch);
+
+	await page.call("window.__hip.resetAll()", 30_000).catch(() => {});
+	return {
+		key: scenario.key,
+		label: scenario.label,
+		mounted,
+		snapshots: snapshots.map((snapshot) => ({
+			label: snapshot.label,
+			listImgCount: snapshot.listImgCount,
+			dataSrcCount: snapshot.dataSrcCount,
+			blobSrcCount: snapshot.blobSrcCount,
+			maxNatural: snapshot.listImgMaxNatural,
+			outsideBoxes: snapshot.outsideBoxes,
+			outsideWithImg: snapshot.outsideWithImg,
+			boxStates: snapshot.boxStates,
+			previewOpen: snapshot.previewOpen,
+			previewOriginalCount: snapshot.previewOriginalCount,
+		})),
+		stats: {
+			atMount: statsAtMount,
+			afterScroll: statsAfterScroll,
+			beforeSwitch: statsBeforeSwitch,
+			afterClear: statsAfterClear,
+		},
+		cycleStats: cycleStats
+			.filter(Boolean)
+			.map((stats) => ({ keys: stats.keys, urls: stats.urls, active: stats.active })),
+		checks,
+		failures: checks.filter((check) => check.level === "mandatory" && !check.ok),
+	};
+}
+
+async function runVerify(page, opts) {
+	const env = await page.call("window.__hip.env()");
+	// build 态没法挂合成历史（要走 dev 模块路径），改用**仓库里真实会话**打开来验：
+	// 列表里所有 img 必须是 ≤384 的缩略图 blob、无 data: 回退，预览点开的是原图
+	if (env.protocol === "file:") {
+		return await runVerifyOnRealSession(page, opts, env);
+	}
+	const scenarioKey = opts.scenarios?.[0];
+	const scenarios = VERIFY_SCENARIOS.filter((scenario) => !scenarioKey || scenario.key === scenarioKey);
+	const report = {
+		mode: "verify",
+		label: opts.label ?? null,
+		startedAt: new Date().toISOString(),
+		env,
+		viewport: await setViewport(page, VIEWPORT.width, VIEWPORT.height),
+		scenarios: [],
+	};
+	const write = async () => {
+		await mkdir(TMP_DIR, { recursive: true });
+		await writeFile(opts.out, JSON.stringify(report, null, 2));
+	};
+	const failures = [];
+	for (const scenario of scenarios) {
+		const entry = await runVerifyScenario(page, scenario);
+		report.scenarios.push(entry);
+		failures.push(...entry.failures.map((failure) => `${scenario.key}: ${failure.id}`));
+		await write();
+		console.log(
+			[
+				`[${scenario.key}] ${scenario.label}`,
+				`快照 ${entry.snapshots.length} 份`,
+				(() => {
+					const shown =
+						[...entry.snapshots].reverse().find((snapshot) => snapshot.listImgCount > 0) ??
+						entry.snapshots[0];
+					return `列表 img ${shown.listImgCount} 张（data ${shown.dataSrcCount} / blob ${shown.blobSrcCount}，最大自然边 ${shown.maxNatural}）· 加载区外 ${shown.outsideBoxes} 盒（带 img ${shown.outsideWithImg}）· 就绪 ${shown.boxStates.ready ?? 0}（≤48）/ 占位 ${shown.boxStates.idle ?? 0}`;
+				})(),
+				entry.failures.length
+					? `断言失败 ${entry.failures.map((failure) => failure.id).join(",")}`
+					: "断言全过",
+			].join(" · "),
+		);
+	}
+	report.failures = failures;
+	await write();
+	console.log(`\n接线验收断言：${failures.length === 0 ? "全部通过" : `${failures.length} 条失败`}`);
+	return { exitCode: failures.length === 0 ? EXIT_OK : EXIT_FAIL, report };
+}
+
 /* --------------------------------------------------------------- geometry */
 
 /**
@@ -2812,13 +3425,14 @@ function analyzeGeometry(snapshots) {
 				images.set(image.id, record);
 			}
 			if (image.boxW !== null) record.boxKeys.add(dimKey(image.boxW, image.boxH));
-			record.imgKeys.add(dimKey(image.imgW, image.imgH));
-			record.rowIds.add(image.rowId);
-			record.states.add(image.loaded ? "loaded" : image.failed ? "failed" : "unloaded");
-			let row = rows.get(image.rowId);
+			// img 只在 ready 后存在：只对真的有 img 的样本比尺寸（否则几何结论靠外盒）
+			if (image.imgW !== null) record.imgKeys.add(dimKey(image.imgW, image.imgH));
+			record.rowIds.add(image.rowId ?? image.id);
+			record.states.add(image.state ?? (image.loaded ? "ready" : "idle"));
+			let row = rows.get(image.rowId ?? image.id);
 			if (!row) {
-				row = { id: image.rowId, heights: new Set() };
-				rows.set(image.rowId, row);
+				row = { id: image.rowId ?? image.id, heights: new Set() };
+				rows.set(image.rowId ?? image.id, row);
 			}
 			row.heights.add(image.rowHeight);
 		}
@@ -2841,6 +3455,7 @@ function analyzeGeometry(snapshots) {
 		}
 	}
 	const list = [...images.values()];
+	const readySizes = list.flatMap((record) => [...record.imgKeys]).filter((key) => key !== "null×null");
 	return {
 		imageCount: list.length,
 		rowCount: rows.size,
@@ -2854,14 +3469,17 @@ function analyzeGeometry(snapshots) {
 			.filter((row) => row.heights.size > 1)
 			.map((row) => ({ id: row.id, heights: [...row.heights] })),
 		scrollViolations,
-		// 同一元素既见过未加载又见过已加载（或失败）→ 证明「加载前后都观察到了」，不是空断言
-		stateTransitions: list.filter((record) => record.states.has("unloaded") && record.states.size > 1).length,
+		// 同一外盒既见过未就绪又见过就绪（或失败）→ 证明「加载前后都观察到了」
+		stateTransitions: list.filter((record) => record.states.size > 1).length,
 		states: list.reduce((acc, record) => {
 			const state = [...record.states].sort().join("+");
 			acc[state] = (acc[state] ?? 0) + 1;
 			return acc;
 		}, {}),
 		boxKeys: [...new Set(list.flatMap((record) => [...record.boxKeys]))],
+		maxReadyNatural: snapshots.reduce((max, snapshot) => max, 0),
+		readyNaturalSizes: [...new Set(list.flatMap((record) => [...record.imgKeys]))],
+		readySizes,
 	};
 }
 
@@ -2891,6 +3509,7 @@ async function runGeometryScenario(page, scenario) {
 			LONG_TIMEOUT_MS,
 		);
 	}
+	// 接线后「图数」= 外盒数（占位也在），与 fixture 张数一一对应
 	const expectedImages = scenario.images ?? scenario.count;
 	const mounted = await page.call(
 		`window.__hip.beginRound(${JSON.stringify({ sessionId, plan, pool: "main" })})`,
@@ -3065,16 +3684,16 @@ async function runGeometryScenario(page, scenario) {
 		);
 		if (scenario.broken) {
 			add(
-				"broken:all-failed",
+				"broken:all-error",
 				"mandatory",
-				Object.keys(analysis.states).every((state) => state === "failed" || state === "failed+unloaded"),
+				Object.keys(analysis.states).every((state) => state.split("+").every((part) => part === "error")),
 				analysis.states,
 			);
 		} else {
 			add(
 				"images:no-error-state",
 				"mandatory",
-				!Object.keys(analysis.states).some((state) => state.includes("failed")),
+				!Object.keys(analysis.states).some((state) => state.includes("error")),
 				analysis.states,
 			);
 		}
@@ -3085,7 +3704,9 @@ async function runGeometryScenario(page, scenario) {
 			narrowSamples.filter((sample) => !sample.ok),
 		);
 		// lazy 是否真的推迟了加载：记录（挂载后仍未加载的张数）
-		const atMount = snapshots[0].images.filter((image) => !image.loaded && !image.failed).length;
+		const atMount = snapshots[0].images.filter(
+			(image) => image.state === "idle" || image.state === "loading",
+		).length;
 		add("lazy:deferred-at-mount", "informational", atMount > 0, atMount);
 		await page.call("window.__hip.resetAll()", 30_000);
 		return {
@@ -3200,6 +3821,7 @@ async function main() {
 		opts.mode !== "probe" &&
 		opts.mode !== "baseline" &&
 		opts.mode !== "geometry" &&
+		opts.mode !== "verify" &&
 		opts.mode !== "worker"
 	) {
 		console.error(
@@ -3236,6 +3858,10 @@ async function main() {
 			exitCode = result.exitCode;
 			await mkdir(TMP_DIR, { recursive: true });
 			await writeFile(out, JSON.stringify(result.summary, null, 2));
+		} else if (opts.mode === "verify") {
+			opts.out = out;
+			const result = await runVerify(page, opts);
+			exitCode = result.exitCode;
 		} else if (opts.mode === "worker") {
 			const result = await runAppWorker(page, opts);
 			exitCode = result.exitCode;

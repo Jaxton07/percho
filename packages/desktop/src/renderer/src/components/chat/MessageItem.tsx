@@ -5,8 +5,9 @@ import { UI_SLOTS } from "../../plugins/slots";
 import type { UIMessage } from "../../stores/transcript";
 import { AssistantMessage } from "./AssistantMessage";
 import { ErrorNote } from "./ErrorNote";
+import { HistoryImage } from "./history-image/HistoryImage";
 import { modeForImageCount } from "./history-image-layout";
-import { ImagePreviewOverlay, imageSrc } from "./ImagePreview";
+import { ImagePreviewOverlay } from "./ImagePreview";
 import { CopyButton, ForkButton } from "./message-actions";
 import { SubagentRunCard } from "./SubagentRunCard";
 import { SystemMessage } from "./SystemMessage";
@@ -46,22 +47,16 @@ export const MessageItem = memo(function MessageItem({
 			<div>
 				<div className="flex flex-wrap gap-2">
 					{message.images.map((image, index) => (
-						<button
+						<HistoryImage
 							// biome-ignore lint/suspicious/noArrayIndexKey: 图片列表不可变
 							key={index}
-							type="button"
-							className={`${mode.box} overflow-hidden rounded-xl border border-border`}
-							onClick={() => setPreviewIndex(index)}
-						>
-							<img
-								src={imageSrc(image)}
-								alt={t("message.image")}
-								className={mode.img}
-								/* 历史图片：滚动近处才加载、解码让出主线程；尺寸由外盒固定，加载不改变行高 */
-								loading="lazy"
-								decoding="async"
-							/>
-						</button>
+							image={image}
+							boxClass={mode.box}
+							imgClass={mode.img}
+							extraClass="rounded-xl border border-border"
+							alt={t("message.image")}
+							onOpen={() => setPreviewIndex(index)}
+						/>
 					))}
 				</div>
 				{previewIndex !== null && (
