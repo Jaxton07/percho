@@ -68,6 +68,8 @@ export function createHistoryImageObserver(options: HistoryImageObserverOptions)
 	const targets = new Map<Element, TargetRecord>();
 	/** 只在**加载范围内**的元素上做视口几何扫描（滚动时不做全历史扫描） */
 	const inRange = new Set<Element>();
+	/** 该实例当前是否已登记进活动集合（避免重复 add/delete） */
+	let registered = false;
 	let observer: IntersectionObserver | null = null;
 	let unsubscribeViewport: (() => void) | null = null;
 	let unsubscribeRootResize: (() => void) | null = null;
@@ -129,6 +131,19 @@ export function createHistoryImageObserver(options: HistoryImageObserverOptions)
 		}
 	}
 
+	function registerActive(): void {
+		if (registered) return;
+		registered = true;
+		createdObserversTotal += 1;
+		activeObservers.add(self);
+	}
+
+	function unregisterActive(): void {
+		if (!registered) return;
+		registered = false;
+		activeObservers.delete(self);
+	}
+
 	function ensureObserver(): IntersectionObserver {
 		if (observer) return observer;
 		observer = createObserver(
@@ -154,6 +169,8 @@ export function createHistoryImageObserver(options: HistoryImageObserverOptions)
 		);
 		if (!unsubscribeViewport) unsubscribeViewport = subscribeViewportChange(refreshViewport);
 		if (!unsubscribeRootResize) unsubscribeRootResize = subscribeRootResize(refreshViewport);
+		// 有目标要观察 = 活动期开始（退出历史时必须随 disconnect 一起注销）
+		registerActive();
 		return observer;
 	}
 
@@ -166,9 +183,10 @@ export function createHistoryImageObserver(options: HistoryImageObserverOptions)
 		unsubscribeRootResize = null;
 		targets.clear();
 		inRange.clear();
+		unregisterActive();
 	}
 
-	return {
+	const self: HistoryImageObserver = {
 		observe: (target: Element, onChange: (state: HistoryImageVisibility) => void) => {
 			let record = targets.get(target);
 			if (!record) {
@@ -203,15 +221,26 @@ export function createHistoryImageObserver(options: HistoryImageObserverOptions)
 			rootResizeSubscriptions: unsubscribeRootResize ? 1 : 0,
 		}),
 	};
+	return self;
 }
 
 const shared = new WeakMap<Element, HistoryImageObserver>();
-/** 活着的共享 observer（WeakMap 不可遍历）：只为诊断统计计数，不持有 DOM 引用以外的信息 */
-const liveObservers = new Set<HistoryImageObserver>();
 
-/** 诊断用聚合统计（DEV 诊断对象会读它；生产里没人调用） */
+/**
+ * **活动** observer 集合（诊断用）：只在「有观察目标」期间登记，最后一个目标退订或 disconnect 时立刻移除。
+ * 关键纪律：它**不能**永久持有已退出历史的 observer —— observer 的闭包持有 `options.root`，
+ * 一旦长期留在集合里就等于强持有那个已脱离 document 的滚动容器与整棵消息 DOM 子树
+ * （WeakMap 的「root 回收后自动清」会被旁路成无界列表）。所以登记/注销严格跟生命周期走，
+ * 并且生产代码里这个集合也是**空**的（没有活动 observer 时就是空集）。
+ */
+const activeObservers = new Set<HistoryImageObserver>();
+/** 累计创建数（只是计数，不持有任何对象引用；用于区分「当前活动」与「历史创建」） */
+let createdObserversTotal = 0;
+
+/** 诊断用聚合统计（DEV 诊断对象会读它；不改产品资源生命周期） */
 export function historyImageObserverDiagnostics(): {
-	observers: number;
+	activeObservers: number;
+	createdObserversTotal: number;
 	targets: number;
 	inRange: number;
 	viewportSubscriptions: number;
@@ -221,25 +250,31 @@ export function historyImageObserverDiagnostics(): {
 	let inRange = 0;
 	let viewportSubscriptions = 0;
 	let rootResizeSubscriptions = 0;
-	for (const observer of liveObservers) {
+	for (const observer of activeObservers) {
 		const stats = observer.stats();
 		targets += stats.targets;
 		inRange += stats.inRange;
 		viewportSubscriptions += stats.viewportSubscriptions;
 		rootResizeSubscriptions += stats.rootResizeSubscriptions;
 	}
-	return { observers: liveObservers.size, targets, inRange, viewportSubscriptions, rootResizeSubscriptions };
+	return {
+		activeObservers: activeObservers.size,
+		createdObserversTotal,
+		targets,
+		inRange,
+		viewportSubscriptions,
+		rootResizeSubscriptions,
+	};
 }
 
 /** 同一个滚动容器共享一个 observer（App 级）；root 换了（切会话重建列表）自然拿到新的 */
 export function historyImageObserver(
 	root: Element,
-	options: { createObserver?: HistoryImageObserverOptions["createObserver"] } = {},
+	options: Omit<HistoryImageObserverOptions, "root"> = {},
 ): HistoryImageObserver {
 	const existing = shared.get(root);
 	if (existing) return existing;
 	const created = createHistoryImageObserver({ root, ...options });
 	shared.set(root, created);
-	liveObservers.add(created);
 	return created;
 }

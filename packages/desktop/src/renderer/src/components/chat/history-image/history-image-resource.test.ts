@@ -11,6 +11,7 @@ import {
 	createHistoryImageObserver,
 	type HistoryImageVisibility,
 	historyImageObserver,
+	historyImageObserverDiagnostics,
 } from "./history-image-observer";
 import { createThumbnailService } from "./history-image-service";
 import { ActiveSlotRegistry, ThumbnailCache } from "./thumbnail-budget";
@@ -1149,6 +1150,79 @@ describe("共享 IntersectionObserver（加载范围 vs 真实可视区）", () 
 		fake.rects.set(far, { top: 400, bottom: 500 });
 		fake.triggerViewport();
 		expect(farCallbacks).toBe(before);
+	});
+
+	it("活动 observer 登记跟生命周期走：10 个不同 root 的 observe→stop 后回到基线（R3B-1）", () => {
+		const baseline = historyImageObserverDiagnostics();
+		const fake = setup();
+		const observers = [];
+		for (let index = 0; index < 10; index += 1) {
+			const root = { id: `root-${index}` } as unknown as Element;
+			fake.rects.set(root, { top: 0, bottom: 800 });
+			const observer = createHistoryImageObserver({
+				root,
+				createObserver: fake.createObserver,
+				subscribeViewportChange: fake.subscribeViewportChange,
+				observeRootResize: fake.observeRootResize,
+				readRect: fake.readRect,
+			});
+			const target = { id: `target-${index}` } as unknown as Element;
+			observers.push({ observer, stop: observer.observe(target, () => {}) });
+		}
+		expect(historyImageObserverDiagnostics().activeObservers).toBe(baseline.activeObservers + 10);
+		for (const entry of observers) entry.stop();
+		// 全部退订后必须回到基线：不能只剩「历史创建」还挂在集合里
+		const after = historyImageObserverDiagnostics();
+		expect(after.activeObservers).toBe(baseline.activeObservers);
+		expect(after.targets).toBe(baseline.targets);
+		expect(after.inRange).toBe(baseline.inRange);
+		expect(after.viewportSubscriptions).toBe(baseline.viewportSubscriptions);
+		expect(after.rootResizeSubscriptions).toBe(baseline.rootResizeSubscriptions);
+		expect(after.createdObserversTotal).toBeGreaterThanOrEqual(baseline.createdObserversTotal + 10);
+	});
+
+	it("同一 root stop→再 observe 会重新登记，且只算 1 个活动 observer（R3B-1）", () => {
+		const root = { id: "re-register" } as unknown as Element;
+		const fake = setup();
+		fake.rects.set(root, { top: 0, bottom: 800 });
+		const observer = historyImageObserver(root, {
+			createObserver: fake.createObserver,
+			subscribeViewportChange: fake.subscribeViewportChange,
+			observeRootResize: fake.observeRootResize,
+			readRect: fake.readRect,
+		});
+		const target = { id: "re-register-target" } as unknown as Element;
+		const before = historyImageObserverDiagnostics().activeObservers;
+		const stop = observer.observe(target, () => {});
+		expect(historyImageObserverDiagnostics().activeObservers).toBe(before + 1);
+		stop();
+		expect(historyImageObserverDiagnostics().activeObservers).toBe(before);
+		const stopAgain = observer.observe(target, () => {});
+		expect(historyImageObserverDiagnostics().activeObservers).toBe(before + 1);
+		stopAgain();
+		expect(historyImageObserverDiagnostics().activeObservers).toBe(before);
+	});
+
+	it("两个订阅者只取消一人时，活动 observer 不能被误删（R3B-1）", () => {
+		const root = { id: "two-subscribers" } as unknown as Element;
+		const fake = setup();
+		fake.rects.set(root, { top: 0, bottom: 800 });
+		const observer = historyImageObserver(root, {
+			createObserver: fake.createObserver,
+			subscribeViewportChange: fake.subscribeViewportChange,
+			observeRootResize: fake.observeRootResize,
+			readRect: fake.readRect,
+		});
+		const target = { id: "two-subscribers-target" } as unknown as Element;
+		const before = historyImageObserverDiagnostics().activeObservers;
+		const stopFirst = observer.observe(target, () => {});
+		const stopSecond = observer.observe(target, () => {});
+		expect(historyImageObserverDiagnostics().activeObservers).toBe(before + 1);
+		stopFirst();
+		expect(historyImageObserverDiagnostics().activeObservers).toBe(before + 1);
+		expect(observer.stats().targets).toBe(1);
+		stopSecond();
+		expect(historyImageObserverDiagnostics().activeObservers).toBe(before);
 	});
 
 	it("同一 root 复用同一个实例", () => {

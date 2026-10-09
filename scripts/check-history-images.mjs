@@ -828,7 +828,8 @@ window.__hip = (() => {
 				inFlight: false,
 			}),
 			observers: () => ({
-				observers: 0,
+				activeObservers: 0,
+				createdObserversTotal: 0,
 				targets: 0,
 				inRange: 0,
 				viewportSubscriptions: 0,
@@ -846,7 +847,7 @@ window.__hip = (() => {
 		const realObservers = registry.observers();
 		globalThis.__perchoHistoryImageDiagnostics = {
 			service: () => ({ ...realService, keys: 5, urls: 5, outstandingRequests: 2 }),
-			observers: () => ({ ...realObservers, targets: 3 }),
+			observers: () => ({ ...realObservers, activeObservers: 3, targets: 3 }),
 		};
 		return true;
 	}
@@ -3002,6 +3003,120 @@ async function runAppWorker(page, opts) {
 /* ----------------------------------------------------------------- verify */
 
 /**
+/** 收敛样本上的「加载区外只剩同尺寸占位」门（抽成纯函数，便于离线自检） */
+function rangeGate(snapshot) {
+	return (
+		snapshot?.settled === true &&
+		snapshot.outsideBoxes > 0 &&
+		snapshot.outsideWithImg === 0 &&
+		(snapshot.outsideStates?.idle ?? 0) === snapshot.outsideBoxes
+	);
+}
+
+/** 统计必须能对照 DOM：DOM 有就绪图时统计不许全 0（零 = 指向了别的实例） */
+function statsSanityGate(domReady, service) {
+	return (
+		service !== null &&
+		(domReady === 0 ||
+			(service.urls > 0 && service.active > 0 && (service.workerCreated > 0 || service.cacheEntries > 0)))
+	);
+}
+
+/** 切空会话后：显示资源 + 服务资源 + observer 登记都必须归零 */
+function cleanupGate(snapshot, service, observers) {
+	return (
+		snapshot?.listImgCount === 0 &&
+		snapshot?.boxCount === 0 &&
+		service?.keys === 0 &&
+		service?.urls === 0 &&
+		service?.outstandingRequests === 0 &&
+		observers?.targets === 0 &&
+		observers?.activeObservers === 0
+	);
+}
+
+/**
+ * 门自检（离线）：用**修复前的实测数字**与几种故障输入喂上面三个门，确认它们真的会红。
+ * 修复前的证据：阶段 3 首版 verify 报告里 single-4k-120 的 `outsideBoxes 41 / outsideWithImg 33`
+ * （那时绑定在创建时就 acquire，加载区外照样在解析缩略图）。
+ */
+function verifyGateSelfTest() {
+	const cases = [];
+	const check = (name, expectFail, passed) => {
+		const failed = !passed;
+		cases.push({ name, expectFail, ok: failed === expectFail });
+	};
+	check(
+		"范围门拦住修复前的数字（41 盒里 33 个带 img）",
+		true,
+		rangeGate({ settled: true, outsideBoxes: 41, outsideWithImg: 33, outsideStates: { ready: 33, idle: 8 } }),
+	);
+	check(
+		"范围门拦住未收敛样本",
+		true,
+		rangeGate({ settled: false, outsideBoxes: 63, outsideWithImg: 0, outsideStates: { idle: 63 } }),
+	);
+	check(
+		"范围门拦住「有 img 但没有 idle 占位」",
+		true,
+		rangeGate({ settled: true, outsideBoxes: 5, outsideWithImg: 5, outsideStates: { ready: 5 } }),
+	);
+	check(
+		"范围门放行正确数字",
+		false,
+		rangeGate({ settled: true, outsideBoxes: 63, outsideWithImg: 0, outsideStates: { idle: 63 } }),
+	);
+	check(
+		"统计门拦住全 0",
+		true,
+		statsSanityGate(7, { urls: 0, active: 0, workerCreated: 0, cacheEntries: 0 }),
+	);
+	check("统计门拦住缺实例", true, statsSanityGate(7, null));
+	check(
+		"统计门放行真实数字",
+		false,
+		statsSanityGate(7, { urls: 7, active: 7, workerCreated: 1, cacheEntries: 41 }),
+	);
+	check(
+		"清理门拦住遗留 URL",
+		true,
+		cleanupGate(
+			{ listImgCount: 0, boxCount: 0 },
+			{ keys: 0, urls: 5, outstandingRequests: 0 },
+			{ targets: 0, activeObservers: 0 },
+		),
+	);
+	check(
+		"清理门拦住遗留 observer 登记",
+		true,
+		cleanupGate(
+			{ listImgCount: 0, boxCount: 0 },
+			{ keys: 0, urls: 0, outstandingRequests: 0 },
+			{ targets: 3, activeObservers: 3 },
+		),
+	);
+	check(
+		"清理门拦住 DOM 残留",
+		true,
+		cleanupGate(
+			{ listImgCount: 2, boxCount: 2 },
+			{ keys: 0, urls: 0, outstandingRequests: 0 },
+			{ targets: 0, activeObservers: 0 },
+		),
+	);
+	check(
+		"清理门放行全零",
+		false,
+		cleanupGate(
+			{ listImgCount: 0, boxCount: 0 },
+			{ keys: 0, urls: 0, outstandingRequests: 0 },
+			{ targets: 0, activeObservers: 0 },
+		),
+	);
+	return cases;
+}
+
+/**
  * build（file://）态：用页面里已有的**真实会话**验接线（合成历史只能走 dev 模块路径）。
  * 逐个点开左栏会话直到聊天区真的出现历史图，然后只断言 DOM 事实。
  */
@@ -3226,6 +3341,7 @@ async function runVerifyScenario(page, scenario, opts) {
 	const atMount = await take("mount");
 
 	// 失败态交互：**趁坏图还在加载区**立刻做（滚走后它会按要求退回占位，就测不到失败态了）
+	const diagnosticsAfterReopen = null;
 	let errorClick = null;
 	let afterErrorClick = null;
 	let retryResult = null;
@@ -3380,6 +3496,7 @@ async function runVerifyScenario(page, scenario, opts) {
 		cycleStats.push(await page.call("window.__hip.diagnostics()", 30_000).catch(() => null));
 	}
 
+	const gateSelfTest = verifyGateSelfTest();
 	const checks = [];
 	const add = (id, level, ok, detail) => {
 		checks.push({ id, level, ok: Boolean(ok), detail: detail === undefined ? null : detail });
@@ -3402,19 +3519,17 @@ async function runVerifyScenario(page, scenario, opts) {
 		listFacts.map((snapshot) => `${snapshot.label}:${snapshot.listImgMaxNatural}`),
 	);
 	// 收敛后：加载区外必须只剩同尺寸占位（瞬态不判定，但等待有上限）
+	add("range:outside-are-idle-placeholders", "mandatory", rangeGate(afterScroll), {
+		settled: afterScroll.settled,
+		outsideBoxes: afterScroll.outsideBoxes,
+		outsideWithImg: afterScroll.outsideWithImg,
+		outsideStates: afterScroll.outsideStates,
+	});
 	add(
-		"range:outside-are-idle-placeholders",
+		"gate-selftest",
 		"mandatory",
-		afterScroll.settled === true &&
-			afterScroll.outsideBoxes > 0 &&
-			afterScroll.outsideWithImg === 0 &&
-			(afterScroll.outsideStates.idle ?? 0) === afterScroll.outsideBoxes,
-		{
-			settled: afterScroll.settled,
-			outsideBoxes: afterScroll.outsideBoxes,
-			outsideWithImg: afterScroll.outsideWithImg,
-			outsideStates: afterScroll.outsideStates,
-		},
+		gateSelfTest.every((item) => item.ok),
+		gateSelfTest.filter((item) => !item.ok),
 	);
 	add(
 		"range:outside-same-box",
@@ -3449,13 +3564,7 @@ async function runVerifyScenario(page, scenario, opts) {
 	);
 	const domReady = afterScroll.boxStates.ready ?? 0;
 	const sanityService = diagnosticsAfterScroll?.service ?? null;
-	const statsSanity =
-		sanityService !== null &&
-		(domReady === 0 ||
-			(sanityService.urls > 0 &&
-				sanityService.active > 0 &&
-				(sanityService.workerCreated > 0 || sanityService.cacheEntries > 0)));
-	add("stats:sanity-vs-dom", "mandatory", statsSanity, {
+	add("stats:sanity-vs-dom", "mandatory", statsSanityGate(domReady, sanityService), {
 		domReady,
 		service: sanityService,
 		reason: domReady === 0 ? "DOM 上没有就绪图" : "DOM 有就绪图时 urls/active/workerCreated 必须非零",
@@ -3560,12 +3669,9 @@ async function runVerifyScenario(page, scenario, opts) {
 	add(
 		"cleanup:empty-session-all-zero",
 		"mandatory",
-		(afterClear.listImgCount ?? -1) === 0 &&
-			(afterClear.boxCount ?? -1) === 0 &&
-			diagnosticsAfterClear?.service?.keys === 0 &&
-			diagnosticsAfterClear?.service?.urls === 0 &&
-			diagnosticsAfterClear?.service?.outstandingRequests === 0 &&
-			diagnosticsAfterClear?.observers?.targets === 0,
+		cleanupGate(afterClear, diagnosticsAfterClear?.service, diagnosticsAfterClear?.observers) &&
+			diagnosticsAfterClear?.observers?.viewportSubscriptions === 0 &&
+			diagnosticsAfterClear?.observers?.rootResizeSubscriptions === 0,
 		{
 			snapshot: { imgs: afterClear.listImgCount, boxes: afterClear.boxCount },
 			diagnostics: diagnosticsAfterClear,
@@ -3608,7 +3714,12 @@ async function runVerifyScenario(page, scenario, opts) {
 			previewOpen: snapshot.previewOpen,
 			previewOriginalCount: snapshot.previewOriginalCount,
 		})),
-		diagnostics: { afterScroll: diagnosticsAfterScroll, afterClear: diagnosticsAfterClear },
+		diagnostics: {
+			afterScroll: diagnosticsAfterScroll,
+			afterClear: diagnosticsAfterClear,
+			afterReopen: diagnosticsAfterReopen,
+		},
+		gateSelfTest,
 		preview: {
 			idleClick,
 			errorClick,
@@ -3670,8 +3781,12 @@ async function runVerify(page, opts) {
 		);
 	}
 	report.failures = failures;
+	report.gateSelfTest = report.scenarios.flatMap((entry) => entry.gateSelfTest ?? []);
+	const selfTestTotal = report.gateSelfTest.length;
+	const selfTestPassed = report.gateSelfTest.filter((item) => item.ok).length;
 	await write();
 	console.log(`\n接线验收断言：${failures.length === 0 ? "全部通过" : `${failures.length} 条失败`}`);
+	console.log(`门自检（离线故障输入）：${selfTestPassed}/${selfTestTotal} 通过`);
 	return { exitCode: failures.length === 0 ? EXIT_OK : EXIT_FAIL, report };
 }
 
