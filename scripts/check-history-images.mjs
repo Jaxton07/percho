@@ -30,13 +30,25 @@
 import { copyFile, mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
+import { makeAnimatedGifBase64 } from "./fixtures/animated-gif.mjs";
 
 const ROOT = fileURLToPath(new URL("..", import.meta.url));
 const TMP_DIR = join(ROOT, ".local/tmp/history-image-performance");
-const PROBE_WORKER_PATH = join(TMP_DIR, "probe.worker.js");
+/** 探针 worker 源码在库里（scripts/fixtures/），不依赖 .local（否则清目录/新 clone 后脚本就废了） */
+const PROBE_WORKER_PATH = join(ROOT, "scripts/fixtures/history-image-probe.worker.js");
 const OUT_RENDERER_DIR = join(ROOT, "packages/desktop/out/renderer");
 const PREVIEW_PROBE_NAME = "__hip-probe.worker.js";
-const GIF_FIXTURE_PATH = join(ROOT, "node_modules/electron-winstaller/resources/install-spinner.gif");
+/** 计划采用的加载方式：同源 worker 文件（Vite 打包产物也是同源 URL）。blob 两个策略只是备选探索项 */
+const MANDATORY_STRATEGIES = ["same-origin-classic", "same-origin-module"];
+const EXPECTED_FIXTURES = [
+	"png-2000",
+	"png-4k",
+	"jpeg-2000",
+	"webp-2000",
+	"png-transparent",
+	"jpeg-exif6",
+	"gif-animated",
+];
 
 const PAGE_PORT = process.env.CDP_PORT ?? "9224";
 const MAIN_PORT = process.env.CDP_MAIN_PORT ?? "9229";
@@ -232,7 +244,7 @@ window.__hip = (() => {
 		const sorted = [...values].sort((a, b) => a - b);
 		return sorted[Math.floor(sorted.length / 2)];
 	};
-	const state = { frames: [], long: [], marks: [], observer: null, raf: 0, pools: {}, sessionIds: [], rpcSeq: 0 };
+	const state = { frames: [], long: [], marks: [], anchor: null, observer: null, raf: 0, pools: {}, sessionIds: [], rpcSeq: 0 };
 
 	function env() {
 		return {
@@ -344,6 +356,74 @@ window.__hip = (() => {
 		return { x: Math.round(rect.left + rect.width / 2), y: Math.round(rect.top + rect.height / 2), rect };
 	}
 
+	/* ---------- 滚动锚点连续采样（scroll 事件 + rAF 合帧；只取一个时间点会漏掉跳回） ---------- */
+	function anchorSample() {
+		const sc = scroller();
+		if (!sc) return null;
+		const rows = sc.firstElementChild ? Array.from(sc.firstElementChild.children) : [];
+		const top = sc.getBoundingClientRect().top;
+		let index = -1;
+		for (let i = 0; i < rows.length; i++) {
+			if (rows[i].getBoundingClientRect().bottom > top + 1) {
+				index = i;
+				break;
+			}
+		}
+		const topmost = index >= 0 ? rows[index] : null;
+		const imgs = Array.from(sc.querySelectorAll("img"));
+		return {
+			time: Math.round(performance.now()),
+			scrollTop: Math.round(sc.scrollTop),
+			scrollHeight: sc.scrollHeight,
+			mountedRows: rows.length,
+			topRowIndex: index,
+			// 主判据：可见顶行「距尾部行数」。挂载窗口只增不减（只在顶部插入），
+			// 故 mountedRows - index 不随“又挂了更多行”而变，等价于全局行号距尾；上滚时必须单调不减。
+			topRowDistanceToTail: index >= 0 ? rows.length - index : null,
+			topRowText: topmost ? (topmost.innerText || "").replace(/\s+/g, " ").slice(0, 40) : null,
+			// 辅助判据（会受下方内容长高影响，不能单独用）
+			tailDistancePx: Math.round(sc.scrollHeight - sc.scrollTop),
+			imgCount: imgs.length,
+			loadedCount: imgs.filter((img) => img.complete && img.naturalWidth > 0).length,
+		};
+	}
+
+	function startAnchorRecorder() {
+		stopAnchorRecorder();
+		const sc = scroller();
+		if (!sc) return false;
+		state.anchor = { samples: [], raf: 0, sc };
+		const record = () => {
+			const sample = anchorSample();
+			if (sample) state.anchor.samples.push(sample);
+		};
+		state.anchor.record = record;
+		state.anchor.onScroll = () => {
+			if (state.anchor.raf) return;
+			state.anchor.raf = requestAnimationFrame(() => {
+				state.anchor.raf = 0;
+				record();
+			});
+		};
+		sc.addEventListener("scroll", state.anchor.onScroll, { passive: true });
+		record();
+		return true;
+	}
+
+	function anchorProgress() {
+		return anchorSample();
+	}
+
+	function stopAnchorRecorder() {
+		if (!state.anchor) return [];
+		const anchor = state.anchor;
+		if (anchor.sc && anchor.onScroll) anchor.sc.removeEventListener("scroll", anchor.onScroll);
+		if (anchor.raf) cancelAnimationFrame(anchor.raf);
+		const samples = anchor.samples.slice();
+		state.anchor = null;
+		return samples;
+	}
+
 	/* ---------- 合成历史（计时之外生成；每轮冷启动后重建） ---------- */
 	const bytesToB64 = (bytes) => {
 		let binary = "";
@@ -450,8 +530,11 @@ window.__hip = (() => {
 	}
 
 	/** 开始一轮：起采样 → 挂合成历史。图片编码必须在这之前完成（脚本里已如此安排） */
-	async function beginRound({ sessionId, plan, pool = "main" }) {
-		startProbe();
+	async function beginRound({ sessionId, plan, pool = "main", keepProbe = false, phaseLabel = "phase:mount:start" }) {
+		// keepProbe：切会话样本要在同一条采样时间轴上比对「加载 A / 加载 B / 反复切换」，
+		// 第二次 beginRound 不能再 startProbe（那会清掉前面的帧与打点）
+		if (!keepProbe) startProbe();
+		mark(phaseLabel);
 		const images = state.pools[pool] ?? [];
 		const messages = buildMessages(sessionId, plan, images);
 		const { useSessionsStore } = await import("/src/stores/sessions.ts");
@@ -721,6 +804,9 @@ window.__hip = (() => {
 		metrics,
 		imgSrcKinds,
 		scrollRect,
+		startAnchorRecorder,
+		anchorProgress,
+		stopAnchorRecorder,
 		makeFixtures,
 		beginRound,
 		scrollUpAll,
@@ -740,7 +826,9 @@ async function installHelpers(page) {
 }
 
 async function installGifFixture(page) {
-	const gif = await readFile(GIF_FIXTURE_PATH);
+	// 夹具是脚本内生成的（scripts/fixtures/animated-gif.mjs），不依赖任何依赖包里的图片；
+	// 它到底是不是动画，由探针的 ImageDecoder frameCount 断言自己证明。
+	const gif = Buffer.from(makeAnimatedGifBase64(), "base64");
 	await page.eval(`window.__hipGifBase64 = ${JSON.stringify(gif.toString("base64"))}; true`);
 	return gif.length;
 }
@@ -794,6 +882,7 @@ function startMemoryPoll(main, intervalMs = 250) {
 		}
 	})();
 	return {
+		intervalMs,
 		stop: async () => {
 			running = false;
 			await task;
@@ -808,6 +897,317 @@ function cspViolations(entries) {
 }
 
 /* ------------------------------------------------------------------ probe */
+
+/**
+ * 技术门断言：纯函数（报告 + console 条目 → 检查项），既用于正式判定，也被自检喂变异报告。
+ * mandatory 才会否门；informational 只记录——不采用的备选策略失败不该否掉整个门。
+ */
+function evaluateProbeReport(report, consoleEntries, { sentinel }) {
+	const checks = [];
+	const add = (id, level, ok, detail) => {
+		checks.push({ id, level, ok: Boolean(ok), detail: detail === undefined ? null : detail });
+	};
+	const byName = new Map((report.strategies ?? []).map((strategy) => [strategy.name, strategy]));
+
+	// 「0 违规」只有在**捕获本身可信**时才算证据：先看哨兵有没有抓到已知违规
+	add("csp:capture-live", "mandatory", sentinel?.detected === true, sentinel?.samples ?? []);
+	const violations = cspViolations(consoleEntries);
+	add(
+		"csp:no-violation",
+		"mandatory",
+		violations.length === 0,
+		violations.slice(0, 3).map((v) => v.text.slice(0, 160)),
+	);
+
+	for (const name of MANDATORY_STRATEGIES) {
+		const strategy = byName.get(name);
+		if (!strategy) {
+			add(`strategy:${name}:exists`, "mandatory", false, "报告里没有这个策略");
+			continue;
+		}
+		add(
+			`strategy:${name}:worker`,
+			"mandatory",
+			strategy.echo?.scope === "worker",
+			strategy.error ?? strategy.echo ?? "没有 echo",
+		);
+		const thumbnails = new Map((strategy.thumbnails ?? []).map((thumbnail) => [thumbnail.name, thumbnail]));
+		const missing = EXPECTED_FIXTURES.filter((fixture) => !thumbnails.has(fixture));
+		add(`strategy:${name}:fixtures`, "mandatory", missing.length === 0, missing);
+		const broken = [...thumbnails.values()].filter((thumbnail) => !thumbnail.ok);
+		add(
+			`strategy:${name}:thumbnails-ok`,
+			"mandatory",
+			broken.length === 0,
+			broken.map((thumbnail) => `${thumbnail.name}: ${thumbnail.error}`),
+		);
+		const oversized = [...thumbnails.values()].filter(
+			(thumbnail) => thumbnail.ok && Math.max(thumbnail.width, thumbnail.height) > 384,
+		);
+		add(
+			`strategy:${name}:max-side`,
+			"mandatory",
+			oversized.length === 0,
+			oversized.map((thumbnail) => `${thumbnail.name} ${thumbnail.width}×${thumbnail.height}`),
+		);
+		const badBlobs = [...thumbnails.values()].filter(
+			(thumbnail) => thumbnail.ok && (thumbnail.blobType !== "image/png" || !(thumbnail.blobBytes > 0)),
+		);
+		add(
+			`strategy:${name}:blob`,
+			"mandatory",
+			badBlobs.length === 0,
+			badBlobs.map((thumbnail) => `${thumbnail.name} ${thumbnail.blobType}/${thumbnail.blobBytes}`),
+		);
+		const transparent = thumbnails.get("png-transparent");
+		add(
+			`strategy:${name}:alpha`,
+			"mandatory",
+			transparent?.minAlpha < 255,
+			`minAlpha=${transparent?.minAlpha}`,
+		);
+		const lostAlpha = [...thumbnails.values()].filter(
+			(thumbnail) => thumbnail.ok && thumbnail.name !== "png-transparent" && thumbnail.minAlpha !== 255,
+		);
+		add(
+			`strategy:${name}:opaque-alpha`,
+			"mandatory",
+			lostAlpha.length === 0,
+			lostAlpha.map((thumbnail) => `${thumbnail.name} minAlpha=${thumbnail.minAlpha}`),
+		);
+		const exif = thumbnails.get("jpeg-exif6");
+		add(
+			`strategy:${name}:exif`,
+			"mandatory",
+			exif?.srcWidth === 1250 && exif?.srcHeight === 2000 && exif?.width < exif?.height,
+			`源 ${exif?.srcWidth}×${exif?.srcHeight} → ${exif?.width}×${exif?.height}`,
+		);
+		add(
+			`strategy:${name}:exif-default`,
+			"mandatory",
+			strategy.exifDefaultOrientation?.srcWidth === 1250 &&
+				strategy.exifDefaultOrientation?.srcHeight === 2000,
+			strategy.exifDefaultOrientation,
+		);
+		add(
+			`strategy:${name}:gif`,
+			"mandatory",
+			strategy.gif?.frameCount > 1 &&
+				strategy.gif?.bitmapWidth === strategy.gif?.firstFrameWidth &&
+				strategy.gif?.bitmapHeight === strategy.gif?.firstFrameHeight,
+			strategy.gif,
+		);
+		add(
+			`strategy:${name}:blob-url-img`,
+			"mandatory",
+			report.blobImgCheck?.loaded === true,
+			report.blobImgCheck,
+		);
+	}
+
+	for (const strategy of report.strategies ?? []) {
+		if (MANDATORY_STRATEGIES.includes(strategy.name)) continue;
+		add(
+			`strategy:${strategy.name}`,
+			"informational",
+			Boolean(strategy.echo) && (strategy.thumbnails ?? []).every((thumbnail) => thumbnail.ok),
+			strategy.echo ? null : (strategy.error ?? strategy.constructError),
+		);
+	}
+	if (report.strategies?.[0]?.resizeOption) {
+		add(
+			"resize-option",
+			"informational",
+			report.strategies[0].resizeOption.ok === true,
+			report.strategies[0].resizeOption,
+		);
+	}
+
+	return { checks, failures: checks.filter((check) => check.level === "mandatory" && !check.ok) };
+}
+
+/**
+ * 自检用的「全绿」报告样本：形状与 workerProbe 产物一致，字段取一份合法值。
+ * 自检要验的是「门能不能挡住失败」，所以基线必须本身全绿——不能拿真实报告当基线，
+ * 否则真实报告一旦有 mandatory 失败，「只备选失败不否门」这条就没法验了。
+ */
+function makeGoodProbeReport() {
+	const base = (name, url, type) => {
+		const thumbnails = EXPECTED_FIXTURES.map((fixture) => ({
+			name: fixture,
+			ok: true,
+			via: "canvas-draw",
+			srcWidth: 2000,
+			srcHeight: 1250,
+			width: 384,
+			height: 240,
+			blobBytes: 50_000,
+			blobType: "image/png",
+			minAlpha: 255,
+			ms: { total: 16, base64: 2, decode: 10, draw: 2, encode: 5 },
+		}));
+		const exif = thumbnails.find((fixture) => fixture.name === "jpeg-exif6");
+		Object.assign(exif, { srcWidth: 1250, srcHeight: 2000, width: 240, height: 384 });
+		thumbnails.find((fixture) => fixture.name === "png-transparent").minAlpha = 0;
+		return {
+			name,
+			url,
+			type,
+			echo: { scope: "worker", hasCreateImageBitmap: true, hasOffscreenCanvas: true },
+			thumbnails,
+			exifDefaultOrientation: { ok: true, srcWidth: 1250, srcHeight: 2000 },
+			gif: {
+				frameCount: 2,
+				animated: true,
+				bitmapWidth: 4,
+				bitmapHeight: 4,
+				firstFrameWidth: 4,
+				firstFrameHeight: 4,
+			},
+			resizeOption: { ok: true, via: "bitmap-resize-option" },
+		};
+	};
+	return {
+		strategies: [
+			base("same-origin-classic", "same-origin", "classic"),
+			base("same-origin-module", "same-origin", "module"),
+			base("blob-classic", "blob", "classic"),
+			base("blob-module", "blob", "module"),
+		],
+		blobImgCheck: { loaded: true, width: 384, height: 240 },
+		fixtureSummary: [],
+	};
+}
+
+/**
+ * 门自检：把「全绿样本」按已知失败模式变异，确认 evaluateProbeReport 真的会红灯。
+ * 断言写了不等于它会挡住失败——这一层保证门本身没瞎。
+ */
+function selfTestProbeGate() {
+	const cases = [];
+	const mutate = (fn) => {
+		const report = JSON.parse(JSON.stringify(makeGoodProbeReport()));
+		const entries = [];
+		fn(report, entries);
+		return evaluateProbeReport(report, entries, { sentinel: { detected: true } }).failures.map(
+			(failure) => failure.id,
+		);
+	};
+	const check = (name, expectFail, failures) => {
+		const caught = failures.length > 0;
+		cases.push({ name, expectFail, caught, ok: caught === expectFail, failures: failures.slice(0, 4) });
+	};
+	const mandatory = (report) =>
+		report.strategies.find((strategy) => strategy.name === MANDATORY_STRATEGIES[0]);
+	const thumbnail = (report, name) => mandatory(report).thumbnails.find((item) => item.name === name);
+
+	check(
+		"基线样本本身全绿（否则自检没意义）",
+		false,
+		mutate(() => {}),
+	);
+	check(
+		"主策略 worker 起不来",
+		true,
+		mutate((report) => {
+			mandatory(report).echo = null;
+			mandatory(report).error = "synthetic";
+		}),
+	);
+	check(
+		"某格式缩图失败",
+		true,
+		mutate((report) => {
+			thumbnail(report, "webp-2000").ok = false;
+		}),
+	);
+	check(
+		"缩图超 384",
+		true,
+		mutate((report) => {
+			thumbnail(report, "png-2000").width = 512;
+		}),
+	);
+	check(
+		"漏一个格式样本",
+		true,
+		mutate((report) => {
+			mandatory(report).thumbnails = mandatory(report).thumbnails.filter((item) => item.name !== "webp-2000");
+		}),
+	);
+	check(
+		"Blob URL img 未加载",
+		true,
+		mutate((report) => {
+			report.blobImgCheck.loaded = false;
+		}),
+	);
+	check(
+		"EXIF 未摆正",
+		true,
+		mutate((report) => {
+			const exif = thumbnail(report, "jpeg-exif6");
+			exif.srcWidth = 2000;
+			exif.srcHeight = 1250;
+		}),
+	);
+	check(
+		"透明 alpha 丢失",
+		true,
+		mutate((report) => {
+			thumbnail(report, "png-transparent").minAlpha = 255;
+		}),
+	);
+	check(
+		"GIF 退化成单帧",
+		true,
+		mutate((report) => {
+			mandatory(report).gif.frameCount = 1;
+		}),
+	);
+	check(
+		"注入一条 CSP 违规",
+		true,
+		mutate((_report, entries) => {
+			entries.push({
+				source: "log",
+				level: "error",
+				text: "Refused to load the image 'blob:x' because it violates the following Content Security Policy directive: \"img-src 'self' data: pi-bg:\".",
+			});
+		}),
+	);
+	check(
+		"仅备选(blob)策略失败不否门",
+		false,
+		mutate((report) => {
+			for (const strategy of report.strategies.filter((item) => !MANDATORY_STRATEGIES.includes(item.name))) {
+				strategy.echo = null;
+				strategy.error = "synthetic";
+			}
+		}),
+	);
+	check(
+		"CSP 哨兵失效（捕获不可信）",
+		true,
+		evaluateProbeReport(makeGoodProbeReport(), [], {
+			sentinel: { detected: false, samples: [] },
+		}).failures.map((failure) => failure.id),
+	);
+
+	return { cases, failed: cases.filter((item) => !item.ok) };
+}
+
+/**
+ * CSP 捕获自检哨兵：发一个已知会被 CSP 拦掉的跨源请求，确认 Log/Runtime 真能收到违规条目。
+ * 跑完清空事件，所以这条哨兵不计入正式探针的违规统计。
+ */
+async function runCspSentinel(page) {
+	page.clearEvents();
+	await page.eval(`(() => { fetch("https://csp-sentinel.invalid/probe").catch(() => {}); return true; })()`);
+	await sleep(700);
+	const hits = cspViolations(page.consoleEntries());
+	return { detected: hits.length > 0, samples: hits.slice(0, 3).map((hit) => hit.text.slice(0, 200)) };
+}
 
 async function runProbe(page, opts) {
 	// 每次探针都冷启动：CSP / worker 加载都是「页面文档级」事实，不能拿上一次导航的旧文档当证据
@@ -831,18 +1231,27 @@ async function runProbe(page, opts) {
 		{ name: "blob-module", type: "module" },
 	];
 
-	page.clearEvents();
-	const gifBytes = await installGifFixture(page);
 	const started = Date.now();
-	const report = await page.call(
-		`window.__hip.workerProbe(${JSON.stringify({ strategies, bench: true })})`,
-		LONG_TIMEOUT_MS,
-	);
-	const consoleEntries = page.consoleEntries();
-	const violations = cspViolations(consoleEntries);
-	if (isPreview) {
+	let sentinel = null;
+	let gifBytes = 0;
+	let report = null;
+	let consoleEntries = [];
+	let evaluation = { checks: [], failures: [] };
+	let selfTest = { cases: [], failed: [] };
+	try {
+		sentinel = await runCspSentinel(page);
+		page.clearEvents();
+		gifBytes = await installGifFixture(page);
+		report = await page.call(
+			`window.__hip.workerProbe(${JSON.stringify({ strategies, bench: true })})`,
+			LONG_TIMEOUT_MS,
+		);
+		consoleEntries = page.consoleEntries();
+		evaluation = evaluateProbeReport(report, consoleEntries, { sentinel });
+		selfTest = selfTestProbeGate();
+	} finally {
 		// 探针 worker 是临时拷进产物目录的，别让它有留在包里的机会
-		await rm(join(OUT_RENDERER_DIR, PREVIEW_PROBE_NAME), { force: true });
+		if (isPreview) await rm(join(OUT_RENDERER_DIR, PREVIEW_PROBE_NAME), { force: true });
 	}
 
 	const summary = {
@@ -855,8 +1264,12 @@ async function runProbe(page, opts) {
 		probeWorker: PROBE_WORKER_PATH,
 		sameOriginUrl,
 		gifFixtureBytes: gifBytes,
+		sentinel,
 		report,
-		cspViolations: violations,
+		checks: evaluation.checks,
+		failures: evaluation.failures,
+		selfTest,
+		cspViolations: cspViolations(consoleEntries),
 		consoleCount: consoleEntries.length,
 		consoleSample: consoleEntries.slice(0, 40),
 	};
@@ -865,7 +1278,7 @@ async function runProbe(page, opts) {
 	console.log(`URL：${env.href}`);
 	console.log(`UA：${env.userAgent}`);
 	for (const strategy of report.strategies) {
-		const okThumbs = (strategy.thumbnails ?? []).filter((t) => t.ok).length;
+		const okThumbs = (strategy.thumbnails ?? []).filter((thumbnail) => thumbnail.ok).length;
 		console.log(
 			[
 				`- ${strategy.name} [${strategy.type}/${strategy.url}]`,
@@ -881,7 +1294,11 @@ async function runProbe(page, opts) {
 	}
 	for (const thumbnail of report.strategies[0]?.thumbnails ?? []) {
 		console.log(
-			`    ${thumbnail.name}: ${thumbnail.ok ? `${thumbnail.srcWidth}×${thumbnail.srcHeight} → ${thumbnail.width}×${thumbnail.height} / ${thumbnail.blobBytes}B · ${Math.round(thumbnail.ms.total)}ms (${thumbnail.via})` : `失败 ${thumbnail.error}`}`,
+			`    ${thumbnail.name}: ${
+				thumbnail.ok
+					? `${thumbnail.srcWidth}×${thumbnail.srcHeight} → ${thumbnail.width}×${thumbnail.height} / ${thumbnail.blobBytes}B · minAlpha=${thumbnail.minAlpha} · ${Math.round(thumbnail.ms.total)}ms (${thumbnail.via})`
+					: `失败 ${thumbnail.error}`
+			}`,
 		);
 	}
 	if (report.strategies[0]?.resizeOption) {
@@ -890,16 +1307,34 @@ async function runProbe(page, opts) {
 	console.log(`EXIF 默认方向：${JSON.stringify(report.strategies[0]?.exifDefaultOrientation)}`);
 	console.log(`blob: URL img：${JSON.stringify(report.blobImgCheck)}`);
 	console.log(`GIF：${JSON.stringify(report.strategies[0]?.gif)}`);
-	console.log(`CSP 违规条目：${violations.length}`);
-	for (const violation of violations.slice(0, 6)) console.log(`    ${violation.text.slice(0, 200)}`);
+	console.log(`CSP 哨兵：${JSON.stringify(sentinel)}`);
+	console.log(`CSP 正式违规条目：${summary.cspViolations.length}`);
 
-	const anyWorkerOk = report.strategies.some((strategy) => strategy.echo);
+	console.log("\n门断言：");
+	for (const check of evaluation.checks) {
+		console.log(
+			`  ${check.ok ? "PASS" : "FAIL"} [${check.level}] ${check.id}${check.ok ? "" : ` → ${JSON.stringify(check.detail)}`}`,
+		);
+	}
+	console.log(
+		`自检（门能不能挡住失败）：${selfTest.cases.filter((item) => item.ok).length}/${selfTest.cases.length}`,
+	);
+	for (const item of selfTest.cases) {
+		console.log(
+			`  ${item.ok ? "PASS" : "FAIL"} ${item.name}（期望${item.expectFail ? "失败" : "通过"}）${item.ok ? "" : ` → ${JSON.stringify(item.failures)}`}`,
+		);
+	}
+
 	let exitCode = EXIT_OK;
-	if (!anyWorkerOk) {
-		console.error("\n[FAIL] 四种 worker 加载策略全部失败：技术门不通过，先回频道报卡点");
+	if (evaluation.failures.length > 0) {
+		console.error(`\n[FAIL] 技术门未过：${evaluation.failures.map((failure) => failure.id).join(", ")}`);
 		exitCode = EXIT_FAIL;
 	}
-	return { summary, exitCode, anyWorkerOk };
+	if (selfTest.failed.length > 0) {
+		console.error(`\n[FAIL] 门自检未过：${selfTest.failed.map((item) => item.name).join(", ")}`);
+		exitCode = EXIT_FAIL;
+	}
+	return { summary, exitCode };
 }
 
 /* --------------------------------------------------------------- baseline */
@@ -907,7 +1342,15 @@ async function runProbe(page, opts) {
 const BASELINE_SCENARIOS = [
 	{ key: "none", kind: "text", count: 0, width: 0, height: 0, blocks: 20, label: "无图对照（20 条文本）" },
 	{ key: "user-40-2000", kind: "user", count: 40, width: 2000, height: 1250, label: "用户附件 40×2000" },
-	{ key: "user-120-2000", kind: "user", count: 120, width: 2000, height: 1250, label: "用户附件 120×2000" },
+	{
+		key: "user-120-2000",
+		kind: "user",
+		count: 120,
+		width: 2000,
+		height: 1250,
+		expectsExpansion: true,
+		label: "用户附件 120×2000",
+	},
 	{ key: "show-40-2000", kind: "image", count: 40, width: 2000, height: 1250, label: "show_image 40×2000" },
 	{
 		key: "show-120-2000",
@@ -918,7 +1361,15 @@ const BASELINE_SCENARIOS = [
 		label: "show_image 120×2000",
 	},
 	{ key: "show-40-4k", kind: "image", count: 40, width: 3840, height: 2160, label: "show_image 40×4K" },
-	{ key: "show-120-4k", kind: "image", count: 120, width: 3840, height: 2160, label: "show_image 120×4K" },
+	{
+		key: "show-120-4k",
+		kind: "image",
+		count: 120,
+		width: 3840,
+		height: 2160,
+		expectsExpansion: true,
+		label: "show_image 120×4K",
+	},
 	{
 		key: "single-9img",
 		kind: "image",
@@ -964,11 +1415,22 @@ function planForScenario(scenario) {
 
 const VIEWPORT = { width: 1400, height: 860 };
 
-async function wheelUpProbe(page, steps = 12) {
+/**
+ * 真实滚轮 + 向上补挂：CSD 发真实 wheel 事件，一直滚到「至少发生 N 次新挂载」且接近顶部。
+ * 锚点采样在**页面里连续进行**（scroll 事件 + rAF 合帧），这里只负责发轮事件与收样本——
+ * 每步只在一个时刻取一个点会漏掉中途跳回，那正是要抓的东西。
+ */
+async function wheelExpandProbe(page, { requireGrowth = 0, maxSteps = 240, stepMs = 100 } = {}) {
 	const rect = await page.call("window.__hip.scrollRect()");
-	if (!rect) return { error: "no scroller" };
-	const samples = [];
-	for (let i = 0; i < steps; i++) {
+	if (!rect) return { error: "找不到 .chat-scrollbar" };
+	if (!(await page.call("window.__hip.startAnchorRecorder()"))) return { error: "锚点采样器起不来" };
+	const first = await page.call("window.__hip.anchorProgress()");
+	let growth = 0;
+	let previousRows = first?.mountedRows ?? 0;
+	let steps = 0;
+	let sinceGrowth = 0;
+	let last = first;
+	for (steps = 1; steps <= maxSteps; steps++) {
 		await page.send("Input.dispatchMouseEvent", {
 			type: "mouseWheel",
 			x: rect.x,
@@ -977,26 +1439,287 @@ async function wheelUpProbe(page, steps = 12) {
 			deltaY: -120,
 			modifiers: 0,
 		});
-		await sleep(120);
-		const sample = await page.call("window.__hip.metrics()");
-		samples.push({
-			step: i + 1,
-			tailDistancePx: sample.tailDistancePx,
-			scrollTop: sample.scrollTop,
-			scrollHeight: sample.scrollHeight,
-			mountedRows: sample.mountedRows,
+		await sleep(stepMs);
+		last = await page.call("window.__hip.anchorProgress()");
+		if ((last?.mountedRows ?? 0) > previousRows) {
+			growth += 1;
+			sinceGrowth = 0;
+		} else {
+			sinceGrowth += 1;
+		}
+		previousRows = last?.mountedRows ?? previousRows;
+		const atTop = (last?.scrollTop ?? 1) <= 2;
+		if (growth >= requireGrowth && (atTop || sinceGrowth > 40)) break;
+	}
+	const samples = await page.call("window.__hip.stopAnchorRecorder()");
+	const analysis = analyzeAnchor(samples);
+	const scrolledUpPx = (first?.scrollTop ?? 0) - (last?.scrollTop ?? 0);
+	return {
+		steps,
+		growth,
+		requireGrowth,
+		scrolledUpPx,
+		reachedTop: (last?.scrollTop ?? null) !== null && last.scrollTop <= 2,
+		loadedDuringWheel: last?.loadedCount ?? null,
+		samples,
+		...analysis,
+		metric: "topRowDistanceToTail（可见顶行距尾部行数，行粒度，主判据）",
+		auxMetric: "tailDistancePx = scrollHeight - scrollTop（辅助，会受下方内容长高影响）",
+	};
+}
+
+/** 锚点分析：上滚时「可见顶行距尾部行数」单调不减；另给一份排除补挂瞬时窗口的计数 */
+function analyzeAnchor(samples) {
+	const list = samples ?? [];
+	const rowsChangedAt = [];
+	for (let i = 1; i < list.length; i++) {
+		if (list[i].mountedRows !== list[i - 1].mountedRows) rowsChangedAt.push(list[i].time);
+	}
+	const inExpansionTransient = (time) =>
+		rowsChangedAt.some((changedAt) => time >= changedAt && time - changedAt <= 400);
+	let violations = 0;
+	let violationsExcludingExpansionTransient = 0;
+	let maxBackstepRows = 0;
+	let auxViolations = 0;
+	for (let i = 1; i < list.length; i++) {
+		const previous = list[i - 1].topRowDistanceToTail;
+		const current = list[i].topRowDistanceToTail;
+		if (previous !== null && current !== null && current - previous < 0) {
+			violations += 1;
+			maxBackstepRows = Math.max(maxBackstepRows, previous - current);
+			if (!inExpansionTransient(list[i].time)) violationsExcludingExpansionTransient += 1;
+		}
+		if (list[i].tailDistancePx - list[i - 1].tailDistancePx < -2) auxViolations += 1;
+	}
+	return {
+		sampleCount: list.length,
+		expansionCount: rowsChangedAt.length,
+		violations,
+		violationsExcludingExpansionTransient,
+		maxBackstepRows,
+		auxViolations,
+	};
+}
+
+/** 按打点把帧间隔/长任务切成阶段段（mount 与 wheel+expand 至少两段） */
+function segmentBetween(probe, fromLabel, toLabel) {
+	const marks = probe.marks ?? [];
+	const from = marks.find((mark) => mark.label === fromLabel);
+	const to = marks.find((mark) => mark.label === toLabel);
+	if (!from || !to) return { from: fromLabel, to: toLabel, missingMarks: true };
+	const frames = (probe.frames ?? []).filter((frame) => frame.time >= from.time && frame.time <= to.time);
+	const longTasks = (probe.longTasks ?? []).filter(
+		(task) => task.start >= from.time && task.start <= to.time,
+	);
+	return {
+		from: fromLabel,
+		to: toLabel,
+		frameCount: frames.length,
+		maxFrameGapMs: frames.length ? Math.round(Math.max(...frames.map((frame) => frame.gap)) * 10) / 10 : null,
+		maxLongTaskMs: longTasks.length ? Math.round(Math.max(...longTasks.map((task) => task.duration))) : 0,
+		longTaskCount: longTasks.length,
+	};
+}
+
+/** 自检用的「合法」基线轮记录（形状与 runBaseline 产物一致） */
+function makeGoodBaselineEntry(scenario) {
+	return {
+		afterMount: {
+			scrollHeight: 4000,
+			scrollTop: 4000,
+			imgCount: scenario.count,
+			loadedCount: scenario.count,
+		},
+		afterExpand: { scrollHeight: 12000 },
+		final: {
+			scrollHeight: 12000,
+			imgCount: scenario.count,
+			loadedCount: scenario.count,
+			blank: false,
+			errorBoundary: false,
+		},
+		peakRss: [{ pid: 1, type: "Tab", rssMb: 500 }],
+		probe: { maxFrameGapMs: 200, maxLongTaskMs: 220 },
+		wheel: {
+			steps: 130,
+			growth: 3,
+			sampleCount: 134,
+			scrolledUpPx: 4732,
+			violations: 0,
+			violationsExcludingExpansionTransient: 0,
+			maxBackstepRows: 0,
+			auxViolations: 3,
+		},
+	};
+}
+
+/**
+ * 基线有效性断言自检：把「合法轮记录」按已知失败模式变异，确认 evaluateBaselineEntry 会红灯。
+ * 顺带钉住一条纪律：锚点违规在**基线模式**是观测结果（informational），不能反过来否掉基线。
+ */
+function baselineSelfTest() {
+	const cases = [];
+	const check = (name, scenario, mutate, expectFail) => {
+		const entry = JSON.parse(JSON.stringify(makeGoodBaselineEntry(scenario)));
+		mutate(entry);
+		const failures = evaluateBaselineEntry(scenario, entry).failures.map((failure) => failure.id);
+		const caught = failures.length > 0;
+		cases.push({ name, expectFail, caught, ok: caught === expectFail, failures: failures.slice(0, 4) });
+	};
+	const longScenario = { key: "show-120-4k", count: 120, expectsExpansion: true };
+	const noneScenario = { key: "none", count: 0 };
+
+	check("合法轮记录不报错", longScenario, () => {}, false);
+	check(
+		"缺主进程工作集",
+		longScenario,
+		(entry) => {
+			entry.peakRss = [];
+		},
+		true,
+	);
+	check(
+		"白屏 / 错误边界",
+		longScenario,
+		(entry) => {
+			entry.final.blank = true;
+		},
+		true,
+	);
+	check(
+		"已挂图未全部加载",
+		longScenario,
+		(entry) => {
+			entry.final.loadedCount = longScenario.count - 1;
+		},
+		true,
+	);
+	check(
+		"图片没挂满（窗口没走完）",
+		longScenario,
+		(entry) => {
+			entry.final.imgCount = longScenario.count - 1;
+		},
+		true,
+	);
+	check(
+		"滚轮没有真位移",
+		longScenario,
+		(entry) => {
+			entry.wheel.scrolledUpPx = 0;
+		},
+		true,
+	);
+	check(
+		"滚轮没触发补挂（覆盖不足）",
+		longScenario,
+		(entry) => {
+			entry.wheel.growth = 1;
+		},
+		true,
+	);
+	check(
+		"锚点采样点太少",
+		longScenario,
+		(entry) => {
+			entry.wheel.sampleCount = 2;
+		},
+		true,
+	);
+	check(
+		"找不到滚动容器",
+		longScenario,
+		(entry) => {
+			entry.afterMount.scrollHeight = null;
+		},
+		true,
+	);
+	check(
+		"锚点违规是观测结果，不否基线",
+		longScenario,
+		(entry) => {
+			entry.wheel.violations = 5;
+			entry.wheel.violationsExcludingExpansionTransient = 2;
+			entry.wheel.maxBackstepRows = 3;
+		},
+		false,
+	);
+	check(
+		"无图场景混进图片",
+		noneScenario,
+		(entry) => {
+			entry.final.imgCount = 3;
+		},
+		true,
+	);
+
+	return { cases, failed: cases.filter((item) => !item.ok) };
+}
+
+/**
+ * 基线每轮的**有效性**断言（measurement validity）：这些不成立这轮数据就没意义。
+ * 注意：滚动锚点「违规数」是**观测结果**，不是有效性断言——基线可能真的存在回弹，
+ * 那正是要记录的；到阶段 3 的 verify 模式才把它变成硬门槛。
+ */
+function evaluateBaselineEntry(scenario, entry) {
+	const checks = [];
+	const add = (id, level, ok, detail) => {
+		checks.push({ id, level, ok: Boolean(ok), detail: detail === undefined ? null : detail });
+	};
+	add(
+		"scroller:present",
+		"mandatory",
+		entry.afterMount?.scrollHeight !== null,
+		entry.afterMount?.scrollHeight,
+	);
+	add("page:not-blank", "mandatory", entry.final?.blank === false && entry.final?.errorBoundary === false, {
+		blank: entry.final?.blank,
+		errorBoundary: entry.final?.errorBoundary,
+	});
+	add("main:metrics", "mandatory", (entry.peakRss ?? []).length > 0, (entry.peakRss ?? []).length);
+	if (scenario.count > 0) {
+		add(
+			"images:all-mounted",
+			"mandatory",
+			entry.final?.imgCount === scenario.count,
+			`${entry.final?.imgCount}/${scenario.count}`,
+		);
+		add(
+			"images:loaded",
+			"mandatory",
+			entry.final?.imgCount > 0 && entry.final?.loadedCount === entry.final?.imgCount,
+			`${entry.final?.loadedCount}/${entry.final?.imgCount}`,
+		);
+	} else {
+		add("images:none-expected", "mandatory", entry.final?.imgCount === 0, entry.final?.imgCount);
+	}
+	if (scenario.expectsExpansion) {
+		add("wheel:samples", "mandatory", (entry.wheel?.sampleCount ?? 0) >= 5, entry.wheel?.sampleCount);
+		add("wheel:expansion-covered", "mandatory", (entry.wheel?.growth ?? 0) >= 2, entry.wheel?.growth);
+		add(
+			"wheel:real-displacement",
+			"mandatory",
+			(entry.wheel?.scrolledUpPx ?? 0) > 0,
+			entry.wheel?.scrolledUpPx,
+		);
+		add(
+			"wheel:anchor-violations",
+			"informational",
+			entry.wheel?.violationsExcludingExpansionTransient === 0,
+			{
+				violations: entry.wheel?.violations,
+				excludingTransient: entry.wheel?.violationsExcludingExpansionTransient,
+				maxBackstepRows: entry.wheel?.maxBackstepRows,
+				auxViolations: entry.wheel?.auxViolations,
+			},
+		);
+	} else {
+		add("wheel:not-applicable", "informational", true, {
+			reason: "该样本不要求补挂（内容不溢出或初始窗口已覆盖）",
+			scrolledUpPx: entry.wheel?.scrolledUpPx ?? null,
 		});
 	}
-	let violations = 0;
-	let maxBackstepPx = 0;
-	for (let i = 1; i < samples.length; i++) {
-		const delta = samples[i].tailDistancePx - samples[i - 1].tailDistancePx;
-		if (delta < -2) {
-			violations++;
-			maxBackstepPx = Math.max(maxBackstepPx, -delta);
-		}
-	}
-	return { steps, samples, violations, maxBackstepPx, metric: "scrollHeight - scrollTop" };
+	return { checks, failures: checks.filter((check) => check.level === "mandatory" && !check.ok) };
 }
 
 /**
@@ -1033,14 +1756,22 @@ async function runSwitchRound(page, main, round) {
 	await sleep(2500);
 	await page.call("window.__hip.scrollUpAll({ steps: 6, stepMs: 300 })", 60_000);
 	await sleep(1500);
+	await page.call(`window.__hip.mark("phase:mount:end")`);
 	const mountedB = await page.call(
-		`window.__hip.beginRound(${JSON.stringify({ sessionId: sessionB, plan: planB, pool: "B" })})`,
+		`window.__hip.beginRound(${JSON.stringify({
+			sessionId: sessionB,
+			plan: planB,
+			pool: "B",
+			keepProbe: true,
+			phaseLabel: "phase:loadB:start",
+		})})`,
 		60_000,
 	);
 	await sleep(2500);
 	await page.call("window.__hip.scrollUpAll({ steps: 6, stepMs: 300 })", 60_000);
 	await sleep(1500);
 	const beforeSwitch = await page.call("window.__hip.metrics()");
+	await page.call(`window.__hip.mark("phase:loadB:end")`);
 
 	await page.call(
 		`window.__hip.switchMeasure(${JSON.stringify({ ids: [sessionA, sessionB], times: 6, holdMs: 900 })})`,
@@ -1049,8 +1780,31 @@ async function runSwitchRound(page, main, round) {
 	const probe = await page.call("window.__hip.stopProbe()");
 	const final = await page.call("window.__hip.metrics()");
 	const peak = await poller.stop();
-	await page.call("window.__hip.resetAll()", 30_000);
 
+	const switches = segmentByMarks(probe);
+	const checks = [];
+	const add = (id, level, ok, detail) => {
+		checks.push({ id, level, ok: Boolean(ok), detail: detail === undefined ? null : detail });
+	};
+	add(
+		"switch:phases-sampled",
+		"mandatory",
+		probe.marks.some((item) => item.label === "phase:loadB:end"),
+		probe.marks.map((item) => item.label),
+	);
+	add("switch:count", "mandatory", switches.length === 6, switches.length);
+	add(
+		"switch:frames-sampled",
+		"mandatory",
+		switches.every((item) => item.maxFrameGapMs !== null && item.frameCount > 0),
+		switches.map((item) => item.frameCount),
+	);
+	add("main:metrics", "mandatory", peak.length > 0, peak.length);
+	add("page:not-blank", "mandatory", final?.blank === false && final?.errorBoundary === false, {
+		blank: final?.blank,
+		errorBoundary: final?.errorBoundary,
+	});
+	await page.call("window.__hip.resetAll()", 30_000);
 	return {
 		round,
 		clearedSessions: cleared,
@@ -1058,16 +1812,22 @@ async function runSwitchRound(page, main, round) {
 		mountedA,
 		mountedB,
 		beforeSwitch,
-		switches: segmentByMarks(probe),
+		switches,
 		probe: {
 			maxFrameGapMs: probe.maxFrameGapMs,
 			maxLongTaskMs: probe.maxLongTaskMs,
 			longTaskCount: probe.longTaskCount,
 			jsHeapMb: probe.jsHeapMb,
+			phases: {
+				loadA: segmentBetween(probe, "phase:mount:start", "phase:mount:end"),
+				loadB: segmentBetween(probe, "phase:loadB:start", "phase:loadB:end"),
+			},
 		},
 		final,
 		peakRss: peak.slice(0, 6),
 		rendererPeakRssMb: (peak.find((metric) => metric.type === "Tab") ?? peak[0])?.rssMb ?? null,
+		checks,
+		failures: checks.filter((check) => check.level === "mandatory" && !check.ok),
 	};
 }
 
@@ -1111,6 +1871,12 @@ async function runBaseline(page, main, opts) {
 	const scenarios = BASELINE_SCENARIOS.filter(
 		(scenario) => !opts.scenarios || opts.scenarios.includes(scenario.key),
 	);
+	if (!main) {
+		console.error("[env] baseline 需要主进程调试端口 9229：进程工作集是基线必录项，不能缺项静默通过");
+		return { exitCode: EXIT_ENV };
+	}
+	const selfTest = baselineSelfTest();
+	const assertions = { checks: 0, failures: [], selfTest };
 	const report = {
 		mode: "baseline",
 		label: opts.label ?? null,
@@ -1118,7 +1884,9 @@ async function runBaseline(page, main, opts) {
 		env,
 		rounds,
 		scenarios: [],
-		mainMetrics: Boolean(main),
+		mainMetrics: true,
+		memorySampleIntervalMs: 250,
+		assertions,
 	};
 	const write = async () => {
 		await mkdir(TMP_DIR, { recursive: true });
@@ -1137,9 +1905,22 @@ async function runBaseline(page, main, opts) {
 			if (scenario.key === "switch") {
 				const entry = await runSwitchRound(page, main, round);
 				scenarioReport.rounds.push(entry);
+				assertions.checks += entry.checks.length;
+				assertions.failures.push(
+					...entry.failures.map((failure) => `${scenario.key} r${round}: ${failure.id}`),
+				);
 				await write();
 				console.log(
-					`[switch r${round}] 切 ${entry.switches.length} 次 · 单次最大帧间隔 ${entry.switches.map((s) => s.maxFrameGapMs).join("/")}ms · 工作集峰值 ${entry.rendererPeakRssMb}MiB · 编码 ${entry.fixtures.map((f) => f.encodeMs).join("+")}ms`,
+					[
+						`[switch r${round}] 切 ${entry.switches.length} 次`,
+						`单次最大帧间隔 ${entry.switches.map((item) => item.maxFrameGapMs).join("/")}ms`,
+						`加载阶段帧间隔 A ${entry.probe.phases.loadA.maxFrameGapMs} / B ${entry.probe.phases.loadB.maxFrameGapMs}ms`,
+						`工作集峰值 ${entry.rendererPeakRssMb}MiB`,
+						`编码 ${entry.fixtures.map((fixture) => fixture.encodeMs).join("+")}ms`,
+						entry.failures.length ? `断言失败 ${entry.failures.map((failure) => failure.id).join(",")}` : "",
+					]
+						.filter(Boolean)
+						.join(" · "),
 				);
 				continue;
 			}
@@ -1160,52 +1941,102 @@ async function runBaseline(page, main, opts) {
 			);
 			const plan = planForScenario(scenario);
 			const poller = startMemoryPoll(main);
-			const mounted = await page.call(
-				`window.__hip.beginRound(${JSON.stringify({ sessionId, plan, pool: "main" })})`,
-				60_000,
+			let entry = null;
+			try {
+				const mounted = await page.call(
+					`window.__hip.beginRound(${JSON.stringify({ sessionId, plan, pool: "main" })})`,
+					60_000,
+				);
+				await sleep(2500);
+				const afterMount = await page.call("window.__hip.metrics()");
+				const srcKinds = await page.call("window.__hip.imgSrcKinds()");
+				await page.call(`window.__hip.mark("phase:mount:end")`);
+				const wheel = await wheelExpandProbe(page, {
+					requireGrowth: scenario.expectsExpansion ? 2 : 0,
+				});
+				const afterExpand = await page.call("window.__hip.metrics()");
+				await page.call(`window.__hip.mark("phase:expand:end")`);
+				// 补挂之后还要把窗口走完（程序性置顶只用于「把行挂满」，锚点结论只看上面的真实滚轮）
+				await page.call("window.__hip.scrollUpAll({ steps: 10, stepMs: 300 })", 60_000);
+				await sleep(2000);
+				const probe = await page.call("window.__hip.stopProbe()");
+				const final = await page.call("window.__hip.metrics()");
+				const finalSrcKinds = await page.call("window.__hip.imgSrcKinds()");
+				const peak = await poller.stop();
+				const rendererPeak = peak.find((metric) => metric.type === "Tab") ?? peak[0] ?? null;
+				entry = {
+					round,
+					sessionId,
+					fixture,
+					clearedSessions: cleared,
+					mounted,
+					afterMount,
+					afterExpand,
+					probe: {
+						maxFrameGapMs: probe.maxFrameGapMs,
+						maxLongTaskMs: probe.maxLongTaskMs,
+						longTaskCount: probe.longTaskCount,
+						longTasks: probe.longTasks.slice(0, 40),
+						jsHeapMb: probe.jsHeapMb,
+						phases: {
+							mount: segmentBetween(probe, "phase:mount:start", "phase:mount:end"),
+							expand: segmentBetween(probe, "phase:mount:end", "phase:expand:end"),
+						},
+					},
+					final,
+					srcKinds,
+					finalSrcKinds,
+					wheel,
+					peakRss: peak.slice(0, 6),
+					rendererPeakRssMb: rendererPeak ? rendererPeak.rssMb : null,
+				};
+			} finally {
+				// 出错也必须收尾：停采样、停内存轮询、把 renderer 里的合成会话清掉
+				await page.call("window.__hip.stopAnchorRecorder()", 30_000).catch(() => {});
+				await poller.stop().catch(() => {});
+				await page.call("window.__hip.resetAll()", 30_000).catch(() => {});
+			}
+			const verdict = evaluateBaselineEntry(scenario, entry);
+			entry.checks = verdict.checks;
+			entry.failures = verdict.failures;
+			assertions.checks += verdict.checks.length;
+			assertions.failures.push(
+				...verdict.failures.map((failure) => `${scenario.key} r${round}: ${failure.id}`),
 			);
-			await sleep(2500);
-			const afterMount = await page.call("window.__hip.metrics()");
-			const srcKinds = await page.call("window.__hip.imgSrcKinds()");
-			const wheel = await wheelUpProbe(page);
-			await page.call("window.__hip.scrollUpAll({ steps: 10, stepMs: 300 })", 60_000);
-			await sleep(2000);
-			const probe = await page.call("window.__hip.stopProbe()");
-			const final = await page.call("window.__hip.metrics()");
-			const finalSrcKinds = await page.call("window.__hip.imgSrcKinds()");
-			const peak = await poller.stop();
-			await page.call("window.__hip.resetAll()", 30_000);
 
-			const rendererPeak = peak.find((metric) => metric.type === "Tab") ?? peak[0] ?? null;
-			const entry = {
-				round,
-				sessionId,
-				fixture,
-				clearedSessions: cleared,
-				mounted,
-				afterMount,
-				probe: {
-					maxFrameGapMs: probe.maxFrameGapMs,
-					maxLongTaskMs: probe.maxLongTaskMs,
-					longTaskCount: probe.longTaskCount,
-					longTasks: probe.longTasks.slice(0, 40),
-					jsHeapMb: probe.jsHeapMb,
-				},
-				final,
-				srcKinds,
-				finalSrcKinds,
-				wheel,
-				peakRss: peak.slice(0, 6),
-				rendererPeakRssMb: rendererPeak ? rendererPeak.rssMb : null,
-			};
 			scenarioReport.rounds.push(entry);
 			await write();
 			console.log(
-				`[${scenario.key} r${round}] 挂图 ${afterMount.loadedCount}/${afterMount.imgCount} · 最大帧间隔 ${entry.probe.maxFrameGapMs}ms · 最长任务 ${entry.probe.maxLongTaskMs}ms · 工作集峰值 ${entry.rendererPeakRssMb}MiB · 滚轮回退 ${wheel.violations} 次(${wheel.maxBackstepPx}px) · 编码 ${fixture.encodeMs}ms/${fixture.base64Mb}MB`,
+				[
+					`[${scenario.key} r${round}]`,
+					`挂图 ${entry.afterMount.loadedCount}/${entry.afterMount.imgCount} → 满窗 ${entry.final.loadedCount}/${entry.final.imgCount}`,
+					`帧间隔 整轮 ${entry.probe.maxFrameGapMs}ms（挂载 ${entry.probe.phases.mount.maxFrameGapMs} / 滚轮 ${entry.probe.phases.expand.maxFrameGapMs}）`,
+					`最长任务 整轮 ${entry.probe.maxLongTaskMs}ms（挂载 ${entry.probe.phases.mount.maxLongTaskMs} / 滚轮 ${entry.probe.phases.expand.maxLongTaskMs}）`,
+					`工作集峰值 ${entry.rendererPeakRssMb}MiB`,
+					`滚轮 ${entry.wheel?.steps ?? "-"} 步 / 补挂 ${entry.wheel?.growth ?? "-"} 次 / 位移 ${entry.wheel?.scrolledUpPx ?? "-"}px / 锚点违规 ${entry.wheel?.violations ?? "-"}（非补挂瞬时 ${entry.wheel?.violationsExcludingExpansionTransient ?? "-"}）`,
+					`编码 ${entry.fixture.encodeMs}ms/${entry.fixture.base64Mb}MB`,
+					entry.failures.length ? `断言失败 ${entry.failures.map((failure) => failure.id).join(",")}` : "",
+				]
+					.filter(Boolean)
+					.join(" · "),
 			);
 		}
 	}
 	await reloadApp(page);
+	console.log(
+		`\n基线有效性断言：${assertions.checks - assertions.failures.length}/${assertions.checks} 通过`,
+	);
+	console.log(
+		`基线断言自检：${selfTest.cases.filter((item) => item.ok).length}/${selfTest.cases.length} 通过`,
+	);
+	for (const item of selfTest.cases) {
+		if (!item.ok) console.error(`  FAIL ${item.name} → ${JSON.stringify(item.failures)}`);
+	}
+	if (selfTest.failed.length > 0) return { exitCode: EXIT_FAIL, report };
+	if (assertions.failures.length > 0) {
+		for (const failure of assertions.failures) console.error(`  FAIL ${failure}`);
+		return { exitCode: EXIT_FAIL, report };
+	}
 	return { exitCode: EXIT_OK, report };
 }
 
@@ -1235,14 +2066,16 @@ async function main() {
 	let mainCdp = null;
 	try {
 		page = await connectPage();
-		await page.send("Runtime.enable").catch(() => {});
-		await page.send("Log.enable").catch(() => {});
-		await page.send("Page.enable").catch(() => {});
+		// 这三个域是证据链的一部分（CSP 条目走 Log/Runtime，导航走 Page）：开不起来就是环境不满足，
+		// 不能 .catch(() => {}) 咽掉——否则「0 违规」可能只是根本没在听。
+		await page.send("Runtime.enable");
+		await page.send("Log.enable");
+		await page.send("Page.enable");
 		await page.send("Emulation.setFocusEmulationEnabled", { enabled: true });
 		mainCdp = await connectMain();
 		await installHelpers(page);
 	} catch (error) {
-		console.error(`[env] 连接失败：${error.message}`);
+		console.error(`[env] 连接/域开启失败：${error.message}`);
 		console.error(
 			"      先起 dev：cd packages/desktop && npx electron-vite dev -- --remote-debugging-port=9224 --inspect=9229",
 		);
