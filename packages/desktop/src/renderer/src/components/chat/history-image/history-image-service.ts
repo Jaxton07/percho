@@ -332,9 +332,14 @@ export function createThumbnailService(options: ThumbnailServiceOptions = {}) {
 				registry.unsubscribe(key, false);
 				continue;
 			}
+			const recordGeneration = generation;
 			if (!registry.hasSlot()) {
 				const visible = registry.visibility(key) === "visible";
 				if (!visible || !reclaimSlot()) return;
+				// reclaimSlot → demote → notify 允许 listener **同步** reset/release（包括正在等的这条）。
+				// 失效就重新从**当前** registry 选任务，绝不能拿旧 record 继续走缓存/派发
+				// （否则会真的把旧代的图投出去：实测 reset 后仍派发旧 image）。
+				if (generation !== recordGeneration || records.get(key) !== record) continue;
 			}
 			const cached = cache.get(key);
 			if (cached) {

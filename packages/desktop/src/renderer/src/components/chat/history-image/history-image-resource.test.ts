@@ -679,6 +679,59 @@ describe("缩略图服务：取消 / 迟到 / 超时 / 重置 / 同步失败", (
 		expect(service.stats().active).toBeLessThanOrEqual(ACTIVE_SLOT_LIMIT);
 	});
 
+	it("回收通知里 reset+acquire：旧代不再投递，只有新代在途（R2B-3）", () => {
+		const { service, workers, worker, revokedUrls } = fakeService();
+		const handles = fillActiveBuffer(service, workers, ACTIVE_SLOT_LIMIT);
+		const victim = handles[0] as ReturnType<typeof service.acquire>;
+		const state: { fresh: ReturnType<typeof service.acquire> | null } = { fresh: null };
+		victim.subscribe(() => {
+			// 只在 demote（变 idle）通知里触发一次：reset 换代 + 用同一 turn 新建需求
+			if (state.fresh || victim.getSnapshot().status !== "idle") return;
+			service.reset();
+			state.fresh = service.acquire(image("new-visible"));
+		});
+		const outer = service.acquire(image("outer-visible"));
+		if (!state.fresh) throw new Error("没有在回收通知里重入成功");
+		const fresh = state.fresh as ReturnType<typeof service.acquire>;
+
+		// ① 旧代的 outer 绝不能被投出去（它已随 reset 失效）
+		expect(worker().posted.some((request) => request.image.data === "data-outer-visible")).toBe(false);
+		// ② 旧 URL 全部撤销（reset 做的）
+		expect(revokedUrls.length).toBe(ACTIVE_SLOT_LIMIT);
+		// ③ 只有新代一条在途，且账目一致
+		expect(outstandingRequests(worker()).length).toBeLessThanOrEqual(1);
+		expect(service.stats()).toMatchObject({ keys: 1, waiting: 0, active: 1, inFlight: true });
+		expect(worker().posted.at(-1)?.image.data).toBe("data-new-visible");
+		workerOf(workers).completeLast();
+		expect(fresh.getSnapshot().status).toBe("ready");
+		expect(outer.getSnapshot()).toMatchObject({ status: "idle", url: null });
+	});
+
+	it("回收通知里释放正在等的 record：不得派发它，队列继续推进（R2B-3）", () => {
+		const { service, workers, worker } = fakeService();
+		const handles = fillActiveBuffer(service, workers, ACTIVE_SLOT_LIMIT);
+		// later / alsoLater 在队列里等
+		service.acquire(image("first")); // 触发第一次回收并被派发（在途）
+		const later = service.acquire(image("later"));
+		const alsoLater = service.acquire(image("also-later"));
+		// 给所有被回收候选都挂上回调：谁被 demote 就在通知里把「正在等的 later」释放掉
+		for (const handle of handles) {
+			(handle as ReturnType<typeof service.acquire>).subscribe(() => {
+				if (handle.getSnapshot().status !== "idle") return;
+				later.release();
+			});
+		}
+		workerOf(workers).completeLast(); // first 完成 → 回收让位 → 通知里释放 later
+		// later 已被释放：它绝不能真的被投递；队列继续推进到 alsoLater
+		expect(worker().posted.some((request) => request.image.data === "data-later")).toBe(false);
+		expect(worker().posted.at(-1)?.image.data).toBe("data-also-later");
+		expect(outstandingRequests(worker()).length).toBeLessThanOrEqual(1);
+		workerOf(workers).completeLast();
+		expect(alsoLater.getSnapshot().status).toBe("ready");
+		expect(later.getSnapshot()).toMatchObject({ status: "idle", url: null });
+		expect(service.stats().active).toBeLessThanOrEqual(ACTIVE_SLOT_LIMIT);
+	});
+
 	it("重入保护：loading 通知里 release，在途结果照旧丢弃且队列继续推进（R2B-1）", () => {
 		const { service, worker } = fakeService();
 		const inFlight = service.acquire(image("first"));
