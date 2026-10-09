@@ -1085,7 +1085,7 @@ git remote 走 SSH（本机直连 github.com:443 不通）。`main` 有分支保
 现象：dev 一切正常；`npm run build` 后 `out/renderer/assets` 里没有该 worker，页面里的缩略图静默停在占位/错误。
 成因有两层，容易误判：① Vite 只在 dev 注入 `?worker_file&type=module` 路径，build 的 worker 静态分析没命中这种写法；
 ② 阶段 2 那个模块当时**没有任何入口引用**，本来就会被 tree-shake 掉——两者叠在一起时，"改了写法还是没出 chunk" 会让人怀疑写法没生效。
-修法：改用仓库既有的 `import Worker from "./x.worker.ts?worker"`（Monaco worker 同款），接线后 app 产物里确实出现 `history-image.worker-*.js`。
+修法：改用仓库既有的 `import Worker from "./x.worker.ts?worker"`（Monaco worker 同款），接线后 app 产物里确实出现 `history-image.worker-*.js`。**结论只限定在当前用法与构建条件**：因为当时那个模块没有任何入口引用，tree-shake 本身就足以解释"产物里没有 worker"，所以这不是"标准 `new Worker(new URL(...))` 语法不被支持"的证据。
 **认产物别用 API 名**（`OffscreenCanvas`/`createImageBitmap`/`convertToBlob` 四个一起也照样命中 Monaco 的 `ts.worker`），要用本 worker 源码里独有的字面量（如错误文案）。
 
 **2）通知里重入服务会绕过「单飞」。**
@@ -1101,5 +1101,16 @@ git remote 走 SSH（本机直连 github.com:443 不通）。`main` 有分支保
 换代把刚建立的句柄全部作废；组件不会自己重跑（deps 没变）。
 修法：服务暴露 `subscribeReset()`，组件订阅它并在换代后重建接线（effect 依赖里加一个 generation 计数）。同理，任何"外部清缓存"都必须让消费者可感知。
 
-**4）其他两条小坑**：`loading="lazy"` 的缩略图离屏时 `naturalWidth` 是 0（脚本断言尺寸前要先滚进可视区或区分"未解码"）；dev 里对产品模块 `import()` 拿到的可能是**另一份模块实例**（HMR `?t=` 后缀），
+**4）`visible:false` 不是「加载区门」。** service 对 buffer 请求照样调度（只是优先级低），所以"创建组件就 `acquire(image,{visible:false})`"会变成
+**全量挂载 + 保 48 张**：实测 42 个盒子里 33 个已经在解析缩略图。真正的门是「先只用 IntersectionObserver 观察，进入 inLoadRange 才 acquire，
+退出立即 release」；只加载加载区内的图之后，同一场景下加载区外 63 个盒子**带 img 的为 0**。
+
+**5）判定"预算/清理"时不要用 `import()` 拿到的单例统计。** dev 里 Vite 会给模块 URL 加 `?t=`（HMR），动态 import 拿到的是**另一份模块实例**，
+它的 `stats()` 全是 0；用 0 当"通过"就成了恒真门。改成 DEV-only 只读诊断注册（`globalThis.__perchoHistoryImageDiagnostics`，生产 tree-shake），
+并加"sanity：DOM 有就绪图时统计必须非零" + 故障注入（诊断返回全 0 / 回报遗留）作为反证。
+
+**6）断言"方向键换了图"要比较指纹而不是前几十字符**：同尺寸 PNG 的 data URL 前 48 字符完全相同（PNG 头 + IHDR 尺寸），
+用切片比较会得到"没换图"的假结论（反过来也可能假绿）。用 长度+头+尾 的指纹。
+
+**7）其他两条小坑**：`loading="lazy"` 的缩略图离屏时 `naturalWidth` 是 0（脚本断言尺寸前要先滚进可视区或区分"未解码"）；dev 里对产品模块 `import()` 拿到的可能是**另一份模块实例**（HMR `?t=` 后缀），
 用它读单例统计会得到全 0——验收统计优先用 DOM 可观测口径（外盒 `data-history-image` 状态），模块统计只作参考。

@@ -29,7 +29,7 @@ import type { ImageInput } from "@percho/shared";
 import * as React from "react";
 import type { UIMessage } from "../../stores/transcript";
 import { HistoryImage, HistoryImageSurface } from "./history-image/HistoryImage";
-import { createHistoryImageBinding } from "./history-image/history-image-binding";
+import { createHistoryImageBinding, INERT_SNAPSHOT } from "./history-image/history-image-binding";
 import type { HistoryImageObserver } from "./history-image/history-image-observer";
 import type {
 	ThumbnailHandle,
@@ -185,6 +185,29 @@ describe("历史图片：外盒几何与三态占位（阶段 3 接线后）", (
 		expect(failed).toContain("重新加载");
 	});
 
+	it("失败态：主点仍是打开原图预览，另有独立 ghost 重试（不改变外盒尺寸）", () => {
+		const opened: number[] = [];
+		const retried: number[] = [];
+		const html = renderToStaticMarkup(
+			createElement(HistoryImageSurface, {
+				snapshot: snapshot("error"),
+				boxClass: "h-16 w-16",
+				imgClass: ATTACHMENT_IMAGE_MODE.img,
+				alt: "图片",
+				onOpen: () => opened.push(1),
+				onRetry: () => retried.push(1),
+			}),
+		);
+		// 两个 button：主覆盖层（打开原图）+ 右下角小 ghost（重试）
+		const buttons = html.match(/<button\b[^>]*>/g) ?? [];
+		expect(buttons).toHaveLength(2);
+		expect(html).toContain("重新加载");
+		// 尺寸仍由外盒决定：没有内联宽高、也没有给按钮加尺寸类
+		expect(html).toContain('class="h-16 w-16');
+		void opened;
+		void retried;
+	});
+
 	it("组件在没接线（无 root）时只渲染占位，绝不去加载", () => {
 		const html = renderToStaticMarkup(
 			createElement(HistoryImage, {
@@ -220,16 +243,38 @@ describe("历史图片：外盒几何与三态占位（阶段 3 接线后）", (
 	});
 });
 
-describe("历史图片接线（binding）：不偷用 visible=true、可见性来自观察者、销毁即释放", () => {
+describe("历史图片接线（binding）：只加载加载区内的图", () => {
 	function fakeEnvironment() {
 		const acquired: { image: ImageInput; visible: boolean }[] = [];
 		const visibility: boolean[] = [];
-		const state = { released: 0, retried: 0, observed: 0, stopped: 0, listeners: new Set<() => void>() };
+		const state = {
+			released: 0,
+			retried: 0,
+			observed: 0,
+			stopped: 0,
+			subscribed: 0,
+			unsubscribed: 0,
+			snapshotStatus: "loading" as ThumbnailSnapshot["status"],
+			listeners: new Set<() => void>(),
+		};
+		const emitHandleChange = (status: ThumbnailSnapshot["status"]) => {
+			state.snapshotStatus = status;
+			for (const listener of [...state.listeners]) listener();
+		};
 		const handle: ThumbnailHandle = {
-			getSnapshot: () => snapshot("loading"),
+			getSnapshot: () => ({
+				status: state.snapshotStatus,
+				url: state.snapshotStatus === "ready" ? "blob:thumb" : null,
+				width: state.snapshotStatus === "ready" ? 384 : null,
+				height: state.snapshotStatus === "ready" ? 240 : null,
+			}),
 			subscribe: (listener) => {
+				state.subscribed += 1;
 				state.listeners.add(listener);
-				return () => state.listeners.delete(listener);
+				return () => {
+					state.unsubscribed += 1;
+					state.listeners.delete(listener);
+				};
 			},
 			setVisible: (visible) => visibility.push(visible),
 			retry: () => {
@@ -237,6 +282,7 @@ describe("历史图片接线（binding）：不偷用 visible=true、可见性�
 			},
 			release: () => {
 				state.released += 1;
+				state.listeners.clear();
 			},
 		};
 		const service = {
@@ -245,6 +291,7 @@ describe("历史图片接线（binding）：不偷用 visible=true、可见性�
 				return handle;
 			},
 			reset: () => {},
+			subscribeReset: () => () => {},
 			stats: () => ({}) as never,
 		} as unknown as ThumbnailService;
 		let onVisibility: ((state: { inLoadRange: boolean; inViewport: boolean }) => void) | null = null;
@@ -254,6 +301,7 @@ describe("历史图片接线（binding）：不偷用 visible=true、可见性�
 				onVisibility = onChange;
 				return () => {
 					state.stopped += 1;
+					onVisibility = null;
 				};
 			},
 			disconnect: () => {},
@@ -271,56 +319,152 @@ describe("历史图片接线（binding）：不偷用 visible=true、可见性�
 			state,
 			service,
 			observer,
-			emitVisibility: (visible: boolean) => onVisibility?.({ inLoadRange: true, inViewport: visible }),
+			emitHandleChange,
+			emitVisibility: (inLoadRange: boolean, inViewport: boolean) =>
+				onVisibility?.({ inLoadRange, inViewport }),
 		};
 	}
 
-	it("初始可见性必须是 false：真实可见只来自观察者", () => {
+	it("false 初态不 acquire、不发请求；进入加载区才 acquire（可见性来自观察者）", () => {
 		const fake = fakeEnvironment();
-		createHistoryImageBinding({
+		const binding = createHistoryImageBinding({
 			service: fake.service,
 			image: image(1),
 			element: {} as Element,
 			observer: fake.observer,
 		});
-		expect(fake.acquired).toHaveLength(1);
-		expect(fake.acquired[0]?.visible).toBe(false);
 		expect(fake.state.observed).toBe(1);
-		fake.emitVisibility(true);
-		expect(fake.visibility).toEqual([true]);
-		fake.emitVisibility(false);
-		expect(fake.visibility).toEqual([true, false]);
+		expect(fake.acquired).toHaveLength(0);
+		expect(binding.getSnapshot().status).toBe("idle");
+
+		fake.emitVisibility(false, false);
+		expect(fake.acquired).toHaveLength(0);
+
+		fake.emitVisibility(true, true);
+		expect(fake.acquired).toHaveLength(1);
+		expect(fake.acquired[0]?.visible).toBe(true);
+
+		fake.emitVisibility(true, false);
+		expect(fake.visibility).toEqual([false]);
 	});
 
-	it("没有观察目标/观察者时：不建立可见性订阅、也不改变可见性", () => {
+	it("加载范围内但不在可视区：acquire 的初始可见性是 false", () => {
+		const fake = fakeEnvironment();
+		createHistoryImageBinding({
+			service: fake.service,
+			image: image(2),
+			element: {} as Element,
+			observer: fake.observer,
+		});
+		fake.emitVisibility(true, false);
+		expect(fake.acquired).toHaveLength(1);
+		expect(fake.acquired[0]?.visible).toBe(false);
+	});
+
+	it("退出加载区立即 release：快照回稳定占位、不再转发 handle 变化、监听解除", () => {
 		const fake = fakeEnvironment();
 		const binding = createHistoryImageBinding({
 			service: fake.service,
-			image: image(1),
+			image: image(3),
+			element: {} as Element,
+			observer: fake.observer,
+		});
+		fake.emitVisibility(true, true);
+		fake.emitHandleChange("ready");
+		expect(binding.getSnapshot().status).toBe("ready");
+		const seen: string[] = [];
+		binding.subscribe(() => seen.push(binding.getSnapshot().status));
+
+		fake.emitVisibility(false, false);
+		expect(fake.state.released).toBe(1);
+		expect(fake.state.unsubscribed).toBeGreaterThanOrEqual(1);
+		expect(binding.getSnapshot()).toMatchObject({ status: "idle", url: null });
+
+		// 在途结果迟到：handle 已经不在绑定里，不能再影响快照
+		fake.emitHandleChange("error");
+		expect(binding.getSnapshot().status).toBe("idle");
+	});
+
+	it("再次进入加载区会重新 acquire（缓存命中由服务负责，不再重复解码）", () => {
+		const fake = fakeEnvironment();
+		createHistoryImageBinding({
+			service: fake.service,
+			image: image(4),
+			element: {} as Element,
+			observer: fake.observer,
+		});
+		fake.emitVisibility(true, true);
+		fake.emitVisibility(false, false);
+		fake.emitVisibility(true, true);
+		expect(fake.acquired).toHaveLength(2);
+		expect(fake.state.released).toBe(1);
+	});
+
+	it("没有 element/observer：彻底惰性（不观察也不加载）", () => {
+		const fake = fakeEnvironment();
+		const binding = createHistoryImageBinding({
+			service: fake.service,
+			image: image(5),
 			element: null,
 			observer: null,
 		});
 		expect(fake.state.observed).toBe(0);
-		expect(fake.visibility).toEqual([]);
-		expect(binding.getSnapshot().status).toBe("loading");
+		expect(fake.acquired).toHaveLength(0);
+		expect(binding.getSnapshot()).toBe(INERT_SNAPSHOT);
+		binding.retry();
+		expect(fake.state.retried).toBe(0);
 	});
 
-	it("dispose 同时断开观察与释放句柄，且幂等", () => {
+	it("dispose 断开观察并释放；再订阅不再收到任何回调（StrictMode 式取消安全）", () => {
 		const fake = fakeEnvironment();
 		const binding = createHistoryImageBinding({
 			service: fake.service,
-			image: image(1),
+			image: image(6),
 			element: {} as Element,
 			observer: fake.observer,
 		});
+		fake.emitVisibility(true, true);
+		const listener = vi.fn();
+		const stop = binding.subscribe(listener);
 		binding.dispose();
 		binding.dispose();
 		expect(fake.state.stopped).toBe(1);
 		expect(fake.state.released).toBe(1);
-		// 释放之后读快照是惰性态、订阅无效
-		expect(binding.getSnapshot().status).toBe("idle");
-		const listener = vi.fn();
-		binding.subscribe(listener)();
+		stop();
 		expect(listener).not.toHaveBeenCalled();
+
+		// StrictMode 式重建：新 binding 从零开始（订阅计数不泄漏）
+		const rebuilt = createHistoryImageBinding({
+			service: fake.service,
+			image: image(6),
+			element: {} as Element,
+			observer: fake.observer,
+		});
+		fake.emitVisibility(true, true);
+		expect(fake.state.subscribed).toBe(2);
+		expect(fake.state.unsubscribed).toBe(1);
+		rebuilt.dispose();
+		expect(fake.state.unsubscribed).toBe(2);
+	});
+
+	it("绑定层订阅与 handle 是否存在解耦：没有 handle 时订阅依然可用", () => {
+		const fake = fakeEnvironment();
+		const binding = createHistoryImageBinding({
+			service: fake.service,
+			image: image(7),
+			element: {} as Element,
+			observer: fake.observer,
+		});
+		const listener = vi.fn();
+		const stop = binding.subscribe(listener);
+		// 进入加载区（有 handle）→ 状态变化会通知
+		fake.emitVisibility(true, true);
+		fake.emitHandleChange("ready");
+		expect(listener).toHaveBeenCalled();
+		// 退出加载区（无 handle）→ 状态变化（回占位）同样通知
+		const before = listener.mock.calls.length;
+		fake.emitVisibility(false, false);
+		expect(listener.mock.calls.length).toBeGreaterThan(before);
+		stop();
 	});
 });

@@ -70,7 +70,7 @@ const CALL_TIMEOUT_MS = 30_000;
 const LONG_TIMEOUT_MS = 300_000;
 
 /** 故障注入：只用于验「门会红灯」与「异常路径清理到位」，正常跑不带 */
-const FAULTS = ["worker", "plan"];
+const FAULTS = ["worker", "plan", "stats", "leak"];
 
 const EXIT_OK = 0;
 const EXIT_FAIL = 1;
@@ -712,6 +712,7 @@ window.__hip = (() => {
 				outsideBoxes: 0,
 				outsideWithImg: 0,
 				outsideDims: [],
+				outsideStates: {},
 				previewOpen: false,
 				previewOriginalCount: 0,
 			};
@@ -727,6 +728,7 @@ window.__hip = (() => {
 		let outsideBoxes = 0;
 		let outsideWithImg = 0;
 		const outsideDims = new Set();
+		const outsideStates = {};
 		for (const box of boxes) {
 			const rect = box.getBoundingClientRect();
 			const farAbove = rect.bottom < scRect.top - 400;
@@ -735,6 +737,8 @@ window.__hip = (() => {
 			outsideBoxes += 1;
 			outsideDims.add(Math.round(rect.width) + "×" + Math.round(rect.height));
 			if (box.querySelector("img")) outsideWithImg += 1;
+			const outsideState = box.getAttribute("data-history-image") ?? "unknown";
+			outsideStates[outsideState] = (outsideStates[outsideState] ?? 0) + 1;
 		}
 		return {
 			hasScroller: true,
@@ -747,11 +751,42 @@ window.__hip = (() => {
 			outsideBoxes,
 			outsideWithImg,
 			outsideDims: [...outsideDims],
+			outsideStates,
 			previewOpen: document.querySelectorAll("[data-image-preview='open']").length > 0,
 			previewOriginalCount: Array.from(document.querySelectorAll("img")).filter((img) =>
 				(img.getAttribute("src") ?? "").startsWith("data:"),
 			).length,
 		};
+	}
+
+	/** 在「同一行内有 ≥minCount 个外盒」的消息里点第 index 个（方向键切换需要多图消息） */
+	function clickHistoryBoxInGroup(minCount, index) {
+		const sc = scroller();
+		const content = sc ? sc.firstElementChild : null;
+		if (!content) return { ok: false, reason: "没有内容容器" };
+		for (const row of Array.from(content.children)) {
+			const boxes = Array.from(row.querySelectorAll("[data-history-image]"));
+			if (boxes.length < minCount) continue;
+			const box = boxes[index ?? 0];
+			const button = box?.querySelector("button");
+			if (!button) continue;
+			button.click();
+			return { ok: true, state: box.getAttribute("data-history-image"), groupSize: boxes.length };
+		}
+		return { ok: false, reason: "没有含 ≥ " + minCount + " 张图的消息" };
+	}
+
+	/** 点某个外盒里的重试 ghost（失败态专用） */
+	function clickHistoryBoxRetry(state, index) {
+		const wanted = state ?? "error";
+		const boxes = Array.from(document.querySelectorAll("[data-history-image]")).filter(
+			(box) => box.getAttribute("data-history-image") === wanted,
+		);
+		const box = boxes[index ?? 0];
+		const retry = box ? box.querySelectorAll("button")[1] : null;
+		if (!retry) return { ok: false, reason: "没有重试入口" };
+		retry.click();
+		return { ok: true, state: wanted };
 	}
 
 	/** 按状态挑第 index 个历史图外盒点击（合成 click 走的是组件自己的 handler） */
@@ -768,10 +803,91 @@ window.__hip = (() => {
 		return { ok: true, state: box.getAttribute("data-history-image") };
 	}
 
-	/** 服务预算统计（dev 才能动态 import 产品模块） */
-	async function serviceStats() {
-		const module = await import("/src/components/chat/history-image/history-image-service.ts");
-		return module.thumbnailService().stats();
+	/**
+	 * 真实产品实例的只读诊断（DEV-only 注册，见 history-image-service.ts）。
+	 * 直接 import 产品模块会拿到**另一份实例**（HMR 会给 URL 加 ?t= 后缀），统计会全是 0。
+	 */
+	function diagnostics() {
+		const registry = globalThis.__perchoHistoryImageDiagnostics;
+		if (!registry) return null;
+		return { service: registry.service(), observers: registry.observers() };
+	}
+
+	/** 故障注入：让诊断通道返回全 0（反证「统计必须能对照真实实例」） */
+	function faultDiagnostics() {
+		globalThis.__perchoHistoryImageDiagnostics = {
+			service: () => ({
+				active: 0,
+				waiting: 0,
+				keys: 0,
+				urls: 0,
+				outstandingRequests: 0,
+				workerCreated: 0,
+				cacheEntries: 0,
+				cacheBytes: 0,
+				inFlight: false,
+			}),
+			observers: () => ({
+				observers: 0,
+				targets: 0,
+				inRange: 0,
+				viewportSubscriptions: 0,
+				rootResizeSubscriptions: 0,
+			}),
+		};
+		return true;
+	}
+
+	/** 故障注入：让诊断报告「有遗留」（keys/urls/订阅非零），反证清理门会红 */
+	function faultLeakDiagnostics() {
+		const registry = globalThis.__perchoHistoryImageDiagnostics;
+		if (!registry) return false;
+		const realService = registry.service();
+		const realObservers = registry.observers();
+		globalThis.__perchoHistoryImageDiagnostics = {
+			service: () => ({ ...realService, keys: 5, urls: 5, outstandingRequests: 2 }),
+			observers: () => ({ ...realObservers, targets: 3 }),
+		};
+		return true;
+	}
+
+	/** 稳定快照：连续两次盒状态一致才算收敛（等待有上限，不无限等） */
+	async function stableSnapshot(timeoutMs) {
+		const deadline = performance.now() + (timeoutMs ?? 6000);
+		let previous = null;
+		let sample = verifySnapshot();
+		while (performance.now() < deadline) {
+			await new Promise((resolve) => setTimeout(resolve, 250));
+			sample = verifySnapshot();
+			const key = JSON.stringify(sample.boxStates);
+			if (previous === key) return { ...sample, settled: true };
+			previous = key;
+		}
+		return { ...sample, settled: false };
+	}
+
+	/** 当前预览层里的原图 src（没开预览时 null）——用来断言方向键真的换了图 */
+	function previewOriginalSrc() {
+		const img = Array.from(document.querySelectorAll("img")).find((element) =>
+			(element.getAttribute("src") ?? "").startsWith("data:"),
+		);
+		if (!img) return null;
+		const src = img.getAttribute("src") ?? "";
+		// 指纹：长度 + 头 + 尾 —— 同尺寸 PNG 的前几十字符完全相同，只用头部切片区分不出来
+		return src.length + "|" + src.slice(0, 24) + "|" + src.slice(-24);
+	}
+
+	function openSession(sessionId) {
+		const row = document.querySelector('[data-session-id="' + sessionId + '"]');
+		if (!row) return false;
+		row.click();
+		return true;
+	}
+
+	function listSessionIds() {
+		return Array.from(document.querySelectorAll("[data-session-id]"))
+			.map((element) => element.getAttribute("data-session-id"))
+			.filter(Boolean);
 	}
 
 	/* ---------- 真实应用 worker（阶段 2 门：验 Vite 产出的真正 worker，不是纯 JS 探针） ---------- */
@@ -1161,8 +1277,16 @@ window.__hip = (() => {
 		appFixture,
 		buildAppFixtures,
 		verifySnapshot,
+		stableSnapshot,
 		clickHistoryBox,
-		serviceStats,
+		clickHistoryBoxInGroup,
+		clickHistoryBoxRetry,
+		diagnostics,
+		faultDiagnostics,
+		faultLeakDiagnostics,
+		previewOriginalSrc,
+		openSession,
+		listSessionIds,
 		runAppService,
 		runBuiltWorker,
 	};
@@ -1905,9 +2029,15 @@ function analyzeAnchor(samples) {
 					rowsBefore: list[i - 1].mountedRows,
 					rowsAfter: list[i].mountedRows,
 					expansionInSameSample: list[i].mountedRows !== list[i - 1].mountedRows,
-					nearExpansionMs: transient
-						? list[i].time - (rowsChangedAt.find((t) => list[i].time - t >= 0) ?? 0)
-						: null,
+					// 距「本样本或之前最近一次」补挂变化：同刻变化记 0（之前用 find 取到的
+					// 是最早那次，数值会误导；transient 判定的依据始终是同刻/400ms 窗口）
+					nearExpansionMs: (() => {
+						if (list[i].mountedRows !== list[i - 1].mountedRows) return 0;
+						const previousChanges = rowsChangedAt.filter((time) => list[i].time - time >= 0);
+						return previousChanges.length > 0
+							? list[i].time - previousChanges[previousChanges.length - 1]
+							: null;
+					})(),
 					topRowText: list[i].topRowText,
 					previousTopRowText: list[i - 1].topRowText,
 					loadedImages: `${list[i].loadedCount}/${list[i].imgCount}`,
@@ -2940,12 +3070,10 @@ async function runVerifyOnRealSession(page, opts, env) {
 		blob: atOpen.blobSrcCount,
 		imgs: atOpen.listImgCount,
 	});
-	add(
-		"build:thumbnail-max-side-384",
-		"mandatory",
-		atOpen.listImgMaxNatural <= 384,
-		{ maxNatural: atOpen.listImgMaxNatural, 滚进可视区后解码: atOpen.listImgMaxNatural > 0 },
-	);
+	add("build:thumbnail-max-side-384", "mandatory", atOpen.listImgMaxNatural <= 384, {
+		maxNatural: atOpen.listImgMaxNatural,
+		滚进可视区后解码: atOpen.listImgMaxNatural > 0,
+	});
 	add("build:thumbnail-decoded", "informational", atOpen.listImgMaxNatural > 0, atOpen.listImgMaxNatural);
 	add("build:no-error-boxes", "mandatory", (atOpen.boxStates.error ?? 0) === 0, atOpen.boxStates);
 	add("build:ready-within-48", "mandatory", (atOpen.boxStates.ready ?? 0) <= 48, {
@@ -3004,6 +3132,7 @@ const VERIFY_SCENARIOS = [
 	{
 		key: "grid-9-4k",
 		label: "单条 9 图（4K 源）+ 远处 40 条 4K",
+		expectsArrowSwitch: true,
 		plan: [
 			{ kind: "image", imageCount: 9 },
 			...Array.from({ length: 40 }, () => ({ kind: "image", imageCount: 1 })),
@@ -3027,17 +3156,17 @@ const VERIFY_SCENARIOS = [
 		key: "broken-mixed",
 		label: "坏图 + 好图混排（失败态与重试）",
 		broken: true,
-		// 前 6 张坏数据（6 图档 80×80），后面 9 条好图（单图档 192×144）
+		// 9 条好图在前、坏图消息在**最后**（初始视口贴底，坏图才能真正进入加载区并失败）
 		plan: [
-			{ kind: "image", imageCount: 6, pool: "broken" },
 			...Array.from({ length: 9 }, () => ({ kind: "image", imageCount: 1, pool: "good" })),
+			{ kind: "image", imageCount: 6, pool: "broken" }, // 6 图档 80×80
 		],
 		count: 15,
 		box: null,
 	},
 ];
 
-async function runVerifyScenario(page, scenario) {
+async function runVerifyScenario(page, scenario, opts) {
 	const sessionId = `hip-verify-${scenario.key}-${Date.now()}`;
 	await reloadApp(page);
 	await setViewport(page, VIEWPORT.width, VIEWPORT.height);
@@ -3068,6 +3197,9 @@ async function runVerifyScenario(page, scenario) {
 	);
 
 	const snapshots = [];
+	let groupClickResult = null;
+	let groupOpened = false;
+	let groupSrcBefore = null;
 	const EMPTY_SNAPSHOT = {
 		hasScroller: false,
 		listImgCount: 0,
@@ -3079,6 +3211,7 @@ async function runVerifyScenario(page, scenario) {
 		outsideBoxes: 0,
 		outsideWithImg: 0,
 		outsideDims: [],
+		outsideStates: {},
 		previewOpen: false,
 		previewOriginalCount: 0,
 	};
@@ -3088,10 +3221,45 @@ async function runVerifyScenario(page, scenario) {
 		return snapshot;
 	};
 	await sleep(1500);
+	if (opts.fault === "stats") await page.call("window.__hip.faultDiagnostics()", 30_000);
+	if (opts.fault === "leak") await page.call("window.__hip.faultLeakDiagnostics()", 30_000);
 	const atMount = await take("mount");
-	const statsAtMount = await page.call("window.__hip.serviceStats()", 30_000).catch(() => null);
 
-	// 快速滚过（真实轮）：滚动过程中不能出现原图 src，也不该超过预算
+	// 失败态交互：**趁坏图还在加载区**立刻做（滚走后它会按要求退回占位，就测不到失败态了）
+	let errorClick = null;
+	let afterErrorClick = null;
+	let retryResult = null;
+	let afterRetry = null;
+	if (scenario.broken) {
+		for (
+			let attempt = 0;
+			attempt < 10 && !(afterRetry && (afterRetry.boxStates.error ?? 0) > 0);
+			attempt += 1
+		) {
+			await sleep(400);
+			errorClick = await page.call("window.__hip.clickHistoryBox('error', 0)", 30_000);
+			await sleep(400);
+			afterErrorClick = await take("error-primary-click");
+			await page.send("Input.dispatchKeyEvent", {
+				type: "keyDown",
+				key: "Escape",
+				code: "Escape",
+				windowsVirtualKeyCode: 27,
+			});
+			await page.send("Input.dispatchKeyEvent", {
+				type: "keyUp",
+				key: "Escape",
+				code: "Escape",
+				windowsVirtualKeyCode: 27,
+			});
+			await sleep(250);
+			retryResult = await page.call("window.__hip.clickHistoryBoxRetry('error', 0)", 30_000);
+			await sleep(500);
+			afterRetry = await take("retry");
+		}
+	}
+
+	// 快速滚过（真实轮）；滚动中允许 IO/rAF 异步过渡，所以瞬态只记录不判定
 	const rect = await page.call("window.__hip.scrollRect()");
 	for (let step = 0; step < 24; step += 1) {
 		await page.send("Input.dispatchMouseEvent", {
@@ -3105,14 +3273,69 @@ async function runVerifyScenario(page, scenario) {
 		await sleep(90);
 		if (step % 6 === 0) await take(`scroll${step}`);
 	}
-	await sleep(800);
-	const afterScroll = await take("after-scroll");
-	const statsAfterScroll = await page.call("window.__hip.serviceStats()", 30_000).catch(() => null);
+	// 收敛后再判定「加载区外只剩同尺寸占位」（有上限地等，不无限等也不删样本）
+	const settled = await page.call("window.__hip.stableSnapshot(8000)", 30_000);
+	snapshots.push({ label: "settled", ...settled });
+	const afterScroll = settled;
+	const diagnosticsAfterScroll = await page.call("window.__hip.diagnostics()", 30_000).catch(() => null);
 
-	// 占位点击 → 原图预览；Esc 关闭
-	const clickResult = await page.call("window.__hip.clickHistoryBox('ready', 0)", 30_000);
+	// 预览①：点一个**占位**（idle）外盒 → 原图预览；若该场景有多图消息，另验方向键切换
+	const idleClick = await page.call("window.__hip.clickHistoryBox('idle', 0)", 30_000);
 	await sleep(500);
-	const afterOpen = await take("preview-open");
+	const afterOpenIdle = await take("preview-open-idle");
+	const srcBefore = await page.call("window.__hip.previewOriginalSrc()", 30_000);
+	// 方向键要在「同一消息内多张图」上验：换点到多图消息的盒子上（仍是占位）
+	if (scenario.expectsArrowSwitch) {
+		await page.send("Input.dispatchKeyEvent", {
+			type: "keyDown",
+			key: "Escape",
+			code: "Escape",
+			windowsVirtualKeyCode: 27,
+		});
+		await page.send("Input.dispatchKeyEvent", {
+			type: "keyUp",
+			key: "Escape",
+			code: "Escape",
+			windowsVirtualKeyCode: 27,
+		});
+		await sleep(300);
+		const groupClick = await page.call("window.__hip.clickHistoryBoxInGroup(2, 0)", 30_000);
+		await sleep(500);
+		const groupSnapshot = await take("preview-open-group");
+		groupClickResult = groupClick;
+		groupOpened = groupSnapshot.previewOpen === true;
+		groupSrcBefore = await page.call("window.__hip.previewOriginalSrc()", 30_000);
+	}
+	await page.send("Input.dispatchKeyEvent", {
+		type: "keyDown",
+		key: "ArrowRight",
+		code: "ArrowRight",
+		windowsVirtualKeyCode: 39,
+	});
+	await page.send("Input.dispatchKeyEvent", {
+		type: "keyUp",
+		key: "ArrowRight",
+		code: "ArrowRight",
+		windowsVirtualKeyCode: 39,
+	});
+	await sleep(400);
+	const afterArrow = await take("preview-arrow");
+	const srcAfterArrow = await page.call("window.__hip.previewOriginalSrc()", 30_000);
+	const arrowBaseline = groupSrcBefore ?? srcBefore;
+	await page.send("Input.dispatchKeyEvent", {
+		type: "keyDown",
+		key: "ArrowLeft",
+		code: "ArrowLeft",
+		windowsVirtualKeyCode: 37,
+	});
+	await page.send("Input.dispatchKeyEvent", {
+		type: "keyUp",
+		key: "ArrowLeft",
+		code: "ArrowLeft",
+		windowsVirtualKeyCode: 37,
+	});
+	await sleep(400);
+	const srcAfterBack = await page.call("window.__hip.previewOriginalSrc()", 30_000);
 	await page.send("Input.dispatchKeyEvent", {
 		type: "keyDown",
 		key: "Escape",
@@ -3128,21 +3351,20 @@ async function runVerifyScenario(page, scenario) {
 	await sleep(400);
 	const afterClose = await take("preview-closed");
 
-	// 失败态：点第一张坏图（重试）不允许打开预览，且不能让其它图永久 busy
-	let retryResult = null;
-	let afterRetry = null;
-	if (scenario.broken) {
-		retryResult = await page.call("window.__hip.clickHistoryBox('error', 0)", 30_000);
-		await sleep(700);
-		afterRetry = await take("retry");
-	}
-	const statsBeforeSwitch = await page.call("window.__hip.serviceStats()", 30_000).catch(() => null);
-
-	// 切空会话 + 10 轮来回：显示资源不许线性累计
+	// 预览②：开着预览切会话 → 遮罩必须销毁
+	const idleClickAgain = await page.call("window.__hip.clickHistoryBox('idle', 0)", 30_000);
+	await sleep(400);
+	const beforeSessionSwitch = await page.call("window.__hip.verifySnapshot()", 30_000);
 	await page.call("window.__hip.clearSessions()", 30_000);
 	await sleep(700);
+	const afterSessionSwitch = await take("session-switched-with-preview");
+	void idleClickAgain;
+
+	// 切空会话 + 10 轮来回：真实口径（keys/urls/observer targets）必须归零
+	await page.call("window.__hip.clearSessions()", 30_000);
+	await sleep(600);
 	const afterClear = await take("session-cleared");
-	const statsAfterClear = await page.call("window.__hip.serviceStats()", 30_000).catch(() => null);
+	const diagnosticsAfterClear = await page.call("window.__hip.diagnostics()", 30_000).catch(() => null);
 	const cycleStats = [];
 	const cycleSnapshots = [];
 	for (let round = 0; round < 10; round += 1) {
@@ -3154,8 +3376,8 @@ async function runVerifyScenario(page, scenario) {
 		await sleep(600);
 		cycleSnapshots.push((await page.call("window.__hip.verifySnapshot()", 30_000)) ?? EMPTY_SNAPSHOT);
 		await page.call("window.__hip.clearSessions()", 30_000);
-		await sleep(150);
-		cycleStats.push(await page.call("window.__hip.serviceStats()", 30_000).catch(() => null));
+		await sleep(250);
+		cycleStats.push(await page.call("window.__hip.diagnostics()", 30_000).catch(() => null));
 	}
 
 	const checks = [];
@@ -3179,13 +3401,30 @@ async function runVerifyScenario(page, scenario) {
 		listFacts.every((snapshot) => snapshot.listImgMaxNatural <= 384),
 		listFacts.map((snapshot) => `${snapshot.label}:${snapshot.listImgMaxNatural}`),
 	);
+	// 收敛后：加载区外必须只剩同尺寸占位（瞬态不判定，但等待有上限）
 	add(
-		"placeholder:outside-retained-bounded",
+		"range:outside-are-idle-placeholders",
 		"mandatory",
-		listFacts.every((snapshot) => (snapshot.outsideWithImg ?? 0) <= 48),
-		listFacts.map(
-			(snapshot) => `${snapshot.label}:outside=${snapshot.outsideBoxes}/withImg=${snapshot.outsideWithImg}`,
-		),
+		afterScroll.settled === true &&
+			afterScroll.outsideBoxes > 0 &&
+			afterScroll.outsideWithImg === 0 &&
+			(afterScroll.outsideStates.idle ?? 0) === afterScroll.outsideBoxes,
+		{
+			settled: afterScroll.settled,
+			outsideBoxes: afterScroll.outsideBoxes,
+			outsideWithImg: afterScroll.outsideWithImg,
+			outsideStates: afterScroll.outsideStates,
+		},
+	);
+	add(
+		"range:outside-same-box",
+		scenario.box ? "mandatory" : "informational",
+		scenario.box ? afterScroll.outsideDims.length === 1 && afterScroll.outsideDims[0] === scenario.box : true,
+		{
+			expected: scenario.box,
+			dims: afterScroll.outsideDims,
+			reason: scenario.box ? null : "混合档位场景并存两个档位",
+		},
 	);
 	add(
 		"budget:ready-at-most-48",
@@ -3193,35 +3432,88 @@ async function runVerifyScenario(page, scenario) {
 		listFacts.every((snapshot) => (snapshot.boxStates.ready ?? 0) <= 48),
 		listFacts.map((snapshot) => `${snapshot.label}:ready=${snapshot.boxStates.ready ?? 0}`),
 	);
-	// 超预算的场景：多出来的必须是占位（DOM 可观测的「预算真的封顶」证据）
 	const overBudget = afterScroll.boxCount > 48;
 	add(
 		"budget:over-budget-are-placeholders",
 		overBudget ? "mandatory" : "informational",
 		overBudget ? (afterScroll.boxStates.idle ?? 0) + (afterScroll.boxStates.loading ?? 0) > 0 : true,
-		{
-			boxCount: afterScroll.boxCount,
-			states: afterScroll.boxStates,
-			reason: overBudget ? null : "总数没超过 48，无需占位兜底",
-		},
+		{ boxCount: afterScroll.boxCount, states: afterScroll.boxStates },
 	);
+
+	// ---- 真实实例诊断（DEV-only 注册）：统计必须能对照 DOM，全 0 视为红灯 ----
 	add(
-		"placeholder:same-box-outside",
-		scenario.box ? "mandatory" : "informational",
-		scenario.box
-			? afterScroll.outsideDims.length === 1 && afterScroll.outsideDims[0] === scenario.box
-			: false,
-		{
-			expected: scenario.box,
-			actual: afterScroll.outsideDims,
-			reason: scenario.box ? null : "混合档位场景两个档位并存",
-		},
-	);
-	add(
-		"preview:placeholder-opens-original",
+		"stats:available",
 		"mandatory",
-		clickResult?.ok === true && afterOpen.previewOpen === true && afterOpen.previewOriginalCount === 1,
-		{ clickResult, open: afterOpen.previewOpen, originals: afterOpen.previewOriginalCount },
+		Boolean(diagnosticsAfterScroll?.service && diagnosticsAfterScroll?.observers),
+		diagnosticsAfterScroll,
+	);
+	const domReady = afterScroll.boxStates.ready ?? 0;
+	const sanityService = diagnosticsAfterScroll?.service ?? null;
+	const statsSanity =
+		sanityService !== null &&
+		(domReady === 0 ||
+			(sanityService.urls > 0 &&
+				sanityService.active > 0 &&
+				(sanityService.workerCreated > 0 || sanityService.cacheEntries > 0)));
+	add("stats:sanity-vs-dom", "mandatory", statsSanity, {
+		domReady,
+		service: sanityService,
+		reason: domReady === 0 ? "DOM 上没有就绪图" : "DOM 有就绪图时 urls/active/workerCreated 必须非零",
+	});
+	add(
+		"stats:budget-within-contract",
+		"mandatory",
+		sanityService !== null &&
+			sanityService.active <= 48 &&
+			sanityService.waiting <= 48 &&
+			sanityService.outstandingRequests <= 1 &&
+			sanityService.urls <= 48 &&
+			sanityService.cacheEntries <= 128 &&
+			sanityService.cacheBytes <= 16 * 1024 * 1024,
+		{
+			active: sanityService?.active,
+			waiting: sanityService?.waiting,
+			outstandingRequests: sanityService?.outstandingRequests,
+			urls: sanityService?.urls,
+			cacheEntries: sanityService?.cacheEntries,
+			cacheBytes: sanityService?.cacheBytes,
+		},
+	);
+	add("stats:pipeline-ran", "mandatory", (sanityService?.workerCreated ?? 0) >= 1, {
+		workerCreated: sanityService?.workerCreated,
+	});
+
+	// ---- 预览交互 ----
+	add(
+		"preview:idle-placeholder-opens-original",
+		idleClick?.ok === true ? "mandatory" : "informational",
+		idleClick?.ok === true
+			? afterOpenIdle.previewOpen === true && afterOpenIdle.previewOriginalCount === 1
+			: afterOpenIdle.previewOriginalCount <= 1,
+		{
+			click: idleClick,
+			open: afterOpenIdle.previewOpen,
+			originals: afterOpenIdle.previewOriginalCount,
+			reason: idleClick?.ok === true ? null : "该场景没有 idle 占位（全部就绪或失败），改用其它状态验证预览",
+		},
+	);
+	add(
+		"preview:arrow-keys-switch-and-no-batch-preload",
+		scenario.expectsArrowSwitch ? "mandatory" : "informational",
+		scenario.expectsArrowSwitch
+			? srcBefore !== null &&
+					srcAfterArrow !== null &&
+					srcBefore !== srcAfterArrow &&
+					afterArrow.previewOriginalCount === 1 &&
+					srcAfterBack === srcBefore
+			: afterArrow.previewOriginalCount <= 1,
+		{
+			srcBefore,
+			srcAfterArrow,
+			srcAfterBack,
+			originalsAfterArrow: afterArrow.previewOriginalCount,
+			reason: scenario.expectsArrowSwitch ? null : "该场景每条消息只有 1 张图，方向键本来就没有可切换目标",
+		},
 	);
 	add(
 		"preview:escape-closes-and-removes-original",
@@ -3229,44 +3521,76 @@ async function runVerifyScenario(page, scenario) {
 		afterClose.previewOpen === false && afterClose.previewOriginalCount === 0,
 		{ open: afterClose.previewOpen, originals: afterClose.previewOriginalCount },
 	);
+	add(
+		"preview:session-switch-destroys-overlay",
+		"mandatory",
+		beforeSessionSwitch.previewOpen === true && afterSessionSwitch.previewOpen === false,
+		{ before: beforeSessionSwitch.previewOpen, after: afterSessionSwitch.previewOpen },
+	);
+	add(
+		"preview:overlays-are-single",
+		"mandatory",
+		listFacts.every((snapshot) => snapshot.previewOriginalCount <= 1),
+		listFacts.map((snapshot) => `${snapshot.label}:${snapshot.previewOriginalCount}`),
+	);
 	if (scenario.broken) {
 		add(
-			"error:retry-does-not-open-preview",
+			"error:primary-click-opens-original",
 			"mandatory",
-			retryResult?.ok === true && retryResult.state === "error" && afterRetry.previewOpen === false,
-			{ retryResult, open: afterRetry.previewOpen, states: afterRetry.boxStates },
+			errorClick?.ok === true &&
+				afterErrorClick.previewOpen === true &&
+				afterErrorClick.previewOriginalCount === 1,
+			{
+				click: errorClick,
+				open: afterErrorClick.previewOpen,
+				originals: afterErrorClick.previewOriginalCount,
+			},
 		);
 		add(
-			"error:others-still-ready",
+			"error:retry-entry-and-others-ready",
 			"mandatory",
-			(afterRetry.boxStates.ready ?? 0) > 0 && (afterRetry.boxStates.error ?? 0) > 0,
-			afterRetry.boxStates,
+			retryResult?.ok === true &&
+				(afterRetry.boxStates.ready ?? 0) > 0 &&
+				(afterRetry.boxStates.error ?? 0) > 0,
+			{ retryResult, states: afterRetry.boxStates },
 		);
 	}
-	if (statsAfterClear) {
-		add(
-			"cleanup:empty-session-zero-display-resources",
-			"mandatory",
-			statsAfterClear.keys === 0 &&
-				statsAfterClear.urls === 0 &&
-				afterClear.listImgCount === 0 &&
-				afterClear.hasScroller === false,
-			{ stats: statsAfterClear, imgs: afterClear.listImgCount },
-		);
-	}
-	const cycleKeys = cycleStats.filter(Boolean).map((stats) => stats.keys);
-	const cycleUrls = cycleStats.filter(Boolean).map((stats) => stats.urls);
-	add(
-		"leak:10-session-cycles-no-growth",
-		"mandatory",
-		cycleKeys.length > 0 &&
-			Math.max(...cycleKeys) <= 12 &&
-			Math.max(...cycleUrls) <= 12 &&
-			cycleKeys[cycleKeys.length - 1] <= cycleKeys[0] + 3,
-		{ keys: cycleKeys, urls: cycleUrls },
-	);
-	add("cleanup:no-leftover", "mandatory", statsBeforeSwitch !== null, statsBeforeSwitch);
 
+	// ---- 清理：真实口径归零（不是「没有就跳过」）----
+	add(
+		"cleanup:empty-session-all-zero",
+		"mandatory",
+		(afterClear.listImgCount ?? -1) === 0 &&
+			(afterClear.boxCount ?? -1) === 0 &&
+			diagnosticsAfterClear?.service?.keys === 0 &&
+			diagnosticsAfterClear?.service?.urls === 0 &&
+			diagnosticsAfterClear?.service?.outstandingRequests === 0 &&
+			diagnosticsAfterClear?.observers?.targets === 0,
+		{
+			snapshot: { imgs: afterClear.listImgCount, boxes: afterClear.boxCount },
+			diagnostics: diagnosticsAfterClear,
+		},
+	);
+	const cycleService = cycleStats.map((entry) => entry?.service ?? null);
+	add(
+		"leak:10-session-cycles-real-zeros",
+		"mandatory",
+		cycleService.length === 10 &&
+			cycleService.every((entry) => entry !== null && entry.keys === 0 && entry.urls === 0),
+		{
+			cycles: cycleService.map((entry) =>
+				entry ? `k${entry.keys}/u${entry.urls}/o${entry.outstandingRequests}` : "null",
+			),
+		},
+	);
+	add(
+		"leak:10-session-cycles-dom-bounded",
+		"mandatory",
+		cycleSnapshots.length === 10 &&
+			Math.max(...cycleSnapshots.map((snapshot) => snapshot.boxCount)) <= 3 &&
+			Math.max(...cycleSnapshots.map((snapshot) => snapshot.boxStates.ready ?? 0)) <= 3,
+		{ boxes: cycleSnapshots.map((snapshot) => snapshot.boxCount) },
+	);
 	await page.call("window.__hip.resetAll()", 30_000).catch(() => {});
 	return {
 		key: scenario.key,
@@ -3284,15 +3608,19 @@ async function runVerifyScenario(page, scenario) {
 			previewOpen: snapshot.previewOpen,
 			previewOriginalCount: snapshot.previewOriginalCount,
 		})),
-		stats: {
-			atMount: statsAtMount,
-			afterScroll: statsAfterScroll,
-			beforeSwitch: statsBeforeSwitch,
-			afterClear: statsAfterClear,
+		diagnostics: { afterScroll: diagnosticsAfterScroll, afterClear: diagnosticsAfterClear },
+		preview: {
+			idleClick,
+			errorClick,
+			retryResult,
+			groupClickResult,
+			groupOpened,
+			srcBefore,
+			arrowBaseline,
+			srcAfterArrow,
+			srcAfterBack,
 		},
-		cycleStats: cycleStats
-			.filter(Boolean)
-			.map((stats) => ({ keys: stats.keys, urls: stats.urls, active: stats.active })),
+		cycleStats: cycleStats.map((entry) => entry?.service ?? null),
 		checks,
 		failures: checks.filter((check) => check.level === "mandatory" && !check.ok),
 	};
@@ -3321,7 +3649,7 @@ async function runVerify(page, opts) {
 	};
 	const failures = [];
 	for (const scenario of scenarios) {
-		const entry = await runVerifyScenario(page, scenario);
+		const entry = await runVerifyScenario(page, scenario, opts);
 		report.scenarios.push(entry);
 		failures.push(...entry.failures.map((failure) => `${scenario.key}: ${failure.id}`));
 		await write();
@@ -3477,7 +3805,6 @@ function analyzeGeometry(snapshots) {
 			return acc;
 		}, {}),
 		boxKeys: [...new Set(list.flatMap((record) => [...record.boxKeys]))],
-		maxReadyNatural: snapshots.reduce((max, snapshot) => max, 0),
 		readyNaturalSizes: [...new Set(list.flatMap((record) => [...record.imgKeys]))],
 		readySizes,
 	};

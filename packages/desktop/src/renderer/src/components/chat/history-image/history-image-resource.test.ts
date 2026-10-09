@@ -852,6 +852,17 @@ describe("缩略图服务：取消 / 迟到 / 超时 / 重置 / 同步失败", (
 		expect(listener).toHaveBeenCalledTimes(1);
 	});
 
+	it("outstandingRequests 真实反映「已投递未回应」：单飞下恒 ≤1", () => {
+		const { service, worker } = fakeService();
+		service.acquire(image("outstanding-1"));
+		service.acquire(image("outstanding-2"));
+		expect(service.stats().outstandingRequests).toBe(1);
+		worker().completeLast();
+		expect(service.stats().outstandingRequests).toBe(1);
+		worker().completeLast();
+		expect(service.stats().outstandingRequests).toBe(0);
+	});
+
 	it("单飞：只有一个在途任务，完成一个才发下一个", () => {
 		const { service, worker } = fakeService();
 		service.acquire(image("q1"));

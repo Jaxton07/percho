@@ -54,7 +54,10 @@ export function HistoryImage({
 		});
 	}, [resolvedService]);
 
-	// 建立/销毁接线（**不在 render 里 acquire**；依赖变化时先释放旧的再建新的）
+	// 建立/销毁接线（**不在 render 里 acquire**；依赖变化时先释放旧的再建新的）。
+	// generation 是**刻意的**换代触发器：服务 reset() 会让既有句柄全部失效，组件必须重建接线，
+	// 否则新会话的图会永远停在占位（biome 认为它多余，这里是有意的）。
+	// biome-ignore lint/correctness/useExhaustiveDependencies: generation 是刻意的换代触发器，见上
 	useEffect(() => {
 		if (!root || !targetRef.current) {
 			setBinding(null);
@@ -129,7 +132,7 @@ export function HistoryImageSurface({
 	const waiting = snapshot.status !== "ready" && snapshot.status !== "error";
 	const label =
 		snapshot.status === "error"
-			? `${t("message.imageLoadError")}，${t("message.imageRetry")}`
+			? `${t("message.imageLoadError")}，${alt}`
 			: snapshot.status === "ready"
 				? alt
 				: `${alt}，${t("message.imagePending")}`;
@@ -175,12 +178,31 @@ export function HistoryImageSurface({
 					)}
 				</span>
 			)}
-			<button
-				type="button"
-				className="absolute inset-0 cursor-pointer"
-				aria-label={label}
-				onClick={snapshot.status === "error" ? onRetry : onOpen}
-			/>
+			{/* 主点：任何状态都能尝试打开原图预览（失败态也不封死原图入口） */}
+			<button type="button" className="absolute inset-0 cursor-pointer" aria-label={label} onClick={onOpen} />
+			{snapshot.status === "error" ? (
+				// 独立小 ghost 重试：绝对定位，不改变外盒尺寸；点击不冒泡到主点
+				<button
+					type="button"
+					className="absolute right-1 bottom-1 flex h-5 w-5 items-center justify-center rounded-md text-ink-faint hover:bg-hover"
+					aria-label={t("message.imageRetry")}
+					onClick={(event) => {
+						event.stopPropagation();
+						onRetry();
+					}}
+				>
+					<svg viewBox="0 0 16 16" width="14" height="14" aria-hidden="true">
+						<path
+							d="M13 8a5 5 0 1 1-1.6-3.7M13 2.5V5.5H10"
+							fill="none"
+							stroke="currentColor"
+							strokeWidth="1.2"
+							strokeLinecap="round"
+							strokeLinejoin="round"
+						/>
+					</svg>
+				</button>
+			) : null}
 		</span>
 	);
 }

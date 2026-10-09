@@ -206,6 +206,30 @@ export function createHistoryImageObserver(options: HistoryImageObserverOptions)
 }
 
 const shared = new WeakMap<Element, HistoryImageObserver>();
+/** 活着的共享 observer（WeakMap 不可遍历）：只为诊断统计计数，不持有 DOM 引用以外的信息 */
+const liveObservers = new Set<HistoryImageObserver>();
+
+/** 诊断用聚合统计（DEV 诊断对象会读它；生产里没人调用） */
+export function historyImageObserverDiagnostics(): {
+	observers: number;
+	targets: number;
+	inRange: number;
+	viewportSubscriptions: number;
+	rootResizeSubscriptions: number;
+} {
+	let targets = 0;
+	let inRange = 0;
+	let viewportSubscriptions = 0;
+	let rootResizeSubscriptions = 0;
+	for (const observer of liveObservers) {
+		const stats = observer.stats();
+		targets += stats.targets;
+		inRange += stats.inRange;
+		viewportSubscriptions += stats.viewportSubscriptions;
+		rootResizeSubscriptions += stats.rootResizeSubscriptions;
+	}
+	return { observers: liveObservers.size, targets, inRange, viewportSubscriptions, rootResizeSubscriptions };
+}
 
 /** 同一个滚动容器共享一个 observer（App 级）；root 换了（切会话重建列表）自然拿到新的 */
 export function historyImageObserver(
@@ -216,5 +240,6 @@ export function historyImageObserver(
 	if (existing) return existing;
 	const created = createHistoryImageObserver({ root, ...options });
 	shared.set(root, created);
+	liveObservers.add(created);
 	return created;
 }

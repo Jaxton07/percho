@@ -68,6 +68,12 @@ export function MessageList() {
 	// 历史图片的私有 root：滚动容器元素本身。用 state 而不是只存 ref —— 挂载顺序上
 	// 后代 effect 需要拿到**已存在**的 DOM 元素才能建立观察，state 变化会触发它们重跑
 	const [historyImageRoot, setHistoryImageRoot] = useState<HTMLElement | null>(null);
+	// ref 用 useCallback 固定：否则每次渲染都是新函数，React 会先 detach 再 attach，
+	// 既让 setHistoryImageRoot 反复触发，也会让历史图的观察目标重挂
+	const attachScroller = useCallback((element: HTMLDivElement | null) => {
+		scrollRef.current = element;
+		setHistoryImageRoot((previous) => (previous === element ? previous : element));
+	}, []);
 	// 对话正文的边界淡出：**只淡上沿**（在顶栏下渐隐）——
 	// 下沿紧贴输入框，那里不要淡出（用户明确不要）；28px < 内容区 pt-8（32px），
 	// 所以静止在顶时只会淡到空白内边距，不会咬正文
@@ -319,10 +325,7 @@ export function MessageList() {
 			{/* relative z-10：无背景；CenterOrb（z-20）连同其 canvas 遮罩盖在本层之上（工作中场景），
 			    交互不受影响（orb 整层 pointer-events-none） */}
 			<div
-				ref={(element) => {
-					scrollRef.current = element;
-					setHistoryImageRoot((previous) => (previous === element ? previous : element));
-				}}
+				ref={attachScroller}
 				onScroll={handleScroll}
 				onClickCapture={handleSummaryToggle}
 				style={{ "--edge-fade-size": "28px" } as CSSProperties}

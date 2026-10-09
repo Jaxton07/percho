@@ -18,6 +18,7 @@ import { TASK_TIMEOUT_MS, THUMBNAIL_MAX_SIDE } from "./constants";
 // chunk。本地实测过 `new Worker(new URL(...))` 这种写法在**当前用法/构建条件**下 app build 里没出 chunk
 // （未引用模块本来也会 tree-shake）；换 `?worker` 后再验。阶段 3 仍要在 app 最终产物 + file:// 下复验。
 import ThumbnailWorker from "./history-image.worker.ts?worker";
+import { historyImageObserverDiagnostics } from "./history-image-observer";
 import { ActiveSlotRegistry, ThumbnailCache, type ThumbnailCacheEntry } from "./thumbnail-budget";
 import type { ThumbnailRequest, ThumbnailResponse } from "./thumbnail-protocol";
 
@@ -60,6 +61,8 @@ export interface ThumbnailServiceStats {
 	urls: number;
 	inFlight: boolean;
 	lateDropped: number;
+	/** 已 postMessage 但还没拿到回应/未收尾的请求数：单飞下必须 ≤1（验收用真实口径） */
+	outstandingRequests: number;
 	timeouts: number;
 	syncFailures: number;
 	reclaimed: number;
@@ -98,6 +101,7 @@ export function createThumbnailService(options: ThumbnailServiceOptions = {}) {
 	const identity = new WeakMap<ImageInput, number>();
 	const records = new Map<number, KeyRecord>();
 	const counters = {
+		outstandingRequests: 0,
 		lateDropped: 0,
 		timeouts: 0,
 		syncFailures: 0,
@@ -205,6 +209,7 @@ export function createThumbnailService(options: ThumbnailServiceOptions = {}) {
 		const task = pending;
 		pending = null;
 		if (task?.timer) clearTimeout(task.timer);
+		if (task) counters.outstandingRequests = Math.max(0, counters.outstandingRequests - 1);
 		disposeWorker();
 		if (!task) return;
 		const record = records.get(task.key);
@@ -225,13 +230,14 @@ export function createThumbnailService(options: ThumbnailServiceOptions = {}) {
 	function handleResponse(response: ThumbnailResponse | undefined): void {
 		const requestId = response?.requestId;
 		if (!pending || requestId !== pending.requestId) {
-			// 迟到 / 已丢弃的结果：直接丢，不回缓存也不通知
+			// 迟到 / 已丢弃的结果：直接丢，不回缓存也不通知（对应 post 已经收过尾）
 			counters.lateDropped += 1;
 			return;
 		}
 		const task = pending;
 		pending = null;
 		if (task.timer) clearTimeout(task.timer);
+		counters.outstandingRequests = Math.max(0, counters.outstandingRequests - 1);
 		const record = records.get(task.key);
 		if (!record) {
 			counters.lateDropped += 1;
@@ -266,6 +272,7 @@ export function createThumbnailService(options: ThumbnailServiceOptions = {}) {
 		try {
 			const request: ThumbnailRequest = { requestId, image: record.image, maxSide };
 			workerInstance().postMessage(request);
+			counters.outstandingRequests += 1;
 		} catch {
 			// 同步失败（new Worker 被拦 / postMessage 抛）：进 error 状态机，句柄照样能 release/retry
 			counters.syncFailures += 1;
@@ -451,6 +458,7 @@ export function createThumbnailService(options: ThumbnailServiceOptions = {}) {
 		const task = pending;
 		pending = null;
 		if (task?.timer) clearTimeout(task.timer);
+		if (task) counters.outstandingRequests = Math.max(0, counters.outstandingRequests - 1);
 		disposeWorker();
 		for (const record of records.values()) {
 			dropUrl(record);
@@ -499,8 +507,26 @@ export type ThumbnailService = ReturnType<typeof createThumbnailService>;
 
 let singleton: ThumbnailService | null = null;
 
+/**
+ * DEV-only 诊断注册：给验收脚本一个**指向真实产品实例**的只读入口（只暴露计数）。
+ * - 生产构建里 `import.meta.env.DEV` 为 false，整段被 tree-shake，不留 window 常驻调试；
+ * - 不暴露图片内容、句柄与任何可写接口。
+ */
+function registerDiagnostics(service: ThumbnailService): void {
+	if (!import.meta.env.DEV) return;
+	(
+		globalThis as typeof globalThis & { __perchoHistoryImageDiagnostics?: unknown }
+	).__perchoHistoryImageDiagnostics = {
+		service: () => service.stats(),
+		observers: () => historyImageObserverDiagnostics(),
+	};
+}
+
 /** 进程内单例（App 级共享一份 48 slots 与一份 LRU）；测试请用 `createThumbnailService` 造新实例 */
 export function thumbnailService(): ThumbnailService {
-	if (!singleton) singleton = createThumbnailService();
+	if (!singleton) {
+		singleton = createThumbnailService();
+		registerDiagnostics(singleton);
+	}
 	return singleton;
 }
