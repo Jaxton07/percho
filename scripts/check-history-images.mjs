@@ -14,6 +14,7 @@
  * 用法：
  *   node scripts/check-history-images.mjs probe      # 阶段 0 技术门：worker 加载策略 × CSP × 格式 × 吞吐（dev 与 build 都要各跑一次）
  *   node scripts/check-history-images.mjs baseline   # 阶段 0 独立对照基线（≥3 轮/场景，页面冷态）
+ *   node scripts/check-history-images.mjs worker     # 阶段 2 真实产出 worker 验收（dev 走产品服务模块；build 走 assets 里的 worker chunk）
  *   node scripts/check-history-images.mjs geometry   # 阶段 1 静态/几何验收：外盒 rect / 行高 / scrollHeight 不随加载变化（含失败态）+ 窄窗不横滚
  *   通用参数：--rounds=<n>、--scenarios=<key,key>、--out=<file>、--label=<名字>
  *
@@ -29,15 +30,25 @@
  *   临时产物只写 `.local/tmp/history-image-performance/`。
  */
 import { existsSync } from "node:fs";
-import { copyFile, mkdir, readFile, rm, writeFile } from "node:fs/promises";
-import { join } from "node:path";
-import { fileURLToPath } from "node:url";
+import { copyFile, mkdir, readdir, readFile, rm, stat, writeFile } from "node:fs/promises";
+import { join, relative } from "node:path";
+import { fileURLToPath, pathToFileURL } from "node:url";
 import { makeAnimatedGifBase64 } from "./fixtures/animated-gif.mjs";
 
 const ROOT = fileURLToPath(new URL("..", import.meta.url));
 const TMP_DIR = join(ROOT, ".local/tmp/history-image-performance");
 /** 探针 worker 源码在库里（scripts/fixtures/），不依赖 .local（否则清目录/新 clone 后脚本就废了） */
 const PROBE_WORKER_PATH = join(ROOT, "scripts/fixtures/history-image-probe.worker.js");
+/**
+ * 认产物用的独有标记：必须是**本 worker 源码里有、别的 chunk 没有**的字面量。
+ * 踩过：用 createImageBitmap/convertToBlob/imageOrientation 这组 API 名会把 Monaco 的 ts.worker 认成自己人。
+ */
+const WORKER_MARKER = "OffscreenCanvas 2d 上下文不可用";
+/** 产品里的真实 worker 源码（阶段 2 起验收对象） */
+const PROJECT_WORKER_PATH = join(
+	ROOT,
+	"packages/desktop/src/renderer/src/components/chat/history-image/history-image.worker.ts",
+);
 const OUT_RENDERER_DIR = join(ROOT, "packages/desktop/out/renderer");
 const PREVIEW_PROBE_NAME = "__hip-probe.worker.js";
 /** 计划采用的加载方式：同源 worker 文件（Vite 打包产物也是同源 URL）。blob 两个策略只是备选探索项 */
@@ -675,6 +686,163 @@ window.__hip = (() => {
 		return ids;
 	}
 
+	/* ---------- 真实应用 worker（阶段 2 门：验 Vite 产出的真正 worker，不是纯 JS 探针） ---------- */
+
+	function appFixture(width, height, kind) {
+		const canvas = document.createElement("canvas");
+		canvas.width = width;
+		canvas.height = height;
+		const ctx = canvas.getContext("2d");
+		if (kind === "transparent") {
+			ctx.clearRect(0, 0, width, height);
+			ctx.fillStyle = "rgb(20,80,200)";
+			ctx.beginPath();
+			ctx.arc(width / 2, height / 2, Math.min(width, height) * 0.3, 0, Math.PI * 2);
+			ctx.fill();
+		} else {
+			ctx.fillStyle = "#f0f0f0";
+			ctx.fillRect(0, 0, width, height);
+			ctx.fillStyle = "#123456";
+			ctx.font = "20px monospace";
+			ctx.fillText("app " + width + "x" + height, 24, 48);
+			ctx.fillRect(width / 2, height / 2, Math.round(width / 4), Math.round(height / 6));
+		}
+		return canvas.toDataURL("image/png").split(",")[1];
+	}
+
+	function buildAppFixtures(specs) {
+		return specs.map((spec) => ({
+			name: spec.name,
+			mimeType: "image/png",
+			base64: appFixture(spec.width, spec.height, spec.kind),
+			checkAlpha: Boolean(spec.checkAlpha),
+		}));
+	}
+
+	/** 用**产品模块**跑一张图（dev：动态 import 真实服务，等价于阶段 3 接线后的路径） */
+	async function runAppService(fixtures) {
+		const { createThumbnailService } = await import(
+			"/src/components/chat/history-image/history-image-service.ts"
+		);
+		const service = createThumbnailService();
+		const results = [];
+		for (const fixture of fixtures) {
+			const image = { mimeType: fixture.mimeType, data: fixture.base64 };
+			const handle = service.acquire(image, { visible: true });
+			const deadline = performance.now() + 20000;
+			while (handle.getSnapshot().status === "idle" || handle.getSnapshot().status === "loading") {
+				if (performance.now() > deadline) break;
+				await new Promise((resolve) => setTimeout(resolve, 30));
+			}
+			const snapshot = handle.getSnapshot();
+			const entry = {
+				name: fixture.name,
+				status: snapshot.status,
+				width: snapshot.width,
+				height: snapshot.height,
+				url: snapshot.url ? snapshot.url.slice(0, snapshot.url.indexOf(":") + 1) : null,
+				blobBytes: null,
+				alpha: null,
+				contentType: null,
+				decoded: false,
+			};
+			if (snapshot.url) {
+				// 注意：**不能用 fetch** —— CSP 的 connect-src 回落到 default-src 'self'，blob: 会被拦；
+				// 产品也不需要 fetch，只有 img-src 允许 blob:，所以这里就用 <img> 验「真的能显示」
+				const decoded = await readImage(snapshot.url, Boolean(fixture.checkAlpha));
+				entry.decoded = decoded.decoded;
+				entry.width = snapshot.width ?? decoded.width;
+				entry.height = snapshot.height ?? decoded.height;
+				entry.alpha = decoded.alpha;
+			}
+			results.push(entry);
+			handle.release();
+		}
+		await new Promise((resolve) => setTimeout(resolve, 50));
+		const stats = service.stats();
+		service.reset();
+		const afterReset = service.stats();
+		return { results, stats, afterReset };
+	}
+
+	/** 直接拿**构建产物**里的 worker 文件跑一条任务（build 态的唯一可达路径） */
+	async function runBuiltWorker(assetUrl, fixtures) {
+		const worker = new Worker(new URL(assetUrl, location.href), { type: "module" });
+		const results = [];
+		let requestId = 0;
+		for (const fixture of fixtures) {
+			requestId += 1;
+			const current = requestId;
+			const response = await new Promise((resolve) => {
+				const timer = setTimeout(() => resolve({ ok: false, error: "worker 响应超时" }), 20000);
+				worker.addEventListener("message", function onMessage(event) {
+					if (event.data?.requestId !== current) return;
+					clearTimeout(timer);
+					worker.removeEventListener("message", onMessage);
+					resolve(event.data);
+				});
+				worker.postMessage({ requestId: current, image: { mimeType: fixture.mimeType, data: fixture.base64 }, maxSide: 384 });
+			});
+			const entry = {
+				name: fixture.name,
+				status: response.ok ? "ready" : "error",
+				width: response.width ?? null,
+				height: response.height ?? null,
+				url: response.blob ? "blob:" : null,
+				blobBytes: response.blob ? response.blob.size : null,
+				contentType: response.blob ? response.blob.type : null,
+				alpha: null,
+				decoded: false,
+				error: response.error ?? null,
+			};
+			if (response.blob) {
+				const url = URL.createObjectURL(response.blob);
+				try {
+					const decoded = await readImage(url, Boolean(fixture.checkAlpha));
+					entry.decoded = decoded.decoded;
+					entry.alpha = decoded.alpha;
+				} finally {
+					URL.revokeObjectURL(url);
+				}
+			}
+			results.push(entry);
+		}
+		worker.terminate();
+		return { results, workerUrl: String(new URL(assetUrl, location.href)) };
+	}
+
+	/**
+	 * 用 <img> 验证 blob: URL 真的能显示（产品路径就是 img src），
+	 * 需要时顺带读 alpha：角应为透明、中心应为不透明（透明 PNG 必须还是透明 PNG）。
+	 */
+	async function readImage(url, checkAlpha) {
+		const img = new Image();
+		const decoded = await new Promise((resolve) => {
+			const timer = setTimeout(() => resolve(false), 10000);
+			img.onload = () => {
+				clearTimeout(timer);
+				resolve(true);
+			};
+			img.onerror = () => {
+				clearTimeout(timer);
+				resolve(false);
+			};
+			img.src = url;
+		});
+		if (!decoded) return { decoded: false, width: null, height: null, alpha: null };
+		let alpha = null;
+		if (checkAlpha) {
+			const canvas = new OffscreenCanvas(img.naturalWidth, img.naturalHeight);
+			const ctx = canvas.getContext("2d");
+			ctx.drawImage(img, 0, 0);
+			alpha = {
+				corner: ctx.getImageData(1, 1, 1, 1).data[3],
+				center: ctx.getImageData(Math.floor(img.naturalWidth / 2), Math.floor(img.naturalHeight / 2), 1, 1).data[3],
+			};
+		}
+		return { decoded: true, width: img.naturalWidth, height: img.naturalHeight, alpha };
+	}
+
 	/* ---------- worker 技术探针 ---------- */
 	function createWorker(strategy, blobSource) {
 		if (!strategy.url) {
@@ -902,6 +1070,10 @@ window.__hip = (() => {
 		clearSessions,
 		debugState,
 		workerProbe,
+		appFixture,
+		buildAppFixtures,
+		runAppService,
+		runBuiltWorker,
 	};
 })();
 true;
@@ -1025,12 +1197,14 @@ function evaluateProbeReport(report, consoleEntries, { sentinel }) {
 		);
 		const thumbnails = new Map((strategy.thumbnails ?? []).map((thumbnail) => [thumbnail.name, thumbnail]));
 		const missing = EXPECTED_FIXTURES.filter((fixture) => !thumbnails.has(fixture));
+		// 空列表会让下面逐项检查「空过」：先要求样本数量齐全，再逐项判（故障注入实测踩到过）
+		const complete = thumbnails.size === EXPECTED_FIXTURES.length;
 		add(`strategy:${name}:fixtures`, "mandatory", missing.length === 0, missing);
 		const broken = [...thumbnails.values()].filter((thumbnail) => !thumbnail.ok);
 		add(
 			`strategy:${name}:thumbnails-ok`,
 			"mandatory",
-			broken.length === 0,
+			complete && broken.length === 0,
 			broken.map((thumbnail) => `${thumbnail.name}: ${thumbnail.error}`),
 		);
 		const oversized = [...thumbnails.values()].filter(
@@ -1039,7 +1213,7 @@ function evaluateProbeReport(report, consoleEntries, { sentinel }) {
 		add(
 			`strategy:${name}:max-side`,
 			"mandatory",
-			oversized.length === 0,
+			complete && oversized.length === 0,
 			oversized.map((thumbnail) => `${thumbnail.name} ${thumbnail.width}×${thumbnail.height}`),
 		);
 		const badBlobs = [...thumbnails.values()].filter(
@@ -1048,7 +1222,7 @@ function evaluateProbeReport(report, consoleEntries, { sentinel }) {
 		add(
 			`strategy:${name}:blob`,
 			"mandatory",
-			badBlobs.length === 0,
+			complete && badBlobs.length === 0,
 			badBlobs.map((thumbnail) => `${thumbnail.name} ${thumbnail.blobType}/${thumbnail.blobBytes}`),
 		);
 		const transparent = thumbnails.get("png-transparent");
@@ -1064,7 +1238,7 @@ function evaluateProbeReport(report, consoleEntries, { sentinel }) {
 		add(
 			`strategy:${name}:opaque-alpha`,
 			"mandatory",
-			lostAlpha.length === 0,
+			complete && lostAlpha.length === 0,
 			lostAlpha.map((thumbnail) => `${thumbnail.name} minAlpha=${thumbnail.minAlpha}`),
 		);
 		const exif = thumbnails.get("jpeg-exif6");
@@ -1218,6 +1392,13 @@ function selfTestProbeGate() {
 		true,
 		mutate((report) => {
 			thumbnail(report, "png-2000").width = 512;
+		}),
+	);
+	check(
+		"缩图列表为空（不许空过）",
+		true,
+		mutate((report) => {
+			mandatory(report).thumbnails = [];
 		}),
 	);
 	check(
@@ -1675,7 +1856,14 @@ function makeGoodBaselineEntry(scenario) {
 			errorBoundary: false,
 		},
 		peakRss: [{ pid: 1, type: "Tab", rssMb: 500 }],
-		probe: { maxFrameGapMs: 200, maxLongTaskMs: 220 },
+		probe: {
+			maxFrameGapMs: 200,
+			maxLongTaskMs: 220,
+			phases: {
+				mount: { frameCount: 302, maxFrameGapMs: 200, maxLongTaskMs: 220, longTaskCount: 1 },
+				expand: { frameCount: 900, maxFrameGapMs: 150, maxLongTaskMs: 160, longTaskCount: 2 },
+			},
+		},
 		wheel: {
 			steps: 130,
 			growth: 3,
@@ -1779,6 +1967,22 @@ function baselineSelfTest() {
 		true,
 	);
 	check(
+		"分段缺打点",
+		longScenario,
+		(entry) => {
+			entry.probe.phases.expand = { missingMarks: true };
+		},
+		true,
+	);
+	check(
+		"分段零帧",
+		longScenario,
+		(entry) => {
+			entry.probe.phases.mount.frameCount = 0;
+		},
+		true,
+	);
+	check(
 		"锚点违规是观测结果，不否基线",
 		longScenario,
 		(entry) => {
@@ -1821,6 +2025,16 @@ function evaluateBaselineEntry(scenario, entry) {
 		errorBoundary: entry.final?.errorBoundary,
 	});
 	add("main:metrics", "mandatory", (entry.peakRss ?? []).length > 0, (entry.peakRss ?? []).length);
+	// 分段缺打点/零帧 → mount 与 wheel+expand 的分段指标是假的（不是「没数据」），必须红灯
+	add(
+		"phases:segmented",
+		"mandatory",
+		entry.probe?.phases?.mount?.missingMarks !== true &&
+			entry.probe?.phases?.expand?.missingMarks !== true &&
+			(entry.probe?.phases?.mount?.frameCount ?? 0) > 0 &&
+			(entry.probe?.phases?.expand?.frameCount ?? 0) > 0,
+		{ mount: entry.probe?.phases?.mount ?? null, expand: entry.probe?.phases?.expand ?? null },
+	);
 	if (scenario.count > 0) {
 		add(
 			"images:all-mounted",
@@ -2218,6 +2432,306 @@ async function runBaseline(page, main, opts) {
 		return { exitCode: EXIT_FAIL, report };
 	}
 	return { exitCode: EXIT_OK, report };
+}
+
+/* ------------------------------------------------------------ app worker */
+
+/**
+ * 阶段 2 门：验**真实产出的 worker**（不是阶段 0 那个纯 JS 探针）。
+ * - dev：动态 import 产品服务模块，走 Vite dev 的 worker 加载路径（等价阶段 3 接线后的调用）
+ * - build：从 `out/renderer/assets` 里认出 Vite 打出来的 worker chunk，直接用它的 URL 跑一条任务
+ *   （build 态没法按源码路径 import，这是唯一可达且真实的方式：真产物 + 真 file:// 源 + 真 CSP）
+ */
+const APP_WORKER_FIXTURES = [
+	{
+		name: "transparent-600x400",
+		width: 600,
+		height: 400,
+		kind: "transparent",
+		checkAlpha: true,
+		expect: { width: 384, height: 256 },
+	},
+	// 比 384 小 → 不许放大
+	{ name: "small-200x100", width: 200, height: 100, kind: "opaque", expect: { width: 200, height: 100 } },
+	{ name: "large-4k", width: 3840, height: 2160, kind: "opaque", expect: { width: 384, height: 216 } },
+];
+
+/**
+ * 独立跑一次 Vite 构建，专门验证「这个 worker 文件能不能被 Vite 出成可加载的 chunk」。
+ *
+ * 为什么要独立构建：阶段 2 的服务/组件还没有被任何入口引用（接线在阶段 3），
+ * 直接 build 整个 app 时这些模块会被 tree-shake 掉，worker 根本不会出现在产物里——
+ * 那不是「打包有问题」，而是「还没有入口」。所以这里用同一个 worker 文件 + `?worker`
+ * 走一遍真实的 Vite worker 流水线，把「能不能出包、出的包能不能跑」先钉住；
+ * **app 自身产物里的 worker 检查留到阶段 3**（接线后 `findBuiltWorkerAsset` 会认它）。
+ */
+async function verifyWorkerEmission() {
+	const dir = join(TMP_DIR, "vite-worker-emission");
+	const outDir = join(dir, "dist");
+	await mkdir(dir, { recursive: true });
+	const entry = join(dir, "entry.ts");
+	await writeFile(
+		entry,
+		`import ThumbnailWorker from ${JSON.stringify(`${PROJECT_WORKER_PATH}?worker`)};\nexport function create() { return new ThumbnailWorker(); }\n`,
+		"utf8",
+	);
+	const { build } = await import("vite");
+	await build({
+		configFile: false,
+		root: dir,
+		logLevel: "warn",
+		build: {
+			outDir,
+			emptyOutDir: true,
+			target: "esnext",
+			minify: false,
+			rollupOptions: { input: entry },
+		},
+	});
+	const report = { outDir, chunks: [], workerChunk: null, markers: null };
+	// Vite 把产物放在 outDir 与 outDir/assets 下：两层都要扫
+	const candidates = [];
+	for (const base of [outDir, join(outDir, "assets")]) {
+		let entries = [];
+		try {
+			entries = await readdir(base);
+		} catch {
+			continue;
+		}
+		for (const file of entries) {
+			const full = join(base, file);
+			const info = await stat(full);
+			if (info.isFile() && file.endsWith(".js")) candidates.push({ file, full });
+		}
+	}
+	for (const { full } of candidates) {
+		const source = await readFile(full, "utf8");
+		const markers = {
+			uniqueLiteral: source.includes(WORKER_MARKER),
+			createImageBitmap: source.includes("createImageBitmap"),
+			convertToBlob: source.includes("convertToBlob"),
+		};
+		const isWorker = Object.values(markers).every(Boolean);
+		const relativePath = relative(outDir, full);
+		report.chunks.push({ file: relativePath, bytes: source.length, markers, isWorker });
+		if (isWorker) report.workerChunk = relativePath;
+	}
+	report.markers = report.chunks.find((chunk) => chunk.isWorker)?.markers ?? null;
+	return report;
+}
+
+/** 在构建产物里认出我们的 worker chunk（按源码里独有的 API 组合标记） */
+async function findBuiltWorkerAsset() {
+	const dir = join(OUT_RENDERER_DIR, "assets");
+	for (const file of await readdir(dir)) {
+		if (!file.endsWith(".js")) continue;
+		const source = await readFile(join(dir, file), "utf8");
+		if (source.includes(WORKER_MARKER)) {
+			return { file, bytes: source.length };
+		}
+	}
+	return null;
+}
+
+function evaluateAppWorkerReport(run, { sentinel, isPreview }) {
+	const checks = [];
+	const add = (id, level, ok, detail) => {
+		checks.push({ id, level, ok: Boolean(ok), detail: detail === undefined ? null : detail });
+	};
+	add("csp:capture-live", "mandatory", sentinel?.detected === true, sentinel?.sources ?? []);
+	const results = run.results ?? [];
+	const byName = new Map(results.map((item) => [item.name, item]));
+	add(
+		"worker:thumbnail-ready",
+		"mandatory",
+		results.length === APP_WORKER_FIXTURES.length && results.every((item) => item.status === "ready"),
+		results.map((item) => `${item.name}:${item.status}${item.error ? `(${item.error})` : ""}`),
+	);
+	for (const fixture of APP_WORKER_FIXTURES) {
+		const result = byName.get(fixture.name);
+		add(
+			`thumbnail:size:${fixture.name}`,
+			"mandatory",
+			result?.width === fixture.expect.width && result?.height === fixture.expect.height,
+			{ expected: fixture.expect, actual: { width: result?.width, height: result?.height } },
+		);
+		add(
+			`thumbnail:max-side:${fixture.name}`,
+			"mandatory",
+			result?.width !== null && result?.height !== null && Math.max(result.width, result.height) <= 384,
+			{ width: result?.width, height: result?.height },
+		);
+		add(
+			`thumbnail:blob:${fixture.name}`,
+			"mandatory",
+			result?.url === "blob:" &&
+				result?.decoded === true &&
+				(result?.contentType === null || result?.contentType === "image/png") &&
+				(result?.blobBytes === null || result?.blobBytes > 0),
+			{
+				url: result?.url,
+				decoded: result?.decoded,
+				contentType: result?.contentType,
+				bytes: result?.blobBytes,
+			},
+		);
+	}
+	const transparent = byName.get("transparent-600x400");
+	add(
+		"thumbnail:alpha-preserved",
+		"mandatory",
+		transparent?.alpha?.corner === 0 && transparent?.alpha?.center === 255,
+		transparent?.alpha ?? null,
+	);
+	if (isPreview) {
+		add("worker:app-artifact", run.assetFound ? "mandatory" : "informational", Boolean(run.usedAppArtifact), {
+			asset: run.appArtifact ?? null,
+			reason: run.usedAppArtifact
+				? null
+				: "阶段 2 服务尚未被入口引用（接线在阶段 3），app 产物里没有该 worker chunk；功能验证改走独立构建产物",
+		});
+	}
+	if (!isPreview) {
+		add("vite:worker-chunk-emitted", "mandatory", Boolean(run.emission?.workerChunk), {
+			chunks:
+				run.emission?.chunks?.map((chunk) => (chunk.isWorker ? `${chunk.file}(worker)` : chunk.file)) ?? null,
+		});
+		add(
+			"vite:worker-chunk-runs",
+			"mandatory",
+			run.emittedRuntime?.status === "ready" &&
+				run.emittedRuntime?.width === 384 &&
+				run.emittedRuntime?.height === 240,
+			run.emittedRuntime ?? null,
+		);
+		add("service:single-worker", "mandatory", run.stats?.workerCreated === 1, {
+			workerCreated: run.stats?.workerCreated,
+		});
+		add(
+			"service:release-then-cache",
+			"mandatory",
+			run.stats?.urls === 0 && run.stats?.cacheEntries === results.length,
+			{ urls: run.stats?.urls, cacheEntries: run.stats?.cacheEntries },
+		);
+		add(
+			"service:reset-terminates-worker",
+			"mandatory",
+			run.afterReset?.workerTerminated === 1 && run.afterReset?.inFlight === false,
+			run.afterReset ?? null,
+		);
+	}
+	return { checks, failures: checks.filter((check) => check.level === "mandatory" && !check.ok) };
+}
+
+async function runAppWorker(page, opts) {
+	await reloadApp(page);
+	const env = await page.call("window.__hip.env()");
+	const isPreview = env.protocol === "file:";
+	const sentinel = await runCspSentinel(page);
+	page.clearEvents();
+	const specs = APP_WORKER_FIXTURES.map(({ name, width, height, kind, checkAlpha }) => ({
+		name,
+		width,
+		height,
+		kind,
+		checkAlpha: Boolean(checkAlpha),
+	}));
+	// 独立构建：两个模式都跑（Node 侧动作，与页面无关），证明 Vite 能把这个 worker 出成 chunk
+	const emission = await verifyWorkerEmission();
+	if (emission.workerChunk) {
+		emission.loadUrl = isPreview
+			? pathToFileURL(join(emission.outDir, emission.workerChunk)).href
+			: `/@fs${join(emission.outDir, emission.workerChunk)}`;
+	}
+	// app 自身产物里的 worker：阶段 2 服务还没被任何入口引用（接线在阶段 3）→ 会被 tree-shake 掉，
+	// 所以这里先记为观测项；阶段 3 接线后它会出现，并且功能验证直接走它
+	const asset = isPreview ? await findBuiltWorkerAsset() : null;
+	const appArtifactUrl = asset ? `./assets/${asset.file}` : null;
+	const functionalUrl = isPreview ? (appArtifactUrl ?? emission.loadUrl) : null;
+	const run = await page.call(
+		`(async () => {
+			const fixtures = window.__hip.buildAppFixtures(${JSON.stringify(specs)});
+			${
+				isPreview
+					? `return await window.__hip.runBuiltWorker(${JSON.stringify(functionalUrl)}, fixtures);`
+					: "return await window.__hip.runAppService(fixtures);"
+			}
+		})()`,
+		LONG_TIMEOUT_MS,
+	);
+	run.usedAppArtifact = Boolean(appArtifactUrl);
+	if (isPreview && appArtifactUrl) run.appArtifact = asset;
+	if (emission?.loadUrl) {
+		// 用**刚构建出来的 chunk** 再跑一张图：证明「出的包真的能加载并出图」
+		run.emittedRuntime = await page
+			.call(
+				`window.__hip.runBuiltWorker(${JSON.stringify(emission.loadUrl)}, window.__hip.buildAppFixtures(${JSON.stringify(
+					[{ name: "emitted-2000x1250", width: 2000, height: 1250, kind: "opaque", checkAlpha: false }],
+				)}))`,
+				LONG_TIMEOUT_MS,
+			)
+			.then((result) => result.results[0]);
+		run.emission = emission;
+	}
+	const entries = page.consoleEntries();
+	const violations = cspViolations(entries);
+	if (emission) run.emission = emission;
+	const evaluation = evaluateAppWorkerReport(run, { sentinel, isPreview });
+	const cspCheck = [
+		{
+			id: "csp:no-violation",
+			level: "mandatory",
+			ok: violations.length === 0,
+			detail: violations.map((v) => v.text.slice(0, 160)),
+		},
+	];
+	const failures = [...evaluation.failures, ...cspCheck.filter((check) => !check.ok)];
+	run.assetFound = Boolean(asset);
+	run.asset = asset;
+	const summary = {
+		mode: "worker",
+		label: opts.label ?? null,
+		runtime: isPreview ? "build-preview" : "dev",
+		startedAt: new Date().toISOString(),
+		env,
+		asset,
+		appArtifactUrl,
+		sentinel,
+		run,
+		checks: [...evaluation.checks, ...cspCheck],
+		failures,
+		cspViolations: violations,
+	};
+	console.log(`\n== 真实 worker 验收（${summary.runtime}）==`);
+	console.log(`URL：${env.href}`);
+	if (asset) console.log(`app 产物 worker chunk：${asset.file}（${asset.bytes} 字符）→ ${appArtifactUrl}`);
+	console.log(`CSP 哨兵：${JSON.stringify({ detected: sentinel.detected, sources: sentinel.sources })}`);
+	console.log(
+		`Vite 独立构建：${emission?.workerChunk ?? "没出 worker chunk"}（${emission?.chunks?.length ?? 0} 个 chunk）${
+			isPreview ? ` · app 产物里的 worker：${appArtifactUrl ?? "无（阶段 3 接线后出现）"}` : ""
+		}`,
+	);
+	for (const result of run.results) {
+		console.log(
+			`  ${result.name}: ${result.status} ${result.width}×${result.height} ${result.contentType ?? "-"} ${result.blobBytes ?? "-"}B${
+				result.alpha ? ` alpha 角${result.alpha.corner}/心${result.alpha.center}` : ""
+			}${result.error ? ` ERR ${result.error}` : ""}`,
+		);
+	}
+	if (!isPreview)
+		console.log(`  服务统计：${JSON.stringify(run.stats)} → reset 后 ${JSON.stringify(run.afterReset)}`);
+	console.log(
+		`  Vite 独立构建：${run.emission?.workerChunk ?? "没出 worker chunk"}${run.emittedRuntime ? ` · 产物跑图 ${run.emittedRuntime.status} ${run.emittedRuntime.width}×${run.emittedRuntime.height}` : ""}`,
+	);
+	console.log("门断言：");
+	for (const check of summary.checks) {
+		console.log(
+			`  ${check.ok ? "PASS" : "FAIL"} [${check.level}] ${check.id}${check.ok ? "" : ` → ${JSON.stringify(check.detail)}`}`,
+		);
+	}
+	if (failures.length > 0)
+		console.error(`\n[FAIL] 真实 worker 验收未过：${failures.map((f) => f.id).join(", ")}`);
+	return { summary, exitCode: failures.length === 0 ? EXIT_OK : EXIT_FAIL };
 }
 
 /* --------------------------------------------------------------- geometry */
@@ -2682,7 +3196,12 @@ function parseArgs(argv) {
 
 async function main() {
 	const opts = parseArgs(process.argv.slice(2));
-	if (opts.mode !== "probe" && opts.mode !== "baseline" && opts.mode !== "geometry") {
+	if (
+		opts.mode !== "probe" &&
+		opts.mode !== "baseline" &&
+		opts.mode !== "geometry" &&
+		opts.mode !== "worker"
+	) {
 		console.error(
 			"用法：node scripts/check-history-images.mjs <probe|baseline|geometry> [--rounds=3] [--scenarios=a,b] [--label=x] [--fault=worker|plan]",
 		);
@@ -2714,6 +3233,11 @@ async function main() {
 	try {
 		if (opts.mode === "probe") {
 			const result = await runProbe(page, opts);
+			exitCode = result.exitCode;
+			await mkdir(TMP_DIR, { recursive: true });
+			await writeFile(out, JSON.stringify(result.summary, null, 2));
+		} else if (opts.mode === "worker") {
+			const result = await runAppWorker(page, opts);
 			exitCode = result.exitCode;
 			await mkdir(TMP_DIR, { recursive: true });
 			await writeFile(out, JSON.stringify(result.summary, null, 2));

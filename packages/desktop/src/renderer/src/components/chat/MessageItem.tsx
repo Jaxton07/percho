@@ -38,7 +38,8 @@ export const MessageItem = memo(function MessageItem({
 
 	if (message.kind === "image") {
 		// show_image 发图：assistant 侧独立图片块，点击全屏预览。
-		// 单图自然比例；多图统一正方形缩略图按数量分档（一行优先，超出 flex-wrap 换行）
+		// 单图：固定 192×144 外盒 + object-contain（允许留白换「加载前后行高不变」）；
+		// 多图：统一正方形缩略图按数量分档（一行优先，超出 flex-wrap 换行）。尺寸见 history-image-layout.ts
 		// 尺寸档位与稳定外盒统一走 history-image-layout（尺寸挂外盒，img 只负责盒内填充）
 		const mode = modeForImageCount(message.images.length);
 		return (

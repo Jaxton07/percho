@@ -16,8 +16,6 @@ export interface HistoryImageMode {
 	box: string;
 	/** 盒内 img：铺满外盒 */
 	img: string;
-	/** 该档位预期的一行张数（窄窗验收用） */
-	columns: number;
 }
 
 /** 单图稳定外盒像素尺寸（Tailwind h-36 / w-48） */
@@ -27,32 +25,27 @@ export const SINGLE_IMAGE_BOX = { width: 192, height: 144 } as const;
 export const ATTACHMENT_IMAGE_MODE: HistoryImageMode = {
 	box: "h-16 w-16",
 	img: "h-full w-full object-cover",
-	columns: 1,
 };
 
 const SINGLE_IMAGE_MODE: HistoryImageMode = {
 	// max-w-full：窄窗下外盒不撑破容器（高度保持 144 不变，几何仍稳定）
 	box: "h-36 w-48 max-w-full",
 	img: "h-full w-full object-contain",
-	columns: 1,
 };
 
 const MULTI_THREE_MODE: HistoryImageMode = {
 	box: "h-24 w-24",
 	img: "h-full w-full object-cover",
-	columns: 3,
 };
 
 const MULTI_SIX_MODE: HistoryImageMode = {
 	box: "h-20 w-20",
 	img: "h-full w-full object-cover",
-	columns: 3,
 };
 
 const MULTI_NINE_MODE: HistoryImageMode = {
 	box: "h-16 w-16",
 	img: "h-full w-full object-cover",
-	columns: 3,
 };
 
 /** show_image 单条消息按图片数量取档位（1 / 2–3 / 4–6 / 7–9） */
