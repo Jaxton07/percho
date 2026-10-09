@@ -5,7 +5,9 @@ import { UI_SLOTS } from "../../plugins/slots";
 import type { UIMessage } from "../../stores/transcript";
 import { AssistantMessage } from "./AssistantMessage";
 import { ErrorNote } from "./ErrorNote";
-import { ImagePreviewOverlay, imageSrc } from "./ImagePreview";
+import { HistoryImage } from "./history-image/HistoryImage";
+import { modeForImageCount } from "./history-image-layout";
+import { ImagePreviewOverlay } from "./ImagePreview";
 import { CopyButton, ForkButton } from "./message-actions";
 import { SubagentRunCard } from "./SubagentRunCard";
 import { SystemMessage } from "./SystemMessage";
@@ -37,29 +39,24 @@ export const MessageItem = memo(function MessageItem({
 
 	if (message.kind === "image") {
 		// show_image 发图：assistant 侧独立图片块，点击全屏预览。
-		// 单图自然比例；多图统一正方形缩略图按数量分档（一行优先，超出 flex-wrap 换行）
-		const count = message.images.length;
-		const sizeClass =
-			count === 1
-				? "max-h-36 max-w-48 object-contain"
-				: count <= 3
-					? "h-24 w-24 object-cover"
-					: count <= 6
-						? "h-20 w-20 object-cover"
-						: "h-16 w-16 object-cover";
+		// 单图：固定 192×144 外盒 + object-contain（允许留白换「加载前后行高不变」）；
+		// 多图：统一正方形缩略图按数量分档（一行优先，超出 flex-wrap 换行）。尺寸见 history-image-layout.ts
+		// 尺寸档位与稳定外盒统一走 history-image-layout（尺寸挂外盒，img 只负责盒内填充）
+		const mode = modeForImageCount(message.images.length);
 		return (
 			<div>
 				<div className="flex flex-wrap gap-2">
 					{message.images.map((image, index) => (
-						<button
+						<HistoryImage
 							// biome-ignore lint/suspicious/noArrayIndexKey: 图片列表不可变
 							key={index}
-							type="button"
-							className="overflow-hidden rounded-xl border border-border"
-							onClick={() => setPreviewIndex(index)}
-						>
-							<img src={imageSrc(image)} alt={t("message.image")} className={sizeClass} />
-						</button>
+							image={image}
+							boxClass={mode.box}
+							imgClass={mode.img}
+							extraClass="rounded-xl border border-border"
+							alt={t("message.image")}
+							onOpen={() => setPreviewIndex(index)}
+						/>
 					))}
 				</div>
 				{previewIndex !== null && (

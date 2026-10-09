@@ -201,6 +201,9 @@ export const zh = {
 		summaryBash: "执行 {n} 条命令",
 		summarySubagents: "子代理 ×{n}",
 		image: "查看图片",
+		imagePending: "图片待加载",
+		imageRetry: "重新加载",
+		imageLoadError: "图片加载失败",
 		subagent: {
 			running: "工作中",
 			done: "已完成",
