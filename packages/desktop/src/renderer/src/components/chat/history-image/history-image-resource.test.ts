@@ -7,7 +7,11 @@ import {
 	THUMBNAIL_MAX_SIDE,
 	WAITING_LIMIT,
 } from "./constants";
-import { createHistoryImageObserver, historyImageObserver } from "./history-image-observer";
+import {
+	createHistoryImageObserver,
+	type HistoryImageVisibility,
+	historyImageObserver,
+} from "./history-image-observer";
 import { createThumbnailService } from "./history-image-service";
 import { ActiveSlotRegistry, ThumbnailCache } from "./thumbnail-budget";
 import type { ThumbnailRequest, ThumbnailResponse } from "./thumbnail-protocol";
@@ -17,10 +21,12 @@ const image = (seed: string): ImageInput => ({ mimeType: "image/png", data: `dat
 class FakeWorker {
 	posted: ThumbnailRequest[] = [];
 	terminated = 0;
+	throwOnPost = false;
 	private messageListeners: ((event: { data: ThumbnailResponse }) => void)[] = [];
 	private errorListeners: (() => void)[] = [];
 
 	postMessage(request: ThumbnailRequest): void {
+		if (this.throwOnPost) throw new Error("postMessage 被拦");
 		this.posted.push(request);
 	}
 
@@ -71,16 +77,18 @@ function workerOf(workers: FakeWorker[]): FakeWorker {
 	return worker;
 }
 
-function fakeService(options: { timeoutMs?: number } = {}) {
+function fakeService(options: { timeoutMs?: number; createWorker?: () => Worker } = {}) {
 	const workers: FakeWorker[] = [];
 	const createdUrls: string[] = [];
 	const revokedUrls: string[] = [];
 	const service = createThumbnailService({
-		createWorker: () => {
-			const worker = new FakeWorker();
-			workers.push(worker);
-			return worker as unknown as Worker;
-		},
+		createWorker:
+			options.createWorker ??
+			(() => {
+				const worker = new FakeWorker();
+				workers.push(worker);
+				return worker as unknown as Worker;
+			}),
 		createObjectUrl: () => {
 			const url = `blob:fake-${createdUrls.length + 1}`;
 			createdUrls.push(url);
@@ -95,88 +103,112 @@ function fakeService(options: { timeoutMs?: number } = {}) {
 }
 
 describe("ActiveSlotRegistry（活跃 slot 与等待队列的纯策略）", () => {
-	it("活跃 slot 上限：满了就没有下一个任务，也不占更多资源", () => {
+	it("活跃 slot 上限：满了就没有下一个任务", () => {
 		const registry = new ActiveSlotRegistry({ active: 2, waiting: 8 });
-		for (let key = 1; key <= 4; key += 1) registry.subscribe(key, "visible");
+		for (let key = 1; key <= 4; key += 1) registry.subscribe(key, true);
 		expect(registry.hasSlot()).toBe(true);
-		const first = registry.nextWaiting();
-		expect(first).not.toBeNull();
-		registry.setState(first as number, "loading");
+		registry.setState(registry.nextWaiting() as number, "loading");
 		registry.setState(registry.nextWaiting() as number, "ready");
 		expect(registry.activeCount()).toBe(2);
 		expect(registry.hasSlot()).toBe(false);
 	});
 
-	it("等待队列上限：超出的缓冲项降级为 idle，之后有空位会被放回", () => {
+	it("等待队列上限是**总数**硬的（不只是缓冲项）", () => {
 		const registry = new ActiveSlotRegistry({ active: 10, waiting: 3 });
-		for (let key = 1; key <= 5; key += 1) registry.subscribe(key, "buffer");
+		for (let key = 1; key <= 6; key += 1) registry.subscribe(key, true);
+		expect(registry.waitingCount()).toBe(3);
+		expect(registry.idleCount()).toBe(3);
+		expect(registry.stats().visibleWaiting).toBe(3);
+		// 队列腾位置后放回来，仍然不超过上限
+		registry.setState(1, "loading");
+		registry.promoteIdle();
 		expect(registry.waitingCount()).toBe(3);
 		expect(registry.idleCount()).toBe(2);
-		// 队列腾出一个位置（比如一个任务开始跑）
-		registry.setState(1, "loading");
-		expect(registry.promoteIdle()).toBe(1);
-		expect(registry.waitingCount()).toBe(3);
-		expect(registry.idleCount()).toBe(1);
 	});
 
-	it("可见优先：后到的可见请求排在被缓冲项前面", () => {
-		const registry = new ActiveSlotRegistry({ active: 8, waiting: 8 });
-		registry.subscribe(1, "buffer");
-		registry.subscribe(2, "buffer");
-		registry.subscribe(3, "visible");
-		expect(registry.nextWaiting()).toBe(3);
-	});
-
-	it("可见不被饿死：队列满时挤掉最老的缓冲项而不是拒绝可见请求", () => {
+	it("可见优先：后到的可见请求排在缓冲项前面；队列外的可见需求会先回队列", () => {
 		const registry = new ActiveSlotRegistry({ active: 8, waiting: 2 });
-		registry.subscribe(1, "buffer");
-		registry.subscribe(2, "buffer");
-		expect(registry.waitingCount()).toBe(2);
-		registry.subscribe(3, "visible");
-		expect(registry.waitingCount()).toBe(2);
+		registry.subscribe(1, false);
+		registry.subscribe(2, false);
+		registry.subscribe(3, true);
 		expect(registry.nextWaiting()).toBe(3);
-		expect(registry.state(1)).toBe("idle");
+		expect(registry.visibility(1)).toBe("buffer");
 	});
 
-	it("队列满时降级的必须是最老的缓冲项：可见项即使更早入队也不许被降级", () => {
+	it("队列满时降级的是最老的缓冲项，可见项保住队列位置", () => {
 		const registry = new ActiveSlotRegistry({ active: 8, waiting: 2 });
-		registry.subscribe(1, "visible"); // seq 1，可见
-		registry.subscribe(2, "buffer"); // seq 2，缓冲
-		registry.subscribe(3, "buffer"); // 队列满 → 先落 idle
-		// 第 3 个变可见要插队 → 队列超上限 → 该降级的是「最老的缓冲项」(2)，不能是更早的可见项 (1)
-		registry.setVisibility(3, "visible");
+		registry.subscribe(1, true);
+		registry.subscribe(2, false);
+		registry.subscribe(3, false);
 		expect(registry.state(1)).toBe("waiting");
 		expect(registry.visibility(1)).toBe("visible");
 		expect(registry.state(2)).toBe("idle");
 		expect(registry.nextWaiting()).toBe(1);
 	});
 
-	it("同 key 多订阅者只算一次资源需求；全部退订才算释放", () => {
+	it("优先级与资源生命周期正交：ready/loading/error 不因可见性变化重新排队", () => {
+		const registry = new ActiveSlotRegistry({ active: 8, waiting: 8 });
+		for (const state of ["loading", "ready", "error"] as const) {
+			registry.subscribe(1, false);
+			registry.setState(1, state);
+			registry.updateHandleVisibility(1, false, true);
+			expect(registry.state(1)).toBe(state);
+			expect(registry.visibility(1)).toBe("visible");
+			expect(registry.activeCount()).toBe(state === "error" ? 0 : 1);
+			registry.unsubscribe(1, true);
+		}
+	});
+
+	it("可见性按每个订阅者计数：一个句柄切缓冲不影响另一个可见句柄", () => {
 		const registry = new ActiveSlotRegistry();
-		registry.subscribe(7, "visible");
-		registry.subscribe(7, "buffer");
-		expect(registry.waitingCount()).toBe(1);
+		registry.subscribe(7, true); // 句柄 A 可见
+		registry.subscribe(7, false); // 句柄 B 缓冲
 		expect(registry.subscribers(7)).toBe(2);
-		expect(registry.unsubscribe(7)).toBe(false);
-		expect(registry.unsubscribe(7)).toBe(true);
-		expect(registry.stats().keys).toBe(0);
+		expect(registry.visibleRefs(7)).toBe(1);
+		expect(registry.visibility(7)).toBe("visible");
+		registry.updateHandleVisibility(7, true, false); // A 变缓冲
+		expect(registry.visibleRefs(7)).toBe(0);
+		expect(registry.visibility(7)).toBe("buffer");
+		expect(registry.unsubscribe(7, false)).toBe(false);
+		expect(registry.unsubscribe(7, false)).toBe(true);
 	});
 
-	it("任一订阅者可见即视为可见（后订阅的缓冲不能把可见降级）", () => {
+	it("重复上报同一可见性不会重复计数（防可见引用漂移）", () => {
 		const registry = new ActiveSlotRegistry();
-		registry.subscribe(9, "visible");
-		registry.subscribe(9, "buffer");
-		expect(registry.visibility(9)).toBe("visible");
+		registry.subscribe(1, true);
+		expect(registry.visibleRefs(1)).toBe(1);
+		registry.updateHandleVisibility(1, true, true);
+		registry.subscribe(1, true);
+		expect(registry.visibleRefs(1)).toBe(2);
+		registry.updateHandleVisibility(1, false, false);
+		expect(registry.visibleRefs(1)).toBe(2);
+		registry.unsubscribe(1, true);
+		registry.unsubscribe(1, true);
+		expect(registry.visibleRefs(1)).toBe(0);
 	});
 
-	it("失败项可重试（requeue 回到队列）", () => {
+	it("requeue 只对 error 生效（重复 retry 不会把在途任务重排队）", () => {
 		const registry = new ActiveSlotRegistry();
-		registry.subscribe(11, "visible");
-		registry.setState(11, "error");
-		expect(registry.stats().error).toBe(1);
-		registry.requeue(11);
-		expect(registry.state(11)).toBe("waiting");
-		expect(registry.stats().error).toBe(0);
+		registry.subscribe(1, true);
+		expect(registry.requeue(1)).toBe(false);
+		expect(registry.state(1)).toBe("waiting");
+		registry.setState(1, "loading");
+		expect(registry.requeue(1)).toBe(false);
+		expect(registry.state(1)).toBe("loading");
+		registry.setState(1, "error");
+		expect(registry.requeue(1)).toBe(true);
+		expect(registry.state(1)).toBe("waiting");
+	});
+
+	it("可回收的只有「非可见 ready」", () => {
+		const registry = new ActiveSlotRegistry();
+		registry.subscribe(1, false);
+		registry.subscribe(2, true);
+		registry.setState(1, "ready");
+		registry.setState(2, "ready");
+		expect(registry.oldestEvictableReady()).toBe(1);
+		registry.updateHandleVisibility(1, false, true);
+		expect(registry.oldestEvictableReady()).toBeNull();
 	});
 
 	it("上界的默认值就是 spec 的 48 / 48", () => {
@@ -235,7 +267,7 @@ describe("ThumbnailCache（LRU 双上限）", () => {
 
 describe("缩略图服务：去重 / 缓存 / URL 生命周期", () => {
 	it("取一次图只发一条任务，请求带的是同一个 ImageInput 引用（不预先复制字节）", () => {
-		const { service, worker, createdUrls } = fakeService();
+		const { service, worker } = fakeService();
 		const source = image("a");
 		const handle = service.acquire(source);
 		expect(handle.getSnapshot().status).toBe("loading");
@@ -244,8 +276,7 @@ describe("缩略图服务：去重 / 缓存 / URL 生命周期", () => {
 		expect(worker().lastRequest?.maxSide).toBe(384);
 		worker().completeLast();
 		expect(handle.getSnapshot()).toMatchObject({ status: "ready", width: 384, height: 240 });
-		expect(createdUrls).toHaveLength(1);
-		expect(handle.getSnapshot().url).toBe(createdUrls[0]);
+		expect(handle.getSnapshot().url).toBe("blob:fake-1");
 	});
 
 	it("同一张图两个订阅者共享一次解码与一个 Blob URL，最后一个走时才 revoke", () => {
@@ -278,15 +309,23 @@ describe("缩略图服务：去重 / 缓存 / URL 生命周期", () => {
 
 	it("身份按对象而不是 base64：两个内容相同的对象各自缩图（不 hash base64 的代价，明确接受）", () => {
 		const { service, worker } = fakeService();
-		const a = image("same-content");
-		const b = image("same-content");
-		expect(a).not.toBe(b);
-		service.acquire(a);
-		service.acquire(b);
-		// 单飞：第一条在途，第二条在队列里
+		service.acquire(image("same-content"));
+		service.acquire(image("same-content"));
 		expect(worker().posted).toHaveLength(1);
 		worker().completeLast();
 		expect(worker().posted).toHaveLength(2);
+	});
+
+	it("StrictMode 式乱序 cleanup：先释放后订阅的那个也要能正确收尾", () => {
+		const { service, worker, revokedUrls } = fakeService();
+		const source = image("strict");
+		const first = service.acquire(source);
+		const second = service.acquire(source);
+		worker().completeLast();
+		second.release();
+		first.release();
+		expect(service.stats()).toMatchObject({ keys: 0, urls: 0, cacheEntries: 1 });
+		expect(revokedUrls).toHaveLength(1);
 	});
 
 	it("可见性变化：调度顺序上「可见」插到「缓冲」前面（已经在跑的那张不抢占）", () => {
@@ -294,18 +333,67 @@ describe("缩略图服务：去重 / 缓存 / URL 生命周期", () => {
 		service.acquire(image("buffer-1"), { visible: false });
 		service.acquire(image("buffer-2"), { visible: false });
 		const visible = service.acquire(image("visible"));
-		// 单飞：在途的那张不会被抢占，所以第一条一定是 buffer-1
 		expect(worker().posted).toHaveLength(1);
 		expect(worker().lastRequest?.image.data).toBe("data-buffer-1");
 		worker().completeLast();
-		// 下一张该跑的是可见项，而不是更早入队的 buffer-2
 		expect(worker().posted).toHaveLength(2);
 		expect(worker().lastRequest?.image.data).toBe("data-visible");
 		expect(visible.getSnapshot().status).toBe("loading");
 	});
+
+	it("setVisible 只动优先级：ready 的图不会重新排队、不会掉出预算、URL 不变", () => {
+		const { service, worker, createdUrls } = fakeService();
+		const handle = service.acquire(image("toggle"), { visible: false });
+		worker().completeLast();
+		const before = handle.getSnapshot();
+		expect(before.status).toBe("ready");
+		const activeBefore = service.stats().active;
+		handle.setVisible(true);
+		handle.setVisible(false);
+		handle.setVisible(true);
+		expect(worker().posted).toHaveLength(1);
+		expect(createdUrls).toHaveLength(1);
+		expect(handle.getSnapshot()).toEqual(before);
+		expect(service.stats().active).toBe(activeBefore);
+		expect(service.stats().waiting).toBe(0);
+	});
+
+	it("真实可见等 slot 而预算已满：回收最老的非可见 ready 让位，不超过预算", () => {
+		const { service, workers, revokedUrls } = fakeService();
+		const total = service.stats().active + ACTIVE_SLOT_LIMIT;
+		const buffers = [];
+		for (let index = 0; index < ACTIVE_SLOT_LIMIT; index += 1) {
+			buffers.push(service.acquire(image(`bulk-${index}`), { visible: false }));
+		}
+		for (let index = 0; index < ACTIVE_SLOT_LIMIT; index += 1) workerOf(workers).completeLast();
+		expect(service.stats().active).toBe(ACTIVE_SLOT_LIMIT);
+		expect(service.stats().urls).toBe(ACTIVE_SLOT_LIMIT);
+		void total;
+
+		const visible = service.acquire(image("visible-needs-slot"));
+		expect(workerOf(workers).posted).toHaveLength(ACTIVE_SLOT_LIMIT + 1);
+		expect(service.stats().active).toBeLessThanOrEqual(ACTIVE_SLOT_LIMIT);
+		expect(service.stats().reclaimed).toBe(1);
+		expect(buffers[0]?.getSnapshot()).toMatchObject({ status: "idle", url: null });
+		expect(revokedUrls.length).toBe(1);
+		workerOf(workers).completeLast();
+		expect(visible.getSnapshot().status).toBe("ready");
+	});
+
+	it("缓冲请求超过队列上限：等待队列不超过 48，其余落在队列外，有空位会补上", () => {
+		const { service, worker } = fakeService();
+		for (let index = 0; index < WAITING_LIMIT + 12; index += 1) {
+			service.acquire(image(`bulk-${index}`), { visible: false });
+		}
+		expect(service.stats().waiting).toBeLessThanOrEqual(WAITING_LIMIT);
+		expect(service.stats().idle).toBeGreaterThan(0);
+		const idleBefore = service.stats().idle;
+		worker().completeLast();
+		expect(service.stats().idle).toBeLessThan(idleBefore);
+	});
 });
 
-describe("缩略图服务：取消 / 迟到 / 超时 / 重置", () => {
+describe("缩略图服务：取消 / 迟到 / 超时 / 重置 / 同步失败", () => {
 	beforeEach(() => {
 		vi.useFakeTimers();
 	});
@@ -318,7 +406,6 @@ describe("缩略图服务：取消 / 迟到 / 超时 / 重置", () => {
 		const handle = service.acquire(image("late"));
 		const requestId = lastRequestOf(worker()).requestId;
 		handle.release();
-		expect(service.stats().inFlight).toBe(true);
 		worker().emit({
 			requestId,
 			ok: true,
@@ -343,12 +430,10 @@ describe("缩略图服务：取消 / 迟到 / 超时 / 重置", () => {
 		const dropped = service.acquire(image("stale"));
 		const staleRequestId = lastRequestOf(worker()).requestId;
 		dropped.release();
-		// 旧任务的响应回来：没有订阅者 → 丢掉，但队列照常推进（B 被派发）
 		worker().emit(staleResponse(staleRequestId));
 		const fresh = service.acquire(image("fresh"));
 		expect(worker().posted).toHaveLength(2);
 		expect(fresh.getSnapshot().status).toBe("loading");
-		// 同一条旧响应再投递一次（重复/迟到的第二次），此时在途的是 B —— 绝不能算到 B 头上
 		worker().emit(staleResponse(staleRequestId));
 		expect(fresh.getSnapshot()).toMatchObject({ status: "loading", url: null });
 		expect(service.stats().lateDropped).toBe(2);
@@ -366,7 +451,6 @@ describe("缩略图服务：取消 / 迟到 / 超时 / 重置", () => {
 		expect(workers[0]?.terminated).toBe(1);
 		expect(service.stats().timeouts).toBe(1);
 		expect(handle.getSnapshot().url).toBeNull();
-		// 重试：懒重建 worker 再跑一次
 		handle.retry();
 		expect(workers.length).toBeGreaterThanOrEqual(2);
 		expect(service.stats().inFlight).toBe(true);
@@ -392,6 +476,66 @@ describe("缩略图服务：取消 / 迟到 / 超时 / 重置", () => {
 		expect(service.stats().inFlight).toBe(true);
 	});
 
+	it("new Worker 同步抛：不把异常抛给调用方，进错误态、不占 active、可重试", () => {
+		let broken = true;
+		const workers: FakeWorker[] = [];
+		const { service } = fakeService({
+			createWorker: () => {
+				if (broken) throw new Error("Worker 被拦截");
+				const worker = new FakeWorker();
+				workers.push(worker);
+				return worker as unknown as Worker;
+			},
+		});
+		let acquired: ReturnType<typeof service.acquire> | null = null;
+		expect(() => {
+			acquired = service.acquire(image("blocked"));
+		}).not.toThrow();
+		if (!acquired) throw new Error("acquire 没返回句柄");
+		const handle = acquired as ReturnType<typeof service.acquire>;
+		expect(handle.getSnapshot().status).toBe("error");
+		expect(service.stats()).toMatchObject({ inFlight: false, active: 0, syncFailures: 1, error: 1 });
+		broken = false;
+		handle.retry();
+		expect(workerOf(workers).posted).toHaveLength(1);
+		workerOf(workers).completeLast();
+		expect(handle.getSnapshot().status).toBe("ready");
+	});
+
+	it("postMessage 同步抛：同样进错误态（不留 pending、可重试）", () => {
+		const workers: FakeWorker[] = [];
+		let throwOnPost = true;
+		const { service } = fakeService({
+			createWorker: () => {
+				const worker = new FakeWorker();
+				worker.throwOnPost = throwOnPost;
+				workers.push(worker);
+				return worker as unknown as Worker;
+			},
+		});
+		const handle = service.acquire(image("post-throws"));
+		expect(handle.getSnapshot().status).toBe("error");
+		expect(service.stats()).toMatchObject({ inFlight: false, active: 0, syncFailures: 1 });
+		// 修好后重试：重建的 worker 也应该正常（这里同时覆盖「同步失败后 worker 已被 dispose」）
+		throwOnPost = false;
+		handle.retry();
+		expect(workerOf(workers).posted).toHaveLength(1);
+	});
+
+	it("批量同步失败不会递归爆栈：微任务收口，逐个停在错误态", async () => {
+		const { service } = fakeService({
+			createWorker: () => {
+				throw new Error("Worker 被拦截");
+			},
+		});
+		for (let index = 0; index < 60; index += 1)
+			service.acquire(image(`blocked-${index}`), { visible: false });
+		// 同步失败用微任务续跑（同一 tick 里不会递归进 pump），这里把微任务排空
+		for (let index = 0; index < 200; index += 1) await Promise.resolve();
+		expect(service.stats()).toMatchObject({ active: 0, inFlight: false, waiting: 0, idle: 0, error: 60 });
+		expect(service.stats().syncFailures).toBe(60);
+	});
+
 	it("reset（切会话）：清队列与在途、revoke URL、清缓存，迟到结果不再影响任何状态", () => {
 		const { service, worker, revokedUrls } = fakeService();
 		const ready = service.acquire(image("done"));
@@ -400,7 +544,6 @@ describe("缩略图服务：取消 / 迟到 / 超时 / 重置", () => {
 		const inFlight = service.acquire(image("pending"));
 		service.acquire(image("queued"), { visible: false });
 		const requestId = lastRequestOf(worker()).requestId;
-		expect(service.stats().inFlight).toBe(true);
 
 		service.reset();
 		expect(service.stats()).toMatchObject({
@@ -412,10 +555,7 @@ describe("缩略图服务：取消 / 迟到 / 超时 / 重置", () => {
 			inFlight: false,
 		});
 		expect(revokedUrls).toHaveLength(1);
-		expect(ready.getSnapshot()).toMatchObject({ status: "idle", url: null });
-		expect(inFlight.getSnapshot().status).toBe("idle");
-
-		// 迟到消息：不该抛，也不该把状态改回去
+		expect(inFlight.getSnapshot()).toMatchObject({ status: "idle", url: null });
 		worker().emit({
 			requestId,
 			ok: true,
@@ -423,10 +563,31 @@ describe("缩略图服务：取消 / 迟到 / 超时 / 重置", () => {
 			width: 1,
 			height: 1,
 		});
-		expect(ready.getSnapshot().status).toBe("idle");
-		// reset 之后还能继续用（新会话懒重建 worker）
 		const next = service.acquire(image("next-session"));
 		expect(next.getSnapshot().status).toBe("loading");
+	});
+
+	it("reset 换代：旧句柄不能碰新代资源（不能撤新 URL、不能改状态）", () => {
+		const { service, worker, revokedUrls } = fakeService();
+		const source = image("same-object");
+		const stale = service.acquire(source);
+		worker().completeLast();
+		expect(stale.getSnapshot().status).toBe("ready");
+		service.reset();
+
+		const fresh = service.acquire(source);
+		worker().completeLast();
+		const freshSnapshot = fresh.getSnapshot();
+		expect(freshSnapshot.status).toBe("ready");
+		expect(revokedUrls.length).toBeGreaterThanOrEqual(1);
+		const revokedBefore = revokedUrls.length;
+
+		stale.release();
+		stale.setVisible(false);
+		stale.retry();
+		expect(fresh.getSnapshot()).toEqual(freshSnapshot);
+		expect(revokedUrls.length).toBe(revokedBefore);
+		expect(service.stats().keys).toBe(1);
 	});
 
 	it("单飞：只有一个在途任务，完成一个才发下一个", () => {
@@ -438,26 +599,18 @@ describe("缩略图服务：取消 / 迟到 / 超时 / 重置", () => {
 		worker().completeLast();
 		expect(worker().posted).toHaveLength(2);
 	});
-
-	it("缓冲请求超过队列上限：等待队列不超过 48，其余降级，有空位会补上", () => {
-		const { service, worker } = fakeService();
-		for (let index = 0; index < WAITING_LIMIT + 12; index += 1) {
-			service.acquire(image(`bulk-${index}`), { visible: false });
-		}
-		expect(service.stats().waiting).toBeLessThanOrEqual(WAITING_LIMIT);
-		expect(service.stats().idle).toBeGreaterThan(0);
-		const idleBefore = service.stats().idle;
-		worker().completeLast();
-		expect(service.stats().idle).toBeLessThan(idleBefore);
-	});
 });
 
-describe("共享 IntersectionObserver", () => {
-	function fakeObserver() {
+describe("共享 IntersectionObserver（加载范围 vs 真实可视区）", () => {
+	function setup() {
+		const root = { id: "scroller" } as unknown as Element;
+		const rects = new Map<Element, { top: number; bottom: number }>([[root, { top: 0, bottom: 800 }]]);
 		const observed: Element[] = [];
 		let callback: IntersectionObserverCallback | null = null;
-		let options: IntersectionObserverInit | null = null;
+		let init: IntersectionObserverInit | null = null;
 		let disconnected = 0;
+		let viewportSubscriptions = 0;
+		let onViewportChange: (() => void) | null = null;
 		const observer = {
 			observe: (target: Element) => observed.push(target),
 			unobserve: () => {},
@@ -470,49 +623,110 @@ describe("共享 IntersectionObserver", () => {
 			takeRecords: () => [],
 		} as unknown as IntersectionObserver;
 		return {
-			createObserver: (cb: IntersectionObserverCallback, init: IntersectionObserverInit) => {
+			root,
+			rects,
+			observed,
+			init: () => init,
+			disconnected: () => disconnected,
+			viewportSubscriptions: () => viewportSubscriptions,
+			triggerViewport: () => onViewportChange?.(),
+			createObserver: (cb: IntersectionObserverCallback, options: IntersectionObserverInit) => {
 				callback = cb;
-				options = init;
+				init = options;
 				return observer;
 			},
-			emit: (target: Element, isIntersecting: boolean) =>
+			subscribeViewportChange: (cb: () => void) => {
+				viewportSubscriptions += 1;
+				onViewportChange = cb;
+				return () => {
+					viewportSubscriptions -= 1;
+					onViewportChange = null;
+				};
+			},
+			readRect: (element: Element) => rects.get(element) ?? { top: 0, bottom: 0 },
+			emitIntersection: (target: Element, isIntersecting: boolean) =>
 				callback?.([{ target, isIntersecting } as unknown as IntersectionObserverEntry], observer),
-			observed,
-			observedOptions: () => options,
-			disconnected: () => disconnected,
 		};
 	}
 
-	it("一个 root 只建一个 observer，root 与 rootMargin 按 spec 传下去", () => {
-		const fake = fakeObserver();
-		const root = { id: "scroller" } as unknown as Element;
-		const observer = createHistoryImageObserver({ root, createObserver: fake.createObserver });
-		const target = { id: "img" } as unknown as Element;
-		observer.observe(target, () => {});
-		observer.observe({ id: "img2" } as unknown as Element, () => {});
-		expect(observer.stats()).toEqual({ elements: 2, observers: 1 });
-		expect(fake.observedOptions()?.root).toBe(root);
-		expect(fake.observedOptions()?.rootMargin).toBe("400px 0px 400px 0px");
+	it("一个 root 只建一个 observer，root/rootMargin 按 spec 传下去", () => {
+		const fake = setup();
+		const observer = createHistoryImageObserver({
+			root: fake.root,
+			createObserver: fake.createObserver,
+			subscribeViewportChange: fake.subscribeViewportChange,
+			readRect: fake.readRect,
+		});
+		observer.observe({ id: "a" } as unknown as Element, () => {});
+		observer.observe({ id: "b" } as unknown as Element, () => {});
+		expect(observer.stats()).toEqual({ targets: 2, observers: 1, viewportSubscriptions: 1 });
+		expect(fake.init()?.root).toBe(fake.root);
+		expect(fake.init()?.rootMargin).toBe("400px 0px 400px 0px");
 	});
 
-	it("可见性回调按元素分发；取消订阅后不再回调", () => {
-		const fake = fakeObserver();
-		const root = { id: "scroller" } as unknown as Element;
-		const observer = createHistoryImageObserver({ root, createObserver: fake.createObserver });
-		const seen: boolean[] = [];
-		const target = { id: "img" } as unknown as Element;
-		const stop = observer.observe(target, (visible) => seen.push(visible));
-		fake.emit(target, true);
-		fake.emit(target, false);
-		expect(seen).toEqual([true, false]);
-		stop();
-		fake.emit(target, true);
-		expect(seen).toEqual([true, false]);
+	it("加载范围内 ≠ 真实可见：IO 命中后仍按几何区分，滚动时才升级为可见", () => {
+		const fake = setup();
+		const observer = createHistoryImageObserver({
+			root: fake.root,
+			createObserver: fake.createObserver,
+			subscribeViewportChange: fake.subscribeViewportChange,
+			readRect: fake.readRect,
+		});
+		const target = { id: "below" } as unknown as Element;
+		// 在 400px 缓冲带里但落在可视区下方
+		fake.rects.set(target, { top: 900, bottom: 1100 });
+		const states: HistoryImageVisibility[] = [];
+		observer.observe(target, (state) => states.push(state));
+		fake.emitIntersection(target, true);
+		expect(states.at(-1)).toEqual({ inLoadRange: true, inViewport: false });
+		// 滚动后进入可视区
+		fake.rects.set(target, { top: 100, bottom: 300 });
+		fake.triggerViewport();
+		expect(states.at(-1)).toEqual({ inLoadRange: true, inViewport: true });
+		// 离开加载范围 → 两个标志都关
+		fake.emitIntersection(target, false);
+		expect(states.at(-1)).toEqual({ inLoadRange: false, inViewport: false });
+	});
+
+	it("同一元素重复订阅互不干扰；最后一个退订后整体断开（IO 与全局监听都不留）", () => {
+		const fake = setup();
+		const observer = createHistoryImageObserver({
+			root: fake.root,
+			createObserver: fake.createObserver,
+			subscribeViewportChange: fake.subscribeViewportChange,
+			readRect: fake.readRect,
+		});
+		const target = { id: "dup" } as unknown as Element;
+		let firstCount = 0;
+		let secondCount = 0;
+		fake.rects.set(target, { top: 10, bottom: 20 });
+		const stopFirst = observer.observe(target, () => {
+			firstCount += 1;
+		});
+		const stopSecond = observer.observe(target, () => {
+			secondCount += 1;
+		});
+		fake.emitIntersection(target, true);
+		expect(firstCount).toBe(1);
+		expect(secondCount).toBe(1);
+		stopFirst();
+		fake.emitIntersection(target, false);
+		fake.emitIntersection(target, true);
+		expect(firstCount).toBe(1);
+		expect(secondCount).toBe(3);
+		stopSecond();
+		expect(observer.stats()).toEqual({ targets: 0, observers: 0, viewportSubscriptions: 0 });
+		expect(fake.disconnected()).toBe(1);
+		// 断开后再订阅会重建
+		fake.rects.set(target, { top: 10, bottom: 20 });
+		const stopAgain = observer.observe(target, () => {});
+		expect(observer.stats()).toEqual({ targets: 1, observers: 1, viewportSubscriptions: 1 });
+		stopAgain();
 	});
 
 	it("同一 root 复用同一个实例", () => {
 		const root = { id: "shared-root" } as unknown as Element;
-		const first = historyImageObserver(root, { createObserver: fakeObserver().createObserver });
+		const first = historyImageObserver(root, { createObserver: setup().createObserver });
 		const second = historyImageObserver(root);
 		expect(first).toBe(second);
 	});

@@ -11,8 +11,8 @@ import { ACTIVE_SLOT_LIMIT, CACHE_BYTE_LIMIT, CACHE_ENTRY_LIMIT, WAITING_LIMIT }
 export type ThumbnailVisibility = "visible" | "buffer";
 
 /**
- * idle = 登记了但没占队列（缓冲项超队列上限时被降级到这里，等有空位再排队）；
- * waiting = 在等待队列里；loading = 在途；ready = 有资源；error = 失败可重试。
+ * idle = 登记了但没占队列（队列满时落在有界队列之外，需求仍在）；waiting = 在等待队列里；
+ * loading = 在途；ready = 有资源；error = 失败可重试。
  */
 export type SlotState = "idle" | "waiting" | "loading" | "ready" | "error";
 
@@ -23,14 +23,25 @@ export interface ActiveSlotLimits {
 
 interface SlotRecord {
 	key: number;
-	visibility: ThumbnailVisibility;
+	/** 可见性按**每个订阅者**汇总：>0 即视为可见（不可被后订阅的缓冲降级） */
+	visibleRefs: number;
 	state: SlotState;
 	subscribers: number;
 	/** 入队序号：同优先级 FIFO */
 	seq: number;
 }
 
-/** 活跃 slot / 等待队列的登记簿：只管「谁该占 slot、下一个跑谁」，不碰资源本身 */
+/**
+ * 活跃 slot / 等待队列 / 可见性优先级的登记簿。
+ *
+ * 三条纪律（都在单测里钉住）：
+ * 1. **优先级与资源生命周期正交**：loading/ready/error 只改优先级，不重排队、不离开 active 计数；
+ * 2. **等待队列上限是硬的**（默认 48，按**总数**算，不是只算缓冲项）：超出的需求落到 idle
+ *    （有界队列之外的需求记录，只引用既有 ImageInput，不复制字节、不占 active 资源），
+ *    有空位时可见优先被放回队列；
+ * 3. **可见项不被缓冲挡住**：降级时先挑最老的缓冲项；可见需求多于 active 预算时允许它们占位等待，
+ *    但不放宽上限。
+ */
 export class ActiveSlotRegistry {
 	private records = new Map<number, SlotRecord>();
 	private seq = 0;
@@ -38,56 +49,55 @@ export class ActiveSlotRegistry {
 	constructor(private limits: ActiveSlotLimits = { active: ACTIVE_SLOT_LIMIT, waiting: WAITING_LIMIT }) {}
 
 	/** 订阅（同一 key 多次订阅只算一次资源需求；返回是否新建） */
-	subscribe(key: number, visibility: ThumbnailVisibility): { state: SlotState; isNew: boolean } {
+	subscribe(key: number, visible: boolean): { state: SlotState; isNew: boolean } {
 		const existing = this.records.get(key);
 		if (existing) {
 			existing.subscribers += 1;
-			// 任一订阅者可见即视为可见：可见优先不能因为后来居下的订阅者退化
-			if (visibility === "visible") existing.visibility = "visible";
+			if (visible) this.addVisibleRef(existing);
 			return { state: existing.state, isNew: false };
 		}
-		const state: SlotState =
-			visibility === "visible" || this.waitingCount() < this.limits.waiting ? "waiting" : "idle";
-		this.records.set(key, { key, visibility, state, subscribers: 1, seq: ++this.seq });
+		const record: SlotRecord = {
+			key,
+			visibleRefs: visible ? 1 : 0,
+			state: "waiting",
+			subscribers: 1,
+			seq: ++this.seq,
+		};
+		this.records.set(key, record);
 		this.enforceWaitingLimit();
-		return { state, isNew: true };
+		return { state: record.state, isNew: true };
+	}
+
+	/** 某个句柄的可见性变化：只动可见性汇总与（idle 时的）入队，不碰 loading/ready/error */
+	updateHandleVisibility(key: number, wasVisible: boolean, isVisible: boolean): void {
+		const record = this.records.get(key);
+		if (!record || wasVisible === isVisible) return;
+		if (isVisible) {
+			this.addVisibleRef(record);
+			return;
+		}
+		record.visibleRefs = Math.max(0, record.visibleRefs - 1);
 	}
 
 	/** 返回 true 表示该 key 已无订阅者（调用方负责释放资源） */
-	unsubscribe(key: number): boolean {
+	unsubscribe(key: number, visible: boolean): boolean {
 		const record = this.records.get(key);
 		if (!record) return true;
 		record.subscribers -= 1;
+		if (visible) record.visibleRefs = Math.max(0, record.visibleRefs - 1);
 		if (record.subscribers > 0) return false;
 		this.records.delete(key);
 		return true;
 	}
 
-	setVisibility(key: number, visibility: ThumbnailVisibility): void {
+	/** 重试：**只对 error 生效**（loading/ready/waiting 的重复调用是 no-op） */
+	requeue(key: number): boolean {
 		const record = this.records.get(key);
-		if (!record) return;
-		if (visibility === "visible") {
-			// 变可见必须能排上队：队列满时挤掉最老的缓冲项（绝不挤可见项）
-			if (record.state === "idle" || !this.queued(record)) {
-				record.visibility = "visible";
-				record.state = "waiting";
-				record.seq = ++this.seq;
-				this.enforceWaitingLimit();
-				return;
-			}
-			record.visibility = "visible";
-			return;
-		}
-		if (record.subscribers <= 1) record.visibility = "buffer";
-	}
-
-	/** 重试：失败项回到等待队列 */
-	requeue(key: number): void {
-		const record = this.records.get(key);
-		if (!record) return;
+		if (record?.state !== "error") return false;
 		record.state = "waiting";
 		record.seq = ++this.seq;
 		this.enforceWaitingLimit();
+		return true;
 	}
 
 	setState(key: number, state: SlotState): void {
@@ -119,11 +129,11 @@ export class ActiveSlotRegistry {
 		return this.activeCount() < this.limits.active;
 	}
 
-	/** 队列有空位时把降级的缓冲项放回队列（单飞任务完成时调用，别让缓冲项被永久遗忘） */
+	/** 队列有空位时把队列外需求放回来：**可见优先**，其次 FIFO */
 	promoteIdle(): number {
 		let promoted = 0;
 		while (this.waitingCount() < this.limits.waiting) {
-			const candidate = this.oldest("idle");
+			const candidate = this.oldestIdle(true) ?? this.oldestIdle(false);
 			if (!candidate) break;
 			candidate.state = "waiting";
 			candidate.seq = ++this.seq;
@@ -134,18 +144,21 @@ export class ActiveSlotRegistry {
 
 	/** 下一个该跑的任务：可见优先，其次 FIFO；没有则 null（不改状态，由调用方标记 loading） */
 	nextWaiting(): number | null {
-		const record = this.oldest("waiting");
-		if (!record) return null;
-		let best = record;
-		for (const candidate of this.records.values()) {
-			if (candidate.state !== "waiting") continue;
-			const better =
-				candidate.visibility === best.visibility
-					? candidate.seq < best.seq
-					: candidate.visibility === "visible" && best.visibility === "buffer";
-			if (better) best = candidate;
+		const best = this.pickWaiting();
+		return best ? best.key : null;
+	}
+
+	/**
+	 * 可被回收的 ready 项：**非可见**且最老。用于「真实可见等 slot 但预算已满」时让位
+	 * （调用方负责撤 URL、把 Blob 放回非活跃 LRU、并把状态退回占位）。
+	 */
+	oldestEvictableReady(): number | null {
+		let best: SlotRecord | null = null;
+		for (const record of this.records.values()) {
+			if (record.state !== "ready" || record.visibleRefs > 0) continue;
+			if (!best || record.seq < best.seq) best = record;
 		}
-		return best.key;
+		return best ? best.key : null;
 	}
 
 	state(key: number): SlotState | null {
@@ -153,26 +166,57 @@ export class ActiveSlotRegistry {
 	}
 
 	visibility(key: number): ThumbnailVisibility | null {
-		return this.records.get(key)?.visibility ?? null;
+		const record = this.records.get(key);
+		if (!record) return null;
+		return record.visibleRefs > 0 ? "visible" : "buffer";
 	}
 
 	subscribers(key: number): number {
 		return this.records.get(key)?.subscribers ?? 0;
 	}
 
+	visibleRefs(key: number): number {
+		return this.records.get(key)?.visibleRefs ?? 0;
+	}
+
 	keys(): number[] {
 		return [...this.records.keys()];
 	}
 
-	stats(): { active: number; waiting: number; idle: number; error: number; keys: number } {
+	/** 可见项不会被计数“藏起来”：visible 与 buffer 分列，便于断言预算真实性 */
+	stats(): {
+		active: number;
+		waiting: number;
+		idle: number;
+		error: number;
+		keys: number;
+		visibleWaiting: number;
+		bufferWaiting: number;
+		visibleActive: number;
+	} {
 		let error = 0;
-		for (const record of this.records.values()) if (record.state === "error") error += 1;
+		let visibleWaiting = 0;
+		let bufferWaiting = 0;
+		let visibleActive = 0;
+		for (const record of this.records.values()) {
+			if (record.state === "error") error += 1;
+			if (record.state === "waiting") {
+				if (record.visibleRefs > 0) visibleWaiting += 1;
+				else bufferWaiting += 1;
+			}
+			if ((record.state === "loading" || record.state === "ready") && record.visibleRefs > 0) {
+				visibleActive += 1;
+			}
+		}
 		return {
 			active: this.activeCount(),
 			waiting: this.waitingCount(),
 			idle: this.idleCount(),
 			error,
 			keys: this.records.size,
+			visibleWaiting,
+			bufferWaiting,
+			visibleActive,
 		};
 	}
 
@@ -180,38 +224,67 @@ export class ActiveSlotRegistry {
 		this.records.clear();
 	}
 
+	private addVisibleRef(record: SlotRecord): void {
+		record.visibleRefs += 1;
+		// 变可见必须能排上队：队列外的需求直接放回队列，并挤掉最老的缓冲项（若需要）
+		if (record.state === "idle") {
+			record.state = "waiting";
+			record.seq = ++this.seq;
+		}
+		this.enforceWaitingLimit();
+	}
+
 	/**
-	 * 队列上限：超了就把**入队最早的缓冲项**降级为 idle，
-	 * 绝不动可见项——否则可见图会被长历史里的缓冲请求挤到队尾（spec：不永久饿死可见图片）。
+	 * 队列上限（**总数**）：降级顺序 = 最老的缓冲项 → 最老的任意项。
+	 * 刚入队/刚变可见的项 seq 最新，因此不会被自己挤掉；可见项优先保住在队列里的位置。
 	 */
 	private enforceWaitingLimit(): void {
 		while (this.waitingCount() > this.limits.waiting) {
-			const victim = this.oldestBufferWaiting();
+			// 先降级缓冲项（oldestWaiting(true)），全可见时才降级最老的等待项
+			const victim = this.oldestWaiting(true) ?? this.oldestWaiting(false);
 			if (!victim) return;
 			victim.state = "idle";
 		}
 	}
 
-	private oldest(state: SlotState): SlotRecord | null {
+	private pickWaiting(): SlotRecord | null {
 		let best: SlotRecord | null = null;
 		for (const record of this.records.values()) {
-			if (record.state !== state) continue;
+			if (record.state !== "waiting") continue;
+			if (!best) {
+				best = record;
+				continue;
+			}
+			const bestVisible = best.visibleRefs > 0;
+			const candidateVisible = record.visibleRefs > 0;
+			if (candidateVisible !== bestVisible) {
+				if (candidateVisible) best = record;
+				continue;
+			}
+			if (record.seq < best.seq) best = record;
+		}
+		return best;
+	}
+
+	private oldestWaiting(buffer: boolean): SlotRecord | null {
+		let best: SlotRecord | null = null;
+		for (const record of this.records.values()) {
+			if (record.state !== "waiting") continue;
+			const isBuffer = record.visibleRefs === 0;
+			if (isBuffer !== buffer) continue;
 			if (!best || record.seq < best.seq) best = record;
 		}
 		return best;
 	}
 
-	private oldestBufferWaiting(): SlotRecord | null {
+	private oldestIdle(visible: boolean): SlotRecord | null {
 		let best: SlotRecord | null = null;
 		for (const record of this.records.values()) {
-			if (record.state !== "waiting" || record.visibility !== "buffer") continue;
+			if (record.state !== "idle") continue;
+			if (record.visibleRefs > 0 !== visible) continue;
 			if (!best || record.seq < best.seq) best = record;
 		}
 		return best;
-	}
-
-	private queued(record: SlotRecord): boolean {
-		return record.state === "waiting" && record.seq > 0;
 	}
 }
 
