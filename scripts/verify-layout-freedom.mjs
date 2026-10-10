@@ -40,6 +40,8 @@
  *    截图通道放最后，且每次拖完都在**把手当前位置**补一次 release 兜底（recoverDrag）。
  *  - 松手坐标跑出视口（x < 0，拖到最左时会发生）同样丢 pointerup。所以松手一律回当前把手中心，不回指针终点。
  *
+ * 自定义隔离 userData 时用 `DEV_UI_STATE=<该目录>/ui-state.json` 指向实际 dev 文件（落盘断言用）。
+ *
  * 副作用：会给 dev 的 `ui-state.json` 写侧栏宽度（阶段 2 后还会写窗口 bounds，见 REVIEW R2）——
  * 手测「重启保持」前先备份该文件。截图落在 `.local/tmp/layout-freedom/`（CDP 截图，不用系统截图）。
  *
@@ -52,7 +54,9 @@ import { dirname, join } from "node:path";
 
 const PAGE_PORT = process.env.CDP_PORT ?? "9224";
 const MAIN_PORT = process.env.CDP_MAIN_PORT ?? "9229";
-const DEV_UI_STATE = join(homedir(), "Library/Application Support/@percho/desktop-dev/ui-state.json");
+const DEV_UI_STATE =
+	process.env.DEV_UI_STATE ??
+	join(homedir(), "Library/Application Support/@percho/desktop-dev/ui-state.json");
 const OUT_DIR = ".local/tmp/layout-freedom";
 const STAGE0 = process.argv.includes("--stage0");
 mkdirSync(OUT_DIR, { recursive: true });
