@@ -25,6 +25,10 @@ export interface ListProvidersOptions {
 export interface ModelPrefs {
 	/** 隐藏的模型 id（provider → modelId 列表）；隐藏不影响已经选中的会话运行 */
 	hiddenModels: Record<string, string[]>;
+	/** 全源模型默认隐藏（不影响凭证或当前会话执行）；缺省为空 */
+	hiddenProviders?: string[];
+	/** 默认隐藏源中的单模型显示例外；非隐藏源不保留条目 */
+	visibleModels?: Record<string, string[]>;
 	subagentModels: Record<string, string>;
 	/** 逐代理思考深度覆盖（agent name → level）；无键 = 跟随 agent 定义 */
 	subagentThinking?: Record<string, string>;

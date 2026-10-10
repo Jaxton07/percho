@@ -27,6 +27,8 @@ export function registerSettingsIpc(backend: PiBackend): void {
 			backend.modelPrefs.setModelHidden(provider, modelId, hidden),
 		setModelsHidden: ({ provider, modelIds, hidden }) =>
 			backend.modelPrefs.setModelsHidden(provider, modelIds, hidden),
+		setProviderModelsHidden: ({ provider, hidden }) =>
+			backend.modelPrefs.setProviderModelsHidden(provider, hidden),
 		setSubagentModel: ({ agent, modelRef }) => backend.modelPrefs.setSubagentModel(agent, modelRef),
 		setSubagentThinking: ({ agent, level }) => backend.modelPrefs.setSubagentThinking(agent, level),
 		setSubagentPreferBuiltin: ({ enabled }) => backend.modelPrefs.setSubagentPreferBuiltin(enabled),

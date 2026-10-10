@@ -11,6 +11,10 @@
  *   `--stage0`：阶段 0 语义 —— V3 的「落盘 windowBounds」这一环尚不存在（阶段 2 才写），
  *   该子断言记 SKIP 而不是 FAIL。阶段 2 之后不加该参数，端到端必须真绿。
  *
+ *   node scripts/verify-layout-freedom.mjs v6-handle [--expect-handle-bug]
+ *   V6：真实 store 列表触发 useEdgeFade，扫描整段把手命中；阶段 0 加 --expect-handle-bug
+ *   验证原始遮挡 + 临时 z-index:1，修复后不加参数验真实 CSS。夹具/样式/窗口均恢复。
+ *
  *   `v4-window` 会**主动退出 dev**（验证退出兜底同步写），所以必须放在最后跑、跑完重启 dev；
  *   `v5-frames` 是 R5 的观察项（连续缩放窗口时的帧间隔），只报数不判定。
  *
@@ -36,6 +40,8 @@
  *    截图通道放最后，且每次拖完都在**把手当前位置**补一次 release 兜底（recoverDrag）。
  *  - 松手坐标跑出视口（x < 0，拖到最左时会发生）同样丢 pointerup。所以松手一律回当前把手中心，不回指针终点。
  *
+ * 自定义隔离 userData 时用 `DEV_UI_STATE=<该目录>/ui-state.json` 指向实际 dev 文件（落盘断言用）。
+ *
  * 副作用：会给 dev 的 `ui-state.json` 写侧栏宽度（阶段 2 后还会写窗口 bounds，见 REVIEW R2）——
  * 手测「重启保持」前先备份该文件。截图落在 `.local/tmp/layout-freedom/`（CDP 截图，不用系统截图）。
  *
@@ -48,7 +54,9 @@ import { dirname, join } from "node:path";
 
 const PAGE_PORT = process.env.CDP_PORT ?? "9224";
 const MAIN_PORT = process.env.CDP_MAIN_PORT ?? "9229";
-const DEV_UI_STATE = join(homedir(), "Library/Application Support/@percho/desktop-dev/ui-state.json");
+const DEV_UI_STATE =
+	process.env.DEV_UI_STATE ??
+	join(homedir(), "Library/Application Support/@percho/desktop-dev/ui-state.json");
 const OUT_DIR = ".local/tmp/layout-freedom";
 const STAGE0 = process.argv.includes("--stage0");
 mkdirSync(OUT_DIR, { recursive: true });
@@ -1287,17 +1295,170 @@ async function v5Frames(page, { isProbe }) {
 	main.close();
 }
 
+/* ---------------- #100：真实列表 + 整段命中回归 ---------------- */
+async function v6Handle(page) {
+	const expectBug = process.argv.includes("--expect-handle-bug");
+	try {
+		await page.evalJs(`(async () => {
+		const { useProjectsStore: projects } = await import('/src/stores/projects.ts');
+		const { useUiPreferencesStore: prefs } = await import('/src/stores/ui-preferences.ts');
+		const p = projects.getState(), u = prefs.getState();
+		window.__handleRegression = {
+			projects, prefs,
+			projectState: { allSessions: p.allSessions, addedProjects: p.addedProjects, search: p.search },
+			prefState: { sidebarCollapsed: u.sidebarCollapsed, sidebarWidth: u.sidebarWidth,
+				expandedGroups: u.expandedGroups, expandedGroupsTouched: u.expandedGroupsTouched },
+			width: outerWidth, height: outerHeight, x: screenX, y: screenY,
+			z: null, priority: '',
+			scrollTop: document.querySelector('[data-sidebar-scroll-root]').scrollTop
+		};
+		prefs.setState({ sidebarCollapsed: false });
+		window.resizeTo(1100, 750);
+	})()`);
+		await sleep(550);
+		const real = await page.evalJs(`(() => {
+			const handles = [...document.querySelectorAll('[data-sidebar-resize-handle]')];
+			return handles.length === 1 && handles[0].matches('hr.sidebar-resize-handle') &&
+				handles[0].dataset.sidebarResizeHandle === '' &&
+				!document.querySelector('#lf-probe-css') && !document.querySelector('[data-sidebar-resize-handle="probe"]');
+		})()`);
+		if (!real)
+			throw Object.assign(new Error("环境不满足：V6 要求唯一真实把手、零 probe、零候选 CSS"), {
+				exitCode: 2,
+			});
+		await page.evalJs(`(() => {
+			const f = window.__handleRegression, h = document.querySelector('[data-sidebar-resize-handle]');
+			f.z = h.style.getPropertyValue('z-index'); f.priority = h.style.getPropertyPriority('z-index');
+		})()`);
+		console.log("V6 环境确认：唯一真实把手、零 probe、零候选 CSS");
+		for (const width of [200, 240, 480]) {
+			for (const scenario of ["none", "bottom", "both", "top"]) {
+				await page.evalJs(`(() => {
+					const f = window.__handleRegression;
+					const sessions = ${scenario === "none" ? 0 : 24};
+					const rows = Array.from({length: sessions}, (_, i) => ({
+						sessionId: 'handle-fixture-' + i, cwd: '/handle-fixture/project-' + i,
+						name: 'Handle regression ' + i, active: false, messageCount: 1,
+						createdAt: 1000 + i, modifiedAt: 1000 + i
+					}));
+					f.projects.setState({allSessions: rows, addedProjects: [], search: ''});
+					f.prefs.setState({sidebarWidth: ${width}, expandedGroups: rows.map(r => r.cwd), expandedGroupsTouched: true});
+				})()`);
+				await sleep(550); // 宽度/分组过渡结束后让真实 observer 更新 fade
+				await page.evalJs(`(() => {
+					const root = document.querySelector('[data-sidebar-scroll-root]');
+					root.scrollTop = ${scenario === "top" ? "root.scrollHeight" : scenario === "both" ? "(root.scrollHeight-root.clientHeight)/2" : "0"};
+				})()`);
+				await page.evalJs(SETTLE);
+				const scan = () =>
+					page.evalJs(`(() => {
+					const handle = document.querySelector('[data-sidebar-resize-handle]');
+					const root = document.querySelector('[data-sidebar-scroll-root]');
+					const h = handle.getBoundingClientRect(), r = root.getBoundingClientRect();
+					const points = [h.top + 20, ...Array.from({length: 11}, (_, i) => r.top + 20 + (r.height-40)*i/10), h.bottom-20];
+					return {
+						width: h.width, sidebarWidth: handle.parentElement.getBoundingClientRect().width,
+						top: root.dataset.fadeTop === 'true', bottom: root.dataset.fadeBottom === 'true',
+						mask: getComputedStyle(root).maskImage, position: getComputedStyle(root).position,
+						rows: root.querySelectorAll('[data-session-id]').length,
+						overflow: root.scrollHeight > root.clientHeight,
+						hits: points.map(y => { const el = document.elementFromPoint(h.right-4, y); return {
+							y, list: y > r.top && y < r.bottom, hit: el === handle,
+							stack: document.elementsFromPoint(h.right-4,y).slice(0,4).map(e => e.tagName+'.'+e.className)
+						}; })
+					};
+				})()`);
+				const original = await scan();
+				const label = `V6 ${width}px fade=${scenario}`;
+				check(
+					`${label} 夹具有效`,
+					original.top === ["both", "top"].includes(scenario) &&
+						original.bottom === ["both", "bottom"].includes(scenario) &&
+						original.width === 8 &&
+						Math.abs(original.sidebarWidth - width) < 1 &&
+						(scenario === "none"
+							? !original.overflow
+							: original.overflow && original.rows === 24 && original.mask !== "none"),
+					JSON.stringify(original),
+				);
+				check(
+					`${label} 原始命中`,
+					original.hits.every((p) => p.hit === !(expectBug && scenario !== "none" && p.list)),
+					JSON.stringify(original.hits),
+				);
+				await page.evalJs(
+					`document.querySelector('[data-sidebar-resize-handle]').style.setProperty('z-index','1')`,
+				);
+				const fixed = await scan();
+				check(
+					`${label} z-index:1 整段命中`,
+					fixed.hits.every((p) => p.hit),
+					JSON.stringify(fixed.hits),
+				);
+				await page.evalJs(`(() => {
+					const f = window.__handleRegression, h = document.querySelector('[data-sidebar-resize-handle]');
+					f.z ? h.style.setProperty('z-index', f.z, f.priority) : h.style.removeProperty('z-index');
+				})()`);
+			}
+		}
+	} finally {
+		await page.evalJs(`(() => {
+			const f = window.__handleRegression;
+			if (!f) return;
+			const h = document.querySelector('[data-sidebar-resize-handle]');
+			if (h && f.z !== null) f.z ? h.style.setProperty('z-index', f.z, f.priority) : h.style.removeProperty('z-index');
+			f.projects.setState(f.projectState); f.prefs.setState(f.prefState);
+			window.resizeTo(f.width, f.height);
+		})()`);
+		await sleep(550);
+		const restored = await page.evalJs(`(() => {
+			const f = window.__handleRegression;
+			if (!f) return {ok: true, snapshotAbsent: true};
+			const root = document.querySelector('[data-sidebar-scroll-root]');
+			root.scrollTop = f.scrollTop;
+			const h = document.querySelector('[data-sidebar-resize-handle]');
+			const store = Object.entries(f.projectState).every(([k,v]) => f.projects.getState()[k] === v) &&
+				Object.entries(f.prefState).every(([k,v]) => f.prefs.getState()[k] === v);
+			const style = f.prefState.sidebarCollapsed ? !h : !!h && (f.z === null ||
+				(h.style.getPropertyValue('z-index') === f.z && h.style.getPropertyPriority('z-index') === f.priority));
+			const bounds = {width: outerWidth, height: outerHeight, x: screenX, y: screenY};
+			const ok = store && style && outerWidth === f.width && outerHeight === f.height &&
+				root.scrollTop === f.scrollTop &&
+				!document.querySelector('[data-session-id^="handle-fixture-"]') &&
+				!document.querySelector('[data-sidebar-resize-handle="probe"], #lf-probe-css');
+			delete window.__handleRegression;
+			return {ok, store, style, collapsed: f.prefState.sidebarCollapsed, bounds,
+				originalBounds: {width: f.width, height: f.height, x: f.x, y: f.y}};
+		})()`);
+		console.log(`V6 恢复核对：${JSON.stringify(restored)}`);
+		if (!restored.ok) check("V6 清理恢复核对", false, JSON.stringify(restored));
+	}
+}
+
 /* ---------------- 主流程 ---------------- */
 const mode = process.argv[2] ?? "all";
 const page = await connect(PAGE_PORT, (t) => t.type === "page" && t.webSocketDebuggerUrl);
 await page.send("Emulation.setFocusEmulationEnabled", { enabled: true });
 await page.send("DOM.enable");
 await page.send("CSS.enable");
+for (let attempt = 0; !(await page.evalJs(`!!document.querySelector('.sidebar')`)); attempt++) {
+	if (attempt >= 100) {
+		page.close();
+		console.error("环境不满足：20 秒内侧栏未挂载");
+		process.exit(2);
+	}
+	await sleep(200);
+}
 
 const followsVar = await page.evalJs(DETECT_REAL_CSS);
-const injectedCss = !followsVar;
+const injectedCss = mode !== "v6-handle" && !followsVar;
+if (mode === "v6-handle" && !followsVar) {
+	page.close();
+	console.error("环境不满足：V6 要求真实宽度 CSS，不允许降级");
+	process.exit(2);
+}
 if (injectedCss) await page.evalJs(INJECT_CSS);
-const handleKind = await page.evalJs(INSTALL_PROBE_HANDLE);
+const handleKind = mode === "v6-handle" ? "real" : await page.evalJs(INSTALL_PROBE_HANDLE);
 const isProbe = handleKind === "probe";
 console.log(
 	`环境：宽度变量 ${injectedCss ? "未落地 → 注入候选 CSS" : "已落地"}；把手 ${isProbe ? "未落地 → 注入探针" : "真实"}`,
@@ -1308,10 +1469,17 @@ try {
 	if (mode === "v2-drag" || mode === "all") await v2Drag(page, { isProbe });
 	if (mode === "v3-bounds" || mode === "all") await v3Bounds(page);
 	if (mode === "v5-frames") await v5Frames(page, { isProbe });
+	if (mode === "v6-handle") await v6Handle(page);
 	if (mode === "v4-window") await v4Window();
+} catch (error) {
+	if (error.exitCode !== 2) throw error;
+	console.error(error.message);
+	process.exitCode = 2;
 } finally {
 	// v4 会主动退出 dev（页面连接已断），给收尾加超时，别让它把整轮结果卡住
-	await Promise.race([page.evalJs(CLEANUP).catch(() => {}), sleep(1500)]);
+	if (mode !== "v6-handle") {
+		await Promise.race([page.evalJs(CLEANUP).catch(() => {}), sleep(1500)]);
+	}
 	page.close();
 }
 
@@ -1322,4 +1490,4 @@ console.log(
 	`\n合计 ${results.length} 条：PASS ${pass.length} / FAIL ${fail.length} / SKIP ${skipped.length}` +
 		(fail.length ? `\n失败项：\n${fail.map((f) => `  - ${f.name}：${f.detail}`).join("\n")}` : ""),
 );
-process.exit(fail.length ? 1 : 0);
+process.exit(process.exitCode ?? (fail.length ? 1 : 0));
