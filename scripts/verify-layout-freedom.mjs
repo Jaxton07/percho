@@ -1294,24 +1294,39 @@ async function v5Frames(page, { isProbe }) {
 /* ---------------- #100：真实列表 + 整段命中回归 ---------------- */
 async function v6Handle(page) {
 	const expectBug = process.argv.includes("--expect-handle-bug");
-	await page.evalJs(`(async () => {
+	try {
+		await page.evalJs(`(async () => {
 		const { useProjectsStore: projects } = await import('/src/stores/projects.ts');
 		const { useUiPreferencesStore: prefs } = await import('/src/stores/ui-preferences.ts');
 		const p = projects.getState(), u = prefs.getState();
-		const handle = document.querySelector('[data-sidebar-resize-handle]');
 		window.__handleRegression = {
 			projects, prefs,
 			projectState: { allSessions: p.allSessions, addedProjects: p.addedProjects, search: p.search },
 			prefState: { sidebarCollapsed: u.sidebarCollapsed, sidebarWidth: u.sidebarWidth,
 				expandedGroups: u.expandedGroups, expandedGroupsTouched: u.expandedGroupsTouched },
-			width: innerWidth, height: innerHeight,
-			z: handle.style.getPropertyValue('z-index'), priority: handle.style.getPropertyPriority('z-index'),
+			width: outerWidth, height: outerHeight, x: screenX, y: screenY,
+			z: null, priority: '',
 			scrollTop: document.querySelector('[data-sidebar-scroll-root]').scrollTop
 		};
 		prefs.setState({ sidebarCollapsed: false });
 		window.resizeTo(1100, 750);
 	})()`);
-	try {
+		await sleep(550);
+		const real = await page.evalJs(`(() => {
+			const handles = [...document.querySelectorAll('[data-sidebar-resize-handle]')];
+			return handles.length === 1 && handles[0].matches('hr.sidebar-resize-handle') &&
+				handles[0].dataset.sidebarResizeHandle === '' &&
+				!document.querySelector('#lf-probe-css') && !document.querySelector('[data-sidebar-resize-handle="probe"]');
+		})()`);
+		if (!real)
+			throw Object.assign(new Error("环境不满足：V6 要求唯一真实把手、零 probe、零候选 CSS"), {
+				exitCode: 2,
+			});
+		await page.evalJs(`(() => {
+			const f = window.__handleRegression, h = document.querySelector('[data-sidebar-resize-handle]');
+			f.z = h.style.getPropertyValue('z-index'); f.priority = h.style.getPropertyPriority('z-index');
+		})()`);
+		console.log("V6 环境确认：唯一真实把手、零 probe、零候选 CSS");
 		for (const width of [200, 240, 480]) {
 			for (const scenario of ["none", "bottom", "both", "top"]) {
 				await page.evalJs(`(() => {
@@ -1383,16 +1398,36 @@ async function v6Handle(page) {
 			}
 		}
 	} finally {
-		await page.evalJs(`(async () => {
+		await page.evalJs(`(() => {
 			const f = window.__handleRegression;
-			f.projects.setState(f.projectState); f.prefs.setState(f.prefState);
+			if (!f) return;
 			const h = document.querySelector('[data-sidebar-resize-handle]');
-			if (h) f.z ? h.style.setProperty('z-index', f.z, f.priority) : h.style.removeProperty('z-index');
+			if (h && f.z !== null) f.z ? h.style.setProperty('z-index', f.z, f.priority) : h.style.removeProperty('z-index');
+			f.projects.setState(f.projectState); f.prefs.setState(f.prefState);
 			window.resizeTo(f.width, f.height);
-			await ${SETTLE};
-			document.querySelector('[data-sidebar-scroll-root]').scrollTop = f.scrollTop;
-			delete window.__handleRegression;
 		})()`);
+		await sleep(550);
+		const restored = await page.evalJs(`(() => {
+			const f = window.__handleRegression;
+			if (!f) return {ok: true, snapshotAbsent: true};
+			const root = document.querySelector('[data-sidebar-scroll-root]');
+			root.scrollTop = f.scrollTop;
+			const h = document.querySelector('[data-sidebar-resize-handle]');
+			const store = Object.entries(f.projectState).every(([k,v]) => f.projects.getState()[k] === v) &&
+				Object.entries(f.prefState).every(([k,v]) => f.prefs.getState()[k] === v);
+			const style = f.prefState.sidebarCollapsed ? !h : !!h && (f.z === null ||
+				(h.style.getPropertyValue('z-index') === f.z && h.style.getPropertyPriority('z-index') === f.priority));
+			const bounds = {width: outerWidth, height: outerHeight, x: screenX, y: screenY};
+			const ok = store && style && outerWidth === f.width && outerHeight === f.height &&
+				root.scrollTop === f.scrollTop &&
+				!document.querySelector('[data-session-id^="handle-fixture-"]') &&
+				!document.querySelector('[data-sidebar-resize-handle="probe"], #lf-probe-css');
+			delete window.__handleRegression;
+			return {ok, store, style, collapsed: f.prefState.sidebarCollapsed, bounds,
+				originalBounds: {width: f.width, height: f.height, x: f.x, y: f.y}};
+		})()`);
+		console.log(`V6 恢复核对：${JSON.stringify(restored)}`);
+		if (!restored.ok) check("V6 清理恢复核对", false, JSON.stringify(restored));
 	}
 }
 
@@ -1412,9 +1447,14 @@ for (let attempt = 0; !(await page.evalJs(`!!document.querySelector('.sidebar')`
 }
 
 const followsVar = await page.evalJs(DETECT_REAL_CSS);
-const injectedCss = !followsVar;
+const injectedCss = mode !== "v6-handle" && !followsVar;
+if (mode === "v6-handle" && !followsVar) {
+	page.close();
+	console.error("环境不满足：V6 要求真实宽度 CSS，不允许降级");
+	process.exit(2);
+}
 if (injectedCss) await page.evalJs(INJECT_CSS);
-const handleKind = await page.evalJs(INSTALL_PROBE_HANDLE);
+const handleKind = mode === "v6-handle" ? "real" : await page.evalJs(INSTALL_PROBE_HANDLE);
 const isProbe = handleKind === "probe";
 console.log(
 	`环境：宽度变量 ${injectedCss ? "未落地 → 注入候选 CSS" : "已落地"}；把手 ${isProbe ? "未落地 → 注入探针" : "真实"}`,
@@ -1427,9 +1467,15 @@ try {
 	if (mode === "v5-frames") await v5Frames(page, { isProbe });
 	if (mode === "v6-handle") await v6Handle(page);
 	if (mode === "v4-window") await v4Window();
+} catch (error) {
+	if (error.exitCode !== 2) throw error;
+	console.error(error.message);
+	process.exitCode = 2;
 } finally {
 	// v4 会主动退出 dev（页面连接已断），给收尾加超时，别让它把整轮结果卡住
-	await Promise.race([page.evalJs(CLEANUP).catch(() => {}), sleep(1500)]);
+	if (mode !== "v6-handle") {
+		await Promise.race([page.evalJs(CLEANUP).catch(() => {}), sleep(1500)]);
+	}
 	page.close();
 }
 
@@ -1440,4 +1486,4 @@ console.log(
 	`\n合计 ${results.length} 条：PASS ${pass.length} / FAIL ${fail.length} / SKIP ${skipped.length}` +
 		(fail.length ? `\n失败项：\n${fail.map((f) => `  - ${f.name}：${f.detail}`).join("\n")}` : ""),
 );
-process.exit(fail.length ? 1 : 0);
+process.exit(process.exitCode ?? (fail.length ? 1 : 0));
