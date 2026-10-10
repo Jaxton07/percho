@@ -256,6 +256,9 @@ LAN 页重连/中途进入时，快照种子经 `messagesToUIMessages` 重建—
    ≠ 已落盘，判断落盘一律用 `existsSync`（`tools/subagent/runner.ts` 的 jsonlPath 就是这么做的）。
    逆命题同样重要：**新建未发消息的会话改名是合法操作**（`appendSessionInfo` 写内存，首条消息落盘时
    一起写入，不丢名）——不要加 `if (!sessionFile) throw` 这种「尚未落盘」拦截，会给正常路径加假错误。
+   **2026-10-10 验收补充**：`listSessions` 走磁盘目录，刚创建但零消息的活体会话可能不在其中，
+   不能拿它查“当前会话是否被自动切模型”。#101 脚本改用主进程 inspector 只读 registry meta 对照 renderer，
+   并确认 getSessionMessages 仍为空（未为验收发送消息/调用生成）。
 
 - **同名工具到底谁赢：`replaceable` 管「让位」，`自定义 < 扩展` 管「优先」**（2026-10-06 修正过一次说法）
   三条机制各管一段，别混：
@@ -578,6 +581,8 @@ el[pk].style; // => {"--sidebar-render-width":"320px"} ← React「最后一次�
 
 **验收纪律**：
 1. 先硬重启隔离 dev，再跑真实组件/observer 矩阵；折叠态没有把手，不能悄悄安装高 z-index 探针后把它当产品验。
+   模型隐藏端到端另见 `scripts/verify-model-visibility.mjs`：当前已选模型被藏后 chip 文案可能退为“选择模型”，
+   不能按旧模型名定位按钮；设置蒙层退场期间要等 elementFromPoint 真正命中目标再点击，不能只等固定毫秒。
 2. 保留 computed mask/position、把手 rect 与 elementsFromPoint 全链；单点/截图不能替代整段命中断言。
 3. 把手缺失或高度为 0 仍先查折叠条件与 hr preflight；无 fade 常态全绿不等于可滚动列表全绿。
 
