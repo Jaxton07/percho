@@ -1336,6 +1336,7 @@ code {
    `height: 0`，只写 `top/bottom: 0` 会被这条具名高度覆盖，命中区高度 0 = 拖不到（CDP 合成事件也命中不了） */
 .sidebar-resize-handle {
 	position: absolute;
+	z-index: 1;
 	top: 0;
 	bottom: 0;
 	right: 0;
