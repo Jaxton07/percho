@@ -1,4 +1,4 @@
-import type { ProviderInfo } from "@percho/shared";
+import { isModelVisible, type ModelPrefs, type ProviderInfo, providerModelVisibility } from "@percho/shared";
 import { useState } from "react";
 import { useT } from "../../../i18n";
 import { useProviderLoginStore } from "../../../stores/provider-login";
@@ -9,7 +9,7 @@ import { Tooltip } from "../../ui/Tooltip";
 import { BuiltinProviderEditForm } from "./BuiltinProviderEditForm";
 import { CustomProviderEditForm } from "./CustomProviderForm";
 
-const EMPTY_MODEL_IDS: string[] = [];
+const EMPTY_MODEL_PREFS: ModelPrefs = { hiddenModels: {}, subagentModels: {} };
 
 /** 图标操作按钮：图标无文字，Tooltip + aria-label 必需（ProvidersPanel 刷新按钮复用） */
 export function IconAction({
@@ -56,14 +56,18 @@ export function ProviderRow({ provider }: { provider: ProviderInfo }) {
 	const startLogin = useProviderLoginStore((s) => s.startProviderLogin);
 	const loginActive = useProviderLoginStore((s) => s.login !== null);
 	const testResult = useSettingsStore((s) => s.testResults[provider.id]);
-	const hiddenModelIds = useSettingsStore((s) => s.modelPrefs?.hiddenModels[provider.id] ?? EMPTY_MODEL_IDS);
+	const modelPrefs = useSettingsStore((s) => s.modelPrefs) ?? EMPTY_MODEL_PREFS;
 	const setModelHidden = useSettingsStore((s) => s.setModelHidden);
-	const setModelsHidden = useSettingsStore((s) => s.setModelsHidden);
-	/** 批量开关三态：全可见 / 全隐藏 / 部分隐藏（中间态点击 = 一键全隐藏，方便先藏再挑） */
-	const hiddenCount = provider.models.filter((m) => hiddenModelIds.includes(m.id)).length;
-	const allVisible = hiddenCount === 0;
-	const allHidden = hiddenCount > 0 && hiddenCount === provider.models.length;
-	const mixed = !allVisible && !allHidden;
+	const setProviderModelsHidden = useSettingsStore((s) => s.setProviderModelsHidden);
+	/** 有效可见性三态；中间态点击全藏，零目录也可设定源默认策略。 */
+	const visibility = providerModelVisibility(
+		modelPrefs,
+		provider.id,
+		provider.models.map((m) => m.id),
+	);
+	const allVisible = visibility === "visible";
+	const allHidden = visibility === "hidden";
+	const mixed = visibility === "mixed";
 	/** 全字段编辑 vs 端点覆写：有落盘的自定义模型定义或全新 id 走全字段；
 	 * 纯 baseUrl 覆写（内置 id、无自定义模型）永远走端点覆写表单——防止保存后同一按钮换表单的跳变 */
 	const fullEdit =
@@ -178,14 +182,7 @@ export function ProviderRow({ provider }: { provider: ProviderInfo }) {
 					<Switch
 						checked={allVisible}
 						indeterminate={mixed}
-						disabled={provider.models.length === 0}
-						onCheckedChange={() =>
-							void setModelsHidden(
-								provider.id,
-								provider.models.map((m) => m.id),
-								!allHidden,
-							)
-						}
+						onCheckedChange={() => void setProviderModelsHidden(provider.id, !allHidden)}
 						aria-label={
 							allHidden
 								? t("settings.providers.showAllModels", { name: provider.name })
@@ -212,13 +209,14 @@ export function ProviderRow({ provider }: { provider: ProviderInfo }) {
 					</p>
 					<ul className="space-y-0.5">
 						{provider.models.map((model) => {
-							const visible = !hiddenModelIds.includes(model.id);
+							const visible = isModelVisible(modelPrefs, provider.id, model.id);
 							return (
 								<li key={model.id}>
 									<div className="flex items-center gap-2 rounded px-1 py-1 text-ui-11 text-ink-dim hover:bg-surface">
 										<span className="min-w-0 flex-1 truncate">{model.name}</span>
 										<Switch
 											checked={visible}
+											aria-label={model.name}
 											onCheckedChange={(nextVisible) =>
 												void setModelHidden(provider.id, model.id, !nextVisible)
 											}

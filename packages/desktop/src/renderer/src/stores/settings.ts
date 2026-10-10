@@ -11,6 +11,7 @@ import type {
 	ResourceDiagnosticInfo,
 	SubagentInfo,
 } from "@percho/shared";
+import { withModelHidden, withModelsHidden, withProviderModelsHidden } from "@percho/shared";
 import { create } from "zustand";
 import { getPi } from "../api";
 import { useSessionsStore } from "./sessions";
@@ -73,6 +74,7 @@ interface SettingsStore {
 	test: (providerId: string) => Promise<void>;
 	setModelHidden: (provider: string, modelId: string, hidden: boolean) => Promise<void>;
 	setModelsHidden: (provider: string, modelIds: string[], hidden: boolean) => Promise<void>;
+	setProviderModelsHidden: (provider: string, hidden: boolean) => Promise<void>;
 	setSubagentModel: (agent: string, modelRef: string | null) => Promise<void>;
 	/** 逐代理思考深度覆盖；null = 跟随 agent 定义 */
 	setSubagentThinking: (agent: string, level: string | null) => Promise<void>;
@@ -93,6 +95,68 @@ function errorMessage(error: unknown): string {
 }
 
 export const useSettingsStore = create<SettingsStore>((set, get) => {
+	// modelPrefs 的单写者：已确认底座 + 未完成操作重放；读与所有偏好 IPC 共用串行尾链。
+	let confirmedPrefs: ModelPrefs | null = null;
+	let prefsTail: Promise<void> = Promise.resolve();
+	type PrefOperation = { apply: (prefs: ModelPrefs) => ModelPrefs };
+	let pendingPrefs: PrefOperation[] = [];
+	const publishPrefs = () => {
+		const base = confirmedPrefs ?? { hiddenModels: {}, subagentModels: {} };
+		set({
+			modelPrefs: pendingPrefs.length
+				? pendingPrefs.reduce((prefs, op) => op.apply(prefs), base)
+				: confirmedPrefs,
+		});
+	};
+	const enqueuePrefs = <T>(operation: () => Promise<T>): Promise<T> => {
+		const result = prefsTail.then(operation);
+		prefsTail = result.then(
+			() => {},
+			() => {},
+		);
+		return result;
+	};
+	const readPrefs = () =>
+		enqueuePrefs(async () => {
+			confirmedPrefs = await getPi().getModelPrefs();
+			publishPrefs();
+		});
+	const changePrefs = (
+		apply: PrefOperation["apply"],
+		commit: () => Promise<ModelPrefs>,
+		refreshModels = false,
+	): Promise<void> => {
+		if (!pendingPrefs.length) confirmedPrefs = get().modelPrefs;
+		// 先验证本次投影；非法输入不得留下永远不会发送的 pending 操作。
+		apply(get().modelPrefs ?? { hiddenModels: {}, subagentModels: {} });
+		const op = { apply };
+		pendingPrefs.push(op);
+		const result = enqueuePrefs(async () => {
+			let succeeded = false;
+			try {
+				confirmedPrefs = await commit();
+				succeeded = true;
+			} catch (error) {
+				pendingPrefs = pendingPrefs.filter((pending) => pending !== op);
+				publishPrefs();
+				// 队列仍被当前操作占住；后继 IPC 未发送，重读不会返回过期的后继快照。
+				try {
+					confirmedPrefs = await getPi().getModelPrefs();
+				} catch {
+					/* 保留最后确认值 */
+				}
+				set({ error: errorMessage(error) });
+			} finally {
+				pendingPrefs = pendingPrefs.filter((pending) => pending !== op);
+				publishPrefs();
+			}
+			if (succeeded && refreshModels) await useSessionsStore.getState().loadModels();
+		});
+		// 先排队再通知订阅者：同步订阅里发起新动作时仍保留原始调用顺序。
+		publishPrefs();
+		return result;
+	};
+
 	/** 变更后刷新 provider 列表与模型选择器数据 */
 	const afterMutation = async () => {
 		await get().refresh();
@@ -132,7 +196,7 @@ export const useSettingsStore = create<SettingsStore>((set, get) => {
 		setCategory: (category) => set({ category }),
 
 		refresh: async () => {
-			set({ loading: true });
+			set({ loading: true, error: null });
 			// 权限门控配置是本地文件读，独立加载，不被 provider 列表阻塞
 			// （仅派生 enabled=false 逃生舱态供 chip 禁用提示；开关 UI 已撒，spec permission-mode D7）
 			void getPi()
@@ -154,12 +218,13 @@ export const useSettingsStore = create<SettingsStore>((set, get) => {
 				.then((lanStatus) => set({ lanStatus }))
 				.catch(() => {});
 			try {
-				const [providers, modelPrefs, subagents] = await Promise.all([
+				const [providers, , subagents] = await Promise.all([
 					getPi().listProviders({}),
-					getPi().getModelPrefs(),
+					readPrefs(),
 					getPi().listSubagents(),
 				]);
-				set({ providers, modelPrefs, subagents, loading: false, error: null });
+				// modelPrefs 已由串行读路径发布，不能等目录返回后再写入旧快照。
+				set({ providers, subagents, loading: false });
 				// 已加载资源按当前活跃会话（其项目）展示；新会话页（还没建后端会话）时为 null（面板显示空态）
 				const activeSessionId = useSessionsStore.getState().activeSessionId;
 				if (activeSessionId) {
@@ -304,81 +369,58 @@ export const useSettingsStore = create<SettingsStore>((set, get) => {
 			}
 		},
 
-		setModelHidden: async (provider, modelId, hidden) => {
-			const previous = get().modelPrefs;
-			const base: ModelPrefs = previous ?? { hiddenModels: {}, subagentModels: {} };
-			const ids = new Set(base.hiddenModels[provider] ?? []);
-			if (hidden) ids.add(modelId);
-			else ids.delete(modelId);
-			const hiddenModels = { ...base.hiddenModels };
-			if (ids.size) hiddenModels[provider] = [...ids];
-			else delete hiddenModels[provider];
-			// 先本地更新，开关圆点不必等待 Electron IPC 往返；失败时以磁盘实际状态回滚。
-			set({ modelPrefs: { ...base, hiddenModels } });
-			try {
-				await getPi().setModelHidden({ provider, modelId, hidden });
-				await useSessionsStore.getState().loadModels();
-			} catch (error) {
-				const modelPrefs = await getPi()
-					.getModelPrefs()
-					.catch(() => previous);
-				set({ modelPrefs, error: error instanceof Error ? error.message : String(error) });
-			}
-		},
+		setModelHidden: async (provider, modelId, hidden) =>
+			changePrefs(
+				(prefs) => withModelHidden(prefs, provider, modelId, hidden),
+				() => getPi().setModelHidden({ provider, modelId, hidden }),
+				true,
+			),
 
 		setModelsHidden: async (provider, modelIds, hidden) => {
-			const previous = get().modelPrefs;
-			const base: ModelPrefs = previous ?? { hiddenModels: {}, subagentModels: {} };
-			const hiddenSet = new Set(base.hiddenModels[provider] ?? []);
-			for (const id of modelIds) {
-				if (hidden) hiddenSet.add(id);
-				else hiddenSet.delete(id);
-			}
-			const hiddenModels = { ...base.hiddenModels };
-			if (hiddenSet.size) hiddenModels[provider] = [...hiddenSet];
-			else delete hiddenModels[provider];
-			// 先本地更新（一次 IPC 写盘，不逐个往返）；失败时以磁盘实际状态回滚。
-			set({ modelPrefs: { ...base, hiddenModels } });
-			try {
-				await getPi().setModelsHidden({ provider, modelIds, hidden });
-				await useSessionsStore.getState().loadModels();
-			} catch (error) {
-				const modelPrefs = await getPi()
-					.getModelPrefs()
-					.catch(() => previous);
-				set({ modelPrefs, error: error instanceof Error ? error.message : String(error) });
-			}
+			const ids = [...modelIds]; // 固定点击时的意图，不受调用方后续数组修改影响
+			return changePrefs(
+				(prefs) => withModelsHidden(prefs, provider, ids, hidden),
+				() => getPi().setModelsHidden({ provider, modelIds: ids, hidden }),
+				true,
+			);
 		},
 
-		setSubagentModel: async (agent, modelRef) => {
-			const previous = get().modelPrefs;
-			try {
-				const modelPrefs = await getPi().setSubagentModel({ agent, modelRef });
-				set({ modelPrefs });
-			} catch (error) {
-				set({ modelPrefs: previous, error: error instanceof Error ? error.message : String(error) });
-			}
-		},
+		setProviderModelsHidden: async (provider, hidden) =>
+			changePrefs(
+				(prefs) => withProviderModelsHidden(prefs, provider, hidden),
+				() => getPi().setProviderModelsHidden({ provider, hidden }),
+				true,
+			),
 
-		setSubagentThinking: async (agent, level) => {
-			const previous = get().modelPrefs;
-			try {
-				const modelPrefs = await getPi().setSubagentThinking({ agent, level });
-				set({ modelPrefs });
-			} catch (error) {
-				set({ modelPrefs: previous, error: error instanceof Error ? error.message : String(error) });
-			}
-		},
+		setSubagentModel: async (agent, modelRef) =>
+			changePrefs(
+				(prefs) => {
+					const next = { ...prefs, subagentModels: { ...prefs.subagentModels } };
+					if (modelRef) next.subagentModels[agent] = modelRef;
+					else delete next.subagentModels[agent];
+					return next;
+				},
+				() => getPi().setSubagentModel({ agent, modelRef }),
+			),
 
-		setSubagentPreferBuiltin: async (enabled) => {
-			const previous = get().modelPrefs;
-			try {
-				const modelPrefs = await getPi().setSubagentPreferBuiltin({ enabled });
-				set({ modelPrefs });
-			} catch (error) {
-				set({ modelPrefs: previous, error: error instanceof Error ? error.message : String(error) });
-			}
-		},
+		setSubagentThinking: async (agent, level) =>
+			changePrefs(
+				(prefs) => {
+					const thinking = { ...prefs.subagentThinking };
+					const next: ModelPrefs = { ...prefs, subagentThinking: thinking };
+					if (level) thinking[agent] = level;
+					else delete thinking[agent];
+					if (!Object.keys(thinking).length) delete next.subagentThinking;
+					return next;
+				},
+				() => getPi().setSubagentThinking({ agent, level }),
+			),
+
+		setSubagentPreferBuiltin: async (enabled) =>
+			changePrefs(
+				(prefs) => ({ ...prefs, subagentPreferBuiltin: enabled }),
+				() => getPi().setSubagentPreferBuiltin({ enabled }),
+			),
 
 		test: async (providerId) => {
 			set((state) => ({ testResults: { ...state.testResults, [providerId]: "testing" } }));
