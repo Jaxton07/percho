@@ -59,6 +59,7 @@ import type {
 import {
 	extractTodos,
 	formatSkillCommand,
+	isModelVisible,
 	parseExpandedSkillInvocation,
 	TODO_TOOL_NAME,
 	type TodoItem,
@@ -1103,7 +1104,7 @@ export class PiBackend {
 		return providers.flatMap((provider) =>
 			provider.configured
 				? provider.models
-						.filter((model) => !prefs.hiddenModels[provider.id]?.includes(model.id))
+						.filter((model) => isModelVisible(prefs, provider.id, model.id))
 						.map((model) => {
 							// 该模型实际支持的思考深度（SDK 按 reasoning/thinkingLevelMap 判定；不推理的模型只有 off）
 							// + 图片输入能力（input 含 image；查不到则缺省，UI fail-open）
