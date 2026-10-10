@@ -210,9 +210,14 @@ export const SETTINGS_CHANNELS = {
 		{ provider: string; modelId: string; hidden: boolean },
 		ModelPrefs
 	>(),
-	/** 批量设置一组模型可见性（一键全隐藏/全显示某 provider 的全部模型）；一次写盘 */
+	/** 批量设置指定 IDs 的可见性，不改变 provider 默认策略；一次写盘 */
 	setModelsHidden: ch("settings:setModelsHidden")<
 		{ provider: string; modelIds: string[]; hidden: boolean },
+		ModelPrefs
+	>(),
+	/** 设置全源默认可见性，清空该源具体 ID 隐藏/显示名单 */
+	setProviderModelsHidden: ch("settings:setProviderModelsHidden")<
+		{ provider: string; hidden: boolean },
 		ModelPrefs
 	>(),
 	/** 为子代理指定 provider/model；null = 继承父会话模型 */
