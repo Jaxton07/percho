@@ -51,6 +51,17 @@ export const zh = {
 		restart: "重启",
 		upToDate: "已是最新版本",
 		checkFailed: "检查更新失败：{message}",
+		helpTitle: "更新遇到问题？",
+		installUnconfirmed: "上次已请求安装 {version}，但尚未观察到该版本启动；这不代表已确认安装失败。",
+		windowsRecovery:
+			"若安装器反复提示关闭 Percho，请取消安装并重启电脑，再从官方页面下载安装包，保持原安装范围。仍失败时先备份数据再正常卸载重装，不要手删用户数据或注册表。",
+		diagnosticsPrivacy:
+			"诊断仅含更新日志、版本与路径；Windows 还含当前相关进程和安装登记快照，不含会话、密钥或进程命令行。路径可能包含用户名，请检查后再分享；不会自动上传。旧卸载器内部的失败文件仍可能需要系统跟踪。",
+		exportDiagnostics: "导出更新诊断",
+		exportingDiagnostics: "正在导出…",
+		diagnosticsSaved: "更新诊断已保存",
+		diagnosticsFailed: "无法导出更新诊断",
+		manualInstaller: "官方安装包",
 	},
 	empty: {
 		hint: "选择项目目录后开始与 Pi Agent 对话",

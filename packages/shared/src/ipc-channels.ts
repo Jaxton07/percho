@@ -38,6 +38,7 @@ import type {
 } from "./settings";
 import type { TodoItem } from "./todo";
 import type { UiPluginInfo, UiPluginManifest, UiPluginsConfig } from "./ui-plugins";
+import type { UpdateDiagnosticsInfo } from "./update-diagnostics";
 
 /**
  * IPC invoke 通道单一事实源（D5）：key（= PiApi 方法名）→ 通道字符串 + 参数/返回类型。
@@ -292,6 +293,10 @@ export const APP_CHANNELS = {
 	downloadUpdate: ch("update:download")<void, void>(),
 	/** 重启并安装已下载的更新 */
 	installUpdate: ch("update:install")<void, void>(),
+	/** 上一次安装交接是否已观察到目标版本启动（不推断安装器退出结果） */
+	getUpdateDiagnostics: ch("update:diagnostics")<void, UpdateDiagnosticsInfo>(),
+	/** 用户选择路径后导出专用更新诊断；取消返回 null，不含会话/认证文件 */
+	exportUpdateDiagnostics: ch("update:exportDiagnostics")<void, string | null>(),
 	/** 渲染端声明「退出确认由我接管」（App 挂载时置位）——未接管时 main 关窗直接放行 */
 	setQuitGuard: ch("app:setQuitGuard")<{ enabled: boolean }, void>(),
 	/** 渲染端回执「退出确认窗已上屏」→ main 撤掉兑底计时（超时 = 渲染进程卡死，直接放行退出） */

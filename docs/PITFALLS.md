@@ -41,6 +41,8 @@
 | 关掉会话后 MCP server 子进程（`uvx`/`node`）仍常驻、还占着上游连接 | 二 · `AgentSession.dispose()` 不发 `session_shutdown`（2026-10-08） |
 | 粘贴截图发给模型后，输入框的图立刻消失、对话区却要 ~1s 才出现气泡 | 二 · 带图发送时气泡「姗姗来迟」：SDK 在构造用户消息前先缩放附件（2026-10-08） |
 | 上一条的另一半：Agent 跑着的时候发大图不会被缩放（可能撞 provider 5MB 上限） | 二 · 同上（队列路径不归一化附件） |
+| Windows 更新提示「无法关闭」但无 Percho.exe，随后 uninstall exit 2 | 三 · Windows 旧卸载失败的文案不能当进程证据（#104）；[WINDOWS-UPDATES.md](WINDOWS-UPDATES.md) |
+| macOS 上 makensis 编译最小 IfErrors 脚本也 std::bad_alloc | 三 · 同上（NSIS patch 编译/执行以 Windows CI 为准） |
 | preload 加载失败（sandbox 下 require is not defined） | 三 · preload 必须 CJS |
 | main 进程 import workspace 包行为异常（外部化/旧产物） | 三 · externalizeDepsPlugin |
 | 打包产物缺 pi SDK、Electron 版本漂移 | 三 · 打包两个坑 |
@@ -442,6 +444,14 @@ pi SDK 必须声明进 `packages/desktop/package.json` dependencies（electron-b
 `gh pr merge --squash` 报 `refusing to allow an OAuth App to create or update workflow .github/workflows/xxx.yml without workflow scope`：gh 的 OAuth token 默认只有 `repo/gist/read:org`，而**凡 merge 会改动 `.github/workflows/` 下文件的 PR，GitHub API 一律要求 `workflow` scope**。修复：`gh auth refresh -h github.com -s workflow`（设备码流程，浏览器确认，一次性）；或网页 UI 手动合。
 
 连带坑（首贡献者 fork PR 死锁）：fork 首次 PR 的 CI 要在 Actions 页面手动 Approve 才会跑，叠加分支保护「要求 branch up-to-date + 检查通过」→ 三者互等死锁，只能 admin 旁路（`gh pr merge --squash --admin`，同样吃上面的 scope 限制）。同步 fork 分支用 `gh pr update-branch <n>`。
+
+### Windows 旧卸载失败的文案不能当进程证据（2026-10-11，#104）
+
+0.6.3 → 0.6.4 下载哈希正确、主进程已退出仍报“无法关闭”，随后旧卸载器返回 2。electron-builder 的卸载重试也复用该文案；2 不能直接等同 Windows ERROR_FILE_NOT_FOUND。文件可读写不证明可改名/删除，现有证据尚未定位具体失败文件。
+
+诊断修补：SDK 专用持久日志 + 安装前同步 journal + 新 NSIS result hook + 用户显式只读导出。hook 会替换 stock `handleUninstallResult`，因此必须保存 Errors/R0/R9 并保留 launch-error/nonzero/success 三支；旧路径不能前向引用 stock 在后面才声明的 Var，改为读取已有登记。日志不可写也不能改变原决策。新安装器可记录旧卸载器最终结果，不能让已安装旧包补出内部日志，也不能把未确认交接判成安装失败。详见 [WINDOWS-UPDATES.md](WINDOWS-UPDATES.md)。
+
+本机 macOS 的 makensis（legacy 和新 toolset）在最小 `IfErrors` 脚本也 `std::bad_alloc`；最小反证排除 patch 特有语法，Windows CI 编译真实生产 installer 并运行隔离 harness 才算本次 NSIS 验证。原始 Windows 故障仍需旧包 → 新包实际捕获，不拿诊断 harness 冒充根因修复。
 
 ## 四、Renderer / React
 

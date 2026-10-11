@@ -37,6 +37,9 @@ extraResources:
   # 内置协作 skill（channel-pickup/design-handoff）：additionalSkillPaths 扫描，与 UI 插件目录分列
   - from: "resources/skills"
     to: "skills"
+  # 显式导出更新诊断时的只读 Windows 快照脚本（无用户命令/凭证采集）
+  - from: "resources/update-diagnostics"
+    to: "update-diagnostics"
 mac:
   category: public.app-category.developer-tools
   # adhoc 临时签名整个 bundle：Gatekeeper 从「已损坏（无绕过）」→「无法验证开发者（可右键打开）」
@@ -65,6 +68,7 @@ linux:
       arch: [x64]
   artifactName: percho-linux-${arch}.${ext}
 nsis:
+  include: build/update-diagnostics.nsh
   oneClick: false
   allowToChangeInstallationDirectory: true
 publish:

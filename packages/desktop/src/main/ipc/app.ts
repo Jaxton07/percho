@@ -7,7 +7,13 @@ import { ensureDailyDir } from "../daily";
 import { checkoutBranch, getGitBranch, listGitBranches } from "../git";
 import { resolveExistingPath } from "../path-target";
 import { loadUiState, saveUiState } from "../ui-state";
-import { checkForUpdates, downloadUpdate, installUpdate } from "../updater";
+import {
+	buildUpdateDiagnosticReport,
+	checkForUpdates,
+	downloadUpdate,
+	getUpdateDiagnostics,
+	installUpdate,
+} from "../updater";
 import { ackQuitDialog, setQuitGuard } from "../window";
 import { registerInvokeHandlers } from "./invoke";
 
@@ -79,6 +85,20 @@ export function registerAppIpc(_backend: PiBackend): void {
 		checkForUpdates: () => checkForUpdates(),
 		downloadUpdate: () => downloadUpdate(),
 		installUpdate: () => installUpdate(),
+		getUpdateDiagnostics: () => getUpdateDiagnostics(),
+		exportUpdateDiagnostics: async () => {
+			const window = BrowserWindow.getAllWindows()[0];
+			const options: Electron.SaveDialogOptions = {
+				defaultPath: `percho-update-diagnostics-${new Date().toISOString().slice(0, 10)}.json`,
+				filters: [{ name: "JSON", extensions: ["json"] }],
+			};
+			const result = window
+				? await dialog.showSaveDialog(window, options)
+				: await dialog.showSaveDialog(options);
+			if (result.canceled || !result.filePath) return null;
+			await writeFile(result.filePath, JSON.stringify(await buildUpdateDiagnosticReport(), null, 2), "utf8");
+			return result.filePath;
+		},
 		// 退出确认（Windows）：渲染端挂载后接管 guard，点 ✕ 才会被拦下弹窗
 		setQuitGuard: ({ enabled }) => setQuitGuard(enabled),
 		quitDialogShown: () => ackQuitDialog(),

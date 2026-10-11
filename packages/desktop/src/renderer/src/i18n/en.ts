@@ -51,6 +51,18 @@ export const en: Messages = {
 		restart: "Restart",
 		upToDate: "You're up to date",
 		checkFailed: "Update check failed: {message}",
+		helpTitle: "Having trouble updating?",
+		installUnconfirmed:
+			"Installation of {version} was requested, but that version has not been observed running. This is not proof of an installation failure.",
+		windowsRecovery:
+			"If the installer repeatedly asks you to close Percho, cancel it, restart Windows, then download the official installer using the original installation scope. If it still fails, back up your data before a normal uninstall and reinstall. Do not manually delete user data or registry entries.",
+		diagnosticsPrivacy:
+			"Contains update logs, versions and paths; Windows also includes a current snapshot of relevant processes and installation registrations. No conversations, credentials or process command lines. Paths may include your account name: review before sharing. Nothing is uploaded automatically. Internal old-uninstaller file failures may still require system tracing.",
+		exportDiagnostics: "Export update diagnostics",
+		exportingDiagnostics: "Exporting…",
+		diagnosticsSaved: "Update diagnostics saved",
+		diagnosticsFailed: "Could not export update diagnostics",
+		manualInstaller: "Official installer",
 	},
 	empty: {
 		hint: "Pick a project directory to start chatting with Pi Agent",

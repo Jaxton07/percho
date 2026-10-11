@@ -1,13 +1,15 @@
-import type { AppInfo } from "@percho/shared";
+import type { AppInfo, UpdateDiagnosticsInfo } from "@percho/shared";
 import { useEffect, useState } from "react";
 import { getPi } from "../../api";
 import { useT } from "../../i18n";
 import { useUpdateStore } from "../../stores/update";
+import { UpdateHelp } from "./UpdateHelp";
 
 /** 关于面板：应用标识 + 软件版本 + 检查更新 + 仓库入口，居中展示 */
 export function AboutPanel() {
 	const t = useT();
 	const [info, setInfo] = useState<AppInfo | null>(null);
+	const [diagnostics, setDiagnostics] = useState<UpdateDiagnosticsInfo | null>(null);
 	const state = useUpdateStore((s) => s.state);
 
 	useEffect(() => {
@@ -19,6 +21,14 @@ export function AboutPanel() {
 			})
 			.catch(() => {
 				if (!cancelled) setInfo(null);
+			});
+		void getPi()
+			.getUpdateDiagnostics()
+			.then((value) => {
+				if (!cancelled) setDiagnostics(value);
+			})
+			.catch(() => {
+				if (!cancelled) setDiagnostics(null);
 			});
 		return () => {
 			cancelled = true;
@@ -88,6 +98,9 @@ export function AboutPanel() {
 				</button>
 			</div>
 			{statusText && <p className="mt-1 text-ui-11 text-ink-faint">{statusText}</p>}
+			{info && (
+				<UpdateHelp diagnostics={diagnostics} windows={info.platform === "win32"} repoUrl={info.repoUrl} />
+			)}
 		</div>
 	);
 }

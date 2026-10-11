@@ -78,6 +78,7 @@ packages/
 | `src/thinking.ts` | `THINKING_LEVELS`、`ThinkingLevel`、`isThinkingLevel` | 思考档位单一事实源（7 档 + 白名单校验）：backend 解析 agent frontmatter / model-prefs 脏值过滤与 renderer 下拉共用；**只判合法不收敛**（收敛交 SDK clamp） |
 | `src/todo.ts` | `TodoItem`、`TODO_TOOL_NAME`、`extractTodos` | todo 工具契约（backend 注入与 renderer 面板共用） |
 | `src/update.ts` | `UpdateState` | 自动更新事件载荷（`available.manual=true` = 当前构建无法自动安装，跳 release 页） |
+| `src/update-diagnostics.ts` | `UpdateDiagnosticsInfo` | 上次安装交接的版本观察状态，不将未确认推断为安装失败 |
 | `src/marquee-motion.ts` | `tailOffsetForWidths` | 流式正文 tail-follow 位移纯函数（无 DOM，可单测） |
 
 ## packages/backend — pi SDK 适配层
@@ -177,7 +178,10 @@ src/
 | `src/main/renderer-watchdog.ts` | `attachRendererWatchdog(backend)`：崩溃熔断+自动 reload（短窗高频转人工对话框）/ console 错误签名去重 / 60s 心跳+临终快照（从 main/index.ts 抽出，index 回归纯装配） |
 | `src/main/lan.ts`（+ `lan-icon.ts`、`ipc/lan.ts`） | LAN observer 接线；观察页 = `src/lan-web/` 独立 vite 单文件产物，`?raw` 内联进 main bundle（**dev 下重 build lan-web 后需重启 dev 实例**，产物不在 electron-vite watch 集） |
 | `src/main/git.ts` | git 分支查询/切换三通道 |
-| `src/main/update-policy.ts` / `updater.ts` | 更新决策纯函数（不 import electron 可单测）/ electron-updater 封装：发现新版只提示，点击才下载，下载完点「重启」安装；mac adhoc = manual 模式跳 release 页；定时静默检查只查不下载；autoUpdater 用 createRequire 取（CJS 导出） |
+| `src/main/update-policy.ts` / `updater.ts` | 更新决策纯函数 / electron-updater 封装：点击才下载/安装、mac adhoc manual、定时只检查；createRequire 取 CJS SDK。SDK 专用日志、交接/退出观察、显式诊断导出；应用内不推断外部安装器结果 |
+| `src/main/update-diagnostics.ts` | 独立同步诊断日志/交接 journal、跨启动版本观察、受限日志尾部/脱敏导出；IO 失败不能阻断更新。类型在 shared `update-diagnostics.ts` |
+| `build/update-diagnostics.nsh` / `resources/update-diagnostics/collect.ps1` | NSIS 初始化/旧卸载结果 trace（保留原控制流）/ 用户显式导出时的 Windows 只读快照；限制与排查见 [WINDOWS-UPDATES.md](WINDOWS-UPDATES.md) |
+| `scripts/check-windows-update-diagnostics.mjs` | NSIS 实际 include 编译/Windows 原生隔离 harness、Errors/寄存器/exit 回归及只读 PowerShell；CI Windows 同时编译真实生产安装器 |
 
 ### preload/
 
@@ -288,7 +292,7 @@ src/
 | provider 设置 / 交互登录（OAuth + api_key） | backend `settings/settings.ts` + `login.ts` + shared `settings.ts`（类型）+ IPC `settings:login*`；UI `settings/providers/`（表单/登录对话框）+ `stores/provider-login.ts` + `stores/settings.ts` |
 | 模型隐藏默认策略 / 单模型显示例外 | shared `model-visibility.ts`（纯规则）→ backend `settings/model-prefs.ts`（串行持久化）→ `pi-backend.ts listModels`（选择器唯一过滤出口）；IPC 表 `setProviderModelsHidden({provider, hidden}): Promise<ModelPrefs>` + main/settings handler，preload 自动接线。测试：backend `model-visibility.test.ts` / `model-prefs-visibility.test.ts` / `pi-backend-models.test.ts`。旧全 ID 隐藏名单不自动推测整源意图，升级后需重新“显示全部→隐藏全部”建立默认策略；UI `stores/settings.ts`（全偏好串行乐观队列，测试 `settings-model-prefs.test.ts`）与 ProviderRow（有效可见性三态/零目录默认策略，测试 `ProviderRow.test.tsx`） |
 | 子代理模型/思考深度偏好 + 执行器开关 | backend `settings/model-prefs.ts`（`subagentModels`/`subagentThinking`/`subagentPreferBuiltin`，读侧白名单）+ `pi-backend.ts`（deps 注入 getter、`listSubagents` 透出 thinking/thinkingWarning）；UI `settings/providers/SubagentPanel.tsx` + `stores/settings.ts`；IPC `settings:setSubagentThinking`/`setSubagentPreferBuiltin` |
-| 自动更新 | `main/updater.ts` + `update-policy.ts` + shared `update.ts`；UI `session/UpdateButton.tsx`（顶栏）+ `settings/AboutPanel.tsx`（手动检查） |
+| 自动更新 | `main/updater.ts` + `update-policy.ts` + `update-diagnostics.ts`；shared `update.ts`/`update-diagnostics.ts`；UI `session/UpdateButton.tsx` + `settings/AboutPanel.tsx`/`UpdateHelp.tsx`（检查/显式诊断导出/恢复指引）；NSIS trace/Windows 快照见 [WINDOWS-UPDATES.md](WINDOWS-UPDATES.md) |
 | 局域网观察页 | 契约 shared `lan.ts` → backend `lan/` → main `lan.ts` + `ipc/lan.ts` → preload → 设置 `LanObserverPanel.tsx`；浏览器页面 = `desktop/src/lan-web/`（独立 vite 单文件，`?raw` 内联） |
 | 窗口位置 / 尺寸记忆（重启恢复 + 屏幕校验） | `main/window-bounds.ts`（常量 + `sanitizeWindowBounds` 纯函数，**不 import electron**）+ `main/window.ts`（`createWindow(theme, bounds)`、`resize`/`move` → 400ms 防抖 → `getNormalBounds()` 落盘、`close` 同步兜底、macOS `show()` 后 x 校正）+ `main/ui-state.ts`（`windowBounds` 白名单 + `saveUiStateSync`）+ `main/index.ts`（启动/activate 传 sanitize 后的 bounds，workArea 取自 `screen`）。字段 `UiState.windowBounds`（normal 态）；验收 `scripts/verify-layout-freedom.mjs` 的 `v3-bounds` / `v4-window` |
 | 主题 / 背景图 / Markdown 代码块主题 | `stores/theme.ts` + `styles/globals.css`（双套 token）；main `background.ts` + `pi-bg://` 协议（CSP img-src 含 pi-bg:）；UI `settings/AppearancePanel.tsx`；代码块主题走 `Markdown.tsx` 的 isDark + 显式双主题 |

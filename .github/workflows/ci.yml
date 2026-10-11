@@ -33,3 +33,24 @@ jobs:
       - name: Packaging smoke (electron-builder --dir)
         working-directory: packages/desktop
         run: npx electron-builder --dir
+
+  windows-update-diagnostics:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - name: Test actual NSIS hooks and read-only PowerShell collector
+        run: node scripts/check-windows-update-diagnostics.mjs
+      - run: npm run build
+      - name: Compile production Windows installer (no publish)
+        working-directory: packages/desktop
+        run: npx electron-builder --win nsis --x64 --publish never
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: windows-update-diagnostic-harness
+          path: .local/tmp/windows-update-hook-check/
