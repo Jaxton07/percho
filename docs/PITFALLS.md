@@ -382,17 +382,16 @@ python 子进程各留一份），还占着上游（Blender 的 9876）连接；
 **诊断手法（可复用）**：
 
 - 用 SDK 自身函数量体积：`SessionManager.open(file)` → `prepareCompaction(branch, settings)`
-  → `convertToLlm()` → `serializeConversation()`（种子脚本 `channel/compaction-bounded/evidence/replay-summary-size.mjs`；
-  仓库版已提升为 `scripts/replay-compaction-bound.mts`，并用注入 `streamFn` 捕获**真实**摘要 prompt）；
+  → `convertToLlm()` → `serializeConversation()`（入库脚本 `scripts/replay-compaction-bound.mts` 就是这件事，
+  对着任一会话文件直接跑；它还用注入 `streamFn` 捕获**真实**摘要 prompt）；
 - 别信「超限报错」的字面意思：deepseek-zw 网关在 ~1M 处硬截断，超限时返回的却是
-  `400 {"message":"Required field 'model' is empty"}`（994,387 tokens 通过、~1.08M 报此错，
-  探针 `evidence/probe-gateway-cap.mjs`）；
+  `400 {"message":"Required field 'model' is empty"}`（实测 994,387 tokens 通过、~1.08M 报此错）；
 - 分词别猜：同一端点实测中文 ≈0.45–0.5 token/字、ASCII ≈0.30 token/字符，
-  仓库蒸发估算器的 1.7 token/字会高估 3.6 倍（`evidence/probe-tokenizer.mjs`）。
+  仓库蒸发估算器的 1.7 token/字会高估 3.6 倍（探针脚本本次未入库，结论数字以本条为准）。
 
-**修复点（本仓，2026-10-11/12）**：`.local/agent-work/spec/compaction-bounded.md`（百分比触发线 + 摘要输入有界，
-commit `6cf53fe`；模块 `packages/backend/src/tools/compaction-guard/`）——`agent_settled` 内同步判百分比水位并 `ctx.compact()`；
-`session_before_compact` 把两份摘要输入（历史 + 回合前缀）降级/丢弃到硬上限之内；观测走 log + `trace_custom`。
+**修复点（本仓，2026-10-11/12，PR #106）**：模块 `packages/backend/src/tools/compaction-guard/`——`agent_settled`
+内同步判百分比水位并 `ctx.compact()`；`session_before_compact` 把两份摘要输入（历史 + 回合前缀）降级/丢弃到
+硬上限之内；观测走 log + `trace_custom`。设计全文在 `.local/agent-work/spec/compaction-bounded.md`（未入库）。
 
 ### 分割线文案由 `compaction_end` 覆盖写入，别在 `session_compact` 处清标记（2026-10-11）
 
