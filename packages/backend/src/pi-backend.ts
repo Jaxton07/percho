@@ -111,7 +111,7 @@ import {
 	readChannelWatchEnabled,
 	writeChannelWatchEnabled,
 } from "./tools/channel-watch";
-import { makeCompactionGuardExtension } from "./tools/compaction-guard";
+import { GuardTriggerMarkers, makeCompactionGuardExtension } from "./tools/compaction-guard";
 import {
 	makeEvapExtension,
 	readContextManagerMode,
@@ -228,6 +228,12 @@ export class PiBackend {
 	private readonly trustGate = new TrustGate((req) => this.trustEmitter.emit(req));
 	/** 会话事件 trace（JSONL，离线可重放） */
 	private readonly traces = new SessionTraces();
+	/**
+	 * 压缩护栏的一次性标记（spec D8）：护栏自研触发时置标记，转发咽喉点把该次压缩的
+	 * `compaction_start/end.reason` 从 SDK 的 `"manual"` 改写成 `"threshold"`（副本，不动 SDK 事件），
+	 * 这样对话区显示「自动（上下文阈值）」而不是「手动」；真实 `/compact` 不受影响。
+	 */
+	private readonly guardTriggerMarkers = new GuardTriggerMarkers();
 	private readonly streamGuard = new StreamGuard();
 	private readonly historyGate = new SessionHydrationGate();
 	/**
@@ -360,6 +366,11 @@ export class PiBackend {
 				agentDir: getAgentDir(),
 				reporter: (sessionId, observation) => {
 					this.traces.recordCustom(sessionId, "compaction_guard", observation);
+					// 触发 → 置一次性标记（D8）。**这里不主动清**：UI 卡片文案是 `compaction_end` 覆盖写入的，
+					// 而 end 可能比 `session_compact` 晚到（实测压缩耗时 15s）——标记由 end 配对消费，另有 TTL 兜底。
+					if (observation.phase === "trigger" && observation.source === "guard") {
+						this.guardTriggerMarkers.mark(sessionId);
+					}
 				},
 			}),
 		);
@@ -584,7 +595,8 @@ export class PiBackend {
 		const dialogs = await this.bindSessionExtensions(session, session.sessionId);
 		const unsubscribe = session.subscribe((event) => {
 			autoNameSession(session, event);
-			this.emitEvent(session.sessionId, event);
+			// D8：自研触发的那次压缩在 UI 上说「自动（上下文阈值）」——只改转发副本
+			this.emitEvent(session.sessionId, this.guardTriggerMarkers.rewrite(session.sessionId, event));
 		});
 		try {
 			this.registry.add({

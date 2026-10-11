@@ -23,6 +23,17 @@ import type { CompactionGuardObservation } from "../src/tools/compaction-guard/t
  * - 所以：**降级轮**的 `THINKING-BODY-SECRET-i` 与 `TOOLRESULT-MIDDLE-i` 必须消失；**保护区内**轮则原样保留。
  */
 
+const sleep = (ms: number): Promise<void> => new Promise((resolve) => setTimeout(resolve, ms));
+
+/** 压缩是 agent_settled 之后异步跑的：断言前等它收尾（最多 5s） */
+async function waitFor(predicate: () => boolean, timeoutMs = 5_000): Promise<void> {
+	const deadline = Date.now() + timeoutMs;
+	while (Date.now() < deadline) {
+		if (predicate()) return;
+		await sleep(25);
+	}
+}
+
 const ROOTS: string[] = [];
 afterEach(() => {
 	for (const root of ROOTS.splice(0)) rmSync(root, { recursive: true, force: true });
@@ -118,6 +129,8 @@ interface SetupOptions {
 	sdkCompaction?: Record<string, unknown>;
 	/** settings.json 的 compactionGuard 段（本扩展配置） */
 	guard?: Record<string, unknown>;
+	/** settings.json 的其它段（如 contextEvaporation，用于 D7b 解耦验证） */
+	contextEvaporation?: Record<string, unknown>;
 	/** 预置历史 */
 	history?: (session: Appendable) => void;
 	/** 假 stream 的脚本 */
@@ -136,6 +149,7 @@ async function setup(options: SetupOptions = {}) {
 		compaction: { keepRecentTokens: 2000, ...(options.sdkCompaction ?? {}) },
 	};
 	if (options.guard) settings.compactionGuard = options.guard;
+	if (options.contextEvaporation) settings.contextEvaporation = options.contextEvaporation;
 	writeFileSync(join(agentDir, "settings.json"), `${JSON.stringify(settings, null, 2)}\n`);
 	// 假 provider 必须注册进 models.json 且在 auth.json 里有凭证：
 	// `session.prompt()` 先查 `hasConfiguredAuth(provider)`（models.json 的 provider 列表 + 凭证存储）
@@ -385,6 +399,94 @@ describe("A5 三条触发路径都过钩子（reason 可见）", () => {
 			await session.prompt("再问一句");
 			expect(observations.some((o) => o.phase === "bound" && o.reason === "overflow")).toBe(true);
 			expect(summarizationPrompts(captures)).toContain("[思考已省略");
+		} finally {
+			session.dispose();
+		}
+	});
+});
+
+describe("D7/D7b 契约：默认行为、逃生舱、与蒸发开关完全解耦、cap 跟着当前模型", () => {
+	it("三相位观测齐（A8）：trigger / bound / settled 各一条，字段口径一致", async () => {
+		const { session, observations } = await setup({
+			contextWindow: 20_000,
+			sdkCompaction: { reserveTokens: 2000 },
+			guard: { thresholdPct: 80 },
+			// 17k < 20k − 2k（SDK 阈值够不到）但 17k/20k = 85% ≥ 80%（自研触发够得到）
+			stream: { text: "ok", usageInput: 17_000 },
+			history: bigHistory(),
+		});
+		try {
+			await session.prompt("问一句");
+			await waitFor(() => observations.some((o) => o.phase === "settled"));
+			const trigger = observations.find((o) => o.phase === "trigger");
+			const bound = observations.find((o) => o.phase === "bound");
+			const settled = observations.filter((o) => o.phase === "settled");
+			expect(trigger).toMatchObject({ reason: "threshold-pct", source: "guard", percentBasis: "usage" });
+			expect(trigger?.percent ?? 0).toBeGreaterThanOrEqual(80);
+			expect(bound).toMatchObject({ source: "guard", measure: expect.stringMatching(/^(cheap|exact)$/) });
+			expect(bound?.cap).toBe(10_000);
+			expect(settled.length).toBeGreaterThanOrEqual(1);
+			expect(settled.every((o) => o.outcome !== undefined)).toBe(true);
+		} finally {
+			session.dispose();
+		}
+	});
+
+	it("D7b 解耦：settings 里 contextEvaporation.enabled=false 不影响护栏（仍然触发+有界化）", async () => {
+		const { session, observations } = await setup({
+			contextWindow: 20_000,
+			sdkCompaction: { reserveTokens: 2000 },
+			contextEvaporation: { enabled: false },
+			guard: { thresholdPct: 80 },
+			stream: { text: "ok", usageInput: 17_000 },
+			history: bigHistory(),
+		});
+		try {
+			await session.prompt("问一句");
+			expect(observations.some((o) => o.phase === "trigger")).toBe(true);
+			expect(observations.find((o) => o.phase === "bound")?.degradedMessages ?? 0).toBeGreaterThan(0);
+		} finally {
+			session.dispose();
+		}
+	});
+
+	it("逃生舱 compactionGuard.enabled=false：钩子不介入（摘要输入保持原样）", async () => {
+		const { session, observations, captures } = await setup({
+			contextWindow: 20_000,
+			sdkCompaction: { reserveTokens: 2000 },
+			guard: { enabled: false },
+			history: bigHistory(),
+		});
+		try {
+			await session.compact();
+			expect(observations.some((o) => o.phase === "bound")).toBe(false);
+			const prompt = summarizationPrompts(captures);
+			expect(prompt).toContain(`${SECRET_THINKING}-1`); // 思考正文还在（没降级）
+			expect(prompt).not.toContain("[思考已省略");
+		} finally {
+			session.dispose();
+		}
+	});
+
+	it("A7 切模型：cap 跟着当前模型算（切到 20k 窗口后 cap 变小）", async () => {
+		const { session, observations } = await setup({
+			contextWindow: 100_000,
+			sdkCompaction: { reserveTokens: 2000 },
+			guard: { thresholdPct: 100 },
+			history: bigHistory(),
+		});
+		try {
+			await session.compact();
+			const first = observations.find((o) => o.phase === "bound");
+			expect(first?.cap).toBe(50_000); // min(0.5×100000, 100000−1600−2048)
+
+			// 第一次压缩后分支末尾是 compaction entry：先补几轮新内容，才有得可压
+			for (let i = 9; i <= 12; i++)
+				appendTurn(session as unknown as Appendable, i, { thinking: 600, toolResult: 3000 });
+			await session.setModel(MODEL(20_000) as never);
+			await session.compact();
+			const second = observations.filter((o) => o.phase === "bound").at(-1);
+			expect(second?.cap).toBe(10_000); // 现在按 20k 窗口算
 		} finally {
 			session.dispose();
 		}

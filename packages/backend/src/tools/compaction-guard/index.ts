@@ -35,6 +35,7 @@ export {
 	type TriggerInput,
 	type TriggerSkipReason,
 } from "./guard";
+export { type CompactionReasonEvent, GuardTriggerMarkers } from "./trigger-marker";
 export {
 	type CompactionBoundResult,
 	type CompactionBoundStats,

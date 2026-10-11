@@ -228,8 +228,9 @@ export function makeCompactionGuardExtension(options: CompactionGuardExtensionOp
 					sessionIdOf(ctx);
 					const mine = pending !== null;
 					pending = null;
-					// 失败与「无效」共用同一退避阶梯但不封顶可见于 cooldownMsFor（倍数阶梯 1→2→4→8）
-					if (mine) state = applyOutcome(state, "ineffective");
+					// spec D6 两条阶梯：失败走 failed 阶梯（不封顶，倍数最多 ×8），
+					// **不**计入 ineffective——瞬时失败不是「压缩没用」的证据（那会把护栏永久关掉）
+					if (mine) state = applyOutcome(state, "failed");
 					report({
 						phase: "settled",
 						reason: event.reason,
@@ -275,6 +276,14 @@ export function makeCompactionGuardExtension(options: CompactionGuardExtensionOp
 					if (prefix) preparation.turnPrefixMessages = prefix.messages as never;
 
 					const stats = mergeStats(history.stats, prefix?.stats);
+					const detail = [
+						`history ${history.stats.estimatedBefore}→${history.stats.estimatedAfter}`,
+						prefix ? `prefix ${prefix.stats.estimatedBefore}→${prefix.stats.estimatedAfter}` : undefined,
+						// M1：收不下去时交回的是「已知最小的那一版」，不是原样
+						stats.oversized > 0 ? `单条超 cap ${stats.oversized} 条（已交回最小版本）` : undefined,
+					]
+						.filter((line) => line !== undefined)
+						.join(" · ");
 					report({
 						phase: "bound",
 						reason: event.reason,
@@ -288,7 +297,7 @@ export function makeCompactionGuardExtension(options: CompactionGuardExtensionOp
 						capRounds: stats.capRounds,
 						degradedMessages: stats.degradedMessages,
 						droppedMessages: stats.droppedMessages,
-						detail: `history ${history.stats.estimatedBefore}→${history.stats.estimatedAfter}${prefix ? ` · prefix ${prefix.stats.estimatedBefore}→${prefix.stats.estimatedAfter}` : ""}${stats.oversized > 0 ? ` · 单条超 cap ${stats.oversized} 条（交回 SDK）` : ""}`,
+						detail,
 						...(stats.withinCap ? {} : { outcome: "cap-unreachable" as const }),
 					});
 				} catch (err) {

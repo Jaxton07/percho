@@ -3,9 +3,11 @@
  *
  * 决策规则（spec D1/D2/D6）：
  * - 触发线：`percent = tokens / model.contextWindow × 100`，`percent ≥ thresholdPct` 才触发；
- * - 防抖：同一 `agent_settled` 周期只触发一次（由调用方持状态保证）+ 自上次触发起 `cooldownMs` 冷却；
- * - 无效压缩退避：压缩后仍 ≥ 阈值且下降 < 5% → `ineffective`，冷却倍数 1→2→4，**连续 3 次后不再主动触发**
- *   （交给 SDK 后置阈值/溢出路径；spec D6）。压缩**失败**同样计入该阶梯——连续失败时不该猛打。
+ * - 防抖：同一 `agent_settled` 周期只触发一次（由调用方持状态保证）+ 自上次触发起「冷却 × 退避倍数」；
+ * - **两条退避阶梯**（spec D6，review 阶段 1 裁定）：
+ *   - `ineffective`（压缩成功但没降下来）：倍数 1→2→4，**连续 3 次即停手**（继续硬打没意义）；
+ *   - `failed`（网络/配额/提供商报错）：同一倍数阶梯但**不封顶**（最大 8×cooldownMs），
+ *     **任意一次成功压缩后清零**——瞬时失败不该被当成「压缩没用」的证据（那会把护栏永久关掉）。
  */
 
 import type { CompactionGuardConfig } from "./types";
@@ -15,6 +17,8 @@ export interface GuardState {
 	lastTriggerAt: number | null;
 	/** 连续无效压缩次数（0..MAX_INEFFECTIVE_STREAK） */
 	ineffectiveStreak: number;
+	/** 连续压缩失败次数（不封顶，影响冷却倍数但最多 ×8） */
+	failedStreak: number;
 }
 
 /** 连续无效到该次数后不再主动触发（spec D6 的「3 次递增退避」） */
@@ -23,8 +27,11 @@ export const MAX_INEFFECTIVE_STREAK = 3;
 /** 「下降 < 5%」判定阈值（百分点，spec D6） */
 export const INEFFECTIVE_DROP_PCT = 5;
 
+/** 失败阶梯的倍数上限（spec D6：最大 8×cooldownMs = 4 分钟） */
+export const MAX_FAILED_MULTIPLIER = 8;
+
 export function createGuardState(): GuardState {
-	return { lastTriggerAt: null, ineffectiveStreak: 0 };
+	return { lastTriggerAt: null, ineffectiveStreak: 0, failedStreak: 0 };
 }
 
 /** 上下文用量投影（SDK `ContextUsage` 的结构子集） */
@@ -38,14 +45,25 @@ export function percentOf(tokens: number | null, contextWindow: number): number 
 	return (tokens / contextWindow) * 100;
 }
 
-/** 退避倍数：streak 0/1/2/3 → ×1/×2/×4/×8（streak 3 已不再触发，倍数只用于展示与日志） */
+/** 无效阶梯倍数：streak 0/1/2/3 → ×1/×2/×4/×8（streak 3 已不再触发，倍数只用于展示与日志） */
 export function backoffMultiplier(streak: number): number {
 	const clamped = Math.max(0, Math.min(Math.trunc(streak), MAX_INEFFECTIVE_STREAK));
 	return 2 ** clamped;
 }
 
-export function cooldownMsFor(config: CompactionGuardConfig, streak: number): number {
-	return config.cooldownMs * backoffMultiplier(streak);
+/** 失败阶梯倍数：不封顶地递增，但倍数本身最多 ×8（spec D6） */
+export function failedBackoffMultiplier(streak: number): number {
+	const clamped = Math.max(0, Math.trunc(streak));
+	return Math.min(2 ** clamped, MAX_FAILED_MULTIPLIER);
+}
+
+/** 冷却 = cooldownMs × max(两条阶梯的倍数) */
+export function cooldownMsFor(state: GuardState, config: CompactionGuardConfig): number {
+	const multiplier = Math.max(
+		backoffMultiplier(state.ineffectiveStreak),
+		failedBackoffMultiplier(state.failedStreak),
+	);
+	return config.cooldownMs * multiplier;
 }
 
 export type TriggerSkipReason =
@@ -79,7 +97,7 @@ export function decideTrigger({ config, usage, state, now }: TriggerInput): Trig
 	if (state.ineffectiveStreak >= MAX_INEFFECTIVE_STREAK)
 		return { trigger: false, reason: "backoff", percent };
 
-	const cooldownMs = cooldownMsFor(config, state.ineffectiveStreak);
+	const cooldownMs = cooldownMsFor(state, config);
 	if (state.lastTriggerAt !== null && now - state.lastTriggerAt < cooldownMs) {
 		return { trigger: false, reason: "cooldown", percent };
 	}
@@ -133,8 +151,19 @@ export function judgeOutcome({ percentBefore, percentNow, thresholdPct }: Outcom
 	return { outcome: ineffective ? "ineffective" : "ok", dropPct };
 }
 
-/** 记账：有效 → 清零退避；无效/失败 → 递增（封顶 MAX_INEFFECTIVE_STREAK） */
-export function applyOutcome(state: GuardState, outcome: "ok" | "ineffective"): GuardState {
-	if (outcome === "ok") return { ...state, ineffectiveStreak: 0 };
-	return { ...state, ineffectiveStreak: Math.min(state.ineffectiveStreak + 1, MAX_INEFFECTIVE_STREAK) };
+/**
+ * 记账（spec D6 两条阶梯）：
+ * - `ok`：两边都清零（压缩成功且确实降下来了）；
+ * - `ineffective`：压缩**成功**但没用 ⇒ `ineffectiveStreak++`（封顶 3 = 停手），失败阶梯清零（这次没失败）；
+ * - `failed`：压缩本身失败 ⇒ `failedStreak++`（不封顶，倍数最多 ×8），**不动**无效阶梯
+ *   （失败不是「压缩没用」的证据）。
+ */
+export function applyOutcome(state: GuardState, outcome: "ok" | "ineffective" | "failed"): GuardState {
+	if (outcome === "ok") return { ...state, ineffectiveStreak: 0, failedStreak: 0 };
+	if (outcome === "failed") return { ...state, failedStreak: state.failedStreak + 1 };
+	return {
+		...state,
+		ineffectiveStreak: Math.min(state.ineffectiveStreak + 1, MAX_INEFFECTIVE_STREAK),
+		failedStreak: 0,
+	};
 }

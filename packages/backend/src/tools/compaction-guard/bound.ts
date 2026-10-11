@@ -10,7 +10,8 @@
  * 层 2（硬上限，收敛口径 = **整体估算**）：
  * - 先用**逐条估算求和**做廉价初判（全量序列化要 1–2 秒，不该每次压缩都白付）；
  * - 仅当 `cheap > cap × 0.85` 才整体序列化 + 迭代丢弃（每轮至少再丢 1 条，最多 8 轮），插一行省略标记；
- * - 单条消息自身就超 cap → 对该条内部再收紧一次；仍不行 → **原样交回 SDK**（残余风险，见 spec §5）。
+ * - 单条消息自身就超 cap → 对该条内部再收紧一次（保护区让位；连纯文本块也截，M2）；
+ *   仍不行 → 交回**已知最小的那一版**（不是原样，M1：请求越小越可能成功；残余风险见 spec §5）。
  *
  * 纪律：
  * - 零 SDK / 零仓库 import：序列化器（SDK `serializeConversation ∘ convertToLlm`）由调用方**注入**，
@@ -139,7 +140,8 @@ export function degradeLayer1(
 
 	const forced = new Set(options.strictIndices ?? []);
 	const out = messages.map((message, index) => {
-		if (index >= protectFrom && !forced.has(index)) return message;
+		const isForced = forced.has(index);
+		if (index >= protectFrom && !isForced) return message;
 		const content = message.content;
 		if (!Array.isArray(content)) return message;
 		let touched = false;
@@ -165,6 +167,21 @@ export function degradeLayer1(
 				stats.argChars += Math.max(0, beforeChars - JSON.stringify(args).length);
 				touched = true;
 				return { ...block, arguments: args } satisfies GuardContentBlock;
+			}
+			// M2：二次收紧时**纯文本块**（user 长文档 / assistant 正文）也要截——只针对「自身就超 cap」的那几条（`isForced`），
+			// 否则会把历史里正常长度的用户消息也切掉（它们不超限，没必要动）
+			if (
+				isForced &&
+				strict &&
+				message.role !== "toolResult" &&
+				typeof block.text === "string" &&
+				block.text.length > textLimit
+			) {
+				const text = truncateToolText(block.text, textLimit);
+				stats.toolResultChars += block.text.length - text.length;
+				stats.secondPass++;
+				touched = true;
+				return { ...block, text } satisfies GuardContentBlock;
 			}
 			if (
 				message.role === "toolResult" &&
@@ -243,6 +260,17 @@ function dropUntilCheapBelow(
 	return dropped;
 }
 
+/**
+ * 被降级（换成了新对象）的消息条数：按**对象身份**数，避免「层 1 与二次收紧都改了同一条」被重复计数。
+ * 传入的都是「最终交回的那一版」。
+ */
+function countDegraded(original: GuardMessage[], result: GuardMessage[]): number {
+	const originalObjects = new Set(original);
+	let count = 0;
+	for (const message of result) if (!originalObjects.has(message)) count++;
+	return count;
+}
+
 /** 自身估算就超 cap 的消息（下标 + 条数）：既要当残余风险指标，也要据此做二次收紧 */
 function oversizedIndices(
 	messages: GuardMessage[],
@@ -304,7 +332,7 @@ export function boundMessages(messages: GuardMessage[], options: BoundOptions): 
 			messages: layer1.messages,
 			stats: makeStats({
 				messageCount,
-				degradedMessages: layer1.stats.degradedMessages,
+				degradedMessages: countDegraded(messages, layer1.messages),
 				estimatedBefore: before,
 				estimatedAfter: cheapAfter,
 				cap: options.cap,
@@ -337,11 +365,7 @@ export function boundMessages(messages: GuardMessage[], options: BoundOptions): 
 
 	// 单条消息自身超 cap：对这一条按层 1 粒度再收紧一次（**保护区让位**，见 degradeLayer1 注释）
 	let oversizedList = oversizedIndices(current, options.cap, serialize);
-	let forcedDegraded = 0;
 	if (oversizedList.length > 0) {
-		// 保护区内、又被强制降级的条数（保护区外的那部分层 1 已经降过了，不能重复计）
-		const protectFrom = protectionStart(current, options.protectTurns);
-		forcedDegraded = oversizedList.filter((index) => index >= protectFrom).length;
 		const strict = degradeLayer1(current, {
 			protectTurns: options.protectTurns,
 			toolResultChars: options.toolResultChars,
@@ -356,14 +380,16 @@ export function boundMessages(messages: GuardMessage[], options: BoundOptions): 
 		oversizedList = oversizedIndices(current, options.cap, serialize);
 	}
 
-	// 仍超 cap：原样交回 SDK 默认路径，只记 trace（spec §5 的残余风险）
+	// 仍超 cap：交回**已知最小的那一版**（M1：返回原样在任何情况下都不会更好），只记 trace（spec §5）
 	if (oversizedList.length > 0 && exact > options.cap) {
 		return {
-			messages,
+			messages: current,
 			stats: makeStats({
 				messageCount,
+				degradedMessages: countDegraded(messages, current),
+				droppedMessages: dropped,
 				estimatedBefore: before,
-				estimatedAfter: before,
+				estimatedAfter: exact,
 				cap: options.cap,
 				withinCap: false,
 				oversizedMessages: oversizedList.length,
@@ -377,7 +403,7 @@ export function boundMessages(messages: GuardMessage[], options: BoundOptions): 
 		messages: current,
 		stats: makeStats({
 			messageCount,
-			degradedMessages: layer1.stats.degradedMessages + forcedDegraded,
+			degradedMessages: countDegraded(messages, current),
 			droppedMessages: dropped,
 			estimatedBefore: before,
 			estimatedAfter: exact,

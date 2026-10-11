@@ -5,7 +5,9 @@ import {
 	cooldownMsFor,
 	createGuardState,
 	decideTrigger,
+	failedBackoffMultiplier,
 	judgeOutcome,
+	MAX_FAILED_MULTIPLIER,
 	MAX_INEFFECTIVE_STREAK,
 	percentOf,
 	recordTrigger,
@@ -120,13 +122,30 @@ describe("decideTrigger（跳过分支）", () => {
 });
 
 describe("退避（连续无效压缩）", () => {
-	it("倍数 1→2→4→8（streak 封顶 3）", () => {
+	it("无效阶梯倍数 1→2→4→8（streak 封顶 3）", () => {
 		expect(backoffMultiplier(0)).toBe(1);
 		expect(backoffMultiplier(1)).toBe(2);
 		expect(backoffMultiplier(2)).toBe(4);
 		expect(backoffMultiplier(3)).toBe(8);
 		expect(backoffMultiplier(99)).toBe(8); // 封顶
-		expect(cooldownMsFor(config, 2)).toBe(config.cooldownMs * 4);
+		expect(cooldownMsFor({ ...createGuardState(), ineffectiveStreak: 2 }, config)).toBe(
+			config.cooldownMs * 4,
+		);
+	});
+
+	it("失败阶梯：不封顶地递增，但倍数最多 ×8（= 4 分钟）", () => {
+		expect(failedBackoffMultiplier(0)).toBe(1);
+		expect(failedBackoffMultiplier(1)).toBe(2);
+		expect(failedBackoffMultiplier(3)).toBe(8);
+		expect(failedBackoffMultiplier(10)).toBe(MAX_FAILED_MULTIPLIER);
+		expect(MAX_FAILED_MULTIPLIER).toBe(8);
+		expect(cooldownMsFor({ ...createGuardState(), failedStreak: 10 }, config)).toBe(config.cooldownMs * 8);
+	});
+
+	it("冷却取两条阶梯的较大倍数（无效 2 × 失败 3 ⇒ 取 8）", () => {
+		expect(cooldownMsFor({ lastTriggerAt: null, ineffectiveStreak: 2, failedStreak: 3 }, config)).toBe(
+			config.cooldownMs * 8,
+		);
 	});
 
 	it("无效 1 次 → 冷却翻倍（30s → 60s）", () => {
@@ -151,14 +170,64 @@ describe("退避（连续无效压缩）", () => {
 		).toMatchObject({ trigger: false, reason: "backoff" });
 	});
 
-	it("有效压缩 → 退避清零（下一次触发不受历史影响）", () => {
+	it("有效压缩 → 两条阶梯都清零（下一次触发不受历史影响）", () => {
 		let state = recordTrigger(createGuardState(), NOW);
 		state = applyOutcome(state, "ineffective");
+		state = applyOutcome(state, "failed");
 		state = applyOutcome(state, "ok");
 		expect(state.ineffectiveStreak).toBe(0);
+		expect(state.failedStreak).toBe(0);
 		const decision = decideTrigger({ config, usage: usage(900_000), state, now: NOW + config.cooldownMs });
 		expect(decision.trigger).toBe(true);
 		if (decision.trigger) expect(decision.cooldownMs).toBe(config.cooldownMs);
+	});
+
+	describe("两条阶梯的状态机（混合序列）", () => {
+		it("失败不累计到无效阶梯：失败 5 次仍然能触发（只被拉长冷却，不封顶停手）", () => {
+			let state = createGuardState();
+			for (let i = 0; i < 5; i++) {
+				state = recordTrigger(state, NOW);
+				state = applyOutcome(state, "failed");
+			}
+			expect(state.ineffectiveStreak).toBe(0);
+			expect(state.failedStreak).toBe(5);
+			expect(
+				decideTrigger({ config, usage: usage(990_000), state, now: NOW + config.cooldownMs * 8 - 1 }).trigger,
+			).toBe(false); // 冷却还差 1ms
+			expect(
+				decideTrigger({ config, usage: usage(990_000), state, now: NOW + config.cooldownMs * 8 }).trigger,
+			).toBe(
+				true, // 8× 冷却走完即恢复（失败不会封顶停手）
+			);
+		});
+
+		it("「无效」会清掉失败计数（那次压缩本身是成功的）", () => {
+			let state = applyOutcome(createGuardState(), "failed");
+			state = applyOutcome(state, "failed");
+			state = applyOutcome(state, "ineffective");
+			expect(state.failedStreak).toBe(0);
+			expect(state.ineffectiveStreak).toBe(1);
+		});
+
+		it("混合序列：失败→无效→ok 后两条都归零；再无效 3 次才停手", () => {
+			let state = createGuardState();
+			state = applyOutcome(state, "failed");
+			state = applyOutcome(state, "ineffective");
+			expect(state).toMatchObject({ failedStreak: 0, ineffectiveStreak: 1 });
+			state = applyOutcome(state, "ok");
+			expect(state).toMatchObject({ failedStreak: 0, ineffectiveStreak: 0 });
+			state = applyOutcome(state, "ineffective");
+			state = applyOutcome(state, "ineffective");
+			expect(
+				decideTrigger({ config, usage: usage(990_000), state, now: NOW + config.cooldownMs * 8 }).trigger,
+			).toBe(
+				true, // 还没到 3 次
+			);
+			state = applyOutcome(state, "ineffective");
+			expect(
+				decideTrigger({ config, usage: usage(990_000), state, now: NOW + 100 * config.cooldownMs }),
+			).toMatchObject({ trigger: false, reason: "backoff" });
+		});
 	});
 });
 

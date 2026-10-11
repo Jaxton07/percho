@@ -6,6 +6,7 @@ import { SessionManager } from "@earendil-works/pi-coding-agent";
 import { describe, expect, it } from "vitest";
 import {
 	boundMessages,
+	degradeLayer1,
 	exactEstimate,
 	protectionStart,
 	TURN_START_ROLES,
@@ -181,18 +182,58 @@ describe("层 2 硬上限：整体估算口径收敛 + 省略标记 + 单条超�
 		expect(messages).toEqual(clone(messages)); // 入参零改动
 	});
 
-	it("单条消息自身就超 cap 且收不下去 → 原样交回 SDK（withinCap=false）", () => {
-		const huge: GuardMessage[] = [
-			{
-				role: "user",
-				content: [{ type: "text", text: "x".repeat(20_000) }],
-			},
+	it("M2：二次收紧时纯文本块（user 长文档）也被截，且只截「自身就超 cap」的那几条", () => {
+		// 直接测规则本身（越过 cap 机制的干扰）：strict 只对 strictIndices 指定的那几条生效
+		const messages: GuardMessage[] = [
+			{ role: "user", content: [{ type: "text", text: `长文档-${"y".repeat(5000)}` }] },
+			{ role: "user", content: [{ type: "text", text: "短问题" }] },
+		];
+		const strict = degradeLayer1(messages, {
+			protectTurns: 0,
+			toolResultChars: 300,
+			strict: true,
+			strictIndices: [0],
+		});
+		const docText = (strict.messages[0].content as { text?: string }[])[0].text ?? "";
+		expect(docText.length).toBeLessThanOrEqual(80); // OVERSIZED_TEXT_CHARS
+		expect(docText).toContain("已省略");
+		// 没被指定的那条（哪怕在保护区外）不动
+		expect((strict.messages[1].content as { text?: string }[])[0].text).toBe("短问题");
+		expect(strict.messages[1]).toBe(messages[1]);
+		// 入参零改动
+		expect(((messages[0].content as { text?: string }[])[0].text ?? "").length).toBeGreaterThan(5000);
+	});
+
+	it("M2 + 层 2 端到端：只剩一条纯文本消息时也能收敛到 cap 之内", () => {
+		const messages: GuardMessage[] = [
+			{ role: "user", content: [{ type: "text", text: `长文档-${"y".repeat(5000)}` }] },
+		];
+		const result = boundMessages(messages, { cap: 100, protectTurns: 2, toolResultChars: 300, serialize });
+		expect(result.stats.withinCap).toBe(true);
+		expect(result.stats.oversizedMessages).toBe(0);
+		const text = (result.messages[0].content as { text?: string }[])[0].text ?? "";
+		expect(text.length).toBeLessThanOrEqual(80);
+		expect(text).toContain("已省略");
+	});
+
+	it("M1：怎么都收不下去时交回**已知最小的那一版**（不是原样）", () => {
+		// 第 2 条是**字符串 content**（不在任何降级规则里）⇒ 它永远超 cap；
+		// 第 1 条能收紧，收紧后仍超限 ⇒ 交回的必须是「收紧过的那一版」
+		const messages: GuardMessage[] = [
+			{ role: "user", content: [{ type: "text", text: `长文档-${"y".repeat(20_000)}` }] },
+			{ role: "assistant", content: "y".repeat(20_000) },
 		];
 		const cap = 100;
-		const result = boundMessages(huge, { cap, protectTurns: 0, toolResultChars: 300, serialize });
-		expect(result.messages).toBe(huge); // 原样
-		expect(result.stats.withinCap).toBe(false);
-		expect(result.stats.oversizedMessages).toBeGreaterThan(0);
+		const result = boundMessages(messages, { cap, protectTurns: 0, toolResultChars: 300, serialize });
+		expect(result.stats.withinCap).toBe(false); // 残余风险照实上报
+		expect(result.stats.oversizedMessages).toBe(1); // 就那条收不下去的
+		expect(result.messages).not.toBe(messages); // M1：不返回原样
+		const docText = (result.messages[0].content as { text?: string }[])[0].text ?? "";
+		expect(docText.length).toBeLessThanOrEqual(80); // 能收紧的都收紧了才交回
+		expect(result.stats.degradedMessages).toBe(1);
+		// 入参仍然零改动
+		expect(((messages[0].content as { text?: string }[])[0].text ?? "").length).toBeGreaterThan(20_000);
+		expect(messages[1].content).toHaveLength(20_000);
 	});
 
 	it("cap <= 0 / NaN → 不介入（极端小窗口）", () => {
