@@ -11,10 +11,12 @@ Var /GLOBAL perchoTraceErrors
 Var /GLOBAL perchoTraceExtra
 Var /GLOBAL perchoTraceUpdated
 Var /GLOBAL perchoTraceForceRun
-Var /GLOBAL perchoUninstallExit
-Var /GLOBAL perchoUninstallLaunchFailed
-Var /GLOBAL perchoOldDirectory
-Var /GLOBAL perchoOldUninstall
+!ifndef BUILD_UNINSTALLER
+  Var /GLOBAL perchoUninstallExit
+  Var /GLOBAL perchoUninstallLaunchFailed
+  Var /GLOBAL perchoOldDirectory
+  Var /GLOBAL perchoOldUninstall
+!endif
 
 !macro PerchoUpdateTrace STAGE
   # Capture before any file command can change the NSIS error flag.

@@ -123,7 +123,7 @@ SectionEnd
 `;
 	const source = join(dir, "harness.nsi");
 	writeFileSync(source, script);
-	const compiled = spawnSync(compiler.path, ["-V2", source], {
+	const compiled = spawnSync(compiler.path, ["-INPUTCHARSET", "UTF8", "-V2", source], {
 		env: { ...process.env, ...compiler.env },
 		encoding: "utf8",
 		timeout: 60_000,
