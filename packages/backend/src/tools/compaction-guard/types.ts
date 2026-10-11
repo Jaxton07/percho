@@ -37,6 +37,12 @@ export const DEFAULT_COMPACTION_GUARD_CONFIG: CompactionGuardConfig = {
 
 // ---------- 可观测（trace_custom "compaction_guard" 行；spec D6） ----------
 
+/** 体积测量方式（spec D3 两段式）：`cheap` = 逐条估算求和（初判），`exact` = 整体序列化（收敛口径） */
+export type CompactionBoundMeasure = "cheap" | "exact";
+
+/** `percent` 的来源（spec D6）：真实 wire usage / 尾部估算 */
+export type CompactionPercentBasis = "usage" | "estimate";
+
 /** 三个相位：触发判定 / 摘要输入有界化 / 压缩收尾与效果判定 */
 export type CompactionGuardPhase = "trigger" | "bound" | "settled";
 
@@ -58,12 +64,18 @@ export interface CompactionGuardObservation {
 	reason?: CompactionGuardReason;
 	/** 触发/收尾相位：占窗口百分比（tokens 未知时省略） */
 	percent?: number;
+	/** 触发/收尾相位：percent 来自真实 usage 还是尾部估算（spec D6） */
+	percentBasis?: CompactionPercentBasis;
 	tokensBefore?: number;
 	contextWindow?: number;
 	/** bound / settled 相位：有界化前后估算（settled 用 SDK 的真实 tokens） */
 	estimatedBefore?: number;
 	estimatedAfter?: number;
 	cap?: number;
+	/** bound 相位：体积是逐条估算求和还是整体序列化量出来的（spec D3 两段式） */
+	measure?: CompactionBoundMeasure;
+	/** bound 相位：层 2 迭代轮数 */
+	capRounds?: number;
 	droppedMessages?: number;
 	degradedMessages?: number;
 	splitTurn?: boolean;
@@ -97,13 +109,13 @@ export interface GuardMessage {
 export interface CompactionBoundStats {
 	/** 输入消息条数（两份请求各自一份） */
 	messageCount: number;
-	/** 被层 1 降级的消息条数 */
+	/** 被层 1 降级的消息条数（含二次收紧的） */
 	degradedMessages: number;
 	/** 层 2 丢掉的最旧消息条数 */
 	droppedMessages: number;
-	/** 有界化前整体估算（token） */
+	/** 有界化前估算（**逐条口径**：便宜，只作诊断） */
 	estimatedBefore: number;
-	/** 有界化后整体估算（token） */
+	/** 有界化后估算（口径见 `measure`；`exact` 时即 A3 断言的「整体估算」） */
 	estimatedAfter: number;
 	/** 生效上限（token）；`<= 0` 表示不介入 */
 	cap: number;
@@ -111,6 +123,10 @@ export interface CompactionBoundStats {
 	withinCap: boolean;
 	/** 自身估算就超 cap 的单条消息数（残余风险，spec §5） */
 	oversizedMessages: number;
+	/** 体积是用哪档口径量出来的（spec D3 两段式） */
+	measure: CompactionBoundMeasure;
+	/** 层 2 迭代轮数（0 = 未触发） */
+	capRounds: number;
 }
 
 export interface CompactionBoundResult {

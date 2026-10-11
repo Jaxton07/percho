@@ -38,7 +38,7 @@ packages/
 | `scripts/smoke-channel-watch.mts` | channel-watch 机制冒烟 V1–V8：V1–V3 需真实模型；**V4–V8 零凭证离线**（V6 扩展钩子/todo 工具、V7 订阅快照上报 + GC intent 守卫走真 PiBackend、V8 关重开后离线变化补投一次＋游标落盘） |
 | `scripts/replay-trace.mts` | 事件 trace 离线重放（`--last` 自动找最新；排查 UI 状态问题首选） |
 | `scripts/replay-evaporation.mts` | 上下文蒸发离线 replay 调参（误杀率/体积曲线；`--core` 与线上实现同构对比；默认数据指 `.local/replay-data/sessions` 副本，指向正式 `~/.pi/agent` 会直接 abort） |
-| `scripts/replay-compaction-bound.mts` | **压缩摘要请求体积 replay（spec: compaction-bounded）**：用 SDK 自身函数链（`getBranch` → `prepareCompaction` → `compact` + 捕获用 `streamFn`）复现真实摘要 prompt，报告体积分块 + 保守估算 tokens + 层 1/层 2 投影（cap 是否可达）。只读会话文件、不联网；接受 `--window` / `--cap-ratio` / `--protect-turns` / `--json` |
+| `scripts/replay-compaction-bound.mts` | **压缩摘要请求体积 replay（spec: compaction-bounded，A3）**：用 SDK 自身函数链（`getBranch` → `prepareCompaction` → `compact` + 捕获用 `streamFn`）复现真实摘要 prompt，再把同一份消息喂给**线上同一个** `bound.ts`，报告原始/有界后的体积与 A3 断言（整体估算 ≤ cap、≤ 提供商上限 50%）。只读会话文件、不联网；`--window` 可给多档（如 `--window=1000000,200000`），另有 `--cap-ratio` / `--protect-turns` / `--json` |
 | `scripts/verify-vertex-auth.mts` | google-vertex 认证链路隔离验证（临时 `PI_CODING_AGENT_DIR`，不碰正式配置）：api_key 路径会 401「API keys are not supported by this API」→ 只有 ADC/服务账号可用 |
 | `scripts/verify-vertex-login.mts` | google-vertex 完整登录桥验证：PiBackend.login 交互（select 剔除 api-key）→ ADC credential 落盘 auth.json → configured |
 | `scripts/repro-full.mjs` | 把 trace 事件序列直接注入 renderer 复现（#185/白屏类问题，手法见 PITFALLS 0.5.0） |

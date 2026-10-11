@@ -4,8 +4,21 @@ import { createLogger } from "../../log";
 import { boundMessages } from "./bound";
 import { readCompactionGuardConfig } from "./config";
 import type { GuardState } from "./guard";
-import { applyOutcome, createGuardState, decideTrigger, judgeOutcome, recordTrigger } from "./guard";
-import type { CompactionGuardConfig, CompactionGuardObservation, GuardMessage } from "./types";
+import {
+	applyOutcome,
+	createGuardState,
+	decideTrigger,
+	hardCapTokens,
+	judgeOutcome,
+	recordTrigger,
+} from "./guard";
+import type {
+	CompactionBoundStats,
+	CompactionGuardConfig,
+	CompactionGuardObservation,
+	CompactionPercentBasis,
+	GuardMessage,
+} from "./types";
 
 const log = createLogger("compaction-guard");
 
@@ -15,9 +28,8 @@ const log = createLogger("compaction-guard");
  * 本扩展做三件事：
  * 1. **百分比触发**（`agent_settled` 内**同步**判定 + `ctx.compact()`，spec D1/D2）——
  *    替代 SDK「窗口 − 16384」那条绝对余量线（1M 窗口上 = 98.4%，等于永不触发）。
- * 2. **摘要输入有界**（`session_before_compact`，spec D3）——层 1 降级 + 层 2 硬上限。
- *    **阶段 1：只量体积、不改输入**（层 1/层 2 在阶段 2 落地）。
- * 3. **观测**（spec D6）：trigger / bound / settled 三个相位各记一行 `compaction_guard` trace。
+ * 2. **摘要输入有界**（`session_before_compact`，spec D3）——层 1 降级 + 层 2 硬上限，两份请求各跑一遍。
+ * 3. **观测**（spec D6）：trigger / bound / settled 三个相位各记一行 `compaction_guard`（log + trace）。
  *
  * 默认常开、无 UI 开关（spec D7）；逃生舱是 settings.json 的 `compactionGuard.enabled=false`。
  * 与设置页那个「上下文管理」（蒸发）开关**完全解耦**（spec D7b）：不读、不跟随、不改它。
@@ -65,29 +77,59 @@ export function makeCompactionGuardExtension(options: CompactionGuardExtensionOp
 			const serialize = options.serialize ?? sdkSerializer();
 
 			let currentSessionId = "";
-			let initialized = false;
 			let state: GuardState = createGuardState();
 			/** 已发起、还没收到 `session_compact`/`session_compact_failed` 的那次 */
 			let pending: Attempt | null = null;
 			/** 压缩已完成、在等「下一次非 null 用量」来判效果（刚压缩完 tokens 恒为 null） */
 			let awaitingOutcome: Attempt | null = null;
+			/** 最近一次压缩之后是否已经出现真实 usage（决定 percentBasis） */
+			let hasUsageSinceCompaction = false;
 
-			// --- 生命周期 ---
+			/**
+			 * 会话 id 惰性解析：观测行要带 id，但**不能依赖 `session_start` 一定发过**
+			 * （`createAgentSession` 的宿主不一定发它——集成测试里实测只有 agent/turn 系列事件）。
+			 * 工厂是每会话一份闭包，所以这里的缓存不会串会话。
+			 */
+			const sessionIdOf = (ctx: { sessionManager: { getSessionId(): string } }): string => {
+				try {
+					currentSessionId = ctx.sessionManager.getSessionId();
+				} catch {
+					// 取不到就沿用上一次的（观测行仍可读，不影响任何行为）
+				}
+				return currentSessionId;
+			};
+
+			// --- 生命周期（重置状态 + 记一行启用日志；不承担「是否初始化」的职责） ---
 			pi.on("session_start", async (_event, ctx) => {
 				try {
-					initialized = true;
-					currentSessionId = ctx.sessionManager.getSessionId();
+					sessionIdOf(ctx);
 					state = createGuardState();
 					pending = null;
 					awaitingOutcome = null;
+					hasUsageSinceCompaction = false;
 					const config = getConfig();
 					if (config.enabled) {
-						log.info("compaction guard 已启用", { sessionId: currentSessionId.slice(0, 8), ...config });
+						log.info("compaction guard 已启用", { sessionId: shortId(currentSessionId), ...config });
 					}
 				} catch (err) {
-					// 初始化失败 → 整个会话不干预（SDK 默认路径原样）
-					initialized = false;
-					log.error("compaction-guard session_start 失败，本会话不干预", { error: messageOf(err) });
+					log.error("compaction-guard session_start 处理异常", { error: messageOf(err) });
+				}
+			});
+
+			// --- percent 口径追踪：真实 usage 出现即记账；压缩后作废（spec D6 的 percentBasis） ---
+			pi.on("message_end", (event) => {
+				try {
+					const message = event.message as unknown as {
+						role?: string;
+						usage?: Record<string, number>;
+						stopReason?: string;
+					};
+					if (message.role !== "assistant") return;
+					if (message.stopReason === "aborted" || message.stopReason === "error") return;
+					const total = usageTotal(message.usage);
+					if (total > 0) hasUsageSinceCompaction = true;
+				} catch {
+					// 纯记账，出问题也不影响任何事
 				}
 			});
 
@@ -97,10 +139,11 @@ export function makeCompactionGuardExtension(options: CompactionGuardExtensionOp
 				// `ctx.compact()` 内部第一步就是 `await this.abort()`；一旦让出事件循环，
 				// 用户刚发的新 prompt 可能插进来被这次 abort 干掉（白丢一条用户消息）。
 				try {
-					if (!initialized) return;
+					sessionIdOf(ctx);
 					const config = getConfig();
 					if (!config.enabled) return;
 					const usage = ctx.getContextUsage();
+					const percentBasis: CompactionPercentBasis = hasUsageSinceCompaction ? "usage" : "estimate";
 
 					// 1) 先结算上一次压缩的效果（spec D6：只能在拿到非 null 用量时判）
 					if (awaitingOutcome && usage && usage.tokens !== null && usage.contextWindow > 0) {
@@ -118,6 +161,7 @@ export function makeCompactionGuardExtension(options: CompactionGuardExtensionOp
 							source: "guard",
 							outcome: judged.outcome,
 							percent: percentNow,
+							percentBasis,
 							tokensBefore: attempt.tokensBefore,
 							estimatedBefore: attempt.tokensBefore,
 							estimatedAfter: usage.tokens,
@@ -130,7 +174,7 @@ export function makeCompactionGuardExtension(options: CompactionGuardExtensionOp
 					const decision = decideTrigger({ config, usage, state, now: now() });
 					if (!decision.trigger) {
 						log.debug("compaction guard 不触发", {
-							sessionId: currentSessionId.slice(0, 8),
+							sessionId: shortId(currentSessionId),
 							reason: decision.reason,
 							percent: decision.percent === null ? null : Math.round(decision.percent * 10) / 10,
 						});
@@ -141,7 +185,9 @@ export function makeCompactionGuardExtension(options: CompactionGuardExtensionOp
 					report({
 						phase: "trigger",
 						reason: "threshold-pct",
+						source: "guard",
 						percent: decision.percent,
+						percentBasis,
 						tokensBefore: decision.tokens,
 						contextWindow: decision.contextWindow,
 					});
@@ -152,8 +198,9 @@ export function makeCompactionGuardExtension(options: CompactionGuardExtensionOp
 			});
 
 			// --- 收尾：压缩成功 / 失败（自研与 SDK 自己触发的都会到这两个事件） ---
-			pi.on("session_compact", (event) => {
+			pi.on("session_compact", (event, ctx) => {
 				try {
+					sessionIdOf(ctx);
 					const mine = pending !== null;
 					if (mine && pending) {
 						// 效果判定要等下一次真实用量；这里只交接记账
@@ -163,6 +210,7 @@ export function makeCompactionGuardExtension(options: CompactionGuardExtensionOp
 						// SDK 自己触发的压缩（手动/SDK 阈值/溢出恢复）：给退避一次重启机会，冷却清零
 						state = { ...applyOutcome(state, "ok"), lastTriggerAt: null };
 					}
+					hasUsageSinceCompaction = false;
 					report({
 						phase: "settled",
 						reason: event.reason,
@@ -175,11 +223,12 @@ export function makeCompactionGuardExtension(options: CompactionGuardExtensionOp
 				}
 			});
 
-			pi.on("session_compact_failed", (event) => {
+			pi.on("session_compact_failed", (event, ctx) => {
 				try {
+					sessionIdOf(ctx);
 					const mine = pending !== null;
 					pending = null;
-					// 连续失败与「连续无效」共用同一退避阶梯：连续失败时不该猛打（spec D6 + §5）
+					// 失败与「无效」共用同一退避阶梯但不封顶可见于 cooldownMsFor（倍数阶梯 1→2→4→8）
 					if (mine) state = applyOutcome(state, "ineffective");
 					report({
 						phase: "settled",
@@ -193,41 +242,59 @@ export function makeCompactionGuardExtension(options: CompactionGuardExtensionOp
 				}
 			});
 
-			// --- 摘要输入有界（阶段 1：只观测，不改输入） ---
-			pi.on("session_before_compact", (event) => {
+			// --- 摘要输入有界（层 1 降级 + 层 2 硬上限，spec D3） ---
+			pi.on("session_before_compact", (event, ctx) => {
+				// 同步改 `preparation`（与 SDK 默认摘要路径同对象，spec §2），不 await
 				try {
+					sessionIdOf(ctx);
 					const config = getConfig();
 					const preparation = event.preparation;
-					const history = preparation.messagesToSummarize as unknown as GuardMessage[];
-					const prefix = preparation.turnPrefixMessages as unknown as GuardMessage[];
-					// 阶段 2 接真实 cap（spec D3：min(hardCapRatio × 窗口, 窗口 − summaryMaxOut − 2048)）；
-					// 阶段 1 只量体积，故用「不介入」的 cap。
+					if (!config.enabled) return undefined;
+
+					const model = ctx.model;
+					const cap = hardCapTokens({
+						contextWindow: model?.contextWindow ?? 0,
+						reserveTokens: preparation.settings?.reserveTokens ?? 0,
+						maxTokens: model?.maxTokens,
+						hardCapRatio: config.hardCapRatio,
+					});
 					const boundOptions = {
-						cap: Number.POSITIVE_INFINITY,
+						cap,
 						protectTurns: config.protectTurns,
 						toolResultChars: config.toolResultChars,
 						serialize,
 					};
-					const historyBound = boundMessages(history, boundOptions);
-					const prefixBound = prefix.length > 0 ? boundMessages(prefix, boundOptions) : undefined;
-					const estimatedBefore =
-						historyBound.stats.estimatedBefore + (prefixBound?.stats.estimatedBefore ?? 0);
-					const estimatedAfter = historyBound.stats.estimatedAfter + (prefixBound?.stats.estimatedAfter ?? 0);
+
+					// split turn 会**发两次**摘要请求（历史 + 回合前缀），两份都必须过同一个有界函数
+					const historyInput = preparation.messagesToSummarize as unknown as GuardMessage[];
+					const prefixInput = preparation.turnPrefixMessages as unknown as GuardMessage[];
+					const history = boundMessages(historyInput, boundOptions);
+					const prefix = prefixInput.length > 0 ? boundMessages(prefixInput, boundOptions) : undefined;
+
+					preparation.messagesToSummarize = history.messages as never;
+					if (prefix) preparation.turnPrefixMessages = prefix.messages as never;
+
+					const stats = mergeStats(history.stats, prefix?.stats);
 					report({
 						phase: "bound",
 						reason: event.reason,
+						source: pending !== null ? "guard" : "sdk",
 						splitTurn: preparation.isSplitTurn,
 						tokensBefore: preparation.tokensBefore,
-						estimatedBefore,
-						estimatedAfter,
-						degradedMessages:
-							historyBound.stats.degradedMessages + (prefixBound?.stats.degradedMessages ?? 0),
-						droppedMessages: historyBound.stats.droppedMessages + (prefixBound?.stats.droppedMessages ?? 0),
-						// 阶段 2 起这里还会把有界化结果赋值回 preparation（当前未生效）
-						detail: `history ${historyBound.stats.estimatedBefore} → ${historyBound.stats.estimatedAfter}`,
+						cap,
+						estimatedBefore: stats.estimatedBefore,
+						estimatedAfter: stats.estimatedAfter,
+						measure: stats.measure,
+						capRounds: stats.capRounds,
+						degradedMessages: stats.degradedMessages,
+						droppedMessages: stats.droppedMessages,
+						detail: `history ${history.stats.estimatedBefore}→${history.stats.estimatedAfter}${prefix ? ` · prefix ${prefix.stats.estimatedBefore}→${prefix.stats.estimatedAfter}` : ""}${stats.oversized > 0 ? ` · 单条超 cap ${stats.oversized} 条（交回 SDK）` : ""}`,
+						...(stats.withinCap ? {} : { outcome: "cap-unreachable" as const }),
 					});
 				} catch (err) {
-					log.error("compaction guard 体积统计失败，原样放行", { error: messageOf(err) });
+					// 出错就原样返回，让 SDK 走默认路径（绝不因为本扩展让压缩整体失败）
+					log.error("compaction guard 有界化失败，原样放行", { error: messageOf(err) });
+					report({ phase: "bound", outcome: "hook-error", detail: messageOf(err) });
 				}
 				return undefined;
 			});
@@ -235,11 +302,50 @@ export function makeCompactionGuardExtension(options: CompactionGuardExtensionOp
 	};
 }
 
+interface MergedStats extends Omit<CompactionBoundStats, "messageCount" | "cap" | "oversizedMessages"> {
+	oversized: number;
+}
+
+/** 两份请求各自的统计合并成一行观测（口径：`exact` 优先——任一边做了整体估算就按整体报） */
+function mergeStats(history: CompactionBoundStats, prefix?: CompactionBoundStats): MergedStats {
+	if (!prefix) {
+		return {
+			estimatedBefore: history.estimatedBefore,
+			estimatedAfter: history.estimatedAfter,
+			measure: history.measure,
+			capRounds: history.capRounds,
+			degradedMessages: history.degradedMessages,
+			droppedMessages: history.droppedMessages,
+			oversized: history.oversizedMessages,
+			withinCap: history.withinCap,
+		};
+	}
+	return {
+		estimatedBefore: history.estimatedBefore + prefix.estimatedBefore,
+		estimatedAfter: history.estimatedAfter + prefix.estimatedAfter,
+		measure: history.measure === "exact" || prefix.measure === "exact" ? "exact" : "cheap",
+		capRounds: history.capRounds + prefix.capRounds,
+		degradedMessages: history.degradedMessages + prefix.degradedMessages,
+		droppedMessages: history.droppedMessages + prefix.droppedMessages,
+		oversized: history.oversizedMessages + prefix.oversizedMessages,
+		withinCap: history.withinCap && prefix.withinCap,
+	};
+}
+
+function usageTotal(usage: Record<string, number> | undefined): number {
+	if (!usage) return 0;
+	if (typeof usage.totalTokens === "number") return usage.totalTokens;
+	return (usage.input ?? 0) + (usage.output ?? 0) + (usage.cacheRead ?? 0) + (usage.cacheWrite ?? 0);
+}
+
+/** 短 id 只为人肉 grep：uuidv7 的时间前缀在同一次运行内相同，**取尾部**才有区分度 */
+const shortId = (sessionId: string): string => (sessionId.length > 8 ? sessionId.slice(-8) : sessionId);
+
 function messageOf(err: unknown): string {
 	return err instanceof Error ? err.message : String(err);
 }
 
 /** log 通道（trace_custom 由 reporter 另写；两处都带 sessionId 便于 grep 单会话） */
 function logObservation(sessionId: string, observation: CompactionGuardObservation): void {
-	log.info("compaction_guard", { sessionId: sessionId.slice(0, 8), ...observation });
+	log.info("compaction_guard", { sessionId: shortId(sessionId), ...observation });
 }

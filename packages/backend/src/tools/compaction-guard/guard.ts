@@ -91,6 +91,26 @@ export function recordTrigger(state: GuardState, now: number): GuardState {
 	return { ...state, lastTriggerAt: now };
 }
 
+/**
+ * 摘要输入硬上限（spec D3）：
+ * `summaryMaxOut = min(floor(0.8 × reserveTokens), model.maxTokens)`（与 SDK 摘要输出上限同口径）；
+ * `hardCap = min(hardCapRatio × contextWindow, contextWindow − summaryMaxOut − 2048)`。
+ * **不设绝对下限**（`max(…, 65536)` 在 200k 以下窗口会算出比窗口还大的上限）；`≤ 0` 时不介入。
+ */
+export function hardCapTokens(input: {
+	contextWindow: number;
+	reserveTokens: number;
+	/** `<= 0` / 缺失 = 该模型没有单独的输出上限 */
+	maxTokens?: number;
+	hardCapRatio: number;
+}): number {
+	if (!(input.contextWindow > 0)) return 0;
+	const maxTokens =
+		input.maxTokens !== undefined && input.maxTokens > 0 ? input.maxTokens : Number.POSITIVE_INFINITY;
+	const summaryMaxOut = Math.min(Math.floor(0.8 * input.reserveTokens), maxTokens);
+	return Math.min(input.hardCapRatio * input.contextWindow, input.contextWindow - summaryMaxOut - 2048);
+}
+
 export interface OutcomeInput {
 	/** 触发时的占窗口百分比 */
 	percentBefore: number;
