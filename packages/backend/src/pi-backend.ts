@@ -111,6 +111,7 @@ import {
 	readChannelWatchEnabled,
 	writeChannelWatchEnabled,
 } from "./tools/channel-watch";
+import { makeCompactionGuardExtension } from "./tools/compaction-guard";
 import {
 	makeEvapExtension,
 	readContextManagerMode,
@@ -317,11 +318,13 @@ export class PiBackend {
 		| ReturnType<typeof makeTodoReminderExtension>
 		| ReturnType<typeof makeChannelWatchExtension>
 		| ReturnType<typeof makeEvapExtension>
+		| ReturnType<typeof makeCompactionGuardExtension>
 	> {
 		const factories: Array<
 			| ReturnType<typeof makeTodoReminderExtension>
 			| ReturnType<typeof makeChannelWatchExtension>
 			| ReturnType<typeof makeEvapExtension>
+			| ReturnType<typeof makeCompactionGuardExtension>
 		> = [];
 		if (this.options.permissionGates !== false && this.options.permissionExtension !== false) {
 			// confirm 直接桥到 PermissionGate（携带 kind/suggestDir 元数据，驱动「允许此目录」）；
@@ -345,6 +348,18 @@ export class PiBackend {
 				reporter: (sessionId, batch) => {
 					reportEvapBatch(sessionId, batch);
 					this.traces.recordCustom(sessionId, "evap_batch", batch);
+				},
+			}),
+		);
+		// 压缩护栏（默认开启，spec compaction-bounded）：`agent_settled` 内**同步**判百分比水位并触发压缩，
+		// `session_before_compact` 把摘要输入有界化。**没有 context 钩子**，与蒸发/视觉代理无语义交互，
+		// 注册位置不敏感；放蒸发之后只为保持「内置扩展同一段」的可读性。
+		// 观测双通道：log（快速 grep）+ trace_custom `compaction_guard` 行（reducer 未知类型 no-op）
+		factories.push(
+			makeCompactionGuardExtension({
+				agentDir: getAgentDir(),
+				reporter: (sessionId, observation) => {
+					this.traces.recordCustom(sessionId, "compaction_guard", observation);
 				},
 			}),
 		);
