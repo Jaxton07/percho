@@ -78,6 +78,8 @@
 | 用渲染层 JS 堆证明「卸载会话能省内存」，结论反了 | 四 · 渲染层的大头是模块级基建，不是会话数据（2026-09-20） |
 | 左栏有图钉、顶栏却没有胶囊（「置顶了但不显示」） | 四 · 顶栏内容要由置顶表驱动，别从 tabs 里筛（2026-09-19） |
 | 后端日志出现 `context-evaporation` / stale ctx 报错 | 二 · 删除正在跑的会话会留 stale ctx（既有现象，2026-09-20 记录） |
+| 会话到点后每轮都「压缩失败」，报错却是 `Required field 'model' is empty`；换模型也救不回来 | 二 · 压缩死锁：触发线贴窗口上限 + 摘要请求无上界（2026-10-11） |
+| 自研触发的压缩在对话区分割线上显示「手动」；或改写了 reason 却没生效（UI 仍显旧文案） | 二 · 分割线文案由 `compaction_end` 覆盖写入，别在 `session_compact` 处清标记（2026-10-11） |
 | hover 才现的控件刚截完图就点不到、点击静默落空 | 四 · 鼠标事件 + `:hover` → 补「截图会清掉 hover」（2026-09-19） |
 | 某个区域内滚轮完全失灵（内层没内容、外层也不滚）；给不溢出的滚动容器挂了 `overscroll-behavior: contain` | 四 · 嵌套滚动的归属验证 + contain 吞 wheel（2026-09-21） |
 | CDP wheel 验证“滚动该归谁”时假失败/假绿（落点被浮层盖住、或拿赋 `scrollTop` 冒充滚动） | 四 · 同章节「验证滚动归属的三条纪律」（2026-09-21） |
@@ -364,6 +366,48 @@ python 子进程各留一份），还占着上游（Blender 的 9876）连接；
 另：`image/jpeg` 的附件是 SDK 缩完重编码的结果 —— 会话 jsonl 里 user 消息文本尾部带 `[Image: original WxH, displayed at WxH…]` 就说明**真缩过**（我们预缩放后这条提示就不再出现）。
 
 ❗**同一个坑的另一半**：streaming 中发送走队列路径时**完全不归一化附件**（`_queueFollowUp`/`_queueSteer` 直接把原图塞进 content，`core/agent-session.js:1729-1750`）——「Agent 跑着的时候粘一张大图」会绕过缩放直接进历史，可能顶到 provider 的 5MB/尺寸上限让整段对话报错。我们没改这条（改动面在 SDK），先记着。
+
+### 压缩死锁：触发线贴窗口上限 + 摘要请求无上界（2026-10-11）
+
+**现象**：1M 窗口模型（deepseek-zw/deepseek-v4-flash）会话跑到 **99.1 万 token** 越线后，
+19 次压缩（15 自动 + 3 手动 + 换 glm 后再试）**全部失败**，每轮都重试、每次都失败 —— 会话再也压不动。
+
+两个独立成因，叠在一起才致命：
+
+1. 触发线 = `contextWindow − reserveTokens(16384)`，1M 上等于 **98.4%**，余量为零；
+2. 摘要请求把**原始全量历史**塞进一个 prompt：思考全文、toolCall 参数全文不截断，
+   只对 tool result 截 2000 字符。实测该会话摘要 prompt = **373 万字符 ≈ 119 万 token**，
+   比模型上限还大 20% ⇒ 越过触发线的那一刻，压缩在数学上已不可能成功。
+
+**诊断手法（可复用）**：
+
+- 用 SDK 自身函数量体积：`SessionManager.open(file)` → `prepareCompaction(branch, settings)`
+  → `convertToLlm()` → `serializeConversation()`（种子脚本 `channel/compaction-bounded/evidence/replay-summary-size.mjs`；
+  仓库版已提升为 `scripts/replay-compaction-bound.mts`，并用注入 `streamFn` 捕获**真实**摘要 prompt）；
+- 别信「超限报错」的字面意思：deepseek-zw 网关在 ~1M 处硬截断，超限时返回的却是
+  `400 {"message":"Required field 'model' is empty"}`（994,387 tokens 通过、~1.08M 报此错，
+  探针 `evidence/probe-gateway-cap.mjs`）；
+- 分词别猜：同一端点实测中文 ≈0.45–0.5 token/字、ASCII ≈0.30 token/字符，
+  仓库蒸发估算器的 1.7 token/字会高估 3.6 倍（`evidence/probe-tokenizer.mjs`）。
+
+**修复点（本仓，2026-10-11/12）**：`.local/agent-work/spec/compaction-bounded.md`（百分比触发线 + 摘要输入有界，
+commit `6cf53fe`；模块 `packages/backend/src/tools/compaction-guard/`）——`agent_settled` 内同步判百分比水位并 `ctx.compact()`；
+`session_before_compact` 把两份摘要输入（历史 + 回合前缀）降级/丢弃到硬上限之内；观测走 log + `trace_custom`。
+
+### 分割线文案由 `compaction_end` 覆盖写入，别在 `session_compact` 处清标记（2026-10-11）
+
+**症状**：给自研触发的压缩把 UI reason 从 SDK 的 `"manual"` 改写成 `"threshold"`（显示「自动（上下文阈值）」）后，
+**unit 测试全绿、真机上却仍显示「手动」**。
+
+**成因**：对话区那张卡片的 reason **不是** `compaction_start` 定稿的 —— `compaction_end` 会用同一个 id 覆盖写入
+（`shared/src/transcript/reducer.ts` → SystemMessage 的 `compact` 态），而实测一次大会话压缩要 **15s**：
+`session_compact`（扩展事件）比 `compaction_end`（会话事件）**早到**。第一版实现把「一次性标记」在
+`session_compact` 对应的观测相位里清掉，于是 end 没被改到 ⇒ UI 显示旧文案。
+
+**修法**：标记的生命周期跟**事件配对**走，而不是跟观测相位走 —— `compaction_start` 命中才置「已改写」态，
+等配对的 `compaction_end` 一起改写后消费掉；start 之前设短窗（5s，避免误改后来的真实 `/compact`），
+start 之后设长兜底（30 分钟，防悬挂）。会话处置（`disposeSession`）时另外清一次。
+改的是**转发副本**（`{...event, reason}`），SDK 事件对象永不动。
 
 ## 三、构建 · 打包 · 环境
 

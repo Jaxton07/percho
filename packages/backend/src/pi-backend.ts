@@ -700,6 +700,9 @@ export class PiBackend {
 	/** 真正的处置：dispose + registry/全局键控子系统清理（closeSession 与 deleteSession 共用） */
 	private async disposeSession(entry: RegisteredSession): Promise<void> {
 		const sessionId = entry.session.sessionId;
+		// D8 标记是内存态、按会话键控：会话处置时顺手清掉（正常路径已由 compaction_end 配对消费，
+		// 这里兜住「触发了但压缩永远没开始/没结束就关会话」的残留）。
+		this.guardTriggerMarkers.clear(sessionId);
 		this.channelWatchCleanups.get(entry.modeRef)?.();
 		this.channelWatchCleanups.delete(entry.modeRef);
 		// 先把 session_shutdown 送给扩展，再 dispose（详见 emitSessionShutdown 注释）：
