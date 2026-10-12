@@ -538,3 +538,54 @@ describe("A6②（修订）compaction.enabled=false：SDK 全自动路径（含�
 		}
 	});
 });
+
+describe("A11 被拦下时留一条 skip 观测（review 追加：事后要能回答「它为什么没压」）", () => {
+	it("percent 已过线但冷却中 → 记 skip/cooldown，且不重复触发", async () => {
+		const { session, observations } = await setup({
+			contextWindow: 20_000,
+			// SDK 阈值 = 20k − 2k = 18k > 12k ⇒ 原生路径够不到，只有护栏会动手
+			sdkCompaction: { reserveTokens: 2000 },
+			guard: { thresholdPct: 50 },
+			// 伪造 12k 用量（12k/20k = 60% ≥ 50%）但真实历史很小：第一次压缩会以
+			// 「Nothing to compact (session too small)」失败（不落 compaction entry，
+			// 因此不会踩到 SDK getContextUsage 在「压缩后 + 合成历史缺 usage」时的抛错）
+			stream: { text: "ok", usageInput: 12_000 },
+		});
+		try {
+			await session.prompt("第一轮");
+			await waitFor(() => observations.some((o) => o.phase === "settled" && o.outcome === "failed"));
+
+			await session.prompt("第二轮");
+			await waitFor(() => observations.some((o) => o.phase === "skip"));
+
+			const skips = observations.filter((o) => o.phase === "skip");
+			// 只有第一次真触发了；第二次过线但被冷却拦下，且只留一条 skip 行（不刷日志）
+			expect(observations.filter((o) => o.phase === "trigger")).toHaveLength(1);
+			expect(skips).toHaveLength(1);
+			expect(skips[0].skipReason).toBe("cooldown");
+			expect(skips[0].source).toBe("guard");
+			expect(skips[0].percent).toBeGreaterThanOrEqual(50);
+			expect(skips[0].tokensBefore).toBeGreaterThan(0);
+			expect(skips[0].contextWindow).toBe(20_000);
+			expect(skips[0].detail).toContain("被冷却拦下");
+		} finally {
+			session.dispose();
+		}
+	}, 30_000);
+
+	it("阈值未达时不产 skip 行（避免把正常跳过写进 trace）", async () => {
+		const { session, observations } = await setup({
+			contextWindow: 20_000,
+			sdkCompaction: { reserveTokens: 2000 },
+			guard: { thresholdPct: 100 }, // 永不触发
+			stream: { text: "ok", usageInput: 12_000 },
+		});
+		try {
+			await session.prompt("随便说点什么");
+			expect(observations.filter((o) => o.phase === "skip")).toHaveLength(0);
+			expect(observations.filter((o) => o.phase === "trigger")).toHaveLength(0);
+		} finally {
+			session.dispose();
+		}
+	});
+});

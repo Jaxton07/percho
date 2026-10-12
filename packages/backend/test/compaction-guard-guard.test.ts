@@ -232,30 +232,67 @@ describe("退避（连续无效压缩）", () => {
 });
 
 describe("judgeOutcome（压缩效果判定，spec D6）", () => {
-	it("仍 ≥ 阈值且下降 < 5 个百分点 → ineffective", () => {
-		expect(judgeOutcome({ percentBefore: 96, percentNow: 95, thresholdPct: 80 })).toEqual({
-			outcome: "ineffective",
-			dropPct: 1,
+	it("仍 ≥ 阈值、且相对下降 < 20% → ineffective", () => {
+		// 96→95 个百分点、token 只掉了 5%（96000→91200）
+		const judged = judgeOutcome({
+			percentBefore: 96,
+			percentNow: 95,
+			tokensBefore: 96_000,
+			tokensAfter: 91_200,
+			thresholdPct: 80,
 		});
-		expect(judgeOutcome({ percentBefore: 96, percentNow: 91.001, thresholdPct: 80 }).outcome).toBe(
-			"ineffective",
-		);
+		expect(judged.outcome).toBe("ineffective");
+		expect(judged.dropPct).toBe(1);
+		expect(judged.dropRatio).toBeCloseTo(0.05, 3);
 	});
 
-	it("下降 ≥ 5 个百分点 → ok（哪怕仍在阈值之上）", () => {
-		expect(judgeOutcome({ percentBefore: 96, percentNow: 91, thresholdPct: 80 })).toEqual({
-			outcome: "ok",
-			dropPct: 5,
+	it("仍 ≥ 阈值但相对下降 ≥ 20% → ok（2026-10-12 dev 实测反例：百分点口径会误判）", () => {
+		// 窗口 1M、阈值 1%：48120 → 34764 token（砍掉 27.8%）只合 1.3 个百分点，旧口径判无效
+		const judged = judgeOutcome({
+			percentBefore: 4.812,
+			percentNow: 3.4764,
+			tokensBefore: 48_120,
+			tokensAfter: 34_764,
+			thresholdPct: 1,
 		});
+		expect(judged.outcome).toBe("ok");
+		expect(judged.dropRatio).toBeGreaterThan(0.27);
 	});
 
 	it("已压到阈值之下 → ok（哪怕只降一点）", () => {
-		expect(judgeOutcome({ percentBefore: 96, percentNow: 79.9, thresholdPct: 80 }).outcome).toBe("ok");
+		expect(
+			judgeOutcome({
+				percentBefore: 96,
+				percentNow: 79.9,
+				tokensBefore: 96_000,
+				tokensAfter: 79_900,
+				thresholdPct: 80,
+			}).outcome,
+		).toBe("ok");
 	});
 
-	it("上下文反而变大（下降为负）且仍 ≥ 阈值 → ineffective", () => {
-		const judged = judgeOutcome({ percentBefore: 90, percentNow: 93, thresholdPct: 80 });
+	it("上下文反而变大（相对下降为负）且仍 ≥ 阈值 → ineffective", () => {
+		const judged = judgeOutcome({
+			percentBefore: 90,
+			percentNow: 93,
+			tokensBefore: 90_000,
+			tokensAfter: 93_000,
+			thresholdPct: 80,
+		});
 		expect(judged.outcome).toBe("ineffective");
 		expect(judged.dropPct).toBe(-3);
+		expect(judged.dropRatio).toBeLessThan(0);
+	});
+
+	it("退化：tokensBefore 不为正时按「没降」处理，不凭空原谅", () => {
+		const judged = judgeOutcome({
+			percentBefore: 90,
+			percentNow: 85,
+			tokensBefore: 0,
+			tokensAfter: 0,
+			thresholdPct: 80,
+		});
+		expect(judged.dropRatio).toBe(0);
+		expect(judged.outcome).toBe("ineffective");
 	});
 });

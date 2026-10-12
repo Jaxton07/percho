@@ -43,11 +43,23 @@ export type CompactionBoundMeasure = "cheap" | "exact";
 /** `percent` 的来源（spec D6）：真实 wire usage / 尾部估算 */
 export type CompactionPercentBasis = "usage" | "estimate";
 
-/** 三个相位：触发判定 / 摘要输入有界化 / 压缩收尾与效果判定 */
-export type CompactionGuardPhase = "trigger" | "bound" | "settled";
+/** 观测相位：触发判定 / 摘要输入有界化 / 压缩收尾与效果判定 / **被节流拦下（本可触发）** */
+export type CompactionGuardPhase = "trigger" | "bound" | "settled" | "skip";
 
 /** 压缩原因（SDK 字段直传）+ 自研触发（threshold-pct） */
 export type CompactionGuardReason = "threshold-pct" | "manual" | "threshold" | "overflow";
+
+/**
+ * 触发判定不触发的原因（`guard.ts` 的 `TriggerSkipReason`）。
+ * 其中只有 **cooldown / backoff** 会在 `percent` 已过线时产生一条 `skip` 观测（其余只走 debug 日志，避免刷日志）。
+ */
+export type CompactionGuardSkipReason =
+	| "disabled"
+	| "no-usage"
+	| "no-window"
+	| "below-threshold"
+	| "cooldown"
+	| "backoff";
 
 export type CompactionGuardOutcome =
 	| "ok"
@@ -62,11 +74,17 @@ export type CompactionGuardOutcome =
 export interface CompactionGuardObservation {
 	phase: CompactionGuardPhase;
 	reason?: CompactionGuardReason;
+	/** skip 相位：被拦下的原因（本可触发才算） */
+	skipReason?: CompactionGuardSkipReason;
 	/** 触发/收尾相位：占窗口百分比（tokens 未知时省略） */
 	percent?: number;
 	/** 触发/收尾相位：percent 来自真实 usage 还是尾部估算（spec D6） */
 	percentBasis?: CompactionPercentBasis;
 	tokensBefore?: number;
+	/** 收尾相位：判定效果时的真实 tokens（与 tokensBefore 配成「降了多少」） */
+	tokensAfter?: number;
+	/** 收尾相位：`(tokensBefore − tokensAfter) / tokensBefore`，判定「无效」用的相对量（spec D6） */
+	dropRatio?: number;
 	contextWindow?: number;
 	/** bound / settled 相位：有界化前后估算（settled 用 SDK 的真实 tokens） */
 	estimatedBefore?: number;

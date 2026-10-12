@@ -153,6 +153,8 @@ export function makeCompactionGuardExtension(options: CompactionGuardExtensionOp
 						const judged = judgeOutcome({
 							percentBefore: attempt.percent,
 							percentNow,
+							tokensBefore: attempt.tokensBefore,
+							tokensAfter: usage.tokens,
 							thresholdPct: config.thresholdPct,
 						});
 						state = applyOutcome(state, judged.outcome);
@@ -163,10 +165,10 @@ export function makeCompactionGuardExtension(options: CompactionGuardExtensionOp
 							percent: percentNow,
 							percentBasis,
 							tokensBefore: attempt.tokensBefore,
-							estimatedBefore: attempt.tokensBefore,
-							estimatedAfter: usage.tokens,
+							tokensAfter: usage.tokens,
+							dropRatio: Math.round(judged.dropRatio * 1000) / 1000,
 							contextWindow: usage.contextWindow,
-							detail: `下降 ${judged.dropPct.toFixed(1)} 个百分点 · 连续无效 ${state.ineffectiveStreak} 次`,
+							detail: `下降 ${judged.dropPct.toFixed(1)} 个百分点 / ${(judged.dropRatio * 100).toFixed(1)}% token · 连续无效 ${state.ineffectiveStreak} 次`,
 						});
 					}
 
@@ -178,6 +180,24 @@ export function makeCompactionGuardExtension(options: CompactionGuardExtensionOp
 							reason: decision.reason,
 							percent: decision.percent === null ? null : Math.round(decision.percent * 10) / 10,
 						});
+						// 「本可触发、被冷却/退避拦下」——不产这条 trace 的话，事后无法回答「它为什么没压」。
+						// 只在这一种情形记（阈值未达 / 无用量等正常跳过仍只走 debug），避免刷日志。
+						if (
+							(decision.reason === "cooldown" || decision.reason === "backoff") &&
+							decision.percent !== null &&
+							decision.percent >= config.thresholdPct
+						) {
+							report({
+								phase: "skip",
+								skipReason: decision.reason,
+								source: "guard",
+								percent: decision.percent,
+								percentBasis,
+								tokensBefore: usage?.tokens ?? undefined,
+								contextWindow: usage && usage.contextWindow > 0 ? usage.contextWindow : undefined,
+								detail: `已过 ${config.thresholdPct}% 线段，被${decision.reason === "cooldown" ? "冷却" : "退避"}拦下`,
+							});
+						}
 						return;
 					}
 					state = recordTrigger(state, now());
