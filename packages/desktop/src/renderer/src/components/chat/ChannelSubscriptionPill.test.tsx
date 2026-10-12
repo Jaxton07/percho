@@ -49,7 +49,7 @@ describe("ChannelSubscriptionPill（SSR 装配）", () => {
 	it("长名字：限制最大宽度 + 省略号（truncate），并提供 Tooltip 显示完整名称", () => {
 		const long = "extremely-long-channel-name-that-should-be-truncated-in-the-pill";
 		const html = markup(presence({ display: [long], opened: true, mounted: true }));
-		expect(html).toContain("max-w-[300px]");
+		expect(html).toContain("max-width:300px"); // 首帧兜底上限（运行时会按可用宽进一步夹取）
 		expect(html).toContain("truncate");
 		expect(html).toContain('role="tooltip"');
 		expect(html).toContain(long); // Tooltip 里给完整名

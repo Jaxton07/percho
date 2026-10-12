@@ -1096,6 +1096,20 @@ pgrep -f "electron-vite" | xargs -r kill -9
 - 需要「点真实子代理卡」这类依赖模型行为的场景，优先找**历史回放**入口：历史里已有子代理运行的父会话，打开它 → transcript 重放出卡片 → 点它，同样落到只读检视页，且完全确定性（子会话文件在 `<agentDir>/sessions-subagents/`，后端按路径判定 `readOnly`）。现场真跑一次 subagent 依赖凭证可用，dev 里常 401 拿不到可点卡片。
   - 2026-10-12 补充（qol3 阶段 2 实测）：dev agentDir 里**可能一个可点子代理卡都没有** —— 唯一一次真实 subagent 运行是 401 失败、没有 `sessionFile`（这类行渲染成不可点）。确定性做法：挑一个含 `"toolName":"subagent"` 的父会话打开，往 `useTranscriptStore` 的 `bySession[id].streaming.subagentRuns` **注入一条** `{key,agent,status:"done",sessionFile:<真实存在的 sessions-subagents 文件>}`（注入要重试：bundle 可能晚于注入落地并把 `streaming` 覆盖回磁盘态），卡片就会渲染出来，点它走的是**真实**组件 + 真实 store + 真实子会话文件；唯一合成物是那一行运行记录，写明即可。
 
+### `TMPDIR` 指向仓库内部会让两个既有后端测试失败（2026-10-12，qol3 阶段 4 复核发现）
+
+现象：`cd packages/backend && TMPDIR=<repo>/.local/tmp npx vitest run` ⇒ **2 个既有用例失败**（默认 TMPDIR 下 754 条全绿）：
+
+- `test/channel-watch-init.test.ts > 非 git 目录：建三子目录、gitignore=not-git`：它在临时目录里造「非 git 目录」，
+  但临时目录落在**本仓库**里 ⇒ git 判定为 ignored（拿到 `ignored` 而不是 `not-git`）。
+- `test/trust.test.ts > 无信任需求资源的项目直接可信`：项目落在仓库内部 ⇒ 扫到仓库的资源目录，判定需要信任。
+
+这不是回归，而是「临时目录必须干净、且不在 git 仓库内」这个隐含前提被破坏。做法上：
+- **我们自己的**中间产物一律写 `.local/tmp/<专用前缀>`（项目规则），新测试也按此隔离
+  （`packages/backend/test/channel-subscriptions.test.ts` 用 `.local/tmp/qol3-channel-subs-test`，两种 TMPDIR 下都绿）；
+- 但**不要**拿 `TMPDIR=<repo>/.local/tmp` 跑整个后端套件当「合规」证据 —— 那两条例外要先说明，
+  或把它们的 fixture 改成不依赖 TMPDIR 位置。
+
 ### 组件测试（`renderToStaticMarkup`）在 vitest 里读不到 store 的运行时状态（2026-10-12，qol3 阶段 2）
 
 症状：把 zustand store `setState` 成想要的状态后 SSR 渲染组件，断言却按**初始状态**输出（`masterOn:false`、`contributions:{}`、`providerOf(...)=undefined`），看起来像「store 没生效」。
@@ -1127,6 +1141,15 @@ pgrep -f "electron-vite" | xargs -r kill -9
    连等 4 次都是同一张白图（纯色 PNG 只有 ~14KB）。**要制造一次重绘**：插一颗**屏幕外**的 1×1 元素
    （`position:fixed;left:-10px`）再移除，然后按「PNG 体积 < 60KB 就当空白」重试（重试间隔递增）。
    实测这一招立刻出图（208KB / 256KB）。
+5. **`ResizeObserver` 的「观察集合」≠「测量占位集合」**（review R11 反例，静默失效）：按 `height > 0` 筛完再
+   observe，就永远观察不到**当前 0 高**的渲染根 —— 插件先渲染空壳、随后长内容时布局不再跟（胶囊停在上一个位置）。
+   正确做法：观察**全部**元素子节点（含 0 高），测量才筛「高度 > 0 且递归穿过 `display: contents` 包层」的盒子
+   （contents 元素自己没有盒、RO 也不会为它回调）。
+6. **右锚浮层按「可用宽」夹取，别拿 shrink-to-fit 的父容器算**（review R12）：固定 `max-w-[300px]` 的文字 +
+   装饰（glyph/内边距）在 ~320px 聊天区会顶出边界；而用「最近的定位祖先」算可用宽时，若它本身就是
+   `position:absolute` + shrink-to-fit（我们的堆叠容器），宽度会随浮层变 ⇒ 自激，浮层被夹到几十像素。
+   可用宽要取**堆叠容器之外**的容器（`stack.closest("[data-corner-stack]").offsetParent`），
+   文字上限 = `min(设计上限, 可用宽 − 装饰宽)`，装饰宽用「内容宽 − 名字可见宽」反推（截断与否同一算式）。
 
 ### 绝不打印/提交 API key
 

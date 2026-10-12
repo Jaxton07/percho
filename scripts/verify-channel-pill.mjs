@@ -71,7 +71,7 @@ async function pageScript() {
 		const p = pill();
 		const t = todoRoot();
 		const s = stack();
-		const names = p?.querySelector("span.max-w-\\[300px\\]") ?? null;
+		const names = p?.querySelector("span.truncate") ?? null;
 		return {
 			activeId: active(),
 			pillPresent: !!p,
@@ -121,10 +121,19 @@ async function pageScript() {
 
 		/* ============ B/C. 注入订阅 ⇒ 胶囊出现 + 宽度动画（右缘固定） ============ */
 		const TOPICS = ["qol3-pill-alpha", "channel-subscription-pill"];
-		const inject = (topics, revision, generation = realSnapshot.generation + 1, sessionId = active()) =>
-			useChannelSubscriptionsStore.getState().apply({ sessionId, live: true, topics, revision, generation });
+		// 代次统一递增：同一会话内每次注入都更新 ⇒ 清理那次不会被判成「更旧」而拒绝（否则胶囊不退场）
+		let injectGeneration = realSnapshot.generation;
+		let injectRevision = realSnapshot.revision;
+		const inject = (topics, sessionId = active()) =>
+			useChannelSubscriptionsStore.getState().apply({
+				sessionId,
+				live: true,
+				topics,
+				revision: ++injectRevision,
+				generation: ++injectGeneration,
+			});
 
-		const frames = await sampleDuring(800, () => inject(TOPICS, realSnapshot.revision + 1));
+		const frames = await sampleDuring(800, () => inject(TOPICS));
 		const present = frames.filter((f) => f.pillPresent);
 		E(present.length > 10, `注入后胶囊没有出现（帧数 ${present.length}）`);
 		const first = present[0];
@@ -163,7 +172,7 @@ async function pageScript() {
 		});
 
 		/* ============ D. 退场：保留退场文本，收起后卸载 ============ */
-		const leaveFrames = await sampleDuring(700, () => inject([], realSnapshot.revision + 2));
+		const leaveFrames = await sampleDuring(700, () => inject([]));
 		const mid = leaveFrames[Math.floor(leaveFrames.length / 2)];
 		if (window.__qol3ReducedMotion) {
 			// reduced-motion：过渡被关掉，退场应当立即完成（没有「保留退场文本」这一步）
@@ -182,11 +191,11 @@ async function pageScript() {
 		});
 
 		/* ============ E. 中断：收起途中又订阅回来，旧 timer 不得删掉新胶囊 ============ */
-		inject(TOPICS, realSnapshot.revision + 3);
+		inject(TOPICS);
 		await twoRaf();
-		inject([], realSnapshot.revision + 4);
+		inject([]);
 		await sleep(120);
-		inject([TOPICS[1]], realSnapshot.revision + 5);
+		inject([TOPICS[1]]);
 		await twoRaf(); // 新胶囊挂载本身要一帧；这不属于「旧 timer 删掉新胶囊」
 		const after = await sampleDuring(700, undefined);
 		const gap = after.filter((f) => !f.pillPresent).length;
@@ -196,10 +205,10 @@ async function pageScript() {
 
 		/* ============ F. reduced-motion：跳过过渡、立即清理（由 runner 切媒体特性） ============ */
 		if (window.__qol3ReducedMotion) {
-			inject([TOPICS[0]], realSnapshot.revision + 6);
+			inject([TOPICS[0]]);
 			await twoRaf();
 			const fastIn = sample();
-			inject([], realSnapshot.revision + 7);
+			inject([]);
 			await twoRaf();
 			const fastOut = sample();
 			E(fastIn.pillPresent, "reduced-motion 下胶囊没出现");
@@ -208,9 +217,9 @@ async function pageScript() {
 				inWidth: Math.round(fastIn.pillRect.width),
 				outPresent: fastOut.pillPresent,
 			});
-			inject(TOPICS, realSnapshot.revision + 8); // 后续几何段需要胶囊在场
+			inject(TOPICS); // 后续几何段需要胶囊在场
 		}
-		inject(TOPICS, realSnapshot.revision + 9); // 兜底：几何段必须有胶囊
+		inject(TOPICS); // 兜底：几何段必须有胶囊
 
 		/* ============ G. 几何跟随：真实 TodoPanel 短/长列表动画逐帧（阶段 0 断言的复跑） ============ */
 		const SHORT = [
@@ -398,7 +407,7 @@ async function pageScript() {
 			withPillContribTop >= withPill.pillRect.bottom - main.getBoundingClientRect().top + 6,
 			"贡献与胶囊重叠了",
 		);
-		inject([], realSnapshot.revision + 20); // 收起胶囊
+		inject([]); // 收起胶囊
 		await sleep(600);
 		E(pill() === null, "退订后胶囊还在");
 		const contribTopNoPill = rectOf(contrib()).top - main.getBoundingClientRect().top;
@@ -410,7 +419,7 @@ async function pageScript() {
 		});
 
 		/* ============ K. 不挡点击 / 不制造横向滚动 ============ */
-		inject(TOPICS, realSnapshot.revision + 30);
+		inject(TOPICS);
 		await sleep(500);
 		const stackEl = stack();
 		E(getComputedStyle(stackEl).pointerEvents === "none", "堆叠容器不是 pointer-events:none（会挡下方点击）");
@@ -429,24 +438,74 @@ async function pageScript() {
 		);
 		step("K 点击穿透与滚动", { below: below?.tagName ?? null });
 
-		/* ============ L. 窄窗：长名字省略、无横向滚动 ============ */
-		const beforeWidth = window.innerWidth;
-		window.resizeTo(720, 760);
-		await sleep(500);
-		inject(["a-very-long-channel-topic-name-for-narrow-window-ellipsis-check"], realSnapshot.revision + 31);
-		await sleep(600);
-		const narrow = sample();
-		E(
-			narrow.nameScroll && narrow.nameScroll.scroll > narrow.nameScroll.client,
-			`窄窗下频道名没有被省略：${JSON.stringify(narrow.nameScroll)}`,
-		);
-		E(
-			document.documentElement.scrollWidth <= document.documentElement.clientWidth,
-			`窄窗出现横向滚动：${document.documentElement.scrollWidth}`,
-		);
-		step("L 窄窗省略", { scroll: narrow.nameScroll?.scroll, client: narrow.nameScroll?.client });
-		window.resizeTo(beforeWidth, window.innerHeight);
-		await sleep(400);
+		const LONG_TOPIC = "a-very-long-channel-topic-name-for-narrow-window-ellipsis-check";
+
+		/**
+		 * L 段（窄窗）：由 runner 先打开 CDP 视口仿真（窗口本身有最小宽度，压不到 ~320 的聊天区），
+		 * 再调用这里。断言 = 胶囊实际左右边界在聊天区内、宽度不超过可用宽、名字被夹取截断、
+		 * glyph 在位且不越界、无横向滚动；Tooltip 的悬停检查由 runner 拿 `hoverPoint` 做。
+		 */
+		window.__qol3Narrow = async () => {
+			try {
+				await sleep(400);
+				const mainRectNarrow = main.getBoundingClientRect();
+				E(mainRectNarrow.width < 360, `聊天区没被压到窄窗量级：${Math.round(mainRectNarrow.width)}`);
+				inject([LONG_TOPIC]);
+				await sleep(700);
+				const narrow = sample();
+				const pillRectNarrow = narrow.pillRect;
+				E(pillRectNarrow, "窄窗下胶囊没出现");
+				E(
+					pillRectNarrow.left >= mainRectNarrow.left + 15 &&
+						pillRectNarrow.right <= mainRectNarrow.right - 15,
+					`窄窗下胶囊越出聊天区：[${Math.round(pillRectNarrow.left)}, ${Math.round(pillRectNarrow.right)}] vs main [${Math.round(mainRectNarrow.left)}, ${Math.round(mainRectNarrow.right)}]`,
+				);
+				E(
+					pillRectNarrow.width <= mainRectNarrow.width - 31,
+					`窄窗下胶囊宽 ${Math.round(pillRectNarrow.width)} 超过可用宽 ${Math.round(mainRectNarrow.width - 32)}`,
+				);
+				// 关键：夹取必须由**可用宽**决定（而不是被 300 设计上限挡住）——名字可见宽要小于 300
+				E(
+					narrow.nameScroll && narrow.nameScroll.scroll > narrow.nameScroll.client,
+					`窄窗下频道名没有被省略：${JSON.stringify(narrow.nameScroll)}`,
+				);
+				E(
+					(narrow.nameScroll?.client ?? 999) < 300,
+					`窄窗下名字宽度仍顶到 300 上限（可用宽夹取没生效）：${JSON.stringify(narrow.nameScroll)}`,
+				);
+				const glyph = pill()?.querySelector("svg");
+				E(glyph, "窄窗下胶囊里没有 glyph");
+				E(
+					Math.round(glyph.getBoundingClientRect().width) === 13,
+					`glyph 尺寸异常：${Math.round(glyph.getBoundingClientRect().width)}`,
+				);
+				E(glyph.getBoundingClientRect().left >= mainRectNarrow.left + 15, "glyph 越出左边界");
+				const namesEl = pill()?.querySelector("span.truncate");
+				E(namesEl && namesEl.getBoundingClientRect().right <= mainRectNarrow.right - 15, "频道名越出右边界");
+				E(
+					document.documentElement.scrollWidth <= document.documentElement.clientWidth,
+					`窄窗出现横向滚动：${document.documentElement.scrollWidth}`,
+				);
+				step("L 窄窗夹取与边界", {
+					mainWidth: Math.round(mainRectNarrow.width),
+					pillWidth: Math.round(pillRectNarrow.width),
+					names: narrow.nameScroll,
+					glyph: Math.round(glyph.getBoundingClientRect().width),
+				});
+				R.env.hoverPoint = {
+					x: Math.round(pillRectNarrow.left + pillRectNarrow.width / 2),
+					y: Math.round(pillRectNarrow.top + pillRectNarrow.height / 2),
+				};
+				R.env.longTopic = LONG_TOPIC;
+			} catch (error) {
+				R.failure = String(error?.message ?? error);
+				R.failureStack = String(error?.stack ?? "")
+					.split("\n")
+					.slice(0, 4)
+					.join(" | ");
+			}
+			return R;
+		};
 
 		/* ============ M. 切会话：旧名字不得串到新会话 ============ */
 		const otherFile = window.__qol3OtherFile;
@@ -457,7 +516,7 @@ async function pageScript() {
 		await sleep(400);
 		const newId = active();
 		E(newId !== activeId, "没有切到另一个会话");
-		inject(["qol3-new-session-topic"], realSnapshot.revision + 40, realSnapshot.generation + 2, newId);
+		inject(["qol3-new-session-topic"], newId);
 		await sleep(500);
 		// 只统计「切过去之后」的帧：采样从 kick 之前就开始了，那些帧本来就该是旧会话的名字
 		const afterSwitch = switched.filter((f) => f.activeId === newId);
@@ -468,10 +527,54 @@ async function pageScript() {
 		step("M 切会话不串名字", { newId, badFrames: badFrames.length });
 		R.env.newSessionId = newId;
 
+		/* ============ N. 0 高根后增长（R11 反例）：观察集合要含当前 0 高的根 ============ */
+		let growListeners = new Set();
+		let growHeight = 0;
+		const GrowTodo = () => {
+			const [, force] = window.PerchoUI.React.useState(0);
+			window.PerchoUI.React.useEffect(() => {
+				const fn = () => force((n) => n + 1);
+				growListeners.add(fn);
+				return () => growListeners.delete(fn);
+			}, []);
+			return window.PerchoUI.React.createElement("div", {
+				"data-probe-todo": "grow",
+				className: "absolute top-2 right-4 z-20 rounded-xl bg-surface shadow-pop",
+				style: { width: "160px", height: `${growHeight}px` },
+			});
+		};
+		registryMod.useUiPluginRegistry.setState({
+			overrides: {
+				"chat.todo-panel": { pluginName: "probe-phase4", exportName: "GrowTodo", component: GrowTodo },
+			},
+		});
+		await setTodos(SHORT);
+		await sleep(400);
+		const growRoot = () => document.querySelector('[data-probe-todo="grow"]');
+		E(growRoot(), "0 高根没渲染出来");
+		E(growRoot().getBoundingClientRect().height === 0, "该用例前提是根初始高度为 0");
+		const stackTopBefore = sample().stackTop;
+		E(Math.abs(stackTopBefore - 8) < 1, `0 高根时堆叠该在基准位：${stackTopBefore}`);
+		growHeight = 140;
+		for (const fn of growListeners) fn();
+		await sleep(400);
+		const bottomGrown = growRoot().getBoundingClientRect().bottom;
+		const stackTopAfter = sample().stackTop;
+		E(
+			Math.abs(stackTopAfter - (bottomGrown - main.getBoundingClientRect().top + 8)) < 3,
+			`0 高根增长后堆叠没跟上（top=${stackTopAfter}，期望 ${bottomGrown - main.getBoundingClientRect().top + 8}）`,
+		);
+		step("N 0 高根后增长", {
+			stackTopBefore,
+			stackTopAfter: Math.round(stackTopAfter),
+			grownBottom: Math.round(bottomGrown),
+		});
+		growListeners = new Set();
+
 		/* ---- 收尾：恢复原会话 + 清掉探针注入 ---- */
 		registryMod.useUiPluginRegistry.setState({ overrides: {}, contributions: {} });
 		uiPluginsMod.useUiPluginsStore.setState((s) => ({ config: { ...s.config, enabled: false } }));
-		inject([], realSnapshot.revision + 50);
+		inject([]);
 		await setTodos([]);
 		await sleep(500);
 		R.env.cleaned = { pill: pill() === null, contrib: contrib() === null };
@@ -583,6 +686,46 @@ await new Promise((r) => setTimeout(r, 1000));
 const reducedResult = await evalIn(`(${pageScript.toString()})()`, true);
 await cdp.send("Emulation.setEmulatedMedia", { features: [] });
 
+// L 段（窄窗）：窗口有最小宽度 ⇒ 用 CDP 视口仿真把聊天区压到 ~320px，再调页面侧那段专门检查
+await cdp.send("Emulation.setDeviceMetricsOverride", {
+	width: 560,
+	height: 760,
+	deviceScaleFactor: 1,
+	mobile: false,
+});
+const narrow = result.failure ? {} : await evalIn("window.__qol3Narrow()", true);
+if (narrow?.failure) console.error(`✗ 窄窗段失败：${narrow.failure}`);
+
+// 悬停检查：真实鼠标移到胶囊中心，断言 Tooltip 给出**完整**频道名（R12 要求）
+const hoverPoint = narrow?.env?.hoverPoint;
+if (hoverPoint && narrow?.env?.longTopic) {
+	await cdp.send("Input.dispatchMouseEvent", {
+		type: "mouseMoved",
+		x: hoverPoint.x,
+		y: hoverPoint.y,
+		buttons: 0,
+	});
+	await new Promise((r) => setTimeout(r, 700));
+	const tip = await evalIn(`(() => {
+		const el = document.querySelector('[role="tooltip"]');
+		if (!el) return null;
+		const r = el.getBoundingClientRect();
+		return { text: el.textContent, left: Math.round(r.left), right: Math.round(r.right) };
+	})()`);
+	console.log(`Tooltip 测量：${JSON.stringify(tip)}`);
+	if (!tip || tip.text !== narrow.env.longTopic) {
+		console.error(`✗ 窄窗 Tooltip 没给出完整频道名：${JSON.stringify(tip)}`);
+		process.exitCode = 1;
+	} else if (tip.left < 0) {
+		console.error(`✗ Tooltip 向左溢出可见区：${tip.left}`);
+		process.exitCode = 1;
+	} else {
+		console.log(`✓ Tooltip 给出完整频道名且不溢出（left=${tip.left}）`);
+	}
+}
+
+await cdp.send("Emulation.clearDeviceMetricsOverride");
+
 if (WITH_SHOTS) {
 	/**
 	 * 截图：窗口被遮挡/合成器空闲时偶发**整帧空白**（见 docs/PITFALLS.md）——纯色 PNG 压缩后极小，
@@ -644,12 +787,13 @@ if (WITH_SHOTS) {
 ws.close();
 const summary = {
 	main: result,
+	narrow,
 	reducedMotion: reducedResult,
 	injected: { otherFile: candidates[1], reducedRan: reduced === true },
 };
 console.log(JSON.stringify(summary, null, 2));
-if (result.failure || reducedResult.failure) {
-	console.error("✗ 验收失败：", result.failure ?? reducedResult.failure);
+if (result.failure || reducedResult.failure || narrow?.failure) {
+	console.error("✗ 验收失败：", result.failure ?? narrow?.failure ?? reducedResult.failure);
 	process.exit(1);
 }
 console.log("\n✓ 频道胶囊 + 右上堆叠真机验收全部断言通过");

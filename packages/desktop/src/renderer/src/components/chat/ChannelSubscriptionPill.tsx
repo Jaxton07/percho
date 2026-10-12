@@ -20,6 +20,13 @@ import type { ChannelPillPresence } from "./channel-pill-presence";
  */
 export const CHANNEL_PILL_DURATION_MS = 360; // 与 styles/globals.css 的 --channel-pill-time 同步
 
+/** 设计基准里频道名的上限（长名再长也不超过它） */
+const NAMES_MAX_WIDTH = 300;
+/** 聊天区左右各留的气口（右锚 right-4 = 16px，左边也对称留 16px） */
+const SIDE_INSET = 16;
+/** 名字最多压到这么窄（再窄就没意义了；极限窄窗下宁可让整体先用满可用宽） */
+const NAMES_MIN_WIDTH = 40;
+
 export function ChannelSubscriptionPill({
 	presence,
 	onExitFinished,
@@ -28,6 +35,7 @@ export function ChannelSubscriptionPill({
 	onExitFinished: (token: number) => void;
 }) {
 	const observerRef = useRef<ResizeObserver | null>(null);
+	const namesRef = useRef<HTMLSpanElement | null>(null);
 	const [naturalWidth, setNaturalWidth] = useState(0);
 	/** 目标宽度：展开态 = 实测自然宽度；收起态 / 刚挂载 = 0（挂载当帧必须先是 0，下一帧再放到自然宽度才有过渡） */
 	const [targetWidth, setTargetWidth] = useState(0);
@@ -41,7 +49,34 @@ export function ChannelSubscriptionPill({
 		observerRef.current?.disconnect();
 		observerRef.current = null;
 		if (!el) return;
-		const measure = () => setNaturalWidth(el.getBoundingClientRect().width);
+		/**
+		 * 把频道名的 `max-width` 夹到「可用宽 − 装饰宽」之内。
+		 * - 装饰宽 = 内容宽 − 名字可见宽（截断时 = 名字上限；未截断时 = 名字自然宽）⇒ 两种情况同一个算式；
+		 * - 名字的**自然需求**用 `scrollWidth`（不受当前 max-width 影响）；
+		 * - 可用宽取**堆叠容器之外**的定位祖先（main）宽度减两侧气口 —— 堆叠自己是 absolute + shrink-to-fit，
+		 *   宽度会跟着胶囊变，拿它算可用宽就成了自激（实测：胶囊会被夹到 85px）；
+		 * - 只在值变化时写，避免「写样式 → ResizeObserver → 再写」的自激。
+		 */
+		const clampNames = () => {
+			const namesEl = namesRef.current;
+			if (!namesEl) return;
+			const stackEl = el.closest("[data-corner-stack]");
+			const stackOffsetParent = stackEl instanceof HTMLElement ? stackEl.offsetParent : null;
+			const block = stackOffsetParent instanceof HTMLElement ? stackOffsetParent : null;
+			const available = block ? block.clientWidth - SIDE_INSET * 2 : Number.POSITIVE_INFINITY;
+			const demand = namesEl.scrollWidth;
+			const decoration = Math.max(0, el.getBoundingClientRect().width - namesEl.clientWidth);
+			const maxNames = Math.max(NAMES_MIN_WIDTH, Math.min(NAMES_MAX_WIDTH, available - decoration));
+			const target = `${Math.min(demand, maxNames)}px`;
+			if (namesEl.style.maxWidth !== target) namesEl.style.maxWidth = target;
+		};
+
+		const measure = () => {
+			// 先按可用宽夹住名字（右锚容器宽度 = 定位祖先的宽 − 两侧气口），再量内容宽度：
+			// 固定 300px 文字 + 装饰（glyph/内边距/间隔）在窄聊天区会顶出边界（review R12）
+			clampNames();
+			setNaturalWidth(el.getBoundingClientRect().width);
+		};
 		measure();
 		const observer = new ResizeObserver(measure);
 		observer.observe(el);
@@ -86,7 +121,7 @@ export function ChannelSubscriptionPill({
 			>
 				<div ref={measureRef} className="flex w-max items-center gap-2 px-3 py-[7px] text-ui-12 text-ink-dim">
 					<ChannelIcon className="shrink-0 text-ink-faint" />
-					<span className="max-w-[300px] truncate">
+					<span ref={namesRef} className="truncate" style={{ maxWidth: NAMES_MAX_WIDTH }}>
 						{presence.display.map((topic, index) => (
 							<Fragment key={topic}>
 								{index > 0 && <span className="px-1.5 text-ink-faint">·</span>}
