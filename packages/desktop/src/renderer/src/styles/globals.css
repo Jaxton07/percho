@@ -372,6 +372,14 @@ html[data-session-slide]::view-transition-image-pair(root) {
 html[data-session-slide]::view-transition-group(session-page) {
 	overflow: clip;
 }
+/* 快照会把滚动条一起拍进去 ⇒ 滑动时右边那条 4px 滚动条跟着横着走（两张快照各带一条，很脏）。
+   这里在过渡期间把滚动条的**像素**抹掉：滑块/轨道颜色全透明，但**宽度一个像素都不动**（宽度一变就重排，
+   两张快照的布局会不一致、内容会跳）。颜色走 CSS 变量 ⇒ 覆盖变量即可同时覆盖深/浅色与各处细滚动条；
+   标记在 startViewTransition 之前就设好 ⇒ 旧快照也是「没有滚动条」的。 */
+html[data-session-slide] {
+	--scrollbar-thumb: transparent;
+	--scrollbar-thumb-hover: transparent;
+}
 html[data-session-slide="push"]::view-transition-old(session-page) {
 	animation: session-page-out-left var(--session-slide-time) cubic-bezier(0.2, 0, 0, 1) both;
 }

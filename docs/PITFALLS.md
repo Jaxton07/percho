@@ -17,6 +17,7 @@
 | `verify-layout-freedom` 的 V2 拖拽断言一片红 / 把手只有列表中段点不到 | 四 · 左栏把手被 edge-fade 列表遮挡（2026-10-10 #100 更正；V6 真实列表矩阵，Windows 待验） |
 | 改了代码字号档位，monaco 代码块字号纹丝不动 | 四 · monaco 只在创建编辑器时应用 options（字号必须在 props 变化时重建代码块） |
 | 把「相对聊天区」的定位写在角容器里，算出来完全不是想要的位置 | 四 · 想要「相对聊天区」的位置，别写在 shrink-to-fit 的角容器里（2026-10-12） |
+| 页面滑动过渡时右边那条滚动条跟着一起横着走 | 四 · 会话页推/出过渡：View Transitions 的五个坑（第 6 条：隐藏滚动条只能改颜色不能改宽度，2026-10-12） |
 | 页面滑动过渡时，相邻容器（左栏）里出现了聊天页内容 | 四 · 会话页推/出过渡：View Transitions 的五个坑（快照不裁剪会横穿，2026-10-12） |
 | 切页动画「演的是上一页内容」/ 第一帧还是旧页面 | 四 · 同上（新快照必须等内容提交，认 DOM 标记） |
 | 注入页面的探针函数报 `SyntaxError: missing ) after argument list` | 四 · 把含反引号/`${}` 的函数塞进模板串注入（要 JSON 后再 eval） |
@@ -1124,7 +1125,7 @@ pgrep -f "electron-vite" | xargs -r kill -9
 
 真机几何类断言（重叠/拉伸/Tooltip 溢出）不要靠 SSR —— 那些拿 CDP 在真实挂载上量（qol3 阶段 2 探针：`self-start` 不被更宽贡献拉伸、`Tooltip align="start"` 左缘不溢出且 `scrollWidth == clientWidth`）。
 
-## 会话页推/出过渡：View Transitions 的五个坑（2026-10-12，D4 收尾）
+## 会话页推/出过渡：View Transitions 的六个坑（2026-10-12，D4 收尾）
 
 开子代理页从右向左推入、返回父会话从左向右推回，用同文档 View Transitions 实现（快照交给浏览器拍，
 不用双挂上一页、也不用克隆 DOM —— monaco/canvas 克隆会丢像素）。五个坑都是实测踩到的，其中第一个
@@ -1146,6 +1147,16 @@ pgrep -f "electron-vite" | xargs -r kill -9
 5. **同一时刻只认最后一次过渡**：过渡进行中再开一个，浏览器会跳过新的。收尾清理（擦方向标记、
    清 `view-transition-name`）必须带**代次守卫**，否则前一次的 `finished` 回来会把新一次的标记擦掉
    （单测 `lib/session-page-slide.test.ts` 里有这条反例）。
+
+6. **滚动条会跟着滑动**（用户一眼就看出来的脏）：滚动条画在聊天页快照里，`translateX(-100%)` 会把它
+   一起横着拖走，而且两张快照各带一条。修法：过渡期间把滑块的**颜色**改透明（`--scrollbar-thumb: transparent`，
+   颜色走 CSS 变量 ⇒ 深/浅色和各处细滚动条一起覆盖），**宽度一个像素都别动** —— 一旦用
+   `::-webkit-scrollbar { display: none }` 之类把轨道去掉，布局会重排（4px 槽塌掉 ⇒ 内容跳一下，
+   两张快照的布局还不一致）。验收：① 手动挂/摘方向标记，量内容列 rect 与滚动条槽宽，必须逐字段一致
+   （证「只改颜色不改布局」）；② 探针在 `startViewTransition` 前与 `ready` 时各采样一次
+   `getComputedStyle(el, "::-webkit-scrollbar-thumb").backgroundColor`，两次都得是透明
+   （证旧/新两张快照都不带滚动条）；③ 过渡结束后颜色要还原。
+   注意：**CDP 截图根本不绘制滚动条**（PITFALLS 另有条目），所以这类问题只能靠实算样式 + 人眼在真窗口确认。
 
 **验收怎么做才算数**（几何断言看不出来的东西）：
 - 真动画参数从 `document.getAnimations()` 里读**伪元素**上的 `animationName / pseudoElement / duration`，
