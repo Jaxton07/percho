@@ -1,11 +1,14 @@
 ---
 name: channel-pickup
-description: 从本项目的跨会话沟通频道接手已交接的实施任务：读 .local/agent-work/channel/<主题>/ 的 HANDOFF.md 和 spec/plan，按沟通协议推进（**阶段门：每个阶段 commit + IMPL-NOTES + post 后停手等 review**；DONE.md 报完成；REVIEW.md 领意见）。当用户说「接手/实施 channel 里的任务」「按 handoff 开工」「继续 XX 主题的实施」时使用。
+description: 从本项目的跨会话沟通频道接手已交接的实施任务：读 .local/agent-work/channel/<主题>/ 的 HANDOFF.md 和 spec/plan，按沟通协议推进（**阶段门：每个阶段 commit + IMPL-NOTES + post 后停手等 review**；DONE.md 报完成；REVIEW.md 领意见）。**只要你要读 `.local/agent-work/channel/` 下的 HANDOFF.md，或用户说「接手/实施频道任务」「按 handoff 开工」「继续 XX 主题的实施」，就必须先加载本 skill**——HANDOFF 里的协议只是摘要，权威在本 skill。
 ---
 
 # 接手频道任务（实施会话用）
 
 你没有上一个会话的记忆，也不需要。**频道目录 + 设计文档是唯一事实来源**，不要找用户复述背景。
+
+> **本 skill 是协作协议的唯一权威。** HANDOFF 里那段「沟通协议」是发起方写的**摘要**，常见缺项：唤醒消息要**一次读全**、阶段门「停手」的完整含义（连只读的活也别做）、收尾检查清单、终态退订、放行例外。
+> 缺项或冲突一律以本 skill 为准。**如果你是读了 HANDOFF 之后才想起本 skill 的**：回去把下面的「开工四步」和「阶段门」核对一遍再动手。
 
 ## 开工四步（顺序固定）
 
