@@ -1,4 +1,5 @@
 import { type MessageKey, useT } from "../../i18n";
+import { withSessionSlide } from "../../lib/session-page-slide";
 import { useSessionsStore } from "../../stores/sessions";
 import type { SubagentRunUi } from "../../stores/transcript";
 
@@ -26,7 +27,11 @@ function SubagentRunRow({ run }: { run: SubagentRunUi }) {
 		<button
 			type="button"
 			disabled={!clickable}
-			onClick={() => clickable && run.sessionFile && void openSubagentSession(run.sessionFile)}
+			// 推入过渡：子代理页从右向左滑入（父页同时向左滑出，见 lib/session-page-slide.ts）
+			onClick={() => {
+				if (!clickable || !run.sessionFile) return;
+				void withSessionSlide("push", () => openSubagentSession(run.sessionFile as string));
+			}}
 			className={`flex w-full items-center gap-2 py-1 text-left ${
 				clickable ? "cursor-pointer rounded-md hover:bg-hover" : "cursor-default"
 			} px-1.5 transition-colors`}

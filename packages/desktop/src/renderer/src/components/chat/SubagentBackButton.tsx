@@ -1,5 +1,6 @@
 import { useLayoutEffect, useRef } from "react";
 import { useT } from "../../i18n";
+import { withSessionSlide } from "../../lib/session-page-slide";
 import { useSessionsStore } from "../../stores/sessions";
 import { useSubagentReturnStore } from "../../stores/subagent-return";
 import { ArrowLeftIcon } from "../icons";
@@ -72,7 +73,8 @@ export function SubagentBackButton() {
 			ref={ref}
 			type="button"
 			aria-label={t("message.subagent.backToParent")}
-			onClick={() => void returnToParent(activeSessionId)}
+			// 推出过渡：父会话从左向右滑回（子页同时向右滑出）
+			onClick={() => void withSessionSlide("pop", () => returnToParent(activeSessionId))}
 			className="pointer-events-auto flex h-[42px] w-[42px] shrink-0 self-start items-center justify-center rounded-xl text-ink-faint transition-colors hover:bg-hover hover:text-ink"
 		>
 			<ArrowLeftIcon size={21} />

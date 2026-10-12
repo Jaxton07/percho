@@ -122,7 +122,13 @@ export default function App() {
 				<SessionTabBar />
 				<div className="relative flex min-h-0 flex-1">
 					<Sidebar />
-					<div className="relative flex min-w-0 flex-1 flex-col">
+					{/* 聊天页容器：会话推/出过渡的动画主体（lib/session-page-slide.ts 认 data-session-page 找它，
+					   用 data-session-id 判定「新内容已上屏」）。顶栏与左栏不在此容器内 ⇒ 导航时保持静态 */}
+					<div
+						className="relative flex min-w-0 flex-1 flex-col"
+						data-session-page=""
+						data-session-id={activeSessionId ?? ""}
+					>
 						{/* 左侧会话轨道（临时工作区）：挂在 main + DockSlot 的父容器上，定位基准是 tab bar 以下的整列内容区——
 						    输入框高度变化不压缩它的居中参考系；收起态是纯覆盖层，不占宽、不挤压聊天布局（设置里默认关） */}
 						<SessionRail />
