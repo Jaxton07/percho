@@ -16,6 +16,7 @@
 | 侧栏拖宽后把手抓不住 / 行末按钮点不到，**截图看却完全正常** | 四 · 比列宽更宽的内容溢出吃 pointer 事件（2026-10-07） |
 | `verify-layout-freedom` 的 V2 拖拽断言一片红 / 把手只有列表中段点不到 | 四 · 左栏把手被 edge-fade 列表遮挡（2026-10-10 #100 更正；V6 真实列表矩阵，Windows 待验） |
 | 改了代码字号档位，monaco 代码块字号纹丝不动 | 四 · monaco 只在创建编辑器时应用 options（字号必须在 props 变化时重建代码块） |
+| 把「相对聊天区」的定位写在角容器里，算出来完全不是想要的位置 | 四 · 想要「相对聊天区」的位置，别写在 shrink-to-fit 的角容器里（2026-10-12） |
 | 注入页面的探针函数报 `SyntaxError: missing ) after argument list` | 四 · 把含反引号/`${}` 的函数塞进模板串注入（要 JSON 后再 eval） |
 | 侧栏拖一次后**整窗光标卡在 col-resize**、之后再也拖不动（刷新才恢复） | 四 · 拖拽只挂 pointerup 会在「窗口外松手」后永久卡死（2026-10-07） |
 | 脚本判定「没生效」但代码明明改了 / 文件里是新值而界面是旧值 | 四 · dev 里 HMR 会让 store 订阅冻结，验收前要硬重启（2026-10-07） |
@@ -1121,7 +1122,7 @@ pgrep -f "electron-vite" | xargs -r kill -9
 
 真机几何类断言（重叠/拉伸/Tooltip 溢出）不要靠 SSR —— 那些拿 CDP 在真实挂载上量（qol3 阶段 2 探针：`self-start` 不被更宽贡献拉伸、`Tooltip align="start"` 左缘不溢出且 `scrollWidth == clientWidth`）。
 
-### 探针/验收脚本的四条硬规矩（2026-10-12，qol3 阶段 4 实测）
+### 探针/验收脚本的硬规矩（2026-10-12，qol3 阶段 4 实测）
 
 按踩到的顺序记，每条都有具体现象与对策：
 
@@ -1160,6 +1161,15 @@ pgrep -f "electron-vite" | xargs -r kill -9
    （右边溢出、且长文本读不全）。触发元素自身的提示可以**局部**覆盖（`[&>[role=tooltip]]:max-w-[320px]
    [&>[role=tooltip]]:whitespace-normal`，不动全局组件），验收要同时断言：`opacity === "1"`（真的可见）、
    `text` 等于完整原文（不是截断后的）、`left ≥ 0`、`right ≤ innerWidth`、且**换行生效**（`height > lineHeight`）。
+8. **想要「相对聊天区」的位置，别写在 shrink-to-fit 的角容器里**（2026-10-12，返回入口居中）：四角定位容器是
+   `absolute left-4` + `flex flex-col`（宽度 = 内容宽，一枚图标），写在里面的 `%` 是相对它自己，不是相对聊天区；
+   容器本身也不能改（同角还堆着插件贡献，动它会连带挪走别人）。做法：**偏移在运行时算**，纯算式抽成模块 +
+   单测（`components/chat/subagent-back-offset.ts`），DOM 读取留在组件里，只写**自身** `transform`。两个细节：
+   取「未偏移左缘」用 `offsetParent` + `offsetLeft`（`getBoundingClientRect()` 会把上次写的 `transform` 算进去，
+   重复调用自己漂移）；「对话区左缘」给列元素挂稳定锚点（`[data-chat-column]`）而不是猜 class 选择器。
+   退化（聊天区窄到列已占满）必须**归 0 退回基线**，不能算出负偏移把元素推出边缘 —— 代价是命中区放大后
+   窄窗压入量等比变大（42px 按钮 + 16px 基线 − 24px 空带 = 压 34px，放大前 20px）。
+   验收要按「同一颗元素不重挂」跑多态（左栏开合 / 窗口缩放）：断言已重算 + 元素身份不变 + 回到原态数值可复现。
 
 ### 绝不打印/提交 API key
 

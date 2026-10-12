@@ -331,7 +331,12 @@ export function MessageList() {
 				style={{ "--edge-fade-size": "28px" } as CSSProperties}
 				className="edge-fade chat-scrollbar relative z-10 h-full overflow-x-hidden overflow-y-auto [overflow-anchor:auto] [scrollbar-gutter:stable]"
 			>
-				<div ref={contentRef} className="mx-auto flex max-w-[760px] flex-col gap-6 px-6 pt-8 pb-16">
+				{/* data-chat-column：对话区列的几何锚点（「返回父会话」入口靠它把自己摆到左侧空带正中，见 subagent-back-offset.ts） */}
+				<div
+					ref={contentRef}
+					data-chat-column
+					className="mx-auto flex max-w-[760px] flex-col gap-6 px-6 pt-8 pb-16"
+				>
 					{/* root 私有接线：历史图片靠它判断「是否在滚动容器可视区内」，拿不到就只渲染占位 */}
 					<HistoryImageRootProvider root={historyImageRoot}>
 						{items}
