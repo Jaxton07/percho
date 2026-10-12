@@ -339,7 +339,7 @@ export const en: Messages = {
 			skills: "Skills",
 			mcp: "MCP",
 			extensions: "Extensions",
-			lan: "LAN Observer",
+			lan: "Cross-device",
 			about: "About",
 		},
 		language: "Language",
@@ -391,7 +391,7 @@ export const en: Messages = {
 		centerOrbHint:
 			"While a task is running, shows an enlarged status animation at the center of the conversation area (above the text, with a translucent scrim dimming whatever is behind it). Only controls the centered animation — the small orb before the Working/Thinking row always stays.",
 		lan: {
-			title: "LAN Observer",
+			title: "Cross-device",
 			hint: "View live agent progress from your phone on a trusted local network. Off by default; the access token rotates every time it is enabled.",
 			port: "Listening port: {port}",
 			clients: "{count} connected device(s)",

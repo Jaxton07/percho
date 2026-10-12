@@ -61,7 +61,7 @@ And for those who prefer a GUI over a TUI:
 - Streaming markdown rendering, image previews, message copy
 - Agent-initiated image display — a built-in `show_image` tool lets the agent deliberately show you images inline (single or grouped), without turning every tool result into noise
 - Custom background image with adjustable overlay dimming, light/dark/system themes
-- LAN companion — monitor sessions from a phone or tablet browser via QR code; optionally enable remote prompts, stop generation, and allow-once/deny approval decisions
+- Cross-device — monitor sessions from a phone or tablet browser via QR code; optionally enable remote prompts, stop generation, and allow-once/deny approval decisions
 
 ## Download
 

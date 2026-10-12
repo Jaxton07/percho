@@ -71,7 +71,7 @@ packages/
 | `src/transcript/` | `reduceEvent`、`messagesToUIMessages`、`buildChatRows`、`deriveTurnChanges`、`deriveTurnTimings` | **UI 消息状态机（桌面与 lan-web 共用同一份）**：`types`（UIMessage/StreamingState 等）、`helpers`（事件载荷解析）、`reducer`（pi 事件 → UI 状态）、`mapping`（历史回放，含 compaction 标记 → 分割线）、`parse-patch`（unified diff 结构化解析）、`turn-files`（按轮聚合文件变更）、`turn-timings`（按轮计时派生 + runEndedAt 定格）、`chat-rows`（行序列分组 + 轮末行定位规则：尾部有 system 通知行时计时行插到它们**前面**；入参 `ChatRowsInput` 四字段收窄）、`llm-errors`（LLM 错误轮判定 live/replay 共用）、`meta-summary`（工具语义分类统计，**MCP 工具按 server 归并成一段 `blender ×3`**；show_image 不入完成摘要，仍保留圆点与明细）、`pending-user`（**乐观用户气泡**：发送瞬间本地回显、权威 `message_start(user)` 到达时原位认领/失败撤回；纯 UI 态不入历史） |
 | `src/errors.ts` | `UiError`、`classifyLlmError`、`buildLlmUiError`、`buildStreamGuardUiError`、`DETAIL_MAX_LENGTH` | 统一报错信封：错误卡数据源（live reducer / 历史回放 mapping / Composer 内联 / LAN 共用）；`classifyLlmError` 按 401/429/context/网络模式分类，误判只影响标题措辞 |
 | `src/ui-plugins.ts` | `UiPluginManifest`、`UiPluginInfo`、`UiPluginsConfig`、`KNOWN_UI_SLOTS`、`KNOWN_UI_REGIONS`、`UI_PLUGIN_ANCHORS` | UI 插件跨进程类型：manifest（slots/contributions/headless 三选一）/ 扫描合成信息 / 持久化配置 / 事件载荷；`KNOWN_*` 供 main 校验，与 renderer `plugins/slots.ts` 对齐（registry.test.ts 断言） |
-| `src/lan.ts` | `LanObserverConfig`、`LanStatus`、`LanSessionBrief/View`、`LanSseFrame` | 局域网观察页跨进程/HTTP 投影契约 |
+| `src/lan.ts` | `LanObserverConfig`、`LanStatus`、`LanSessionBrief/View`、`LanSseFrame` | 跨设备互联页跨进程/HTTP 投影契约 |
 | `src/packages.ts` | `CatalogPackage*`、`NPM_NOT_FOUND_SENTINEL`、`isSubagentPackage` | pi.dev 社区包目录类型（设置页扩展面板用；`isSubagentPackage` 启发式仅供安装警示，非安全边界） |
 | `src/settings.ts` | `ProviderInfo`、`CustomProviderInput`、`KNOWN_APIS`、`LoginAuthPrompt/LoginEventPayload`、`ModelPrefs`、`SubagentInfo` 等 | provider 设置类型（含订阅登录 OAuth 镜像）+ 模型选择偏好（hiddenModels + 可选 hiddenProviders/visibleModels）+ 子代理偏好（模型/思考深度/执行器开关；thinking 值域见 `src/thinking.ts`） |
 | `src/model-visibility.ts` | `ModelVisibilityPrefs`、`ProviderModelVisibility`、`normalizeModelVisibility`、`isModelVisible`、`providerModelVisibility`、`withModelHidden` / `withModelsHidden` / `withProviderModelsHidden` | renderer/backend 共用的有效可见性与不可变偏好变更规则：默认隐藏源仅白名单可见，默认显示源沿用 ID 黑名单；零模型三态按源默认策略；整源操作清空目标源两种 ID 名单；旧 ID 名单不猜迁移；normalize trim/去空/合并/去重/排序，空可选字段及非隐藏源白名单省略 |
@@ -95,7 +95,7 @@ src/
 ├── json-store.ts       统一 JSON 持久化原语
 ├── slash-commands.ts   斜杠命令清单（纯函数）
 ├── log.ts              结构化日志
-├── lan/                局域网观察：config / projector / server（+ audit / sanitize）
+├── lan/                跨设备互联（局域网观察）：config / projector / server（+ audit / sanitize）
 ├── mcp/                config-store（mcp.json 读写 + 面板视图）/ notices（官方 notify 文本 → 失败原因、需登录、授权 URL）
 ├── session/            registry / shutdown / meta / single-flight / naming / messages / hydration-gate / trace+traces / event-slim+stream-guard / rates / ui-context / extension-dialog-host
 ├── permissions/        index(barrel) / bash-chain / pattern / config / annotations / tmp-zone / gate / extension / audit
@@ -149,7 +149,7 @@ src/
 | `src/settings/login.ts` | `LoginService` | provider 交互登录桥接：AuthInteraction → IPC 事件（prompt 挂起等 renderer 应答；浏览器先到则拒挂起 prompt）。支持 OAuth + api_key 交互登录（如 Google Vertex）；`filterAuthSelectOptions` 对 google-vertex 剔除必败的 api-key 选项（Vertex 不接受 API key，见 PITFALLS） |
 | `src/packages/admin.ts` | `PackageAdmin` | 社区包搜索/安装/卸载/已配置清单 + 装卸后对非流式会话热重载（对齐 CLI /reload）；npm ENOENT 转带哨兵的可读错误 |
 | `src/packages/catalog.ts` | `fetchPackageCatalog` | pi.dev 目录抓取：无 JSON API，解析 SSR HTML 的 `<article data-package-card>` |
-| `src/lan/server.ts` | `LanObserverServer` | 局域网观察与可选远程控制：userData 配置 + token 轮换、HTTP+SSE（timingSafeEqual、5 客户端上限、delta 微批合帧）；远程发送/停止/允许一次或拒绝由独立 `remoteControl` 开关保护；projectEvent = 投影更新与帧广播同点（快照带 in-flight 容器，重连无缝） |
+| `src/lan/server.ts` | `LanObserverServer` | 跨设备互联与可选远程控制：userData 配置 + token 轮换、HTTP+SSE（timingSafeEqual、5 客户端上限、delta 微批合帧）；远程发送/停止/允许一次或拒绝由独立 `remoteControl` 开关保护；projectEvent = 投影更新与帧广播同点（快照带 in-flight 容器，重连无缝） |
 
 **可观测性**：每会话事件 trace + 关键操作日志（create/open/close/prompt/abort/compact）；main 进程还监听 renderer 崩溃/unresponsive/console。排查 UI 状态问题：`npx tsx scripts/replay-trace.mts --last` 确定性复现。
 
@@ -307,7 +307,7 @@ src/
 | 模型隐藏默认策略 / 单模型显示例外 | shared `model-visibility.ts`（纯规则）→ backend `settings/model-prefs.ts`（串行持久化）→ `pi-backend.ts listModels`（选择器唯一过滤出口）；IPC 表 `setProviderModelsHidden({provider, hidden}): Promise<ModelPrefs>` + main/settings handler，preload 自动接线。测试：backend `model-visibility.test.ts` / `model-prefs-visibility.test.ts` / `pi-backend-models.test.ts`。旧全 ID 隐藏名单不自动推测整源意图，升级后需重新“显示全部→隐藏全部”建立默认策略；UI `stores/settings.ts`（全偏好串行乐观队列，测试 `settings-model-prefs.test.ts`）与 ProviderRow（有效可见性三态/零目录默认策略，测试 `ProviderRow.test.tsx`） |
 | 子代理模型/思考深度偏好 + 执行器开关 | backend `settings/model-prefs.ts`（`subagentModels`/`subagentThinking`/`subagentPreferBuiltin`，读侧白名单）+ `pi-backend.ts`（deps 注入 getter、`listSubagents` 透出 thinking/thinkingWarning）；UI `settings/providers/SubagentPanel.tsx` + `stores/settings.ts`；IPC `settings:setSubagentThinking`/`setSubagentPreferBuiltin` |
 | 自动更新 | `main/updater.ts` + `update-policy.ts` + `update-diagnostics.ts`；shared `update.ts`/`update-diagnostics.ts`；UI `session/UpdateButton.tsx` + `settings/AboutPanel.tsx`/`UpdateHelp.tsx`（检查/显式诊断导出/恢复指引）；NSIS trace/Windows 快照见 [WINDOWS-UPDATES.md](WINDOWS-UPDATES.md) |
-| 局域网观察页 | 契约 shared `lan.ts` → backend `lan/` → main `lan.ts` + `ipc/lan.ts` → preload → 设置 `LanObserverPanel.tsx`；浏览器页面 = `desktop/src/lan-web/`（独立 vite 单文件，`?raw` 内联） |
+| 跨设备互联（观察页） | 契约 shared `lan.ts` → backend `lan/` → main `lan.ts` + `ipc/lan.ts` → preload → 设置 `LanObserverPanel.tsx`；浏览器页面 = `desktop/src/lan-web/`（独立 vite 单文件，`?raw` 内联） |
 | 窗口位置 / 尺寸记忆（重启恢复 + 屏幕校验） | `main/window-bounds.ts`（常量 + `sanitizeWindowBounds` 纯函数，**不 import electron**）+ `main/window.ts`（`createWindow(theme, bounds)`、`resize`/`move` → 400ms 防抖 → `getNormalBounds()` 落盘、`close` 同步兜底、macOS `show()` 后 x 校正）+ `main/ui-state.ts`（`windowBounds` 白名单 + `saveUiStateSync`）+ `main/index.ts`（启动/activate 传 sanitize 后的 bounds，workArea 取自 `screen`）。字段 `UiState.windowBounds`（normal 态）；验收 `scripts/verify-layout-freedom.mjs` 的 `v3-bounds` / `v4-window` |
 | 主题 / 背景图 / Markdown 代码块主题 | `stores/theme.ts` + `styles/globals.css`（双套 token）；main `background.ts` + `pi-bg://` 协议（CSP img-src 含 pi-bg:）；UI `settings/AppearancePanel.tsx`；代码块主题走 `Markdown.tsx` 的 isDark + 显式双主题 |
 | Toast | `stores/toasts.ts` + globals.css `.toast` / `.toast-overflow` 样式段 |

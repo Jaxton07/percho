@@ -3,12 +3,12 @@
  * 按 navigator.language 选择，en 为兜底。
  */
 const zh = {
-	"app.eyebrow": "Percho · 局域网",
+	"app.eyebrow": "Percho · 跨设备互联",
 	"list.title": "会话",
 	"list.sectionActive": "正在运行",
 	"list.sectionHistory": "历史 · 只读",
 	"token.title": "输入访问令牌",
-	"token.hint": "在桌面端「设置 → 局域网」查看二维码或链接",
+	"token.hint": "在桌面端「设置 → 跨设备互联」查看二维码或链接",
 	"token.open": "打开",
 	"token.invalid": "令牌无效，请重新输入",
 	"conn.connecting": "连接中…",
@@ -68,12 +68,12 @@ const zh = {
 };
 
 const en: Record<keyof typeof zh, string> = {
-	"app.eyebrow": "Percho · LAN",
+	"app.eyebrow": "Percho · Cross-device",
 	"list.title": "Sessions",
 	"list.sectionActive": "Running",
 	"list.sectionHistory": "History · Read-only",
 	"token.title": "Enter access token",
-	"token.hint": "Find the QR code or link in desktop Settings → LAN",
+	"token.hint": "Find the QR code or link in desktop Settings → Cross-device",
 	"token.open": "Open",
 	"token.invalid": "Invalid token, please retry",
 	"conn.connecting": "Connecting…",
