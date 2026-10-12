@@ -190,7 +190,7 @@ export const EXTENSION_DIALOG_CHANNELS = {
 
 /** 设置域：provider 设置 + 模型偏好 + 登录流程 + 权限/上下文/频道开关 + 信任应答 */
 export const SETTINGS_CHANNELS = {
-	/** 列出 provider（默认只走内置目录+本地缓存；forceNetwork 时联网拉最新模型目录） */
+	/** 列出 provider（默认只走内置目录+本地缓存；forceNetwork 时联网拉最新模型目录，触发点 = 手动刷新 / 进入模型分类自动刷新） */
 	listProviders: ch("settings:listProviders")<{ options?: ListProvidersOptions }, ProviderInfo[]>(),
 	saveApiKey: ch("settings:saveApiKey")<{ providerId: string; key: string }, void>(),
 	removeCredential: ch("settings:removeCredential")<{ providerId: string }, void>(),

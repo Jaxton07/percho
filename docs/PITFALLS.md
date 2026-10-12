@@ -159,7 +159,9 @@ glm-5.3 流式输出病态空白 thinking（纯 `\n    ` 洪流永不终止）�
 
 ### `runtime.refresh()` 不传参时 `allowNetwork` 缺省为 true（除非 `PI_OFFLINE`）
 
-会向 pi.dev 拉全部 provider 的远程模型目录，且 `fetchWithRetry` 无内置超时，网络不可达时一直挂（设置页曾因此永久 Loading）。`SettingsService.listProviders` 默认显式 `allowNetwork:false` 走本地，仅用户点刷新才 `forceNetwork`（`force:true` + 15s 超时兜底）。
+会向 pi.dev 拉全部 provider 的远程模型目录，且 `fetchWithRetry` 无内置超时，网络不可达时一直挂（设置页曾因此永久 Loading）。`SettingsService.listProviders` 默认显式 `allowNetwork:false` 走本地，只有显式 `forceNetwork` 才联网（`force:true` + 15s 超时兜底）。
+
+联网触发点（2026-10-12 起，spec D3 「模型分类自动刷新」）：① 用户点手动刷新；② **进入设置「模型」分类时自动刷新一次**（`ProvidersPanel` 挂载副作用；分类切换/关闭重开各一次，面板内 `providers ↔ subagents` 子 tab 切换不重刷）。renderer 侧 `stores/settings.ts` 的目录请求协调器把两个入口收敛成 single-flight（在途复用，手动按钮在刷新中禁用），并要求「联网**有效发布**后才刷新 Composer 模型选择器」。
 
 ### `createAgentSession({ tools: [...] })` 传数组 = 允许清单
 
@@ -1090,6 +1092,7 @@ pgrep -f "electron-vite" | xargs -r kill -9
 
 - **失败路径**改用「受控失败路径」：例如把新会话 draft 的 `cwd` 置成 null（= 用户还没选项目）走 `createSession()` 的 null 返回分支，或直接在单测里 mock。**别指望在页面里拦 IPC**。
 - **成功路径的 IPC 计数**：数主进程日志（本仓 backend 每次建会话会打 `session created`，脚本按行数取差），或用应用的 store 状态断言（页面内 `await import("/src/stores/*.ts")` 拿到的就是应用在用的同一份实例）。
+  - 2026-10-12 补充（qol3 阶段 1 实测）：计数「某请求触发了几次」时，**订阅 store 的上升沿**（`useSettingsStore.subscribe((s, prev) => …)` 数 `loading`/`refreshing` false→true）比数 IPC 更实用 —— 只要发起方在**发起请求时同步置位**，上升沿就与真实请求一一对应，且不受对端快慢影响（在途去重也能被这条口径验证）。同理「副作用是否只发生一次」可以把 store 上的 action 换成一个计数包装（`useXStore.setState({ action: async () => { count++; return orig() }) }`，store 内部走 `getState().action()` 时会用到包装后的版本）。
 - 需要「点真实子代理卡」这类依赖模型行为的场景，优先找**历史回放**入口：历史里已有子代理运行的父会话，打开它 → transcript 重放出卡片 → 点它，同样落到只读检视页，且完全确定性（子会话文件在 `<agentDir>/sessions-subagents/`，后端按路径判定 `readOnly`）。现场真跑一次 subagent 依赖凭证可用，dev 里常 401 拿不到可点卡片。
 
 ### 绝不打印/提交 API key

@@ -87,11 +87,113 @@ interface SettingsStore {
 	setLanRemoteControl: (enabled: boolean) => Promise<void>;
 }
 
+/** 目录请求来源（产出快照的那次请求；仅用于诊断与断言） */
+type CatalogSource = "local" | "network" | "mutation";
+
+/** 目录请求载荷：本地请求顺带带回子代理清单（与目录同一次发布，避免两个字段互相覆盖） */
+interface CatalogPayload {
+	providers: ProviderInfo[];
+	subagents?: SubagentInfo[];
+	source?: CatalogSource;
+}
+
 /** Electron `invoke` 的失败信息带前缀（`Error invoking remote method '<channel>': Error: `），
  *  剥掉它只留后端原文 —— 表单校验提示（provider ID 非法 / 旧 provider 已改名 等）才读得懂 */
 function errorMessage(error: unknown): string {
 	const raw = error instanceof Error ? error.message : String(error);
 	return raw.replace(/^Error invoking remote method '[^']*':\s*(?:Error:\s*)?/, "");
+}
+
+/**
+ * 模型目录（providers）请求协调器（spec D3；机制与反例见 `.local/agent-work/probe/phase0-design.md` §2）。
+ *
+ * 三条**独立**仲裁，别合并：
+ * - **发布**：请求开始领全局号 `token`，`token > publishedSeq`（后开始者赢）**且** 该读取发出后没有发生写盘
+ *   （`epochAtStart === mutationEpoch`）才发布。后半条是「变更后的重读语义」的关键：写盘前发出的读取，
+ *   无论多晚回、多成功都不能发布，否则刚删掉的 provider 会复活。
+ * - **error**：只有结算时仍是全局最新号（`token === seq`）的请求写 —— 旧请求的成败不得覆盖新请求的结论。
+ * - **spinner**：按类别（local=loading / network=refreshing）记在途号，只有该类别的**最新**请求有资格清。
+ *   跨类别互不干扰（否则「本地在途 + 联网先结束」会让 loading 永久卡住）；同类别并发时（见下）旧请求也不清。
+ *
+ * 刻意**不采用**「失败也占位（已结算号水位）」的规则：那会让「首次打开面板 + 联网立刻失败」时本地读取被一并拒掉，
+ * 面板空列表。代价是「同一写盘世代下，较老的成功读取可以兜底发布」。
+ */
+function createCatalogCoordinator(deps: {
+	load: (kind: "local" | "network") => Promise<CatalogPayload>;
+	publish: (payload: CatalogPayload) => void;
+	setFlags: (flags: { loading?: boolean; refreshing?: boolean; error?: string | null }) => void;
+}) {
+	type Kind = "local" | "network";
+	/** `token` = 该次请求的全局号：多个入口 await 同一个在途请求时，调用方靠它去重「每个有效发布只做一次副作用」 */
+	type Result = { published: boolean; token: number };
+	let seq = 0;
+	let publishedSeq = 0;
+	const kindSeq: Record<Kind, number> = { local: 0, network: 0 };
+	let mutationEpoch = 0;
+	let localInFlight: { epoch: number; promise: Promise<Result> } | null = null;
+	let networkInFlight: Promise<Result> | null = null;
+
+	const setSpinner = (kind: Kind, on: boolean) =>
+		deps.setFlags(kind === "network" ? { refreshing: on } : { loading: on });
+
+	const run = async (kind: Kind, source: CatalogSource): Promise<Result> => {
+		const token = ++seq;
+		const kindToken = ++kindSeq[kind];
+		const epochAtStart = mutationEpoch;
+		setSpinner(kind, true);
+		deps.setFlags({ error: null }); // 新请求开始即清旧错误（结论由最新请求负责）
+		try {
+			const payload = await deps.load(kind);
+			if (token > publishedSeq && epochAtStart === mutationEpoch) {
+				publishedSeq = token;
+				deps.publish({ ...payload, source });
+				return { published: true, token };
+			}
+			// 否则丢弃：要么已有更晚发出的结果落地，要么本快照可能早于某次写盘（不能复活旧数据）
+			return { published: false, token };
+		} catch (error) {
+			// 失败不发布：保留最后一次成功发布的快照（可能已过期），由 error 提示用户重试
+			if (token === seq) deps.setFlags({ error: errorMessage(error) });
+			return { published: false, token };
+		} finally {
+			if (kindToken === kindSeq[kind]) setSpinner(kind, false);
+		}
+	};
+
+	const startLocal = (source: CatalogSource): Promise<Result> => {
+		const promise = run("local", source).finally(() => {
+			if (localInFlight && localInFlight.promise === promise) localInFlight = null;
+		});
+		localInFlight = { epoch: mutationEpoch, promise };
+		return promise;
+	};
+
+	return {
+		/** 面板加载 / 分类切换：同一写盘世代下的在途读取可复用（single-flight） */
+		refreshLocal(): Promise<Result> {
+			const current = localInFlight;
+			if (current && current.epoch === mutationEpoch) return current.promise;
+			return startLocal("local");
+		},
+		/**
+		 * 写盘成功后调用（**必须**读到写盘后的状态）：推进写盘世代 ⇒ 写盘前发出的读取一律不复用，
+		 * 一定新发一次读取。调用方须保证此刻写盘 IPC 已 resolve（后端各变更最后一步 `refreshLocalModels()`
+		 * 在 resolve 之前完成，见 `backend/src/settings/settings.ts`）。
+		 */
+		refreshAfterMutation(): Promise<Result> {
+			mutationEpoch += 1;
+			return startLocal("mutation");
+		},
+		/** 联网刷新（自动入口 + 手动入口共用，single-flight） */
+		refreshNetwork(): Promise<Result> {
+			if (networkInFlight) return networkInFlight;
+			const promise = run("network", "network").finally(() => {
+				if (networkInFlight === promise) networkInFlight = null;
+			});
+			networkInFlight = promise;
+			return promise;
+		},
+	};
 }
 
 export const useSettingsStore = create<SettingsStore>((set, get) => {
@@ -157,10 +259,81 @@ export const useSettingsStore = create<SettingsStore>((set, get) => {
 		return result;
 	};
 
-	/** 变更后刷新 provider 列表与模型选择器数据 */
+	/** 变更后刷新 provider 列表与模型选择器数据（目录重读必须推进写盘世代，见协调器 `refreshAfterMutation`） */
 	const afterMutation = async () => {
-		await get().refresh();
+		await loadPanelData("mutation");
 		await useSessionsStore.getState().loadModels();
+	};
+
+	/** 上一次触发过「选择器刷新」的目录请求号（同一在途请求的多个入口只刷一次） */
+	let selectorRefreshToken = 0;
+
+	/** 目录（providers/subagents）走协调器：谁多发谁发、谁后开始谁赢，都在里面仲裁 */
+	const coordinator = createCatalogCoordinator({
+		load: async (kind) => {
+			if (kind === "network")
+				return { providers: await getPi().listProviders({ options: { forceNetwork: true } }) };
+			const [providers, subagents] = await Promise.all([getPi().listProviders({}), getPi().listSubagents()]);
+			return { providers, subagents };
+		},
+		publish: ({ providers, subagents }) => set(subagents ? { providers, subagents } : { providers }),
+		setFlags: (flags) => set(flags),
+	});
+
+	/** 已加载资源（skills/extensions）与目录无关，自己发布、自己吞错误（不再污染目录请求的 error 仲裁） */
+	const loadLoadedResources = async (): Promise<void> => {
+		const activeSessionId = useSessionsStore.getState().activeSessionId;
+		if (!activeSessionId) {
+			set({ skills: null, skillDiagnostics: [], extensions: null, extensionErrors: [] });
+			return;
+		}
+		try {
+			const resources = await getPi().getLoadedResources({ sessionId: activeSessionId });
+			// 竞态守卫：await 期间活跃会话已切换则丢弃（防把 A 项目的资源写到 B 会话的面板）
+			if (useSessionsStore.getState().activeSessionId === activeSessionId) {
+				set({
+					skills: resources.skills,
+					skillDiagnostics: resources.skillDiagnostics,
+					extensions: resources.extensions,
+					extensionErrors: resources.extensionErrors,
+				});
+			}
+		} catch (error) {
+			console.error("[settings] 已加载资源读取失败", error);
+		}
+	};
+
+	/**
+	 * 面板数据装载。目录（providers/subagents）经协调器仲裁（loading/error/发布都在里面）；
+	 * 其余本地配置/偏好/资源各自独立发布 —— 不得因为目录请求被拒而丢字段。
+	 */
+	const loadPanelData = async (mode: "local" | "mutation"): Promise<void> => {
+		// 权限门控配置是本地文件读，独立加载，不被 provider 列表阻塞
+		// （仅派生 enabled=false 逃生舱态供 chip 禁用提示；开关 UI 已撒，spec permission-mode D7）
+		void getPi()
+			.getPermissionConfig()
+			.then((permission) => set({ permissionGateOff: !permission.enabled }))
+			.catch(() => {});
+		// 上下文管理模式二态同样本地文件读，独立加载
+		void getPi()
+			.getContextManagerConfig()
+			.then((cm) => set({ contextManagerMode: cm.mode }))
+			.catch(() => {});
+		// channel-watch 开关同样本地文件读，独立加载
+		void getPi()
+			.getChannelWatchConfig()
+			.then((cw) => set({ channelWatchEnabled: cw.enabled }))
+			.catch(() => {});
+		void getPi()
+			.lanGetStatus()
+			.then((lanStatus) => set({ lanStatus }))
+			.catch(() => {});
+		// modelPrefs 已由串行读路径发布，不能等目录返回后再写入旧快照；
+		// 读失败只记日志：提示区 error 字段的写入权收敛给目录请求仲裁（变更路径的失败仍由 changePrefs 写）
+		void readPrefs().catch((error) => console.error("[settings] 模型偏好读取失败", error));
+		await (mode === "mutation" ? coordinator.refreshAfterMutation() : coordinator.refreshLocal());
+		// 已加载资源按当前活跃会话（其项目）展示；新会话页（还没建后端会话）时为 null（面板显示空态）
+		await loadLoadedResources();
 	};
 
 	return {
@@ -196,66 +369,18 @@ export const useSettingsStore = create<SettingsStore>((set, get) => {
 		setCategory: (category) => set({ category }),
 
 		refresh: async () => {
-			set({ loading: true, error: null });
-			// 权限门控配置是本地文件读，独立加载，不被 provider 列表阻塞
-			// （仅派生 enabled=false 逃生舱态供 chip 禁用提示；开关 UI 已撒，spec permission-mode D7）
-			void getPi()
-				.getPermissionConfig()
-				.then((permission) => set({ permissionGateOff: !permission.enabled }))
-				.catch(() => {});
-			// 上下文管理模式二态同样本地文件读，独立加载
-			void getPi()
-				.getContextManagerConfig()
-				.then((cm) => set({ contextManagerMode: cm.mode }))
-				.catch(() => {});
-			// channel-watch 开关同样本地文件读，独立加载
-			void getPi()
-				.getChannelWatchConfig()
-				.then((cw) => set({ channelWatchEnabled: cw.enabled }))
-				.catch(() => {});
-			void getPi()
-				.lanGetStatus()
-				.then((lanStatus) => set({ lanStatus }))
-				.catch(() => {});
-			try {
-				const [providers, , subagents] = await Promise.all([
-					getPi().listProviders({}),
-					readPrefs(),
-					getPi().listSubagents(),
-				]);
-				// modelPrefs 已由串行读路径发布，不能等目录返回后再写入旧快照。
-				set({ providers, subagents, loading: false });
-				// 已加载资源按当前活跃会话（其项目）展示；新会话页（还没建后端会话）时为 null（面板显示空态）
-				const activeSessionId = useSessionsStore.getState().activeSessionId;
-				if (activeSessionId) {
-					const resources = await getPi().getLoadedResources({ sessionId: activeSessionId });
-					// 竞态守卫：await 期间活跃会话已切换则丢弃（防把 A 项目的资源写到 B 会话的面板）
-					if (useSessionsStore.getState().activeSessionId === activeSessionId) {
-						set({
-							skills: resources.skills,
-							skillDiagnostics: resources.skillDiagnostics,
-							extensions: resources.extensions,
-							extensionErrors: resources.extensionErrors,
-						});
-					}
-				} else {
-					set({ skills: null, skillDiagnostics: [], extensions: null, extensionErrors: [] });
-				}
-			} catch (error) {
-				set({ loading: false, error: error instanceof Error ? error.message : String(error) });
-			}
+			// 目录走协调器（loading/error/发布都受仲裁）；prefs/subagents/资源各自独立发布
+			await loadPanelData("local");
 		},
 
 		refreshProvidersFromNetwork: async () => {
-			set({ refreshing: true, error: null });
-			try {
-				const providers = await getPi().listProviders({ options: { forceNetwork: true } });
-				set({ providers, refreshing: false });
-				// runtime 已持有最新目录，本地刷新模型选择器数据即可
-				await useSessionsStore.getState().loadModels();
-			} catch (error) {
-				set({ refreshing: false, error: error instanceof Error ? error.message : String(error) });
-			}
+			const { published, token } = await coordinator.refreshNetwork();
+			// runtime 已持有最新目录，本地刷新模型选择器数据即可；
+			// 只有**真的发布了新目录**才刷新 Composer 的模型选择器（被拒的旧结果不触发副作用，见 spec D3）；
+			// 同一在途请求被多个入口 await（进入分类自动 + 手动点击）时按请求号去重，只刷一次。
+			if (!published || token === selectorRefreshToken) return;
+			selectorRefreshToken = token;
+			await useSessionsStore.getState().loadModels();
 		},
 
 		setContextManagerMode: async (mode) => {

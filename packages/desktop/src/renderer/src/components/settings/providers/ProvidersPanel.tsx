@@ -1,5 +1,5 @@
 import type { ProviderInfo } from "@percho/shared";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useT } from "../../../i18n";
 import { useSettingsStore } from "../../../stores/settings";
 import { RefreshIcon } from "../../icons";
@@ -19,6 +19,14 @@ export function ProvidersPanel() {
 	const refreshing = useSettingsStore((s) => s.refreshing);
 	const refreshFromNetwork = useSettingsStore((s) => s.refreshProvidersFromNetwork);
 	const error = useSettingsStore((s) => s.error);
+
+	// 每次进入模型分类（本面板挂载）自动联网刷新一次目录（spec D3），手动刷新入口保留。
+	// 触发面 = 组件挂载：分类切换 / 关闭设置重开都会各触发一次；
+	// 面板内的 providers↔subagents 子 tab 切换不重新挂载 ⇒ 不额外触发。
+	// 并发入口由 store 的 single-flight 兜底（同一在途请求复用；StrictMode 双跑也只发一次）。
+	useEffect(() => {
+		void useSettingsStore.getState().refreshProvidersFromNetwork();
+	}, []);
 
 	return (
 		<div>
