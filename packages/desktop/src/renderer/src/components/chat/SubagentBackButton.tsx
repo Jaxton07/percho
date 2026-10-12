@@ -3,16 +3,14 @@ import { useT } from "../../i18n";
 import { useSessionsStore } from "../../stores/sessions";
 import { useSubagentReturnStore } from "../../stores/subagent-return";
 import { ArrowLeftIcon } from "../icons";
-import { Tooltip } from "../ui/Tooltip";
 import { backButtonOffset } from "./subagent-back-offset";
 
 /**
  * 子代理检视页的「返回父会话」入口（spec D4）：当前会话有已知父关系时才出现，否则渲染 null。
  *
- * 形态：**仅一枚 ghost 图标**（21px 箭头，hover 才现底色），无常驻文案、无胶囊 —— 文案只在
- * Tooltip（悬停出现）与 `aria-label`（无障碍名）里存在。
+ * 形态：**只有一枚 ghost 图标**（21px 箭头，hover 才现底色）—— 无常驻文案、无 Tooltip 气泡、无原生 title，
+ * 语义只靠 `aria-label`（无障碍名）承载（产品侧明确要求不出现文字提示）。
  * 尺寸：固定 `h-[42px] w-[42px] shrink-0` + `self-start`，不因同容器里更宽的插件贡献被 flex 拉伸。
- * Tooltip 用 `align="start"`：气泡左对齐向右伸展，不向左溢出。
  *
  * 水平位置：**聊天区左缘与对话区（气泡左缘）之间那条空带的正中**（算式在 `subagent-back-offset`，
  * 那里解释了为什么不能用 CSS）；用 `useLayoutEffect` + ResizeObserver 写在自身 `transform` 上
@@ -70,16 +68,14 @@ export function SubagentBackButton() {
 	if (!activeSessionId || !hasParent) return null;
 
 	return (
-		<Tooltip label={t("message.subagent.backToParent")} align="start" className="self-start">
-			<button
-				ref={ref}
-				type="button"
-				aria-label={t("message.subagent.backToParent")}
-				onClick={() => void returnToParent(activeSessionId)}
-				className="pointer-events-auto flex h-[42px] w-[42px] shrink-0 items-center justify-center rounded-xl text-ink-faint transition-colors hover:bg-hover hover:text-ink"
-			>
-				<ArrowLeftIcon size={21} />
-			</button>
-		</Tooltip>
+		<button
+			ref={ref}
+			type="button"
+			aria-label={t("message.subagent.backToParent")}
+			onClick={() => void returnToParent(activeSessionId)}
+			className="pointer-events-auto flex h-[42px] w-[42px] shrink-0 self-start items-center justify-center rounded-xl text-ink-faint transition-colors hover:bg-hover hover:text-ink"
+		>
+			<ArrowLeftIcon size={21} />
+		</button>
 	);
 }
