@@ -24,26 +24,35 @@ export interface AnchorTreeAdapter<T> {
 	box: (node: T) => AnchorBox;
 }
 
-/** 观察集合：宿主的**全部**元素子节点（含当前 0 高的；不含 contents 包层里的后代 —— 那些由递归分支补上） */
+/** 宿主的直接元素子节点（渲染根） */
 export function slotRoots<T>(host: T, adapter: AnchorTreeAdapter<T>): T[] {
 	return adapter.elementChildren(host);
 }
 
 /**
- * 测量集合（占位盒）：递归穿过 `display: contents` 包层，取「高度 > 0」的盒子。
- * 多根 / 包层 / 混合都支持。
+ * **观察集合**：所有「可能变成盒子」的元素 —— 渲染根 + 递归穿过 `display: contents` 包层后的后代，
+ * **不做高度筛选**（review R11 反例第二轮：包层里当前 0 高的子节点也必须被观察，否则它长大后布局不跟）。
+ * `display: contents` 的元素自己没有盒、ResizeObserver 也不会为它回调，所以只能观察它里面的盒子。
  */
-export function occupyingBoxes<T>(host: T, adapter: AnchorTreeAdapter<T>): T[] {
+export function potentialBoxes<T>(host: T, adapter: AnchorTreeAdapter<T>): T[] {
 	const out: T[] = [];
 	const walk = (node: T) => {
 		if (adapter.isDisplayContents(node)) {
 			for (const child of adapter.elementChildren(node)) walk(child);
 			return;
 		}
-		if (adapter.box(node).height > 0) out.push(node);
+		out.push(node);
 	};
 	for (const root of slotRoots(host, adapter)) walk(root);
 	return out;
+}
+
+/**
+ * **测量集合**（占位盒）：在观察集合的基础上只留「高度 > 0」的盒子。
+ * 多根 / 包层 / 混合都支持。
+ */
+export function occupyingBoxes<T>(host: T, adapter: AnchorTreeAdapter<T>): T[] {
+	return potentialBoxes(host, adapter).filter((node) => adapter.box(node).height > 0);
 }
 
 /** 锚点底边 = 所有占位盒 bottom 的最大值；没有任何占位盒 ⇒ null（调用方回到基准位置） */

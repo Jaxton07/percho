@@ -80,6 +80,11 @@ export function ChannelSubscriptionPill({
 		measure();
 		const observer = new ResizeObserver(measure);
 		observer.observe(el);
+		// 还要观察「决定可用宽的那个容器」（main）：胶囊活着的时候 main 变窄/变宽，内容自己是 `w-max`，
+		// 不会因此改变尺寸 ⇒ 只观察内容会漏掉重算（review R12 第二轮）。
+		const stackEl = el.closest("[data-corner-stack]");
+		const widthBlock = stackEl instanceof HTMLElement ? stackEl.offsetParent : null;
+		if (widthBlock instanceof HTMLElement) observer.observe(widthBlock);
 		observerRef.current = observer;
 	}, []);
 
@@ -110,7 +115,12 @@ export function ChannelSubscriptionPill({
 
 	const label = presence.display.join(" · ");
 	return (
-		<Tooltip label={label} align="end" className="pointer-events-auto">
+		<Tooltip
+			label={label}
+			align="end"
+			// 超长 / 多频道的完整名要在气泡里**可读**：局部限宽 + 允许换行（只覆盖本气泡，不动全局 Tooltip 样式）
+			className="pointer-events-auto [&>[role=tooltip]]:max-w-[320px] [&>[role=tooltip]]:whitespace-normal"
+		>
 			<span
 				className={`channel-pill rounded-full bg-surface shadow-pop${presence.opened ? " channel-pill-open" : ""}`}
 				style={{ width: targetWidth }}

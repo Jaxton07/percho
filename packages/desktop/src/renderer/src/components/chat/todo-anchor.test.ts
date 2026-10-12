@@ -1,5 +1,11 @@
 import { describe, expect, it } from "vitest";
-import { type AnchorTreeAdapter, anchorBottom, occupyingBoxes, slotRoots } from "./todo-anchor";
+import {
+	type AnchorTreeAdapter,
+	anchorBottom,
+	occupyingBoxes,
+	potentialBoxes,
+	slotRoots,
+} from "./todo-anchor";
 
 /**
  * 槽位锚点的纯逻辑（review R11 的反例就在这里）：
@@ -86,5 +92,29 @@ describe("anchorBottom（锚点底边）", () => {
 			{ name: "w", display: "contents" as const, children: [nested] },
 		]);
 		expect(anchorBottom(hostNode, adapter)).toBe(300);
+	});
+});
+
+describe("potentialBoxes（观察集合第二轮：递归 + 不做高度筛选）", () => {
+	it("contents 包层里**当前 0 高**的子节点也必须在观察集合里（R11 第二轮反例）", () => {
+		const lateChild = { name: "包层里的 0 高子节点", height: 0 };
+		const wrapper = { name: "w", display: "contents" as const, children: [lateChild] };
+		expect(potentialBoxes(host([wrapper]), adapter).map((n) => n.name)).toEqual(["包层里的 0 高子节点"]);
+		// 但它不算「占位」（测量集合里没有）—— 两者必须分开
+		expect(occupyingBoxes(host([wrapper]), adapter)).toEqual([]);
+	});
+
+	it("多层包层也递归到底", () => {
+		const deep = { name: "deep", height: 0 };
+		const inner = { name: "inner", display: "contents" as const, children: [deep] };
+		const outer = { name: "outer", display: "contents" as const, children: [inner] };
+		expect(potentialBoxes(host([outer]), adapter).map((n) => n.name)).toEqual(["deep"]);
+	});
+
+	it("直接根与包层后代都在观察集合里，且包层自己不在（它没有盒）", () => {
+		const direct = { name: "direct", height: 12 };
+		const nested = { name: "nested", height: 0 };
+		const wrapper = { name: "w", display: "contents" as const, children: [nested] };
+		expect(potentialBoxes(host([direct, wrapper]), adapter).map((n) => n.name)).toEqual(["direct", "nested"]);
 	});
 });

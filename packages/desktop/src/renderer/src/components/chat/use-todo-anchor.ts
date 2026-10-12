@@ -1,5 +1,5 @@
 import { type RefObject, useEffect, useState } from "react";
-import { type AnchorTreeAdapter, occupyingBoxes, slotRoots } from "./todo-anchor";
+import { type AnchorTreeAdapter, occupyingBoxes, potentialBoxes } from "./todo-anchor";
 
 /** 槽位底部到胶囊之间的间距（设计基准 8px） */
 const ANCHOR_GAP = 8;
@@ -64,13 +64,12 @@ export function useTodoAnchor({
 
 		const resizeObserver = new ResizeObserver(apply);
 		const observed = new Set<HTMLElement>();
-		// 观察集合 = 全部渲染根 + 遍历到的占位盒（contents 包层没有盒子、RO 不会为它回调，要观察它里面的盒子）
+		// 观察集合 = **所有潜在盒**（渲染根 + 递归 contents 包层后的后代，含当前 0 高的）：
+		// 少观察一个「现在还是 0 高、以后会长内容」的节点，就会静默失去跟随（review R11 两轮反例）
 		const rebind = () => {
 			for (const node of observed) resizeObserver.unobserve(node);
 			observed.clear();
-			const targets = new Set<HTMLElement>(slotRoots(host, domAdapter));
-			for (const box of occupyingBoxes(host, domAdapter)) targets.add(box);
-			for (const node of targets) {
+			for (const node of potentialBoxes(host, domAdapter)) {
 				resizeObserver.observe(node);
 				observed.add(node);
 			}

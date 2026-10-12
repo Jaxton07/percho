@@ -323,7 +323,8 @@ async function pageScript() {
 		step("H 多根槽位", {
 			roots: probeTodos().length,
 			minBottom: Math.round(minBottom),
-			maxBottom: Math.round(maxBottom),
+			// H 段（多根）与 N 段（0 高根后增长）各自的最底边
+			hMaxBottom: Math.round(maxBottom),
 			stackTop: Math.round(stackTopNow),
 		});
 
@@ -438,75 +439,6 @@ async function pageScript() {
 		);
 		step("K 点击穿透与滚动", { below: below?.tagName ?? null });
 
-		const LONG_TOPIC = "a-very-long-channel-topic-name-for-narrow-window-ellipsis-check";
-
-		/**
-		 * L 段（窄窗）：由 runner 先打开 CDP 视口仿真（窗口本身有最小宽度，压不到 ~320 的聊天区），
-		 * 再调用这里。断言 = 胶囊实际左右边界在聊天区内、宽度不超过可用宽、名字被夹取截断、
-		 * glyph 在位且不越界、无横向滚动；Tooltip 的悬停检查由 runner 拿 `hoverPoint` 做。
-		 */
-		window.__qol3Narrow = async () => {
-			try {
-				await sleep(400);
-				const mainRectNarrow = main.getBoundingClientRect();
-				E(mainRectNarrow.width < 360, `聊天区没被压到窄窗量级：${Math.round(mainRectNarrow.width)}`);
-				inject([LONG_TOPIC]);
-				await sleep(700);
-				const narrow = sample();
-				const pillRectNarrow = narrow.pillRect;
-				E(pillRectNarrow, "窄窗下胶囊没出现");
-				E(
-					pillRectNarrow.left >= mainRectNarrow.left + 15 &&
-						pillRectNarrow.right <= mainRectNarrow.right - 15,
-					`窄窗下胶囊越出聊天区：[${Math.round(pillRectNarrow.left)}, ${Math.round(pillRectNarrow.right)}] vs main [${Math.round(mainRectNarrow.left)}, ${Math.round(mainRectNarrow.right)}]`,
-				);
-				E(
-					pillRectNarrow.width <= mainRectNarrow.width - 31,
-					`窄窗下胶囊宽 ${Math.round(pillRectNarrow.width)} 超过可用宽 ${Math.round(mainRectNarrow.width - 32)}`,
-				);
-				// 关键：夹取必须由**可用宽**决定（而不是被 300 设计上限挡住）——名字可见宽要小于 300
-				E(
-					narrow.nameScroll && narrow.nameScroll.scroll > narrow.nameScroll.client,
-					`窄窗下频道名没有被省略：${JSON.stringify(narrow.nameScroll)}`,
-				);
-				E(
-					(narrow.nameScroll?.client ?? 999) < 300,
-					`窄窗下名字宽度仍顶到 300 上限（可用宽夹取没生效）：${JSON.stringify(narrow.nameScroll)}`,
-				);
-				const glyph = pill()?.querySelector("svg");
-				E(glyph, "窄窗下胶囊里没有 glyph");
-				E(
-					Math.round(glyph.getBoundingClientRect().width) === 13,
-					`glyph 尺寸异常：${Math.round(glyph.getBoundingClientRect().width)}`,
-				);
-				E(glyph.getBoundingClientRect().left >= mainRectNarrow.left + 15, "glyph 越出左边界");
-				const namesEl = pill()?.querySelector("span.truncate");
-				E(namesEl && namesEl.getBoundingClientRect().right <= mainRectNarrow.right - 15, "频道名越出右边界");
-				E(
-					document.documentElement.scrollWidth <= document.documentElement.clientWidth,
-					`窄窗出现横向滚动：${document.documentElement.scrollWidth}`,
-				);
-				step("L 窄窗夹取与边界", {
-					mainWidth: Math.round(mainRectNarrow.width),
-					pillWidth: Math.round(pillRectNarrow.width),
-					names: narrow.nameScroll,
-					glyph: Math.round(glyph.getBoundingClientRect().width),
-				});
-				R.env.hoverPoint = {
-					x: Math.round(pillRectNarrow.left + pillRectNarrow.width / 2),
-					y: Math.round(pillRectNarrow.top + pillRectNarrow.height / 2),
-				};
-				R.env.longTopic = LONG_TOPIC;
-			} catch (error) {
-				R.failure = String(error?.message ?? error);
-				R.failureStack = String(error?.stack ?? "")
-					.split("\n")
-					.slice(0, 4)
-					.join(" | ");
-			}
-			return R;
-		};
-
 		/* ============ M. 切会话：旧名字不得串到新会话 ============ */
 		const otherFile = window.__qol3OtherFile;
 		E(otherFile, "runner 没给第二个会话文件");
@@ -527,9 +459,120 @@ async function pageScript() {
 		step("M 切会话不串名字", { newId, badFrames: badFrames.length });
 		R.env.newSessionId = newId;
 
-		/* ============ N. 0 高根后增长（R11 反例）：观察集合要含当前 0 高的根 ============ */
+		const LONG_TOPIC = "a-very-long-channel-topic-name-for-narrow-window-ellipsis-check";
+		const MULTI_TOPICS = [LONG_TOPIC, "channel-subscription-pill", "session-qol-three"];
+		/** L/R12 第二轮：先在**正常宽度**注入一次，随后由 runner 改视口，检查**同一颗存活胶囊**是否重算 */
+		inject(MULTI_TOPICS);
+		await sleep(600);
+		const pillAtWide = pill();
+		E(pillAtWide, "宽窗下胶囊没出现");
+		const wideNames = sample().nameScroll;
+		R.env.wideNames = wideNames;
+		R.env.longTopic = MULTI_TOPICS.join(" · ");
+
+		/**
+		 * 窄窗段（runner 先打开 CDP 视口仿真把聊天区压到 ~320px）：**不重新 inject、不重挂**，
+		 * 只断言同一颗胶囊按新的可用宽重新夹取 + 实际左右边界 / glyph / 无横向滚动。
+		 */
+		window.__qol3Narrow = async () => {
+			try {
+				await sleep(500);
+				const mainRectNarrow = main.getBoundingClientRect();
+				E(mainRectNarrow.width < 360, `聊天区没被压到窄窗量级：${Math.round(mainRectNarrow.width)}`);
+				E(pill() === pillAtWide, "胶囊被重新挂载了（本段要验的是存活胶囊的自我重算）");
+				const narrow = sample();
+				const pillRectNarrow = narrow.pillRect;
+				E(pillRectNarrow, "窄窗下胶囊消失了");
+				E(
+					pillRectNarrow.left >= mainRectNarrow.left + 15 &&
+						pillRectNarrow.right <= mainRectNarrow.right - 15,
+					`窄窗下胶囊越出聊天区：[${Math.round(pillRectNarrow.left)}, ${Math.round(pillRectNarrow.right)}] vs main [${Math.round(mainRectNarrow.left)}, ${Math.round(mainRectNarrow.right)}]`,
+				);
+				E(
+					pillRectNarrow.width <= mainRectNarrow.width - 31,
+					`窄窗下胶囊宽 ${Math.round(pillRectNarrow.width)} 超过可用宽 ${Math.round(mainRectNarrow.width - 32)}`,
+				);
+				E(
+					narrow.nameScroll && narrow.nameScroll.scroll > narrow.nameScroll.client,
+					`窄窗下频道名没有被省略：${JSON.stringify(narrow.nameScroll)}`,
+				);
+				E(
+					(narrow.nameScroll?.client ?? 999) < 300,
+					`窄窗下名字仍顶到 300 上限（可用宽夹取没生效）：${JSON.stringify(narrow.nameScroll)}`,
+				);
+				E(
+					(narrow.nameScroll?.client ?? 0) < (wideNames?.client ?? 0),
+					`可用宽变窄后名字宽度没有跟着收：${JSON.stringify(narrow.nameScroll)} vs 宽窗 ${JSON.stringify(wideNames)}`,
+				);
+				const glyph = pill()?.querySelector("svg");
+				E(glyph, "窄窗下胶囊里没有 glyph");
+				E(
+					Math.round(glyph.getBoundingClientRect().width) === 13,
+					`glyph 尺寸异常：${Math.round(glyph.getBoundingClientRect().width)}`,
+				);
+				E(glyph.getBoundingClientRect().left >= mainRectNarrow.left + 15, "glyph 越出左边界");
+				const namesEl = pill()?.querySelector("span.truncate");
+				E(namesEl && namesEl.getBoundingClientRect().right <= mainRectNarrow.right - 15, "频道名越出右边界");
+				E(glyph.getBoundingClientRect().right <= namesEl.getBoundingClientRect().left, "glyph 与频道名重叠");
+				E(
+					Array.from(pill().querySelectorAll("span")).filter((el) => el.textContent === "·").length >=
+						MULTI_TOPICS.length - 1,
+					"多频道之间的间隔点数量不足",
+				);
+				E(
+					document.documentElement.scrollWidth <= document.documentElement.clientWidth,
+					`窄窗出现横向滚动：${document.documentElement.scrollWidth}`,
+				);
+				step("L 窄窗重算与边界", {
+					mainWidth: Math.round(mainRectNarrow.width),
+					pillWidth: Math.round(pillRectNarrow.width),
+					namesNarrow: narrow.nameScroll,
+					namesWide: wideNames,
+					glyph: Math.round(glyph.getBoundingClientRect().width),
+				});
+				R.env.hoverPoint = {
+					x: Math.round(glyph.getBoundingClientRect().left + 6),
+					y: Math.round(pillRectNarrow.top + pillRectNarrow.height / 2),
+				};
+			} catch (error) {
+				R.failure = String(error?.message ?? error);
+				R.failureStack = String(error?.stack ?? "")
+					.split("\n")
+					.slice(0, 4)
+					.join(" | ");
+			}
+			return R;
+		};
+
+		/** 宽窗回来段：同一颗胶囊应当按新的可用宽把名字放开（同样不重挂） */
+		window.__qol3Wide = async () => {
+			try {
+				await sleep(500);
+				E(pill() === pillAtWide, "回到宽窗时胶囊被重新挂载了");
+				const back = sample();
+				E(
+					(back.nameScroll?.client ?? 0) > (wideNames?.client ?? 0) - 1,
+					`回到宽窗后名字宽度没有恢复：${JSON.stringify(back.nameScroll)} vs ${JSON.stringify(wideNames)}`,
+				);
+				step("L2 宽窗恢复", { names: back.nameScroll });
+			} catch (error) {
+				R.failure = String(error?.message ?? error);
+			}
+			return R;
+		};
+
+		/** 收尾（runner 在截图前调用）：把注入的胶囊状态清掉 */
+		window.__qol3Cleanup = async () => {
+			inject([]);
+			await sleep(700);
+			R.env.cleaned = { pill: pill() === null };
+			return R;
+		};
+
+		/* ============ N. 0 高根后增长（R11 两轮反例）：直接根 + `display:contents` 包层里的 0 高子节点 ============ */
 		let growListeners = new Set();
 		let growHeight = 0;
+		let grownHeight = 0;
 		const GrowTodo = () => {
 			const [, force] = window.PerchoUI.React.useState(0);
 			window.PerchoUI.React.useEffect(() => {
@@ -537,11 +580,25 @@ async function pageScript() {
 				growListeners.add(fn);
 				return () => growListeners.delete(fn);
 			}, []);
-			return window.PerchoUI.React.createElement("div", {
-				"data-probe-todo": "grow",
-				className: "absolute top-2 right-4 z-20 rounded-xl bg-surface shadow-pop",
-				style: { width: "160px", height: `${growHeight}px` },
-			});
+			return window.PerchoUI.React.createElement(
+				window.PerchoUI.React.Fragment,
+				null,
+				window.PerchoUI.React.createElement("div", {
+					"data-probe-todo": "grow-direct",
+					className: "absolute top-2 right-4 z-20 rounded-xl bg-surface shadow-pop",
+					style: { width: "160px", height: `${growHeight}px` },
+				}),
+				// contents 包层（自己没有盒）里放一个 0 高子节点：观察集合必须递归到它
+				window.PerchoUI.React.createElement(
+					"div",
+					{ style: { display: "contents" } },
+					window.PerchoUI.React.createElement("div", {
+						"data-probe-todo": "grow-nested",
+						className: "absolute top-2 right-4 z-20 rounded-xl bg-surface shadow-pop",
+						style: { width: "120px", height: `${grownHeight}px`, marginTop: "60px" },
+					}),
+				),
+			);
 		};
 		registryMod.useUiPluginRegistry.setState({
 			overrides: {
@@ -550,34 +607,50 @@ async function pageScript() {
 		});
 		await setTodos(SHORT);
 		await sleep(400);
-		const growRoot = () => document.querySelector('[data-probe-todo="grow"]');
-		E(growRoot(), "0 高根没渲染出来");
-		E(growRoot().getBoundingClientRect().height === 0, "该用例前提是根初始高度为 0");
-		const stackTopBefore = sample().stackTop;
-		E(Math.abs(stackTopBefore - 8) < 1, `0 高根时堆叠该在基准位：${stackTopBefore}`);
-		growHeight = 140;
+		const growDirect = () => document.querySelector('[data-probe-todo="grow-direct"]');
+		const growNested = () => document.querySelector('[data-probe-todo="grow-nested"]');
+		E(growDirect() && growNested(), "0 高根没渲染出来");
+		E(
+			growDirect().getBoundingClientRect().height === 0 && growNested().getBoundingClientRect().height === 0,
+			"该用例前提是两个根初始高度都为 0",
+		);
+		E(Math.abs(sample().stackTop - 8) < 1, "全 0 高时堆叠该在基准位");
+		// 只让**包层里的**那个子节点长高：它在观察集合里才跟得上
+		grownHeight = 180;
 		for (const fn of growListeners) fn();
 		await sleep(400);
-		const bottomGrown = growRoot().getBoundingClientRect().bottom;
-		const stackTopAfter = sample().stackTop;
+		const nestedBottom = growNested().getBoundingClientRect().bottom;
+		const stackTopNested = sample().stackTop;
 		E(
-			Math.abs(stackTopAfter - (bottomGrown - main.getBoundingClientRect().top + 8)) < 3,
-			`0 高根增长后堆叠没跟上（top=${stackTopAfter}，期望 ${bottomGrown - main.getBoundingClientRect().top + 8}）`,
+			Math.abs(stackTopNested - (nestedBottom - main.getBoundingClientRect().top + 8)) < 3,
+			`contents 包层里的 0 高子节点长大后堆叠没跟上（top=${stackTopNested}）`,
 		);
-		step("N 0 高根后增长", {
-			stackTopBefore,
-			stackTopAfter: Math.round(stackTopAfter),
-			grownBottom: Math.round(bottomGrown),
+		// 再让直接根也长高（取最大底边）
+		growHeight = 260;
+		for (const fn of growListeners) fn();
+		await sleep(400);
+		const grownMaxBottom = Math.max(
+			growDirect().getBoundingClientRect().bottom,
+			growNested().getBoundingClientRect().bottom,
+		);
+		const stackTopBoth = sample().stackTop;
+		E(
+			Math.abs(stackTopBoth - (grownMaxBottom - main.getBoundingClientRect().top + 8)) < 3,
+			`两个根都长高后堆叠没取最大底边（top=${stackTopBoth}）`,
+		);
+		step("N 0 高根后增长（含 contents 包层）", {
+			stackTopNested: Math.round(stackTopNested),
+			nestedBottom: Math.round(nestedBottom),
+			stackTopBoth: Math.round(stackTopBoth),
+			maxBottom: Math.round(grownMaxBottom),
 		});
 		growListeners = new Set();
 
 		/* ---- 收尾：恢复原会话 + 清掉探针注入 ---- */
 		registryMod.useUiPluginRegistry.setState({ overrides: {}, contributions: {} });
 		uiPluginsMod.useUiPluginsStore.setState((s) => ({ config: { ...s.config, enabled: false } }));
-		inject([]);
 		await setTodos([]);
-		await sleep(500);
-		R.env.cleaned = { pill: pill() === null, contrib: contrib() === null };
+		await sleep(300);
 	} catch (error) {
 		R.failure = String(error?.message ?? error);
 		R.failureStack = String(error?.stack ?? "")
@@ -686,6 +759,9 @@ await new Promise((r) => setTimeout(r, 1000));
 const reducedResult = await evalIn(`(${pageScript.toString()})()`, true);
 await cdp.send("Emulation.setEmulatedMedia", { features: [] });
 
+console.log(`主段：${JSON.stringify(result, null, 2)}`);
+if (result.failure) console.error(`✗ 主段失败：${result.failure} | ${result.failureStack ?? ""}`);
+
 // L 段（窄窗）：窗口有最小宽度 ⇒ 用 CDP 视口仿真把聊天区压到 ~320px，再调页面侧那段专门检查
 await cdp.send("Emulation.setDeviceMetricsOverride", {
 	width: 560,
@@ -696,7 +772,7 @@ await cdp.send("Emulation.setDeviceMetricsOverride", {
 const narrow = result.failure ? {} : await evalIn("window.__qol3Narrow()", true);
 if (narrow?.failure) console.error(`✗ 窄窗段失败：${narrow.failure}`);
 
-// 悬停检查：真实鼠标移到胶囊中心，断言 Tooltip 给出**完整**频道名（R12 要求）
+// 悬停检查：真实鼠标移到胶囊的 glyph 上，断言 Tooltip **可见**、给出**完整**（多频道）名字、左右都不溢出、且换行可读
 const hoverPoint = narrow?.env?.hoverPoint;
 if (hoverPoint && narrow?.env?.longTopic) {
 	await cdp.send("Input.dispatchMouseEvent", {
@@ -705,26 +781,51 @@ if (hoverPoint && narrow?.env?.longTopic) {
 		y: hoverPoint.y,
 		buttons: 0,
 	});
-	await new Promise((r) => setTimeout(r, 700));
+	await new Promise((r) => setTimeout(r, 800));
 	const tip = await evalIn(`(() => {
 		const el = document.querySelector('[role="tooltip"]');
 		if (!el) return null;
 		const r = el.getBoundingClientRect();
-		return { text: el.textContent, left: Math.round(r.left), right: Math.round(r.right) };
+		const style = getComputedStyle(el);
+		return {
+			text: el.textContent,
+			opacity: style.opacity,
+			left: Math.round(r.left),
+			right: Math.round(r.right),
+			top: Math.round(r.top),
+			height: Math.round(r.height),
+			width: Math.round(r.width),
+			viewportWidth: window.innerWidth,
+			lineHeight: Math.round(Number.parseFloat(style.lineHeight) || 0),
+		};
 	})()`);
 	console.log(`Tooltip 测量：${JSON.stringify(tip)}`);
-	if (!tip || tip.text !== narrow.env.longTopic) {
-		console.error(`✗ 窄窗 Tooltip 没给出完整频道名：${JSON.stringify(tip)}`);
-		process.exitCode = 1;
-	} else if (tip.left < 0) {
-		console.error(`✗ Tooltip 向左溢出可见区：${tip.left}`);
+	const problems = [];
+	if (!tip) problems.push("Tooltip 没渲染出来");
+	else {
+		if (tip.text !== narrow.env.longTopic) problems.push(`文本不完整：${tip.text}`);
+		if (tip.opacity !== "1") problems.push(`不可见（opacity=${tip.opacity}）`);
+		if (tip.left < 0) problems.push(`向左溢出：${tip.left}`);
+		if (tip.right > tip.viewportWidth) problems.push(`向右溢出：${tip.right} > ${tip.viewportWidth}`);
+		if (tip.width > 340) problems.push(`气泡过宽：${tip.width}`);
+		if (tip.height <= tip.lineHeight)
+			problems.push(`超长名字没有换行可读：height=${tip.height} lineHeight=${tip.lineHeight}`);
+	}
+	if (problems.length > 0) {
+		console.error(`✗ 窄窗 Tooltip: ${problems.join("；")}`);
 		process.exitCode = 1;
 	} else {
-		console.log(`✓ Tooltip 给出完整频道名且不溢出（left=${tip.left}）`);
+		console.log(
+			`✓ Tooltip 可见、完整、换行可读且不溢出（left=${tip.left} right=${tip.right} h=${tip.height}）`,
+		);
 	}
 }
 
 await cdp.send("Emulation.clearDeviceMetricsOverride");
+const wide = result.failure || narrow?.failure ? {} : await evalIn("window.__qol3Wide()", true);
+if (wide?.failure) console.error(`✗ 宽窗恢复段失败：${wide.failure}`);
+const cleanup = result.failure || wide?.failure ? {} : await evalIn("window.__qol3Cleanup()", true);
+if (cleanup?.env && cleanup.env.cleaned?.pill !== true) console.error("✗ 收尾没清掉胶囊（截图会带注入物）");
 
 if (WITH_SHOTS) {
 	/**
@@ -788,12 +889,14 @@ ws.close();
 const summary = {
 	main: result,
 	narrow,
+	wide,
+	cleanup: cleanup?.env ?? null,
 	reducedMotion: reducedResult,
 	injected: { otherFile: candidates[1], reducedRan: reduced === true },
 };
 console.log(JSON.stringify(summary, null, 2));
-if (result.failure || reducedResult.failure || narrow?.failure) {
-	console.error("✗ 验收失败：", result.failure ?? narrow?.failure ?? reducedResult.failure);
+if (result.failure || reducedResult.failure || narrow?.failure || wide?.failure) {
+	console.error("✗ 验收失败：", result.failure ?? narrow?.failure ?? wide?.failure ?? reducedResult.failure);
 	process.exit(1);
 }
 console.log("\n✓ 频道胶囊 + 右上堆叠真机验收全部断言通过");
