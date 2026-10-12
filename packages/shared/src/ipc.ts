@@ -1,3 +1,4 @@
+import type { ChannelSubscriptionsSnapshot } from "./channel-subscriptions";
 import type {
 	ExtensionDialogRequest,
 	ExtensionDialogResolved,
@@ -63,4 +64,6 @@ export interface PiApi extends InvokeApi<typeof CHANNEL_TABLE> {
 	onExtensionEditorText(cb: (event: ExtensionEditorTextEvent) => void): () => void;
 	/** MCP 运行态变化（每个 server 的工具 + 失效原因 + 全局提示；面板刷新用） */
 	onMcpServersChanged(cb: (payload: McpServersChangedPayload) => void): () => void;
+	/** 频道订阅快照变化（spec D1）：载荷是完整快照，renderer 自行按 (generation, revision) 判新旧 */
+	onChannelSubscriptionsChanged(cb: (payload: ChannelSubscriptionsSnapshot) => void): () => void;
 }

@@ -1,3 +1,4 @@
+export * from "./channel-subscriptions";
 export * from "./errors";
 export * from "./extension-dialog";
 export * from "./ipc";

@@ -61,5 +61,7 @@ export function registerIpc(
 	forward(backend.onExtensionEditorText.bind(backend), IpcChannels.ExtensionEditorText);
 	forward(backend.onLoginEvent.bind(backend), IpcChannels.SettingsLoginEvent);
 	forward(backend.onMcpServersChanged.bind(backend), IpcChannels.McpServersChanged);
+	// 频道订阅快照变化（spec D1）：payload 自带 generation+revision，renderer 自行判新旧
+	forward(backend.onChannelSubscriptionsChanged.bind(backend), IpcChannels.ChannelSubscriptionsChanged);
 	forward(onUpdateState, IpcChannels.UpdateEvent);
 }

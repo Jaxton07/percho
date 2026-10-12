@@ -22,6 +22,7 @@ import {
 } from "@earendil-works/pi-coding-agent";
 import type {
 	AvailableModel,
+	ChannelSubscriptionsSnapshot,
 	ContextManagerMode,
 	ContextUsageInfo,
 	CreateSessionOptions,
@@ -64,6 +65,7 @@ import {
 	TODO_TOOL_NAME,
 	type TodoItem,
 } from "@percho/shared";
+import { ChannelSubscriptionRegistry } from "./channel-subscriptions";
 import { Emitter } from "./emitter";
 import { createLogger } from "./log";
 import { listMcpServers, removeMcpServer, upsertMcpServer } from "./mcp/config-store";
@@ -198,11 +200,12 @@ export class PiBackend {
 	/** open 的 single-flight（key = 规范化绝对路径）：同文件并发 open 共享一次构造（spec D4） */
 	private readonly openFlights = new KeyedSingleFlight<SessionMeta>();
 	/**
-	 * 已加载会话的频道订阅快照（spec §6.1/§6.2）：sessionId → 有效运行态 topic 集，
-	 * 由 channel-watch 扩展经 `reportChannelSubscriptions` 维护（只存 topic 名）。
-	 * 阶段 0 只建管道，GC 守卫/查询 IPC 见 plan 阶段 1。
+	 * 频道订阅快照仓库（spec §6.1/§6.2 / spec D1）：sessionId → 有效运行态 topic 集，
+	 * 由 channel-watch 扩展经 `reportChannelSubscriptions` 维护（只存 topic 名）+ 版本/代次与事件发布。
+	 * 查询 IPC：`getChannelSubscriptionSessionIds`（GC 用，按 registry 过滤）与
+	 * `getChannelSubscriptions`（单会话快照，**不**过滤 —— 扩展可能早于 registry.add 上报）。
 	 */
-	private readonly channelSubscriptionIds = new Map<string, Set<string>>();
+	private readonly channelSubs = new ChannelSubscriptionRegistry((id) => this.registry.has(id));
 	/** 用户级模型可见性与子代理模型偏好（独立于 CLI 共用 settings.json）。readonly 直暴露 */
 	readonly modelPrefs = new ModelPrefsService(join(getAgentDir(), "model-prefs.json"));
 	/** 社区包管理（安装/卸载 + 会话热重载）。readonly 直暴露 */
@@ -609,6 +612,8 @@ export class PiBackend {
 				modeRef,
 				readOnly: readOnly || undefined,
 			});
+			// 这一代开始了：领取新代次（早报过的会话也在这里拿到最终代次；dispose 后重开会是新的一代）
+			this.channelSubs.noteSessionOpened(session.sessionId);
 		} catch (error) {
 			this.channelWatchCleanups.get(modeRef)?.();
 			this.channelWatchCleanups.delete(modeRef);
@@ -660,8 +665,20 @@ export class PiBackend {
 	 * 这里只存取快照，不做保护策略（策略在 closeSession 的 intent 守卫与 renderer 纯策略层）。
 	 */
 	reportChannelSubscriptions(sessionId: string, topics: ReadonlySet<string>): void {
-		if (topics.size === 0) this.channelSubscriptionIds.delete(sessionId);
-		else this.channelSubscriptionIds.set(sessionId, new Set(topics));
+		this.channelSubs.report(sessionId, topics);
+	}
+
+	/** 单会话订阅快照（renderer 一次性查询 / reload 恢复用）：带 (generation, revision) 供 renderer 判新旧 */
+	getChannelSubscriptions(sessionId: string): ChannelSubscriptionsSnapshot {
+		return this.channelSubs.snapshot(sessionId);
+	}
+
+	/**
+	 * 订阅快照变化事件（spec D1）：载荷是完整快照。renderer 先建立订阅再取快照，两条路径互相乱序时
+	 * 用 (generation, revision) 判新旧（见 `stores/channel-subscriptions.ts`）。
+	 */
+	onChannelSubscriptionsChanged(handler: (snapshot: ChannelSubscriptionsSnapshot) => void): () => void {
+		return this.channelSubs.subscribe(handler);
 	}
 
 	/**
@@ -670,7 +687,7 @@ export class PiBackend {
 	 * 不能让一个已不存在的会话 ID 永久影响 GC 判定。
 	 */
 	getChannelSubscriptionSessionIds(): string[] {
-		return [...this.channelSubscriptionIds.keys()].filter((id) => this.registry.has(id));
+		return this.channelSubs.loadedSessionIdsWithSubscriptions();
 	}
 
 	/**
@@ -690,7 +707,7 @@ export class PiBackend {
 		}
 		// 自动 GC 不得卸掉有频道订阅的会话（快照按 sessionId 精确查，退订后自然恢复资格）。
 		// 显式关（intent="user"/缺省，含 delete 路径）不受此限：用户意图优先，订阅也不能绑架用户。
-		if (intent === "gc" && this.channelSubscriptionIds.has(sessionId)) {
+		if (intent === "gc" && this.channelSubs.snapshot(sessionId).topics.length > 0) {
 			log.info("closeSession ignored: channel subscriptions", sessionId);
 			return { closed: false };
 		}
@@ -721,8 +738,9 @@ export class PiBackend {
 		// entry 级清理：unsubscribe + gate/dialogs dispose（pending 对话框按 sessionClosed 结算，
 		// 广播 resolved 让 renderer 撤卡；扩展 Promise 落取消值）
 		this.registry.delete(sessionId);
-		// 订阅快照兜底清理（正常路径 shutdown 会先上报空集；这里接住 session_start 前/异常路径）
-		this.channelSubscriptionIds.delete(sessionId);
+		// 订阅快照兜底：**无条件发布空集**（这一代结束的生命周期信号）+ 标 not-live；
+		// 正常路径扩展的 shutdown 已上报过空集（内容变化发布一次），这里是接住 session_start 前/异常路径
+		this.channelSubs.dispose(sessionId);
 		// 全局键控子系统（本就独立于 registry）
 		this.streamGuard.cleanup(sessionId);
 		this.eventRates.delete(sessionId);
@@ -746,6 +764,7 @@ export class PiBackend {
 			if (error.code !== "ENOENT") throw error;
 		});
 		if (sessionDir) await TraceRecorder.removeAll(sessionDir, sessionId);
+		this.channelSubs.delete(sessionId);
 		log.info("session deleted", sessionId);
 	}
 

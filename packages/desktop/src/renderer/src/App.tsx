@@ -22,6 +22,7 @@ import { Slot } from "./plugins/Slot";
 import { UI_REGIONS, UI_SLOTS } from "./plugins/slots";
 import { finishSplash } from "./splash";
 import { initAppQuit } from "./stores/app-quit";
+import { initChannelSubscriptions, syncActiveSession } from "./stores/channel-subscriptions";
 import { restoreSessionWorkspace } from "./stores/session-workspace-restore";
 import { useSessionsStore } from "./stores/sessions";
 import { useHasParentRelation } from "./stores/subagent-return";
@@ -41,6 +42,12 @@ export default function App() {
 	const activeSessionId = useSessionsStore((s) => s.activeSessionId);
 	// 子代理检视页才挂返回入口：无关系时连左上定位容器都不出现（不留占位）
 	const hasParentRelation = useHasParentRelation(activeSessionId);
+	// 频道订阅快照（spec D1）：**先建立事件订阅**（声明在前 ⇒ 同一提交内先执行），再按活动会话取一次快照；
+	// reload/启动恢复靠这条查询自恢复，不依赖曾收到事件
+	useEffect(() => initChannelSubscriptions(), []);
+	useEffect(() => {
+		void syncActiveSession(activeSessionId);
+	}, [activeSessionId]);
 	// 订阅收敛为原始值（selector 返回 boolean → 仅在值翻转时重渲染）：App 子树（TabBar/MessageList/
 	// TodoPanel/DiffSidebar/…）无 memo，若订阅 transcript 对象会随每条流式 delta 全量级联重渲染
 	const showEmpty = useTranscriptStore((s) => {

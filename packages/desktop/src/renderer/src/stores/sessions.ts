@@ -4,6 +4,7 @@ import { create } from "zustand";
 import { getPi } from "../api";
 import { errText } from "../lib/error-text";
 import { clampThinkingLevel } from "../lib/thinking";
+import { useChannelSubscriptionsStore } from "./channel-subscriptions";
 import { COMPOSER_FOCUS_EVENT, useDraftStore } from "./drafts";
 import {
 	clearSessionHistory,
@@ -746,6 +747,8 @@ export const useSessionsStore = create<SessionsStore>((set, get) => ({
 		if (closedFile) openInFlight.delete(closedFile.trim());
 		bundleInFlight.delete(sessionId); // 旧实例的迟到请求已由 openingEpoch 失效，新实例可独立装载
 		useTranscriptStore.getState().resetSession(sessionId);
+		// 频道订阅快照是「后端会话实例」的附属状态：会话关了（含 GC 卸载）就丢掉，并让在途查询作废
+		useChannelSubscriptionsStore.getState().forget(sessionId);
 		set((state) => {
 			const closing = state.sessions.find((s) => s.sessionId === sessionId);
 			const sessions = state.sessions.filter((s) => s.sessionId !== sessionId);

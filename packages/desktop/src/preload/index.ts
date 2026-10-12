@@ -1,5 +1,6 @@
 import {
 	CHANNEL_TABLE,
+	type ChannelSubscriptionsSnapshot,
 	type ExtensionDialogRequest,
 	type ExtensionDialogResolved,
 	type ExtensionEditorTextEvent,
@@ -41,6 +42,9 @@ const api: PiApi = {
 	...invokeApi,
 	onProviderLoginEvent: makeSubscription<LoginEventPayload>(IpcChannels.SettingsLoginEvent),
 	onMcpServersChanged: makeSubscription<McpServersChangedPayload>(IpcChannels.McpServersChanged),
+	onChannelSubscriptionsChanged: makeSubscription<ChannelSubscriptionsSnapshot>(
+		IpcChannels.ChannelSubscriptionsChanged,
+	),
 	onUiPluginsEvent: makeSubscription<UiPluginsEventPayload>(IpcChannels.UiPluginsEvent),
 	onQuitRequested: makeSubscription<void>(IpcChannels.QuitRequested),
 	onUpdateEvent: makeSubscription<UpdateState>(IpcChannels.UpdateEvent),

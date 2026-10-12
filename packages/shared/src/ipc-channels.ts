@@ -1,3 +1,4 @@
+import type { ChannelSubscriptionsSnapshot } from "./channel-subscriptions";
 import type { ExtensionDialogRespond } from "./extension-dialog";
 import type { LanStatus } from "./lan";
 import type { McpConfigListResult, McpMutationResult, McpUpsertInput } from "./mcp";
@@ -131,6 +132,14 @@ export const SESSION_CHANNELS = {
 	 * 会话被卸载/关闭后不再返回（backend 快照同步清理）。
 	 */
 	getChannelSubscriptionSessionIds: ch("session:getChannelSubscriptionSessionIds")<void, string[]>(),
+	/**
+	 * 单会话的频道订阅快照（spec D1）。与上面的 GC 查询**语义不同**：这里不按 registry 过滤 ——
+	 * 扩展可能早于 registry.add 上报，过滤会让「刚打开就有订阅」的会话查到空集（胶囊闪一下才出现）。
+	 */
+	getChannelSubscriptions: ch("session:getChannelSubscriptions")<
+		{ sessionId: string },
+		ChannelSubscriptionsSnapshot
+	>(),
 	/** 可用模型列表（providers × models，含 authed/thinkingLevels/imageInput 元数据） */
 	listModels: ch("models:list")<void, AvailableModel[]>(),
 	/** @ 补全数据源：项目文件相对路径列表（目录带尾 /） */
@@ -380,6 +389,8 @@ const EVENT_CHANNELS = {
 	ExtensionEditorText: "pi:extension-editor-text",
 	/** MCP 运行态变化（每 server 的工具 + 失效原因 + 全局提示；面板刷新用） */
 	McpServersChanged: "mcp:serversChanged",
+	/** 频道订阅快照变化（spec D1；携带完整快照，renderer 按 (generation, revision) 判新旧） */
+	ChannelSubscriptionsChanged: "channel:subscriptionsChanged",
 	/** 登录流程事件（event/prompt/prompt-cancel） */
 	SettingsLoginEvent: "settings:loginEvent",
 	/** 更新状态 */

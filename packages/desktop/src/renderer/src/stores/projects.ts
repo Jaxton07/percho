@@ -3,6 +3,7 @@ import { create } from "zustand";
 import { getPi } from "../api";
 import { initDailyDir, isDailyCwd } from "../lib/daily";
 import { isPrimaryNavigationSession } from "../lib/session-visibility";
+import { useChannelSubscriptionsStore } from "./channel-subscriptions";
 import { useSessionWorkspaceStore } from "./session-workspace";
 import { partitionSessionsByPin, useSessionsStore } from "./sessions";
 import { useSubagentReturnStore } from "./subagent-return";
@@ -159,6 +160,8 @@ export const useProjectsStore = create<ProjectsStore>((set, get) => {
 			// **只有删除**清：GC 卸载要靠 parentFile 重开父会话，清了箭头就没了（两者不能混用）。
 			useSubagentReturnStore.getState().forgetChildrenOf(session.sessionId);
 			useSubagentReturnStore.getState().forgetChild(session.sessionId);
+			// 频道订阅快照同理（删除路径上 sessions.closeSession 不一定跑到，幂等清一次）
+			useChannelSubscriptionsStore.getState().forget(session.sessionId);
 			const sessionsState = useSessionsStore.getState();
 			if (sessionsState.sessions.some((s) => s.sessionId === session.sessionId)) {
 				await sessionsState.closeSession(session.sessionId);

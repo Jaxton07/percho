@@ -33,6 +33,7 @@ export function registerSessionsIpc(backend: PiBackend): void {
 		forkSession: ({ sessionId, ref }) => backend.forkSession(sessionId, ref),
 		recallMessage: ({ sessionId, ref }) => backend.recallMessage(sessionId, ref),
 		getLoadedResources: ({ sessionId }) => backend.getLoadedResources(sessionId),
+		getChannelSubscriptions: ({ sessionId }) => backend.getChannelSubscriptions(sessionId),
 		listModels: () => backend.listModels(),
 		listProjectFiles: ({ cwd }) => backend.listProjectFiles(cwd),
 		ensureProjectTrust: ({ cwd }) => backend.ensureProjectTrust(cwd),
