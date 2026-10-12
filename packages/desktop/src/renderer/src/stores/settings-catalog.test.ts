@@ -29,6 +29,8 @@ const api = vi.hoisted(() => ({
 	setProviderBaseUrl: vi.fn(),
 }));
 vi.mock("../api", () => ({ getPi: () => api }));
+const toasts = vi.hoisted(() => ({ pushToast: vi.fn() }));
+vi.mock("./toasts", () => ({ pushToast: toasts.pushToast }));
 // settings store 只用到 sessions store 的 activeSessionId + loadModels
 const sessionsState = vi.hoisted(() => ({ activeSessionId: null as string | null, loadModels: vi.fn() }));
 vi.mock("./sessions", () => ({ useSessionsStore: { getState: () => sessionsState } }));
@@ -392,4 +394,102 @@ describe("D3 写盘世代：每个变更入口都必须推进", () => {
 			expect(store.getState().loading).toBe(false);
 		});
 	}
+});
+
+describe("D3 子代理清单独立发布（review R3）", () => {
+	it("联网先回、本地目录后回：子代理清单仍按本地读取发布，不被目录仲裁淘汰", async () => {
+		const localGate = deferred<ProviderInfo[]>();
+		const netGate = deferred<ProviderInfo[]>();
+		api.listSubagents.mockResolvedValue([{ name: "scout" }] as never);
+		api.listProviders.mockImplementation((arg?: { options?: { forceNetwork?: boolean } }) =>
+			arg?.options?.forceNetwork ? netGate.promise : localGate.promise,
+		);
+		const local = store.getState().refresh();
+		const network = store.getState().refreshProvidersFromNetwork();
+		netGate.resolve(providers("net"));
+		await network;
+		localGate.resolve(providers("local"));
+		await local;
+		expect(store.getState().providers.map((p) => p.id)).toEqual(["net"]);
+		expect(store.getState().subagents).toEqual([{ name: "scout" }]);
+	});
+
+	it("目录读取失败但子代理清单成功：清单仍落地", async () => {
+		api.listProviders.mockRejectedValue(new Error("disk error"));
+		api.listSubagents.mockResolvedValue([{ name: "scout" }] as never);
+		await store.getState().refresh();
+		expect(store.getState().error).toBe("disk error");
+		expect(store.getState().subagents).toEqual([{ name: "scout" }]);
+	});
+
+	it("子代理清单失败但目录成功：目录仍落地 + 走 toast（不去抢 error 字段）", async () => {
+		api.listProviders.mockResolvedValue(providers("p1"));
+		api.listSubagents.mockRejectedValue(new Error("subagents boom"));
+		await store.getState().refresh();
+		expect(store.getState().providers.map((p) => p.id)).toEqual(["p1"]);
+		expect(store.getState().error).toBeNull();
+		expect(toasts.pushToast).toHaveBeenCalledWith("warning", "toast.subagentsLoadFailed", "subagents boom");
+	});
+
+	it("两次子代理读取乱序：旧清单不回灌", async () => {
+		const gates: Array<ReturnType<typeof deferred<unknown[]>>> = [];
+		api.listProviders.mockResolvedValue(providers("p"));
+		api.listSubagents.mockImplementation(() => {
+			const gate = deferred<unknown[]>();
+			gates.push(gate);
+			return gate.promise as never;
+		});
+		const first = store.getState().refresh();
+		const second = store.getState().refresh();
+		await vi.waitFor(() => expect(gates.length).toBe(2));
+		at(gates, 1).resolve([{ name: "new" }]);
+		await second;
+		expect(store.getState().subagents).toEqual([{ name: "new" }]);
+		at(gates, 0).resolve([{ name: "old" }]);
+		await first;
+		expect(store.getState().subagents).toEqual([{ name: "new" }]);
+	});
+});
+
+describe("D3 非目录读取失败的可见提示（review R4）", () => {
+	it("modelPrefs 读取失败：走 toast、不覆盖目录 error；重试成功后偏好正常发布", async () => {
+		api.listProviders.mockRejectedValue(new Error("disk error"));
+		api.getModelPrefs.mockRejectedValueOnce(new Error("prefs boom"));
+		await store.getState().refresh();
+		await vi.waitFor(() =>
+			expect(toasts.pushToast).toHaveBeenCalledWith("warning", "toast.modelPrefsLoadFailed", "prefs boom"),
+		);
+		expect(store.getState().error).toBe("disk error"); // 目录 error 没被非目录失败抢走
+
+		api.listProviders.mockResolvedValue(providers("p1"));
+		api.getModelPrefs.mockResolvedValue({ hiddenModels: { a: true }, subagentModels: {} } as never);
+		await store.getState().refresh();
+		expect(store.getState().modelPrefs).toEqual({ hiddenModels: { a: true }, subagentModels: {} });
+		expect(store.getState().error).toBeNull();
+	});
+
+	it("已加载资源读取失败：走 toast，且与目录 error 同时存在时互不吞", async () => {
+		sessionsState.activeSessionId = "s1";
+		api.listProviders.mockRejectedValue(new Error("disk error"));
+		api.getLoadedResources.mockRejectedValue(new Error("resources boom"));
+		await store.getState().refresh();
+		expect(store.getState().error).toBe("disk error");
+		expect(toasts.pushToast).toHaveBeenCalledWith("warning", "toast.loadedResourcesFailed", "resources boom");
+	});
+
+	it("已加载资源失败后可重试成功", async () => {
+		sessionsState.activeSessionId = "s1";
+		api.listProviders.mockResolvedValue(providers("p1"));
+		api.getLoadedResources.mockRejectedValueOnce(new Error("resources boom"));
+		await store.getState().refresh();
+		expect(store.getState().skills).toBeNull();
+		api.getLoadedResources.mockResolvedValue({
+			skills: [{ name: "x" }],
+			skillDiagnostics: [],
+			extensions: [],
+			extensionErrors: [],
+		} as never);
+		await store.getState().refresh();
+		expect(store.getState().skills).toEqual([{ name: "x" }]);
+	});
 });

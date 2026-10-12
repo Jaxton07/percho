@@ -15,6 +15,7 @@ import { withModelHidden, withModelsHidden, withProviderModelsHidden } from "@pe
 import { create } from "zustand";
 import { getPi } from "../api";
 import { useSessionsStore } from "./sessions";
+import { pushToast } from "./toasts";
 
 export type SettingsCategory =
 	| "general"
@@ -90,10 +91,9 @@ interface SettingsStore {
 /** 目录请求来源（产出快照的那次请求；仅用于诊断与断言） */
 type CatalogSource = "local" | "network" | "mutation";
 
-/** 目录请求载荷：本地请求顺带带回子代理清单（与目录同一次发布，避免两个字段互相覆盖） */
+/** 目录请求载荷：**只有 providers**（子代理清单有自己的发布路径，见 `loadSubagents`） */
 interface CatalogPayload {
 	providers: ProviderInfo[];
-	subagents?: SubagentInfo[];
 	source?: CatalogSource;
 }
 
@@ -268,19 +268,34 @@ export const useSettingsStore = create<SettingsStore>((set, get) => {
 	/** 上一次触发过「选择器刷新」的目录请求号（同一在途请求的多个入口只刷一次） */
 	let selectorRefreshToken = 0;
 
-	/** 目录（providers/subagents）走协调器：谁多发谁发、谁后开始谁赢，都在里面仲裁 */
+	/** 目录（providers）走协调器：谁多发谁发、谁后开始谁赢，都在里面仲裁 */
 	const coordinator = createCatalogCoordinator({
-		load: async (kind) => {
-			if (kind === "network")
-				return { providers: await getPi().listProviders({ options: { forceNetwork: true } }) };
-			const [providers, subagents] = await Promise.all([getPi().listProviders({}), getPi().listSubagents()]);
-			return { providers, subagents };
-		},
-		publish: ({ providers, subagents }) => set(subagents ? { providers, subagents } : { providers }),
+		load: async (kind) =>
+			kind === "network"
+				? { providers: await getPi().listProviders({ options: { forceNetwork: true } }) }
+				: { providers: await getPi().listProviders({}) },
+		publish: ({ providers }) => set({ providers }),
 		setFlags: (flags) => set(flags),
 	});
 
-	/** 已加载资源（skills/extensions）与目录无关，自己发布、自己吞错误（不再污染目录请求的 error 仲裁） */
+	/**
+	 * 子代理清单：**独立于目录请求**的轻量发布路径（review R3）。
+	 * - network 请求根本不返回子代理清单 ⇒ 联网成功没有理由淘汰本地清单；
+	 * - 只接受「最新一次子代理读取」的结果（自己的序号，乱序不回灌旧清单）；
+	 * - 读失败只发 toast，既不挡目录发布，也不去抢目录的 `error` 字段。
+	 */
+	let subagentsSeq = 0;
+	const loadSubagents = async (): Promise<void> => {
+		const token = ++subagentsSeq;
+		try {
+			const subagents = await getPi().listSubagents();
+			if (token === subagentsSeq) set({ subagents });
+		} catch (error) {
+			pushToast("warning", "toast.subagentsLoadFailed", errorMessage(error));
+		}
+	};
+
+	/** 已加载资源（skills/extensions）：顺序上排在目录之后（沿用改造前后顺序），失败走 toast —— 既不污染目录 error 仲裁，也不静默 */
 	const loadLoadedResources = async (): Promise<void> => {
 		const activeSessionId = useSessionsStore.getState().activeSessionId;
 		if (!activeSessionId) {
@@ -299,7 +314,7 @@ export const useSettingsStore = create<SettingsStore>((set, get) => {
 				});
 			}
 		} catch (error) {
-			console.error("[settings] 已加载资源读取失败", error);
+			pushToast("warning", "toast.loadedResourcesFailed", errorMessage(error));
 		}
 	};
 
@@ -329,10 +344,16 @@ export const useSettingsStore = create<SettingsStore>((set, get) => {
 			.then((lanStatus) => set({ lanStatus }))
 			.catch(() => {});
 		// modelPrefs 已由串行读路径发布，不能等目录返回后再写入旧快照；
-		// 读失败只记日志：提示区 error 字段的写入权收敛给目录请求仲裁（变更路径的失败仍由 changePrefs 写）
-		void readPrefs().catch((error) => console.error("[settings] 模型偏好读取失败", error));
-		await (mode === "mutation" ? coordinator.refreshAfterMutation() : coordinator.refreshLocal());
-		// 已加载资源按当前活跃会话（其项目）展示；新会话页（还没建后端会话）时为 null（面板显示空态）
+		// 读失败走 toast：可见（不静默）但不抢目录的 `error` 字段（变更路径的失败仍由 changePrefs 写 error）
+		void readPrefs().catch((error) =>
+			pushToast("warning", "toast.modelPrefsLoadFailed", errorMessage(error)),
+		);
+		// 目录与子代理并行、各自独立发布（子代理不受目录仲裁影响）
+		await Promise.all([
+			mode === "mutation" ? coordinator.refreshAfterMutation() : coordinator.refreshLocal(),
+			loadSubagents(),
+		]);
+		// 已加载资源：顺序排在目录之后（沿用改造前顺序）；目录失败也照取
 		await loadLoadedResources();
 	};
 
