@@ -1,6 +1,7 @@
 import type { TrustRequest } from "@percho/shared";
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { getPi } from "./api";
+import { CornerStack } from "./components/chat/CornerStack";
 import { EmptyState } from "./components/chat/EmptyState";
 import { MessageList } from "./components/chat/MessageList";
 import { SubagentBackButton } from "./components/chat/SubagentBackButton";
@@ -46,6 +47,8 @@ export default function App() {
 	const activeSessionId = useSessionsStore((s) => s.activeSessionId);
 	// 子代理检视页才挂返回入口：无关系时连左上定位容器都不出现（不留占位）
 	const hasParentRelation = useHasParentRelation(activeSessionId);
+	/** Todo 槽位的 `display: contents` 宿主：CornerStack 靠它测量渲染根底边（插件原绝对定位不受影响） */
+	const todoSlotHostRef = useRef<HTMLDivElement | null>(null);
 	// 频道订阅快照（spec D1）：**先建立事件订阅**（声明在前 ⇒ 同一提交内先执行），再按活动会话取一次快照；
 	// reload/启动恢复靠这条查询自恢复，不依赖曾收到事件
 	useEffect(() => initChannelSubscriptions(), []);
@@ -126,14 +129,18 @@ export default function App() {
 						{/* 右侧 DiffSidebar 是独立浮层，不参与中间聊天列宽度与布局动画。 */}
 						<main className="relative min-h-0 flex-1">
 							{showEmpty ? <EmptyState /> : <MessageList />}
-							<Slot name={UI_SLOTS.TodoPanel} props={{}} fallback={TodoPanel} />
-							{/* 聊天区四角贡献层（top-right 与 TodoPanel 同角，容器已预留 pt-12） */}
-							{/* top-left 用 leading 插：返回父会话入口与左上区域贡献共用同一定位容器，不会重叠 */}
+							{/* Todo 槽位宿主：display:contents 不产生盒子（插件/默认 Todo 的原绝对定位不受影响），
+							    只给 CornerStack 一个可 observe 的挂载点（它去测量渲染根的实际底边） */}
+							<div ref={todoSlotHostRef} style={{ display: "contents" }}>
+								<Slot name={UI_SLOTS.TodoPanel} props={{}} fallback={TodoPanel} />
+							</div>
+							{/* 右上角：频道胶囊 + top-right 贡献共用一个堆叠（CornerStack），一起避开 Todo 实际底边；
+							    top-left 用 leading 插返回父会话入口，与左上区域贡献共用同一定位容器 */}
+							<CornerStack slotHostRef={todoSlotHostRef} />
 							<RegionHost
 								region={UI_REGIONS.CornerTopLeft}
 								leading={hasParentRelation ? <SubagentBackButton /> : undefined}
 							/>
-							<RegionHost region={UI_REGIONS.CornerTopRight} />
 							<RegionHost region={UI_REGIONS.CornerBottomLeft} />
 							<RegionHost region={UI_REGIONS.CornerBottomRight} />
 						</main>

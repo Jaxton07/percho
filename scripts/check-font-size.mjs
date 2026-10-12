@@ -1721,7 +1721,7 @@ function runCompare(beforeDir, afterDir, { pixelOnly = false, allowChange = [] }
 
 	if (geometryProblems) fail(`几何清单有 ${geometryProblems} 处不等（主判据未过）`);
 	if (failed > 0) fail(`${failed} 张有实质差异（像素判据未过）`);
-	const criteria = ["逐像素一致" + (jitter > 0 ? `（另 ${jitter} 张仅抗锯齿级抖动，已判一致）` : "")];
+	const criteria = [`逐像素一致${jitter > 0 ? `（另 ${jitter} 张仅抗锯齿级抖动，已判一致）` : ""}`];
 	if (pixelOnly) criteria.unshift("（仅像素判据：主判据未跑）");
 	else criteria.unshift("几何清单逐字段相等");
 	console.log(`\n✓ 默认档零差异通过：${criteria.join(" + ")}`);

@@ -2,6 +2,7 @@ import { appendFile, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/pro
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
+import { ChannelSubscriptionRegistry } from "../src/channel-subscriptions";
 import {
 	buildWakeMessage,
 	type ChannelWatchOptions,
@@ -1357,5 +1358,43 @@ describe("P2.1 · 阻塞 3：只接受 topic 根目录的主消息文件", () =>
 
 		expect(pi.wakes).toHaveLength(0);
 		expect(lastPayload(pi)).toEqual({ topics: ["t1"], cursors: { t1: null } });
+	});
+});
+
+describe("频道订阅快照仓库集成（真实工具 execute → backend registry，spec D1/阶段 4 验收）", () => {
+	it("真实 channel_subscribe / channel_unsubscribe 驱动 registry：非空 → 空；退订 ≠ 关闭；dispose 才是关闭", async () => {
+		const registry = new ChannelSubscriptionRegistry(() => true);
+		const published: Array<{ topics: string[]; generation: number; live: boolean }> = [];
+		registry.subscribe((snapshot) =>
+			published.push({ topics: snapshot.topics, generation: snapshot.generation, live: snapshot.live }),
+		);
+		// 扩展回调里带的是**真实** sessionId（假 ctx 的 sessionManager.getSessionId() = "s-test"）
+		const sessionId = "s-test";
+		// 模拟 openSession 里 registry.add 之后那一步（代次唯一来源）
+		registry.noteSessionOpened(sessionId);
+
+		const cwd = join(testRoot, "proj-integration");
+		await mkdir(topicDir(cwd, "qol3-real"), { recursive: true });
+		await writeFile(messagesFile(cwd, "qol3-real"), "# 频道\n", "utf8");
+		const { pi } = await wire({
+			cwd,
+			onSubscriptionsChanged: (id, topics) => registry.report(id, topics),
+		});
+
+		await subscribe(pi, "qol3-real");
+		const afterSubscribe = registry.snapshot(sessionId);
+		expect(afterSubscribe).toMatchObject({ topics: ["qol3-real"], live: true, generation: 1 });
+		expect(published).toEqual([{ topics: ["qol3-real"], generation: 1, live: true }]);
+		expect(registry.loadedSessionIdsWithSubscriptions()).toEqual([sessionId]);
+
+		await unsubscribe(pi, "qol3-real");
+		const afterUnsubscribe = registry.snapshot(sessionId);
+		expect(afterUnsubscribe).toMatchObject({ topics: [], live: true }); // 退订 ≠ 关闭
+		expect(afterUnsubscribe.revision).toBeGreaterThan(afterSubscribe.revision);
+		expect(registry.loadedSessionIdsWithSubscriptions()).toEqual([]);
+
+		registry.dispose(sessionId); // 会话处置：无条件发布空集 + live=false
+		expect(registry.snapshot(sessionId)).toMatchObject({ topics: [], live: false });
+		expect(published.at(-1)).toMatchObject({ topics: [], live: false });
 	});
 });

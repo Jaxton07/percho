@@ -24,7 +24,8 @@ const OVERLAY_ANCHOR_CLASSES: Record<UiPluginAnchor, string> = {
 /** 聊天区四角定位（与 TodoPanel 同语义不重叠；top-right 与 TodoPanel 同角，预留 pt-12 堆在其下） */
 const CORNER_POS_CLASSES: Partial<Record<RegionName, string>> = {
 	[UI_REGIONS.CornerTopLeft]: "top-2 left-4",
-	[UI_REGIONS.CornerTopRight]: "top-2 right-4 pt-12",
+	// top-right 由宿主的「右上堆叠」定位（CornerStack：Todo 底边 + 8），这里只是独立渲染时的兜底位置
+	[UI_REGIONS.CornerTopRight]: "top-2 right-4",
 	[UI_REGIONS.CornerBottomLeft]: "bottom-2 left-4",
 	[UI_REGIONS.CornerBottomRight]: "bottom-2 right-4",
 };
@@ -37,9 +38,20 @@ const CORNER_POS_CLASSES: Partial<Record<RegionName, string>> = {
  * - chat.corner.*：absolute z-20 flex-col 同角纵向堆叠（top-right 预留 pt-12 避开 TodoPanel）。
  *   `leading` 只对 `chat.corner.*` 有效：宿主自带的 UI 放在贡献之前，与贡献**共用同一个定位容器**
  *   （例：top-left 的「返回父会话」入口），这样永远不可能与合规贡献重叠；没有贡献时也能单独渲染。
+ *   `layout="flow"` 表示**由父级提供定位**（例：top-right 由 `CornerStack` 统一堆叠：频道胶囊在上、贡献在下，
+ *   一起避开 TodoPanel 的实际底边）—— 该区域自身不再绝对定位，也不再预留 pt-12。
  * 贡献崩溃 → PluginBoundary 兜底 null（没有默认可回退，spec §15）。
  */
-export function RegionHost({ region, leading }: { region: RegionName; leading?: ReactNode }) {
+export function RegionHost({
+	region,
+	leading,
+	layout = "corner",
+}: {
+	region: RegionName;
+	leading?: ReactNode;
+	/** "corner"（默认）= 自己绝对定位到角上；"flow" = 由父级容器定位（宿主堆叠用） */
+	layout?: "corner" | "flow";
+}) {
 	// 稳定引用纪律：contributions[region] 是 map 项（改动时整体换新数组），空用模块级 EMPTY
 	const list = useUiPluginRegistry((s) => s.contributions[region]) ?? EMPTY_CONTRIBUTIONS;
 	// 热重载换新边界实例（errored 归零），与 Slot 的 key 语义一致
@@ -48,7 +60,8 @@ export function RegionHost({ region, leading }: { region: RegionName; leading?: 
 	const masterOn = useUiPluginsStore((s) => s.config.enabled);
 	const hasContent = masterOn && list.length > 0;
 	// leading 只在角区域有意义（那里有共用的绝对定位容器）；其他区域没有贡献就整体不渲染
-	const showCornerContainer = Boolean(leading) && CORNER_POS_CLASSES[region] !== undefined;
+	const isCorner = CORNER_POS_CLASSES[region] !== undefined;
+	const showCornerContainer = (Boolean(leading) || layout === "flow") && isCorner;
 	if (!hasContent && !showCornerContainer) return null;
 
 	const renderContribution = (c: Contribution) => {
@@ -91,7 +104,11 @@ export function RegionHost({ region, leading }: { region: RegionName; leading?: 
 		case UI_REGIONS.CornerBottomRight:
 			return (
 				<div
-					className={`pointer-events-none absolute z-20 flex flex-col gap-2 ${CORNER_POS_CLASSES[region]}`}
+					className={
+						layout === "flow"
+							? "pointer-events-none flex flex-col gap-2"
+							: `pointer-events-none absolute z-20 flex flex-col gap-2 ${CORNER_POS_CLASSES[region]}`
+					}
 				>
 					{leading}
 					{hasContent && list.map(renderContribution)}

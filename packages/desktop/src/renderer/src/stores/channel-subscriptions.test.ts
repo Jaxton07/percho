@@ -375,4 +375,24 @@ describe("R10：生命周期只认明确信号（live / 本地 forget），不�
 		expect(apply(snapshot("s1", ["beta"], 11, 2))).toBe(false); // 同代更早的订阅快照
 		expect(topicsOf("s1")).toEqual([]);
 	});
+
+	it("dispose 落进可见路径后，lifecycle.closed 如实反映 live=false（review 小项）", () => {
+		const { apply } = useChannelSubscriptionsStore.getState();
+		apply(snapshot("s1", ["beta"], 10, 2));
+		expect(useChannelSubscriptionsStore.getState().lifecycles.s1?.closed).toBe(false);
+		apply(snapshot("s1", [], 12, 2, false)); // dispose（后端侧关闭，没走本地 forget）
+		expect(useChannelSubscriptionsStore.getState().lifecycles.s1).toMatchObject({
+			generation: 2,
+			revision: 12,
+			closed: true,
+		});
+		expect(topicsOf("s1")).toEqual([]);
+		// 关闭态纪律生效：同代/更老代的快照只抬水位，不再产生可见状态
+		expect(apply(snapshot("s1", ["beta"], 13, 2))).toBe(false);
+		expect(apply(snapshot("s1", ["alpha"], 14, 1))).toBe(false);
+		expect(topicsOf("s1")).toEqual([]);
+		// 新代在册则照常恢复
+		expect(apply(snapshot("s1", ["gamma"], 15, 3))).toBe(true);
+		expect(topicsOf("s1")).toEqual(["gamma"]);
+	});
 });

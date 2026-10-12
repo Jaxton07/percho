@@ -349,7 +349,27 @@
 	background: transparent;
 }
 
+/* 频道订阅胶囊（spec D2）：宽度 0 ↔ 实测自然宽度，右缘固定、左端伸展；退场同曲线收起 + 淡出。
+   时长/缓动是设计基准（.local/design/ux/channel-subscription-pill/index.html），组件里同步一份常量
+   （CHANNEL_PILL_DURATION_MS）用于「退场结束」的兜底计时；两边改要一起改。 */
+.channel-pill {
+	width: 0;
+	opacity: 0;
+	overflow: hidden;
+	flex-shrink: 0;
+	transition:
+		width var(--channel-pill-time, 360ms) cubic-bezier(0.4, 0, 0.2, 1),
+		opacity var(--channel-pill-time, 360ms) cubic-bezier(0.4, 0, 0.2, 1);
+}
+.channel-pill-open {
+	opacity: 1;
+}
+
 @media (prefers-reduced-motion: reduce) {
+	/* 频道胶囊：跳过过渡（宽度/透明度直接到位），组件侧同时按 0ms 走立即清理 */
+	.channel-pill {
+		transition: none;
+	}
 	.todo-breath-dot {
 		animation: none;
 	}

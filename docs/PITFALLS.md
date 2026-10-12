@@ -1107,6 +1107,27 @@ pgrep -f "electron-vite" | xargs -r kill -9
 
 真机几何类断言（重叠/拉伸/Tooltip 溢出）不要靠 SSR —— 那些拿 CDP 在真实挂载上量（qol3 阶段 2 探针：`self-start` 不被更宽贡献拉伸、`Tooltip align="start"` 左缘不溢出且 `scrollWidth == clientWidth`）。
 
+### 探针/验收脚本的四条硬规矩（2026-10-12，qol3 阶段 4 实测）
+
+按踩到的顺序记，每条都有具体现象与对策：
+
+1. **定位「槽位渲染根」不要按文本找**。Slot 的内容常常就是我们的测试数据（todo 文本、「验证任务 01」…），
+   而**探针自己的 transcript 里也写着这些字样**（我写进脚本的字符串会进历史）。`main.children.find(el => el.textContent.includes(...))`
+   会命中 MessageList，于是「Todo 底边」量成了整个聊天区的底边，断言偏差上百像素。
+   对策：认结构不认文本 —— 槽位宿主是 `display: contents` 的包裹层（`main > div[style*="contents"]`），
+   它的渲染根就是 `> *`；探针自己注入的假组件一律带 `data-*` 标记。
+2. **长页面脚本用 `fn.toString()` 注入，别拼字符串**。`Runtime.evaluate` 传 `(${pageFn.toString()})()`：
+   函数源码里的反引号/`${}` 原样保留，不需要任何转义，也不会触发注入转义坑（对比下面「探针函数塞进模板串」那条）。
+   注意注入的是**函数体**，所以页面侧只能引用页面全局（`window.*`）与它自己 `import()` 到的东西。
+3. **`useLayoutEffect(..., [])` 量不到「后挂载」的内容**。胶囊组件在没有订阅时也挂载（返回 null），
+   首帧 ref 还是 null ⇒ 之后内容出现了，空 deps 的 effect 永不重跑 ⇒ **宽度永远量不到，胶囊卡在 0 宽不展开**。
+   对策：用 **ref 回调**（React 在节点挂载/卸载时自己调用）里测宽 + `ResizeObserver` 跟内容变化；顺带避开
+   `useExhaustiveDependencies` 的「依赖多余」告警。
+4. **`Page.captureScreenshot` 偶发整帧空白，纯 rAF「叫醒」无效**：合成器没有 damage 时不给新帧，
+   连等 4 次都是同一张白图（纯色 PNG 只有 ~14KB）。**要制造一次重绘**：插一颗**屏幕外**的 1×1 元素
+   （`position:fixed;left:-10px`）再移除，然后按「PNG 体积 < 60KB 就当空白」重试（重试间隔递增）。
+   实测这一招立刻出图（208KB / 256KB）。
+
 ### 绝不打印/提交 API key
 
 `models.json` 用环境变量引用（`$AI_OPS_API_KEY`），key 由用户自持。

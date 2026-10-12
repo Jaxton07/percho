@@ -113,7 +113,13 @@ export const useChannelSubscriptionsStore = create<ChannelSubscriptionsState>((s
 				},
 				lifecycles: {
 					...state.lifecycles,
-					[sessionId]: { generation: snapshot.generation, revision: snapshot.revision, closed: false },
+					// closed 如实反映「这一代还在不在册」（review 小项）：live=false 的快照（dispose / 后端侧关闭）
+					// 落地后，这一代就按关闭的纪律走 —— 同代/更老代的后续快照只抬水位，不再产生可见状态
+					[sessionId]: {
+						generation: snapshot.generation,
+						revision: snapshot.revision,
+						closed: !snapshot.live,
+					},
 				},
 			};
 		});

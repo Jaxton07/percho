@@ -796,3 +796,22 @@ export function MoreIcon({ size = 14, className }: IconProps) {
 		</svg>
 	);
 }
+
+/** 频道（栅栏/井号）glyph：频道订阅胶囊用；13px、ink-faint */
+export function ChannelIcon({ size = 13, className }: IconProps) {
+	return (
+		<svg
+			className={className}
+			width={size}
+			height={size}
+			viewBox="0 0 20 20"
+			fill="none"
+			stroke="currentColor"
+			strokeWidth={1.4}
+			strokeLinecap="round"
+			aria-hidden="true"
+		>
+			<path d="M7 3 5 17M15 3l-2 14M3 7h14M2 13h14" />
+		</svg>
+	);
+}

@@ -48,7 +48,7 @@ function deferred<T>() {
 /** 取数组第 n 项（noUncheckedIndexedAccess 下显式失败，比非空断言更好定位） */
 function at<T>(list: T[], index: number): T {
 	const item = list[index];
-	if (item === undefined) throw new Error("期望存在第 " + index + " 项");
+	if (item === undefined) throw new Error(`期望存在第 ${index} 项`);
 	return item;
 }
 
