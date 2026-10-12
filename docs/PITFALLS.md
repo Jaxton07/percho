@@ -1142,8 +1142,17 @@ pgrep -f "electron-vite" | xargs -r kill -9
    超时（我们取 1200ms）就 `transition.skipTransition()` —— 宁可不播，也不放演旧内容的假动画。
 3. **根快照要中性化**：默认 `::view-transition-old/new(root)` 是整页交叉淡化，会把顶栏/左栏一起闪一遍。
    关掉它们的动画与 `mix-blend-mode`（`mix-blend-mode: normal`），让只有命名的那张快照动。
-4. **推入/推出两张必须同一时长、同一缓动**：两者边缘要全程严丝合缝（各占 100% 宽、位移同速），
-   差了哪怕几十毫秒，中间就会裂开一条缝露出底图。时长放一个变量里（`--session-slide-time`）成对引用。
+4. **两页等距、同时长、同缓动**：两者的边缘必须全程严丝合缝（各占 100% 宽、位移同速），
+   差了哪怕几十毫秒，中间就会裂开一条缝露出底图。所以要「调手感」，只能换**成对**的缓动曲线与总时长
+   （时长放一个变量 `--session-slide-time`）。本仓现有曲线里面 `cubic-bezier(0.16, 1, 0.3, 1)`（≈easeOutExpo）
+   与 `pop-in`/`selection-pop` 同一族，用它就有了「滑过去被阻尼吸住」的手感（实测：1/3 时长已走 90% 行程，
+   最后 28% 时长只再走 0.3%）。
+   **坑（2026-10-12 实测）**：改缓动/关键帧时，文件里若留着**同名 `@keyframes` 的后一份**（同名的后定义胜出），
+   改前面那份等于没改 —— 屏幕上看不出、但采样出来的位移会露馅（我这次量到出门页走了 -100% 而不是 -32%）。
+   收尾检查：`grep -c "@keyframes session-page-out-left"` 必须是 1。
+   验收也别只看 CSS 文本：读 `document.getAnimations()` 里伪元素动画的 `duration`，以及
+   **`effect.getKeyframes()[i].easing`**（CSS 动画的 `animation-timing-function` 落在关键帧上，
+   `getTiming().easing` 恒为 `linear`，读它会以为「曲线没生效」）。
 5. **同一时刻只认最后一次过渡**：过渡进行中再开一个，浏览器会跳过新的。收尾清理（擦方向标记、
    清 `view-transition-name`）必须带**代次守卫**，否则前一次的 `finished` 回来会把新一次的标记擦掉
    （单测 `lib/session-page-slide.test.ts` 里有这条反例）。

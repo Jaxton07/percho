@@ -351,47 +351,18 @@
 
 /* 会话页推/出过渡（spec D4 收尾增强）：开子代理 = 新页从右向左推入，返回父会话 = 父页从左向右推回。
    用同文档 View Transitions：浏览器拍切换前后的两张页面快照，这里只接管这两张快照的位移。
-   三个要点（对应 lib/session-page-slide.ts 的注释）：
-   ① 推入/推出成对定义同一时长与缓动（--session-slide-time 单点改）——两者边缘在动画全程严丝合缝，
-      脱开就会露出后面的底图；② 根快照（root）中性化，顶栏与左栏保持静态，只有聊天页那张动；
+   要点（对应 lib/session-page-slide.ts 的注释）：
+   ① 两页等距（各 100%）、**同时长同缓动**（--session-slide-time 单点改）——两张快照边缘在整段动画里
+      严丝合缝，脱开就会露出底图；手感全部交给缓动曲线（见下面那段）；
+      ② 根快照（root）中性化，顶栏与左栏保持静态，只有聊天页那张动；
       ③ 没有 html[data-session-slide] 就完全不生效（无 API / 减少动态偏好 / 导航失败都落到这条路）。 */
 :root {
-	--session-slide-time: 300ms;
+	--session-slide-time: 340ms;
 }
-html[data-session-slide]::view-transition-old(root),
-html[data-session-slide]::view-transition-new(root) {
-	animation: none;
-	mix-blend-mode: normal;
-}
-html[data-session-slide]::view-transition-image-pair(root) {
-	isolation: auto;
-}
-/* 快照画在顶层，位移不受容器 overflow 约束 —— 不裁的话聊天页会**横穿左栏**（实测：左栏像素被盖）。
-   给 group 加裁剪后，两张快照只能在这个「画框」里出现：出门那张滑到框左缘就消失、进门那张从框右缘进来，
-   正是「画框内左右滚动」的观感（对应验收里 E2/E3 的两处像素检查）。 */
-html[data-session-slide]::view-transition-group(session-page) {
-	overflow: clip;
-}
-/* 快照会把滚动条一起拍进去 ⇒ 滑动时右边那条 4px 滚动条跟着横着走（两张快照各带一条，很脏）。
-   这里在过渡期间把滚动条的**像素**抹掉：滑块/轨道颜色全透明，但**宽度一个像素都不动**（宽度一变就重排，
-   两张快照的布局会不一致、内容会跳）。颜色走 CSS 变量 ⇒ 覆盖变量即可同时覆盖深/浅色与各处细滚动条；
-   标记在 startViewTransition 之前就设好 ⇒ 旧快照也是「没有滚动条」的。 */
-html[data-session-slide] {
-	--scrollbar-thumb: transparent;
-	--scrollbar-thumb-hover: transparent;
-}
-html[data-session-slide="push"]::view-transition-old(session-page) {
-	animation: session-page-out-left var(--session-slide-time) cubic-bezier(0.2, 0, 0, 1) both;
-}
-html[data-session-slide="push"]::view-transition-new(session-page) {
-	animation: session-page-in-right var(--session-slide-time) cubic-bezier(0.2, 0, 0, 1) both;
-}
-html[data-session-slide="pop"]::view-transition-old(session-page) {
-	animation: session-page-out-right var(--session-slide-time) cubic-bezier(0.2, 0, 0, 1) both;
-}
-html[data-session-slide="pop"]::view-transition-new(session-page) {
-	animation: session-page-in-left var(--session-slide-time) cubic-bezier(0.2, 0, 0, 1) both;
-}
+/* 阻尼感只来自**缓动曲线**：两页都是走满 100% 的等距平移、同时长同缓动（所以两张快照边缘全程严丝合缝），
+   曲线 cubic-bezier(0.16, 1, 0.3, 1) ≈ easeOutExpo —— 起步快、后段长时间轻轻收住，就是"滑过去被阻尼吸住"的手感。
+   想更弹：把系数换成 (0.22, 1, 0.36, 1)（easeOutQuint，收得早一点）或 (0.34, 1.12, 0.64, 1)
+   （末尾过冲约 2%——行程是整屏宽，过冲会被放大，系数别给大）。 */
 @keyframes session-page-out-left {
 	from {
 		transform: translateX(0);
@@ -424,7 +395,32 @@ html[data-session-slide="pop"]::view-transition-new(session-page) {
 		transform: translateX(0);
 	}
 }
-
+html[data-session-slide="push"]::view-transition-old(session-page) {
+	animation: session-page-out-left var(--session-slide-time) cubic-bezier(0.16, 1, 0.3, 1) both;
+}
+html[data-session-slide="push"]::view-transition-new(session-page) {
+	animation: session-page-in-right var(--session-slide-time) cubic-bezier(0.16, 1, 0.3, 1) both;
+}
+html[data-session-slide="pop"]::view-transition-old(session-page) {
+	animation: session-page-out-right var(--session-slide-time) cubic-bezier(0.16, 1, 0.3, 1) both;
+}
+html[data-session-slide="pop"]::view-transition-new(session-page) {
+	animation: session-page-in-left var(--session-slide-time) cubic-bezier(0.16, 1, 0.3, 1) both;
+}
+/* 快照画在顶层，位移不受容器 overflow 约束 —— 不裁的话聊天页会**横穿左栏**（实测：左栏像素被盖）。
+   给 group 加裁剪后，两张快照只能在这个「画框」里出现：出门那张滑到框左缘就消失、进门那张从框右缘进来，
+   正是「画框内左右滚动」的观感（对应验收里 E2/E3 的两处像素检查）。 */
+html[data-session-slide]::view-transition-group(session-page) {
+	overflow: clip;
+}
+/* 快照会把滚动条一起拍进去 ⇒ 滑动时右边那条 4px 滚动条跟着横着走（两张快照各带一条，很脏）。
+   这里在过渡期间把滚动条的**像素**抹掉：滑块/轨道颜色全透明，但**宽度一个像素都不动**（宽度一变就重排，
+   两张快照的布局会不一致、内容会跳）。颜色走 CSS 变量 ⇒ 覆盖变量即可同时覆盖深/浅色与各处细滚动条；
+   标记在 startViewTransition 之前就设好 ⇒ 旧快照也是「没有滚动条」的。 */
+html[data-session-slide] {
+	--scrollbar-thumb: transparent;
+	--scrollbar-thumb-hover: transparent;
+}
 /* 频道订阅胶囊（spec D2）：宽度 0 ↔ 实测自然宽度，右缘固定、左端伸展；退场同曲线收起 + 淡出。
    时长/缓动是设计基准（.local/design/ux/channel-subscription-pill/index.html），组件里同步一份常量
    （CHANNEL_PILL_DURATION_MS）用于「退场结束」的兜底计时；两边改要一起改。 */
@@ -434,8 +430,8 @@ html[data-session-slide="pop"]::view-transition-new(session-page) {
 	overflow: hidden;
 	flex-shrink: 0;
 	transition:
-		width var(--channel-pill-time, 360ms) cubic-bezier(0.4, 0, 0.2, 1),
-		opacity var(--channel-pill-time, 360ms) cubic-bezier(0.4, 0, 0.2, 1);
+		width var(--channel-pill-time, 360ms) cubic-bezier(0.16, 1, 0.3, 1),
+		opacity var(--channel-pill-time, 360ms) cubic-bezier(0.16, 1, 0.3, 1);
 }
 .channel-pill-open {
 	opacity: 1;
