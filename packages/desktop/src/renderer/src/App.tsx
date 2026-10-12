@@ -3,6 +3,7 @@ import { useCallback, useEffect, useState } from "react";
 import { getPi } from "./api";
 import { EmptyState } from "./components/chat/EmptyState";
 import { MessageList } from "./components/chat/MessageList";
+import { SubagentBackButton } from "./components/chat/SubagentBackButton";
 import { TodoPanel } from "./components/chat/TodoPanel";
 import { DiffSidebar } from "./components/diff/DiffSidebar";
 import { DockSlot } from "./components/session/DockSlot";
@@ -111,7 +112,8 @@ export default function App() {
 							{showEmpty ? <EmptyState /> : <MessageList />}
 							<Slot name={UI_SLOTS.TodoPanel} props={{}} fallback={TodoPanel} />
 							{/* 聊天区四角贡献层（top-right 与 TodoPanel 同角，容器已预留 pt-12） */}
-							<RegionHost region={UI_REGIONS.CornerTopLeft} />
+							{/* top-left 用 leading 插：返回父会话入口与左上区域贡献共用同一定位容器，不会重叠 */}
+							<RegionHost region={UI_REGIONS.CornerTopLeft} leading={<SubagentBackButton />} />
 							<RegionHost region={UI_REGIONS.CornerTopRight} />
 							<RegionHost region={UI_REGIONS.CornerBottomLeft} />
 							<RegionHost region={UI_REGIONS.CornerBottomRight} />

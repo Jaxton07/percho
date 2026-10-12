@@ -218,6 +218,8 @@ export const zh = {
 		subagent: {
 			running: "工作中",
 			done: "已完成",
+			/** 子代理检视页左上角返回父会话入口（spec D4） */
+			backToParent: "返回父会话",
 			failed: "失败",
 			mutex: "检测到 subagent 扩展 {path}，其工具已由内置 subagent 接管：{tools}",
 		},
@@ -722,6 +724,7 @@ export const zh = {
 		forkFailed: "分叉会话失败",
 		recallFailed: "撤回消息失败",
 		modelsLoadFailed: "加载模型列表失败",
+		subagentReturnUnavailable: "无法返回父会话：找不到父会话文件",
 		modelPrefsLoadFailed: "模型偏好读取失败",
 		subagentsLoadFailed: "子代理列表读取失败",
 		loadedResourcesFailed: "已加载资源读取失败",

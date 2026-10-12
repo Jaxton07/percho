@@ -222,6 +222,8 @@ export const en: Messages = {
 		subagent: {
 			running: "Working",
 			done: "Done",
+			/** Back-to-parent entry on the subagent inspection page (spec D4) */
+			backToParent: "Back to parent session",
 			failed: "Failed",
 			mutex: "Detected subagent extension {path}; built-in subagent took over: {tools}",
 		},
@@ -745,6 +747,7 @@ export const en: Messages = {
 		forkFailed: "Failed to fork session",
 		recallFailed: "Failed to recall message",
 		modelsLoadFailed: "Failed to load models",
+		subagentReturnUnavailable: "Cannot return: parent session file is missing",
 		modelPrefsLoadFailed: "Failed to read model preferences",
 		subagentsLoadFailed: "Failed to read subagents",
 		loadedResourcesFailed: "Failed to read loaded resources",

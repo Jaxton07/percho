@@ -1,5 +1,5 @@
 import type { UiPluginAnchor } from "@percho/shared";
-import type { ComponentType } from "react";
+import type { ComponentType, ReactNode } from "react";
 import { useUiPluginsStore } from "../stores/ui-plugins";
 import { PluginBoundary } from "./PluginBoundary";
 import { type Contribution, useUiPluginRegistry } from "./registry";
@@ -35,16 +35,21 @@ const CORNER_POS_CLASSES: Partial<Record<RegionName, string>> = {
  * - app.background：绝对填充 z-0，与自定义背景图同层同规则（界面默认不透明时不可见）；
  * - app.overlay：每贡献一个 fixed inset-0 z-20 pointer-events-none 容器 + anchor 对齐类；
  * - chat.corner.*：absolute z-20 flex-col 同角纵向堆叠（top-right 预留 pt-12 避开 TodoPanel）。
+ *   `leading` 只对 `chat.corner.*` 有效：宿主自带的 UI 放在贡献之前，与贡献**共用同一个定位容器**
+ *   （例：top-left 的「返回父会话」入口），这样永远不可能与合规贡献重叠；没有贡献时也能单独渲染。
  * 贡献崩溃 → PluginBoundary 兜底 null（没有默认可回退，spec §15）。
  */
-export function RegionHost({ region }: { region: RegionName }) {
+export function RegionHost({ region, leading }: { region: RegionName; leading?: ReactNode }) {
 	// 稳定引用纪律：contributions[region] 是 map 项（改动时整体换新数组），空用模块级 EMPTY
 	const list = useUiPluginRegistry((s) => s.contributions[region]) ?? EMPTY_CONTRIBUTIONS;
 	// 热重载换新边界实例（errored 归零），与 Slot 的 key 语义一致
 	const nonces = useUiPluginRegistry((s) => s.loadNonces);
 	// 全局总开关：关 = 全部贡献立即停用（与 Slot 同一开关语义；registry 保留，开回即恢复）
 	const masterOn = useUiPluginsStore((s) => s.config.enabled);
-	if (!masterOn || list.length === 0) return null;
+	const hasContent = masterOn && list.length > 0;
+	// leading 只在角区域有意义（那里有共用的绝对定位容器）；其他区域没有贡献就整体不渲染
+	const showCornerContainer = Boolean(leading) && CORNER_POS_CLASSES[region] !== undefined;
+	if (!hasContent && !showCornerContainer) return null;
 
 	const renderContribution = (c: Contribution) => {
 		const Comp = c.component as ComponentType<Record<string, never>>;
@@ -88,7 +93,8 @@ export function RegionHost({ region }: { region: RegionName }) {
 				<div
 					className={`pointer-events-none absolute z-20 flex flex-col gap-2 ${CORNER_POS_CLASSES[region]}`}
 				>
-					{list.map(renderContribution)}
+					{leading}
+					{hasContent && list.map(renderContribution)}
 				</div>
 			);
 		case UI_REGIONS.ComposerFooter:

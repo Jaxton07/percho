@@ -5,6 +5,7 @@ import { initDailyDir, isDailyCwd } from "../lib/daily";
 import { isPrimaryNavigationSession } from "../lib/session-visibility";
 import { useSessionWorkspaceStore } from "./session-workspace";
 import { partitionSessionsByPin, useSessionsStore } from "./sessions";
+import { useSubagentReturnStore } from "./subagent-return";
 import { useUiPreferencesStore } from "./ui-preferences";
 
 const ADDED_KEY = "pi-desktop.projects";
@@ -154,6 +155,10 @@ export const useProjectsStore = create<ProjectsStore>((set, get) => {
 			useUiPreferencesStore.getState().forgetPermissionMode(session.sessionId);
 			// 工作区成员同理清理（**只有删除**会顺带移出；关会话/卸载不自动移出，见 spec）
 			useSessionWorkspaceStore.getState().removeMember(session.sessionId);
+			// spec D4：会话被删则与它相关的关系失效 —— 作为父（子会话的返回箭头）与作为子（自己的箭头）都清。
+			// **只有删除**清：GC 卸载要靠 parentFile 重开父会话，清了箭头就没了（两者不能混用）。
+			useSubagentReturnStore.getState().forgetChildrenOf(session.sessionId);
+			useSubagentReturnStore.getState().forgetChild(session.sessionId);
 			const sessionsState = useSessionsStore.getState();
 			if (sessionsState.sessions.some((s) => s.sessionId === session.sessionId)) {
 				await sessionsState.closeSession(session.sessionId);

@@ -1094,6 +1094,7 @@ pgrep -f "electron-vite" | xargs -r kill -9
 - **成功路径的 IPC 计数**：数主进程日志（本仓 backend 每次建会话会打 `session created`，脚本按行数取差），或用应用的 store 状态断言（页面内 `await import("/src/stores/*.ts")` 拿到的就是应用在用的同一份实例）。
   - 2026-10-12 补充（qol3 阶段 1 实测）：计数「某请求触发了几次」时，**订阅 store 的上升沿**（`useSettingsStore.subscribe((s, prev) => …)` 数 `loading`/`refreshing` false→true）比数 IPC 更实用 —— 只要发起方在**发起请求时同步置位**，上升沿就与真实请求一一对应，且不受对端快慢影响（在途去重也能被这条口径验证）。同理「副作用是否只发生一次」可以把 store 上的 action 换成一个计数包装（`useXStore.setState({ action: async () => { count++; return orig() }) }`，store 内部走 `getState().action()` 时会用到包装后的版本）。
 - 需要「点真实子代理卡」这类依赖模型行为的场景，优先找**历史回放**入口：历史里已有子代理运行的父会话，打开它 → transcript 重放出卡片 → 点它，同样落到只读检视页，且完全确定性（子会话文件在 `<agentDir>/sessions-subagents/`，后端按路径判定 `readOnly`）。现场真跑一次 subagent 依赖凭证可用，dev 里常 401 拿不到可点卡片。
+  - 2026-10-12 补充（qol3 阶段 2 实测）：dev agentDir 里**可能一个可点子代理卡都没有** —— 唯一一次真实 subagent 运行是 401 失败、没有 `sessionFile`（这类行渲染成不可点）。确定性做法：挑一个含 `"toolName":"subagent"` 的父会话打开，往 `useTranscriptStore` 的 `bySession[id].streaming.subagentRuns` **注入一条** `{key,agent,status:"done",sessionFile:<真实存在的 sessions-subagents 文件>}`（注入要重试：bundle 可能晚于注入落地并把 `streaming` 覆盖回磁盘态），卡片就会渲染出来，点它走的是**真实**组件 + 真实 store + 真实子会话文件；唯一合成物是那一行运行记录，写明即可。
 
 ### 绝不打印/提交 API key
 

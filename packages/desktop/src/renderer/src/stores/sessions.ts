@@ -15,6 +15,7 @@ import {
 	retrySessionHistory,
 } from "./session-history";
 import { useSessionWorkspaceStore } from "./session-workspace";
+import { useSubagentReturnStore } from "./subagent-return";
 import { pushToast } from "./toasts";
 import { useTranscriptStore } from "./transcript";
 import { useUiPreferencesStore } from "./ui-preferences";
@@ -90,8 +91,13 @@ export function partitionSessionsByPin(
 /**
  * `openFromHistory` 的结果：`ok:false` = 没开起来（已 toast）；`latest:false` = 会话确实开了，
  * 但用户在等待期间又导航了 —— 调用方只能落数据，不得抢焦点/`activeFile`。
+ *
+ * `token` = 本次导航领的激活序号：调用方在**提交副作用前**可以再核对一次「还是不是最新意图」
+ * （spec D4：关系提交不能只看 activeSessionId —— 同一个子会话被再点一次也是更新的意图）。
  */
-export type OpenFromHistoryResult = { ok: false } | { ok: true; latest: boolean; meta: SessionMeta };
+export type OpenFromHistoryResult =
+	| { ok: false }
+	| { ok: true; latest: boolean; meta: SessionMeta; token: number };
 
 /**
  * 进程内单调激活序号（spec D2）：**用户导航动作一开始**就领号（不能等 IPC 返回才领，否则表达不了点击顺序）。
@@ -548,6 +554,10 @@ interface SessionsStore {
 	/** 自动卸载（内存策略专用，见实现处注释）；传 intent="gc" 让后端区分自动 GC 与用户意图 */
 	unloadSession: (sessionId: string) => Promise<{ closed: boolean }>;
 	openFromHistory: (filePath: string) => Promise<OpenFromHistoryResult>;
+	/** 子代理检视打开（spec D4）：捕获父目标 + 只在最新导航意图下建立返回关系 */
+	openSubagentSession: (filePath: string) => Promise<OpenFromHistoryResult>;
+	/** 从子代理检视页回到父会话（父仍加载则切，已卸载则按文件重开） */
+	returnToParent: (childSessionId: string) => Promise<boolean>;
 	/** 在指定 assistant 消息处分叉：新会话以新 tab 打开并切换过去（原会话保留原样）；成功返回新 sessionId */
 	forkSession: (ref: { entryId?: string; text?: string }) => Promise<string | undefined>;
 	/** 撤回一条用户消息：会话回退到该消息之前，文本/图片放回输入框草稿继续编辑 */
@@ -786,11 +796,54 @@ export const useSessionsStore = create<SessionsStore>((set, get) => ({
 		// 失败已由共享链报过一次；这里的提前返回同时保证不对用户的新选择做任何回滚
 		if (!meta) return { ok: false };
 		// 迟到（用户已切走）：会话确实开起来了，但**不能抢焦点** —— 调用方据此只落数据
-		if (!isLatestActivation(token)) return { ok: true, latest: false, meta };
+		if (!isLatestActivation(token)) return { ok: true, latest: false, meta, token };
 		set({ activeSessionId: meta.sessionId, cwd: meta.cwd });
 		// 先记 cwd 再拉数据：即便随后装载失败，用户「在用哪个项目」的事实也已经成立
 		rememberCwd(meta.cwd);
-		return { ok: true, latest: true, meta };
+		return { ok: true, latest: true, meta, token };
+	},
+
+	/**
+	 * 子代理检视打开（spec D4）：同步捕获父目标 → 走统一打开链 → **只在这次导航仍是最新意图时**建立返回关系。
+	 *
+	 * 关键点：
+	 * - 父目标在**函数入口同步捕获**（activeSessionId + sessionFile），不依赖 await 期间父会话还在焦点；
+	 * - 关系提交前再核对**导航令牌**（`isLatestNavigation(token)`），不能只看 `activeSessionId === 子会话`:
+	 *   同一个子会话被再点一次（比如从另一个父会话）也是更新的意图，迟到的旧提交不得覆盖它；
+	 * - 失败/迟到都不挂假记录（漏箭头只是少一个入口，不会把用户带到错的父会话）。
+	 */
+	openSubagentSession: async (filePath) => {
+		const { activeSessionId, sessions } = get();
+		const parent = activeSessionId && {
+			parentSessionId: activeSessionId,
+			parentFile: sessions.find((s) => s.sessionId === activeSessionId)?.sessionFile,
+		};
+		const result = await get().openFromHistory(filePath);
+		if (!parent) return result;
+		if (!result.ok || !result.latest) return result;
+		// 微任务窗口守卫：从 openFromHistory 返回到这里之间，用户可能又导航（甚至再开同一个子会话）
+		if (!isLatestNavigation(result.token)) return result;
+		useSubagentReturnStore.getState().remember(result.meta.sessionId, parent);
+		return result;
+	},
+
+	/**
+	 * 从子代理检视页回到父会话（spec D4）：父仍加载 → `switchSession`（不新增工作区成员、不重置实时 transcript）；
+	 * 父已被 GC 卸载 → 按 `parentFile` 重开（失败路径已 toast，留在子页不做猜测性跳转）。
+	 */
+	returnToParent: async (childSessionId) => {
+		const target = useSubagentReturnStore.getState().relations[childSessionId];
+		if (!target) return false;
+		if (get().sessions.some((s) => s.sessionId === target.parentSessionId)) {
+			get().switchSession(target.parentSessionId);
+			return true;
+		}
+		if (!target.parentFile) {
+			pushToast("warning", "toast.subagentReturnUnavailable");
+			return false;
+		}
+		const result = await get().openFromHistory(target.parentFile);
+		return result.ok;
 	},
 
 	forkSession: async (ref) => {
