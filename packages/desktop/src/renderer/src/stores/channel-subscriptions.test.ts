@@ -11,6 +11,7 @@ vi.mock("../api", () => ({ getPi: () => piMock }));
 import {
 	EMPTY_TOPICS,
 	initChannelSubscriptions,
+	invalidateChannelSubscriptionQueries,
 	syncActiveSession,
 	useChannelSubscriptionsStore,
 } from "./channel-subscriptions";
@@ -55,7 +56,8 @@ beforeEach(() => {
 			listeners = listeners.filter((item) => item !== listener);
 		};
 	});
-	useChannelSubscriptionsStore.setState({ bySession: {} });
+	// 三张表都清（生命周期水位与 forget 计数都在 store 里 ⇒ 不会靠残留水位意外过关）
+	useChannelSubscriptionsStore.setState({ bySession: {}, lifecycles: {}, forgetTokens: {} });
 });
 
 describe("apply 的新旧守卫", () => {
@@ -198,5 +200,113 @@ describe("查询路径（启动 / reload 恢复）与生命周期守卫", () => 
 	it("activeSessionId 为 null 时不查询", async () => {
 		await syncActiveSession(null);
 		expect(piMock.getChannelSubscriptions).not.toHaveBeenCalled();
+	});
+});
+
+describe("R7：关闭后旧事件不得复活（可见状态与生命周期水位分离）", () => {
+	it("dispose 空集 → forget → 迟到的同代旧 topic 事件：不复活", () => {
+		const { apply, forget } = useChannelSubscriptionsStore.getState();
+		apply(snapshot("s1", ["alpha"], 5, 1)); // 订阅
+		apply(snapshot("s1", [], 6, 1)); // dispose 空集：胶囊清掉
+		forget("s1");
+		expect(topicsOf("s1")).toBeUndefined();
+
+		apply(snapshot("s1", ["alpha"], 5, 1)); // 关闭前那条 alpha 迟到
+		expect(topicsOf("s1")).toBeUndefined(); // 旧行为会在这里复活
+	});
+
+	it("关闭时没有可见快照：关闭事件迟到也能建/抬水位，之后的旧 topic 一律忽略", () => {
+		const { apply, forget } = useChannelSubscriptionsStore.getState();
+		forget("s1"); // 从没收到过这个会话的快照
+		apply(snapshot("s1", [], 9, 5)); // dispose 空集迟到：只抬水位
+		expect(topicsOf("s1")).toBeUndefined();
+		apply(snapshot("s1", ["alpha"], 8, 5)); // 同一代的旧 topic 随后到达
+		expect(topicsOf("s1")).toBeUndefined();
+	});
+
+	it("更高代的空集（如重开后还没订阅）保持关闭，不产生可见状态", () => {
+		const { apply, forget } = useChannelSubscriptionsStore.getState();
+		apply(snapshot("s1", ["alpha"], 5, 1));
+		forget("s1");
+		apply(snapshot("s1", [], 7, 2)); // 新的一代 + 空集
+		expect(topicsOf("s1")).toBeUndefined();
+		expect(useChannelSubscriptionsStore.getState().lifecycles.s1).toMatchObject({
+			generation: 2,
+			closed: true,
+		});
+	});
+
+	it("新代早报（更高代 + 非空）仍被接受：不能把重开永久屏蔽", () => {
+		const { apply, forget } = useChannelSubscriptionsStore.getState();
+		apply(snapshot("s1", ["alpha"], 5, 1));
+		forget("s1");
+		expect(apply(snapshot("s1", ["beta"], 6, 2))).toBe(true);
+		expect(topicsOf("s1")).toEqual(["beta"]);
+		expect(useChannelSubscriptionsStore.getState().lifecycles.s1?.closed).toBe(false);
+		// 恢复后旧代事件依然不能回灌
+		expect(apply(snapshot("s1", ["alpha"], 99, 1))).toBe(false);
+		expect(topicsOf("s1")).toEqual(["beta"]);
+	});
+
+	it("更老一代的事件在关闭态下也被忽略", () => {
+		const { apply, forget } = useChannelSubscriptionsStore.getState();
+		apply(snapshot("s1", ["alpha"], 5, 3));
+		forget("s1");
+		expect(apply(snapshot("s1", ["legacy"], 50, 2))).toBe(false);
+		expect(topicsOf("s1")).toBeUndefined();
+	});
+
+	it("关闭态下的查询结果（同一代空集）也不会把可见状态建回来", async () => {
+		const { apply, forget } = useChannelSubscriptionsStore.getState();
+		apply(snapshot("s1", ["alpha"], 5, 1));
+		forget("s1");
+		piMock.getChannelSubscriptions.mockResolvedValue(snapshot("s1", [], 6, 1));
+		await syncActiveSession("s1");
+		expect(topicsOf("s1")).toBeUndefined();
+	});
+
+	it("forget 之后重开（新代事件 → 退订 → dispose）能正常走完一轮", () => {
+		const { apply, forget } = useChannelSubscriptionsStore.getState();
+		apply(snapshot("s1", ["alpha"], 5, 1));
+		forget("s1");
+		apply(snapshot("s1", ["alpha"], 6, 2)); // 重开后订阅
+		expect(topicsOf("s1")).toEqual(["alpha"]);
+		apply(snapshot("s1", [], 7, 2)); // 退订
+		expect(topicsOf("s1")).toEqual([]);
+		apply(snapshot("s1", [], 8, 2)); // dispose
+		expect(topicsOf("s1")).toEqual([]);
+	});
+});
+
+describe("R8：切到新会话页 / effect cleanup 时在途查询必须作废", () => {
+	it("syncActiveSession(null) 推进序号：上一个会话在途的查询结果不再落地", async () => {
+		const gate = deferred<ChannelSubscriptionsSnapshot>();
+		piMock.getChannelSubscriptions.mockReturnValue(gate.promise);
+
+		const pending = syncActiveSession("s1");
+		await syncActiveSession(null); // 用户切到新会话页（还没发查询）
+		gate.resolve(snapshot("s1", ["alpha"], 5, 1));
+		await pending;
+
+		expect(topicsOf("s1")).toBeUndefined();
+	});
+
+	it("invalidateChannelSubscriptionQueries()（effect cleanup）让在途查询作废", async () => {
+		const gate = deferred<ChannelSubscriptionsSnapshot>();
+		piMock.getChannelSubscriptions.mockReturnValue(gate.promise);
+
+		const pending = syncActiveSession("s1");
+		invalidateChannelSubscriptionQueries(); // StrictMode cleanup / 卸载
+		gate.resolve(snapshot("s1", ["alpha"], 5, 1));
+		await pending;
+
+		expect(topicsOf("s1")).toBeUndefined();
+	});
+
+	it("作废只影响在途查询：之后新发的同步照常落地", async () => {
+		invalidateChannelSubscriptionQueries();
+		piMock.getChannelSubscriptions.mockResolvedValue(snapshot("s1", ["alpha"], 5, 1));
+		await syncActiveSession("s1");
+		expect(topicsOf("s1")).toEqual(["alpha"]);
 	});
 });

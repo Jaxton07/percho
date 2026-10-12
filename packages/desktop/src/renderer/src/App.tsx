@@ -22,7 +22,11 @@ import { Slot } from "./plugins/Slot";
 import { UI_REGIONS, UI_SLOTS } from "./plugins/slots";
 import { finishSplash } from "./splash";
 import { initAppQuit } from "./stores/app-quit";
-import { initChannelSubscriptions, syncActiveSession } from "./stores/channel-subscriptions";
+import {
+	initChannelSubscriptions,
+	invalidateChannelSubscriptionQueries,
+	syncActiveSession,
+} from "./stores/channel-subscriptions";
 import { restoreSessionWorkspace } from "./stores/session-workspace-restore";
 import { useSessionsStore } from "./stores/sessions";
 import { useHasParentRelation } from "./stores/subagent-return";
@@ -47,6 +51,8 @@ export default function App() {
 	useEffect(() => initChannelSubscriptions(), []);
 	useEffect(() => {
 		void syncActiveSession(activeSessionId);
+		// cleanup（卸载 / 依赖变化 / StrictMode 重跑）让这一次的在途查询作废
+		return invalidateChannelSubscriptionQueries;
 	}, [activeSessionId]);
 	// 订阅收敛为原始值（selector 返回 boolean → 仅在值翻转时重渲染）：App 子树（TabBar/MessageList/
 	// TodoPanel/DiffSidebar/…）无 memo，若订阅 transcript 对象会随每条流式 delta 全量级联重渲染

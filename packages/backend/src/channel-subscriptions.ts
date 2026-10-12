@@ -24,9 +24,14 @@ export class ChannelSubscriptionRegistry {
 	private readonly topics = new Map<string, Set<string>>();
 	/**
 	 * sessionId → 在册代次。`dispose` 后**保留代次值**（标 `live: false`）——关闭状态下查询也能给出
-	 * 稳定答案（同一代的旧响应因此仍被 revision 挡住）；下一次上报/打开会领新的一代。
+	 * 稳定答案（同一代的旧响应因此仍被 revision 挡住）；下一次打开会领新的一代。
+	 *
+	 * 代次**只由 `noteSessionOpened` 产生**：早报（扩展构造期上报）不单独占一代，它的订阅先落表、
+	 * 等注册确认时用那一代发布一次 —— 所以「每 open 恰好一代」是字面成立的（见 `pendingPublish`）。
 	 */
 	private readonly incarnations = new Map<string, { generation: number; live: boolean }>();
+	/** 早报过、还没注册确认的会话：`noteSessionOpened` 时用新代次统一发布一次 */
+	private readonly pendingPublish = new Set<string>();
 	private readonly emitter = new Emitter<ChannelSubscriptionsSnapshot>();
 	private revision = 0;
 	private incarnationSeq = 0;
@@ -42,23 +47,32 @@ export class ChannelSubscriptionRegistry {
 		return this.emitter.subscribe(handler);
 	}
 
-	/** 打开/注册一代（PiBackend 在 registry.add 后调用）；早报过的会话也在这里拿到最终代次 */
+	/**
+	 * 打开/注册一代（PiBackend 在 registry.add 后调用）：**代次唯一来源**。
+	 * 若这个会话在构造期已上报过（早报），此刻用这一代发布一次，让 renderer 拿到「开箱即有」的状态。
+	 */
 	noteSessionOpened(sessionId: string): void {
 		this.incarnations.set(sessionId, { generation: ++this.incarnationSeq, live: true });
+		if (this.pendingPublish.delete(sessionId)) this.publish(sessionId);
 	}
 
 	/**
 	 * channel-watch 扩展回调入口（spec §6.1）：上报该会话当前的「有效运行态订阅」快照。
 	 * 内容与代次都没变 ⇒ 不发布（避免刷事件）；空集 ⇒ 移出快照。
+	 *
+	 * **早报**（`session_start` 前、扩展构造期上报，此时还没有在册代次）：只落表 + 记待发布，
+	 * 代次由随后的 `noteSessionOpened` 定并统一发布 —— 这样早报不会另占一代（查询也能查到，
+	 * 因为 `snapshot()` 读的就是这张表）。
 	 */
 	report(sessionId: string, topics: ReadonlySet<string>): void {
 		const next = [...topics].sort();
-		if (this.isLiveIncarnation(sessionId) && sameTopics(this.topics.get(sessionId), next)) return;
+		const confirmed = this.isLiveIncarnation(sessionId);
+		if (confirmed && sameTopics(this.topics.get(sessionId), next)) return;
 		if (next.length === 0) this.topics.delete(sessionId);
 		else this.topics.set(sessionId, new Set(next));
-		// 早报路径：session_start 前就上报（扩展构造期）时还没有代次，先领一代
-		if (!this.incarnations.get(sessionId)?.live) {
-			this.incarnations.set(sessionId, { generation: ++this.incarnationSeq, live: true });
+		if (!confirmed) {
+			this.pendingPublish.add(sessionId); // 早报：等注册确认时用那一代发布
+			return;
 		}
 		this.publish(sessionId);
 	}
@@ -70,6 +84,7 @@ export class ChannelSubscriptionRegistry {
 	 */
 	dispose(sessionId: string): void {
 		this.topics.delete(sessionId);
+		this.pendingPublish.delete(sessionId);
 		const entry = this.incarnations.get(sessionId);
 		if (entry) entry.live = false; // 保留 generation：关闭状态下的查询仍然稳定
 		this.publish(sessionId);
@@ -79,6 +94,7 @@ export class ChannelSubscriptionRegistry {
 	delete(sessionId: string): void {
 		this.topics.delete(sessionId);
 		this.incarnations.delete(sessionId);
+		this.pendingPublish.delete(sessionId);
 	}
 
 	/**
