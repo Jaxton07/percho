@@ -25,12 +25,14 @@ import {
 type Listener = (snapshot: ChannelSubscriptionsSnapshot) => void;
 let listeners: Listener[] = [];
 
+/** `live` 默认 true（存活期内的乱序用例）；dispose/关闭类用例显式传 false */
 const snapshot = (
 	sessionId: string,
 	topics: string[],
 	revision: number,
 	generation: number,
-): ChannelSubscriptionsSnapshot => ({ sessionId, topics, revision, generation });
+	live = true,
+): ChannelSubscriptionsSnapshot => ({ sessionId, live, topics, revision, generation });
 
 /** 模拟后端派发事件 */
 const emit = (payload: ChannelSubscriptionsSnapshot) => {
@@ -215,25 +217,37 @@ describe("R7：关闭后旧事件不得复活（可见状态与生命周期水�
 		expect(topicsOf("s1")).toBeUndefined(); // 旧行为会在这里复活
 	});
 
-	it("关闭时没有可见快照：关闭事件迟到也能建/抬水位，之后的旧 topic 一律忽略", () => {
+	it("关闭时没有可见快照：迟到 dispose（live=false）抬水位，之后同代的旧 topic 一律忽略", () => {
 		const { apply, forget } = useChannelSubscriptionsStore.getState();
 		forget("s1"); // 从没收到过这个会话的快照
-		apply(snapshot("s1", [], 9, 5)); // dispose 空集迟到：只抬水位
+		expect(apply(snapshot("s1", [], 9, 5, false))).toBe(false); // dispose 空集迟到：只抬水位
 		expect(topicsOf("s1")).toBeUndefined();
-		apply(snapshot("s1", ["alpha"], 8, 5)); // 同一代的旧 topic 随后到达
+		expect(apply(snapshot("s1", ["alpha"], 8, 5, false))).toBe(false); // 同一代的旧 topic
+		expect(topicsOf("s1")).toBeUndefined();
+		expect(apply(snapshot("s1", ["alpha"], 7, 5))).toBe(false); // 同一代、当时还 live 的旧事件
 		expect(topicsOf("s1")).toBeUndefined();
 	});
 
-	it("更高代的空集（如重开后还没订阅）保持关闭，不产生可见状态", () => {
+	it("关闭时没有可见快照 + 真的重开（新代 live）：接受订阅", () => {
+		const { apply, forget } = useChannelSubscriptionsStore.getState();
+		forget("s1");
+		expect(apply(snapshot("s1", ["alpha"], 9, 4))).toBe(true); // 新代且在册
+		expect(topicsOf("s1")).toEqual(["alpha"]);
+	});
+
+	it("更高代 + live=false 的迟到 dispose：保持关闭、不产生可见状态、只抬水位", () => {
 		const { apply, forget } = useChannelSubscriptionsStore.getState();
 		apply(snapshot("s1", ["alpha"], 5, 1));
 		forget("s1");
-		apply(snapshot("s1", [], 7, 2)); // 新的一代 + 空集
+		expect(apply(snapshot("s1", [], 7, 2, false))).toBe(false); // 新代但从没在册（dispose 信号）
 		expect(topicsOf("s1")).toBeUndefined();
 		expect(useChannelSubscriptionsStore.getState().lifecycles.s1).toMatchObject({
 			generation: 2,
 			closed: true,
 		});
+		// 同代的旧 topic 随后到达也不能复活
+		expect(apply(snapshot("s1", ["alpha"], 8, 2, false))).toBe(false);
+		expect(topicsOf("s1")).toBeUndefined();
 	});
 
 	it("新代早报（更高代 + 非空）仍被接受：不能把重开永久屏蔽", () => {
@@ -308,5 +322,57 @@ describe("R8：切到新会话页 / effect cleanup 时在途查询必须作废",
 		piMock.getChannelSubscriptions.mockResolvedValue(snapshot("s1", ["alpha"], 5, 1));
 		await syncActiveSession("s1");
 		expect(topicsOf("s1")).toEqual(["alpha"]);
+	});
+});
+
+describe("R10：生命周期只认明确信号（live / 本地 forget），不拿 topics 空猜关闭", () => {
+	it("正常重开：forget(旧代) → 新代空集 → 同代 subscribe ⇒ 必须显示（review 反例）", () => {
+		const { apply, forget } = useChannelSubscriptionsStore.getState();
+		apply(snapshot("s1", ["alpha"], 5, 1)); // 旧代有订阅
+		forget("s1"); // 关闭
+		expect(apply(snapshot("s1", [], 7, 2))).toBe(true); // 重开后还没订阅（新代、在册、空集）
+		expect(topicsOf("s1")).toEqual([]);
+		expect(apply(snapshot("s1", ["beta"], 8, 2))).toBe(true); // 同代随后 subscribe
+		expect(topicsOf("s1")).toEqual(["beta"]);
+	});
+
+	it("同代退订再订阅：空集只是「暂时没订阅」，不是关闭", () => {
+		const { apply } = useChannelSubscriptionsStore.getState();
+		apply(snapshot("s1", ["alpha"], 5, 1));
+		apply(snapshot("s1", [], 6, 1)); // 退订
+		expect(topicsOf("s1")).toEqual([]);
+		apply(snapshot("s1", ["beta"], 7, 1)); // 再订阅（同代）
+		expect(topicsOf("s1")).toEqual(["beta"]);
+	});
+
+	it("重开先空后订阅 → 退订 → 再订阅，全程不被屏蔽", () => {
+		const { apply, forget } = useChannelSubscriptionsStore.getState();
+		apply(snapshot("s1", ["alpha"], 5, 1));
+		forget("s1");
+		apply(snapshot("s1", [], 6, 2)); // 新代空
+		apply(snapshot("s1", ["beta"], 7, 2));
+		apply(snapshot("s1", [], 8, 2)); // 退订
+		expect(topicsOf("s1")).toEqual([]);
+		apply(snapshot("s1", ["gamma"], 9, 2)); // 再订阅
+		expect(topicsOf("s1")).toEqual(["gamma"]);
+	});
+
+	it("旧代 / 新代乱序：旧代回灌失败，新代 dispose 生效，再新代可订阅", () => {
+		const { apply } = useChannelSubscriptionsStore.getState();
+		apply(snapshot("s1", ["beta"], 10, 2)); // 新代在册
+		expect(apply(snapshot("s1", ["alpha"], 11, 1))).toBe(false); // 旧代晚到（revision 更大也没用）
+		expect(topicsOf("s1")).toEqual(["beta"]);
+		expect(apply(snapshot("s1", [], 12, 2, false))).toBe(true); // 同代 dispose（live=false）生效
+		expect(topicsOf("s1")).toEqual([]);
+		expect(apply(snapshot("s1", ["gamma"], 13, 3))).toBe(true); // 再开一代
+		expect(topicsOf("s1")).toEqual(["gamma"]);
+	});
+
+	it("同代非空不能覆盖明确 dispose（live=false 的那条 last write 之后）", () => {
+		const { apply } = useChannelSubscriptionsStore.getState();
+		apply(snapshot("s1", ["beta"], 10, 2));
+		apply(snapshot("s1", [], 12, 2, false)); // dispose
+		expect(apply(snapshot("s1", ["beta"], 11, 2))).toBe(false); // 同代更早的订阅快照
+		expect(topicsOf("s1")).toEqual([]);
 	});
 });

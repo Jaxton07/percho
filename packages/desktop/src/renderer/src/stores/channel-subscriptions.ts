@@ -15,10 +15,11 @@ import { getPi } from "../api";
  * 1. **可见状态 vs 生命周期水位**（`bySession` vs `lifecycles`）。后者在 `forget` 后**保留**：
  *    关闭一代的拒旧依据不能随可见状态一起丢掉 —— 否则 dispose 空集清掉胶囊之后，一条**迟到的**
  *    旧 topic 事件（同一代、更小 revision）会因为「没有 current 可比」而把它复活（review R7 实测）。
- *    规则：
- *      · 关闭代（generation == 水位代）的任何快照都忽略；更老的一代也忽略；
- *      · 更高代 + **空集** ⇒ 只抬水位、保持关闭（新一代的生命周期信号，如 dispose / 新代还没订阅）；
- *      · 更高代 + **非空** ⇒ 接受（新代早报 / 重开后的真实订阅），解除关闭 —— 不能把重开永久屏蔽。
+ *    生命周期**只认明确信号**（review R10）：快照里的 `live`（这一代还在不在册）与本地 `forget`，
+ *    **不用「topics 为空」猜关闭** —— 重开后的新代可能只是暂时还没订阅，之后同代的 subscribe 必须能进来。
+ *    规则（关闭态下）：
+ *      · `live === false`（迟到 dispose / 从未打开）或 `generation <= 水位代` ⇒ 只抬水位、保持关闭；
+ *      · `live === true` 且 `generation > 水位代` ⇒ 新的一代真的在册了：接受（**空集也接受**）并解除关闭。
  * 2. **钥匙 = `(generation, revision)` 字典序**：跨代先比代次（上一代的迟到响应永远打不过新一代），
  *    同代比进程内单调 revision（后读的一定更大，晚到的旧查询结果被丢弃）。
  *
@@ -79,22 +80,19 @@ export const useChannelSubscriptionsStore = create<ChannelSubscriptionsState>((s
 		set((state) => {
 			const lifecycle = state.lifecycles[sessionId];
 			if (lifecycle?.closed) {
-				// 关闭代（含它自己的 dispose 空集与迟到的旧 topic）：一律忽略，不复活
-				if (snapshot.generation <= lifecycle.generation) return state;
-				if (snapshot.topics.length === 0) {
-					// 新一代的空集 = 生命周期信号：只抬水位，保持关闭（不产生可见状态）
+				// 只有「更高代 + 这一代确实在册」才算会话真的又活了
+				const reopened = snapshot.live && snapshot.generation > lifecycle.generation;
+				if (!reopened) {
+					// 关闭代（含它自己的 dispose 空集、迟到的旧 topic、以及任何 live=false 的迟到快照）：
+					// 一律不产生可见状态，只把水位抬到见过的最大值（保持关闭）
+					const generation = Math.max(lifecycle.generation, snapshot.generation);
+					const revision = Math.max(lifecycle.revision, snapshot.revision);
+					if (generation === lifecycle.generation && revision === lifecycle.revision) return state;
 					return {
-						lifecycles: {
-							...state.lifecycles,
-							[sessionId]: {
-								generation: snapshot.generation,
-								revision: snapshot.revision,
-								closed: true,
-							},
-						},
+						lifecycles: { ...state.lifecycles, [sessionId]: { generation, revision, closed: true } },
 					};
 				}
-				// 更高代 + 有订阅 ⇒ 新代早报 / 重开后的真实订阅：落到下面正常写入并解除关闭
+				// 新代在册 ⇒ 落到下面正常写入（topics 可以是空集：之后同代的 subscribe 事件照样能进来）并解除关闭
 			}
 			const current = state.bySession[sessionId];
 			if (!isFresher(current, snapshot)) return state;

@@ -103,11 +103,15 @@ export class ChannelSubscriptionRegistry {
 	 * 字典序比大小，同代内「后读的更大」这条不变式照样成立。
 	 */
 	snapshot(sessionId: string): ChannelSubscriptionsSnapshot {
+		const incarnation = this.incarnations.get(sessionId);
 		return {
 			sessionId,
+			// 在册与否是**独立字段**（不是从 topics 猜）：重开后暂时没订阅仍是 live=true，
+			// dispose 后的空集才是 live=false —— renderer 的关闭水位只认这个信号
+			live: incarnation?.live === true,
 			topics: [...(this.topics.get(sessionId) ?? [])].sort(),
 			revision: this.revision,
-			generation: this.incarnations.get(sessionId)?.generation ?? 0,
+			generation: incarnation?.generation ?? 0,
 		};
 	}
 

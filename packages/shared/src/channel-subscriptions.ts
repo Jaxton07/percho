@@ -10,7 +10,14 @@
  */
 export interface ChannelSubscriptionsSnapshot {
 	sessionId: string;
-	/** 有效订阅的 topic 名（去重、按字典序排序的副本）；空数组 = 无有效订阅 */
+	/**
+	 * 该会话当前是否有**在册的 backend 实例**（`incarnations.live`）。
+	 * `false` 的三种来源：从未打开、已 dispose（关闭/GC 卸载）、已删除。
+	 * renderer **不要用「topics 为空」推断生命周期**：重开后的新代可能只是暂时还没订阅 ——
+	 * 只有 `live === false` 才是「这一代没了」的明确信号。
+	 */
+	live: boolean;
+	/** 有效订阅的 topic 名（去重、按字典序排序的副本）；空数组 = 无有效订阅（可能是 live 也可能是 disposed） */
 	topics: string[];
 	/** backend 进程内单调版本（同代内比较用） */
 	revision: number;
