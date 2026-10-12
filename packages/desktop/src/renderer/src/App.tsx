@@ -24,6 +24,7 @@ import { finishSplash } from "./splash";
 import { initAppQuit } from "./stores/app-quit";
 import { restoreSessionWorkspace } from "./stores/session-workspace-restore";
 import { useSessionsStore } from "./stores/sessions";
+import { useHasParentRelation } from "./stores/subagent-return";
 import { backgroundImageUrl, useThemeStore } from "./stores/theme";
 import { useTranscriptStore } from "./stores/transcript";
 import { useUiPreferencesStore } from "./stores/ui-preferences";
@@ -38,6 +39,8 @@ import { initUpdateStore } from "./stores/update";
 
 export default function App() {
 	const activeSessionId = useSessionsStore((s) => s.activeSessionId);
+	// 子代理检视页才挂返回入口：无关系时连左上定位容器都不出现（不留占位）
+	const hasParentRelation = useHasParentRelation(activeSessionId);
 	// 订阅收敛为原始值（selector 返回 boolean → 仅在值翻转时重渲染）：App 子树（TabBar/MessageList/
 	// TodoPanel/DiffSidebar/…）无 memo，若订阅 transcript 对象会随每条流式 delta 全量级联重渲染
 	const showEmpty = useTranscriptStore((s) => {
@@ -113,7 +116,10 @@ export default function App() {
 							<Slot name={UI_SLOTS.TodoPanel} props={{}} fallback={TodoPanel} />
 							{/* 聊天区四角贡献层（top-right 与 TodoPanel 同角，容器已预留 pt-12） */}
 							{/* top-left 用 leading 插：返回父会话入口与左上区域贡献共用同一定位容器，不会重叠 */}
-							<RegionHost region={UI_REGIONS.CornerTopLeft} leading={<SubagentBackButton />} />
+							<RegionHost
+								region={UI_REGIONS.CornerTopLeft}
+								leading={hasParentRelation ? <SubagentBackButton /> : undefined}
+							/>
 							<RegionHost region={UI_REGIONS.CornerTopRight} />
 							<RegionHost region={UI_REGIONS.CornerBottomLeft} />
 							<RegionHost region={UI_REGIONS.CornerBottomRight} />

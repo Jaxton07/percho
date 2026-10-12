@@ -120,6 +120,27 @@ describe("打开子代理检视页：建立返回关系", () => {
 		expect(active()).toBe("other");
 	});
 
+	it("提交前的导航令牌守卫：已判定 latest:true、active childId 也没变，但提交前又导航 ⇒ 不写关系", async () => {
+		openParentAsActive();
+		piMock.openSession.mockResolvedValue(child);
+		// 在「子会话刚被激活」的同步时刻插入一次新导航（同一个 childId ⇒ 只比对 activeSessionId 的守卫会放过它）
+		let interfered = 0;
+		const unsubscribe = useSessionsStore.subscribe((state, prev) => {
+			if (interfered === 0 && state.activeSessionId === "sub-1" && prev.activeSessionId !== "sub-1") {
+				interfered += 1;
+				useSessionsStore.getState().switchSession("sub-1");
+			}
+		});
+
+		const result = await useSessionsStore.getState().openSubagentSession(childFile);
+		unsubscribe();
+
+		expect(interfered).toBe(1); // 反例确实编排进了「latest 已判定、关系尚未提交」的窗口
+		expect(result).toMatchObject({ ok: true, latest: true }); // latest 在干扰之前就已为 true
+		expect(active()).toBe("sub-1"); // 活动子会话 id 仍然相同（只比 id 的守卫会放过这次提交）
+		expect(relations()).toEqual({}); // 只有提交前的令牌守卫能拦住它
+	});
+
 	it("同一子会话被两个父会话先后打开：最新入口决定父关系", async () => {
 		openParentAsActive();
 		piMock.openSession.mockResolvedValue(child);

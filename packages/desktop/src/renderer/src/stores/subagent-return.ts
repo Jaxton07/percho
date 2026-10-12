@@ -28,6 +28,10 @@ interface SubagentReturnState {
 	forgetChildrenOf: (parentSessionId: string) => void;
 }
 
+/** 当前会话是否有已知父关系（宿主用它决定「要不要挂返回入口」：无关系时连定位容器都不出现） */
+export const useHasParentRelation = (sessionId: string | null): boolean =>
+	useSubagentReturnStore((s) => (sessionId ? Boolean(s.relations[sessionId]) : false));
+
 export const useSubagentReturnStore = create<SubagentReturnState>((set) => ({
 	relations: {},
 

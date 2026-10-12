@@ -1096,6 +1096,17 @@ pgrep -f "electron-vite" | xargs -r kill -9
 - 需要「点真实子代理卡」这类依赖模型行为的场景，优先找**历史回放**入口：历史里已有子代理运行的父会话，打开它 → transcript 重放出卡片 → 点它，同样落到只读检视页，且完全确定性（子会话文件在 `<agentDir>/sessions-subagents/`，后端按路径判定 `readOnly`）。现场真跑一次 subagent 依赖凭证可用，dev 里常 401 拿不到可点卡片。
   - 2026-10-12 补充（qol3 阶段 2 实测）：dev agentDir 里**可能一个可点子代理卡都没有** —— 唯一一次真实 subagent 运行是 401 失败、没有 `sessionFile`（这类行渲染成不可点）。确定性做法：挑一个含 `"toolName":"subagent"` 的父会话打开，往 `useTranscriptStore` 的 `bySession[id].streaming.subagentRuns` **注入一条** `{key,agent,status:"done",sessionFile:<真实存在的 sessions-subagents 文件>}`（注入要重试：bundle 可能晚于注入落地并把 `streaming` 覆盖回磁盘态），卡片就会渲染出来，点它走的是**真实**组件 + 真实 store + 真实子会话文件；唯一合成物是那一行运行记录，写明即可。
 
+### 组件测试（`renderToStaticMarkup`）在 vitest 里读不到 store 的运行时状态（2026-10-12，qol3 阶段 2）
+
+症状：把 zustand store `setState` 成想要的状态后 SSR 渲染组件，断言却按**初始状态**输出（`masterOn:false`、`contributions:{}`、`providerOf(...)=undefined`），看起来像「store 没生效」。
+
+两个原因叠在一起，都不是业务 bug：
+
+1. **zustand v5 的 `useStore` 把 `getInitialState()` 当 SSR 快照**（`zustand/esm/react.mjs`：`useSyncExternalStore(subscribe, getState, () => selector(api.getInitialState()))`）。`renderToStaticMarkup` 属服务端渲染路径 ⇒ hook 一律拿初始态，`setState` 之后也不变。绕法与本仓既有做法一致（见 `components/settings/providers/ProviderRow.test.tsx`）：**用 `vi.mock` 把 store 换成一个普通 selector 函数**，直接喂测试态对象，不走 zustand。
+2. 本仓 vitest **没有 vite 配置**（只有 `electron.vite.config.ts`，vitest 不读），所以产品 `.tsx` 走的是 classic JSX：`React` 必须是运行时可见的全局。测试文件里 `vi.stubGlobal("React", React)` + `afterEach(() => vi.unstubAllGlobals())`，否则报 `React is not defined`（报错行落在**产品文件**的 JSX 上，很容易误判成产品 bug）。
+
+真机几何类断言（重叠/拉伸/Tooltip 溢出）不要靠 SSR —— 那些拿 CDP 在真实挂载上量（qol3 阶段 2 探针：`self-start` 不被更宽贡献拉伸、`Tooltip align="start"` 左缘不溢出且 `scrollWidth == clientWidth`）。
+
 ### 绝不打印/提交 API key
 
 `models.json` 用环境变量引用（`$AI_OPS_API_KEY`），key 由用户自持。
