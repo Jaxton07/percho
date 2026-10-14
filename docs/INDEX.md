@@ -12,7 +12,7 @@
 - preload 必须保持 CJS（sandbox 限制，见 PITFALLS）
 - 新增 UI 文案：`i18n/zh.ts` + `en.ts` 双字典都要加
 - zustand selector 必须返回稳定引用（模块级空对象/数组；#185 无限渲染，见 PITFALLS）
-- **renderer 模块图必须无环**（改完用脚本自查）：有环时「模块体在谁的 import 过程中执行」不确定，模块级副作用会读到尚未求值的 store 绑定（曾因此把 `toggleInList` 拆成叶模块 `lib/toggle-in-list.ts`）。纯函数/常量不要挂在会反向 import 回来的模块上
+- **main/preload/renderer 的生产相对导入图必须无环**（`renderer/src/import-cycles.test.ts` 同一 AST 解析器守护三域，含类型/声明/barrel/副作用与字面量动态import；单文件preload零内边合法）：有环时「模块体在谁的 import 过程中执行」不确定，模块级副作用会读到尚未求值的 store 绑定（曾因此把 `toggleInList` 拆成叶模块 `lib/toggle-in-list.ts`）。纯函数/常量不要挂在会反向 import 回来的模块上
 - 新增 renderer hook/store 要暴露给插件 = 源模块 + `plugins/host-api.ts` + `plugins/env.d.ts`（PerchoUiApi）+ `main/ui-plugins/build.ts` SHIM + `resources/percho-ui.d.ts`（必要时 SPEC.md 导出清单）五处同步
 - JSON 持久化一律走 backend `JsonStore`（原子写 + 损坏语义），不自写 fs
 
@@ -168,6 +168,7 @@ src/
 | `src/main/dev-agent-dir.ts` | dev/预览态数据隔离：userData 重定向 `*-dev` 后缀 + `PI_CODING_AGENT_DIR = ~/.pi/agent-dev` + 五配置一次性种子拷贝（正式目录零写入） |
 | `src/main/daily.ts` | 日常空间工作台目录（`~/.percho/daily`，全部日常会话的固定 cwd）+ 懒创建；信任链无资源自动信任不弹窗；dev/正式共享工作区（会话列表按 agent dir 天然隔离） |
 | `src/main/ipc/index.ts` | `registerIpc` 组合入口 + backend 事件/updater 状态转发（`forward()` 单行透传）+ UI 插件热重载 watcher 启动。**新增通道：进 `shared/src/ipc-channels.ts` 对应域子表 + 域文件 handler 一行，preload/main 自动接线** |
+| `src/main/ipc/send.ts` | `sendToRenderer` 叶模块，只依赖electron；保留首个BrowserWindow发送目标、原payload身份及销毁/no-window处理，组合入口与域handler共用；行为测试 `send.test.ts` |
 | `src/main/ipc/{sessions,settings,packages,app,ui-plugins,lan}.ts` + `invoke.ts` | 各域 handler（`registerInvokeHandlers(子表, {...})` 表驱动注册；ui-plugins 域 handler async await 落盘后才返回；17 非透传 handler 的逻辑体就在各域 map 内） |
 | `src/main/ui-state.ts` | ui-state.json 读写（JsonStore 原子写；补丁式合并 + normalize 补缺省）。**v10 起没有 tabs.json**：不再持久化「打开列表」——**v12 起「打开过的会话」改由 `sessionWorkspace` 快照（有序文件路径 + activeFile）表达**，normalize 负责清洗（trim/去空/去重、`activeFile` 必须 ∈ `files`）并在**两个显示入口都关掉时强制清空**；`sessionRailEnabled`（缺省 false）/ `barSessionsVisible`（缺省 true）两个开关对应设置 → 外观的「左侧会话轨道」与「顶栏显示会话」；补丁式写入由 JsonStore 串行化，renderer 侧的工作区写入是**合并式单写者**（见 `stores/session-workspace.ts`）。**v13 起另持久化 `windowBounds`（normal 态窗口位置尺寸，normalize 只做尺寸/类型白名单、不做屏幕校验）与 `sidebarWidth`（用户意图宽，`clampSidebarWidth` 夹紧）**；`saveUiStateSync()` 走 `updateSync`（**不参与 async per-path 队列**，只用于窗口 `close` 的退出兜底，绝不抛错） |
 | `src/main/background.ts` | 背景图选图（dialog → 拷贝 `userData/backgrounds/` 并清理旧图） |
@@ -237,6 +238,7 @@ src/
 | `styles/globals.css` | Tailwind 入口（另有 `.channel-pill` / `.channel-pill-open`：频道胶囊宽度/透明度过渡 360ms cubic-bezier(.4,0,.2,1)，reduced-motion 下关过渡；时长与组件里的 `CHANNEL_PILL_DURATION_MS` 同步）（**必须 `@import "tailwindcss"` 之后再 `@import "./typography.css"`**：反过来会让 `base` 层的 preflight `font: inherit` 压住 `utilities` 层的字号，按钮/输入框上尤其明显）+ 主题 token（`bg-canvas/bg-surface/ink 灰阶/shadow 三档` 等；组件禁写死色值，一律语义 token）+ markdown/滚动条/动画样式段 |
 | `styles/typography.css` | **字号唯一事实源**：13 个 `.text-ui-*` token（`calc(<px> * var(--fs-ui-scale, 1))`，命名去掉小数点 → `text-ui-105` = 10.5px）+ 两个乘数变量（`--fs-ui-scale` 界面 / `--fs-code-scale` 代码；兜底 1 = 默认档等于迁移前现状）；新增字号只在这里加 + 文件头有「原写法 ↔ token」对照表 |
 | `stores/ui-plugin-config-baseline.test.ts` | 跨层插件配置回归：真实 JsonStore 并发原子命令、IPC 同目标顺序/信任/取消规则、暂停旧scan后真实 renderer store 最终一致性、损坏与rename故障不推成功事件；成功/失败晚build不覆盖启停/信任/版本，删除后不复活；受控接缝有界诊断，不替代产品读改写实现 |
+| `import-cycles.test.ts` | 生产相对导入图三域无环守护（main/preload/renderer，排除测试、含声明）；实际非空扫描/解析统计、总体真边，同一解析器自环/多节点type-barrel-side-effect环/无环与JS-to-TS解析反证；preload单文件零内边不跳过，不锁死计数、不加白名单 |
 | `components/settings/loading-effects.test.tsx` | 设置加载责任特征测试：执行真实 Providers/LAN 面板 effect 回调，验证模型联网入口、LAN 初始读取/5s 轮询/cleanup；受控 hook 调度，不替代 Electron DOM/StrictMode 测试。store 请求矩阵另见 `stores/settings-catalog.test.ts` |
 | `styles/typography.test.ts` | 字号守护测试（9 例）：token 集合与 px 一一对应、每个 font-size 都是 calc(var)、**`@import` 顺序**、globals.css 的 font-size 只允许 calc(var) 或白名单 0、绝对行高只许那三处、组件里不许再有 `text-[Npx]` / `text-xs|sm|lg` / 写死 font-size（跳过 `*.test.ts(x)`：样例 CSS 文本不是界面字号） |
 ### components/（按域分目录）

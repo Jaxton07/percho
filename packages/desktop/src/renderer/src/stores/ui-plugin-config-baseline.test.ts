@@ -21,7 +21,7 @@ const state = vi.hoisted(() => ({
 	send: vi.fn(),
 }));
 vi.mock("electron", () => ({ app: { getPath: () => state.root }, shell: { openPath: vi.fn() } }));
-vi.mock("../../../main/ipc/index", () => ({ sendToRenderer: state.send }));
+vi.mock("../../../main/ipc/send", () => ({ sendToRenderer: state.send }));
 vi.mock("../api", () => ({
 	getPi: () => ({
 		uiPluginsGetConfig: () => invoke("uiPluginsGetConfig", undefined),

@@ -1,79 +1,166 @@
-import { readdirSync, readFileSync, statSync } from "node:fs";
+import { readdirSync, readFileSync } from "node:fs";
 import { dirname, join, relative, resolve } from "node:path";
+import ts from "typescript";
 import { describe, expect, it } from "vitest";
 
-/**
- * renderer 模块图不许有环（工程纪律，见 docs/INDEX.md 硬约束 / PITFALLS）。
- *
- * 为什么值得一条测试：有环时「某个模块体在谁的 import 过程中执行」不确定，模块级副作用会读到
- * 尚未求值的绑定 —— 2026-09-21 的会话目录写穿订阅就因此炸过一次（`stores/projects.ts` 底部的
- * `useSessionsStore.subscribe` 在「sessions 先进」的入口下拿到 undefined）；当时环
- * `stores/projects → stores/sessions → stores/ui-preferences → lib/sidebar-groups → stores/projects`
- * 的成因只是一条 3 行纯函数（`toggleInList`）挂错了层。环本身没炸是因为入口顺序碰巧对了 —— 这类
- * 潜伏问题靠 reviewer 眼睛看不出来，交给它守。
- *
- * 判定口径：只看 `src/renderer/src` 下的相对 import（含 `import type` 与 `import "x"` 副作用导入；
- * 类型环同样说明分层乱了）。外部包（`@percho/shared` 等）不参与。
- */
-const ROOT = resolve(import.meta.dirname);
-const SOURCE_RE = /\bfrom\s*["']([^"']+)["']|\bimport\s*["']([^"']+)["']/g;
-
-function listSources(dir: string): string[] {
-	return readdirSync(dir).flatMap((entry) => {
-		const path = join(dir, entry);
-		if (statSync(path).isDirectory()) return listSources(path);
-		return /\.(ts|tsx)$/.test(path) && !path.endsWith(".d.ts") ? [path] : [];
-	});
-}
-
-function edgesOf(file: string): string[] {
-	const found = new Set<string>();
-	for (const match of readFileSync(file, "utf8").matchAll(SOURCE_RE)) {
-		const spec = match[1] ?? match[2];
-		if (!spec?.startsWith(".")) continue;
-		const base = resolve(dirname(file), spec);
-		for (const candidate of [`${base}.ts`, `${base}.tsx`, join(base, "index.ts")]) {
-			try {
-				if (statSync(candidate).isFile()) found.add(candidate);
-			} catch {
-				// 不是文件（目录/不存在）→ 继续试下一个候选
+// Production-only relative module graph, including declarations/type imports. This stays in the
+// existing Vitest-discovered test path; graph parsing never executes Electron or renderer modules.
+const DOMAINS = [
+	{ name: "main", root: resolve(__dirname, "../../main") },
+	{ name: "preload", root: resolve(__dirname, "../../preload") },
+	{ name: "renderer", root: __dirname },
+];
+function sourcesIn(root: string): Map<string, string> {
+	const sources = new Map<string, string>();
+	function walk(dir: string) {
+		for (const entry of readdirSync(dir, { withFileTypes: true })) {
+			const file = join(dir, entry.name);
+			if (entry.isDirectory()) walk(file);
+			else if (/\.(?:[cm]?ts|tsx)$/.test(file) && !/\.test\.(?:[cm]?ts|tsx)$/.test(file)) {
+				sources.set(file, readFileSync(file, "utf8"));
 			}
 		}
 	}
-	return [...found];
+	walk(root);
+	return sources;
 }
-
-it("renderer 的 import 图无环（有环 = 模块体执行顺序不确定，模块级副作用会踩未初始化绑定）", () => {
-	const sources = listSources(ROOT);
-	const graph = new Map(sources.map((file) => [file, edgesOf(file)]));
-	const state = new Map<string, "visiting" | "done">();
+function importSpecifiers(file: string, text: string): string[] {
+	const source = ts.createSourceFile(file, text, ts.ScriptTarget.Latest, true);
+	const specs: string[] = [];
+	function literal(node: ts.Node | undefined) {
+		if (node && (ts.isStringLiteral(node) || ts.isNoSubstitutionTemplateLiteral(node))) specs.push(node.text);
+	}
+	function visit(node: ts.Node) {
+		if (ts.isImportDeclaration(node) || ts.isExportDeclaration(node)) literal(node.moduleSpecifier);
+		if (ts.isCallExpression(node) && node.expression.kind === ts.SyntaxKind.ImportKeyword)
+			literal(node.arguments[0]);
+		if (ts.isImportTypeNode(node) && ts.isLiteralTypeNode(node.argument)) literal(node.argument.literal);
+		if (ts.isImportEqualsDeclaration(node) && ts.isExternalModuleReference(node.moduleReference))
+			literal(node.moduleReference.expression);
+		ts.forEachChild(node, visit);
+	}
+	visit(source);
+	return specs;
+}
+function buildGraph(sources: Map<string, string>) {
+	const graph = new Map<string, string[]>();
+	let parsedSpecifiers = 0;
+	for (const [file, text] of sources) {
+		const specs = importSpecifiers(file, text);
+		parsedSpecifiers += specs.length;
+		const edges: string[] = [];
+		for (const spec of specs) {
+			if (!spec.startsWith(".")) continue;
+			const path = resolve(dirname(file), spec.split("?")[0] ?? spec);
+			const stem = path.replace(/\.(?:mjs|cjs|jsx|js)$/, "");
+			const suffixes = path.endsWith(".mjs")
+				? [".mts", ".d.mts"]
+				: path.endsWith(".cjs")
+					? [".cts", ".d.cts"]
+					: path.endsWith(".jsx")
+						? [".tsx", ".d.ts"]
+						: [".ts", ".tsx", ".d.ts"];
+			const target = [
+				path,
+				...suffixes.map((suffix) => `${stem}${suffix}`),
+				join(path, "index.ts"),
+				join(path, "index.tsx"),
+				join(path, "index.d.ts"),
+			].find((candidate) => sources.has(candidate));
+			if (target) edges.push(target);
+		}
+		graph.set(file, [...new Set(edges)]);
+	}
+	return {
+		graph,
+		parsedSpecifiers,
+		edgeCount: [...graph.values()].reduce((sum, edges) => sum + edges.length, 0),
+	};
+}
+function cyclesIn(graph: Map<string, string[]>): string[][] {
+	const active = new Set<string>();
+	const done = new Set<string>();
 	const stack: string[] = [];
-	const cycles: string[] = [];
-
-	function visit(node: string): void {
-		state.set(node, "visiting");
+	const cycles: string[][] = [];
+	function visit(node: string) {
+		active.add(node);
 		stack.push(node);
-		for (const next of graph.get(node) ?? []) {
-			if (!graph.has(next)) continue;
-			if (state.get(next) === "visiting") {
-				cycles.push([...stack.slice(stack.indexOf(next)), next].map((p) => relative(ROOT, p)).join(" → "));
-				continue;
-			}
-			if (!state.has(next)) visit(next);
+		for (const target of graph.get(node) ?? []) {
+			if (active.has(target)) cycles.push([...stack.slice(stack.indexOf(target)), target]);
+			else if (!done.has(target)) visit(target);
 		}
 		stack.pop();
-		state.set(node, "done");
+		active.delete(node);
+		done.add(node);
 	}
+	for (const node of graph.keys()) if (!done.has(node)) visit(node);
+	return cycles;
+}
+function fixture(domain: string, sources: Record<string, string>) {
+	const root = resolve("/virtual", domain);
+	const result = buildGraph(new Map(Object.entries(sources).map(([name, text]) => [join(root, name), text])));
+	return {
+		...result,
+		root,
+		cycles: cyclesIn(result.graph).map((cycle) => cycle.map((file) => relative(root, file))),
+	};
+}
+const actual = DOMAINS.map((domain) => ({ ...domain, ...buildGraph(sourcesIn(domain.root)) }));
 
-	for (const file of sources) if (!state.has(file)) visit(file);
-	expect(cycles).toEqual([]);
+describe("main/preload/renderer production relative imports are acyclic", () => {
+	it.each(actual)("$name is really scanned and has no cycles", (domain) => {
+		expect(domain.graph.size, `${domain.name}: source glob is empty`).toBeGreaterThan(0);
+		expect(domain.parsedSpecifiers, `${domain.name}: no actual imports parsed`).toBeGreaterThan(0);
+		expect(
+			cyclesIn(domain.graph).map((cycle) => cycle.map((file) => relative(domain.root, file)).join(" → ")),
+		).toEqual([]);
+	});
+	it("combined production graphs have actual resolved edges; single-file preload may legitimately have zero", () => {
+		expect(actual.reduce((sum, domain) => sum + domain.edgeCount, 0)).toBeGreaterThan(0);
+		for (const domain of actual) {
+			expect([...domain.graph.keys()].some((file) => /\.test\./.test(file))).toBe(false);
+			console.info(
+				`import graph ${domain.name}: ${domain.graph.size} sources, ${domain.edgeCount} relative edges, ${domain.parsedSpecifiers} parsed specifiers`,
+			);
+		}
+	});
 });
 
-describe("本测试自己的守卫（防它自己失效）", () => {
-	it("扫到的文件数与依赖解析都非空（否则「0 环」是假绿）", () => {
-		const sources = listSources(ROOT);
-		expect(sources.length).toBeGreaterThan(50);
-		const withEdges = sources.filter((file) => edgesOf(file).length > 0);
-		expect(withEdges.length).toBeGreaterThan(20);
-	});
+describe("same graph parser counterexamples (including preload-style relative cycles)", () => {
+	it.each(DOMAINS)(
+		"$name detects both self-loop and multi-node type/barrel/side-effect cycle",
+		({ name }) => {
+			expect(fixture(name, { "index.ts": 'import "./index";' }).cycles).toEqual([["index.ts", "index.ts"]]);
+			expect(
+				fixture(name, {
+					"a.ts": 'import type { T } from "./b";',
+					"b.ts": 'export { x } from "./c";',
+					"c.ts": 'import "./a";',
+				}).cycles,
+			).toEqual([["a.ts", "b.ts", "c.ts", "a.ts"]]);
+		},
+	);
+	it.each(DOMAINS)(
+		"$name correctly resolves a real acyclic grammar fixture, declarations, barrels and JS-to-TS",
+		({ name }) => {
+			const example = fixture(name, {
+				"index.ts": `import type { T } from "./types"; import "./boot.js";
+				export { x } from "./folder"; import "./folder/index.js";
+					const lazy = import("./lazy"); type U = import("./types").T;
+				// import "./index";
+				const notAnImport = 'import "./index"';`,
+				"types.d.ts": "export type T = string;",
+				"boot.ts": "export {};",
+				"folder/index.tsx": "export const x = 1;",
+				"lazy.ts": "export {};",
+			});
+			expect(example.graph.size).toBe(5);
+			expect(example.parsedSpecifiers).toBe(6);
+			expect(example.edgeCount).toBe(4);
+			expect(
+				example.graph.get(join(example.root, "index.ts"))?.map((file) => relative(example.root, file)),
+			).toEqual(["types.d.ts", "boot.ts", "folder/index.tsx", "lazy.ts"]);
+			expect(example.cycles).toEqual([]);
+		},
+	);
 });

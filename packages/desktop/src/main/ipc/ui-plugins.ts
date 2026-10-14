@@ -2,8 +2,8 @@ import { IpcChannels, KNOWN_UI_SLOTS, UI_PLUGINS_CHANNELS } from "@percho/shared
 import { shell } from "electron";
 import { loadUiPluginsConfig } from "../ui-plugins/config";
 import type { UiPluginManager } from "../ui-plugins/manager";
-import { sendToRenderer } from "./index";
 import { registerInvokeHandlers } from "./invoke";
+import { sendToRenderer } from "./send";
 
 /** 配置类变更（总开关/启用/指派）→ 通知 renderer 全量对齐 */
 function pushConfigEvent(): void {

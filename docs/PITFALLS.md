@@ -8,6 +8,7 @@
 
 | 症状 / 场景 | 条目（章节） |
 |---|---|
+| IPC域handler反向依赖组合index成环；preload单文件被“每域有边”误判 | 三 · 三域无环守护不可由计数反向驱动抽象（2026-10-14） |
 | 包装卸时压缩被打断，或逐会话reload期间下一会话变忙仍被重载 | 三 · 包管理与MCP须共用现读空闲守卫（2026-10-14） |
 | 快速启用多个 UI 插件/指派多个槽位，选择丢失或界面与磁盘不一致 | 三 · 插件配置的队列外旧快照与扫描晚发布（2026-10-14） |
 | 全 app 卡死、日志/磁盘分钟级 GB 暴涨、renderer unresponsive | 一 · 0.4.6 冻结事故 |
@@ -998,7 +999,7 @@ RenamePopover / ImagePreview 都是这么做的，`LoginDialog` 漏了）。z-in
 连带两个教训：
 
 - **推导链条里任何一环「旧」，整条结论都不可信**：spec 里曾写着「左栏列的是磁盘历史，所以卸载不会让任何列表缺项」——这句话在快照新鲜时成立，而快照并不保证新鲜（`session-memory-policy.md` §1 已标注修正）。审查这类断言时要问「这份数据的**新鲜度**由谁保证」。
-- **renderer 模块图不许有环**：写穿用一个模块级订阅，立刻在「`sessions` 先进」的入口（三个 store 单测）报 `Cannot read properties of undefined (reading 'subscribe')`——环 `projects → sessions → ui-preferences → sidebar-groups → projects` 让 `projects` 的模块体在 `sessions` 未求值完时执行。环的成因只是 3 行纯函数 `toggleInList` 挂在 `sidebar-groups` 上（已拆成叶模块 `lib/toggle-in-list.ts`）。防线：`src/renderer/src/import-cycles.test.ts` 扫全图断言 0 环（本仓当时为 0，含 `import type`）。
+- **renderer 模块图不许有环**：写穿用一个模块级订阅，立刻在「`sessions` 先进」的入口（三个 store 单测）报 `Cannot read properties of undefined (reading 'subscribe')`——环 `projects → sessions → ui-preferences → sidebar-groups → projects` 让 `projects` 的模块体在 `sessions` 未求值完时执行。环的成因只是 3 行纯函数 `toggleInList` 挂在 `sidebar-groups` 上（已拆成叶模块 `lib/toggle-in-list.ts`）。防线：`src/renderer/src/import-cycles.test.ts` 扫全图断言 0 环（本仓当时为 0，含 `import type`）；2026-10-14扩展为main/preload/renderer生产相对导入的同一AST守护，见下方三域条目。
 
 复现手法（可复用）：dev 实例 + CDP 直接驱 store 走真实入口（`.local/dev-logs/repro-session-catalog.mjs`）：`createSession()`（真实 promotion）→ `activateNewSessionDraft()` 切走 → `unloadSession(id)`（GC 真实入口）→ 断言 `inMemory=false` 但 `inCatalog=true` 且 `document.querySelector('[data-session-id=…]')` 仍在。**侧栏按组渲染，断言前要先展开该会话所在项目的组**（`setExpandedGroups([...groups, cwd])`），否则“行不在 DOM 里”是假阴性。
 
@@ -1101,6 +1102,14 @@ pgrep -f "electron-vite" | xargs -r kill -9
   - 2026-10-12 补充（qol3 阶段 1 实测）：计数「某请求触发了几次」时，**订阅 store 的上升沿**（`useSettingsStore.subscribe((s, prev) => …)` 数 `loading`/`refreshing` false→true）比数 IPC 更实用 —— 只要发起方在**发起请求时同步置位**，上升沿就与真实请求一一对应，且不受对端快慢影响（在途去重也能被这条口径验证）。同理「副作用是否只发生一次」可以把 store 上的 action 换成一个计数包装（`useXStore.setState({ action: async () => { count++; return orig() }) }`，store 内部走 `getState().action()` 时会用到包装后的版本）。
 - 需要「点真实子代理卡」这类依赖模型行为的场景，优先找**历史回放**入口：历史里已有子代理运行的父会话，打开它 → transcript 重放出卡片 → 点它，同样落到只读检视页，且完全确定性（子会话文件在 `<agentDir>/sessions-subagents/`，后端按路径判定 `readOnly`）。现场真跑一次 subagent 依赖凭证可用，dev 里常 401 拿不到可点卡片。
   - 2026-10-12 补充（qol3 阶段 2 实测）：dev agentDir 里**可能一个可点子代理卡都没有** —— 唯一一次真实 subagent 运行是 401 失败、没有 `sessionFile`（这类行渲染成不可点）。确定性做法：挑一个含 `"toolName":"subagent"` 的父会话打开，往 `useTranscriptStore` 的 `bySession[id].streaming.subagentRuns` **注入一条** `{key,agent,status:"done",sessionFile:<真实存在的 sessions-subagents 文件>}`（注入要重试：bundle 可能晚于注入落地并把 `streaming` 覆盖回磁盘态），卡片就会渲染出来，点它走的是**真实**组件 + 真实 store + 真实子会话文件；唯一合成物是那一行运行记录，写明即可。
+
+### 三域无环守护不可由计数反向驱动抽象（2026-10-14）
+
+IPC组合index导入ui-plugins域，域又从index取sendToRenderer形成环；把原发送函数搬到只依赖electron的ipc/send.ts，两端导入叶模块，不重导回index，不新增消息总线。首个窗口选择、原payload身份、销毁/no-window行为用send.test.ts保真。
+
+守护按生产相对静态字面量导入图扫描main/preload/renderer，含声明/类型、barrel、side-effect、动态字面量import，排除测试。不能只用regex误读注释/字符串，也不能靠空glob“无环”。同一解析器验证自环/多节点环/无环/语法解析；手动临时复入已知UI域反向依赖时实际main测试稳定失败，再文件编辑恢复修复。
+
+preload当时仅index.ts一文件、零内部相对边，这是合法结构，不为测试凑边数拆订阅helper或加入伪边。每域源码非空且确实解析、总体有真边，输出统计供复核而不锁死文件/边数量；preload仍进扫描与环检测，preload样式成环fixture必须检出。不添加真实环白名单。
 
 ### 包管理与MCP须共用现读空闲守卫（2026-10-14）
 
