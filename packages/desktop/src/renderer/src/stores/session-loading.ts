@@ -106,6 +106,7 @@ export function createSessionLoader(ports: SessionDataPorts) {
 		}
 	}
 
+	/** GC重建后恢复renderer档位；有效失败回落backend default并提示，持久偏好留待下次重试。 */
 	async function restorePermissionMode(sessionId: string): Promise<void> {
 		const openingEpoch = historyOpenEpoch(sessionId);
 		const mode = ports.readPermissionMode(sessionId);
@@ -120,6 +121,7 @@ export function createSessionLoader(ports: SessionDataPorts) {
 		}
 	}
 
+	/** 按trim后的file单飞，失败一次提示且可重试；GC loadBundle:false保留现有transcript。 */
 	function ensureOpenSession(filePath: string, opts?: { loadBundle?: boolean }): Promise<SessionMeta | null> {
 		const key = filePath.trim();
 		const existing = openInFlight.get(key);
@@ -147,6 +149,7 @@ export function createSessionLoader(ports: SessionDataPorts) {
 			meta = await getPi().openSession({ filePath });
 		} catch (error) {
 			console.error("打开会话失败", error);
+			if (!isCurrent()) return null;
 			pushToast("warning", "toast.sessionOpenFailed", errText(error));
 			return null;
 		}
@@ -154,7 +157,7 @@ export function createSessionLoader(ports: SessionDataPorts) {
 		// lastUsedAt 必须在数据路径打：用户确实点了这一行，不然 GC 会把它当成「从没用过」。
 		if (!isCurrent()) return null;
 		ports.landMeta(meta);
-		if (!loadBundle) return meta;
+		if (!loadBundle) return isCurrent() ? meta : null;
 		try {
 			// 运行中子会话的事件已按其 sessionId 实时转发；保留已有流式态，
 			// 否则会在点击卡片时把 agent_start 建立的进度视图重置为静态历史。
@@ -163,6 +166,7 @@ export function createSessionLoader(ports: SessionDataPorts) {
 			// 会话已经打开了（后端在内存里、meta 在 tabs）：数据装载失败只能提示，
 			// 不能当成「打开失败」——否则用户点了行却什么都没发生。
 			console.error("装载会话数据失败", error);
+			if (!isCurrent()) return null;
 			pushToast("warning", "toast.sessionOpenFailed", errText(error));
 		}
 		return isCurrent() ? meta : null;

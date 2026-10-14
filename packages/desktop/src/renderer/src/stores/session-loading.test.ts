@@ -29,10 +29,12 @@ import { useUiPreferencesStore } from "./ui-preferences";
 
 function deferred<T>() {
 	let resolve!: (value: T) => void;
-	const promise = new Promise<T>((done) => {
+	let reject!: (error: unknown) => void;
+	const promise = new Promise<T>((done, fail) => {
 		resolve = done;
+		reject = fail;
 	});
-	return { promise, resolve };
+	return { promise, resolve, reject };
 }
 const ids = new Set<string>();
 const meta = (id: string, name?: string): SessionMeta => {
@@ -105,6 +107,78 @@ describe("session loader owns flights and data, not navigation", () => {
 			next.resolve(meta("file"));
 			await Promise.allSettled([first, second]);
 		}
+	});
+	it("forgotten old open rejection stays silent and leaves the replacement flight/meta intact", async () => {
+		const f = fixture("open-reject"),
+			old = deferred<SessionMeta>(),
+			next = deferred<SessionMeta>();
+		pi.openSession.mockReturnValueOnce(old.promise).mockReturnValueOnce(next.promise);
+		const first = f.loader.ensureOpenSession("/open-reject.jsonl");
+		f.loader.forget("open-reject", "/open-reject.jsonl");
+		f.sessions.delete("open-reject");
+		const second = f.loader.ensureOpenSession("/open-reject.jsonl");
+		try {
+			old.reject(Error("obsolete open"));
+			expect(await first).toBeNull();
+			expect(useToastsStore.getState().toasts).toEqual([]);
+			expect(f.landMeta).not.toHaveBeenCalled();
+			expect(f.loader.ensureOpenSession("/open-reject.jsonl")).toBe(second);
+			expect(pi.openSession).toHaveBeenCalledTimes(2);
+			next.resolve(meta("open-reject", "new"));
+			expect((await second)?.name).toBe("new");
+			expect(f.sessions.get("open-reject")?.name).toBe("new");
+		} finally {
+			old.resolve(meta("open-reject"));
+			next.resolve(meta("open-reject"));
+			await Promise.allSettled([first, second]);
+		}
+	});
+	it("forgotten old bundle rejection stays silent and leaves the replacement file flight intact", async () => {
+		const f = fixture("bundle-reject"),
+			oldHistory = deferred<never[]>(),
+			next = deferred<SessionMeta>();
+		pi.openSession.mockResolvedValueOnce(meta("bundle-reject", "old")).mockReturnValueOnce(next.promise);
+		pi.getSessionMessages.mockReturnValueOnce(oldHistory.promise);
+		const first = f.loader.ensureOpenSession("/bundle-reject.jsonl");
+		let second: Promise<SessionMeta | null> | undefined;
+		try {
+			await vi.waitFor(() => expect(pi.getSessionMessages).toHaveBeenCalledOnce());
+			f.loader.forget("bundle-reject", "/bundle-reject.jsonl");
+			f.sessions.delete("bundle-reject");
+			second = f.loader.ensureOpenSession("/bundle-reject.jsonl");
+			oldHistory.reject(Error("obsolete bundle"));
+			expect(await first).toBeNull();
+			expect(useToastsStore.getState().toasts).toEqual([]);
+			expect(f.sessions.has("bundle-reject")).toBe(false);
+			expect(f.loader.ensureOpenSession("/bundle-reject.jsonl")).toBe(second);
+			expect(pi.openSession).toHaveBeenCalledTimes(2);
+			next.resolve(meta("bundle-reject", "new"));
+			expect((await second)?.name).toBe("new");
+			expect(f.sessions.get("bundle-reject")?.name).toBe("new");
+		} finally {
+			oldHistory.resolve([]);
+			next.resolve(meta("bundle-reject"));
+			await Promise.allSettled([first, ...(second ? [second] : [])]);
+		}
+	});
+	it("valid bundle failure returns opened meta and exactly one toast", async () => {
+		const f = fixture("valid-bundle-reject");
+		pi.openSession.mockResolvedValue(meta("valid-bundle-reject"));
+		pi.getTodos.mockRejectedValueOnce(Error("valid bundle"));
+		expect(await f.loader.ensureOpenSession("/valid-bundle-reject.jsonl")).toMatchObject({
+			sessionId: "valid-bundle-reject",
+		});
+		expect(useToastsStore.getState().toasts).toHaveLength(1);
+	});
+	it("loadBundle:false also checks identity after synchronous landMeta invalidation", async () => {
+		const f = fixture("land-forget");
+		pi.openSession.mockResolvedValue(meta("land-forget"));
+		f.landMeta.mockImplementationOnce(() => {
+			f.loader.forget("land-forget", "/land-forget.jsonl");
+		});
+		expect(await f.loader.ensureOpenSession("/land-forget.jsonl", { loadBundle: false })).toBeNull();
+		expect(pi.getSessionMessages).not.toHaveBeenCalled();
+		expect(useToastsStore.getState().toasts).toEqual([]);
 	});
 	it("forget/reopen keeps new bundle flight through old finally; epoch blocks old history/permission/ACK", async () => {
 		const f = fixture("bundle"),

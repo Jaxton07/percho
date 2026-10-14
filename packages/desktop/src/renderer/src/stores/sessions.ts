@@ -111,28 +111,11 @@ export type OpenFromHistoryResult =
 	| { ok: false }
 	| { ok: true; latest: boolean; meta: SessionMeta; token: number };
 
-// Existing-session data pipelines are owned by the loader below; actions only delegate.
-function loadSessionBundle(sessionId: string, opts?: { skipHistoryIfLive?: boolean }): Promise<void> {
-	return sessionLoader.loadSessionBundle(sessionId, opts);
-}
-
 /** 后端真值写入本 map（default = 删 key，保持「缺 key = default」语义） */
 function applyBackendPermissionMode(sessionId: string, mode: PermissionMode): void {
 	useSessionsStore.setState((state) => ({
 		permissionModes: withPermissionMode(state.permissionModes, sessionId, mode),
 	}));
-}
-
-/**
- * 后端会话被重建（GC 竞态恢复）后把权限档位拉回：新构造的会话一律 default 起步（D1：不落盘、不继承），
- * 而 renderer 里还持有用户选过的档位——不拉回就会出现「UI 显示 fullAccess、后端按 default 走」的静默偏差。
- *
- * 拉回失败时必须把 renderer 拉回 default（而不是保留旧档）：UI 永远反映 backend 真值，
- * 否则用户看到 fullAccess、实际后端在按 default 索要确认——静默权限分叉比多一个 toast 危险得多。
- * 持久偏好（uiPreferences.sessionPermissionModes）不动，下次打开/重启还能重试。
- */
-function restorePermissionMode(sessionId: string): Promise<void> {
-	return sessionLoader.restorePermissionMode(sessionId);
 }
 
 /**
@@ -225,22 +208,6 @@ async function optimisticSessionSetting(
 		console.error(`${label}失败`, error);
 		pushToast("warning", toastKey, errText(error));
 	}
-}
-
-/**
- * 共享 open pipeline（spec D3）：key = 规范化 sessionFile（trim）。同一文件在途时复用同一个 Promise，
- * 因此「同一文件双击只发一次 IPC + 只装载一次 bundle + 失败只 toast 一次」；
- * settle（无论成败）后立即清 key，失败可以重试；不同文件互不影响。
- * 返回 null = 失败（提示已在共享链里报过，调用者不再重复报）。
- *
- * `loadBundle: false`（GC 竞态恢复专用）：只重建 backend 会话、刷新 meta，**不**重载磁盘历史——
- * idle transcript 必须原样保留（GC 不能把用户看到的对话内容重置成历史快照）。
- * 已有在途请求时用先到者的选项（不会重复发 IPC，也不会多跑一次 bundle）。
- *
- * 模块级 Map 只存正在执行的 Promise，不落盘、不进 store：没有任何「仅测试用的 reset 入口」。
- */
-function ensureOpenSession(filePath: string, opts?: { loadBundle?: boolean }): Promise<SessionMeta | null> {
-	return sessionLoader.ensureOpenSession(filePath, opts);
 }
 
 /**
@@ -855,6 +822,8 @@ const sessionLoader = createSessionLoader({
 	readPermissionMode: (sessionId) => useSessionsStore.getState().permissionModes[sessionId],
 	writePermissionMode: applyBackendPermissionMode,
 });
+// Bind the coordinator methods directly; no private forwarding facade.
+const { loadSessionBundle, restorePermissionMode, ensureOpenSession } = sessionLoader;
 
 /**
  * 工作区 `activeFile` 跟随当前会话：**唯一同步点**。

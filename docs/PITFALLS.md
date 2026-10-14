@@ -1110,7 +1110,7 @@ pgrep -f "electron-vite" | xargs -r kill -9
 
 session-navigation仅持两个独立令牌，store保留draft页＋只noteUserIntent的例外；session-loading只有四个固定data端口，isOpen/permissions在await后调用现读，landMeta含LRU但不焦点/成员/draft。不能把宽setState端口或反向store import包装成拆分。
 
-forget必须一起清历史epoch、file/session flight，旧finally只删自己的Promise；旧open landing也核对file flight身份，不能关闭重开后把旧meta盖新。记住权限的setPermissionMode成功/GC恢复失败也是await边界，需epoch/isOpen复核，否则旧权限续体写新代；bundle失败仍保持历史ready/retry/ACK原协议，不拿一条实时消息冒充完整历史。新模块的裸factory测试与真实store/父子/恢复/无环测试一起验证；文件行数不是指标。
+forget必须一起清历史epoch、file/session flight，旧finally只删自己的Promise；旧open landing也核对file flight身份，不能关闭重开后把旧meta盖新。取消身份门不只用于成功：open/bundle两个catch都先核isCurrent再toast，失效失败静默null；loadBundle:false也须在同步landMeta订阅后复核身份，不能绕过取消收口。记住权限的setPermissionMode成功/GC恢复失败也是await边界，需epoch/isOpen复核，否则旧权限续体写新代；bundle失败仍保持历史ready/retry/ACK原协议，不拿一条实时消息冒充完整历史。新模块的裸factory测试与真实store/父子/恢复/无环测试一起验证；文件行数不是指标。
 
 ### 注册实例清理必须区分normal/quit/冲突（2026-10-14）
 
