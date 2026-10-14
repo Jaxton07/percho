@@ -159,12 +159,15 @@ describe("打开子代理检视页：建立返回关系", () => {
 describe("返回父会话", () => {
 	it("父仍加载：切回父会话，不新增工作区成员、不重建会话条目（实时 transcript 保持）", async () => {
 		openParentAsActive();
-		piMock.openSession.mockResolvedValue(child);
+		const differentCwdChild = { ...child, cwd: "/child/loaded-parent-return" };
+		piMock.openSession.mockResolvedValue(differentCwdChild);
 		await useSessionsStore.getState().openSubagentSession(childFile);
 		useSessionWorkspaceStore.getState().addMember({ file: parent.sessionFile, sessionId: "parent" });
 		const membersBefore = members();
 		const parentEntryBefore = useSessionsStore.getState().sessions.find((s) => s.sessionId === "parent");
 		const openCallsBefore = piMock.openSession.mock.calls.length;
+		expect(useSessionsStore.getState().cwd).toBe(differentCwdChild.cwd);
+		expect(useSessionsStore.getState().cwd).not.toBe(parent.cwd);
 
 		const ok = await useSessionsStore.getState().returnToParent("sub-1");
 
@@ -180,7 +183,8 @@ describe("返回父会话", () => {
 
 	it("父已被 GC 卸载：按 parentFile 重开，不新增成员、成员顺序不变", async () => {
 		openParentAsActive();
-		piMock.openSession.mockResolvedValue(child);
+		const differentCwdChild = { ...child, cwd: "/child/gc-parent-return" };
+		piMock.openSession.mockResolvedValue(differentCwdChild);
 		await useSessionsStore.getState().openSubagentSession(childFile);
 		useSessionWorkspaceStore.getState().addMember({ file: parent.sessionFile, sessionId: "parent" });
 		useSessionWorkspaceStore.getState().addMember({ file: child.sessionFile, sessionId: "sub-1" });
@@ -188,6 +192,8 @@ describe("返回父会话", () => {
 		await useSessionsStore.getState().closeSession("parent", "gc"); // 内存策略卸载父会话
 		expect(useSessionsStore.getState().sessions.some((s) => s.sessionId === "parent")).toBe(false);
 		piMock.openSession.mockResolvedValue(parent);
+		expect(useSessionsStore.getState().cwd).toBe(differentCwdChild.cwd);
+		expect(useSessionsStore.getState().cwd).not.toBe(parent.cwd);
 
 		const ok = await useSessionsStore.getState().returnToParent("sub-1");
 

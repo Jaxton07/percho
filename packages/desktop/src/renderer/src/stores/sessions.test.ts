@@ -778,6 +778,12 @@ describe("GC close 在途的选择竞态（spec D5）", () => {
 
 		const unloading = useSessionsStore.getState().unloadSession("b");
 		useSessionsStore.getState().switchSession("b");
+		// R01-C: explicit inconsistent seed probes whether backend reopening repairs the cwd mirror.
+		useSessionsStore.setState({ cwd: "/stale/gc-reopen" });
+		expect(useSessionsStore.getState().cwd).toBe("/stale/gc-reopen");
+		expect(useSessionsStore.getState().cwd).not.toBe(
+			useSessionsStore.getState().sessions.find((s) => s.sessionId === "b")?.cwd,
+		);
 		closing.resolve({ closed: true });
 		const result = await unloading;
 
@@ -788,7 +794,11 @@ describe("GC close 在途的选择竞态（spec D5）", () => {
 		expect(state.activeSessionId).toBe("b");
 		expect(state.sessions.map((s) => s.sessionId)).toEqual(["a", "b"]);
 		expect(useTranscriptStore.getState().bySession.b?.followUpQueue).toEqual(["kept"]);
-		expect(state.cwd).toBe(state.sessions.find((s) => s.sessionId === state.activeSessionId)?.cwd);
+		// Characteristic: this path reloads backend/meta only, and currently does not repair
+		// a manually inconsistent cwd mirror. Ticket 10 must decide the projection/commit behavior.
+		expect(state.sessions.find((s) => s.sessionId === state.activeSessionId)?.cwd).toBe("/p");
+		expect(state.cwd).toBe("/stale/gc-reopen");
+		expect(state.cwd).not.toBe(state.sessions.find((s) => s.sessionId === state.activeSessionId)?.cwd);
 	});
 
 	it("close 在途期间用户切到别处：正常卸载（closed:true、条目移除，不 reopen）", async () => {
