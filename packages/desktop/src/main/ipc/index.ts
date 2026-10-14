@@ -7,15 +7,10 @@ import { registerAppIpc } from "./app";
 import { registerExtensionDialogIpc } from "./extension-dialogs";
 import { registerLanIpc } from "./lan";
 import { registerPackagesIpc } from "./packages";
-import { sendToRenderer } from "./send";
+import { forward, sendToRenderer } from "./send";
 import { registerSessionsIpc } from "./sessions";
 import { registerSettingsIpc } from "./settings";
 import { registerUiPluginsIpc } from "./ui-plugins";
-
-/** 订阅 backend/updater 事件并透传转发 renderer（payload 不变形的转发统一走这里） */
-function forward<T>(subscribe: (handler: (payload: T) => void) => void, channel: string): void {
-	subscribe((payload) => sendToRenderer(channel, payload));
-}
 
 /**
  * IPC 注册组合入口：按域拆在 ./sessions ./settings ./packages ./app ./ui-plugins 五个文件，

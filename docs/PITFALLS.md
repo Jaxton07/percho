@@ -8,6 +8,7 @@
 
 | 症状 / 场景 | 条目（章节） |
 |---|---|
+| 订阅表按on前缀猜别名；payload检查只剩动态Map断言；退出callback收到多余arg | 三 · 订阅单源表与真实类型/沙箱验证（2026-10-14） |
 | IPC域handler反向依赖组合index成环；preload单文件被“每域有边”误判 | 三 · 三域无环守护不可由计数反向驱动抽象（2026-10-14） |
 | 包装卸时压缩被打断，或逐会话reload期间下一会话变忙仍被重载 | 三 · 包管理与MCP须共用现读空闲守卫（2026-10-14） |
 | 快速启用多个 UI 插件/指派多个槽位，选择丢失或界面与磁盘不一致 | 三 · 插件配置的队列外旧快照与扫描晚发布（2026-10-14） |
@@ -1102,6 +1103,16 @@ pgrep -f "electron-vite" | xargs -r kill -9
   - 2026-10-12 补充（qol3 阶段 1 实测）：计数「某请求触发了几次」时，**订阅 store 的上升沿**（`useSettingsStore.subscribe((s, prev) => …)` 数 `loading`/`refreshing` false→true）比数 IPC 更实用 —— 只要发起方在**发起请求时同步置位**，上升沿就与真实请求一一对应，且不受对端快慢影响（在途去重也能被这条口径验证）。同理「副作用是否只发生一次」可以把 store 上的 action 换成一个计数包装（`useXStore.setState({ action: async () => { count++; return orig() }) }`，store 内部走 `getState().action()` 时会用到包装后的版本）。
 - 需要「点真实子代理卡」这类依赖模型行为的场景，优先找**历史回放**入口：历史里已有子代理运行的父会话，打开它 → transcript 重放出卡片 → 点它，同样落到只读检视页，且完全确定性（子会话文件在 `<agentDir>/sessions-subagents/`，后端按路径判定 `readOnly`）。现场真跑一次 subagent 依赖凭证可用，dev 里常 401 拿不到可点卡片。
   - 2026-10-12 补充（qol3 阶段 2 实测）：dev agentDir 里**可能一个可点子代理卡都没有** —— 唯一一次真实 subagent 运行是 401 失败、没有 `sessionFile`（这类行渲染成不可点）。确定性做法：挑一个含 `"toolName":"subagent"` 的父会话打开，往 `useTranscriptStore` 的 `bySession[id].streaming.subagentRuns` **注入一条** `{key,agent,status:"done",sessionFile:<真实存在的 sessions-subagents 文件>}`（注入要重试：bundle 可能晚于注入落地并把 `streaming` 覆盖回磁盘态），卡片就会渲染出来，点它走的是**真实**组件 + 真实 store + 真实子会话文件；唯一合成物是那一行运行记录，写明即可。
+
+### 订阅单源表与真实类型/沙箱验证（2026-10-14）
+
+onProviderLoginEvent的旧IpcChannels别名是SettingsLoginEvent，不能按剥on推断。SUBSCRIPTION_TABLE显式定义方法key/alias/channel/payload（类型占位）、void运行时标志；PiApi/preload/旧别名从表派生，invoke表独立，backend来源与会话信封转换仍明确接线。
+
+动态Object.fromEntries无法证明每个方法的函数类型，其边界cast不是main载荷约束。send/forward使用channel→payload类型推导和NoInfer；实际TS compiler正例必须零诊断、负例逐行有诊断（错误send/source/callback/零参退出/退订返回类型/未知channel），不把未受tsconfig检查的@ts-expect-error注释当证据。兼容快照仅验证旧值，不作为新增订阅第二张权威名单。
+
+退出API声明零参回调，旧泛型包装cb(payload)即便payload=undefined也会在JS传一个参数；显式void标志确保cb()，用mock.calls/arguments长度测试真实零arg。普通事件仍透传原payload，退订用同一listener且独立订阅不互删。
+
+CJS验证不能只看esbuild测试指定format：另跑实际electron-vite build，执行out/preload/index.cjs产物的沙箱依赖白名单VM，require只允许electron，验证全订阅与退订；不宣称这替代真实Electron窗口冒烟。shared类型依赖SDK用import type，运行时不拉SDK/Electron进shared。
 
 ### 三域无环守护不可由计数反向驱动抽象（2026-10-14）
 

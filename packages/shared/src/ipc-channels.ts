@@ -1,7 +1,13 @@
 import type { ChannelSubscriptionsSnapshot } from "./channel-subscriptions";
-import type { ExtensionDialogRespond } from "./extension-dialog";
+import type {
+	ExtensionDialogRequest,
+	ExtensionDialogResolved,
+	ExtensionDialogRespond,
+	ExtensionEditorTextEvent,
+	ExtensionNotifyEvent,
+} from "./extension-dialog";
 import type { LanStatus } from "./lan";
-import type { McpConfigListResult, McpMutationResult, McpUpsertInput } from "./mcp";
+import type { McpConfigListResult, McpMutationResult, McpServersChangedPayload, McpUpsertInput } from "./mcp";
 import type { CatalogPackageType, CatalogSearchResult, ConfiguredPackageInfo } from "./packages";
 import type {
 	AppInfo,
@@ -17,20 +23,25 @@ import type {
 	PermissionAnswer,
 	PermissionConfigInfo,
 	PermissionMode,
+	PermissionRequest,
+	PermissionResolved,
 	QueuedMessages,
 	QuotaInfo,
 	SessionCloseIntent,
+	SessionEventEnvelope,
 	SessionMessage,
 	SessionMeta,
 	SessionStats,
 	SlashCommandInfo,
 	TrustAnswer,
+	TrustRequest,
 	UiState,
 } from "./session";
 import type {
 	CustomProviderInput,
 	CustomProviderUpdateInput,
 	ListProvidersOptions,
+	LoginEventPayload,
 	LoginResult,
 	ModelPrefs,
 	ProviderInfo,
@@ -38,7 +49,8 @@ import type {
 	SubagentInfo,
 } from "./settings";
 import type { TodoItem } from "./todo";
-import type { UiPluginInfo, UiPluginManifest, UiPluginsConfig } from "./ui-plugins";
+import type { UiPluginInfo, UiPluginManifest, UiPluginsConfig, UiPluginsEventPayload } from "./ui-plugins";
+import type { UpdateState } from "./update";
 import type { UpdateDiagnosticsInfo } from "./update-diagnostics";
 
 /**
@@ -46,7 +58,7 @@ import type { UpdateDiagnosticsInfo } from "./update-diagnostics";
  *
  * 约定：
  * - 参数统一「单对象」形态（无参通道 args = void）；main→renderer 单向事件通道不在此表
- *   （见下方 EVENT_CHANNELS，send-only 无 invoke 返回语义）
+ *   （见下方 SUBSCRIPTION_TABLE，send-only 无 invoke 返回语义）
  * - ch("domain:action")<{...args}, Ret>()：通道字面量只写一次，运行时值仅 { channel }
  * - main 侧经 registerInvokeHandlers(子表, handlers) 注册；preload 对 CHANNEL_TABLE 循环注册
  */
@@ -374,32 +386,66 @@ function channelsFromTable<T extends Record<string, AnyChannelDef>>(
 	};
 }
 
-/** main → renderer 单向事件通道（send-only；preload 订阅与 main 推送共用，不进 invoke 表） */
-const EVENT_CHANNELS = {
-	Event: "pi:event",
-	PermissionRequest: "pi:permission-request",
-	/** 权限请求已裁决（含 LAN 远程应答；桌面端据此撤卡） */
-	PermissionResolved: "pi:permission-resolved",
-	/** 项目信任请求（会话创建前） */
-	TrustRequest: "pi:trust-request",
-	/** 扩展对话框请求/结算 + notify + 草稿预填（issue #45，GUI-only 不进 LAN） */
-	ExtensionDialogRequest: "pi:extension-dialog-request",
-	ExtensionDialogResolved: "pi:extension-dialog-resolved",
-	ExtensionNotify: "pi:extension-notify",
-	ExtensionEditorText: "pi:extension-editor-text",
-	/** MCP 运行态变化（每 server 的工具 + 失效原因 + 全局提示；面板刷新用） */
-	McpServersChanged: "mcp:serversChanged",
-	/** 频道订阅快照变化（spec D1；携带完整快照，renderer 按 (generation, revision) 判新旧） */
-	ChannelSubscriptionsChanged: "channel:subscriptionsChanged",
-	/** 登录流程事件（event/prompt/prompt-cancel） */
-	SettingsLoginEvent: "settings:loginEvent",
-	/** 更新状态 */
-	UpdateEvent: "update:event",
-	/** UI 插件事件（changed/config） */
-	UiPluginsEvent: "uiPlugins:event",
-	/** 用户点了关闭窗口且 main 已拦下（等渲染端弹退出确认）；payload 为空 */
-	QuitRequested: "app:quit-requested",
+/** Payload is a type-only slot like invoke args/ret; void requires an explicit runtime marker. */
+function subscription<P>() {
+	return <const A extends string, const C extends string>(
+		alias: A,
+		channel: C,
+		...noPayload: [P] extends [ReturnType<() => void>] ? [true] : []
+	) =>
+		({ alias, channel, noPayload: noPayload[0] ?? false }) as {
+			alias: A;
+			channel: C;
+			payload: P;
+			noPayload: boolean;
+		};
+}
+
+/** Sole subscription definition: API key + explicit legacy alias + channel + payload type. */
+export const SUBSCRIPTION_TABLE = {
+	onProviderLoginEvent: subscription<LoginEventPayload>()("SettingsLoginEvent", "settings:loginEvent"),
+	onMcpServersChanged: subscription<McpServersChangedPayload>()("McpServersChanged", "mcp:serversChanged"),
+	onChannelSubscriptionsChanged: subscription<ChannelSubscriptionsSnapshot>()(
+		"ChannelSubscriptionsChanged",
+		"channel:subscriptionsChanged",
+	),
+	onUiPluginsEvent: subscription<UiPluginsEventPayload>()("UiPluginsEvent", "uiPlugins:event"),
+	onQuitRequested: subscription<void>()("QuitRequested", "app:quit-requested", true),
+	onUpdateEvent: subscription<UpdateState>()("UpdateEvent", "update:event"),
+	onEvent: subscription<SessionEventEnvelope>()("Event", "pi:event"),
+	onPermissionRequest: subscription<PermissionRequest>()("PermissionRequest", "pi:permission-request"),
+	onPermissionResolved: subscription<PermissionResolved>()("PermissionResolved", "pi:permission-resolved"),
+	onTrustRequest: subscription<TrustRequest>()("TrustRequest", "pi:trust-request"),
+	onExtensionDialogRequest: subscription<ExtensionDialogRequest>()(
+		"ExtensionDialogRequest",
+		"pi:extension-dialog-request",
+	),
+	onExtensionDialogResolved: subscription<ExtensionDialogResolved>()(
+		"ExtensionDialogResolved",
+		"pi:extension-dialog-resolved",
+	),
+	onExtensionNotify: subscription<ExtensionNotifyEvent>()("ExtensionNotify", "pi:extension-notify"),
+	onExtensionEditorText: subscription<ExtensionEditorTextEvent>()(
+		"ExtensionEditorText",
+		"pi:extension-editor-text",
+	),
 } as const;
+
+export type SubscriptionApi<T extends Record<string, { payload: unknown }>> = {
+	[K in keyof T]: (
+		cb: T[K]["payload"] extends void ? () => void : (payload: T[K]["payload"]) => void,
+	) => () => void;
+};
+export type SubscriptionChannel = (typeof SUBSCRIPTION_TABLE)[keyof typeof SUBSCRIPTION_TABLE]["channel"];
+export type SubscriptionPayload<C extends SubscriptionChannel> = {
+	[K in keyof typeof SUBSCRIPTION_TABLE as (typeof SUBSCRIPTION_TABLE)[K]["channel"]]: (typeof SUBSCRIPTION_TABLE)[K]["payload"];
+}[C];
+
+const EVENT_CHANNELS = Object.fromEntries(
+	Object.values(SUBSCRIPTION_TABLE).map((def) => [def.alias, def.channel]),
+) as {
+	[K in keyof typeof SUBSCRIPTION_TABLE as (typeof SUBSCRIPTION_TABLE)[K]["alias"]]: (typeof SUBSCRIPTION_TABLE)[K]["channel"];
+};
 
 /** 全通道字符串常量：main→renderer 事件通道 + 表化 invoke（key = PiApi 方法名） */
 export const IpcChannels = Object.freeze({

@@ -1,34 +1,13 @@
 import {
 	CHANNEL_TABLE,
-	type ChannelSubscriptionsSnapshot,
-	type ExtensionDialogRequest,
-	type ExtensionDialogResolved,
-	type ExtensionEditorTextEvent,
-	type ExtensionNotifyEvent,
 	type InvokeApi,
-	IpcChannels,
-	type LoginEventPayload,
-	type McpServersChangedPayload,
-	type PermissionRequest,
-	type PermissionResolved,
 	type PiApi,
-	type SessionEventEnvelope,
-	type TrustRequest,
-	type UiPluginsEventPayload,
-	type UpdateState,
+	SUBSCRIPTION_TABLE,
+	type SubscriptionApi,
 } from "@percho/shared";
 import { contextBridge, ipcRenderer, webUtils } from "electron";
 
-/** 事件订阅包装：ipcRenderer.on + 返回退订函数（removeListener），payload 透传 */
-function makeSubscription<T>(channel: string): (cb: (payload: T) => void) => () => void {
-	return (cb) => {
-		const listener = (_event: unknown, payload: T) => cb(payload);
-		ipcRenderer.on(channel, listener);
-		return () => ipcRenderer.removeListener(channel, listener);
-	};
-}
-
-/** 表化 invoke 通道：循环注册（args 单对象透传；通道定义 = shared/ipc-channels.ts 单一事实源） */
+/** Invoke remains independent: single-object args pass through unchanged. */
 const invokeApi = Object.fromEntries(
 	Object.entries(CHANNEL_TABLE).map(([key, def]) => [
 		key,
@@ -36,26 +15,22 @@ const invokeApi = Object.fromEntries(
 	]),
 ) as InvokeApi<typeof CHANNEL_TABLE>;
 
+/** Each subscription owns exactly the listener removed by its returned unsubscribe function. */
+const subscriptionApi = Object.fromEntries(
+	Object.entries(SUBSCRIPTION_TABLE).map(([key, def]) => [
+		key,
+		(cb: (...args: unknown[]) => void) => {
+			const listener = (_event: unknown, payload: unknown) => (def.noPayload ? cb() : cb(payload));
+			ipcRenderer.on(def.channel, listener);
+			return () => ipcRenderer.removeListener(def.channel, listener);
+		},
+	]),
+) as unknown as SubscriptionApi<typeof SUBSCRIPTION_TABLE>;
+
 const api: PiApi = {
 	platform: process.platform,
 	getPathForFile: (file) => webUtils.getPathForFile(file as Parameters<typeof webUtils.getPathForFile>[0]),
 	...invokeApi,
-	onProviderLoginEvent: makeSubscription<LoginEventPayload>(IpcChannels.SettingsLoginEvent),
-	onMcpServersChanged: makeSubscription<McpServersChangedPayload>(IpcChannels.McpServersChanged),
-	onChannelSubscriptionsChanged: makeSubscription<ChannelSubscriptionsSnapshot>(
-		IpcChannels.ChannelSubscriptionsChanged,
-	),
-	onUiPluginsEvent: makeSubscription<UiPluginsEventPayload>(IpcChannels.UiPluginsEvent),
-	onQuitRequested: makeSubscription<void>(IpcChannels.QuitRequested),
-	onUpdateEvent: makeSubscription<UpdateState>(IpcChannels.UpdateEvent),
-	onEvent: makeSubscription<SessionEventEnvelope>(IpcChannels.Event),
-	onPermissionRequest: makeSubscription<PermissionRequest>(IpcChannels.PermissionRequest),
-	onPermissionResolved: makeSubscription<PermissionResolved>(IpcChannels.PermissionResolved),
-	onTrustRequest: makeSubscription<TrustRequest>(IpcChannels.TrustRequest),
-	onExtensionDialogRequest: makeSubscription<ExtensionDialogRequest>(IpcChannels.ExtensionDialogRequest),
-	onExtensionDialogResolved: makeSubscription<ExtensionDialogResolved>(IpcChannels.ExtensionDialogResolved),
-	onExtensionNotify: makeSubscription<ExtensionNotifyEvent>(IpcChannels.ExtensionNotify),
-	onExtensionEditorText: makeSubscription<ExtensionEditorTextEvent>(IpcChannels.ExtensionEditorText),
+	...subscriptionApi,
 };
-
 contextBridge.exposeInMainWorld("pi", api);
