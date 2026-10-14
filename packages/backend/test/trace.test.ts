@@ -1,7 +1,7 @@
 import { mkdir, mkdtemp, readdir, readFile, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { TraceRecorder } from "../src/session/trace";
 
 const dirs: string[] = [];
@@ -78,14 +78,24 @@ describe("TraceRecorder", () => {
 			flushIntervalMs: 60_000,
 			rotateSizeBytes: 1024,
 		});
-		for (let i = 0; i < 128 * 12; i++) {
-			recorder.record({ type: "tick", i, pad: "y".repeat(32) });
-			if (i % 128 === 127) {
-				// record 触发的 void flush 是异步的，等它完成再继续
-				await new Promise((resolve) => setTimeout(resolve, 10));
+		// Test-only observation: no production flush API or fixed sleep claiming I/O completion.
+		const state = recorder as unknown as { flushing: boolean; buffer: string[] };
+		try {
+			for (let i = 0; i < 128 * 12; i++) {
+				recorder.record({ type: "tick", i, pad: "y".repeat(32) });
+				if (i % 128 === 127) {
+					await vi.waitFor(
+						() => {
+							expect(state.flushing).toBe(false);
+							expect(state.buffer).toHaveLength(0);
+						},
+						{ timeout: 1000, interval: 1 },
+					);
+				}
 			}
+		} finally {
+			await recorder.close();
 		}
-		await recorder.close();
 		const files = (await readdir(join(dir, "traces"))).filter((f) => f.startsWith(`trace-${sessionId}`));
 		const archives = files.filter((f) => f !== `trace-${sessionId}.jsonl`);
 		expect(archives.length).toBe(5); // MAX_ARCHIVED

@@ -7,7 +7,7 @@
 ## 硬约束（改代码前必知）
 
 - renderer 绝不 import pi 包，只经 `window.pi`（preload）通信
-- `packages/backend/src/pi-backend.ts` 是唯一 import pi SDK 的地方（钉 1.0.4）
+- pi SDK 的生产适配边界在 `packages/backend`（钉1.0.4）；`pi-backend.ts`是门面，backend各会话/工具/设置模块也直接消费SDK类型或能力，不虚称单一文件
 - 新增 IPC invoke：进 `shared/src/ipc-channels.ts` 对应域子表 → 域文件 `registerInvokeHandlers`；新增订阅：进同文件 `SUBSCRIPTION_TABLE`（方法key/显式旧别名/channel/payload），PiApi/preload自动派生。事件来源与信封转换仍在 `main/ipc/index.ts` 明确接线，typed send/forward 校验载荷
 - preload 必须保持 CJS（sandbox 限制，见 PITFALLS）
 - 新增 UI 文案：`i18n/zh.ts` + `en.ts` 双字典都要加
@@ -85,7 +85,7 @@ packages/
 
 ## packages/backend — pi SDK 适配层
 
-纯 Node，不依赖 Electron。唯一 import pi SDK 的包，import 收敛在 `pi-backend.ts`。
+纯Node，不依赖Electron；pi SDK生产适配限在backend包内。门面`pi-backend.ts`统一会话/API入口，内部叶模块直接使用所需SDK类型/能力，不为“单文件import”增加无用代理层。
 
 ```
 src/

@@ -4,10 +4,15 @@
 > 配套阅读：`docs/INDEX.md`（项目索引，「想改 X 改哪里」）；AGENTS.md「UI 截图调试」「常用命令·本地内测打包」两节还有各自的实操坑。
 > 新踩的坑记到这边（注明日期与修复点），别只在会话里说。
 
+## 三 · trace测试等待真实drain，不放宽轮转断言（2026-10-14）
+
+`record()`触发的void flush包含异步append/rotate/sweep。固定sleep10ms不是完成屏障：并发测试负载下仍可能在flushing时继续塞入多批，最终产生超出原测试大小预算的批次。`backend/test/trace.test.ts`现在仅在测试侧有界观测`flushing=false && buffer.length=0`（vi.waitFor，1ms轮询、1000ms局部等待），finally关闭recorder。原测试总timeout、1024字节轮转阈值、5归档、末条/大小/行数断言不改，也不加生产测试API。完整测试trace9/9通过；这不等于已修复另两个历史watcher/updater波动。
+
 ## 症状快速索引
 
 | 症状 / 场景 | 条目（章节） |
 |---|---|
+| trace轮转全套偶发超大小；用固定sleep误当异步flush完成 | 三 · trace测试等待真实drain，不放宽轮转断言（2026-10-14） |
 | 退出遗漏频道/流状态清理；冲突清理误碰holder；资源异常截断后续释放 | 三 · 注册实例清理必须区分normal/quit/冲突（2026-10-14） |
 | 插件runtime/shim有名字而发布声明缺项；standalone声明报ambient内declare错误 | 三 · 插件守护须双向核对别名与实际声明/构建（2026-10-14） |
 | 订阅表按on前缀猜别名；payload检查只剩动态Map断言；退出callback收到多余arg | 三 · 订阅单源表与真实类型/沙箱验证（2026-10-14） |
