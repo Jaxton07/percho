@@ -177,7 +177,7 @@ src/
 | `src/main/ui-plugins/config.ts` | `ui-plugins.json` 读写；内部 `UiPluginsConfigCommand` / `updateUiPluginsConfig` 将总开关、插件启用/信任及槽位指派的全部读改写放入 JsonStore 队列；normalize 白名单，失效指派保留，取消只删对应key |
 | `src/main/ui-plugins/contract-baseline.test.ts` | 插件公开面特征基线：真实四模块 shim 构建/执行、AST 成员/别名/props/资产清单与现有声明缺项（记录现状，修复时将缺陷期待翻为目标断言） |
 | `src/main/ui-plugins/build.ts` | 插件 esbuild 构建器：`loadEsbuild` 懒加载 + `ESBUILD_BINARY_PATH` 指向 asar.unpacked 真实二进制（打包态坑，升级 esbuild 前重评）；react 系四个 specifier 重写到 `window.PerchoUI` shim（**与 renderer host-api.ts、resources/percho-ui.d.ts 逐名一致**）；图片/音频资产 dataurl 内联（CSP img-src / media-src 均放行 data:） |
-| `src/main/ui-plugins/manager.ts` | UiPluginManager 编排：scanAll / ensureBuilt / fs.watch 300ms 防抖热重载；配置命令提交与扫描发布共用私有串行链，防旧scan晚回灌（失败不毒化后续工作）；manifest/contributions 在 manifest.ts，种子在 seeder.ts，树工具在 fs-tree.ts |
+| `src/main/ui-plugins/manager.ts` | UiPluginManager 编排：scanAll / ensureBuilt / fs.watch 300ms 防抖热重载；配置命令提交与扫描发布共用私有串行链，防旧scan晚回灌（失败不毒化后续工作）；晚构建仅向仍在册且目录对应的最新info合并built/buildError，不回写配置/扫描字段或复活已删条目；manifest/contributions 在 manifest.ts，种子在 seeder.ts，树工具在 fs-tree.ts |
 | `src/main/ui-plugins/{manifest,fs-tree,seeder}.ts` | manifest 校验+过滤+读取（纯函数域）/ copyTree+sameTree+newestMtime / pluginsDir+seedBuiltinPlugins+seedDocs+uiPluginsResourcesDir（从 manager 拆出，D7） |
 | `src/main/renderer-watchdog.ts` | `attachRendererWatchdog(backend)`：崩溃熔断+自动 reload（短窗高频转人工对话框）/ console 错误签名去重 / 60s 心跳+临终快照（从 main/index.ts 抽出，index 回归纯装配） |
 | `src/main/lan.ts`（+ `lan-icon.ts`、`ipc/lan.ts`） | LAN observer 接线；观察页 = `src/lan-web/` 独立 vite 单文件产物，`?raw` 内联进 main bundle（**dev 下重 build lan-web 后需重启 dev 实例**，产物不在 electron-vite watch 集） |
@@ -236,7 +236,7 @@ src/
 | `i18n/` | zh/en 字典 + `useT()`（文案改这里，双字典）；`localized-presentation.test.ts` 覆盖内置工具/命令翻译、第三方原名保留、show_image 折叠展示 |
 | `styles/globals.css` | Tailwind 入口（另有 `.channel-pill` / `.channel-pill-open`：频道胶囊宽度/透明度过渡 360ms cubic-bezier(.4,0,.2,1)，reduced-motion 下关过渡；时长与组件里的 `CHANNEL_PILL_DURATION_MS` 同步）（**必须 `@import "tailwindcss"` 之后再 `@import "./typography.css"`**：反过来会让 `base` 层的 preflight `font: inherit` 压住 `utilities` 层的字号，按钮/输入框上尤其明显）+ 主题 token（`bg-canvas/bg-surface/ink 灰阶/shadow 三档` 等；组件禁写死色值，一律语义 token）+ markdown/滚动条/动画样式段 |
 | `styles/typography.css` | **字号唯一事实源**：13 个 `.text-ui-*` token（`calc(<px> * var(--fs-ui-scale, 1))`，命名去掉小数点 → `text-ui-105` = 10.5px）+ 两个乘数变量（`--fs-ui-scale` 界面 / `--fs-code-scale` 代码；兜底 1 = 默认档等于迁移前现状）；新增字号只在这里加 + 文件头有「原写法 ↔ token」对照表 |
-| `stores/ui-plugin-config-baseline.test.ts` | 跨层插件配置回归：真实 JsonStore 并发原子命令、IPC 同目标顺序/信任/取消规则、暂停旧scan后真实 renderer store 最终一致性、损坏与rename故障不推成功事件；受控接缝有界诊断，不替代产品读改写实现 |
+| `stores/ui-plugin-config-baseline.test.ts` | 跨层插件配置回归：真实 JsonStore 并发原子命令、IPC 同目标顺序/信任/取消规则、暂停旧scan后真实 renderer store 最终一致性、损坏与rename故障不推成功事件；成功/失败晚build不覆盖启停/信任/版本，删除后不复活；受控接缝有界诊断，不替代产品读改写实现 |
 | `components/settings/loading-effects.test.tsx` | 设置加载责任特征测试：执行真实 Providers/LAN 面板 effect 回调，验证模型联网入口、LAN 初始读取/5s 轮询/cleanup；受控 hook 调度，不替代 Electron DOM/StrictMode 测试。store 请求矩阵另见 `stores/settings-catalog.test.ts` |
 | `styles/typography.test.ts` | 字号守护测试（9 例）：token 集合与 px 一一对应、每个 font-size 都是 calc(var)、**`@import` 顺序**、globals.css 的 font-size 只允许 calc(var) 或白名单 0、绝对行高只许那三处、组件里不许再有 `text-[Npx]` / `text-xs|sm|lg` / 写死 font-size（跳过 `*.test.ts(x)`：样例 CSS 文本不是界面字号） |
 ### components/（按域分目录）

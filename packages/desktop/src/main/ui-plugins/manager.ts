@@ -169,10 +169,14 @@ export class UiPluginManager {
 			}
 			if (needsBuild) {
 				const res = await buildPlugin(pluginDir, manifest.main);
-				if (res.ok) {
-					this.infos.set(name, { ...info, buildError: undefined, built: true });
-				} else {
-					this.infos.set(name, { ...info, buildError: res.error, built: existsSync(dist) });
+				// await 期间扫描/配置可能已更新或移除条目；构建只发布自己负责的字段。
+				const latest = this.infos.get(name);
+				if (latest && this.dirNames.get(name) === pluginDir) {
+					this.infos.set(name, {
+						...latest,
+						buildError: res.ok ? undefined : res.error,
+						built: res.ok || existsSync(dist),
+					});
 				}
 				return res.ok;
 			}

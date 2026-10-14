@@ -4,6 +4,8 @@ import { join } from "node:path";
 import type { UiPluginsConfig } from "@percho/shared";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
+type BuildResult = Awaited<ReturnType<typeof import("../../../main/ui-plugins/build").buildPlugin>>;
+
 const state = vi.hoisted(() => ({
 	root: "",
 	handlers: {} as Record<string, (input: any) => unknown>,
@@ -14,6 +16,8 @@ const state = vi.hoisted(() => ({
 	failWrite: false,
 	writes: [] as string[],
 	commandStarts: 0,
+	holdBuild: false,
+	heldBuilds: [] as Array<{ dir: string; resolve: (result: BuildResult) => void }>,
 	send: vi.fn(),
 }));
 vi.mock("electron", () => ({ app: { getPath: () => state.root }, shell: { openPath: vi.fn() } }));
@@ -44,6 +48,19 @@ vi.mock("node:fs/promises", async (importOriginal) => {
 				state.writes.push(to);
 			}
 			return actual.rename(from, to);
+		},
+	};
+});
+// Control the external build-result seam; all config, scan and renderer pull logic stays real.
+vi.mock("../../../main/ui-plugins/build", async (importOriginal) => {
+	const actual = await importOriginal<typeof import("../../../main/ui-plugins/build")>();
+	return {
+		...actual,
+		buildPlugin: (...args: Parameters<typeof actual.buildPlugin>) => {
+			if (!state.holdBuild) return actual.buildPlugin(...args);
+			return new Promise<BuildResult>((resolve) => {
+				state.heldBuilds.push({ dir: args[0], resolve });
+			});
 		},
 	};
 });
@@ -107,6 +124,8 @@ beforeEach(async () => {
 	state.failWrite = false;
 	state.writes = [];
 	state.commandStarts = 0;
+	state.holdBuild = false;
+	state.heldBuilds = [];
 	state.send.mockClear();
 	for (const name of ["alpha", "beta"]) {
 		const dir = join(state.root, "plugins", name);
@@ -127,6 +146,7 @@ beforeEach(async () => {
 });
 afterEach(async () => {
 	for (const release of state.releases.splice(0)) release();
+	for (const build of state.heldBuilds.splice(0)) build.resolve({ ok: false, error: "test cleanup" });
 	await bounded(Promise.allSettled(state.pending), "cleanup");
 	await rm(state.root, { recursive: true, force: true });
 });
@@ -245,6 +265,68 @@ describe("ticket 02 atomic commands and ordered cache publication", () => {
 		await writeFile(file, JSON.stringify({ enabled: false, plugins: {}, assignments: {} }));
 		await invoke("uiPluginsSetEnabled", { enabled: true });
 		expect(state.send).toHaveBeenCalledTimes(1);
+		await assertRendererAligned();
+	});
+	it.each([
+		{ ok: true, enabled: true },
+		{ ok: false, enabled: true },
+		{ ok: true, enabled: false },
+		{ ok: false, enabled: false },
+	])(
+		"late build ok=$ok preserves committed enabled=$enabled/trusted and newest scan fields",
+		async ({ ok, enabled }) => {
+			await invoke("uiPluginsSetPluginEnabled", { name: "alpha", enabled: !enabled });
+			const dir = join(state.root, "plugins", "alpha");
+			await mkdir(join(dir, "dist"));
+			await writeFile(join(dir, "dist/index.js"), "old artifact");
+			state.holdBuild = true;
+			const building = track(manager.ensureBuilt("alpha", true));
+			await vi.waitFor(() => expect(state.heldBuilds, "expected the build-result seam").toHaveLength(1), {
+				timeout: 1500,
+			});
+			await writeFile(
+				join(dir, "plugin.json"),
+				JSON.stringify({
+					name: "alpha",
+					version: "2.0",
+					perchoUi: 1,
+					main: "src/index.ts",
+					slots: { "chat.todo-panel": "Todo" },
+				}),
+			);
+			await bounded(
+				invoke("uiPluginsSetPluginEnabled", { name: "alpha", enabled }),
+				"command while build pending",
+			);
+			expect(manager.info("alpha")).toMatchObject({ enabled, trusted: true, version: "2.0" });
+			const held = state.heldBuilds.shift();
+			if (!held) throw Error("missing held build");
+			expect(held.dir).toBe(dir);
+			held.resolve(ok ? { ok: true } : { ok: false, error: "late build failure" });
+			expect(await bounded(building, "late build")).toBe(ok);
+			expect(manager.info("alpha")).toMatchObject({ enabled, trusted: true, version: "2.0", built: true });
+			expect(manager.info("alpha")?.buildError).toBe(ok ? undefined : "late build failure");
+			expect(await readFile(join(dir, "dist/index.js"), "utf8")).toBe("old artifact");
+			await assertRendererAligned();
+		},
+	);
+	it.each([true, false])("late build ok=%s cannot revive a plugin removed by scan", async (ok) => {
+		await invoke("uiPluginsSetPluginEnabled", { name: "alpha", enabled: true });
+		state.holdBuild = true;
+		const building = track(manager.ensureBuilt("alpha", true));
+		await vi.waitFor(() => expect(state.heldBuilds, "expected the build-result seam").toHaveLength(1), {
+			timeout: 1500,
+		});
+		await rm(join(state.root, "plugins", "alpha"), { recursive: true });
+		await bounded(manager.scanAll(), "scan deleted plugin");
+		expect(manager.info("alpha")).toBeNull();
+		expect(manager.pluginDirOf("alpha")).toBeNull();
+		const held = state.heldBuilds.shift();
+		if (!held) throw Error("missing held build");
+		held.resolve(ok ? { ok: true } : { ok: false, error: "late removed build" });
+		expect(await bounded(building, "removed late build")).toBe(ok);
+		expect(manager.info("alpha")).toBeNull();
+		expect(manager.list().map((plugin) => plugin.name)).toEqual(["beta"]);
 		await assertRendererAligned();
 	});
 	it("atomic rename failure preserves disk/cache/renderer and emits no success; retry works", async () => {

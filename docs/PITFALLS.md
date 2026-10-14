@@ -1105,9 +1105,9 @@ pgrep -f "electron-vite" | xargs -r kill -9
 
 底层 JsonStore 已串行，并不意味着上层逻辑原子：handler 在队列外读取 plugins/assignments 全对象，再以嵌套快照回写，不同目标仍会互相覆盖。另一个独立竞态是 scanAll 读旧配置后暂停，新命令提交并刷新后，旧 scan 晚发布可使 manager/list 回退，renderer 的 config 与 plugins 两份数据互相矛盾。
 
-修复点：`main/ui-plugins/config.ts` 改内部意图命令，旧 trusted/取消key等计算全部在 JsonStore.update 回调中；`manager.ts` 让扫描与命令提交+刷新共用私有串行链。写入/损坏失败向调用者传播，链的内部尾部仅消化失败以允许后续重试；IPC仍成功落盘并刷新后才推事件。不要仅检查最终磁盘文件。
+修复点：`main/ui-plugins/config.ts` 改内部意图命令，旧 trusted/取消key等计算全部在 JsonStore.update 回调中；`manager.ts` 让扫描与命令提交+刷新共用私有串行链。还必须核对其他缓存写者：ensureBuilt 原先 await 后展开旧 info，即使扫描串行，晚构建仍可覆盖 enabled/trusted 或复活已删条目。构建完成只向仍在册、目录仍对应的最新 info 合并 built/buildError，不把耗时build塞入配置锁。写入/损坏失败向调用者传播，链的内部尾部仅消化失败以允许后续重试；IPC仍成功落盘并刷新后才推事件。不要仅检查最终磁盘文件。
 
-回归在 `renderer/src/stores/ui-plugin-config-baseline.test.ts`：不经过manager串行的真实配置并发仍保留全部目标；真实IPC同目标顺序、信任与取消规则；暂停扫描读取返回，明确检查新命令未进入提交，再放行旧扫描并验证disk/manager/真实renderer store一致。等候有界且报captures/writes，避免重构接缝后旧barrier永久等不到。故障只注入真实rename IO边界，不mock配置实现。
+回归在 `renderer/src/stores/ui-plugin-config-baseline.test.ts`：不经过manager串行的真实配置并发仍保留全部目标；真实IPC同目标顺序、信任与取消规则；暂停扫描读取返回，明确检查新命令未进入提交，再放行旧扫描并验证disk/manager/真实renderer store一致。等候有界且报captures/writes，避免重构接缝后旧barrier永久等不到。故障只注入真实rename IO边界，不mock配置实现。构建结果接缝另有deferred：成功/失败 × 启用/停用四例及删除后晚结果两例；手动恢复旧发布逻辑时新六例稳定红、原七例仍绿，修复后全绿，确保不遗漏第三个写者。
 
 ### `TMPDIR` 指向仓库内部会让两个既有后端测试失败（2026-10-12，qol3 阶段 4 复核发现）
 
