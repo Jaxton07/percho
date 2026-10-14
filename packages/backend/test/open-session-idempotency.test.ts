@@ -111,7 +111,7 @@ describe("PiBackend.openSession 幂等（spec D4）", () => {
 });
 
 describe("PiBackend.wireSession 注册冲突（D4 最后防线）", () => {
-	it("同 sessionId 已被占住：抛错，并把刚构造的实例拆干净（订阅/gate/dialogs/session）", async () => {
+	it.each([false, true])("注册冲突：holder保真，新unsubscribe异常=%s也继续清理", async (throws) => {
 		const file = writeSessionFile(dir, "sess-dup");
 		const backend = new PiBackend({
 			projectTrust: false,
@@ -124,9 +124,29 @@ describe("PiBackend.wireSession 注册冲突（D4 最后防线）", () => {
 		const holderUnsubscribe = vi.fn();
 		holder.unsubscribe = holderUnsubscribe;
 		registry.add(holder);
+		const lifecycle = backend as unknown as {
+			channelSubs: import("../src/channel-subscriptions").ChannelSubscriptionRegistry;
+			historyGate: import("../src/session/hydration-gate").SessionHydrationGate;
+			guardTriggerMarkers: import("../src/tools/compaction-guard/trigger-marker").GuardTriggerMarkers;
+			eventRates: import("../src/session/rates").EventRateTracker;
+			channelWatchCleanups: WeakMap<RegisteredSession["modeRef"], () => void>;
+		};
+		lifecycle.channelSubs.noteSessionOpened("sess-dup");
+		lifecycle.channelSubs.report("sess-dup", new Set(["holder"]));
+		const snapshot = lifecycle.channelSubs.snapshot("sess-dup");
+		lifecycle.guardTriggerMarkers.mark("sess-dup");
+		lifecycle.eventRates.tick("sess-dup");
+		const holderWatcher = vi.fn();
+		lifecycle.channelWatchCleanups.set(holder.modeRef, holderWatcher);
+		let historySettled = false;
+		const history = lifecycle.historyGate.wait("sess-dup").then(() => {
+			historySettled = true;
+		});
 
 		const shutdown = vi.fn().mockResolvedValue(undefined);
-		const unsubscribe = vi.fn();
+		const unsubscribe = vi.fn(() => {
+			if (throws) throw new Error("new unsubscribe fault");
+		});
 		const dispose = vi.fn();
 		const gateDispose = vi.spyOn(PermissionGate.prototype, "dispose");
 		const dialogsDispose = vi.spyOn(ExtensionDialogHost.prototype, "dispose");
@@ -167,9 +187,24 @@ describe("PiBackend.wireSession 注册冲突（D4 最后防线）", () => {
 			// 占位 entry 原样保留（没有被静默替换），registry 里也不会多出第二条
 			expect(registry.get("sess-dup")).toBe(holder);
 			expect(registry.list()).toHaveLength(1);
+			expect(lifecycle.channelSubs.snapshot("sess-dup")).toEqual(snapshot);
+			expect(historySettled).toBe(false);
+			expect(holderWatcher).not.toHaveBeenCalled();
+			expect(lifecycle.channelWatchCleanups.has(holder.modeRef)).toBe(true);
+			expect(lifecycle.eventRates.snapshot().has("sess-dup")).toBe(true);
+			expect(
+				lifecycle.guardTriggerMarkers.rewrite("sess-dup", { type: "compaction_start", reason: "manual" })
+					.reason,
+			).toBe("threshold");
 		} finally {
 			gateDispose.mockRestore();
 			dialogsDispose.mockRestore();
+			lifecycle.historyGate.cancel("sess-dup");
+			await history;
+			lifecycle.channelSubs.dispose("sess-dup");
+			lifecycle.guardTriggerMarkers.clear("sess-dup");
+			lifecycle.eventRates.delete("sess-dup");
+			lifecycle.channelWatchCleanups.delete(holder.modeRef);
 		}
 	});
 });

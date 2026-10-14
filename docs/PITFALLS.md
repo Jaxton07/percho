@@ -8,6 +8,7 @@
 
 | 症状 / 场景 | 条目（章节） |
 |---|---|
+| 退出遗漏频道/流状态清理；冲突清理误碰holder；资源异常截断后续释放 | 三 · 注册实例清理必须区分normal/quit/冲突（2026-10-14） |
 | 插件runtime/shim有名字而发布声明缺项；standalone声明报ambient内declare错误 | 三 · 插件守护须双向核对别名与实际声明/构建（2026-10-14） |
 | 订阅表按on前缀猜别名；payload检查只剩动态Map断言；退出callback收到多余arg | 三 · 订阅单源表与真实类型/沙箱验证（2026-10-14） |
 | IPC域handler反向依赖组合index成环；preload单文件被“每域有边”误判 | 三 · 三域无环守护不可由计数反向驱动抽象（2026-10-14） |
@@ -1104,6 +1105,14 @@ pgrep -f "electron-vite" | xargs -r kill -9
   - 2026-10-12 补充（qol3 阶段 1 实测）：计数「某请求触发了几次」时，**订阅 store 的上升沿**（`useSettingsStore.subscribe((s, prev) => …)` 数 `loading`/`refreshing` false→true）比数 IPC 更实用 —— 只要发起方在**发起请求时同步置位**，上升沿就与真实请求一一对应，且不受对端快慢影响（在途去重也能被这条口径验证）。同理「副作用是否只发生一次」可以把 store 上的 action 换成一个计数包装（`useXStore.setState({ action: async () => { count++; return orig() }) }`，store 内部走 `getState().action()` 时会用到包装后的版本）。
 - 需要「点真实子代理卡」这类依赖模型行为的场景，优先找**历史回放**入口：历史里已有子代理运行的父会话，打开它 → transcript 重放出卡片 → 点它，同样落到只读检视页，且完全确定性（子会话文件在 `<agentDir>/sessions-subagents/`，后端按路径判定 `readOnly`）。现场真跑一次 subagent 依赖凭证可用，dev 里常 401 拿不到可点卡片。
   - 2026-10-12 补充（qol3 阶段 2 实测）：dev agentDir 里**可能一个可点子代理卡都没有** —— 唯一一次真实 subagent 运行是 401 失败、没有 `sessionFile`（这类行渲染成不可点）。确定性做法：挑一个含 `"toolName":"subagent"` 的父会话打开，往 `useTranscriptStore` 的 `bySession[id].streaming.subagentRuns` **注入一条** `{key,agent,status:"done",sessionFile:<真实存在的 sessions-subagents 文件>}`（注入要重试：bundle 可能晚于注入落地并把 `streaming` 覆盖回磁盘态），卡片就会渲染出来，点它走的是**真实**组件 + 真实 store + 真实子会话文件；唯一合成物是那一行运行记录，写明即可。
+
+### 注册实例清理必须区分normal/quit/冲突（2026-10-14）
+
+normal关闭需要await shutdown，SDK dispose后history.cancel，再registry entry释放/移除、频道/流/rates、await trace.stop；不能为统一把history取消挪早。quit必须同步返回，先entry释放再fire-and-forget shutdown/SDK dispose/移除；afterhook先cancel history再辅助组，全局traces.disposeAll仍唯一退出trace归属。
+
+实例helper只清unsubscribe/gate/dialogs，不按id查registry、不碰SDK/频道/trace；冲突只拆新modeRef资源，不发shutdown、不清holder的marker/history/频道/stream/rates。注册实例两辅助组和registry同步hooks用明确步骤，每步异常继续，避免先一个unsubscribe/watcher失败使后面gate/dialog或下一会话跳过。不造通用Scope/新disposed平台，不收runner进registry。
+
+行为验证不能只断言spy调用：真实PermissionGate/Dialog待处理Promise应落取消值、history.wait应false、watcher映射撤、marker/rates/流熔断清、频道not-live空且代次保留；重开旧modeRef reporter不得覆盖新代。内部channelSubs.report允许构造前早报，不可把它直接当旧watcher投递：测试捕获真实producer的isSessionAlive/代次身份回调，晚shutdown空集与重开后的旧非空报告分别验证。装饰spy时先保存native binding，不能先spy再bind（会递归自调用）；未编译backend测试不能让错误资源API假设掩盖行为证据。
 
 ### 插件守护须双向核对别名与实际声明/构建（2026-10-14）
 

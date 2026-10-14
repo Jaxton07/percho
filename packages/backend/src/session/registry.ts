@@ -1,5 +1,6 @@
 import type { AgentSession, AgentSessionEvent } from "@earendil-works/pi-coding-agent";
 import type { SessionMeta } from "@percho/shared";
+import { createLogger } from "../log";
 import type { PermissionModeRef } from "../permissions/extension";
 import type { PermissionGate } from "../permissions/gate";
 import type { ExtensionDialogHost } from "./extension-dialog-host";
@@ -18,6 +19,37 @@ export interface RegisteredSession {
 	dialogs: ExtensionDialogHost;
 	/** 会话权限模式引用（default 缺省；随工厂闭包注入求值链，不落盘） */
 	modeRef: PermissionModeRef;
+}
+
+const log = createLogger("session-registry");
+
+/** Internal synchronous hooks; implementations must not return/await a Promise. */
+export interface SessionDisposeHooks {
+	beforeShutdown?: (entry: RegisteredSession) => void;
+	afterDispose?: (entry: RegisteredSession) => void;
+}
+
+/** Instance-only ownership: no id lookup, SDK dispose, channel registry or trace dependency. */
+export function releaseEntryResources(
+	entry: Pick<RegisteredSession, "unsubscribe" | "gate" | "dialogs">,
+): void {
+	const failures: unknown[] = [];
+	try {
+		entry.unsubscribe();
+	} catch (error) {
+		failures.push(error);
+	}
+	try {
+		entry.gate.dispose();
+	} catch (error) {
+		failures.push(error);
+	}
+	try {
+		entry.dialogs.dispose();
+	} catch (error) {
+		failures.push(error);
+	}
+	if (failures.length) log.warn("entry resource release failed", failures);
 }
 
 /** 维护 sessionId → AgentSession 实例（会话级状态单条记录：gate/dialogs/modeRef 都在 entry 上） */
@@ -50,9 +82,7 @@ export class SessionRegistry {
 	delete(sessionId: string): void {
 		const entry = this.sessions.get(sessionId);
 		if (!entry) return;
-		entry.unsubscribe();
-		entry.gate.dispose();
-		entry.dialogs.dispose();
+		releaseEntryResources(entry);
 		this.sessions.delete(sessionId);
 	}
 
@@ -87,20 +117,32 @@ export class SessionRegistry {
 		};
 	}
 
-	disposeAll(): void {
+	disposeAll(hooks: SessionDisposeHooks = {}): void {
 		// 与 closeSession 对称：逐 entry 全量清理（closeSession 已 dispose 的不在
 		// registry，无双重释放路径）；清空 Map
 		for (const [sessionId, entry] of [...this.sessions.entries()]) {
-			entry.unsubscribe();
-			entry.gate.dispose();
-			entry.dialogs.dispose();
+			try {
+				hooks.beforeShutdown?.(entry);
+			} catch (error) {
+				log.warn("before shutdown failed", sessionId, error);
+			}
+			releaseEntryResources(entry);
 			// 先把 session_shutdown 送给扩展（详见 emitSessionShutdown 注释），否则 MCP stdio
 			// 子进程不会被回收。这条路径是 `before-quit` 的**同步**收尾（Electron 不会等 async
 			// quit 钩子），所以只能 fire-and-forget —— 够用：`connection.close()` 里 kill 子进程
 			// 是同步段发出的，剩下的等待交给进程消亡接管。
 			emitSessionShutdown(entry.session).catch(() => {});
-			entry.session.dispose();
+			try {
+				entry.session.dispose();
+			} catch (error) {
+				log.warn("SDK dispose failed", sessionId, error);
+			}
 			this.sessions.delete(sessionId);
+			try {
+				hooks.afterDispose?.(entry);
+			} catch (error) {
+				log.warn("after dispose failed", sessionId, error);
+			}
 		}
 	}
 }

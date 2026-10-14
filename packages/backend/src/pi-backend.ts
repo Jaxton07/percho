@@ -96,7 +96,12 @@ import {
 } from "./session/messages";
 import { autoNameSession } from "./session/naming";
 import { EventRateTracker } from "./session/rates";
-import { type EventForwarder, type RegisteredSession, SessionRegistry } from "./session/registry";
+import {
+	type EventForwarder,
+	type RegisteredSession,
+	releaseEntryResources,
+	SessionRegistry,
+} from "./session/registry";
 import { renameSessionFile } from "./session/rename";
 import { emitSessionShutdown } from "./session/shutdown";
 import { KeyedSingleFlight } from "./session/single-flight";
@@ -618,14 +623,20 @@ export class PiBackend {
 			// 这一代开始了：领取新代次（早报过的会话也在这里拿到最终代次；dispose 后重开会是新的一代）
 			this.channelSubs.noteSessionOpened(session.sessionId);
 		} catch (error) {
-			this.channelWatchCleanups.get(modeRef)?.();
-			this.channelWatchCleanups.delete(modeRef);
-			// registry 的最后防线（同 sessionId 已被别的 entry 占住，如并发/别名路径）：
-			// 刚构造的这份必须当场拆干净（订阅/gate/dialogs/session），不能只抛错把资源泄漏出去
-			unsubscribe();
-			gate.dispose();
-			dialogs.dispose();
-			session.dispose();
+			try {
+				this.channelWatchCleanups.get(modeRef)?.();
+			} catch (cleanupError) {
+				log.warn("conflicting watcher cleanup failed", session.sessionId, cleanupError);
+			} finally {
+				this.channelWatchCleanups.delete(modeRef);
+			}
+			// Release only the new instance: no holder-id cleanup or shutdown emission.
+			releaseEntryResources({ unsubscribe, gate, dialogs });
+			try {
+				session.dispose();
+			} catch (cleanupError) {
+				log.warn("conflicting SDK dispose failed", session.sessionId, cleanupError);
+			}
 			log.error("session register conflicted; constructed instance disposed", {
 				sessionId: session.sessionId,
 			});
@@ -718,14 +729,46 @@ export class PiBackend {
 		return { closed: true };
 	}
 
+	/** Registered-session-only auxiliary groups; conflict cleanup must not touch holder ids. */
+	private beforeSessionShutdown(entry: RegisteredSession): void {
+		const id = entry.session.sessionId;
+		try {
+			this.guardTriggerMarkers.clear(id);
+		} catch (error) {
+			log.warn("guard marker cleanup failed", id, error);
+		}
+		try {
+			this.channelWatchCleanups.get(entry.modeRef)?.();
+		} catch (error) {
+			log.warn("channel watcher cleanup failed", id, error);
+		} finally {
+			this.channelWatchCleanups.delete(entry.modeRef);
+		}
+	}
+
+	private afterSessionDispose(entry: RegisteredSession): void {
+		const id = entry.session.sessionId;
+		try {
+			this.channelSubs.dispose(id);
+		} catch (error) {
+			log.warn("channel incarnation cleanup failed", id, error);
+		}
+		try {
+			this.streamGuard.cleanup(id);
+		} catch (error) {
+			log.warn("stream guard cleanup failed", id, error);
+		}
+		try {
+			this.eventRates.delete(id);
+		} catch (error) {
+			log.warn("event rate cleanup failed", id, error);
+		}
+	}
+
 	/** 真正的处置：dispose + registry/全局键控子系统清理（closeSession 与 deleteSession 共用） */
 	private async disposeSession(entry: RegisteredSession): Promise<void> {
 		const sessionId = entry.session.sessionId;
-		// D8 标记是内存态、按会话键控：会话处置时顺手清掉（正常路径已由 compaction_end 配对消费，
-		// 这里兜住「触发了但压缩永远没开始/没结束就关会话」的残留）。
-		this.guardTriggerMarkers.clear(sessionId);
-		this.channelWatchCleanups.get(entry.modeRef)?.();
-		this.channelWatchCleanups.delete(entry.modeRef);
+		this.beforeSessionShutdown(entry);
 		// 先把 session_shutdown 送给扩展，再 dispose（详见 emitSessionShutdown 注释）：
 		// SDK 的 dispose() 不发这个事件，而官方 mcp 扩展只在它里面关 MCP stdio 子进程 ——
 		// 顺序反了就漏子进程，也会让扩展拿到的 ctx 已失效。
@@ -736,18 +779,26 @@ export class PiBackend {
 				error: error instanceof Error ? error.message : String(error),
 			});
 		});
-		entry.session.dispose();
-		this.historyGate.cancel(sessionId);
+		try {
+			entry.session.dispose();
+		} catch (error) {
+			log.warn("SDK dispose failed", sessionId, error);
+		}
+		// Normal close keeps history cancellation after SDK dispose and before entry release.
+		try {
+			this.historyGate.cancel(sessionId);
+		} catch (error) {
+			log.warn("history cancel failed", sessionId, error);
+		}
 		// entry 级清理：unsubscribe + gate/dialogs dispose（pending 对话框按 sessionClosed 结算，
 		// 广播 resolved 让 renderer 撤卡；扩展 Promise 落取消值）
 		this.registry.delete(sessionId);
-		// 订阅快照兜底：**无条件发布空集**（这一代结束的生命周期信号）+ 标 not-live；
-		// 正常路径扩展的 shutdown 已上报过空集（内容变化发布一次），这里是接住 session_start 前/异常路径
-		this.channelSubs.dispose(sessionId);
-		// 全局键控子系统（本就独立于 registry）
-		this.streamGuard.cleanup(sessionId);
-		this.eventRates.delete(sessionId);
-		await this.traces.stop(sessionId);
+		this.afterSessionDispose(entry);
+		try {
+			await this.traces.stop(sessionId);
+		} catch (error) {
+			log.warn("trace stop failed", sessionId, error);
+		}
 		log.info("session closed", sessionId);
 	}
 
@@ -1542,8 +1593,20 @@ export class PiBackend {
 	}
 
 	dispose(): void {
-		for (const entry of this.registry.list()) this.channelWatchCleanups.get(entry.modeRef)?.();
-		this.registry.disposeAll();
+		this.registry.disposeAll({
+			beforeShutdown: (entry) => {
+				this.beforeSessionShutdown(entry);
+			},
+			afterDispose: (entry) => {
+				const id = entry.session.sessionId;
+				try {
+					this.historyGate.cancel(id);
+				} catch (error) {
+					log.warn("history cancel failed", id, error);
+				}
+				this.afterSessionDispose(entry);
+			},
+		});
 		this.historyGate.dispose();
 		this.eventEmitter.clear();
 		this.permissionEmitter.clear();

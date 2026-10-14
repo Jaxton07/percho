@@ -92,7 +92,7 @@ describe("V05 close/quit resource ordering characteristics", () => {
 		expect(internal.channelWatchCleanups.has(entry.modeRef)).toBe(false);
 		backend.dispose();
 	});
-	it("quit is synchronous, unsubscribes before shutdown and currently leaves channel incarnation live", async () => {
+	it("quit is synchronous, unsubscribes before shutdown and closes the channel incarnation", async () => {
 		const order: string[] = [];
 		const { backend, internal, entry } = registeredBackend(order);
 		let resolveShutdown!: () => void;
@@ -106,12 +106,12 @@ describe("V05 close/quit resource ordering characteristics", () => {
 		expect(backend.dispose()).toBeUndefined();
 		expect(order).toEqual(["watcher", "unsubscribe", "gate", "dialogs", "emit:pending", "dispose"]);
 		expect(internal.registry.list()).toHaveLength(0);
-		expect(internal.channelSubs.snapshot("s1")).toMatchObject({ live: true, topics: ["baseline"] });
+		expect(internal.channelSubs.snapshot("s1")).toMatchObject({ live: false, topics: [] });
 		const published: unknown[] = [];
 		const unsubscribe = internal.channelSubs.subscribe((snapshot) => published.push(snapshot));
-		// Model a delayed old runner report: current quit has not invalidated the incarnation.
+		// A delayed shutdown clear cannot publish/revive the closed incarnation.
 		internal.channelSubs.report("s1", new Set());
-		expect(published).toHaveLength(1);
+		expect(published).toHaveLength(0);
 		resolveShutdown();
 		await Promise.resolve();
 		unsubscribe();
