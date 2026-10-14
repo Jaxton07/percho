@@ -1,5 +1,4 @@
 import type { AvailableModel, PermissionMode, SessionCloseIntent, SessionMeta } from "@percho/shared";
-import { messagesToUIMessages } from "@percho/shared";
 import { create } from "zustand";
 import { getPi } from "../api";
 import { errText } from "../lib/error-text";
@@ -7,14 +6,26 @@ import { clampThinkingLevel } from "../lib/thinking";
 import { useChannelSubscriptionsStore } from "./channel-subscriptions";
 import { COMPOSER_FOCUS_EVENT, useDraftStore } from "./drafts";
 import {
-	clearSessionHistory,
-	deferSessionHistory,
 	finishSessionHistory,
 	hasPendingSessionHistory,
-	historyOpenEpoch,
 	isHistoryReady,
 	retrySessionHistory,
 } from "./session-history";
+import { createSessionLoader } from "./session-loading";
+import {
+	claimActivation,
+	isLatestActivation,
+	isLatestNavigation,
+	noteUserIntent,
+} from "./session-navigation";
+
+export {
+	currentNavigationToken,
+	currentUserIntentToken,
+	isLatestNavigation,
+	isLatestUserIntent,
+} from "./session-navigation";
+
 import { useSessionWorkspaceStore } from "./session-workspace";
 import { useSubagentReturnStore } from "./subagent-return";
 import { pushToast } from "./toasts";
@@ -90,7 +101,7 @@ export function partitionSessionsByPin(
 }
 
 /**
- * `openFromHistory` 的结果：`ok:false` = 没开起来（已 toast）；`latest:false` = 会话确实开了，
+ * `openFromHistory` 的结果：`ok:false` = 请求失败（已 toast）或被关闭forget作废（静默）；`latest:false` = 会话确实开了，
  * 但用户在等待期间又导航了 —— 调用方只能落数据，不得抢焦点/`activeFile`。
  *
  * `token` = 本次导航领的激活序号：调用方在**提交副作用前**可以再核对一次「还是不是最新意图」
@@ -100,147 +111,9 @@ export type OpenFromHistoryResult =
 	| { ok: false }
 	| { ok: true; latest: boolean; meta: SessionMeta; token: number };
 
-/**
- * 进程内单调激活序号（spec D2）：**用户导航动作一开始**就领号（不能等 IPC 返回才领，否则表达不了点击顺序）。
- * 异步动作返回时只有「自己领的号仍是最新」才允许写 `activeSessionId/cwd/rememberCwd`；
- * 过期的仍可落数据（sessions 条目、transcript 装载），但不得抄回焦点。
- *
- * 不落盘、不进 store：重启后一个在途动作都没有，序号归零无意义；测试间保留递增即可。
- */
-let activationSeq = 0;
-
-/**
- * 当前导航代次（只读，不领号）：启动恢复链在**异步等待之前**取号，等待后比对 ——
- * 变了说明用户自己导航过（切会话、点「＋」/项目行回新会话页都算），迟到的恢复必须放弃抄回焦点。
- */
-export function currentNavigationToken(): number {
-	return activationSeq;
-}
-
-/** 该代次是否仍是最新意图（恢复链入口取号后用） */
-export function isLatestNavigation(token: number): boolean {
-	return token === activationSeq;
-}
-
-/**
- * 用户意图序号：只回答「用户在某个自动动作（启动恢复）开始后自己开过/切过页面吗」。
- *
- * 为什么不能直接用 `activationSeq`：后者决定**谁抢到焦点**，而「已经在 draft 页时再点＋」按既有设计
- * 不得作废在途 promotion 的落地（单例 draft 语义，有断言锁着）—— 但那条动作确实是用户的选择，
- * 迟到的启动恢复不该再把页面换成快照里的旧会话。两个问题，两个序号。
- */
-let userIntentSeq = 0;
-
-function noteUserIntent(): void {
-	userIntentSeq += 1;
-}
-
-/** 恢复链在**任何 await 之前**取号；等待结束时变了就说明用户自己动过手 */
-export function currentUserIntentToken(): number {
-	return userIntentSeq;
-}
-
-export function isLatestUserIntent(token: number): boolean {
-	return token === userIntentSeq;
-}
-
-function claimActivation(): number {
-	activationSeq += 1;
-	return activationSeq;
-}
-
-/** 领号后所有更早的在途导航立即失效（同步 `switchSession` 因此天然淘汰在飞的 open/create/fork） */
-function isLatestActivation(token: number): boolean {
-	return token === activationSeq;
-}
-/** 同会话在途的 bundle 装载（key = sessionId） */
-const bundleInFlight = new Map<string, Promise<void>>();
-
-/**
- * 打开会话时同步四件套：消息历史（可选跳过 live 态）、排队队列、todo 面板、权限模式。
- * 取数并行（各写 store 不同字段，无交叉读），应用顺序保持 history → queue → todos。
- * 权限模式对齐后端真值：关 tab 重开后端已归零 default，拉回防 stale（spec permission-mode D1）。
- *
- * 同会话同时在途时复用同一个 Promise（spec D3，见 `ensureOpenSession`）：open 完成时 meta 会先落进
- * `sessions`，用户这时再点那一行就走 `switchSession` 的懒加载，两条路会撞车重复拉四件套。
- */
+// Existing-session data pipelines are owned by the loader below; actions only delegate.
 function loadSessionBundle(sessionId: string, opts?: { skipHistoryIfLive?: boolean }): Promise<void> {
-	const existing = bundleInFlight.get(sessionId);
-	if (existing) return existing;
-	const openingEpoch = historyOpenEpoch(sessionId);
-	const promise = loadSessionBundleInner(sessionId, opts)
-		.catch((error: unknown) => {
-			// 历史 IPC 失败也不能把「有一条实时消息」当作历史完成。保留可重试状态。
-			if (
-				historyOpenEpoch(sessionId) === openingEpoch &&
-				!isHistoryReady(sessionId) &&
-				useSessionsStore.getState().sessions.some((s) => s.sessionId === sessionId)
-			) {
-				deferSessionHistory(sessionId, () =>
-					useSessionsStore.getState().sessions.some((s) => s.sessionId === sessionId),
-				);
-			}
-			throw error;
-		})
-		.finally(() => {
-			if (bundleInFlight.get(sessionId) === promise) bundleInFlight.delete(sessionId);
-		});
-	bundleInFlight.set(sessionId, promise);
-	return promise;
-}
-
-async function loadSessionBundleInner(
-	sessionId: string,
-	opts?: { skipHistoryIfLive?: boolean },
-): Promise<void> {
-	// skip 判定在入口一次性取值：并行发起 IPC 前先确定是否跳过历史（agent 运行中保流式态，见 openFromHistory 注释）
-	const skipHistory =
-		opts?.skipHistoryIfLive === true &&
-		useTranscriptStore.getState().bySession[sessionId]?.agentActive === true;
-	const transcriptBefore = useTranscriptStore.getState().bySession[sessionId];
-	const openingEpoch = historyOpenEpoch(sessionId);
-	const [history, followUpQueue, todos, permissionMode] = await Promise.all([
-		skipHistory ? Promise.resolve(null) : getPi().getSessionMessages({ sessionId }),
-		getPi().getFollowUpMessages({ sessionId }),
-		getPi().getTodos({ sessionId }),
-		getPi().getPermissionMode({ sessionId }),
-	]);
-	// TOCTOU 复核：await 期间会话转为 live（如恰好有 prompt 竞态）时丢弃迟到历史，
-	// 防旧快照覆盖刚建立的流式态（queue/todo/permissionMode 是幂等快照，照常应用）
-	const transcriptNow = useTranscriptStore.getState().bySession[sessionId];
-	const liveNow = transcriptNow?.agentActive === true;
-	// 不能只看 liveNow：IPC 期间恰好跑完的一轮可能已改写 transcript，旧快照仍过期。
-	// 关闭后的迟到 bundle 也绝不能重建该 session 的 UI 条目。
-	if (
-		historyOpenEpoch(sessionId) !== openingEpoch ||
-		!useSessionsStore.getState().sessions.some((s) => s.sessionId === sessionId)
-	)
-		return;
-	const t = useTranscriptStore.getState();
-	const historyNeedsRetry = !history || liveNow || transcriptBefore !== transcriptNow;
-	if (history && !historyNeedsRetry) {
-		t.loadHistory(sessionId, messagesToUIMessages(history));
-		finishSessionHistory(sessionId);
-	}
-	t.setFollowUpQueue(sessionId, followUpQueue);
-	t.loadTodos(sessionId, todos);
-	applyBackendPermissionMode(sessionId, permissionMode);
-	if (historyNeedsRetry) {
-		deferSessionHistory(sessionId, () =>
-			useSessionsStore.getState().sessions.some((s) => s.sessionId === sessionId),
-		);
-	}
-	// D7：本机记住过的档位盖过后端默认值（后端 mode 不落盘，重启/卸载重开后恒为 default）。
-	// 这里 await 而不是 fire-and-forget：保证「打开完就是正确档位」，验收才能确定性断言。
-	const remembered = useUiPreferencesStore.getState().sessionPermissionModes[sessionId];
-	if (remembered && remembered !== permissionMode) {
-		try {
-			await getPi().setPermissionMode({ sessionId, mode: remembered });
-			applyBackendPermissionMode(sessionId, remembered);
-		} catch (error) {
-			console.warn("恢复会话权限模式失败", error);
-		}
-	}
+	return sessionLoader.loadSessionBundle(sessionId, opts);
 }
 
 /** 后端真值写入本 map（default = 删 key，保持「缺 key = default」语义） */
@@ -258,16 +131,8 @@ function applyBackendPermissionMode(sessionId: string, mode: PermissionMode): vo
  * 否则用户看到 fullAccess、实际后端在按 default 索要确认——静默权限分叉比多一个 toast 危险得多。
  * 持久偏好（uiPreferences.sessionPermissionModes）不动，下次打开/重启还能重试。
  */
-async function restorePermissionMode(sessionId: string): Promise<void> {
-	const mode = useSessionsStore.getState().permissionModes[sessionId];
-	if (!mode || mode === "default") return;
-	try {
-		await getPi().setPermissionMode({ sessionId, mode });
-	} catch (error) {
-		console.warn("恢复会话权限模式失败", error);
-		applyBackendPermissionMode(sessionId, "default");
-		pushToast("warning", "toast.permissionModeFailed", errText(error));
-	}
+function restorePermissionMode(sessionId: string): Promise<void> {
+	return sessionLoader.restorePermissionMode(sessionId);
 }
 
 /**
@@ -375,45 +240,7 @@ async function optimisticSessionSetting(
  * 模块级 Map 只存正在执行的 Promise，不落盘、不进 store：没有任何「仅测试用的 reset 入口」。
  */
 function ensureOpenSession(filePath: string, opts?: { loadBundle?: boolean }): Promise<SessionMeta | null> {
-	const key = filePath.trim();
-	const existing = openInFlight.get(key);
-	if (existing) return existing;
-	const promise = ensureOpenSessionInner(key, opts?.loadBundle !== false).finally(() => {
-		if (openInFlight.get(key) === promise) openInFlight.delete(key);
-	});
-	openInFlight.set(key, promise);
-	return promise;
-}
-
-const openInFlight = new Map<string, Promise<SessionMeta | null>>();
-
-async function ensureOpenSessionInner(filePath: string, loadBundle: boolean): Promise<SessionMeta | null> {
-	let meta: SessionMeta;
-	try {
-		meta = await getPi().openSession({ filePath });
-	} catch (error) {
-		console.error("打开会话失败", error);
-		pushToast("warning", "toast.sessionOpenFailed", errText(error));
-		return null;
-	}
-	// 数据先落：meta 进 tabs + LRU 打点 —— 这些与「谁抢到焦点」无关（由调用者的 token 决定）。
-	// lastUsedAt 必须在数据路径打：用户确实点了这一行，不然 GC 会把它当成「从没用过」。
-	useSessionsStore.setState((state) => ({
-		sessions: [...state.sessions.filter((s) => s.sessionId !== meta.sessionId), meta],
-		lastUsedAt: { ...state.lastUsedAt, [meta.sessionId]: Date.now() },
-	}));
-	if (!loadBundle) return meta;
-	try {
-		// 运行中子会话的事件已按其 sessionId 实时转发；保留已有流式态，
-		// 否则会在点击卡片时把 agent_start 建立的进度视图重置为静态历史。
-		await loadSessionBundle(meta.sessionId, { skipHistoryIfLive: true });
-	} catch (error) {
-		// 会话已经打开了（后端在内存里、meta 在 tabs）：数据装载失败只能提示，
-		// 不能当成「打开失败」——否则用户点了行却什么都没发生。
-		console.error("装载会话数据失败", error);
-		pushToast("warning", "toast.sessionOpenFailed", errText(error));
-	}
-	return meta;
+	return sessionLoader.ensureOpenSession(filePath, opts);
 }
 
 /**
@@ -742,10 +569,8 @@ export const useSessionsStore = create<SessionsStore>((set, get) => ({
 			pushToast("warning", "toast.closeFailed", errText(error));
 			return { closed: false };
 		}
-		clearSessionHistory(sessionId);
 		const closedFile = get().sessions.find((s) => s.sessionId === sessionId)?.sessionFile;
-		if (closedFile) openInFlight.delete(closedFile.trim());
-		bundleInFlight.delete(sessionId); // 旧实例的迟到请求已由 openingEpoch 失效，新实例可独立装载
+		sessionLoader.forget(sessionId, closedFile);
 		useTranscriptStore.getState().resetSession(sessionId);
 		// 频道订阅快照是「后端会话实例」的附属状态：会话关了（含 GC 卸载）就丢掉，并让在途查询作废
 		useChannelSubscriptionsStore.getState().forget(sessionId);
@@ -1019,6 +844,17 @@ export const useSessionsStore = create<SessionsStore>((set, get) => ({
 		}
 	},
 }));
+
+const sessionLoader = createSessionLoader({
+	isOpen: (sessionId) => useSessionsStore.getState().sessions.some((s) => s.sessionId === sessionId),
+	landMeta: (meta) =>
+		useSessionsStore.setState((state) => ({
+			sessions: [...state.sessions.filter((s) => s.sessionId !== meta.sessionId), meta],
+			lastUsedAt: { ...state.lastUsedAt, [meta.sessionId]: Date.now() },
+		})),
+	readPermissionMode: (sessionId) => useSessionsStore.getState().permissionModes[sessionId],
+	writePermissionMode: applyBackendPermissionMode,
+});
 
 /**
  * 工作区 `activeFile` 跟随当前会话：**唯一同步点**。

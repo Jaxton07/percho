@@ -1106,6 +1106,12 @@ pgrep -f "electron-vite" | xargs -r kill -9
 - 需要「点真实子代理卡」这类依赖模型行为的场景，优先找**历史回放**入口：历史里已有子代理运行的父会话，打开它 → transcript 重放出卡片 → 点它，同样落到只读检视页，且完全确定性（子会话文件在 `<agentDir>/sessions-subagents/`，后端按路径判定 `readOnly`）。现场真跑一次 subagent 依赖凭证可用，dev 里常 401 拿不到可点卡片。
   - 2026-10-12 补充（qol3 阶段 2 实测）：dev agentDir 里**可能一个可点子代理卡都没有** —— 唯一一次真实 subagent 运行是 401 失败、没有 `sessionFile`（这类行渲染成不可点）。确定性做法：挑一个含 `"toolName":"subagent"` 的父会话打开，往 `useTranscriptStore` 的 `bySession[id].streaming.subagentRuns` **注入一条** `{key,agent,status:"done",sessionFile:<真实存在的 sessions-subagents 文件>}`（注入要重试：bundle 可能晚于注入落地并把 `streaming` 覆盖回磁盘态），卡片就会渲染出来，点它走的是**真实**组件 + 真实 store + 真实子会话文件；唯一合成物是那一行运行记录，写明即可。
 
+### Renderer装载拆分不能带走导航或缓存store快照（2026-10-14）
+
+session-navigation仅持两个独立令牌，store保留draft页＋只noteUserIntent的例外；session-loading只有四个固定data端口，isOpen/permissions在await后调用现读，landMeta含LRU但不焦点/成员/draft。不能把宽setState端口或反向store import包装成拆分。
+
+forget必须一起清历史epoch、file/session flight，旧finally只删自己的Promise；旧open landing也核对file flight身份，不能关闭重开后把旧meta盖新。记住权限的setPermissionMode成功/GC恢复失败也是await边界，需epoch/isOpen复核，否则旧权限续体写新代；bundle失败仍保持历史ready/retry/ACK原协议，不拿一条实时消息冒充完整历史。新模块的裸factory测试与真实store/父子/恢复/无环测试一起验证；文件行数不是指标。
+
 ### 注册实例清理必须区分normal/quit/冲突（2026-10-14）
 
 normal关闭需要await shutdown，SDK dispose后history.cancel，再registry entry释放/移除、频道/流/rates、await trace.stop；不能为统一把history取消挪早。尽力清尾不等于吞错成功：helper尾抛首错、registry.delete finally移出已拆entry，normal收尾后仍传播首个清理错误，delete不得因此继续unlink；shutdown旧日志例外保持。仅串行重复关闭不足：entry身份WeakMap共享完成/失败Promise，不能WeakSet让第二调用早返回；await shutdown前后核对registry身份，quit/新代抢先后旧续体不可再SDK/频道/history/trace收尾。同步quit独立，不造异步退出屏障。deferred trace Promise需预先建立，失败finally释放shutdown/trace且afterEach独立结算保留的资源timer，避免失败挂住掩盖问题。quit必须同步返回，先entry释放再fire-and-forget shutdown/SDK dispose/移除；afterhook先cancel history再辅助组，全局traces.disposeAll仍唯一退出trace归属。
