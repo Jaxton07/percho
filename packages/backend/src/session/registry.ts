@@ -49,7 +49,7 @@ export function releaseEntryResources(
 	} catch (error) {
 		failures.push(error);
 	}
-	if (failures.length) log.warn("entry resource release failed", failures);
+	if (failures.length) throw failures[0];
 }
 
 /** 维护 sessionId → AgentSession 实例（会话级状态单条记录：gate/dialogs/modeRef 都在 entry 上） */
@@ -82,8 +82,11 @@ export class SessionRegistry {
 	delete(sessionId: string): void {
 		const entry = this.sessions.get(sessionId);
 		if (!entry) return;
-		releaseEntryResources(entry);
-		this.sessions.delete(sessionId);
+		try {
+			releaseEntryResources(entry);
+		} finally {
+			this.sessions.delete(sessionId);
+		}
 	}
 
 	list(): RegisteredSession[] {
@@ -126,7 +129,11 @@ export class SessionRegistry {
 			} catch (error) {
 				log.warn("before shutdown failed", sessionId, error);
 			}
-			releaseEntryResources(entry);
+			try {
+				releaseEntryResources(entry);
+			} catch (error) {
+				log.warn("entry resource release failed", sessionId, error);
+			}
 			// 先把 session_shutdown 送给扩展（详见 emitSessionShutdown 注释），否则 MCP stdio
 			// 子进程不会被回收。这条路径是 `before-quit` 的**同步**收尾（Electron 不会等 async
 			// quit 钩子），所以只能 fire-and-forget —— 够用：`connection.close()` 里 kill 子进程

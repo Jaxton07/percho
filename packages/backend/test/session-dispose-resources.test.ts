@@ -1,4 +1,7 @@
 import { EventEmitter } from "node:events";
+import { existsSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { ChannelSubscriptionRegistry } from "../src/channel-subscriptions";
 import { PermissionGate } from "../src/permissions/gate";
@@ -39,8 +42,11 @@ interface Internals {
 	traces: { stop(id: string): Promise<void>; disposeAll(): void };
 }
 const backends: PiBackend[] = [];
+const pendingResourceCleanup: Array<() => void> = [];
 afterEach(() => {
 	for (const backend of backends.splice(0)) backend.dispose();
+	// Assertions may fail before a deferred release; settle retained resource timers independently.
+	for (const cleanup of pendingResourceCleanup.splice(0)) cleanup();
 	vi.restoreAllMocks();
 });
 function setup(id: string, shutdown: () => Promise<void> = async () => {}) {
@@ -68,6 +74,7 @@ function setup(id: string, shutdown: () => Promise<void> = async () => {}) {
 			sessionId: id,
 			isStreaming: false,
 			messages: [],
+			sessionManager: { getSessionDir: () => undefined, getSessionFile: () => undefined },
 			extensionRunner: {
 				emit: () => {
 					order.push("shutdown");
@@ -108,6 +115,12 @@ function setup(id: string, shutdown: () => Promise<void> = async () => {}) {
 		dialogs: dialogs.dispose.bind(dialogs),
 		history: internal.historyGate.cancel.bind(internal.historyGate),
 	};
+	pendingResourceCleanup.push(() => {
+		native.gate();
+		native.dialogs();
+		native.history(id);
+		sdkEvents.removeAllListeners();
+	});
 	const gateDispose = vi.spyOn(gate, "dispose"),
 		dialogDispose = vi.spyOn(dialogs, "dispose");
 	const historyCancel = vi.spyOn(internal.historyGate, "cancel");
@@ -180,17 +193,19 @@ describe("registered session lifetime uses real pending resources and auxiliary 
 			oldDialogs();
 		});
 		let endTrace!: () => void;
+		const traceCompleted = new Promise<void>((resolve) => {
+			endTrace = resolve;
+		});
 		const stop = vi.spyOn(internal.traces, "stop").mockImplementation(() => {
 			order.push("trace");
-			return new Promise<void>((resolve) => {
-				endTrace = resolve;
-			});
+			return traceCompleted;
 		});
 		let done = false;
 		const close = backend.closeSession("normal").then((value) => {
 			done = true;
 			return value;
 		});
+		await Promise.resolve();
 		try {
 			expect(order).toEqual(["watcher", "shutdown"]);
 			expect(done).toBe(false);
@@ -295,8 +310,9 @@ describe("registered session lifetime uses real pending resources and auxiliary 
 			fixture.internal.registry.add(second);
 			const oldGate = fixture.native.gate,
 				oldDialogs = fixture.native.dialogs;
+			const firstFailure = Error("watcher fault");
 			fixture.watcher.mockImplementation(() => {
-				throw Error("watcher fault");
+				throw firstFailure;
 			});
 			vi.mocked(fixture.entry.unsubscribe).mockImplementation(() => {
 				fixture.sdkEvents.removeAllListeners("event");
@@ -310,11 +326,12 @@ describe("registered session lifetime uses real pending resources and auxiliary 
 				oldDialogs();
 				throw Error("dialogs fault");
 			});
+			const sdkFailure = Error("SDK fault");
 			vi.mocked(fixture.entry.session.dispose).mockImplementation(() => {
-				throw Error("SDK fault");
+				throw sdkFailure;
 			});
 			if (path === "normal")
-				await expect(fixture.backend.closeSession(`fault-${path}`)).resolves.toEqual({ closed: true });
+				await expect(fixture.backend.closeSession(`fault-${path}`)).rejects.toBe(firstFailure);
 			else expect(fixture.backend.dispose()).toBeUndefined();
 			assertAuxiliaryReleased(fixture, `fault-${path}`);
 			expect(await fixture.permission).toBe(false);
@@ -359,7 +376,7 @@ describe("registered session lifetime uses real pending resources and auxiliary 
 					? vi.spyOn(internal.traces, "stop").mockRejectedValue(Error("trace fault"))
 					: vi.spyOn(internal.traces, "disposeAll");
 			if (path === "normal")
-				await expect(fixture.backend.closeSession(`aux-${path}`)).resolves.toEqual({ closed: true });
+				await expect(fixture.backend.closeSession(`aux-${path}`)).rejects.toThrow("marker fault");
 			else expect(fixture.backend.dispose()).toBeUndefined();
 			for (const spy of [
 				markerSpy,
@@ -409,6 +426,196 @@ describe("registered session lifetime uses real pending resources and auxiliary 
 	});
 });
 
+describe("normal disposal errors and overlapping entry ownership", () => {
+	it.each(["SDK", "entry", "trace"])(
+		"%s failure preserves first error identity, cleans tail and prevents delete unlink",
+		async (stage) => {
+			const directory = mkdtempSync(join(tmpdir(), "dispose-error-")),
+				file = join(directory, "session.jsonl");
+			const failure = Error(`${stage} first`),
+				later = Error("later trace error");
+			const fixture = setup(`error-${stage}`);
+			writeFileSync(file, "fixture");
+			const stop = vi.spyOn(fixture.internal.traces, "stop");
+			if (stage === "SDK")
+				vi.mocked(fixture.entry.session.dispose).mockImplementation(() => {
+					throw failure;
+				});
+			if (stage === "entry")
+				vi.mocked(fixture.entry.unsubscribe).mockImplementation(() => {
+					fixture.sdkEvents.removeAllListeners();
+					throw failure;
+				});
+			stop.mockRejectedValue(stage === "trace" ? failure : later);
+			try {
+				const close = fixture.backend.closeSession(`error-${stage}`),
+					deletion = fixture.backend.deleteSession(`error-${stage}`, file);
+				await Promise.all([expect(close).rejects.toBe(failure), expect(deletion).rejects.toBe(failure)]);
+				expect(existsSync(file)).toBe(true);
+				assertAuxiliaryReleased(fixture, `error-${stage}`);
+				expect(await fixture.permission).toBe(false);
+				expect(await fixture.dialog).toBe(false);
+				expect(await fixture.history).toBe(false);
+				for (const spy of [
+					fixture.entry.session.dispose,
+					fixture.entry.unsubscribe,
+					fixture.gateDispose,
+					fixture.dialogDispose,
+					stop,
+				])
+					expect(spy).toHaveBeenCalledOnce();
+			} finally {
+				rmSync(directory, { recursive: true, force: true });
+			}
+		},
+	);
+	it.each(["close", "delete"])(
+		"overlapping close/%s waits for shared shutdown and trace completion, exactly once",
+		async (secondAction) => {
+			let releaseShutdown: () => void = () => {},
+				releaseTrace: () => void = () => {};
+			const fixture = setup(
+				`overlap-${secondAction}`,
+				() =>
+					new Promise<void>((resolve) => {
+						releaseShutdown = resolve;
+					}),
+			);
+			const directory = mkdtempSync(join(tmpdir(), "dispose-overlap-")),
+				file = join(directory, "session.jsonl");
+			writeFileSync(file, "fixture");
+			const channel = vi.spyOn(fixture.internal.channelSubs, "dispose");
+			const traceCompleted = new Promise<void>((resolve) => {
+				releaseTrace = resolve;
+			});
+			const stop = vi.spyOn(fixture.internal.traces, "stop").mockReturnValue(traceCompleted);
+			let firstDone = false,
+				secondDone = false;
+			const first = fixture.backend.closeSession(`overlap-${secondAction}`).then(() => {
+				firstDone = true;
+			});
+			const second = (
+				secondAction === "close"
+					? fixture.backend.closeSession(`overlap-${secondAction}`)
+					: fixture.backend.deleteSession(`overlap-${secondAction}`, file)
+			).then(() => {
+				secondDone = true;
+			});
+			try {
+				await Promise.resolve();
+				expect(fixture.order.filter((item) => item === "shutdown")).toHaveLength(1);
+				expect(firstDone).toBe(false);
+				expect(secondDone).toBe(false);
+				expect(existsSync(file)).toBe(true);
+				expect(fixture.internal.registry.get(`overlap-${secondAction}`)).toBe(fixture.entry);
+				releaseShutdown();
+				await vi.waitFor(() => expect(stop).toHaveBeenCalledOnce());
+				expect(firstDone).toBe(false);
+				expect(secondDone).toBe(false);
+				expect(existsSync(file)).toBe(true);
+				releaseTrace();
+				await Promise.all([first, second]);
+				expect(existsSync(file)).toBe(secondAction === "close");
+				for (const spy of [
+					fixture.watcher,
+					fixture.entry.unsubscribe,
+					fixture.entry.session.dispose,
+					fixture.gateDispose,
+					fixture.dialogDispose,
+					fixture.historyCancel,
+					channel,
+					stop,
+				])
+					expect(spy).toHaveBeenCalledOnce();
+			} finally {
+				releaseShutdown();
+				releaseTrace();
+				await Promise.allSettled([first, second]);
+				rmSync(directory, { recursive: true, force: true });
+			}
+		},
+	);
+	it.each([false, true])(
+		"pending normal + synchronous quit: old continuation skips cleanup, reopened=%s",
+		async (reopen) => {
+			let releaseShutdown: () => void = () => {};
+			const fixture = setup(
+				"quit-race",
+				() =>
+					new Promise<void>((resolve) => {
+						releaseShutdown = resolve;
+					}),
+			);
+			// Quit may emit another best-effort shutdown, but only the original normal emission stays pending.
+			const emit = vi
+				.spyOn(fixture.entry.session.extensionRunner, "emit")
+				.mockImplementationOnce(
+					() =>
+						new Promise<void>((resolve) => {
+							releaseShutdown = resolve;
+						}),
+				)
+				.mockResolvedValue(undefined);
+			const channel = vi.spyOn(fixture.internal.channelSubs, "dispose"),
+				stop = vi.spyOn(fixture.internal.traces, "stop");
+			const close = fixture.backend.closeSession("quit-race");
+			let next: RegisteredSession | undefined, nextHistory: Promise<boolean> | undefined;
+			try {
+				await Promise.resolve();
+				expect(emit).toHaveBeenCalledOnce();
+				expect(fixture.backend.dispose()).toBeUndefined();
+				expect(fixture.entry.session.dispose).toHaveBeenCalledOnce();
+				expect(channel).toHaveBeenCalledOnce();
+				const closed = fixture.internal.channelSubs.snapshot("quit-race");
+				if (reopen) {
+					next = {
+						...fixture.entry,
+						session: {
+							...fixture.entry.session,
+							dispose: vi.fn(),
+							extensionRunner: { emit: vi.fn().mockResolvedValue(undefined) },
+						},
+						unsubscribe: vi.fn(),
+						gate: new PermissionGate(() => {}),
+						dialogs: new ExtensionDialogHost({ onRequest: () => {}, onResolved: () => {} }),
+						modeRef: { current: "default" },
+					} as unknown as RegisteredSession;
+					fixture.internal.registry.add(next);
+					fixture.internal.channelSubs.noteSessionOpened("quit-race");
+					fixture.internal.channelSubs.report("quit-race", new Set(["new"]));
+					nextHistory = fixture.internal.historyGate.wait("quit-race");
+				}
+				const current = fixture.internal.channelSubs.snapshot("quit-race");
+				if (reopen) expect(current.generation).toBeGreaterThan(closed.generation);
+				releaseShutdown();
+				await expect(close).resolves.toEqual({ closed: true });
+				expect(fixture.internal.channelSubs.snapshot("quit-race")).toEqual(current);
+				for (const spy of [
+					fixture.entry.session.dispose,
+					fixture.entry.unsubscribe,
+					fixture.gateDispose,
+					fixture.dialogDispose,
+					fixture.historyCancel,
+					channel,
+				])
+					expect(spy).toHaveBeenCalledOnce();
+				expect(stop).not.toHaveBeenCalled();
+				if (next) {
+					expect(fixture.internal.registry.get("quit-race")).toBe(next);
+					expect(next.session.dispose).not.toHaveBeenCalled();
+					fixture.internal.historyGate.ack("quit-race");
+					expect(await nextHistory).toBe(true);
+				}
+			} finally {
+				releaseShutdown();
+				await Promise.allSettled([close]);
+				fixture.internal.historyGate.cancel("quit-race");
+				await nextHistory;
+			}
+		},
+	);
+});
+
 describe("registry owns entry release, not SDK lifetime on delete", () => {
 	it("delete twice/disposeAll does not double release; failures cannot skip gate/dialogs", () => {
 		const registry = new SessionRegistry();
@@ -428,7 +635,7 @@ describe("registry owns entry release, not SDK lifetime on delete", () => {
 			gate,
 			dialogs,
 		} as unknown as RegisteredSession);
-		registry.delete("entry");
+		expect(() => registry.delete("entry")).toThrow("unsubscribe");
 		registry.delete("entry");
 		registry.disposeAll();
 		for (const spy of [unsubscribe, gate.dispose, dialogs.dispose]) expect(spy).toHaveBeenCalledOnce();

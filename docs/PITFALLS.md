@@ -1108,7 +1108,7 @@ pgrep -f "electron-vite" | xargs -r kill -9
 
 ### 注册实例清理必须区分normal/quit/冲突（2026-10-14）
 
-normal关闭需要await shutdown，SDK dispose后history.cancel，再registry entry释放/移除、频道/流/rates、await trace.stop；不能为统一把history取消挪早。quit必须同步返回，先entry释放再fire-and-forget shutdown/SDK dispose/移除；afterhook先cancel history再辅助组，全局traces.disposeAll仍唯一退出trace归属。
+normal关闭需要await shutdown，SDK dispose后history.cancel，再registry entry释放/移除、频道/流/rates、await trace.stop；不能为统一把history取消挪早。尽力清尾不等于吞错成功：helper尾抛首错、registry.delete finally移出已拆entry，normal收尾后仍传播首个清理错误，delete不得因此继续unlink；shutdown旧日志例外保持。仅串行重复关闭不足：entry身份WeakMap共享完成/失败Promise，不能WeakSet让第二调用早返回；await shutdown前后核对registry身份，quit/新代抢先后旧续体不可再SDK/频道/history/trace收尾。同步quit独立，不造异步退出屏障。deferred trace Promise需预先建立，失败finally释放shutdown/trace且afterEach独立结算保留的资源timer，避免失败挂住掩盖问题。quit必须同步返回，先entry释放再fire-and-forget shutdown/SDK dispose/移除；afterhook先cancel history再辅助组，全局traces.disposeAll仍唯一退出trace归属。
 
 实例helper只清unsubscribe/gate/dialogs，不按id查registry、不碰SDK/频道/trace；冲突只拆新modeRef资源，不发shutdown、不清holder的marker/history/频道/stream/rates。注册实例两辅助组和registry同步hooks用明确步骤，每步异常继续，避免先一个unsubscribe/watcher失败使后面gate/dialog或下一会话跳过。不造通用Scope/新disposed平台，不收runner进registry。
 

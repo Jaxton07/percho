@@ -123,7 +123,9 @@ describe("会话终结的 session_shutdown", () => {
 		const order: string[] = [];
 		const backend = new PiBackend();
 
-		await (backend as unknown as BackendInternals).disposeSession(makeEntry(order));
+		const entry = makeEntry(order);
+		(backend as unknown as BackendInternals).registry.add(entry);
+		await (backend as unknown as BackendInternals).disposeSession(entry);
 
 		expect(order).toEqual(["emit:session_shutdown:quit", "dispose"]);
 		backend.dispose();
@@ -140,6 +142,7 @@ describe("会话终结的 session_shutdown", () => {
 			};
 
 		const backend = new PiBackend();
+		(backend as unknown as BackendInternals).registry.add(entry);
 		await expect((backend as unknown as BackendInternals).disposeSession(entry)).resolves.toBeUndefined();
 
 		expect(order).toEqual(["emit:threw", "dispose"]);

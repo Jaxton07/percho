@@ -202,6 +202,7 @@ export interface PiBackendOptions {
  */
 export class PiBackend {
 	private readonly registry = new SessionRegistry();
+	private readonly sessionDisposals = new WeakMap<RegisteredSession, Promise<void>>();
 	/** open 的 single-flight（key = 规范化绝对路径）：同文件并发 open 共享一次构造（spec D4） */
 	private readonly openFlights = new KeyedSingleFlight<SessionMeta>();
 	/**
@@ -631,7 +632,11 @@ export class PiBackend {
 				this.channelWatchCleanups.delete(modeRef);
 			}
 			// Release only the new instance: no holder-id cleanup or shutdown emission.
-			releaseEntryResources({ unsubscribe, gate, dialogs });
+			try {
+				releaseEntryResources({ unsubscribe, gate, dialogs });
+			} catch (cleanupError) {
+				log.warn("conflicting entry cleanup failed", session.sessionId, cleanupError);
+			}
 			try {
 				session.dispose();
 			} catch (cleanupError) {
@@ -732,43 +737,62 @@ export class PiBackend {
 	/** Registered-session-only auxiliary groups; conflict cleanup must not touch holder ids. */
 	private beforeSessionShutdown(entry: RegisteredSession): void {
 		const id = entry.session.sessionId;
+		const failures: unknown[] = [];
 		try {
 			this.guardTriggerMarkers.clear(id);
 		} catch (error) {
-			log.warn("guard marker cleanup failed", id, error);
+			failures.push(error);
 		}
 		try {
 			this.channelWatchCleanups.get(entry.modeRef)?.();
 		} catch (error) {
-			log.warn("channel watcher cleanup failed", id, error);
+			failures.push(error);
 		} finally {
 			this.channelWatchCleanups.delete(entry.modeRef);
 		}
+		if (failures.length) throw failures[0];
 	}
 
 	private afterSessionDispose(entry: RegisteredSession): void {
 		const id = entry.session.sessionId;
+		const failures: unknown[] = [];
 		try {
 			this.channelSubs.dispose(id);
 		} catch (error) {
-			log.warn("channel incarnation cleanup failed", id, error);
+			failures.push(error);
 		}
 		try {
 			this.streamGuard.cleanup(id);
 		} catch (error) {
-			log.warn("stream guard cleanup failed", id, error);
+			failures.push(error);
 		}
 		try {
 			this.eventRates.delete(id);
 		} catch (error) {
-			log.warn("event rate cleanup failed", id, error);
+			failures.push(error);
 		}
+		if (failures.length) throw failures[0];
 	}
 
 	/** 真正的处置：dispose + registry/全局键控子系统清理（closeSession 与 deleteSession 共用） */
-	private async disposeSession(entry: RegisteredSession): Promise<void> {
+	private disposeSession(entry: RegisteredSession): Promise<void> {
+		const pending = this.sessionDisposals.get(entry);
+		if (pending) return pending;
+		// Publish the identity-keyed Promise before running cleanup, including reentrant callers.
+		const disposal = Promise.resolve().then(() => this.disposeRegisteredSession(entry));
+		this.sessionDisposals.set(entry, disposal);
+		return disposal;
+	}
+
+	private async disposeRegisteredSession(entry: RegisteredSession): Promise<void> {
 		const sessionId = entry.session.sessionId;
-		this.beforeSessionShutdown(entry);
+		if (this.registry.get(sessionId) !== entry) return;
+		const failures: unknown[] = [];
+		try {
+			this.beforeSessionShutdown(entry);
+		} catch (error) {
+			failures.push(error);
+		}
 		// 先把 session_shutdown 送给扩展，再 dispose（详见 emitSessionShutdown 注释）：
 		// SDK 的 dispose() 不发这个事件，而官方 mcp 扩展只在它里面关 MCP stdio 子进程 ——
 		// 顺序反了就漏子进程，也会让扩展拿到的 ctx 已失效。
@@ -779,26 +803,40 @@ export class PiBackend {
 				error: error instanceof Error ? error.message : String(error),
 			});
 		});
+		// Synchronous quit may have disposed this entry (or a new incarnation now owns the id).
+		if (this.registry.get(sessionId) !== entry) {
+			if (failures.length) throw failures[0];
+			return;
+		}
 		try {
 			entry.session.dispose();
 		} catch (error) {
-			log.warn("SDK dispose failed", sessionId, error);
+			failures.push(error);
 		}
 		// Normal close keeps history cancellation after SDK dispose and before entry release.
 		try {
 			this.historyGate.cancel(sessionId);
 		} catch (error) {
-			log.warn("history cancel failed", sessionId, error);
+			failures.push(error);
 		}
 		// entry 级清理：unsubscribe + gate/dialogs dispose（pending 对话框按 sessionClosed 结算，
 		// 广播 resolved 让 renderer 撤卡；扩展 Promise 落取消值）
-		this.registry.delete(sessionId);
-		this.afterSessionDispose(entry);
+		try {
+			this.registry.delete(sessionId);
+		} catch (error) {
+			failures.push(error);
+		}
+		try {
+			this.afterSessionDispose(entry);
+		} catch (error) {
+			failures.push(error);
+		}
 		try {
 			await this.traces.stop(sessionId);
 		} catch (error) {
-			log.warn("trace stop failed", sessionId, error);
+			failures.push(error);
 		}
+		if (failures.length) throw failures[0];
 		log.info("session closed", sessionId);
 	}
 
