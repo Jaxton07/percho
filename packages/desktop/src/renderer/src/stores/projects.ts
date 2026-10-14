@@ -5,7 +5,7 @@ import { initDailyDir, isDailyCwd } from "../lib/daily";
 import { isPrimaryNavigationSession } from "../lib/session-visibility";
 import { useChannelSubscriptionsStore } from "./channel-subscriptions";
 import { useSessionWorkspaceStore } from "./session-workspace";
-import { partitionSessionsByPin, useSessionsStore } from "./sessions";
+import { useSessionsStore } from "./sessions";
 import { useSubagentReturnStore } from "./subagent-return";
 import { useUiPreferencesStore } from "./ui-preferences";
 
@@ -280,20 +280,4 @@ export function deriveProjects(state: Pick<ProjectsStore, "allSessions" | "added
 		}
 	}
 	return [...byCwd.values()].sort((a, b) => b.addedIndex - a.addedIndex || b.lastActive - a.lastActive);
-}
-
-/** 选中项目下按搜索过滤后的会话：置顶分区在左，其余按最后活动倒序。
- *  置顶列表来自 ui-preferences（local ∩ app 偏好），不进本 store 避免两份状态 */
-export function deriveSessions(
-	state: Pick<ProjectsStore, "allSessions" | "selectedCwd" | "search"> & {
-		pinnedSessions: readonly string[];
-	},
-): SessionMeta[] {
-	if (!state.selectedCwd) return [];
-	const query = state.search.trim().toLowerCase();
-	const filtered = state.allSessions
-		.filter((s) => s.cwd === state.selectedCwd)
-		.filter((s) => !query || (s.name ?? "").toLowerCase().includes(query) || s.sessionId.includes(query))
-		.sort((a, b) => (b.modifiedAt ?? b.createdAt) - (a.modifiedAt ?? a.createdAt));
-	return partitionSessionsByPin(filtered, state.pinnedSessions);
 }

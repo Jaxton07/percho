@@ -94,7 +94,7 @@ export type SidebarGroupsInput = {
 	sessions: readonly SessionMeta[];
 	/** 项目表：**复用 `deriveProjects(projectsStore)` 的输出**（已排除日常目录、已含「只有会话」与「手动添加」两类） */
 	projects: readonly ProjectEntry[];
-	/** 搜索词（与 `deriveSessions` 同规则：命中名称或 sessionId，空串不过滤） */
+	/** 搜索词（命中名称或 sessionId，空串不过滤） */
 	search: string;
 	/**
 	 * 当前会话所在目录（新会话页 = draft 的目录），只用来算默认展开组。
