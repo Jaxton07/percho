@@ -3,26 +3,28 @@
  * 设计规范见 .local/docs/design/spec/ui-plugin-system.md §5/§8/§9。
  */
 
-/**
- * 已知槽位名（main 进程校验 manifest.slots 用）。
- * 与 renderer 的 plugins/slots.ts 对齐（registry.test.ts 有断言），两处不可漂移。
- */
-export const KNOWN_UI_SLOTS: string[] = ["chat.tool-call-card", "chat.subagent-card", "chat.todo-panel"];
+/** 槽位/区域标识的唯一来源；renderer重导出，main manifest校验从值派生。 */
+export const UI_SLOTS = {
+	ToolCallCard: "chat.tool-call-card",
+	SubagentCard: "chat.subagent-card",
+	TodoPanel: "chat.todo-panel",
+} as const;
+export type SlotName = (typeof UI_SLOTS)[keyof typeof UI_SLOTS];
+export const KNOWN_UI_SLOTS: string[] = Object.values(UI_SLOTS);
 
-/**
- * 已知区域名（main 进程校验 manifest.contributions 用；spec §15）。
- * 与 renderer 的 plugins/slots.ts 对齐（registry.test.ts 有断言），两处不可漂移。
- */
-export const KNOWN_UI_REGIONS: string[] = [
-	"app.background",
-	"app.overlay",
-	"chat.corner.top-left",
-	"chat.corner.top-right",
-	"chat.corner.bottom-left",
-	"chat.corner.bottom-right",
-	"composer.footer",
-	"settings.panel",
-];
+export const UI_REGIONS = {
+	AppBackground: "app.background",
+	AppOverlay: "app.overlay",
+	CornerTopLeft: "chat.corner.top-left",
+	CornerTopRight: "chat.corner.top-right",
+	CornerBottomLeft: "chat.corner.bottom-left",
+	CornerBottomRight: "chat.corner.bottom-right",
+	/** 输入框底部工具行（ContextRing旁） */
+	ComposerFooter: "composer.footer",
+	SettingsPanel: "settings.panel",
+} as const;
+export type RegionName = (typeof UI_REGIONS)[keyof typeof UI_REGIONS];
+export const KNOWN_UI_REGIONS: string[] = Object.values(UI_REGIONS);
 
 /** app.overlay 的九宫格锚点枚举（spec §16） */
 export const UI_PLUGIN_ANCHORS = [

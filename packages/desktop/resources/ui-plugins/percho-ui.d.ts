@@ -46,7 +46,7 @@ declare module "react" {
 	export const useSyncExternalStore: unknown;
 	export const useTransition: unknown;
 	export const version: string;
-	declare const React: unknown;
+	const React: unknown;
 	export default React;
 }
 
@@ -59,7 +59,7 @@ declare module "react/jsx-runtime" {
 declare module "react-dom" {
 	export const createPortal: unknown;
 	export const flushSync: unknown;
-	declare const ReactDOM: unknown;
+	const ReactDOM: unknown;
 	export default ReactDOM;
 }
 
@@ -119,6 +119,8 @@ declare module "@percho/plugin-api" {
 		output: string;
 		state: "running" | "done" | "error";
 		blockIndex?: number;
+		diff?: string;
+		endedAt?: number;
 	}
 
 	export interface SubagentRunUi {
@@ -127,6 +129,7 @@ declare module "@percho/plugin-api" {
 		task?: string;
 		status: "running" | "done" | "error";
 		model?: string;
+		thinkingLevel?: string;
 		tokens?: number;
 		exitCode?: number;
 		artifactsDir?: string;
@@ -183,6 +186,18 @@ declare module "@percho/plugin-api" {
 		/** 应用级 UI 偏好（ui-state.json 持久化）：barSessionsVisible / sidebarCollapsed / centerOrbEnabled 等 */
 		useUiPreferencesStore: unknown;
 	};
+	// 具名便捷导出复用分组声明，不另写一套props/签名。
+	export const Button: typeof components.Button;
+	export const Dropdown: typeof components.Dropdown;
+	export const Tooltip: typeof components.Tooltip;
+	export const Markdown: typeof components.Markdown;
+	export const ImagePreview: typeof components.ImagePreview;
+	export const summarizeArgs: typeof helpers.summarizeArgs;
+	export const displayToolName: typeof helpers.displayToolName;
+	export const useT: typeof hooks.useT;
+	export const useContextUsage: typeof hooks.useContextUsage;
+	export const useQuota: typeof hooks.useQuota;
+	export const useLanguage: typeof hooks.useLanguage;
 	// store hooks 顶层便捷导出（与 shim 解构一致，例：import { useSessionsStore } from "@percho/plugin-api"）
 	export const useTranscriptStore: unknown;
 	export const useSessionsStore: unknown;
@@ -190,7 +205,7 @@ declare module "@percho/plugin-api" {
 	export const useProjectsStore: unknown;
 	export const useSettingsStore: unknown;
 	export const useUiPreferencesStore: unknown;
-	declare const api: unknown;
+	const api: unknown;
 	export default api;
 }
 

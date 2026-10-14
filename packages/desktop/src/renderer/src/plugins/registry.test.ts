@@ -1,16 +1,23 @@
 import type { UiPluginContribution, UiPluginManifest } from "@percho/shared";
-import { KNOWN_UI_REGIONS, KNOWN_UI_SLOTS } from "@percho/shared";
+import {
+	KNOWN_UI_REGIONS,
+	KNOWN_UI_SLOTS,
+	UI_REGIONS as SHARED_UI_REGIONS,
+	UI_SLOTS as SHARED_UI_SLOTS,
+} from "@percho/shared";
 import { beforeEach, describe, expect, it } from "vitest";
 import { useUiPluginRegistry } from "./registry";
 import { UI_REGIONS, UI_SLOTS } from "./slots";
 
 /** 槽位名单与 shared 的 KNOWN_UI_SLOTS 一致（main 校验 manifest.slots 用同一份，两处不可漂移） */
 it("UI_SLOTS 与 KNOWN_UI_SLOTS 对齐", () => {
+	expect(UI_SLOTS).toBe(SHARED_UI_SLOTS);
 	expect(Object.values(UI_SLOTS)).toEqual(KNOWN_UI_SLOTS);
 });
 
 /** 区域名单与 shared 的 KNOWN_UI_REGIONS 一致（main 校验 manifest.contributions 用同一份） */
 it("UI_REGIONS 与 KNOWN_UI_REGIONS 对齐", () => {
+	expect(UI_REGIONS).toBe(SHARED_UI_REGIONS);
 	expect(Object.values(UI_REGIONS)).toEqual(KNOWN_UI_REGIONS);
 });
 

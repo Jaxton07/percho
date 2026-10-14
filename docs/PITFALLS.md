@@ -8,6 +8,7 @@
 
 | 症状 / 场景 | 条目（章节） |
 |---|---|
+| 插件runtime/shim有名字而发布声明缺项；standalone声明报ambient内declare错误 | 三 · 插件守护须双向核对别名与实际声明/构建（2026-10-14） |
 | 订阅表按on前缀猜别名；payload检查只剩动态Map断言；退出callback收到多余arg | 三 · 订阅单源表与真实类型/沙箱验证（2026-10-14） |
 | IPC域handler反向依赖组合index成环；preload单文件被“每域有边”误判 | 三 · 三域无环守护不可由计数反向驱动抽象（2026-10-14） |
 | 包装卸时压缩被打断，或逐会话reload期间下一会话变忙仍被重载 | 三 · 包管理与MCP须共用现读空闲守卫（2026-10-14） |
@@ -1103,6 +1104,14 @@ pgrep -f "electron-vite" | xargs -r kill -9
   - 2026-10-12 补充（qol3 阶段 1 实测）：计数「某请求触发了几次」时，**订阅 store 的上升沿**（`useSettingsStore.subscribe((s, prev) => …)` 数 `loading`/`refreshing` false→true）比数 IPC 更实用 —— 只要发起方在**发起请求时同步置位**，上升沿就与真实请求一一对应，且不受对端快慢影响（在途去重也能被这条口径验证）。同理「副作用是否只发生一次」可以把 store 上的 action 换成一个计数包装（`useXStore.setState({ action: async () => { count++; return orig() }) }`，store 内部走 `getState().action()` 时会用到包装后的版本）。
 - 需要「点真实子代理卡」这类依赖模型行为的场景，优先找**历史回放**入口：历史里已有子代理运行的父会话，打开它 → transcript 重放出卡片 → 点它，同样落到只读检视页，且完全确定性（子会话文件在 `<agentDir>/sessions-subagents/`，后端按路径判定 `readOnly`）。现场真跑一次 subagent 依赖凭证可用，dev 里常 401 拿不到可点卡片。
   - 2026-10-12 补充（qol3 阶段 2 实测）：dev agentDir 里**可能一个可点子代理卡都没有** —— 唯一一次真实 subagent 运行是 401 失败、没有 `sessionFile`（这类行渲染成不可点）。确定性做法：挑一个含 `"toolName":"subagent"` 的父会话打开，往 `useTranscriptStore` 的 `bySession[id].streaming.subagentRuns` **注入一条** `{key,agent,status:"done",sessionFile:<真实存在的 sessions-subagents 文件>}`（注入要重试：bundle 可能晚于注入落地并把 `streaming` 覆盖回磁盘态），卡片就会渲染出来，点它走的是**真实**组件 + 真实 store + 真实子会话文件；唯一合成物是那一行运行记录，写明即可。
+
+### 插件守护须双向核对别名与实际声明/构建（2026-10-14）
+
+基线发现发布声明缺11个非store具名便捷导出、UIToolCall.diff/endedAt与SubagentRunUi.thinkingLevel；runtime已支持，补声明而不是删旧能力。顶层便捷类型复用分组typeof，不锁内部store（原unknown保留），版本仍1。槽位/区域标识移shared为唯一来源，renderer旧导入路径重导出，KNOWN由值派生。
+
+静态姓名集合比较无法发现“导出Button但取Dropdown”、错分组或声明typeof指向别的组件。用TS AST解析实际shim的导出名→host路径（含destructuring/具名别名），完整双向比较host/env/声明，解析不了的形态直接失败；原生React系必须同名转发。props/DTO对齐成员名、类型token与optional，不能只比一侧子集。反证先保证替换真的发生，不能让无效replace“测试没抛错”掩盖夹具错误。
+
+独立消费者用真实TS compiler、skipLibCheck=false验证发布声明/具名别名/缺字段/资产string，并读取实际模块值符号，不把纯语法扫描当类型证明；因此发现旧ambient模块内3处重复declare触发TS1038，去掉冗余修饰即可，类型/导出不变。真实buildPlugin构建四specifier与全部资产，执行并比较每个导出身份；不用导入host-api引爆renderer模块级订阅，也不用虚假的React名字sentinel证明真实React存在。
 
 ### 订阅单源表与真实类型/沙箱验证（2026-10-14）
 

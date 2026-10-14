@@ -32,6 +32,8 @@ interface UIToolCall {
 	output: string;   // 执行输出累积
 	state: "running" | "done" | "error";
 	blockIndex?: number;
+	diff?: string;     // edit成功后的unified patch（可选）
+	endedAt?: number;  // 执行结束时间戳（可选）
 }
 
 interface SubagentRunUi {
@@ -40,6 +42,7 @@ interface SubagentRunUi {
 	task?: string;
 	status: "running" | "done" | "error";
 	model?: string;
+	thinkingLevel?: string;
 	tokens?: number;
 	exitCode?: number;
 	artifactsDir?: string;
