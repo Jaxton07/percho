@@ -263,7 +263,10 @@ export class PiBackend {
 	private readonly projectLoader: ProjectResourceLoader;
 
 	constructor(private readonly options: PiBackendOptions = {}) {
-		this.packages = new PackageAdmin({ registry: this.registry, defaultCwd: options.defaultCwd });
+		this.packages = new PackageAdmin({
+			reloadIdleSessions: () => this.reloadIdleSessions(undefined),
+			defaultCwd: options.defaultCwd,
+		});
 		this.projectLoader = new ProjectResourceLoader({
 			trustStore: this.trustStore,
 			ask: (dir, opts) => this.trustGate.ask(dir, opts),
@@ -1330,7 +1333,7 @@ export class PiBackend {
 		});
 	}
 
-	/** 新增/编辑一个 MCP server；写盘后 reload 空闲会话（运行中的跳过并回报，见 reloadSessionsForCwd） */
+	/** 新增/编辑一个 MCP server；写盘后 reload 空闲会话（运行中的跳过并回报，见 reloadIdleSessions） */
 	async upsertMcpServer(input: McpUpsertInput): Promise<McpMutationResult> {
 		const cwd = input.cwd ?? this.options.defaultCwd;
 		const projectTrusted = this.isProjectTrusted(cwd);
@@ -1343,7 +1346,7 @@ export class PiBackend {
 				globalNotice: this.mcpGlobalNotice,
 			},
 		);
-		const reload = await this.reloadSessionsForCwd(input.scope === "project" ? cwd : undefined);
+		const reload = await this.reloadIdleSessions(input.scope === "project" ? cwd : undefined);
 		return { config, reload };
 	}
 
@@ -1353,7 +1356,7 @@ export class PiBackend {
 	 */
 	async reloadMcpServers(input: { cwd?: string } = {}): Promise<McpMutationResult> {
 		const cwd = input.cwd ?? this.options.defaultCwd;
-		const reload = await this.reloadSessionsForCwd(undefined); // 全局配置影响所有会话
+		const reload = await this.reloadIdleSessions(undefined); // 全局配置影响所有会话
 		return { config: await this.getMcpConfig({ cwd }), reload };
 	}
 
@@ -1365,7 +1368,7 @@ export class PiBackend {
 	}): Promise<McpMutationResult> {
 		const cwd = input.cwd ?? this.options.defaultCwd;
 		await removeMcpServer({ ...input, cwd });
-		const reload = await this.reloadSessionsForCwd(input.scope === "project" ? cwd : undefined);
+		const reload = await this.reloadIdleSessions(input.scope === "project" ? cwd : undefined);
 		return { config: await this.getMcpConfig({ cwd }), reload };
 	}
 
@@ -1384,7 +1387,7 @@ export class PiBackend {
 	}
 
 	/**
-	 * mcp.json 变更后重载会话：官方 mcp 扩展在 `session_start`/reload 时读配置，不 reload 看不到新 server。
+	 * 包安装/卸载与 MCP 变更的唯一空闲重载实现。官方 mcp 扩展在 session_start/reload 时读配置。
 	 * `cwd` 给定 = 只重载该项目下的会话（项目级配置只影响它们）；缺省 = 全局配置，重载全部。
 	 *
 	 * ❗**必须跳过运行中的会话**：`AgentSession.reload()` 内部既没有 `isStreaming` 守卫也不 abort
@@ -1393,7 +1396,7 @@ export class PiBackend {
 	 * （失败还被 catch 吞掉 → 用户视角"点了没反应"）。跳过并把名单回给 UI（空闲后生效）。
 	 * 与 `forkSession` 用的同一把守卫。
 	 */
-	private async reloadSessionsForCwd(cwd: string | undefined): Promise<McpReloadReport> {
+	private async reloadIdleSessions(cwd: string | undefined): Promise<McpReloadReport> {
 		const skipped: McpReloadReport["skipped"] = [];
 		let reloaded = 0;
 		for (const entry of this.registry.list()) {

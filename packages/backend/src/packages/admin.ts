@@ -2,7 +2,6 @@ import { DefaultPackageManager, getAgentDir, SettingsManager } from "@earendil-w
 import type { CatalogPackageType, CatalogSearchResult, ConfiguredPackageInfo } from "@percho/shared";
 import { NPM_NOT_FOUND_SENTINEL } from "@percho/shared";
 import { createLogger } from "../log";
-import type { SessionRegistry } from "../session/registry";
 import { fetchPackageCatalog } from "./catalog";
 
 const log = createLogger("backend");
@@ -33,14 +32,14 @@ function rethrowPackageError(err: unknown): never {
 
 /**
  * pi.dev 社区包管理：目录搜索 + 用户级安装/卸载 + 已配置清单。
- * 装/卸后对非流式活跃会话热重载，扩展立即生效（对齐 CLI /reload）。
+ * 装/卸后委托空闲会话热重载；忙碌者跳过，不排队补重载（对齐 CLI /reload）。
  */
 export class PackageAdmin {
 	private packageManager: DefaultPackageManager | undefined;
 
 	constructor(
 		private readonly deps: {
-			registry: SessionRegistry;
+			reloadIdleSessions: () => Promise<unknown>;
 			defaultCwd?: string;
 		},
 	) {}
@@ -77,7 +76,7 @@ export class PackageAdmin {
 			.map((p) => ({ source: p.source, scope: p.scope }));
 	}
 
-	/** 安装社区包（npm:<name>，用户级）；成功后热重载非流式活跃会话，扩展立即生效 */
+	/** 安装社区包（npm:<name>，用户级）；成功后委托空闲会话重载。 */
 	async installPackage(name: string): Promise<void> {
 		if (!/^(@[a-z0-9][a-z0-9._-]*\/)?[a-z0-9][a-z0-9._-]*$/i.test(name)) {
 			throw new Error(`Invalid package name: ${name}`);
@@ -88,10 +87,10 @@ export class PackageAdmin {
 			rethrowPackageError(err);
 		}
 		log.info("package installed", name);
-		await this.reloadSessions();
+		await this.deps.reloadIdleSessions();
 	}
 
-	/** 卸载已配置的包（按 source + scope 移除并持久化）；成功后热重载非流式活跃会话 */
+	/** 卸载已配置的包（按 source + scope 移除并持久化）；成功后委托空闲会话重载。 */
 	async removePackage(source: string, scope: "user" | "project"): Promise<void> {
 		let removed: boolean;
 		try {
@@ -103,21 +102,6 @@ export class PackageAdmin {
 		}
 		if (!removed) throw new Error(`Package not installed: ${source}`);
 		log.info("package removed", source, { scope });
-		await this.reloadSessions();
-	}
-
-	/** 对非流式活跃会话做资源热重载（装/卸包后立即生效） */
-	private async reloadSessions(): Promise<void> {
-		for (const entry of this.deps.registry.list()) {
-			if (entry.session.isStreaming) {
-				log.info("skip reload while streaming", entry.session.sessionId);
-				continue;
-			}
-			try {
-				await entry.session.reload();
-			} catch (err) {
-				log.warn("session reload failed", entry.session.sessionId, err);
-			}
-		}
+		await this.deps.reloadIdleSessions();
 	}
 }

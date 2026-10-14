@@ -8,6 +8,7 @@
 
 | 症状 / 场景 | 条目（章节） |
 |---|---|
+| 包装卸时压缩被打断，或逐会话reload期间下一会话变忙仍被重载 | 三 · 包管理与MCP须共用现读空闲守卫（2026-10-14） |
 | 快速启用多个 UI 插件/指派多个槽位，选择丢失或界面与磁盘不一致 | 三 · 插件配置的队列外旧快照与扫描晚发布（2026-10-14） |
 | 全 app 卡死、日志/磁盘分钟级 GB 暴涨、renderer unresponsive | 一 · 0.4.6 冻结事故 |
 | 流式期间白屏、`error #185`、无限重渲染整树卸载 | 一 · 0.5.0 白屏事故；四 · Zustand selector（#185 另一成因） |
@@ -1100,6 +1101,12 @@ pgrep -f "electron-vite" | xargs -r kill -9
   - 2026-10-12 补充（qol3 阶段 1 实测）：计数「某请求触发了几次」时，**订阅 store 的上升沿**（`useSettingsStore.subscribe((s, prev) => …)` 数 `loading`/`refreshing` false→true）比数 IPC 更实用 —— 只要发起方在**发起请求时同步置位**，上升沿就与真实请求一一对应，且不受对端快慢影响（在途去重也能被这条口径验证）。同理「副作用是否只发生一次」可以把 store 上的 action 换成一个计数包装（`useXStore.setState({ action: async () => { count++; return orig() }) }`，store 内部走 `getState().action()` 时会用到包装后的版本）。
 - 需要「点真实子代理卡」这类依赖模型行为的场景，优先找**历史回放**入口：历史里已有子代理运行的父会话，打开它 → transcript 重放出卡片 → 点它，同样落到只读检视页，且完全确定性（子会话文件在 `<agentDir>/sessions-subagents/`，后端按路径判定 `readOnly`）。现场真跑一次 subagent 依赖凭证可用，dev 里常 401 拿不到可点卡片。
   - 2026-10-12 补充（qol3 阶段 2 实测）：dev agentDir 里**可能一个可点子代理卡都没有** —— 唯一一次真实 subagent 运行是 401 失败、没有 `sessionFile`（这类行渲染成不可点）。确定性做法：挑一个含 `"toolName":"subagent"` 的父会话打开，往 `useTranscriptStore` 的 `bySession[id].streaming.subagentRuns` **注入一条** `{key,agent,status:"done",sessionFile:<真实存在的 sessions-subagents 文件>}`（注入要重试：bundle 可能晚于注入落地并把 `streaming` 覆盖回磁盘态），卡片就会渲染出来，点它走的是**真实**组件 + 真实 store + 真实子会话文件；唯一合成物是那一行运行记录，写明即可。
+
+### 包管理与MCP须共用现读空闲守卫（2026-10-14）
+
+SDK reload会shutdown旧扩展/MCP连接，不是无害的配置重读。原PackageAdmin只跳过streaming，MCP门面同时跳过streaming/compacting，形成守卫分歧。删除包模块的遍历实现，改注入窄reloadIdleSessions函数，门面保留唯一规则。
+
+关键是**每个reload调用前**现读状态，不能先把全表预筛为idle列表再串行await：第一个reload等待期间，后一个会话可开始生成或压缩。`packages-admin.test.ts`与`mcp-reload-guard.test.ts`用deferred前一reload和getter化后一状态，验证streaming/compacting均跳过；前者只mock外部SDK安装，后者真实隔离MCP配置/项目信任，不真实spawn npm或连接server。忙碌者不排队自动重试，单会话失败记录后继续；void/报告/ENOENT语义保持。
 
 ### 插件配置的队列外旧快照与扫描晚发布（2026-10-14）
 
