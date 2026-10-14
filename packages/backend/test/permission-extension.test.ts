@@ -1,6 +1,7 @@
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { homedir, tmpdir } from "node:os";
-import { dirname, join, resolve, sep } from "node:path";
+import { dirname, join, relative, resolve, sep } from "node:path";
+import { fileURLToPath } from "node:url";
 import type {
 	ExtensionAPI,
 	ExtensionContext,
@@ -15,6 +16,7 @@ import type { PermissionAuditEntry } from "../src/permissions/audit";
 import { permissionAuditPath } from "../src/permissions/audit";
 import { makePermissionGateExtension, type PermissionConfirm } from "../src/permissions/extension";
 import { PermissionGate } from "../src/permissions/gate";
+import { isTemporaryPath } from "../src/permissions/tmp-zone";
 import { workspaceConfigPath } from "../src/project/workspace-store";
 
 type ToolCallHandler = ExtensionHandler<ToolCallEvent, ToolCallEventResult>;
@@ -276,13 +278,28 @@ describe("permission-gate 扩展", () => {
 		const dir = makeAgentDir();
 		const root = join(dir, "proj");
 		// git 根候选 fixture 必须在临时区之外（tmp 路径走 temporary 分支：默认放行不弹窗，
-		// 收紧后也不给 suggestDir）；放包目录下临时目录（用后清理），不写用户家目录
-		const fixtureBase = mkdtempSync(join(process.cwd(), ".perm-ext-fixture-"));
+		// 收紧后也不给 suggestDir）；仓库锚定的 .local probe 与 TMPDIR 分离，用后清理。
+		const fixtureParent = fileURLToPath(
+			new URL(
+				"../../../.local/agent-work/probe/architecture-simplification/permission-git/",
+				import.meta.url,
+			),
+		);
+		mkdirSync(fixtureParent, { recursive: true });
+		const fixtureBase = mkdtempSync(join(fixtureParent, "case-"));
 		const repo = join(fixtureBase, "other-repo");
 		mkdirSync(root, { recursive: true });
 		mkdirSync(join(repo, "sub"), { recursive: true });
 		mkdirSync(join(repo, ".git")); // git 根候选
 		try {
+			expect(isTemporaryPath(fixtureBase)).toBe(false);
+			const isWithin = (parent: string, child: string) => {
+				const rel = relative(parent, child);
+				return rel === "" || (!rel.startsWith(`..${sep}`) && rel !== "..");
+			};
+			expect(isWithin(resolve(tmpdir()), fixtureBase)).toBe(false);
+			expect(isWithin(fixtureBase, resolve(tmpdir()))).toBe(false);
+			expect(isWithin(root, fixtureBase)).toBe(false);
 			const calls: ConfirmCall[] = [];
 			const { call } = makeHarness(dir, false, { projectRoot: root, confirmCalls: calls });
 			await call("edit", { path: join(repo, "sub", "a.ts") });

@@ -72,6 +72,62 @@ beforeEach(() => {
 	useTranscriptStore.setState({ bySession: {} });
 });
 
+describe("V04 cwd projection characteristics (baseline for ticket 10)", () => {
+	const projectedCwd = () => {
+		const state = useSessionsStore.getState();
+		return state.activeSessionId === null
+			? (state.newSessionDraft?.cwd ?? null)
+			: (state.sessions.find((s) => s.sessionId === state.activeSessionId)?.cwd ?? state.cwd);
+	};
+	it("unknown ID activation preserves cwd fallback; a known activation repairs inconsistent seeds", () => {
+		useSessionsStore.setState({
+			sessions: [realMeta("known", "/known")],
+			activeSessionId: "known",
+			cwd: "/old",
+		});
+		useSessionsStore.getState().switchSession("missing");
+		expect(useSessionsStore.getState().activeSessionId).toBe("missing");
+		expect(useSessionsStore.getState().cwd).toBe("/old");
+		expect(projectedCwd()).toBe("/old");
+		useSessionsStore.getState().switchSession("known");
+		expect(useSessionsStore.getState().cwd).toBe(projectedCwd());
+	});
+	it("draft null cwd is authoritative when the last real session closes", async () => {
+		useSessionsStore.getState().activateNewSessionDraft();
+		useSessionsStore.setState({
+			sessions: [realMeta("last", "/last")],
+			activeSessionId: "last",
+			cwd: "/last",
+		});
+		await useSessionsStore.getState().closeSession("last");
+		expect(projectedCwd()).toBeNull();
+		expect(useSessionsStore.getState().cwd).toBeNull();
+	});
+	it("directory cancellation is inert; choosing a directory mirrors draft cwd", async () => {
+		useSessionsStore.getState().activateNewSessionDraft();
+		const before = useSessionsStore.getState().cwd;
+		piMock.pickDirectory.mockResolvedValueOnce(null);
+		await useSessionsStore.getState().pickDirectory();
+		expect(useSessionsStore.getState().cwd).toBe(before);
+		piMock.pickDirectory.mockResolvedValueOnce("/chosen");
+		await useSessionsStore.getState().pickDirectory();
+		expect(useSessionsStore.getState().cwd).toBe("/chosen");
+		expect(useSessionsStore.getState().cwd).toBe(projectedCwd());
+	});
+	it("fork currently retains a stale manually seeded cwd (counterexample to unconditional equivalence)", async () => {
+		useSessionsStore.setState({
+			sessions: [realMeta("parent", "/parent")],
+			activeSessionId: "parent",
+			cwd: "/stale",
+		});
+		piMock.forkSession.mockResolvedValueOnce(realMeta("fork-cwd", "/parent"));
+		await useSessionsStore.getState().forkSession({});
+		expect(useSessionsStore.getState().activeSessionId).toBe("fork-cwd");
+		expect(projectedCwd()).toBe("/parent");
+		expect(useSessionsStore.getState().cwd).toBe("/stale");
+	});
+});
+
 describe("partitionSessionsByPin", () => {
 	const list = ["a", "b", "c", "d"].map((id) => realMeta(id, "/p"));
 	const ids = (sessions: SessionMeta[]) => sessions.map((s) => s.sessionId);
@@ -732,6 +788,7 @@ describe("GC close 在途的选择竞态（spec D5）", () => {
 		expect(state.activeSessionId).toBe("b");
 		expect(state.sessions.map((s) => s.sessionId)).toEqual(["a", "b"]);
 		expect(useTranscriptStore.getState().bySession.b?.followUpQueue).toEqual(["kept"]);
+		expect(state.cwd).toBe(state.sessions.find((s) => s.sessionId === state.activeSessionId)?.cwd);
 	});
 
 	it("close 在途期间用户切到别处：正常卸载（closed:true、条目移除，不 reopen）", async () => {

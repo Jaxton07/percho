@@ -121,8 +121,11 @@ describe("PiBackend.wireSession 注册冲突（D4 最后防线）", () => {
 		const registry = (backend as unknown as { registry: SessionRegistry }).registry;
 		// 先占住 sessionId（模拟并发/别名路径：另一个 entry 已经在册）
 		const holder = entryFor(file, "sess-dup");
+		const holderUnsubscribe = vi.fn();
+		holder.unsubscribe = holderUnsubscribe;
 		registry.add(holder);
 
+		const shutdown = vi.fn().mockResolvedValue(undefined);
 		const unsubscribe = vi.fn();
 		const dispose = vi.fn();
 		const gateDispose = vi.spyOn(PermissionGate.prototype, "dispose");
@@ -137,6 +140,7 @@ describe("PiBackend.wireSession 注册冲突（D4 最后防线）", () => {
 			sessionManager: SessionManager.open(file),
 			subscribe: () => unsubscribe,
 			bindExtensions: () => Promise.resolve(),
+			extensionRunner: { emit: shutdown },
 			dispose,
 		};
 		const wire = (
@@ -157,6 +161,9 @@ describe("PiBackend.wireSession 注册冲突（D4 最后防线）", () => {
 			expect(gateDispose).toHaveBeenCalledTimes(1);
 			expect(dialogsDispose).toHaveBeenCalledTimes(1);
 			expect(dispose).toHaveBeenCalledTimes(1);
+			// V05 characteristic: the conflict path currently does not emit shutdown.
+			expect(shutdown).not.toHaveBeenCalled();
+			expect(holderUnsubscribe).not.toHaveBeenCalled();
 			// 占位 entry 原样保留（没有被静默替换），registry 里也不会多出第二条
 			expect(registry.get("sess-dup")).toBe(holder);
 			expect(registry.list()).toHaveLength(1);

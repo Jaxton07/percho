@@ -25,9 +25,12 @@ vi.mock("@earendil-works/pi-coding-agent", async (importOriginal) => {
 const { PiBackend } = await import("../src/pi-backend");
 
 let root = "";
+let project = "";
 
 beforeEach(() => {
 	root = mkdtempSync(join(tmpdir(), "percho-mcp-reload-guard-"));
+	project = join(root, "project");
+	mkdirSync(project, { recursive: true });
 	agentDir.value = join(root, "agent");
 	mkdirSync(agentDir.value, { recursive: true });
 });
@@ -51,7 +54,7 @@ function makeBackend(entries: { session: AgentSession; cwd?: string }[]) {
 	const backend = new PiBackend({ projectTrust: false, permissionGates: false });
 	const registry = (backend as unknown as { registry: SessionRegistry }).registry;
 	for (const entry of entries) {
-		registry.add({ session: entry.session, unsubscribe: () => {}, cwd: entry.cwd ?? "/tmp/project" });
+		registry.add({ session: entry.session, unsubscribe: () => {}, cwd: entry.cwd ?? project });
 	}
 	return backend;
 }
@@ -67,7 +70,7 @@ describe("MCP reload 守卫", () => {
 			{ session: idle.session },
 		]);
 
-		const result = await backend.reloadMcpServers({ cwd: "/tmp/project" });
+		const result = await backend.reloadMcpServers({ cwd: project });
 
 		expect(result.reload.reloaded).toBe(1);
 		expect(result.reload.skipped).toEqual([
@@ -87,7 +90,7 @@ describe("MCP reload 守卫", () => {
 			scope: "user",
 			name: "demo",
 			command: "node",
-			cwd: "/tmp/project",
+			cwd: project,
 		});
 		expect(upserted.config.global.map((s) => s.name)).toEqual(["demo"]);
 		expect(upserted.reload).toEqual({
@@ -95,7 +98,7 @@ describe("MCP reload 守卫", () => {
 			skipped: [{ sessionId: "running", reason: "streaming" }],
 		});
 
-		const removed = await backend.removeMcpServer({ scope: "user", name: "demo", cwd: "/tmp/project" });
+		const removed = await backend.removeMcpServer({ scope: "user", name: "demo", cwd: project });
 		expect(removed.config.global).toEqual([]);
 		expect(removed.reload.skipped).toHaveLength(1);
 		expect(running.reload).not.toHaveBeenCalled();

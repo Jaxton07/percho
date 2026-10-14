@@ -1,5 +1,4 @@
-import { existsSync, readFileSync } from "node:fs";
-import { homedir } from "node:os";
+import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { SessionManager } from "@earendil-works/pi-coding-agent";
@@ -16,7 +15,7 @@ import type { GuardMessage } from "../src/tools/compaction-guard/types";
 
 /**
  * 有界化核心验收（spec §6 A1 / A3 / A6③），全部零 SDK 依赖，除了：
- * - A3 用**真实事故会话**（跑真 SDK 的 prepareCompaction + serializeConversation）；
+ * - A3 用完全合成的内存长历史（跑真 SDK 的 prepareCompaction + serializeConversation）；
  * - A6③ 读 SDK dist 源码里 `isTurnStartMessage` 的分支表，钉住我们复刻的轮起点规则。
  */
 
@@ -303,12 +302,60 @@ describe("A6③ 轮起点规则与 SDK 口径一致（SDK 升级后红了就是�
 	});
 });
 
-// ---------- A3：真实事故会话离线重放 ----------
+// ---------- A3：SDK 合成长历史集成回归（不探测或读取正式事故会话） ----------
 
-const ACCIDENT_SESSION = join(
-	homedir(),
-	".pi/agent/sessions/--Users-ericw-work-code-ZhongWei-project-pi-runtime-core--/2026-10-11T03-45-33-947Z_01a12910-defb-738a-9c4d-4294452e9ac5.jsonl",
-);
+function syntheticCompactionSession(): SessionManager {
+	const session = SessionManager.inMemory(
+		fileURLToPath(new URL("../../../.local/tmp/architecture-simplification/synthetic-cwd", import.meta.url)),
+	);
+	let timestamp = 1;
+	const appendAssistant = (index: number, text: string) =>
+		session.appendMessage({
+			role: "assistant",
+			content: [
+				{ type: "text", text },
+				{ type: "toolCall", id: `synthetic-${index}`, name: "read", arguments: { path: "fixture.txt" } },
+			],
+			api: "openai-completions",
+			provider: "openai",
+			model: "synthetic-model",
+			usage: {
+				input: 0,
+				output: 0,
+				cacheRead: 0,
+				cacheWrite: 0,
+				totalTokens: 0,
+				cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
+			},
+			stopReason: "toolUse",
+			timestamp: timestamp++,
+		});
+	const appendResult = (index: number, text: string) =>
+		session.appendMessage({
+			role: "toolResult",
+			toolCallId: `synthetic-${index}`,
+			toolName: "read",
+			content: [{ type: "text", text }],
+			isError: false,
+			timestamp: timestamp++,
+		});
+	for (let index = 0; index < 550; index++) {
+		session.appendMessage({
+			role: "user",
+			content: `question-${index} ${"u".repeat(1600)}`,
+			timestamp: timestamp++,
+		});
+		appendAssistant(index, "synthetic answer");
+		appendResult(index, "r".repeat(8000));
+	}
+	// One long tool-using turn forces the real SDK cut point into a turn, covering turnPrefix.
+	session.appendMessage({ role: "user", content: "long final turn", timestamp: timestamp++ });
+	for (let index = 550; index < 558; index++) {
+		appendAssistant(index, "a".repeat(16000));
+		appendResult(index, "r".repeat(8000));
+	}
+	return session;
+}
 /** 提供商实测上限（spec §1.3）：A3 要求另断言 ≤ 它的 50% */
 const PROVIDER_LIMIT_TOKENS = 994_387;
 
@@ -331,48 +378,49 @@ async function sdkCompactionBits() {
 	};
 }
 
-describe("A3 事故会话离线重放：整体估算 ≤ hardCap（两档窗口）", () => {
-	it.skipIf(!existsSync(ACCIDENT_SESSION))(
-		"1M 与 200k 两档窗口都收敛在 cap 之内（200k 那档同时是层 2 的收敛验证）",
-		{ timeout: 120_000 },
-		async () => {
-			const { prepareCompaction, serialize } = await sdkCompactionBits();
-			const settings = { enabled: true, reserveTokens: 16_384, keepRecentTokens: 20_000 };
-			const session = SessionManager.open(ACCIDENT_SESSION);
-			const preparation = prepareCompaction(session.getBranch(), settings);
-			expect(preparation).toBeDefined();
-			const historyInput = preparation?.messagesToSummarize ?? [];
-			const prefixInput = preparation?.turnPrefixMessages ?? [];
-			expect(historyInput.length).toBeGreaterThan(1000);
+describe("A3 SDK 合成长历史集成回归：整体估算 ≤ hardCap（两档窗口）", () => {
+	it("1M 与 200k 两档窗口都收敛在 cap 之内（200k 那档同时是层 2 的收敛验证）", {
+		timeout: 120_000,
+	}, async () => {
+		const { prepareCompaction, serialize } = await sdkCompactionBits();
+		const settings = { enabled: true, reserveTokens: 16_384, keepRecentTokens: 20_000 };
+		const session = syntheticCompactionSession();
+		const preparation = prepareCompaction(session.getBranch(), settings);
+		expect(preparation).toBeDefined();
+		const historyInput = preparation?.messagesToSummarize ?? [];
+		const prefixInput = preparation?.turnPrefixMessages ?? [];
+		expect(historyInput.length).toBeGreaterThan(1000);
+		expect(preparation?.isSplitTurn).toBe(true);
+		expect(prefixInput.length).toBeGreaterThan(0);
+		const inputSnapshot = clone([historyInput, prefixInput]);
 
-			for (const contextWindow of [1_000_000, 200_000]) {
-				const cap = hardCapTokens({
-					contextWindow,
-					reserveTokens: settings.reserveTokens,
-					maxTokens: 32_000,
-					hardCapRatio: 0.5,
-				});
-				expect(cap).toBe(contextWindow === 1_000_000 ? 500_000 : 100_000);
+		for (const contextWindow of [1_000_000, 200_000]) {
+			const cap = hardCapTokens({
+				contextWindow,
+				reserveTokens: settings.reserveTokens,
+				maxTokens: 32_000,
+				hardCapRatio: 0.5,
+			});
+			expect(cap).toBe(contextWindow === 1_000_000 ? 500_000 : 100_000);
 
-				for (const [label, input] of [
-					["history", historyInput],
-					["turn-prefix", prefixInput],
-				] as const) {
-					if (input.length === 0) continue;
-					const result = boundMessages(input, { cap, protectTurns: 2, toolResultChars: 300, serialize });
-					const whole = exactEstimate(result.messages, serialize);
-					expect(result.stats.withinCap, `${contextWindow}/${label}`).toBe(true);
-					expect(whole, `${contextWindow}/${label} 整体估算 ≤ cap`).toBeLessThanOrEqual(cap);
-					if (contextWindow === 1_000_000) {
-						expect(whole, `${label} ≤ 提供商上限 50%`).toBeLessThanOrEqual(PROVIDER_LIMIT_TOKENS * 0.5);
-					}
-					if (contextWindow === 200_000 && label === "history") {
-						// 层 2 必须真的介入（这档窗口下仅靠降级到不了 cap）
-						expect(result.stats.measure).toBe("exact");
-						expect(result.stats.droppedMessages).toBeGreaterThan(0);
-					}
+			for (const [label, input] of [
+				["history", historyInput],
+				["turn-prefix", prefixInput],
+			] as const) {
+				const result = boundMessages(input, { cap, protectTurns: 2, toolResultChars: 300, serialize });
+				const whole = exactEstimate(result.messages, serialize);
+				expect(result.stats.withinCap, `${contextWindow}/${label}`).toBe(true);
+				expect(whole, `${contextWindow}/${label} 整体估算 ≤ cap`).toBeLessThanOrEqual(cap);
+				if (contextWindow === 1_000_000) {
+					expect(whole, `${label} ≤ 提供商上限 50%`).toBeLessThanOrEqual(PROVIDER_LIMIT_TOKENS * 0.5);
+				}
+				if (contextWindow === 200_000 && label === "history") {
+					// 层 2 必须真的介入（这档窗口下仅靠降级到不了 cap）
+					expect(result.stats.measure).toBe("exact");
+					expect(result.stats.droppedMessages).toBeGreaterThan(0);
 				}
 			}
-		},
-	);
+		}
+		expect([historyInput, prefixInput]).toEqual(inputSnapshot);
+	});
 });

@@ -1,4 +1,5 @@
 import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { discoverAgents, parseAgentMarkdown } from "../src/tools/subagent/agents";
@@ -49,7 +50,7 @@ describe("subagent agent definitions", () => {
 	});
 
 	it("applies builtin → user → trusted project precedence", async () => {
-		const root = await mkdtemp("/tmp/percho-subagent-agents-");
+		const root = await mkdtemp(join(tmpdir(), "percho-subagent-agents-"));
 		tempDirs.push(root);
 		const agentDir = join(root, "agent");
 		await mkdir(join(agentDir, "agents"), { recursive: true });

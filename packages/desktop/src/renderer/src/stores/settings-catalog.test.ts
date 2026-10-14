@@ -90,6 +90,50 @@ beforeEach(async () => {
 	store = (await import("./settings")).useSettingsStore;
 });
 
+describe("V03 current settings request matrix (baseline for ticket 11)", () => {
+	it("import is lazy; category changes and closing perform no requests", () => {
+		expect(store.getState().permissionGateOff).toBeNull();
+		store.getState().setCategory("general");
+		store.getState().setOpen(false);
+		for (const mock of Object.values(api)) expect(mock).not.toHaveBeenCalled();
+	});
+	it("refresh reads all local domains once; resources are conditional on an active session", async () => {
+		api.listProviders.mockResolvedValue([]);
+		await store.getState().refresh();
+		for (const mock of [
+			api.getPermissionConfig,
+			api.getContextManagerConfig,
+			api.getChannelWatchConfig,
+			api.lanGetStatus,
+			api.getModelPrefs,
+			api.listProviders,
+			api.listSubagents,
+		]) {
+			expect(mock).toHaveBeenCalledTimes(1);
+		}
+		expect(api.getLoadedResources).not.toHaveBeenCalled();
+		expect(coldCalls()).toEqual([false]);
+		sessionsState.activeSessionId = "active";
+		await store.getState().refresh();
+		expect(api.getLoadedResources).toHaveBeenCalledWith({ sessionId: "active" });
+	});
+	it("reopening the same category rereads permission/LAN; openWith also performs full refresh", async () => {
+		api.listProviders.mockResolvedValue([]);
+		store.getState().setCategory("general");
+		store.getState().setOpen(true);
+		await vi.waitFor(() => expect(store.getState().loading).toBe(false));
+		expect(api.getPermissionConfig).toHaveBeenCalledTimes(1);
+		expect(api.lanGetStatus).toHaveBeenCalledTimes(1);
+		store.getState().setOpen(false);
+		api.getPermissionConfig.mockResolvedValue({ enabled: false });
+		store.getState().openWith("general");
+		await vi.waitFor(() => expect(store.getState().permissionGateOff).toBe(true));
+		expect(api.getPermissionConfig).toHaveBeenCalledTimes(2);
+		expect(api.lanGetStatus).toHaveBeenCalledTimes(2);
+		expect(coldCalls()).toEqual([false, false]);
+	});
+});
+
 describe("D3 触发面：谁发请求", () => {
 	it("打开设置 / 进模型分类（refresh）只走本地目录，不发联网请求", async () => {
 		api.listProviders.mockResolvedValue(providers("local-a"));

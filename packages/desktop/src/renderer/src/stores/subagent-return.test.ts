@@ -175,6 +175,7 @@ describe("返回父会话", () => {
 			parentEntryBefore,
 		);
 		expect(piMock.openSession.mock.calls.length).toBe(openCallsBefore); // 没有重新打开
+		expect(useSessionsStore.getState().cwd).toBe(parent.cwd);
 	});
 
 	it("父已被 GC 卸载：按 parentFile 重开，不新增成员、成员顺序不变", async () => {
@@ -194,6 +195,7 @@ describe("返回父会话", () => {
 		expect(piMock.openSession).toHaveBeenCalledWith({ filePath: parent.sessionFile });
 		expect(active()).toBe("parent");
 		expect(members()).toEqual(membersBefore); // 没有新增/重排成员
+		expect(useSessionsStore.getState().cwd).toBe(parent.cwd);
 	});
 
 	it("父会话文件已丢失（重开失败）：留在子页并如实返回失败", async () => {

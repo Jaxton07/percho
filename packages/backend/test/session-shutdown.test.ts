@@ -1,4 +1,5 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
+import type { ChannelSubscriptions } from "../src/channel-subscriptions";
 import { PiBackend } from "../src/pi-backend";
 import type { RegisteredSession } from "../src/session/registry";
 import { SessionRegistry } from "../src/session/registry";
@@ -36,7 +37,86 @@ function makeEntry(order: string[], sessionId = "s1"): RegisteredSession {
 }
 
 /** 绕过 private 取内部方法（只为验证调用契约，不碰真实会话） */
-type BackendInternals = { disposeSession(entry: RegisteredSession): Promise<void> };
+type BackendInternals = {
+	disposeSession(entry: RegisteredSession): Promise<void>;
+	registry: SessionRegistry;
+	channelSubs: ChannelSubscriptions;
+	channelWatchCleanups: WeakMap<RegisteredSession["modeRef"], () => void>;
+	traces: { stop(id: string): Promise<void> };
+};
+
+describe("V05 close/quit resource ordering characteristics", () => {
+	function registeredBackend(order: string[]) {
+		const backend = new PiBackend();
+		const internal = backend as unknown as BackendInternals;
+		const entry = makeEntry(order);
+		entry.unsubscribe = () => {
+			order.push("unsubscribe");
+		};
+		entry.gate = {
+			dispose: () => {
+				order.push("gate");
+			},
+		} as RegisteredSession["gate"];
+		entry.dialogs = {
+			dispose: () => {
+				order.push("dialogs");
+			},
+		} as RegisteredSession["dialogs"];
+		internal.registry.add(entry);
+		internal.channelWatchCleanups.set(entry.modeRef, () => {
+			order.push("watcher");
+		});
+		internal.channelSubs.noteSessionOpened("s1");
+		internal.channelSubs.report("s1", new Set(["baseline"]));
+		return { backend, internal, entry };
+	}
+	it("normal close awaits shutdown, then disposes SDK/resources, invalidates incarnation and stops trace", async () => {
+		const order: string[] = [];
+		const { backend, internal, entry } = registeredBackend(order);
+		vi.spyOn(internal.traces, "stop").mockImplementation(async () => {
+			order.push("trace");
+		});
+		await internal.disposeSession(entry);
+		expect(order).toEqual([
+			"watcher",
+			"emit:session_shutdown:quit",
+			"dispose",
+			"unsubscribe",
+			"gate",
+			"dialogs",
+			"trace",
+		]);
+		expect(internal.registry.list()).toHaveLength(0);
+		expect(internal.channelSubs.snapshot("s1")).toMatchObject({ live: false, topics: [] });
+		expect(internal.channelWatchCleanups.has(entry.modeRef)).toBe(false);
+		backend.dispose();
+	});
+	it("quit is synchronous, unsubscribes before shutdown and currently leaves channel incarnation live", async () => {
+		const order: string[] = [];
+		const { backend, internal, entry } = registeredBackend(order);
+		let resolveShutdown!: () => void;
+		(entry.session as unknown as { extensionRunner: { emit(): Promise<void> } }).extensionRunner.emit =
+			() => {
+				order.push("emit:pending");
+				return new Promise<void>((resolve) => {
+					resolveShutdown = resolve;
+				});
+			};
+		expect(backend.dispose()).toBeUndefined();
+		expect(order).toEqual(["watcher", "unsubscribe", "gate", "dialogs", "emit:pending", "dispose"]);
+		expect(internal.registry.list()).toHaveLength(0);
+		expect(internal.channelSubs.snapshot("s1")).toMatchObject({ live: true, topics: ["baseline"] });
+		const published: unknown[] = [];
+		const unsubscribe = internal.channelSubs.subscribe((snapshot) => published.push(snapshot));
+		// Model a delayed old runner report: current quit has not invalidated the incarnation.
+		internal.channelSubs.report("s1", new Set());
+		expect(published).toHaveLength(1);
+		resolveShutdown();
+		await Promise.resolve();
+		unsubscribe();
+	});
+});
 
 describe("会话终结的 session_shutdown", () => {
 	it("disposeSession：先 emit session_shutdown（reason=quit）再 dispose", async () => {

@@ -1,12 +1,20 @@
-import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { ProjectTrustStore } from "@earendil-works/pi-coding-agent";
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it } from "vitest";
 import { buildTrustOptions, resolveProjectTrust, TrustGate } from "../src/project/trust";
+
+const roots: string[] = [];
+const gates: TrustGate[] = [];
+afterEach(() => {
+	for (const gate of gates.splice(0)) gate.dispose();
+	for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true });
+});
 
 function makeProject(): { cwd: string; agentDir: string; trustStore: ProjectTrustStore } {
 	const root = mkdtempSync(join(tmpdir(), "pi-trust-test-"));
+	roots.push(root);
 	const cwd = join(root, "project");
 	mkdirSync(join(cwd, ".pi"), { recursive: true });
 	writeFileSync(join(cwd, ".pi", "settings.json"), "{}");
@@ -32,6 +40,7 @@ describe("buildTrustOptions", () => {
 describe("resolveProjectTrust", () => {
 	it("无信任需求资源的项目直接可信，不问用户", async () => {
 		const root = mkdtempSync(join(tmpdir(), "pi-trust-test-"));
+		roots.push(root);
 		const cwd = join(root, "plain");
 		mkdirSync(cwd, { recursive: true });
 		const agentDir = join(root, "agent");
@@ -132,13 +141,14 @@ describe("TrustGate", () => {
 	function makeGate() {
 		const requests: { id: string; optionCount: number }[] = [];
 		const gate = new TrustGate((req) => requests.push({ id: req.id, optionCount: req.options.length }));
-		return { gate, requests };
+		gates.push(gate);
+		return { gate, requests, cwd: makeProject().cwd };
 	}
 
 	it("发出 trust request 并等待应答", async () => {
-		const { gate, requests } = makeGate();
-		const options = buildTrustOptions("/tmp/project-x");
-		const promise = gate.ask("/tmp/project-x", options);
+		const { gate, requests, cwd } = makeGate();
+		const options = buildTrustOptions(cwd);
+		const promise = gate.ask(cwd, options);
 		expect(requests).toHaveLength(1);
 		expect(requests[0].optionCount).toBe(options.length);
 
@@ -147,39 +157,41 @@ describe("TrustGate", () => {
 	});
 
 	it("越界下标按取消处理", async () => {
-		const { gate, requests } = makeGate();
-		const promise = gate.ask("/tmp/project-x", buildTrustOptions("/tmp/project-x"));
+		const { gate, requests, cwd } = makeGate();
+		const promise = gate.ask(cwd, buildTrustOptions(cwd));
 		gate.respond(requests[0].id, 99);
 		await expect(promise).resolves.toBeUndefined();
 	});
 
 	it("dispose 时未决请求按取消处理", async () => {
-		const { gate } = makeGate();
-		const promise = gate.ask("/tmp/project-x", buildTrustOptions("/tmp/project-x"));
+		const { gate, cwd } = makeGate();
+		const promise = gate.ask(cwd, buildTrustOptions(cwd));
 		gate.dispose();
 		await expect(promise).resolves.toBeUndefined();
 	});
 
 	it("同一 cwd 的在途询问去重（不重复弹窗），应答后可再问", async () => {
-		const { gate, requests } = makeGate();
-		const p1 = gate.ask("/tmp/project-x", buildTrustOptions("/tmp/project-x"));
-		const p2 = gate.ask("/tmp/project-x", buildTrustOptions("/tmp/project-x"));
+		const { gate, requests, cwd } = makeGate();
+		const p1 = gate.ask(cwd, buildTrustOptions(cwd));
+		const p2 = gate.ask(cwd, buildTrustOptions(cwd));
 		expect(requests).toHaveLength(1);
 
 		gate.respond(requests[0].id, 0);
 		await expect(p1).resolves.toBe(0);
 		await expect(p2).resolves.toBe(0);
 
-		const p3 = gate.ask("/tmp/project-x", buildTrustOptions("/tmp/project-x"));
+		const p3 = gate.ask(cwd, buildTrustOptions(cwd));
 		expect(requests).toHaveLength(2);
 		gate.respond(requests[1].id, 1);
 		await expect(p3).resolves.toBe(1);
 	});
 
 	it("不同 cwd 互不去重", async () => {
-		const { gate, requests } = makeGate();
-		gate.ask("/tmp/project-x", buildTrustOptions("/tmp/project-x"));
-		gate.ask("/tmp/project-y", buildTrustOptions("/tmp/project-y"));
+		const { gate, requests, cwd } = makeGate();
+		const otherCwd = makeProject().cwd;
+		expect(otherCwd).not.toBe(cwd);
+		gate.ask(cwd, buildTrustOptions(cwd));
+		gate.ask(otherCwd, buildTrustOptions(otherCwd));
 		expect(requests).toHaveLength(2);
 	});
 });
