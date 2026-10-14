@@ -26,6 +26,7 @@ const LEGACY_SUBSCRIPTION_SNAPSHOT = [
 ];
 const PRELOAD = resolve(__dirname, "../../preload/index.ts");
 const SEND = resolve(__dirname, "../../main/ipc/send.ts");
+const SHARED = resolve(__dirname, "../../../../shared/src/index.ts");
 const code = buildSync({
 	entryPoints: [PRELOAD],
 	bundle: true,
@@ -141,7 +142,8 @@ function compileFixture(body: string) {
 	const root = mkdtempSync(join(tmpdir(), "percho-subscription-types-"));
 	try {
 		const file = join(root, "fixture.ts");
-		const source = `import { IpcChannels, type PiApi } from "@percho/shared";\nimport { sendToRenderer, forward } from ${JSON.stringify(SEND)};\ndeclare const api: PiApi;\n${body}`;
+		// Resolve the real public barrel explicitly: temp fixtures need not have workspace node_modules ancestors.
+		const source = `import { IpcChannels, type PiApi } from ${JSON.stringify(SHARED)};\nimport { sendToRenderer, forward } from ${JSON.stringify(SEND)};\ndeclare const api: PiApi;\n${body}`;
 		writeFileSync(file, source);
 		const configPath = resolve(__dirname, "../../../tsconfig.node.json");
 		const config = ts.readConfigFile(configPath, ts.sys.readFile);

@@ -1189,6 +1189,7 @@ SDK reload会shutdown旧扩展/MCP连接，不是无害的配置重读。原Pack
 - Git的非仓库用例临时设置`GIT_CEILING_DIRECTORIES=realpath(testRoot)`，阻止发现祖先仓库；仍执行真实Git、保留原断言，`afterEach`恢复环境。其余嵌套真实仓库用例不设上界。
 - trust的无资源用例仅把SDK资源探测结果控制为false，验证宿主直接信任、不询问且不写信任记录；真实ProjectTrustStore保留，其余用例默认调用真实SDK探测，每例后重置mock。SDK当前检查cwd的`.pi`及祖先`.agents/skills`，不能因为测试在仓库内就修改产品信任规则。
 - 中间产物继续写`.local/tmp/<专用前缀>`，不必迁到系统临时目录。完整套件应在显式隔离agent/TMPDIR下照跑，其他失败不得套用旧两项豁免。
+- 反向依赖同样要防：`ipc-subscriptions.test.ts`的临时TS夹具曾靠仓内祖先`node_modules`解析`@percho/shared`，CI默认临时目录在仓外就报找不到模块。夹具现以绝对路径导入真实shared公共barrel，仍执行完整正反编译/逐行诊断，不靠改CI TMPDIR或放宽断言掩盖。
 
 ### 组件测试（`renderToStaticMarkup`）在 vitest 里读不到 store 的运行时状态（2026-10-12，qol3 阶段 2）
 
