@@ -5,7 +5,12 @@ import { createLogger } from "@percho/backend";
 import type { UiPluginInfo, UiPluginManifest, UiPluginsConfig } from "@percho/shared";
 import { app } from "electron";
 import { buildPlugin } from "./build";
-import { defaultUiPluginsConfig, loadUiPluginsConfig, saveUiPluginsConfig } from "./config";
+import {
+	defaultUiPluginsConfig,
+	loadUiPluginsConfig,
+	type UiPluginsConfigCommand,
+	updateUiPluginsConfig,
+} from "./config";
 
 const log = createLogger("ui-plugins");
 
@@ -30,6 +35,18 @@ export class UiPluginManager {
 	private watchers: FSWatcher[] = [];
 	/** 插件名 → 防抖重建定时器（连续保存只重建一次） */
 	private rebuildTimers = new Map<string, NodeJS.Timeout>();
+	/** 配置提交与扫描发布共用一条串行链，旧扫描不能在新提交之后回灌缓存。 */
+	private configWork: Promise<void> = Promise.resolve();
+
+	private enqueueConfigWork<T>(work: () => Promise<T>): Promise<T> {
+		const result = this.configWork.then(work);
+		// 失败向调用者传播，但不毒化后续扫描/命令。
+		this.configWork = result.then(
+			() => {},
+			() => {},
+		);
+		return result;
+	}
 
 	/** 确保插件根目录存在、分发规范文档与内置插件、加载配置 + 首次扫描 */
 	async init(): Promise<void> {
@@ -67,7 +84,11 @@ export class UiPluginManager {
 	}
 
 	/** 扫描 userData/ui-plugins/ 每个子目录：校验 manifest 并合成 UiPluginInfo（叠加 config/产物状态） */
-	async scanAll(): Promise<UiPluginInfo[]> {
+	scanAll(): Promise<UiPluginInfo[]> {
+		return this.enqueueConfigWork(() => this.scanAllInner());
+	}
+
+	private async scanAllInner(): Promise<UiPluginInfo[]> {
 		this.config = await loadUiPluginsConfig();
 		// 随包内置名单（每次扫描现取，目录静态几乎零开销）
 		const builtinEntries = await readdir(builtinPluginsDir(), { withFileTypes: true }).catch(() => []);
@@ -256,9 +277,11 @@ export class UiPluginManager {
 		this.watchers = [];
 	}
 
-	/** 写入配置补丁并刷新扫描缓存（enabled/trusted/assignments 变化后调用） */
-	async updateConfig(patch: Partial<UiPluginsConfig>): Promise<void> {
-		await saveUiPluginsConfig(patch);
-		await this.scanAll();
+	/** 提交配置意图并刷新扫描缓存；两步与其他扫描整体串行。 */
+	updateConfig(command: UiPluginsConfigCommand): Promise<void> {
+		return this.enqueueConfigWork(async () => {
+			await updateUiPluginsConfig(command);
+			await this.scanAllInner();
+		});
 	}
 }

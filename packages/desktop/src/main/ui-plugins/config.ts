@@ -53,16 +53,37 @@ export async function loadUiPluginsConfig(): Promise<UiPluginsConfig> {
 	return normalize(parsed ?? {});
 }
 
+export type UiPluginsConfigCommand =
+	| { kind: "set-enabled"; enabled: boolean }
+	| { kind: "set-plugin-enabled"; name: string; enabled: boolean }
+	| { kind: "assign-slot"; slot: string; pluginName: string | null };
+
 /**
- * 持久化配置（与现有内容合并后原子写，调用方传补丁即可）。
+ * 持久化配置意图：旧字段读取与新值计算都在 JsonStore 的 update 队列内。
  * 失败不吞（log 后重抛）：IPC handler 已 await 落盘才返回/推 config 事件，
  * reject 后 renderer 收到失败、不再误推成功事件。
  */
-export async function saveUiPluginsConfig(patch: Partial<UiPluginsConfig>): Promise<void> {
+export async function updateUiPluginsConfig(command: UiPluginsConfigCommand): Promise<void> {
 	try {
-		// 单次 update：读改写整体在 per-path 队列内串行（handler 并发调用不互相覆盖）；
-		// 损坏拒写抛 CorruptedError（原为读损坏回退默认后照样覆盖写 = 自愈但静默丢数据）
-		await configStore().update((draft) => normalize({ ...(draft ?? {}), ...patch }));
+		await configStore().update((draft) => {
+			const config = normalize(draft ?? {});
+			switch (command.kind) {
+				case "set-enabled":
+					config.enabled = command.enabled;
+					break;
+				case "set-plugin-enabled":
+					config.plugins[command.name] = {
+						enabled: command.enabled,
+						trusted: command.enabled || (config.plugins[command.name]?.trusted ?? false),
+					};
+					break;
+				case "assign-slot":
+					if (command.pluginName === null) delete config.assignments[command.slot];
+					else config.assignments[command.slot] = command.pluginName;
+					break;
+			}
+			return config;
+		});
 	} catch (err) {
 		log.error("ui-plugins config save failed", err);
 		throw err;

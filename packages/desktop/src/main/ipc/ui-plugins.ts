@@ -1,4 +1,4 @@
-import { IpcChannels, KNOWN_UI_SLOTS, UI_PLUGINS_CHANNELS, type UiPluginsConfig } from "@percho/shared";
+import { IpcChannels, KNOWN_UI_SLOTS, UI_PLUGINS_CHANNELS } from "@percho/shared";
 import { shell } from "electron";
 import { loadUiPluginsConfig } from "../ui-plugins/config";
 import type { UiPluginManager } from "../ui-plugins/manager";
@@ -21,7 +21,7 @@ export function registerUiPluginsIpc(manager: UiPluginManager): void {
 		// 启用=信任：enabled=true 时 trusted 一并落盘；await 落盘后才返回（renderer invoke 读到的是写入后的最新配置）
 		uiPluginsSetEnabled: async ({ enabled }) => {
 			if (typeof enabled !== "boolean") return;
-			await manager.updateConfig({ enabled });
+			await manager.updateConfig({ kind: "set-enabled", enabled });
 			pushConfigEvent();
 		},
 		uiPluginsList: () => manager.list(),
@@ -34,25 +34,13 @@ export function registerUiPluginsIpc(manager: UiPluginManager): void {
 			if (typeof name !== "string" || typeof enabled !== "boolean") return;
 			const info = manager.info(name);
 			if (!info || info.invalidReason) return;
-			const config = await loadUiPluginsConfig();
-			const prev = config.plugins[name];
-			const patch: Partial<UiPluginsConfig> = {
-				plugins: {
-					...config.plugins,
-					[name]: { enabled, trusted: enabled ? true : (prev?.trusted ?? false) },
-				},
-			};
-			await manager.updateConfig(patch);
+			await manager.updateConfig({ kind: "set-plugin-enabled", name, enabled });
 			pushConfigEvent();
 		},
 		uiPluginsAssignSlot: async ({ slot, pluginName }) => {
 			if (typeof slot !== "string" || !KNOWN_UI_SLOTS.includes(slot)) return;
 			if (pluginName !== null && typeof pluginName !== "string") return;
-			const config = await loadUiPluginsConfig();
-			const assignments = { ...config.assignments };
-			if (pluginName === null) delete assignments[slot];
-			else assignments[slot] = pluginName;
-			await manager.updateConfig({ assignments });
+			await manager.updateConfig({ kind: "assign-slot", slot, pluginName });
 			pushConfigEvent();
 		},
 		uiPluginsRebuild: async ({ name }) => {
