@@ -63,6 +63,8 @@ interface SettingsStore {
 	openWith: (category?: SettingsCategory) => void;
 	setCategory: (category: SettingsCategory) => void;
 	refresh: () => Promise<void>;
+	loadPermissionGate: () => Promise<void>;
+	refreshAfterMutation: (domain: "provider" | "packages") => Promise<void>;
 	/** 从 pi.dev 联网拉取最新模型目录（绕过新鲜度窗口；成功后同步模型选择器数据） */
 	refreshProvidersFromNetwork: () => Promise<void>;
 	saveKey: (providerId: string, key: string) => Promise<void>;
@@ -260,10 +262,7 @@ export const useSettingsStore = create<SettingsStore>((set, get) => {
 	};
 
 	/** 变更后刷新 provider 列表与模型选择器数据（目录重读必须推进写盘世代，见协调器 `refreshAfterMutation`） */
-	const afterMutation = async () => {
-		await loadPanelData("mutation");
-		await useSessionsStore.getState().loadModels();
-	};
+	const afterMutation = () => get().refreshAfterMutation("provider");
 
 	/** 上一次触发过「选择器刷新」的目录请求号（同一在途请求的多个入口只刷一次） */
 	let selectorRefreshToken = 0;
@@ -322,37 +321,74 @@ export const useSettingsStore = create<SettingsStore>((set, get) => {
 	 * 面板数据装载。目录（providers/subagents）经协调器仲裁（loading/error/发布都在里面）；
 	 * 其余本地配置/偏好/资源各自独立发布 —— 不得因为目录请求被拒而丢字段。
 	 */
-	const loadPanelData = async (mode: "local" | "mutation"): Promise<void> => {
-		// 权限门控配置是本地文件读，独立加载，不被 provider 列表阻塞
-		// （仅派生 enabled=false 逃生舱态供 chip 禁用提示；开关 UI 已撒，spec permission-mode D7）
-		void getPi()
+	let permissionFlight: Promise<void> | null = null;
+	const loadPermissionGate = (): Promise<void> => {
+		if (permissionFlight) return permissionFlight;
+		const work = getPi()
 			.getPermissionConfig()
-			.then((permission) => set({ permissionGateOff: !permission.enabled }))
-			.catch(() => {});
-		// 上下文管理模式二态同样本地文件读，独立加载
+			.then((permission) => {
+				set({ permissionGateOff: !permission.enabled });
+			})
+			.catch(() => {})
+			.finally(() => {
+				if (permissionFlight === work) permissionFlight = null;
+			});
+		permissionFlight = work;
+		return work;
+	};
+	const loadGeneral = (): void => {
 		void getPi()
 			.getContextManagerConfig()
 			.then((cm) => set({ contextManagerMode: cm.mode }))
 			.catch(() => {});
-		// channel-watch 开关同样本地文件读，独立加载
 		void getPi()
 			.getChannelWatchConfig()
 			.then((cw) => set({ channelWatchEnabled: cw.enabled }))
 			.catch(() => {});
-		void getPi()
-			.lanGetStatus()
-			.then((lanStatus) => set({ lanStatus }))
-			.catch(() => {});
-		// modelPrefs 已由串行读路径发布，不能等目录返回后再写入旧快照；
-		// 读失败走 toast：可见（不静默）但不抢目录的 `error` 字段（变更路径的失败仍由 changePrefs 写 error）
+	};
+	const loadModelsData = async (mode: "local" | "mutation"): Promise<void> => {
 		void readPrefs().catch((error) =>
 			pushToast("warning", "toast.modelPrefsLoadFailed", errorMessage(error)),
 		);
-		// 目录与子代理并行、各自独立发布（子代理不受目录仲裁影响）
 		await Promise.all([
 			mode === "mutation" ? coordinator.refreshAfterMutation() : coordinator.refreshLocal(),
 			loadSubagents(),
 		]);
+	};
+	const loadPanel = (category: SettingsCategory): void => {
+		switch (category) {
+			case "general":
+				loadGeneral();
+				break;
+			case "models":
+				void loadModelsData("local");
+				break;
+			case "skills":
+			case "extensions":
+				void loadLoadedResources();
+				break;
+			case "lan":
+				void get().refreshLanStatus();
+				break;
+			case "appearance":
+			case "mcp":
+			case "about":
+				break;
+			default:
+				void get().refresh();
+		}
+	};
+	const loadFullData = async (): Promise<void> => {
+		// 权限门控配置是本地文件读，独立加载，不被 provider 列表阻塞
+		// （仅派生 enabled=false 逃生舱态供 chip 禁用提示；开关 UI 已撒，spec permission-mode D7）
+		void loadPermissionGate();
+		loadGeneral();
+		// Full-refresh's historical silent LAN read must not take over the catalog error field.
+		void getPi()
+			.lanGetStatus()
+			.then((lanStatus) => set({ lanStatus }))
+			.catch(() => {});
+		await loadModelsData("local");
 		// 已加载资源：顺序排在目录之后（沿用改造前顺序）；目录失败也照取
 		await loadLoadedResources();
 	};
@@ -378,20 +414,37 @@ export const useSettingsStore = create<SettingsStore>((set, get) => {
 		error: null,
 
 		setOpen: (open) => {
+			const wasOpen = get().open;
 			set({ open, testResults: {}, error: null });
-			if (open) void get().refresh();
+			if (open && !wasOpen) {
+				void loadPermissionGate();
+				loadPanel(get().category);
+			}
 		},
 
 		openWith: (category) => {
-			set((state) => ({ category: category ?? state.category, open: true, testResults: {}, error: null }));
-			void get().refresh();
+			const previous = get();
+			const target = category ?? previous.category;
+			set({ category: target, open: true, testResults: {}, error: null });
+			if (!previous.open) void loadPermissionGate();
+			if (!previous.open || previous.category !== target) loadPanel(target);
 		},
 
-		setCategory: (category) => set({ category }),
+		setCategory: (category) => {
+			if (get().category === category) return;
+			set({ category });
+			if (get().open) loadPanel(category);
+		},
+		loadPermissionGate,
+		refreshAfterMutation: async (domain) => {
+			await loadModelsData("mutation");
+			if (domain === "packages") await loadLoadedResources();
+			await useSessionsStore.getState().loadModels();
+		},
 
 		refresh: async () => {
 			// 目录走协调器（loading/error/发布都受仲裁）；prefs/subagents/资源各自独立发布
-			await loadPanelData("local");
+			await loadFullData();
 		},
 
 		refreshProvidersFromNetwork: async () => {

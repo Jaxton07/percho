@@ -1,7 +1,6 @@
 import type { LoginAuthPrompt, ProviderInfo } from "@percho/shared";
 import { create } from "zustand";
 import { getPi } from "../api";
-import { useSessionsStore } from "./sessions";
 import { useSettingsStore } from "./settings";
 
 /** 交互登录（OAuth / api_key，如 Google Vertex）流程的 UI 状态机；事件来自 backend LoginService 桥接 */
@@ -99,8 +98,7 @@ export const useProviderLoginStore = create<ProviderLoginStore>((set, get) => ({
 			if (result.ok) {
 				set({ login: null });
 				// 凭证已持久化并同步运行时：刷新 provider 徽章 + 模型选择器
-				await useSettingsStore.getState().refresh();
-				await useSessionsStore.getState().loadModels();
+				await useSettingsStore.getState().refreshAfterMutation("provider");
 			} else if (result.cancelled) {
 				set({ login: null });
 			} else {

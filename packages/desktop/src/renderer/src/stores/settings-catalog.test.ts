@@ -27,6 +27,11 @@ const api = vi.hoisted(() => ({
 	saveApiKey: vi.fn(),
 	removeCredential: vi.fn(),
 	setProviderBaseUrl: vi.fn(),
+	installPackage: vi.fn(),
+	removePackage: vi.fn(),
+	listConfiguredPackages: vi.fn(),
+	startProviderLogin: vi.fn(),
+	onProviderLoginEvent: vi.fn(),
 }));
 vi.mock("../api", () => ({ getPi: () => api }));
 const toasts = vi.hoisted(() => ({ pushToast: vi.fn() }));
@@ -90,7 +95,7 @@ beforeEach(async () => {
 	store = (await import("./settings")).useSettingsStore;
 });
 
-describe("V03 current settings request matrix (baseline for ticket 11)", () => {
+describe("V03 settings consumer matrix (ticket 11 target)", () => {
 	it("import is lazy; category changes and closing perform no requests", () => {
 		expect(store.getState().permissionGateOff).toBeNull();
 		store.getState().setCategory("general");
@@ -117,20 +122,173 @@ describe("V03 current settings request matrix (baseline for ticket 11)", () => {
 		await store.getState().refresh();
 		expect(api.getLoadedResources).toHaveBeenCalledWith({ sessionId: "active" });
 	});
-	it("reopening the same category rereads permission/LAN; openWith also performs full refresh", async () => {
+	it("reopening general rereads permission/general but never LAN or model domains", async () => {
 		api.listProviders.mockResolvedValue([]);
 		store.getState().setCategory("general");
 		store.getState().setOpen(true);
-		await vi.waitFor(() => expect(store.getState().loading).toBe(false));
+		await store.getState().loadPermissionGate();
 		expect(api.getPermissionConfig).toHaveBeenCalledTimes(1);
-		expect(api.lanGetStatus).toHaveBeenCalledTimes(1);
+		expect(api.lanGetStatus).not.toHaveBeenCalled();
 		store.getState().setOpen(false);
 		api.getPermissionConfig.mockResolvedValue({ enabled: false });
 		store.getState().openWith("general");
 		await vi.waitFor(() => expect(store.getState().permissionGateOff).toBe(true));
 		expect(api.getPermissionConfig).toHaveBeenCalledTimes(2);
-		expect(api.lanGetStatus).toHaveBeenCalledTimes(2);
-		expect(coldCalls()).toEqual([false, false]);
+		expect(api.lanGetStatus).not.toHaveBeenCalled();
+		expect(api.getContextManagerConfig).toHaveBeenCalledTimes(2);
+		expect(api.getChannelWatchConfig).toHaveBeenCalledTimes(2);
+		expect(coldCalls()).toEqual([]);
+	});
+});
+
+describe("D10 consumer and mutation responsibilities", () => {
+	it.each(["general", "models", "skills", "extensions", "lan", "appearance", "mcp", "about", "plugin:test"])(
+		"openWith(%s) only reads its settings domains plus the shared gate",
+		async (category) => {
+			api.listProviders.mockResolvedValue([]);
+			sessionsState.activeSessionId = "matrix-session";
+			store.getState().openWith(category as import("./settings").SettingsCategory);
+			await store.getState().loadPermissionGate();
+			const full = category.startsWith("plugin:");
+			if (full) await vi.waitFor(() => expect(api.getLoadedResources).toHaveBeenCalledOnce());
+			for (const [mock, enabled] of [
+				[api.getContextManagerConfig, full || category === "general"],
+				[api.getChannelWatchConfig, full || category === "general"],
+				[api.listProviders, full || category === "models"],
+				[api.getModelPrefs, full || category === "models"],
+				[api.listSubagents, full || category === "models"],
+				[api.getLoadedResources, full || category === "skills" || category === "extensions"],
+				[api.lanGetStatus, full || category === "lan"],
+			] as const)
+				expect(mock).toHaveBeenCalledTimes(enabled ? 1 : 0);
+			expect(api.getPermissionConfig).toHaveBeenCalledOnce();
+		},
+	);
+	it("closed category/same category/read-once marker never turns into TTL; reentry reads again without clearing other domains", async () => {
+		api.listProviders.mockResolvedValue(providers("kept"));
+		await store.getState().refresh();
+		const kept = store.getState().providers;
+		vi.clearAllMocks();
+		store.getState().setCategory("appearance");
+		expect(api.getPermissionConfig).not.toHaveBeenCalled();
+		store.getState().setOpen(true);
+		await store.getState().loadPermissionGate();
+		store.getState().setOpen(true);
+		store.getState().setCategory("appearance");
+		store.getState().openWith("appearance");
+		expect(api.getPermissionConfig).toHaveBeenCalledOnce();
+		expect(api.listProviders).not.toHaveBeenCalled();
+		expect(store.getState().providers).toBe(kept);
+		store.getState().setCategory("general");
+		expect(api.getContextManagerConfig).toHaveBeenCalledOnce();
+		store.getState().setCategory("general");
+		expect(api.getContextManagerConfig).toHaveBeenCalledOnce();
+		store.getState().setOpen(false);
+		store.getState().setOpen(true);
+		await store.getState().loadPermissionGate();
+		expect(api.getPermissionConfig).toHaveBeenCalledTimes(2);
+		expect(api.getContextManagerConfig).toHaveBeenCalledTimes(2);
+	});
+	it("independent gate startup coalesces pending reads and retries after failure, then reopens detect edited config", async () => {
+		const gate = deferred<{ enabled: boolean }>();
+		api.getPermissionConfig.mockReturnValueOnce(gate.promise);
+		const startup = store.getState().loadPermissionGate();
+		expect(store.getState().loadPermissionGate()).toBe(startup);
+		store.getState().openWith("appearance");
+		expect(api.getPermissionConfig).toHaveBeenCalledOnce();
+		gate.reject(Error("gate read"));
+		await startup;
+		expect(store.getState().permissionGateOff).toBeNull();
+		api.getPermissionConfig.mockResolvedValue({ enabled: false });
+		await store.getState().loadPermissionGate();
+		expect(store.getState().permissionGateOff).toBe(true);
+		store.getState().setOpen(false);
+		api.getPermissionConfig.mockResolvedValue({ enabled: true });
+		store.getState().setOpen(true);
+		await store.getState().loadPermissionGate();
+		expect(store.getState().permissionGateOff).toBe(false);
+		expect(api.getPermissionConfig).toHaveBeenCalledTimes(3);
+	});
+	it.each(["provider", "packages"] as const)(
+		"%s mutation refresh preserves catalog generation/models while avoiding general/gate/LAN",
+		async (domain) => {
+			api.listProviders.mockResolvedValue(providers("changed"));
+			sessionsState.activeSessionId = "mutation-session";
+			await store.getState().refreshAfterMutation(domain);
+			expect(api.listProviders).toHaveBeenCalledOnce();
+			expect(api.getModelPrefs).toHaveBeenCalledOnce();
+			expect(api.listSubagents).toHaveBeenCalledOnce();
+			expect(api.loadModels).toHaveBeenCalledOnce();
+			expect(api.getLoadedResources).toHaveBeenCalledTimes(domain === "packages" ? 1 : 0);
+			for (const mock of [
+				api.getPermissionConfig,
+				api.getContextManagerConfig,
+				api.getChannelWatchConfig,
+				api.lanGetStatus,
+			])
+				expect(mock).not.toHaveBeenCalled();
+		},
+	);
+	it.each(["failed", "cancelled"] as const)(
+		"actual login %s keeps its existing error/cancel ownership and never refreshes domains",
+		async (outcome) => {
+			const off = vi.fn();
+			api.onProviderLoginEvent.mockReturnValue(off);
+			api.startProviderLogin.mockResolvedValue(
+				outcome === "failed" ? { ok: false, error: "login denied" } : { ok: false, cancelled: true },
+			);
+			const login = (await import("./provider-login")).useProviderLoginStore;
+			await login.getState().startProviderLogin(providers("login-provider")[0] as ProviderInfo);
+			expect(off).toHaveBeenCalledOnce();
+			if (outcome === "failed") expect(login.getState().login?.error).toBe("login denied");
+			else expect(login.getState().login).toBeNull();
+			for (const mock of [
+				api.loadModels,
+				api.listProviders,
+				api.getModelPrefs,
+				api.getLoadedResources,
+				api.getPermissionConfig,
+				api.lanGetStatus,
+			])
+				expect(mock).not.toHaveBeenCalled();
+		},
+	);
+	it("full refresh retains silent LAN read while LAN panel owns its visible error", async () => {
+		api.listProviders.mockRejectedValue(Error("catalog denied"));
+		api.lanGetStatus.mockRejectedValue(Error("lan denied"));
+		await store.getState().refresh();
+		expect(store.getState().error).toBe("catalog denied");
+		store.getState().openWith("lan");
+		await vi.waitFor(() => expect(store.getState().error).toBe("lan denied"));
+	});
+	it("actual package install/remove and login success delegate the domain mutation entry, without broad refresh", async () => {
+		api.listProviders.mockResolvedValue([]);
+		api.listConfiguredPackages.mockResolvedValue([]);
+		api.installPackage.mockResolvedValue(undefined);
+		api.removePackage.mockResolvedValue(undefined);
+		sessionsState.activeSessionId = "packages";
+		const catalog = (await import("./catalog")).useCatalogStore;
+		await catalog.getState().installCatalogPackage("fixture");
+		await vi.waitFor(() => expect(api.loadModels).toHaveBeenCalledTimes(1));
+		await catalog.getState().removeConfiguredPackage("fixture", "user");
+		await vi.waitFor(() => expect(api.loadModels).toHaveBeenCalledTimes(2));
+		expect(api.getLoadedResources).toHaveBeenCalledTimes(2);
+		const off = vi.fn();
+		api.onProviderLoginEvent.mockReturnValue(off);
+		api.startProviderLogin.mockResolvedValue({ ok: true });
+		const login = (await import("./provider-login")).useProviderLoginStore;
+		await login.getState().startProviderLogin(providers("login-provider")[0] as ProviderInfo);
+		expect(api.loadModels).toHaveBeenCalledTimes(3);
+		expect(api.getLoadedResources).toHaveBeenCalledTimes(2);
+		expect(off).toHaveBeenCalledOnce();
+		expect(login.getState().login).toBeNull();
+		for (const mock of [
+			api.getPermissionConfig,
+			api.getContextManagerConfig,
+			api.getChannelWatchConfig,
+			api.lanGetStatus,
+		])
+			expect(mock).not.toHaveBeenCalled();
 	});
 });
 

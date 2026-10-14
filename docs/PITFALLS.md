@@ -1106,6 +1106,12 @@ pgrep -f "electron-vite" | xargs -r kill -9
 - 需要「点真实子代理卡」这类依赖模型行为的场景，优先找**历史回放**入口：历史里已有子代理运行的父会话，打开它 → transcript 重放出卡片 → 点它，同样落到只读检视页，且完全确定性（子会话文件在 `<agentDir>/sessions-subagents/`，后端按路径判定 `readOnly`）。现场真跑一次 subagent 依赖凭证可用，dev 里常 401 拿不到可点卡片。
   - 2026-10-12 补充（qol3 阶段 2 实测）：dev agentDir 里**可能一个可点子代理卡都没有** —— 唯一一次真实 subagent 运行是 401 失败、没有 `sessionFile`（这类行渲染成不可点）。确定性做法：挑一个含 `"toolName":"subagent"` 的父会话打开，往 `useTranscriptStore` 的 `bySession[id].streaming.subagentRuns` **注入一条** `{key,agent,status:"done",sessionFile:<真实存在的 sessions-subagents 文件>}`（注入要重试：bundle 可能晚于注入落地并把 `streaming` 覆盖回磁盘态），卡片就会渲染出来，点它走的是**真实**组件 + 真实 store + 真实子会话文件；唯一合成物是那一行运行记录，写明即可。
 
+### 设置按域读取不能丢全局权限/世代或造第二个LAN初读（2026-10-14）
+
+setOpen关→开与openWith/setCategory按消费者域加载；关闭改分类和相同分类不刷新，其他字段不清。PermissionPicker稳定mount独立loadPermissionGate单飞；关→开/全量refresh再读，不是永久loaded/TTL。plugin:*保守全量且资源只读一次，权限入口共享在途避免重复。
+
+ProvidersPanel挂载联网不撤（私有local目录与network原仲裁不改）；LAN初读由store分类负责，组件只做enabled时5s轮询和cleanup。provider/登录成功/包装卸经统一refreshAfterMutation，以mutation目录路径推进写盘世代并刷新模型选择器；包还需当前会话loadedResources。不要把全量refresh从mutation搬到另一个effect。原modelPrefs串行队列/subagents序号/resources失败toast保留；全量兼容refresh的LAN失败仍静默，分类/poll公开refreshLanStatus仍自己显形error，不能借拆loader改错误归属。
+
 ### 当前目录投影必须算最终patch，不监听补写（2026-10-14）
 
 selectActiveCwd：无active看draft.cwd（null是权威，不回退旧项目）；已知active看meta.cwd；未知ID只保留兼容cwd兜底。宿主动作用commitSessionState对原状态+最终patch一次派生兼容字段，不能在旧state上算、先导航再订阅补写，更不能包装插件/测试公开setState（外部播种保持原Zustand行为）。draft创建输入来源/close fallback用于生成draft的meta读取仍保留，不机械替换所有cwd。

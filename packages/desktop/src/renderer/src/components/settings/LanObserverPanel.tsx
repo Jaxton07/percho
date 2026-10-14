@@ -13,9 +13,7 @@ export function LanObserverPanel() {
 	const setRemoteControl = useSettingsStore((s) => s.setLanRemoteControl);
 	const [copied, setCopied] = useState(false);
 
-	useEffect(() => {
-		void refresh();
-	}, [refresh]);
+	// Initial load belongs to settings' category transition; this effect only polls while enabled.
 	useEffect(() => {
 		if (!status?.enabled) return;
 		const timer = setInterval(() => void refresh(), 5000);

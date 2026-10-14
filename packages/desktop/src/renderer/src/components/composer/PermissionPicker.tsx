@@ -26,6 +26,10 @@ export function PermissionPicker() {
 	const setSessionPermissionMode = useSessionsStore((s) => s.setSessionPermissionMode);
 	const setDraftPermissionMode = useSessionsStore((s) => s.setDraftPermissionMode);
 	const gateOff = useSettingsStore((s) => s.permissionGateOff);
+	const loadPermissionGate = useSettingsStore((s) => s.loadPermissionGate);
+	useEffect(() => {
+		void loadPermissionGate();
+	}, [loadPermissionGate]);
 	const [open, setOpen] = useState(false);
 	const ref = useRef<HTMLDivElement>(null);
 

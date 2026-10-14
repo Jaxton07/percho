@@ -17,6 +17,8 @@ const harness = vi.hoisted(() => ({
 		refreshLanStatus: vi.fn().mockResolvedValue(undefined),
 		setLanEnabled: vi.fn(),
 		setLanRemoteControl: vi.fn(),
+		permissionGateOff: null,
+		loadPermissionGate: vi.fn().mockResolvedValue(undefined),
 	},
 }));
 vi.mock("react", async (importOriginal) => {
@@ -27,6 +29,7 @@ vi.mock("react", async (importOriginal) => {
 			harness.effects.push({ callback, deps });
 		},
 		useState: (value: unknown) => [typeof value === "string" ? harness.tab : value, vi.fn()],
+		useRef: () => ({ current: null }),
 	};
 });
 vi.mock("../../stores/settings", () => ({
@@ -35,12 +38,23 @@ vi.mock("../../stores/settings", () => ({
 		{ getState: () => harness.state },
 	),
 }));
+vi.mock("../../stores/sessions", () => ({
+	useSessionsStore: (selector: (state: any) => unknown) =>
+		selector({
+			activeSessionId: null,
+			newSessionDraft: { permissionMode: "default" },
+			permissionModes: {},
+			setDraftPermissionMode: vi.fn(),
+			setSessionPermissionMode: vi.fn(),
+		}),
+}));
 vi.mock("../../i18n", () => ({ useT: () => (key: string) => key }));
 vi.mock("./providers/CustomProviderForm", () => ({ CustomProviderForm: () => null }));
 vi.mock("./providers/LoginDialog", () => ({ LoginDialog: () => null }));
 vi.mock("./providers/ProviderRow", () => ({ IconAction: () => null, ProviderRow: () => null }));
 vi.mock("./providers/SubagentPanel", () => ({ SubagentPanel: () => null }));
 
+import { PermissionPicker } from "../composer/PermissionPicker";
 import { LanObserverPanel } from "./LanObserverPanel";
 import { ProvidersPanel } from "./providers/ProvidersPanel";
 
@@ -70,23 +84,31 @@ describe("V03 panel effect callback ownership", () => {
 		ProvidersPanel();
 		expect(harness.effects[0]?.deps).toEqual([]); // React keeps the same [] effect on sub-tab rerender.
 	});
-	it("LAN has one initial callback, no disabled poll; enabled poll is 5s with timer cleanup", () => {
-		LanObserverPanel();
+	it("permission picker bootstraps the gate independently of opening settings", () => {
+		PermissionPicker();
 		expect(harness.effects).toHaveLength(2);
+		expect(harness.effects[0]?.deps).toEqual([harness.state.loadPermissionGate]);
 		harness.effects[0]?.callback();
-		harness.effects[1]?.callback();
+		expect(harness.state.loadPermissionGate).toHaveBeenCalledOnce();
+		expect(harness.state.refreshProvidersFromNetwork).not.toHaveBeenCalled();
+		expect(harness.state.refreshLanStatus).not.toHaveBeenCalled();
+	});
+	it("LAN has no initial load callback; enabled-only polling retains 5s and cleanup", () => {
+		LanObserverPanel();
+		expect(harness.effects).toHaveLength(1);
+		harness.effects[0]?.callback();
 		vi.advanceTimersByTime(10000);
-		expect(harness.state.refreshLanStatus).toHaveBeenCalledTimes(1);
+		expect(harness.state.refreshLanStatus).not.toHaveBeenCalled();
 		expect(harness.state.refreshProvidersFromNetwork).not.toHaveBeenCalled();
 		harness.effects = [];
 		harness.state.lanStatus = { enabled: true, urls: [] };
 		LanObserverPanel();
-		const cleanup = harness.effects[1]?.callback();
+		const cleanup = harness.effects[0]?.callback();
 		vi.advanceTimersByTime(5000);
-		expect(harness.state.refreshLanStatus).toHaveBeenCalledTimes(2);
+		expect(harness.state.refreshLanStatus).toHaveBeenCalledTimes(1);
 		if (typeof cleanup !== "function") throw Error("Expected enabled polling cleanup");
 		cleanup();
 		vi.advanceTimersByTime(10000);
-		expect(harness.state.refreshLanStatus).toHaveBeenCalledTimes(2);
+		expect(harness.state.refreshLanStatus).toHaveBeenCalledTimes(1);
 	});
 });

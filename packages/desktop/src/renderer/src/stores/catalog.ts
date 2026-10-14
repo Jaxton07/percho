@@ -114,8 +114,8 @@ export const useCatalogStore = create<CatalogStore>((set, get) => {
 			try {
 				await getPi().installPackage({ name });
 				await get().refreshConfiguredPackages();
-				// backend 已对非流式会话做 session.reload()，刷新已加载资源列表让「已加载」页同步
-				void useSettingsStore.getState().refresh();
+				// backend reload后刷新模型域与已加载资源，不读取general/LAN。
+				void useSettingsStore.getState().refreshAfterMutation("packages");
 			} catch (error) {
 				set((state) => ({
 					installErrors: {
@@ -150,8 +150,8 @@ export const useCatalogStore = create<CatalogStore>((set, get) => {
 			try {
 				await getPi().removePackage({ source, scope });
 				await get().refreshConfiguredPackages();
-				// backend 已对非流式会话做 session.reload()，刷新已加载资源列表让「已加载」页同步
-				void useSettingsStore.getState().refresh();
+				// backend reload后刷新模型域与已加载资源，不读取general/LAN。
+				void useSettingsStore.getState().refreshAfterMutation("packages");
 			} catch (error) {
 				set((state) => ({
 					removeErrors: {
