@@ -1185,11 +1185,10 @@ SDK reload会shutdown旧扩展/MCP连接，不是无害的配置重读。原Pack
   但临时目录落在**本仓库**里 ⇒ git 判定为 ignored（拿到 `ignored` 而不是 `not-git`）。
 - `test/trust.test.ts > 无信任需求资源的项目直接可信`：项目落在仓库内部 ⇒ 扫到仓库的资源目录，判定需要信任。
 
-这不是回归，而是「临时目录必须干净、且不在 git 仓库内」这个隐含前提被破坏。做法上：
-- **我们自己的**中间产物一律写 `.local/tmp/<专用前缀>`（项目规则），新测试也按此隔离
-  （`packages/backend/test/channel-subscriptions.test.ts` 用 `.local/tmp/qol3-channel-subs-test`，两种 TMPDIR 下都绿）；
-- 但**不要**拿 `TMPDIR=<repo>/.local/tmp` 跑整个后端套件当「合规」证据 —— 那两条例外要先说明，
-  或把它们的 fixture 改成不依赖 TMPDIR 位置。
+这不是产品回归，而是测试对祖先环境的隐含依赖。**2026-10-14已修复测试，不再将这两项列为固定例外：**
+- Git的非仓库用例临时设置`GIT_CEILING_DIRECTORIES=realpath(testRoot)`，阻止发现祖先仓库；仍执行真实Git、保留原断言，`afterEach`恢复环境。其余嵌套真实仓库用例不设上界。
+- trust的无资源用例仅把SDK资源探测结果控制为false，验证宿主直接信任、不询问且不写信任记录；真实ProjectTrustStore保留，其余用例默认调用真实SDK探测，每例后重置mock。SDK当前检查cwd的`.pi`及祖先`.agents/skills`，不能因为测试在仓库内就修改产品信任规则。
+- 中间产物继续写`.local/tmp/<专用前缀>`，不必迁到系统临时目录。完整套件应在显式隔离agent/TMPDIR下照跑，其他失败不得套用旧两项豁免。
 
 ### 组件测试（`renderToStaticMarkup`）在 vitest 里读不到 store 的运行时状态（2026-10-12，qol3 阶段 2）
 

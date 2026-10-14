@@ -1,9 +1,9 @@
 import { execFile } from "node:child_process";
-import { mkdir, mkdtemp, readFile, rm, stat, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, realpath, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { promisify } from "node:util";
-import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 import {
 	AGENT_WORK_REL,
 	channelRoot,
@@ -26,6 +26,10 @@ afterAll(async () => {
 	await rm(testRoot, { recursive: true, force: true });
 });
 
+afterEach(() => {
+	vi.unstubAllEnvs();
+});
+
 describe("validateTopic", () => {
 	it("合法 topic 通过", () => {
 		for (const t of ["channel-automation", "abc", "Task_1.2", "a"]) {
@@ -41,6 +45,8 @@ describe("validateTopic", () => {
 
 describe("ensureAgentWorkInit", () => {
 	it("非 git 目录：建三子目录、gitignore=not-git、幂等", async () => {
+		// TMPDIR可能在仓库内：只约束此用例的Git向上发现，仍执行真实Git。
+		vi.stubEnv("GIT_CEILING_DIRECTORIES", await realpath(testRoot));
 		const cwd = join(testRoot, "plain");
 		const r1 = await ensureAgentWorkInit(cwd);
 		expect(r1.created).toHaveLength(4); // agent-work 根 + 3 子目录

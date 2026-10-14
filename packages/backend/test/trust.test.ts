@@ -1,13 +1,22 @@
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { ProjectTrustStore } from "@earendil-works/pi-coding-agent";
-import { afterEach, describe, expect, it } from "vitest";
+import { hasTrustRequiringProjectResources, ProjectTrustStore } from "@earendil-works/pi-coding-agent";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { buildTrustOptions, resolveProjectTrust, TrustGate } from "../src/project/trust";
+
+vi.mock("@earendil-works/pi-coding-agent", async (importOriginal) => {
+	const actual = await importOriginal<typeof import("@earendil-works/pi-coding-agent")>();
+	return {
+		...actual,
+		hasTrustRequiringProjectResources: vi.fn(actual.hasTrustRequiringProjectResources),
+	};
+});
 
 const roots: string[] = [];
 const gates: TrustGate[] = [];
 afterEach(() => {
+	vi.mocked(hasTrustRequiringProjectResources).mockReset();
 	for (const gate of gates.splice(0)) gate.dispose();
 	for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true });
 });
@@ -45,10 +54,14 @@ describe("resolveProjectTrust", () => {
 		mkdirSync(cwd, { recursive: true });
 		const agentDir = join(root, "agent");
 		mkdirSync(agentDir, { recursive: true });
+		// 这里只验证“无资源”的宿主决策，不依赖SDK扫描到哪些祖先资源。
+		// 其他用例仍默认执行真实探测，ProjectTrustStore也保持真实实现。
+		vi.mocked(hasTrustRequiringProjectResources).mockReturnValueOnce(false);
+		const trustStore = new ProjectTrustStore(agentDir);
 		let asked = false;
 		const trusted = await resolveProjectTrust({
 			cwd,
-			trustStore: new ProjectTrustStore(agentDir),
+			trustStore,
 			defaultProjectTrust: "ask",
 			askUser: async () => {
 				asked = true;
@@ -57,6 +70,8 @@ describe("resolveProjectTrust", () => {
 		});
 		expect(trusted).toBe(true);
 		expect(asked).toBe(false);
+		expect(hasTrustRequiringProjectResources).toHaveBeenCalledExactlyOnceWith(cwd);
+		expect(trustStore.get(cwd)).toBeNull();
 	});
 
 	it("trust.json 有记录时直接用记录，不问用户", async () => {
