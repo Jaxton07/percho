@@ -2,6 +2,7 @@ import type { McpServerView } from "@percho/shared";
 import { useEffect, useState } from "react";
 import { getPi } from "../../../api";
 import { useT } from "../../../i18n";
+import { selectActiveCwd } from "../../../lib/active-cwd";
 import { useMcpStore } from "../../../stores/mcp";
 import { useSessionsStore } from "../../../stores/sessions";
 import { selectTranscript, useTranscriptStore } from "../../../stores/transcript";
@@ -65,7 +66,7 @@ function Group({ title, path, children }: { title: string; path?: string; childr
  * 这里分两个概念：配置读写用 `cwd`；运行态（连接/工具清单）靠会话上报，用 `hasSession` 判断。
  */
 function useProjectCwd(): string | undefined {
-	return useSessionsStore((s) => s.cwd ?? undefined);
+	return useSessionsStore((s) => selectActiveCwd(s) ?? undefined);
 }
 
 /** 是否有活跃会话（运行态报告来源）：draft 新会话页为 null */

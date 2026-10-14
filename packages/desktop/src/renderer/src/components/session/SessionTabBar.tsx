@@ -20,6 +20,7 @@ import type { ComponentProps } from "react";
 import { useCallback, useEffect, useState } from "react";
 import { getPi } from "../../api";
 import { useT } from "../../i18n";
+import { selectActiveCwd } from "../../lib/active-cwd";
 import { prefersReducedMotion, useListShift } from "../../lib/use-list-shift";
 import { useWorkspaceRemoval } from "../../lib/workspace-actions";
 import { COMPOSER_FOCUS_EVENT } from "../../stores/drafts";
@@ -237,7 +238,7 @@ export function SessionTabBar() {
 	const activeSessionId = useSessionsStore((s) => s.activeSessionId);
 	const activateNewSessionDraft = useSessionsStore((s) => s.activateNewSessionDraft);
 
-	const cwd = useSessionsStore((s) => s.cwd);
+	const cwd = useSessionsStore(selectActiveCwd);
 	const diffSidebarOpen = useUiStore((s) => s.diffSidebarOpen);
 	const toggleDiffSidebar = useUiStore((s) => s.toggleDiffSidebar);
 	const sidebarCollapsed = useUiPreferencesStore((s) => s.sidebarCollapsed);

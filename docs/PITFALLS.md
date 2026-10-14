@@ -1106,6 +1106,12 @@ pgrep -f "electron-vite" | xargs -r kill -9
 - 需要「点真实子代理卡」这类依赖模型行为的场景，优先找**历史回放**入口：历史里已有子代理运行的父会话，打开它 → transcript 重放出卡片 → 点它，同样落到只读检视页，且完全确定性（子会话文件在 `<agentDir>/sessions-subagents/`，后端按路径判定 `readOnly`）。现场真跑一次 subagent 依赖凭证可用，dev 里常 401 拿不到可点卡片。
   - 2026-10-12 补充（qol3 阶段 2 实测）：dev agentDir 里**可能一个可点子代理卡都没有** —— 唯一一次真实 subagent 运行是 401 失败、没有 `sessionFile`（这类行渲染成不可点）。确定性做法：挑一个含 `"toolName":"subagent"` 的父会话打开，往 `useTranscriptStore` 的 `bySession[id].streaming.subagentRuns` **注入一条** `{key,agent,status:"done",sessionFile:<真实存在的 sessions-subagents 文件>}`（注入要重试：bundle 可能晚于注入落地并把 `streaming` 覆盖回磁盘态），卡片就会渲染出来，点它走的是**真实**组件 + 真实 store + 真实子会话文件；唯一合成物是那一行运行记录，写明即可。
 
+### 当前目录投影必须算最终patch，不监听补写（2026-10-14）
+
+selectActiveCwd：无active看draft.cwd（null是权威，不回退旧项目）；已知active看meta.cwd；未知ID只保留兼容cwd兜底。宿主动作用commitSessionState对原状态+最终patch一次派生兼容字段，不能在旧state上算、先导航再订阅补写，更不能包装插件/测试公开setState（外部播种保持原Zustand行为）。draft创建输入来源/close fallback用于生成draft的meta读取仍保留，不机械替换所有cwd。
+
+数据landMeta含LRU也要走提交，GC late reopen时重算当下active目录而非late meta的目录，焦点/成员不能动。旧fork/GC手工stale种子是反例不是正常必现bug；ticket10以真实selector翻红→修绿，另测切到别的项目再收late metadata。兼容字段不删，宿主八读侧用selector而不假设外部seed镜像总是正确；Mcp的null→undefined域适配保留。
+
 ### Renderer装载拆分不能带走导航或缓存store快照（2026-10-14）
 
 session-navigation仅持两个独立令牌，store保留draft页＋只noteUserIntent的例外；session-loading只有四个固定data端口，isOpen/permissions在await后调用现读，landMeta含LRU但不焦点/成员/draft。不能把宽setState端口或反向store import包装成拆分。

@@ -1,5 +1,6 @@
 import { type CSSProperties, useMemo, useRef, useState } from "react";
 import { useT } from "../../i18n";
+import { selectActiveCwd } from "../../lib/active-cwd";
 import { deriveSidebarNavigation } from "../../lib/sidebar-groups";
 import { useEdgeFade } from "../../lib/use-edge-fade";
 import { useProjectsStore } from "../../stores/projects";
@@ -43,8 +44,8 @@ export function Sidebar() {
 	const activeSessionId = useSessionsStore((s) => s.activeSessionId);
 	// 内存会话（含刚创建还没进历史的真实会话与只读子会话）：与磁盘历史合并成左栏数据源（spec D2）
 	const memorySessions = useSessionsStore((s) => s.sessions);
-	// 默认展开组用「当前目录」：真实会话 = 它的项目；新会话页 = draft 的目录（store.cwd 两处都已镜像）
-	const activeCwd = useSessionsStore((s) => s.cwd);
+	// 默认展开组使用同一当前目录规则，不依赖外部seed的兼容镜像。
+	const activeCwd = useSessionsStore(selectActiveCwd);
 
 	// 装配全在纯函数层（含只读子会话过滤 + 项目表同源），Sidebar 只负责取数与分发
 	const data = useMemo(

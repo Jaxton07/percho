@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { getPi } from "../../api";
 import { useT } from "../../i18n";
+import { selectActiveCwd } from "../../lib/active-cwd";
 import { getDailyDirCached, isDailyCwd } from "../../lib/daily";
 import { deriveProjects, useProjectsStore } from "../../stores/projects";
 import { useSessionsStore } from "../../stores/sessions";
@@ -9,7 +10,7 @@ import { Dropdown } from "../ui/Dropdown";
 
 /** 空态 Composer 下方：项目目录选择 + git 分支选择（对标 opencode） */
 export function ProjectBranchPicker() {
-	const cwd = useSessionsStore((s) => s.cwd);
+	const cwd = useSessionsStore(selectActiveCwd);
 	const activeSessionId = useSessionsStore((s) => s.activeSessionId);
 	// 真实会话的项目在创建时已绑定、不可更改：只在新会话页（无 active）提供切换，
 	// 避免选择器看起来能切、实际不生效的假交互
@@ -31,7 +32,7 @@ export function ProjectBranchPicker() {
 
 function ProjectPicker() {
 	const t = useT();
-	const cwd = useSessionsStore((s) => s.cwd);
+	const cwd = useSessionsStore(selectActiveCwd);
 	const pickDirectory = useSessionsStore((s) => s.pickDirectory);
 	const setDraftCwd = useSessionsStore((s) => s.setDraftCwd);
 	const allSessions = useProjectsStore((s) => s.allSessions);

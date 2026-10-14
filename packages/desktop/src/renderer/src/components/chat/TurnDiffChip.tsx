@@ -1,6 +1,7 @@
 import type { TurnChanges, TurnTiming } from "@percho/shared";
 import { useEffect, useReducer, useState } from "react";
 import { useT } from "../../i18n";
+import { selectActiveCwd } from "../../lib/active-cwd";
 import { useSessionsStore } from "../../stores/sessions";
 import { useUiStore } from "../../stores/ui";
 import { ClockIcon, MoreIcon } from "../icons";
@@ -73,7 +74,7 @@ export function TurnDiffChip({
 	const setDiffSidebarOpen = useUiStore((s) => s.setDiffSidebarOpen);
 	const setDiffFocus = useUiStore((s) => s.setDiffFocus);
 	/** 相对路径文件行的解析基准（变更行里的路径是模型原样给出的，可能是相对的） */
-	const cwd = useSessionsStore((s) => s.cwd);
+	const cwd = useSessionsStore(selectActiveCwd);
 	/** 文件行右键菜单：记住打开的那一行（target + 锚点） */
 	const [menu, setMenu] = useState<{ path: string; anchor: MenuAnchor } | null>(null);
 	const enterCls = entering ? " turn-diff-enter" : "";

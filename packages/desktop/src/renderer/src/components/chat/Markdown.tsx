@@ -5,6 +5,7 @@ import "markstream-react/index.css";
 import "katex/dist/katex.min.css";
 import { type MouseEvent, useMemo, useRef } from "react";
 import { getPi } from "../../api";
+import { selectActiveCwd } from "../../lib/active-cwd";
 import { errText } from "../../lib/error-text";
 import { monacoFontSizeFor, monacoLineHeightFor } from "../../lib/typography";
 import { useSessionsStore } from "../../stores/sessions";
@@ -79,7 +80,7 @@ const REDUCED_MOTION =
  */
 export function Markdown({ text, streaming }: { text: string; streaming?: boolean }) {
 	const isDark = useThemeStore((s) => s.resolved === "dark");
-	const cwd = useSessionsStore((s) => s.cwd);
+	const cwd = useSessionsStore(selectActiveCwd);
 	const onLinkClick = (event: MouseEvent<HTMLDivElement>) => {
 		const anchor = event.target instanceof Element ? event.target.closest("a[href]") : null;
 		if (!anchor || !event.currentTarget.contains(anchor)) return;

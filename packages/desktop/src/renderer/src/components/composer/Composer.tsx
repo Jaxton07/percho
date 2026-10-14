@@ -3,6 +3,7 @@ import { type MouseEvent as ReactMouseEvent, useCallback, useEffect, useRef, use
 import { getPi } from "../../api";
 import { useActiveModelInfo, useSessionReadOnly } from "../../hooks/use-session-state";
 import { useT } from "../../i18n";
+import { selectActiveCwd } from "../../lib/active-cwd";
 import { prepareImageAttachment } from "../../lib/image-attachment";
 import { RegionHost } from "../../plugins/RegionHost";
 import { UI_REGIONS } from "../../plugins/slots";
@@ -45,7 +46,7 @@ export function Composer({ centered = false }: { centered?: boolean }) {
 	const activeSessionId = useSessionsStore((s) => s.activeSessionId);
 	/** 只读会话（subagent 产物检视）：输入/发送/图片全禁，模型与思考档位选择器置灰 */
 	const readOnly = useSessionReadOnly();
-	const cwd = useSessionsStore((s) => s.cwd);
+	const cwd = useSessionsStore(selectActiveCwd);
 	/** 信任决策应答后递增：新会话页的斜杠菜单按新决策（信任与否）重拉命令 */
 	const trustVersion = useSessionsStore((s) => s.trustVersion);
 	const transcript = useTranscriptStore((s) => selectTranscript(s, activeSessionId));

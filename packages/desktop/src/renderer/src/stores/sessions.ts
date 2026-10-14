@@ -1,6 +1,7 @@
 import type { AvailableModel, PermissionMode, SessionCloseIntent, SessionMeta } from "@percho/shared";
 import { create } from "zustand";
 import { getPi } from "../api";
+import { selectActiveCwd } from "../lib/active-cwd";
 import { errText } from "../lib/error-text";
 import { clampThinkingLevel } from "../lib/thinking";
 import { useChannelSubscriptionsStore } from "./channel-subscriptions";
@@ -113,7 +114,7 @@ export type OpenFromHistoryResult =
 
 /** 后端真值写入本 map（default = 删 key，保持「缺 key = default」语义） */
 function applyBackendPermissionMode(sessionId: string, mode: PermissionMode): void {
-	useSessionsStore.setState((state) => ({
+	commitSessionState((state) => ({
 		permissionModes: withPermissionMode(state.permissionModes, sessionId, mode),
 	}));
 }
@@ -175,7 +176,7 @@ async function optimisticSessionSetting(
 			Pick<NewSessionDraftConfig, "model" | "thinkingLevel" | "modelResolved" | "thinkingResolved">
 		>,
 	) =>
-		useSessionsStore.setState((state) => ({
+		commitSessionState((state) => ({
 			...g,
 			sessions: state.sessions.map((x) => (x.sessionId === activeSessionId ? { ...x, ...patch } : x)),
 			// draft 页没有会话条目可写：选择落在 draft 配置上（promotion 时随快照生效）
@@ -225,7 +226,7 @@ function rememberCwd(cwd: string | null): void {
 function ensureTrust(cwd: string): void {
 	void getPi()
 		.ensureProjectTrust({ cwd })
-		.then(() => useSessionsStore.setState((s) => ({ trustVersion: s.trustVersion + 1 })))
+		.then(() => commitSessionState((s) => ({ trustVersion: s.trustVersion + 1 })))
 		.catch((error) => {
 			console.error("项目信任检查失败", error);
 			pushToast("warning", "toast.trustFailed", errText(error));
@@ -262,7 +263,7 @@ async function promoteDraft(draft: NewSessionDraftConfig): Promise<string | null
 				{ file: meta.sessionFile, sessionId: meta.sessionId },
 				{ activate: isLatestActivation(token) },
 			);
-		useSessionsStore.setState((state) => {
+		commitSessionState((state) => {
 			// 同 id 已存在就不再 append（与 open pipeline 同一套防御性去重）
 			const sessions = state.sessions.some((s) => s.sessionId === meta.sessionId)
 				? state.sessions
@@ -270,7 +271,7 @@ async function promoteDraft(draft: NewSessionDraftConfig): Promise<string | null
 			const landed = { sessions, lastUsedAt: { ...state.lastUsedAt, [meta.sessionId]: Date.now() } };
 			if (isLatestActivation(token)) {
 				// 消费 draft：转正成功后新会话页不再留草稿（下次「＋」再按当时的会话快照新建一份）
-				return { ...landed, newSessionDraft: null, activeSessionId: meta.sessionId, cwd: targetCwd };
+				return { ...landed, newSessionDraft: null, activeSessionId: meta.sessionId };
 			}
 			// 迟到（用户已切走）：新会话仍进 sessions，但不抢焦点/cwd。
 			// 注意「转正途中点了『＋』」：此刻用户就在新会话页，而本次已消费掉那份 draft ——
@@ -367,7 +368,19 @@ interface SessionsStore {
 	setSessionPermissionMode: (sessionId: string, mode: PermissionMode) => Promise<void>;
 }
 
-export const useSessionsStore = create<SessionsStore>((set, get) => ({
+/** Host-only commit projects the final patched state; external Zustand setState stays native. */
+function commitSessionState(
+	patch: Partial<SessionsStore> | ((state: SessionsStore) => Partial<SessionsStore>),
+): void {
+	useSessionsStore.setState((state) => {
+		const changes = typeof patch === "function" ? patch(state) : patch;
+		return { ...changes, cwd: selectActiveCwd({ ...state, ...changes }) };
+	});
+}
+
+// Host action writes use the explicit commit; Zustand's public setState is not wrapped.
+const set = commitSessionState;
+export const useSessionsStore = create<SessionsStore>((_set, get) => ({
 	sessions: [],
 	activeSessionId: null,
 	cwd: null,
@@ -415,7 +428,7 @@ export const useSessionsStore = create<SessionsStore>((set, get) => ({
 				thinkingLevel: activeSession.thinkingLevel,
 			});
 			nextDraft.permissionMode = state.permissionModes[activeSession.sessionId] ?? "default";
-			set({ activeSessionId: null, cwd: targetCwd, newSessionDraft: nextDraft });
+			set({ activeSessionId: null, newSessionDraft: nextDraft });
 			ensureTrust(targetCwd);
 			return;
 		}
@@ -427,7 +440,6 @@ export const useSessionsStore = create<SessionsStore>((set, get) => ({
 			const targetCwd = existing.cwd ?? cwd ?? state.cwd;
 			set({
 				activeSessionId: null,
-				cwd: targetCwd,
 				newSessionDraft: { ...existing, cwd: targetCwd },
 			});
 			if (targetCwd) ensureTrust(targetCwd);
@@ -437,7 +449,6 @@ export const useSessionsStore = create<SessionsStore>((set, get) => ({
 		const targetCwd = cwd ?? state.cwd;
 		set({
 			activeSessionId: null,
-			cwd: targetCwd,
 			newSessionDraft: makeDraft(state, { cwd: targetCwd }),
 		});
 		if (targetCwd) ensureTrust(targetCwd);
@@ -459,7 +470,7 @@ export const useSessionsStore = create<SessionsStore>((set, get) => ({
 					model: activeSession?.model ?? state.lastUsedModel,
 					thinkingLevel: activeSession?.thinkingLevel,
 				});
-		set({ activeSessionId: null, cwd, newSessionDraft });
+		set({ activeSessionId: null, newSessionDraft });
 		ensureTrust(cwd);
 		rememberCwd(cwd);
 	},
@@ -468,7 +479,6 @@ export const useSessionsStore = create<SessionsStore>((set, get) => ({
 		// cwd 变化即前置信任决策
 		ensureTrust(cwd);
 		set((state) => ({
-			cwd,
 			newSessionDraft: state.newSessionDraft ? { ...state.newSessionDraft, cwd } : state.newSessionDraft,
 		}));
 		// 在选择器里选过项目 = 用户明确表态要用它：立刻记住（典型场景：首启选了项目、还没发消息就退出）
@@ -486,10 +496,8 @@ export const useSessionsStore = create<SessionsStore>((set, get) => ({
 		claimActivation();
 		noteUserIntent();
 		set((state) => {
-			const session = state.sessions.find((s) => s.sessionId === sessionId);
 			return {
 				activeSessionId: sessionId,
-				cwd: session?.cwd ?? state.cwd,
 				lastUsedAt: { ...state.lastUsedAt, [sessionId]: Date.now() },
 			};
 		});
@@ -503,7 +511,7 @@ export const useSessionsStore = create<SessionsStore>((set, get) => ({
 				pushToast("warning", "toast.sessionOpenFailed", errText(error));
 			});
 		}
-		rememberCwd(get().cwd);
+		rememberCwd(selectActiveCwd(get()));
 	},
 
 	updateSessionName: (sessionId, name) =>
@@ -562,16 +570,12 @@ export const useSessionsStore = create<SessionsStore>((set, get) => ({
 							thinkingLevel: closing?.thinkingLevel,
 						}))
 					: state.newSessionDraft;
-			// 新会话页的 cwd 真相是 draft.cwd（项目选择器 / Sidebar activeCwd / promotion 都读它）：
-			// 严格镜像它（**含 null**）—— 不能回退到被关闭会话的项目，
-			// 否则又回到「页面/promotion 两处说法」（draft 还没选项目时 store.cwd 也得是 null）
-			const cwd = activeSessionId === null ? (newSessionDraft?.cwd ?? null) : fallbackCwd;
 			// 权限模式随会话销毁归零（后端 holder 同点位清理）
 			const permissionModes = withPermissionMode(state.permissionModes, sessionId, "default");
 			// LRU 打点随会话一起清（表项留着就是泄漏：只会积攒不再打开的 id）
 			const lastUsedAt = { ...state.lastUsedAt };
 			delete lastUsedAt[sessionId];
-			return { sessions, activeSessionId, cwd, permissionModes, lastUsedAt, newSessionDraft };
+			return { sessions, activeSessionId, permissionModes, lastUsedAt, newSessionDraft };
 		});
 		return { closed: true };
 	},
@@ -592,7 +596,7 @@ export const useSessionsStore = create<SessionsStore>((set, get) => ({
 		if (!meta) return { ok: false };
 		// 迟到（用户已切走）：会话确实开起来了，但**不能抢焦点** —— 调用方据此只落数据
 		if (!isLatestActivation(token)) return { ok: true, latest: false, meta, token };
-		set({ activeSessionId: meta.sessionId, cwd: meta.cwd });
+		set({ activeSessionId: meta.sessionId });
 		// 先记 cwd 再拉数据：即便随后装载失败，用户「在用哪个项目」的事实也已经成立
 		rememberCwd(meta.cwd);
 		return { ok: true, latest: true, meta, token };
@@ -815,7 +819,7 @@ export const useSessionsStore = create<SessionsStore>((set, get) => ({
 const sessionLoader = createSessionLoader({
 	isOpen: (sessionId) => useSessionsStore.getState().sessions.some((s) => s.sessionId === sessionId),
 	landMeta: (meta) =>
-		useSessionsStore.setState((state) => ({
+		commitSessionState((state) => ({
 			sessions: [...state.sessions.filter((s) => s.sessionId !== meta.sessionId), meta],
 			lastUsedAt: { ...state.lastUsedAt, [meta.sessionId]: Date.now() },
 		})),

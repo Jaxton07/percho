@@ -2,6 +2,7 @@ import { deriveTurnChanges, type TurnChanges } from "@percho/shared";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { getPi } from "../../api";
 import { useT } from "../../i18n";
+import { selectActiveCwd } from "../../lib/active-cwd";
 import { useSessionsStore } from "../../stores/sessions";
 import { useTranscriptStore } from "../../stores/transcript";
 import { useUiStore } from "../../stores/ui";
@@ -19,7 +20,7 @@ const EMPTY_TURNS: TurnChanges[] = [];
  */
 function BranchRow() {
 	const activeSessionId = useSessionsStore((s) => s.activeSessionId);
-	const cwd = useSessionsStore((s) => s.cwd);
+	const cwd = useSessionsStore(selectActiveCwd);
 	const messages = useTranscriptStore((s) =>
 		activeSessionId ? s.bySession[activeSessionId]?.messages : undefined,
 	);
@@ -102,7 +103,7 @@ export function DiffSidebar() {
 	const diffFocus = useUiStore((s) => s.diffFocus);
 	const clearDiffFocus = useUiStore((s) => s.clearDiffFocus);
 	const activeSessionId = useSessionsStore((s) => s.activeSessionId);
-	const sessionCwd = useSessionsStore((s) => s.cwd);
+	const sessionCwd = useSessionsStore(selectActiveCwd);
 	const messages = useTranscriptStore((s) =>
 		activeSessionId ? s.bySession[activeSessionId]?.messages : undefined,
 	);
