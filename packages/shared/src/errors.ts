@@ -27,6 +27,8 @@ export interface UiError {
 	/** 操作行；有 detail 时恒含 copyDetail */
 	actions: UiErrorAction[];
 	timestamp: number;
+	/** 模型失败响应定位；卡片生成时间不能代替响应 timestamp。缺失时禁止会话内手动重试。 */
+	retryTarget?: { timestamp: number; entryId: string };
 }
 
 /** detail 展示截断上限（防巨错误文本进渲染树） */

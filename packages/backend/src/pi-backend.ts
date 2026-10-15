@@ -465,6 +465,23 @@ export class PiBackend {
 
 	private emitEvent(sessionId: string, event: SessionEvent): void {
 		this.eventRates.tick(sessionId);
+		if (
+			event.type === "turn_end" &&
+			event.message.role === "assistant" &&
+			event.message.stopReason === "error"
+		) {
+			// message_end 已持久化；只给转发副本加定位，不改 SDK 消息或磁盘内容。
+			const terminal = this.registry
+				.get(sessionId)
+				?.session.sessionManager.getBranch()
+				.findLast((entry) => entry.type === "message");
+			if (
+				terminal?.type === "message" &&
+				terminal.message.role === "assistant" &&
+				terminal.message.timestamp === event.message.timestamp
+			)
+				event = { ...event, retryEntryId: terminal.id };
+		}
 		// 会话标题全量落一行日志（决策 7：不截断）：用户拿 UI 里看到的标题（含自动命名的 …）
 		// 能直接 grep 主日志定位会话，不再只靠 prompt 行的 120 字符截断
 		if (event.type === "session_info_changed") log.info("session renamed", sessionId, { name: event.name });
@@ -895,6 +912,16 @@ export class PiBackend {
 					() => resolve(),
 					(err) => reject(err),
 				);
+		});
+	}
+
+	/** SDK 补丁公开入口：目标核验/同步占位/持久化排除失败响应均由会话层完成。 */
+	async retryLastFailedTurn(sessionId: string, ref: { timestamp: number; entryId: string }): Promise<void> {
+		const entry = this.requireWritable(sessionId);
+		log.info("retry failed turn", sessionId, ref);
+		// 与 prompt 一样只等待受理；不把一整轮执行挂在 IPC 上，也不吞掉 preflight 拒绝。
+		await new Promise<void>((resolve, reject) => {
+			entry.session.retryLastFailedTurn(ref, { preflightResult: () => resolve() }).then(resolve, reject);
 		});
 	}
 

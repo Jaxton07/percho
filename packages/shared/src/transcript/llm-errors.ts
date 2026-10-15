@@ -27,6 +27,14 @@ export function isLlmErrorRound(m: AssistantRoundLike): m is {
 }
 
 /** 构造 LLM 错误卡（live 用当前时刻，replay 用消息时间戳） */
-export function buildRoundErrorCard(m: { errorMessage: string }, timestamp?: number): UiError {
-	return buildLlmUiError(m.errorMessage, timestamp);
+export function buildRoundErrorCard(
+	m: { errorMessage: string; timestamp?: unknown; entryId?: string },
+	timestamp?: number,
+): UiError {
+	return {
+		...buildLlmUiError(m.errorMessage, timestamp),
+		...(typeof m.timestamp === "number" && Number.isFinite(m.timestamp) && m.entryId
+			? { retryTarget: { timestamp: m.timestamp, entryId: m.entryId } }
+			: {}),
+	};
 }

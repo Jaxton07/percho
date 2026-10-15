@@ -285,6 +285,12 @@ export function reduceEvent(state: SessionTranscriptState, event: SessionEvent):
 		case "agent_start":
 			return {
 				...state,
+				// 任何新 run 都使旧失败失效，即使随后立即取消、没有可见正文也不能复用旧卡。
+				messages: state.messages.map((message) => {
+					if (message.kind !== "error" || !message.error.retryTarget) return message;
+					const { retryTarget: _target, ...error } = message.error;
+					return { ...message, error };
+				}),
 				phase: "streaming",
 				agentActive: true,
 				streaming: emptyStreaming(),
@@ -542,9 +548,17 @@ export function reduceEvent(state: SessionTranscriptState, event: SessionEvent):
 			// LLM 错误轮：不当场落卡，挂 pending 等 agent_end 的 willRetry 判定（决策 D1：
 			// SDK 每个 retry 轮都发 turn_end(error)，只有最终失败才落卡；判定与 replay 路径
 			// 共用 isLlmErrorRound——live/replay 唯一事实源，llm-errors.ts）
-			const message = event.message as { role?: unknown; stopReason?: unknown; errorMessage?: unknown };
+			const message = event.message as {
+				role?: unknown;
+				stopReason?: unknown;
+				errorMessage?: unknown;
+				timestamp?: number;
+			};
 			if (isLlmErrorRound(message)) {
-				return { ...final, pendingLlmError: buildRoundErrorCard(message) };
+				return {
+					...final,
+					pendingLlmError: buildRoundErrorCard({ ...message, entryId: event.retryEntryId }),
+				};
 			}
 			return final;
 		}

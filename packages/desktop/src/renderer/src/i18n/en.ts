@@ -746,6 +746,7 @@ export const en: Messages = {
 		sessionOpenFailed: "Failed to open session",
 		forkFailed: "Failed to fork session",
 		recallFailed: "Failed to recall message",
+		retryFailed: "Retry was not accepted",
 		modelsLoadFailed: "Failed to load models",
 		subagentReturnUnavailable: "Cannot return: parent session file is missing",
 		modelPrefsLoadFailed: "Failed to read model preferences",

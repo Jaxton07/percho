@@ -14,6 +14,7 @@ export function registerSessionsIpc(backend: PiBackend): void {
 		getChannelSubscriptionSessionIds: () => backend.getChannelSubscriptionSessionIds(),
 		deleteSession: ({ sessionId, sessionFile }) => backend.deleteSession(sessionId, sessionFile),
 		prompt: ({ sessionId, text, images }) => backend.prompt(sessionId, text, images),
+		retryLastFailedTurn: ({ sessionId, ref }) => backend.retryLastFailedTurn(sessionId, ref),
 		abort: ({ sessionId }) => backend.abort(sessionId),
 		setModel: ({ sessionId, provider, modelId }) => backend.setModel(sessionId, provider, modelId),
 		setThinkingLevel: ({ sessionId, level }) => backend.setThinkingLevel(sessionId, level),

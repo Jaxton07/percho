@@ -106,6 +106,11 @@ export const SESSION_CHANNELS = {
 	deleteSession: ch("session:delete")<{ sessionId: string; sessionFile?: string }, void>(),
 	/** 发送消息；images 为随消息附带的图片（base64） */
 	prompt: ch("session:prompt")<{ sessionId: string; text: string; images?: ImageInput[] }, void>(),
+	/** 仅重试当前末端模型失败，不新增用户消息；受理即返回，执行结果走事件流。 */
+	retryLastFailedTurn: ch("session:retryLastFailedTurn")<
+		{ sessionId: string; ref: { timestamp: number; entryId: string } },
+		void
+	>(),
 	abort: ch("session:abort")<{ sessionId: string }, void>(),
 	setThinkingLevel: ch("session:setThinkingLevel")<{ sessionId: string; level: string }, void>(),
 	/** 读取会话历史消息（打开历史会话时回放） */

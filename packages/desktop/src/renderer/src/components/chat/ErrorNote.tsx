@@ -1,7 +1,9 @@
-import type { UIMessage, UiError } from "@percho/shared";
+import type { UiError } from "@percho/shared";
 import { useMemo, useState } from "react";
 import { getPi } from "../../api";
 import { type MessageKey, useT } from "../../i18n";
+import { canRetryError } from "../../lib/error-retry";
+import { retryFailedTurn } from "../../stores/session-retry";
 import { useSessionsStore } from "../../stores/sessions";
 import { useSettingsStore } from "../../stores/settings";
 import { useTranscriptStore } from "../../stores/transcript";
@@ -12,7 +14,7 @@ import { ChevronRightIcon, CopyIcon, ErrorCircleIcon, GearIcon, RefreshIcon } fr
  * v2 语言：rounded-xl bg-surface shadow-soft（QueueBar/TodoPanel 同款），默认折叠。
  *
  * 动作行：
- * - retry：重发本卡之前最后一条 user 消息（原文 sourceText），错误卡保留（错误确实发生过）；
+ * - retry：仅重试当前末端失败响应，不新增用户消息；旧卡保留详情但不能再次执行；
  * - compact：/compact 压缩（只 llmOverflow 类出现）；
  * - openSettings：打开设置面板（只凭证类出现）；
  * - copyDetail：复制原始报错（有 detail 时恒有）。
@@ -29,34 +31,12 @@ export function ErrorNote({
 	const t = useT();
 	const [copied, setCopied] = useState(false);
 
-	// 本卡之前最后一条 user 消息（重试用）——按 cardId 定位卡索引，向前找
-	const lastUser = useTranscriptStore((s) => {
-		if (!sessionId) return undefined;
-		const entry = s.bySession[sessionId];
-		const messages = entry?.messages ?? [];
-		const idx = messages.findLastIndex((m) => m.kind === "error" && m.id === cardId);
-		if (idx < 0) return undefined;
-		for (let i = idx - 1; i >= 0; i--) {
-			const m = messages[i];
-			if (m?.kind === "user") return m;
-		}
-		return undefined;
-	});
-
-	const retry = async () => {
-		if (!sessionId || !lastUser) return;
-		const user = lastUser as Extract<UIMessage, { kind: "user" }>;
-		const text = user.sourceText ?? user.text;
-		const images = user.images;
-		useTranscriptStore.getState().markAgentActive(sessionId, true);
-		try {
-			await getPi().prompt({ sessionId, text, images: images.length > 0 ? images : undefined });
-			// 重发受理：切回该会话（若在看别的会话）
-			useSessionsStore.getState().switchSession(sessionId);
-		} catch {
-			useTranscriptStore.getState().markAgentActive(sessionId, false);
-		}
-	};
+	const retryAvailable = useTranscriptStore((s) =>
+		sessionId ? canRetryError(s.bySession[sessionId], cardId) : false,
+	);
+	const readOnly = useSessionsStore(
+		(s) => s.sessions.find((session) => session.sessionId === sessionId)?.readOnly === true,
+	);
 
 	const copyDetail = async () => {
 		if (!error.detail) return;
@@ -107,8 +87,9 @@ export function ErrorNote({
 							key={action}
 							type="button"
 							className={`error-note-act${action === "retry" ? " strong" : ""}`}
+							disabled={action === "retry" && (!retryAvailable || readOnly)}
 							onClick={() => {
-								if (action === "retry") void retry();
+								if (action === "retry" && sessionId) void retryFailedTurn(sessionId, cardId);
 								else if (action === "compact" && sessionId) void getPi().compact({ sessionId });
 								else if (action === "openSettings") useSettingsStore.getState().openWith();
 								else if (action === "copyDetail") void copyDetail();

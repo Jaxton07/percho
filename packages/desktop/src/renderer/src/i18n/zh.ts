@@ -723,6 +723,7 @@ export const zh = {
 		sessionOpenFailed: "打开会话失败",
 		forkFailed: "分叉会话失败",
 		recallFailed: "撤回消息失败",
+		retryFailed: "重试未受理",
 		modelsLoadFailed: "加载模型列表失败",
 		subagentReturnUnavailable: "无法返回父会话：找不到父会话文件",
 		modelPrefsLoadFailed: "模型偏好读取失败",
