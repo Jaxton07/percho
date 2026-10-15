@@ -214,7 +214,8 @@ export async function runSubagent(deps: RunSubagentDeps, input: RunSubagentInput
 		noExtensions: true,
 		noSkills: true,
 		noPromptTemplates: true,
-		appendSystemPrompt: [input.agent.systemPrompt],
+		// 保留角色指令，同时让 SDK 按父会话信任态发现 APPEND_SYSTEM.md。
+		appendSystemPromptOverride: (base) => [input.agent.systemPrompt, ...base],
 		extensionFactories: [
 			makePermissionGateExtension(agentDir, {
 				projectRoot: input.cwd,

@@ -46,7 +46,7 @@ export class ProjectResourceLoader {
 			buildExtensions: ExtensionFactoryBuilder;
 			/** false 时所有项目自动信任（无人值守场景） */
 			projectTrust?: boolean;
-			/** 桌面端集成：追加系统提示词段落 + 额外技能目录（透传给 DefaultResourceLoader） */
+			/** 桌面端集成：提示段落与 SDK 发现的 APPEND_SYSTEM.md 合并，额外技能目录透传。 */
 			desktopIntegration?: {
 				appendSystemPrompt: string[];
 				additionalSkillPaths: string[];
@@ -77,7 +77,12 @@ export class ProjectResourceLoader {
 				this.deps.buildExtensions(cwd, options?.confirm, options?.modeRef),
 				{ openUrl: this.deps.openUrl },
 			),
-			...this.deps.desktopIntegration,
+			additionalSkillPaths: this.deps.desktopIntegration?.additionalSkillPaths,
+			// appendSystemPrompt 会替换文件发现；override 在发现后合并，保留 SDK 信任/优先级规则。
+			appendSystemPromptOverride: (base) => [
+				...(this.deps.desktopIntegration?.appendSystemPrompt ?? []),
+				...base,
+			],
 		});
 		if (this.deps.projectTrust === false) {
 			settingsManager.setProjectTrusted(true);

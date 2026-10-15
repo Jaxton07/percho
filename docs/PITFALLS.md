@@ -18,10 +18,19 @@
 
 升级 SDK 时：检查官方是否已提供等价公开入口，优先删除本补丁；否则重评两个内部恢复方法和空数组 prompt 的语义，重新生成版本补丁。必须跑 `backend/test/manual-retry.test.ts`（真 SDK 离线：工具结果保留、原始历史不删、排除持久化、耗尽后再试及重开、自动重试/压缩/取消生命周期、并发/旧身份）和 renderer `stores/session-retry.test.ts`，再跑全套 typecheck/test/lint。不要只改 node_modules 或只确认补丁能套上。
 
+## 二 · APPEND_SYSTEM.md 被宿主追加提示覆盖（2026-10-15）
+
+症状：Percho 桌面端/子代理有桌面或角色提示，但用户/项目 `APPEND_SYSTEM.md` 静默失效。SDK 1.0.4 `DefaultResourceLoader.appendSystemPrompt` 是替换发现来源，不是与文件叠加；即使传空数组也会跳过文件发现。主会话原先展开 `desktopIntegration`，子代理直接传 `[agent.systemPrompt]`，两处都触发了覆盖。
+
+修复：`project/trust-loader.ts` 改为单独透传 `additionalSkillPaths`，通过 `appendSystemPromptOverride(base)` 返回 `[...desktopText, ...base]`；`tools/subagent/runner.ts` 返回 `[agent.systemPrompt, ...base]`。这个官方钩子在文件发现之后运行，不用改 SDK 或自己读文件；每次 reload 都从新 base 合并，不累积。保持 SDK 优先级：受信项目 `.pi/APPEND_SYSTEM.md` 优先，否则回退 `<agentDir>/APPEND_SYSTEM.md`，两级文件不合并，不信任项目不能注入项目文件。
+
+`test/append-system-prompt.test.ts` 覆盖真实两条加载路径、信任/回退/空注入、无文件、重新加载文件与信任变化、技能目录透传和真 SDK 最终系统提示拼装（模型执行隔离，不联网）。排查不能只问模型“是否看到”或只看 `system.content`：SDK 1.0.4 还会把系统提示放入 `sections`；优先检查 loader 的 `getAppendSystemPrompt()` / `getAppendSystemPromptSources()` 和 `session.systemPrompt`，历史完整渲染应包含 `sections`。
+
 ## 症状快速索引
 
 | 症状 / 场景 | 条目（章节） |
 |---|---|
+| 桌面/子代理提示存在但 APPEND_SYSTEM.md 不生效 | 二 · APPEND_SYSTEM.md 被宿主追加提示覆盖（2026-10-15） |
 | 错误卡重试重复下任务 / 升 SDK 后手动重试失效 | 二 · 手动重试不能重发任务或只调底层 continue（2026-10-15） |
 | trace轮转全套偶发超大小；用固定sleep误当异步flush完成 | 三 · trace测试等待真实drain，不放宽轮转断言（2026-10-14） |
 | 退出遗漏频道/流状态清理；冲突清理误碰holder；资源异常截断后续释放 | 三 · 注册实例清理必须区分normal/quit/冲突（2026-10-14） |
