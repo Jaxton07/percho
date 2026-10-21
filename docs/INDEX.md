@@ -13,6 +13,7 @@
 | pi 扩展在 GUI 中实际支持哪些交互 | [扩展 UI](extension-ui.md) |
 | 构建、打包、验包 | [构建发布](build-release.md) |
 | Windows 更新取证、恢复 | [Windows 更新](WINDOWS-UPDATES.md) |
+| 模型请求代理、直连和环境变量 | [网络代理](network-proxy.md) |
 | 按症状选择排查方向 | [排障入口](PITFALLS.md) |
 
 ## 代码入口
