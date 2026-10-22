@@ -51,7 +51,7 @@
 
 自动检查用根目录 `typecheck` / `test` / `lint`。专项脚本都在 `scripts/`，**具体参数、安全前提和断言以脚本文件头为准**，不在索引复制。
 
-- SDK 与后端：`smoke-sdk-1.0.mts`、`smoke-backend.mts`、`smoke-error-events.mts`、`smoke-subagent.mts`、`smoke-extension-dialogs.mts`。
+- SDK 与后端：`smoke-sdk.mts`、`smoke-backend.mts`、`smoke-error-events.mts`、`smoke-subagent.mts`、`smoke-extension-dialogs.mts`。
 - 状态重放：`replay-trace.mts`、`repro-full.mjs`；上下文调参：`replay-evaporation.mts`、`replay-compaction-bound.mts`。
 - UI/CDP：`cdp-eval.mjs`、`cdp-shot.mjs`；按功能查找 `check-*`、`verify-*`、`shoot-*`。
 

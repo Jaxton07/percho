@@ -68,7 +68,7 @@ describe("StreamGuard", () => {
 		expect(guard.inspect("s", { type: "agent_end" } as SessionEvent)).toBe("pass");
 		// 状态已删：后续 delta 走全新计数（若残留 tripped 状态这里会是 suppress）
 		expect(guard.inspect("s", delta("正常"))).toBe("pass");
-		expect(guard.inspect("s", { type: "agent_settled" } as SessionEvent)).toBe("pass");
+		expect(guard.inspect("s", { type: "agent_settled", aborted: false } as SessionEvent)).toBe("pass");
 		// 终结事件自身不留条目（run 结束后 Map 归零）
 		expect((guard as unknown as { states: Map<string, unknown> }).states.size).toBe(0);
 	});

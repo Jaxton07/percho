@@ -1,8 +1,7 @@
 diff --git a/node_modules/@earendil-works/pi-coding-agent/dist/core/agent-session.d.ts b/node_modules/@earendil-works/pi-coding-agent/dist/core/agent-session.d.ts
-index 03f811e..f71e3af 100644
 --- a/node_modules/@earendil-works/pi-coding-agent/dist/core/agent-session.d.ts
 +++ b/node_modules/@earendil-works/pi-coding-agent/dist/core/agent-session.d.ts
-@@ -525,6 +525,10 @@ export declare class AgentSession {
+@@ -551,6 +551,10 @@
       * @throws Error if no model selected or no API key available (when not streaming)
       */
      prompt(text: string, options?: PromptOptions): Promise<void>;
@@ -14,41 +13,51 @@ index 03f811e..f71e3af 100644
       * Try to execute an extension command. Returns true if command was found and executed.
       */
 diff --git a/node_modules/@earendil-works/pi-coding-agent/dist/core/agent-session.js b/node_modules/@earendil-works/pi-coding-agent/dist/core/agent-session.js
-index ec5f44e..7786dc4 100644
 --- a/node_modules/@earendil-works/pi-coding-agent/dist/core/agent-session.js
 +++ b/node_modules/@earendil-works/pi-coding-agent/dist/core/agent-session.js
-@@ -1373,16 +1373,16 @@ export class AgentSession {
-     // =========================================================================
-     // Prompting
-     // =========================================================================
--    async _runAgentPrompt(messages) {
-+    async _runAgentPrompt(messages, failedResponse) {
-         this._agentRunAbortRequested = false;
+@@ -1438,14 +1438,18 @@
+         // have while idle. No run exists yet, so they cannot split a tool call from its result.
+         this._flushPendingBashMessages();
+         this._flushPendingCustomMessages();
+-        onStarted?.();
 -        // Compaction before the prompt may have scheduled a retry; the new prompt replaces it.
 -        this._failedResponse = undefined;
 -        this._recordSelection();
 -        // The run records the loadout in the transcript; restored tools that did not register by now
 -        // are dropped, so a tool that never registers does not stay pending.
 -        this._pendingToolNames.clear();
-+        // A manual recovery repeats a failed response; a new prompt replaces it.
++        await this._runAgentPrompt(messages, undefined, onStarted);
++    }
++    /** Percho patch: share the complete run lifecycle with manual failure recovery. */
++    async _runAgentPrompt(messages, failedResponse, onStarted) {
 +        this._failedResponse = failedResponse;
-         this._isAgentRunActive = true;
++        let started = false;
          try {
 +            this._recordSelection();
-+            // The run records the loadout in the transcript; restored tools that did not register by now
-+            // are dropped, so a tool that never registers does not stay pending.
++            // Keep late tool registration/loadout semantics identical for prompts and recovery.
 +            this._pendingToolNames.clear();
++            onStarted?.();
++            started = true;
              await this.agent.prompt(messages);
              while (!this._agentRunAbortRequested) {
                  if (await this._handlePostAgentRun()) {
-@@ -1501,6 +1501,48 @@ export class AgentSession {
-         }
-         return { images: normalizedImages, hints };
-     }
+@@ -1468,7 +1472,51 @@
+             this._runSystemPromptOptions = undefined;
+             this._flushPendingBashMessages();
+             this._flushPendingCustomMessages();
+-            await this._emitAgentSettled();
++            if (started) {
++                await this._emitAgentSettled();
++            }
++            else {
++                this._isAgentRunActive = false;
++                this._resolveIdleWaitIfIdle();
++            }
++        }
++    }
 +    /**
-+     * Percho patch: retry only the terminal failed assistant response, without adding user input.
-+     * Uses the same durable omission and full run lifecycle as automatic recovery.
-+     * The timestamp is the assistant message timestamp, not the error card creation time.
++     * Percho patch: retry the terminal failed response without adding user/custom input or
++     * re-running before_agent_start handlers. Retain the original failure in durable history.
 +     */
 +    async retryLastFailedTurn(ref, options) {
 +        if (!this.isIdle || this._isEmittingAgentSettled || this._isBeforeSettle || this.agent.hasQueuedMessages()) {
@@ -66,27 +75,22 @@ index ec5f44e..7786dc4 100644
 +        if (!this.model) {
 +            throw new Error(formatNoModelSelectedMessage());
 +        }
-+        // Reserve synchronously before emitting entries/calling host code, so a second caller cannot
-+        // accept the same failure. Re-enter the normal run with no new user/custom message.
 +        this._isAgentRunActive = true;
++        this._agentRunAbortRequested = false;
 +        let running = false;
 +        try {
 +            this._omitRecoveryAttempt(message);
 +            this._retryAttempt = 0;
 +            this._overflowRecoveryAttempted = false;
-+            options?.preflightResult?.("started");
 +            running = true;
-+            await this._runAgentPrompt([], message);
++            await this._runAgentPrompt([], message, () => options?.preflightResult?.("started"));
 +        }
 +        finally {
-+            // _runAgentPrompt owns settlement after it starts. Preparation errors must release the
-+            // reservation too, without falsely emitting completion for a run that never started.
++            // The shared run owns cleanup after entry; durable omission can fail before that.
 +            if (!running) {
 +                this._isAgentRunActive = false;
 +                this._resolveIdleWaitIfIdle();
 +            }
-+        }
-+    }
+         }
+     }
      /**
-      * Send a prompt to the agent.
-      * - Handles extension commands (registered via pi.registerCommand) immediately, even during streaming

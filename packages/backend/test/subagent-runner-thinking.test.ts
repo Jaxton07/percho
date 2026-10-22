@@ -72,7 +72,7 @@ function stubSession() {
 		setSessionName: () => undefined,
 		bindExtensions: async () => undefined,
 		prompt: async () => {
-			for (const fn of listeners) fn({ type: "agent_settled" });
+			for (const fn of listeners) fn({ type: "agent_settled", aborted: false });
 		},
 		dispose: () => undefined,
 		abort: async () => undefined,

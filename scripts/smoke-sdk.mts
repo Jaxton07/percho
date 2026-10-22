@@ -1,9 +1,8 @@
-// 阶段 0 冒烟：pi SDK 升级到 1.0.4 的事实核对（9 条断言，硬门）。
-// 断言依据：.local/agent-work/plan/pi-sdk-1.0-upgrade-plan.md 阶段 0 + spec §7.2/§7.3。
-// 用法：npx tsx scripts/smoke-sdk-1.0.mts   （全过打印 OK n 并 exit 0；任一失败 exit 1）
+// Pi SDK 1.4.0 安装与资源冒烟；在隔离 HOME/agent/TMPDIR、无正式凭证的环境执行。
+// 用法：node scripts/smoke-sdk.mts（全过 exit 0；任一失败 exit 1）。
 //
 // ❗ 不要用 mod.VERSION 判版本：Percho 打包态设了 PI_PACKAGE_DIR，SDK 的 VERSION = getPackageDir()
-//    读到的 package.json 版本（= 随包分发的 pi-package），不是真正 resolve 到的 SDK。详见 spec §7.2。
+//    读到的 package.json 版本（= 随包分发的 pi-package），不是真正 resolve 到的 SDK。
 import { createRequire } from "node:module";
 import { existsSync, readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
@@ -23,10 +22,15 @@ const check = (name: string, cond: boolean, extra = "") => {
 // 该包 exports 只有 import 条件、没有 require → 用 import.meta.resolve（createRequire 会 ERR_PACKAGE_PATH_NOT_EXPORTED）
 const entry = fileURLToPath(import.meta.resolve("@earendil-works/pi-coding-agent"));
 let pkgRoot = dirname(entry);
-while (!existsSync(join(pkgRoot, "package.json")) || pkgRoot === "/") pkgRoot = dirname(pkgRoot);
+while (!existsSync(join(pkgRoot, "package.json"))) {
+	const parent = dirname(pkgRoot);
+	if (parent === pkgRoot) throw new Error("Cannot locate SDK package.json");
+	pkgRoot = parent;
+}
 const pkg = JSON.parse(readFileSync(join(pkgRoot, "package.json"), "utf8")) as { name: string; version: string };
 info.push(`resolve 到 ${pkg.name}@${pkg.version}（${pkgRoot}）；mod.VERSION 报 ${mod.VERSION}`);
-check("1 resolve 到的 SDK === 1.0.4", pkg.version === "1.0.4", `实际 ${pkg.version}`);
+check("1 resolve 到的 SDK === 1.4.0", pkg.version === "1.4.0", `实际 ${pkg.version}`);
+check("1b 手动重试补丁已应用", typeof mod.AgentSession.prototype.retryLastFailedTurn === "function");
 
 // 2. 三个内置扩展工厂可从包根 import（llama.cpp 不在其中，见 3/4）
 check(

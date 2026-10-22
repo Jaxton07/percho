@@ -308,7 +308,8 @@ describe("A4 / A6① 摘要请求真的变小（思考正文消失 · toolResult
 			expect(bound?.estimatedAfter ?? Number.POSITIVE_INFINITY).toBeLessThan(bound?.estimatedBefore ?? 0);
 
 			// A6①：钩子替换 messagesToSummarize 后，SDK 默认摘要器读到的就是替换后的内容
-			expect(prompt).toContain("[思考已省略"); // 老轮思考 → 占位
+			// SDK 1.4 的摘要序列化会移除全部 thinking 块，包括护栏替换后的占位。
+			expect(prompt).not.toContain("[思考已省略");
 			expect(prompt).not.toContain(`${SECRET_THINKING}-1`); // 第 1 轮思考正文消失
 			expect(prompt).toContain("…（已省略"); // toolResult 被截并标注
 			expect(prompt).not.toContain(`${SECRET_MIDDLE}-1-`); // 第 1 轮 toolResult 中段消失
@@ -356,7 +357,7 @@ describe("A5 三条触发路径都过钩子（reason 可见）", () => {
 		try {
 			await session.compact();
 			expect(observations.some((o) => o.phase === "bound" && o.reason === "manual")).toBe(true);
-			expect(summarizationPrompts(captures)).toContain("[思考已省略");
+			expect(summarizationPrompts(captures)).toContain("…（已省略");
 		} finally {
 			session.dispose();
 		}
@@ -398,7 +399,7 @@ describe("A5 三条触发路径都过钩子（reason 可见）", () => {
 		try {
 			await session.prompt("再问一句");
 			expect(observations.some((o) => o.phase === "bound" && o.reason === "overflow")).toBe(true);
-			expect(summarizationPrompts(captures)).toContain("[思考已省略");
+			expect(summarizationPrompts(captures)).toContain("…（已省略");
 		} finally {
 			session.dispose();
 		}
@@ -450,7 +451,7 @@ describe("D7/D7b 契约：默认行为、逃生舱、与蒸发开关完全解耦
 		}
 	});
 
-	it("逃生舱 compactionGuard.enabled=false：钩子不介入（摘要输入保持原样）", async () => {
+	it("逃生舱 compactionGuard.enabled=false：钩子不介入，SDK 仍移除摘要中的思考", async () => {
 		const { session, observations, captures } = await setup({
 			contextWindow: 20_000,
 			sdkCompaction: { reserveTokens: 2000 },
@@ -461,7 +462,8 @@ describe("D7/D7b 契约：默认行为、逃生舱、与蒸发开关完全解耦
 			await session.compact();
 			expect(observations.some((o) => o.phase === "bound")).toBe(false);
 			const prompt = summarizationPrompts(captures);
-			expect(prompt).toContain(`${SECRET_THINKING}-1`); // 思考正文还在（没降级）
+			expect(prompt).not.toContain(SECRET_THINKING);
+			expect(prompt).toContain(`${SECRET_MIDDLE}-1-`); // 关闭护栏后没有自研工具结果降级
 			expect(prompt).not.toContain("[思考已省略");
 		} finally {
 			session.dispose();
@@ -533,6 +535,31 @@ describe("A6②（修订）compaction.enabled=false：SDK 全自动路径（含�
 			const trigger = observations.find((o) => o.phase === "trigger");
 			expect(trigger?.reason).toBe("threshold-pct");
 			expect(trigger?.percentBasis).toBe("estimate"); // error 轮的 usage 不算数 ⇒ 纯估算口径
+		} finally {
+			session.dispose();
+		}
+	});
+});
+
+describe("cancelled runs", () => {
+	it("does not start guard compaction after cancellation even when history exceeds the threshold", async () => {
+		const { session, observations, captures } = await setup({
+			contextWindow: 20_000,
+			sdkCompaction: { enabled: false, reserveTokens: 2000 },
+			guard: { thresholdPct: 40 },
+			history: bigHistory(),
+		});
+		let aborting: Promise<void> | undefined;
+		session.subscribe((event) => {
+			if (event.type === "agent_start") aborting = session.abort();
+		});
+		try {
+			await session.prompt("cancel before the first request");
+			await aborting;
+			await session.waitForIdle();
+			expect(captures.filter((capture) => capture.summarization)).toHaveLength(0);
+			expect(observations.some((observation) => observation.phase === "trigger")).toBe(false);
+			expect(session.isIdle).toBe(true);
 		} finally {
 			session.dispose();
 		}

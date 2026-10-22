@@ -256,7 +256,7 @@ export async function runSubagent(deps: RunSubagentDeps, input: RunSubagentInput
 	let settled = false;
 	let failure: string | undefined;
 	let unsubscribeEvents: (() => void) | undefined;
-	// 等待 agent_settled 而非 agent_end：_runAgentPrompt 的 finally 保证 settled 在全部路径
+	// 等待 agent_settled 而非 agent_end：SDK 运行主体的 finally 保证已启动运行最终 settled
 	// （正常结束 / 异常逃逸 / abort）都触发；agent_end 在 overflow 重试（willRetry）或异常时不算终结。
 	const endPromise = new Promise<void>((resolve) => {
 		unsubscribeEvents = session.subscribe((event: AgentSessionEvent) => {

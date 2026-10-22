@@ -10,7 +10,7 @@ const turnEnd = (stopReason: string, errorMessage?: string): Event =>
 		toolResults: [],
 	}) as unknown as Event;
 const agentEnd = (willRetry: boolean): Event => ({ type: "agent_end", messages: [], willRetry });
-const settled: Event = { type: "agent_settled" };
+const settled: Event = { type: "agent_settled", aborted: false };
 const guard: Event = { type: "stream_guard_tripped", verdict: "trip_whitespace" } as unknown as Event;
 
 const errorCards = (s: ReturnType<typeof emptyTranscript>) => s.messages.filter((m) => m.kind === "error");

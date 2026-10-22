@@ -145,7 +145,7 @@ describe("failed turn retry", () => {
 		seed();
 		const store = useTranscriptStore.getState();
 		store.applyEvent("s", { type: "agent_start" });
-		store.applyEvent("s", { type: "agent_settled" });
+		store.applyEvent("s", { type: "agent_settled", aborted: true });
 		expect(canRetryError(useTranscriptStore.getState().bySession.s, "failure")).toBe(false);
 		expect(useTranscriptStore.getState().bySession.s?.messages[0]).toMatchObject({ kind: "error" });
 	});

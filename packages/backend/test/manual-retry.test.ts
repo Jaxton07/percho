@@ -262,6 +262,10 @@ describe("manual retry SDK patch (real offline lifecycle)", () => {
 
 	it("abort still settles and releases the run", async () => {
 		const f = await fixture();
+		const settled: boolean[] = [];
+		f.session.subscribe((event) => {
+			if (event.type === "agent_settled") settled.push(event.aborted);
+		});
 		let release!: () => void;
 		f.block(
 			new Promise<void>((r) => {
@@ -274,6 +278,7 @@ describe("manual retry SDK patch (real offline lifecycle)", () => {
 		await Promise.all([running, aborting]);
 		expect(f.session.isIdle).toBe(true);
 		expect(f.events.at(-1)).toBe("agent_settled");
+		expect(settled).toEqual([true]);
 	});
 
 	it("backend returns on acceptance; a concurrent retry is rejected before another request", async () => {
@@ -340,6 +345,41 @@ describe("manual retry SDK patch (real offline lifecycle)", () => {
 			throw new Error("disk full");
 		});
 		await expect(f.session.retryLastFailedTurn(f.ref)).rejects.toThrow("disk full");
+		expect(f.session.isIdle).toBe(true);
+		expect(f.requests).toHaveLength(0);
+	});
+
+	it.each(["selection", "acceptance"])("releases reservation when %s preparation throws", async (stage) => {
+		const f = await fixture();
+		const failure = new Error(`${stage} failed`);
+		const selection = vi.spyOn(f.session as unknown as { _recordSelection(): void }, "_recordSelection");
+		if (stage === "selection")
+			selection.mockImplementationOnce(() => {
+				throw failure;
+			});
+		await expect(
+			f.session.retryLastFailedTurn(f.ref, {
+				preflightResult: () => {
+					if (stage === "acceptance") throw failure;
+				},
+			}),
+		).rejects.toBe(failure);
+		expect(f.session.isIdle).toBe(true);
+		await f.session.waitForIdle();
+		expect(f.requests).toHaveLength(0);
+		expect(f.events).not.toContain("agent_settled");
+		// The persisted failure is still the target; recovery remains usable after preparation fails.
+		await f.session.retryLastFailedTurn(f.ref);
+		expect(f.requests).toHaveLength(1);
+		expect(f.events.filter((event) => event === "agent_settled")).toHaveLength(1);
+	});
+
+	it("rejects a missing model before mutating context", async () => {
+		const f = await fixture();
+		vi.spyOn(f.session, "model", "get").mockReturnValue(undefined);
+		const before = f.sm.getBranch().length;
+		await expect(f.session.retryLastFailedTurn(f.ref)).rejects.toThrow();
+		expect(f.sm.getBranch()).toHaveLength(before);
 		expect(f.session.isIdle).toBe(true);
 		expect(f.requests).toHaveLength(0);
 	});

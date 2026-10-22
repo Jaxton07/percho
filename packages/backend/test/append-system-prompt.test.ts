@@ -99,7 +99,7 @@ async function childLoader(trusted: boolean) {
 			return () => listeners.delete(listener);
 		},
 		prompt: async () => {
-			for (const listener of listeners) listener({ type: "agent_settled" });
+			for (const listener of listeners) listener({ type: "agent_settled", aborted: false });
 		},
 		dispose: vi.fn(),
 	};

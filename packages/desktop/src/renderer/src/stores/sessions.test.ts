@@ -306,7 +306,9 @@ describe("历史就绪屏障", () => {
 		expect(isHistoryReady("wake")).toBe(false);
 		expect(piMock.markSessionHistoryReady).not.toHaveBeenCalled();
 		piMock.getSessionMessages.mockResolvedValueOnce(history("旧消息", 1).concat(history("频道提醒", 2)));
-		useTranscriptStore.getState().applyEvent("wake", { type: "agent_settled" } as SessionEvent);
+		useTranscriptStore
+			.getState()
+			.applyEvent("wake", { type: "agent_settled", aborted: false } as SessionEvent);
 		await retrySessionHistory("wake");
 		await vi.waitFor(() => expect(isHistoryReady("wake")).toBe(true));
 		expect(
@@ -330,7 +332,9 @@ describe("历史就绪屏障", () => {
 		expect(useTranscriptStore.getState().bySession.race?.agentActive).toBe(true);
 		expect(isHistoryReady("race")).toBe(false);
 		piMock.getSessionMessages.mockResolvedValueOnce(history("完整历史", 1));
-		useTranscriptStore.getState().applyEvent("race", { type: "agent_settled" } as SessionEvent);
+		useTranscriptStore
+			.getState()
+			.applyEvent("race", { type: "agent_settled", aborted: false } as SessionEvent);
 		await retrySessionHistory("race");
 		await vi.waitFor(() => expect(isHistoryReady("race")).toBe(true));
 		expect(
@@ -348,7 +352,9 @@ describe("历史就绪屏障", () => {
 		const opening = useSessionsStore.getState().openFromHistory("/proj/fast.jsonl");
 		await vi.waitFor(() => expect(piMock.getSessionMessages).toHaveBeenCalledTimes(1));
 		useTranscriptStore.getState().applyEvent("fast", { type: "agent_start" } as SessionEvent);
-		useTranscriptStore.getState().applyEvent("fast", { type: "agent_settled" } as SessionEvent);
+		useTranscriptStore
+			.getState()
+			.applyEvent("fast", { type: "agent_settled", aborted: false } as SessionEvent);
 		piMock.getSessionMessages.mockResolvedValueOnce(history("新一轮已写入", 2));
 		snapshot.resolve(history("开工前快照", 1));
 		await opening;
@@ -392,7 +398,9 @@ describe("历史就绪屏障", () => {
 		await useSessionsStore.getState().openFromHistory("/proj/closed.jsonl");
 		const late = deferred<never[]>();
 		piMock.getSessionMessages.mockImplementationOnce(() => late.promise);
-		useTranscriptStore.getState().applyEvent("closed", { type: "agent_settled" } as SessionEvent);
+		useTranscriptStore
+			.getState()
+			.applyEvent("closed", { type: "agent_settled", aborted: false } as SessionEvent);
 		const loading = retrySessionHistory("closed");
 		await useSessionsStore.getState().closeSession("closed");
 		late.resolve(history("迟到", 1));
