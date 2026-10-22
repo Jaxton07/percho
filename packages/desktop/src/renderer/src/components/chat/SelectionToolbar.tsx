@@ -117,11 +117,18 @@ export function SelectionToolbar({ containerRef }: { containerRef: React.RefObje
 		hide();
 	}, [activeSessionId, hide]);
 
-	/** 清除选区并收起（动作完成后调用，避免残留高亮） */
-	const consume = useCallback(() => {
-		window.getSelection()?.removeAllRanges();
-		hide();
-	}, [hide]);
+	/** 先清理选区和菜单，等界面提交后再把输入焦点交给 Composer。 */
+	const consumeAndFocus = useCallback(
+		(sessionId: string) => {
+			window.getSelection()?.removeAllRanges();
+			hide();
+			requestAnimationFrame(() => {
+				if (useSessionsStore.getState().activeSessionId !== sessionId) return;
+				window.dispatchEvent(new CustomEvent(COMPOSER_FOCUS_EVENT, { detail: { moveToEnd: true } }));
+			});
+		},
+		[hide],
+	);
 
 	const addToChat = () => {
 		if (!pending || !activeSessionId) return;
@@ -131,8 +138,7 @@ export function SelectionToolbar({ containerRef }: { containerRef: React.RefObje
 			.updateDraft(activeSessionId, (d) =>
 				d.quotes.includes(pending.text) ? d : { ...d, quotes: [...d.quotes, pending.text] },
 			);
-		window.dispatchEvent(new CustomEvent(COMPOSER_FOCUS_EVENT));
-		consume();
+		consumeAndFocus(activeSessionId);
 	};
 
 	const continueInNewChat = async () => {
@@ -149,8 +155,7 @@ export function SelectionToolbar({ containerRef }: { containerRef: React.RefObje
 			const newId = await useSessionsStore.getState().forkSession(ref);
 			if (!newId) return;
 			useDraftStore.getState().updateDraft(newId, (d) => ({ ...d, quotes: [...d.quotes, quote] }));
-			window.dispatchEvent(new CustomEvent(COMPOSER_FOCUS_EVENT));
-			consume();
+			consumeAndFocus(newId);
 		} finally {
 			setForking(false);
 		}

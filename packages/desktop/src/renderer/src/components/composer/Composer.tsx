@@ -208,9 +208,16 @@ export function Composer({ centered = false }: { centered?: boolean }) {
 		el.style.height = `${Math.min(el.scrollHeight, 200)}px`;
 	}, [text]);
 
-	// 撤回回填草稿后聚焦输入框继续编辑（sessions store 派发，window 事件解耦组件间依赖）
+	// 外部操作请求继续编辑；引用内容时移到末尾，其他聚焦请求保留原光标位置。
 	useEffect(() => {
-		const onFocusRequest = () => textareaRef.current?.focus();
+		const onFocusRequest = (event: Event) => {
+			const el = textareaRef.current;
+			if (!el) return;
+			el.focus();
+			if (event instanceof CustomEvent && event.detail?.moveToEnd === true) {
+				el.setSelectionRange(el.value.length, el.value.length);
+			}
+		};
 		window.addEventListener(COMPOSER_FOCUS_EVENT, onFocusRequest);
 		return () => window.removeEventListener(COMPOSER_FOCUS_EVENT, onFocusRequest);
 	}, []);
