@@ -55,6 +55,8 @@
 	--color-on-ink: #ffffff;
 	--color-accent: #7c3aed;
 	--color-on-accent: #ffffff;
+	--color-skill-reference-bg: #e7f1ff;
+	--color-skill-reference-ink: #176ac4;
 	/* 首页字标（手稿构造版 WordmarkConstruct）：字描边 / 主构造线 / 次级虚线 / 标注文字 */
 	--lg-ol: #a1a1aa;
 	--lg-c1: #c9c9d1;
@@ -116,6 +118,8 @@
 	--color-on-ink: #17171a;
 	--color-accent: #8b5cf6;
 	--color-on-accent: #ffffff;
+	--color-skill-reference-bg: #193653;
+	--color-skill-reference-ink: #8bc4ff;
 	/* 思考深度横条深色一套（比浅色更亮），其余见 :root 处注释 */
 	--bar-grad: linear-gradient(96deg, #5b7cfa 0%, #8b5cf6 52%, #b06bfb 100%);
 	--bar-knob: #ffffff;

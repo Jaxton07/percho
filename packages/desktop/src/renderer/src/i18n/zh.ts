@@ -71,6 +71,7 @@ export const zh = {
 		start: "开始新对话",
 	},
 	composer: {
+		restoreFailedDraft: "恢复上次未发送的内容（当前输入仍会保留）",
 		placeholder: "随便问点什么，/ 命令，@ 上下文",
 		placeholderQueued: "排队消息，当前任务完成后自动发送",
 		placeholderCompacting: "正在压缩上下文…",

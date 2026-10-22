@@ -72,6 +72,7 @@ export const en: Messages = {
 		start: "Start new chat",
 	},
 	composer: {
+		restoreFailedDraft: "Restore the last unsent message (keep the current draft)",
 		placeholder: "Ask anything, / for commands, @ for context",
 		placeholderQueued: "Queue a message — sent when the current task finishes",
 		placeholderCompacting: "Compacting context…",

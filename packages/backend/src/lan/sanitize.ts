@@ -1,6 +1,8 @@
 import {
+	composerDocumentText,
 	LAN_IMAGE_PLACEHOLDER,
 	REDUCED_EVENT_TYPES,
+	readComposerDocument,
 	type SessionEvent,
 	type SessionMessage,
 } from "@percho/shared";
@@ -76,7 +78,19 @@ function sanitizeAgentMessage(message: unknown): unknown {
 		if (!out) out = { ...m };
 		out[key] = value;
 	};
-	if (Array.isArray(m.content)) set("content", sanitizeContentBlocks(m.content));
+	if (m.perchoInput !== undefined) {
+		out = { ...m };
+		delete out.perchoInput;
+		const document = readComposerDocument(m);
+		if (m.role === "user" && document) {
+			out.content = [
+				{ type: "text", text: composerDocumentText(document) },
+				...(Array.isArray(m.content) ? m.content.filter((b) => b?.type === "image") : []),
+			];
+		}
+	}
+	if (Array.isArray(out?.content ?? m.content))
+		set("content", sanitizeContentBlocks(out?.content ?? m.content));
 	if (m.details) set("details", sanitizeDetails(m.details));
 	return out ?? message;
 }
@@ -84,7 +98,7 @@ function sanitizeAgentMessage(message: unknown): unknown {
 /** 历史消息 sanitize（snapshot transcripts 用）。 */
 export function sanitizeSessionMessage(message: SessionMessage): SessionMessage {
 	if (message.role === "user") {
-		const { sourceText: _st, ...rest } = message;
+		const { sourceText: _st, document: _doc, ...rest } = message;
 		return { ...rest, images: placeholderImages(message.images) };
 	}
 	if (message.role === "assistant") {

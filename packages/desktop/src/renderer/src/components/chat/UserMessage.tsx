@@ -2,6 +2,7 @@ import { formatSkillCommand } from "@percho/shared";
 import { useState } from "react";
 import { useT } from "../../i18n";
 import type { UIMessage } from "../../stores/transcript";
+import { ReferenceText } from "../composer/ReferenceText";
 import { HistoryImage } from "./history-image/HistoryImage";
 import { ATTACHMENT_IMAGE_MODE } from "./history-image-layout";
 import { ImagePreviewOverlay } from "./ImagePreview";
@@ -32,7 +33,11 @@ export function UserMessage({ message }: { message: Extract<UIMessage, { kind: "
 						))}
 					</div>
 				)}
-				{message.skill ? (
+				{message.document ? (
+					<div className="rounded-2xl rounded-br-md bg-user-bubble px-4 py-2.5 text-ui-15 leading-[1.7] text-ink shadow-soft select-text">
+						<ReferenceText document={message.document} />
+					</div>
+				) : message.skill ? (
 					<div className="rounded-2xl rounded-br-md bg-user-bubble px-4 py-2.5 text-ui-15 leading-[1.7] text-ink shadow-soft select-text">
 						<div
 							className={

@@ -1,8 +1,10 @@
 import { parseSessionEntries, type SessionEntry, type SessionManager } from "@earendil-works/pi-coding-agent";
 import {
+	composerDocumentText,
 	extractSubagentRuns,
 	type ImageInput,
 	parseExpandedSkillInvocation,
+	readComposerDocument,
 	type SessionMessage,
 	type SessionToolCall,
 } from "@percho/shared";
@@ -26,6 +28,7 @@ export interface ContentBlock {
 
 export interface RawMessage {
 	role: string;
+	perchoInput?: unknown;
 	content?: string | ContentBlock[];
 	toolCallId?: string;
 	isError?: boolean;
@@ -131,7 +134,10 @@ export function resolveRecallEntryId(
 			if (m.role !== "user") continue;
 			// timestamp 同时给出时必须相等（毫秒碰撞军见，双重锚定防同文消息错配）
 			if (ref.timestamp !== undefined && m.timestamp !== ref.timestamp) continue;
-			if (ref.text !== undefined && blockText(m.content) !== ref.text) continue;
+			if (ref.text !== undefined && blockText(m.content) !== ref.text) {
+				const document = readComposerDocument(m);
+				if (!document || composerDocumentText(document) !== ref.text) continue;
+			}
 			return e.id;
 		}
 	}
@@ -239,10 +245,12 @@ export function toSessionMessages(rawMessages: readonly unknown[]): SessionMessa
 		}
 		if (raw.role === "user") {
 			const sourceText = blockText(raw.content);
-			const invocation = parseExpandedSkillInvocation(sourceText);
+			const document = readComposerDocument(raw);
+			const invocation = document ? null : parseExpandedSkillInvocation(sourceText);
 			out.push({
 				role: "user",
-				text: invocation ? (invocation.args ?? "") : sourceText,
+				text: document ? composerDocumentText(document) : invocation ? (invocation.args ?? "") : sourceText,
+				...(document ? { document, sourceText } : {}),
 				thinking: "",
 				tools: [],
 				images: blockImages(raw.content),

@@ -1,4 +1,5 @@
-import type { ImageInput } from "@percho/shared";
+import type { ComposerDocument, ImageInput } from "@percho/shared";
+import { normalizeComposerDocument } from "@percho/shared";
 import { type MouseEvent as ReactMouseEvent, useCallback, useEffect, useRef, useState } from "react";
 import { getPi } from "../../api";
 import { useActiveModelInfo, useSessionReadOnly } from "../../hooks/use-session-state";
@@ -7,15 +8,24 @@ import { selectActiveCwd } from "../../lib/active-cwd";
 import { prepareImageAttachment } from "../../lib/image-attachment";
 import { RegionHost } from "../../plugins/RegionHost";
 import { UI_REGIONS } from "../../plugins/slots";
-import { COMPOSER_FOCUS_EVENT, EMPTY_DRAFT, NEW_SESSION_DRAFT_KEY, useDraftStore } from "../../stores/drafts";
+import {
+	COMPOSER_FOCUS_EVENT,
+	draftText,
+	EMPTY_DRAFT,
+	NEW_SESSION_DRAFT_KEY,
+	restoreFailedDraft,
+	useDraftStore,
+	withDraftText,
+} from "../../stores/drafts";
 import { useSessionsStore } from "../../stores/sessions";
 import { pushToast } from "../../stores/toasts";
 import { selectTranscript, useTranscriptStore } from "../../stores/transcript";
 import { ImagePreviewOverlay } from "../chat/ImagePreview";
 import { ArrowUpIcon, PencilIcon, PlusIcon, StopIcon } from "../icons";
 import { AtMenu } from "./AtMenu";
-import { AttachmentChip } from "./AttachmentChip";
+import { ComposerEditor, type ComposerEditorHandle } from "./ComposerEditor";
 import { ContextRing } from "./ContextRing";
+import "./composer-editor.css";
 import { resolveDroppedFilePaths } from "./drop-files";
 import { ImageTray } from "./ImageTray";
 import { ModelPicker } from "./ModelPicker";
@@ -59,10 +69,14 @@ export function Composer({ centered = false }: { centered?: boolean }) {
 	/** 输入内容（文本/图片/命令胶囊）按会话持久：真实会话用 sessionId、新会话页用固定 key，不丢也不串 */
 	const draftKey = activeSessionId ?? NEW_SESSION_DRAFT_KEY;
 	const draft = useDraftStore((s) => s.bySession[draftKey] ?? EMPTY_DRAFT);
-	const { text, images, slashCommand, attachments, quotes } = draft;
+	const failedDraft = useDraftStore((s) => s.failedBySession[draftKey]);
+	const { document, images, slashCommand, quotes } = draft;
+	const text = draftText(draft);
 	const updateDraft = useDraftStore((s) => s.updateDraft);
 	const setText = (updater: string | ((prev: string) => string)) => {
-		updateDraft(draftKey, (d) => ({ ...d, text: typeof updater === "function" ? updater(d.text) : updater }));
+		updateDraft(draftKey, (d) =>
+			withDraftText(d, typeof updater === "function" ? updater(draftText(d)) : updater),
+		);
 	};
 	const setImages = (updater: ImageInput[] | ((prev: ImageInput[]) => ImageInput[])) => {
 		updateDraft(draftKey, (d) => ({
@@ -73,18 +87,21 @@ export function Composer({ centered = false }: { centered?: boolean }) {
 	const setSlashCommand = (command: string | null) => {
 		updateDraft(draftKey, (d) => ({ ...d, slashCommand: command }));
 	};
-	const setAttachments = (updater: string[] | ((prev: string[]) => string[])) => {
-		updateDraft(draftKey, (d) => ({
-			...d,
-			attachments: typeof updater === "function" ? updater(d.attachments) : updater,
-		}));
-	};
 	const appendAttachments = useCallback(
 		(paths: string[]) => {
-			if (paths.length === 0) return;
+			if (!paths.length) return;
 			updateDraft(draftKey, (d) => ({
 				...d,
-				attachments: [...new Set([...d.attachments, ...paths])],
+				document: normalizeComposerDocument({
+					version: 1,
+					parts: [
+						...d.document.parts,
+						...paths.flatMap((path) => [
+							{ type: "text" as const, text: " " },
+							{ type: "file" as const, path, label: path.split(/[\\/]/).at(-1) },
+						]),
+					],
+				}),
 			}));
 		},
 		[draftKey, updateDraft],
@@ -96,7 +113,7 @@ export function Composer({ centered = false }: { centered?: boolean }) {
 		}));
 	};
 	const [previewImage, setPreviewImage] = useState<ImageInput | null>(null);
-	const textareaRef = useRef<HTMLTextAreaElement>(null);
+	const editorRef = useRef<ComposerEditorHandle>(null);
 	const boxRef = useRef<HTMLDivElement>(null);
 	const fileInputRef = useRef<HTMLInputElement>(null);
 
@@ -104,47 +121,36 @@ export function Composer({ centered = false }: { centered?: boolean }) {
 	/** 压缩进行中：禁发（SDK 拒绝压缩中的 prompt；提前拦截保住草稿，warn 提示代替报错丢文本） */
 	const compacting = transcript.compacting;
 	/** 输入框有内容：streaming 中按钮从停止切回发送（入队后文本清空自动切回停止） */
-	const hasContent =
-		Boolean(text.trim()) ||
-		images.length > 0 ||
-		Boolean(slashCommand) ||
-		attachments.length > 0 ||
-		quotes.length > 0;
+	const hasContent = Boolean(text.trim()) || images.length > 0 || Boolean(slashCommand) || quotes.length > 0;
 
 	const send = useComposerSend({
+		draftKey,
 		activeSessionId,
-		text,
-		images,
-		attachments,
-		quotes,
-		slashCommand,
-		followUpQueue,
-		compacting,
-		agentActive: transcript.agentActive,
 		imagesSupported,
-		setText,
-		setImages,
-		setAttachments,
-		setQuotes,
-		setSlashCommand,
 	});
 	const { sending, error, setError, feedback, showFeedback, ensureSession, runSlashCommand, handleSend } =
 		send;
 	// 附件预处理（缩图）在途的 promise：发送前要等它们落地，否则「粘图立刻回车」会把图丢了
 	// （预处理要几百 ms，以前 FileReader 只需几 ms，这个窗口可忽略；现在不能）
-	const preparingRef = useRef<Promise<unknown>[]>([]);
-	// 每次渲染刷新：等完预处理后要调**最新一份** handleSend，才读得到刚 setImages 进去的图
-	const latestSendRef = useRef(handleSend);
-	latestSendRef.current = handleSend;
+	const preparingRef = useRef<{ key: string; generation: number | undefined; promise: Promise<unknown> }[]>(
+		[],
+	);
 	const sendWhenReady = async () => {
-		if (preparingRef.current.length > 0) {
-			const inFlight = preparingRef.current;
-			preparingRef.current = [];
-			await Promise.all(inFlight);
-		}
-		await latestSendRef.current();
+		if (readOnly) return;
+		const generation =
+			draftKey === NEW_SESSION_DRAFT_KEY
+				? useSessionsStore.getState().newSessionDraft?.generation
+				: undefined;
+		const inFlight = preparingRef.current.filter((p) => p.key === draftKey && p.generation === generation);
+		await Promise.all(inFlight.map((p) => p.promise));
+		if (
+			draftKey === NEW_SESSION_DRAFT_KEY &&
+			generation !== useSessionsStore.getState().newSessionDraft?.generation
+		)
+			return;
+		await handleSend();
 	};
-	const focusTextarea = () => textareaRef.current?.focus();
+	const focusEditor = () => editorRef.current?.focus();
 
 	/**
 	 * 点盒子空白处也进入输入状态：正文只有一行高，正文与底部图标行之间的留白、图标行右侧
@@ -159,7 +165,7 @@ export function Composer({ centered = false }: { centered?: boolean }) {
 		const target = event.target;
 		if (target instanceof Element && target.closest(COMPOSER_FOCUS_BLOCKERS)) return;
 		event.preventDefault();
-		textareaRef.current?.focus();
+		editorRef.current?.focus();
 	};
 	const isStreaming = transcript.phase === "streaming" || sending;
 	const placeholder = readOnly
@@ -178,7 +184,7 @@ export function Composer({ centered = false }: { centered?: boolean }) {
 		slashCommand,
 		setText,
 		setSlashCommand,
-		textareaRef,
+		editorRef,
 		ensureSession,
 		runSlashCommand,
 		// 斜杠菜单的 skill/模板命令也要等附件预处理（它们同样可能带图）
@@ -193,30 +199,17 @@ export function Composer({ centered = false }: { centered?: boolean }) {
 	const at = useAtCompletion({
 		cwd,
 		text,
-		attachments,
+		draftKey,
 		slashOpen: slash.slashOpen,
-		setText,
-		setAttachments,
-		textareaRef,
+		editorRef,
 	});
-
-	// biome-ignore lint/correctness/useExhaustiveDependencies: 高度由文本 DOM 变化驱动，显式依赖 text 便于触发
-	useEffect(() => {
-		const el = textareaRef.current;
-		if (!el) return;
-		el.style.height = "auto";
-		el.style.height = `${Math.min(el.scrollHeight, 200)}px`;
-	}, [text]);
 
 	// 外部操作请求继续编辑；引用内容时移到末尾，其他聚焦请求保留原光标位置。
 	useEffect(() => {
 		const onFocusRequest = (event: Event) => {
-			const el = textareaRef.current;
-			if (!el) return;
-			el.focus();
-			if (event instanceof CustomEvent && event.detail?.moveToEnd === true) {
-				el.setSelectionRange(el.value.length, el.value.length);
-			}
+			editorRef.current?.focus(
+				event instanceof CustomEvent && event.detail?.moveToEnd === true ? "end" : undefined,
+			);
 		};
 		window.addEventListener(COMPOSER_FOCUS_EVENT, onFocusRequest);
 		return () => window.removeEventListener(COMPOSER_FOCUS_EVENT, onFocusRequest);
@@ -260,23 +253,21 @@ export function Composer({ centered = false }: { centered?: boolean }) {
 	}, [slash.slashOpen, at.atOpen, setSlashDismissed, setAtDismissed]);
 
 	/** 文本变化：重置菜单折叠态 + 探测光标前 @ / slash token（驱动两个菜单）；同时清预填来源提示 */
-	const handleTextChange = (e: React.ChangeEvent<HTMLTextAreaElement>) => {
+	const handleTextChange = (next: ComposerDocument, value: string, cursor: number) => {
 		if (extensionPrefillSource) useTranscriptStore.getState().clearExtensionPrefill(activeSessionId ?? "");
 		slash.setSlashDismissed(false);
 		at.setAtDismissed(false);
-		setText(e.target.value);
-		const cursor = e.target.selectionStart ?? e.target.value.length;
-		slash.updateToken(e.target.value, cursor);
-		at.updateToken(e.target.value, cursor);
+		updateDraft(draftKey, (d) => ({ ...d, document: next }));
+		slash.updateToken(value, cursor);
+		at.updateToken(value, cursor);
 	};
 
 	/** 光标移动（点击/方向键）：重探 slash token（@ 菜单仅输入驱动，点进去不弹） */
-	const handleSelect = (e: React.SyntheticEvent<HTMLTextAreaElement>) => {
-		const el = e.currentTarget;
-		slash.updateToken(el.value, el.selectionStart ?? el.value.length);
+	const handleSelect = (value: string, cursor: number) => {
+		slash.updateToken(value, cursor);
 	};
 
-	const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
+	const handleKeyDown = (e: React.KeyboardEvent<HTMLDivElement>) => {
 		if (at.handleKeyDown(e)) return;
 		if (slash.handleKeyDown(e)) return;
 		// 胶囊撤销：Esc（任意文本态，菜单未消费时）；空文本 Backspace/Delete 先 @ 胶囊后 slash 胶囊
@@ -286,11 +277,7 @@ export function Composer({ centered = false }: { centered?: boolean }) {
 		}
 		if (text === "" && (e.key === "Backspace" || e.key === "Delete")) {
 			// 胶囊撤销：视觉由近及远（@ 文件 → slash 命令 → 引用）
-			if (attachments.length > 0) {
-				e.preventDefault();
-				at.handleAttachmentRemove(attachments.length - 1);
-				return;
-			}
+
 			if (slashCommand) {
 				slash.restoreSlashPill(e);
 				return;
@@ -316,18 +303,39 @@ export function Composer({ centered = false }: { centered?: boolean }) {
 			// 在粘贴/选择时就先把图缩到模型规格（见 lib/image-attachment.ts）：
 			// 发送路径上的 SDK 归一化于是只需解码量尺寸（~20-40ms）而不是真缩一遍（~0.8–1.1s）。
 			// 失败一律退回原图，不丢附件；在途 promise 交给 preparingRef，回车会等它。
+			const generation =
+				draftKey === NEW_SESSION_DRAFT_KEY
+					? useSessionsStore.getState().newSessionDraft?.generation
+					: undefined;
+			const original = useDraftStore.getState().bySession[draftKey] ?? EMPTY_DRAFT;
 			const prepared = prepareImageAttachment(file).then((image) => {
-				setImages((prev) => [...prev, image]);
+				if (
+					draftKey === NEW_SESSION_DRAFT_KEY &&
+					generation !== useSessionsStore.getState().newSessionDraft?.generation
+				) {
+					// 新会话页已换代：保留为显式可恢复草稿，不能注入后来新建的输入。
+					useDraftStore.setState((state) => ({
+						failedBySession: {
+							...state.failedBySession,
+							[draftKey]: {
+								...(state.failedBySession[draftKey] ?? original),
+								images: [...(state.failedBySession[draftKey]?.images ?? original.images), image],
+							},
+						},
+					}));
+					return;
+				}
+				updateDraft(draftKey, (d) => ({ ...d, images: [...d.images, image] }));
 			});
-			preparingRef.current.push(prepared);
+			preparingRef.current.push({ key: draftKey, generation, promise: prepared });
 			void prepared.finally(() => {
-				preparingRef.current = preparingRef.current.filter((p) => p !== prepared);
+				preparingRef.current = preparingRef.current.filter((p) => p.promise !== prepared);
 			});
 		}
 	};
 
 	/** 截图/复制图片后 Ctrl+V 粘贴到输入框 */
-	const handlePaste = (e: React.ClipboardEvent<HTMLTextAreaElement>) => {
+	const handlePaste = (e: React.ClipboardEvent<HTMLDivElement>) => {
 		const items = e.clipboardData?.items;
 		if (!items) return;
 		const files: File[] = [];
@@ -353,6 +361,15 @@ export function Composer({ centered = false }: { centered?: boolean }) {
 		<div ref={boxRef} className={centered ? "w-full max-w-[760px]" : "shrink-0 px-6 pb-3"}>
 			{/* relative：ImageTray 悬浮层（absolute bottom-full）的定位锚，浮在错误条/菜单/输入框整列之上 */}
 			<div className="relative mx-auto max-w-[760px]">
+				{failedDraft && (
+					<button
+						type="button"
+						className="mb-2 text-ui-12 text-ink-dim"
+						onClick={() => restoreFailedDraft(draftKey)}
+					>
+						{t("composer.restoreFailedDraft")}
+					</button>
+				)}
 				{error && <SendErrorBar error={error} onRetry={() => void sendWhenReady()} />}
 				{feedback && !error && (
 					<p
@@ -381,7 +398,7 @@ export function Composer({ centered = false }: { centered?: boolean }) {
 				{followUpQueue.length > 0 && (
 					<QueueBar
 						text={followUpQueue[0] ?? ""}
-						onRestore={() => void send.handleRestoreQueue(focusTextarea)}
+						onRestore={() => void send.handleRestoreQueue(focusEditor)}
 					/>
 				)}
 				{/* 扩展 setEditorText 预填提示（画板⑩）：一次性来源标注，首次键入即清除 */}
@@ -396,7 +413,7 @@ export function Composer({ centered = false }: { centered?: boolean }) {
 					onPreview={setPreviewImage}
 					onRemove={(index) => setImages((prev) => prev.filter((_, i) => i !== index))}
 				/>
-				{/* biome-ignore lint/a11y/noStaticElementInteractions: 点留白 = 聚焦正文（与直接点 textarea 等价，纯便利）；
+				{/* biome-ignore lint/a11y/noStaticElementInteractions: 点留白 = 聚焦正文（与直接点正文等价，纯便利）；
 				    不给盒子加 role/ tabIndex，那会让读屏多出一个空的可聚焦区域 */}
 				<div
 					onMouseDown={handleComposerMouseDown}
@@ -414,37 +431,30 @@ export function Composer({ centered = false }: { centered?: boolean }) {
 							))}
 						</div>
 					)}
-					{/* 正文行：slash/@ 胶囊内联在文本行首（有胶囊时 flex-wrap 同行，否则 textarea 独占整行）；
-					    外层容器恒定渲染，textarea 只切 className 不换位置 → 不重挂、不丢焦点；
+					{/* 正文行：普通 slash 命令保留参数模式，skill 和文件由编辑器在正文原位置呈现；
+					    宿主身份由草稿决定，内容更新不重建编辑器；
 					    无引用时文本贴顶（可编辑区向上扩展），引用行临时加一行、不浪费空间 */}
 					<div className={`px-4 pb-5.5 ${quotes.length > 0 ? "pt-1.5" : "pt-2"}`}>
 						<div
-							className={
-								slashCommand || attachments.length > 0
-									? "flex flex-wrap items-start gap-x-1.5 gap-y-1"
-									: undefined
-							}
+							className={slashCommand ? "relative flex flex-wrap items-start gap-x-1.5 gap-y-1" : "relative"}
 						>
 							{slashCommand && (
 								<span className="mt-0.5 flex shrink-0 select-none items-center rounded-md bg-surface px-2 py-0.5 font-mono text-ui-12 leading-5 text-ink-2 shadow-pop">
 									{slashLabel !== slashCommand && <span className="mr-1.5">{slashLabel}</span>}/{slashCommand}
 								</span>
 							)}
-							{attachments.map((path, index) => (
-								<AttachmentChip key={path} path={path} onRemove={() => at.handleAttachmentRemove(index)} />
-							))}
-							<textarea
-								ref={textareaRef}
-								className={`max-h-[200px] resize-none bg-transparent text-ui-14 leading-relaxed outline-none placeholder:text-ink-faint select-text thin-scrollbar ${
-									slashCommand || attachments.length > 0 ? "min-w-[140px] flex-1" : "w-full"
-								}`}
+
+							<ComposerEditor
+								key={draftKey}
+								ref={editorRef}
+								draftKey={draftKey}
+								document={document}
+								className={slashCommand ? "min-w-[140px] flex-1" : "w-full"}
 								placeholder={slashCommand ? t("slash.argPlaceholder") : placeholder}
-								value={text}
-								rows={1}
-								disabled={readOnly}
+								readOnly={readOnly}
 								onChange={handleTextChange}
 								onKeyDown={handleKeyDown}
-								onSelect={handleSelect}
+								onSelectionChange={handleSelect}
 								onPaste={handlePaste}
 							/>
 						</div>

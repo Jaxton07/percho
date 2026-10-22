@@ -1,5 +1,5 @@
 import { existsSync } from "node:fs";
-import { readFile, unlink } from "node:fs/promises";
+import { mkdtemp, readFile, rm, unlink } from "node:fs/promises";
 import { join, resolve } from "node:path";
 import type { Model, ThinkingLevel } from "@earendil-works/pi-ai";
 import { getSupportedThinkingLevels } from "@earendil-works/pi-ai";
@@ -58,10 +58,15 @@ import type {
 	TrustRequest,
 } from "@percho/shared";
 import {
+	type ComposerDocument,
+	composerDocumentFromText,
+	composerDocumentText,
 	extractTodos,
 	formatSkillCommand,
 	isModelVisible,
 	parseExpandedSkillInvocation,
+	type QueuedMessages,
+	readComposerDocument,
 	TODO_TOOL_NAME,
 	type TodoItem,
 } from "@percho/shared";
@@ -82,6 +87,12 @@ import { walkProjectFiles } from "./project/files";
 import { TrustGate } from "./project/trust";
 import { ProjectResourceLoader } from "./project/trust-loader";
 import { addAllowedPattern, addWorkspaceRoot } from "./project/workspace-store";
+import {
+	composerInputBridge,
+	composerQueueDocument,
+	composerQueueText,
+	projectComposerMessage,
+} from "./session/composer-input";
 import { slimBulkyEvent, slimMessageUpdate } from "./session/event-slim";
 import { ExtensionDialogHost } from "./session/extension-dialog-host";
 import { SessionHydrationGate } from "./session/hydration-gate";
@@ -464,6 +475,16 @@ export class PiBackend {
 	}
 
 	private emitEvent(sessionId: string, event: SessionEvent): void {
+		if (event.type === "message_start" || event.type === "message_end")
+			event = { ...event, message: projectComposerMessage(event.message) };
+		if (event.type === "agent_end")
+			event = { ...event, messages: event.messages.map(projectComposerMessage) };
+		if (event.type === "queue_update")
+			event = {
+				...event,
+				steering: event.steering.map(composerQueueText),
+				followUp: event.followUp.map(composerQueueText),
+			};
 		this.eventRates.tick(sessionId);
 		if (
 			event.type === "turn_end" &&
@@ -624,7 +645,12 @@ export class PiBackend {
 		gate.bindSession(session.sessionId);
 		const dialogs = await this.bindSessionExtensions(session, session.sessionId);
 		const unsubscribe = session.subscribe((event) => {
-			autoNameSession(session, event);
+			autoNameSession(
+				session,
+				event.type === "message_start" || event.type === "message_end"
+					? { ...event, message: projectComposerMessage(event.message) }
+					: event,
+			);
 			// D8：自研触发的那次压缩在 UI 上说「自动（上下文阈值）」——只改转发副本
 			this.emitEvent(session.sessionId, this.guardTriggerMarkers.rewrite(session.sessionId, event));
 		});
@@ -877,7 +903,12 @@ export class PiBackend {
 		log.info("session deleted", sessionId);
 	}
 
-	async prompt(sessionId: string, text: string, images?: ImageInput[]): Promise<void> {
+	async prompt(
+		sessionId: string,
+		text: string,
+		images?: ImageInput[],
+		document?: ComposerDocument,
+	): Promise<void> {
 		const entry = this.requireWritable(sessionId);
 		log.info("prompt", sessionId, { text: text.slice(0, 120), images: images?.length ?? 0 });
 		// session.prompt() 非流式路径会 await 整个 run（直到 agent_settled）；渲染端只需要
@@ -888,31 +919,38 @@ export class PiBackend {
 		// 1.0.4 契约：disposition ∈ "handled" | "queued" | "started"，三者都是「已受理」→ 全部 resolve；
 		// **被拒时 SDK 不再回调**（0.84.3 的 preflightResult(false) 已删），真实错误只经下面的 reject 回传。
 		// 三种 disposition 不往 IPC 传：渲染端的「已排队」区分靠 queue_update 事件，传个无人消费的值只是死契约。
-		await new Promise<void>((resolve, reject) => {
-			entry.session
-				.prompt(text, {
-					// 运行中发送走 followUp 排队（agent 完成后自动投递；steer 打断暂不支持）
-					// SDK 要求 streaming 时必传 streamingBehavior，否则抛错
-					streamingBehavior: "followUp",
-					images: images?.map((image) => ({
-						type: "image" as const,
-						data: image.data,
-						mimeType: image.mimeType,
-					})),
-					preflightResult: (disposition) => {
-						switch (disposition) {
-							case "handled": // 扩展命令已就地处理，本轮不会再有模型响应
-							case "queued": // steer/followUp 已入队
-							case "started": // 正常开跑
-								resolve();
-						}
-					},
-				})
-				.then(
-					() => resolve(),
-					(err) => reject(err),
-				);
-		});
+		const dispatch = (acceptedText = text) =>
+			new Promise<void>((resolve, reject) => {
+				entry.session
+					.prompt(acceptedText, {
+						source: document ? "rpc" : undefined,
+						expandPromptTemplates: document ? false : undefined,
+						// 运行中发送走 followUp 排队（agent 完成后自动投递；steer 打断暂不支持）
+						// SDK 要求 streaming 时必传 streamingBehavior，否则抛错
+						streamingBehavior: "followUp",
+						images: images?.map((image) => ({
+							type: "image" as const,
+							data: image.data,
+							mimeType: image.mimeType,
+						})),
+						preflightResult: (disposition) => {
+							switch (disposition) {
+								case "handled": // 扩展命令已就地处理，本轮不会再有模型响应
+								case "queued": // steer/followUp 已入队
+								case "started": // 正常开跑
+									resolve();
+							}
+						},
+					})
+					.then(
+						() => resolve(),
+						(err) => reject(err),
+					);
+			});
+		const bridge = entry.session.resourceLoader && composerInputBridge(entry.session.resourceLoader);
+		if (document && !bridge) throw new Error("Composer input adapter unavailable");
+		if (bridge) await bridge.accept(entry.session.resourceLoader, document, dispatch);
+		else await dispatch();
 	}
 
 	/** SDK 补丁公开入口：目标核验/同步占位/持久化排除失败响应均由会话层完成。 */
@@ -941,18 +979,54 @@ export class PiBackend {
 	}
 
 	/** 清空运行中排队消息（steer+followUp 都清），返回被清内容；无会话返回空 */
-	async clearQueue(sessionId: string): Promise<{ steering: string[]; followUp: string[] }> {
+	async clearQueue(sessionId: string): Promise<QueuedMessages> {
 		const entry = this.registry.get(sessionId);
 		if (!entry) return { steering: [], followUp: [] };
 		log.info("clearQueue", sessionId);
-		return entry.session.clearQueue();
+		// Public previews honor drain modes and prefer steering. During this synchronous clear-all,
+		// preview all steering, clear that queue, then preview all follow-ups. No second queue is kept.
+		const agent = entry.session.agent;
+		const steeringMode = agent.steeringMode,
+			followUpMode = agent.followUpMode;
+		let steering: readonly unknown[] = [],
+			followUp: readonly unknown[] = [];
+		try {
+			agent.steeringMode = "all";
+			agent.followUpMode = "all";
+			if (entry.session.getSteeringMessages().length) {
+				steering = agent.peekQueuedMessages();
+				agent.clearSteeringQueue();
+			}
+			followUp = agent.peekQueuedMessages();
+		} finally {
+			agent.steeringMode = steeringMode;
+			agent.followUpMode = followUpMode;
+		}
+		const inputs = (messages: readonly unknown[]) =>
+			messages
+				.filter((m) => (m as RawMessage).role === "user")
+				.map((m) => {
+					const raw = m as RawMessage;
+					const text = blockText(raw.content);
+					return {
+						document: composerQueueDocument(text) ?? composerDocumentFromText(text),
+						images: blockImages(raw.content),
+					};
+				});
+		const cleared = entry.session.clearQueue();
+		return {
+			steering: cleared.steering.map(composerQueueText),
+			followUp: cleared.followUp.map(composerQueueText),
+			steeringInputs: inputs(steering),
+			followUpInputs: inputs(followUp),
+		};
 	}
 
 	/** 当前排队的 followUp 消息文本；无会话返回空 */
 	async getFollowUpMessages(sessionId: string): Promise<string[]> {
 		const entry = this.registry.get(sessionId);
 		if (!entry) return [];
-		return [...entry.session.getFollowUpMessages()];
+		return entry.session.getFollowUpMessages().map(composerQueueText);
 	}
 
 	async setModel(sessionId: string, provider: string, modelId: string): Promise<void> {
@@ -1132,7 +1206,32 @@ export class PiBackend {
 	/** 导出会话内容（HTML/JSONL）；返回文件内容，由调用方保存 */
 	async exportSession(sessionId: string, format: "html" | "jsonl"): Promise<string> {
 		const entry = this.requireSession(sessionId);
-		return format === "html" ? entry.session.exportToHtml() : entry.session.exportToJsonl();
+		const manager = entry.session.sessionManager;
+		if (format === "jsonl")
+			return `${[manager.getHeader(), ...manager.getBranch()].map((e) => JSON.stringify(e)).join("\n")}\n`;
+		const directory = await mkdtemp(join(manager.getSessionDir(), ".percho-export-"));
+		try {
+			const path = await entry.session.exportToHtml(join(directory, "session.html"));
+			const html = await readFile(path, "utf8");
+			if (!/<script id="session-data" type="application\/json">[A-Za-z0-9+/=]+<\/script>/.test(html)) {
+				throw new Error("Unsupported SDK HTML export format");
+			}
+			return html.replace(
+				/(<script id="session-data" type="application\/json">)([A-Za-z0-9+/=]+)(<\/script>)/,
+				(_match, start: string, payload: string, end: string) => {
+					const data = JSON.parse(Buffer.from(payload, "base64").toString("utf8"));
+					data.entries = data.entries.map((item: { type: string; message?: unknown }) => {
+						if (item.type !== "message") return item;
+						const projected = projectComposerMessage(item.message) as Record<string, unknown>;
+						const { perchoInput: _input, ...message } = projected;
+						return { ...item, message };
+					});
+					return start + Buffer.from(JSON.stringify(data)).toString("base64") + end;
+				},
+			);
+		} finally {
+			await rm(directory, { recursive: true, force: true });
+		}
 	}
 
 	/** renderer 已落下首份完整历史；放行启动期频道 watcher + 离线对账。 */
@@ -1226,7 +1325,7 @@ export class PiBackend {
 	async recallMessage(
 		sessionId: string,
 		ref: { entryId?: string; text?: string; timestamp?: number },
-	): Promise<{ text: string; images: ImageInput[] }> {
+	): Promise<{ text: string; images: ImageInput[]; document?: ComposerDocument }> {
 		const entry = this.requireWritable(sessionId);
 		if (entry.session.isStreaming || entry.session.isCompacting) {
 			throw new Error("Cannot recall while the agent is running or context is compacting");
@@ -1237,8 +1336,13 @@ export class PiBackend {
 		const message = target.message as RawMessage;
 		// 文本/图片从目标 entry 提取（navigateTree 只返回 editorText，图片会丢）
 		const sourceText = blockText(message.content);
+		const document = readComposerDocument(message);
 		const invocation = parseExpandedSkillInvocation(sourceText);
-		const text = invocation ? formatSkillCommand(invocation) : sourceText;
+		const text = document
+			? composerDocumentText(document)
+			: invocation
+				? formatSkillCommand(invocation)
+				: sourceText;
 		const images = blockImages(message.content);
 		if (sm.getLeafId() === targetId) {
 			// 悬挂的用户消息（发出后无任何回复，entry 即当前 leaf）：navigateTree 视为 no-op，
@@ -1260,7 +1364,7 @@ export class PiBackend {
 		// （否则撤回只存在内存，重启后旧分支回来）
 		sm.appendCustomEntry(PiBackend.RECALLED_MARKER_TYPE, { recalledEntryId: targetId });
 		log.info("recall message", sessionId, { targetId });
-		return { text, images };
+		return { text, images, ...(document ? { document } : {}) };
 	}
 
 	async listModels(): Promise<AvailableModel[]> {

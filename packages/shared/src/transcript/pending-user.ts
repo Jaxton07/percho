@@ -1,3 +1,4 @@
+import type { ComposerDocument } from "../composer-document";
 import type { ImageInput } from "../session";
 import { newMessageId } from "./helpers";
 import type { SessionTranscriptState, UIMessage } from "./types";
@@ -15,13 +16,14 @@ import type { SessionTranscriptState, UIMessage } from "./types";
  */
 export function appendOptimisticUserMessage(
 	state: SessionTranscriptState,
-	input: { text: string; images: ImageInput[] },
+	input: { text: string; images: ImageInput[]; document?: ComposerDocument },
 ): { state: SessionTranscriptState; id: string } {
 	const id = newMessageId();
 	const message: UIMessage = {
 		kind: "user",
 		id,
 		text: input.text,
+		document: input.document,
 		images: input.images,
 		timestamp: Date.now(),
 		pending: true,

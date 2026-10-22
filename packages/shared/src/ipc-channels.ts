@@ -1,4 +1,5 @@
 import type { ChannelSubscriptionsSnapshot } from "./channel-subscriptions";
+import type { ComposerDocument } from "./composer-document";
 import type {
 	ExtensionDialogRequest,
 	ExtensionDialogResolved,
@@ -105,7 +106,10 @@ export const SESSION_CHANNELS = {
 	/** 删除会话（含磁盘 jsonl 文件，不可恢复） */
 	deleteSession: ch("session:delete")<{ sessionId: string; sessionFile?: string }, void>(),
 	/** 发送消息；images 为随消息附带的图片（base64） */
-	prompt: ch("session:prompt")<{ sessionId: string; text: string; images?: ImageInput[] }, void>(),
+	prompt: ch("session:prompt")<
+		{ sessionId: string; text: string; images?: ImageInput[]; document?: ComposerDocument },
+		void
+	>(),
 	/** 仅重试当前末端模型失败，不新增用户消息；受理即返回，执行结果走事件流。 */
 	retryLastFailedTurn: ch("session:retryLastFailedTurn")<
 		{ sessionId: string; ref: { timestamp: number; entryId: string } },
@@ -140,7 +144,7 @@ export const SESSION_CHANNELS = {
 	/** 撤回用户消息（回退到该消息之前，内容放回输入框） */
 	recallMessage: ch("session:recall")<
 		{ sessionId: string; ref: { entryId?: string; text?: string; timestamp?: number } },
-		{ text: string; images: ImageInput[] }
+		{ text: string; images: ImageInput[]; document?: ComposerDocument }
 	>(),
 	/** 读取会话已加载的资源（skills/扩展；设置页展示用） */
 	getLoadedResources: ch("session:getLoadedResources")<{ sessionId: string }, LoadedResources>(),

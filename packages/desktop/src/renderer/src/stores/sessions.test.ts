@@ -1,4 +1,4 @@
-import type { SessionEvent, SessionMeta } from "@percho/shared";
+import { composerDocumentFromText, type SessionEvent, type SessionMeta } from "@percho/shared";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 /** window.pi 的 mock：sessions store 经 getPi() 访问，测试环境无 preload 注入 */
@@ -989,7 +989,9 @@ describe("单例新会话 draft（newSessionDraft）", () => {
 		useSessionsStore.setState({ cwd: "/proj/old" });
 		useSessionsStore.getState().activateNewSessionDraft();
 		useSessionsStore.getState().setDraftCwd("/proj/old-draft");
-		useDraftStore.getState().updateDraft(NEW_SESSION_DRAFT_KEY, (d) => ({ ...d, text: "半包需求" }));
+		useDraftStore
+			.getState()
+			.updateDraft(NEW_SESSION_DRAFT_KEY, (d) => ({ ...d, document: composerDocumentFromText("半包需求") }));
 		useSessionsStore.setState({
 			sessions: [
 				{
@@ -1015,7 +1017,12 @@ describe("单例新会话 draft（newSessionDraft）", () => {
 			permissionMode: "fullAccess",
 		});
 		expect(state.sessions.map((s) => s.sessionId)).toEqual(["r1"]);
-		expect(useDraftStore.getState().bySession[NEW_SESSION_DRAFT_KEY]?.text).toBe("半包需求");
+		expect(
+			useDraftStore
+				.getState()
+				.bySession[NEW_SESSION_DRAFT_KEY]?.document.parts.map((p) => (p.type === "text" ? p.text : ""))
+				.join(""),
+		).toBe("半包需求");
 	});
 
 	it("项目行新建：复用全局 draft，只改投 cwd，配置与输入内容都保留", () => {
@@ -1033,8 +1040,13 @@ describe("单例新会话 draft（newSessionDraft）", () => {
 		}));
 		useDraftStore.getState().updateDraft(NEW_SESSION_DRAFT_KEY, (draft) => ({
 			...draft,
-			text: "保留这段需求",
-			attachments: ["src/a.ts"],
+			document: {
+				version: 1,
+				parts: [
+					{ type: "text", text: "保留这段需求" },
+					{ type: "file", path: "/proj/a/src/a.ts", label: "src/a.ts" },
+				],
+			},
 		}));
 
 		const beforeGeneration = useSessionsStore.getState().newSessionDraft?.generation;
@@ -1051,8 +1063,13 @@ describe("单例新会话 draft（newSessionDraft）", () => {
 		});
 		expect(state.newSessionDraft?.generation).not.toBe(beforeGeneration);
 		expect(useDraftStore.getState().bySession[NEW_SESSION_DRAFT_KEY]).toMatchObject({
-			text: "保留这段需求",
-			attachments: ["src/a.ts"],
+			document: {
+				version: 1,
+				parts: [
+					{ type: "text", text: "保留这段需求" },
+					{ type: "file", path: "/proj/a/src/a.ts", label: "src/a.ts" },
+				],
+			},
 		});
 		expect(piMock.ensureProjectTrust).toHaveBeenCalledWith({ cwd: "/proj/b" });
 		expect(piMock.createSession).not.toHaveBeenCalled();
@@ -1103,24 +1120,27 @@ describe("单例新会话 draft（newSessionDraft）", () => {
 		useSessionsStore.setState({ cwd: "/proj/a" });
 		const draftStore = useDraftStore.getState();
 		draftStore.updateDraft(NEW_SESSION_DRAFT_KEY, () => ({
-			text: "接着上一句",
+			document: composerDocumentFromText("接着上一句"),
 			images: [{ data: "AAAA", mimeType: "image/png" }],
 			slashCommand: "compact",
-			attachments: ["src/a.ts"],
 			quotes: ["引用段落"],
 		}));
 
 		useSessionsStore.getState().activateNewSessionDraft();
 		expect(useDraftStore.getState().bySession[NEW_SESSION_DRAFT_KEY]).toEqual({
-			text: "接着上一句",
+			document: composerDocumentFromText("接着上一句"),
 			images: [{ data: "AAAA", mimeType: "image/png" }],
 			slashCommand: "compact",
-			attachments: ["src/a.ts"],
 			quotes: ["引用段落"],
 		});
 
 		useSessionsStore.getState().activateNewSessionDraft();
-		expect(useDraftStore.getState().bySession[NEW_SESSION_DRAFT_KEY]?.text).toBe("接着上一句");
+		expect(
+			useDraftStore
+				.getState()
+				.bySession[NEW_SESSION_DRAFT_KEY]?.document.parts.map((p) => (p.type === "text" ? p.text : ""))
+				.join(""),
+		).toBe("接着上一句");
 	});
 
 	it("无 cwd 也能进入 draft（newSessionDraft.cwd === null，不静默 no-op）", () => {
@@ -1328,6 +1348,34 @@ describe("单例新会话 draft（newSessionDraft）", () => {
 describe("promotion：首条消息把 draft 转成真实会话", () => {
 	beforeEach(() => useToastsStore.setState({ toasts: [] }));
 
+	it("创建期间的新编辑随原草稿转正，不留在下一张新会话页", async () => {
+		const created = deferred<SessionMeta>();
+		piMock.createSession.mockImplementationOnce(() => created.promise);
+		useSessionsStore.getState().activateNewSessionDraft("/proj/a");
+		const promoting = useSessionsStore.getState().createSession();
+		const next = composerDocumentFromText("等待期间的新输入");
+		useDraftStore.getState().updateDraft(NEW_SESSION_DRAFT_KEY, (d) => ({ ...d, document: next }));
+		created.resolve(realMeta("new-1", "/proj/a"));
+		await promoting;
+		expect(useDraftStore.getState().bySession["new-1"]?.document).toEqual(next);
+		expect(useDraftStore.getState().bySession[NEW_SESSION_DRAFT_KEY]).toBeUndefined();
+	});
+
+	it("创建期间改投其他项目：迟到转正不移动新代次的草稿", async () => {
+		const created = deferred<SessionMeta>();
+		piMock.createSession.mockImplementationOnce(() => created.promise);
+		useSessionsStore.getState().activateNewSessionDraft("/proj/a");
+		const promoting = useSessionsStore.getState().createSession();
+		useSessionsStore.getState().activateNewSessionDraftForCwd("/proj/b");
+		const next = composerDocumentFromText("属于项目 B");
+		useDraftStore.getState().updateDraft(NEW_SESSION_DRAFT_KEY, (d) => ({ ...d, document: next }));
+		created.resolve(realMeta("new-1", "/proj/a"));
+		await promoting;
+		expect(useDraftStore.getState().bySession["new-1"]).toBeUndefined();
+		expect(useDraftStore.getState().bySession[NEW_SESSION_DRAFT_KEY]?.document).toEqual(next);
+		expect(useSessionsStore.getState().activeSessionId).toBeNull();
+	});
+
 	it("用 draft 快照创建：当前会话模型 A 优先于全局最近 B", async () => {
 		piMock.createSession.mockResolvedValue(realMeta("new-1", "/proj/alpha"));
 		useSessionsStore.setState({
@@ -1378,7 +1426,9 @@ describe("promotion：首条消息把 draft 转成真实会话", () => {
 			.mockResolvedValueOnce(realMeta("new-1", "/proj/a"));
 		useSessionsStore.getState().activateNewSessionDraft("/proj/a");
 		useSessionsStore.getState().setDraftPermissionMode("fullAccess");
-		useDraftStore.getState().updateDraft(NEW_SESSION_DRAFT_KEY, (d) => ({ ...d, text: "别丢了我" }));
+		useDraftStore
+			.getState()
+			.updateDraft(NEW_SESSION_DRAFT_KEY, (d) => ({ ...d, document: composerDocumentFromText("别丢了我") }));
 
 		expect(await useSessionsStore.getState().createSession()).toBeNull();
 
@@ -1386,7 +1436,12 @@ describe("promotion：首条消息把 draft 转成真实会话", () => {
 		expect(afterFail.newSessionDraft?.cwd).toBe("/proj/a");
 		expect(afterFail.newSessionDraft?.permissionMode).toBe("fullAccess");
 		expect(afterFail.activeSessionId).toBeNull();
-		expect(useDraftStore.getState().bySession[NEW_SESSION_DRAFT_KEY]?.text).toBe("别丢了我");
+		expect(
+			useDraftStore
+				.getState()
+				.bySession[NEW_SESSION_DRAFT_KEY]?.document.parts.map((p) => (p.type === "text" ? p.text : ""))
+				.join(""),
+		).toBe("别丢了我");
 		expect(toastKeys()).toContain("toast.sessionCreateFailed");
 
 		expect(await useSessionsStore.getState().createSession()).toBe("new-1");
@@ -1487,7 +1542,9 @@ describe("promotion：首条消息把 draft 转成真实会话", () => {
 		useSessionsStore.setState({ cwd: "/proj/a" });
 		useSessionsStore.getState().activateNewSessionDraft();
 		useSessionsStore.getState().setDraftPermissionMode("fullAccess");
-		useDraftStore.getState().updateDraft(NEW_SESSION_DRAFT_KEY, (d) => ({ ...d, text: "首条消息" }));
+		useDraftStore
+			.getState()
+			.updateDraft(NEW_SESSION_DRAFT_KEY, (d) => ({ ...d, document: composerDocumentFromText("首条消息") }));
 
 		const promoting = useSessionsStore.getState().createSession();
 		useSessionsStore.getState().activateNewSessionDraft("/proj/other");
@@ -1495,7 +1552,12 @@ describe("promotion：首条消息把 draft 转成真实会话", () => {
 		// 同一份 draft：cwd / 权限模式 / 内容都不被重置
 		expect(useSessionsStore.getState().newSessionDraft?.cwd).toBe("/proj/a");
 		expect(useSessionsStore.getState().newSessionDraft?.permissionMode).toBe("fullAccess");
-		expect(useDraftStore.getState().bySession[NEW_SESSION_DRAFT_KEY]?.text).toBe("首条消息");
+		expect(
+			useDraftStore
+				.getState()
+				.bySession[NEW_SESSION_DRAFT_KEY]?.document.parts.map((p) => (p.type === "text" ? p.text : ""))
+				.join(""),
+		).toBe("首条消息");
 		expect(piMock.createSession).toHaveBeenCalledTimes(1);
 
 		created.resolve(realMeta("new-1", "/proj/a"));

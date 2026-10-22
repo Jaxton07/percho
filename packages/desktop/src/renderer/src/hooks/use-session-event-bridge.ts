@@ -1,7 +1,7 @@
 import type { SessionEvent, TrustRequest } from "@percho/shared";
 import { useEffect } from "react";
 import { getPi } from "../api";
-import { useDraftStore } from "../stores/drafts";
+import { useDraftStore, withDraftText } from "../stores/drafts";
 import { EventConflator } from "../stores/event-conflator";
 import { useProjectsStore } from "../stores/projects";
 import { retrySessionHistory } from "../stores/session-history";
@@ -59,7 +59,7 @@ export function useSessionEventBridge({
 			pushExtensionToast(event.level, event.message, event.extensionPath || undefined);
 		});
 		const offEditorText = pi.onExtensionEditorText((event) => {
-			useDraftStore.getState().updateDraft(event.sessionId, (d) => ({ ...d, text: event.text }));
+			useDraftStore.getState().updateDraft(event.sessionId, (d) => withDraftText(d, event.text));
 			useTranscriptStore.getState().markExtensionPrefill(event.sessionId, event.source ?? "");
 		});
 		const offTrust = pi.onTrustRequest(onTrustRequest);

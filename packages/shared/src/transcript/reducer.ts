@@ -1,3 +1,4 @@
+import { readComposerDocument } from "../composer-document";
 import { buildStreamGuardUiError, type UiError } from "../errors";
 import type { ImageInput, SessionEvent } from "../session";
 import { parseExpandedSkillInvocation } from "../skill-invocation";
@@ -323,7 +324,8 @@ export function reduceEvent(state: SessionTranscriptState, event: SessionEvent):
 							.filter((c) => c.type === "text")
 							.map((c) => (c as { text: string }).text)
 							.join("");
-			const invocation = parseExpandedSkillInvocation(text);
+			const document = readComposerDocument(event.message);
+			const invocation = document ? null : parseExpandedSkillInvocation(text);
 			const images: ImageInput[] = Array.isArray(content)
 				? content
 						.filter((c) => c.type === "image" && (c as { data?: string }).data)
@@ -334,6 +336,7 @@ export function reduceEvent(state: SessionTranscriptState, event: SessionEvent):
 				: [];
 			const message: UIMessage = {
 				kind: "user",
+				...(document ? { document } : {}),
 				id: newMessageId(),
 				text: invocation ? (invocation.args ?? "") : text,
 				images,

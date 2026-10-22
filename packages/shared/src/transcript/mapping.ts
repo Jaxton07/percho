@@ -71,6 +71,7 @@ export function messagesToUIMessages(messages: SessionMessage[]): UIMessage[] {
 					timestamp: m.timestamp,
 					entryId: m.entryId,
 					skill: m.skill,
+					document: m.document,
 					...(sourceText !== undefined ? { sourceText } : {}),
 				});
 			}

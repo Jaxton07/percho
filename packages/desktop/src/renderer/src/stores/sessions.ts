@@ -1,11 +1,24 @@
-import type { AvailableModel, PermissionMode, SessionCloseIntent, SessionMeta } from "@percho/shared";
+import {
+	type AvailableModel,
+	composerDocumentFromText,
+	type PermissionMode,
+	type SessionCloseIntent,
+	type SessionMeta,
+} from "@percho/shared";
 import { create } from "zustand";
 import { getPi } from "../api";
+import { releaseComposerEditor } from "../components/composer/editor-host";
 import { selectActiveCwd } from "../lib/active-cwd";
 import { errText } from "../lib/error-text";
 import { clampThinkingLevel } from "../lib/thinking";
 import { useChannelSubscriptionsStore } from "./channel-subscriptions";
-import { COMPOSER_FOCUS_EVENT, useDraftStore } from "./drafts";
+import {
+	appendDraftInput,
+	COMPOSER_FOCUS_EVENT,
+	EMPTY_DRAFT,
+	NEW_SESSION_DRAFT_KEY,
+	useDraftStore,
+} from "./drafts";
 import {
 	finishSessionHistory,
 	hasPendingSessionHistory,
@@ -263,6 +276,17 @@ async function promoteDraft(draft: NewSessionDraftConfig): Promise<string | null
 				{ file: meta.sessionFile, sessionId: meta.sessionId },
 				{ activate: isLatestActivation(token) },
 			);
+		if (
+			isLatestActivation(token) &&
+			useSessionsStore.getState().newSessionDraft?.generation === draft.generation
+		) {
+			const remaining = useDraftStore.getState().bySession[NEW_SESSION_DRAFT_KEY];
+			if (remaining) {
+				useDraftStore.getState().updateDraft(meta.sessionId, () => remaining);
+				useDraftStore.getState().updateDraft(NEW_SESSION_DRAFT_KEY, () => EMPTY_DRAFT);
+			}
+			releaseComposerEditor(NEW_SESSION_DRAFT_KEY);
+		}
 		commitSessionState((state) => {
 			// 同 id 已存在就不再 append（与 open pipeline 同一套防御性去重）
 			const sessions = state.sessions.some((s) => s.sessionId === meta.sessionId)
@@ -545,6 +569,7 @@ export const useSessionsStore = create<SessionsStore>((_set, get) => ({
 			return { closed: false };
 		}
 		const closedFile = get().sessions.find((s) => s.sessionId === sessionId)?.sessionFile;
+		releaseComposerEditor(sessionId);
 		sessionLoader.forget(sessionId, closedFile);
 		useTranscriptStore.getState().resetSession(sessionId);
 		// 频道订阅快照是「后端会话实例」的附属状态：会话关了（含 GC 卸载）就丢掉，并让在途查询作废
@@ -681,14 +706,16 @@ export const useSessionsStore = create<SessionsStore>((_set, get) => ({
 		try {
 			const recalled = await getPi().recallMessage({ sessionId: activeSessionId, ref });
 			// 内容回填草稿：已有草稿文本时换行拼接（与排队取回一致），图片追加在尾部
-			useDraftStore.getState().updateDraft(activeSessionId, (d) => ({
-				...d,
-				text: d.text ? `${d.text}\n${recalled.text}` : recalled.text,
-				images: recalled.images.length > 0 ? [...d.images, ...recalled.images] : d.images,
-			}));
+			useDraftStore.getState().updateDraft(activeSessionId, (d) =>
+				appendDraftInput(d, {
+					document: recalled.document ?? composerDocumentFromText(recalled.text),
+					images: recalled.images,
+				}),
+			);
 			// 重建消息流 + 队列/todo 对齐（同 fork 的恢复套路；会话 meta 不变无需更新）
 			await loadSessionBundle(activeSessionId);
-			window.dispatchEvent(new CustomEvent(COMPOSER_FOCUS_EVENT));
+			if (get().activeSessionId === activeSessionId)
+				window.dispatchEvent(new CustomEvent(COMPOSER_FOCUS_EVENT, { detail: { moveToEnd: true } }));
 		} catch (error) {
 			console.error("撤回消息失败", error);
 			pushToast("warning", "toast.recallFailed", errText(error));

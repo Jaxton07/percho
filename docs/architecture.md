@@ -40,6 +40,7 @@ UI 插件的槽位/区域标识以 shared `ui-plugins.ts` 为单源。新增对�
 - `session-loading.ts` 负责共享 open/bundle 单飞和数据落地，不拥有焦点或工作区成员；跨 await 重新核对身份，不缓存 store 快照来覆盖新状态。
 - 完整历史落到 UI 后才发 history-ready ACK；打开期间实时事件抢先到达，不等于历史已完整，需由 `session-history.ts` 协调补拉。
 - 新会话页只有一份全局 draft；`activeSessionId === null` 时必须有 draft，兼容 `cwd` 镜像 draft.cwd（包括 null）。首发 promotion 使用入口快照并按 draft 代次单飞；迟到结果可以入表，但不能抢新意图的焦点。
+- 输入正文使用 shared 中立文档，Lexical 的节点与撤销状态只留在 renderer 编辑宿主。同一草稿切换只解绑 DOM，真实会话卸载/关闭才释放编辑器；未发送草稿仍只保存在本次运行内。发送快照、在途锁与拒绝提示按目标草稿保存，不能放在会随空态/列表态重挂的组件内；拒绝时已有新编辑则显式恢复旧快照，不覆盖新内容。
 - 当前目录统一由 `lib/active-cwd.ts` 派生；宿主提交状态时从最终 patch 计算兼容 cwd，不用订阅补写制造中间态。
 - “空集合是有效选择”和“尚未初始化”分开表达，例如左栏全部折叠不能因 `[]` 而回退到默认展开。
 

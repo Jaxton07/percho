@@ -1,4 +1,5 @@
 export * from "./channel-subscriptions";
+export * from "./composer-document";
 export * from "./errors";
 export * from "./extension-dialog";
 export * from "./ipc";

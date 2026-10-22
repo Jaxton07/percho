@@ -2,6 +2,7 @@ import type { InlineExtension, ProjectTrustStore } from "@earendil-works/pi-codi
 import { DefaultResourceLoader, getAgentDir, SettingsManager } from "@earendil-works/pi-coding-agent";
 import { createLogger } from "../log";
 import type { PermissionConfirm, PermissionModeRef } from "../permissions/extension";
+import { bindComposerInputBridge, createComposerInputBridge } from "../session/composer-input";
 import { builtinExtensions } from "./builtin-extensions";
 import { resolveProjectTrust, type TrustOptionInternal } from "./trust";
 
@@ -69,14 +70,17 @@ export class ProjectResourceLoader {
 	}> {
 		const agentDir = getAgentDir();
 		const settingsManager = SettingsManager.create(cwd, agentDir, { projectTrusted: false });
+		const composer = createComposerInputBridge();
 		const resourceLoader = new DefaultResourceLoader({
 			cwd,
 			agentDir,
 			settingsManager,
-			extensionFactories: composeExtensionFactories(
-				this.deps.buildExtensions(cwd, options?.confirm, options?.modeRef),
-				{ openUrl: this.deps.openUrl },
-			),
+			extensionFactories: [
+				...composeExtensionFactories(this.deps.buildExtensions(cwd, options?.confirm, options?.modeRef), {
+					openUrl: this.deps.openUrl,
+				}),
+				composer.extension,
+			],
 			additionalSkillPaths: this.deps.desktopIntegration?.additionalSkillPaths,
 			// appendSystemPrompt 会替换文件发现；override 在发现后合并，保留 SDK 信任/优先级规则。
 			appendSystemPromptOverride: (base) => [
@@ -84,6 +88,7 @@ export class ProjectResourceLoader {
 				...base,
 			],
 		});
+		bindComposerInputBridge(resourceLoader, composer);
 		if (this.deps.projectTrust === false) {
 			settingsManager.setProjectTrusted(true);
 			await resourceLoader.reload();

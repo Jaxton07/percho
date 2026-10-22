@@ -1,4 +1,5 @@
 import type {
+	ComposerDocument,
 	ExtensionDialogRequest,
 	ImageInput,
 	SessionEvent,
@@ -45,7 +46,10 @@ interface TranscriptStore {
 	/** 乐观置 agent 运行状态（发送消息后立即置 true，失败/结束后置 false 修正） */
 	markAgentActive: (sessionId: string, active: boolean) => void;
 	/** 发送瞬间插入乐观用户气泡（返回本地 id，供发送失败时撤回；详见 shared/transcript/pending-user.ts） */
-	appendOptimisticUser: (sessionId: string, input: { text: string; images: ImageInput[] }) => string;
+	appendOptimisticUser: (
+		sessionId: string,
+		input: { text: string; images: ImageInput[]; document?: ComposerDocument },
+	) => string;
 	/** 发送失败撤回乐观气泡（已认领的不动） */
 	removeOptimisticUser: (sessionId: string, id: string) => void;
 	/** 清除完成未读标记（切到该会话/回到 chat 视图时调用） */

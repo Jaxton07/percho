@@ -1,4 +1,5 @@
 import type { AgentSessionEvent as PiAgentSessionEvent } from "@earendil-works/pi-coding-agent";
+import type { ComposerDocument } from "./composer-document";
 import type { SkillInvocationDisplay } from "./skill-invocation";
 import type { SubagentRunData } from "./subagent";
 
@@ -183,6 +184,7 @@ interface SessionBaseMessage {
 /** 历史 user 消息（打开历史会话时回放用；不依赖 pi 内部类型） */
 export interface SessionUserMessage extends SessionBaseMessage {
 	role: "user";
+	document?: ComposerDocument;
 	/** 已展开 skill 的安全展示信息（不含正文或路径） */
 	skill?: SkillInvocationDisplay;
 }
@@ -256,6 +258,8 @@ export type SlashCommandSource = "builtin" | "template" | "skill" | "extension";
 
 /** 斜杠命令条目（补全面板展示用） */
 export interface SlashCommandInfo {
+	/** Stable effective resource identity, supplied only for skill entries. */
+	skillId?: string;
 	/** 命令名，不含前导 / */
 	name: string;
 	description: string;
@@ -308,6 +312,13 @@ export interface QuotaInfo {
 export interface QueuedMessages {
 	steering: string[];
 	followUp: string[];
+	steeringInputs?: QueuedInput[];
+	followUpInputs?: QueuedInput[];
+}
+
+export interface QueuedInput {
+	document: ComposerDocument;
+	images: ImageInput[];
 }
 
 export interface CreateSessionOptions {

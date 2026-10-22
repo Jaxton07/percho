@@ -1,5 +1,6 @@
 import type { AgentSession, Extension, ResourceLoader } from "@earendil-works/pi-coding-agent";
 import type { SlashCommandInfo } from "@percho/shared";
+import { skillResourceId } from "./session/composer-input";
 
 /**
  * 斜杠命令清单（纯函数）：内置静态表 + prompt 模板 + skill + 扩展命令。
@@ -54,6 +55,7 @@ function templateCommands(loader: ResourceLoader): SlashCommandInfo[] {
 /** skill 命令映射（会话/无会话两态共用） */
 function skillCommands(loader: ResourceLoader): SlashCommandInfo[] {
 	return loader.getSkills().skills.map((skill) => ({
+		skillId: skillResourceId(skill.filePath),
 		name: `skill:${skill.name}`,
 		description: skill.description,
 		source: "skill",

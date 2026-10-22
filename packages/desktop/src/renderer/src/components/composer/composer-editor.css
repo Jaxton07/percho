@@ -1,0 +1,40 @@
+.composer-editor {
+	white-space: pre-wrap;
+	overflow-wrap: anywhere;
+}
+
+.composer-editor p {
+	margin: 0;
+}
+
+.composer-reference {
+	display: inline;
+	border-radius: 999px;
+	padding: 0.05em 0.45em;
+	color: var(--color-ink-2);
+	background: var(--color-hover);
+	box-decoration-break: clone;
+	-webkit-box-decoration-break: clone;
+}
+
+.composer-reference-skill {
+	color: var(--color-skill-reference-ink);
+	background: var(--color-skill-reference-bg);
+}
+
+.composer-reference::before {
+	content: "";
+	display: inline-block;
+	width: 0.9em;
+	height: 0.9em;
+	margin-right: 0.2em;
+	vertical-align: -0.08em;
+	background: currentColor;
+	mask:
+		url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Cpath fill='none' stroke='black' stroke-width='1.7' stroke-linejoin='round' d='m12 2 8 4.5v10L12 22l-8-5.5v-10L12 2Zm0 10 8-5.5M12 12 4 6.5M12 12v10M8 4.3l8 5.5'/%3E%3C/svg%3E")
+		center / contain no-repeat;
+}
+
+.composer-reference-file::before {
+	mask-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Cpath fill='none' stroke='black' stroke-width='1.7' stroke-linejoin='round' d='M14 2H5v20h14V7l-5-5Zm0 0v5h5M8 12h8M8 16h8'/%3E%3C/svg%3E");
+}
