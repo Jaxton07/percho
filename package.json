@@ -15,7 +15,7 @@
 	],
 	"scripts": {
 		"dev": "npm run dev -w packages/desktop",
-		"postinstall": "patch-package",
+		"postinstall": "patch-package && node node_modules/electron/install.js",
 		"build": "npm run build -w packages/desktop",
 		"typecheck": "npm run typecheck --workspaces",
 		"test": "npm run test --workspaces --if-present",
