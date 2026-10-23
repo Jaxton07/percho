@@ -9,6 +9,12 @@ import type {
 } from "./extension-dialog";
 import type { LanStatus } from "./lan";
 import type { McpConfigListResult, McpMutationResult, McpServersChangedPayload, McpUpsertInput } from "./mcp";
+import type {
+	NetworkSettings,
+	NetworkSettingsSaveResult,
+	NetworkSettingsStatus,
+	NetworkTestResult,
+} from "./network";
 import type { CatalogPackageType, CatalogSearchResult, ConfiguredPackageInfo } from "./packages";
 import type {
 	AppInfo,
@@ -358,6 +364,13 @@ export const UI_PLUGINS_CHANNELS = {
 	uiPluginsOpenDir: ch("uiPlugins:openDir")<{ name?: string }, void>(),
 } as const;
 
+/** 应用级网络设置：保存后下次启动生效。 */
+export const NETWORK_CHANNELS = {
+	loadNetworkSettings: ch("network:load")<void, NetworkSettingsStatus>(),
+	saveNetworkSettings: ch("network:save")<{ settings: NetworkSettings }, NetworkSettingsSaveResult>(),
+	testNetworkConnection: ch("network:test")<{ settings: NetworkSettings }, NetworkTestResult>(),
+} as const;
+
 /** 已表化通道全集（分批迁移，终态 = 全部 invoke 通道） */
 export const CHANNEL_TABLE = {
 	...SESSION_CHANNELS,
@@ -365,6 +378,7 @@ export const CHANNEL_TABLE = {
 	...PACKAGES_CHANNELS,
 	...MCP_CHANNELS,
 	...APP_CHANNELS,
+	...NETWORK_CHANNELS,
 	...LAN_CHANNELS,
 	...EXTENSION_DIALOG_CHANNELS,
 	...UI_PLUGINS_CHANNELS,

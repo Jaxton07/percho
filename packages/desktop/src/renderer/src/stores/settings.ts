@@ -21,6 +21,7 @@ export type SettingsCategory =
 	| "general"
 	| "appearance"
 	| "models"
+	| "network"
 	| "skills"
 	| "mcp"
 	| "extensions"
@@ -371,6 +372,7 @@ export const useSettingsStore = create<SettingsStore>((set, get) => {
 				void get().refreshLanStatus();
 				break;
 			case "appearance":
+			case "network":
 			case "mcp":
 			case "about":
 				break;

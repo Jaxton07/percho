@@ -4,10 +4,13 @@ import "./fix-path";
 import { join } from "node:path";
 import { pathToFileURL } from "node:url";
 import { createLogger, initLogging, PiBackend } from "@percho/backend";
-import { app, BrowserWindow, Menu, nativeTheme, net, protocol, screen, shell } from "electron";
+import { app, BrowserWindow, Menu, nativeTheme, net, protocol, screen, session, shell } from "electron";
 import { backgroundsDir } from "./background";
 import { registerIpc } from "./ipc";
 import { initLanObserver, type LanObserverHandle } from "./lan";
+import { applyNetworkSettings, matchesProxyAuth } from "./network-runtime";
+import { networkSecrets } from "./network-secrets";
+import { NetworkSettingsService } from "./network-settings";
 import { attachRendererWatchdog } from "./renderer-watchdog";
 import { UiPluginManager, uiPluginsResourcesDir } from "./ui-plugins/manager";
 import { loadUiState } from "./ui-state";
@@ -46,6 +49,14 @@ nativeTheme.on("updated", () => applyChromeTheme(nativeTheme.themeSource));
 app.whenReady().then(async () => {
 	initLogging(join(app.getPath("userData"), "logs"));
 	log.info("app ready", { version: app.getVersion(), userData: app.getPath("userData") });
+	const network = new NetworkSettingsService(join(app.getPath("userData"), "network.json"), networkSecrets);
+	const activeNetwork = await network.initialize();
+	app.on("login", (event, _contents, _details, authInfo, callback) => {
+		if (!matchesProxyAuth(activeNetwork, authInfo)) return;
+		event.preventDefault();
+		callback(activeNetwork.username, activeNetwork.password);
+	});
+	await applyNetworkSettings(activeNetwork, session.defaultSession);
 
 	// 自定义背景图协议：pi-bg://background/<文件名> → userData/backgrounds/<文件名>（文件名白名单防路径穿越）
 	protocol.handle(BG_PROTOCOL, (request) => {
@@ -77,7 +88,7 @@ app.whenReady().then(async () => {
 	);
 	uiPluginsManager = new UiPluginManager();
 	await uiPluginsManager.init();
-	registerIpc(backend, uiPluginsManager, lanObserver);
+	registerIpc(backend, uiPluginsManager, lanObserver, network);
 	await initUpdater();
 	scheduleAutoUpdateCheck();
 	const uiState = await loadUiState();

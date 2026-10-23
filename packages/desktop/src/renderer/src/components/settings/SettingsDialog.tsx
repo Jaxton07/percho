@@ -14,6 +14,7 @@ import { ExtensionsPanel } from "./extensions/ExtensionsPanel";
 import { GeneralPanel } from "./GeneralPanel";
 import { LanObserverPanel } from "./LanObserverPanel";
 import { McpPanel } from "./mcp/McpPanel";
+import { NetworkPanel } from "./NetworkPanel";
 import { ProvidersPanel } from "./providers/ProvidersPanel";
 import { SkillsPanel } from "./SkillsPanel";
 
@@ -21,6 +22,7 @@ const STATIC_CATEGORIES = [
 	"general",
 	"appearance",
 	"models",
+	"network",
 	"skills",
 	"mcp",
 	"extensions",
@@ -33,6 +35,7 @@ const PANELS: Partial<Record<SettingsCategory, ComponentType>> = {
 	general: GeneralPanel,
 	appearance: AppearancePanel,
 	models: ProvidersPanel,
+	network: NetworkPanel,
 	skills: SkillsPanel,
 	mcp: McpPanel,
 	extensions: ExtensionsPanel,
