@@ -15,6 +15,8 @@ export interface ExtensionDialogRequest {
 	/** 不可复用的请求身份（包括服务重启及会话重开） */
 	id: string;
 	sessionId: string;
+	/** Source directory, including dialogs raised before session registration completes. */
+	cwd?: string;
 	kind: ExtensionDialogKind;
 	/** 插件原文，宿主不改写 */
 	title: string;

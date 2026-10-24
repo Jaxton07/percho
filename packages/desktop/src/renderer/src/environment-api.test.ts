@@ -44,6 +44,9 @@ const fixture = vi.hoisted(() => {
 					retrying: null,
 				},
 			})),
+			getPendingInteractions: vi.fn(
+				async (): Promise<unknown> => ({ revision: 0, permissions: [], dialogs: [], trust: [] }),
+			),
 			getLoadedSessions: vi.fn(async () => [
 				{
 					meta,
@@ -367,4 +370,34 @@ it("project switching inherits a model template only within its original environ
 		model: local.model,
 		modelResolved: true,
 	});
+});
+
+it("keeps a constructing dialog source in its original environment before a session exists", async () => {
+	disposers.push(registerEnvironment(remote));
+	fixture.remote.getPendingInteractions.mockResolvedValueOnce({
+		revision: 1,
+		permissions: [],
+		trust: [],
+		dialogs: [
+			{
+				id: "startup-dialog",
+				sessionId: "initializing",
+				cwd: "/same",
+				title: "Startup",
+				kind: "input",
+				requestedAt: 1,
+			},
+		],
+	});
+	const snapshot = await getExecutionApi(remote).getPendingInteractions();
+	expect(snapshot.dialogs[0]).toMatchObject({
+		id: environmentEntityKey(remote, "startup-dialog"),
+		sessionId: environmentEntityKey(remote, "initializing"),
+		cwd: environmentEntityKey(remote, "/same"),
+	});
+	expect(
+		useSessionsStore
+			.getState()
+			.sessions.some((item) => item.sessionId === environmentEntityKey(remote, "initializing")),
+	).toBe(false);
 });

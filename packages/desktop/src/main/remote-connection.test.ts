@@ -54,6 +54,8 @@ const probe = {
 	glibc: "2.35",
 	commands: { sh: true, tar: true, sha256sum: true, flock: true, setsid: true },
 	installed: true,
+	agentDir: "/home/developer/.local/share/percho/agent",
+	environmentId: "data",
 };
 const info = {
 	instanceId: "instance",
@@ -249,4 +251,16 @@ it("cancelling or starting a fresh check invalidates an earlier installation con
 	manager.disconnect();
 	await expect(manager.installAndConnect(ready.installation?.token ?? "")).rejects.toThrow("expired");
 	expect(distribution.install).not.toHaveBeenCalled();
+});
+
+it("a missing previous data identity cannot auto-initialize or rebind the saved environment", async () => {
+	await manager.connect("dev");
+	manager.disconnect();
+	fixture.connect.mockClear();
+	fixture.probe.mockResolvedValue({ ...probe, environmentId: undefined });
+	await expect(manager.connect("dev")).rejects.toThrow("Remote identity changed");
+	expect(fixture.connect).not.toHaveBeenCalled();
+	expect((await manager.getStatus()).errorKind).toBe("identity");
+	await vi.runAllTimersAsync();
+	expect(fixture.connect).not.toHaveBeenCalled();
 });

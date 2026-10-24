@@ -47,6 +47,8 @@ export class RuntimeClient {
 	>();
 	private attachment?: RuntimeAttachment;
 	private closed = false;
+	private lastHeartbeat = 0;
+	private heartbeat?: ReturnType<typeof setInterval>;
 	private constructor(
 		private readonly socket: Duplex,
 		private readonly onEvent: (method: string, payload: unknown) => void,
@@ -60,6 +62,7 @@ export class RuntimeClient {
 		socket.once("close", () => reader.dispose());
 		const fail = () => {
 			this.closed = true;
+			clearInterval(this.heartbeat);
 			for (const request of this.pending.values()) {
 				clearTimeout(request.timer);
 				request.reject(
@@ -101,8 +104,10 @@ export class RuntimeClient {
 	private receive(frame: RuntimeFrame): void {
 		if (frame.type === "ping") {
 			const target = this.attachment;
-			if (target && frame.instanceId === target.info.instanceId && frame.epoch === target.epoch)
+			if (target && frame.instanceId === target.info.instanceId && frame.epoch === target.epoch) {
+				this.lastHeartbeat = Date.now();
 				this.send({ type: "pong", nonce: frame.nonce, instanceId: frame.instanceId, epoch: frame.epoch });
+			}
 			return;
 		}
 		if (frame.type === "event") {
@@ -182,6 +187,13 @@ export class RuntimeClient {
 			throw new Error("Invalid runtime handshake");
 		this.attachment = value;
 		this.mutationSequence = 0;
+		this.lastHeartbeat = Date.now();
+		clearInterval(this.heartbeat);
+		this.heartbeat = setInterval(() => {
+			if (Date.now() - this.lastHeartbeat > 25_000)
+				this.socket.destroy(new Error("Runtime heartbeat timed out"));
+		}, 5000);
+		this.heartbeat.unref();
 		return value;
 	}
 
@@ -239,6 +251,7 @@ export class RuntimeClient {
 		return this.attachment;
 	}
 	close(): void {
+		clearInterval(this.heartbeat);
 		this.socket.destroy();
 	}
 }

@@ -6,7 +6,7 @@
 
 - `packages/shared`：跨进程契约、共享纯函数、消息 reducer；不依赖 Electron 或 React。
 - `packages/backend`：纯 Node 的 pi SDK 生产适配边界。`pi-backend.ts` 是门面，内部模块也直接使用 SDK，不要求所有 SDK import 挤在一个文件。
-- `packages/desktop`：Electron main 装配 backend，preload 暴露 `window.pi`，renderer 使用 React + Zustand。SDK 运行在 main 内，不是独立后端子进程。
+- `packages/desktop`：Electron main 装配 backend，preload 暴露 `window.pi`，renderer 使用 React + Zustand。本机 SDK 运行在 main 内；远端由独立 Linux 宿主装配同一 backend。
 - LAN 页面复用 shared 消息投影，出网事件必须经过 backend `lan/sanitize.ts`；不要另造一套消息状态机。
 
 ## IPC 与扩展边界
@@ -89,3 +89,7 @@ SSH 只读预检不创建运行目录或启动 SDK；探测实际非交互环境
 混合导航由 `environment-ui-state.json` 保存带环境的项目、收藏、展开、最近目录与单一工作区顺序，附有不含正文和权限的有限目录元数据以供离线显示。它存在后，不再把旧本机工作区顺序与远端顺序拼成另一份权威。首次转换在旧本机恢复结束后才开始保存；旧 `ui-state.json` 和手动项目 localStorage 继续只写本机投影。远端恢复等待原连接，用户已导航就不抢焦点；零消息会话只从仍存活服务的registry接回，不据缓存声称任务仍在运行。删除连接保留旧归属，不能把旧项目、审批或未知操作核查改绑到新连接。
 
 本机 UI 插件的工作台级信任覆盖本机与远端内容，属于受信代码而非环境隔离。main 在首次连接和读取远端导航缓存前检查旧插件，并串行协调代码交付、启用与确认；已交付代码即使关闭或从配置移除仍计入本次进程的确认范围。全新界面中未加载、未启用的插件不提前弹确认，之后加载时再确认。用户拒绝后保留本机功能与原插件开关，也不允许用本机回退快照覆盖尚未获准的远端导航。LAN 继续直接接本机 backend，禁止从混合 renderer 状态或环境路由汇总远端数据。
+
+扩展 session_start 可以在会话注册前等待输入；构造期宿主也属于待决快照与应答入口，不能只遍历 registry。桌面复用既有交互卡按请求来源处理此类输入，不为它伪造已装载会话，也不靠切换当前项目路由。
+
+连接空闲时也有双向失活检测：daemon等待当前epoch的pong，桌面等待原实例的ping；客户端心跳超时必须关闭本次SSH子进程并通知连接管理，不能只拒绝一个在途调用。SSH保活只证明sshd链路，不代替完整agent服务心跳；两层超时均不停止任务或转发到其他环境。

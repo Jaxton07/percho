@@ -794,3 +794,42 @@ it("stopping also cancels a dialog opened while a session is still being constru
 	expect(shutdown).toHaveBeenCalledOnce();
 	expect(dispose).toHaveBeenCalledOnce();
 });
+
+it("recovers and answers session_start dialogs before the session enters the registry", async () => {
+	const backend = new PiBackend({ projectTrust: false, permissionGates: false });
+	backends.push(backend);
+	const internal = backend as unknown as {
+		bindSessionExtensions(session: unknown, id: string, cwd: string): Promise<ExtensionDialogHost>;
+	};
+	let entered!: () => void, answer: unknown;
+	const waiting = new Promise<void>((resolve) => {
+		entered = resolve;
+	});
+	const binding = internal.bindSessionExtensions(
+		{
+			bindExtensions: async ({ uiContext }: { uiContext: { input(title: string): Promise<unknown> } }) => {
+				const result = uiContext.input("Startup recovery");
+				entered();
+				answer = await result;
+			},
+		},
+		"not-registered",
+		"/isolated/initializing",
+	);
+	await waiting;
+	expect(backend.getLoadedSessions()).toEqual([]);
+	const snapshot = backend.getPendingInteractions();
+	expect(snapshot.dialogs).toHaveLength(1);
+	expect(snapshot.dialogs[0]).toMatchObject({
+		sessionId: "not-registered",
+		cwd: "/isolated/initializing",
+		title: "Startup recovery",
+	});
+	const id = snapshot.dialogs[0].id;
+	backend.respondExtensionDialog(id, { value: "exactly once" });
+	backend.respondExtensionDialog(id, { value: "stale" });
+	const host = await binding;
+	expect(answer).toBe("exactly once");
+	expect(backend.getPendingInteractions().dialogs).toEqual([]);
+	host.dispose();
+});

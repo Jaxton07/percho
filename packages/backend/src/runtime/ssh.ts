@@ -65,7 +65,7 @@ export function remoteAuthGuide(alias: string, node: string, releaseId = "develo
 	validateSshAlias(alias);
 	if (!node.startsWith("/")) throw new Error("Remote Node path must be absolute");
 	return {
-		sshCommand: `ssh -t -oStrictHostKeyChecking=yes -oForwardAgent=no -oClearAllForwardings=yes -oControlMaster=no -- ${alias}`,
+		sshCommand: `ssh -t -oStrictHostKeyChecking=yes -oForwardAgent=no -oClearAllForwardings=yes -oControlMaster=no -oControlPath=none -- ${alias}`,
 		authCommand: `exec ${shellQuote(node)} "$HOME/.local/share/percho/releases/${releaseId}/entry.mjs" auth`,
 	};
 }
@@ -149,9 +149,17 @@ export class SshRuntimeConnection {
 		child.on("error", () => {
 			stream.destroy(new Error(stderr.trim() || "SSH bridge closed"));
 		});
+		let notified = false;
+		const ended = () => {
+			if (notified) return;
+			notified = true;
+			close();
+			options.onClose();
+		};
+		stream.once("close", ended);
 		child.once("close", () => {
 			stream.destroy();
-			options.onClose();
+			ended();
 		});
 		try {
 			const attached = await client.attach(options.clientTag ?? randomUUID());

@@ -361,8 +361,8 @@ export class RemoteConnectionManager {
 			if (
 				saved &&
 				(probe.uid !== saved.uid ||
-					(probe.agentDir && probe.agentDir !== saved.canonicalAgentDir) ||
-					(probe.environmentId && probe.environmentId !== saved.environmentId))
+					probe.agentDir !== saved.canonicalAgentDir ||
+					probe.environmentId !== saved.environmentId)
 			)
 				throw new Error("Remote identity changed: UID or data directory differs");
 			if (saved?.target && JSON.stringify(saved.target) !== JSON.stringify(probe.target))

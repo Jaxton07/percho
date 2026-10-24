@@ -46,6 +46,14 @@ jobs:
             -v "$PWD/scripts:/verify:ro" \
             -v "$PWD/.local/runtime-${ARTIFACT_ARCH}:/artifacts:ro" \
             percho-runtime-build sh /verify/remote-runtime/check-artifact.sh
+      - name: Verify desktop installer against the target archive
+        run: |
+          docker run --rm --platform "$PLATFORM" --network none \
+            --tmpfs /state:mode=0700,exec \
+            -v "$PWD/scripts:/verify:ro" \
+            -v "$PWD/packages/backend/src/runtime/install-script.ts:/bootstrap.mjs:ro" \
+            -v "$PWD/.local/runtime-${ARTIFACT_ARCH}:/artifacts:ro" \
+            percho-runtime-build node /verify/verify-remote-runtime-install.mjs
       - uses: actions/upload-artifact@v4
         with:
           name: remote-runtime-${{ matrix.arch }}

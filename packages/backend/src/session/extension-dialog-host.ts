@@ -54,6 +54,7 @@ interface PendingEntry {
 export class ExtensionDialogHost {
 	private readonly pending = new Map<string, PendingEntry>();
 	private sessionId = "";
+	private cwd?: string;
 	private closed = false;
 
 	constructor(
@@ -64,8 +65,9 @@ export class ExtensionDialogHost {
 	) {}
 
 	/** 会话创建后才能确定 sessionId，创建后绑定（仿 gate.bindSession 两步构造） */
-	bind(sessionId: string): void {
+	bind(sessionId: string, cwd?: string): void {
 		this.sessionId = sessionId;
+		this.cwd = cwd;
 	}
 
 	/** 实现 ctx.ui.select/confirm/input/editor 的统一入口；取消值按 kind 契约 */
@@ -79,6 +81,7 @@ export class ExtensionDialogHost {
 		const request: ExtensionDialogRequest = {
 			id,
 			sessionId: this.sessionId,
+			...(this.cwd ? { cwd: this.cwd } : {}),
 			kind,
 			title: fields.title,
 			...(fields.message !== undefined ? { message: fields.message } : {}),

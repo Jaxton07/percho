@@ -127,6 +127,7 @@ describe("SSH runtime boundary", () => {
 			expect(args).toContain("-oBatchMode=yes");
 			expect(args).toContain("-oForwardAgent=no");
 			expect(args).toContain("-T");
+			expect(args).toContain("-oControlPath=none");
 			expect(args.slice(-3, -1)).toEqual(["--", "company-dev"]);
 			expect(await connection.invoke("getStats", { sessionId: "same" })).toEqual({ ok: true });
 		} finally {

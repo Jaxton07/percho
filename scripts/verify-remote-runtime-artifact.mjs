@@ -25,8 +25,20 @@ assert.equal(
 	JSON.parse(await readFile("/runtime/package.json", "utf8")).dependencies["@earendil-works/pi-coding-agent"],
 );
 await assert.rejects(access("/state/check-must-not-exist"), { code: "ENOENT" });
-for (const root of ["r", "i", "c", "t", "a"]) await mkdir(`/state/${root}`, { recursive: true, mode: 0o700 });
-const cases = ["linux", "images", "artifact-worker", "reconnect", "settings", "artifact-tools"];
+for (const root of ["r", "i", "c", "t", "a", "s"])
+	await mkdir(`/state/${root}`, { recursive: true, mode: 0o700 });
+const cases = [
+	"linux",
+	"images",
+	"artifact-worker",
+	"reconnect",
+	"settings",
+	"artifact-tools",
+	"startup-dialog",
+	"paths",
+	"half-open",
+	"shutdown",
+];
 for (const name of cases) {
 	const result = await exec(process.execPath, [`/verify/verify-remote-runtime-${name}.mjs`], {
 		env: { ...process.env, PERCHO_RUNTIME_TEST_PROJECTION: "/artifacts/recovery-projection.mjs" },

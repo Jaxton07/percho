@@ -313,7 +313,9 @@ export class PiBackend {
 		return {
 			revision: this.interactionRevision,
 			permissions: this.getPendingPermissionRequests(),
-			dialogs: this.registry.list().flatMap((entry) => entry.dialogs.listPending()),
+			dialogs: [
+				...new Set([...this.registry.list().map((entry) => entry.dialogs), ...this.constructionDialogs]),
+			].flatMap((host) => host.listPending()),
 			trust: this.trustGate.listPending(),
 		};
 	}
@@ -524,12 +526,13 @@ export class PiBackend {
 	private async bindSessionExtensions(
 		session: AgentSession,
 		sessionId: string,
+		cwd: string,
 	): Promise<ExtensionDialogHost> {
 		const dialogs = new ExtensionDialogHost({
-			onRequest: (req) => this.publishInteraction(this.extensionDialogRequestEmitter, req),
+			onRequest: (req) => this.publishInteraction(this.extensionDialogRequestEmitter, { ...req, cwd }),
 			onResolved: (result) => this.publishInteraction(this.extensionDialogResolvedEmitter, result),
 		});
-		dialogs.bind(sessionId);
+		dialogs.bind(sessionId, cwd);
 		this.constructionDialogs.add(dialogs);
 		const recordExtensionError = (err: ExtensionError): void => {
 			log.error("extension error", sessionId, err);
@@ -809,7 +812,7 @@ export class PiBackend {
 				}
 			}
 			gate.bindSession(session.sessionId);
-			const dialogs = await this.bindSessionExtensions(session, session.sessionId);
+			const dialogs = await this.bindSessionExtensions(session, session.sessionId, cwd);
 			candidateDialogs = dialogs;
 			this.assertRunning();
 			const unsubscribe = session.subscribe((event) => {
@@ -1880,6 +1883,7 @@ export class PiBackend {
 
 	/** renderer 应答扩展对话框（requestId 含 sessionId 全局唯一；非本宿主实例静默忽略，仿 respondPermission 遍历） */
 	respondExtensionDialog(requestId: string, answer: ExtensionDialogRespond): void {
+		for (const dialogs of this.constructionDialogs) dialogs.respond(requestId, answer);
 		for (const { dialogs } of this.registry.list()) {
 			dialogs.respond(requestId, answer);
 		}

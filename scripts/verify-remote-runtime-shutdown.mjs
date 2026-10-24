@@ -9,7 +9,7 @@ import { pathToFileURL } from "node:url";
 import { promisify } from "node:util";
 
 const entry = process.env.PERCHO_RUNTIME_TEST_ENTRY;
-if (process.platform !== "linux" || !entry?.startsWith("/work/"))
+if (process.platform !== "linux" || !(entry?.startsWith("/work/") || entry?.startsWith("/runtime/")))
 	throw new Error("Isolated Linux fixture required");
 const exec = promisify(execFile),
 	root = "/state/s";
@@ -48,7 +48,7 @@ for (const name of [
 	await rm(`${root}/${name}`, { force: true });
 await writeFile(
 	`${root}/fixture-mcp.mjs`,
-	`import{writeFileSync}from'node:fs';writeFileSync('${root}/mcp-pid',String(process.pid));process.on('exit',()=>writeFileSync('${root}/mcp-exit','closed'));await import('/work/scripts/fixtures/remote-runtime-mcp.mjs');`,
+	`import{writeFileSync}from'node:fs';writeFileSync('${root}/mcp-pid',String(process.pid));process.on('exit',()=>writeFileSync('${root}/mcp-exit','closed'));await import('${new URL("./fixtures/remote-runtime-mcp.mjs", import.meta.url).href}');`,
 );
 await writeFile(
 	`${root}/agent/mcp.json`,
@@ -158,7 +158,10 @@ try {
 	for (const name of await readdir(dirname(entry)))
 		if (name.endsWith(".mjs")) await copyFile(join(dirname(entry), name), join(alternate, name));
 	if (!(await exists(join(alternate, "node_modules"))))
-		await symlink("/work/node_modules", join(alternate, "node_modules"));
+		await symlink(join(dirname(entry), "node_modules"), join(alternate, "node_modules"));
+	for (const name of ["package.json", "bin"])
+		if (await exists(join(dirname(entry), name)))
+			await symlink(join(dirname(entry), name), join(alternate, name));
 	const replacement = await cli("start", join(alternate, "entry.mjs"));
 	assert.notEqual(replacement.instanceId, started.instanceId);
 	assert.equal(replacement.environmentId, started.environmentId);
@@ -186,7 +189,7 @@ try {
 	pid = undefined;
 	// An incomplete prepared package must fail readiness without retaining an owner or silently selecting another package.
 	const serverChunk = (await readFile(join(alternate, "cli.mjs"), "utf8")).match(
-		/server-[A-Za-z0-9_-]+\.mjs/,
+		/server(?:-[A-Za-z0-9_-]+)?\.mjs/,
 	)?.[0];
 	assert.ok(serverChunk);
 	await rm(join(alternate, serverChunk));

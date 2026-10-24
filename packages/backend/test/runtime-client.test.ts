@@ -105,3 +105,42 @@ describe("runtime client transport ownership", () => {
 		expect(f.requests.filter((request) => request.type === "invoke")).toHaveLength(1);
 	});
 });
+
+it("an idle half-open attachment times out without waiting for a new business call", async () => {
+	vi.useFakeTimers({ toFake: ["Date", "setTimeout", "clearTimeout", "setInterval", "clearInterval"] });
+	const f = fixture();
+	try {
+		await f.client.attach("desktop");
+		await vi.advanceTimersByTimeAsync(20_000);
+		// An unrelated instance cannot keep an old attachment apparently healthy.
+		f.write({ type: "ping", nonce: "old", instanceId: "other", epoch: 4 });
+		await vi.advanceTimersByTimeAsync(10_000);
+		await expect(f.client.invoke("getLoadedSessions")).rejects.toThrow(/closed/);
+	} finally {
+		f.client.close();
+		vi.useRealTimers();
+	}
+});
+it("current daemon heartbeats keep an otherwise idle connection usable", async () => {
+	vi.useFakeTimers({ toFake: ["Date", "setTimeout", "clearTimeout", "setInterval", "clearInterval"] });
+	const f = fixture();
+	try {
+		await f.client.attach("desktop");
+		for (let i = 0; i < 8; i++) {
+			await vi.advanceTimersByTimeAsync(5000);
+			f.write({ type: "ping", nonce: String(i), instanceId: "instance", epoch: 4 });
+			await vi.advanceTimersByTimeAsync(0);
+		}
+		const pending = f.client.invoke("getLoadedSessions");
+		void pending.catch(() => {});
+		for (let turn = 0; turn < 32 && !f.requests.some((item) => item.type === "invoke"); turn++)
+			await new Promise<void>((resolve) => setImmediate(resolve));
+		const request = f.requests.find((item) => item.type === "invoke");
+		if (request?.type !== "invoke") throw Error("Missing request");
+		f.write({ type: "result", id: request.id, result: [] });
+		await expect(pending).resolves.toEqual([]);
+	} finally {
+		f.client.close();
+		vi.useRealTimers();
+	}
+});
