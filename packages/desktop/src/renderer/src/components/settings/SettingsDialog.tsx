@@ -1,3 +1,4 @@
+import type { UiPluginInfo } from "@percho/shared";
 import type { ComponentType, CSSProperties } from "react";
 import { useMemo, useRef } from "react";
 import { useT } from "../../i18n";
@@ -5,6 +6,8 @@ import { useEdgeFade } from "../../lib/use-edge-fade";
 import { PluginBoundary } from "../../plugins/PluginBoundary";
 import { EMPTY_CONTRIBUTIONS } from "../../plugins/RegionHost";
 import { type Contribution, useUiPluginRegistry } from "../../plugins/registry";
+import { ShadowSurface } from "../../plugins/ShadowSurface";
+import { SchemaSettingsPage } from "../../plugins/settings-schema-form";
 import { UI_REGIONS } from "../../plugins/slots";
 import { type SettingsCategory, useSettingsStore } from "../../stores/settings";
 import { useUiPluginsStore } from "../../stores/ui-plugins";
@@ -40,9 +43,25 @@ const PANELS: Partial<Record<SettingsCategory, ComponentType>> = {
 	about: AboutPanel,
 };
 
-/** settings.panel 贡献的分类 id：plugin:<pluginName>:<contributionId>（spec §17） */
+/** settings.panel 贡献的分类 id：plugin:<pluginName>:<contributionId> */
 function pluginCategoryId(pluginName: string, contributionId: string): SettingsCategory {
 	return `plugin:${pluginName}:${contributionId}`;
+}
+
+/** 声明式设置页的分类 id 后缀（与 settings.panel 贡献区分：后者用 plugin:<name>:<id>） */
+const SETTINGS_SUFFIX = ":$settings";
+
+/** 声明式设置页的分类 id（插件只声明 settingsSchema、没写设置页组件时用） */
+function pluginSettingsCategoryId(pluginName: string): SettingsCategory {
+	return `plugin:${pluginName}${SETTINGS_SUFFIX}` as SettingsCategory;
+}
+
+/** 由分类 id 反查"声明式设置页"插件；不是该形态返回 null */
+function findSettingsCategory(category: SettingsCategory, plugins: UiPluginInfo[]) {
+	if (!category.startsWith("plugin:") || !category.endsWith(SETTINGS_SUFFIX)) return null;
+	const name = category.slice("plugin:".length, -SETTINGS_SUFFIX.length);
+	if (!name || name.includes(":")) return null;
+	return plugins.find((p) => p.name === name && p.settingsSchema) ?? null;
 }
 
 /** 由分类 id 反查 settings.panel 贡献；非 plugin: 前缀或已不存在返回 null */
@@ -83,6 +102,28 @@ function SettingsDialogBody() {
 		() => findPluginContribution(category, pluginCategories),
 		[category, pluginCategories],
 	);
+
+	// 声明式设置页：manifest.settingsSchema 即可，不需要写组件。
+	// 已经用 settings.panel 贡献自己画页面的插件不再重复列一项（贡献优先）。
+	const pluginInfos = useUiPluginsStore((s) => s.plugins);
+	const schemaPlugins = useMemo(() => {
+		if (!masterOn) return [];
+		const claimed = new Set(pluginCategories.map((c) => c.pluginName));
+		return pluginInfos.filter(
+			(p) =>
+				p.enabled &&
+				p.trusted &&
+				!p.invalidReason &&
+				p.settingsSchema &&
+				!claimed.has(p.name) &&
+				!p.contributions.some((c) => c.region === UI_REGIONS.SettingsPanel),
+		);
+	}, [masterOn, pluginCategories, pluginInfos]);
+	const activeSchemaPlugin = useMemo(
+		() => findSettingsCategory(category, schemaPlugins),
+		[category, schemaPlugins],
+	);
+	const fullBleed = activePluginContribution?.layout === "full";
 
 	// 两列各自是滚动容器：分割线只留左导航右缘那条（`.fade-rule-v`），内容区的边界改由滚动淡出表达
 	const navRef = useRef<HTMLElement>(null);
@@ -130,6 +171,24 @@ function SettingsDialogBody() {
 								{t(`settings.category.${id}`)}
 							</button>
 						))}
+						{/* 声明式设置页分类：标题取插件 displayName（manifest 字符串，不走宿主 i18n） */}
+						{schemaPlugins.map((p) => {
+							const id = pluginSettingsCategoryId(p.name);
+							return (
+								<button
+									key={id}
+									type="button"
+									className={`mb-0.5 w-full rounded-lg px-3 py-2 text-left text-ui-13 transition-colors ${
+										category === id
+											? "bg-hover font-medium text-ink"
+											: "text-ink-dim hover:bg-hover hover:text-ink"
+									}`}
+									onClick={() => setCategory(id)}
+								>
+									{p.displayName ?? p.name}
+								</button>
+							);
+						})}
 						{/* 插件自带设置页分类：标题取 contribution.title（插件自定义字符串，不走宿主 i18n） */}
 						{pluginCategories.map((c) => {
 							const id = pluginCategoryId(c.pluginName, c.id);
@@ -151,7 +210,10 @@ function SettingsDialogBody() {
 					</nav>
 					<div
 						ref={contentRef}
-						className="edge-fade min-w-0 flex-1 overflow-y-auto overflow-x-hidden px-4 py-3"
+						// layout=full：内容区不再套 padding、不再有外层滚动（插件自己管），否则默认 form
+						className={`edge-fade min-w-0 flex-1 overflow-x-hidden ${
+							fullBleed ? "min-h-0 overflow-hidden" : "overflow-y-auto px-4 py-3"
+						}`}
 						style={{ "--edge-fade-size": "20px" } as CSSProperties}
 					>
 						{Panel ? (
@@ -165,8 +227,14 @@ function SettingsDialogBody() {
 								pluginName={activePluginContribution.pluginName}
 								label={category}
 							>
-								<activePluginContribution.component />
+								<ContributionBody contribution={activePluginContribution} label={category} />
 							</PluginBoundary>
+						) : activeSchemaPlugin?.settingsSchema ? (
+							<SchemaSettingsPage
+								pluginName={activeSchemaPlugin.name}
+								schema={activeSchemaPlugin.settingsSchema}
+								description={activeSchemaPlugin.description}
+							/>
 						) : (
 							<p className="py-8 text-center text-ui-13 text-ink-faint">{t("settings.comingSoon")}</p>
 						)}
@@ -175,4 +243,24 @@ function SettingsDialogBody() {
 			</div>
 		</div>
 	);
+}
+
+/**
+ * 贡献正文：isolation=shadow（perchoUi 2）时挂进 shadow root，否则按 v1 行为直接渲染。
+ * 单独抽出来是为了让 PluginBoundary 的 key 语义保持"按贡献实例"，而不是按隔离方式。
+ */
+function ContributionBody({ contribution, label }: { contribution: Contribution; label: string }) {
+	const Component = contribution.component;
+	if (contribution.isolation === "shadow") {
+		return (
+			<ShadowSurface
+				pluginName={contribution.pluginName}
+				label={label}
+				layout={contribution.layout ?? "form"}
+			>
+				<Component />
+			</ShadowSurface>
+		);
+	}
+	return <Component />;
 }

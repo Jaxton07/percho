@@ -5,7 +5,9 @@ import {
 	type UiPluginsConfig,
 } from "@percho/shared";
 import { getPi } from "../api";
+import { usePluginSettingsStore } from "../stores/plugin-settings";
 import { useUiPluginsStore } from "../stores/ui-plugins";
+import { setPluginCss } from "./plugin-assets";
 import { useUiPluginRegistry } from "./registry";
 import type { SlotName } from "./slots";
 
@@ -89,6 +91,14 @@ async function reloadAll(): Promise<void> {
 			store.setLoadError(p.name, res.error);
 			continue;
 		}
+		// 插件样式（perchoUi 2）随代码一起替换：先更新缓存再加载，避免首帧缺样式
+		setPluginCss(p.name, res.css);
+		// styles 只在 shadow 隔离里注入：light 隔离下写了也不生效，明说一句，省得作者以为没构建出来
+		if (res.css && !res.manifest.contributions?.some((c) => c.isolation === "shadow")) {
+			console.warn(
+				`[ui-plugins] ${p.name} 声明了 styles，但没有 isolation="shadow" 的贡献：宿主不会注入这些样式`,
+			);
+		}
 		await loadPluginCode(res.manifest, res.code, computeAssignedSlots(res.manifest, plugins, config));
 	}
 }
@@ -128,8 +138,15 @@ export async function initUiPlugins(): Promise<void> {
 	if (!subscribed) {
 		subscribed = true;
 		getPi().onUiPluginsEvent((payload) => {
-			if (payload.kind === "config") enqueueReload(() => reloadAll());
-			else if (payload.kind === "changed") enqueueReload(() => reloadPlugin(payload.name));
+			if (payload.kind === "config") {
+				// 配置可能来自别的窗口（含插件自己的配置写入）：丢掉缓存，设置页下次挂载重新读
+				usePluginSettingsStore.getState().invalidate();
+				enqueueReload(() => reloadAll());
+			} else if (payload.kind === "settings") {
+				// 只是某个插件的配置变了：绝不能 reloadAll —— 否则用户每敲一个字，所有插件都会
+				// 重新执行一遍（状态丢失、输入卡顿），而配置本身和插件代码无关
+				usePluginSettingsStore.getState().invalidate(payload.name);
+			} else if (payload.kind === "changed") enqueueReload(() => reloadPlugin(payload.name));
 		});
 	}
 	await useUiPluginsStore.getState().loadAll();

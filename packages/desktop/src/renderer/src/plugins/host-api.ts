@@ -6,6 +6,7 @@ import { Markdown } from "../components/chat/Markdown";
 import { displayName, summarizeArgs } from "../components/chat/ToolCallCard";
 import { Button } from "../components/ui/Button";
 import { Dropdown } from "../components/ui/Dropdown";
+import { Switch } from "../components/ui/Switch";
 import { Tooltip } from "../components/ui/Tooltip";
 import { useContextUsage } from "../hooks/use-context-usage";
 import { useLanguage } from "../hooks/use-language";
@@ -18,6 +19,7 @@ import { useTranscriptStore } from "../stores/transcript";
 import { useUiStore } from "../stores/ui";
 import { useUiPreferencesStore } from "../stores/ui-preferences";
 import type { PerchoUiApi } from "./env";
+import { usePluginSettings } from "./use-plugin-settings";
 
 /**
  * 宿主 API：把宿主能力挂到 window.PerchoUI（插件运行时的唯一入口，与宿主共享同一 React 实例）。
@@ -37,6 +39,8 @@ window.PerchoUI = {
 		Tooltip,
 		Markdown,
 		ImagePreview: ImagePreviewOverlay,
+		// 设置页原语：只放行为/可访问性容易做错的控件，样式仍由宿主主题表与设置页共享
+		Switch,
 	},
 	helpers: {
 		summarizeArgs,
@@ -47,6 +51,7 @@ window.PerchoUI = {
 		useContextUsage,
 		useQuota,
 		useLanguage,
+		usePluginSettings,
 	},
 	stores: {
 		useTranscriptStore,

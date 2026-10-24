@@ -47,6 +47,10 @@ export interface Contribution {
 	anchor?: UiPluginAnchor;
 	/** 展示名（settings.panel 用作设置分类标题） */
 	title?: string;
+	/** 版式（仅 settings.panel 有意义，perchoUi 2）：full = 内容区让位、插件自管滚动 */
+	layout?: "form" | "full";
+	/** 隔离方式（perchoUi 2）：shadow = 挂进 shadow root（宿主主题表），light = v1 行为 */
+	isolation?: "light" | "shadow";
 }
 
 interface UiPluginRegistryState {
@@ -147,6 +151,8 @@ export const useUiPluginRegistry = create<UiPluginRegistryState>((set, get) => (
 					component: exported as ComponentType<Record<string, never>>,
 					anchor: c.anchor,
 					title: c.title,
+					layout: c.layout,
+					isolation: c.isolation,
 				},
 			];
 		}

@@ -3,6 +3,7 @@ import type { ComponentType, ReactNode } from "react";
 import { useUiPluginsStore } from "../stores/ui-plugins";
 import { PluginBoundary } from "./PluginBoundary";
 import { type Contribution, useUiPluginRegistry } from "./registry";
+import { ShadowSurface } from "./ShadowSurface";
 import { type RegionName, UI_REGIONS } from "./slots";
 
 /** 区域空列表稳定引用（selector 缺省用，禁内联新数组） */
@@ -64,16 +65,29 @@ export function RegionHost({
 	const showCornerContainer = (Boolean(leading) || layout === "flow") && isCorner;
 	if (!hasContent && !showCornerContainer) return null;
 
-	const renderContribution = (c: Contribution) => {
+	/**
+	 * 贡献正文：isolation=shadow（perchoUi 2）→ 挂进 shadow root（宿主主题表 + 插件自带样式），
+	 * 否则按 v1 行为直接渲染。区域容器语义（定位/层级）仍由外层 div 负责，不给插件。
+	 */
+	const renderBody = (c: Contribution) => {
 		const Comp = c.component as ComponentType<Record<string, never>>;
-		return (
-			<div key={`${c.pluginName}:${c.id}:${nonces[c.pluginName] ?? 0}`} data-plugin={c.pluginName}>
-				<PluginBoundary pluginName={c.pluginName} label={`region ${region}`}>
+		if (c.isolation === "shadow") {
+			return (
+				<ShadowSurface pluginName={c.pluginName} label={`region ${region}`} layout="form">
 					<Comp />
-				</PluginBoundary>
-			</div>
-		);
+				</ShadowSurface>
+			);
+		}
+		return <Comp />;
 	};
+
+	const renderContribution = (c: Contribution) => (
+		<div key={`${c.pluginName}:${c.id}:${nonces[c.pluginName] ?? 0}`} data-plugin={c.pluginName}>
+			<PluginBoundary pluginName={c.pluginName} label={`region ${region}`}>
+				{renderBody(c)}
+			</PluginBoundary>
+		</div>
+	);
 
 	switch (region) {
 		case UI_REGIONS.AppBackground:
@@ -92,7 +106,7 @@ export function RegionHost({
 							className={`pointer-events-none fixed inset-0 z-20 flex ${OVERLAY_ANCHOR_CLASSES[c.anchor ?? "bottom-right"]}`}
 						>
 							<PluginBoundary pluginName={c.pluginName} label={`region ${region}`}>
-								<c.component />
+								{renderBody(c)}
 							</PluginBoundary>
 						</div>
 					))}
