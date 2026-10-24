@@ -15,6 +15,7 @@ import { create } from "zustand";
 import { getPi } from "../api";
 import { releaseComposerEditor } from "../components/composer/editor-host";
 import { getExecutionApi } from "../environment-api";
+import { isEnvironmentRegistered } from "../environment-registry";
 import { selectActiveCwd } from "../lib/active-cwd";
 import { errText } from "../lib/error-text";
 import { clampThinkingLevel } from "../lib/thinking";
@@ -268,6 +269,7 @@ function rememberCwd(cwd: string | null): void {
 
 /** 信任前置：未决项目弹窗（结果落 trust.json），draft 拉斜杠命令/promotion 建会话直接命中缓存 */
 function ensureTrust(cwd: string, environment: EnvironmentRef = environmentEntityRef(cwd).environment): void {
+	if (environment.kind === "ssh" && !isEnvironmentRegistered(environment)) return;
 	void getExecutionApi(environment)
 		.ensureProjectTrust({ cwd })
 		.then(() => commitSessionState((s) => ({ trustVersion: s.trustVersion + 1 })))
@@ -509,6 +511,16 @@ export const useSessionsStore = create<SessionsStore>((_set, get) => ({
 			// 已经在 draft 页：再次点击只激活，不覆盖用户在 draft 内选过的配置。
 			// 只有「还没选项目」的那份（开机初始化/补种出来的，cwd === null）接受启动传入的 cwd。
 			const targetCwd = existing.cwd ?? cwd ?? state.cwd;
+			if (
+				targetCwd &&
+				!sameEnvironment(
+					environmentEntityRef(targetCwd).environment,
+					existing.environment ?? LOCAL_ENVIRONMENT,
+				)
+			) {
+				get().activateNewSessionDraftForCwd(targetCwd);
+				return;
+			}
 			set({
 				activeSessionId: null,
 				newSessionDraft: { ...existing, cwd: targetCwd },
@@ -520,7 +532,10 @@ export const useSessionsStore = create<SessionsStore>((_set, get) => ({
 		const targetCwd = cwd ?? state.cwd;
 		set({
 			activeSessionId: null,
-			newSessionDraft: makeDraft(state, { cwd: targetCwd }),
+			newSessionDraft: makeDraft(state, {
+				cwd: targetCwd,
+				environment: targetCwd ? environmentEntityRef(targetCwd).environment : undefined,
+			}),
 		});
 		if (targetCwd) ensureTrust(targetCwd, currentEnvironment(get()));
 	},

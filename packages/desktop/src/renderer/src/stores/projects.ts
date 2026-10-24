@@ -24,7 +24,15 @@ function loadAddedProjects(): string[] {
 	try {
 		const raw = localStorage.getItem(ADDED_KEY);
 		const parsed = raw ? (JSON.parse(raw) as unknown) : [];
-		return Array.isArray(parsed) ? parsed.filter((p): p is string => typeof p === "string") : [];
+		return Array.isArray(parsed)
+			? parsed.filter((p): p is string => {
+					try {
+						return typeof p === "string" && environmentEntityRef(p).environment.kind === "local";
+					} catch {
+						return false;
+					}
+				})
+			: [];
 	} catch {
 		return [];
 	}

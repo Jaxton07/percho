@@ -3,6 +3,7 @@ import type { Messages } from "./zh";
 /** English language pack (mirrors zh.ts shape) */
 export const en: Messages = {
 	remote: {
+		unavailableProject: "Unlinked",
 		projectLocationHint: "Choose where this project lives. Its sessions stay in that environment.",
 		localProject: "Local project",
 		remoteProject: "Remote project",

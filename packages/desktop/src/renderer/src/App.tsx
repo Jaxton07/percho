@@ -1,5 +1,5 @@
 import type { TrustRequest } from "@percho/shared";
-import { environmentEntityRef } from "@percho/shared";
+import { environmentEntityRef, LOCAL_ENVIRONMENT } from "@percho/shared";
 import { useCallback, useEffect, useRef } from "react";
 import { CornerStack } from "./components/chat/CornerStack";
 import { EmptyState } from "./components/chat/EmptyState";
@@ -32,6 +32,10 @@ import {
 	invalidateChannelSubscriptionQueries,
 	syncActiveSession,
 } from "./stores/channel-subscriptions";
+import {
+	restoreEnvironmentUiNavigation,
+	startEnvironmentUiPersistence,
+} from "./stores/environment-ui-restore";
 import { useInteractionStore } from "./stores/interactions";
 import { initRemoteConnectionBridge } from "./stores/remote-connection";
 import { restoreSessionWorkspace } from "./stores/session-workspace-restore";
@@ -102,10 +106,13 @@ export default function App() {
 		// 开屏就绪信号：首批数据（模型列表）settle 后收场（finishSplash 幂等）。
 		// v10：**不再恢复上次打开的会话**（启动纯空 = 新会话页，与 pi 原生 / Codex 一致）；
 		// 历史全在左栏，点一下才按需加载
-		void Promise.allSettled([useSessionsStore.getState().loadModels()]).then(() => finishSplash());
+		void Promise.allSettled([useSessionsStore.getState().loadModels(LOCAL_ENVIRONMENT)]).then(() =>
+			finishSplash(),
+		);
 		// 临时会话工作区恢复：fire-and-forget，不阻塞开屏（splash 仍由上面的 loadModels 链收场）。
 		// 它会自己等历史目录对账；只按需加载 activeFile 一条，且不抢用户已做出的导航
-		void restoreSessionWorkspace();
+		void restoreSessionWorkspace().finally(startEnvironmentUiPersistence);
+		restoreEnvironmentUiNavigation();
 		initUpdateStore();
 		// 退出确认（Windows）：挂载即向 main 声明接管，点 ✕ 才会拦下来弹窗
 		initAppQuit();

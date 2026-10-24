@@ -107,6 +107,7 @@ export type MutationReceipt =
 	| { state: "failed" | "rejected"; error: string }
 	| { state: "expired" | "unknown" };
 export interface UncertainRemoteOperation {
+	environment: EnvironmentRef;
 	id: string;
 	operation: MutationReference;
 	createdAt: number;

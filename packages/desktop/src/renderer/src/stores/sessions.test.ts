@@ -1,4 +1,9 @@
-import { composerDocumentFromText, type SessionEvent, type SessionMeta } from "@percho/shared";
+import {
+	composerDocumentFromText,
+	environmentEntityKey,
+	type SessionEvent,
+	type SessionMeta,
+} from "@percho/shared";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 /** window.pi 的 mock：sessions store 经 getPi() 访问，测试环境无 preload 注入 */
@@ -1768,4 +1773,14 @@ describe("工作区接线", () => {
 		expect(memberIds()).toEqual([]);
 		expect(activeFile()).toBeNull();
 	});
+});
+
+it("cold start remote cwd keeps its environment and never requests local project trust", () => {
+	const environment = { kind: "ssh", connectionId: "saved", environmentId: "data" } as const;
+	const cwd = environmentEntityKey(environment, "/company/project");
+	useSessionsStore.getState().activateNewSessionDraft();
+	useSessionsStore.getState().activateNewSessionDraft(cwd);
+	expect(useSessionsStore.getState().newSessionDraft?.environment).toEqual(environment);
+	expect(useSessionsStore.getState().newSessionDraft?.cwd).toBe(cwd);
+	expect(piMock.ensureProjectTrust).not.toHaveBeenCalled();
 });

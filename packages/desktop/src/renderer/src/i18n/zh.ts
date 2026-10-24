@@ -1,6 +1,7 @@
 /** 中文语言包（作为 key 的结构定义，en.ts 与之同形） */
 export const zh = {
 	remote: {
+		unavailableProject: "不可用",
 		projectLocationHint: "选择项目所在的位置。添加后会话固定在该环境执行。",
 		localProject: "本机项目",
 		remoteProject: "远端项目",

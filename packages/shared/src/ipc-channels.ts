@@ -1,6 +1,7 @@
 import type { ChannelSubscriptionsSnapshot } from "./channel-subscriptions";
 import type { ComposerDocument } from "./composer-document";
 import type { EnvironmentRef } from "./environment";
+import type { EnvironmentUiState } from "./environment-ui-state";
 import type {
 	ExtensionDialogRequest,
 	ExtensionDialogResolved,
@@ -685,6 +686,8 @@ export const APP_CHANNELS = {
 	/** 日常空间工作台目录（懒创建后返回；日常会话的固定 cwd） */
 	getDailyDir: ch("app:getDailyDir", "environment", "read")<void, string>(),
 	/** 读取持久化 UI 状态（上次使用的模型/思考级别/主题/背景；无数据返回 null） */
+	loadEnvironmentUiState: ch("environmentUi:load", "desktop")<void, EnvironmentUiState | null>(),
+	saveEnvironmentUiState: ch("environmentUi:save", "desktop")<{ state: EnvironmentUiState }, void>(),
 	loadUiState: ch("uiState:load", "desktop")<void, UiState | null>(),
 	/** 持久化 UI 状态（主进程合并写入 userData/ui-state.json，传补丁即可） */
 	saveUiState: ch("uiState:save", "desktop")<{ state: Partial<UiState> }, void>(),

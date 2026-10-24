@@ -1,6 +1,7 @@
 export * from "./channel-subscriptions";
 export * from "./composer-document";
 export * from "./environment";
+export * from "./environment-ui-state";
 export * from "./errors";
 export * from "./extension-dialog";
 export * from "./ipc";

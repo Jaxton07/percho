@@ -17,6 +17,7 @@ import {
 	type SshPreflight,
 	SUBSCRIPTION_TABLE,
 	type SubscriptionPayload,
+	sameEnvironment,
 	type UncertainRemoteOperation,
 } from "@percho/shared";
 import { app } from "electron";
@@ -38,6 +39,41 @@ const store = () =>
 		path: join(app.getPath("userData"), "remote-connection.json"),
 		defaultValue: () => null,
 	});
+
+class InvalidSavedConnectionError extends Error {}
+async function readSaved(): Promise<SavedConnection | null> {
+	const value = await store().read();
+	if (value === null) return null;
+	if (
+		!value ||
+		typeof value !== "object" ||
+		Array.isArray(value) ||
+		typeof value.connectionId !== "string" ||
+		!value.connectionId ||
+		typeof value.environmentId !== "string" ||
+		!value.environmentId ||
+		!Number.isInteger(value.uid) ||
+		value.uid < 0 ||
+		typeof value.canonicalAgentDir !== "string" ||
+		!value.canonicalAgentDir.startsWith("/") ||
+		typeof value.alias !== "string" ||
+		(value.node !== undefined && (typeof value.node !== "string" || !value.node.startsWith("/")))
+	)
+		throw new InvalidSavedConnectionError("Saved SSH connection is invalid; remove it before reconnecting");
+	try {
+		validateSshAlias(value.alias);
+	} catch {
+		throw new InvalidSavedConnectionError("Saved SSH alias is invalid; remove it before reconnecting");
+	}
+	if (
+		value.target &&
+		(typeof value.target.hostname !== "string" ||
+			typeof value.target.user !== "string" ||
+			typeof value.target.port !== "string")
+	)
+		throw new InvalidSavedConnectionError("Saved SSH target is invalid; remove it before reconnecting");
+	return value;
+}
 
 export class RemoteConnectionManager {
 	private status: RemoteConnectionStatus = { revision: 0, state: "disconnected" };
@@ -85,14 +121,14 @@ export class RemoteConnectionManager {
 				this.update({
 					...this.status,
 					state: "error",
-					errorKind: sshFailureKind(error),
+					errorKind: error instanceof InvalidSavedConnectionError ? "identity" : sshFailureKind(error),
 					error: error instanceof Error ? error.message : String(error),
 				});
 			throw error;
 		}
 	}
 	async authGuide(environment: EnvironmentRef) {
-		const saved = await store().read();
+		const saved = await readSaved();
 		if (
 			!saved ||
 			environment.kind !== "ssh" ||
@@ -129,10 +165,10 @@ export class RemoteConnectionManager {
 		return this.status;
 	}
 
-	private track(error: RemoteMutationUnknownError): void {
+	private track(error: RemoteMutationUnknownError, environment: EnvironmentRef): void {
 		const reference = error.operation;
 		const id = `${reference.instanceId}:${reference.epoch}:${reference.sequence}`;
-		this.uncertain.set(id, { id, operation: reference, createdAt: error.createdAt });
+		this.uncertain.set(id, { id, environment, operation: reference, createdAt: error.createdAt });
 		if (this.uncertain.size > 128) {
 			const oldest = this.uncertain.keys().next().value;
 			if (oldest) this.uncertain.delete(oldest);
@@ -142,7 +178,12 @@ export class RemoteConnectionManager {
 	async checkOperation(id: string): Promise<MutationReceipt> {
 		const record = this.uncertain.get(id);
 		if (!record) return { state: "unknown" };
-		if (!this.connection) throw new Error("Reconnect before checking the remote operation");
+		if (
+			!this.connection ||
+			!this.status.environment ||
+			!sameEnvironment(record.environment, this.status.environment)
+		)
+			throw new Error("Reconnect to the original environment before checking the remote operation");
 		const receipt = await this.connection.queryReceipt(record.operation);
 		this.uncertain.set(id, { ...record, receipt });
 		this.update(this.status);
@@ -154,7 +195,16 @@ export class RemoteConnectionManager {
 	}
 	async getStatus(): Promise<RemoteConnectionStatus> {
 		if (this.status.revision === 0) {
-			const saved = await store().read();
+			let saved: SavedConnection | null;
+			try {
+				saved = await readSaved();
+			} catch (error) {
+				return this.update({
+					state: "error",
+					errorKind: "identity",
+					error: error instanceof Error ? error.message : "Invalid saved SSH connection",
+				});
+			}
 			if (saved && this.status.revision === 0)
 				this.update({
 					state: "disconnected",
@@ -233,7 +283,7 @@ export class RemoteConnectionManager {
 		let transportClosed = false;
 		try {
 			await this.authorize();
-			const saved = await store().read();
+			const saved = await readSaved();
 			if (generation !== this.generation || controller.signal.aborted) return this.status;
 			if (saved && saved.alias !== alias)
 				throw new Error("This desktop is already bound to another SSH alias");
@@ -316,7 +366,7 @@ export class RemoteConnectionManager {
 					try {
 						return await target.invoke(method, args);
 					} catch (error) {
-						if (error instanceof RemoteMutationUnknownError) this.track(error);
+						if (error instanceof RemoteMutationUnknownError) this.track(error, environment as EnvironmentRef);
 						throw error;
 					}
 				},
@@ -338,7 +388,7 @@ export class RemoteConnectionManager {
 				alias,
 				environment: this.status.environment,
 				error: error instanceof Error ? error.message : String(error),
-				errorKind: sshFailureKind(error),
+				errorKind: error instanceof InvalidSavedConnectionError ? "identity" : sshFailureKind(error),
 				preflight: this.status.preflight,
 			});
 			this.scheduleRetry(

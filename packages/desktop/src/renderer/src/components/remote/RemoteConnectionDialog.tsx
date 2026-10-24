@@ -134,7 +134,7 @@ function RemoteConnectionBody() {
 					<p className="mt-2 text-ui-12 text-ink-faint">{t(`remote.failure.${status.errorKind}`)}</p>
 				)}
 				<p className="mt-2 text-ui-12 text-ink-faint">{t("remote.disconnectHint")}</p>
-				{status.environment && (
+				{(status.environment || status.errorKind === "identity") && (
 					<div className="mt-2 text-ui-12">
 						{!confirmForget ? (
 							<Button onClick={() => setConfirmForget(true)}>{t("remote.forget")}</Button>
@@ -186,12 +186,20 @@ function RemoteConnectionBody() {
 								className="flex items-center justify-between gap-2 rounded-lg bg-hover px-3 py-2"
 							>
 								<span>
+									{(!status.environment || !sameEnvironment(operation.environment, status.environment)) && (
+										<>{t("remote.unavailableEnvironment")} · </>
+									)}
 									{new Date(operation.createdAt).toLocaleTimeString()} ·{" "}
 									{t(`remote.receipt.${operation.receipt?.state ?? "unknown"}`)}
 								</span>
 								<div className="flex shrink-0 gap-1">
 									<Button
-										disabled={busy || status.state !== "connected"}
+										disabled={
+											busy ||
+											status.state !== "connected" ||
+											!status.environment ||
+											!sameEnvironment(operation.environment, status.environment)
+										}
 										onClick={() => void run(() => checkOperation(operation.id))}
 									>
 										{t("remote.check")}

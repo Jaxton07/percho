@@ -172,3 +172,14 @@ it("maintenance instructions remain bound to the original environment after disc
 	await manager.forget();
 	await expect(manager.authGuide(environment)).rejects.toThrow("this environment");
 });
+
+it("rejects malformed saved identities before auto-connecting or publishing them", async () => {
+	fixture.saved = { alias: "dev", connectionId: 42 };
+	expect(await manager.getStatus()).toMatchObject({ state: "error", errorKind: "identity" });
+	manager.startAutoConnect(async () => {});
+	await vi.advanceTimersByTimeAsync(0);
+	expect(fixture.probe).not.toHaveBeenCalled();
+	expect(fixture.connect).not.toHaveBeenCalled();
+	await manager.forget();
+	expect(fixture.saved).toBeNull();
+});

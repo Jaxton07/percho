@@ -37,3 +37,8 @@ export function setDailyDirForTest(
 	if (dir === null) dailyDirs.delete(key);
 	else dailyDirs.set(key, dir);
 }
+
+/** Restore only previously known environment directory identities; no filesystem access. */
+export function rememberDailyDirectory(cwd: string): void {
+	dailyDirs.set(environmentKey(environmentEntityRef(cwd).environment), cwd);
+}

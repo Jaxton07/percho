@@ -1,9 +1,10 @@
-import { environmentEntityRef } from "@percho/shared";
+import { environmentEntityRef, sameEnvironment } from "@percho/shared";
 import { useT } from "../../i18n";
 import type { SidebarGroup as Group } from "../../lib/sidebar-groups";
 import { hasMoreSessions, visibleSessions } from "../../lib/sidebar-visible-count";
 import { COMPOSER_FOCUS_EVENT } from "../../stores/drafts";
 import { useProjectsStore } from "../../stores/projects";
+import { useRemoteConnectionStore } from "../../stores/remote-connection";
 import { useSessionsStore } from "../../stores/sessions";
 import { ProjectRow } from "./ProjectRow";
 import { useSessionMenu } from "./SessionMenu";
@@ -42,6 +43,8 @@ export function SidebarGroup({
 	onRemove?: () => void;
 }) {
 	const t = useT();
+	const connectionEnvironment = useRemoteConnectionStore((state) => state.status.environment);
+	const environment = environmentEntityRef(group.cwd).environment;
 	const openSession = useProjectsStore((s) => s.openSession);
 	const activateNewSessionDraftForCwd = useSessionsStore((s) => s.activateNewSessionDraftForCwd);
 	const sessionMenu = useSessionMenu();
@@ -56,7 +59,11 @@ export function SidebarGroup({
 			<ProjectRow
 				label={group.label ?? t("sidebar.daily")}
 				environmentLabel={
-					environmentEntityRef(group.cwd).environment.kind === "ssh" ? t("remote.label") : undefined
+					environment.kind === "ssh"
+						? connectionEnvironment && sameEnvironment(environment, connectionEnvironment)
+							? t("remote.label")
+							: t("remote.unavailableProject")
+						: undefined
 				}
 				kind={group.kind}
 				expanded={expanded}

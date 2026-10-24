@@ -38,6 +38,11 @@ export const useRemoteConnectionStore = create<RemoteConnectionStore>((set, get)
 		if (status.revision <= get().status.revision) return;
 		const previous = get().status;
 		const environment = status.environment;
+		if (!environment && registered) {
+			unregister?.();
+			unregister = undefined;
+			registered = undefined;
+		}
 		if (environment && environmentKey(environment) !== registered) {
 			unregister?.();
 			unregister = registerEnvironment(environment);

@@ -4,6 +4,7 @@ import { APP_CHANNELS, environmentEntityRef } from "@percho/shared";
 import { app, BrowserWindow, dialog, nativeTheme, shell } from "electron";
 import { pickBackgroundImage } from "../background";
 import { ensureDailyDir } from "../daily";
+import { loadEnvironmentUiState, saveEnvironmentUiState } from "../environment-ui-state";
 import { checkoutBranch, getGitBranch, listGitBranches } from "../git";
 import { resolveExistingPath } from "../path-target";
 import { loadUiState, saveUiState } from "../ui-state";
@@ -34,6 +35,8 @@ function localDirectory(cwd: string | null): string | null {
  */
 export function registerAppIpc(_backend: PiBackend): void {
 	registerInvokeHandlers(APP_CHANNELS, {
+		loadEnvironmentUiState,
+		saveEnvironmentUiState: ({ state }) => saveEnvironmentUiState(state),
 		validateProjectDirectory: ({ path }) => validateProjectDirectory(path),
 		saveFileDialog: async ({ defaultName, content }) => {
 			const window = BrowserWindow.getAllWindows()[0];

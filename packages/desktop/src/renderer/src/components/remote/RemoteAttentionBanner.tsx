@@ -1,4 +1,4 @@
-import { environmentEntityRef } from "@percho/shared";
+import { environmentEntityRef, sameEnvironment } from "@percho/shared";
 import { useState } from "react";
 import { createPortal } from "react-dom";
 import { getExecutionApi } from "../../environment-api";
@@ -6,6 +6,7 @@ import { useT } from "../../i18n";
 import { selectActiveCwd } from "../../lib/active-cwd";
 import { displayPath } from "../../lib/path-display";
 import { useInteractionStore } from "../../stores/interactions";
+import { useRemoteConnectionStore } from "../../stores/remote-connection";
 import { useSessionsStore } from "../../stores/sessions";
 import { pushToast } from "../../stores/toasts";
 import { useTranscriptStore } from "../../stores/transcript";
@@ -16,11 +17,13 @@ export function RemoteAttentionBanner() {
 	const t = useT(),
 		active = useSessionsStore((state) => state.activeSessionId),
 		cwd = useSessionsStore(selectActiveCwd);
+	const environment = useRemoteConnectionStore((state) => state.status.environment);
 	const selectedTrust = useInteractionStore((state) => state.selectedTrustId);
 	const trust = useInteractionStore((state) =>
 		state.trustRequests.find(
 			(request) =>
-				environmentEntityRef(request.id).environment.kind === "ssh" &&
+				environment &&
+				sameEnvironment(environmentEntityRef(request.id).environment, environment) &&
 				request.id !== selectedTrust &&
 				request.cwd !== cwd,
 		),
@@ -29,7 +32,8 @@ export function RemoteAttentionBanner() {
 		for (const [id, entry] of Object.entries(state.bySession))
 			if (
 				id !== active &&
-				environmentEntityRef(id).environment.kind === "ssh" &&
+				environment &&
+				sameEnvironment(environmentEntityRef(id).environment, environment) &&
 				(entry.pendingPermissions.length || entry.pendingDialogs.length)
 			)
 				return id;

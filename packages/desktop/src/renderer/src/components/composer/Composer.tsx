@@ -4,6 +4,7 @@ import {
 	environmentKey,
 	LOCAL_ENVIRONMENT,
 	normalizeComposerDocument,
+	sameEnvironment,
 } from "@percho/shared";
 import { type MouseEvent as ReactMouseEvent, useCallback, useEffect, useRef, useState } from "react";
 import { getPi } from "../../api";
@@ -23,6 +24,7 @@ import {
 	useDraftStore,
 	withDraftText,
 } from "../../stores/drafts";
+import { useRemoteConnectionStore } from "../../stores/remote-connection";
 import { useSessionsStore } from "../../stores/sessions";
 import { pushToast } from "../../stores/toasts";
 import { selectTranscript, useTranscriptStore } from "../../stores/transcript";
@@ -79,6 +81,13 @@ export function Composer({ centered = false }: { centered?: boolean }) {
 		? environmentEntityRef(activeSessionId).environment
 		: (draftConfig?.environment ?? LOCAL_ENVIRONMENT);
 	const modelEnvironmentKey = environmentKey(environment);
+	const online = useRemoteConnectionStore(
+		(state) =>
+			environment.kind === "local" ||
+			(state.status.state === "connected" &&
+				!!state.status.environment &&
+				sameEnvironment(environment, state.status.environment)),
+	);
 	// Selection only changes which catalog is displayed; each async load retains its original owner.
 	// biome-ignore lint/correctness/useExhaustiveDependencies: identity key captures the immutable environment
 	useEffect(() => {
@@ -86,8 +95,8 @@ export function Composer({ centered = false }: { centered?: boolean }) {
 		const cached = store.modelsByEnvironment[modelEnvironmentKey];
 		if (cached) useSessionsStore.setState({ models: cached });
 		else useSessionsStore.setState({ models: [] });
-		void store.loadModels(environment);
-	}, [modelEnvironmentKey]);
+		if (online) void store.loadModels(environment);
+	}, [modelEnvironmentKey, online]);
 
 	const draft = useDraftStore((s) => s.bySession[draftKey] ?? EMPTY_DRAFT);
 	const failedDraft = useDraftStore((s) => s.failedBySession[draftKey]);
