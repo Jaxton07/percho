@@ -9,7 +9,7 @@ import type { PiBackend } from "./pi-backend";
 /** Explicit implementations share the existing IPC method identities; there is no backend reflection. */
 export function createExecutionHandlers(
 	backend: PiBackend,
-	options: { getDailyDir?: () => Promise<string> } = {},
+	options: { getDailyDir?: () => Promise<string>; allowInteractiveAuth?: boolean } = {},
 ): EnvironmentHandlers {
 	return {
 		createSession: ({ options }) => backend.createSession(options),
@@ -71,7 +71,13 @@ export function createExecutionHandlers(
 		setSubagentThinking: ({ agent, level }) => backend.modelPrefs.setSubagentThinking(agent, level),
 		setSubagentPreferBuiltin: ({ enabled }) => backend.modelPrefs.setSubagentPreferBuiltin(enabled),
 		listSubagents: () => backend.listSubagents(),
-		startProviderLogin: ({ loginId, providerId }) => backend.login.startLogin(loginId, providerId),
+		startProviderLogin: ({ loginId, providerId }) => {
+			if (options.allowInteractiveAuth === false)
+				throw new Error(
+					"Remote interactive login is unavailable in the desktop. Stop the service and use its same-version auth maintenance entry.",
+				);
+			return backend.login.startLogin(loginId, providerId);
+		},
 		cancelProviderLogin: ({ loginId }) => backend.login.cancel(loginId),
 		respondProviderLogin: ({ loginId, promptId, value }) => backend.login.respond(loginId, promptId, value),
 		respondPermission: ({ requestId, answer }) => backend.respondPermission(requestId, answer),

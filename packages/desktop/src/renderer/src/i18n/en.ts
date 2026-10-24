@@ -3,6 +3,16 @@ import type { Messages } from "./zh";
 /** English language pack (mirrors zh.ts shape) */
 export const en: Messages = {
 	remote: {
+		unavailableEnvironment: "Original remote (connection unavailable)",
+		authHint:
+			"The remote uses its own models and credentials. Save API keys or custom providers here. Interactive login uses remote terminal maintenance; local accounts are never copied.",
+		authInstructions: "Show terminal login steps",
+		authStopFirst:
+			"Stop the service in Remote connection and confirm exit, then connect to the original server in an external terminal:",
+		authRunRemotely:
+			"Inside the server terminal, run the same-version maintenance entry and use /login, or /mcp login for MCP authorization. Maintenance refuses to start while the service owns the data directory:",
+		authFinish:
+			"Exit maintenance after login, reconnect in Percho, and refresh models. Credentials stay in this Percho-only directory, separate from an existing Pi CLI:",
 		stopping: "Stopping service",
 		stopService: "Stop remote service",
 		confirmStop: "Confirm stop",

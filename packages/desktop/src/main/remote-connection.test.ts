@@ -29,6 +29,10 @@ vi.mock("@percho/backend", async () => {
 		validateSshAlias: (alias: string) => {
 			if (!/^[a-z][a-z0-9-]*$/.test(alias)) throw new Error("Invalid alias");
 		},
+		remoteAuthGuide: (alias: string, node: string) => ({
+			sshCommand: `ssh ${alias}`,
+			authCommand: `${node} auth`,
+		}),
 		preflightSsh: fixture.probe,
 		checkSshRequirements,
 		sshFailureKind,
@@ -154,4 +158,17 @@ it("a deliberate stop stays paused across bridge closure and waits for owner-rel
 	expect((await manager.getStatus()).serviceStopped).toBe(true);
 	await vi.runAllTimersAsync();
 	expect(fixture.connect).toHaveBeenCalledTimes(1);
+});
+
+it("maintenance instructions remain bound to the original environment after disconnect", async () => {
+	await manager.connect("dev");
+	const environment = (await manager.getStatus()).environment;
+	if (!environment) throw new Error("Fixture has no remote");
+	manager.disconnect();
+	expect((await manager.authGuide(environment)).agentDir).toBe(info.canonicalAgentDir);
+	await expect(manager.authGuide({ ...environment, environmentId: "different" })).rejects.toThrow(
+		"this environment",
+	);
+	await manager.forget();
+	await expect(manager.authGuide(environment)).rejects.toThrow("this environment");
 });

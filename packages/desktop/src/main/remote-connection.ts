@@ -5,6 +5,7 @@ import {
 	JsonStore,
 	preflightSsh,
 	RemoteMutationUnknownError,
+	remoteAuthGuide,
 	SshRuntimeConnection,
 	sshFailureKind,
 	validateSshAlias,
@@ -28,6 +29,8 @@ interface SavedConnection {
 	environmentId: string;
 	uid: number;
 	canonicalAgentDir: string;
+	node?: string;
+	releaseId?: string;
 	target?: SshPreflight["target"];
 }
 const store = () =>
@@ -87,6 +90,23 @@ export class RemoteConnectionManager {
 				});
 			throw error;
 		}
+	}
+	async authGuide(environment: EnvironmentRef) {
+		const saved = await store().read();
+		if (
+			!saved ||
+			environment.kind !== "ssh" ||
+			environment.connectionId !== saved.connectionId ||
+			environment.environmentId !== saved.environmentId ||
+			!saved.node
+		)
+			throw new Error(
+				"Check and connect this environment before requesting authentication maintenance instructions",
+			);
+		return {
+			...remoteAuthGuide(saved.alias, saved.node, saved.releaseId),
+			agentDir: saved.canonicalAgentDir,
+		};
 	}
 	async forget(): Promise<RemoteConnectionStatus> {
 		this.disconnect();
@@ -282,6 +302,8 @@ export class RemoteConnectionManager {
 					environmentId: info.environmentId,
 					uid: info.uid,
 					canonicalAgentDir: info.canonicalAgentDir,
+					node: probe.node,
+					releaseId: info.releaseId,
 					target: probe.target,
 				};
 			});

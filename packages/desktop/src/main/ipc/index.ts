@@ -31,6 +31,7 @@ export function registerIpc(
 	};
 	remoteConnectionManager.startAutoConnect(authorizeRemote);
 	registerInvokeHandlers(REMOTE_CHANNELS, {
+		remoteAuthGuide: ({ environment }) => remoteConnectionManager.authGuide(environment),
 		remoteStopService: () => remoteConnectionManager.stopService(),
 		remotePreflight: ({ alias }) => remoteConnectionManager.preflight(alias),
 		remoteForget: () => remoteConnectionManager.forget(),

@@ -1,6 +1,15 @@
 /** 中文语言包（作为 key 的结构定义，en.ts 与之同形） */
 export const zh = {
 	remote: {
+		unavailableEnvironment: "原远端（连接不可用）",
+		authHint:
+			"远端使用自己的模型配置和凭据，可在这里保存 API key 或自定义服务商。交互式登录请使用远端维护入口；不会复制本机账号。",
+		authInstructions: "查看终端登录步骤",
+		authStopFirst: "先在“远端连接”中停止服务并确认退出，再在外部终端连接原服务器：",
+		authRunRemotely:
+			"进入服务器终端后运行同版维护入口，使用 /login；MCP 授权使用 /mcp login。服务存活时维护入口会拒绝启动：",
+		authFinish:
+			"登录完成后退出终端维护，再回 Percho 点“连接”并刷新模型。凭据仅保存在以下 Percho 专属目录，不与现有 Pi CLI 共享：",
 		stopping: "正在停止服务",
 		stopService: "停止远端服务",
 		confirmStop: "确认停止服务",

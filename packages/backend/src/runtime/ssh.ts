@@ -49,6 +49,17 @@ async function ensureStarted(alias: string, signal: AbortSignal, node: string): 
 	return JSON.parse(await runSsh(sshArguments(alias, remoteCommand("start", node)), signal)) as RuntimeInfo;
 }
 
+export function remoteAuthGuide(alias: string, node: string, releaseId = "development") {
+	if (!/^[a-zA-Z0-9][a-zA-Z0-9._-]{0,127}$/.test(releaseId))
+		throw new Error("Invalid installed runtime release");
+	validateSshAlias(alias);
+	if (!node.startsWith("/")) throw new Error("Remote Node path must be absolute");
+	return {
+		sshCommand: `ssh -t -oStrictHostKeyChecking=yes -oForwardAgent=no -oClearAllForwardings=yes -oControlMaster=no -- ${alias}`,
+		authCommand: `exec ${shellQuote(node)} "$HOME/.local/share/percho/releases/${releaseId}/entry.mjs" auth`,
+	};
+}
+
 export class SshRuntimeConnection {
 	private constructor(
 		readonly info: RuntimeInfo,

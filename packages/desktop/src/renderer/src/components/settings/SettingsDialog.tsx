@@ -9,6 +9,7 @@ import { PluginBoundary } from "../../plugins/PluginBoundary";
 import { EMPTY_CONTRIBUTIONS } from "../../plugins/RegionHost";
 import { type Contribution, useUiPluginRegistry } from "../../plugins/registry";
 import { UI_REGIONS } from "../../plugins/slots";
+import { useRemoteConnectionStore } from "../../stores/remote-connection";
 import { useSessionsStore } from "../../stores/sessions";
 import {
 	getSettingsStore,
@@ -100,6 +101,13 @@ function SettingsDialogBody({
 	onEnvironmentChange: (environment: EnvironmentRef) => void;
 }) {
 	const t = useT();
+	const remoteStatus = useRemoteConnectionStore((state) => state.status);
+	const registeredEnvironments = getEnvironments();
+	const environments = registeredEnvironments.some(
+		(ref) => environmentKey(ref) === environmentKey(environment),
+	)
+		? registeredEnvironments
+		: [...registeredEnvironments, environment];
 	const setOpen = useSettingsStore((s) => s.setOpen);
 	const category = useSettingsStore((s) => s.category);
 	const setCategory = useSettingsStore((s) => s.setCategory);
@@ -133,7 +141,7 @@ function SettingsDialogBody({
 					<h2 className="text-ui-14 leading-[calc(1.25_/_0.875)] font-semibold text-ink">
 						{t("settings.title")}
 						<select
-							className="ml-3 rounded-full bg-transparent px-2 py-1 text-ui-12 text-ink-faint"
+							className="ml-3 max-w-[240px] rounded-full bg-transparent px-2 py-1 text-ui-12 text-ink-faint"
 							aria-label={t("settings.environment")}
 							value={environmentKey(environment)}
 							onChange={(event) => {
@@ -141,9 +149,13 @@ function SettingsDialogBody({
 								if (next) onEnvironmentChange(next);
 							}}
 						>
-							{getEnvironments().map((ref) => (
+							{environments.map((ref) => (
 								<option key={environmentKey(ref)} value={environmentKey(ref)}>
-									{ref.kind === "local" ? t("settings.localEnvironment") : ref.connectionId}
+									{ref.kind === "local"
+										? t("settings.localEnvironment")
+										: remoteStatus.environment?.connectionId === ref.connectionId
+											? (remoteStatus.alias ?? t("remote.label"))
+											: t("remote.unavailableEnvironment")}
 								</option>
 							))}
 						</select>

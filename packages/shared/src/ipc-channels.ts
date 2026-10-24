@@ -1,5 +1,6 @@
 import type { ChannelSubscriptionsSnapshot } from "./channel-subscriptions";
 import type { ComposerDocument } from "./composer-document";
+import type { EnvironmentRef } from "./environment";
 import type {
 	ExtensionDialogRequest,
 	ExtensionDialogResolved,
@@ -10,7 +11,12 @@ import type {
 import type { LanStatus } from "./lan";
 import type { McpConfigListResult, McpMutationResult, McpServersChangedPayload, McpUpsertInput } from "./mcp";
 import type { CatalogPackageType, CatalogSearchResult, ConfiguredPackageInfo } from "./packages";
-import type { MutationReceipt, RemoteConnectionStatus, SshPreflight } from "./remote-runtime";
+import type {
+	MutationReceipt,
+	RemoteAuthGuide,
+	RemoteConnectionStatus,
+	SshPreflight,
+} from "./remote-runtime";
 import { type ArgumentRules, input, validateArguments } from "./request-validation";
 import type {
 	AppInfo,
@@ -731,6 +737,7 @@ export const UI_PLUGINS_CHANNELS = {
 
 /** Desktop-owned connection control; never forwarded to a remote business handler. */
 export const REMOTE_CHANNELS = {
+	remoteAuthGuide: ch("remote:authGuide", "desktop")<{ environment: EnvironmentRef }, RemoteAuthGuide>(),
 	remoteStopService: ch("remote:stopService", "desktop")<void, RemoteConnectionStatus>(),
 	remotePreflight: ch("remote:preflight", "desktop")<{ alias: string }, SshPreflight>(),
 	remoteForget: ch("remote:forget", "desktop")<void, RemoteConnectionStatus>(),

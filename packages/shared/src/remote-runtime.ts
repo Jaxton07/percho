@@ -24,6 +24,7 @@ export interface RuntimeInfo {
 	subscriptions: string[];
 	protocol: number;
 	runtimeVersion: string;
+	releaseId?: string;
 	environmentId: string;
 	instanceId: string;
 	canonicalAgentDir: string;
@@ -110,4 +111,10 @@ export interface UncertainRemoteOperation {
 	operation: MutationReference;
 	createdAt: number;
 	receipt?: MutationReceipt;
+}
+
+export interface RemoteAuthGuide {
+	sshCommand: string;
+	authCommand: string;
+	agentDir: string;
 }

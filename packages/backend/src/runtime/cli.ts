@@ -4,6 +4,7 @@ import { constants } from "node:fs";
 import { open } from "node:fs/promises";
 import { connect } from "node:net";
 import { join } from "node:path";
+import { fileURLToPath } from "node:url";
 import { RuntimeClient } from "./client";
 import { acquireOwner, type RuntimePaths, runtimePaths } from "./paths";
 
@@ -81,13 +82,38 @@ async function bridge(paths: RuntimePaths): Promise<void> {
 	socket.pipe(process.stdout);
 }
 
-export async function runRuntimeCli(root: string, command: string): Promise<void> {
+export async function runRuntimeCli(root: string, command: string, authArgs: string[] = []): Promise<void> {
 	if (process.platform !== "linux") throw new Error("The remote runtime supports glibc Linux only");
 	const report = process.report.getReport() as { header?: { glibcVersionRuntime?: string } };
 	if (!report.header?.glibcVersionRuntime)
 		throw new Error("The remote runtime requires glibc; musl/Alpine is unsupported");
 	const paths = await runtimePaths(root);
 	process.env.PI_CODING_AGENT_DIR = paths.agent;
+	if (command === "auth") {
+		const owner = await acquireOwner(paths);
+		if (!owner)
+			throw new Error(
+				"AUTH_OWNER_BUSY: Stop the remote service and confirm owner release before authentication maintenance",
+			);
+		try {
+			const sdkCli = fileURLToPath(
+				new URL("./bundle/cli.js", import.meta.resolve("@earendil-works/pi-coding-agent")),
+			);
+			const child = spawn(process.execPath, [sdkCli, "--no-session", ...authArgs], {
+				cwd: paths.root,
+				env: { ...process.env, PI_CODING_AGENT_DIR: paths.agent },
+				stdio: ["inherit", "inherit", "inherit", owner.fd],
+			});
+			const code = await new Promise<number>((resolve, reject) => {
+				child.once("error", reject);
+				child.once("exit", (code, signal) => resolve(code ?? (signal ? 1 : 0)));
+			});
+			if (code !== 0) throw new Error(`Authentication maintenance exited (${code})`);
+		} finally {
+			await owner.close();
+		}
+		return;
+	}
 	if (command === "bridge") return bridge(paths);
 	if (command === "serve") {
 		const { startRuntimeServer } = await import("./server");
@@ -151,6 +177,6 @@ export async function runRuntimeCli(root: string, command: string): Promise<void
 	}
 
 	throw new Error(
-		"Usage: node entry.mjs <start|status|bridge|stop|wait-stopped> [--root <private-directory>]",
+		"Usage: node entry.mjs <start|status|bridge|stop|wait-stopped|auth> [--root <private-directory>]",
 	);
 }

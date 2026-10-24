@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { chmod, lstat, unlink } from "node:fs/promises";
 import { createServer, type Socket } from "node:net";
+import { basename, dirname } from "node:path";
 import { VERSION as SDK_VERSION } from "@earendil-works/pi-coding-agent";
 import {
 	CHANNEL_TABLE,
@@ -40,12 +41,13 @@ export async function startRuntimeServer(paths: RuntimePaths, exitStopped: () =>
 		backend = new PiBackend();
 		await backend.init();
 		const runtimeBackend = backend;
-		const handlers = createExecutionHandlers(runtimeBackend);
+		const handlers = createExecutionHandlers(runtimeBackend, { allowInteractiveAuth: false });
 		const info: RuntimeInfo = {
 			...executionContract(),
 			sdkVersion: SDK_VERSION,
 			protocol: REMOTE_PROTOCOL_VERSION,
 			runtimeVersion: "0.1.0",
+			releaseId: basename(dirname(process.argv[1] ?? "")),
 			environmentId: identity.environmentId,
 			instanceId: randomUUID(),
 			canonicalAgentDir: paths.agent,
