@@ -6,7 +6,15 @@ type SaveUiStatePayload = { state: { sessionWorkspace: { files: string[]; active
 const piMock = vi.hoisted(() => ({
 	saveUiState: vi.fn((_payload: unknown) => Promise.resolve()),
 }));
-vi.mock("../api", () => ({ getPi: () => piMock }));
+vi.mock("../api", () => ({
+	getPi: () =>
+		Object.assign(piMock, {
+			forEnvironment: (environment: { kind: string }) => {
+				if (environment.kind !== "local") throw new Error("Unexpected remote fixture");
+				return piMock;
+			},
+		}),
+}));
 
 import {
 	insertMember,

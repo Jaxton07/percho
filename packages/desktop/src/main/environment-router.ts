@@ -1,11 +1,11 @@
 import {
 	type AnyChannelDef,
 	CHANNEL_TABLE,
-	type EnvironmentInvocation,
 	type EnvironmentMethod,
 	type EnvironmentRef,
 	environmentKey,
 	environmentRef,
+	isEnvironmentInvocation,
 } from "@percho/shared";
 
 export interface EnvironmentExecutor {
@@ -37,8 +37,9 @@ export class EnvironmentRouter {
 		};
 	}
 
-	invoke(channel: string, request: EnvironmentInvocation): unknown | Promise<unknown> {
-		if (request.__perchoEnvironment !== 1) throw new Error("Invalid environment invocation");
+	invoke(channel: string, request: unknown): unknown | Promise<unknown> {
+		if (!isEnvironmentInvocation(request) || request.__perchoEnvironment !== 1)
+			throw new Error("Invalid environment invocation");
 		const entry = this.channels.get(channel);
 		if (entry?.def.scope !== "environment") throw new Error("Method is not an execution method");
 		const environment = environmentRef(request.environment);

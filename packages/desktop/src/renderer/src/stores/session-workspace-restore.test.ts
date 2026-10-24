@@ -15,7 +15,15 @@ const piMock = vi.hoisted(() => ({
 	saveUiState: vi.fn(() => Promise.resolve()),
 	closeSession: vi.fn(() => Promise.resolve({ closed: true })),
 }));
-vi.mock("../api", () => ({ getPi: () => piMock }));
+vi.mock("../api", () => ({
+	getPi: () =>
+		Object.assign(piMock, {
+			forEnvironment: (environment: { kind: string }) => {
+				if (environment.kind !== "local") throw new Error("Unexpected remote fixture");
+				return piMock;
+			},
+		}),
+}));
 
 import { useProjectsStore } from "./projects";
 import { useSessionWorkspaceStore } from "./session-workspace";

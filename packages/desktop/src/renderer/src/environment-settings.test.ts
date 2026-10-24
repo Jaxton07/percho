@@ -16,7 +16,10 @@ const fixture = vi.hoisted(() => {
 		listGitBranches: vi.fn(async (_args: unknown) => ({ current: "main", branches: ["main"] })),
 	});
 	const remote = api();
-	const local = { ...api(), forEnvironment: vi.fn(() => remote) };
+	const local = {
+		...api(),
+		forEnvironment: vi.fn((environment: { kind: string }) => (environment.kind === "local" ? local : remote)),
+	};
 	return { local, remote };
 });
 vi.mock("./api", () => ({ getPi: () => fixture.local }));

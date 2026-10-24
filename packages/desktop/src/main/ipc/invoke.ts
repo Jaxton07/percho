@@ -13,8 +13,10 @@ export function registerInvokeHandlers<T extends Record<string, AnyChannelDef>>(
 	for (const [key, def] of Object.entries(table) as [keyof T & string, AnyChannelDef][]) {
 		const handler = handlers[key] as (args: unknown) => unknown;
 		environmentRouter.registerLocal(def.channel, handler);
-		ipcMain.handle(def.channel, (_e, args: unknown) =>
-			isEnvironmentInvocation(args) ? environmentRouter.invoke(def.channel, args) : handler(args),
-		);
+		ipcMain.handle(def.channel, (_e, args: unknown) => {
+			if (def.scope === "environment" || isEnvironmentInvocation(args))
+				return environmentRouter.invoke(def.channel, args);
+			return handler(args);
+		});
 	}
 }

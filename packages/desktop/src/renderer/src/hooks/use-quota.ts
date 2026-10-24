@@ -1,6 +1,7 @@
-import type { QuotaInfo } from "@percho/shared";
+import { environmentKey, type QuotaInfo } from "@percho/shared";
 import { useCallback, useEffect, useRef, useState } from "react";
-import { getPi } from "../api";
+import { getExecutionApi } from "../environment-api";
+import { useActiveEnvironment } from "./use-active-environment";
 
 /** 轮询兜底（后端 5 分钟 TTL，这里的 60s 轮询只为跨会话/挂起恢复时刷新） */
 const POLL_MS = 60_000;
@@ -18,17 +19,21 @@ function isRefreshEvent(type: string): boolean {
  * turn 结束事件驱动刷新 + 60s 轮询兜底；后端 5 分钟 TTL 限流。
  */
 export function useQuota(): QuotaInfo | null {
-	const [quota, setQuota] = useState<QuotaInfo | null>(null);
+	const environment = useActiveEnvironment();
+	const key = environmentKey(environment);
+	const target = useRef(key);
+	target.current = key;
+	const [quota, setQuota] = useState<{ key: string; value: QuotaInfo | null } | null>(null);
 	const cancelledRef = useRef(false);
 
 	const refresh = useCallback(async () => {
 		try {
-			const next = await getPi().getQuota();
-			if (!cancelledRef.current) setQuota(next);
+			const next = await getExecutionApi(environment).getQuota();
+			if (!cancelledRef.current && target.current === key) setQuota({ key, value: next });
 		} catch {
-			if (!cancelledRef.current) setQuota(null);
+			if (!cancelledRef.current && target.current === key) setQuota({ key, value: null });
 		}
-	}, []);
+	}, [environment, key]);
 
 	useEffect(() => {
 		cancelledRef.current = false;
@@ -44,12 +49,12 @@ export function useQuota(): QuotaInfo | null {
 
 	// 事件驱动刷新：任一会话 turn 结束都取一次（额度全局有效）
 	useEffect(() => {
-		const off = getPi().onEvent(({ event }) => {
+		const off = getExecutionApi(environment).onEvent(({ event }) => {
 			if (!isRefreshEvent(event.type)) return;
 			void refresh();
 		});
 		return off;
-	}, [refresh]);
+	}, [refresh, environment]);
 
-	return quota;
+	return quota?.key === key ? quota.value : null;
 }

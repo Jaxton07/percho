@@ -1,6 +1,6 @@
 import { writeFile } from "node:fs/promises";
 import type { PiBackend } from "@percho/backend";
-import { APP_CHANNELS } from "@percho/shared";
+import { APP_CHANNELS, environmentEntityRef } from "@percho/shared";
 import { app, BrowserWindow, dialog, nativeTheme, shell } from "electron";
 import { pickBackgroundImage } from "../background";
 import { ensureDailyDir } from "../daily";
@@ -19,6 +19,14 @@ import { registerInvokeHandlers } from "./invoke";
 
 /** 项目仓库地址（帮助跳转 + 关于页） */
 const REPO_URL = "https://github.com/Jaxton07/percho";
+
+/** Native file actions must never interpret a remote UI reference as a local path. */
+function localDirectory(cwd: string | null): string | null {
+	if (cwd === null) return null;
+	const reference = environmentEntityRef(cwd);
+	if (reference.environment.kind !== "local") throw new Error("Remote paths cannot be opened by the desktop");
+	return reference.id;
+}
 
 /**
  * 应用域：窗口级功能（不依赖 PiBackend 会话状态的部分也在此，backend 参数仅为对齐签名）。
@@ -57,11 +65,11 @@ export function registerAppIpc(_backend: PiBackend): void {
 		// 三个路径动作共用一套解析（相对/~/file:// 锚点归一，不存在直接抛错 → toast 显示原因）
 		resolvePath: ({ target, cwd }) => resolveExistingPath(target, cwd),
 		openPath: async ({ target, cwd }) => {
-			const error = await shell.openPath(resolveExistingPath(target, cwd));
+			const error = await shell.openPath(resolveExistingPath(target, localDirectory(cwd)));
 			if (error) throw new Error(error);
 		},
 		revealPath: ({ target, cwd }) => {
-			shell.showItemInFolder(resolveExistingPath(target, cwd));
+			shell.showItemInFolder(resolveExistingPath(target, localDirectory(cwd)));
 		},
 		getAppInfo: () => ({
 			name: app.getName(),

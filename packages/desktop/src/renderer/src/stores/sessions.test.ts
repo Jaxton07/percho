@@ -23,7 +23,15 @@ const piMock = vi.hoisted(() => ({
 	listModels: vi.fn(),
 	loadUiState: vi.fn(),
 }));
-vi.mock("../api", () => ({ getPi: () => piMock }));
+vi.mock("../api", () => ({
+	getPi: () =>
+		Object.assign(piMock, {
+			forEnvironment: (environment: { kind: string }) => {
+				if (environment.kind !== "local") throw new Error("Unexpected remote fixture");
+				return piMock;
+			},
+		}),
+}));
 
 import { selectActiveCwd } from "../lib/active-cwd";
 import { NEW_SESSION_DRAFT_KEY, useDraftStore } from "./drafts";

@@ -156,8 +156,7 @@ export function getExecutionApi(reference: EnvironmentRef | string): Environment
 	cached.set(pi, pool);
 	const existing = pool.get(key);
 	if (existing) return existing;
-	// Local legacy calls remain supported only during the expand–contract migration.
-	const raw = environment.kind === "local" ? pi : pi.forEnvironment(environment);
+	const raw = pi.forEnvironment(environment);
 	const entries: Array<[string, unknown]> = Object.entries(CHANNEL_TABLE)
 		.filter(([, def]) => def.scope === "environment")
 		.map(([method]) => [

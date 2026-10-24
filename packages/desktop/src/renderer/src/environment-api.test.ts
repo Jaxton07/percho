@@ -51,7 +51,15 @@ const fixture = vi.hoisted(() => {
 	};
 	const remote = makeApi(),
 		local = makeApi();
-	return { remote, local: { ...local, forEnvironment: vi.fn(() => remote) } };
+	return {
+		remote,
+		local: {
+			...local,
+			forEnvironment: vi.fn((environment: { kind: string }) =>
+				environment.kind === "local" ? local : remote,
+			),
+		},
+	};
 });
 vi.mock("./api", () => ({ getPi: () => fixture.local }));
 

@@ -1,4 +1,6 @@
+import { LOCAL_ENVIRONMENT } from "@percho/shared";
 import { getPi } from "../api";
+import { getExecutionApi } from "../environment-api";
 import { initDailyDir } from "../lib/daily";
 import { useProjectsStore } from "./projects";
 import { isWorkspaceRecording, resolveMembersByFile, useSessionWorkspaceStore } from "./session-workspace";
@@ -52,7 +54,7 @@ export async function restoreSessionWorkspace(): Promise<void> {
 	// 目录快照：**恢复链自己读**（不用 projects.load 的返回值）—— 裁剪判据必须是这次请求拿到的磁盘真值，
 	// 而 load 是 latest-wins 的：被抢占时它返回的是别人的账，拿来做失效判定会误删有效成员。
 	// 读到之后交 store 采纳（adoptCatalog 会推进序号线，在飞的旧 load 不会把更旧的账盖回来）。
-	const catalog = await getPi()
+	const catalog = await getExecutionApi(LOCAL_ENVIRONMENT)
 		.listAllSessions()
 		.catch(() => null);
 	if (!catalog) {

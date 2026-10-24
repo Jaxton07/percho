@@ -17,7 +17,13 @@ const piMock = vi.hoisted(() => ({
 	getPermissionMode: vi.fn(() => Promise.resolve("default" as const)),
 	saveUiState: vi.fn(() => Promise.resolve()),
 }));
-vi.mock("../api", () => ({ getPi: () => piMock }));
+vi.mock("../api", () => ({
+	getPi: () => ({
+		...piMock,
+		forEnvironment: (environment: { kind: string }) =>
+			environment.kind === "local" ? piMock : piMock.forEnvironment(environment),
+	}),
+}));
 
 import { setDailyDirForTest } from "../lib/daily";
 import { deriveSidebarNavigation } from "../lib/sidebar-groups";

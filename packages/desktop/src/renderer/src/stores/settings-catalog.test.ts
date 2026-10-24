@@ -33,7 +33,15 @@ const api = vi.hoisted(() => ({
 	startProviderLogin: vi.fn(),
 	onProviderLoginEvent: vi.fn(),
 }));
-vi.mock("../api", () => ({ getPi: () => api }));
+vi.mock("../api", () => ({
+	getPi: () =>
+		Object.assign(api, {
+			forEnvironment: (environment: { kind: string }) => {
+				if (environment.kind !== "local") throw new Error("Unexpected remote fixture");
+				return api;
+			},
+		}),
+}));
 const toasts = vi.hoisted(() => ({ pushToast: vi.fn() }));
 vi.mock("./toasts", () => ({ pushToast: toasts.pushToast }));
 // settings store 只用到 sessions store 的 activeSessionId + loadModels

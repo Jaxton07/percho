@@ -17,7 +17,15 @@ const api = vi.hoisted(() => ({
 	lanGetStatus: vi.fn(),
 	loadModels: vi.fn(),
 }));
-vi.mock("../api", () => ({ getPi: () => api }));
+vi.mock("../api", () => ({
+	getPi: () =>
+		Object.assign(api, {
+			forEnvironment: (environment: { kind: string }) => {
+				if (environment.kind !== "local") throw new Error("Unexpected remote fixture");
+				return api;
+			},
+		}),
+}));
 vi.mock("./sessions", () => ({
 	useSessionsStore: { getState: () => ({ loadModels: api.loadModels, activeSessionId: null }) },
 }));
