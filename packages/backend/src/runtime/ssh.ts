@@ -4,6 +4,8 @@ import { Duplex } from "node:stream";
 import {
 	type EnvironmentMethod,
 	executionContract,
+	type MutationReceipt,
+	type MutationReference,
 	REMOTE_PROTOCOL_VERSION,
 	type RuntimeInfo,
 } from "@percho/shared";
@@ -154,6 +156,9 @@ export class SshRuntimeConnection {
 	}
 	invoke(method: EnvironmentMethod, args: unknown): Promise<unknown> {
 		return this.client.invoke(method, args);
+	}
+	queryReceipt(operation: MutationReference): Promise<MutationReceipt> {
+		return this.client.queryReceipt(operation);
 	}
 	disconnect(): void {
 		this.closeBridge();

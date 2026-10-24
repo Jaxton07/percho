@@ -38,6 +38,25 @@ function fixture() {
 }
 
 describe("runtime client transport ownership", () => {
+	it("invalid local input does not consume a sequence; reads and old-instance checks do not submit mutations", async () => {
+		const f = fixture();
+		try {
+			await f.client.attach("desktop");
+			await expect(f.client.invoke("prompt", { sessionId: "same", text: 123 })).rejects.toThrow("Invalid");
+			expect(await f.client.queryReceipt({ instanceId: "old", epoch: 1, sequence: 1 })).toEqual({
+				state: "unknown",
+			});
+			const pending = f.client.invoke("prompt", { sessionId: "same", text: "write" });
+			const request = f.requests.at(-1);
+			if (request?.type !== "invoke") throw new Error("Missing invocation");
+			expect(request.mutationSeq).toBe(1);
+			f.write({ type: "result", id: request.id, result: null });
+			await pending;
+			expect(f.requests.filter((request) => request.type === "invoke")).toHaveLength(1);
+		} finally {
+			f.client.close();
+		}
+	});
 	it("binds calls and heartbeats to the attached instance and epoch; events remain asynchronous", async () => {
 		const f = fixture();
 		try {

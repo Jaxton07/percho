@@ -1,4 +1,10 @@
-import { buildLlmUiError, classifyLlmError, DETAIL_MAX_LENGTH, type UiError } from "@percho/shared";
+import {
+	buildLlmUiError,
+	classifyLlmError,
+	DETAIL_MAX_LENGTH,
+	REMOTE_OUTCOME_UNKNOWN,
+	type UiError,
+} from "@percho/shared";
 
 /**
  * 发送路径失败 → UiError（Composer 内联条 data 源）。
@@ -9,6 +15,16 @@ import { buildLlmUiError, classifyLlmError, DETAIL_MAX_LENGTH, type UiError } fr
  * 纯函数放这里（随 Composer 域），+ 测试 send-error.test.ts。
  */
 export function buildSendUiError(message: string, now: number = Date.now()): UiError {
+	if (message.includes(REMOTE_OUTCOME_UNKNOWN))
+		return {
+			severity: "warning",
+			source: "network",
+			titleKey: "remote.unknownTitle",
+			hintKey: "remote.unknownHint",
+			detail: truncateDetail(message),
+			actions: ["copyDetail"],
+			timestamp: now,
+		};
 	const lower = message.toLowerCase();
 	if (lower.includes("read-only")) {
 		return {

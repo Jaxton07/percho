@@ -10,6 +10,8 @@ interface RemoteConnectionStore {
 	open: boolean;
 	status: RemoteConnectionStatus;
 	setOpen: (open: boolean) => void;
+	checkOperation: (id: string) => Promise<void>;
+	dismissOperation: (id: string) => Promise<void>;
 	connect: (alias: string) => Promise<void>;
 	disconnect: () => Promise<void>;
 	openProject: (path: string) => Promise<void>;
@@ -34,6 +36,12 @@ export const useRemoteConnectionStore = create<RemoteConnectionStore>((set, get)
 			void useProjectsStore.getState().load(environment);
 			void useSessionsStore.getState().loadModels(environment);
 		}
+	},
+	checkOperation: async (id) => {
+		await getPi().remoteCheckOperation({ operationId: id });
+	},
+	dismissOperation: async (id) => {
+		await getPi().remoteDismissOperation({ operationId: id });
 	},
 	connect: async (alias) => {
 		get().accept(await getPi().remoteConnect({ alias }));

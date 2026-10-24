@@ -42,6 +42,7 @@ export class EnvironmentRouter {
 			throw new Error("Invalid environment invocation");
 		const entry = this.channels.get(channel);
 		if (entry?.def.scope !== "environment") throw new Error("Method is not an execution method");
+		entry.def.validate(request.args);
 		const environment = environmentRef(request.environment);
 		if (environment.kind === "local") {
 			const handler = this.local.get(channel);

@@ -1,6 +1,19 @@
 /** 中文语言包（作为 key 的结构定义，en.ts 与之同形） */
 export const zh = {
 	remote: {
+		unknownTitle: "远端操作结果待核查",
+		unknownHint: "未收到确认并不表示未执行。先核查远端操作和项目状态，再决定是否继续；不会自动重发。",
+		check: "核查操作",
+		checked: "我已核查",
+		receipt: {
+			unknown: "结果未知",
+			expired: "已无法确认",
+			pending: "仍在处理",
+			succeeded: "请求已确认",
+			failed: "执行返回错误",
+			rejected: "未执行",
+		},
+
 		title: "远端连接",
 		preparedRuntime: "使用已有 SSH 别名连接已准备好的 Percho 运行包。",
 		alias: "SSH 别名",

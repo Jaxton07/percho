@@ -3,6 +3,20 @@ import type { Messages } from "./zh";
 /** English language pack (mirrors zh.ts shape) */
 export const en: Messages = {
 	remote: {
+		unknownTitle: "Check the remote operation outcome",
+		unknownHint:
+			"Missing confirmation does not mean the operation did not run. Check the remote operation and project before continuing. It will not be resent automatically.",
+		check: "Check outcome",
+		checked: "Reviewed",
+		receipt: {
+			unknown: "Outcome unknown",
+			expired: "Confirmation unavailable",
+			pending: "Still processing",
+			succeeded: "Request confirmed",
+			failed: "Operation returned an error",
+			rejected: "Not executed",
+		},
+
 		title: "Remote connection",
 		preparedRuntime: "Connect an existing SSH alias to a prepared Percho runtime.",
 		alias: "SSH alias",

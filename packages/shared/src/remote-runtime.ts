@@ -3,7 +3,8 @@ import type { EnvironmentMethod } from "./ipc";
 import { CHANNEL_TABLE, SUBSCRIPTION_TABLE } from "./ipc-channels";
 
 /** Control messages only. Business method identities and payloads remain in ipc-channels.ts. */
-export const REMOTE_PROTOCOL_VERSION = 1;
+export const REMOTE_PROTOCOL_VERSION = 2;
+export const REMOTE_OUTCOME_UNKNOWN = "[PERCHO_REMOTE_OUTCOME_UNKNOWN]";
 export const EXECUTION_EVENT_CONTRACT_VERSION = 1;
 export function executionContract() {
 	return {
@@ -40,7 +41,9 @@ export type RuntimeRequest =
 			epoch: number;
 			method: EnvironmentMethod;
 			args?: unknown;
+			mutationSeq?: number;
 	  }
+	| { type: "receipt"; id: string; instanceId: string; epoch: number; operation: MutationReference }
 	| { type: "pong"; instanceId: string; epoch: number; nonce: string }
 	| { type: "stop"; id: string; instanceId: string; epoch: number };
 export type RuntimeFrame =
@@ -58,4 +61,22 @@ export interface RemoteConnectionStatus {
 	alias?: string;
 	environment?: Extract<EnvironmentRef, { kind: "ssh" }>;
 	error?: string;
+	operations?: UncertainRemoteOperation[];
+}
+
+export interface MutationReference {
+	instanceId: string;
+	epoch: number;
+	sequence: number;
+}
+export type MutationReceipt =
+	| { state: "pending" }
+	| { state: "succeeded"; result?: unknown; resultOmitted?: true }
+	| { state: "failed" | "rejected"; error: string }
+	| { state: "expired" | "unknown" };
+export interface UncertainRemoteOperation {
+	id: string;
+	operation: MutationReference;
+	createdAt: number;
+	receipt?: MutationReceipt;
 }

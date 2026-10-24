@@ -15,6 +15,7 @@ import { JsonStore } from "../json-store";
 import { PiBackend } from "../pi-backend";
 import { bindExecutionEvents } from "./events";
 import { readRuntimeFrames } from "./frames";
+import { MutationBook, MutationProtocolError } from "./mutations";
 import { acquireOwner, ownerIsCurrent, type RuntimePaths } from "./paths";
 
 export async function startRuntimeServer(paths: RuntimePaths) {
@@ -54,6 +55,7 @@ export async function startRuntimeServer(paths: RuntimePaths) {
 		};
 		let state: "starting" | "running" | "stopping" | "stopped" = "starting";
 		let epoch = 0;
+		const mutations = new MutationBook();
 		let controller:
 			| { socket: Socket; epoch: number; clientTag: string; lastPong: number; nonce?: string }
 			| undefined;
@@ -144,6 +146,7 @@ export async function startRuntimeServer(paths: RuntimePaths) {
 						return;
 					}
 					controller = { socket, epoch: ++epoch, clientTag: request.clientTag, lastPong: Date.now() };
+					mutations.beginEpoch(epoch);
 					result(request.id, { info, epoch });
 					return;
 				}
@@ -164,16 +167,41 @@ export async function startRuntimeServer(paths: RuntimePaths) {
 					}
 					return;
 				}
-				if (
-					!(await ownerIsCurrent(paths, owner)) ||
-					controller !== current ||
-					socket.destroyed ||
-					state !== "running"
-				) {
-					socket.destroy();
+
+				if (request.type === "receipt") {
+					const reference = request.operation;
+					if (
+						!reference ||
+						!Number.isSafeInteger(reference.epoch) ||
+						!Number.isSafeInteger(reference.sequence) ||
+						reference.epoch < 1 ||
+						reference.sequence < 1
+					) {
+						socket.destroy();
+						return;
+					}
+					result(
+						request.id,
+						reference.instanceId === info.instanceId
+							? mutations.query(reference.epoch, reference.sequence)
+							: { state: "unknown" },
+					);
 					return;
 				}
+				const authorized = async () => {
+					if (
+						!(await ownerIsCurrent(paths, owner)) ||
+						controller !== current ||
+						socket.destroyed ||
+						state !== "running"
+					)
+						throw new MutationProtocolError(
+							"NOT_EXECUTED",
+							"Connection is no longer authorized; operation was not started",
+						);
+				};
 				if (request.type === "stop") {
+					await authorized();
 					result(request.id, { accepted: true });
 					setImmediate(() => {
 						void stop();
@@ -189,11 +217,44 @@ export async function startRuntimeServer(paths: RuntimePaths) {
 					reject(request.id, "Unknown or desktop-only method");
 					return;
 				}
+				const handler = handlers[request.method] as (args: unknown) => unknown;
 				try {
-					const handler = handlers[request.method] as (args: unknown) => unknown;
-					result(request.id, await handler(request.args));
+					if (definition.operation === "mutation") {
+						// No await before admission: interleaved I/O cannot reorder mutation sequence consumption.
+						const completion = mutations.submit(
+							current.epoch,
+							request.mutationSeq as number,
+							request.method,
+							request.args,
+							() => definition.validate(request.args),
+							async () => {
+								await authorized();
+								return handler(request.args);
+							},
+						);
+						result(request.id, await completion);
+					} else {
+						if (request.mutationSeq !== undefined) {
+							socket.destroy();
+							return;
+						}
+						definition.validate(request.args);
+						await authorized();
+						result(request.id, await handler(request.args));
+					}
 				} catch (error) {
-					reject(request.id, error instanceof Error ? error.message : String(error));
+					if (
+						error instanceof MutationProtocolError &&
+						["INVALID_SEQUENCE", "SEQUENCE_GAP"].includes(error.code)
+					) {
+						socket.destroy();
+						return;
+					}
+					reject(
+						request.id,
+						error instanceof Error ? error.message : String(error),
+						error instanceof MutationProtocolError ? error.code : "RUNTIME_ERROR",
+					);
 				}
 			};
 			socket.on(

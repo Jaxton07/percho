@@ -1,11 +1,18 @@
 import { randomUUID } from "node:crypto";
 import { join } from "node:path";
-import { JsonStore, SshRuntimeConnection, validateSshAlias } from "@percho/backend";
+import {
+	JsonStore,
+	RemoteMutationUnknownError,
+	SshRuntimeConnection,
+	validateSshAlias,
+} from "@percho/backend";
 import {
 	type EnvironmentRef,
+	type MutationReceipt,
 	type RemoteConnectionStatus,
 	SUBSCRIPTION_TABLE,
 	type SubscriptionPayload,
+	type UncertainRemoteOperation,
 } from "@percho/shared";
 import { app } from "electron";
 import { environmentRouter } from "./environment-router";
@@ -31,10 +38,35 @@ class RemoteConnectionManager {
 	private connection?: SshRuntimeConnection;
 	private detach?: () => void;
 	private readonly clientTag = randomUUID();
+	private readonly uncertain = new Map<string, UncertainRemoteOperation>();
 	private update(patch: Omit<RemoteConnectionStatus, "revision">): RemoteConnectionStatus {
-		this.status = { ...patch, revision: this.status.revision + 1 };
+		this.status = { ...patch, revision: this.status.revision + 1, operations: [...this.uncertain.values()] };
 		sendToRenderer(SUBSCRIPTION_TABLE.onRemoteConnectionStatus.channel, this.status);
 		return this.status;
+	}
+
+	private track(error: RemoteMutationUnknownError): void {
+		const reference = error.operation;
+		const id = `${reference.instanceId}:${reference.epoch}:${reference.sequence}`;
+		this.uncertain.set(id, { id, operation: reference, createdAt: error.createdAt });
+		if (this.uncertain.size > 128) {
+			const oldest = this.uncertain.keys().next().value;
+			if (oldest) this.uncertain.delete(oldest);
+		}
+		this.update(this.status);
+	}
+	async checkOperation(id: string): Promise<MutationReceipt> {
+		const record = this.uncertain.get(id);
+		if (!record) return { state: "unknown" };
+		if (!this.connection) throw new Error("Reconnect before checking the remote operation");
+		const receipt = await this.connection.queryReceipt(record.operation);
+		this.uncertain.set(id, { ...record, receipt });
+		this.update(this.status);
+		return receipt;
+	}
+	dismissOperation(id: string): void {
+		this.uncertain.delete(id);
+		this.update(this.status);
 	}
 	async getStatus(): Promise<RemoteConnectionStatus> {
 		if (this.status.revision === 0) {
@@ -131,7 +163,14 @@ class RemoteConnectionManager {
 			environment = { kind: "ssh", connectionId, environmentId: info.environmentId };
 			const target = connection;
 			this.detach = environmentRouter.attach(environment, {
-				invoke: (method, args) => target.invoke(method, args),
+				invoke: async (method, args) => {
+					try {
+						return await target.invoke(method, args);
+					} catch (error) {
+						if (error instanceof RemoteMutationUnknownError) this.track(error);
+						throw error;
+					}
+				},
 			});
 			this.connection = connection;
 			return this.update({ state: "connected", alias, environment });

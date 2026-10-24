@@ -25,6 +25,8 @@ export function registerIpc(
 	lan: LanObserverHandle,
 ): void {
 	registerInvokeHandlers(REMOTE_CHANNELS, {
+		remoteCheckOperation: ({ operationId }) => remoteConnectionManager.checkOperation(operationId),
+		remoteDismissOperation: ({ operationId }) => remoteConnectionManager.dismissOperation(operationId),
 		remoteGetStatus: () => remoteConnectionManager.getStatus(),
 		remoteDisconnect: () => remoteConnectionManager.disconnect(),
 		remoteConnect: async ({ alias }) => {

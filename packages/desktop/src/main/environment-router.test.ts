@@ -49,25 +49,36 @@ describe("bound environment execution through the public API", () => {
 		const local = vi.fn(),
 			execute = vi.fn();
 		router.registerLocal(CHANNEL_TABLE.prompt.channel, local);
-		expect(() => router.invoke(CHANNEL_TABLE.prompt.channel, environmentInvocation(remote, {}))).toThrow(
-			"not attached",
-		);
+		expect(() =>
+			router.invoke(
+				CHANNEL_TABLE.prompt.channel,
+				environmentInvocation(remote, { sessionId: "same", text: "write" }),
+			),
+		).toThrow("not attached");
 		const detach = router.attach(remote, { invoke: execute });
 		const changed = { ...remote, environmentId: "replacement" } as EnvironmentRef;
-		expect(() => router.invoke(CHANNEL_TABLE.prompt.channel, environmentInvocation(changed, {}))).toThrow(
-			"identity",
-		);
-		expect(() => router.invoke("unknown:method", environmentInvocation(remote, {}))).toThrow(
-			"not an execution",
-		);
+		expect(() =>
+			router.invoke(
+				CHANNEL_TABLE.prompt.channel,
+				environmentInvocation(changed, { sessionId: "same", text: "write" }),
+			),
+		).toThrow("identity");
+		expect(() =>
+			router.invoke("unknown:method", environmentInvocation(remote, { sessionId: "same", text: "write" })),
+		).toThrow("not an execution");
 		for (const def of Object.values(CHANNEL_TABLE).filter((entry) => entry.scope === "desktop")) {
-			expect(() => router.invoke(def.channel, environmentInvocation(remote, {}))).toThrow("not an execution");
+			expect(() =>
+				router.invoke(def.channel, environmentInvocation(remote, { sessionId: "same", text: "write" })),
+			).toThrow("not an execution");
 		}
 		detach();
 		detach();
-		expect(() => router.invoke(CHANNEL_TABLE.prompt.channel, environmentInvocation(remote, {}))).toThrow(
-			"not attached",
-		);
+		expect(() =>
+			router.invoke(
+				CHANNEL_TABLE.prompt.channel,
+				environmentInvocation(remote, { sessionId: "same", text: "write" }),
+			),
+		).toThrow("not attached");
 		expect(local).not.toHaveBeenCalled();
 		expect(execute).not.toHaveBeenCalled();
 	});

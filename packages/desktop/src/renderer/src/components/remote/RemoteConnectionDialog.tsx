@@ -14,6 +14,8 @@ function RemoteConnectionBody() {
 	const connect = useRemoteConnectionStore((state) => state.connect);
 	const disconnect = useRemoteConnectionStore((state) => state.disconnect);
 	const openProject = useRemoteConnectionStore((state) => state.openProject);
+	const checkOperation = useRemoteConnectionStore((state) => state.checkOperation);
+	const dismissOperation = useRemoteConnectionStore((state) => state.dismissOperation);
 	const close = useRemoteConnectionStore((state) => state.setOpen);
 	const [alias, setAlias] = useState(status.alias ?? "");
 	const [path, setPath] = useState("");
@@ -92,6 +94,33 @@ function RemoteConnectionBody() {
 							</Button>
 						</div>
 					</>
+				)}
+				{(status.operations?.length ?? 0) > 0 && (
+					<div className="mt-4 space-y-2 text-ui-12 text-ink-2">
+						<p>{t("remote.unknownHint")}</p>
+						{status.operations?.map((operation) => (
+							<div
+								key={operation.id}
+								className="flex items-center justify-between gap-2 rounded-lg bg-hover px-3 py-2"
+							>
+								<span>
+									{new Date(operation.createdAt).toLocaleTimeString()} ·{" "}
+									{t(`remote.receipt.${operation.receipt?.state ?? "unknown"}`)}
+								</span>
+								<div className="flex shrink-0 gap-1">
+									<Button
+										disabled={busy || status.state !== "connected"}
+										onClick={() => void run(() => checkOperation(operation.id))}
+									>
+										{t("remote.check")}
+									</Button>
+									<Button onClick={() => void run(() => dismissOperation(operation.id))}>
+										{t("remote.checked")}
+									</Button>
+								</div>
+							</div>
+						))}
+					</div>
 				)}
 				{(error || status.error) && (
 					<p className="mt-3 break-words text-ui-12 text-err">{error || status.error}</p>

@@ -2,7 +2,11 @@ import { randomUUID } from "node:crypto";
 import { connect } from "node:net";
 import type { Duplex } from "node:stream";
 import {
+	CHANNEL_TABLE,
 	type EnvironmentMethod,
+	type MutationReceipt,
+	type MutationReference,
+	REMOTE_OUTCOME_UNKNOWN,
 	REMOTE_PROTOCOL_VERSION,
 	type RuntimeAttachment,
 	type RuntimeFrame,
@@ -11,13 +15,33 @@ import {
 } from "@percho/shared";
 import { readRuntimeFrames } from "./frames";
 
+export class RemoteMutationUnknownError extends Error {
+	constructor(
+		readonly operation: MutationReference,
+		readonly method: EnvironmentMethod,
+		readonly createdAt: number,
+	) {
+		super(
+			`${REMOTE_OUTCOME_UNKNOWN} Remote operation outcome may be unknown; check server state before retrying (${operation.instanceId}:${operation.epoch}:${operation.sequence})`,
+		);
+	}
+}
+type RequestWithoutId<T> = T extends { id: string } ? Omit<T, "id"> : never;
+interface PendingMutation {
+	operation: MutationReference;
+	method: EnvironmentMethod;
+	createdAt: number;
+}
+
 export class RuntimeClient {
+	private mutationSequence = 0;
 	private readonly pending = new Map<
 		string,
 		{
 			resolve: (value: unknown) => void;
 			reject: (error: Error) => void;
 			timer: ReturnType<typeof setTimeout>;
+			mutation?: PendingMutation;
 		}
 	>();
 	private attachment?: RuntimeAttachment;
@@ -37,7 +61,15 @@ export class RuntimeClient {
 			this.closed = true;
 			for (const request of this.pending.values()) {
 				clearTimeout(request.timer);
-				request.reject(new Error("Runtime connection closed; operation outcome may be unknown"));
+				request.reject(
+					request.mutation
+						? new RemoteMutationUnknownError(
+								request.mutation.operation,
+								request.mutation.method,
+								request.mutation.createdAt,
+							)
+						: new Error("Runtime connection closed; operation outcome may be unknown"),
+				);
 			}
 			this.pending.clear();
 		};
@@ -84,19 +116,45 @@ export class RuntimeClient {
 		if (!pending) return;
 		this.pending.delete(frame.id);
 		clearTimeout(pending.timer);
-		if (frame.error) pending.reject(Object.assign(new Error(frame.error), { code: frame.code }));
+		if (frame.error)
+			pending.reject(
+				frame.code === "RESULT_UNAVAILABLE" && pending.mutation
+					? new RemoteMutationUnknownError(
+							pending.mutation.operation,
+							pending.mutation.method,
+							pending.mutation.createdAt,
+						)
+					: Object.assign(new Error(frame.error), { code: frame.code }),
+			);
 		else pending.resolve(frame.result);
 	}
-	private request(value: Omit<Extract<RuntimeRequest, { id: string }>, "id">): Promise<unknown> {
+
+	private request(value: RequestWithoutId<RuntimeRequest>, mutation?: PendingMutation): Promise<unknown> {
 		const id = randomUUID();
 		return new Promise((resolve, reject) => {
+			let encoded: string;
+			try {
+				encoded = JSON.stringify({ ...value, id });
+			} catch (error) {
+				reject(error);
+				return;
+			}
+			if (this.closed || this.socket.destroyed || !this.socket.writable) {
+				reject(new Error("Runtime connection is closed; request was not queued"));
+				return;
+			}
 			const timer = setTimeout(() => {
 				this.pending.delete(id);
-				reject(new Error("Runtime request timed out; operation outcome may be unknown"));
+				reject(
+					mutation
+						? new RemoteMutationUnknownError(mutation.operation, mutation.method, mutation.createdAt)
+						: new Error("Runtime request timed out"),
+				);
 			}, 30_000);
-			this.pending.set(id, { resolve, reject, timer });
+			this.pending.set(id, { resolve, reject, timer, mutation });
 			try {
-				this.send({ ...value, id } as RuntimeRequest);
+				this.socket.write(`${encoded}\n`);
+				if (mutation) this.mutationSequence = mutation.operation.sequence;
 			} catch (error) {
 				clearTimeout(timer);
 				this.pending.delete(id);
@@ -104,6 +162,7 @@ export class RuntimeClient {
 			}
 		});
 	}
+
 	async inspect(): Promise<RuntimeInfo> {
 		return (await this.request({ type: "inspect" })) as RuntimeInfo;
 	}
@@ -112,22 +171,56 @@ export class RuntimeClient {
 			type: "attach",
 			protocol: REMOTE_PROTOCOL_VERSION,
 			clientTag,
-		} as Omit<Extract<RuntimeRequest, { type: "attach" }>, "id">)) as RuntimeAttachment;
+		})) as RuntimeAttachment;
 		if (!value?.info || value.info.protocol !== REMOTE_PROTOCOL_VERSION || !Number.isSafeInteger(value.epoch))
 			throw new Error("Invalid runtime handshake");
 		this.attachment = value;
+		this.mutationSequence = 0;
 		return value;
 	}
-	invoke(method: EnvironmentMethod, args?: unknown): Promise<unknown> {
+
+	async invoke(method: EnvironmentMethod, args?: unknown): Promise<unknown> {
 		const target = this.requireAttachment();
-		return this.request({
-			type: "invoke",
-			method,
-			args,
+		const definition = CHANNEL_TABLE[method];
+		if (definition?.scope !== "environment") throw new Error("Unknown execution method");
+		definition.validate(args);
+		const mutation =
+			definition.operation === "mutation"
+				? {
+						operation: {
+							instanceId: target.info.instanceId,
+							epoch: target.epoch,
+							sequence: this.mutationSequence + 1,
+						},
+						method,
+						createdAt: Date.now(),
+					}
+				: undefined;
+		if (mutation && !Number.isSafeInteger(mutation.operation.sequence))
+			throw new Error("Reconnect before submitting further mutations");
+		return this.request(
+			{
+				type: "invoke",
+				method,
+				args,
+				instanceId: target.info.instanceId,
+				epoch: target.epoch,
+				...(mutation ? { mutationSeq: mutation.operation.sequence } : {}),
+			},
+			mutation,
+		);
+	}
+	async queryReceipt(operation: MutationReference): Promise<MutationReceipt> {
+		const target = this.requireAttachment();
+		if (operation.instanceId !== target.info.instanceId) return { state: "unknown" };
+		return (await this.request({
+			type: "receipt",
 			instanceId: target.info.instanceId,
 			epoch: target.epoch,
-		} as Omit<Extract<RuntimeRequest, { type: "invoke" }>, "id">);
+			operation,
+		})) as MutationReceipt;
 	}
+
 	stop(): Promise<unknown> {
 		const target = this.requireAttachment();
 		return this.request({ type: "stop", instanceId: target.info.instanceId, epoch: target.epoch } as Omit<

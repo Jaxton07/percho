@@ -73,6 +73,7 @@ export {
 	type WorkspacesConfig,
 	workspaceConfigPath,
 } from "./project/workspace-store";
+export { RemoteMutationUnknownError } from "./runtime/client";
 export { SshRuntimeConnection, sshArguments, validateSshAlias } from "./runtime/ssh";
 export {
 	assignEntryIds,

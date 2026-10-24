@@ -173,7 +173,18 @@ try {
 		options: { cwd: "/state/project-two", provider: "runtime-test", modelId: "m0", thinkingLevel: "off" },
 	});
 	await first.invoke("setPermissionMode", { sessionId: session.sessionId, mode: "fullAccess" });
-	await first.invoke("prompt", { sessionId: session.sessionId, text: "Test disconnect continuation" });
+	// Send once, deliberately discard the ACK, then disconnect after the model receives it.
+	bridgeChild.stdin.write(
+		`${JSON.stringify({
+			type: "invoke",
+			id: "discarded-ack",
+			method: "prompt",
+			instanceId: attached.info.instanceId,
+			epoch: attached.epoch,
+			mutationSeq: 4,
+			args: { sessionId: session.sessionId, text: "Test disconnect continuation" },
+		})}\n`,
+	);
 	await requestSeen;
 	first.close();
 	first = undefined;
@@ -184,6 +195,9 @@ try {
 	const next = await second.attach("linux-reconnect");
 	if (next.info.instanceId !== attached.info.instanceId || next.epoch <= attached.epoch)
 		throw new Error("Attachment identity/fence incorrect");
+	const operation = { instanceId: attached.info.instanceId, epoch: attached.epoch, sequence: 4 };
+	const receipt = await second.queryReceipt(operation);
+	if (receipt.state !== "succeeded") throw new Error("Lost ACK receipt not retained");
 	const deadline = Date.now() + 15000;
 	let messages = [];
 	while (Date.now() < deadline) {
@@ -193,6 +207,13 @@ try {
 	}
 	if (!JSON.stringify(messages).includes("Linux runtime continued while detached"))
 		throw new Error("Detached task did not finish");
+	if (
+		messages.filter(
+			(message) =>
+				message.role === "user" && JSON.stringify(message).includes("Test disconnect continuation"),
+		).length !== 1
+	)
+		throw new Error("Lost ACK duplicated the user operation");
 	if ((await readFile(`${root}/agent/extension-proof`, "utf8")) !== "REMOTE_EXTENSION_SENTINEL")
 		throw new Error("Remote extension did not execute");
 	if ((await readFile(`${root}/agent/mcp-proof`, "utf8")) !== "REMOTE_MCP_SENTINEL")
@@ -207,6 +228,17 @@ try {
 	second = undefined;
 	const stopped = await cli("stop");
 	if (!stopped.stopped) throw new Error("Service did not stop");
+	const restarted = await cli("start");
+	second = await RuntimeClient.connect(socket);
+	await second.attach("linux-after-restart");
+	if (
+		restarted.instanceId === operation.instanceId ||
+		(await second.queryReceipt(operation)).state !== "unknown"
+	)
+		throw new Error("Restart claimed an old operation receipt");
+	second.close();
+	second = undefined;
+	await cli("stop");
 	console.log(
 		JSON.stringify({
 			passed: true,
@@ -223,6 +255,8 @@ try {
 			remoteRules: true,
 			stdioBridge: true,
 			kernelLifetimeLock: true,
+			lostAckWithoutReplay: true,
+			restartOutcomeUnknown: true,
 		}),
 	);
 } finally {
