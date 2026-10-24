@@ -334,9 +334,22 @@ export function Composer({ centered = false }: { centered?: boolean }) {
 		}
 	};
 
-	/** 截图/复制图片后 Ctrl+V 粘贴到输入框 */
+	/**
+	 * 截图/复制图片后 Ctrl+V 粘贴到输入框。
+	 * 从 Finder 粘贴文件另走一条：沙箱里 File 只有 name 没有 path，原生路径必须由 preload 的
+	 * webUtils 还原（与拖放同一条 resolveDroppedFilePaths 管线），否则输入框里只会留下一个孤立文件名。
+	 */
 	const handlePaste = (e: React.ClipboardEvent<HTMLDivElement>) => {
-		const items = e.clipboardData?.items;
+		const clipboard = e.clipboardData;
+		if (!clipboard) return;
+		const documents = Array.from(clipboard.files).filter((file) => !file.type.startsWith("image/"));
+		const paths = resolveDroppedFilePaths(documents, getPi().getPathForFile);
+		if (paths.length > 0) {
+			e.preventDefault();
+			appendAttachments(paths);
+			return;
+		}
+		const items = clipboard.items;
 		if (!items) return;
 		const files: File[] = [];
 		for (const item of items) {
