@@ -295,7 +295,13 @@ describe("session loader owns flights and data, not navigation", () => {
 			.filter(ts.isImportDeclaration)
 			.map((item) => (item.moduleSpecifier as ts.StringLiteral).text);
 		expect(imports).toEqual(
-			expect.arrayContaining(["../api", "./session-history", "./transcript", "./ui-preferences", "./toasts"]),
+			expect.arrayContaining([
+				"../environment-api",
+				"./session-history",
+				"./transcript",
+				"./ui-preferences",
+				"./toasts",
+			]),
 		);
 		expect(
 			imports.filter((name) => /(?:sessions|projects|workspace|navigation|drafts)(?:$|\/)/.test(name)),

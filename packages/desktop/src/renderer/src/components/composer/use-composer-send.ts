@@ -6,13 +6,14 @@ import {
 } from "@percho/shared";
 import { useEffect, useRef, useState } from "react";
 import { getPi } from "../../api";
+import { getExecutionApi } from "../../environment-api";
 import { useT } from "../../i18n";
 import {
 	appendDraftInput,
 	type DraftEntry,
 	draftText,
 	EMPTY_DRAFT,
-	NEW_SESSION_DRAFT_KEY,
+	newSessionDraftKey,
 	restoreRejectedDraft,
 	takeDraft,
 	useDraftStore,
@@ -82,7 +83,7 @@ export function useComposerSend(options: UseComposerSendOptions) {
 	const runSlashCommand = async (content: string, sessionId: string): Promise<boolean> => {
 		const [name, ...rest] = content.slice(1).split(/\s+/);
 		const arg = rest.join(" ").trim();
-		const pi = getPi();
+		const pi = getExecutionApi(sessionId);
 		switch (name) {
 			case "compact":
 				// 输入框上方不提醒（成功/失败都不提醒）：对话区的压缩分割线已经把「在干什么、成没成」说全了
@@ -103,7 +104,7 @@ export function useComposerSend(options: UseComposerSendOptions) {
 			case "export": {
 				const format = arg === "html" ? "html" : arg === "jsonl" ? "jsonl" : "jsonl";
 				const contentOut = await pi.exportSession({ sessionId, format });
-				const path = await pi.saveFileDialog({
+				const path = await getPi().saveFileDialog({
 					defaultName: `pi-session-${Date.now()}.${format}`,
 					content: contentOut,
 				});
@@ -139,6 +140,13 @@ export function useComposerSend(options: UseComposerSendOptions) {
 		setError(null);
 		try {
 			if (!sessionId) {
+				const target = useSessionsStore.getState().newSessionDraft;
+				if (
+					target?.generation !== generation ||
+					newSessionDraftKey(target?.environment, target?.cwd) !== options.draftKey
+				) {
+					throw new Error(t("composer.targetChanged"));
+				}
 				sessionId = await ensureSession();
 				if (!sessionId) throw new Error(t("slash.feedback.noSession"));
 				recoveryKey = sessionId;
@@ -159,7 +167,7 @@ export function useComposerSend(options: UseComposerSendOptions) {
 					: useTranscriptStore
 							.getState()
 							.appendOptimisticUser(sessionId, { text: content, images: draft.images, document });
-			await getPi().prompt({
+			await getExecutionApi(sessionId).prompt({
 				sessionId,
 				text: content,
 				document,
@@ -174,7 +182,7 @@ export function useComposerSend(options: UseComposerSendOptions) {
 			restoreRejectedDraft(
 				recoveryKey,
 				draft,
-				recoveryKey === NEW_SESSION_DRAFT_KEY && generation !== newGeneration,
+				!options.activeSessionId && recoveryKey === options.draftKey && generation !== newGeneration,
 			);
 			setError(error instanceof Error ? error.message : String(error), recoveryKey);
 		} finally {
@@ -240,7 +248,7 @@ export function useComposerSend(options: UseComposerSendOptions) {
 	};
 
 	const restoreQueue = async (sessionId: string) => {
-		const cleared = await getPi().clearQueue({ sessionId });
+		const cleared = await getExecutionApi(sessionId).clearQueue({ sessionId });
 		const inputs =
 			cleared.followUpInputs ??
 			cleared.followUp.map((text) => ({ document: composerDocumentFromText(text), images: [] }));
@@ -252,7 +260,7 @@ export function useComposerSend(options: UseComposerSendOptions) {
 		if (!sessionId) return;
 		try {
 			await restoreQueue(sessionId);
-			await getPi().abort({ sessionId });
+			await getExecutionApi(sessionId).abort({ sessionId });
 		} catch (error) {
 			setError(error instanceof Error ? error.message : String(error), sessionId);
 		}

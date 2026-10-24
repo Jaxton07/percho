@@ -43,24 +43,31 @@ export interface EnvironmentEntityRef {
 	readonly id: string;
 }
 
-/** JSON tuples preserve arbitrary SDK IDs and literal paths without delimiter collisions. */
+const ENTITY_PREFIX = "percho-env-v1:";
+
+/** Legacy local values stay valid; reserved-prefix local values are escaped like remote values. */
 export function environmentEntityKey(environment: EnvironmentRef, id: string): string {
 	if (typeof id !== "string" || !id) throw new Error("Missing environment entity identity");
-	return JSON.stringify([environmentKey(environment), id]);
+	const ref = environmentRef(environment);
+	if (ref.kind === "local" && !id.startsWith(ENTITY_PREFIX)) return id;
+	return ENTITY_PREFIX + encodeURIComponent(JSON.stringify([ref, id]));
+}
+
+export function environmentEntityRef(key: string): EnvironmentEntityRef {
+	if (!key.startsWith(ENTITY_PREFIX)) return { environment: LOCAL_ENVIRONMENT, id: key };
+	const tuple: unknown = JSON.parse(decodeURIComponent(key.slice(ENTITY_PREFIX.length)));
+	if (!Array.isArray(tuple) || tuple.length !== 2 || typeof tuple[1] !== "string" || !tuple[1]) {
+		throw new Error("Invalid environment entity identity");
+	}
+	return { environment: environmentRef(tuple[0]), id: tuple[1] };
 }
 
 export function environmentEntityId(environment: EnvironmentRef, key: string): string {
-	const tuple: unknown = JSON.parse(key);
-	if (
-		!Array.isArray(tuple) ||
-		tuple.length !== 2 ||
-		tuple[0] !== environmentKey(environment) ||
-		typeof tuple[1] !== "string" ||
-		!tuple[1]
-	) {
+	const ref = environmentEntityRef(key);
+	if (!sameEnvironment(ref.environment, environment)) {
 		throw new Error("Entity belongs to a different execution environment");
 	}
-	return tuple[1];
+	return ref.id;
 }
 
 export interface EnvironmentInvocation {

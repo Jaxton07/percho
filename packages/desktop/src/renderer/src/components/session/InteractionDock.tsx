@@ -1,6 +1,6 @@
 import type { ExtensionDialogRequest, ExtensionDialogRespond } from "@percho/shared";
 import { useCallback, useEffect, useRef, useState } from "react";
-import { getPi } from "../../api";
+import { getExecutionApi } from "../../environment-api";
 import { useT } from "../../i18n";
 import { useTranscriptStore } from "../../stores/transcript";
 import { ClockIcon, FileTextIcon, HelpIcon, PencilIcon } from "../icons";
@@ -125,7 +125,7 @@ export function InteractionDock({ sessionId }: { sessionId: string | null }) {
 			setSending(true);
 			setError(null);
 			try {
-				await getPi().respondExtensionDialog({ requestId: shown.id, answer });
+				await getExecutionApi(shown.id).respondExtensionDialog({ requestId: shown.id, answer });
 				resolveExtensionDialog(sessionId, shown.id);
 			} catch (err) {
 				setError(err instanceof Error ? err.message : String(err));

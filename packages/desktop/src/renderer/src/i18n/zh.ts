@@ -94,6 +94,7 @@ export const zh = {
 		queueTitle: "排队中",
 		queueRestore: "取回编辑",
 		queueFull: "已有一条排队消息，取回后再发",
+		targetChanged: "项目已切换，请回到原项目重试发送",
 		removeQuote: "移除引用",
 		permissionMode: "权限模式",
 		permissionDefault: "默认",

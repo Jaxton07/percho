@@ -1,6 +1,6 @@
 import type { PermissionMode, SessionMeta } from "@percho/shared";
-import { messagesToUIMessages } from "@percho/shared";
-import { getPi } from "../api";
+import { environmentEntityRef, messagesToUIMessages } from "@percho/shared";
+import { getExecutionApi } from "../environment-api";
 import { errText } from "../lib/error-text";
 import {
 	clearSessionHistory,
@@ -67,10 +67,10 @@ export function createSessionLoader(ports: SessionDataPorts) {
 		const transcriptBefore = useTranscriptStore.getState().bySession[sessionId];
 		const openingEpoch = historyOpenEpoch(sessionId);
 		const [history, followUpQueue, todos, permissionMode] = await Promise.all([
-			skipHistory ? Promise.resolve(null) : getPi().getSessionMessages({ sessionId }),
-			getPi().getFollowUpMessages({ sessionId }),
-			getPi().getTodos({ sessionId }),
-			getPi().getPermissionMode({ sessionId }),
+			skipHistory ? Promise.resolve(null) : getExecutionApi(sessionId).getSessionMessages({ sessionId }),
+			getExecutionApi(sessionId).getFollowUpMessages({ sessionId }),
+			getExecutionApi(sessionId).getTodos({ sessionId }),
+			getExecutionApi(sessionId).getPermissionMode({ sessionId }),
 		]);
 		// TOCTOU 复核：await 期间会话转为 live（如恰好有 prompt 竞态）时丢弃迟到历史，
 		// 防旧快照覆盖刚建立的流式态（queue/todo/permissionMode 是幂等快照，照常应用）
@@ -93,10 +93,13 @@ export function createSessionLoader(ports: SessionDataPorts) {
 		}
 		// D7：本机记住过的档位盖过后端默认值（后端 mode 不落盘，重启/卸载重开后恒为 default）。
 		// 这里 await 而不是 fire-and-forget：保证「打开完就是正确档位」，验收才能确定性断言。
-		const remembered = useUiPreferencesStore.getState().sessionPermissionModes[sessionId];
+		const remembered =
+			environmentEntityRef(sessionId).environment.kind === "local"
+				? useUiPreferencesStore.getState().sessionPermissionModes[sessionId]
+				: undefined;
 		if (remembered && remembered !== permissionMode) {
 			try {
-				await getPi().setPermissionMode({ sessionId, mode: remembered });
+				await getExecutionApi(sessionId).setPermissionMode({ sessionId, mode: remembered });
 				if (historyOpenEpoch(sessionId) === openingEpoch && ports.isOpen(sessionId)) {
 					ports.writePermissionMode(sessionId, remembered);
 				}
@@ -109,10 +112,11 @@ export function createSessionLoader(ports: SessionDataPorts) {
 	/** GC重建后恢复renderer档位；有效失败回落backend default并提示，持久偏好留待下次重试。 */
 	async function restorePermissionMode(sessionId: string): Promise<void> {
 		const openingEpoch = historyOpenEpoch(sessionId);
+		if (environmentEntityRef(sessionId).environment.kind !== "local") return;
 		const mode = ports.readPermissionMode(sessionId);
 		if (!mode || mode === "default") return;
 		try {
-			await getPi().setPermissionMode({ sessionId, mode });
+			await getExecutionApi(sessionId).setPermissionMode({ sessionId, mode });
 		} catch (error) {
 			console.warn("恢复会话权限模式失败", error);
 			if (historyOpenEpoch(sessionId) !== openingEpoch || !ports.isOpen(sessionId)) return;
@@ -146,7 +150,7 @@ export function createSessionLoader(ports: SessionDataPorts) {
 	): Promise<SessionMeta | null> {
 		let meta: SessionMeta;
 		try {
-			meta = await getPi().openSession({ filePath });
+			meta = await getExecutionApi(filePath).openSession({ filePath });
 		} catch (error) {
 			console.error("打开会话失败", error);
 			if (!isCurrent()) return null;

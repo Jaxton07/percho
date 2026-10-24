@@ -12,7 +12,7 @@ import {
 	COMPOSER_FOCUS_EVENT,
 	draftText,
 	EMPTY_DRAFT,
-	NEW_SESSION_DRAFT_KEY,
+	newSessionDraftKey,
 	restoreFailedDraft,
 	useDraftStore,
 	withDraftText,
@@ -67,7 +67,8 @@ export function Composer({ centered = false }: { centered?: boolean }) {
 	/** 当前模型是否支持图片输入；fail-open：模型未知/字段缺省一律按支持，只拦 imageInput === false */
 	const imagesSupported = activeModelInfo?.imageInput !== false;
 	/** 输入内容（文本/图片/命令胶囊）按会话持久：真实会话用 sessionId、新会话页用固定 key，不丢也不串 */
-	const draftKey = activeSessionId ?? NEW_SESSION_DRAFT_KEY;
+	const draftConfig = useSessionsStore((s) => s.newSessionDraft);
+	const draftKey = activeSessionId ?? newSessionDraftKey(draftConfig?.environment, draftConfig?.cwd);
 	const draft = useDraftStore((s) => s.bySession[draftKey] ?? EMPTY_DRAFT);
 	const failedDraft = useDraftStore((s) => s.failedBySession[draftKey]);
 	const { document, images, slashCommand, quotes } = draft;
@@ -138,15 +139,10 @@ export function Composer({ centered = false }: { centered?: boolean }) {
 	const sendWhenReady = async () => {
 		if (readOnly) return;
 		const generation =
-			draftKey === NEW_SESSION_DRAFT_KEY
-				? useSessionsStore.getState().newSessionDraft?.generation
-				: undefined;
+			activeSessionId === null ? useSessionsStore.getState().newSessionDraft?.generation : undefined;
 		const inFlight = preparingRef.current.filter((p) => p.key === draftKey && p.generation === generation);
 		await Promise.all(inFlight.map((p) => p.promise));
-		if (
-			draftKey === NEW_SESSION_DRAFT_KEY &&
-			generation !== useSessionsStore.getState().newSessionDraft?.generation
-		)
+		if (activeSessionId === null && generation !== useSessionsStore.getState().newSessionDraft?.generation)
 			return;
 		await handleSend();
 	};
@@ -304,13 +300,11 @@ export function Composer({ centered = false }: { centered?: boolean }) {
 			// 发送路径上的 SDK 归一化于是只需解码量尺寸（~20-40ms）而不是真缩一遍（~0.8–1.1s）。
 			// 失败一律退回原图，不丢附件；在途 promise 交给 preparingRef，回车会等它。
 			const generation =
-				draftKey === NEW_SESSION_DRAFT_KEY
-					? useSessionsStore.getState().newSessionDraft?.generation
-					: undefined;
+				activeSessionId === null ? useSessionsStore.getState().newSessionDraft?.generation : undefined;
 			const original = useDraftStore.getState().bySession[draftKey] ?? EMPTY_DRAFT;
 			const prepared = prepareImageAttachment(file).then((image) => {
 				if (
-					draftKey === NEW_SESSION_DRAFT_KEY &&
+					activeSessionId === null &&
 					generation !== useSessionsStore.getState().newSessionDraft?.generation
 				) {
 					// 新会话页已换代：保留为显式可恢复草稿，不能注入后来新建的输入。

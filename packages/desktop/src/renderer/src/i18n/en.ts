@@ -96,6 +96,7 @@ export const en: Messages = {
 		queueTitle: "Queued",
 		queueRestore: "Take back to editor",
 		queueFull: "A message is already queued — take it back first",
+		targetChanged: "The project has changed. Return to the original project to retry sending.",
 		removeQuote: "Remove quote",
 		permissionMode: "Permission mode",
 		permissionDefault: "Default",

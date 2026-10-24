@@ -1,6 +1,6 @@
 import type { PermissionRequest } from "@percho/shared";
 import { useCallback, useEffect, useState } from "react";
-import { getPi } from "../../api";
+import { getExecutionApi } from "../../environment-api";
 import { useT } from "../../i18n";
 import { useTranscriptStore } from "../../stores/transcript";
 import { WarningIcon } from "../icons";
@@ -52,7 +52,7 @@ export function ApprovalDock({ sessionId }: { sessionId: string | null }) {
 			setSending(true);
 			setError(null);
 			try {
-				await getPi().respondPermission({ requestId: shown.id, answer });
+				await getExecutionApi(shown.id).respondPermission({ requestId: shown.id, answer });
 				resolvePermission(sessionId, shown.id);
 			} catch (err) {
 				setError(err instanceof Error ? err.message : String(err));

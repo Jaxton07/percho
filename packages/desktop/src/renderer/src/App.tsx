@@ -1,6 +1,5 @@
 import type { TrustRequest } from "@percho/shared";
 import { useCallback, useEffect, useRef, useState } from "react";
-import { getPi } from "./api";
 import { CornerStack } from "./components/chat/CornerStack";
 import { EmptyState } from "./components/chat/EmptyState";
 import { MessageList } from "./components/chat/MessageList";
@@ -14,6 +13,7 @@ import { TrustDialog } from "./components/session/TrustDialog";
 import { SettingsDialog } from "./components/settings/SettingsDialog";
 import { Sidebar } from "./components/sidebar/Sidebar";
 import { Toaster } from "./components/Toaster";
+import { getExecutionApi } from "./environment-api";
 import { useSessionEventBridge } from "./hooks/use-session-event-bridge";
 import { initDailyDir } from "./lib/daily";
 import { useSessionGc } from "./lib/use-session-gc";
@@ -99,7 +99,7 @@ export default function App() {
 	}, []);
 
 	const respondTrust = (requestId: string, optionIndex: number) => {
-		void getPi().respondTrust({ requestId, answer: optionIndex });
+		void getExecutionApi(requestId).respondTrust({ requestId, answer: optionIndex });
 		setTrustRequests((prev) => prev.filter((req) => req.id !== requestId));
 	};
 
