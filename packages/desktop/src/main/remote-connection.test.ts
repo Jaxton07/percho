@@ -35,6 +35,7 @@ vi.mock("@percho/backend", async () => {
 		}),
 		preflightSsh: fixture.probe,
 		checkSshRequirements,
+		installSshRuntime: vi.fn(),
 		sshFailureKind,
 	};
 });
@@ -182,4 +183,70 @@ it("rejects malformed saved identities before auto-connecting or publishing them
 	expect(fixture.connect).not.toHaveBeenCalled();
 	await manager.forget();
 	expect(fixture.saved).toBeNull();
+});
+
+it("downloads for manual installation but never installs without the matching one-use confirmation", async () => {
+	const manifest = {
+		releaseId: "v1.0.0",
+		protocol: 3,
+		artifacts: { arm64: { bytes: 42, sha256: "a".repeat(64) } },
+	};
+	const distribution = {
+		manifest: vi.fn().mockResolvedValue(manifest),
+		download: vi.fn().mockResolvedValue("/isolated/archive"),
+		install: vi.fn().mockImplementation(async () => {
+			fixture.probe.mockResolvedValue(probe);
+		}),
+	};
+	manager = new RemoteConnectionManager(distribution as never);
+	fixture.probe.mockResolvedValue({ ...probe, installed: false, serviceState: "stopped" });
+	const ready = await manager.connect("dev");
+	expect(ready.installation).toMatchObject({
+		releaseId: "v1.0.0",
+		directory: "/home/developer/.local/share/percho/releases/v1.0.0",
+	});
+	expect(distribution.install).not.toHaveBeenCalled();
+	expect(fixture.connect).not.toHaveBeenCalled();
+	await expect(manager.installAndConnect("wrong")).rejects.toThrow("expired");
+	const token = ready.installation?.token ?? "";
+	await manager.installAndConnect(token);
+	expect(distribution.install).toHaveBeenCalledTimes(1);
+	expect(fixture.connect).toHaveBeenCalledTimes(1);
+	await expect(manager.installAndConnect(token)).rejects.toThrow("expired");
+});
+it("background connection never downloads or prompts for a missing runtime", async () => {
+	const distribution = { manifest: vi.fn(), download: vi.fn(), install: vi.fn() };
+	manager = new RemoteConnectionManager(distribution as never);
+	fixture.probe.mockResolvedValue({ ...probe, installed: false, serviceState: "stopped" });
+	await expect(manager.connect("dev", true)).rejects.toThrow("NOT_INSTALLED");
+	expect(distribution.manifest).not.toHaveBeenCalled();
+	expect(distribution.download).not.toHaveBeenCalled();
+	await vi.runAllTimersAsync();
+	expect(fixture.probe).toHaveBeenCalledTimes(1);
+});
+it("connects an installed runtime without reading the desired release manifest", async () => {
+	const distribution = {
+		manifest: vi.fn().mockRejectedValue(new Error("no new release available")),
+		download: vi.fn(),
+		install: vi.fn(),
+	};
+	manager = new RemoteConnectionManager(distribution as never);
+	await manager.connect("dev");
+	expect((await manager.getStatus()).state).toBe("connected");
+	expect(distribution.manifest).not.toHaveBeenCalled();
+});
+it("cancelling or starting a fresh check invalidates an earlier installation confirmation", async () => {
+	const distribution = {
+		manifest: vi
+			.fn()
+			.mockResolvedValue({ releaseId: "v1.0.0", protocol: 3, artifacts: { arm64: { bytes: 42 } } }),
+		download: vi.fn().mockResolvedValue("/isolated/archive"),
+		install: vi.fn(),
+	};
+	manager = new RemoteConnectionManager(distribution as never);
+	fixture.probe.mockResolvedValue({ ...probe, installed: false, serviceState: "stopped" });
+	const ready = await manager.connect("dev");
+	manager.disconnect();
+	await expect(manager.installAndConnect(ready.installation?.token ?? "")).rejects.toThrow("expired");
+	expect(distribution.install).not.toHaveBeenCalled();
 });

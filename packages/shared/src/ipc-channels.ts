@@ -752,6 +752,8 @@ export const REMOTE_CHANNELS = {
 	remoteCheckOperation: ch("remote:checkOperation", "desktop")<{ operationId: string }, MutationReceipt>(),
 	remoteDismissOperation: ch("remote:dismissOperation", "desktop")<{ operationId: string }, void>(),
 	remoteGetStatus: ch("remote:status", "desktop")<void, RemoteConnectionStatus>(),
+	remotePrepareInstall: ch("remote:prepareInstall", "desktop")<{ alias: string }, RemoteConnectionStatus>(),
+	remoteInstall: ch("remote:install", "desktop")<{ token: string }, RemoteConnectionStatus>(),
 	remoteConnect: ch("remote:connect", "desktop")<{ alias: string }, RemoteConnectionStatus>(),
 	remoteDisconnect: ch("remote:disconnect", "desktop")<void, RemoteConnectionStatus>(),
 } as const;

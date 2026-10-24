@@ -71,7 +71,11 @@ export const zh = {
 		},
 
 		title: "远端连接",
-		preparedRuntime: "使用已有 SSH 别名连接已准备好的 Percho 运行包。",
+		installHint:
+			"运行包已下载并验证。确认后在此服务器的私有目录安装并启动；不会安装 Node 或项目依赖。更新前请先明确停止旧服务。",
+		confirmInstall: "确认安装并连接",
+		prepareUpdate: "准备更新包",
+		preparedRuntime: "使用已有 SSH 别名连接；缺少运行包时会自动下载，确认后安装。",
 		alias: "SSH 别名",
 		disconnected: "未连接",
 		connecting: "连接中",

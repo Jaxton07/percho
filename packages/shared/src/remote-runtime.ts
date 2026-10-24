@@ -68,6 +68,7 @@ export interface SshPreflight {
 	glibc: string;
 	commands: Record<string, boolean>;
 	installed: boolean;
+	installedReleaseId?: string;
 	agentDir?: string;
 	environmentId?: string;
 	serviceState?: "running" | "stopped" | "unreachable";
@@ -77,6 +78,7 @@ export interface RemoteConnectionStatus {
 	revision: number;
 	state: "disconnected" | "checking" | "connecting" | "stopping" | "reconnecting" | "connected" | "error";
 	preflight?: SshPreflight;
+	installation?: { token: string; releaseId: string; bytes: number; directory: string };
 	errorKind?:
 		| "network"
 		| "authentication"

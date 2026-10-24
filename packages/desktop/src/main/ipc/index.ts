@@ -61,6 +61,12 @@ export function registerIpc(
 		remoteDismissOperation: ({ operationId }) => remoteConnectionManager.dismissOperation(operationId),
 		remoteGetStatus: () => remoteConnectionManager.getStatus(),
 		remoteDisconnect: () => remoteConnectionManager.disconnect(),
+		remoteInstall: ({ token }) => remoteConnectionManager.installAndConnect(token),
+		remotePrepareInstall: async ({ alias }) => {
+			trust.resetDecline();
+			await authorizeRemote();
+			return remoteConnectionManager.prepareInstall(alias);
+		},
 		remoteConnect: ({ alias }) => {
 			trust.resetDecline();
 			return remoteConnectionManager.connect(alias);

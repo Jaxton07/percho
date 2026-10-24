@@ -81,7 +81,12 @@ export const en: Messages = {
 		},
 
 		title: "Remote connection",
-		preparedRuntime: "Connect an existing SSH alias to a prepared Percho runtime.",
+		installHint:
+			"The runtime is downloaded and verified. Confirm to install and start it in this server’s private directory. Node and project dependencies are prerequisites. Explicitly stop the old service before updating.",
+		confirmInstall: "Install and connect",
+		prepareUpdate: "Prepare update",
+		preparedRuntime:
+			"Connect an existing SSH alias. If needed, the runtime is downloaded automatically and installed after confirmation.",
 		alias: "SSH alias",
 		disconnected: "Disconnected",
 		connecting: "Connecting",

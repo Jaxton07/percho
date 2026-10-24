@@ -60,7 +60,9 @@ const fs=require('node:fs'),os=require('node:os'),path=require('node:path'),cp=r
   socket.on('connect',()=>socket.write(JSON.stringify({type:'inspect',id:'probe'})+'\\n'));
   socket.on('data',chunk=>{text+=chunk;if(text.length>1048576)return finish({serviceState:'unreachable'});if(text.includes('\\n')){try{const frame=JSON.parse(text.split('\\n')[0]);finish(frame.result?{serviceState:'running',service:frame.result}:{serviceState:'unreachable'});}catch{finish({serviceState:'unreachable'});}}});
  });
- console.log(JSON.stringify({uid:process.getuid?.(),home,agentDir,environmentId,node:fs.realpathSync(process.execPath),nodeVersion:process.versions.node,platform:process.platform,arch:process.arch,glibc:process.report.getReport().header.glibcVersionRuntime||'',commands,installed:fs.existsSync(path.join(root,'releases/development/entry.mjs')),...status}));
+ let installedReleaseId;try{const v=JSON.parse(fs.readFileSync(path.join(root,'installed.json'),'utf8'));if(!/^v[0-9]+\\.[0-9]+\\.[0-9]+(?:-[a-zA-Z0-9.-]+)?$/.test(v.releaseId))throw new Error('Invalid installed release');installedReleaseId=v.releaseId;}catch(e){if(e.code!=='ENOENT')throw e;}
+ if(!installedReleaseId&&fs.existsSync(path.join(root,'releases/development/entry.mjs')))installedReleaseId='development';
+ console.log(JSON.stringify({uid:process.getuid?.(),home,agentDir,environmentId,node:fs.realpathSync(process.execPath),nodeVersion:process.versions.node,platform:process.platform,arch:process.arch,glibc:process.report.getReport().header.glibcVersionRuntime||'',commands,installedReleaseId,installed:!!installedReleaseId&&fs.existsSync(path.join(root,'releases',installedReleaseId,'entry.mjs')),...status}));
 })().catch(e=>{console.error(e.message);process.exitCode=1;});
 `;
 
@@ -108,6 +110,9 @@ export function checkSshRequirements(probe: SshPreflight): void {
 		);
 	if (probe.platform !== "linux" || !["x64", "arm64"].includes(probe.arch) || !probe.glibc)
 		throw new Error("REQUIREMENTS: Requires glibc Linux x64 or ARM64; musl/Alpine is unsupported");
+	const [glibcMajor = 0, glibcMinor = 0] = probe.glibc.split(".").map(Number);
+	if (glibcMajor < 2 || (glibcMajor === 2 && glibcMinor < 35))
+		throw new Error("REQUIREMENTS: Requires glibc 2.35 or newer");
 	const missing = ["sh", "tar", "sha256sum", "flock", "setsid"].filter((name) => !probe.commands[name]);
 	if (missing.length) throw new Error(`REQUIREMENTS: Missing commands: ${missing.join(", ")}`);
 }

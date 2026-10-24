@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto";
 import { join } from "node:path";
 import {
 	checkSshRequirements,
+	installSshRuntime,
 	JsonStore,
 	preflightSsh,
 	RemoteMutationUnknownError,
@@ -23,6 +24,11 @@ import {
 import { app } from "electron";
 import { environmentRouter } from "./environment-router";
 import { sendToRenderer } from "./ipc/send";
+import {
+	downloadRuntimeArtifact,
+	type RuntimeManifest,
+	readRuntimeManifest,
+} from "./remote-runtime-download";
 
 interface SavedConnection {
 	connectionId: string;
@@ -76,6 +82,20 @@ async function readSaved(): Promise<SavedConnection | null> {
 }
 
 export class RemoteConnectionManager {
+	private installation?: { token: string; probe: SshPreflight; manifest: RuntimeManifest; archive: string };
+	constructor(
+		private readonly distribution = {
+			manifest: () =>
+				readRuntimeManifest(
+					app.isPackaged
+						? join(process.resourcesPath, "remote-runtime/manifest.json")
+						: join(app.getAppPath(), "resources/remote-runtime/manifest.json"),
+				),
+			download: (item: RuntimeManifest["artifacts"]["arm64"], signal: AbortSignal) =>
+				downloadRuntimeArtifact(item, join(app.getPath("userData"), "runtime-downloads"), signal),
+			install: installSshRuntime,
+		},
+	) {}
 	private status: RemoteConnectionStatus = { revision: 0, state: "disconnected" };
 	private generation = 0;
 	private autoConnect = true;
@@ -108,6 +128,7 @@ export class RemoteConnectionManager {
 			throw new Error("Disconnect or cancel the current connection first");
 		this.disconnect();
 		const generation = ++this.generation;
+		this.installation = undefined;
 		const controller = new AbortController();
 		this.controller = controller;
 		this.update({ ...this.status, state: "checking", alias });
@@ -249,6 +270,7 @@ export class RemoteConnectionManager {
 		clearTimeout(this.retryTimer);
 		this.retryTimer = undefined;
 		this.generation += 1;
+		this.installation = undefined;
 		this.controller?.abort();
 		this.controller = undefined;
 		this.detach?.();
@@ -261,7 +283,53 @@ export class RemoteConnectionManager {
 			environment: this.status.environment,
 		});
 	}
-	async connect(alias: string, automatic = false): Promise<RemoteConnectionStatus> {
+	async prepareInstall(alias: string): Promise<RemoteConnectionStatus> {
+		await this.connect(alias, false, true);
+		return this.status;
+	}
+	async installAndConnect(token: string): Promise<RemoteConnectionStatus> {
+		const plan = this.installation;
+		if (
+			!plan ||
+			plan.token !== token ||
+			this.status.installation?.token !== token ||
+			this.status.alias !== plan.probe.alias ||
+			!this.controller ||
+			this.controller.signal.aborted
+		)
+			throw new Error("Installation confirmation expired; check the target again");
+		this.installation = undefined;
+		const generation = this.generation,
+			signal = this.controller.signal;
+		this.update({ ...this.status, state: "connecting", installation: undefined });
+		try {
+			const artifact = plan.manifest.artifacts[plan.probe.arch as "arm64" | "x64"];
+			await this.distribution.install(
+				plan.probe,
+				plan.archive,
+				{
+					...artifact,
+					releaseId: plan.manifest.releaseId,
+					protocol: plan.manifest.protocol,
+					arch: plan.probe.arch,
+				},
+				signal,
+			);
+			if (generation !== this.generation || signal.aborted) return this.status;
+			this.update({ ...this.status, state: "disconnected" });
+			return await this.connect(plan.probe.alias);
+		} catch (error) {
+			if (generation === this.generation)
+				this.update({
+					...this.status,
+					state: "error",
+					errorKind: "other",
+					error: error instanceof Error ? error.message : String(error),
+				});
+			throw error;
+		}
+	}
+	async connect(alias: string, automatic = false, forcePrepare = false): Promise<RemoteConnectionStatus> {
 		if (automatic && !this.autoConnect) return this.status;
 		validateSshAlias(alias);
 		if (["connecting", "checking", "stopping"].includes(this.status.state))
@@ -276,6 +344,7 @@ export class RemoteConnectionManager {
 			clearTimeout(this.retryTimer);
 		}
 		const generation = ++this.generation;
+		this.installation = undefined;
 		const controller = new AbortController();
 		this.controller = controller;
 		this.update({ state: "connecting", alias, environment: this.status.environment });
@@ -300,6 +369,25 @@ export class RemoteConnectionManager {
 				throw new Error("Remote identity changed: effective SSH hostname, port or user differs");
 			if (generation !== this.generation || controller.signal.aborted) return this.status;
 			this.update({ ...this.status, state: "connecting", preflight: probe });
+			if (forcePrepare || (!probe.installed && probe.serviceState !== "running")) {
+				if (automatic) throw new Error("NOT_INSTALLED: Open the connection dialog to confirm installation");
+				const manifest = await this.distribution.manifest();
+				const artifact = manifest.artifacts[probe.arch as "arm64" | "x64"];
+				const archive = await this.distribution.download(artifact, controller.signal);
+				if (generation !== this.generation || controller.signal.aborted) return this.status;
+				const token = randomUUID();
+				this.installation = { token, probe, manifest, archive };
+				return this.update({
+					...this.status,
+					state: "disconnected",
+					installation: {
+						token,
+						releaseId: manifest.releaseId,
+						bytes: artifact.bytes,
+						directory: `${probe.home}/.local/share/percho/releases/${manifest.releaseId}`,
+					},
+				});
+			}
 			const connectionId = saved?.connectionId ?? randomUUID();
 			let environment: Extract<EnvironmentRef, { kind: "ssh" }> | undefined;
 			connection = await SshRuntimeConnection.connect(alias, {

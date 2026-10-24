@@ -17,10 +17,13 @@ import { checkSshRequirements, preflightSsh, runSsh, shellQuote } from "./ssh-pr
 
 export { sshArguments, validateSshAlias } from "./ssh-arguments";
 
-// The development artifact is prepared explicitly for M1. Release metadata replaces this selector in deployment.
-const entry = '"$HOME/.local/share/percho/releases/development/entry.mjs"';
-const remoteCommand = (command: "start" | "bridge", node: string) =>
-	`exec ${shellQuote(node)} ${entry} ${command}`;
+function releaseEntry(releaseId: string): string {
+	if (!/^[a-zA-Z0-9][a-zA-Z0-9._-]{0,127}$/.test(releaseId))
+		throw new Error("Invalid installed runtime release");
+	return `"$HOME/.local/share/percho/releases/${releaseId}/entry.mjs"`;
+}
+const remoteCommand = (command: "start" | "bridge", node: string, releaseId: string) =>
+	`exec ${shellQuote(node)} ${releaseEntry(releaseId)} ${command}`;
 
 function checkContract(info: RuntimeInfo): void {
 	const expected = executionContract();
@@ -45,8 +48,15 @@ function checkContract(info: RuntimeInfo): void {
 		throw new Error("Remote runtime has an incompatible execution/event contract");
 }
 
-async function ensureStarted(alias: string, signal: AbortSignal, node: string): Promise<RuntimeInfo> {
-	return JSON.parse(await runSsh(sshArguments(alias, remoteCommand("start", node)), signal)) as RuntimeInfo;
+async function ensureStarted(
+	alias: string,
+	signal: AbortSignal,
+	node: string,
+	releaseId: string,
+): Promise<RuntimeInfo> {
+	return JSON.parse(
+		await runSsh(sshArguments(alias, remoteCommand("start", node, releaseId)), signal),
+	) as RuntimeInfo;
 }
 
 export function remoteAuthGuide(alias: string, node: string, releaseId = "development") {
@@ -68,6 +78,7 @@ export class SshRuntimeConnection {
 		private readonly alias: string,
 		private readonly node: string,
 		private readonly signal: AbortSignal,
+		private readonly releaseId: string,
 	) {}
 	static async connect(
 		alias: string,
@@ -104,11 +115,20 @@ export class SshRuntimeConnection {
 				])
 		)
 			throw new Error("Remote identity changed since preflight; check again before connecting");
-		if (!probe.installed)
+		if (probe.serviceState === "running") checkContract(probe.service as RuntimeInfo);
+		if (probe.serviceState === "unreachable")
+			throw new Error(
+				"Runtime owner may be active but unreachable; verify it before installing or starting another release",
+			);
+		if (!probe.installed && probe.serviceState !== "running")
 			throw new Error("NOT_INSTALLED: Remote runtime is not installed; use Install and connect");
-		const started = await ensureStarted(alias, options.signal, probe.node);
+		const releaseId = probe.service?.releaseId ?? probe.installedReleaseId ?? "development";
+		const started =
+			probe.serviceState === "running"
+				? (probe.service as RuntimeInfo)
+				: await ensureStarted(alias, options.signal, probe.node, releaseId);
 		checkContract(started);
-		const child = spawn("ssh", sshArguments(alias, remoteCommand("bridge", probe.node)), {
+		const child = spawn("ssh", sshArguments(alias, remoteCommand("bridge", probe.node, releaseId)), {
 			windowsHide: true,
 			stdio: ["pipe", "pipe", "pipe"],
 			signal: options.signal,
@@ -144,7 +164,15 @@ export class SshRuntimeConnection {
 			if (options.signal.aborted) throw new Error("SSH connection cancelled");
 			// Initial registry synchronization is required before this controller can submit new work.
 			await Promise.all([client.invoke("getLoadedSessions"), client.invoke("getPendingInteractions")]);
-			return new SshRuntimeConnection(attached.info, client, close, alias, probe.node, options.signal);
+			return new SshRuntimeConnection(
+				attached.info,
+				client,
+				close,
+				alias,
+				probe.node,
+				options.signal,
+				releaseId,
+			);
 		} catch (error) {
 			close();
 			throw error;
@@ -165,7 +193,10 @@ export class SshRuntimeConnection {
 		this.closeBridge();
 		const confirmed = JSON.parse(
 			await runSsh(
-				sshArguments(this.alias, `exec ${shellQuote(this.node)} ${entry} wait-stopped`),
+				sshArguments(
+					this.alias,
+					`exec ${shellQuote(this.node)} ${releaseEntry(this.releaseId)} wait-stopped`,
+				),
 				this.signal,
 				45_000,
 			),

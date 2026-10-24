@@ -14,6 +14,8 @@ function RemoteConnectionBody() {
 	const t = useT();
 	const addedProjects = useProjectsStore((state) => state.addedProjects);
 	const status = useRemoteConnectionStore((state) => state.status);
+	const install = useRemoteConnectionStore((state) => state.install);
+	const prepareInstall = useRemoteConnectionStore((state) => state.prepareInstall);
 	const connect = useRemoteConnectionStore((state) => state.connect);
 	const preflight = useRemoteConnectionStore((state) => state.preflight);
 	const forget = useRemoteConnectionStore((state) => state.forget);
@@ -40,6 +42,7 @@ function RemoteConnectionBody() {
 			setWorking(false);
 		}
 	};
+	const installation = status.installation;
 	const busy =
 		working || status.state === "connecting" || status.state === "checking" || status.state === "stopping";
 	return createPortal(
@@ -92,6 +95,29 @@ function RemoteConnectionBody() {
 						</Button>
 					</div>
 				</div>
+				{installation && status.alias === alias && (
+					<div className="mt-3 rounded-lg bg-hover p-3 text-ui-12 text-ink-2">
+						<p>{t("remote.installHint")}</p>
+						<p className="mt-2 break-all">
+							{installation.releaseId} · {Math.ceil(installation.bytes / 1048576)} MB
+							<br />
+							{installation.directory}
+						</p>
+						<div className="mt-3 flex gap-2">
+							<Button disabled={busy} onClick={() => void run(() => install(installation.token))}>
+								{t("remote.confirmInstall")}
+							</Button>
+							<Button disabled={busy} onClick={() => void run(disconnect)}>
+								{t("common.cancel")}
+							</Button>
+						</div>
+					</div>
+				)}
+				{status.preflight?.installed && status.state === "disconnected" && !status.installation && (
+					<Button disabled={busy || !alias} onClick={() => void run(() => prepareInstall(alias))}>
+						{t("remote.prepareUpdate")}
+					</Button>
+				)}
 				{status.state === "connected" && (
 					<div className="mt-2 text-ui-12">
 						{!confirmStop ? (

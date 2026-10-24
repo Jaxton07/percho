@@ -16,6 +16,8 @@ interface RemoteConnectionStore {
 	setOpen: (open: boolean) => void;
 	checkOperation: (id: string) => Promise<void>;
 	dismissOperation: (id: string) => Promise<void>;
+	install: (token: string) => Promise<void>;
+	prepareInstall: (alias: string) => Promise<void>;
 	connect: (alias: string) => Promise<void>;
 	preflight: (alias: string) => Promise<void>;
 	forget: () => Promise<void>;
@@ -76,6 +78,12 @@ export const useRemoteConnectionStore = create<RemoteConnectionStore>((set, get)
 	},
 	forget: async () => {
 		get().accept(await getPi().remoteForget());
+	},
+	install: async (token) => {
+		get().accept(await getPi().remoteInstall({ token }));
+	},
+	prepareInstall: async (alias) => {
+		get().accept(await getPi().remotePrepareInstall({ alias }));
 	},
 	connect: async (alias) => {
 		get().accept(await getPi().remoteConnect({ alias }));

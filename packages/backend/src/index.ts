@@ -75,6 +75,7 @@ export {
 	workspaceConfigPath,
 } from "./project/workspace-store";
 export { RemoteMutationUnknownError } from "./runtime/client";
+export { installSshRuntime } from "./runtime/install";
 export { remoteAuthGuide, SshRuntimeConnection, sshArguments, validateSshAlias } from "./runtime/ssh";
 export { checkSshRequirements, preflightSsh, sshFailureKind } from "./runtime/ssh-preflight";
 export {
