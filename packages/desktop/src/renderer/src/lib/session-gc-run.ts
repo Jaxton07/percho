@@ -1,3 +1,4 @@
+import { type EnvironmentRef, environmentEntityRef, sameEnvironment } from "@percho/shared";
 import { pickUnloadCandidates, type SessionGcEntry, type SessionGcOpen } from "./session-gc";
 
 /**
@@ -78,4 +79,30 @@ export async function runSessionGcRound(deps: SessionGcRoundDeps): Promise<Sessi
 		}
 	}
 	return { skipped: null, unloaded, refused };
+}
+
+/** The existing policy runs independently for each environment, including its protection snapshot. */
+export async function runEnvironmentSessionGc(
+	environments: readonly EnvironmentRef[],
+	deps: Omit<SessionGcRoundDeps, "listSubscriptionSessionIds"> & {
+		listSubscriptionSessionIds: (environment: EnvironmentRef) => Promise<string[]>;
+	},
+): Promise<SessionGcRoundResult[]> {
+	return Promise.all(
+		environments.map((environment) =>
+			runSessionGcRound({
+				...deps,
+				getOpen: () => {
+					const state = deps.getOpen();
+					return {
+						...state,
+						open: state.open.filter((session) =>
+							sameEnvironment(environmentEntityRef(session.sessionId).environment, environment),
+						),
+					};
+				},
+				listSubscriptionSessionIds: () => deps.listSubscriptionSessionIds(environment),
+			}),
+		),
+	);
 }

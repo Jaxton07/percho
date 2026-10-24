@@ -1,6 +1,7 @@
+import { environmentEntityKey, LOCAL_ENVIRONMENT } from "@percho/shared";
 import { describe, expect, it, vi } from "vitest";
 import type { SessionGcEntry, SessionGcOpen } from "./session-gc";
-import { runSessionGcRound, type SessionGcRoundDeps } from "./session-gc-run";
+import { runEnvironmentSessionGc, runSessionGcRound, type SessionGcRoundDeps } from "./session-gc-run";
 
 /** 空闲会话的 transcript 侧状态（全 false / 全空） */
 const IDLE_ENTRY: SessionGcEntry = {
@@ -145,4 +146,28 @@ describe("runSessionGcRound · 卸载前的再确认与后端拒绝", () => {
 		expect(result.refused).toEqual(["a"]);
 		expect(result.unloaded).toEqual([]);
 	});
+});
+
+it("remote protection failure skips only remote candidates, while local uses its own retention budget", async () => {
+	const remote = { kind: "ssh" as const, connectionId: "company", environmentId: "data" };
+	const key = (id: string) => environmentEntityKey(remote, id);
+	const { deps, unload } = makeDeps({
+		open: [
+			openSession("a", NOW - 10_000_000),
+			openSession("b", NOW - 60_000),
+			openSession(key("a"), NOW - 10_000_000),
+			openSession(key("b"), NOW - 60_000),
+		],
+		keep: 1,
+	});
+	const results = await runEnvironmentSessionGc([LOCAL_ENVIRONMENT, remote], {
+		...deps,
+		listSubscriptionSessionIds: async (environment) => {
+			if (environment.kind === "ssh") throw new Error("offline");
+			return [];
+		},
+	});
+	expect(results[0]?.unloaded).toEqual(["a"]);
+	expect(results[1]?.skipped).toBe("subscription-snapshot-failed");
+	expect(unload).toHaveBeenCalledTimes(1);
 });

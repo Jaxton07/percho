@@ -64,6 +64,7 @@ export function scopeSessionMeta(value: SessionMeta, environment: EnvironmentRef
 	return {
 		...value,
 		sessionId: environmentEntityKey(environment, value.sessionId),
+		cwd: environmentEntityKey(environment, value.cwd),
 		...(value.sessionFile ? { sessionFile: environmentEntityKey(environment, value.sessionFile) } : {}),
 	};
 }
@@ -78,6 +79,8 @@ function resultFor(method: string, value: unknown, environment: EnvironmentRef):
 		case "listSessions":
 		case "listAllSessions":
 			return (value as SessionMeta[]).map((meta) => scopeSessionMeta(meta, environment));
+		case "getDailyDir":
+			return environmentEntityKey(environment, value as string);
 		case "getChannelSubscriptionSessionIds":
 			return (value as string[]).map((id) => environmentEntityKey(environment, id));
 		case "getChannelSubscriptions":
@@ -114,6 +117,8 @@ function eventFor(method: string, value: unknown, environment: EnvironmentRef): 
 	) {
 		next.id = environmentEntityKey(environment, next.id);
 	}
+	if (method === "onTrustRequest" && typeof next.cwd === "string")
+		next.cwd = environmentEntityKey(environment, next.cwd);
 	if (method === "onEvent" && record(next.event)) {
 		const event = next.event;
 		if (event.type === "tool_execution_update")
@@ -130,6 +135,12 @@ function argumentsFor(value: unknown, environment: EnvironmentRef): unknown {
 	for (const key of ["sessionId", "requestId", "sessionFile", "filePath"]) {
 		if (typeof next[key] === "string") next[key] = environmentEntityId(environment, next[key]);
 	}
+	// Explicitly bound directory input may be literal (e.g. the add-project field).
+	const directory = (cwd: string) =>
+		cwd.startsWith("percho-env-v1:") ? environmentEntityId(environment, cwd) : cwd;
+	if (typeof next.cwd === "string") next.cwd = directory(next.cwd);
+	if (record(next.options) && typeof next.options.cwd === "string")
+		next.options = { ...next.options, cwd: directory(next.options.cwd) };
 	return next;
 }
 

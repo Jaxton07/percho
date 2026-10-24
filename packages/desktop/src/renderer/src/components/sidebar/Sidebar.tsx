@@ -77,7 +77,7 @@ export function Sidebar() {
 	// 分批显示（每组 6 条 + 显示更多）与搜索临时展开：纯内存态，只在渲染时叠加到派生结果上。
 	// 首次开合的起点由派生层给（当前会话所在组），组件不自己再算一遍。
 	const batching = useSidebarBatching({ search, defaults: data.defaultExpandedKeys });
-	const empty = data.daily === null && data.projects.length === 0;
+	const empty = data.dailies.length === 0 && data.projects.length === 0;
 
 	// 左栏唯一滚动容器的边界淡出（底部下沿淡出，原来这里是一条 1px 实线）
 	const sidebarScrollRef = useRef<HTMLDivElement>(null);
@@ -102,9 +102,14 @@ export function Sidebar() {
 					style={{ "--edge-fade-size": "16px" } as CSSProperties}
 					className="edge-fade min-h-0 flex-1 overflow-x-hidden overflow-y-auto px-2 pt-0.5 pb-4 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
 				>
-					{data.daily && (
-						<SidebarGroup group={data.daily} activeSessionId={activeSessionId} batching={batching} />
-					)}
+					{data.dailies.map((group) => (
+						<SidebarGroup
+							key={group.key}
+							group={group}
+							activeSessionId={activeSessionId}
+							batching={batching}
+						/>
+					))}
 					<ProjectSection
 						projects={data.projects}
 						activeSessionId={activeSessionId}

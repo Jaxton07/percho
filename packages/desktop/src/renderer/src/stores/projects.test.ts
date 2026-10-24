@@ -1,9 +1,10 @@
-import type { SessionMeta } from "@percho/shared";
+import { type EnvironmentRef, environmentEntityKey, environmentKey, type SessionMeta } from "@percho/shared";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 /** window.pi 的 mock：store 的 load 经 getPi() 访问（测试环境无 preload 注入） */
 const piMock = vi.hoisted(() => ({
 	listAllSessions: vi.fn(),
+	forEnvironment: vi.fn(),
 	getDailyDir: vi.fn(() => Promise.resolve(null)),
 	// 用户入口 openSession / deleteSession 会走这些 IPC（其余四件套的拉取见 sessions store）
 	openSession: vi.fn(),
@@ -431,5 +432,64 @@ describe("工作区接线 · projects", () => {
 
 		expect(memberIds()).toEqual(["m2"]);
 		expect(piMock.deleteSession).toHaveBeenCalledWith({ sessionId: "m1", sessionFile: "/tmp/m1.jsonl" });
+	});
+});
+
+describe("environment catalog isolation", () => {
+	const remote: EnvironmentRef = { kind: "ssh", connectionId: "company", environmentId: "data" };
+	const key = (id: string) => environmentEntityKey(remote, id);
+	beforeEach(() => {
+		useSessionsStore.setState({ sessions: [], activeSessionId: null });
+		useProjectsStore.setState({ allSessions: [], addedProjects: [], selectedCwd: null, catalogs: {} });
+	});
+	afterEach(() => {
+		setDailyDirForTest(null, remote);
+		setDailyDirForTest(null);
+	});
+	it("interleaved remote refresh preserves local snapshot and failed remote refresh preserves its last good snapshot", async () => {
+		let complete!: (sessions: SessionMeta[]) => void;
+		const listRemote = vi.fn(
+			() =>
+				new Promise<SessionMeta[]>((resolve) => {
+					complete = resolve;
+				}),
+		);
+		piMock.forEnvironment.mockReturnValue({ listAllSessions: listRemote, getDailyDir: async () => "/daily" });
+		const store = useProjectsStore.getState();
+		const pending = store.load(remote);
+		store.adoptCatalog([session("/same", 10)]);
+		expect(useProjectsStore.getState().loading).toBe(false);
+		expect(useProjectsStore.getState().catalogs[environmentKey(remote)]?.loading).toBe(true);
+		complete([session("/same", 10)]);
+		await pending;
+		expect(useProjectsStore.getState().allSessions.map((s) => s.cwd)).toEqual(["/same", key("/same")]);
+		expect(deriveProjects(useProjectsStore.getState()).map((p) => p.name)).toEqual(["same", "same"]);
+		listRemote.mockRejectedValueOnce(new Error("offline"));
+		await store.load(remote);
+		expect(useProjectsStore.getState().allSessions).toHaveLength(2);
+		expect(useProjectsStore.getState().selectedCwd).toBe("/same");
+		expect(useProjectsStore.getState().catalogs[environmentKey(remote)]?.failed).toBe(true);
+	});
+	it("same-path daily spaces have separate groups, expansion and members", () => {
+		setDailyDirForTest("/daily");
+		setDailyDirForTest(key("/daily"), remote);
+		const local = session("/daily", 1);
+		const remoteSession = { ...local, sessionId: key(local.sessionId), cwd: key("/daily") };
+		const data = deriveSidebarNavigation({
+			history: [local, remoteSession],
+			memory: [],
+			addedProjects: [],
+			search: "",
+			activeCwd: key("/daily"),
+			pinnedSessions: [],
+			pinnedProjects: [],
+			expandedGroups: [],
+			expandedGroupsTouched: false,
+		});
+		expect(data.projects).toEqual([]);
+		expect(data.dailies.map((g) => [g.cwd, g.expanded, g.sessions[0]?.session.sessionId])).toEqual([
+			["/daily", false, local.sessionId],
+			[key("/daily"), true, remoteSession.sessionId],
+		]);
 	});
 });

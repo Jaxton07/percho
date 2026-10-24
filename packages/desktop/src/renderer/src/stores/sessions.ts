@@ -255,7 +255,7 @@ function rememberCwd(cwd: string | null): void {
 }
 
 /** 信任前置：未决项目弹窗（结果落 trust.json），draft 拉斜杠命令/promotion 建会话直接命中缓存 */
-function ensureTrust(cwd: string, environment: EnvironmentRef = LOCAL_ENVIRONMENT): void {
+function ensureTrust(cwd: string, environment: EnvironmentRef = environmentEntityRef(cwd).environment): void {
 	void getExecutionApi(environment)
 		.ensureProjectTrust({ cwd })
 		.then(() => commitSessionState((s) => ({ trustVersion: s.trustVersion + 1 })))
@@ -511,7 +511,7 @@ export const useSessionsStore = create<SessionsStore>((_set, get) => ({
 		if (targetCwd) ensureTrust(targetCwd, currentEnvironment(get()));
 	},
 
-	activateNewSessionDraftForCwd: (cwd, environment = LOCAL_ENVIRONMENT) => {
+	activateNewSessionDraftForCwd: (cwd, environment = environmentEntityRef(cwd).environment) => {
 		const state = get();
 		const activeSession = state.sessions.find((s) => s.sessionId === state.activeSessionId);
 		// 与普通「＋」不同，项目行点击即使已经在 draft 页也是一次新的导航意图：
@@ -548,7 +548,7 @@ export const useSessionsStore = create<SessionsStore>((_set, get) => ({
 		rememberCwd(cwd);
 	},
 
-	setDraftCwd: (cwd, environment = LOCAL_ENVIRONMENT) => {
+	setDraftCwd: (cwd, environment = environmentEntityRef(cwd).environment) => {
 		// cwd 变化即前置信任决策
 		ensureTrust(cwd, environment);
 		set((state) => {

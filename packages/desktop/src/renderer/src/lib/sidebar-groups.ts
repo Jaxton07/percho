@@ -1,7 +1,7 @@
 import type { SessionMeta } from "@percho/shared";
 import { deriveProjects, type ProjectEntry } from "../stores/projects";
 import { partitionSessionsByPin } from "../stores/sessions";
-import { getDailyDirCached } from "./daily";
+import { getDailyDirCached, getDailyDirsCached } from "./daily";
 import { isPrimaryNavigationSession } from "./session-visibility";
 
 export { isPrimaryNavigationSession };
@@ -41,6 +41,7 @@ export type SidebarProjectEntry = SidebarGroup & {
 
 export type SidebarGroupsResult = {
 	daily: SidebarGroup | null;
+	dailies: SidebarGroup[];
 	projects: SidebarProjectEntry[];
 	/** 无用户记录时的默认展开集（= 默认推断结果），供 useExpandedGroups 在用户首次开合时当起点 */
 	defaultExpandedKeys: string[];
@@ -173,20 +174,23 @@ export function deriveSidebarGroups(input: SidebarGroupsInput): SidebarGroupsRes
 	const expandedKeys = input.expandedGroupsTouched ? input.expandedGroups : defaultExpandedKeys;
 	const isExpanded = (key: string) => expandedKeys.includes(key);
 
-	const dailyCwd = getDailyDirCached();
-	const dailySessions = dailyCwd ? (byCwd.get(dailyCwd) ?? []) : [];
-	const daily =
-		dailyCwd && (!searching || dailySessions.length > 0)
-			? {
-					key: dailyCwd,
-					kind: "daily" as const,
-					cwd: dailyCwd,
-					label: null,
-					sessionCount: dailySessions.length,
-					sessions: groupSessions(dailySessions, pinnedSessions),
-					expanded: isExpanded(dailyCwd),
-				}
-			: null;
+	const dailies: SidebarGroup[] = getDailyDirsCached().flatMap((cwd) => {
+		const sessions = byCwd.get(cwd) ?? [];
+		return searching && sessions.length === 0
+			? []
+			: [
+					{
+						key: cwd,
+						kind: "daily",
+						cwd,
+						label: null,
+						sessionCount: sessions.length,
+						sessions: groupSessions(sessions, pinnedSessions),
+						expanded: isExpanded(cwd),
+					},
+				];
+	});
+	const daily = dailies.find((group) => group.cwd === getDailyDirCached()) ?? null;
 
 	const matched = input.projects.filter((project) => !searching || (byCwd.get(project.cwd)?.length ?? 0) > 0);
 	const byCwdProject = new Map(matched.map((project) => [project.cwd, project]));
@@ -198,6 +202,7 @@ export function deriveSidebarGroups(input: SidebarGroupsInput): SidebarGroupsRes
 
 	return {
 		daily,
+		dailies,
 		projects: ordered.map((project) => {
 			const sessions = byCwd.get(project.cwd) ?? [];
 			return {
