@@ -1,9 +1,12 @@
 import type { PiBackend } from "@percho/backend";
-import { IpcChannels, REMOTE_CHANNELS } from "@percho/shared";
+import { IpcChannels, REMOTE_CHANNELS, UI_WORKBENCH_TRUST_COPY } from "@percho/shared";
+import { app, dialog } from "electron";
+import { setEnvironmentUiAuthorization } from "../environment-ui-state";
 import type { LanObserverHandle } from "../lan";
 import { remoteConnectionManager } from "../remote-connection";
 import { loadUiPluginsConfig } from "../ui-plugins/config";
 import type { UiPluginManager } from "../ui-plugins/manager";
+import { UiWorkbenchTrust } from "../ui-plugins/workbench-trust";
 import { onUpdateState } from "../updater";
 import { registerAppIpc } from "./app";
 import { registerExtensionDialogIpc } from "./extension-dialogs";
@@ -24,29 +27,51 @@ export function registerIpc(
 	uiPluginsManager: UiPluginManager,
 	lan: LanObserverHandle,
 ): void {
-	const authorizeRemote = async () => {
-		const config = await loadUiPluginsConfig();
-		if (Object.values(config.plugins).some((plugin) => plugin.trusted))
-			throw new Error("Remote workbench plugin consent must be configured before connecting");
-	};
+	const trust = new UiWorkbenchTrust(
+		loadUiPluginsConfig,
+		(names) => uiPluginsManager.updateConfig({ kind: "trust-workbench", names }),
+		async (names) => {
+			const copy = UI_WORKBENCH_TRUST_COPY[app.getLocale().startsWith("zh") ? "zh" : "en"];
+			const result = await dialog.showMessageBox({
+				type: "question",
+				title: copy.title,
+				message: copy.title,
+				detail: `${copy.detail}\n\n${names.join("\n")}`,
+				buttons: [copy.cancel, copy.allow],
+				defaultId: 0,
+				cancelId: 0,
+				noLink: true,
+			});
+			return result.response === 1;
+		},
+	);
+	const authorizeRemote = () => trust.authorizeRemote();
+	setEnvironmentUiAuthorization(authorizeRemote);
 	remoteConnectionManager.startAutoConnect(authorizeRemote);
 	registerInvokeHandlers(REMOTE_CHANNELS, {
 		remoteAuthGuide: ({ environment }) => remoteConnectionManager.authGuide(environment),
 		remoteStopService: () => remoteConnectionManager.stopService(),
-		remotePreflight: ({ alias }) => remoteConnectionManager.preflight(alias),
+		remotePreflight: async ({ alias }) => {
+			trust.resetDecline();
+			await authorizeRemote();
+			return remoteConnectionManager.preflight(alias);
+		},
 		remoteForget: () => remoteConnectionManager.forget(),
 		remoteCheckOperation: ({ operationId }) => remoteConnectionManager.checkOperation(operationId),
 		remoteDismissOperation: ({ operationId }) => remoteConnectionManager.dismissOperation(operationId),
 		remoteGetStatus: () => remoteConnectionManager.getStatus(),
 		remoteDisconnect: () => remoteConnectionManager.disconnect(),
-		remoteConnect: ({ alias }) => remoteConnectionManager.connect(alias),
+		remoteConnect: ({ alias }) => {
+			trust.resetDecline();
+			return remoteConnectionManager.connect(alias);
+		},
 	});
 	registerSessionsIpc(backend);
 	registerSettingsIpc(backend);
 	registerPackagesIpc(backend);
 	registerAppIpc(backend);
 	registerExtensionDialogIpc(backend);
-	registerUiPluginsIpc(uiPluginsManager);
+	registerUiPluginsIpc(uiPluginsManager, trust);
 	registerLanIpc(lan);
 	// 热重载 watcher：插件源码变更 → 重建 → 推 changed 事件（renderer 经 loader reloadPlugin 热替换）
 	uiPluginsManager.startWatcher((name) => {

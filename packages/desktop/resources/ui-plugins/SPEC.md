@@ -93,8 +93,10 @@ import idleUrl from "./assets/idle.png";                // 插件目录内图片
 - ❌ 禁止 import 任何其他 npm 包（构建器只重写上述四个 specifier，其余裸导入构建直接失败）；
 - ❌ 禁止 Node API（`process`/`fs`/`path`/`require` 等都不存在——代码跑在浏览器沙箱渲染进程）；
 - ❌ 禁止 `fetch`/网络请求、`localStorage`（宿主未授权，且 CSP 会拦）；
-- ❌ 禁止直接访问 `window.pi` 做任何 IPC 调用（信任模型边界，插件只准用 `window.PerchoUI` 暴露的能力）；
+- ❌ 禁止直接访问 `window.pi` 做任何 IPC 调用（公开契约约定只使用 `window.PerchoUI`；这不是隔离沙箱，不能据此声称插件无法访问其他工作台数据）；
 - ✅ 允许 `window.PerchoUI` 的 hooks 取宿主 store 数据（如 todo 面板替换）。
+
+本机获准 UI 插件是整个工作台的受信代码，可读取本机与远端内容；项目切换不形成隔离。首次引入远端内容（含离线导航缓存）前，旧信任必须经用户确认扩大到整个工作台。只加载本机安装的 UI 代码，不从远端自动加载界面插件。LAN 仍只展示本机后端按既有规则允许的数据。
 
 ## 4. `@percho/plugin-api` 导出清单
 
@@ -146,7 +148,7 @@ export const stores: {                      // 宿主 zustand store（与宿主�
 1. 读本 SPEC + `percho-ui.d.ts`；
 2. 在 `~/.percho/ui-plugins/<name>/`（=`userData/ui-plugins/<name>/`，宿主已建 symlink）scaffold：`plugin.json` + `src/index.tsx`；
 3. 保存 → 宿主自动构建（面板若显示「构建失败」则修语法/导入问题）；
-4. **引导用户去 设置 → UI 插件 面板启用**（总开关 + 插件启用带二次确认，agent 无权代劳——这是信任门）；
+4. **引导用户去 设置 → UI 插件 面板启用**（总开关 + 插件启用带工作台级信任确认，agent 无权代劳——这是信任门）；
 5. 用户确认替换生效后，迭代样式时直接改 `src/index.tsx` 保存即可热替换。
 
 ## 10. Region/Contribution：往页面加挂新组件（Phase 3）
@@ -195,7 +197,7 @@ z 序：背景 0 < 内容 10 < overlay 20 < 设置弹窗 40 < 信任弹窗/全�
 - 同角多贡献纵向堆叠，顺序 = 启用先后（先启用的在上）；
 - `settings.panel` 贡献渲染为设置弹窗的独立分类（分类 id `plugin:<name>:<cid>`，标题 = `title`），随插件启停自动增删；
 - 排查：贡献根元素外层的宿主容器挂 `data-plugin="<name>"` 属性（插件无需自己做）；
-- **内置插件**：`resources/ui-plugins/builtin/` 随包分发，应用首次启动/升级时导出到用户插件目录（与用户插件同一条扫描/构建/热重载路径，面板带「内置」badge、启用免二次确认）。**直接改内置副本会在下次升级被覆盖——魔改请把目录改名另存**（`plugin.json` 的 `name` 同步改）；手动删除的目录本版本内不会回来，下次升级重新导出；
+- **内置插件**：`resources/ui-plugins/builtin/` 随包分发，应用首次启动/升级时导出到用户插件目录（与用户插件同一条扫描/构建/热重载路径，面板带「内置」badge、启用遵循同一工作台级信任确认）。**直接改内置副本会在下次升级被覆盖——魔改请把目录改名另存**（`plugin.json` 的 `name` 同步改）；手动删除的目录本版本内不会回来，下次升级重新导出；
 - 新 hooks（`percho-ui.d.ts` 已声明）：`useContextUsage(sessionId)` 返回 `{ tokens, contextWindow, percent }`（事件驱动刷新，token 仪表盘用）；`useQuota()` 返回 `{ windows, updatedAt, error? }`（全局额度，无 key/无订阅返回 null，turn 结束刷新 + 60s 轮询，额度圆环用）；`useLanguage()` 返回 `"zh" | "en"`（插件自有文案跟随中英）。
 - `composer.footer` 行内区域：挂在 ContextRing 旁的 flex 行内，贡献组件无 props；需要悬停交互的子树自己开 `pointer-events-auto`（Tooltip 内部已处理）。
 
@@ -231,4 +233,4 @@ export function activate() {
 纪律：
 - `activate` 抛错或缺导出 → 该插件记为加载失败（等同槽位导出缺失），不炸宿主；清理函数抛错只告警；
 - 与组件插件同一条启用/信任/热重载路径，面板中「无槽位/无贡献」即无头插件；
-- 参考实现：随包内置插件 `builtin/voice-alerts/`（语音提醒）：全局安静检测 + `new Audio(dataUrl)` 播放，开关即插件启用开关（禁用 = 卸载副作用）。
+- 参考实现：随包内置插件 `builtin/voice-alerts/`（语音提醒）：全局安静检测 + `new Audio(dataUrl)` 播放，开关即插件启用开关（规范要求禁用时清理自身监听与定时器；不能撤销已经执行的代码）。

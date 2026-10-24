@@ -1,5 +1,5 @@
 import { KNOWN_UI_REGIONS, KNOWN_UI_SLOTS, type UiPluginInfo } from "@percho/shared";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { type MessageKey, useT } from "../../i18n";
 import { useUiPluginsStore } from "../../stores/ui-plugins";
 import { FolderIcon, RefreshIcon } from "../icons";
@@ -27,37 +27,15 @@ const REGION_KEYS: Record<string, MessageKey> = {
 
 const REGION_NAMES = new Set(KNOWN_UI_REGIONS);
 
-/** 行内启用按钮：未信任时先二次确认（照 ExtensionsPanel UninstallButton 模式，3s 恢复） */
+/** Main confirms workbench-wide trust before enabling any plugin. */
 function EnableButton({ plugin }: { plugin: UiPluginInfo }) {
 	const t = useT();
-	const [confirming, setConfirming] = useState(false);
-	const timerRef = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
 	const setPluginEnabled = useUiPluginsStore((s) => s.setPluginEnabled);
-
-	if (confirming) {
-		return (
-			<button
-				type="button"
-				className="rounded-lg px-2 py-1 text-ui-12 font-medium text-err transition-colors hover:bg-hover"
-				onClick={() => {
-					clearTimeout(timerRef.current);
-					void setPluginEnabled(plugin.name, true);
-				}}
-				onMouseLeave={() => setConfirming(false)}
-			>
-				{t("settings.uiPlugins.confirmEnable")}
-			</button>
-		);
-	}
 	return (
 		<button
 			type="button"
 			className="rounded-lg px-2 py-1 text-ui-12 font-medium text-ink-2 transition-colors hover:bg-hover"
-			onClick={() => {
-				setConfirming(true);
-				clearTimeout(timerRef.current);
-				timerRef.current = setTimeout(() => setConfirming(false), 3000);
-			}}
+			onClick={() => void setPluginEnabled(plugin.name, true)}
 		>
 			{t("settings.uiPlugins.enable")}
 		</button>

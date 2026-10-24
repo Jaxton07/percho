@@ -30,6 +30,7 @@ function normalize(parsed: Partial<UiPluginsConfig>): UiPluginsConfig {
 			plugins[name] = {
 				enabled: typeof p.enabled === "boolean" ? p.enabled : false,
 				trusted: typeof p.trusted === "boolean" ? p.trusted : false,
+				...(p.workbenchTrusted === true ? { workbenchTrusted: true } : {}),
 			};
 		}
 	}
@@ -54,6 +55,7 @@ export async function loadUiPluginsConfig(): Promise<UiPluginsConfig> {
 }
 
 export type UiPluginsConfigCommand =
+	| { kind: "trust-workbench"; names: string[] }
 	| { kind: "set-enabled"; enabled: boolean }
 	| { kind: "set-plugin-enabled"; name: string; enabled: boolean }
 	| { kind: "assign-slot"; slot: string; pluginName: string | null };
@@ -68,6 +70,14 @@ export async function updateUiPluginsConfig(command: UiPluginsConfigCommand): Pr
 		await configStore().update((draft) => {
 			const config = normalize(draft ?? {});
 			switch (command.kind) {
+				case "trust-workbench":
+					for (const name of command.names)
+						config.plugins[name] = {
+							enabled: config.plugins[name]?.enabled ?? false,
+							trusted: true,
+							workbenchTrusted: true,
+						};
+					break;
 				case "set-enabled":
 					config.enabled = command.enabled;
 					break;
@@ -75,6 +85,7 @@ export async function updateUiPluginsConfig(command: UiPluginsConfigCommand): Pr
 					config.plugins[command.name] = {
 						enabled: command.enabled,
 						trusted: command.enabled || (config.plugins[command.name]?.trusted ?? false),
+						...(config.plugins[command.name]?.workbenchTrusted ? { workbenchTrusted: true } : {}),
 					};
 					break;
 				case "assign-slot":

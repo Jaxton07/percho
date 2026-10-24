@@ -1,3 +1,4 @@
+import { UI_WORKBENCH_TRUST_COPY } from "@percho/shared";
 import type { Messages } from "./zh";
 
 /** English language pack (mirrors zh.ts shape) */
@@ -759,8 +760,7 @@ export const en: Messages = {
 		},
 		uiPlugins: {
 			title: "UI Plugins",
-			masterHint:
-				"Plugins from your local user directory can replace built-in components such as the tool call card, subagent card, and todo panel; turning the switch off disables them all immediately (files and config are kept)",
+			masterHint: UI_WORKBENCH_TRUST_COPY.en.detail,
 			pluginCount: "{count} plugin(s)",
 			empty:
 				"No plugins yet. The plugin directory lives under ui-plugins in the user data directory (ask an agent to write one following the SPEC)",
