@@ -3,6 +3,37 @@ import type { Messages } from "./zh";
 /** English language pack (mirrors zh.ts shape) */
 export const en: Messages = {
 	remote: {
+		service: {
+			running: "Service running",
+			stopped: "Service not running",
+			unreachable: "Service unreachable; verify the original owner",
+		},
+		checking: "Checking",
+		reconnecting: "Waiting to reconnect",
+		preflight: "Check",
+		installed: "Runtime installed",
+		notInstalled: "Runtime not installed",
+		gitMissing: "Git was not found. Project Git features will be unavailable.",
+		disconnectHint:
+			"Disconnect or cancel pauses this run only. Remote tasks continue; the next app launch tries again.",
+		forget: "Remove connection",
+		confirmForget: "Confirm removal",
+		forgetHint:
+			"Only local connection details are removed. Remote tasks and data remain. Existing projects keep their original environment.",
+		failure: {
+			network: "Network failure. Retries are bounded and can be cancelled.",
+			authentication: "Configure non-interactive SSH key or agent authentication in an external terminal.",
+			hostKey: "Verify the host key externally. Percho never edits known_hosts.",
+			identity:
+				"Remote identity changed. Old projects are blocked; verify before explicitly removing and adding the connection.",
+			incompatible: "The runtime is incompatible. Use the explicit stop and update flow.",
+			notInstalled: "Install the runtime first. A check never installs it.",
+			busy: "Another client controls this service. Percho will not take over.",
+			requirements:
+				"Prepare compatible Node and basic commands, then check again. Percho does not modify the server environment.",
+			other: "Review the error details and retry.",
+		},
+
 		pendingAttention: "A remote project needs your attention",
 		pendingExpired: "This request is no longer pending.",
 		review: "Review request",

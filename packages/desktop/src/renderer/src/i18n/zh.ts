@@ -1,6 +1,33 @@
 /** 中文语言包（作为 key 的结构定义，en.ts 与之同形） */
 export const zh = {
 	remote: {
+		service: {
+			running: "服务运行中",
+			stopped: "服务未运行",
+			unreachable: "服务暂不可达，请核实原所有者状态",
+		},
+		checking: "检测中",
+		reconnecting: "等待重连",
+		preflight: "检测",
+		installed: "运行包已安装",
+		notInstalled: "尚未安装运行包",
+		gitMissing: "未检测到 Git，项目 Git 功能将不可用。",
+		disconnectHint: "断开或取消仅暂停本次连接，远端任务继续；下次启动会再次尝试连接。",
+		forget: "删除连接资料",
+		confirmForget: "确认删除连接",
+		forgetHint: "仅删除本机连接资料。远端任务和数据保留，原项目仍绑定原环境，不会改指新服务器。",
+		failure: {
+			network: "网络连接失败，将有限次数重试，也可以取消。",
+			authentication: "请先在外部终端配置可非交互登录的 SSH 密钥或 agent。",
+			hostKey: "请在外部 SSH 工具中核验主机密钥；应用不会修改 known_hosts。",
+			identity: "目标身份已变化，已阻止旧项目连接。请核验后显式删除原连接再添加。",
+			incompatible: "服务版本不兼容，请使用明确的停机更新流程。",
+			notInstalled: "请先安装运行包，检测不会自动安装。",
+			busy: "服务已被其他客户端占用；不会抢占控制权。",
+			requirements: "请自行准备兼容的 Node 与基础命令，然后重新检测；应用不会修改服务器环境。",
+			other: "检查错误详情后重试。",
+		},
+
 		pendingAttention: "远端项目有待处理的请求",
 		pendingExpired: "该请求已不再等待处理。",
 		review: "查看并处理",

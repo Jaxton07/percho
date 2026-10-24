@@ -75,6 +75,7 @@ export {
 } from "./project/workspace-store";
 export { RemoteMutationUnknownError } from "./runtime/client";
 export { SshRuntimeConnection, sshArguments, validateSshAlias } from "./runtime/ssh";
+export { checkSshRequirements, preflightSsh, sshFailureKind } from "./runtime/ssh-preflight";
 export {
 	assignEntryIds,
 	blockImages,

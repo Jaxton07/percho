@@ -16,6 +16,8 @@ interface RemoteConnectionStore {
 	checkOperation: (id: string) => Promise<void>;
 	dismissOperation: (id: string) => Promise<void>;
 	connect: (alias: string) => Promise<void>;
+	preflight: (alias: string) => Promise<void>;
+	forget: () => Promise<void>;
 	disconnect: () => Promise<void>;
 	openProject: (path: string) => Promise<void>;
 	accept: (status: RemoteConnectionStatus) => void;
@@ -57,6 +59,12 @@ export const useRemoteConnectionStore = create<RemoteConnectionStore>((set, get)
 	},
 	dismissOperation: async (id) => {
 		await getPi().remoteDismissOperation({ operationId: id });
+	},
+	preflight: async (alias) => {
+		await getPi().remotePreflight({ alias });
+	},
+	forget: async () => {
+		get().accept(await getPi().remoteForget());
 	},
 	connect: async (alias) => {
 		get().accept(await getPi().remoteConnect({ alias }));

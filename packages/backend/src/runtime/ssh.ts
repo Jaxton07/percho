@@ -8,33 +8,19 @@ import {
 	type MutationReference,
 	REMOTE_PROTOCOL_VERSION,
 	type RuntimeInfo,
+	type SshPreflight,
 } from "@percho/shared";
 import { RuntimeClient } from "./client";
 
-/** A concrete configured Host alias, never a destination expression or remote command supplied by renderer. */
-export function validateSshAlias(alias: string): string {
-	if (typeof alias !== "string" || !/^[a-zA-Z0-9][a-zA-Z0-9._-]{0,127}$/.test(alias))
-		throw new Error("Enter a concrete SSH Host alias");
-	return alias;
-}
-export function sshArguments(alias: string, command: string): string[] {
-	return [
-		"-T",
-		"-oBatchMode=yes",
-		"-oStrictHostKeyChecking=yes",
-		"-oForwardAgent=no",
-		"-oClearAllForwardings=yes",
-		"-oControlMaster=no",
-		"-oConnectTimeout=10",
-		"--",
-		validateSshAlias(alias),
-		command,
-	];
-}
+import { sshArguments, validateSshAlias } from "./ssh-arguments";
+import { checkSshRequirements, preflightSsh, runSsh, shellQuote } from "./ssh-preflight";
+
+export { sshArguments, validateSshAlias } from "./ssh-arguments";
 
 // The development artifact is prepared explicitly for M1. Release metadata replaces this selector in deployment.
 const entry = '"$HOME/.local/share/percho/releases/development/entry.mjs"';
-const remoteCommand = (command: "start" | "bridge") => `exec node ${entry} ${command}`;
+const remoteCommand = (command: "start" | "bridge", node: string) =>
+	`exec ${shellQuote(node)} ${entry} ${command}`;
 
 function checkContract(info: RuntimeInfo): void {
 	const expected = executionContract();
@@ -59,42 +45,8 @@ function checkContract(info: RuntimeInfo): void {
 		throw new Error("Remote runtime has an incompatible execution/event contract");
 }
 
-async function ensureStarted(alias: string, signal: AbortSignal): Promise<RuntimeInfo> {
-	return await new Promise<RuntimeInfo>((resolve, reject) => {
-		const child = spawn("ssh", sshArguments(alias, remoteCommand("start")), {
-			windowsHide: true,
-			stdio: ["ignore", "pipe", "pipe"],
-			signal,
-		});
-		const output: Buffer[] = [];
-		let outputSize = 0;
-		let error = "";
-		const timer = setTimeout(() => child.kill(), 25_000);
-		child.stdout.on("data", (chunk: Buffer) => {
-			output.push(chunk);
-			outputSize += chunk.byteLength;
-			if (outputSize > 1024 * 1024) child.kill();
-		});
-		child.stderr.on("data", (chunk: Buffer) => {
-			if (error.length < 16384) error += chunk.toString("utf8");
-		});
-		child.once("error", (cause) => {
-			clearTimeout(timer);
-			reject(cause);
-		});
-		child.once("close", (code) => {
-			clearTimeout(timer);
-			if (code !== 0) {
-				reject(new Error(error.trim() || "SSH runtime startup failed"));
-				return;
-			}
-			try {
-				resolve(JSON.parse(Buffer.concat(output).toString("utf8")) as RuntimeInfo);
-			} catch {
-				reject(new Error("Invalid SSH runtime startup response"));
-			}
-		});
-	});
+async function ensureStarted(alias: string, signal: AbortSignal, node: string): Promise<RuntimeInfo> {
+	return JSON.parse(await runSsh(sshArguments(alias, remoteCommand("start", node)), signal)) as RuntimeInfo;
 }
 
 export class SshRuntimeConnection {
@@ -110,11 +62,39 @@ export class SshRuntimeConnection {
 			onEvent: (method: string, payload: unknown) => void;
 			onClose: () => void;
 			clientTag?: string;
+			preflight?: SshPreflight;
 		},
 	): Promise<SshRuntimeConnection> {
-		const started = await ensureStarted(validateSshAlias(alias), options.signal);
+		validateSshAlias(alias);
+		const probe = await preflightSsh(alias, options.signal);
+		checkSshRequirements(probe);
+		if (
+			options.preflight &&
+			JSON.stringify([
+				probe.target,
+				probe.uid,
+				probe.home,
+				probe.node,
+				probe.nodeVersion,
+				probe.agentDir,
+				probe.environmentId,
+			]) !==
+				JSON.stringify([
+					options.preflight.target,
+					options.preflight.uid,
+					options.preflight.home,
+					options.preflight.node,
+					options.preflight.nodeVersion,
+					options.preflight.agentDir,
+					options.preflight.environmentId,
+				])
+		)
+			throw new Error("Remote identity changed since preflight; check again before connecting");
+		if (!probe.installed)
+			throw new Error("NOT_INSTALLED: Remote runtime is not installed; use Install and connect");
+		const started = await ensureStarted(alias, options.signal, probe.node);
 		checkContract(started);
-		const child = spawn("ssh", sshArguments(alias, remoteCommand("bridge")), {
+		const child = spawn("ssh", sshArguments(alias, remoteCommand("bridge", probe.node)), {
 			windowsHide: true,
 			stdio: ["pipe", "pipe", "pipe"],
 			signal: options.signal,

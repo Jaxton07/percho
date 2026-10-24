@@ -34,7 +34,29 @@ beforeEach(() => {
 			child.emit("close", null);
 			return true;
 		});
-		if (args.at(-1)?.endsWith(" start"))
+		if (args.includes("-G"))
+			queueMicrotask(() => {
+				child.stdout.write("hostname server\nuser developer\nport 22\n");
+				child.emit("close", 0);
+			});
+		else if (args.at(-1)?.includes("command -v node"))
+			queueMicrotask(() => {
+				child.stdout.write(
+					JSON.stringify({
+						uid: 1000,
+						home: "/远端/用户",
+						node: "/usr/bin/node",
+						nodeVersion: "22.19.0",
+						platform: "linux",
+						arch: "arm64",
+						glibc: "2.35",
+						commands: { sh: true, tar: true, sha256sum: true, flock: true, setsid: true },
+						installed: true,
+					}),
+				);
+				child.emit("close", 0);
+			});
+		else if (args.at(-1)?.endsWith(" start"))
 			queueMicrotask(() => {
 				const bytes = Buffer.from(JSON.stringify(fixture.info));
 				for (let offset = 0; offset < bytes.length; offset += 2)
@@ -89,7 +111,7 @@ describe("SSH runtime boundary", () => {
 				onClose: () => {},
 			}),
 		).rejects.toThrow("incompatible execution/event contract");
-		expect(fixture.spawn).toHaveBeenCalledTimes(1);
+		expect(fixture.spawn).toHaveBeenCalledTimes(3);
 	});
 	it("preserves split UTF-8 identity, strictly verifies hosts and uses a bridge bound to that runtime", async () => {
 		const connection = await SshRuntimeConnection.connect("company-dev", {
@@ -100,7 +122,7 @@ describe("SSH runtime boundary", () => {
 		try {
 			expect(connection.info.canonicalAgentDir).toBe("/远端/用户/agent");
 			expect(validateSshAlias("company-dev")).toBe("company-dev");
-			const args = fixture.spawn.mock.calls[0]?.[1] as string[];
+			const args = fixture.spawn.mock.calls[2]?.[1] as string[];
 			expect(args).toContain("-oStrictHostKeyChecking=yes");
 			expect(args).toContain("-oBatchMode=yes");
 			expect(args).toContain("-oForwardAgent=no");

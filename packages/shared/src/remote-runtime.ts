@@ -55,9 +55,38 @@ export interface RuntimeAttachment {
 	epoch: number;
 }
 
+export interface SshPreflight {
+	alias: string;
+	target: { hostname: string; user: string; port: string };
+	uid: number;
+	home: string;
+	node: string;
+	nodeVersion: string;
+	platform: string;
+	arch: string;
+	glibc: string;
+	commands: Record<string, boolean>;
+	installed: boolean;
+	agentDir?: string;
+	environmentId?: string;
+	serviceState?: "running" | "stopped" | "unreachable";
+	service?: RuntimeInfo;
+}
 export interface RemoteConnectionStatus {
 	revision: number;
-	state: "disconnected" | "connecting" | "connected" | "error";
+	state: "disconnected" | "checking" | "connecting" | "reconnecting" | "connected" | "error";
+	preflight?: SshPreflight;
+	errorKind?:
+		| "network"
+		| "authentication"
+		| "hostKey"
+		| "identity"
+		| "incompatible"
+		| "notInstalled"
+		| "busy"
+		| "requirements"
+		| "other";
+	retryAt?: number;
 	instanceId?: string;
 	alias?: string;
 	environment?: Extract<EnvironmentRef, { kind: "ssh" }>;

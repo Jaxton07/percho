@@ -24,17 +24,20 @@ export function registerIpc(
 	uiPluginsManager: UiPluginManager,
 	lan: LanObserverHandle,
 ): void {
+	const authorizeRemote = async () => {
+		const config = await loadUiPluginsConfig();
+		if (Object.values(config.plugins).some((plugin) => plugin.trusted))
+			throw new Error("Remote workbench plugin consent must be configured before connecting");
+	};
+	remoteConnectionManager.startAutoConnect(authorizeRemote);
 	registerInvokeHandlers(REMOTE_CHANNELS, {
+		remotePreflight: ({ alias }) => remoteConnectionManager.preflight(alias),
+		remoteForget: () => remoteConnectionManager.forget(),
 		remoteCheckOperation: ({ operationId }) => remoteConnectionManager.checkOperation(operationId),
 		remoteDismissOperation: ({ operationId }) => remoteConnectionManager.dismissOperation(operationId),
 		remoteGetStatus: () => remoteConnectionManager.getStatus(),
 		remoteDisconnect: () => remoteConnectionManager.disconnect(),
-		remoteConnect: async ({ alias }) => {
-			const config = await loadUiPluginsConfig();
-			if (Object.values(config.plugins).some((plugin) => plugin.trusted))
-				throw new Error("Remote workbench plugin consent must be configured before connecting");
-			return remoteConnectionManager.connect(alias);
-		},
+		remoteConnect: ({ alias }) => remoteConnectionManager.connect(alias),
 	});
 	registerSessionsIpc(backend);
 	registerSettingsIpc(backend);
