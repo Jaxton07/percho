@@ -406,6 +406,7 @@ export const zh = {
 		showMore: "显示更多",
 	},
 	projects: {
+		refreshGit: "重新读取分支",
 		daily: "日常",
 		untitled: "未命名会话",
 		selectProject: "选择项目目录",

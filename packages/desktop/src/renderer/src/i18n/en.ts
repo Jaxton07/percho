@@ -419,6 +419,7 @@ export const en: Messages = {
 		showMore: "Show more",
 	},
 	projects: {
+		refreshGit: "Reload branches",
 		daily: "Daily",
 		untitled: "Untitled session",
 		selectProject: "Pick project directory",

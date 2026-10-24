@@ -1,4 +1,4 @@
-import { environmentEntityRef, LOCAL_ENVIRONMENT } from "@percho/shared";
+import { environmentEntityRef, LOCAL_ENVIRONMENT, sameEnvironment } from "@percho/shared";
 import { useEffect, useMemo, useState } from "react";
 import { getExecutionApi } from "../../environment-api";
 import { useT } from "../../i18n";
@@ -6,6 +6,7 @@ import { selectActiveCwd } from "../../lib/active-cwd";
 import { getDailyDirCached, isDailyCwd } from "../../lib/daily";
 import { pathLastSegment } from "../../lib/path-display";
 import { deriveProjects, useProjectsStore } from "../../stores/projects";
+import { useRemoteConnectionStore } from "../../stores/remote-connection";
 import { useSessionsStore } from "../../stores/sessions";
 import { CoffeeIcon } from "../icons";
 import { AddProjectDialog } from "../sidebar/AddProjectDialog";
@@ -139,9 +140,21 @@ function BranchPicker({ cwd }: { cwd: string | null }) {
 	const [branches, setBranches] = useState<string[]>([]);
 	const [current, setCurrent] = useState<string | null>(null);
 	const [error, setError] = useState<string | null>(null);
+	const [revision, setRevision] = useState(0);
+	const [changing, setChanging] = useState(false);
+	const remoteStatus = useRemoteConnectionStore((state) => state.status);
+	const remote = cwd ? environmentEntityRef(cwd).environment.kind === "ssh" : false;
+	const online =
+		!remote ||
+		(remoteStatus.state === "connected" &&
+			!!remoteStatus.environment &&
+			!!cwd &&
+			sameEnvironment(environmentEntityRef(cwd).environment, remoteStatus.environment));
+	const instance = remote ? remoteStatus.instanceId : undefined;
 
+	// biome-ignore lint/correctness/useExhaustiveDependencies: revision 是显式刷新，instance 是同址服务重启；两者均要求重新对账
 	useEffect(() => {
-		if (!cwd) return;
+		if (!cwd || !online) return;
 		let cancelled = false;
 		void getExecutionApi(cwd)
 			.listGitBranches({ cwd })
@@ -149,12 +162,25 @@ function BranchPicker({ cwd }: { cwd: string | null }) {
 				if (cancelled) return;
 				setBranches(result.branches);
 				setCurrent(result.current);
+				setError(null);
+			})
+			.catch((error) => {
+				if (!cancelled) setError(error instanceof Error ? error.message : String(error));
 			});
 		return () => {
 			cancelled = true;
 		};
-	}, [cwd]);
+	}, [cwd, revision, online, instance]);
 
+	if (error && !current)
+		return (
+			<span className="text-ui-11 text-err">
+				{error}{" "}
+				<button type="button" disabled={!online} onClick={() => setRevision((value) => value + 1)}>
+					{t("projects.refreshGit")}
+				</button>
+			</span>
+		);
 	if (!cwd || !current) {
 		return <span className="text-ink-faint">⎇ {t("projects.noGit")}</span>;
 	}
@@ -162,6 +188,7 @@ function BranchPicker({ cwd }: { cwd: string | null }) {
 	return (
 		<>
 			<Dropdown
+				onOpen={() => setRevision((value) => value + 1)}
 				trigger={
 					<span className="flex items-center gap-1.5">
 						<span aria-hidden="true">⎇</span>
@@ -174,16 +201,20 @@ function BranchPicker({ cwd }: { cwd: string | null }) {
 						{branches.map((branch) => (
 							<button
 								key={branch}
+								disabled={changing || !online}
 								type="button"
 								className={`flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left text-ui-13 transition-colors hover:bg-hover ${
 									branch === current ? "font-medium text-ink" : "text-ink-2"
 								}`}
 								onClick={() => {
-									if (branch !== current && cwd) {
+									if (branch !== current && cwd && online && !changing) {
+										setChanging(true);
+										setError(null);
 										void getExecutionApi(cwd)
 											.checkoutBranch({ cwd, branch })
-											.then(setCurrent)
-											.catch((e: unknown) => setError(e instanceof Error ? e.message : String(e)));
+											.then(() => setRevision((value) => value + 1))
+											.catch((e: unknown) => setError(e instanceof Error ? e.message : String(e)))
+											.finally(() => setChanging(false));
 									}
 									close();
 								}}
