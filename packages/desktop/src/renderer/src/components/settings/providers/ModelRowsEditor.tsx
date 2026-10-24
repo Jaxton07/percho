@@ -1,18 +1,122 @@
+import type { UpstreamModelInfo } from "@percho/shared";
+import { useState } from "react";
 import { useT } from "../../../i18n";
-import { CloseIcon } from "../../icons";
+import { ChevronDownIcon, CloseIcon } from "../../icons";
 import { Tooltip } from "../../ui/Tooltip";
-import { EMPTY_MODEL_ROW, type ModelRow, parseTokenCount, splitPastedModelIds } from "./model-rows";
+import {
+	EMPTY_MODEL_ROW,
+	type ModelRow,
+	parseTokenCount,
+	rowFromUpstreamModel,
+	splitPastedModelIds,
+} from "./model-rows";
 
 const inputClass =
 	"w-full rounded-lg border border-border px-2.5 py-1.5 text-ui-12 outline-none focus:border-ink-faint disabled:cursor-not-allowed disabled:text-ink-faint";
+
+/** 候选列表里的能力摘要：按 k / M 缩写，避免 1048576 这种长数字把行挤爆 */
+function compactTokens(n: number): string {
+	return n >= 1_000_000
+		? `${Math.round(n / 1_000_000)}M`
+		: n >= 1000
+			? `${Math.round(n / 1000)}k`
+			: String(n);
+}
+
+/**
+ * 模型 ID 输入 + 上游候选下拉（options 为空时不显示箭头）。
+ * 选中一条即用 rowFromUpstreamModel 把 ID、上下文、输出、思考、图像一次填好。
+ */
+function ModelIdField({
+	value,
+	options,
+	onChange,
+	onPaste,
+	onPick,
+}: {
+	value: string;
+	options: readonly UpstreamModelInfo[];
+	onChange: (value: string) => void;
+	onPaste: (e: React.ClipboardEvent<HTMLInputElement>) => void;
+	onPick: (model: UpstreamModelInfo) => void;
+}) {
+	const t = useT();
+	const [open, setOpen] = useState(false);
+
+	return (
+		<div className="relative min-w-0 flex-1">
+			<input
+				className={`${inputClass} ${options.length > 0 ? "pr-7" : ""}`}
+				placeholder={t("settings.providers.customModelId")}
+				value={value}
+				onChange={(e) => onChange(e.target.value)}
+				onPaste={onPaste}
+			/>
+			{options.length > 0 && (
+				<button
+					type="button"
+					aria-label={t("settings.providers.pickUpstreamModel")}
+					aria-expanded={open}
+					className="absolute right-1 top-1/2 -translate-y-1/2 rounded p-1 text-ink-faint transition-colors hover:bg-hover hover:text-ink-dim"
+					onClick={() => setOpen((v) => !v)}
+				>
+					<ChevronDownIcon size={9} />
+				</button>
+			)}
+			{open && (
+				<>
+					{/* 点外部关闭：透明遮罩省掉全局事件监听，且随菜单一起卸载 */}
+					<button
+						type="button"
+						aria-hidden
+						tabIndex={-1}
+						className="fixed inset-0 z-20 cursor-default"
+						onClick={() => setOpen(false)}
+					/>
+					<div className="absolute left-0 top-full z-30 mt-1 max-h-56 w-full overflow-y-auto rounded-xl border border-border bg-surface p-1 shadow-pop">
+						{options.map((model) => (
+							<button
+								key={model.id}
+								type="button"
+								className="flex w-full items-center gap-2 rounded-lg px-2 py-1.5 text-left text-ui-12 text-ink transition-colors hover:bg-hover"
+								onClick={() => {
+									onPick(model);
+									setOpen(false);
+								}}
+							>
+								<span className="truncate">{model.id}</span>
+								<span className="ml-auto shrink-0 text-ui-10 text-ink-faint">
+									{[model.contextWindow, model.maxTokens]
+										.filter((n): n is number => n !== undefined)
+										.map(compactTokens)
+										.join(" / ")}
+								</span>
+							</button>
+						))}
+					</div>
+				</>
+			)}
+		</div>
+	);
+}
 
 /** 模型行编辑器：每行一个模型；ctx/out 留空跟随 SDK 默认（128k/16k），非法值红框且禁止保存 */
 export function ModelRowsEditor({
 	rows,
 	onChange,
+	upstream = [],
+	fetching = false,
+	fetchError = null,
+	onFetch,
 }: {
 	rows: ModelRow[];
 	onChange: (rows: ModelRow[]) => void;
+	/** 从上游 /models 拉到的候选（已带 SDK 目录补全的能力）；空 = 还没获取过 */
+	upstream?: readonly UpstreamModelInfo[];
+	fetching?: boolean;
+	fetchError?: string | null;
+	/** 触发「自动获取模型」；不传则不显示该按钮 */
+	onFetch?: () => void;
 }) {
 	const t = useT();
 
@@ -74,12 +178,12 @@ export function ModelRowsEditor({
 				// 行随增删变化，无稳定 id，用序号做 key（局部编辑器，重排场景不存在）
 				// biome-ignore lint/suspicious/noArrayIndexKey: 行编辑器无稳定标识
 				<div key={i} className="mb-1.5 flex items-center gap-1.5">
-					<input
-						className={`${inputClass} min-w-0 flex-1`}
-						placeholder={t("settings.providers.customModelId")}
+					<ModelIdField
 						value={row.id}
-						onChange={(e) => setRow(i, { id: e.target.value })}
+						options={upstream}
+						onChange={(id) => setRow(i, { id })}
 						onPaste={onIdPaste(i)}
+						onPick={(model) => setRow(i, rowFromUpstreamModel(model))}
 					/>
 					{numberField(
 						row.contextWindow,
@@ -117,6 +221,16 @@ export function ModelRowsEditor({
 				>
 					{t("settings.providers.addModelRow")}
 				</button>
+				{onFetch && (
+					<button
+						type="button"
+						className="rounded-md px-1.5 py-1 text-ui-11 text-ink-dim transition-colors hover:bg-hover disabled:opacity-40"
+						disabled={fetching}
+						onClick={onFetch}
+					>
+						{fetching ? t("settings.providers.fetchingUpstream") : t("settings.providers.fetchUpstream")}
+					</button>
+				)}
 				{rows.some((row) => row.id.trim()) && (
 					<button
 						type="button"
@@ -127,6 +241,16 @@ export function ModelRowsEditor({
 					</button>
 				)}
 			</div>
+			{upstream.length > 0 && (
+				<p className="mt-1 text-ui-10 leading-relaxed text-ink-dim">
+					{t("settings.providers.upstreamFetched", { count: upstream.length })}
+				</p>
+			)}
+			{fetchError && (
+				<p className="mt-1 text-ui-10 leading-relaxed text-err">
+					{t("settings.providers.upstreamError", { message: fetchError })}
+				</p>
+			)}
 			<p className="mt-1 text-ui-10 leading-relaxed text-ink-faint">
 				{t("settings.providers.customModelsHint")}
 			</p>

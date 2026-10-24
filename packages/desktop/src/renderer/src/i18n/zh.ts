@@ -465,6 +465,12 @@ export const zh = {
 			customModelImage: "图像",
 			addModelRow: "+ 添加模型",
 			clearModelRows: "清空模型列表",
+			fetchUpstream: "自动获取",
+			fetchingUpstream: "获取中…",
+			upstreamFetched: "已获取 {count} 个模型，点模型名右侧箭头挑选，选中后自动填好上下文/输出/思考/图像",
+			upstreamEmpty: "上游没有返回模型",
+			upstreamError: "获取失败：{message}",
+			pickUpstreamModel: "从上游模型列表选择",
 			removeModelRow: "删除此行",
 			customModelsHint:
 				"每行一个模型，可粘贴逗号/换行分隔的列表自动拆行；「思考」开启后该模型才可选思考深度。模型留空 = 沿用该 provider 的官方模型列表（仅覆写 baseUrl，思考/窗口等元数据保持不变）",

@@ -474,6 +474,13 @@ export const en: Messages = {
 			customModelImage: "Image",
 			addModelRow: "+ Add model",
 			clearModelRows: "Clear model list",
+			fetchUpstream: "Fetch",
+			fetchingUpstream: "Fetching…",
+			upstreamFetched:
+				"Fetched {count} models. Open the arrow next to a model ID to pick one; context, output, thinking and image are filled in for you.",
+			upstreamEmpty: "The upstream returned no models",
+			upstreamError: "Fetch failed: {message}",
+			pickUpstreamModel: "Pick from upstream model list",
 			removeModelRow: "Remove row",
 			customModelsHint:
 				"One model per row; paste a comma/newline-separated list to split into rows; enable Think to unlock thinking levels for that model. Leave empty to reuse the provider\u2019s official model list (only baseUrl is overridden; thinking/window metadata stays official)",

@@ -1,6 +1,12 @@
-import { type CustomProviderInput, KNOWN_APIS, type ProviderInfo } from "@percho/shared";
+import {
+	type CustomProviderInput,
+	KNOWN_APIS,
+	type ProviderInfo,
+	type UpstreamModelInfo,
+} from "@percho/shared";
 import { useState } from "react";
 import { useT } from "../../../i18n";
+import { errText } from "../../../lib/error-text";
 import { useSettingsStore } from "../../../stores/settings";
 import { Tooltip } from "../../ui/Tooltip";
 import { ModelRowsEditor } from "./ModelRowsEditor";
@@ -55,8 +61,34 @@ function ProviderConfigForm({
 	onCancel: () => void;
 }) {
 	const t = useT();
+	const listUpstreamModels = useSettingsStore((s) => s.listUpstreamModels);
 	const [form, setForm] = useState(initial);
 	const [submitting, setSubmitting] = useState(false);
+	// 上游候选只在本次表单生命周期内有效：不落盘，baseUrl/api/key 变了解析结果就不可信
+	const [upstream, setUpstream] = useState<UpstreamModelInfo[]>([]);
+	const [fetchingUpstream, setFetchingUpstream] = useState(false);
+	const [upstreamError, setUpstreamError] = useState<string | null>(null);
+
+	/** 自动获取模型：key 留空时后端读 auth.json 里已存的（编辑态常态），失败就地显示不打断表单 */
+	const fetchUpstream = async () => {
+		setFetchingUpstream(true);
+		setUpstreamError(null);
+		try {
+			const models = await listUpstreamModels({
+				providerId: lockId ? form.id : undefined,
+				baseUrl: form.baseUrl,
+				api: form.api,
+				apiKey: form.apiKey,
+			});
+			setUpstream(models);
+			if (models.length === 0) setUpstreamError(t("settings.providers.upstreamEmpty"));
+		} catch (error) {
+			setUpstream([]);
+			setUpstreamError(errText(error) ?? String(error));
+		} finally {
+			setFetchingUpstream(false);
+		}
+	};
 
 	const set = (field: keyof ProviderFormState) => (e: { target: { value: string } }) =>
 		setForm((f) => ({ ...f, [field]: e.target.value }));
@@ -124,7 +156,14 @@ function ProviderConfigForm({
 					value={form.apiKey}
 					onChange={set("apiKey")}
 				/>
-				<ModelRowsEditor rows={form.models} onChange={(models) => setForm((f) => ({ ...f, models }))} />
+				<ModelRowsEditor
+					rows={form.models}
+					onChange={(models) => setForm((f) => ({ ...f, models }))}
+					upstream={upstream}
+					fetching={fetchingUpstream}
+					fetchError={upstreamError}
+					onFetch={() => void fetchUpstream()}
+				/>
 			</div>
 			<div className="mt-2 flex justify-end gap-2">
 				<button

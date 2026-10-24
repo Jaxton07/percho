@@ -10,6 +10,8 @@ import type {
 	ProviderTestResult,
 	ResourceDiagnosticInfo,
 	SubagentInfo,
+	UpstreamModelInfo,
+	UpstreamModelsInput,
 } from "@percho/shared";
 import { withModelHidden, withModelsHidden, withProviderModelsHidden } from "@percho/shared";
 import { create } from "zustand";
@@ -71,6 +73,8 @@ interface SettingsStore {
 	removeCredential: (providerId: string) => Promise<void>;
 	addCustom: (input: CustomProviderInput) => Promise<void>;
 	updateCustom: (input: CustomProviderUpdateInput) => Promise<void>;
+	/** 上游 /models 的模型候选（已补 SDK 目录能力）；失败抛给调用方就地展示，不写 store.error */
+	listUpstreamModels: (input: UpstreamModelsInput) => Promise<UpstreamModelInfo[]>;
 	removeCustom: (providerId: string) => Promise<void>;
 	/** 内置 provider 的可选 baseUrl 覆写（留空 = 清除覆写回官方） */
 	setProviderBaseUrl: (providerId: string, baseUrl: string, apiKey?: string) => Promise<void>;
@@ -549,6 +553,7 @@ export const useSettingsStore = create<SettingsStore>((set, get) => {
 			}
 		},
 
+		listUpstreamModels: (input) => getPi().listUpstreamModels(input),
 		removeCustom: async (providerId) => {
 			try {
 				await getPi().removeCustomProvider({ providerId });

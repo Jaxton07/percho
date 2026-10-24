@@ -48,6 +48,8 @@ import type {
 	ProviderInfo,
 	ProviderTestResult,
 	SubagentInfo,
+	UpstreamModelInfo,
+	UpstreamModelsInput,
 } from "./settings";
 import type { TodoItem } from "./todo";
 import type { UiPluginInfo, UiPluginManifest, UiPluginsConfig, UiPluginsEventPayload } from "./ui-plugins";
@@ -227,6 +229,8 @@ export const SETTINGS_CHANNELS = {
 	addCustomProvider: ch("settings:addCustomProvider")<{ input: CustomProviderInput }, void>(),
 	/** 更新自定义 provider（ID 不可改；apiKey 留空保持不变） */
 	updateCustomProvider: ch("settings:updateCustomProvider")<{ input: CustomProviderUpdateInput }, void>(),
+	/** 从上游 provider 的 /models 拉模型 ID，并用 SDK 内置目录补齐上下文/输出/思考/图像（key 留空则用已存的） */
+	listUpstreamModels: ch("settings:listUpstreamModels")<UpstreamModelsInput, UpstreamModelInfo[]>(),
 	removeCustomProvider: ch("settings:removeCustomProvider")<{ providerId: string }, void>(),
 	/** 内置 provider 的可选 baseUrl 覆写（不写 models，共享官方模型列表）；baseUrl 空串 = 清除覆写回官方 */
 	setProviderBaseUrl: ch("settings:setProviderBaseUrl")<

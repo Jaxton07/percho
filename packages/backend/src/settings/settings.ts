@@ -7,8 +7,11 @@ import type {
 	ListProvidersOptions,
 	ProviderInfo,
 	ProviderTestResult,
+	UpstreamModelInfo,
+	UpstreamModelsInput,
 } from "@percho/shared";
 import { JsonStore } from "../json-store";
+import { buildMetaIndex, enrichUpstreamModels, fetchUpstreamModels } from "./upstream-models";
 
 /** 内置 provider id 集合：models.json 里配置的 ID 命中它 = 「覆写内置」（有官方模型列表可共享），否则是全新自定义 provider */
 const BUILTIN_PROVIDER_IDS = new Set(builtinProviders().map((p) => p.id));
@@ -201,6 +204,51 @@ export class SettingsService {
 		const runtime = await this.getRuntime();
 		await runtime.logout(providerId);
 		await this.refreshLocalModels();
+	}
+
+	/** 读 auth.json 里该 provider 已存的 api key：表单留空时兜底，key 不回读给 renderer */
+	private async readStoredApiKey(providerId: string | undefined): Promise<string | undefined> {
+		if (!providerId) return undefined;
+		const auth = await readJsonFile(this.authPath);
+		const entry = auth[providerId];
+		const key = entry && typeof entry === "object" ? (entry as JsonObject).key : undefined;
+		return typeof key === "string" && key.trim() ? key.trim() : undefined;
+	}
+
+	/**
+	 * 从上游 provider 的 \`/models\` 拉模型清单，并用 SDK 内置目录给每个 ID 补能力元数据。
+	 * 网络请求和 key 都留在后端（key 不回给 renderer）；目录里查不到的模型只回 ID，
+	 * 表单留空即跟随 SDK 默认（128k / 16k / 仅文本）。
+	 */
+	async listUpstreamModels(input: UpstreamModelsInput): Promise<UpstreamModelInfo[]> {
+		const customs = await this.readCustomProviders();
+		const entry = input.providerId ? (customs[input.providerId] as JsonObject | undefined) : undefined;
+		const stored = (field: "baseUrl" | "api"): string =>
+			entry && typeof entry[field] === "string" ? (entry[field] as string) : "";
+		const baseUrl = (input.baseUrl.trim() || stored("baseUrl")).trim();
+		if (!/^https?:\/\//i.test(baseUrl)) throw new Error("baseUrl 必须以 http(s):// 开头");
+		const api = input.api.trim() || stored("api") || "openai-completions";
+		const apiKey =
+			(input.apiKey ?? "").trim() ||
+			(await this.readStoredApiKey(input.providerId)) ||
+			(entry && typeof entry.apiKey === "string" ? entry.apiKey : "");
+		if (!apiKey) throw new Error("请先填 API Key，或先保存一次把 key 存进 auth.json 再获取");
+		const runtime = await this.getRuntime();
+		// 内置目录是能力元数据的唯一来源：上游 /models 只给 ID，窗口/输出/思考/图像都从这里补
+		const index = buildMetaIndex(
+			runtime.getModels().map((model) => {
+				const meta = model as { reasoning?: boolean; input?: readonly string[] };
+				return {
+					id: model.id,
+					name: model.name,
+					reasoning: meta.reasoning === true,
+					contextWindow: model.contextWindow,
+					maxTokens: model.maxTokens,
+					imageInput: meta.input?.includes("image") === true,
+				};
+			}),
+		);
+		return enrichUpstreamModels(await fetchUpstreamModels({ baseUrl, api, apiKey }), index);
 	}
 
 	/**

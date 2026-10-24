@@ -95,3 +95,23 @@ export function splitPastedModelIds(text: string): [string, ...string[]] | null 
 	const [first, ...rest] = ids;
 	return first === undefined ? null : [first, ...rest];
 }
+
+/**
+ * 上游模型（含 SDK 目录补全的能力）→ 行：ID 与 ctx/out/思考/图像一次填好。
+ * 目录里查不到能力的字段留空，落盘时不写，跟随 SDK 默认（128k / 16k / 仅文本）。
+ */
+export function rowFromUpstreamModel(model: {
+	id: string;
+	reasoning?: boolean;
+	contextWindow?: number;
+	maxTokens?: number;
+	imageInput?: boolean;
+}): ModelRow {
+	return {
+		id: model.id,
+		contextWindow: model.contextWindow === undefined ? "" : formatTokenCount(model.contextWindow),
+		maxTokens: model.maxTokens === undefined ? "" : formatTokenCount(model.maxTokens),
+		reasoning: model.reasoning === true,
+		imageInput: model.imageInput === true,
+	};
+}

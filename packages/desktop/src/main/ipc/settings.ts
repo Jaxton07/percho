@@ -17,6 +17,7 @@ export function registerSettingsIpc(backend: PiBackend): void {
 		saveApiKey: ({ providerId, key }) => backend.settings.saveApiKey(providerId, key),
 		removeCredential: ({ providerId }) => backend.settings.removeCredential(providerId),
 		addCustomProvider: ({ input }) => backend.settings.addCustomProvider(input),
+		listUpstreamModels: (input) => backend.settings.listUpstreamModels(input),
 		updateCustomProvider: ({ input }) => backend.settings.updateCustomProvider(input),
 		removeCustomProvider: ({ providerId }) => backend.settings.removeCustomProvider(providerId),
 		setProviderBaseUrl: ({ providerId, baseUrl, apiKey }) =>
