@@ -399,7 +399,7 @@ describe("D3 写盘世代：变更后的重读与并发目录", () => {
 		const local = store.getState().refresh(); // 面板打开时的本地读取（在途）
 		const network = store.getState().refreshProvidersFromNetwork(); // 自动联网（在途，含要被删的 custom-x）
 		const remove = store.getState().removeCustom("custom-x"); // 用户删除（写盘成功 → afterMutation）
-		await Promise.resolve();
+		await vi.waitFor(() => expect(reads).toHaveLength(2));
 		expect(reads.length).toBe(2); // 写盘后的重读**新发**一次，没复用写盘前那次
 		at(reads, 1).resolve(providers("keep"));
 		await remove;
@@ -429,7 +429,7 @@ describe("D3 写盘世代：变更后的重读与并发目录", () => {
 
 		const network = store.getState().refreshProvidersFromNetwork();
 		const remove = store.getState().removeCustom("custom-x");
-		await Promise.resolve();
+		await vi.waitFor(() => expect(reads).toHaveLength(1));
 		at(reads, 0).resolve(providers("keep"));
 		await remove;
 		expect(api.loadModels).toHaveBeenCalledTimes(1); // 变更路径的那次
@@ -451,7 +451,7 @@ describe("D3 写盘世代：变更后的重读与并发目录", () => {
 
 		const first = store.getState().refresh(); // 旧 local（在途）
 		const save = store.getState().saveKey("p", "k"); // 写盘 → 新 local
-		await Promise.resolve();
+		await vi.waitFor(() => expect(reads).toHaveLength(2));
 		expect(reads.length).toBe(2);
 		at(reads, 0).resolve(providers("stale"));
 		await first;

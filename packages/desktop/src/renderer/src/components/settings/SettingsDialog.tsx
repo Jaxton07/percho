@@ -1,12 +1,20 @@
+import { type EnvironmentRef, environmentEntityRef, environmentKey, LOCAL_ENVIRONMENT } from "@percho/shared";
 import type { ComponentType, CSSProperties } from "react";
-import { useMemo, useRef } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
+import { EnvironmentContext } from "../../environment-context";
+import { getEnvironments } from "../../environment-registry";
 import { useT } from "../../i18n";
 import { useEdgeFade } from "../../lib/use-edge-fade";
 import { PluginBoundary } from "../../plugins/PluginBoundary";
 import { EMPTY_CONTRIBUTIONS } from "../../plugins/RegionHost";
 import { type Contribution, useUiPluginRegistry } from "../../plugins/registry";
 import { UI_REGIONS } from "../../plugins/slots";
-import { type SettingsCategory, useSettingsStore } from "../../stores/settings";
+import { useSessionsStore } from "../../stores/sessions";
+import {
+	getSettingsStore,
+	type SettingsCategory,
+	useLocalSettingsStore as useSettingsStore,
+} from "../../stores/settings";
 import { useUiPluginsStore } from "../../stores/ui-plugins";
 import { AboutPanel } from "./AboutPanel";
 import { AppearancePanel } from "./AppearancePanel";
@@ -61,11 +69,36 @@ function findPluginContribution(category: SettingsCategory, list: Contribution[]
 export function SettingsDialog() {
 	const open = useSettingsStore((s) => s.open);
 	if (!open) return null;
-	return <SettingsDialogBody />;
+	return <SettingsEnvironment />;
+}
+
+function SettingsEnvironment() {
+	const [environment, setEnvironment] = useState<EnvironmentRef>(() => {
+		const state = useSessionsStore.getState();
+		return state.activeSessionId
+			? environmentEntityRef(state.activeSessionId).environment
+			: (state.newSessionDraft?.environment ?? LOCAL_ENVIRONMENT);
+	});
+	const category = useSettingsStore((state) => state.category);
+	const key = environmentKey(environment);
+	useEffect(() => {
+		if (environment.kind !== "local") getSettingsStore(environment).getState().openWith(category);
+	}, [environment, category]);
+	return (
+		<EnvironmentContext.Provider value={environment}>
+			<SettingsDialogBody key={key} environment={environment} onEnvironmentChange={setEnvironment} />
+		</EnvironmentContext.Provider>
+	);
 }
 
 /** 弹窗体：左侧分类导航 + 右侧内容，两列均可独立滚动；plugin 分类由 registry 动态拼接 */
-function SettingsDialogBody() {
+function SettingsDialogBody({
+	environment,
+	onEnvironmentChange,
+}: {
+	environment: EnvironmentRef;
+	onEnvironmentChange: (environment: EnvironmentRef) => void;
+}) {
 	const t = useT();
 	const setOpen = useSettingsStore((s) => s.setOpen);
 	const category = useSettingsStore((s) => s.category);
@@ -99,6 +132,21 @@ function SettingsDialogBody() {
 				<div className="flex shrink-0 items-center justify-between px-4 py-3">
 					<h2 className="text-ui-14 leading-[calc(1.25_/_0.875)] font-semibold text-ink">
 						{t("settings.title")}
+						<select
+							className="ml-3 rounded-full bg-transparent px-2 py-1 text-ui-12 text-ink-faint"
+							aria-label={t("settings.environment")}
+							value={environmentKey(environment)}
+							onChange={(event) => {
+								const next = getEnvironments().find((ref) => environmentKey(ref) === event.target.value);
+								if (next) onEnvironmentChange(next);
+							}}
+						>
+							{getEnvironments().map((ref) => (
+								<option key={environmentKey(ref)} value={environmentKey(ref)}>
+									{ref.kind === "local" ? t("settings.localEnvironment") : ref.connectionId}
+								</option>
+							))}
+						</select>
 					</h2>
 					<button
 						type="button"

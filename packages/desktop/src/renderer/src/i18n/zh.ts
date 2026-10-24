@@ -117,7 +117,10 @@ export const zh = {
 			compact: { label: "压缩", description: "压缩会话上下文", argumentHint: "[关注重点]" },
 			name: { label: "重命名", description: "设置会话名称", argumentHint: "<名称>" },
 			export: { label: "导出", description: "导出会话（.html/.jsonl）", argumentHint: "[路径]" },
-			settings: { label: "设置", description: "打开设置" },
+			settings: {
+				label: "设置",
+				description: "打开设置",
+			},
 		},
 		group: {
 			builtin: "内置命令",
@@ -328,6 +331,8 @@ export const zh = {
 		noGit: "无 Git",
 	},
 	settings: {
+		environment: "运行环境",
+		localEnvironment: "本机",
 		title: "设置",
 		loading: "加载中…",
 		comingSoon: "该分类的设置将在后续版本提供。",
@@ -717,6 +722,7 @@ export const zh = {
 		retryFailed: "重试失败",
 	},
 	toast: {
+		remotePathAction: "远端文件请在服务器上打开；这里可以复制路径。",
 		tabsSaveFailed: "标签页保存失败",
 		uiStateSaveFailed: "界面设置保存失败",
 		trustFailed: "项目信任检查失败",

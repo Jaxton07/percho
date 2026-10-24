@@ -1,6 +1,6 @@
 import type { SlashCommandInfo } from "@percho/shared";
 import { type RefObject, useEffect, useState } from "react";
-import { getPi } from "../../api";
+import { getExecutionApi } from "../../environment-api";
 import { useT } from "../../i18n";
 import type { ComposerEditorHandle } from "./ComposerEditor";
 import { extractSlashToken, filterCommands, type SlashToken } from "./slash-filter";
@@ -61,9 +61,9 @@ export function useSlashMenu(options: UseSlashMenuOptions) {
 		setSlashToken(null);
 		setSlashCommands([]);
 		const request = activeSessionId
-			? getPi().listSlashCommands({ sessionId: activeSessionId })
+			? getExecutionApi(activeSessionId).listSlashCommands({ sessionId: activeSessionId })
 			: cwd
-				? getPi().listSlashCommandsForCwd({ cwd })
+				? getExecutionApi(cwd).listSlashCommandsForCwd({ cwd })
 				: null;
 		if (!request) {
 			setSlashCommands([]);

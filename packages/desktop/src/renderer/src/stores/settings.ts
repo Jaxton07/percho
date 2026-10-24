@@ -11,9 +11,21 @@ import type {
 	ResourceDiagnosticInfo,
 	SubagentInfo,
 } from "@percho/shared";
-import { withModelHidden, withModelsHidden, withProviderModelsHidden } from "@percho/shared";
-import { create } from "zustand";
+import {
+	type EnvironmentRef,
+	environmentEntityRef,
+	environmentKey,
+	environmentRef,
+	LOCAL_ENVIRONMENT,
+	sameEnvironment,
+	withModelHidden,
+	withModelsHidden,
+	withProviderModelsHidden,
+} from "@percho/shared";
+import { create, useStore } from "zustand";
 import { getPi } from "../api";
+import { getExecutionApi } from "../environment-api";
+import { useEnvironment } from "../environment-context";
 import { useSessionsStore } from "./sessions";
 import { pushToast } from "./toasts";
 
@@ -198,442 +210,473 @@ function createCatalogCoordinator(deps: {
 	};
 }
 
-export const useSettingsStore = create<SettingsStore>((set, get) => {
-	// modelPrefs 的单写者：已确认底座 + 未完成操作重放；读与所有偏好 IPC 共用串行尾链。
-	let confirmedPrefs: ModelPrefs | null = null;
-	let prefsTail: Promise<void> = Promise.resolve();
-	type PrefOperation = { apply: (prefs: ModelPrefs) => ModelPrefs };
-	let pendingPrefs: PrefOperation[] = [];
-	const publishPrefs = () => {
-		const base = confirmedPrefs ?? { hiddenModels: {}, subagentModels: {} };
-		set({
-			modelPrefs: pendingPrefs.length
-				? pendingPrefs.reduce((prefs, op) => op.apply(prefs), base)
-				: confirmedPrefs,
-		});
-	};
-	const enqueuePrefs = <T>(operation: () => Promise<T>): Promise<T> => {
-		const result = prefsTail.then(operation);
-		prefsTail = result.then(
-			() => {},
-			() => {},
-		);
-		return result;
-	};
-	const readPrefs = () =>
-		enqueuePrefs(async () => {
-			confirmedPrefs = await getPi().getModelPrefs();
-			publishPrefs();
-		});
-	const changePrefs = (
-		apply: PrefOperation["apply"],
-		commit: () => Promise<ModelPrefs>,
-		refreshModels = false,
-	): Promise<void> => {
-		if (!pendingPrefs.length) confirmedPrefs = get().modelPrefs;
-		// 先验证本次投影；非法输入不得留下永远不会发送的 pending 操作。
-		apply(get().modelPrefs ?? { hiddenModels: {}, subagentModels: {} });
-		const op = { apply };
-		pendingPrefs.push(op);
-		const result = enqueuePrefs(async () => {
-			let succeeded = false;
-			try {
-				confirmedPrefs = await commit();
-				succeeded = true;
-			} catch (error) {
-				pendingPrefs = pendingPrefs.filter((pending) => pending !== op);
-				publishPrefs();
-				// 队列仍被当前操作占住；后继 IPC 未发送，重读不会返回过期的后继快照。
-				try {
-					confirmedPrefs = await getPi().getModelPrefs();
-				} catch {
-					/* 保留最后确认值 */
-				}
-				set({ error: errorMessage(error) });
-			} finally {
-				pendingPrefs = pendingPrefs.filter((pending) => pending !== op);
-				publishPrefs();
-			}
-			if (succeeded && refreshModels) await useSessionsStore.getState().loadModels();
-		});
-		// 先排队再通知订阅者：同步订阅里发起新动作时仍保留原始调用顺序。
-		publishPrefs();
-		return result;
-	};
-
-	/** 变更后刷新 provider 列表与模型选择器数据（目录重读必须推进写盘世代，见协调器 `refreshAfterMutation`） */
-	const afterMutation = () => get().refreshAfterMutation("provider");
-
-	/** 上一次触发过「选择器刷新」的目录请求号（同一在途请求的多个入口只刷一次） */
-	let selectorRefreshToken = 0;
-
-	/** 目录（providers）走协调器：谁多发谁发、谁后开始谁赢，都在里面仲裁 */
-	const coordinator = createCatalogCoordinator({
-		load: async (kind) =>
-			kind === "network"
-				? { providers: await getPi().listProviders({ options: { forceNetwork: true } }) }
-				: { providers: await getPi().listProviders({}) },
-		publish: ({ providers }) => set({ providers }),
-		setFlags: (flags) => set(flags),
-	});
-
-	/**
-	 * 子代理清单：**独立于目录请求**的轻量发布路径（review R3）。
-	 * - network 请求根本不返回子代理清单 ⇒ 联网成功没有理由淘汰本地清单；
-	 * - 只接受「最新一次子代理读取」的结果（自己的序号，乱序不回灌旧清单）；
-	 * - 读失败只发 toast，既不挡目录发布，也不去抢目录的 `error` 字段。
-	 */
-	let subagentsSeq = 0;
-	const loadSubagents = async (): Promise<void> => {
-		const token = ++subagentsSeq;
-		try {
-			const subagents = await getPi().listSubagents();
-			if (token === subagentsSeq) set({ subagents });
-		} catch (error) {
-			pushToast("warning", "toast.subagentsLoadFailed", errorMessage(error));
-		}
-	};
-
-	/** 已加载资源（skills/extensions）：顺序上排在目录之后（沿用改造前后顺序），失败走 toast —— 既不污染目录 error 仲裁，也不静默 */
-	const loadLoadedResources = async (): Promise<void> => {
-		const activeSessionId = useSessionsStore.getState().activeSessionId;
-		if (!activeSessionId) {
-			set({ skills: null, skillDiagnostics: [], extensions: null, extensionErrors: [] });
-			return;
-		}
-		try {
-			const resources = await getPi().getLoadedResources({ sessionId: activeSessionId });
-			// 竞态守卫：await 期间活跃会话已切换则丢弃（防把 A 项目的资源写到 B 会话的面板）
-			if (useSessionsStore.getState().activeSessionId === activeSessionId) {
-				set({
-					skills: resources.skills,
-					skillDiagnostics: resources.skillDiagnostics,
-					extensions: resources.extensions,
-					extensionErrors: resources.extensionErrors,
-				});
-			}
-		} catch (error) {
-			pushToast("warning", "toast.loadedResourcesFailed", errorMessage(error));
-		}
-	};
-
-	/**
-	 * 面板数据装载。目录（providers/subagents）经协调器仲裁（loading/error/发布都在里面）；
-	 * 其余本地配置/偏好/资源各自独立发布 —— 不得因为目录请求被拒而丢字段。
-	 */
-	let permissionFlight: Promise<void> | null = null;
-	const loadPermissionGate = (): Promise<void> => {
-		if (permissionFlight) return permissionFlight;
-		const work = getPi()
-			.getPermissionConfig()
-			.then((permission) => {
-				set({ permissionGateOff: !permission.enabled });
-			})
-			.catch(() => {})
-			.finally(() => {
-				if (permissionFlight === work) permissionFlight = null;
+function createSettingsStore(environment: EnvironmentRef) {
+	return create<SettingsStore>((set, get) => {
+		// modelPrefs 的单写者：已确认底座 + 未完成操作重放；读与所有偏好 IPC 共用串行尾链。
+		let confirmedPrefs: ModelPrefs | null = null;
+		let prefsTail: Promise<void> = Promise.resolve();
+		type PrefOperation = { apply: (prefs: ModelPrefs) => ModelPrefs };
+		let pendingPrefs: PrefOperation[] = [];
+		const publishPrefs = () => {
+			const base = confirmedPrefs ?? { hiddenModels: {}, subagentModels: {} };
+			set({
+				modelPrefs: pendingPrefs.length
+					? pendingPrefs.reduce((prefs, op) => op.apply(prefs), base)
+					: confirmedPrefs,
 			});
-		permissionFlight = work;
-		return work;
-	};
-	const loadGeneral = (): void => {
-		void getPi()
-			.getContextManagerConfig()
-			.then((cm) => set({ contextManagerMode: cm.mode }))
-			.catch(() => {});
-		void getPi()
-			.getChannelWatchConfig()
-			.then((cw) => set({ channelWatchEnabled: cw.enabled }))
-			.catch(() => {});
-	};
-	const loadModelsData = async (mode: "local" | "mutation"): Promise<void> => {
-		void readPrefs().catch((error) =>
-			pushToast("warning", "toast.modelPrefsLoadFailed", errorMessage(error)),
-		);
-		await Promise.all([
-			mode === "mutation" ? coordinator.refreshAfterMutation() : coordinator.refreshLocal(),
-			loadSubagents(),
-		]);
-	};
-	const loadPanel = (category: SettingsCategory): void => {
-		switch (category) {
-			case "general":
-				loadGeneral();
-				break;
-			case "models":
-				void loadModelsData("local");
-				break;
-			case "skills":
-			case "extensions":
-				void loadLoadedResources();
-				break;
-			case "lan":
-				void get().refreshLanStatus();
-				break;
-			case "appearance":
-			case "mcp":
-			case "about":
-				break;
-			default:
-				void get().refresh();
-		}
-	};
-	const loadFullData = async (): Promise<void> => {
-		// 权限门控配置是本地文件读，独立加载，不被 provider 列表阻塞
-		// （仅派生 enabled=false 逃生舱态供 chip 禁用提示；开关 UI 已撒，spec permission-mode D7）
-		void loadPermissionGate();
-		loadGeneral();
-		// Full-refresh's historical silent LAN read must not take over the catalog error field.
-		void getPi()
-			.lanGetStatus()
-			.then((lanStatus) => set({ lanStatus }))
-			.catch(() => {});
-		await loadModelsData("local");
-		// 已加载资源：顺序排在目录之后（沿用改造前顺序）；目录失败也照取
-		await loadLoadedResources();
-	};
-
-	return {
-		open: false,
-		category: "models",
-		providers: [],
-		modelPrefs: null,
-		subagents: [],
-		loading: false,
-		refreshing: false,
-		permissionGateOff: null,
-		contextManagerMode: null,
-		channelWatchEnabled: null,
-		lanStatus: null,
-		lanSaving: false,
-		skills: null,
-		skillDiagnostics: [],
-		extensions: null,
-		extensionErrors: [],
-		testResults: {},
-		error: null,
-
-		setOpen: (open) => {
-			const wasOpen = get().open;
-			set({ open, testResults: {}, error: null });
-			if (open && !wasOpen) {
-				void loadPermissionGate();
-				loadPanel(get().category);
-			}
-		},
-
-		openWith: (category) => {
-			const previous = get();
-			const target = category ?? previous.category;
-			set({ category: target, open: true, testResults: {}, error: null });
-			if (!previous.open) void loadPermissionGate();
-			if (!previous.open || previous.category !== target) loadPanel(target);
-		},
-
-		setCategory: (category) => {
-			if (get().category === category) return;
-			set({ category });
-			if (get().open) loadPanel(category);
-		},
-		loadPermissionGate,
-		refreshAfterMutation: async (domain) => {
-			await loadModelsData("mutation");
-			if (domain === "packages") await loadLoadedResources();
-			await useSessionsStore.getState().loadModels();
-		},
-
-		refresh: async () => {
-			// 目录走协调器（loading/error/发布都受仲裁）；prefs/subagents/资源各自独立发布
-			await loadFullData();
-		},
-
-		refreshProvidersFromNetwork: async () => {
-			const { published, token } = await coordinator.refreshNetwork();
-			// runtime 已持有最新目录，本地刷新模型选择器数据即可；
-			// 只有**真的发布了新目录**才刷新 Composer 的模型选择器（被拒的旧结果不触发副作用，见 spec D3）；
-			// 同一在途请求被多个入口 await（进入分类自动 + 手动点击）时按请求号去重，只刷一次。
-			if (!published || token === selectorRefreshToken) return;
-			selectorRefreshToken = token;
-			await useSessionsStore.getState().loadModels();
-		},
-
-		setContextManagerMode: async (mode) => {
-			const previous = get().contextManagerMode;
-			set({ contextManagerMode: mode });
-			try {
-				await getPi().setContextManagerMode({ mode });
-			} catch (error) {
-				set({
-					contextManagerMode: previous,
-					error: error instanceof Error ? error.message : String(error),
-				});
-			}
-		},
-
-		setChannelWatchEnabled: async (enabled) => {
-			const previous = get().channelWatchEnabled;
-			set({ channelWatchEnabled: enabled });
-			try {
-				await getPi().setChannelWatchEnabled({ enabled });
-			} catch (error) {
-				set({
-					channelWatchEnabled: previous,
-					error: error instanceof Error ? error.message : String(error),
-				});
-			}
-		},
-
-		refreshLanStatus: async () => {
-			try {
-				set({ lanStatus: await getPi().lanGetStatus() });
-			} catch (error) {
-				set({ error: errorMessage(error) });
-			}
-		},
-
-		setLanEnabled: async (enabled) => {
-			set({ lanSaving: true });
-			try {
-				const lanStatus = await getPi().lanSetEnabled({ enabled });
-				set({ lanStatus, lanSaving: false });
-			} catch (error) {
-				set({ lanSaving: false, error: error instanceof Error ? error.message : String(error) });
-			}
-		},
-
-		setLanRemoteControl: async (enabled) => {
-			set({ lanSaving: true });
-			try {
-				const lanStatus = await getPi().lanSetRemoteControl({ enabled });
-				set({ lanStatus, lanSaving: false });
-			} catch (error) {
-				set({ lanSaving: false, error: error instanceof Error ? error.message : String(error) });
-			}
-		},
-
-		saveKey: async (providerId, key) => {
-			try {
-				await getPi().saveApiKey({ providerId, key });
-				await afterMutation();
-			} catch (error) {
-				set({ error: errorMessage(error) });
-			}
-		},
-
-		removeCredential: async (providerId) => {
-			try {
-				await getPi().removeCredential({ providerId });
-				await afterMutation();
-			} catch (error) {
-				set({ error: errorMessage(error) });
-			}
-		},
-
-		addCustom: async (input) => {
-			try {
-				await getPi().addCustomProvider({ input });
-				await afterMutation();
-			} catch (error) {
-				set({ error: errorMessage(error) });
-				throw error;
-			}
-		},
-
-		updateCustom: async (input) => {
-			try {
-				await getPi().updateCustomProvider({ input });
-				await afterMutation();
-			} catch (error) {
-				set({ error: errorMessage(error) });
-				throw error;
-			}
-		},
-
-		removeCustom: async (providerId) => {
-			try {
-				await getPi().removeCustomProvider({ providerId });
-				await afterMutation();
-			} catch (error) {
-				set({ error: errorMessage(error) });
-			}
-		},
-
-		setProviderBaseUrl: async (providerId, baseUrl, apiKey) => {
-			try {
-				await getPi().setProviderBaseUrl({ providerId, baseUrl, apiKey });
-				await afterMutation();
-			} catch (error) {
-				set({ error: errorMessage(error) });
-				throw error;
-			}
-		},
-
-		setModelHidden: async (provider, modelId, hidden) =>
-			changePrefs(
-				(prefs) => withModelHidden(prefs, provider, modelId, hidden),
-				() => getPi().setModelHidden({ provider, modelId, hidden }),
-				true,
-			),
-
-		setModelsHidden: async (provider, modelIds, hidden) => {
-			const ids = [...modelIds]; // 固定点击时的意图，不受调用方后续数组修改影响
-			return changePrefs(
-				(prefs) => withModelsHidden(prefs, provider, ids, hidden),
-				() => getPi().setModelsHidden({ provider, modelIds: ids, hidden }),
-				true,
+		};
+		const enqueuePrefs = <T>(operation: () => Promise<T>): Promise<T> => {
+			const result = prefsTail.then(operation);
+			prefsTail = result.then(
+				() => {},
+				() => {},
 			);
-		},
+			return result;
+		};
+		const readPrefs = () =>
+			enqueuePrefs(async () => {
+				confirmedPrefs = await getExecutionApi(environment).getModelPrefs();
+				publishPrefs();
+			});
+		const changePrefs = (
+			apply: PrefOperation["apply"],
+			commit: () => Promise<ModelPrefs>,
+			refreshModels = false,
+		): Promise<void> => {
+			if (!pendingPrefs.length) confirmedPrefs = get().modelPrefs;
+			// 先验证本次投影；非法输入不得留下永远不会发送的 pending 操作。
+			apply(get().modelPrefs ?? { hiddenModels: {}, subagentModels: {} });
+			const op = { apply };
+			pendingPrefs.push(op);
+			const result = enqueuePrefs(async () => {
+				let succeeded = false;
+				try {
+					confirmedPrefs = await commit();
+					succeeded = true;
+				} catch (error) {
+					pendingPrefs = pendingPrefs.filter((pending) => pending !== op);
+					publishPrefs();
+					// 队列仍被当前操作占住；后继 IPC 未发送，重读不会返回过期的后继快照。
+					try {
+						confirmedPrefs = await getExecutionApi(environment).getModelPrefs();
+					} catch {
+						/* 保留最后确认值 */
+					}
+					set({ error: errorMessage(error) });
+				} finally {
+					pendingPrefs = pendingPrefs.filter((pending) => pending !== op);
+					publishPrefs();
+				}
+				if (succeeded && refreshModels) await useSessionsStore.getState().loadModels(environment);
+			});
+			// 先排队再通知订阅者：同步订阅里发起新动作时仍保留原始调用顺序。
+			publishPrefs();
+			return result;
+		};
 
-		setProviderModelsHidden: async (provider, hidden) =>
-			changePrefs(
-				(prefs) => withProviderModelsHidden(prefs, provider, hidden),
-				() => getPi().setProviderModelsHidden({ provider, hidden }),
-				true,
-			),
+		/** 变更后刷新 provider 列表与模型选择器数据（目录重读必须推进写盘世代，见协调器 `refreshAfterMutation`） */
+		const afterMutation = () => get().refreshAfterMutation("provider");
 
-		setSubagentModel: async (agent, modelRef) =>
-			changePrefs(
-				(prefs) => {
-					const next = { ...prefs, subagentModels: { ...prefs.subagentModels } };
-					if (modelRef) next.subagentModels[agent] = modelRef;
-					else delete next.subagentModels[agent];
-					return next;
-				},
-				() => getPi().setSubagentModel({ agent, modelRef }),
-			),
+		/** 上一次触发过「选择器刷新」的目录请求号（同一在途请求的多个入口只刷一次） */
+		let selectorRefreshToken = 0;
 
-		setSubagentThinking: async (agent, level) =>
-			changePrefs(
-				(prefs) => {
-					const thinking = { ...prefs.subagentThinking };
-					const next: ModelPrefs = { ...prefs, subagentThinking: thinking };
-					if (level) thinking[agent] = level;
-					else delete thinking[agent];
-					if (!Object.keys(thinking).length) delete next.subagentThinking;
-					return next;
-				},
-				() => getPi().setSubagentThinking({ agent, level }),
-			),
+		/** 目录（providers）走协调器：谁多发谁发、谁后开始谁赢，都在里面仲裁 */
+		const coordinator = createCatalogCoordinator({
+			load: async (kind) =>
+				kind === "network"
+					? {
+							providers: await getExecutionApi(environment).listProviders({
+								options: { forceNetwork: true },
+							}),
+						}
+					: { providers: await getExecutionApi(environment).listProviders({}) },
+			publish: ({ providers }) => set({ providers }),
+			setFlags: (flags) => set(flags),
+		});
 
-		setSubagentPreferBuiltin: async (enabled) =>
-			changePrefs(
-				(prefs) => ({ ...prefs, subagentPreferBuiltin: enabled }),
-				() => getPi().setSubagentPreferBuiltin({ enabled }),
-			),
-
-		test: async (providerId) => {
-			set((state) => ({ testResults: { ...state.testResults, [providerId]: "testing" } }));
+		/**
+		 * 子代理清单：**独立于目录请求**的轻量发布路径（review R3）。
+		 * - network 请求根本不返回子代理清单 ⇒ 联网成功没有理由淘汰本地清单；
+		 * - 只接受「最新一次子代理读取」的结果（自己的序号，乱序不回灌旧清单）；
+		 * - 读失败只发 toast，既不挡目录发布，也不去抢目录的 `error` 字段。
+		 */
+		let subagentsSeq = 0;
+		const loadSubagents = async (): Promise<void> => {
+			const token = ++subagentsSeq;
 			try {
-				const result = await getPi().testProvider({ providerId });
-				set((state) => ({ testResults: { ...state.testResults, [providerId]: result } }));
+				const subagents = await getExecutionApi(environment).listSubagents();
+				if (token === subagentsSeq) set({ subagents });
 			} catch (error) {
-				set((state) => ({
-					testResults: {
-						...state.testResults,
-						[providerId]: { ok: false, error: error instanceof Error ? error.message : String(error) },
-					},
-				}));
+				pushToast("warning", "toast.subagentsLoadFailed", errorMessage(error));
 			}
-		},
-	};
-});
+		};
+
+		/** 已加载资源（skills/extensions）：顺序上排在目录之后（沿用改造前后顺序），失败走 toast —— 既不污染目录 error 仲裁，也不静默 */
+		const loadLoadedResources = async (): Promise<void> => {
+			const activeSessionId = useSessionsStore.getState().activeSessionId;
+			if (
+				!activeSessionId ||
+				!sameEnvironment(environmentEntityRef(activeSessionId).environment, environment)
+			) {
+				set({ skills: null, skillDiagnostics: [], extensions: null, extensionErrors: [] });
+				return;
+			}
+			try {
+				const resources = await getExecutionApi(environment).getLoadedResources({
+					sessionId: activeSessionId,
+				});
+				// 竞态守卫：await 期间活跃会话已切换则丢弃（防把 A 项目的资源写到 B 会话的面板）
+				if (useSessionsStore.getState().activeSessionId === activeSessionId) {
+					set({
+						skills: resources.skills,
+						skillDiagnostics: resources.skillDiagnostics,
+						extensions: resources.extensions,
+						extensionErrors: resources.extensionErrors,
+					});
+				}
+			} catch (error) {
+				pushToast("warning", "toast.loadedResourcesFailed", errorMessage(error));
+			}
+		};
+
+		/**
+		 * 面板数据装载。目录（providers/subagents）经协调器仲裁（loading/error/发布都在里面）；
+		 * 其余本地配置/偏好/资源各自独立发布 —— 不得因为目录请求被拒而丢字段。
+		 */
+		let permissionFlight: Promise<void> | null = null;
+		const loadPermissionGate = (): Promise<void> => {
+			if (permissionFlight) return permissionFlight;
+			const work = getExecutionApi(environment)
+				.getPermissionConfig()
+				.then((permission) => {
+					set({ permissionGateOff: !permission.enabled });
+				})
+				.catch(() => {})
+				.finally(() => {
+					if (permissionFlight === work) permissionFlight = null;
+				});
+			permissionFlight = work;
+			return work;
+		};
+		const loadGeneral = (): void => {
+			void getExecutionApi(environment)
+				.getContextManagerConfig()
+				.then((cm) => set({ contextManagerMode: cm.mode }))
+				.catch(() => {});
+			void getExecutionApi(environment)
+				.getChannelWatchConfig()
+				.then((cw) => set({ channelWatchEnabled: cw.enabled }))
+				.catch(() => {});
+		};
+		const loadModelsData = async (mode: "local" | "mutation"): Promise<void> => {
+			void readPrefs().catch((error) =>
+				pushToast("warning", "toast.modelPrefsLoadFailed", errorMessage(error)),
+			);
+			await Promise.all([
+				mode === "mutation" ? coordinator.refreshAfterMutation() : coordinator.refreshLocal(),
+				loadSubagents(),
+			]);
+		};
+		const loadPanel = (category: SettingsCategory): void => {
+			switch (category) {
+				case "general":
+					loadGeneral();
+					break;
+				case "models":
+					void loadModelsData("local");
+					break;
+				case "skills":
+				case "extensions":
+					void loadLoadedResources();
+					break;
+				case "lan":
+					void get().refreshLanStatus();
+					break;
+				case "appearance":
+				case "mcp":
+				case "about":
+					break;
+				default:
+					void get().refresh();
+			}
+		};
+		const loadFullData = async (): Promise<void> => {
+			// 权限门控配置是本地文件读，独立加载，不被 provider 列表阻塞
+			// （仅派生 enabled=false 逃生舱态供 chip 禁用提示；开关 UI 已撒，spec permission-mode D7）
+			void loadPermissionGate();
+			loadGeneral();
+			// Full-refresh's historical silent LAN read must not take over the catalog error field.
+			void getPi()
+				.lanGetStatus()
+				.then((lanStatus) => set({ lanStatus }))
+				.catch(() => {});
+			await loadModelsData("local");
+			// 已加载资源：顺序排在目录之后（沿用改造前顺序）；目录失败也照取
+			await loadLoadedResources();
+		};
+
+		return {
+			open: false,
+			category: "models",
+			providers: [],
+			modelPrefs: null,
+			subagents: [],
+			loading: false,
+			refreshing: false,
+			permissionGateOff: null,
+			contextManagerMode: null,
+			channelWatchEnabled: null,
+			lanStatus: null,
+			lanSaving: false,
+			skills: null,
+			skillDiagnostics: [],
+			extensions: null,
+			extensionErrors: [],
+			testResults: {},
+			error: null,
+
+			setOpen: (open) => {
+				const wasOpen = get().open;
+				set({ open, testResults: {}, error: null });
+				if (open && !wasOpen) {
+					void loadPermissionGate();
+					loadPanel(get().category);
+				}
+			},
+
+			openWith: (category) => {
+				const previous = get();
+				const target = category ?? previous.category;
+				set({ category: target, open: true, testResults: {}, error: null });
+				if (!previous.open) void loadPermissionGate();
+				if (!previous.open || previous.category !== target) loadPanel(target);
+			},
+
+			setCategory: (category) => {
+				if (get().category === category) return;
+				set({ category });
+				if (get().open) loadPanel(category);
+			},
+			loadPermissionGate,
+			refreshAfterMutation: async (domain) => {
+				await loadModelsData("mutation");
+				if (domain === "packages") await loadLoadedResources();
+				await useSessionsStore.getState().loadModels(environment);
+			},
+
+			refresh: async () => {
+				// 目录走协调器（loading/error/发布都受仲裁）；prefs/subagents/资源各自独立发布
+				await loadFullData();
+			},
+
+			refreshProvidersFromNetwork: async () => {
+				const { published, token } = await coordinator.refreshNetwork();
+				// runtime 已持有最新目录，本地刷新模型选择器数据即可；
+				// 只有**真的发布了新目录**才刷新 Composer 的模型选择器（被拒的旧结果不触发副作用，见 spec D3）；
+				// 同一在途请求被多个入口 await（进入分类自动 + 手动点击）时按请求号去重，只刷一次。
+				if (!published || token === selectorRefreshToken) return;
+				selectorRefreshToken = token;
+				await useSessionsStore.getState().loadModels(environment);
+			},
+
+			setContextManagerMode: async (mode) => {
+				const previous = get().contextManagerMode;
+				set({ contextManagerMode: mode });
+				try {
+					await getExecutionApi(environment).setContextManagerMode({ mode });
+				} catch (error) {
+					set({
+						contextManagerMode: previous,
+						error: error instanceof Error ? error.message : String(error),
+					});
+				}
+			},
+
+			setChannelWatchEnabled: async (enabled) => {
+				const previous = get().channelWatchEnabled;
+				set({ channelWatchEnabled: enabled });
+				try {
+					await getExecutionApi(environment).setChannelWatchEnabled({ enabled });
+				} catch (error) {
+					set({
+						channelWatchEnabled: previous,
+						error: error instanceof Error ? error.message : String(error),
+					});
+				}
+			},
+
+			refreshLanStatus: async () => {
+				try {
+					set({ lanStatus: await getPi().lanGetStatus() });
+				} catch (error) {
+					set({ error: errorMessage(error) });
+				}
+			},
+
+			setLanEnabled: async (enabled) => {
+				set({ lanSaving: true });
+				try {
+					const lanStatus = await getPi().lanSetEnabled({ enabled });
+					set({ lanStatus, lanSaving: false });
+				} catch (error) {
+					set({ lanSaving: false, error: error instanceof Error ? error.message : String(error) });
+				}
+			},
+
+			setLanRemoteControl: async (enabled) => {
+				set({ lanSaving: true });
+				try {
+					const lanStatus = await getPi().lanSetRemoteControl({ enabled });
+					set({ lanStatus, lanSaving: false });
+				} catch (error) {
+					set({ lanSaving: false, error: error instanceof Error ? error.message : String(error) });
+				}
+			},
+
+			saveKey: async (providerId, key) => {
+				try {
+					await getExecutionApi(environment).saveApiKey({ providerId, key });
+					await afterMutation();
+				} catch (error) {
+					set({ error: errorMessage(error) });
+				}
+			},
+
+			removeCredential: async (providerId) => {
+				try {
+					await getExecutionApi(environment).removeCredential({ providerId });
+					await afterMutation();
+				} catch (error) {
+					set({ error: errorMessage(error) });
+				}
+			},
+
+			addCustom: async (input) => {
+				try {
+					await getExecutionApi(environment).addCustomProvider({ input });
+					await afterMutation();
+				} catch (error) {
+					set({ error: errorMessage(error) });
+					throw error;
+				}
+			},
+
+			updateCustom: async (input) => {
+				try {
+					await getExecutionApi(environment).updateCustomProvider({ input });
+					await afterMutation();
+				} catch (error) {
+					set({ error: errorMessage(error) });
+					throw error;
+				}
+			},
+
+			removeCustom: async (providerId) => {
+				try {
+					await getExecutionApi(environment).removeCustomProvider({ providerId });
+					await afterMutation();
+				} catch (error) {
+					set({ error: errorMessage(error) });
+				}
+			},
+
+			setProviderBaseUrl: async (providerId, baseUrl, apiKey) => {
+				try {
+					await getExecutionApi(environment).setProviderBaseUrl({ providerId, baseUrl, apiKey });
+					await afterMutation();
+				} catch (error) {
+					set({ error: errorMessage(error) });
+					throw error;
+				}
+			},
+
+			setModelHidden: async (provider, modelId, hidden) =>
+				changePrefs(
+					(prefs) => withModelHidden(prefs, provider, modelId, hidden),
+					() => getExecutionApi(environment).setModelHidden({ provider, modelId, hidden }),
+					true,
+				),
+
+			setModelsHidden: async (provider, modelIds, hidden) => {
+				const ids = [...modelIds]; // 固定点击时的意图，不受调用方后续数组修改影响
+				return changePrefs(
+					(prefs) => withModelsHidden(prefs, provider, ids, hidden),
+					() => getExecutionApi(environment).setModelsHidden({ provider, modelIds: ids, hidden }),
+					true,
+				);
+			},
+
+			setProviderModelsHidden: async (provider, hidden) =>
+				changePrefs(
+					(prefs) => withProviderModelsHidden(prefs, provider, hidden),
+					() => getExecutionApi(environment).setProviderModelsHidden({ provider, hidden }),
+					true,
+				),
+
+			setSubagentModel: async (agent, modelRef) =>
+				changePrefs(
+					(prefs) => {
+						const next = { ...prefs, subagentModels: { ...prefs.subagentModels } };
+						if (modelRef) next.subagentModels[agent] = modelRef;
+						else delete next.subagentModels[agent];
+						return next;
+					},
+					() => getExecutionApi(environment).setSubagentModel({ agent, modelRef }),
+				),
+
+			setSubagentThinking: async (agent, level) =>
+				changePrefs(
+					(prefs) => {
+						const thinking = { ...prefs.subagentThinking };
+						const next: ModelPrefs = { ...prefs, subagentThinking: thinking };
+						if (level) thinking[agent] = level;
+						else delete thinking[agent];
+						if (!Object.keys(thinking).length) delete next.subagentThinking;
+						return next;
+					},
+					() => getExecutionApi(environment).setSubagentThinking({ agent, level }),
+				),
+
+			setSubagentPreferBuiltin: async (enabled) =>
+				changePrefs(
+					(prefs) => ({ ...prefs, subagentPreferBuiltin: enabled }),
+					() => getExecutionApi(environment).setSubagentPreferBuiltin({ enabled }),
+				),
+
+			test: async (providerId) => {
+				set((state) => ({ testResults: { ...state.testResults, [providerId]: "testing" } }));
+				try {
+					const result = await getExecutionApi(environment).testProvider({ providerId });
+					set((state) => ({ testResults: { ...state.testResults, [providerId]: result } }));
+				} catch (error) {
+					set((state) => ({
+						testResults: {
+							...state.testResults,
+							[providerId]: { ok: false, error: error instanceof Error ? error.message : String(error) },
+						},
+					}));
+				}
+			},
+		};
+	});
+}
+
+const stores = new Map<string, ReturnType<typeof createSettingsStore>>();
+export function getSettingsStore(reference: EnvironmentRef = LOCAL_ENVIRONMENT) {
+	const environment = environmentRef(reference);
+	const key = environmentKey(environment);
+	let store = stores.get(key);
+	if (!store) {
+		store = createSettingsStore(environment);
+		stores.set(key, store);
+	}
+	return store;
+}
+const localStore = getSettingsStore();
+export const useLocalSettingsStore = localStore;
+function useBoundSettingsStore<T = SettingsStore>(selector?: (state: SettingsStore) => T): T {
+	const store = getSettingsStore(useEnvironment());
+	return useStore(store, selector ?? ((state) => state as unknown as T));
+}
+// Static access is the local compatibility entry. Environment operations use getSettingsStore(ref).
+export const useSettingsStore = Object.assign(useBoundSettingsStore, localStore);

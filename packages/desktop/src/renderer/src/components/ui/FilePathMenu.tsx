@@ -1,4 +1,6 @@
+import { environmentEntityRef, LOCAL_ENVIRONMENT } from "@percho/shared";
 import { getPi } from "../../api";
+import { getExecutionApi } from "../../environment-api";
 import { useT } from "../../i18n";
 import { errText } from "../../lib/error-text";
 import { useToastsStore } from "../../stores/toasts";
@@ -26,15 +28,20 @@ export function FilePathMenu({
 	onClose: () => void;
 }) {
 	const t = useT();
+	const environment = cwd ? environmentEntityRef(cwd).environment : LOCAL_ENVIRONMENT;
 
 	const run = async (action: "open" | "reveal" | "copy") => {
 		try {
 			if (action === "copy") {
 				// 复制的是解析后的绝对路径（原样复制相对路径对用户没用）
-				const resolved = await getPi().resolvePath({ target, cwd });
+				const resolved = await getExecutionApi(environment).resolvePath({ target, cwd });
 				await navigator.clipboard.writeText(resolved);
 				// 剪贴板不可见，给一条 info 反馈（详情 = 绝对路径）
 				useToastsStore.getState().push("info", "toast.pathCopied", resolved);
+				return;
+			}
+			if (environment.kind === "ssh") {
+				useToastsStore.getState().push("info", "toast.remotePathAction");
 				return;
 			}
 			if (action === "open") await getPi().openPath({ target, cwd });

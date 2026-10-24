@@ -25,8 +25,8 @@ export function ProvidersPanel() {
 	// 面板内的 providers↔subagents 子 tab 切换不重新挂载 ⇒ 不额外触发。
 	// 并发入口由 store 的 single-flight 兜底（同一在途请求复用；StrictMode 双跑也只发一次）。
 	useEffect(() => {
-		void useSettingsStore.getState().refreshProvidersFromNetwork();
-	}, []);
+		void refreshFromNetwork();
+	}, [refreshFromNetwork]);
 
 	return (
 		<div>

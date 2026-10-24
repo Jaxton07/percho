@@ -1,3 +1,4 @@
+export { checkoutBranch, getGitBranch, listGitBranches } from "./git";
 export {
 	JsonStore,
 	JsonStoreCorruptedError,
@@ -16,6 +17,7 @@ export {
 export { type LanObserverBackend, LanObserverServer, type LanObserverServerOptions } from "./lan/server";
 export { createLogger, initLogging, type Logger } from "./log";
 export { fetchPackageCatalog, parseCatalogHtml } from "./packages/catalog";
+export { cleanPathText, resolveExistingPath, resolvePathTarget } from "./path-target";
 export {
 	createPermissionConfigLoader,
 	DEFAULT_PERMISSION_CONFIG,

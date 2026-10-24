@@ -1,7 +1,13 @@
 import type { ComposerDocument, ImageInput } from "@percho/shared";
-import { normalizeComposerDocument } from "@percho/shared";
+import {
+	environmentEntityRef,
+	environmentKey,
+	LOCAL_ENVIRONMENT,
+	normalizeComposerDocument,
+} from "@percho/shared";
 import { type MouseEvent as ReactMouseEvent, useCallback, useEffect, useRef, useState } from "react";
 import { getPi } from "../../api";
+import { EnvironmentContext } from "../../environment-context";
 import { useActiveModelInfo, useSessionReadOnly } from "../../hooks/use-session-state";
 import { useT } from "../../i18n";
 import { selectActiveCwd } from "../../lib/active-cwd";
@@ -69,6 +75,20 @@ export function Composer({ centered = false }: { centered?: boolean }) {
 	/** 输入内容（文本/图片/命令胶囊）按会话持久：真实会话用 sessionId、新会话页用固定 key，不丢也不串 */
 	const draftConfig = useSessionsStore((s) => s.newSessionDraft);
 	const draftKey = activeSessionId ?? newSessionDraftKey(draftConfig?.environment, draftConfig?.cwd);
+	const environment = activeSessionId
+		? environmentEntityRef(activeSessionId).environment
+		: (draftConfig?.environment ?? LOCAL_ENVIRONMENT);
+	const modelEnvironmentKey = environmentKey(environment);
+	// Selection only changes which catalog is displayed; each async load retains its original owner.
+	// biome-ignore lint/correctness/useExhaustiveDependencies: identity key captures the immutable environment
+	useEffect(() => {
+		const store = useSessionsStore.getState();
+		const cached = store.modelsByEnvironment[modelEnvironmentKey];
+		if (cached) useSessionsStore.setState({ models: cached });
+		else useSessionsStore.setState({ models: [] });
+		void store.loadModels(environment);
+	}, [modelEnvironmentKey]);
+
 	const draft = useDraftStore((s) => s.bySession[draftKey] ?? EMPTY_DRAFT);
 	const failedDraft = useDraftStore((s) => s.failedBySession[draftKey]);
 	const { document, images, slashCommand, quotes } = draft;
@@ -476,7 +496,9 @@ export function Composer({ centered = false }: { centered?: boolean }) {
 							<PlusIcon size={18} />
 						</button>
 						<div className={readOnly ? "pointer-events-none opacity-40" : undefined}>
-							<PermissionPicker />
+							<EnvironmentContext.Provider value={environment}>
+								<PermissionPicker />
+							</EnvironmentContext.Provider>
 						</div>
 						<div className="flex-1" />
 						<ContextRing />

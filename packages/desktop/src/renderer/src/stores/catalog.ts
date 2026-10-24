@@ -1,7 +1,9 @@
 import type { CatalogPackage, CatalogPackageType, ConfiguredPackageInfo } from "@percho/shared";
-import { create } from "zustand";
-import { getPi } from "../api";
-import { useSettingsStore } from "./settings";
+import { type EnvironmentRef, environmentKey, environmentRef, LOCAL_ENVIRONMENT } from "@percho/shared";
+import { create, useStore } from "zustand";
+import { getExecutionApi } from "../environment-api";
+import { useEnvironment } from "../environment-context";
+import { getSettingsStore } from "./settings";
 
 interface CatalogStore {
 	/** 扩展面板分段：浏览社区 / 已加载（进 store 保「切面板往返不丢 tab」） */
@@ -39,133 +41,159 @@ interface CatalogStore {
 	refreshConfiguredPackages: () => Promise<void>;
 }
 
-export const useCatalogStore = create<CatalogStore>((set, get) => {
-	/** 目录搜索防抖（query/type 变更 300ms 后触发） */
-	let catalogDebounceTimer: ReturnType<typeof setTimeout> | undefined;
-	const scheduleCatalogSearch = () => {
-		clearTimeout(catalogDebounceTimer);
-		catalogDebounceTimer = setTimeout(() => void get().searchCatalog(false), 300);
-	};
+function createCatalogStore(environment: EnvironmentRef) {
+	return create<CatalogStore>((set, get) => {
+		/** 目录搜索防抖（query/type 变更 300ms 后触发） */
+		let catalogDebounceTimer: ReturnType<typeof setTimeout> | undefined;
+		const scheduleCatalogSearch = () => {
+			clearTimeout(catalogDebounceTimer);
+			catalogDebounceTimer = setTimeout(() => void get().searchCatalog(false), 300);
+		};
 
-	return {
-		extensionsTab: "browse",
-		catalogQuery: "",
-		catalogType: "",
-		catalogPackages: [],
-		catalogTotal: 0,
-		catalogPage: 0,
-		catalogLoading: false,
-		catalogLoadingMore: false,
-		catalogError: null,
-		catalogSeq: 0,
-		installingNames: {},
-		installErrors: {},
-		removingSources: {},
-		removeErrors: {},
-		configuredPackages: null,
+		return {
+			extensionsTab: "browse",
+			catalogQuery: "",
+			catalogType: "",
+			catalogPackages: [],
+			catalogTotal: 0,
+			catalogPage: 0,
+			catalogLoading: false,
+			catalogLoadingMore: false,
+			catalogError: null,
+			catalogSeq: 0,
+			installingNames: {},
+			installErrors: {},
+			removingSources: {},
+			removeErrors: {},
+			configuredPackages: null,
 
-		setExtensionsTab: (extensionsTab) => set({ extensionsTab }),
+			setExtensionsTab: (extensionsTab) => set({ extensionsTab }),
 
-		setCatalogQuery: (catalogQuery) => {
-			set({ catalogQuery });
-			scheduleCatalogSearch();
-		},
+			setCatalogQuery: (catalogQuery) => {
+				set({ catalogQuery });
+				scheduleCatalogSearch();
+			},
 
-		setCatalogType: (catalogType) => {
-			set({ catalogType });
-			scheduleCatalogSearch();
-		},
+			setCatalogType: (catalogType) => {
+				set({ catalogType });
+				scheduleCatalogSearch();
+			},
 
-		searchCatalog: async (append = false) => {
-			const { catalogQuery, catalogType, catalogPage, catalogSeq } = get();
-			const page = append ? catalogPage + 1 : 1;
-			const seq = catalogSeq + 1;
-			set(
-				append
-					? { catalogSeq: seq, catalogLoadingMore: true, catalogError: null }
-					: { catalogSeq: seq, catalogLoading: true, catalogError: null },
-			);
-			try {
-				const result = await getPi().searchCatalog({ query: catalogQuery, type: catalogType, page });
-				if (get().catalogSeq !== seq) return; // 已有更新的搜索，丢弃陈旧响应
-				set((state) => ({
-					catalogPackages: append ? [...state.catalogPackages, ...result.packages] : result.packages,
-					catalogTotal: result.total,
-					catalogPage: result.page,
-					catalogLoading: false,
-					catalogLoadingMore: false,
-				}));
-			} catch (error) {
-				if (get().catalogSeq !== seq) return;
-				set({
-					catalogLoading: false,
-					catalogLoadingMore: false,
-					catalogError: error instanceof Error ? error.message : String(error),
-				});
-			}
-		},
+			searchCatalog: async (append = false) => {
+				const { catalogQuery, catalogType, catalogPage, catalogSeq } = get();
+				const page = append ? catalogPage + 1 : 1;
+				const seq = catalogSeq + 1;
+				set(
+					append
+						? { catalogSeq: seq, catalogLoadingMore: true, catalogError: null }
+						: { catalogSeq: seq, catalogLoading: true, catalogError: null },
+				);
+				try {
+					const result = await getExecutionApi(environment).searchCatalog({
+						query: catalogQuery,
+						type: catalogType,
+						page,
+					});
+					if (get().catalogSeq !== seq) return; // 已有更新的搜索，丢弃陈旧响应
+					set((state) => ({
+						catalogPackages: append ? [...state.catalogPackages, ...result.packages] : result.packages,
+						catalogTotal: result.total,
+						catalogPage: result.page,
+						catalogLoading: false,
+						catalogLoadingMore: false,
+					}));
+				} catch (error) {
+					if (get().catalogSeq !== seq) return;
+					set({
+						catalogLoading: false,
+						catalogLoadingMore: false,
+						catalogError: error instanceof Error ? error.message : String(error),
+					});
+				}
+			},
 
-		installCatalogPackage: async (name) => {
-			set((state) => {
-				const installErrors = { ...state.installErrors };
-				delete installErrors[name];
-				return { installingNames: { ...state.installingNames, [name]: true }, installErrors };
-			});
-			try {
-				await getPi().installPackage({ name });
-				await get().refreshConfiguredPackages();
-				// backend reload后刷新模型域与已加载资源，不读取general/LAN。
-				void useSettingsStore.getState().refreshAfterMutation("packages");
-			} catch (error) {
-				set((state) => ({
-					installErrors: {
-						...state.installErrors,
-						[name]: error instanceof Error ? error.message : String(error),
-					},
-				}));
-			} finally {
+			installCatalogPackage: async (name) => {
 				set((state) => {
-					const installingNames = { ...state.installingNames };
-					delete installingNames[name];
-					return { installingNames };
+					const installErrors = { ...state.installErrors };
+					delete installErrors[name];
+					return { installingNames: { ...state.installingNames, [name]: true }, installErrors };
 				});
-			}
-		},
+				try {
+					await getExecutionApi(environment).installPackage({ name });
+					await get().refreshConfiguredPackages();
+					// backend reload后刷新模型域与已加载资源，不读取general/LAN。
+					void getSettingsStore(environment).getState().refreshAfterMutation("packages");
+				} catch (error) {
+					set((state) => ({
+						installErrors: {
+							...state.installErrors,
+							[name]: error instanceof Error ? error.message : String(error),
+						},
+					}));
+				} finally {
+					set((state) => {
+						const installingNames = { ...state.installingNames };
+						delete installingNames[name];
+						return { installingNames };
+					});
+				}
+			},
 
-		refreshConfiguredPackages: async () => {
-			try {
-				const configured = await getPi().listConfiguredPackages();
-				set({ configuredPackages: configured });
-			} catch {
-				set({ configuredPackages: [] });
-			}
-		},
+			refreshConfiguredPackages: async () => {
+				try {
+					const configured = await getExecutionApi(environment).listConfiguredPackages();
+					set({ configuredPackages: configured });
+				} catch {
+					set({ configuredPackages: [] });
+				}
+			},
 
-		removeConfiguredPackage: async (source, scope) => {
-			set((state) => {
-				const removeErrors = { ...state.removeErrors };
-				delete removeErrors[source];
-				return { removingSources: { ...state.removingSources, [source]: true }, removeErrors };
-			});
-			try {
-				await getPi().removePackage({ source, scope });
-				await get().refreshConfiguredPackages();
-				// backend reload后刷新模型域与已加载资源，不读取general/LAN。
-				void useSettingsStore.getState().refreshAfterMutation("packages");
-			} catch (error) {
-				set((state) => ({
-					removeErrors: {
-						...state.removeErrors,
-						[source]: error instanceof Error ? error.message : String(error),
-					},
-				}));
-			} finally {
+			removeConfiguredPackage: async (source, scope) => {
 				set((state) => {
-					const removingSources = { ...state.removingSources };
-					delete removingSources[source];
-					return { removingSources };
+					const removeErrors = { ...state.removeErrors };
+					delete removeErrors[source];
+					return { removingSources: { ...state.removingSources, [source]: true }, removeErrors };
 				});
-			}
-		},
-	};
-});
+				try {
+					await getExecutionApi(environment).removePackage({ source, scope });
+					await get().refreshConfiguredPackages();
+					// backend reload后刷新模型域与已加载资源，不读取general/LAN。
+					void getSettingsStore(environment).getState().refreshAfterMutation("packages");
+				} catch (error) {
+					set((state) => ({
+						removeErrors: {
+							...state.removeErrors,
+							[source]: error instanceof Error ? error.message : String(error),
+						},
+					}));
+				} finally {
+					set((state) => {
+						const removingSources = { ...state.removingSources };
+						delete removingSources[source];
+						return { removingSources };
+					});
+				}
+			},
+		};
+	});
+}
+
+const stores = new Map<string, ReturnType<typeof createCatalogStore>>();
+export function getCatalogStore(reference: EnvironmentRef = LOCAL_ENVIRONMENT) {
+	const environment = environmentRef(reference);
+	const key = environmentKey(environment);
+	let store = stores.get(key);
+	if (!store) {
+		store = createCatalogStore(environment);
+		stores.set(key, store);
+	}
+	return store;
+}
+const localStore = getCatalogStore();
+export const useLocalCatalogStore = localStore;
+function useBoundCatalogStore<T = CatalogStore>(selector?: (state: CatalogStore) => T): T {
+	const store = getCatalogStore(useEnvironment());
+	return useStore(store, selector ?? ((state) => state as unknown as T));
+}
+// Static access is the local compatibility entry. Environment operations use getCatalogStore(ref).
+export const useCatalogStore = Object.assign(useBoundCatalogStore, localStore);

@@ -3,6 +3,7 @@ import {
 	composerDocumentFromText,
 	type EnvironmentRef,
 	environmentEntityRef,
+	environmentKey,
 	LOCAL_ENVIRONMENT,
 	type PermissionMode,
 	type SessionCloseIntent,
@@ -78,6 +79,7 @@ export interface NewSessionDraftConfig {
 }
 
 let draftGenerationSeq = 0;
+const modelLoads = new Map<string, number>();
 
 /**
  * 造一份 draft 配置。**有真实会话来源的字段才算「已定」**，没来源的一律留给 `loadModels`
@@ -354,6 +356,7 @@ interface SessionsStore {
 	activeSessionId: string | null;
 	cwd: string | null;
 	models: AvailableModel[];
+	modelsByEnvironment: Record<string, AvailableModel[]>;
 	/** 全局唯一的新会话 draft；null = 当前已有真实会话（或还没初始化） */
 	newSessionDraft: NewSessionDraftConfig | null;
 	/** 上次使用的模型/思考深度（新会话与 draft 起步跟随；持久化 ui-state.json，语义 = 跟随最近选择，非独立默认设置） */
@@ -405,7 +408,7 @@ interface SessionsStore {
 	/** 自动命名等事件带来的标题变更 */
 	updateSessionName: (sessionId: string, name: string | undefined) => void;
 	pickDirectory: () => Promise<void>;
-	loadModels: () => Promise<void>;
+	loadModels: (environment?: EnvironmentRef) => Promise<void>;
 	setCurrentModel: (provider: string, modelId: string) => Promise<void>;
 	setThinkingLevel: (level: string) => Promise<void>;
 	/** 切换会话权限模式（真实会话乐观更新 + 失败回滚 + toast；draft 走 setDraftPermissionMode） */
@@ -437,6 +440,7 @@ export const useSessionsStore = create<SessionsStore>((_set, get) => ({
 	activeSessionId: null,
 	cwd: null,
 	models: [],
+	modelsByEnvironment: {},
 	// 不变式：新会话页（`activeSessionId === null`）必须有一份 draft。开机就是新会话页，
 	// 所以初始化就建好（App 启动再把 lastCwd 种进来，见 App.tsx），不留「active=null 且 draft=null」的窗口
 	newSessionDraft: makeDraft({ cwd: null, lastUsedModel: null, lastUsedThinkingLevel: "medium" }),
@@ -801,11 +805,17 @@ export const useSessionsStore = create<SessionsStore>((_set, get) => ({
 		if (cwd) get().setDraftCwd(cwd);
 	},
 
-	loadModels: async () => {
+	loadModels: async (environment = currentEnvironment(get())) => {
+		const key = environmentKey(environment);
+		const seq = (modelLoads.get(key) ?? 0) + 1;
+		modelLoads.set(key, seq);
 		try {
-			const models = await getPi().listModels();
+			const models = await getExecutionApi(environment).listModels();
 			// 复用上次使用的模型/思考级别（失效则回退到第一个可用模型）
-			const saved = await getPi().loadUiState();
+			const saved = environment.kind === "local" ? await getPi().loadUiState() : null;
+			if (modelLoads.get(key) !== seq) return;
+			set((state) => ({ modelsByEnvironment: { ...state.modelsByEnvironment, [key]: models } }));
+			if (!sameEnvironment(environment, currentEnvironment(get()))) return;
 			const savedModel =
 				saved?.lastUsedModel &&
 				models.some(
@@ -813,7 +823,7 @@ export const useSessionsStore = create<SessionsStore>((_set, get) => ({
 				)
 					? saved.lastUsedModel
 					: null;
-			const current = get().lastUsedModel;
+			const current = environment.kind === "local" ? get().lastUsedModel : get().newSessionDraft?.model;
 			const fallback = models.find((m) => m.authed) ?? models[0];
 			const nextLastUsedModel =
 				savedModel ?? current ?? (fallback ? { provider: fallback.provider, modelId: fallback.id } : null);

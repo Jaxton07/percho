@@ -1,6 +1,6 @@
 import { deriveTurnChanges, type TurnChanges } from "@percho/shared";
 import { useEffect, useMemo, useRef, useState } from "react";
-import { getPi } from "../../api";
+import { getExecutionApi } from "../../environment-api";
 import { useT } from "../../i18n";
 import { selectActiveCwd } from "../../lib/active-cwd";
 import { useSessionsStore } from "../../stores/sessions";
@@ -34,7 +34,7 @@ function BranchRow() {
 	useEffect(() => {
 		if (!cwd || !hasContent) return;
 		let cancelled = false;
-		void getPi()
+		void getExecutionApi(cwd)
 			.listGitBranches({ cwd })
 			.then((r) => {
 				if (cancelled) return;

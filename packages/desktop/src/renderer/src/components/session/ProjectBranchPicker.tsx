@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
-import { getPi } from "../../api";
+import { getExecutionApi } from "../../environment-api";
 import { useT } from "../../i18n";
 import { selectActiveCwd } from "../../lib/active-cwd";
 import { getDailyDirCached, isDailyCwd } from "../../lib/daily";
@@ -131,7 +131,7 @@ function BranchPicker({ cwd }: { cwd: string | null }) {
 	useEffect(() => {
 		if (!cwd) return;
 		let cancelled = false;
-		void getPi()
+		void getExecutionApi(cwd)
 			.listGitBranches({ cwd })
 			.then((result) => {
 				if (cancelled) return;
@@ -168,7 +168,7 @@ function BranchPicker({ cwd }: { cwd: string | null }) {
 								}`}
 								onClick={() => {
 									if (branch !== current && cwd) {
-										void getPi()
+										void getExecutionApi(cwd)
 											.checkoutBranch({ cwd, branch })
 											.then(setCurrent)
 											.catch((e: unknown) => setError(e instanceof Error ? e.message : String(e)));

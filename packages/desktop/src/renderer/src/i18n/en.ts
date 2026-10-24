@@ -120,7 +120,10 @@ export const en: Messages = {
 			compact: { label: "compact", description: "Compress session context", argumentHint: "[focus]" },
 			name: { label: "name", description: "Set session display name", argumentHint: "<name>" },
 			export: { label: "export", description: "Export session (.html/.jsonl)", argumentHint: "[path]" },
-			settings: { label: "settings", description: "Open settings" },
+			settings: {
+				label: "settings",
+				description: "Open settings",
+			},
 		},
 		group: {
 			builtin: "Built-in",
@@ -333,6 +336,8 @@ export const en: Messages = {
 		noGit: "No Git",
 	},
 	settings: {
+		environment: "Execution environment",
+		localEnvironment: "Local",
 		title: "Settings",
 		loading: "Loading…",
 		comingSoon: "Settings for this category are coming in a future release.",
@@ -740,6 +745,7 @@ export const en: Messages = {
 		retryFailed: "Retry failed",
 	},
 	toast: {
+		remotePathAction: "Open remote files on the server. You can copy their paths here.",
 		tabsSaveFailed: "Failed to save tabs",
 		uiStateSaveFailed: "Failed to save UI state",
 		trustFailed: "Failed to check project trust",

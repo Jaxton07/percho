@@ -1,5 +1,6 @@
 import type { SessionMeta } from "@percho/shared";
 import { getPi } from "../../api";
+import { getExecutionApi } from "../../environment-api";
 import type { Translate } from "../../i18n";
 import { buildDiagnosticsText } from "../../lib/diagnostics";
 import { useProjectsStore } from "../../stores/projects";
@@ -55,7 +56,7 @@ function sessionCwd(sessionId: string): string | undefined {
  *  只更新一边会出现「胶囊新名 / 左栏旧名」并存（阶段 3 实测踩到）。 */
 export function renameSession(sessionId: string, name: string): void {
 	if (!name) return; // 空值 = 保持原名（与系统重命名一致，不报错）
-	getPi()
+	getExecutionApi(sessionId)
 		.setSessionName({ sessionId, name, cwd: sessionCwd(sessionId) })
 		.then(() => {
 			useSessionsStore.getState().updateSessionName(sessionId, name);

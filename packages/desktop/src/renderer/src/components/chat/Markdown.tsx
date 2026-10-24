@@ -1,3 +1,4 @@
+import { environmentEntityRef } from "@percho/shared";
 import MarkdownRender, { type SmoothMarkdownStreamOptions } from "markstream-react";
 import "markstream-react/index.css";
 // KaTeX 只在公式出现时才会被 markstream 动态 import（mermaid 的依赖里也有 katex）；
@@ -91,6 +92,10 @@ export function Markdown({ text, streaming }: { text: string; streaming?: boolea
 		// 包括 Cmd/Ctrl 点击的默认行为都不应把应用页面导航走；主进程另有兜底拦截。
 		event.preventDefault();
 		if (link.kind === "unsupported") return;
+		if (link.kind === "file" && cwd && environmentEntityRef(cwd).environment.kind === "ssh") {
+			pushToast("info", "toast.remotePathAction");
+			return;
+		}
 		const operation =
 			link.kind === "external"
 				? getPi().openExternal({ url: link.url })
