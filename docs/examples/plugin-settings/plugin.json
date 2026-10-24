@@ -1,0 +1,56 @@
+{
+	"name": "plugin-settings",
+	"version": "0.1.0",
+	"displayName": "插件设置示例",
+	"description": "声明式设置页（settingsSchema，零代码）+ shadow 隔离的角标（isolation: shadow，自带样式）",
+	"perchoUi": 2,
+	"main": "src/index.tsx",
+	"styles": ["src/style.css"],
+	"settingsSchema": {
+		"version": 1,
+		"fields": {
+			"showBadge": {
+				"type": "boolean",
+				"label": { "zh": "显示角标", "en": "Show badge" },
+				"hint": {
+					"zh": "关掉后右上角的状态条立即消失（配置即时生效，不需要重启）",
+					"en": "The badge disappears immediately when turned off"
+				},
+				"default": true
+			},
+			"prefix": {
+				"type": "string",
+				"label": { "zh": "前缀文字", "en": "Prefix" },
+				"hint": { "zh": "角标里显示在数字前面的文字", "en": "Text shown before the number" },
+				"default": "bw",
+				"placeholder": "bw"
+			},
+			"refreshSeconds": {
+				"type": "number",
+				"label": { "zh": "刷新间隔（秒）", "en": "Refresh interval (s)" },
+				"default": 15,
+				"min": 5,
+				"max": 120,
+				"step": 5
+			},
+			"tone": {
+				"type": "select",
+				"label": { "zh": "角标色调", "en": "Tone" },
+				"default": "plain",
+				"options": [
+					{ "value": "plain", "label": { "zh": "朴素", "en": "Plain" } },
+					{ "value": "accent", "label": { "zh": "强调色", "en": "Accent" } }
+				]
+			}
+		}
+	},
+	"contributions": [
+		{
+			"id": "badge",
+			"region": "chat.corner.top-right",
+			"export": "SettingsBadge",
+			"title": "角标",
+			"isolation": "shadow"
+		}
+	]
+}
