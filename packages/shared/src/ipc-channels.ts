@@ -24,6 +24,7 @@ import type {
 	ImageInput,
 	LoadedResources,
 	LoadedSessionSummary,
+	PendingInteractions,
 	PermissionAnswer,
 	PermissionConfigInfo,
 	PermissionMode,
@@ -40,6 +41,7 @@ import type {
 	SlashCommandInfo,
 	TrustAnswer,
 	TrustRequest,
+	TrustResolved,
 	UiState,
 } from "./session";
 import type {
@@ -198,6 +200,10 @@ export const SESSION_CHANNELS = {
 		"mutation",
 	)<{ sessionId: string; level: string }, void>({ sessionId: input.id, level: input.text }),
 	/** 读取会话历史消息（打开历史会话时回放） */
+	getPendingInteractions: ch("session:getPendingInteractions", "environment", "read")<
+		void,
+		PendingInteractions
+	>(),
 	getLoadedSessions: ch("session:getLoaded", "environment", "read")<void, LoadedSessionSummary[]>(),
 	getSessionBaseline: ch(
 		"session:getBaseline",
@@ -440,7 +446,11 @@ export const EXTENSION_DIALOG_CHANNELS = {
 		"mutation",
 	)<{ requestId: string; answer: ExtensionDialogRespond }, void>({
 		requestId: input.id,
-		answer: input.jsonObject<ExtensionDialogRespond>(),
+		answer: input.union<ExtensionDialogRespond>(
+			input.object({ value: input.text }),
+			input.object({ confirmed: input.boolean }),
+			input.object({ cancelled: input.oneOf(true) }),
+		),
 	}),
 } as const;
 
@@ -803,6 +813,7 @@ export const SUBSCRIPTION_TABLE = {
 	onEvent: subscription<SessionEventEnvelope>()("Event", "pi:event"),
 	onPermissionRequest: subscription<PermissionRequest>()("PermissionRequest", "pi:permission-request"),
 	onPermissionResolved: subscription<PermissionResolved>()("PermissionResolved", "pi:permission-resolved"),
+	onTrustResolved: subscription<TrustResolved>()("TrustResolved", "pi:trustResolved"),
 	onTrustRequest: subscription<TrustRequest>()("TrustRequest", "pi:trust-request"),
 	onExtensionDialogRequest: subscription<ExtensionDialogRequest>()(
 		"ExtensionDialogRequest",

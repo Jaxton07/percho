@@ -333,6 +333,7 @@ export interface CreateSessionOptions {
 export type PermissionRequestKind = "path" | "command" | "other";
 
 export interface PermissionRequest {
+	revision?: number;
 	id: string;
 	sessionId: string;
 	title: string;
@@ -346,6 +347,7 @@ export type PermissionAnswer = "allow" | "deny" | "allowAlways" | "allowDir";
 
 /** 权限请求已裁决（answered=true 为批准/拒绝，false 为取消/过期）。 */
 export interface PermissionResolved {
+	revision?: number;
 	sessionId: string;
 	requestId: string;
 	answered: boolean;
@@ -392,6 +394,7 @@ export interface TrustOption {
 
 /** 项目信任请求（发生在会话创建前，无 sessionId） */
 export interface TrustRequest {
+	revision?: number;
 	id: string;
 	cwd: string;
 	options: TrustOption[];
@@ -524,4 +527,15 @@ export interface LoadedSessionSummary {
 	meta: SessionMeta;
 	streaming: boolean;
 	compacting: boolean;
+}
+
+export interface TrustResolved {
+	requestId: string;
+	revision?: number;
+}
+export interface PendingInteractions {
+	revision: number;
+	permissions: PermissionRequest[];
+	dialogs: import("./extension-dialog").ExtensionDialogRequest[];
+	trust: TrustRequest[];
 }

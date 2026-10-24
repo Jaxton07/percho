@@ -85,6 +85,9 @@ export function createSessionLoader(ports: SessionDataPorts) {
 							...state.bySession,
 							[sessionId]: {
 								...baseline.transcript,
+								phase: previous?.pendingPermissions.length
+									? "awaiting_permission"
+									: baseline.transcript.phase,
 								pendingPermissions: previous?.pendingPermissions ?? [],
 								pendingDialogs: previous?.pendingDialogs ?? [],
 							},

@@ -9,6 +9,31 @@ function makeGate(requests: PermissionRequest[] = []) {
 }
 
 describe("PermissionGate", () => {
+	it("does not reuse IDs across reopened hosts, and cancellation settles once without approving a later request", async () => {
+		const requests: PermissionRequest[] = [];
+		const resolved: unknown[] = [];
+		const old = new PermissionGate(
+			(request) => requests.push(request),
+			(result) => resolved.push(result),
+		);
+		old.bindSession("same");
+		const first = old.confirm("tool", "first");
+		old.cancelPending();
+		old.respond(requests[0].id, "allow");
+		expect(await first).toBe(false);
+		expect(resolved).toHaveLength(1);
+		const next = new PermissionGate((request) => requests.push(request));
+		next.bindSession("same");
+		const second = next.confirm("tool", "second");
+		expect(requests[1].id).not.toBe(requests[0].id);
+		next.respond(requests[0].id, "allow");
+		expect(next.listPending()).toHaveLength(1);
+		next.respond(requests[1].id, "allow");
+		expect(await second).toBe(true);
+		next.dispose();
+		expect(await next.confirm("tool", "late")).toBe(false);
+		expect(next.listPending()).toEqual([]);
+	});
 	it("发出 permission_request 并等待应答", async () => {
 		const { gate, requests } = makeGate();
 

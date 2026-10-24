@@ -11,7 +11,8 @@ export type ExtensionDialogKind = "select" | "input" | "editor" | "confirm";
 
 /** main → renderer：待应答对话框（卡片渲染数据源；内容为插件提供的非受信文本，renderer 纯文本渲染） */
 export interface ExtensionDialogRequest {
-	/** `dlg-<sessionId>-<n>`，backend 单调递增 */
+	revision?: number;
+	/** 不可复用的请求身份（包括服务重启及会话重开） */
 	id: string;
 	sessionId: string;
 	kind: ExtensionDialogKind;
@@ -36,6 +37,7 @@ export type ExtensionDialogRespond = { value: string } | { confirmed: boolean } 
 
 /** main → renderer：对话框已结算（应答/超时/中止/会话关闭都会广播，renderer 撤卡） */
 export interface ExtensionDialogResolved {
+	revision?: number;
 	sessionId: string;
 	requestId: string;
 	/** answered=用户现场作答（含主动取消）；其余为系统裁决 */

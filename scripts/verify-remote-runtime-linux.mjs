@@ -159,6 +159,7 @@ try {
 	);
 	const attached = await first.attach("linux-integration");
 	await first.invoke("getLoadedSessions");
+	await first.invoke("getPendingInteractions");
 	second = await RuntimeClient.connect(socket);
 	try {
 		await second.attach("second-controller");
@@ -194,6 +195,8 @@ try {
 	// Reattach to the same in-memory backend. No request is replayed.
 	second = await RuntimeClient.connect(socket);
 	const next = await second.attach("linux-reconnect");
+	await second.invoke("getLoadedSessions");
+	await second.invoke("getPendingInteractions");
 	if (next.info.instanceId !== attached.info.instanceId || next.epoch <= attached.epoch)
 		throw new Error("Attachment identity/fence incorrect");
 	const operation = { instanceId: attached.info.instanceId, epoch: attached.epoch, sequence: 4 };

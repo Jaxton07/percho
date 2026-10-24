@@ -57,7 +57,16 @@ export async function startRuntimeServer(paths: RuntimePaths) {
 		let epoch = 0;
 		const mutations = new MutationBook();
 		let controller:
-			| { socket: Socket; epoch: number; clientTag: string; lastPong: number; nonce?: string; ready: boolean }
+			| {
+					socket: Socket;
+					epoch: number;
+					clientTag: string;
+					lastPong: number;
+					nonce?: string;
+					ready: boolean;
+					loaded: boolean;
+					interactions: boolean;
+			  }
 			| undefined;
 		const sockets = new Set<Socket>();
 		const writers = new Map<Socket, RuntimeWriter>();
@@ -161,6 +170,8 @@ export async function startRuntimeServer(paths: RuntimePaths) {
 						clientTag: request.clientTag,
 						lastPong: Date.now(),
 						ready: false,
+						loaded: false,
+						interactions: false,
 					};
 					mutations.beginEpoch(epoch);
 					result(request.id, { info, epoch });
@@ -267,7 +278,9 @@ export async function startRuntimeServer(paths: RuntimePaths) {
 						definition.validate(request.args);
 						await authorized();
 						const value = await handler(request.args);
-						if (request.method === "getLoadedSessions") current.ready = true;
+						if (request.method === "getLoadedSessions") current.loaded = true;
+						if (request.method === "getPendingInteractions") current.interactions = true;
+						current.ready = current.loaded && current.interactions;
 						result(request.id, value);
 					}
 				} catch (error) {

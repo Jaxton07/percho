@@ -3,6 +3,7 @@ import { useEffect } from "react";
 import { subscribeExecutionEnvironments } from "../environment-api";
 import { useDraftStore, withDraftText } from "../stores/drafts";
 import { EventConflator } from "../stores/event-conflator";
+import { acceptInteractionEvent, useInteractionStore } from "../stores/interactions";
 import { useProjectsStore } from "../stores/projects";
 import { acceptSessionEvent, onSessionBoundaryReset } from "../stores/session-event-boundary";
 import { retrySessionHistory } from "../stores/session-history";
@@ -33,7 +34,7 @@ export function useSessionEventBridge({
 			},
 		});
 		const offBoundary = onSessionBoundaryReset((sessionId) => conflator.discard(sessionId));
-		const offEnvironments = subscribeExecutionEnvironments((pi) => {
+		const offEnvironments = subscribeExecutionEnvironments((pi, environment) => {
 			const offEvent = pi.onEvent(
 				({ sessionId, event, sequence }: { sessionId: string; event: SessionEvent; sequence?: number }) => {
 					acceptSessionEvent(sessionId, sequence, event, () => {
@@ -49,17 +50,25 @@ export function useSessionEventBridge({
 				},
 			);
 			const offPermission = pi.onPermissionRequest((req) => {
-				useTranscriptStore.getState().addPermission(req.sessionId, req);
+				acceptInteractionEvent(environment, req.revision, req, () => {
+					useTranscriptStore.getState().addPermission(req.sessionId, req);
+				});
 			});
 			const offPermissionResolved = pi.onPermissionResolved((result) => {
-				useTranscriptStore.getState().resolvePermission(result.sessionId, result.requestId);
+				acceptInteractionEvent(environment, result.revision, result, () => {
+					useTranscriptStore.getState().resolvePermission(result.sessionId, result.requestId);
+				});
 			});
 			// 扩展对话框（issue #45）：入队/撤卡 + notify→Toast + 预填→草稿（来源带一次性提示）
 			const offDialogRequest = pi.onExtensionDialogRequest((req) => {
-				useTranscriptStore.getState().addExtensionDialog(req.sessionId, req);
+				acceptInteractionEvent(environment, req.revision, req, () => {
+					useTranscriptStore.getState().addExtensionDialog(req.sessionId, req);
+				});
 			});
 			const offDialogResolved = pi.onExtensionDialogResolved((result) => {
-				useTranscriptStore.getState().resolveExtensionDialog(result.sessionId, result.requestId);
+				acceptInteractionEvent(environment, result.revision, result, () => {
+					useTranscriptStore.getState().resolveExtensionDialog(result.sessionId, result.requestId);
+				});
 			});
 			const offNotify = pi.onExtensionNotify((event) => {
 				pushExtensionToast(event.level, event.message, event.extensionPath || undefined);
@@ -68,7 +77,14 @@ export function useSessionEventBridge({
 				useDraftStore.getState().updateDraft(event.sessionId, (d) => withDraftText(d, event.text));
 				useTranscriptStore.getState().markExtensionPrefill(event.sessionId, event.source ?? "");
 			});
-			const offTrust = pi.onTrustRequest(onTrustRequest);
+			const offTrust = pi.onTrustRequest((req) =>
+				acceptInteractionEvent(environment, req.revision, req, () => onTrustRequest(req)),
+			);
+			const offTrustResolved = pi.onTrustResolved((result) =>
+				acceptInteractionEvent(environment, result.revision, result, () =>
+					useInteractionStore.getState().removeTrust(result.requestId),
+				),
+			);
 			return () => {
 				offEvent();
 				offPermission();
@@ -78,6 +94,7 @@ export function useSessionEventBridge({
 				offNotify();
 				offEditorText();
 				offTrust();
+				offTrustResolved();
 			};
 		});
 		return () => {

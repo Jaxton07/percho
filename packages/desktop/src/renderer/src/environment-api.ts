@@ -88,6 +88,15 @@ function resultFor(method: string, value: unknown, environment: EnvironmentRef):
 			return record(value) && typeof value.sessionId === "string"
 				? { ...value, sessionId: environmentEntityKey(environment, value.sessionId) }
 				: value;
+		case "getPendingInteractions": {
+			const snapshot = value as import("@percho/shared").PendingInteractions;
+			return {
+				...snapshot,
+				permissions: snapshot.permissions.map((item) => eventFor("onPermissionRequest", item, environment)),
+				dialogs: snapshot.dialogs.map((item) => eventFor("onExtensionDialogRequest", item, environment)),
+				trust: snapshot.trust.map((item) => eventFor("onTrustRequest", item, environment)),
+			};
+		}
 		case "getLoadedSessions":
 			return (value as Array<{ meta: SessionMeta }>).map((item) => ({
 				...item,

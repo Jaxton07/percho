@@ -4,6 +4,7 @@ import { getPi } from "../api";
 import { getExecutionApi } from "../environment-api";
 import { registerEnvironment } from "../environment-registry";
 import { errText } from "../lib/error-text";
+import { useInteractionStore } from "./interactions";
 import { useProjectsStore } from "./projects";
 import { invalidateEnvironmentSessions, synchronizeEnvironmentSessions, useSessionsStore } from "./sessions";
 import { pushToast } from "./toasts";
@@ -71,7 +72,14 @@ export const useRemoteConnectionStore = create<RemoteConnectionStore>((set, get)
 		const canonical = await api.resolvePath({ target: path, cwd: null });
 		// Trust is the existing target-side decision, routed through the shared dialog bridge.
 		set({ open: false });
-		await api.ensureProjectTrust({ cwd: canonical });
+		const trustCwd = environmentEntityKey(environment, canonical);
+		useInteractionStore.getState().setTrustTarget(trustCwd);
+		try {
+			await api.ensureProjectTrust({ cwd: canonical });
+		} finally {
+			if (useInteractionStore.getState().foregroundTrustCwd === trustCwd)
+				useInteractionStore.getState().setTrustTarget(null);
+		}
 		const cwd = environmentEntityKey(environment, canonical);
 		useProjectsStore.getState().addKnownProject(cwd);
 		useProjectsStore.getState().select(cwd);

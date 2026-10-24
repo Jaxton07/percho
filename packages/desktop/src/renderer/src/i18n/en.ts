@@ -3,6 +3,11 @@ import type { Messages } from "./zh";
 /** English language pack (mirrors zh.ts shape) */
 export const en: Messages = {
 	remote: {
+		pendingAttention: "A remote project needs your attention",
+		pendingExpired: "This request is no longer pending.",
+		review: "Review request",
+
+		waitingForConnection: "Answers are available after reconnecting and verifying pending requests.",
 		restarted:
 			"The remote service restarted. Saved history is available; previous tasks will not resume automatically. Check their results.",
 		syncFailed: "Remote session synchronization failed. Open the session to retry.",

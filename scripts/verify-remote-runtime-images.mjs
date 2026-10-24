@@ -140,6 +140,7 @@ try {
 	});
 	await client.attach("image-fixture");
 	await client.invoke("getLoadedSessions");
+	await client.invoke("getPendingInteractions");
 	const session = await client.invoke("createSession", {
 		options: { cwd: project, provider: "image-fixture", modelId: "images", thinkingLevel: "off" },
 	});

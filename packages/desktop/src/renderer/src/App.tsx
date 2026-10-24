@@ -1,11 +1,13 @@
 import type { TrustRequest } from "@percho/shared";
-import { useCallback, useEffect, useRef, useState } from "react";
+import { environmentEntityRef } from "@percho/shared";
+import { useCallback, useEffect, useRef } from "react";
 import { CornerStack } from "./components/chat/CornerStack";
 import { EmptyState } from "./components/chat/EmptyState";
 import { MessageList } from "./components/chat/MessageList";
 import { SubagentBackButton } from "./components/chat/SubagentBackButton";
 import { TodoPanel } from "./components/chat/TodoPanel";
 import { DiffSidebar } from "./components/diff/DiffSidebar";
+import { RemoteAttentionBanner } from "./components/remote/RemoteAttentionBanner";
 import { RemoteConnectionDialog } from "./components/remote/RemoteConnectionDialog";
 import { DockSlot } from "./components/session/DockSlot";
 import { SessionRail } from "./components/session/SessionRail";
@@ -16,6 +18,7 @@ import { Sidebar } from "./components/sidebar/Sidebar";
 import { Toaster } from "./components/Toaster";
 import { getExecutionApi } from "./environment-api";
 import { useSessionEventBridge } from "./hooks/use-session-event-bridge";
+import { selectActiveCwd } from "./lib/active-cwd";
 import { initDailyDir } from "./lib/daily";
 import { useSessionGc } from "./lib/use-session-gc";
 import { initUiPlugins } from "./plugins/loader";
@@ -29,6 +32,7 @@ import {
 	invalidateChannelSubscriptionQueries,
 	syncActiveSession,
 } from "./stores/channel-subscriptions";
+import { useInteractionStore } from "./stores/interactions";
 import { initRemoteConnectionBridge } from "./stores/remote-connection";
 import { restoreSessionWorkspace } from "./stores/session-workspace-restore";
 import { useSessionsStore } from "./stores/sessions";
@@ -65,11 +69,21 @@ export default function App() {
 		const entry = activeSessionId ? s.bySession[activeSessionId] : undefined;
 		return !entry || (entry.messages.length === 0 && !entry.streaming);
 	});
-	const [trustRequests, setTrustRequests] = useState<TrustRequest[]>([]);
+	const trustRequests = useInteractionStore((state) => state.trustRequests);
+	const selectedTrustId = useInteractionStore((state) => state.selectedTrustId);
+	const activeCwd = useSessionsStore(selectActiveCwd);
+	const foregroundTrustCwd = useInteractionStore((state) => state.foregroundTrustCwd);
+	const visibleTrustRequests = trustRequests.filter(
+		(request) =>
+			environmentEntityRef(request.id).environment.kind === "local" ||
+			request.id === selectedTrustId ||
+			request.cwd === activeCwd ||
+			request.cwd === foregroundTrustCwd,
+	);
 
 	// 事件桥：conflator 装配 + 事件/权限/信任订阅（回调稳定引用，桥只订阅一次不重挂）
 	const pushTrustRequest = useCallback((req: TrustRequest) => {
-		setTrustRequests((prev) => [...prev, req]);
+		useInteractionStore.getState().addTrust(req);
 	}, []);
 	useSessionEventBridge({ onTrustRequest: pushTrustRequest });
 
@@ -101,9 +115,9 @@ export default function App() {
 		void initUiPlugins();
 	}, []);
 
-	const respondTrust = (requestId: string, optionIndex: number) => {
-		void getExecutionApi(requestId).respondTrust({ requestId, answer: optionIndex });
-		setTrustRequests((prev) => prev.filter((req) => req.id !== requestId));
+	const respondTrust = async (requestId: string, optionIndex: number) => {
+		await getExecutionApi(requestId).respondTrust({ requestId, answer: optionIndex });
+		useInteractionStore.getState().removeTrust(requestId);
 	};
 
 	const bgImage = useThemeStore((s) => s.background.image);
@@ -162,7 +176,8 @@ export default function App() {
 			<RegionHost region={UI_REGIONS.AppOverlay} />
 			<SettingsDialog />
 			<RemoteConnectionDialog />
-			<TrustDialog requests={trustRequests} onRespond={respondTrust} />
+			<RemoteAttentionBanner />
+			<TrustDialog requests={visibleTrustRequests} onRespond={respondTrust} />
 			<Toaster />
 		</div>
 	);

@@ -1,7 +1,8 @@
 import type { PermissionRequest } from "@percho/shared";
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { getExecutionApi } from "../../environment-api";
 import { useT } from "../../i18n";
+import { useCanAnswerInteraction } from "../../stores/interactions";
 import { useTranscriptStore } from "../../stores/transcript";
 import { WarningIcon } from "../icons";
 
@@ -17,6 +18,7 @@ const EXIT_MS = 150;
  */
 export function ApprovalDock({ sessionId }: { sessionId: string | null }) {
 	const t = useT();
+	const cardRef = useRef<HTMLDivElement>(null);
 	const pending = useTranscriptStore((s) =>
 		sessionId ? s.bySession[sessionId]?.pendingPermissions : undefined,
 	);
@@ -30,6 +32,7 @@ export function ApprovalDock({ sessionId }: { sessionId: string | null }) {
 	// 应答 IPC 失败：请求保留在 pending（agent 仍在等待），展示错误供重试（D3）
 	const [error, setError] = useState<string | null>(null);
 	const [sending, setSending] = useState(false);
+	const canAnswer = useCanAnswerInteraction(shown?.id);
 	useEffect(() => {
 		if (request) {
 			setShown(request);
@@ -48,7 +51,7 @@ export function ApprovalDock({ sessionId }: { sessionId: string | null }) {
 	// 应答链：await IPC 成功才移除 UI（失败保留请求，agent 不丢审批）；按钮与快捷键共用
 	const respond = useCallback(
 		async (answer: "allow" | "deny" | "allowAlways" | "allowDir") => {
-			if (!shown || leaving || !sessionId || sending) return;
+			if (!shown || leaving || !sessionId || sending || !canAnswer) return;
 			setSending(true);
 			setError(null);
 			try {
@@ -60,13 +63,20 @@ export function ApprovalDock({ sessionId }: { sessionId: string | null }) {
 				setSending(false);
 			}
 		},
-		[shown, leaving, sessionId, sending, resolvePermission],
+		[shown, leaving, sessionId, sending, canAnswer, resolvePermission],
 	);
 
 	// 键盘快捷键：Enter=允许一次，A=本项目总是允许，D=允许此目录（仅越界路径类有），Esc=拒绝
 	useEffect(() => {
 		if (!shown || leaving || !sessionId) return;
 		const onKeyDown = (e: KeyboardEvent) => {
+			if (e.target instanceof Element && e.target.closest("input, textarea, [contenteditable=true]")) return;
+			if (
+				[...document.querySelectorAll('[role="dialog"][aria-modal="true"]')].some(
+					(dialog) => dialog !== cardRef.current,
+				)
+			)
+				return;
 			const answer =
 				e.key === "Enter"
 					? "allow"
@@ -98,51 +108,57 @@ export function ApprovalDock({ sessionId }: { sessionId: string | null }) {
 		// z-20 同 DockSlot：审批卡在下方时缩略图 × 同样会伸出容器顶
 		<div className="relative z-20 shrink-0 px-6 pb-3">
 			<div className="mx-auto max-w-[760px]">
-				<div
-					key={shown.id}
-					role="dialog"
-					aria-modal
-					className={`flex flex-col gap-2.5 rounded-[14px] bg-surface px-3.5 pt-3 pb-2.5 shadow-soft outline-none ${
-						leaving ? "dock-exit" : "dock-in"
-					}`}
-				>
-					<div className="flex min-h-5 items-center gap-2">
-						<span className="flex-none text-warn" aria-hidden="true">
-							<WarningIcon />
-						</span>
-						<h3 className="min-w-0 flex-1 truncate font-mono text-ui-13 font-medium text-ink-2">
-							{shown.title}
-						</h3>
-						{queueCount > 0 && (
-							<span className="shrink-0 text-ui-11 text-ink-faint">
-								{t("permission.queued", { count: queueCount })}
+				{!canAnswer && <p className="mb-2 text-ui-12 text-ink-faint">{t("remote.waitingForConnection")}</p>}
+				<fieldset disabled={!canAnswer || sending} className="contents">
+					<div
+						key={shown.id}
+						ref={cardRef}
+						role="dialog"
+						aria-modal
+						className={`flex flex-col gap-2.5 rounded-[14px] bg-surface px-3.5 pt-3 pb-2.5 shadow-soft outline-none ${
+							leaving ? "dock-exit" : "dock-in"
+						}`}
+					>
+						<div className="flex min-h-5 items-center gap-2">
+							<span className="flex-none text-warn" aria-hidden="true">
+								<WarningIcon />
 							</span>
-						)}
-					</div>
-					<p className="max-h-32 overflow-y-auto rounded-lg bg-hover p-2.5 font-mono text-ui-12 leading-relaxed break-all whitespace-pre-wrap text-ink-2 select-text">
-						{shown.message}
-					</p>
-					{error && (
-						<p className="rounded-lg bg-hover px-2.5 py-1.5 text-ui-12 break-all text-err">{error}</p>
-					)}
-					<div className="flex flex-wrap items-center gap-0.5">
-						<span className="text-ui-11 text-ink-faint">
-							{shown.suggestDir
-								? t("interaction.hintPermissionDir", hintParams)
-								: t("interaction.hintPermission", hintParams)}
-						</span>
-						<div className="ml-auto flex flex-wrap items-center gap-0.5">
-							<GhostAction onClick={() => respond("deny")}>{t("permission.deny")}</GhostAction>
-							{shown.suggestDir && (
-								<GhostAction onClick={() => respond("allowDir")}>{t("permission.allowDir")}</GhostAction>
+							<h3 className="min-w-0 flex-1 truncate font-mono text-ui-13 font-medium text-ink-2">
+								{shown.title}
+							</h3>
+							{queueCount > 0 && (
+								<span className="shrink-0 text-ui-11 text-ink-faint">
+									{t("permission.queued", { count: queueCount })}
+								</span>
 							)}
-							<GhostAction onClick={() => respond("allowAlways")}>{t("permission.allowAlways")}</GhostAction>
-							<GhostAction strong onClick={() => respond("allow")}>
-								{t("permission.allowOnce")}
-							</GhostAction>
+						</div>
+						<p className="max-h-32 overflow-y-auto rounded-lg bg-hover p-2.5 font-mono text-ui-12 leading-relaxed break-all whitespace-pre-wrap text-ink-2 select-text">
+							{shown.message}
+						</p>
+						{error && (
+							<p className="rounded-lg bg-hover px-2.5 py-1.5 text-ui-12 break-all text-err">{error}</p>
+						)}
+						<div className="flex flex-wrap items-center gap-0.5">
+							<span className="text-ui-11 text-ink-faint">
+								{shown.suggestDir
+									? t("interaction.hintPermissionDir", hintParams)
+									: t("interaction.hintPermission", hintParams)}
+							</span>
+							<div className="ml-auto flex flex-wrap items-center gap-0.5">
+								<GhostAction onClick={() => respond("deny")}>{t("permission.deny")}</GhostAction>
+								{shown.suggestDir && (
+									<GhostAction onClick={() => respond("allowDir")}>{t("permission.allowDir")}</GhostAction>
+								)}
+								<GhostAction onClick={() => respond("allowAlways")}>
+									{t("permission.allowAlways")}
+								</GhostAction>
+								<GhostAction strong onClick={() => respond("allow")}>
+									{t("permission.allowOnce")}
+								</GhostAction>
+							</div>
 						</div>
 					</div>
-				</div>
+				</fieldset>
 			</div>
 		</div>
 	);

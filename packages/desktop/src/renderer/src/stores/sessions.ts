@@ -26,6 +26,7 @@ import {
 	newSessionDraftKey,
 	useDraftStore,
 } from "./drafts";
+import { invalidateInteractions, synchronizeInteractions } from "./interactions";
 import {
 	beginSessionBaseline,
 	finishSessionBaseline,
@@ -965,6 +966,7 @@ export function invalidateEnvironmentSessions(environment: EnvironmentRef): numb
 	const generation = (remoteRecovery.get(key) ?? 0) + 1;
 	remoteRecovery.set(key, generation);
 	pauseEnvironmentEvents(environment);
+	invalidateInteractions(environment);
 	for (const meta of useSessionsStore.getState().sessions) {
 		if (!sameEnvironment(environmentEntityRef(meta.sessionId).environment, environment)) continue;
 		sessionLoader.forget(meta.sessionId, meta.sessionFile);
@@ -977,7 +979,10 @@ export async function synchronizeEnvironmentSessions(
 	generation: number,
 ): Promise<void> {
 	const key = environmentKey(environment);
-	const summaries = await getExecutionApi(environment).getLoadedSessions();
+	const [summaries] = await Promise.all([
+		getExecutionApi(environment).getLoadedSessions(),
+		synchronizeInteractions(environment),
+	]);
 	if (remoteRecovery.get(key) !== generation) return;
 	const old = useSessionsStore.getState();
 	const active = old.activeSessionId;
@@ -1039,7 +1044,11 @@ export async function synchronizeEnvironmentSessions(
 							streaming: null,
 							agentActive: summary.streaming,
 							compacting: summary.compacting,
-							phase: summary.streaming ? "streaming" : "idle",
+							phase: previous?.pendingPermissions.length
+								? "awaiting_permission"
+								: summary.streaming
+									? "streaming"
+									: "idle",
 							followUpQueue: summary.followUpQueue,
 						},
 					},

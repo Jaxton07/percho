@@ -15,6 +15,7 @@ export function bindExecutionEvents(
 			),
 		onPermissionRequest: (handler) => backend.onPermissionRequest(handler),
 		onPermissionResolved: (handler) => backend.onPermissionResolved(handler),
+		onTrustResolved: (handler) => backend.onTrustResolved(handler),
 		onTrustRequest: (handler) => backend.onTrustRequest(handler),
 		onExtensionDialogRequest: (handler) => backend.onExtensionDialogRequest(handler),
 		onExtensionDialogResolved: (handler) => backend.onExtensionDialogResolved(handler),

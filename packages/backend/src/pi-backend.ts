@@ -42,6 +42,7 @@ import type {
 	McpServersChangedPayload,
 	McpToolView,
 	McpUpsertInput,
+	PendingInteractions,
 	PermissionAnswer,
 	PermissionMode,
 	PermissionRequest,
@@ -56,6 +57,7 @@ import type {
 	SubagentInfo,
 	TrustAnswer,
 	TrustRequest,
+	TrustResolved,
 } from "@percho/shared";
 import {
 	type ComposerDocument,
@@ -232,6 +234,19 @@ export class PiBackend {
 	private readonly permissionEmitter = new Emitter<PermissionRequest>();
 	private readonly permissionResolvedEmitter = new Emitter<PermissionResolved>();
 	private readonly trustEmitter = new Emitter<TrustRequest>();
+	private readonly trustResolvedEmitter = new Emitter<TrustResolved>();
+	private interactionRevision = 0;
+	private publishInteraction<T>(emitter: Emitter<T>, event: T): void {
+		emitter.emit({ ...event, revision: ++this.interactionRevision });
+	}
+	getPendingInteractions(): PendingInteractions {
+		return {
+			revision: this.interactionRevision,
+			permissions: this.getPendingPermissionRequests(),
+			dialogs: this.registry.list().flatMap((entry) => entry.dialogs.listPending()),
+			trust: this.trustGate.listPending(),
+		};
+	}
 	private readonly loginEmitter = new Emitter<LoginEventPayload>();
 	private readonly extensionDialogRequestEmitter = new Emitter<ExtensionDialogRequest>();
 	private readonly extensionDialogResolvedEmitter = new Emitter<ExtensionDialogResolved>();
@@ -247,7 +262,10 @@ export class PiBackend {
 	private mcpGlobalNotice: McpGlobalNotice | undefined;
 	/** 项目信任决策记录（~/.pi/agent/trust.json，与 CLI 共享）+ 信任请求门控 */
 	private readonly trustStore = new ProjectTrustStore(getAgentDir());
-	private readonly trustGate = new TrustGate((req) => this.trustEmitter.emit(req));
+	private readonly trustGate = new TrustGate(
+		(req) => this.publishInteraction(this.trustEmitter, req),
+		(requestId) => this.publishInteraction(this.trustResolvedEmitter, { requestId }),
+	);
 	/** 会话事件 trace（JSONL，离线可重放） */
 	private readonly traces = new SessionTraces();
 	/**
@@ -435,8 +453,8 @@ export class PiBackend {
 		sessionId: string,
 	): Promise<ExtensionDialogHost> {
 		const dialogs = new ExtensionDialogHost({
-			onRequest: (req) => this.extensionDialogRequestEmitter.emit(req),
-			onResolved: (result) => this.extensionDialogResolvedEmitter.emit(result),
+			onRequest: (req) => this.publishInteraction(this.extensionDialogRequestEmitter, req),
+			onResolved: (result) => this.publishInteraction(this.extensionDialogResolvedEmitter, result),
 		});
 		dialogs.bind(sessionId);
 		const recordExtensionError = (err: ExtensionError): void => {
@@ -663,7 +681,10 @@ export class PiBackend {
 			load: () => Promise<{ settingsManager: SettingsManagerType; resourceLoader: DefaultResourceLoader }>;
 		}) => Promise<CreateAgentSessionResult>,
 	): Promise<AgentSession> {
-		const gate = new PermissionGate((req) => this.permissionEmitter.emit(req));
+		const gate = new PermissionGate(
+			(req) => this.publishInteraction(this.permissionEmitter, req),
+			(result) => this.publishInteraction(this.permissionResolvedEmitter, result),
+		);
 		// 权限扩展的确认通道直接桥到 gate（携带 kind/suggestDir 元数据，驱动「允许此目录」/持久化）
 		const confirmBridge: PermissionConfirm = (title, message, meta) => gate.confirm(title, message, meta);
 		// 会话权限模式引用：一律 default 起步（D1：不落盘、不继承），随工厂闭包注入求值链
@@ -1012,6 +1033,8 @@ export class PiBackend {
 		const entry = this.registry.get(sessionId);
 		if (!entry) return;
 		log.info("abort", sessionId);
+		entry.gate.cancelPending();
+		entry.dialogs.cancelPending();
 		await entry.session.abort();
 	}
 
@@ -1480,6 +1503,9 @@ export class PiBackend {
 		return this.permissionResolvedEmitter.subscribe(handler);
 	}
 
+	onTrustResolved(handler: (event: TrustResolved) => void): () => void {
+		return this.trustResolvedEmitter.subscribe(handler);
+	}
 	onTrustRequest(handler: (req: TrustRequest) => void): () => void {
 		return this.trustEmitter.subscribe(handler);
 	}
@@ -1722,11 +1748,6 @@ export class PiBackend {
 				// 先放行 agent 再持久化（D3）：持久化失败（如 workspaces.json 损坏拒写）只丢记忆不挂会话，
 				// log.error 留痕——fail-open 与 enabled=false 整体放行的既有语义一致
 				gate.respond(requestId, answer);
-				this.permissionResolvedEmitter.emit({
-					sessionId: gate.getSessionId(),
-					requestId,
-					answered: true,
-				});
 				const entry = this.registry.get(gate.getSessionId());
 				if (entry) {
 					try {
@@ -1747,11 +1768,6 @@ export class PiBackend {
 		for (const { gate } of this.registry.list()) {
 			if (!gate.getRequest(requestId)) continue;
 			gate.respond(requestId, answer);
-			this.permissionResolvedEmitter.emit({
-				sessionId: gate.getSessionId(),
-				requestId,
-				answered: true,
-			});
 		}
 	}
 
@@ -1829,6 +1845,7 @@ export class PiBackend {
 		this.permissionEmitter.clear();
 		this.permissionResolvedEmitter.clear();
 		this.trustEmitter.clear();
+		this.trustResolvedEmitter.clear();
 		this.loginEmitter.clear();
 		this.extensionDialogRequestEmitter.clear();
 		this.extensionDialogResolvedEmitter.clear();

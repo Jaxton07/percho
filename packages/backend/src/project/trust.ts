@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import { realpathSync } from "node:fs";
 import { resolve } from "node:path";
 import {
@@ -73,8 +74,6 @@ export async function resolveProjectTrust(options: ResolveTrustOptions): Promise
 
 export type TrustResponder = (req: TrustRequest) => void;
 
-let nextId = 0;
-
 /**
  * 项目信任门控：决策需要用户输入时发 trust-request 事件并等待应答。
  * 应答为选项下标；用户关闭/取消（undefined）按不信任处理（与 CLI 一致）。
@@ -82,34 +81,38 @@ let nextId = 0;
 export class TrustGate {
 	private readonly pending = new Map<
 		string,
-		{ optionCount: number; resolve: (answer: number | undefined) => void }
+		{ request: TrustRequest; optionCount: number; resolve: (answer: number | undefined) => void }
 	>();
 	/** 同一 cwd 的在途询问去重：选目录预检与会话创建可能并发触发，避免同项目弹两次 */
 	private readonly inflightByCwd = new Map<string, Promise<number | undefined>>();
 
-	constructor(private readonly onRequest: TrustResponder) {}
+	constructor(
+		private readonly onRequest: TrustResponder,
+		private readonly onResolved: (id: string) => void = () => {},
+	) {}
 
 	ask(cwd: string, options: TrustOptionInternal[]): Promise<number | undefined> {
 		const inflight = this.inflightByCwd.get(cwd);
 		if (inflight) return inflight;
-		const id = `trust-${nextId++}`;
+		const id = `trust-${randomUUID()}`;
 		const promise = new Promise<number | undefined>((resolve) => {
-			this.pending.set(id, { optionCount: options.length, resolve });
-			this.onRequest({
-				id,
-				cwd,
-				options: options.map((o) => ({ key: o.key })),
-			});
+			const request: TrustRequest = { id, cwd, options: options.map((option) => ({ key: option.key })) };
+			this.pending.set(id, { request, optionCount: options.length, resolve });
+			this.onRequest(request);
 		});
 		this.inflightByCwd.set(cwd, promise);
 		void promise.then(() => this.inflightByCwd.delete(cwd));
 		return promise;
 	}
 
+	listPending(): TrustRequest[] {
+		return [...this.pending.values()].map((entry) => entry.request);
+	}
 	respond(requestId: string, answer: number): void {
 		const entry = this.pending.get(requestId);
 		if (!entry) return;
 		this.pending.delete(requestId);
+		this.onResolved(requestId);
 		if (!Number.isInteger(answer) || answer < 0 || answer >= entry.optionCount) {
 			entry.resolve(undefined);
 			return;
@@ -118,7 +121,10 @@ export class TrustGate {
 	}
 
 	dispose(): void {
-		for (const entry of this.pending.values()) entry.resolve(undefined);
+		for (const [id, entry] of this.pending) {
+			entry.resolve(undefined);
+			this.onResolved(id);
+		}
 		this.pending.clear();
 		this.inflightByCwd.clear();
 	}

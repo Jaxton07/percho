@@ -115,6 +115,7 @@ try {
 	}
 	if (!refused || (await client.invoke("getLoadedSessions")).length !== 0)
 		throw new Error("New work was admitted before initial synchronization");
+	await client.invoke("getPendingInteractions");
 	const session = await client.invoke("createSession", {
 		options: { cwd: project, provider: "reconnect-fixture", modelId: "m", thinkingLevel: "off" },
 	});
@@ -155,6 +156,7 @@ try {
 	}
 	if (!client) throw new Error("Controller was not released");
 	const loaded = await client.invoke("getLoadedSessions");
+	await client.invoke("getPendingInteractions");
 	if (
 		!loaded.some((item) => item.meta.sessionId === empty.sessionId && item.meta.messageCount === 0) ||
 		!loaded.find((item) => item.meta.sessionId === session.sessionId)?.streaming
@@ -172,6 +174,7 @@ try {
 	client = RuntimeClient.fromStream(socket, onEvent);
 	await client.attach("during-large-baseline");
 	await client.invoke("getLoadedSessions");
+	await client.invoke("getPendingInteractions");
 	let started = false;
 	const releaseDuringTransfer = (bytes) => {
 		if (!started && bytes.toString("utf8").includes('"type":"chunk"')) {

@@ -56,6 +56,7 @@ export function registerIpc(
 	// 权限裁决也回投渲染端：LAN 远程应答 / 其他来源应答时桌面卡片要同步撤掉
 	forward(backend.onPermissionResolved.bind(backend), IpcChannels.PermissionResolved);
 	forward(backend.onTrustRequest.bind(backend), IpcChannels.TrustRequest);
+	forward(backend.onTrustResolved.bind(backend), IpcChannels.TrustResolved);
 	// 扩展对话框四事件：请求/结算/notify/草稿预填（issue #45）
 	forward(backend.onExtensionDialogRequest.bind(backend), IpcChannels.ExtensionDialogRequest);
 	forward(backend.onExtensionDialogResolved.bind(backend), IpcChannels.ExtensionDialogResolved);

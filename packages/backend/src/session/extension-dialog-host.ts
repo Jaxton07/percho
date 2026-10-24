@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import type {
 	ExtensionDialogKind,
 	ExtensionDialogRequest,
@@ -45,7 +46,7 @@ interface PendingEntry {
 
 /**
  * 扩展对话框宿主：每会话一个（与 PermissionGate 平行）。职责：
- * - ask() 注册 pending（分配 dlg-<sessionId>-<n>）并 dispatch 请求事件；
+ * - ask() 注册 pending（分配不可复用的随机请求 ID）并 dispatch 请求事件；
  * - timeout 起定时器、signal 监听 abort，到点/中止自动按取消值结算（D4：裁决在 backend）；
  * - respond() 用户应答结算；dispose() 会话关闭兜底（防扩展 Promise 悬挂卡死 agent）。
  * 纯逻辑、零 Electron 依赖；回调注入。
@@ -53,7 +54,7 @@ interface PendingEntry {
 export class ExtensionDialogHost {
 	private readonly pending = new Map<string, PendingEntry>();
 	private sessionId = "";
-	private seq = 0;
+	private closed = false;
 
 	constructor(
 		private readonly listeners: {
@@ -73,7 +74,8 @@ export class ExtensionDialogHost {
 		fields: ExtensionDialogFields,
 		opts?: ExtensionDialogOpts,
 	): Promise<string | boolean | undefined> {
-		const id = `dlg-${this.sessionId}-${this.seq++}`;
+		if (this.closed) return Promise.resolve(CANCEL_VALUE[kind]);
+		const id = `dlg-${randomUUID()}`;
 		const request: ExtensionDialogRequest = {
 			id,
 			sessionId: this.sessionId,
@@ -112,6 +114,10 @@ export class ExtensionDialogHost {
 		});
 	}
 
+	listPending(): ExtensionDialogRequest[] {
+		return [...this.pending.values()].map((entry) => entry.request);
+	}
+
 	/** 用户应答（renderer IPC；confirm 的 confirmed !== true 一律 false，fail-closed） */
 	respond(requestId: string, answer: ExtensionDialogRespond): void {
 		const entry = this.pending.get(requestId);
@@ -134,7 +140,11 @@ export class ExtensionDialogHost {
 	}
 
 	/** 会话关闭兜底：全部按 sessionClosed 结算（扩展 Promise 落取消值，agent 不悬挂） */
+	cancelPending(): void {
+		for (const id of [...this.pending.keys()]) this.settle(id, "aborted");
+	}
 	dispose(): void {
+		this.closed = true;
 		for (const id of [...this.pending.keys()]) this.settle(id, "sessionClosed");
 	}
 

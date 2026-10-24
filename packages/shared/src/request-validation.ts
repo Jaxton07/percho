@@ -76,6 +76,21 @@ export const input = {
 	jsonObject<T extends object>(): InputRule<T> {
 		return rule((value) => record(value) && json(value));
 	},
+	union<T>(...rules: InputRule<T>[]): InputRule<T> {
+		return {
+			validate(value) {
+				for (const candidate of rules) {
+					try {
+						candidate.validate(value);
+						return;
+					} catch {
+						/* Try the next explicit shape. */
+					}
+				}
+				invalid();
+			},
+		};
+	},
 };
 
 export function validateArguments(

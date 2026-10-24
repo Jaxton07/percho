@@ -1,6 +1,11 @@
 /** 中文语言包（作为 key 的结构定义，en.ts 与之同形） */
 export const zh = {
 	remote: {
+		pendingAttention: "远端项目有待处理的请求",
+		pendingExpired: "该请求已不再等待处理。",
+		review: "查看并处理",
+
+		waitingForConnection: "连接恢复并核验请求后才可应答。",
 		restarted: "远端服务已重启。可恢复已保存的历史；之前任务不会自动续跑，操作结果需核查。",
 		syncFailed: "远端会话同步失败，打开会话后可重试。",
 		synchronizing: "远端会话正在同步，请稍后再发送。停止任务仍可使用。",
