@@ -8,6 +8,7 @@ import { useState } from "react";
 import { useT } from "../../../i18n";
 import { errText } from "../../../lib/error-text";
 import { useSettingsStore } from "../../../stores/settings";
+import { Select } from "../../ui/Select";
 import { Tooltip } from "../../ui/Tooltip";
 import { ModelRowsEditor } from "./ModelRowsEditor";
 import { EMPTY_MODEL_ROW, type ModelRow, modelsToRows, rowsToModelInputs, rowsValid } from "./model-rows";
@@ -142,13 +143,11 @@ function ProviderConfigForm({
 					value={form.baseUrl}
 					onChange={set("baseUrl")}
 				/>
-				<select className={inputClass} value={form.api} onChange={set("api")}>
-					{apiOptions.map((api) => (
-						<option key={api} value={api}>
-							{api}
-						</option>
-					))}
-				</select>
+				<Select
+					value={form.api}
+					options={apiOptions.map((api) => ({ value: api, label: api }))}
+					onChange={(api) => setForm((f) => ({ ...f, api }))}
+				/>
 				<input
 					className={inputClass}
 					placeholder={lockId ? t("settings.providers.customKeyKeep") : t("settings.providers.customKey")}

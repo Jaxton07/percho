@@ -1,7 +1,9 @@
 import type { UpstreamModelInfo } from "@percho/shared";
-import { useState } from "react";
+import { useRef, useState } from "react";
 import { useT } from "../../../i18n";
 import { ChevronDownIcon, CloseIcon } from "../../icons";
+import { anchorOfElement, type MenuAnchor } from "../../ui/place-menu";
+import { Popup, SelectItem } from "../../ui/Select";
 import { Tooltip } from "../../ui/Tooltip";
 import {
 	EMPTY_MODEL_ROW,
@@ -41,11 +43,13 @@ function ModelIdField({
 	onPick: (model: UpstreamModelInfo) => void;
 }) {
 	const t = useT();
-	const [open, setOpen] = useState(false);
+	const inputRef = useRef<HTMLInputElement>(null);
+	const [anchor, setAnchor] = useState<MenuAnchor | null>(null);
 
 	return (
 		<div className="relative min-w-0 flex-1">
 			<input
+				ref={inputRef}
 				className={`${inputClass} ${options.length > 0 ? "pr-7" : ""}`}
 				placeholder={t("settings.providers.customModelId")}
 				value={value}
@@ -56,45 +60,35 @@ function ModelIdField({
 				<button
 					type="button"
 					aria-label={t("settings.providers.pickUpstreamModel")}
-					aria-expanded={open}
+					aria-expanded={anchor !== null}
 					className="absolute right-1 top-1/2 -translate-y-1/2 rounded p-1 text-ink-faint transition-colors hover:bg-hover hover:text-ink-dim"
-					onClick={() => setOpen((v) => !v)}
+					onClick={() => {
+						const el = inputRef.current;
+						setAnchor((prev) => (prev ? null : el ? anchorOfElement(el) : null));
+					}}
 				>
 					<ChevronDownIcon size={9} />
 				</button>
 			)}
-			{open && (
-				<>
-					{/* 点外部关闭：透明遮罩省掉全局事件监听，且随菜单一起卸载 */}
-					<button
-						type="button"
-						aria-hidden
-						tabIndex={-1}
-						className="fixed inset-0 z-20 cursor-default"
-						onClick={() => setOpen(false)}
-					/>
-					<div className="absolute left-0 top-full z-30 mt-1 max-h-56 w-full overflow-y-auto rounded-xl border border-border bg-surface p-1 shadow-pop">
-						{options.map((model) => (
-							<button
-								key={model.id}
-								type="button"
-								className="flex w-full items-center gap-2 rounded-lg px-2 py-1.5 text-left text-ui-12 text-ink transition-colors hover:bg-hover"
-								onClick={() => {
-									onPick(model);
-									setOpen(false);
-								}}
-							>
-								<span className="truncate">{model.id}</span>
-								<span className="ml-auto shrink-0 text-ui-10 text-ink-faint">
-									{[model.contextWindow, model.maxTokens]
-										.filter((n): n is number => n !== undefined)
-										.map(compactTokens)
-										.join(" / ")}
-								</span>
-							</button>
-						))}
-					</div>
-				</>
+			{anchor && (
+				<Popup anchor={anchor} width={anchor.width} onClose={() => setAnchor(null)}>
+					{options.map((model) => (
+						<SelectItem
+							key={model.id}
+							selected={model.id === value}
+							trailing={[model.contextWindow, model.maxTokens]
+								.filter((n): n is number => n !== undefined)
+								.map(compactTokens)
+								.join(" / ")}
+							onSelect={() => {
+								onPick(model);
+								setAnchor(null);
+							}}
+						>
+							{model.id}
+						</SelectItem>
+					))}
+				</Popup>
 			)}
 		</div>
 	);
