@@ -4,15 +4,15 @@ import "markstream-react/index.css";
 // KaTeX 只在公式出现时才会被 markstream 动态 import（mermaid 的依赖里也有 katex）；
 // 它的 CSS 必须显式引入：缺了它 katex-mathml 层不会被隐藏，公式会重影地多一份 MathML 文本。
 import "katex/dist/katex.min.css";
-import { type MouseEvent, useMemo, useRef } from "react";
+import { type MouseEvent, useMemo, useRef, useState } from "react";
 import { getPi } from "../../api";
-import { selectActiveCwd } from "../../lib/active-cwd";
 import { errText } from "../../lib/error-text";
 import { monacoFontSizeFor, monacoLineHeightFor } from "../../lib/typography";
-import { useSessionsStore } from "../../stores/sessions";
 import { useThemeStore } from "../../stores/theme";
 import { pushToast } from "../../stores/toasts";
 import { useUiPreferencesStore } from "../../stores/ui-preferences";
+import { FilePathMenu } from "../ui/FilePathMenu";
+import { anchorOfElement, type MenuAnchor } from "../ui/place-menu";
 import { classifyMarkdownLink } from "./markdown-link";
 // 副作用 import：MermaidBlock 在模块加载时向 markstream 注册 mermaid 节点的自定义组件（见该文件末尾）
 import "./MermaidBlock";
@@ -79,9 +79,17 @@ const REDUCED_MOTION =
  * codeBlockLightTheme/codeBlockDarkTheme：不传时 stream-monaco 回退到 themes[0]（默认 vitesse-dark），
  * 浅色模式下代码块也会是深色。
  */
-export function Markdown({ text, streaming }: { text: string; streaming?: boolean }) {
+export function Markdown({
+	text,
+	streaming,
+	cwd = null,
+}: {
+	text: string;
+	streaming?: boolean;
+	cwd?: string | null;
+}) {
 	const isDark = useThemeStore((s) => s.resolved === "dark");
-	const cwd = useSessionsStore(selectActiveCwd);
+	const [menu, setMenu] = useState<{ target: string; cwd: string; anchor: MenuAnchor } | null>(null);
 	const onLinkClick = (event: MouseEvent<HTMLDivElement>) => {
 		const anchor = event.target instanceof Element ? event.target.closest("a[href]") : null;
 		if (!anchor || !event.currentTarget.contains(anchor)) return;
@@ -93,13 +101,13 @@ export function Markdown({ text, streaming }: { text: string; streaming?: boolea
 		event.preventDefault();
 		if (link.kind === "unsupported") return;
 		if (link.kind === "file" && cwd && environmentEntityRef(cwd).environment.kind === "ssh") {
-			pushToast("info", "toast.remotePathAction");
+			setMenu({ target: link.target, cwd, anchor: anchorOfElement(anchor) });
 			return;
 		}
 		const operation =
 			link.kind === "external"
 				? getPi().openExternal({ url: link.url })
-				: cwd || link.target.startsWith("/") || link.target.startsWith("~") || /^file:\/\//i.test(link.target)
+				: cwd
 					? getPi().openPath({ target: link.target, cwd })
 					: Promise.reject(new Error("No session working directory for relative link"));
 		void operation.catch((error: unknown) => {
@@ -125,30 +133,40 @@ export function Markdown({ text, streaming }: { text: string; streaming?: boolea
 		};
 	}, [codeFontSize]);
 	return (
-		// 委托给库动态生成的 <a>；键盘 Enter 在锚点上会合成 click，无需给容器伪造交互角色。
-		// biome-ignore lint/a11y/noStaticElementInteractions: 容器只代理内部原生可交互锚点
-		// biome-ignore lint/a11y/useKeyWithClickEvents: 锚点的键盘 Enter 原生派发 click，同一路径处理
-		<div className="markdown-body text-ui-15 leading-[1.75] text-ink select-text" onClick={onLinkClick}>
-			{/* key 里带 codeFontSize：monaco 的字号/行高**只在编辑器创建时**应用（库内没有 updateOptions
+		<>
+			{/* biome-ignore lint/a11y/noStaticElementInteractions: delegates native anchor clicks */}
+			{/* biome-ignore lint/a11y/useKeyWithClickEvents: native anchors dispatch keyboard clicks */}
+			<div className="markdown-body text-ui-15 leading-[1.75] text-ink select-text" onClick={onLinkClick}>
+				{/* key 里带 codeFontSize：monaco 的字号/行高**只在编辑器创建时**应用（库内没有 updateOptions
 			    调用，`monacoOptions` 换了也不会生效），所以换代码字号时必须让代码块重新挂载。
 			    代价：改档位会重建这一条消息的 markdown 子树（设置项，用户极少动；流式中改会重放当前
 			    消息的打字机动画）。key 只随 codeFontSize 变，流式期间稳定。 */}
-			{/* deferNodesUntilVisible=false：markstream 0.0.55 的延迟节点 bug——块数 > initialRenderBatchSize(40)
+				{/* deferNodesUntilVisible=false：markstream 0.0.55 的延迟节点 bug——块数 > initialRenderBatchSize(40)
 			    的节点先渲染为 node-placeholder 占位条，等 IntersectionObserver 标记可见后只写 ref 不触发
 			    re-render（非虚拟化路径）；流式期间靠内容更新顺带刷新，流一停占位条就永久残留。 */}
-			<MarkdownRender
-				key={`code-font-${codeFontSize}`}
-				content={text}
-				final={!streaming}
-				fade={false}
-				smoothStreaming={smoothableRef.current}
-				smoothStreamingOptions={SMOOTH_OPTIONS}
-				isDark={isDark}
-				codeBlockLightTheme="vitesse-light"
-				codeBlockDarkTheme="vitesse-dark"
-				codeBlockProps={codeBlockProps}
-				deferNodesUntilVisible={false}
-			/>
-		</div>
+				<MarkdownRender
+					key={`code-font-${codeFontSize}`}
+					content={text}
+					final={!streaming}
+					fade={false}
+					smoothStreaming={smoothableRef.current}
+					smoothStreamingOptions={SMOOTH_OPTIONS}
+					isDark={isDark}
+					codeBlockLightTheme="vitesse-light"
+					codeBlockDarkTheme="vitesse-dark"
+					codeBlockProps={codeBlockProps}
+					deferNodesUntilVisible={false}
+				/>
+			</div>
+			{menu && (
+				<FilePathMenu
+					target={menu.target}
+					cwd={menu.cwd}
+					fileUrl
+					anchor={menu.anchor}
+					onClose={() => setMenu(null)}
+				/>
+			)}
+		</>
 	);
 }

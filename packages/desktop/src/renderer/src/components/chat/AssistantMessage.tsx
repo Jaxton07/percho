@@ -9,8 +9,10 @@ export function AssistantMessage({
 	tools,
 	streaming,
 	metaInGroup = false,
+	cwd = null,
 }: {
 	text: string;
+	cwd?: string | null;
 	thinking: string;
 	tools: UIToolCall[];
 	streaming?: boolean;
@@ -23,7 +25,7 @@ export function AssistantMessage({
 	return (
 		<div className="flex flex-col gap-2">
 			{items.length > 0 && <MetaGroup items={items} working={Boolean(streaming) && !text} />}
-			{text && <Markdown text={text} streaming={streaming} />}
+			{text && <Markdown text={text} streaming={streaming} cwd={cwd} />}
 			{streaming && !text && !thinking && tools.length === 0 && (
 				<div className="flex items-center gap-1 text-ink-faint">
 					<span className="h-1.5 w-1.5 animate-pulse rounded-full bg-ink-faint" />
