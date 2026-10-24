@@ -1,6 +1,9 @@
 /** 中文语言包（作为 key 的结构定义，en.ts 与之同形） */
 export const zh = {
 	remote: {
+		projectLocationHint: "选择项目所在的位置。添加后会话固定在该环境执行。",
+		localProject: "本机项目",
+		remoteProject: "远端项目",
 		unavailableEnvironment: "原远端（连接不可用）",
 		authHint:
 			"远端使用自己的模型配置和凭据，可在这里保存 API key 或自定义服务商。交互式登录请使用远端维护入口；不会复制本机账号。",

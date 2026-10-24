@@ -1,5 +1,5 @@
 import { writeFile } from "node:fs/promises";
-import type { PiBackend } from "@percho/backend";
+import { type PiBackend, validateProjectDirectory } from "@percho/backend";
 import { APP_CHANNELS, environmentEntityRef } from "@percho/shared";
 import { app, BrowserWindow, dialog, nativeTheme, shell } from "electron";
 import { pickBackgroundImage } from "../background";
@@ -34,6 +34,7 @@ function localDirectory(cwd: string | null): string | null {
  */
 export function registerAppIpc(_backend: PiBackend): void {
 	registerInvokeHandlers(APP_CHANNELS, {
+		validateProjectDirectory: ({ path }) => validateProjectDirectory(path),
 		saveFileDialog: async ({ defaultName, content }) => {
 			const window = BrowserWindow.getAllWindows()[0];
 			const options: Electron.SaveDialogOptions = {

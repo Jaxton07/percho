@@ -643,6 +643,11 @@ export const SETTINGS_CHANNELS = {
 
 /** 应用域：窗口级功能（对话框/背景/更新/tabs/ui-state/git/外链等，多为非透传 handler） */
 export const APP_CHANNELS = {
+	validateProjectDirectory: ch(
+		"project:validateDirectory",
+		"environment",
+		"read",
+	)<{ path: string }, string>({ path: input.text }),
 	/** 弹保存对话框并写文件；用户取消返回 null，成功返回写入路径 */
 	saveFileDialog: ch("file:saveDialog", "desktop")<{ defaultName: string; content: string }, string | null>(),
 	/** 目录选择对话框（取消返回 null） */

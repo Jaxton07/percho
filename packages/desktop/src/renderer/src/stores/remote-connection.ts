@@ -6,6 +6,7 @@ import { registerEnvironment } from "../environment-registry";
 import { errText } from "../lib/error-text";
 import { useInteractionStore } from "./interactions";
 import { useProjectsStore } from "./projects";
+import { claimActivation, isLatestActivation, noteUserIntent } from "./session-navigation";
 import { invalidateEnvironmentSessions, synchronizeEnvironmentSessions, useSessionsStore } from "./sessions";
 import { pushToast } from "./toasts";
 
@@ -23,12 +24,16 @@ interface RemoteConnectionStore {
 	openProject: (path: string) => Promise<void>;
 	accept: (status: RemoteConnectionStatus) => void;
 }
+let projectAttempt = 0;
 let registered: string | undefined;
 let unregister: (() => void) | undefined;
 export const useRemoteConnectionStore = create<RemoteConnectionStore>((set, get) => ({
 	open: false,
 	status: { revision: -1, state: "disconnected" },
-	setOpen: (open) => set({ open }),
+	setOpen: (open) => {
+		if (!open) projectAttempt++;
+		set({ open });
+	},
 	accept: (status) => {
 		if (status.revision <= get().status.revision) return;
 		const previous = get().status;
@@ -80,8 +85,13 @@ export const useRemoteConnectionStore = create<RemoteConnectionStore>((set, get)
 		const { environment, state } = get().status;
 		if (state !== "connected" || !environment) throw new Error("Connect the remote environment first");
 		if (!path.startsWith("/")) throw new Error("Enter an absolute remote project directory");
+		noteUserIntent();
+		const navigation = claimActivation();
+		const attempt = ++projectAttempt;
+		const current = () => attempt === projectAttempt && isLatestActivation(navigation);
 		const api = getExecutionApi(environment);
-		const canonical = await api.resolvePath({ target: path, cwd: null });
+		const canonical = await api.validateProjectDirectory({ path });
+		if (!current()) return;
 		// Trust is the existing target-side decision, routed through the shared dialog bridge.
 		set({ open: false });
 		const trustCwd = environmentEntityKey(environment, canonical);
@@ -94,6 +104,7 @@ export const useRemoteConnectionStore = create<RemoteConnectionStore>((set, get)
 		}
 		const cwd = environmentEntityKey(environment, canonical);
 		useProjectsStore.getState().addKnownProject(cwd);
+		if (!current()) return;
 		useProjectsStore.getState().select(cwd);
 		useSessionsStore.getState().activateNewSessionDraftForCwd(cwd, environment);
 	},

@@ -66,6 +66,7 @@ import {
 	extractTodos,
 	formatSkillCommand,
 	isModelVisible,
+	parseComposerDocument,
 	parseExpandedSkillInvocation,
 	type QueuedMessages,
 	readComposerDocument,
@@ -85,6 +86,7 @@ import {
 	type PermissionModeRef,
 } from "./permissions/extension";
 import { PermissionGate } from "./permissions/gate";
+import { validateProjectDirectory, validateProjectReference } from "./project/directory";
 import { walkProjectFiles } from "./project/files";
 import { TrustGate } from "./project/trust";
 import { ProjectResourceLoader } from "./project/trust-loader";
@@ -171,6 +173,8 @@ function sessionInfoToMeta(
 export interface PiBackendOptions {
 	/** 默认工作目录（createSession 未指定时使用） */
 	defaultCwd?: string;
+	/** Independent remote host validates literal directories before new execution. */
+	validateWorkspace?: boolean;
 	/** 每会话工具白名单；缺省用 pi 默认（read/bash/edit/write） */
 	tools?: string[];
 	/** 额外自定义工具 */
@@ -683,7 +687,9 @@ export class PiBackend {
 	private async createSessionOnce(options: CreateSessionOptions): Promise<SessionMeta> {
 		const runtime = await this.getModelRuntime();
 		this.assertRunning();
-		const cwd = options.cwd || this.options.defaultCwd || process.cwd();
+		const requested = options.cwd || this.options.defaultCwd || process.cwd();
+		const cwd = this.options.validateWorkspace ? await validateProjectDirectory(requested) : requested;
+		this.assertRunning();
 		const model =
 			options.provider && options.modelId ? runtime.getModel(options.provider, options.modelId) : undefined;
 		const session = await this.wireSession(cwd, undefined, async (deps) => {
@@ -1100,6 +1106,14 @@ export class PiBackend {
 		document?: ComposerDocument,
 	): Promise<void> {
 		const entry = this.requireWritable(sessionId);
+		if (this.options.validateWorkspace) {
+			await validateProjectDirectory(entry.cwd);
+			if (document)
+				for (const part of parseComposerDocument(document).parts)
+					if (part.type === "file") await validateProjectReference(part.path, entry.cwd);
+			if (this.requireWritable(sessionId) !== entry)
+				throw new Error("Session changed while validating the project");
+		}
 		log.info("prompt", sessionId, { text: text.slice(0, 120), images: images?.length ?? 0 });
 		// session.prompt() 非流式路径会 await 整个 run（直到 agent_settled）；渲染端只需要
 		// “已受理/已入队”回执——用 preflightResult 提前返回，否则 IPC 挂一整轮，渲染端
@@ -1147,6 +1161,11 @@ export class PiBackend {
 	/** SDK 补丁公开入口：目标核验/同步占位/持久化排除失败响应均由会话层完成。 */
 	async retryLastFailedTurn(sessionId: string, ref: { timestamp: number; entryId: string }): Promise<void> {
 		const entry = this.requireWritable(sessionId);
+		if (this.options.validateWorkspace) {
+			await validateProjectDirectory(entry.cwd);
+			if (this.requireWritable(sessionId) !== entry)
+				throw new Error("Session changed while validating the project");
+		}
 		log.info("retry failed turn", sessionId, ref);
 		// 与 prompt 一样只等待受理；不把一整轮执行挂在 IPC 上，也不吞掉 preflight 拒绝。
 		await new Promise<void>((resolve, reject) => {

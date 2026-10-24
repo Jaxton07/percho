@@ -568,6 +568,8 @@ export const useSessionsStore = create<SessionsStore>((_set, get) => ({
 	},
 
 	setDraftCwd: (cwd, environment = environmentEntityRef(cwd).environment) => {
+		claimActivation();
+		noteUserIntent();
 		// cwd 变化即前置信任决策
 		ensureTrust(cwd, environment);
 		set((state) => {

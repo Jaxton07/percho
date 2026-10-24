@@ -5,6 +5,7 @@ import type { EnvironmentHandlers } from "@percho/shared";
 import { checkoutBranch, getGitBranch, listGitBranches } from "./git";
 import { resolveExistingPath } from "./path-target";
 import type { PiBackend } from "./pi-backend";
+import { validateProjectDirectory } from "./project/directory";
 
 /** Explicit implementations share the existing IPC method identities; there is no backend reflection. */
 export function createExecutionHandlers(
@@ -12,6 +13,7 @@ export function createExecutionHandlers(
 	options: { getDailyDir?: () => Promise<string>; allowInteractiveAuth?: boolean } = {},
 ): EnvironmentHandlers {
 	return {
+		validateProjectDirectory: ({ path }) => validateProjectDirectory(path),
 		createSession: ({ options }) => backend.createSession(options),
 		listSessions: ({ cwd }) => backend.listSessions(cwd),
 		listAllSessions: () => backend.listAllSessions(),

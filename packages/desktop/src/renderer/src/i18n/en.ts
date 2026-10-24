@@ -3,6 +3,9 @@ import type { Messages } from "./zh";
 /** English language pack (mirrors zh.ts shape) */
 export const en: Messages = {
 	remote: {
+		projectLocationHint: "Choose where this project lives. Its sessions stay in that environment.",
+		localProject: "Local project",
+		remoteProject: "Remote project",
 		unavailableEnvironment: "Original remote (connection unavailable)",
 		authHint:
 			"The remote uses its own models and credentials. Save API keys or custom providers here. Interactive login uses remote terminal maintenance; local accounts are never copied.",

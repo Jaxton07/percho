@@ -1,6 +1,8 @@
+import { environmentEntityRef, sameEnvironment } from "@percho/shared";
 import { useState } from "react";
 import { createPortal } from "react-dom";
 import { useT } from "../../i18n";
+import { useProjectsStore } from "../../stores/projects";
 import { useRemoteConnectionStore } from "../../stores/remote-connection";
 import { Button } from "../ui/Button";
 
@@ -10,6 +12,7 @@ export function RemoteConnectionDialog() {
 }
 function RemoteConnectionBody() {
 	const t = useT();
+	const addedProjects = useProjectsStore((state) => state.addedProjects);
 	const status = useRemoteConnectionStore((state) => state.status);
 	const connect = useRemoteConnectionStore((state) => state.connect);
 	const preflight = useRemoteConnectionStore((state) => state.preflight);
@@ -153,8 +156,20 @@ function RemoteConnectionBody() {
 								value={path}
 								onChange={(event) => setPath(event.target.value)}
 								placeholder="/home/user/project"
+								list="remote-recent-projects"
 							/>
 						</label>
+						<datalist id="remote-recent-projects">
+							{addedProjects
+								.filter(
+									(cwd) =>
+										status.environment &&
+										sameEnvironment(environmentEntityRef(cwd).environment, status.environment),
+								)
+								.map((cwd) => (
+									<option key={cwd} value={environmentEntityRef(cwd).id} />
+								))}
+						</datalist>
 						<div className="mt-3 flex justify-end">
 							<Button disabled={busy || !path} onClick={() => void run(() => openProject(path))}>
 								{t("remote.openProject")}
