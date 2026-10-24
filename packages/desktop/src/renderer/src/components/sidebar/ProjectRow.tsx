@@ -23,6 +23,7 @@ import { projectMenuItems } from "./ProjectMenu";
  */
 export function ProjectRow({
 	label,
+	environmentLabel,
 	kind,
 	expanded,
 	pinned = false,
@@ -33,6 +34,7 @@ export function ProjectRow({
 	onRemove,
 }: {
 	label: string;
+	environmentLabel?: string;
 	kind: "daily" | "project";
 	expanded: boolean;
 	pinned?: boolean;
@@ -74,6 +76,9 @@ export function ProjectRow({
 					{icon}
 				</span>
 				<span className="min-w-0 flex-1 truncate text-left font-medium">{label}</span>
+				{environmentLabel && (
+					<span className="shrink-0 text-ui-11 font-normal text-ink-faint">{environmentLabel}</span>
+				)}
 				{pinned && (
 					<span className="grid h-4 w-4 shrink-0 place-items-center text-ink-faint" aria-hidden="true">
 						<PinIcon size={12} />

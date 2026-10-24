@@ -1,3 +1,4 @@
+import { environmentEntityRef } from "@percho/shared";
 import { useT } from "../../i18n";
 import type { SidebarGroup as Group } from "../../lib/sidebar-groups";
 import { hasMoreSessions, visibleSessions } from "../../lib/sidebar-visible-count";
@@ -54,6 +55,9 @@ export function SidebarGroup({
 		<div data-sidebar-group-key={group.key}>
 			<ProjectRow
 				label={group.label ?? t("sidebar.daily")}
+				environmentLabel={
+					environmentEntityRef(group.cwd).environment.kind === "ssh" ? t("remote.label") : undefined
+				}
 				kind={group.kind}
 				expanded={expanded}
 				pinned={pinned}

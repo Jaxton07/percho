@@ -73,6 +73,7 @@ export {
 	type WorkspacesConfig,
 	workspaceConfigPath,
 } from "./project/workspace-store";
+export { SshRuntimeConnection, sshArguments, validateSshAlias } from "./runtime/ssh";
 export {
 	assignEntryIds,
 	blockImages,

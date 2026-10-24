@@ -70,6 +70,7 @@ interface ProjectsStore {
 	select: (cwd: string | null) => void;
 	setSearch: (search: string) => void;
 	addProject: () => Promise<void>;
+	addKnownProject: (cwd: string) => void;
 	/** 删除历史会话（含磁盘文件）；若该会话在顶栏打开中则一并关闭 */
 	deleteSession: (session: SessionMeta) => Promise<void>;
 	/** 删除整个项目：删除该项目下全部会话（含磁盘文件），并从已添加列表移除 */
@@ -162,6 +163,12 @@ export const useProjectsStore = create<ProjectsStore>((set, get) => {
 
 		setSearch: (search) => set({ search }),
 
+		addKnownProject: (cwd) => {
+			if (get().addedProjects.includes(cwd)) return;
+			const next = [...get().addedProjects, cwd];
+			localStorage.setItem(ADDED_KEY, JSON.stringify(localProjects(next)));
+			set({ addedProjects: next });
+		},
 		addProject: async () => {
 			const cwd = await getPi().pickDirectory();
 			if (!cwd) return;

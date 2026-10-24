@@ -8,6 +8,7 @@ import { app, BrowserWindow, Menu, nativeTheme, net, protocol, screen, shell } f
 import { backgroundsDir } from "./background";
 import { registerIpc } from "./ipc";
 import { initLanObserver, type LanObserverHandle } from "./lan";
+import { remoteConnectionManager } from "./remote-connection";
 import { attachRendererWatchdog } from "./renderer-watchdog";
 import { UiPluginManager, uiPluginsResourcesDir } from "./ui-plugins/manager";
 import { loadUiState } from "./ui-state";
@@ -112,6 +113,7 @@ app.on("before-quit", () => {
 	// 先放行 close 拦截：否则 macOS 下 ⌘Q 会被当成「关窗 → 隐藏」而退不掉
 	markQuitting();
 	void lanObserver?.stop();
+	remoteConnectionManager.disconnect();
 	backend?.dispose();
 	uiPluginsManager?.disposeWatcher();
 });

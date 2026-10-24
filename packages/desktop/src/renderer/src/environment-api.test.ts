@@ -251,3 +251,47 @@ describe("session ownership through the actual renderer execution boundary", () 
 		expect(environmentEntityRef(escapedLocal)).toEqual({ environment: LOCAL_ENVIRONMENT, id: remoteKey });
 	});
 });
+
+it("project switching inherits a model template only within its original environment", async () => {
+	const local = {
+		...(await getExecutionApi(LOCAL_ENVIRONMENT).openSession({ filePath: "/same/history.jsonl" })),
+		model: { provider: "local", modelId: "l" },
+	};
+	const foreign = {
+		...(await getExecutionApi(remote).openSession({
+			filePath: environmentEntityKey(remote, "/same/history.jsonl"),
+		})),
+		model: { provider: "remote", modelId: "r" },
+	};
+	const store = useSessionsStore.getState();
+	useSessionsStore.setState({
+		sessions: [local, foreign],
+		activeSessionId: foreign.sessionId,
+		newSessionDraft: null,
+		lastUsedModel: foreign.model,
+	});
+	store.activateNewSessionDraftForCwd("/same");
+	expect(useSessionsStore.getState().newSessionDraft).toMatchObject({
+		environment: LOCAL_ENVIRONMENT,
+		model: null,
+		modelResolved: false,
+	});
+	useSessionsStore.setState({
+		activeSessionId: local.sessionId,
+		newSessionDraft: null,
+		lastUsedModel: local.model,
+	});
+	store.activateNewSessionDraftForCwd(environmentEntityKey(remote, "/same"));
+	expect(useSessionsStore.getState().newSessionDraft).toMatchObject({
+		environment: remote,
+		model: null,
+		modelResolved: false,
+	});
+	useSessionsStore.setState({ activeSessionId: local.sessionId, newSessionDraft: null });
+	store.activateNewSessionDraftForCwd("/other-local");
+	expect(useSessionsStore.getState().newSessionDraft).toMatchObject({
+		environment: LOCAL_ENVIRONMENT,
+		model: local.model,
+		modelResolved: true,
+	});
+});

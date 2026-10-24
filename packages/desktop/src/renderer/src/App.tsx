@@ -6,6 +6,7 @@ import { MessageList } from "./components/chat/MessageList";
 import { SubagentBackButton } from "./components/chat/SubagentBackButton";
 import { TodoPanel } from "./components/chat/TodoPanel";
 import { DiffSidebar } from "./components/diff/DiffSidebar";
+import { RemoteConnectionDialog } from "./components/remote/RemoteConnectionDialog";
 import { DockSlot } from "./components/session/DockSlot";
 import { SessionRail } from "./components/session/SessionRail";
 import { SessionTabBar } from "./components/session/SessionTabBar";
@@ -28,6 +29,7 @@ import {
 	invalidateChannelSubscriptionQueries,
 	syncActiveSession,
 } from "./stores/channel-subscriptions";
+import { initRemoteConnectionBridge } from "./stores/remote-connection";
 import { restoreSessionWorkspace } from "./stores/session-workspace-restore";
 import { useSessionsStore } from "./stores/sessions";
 import { useHasParentRelation } from "./stores/subagent-return";
@@ -74,6 +76,7 @@ export default function App() {
 	// 一次性 bootstrap：开屏就绪信号 + 更新状态 + UI 插件加载
 	// 会话内存策略（K=3 热会话 + 受保护不卸）：全局挂一次，策略细节在 lib/session-gc.ts
 	useSessionGc();
+	useEffect(() => initRemoteConnectionBridge(), []);
 
 	useEffect(() => {
 		// 上次项目目录：启动即预填（用户不用重选项目）。**只带 cwd，不恢复任何会话**——
@@ -158,6 +161,7 @@ export default function App() {
 			{/* 悬浮贡献层：内容列之后、设置弹窗之前（z-20 < z-40，插件层永在弹窗之下） */}
 			<RegionHost region={UI_REGIONS.AppOverlay} />
 			<SettingsDialog />
+			<RemoteConnectionDialog />
 			<TrustDialog requests={trustRequests} onRespond={respondTrust} />
 			<Toaster />
 		</div>

@@ -1,8 +1,26 @@
+import type { EnvironmentRef } from "./environment";
 import type { EnvironmentMethod } from "./ipc";
+import { CHANNEL_TABLE, SUBSCRIPTION_TABLE } from "./ipc-channels";
 
 /** Control messages only. Business method identities and payloads remain in ipc-channels.ts. */
 export const REMOTE_PROTOCOL_VERSION = 1;
+export const EXECUTION_EVENT_CONTRACT_VERSION = 1;
+export function executionContract() {
+	return {
+		eventContract: EXECUTION_EVENT_CONTRACT_VERSION,
+		methods: Object.entries(CHANNEL_TABLE)
+			.filter(([, definition]) => definition.scope === "environment")
+			.map(([method]) => method),
+		subscriptions: Object.entries(SUBSCRIPTION_TABLE)
+			.filter(([, definition]) => definition.scope === "environment")
+			.map(([method]) => method),
+	};
+}
 export interface RuntimeInfo {
+	sdkVersion: string;
+	eventContract: number;
+	methods: string[];
+	subscriptions: string[];
 	protocol: number;
 	runtimeVersion: string;
 	environmentId: string;
@@ -32,4 +50,12 @@ export type RuntimeFrame =
 export interface RuntimeAttachment {
 	info: RuntimeInfo;
 	epoch: number;
+}
+
+export interface RemoteConnectionStatus {
+	revision: number;
+	state: "disconnected" | "connecting" | "connected" | "error";
+	alias?: string;
+	environment?: Extract<EnvironmentRef, { kind: "ssh" }>;
+	error?: string;
 }

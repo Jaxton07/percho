@@ -10,6 +10,7 @@ import type {
 import type { LanStatus } from "./lan";
 import type { McpConfigListResult, McpMutationResult, McpServersChangedPayload, McpUpsertInput } from "./mcp";
 import type { CatalogPackageType, CatalogSearchResult, ConfiguredPackageInfo } from "./packages";
+import type { RemoteConnectionStatus } from "./remote-runtime";
 import type {
 	AppInfo,
 	AvailableModel,
@@ -383,8 +384,16 @@ export const UI_PLUGINS_CHANNELS = {
 	uiPluginsOpenDir: ch("uiPlugins:openDir", "desktop")<{ name?: string }, void>(),
 } as const;
 
+/** Desktop-owned connection control; never forwarded to a remote business handler. */
+export const REMOTE_CHANNELS = {
+	remoteGetStatus: ch("remote:status", "desktop")<void, RemoteConnectionStatus>(),
+	remoteConnect: ch("remote:connect", "desktop")<{ alias: string }, RemoteConnectionStatus>(),
+	remoteDisconnect: ch("remote:disconnect", "desktop")<void, RemoteConnectionStatus>(),
+} as const;
+
 /** 已表化通道全集（分批迁移，终态 = 全部 invoke 通道） */
 export const CHANNEL_TABLE = {
+	...REMOTE_CHANNELS,
 	...SESSION_CHANNELS,
 	...SETTINGS_CHANNELS,
 	...PACKAGES_CHANNELS,
@@ -438,6 +447,10 @@ function subscription<P, S extends ChannelScope = "environment">(scope: S = "env
 
 /** Sole subscription definition: API key + explicit legacy alias + channel + payload type. */
 export const SUBSCRIPTION_TABLE = {
+	onRemoteConnectionStatus: subscription<RemoteConnectionStatus, "desktop">("desktop")(
+		"RemoteConnectionStatus",
+		"remote:statusChanged",
+	),
 	onProviderLoginEvent: subscription<LoginEventPayload>()("SettingsLoginEvent", "settings:loginEvent"),
 	onMcpServersChanged: subscription<McpServersChangedPayload>()("McpServersChanged", "mcp:serversChanged"),
 	onChannelSubscriptionsChanged: subscription<ChannelSubscriptionsSnapshot>()(

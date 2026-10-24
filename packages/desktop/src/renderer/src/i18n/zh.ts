@@ -1,5 +1,19 @@
 /** 中文语言包（作为 key 的结构定义，en.ts 与之同形） */
 export const zh = {
+	remote: {
+		title: "远端连接",
+		preparedRuntime: "使用已有 SSH 别名连接已准备好的 Percho 运行包。",
+		alias: "SSH 别名",
+		disconnected: "未连接",
+		connecting: "连接中",
+		connected: "已连接",
+		error: "连接失败",
+		disconnect: "断开",
+		connect: "连接",
+		projectPath: "远端项目目录",
+		openProject: "打开项目",
+		label: "远端",
+	},
 	common: {
 		save: "保存",
 		cancel: "取消",

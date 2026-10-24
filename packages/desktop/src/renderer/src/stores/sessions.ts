@@ -518,6 +518,11 @@ export const useSessionsStore = create<SessionsStore>((_set, get) => ({
 	activateNewSessionDraftForCwd: (cwd, environment = environmentEntityRef(cwd).environment) => {
 		const state = get();
 		const activeSession = state.sessions.find((s) => s.sessionId === state.activeSessionId);
+		const sourceSession =
+			activeSession && sameEnvironment(environmentEntityRef(activeSession.sessionId).environment, environment)
+				? activeSession
+				: undefined;
+		const followsCurrentEnvironment = sameEnvironment(currentEnvironment(state), environment);
 		// 与普通「＋」不同，项目行点击即使已经在 draft 页也是一次新的导航意图：
 		// 淘汰在途 open/create/fork，且换 generation，避免旧 cwd 的 promotion single-flight 被复用。
 		claimActivation();
@@ -544,8 +549,8 @@ export const useSessionsStore = create<SessionsStore>((_set, get) => ({
 			: makeDraft(state, {
 					environment,
 					cwd,
-					model: activeSession?.model ?? state.lastUsedModel,
-					thinkingLevel: activeSession?.thinkingLevel,
+					model: sourceSession?.model ?? (followsCurrentEnvironment ? state.lastUsedModel : null),
+					thinkingLevel: sourceSession?.thinkingLevel,
 				});
 		set({ activeSessionId: null, newSessionDraft });
 		ensureTrust(cwd, environment);

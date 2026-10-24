@@ -1,10 +1,13 @@
 import type { PiBackend } from "@percho/backend";
-import { IpcChannels } from "@percho/shared";
+import { IpcChannels, REMOTE_CHANNELS } from "@percho/shared";
 import type { LanObserverHandle } from "../lan";
+import { remoteConnectionManager } from "../remote-connection";
+import { loadUiPluginsConfig } from "../ui-plugins/config";
 import type { UiPluginManager } from "../ui-plugins/manager";
 import { onUpdateState } from "../updater";
 import { registerAppIpc } from "./app";
 import { registerExtensionDialogIpc } from "./extension-dialogs";
+import { registerInvokeHandlers } from "./invoke";
 import { registerLanIpc } from "./lan";
 import { registerPackagesIpc } from "./packages";
 import { forward, sendToRenderer } from "./send";
@@ -21,6 +24,16 @@ export function registerIpc(
 	uiPluginsManager: UiPluginManager,
 	lan: LanObserverHandle,
 ): void {
+	registerInvokeHandlers(REMOTE_CHANNELS, {
+		remoteGetStatus: () => remoteConnectionManager.getStatus(),
+		remoteDisconnect: () => remoteConnectionManager.disconnect(),
+		remoteConnect: async ({ alias }) => {
+			const config = await loadUiPluginsConfig();
+			if (Object.values(config.plugins).some((plugin) => plugin.trusted))
+				throw new Error("Remote workbench plugin consent must be configured before connecting");
+			return remoteConnectionManager.connect(alias);
+		},
+	});
 	registerSessionsIpc(backend);
 	registerSettingsIpc(backend);
 	registerPackagesIpc(backend);

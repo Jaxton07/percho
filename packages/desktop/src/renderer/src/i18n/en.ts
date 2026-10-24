@@ -2,6 +2,20 @@ import type { Messages } from "./zh";
 
 /** English language pack (mirrors zh.ts shape) */
 export const en: Messages = {
+	remote: {
+		title: "Remote connection",
+		preparedRuntime: "Connect an existing SSH alias to a prepared Percho runtime.",
+		alias: "SSH alias",
+		disconnected: "Disconnected",
+		connecting: "Connecting",
+		connected: "Connected",
+		error: "Connection failed",
+		disconnect: "Disconnect",
+		connect: "Connect",
+		projectPath: "Remote project directory",
+		openProject: "Open project",
+		label: "Remote",
+	},
 	common: {
 		save: "Save",
 		cancel: "Cancel",

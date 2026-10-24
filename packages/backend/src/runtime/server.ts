@@ -1,8 +1,10 @@
 import { randomUUID } from "node:crypto";
 import { chmod, lstat, unlink } from "node:fs/promises";
 import { createServer, type Socket } from "node:net";
+import { VERSION as SDK_VERSION } from "@earendil-works/pi-coding-agent";
 import {
 	CHANNEL_TABLE,
+	executionContract,
 	REMOTE_PROTOCOL_VERSION,
 	type RuntimeFrame,
 	type RuntimeInfo,
@@ -39,6 +41,8 @@ export async function startRuntimeServer(paths: RuntimePaths) {
 		const runtimeBackend = backend;
 		const handlers = createExecutionHandlers(runtimeBackend);
 		const info: RuntimeInfo = {
+			...executionContract(),
+			sdkVersion: SDK_VERSION,
 			protocol: REMOTE_PROTOCOL_VERSION,
 			runtimeVersion: "0.1.0",
 			environmentId: identity.environmentId,
