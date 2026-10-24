@@ -3,7 +3,7 @@ import type { EnvironmentMethod } from "./ipc";
 import { CHANNEL_TABLE, SUBSCRIPTION_TABLE } from "./ipc-channels";
 
 /** Control messages only. Business method identities and payloads remain in ipc-channels.ts. */
-export const REMOTE_PROTOCOL_VERSION = 2;
+export const REMOTE_PROTOCOL_VERSION = 3;
 export const REMOTE_OUTCOME_UNKNOWN = "[PERCHO_REMOTE_OUTCOME_UNKNOWN]";
 export const EXECUTION_EVENT_CONTRACT_VERSION = 1;
 export function executionContract() {

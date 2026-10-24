@@ -13,7 +13,7 @@ import {
 	type RuntimeInfo,
 	type RuntimeRequest,
 } from "@percho/shared";
-import { readRuntimeFrames } from "./frames";
+import { RuntimeWriter, readRuntimeFrames } from "./frames";
 
 export class RemoteMutationUnknownError extends Error {
 	constructor(
@@ -35,6 +35,7 @@ interface PendingMutation {
 
 export class RuntimeClient {
 	private mutationSequence = 0;
+	private readonly writer: RuntimeWriter;
 	private readonly pending = new Map<
 		string,
 		{
@@ -50,13 +51,13 @@ export class RuntimeClient {
 		private readonly socket: Duplex,
 		private readonly onEvent: (method: string, payload: unknown) => void,
 	) {
-		socket.on(
-			"data",
-			readRuntimeFrames(
-				(value) => this.receive(value as RuntimeFrame),
-				(error) => socket.destroy(error),
-			),
+		this.writer = new RuntimeWriter(socket);
+		const reader = readRuntimeFrames(
+			(value) => this.receive(value as RuntimeFrame),
+			(error) => socket.destroy(error),
 		);
+		socket.on("data", reader);
+		socket.once("close", () => reader.dispose());
 		const fail = () => {
 			this.closed = true;
 			for (const request of this.pending.values()) {
@@ -95,7 +96,7 @@ export class RuntimeClient {
 	}
 	private send(request: RuntimeRequest): void {
 		if (this.closed) throw new Error("Runtime connection is closed");
-		this.socket.write(`${JSON.stringify(request)}\n`);
+		this.writer.write(request, request.type === "pong" || request.type === "stop");
 	}
 	private receive(frame: RuntimeFrame): void {
 		if (frame.type === "ping") {
@@ -143,8 +144,13 @@ export class RuntimeClient {
 				reject(new Error("Runtime connection is closed; request was not queued"));
 				return;
 			}
+			if (this.pending.size >= 128) {
+				reject(new Error("Too many in-flight runtime requests"));
+				return;
+			}
 			const timer = setTimeout(() => {
 				this.pending.delete(id);
+				this.socket.destroy();
 				reject(
 					mutation
 						? new RemoteMutationUnknownError(mutation.operation, mutation.method, mutation.createdAt)
@@ -153,7 +159,7 @@ export class RuntimeClient {
 			}, 30_000);
 			this.pending.set(id, { resolve, reject, timer, mutation });
 			try {
-				this.socket.write(`${encoded}\n`);
+				this.writer.writeEncoded(encoded, value.type === "stop" || value.type === "receipt");
 				if (mutation) this.mutationSequence = mutation.operation.sequence;
 			} catch (error) {
 				clearTimeout(timer);

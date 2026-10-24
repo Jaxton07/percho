@@ -231,28 +231,6 @@ export function Composer({ centered = false }: { centered?: boolean }) {
 		return () => window.removeEventListener(COMPOSER_FOCUS_EVENT, onFocusRequest);
 	}, []);
 
-	// Electron sandbox 中 File.path 已移除；preload 通过 webUtils 恢复原生路径并送入现有附件管线。
-	useEffect(() => {
-		if (readOnly) return;
-		const containsFiles = (event: DragEvent) => event.dataTransfer?.types.includes("Files") ?? false;
-		const onDragOver = (event: DragEvent) => {
-			if (!containsFiles(event)) return;
-			event.preventDefault();
-			if (event.dataTransfer) event.dataTransfer.dropEffect = "copy";
-		};
-		const onDrop = (event: DragEvent) => {
-			if (!containsFiles(event) || !event.dataTransfer) return;
-			event.preventDefault();
-			appendAttachments(resolveDroppedFilePaths(event.dataTransfer.files, getPi().getPathForFile));
-		};
-		window.addEventListener("dragover", onDragOver);
-		window.addEventListener("drop", onDrop);
-		return () => {
-			window.removeEventListener("dragover", onDragOver);
-			window.removeEventListener("drop", onDrop);
-		};
-	}, [appendAttachments, readOnly]);
-
 	// 点击输入框容器外部时收起命令/文件面板（文本保留；继续输入时恢复）
 	const { setSlashDismissed } = slash;
 	const { setAtDismissed } = at;
@@ -310,43 +288,73 @@ export function Composer({ centered = false }: { centered?: boolean }) {
 		}
 	};
 
-	const handleFiles = (files: FileList | File[] | null) => {
-		if (!files || files.length === 0) return;
-		// 图片门控入口防御：+ 按钮/粘贴之外的路径不再存在，仍早退兜底
-		if (!imagesSupported) return;
-		for (const file of Array.from(files)) {
-			if (!file.type.startsWith("image/")) continue;
-			// 在粘贴/选择时就先把图缩到模型规格（见 lib/image-attachment.ts）：
-			// 发送路径上的 SDK 归一化于是只需解码量尺寸（~20-40ms）而不是真缩一遍（~0.8–1.1s）。
-			// 失败一律退回原图，不丢附件；在途 promise 交给 preparingRef，回车会等它。
-			const generation =
-				activeSessionId === null ? useSessionsStore.getState().newSessionDraft?.generation : undefined;
-			const original = useDraftStore.getState().bySession[draftKey] ?? EMPTY_DRAFT;
-			const prepared = prepareImageAttachment(file).then((image) => {
-				if (
-					activeSessionId === null &&
-					generation !== useSessionsStore.getState().newSessionDraft?.generation
-				) {
-					// 新会话页已换代：保留为显式可恢复草稿，不能注入后来新建的输入。
-					useDraftStore.setState((state) => ({
-						failedBySession: {
-							...state.failedBySession,
-							[draftKey]: {
-								...(state.failedBySession[draftKey] ?? original),
-								images: [...(state.failedBySession[draftKey]?.images ?? original.images), image],
+	const handleFiles = useCallback(
+		(files: FileList | File[] | null) => {
+			if (!files || files.length === 0) return;
+			// 图片门控入口防御：+ 按钮/粘贴之外的路径不再存在，仍早退兜底
+			if (!imagesSupported) return;
+			for (const file of Array.from(files)) {
+				if (!file.type.startsWith("image/")) continue;
+				// 在粘贴/选择时就先把图缩到模型规格（见 lib/image-attachment.ts）：
+				// 发送路径上的 SDK 归一化于是只需解码量尺寸（~20-40ms）而不是真缩一遍（~0.8–1.1s）。
+				// 失败一律退回原图，不丢附件；在途 promise 交给 preparingRef，回车会等它。
+				const generation =
+					activeSessionId === null ? useSessionsStore.getState().newSessionDraft?.generation : undefined;
+				const original = useDraftStore.getState().bySession[draftKey] ?? EMPTY_DRAFT;
+				const prepared = prepareImageAttachment(file).then((image) => {
+					if (
+						activeSessionId === null &&
+						generation !== useSessionsStore.getState().newSessionDraft?.generation
+					) {
+						// 新会话页已换代：保留为显式可恢复草稿，不能注入后来新建的输入。
+						useDraftStore.setState((state) => ({
+							failedBySession: {
+								...state.failedBySession,
+								[draftKey]: {
+									...(state.failedBySession[draftKey] ?? original),
+									images: [...(state.failedBySession[draftKey]?.images ?? original.images), image],
+								},
 							},
-						},
-					}));
-					return;
-				}
-				updateDraft(draftKey, (d) => ({ ...d, images: [...d.images, image] }));
-			});
-			preparingRef.current.push({ key: draftKey, generation, promise: prepared });
-			void prepared.finally(() => {
-				preparingRef.current = preparingRef.current.filter((p) => p.promise !== prepared);
-			});
-		}
-	};
+						}));
+						return;
+					}
+					updateDraft(draftKey, (d) => ({ ...d, images: [...d.images, image] }));
+				});
+				preparingRef.current.push({ key: draftKey, generation, promise: prepared });
+				void prepared.finally(() => {
+					preparingRef.current = preparingRef.current.filter((p) => p.promise !== prepared);
+				});
+			}
+		},
+		[imagesSupported, activeSessionId, draftKey, updateDraft],
+	);
+
+	// Electron sandbox 中 File.path 已移除；preload 通过 webUtils 恢复原生路径并送入现有附件管线。
+	useEffect(() => {
+		if (readOnly) return;
+		const containsFiles = (event: DragEvent) => event.dataTransfer?.types.includes("Files") ?? false;
+		const onDragOver = (event: DragEvent) => {
+			if (!containsFiles(event)) return;
+			event.preventDefault();
+			if (event.dataTransfer) event.dataTransfer.dropEffect = "copy";
+		};
+		const onDrop = (event: DragEvent) => {
+			if (!containsFiles(event) || !event.dataTransfer) return;
+			event.preventDefault();
+			if (environment.kind === "ssh") {
+				const files = Array.from(event.dataTransfer.files);
+				if (files.some((file) => !file.type.startsWith("image/")))
+					pushToast("warning", "remote.localFileRejected");
+				handleFiles(files.filter((file) => file.type.startsWith("image/")));
+			} else appendAttachments(resolveDroppedFilePaths(event.dataTransfer.files, getPi().getPathForFile));
+		};
+		window.addEventListener("dragover", onDragOver);
+		window.addEventListener("drop", onDrop);
+		return () => {
+			window.removeEventListener("dragover", onDragOver);
+			window.removeEventListener("drop", onDrop);
+		};
+	}, [appendAttachments, readOnly, environment.kind, handleFiles]);
 
 	/** 截图/复制图片后 Ctrl+V 粘贴到输入框 */
 	const handlePaste = (e: React.ClipboardEvent<HTMLDivElement>) => {

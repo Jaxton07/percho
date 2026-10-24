@@ -14,7 +14,7 @@ import { createExecutionHandlers } from "../execution-handlers";
 import { JsonStore } from "../json-store";
 import { PiBackend } from "../pi-backend";
 import { bindExecutionEvents } from "./events";
-import { readRuntimeFrames } from "./frames";
+import { RuntimeWriter, readRuntimeFrames } from "./frames";
 import { MutationBook, MutationProtocolError } from "./mutations";
 import { acquireOwner, ownerIsCurrent, type RuntimePaths } from "./paths";
 
@@ -60,14 +60,22 @@ export async function startRuntimeServer(paths: RuntimePaths) {
 			| { socket: Socket; epoch: number; clientTag: string; lastPong: number; nonce?: string }
 			| undefined;
 		const sockets = new Set<Socket>();
+		const writers = new Map<Socket, RuntimeWriter>();
 		const write = (socket: Socket, frame: RuntimeFrame) => {
 			if (socket.destroyed) return;
-			const line = `${JSON.stringify(frame)}\n`;
-			if (socket.writableLength + Buffer.byteLength(line) > 16 * 1024 * 1024) {
-				socket.destroy();
-				return;
+			const writer = writers.get(socket);
+			if (!writer) return;
+			try {
+				writer.write(frame, frame.type === "ping");
+			} catch (error) {
+				if (frame.type === "result" && error instanceof Error && error.message.includes("64 MiB")) {
+					try {
+						writer.write({ type: "result", id: frame.id, error: error.message, code: "RESULT_UNAVAILABLE" });
+					} catch {
+						socket.destroy();
+					}
+				} else socket.destroy();
 			}
-			socket.write(line);
 		};
 		const eventsOff = bindExecutionEvents(runtimeBackend, (method, payload) => {
 			if (controller) write(controller.socket, { type: "event", method, payload });
@@ -94,8 +102,10 @@ export async function startRuntimeServer(paths: RuntimePaths) {
 		};
 		const server = createServer((socket) => {
 			sockets.add(socket);
+			writers.set(socket, new RuntimeWriter(socket));
 			socket.once("close", () => {
 				sockets.delete(socket);
+				writers.delete(socket);
 				if (controller?.socket === socket) controller = undefined;
 			});
 			socket.on("error", () => socket.destroy());
@@ -257,15 +267,23 @@ export async function startRuntimeServer(paths: RuntimePaths) {
 					);
 				}
 			};
-			socket.on(
-				"data",
-				readRuntimeFrames(
-					(frame) => {
-						void receive(frame).catch(() => socket.destroy());
-					},
-					() => socket.destroy(),
-				),
+			let inFlight = 0;
+			const reader = readRuntimeFrames(
+				(frame) => {
+					if (++inFlight > 128) {
+						socket.destroy();
+						return;
+					}
+					void receive(frame)
+						.catch(() => socket.destroy())
+						.finally(() => {
+							inFlight--;
+						});
+				},
+				() => socket.destroy(),
 			);
+			socket.on("data", reader);
+			socket.once("close", () => reader.dispose());
 		});
 		const heartbeat = setInterval(() => {
 			const current = controller;

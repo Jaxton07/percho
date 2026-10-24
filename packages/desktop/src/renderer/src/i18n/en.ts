@@ -3,6 +3,8 @@ import type { Messages } from "./zh";
 /** English language pack (mirrors zh.ts shape) */
 export const en: Messages = {
 	remote: {
+		localFileRejected:
+			"Remote sessions accept local images. Other local files cannot be used as remote paths.",
 		unknownTitle: "Check the remote operation outcome",
 		unknownHint:
 			"Missing confirmation does not mean the operation did not run. Check the remote operation and project before continuing. It will not be resent automatically.",

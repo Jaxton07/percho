@@ -47,6 +47,7 @@ describe("runtime client transport ownership", () => {
 				state: "unknown",
 			});
 			const pending = f.client.invoke("prompt", { sessionId: "same", text: "write" });
+			await vi.waitFor(() => expect(f.requests.at(-1)?.type).toBe("invoke"));
 			const request = f.requests.at(-1);
 			if (request?.type !== "invoke") throw new Error("Missing invocation");
 			expect(request.mutationSeq).toBe(1);
@@ -63,6 +64,7 @@ describe("runtime client transport ownership", () => {
 			const attachment = (await f.client.attach("desktop")) as RuntimeAttachment;
 			const pending = f.client.invoke("getStats", { sessionId: "same" });
 			void pending.catch(() => {}); // Cleanup on an assertion failure must not leave an unhandled request.
+			await vi.waitFor(() => expect(f.requests.at(-1)?.type).toBe("invoke"));
 			const request = f.requests.at(-1);
 			if (request?.type !== "invoke") throw new Error("Missing invocation");
 			expect(request).toMatchObject({
@@ -97,6 +99,7 @@ describe("runtime client transport ownership", () => {
 		await f.client.attach("desktop");
 		const pending = f.client.invoke("prompt", { sessionId: "same", text: "write" });
 		const failed = expect(pending).rejects.toThrow("outcome may be unknown");
+		await vi.waitFor(() => expect(f.requests.at(-1)?.type).toBe("invoke"));
 		f.client.close();
 		await failed;
 		expect(f.requests.filter((request) => request.type === "invoke")).toHaveLength(1);
