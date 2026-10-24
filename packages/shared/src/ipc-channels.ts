@@ -60,24 +60,40 @@ import type { UpdateDiagnosticsInfo } from "./update-diagnostics";
  * 约定：
  * - 参数统一「单对象」形态（无参通道 args = void）；main→renderer 单向事件通道不在此表
  *   （见下方 SUBSCRIPTION_TABLE，send-only 无 invoke 返回语义）
- * - ch("domain:action")<{...args}, Ret>()：通道字面量只写一次，运行时值仅 { channel }
+ * - ch("domain:action")<{...args}, Ret>()：通道字面量只写一次，运行时值为 { channel, scope }
  * - main 侧经 registerInvokeHandlers(子表, handlers) 注册；preload 对 CHANNEL_TABLE 循环注册
  */
 
 /** 通道定义：channel 字面量 + args/ret（args/ret 仅类型占位，运行时不存在） */
-export interface ChannelDef<C extends string = string, A = void, R = unknown> {
+export type ChannelScope = "environment" | "desktop";
+
+export interface ChannelDef<
+	C extends string = string,
+	A = void,
+	R = unknown,
+	S extends ChannelScope = ChannelScope,
+> {
 	channel: C;
+	scope: S;
 	args: A;
 	ret: R;
 }
 
 /** 已知 channel 字面量的 args/ret 构造器（第二段显式泛型） */
-export type ChannelCtor<C extends string> = <A, R>() => ChannelDef<C, A, R>;
+export type ChannelCtor<C extends string, S extends ChannelScope = "environment"> = <A, R>() => ChannelDef<
+	C,
+	A,
+	R,
+	S
+>;
 
-/** ch("domain:action")<Args, Ret>() —— 通道字面量（第一段推断保留）+ args/ret（第二段显式）；运行时值仅 { channel } */
-export function ch<const C extends string>(channel: C): ChannelCtor<C> {
-	const ctor = () => ({ channel });
-	return ctor as ChannelCtor<C>;
+/** ch("domain:action")<Args, Ret>() —— 通道字面量（第一段推断保留）+ args/ret（第二段显式）；运行时值为 { channel, scope } */
+export function ch<const C extends string, const S extends ChannelScope = "environment">(
+	channel: C,
+	scope: S = "environment" as S,
+): ChannelCtor<C, S> {
+	const ctor = () => ({ channel, scope });
+	return ctor as ChannelCtor<C, S>;
 }
 
 /** 泛型容器最小约束（args/ret 任意；channel 字面量保留） */
@@ -202,11 +218,11 @@ export const MCP_CHANNELS = {
 /** LAN 观察域：本机服务开关与远程控制开关 */
 export const LAN_CHANNELS = {
 	/** 读取局域网观察服务状态（URL/二维码只在启用并监听后提供） */
-	lanGetStatus: ch("lan:getStatus")<void, LanStatus>(),
+	lanGetStatus: ch("lan:getStatus", "desktop")<void, LanStatus>(),
 	/** 启用或停止局域网只读观察服务；启用时轮换访问 token */
-	lanSetEnabled: ch("lan:setEnabled")<{ enabled: boolean }, LanStatus>(),
+	lanSetEnabled: ch("lan:setEnabled", "desktop")<{ enabled: boolean }, LanStatus>(),
 	/** 远程控制二级开关（独立于观察开关；未开观察时允许配置但不生效） */
-	lanSetRemoteControl: ch("lan:setRemoteControl")<{ enabled: boolean }, LanStatus>(),
+	lanSetRemoteControl: ch("lan:setRemoteControl", "desktop")<{ enabled: boolean }, LanStatus>(),
 } as const;
 
 /** 扩展对话框域：renderer 应答（请求/结算/通知为 main→renderer 单向事件，在 index.ts 转发） */
@@ -292,70 +308,79 @@ export const SETTINGS_CHANNELS = {
 /** 应用域：窗口级功能（对话框/背景/更新/tabs/ui-state/git/外链等，多为非透传 handler） */
 export const APP_CHANNELS = {
 	/** 弹保存对话框并写文件；用户取消返回 null，成功返回写入路径 */
-	saveFileDialog: ch("file:saveDialog")<{ defaultName: string; content: string }, string | null>(),
+	saveFileDialog: ch("file:saveDialog", "desktop")<{ defaultName: string; content: string }, string | null>(),
 	/** 目录选择对话框（取消返回 null） */
-	pickDirectory: ch("project:pickDirectory")<void, string | null>(),
+	pickDirectory: ch("project:pickDirectory", "desktop")<void, string | null>(),
 	getGitBranch: ch("project:getGitBranch")<{ cwd: string }, string | null>(),
 	listGitBranches: ch("project:listGitBranches")<{ cwd: string }, GitBranches>(),
 	/** 切换分支；返回切换后的当前分支（失败抛错） */
 	checkoutBranch: ch("project:checkoutBranch")<{ cwd: string; branch: string }, string>(),
 	/** 用系统浏览器打开链接（仅 http(s)，防 file:// 协议滥用） */
-	openExternal: ch("app:openExternal")<{ url: string }, void>(),
+	openExternal: ch("app:openExternal", "desktop")<{ url: string }, void>(),
 	/** 解析文件路径为绝对路径（相对/`~`/`file://`/带 `:行:列` 锚点均可；不存在抛错） */
 	resolvePath: ch("app:resolvePath")<{ target: string; cwd: string | null }, string>(),
 	/** 用系统默认应用打开文件（路径解析同上；打开失败把系统报错抛给渲染端） */
-	openPath: ch("app:openPath")<{ target: string; cwd: string | null }, void>(),
+	openPath: ch("app:openPath", "desktop")<{ target: string; cwd: string | null }, void>(),
 	/** 在系统文件管理器中显示该文件（macOS = 访达；路径解析同上） */
-	revealPath: ch("app:revealPath")<{ target: string; cwd: string | null }, void>(),
+	revealPath: ch("app:revealPath", "desktop")<{ target: string; cwd: string | null }, void>(),
 	/** 应用信息（版本/运行时版本/仓库地址，设置关于页用） */
-	getAppInfo: ch("app:getInfo")<void, AppInfo>(),
+	getAppInfo: ch("app:getInfo", "desktop")<void, AppInfo>(),
 	/** 日常空间工作台目录（懒创建后返回；日常会话的固定 cwd） */
 	getDailyDir: ch("app:getDailyDir")<void, string>(),
 	/** 读取持久化 UI 状态（上次使用的模型/思考级别/主题/背景；无数据返回 null） */
-	loadUiState: ch("uiState:load")<void, UiState | null>(),
+	loadUiState: ch("uiState:load", "desktop")<void, UiState | null>(),
 	/** 持久化 UI 状态（主进程合并写入 userData/ui-state.json，传补丁即可） */
-	saveUiState: ch("uiState:save")<{ state: Partial<UiState> }, void>(),
+	saveUiState: ch("uiState:save", "desktop")<{ state: Partial<UiState> }, void>(),
 	/** 弹图选框选背景图并拷贝进 userData/backgrounds/；取消返回 null */
-	pickBackgroundImage: ch("background:pick")<void, string | null>(),
+	pickBackgroundImage: ch("background:pick", "desktop")<void, string | null>(),
 	/** 检查更新（纯检查：发现新版只提示不下载） */
-	checkForUpdates: ch("update:check")<void, void>(),
+	checkForUpdates: ch("update:check", "desktop")<void, void>(),
 	/** 下载更新（已发现新版→下载；未发现→先检查）；仅用户显式点击触发 */
-	downloadUpdate: ch("update:download")<void, void>(),
+	downloadUpdate: ch("update:download", "desktop")<void, void>(),
 	/** 重启并安装已下载的更新 */
-	installUpdate: ch("update:install")<void, void>(),
+	installUpdate: ch("update:install", "desktop")<void, void>(),
 	/** 上一次安装交接是否已观察到目标版本启动（不推断安装器退出结果） */
-	getUpdateDiagnostics: ch("update:diagnostics")<void, UpdateDiagnosticsInfo>(),
+	getUpdateDiagnostics: ch("update:diagnostics", "desktop")<void, UpdateDiagnosticsInfo>(),
 	/** 用户选择路径后导出专用更新诊断；取消返回 null，不含会话/认证文件 */
-	exportUpdateDiagnostics: ch("update:exportDiagnostics")<void, string | null>(),
+	exportUpdateDiagnostics: ch("update:exportDiagnostics", "desktop")<void, string | null>(),
 	/** 渲染端声明「退出确认由我接管」（App 挂载时置位）——未接管时 main 关窗直接放行 */
-	setQuitGuard: ch("app:setQuitGuard")<{ enabled: boolean }, void>(),
+	setQuitGuard: ch("app:setQuitGuard", "desktop")<{ enabled: boolean }, void>(),
 	/** 渲染端回执「退出确认窗已上屏」→ main 撤掉兑底计时（超时 = 渲染进程卡死，直接放行退出） */
-	quitDialogShown: ch("app:quitDialogShown")<void, void>(),
+	quitDialogShown: ch("app:quitDialogShown", "desktop")<void, void>(),
 	/** 用户在退出确认弹窗点了「退出」→ main 置 quitting 后真退 */
-	confirmQuit: ch("app:confirmQuit")<void, void>(),
+	confirmQuit: ch("app:confirmQuit", "desktop")<void, void>(),
 } as const;
 
 /** UI 插件域：配置读写 / 列表 / 构建 / 代码读取 / 目录打开（参数校验在 handler 内） */
 export const UI_PLUGINS_CHANNELS = {
 	/** 读 UI 插件全局配置（总开关/启用信任表/槽位指派） */
-	uiPluginsGetConfig: ch("uiPlugins:getConfig")<void, UiPluginsConfig>(),
+	uiPluginsGetConfig: ch("uiPlugins:getConfig", "desktop")<void, UiPluginsConfig>(),
 	/** 设 UI 插件全局总开关 */
-	uiPluginsSetEnabled: ch("uiPlugins:setEnabled")<{ enabled: boolean }, void>(),
+	uiPluginsSetEnabled: ch("uiPlugins:setEnabled", "desktop")<{ enabled: boolean }, void>(),
 	/** 列 UI 插件（含 enabled/trusted/buildError/invalidReason） */
-	uiPluginsList: ch("uiPlugins:list")<void, UiPluginInfo[]>(),
+	uiPluginsList: ch("uiPlugins:list", "desktop")<void, UiPluginInfo[]>(),
 	/** 读插件构建产物（name 必须是扫描到的合法插件名，禁路径） */
-	uiPluginsReadCode: ch("uiPlugins:readCode")<
+	uiPluginsReadCode: ch("uiPlugins:readCode", "desktop")<
 		{ name: string },
 		{ manifest: UiPluginManifest; code: string } | { error: string }
 	>(),
 	/** 启用/停用单个插件（启用=信任，同步落盘） */
-	uiPluginsSetPluginEnabled: ch("uiPlugins:setPluginEnabled")<{ name: string; enabled: boolean }, void>(),
+	uiPluginsSetPluginEnabled: ch("uiPlugins:setPluginEnabled", "desktop")<
+		{ name: string; enabled: boolean },
+		void
+	>(),
 	/** 槽位指派（pluginName=null 取消指派） */
-	uiPluginsAssignSlot: ch("uiPlugins:assignSlot")<{ slot: string; pluginName: string | null }, void>(),
+	uiPluginsAssignSlot: ch("uiPlugins:assignSlot", "desktop")<
+		{ slot: string; pluginName: string | null },
+		void
+	>(),
 	/** 重新构建插件（构建失败返回错误信息，旧产物保留） */
-	uiPluginsRebuild: ch("uiPlugins:rebuild")<{ name: string }, { ok: true } | { ok: false; error: string }>(),
+	uiPluginsRebuild: ch("uiPlugins:rebuild", "desktop")<
+		{ name: string },
+		{ ok: true } | { ok: false; error: string }
+	>(),
 	/** 打开插件目录（不传 name 开根目录；shell.openPath） */
-	uiPluginsOpenDir: ch("uiPlugins:openDir")<{ name?: string }, void>(),
+	uiPluginsOpenDir: ch("uiPlugins:openDir", "desktop")<{ name?: string }, void>(),
 } as const;
 
 /** 已表化通道全集（分批迁移，终态 = 全部 invoke 通道） */
@@ -396,16 +421,17 @@ function channelsFromTable<T extends Record<string, AnyChannelDef>>(
 }
 
 /** Payload is a type-only slot like invoke args/ret; void requires an explicit runtime marker. */
-function subscription<P>() {
+function subscription<P, S extends ChannelScope = "environment">(scope: S = "environment" as S) {
 	return <const A extends string, const C extends string>(
 		alias: A,
 		channel: C,
 		...noPayload: [P] extends [ReturnType<() => void>] ? [true] : []
 	) =>
-		({ alias, channel, noPayload: noPayload[0] ?? false }) as {
+		({ alias, channel, scope, noPayload: noPayload[0] ?? false }) as {
 			alias: A;
 			channel: C;
 			payload: P;
+			scope: S;
 			noPayload: boolean;
 		};
 }
@@ -418,9 +444,12 @@ export const SUBSCRIPTION_TABLE = {
 		"ChannelSubscriptionsChanged",
 		"channel:subscriptionsChanged",
 	),
-	onUiPluginsEvent: subscription<UiPluginsEventPayload>()("UiPluginsEvent", "uiPlugins:event"),
-	onQuitRequested: subscription<void>()("QuitRequested", "app:quit-requested", true),
-	onUpdateEvent: subscription<UpdateState>()("UpdateEvent", "update:event"),
+	onUiPluginsEvent: subscription<UiPluginsEventPayload, "desktop">("desktop")(
+		"UiPluginsEvent",
+		"uiPlugins:event",
+	),
+	onQuitRequested: subscription<void, "desktop">("desktop")("QuitRequested", "app:quit-requested", true),
+	onUpdateEvent: subscription<UpdateState, "desktop">("desktop")("UpdateEvent", "update:event"),
 	onEvent: subscription<SessionEventEnvelope>()("Event", "pi:event"),
 	onPermissionRequest: subscription<PermissionRequest>()("PermissionRequest", "pi:permission-request"),
 	onPermissionResolved: subscription<PermissionResolved>()("PermissionResolved", "pi:permission-resolved"),

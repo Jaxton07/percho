@@ -11,6 +11,19 @@ beforeEach(() => {
 	state.windows = [];
 });
 describe("renderer event send leaf", () => {
+	it("preserves the source of execution events and rejects remote native events", () => {
+		const window = { isDestroyed: () => false, webContents: { send: vi.fn() } };
+		state.windows = [window];
+		const remote = { kind: "ssh" as const, connectionId: "company", environmentId: "data" };
+		const payload = {
+			sessionId: "same-id",
+			event: { type: "agent_end" as const, messages: [], willRetry: false },
+		};
+		sendToRenderer("pi:event", payload, remote);
+		expect(window.webContents.send).toHaveBeenCalledExactlyOnceWith("pi:event", payload, remote);
+		expect(() => sendToRenderer("app:quit-requested", undefined, remote)).toThrow("Desktop events");
+		expect(window.webContents.send).toHaveBeenCalledTimes(1);
+	});
 	it("explicit source forward passes the same payload through the typed send leaf", () => {
 		const window = { isDestroyed: () => false, webContents: { send: vi.fn() } };
 		state.windows = [window];

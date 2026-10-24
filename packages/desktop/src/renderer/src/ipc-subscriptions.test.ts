@@ -35,7 +35,7 @@ const code = buildSync({
 	write: false,
 	external: ["electron"],
 }).outputFiles[0]?.text;
-type Listener = (event: unknown, payload?: unknown) => void;
+type Listener = (event: unknown, payload?: unknown, source?: unknown) => void;
 function bootPreload() {
 	if (!code) throw new Error("preload bundle missing");
 	let exposed: PiApi | undefined;
@@ -135,6 +135,30 @@ describe("single-source subscription contract and real bundled preload", () => {
 		expect(ipc.invoke.mock.calls.at(-1)?.[1]).toBe(args);
 		await api.getQuota();
 		expect(ipc.invoke).toHaveBeenLastCalledWith(CHANNEL_TABLE.getQuota.channel, undefined);
+	});
+	it("the sandboxed preload binds an immutable target and keeps remote events out of legacy local listeners", async () => {
+		const { api, ipc, listeners } = bootPreload();
+		const remote = { kind: "ssh" as const, connectionId: "company", environmentId: "data" };
+		const bound = api.forEnvironment(remote);
+		remote.environmentId = "changed-after-binding";
+		await bound.listSessions({ cwd: "/project" });
+		expect(ipc.invoke).toHaveBeenLastCalledWith(CHANNEL_TABLE.listSessions.channel, {
+			__perchoEnvironment: 1,
+			environment: { kind: "ssh", connectionId: "company", environmentId: "data" },
+			args: { cwd: "/project" },
+		});
+		expect("openPath" in bound).toBe(false);
+		const local = vi.fn(),
+			foreign = vi.fn();
+		api.onEvent(local);
+		const off = bound.onEvent(foreign);
+		const event = { sessionId: "same-id", event: { type: "agent_end", messages: [] } };
+		for (const listener of listeners.get(IpcChannels.Event) ?? []) {
+			listener({}, event, { kind: "ssh", connectionId: "company", environmentId: "data" });
+		}
+		expect(local).not.toHaveBeenCalled();
+		expect(foreign).toHaveBeenCalledExactlyOnceWith(event);
+		off();
 	});
 });
 

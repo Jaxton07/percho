@@ -13,6 +13,8 @@
 
 新增 invoke 在 shared `ipc-channels.ts` 对应域表定义，并在 desktop `main/ipc/` 域 handler 实现；新增订阅在同文件 `SUBSCRIPTION_TABLE` 定义。PiApi 与 preload 从表派生，事件来源和信封转换仍由 main 显式接线；发送复用 `main/ipc/send.ts`，不绕过载荷类型检查。
 
+执行方法与本机原生方法的作用域也由原契约表定义。环境调用在入口绑定已登记的目标身份，不读取可变的“当前后端”；环境身份变化或连接脱离后拒绝原请求，不能回落本机。事件保留所属环境，兼容期旧订阅只接本机事件。UI复合引用不改写SDK原始ID或JSONL，跨环境解包必须核对归属；不得把路径或会话裸ID当作跨机器唯一身份。
+
 preload 保持 CJS 与 sandbox 兼容。生产相对导入图三域无环；纯函数与常量放叶模块，不放在会反向导入其消费者的 store 或 barrel 上。
 
 UI 插件的槽位/区域标识以 shared `ui-plugins.ts` 为单源。新增对插件公开的 hook/store 时，同步核对 renderer `plugins/host-api.ts`、`env.d.ts`、main `ui-plugins/build.ts` shim、发布的 `resources/ui-plugins/percho-ui.d.ts` 与 SPEC；使用现有契约守护测试，不手抄第二份 API。
