@@ -72,7 +72,8 @@ export class UiPluginManager {
 			version: typeof manifest?.version === "string" ? manifest.version : undefined,
 			perchoUi: manifest?.perchoUi,
 			slots: manifest?.slots ?? {},
-			contributions: filterContributions(manifest?.contributions),
+			contributions: filterContributions(manifest?.contributions, manifest?.perchoUi ?? 1),
+			settingsSchema: manifest?.perchoUi === 2 ? manifest.settingsSchema : undefined,
 			headless: manifest?.headless === true ? true : undefined,
 			enabled: this.config.plugins[name]?.enabled ?? false,
 			trusted: this.config.plugins[name]?.trusted ?? false,
@@ -168,7 +169,9 @@ export class UiPluginManager {
 				needsBuild = srcMtime === null || !distStat || srcMtime > distStat.mtimeMs;
 			}
 			if (needsBuild) {
-				const res = await buildPlugin(pluginDir, manifest.main);
+				const res = await buildPlugin(pluginDir, manifest.main, {
+					styles: manifest.perchoUi === 2 ? manifest.styles : undefined,
+				});
 				// await 期间扫描/配置可能已更新或移除条目；构建只发布自己负责的字段。
 				const latest = this.infos.get(name);
 				if (latest && this.dirNames.get(name) === pluginDir) {
@@ -191,7 +194,9 @@ export class UiPluginManager {
 	 * 读插件构建产物（白名单：只接受扫描到的合法名；先 ensureBuilt 再读 dist/index.js）。
 	 * 返回 { manifest, code } 或 { error }。
 	 */
-	async readCode(name: string): Promise<{ manifest: UiPluginManifest; code: string } | { error: string }> {
+	async readCode(
+		name: string,
+	): Promise<{ manifest: UiPluginManifest; code: string; css?: string } | { error: string }> {
 		const info = this.infos.get(name);
 		if (!info || info.invalidReason) return { error: `未知插件 ${name}` };
 		const pluginDir = this.dirNames.get(name);
@@ -212,9 +217,14 @@ export class UiPluginManager {
 			// 未知 region 条目已被过滤（与 scanAll 合成 info 同源），registry 只注册已知区域
 			const cleanManifest: UiPluginManifest = {
 				...(manifest as UiPluginManifest),
-				contributions: filterContributions(manifest.contributions),
+				contributions: filterContributions(manifest.contributions, manifest.perchoUi),
+				// v1 契约没有 v2 字段：不往 renderer 传，避免被当新语义用
+				styles: manifest.perchoUi === 2 ? manifest.styles : undefined,
+				settingsSchema: manifest.perchoUi === 2 ? manifest.settingsSchema : undefined,
 			};
-			return { manifest: cleanManifest, code };
+			// 插件样式（perchoUi 2）：存在才读，缺失不影响加载
+			const css = await readFile(join(pluginDir, "dist/index.css"), "utf-8").catch(() => undefined);
+			return css === undefined ? { manifest: cleanManifest, code } : { manifest: cleanManifest, code, css };
 		} catch (err) {
 			log.error("readCode failed", name, err);
 			return { error: String(err) };

@@ -50,7 +50,13 @@ import type {
 	SubagentInfo,
 } from "./settings";
 import type { TodoItem } from "./todo";
-import type { UiPluginInfo, UiPluginManifest, UiPluginsConfig, UiPluginsEventPayload } from "./ui-plugins";
+import type {
+	UiPluginInfo,
+	UiPluginManifest,
+	UiPluginSettingValue,
+	UiPluginsConfig,
+	UiPluginsEventPayload,
+} from "./ui-plugins";
 import type { UpdateState } from "./update";
 import type { UpdateDiagnosticsInfo } from "./update-diagnostics";
 
@@ -346,7 +352,7 @@ export const UI_PLUGINS_CHANNELS = {
 	/** 读插件构建产物（name 必须是扫描到的合法插件名，禁路径） */
 	uiPluginsReadCode: ch("uiPlugins:readCode")<
 		{ name: string },
-		{ manifest: UiPluginManifest; code: string } | { error: string }
+		{ manifest: UiPluginManifest; code: string; css?: string } | { error: string }
 	>(),
 	/** 启用/停用单个插件（启用=信任，同步落盘） */
 	uiPluginsSetPluginEnabled: ch("uiPlugins:setPluginEnabled")<{ name: string; enabled: boolean }, void>(),
@@ -356,6 +362,13 @@ export const UI_PLUGINS_CHANNELS = {
 	uiPluginsRebuild: ch("uiPlugins:rebuild")<{ name: string }, { ok: true } | { ok: false; error: string }>(),
 	/** 打开插件目录（不传 name 开根目录；shell.openPath） */
 	uiPluginsOpenDir: ch("uiPlugins:openDir")<{ name?: string }, void>(),
+	/** 读插件自有配置（未设置过的键不出现；值只可能是 JSON 标量） */
+	uiPluginsGetSettings: ch("uiPlugins:getSettings")<{ name: string }, Record<string, UiPluginSettingValue>>(),
+	/** 写插件自有配置（patch 语义：undefined = 删除该键；越界/非标量值整批拒绝并抛错，不静默截断） */
+	uiPluginsSetSettings: ch("uiPlugins:setSettings")<
+		{ name: string; patch: Record<string, UiPluginSettingValue | undefined> },
+		void
+	>(),
 } as const;
 
 /** 已表化通道全集（分批迁移，终态 = 全部 invoke 通道） */

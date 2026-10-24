@@ -1,13 +1,19 @@
 import { IpcChannels, KNOWN_UI_SLOTS, UI_PLUGINS_CHANNELS } from "@percho/shared";
 import { shell } from "electron";
-import { loadUiPluginsConfig } from "../ui-plugins/config";
+import { loadPluginSettings, loadUiPluginsConfig } from "../ui-plugins/config";
 import type { UiPluginManager } from "../ui-plugins/manager";
+import { migratePluginSettings } from "../ui-plugins/settings";
 import { registerInvokeHandlers } from "./invoke";
 import { sendToRenderer } from "./send";
 
 /** 配置类变更（总开关/启用/指派）→ 通知 renderer 全量对齐 */
 function pushConfigEvent(): void {
 	sendToRenderer(IpcChannels.UiPluginsEvent, { kind: "config" });
+}
+
+/** 只改了插件自有配置：发窄事件，renderer 不必把插件代码重载一遍 */
+function pushSettingsEvent(name: string): void {
+	sendToRenderer(IpcChannels.UiPluginsEvent, { kind: "settings", name });
 }
 
 /**
@@ -53,6 +59,35 @@ export function registerUiPluginsIpc(manager: UiPluginManager): void {
 			// 重建成功 → 通知 renderer 重载该插件（旧代码立即替换）
 			sendToRenderer(IpcChannels.UiPluginsEvent, { kind: "changed", name });
 			return { ok: true as const };
+		},
+		uiPluginsGetSettings: async ({ name }) => {
+			if (typeof name !== "string" || name.length === 0) return {};
+			const stored = await loadPluginSettings(name);
+			const info = manager.info(name);
+			// 读时迁移：版本对不上就按 manifest 的 migrations 逐级升，
+			// 并当场回写 —— 迁移只跑一次，之后读到的就是新形状。
+			const config = await loadUiPluginsConfig();
+			const migrated = migratePluginSettings(
+				stored,
+				config.plugins[name]?.settingsVersion,
+				info?.settingsSchema,
+			);
+			if (!migrated.applied) return stored;
+			await manager.updateConfig({
+				kind: "replace-plugin-settings",
+				name,
+				settings: migrated.value,
+				settingsVersion: migrated.version,
+			});
+			pushSettingsEvent(name);
+			return migrated.value ?? {};
+		},
+		uiPluginsSetSettings: async ({ name, patch }) => {
+			if (typeof name !== "string" || name.length === 0) return;
+			// 只接受扫描到的合法插件名（插件目录白名单，禁路径）
+			if (!manager.pluginDirOf(name)) return;
+			await manager.updateConfig({ kind: "set-plugin-settings", name, patch });
+			pushSettingsEvent(name);
 		},
 		uiPluginsOpenDir: ({ name }) => {
 			if (name !== undefined && name !== null && typeof name !== "string") return;
