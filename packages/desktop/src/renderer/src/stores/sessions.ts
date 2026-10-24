@@ -2,6 +2,7 @@ import {
 	type AvailableModel,
 	composerDocumentFromText,
 	type EnvironmentRef,
+	emptyTranscript,
 	environmentEntityRef,
 	environmentKey,
 	LOCAL_ENVIRONMENT,
@@ -25,6 +26,14 @@ import {
 	newSessionDraftKey,
 	useDraftStore,
 } from "./drafts";
+import {
+	beginSessionBaseline,
+	finishSessionBaseline,
+	forgetSessionBoundary,
+	pauseEnvironmentEvents,
+	pendingSessionBaselineToken,
+	resumeEnvironmentEvents,
+} from "./session-event-boundary";
 import {
 	finishSessionHistory,
 	hasPendingSessionHistory,
@@ -604,7 +613,11 @@ export const useSessionsStore = create<SessionsStore>((_set, get) => ({
 		});
 		// 懒加载兜底（D4）：目标会话无 transcript 数据时补拉四件套（从历史打开、
 		// 事件桥断连期间的切换等都经此路径自愈；已有数据零成本短路）
-		if (!isHistoryReady(sessionId) && hasPendingSessionHistory(sessionId)) {
+		if (environmentEntityRef(sessionId).environment.kind === "ssh" && !isHistoryReady(sessionId)) {
+			void loadSessionBundle(sessionId).catch((error) =>
+				pushToast("warning", "toast.sessionOpenFailed", errText(error)),
+			);
+		} else if (!isHistoryReady(sessionId) && hasPendingSessionHistory(sessionId)) {
 			void retrySessionHistory(sessionId);
 		} else if (useTranscriptStore.getState().bySession[sessionId] === undefined) {
 			void loadSessionBundle(sessionId).catch((error) => {
@@ -945,6 +958,107 @@ const sessionLoader = createSessionLoader({
 });
 // Bind the coordinator methods directly; no private forwarding facade.
 const { loadSessionBundle, restorePermissionMode, ensureOpenSession } = sessionLoader;
+
+const remoteRecovery = new Map<string, number>();
+export function invalidateEnvironmentSessions(environment: EnvironmentRef): number {
+	const key = environmentKey(environment);
+	const generation = (remoteRecovery.get(key) ?? 0) + 1;
+	remoteRecovery.set(key, generation);
+	pauseEnvironmentEvents(environment);
+	for (const meta of useSessionsStore.getState().sessions) {
+		if (!sameEnvironment(environmentEntityRef(meta.sessionId).environment, environment)) continue;
+		sessionLoader.forget(meta.sessionId, meta.sessionFile);
+		beginSessionBaseline(meta.sessionId);
+	}
+	return generation;
+}
+export async function synchronizeEnvironmentSessions(
+	environment: EnvironmentRef,
+	generation: number,
+): Promise<void> {
+	const key = environmentKey(environment);
+	const summaries = await getExecutionApi(environment).getLoadedSessions();
+	if (remoteRecovery.get(key) !== generation) return;
+	const old = useSessionsStore.getState();
+	const active = old.activeSessionId;
+	const previousActive = old.sessions.find((meta) => meta.sessionId === active);
+	const loadedIds = new Set(summaries.map((summary) => summary.meta.sessionId));
+	for (const meta of old.sessions) {
+		if (
+			!sameEnvironment(environmentEntityRef(meta.sessionId).environment, environment) ||
+			loadedIds.has(meta.sessionId)
+		)
+			continue;
+		forgetSessionBoundary(meta.sessionId);
+		useTranscriptStore.setState((state) => {
+			const previous = state.bySession[meta.sessionId];
+			if (!previous) return state;
+			return {
+				bySession: {
+					...state.bySession,
+					[meta.sessionId]: {
+						...previous,
+						streaming: null,
+						agentActive: false,
+						compacting: false,
+						phase: "idle",
+						followUpQueue: [],
+						retrying: null,
+						pendingLlmError: null,
+						pendingPermissions: [],
+						pendingDialogs: [],
+					},
+				},
+			};
+		});
+	}
+	const tokens = new Map(
+		summaries.map((summary) => [
+			summary.meta.sessionId,
+			pendingSessionBaselineToken(summary.meta.sessionId) ?? beginSessionBaseline(summary.meta.sessionId),
+		]),
+	);
+	commitSessionState((state) => ({
+		sessions: [
+			...state.sessions.filter(
+				(meta) => !sameEnvironment(environmentEntityRef(meta.sessionId).environment, environment),
+			),
+			...summaries.map((summary) => summary.meta),
+		],
+	}));
+	for (const summary of summaries) {
+		const id = summary.meta.sessionId;
+		finishSessionBaseline(id, tokens.get(id) as number, summary.sequence, () => {
+			useTranscriptStore.setState((state) => {
+				const previous = state.bySession[id];
+				return {
+					bySession: {
+						...state.bySession,
+						[id]: {
+							...(previous ?? { ...emptyTranscript(), pendingPermissions: [], pendingDialogs: [] }),
+							streaming: null,
+							agentActive: summary.streaming,
+							compacting: summary.compacting,
+							phase: summary.streaming ? "streaming" : "idle",
+							followUpQueue: summary.followUpQueue,
+						},
+					},
+				};
+			});
+			applyBackendPermissionMode(id, summary.permissionMode);
+		});
+	}
+	resumeEnvironmentEvents(environment);
+	if (active && previousActive && sameEnvironment(environmentEntityRef(active).environment, environment)) {
+		if (!summaries.some((summary) => summary.meta.sessionId === active) && previousActive.sessionFile)
+			await ensureOpenSession(previousActive.sessionFile, { loadBundle: false });
+		if (
+			remoteRecovery.get(key) === generation &&
+			useSessionsStore.getState().sessions.some((meta) => meta.sessionId === active)
+		)
+			await loadSessionBundle(active);
+	}
+}
 
 /**
  * 工作区 `activeFile` 跟随当前会话：**唯一同步点**。

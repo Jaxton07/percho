@@ -1,6 +1,9 @@
 /** 中文语言包（作为 key 的结构定义，en.ts 与之同形） */
 export const zh = {
 	remote: {
+		restarted: "远端服务已重启。可恢复已保存的历史；之前任务不会自动续跑，操作结果需核查。",
+		syncFailed: "远端会话同步失败，打开会话后可重试。",
+		synchronizing: "远端会话正在同步，请稍后再发送。停止任务仍可使用。",
 		localFileRejected: "远端会话只支持传入图片，普通本机文件无法作为远端路径使用。",
 		unknownTitle: "远端操作结果待核查",
 		unknownHint: "未收到确认并不表示未执行。先核查远端操作和项目状态，再决定是否继续；不会自动重发。",

@@ -158,6 +158,7 @@ try {
 		Duplex.from({ readable: bridgeChild.stdout, writable: bridgeChild.stdin }),
 	);
 	const attached = await first.attach("linux-integration");
+	await first.invoke("getLoadedSessions");
 	second = await RuntimeClient.connect(socket);
 	try {
 		await second.attach("second-controller");

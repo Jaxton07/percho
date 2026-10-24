@@ -139,6 +139,7 @@ try {
 		if (method === "onEvent" && payload.event.type === "tool_execution_end") events.push(payload);
 	});
 	await client.attach("image-fixture");
+	await client.invoke("getLoadedSessions");
 	const session = await client.invoke("createSession", {
 		options: { cwd: project, provider: "image-fixture", modelId: "images", thinkingLevel: "off" },
 	});

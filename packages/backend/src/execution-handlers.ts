@@ -24,6 +24,8 @@ export function createExecutionHandlers(
 		abort: ({ sessionId }) => backend.abort(sessionId),
 		setModel: ({ sessionId, provider, modelId }) => backend.setModel(sessionId, provider, modelId),
 		setThinkingLevel: ({ sessionId, level }) => backend.setThinkingLevel(sessionId, level),
+		getLoadedSessions: () => backend.getLoadedSessions(),
+		getSessionBaseline: ({ sessionId }) => backend.getSessionBaseline(sessionId),
 		getSessionMessages: ({ sessionId }) => backend.getSessionMessages(sessionId),
 		markSessionHistoryReady: ({ sessionId }) => backend.markSessionHistoryReady(sessionId),
 		getTodos: ({ sessionId }) => backend.getTodos(sessionId),

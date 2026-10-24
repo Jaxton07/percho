@@ -58,6 +58,7 @@ export interface RuntimeAttachment {
 export interface RemoteConnectionStatus {
 	revision: number;
 	state: "disconnected" | "connecting" | "connected" | "error";
+	instanceId?: string;
 	alias?: string;
 	environment?: Extract<EnvironmentRef, { kind: "ssh" }>;
 	error?: string;

@@ -1,5 +1,6 @@
 import { messagesToUIMessages } from "@percho/shared";
 import { getExecutionApi } from "../environment-api";
+import { forgetSessionBoundary } from "./session-event-boundary";
 import { useTranscriptStore } from "./transcript";
 
 /** 历史就绪不是「收过实时事件」：打开中 agent 可抢先创建一个不完整 transcript。 */
@@ -23,6 +24,7 @@ export function hasPendingSessionHistory(sessionId: string): boolean {
 }
 
 export function clearSessionHistory(sessionId: string): void {
+	forgetSessionBoundary(sessionId);
 	openEpoch.set(sessionId, historyOpenEpoch(sessionId) + 1);
 	ready.delete(sessionId);
 	pending.delete(sessionId);

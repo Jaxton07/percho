@@ -146,6 +146,15 @@ export class EventConflator {
 		}
 	}
 
+	/** A newer baseline supersedes only this session's uncommitted deltas. */
+	discard(sessionId: string): void {
+		this.pending = this.pending.filter((entry) => entry.sessionId !== sessionId);
+		this.keyIndex.clear();
+		for (const [index, entry] of this.pending.entries()) {
+			const key = conflatableKey(entry.sessionId, entry.event);
+			if (key) this.keyIndex.set(key, index);
+		}
+	}
 	dispose(): void {
 		this.flushNow();
 	}

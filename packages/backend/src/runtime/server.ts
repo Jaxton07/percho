@@ -57,7 +57,7 @@ export async function startRuntimeServer(paths: RuntimePaths) {
 		let epoch = 0;
 		const mutations = new MutationBook();
 		let controller:
-			| { socket: Socket; epoch: number; clientTag: string; lastPong: number; nonce?: string }
+			| { socket: Socket; epoch: number; clientTag: string; lastPong: number; nonce?: string; ready: boolean }
 			| undefined;
 		const sockets = new Set<Socket>();
 		const writers = new Map<Socket, RuntimeWriter>();
@@ -155,7 +155,13 @@ export async function startRuntimeServer(paths: RuntimePaths) {
 						reject(request.id, `Runtime already controlled by ${controller.clientTag}`, "BUSY");
 						return;
 					}
-					controller = { socket, epoch: ++epoch, clientTag: request.clientTag, lastPong: Date.now() };
+					controller = {
+						socket,
+						epoch: ++epoch,
+						clientTag: request.clientTag,
+						lastPong: Date.now(),
+						ready: false,
+					};
 					mutations.beginEpoch(epoch);
 					result(request.id, { info, epoch });
 					return;
@@ -239,6 +245,16 @@ export async function startRuntimeServer(paths: RuntimePaths) {
 							() => definition.validate(request.args),
 							async () => {
 								await authorized();
+								if (
+									!current.ready &&
+									!["abort", "respondPermission", "respondTrust", "respondExtensionDialog"].includes(
+										request.method,
+									)
+								)
+									throw new MutationProtocolError(
+										"NOT_EXECUTED",
+										"Read runtime summary before submitting new work",
+									);
 								return handler(request.args);
 							},
 						);
@@ -250,7 +266,9 @@ export async function startRuntimeServer(paths: RuntimePaths) {
 						}
 						definition.validate(request.args);
 						await authorized();
-						result(request.id, await handler(request.args));
+						const value = await handler(request.args);
+						if (request.method === "getLoadedSessions") current.ready = true;
+						result(request.id, value);
 					}
 				} catch (error) {
 					if (

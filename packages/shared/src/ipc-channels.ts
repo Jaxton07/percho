@@ -23,6 +23,7 @@ import type {
 	GitBranches,
 	ImageInput,
 	LoadedResources,
+	LoadedSessionSummary,
 	PermissionAnswer,
 	PermissionConfigInfo,
 	PermissionMode,
@@ -30,6 +31,7 @@ import type {
 	PermissionResolved,
 	QueuedMessages,
 	QuotaInfo,
+	SessionBaseline,
 	SessionCloseIntent,
 	SessionEventEnvelope,
 	SessionMessage,
@@ -196,6 +198,13 @@ export const SESSION_CHANNELS = {
 		"mutation",
 	)<{ sessionId: string; level: string }, void>({ sessionId: input.id, level: input.text }),
 	/** 读取会话历史消息（打开历史会话时回放） */
+	getLoadedSessions: ch("session:getLoaded", "environment", "read")<void, LoadedSessionSummary[]>(),
+	getSessionBaseline: ch(
+		"session:getBaseline",
+		"environment",
+		"read",
+	)<{ sessionId: string }, SessionBaseline>({ sessionId: input.id }),
+
 	getSessionMessages: ch(
 		"session:getMessages",
 		"environment",

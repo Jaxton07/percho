@@ -3,8 +3,10 @@ import { create } from "zustand";
 import { getPi } from "../api";
 import { getExecutionApi } from "../environment-api";
 import { registerEnvironment } from "../environment-registry";
+import { errText } from "../lib/error-text";
 import { useProjectsStore } from "./projects";
-import { useSessionsStore } from "./sessions";
+import { invalidateEnvironmentSessions, synchronizeEnvironmentSessions, useSessionsStore } from "./sessions";
+import { pushToast } from "./toasts";
 
 interface RemoteConnectionStore {
 	open: boolean;
@@ -25,16 +27,28 @@ export const useRemoteConnectionStore = create<RemoteConnectionStore>((set, get)
 	setOpen: (open) => set({ open }),
 	accept: (status) => {
 		if (status.revision <= get().status.revision) return;
+		const previous = get().status;
 		const environment = status.environment;
 		if (environment && environmentKey(environment) !== registered) {
 			unregister?.();
 			unregister = registerEnvironment(environment);
 			registered = environmentKey(environment);
 		}
+		if (environment && status.state !== "connected" && previous.state === "connected")
+			invalidateEnvironmentSessions(environment);
 		set({ status });
 		if (environment && status.state === "connected") {
-			void useProjectsStore.getState().load(environment);
-			void useSessionsStore.getState().loadModels(environment);
+			if (previous.state !== "connected") {
+				if (previous.instanceId && status.instanceId && previous.instanceId !== status.instanceId)
+					pushToast("warning", "remote.restarted");
+				const generation = invalidateEnvironmentSessions(environment);
+				void synchronizeEnvironmentSessions(environment, generation).catch((error) => {
+					console.warn("Remote session synchronization failed", error);
+					pushToast("warning", "remote.syncFailed", errText(error));
+				});
+				void useProjectsStore.getState().load(environment);
+				void useSessionsStore.getState().loadModels(environment);
+			}
 		}
 	},
 	checkOperation: async (id) => {

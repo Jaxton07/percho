@@ -15,6 +15,7 @@ import {
 } from "@percho/shared";
 import { getPi } from "./api";
 import { getEnvironments, onEnvironmentsChanged } from "./environment-registry";
+import { isEnvironmentSynchronizing, isSessionSynchronizing } from "./stores/session-event-boundary";
 
 function record(value: unknown): value is Record<string, unknown> {
 	return !!value && typeof value === "object" && !Array.isArray(value);
@@ -87,6 +88,35 @@ function resultFor(method: string, value: unknown, environment: EnvironmentRef):
 			return record(value) && typeof value.sessionId === "string"
 				? { ...value, sessionId: environmentEntityKey(environment, value.sessionId) }
 				: value;
+		case "getLoadedSessions":
+			return (value as Array<{ meta: SessionMeta }>).map((item) => ({
+				...item,
+				meta: scopeSessionMeta(item.meta, environment),
+			}));
+		case "getSessionBaseline": {
+			const baseline = value as import("@percho/shared").SessionBaseline;
+			const run = (item: import("@percho/shared").SubagentRunUi) => ({
+				...item,
+				...(item.sessionFile ? { sessionFile: environmentEntityKey(environment, item.sessionFile) } : {}),
+			});
+			return {
+				...baseline,
+				meta: scopeSessionMeta(baseline.meta, environment),
+				transcript: {
+					...baseline.transcript,
+					messages: baseline.transcript.messages.map((message) =>
+						message.kind === "subagent" ? { ...message, runs: message.runs.map(run) } : message,
+					),
+					streaming: baseline.transcript.streaming
+						? {
+								...baseline.transcript.streaming,
+								subagentRuns: baseline.transcript.streaming.subagentRuns.map(run),
+							}
+						: null,
+				},
+			};
+		}
+
 		case "getSessionMessages":
 			return (value as unknown[]).map((message) =>
 				record(message) && message.role === "subagent" && Array.isArray(message.runs)
@@ -162,6 +192,29 @@ export function getExecutionApi(reference: EnvironmentRef | string): Environment
 		.map(([method]) => [
 			method,
 			async (args: unknown) => {
+				if (environment.kind === "ssh") {
+					const definition = CHANNEL_TABLE[method as EnvironmentMethod];
+					const controls = [
+						"abort",
+						"respondPermission",
+						"respondTrust",
+						"respondExtensionDialog",
+						"markSessionHistoryReady",
+					];
+					if (
+						definition.operation === "mutation" &&
+						isEnvironmentSynchronizing(environment) &&
+						!controls.includes(method)
+					)
+						throw new Error("Remote environment is synchronizing; wait before submitting new work");
+					if (
+						["prompt", "retryLastFailedTurn"].includes(method) &&
+						record(args) &&
+						typeof args.sessionId === "string" &&
+						isSessionSynchronizing(args.sessionId)
+					)
+						throw new Error("Remote session is synchronizing; wait before submitting new work");
+				}
 				const call = raw[method as EnvironmentMethod] as (input?: unknown) => Promise<unknown>;
 				const value = args === undefined ? await call() : await call(argumentsFor(args, environment));
 				return resultFor(method, value, environment);

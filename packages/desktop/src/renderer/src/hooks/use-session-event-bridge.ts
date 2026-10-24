@@ -4,6 +4,7 @@ import { subscribeExecutionEnvironments } from "../environment-api";
 import { useDraftStore, withDraftText } from "../stores/drafts";
 import { EventConflator } from "../stores/event-conflator";
 import { useProjectsStore } from "../stores/projects";
+import { acceptSessionEvent, onSessionBoundaryReset } from "../stores/session-event-boundary";
 import { retrySessionHistory } from "../stores/session-history";
 import { useSessionsStore } from "../stores/sessions";
 import { pushExtensionToast } from "../stores/toasts";
@@ -31,17 +32,22 @@ export function useSessionEventBridge({
 				if (event.type === "agent_settled") void retrySessionHistory(sessionId);
 			},
 		});
+		const offBoundary = onSessionBoundaryReset((sessionId) => conflator.discard(sessionId));
 		const offEnvironments = subscribeExecutionEnvironments((pi) => {
-			const offEvent = pi.onEvent(({ sessionId, event }: { sessionId: string; event: SessionEvent }) => {
-				if (event.type === "session_info_changed") {
-					useSessionsStore.getState().updateSessionName(sessionId, event.name);
-					// 新会话先以「未命名」meta 写穿进目录，首条消息随后才触发自动命名。
-					// 目录也必须同步，否则 GC 卸载内存项后，左栏会退回 cwd 末级名（如 percho）。
-					useProjectsStore.getState().applySessionName(sessionId, event.name);
-					return; // 会话名走 sessions + projects 两份投影；reducer 对该类型本就无操作
-				}
-				conflator.push(sessionId, event);
-			});
+			const offEvent = pi.onEvent(
+				({ sessionId, event, sequence }: { sessionId: string; event: SessionEvent; sequence?: number }) => {
+					acceptSessionEvent(sessionId, sequence, event, () => {
+						if (event.type === "session_info_changed") {
+							useSessionsStore.getState().updateSessionName(sessionId, event.name);
+							// 新会话先以「未命名」meta 写穿进目录，首条消息随后才触发自动命名。
+							// 目录也必须同步，否则 GC 卸载内存项后，左栏会退回 cwd 末级名（如 percho）。
+							useProjectsStore.getState().applySessionName(sessionId, event.name);
+							return; // 会话名走 sessions + projects 两份投影；reducer 对该类型本就无操作
+						}
+						conflator.push(sessionId, event);
+					});
+				},
+			);
 			const offPermission = pi.onPermissionRequest((req) => {
 				useTranscriptStore.getState().addPermission(req.sessionId, req);
 			});
@@ -75,6 +81,7 @@ export function useSessionEventBridge({
 			};
 		});
 		return () => {
+			offBoundary();
 			offEnvironments();
 			conflator.dispose();
 		};

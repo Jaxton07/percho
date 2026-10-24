@@ -18,6 +18,7 @@ import {
 	takeDraft,
 	useDraftStore,
 } from "../../stores/drafts";
+import { isSessionSynchronizing } from "../../stores/session-event-boundary";
 import { useSessionsStore } from "../../stores/sessions";
 import { useSettingsStore } from "../../stores/settings";
 import { pushToast } from "../../stores/toasts";
@@ -68,7 +69,10 @@ export function useComposerSend(options: UseComposerSendOptions) {
 	/** 确保有活跃会话（新会话页则把那唯一一份 draft 转正），返回 sessionId */
 	const ensureSession = async (): Promise<string | null> => {
 		const current = options.activeSessionId;
-		if (current) return current;
+		if (current) {
+			if (isSessionSynchronizing(current)) throw new Error(t("remote.synchronizing"));
+			return current;
+		}
 		// draft 页：promotion 用 draft 快照建真实会话（模型/思考/权限都从 `newSessionDraft` 取，
 		// 调用方不再自己拼 cwd/权限）。无 draft 的防御态（调用顺序异常）先建一份再转正。
 		if (!useSessionsStore.getState().newSessionDraft) {

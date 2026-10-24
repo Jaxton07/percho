@@ -3,6 +3,12 @@ import { environmentEntityRef, messagesToUIMessages } from "@percho/shared";
 import { getExecutionApi } from "../environment-api";
 import { errText } from "../lib/error-text";
 import {
+	beginSessionBaseline,
+	failSessionBaseline,
+	finishSessionBaseline,
+	isCurrentSessionBaseline,
+} from "./session-event-boundary";
+import {
 	clearSessionHistory,
 	deferSessionHistory,
 	finishSessionHistory,
@@ -43,6 +49,7 @@ export function createSessionLoader(ports: SessionDataPorts) {
 				if (
 					historyOpenEpoch(sessionId) === openingEpoch &&
 					!isHistoryReady(sessionId) &&
+					environmentEntityRef(sessionId).environment.kind === "local" &&
 					ports.isOpen(sessionId)
 				) {
 					deferSessionHistory(sessionId, () => ports.isOpen(sessionId));
@@ -60,6 +67,39 @@ export function createSessionLoader(ports: SessionDataPorts) {
 		sessionId: string,
 		opts?: { skipHistoryIfLive?: boolean },
 	): Promise<void> {
+		if (environmentEntityRef(sessionId).environment.kind === "ssh") {
+			const openingEpoch = historyOpenEpoch(sessionId);
+			const token = beginSessionBaseline(sessionId);
+			try {
+				const baseline = await getExecutionApi(sessionId).getSessionBaseline({ sessionId });
+				if (
+					historyOpenEpoch(sessionId) !== openingEpoch ||
+					!ports.isOpen(sessionId) ||
+					!isCurrentSessionBaseline(sessionId, token)
+				)
+					return;
+				finishSessionBaseline(sessionId, token, baseline.sequence, () => {
+					const previous = useTranscriptStore.getState().bySession[sessionId];
+					useTranscriptStore.setState((state) => ({
+						bySession: {
+							...state.bySession,
+							[sessionId]: {
+								...baseline.transcript,
+								pendingPermissions: previous?.pendingPermissions ?? [],
+								pendingDialogs: previous?.pendingDialogs ?? [],
+							},
+						},
+					}));
+					ports.landMeta(baseline.meta);
+					ports.writePermissionMode(sessionId, baseline.permissionMode);
+				});
+				finishSessionHistory(sessionId);
+			} catch (error) {
+				failSessionBaseline(sessionId, token);
+				throw error;
+			}
+			return;
+		}
 		// skip 判定在入口一次性取值：并行发起 IPC 前先确定是否跳过历史（agent 运行中保流式态，见 openFromHistory 注释）
 		const skipHistory =
 			opts?.skipHistoryIfLive === true &&

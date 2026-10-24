@@ -504,6 +504,24 @@ export type SessionEvent =
 
 /** 渲染进程收到的统一事件包络 */
 export interface SessionEventEnvelope {
+	/** Present for independent-runtime events; local legacy observers need not use a boundary. */
+	sequence?: number;
 	sessionId: string;
 	event: SessionEvent;
+}
+
+/** Consistent per-session capture; sequence is the boundary for subsequent onEvent increments. */
+export interface SessionBaseline {
+	meta: SessionMeta;
+	sequence: number;
+	transcript: import("./transcript").SessionTranscriptState;
+	permissionMode: PermissionMode;
+}
+export interface LoadedSessionSummary {
+	sequence: number;
+	followUpQueue: string[];
+	permissionMode: PermissionMode;
+	meta: SessionMeta;
+	streaming: boolean;
+	compacting: boolean;
 }

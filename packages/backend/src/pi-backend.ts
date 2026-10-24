@@ -96,6 +96,7 @@ import {
 import { slimBulkyEvent, slimMessageUpdate } from "./session/event-slim";
 import { ExtensionDialogHost } from "./session/extension-dialog-host";
 import { SessionHydrationGate } from "./session/hydration-gate";
+import { LiveTranscript } from "./session/live-transcript";
 import {
 	blockImages,
 	blockText,
@@ -474,6 +475,49 @@ export class PiBackend {
 		return this.modelRuntime;
 	}
 
+	private readonly liveTranscripts = new Map<string, LiveTranscript>();
+	private publishEvent(sessionId: string, event: SessionEvent): void {
+		let live = this.liveTranscripts.get(sessionId);
+		if (!live) {
+			live = new LiveTranscript();
+			this.liveTranscripts.set(sessionId, live);
+		}
+		// Capturing the branch on every delta would copy long history repeatedly. Only turn_start needs it.
+		live.apply(
+			event,
+			event.type === "turn_start"
+				? (this.registry.get(sessionId)?.session.sessionManager.getBranch() ?? [])
+				: [],
+		);
+		this.eventEmitter.emit({ sessionId, event });
+	}
+	getSessionEventSequence(sessionId: string): number {
+		return this.liveTranscripts.get(sessionId)?.sequence ?? 0;
+	}
+	getLoadedSessions(): import("@percho/shared").LoadedSessionSummary[] {
+		return this.registry.list().map((entry) => ({
+			meta: this.registry.toMeta(entry),
+			sequence: this.getSessionEventSequence(entry.session.sessionId),
+			followUpQueue: entry.session.getFollowUpMessages().map(composerQueueText),
+			permissionMode: entry.modeRef.current,
+			streaming: entry.session.isStreaming,
+			compacting: entry.session.isCompacting,
+		}));
+	}
+	getSessionBaseline(sessionId: string): import("@percho/shared").SessionBaseline {
+		const entry = this.requireSession(sessionId);
+		const live = this.liveTranscripts.get(sessionId) ?? new LiveTranscript();
+		const transcript = live.snapshot(entry.session.sessionManager.getBranch(), {
+			streaming: entry.session.isStreaming,
+			compacting: entry.session.isCompacting,
+		});
+		return {
+			meta: this.registry.toMeta(entry),
+			sequence: live.sequence,
+			transcript: { ...transcript, todos: this.readTodos(entry) },
+			permissionMode: entry.modeRef.current,
+		};
+	}
 	private emitEvent(sessionId: string, event: SessionEvent): void {
 		if (event.type === "message_start" || event.type === "message_end")
 			event = { ...event, message: projectComposerMessage(event.message) };
@@ -519,13 +563,13 @@ export class PiBackend {
 				// 熔断显形：合成 stream_guard_tripped UI 事件（subagent_mutex 同款：union + IPC 转发 +
 				// 不进 trace），reducer 产 warning 条——否则「回复戛然而止」零 UI 信号。
 				// 合成事件直接 emit，不喂回 streamGuard.inspect（防线不能自触发）。
-				this.eventEmitter.emit({ sessionId, event: { type: "stream_guard_tripped", verdict } });
+				this.publishEvent(sessionId, { type: "stream_guard_tripped", verdict });
 			}
 			return;
 		}
 		if (event.type !== "subagent_mutex" && event.type !== "stream_guard_tripped")
 			this.traces.record(sessionId, event);
-		this.eventEmitter.emit({ sessionId, event });
+		this.publishEvent(sessionId, event);
 	}
 
 	async init(): Promise<void> {
@@ -797,6 +841,7 @@ export class PiBackend {
 	}
 
 	private afterSessionDispose(entry: RegisteredSession): void {
+		this.liveTranscripts.delete(entry.session.sessionId);
 		const id = entry.session.sessionId;
 		const failures: unknown[] = [];
 		try {
@@ -1270,6 +1315,9 @@ export class PiBackend {
 	 */
 	async getTodos(sessionId: string): Promise<TodoItem[]> {
 		const entry = this.requireSession(sessionId);
+		return this.readTodos(entry);
+	}
+	private readTodos(entry: RegisteredSession): TodoItem[] {
 		const branch = entry.session.sessionManager.getBranch();
 		for (let i = branch.length - 1; i >= 0; i--) {
 			const item = branch[i];

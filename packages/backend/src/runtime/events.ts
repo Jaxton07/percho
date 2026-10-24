@@ -9,7 +9,10 @@ export function bindExecutionEvents(
 	emit: (method: EventMethod, payload: unknown) => void,
 ): () => void {
 	const subscriptions: Pick<EnvironmentApi, EventMethod> = {
-		onEvent: (handler) => backend.onEvent((sessionId, event) => handler({ sessionId, event })),
+		onEvent: (handler) =>
+			backend.onEvent((sessionId, event) =>
+				handler({ sessionId, event, sequence: backend.getSessionEventSequence(sessionId) }),
+			),
 		onPermissionRequest: (handler) => backend.onPermissionRequest(handler),
 		onPermissionResolved: (handler) => backend.onPermissionResolved(handler),
 		onTrustRequest: (handler) => backend.onTrustRequest(handler),

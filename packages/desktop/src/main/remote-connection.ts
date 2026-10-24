@@ -40,7 +40,12 @@ class RemoteConnectionManager {
 	private readonly clientTag = randomUUID();
 	private readonly uncertain = new Map<string, UncertainRemoteOperation>();
 	private update(patch: Omit<RemoteConnectionStatus, "revision">): RemoteConnectionStatus {
-		this.status = { ...patch, revision: this.status.revision + 1, operations: [...this.uncertain.values()] };
+		this.status = {
+			...patch,
+			instanceId: patch.instanceId ?? this.status.instanceId,
+			revision: this.status.revision + 1,
+			operations: [...this.uncertain.values()],
+		};
 		sendToRenderer(SUBSCRIPTION_TABLE.onRemoteConnectionStatus.channel, this.status);
 		return this.status;
 	}
@@ -173,7 +178,7 @@ class RemoteConnectionManager {
 				},
 			});
 			this.connection = connection;
-			return this.update({ state: "connected", alias, environment });
+			return this.update({ state: "connected", alias, environment, instanceId: info.instanceId });
 		} catch (error) {
 			connection?.disconnect();
 			if (generation !== this.generation) return this.status;

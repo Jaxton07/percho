@@ -3,6 +3,10 @@ import type { Messages } from "./zh";
 /** English language pack (mirrors zh.ts shape) */
 export const en: Messages = {
 	remote: {
+		restarted:
+			"The remote service restarted. Saved history is available; previous tasks will not resume automatically. Check their results.",
+		syncFailed: "Remote session synchronization failed. Open the session to retry.",
+		synchronizing: "Remote session is synchronizing. Wait before sending; stopping remains available.",
 		localFileRejected:
 			"Remote sessions accept local images. Other local files cannot be used as remote paths.",
 		unknownTitle: "Check the remote operation outcome",

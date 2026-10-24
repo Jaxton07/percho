@@ -22,6 +22,26 @@ function makeSession() {
 	return { sm, first, reply, second };
 }
 
+describe("failed history identity", () => {
+	it("retains the empty failed assistant entry needed to retry after reconnect", () => {
+		const manager = SessionManager.inMemory();
+		manager.appendMessage({ role: "user", content: "request", timestamp: 1 });
+		const entryId = manager.appendMessage({
+			role: "assistant",
+			content: [],
+			api: "openai-completions",
+			provider: "fixture",
+			model: "m",
+			timestamp: 2,
+			stopReason: "error",
+			errorMessage: "fixture error",
+		} as Message);
+		expect(
+			toBranchSessionMessages(manager.getBranch()).find((message) => message.stopReason === "error")?.entryId,
+		).toBe(entryId);
+	});
+});
+
 describe("resolveRecallEntryId（撤回目标解析）", () => {
 	it("entryId 精确命中用户消息", () => {
 		const { sm, second } = makeSession();

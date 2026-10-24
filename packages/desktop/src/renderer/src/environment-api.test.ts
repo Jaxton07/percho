@@ -1,9 +1,11 @@
 import {
 	composerDocumentFromText,
 	type EnvironmentRef,
+	emptyTranscript,
 	environmentEntityKey,
 	environmentEntityRef,
 	LOCAL_ENVIRONMENT,
+	reduceEvent,
 } from "@percho/shared";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -25,6 +27,33 @@ const fixture = vi.hoisted(() => {
 			createSession: vi.fn(async () => meta),
 			openSession: vi.fn(async () => meta),
 			getSessionMessages: vi.fn(async (): Promise<unknown[]> => []),
+			getSessionBaseline: vi.fn(async () => ({
+				meta,
+				sequence: 0,
+				permissionMode: "default",
+				transcript: {
+					messages: [],
+					streaming: null,
+					phase: "idle",
+					agentActive: false,
+					unseenCompletion: false,
+					followUpQueue: [],
+					compacting: false,
+					todos: [],
+					pendingLlmError: null,
+					retrying: null,
+				},
+			})),
+			getLoadedSessions: vi.fn(async () => [
+				{
+					meta,
+					sequence: 0,
+					permissionMode: "default",
+					followUpQueue: [],
+					streaming: false,
+					compacting: false,
+				},
+			]),
 			getFollowUpMessages: vi.fn(async () => []),
 			getTodos: vi.fn(async () => []),
 			getPermissionMode: vi.fn(async () => "default"),
@@ -66,6 +95,7 @@ vi.mock("./api", () => ({ getPi: () => fixture.local }));
 import { getExecutionApi, subscribeExecutionEnvironments } from "./environment-api";
 import { registerEnvironment } from "./environment-registry";
 import { NEW_SESSION_DRAFT_KEY, newSessionDraftKey, useDraftStore } from "./stores/drafts";
+import { acceptSessionEvent } from "./stores/session-event-boundary";
 import { clearSessionHistory } from "./stores/session-history";
 import { useSessionWorkspaceStore } from "./stores/session-workspace";
 import { useSessionsStore } from "./stores/sessions";
@@ -178,6 +208,49 @@ describe("session ownership through the actual renderer execution boundary", () 
 		expect(result.ok).toBe(true);
 		expect(useSessionsStore.getState().permissionModes[sessionId]).toBeUndefined();
 		expect(fixture.remote.setPermissionMode).not.toHaveBeenCalled();
+		expect(fixture.remote.getSessionBaseline).toHaveBeenCalledExactlyOnceWith({ sessionId: "same-id" });
+		expect(fixture.remote.markSessionHistoryReady).toHaveBeenCalledExactlyOnceWith({ sessionId: "same-id" });
+	});
+
+	it("installs a remote baseline and its later increments without replacing the selected local transcript", async () => {
+		const raw = await fixture.remote.getSessionBaseline();
+		fixture.remote.getSessionBaseline.mockClear();
+		let release!: (value: unknown) => void;
+		fixture.remote.getSessionBaseline.mockImplementationOnce(
+			() =>
+				new Promise((resolve) => {
+					release = resolve;
+				}) as never,
+		);
+		const id = environmentEntityKey(remote, "same-id");
+		const opened = useSessionsStore
+			.getState()
+			.openFromHistory(environmentEntityKey(remote, "/same/history.jsonl"));
+		await vi.waitFor(() => expect(fixture.remote.getSessionBaseline).toHaveBeenCalled());
+		useTranscriptStore.setState((state) => ({
+			bySession: {
+				...state.bySession,
+				local: { ...emptyTranscript(), pendingPermissions: [], pendingDialogs: [] },
+			},
+		}));
+		useSessionsStore.getState().switchSession("local");
+		const local = useTranscriptStore.getState().bySession.local;
+		let projected = reduceEvent(emptyTranscript(), { type: "agent_start" } as never);
+		projected = reduceEvent(projected, {
+			type: "message_update",
+			assistantMessageEvent: { type: "text_delta", contentIndex: 0, delta: "first" },
+		} as never);
+		acceptSessionEvent(id, 3, {}, () =>
+			useTranscriptStore.getState().applyEvent(id, {
+				type: "message_update",
+				assistantMessageEvent: { type: "text_delta", contentIndex: 0, delta: " second" },
+			} as never),
+		);
+		release({ ...raw, sequence: 2, transcript: projected });
+		await opened;
+		expect(useTranscriptStore.getState().bySession[id]?.streaming?.text).toBe("first second");
+		expect(useTranscriptStore.getState().bySession.local).toBe(local);
+		expect(useSessionsStore.getState().activeSessionId).toBe("local");
 	});
 
 	it("keeps nested subagent navigation scoped but preserves arbitrary tool content", async () => {

@@ -148,6 +148,8 @@ export class SshRuntimeConnection {
 			)
 				throw new Error("Remote runtime changed during connection; reconnect explicitly");
 			if (options.signal.aborted) throw new Error("SSH connection cancelled");
+			// Initial registry synchronization is required before this controller can submit new work.
+			await client.invoke("getLoadedSessions");
 			return new SshRuntimeConnection(attached.info, client, close);
 		} catch (error) {
 			close();
