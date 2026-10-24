@@ -68,9 +68,9 @@ export const { createPortal, flushSync } = D;`,
 const A = window.PerchoUI;
 export default A;
 export const { version, components, helpers, hooks, stores } = A;
-export const { Button, Dropdown, Tooltip, Markdown, ImagePreview } = A.components;
+export const { Button, Dropdown, Tooltip, Markdown, ImagePreview, Switch } = A.components;
 export const { summarizeArgs, displayToolName } = A.helpers;
-export const { useT, useContextUsage, useQuota, useLanguage } = A.hooks;
+export const { useT, useContextUsage, useQuota, useLanguage, usePluginSettings } = A.hooks;
 export const { useTranscriptStore, useSessionsStore, useUiStore, useProjectsStore, useSettingsStore, useUiPreferencesStore } = A.stores;`,
 };
 
@@ -119,7 +119,7 @@ const ASSET_LOADERS: Record<string, "dataurl"> = {
 export async function buildPlugin(
 	pluginDir: string,
 	mainEntry: string,
-	options?: { outDir?: string },
+	options?: { outDir?: string; styles?: string[] },
 ): Promise<{ ok: true } | { ok: false; error: string }> {
 	// 产物目录：默认插件目录内 dist/；内置插件（resources 只读）由 manager 指定 userData 版本化缓存目录
 	const outDir = options?.outDir ?? join(pluginDir, "dist");
@@ -139,6 +139,24 @@ export async function buildPlugin(
 			loader: ASSET_LOADERS,
 			plugins: [perchoExternalsPlugin],
 		});
+		/**
+		 * 插件自带样式（perchoUi 2 的 styles）：多个文件用 Virtual stdin 串成 @import 再 bundle，
+		 * 产物固定 dist/index.css（manager.readCode 读它注入 shadow root，不写全局）。
+		 */
+		if (options?.styles?.length) {
+			await build({
+				stdin: {
+					contents: options.styles.map((s) => `@import "${s}";`).join("\n"),
+					resolveDir: pluginDir,
+					sourcefile: "percho-plugin-styles.css",
+					loader: "css",
+				},
+				bundle: true,
+				outfile: join(outDir, "index.css"),
+				loader: ASSET_LOADERS,
+				logLevel: "silent",
+			});
+		}
 		return { ok: true };
 	} catch (err) {
 		const esbuildErr = err as {

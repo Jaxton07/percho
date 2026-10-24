@@ -11,6 +11,7 @@
 | CDP、截图、交互验收、测试实例管理 | [UI 调试](ui-debugging.md) |
 | SDK 行为、升级、资源释放、上下文 | [SDK 集成](sdk.md) |
 | pi 扩展在 GUI 中实际支持哪些交互 | [扩展 UI](extension-ui.md) |
+| UI 插件设置页、配置存储与 shadow 隔离 | [UI 插件设置](ui-plugin-settings.md) |
 | 构建、打包、验包 | [构建发布](build-release.md) |
 | Windows 更新取证、恢复 | [Windows 更新](WINDOWS-UPDATES.md) |
 | 按症状选择排查方向 | [排障入口](PITFALLS.md) |

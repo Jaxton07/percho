@@ -1,0 +1,36 @@
+/* 示例插件样式：只对 shadow root 内的节点生效（isolation: shadow + adoptedStyleSheets）。
+   本示例不随包分发，见同目录 README.md。 */
+/*
+ * 插件自带样式：只在 shadow root 内生效（宿主不会全局注入）。
+ * 可以直接用主题表的令牌（--p-*），因此暗色主题自动跟随。
+ */
+.pbadge {
+	display: inline-flex;
+	align-items: center;
+	gap: 6px;
+	padding: 4px 10px;
+	border: 1px solid var(--p-border);
+	border-radius: 999px;
+	background: var(--p-surface);
+	color: var(--p-ink-dim);
+	font-size: var(--p-fs-11);
+	line-height: 1;
+	box-shadow: 0 1px 2px rgb(0 0 0 / 6%);
+}
+
+.pbadge-accent {
+	border-color: var(--p-accent);
+	color: var(--p-accent);
+}
+
+.pbadge-dot {
+	width: 6px;
+	height: 6px;
+	border-radius: 999px;
+	background: currentcolor;
+	opacity: 0.7;
+}
+
+.pbadge-text {
+	font-variant-numeric: tabular-nums;
+}

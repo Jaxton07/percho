@@ -152,6 +152,38 @@ declare module "@percho/plugin-api" {
 		text: string;
 		streaming?: boolean;
 	}
+	/** 插件配置值：JSON 标量（对象/数组会被宿主丢弃） */
+	export type PluginSettingValue = string | number | boolean | null;
+
+	/** 插件文案：单字符串，或跟随宿主语言切换的双语对象 */
+	export type PluginText = string | { zh: string; en: string };
+
+	export interface PluginSwitchProps {
+		checked: boolean;
+		/** 三态（部分选中）：视觉为 thumb 居中 */
+		indeterminate?: boolean;
+		onCheckedChange: (checked: boolean) => void;
+		disabled?: boolean;
+		className?: string;
+		"aria-label"?: string;
+	}
+
+	/** 声明式设置项（manifest.settingsSchema.fields 的一项） */
+	export interface PluginSettingField {
+		type: "boolean" | "string" | "number" | "select";
+		label: PluginText;
+		hint?: PluginText;
+		default?: PluginSettingValue;
+		placeholder?: string;
+		/** select 选项（value 即落盘值） */
+		options?: { value: string; label: PluginText }[];
+		/** 多行文本（type=string） */
+		multiline?: boolean;
+		min?: number;
+		max?: number;
+		step?: number;
+	}
+
 	export interface PluginImagePreviewProps {
 		image: { data: string; mimeType: string };
 		onClose: () => void;
@@ -163,6 +195,12 @@ declare module "@percho/plugin-api" {
 		Tooltip: (props: PluginTooltipProps) => unknown;
 		Markdown: (props: PluginMarkdownProps) => unknown;
 		ImagePreview: (props: PluginImagePreviewProps) => unknown;
+		/**
+		 * 统一开关：受控、键盘可达、禁用态语义与宿主一致——设置页请用它而不是自己写 button。
+		 * ⚠️ 宿主组件靠宿主 Tailwind 类渲染，**只在 isolation="light" 的贡献里可用**；
+		 * shadow 隔离下请用主题表的 `.p*` 语义类自己画。
+		 */
+		Switch: (props: PluginSwitchProps) => unknown;
 	};
 	export const helpers: {
 		summarizeArgs(args: string): string;
@@ -176,6 +214,18 @@ declare module "@percho/plugin-api" {
 		useQuota(): QuotaInfo | null;
 		/** 当前界面语言（"zh" | "en"）——插件自有文案跟随中英 */
 		useLanguage(): "zh" | "en";
+		/**
+		 * 插件自有配置（需 perchoUi: 2；只存 JSON 标量，宿主有界校验）。
+		 * 值只可能是 JSON 标量；宿主有界校验后写 userData/ui-plugins.json（≤64 键 / 单值 ≤4KB / 总计 ≤32KB）。
+		 * patch 里传 undefined = 删除该键。
+		 */
+		usePluginSettings<T extends Record<string, PluginSettingValue>>(
+			name: string,
+			defaults?: Partial<T>,
+		): {
+			values: T;
+			update: (patch: Record<string, PluginSettingValue | undefined>) => void;
+		};
 	};
 	export const stores: {
 		useTranscriptStore: unknown;
@@ -198,6 +248,8 @@ declare module "@percho/plugin-api" {
 	export const useContextUsage: typeof hooks.useContextUsage;
 	export const useQuota: typeof hooks.useQuota;
 	export const useLanguage: typeof hooks.useLanguage;
+	export const Switch: typeof components.Switch;
+	export const usePluginSettings: typeof hooks.usePluginSettings;
 	// store hooks 顶层便捷导出（与 shim 解构一致，例：import { useSessionsStore } from "@percho/plugin-api"）
 	export const useTranscriptStore: unknown;
 	export const useSessionsStore: unknown;
