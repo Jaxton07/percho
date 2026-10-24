@@ -1,5 +1,7 @@
 import { homedir } from "node:os";
-import { join, resolve } from "node:path";
+import { delimiter, dirname, join, resolve } from "node:path";
+
+import { fileURLToPath } from "node:url";
 
 // This bootstrap runs before any SDK import, including when launched from an SSH login shell.
 const args = process.argv.slice(2);
@@ -13,6 +15,11 @@ if (args.length) {
 	root = resolve(args[1]);
 }
 process.env.PI_CODING_AGENT_DIR = join(root, "agent");
+process.env.PI_PACKAGE_DIR = resolve(
+	dirname(fileURLToPath(import.meta.resolve("@earendil-works/pi-coding-agent"))),
+	"..",
+);
+process.env.PATH = `${join(dirname(fileURLToPath(import.meta.url)), "bin")}${delimiter}${process.env.PATH ?? ""}`;
 try {
 	const { runRuntimeCli } = await import("./cli.mjs");
 	await runRuntimeCli(root, command, authArgs);

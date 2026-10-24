@@ -18,6 +18,7 @@ import { bindExecutionEvents } from "./events";
 import { RuntimeWriter, readRuntimeFrames } from "./frames";
 import { MutationBook, MutationProtocolError } from "./mutations";
 import { acquireOwner, ownerIsCurrent, type RuntimePaths } from "./paths";
+import { readRuntimeRelease } from "./release";
 
 export async function startRuntimeServer(paths: RuntimePaths, exitStopped: () => never) {
 	const owner = await acquireOwner(paths);
@@ -46,7 +47,7 @@ export async function startRuntimeServer(paths: RuntimePaths, exitStopped: () =>
 			...executionContract(),
 			sdkVersion: SDK_VERSION,
 			protocol: REMOTE_PROTOCOL_VERSION,
-			runtimeVersion: "0.1.0",
+			runtimeVersion: (await readRuntimeRelease())?.version ?? "development",
 			releaseId: basename(dirname(process.argv[1] ?? "")),
 			environmentId: identity.environmentId,
 			instanceId: randomUUID(),

@@ -9,10 +9,13 @@ import { pathToFileURL } from "node:url";
 import { promisify } from "node:util";
 
 const entry = process.env.PERCHO_RUNTIME_TEST_ENTRY;
-if (process.platform !== "linux" || !entry?.startsWith("/work/"))
+if (process.platform !== "linux" || !(entry?.startsWith("/work/") || entry?.startsWith("/runtime/")))
 	throw new Error("Use isolated Linux /work + /state fixture");
 const { RuntimeClient } = await import(pathToFileURL(join(dirname(entry), "client.mjs")).href);
-const { reduceEvent } = await import(pathToFileURL(join(dirname(entry), "recovery-projection.mjs")).href);
+const { reduceEvent } = await import(
+	pathToFileURL(process.env.PERCHO_RUNTIME_TEST_PROJECTION ?? join(dirname(entry), "recovery-projection.mjs"))
+		.href
+);
 const exec = promisify(execFile),
 	root = "/state/c",
 	project = "/state/reconnect-project";

@@ -9,7 +9,7 @@ import { promisify } from "node:util";
 import { deflateSync } from "node:zlib";
 
 const entry = process.env.PERCHO_RUNTIME_TEST_ENTRY;
-if (process.platform !== "linux" || !entry?.startsWith("/work/"))
+if (process.platform !== "linux" || !(entry?.startsWith("/work/") || entry?.startsWith("/runtime/")))
 	throw new Error("Use the isolated Linux /work + /state fixture");
 const { RuntimeClient } = await import(pathToFileURL(join(dirname(entry), "client.mjs")).href);
 const exec = promisify(execFile),

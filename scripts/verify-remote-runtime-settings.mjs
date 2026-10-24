@@ -2,14 +2,15 @@
 import assert from "node:assert/strict";
 import { execFile, spawn } from "node:child_process";
 import { createHash } from "node:crypto";
-import { access, mkdir, readFile, readlink, stat, writeFile } from "node:fs/promises";
+import { constants } from "node:fs";
+import { access, mkdir, open, readFile, readlink, stat, writeFile } from "node:fs/promises";
 import { createServer } from "node:http";
 import { dirname, join } from "node:path";
 import { pathToFileURL } from "node:url";
 import { promisify } from "node:util";
 
 const entry = process.env.PERCHO_RUNTIME_TEST_ENTRY;
-if (process.platform !== "linux" || !entry?.startsWith("/work/"))
+if (process.platform !== "linux" || !(entry?.startsWith("/work/") || entry?.startsWith("/runtime/")))
 	throw new Error("Isolated Linux fixture required");
 const exec = promisify(execFile),
 	root = "/state/t";
@@ -45,7 +46,7 @@ const model = createServer(async (request, response) => {
 	response.end("data: [DONE]\n\n");
 });
 await new Promise((resolve) => model.listen(0, "127.0.0.1", resolve));
-let client, maintenance, authChild;
+let client, maintenance, authChild, maintenanceInput;
 try {
 	await cli("start");
 	client = await RuntimeClient.connect(socket);
@@ -82,23 +83,29 @@ try {
 	assert.equal(JSON.parse(await cli("wait-stopped")).stopped, true);
 	const help = await cli("auth", "--help");
 	assert.match(help, /Usage:|--provider/);
-	// Keep the original SDK CLI waiting on its own stdin; the child inherits fd3 as well as the parent.
+	// The verifier owns this input independently: killing the ChildProcess must not close stdin and let the SDK CLI exit before the lock assertion.
+	await exec("mkfifo", [`${root}/maintenance-input`]);
+	maintenanceInput = await open(`${root}/maintenance-input`, constants.O_RDWR);
 	maintenance = spawn(process.execPath, [entry, "auth", "--root", root], {
-		stdio: ["pipe", "ignore", "pipe"],
+		stdio: [maintenanceInput.fd, "ignore", "ignore"],
+		env: {
+			...process.env,
+			PERCHO_AUTH_READY_FILE: `${root}/maintenance-ready`,
+			NODE_OPTIONS: `${process.env.NODE_OPTIONS ?? ""} --import ${new URL("./fixtures/remote-runtime-auth-ready.mjs", import.meta.url).href}`,
+		},
 	});
-	maintenance.stderr.resume();
 	maintenance.on("error", () => {});
 	await until(async () => {
 		try {
-			const children = (await readFile(`/proc/${maintenance.pid}/task/${maintenance.pid}/children`, "utf8"))
-				.trim()
-				.split(/\s+/)
-				.filter(Boolean);
-			for (const child of children)
-				if ((await readlink(`/proc/${child}/fd/3`)).endsWith("owner.lock")) {
-					authChild = Number(child);
-					return true;
-				}
+			const child = Number(await readFile(`${root}/maintenance-ready`, "utf8"));
+			if (
+				Number.isInteger(child) &&
+				child > 0 &&
+				(await readlink(`/proc/${child}/fd/3`)).endsWith("owner.lock")
+			) {
+				authChild = child;
+				return true;
+			}
 		} catch {}
 		return false;
 	}, "maintenance child inherited lifetime owner fd");
@@ -137,6 +144,7 @@ try {
 		}),
 	);
 } finally {
+	await maintenanceInput?.close();
 	client?.close();
 	maintenance?.kill();
 	if (authChild)

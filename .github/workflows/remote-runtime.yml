@@ -1,0 +1,55 @@
+name: Remote runtime artifacts
+
+on:
+  workflow_call:
+    inputs:
+      release_tag:
+        type: string
+        default: ""
+        required: false
+
+jobs:
+  build-and-verify:
+    runs-on: ubuntu-22.04
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: x64
+            platform: linux/amd64
+          - arch: arm64
+            platform: linux/arm64
+    env:
+      PLATFORM: ${{ matrix.platform }}
+      ARTIFACT_ARCH: ${{ matrix.arch }}
+      PERCHO_BUILD_RELEASE_TAG: ${{ inputs.release_tag }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: docker/setup-qemu-action@v3
+        with:
+          platforms: arm64
+      - uses: docker/setup-buildx-action@v3
+      - name: Prepare target Linux build environment
+        run: docker buildx build --load --platform "$PLATFORM" -t percho-runtime-build -f scripts/remote-runtime/Dockerfile scripts/remote-runtime
+      - name: Build locked runtime with target dependencies
+        run: |
+          mkdir -p ".local/runtime-${ARTIFACT_ARCH}"
+          docker run --rm --platform "$PLATFORM" \
+            -e PERCHO_BUILD_RELEASE_TAG \
+            -v "$PWD:/source:ro" --tmpfs /source/node_modules \
+            -v "$PWD/.local/runtime-${ARTIFACT_ARCH}:/output" \
+            percho-runtime-build node /source/scripts/build-remote-runtime.mjs --out /output
+      - name: Verify actual package without checkout or external network
+        run: |
+          docker run --rm --platform "$PLATFORM" --network none \
+            --tmpfs /runtime:mode=0700,exec --tmpfs /state:mode=0700 \
+            -v "$PWD/scripts:/verify:ro" \
+            -v "$PWD/.local/runtime-${ARTIFACT_ARCH}:/artifacts:ro" \
+            percho-runtime-build sh /verify/remote-runtime/check-artifact.sh
+      - uses: actions/upload-artifact@v4
+        with:
+          name: remote-runtime-${{ matrix.arch }}
+          path: |
+            .local/runtime-${{ matrix.arch }}/percho-runtime-linux-${{ matrix.arch }}.tar.gz
+            .local/runtime-${{ matrix.arch }}/runtime-linux-${{ matrix.arch }}.json
+          if-no-files-found: error

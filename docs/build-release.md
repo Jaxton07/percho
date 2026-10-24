@@ -52,3 +52,11 @@ npx asar extract packages/desktop/dist/mac-arm64/Percho.app/Contents/Resources/a
 本机维护者的 tag、签名、网络等操作见 `.local/docs/release.md`（不入库）；文件不存在时从仓库 workflow 和 builder 配置核对，不猜发布步骤。未经用户明确要求不 push、不创建发布或覆盖已发布资产。
 
 Windows 更新诊断及旧卸载器边界见 [WINDOWS-UPDATES.md](WINDOWS-UPDATES.md)。NSIS 改动须用 Windows CI 的真实 installer 编译和隔离 harness 验证，macOS 上的编译结果不能替代 Windows 行为证据。
+
+## SSH 运行包
+
+`build-remote-runtime.mjs` 只在目标 glibc Linux CPU 上构建；Node 外置，当前支持 Node 22.19+ 的 22.x 与 glibc 2.35+。依赖从提交的锁文件中选出后在独立目录安装，应用 SDK 补丁；不把桌面 node_modules 复制过去。包保留 SDK worker/WASM、主题、文档、维护 CLI 和导出资源，固定摘要的 fd/rg 放包内 bin，不安装到系统。入口固定自身 SDK 资源根，不能继承其他 Pi CLI 的 PI_PACKAGE_DIR。
+
+构建与仓库外验包由 `.github/workflows/remote-runtime.yml` 复用：目标容器内运行 `node scripts/build-remote-runtime.mjs --out <隔离产物目录>`；验包容器只挂归档、scripts 和私有 /state，关闭外网，执行 `scripts/remote-runtime/check-artifact.sh`。临时 /runtime 须允许执行包内搜索程序；不要把测试目录的 noexec 挂载误诊为工具缺失。验收覆盖主工具、用户扩展/MCP/子代理、两种 WASM 与图片 worker 无回退、完整导出、断线恢复和认证维护锁；CPU 仿真结果需标明，不能冒充物理目标性能或三桌面验收。
+
+两份验包产物经 `prepare-remote-runtime-manifest.mjs --input <同目录两份归档和摘要> --output packages/desktop/resources/remote-runtime/manifest.json` 生成桌面清单。生成文件不入库；打包前检查它与桌面版本对应，缺失时阻止打包。普通 renderer/main 构建仍可独立运行。公开发行流程先发布验过的运行包，再用 `--require-published` 核对固定官方 URL，之后才构建和上传引用它们的桌面；不读取任意 latest、不覆盖在用运行包，也不把本地生成清单当成资产已经公开的证据。未经用户授权不触发发布流程。

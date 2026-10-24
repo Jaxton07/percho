@@ -7,6 +7,7 @@ import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { RuntimeClient } from "./client";
 import { acquireOwner, type RuntimePaths, runtimePaths } from "./paths";
+import { assertRuntimeReleasePlatform, checkRuntimeRelease, readRuntimeRelease } from "./release";
 
 const pause = (milliseconds: number) => new Promise<void>((resolve) => setTimeout(resolve, milliseconds));
 async function inspect(paths: RuntimePaths) {
@@ -87,6 +88,9 @@ export async function runRuntimeCli(root: string, command: string, authArgs: str
 	const report = process.report.getReport() as { header?: { glibcVersionRuntime?: string } };
 	if (!report.header?.glibcVersionRuntime)
 		throw new Error("The remote runtime requires glibc; musl/Alpine is unsupported");
+	const release = await readRuntimeRelease();
+	if (release) assertRuntimeReleasePlatform(release, report.header.glibcVersionRuntime);
+	if (command === "check") return checkRuntimeRelease(release);
 	const paths = await runtimePaths(root);
 	process.env.PI_CODING_AGENT_DIR = paths.agent;
 	if (command === "auth") {

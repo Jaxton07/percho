@@ -11,7 +11,7 @@ import { promisify } from "node:util";
 
 const exec = promisify(execFile);
 const entry = process.env.PERCHO_RUNTIME_TEST_ENTRY;
-if (process.platform !== "linux" || !entry?.startsWith("/work/"))
+if (process.platform !== "linux" || !(entry?.startsWith("/work/") || entry?.startsWith("/runtime/")))
 	throw new Error(
 		"Set PERCHO_RUNTIME_TEST_ENTRY to the artifact in an isolated /work + /state Linux container",
 	);
