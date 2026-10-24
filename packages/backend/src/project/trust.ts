@@ -79,6 +79,7 @@ export type TrustResponder = (req: TrustRequest) => void;
  * 应答为选项下标；用户关闭/取消（undefined）按不信任处理（与 CLI 一致）。
  */
 export class TrustGate {
+	private closed = false;
 	private readonly pending = new Map<
 		string,
 		{ request: TrustRequest; optionCount: number; resolve: (answer: number | undefined) => void }
@@ -92,6 +93,7 @@ export class TrustGate {
 	) {}
 
 	ask(cwd: string, options: TrustOptionInternal[]): Promise<number | undefined> {
+		if (this.closed) return Promise.resolve(undefined);
 		const inflight = this.inflightByCwd.get(cwd);
 		if (inflight) return inflight;
 		const id = `trust-${randomUUID()}`;
@@ -121,6 +123,7 @@ export class TrustGate {
 	}
 
 	dispose(): void {
+		this.closed = true;
 		for (const [id, entry] of this.pending) {
 			entry.resolve(undefined);
 			this.onResolved(id);

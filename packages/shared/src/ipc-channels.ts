@@ -731,6 +731,7 @@ export const UI_PLUGINS_CHANNELS = {
 
 /** Desktop-owned connection control; never forwarded to a remote business handler. */
 export const REMOTE_CHANNELS = {
+	remoteStopService: ch("remote:stopService", "desktop")<void, RemoteConnectionStatus>(),
 	remotePreflight: ch("remote:preflight", "desktop")<{ alias: string }, SshPreflight>(),
 	remoteForget: ch("remote:forget", "desktop")<void, RemoteConnectionStatus>(),
 	remoteCheckOperation: ch("remote:checkOperation", "desktop")<{ operationId: string }, MutationReceipt>(),

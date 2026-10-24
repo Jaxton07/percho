@@ -15,6 +15,8 @@ function RemoteConnectionBody() {
 	const preflight = useRemoteConnectionStore((state) => state.preflight);
 	const forget = useRemoteConnectionStore((state) => state.forget);
 	const [confirmForget, setConfirmForget] = useState(false);
+	const stopService = useRemoteConnectionStore((state) => state.stopService);
+	const [confirmStop, setConfirmStop] = useState(false);
 	const disconnect = useRemoteConnectionStore((state) => state.disconnect);
 	const openProject = useRemoteConnectionStore((state) => state.openProject);
 	const checkOperation = useRemoteConnectionStore((state) => state.checkOperation);
@@ -35,7 +37,8 @@ function RemoteConnectionBody() {
 			setWorking(false);
 		}
 	};
-	const busy = working || status.state === "connecting" || status.state === "checking";
+	const busy =
+		working || status.state === "connecting" || status.state === "checking" || status.state === "stopping";
 	return createPortal(
 		<div
 			className="fixed inset-0 z-40 flex items-center justify-center bg-ink/20"
@@ -43,7 +46,7 @@ function RemoteConnectionBody() {
 			aria-modal
 			aria-label={t("remote.title")}
 		>
-			<div className="w-[480px] max-w-[calc(100vw-32px)] rounded-xl bg-surface p-5 shadow-dialog">
+			<div className="max-h-[calc(100vh-64px)] overflow-y-auto w-[480px] max-w-[calc(100vw-32px)] rounded-xl bg-surface p-5 shadow-dialog">
 				<div className="flex items-center justify-between">
 					<h2 className="text-ui-14 font-semibold text-ink">{t("remote.title")}</h2>
 					<button
@@ -86,6 +89,22 @@ function RemoteConnectionBody() {
 						</Button>
 					</div>
 				</div>
+				{status.state === "connected" && (
+					<div className="mt-2 text-ui-12">
+						{!confirmStop ? (
+							<Button onClick={() => setConfirmStop(true)}>{t("remote.stopService")}</Button>
+						) : (
+							<>
+								<p>{t("remote.stopHint")}</p>
+								<Button disabled={busy} onClick={() => void run(stopService)}>
+									{t("remote.confirmStop")}
+								</Button>
+								<Button onClick={() => setConfirmStop(false)}>{t("common.cancel")}</Button>
+							</>
+						)}
+					</div>
+				)}
+				{status.serviceStopped && <p className="mt-2 text-ui-12 text-ink-2">{t("remote.stopConfirmed")}</p>}
 				{status.preflight && (
 					<div className="mt-3 break-words rounded-lg bg-hover p-3 text-ui-12 text-ink-2" role="status">
 						<p>

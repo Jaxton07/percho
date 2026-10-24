@@ -3,6 +3,12 @@ import type { Messages } from "./zh";
 /** English language pack (mirrors zh.ts shape) */
 export const en: Messages = {
 	remote: {
+		stopping: "Stopping service",
+		stopService: "Stop remote service",
+		confirmStop: "Confirm stop",
+		stopHint:
+			"This aborts remote tasks and shuts down this user’s service. Disconnect instead to keep tasks running. Automatic reconnection stays paused for this app run.",
+		stopConfirmed: "Remote service exit and ownership release confirmed.",
 		service: {
 			running: "Service running",
 			stopped: "Service not running",

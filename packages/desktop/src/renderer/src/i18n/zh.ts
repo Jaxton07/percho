@@ -1,6 +1,12 @@
 /** 中文语言包（作为 key 的结构定义，en.ts 与之同形） */
 export const zh = {
 	remote: {
+		stopping: "正在停止服务",
+		stopService: "停止远端服务",
+		confirmStop: "确认停止服务",
+		stopHint:
+			"这会中止远端任务并关闭该用户的服务。仅断开连接可以让任务继续。停止完成后本次不会自动重新启动。",
+		stopConfirmed: "已确认远端服务退出并释放所有权。",
 		service: {
 			running: "服务运行中",
 			stopped: "服务未运行",

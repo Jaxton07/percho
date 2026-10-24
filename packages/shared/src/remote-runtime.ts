@@ -74,7 +74,7 @@ export interface SshPreflight {
 }
 export interface RemoteConnectionStatus {
 	revision: number;
-	state: "disconnected" | "checking" | "connecting" | "reconnecting" | "connected" | "error";
+	state: "disconnected" | "checking" | "connecting" | "stopping" | "reconnecting" | "connected" | "error";
 	preflight?: SshPreflight;
 	errorKind?:
 		| "network"
@@ -87,6 +87,7 @@ export interface RemoteConnectionStatus {
 		| "requirements"
 		| "other";
 	retryAt?: number;
+	serviceStopped?: boolean;
 	instanceId?: string;
 	alias?: string;
 	environment?: Extract<EnvironmentRef, { kind: "ssh" }>;

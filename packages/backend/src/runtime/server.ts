@@ -18,7 +18,7 @@ import { RuntimeWriter, readRuntimeFrames } from "./frames";
 import { MutationBook, MutationProtocolError } from "./mutations";
 import { acquireOwner, ownerIsCurrent, type RuntimePaths } from "./paths";
 
-export async function startRuntimeServer(paths: RuntimePaths) {
+export async function startRuntimeServer(paths: RuntimePaths, exitStopped: () => never) {
 	const owner = await acquireOwner(paths);
 	if (!owner) throw new Error("RUNTIME_OWNER_BUSY: another service owns this data directory");
 	let backend: PiBackend | undefined;
@@ -56,6 +56,7 @@ export async function startRuntimeServer(paths: RuntimePaths) {
 		let state: "starting" | "running" | "stopping" | "stopped" = "starting";
 		let epoch = 0;
 		const mutations = new MutationBook();
+		const activeOperations = new Set<Promise<unknown>>();
 		let controller:
 			| {
 					socket: Socket;
@@ -70,12 +71,12 @@ export async function startRuntimeServer(paths: RuntimePaths) {
 			| undefined;
 		const sockets = new Set<Socket>();
 		const writers = new Map<Socket, RuntimeWriter>();
-		const write = (socket: Socket, frame: RuntimeFrame) => {
+		const write = (socket: Socket, frame: RuntimeFrame, priority = false) => {
 			if (socket.destroyed) return;
 			const writer = writers.get(socket);
 			if (!writer) return;
 			try {
-				writer.write(frame, frame.type === "ping");
+				writer.write(frame, priority || frame.type === "ping");
 			} catch (error) {
 				if (frame.type === "result" && error instanceof Error && error.message.includes("64 MiB")) {
 					try {
@@ -96,7 +97,10 @@ export async function startRuntimeServer(paths: RuntimePaths) {
 			stopped = (async () => {
 				clearInterval(heartbeat);
 				eventsOff();
-				runtimeBackend.dispose();
+				runtimeBackend.beginShutdown();
+				await Promise.allSettled([...activeOperations]);
+				await runtimeBackend.shutdown();
+				await new Promise<void>((resolve) => setImmediate(resolve));
 				for (const socket of sockets) socket.destroy();
 				await new Promise<void>((resolve, reject) =>
 					server.close((error) => (error ? reject(error) : resolve())),
@@ -104,8 +108,10 @@ export async function startRuntimeServer(paths: RuntimePaths) {
 				await unlink(paths.socket).catch((error: NodeJS.ErrnoException) => {
 					if (error.code !== "ENOENT") throw error;
 				});
-				await owner.close();
 				state = "stopped";
+				// Unmanaged extension timers must never execute after the lifetime lock is released.
+				// The kernel closes the owner descriptor only when this dedicated host exits.
+				exitStopped();
 			})();
 			return stopped;
 		};
@@ -229,9 +235,9 @@ export async function startRuntimeServer(paths: RuntimePaths) {
 				};
 				if (request.type === "stop") {
 					await authorized();
-					result(request.id, { accepted: true });
-					setImmediate(() => {
-						void stop();
+					write(socket, { type: "result", id: request.id, result: { accepted: true } }, true);
+					void stop().catch((error) => {
+						process.stderr.write(`Shutdown incomplete: ${String(error)}\n`);
 					});
 					return;
 				}
@@ -245,6 +251,18 @@ export async function startRuntimeServer(paths: RuntimePaths) {
 					return;
 				}
 				const handler = handlers[request.method] as (args: unknown) => unknown;
+				const execute = async () => {
+					const operation = Promise.resolve().then(() => {
+						runtimeBackend.assertRunning();
+						return handler(request.args);
+					});
+					activeOperations.add(operation);
+					try {
+						return await operation;
+					} finally {
+						activeOperations.delete(operation);
+					}
+				};
 				try {
 					if (definition.operation === "mutation") {
 						// No await before admission: interleaved I/O cannot reorder mutation sequence consumption.
@@ -266,7 +284,7 @@ export async function startRuntimeServer(paths: RuntimePaths) {
 										"NOT_EXECUTED",
 										"Read runtime summary before submitting new work",
 									);
-								return handler(request.args);
+								return execute();
 							},
 						);
 						result(request.id, await completion);
@@ -277,7 +295,7 @@ export async function startRuntimeServer(paths: RuntimePaths) {
 						}
 						definition.validate(request.args);
 						await authorized();
-						const value = await handler(request.args);
+						const value = await execute();
 						if (request.method === "getLoadedSessions") current.loaded = true;
 						if (request.method === "getPendingInteractions") current.interactions = true;
 						current.ready = current.loaded && current.interactions;

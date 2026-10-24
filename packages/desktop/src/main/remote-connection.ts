@@ -144,8 +144,38 @@ export class RemoteConnectionManager {
 		}
 		return this.status;
 	}
-	disconnect(): RemoteConnectionStatus {
+	pauseAutoConnect(): void {
 		this.autoConnect = false;
+		clearTimeout(this.retryTimer);
+		this.retryTimer = undefined;
+	}
+	async stopService(): Promise<RemoteConnectionStatus> {
+		this.pauseAutoConnect();
+		const target = this.connection;
+		if (!target || this.status.state !== "connected")
+			throw new Error("Connect before explicitly stopping the service");
+		const generation = this.generation;
+		this.update({ ...this.status, state: "stopping" });
+		try {
+			await target.stopService();
+			if (generation !== this.generation) return this.status;
+			this.disconnect();
+			return this.update({ ...this.status, serviceStopped: true });
+		} catch (error) {
+			if (generation !== this.generation) return this.status;
+			this.disconnect();
+			this.update({
+				...this.status,
+				state: "error",
+				errorKind: "other",
+				error:
+					"Remote service stop is unconfirmed; do not start another version until ownership release is verified",
+			});
+			throw error;
+		}
+	}
+	disconnect(): RemoteConnectionStatus {
+		this.pauseAutoConnect();
 		clearTimeout(this.retryTimer);
 		this.retryTimer = undefined;
 		this.generation += 1;
@@ -162,18 +192,18 @@ export class RemoteConnectionManager {
 		});
 	}
 	async connect(alias: string, automatic = false): Promise<RemoteConnectionStatus> {
-		if (!automatic) {
-			this.autoConnect = true;
-			this.retryCount = 0;
-			clearTimeout(this.retryTimer);
-		}
 		if (automatic && !this.autoConnect) return this.status;
 		validateSshAlias(alias);
-		if (["connecting", "checking"].includes(this.status.state))
+		if (["connecting", "checking", "stopping"].includes(this.status.state))
 			throw new Error("A remote connection is already being established");
 		if (this.connection) {
 			if (alias === this.status.alias) return this.status;
 			throw new Error("Disconnect the existing remote environment first");
+		}
+		if (!automatic) {
+			this.autoConnect = true;
+			this.retryCount = 0;
+			clearTimeout(this.retryTimer);
 		}
 		const generation = ++this.generation;
 		const controller = new AbortController();
@@ -223,7 +253,7 @@ export class RemoteConnectionManager {
 					this.detach = undefined;
 					this.connection = undefined;
 					this.update({
-						state: "error",
+						state: this.status.state === "stopping" ? "stopping" : "error",
 						alias,
 						environment: this.status.environment,
 						error: "SSH connection closed",

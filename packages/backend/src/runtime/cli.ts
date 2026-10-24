@@ -91,7 +91,7 @@ export async function runRuntimeCli(root: string, command: string): Promise<void
 	if (command === "bridge") return bridge(paths);
 	if (command === "serve") {
 		const { startRuntimeServer } = await import("./server");
-		const server = await startRuntimeServer(paths);
+		const server = await startRuntimeServer(paths, () => process.exit(0));
 		for (const signal of ["SIGINT", "SIGTERM"] as const)
 			process.once(signal, () => {
 				void server.stop().catch((error) => {
@@ -113,21 +113,44 @@ export async function runRuntimeCli(root: string, command: string): Promise<void
 		const client = await RuntimeClient.connect(paths.socket);
 		try {
 			await client.attach(`maintenance-${randomUUID()}`);
-			await client.stop();
+			await client.stop().catch(() => {
+				/* Only owner release below proves stop, including lost ACKs. */
+			});
 		} finally {
 			client.close();
 		}
+	}
+	if (command === "stop" || command === "wait-stopped") {
 		const deadline = Date.now() + 30_000;
 		while (Date.now() < deadline) {
 			const owner = await acquireOwner(paths);
 			if (owner) {
-				await owner.close();
-				process.stdout.write('{"stopped":true}\n');
-				return;
+				try {
+					const reachable = await new Promise<boolean>((resolve) => {
+						const socket = connect(paths.socket);
+						const finish = (value: boolean) => {
+							clearTimeout(timer);
+							socket.destroy();
+							resolve(value);
+						};
+						const timer = setTimeout(() => finish(true), 500);
+						socket.once("connect", () => finish(true));
+						socket.once("error", () => finish(false));
+					});
+					if (!reachable) {
+						process.stdout.write('{"stopped":true}\n');
+						return;
+					}
+				} finally {
+					await owner.close();
+				}
 			}
 			await pause(100);
 		}
-		throw new Error("Runtime has not fully released its owner lock; refusing to start another service");
+		throw new Error("Runtime has not fully stopped and released ownership; refusing another service");
 	}
-	throw new Error("Usage: node entry.mjs <start|status|bridge|stop> [--root <private-directory>]");
+
+	throw new Error(
+		"Usage: node entry.mjs <start|status|bridge|stop|wait-stopped> [--root <private-directory>]",
+	);
 }

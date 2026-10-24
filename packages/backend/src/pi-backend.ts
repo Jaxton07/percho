@@ -216,6 +216,72 @@ export interface PiBackendOptions {
  */
 export class PiBackend {
 	private readonly registry = new SessionRegistry();
+	private stopping = false;
+	private shutdownPromise?: Promise<void>;
+	private readonly creationFlights = new Set<Promise<unknown>>();
+	private readonly constructionGates = new Set<PermissionGate>();
+	private readonly constructionDialogs = new Set<ExtensionDialogHost>();
+	private readonly shutdownFailures: unknown[] = [];
+	private shutdownAborts: Promise<PromiseSettledResult<void>[]> = Promise.resolve([]);
+	assertRunning(): void {
+		if (this.stopping) throw new Error("BACKEND_STOPPING: no new work is accepted");
+	}
+	private trackCreation<T>(work: () => Promise<T>): Promise<T> {
+		this.assertRunning();
+		const promise = Promise.resolve().then(() => {
+			this.assertRunning();
+			return work();
+		});
+		this.creationFlights.add(promise);
+		void promise.then(
+			() => this.creationFlights.delete(promise),
+			() => this.creationFlights.delete(promise),
+		);
+		return promise;
+	}
+	/** Synchronous fence before awaiting any cleanup or in-flight request. */
+	beginShutdown(): void {
+		if (this.stopping) return;
+		this.stopping = true;
+		const attempt = (work: () => void) => {
+			try {
+				work();
+			} catch (error) {
+				this.shutdownFailures.push(error);
+			}
+		};
+		attempt(() => this.trustGate.dispose());
+		attempt(() => this.login.dispose());
+		attempt(() => this.historyGate.dispose());
+		for (const gate of this.constructionGates) attempt(() => gate.dispose());
+		this.constructionGates.clear();
+		for (const host of this.constructionDialogs) attempt(() => host.dispose());
+		for (const entry of this.registry.list()) {
+			attempt(() => this.beforeSessionShutdown(entry));
+			attempt(() => entry.gate.dispose());
+			attempt(() => entry.dialogs.dispose());
+			attempt(() => entry.session.clearQueue());
+		}
+		this.shutdownAborts = Promise.allSettled(
+			this.registry.list().map((entry) => Promise.resolve().then(() => entry.session.abort())),
+		);
+	}
+	/** Remote host awaits SDK shutdown before disposing contexts. Failures retain host ownership. */
+	shutdown(): Promise<void> {
+		this.beginShutdown();
+		this.shutdownPromise ??= (async () => {
+			await Promise.allSettled([...this.creationFlights]);
+			const entries = this.registry.list();
+			const aborted = await this.shutdownAborts;
+			const disposed = await Promise.allSettled(entries.map((entry) => this.disposeSession(entry)));
+			for (const result of [...aborted, ...disposed])
+				if (result.status === "rejected") this.shutdownFailures.push(result.reason);
+			this.dispose();
+			if (this.shutdownFailures.length)
+				throw new AggregateError(this.shutdownFailures, "Remote SDK shutdown did not complete cleanly");
+		})();
+		return this.shutdownPromise;
+	}
 	private readonly sessionDisposals = new WeakMap<RegisteredSession, Promise<void>>();
 	/** open 的 single-flight（key = 规范化绝对路径）：同文件并发 open 共享一次构造（spec D4） */
 	private readonly openFlights = new KeyedSingleFlight<SessionMeta>();
@@ -375,6 +441,9 @@ export class PiBackend {
 			| ReturnType<typeof makeEvapExtension>
 			| ReturnType<typeof makeCompactionGuardExtension>
 		> = [];
+		factories.push((pi) => {
+			pi.on("input", () => (this.stopping ? { action: "handled" } : { action: "continue" }));
+		});
 		if (this.options.permissionGates !== false && this.options.permissionExtension !== false) {
 			// confirm 直接桥到 PermissionGate（携带 kind/suggestDir 元数据，驱动「允许此目录」）；
 			// 未提供时扩展自行回退 ctx.ui.confirm（无元数据）；modeRef 同款闭包注入（D1：
@@ -430,7 +499,7 @@ export class PiBackend {
 				},
 				waitForHistoryReady: (sessionId) => this.historyGate.wait(sessionId),
 				isSessionAlive: (sessionId) =>
-					modeRef !== undefined && this.registry.get(sessionId)?.modeRef === modeRef,
+					!this.stopping && modeRef !== undefined && this.registry.get(sessionId)?.modeRef === modeRef,
 				onSessionCleanup: (cleanup) => {
 					if (modeRef) this.channelWatchCleanups.set(modeRef, cleanup);
 				},
@@ -457,6 +526,7 @@ export class PiBackend {
 			onResolved: (result) => this.publishInteraction(this.extensionDialogResolvedEmitter, result),
 		});
 		dialogs.bind(sessionId);
+		this.constructionDialogs.add(dialogs);
 		const recordExtensionError = (err: ExtensionError): void => {
 			log.error("extension error", sessionId, err);
 			try {
@@ -469,18 +539,26 @@ export class PiBackend {
 				// trace 不可用不影响扩展运行
 			}
 		};
-		await session.bindExtensions({
-			uiContext: makeUiContext({
-				dialogs,
-				onNotify: (message, level, source) => {
-					this.handleMcpNotice(sessionId, message);
-					this.extensionNotifyEmitter.emit({ sessionId, extensionPath: source, message, level });
-				},
-				onEditorText: (text, source) => this.extensionEditorTextEmitter.emit({ sessionId, text, source }),
-			}),
-			mode: "rpc",
-			onError: recordExtensionError,
-		});
+		try {
+			await session.bindExtensions({
+				uiContext: makeUiContext({
+					dialogs,
+					onNotify: (message, level, source) => {
+						this.handleMcpNotice(sessionId, message);
+						this.extensionNotifyEmitter.emit({ sessionId, extensionPath: source, message, level });
+					},
+					onEditorText: (text, source) => this.extensionEditorTextEmitter.emit({ sessionId, text, source }),
+				}),
+				mode: "rpc",
+				onError: recordExtensionError,
+			});
+		} catch (error) {
+			dialogs.dispose();
+			throw error;
+		} finally {
+			this.constructionDialogs.delete(dialogs);
+		}
+
 		return dialogs;
 	}
 
@@ -599,8 +677,12 @@ export class PiBackend {
 		return walkProjectFiles(cwd || this.options.defaultCwd || process.cwd());
 	}
 
-	async createSession(options: CreateSessionOptions): Promise<SessionMeta> {
+	createSession(options: CreateSessionOptions): Promise<SessionMeta> {
+		return this.trackCreation(() => this.createSessionOnce(options));
+	}
+	private async createSessionOnce(options: CreateSessionOptions): Promise<SessionMeta> {
 		const runtime = await this.getModelRuntime();
+		this.assertRunning();
 		const cwd = options.cwd || this.options.defaultCwd || process.cwd();
 		const model =
 			options.provider && options.modelId ? runtime.getModel(options.provider, options.modelId) : undefined;
@@ -631,7 +713,7 @@ export class PiBackend {
 	 */
 	async openSession(filePath: string): Promise<SessionMeta> {
 		const key = resolve(filePath);
-		return this.openFlights.run(key, () => this.openSessionOnce(key));
+		return this.trackCreation(() => this.openFlights.run(key, () => this.openSessionOnce(key)));
 	}
 
 	private async openSessionOnce(filePath: string): Promise<SessionMeta> {
@@ -645,6 +727,7 @@ export class PiBackend {
 			return this.registry.toMeta(existing);
 		}
 		const runtime = await this.getModelRuntime();
+		this.assertRunning();
 		const cwd = sessionManager.getCwd() || process.cwd();
 		const readOnly = isSubagentSessionPath(filePath);
 		const session = await this.wireSession(cwd, readOnly, async (deps) => {
@@ -681,82 +764,122 @@ export class PiBackend {
 			load: () => Promise<{ settingsManager: SettingsManagerType; resourceLoader: DefaultResourceLoader }>;
 		}) => Promise<CreateAgentSessionResult>,
 	): Promise<AgentSession> {
+		this.assertRunning();
 		const gate = new PermissionGate(
 			(req) => this.publishInteraction(this.permissionEmitter, req),
 			(result) => this.publishInteraction(this.permissionResolvedEmitter, result),
 		);
-		// 权限扩展的确认通道直接桥到 gate（携带 kind/suggestDir 元数据，驱动「允许此目录」/持久化）
-		const confirmBridge: PermissionConfirm = (title, message, meta) => gate.confirm(title, message, meta);
-		// 会话权限模式引用：一律 default 起步（D1：不落盘、不继承），随工厂闭包注入求值链
+		this.constructionGates.add(gate);
 		const modeRef: PermissionModeRef = { current: "default" };
-		let loaded: { settingsManager: SettingsManagerType; resourceLoader: DefaultResourceLoader } | undefined;
-		const load = async () => {
-			loaded ??= await this.projectLoader.load(cwd, { confirm: confirmBridge, modeRef });
-			return loaded;
-		};
-		const preferBuiltin = await this.subagentPreferBuiltin();
-		const { session, extensionsResult } = await makeSession({ gate, preferBuiltin, load });
-		const mutex = applySubagentMutex(session, extensionsResult, preferBuiltin);
-		if (mutex.shadowed.length > 0) {
-			log.info("third-party subagent tools shadowed", session.sessionId, mutex);
-			for (const shadowed of mutex.shadowed) {
-				this.emitEvent(session.sessionId, {
-					type: "subagent_mutex",
-					extensionPath: shadowed.extensionPath,
-					tools: shadowed.tools,
-				});
-			}
-		}
-		gate.bindSession(session.sessionId);
-		const dialogs = await this.bindSessionExtensions(session, session.sessionId);
-		const unsubscribe = session.subscribe((event) => {
-			autoNameSession(
-				session,
-				event.type === "message_start" || event.type === "message_end"
-					? { ...event, message: projectComposerMessage(event.message) }
-					: event,
-			);
-			// D8：自研触发的那次压缩在 UI 上说「自动（上下文阈值）」——只改转发副本
-			this.emitEvent(session.sessionId, this.guardTriggerMarkers.rewrite(session.sessionId, event));
-		});
+		let candidate: AgentSession | undefined;
+		let candidateDialogs: ExtensionDialogHost | undefined;
+		let registered = false,
+			released = false;
 		try {
-			this.registry.add({
-				session,
-				unsubscribe,
-				cwd,
-				gate,
-				dialogs,
-				modeRef,
-				readOnly: readOnly || undefined,
+			// 权限扩展的确认通道直接桥到 gate（携带 kind/suggestDir 元数据，驱动「允许此目录」/持久化）
+			const confirmBridge: PermissionConfirm = (title, message, meta) => gate.confirm(title, message, meta);
+			// 会话权限模式引用：一律 default 起步（D1：不落盘、不继承），随工厂闭包注入求值链
+			let loaded: { settingsManager: SettingsManagerType; resourceLoader: DefaultResourceLoader } | undefined;
+			const load = async () => {
+				this.assertRunning();
+				loaded ??= await this.projectLoader.load(cwd, { confirm: confirmBridge, modeRef });
+				this.assertRunning();
+				return loaded;
+			};
+			const preferBuiltin = await this.subagentPreferBuiltin();
+			this.assertRunning();
+			const { session, extensionsResult } = await makeSession({ gate, preferBuiltin, load });
+			candidate = session;
+			this.assertRunning();
+			const mutex = applySubagentMutex(session, extensionsResult, preferBuiltin);
+			if (mutex.shadowed.length > 0) {
+				log.info("third-party subagent tools shadowed", session.sessionId, mutex);
+				for (const shadowed of mutex.shadowed) {
+					this.emitEvent(session.sessionId, {
+						type: "subagent_mutex",
+						extensionPath: shadowed.extensionPath,
+						tools: shadowed.tools,
+					});
+				}
+			}
+			gate.bindSession(session.sessionId);
+			const dialogs = await this.bindSessionExtensions(session, session.sessionId);
+			candidateDialogs = dialogs;
+			this.assertRunning();
+			const unsubscribe = session.subscribe((event) => {
+				autoNameSession(
+					session,
+					event.type === "message_start" || event.type === "message_end"
+						? { ...event, message: projectComposerMessage(event.message) }
+						: event,
+				);
+				// D8：自研触发的那次压缩在 UI 上说「自动（上下文阈值）」——只改转发副本
+				this.emitEvent(session.sessionId, this.guardTriggerMarkers.rewrite(session.sessionId, event));
 			});
-			// 这一代开始了：领取新代次（早报过的会话也在这里拿到最终代次；dispose 后重开会是新的一代）
-			this.channelSubs.noteSessionOpened(session.sessionId);
+			this.constructionGates.delete(gate);
+			try {
+				this.registry.add({
+					session,
+					unsubscribe,
+					cwd,
+					gate,
+					dialogs,
+					modeRef,
+					readOnly: readOnly || undefined,
+				});
+				registered = true;
+				// 这一代开始了：领取新代次（早报过的会话也在这里拿到最终代次；dispose 后重开会是新的一代）
+				this.channelSubs.noteSessionOpened(session.sessionId);
+			} catch (error) {
+				try {
+					this.channelWatchCleanups.get(modeRef)?.();
+				} catch (cleanupError) {
+					log.warn("conflicting watcher cleanup failed", session.sessionId, cleanupError);
+				} finally {
+					this.channelWatchCleanups.delete(modeRef);
+				}
+				released = true;
+				// Release only the new instance: no holder-id cleanup or shutdown emission.
+				try {
+					releaseEntryResources({ unsubscribe, gate, dialogs });
+				} catch (cleanupError) {
+					log.warn("conflicting entry cleanup failed", session.sessionId, cleanupError);
+				}
+				try {
+					session.dispose();
+				} catch (cleanupError) {
+					log.warn("conflicting SDK dispose failed", session.sessionId, cleanupError);
+				}
+				log.error("session register conflicted; constructed instance disposed", {
+					sessionId: session.sessionId,
+				});
+				throw error;
+			}
+			if (!readOnly) await this.traces.start(session.sessionId, session.sessionManager.getSessionDir());
+			this.assertRunning();
+			return session;
 		} catch (error) {
-			try {
-				this.channelWatchCleanups.get(modeRef)?.();
-			} catch (cleanupError) {
-				log.warn("conflicting watcher cleanup failed", session.sessionId, cleanupError);
-			} finally {
+			if (this.constructionGates.delete(gate)) gate.dispose();
+			if (candidate && !registered && !released) {
+				const unregistered = candidate;
+				const attempt = async (cleanup: () => unknown) => {
+					try {
+						await cleanup();
+					} catch (failure) {
+						if (this.stopping) this.shutdownFailures.push(failure);
+						log.warn("unregistered session cleanup failed", failure);
+					}
+				};
+				await attempt(() => this.channelWatchCleanups.get(modeRef)?.());
 				this.channelWatchCleanups.delete(modeRef);
+				await attempt(() => candidateDialogs?.dispose());
+				await attempt(() => emitSessionShutdown(unregistered));
+				await attempt(() => unregistered.dispose());
 			}
-			// Release only the new instance: no holder-id cleanup or shutdown emission.
-			try {
-				releaseEntryResources({ unsubscribe, gate, dialogs });
-			} catch (cleanupError) {
-				log.warn("conflicting entry cleanup failed", session.sessionId, cleanupError);
-			}
-			try {
-				session.dispose();
-			} catch (cleanupError) {
-				log.warn("conflicting SDK dispose failed", session.sessionId, cleanupError);
-			}
-			log.error("session register conflicted; constructed instance disposed", {
-				sessionId: session.sessionId,
-			});
 			throw error;
+		} finally {
+			this.constructionGates.delete(gate);
 		}
-		if (!readOnly) await this.traces.start(session.sessionId, session.sessionManager.getSessionDir());
-		return session;
 	}
 
 	async listSessions(cwd?: string): Promise<SessionMeta[]> {
@@ -907,6 +1030,7 @@ export class PiBackend {
 		// 顺序反了就漏子进程，也会让扩展拿到的 ctx 已失效。
 		// 派发失败只记日志、不阻断处置（否则下面的 registry/gate/traces 清理全会漏掉）。
 		await emitSessionShutdown(entry.session).catch((error: unknown) => {
+			if (this.stopping) failures.push(error);
 			log.warn("session_shutdown 派发失败，继续处置会话", {
 				sessionId,
 				error: error instanceof Error ? error.message : String(error),
@@ -987,6 +1111,7 @@ export class PiBackend {
 		// 三种 disposition 不往 IPC 传：渲染端的「已排队」区分靠 queue_update 事件，传个无人消费的值只是死契约。
 		const dispatch = (acceptedText = text) =>
 			new Promise<void>((resolve, reject) => {
+				this.assertRunning();
 				entry.session
 					.prompt(acceptedText, {
 						source: document ? "rpc" : undefined,
@@ -1100,6 +1225,7 @@ export class PiBackend {
 	async setModel(sessionId: string, provider: string, modelId: string): Promise<void> {
 		const entry = this.requireWritable(sessionId);
 		const runtime = await this.getModelRuntime();
+		this.assertRunning();
 		const model = runtime.getModel(provider, modelId);
 		if (!model) throw new Error(`Model not found: ${provider}/${modelId}`);
 		await entry.session.setModel(model);
@@ -1179,6 +1305,7 @@ export class PiBackend {
 
 	/** 项目信任前置决策（添加项目/切换 draft cwd 时由 renderer 调用） */
 	async ensureProjectTrust(cwd: string): Promise<boolean> {
+		this.assertRunning();
 		return this.projectLoader.ensureTrust(cwd);
 	}
 
@@ -1691,6 +1818,7 @@ export class PiBackend {
 	 * 与 `forkSession` 用的同一把守卫。
 	 */
 	private async reloadIdleSessions(cwd: string | undefined): Promise<McpReloadReport> {
+		this.assertRunning();
 		const skipped: McpReloadReport["skipped"] = [];
 		let reloaded = 0;
 		for (const entry of this.registry.list()) {
@@ -1704,6 +1832,7 @@ export class PiBackend {
 				continue;
 			}
 			try {
+				this.assertRunning();
 				await entry.session.reload();
 				reloaded++;
 			} catch (err) {
@@ -1826,6 +1955,7 @@ export class PiBackend {
 	}
 
 	dispose(): void {
+		this.stopping = true;
 		this.registry.disposeAll({
 			beforeShutdown: (entry) => {
 				this.beforeSessionShutdown(entry);
@@ -1852,6 +1982,7 @@ export class PiBackend {
 		this.extensionNotifyEmitter.clear();
 		this.extensionEditorTextEmitter.clear();
 		this.trustGate.dispose();
+		this.login.dispose();
 		this.traces.disposeAll();
 		log.info("backend disposed");
 	}
@@ -1864,6 +1995,7 @@ export class PiBackend {
 
 	/** 只读会话（subagent 产物检视）写操作统一守卫；可写时返回 entry */
 	private requireWritable(sessionId: string) {
+		this.assertRunning();
 		const entry = this.requireSession(sessionId);
 		if (entry.readOnly) throw new Error("Session is read-only (subagent transcript)");
 		return entry;

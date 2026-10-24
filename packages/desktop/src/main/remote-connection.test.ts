@@ -6,6 +6,7 @@ const fixture = vi.hoisted(() => ({
 	connect: vi.fn(),
 	detach: vi.fn(),
 	close: vi.fn(),
+	stop: vi.fn(),
 	send: vi.fn(),
 }));
 vi.mock("electron", () => ({ app: { getPath: () => "/isolated-test-data" } }));
@@ -60,8 +61,14 @@ beforeEach(() => {
 	vi.useFakeTimers();
 	vi.clearAllMocks();
 	fixture.saved = null;
+	fixture.stop.mockResolvedValue(undefined);
 	fixture.probe.mockResolvedValue(probe);
-	fixture.connect.mockResolvedValue({ info, disconnect: fixture.close, invoke: vi.fn() });
+	fixture.connect.mockResolvedValue({
+		info,
+		disconnect: fixture.close,
+		stopService: fixture.stop,
+		invoke: vi.fn(),
+	});
 	manager = new RemoteConnectionManager();
 });
 afterEach(() => {
@@ -125,4 +132,26 @@ describe("remote connection intent and ownership", () => {
 		expect((await manager.getStatus()).environment).toBeUndefined();
 		expect(fixture.close).toHaveBeenCalledTimes(2);
 	});
+});
+
+it("a deliberate stop stays paused across bridge closure and waits for owner-release proof", async () => {
+	let release!: () => void;
+	fixture.stop.mockReturnValue(
+		new Promise<void>((resolve) => {
+			release = resolve;
+		}),
+	);
+	await manager.connect("dev");
+	const stopped = manager.stopService();
+	const callbacks = fixture.connect.mock.calls.at(-1)?.[1];
+	callbacks.onClose();
+	expect((await manager.getStatus()).state).toBe("stopping");
+	await vi.runAllTimersAsync();
+	expect(fixture.connect).toHaveBeenCalledTimes(1);
+	await expect(manager.connect("dev")).rejects.toThrow("already being established");
+	release();
+	await stopped;
+	expect((await manager.getStatus()).serviceStopped).toBe(true);
+	await vi.runAllTimersAsync();
+	expect(fixture.connect).toHaveBeenCalledTimes(1);
 });

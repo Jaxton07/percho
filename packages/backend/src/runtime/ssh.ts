@@ -54,6 +54,9 @@ export class SshRuntimeConnection {
 		readonly info: RuntimeInfo,
 		private readonly client: RuntimeClient,
 		private readonly closeBridge: () => void,
+		private readonly alias: string,
+		private readonly node: string,
+		private readonly signal: AbortSignal,
 	) {}
 	static async connect(
 		alias: string,
@@ -130,7 +133,7 @@ export class SshRuntimeConnection {
 			if (options.signal.aborted) throw new Error("SSH connection cancelled");
 			// Initial registry synchronization is required before this controller can submit new work.
 			await Promise.all([client.invoke("getLoadedSessions"), client.invoke("getPendingInteractions")]);
-			return new SshRuntimeConnection(attached.info, client, close);
+			return new SshRuntimeConnection(attached.info, client, close, alias, probe.node, options.signal);
 		} catch (error) {
 			close();
 			throw error;
@@ -141,6 +144,22 @@ export class SshRuntimeConnection {
 	}
 	queryReceipt(operation: MutationReference): Promise<MutationReceipt> {
 		return this.client.queryReceipt(operation);
+	}
+	async stopService(): Promise<void> {
+		try {
+			await this.client.stop();
+		} catch {
+			/* A closed bridge or stop ACK does not prove owner exit. */
+		}
+		this.closeBridge();
+		const confirmed = JSON.parse(
+			await runSsh(
+				sshArguments(this.alias, `exec ${shellQuote(this.node)} ${entry} wait-stopped`),
+				this.signal,
+				45_000,
+			),
+		);
+		if (confirmed.stopped !== true) throw new Error("Remote service stop is unconfirmed");
 	}
 	disconnect(): void {
 		this.closeBridge();

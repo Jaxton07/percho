@@ -7,7 +7,7 @@ export function shellQuote(value: string): string {
 }
 
 /** Bounded one-shot OpenSSH process. Cancellation never signals the daemon or unrelated SSH processes. */
-export async function runSsh(args: string[], signal: AbortSignal): Promise<string> {
+export async function runSsh(args: string[], signal: AbortSignal, timeoutMs = 25_000): Promise<string> {
 	return new Promise((resolve, reject) => {
 		const child = spawn("ssh", args, { windowsHide: true, stdio: ["ignore", "pipe", "pipe"], signal });
 		const output: Buffer[] = [];
@@ -17,7 +17,7 @@ export async function runSsh(args: string[], signal: AbortSignal): Promise<strin
 		const timer = setTimeout(() => {
 			failure = new Error("SSH connection timed out");
 			child.kill();
-		}, 25_000);
+		}, timeoutMs);
 		child.stdout.on("data", (chunk: Buffer) => {
 			bytes += chunk.length;
 			if (bytes > 1024 * 1024) {
