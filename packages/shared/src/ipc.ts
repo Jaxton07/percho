@@ -39,6 +39,7 @@ type EnvironmentSubscriptionTable = Pick<
 	}[keyof typeof SUBSCRIPTION_TABLE]
 >;
 
+export type EnvironmentHandlers = import("./ipc-channels").InvokeHandlers<EnvironmentInvokeTable>;
 export type EnvironmentMethod = keyof EnvironmentInvokeTable;
 export type EnvironmentApi = InvokeApi<EnvironmentInvokeTable> &
 	SubscriptionApi<EnvironmentSubscriptionTable>;
