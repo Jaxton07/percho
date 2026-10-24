@@ -21,6 +21,8 @@ export const UI_REGIONS = {
 	CornerBottomRight: "chat.corner.bottom-right",
 	/** 输入框底部工具行（ContextRing旁） */
 	ComposerFooter: "composer.footer",
+	/** 输入框正上方（整列顶部，错误条之上）：发送前的摘要类信息 */
+	ComposerTop: "composer.top",
 	SettingsPanel: "settings.panel",
 } as const;
 export type RegionName = (typeof UI_REGIONS)[keyof typeof UI_REGIONS];

@@ -103,6 +103,16 @@ describe("RegionHost · chat.corner.top-left 的 leading 与区域贡献", () =>
 		expect(markup(false)).toContain("data-probe");
 	});
 
+	it("composer.top 有贡献时纵向堆叠渲染，无贡献时整体不渲染", () => {
+		state.masterOn = true;
+		state.contributions = { [UI_REGIONS.ComposerTop]: [contribution] };
+		const html = renderToStaticMarkup(<RegionHost region={UI_REGIONS.ComposerTop} />);
+		expect(html).toContain("data-probe");
+		expect(html).toContain("flex flex-col gap-1.5");
+		state.contributions = {};
+		expect(renderToStaticMarkup(<RegionHost region={UI_REGIONS.ComposerTop} />)).toBe("");
+	});
+
 	it("leading 不会泄漏到非角区域（那里没有共用容器语义）", () => {
 		state.masterOn = true;
 		const html = renderToStaticMarkup(
