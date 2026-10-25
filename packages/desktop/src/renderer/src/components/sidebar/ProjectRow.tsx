@@ -1,11 +1,15 @@
 import { useState } from "react";
+import { getPi } from "../../api";
 import { useT } from "../../i18n";
+import { errText } from "../../lib/error-text";
+import { useToastsStore } from "../../stores/toasts";
 import { CoffeeIcon, EditIcon, FolderIcon, FolderOpenIcon, MoreIcon, PinIcon } from "../icons";
 import { ConfirmDialog } from "../ui/ConfirmDialog";
 import { ContextMenu } from "../ui/ContextMenu";
 import type { MenuAnchor } from "../ui/place-menu";
 import { ProjectFoldersDialog } from "./ProjectFoldersDialog";
 import { projectMenuItems } from "./ProjectMenu";
+import { revealLabelKey } from "./project-menu-labels";
 
 /**
  * 分组行（日常 / 每个项目共用）。
@@ -118,6 +122,19 @@ export function ProjectRow({
 						pinned,
 						onTogglePin: togglePin,
 						onEditFolders: cwd && kind === "project" ? () => setEditingFolders(true) : undefined,
+						onReveal:
+							cwd && kind === "project"
+								? () => {
+										// 目录不存在时不静默：和文件行的「在访达中显示」一样 toast 报错
+										void getPi()
+											.revealPath({ target: cwd, cwd })
+											.catch((error: unknown) => {
+												console.error("在文件管理器中显示失败", { cwd, error });
+												useToastsStore.getState().push("error", "toast.pathRevealFailed", errText(error));
+											});
+									}
+								: undefined,
+						revealLabel: t(revealLabelKey(getPi().platform)),
 						onRemove: remove ? () => setConfirming(true) : undefined,
 					})}
 					onClose={() => setAnchor(null)}
