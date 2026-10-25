@@ -324,6 +324,21 @@ export const en: Messages = {
 		noSessions: "No sessions",
 		/** Per-group "show more" button at the end of the list (16 more rows each click) */
 		showMore: "Show more",
+		/** Project row menu item that opens the extra folders dialog */
+		editProject: "Edit",
+		/** Same action, platform-specific wording (Finder on macOS, Explorer on Windows) */
+		revealInFinder: "Show in Finder",
+		revealInExplorer: "Show in Explorer",
+		revealInFileManager: "Show in file manager",
+	},
+	/** Extra folders dialog (declared in the system prompt only; cwd stays the primary directory) */
+	projectFolders: {
+		title: "Edit project",
+		primary: "Primary",
+		addFolder: "Add folder",
+		remove: "Remove {path}",
+		save: "Save",
+		cancel: "Cancel",
 	},
 	projects: {
 		daily: "Daily",

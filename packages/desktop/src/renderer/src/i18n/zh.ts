@@ -319,6 +319,21 @@ export const zh = {
 		noSessions: "暂无会话",
 		/** 每组末尾「显示更多」按钮（每次多显示 16 条） */
 		showMore: "显示更多",
+		/** 项目行的「编辑」菜单项（额外文件夹弹窗） */
+		editProject: "编辑",
+		/** 同一项文案按平台变（macOS 叫 Finder，Windows 叫资源管理器） */
+		revealInFinder: "在 Finder 中显示",
+		revealInExplorer: "在资源管理器中显示",
+		revealInFileManager: "在文件管理器中显示",
+	},
+	/** 项目额外文件夹弹窗（只声明进系统提示词，不改变 cwd） */
+	projectFolders: {
+		title: "编辑项目",
+		primary: "主要",
+		addFolder: "添加文件夹",
+		remove: "移除 {path}",
+		save: "保存",
+		cancel: "取消",
 	},
 	projects: {
 		daily: "日常",

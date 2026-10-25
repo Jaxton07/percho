@@ -138,6 +138,7 @@ import {
 	writeContextManagerMode,
 } from "./tools/context-evaporation";
 import { collectMcpTools, makeMcpInventoryExtension } from "./tools/mcp-inventory";
+import { makeProjectExtraDirsExtension } from "./tools/project-extra-dirs/extension";
 import { makeShowImageTool } from "./tools/show-image";
 import { discoverAgents, isSubagentSessionPath, makeSubagentTool } from "./tools/subagent";
 import { applySubagentMutex, resolveSubagentPreferBuiltin } from "./tools/subagent/mutex";
@@ -196,6 +197,12 @@ export interface PiBackendOptions {
 	 * 目前是 MCP 的 OAuth 授权页（spec §4.2）。缺省 → 官方内置扩展自行回落到平台默认浏览器。
 	 */
 	openExternal?: (url: string) => void | Promise<void>;
+	/**
+	 * 按 cwd 返回项目额外目录（桌面端从 ui-state 读；纯 CLI 环境不传）。
+	 * 由内置扩展 project-extra-dirs 每轮写成一段系统提示词声明（模型知道这些目录存在、用绝对路径访问），
+	 * 不改变 cwd 与资源发现。
+	 */
+	projectExtraDirs?: (cwd: string) => string[];
 }
 
 /**
@@ -349,12 +356,14 @@ export class PiBackend {
 		| ReturnType<typeof makeChannelWatchExtension>
 		| ReturnType<typeof makeEvapExtension>
 		| ReturnType<typeof makeCompactionGuardExtension>
+		| ReturnType<typeof makeProjectExtraDirsExtension>
 	> {
 		const factories: Array<
 			| ReturnType<typeof makeTodoReminderExtension>
 			| ReturnType<typeof makeChannelWatchExtension>
 			| ReturnType<typeof makeEvapExtension>
 			| ReturnType<typeof makeCompactionGuardExtension>
+			| ReturnType<typeof makeProjectExtraDirsExtension>
 		> = [];
 		if (this.options.permissionGates !== false && this.options.permissionExtension !== false) {
 			// confirm 直接桥到 PermissionGate（携带 kind/suggestDir 元数据，驱动「允许此目录」）；
@@ -417,6 +426,17 @@ export class PiBackend {
 				},
 			}),
 		);
+		// 项目额外目录声明（spec project-extra-dirs）：写成 systemPromptOptions.sections 里的一段，
+		// 每轮 before_agent_start 现取（设置改了下一轮生效）；调用方不提供该选项则不注册。
+		const projectExtraDirs = this.options.projectExtraDirs;
+		if (projectExtraDirs) {
+			factories.push(
+				makeProjectExtraDirsExtension({
+					cwd,
+					getDirs: () => projectExtraDirs(cwd),
+				}),
+			);
+		}
 		// todo-reminder 最后：compaction 后恢复注入的任务列表不被上游折叠
 		factories.push(makeTodoReminderExtension());
 		// MCP 运行态聚合（spec §4.8.1）：三个时机聚合 `mcp__<server>__<tool>`，集合变化才发事件给面板

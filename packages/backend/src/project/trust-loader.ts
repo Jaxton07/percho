@@ -83,6 +83,8 @@ export class ProjectResourceLoader {
 			],
 			additionalSkillPaths: this.deps.desktopIntegration?.additionalSkillPaths,
 			// appendSystemPrompt 会替换文件发现；override 在发现后合并，保留 SDK 信任/优先级规则。
+			// 顺序：桌面端静态段落 → SDK 发现的 APPEND_SYSTEM 段落。
+			// 项目额外目录**不在这里**：它由内置扩展 project-extra-dirs 写 section（叠加语义，见 tools/project-extra-dirs）。
 			appendSystemPromptOverride: (base) => [
 				...(this.deps.desktopIntegration?.appendSystemPrompt ?? []),
 				...base,

@@ -4,6 +4,9 @@ import {
 	clampCodeFontSize,
 	clampSidebarWidth,
 	clampUiFontSize,
+	cleanProjectExtraDirs,
+	EMPTY_EXTRA_DIRS,
+	isAbsoluteDirPath,
 	type PermissionMode,
 	type Rect,
 	type SessionWorkspaceSnapshot,
@@ -36,6 +39,22 @@ function stringArray(value: unknown): string[] {
 	return Array.isArray(value)
 		? value.filter((item): item is string => typeof item === "string" && item !== "")
 		: [];
+}
+
+/**
+ * 额外目录映射（cwd → 路径数组）归一化：非对象 → `{}`；key 必须是绝对路径；列表走 shared 的
+ * `cleanProjectExtraDirs`（与 renderer 写入前**同一套规则**）；空列表的项目直接丢键。
+ * 脏值（手改文件/旧版本）一律丢弃，不阻塞启动。
+ */
+function extraDirsMap(value: unknown): Record<string, string[]> {
+	if (!value || typeof value !== "object" || Array.isArray(value)) return {};
+	const out: Record<string, string[]> = {};
+	for (const [cwd, dirs] of Object.entries(value as Record<string, unknown>)) {
+		if (!isAbsoluteDirPath(cwd)) continue;
+		const list = cleanProjectExtraDirs(cwd, dirs);
+		if (list.length > 0) out[cwd] = [...list];
+	}
+	return out;
 }
 
 /**
@@ -151,6 +170,8 @@ function normalize(parsed: UiStateFileShape): UiState {
 		pinnedProjects: stringArray(parsed.pinnedProjects),
 		// 上次项目目录：只收非空字符串（旧文件/脏值 → null）
 		lastCwd: typeof parsed.lastCwd === "string" && parsed.lastCwd.length > 0 ? parsed.lastCwd : null,
+		// 项目额外目录（cwd → 绝对路径）：只用于系统提示词声明，脏值逐项丢弃而不是丢掉整张表
+		projectExtraDirs: extraDirsMap(parsed.projectExtraDirs),
 	};
 }
 
@@ -162,6 +183,21 @@ export async function loadUiState(): Promise<UiState | null> {
 	if (model && typeof model.provider !== "string") return null;
 	if (model && typeof model.modelId !== "string") return null;
 	return normalize(parsed);
+}
+
+/**
+ * **同步**读取某 cwd 的额外目录（`PiBackend.projectExtraDirs` 在会话构造时同步调用）。
+ * 走 `readSync` 而不是缓存：会话创建是低频操作，一次小文件同步读比维护一份可能失同步的缓存简单。
+ * 文件缺失/损坏 → 空数组（不注入任何段落）。
+ */
+export function projectExtraDirsFor(cwd: string): string[] {
+	try {
+		const parsed = uiStateStore().readSync();
+		return parsed ? (extraDirsMap(parsed.projectExtraDirs)[cwd] ?? EMPTY_EXTRA_DIRS) : EMPTY_EXTRA_DIRS;
+	} catch (err) {
+		log.warn("project extra dirs read failed", err);
+		return EMPTY_EXTRA_DIRS;
+	}
 }
 
 /** 持久化 UI 状态（与现有内容浅合并后原子写，调用方传补丁即可；失败不吞，UiStateSave 是 handle） */

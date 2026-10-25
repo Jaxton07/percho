@@ -3,6 +3,8 @@ import {
 	clampCodeFontSize,
 	clampSidebarWidth,
 	clampUiFontSize,
+	cleanProjectExtraDirs,
+	EMPTY_EXTRA_DIRS,
 	type PermissionMode,
 	SIDEBAR_DEFAULT_WIDTH,
 	UI_FONT_SIZE_BASE,
@@ -12,6 +14,9 @@ import { create } from "zustand";
 import { getPi } from "../api";
 import { toggleInList } from "../lib/toggle-in-list";
 import { applyFontScales } from "../lib/typography";
+
+/** 空映射常量：hydrate 前/无记录时返回**稳定引用**（内联 `{}` 会让订阅方每次拿到新对象） */
+const EMPTY_EXTRA_DIRS_MAP: Record<string, string[]> = {};
 
 /** 应用级 UI 偏好（持久化在 ui-state.json，与主题/背景同源；主进程 normalize 负责旧文件缺省） */
 interface UiPreferencesStore {
@@ -41,6 +46,11 @@ interface UiPreferencesStore {
 	pinnedProjects: string[];
 	/** 上次使用的项目目录（重启后启动页预填；只记目录、不恢复会话）；null = 未记过 */
 	lastCwd: string | null;
+	/**
+	 * 项目额外目录（cwd → 绝对路径，首个目录始终是 cwd 本身）。**只用于系统提示词声明**，
+	 * 不改 cwd、不进资源发现、不进会话分组；缺省（未配置）用 `EMPTY_EXTRA_DIRS` 拿稳定引用。
+	 */
+	projectExtraDirs: Record<string, string[]>;
 	/**
 	 * 界面字号（px，档位取值见 shared/typography.ts）：基准 13。
 	 * 生效方式是写 CSS 变量 `--fs-ui-scale`（`lib/typography.ts`），改一次整树跟随、不需重渲染。
@@ -81,6 +91,11 @@ interface UiPreferencesStore {
 	forgetPermissionMode: (sessionId: string) => void;
 	/** 记住上次项目目录（切会话/打开会话/建会话时由 sessions store 调；同值不重复写盘） */
 	setLastCwd: (cwd: string | null) => void;
+	/**
+	 * 写一个项目的额外目录（内部按 shared `cleanProjectExtraDirs` 清洗：去空/去重/丢等于 cwd 的项/
+	 * 只收绝对路径/上限 16）。洗空则删键（文件不会越用越大）。
+	 */
+	setProjectExtraDirs: (cwd: string, dirs: string[]) => void;
 	/** 切换界面字号（脏值/越界在 clamp 里收口）；立即写 CSS 变量 + 落盘 */
 	setUiFontSize: (px: number) => void;
 	/** 切换代码字号：写 `--fs-code-scale`（内联 code / 代码块 / diff / mermaid）+ monaco 由 Markdown.tsx 传 options */
@@ -108,6 +123,7 @@ export const useUiPreferencesStore = create<UiPreferencesStore>((set, get) => ({
 	/** 置顶项目 cwd（新置顶在前，决定左侧栏项目区排序） */
 	pinnedProjects: [],
 	lastCwd: null,
+	projectExtraDirs: EMPTY_EXTRA_DIRS_MAP,
 	uiFontSize: UI_FONT_SIZE_BASE,
 	codeFontSize: CODE_FONT_SIZE_BASE,
 
@@ -129,6 +145,7 @@ export const useUiPreferencesStore = create<UiPreferencesStore>((set, get) => ({
 			expandedGroupsTouched: saved?.expandedGroupsTouched ?? false,
 			pinnedProjects: saved?.pinnedProjects ?? [],
 			lastCwd: saved?.lastCwd ?? null,
+			projectExtraDirs: saved?.projectExtraDirs ?? EMPTY_EXTRA_DIRS_MAP,
 			uiFontSize,
 			codeFontSize,
 		});
@@ -155,6 +172,19 @@ export const useUiPreferencesStore = create<UiPreferencesStore>((set, get) => ({
 		if (get().lastCwd === cwd) return;
 		set({ lastCwd: cwd });
 		persistPatch({ lastCwd: cwd });
+	},
+
+	setProjectExtraDirs: (cwd, dirs) => {
+		const current = get().projectExtraDirs;
+		const cleaned = cleanProjectExtraDirs(cwd, dirs);
+		const before = current[cwd] ?? EMPTY_EXTRA_DIRS;
+		// 同值短路：弹窗点保存但不改任何东西时不写盘
+		if (cleaned.length === before.length && cleaned.every((dir, i) => dir === before[i])) return;
+		const next = { ...current };
+		if (cleaned.length === 0) delete next[cwd];
+		else next[cwd] = cleaned;
+		set({ projectExtraDirs: next });
+		persistPatch({ projectExtraDirs: next });
 	},
 
 	setUiFontSize: (px) => {
