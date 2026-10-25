@@ -72,7 +72,7 @@ it("only accepts fixed official source identities and the supported manifest con
 		runtimeVersion: "1.0.0",
 		protocol: 3,
 		minimumGlibc: "2.35",
-		node: ">=22.19.0 <23",
+		node: ">=22.19.0",
 		artifacts: {
 			arm64: artifact,
 			x64: {

@@ -2,7 +2,7 @@ import { createHash, randomUUID } from "node:crypto";
 import { createReadStream } from "node:fs";
 import { mkdir, open, readFile, rename, rm, stat } from "node:fs/promises";
 import { join } from "node:path";
-import { REMOTE_PROTOCOL_VERSION } from "@percho/shared";
+import { REMOTE_PROTOCOL_VERSION, RUNTIME_NODE_RANGE } from "@percho/shared";
 
 const MAX_ARCHIVE = 256 * 1024 * 1024;
 export interface RuntimeArtifact {
@@ -17,7 +17,7 @@ export interface RuntimeManifest {
 	runtimeVersion: string;
 	protocol: number;
 	minimumGlibc: "2.35";
-	node: ">=22.19.0 <23";
+	node: typeof RUNTIME_NODE_RANGE;
 	artifacts: Record<"x64" | "arm64", RuntimeArtifact>;
 }
 export function parseRuntimeManifest(input: unknown): RuntimeManifest {
@@ -28,7 +28,7 @@ export function parseRuntimeManifest(input: unknown): RuntimeManifest {
 		value.releaseId !== `v${value.runtimeVersion}` ||
 		value.protocol !== REMOTE_PROTOCOL_VERSION ||
 		value.minimumGlibc !== "2.35" ||
-		value.node !== ">=22.19.0 <23"
+		value.node !== RUNTIME_NODE_RANGE
 	)
 		throw new Error("Invalid bundled runtime manifest");
 	for (const arch of ["x64", "arm64"] as const) {

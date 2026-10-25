@@ -1,6 +1,7 @@
 import { createHash } from "node:crypto";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { dirname, resolve } from "node:path";
+import nodePolicy from "../packages/shared/src/runtime-node-policy.json" with { type: "json" };
 
 const args = process.argv.slice(2);
 if (
@@ -23,7 +24,7 @@ for (const arch of ["x64", "arm64"]) {
 		!/^v\d+\.\d+\.\d+(?:-[a-zA-Z0-9.-]+)?$/.test(item.releaseId) ||
 		item.releaseId !== `v${item.runtimeVersion}` ||
 		item.minimumGlibc !== "2.35" ||
-		item.node !== ">=22.19.0 <23" ||
+		item.node !== nodePolicy.node ||
 		!Number.isInteger(item.protocol) ||
 		typeof item.sdkVersion !== "string" ||
 		!/^[a-f0-9]{64}$/.test(item.sha256) ||

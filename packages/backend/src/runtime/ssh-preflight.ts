@@ -1,5 +1,10 @@
 import { spawn } from "node:child_process";
-import type { RemoteConnectionStatus, SshPreflight } from "@percho/shared";
+import {
+	isSupportedRuntimeNode,
+	type RemoteConnectionStatus,
+	RUNTIME_NODE_RANGE,
+	type SshPreflight,
+} from "@percho/shared";
 import { sshArguments, validateSshAlias } from "./ssh-arguments";
 
 export function shellQuote(value: string): string {
@@ -85,7 +90,7 @@ export async function preflightSsh(alias: string, signal: AbortSignal): Promise<
 	const output = await runSsh(
 		sshArguments(
 			alias,
-			`command -v node >/dev/null 2>&1 || { echo 'NODE_REQUIRED: Install Node 22 >=22.19.0 <23, visible to non-interactive SSH; see https://nodejs.org/en/download' >&2; exit 64; }; exec node -e ${shellQuote(probe)}`,
+			`command -v node >/dev/null 2>&1 || { echo 'NODE_REQUIRED: Install Node ${RUNTIME_NODE_RANGE}, visible to non-interactive SSH; see https://nodejs.org/en/download' >&2; exit 64; }; exec node -e ${shellQuote(probe)}`,
 		),
 		signal,
 	);
@@ -103,10 +108,9 @@ export async function preflightSsh(alias: string, signal: AbortSignal): Promise<
 }
 
 export function checkSshRequirements(probe: SshPreflight): void {
-	const [major, minor] = probe.nodeVersion.split(".").map(Number);
-	if (major !== 22 || (minor ?? -1) < 19)
+	if (!isSupportedRuntimeNode(probe.nodeVersion))
 		throw new Error(
-			"NODE_REQUIRED: Install Node >=22.19.0 <23 in the non-interactive SSH environment; https://nodejs.org/en/download",
+			`NODE_REQUIRED: Install Node ${RUNTIME_NODE_RANGE} in the non-interactive SSH environment; https://nodejs.org/en/download`,
 		);
 	if (probe.platform !== "linux" || !["x64", "arm64"].includes(probe.arch) || !probe.glibc)
 		throw new Error("REQUIREMENTS: Requires glibc Linux x64 or ARM64; musl/Alpine is unsupported");

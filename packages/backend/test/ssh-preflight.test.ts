@@ -18,10 +18,13 @@ const probe: SshPreflight = {
 describe("SSH preflight requirements", () => {
 	it("reports missing installation independently from platform readiness", () => {
 		expect(() => checkSshRequirements(probe)).not.toThrow();
+		for (const nodeVersion of ["22.19.0", "24.22.1", "26.12.1"])
+			expect(() => checkSshRequirements({ ...probe, nodeVersion })).not.toThrow();
 		for (const change of [
 			{ nodeVersion: "20.19.0" },
 			{ nodeVersion: "22.18.0" },
-			{ nodeVersion: "24.0.0" },
+			{ nodeVersion: "22.19.0-rc.1" },
+			{ nodeVersion: "garbage" },
 			{ glibc: "" },
 			{ platform: "darwin" },
 			{ arch: "riscv64" },

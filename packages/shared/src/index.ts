@@ -12,6 +12,7 @@ export * from "./mcp";
 export * from "./model-visibility";
 export * from "./packages";
 export * from "./remote-runtime";
+export * from "./runtime-node-policy";
 export * from "./session";
 export * from "./settings";
 export * from "./sidebar";

@@ -54,6 +54,21 @@ jobs:
             -v "$PWD/packages/backend/src/runtime/install-script.ts:/bootstrap.mjs:ro" \
             -v "$PWD/.local/runtime-${ARTIFACT_ARCH}:/artifacts:ro" \
             percho-runtime-build node /verify/verify-remote-runtime-install.mjs
+      - name: Prepare Node Current compatibility environment
+        run: docker buildx build --load --platform "$PLATFORM" --build-arg NODE_VERSION=26.12.1 -t percho-runtime-current -f scripts/remote-runtime/Dockerfile scripts/remote-runtime
+      - name: Verify the same archive with Node Current
+        run: |
+          docker run --rm --platform "$PLATFORM" --network none \
+            --tmpfs /runtime:mode=0700,exec --tmpfs /state:mode=0700 \
+            -v "$PWD/scripts:/verify:ro" \
+            -v "$PWD/.local/runtime-${ARTIFACT_ARCH}:/artifacts:ro" \
+            percho-runtime-current sh /verify/remote-runtime/check-artifact.sh
+          docker run --rm --platform "$PLATFORM" --network none \
+            --tmpfs /state:mode=0700,exec \
+            -v "$PWD/scripts:/verify:ro" \
+            -v "$PWD/packages/backend/src/runtime/install-script.ts:/bootstrap.mjs:ro" \
+            -v "$PWD/.local/runtime-${ARTIFACT_ARCH}:/artifacts:ro" \
+            percho-runtime-current node /verify/verify-remote-runtime-install.mjs
       - uses: actions/upload-artifact@v4
         with:
           name: remote-runtime-${{ matrix.arch }}

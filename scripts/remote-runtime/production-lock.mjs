@@ -1,4 +1,5 @@
 import { posix } from "node:path";
+import nodePolicy from "../../packages/shared/src/runtime-node-policy.json" with { type: "json" };
 
 /** Select exact installed lock entries, without introducing another dependency/version solver. */
 export function runtimeBuildLock(lock, version) {
@@ -56,7 +57,7 @@ export function runtimeBuildLock(lock, version) {
 		private: true,
 		type: "module",
 		license: "MIT",
-		engines: { node: ">=22.19.0 <23" },
+		engines: { node: nodePolicy.node },
 		dependencies,
 		devDependencies,
 	};

@@ -55,7 +55,7 @@ Windows 更新诊断及旧卸载器边界见 [WINDOWS-UPDATES.md](WINDOWS-UPDATE
 
 ## SSH 运行包
 
-`build-remote-runtime.mjs` 只在目标 glibc Linux CPU 上构建；Node 外置，当前支持 Node 22.19+ 的 22.x 与 glibc 2.35+。依赖从提交的锁文件中选出后在独立目录安装，应用 SDK 补丁；不把桌面 node_modules 复制过去。包保留 SDK worker/WASM、主题、文档、维护 CLI 和导出资源，固定摘要的 fd/rg 放包内 bin，不安装到系统。入口固定自身 SDK 资源根，不能继承其他 Pi CLI 的 PI_PACKAGE_DIR。
+`build-remote-runtime.mjs` 只在目标 glibc Linux CPU 上构建；Node 外置，运行要求跟随已锁定SDK的最低版本 `>=22.19.0`，不限制22.x；glibc要求2.35+。Node范围单源位于 shared 的 runtime-node-policy.json，预检、启动、清单与生产依赖声明共用；发行构建仍使用固定Node22.19基线。依赖从提交的锁文件中选出后在独立目录安装，应用 SDK 补丁；不把桌面 node_modules 复制过去。包保留 SDK worker/WASM、主题、文档、维护 CLI 和导出资源，固定摘要的 fd/rg 放包内 bin，不安装到系统。入口固定自身 SDK 资源根，不能继承其他 Pi CLI 的 PI_PACKAGE_DIR。
 
 构建与仓库外验包由 `.github/workflows/remote-runtime.yml` 复用：目标容器内运行 `node scripts/build-remote-runtime.mjs --out <隔离产物目录>`；验包容器只挂归档、scripts 和私有 /state，关闭外网，执行 `scripts/remote-runtime/check-artifact.sh`。临时 /runtime 须允许执行包内搜索程序；不要把测试目录的 noexec 挂载误诊为工具缺失。验收覆盖主工具、用户扩展/MCP/子代理、两种 WASM 与图片 worker 无回退、完整导出、断线恢复和认证维护锁；CPU 仿真结果需标明，不能冒充物理目标性能或三桌面验收。
 
@@ -63,8 +63,10 @@ Windows 更新诊断及旧卸载器边界见 [WINDOWS-UPDATES.md](WINDOWS-UPDATE
 
 两份验包产物经 `prepare-remote-runtime-manifest.mjs --input <同目录两份归档和摘要> --output packages/desktop/resources/remote-runtime/manifest.json` 生成桌面清单。生成文件不入库；打包前检查它与桌面版本对应，缺失时阻止打包。普通 renderer/main 构建仍可独立运行。公开发行流程先发布验过的运行包，再用 `--require-published` 核对固定官方 URL，之后才构建和上传引用它们的桌面；不读取任意 latest、不覆盖在用运行包，也不把本地生成清单当成资产已经公开的证据。未经用户授权不触发发布流程。
 
-SSH 首次安装由桌面执行：先只读检测已有 Host 别名、Node 22.19+（22.x）、glibc 2.35+ 与基础命令；已存在兼容服务直接附着，已装且停止的包按原版本启动，不读取新发行清单。缺包时按随附清单从固定官方 URL 下载到本机缓存并核对大小/摘要，展示版本及服务器私有安装目录，点击“确认安装并连接”才修改目标。后台自动连接缺包只提示，不代用户确认。开发态安装需要先生成资源清单，普通构建不会生成可信发行清单。
+SSH 首次安装由桌面执行：先只读检测已有 Host 别名、Node >=22.19.0、glibc 2.35+ 与基础命令；已存在兼容服务直接附着，已装且停止的包按原版本启动，不读取新发行清单。缺包时按随附清单从固定官方 URL 下载到本机缓存并核对大小/摘要，展示版本及服务器私有安装目录，点击“确认安装并连接”才修改目标。后台自动连接缺包只提示，不代用户确认。开发态安装需要先生成资源清单，普通构建不会生成可信发行清单。
 
 安装通过专用 SSH 上传归档：重新核验目标身份，持有安装锁与服务所有者锁，在私有随机暂存内逐项校验 ustar（只接受普通文件和目录，拒绝链接、越界、特殊权限、重复与超限），运行候选包离线检查，成功后原子发布不可变版本目录和 installed.json。候选未就绪不会被选作启动包；同版本不同摘要拒绝覆盖。中断可能保留私有 install-* 暂存，但不会自动执行它或清理旧包/agent 数据。它不是普通文件传输功能。
 
 更新使用“停止远端服务”并取得退出证明，再检测、准备更新包并确认安装；新包启动失败保留旧包与 agent 数据，先查看私有 logs/runtime.log，不清空凭据或历史。若旧服务协议不兼容，桌面不调用猜测的旧停止接口：按目标端原运行目录执行同版 entry.mjs stop，再核验 wait-stopped；原服务仍被其他控制端占用时应回原桌面停止。OAuth/交互认证需在服务已停止时使用设置中给出的同版 auth 命令；远端凭据不从本机复制。
+
+Node兼容验证区分最低运行版本与实测版本：Node22.19基线与Node26.12.1 x64实际包已通过隔离验证；Current镜像可用Dockerfile的NODE_VERSION参数构建，workflow同时复验同一归档。Node26官方Linux二进制还需要libatomic.so.1（Ubuntu包libatomic1），Node本身必须能在非交互SSH执行；Percho不自动修改系统库或升级Node。较新版本获准不等于所有未来Node版本已有实测证据。

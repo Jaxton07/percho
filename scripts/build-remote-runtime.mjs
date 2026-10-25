@@ -18,6 +18,7 @@ import { createRequire } from "node:module";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { promisify } from "node:util";
+import nodePolicy from "../packages/shared/src/runtime-node-policy.json" with { type: "json" };
 import { runtimeBuildLock } from "./remote-runtime/production-lock.mjs";
 
 const exec = promisify(execFile),
@@ -134,7 +135,7 @@ try {
 		platform: "linux",
 		arch,
 		minimumGlibc: "2.35",
-		node: ">=22.19.0 <23",
+		node: nodePolicy.node,
 	};
 	await writeFile(join(stage, "package.json"), `${JSON.stringify(selected.manifest, null, 2)}\n`);
 	await rm(join(stage, "node_modules/.bin"), { recursive: true, force: true });
@@ -178,7 +179,7 @@ try {
 		protocol: checked.protocol,
 		sdkVersion: checked.sdkVersion,
 		minimumGlibc: "2.35",
-		node: ">=22.19.0 <23",
+		node: nodePolicy.node,
 		arch,
 		asset,
 		bytes: bytes.length,

@@ -4,7 +4,7 @@ import { createRequire } from "node:module";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
-import { REMOTE_PROTOCOL_VERSION } from "@percho/shared";
+import { isSupportedRuntimeNode, REMOTE_PROTOCOL_VERSION, RUNTIME_NODE_RANGE } from "@percho/shared";
 
 interface RuntimeRelease {
 	version: string;
@@ -44,8 +44,8 @@ export function assertRuntimeReleasePlatform(release: RuntimeRelease, glibc: str
 	if (process.arch !== release.arch) throw new Error("Runtime package CPU architecture mismatch");
 	const [major = 0, minor = 0] = glibc.split(".").map(Number);
 	if (major < 2 || (major === 2 && minor < 35)) throw new Error("Runtime requires glibc 2.35 or newer");
-	const [nodeMajor, nodeMinor = 0] = process.versions.node.split(".").map(Number);
-	if (nodeMajor !== 22 || nodeMinor < 19) throw new Error("Runtime requires Node 22.19+ (22.x)");
+	if (!isSupportedRuntimeNode(process.versions.node))
+		throw new Error(`Runtime requires Node ${RUNTIME_NODE_RANGE}`);
 }
 /** Offline package check: no backend, owner lock, credentials or service is created. */
 export async function checkRuntimeRelease(release: RuntimeRelease | null): Promise<void> {
