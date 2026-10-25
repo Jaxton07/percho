@@ -336,8 +336,6 @@ export const en: Messages = {
 		title: "Edit project",
 		primary: "Primary",
 		addFolder: "Add folder",
-		empty: "No extra folders",
-		hint: "Extra folders are only declared in the system prompt; the first one stays the primary working directory",
 		remove: "Remove {path}",
 		save: "Save",
 		cancel: "Cancel",

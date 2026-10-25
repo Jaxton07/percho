@@ -111,9 +111,6 @@ export function ProjectFoldersDialog({
 							</button>
 						</div>
 					))}
-					{dirs.length === 0 && (
-						<p className="px-2 py-3 text-center text-ui-12 text-ink-faint">{t("projectFolders.empty")}</p>
-					)}
 				</div>
 
 				<button
@@ -124,8 +121,6 @@ export function ProjectFoldersDialog({
 					<PlusIcon size={13} />
 					{t("projectFolders.addFolder")}
 				</button>
-
-				<p className="mt-2 text-ui-12 leading-[1.6] text-ink-faint">{t("projectFolders.hint")}</p>
 
 				<div className="fade-rule my-3" />
 				<div className="flex justify-end gap-2">

@@ -331,8 +331,6 @@ export const zh = {
 		title: "编辑项目",
 		primary: "主要",
 		addFolder: "添加文件夹",
-		empty: "暂无额外文件夹",
-		hint: "额外文件夹只写进系统提示词，首个目录仍是主要工作目录",
 		remove: "移除 {path}",
 		save: "保存",
 		cancel: "取消",
