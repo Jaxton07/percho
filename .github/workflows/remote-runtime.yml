@@ -33,7 +33,8 @@ jobs:
         run: docker buildx build --load --platform "$PLATFORM" -t percho-runtime-build -f scripts/remote-runtime/Dockerfile scripts/remote-runtime
       - name: Build locked runtime with target dependencies
         run: |
-          mkdir -p ".local/runtime-${ARTIFACT_ARCH}"
+          # The read-only source bind must already contain the nested tmpfs mountpoint.
+          mkdir -p ".local/runtime-${ARTIFACT_ARCH}" node_modules
           docker run --rm --platform "$PLATFORM" \
             -e PERCHO_BUILD_RELEASE_TAG \
             -v "$PWD:/source:ro" --tmpfs /source/node_modules \
