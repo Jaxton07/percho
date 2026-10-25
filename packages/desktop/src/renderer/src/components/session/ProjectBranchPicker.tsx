@@ -9,6 +9,7 @@ import { deriveProjects, useProjectsStore } from "../../stores/projects";
 import { useRemoteConnectionStore } from "../../stores/remote-connection";
 import { useSessionsStore } from "../../stores/sessions";
 import { CoffeeIcon } from "../icons";
+import { RemoteEnvironmentIndicator } from "../remote/RemoteEnvironmentIndicator";
 import { AddProjectDialog } from "../sidebar/AddProjectDialog";
 import { Dropdown } from "../ui/Dropdown";
 
@@ -68,7 +69,11 @@ function ProjectPicker() {
 							</span>
 						)}
 						{daily ? t("projects.daily") : (name ?? t("projects.selectProject"))}
-						{remote && <span className="shrink-0 text-ui-11 text-ink-faint">{t("remote.label")}</span>}
+						{remote && (
+							<RemoteEnvironmentIndicator
+								environment={cwd ? environmentEntityRef(cwd).environment : LOCAL_ENVIRONMENT}
+							/>
+						)}
 					</span>
 				}
 			>
@@ -91,7 +96,11 @@ function ProjectPicker() {
 										<CoffeeIcon size={10} />
 									</span>
 									<span className="truncate">{t("projects.daily")}</span>
-									{remote && <span className="shrink-0 text-ui-11 text-ink-faint">{t("remote.label")}</span>}
+									{remote && (
+										<RemoteEnvironmentIndicator
+											environment={cwd ? environmentEntityRef(cwd).environment : LOCAL_ENVIRONMENT}
+										/>
+									)}
 								</button>
 								{projects.length > 0 && <div className="my-0.5 border-t border-border" />}
 							</>
@@ -114,7 +123,7 @@ function ProjectPicker() {
 								</span>
 								<span className="truncate">{project.name}</span>
 								{environmentEntityRef(project.cwd).environment.kind === "ssh" && (
-									<span className="shrink-0 text-ui-11 text-ink-faint">{t("remote.label")}</span>
+									<RemoteEnvironmentIndicator environment={environmentEntityRef(project.cwd).environment} />
 								)}
 							</button>
 						))}

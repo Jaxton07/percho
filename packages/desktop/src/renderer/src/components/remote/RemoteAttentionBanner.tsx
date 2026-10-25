@@ -17,7 +17,7 @@ import {
 import { useSessionsStore } from "../../stores/sessions";
 import { pushToast } from "../../stores/toasts";
 import { useTranscriptStore } from "../../stores/transcript";
-import { WarningIcon } from "../icons";
+import { ServerIcon, WarningIcon } from "../icons";
 import { InteractionDock } from "../session/InteractionDock";
 
 /** Passive source notice. It never focuses a control or switches projects on arrival. */
@@ -100,8 +100,8 @@ export function RemoteAttentionBanner() {
 			>
 				<div className="w-[480px] max-w-[calc(100vw-32px)] rounded-xl bg-surface p-4 shadow-dialog">
 					<div className="mb-3 flex items-center justify-between gap-2 text-ui-12 text-ink-faint">
-						<span className="break-all">
-							{t("remote.label")} · {alias} {source ? `· ${displayPath(source)}` : ""}
+						<span className="flex min-w-0 items-center gap-2 break-all">
+							<ServerIcon size={13} className="shrink-0" /> {alias} {source ? `· ${displayPath(source)}` : ""}
 						</span>
 						<button type="button" onClick={() => setDialogSession(null)} aria-label={t("common.close")}>
 							✕

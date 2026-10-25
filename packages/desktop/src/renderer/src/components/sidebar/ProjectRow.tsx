@@ -1,6 +1,8 @@
+import type { EnvironmentRef } from "@percho/shared";
 import { useState } from "react";
 import { useT } from "../../i18n";
 import { CoffeeIcon, EditIcon, FolderIcon, FolderOpenIcon, MoreIcon, PinIcon } from "../icons";
+import { RemoteEnvironmentIndicator } from "../remote/RemoteEnvironmentIndicator";
 import { ConfirmDialog } from "../ui/ConfirmDialog";
 import { ContextMenu } from "../ui/ContextMenu";
 import type { MenuAnchor } from "../ui/place-menu";
@@ -23,7 +25,7 @@ import { projectMenuItems } from "./ProjectMenu";
  */
 export function ProjectRow({
 	label,
-	environmentLabel,
+	environment,
 	kind,
 	expanded,
 	pinned = false,
@@ -34,7 +36,7 @@ export function ProjectRow({
 	onRemove,
 }: {
 	label: string;
-	environmentLabel?: string;
+	environment?: EnvironmentRef;
 	kind: "daily" | "project";
 	expanded: boolean;
 	pinned?: boolean;
@@ -66,7 +68,7 @@ export function ProjectRow({
 			<button
 				type="button"
 				aria-expanded={expanded}
-				title={environmentLabel ? `${label} · ${environmentLabel}` : label}
+				title={label}
 				className={`flex h-[34px] w-full items-center gap-2 rounded-[7px] px-1.5 pr-12 text-ui-14 text-ink-2 group-hover/row:bg-hover group-hover/row:text-ink ${
 					expanded ? "text-ink" : ""
 				}`}
@@ -76,9 +78,7 @@ export function ProjectRow({
 					{icon}
 				</span>
 				<span className="min-w-0 flex-1 truncate text-left font-medium">{label}</span>
-				{environmentLabel && (
-					<span className="shrink-0 text-ui-11 font-normal text-ink-faint">{environmentLabel}</span>
-				)}
+				{environment && <RemoteEnvironmentIndicator environment={environment} />}
 				{pinned && (
 					<span className="grid h-4 w-4 shrink-0 place-items-center text-ink-faint" aria-hidden="true">
 						<PinIcon size={12} />

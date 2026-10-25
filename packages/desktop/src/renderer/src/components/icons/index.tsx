@@ -11,6 +11,26 @@ const strokeProps = {
 	strokeWidth: 2,
 } as const;
 
+/** 远端运行环境：服务器机架，不与本机目录或终端操作混淆。 */
+export function ServerIcon({ size = 14, className }: IconProps) {
+	return (
+		<svg
+			className={className}
+			width={size}
+			height={size}
+			viewBox="0 0 24 24"
+			{...strokeProps}
+			strokeLinecap="round"
+			strokeLinejoin="round"
+			aria-hidden="true"
+		>
+			<rect x="3" y="3" width="18" height="7" rx="2" />
+			<rect x="3" y="14" width="18" height="7" rx="2" />
+			<path d="M7 6.5h.01M7 17.5h.01M12 6.5h5M12 17.5h5" />
+		</svg>
+	);
+}
+
 export function SunIcon({ size = 14, className }: IconProps) {
 	return (
 		<svg

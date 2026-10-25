@@ -24,10 +24,10 @@ import {
 	GearIcon,
 	InfoIcon,
 	PuzzleIcon,
+	ServerIcon,
 	SlidersIcon,
 	SubagentIcon,
 	SunIcon,
-	TerminalIcon,
 } from "../icons";
 import { RemoteConnectionPanel } from "../remote/RemoteConnectionDialog";
 import { SelectionMenu } from "../ui/SelectionMenu";
@@ -59,7 +59,7 @@ const CATEGORY_ICONS = {
 	skills: FileTextIcon,
 	mcp: SubagentIcon,
 	extensions: PuzzleIcon,
-	remote: TerminalIcon,
+	remote: ServerIcon,
 	lan: DevicesIcon,
 	about: InfoIcon,
 } satisfies Record<(typeof STATIC_CATEGORIES)[number], ComponentType<{ size?: number }>>;
@@ -190,7 +190,7 @@ function SettingsDialogBody({
 										{environment.kind === "local"
 											? t("settings.localEnvironment")
 											: remoteStatus.environment?.connectionId === environment.connectionId
-												? (remoteStatus.alias ?? t("remote.label"))
+												? (remoteStatus.alias ?? t("remote.alias"))
 												: t("remote.unavailableEnvironment")}
 									</span>
 									<ChevronDownIcon size={12} className="shrink-0" />
@@ -206,7 +206,7 @@ function SettingsDialogBody({
 												ref.kind === "local"
 													? t("settings.localEnvironment")
 													: remoteStatus.environment?.connectionId === ref.connectionId
-														? (remoteStatus.alias ?? t("remote.label"))
+														? (remoteStatus.alias ?? t("remote.alias"))
 														: t("remote.unavailableEnvironment"),
 										}))}
 										onSelect={(value) => {
