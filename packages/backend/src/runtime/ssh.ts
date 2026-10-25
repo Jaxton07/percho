@@ -20,7 +20,7 @@ export { sshArguments, validateSshAlias } from "./ssh-arguments";
 function releaseEntry(releaseId: string): string {
 	if (!/^[a-zA-Z0-9][a-zA-Z0-9._-]{0,127}$/.test(releaseId))
 		throw new Error("Invalid installed runtime release");
-	return `"$HOME/.local/share/percho/releases/${releaseId}/entry.mjs"`;
+	return `"$HOME/.percho/releases/${releaseId}/entry.mjs"`;
 }
 const remoteCommand = (command: "start" | "bridge", node: string, releaseId: string) =>
 	`exec ${shellQuote(node)} ${releaseEntry(releaseId)} ${command}`;
@@ -66,7 +66,7 @@ export function remoteAuthGuide(alias: string, node: string, releaseId = "develo
 	if (!node.startsWith("/")) throw new Error("Remote Node path must be absolute");
 	return {
 		sshCommand: `ssh -t -oStrictHostKeyChecking=yes -oForwardAgent=no -oClearAllForwardings=yes -oControlMaster=no -oControlPath=none -- ${alias}`,
-		authCommand: `exec ${shellQuote(node)} "$HOME/.local/share/percho/releases/${releaseId}/entry.mjs" auth`,
+		authCommand: `exec ${shellQuote(node)} "$HOME/.percho/releases/${releaseId}/entry.mjs" auth`,
 	};
 }
 

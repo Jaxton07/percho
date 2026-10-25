@@ -49,7 +49,7 @@ export async function runSsh(args: string[], signal: AbortSignal, timeoutMs = 25
 const probe = `
 const fs=require('node:fs'),os=require('node:os'),path=require('node:path'),cp=require('node:child_process'),crypto=require('node:crypto'),net=require('node:net');
 (async()=>{
- const home=fs.realpathSync(os.homedir()), rawRoot=path.join(home,'.local/share/percho');
+ const home=fs.realpathSync(os.homedir()), rawRoot=path.join(home,'.percho');
  const root=fs.existsSync(rawRoot)?fs.realpathSync(rawRoot):rawRoot;
  const rawAgent=path.join(root,'agent'),agentDir=fs.existsSync(rawAgent)?fs.realpathSync(rawAgent):rawAgent;
  const commands=Object.fromEntries(['sh','tar','sha256sum','flock','setsid','git'].map(name=>[name,cp.spawnSync('sh',['-c','command -v "$1" >/dev/null','probe',name]).status===0]));

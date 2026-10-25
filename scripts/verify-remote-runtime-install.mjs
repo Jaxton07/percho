@@ -9,7 +9,7 @@ import { INSTALL_SCRIPT } from "/bootstrap.mjs";
 if (process.platform !== "linux" || !["arm64", "x64"].includes(process.arch))
 	throw new Error("Target Linux fixture required");
 const home = "/state/install-home",
-	root = `${home}/.local/share/percho`;
+	root = `${home}/.percho`;
 await mkdir(home, { recursive: true, mode: 0o700 });
 const manifest = JSON.parse(await readFile(`/artifacts/runtime-linux-${process.arch}.json`, "utf8"));
 const archive = await readFile(`/artifacts/percho-runtime-linux-${process.arch}.tar.gz`);

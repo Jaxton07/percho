@@ -8,7 +8,7 @@ async function privateDir(p){await fs.mkdir(p,{recursive:true,mode:0o700});const
 async function execute(file,args,options={}){return new Promise((resolve,reject)=>cp.execFile(file,args,{timeout:90000,maxBuffer:1048576,...options},(e,out)=>e?reject(e):resolve(out)));}
 (async()=>{
  if(process.platform!=='linux'||!['arm64','x64'].includes(process.arch)||metadata.arch!==process.arch||!/^v[0-9]+\.[0-9]+\.[0-9]+(?:-[a-zA-Z0-9.-]+)?$/.test(metadata.releaseId)||!Number.isSafeInteger(metadata.bytes)||metadata.bytes<1||metadata.bytes>268435456||!(/^[a-f0-9]{64}$/).test(metadata.sha256))throw Error('Invalid installation metadata/platform');
- const rawRoot=path.join(await fs.realpath(os.homedir()),'.local/share/percho');
+ const rawRoot=path.join(await fs.realpath(os.homedir()),'.percho');
  await privateDir(rawRoot);const root=await fs.realpath(rawRoot);for(const d of ['staging','releases','run'])await privateDir(path.join(root,d));
  lock=await fs.open(path.join(root,'run/install.lock'),C.O_CREAT|C.O_RDWR|C.O_NOFOLLOW,0o600);const ls=await lock.stat();if(!ls.isFile()||ls.uid!==process.getuid())throw Error('Unsafe install lock');await lock.chmod(0o600);
  async function acquire(file){await new Promise((resolve,reject)=>{const child=cp.spawn('flock',['-n','-E','75','3'],{stdio:['ignore','ignore','pipe',file.fd]});child.once('error',reject);child.once('exit',code=>code===0?resolve():reject(Error('INSTALL_BUSY: Runtime or installer owns the target')));});}

@@ -1,5 +1,6 @@
 # 本地文件
 .local/
+/openspec/
 AGENTS.md
 
 # 依赖

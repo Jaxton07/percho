@@ -6,7 +6,7 @@ import { fileURLToPath } from "node:url";
 // This bootstrap runs before any SDK import, including when launched from an SSH login shell.
 const args = process.argv.slice(2);
 const command = args.shift() ?? "status";
-let root = join(homedir(), ".local", "share", "percho");
+let root = join(homedir(), ".percho");
 const authArgs =
 	command === "auth" ? args.splice(0, args.includes("--root") ? args.indexOf("--root") : args.length) : [];
 if (args.length) {

@@ -384,7 +384,7 @@ export class RemoteConnectionManager {
 						token,
 						releaseId: manifest.releaseId,
 						bytes: artifact.bytes,
-						directory: `${probe.home}/.local/share/percho/releases/${manifest.releaseId}`,
+						directory: `${probe.home}/.percho/releases/${manifest.releaseId}`,
 					},
 				});
 			}

@@ -54,14 +54,14 @@ const probe = {
 	glibc: "2.35",
 	commands: { sh: true, tar: true, sha256sum: true, flock: true, setsid: true },
 	installed: true,
-	agentDir: "/home/developer/.local/share/percho/agent",
+	agentDir: "/home/developer/.percho/agent",
 	environmentId: "data",
 };
 const info = {
 	instanceId: "instance",
 	environmentId: "data",
 	uid: 1000,
-	canonicalAgentDir: "/home/developer/.local/share/percho/agent",
+	canonicalAgentDir: "/home/developer/.percho/agent",
 };
 let manager: RemoteConnectionManager;
 beforeEach(() => {
@@ -205,7 +205,7 @@ it("downloads for manual installation but never installs without the matching on
 	const ready = await manager.connect("dev");
 	expect(ready.installation).toMatchObject({
 		releaseId: "v1.0.0",
-		directory: "/home/developer/.local/share/percho/releases/v1.0.0",
+		directory: "/home/developer/.percho/releases/v1.0.0",
 	});
 	expect(distribution.install).not.toHaveBeenCalled();
 	expect(fixture.connect).not.toHaveBeenCalled();

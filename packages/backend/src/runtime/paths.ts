@@ -26,9 +26,7 @@ async function privateDirectory(path: string): Promise<void> {
 		throw new Error(`Runtime directory must be owned by the current user with mode 0700: ${path}`);
 }
 
-export async function runtimePaths(
-	input = join(homedir(), ".local", "share", "percho"),
-): Promise<RuntimePaths> {
+export async function runtimePaths(input = join(homedir(), ".percho")): Promise<RuntimePaths> {
 	await privateDirectory(resolve(input));
 	const root = await realpath(resolve(input));
 	for (const name of ["agent", "releases", "staging", "run", "logs"])
