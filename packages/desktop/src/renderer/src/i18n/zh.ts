@@ -10,7 +10,7 @@ export const zh = {
 		authHint:
 			"远端使用自己的模型配置和凭据，可在这里保存 API key 或自定义服务商。交互式登录请使用远端维护入口；不会复制本机账号。",
 		authInstructions: "查看终端登录步骤",
-		authStopFirst: "先在“远端连接”中停止服务并确认退出，再在外部终端连接原服务器：",
+		authStopFirst: "先在“SSH 连接”中停止服务并确认退出，再在外部终端连接原服务器：",
 		authRunRemotely:
 			"进入服务器终端后运行同版维护入口，使用 /login；MCP 授权使用 /mcp login。服务存活时维护入口会拒绝启动：",
 		authFinish:
@@ -70,7 +70,7 @@ export const zh = {
 			rejected: "未执行",
 		},
 
-		title: "远端连接",
+		title: "SSH 连接",
 		installHint:
 			"运行包已下载并验证。确认后在此服务器的私有目录安装并启动；不会安装 Node 或项目依赖。更新前请先明确停止旧服务。",
 		confirmInstall: "确认安装并连接",
@@ -79,6 +79,7 @@ export const zh = {
 		chooseAlias: "选择 SSH 别名",
 		refreshAliases: "刷新本机 SSH 配置",
 		aliasesLoading: "正在读取本机 SSH 配置…",
+		aliasesConnected: "当前已连接，可查看别名；请先断开，再切换别名。",
 		aliasesHint: "来自本机 SSH 配置；选择后请手动检测或连接。",
 		aliasesEmpty: "未发现可选 SSH 别名，可直接输入已有别名。",
 		aliasesIncomplete: "部分 SSH 配置未能读取，仍可手动输入别名。",
@@ -436,7 +437,7 @@ export const zh = {
 		loading: "加载中…",
 		comingSoon: "该分类的设置将在后续版本提供。",
 		category: {
-			remote: "远端连接",
+			remote: "SSH 连接",
 			general: "通用",
 			appearance: "外观",
 			models: "模型",

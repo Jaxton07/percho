@@ -165,7 +165,7 @@ export function RemoteConnectionPanel() {
 							aria-label={t("remote.chooseAlias")}
 							aria-haspopup="listbox"
 							aria-expanded={!!aliasAnchor}
-							disabled={busy || status.state === "connected" || !aliases.length}
+							disabled={busy || !aliases.length}
 							onClick={(event) => setAliasAnchor(aliasAnchor ? null : event.currentTarget)}
 							className="flex h-8 w-7 items-center justify-center rounded-lg text-ink-faint hover:text-ink disabled:opacity-35"
 						>
@@ -188,9 +188,11 @@ export function RemoteConnectionPanel() {
 							? "remote.aliasesLoading"
 							: aliasesIncomplete
 								? "remote.aliasesIncomplete"
-								: aliases.length
-									? "remote.aliasesHint"
-									: "remote.aliasesEmpty",
+								: status.state === "connected"
+									? "remote.aliasesConnected"
+									: aliases.length
+										? "remote.aliasesHint"
+										: "remote.aliasesEmpty",
 					)}
 				</p>
 				{aliasAnchor && (
@@ -198,9 +200,14 @@ export function RemoteConnectionPanel() {
 						anchor={aliasAnchor}
 						field={aliasField.current ?? undefined}
 						label={t("remote.chooseAlias")}
-						options={aliases.map((value) => ({ value, label: value }))}
+						options={aliases.map((value) => ({
+							value,
+							label: value,
+							disabled: (status.state === "connected" || busy) && value !== alias,
+						}))}
 						value={alias}
 						onSelect={(value) => {
+							if (status.state === "connected" || busy) return;
 							setAlias(value);
 							setError("");
 						}}

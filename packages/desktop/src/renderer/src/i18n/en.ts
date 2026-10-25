@@ -13,7 +13,7 @@ export const en: Messages = {
 			"The remote uses its own models and credentials. Save API keys or custom providers here. Interactive login uses remote terminal maintenance; local accounts are never copied.",
 		authInstructions: "Show terminal login steps",
 		authStopFirst:
-			"Stop the service in Remote connection and confirm exit, then connect to the original server in an external terminal:",
+			"Stop the service in SSH connection and confirm exit, then connect to the original server in an external terminal:",
 		authRunRemotely:
 			"Inside the server terminal, run the same-version maintenance entry and use /login, or /mcp login for MCP authorization. Maintenance refuses to start while the service owns the data directory:",
 		authFinish:
@@ -80,7 +80,7 @@ export const en: Messages = {
 			rejected: "Not executed",
 		},
 
-		title: "Remote connection",
+		title: "SSH connection",
 		installHint:
 			"The runtime is downloaded and verified. Confirm to install and start it in this server’s private directory. Node and project dependencies are prerequisites. Explicitly stop the old service before updating.",
 		confirmInstall: "Install and connect",
@@ -90,6 +90,7 @@ export const en: Messages = {
 		chooseAlias: "Choose SSH alias",
 		refreshAliases: "Refresh local SSH configuration",
 		aliasesLoading: "Reading local SSH configuration…",
+		aliasesConnected: "Connected. You can browse aliases; disconnect before choosing another alias.",
 		aliasesHint: "From local SSH configuration. Select an alias, then check or connect.",
 		aliasesEmpty: "No SSH aliases found. You can enter an existing alias manually.",
 		aliasesIncomplete: "Some SSH configuration could not be read. Manual entry is still available.",
@@ -450,7 +451,7 @@ export const en: Messages = {
 		loading: "Loading…",
 		comingSoon: "Settings for this category are coming in a future release.",
 		category: {
-			remote: "Remote Connection",
+			remote: "SSH Connection",
 			general: "General",
 			appearance: "Appearance",
 			models: "Models",

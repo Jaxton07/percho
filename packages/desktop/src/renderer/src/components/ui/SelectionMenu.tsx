@@ -17,7 +17,7 @@ export function SelectionMenu({
 	/** 可输入选择器：列表固定在整个字段下方，并与字段等宽。 */
 	field?: HTMLElement;
 	label: string;
-	options: { value: string; label: string }[];
+	options: { value: string; label: string; disabled?: boolean }[];
 	value: string;
 	onSelect: (value: string) => void;
 	onClose: () => void;
@@ -30,7 +30,8 @@ export function SelectionMenu({
 		width?: number;
 		maxHeight?: number;
 	} | null>(null);
-	const focusTrigger = () => (field?.querySelector("input") ?? anchor).focus({ preventScroll: true });
+	const focusTrigger = () =>
+		(field?.querySelector<HTMLInputElement>("input:not(:disabled)") ?? anchor).focus({ preventScroll: true });
 	useLayoutEffect(() => {
 		const menu = ref.current;
 		if (!menu) return;
@@ -55,8 +56,9 @@ export function SelectionMenu({
 		if (!position) return;
 		const menu = ref.current;
 		const selected =
-			menu?.querySelector<HTMLButtonElement>('[aria-selected="true"]') ??
-			menu?.querySelector<HTMLButtonElement>('[role="option"]');
+			menu?.querySelector<HTMLButtonElement>('[aria-selected="true"]:not(:disabled)') ??
+			menu?.querySelector<HTMLButtonElement>('[role="option"]:not(:disabled)') ??
+			menu;
 		selected?.focus({ preventScroll: true });
 	}, [position]);
 	useEffect(() => {
@@ -80,6 +82,7 @@ export function SelectionMenu({
 		<div
 			ref={ref}
 			role="listbox"
+			tabIndex={-1}
 			aria-label={label}
 			className="fixed z-50 max-h-60 max-w-[calc(100vw-16px)] overflow-y-auto rounded-xl bg-surface p-1 shadow-pop"
 			style={{
@@ -93,10 +96,13 @@ export function SelectionMenu({
 				visibility: position ? "visible" : "hidden",
 			}}
 			onKeyDown={(event) => {
-				const buttons = [...(ref.current?.querySelectorAll<HTMLButtonElement>("[role=option]") ?? [])];
+				const buttons = [
+					...(ref.current?.querySelectorAll<HTMLButtonElement>("[role=option]:not(:disabled)") ?? []),
+				];
 				const index = buttons.indexOf(document.activeElement as HTMLButtonElement);
-				const next =
-					event.key === "Home"
+				const next = !buttons.length
+					? null
+					: event.key === "Home"
 						? 0
 						: event.key === "End"
 							? buttons.length - 1
@@ -131,8 +137,9 @@ export function SelectionMenu({
 					id={`${id}-${index}`}
 					type="button"
 					role="option"
+					disabled={option.disabled}
 					aria-selected={option.value === value}
-					className="flex w-full items-center gap-2 rounded-lg px-2.5 py-2 text-left text-ui-12 text-ink-2 outline-none hover:bg-hover focus:bg-hover"
+					className="flex w-full items-center gap-2 rounded-lg px-2.5 py-2 text-left text-ui-12 text-ink-2 outline-none hover:bg-hover focus:bg-hover disabled:opacity-40 disabled:cursor-default disabled:hover:bg-transparent"
 					onClick={() => {
 						onSelect(option.value);
 						onClose();
