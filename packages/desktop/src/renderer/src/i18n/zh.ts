@@ -319,6 +319,19 @@ export const zh = {
 		noSessions: "暂无会话",
 		/** 每组末尾「显示更多」按钮（每次多显示 16 条） */
 		showMore: "显示更多",
+		/** 项目行的「编辑项目」菜单项（额外文件夹弹窗） */
+		editProject: "编辑项目",
+	},
+	/** 项目额外文件夹弹窗（只声明进系统提示词，不改变 cwd） */
+	projectFolders: {
+		title: "编辑项目",
+		primary: "主要",
+		addFolder: "添加文件夹",
+		empty: "暂无额外文件夹",
+		hint: "额外文件夹只写进系统提示词，首个目录仍是主要工作目录",
+		remove: "移除 {path}",
+		save: "保存",
+		cancel: "取消",
 	},
 	projects: {
 		daily: "日常",

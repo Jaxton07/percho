@@ -1,9 +1,12 @@
-import { isAbsolute, join } from "node:path";
+import { join } from "node:path";
 import { createLogger, JsonStore } from "@percho/backend";
 import {
 	clampCodeFontSize,
 	clampSidebarWidth,
 	clampUiFontSize,
+	cleanProjectExtraDirs,
+	EMPTY_EXTRA_DIRS,
+	isAbsoluteDirPath,
 	type PermissionMode,
 	type Rect,
 	type SessionWorkspaceSnapshot,
@@ -38,42 +41,18 @@ function stringArray(value: unknown): string[] {
 		: [];
 }
 
-/** 每项目额外目录上限：这些路径会原样进系统提示词，不设限会挤占上下文 */
-const MAX_PROJECT_EXTRA_DIRS = 16;
-
-/** 空值常量（返回稳定引用，免得上层每次拿到新数组） */
-const EMPTY_DIRS: string[] = [];
-
 /**
- * 项目额外目录清洗（写侧 renderer 也做同名规则）：非数组 → 空；trim → 去空 → 去重（保序）
- * → **丢弃等于 key 的项**（首个目录本就是 cwd）→ 只收绝对路径 → 上限 `MAX_PROJECT_EXTRA_DIRS`。
- */
-function extraDirList(value: unknown, cwd: string): string[] {
-	if (!Array.isArray(value)) return EMPTY_DIRS;
-	const seen = new Set<string>();
-	const out: string[] = [];
-	for (const item of value) {
-		if (typeof item !== "string") continue;
-		const path = item.trim();
-		if (path === "" || path === cwd || !isAbsolute(path) || seen.has(path)) continue;
-		seen.add(path);
-		out.push(path);
-		if (out.length >= MAX_PROJECT_EXTRA_DIRS) break;
-	}
-	return out.length === 0 ? EMPTY_DIRS : out;
-}
-
-/**
- * 额外目录映射（cwd → 路径数组）归一化：非对象 → `{}`；key 必须是绝对路径；空列表的项目直接丢键。
+ * 额外目录映射（cwd → 路径数组）归一化：非对象 → `{}`；key 必须是绝对路径；列表走 shared 的
+ * `cleanProjectExtraDirs`（与 renderer 写入前**同一套规则**）；空列表的项目直接丢键。
  * 脏值（手改文件/旧版本）一律丢弃，不阻塞启动。
  */
 function extraDirsMap(value: unknown): Record<string, string[]> {
 	if (!value || typeof value !== "object" || Array.isArray(value)) return {};
 	const out: Record<string, string[]> = {};
 	for (const [cwd, dirs] of Object.entries(value as Record<string, unknown>)) {
-		if (!isAbsolute(cwd)) continue;
-		const list = extraDirList(dirs, cwd);
-		if (list.length > 0) out[cwd] = list;
+		if (!isAbsoluteDirPath(cwd)) continue;
+		const list = cleanProjectExtraDirs(cwd, dirs);
+		if (list.length > 0) out[cwd] = [...list];
 	}
 	return out;
 }
@@ -214,10 +193,10 @@ export async function loadUiState(): Promise<UiState | null> {
 export function projectExtraDirsFor(cwd: string): string[] {
 	try {
 		const parsed = uiStateStore().readSync();
-		return parsed ? (extraDirsMap(parsed.projectExtraDirs)[cwd] ?? EMPTY_DIRS) : EMPTY_DIRS;
+		return parsed ? (extraDirsMap(parsed.projectExtraDirs)[cwd] ?? EMPTY_EXTRA_DIRS) : EMPTY_EXTRA_DIRS;
 	} catch (err) {
 		log.warn("project extra dirs read failed", err);
-		return EMPTY_DIRS;
+		return EMPTY_EXTRA_DIRS;
 	}
 }
 

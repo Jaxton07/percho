@@ -4,6 +4,7 @@ import { CoffeeIcon, EditIcon, FolderIcon, FolderOpenIcon, MoreIcon, PinIcon } f
 import { ConfirmDialog } from "../ui/ConfirmDialog";
 import { ContextMenu } from "../ui/ContextMenu";
 import type { MenuAnchor } from "../ui/place-menu";
+import { ProjectFoldersDialog } from "./ProjectFoldersDialog";
 import { projectMenuItems } from "./ProjectMenu";
 
 /**
@@ -20,10 +21,14 @@ import { projectMenuItems } from "./ProjectMenu";
  * 图标槽：folder/folder-open/咖啡/图钉/箭头都装在 **16×16 固定容器**里居中
  * （v6 定稿）：图标自身宽度不同曾把标题顶得左右跳，现在文字 x 恒定；会话行缩进 6+16+8=30 也不变。
  * 字号：项目名/日常名 14px/500（行高 34），见画板 E 的 v6 表。
+ *
+ * `cwd`：只有**项目**行传（日常行没有项目身份）。传了才会在 «⋯» 里出「编辑项目」，弹窗就挂在这一行里
+ * （弹窗自己的状态，不往上抬——一个项目行对应一个弹窗，互不干扰）。
  */
 export function ProjectRow({
 	label,
 	kind,
+	cwd,
 	expanded,
 	pinned = false,
 	totalSessions = 0,
@@ -34,6 +39,8 @@ export function ProjectRow({
 }: {
 	label: string;
 	kind: "daily" | "project";
+	/** 项目主目录（仅项目行传；它的存在决定 «⋯» 里是否出「编辑项目」） */
+	cwd?: string;
 	expanded: boolean;
 	pinned?: boolean;
 	/** 会话总数（只有项目组传）：移除确认文案里的真实条数 */
@@ -49,6 +56,7 @@ export function ProjectRow({
 	const t = useT();
 	const [anchor, setAnchor] = useState<MenuAnchor | null>(null);
 	const [confirming, setConfirming] = useState(false);
+	const [editingFolders, setEditingFolders] = useState(false);
 	const togglePin = onTogglePin;
 	const remove = onRemove;
 	const icon =
@@ -109,10 +117,14 @@ export function ProjectRow({
 					items={projectMenuItems(t, {
 						pinned,
 						onTogglePin: togglePin,
+						onEditFolders: cwd && kind === "project" ? () => setEditingFolders(true) : undefined,
 						onRemove: remove ? () => setConfirming(true) : undefined,
 					})}
 					onClose={() => setAnchor(null)}
 				/>
+			)}
+			{editingFolders && cwd && (
+				<ProjectFoldersDialog cwd={cwd} name={label} onClose={() => setEditingFolders(false)} />
 			)}
 			{confirming && remove && (
 				<ConfirmDialog

@@ -90,3 +90,80 @@ describe("ProjectResourceLoader 接线", () => {
 		expect(paragraphs).toEqual([STATIC]);
 	});
 });
+
+describe("真实 SDK 的系统提示词（新建 + 恢复都注入）", () => {
+	it("session.systemPrompt 里出现两个额外目录的绝对路径", async () => {
+		const { createAgentSession, SessionManager, SettingsManager } = await vi.importActual<
+			typeof import("@earendil-works/pi-coding-agent")
+		>("@earendil-works/pi-coding-agent");
+		const model = {
+			id: "extra-dirs-test",
+			name: "extra-dirs-test",
+			provider: "test",
+			api: "openai-completions",
+			baseUrl: "https://example.invalid",
+			input: ["text"],
+			reasoning: false,
+			contextWindow: 128_000,
+			maxTokens: 1024,
+			cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+		} as never;
+		const extra = ["/abs/extra-a", "/abs/extra-b"];
+		const makeLoader = async () =>
+			new ProjectResourceLoader({
+				trustStore: new ProjectTrustStore(agentDir),
+				ask: async () => undefined,
+				canAsk: () => false,
+				buildExtensions: () => [],
+				projectTrust: false,
+				projectExtraDirs: () => extra,
+			}).load(cwd);
+
+		const settingsManager = SettingsManager.inMemory({
+			compaction: { enabled: false },
+			retry: { enabled: false },
+			cacheWarming: "off",
+		});
+		const first = await makeLoader();
+		const created = await createAgentSession({
+			cwd,
+			agentDir,
+			model,
+			settingsManager,
+			resourceLoader: first.resourceLoader,
+			noTools: "all",
+			sessionManager: SessionManager.create(cwd, join(root, "sessions")),
+			modelRuntime: {
+				getModel: () => model,
+				hasConfiguredAuth: () => true,
+			} as never,
+		});
+		const createdPrompt = created.session.systemPrompt;
+		expect(createdPrompt).toContain("项目还有这些目录（不在 cwd 内，需要时用绝对路径访问）：");
+		for (const dir of extra) expect(createdPrompt).toContain(`- ${dir}`);
+		// 系统提示词里 `<cwd>` 段本就有 cwd；这里只断言额外目录段落把 cwd 排除在外（清洗规则）
+		expect(createdPrompt).not.toContain(`- ${cwd}`);
+		created.session.dispose();
+
+		// 恢复路径：从同一 session 文件重开（openSessionOnce 走同一个 ProjectResourceLoader.load）
+		const file = created.session.sessionFile;
+		expect(file).toBeTruthy();
+		if (!file) throw new Error("missing session file");
+		const resumedLoader = await makeLoader();
+		const resumed = await createAgentSession({
+			agentDir,
+			model,
+			settingsManager,
+			resourceLoader: resumedLoader.resourceLoader,
+			noTools: "all",
+			sessionManager: SessionManager.open(file),
+			modelRuntime: {
+				getModel: () => model,
+				hasConfiguredAuth: () => true,
+			} as never,
+		});
+		const resumedPrompt = resumed.session.systemPrompt;
+		for (const dir of extra) expect(resumedPrompt).toContain(`- ${dir}`);
+		resumed.session.dispose();
+	});
+});

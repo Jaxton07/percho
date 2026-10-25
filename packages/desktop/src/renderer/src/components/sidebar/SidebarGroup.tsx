@@ -55,6 +55,7 @@ export function SidebarGroup({
 			<ProjectRow
 				label={group.label ?? t("sidebar.daily")}
 				kind={group.kind}
+				cwd={group.kind === "project" ? group.cwd : undefined}
 				expanded={expanded}
 				pinned={pinned}
 				totalSessions={totalSessions}
