@@ -196,6 +196,11 @@ export interface PiBackendOptions {
 	 * 目前是 MCP 的 OAuth 授权页（spec §4.2）。缺省 → 官方内置扩展自行回落到平台默认浏览器。
 	 */
 	openExternal?: (url: string) => void | Promise<void>;
+	/**
+	 * 按 cwd 返回项目额外目录（桌面端从 ui-state 读；纯 CLI 环境不传）。
+	 * 只拼成一段系统提示词声明（模型知道这些目录存在、用绝对路径访问），不改变 cwd 与资源发现。
+	 */
+	projectExtraDirs?: (cwd: string) => string[];
 }
 
 /**
@@ -292,6 +297,7 @@ export class PiBackend {
 			projectTrust: options.projectTrust,
 			desktopIntegration: options.desktopIntegration,
 			openUrl: options.openExternal,
+			projectExtraDirs: options.projectExtraDirs,
 		});
 	}
 

@@ -1,4 +1,4 @@
-import { join } from "node:path";
+import { isAbsolute, join } from "node:path";
 import { createLogger, JsonStore } from "@percho/backend";
 import {
 	clampCodeFontSize,
@@ -36,6 +36,46 @@ function stringArray(value: unknown): string[] {
 	return Array.isArray(value)
 		? value.filter((item): item is string => typeof item === "string" && item !== "")
 		: [];
+}
+
+/** 每项目额外目录上限：这些路径会原样进系统提示词，不设限会挤占上下文 */
+const MAX_PROJECT_EXTRA_DIRS = 16;
+
+/** 空值常量（返回稳定引用，免得上层每次拿到新数组） */
+const EMPTY_DIRS: string[] = [];
+
+/**
+ * 项目额外目录清洗（写侧 renderer 也做同名规则）：非数组 → 空；trim → 去空 → 去重（保序）
+ * → **丢弃等于 key 的项**（首个目录本就是 cwd）→ 只收绝对路径 → 上限 `MAX_PROJECT_EXTRA_DIRS`。
+ */
+function extraDirList(value: unknown, cwd: string): string[] {
+	if (!Array.isArray(value)) return EMPTY_DIRS;
+	const seen = new Set<string>();
+	const out: string[] = [];
+	for (const item of value) {
+		if (typeof item !== "string") continue;
+		const path = item.trim();
+		if (path === "" || path === cwd || !isAbsolute(path) || seen.has(path)) continue;
+		seen.add(path);
+		out.push(path);
+		if (out.length >= MAX_PROJECT_EXTRA_DIRS) break;
+	}
+	return out.length === 0 ? EMPTY_DIRS : out;
+}
+
+/**
+ * 额外目录映射（cwd → 路径数组）归一化：非对象 → `{}`；key 必须是绝对路径；空列表的项目直接丢键。
+ * 脏值（手改文件/旧版本）一律丢弃，不阻塞启动。
+ */
+function extraDirsMap(value: unknown): Record<string, string[]> {
+	if (!value || typeof value !== "object" || Array.isArray(value)) return {};
+	const out: Record<string, string[]> = {};
+	for (const [cwd, dirs] of Object.entries(value as Record<string, unknown>)) {
+		if (!isAbsolute(cwd)) continue;
+		const list = extraDirList(dirs, cwd);
+		if (list.length > 0) out[cwd] = list;
+	}
+	return out;
 }
 
 /**
@@ -151,6 +191,8 @@ function normalize(parsed: UiStateFileShape): UiState {
 		pinnedProjects: stringArray(parsed.pinnedProjects),
 		// 上次项目目录：只收非空字符串（旧文件/脏值 → null）
 		lastCwd: typeof parsed.lastCwd === "string" && parsed.lastCwd.length > 0 ? parsed.lastCwd : null,
+		// 项目额外目录（cwd → 绝对路径）：只用于系统提示词声明，脏值逐项丢弃而不是丢掉整张表
+		projectExtraDirs: extraDirsMap(parsed.projectExtraDirs),
 	};
 }
 
@@ -162,6 +204,21 @@ export async function loadUiState(): Promise<UiState | null> {
 	if (model && typeof model.provider !== "string") return null;
 	if (model && typeof model.modelId !== "string") return null;
 	return normalize(parsed);
+}
+
+/**
+ * **同步**读取某 cwd 的额外目录（`PiBackend.projectExtraDirs` 在会话构造时同步调用）。
+ * 走 `readSync` 而不是缓存：会话创建是低频操作，一次小文件同步读比维护一份可能失同步的缓存简单。
+ * 文件缺失/损坏 → 空数组（不注入任何段落）。
+ */
+export function projectExtraDirsFor(cwd: string): string[] {
+	try {
+		const parsed = uiStateStore().readSync();
+		return parsed ? (extraDirsMap(parsed.projectExtraDirs)[cwd] ?? EMPTY_DIRS) : EMPTY_DIRS;
+	} catch (err) {
+		log.warn("project extra dirs read failed", err);
+		return EMPTY_DIRS;
+	}
 }
 
 /** 持久化 UI 状态（与现有内容浅合并后原子写，调用方传补丁即可；失败不吞，UiStateSave 是 handle） */

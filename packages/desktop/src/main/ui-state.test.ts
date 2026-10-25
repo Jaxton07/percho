@@ -11,7 +11,7 @@ import { afterAll, beforeEach, describe, expect, it, vi } from "vitest";
 const env = vi.hoisted(() => ({ dir: "" }));
 vi.mock("electron", () => ({ app: { getPath: () => env.dir } }));
 
-import { loadUiState, saveUiState } from "./ui-state";
+import { loadUiState, projectExtraDirsFor, saveUiState } from "./ui-state";
 
 let root = "";
 const file = () => join(root, "ui-state.json");
@@ -365,5 +365,56 @@ describe("字号档位（uiFontSize / codeFontSize）", () => {
 		const state = await loadUiState();
 		expect(state?.uiFontSize).toBe(15);
 		expect(state?.codeFontSize).toBe(14);
+	});
+});
+
+describe("projectExtraDirs（cwd → 额外目录，只用于提示词声明）", () => {
+	it("缺字段/脏值 → 空表（不炸启动）", async () => {
+		for (const raw of [
+			"{}",
+			'{"projectExtraDirs":[]}',
+			'{"projectExtraDirs":"x"}',
+			'{"projectExtraDirs":null}',
+		]) {
+			writeFileSync(file(), raw);
+			expect((await loadUiState())?.projectExtraDirs, raw).toEqual({});
+		}
+	});
+
+	it("key 必须是绝对路径，value 清洗：trim → 去空 → 去重（保序）→ 丢等于 key 的项", async () => {
+		writeFileSync(
+			file(),
+			JSON.stringify({
+				projectExtraDirs: {
+					"/work/alpha": [" /work/a ", "", "/work/a", "/work/alpha", 3, "/work/b"],
+					"relative/path": ["/work/c"],
+				},
+			}),
+		);
+		expect((await loadUiState())?.projectExtraDirs).toEqual({
+			"/work/alpha": ["/work/a", "/work/b"],
+		});
+	});
+
+	it("空列表的项目直接丢键（文件不会越用越大）", async () => {
+		writeFileSync(file(), JSON.stringify({ projectExtraDirs: { "/work/alpha": [], "/work/beta": [1] } }));
+		expect((await loadUiState())?.projectExtraDirs).toEqual({});
+	});
+
+	it("每项目上限 16 条", async () => {
+		const many = Array.from({ length: 30 }, (_, i) => `/work/dir-${i}`);
+		writeFileSync(file(), JSON.stringify({ projectExtraDirs: { "/work/alpha": many } }));
+		const dirs = (await loadUiState())?.projectExtraDirs["/work/alpha"] ?? [];
+		expect(dirs).toEqual(many.slice(0, 16));
+	});
+
+	it("保存补丁写回并按 cwd 同步读（PiBackend 会话构造走的就是这条）", async () => {
+		writeFileSync(file(), "{}");
+		await saveUiState({ projectExtraDirs: { "/work/alpha": ["/work/a"] } });
+		expect((await loadUiState())?.projectExtraDirs).toEqual({ "/work/alpha": ["/work/a"] });
+		expect(projectExtraDirsFor("/work/alpha")).toEqual(["/work/a"]);
+		// 未配置的 cwd 与缺失文件都回稳定空数组（不注入段落）
+		expect(projectExtraDirsFor("/work/beta")).toEqual([]);
+		expect(projectExtraDirsFor("/work/beta")).toBe(projectExtraDirsFor("/work/other"));
 	});
 });

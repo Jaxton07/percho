@@ -106,6 +106,12 @@ export interface UiState {
 	 * v10 起启动仍然是纯空会话页（与 pi 原生/Codex 一致），这里只让用户不用重选项目。
 	 */
 	lastCwd: string | null;
+	/**
+	 * 项目额外目录：cwd → 绝对路径数组。**只用于系统提示词声明**，不改变 cwd、不参与资源发现
+	 * （`.pi` 配置 / AGENTS.md / skills 仍只按 cwd 解析），也不进会话分组。
+	 * 首个目录始终是 cwd 本身，所以这里只存「额外」的那些（清洗时丢弃等于 key 的项）。
+	 */
+	projectExtraDirs: Record<string, string[]>;
 }
 
 /** 会话元数据（IPC 往返用，独立于 pi 内部类型） */

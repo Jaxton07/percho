@@ -31,6 +31,17 @@ export type ExtensionFactoryBuilder = (
 ) => InlineExtension[];
 
 /**
+ * 项目额外目录的提示段落（**措辞就是行为契约，改它等于改模型行为**）：空列表 → undefined（不注入）。
+ * 只做声明，不做沙箱、不做多根资源发现（spec：pi 没有沙箱层，cwd 不变）。
+ */
+export function extraDirsPrompt(dirs: string[]): string | undefined {
+	if (dirs.length === 0) return undefined;
+	return ["项目还有这些目录（不在 cwd 内，需要时用绝对路径访问）：", ...dirs.map((dir) => `- ${dir}`)].join(
+		"\n",
+	);
+}
+
+/**
  * 项目资源加载器（对齐 CLI main.js:533-570 的两阶段加载）：
  * 先 projectTrusted=false 只加载用户级资源 → 解析项目信任 → 按结果重载。
  * 不信任时项目级 settings/extensions/skills/prompts/themes 不加载。
@@ -54,6 +65,8 @@ export class ProjectResourceLoader {
 			};
 			/** 官方内置扩展（codemode/tool-search/mcp）的 OAuth 授权页打开方式（桌面端 = shell.openExternal） */
 			openUrl?: (url: string) => void | Promise<void>;
+			/** 按 cwd 返回项目额外目录（桌面端从 ui-state 读；缺省/返回空数组则不注入段落） */
+			projectExtraDirs?: (cwd: string) => string[];
 		},
 	) {}
 
@@ -83,10 +96,15 @@ export class ProjectResourceLoader {
 			],
 			additionalSkillPaths: this.deps.desktopIntegration?.additionalSkillPaths,
 			// appendSystemPrompt 会替换文件发现；override 在发现后合并，保留 SDK 信任/优先级规则。
-			appendSystemPromptOverride: (base) => [
-				...(this.deps.desktopIntegration?.appendSystemPrompt ?? []),
-				...base,
-			],
+			// 顺序：桌面端静态段落 → 项目额外目录声明（按 cwd 现取）→ SDK 发现的 APPEND_SYSTEM 段落。
+			appendSystemPromptOverride: (base) => {
+				const extraDirs = extraDirsPrompt(this.deps.projectExtraDirs?.(cwd) ?? []);
+				return [
+					...(this.deps.desktopIntegration?.appendSystemPrompt ?? []),
+					...(extraDirs ? [extraDirs] : []),
+					...base,
+				];
+			},
 		});
 		bindComposerInputBridge(resourceLoader, composer);
 		if (this.deps.projectTrust === false) {
