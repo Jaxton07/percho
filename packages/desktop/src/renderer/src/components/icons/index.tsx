@@ -11,6 +11,130 @@ const strokeProps = {
 	strokeWidth: 2,
 } as const;
 
+export function SunIcon({ size = 14, className }: IconProps) {
+	return (
+		<svg
+			className={className}
+			width={size}
+			height={size}
+			viewBox="0 0 24 24"
+			{...strokeProps}
+			strokeLinecap="round"
+			aria-hidden="true"
+		>
+			<circle cx="12" cy="12" r="4" />
+			<path d="M12 2v2m0 16v2M2 12h2m16 0h2M5 5l1.5 1.5m11 11L19 19M5 19l1.5-1.5m11-11L19 5" />
+		</svg>
+	);
+}
+
+export function SlidersIcon({ size = 14, className }: IconProps) {
+	return (
+		<svg
+			className={className}
+			width={size}
+			height={size}
+			viewBox="0 0 24 24"
+			{...strokeProps}
+			strokeLinecap="round"
+			aria-hidden="true"
+		>
+			<path d="M3 6h4m4 0h10M3 12h10m4 0h4M3 18h4m4 0h10" />
+			<circle cx="9" cy="6" r="2" />
+			<circle cx="15" cy="12" r="2" />
+			<circle cx="9" cy="18" r="2" />
+		</svg>
+	);
+}
+
+export function PuzzleIcon({ size = 14, className }: IconProps) {
+	return (
+		<svg
+			className={className}
+			width={size}
+			height={size}
+			viewBox="0 0 24 24"
+			{...strokeProps}
+			strokeLinecap="round"
+			strokeLinejoin="round"
+			aria-hidden="true"
+		>
+			<path d="M9 5V4a3 3 0 0 1 6 0v1h4v4h1a3 3 0 0 1 0 6h-1v4h-4v-1a3 3 0 0 0-6 0v1H5v-4H4a3 3 0 0 1 0-6h1V5Z" />
+		</svg>
+	);
+}
+
+export function TerminalIcon({ size = 14, className }: IconProps) {
+	return (
+		<svg
+			className={className}
+			width={size}
+			height={size}
+			viewBox="0 0 24 24"
+			{...strokeProps}
+			strokeLinecap="round"
+			strokeLinejoin="round"
+			aria-hidden="true"
+		>
+			<rect x="3" y="4" width="18" height="16" rx="3" />
+			<path d="m7 9 3 3-3 3m6 0h4" />
+		</svg>
+	);
+}
+
+export function DevicesIcon({ size = 14, className }: IconProps) {
+	return (
+		<svg
+			className={className}
+			width={size}
+			height={size}
+			viewBox="0 0 24 24"
+			{...strokeProps}
+			strokeLinecap="round"
+			strokeLinejoin="round"
+			aria-hidden="true"
+		>
+			<path d="M13 17H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h13a2 2 0 0 1 2 2v3M8 17v4m-3 0h8" />
+			<rect x="16" y="10" width="6" height="12" rx="1.5" />
+		</svg>
+	);
+}
+
+/** 断开远端连接：分离的插头，与停止服务区分。 */
+export function UnplugIcon({ size = 16, className }: IconProps) {
+	return (
+		<svg
+			className={className}
+			width={size}
+			height={size}
+			viewBox="0 0 24 24"
+			{...strokeProps}
+			strokeLinecap="round"
+			strokeLinejoin="round"
+			aria-hidden="true"
+		>
+			<path d="m3 21 4-4m10-10 4-4M7 7l10 10M5 11l-1 1a4.2 4.2 0 0 0 6 6l1-1M13 7l1-1a4.2 4.2 0 0 1 6 6l-1 1M4 4l16 16" />
+		</svg>
+	);
+}
+
+/** 关闭服务电源；仅表示显式停止，不表示断开 SSH。 */
+export function PowerIcon({ size = 16, className }: IconProps) {
+	return (
+		<svg
+			className={className}
+			width={size}
+			height={size}
+			viewBox="0 0 24 24"
+			{...strokeProps}
+			strokeLinecap="round"
+			aria-hidden="true"
+		>
+			<path d="M12 3v9M6.3 5.7a8 8 0 1 0 11.4 0" />
+		</svg>
+	);
+}
+
 /** 信息包「i」：（Toast info glyph，ink-faint 近乎隐形） */
 export function InfoIcon({ size = 14, className }: IconProps) {
 	return (

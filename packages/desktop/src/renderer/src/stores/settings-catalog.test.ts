@@ -150,28 +150,36 @@ describe("V03 settings consumer matrix (ticket 11 target)", () => {
 });
 
 describe("D10 consumer and mutation responsibilities", () => {
-	it.each(["general", "models", "skills", "extensions", "lan", "appearance", "mcp", "about", "plugin:test"])(
-		"openWith(%s) only reads its settings domains plus the shared gate",
-		async (category) => {
-			api.listProviders.mockResolvedValue([]);
-			sessionsState.activeSessionId = "matrix-session";
-			store.getState().openWith(category as import("./settings").SettingsCategory);
-			await store.getState().loadPermissionGate();
-			const full = category.startsWith("plugin:");
-			if (full) await vi.waitFor(() => expect(api.getLoadedResources).toHaveBeenCalledOnce());
-			for (const [mock, enabled] of [
-				[api.getContextManagerConfig, full || category === "general"],
-				[api.getChannelWatchConfig, full || category === "general"],
-				[api.listProviders, full || category === "models"],
-				[api.getModelPrefs, full || category === "models"],
-				[api.listSubagents, full || category === "models"],
-				[api.getLoadedResources, full || category === "skills" || category === "extensions"],
-				[api.lanGetStatus, full || category === "lan"],
-			] as const)
-				expect(mock).toHaveBeenCalledTimes(enabled ? 1 : 0);
-			expect(api.getPermissionConfig).toHaveBeenCalledOnce();
-		},
-	);
+	it.each([
+		"general",
+		"models",
+		"skills",
+		"extensions",
+		"lan",
+		"appearance",
+		"mcp",
+		"about",
+		"remote",
+		"plugin:test",
+	])("openWith(%s) only reads its settings domains plus the shared gate", async (category) => {
+		api.listProviders.mockResolvedValue([]);
+		sessionsState.activeSessionId = "matrix-session";
+		store.getState().openWith(category as import("./settings").SettingsCategory);
+		await store.getState().loadPermissionGate();
+		const full = category.startsWith("plugin:");
+		if (full) await vi.waitFor(() => expect(api.getLoadedResources).toHaveBeenCalledOnce());
+		for (const [mock, enabled] of [
+			[api.getContextManagerConfig, full || category === "general"],
+			[api.getChannelWatchConfig, full || category === "general"],
+			[api.listProviders, full || category === "models"],
+			[api.getModelPrefs, full || category === "models"],
+			[api.listSubagents, full || category === "models"],
+			[api.getLoadedResources, full || category === "skills" || category === "extensions"],
+			[api.lanGetStatus, full || category === "lan"],
+		] as const)
+			expect(mock).toHaveBeenCalledTimes(enabled ? 1 : 0);
+		expect(api.getPermissionConfig).toHaveBeenCalledOnce();
+	});
 	it("closed category/same category/read-once marker never turns into TTL; reentry reads again without clearing other domains", async () => {
 		api.listProviders.mockResolvedValue(providers("kept"));
 		await store.getState().refresh();

@@ -36,6 +36,7 @@ export type SettingsCategory =
 	| "skills"
 	| "mcp"
 	| "extensions"
+	| "remote"
 	| "lan"
 	| "about"
 	// 插件自带设置页分类（settings.panel 贡献动态拼接，id = plugin:<pluginName>:<contributionId>）
@@ -392,6 +393,7 @@ function createSettingsStore(environment: EnvironmentRef) {
 				case "lan":
 					void get().refreshLanStatus();
 					break;
+				case "remote":
 				case "appearance":
 				case "mcp":
 				case "about":
