@@ -1,5 +1,6 @@
 import { environmentEntityRef, sameEnvironment } from "@percho/shared";
 import { type ComponentType, useEffect, useRef, useState } from "react";
+import { getPi } from "../../api";
 import { useT } from "../../i18n";
 import { useProjectsStore } from "../../stores/projects";
 import { useRemoteConnectionStore } from "../../stores/remote-connection";
@@ -71,6 +72,37 @@ export function RemoteConnectionPanel() {
 	const checkOperation = useRemoteConnectionStore((state) => state.checkOperation);
 	const dismissOperation = useRemoteConnectionStore((state) => state.dismissOperation);
 	const projectField = useRef<HTMLDivElement>(null);
+	const aliasField = useRef<HTMLDivElement>(null);
+	const [aliasAnchor, setAliasAnchor] = useState<HTMLElement | null>(null);
+	const [aliases, setAliases] = useState<string[]>([]);
+	const [aliasesLoading, setAliasesLoading] = useState(true);
+	const [aliasesIncomplete, setAliasesIncomplete] = useState(false);
+	const [aliasesRefresh, setAliasesRefresh] = useState(0);
+	// biome-ignore lint/correctness/useExhaustiveDependencies: Explicit refresh restarts discovery and cancels the preceding read.
+	useEffect(() => {
+		let cancelled = false;
+		setAliasesLoading(true);
+		void getPi()
+			.remoteListSshAliases()
+			.then((result) => {
+				if (!cancelled) {
+					setAliases(result.aliases);
+					setAliasesIncomplete(result.incomplete);
+				}
+			})
+			.catch(() => {
+				if (!cancelled) {
+					setAliases([]);
+					setAliasesIncomplete(true);
+				}
+			})
+			.finally(() => {
+				if (!cancelled) setAliasesLoading(false);
+			});
+		return () => {
+			cancelled = true;
+		};
+	}, [aliasesRefresh]);
 	const [recentAnchor, setRecentAnchor] = useState<HTMLElement | null>(null);
 	const [alias, setAlias] = useState(status.alias ?? "");
 	const [path, setPath] = useState("");
@@ -88,6 +120,7 @@ export function RemoteConnectionPanel() {
 		}
 	};
 	const installation = status.installation;
+	const matchesAlias = status.alias === alias;
 	const busy =
 		working || status.state === "connecting" || status.state === "checking" || status.state === "stopping";
 	const recentProjects = [
@@ -104,16 +137,77 @@ export function RemoteConnectionPanel() {
 		<section aria-label={t("remote.title")} className="pb-4">
 			<h3 className="text-ui-14 font-medium text-ink">{t("remote.title")}</h3>
 			<p className="mt-2 text-ui-12 text-ink-faint">{t("remote.preparedRuntime")}</p>
-			<label className="mt-4 block text-ui-12 text-ink-2">
-				{t("remote.alias")}
-				<input
-					className="mt-1 w-full rounded-lg bg-hover px-3 py-2 text-ui-13 text-ink outline-none"
-					value={alias}
-					onChange={(event) => setAlias(event.target.value)}
-					placeholder="company-dev"
-					disabled={busy || status.state === "connected"}
-				/>
-			</label>
+			<div className="mt-4">
+				<label htmlFor="remote-ssh-alias" className="block text-ui-12 text-ink-2">
+					{t("remote.alias")}
+				</label>
+				<div className="mt-1 flex items-center gap-2">
+					<div ref={aliasField} className="flex min-w-0 flex-1 items-center rounded-lg bg-hover px-2">
+						<input
+							id="remote-ssh-alias"
+							className="min-w-0 flex-1 bg-transparent px-1 py-2 text-ui-13 text-ink outline-none"
+							value={alias}
+							onChange={(event) => {
+								setAlias(event.target.value);
+								setError("");
+							}}
+							placeholder="company-dev"
+							disabled={busy || status.state === "connected"}
+							onKeyDown={(event) => {
+								if (event.key === "ArrowDown" && !event.nativeEvent.isComposing && aliases.length) {
+									event.preventDefault();
+									setAliasAnchor(aliasField.current?.querySelector("button") ?? null);
+								}
+							}}
+						/>
+						<button
+							type="button"
+							aria-label={t("remote.chooseAlias")}
+							aria-haspopup="listbox"
+							aria-expanded={!!aliasAnchor}
+							disabled={busy || status.state === "connected" || !aliases.length}
+							onClick={(event) => setAliasAnchor(aliasAnchor ? null : event.currentTarget)}
+							className="flex h-8 w-7 items-center justify-center rounded-lg text-ink-faint hover:text-ink disabled:opacity-35"
+						>
+							<ChevronDownIcon size={12} />
+						</button>
+					</div>
+					<ConnectionAction
+						label={t("remote.refreshAliases")}
+						icon={RefreshIcon}
+						disabled={aliasesLoading}
+						onClick={() => {
+							setAliasAnchor(null);
+							setAliasesRefresh((value) => value + 1);
+						}}
+					/>
+				</div>
+				<p className="mt-1 text-ui-11 text-ink-faint">
+					{t(
+						aliasesLoading
+							? "remote.aliasesLoading"
+							: aliasesIncomplete
+								? "remote.aliasesIncomplete"
+								: aliases.length
+									? "remote.aliasesHint"
+									: "remote.aliasesEmpty",
+					)}
+				</p>
+				{aliasAnchor && (
+					<SelectionMenu
+						anchor={aliasAnchor}
+						field={aliasField.current ?? undefined}
+						label={t("remote.chooseAlias")}
+						options={aliases.map((value) => ({ value, label: value }))}
+						value={alias}
+						onSelect={(value) => {
+							setAlias(value);
+							setError("");
+						}}
+						onClose={() => setAliasAnchor(null)}
+					/>
+				)}
+			</div>
 			<div className="mt-3 flex items-center justify-between gap-3 text-ui-12 text-ink-dim">
 				<span className="flex items-center gap-2" role="status">
 					<span
@@ -167,11 +261,14 @@ export function RemoteConnectionPanel() {
 					</div>
 				</div>
 			)}
-			{status.preflight?.installed && status.state === "disconnected" && !status.installation && (
-				<Button disabled={busy || !alias} onClick={() => void run(() => prepareInstall(alias))}>
-					{t("remote.prepareUpdate")}
-				</Button>
-			)}
+			{matchesAlias &&
+				status.preflight?.installed &&
+				status.state === "disconnected" &&
+				!status.installation && (
+					<Button disabled={busy || !alias} onClick={() => void run(() => prepareInstall(alias))}>
+						{t("remote.prepareUpdate")}
+					</Button>
+				)}
 			{status.state === "connected" && confirmStop && (
 				<div className="mt-3 rounded-lg bg-hover p-3 text-ui-12 text-ink-2">
 					<p>{t("remote.stopHint")}</p>
@@ -191,8 +288,10 @@ export function RemoteConnectionPanel() {
 					</div>
 				</div>
 			)}
-			{status.serviceStopped && <p className="mt-2 text-ui-12 text-ink-2">{t("remote.stopConfirmed")}</p>}
-			{status.preflight && (
+			{matchesAlias && status.serviceStopped && (
+				<p className="mt-2 text-ui-12 text-ink-2">{t("remote.stopConfirmed")}</p>
+			)}
+			{matchesAlias && status.preflight && (
 				<div className="mt-3 rounded-lg bg-hover p-3 text-ui-12 text-ink-2">
 					<p>
 						{status.preflight.target.user}@{status.preflight.target.hostname}:{status.preflight.target.port}
@@ -222,7 +321,7 @@ export function RemoteConnectionPanel() {
 					)}
 				</div>
 			)}
-			{status.errorKind && (
+			{matchesAlias && status.errorKind && (
 				<p className="mt-2 text-ui-12 text-ink-faint">{t(`remote.failure.${status.errorKind}`)}</p>
 			)}
 			<p className="mt-2 text-ui-12 text-ink-faint">{t("remote.disconnectHint")}</p>
@@ -329,7 +428,7 @@ export function RemoteConnectionPanel() {
 					))}
 				</div>
 			)}
-			{(error || status.error) && (
+			{(error || (matchesAlias && status.error)) && (
 				<p className="mt-3 break-words text-ui-12 text-err">{error || status.error}</p>
 			)}
 		</section>

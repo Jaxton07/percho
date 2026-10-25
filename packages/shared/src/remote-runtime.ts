@@ -56,6 +56,12 @@ export interface RuntimeAttachment {
 	epoch: number;
 }
 
+export interface SshAliasDiscovery {
+	aliases: string[];
+	/** Unreadable/unsupported includes or discovery limits; manual entry remains available. */
+	incomplete: boolean;
+}
+
 export interface SshPreflight {
 	alias: string;
 	target: { hostname: string; user: string; port: string };

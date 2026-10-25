@@ -87,6 +87,12 @@ export const en: Messages = {
 		prepareUpdate: "Prepare update",
 		preparedRuntime:
 			"Connect an existing SSH alias. If needed, the runtime is downloaded automatically and installed after confirmation.",
+		chooseAlias: "Choose SSH alias",
+		refreshAliases: "Refresh local SSH configuration",
+		aliasesLoading: "Reading local SSH configuration…",
+		aliasesHint: "From local SSH configuration. Select an alias, then check or connect.",
+		aliasesEmpty: "No SSH aliases found. You can enter an existing alias manually.",
+		aliasesIncomplete: "Some SSH configuration could not be read. Manual entry is still available.",
 		alias: "SSH alias",
 		disconnected: "Disconnected",
 		connecting: "Connecting",

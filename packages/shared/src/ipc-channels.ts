@@ -16,6 +16,7 @@ import type {
 	MutationReceipt,
 	RemoteAuthGuide,
 	RemoteConnectionStatus,
+	SshAliasDiscovery,
 	SshPreflight,
 } from "./remote-runtime";
 import { type ArgumentRules, input, validateArguments } from "./request-validation";
@@ -745,6 +746,7 @@ export const UI_PLUGINS_CHANNELS = {
 
 /** Desktop-owned connection control; never forwarded to a remote business handler. */
 export const REMOTE_CHANNELS = {
+	remoteListSshAliases: ch("remote:listSshAliases", "desktop")<void, SshAliasDiscovery>(),
 	remoteAuthGuide: ch("remote:authGuide", "desktop")<{ environment: EnvironmentRef }, RemoteAuthGuide>(),
 	remoteStopService: ch("remote:stopService", "desktop")<void, RemoteConnectionStatus>(),
 	remotePreflight: ch("remote:preflight", "desktop")<{ alias: string }, SshPreflight>(),

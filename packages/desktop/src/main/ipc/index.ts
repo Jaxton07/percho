@@ -4,6 +4,7 @@ import { app, dialog } from "electron";
 import { setEnvironmentUiAuthorization } from "../environment-ui-state";
 import type { LanObserverHandle } from "../lan";
 import { remoteConnectionManager } from "../remote-connection";
+import { discoverSshAliases } from "../ssh-config";
 import { loadUiPluginsConfig } from "../ui-plugins/config";
 import type { UiPluginManager } from "../ui-plugins/manager";
 import { UiWorkbenchTrust } from "../ui-plugins/workbench-trust";
@@ -49,6 +50,7 @@ export function registerIpc(
 	setEnvironmentUiAuthorization(authorizeRemote);
 	remoteConnectionManager.startAutoConnect(authorizeRemote);
 	registerInvokeHandlers(REMOTE_CHANNELS, {
+		remoteListSshAliases: () => discoverSshAliases(),
 		remoteAuthGuide: ({ environment }) => remoteConnectionManager.authGuide(environment),
 		remoteStopService: () => remoteConnectionManager.stopService(),
 		remotePreflight: async ({ alias }) => {
