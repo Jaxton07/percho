@@ -108,6 +108,8 @@ export interface UiPluginsConfig {
 		{
 			/** 单个插件启用（默认 false） */
 			enabled: boolean;
+			/** Explicit workbench-wide trust, including local and remote content. Legacy trust does not imply this. */
+			workbenchTrusted?: boolean;
 			/** 已信任（启用即置 true：启用动作 = 信任动作） */
 			trusted: boolean;
 		}
@@ -118,3 +120,23 @@ export interface UiPluginsConfig {
 
 /** main → renderer 事件载荷 */
 export type UiPluginsEventPayload = { kind: "changed"; name: string } | { kind: "config" };
+
+export const UI_WORKBENCH_TRUST_COPY: Record<
+	"zh" | "en",
+	{ title: string; detail: string; allow: string; cancel: string }
+> = {
+	zh: {
+		title: "允许 UI 插件访问整个工作台？",
+		detail:
+			"以下本机 UI 插件可访问本机与远端的项目、会话和配置，并调用宿主 API。关闭插件不能撤销已执行代码。只对信任的代码继续；拒绝后本机继续可用，远端内容暂不接入。",
+		allow: "信任整个工作台",
+		cancel: "暂不允许",
+	},
+	en: {
+		title: "Trust UI plugins across the workbench?",
+		detail:
+			"These locally installed UI plugins can access local and remote projects, sessions and settings, and call host APIs. Disabling a plugin cannot revoke code already executed. Continue only for trusted code. Declining keeps local work available and pauses remote content access.",
+		allow: "Trust across workbench",
+		cancel: "Not now",
+	},
+};

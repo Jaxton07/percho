@@ -1,14 +1,27 @@
-import type { SubscriptionChannel, SubscriptionPayload } from "@percho/shared";
+import {
+	type EnvironmentRef,
+	environmentRef,
+	SUBSCRIPTION_TABLE,
+	type SubscriptionChannel,
+	type SubscriptionPayload,
+} from "@percho/shared";
 import { BrowserWindow } from "electron";
 
 /** 向 renderer 推事件（backend 事件转发 + 更新状态共用） */
 export function sendToRenderer<C extends SubscriptionChannel>(
 	channel: C,
 	payload: NoInfer<SubscriptionPayload<C>>,
+	environment?: EnvironmentRef,
 ): void {
+	if (environment) {
+		const def = Object.values(SUBSCRIPTION_TABLE).find((entry) => entry.channel === channel);
+		if (def?.scope !== "environment") throw new Error("Desktop events cannot originate remotely");
+		environment = environmentRef(environment);
+	}
 	const window = BrowserWindow.getAllWindows()[0];
 	if (window && !window.isDestroyed()) {
-		window.webContents.send(channel, payload);
+		if (environment) window.webContents.send(channel, payload, environment);
+		else window.webContents.send(channel, payload);
 	}
 }
 

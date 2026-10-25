@@ -1,12 +1,14 @@
 import type { TrustRequest } from "@percho/shared";
-import { useCallback, useEffect, useRef, useState } from "react";
-import { getPi } from "./api";
+import { environmentEntityRef, LOCAL_ENVIRONMENT } from "@percho/shared";
+import { useCallback, useEffect, useRef } from "react";
 import { CornerStack } from "./components/chat/CornerStack";
 import { EmptyState } from "./components/chat/EmptyState";
 import { MessageList } from "./components/chat/MessageList";
 import { SubagentBackButton } from "./components/chat/SubagentBackButton";
 import { TodoPanel } from "./components/chat/TodoPanel";
 import { DiffSidebar } from "./components/diff/DiffSidebar";
+import { RemoteAttentionBanner } from "./components/remote/RemoteAttentionBanner";
+import { RemoteConnectionDialog } from "./components/remote/RemoteConnectionDialog";
 import { DockSlot } from "./components/session/DockSlot";
 import { SessionRail } from "./components/session/SessionRail";
 import { SessionTabBar } from "./components/session/SessionTabBar";
@@ -14,7 +16,9 @@ import { TrustDialog } from "./components/session/TrustDialog";
 import { SettingsDialog } from "./components/settings/SettingsDialog";
 import { Sidebar } from "./components/sidebar/Sidebar";
 import { Toaster } from "./components/Toaster";
+import { getExecutionApi } from "./environment-api";
 import { useSessionEventBridge } from "./hooks/use-session-event-bridge";
+import { selectActiveCwd } from "./lib/active-cwd";
 import { initDailyDir } from "./lib/daily";
 import { useSessionGc } from "./lib/use-session-gc";
 import { initUiPlugins } from "./plugins/loader";
@@ -28,6 +32,12 @@ import {
 	invalidateChannelSubscriptionQueries,
 	syncActiveSession,
 } from "./stores/channel-subscriptions";
+import {
+	restoreEnvironmentUiNavigation,
+	startEnvironmentUiPersistence,
+} from "./stores/environment-ui-restore";
+import { useInteractionStore } from "./stores/interactions";
+import { initRemoteConnectionBridge } from "./stores/remote-connection";
 import { restoreSessionWorkspace } from "./stores/session-workspace-restore";
 import { useSessionsStore } from "./stores/sessions";
 import { useHasParentRelation } from "./stores/subagent-return";
@@ -63,17 +73,28 @@ export default function App() {
 		const entry = activeSessionId ? s.bySession[activeSessionId] : undefined;
 		return !entry || (entry.messages.length === 0 && !entry.streaming);
 	});
-	const [trustRequests, setTrustRequests] = useState<TrustRequest[]>([]);
+	const trustRequests = useInteractionStore((state) => state.trustRequests);
+	const selectedTrustId = useInteractionStore((state) => state.selectedTrustId);
+	const activeCwd = useSessionsStore(selectActiveCwd);
+	const foregroundTrustCwd = useInteractionStore((state) => state.foregroundTrustCwd);
+	const visibleTrustRequests = trustRequests.filter(
+		(request) =>
+			environmentEntityRef(request.id).environment.kind === "local" ||
+			request.id === selectedTrustId ||
+			request.cwd === activeCwd ||
+			request.cwd === foregroundTrustCwd,
+	);
 
 	// 事件桥：conflator 装配 + 事件/权限/信任订阅（回调稳定引用，桥只订阅一次不重挂）
 	const pushTrustRequest = useCallback((req: TrustRequest) => {
-		setTrustRequests((prev) => [...prev, req]);
+		useInteractionStore.getState().addTrust(req);
 	}, []);
 	useSessionEventBridge({ onTrustRequest: pushTrustRequest });
 
 	// 一次性 bootstrap：开屏就绪信号 + 更新状态 + UI 插件加载
 	// 会话内存策略（K=3 热会话 + 受保护不卸）：全局挂一次，策略细节在 lib/session-gc.ts
 	useSessionGc();
+	useEffect(() => initRemoteConnectionBridge(), []);
 
 	useEffect(() => {
 		// 上次项目目录：启动即预填（用户不用重选项目）。**只带 cwd，不恢复任何会话**——
@@ -85,10 +106,13 @@ export default function App() {
 		// 开屏就绪信号：首批数据（模型列表）settle 后收场（finishSplash 幂等）。
 		// v10：**不再恢复上次打开的会话**（启动纯空 = 新会话页，与 pi 原生 / Codex 一致）；
 		// 历史全在左栏，点一下才按需加载
-		void Promise.allSettled([useSessionsStore.getState().loadModels()]).then(() => finishSplash());
+		void Promise.allSettled([useSessionsStore.getState().loadModels(LOCAL_ENVIRONMENT)]).then(() =>
+			finishSplash(),
+		);
 		// 临时会话工作区恢复：fire-and-forget，不阻塞开屏（splash 仍由上面的 loadModels 链收场）。
 		// 它会自己等历史目录对账；只按需加载 activeFile 一条，且不抢用户已做出的导航
-		void restoreSessionWorkspace();
+		void restoreSessionWorkspace().finally(startEnvironmentUiPersistence);
+		restoreEnvironmentUiNavigation();
 		initUpdateStore();
 		// 退出确认（Windows）：挂载即向 main 声明接管，点 ✕ 才会拦下来弹窗
 		initAppQuit();
@@ -98,9 +122,9 @@ export default function App() {
 		void initUiPlugins();
 	}, []);
 
-	const respondTrust = (requestId: string, optionIndex: number) => {
-		void getPi().respondTrust({ requestId, answer: optionIndex });
-		setTrustRequests((prev) => prev.filter((req) => req.id !== requestId));
+	const respondTrust = async (requestId: string, optionIndex: number) => {
+		await getExecutionApi(requestId).respondTrust({ requestId, answer: optionIndex });
+		useInteractionStore.getState().removeTrust(requestId);
 	};
 
 	const bgImage = useThemeStore((s) => s.background.image);
@@ -158,7 +182,9 @@ export default function App() {
 			{/* 悬浮贡献层：内容列之后、设置弹窗之前（z-20 < z-40，插件层永在弹窗之下） */}
 			<RegionHost region={UI_REGIONS.AppOverlay} />
 			<SettingsDialog />
-			<TrustDialog requests={trustRequests} onRespond={respondTrust} />
+			<RemoteConnectionDialog />
+			<RemoteAttentionBanner />
+			<TrustDialog requests={visibleTrustRequests} onRespond={respondTrust} />
 			<Toaster />
 		</div>
 	);

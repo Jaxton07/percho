@@ -12,7 +12,15 @@ const pi = vi.hoisted(() => ({
 	setPermissionMode: vi.fn(),
 	markSessionHistoryReady: vi.fn(),
 }));
-vi.mock("../api", () => ({ getPi: () => pi }));
+vi.mock("../api", () => ({
+	getPi: () =>
+		Object.assign(pi, {
+			forEnvironment: (environment: { kind: string }) => {
+				if (environment.kind !== "local") throw new Error("Unexpected remote fixture");
+				return pi;
+			},
+		}),
+}));
 
 import { clearSessionHistory, isHistoryReady } from "./session-history";
 import { createSessionLoader } from "./session-loading";
@@ -295,7 +303,13 @@ describe("session loader owns flights and data, not navigation", () => {
 			.filter(ts.isImportDeclaration)
 			.map((item) => (item.moduleSpecifier as ts.StringLiteral).text);
 		expect(imports).toEqual(
-			expect.arrayContaining(["../api", "./session-history", "./transcript", "./ui-preferences", "./toasts"]),
+			expect.arrayContaining([
+				"../environment-api",
+				"./session-history",
+				"./transcript",
+				"./ui-preferences",
+				"./toasts",
+			]),
 		);
 		expect(
 			imports.filter((name) => /(?:sessions|projects|workspace|navigation|drafts)(?:$|\/)/.test(name)),

@@ -1,6 +1,8 @@
 import type { LoginAuthPrompt, ProviderInfo } from "@percho/shared";
+import { LOCAL_ENVIRONMENT } from "@percho/shared";
 import { create } from "zustand";
 import { getPi } from "../api";
+import { getExecutionApi } from "../environment-api";
 import { useSettingsStore } from "./settings";
 
 /** 交互登录（OAuth / api_key，如 Google Vertex）流程的 UI 状态机；事件来自 backend LoginService 桥接 */
@@ -55,7 +57,7 @@ export const useProviderLoginStore = create<ProviderLoginStore>((set, get) => ({
 		// 每个流程只自动开一次浏览器（auth_url 可能重复发）
 		let browserOpened = false;
 		// 先订阅再 invoke：事件可能在 invoke 返回前到达
-		const unsubscribe = getPi().onProviderLoginEvent((payload) => {
+		const unsubscribe = getExecutionApi(LOCAL_ENVIRONMENT).onProviderLoginEvent((payload) => {
 			if (payload.loginId !== loginId) return;
 			const state = get().login;
 			if (!state || state.loginId !== loginId) return;
@@ -94,7 +96,10 @@ export const useProviderLoginStore = create<ProviderLoginStore>((set, get) => ({
 			}
 		});
 		try {
-			const result = await getPi().startProviderLogin({ loginId, providerId: provider.id });
+			const result = await getExecutionApi(LOCAL_ENVIRONMENT).startProviderLogin({
+				loginId,
+				providerId: provider.id,
+			});
 			if (result.ok) {
 				set({ login: null });
 				// 凭证已持久化并同步运行时：刷新 provider 徽章 + 模型选择器
@@ -134,7 +139,11 @@ export const useProviderLoginStore = create<ProviderLoginStore>((set, get) => ({
 		if (!state?.pendingPrompt) return;
 		const { promptId } = state.pendingPrompt;
 		try {
-			await getPi().respondProviderLogin({ loginId: state.loginId, promptId, value });
+			await getExecutionApi(LOCAL_ENVIRONMENT).respondProviderLogin({
+				loginId: state.loginId,
+				promptId,
+				value,
+			});
 			set((s) => {
 				if (!s.login?.pendingPrompt || s.login.pendingPrompt.promptId !== promptId) return {};
 				return { login: { ...s.login, pendingPrompt: undefined } };
@@ -148,7 +157,7 @@ export const useProviderLoginStore = create<ProviderLoginStore>((set, get) => ({
 	cancelProviderLogin: () => {
 		const state = get().login;
 		if (!state) return;
-		void getPi().cancelProviderLogin({ loginId: state.loginId });
+		void getExecutionApi(LOCAL_ENVIRONMENT).cancelProviderLogin({ loginId: state.loginId });
 	},
 
 	dismissLogin: () => set({ login: null }),

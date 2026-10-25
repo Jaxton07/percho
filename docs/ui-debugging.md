@@ -17,6 +17,8 @@ npx electron-vite dev -- --remote-debugging-port=9224
 2. CDP 连接后核对 `location.href` 与实际页面，`chrome-error://` 表示连到了错误页，不是业务组件不存在。
 3. 测试结束关闭本次 Electron 及其 dev server，确认端口释放。只杀 electron-vite 包装进程可能留下 Electron；不要用宽泛的 `pkill -f Electron`，以免结束正式版。
 
+开始输入前等待 `html[data-app-ready="true"]` 且 `#splash` 已移除。开屏期间 React 节点已经存在，但 `#root` 的 `content-visibility: hidden` 会让焦点和输入无法到达；不能以查到按钮或输入节点作为可交互的证据。
+
 main 修改没有生效时先核对 `packages/desktop/out/main/index.js` 是否重建；改 store 后 HMR 可能留下旧订阅或实例。**最终验收用干净重启，不把 HMR 异常当产品结论。**
 
 ## 隔离与 seed

@@ -5,7 +5,15 @@ const piMock = vi.hoisted(() => ({
 	searchCatalog: vi.fn(),
 	listConfiguredPackages: vi.fn(),
 }));
-vi.mock("../api", () => ({ getPi: () => piMock }));
+vi.mock("../api", () => ({
+	getPi: () =>
+		Object.assign(piMock, {
+			forEnvironment: (environment: { kind: string }) => {
+				if (environment.kind !== "local") throw new Error("Unexpected remote fixture");
+				return piMock;
+			},
+		}),
+}));
 
 import { useCatalogStore } from "./catalog";
 

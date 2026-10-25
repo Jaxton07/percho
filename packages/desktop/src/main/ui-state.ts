@@ -4,6 +4,7 @@ import {
 	clampCodeFontSize,
 	clampSidebarWidth,
 	clampUiFontSize,
+	environmentEntityRef,
 	type PermissionMode,
 	type Rect,
 	type SessionWorkspaceSnapshot,
@@ -31,10 +32,19 @@ function uiStateStore(): JsonStore<UiStateFileShape | null> {
 	});
 }
 
+/** Legacy ui-state owns local identities only; mixed ordering is persisted separately. */
+function isLocalIdentity(value: string): boolean {
+	try {
+		return environmentEntityRef(value).environment.kind === "local";
+	} catch {
+		return false;
+	}
+}
+
 /** 字符串数组字段校验：非数组 → 丢弃，非字符串/空串元素 → 过滤（渲染侧另会忽略未知 id） */
 function stringArray(value: unknown): string[] {
 	return Array.isArray(value)
-		? value.filter((item): item is string => typeof item === "string" && item !== "")
+		? value.filter((item): item is string => typeof item === "string" && item !== "" && isLocalIdentity(item))
 		: [];
 }
 
@@ -45,7 +55,7 @@ function permissionModeMap(value: unknown): Record<string, PermissionMode> {
 	if (!value || typeof value !== "object" || Array.isArray(value)) return {};
 	const out: Record<string, PermissionMode> = {};
 	for (const [sessionId, mode] of Object.entries(value as Record<string, unknown>)) {
-		if (sessionId === "") continue;
+		if (sessionId === "" || !isLocalIdentity(sessionId)) continue;
 		if (mode === "fullAccess") out[sessionId] = mode;
 	}
 	return out;
@@ -59,7 +69,7 @@ function filePathArray(value: unknown): string[] {
 	for (const item of value) {
 		if (typeof item !== "string") continue;
 		const path = item.trim();
-		if (path === "" || seen.has(path)) continue;
+		if (path === "" || seen.has(path) || !isLocalIdentity(path)) continue;
 		seen.add(path);
 		out.push(path);
 	}
@@ -150,7 +160,10 @@ function normalize(parsed: UiStateFileShape): UiState {
 				: expandedGroups.length > 0,
 		pinnedProjects: stringArray(parsed.pinnedProjects),
 		// 上次项目目录：只收非空字符串（旧文件/脏值 → null）
-		lastCwd: typeof parsed.lastCwd === "string" && parsed.lastCwd.length > 0 ? parsed.lastCwd : null,
+		lastCwd:
+			typeof parsed.lastCwd === "string" && parsed.lastCwd.length > 0 && isLocalIdentity(parsed.lastCwd)
+				? parsed.lastCwd
+				: null,
 	};
 }
 

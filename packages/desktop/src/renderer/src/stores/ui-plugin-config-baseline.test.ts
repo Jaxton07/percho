@@ -137,7 +137,13 @@ beforeEach(async () => {
 	}
 	manager = new UiPluginManager();
 	await manager.scanAll();
-	registerUiPluginsIpc(manager);
+	registerUiPluginsIpc(manager, {
+		configurePlugin: async (_name, _enabled, write) => {
+			await write();
+			return true;
+		},
+		serve: (_name, read) => read(),
+	});
 	useUiPluginsStore.setState({
 		config: { enabled: false, plugins: {}, assignments: {} },
 		plugins: [],

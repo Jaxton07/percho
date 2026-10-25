@@ -73,6 +73,10 @@ function setup(id: string, shutdown: () => Promise<void> = async () => {}) {
 		session: {
 			sessionId: id,
 			isStreaming: false,
+			clearQueue: vi.fn(),
+			abort: vi.fn(async () => {
+				order.push("abort");
+			}),
 			messages: [],
 			sessionManager: { getSessionDir: () => undefined, getSessionFile: () => undefined },
 			extensionRunner: {
@@ -692,4 +696,140 @@ describe("registry owns entry release, not SDK lifetime on delete", () => {
 		).toBeUndefined();
 		for (const spy of [unsubscribe, gate.dispose, dialogs.dispose]) expect(spy).toHaveBeenCalledOnce();
 	});
+});
+
+describe("irreversible remote shutdown", () => {
+	it("cancels pending work, fences channel wakeups and awaits shutdown before invalidating SDK context", async () => {
+		let finish!: () => void;
+		const waiting = new Promise<void>((resolve) => {
+			finish = resolve;
+		});
+		const fixture = setup("remote-stop", () => waiting);
+		const stopped = fixture.backend.shutdown();
+		expect(fixture.producer.isSessionAlive("remote-stop")).toBe(false);
+		await expect(fixture.permission).resolves.toBe(false);
+		await expect(fixture.dialog).resolves.toBe(false);
+		await expect(fixture.backend.prompt("remote-stop", "new work")).rejects.toThrow("STOPPING");
+		expect(fixture.entry.session.dispose).not.toHaveBeenCalled();
+		finish();
+		await stopped;
+		expect(fixture.order.indexOf("abort")).toBeLessThan(fixture.order.indexOf("shutdown"));
+		expect(fixture.order.indexOf("shutdown")).toBeLessThan(fixture.order.indexOf("sdk"));
+		expect(fixture.backend.shutdown()).toBe(stopped);
+	});
+	it("reports SDK shutdown failure after releasing managed resources instead of claiming success", async () => {
+		const fixture = setup("remote-failed-stop", async () => {
+			throw new Error("MCP close failed");
+		});
+		await expect(fixture.backend.shutdown()).rejects.toThrow("did not complete cleanly");
+		expect(fixture.entry.session.dispose).toHaveBeenCalledOnce();
+		expect(fixture.internal.registry.has("remote-failed-stop")).toBe(false);
+	});
+	it("a creation suspended before resource construction cannot resume after the stop fence", async () => {
+		const backend = new PiBackend({
+			projectTrust: false,
+			permissionGates: false,
+			subagentPreferBuiltin: false,
+		});
+		backends.push(backend);
+		let enter!: () => void, release!: (runtime: unknown) => void;
+		const entered = new Promise<void>((resolve) => {
+			enter = resolve;
+		});
+		const runtime = new Promise<unknown>((resolve) => {
+			release = resolve;
+		});
+		const internal = backend as unknown as { getModelRuntime(): Promise<unknown>; registry: SessionRegistry };
+		vi.spyOn(internal, "getModelRuntime").mockImplementation(() => {
+			enter();
+			return runtime;
+		});
+		const creating = backend.createSession({ cwd: "/isolated/remote-project" });
+		await entered;
+		const rejected = expect(creating).rejects.toThrow("STOPPING");
+		const stopped = backend.shutdown();
+		release({});
+		await rejected;
+		await stopped;
+		expect(internal.registry.list()).toEqual([]);
+	});
+});
+
+it("stopping also cancels a dialog opened while a session is still being constructed", async () => {
+	const backend = new PiBackend({
+		projectTrust: false,
+		permissionGates: false,
+		subagentPreferBuiltin: false,
+	});
+	backends.push(backend);
+	let entered!: () => void;
+	const waiting = new Promise<void>((resolve) => {
+		entered = resolve;
+	});
+	const internal = backend as unknown as {
+		subagentPreferBuiltin(): Promise<boolean>;
+		wireSession(cwd: string, readOnly: undefined, make: () => Promise<unknown>): Promise<unknown>;
+	};
+	vi.spyOn(internal, "subagentPreferBuiltin").mockResolvedValue(false);
+	const shutdown = vi.fn(async () => {}),
+		dispose = vi.fn();
+	const session = {
+		sessionId: "constructing",
+		bindExtensions: async ({ uiContext }: { uiContext: { input: (title: string) => Promise<unknown> } }) => {
+			entered();
+			await uiContext.input("Startup input");
+		},
+		extensionRunner: { emit: shutdown },
+		dispose,
+	};
+	const creating = internal.wireSession("/isolated/constructing", undefined, async () => ({
+		session,
+		extensionsResult: { extensions: [], errors: [] },
+	}));
+	const rejected = expect(creating).rejects.toThrow("STOPPING");
+	await waiting;
+	backend.beginShutdown();
+	await rejected;
+	await backend.shutdown();
+	expect(shutdown).toHaveBeenCalledOnce();
+	expect(dispose).toHaveBeenCalledOnce();
+});
+
+it("recovers and answers session_start dialogs before the session enters the registry", async () => {
+	const backend = new PiBackend({ projectTrust: false, permissionGates: false });
+	backends.push(backend);
+	const internal = backend as unknown as {
+		bindSessionExtensions(session: unknown, id: string, cwd: string): Promise<ExtensionDialogHost>;
+	};
+	let entered!: () => void, answer: unknown;
+	const waiting = new Promise<void>((resolve) => {
+		entered = resolve;
+	});
+	const binding = internal.bindSessionExtensions(
+		{
+			bindExtensions: async ({ uiContext }: { uiContext: { input(title: string): Promise<unknown> } }) => {
+				const result = uiContext.input("Startup recovery");
+				entered();
+				answer = await result;
+			},
+		},
+		"not-registered",
+		"/isolated/initializing",
+	);
+	await waiting;
+	expect(backend.getLoadedSessions()).toEqual([]);
+	const snapshot = backend.getPendingInteractions();
+	expect(snapshot.dialogs).toHaveLength(1);
+	expect(snapshot.dialogs[0]).toMatchObject({
+		sessionId: "not-registered",
+		cwd: "/isolated/initializing",
+		title: "Startup recovery",
+	});
+	const id = snapshot.dialogs[0].id;
+	backend.respondExtensionDialog(id, { value: "exactly once" });
+	backend.respondExtensionDialog(id, { value: "stale" });
+	const host = await binding;
+	expect(answer).toBe("exactly once");
+	expect(backend.getPendingInteractions().dialogs).toEqual([]);
+	host.dispose();
 });

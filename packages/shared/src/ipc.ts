@@ -1,3 +1,4 @@
+import type { EnvironmentRef } from "./environment";
 import type { CHANNEL_TABLE, InvokeApi, SUBSCRIPTION_TABLE, SubscriptionApi } from "./ipc-channels";
 
 export {
@@ -6,6 +7,7 @@ export {
 	CHANNEL_TABLE,
 	type ChannelCtor,
 	type ChannelDef,
+	type ChannelScope,
 	ch,
 	EXTENSION_DIALOG_CHANNELS,
 	type InvokeApi,
@@ -13,6 +15,7 @@ export {
 	IpcChannels,
 	LAN_CHANNELS,
 	PACKAGES_CHANNELS,
+	REMOTE_CHANNELS,
 	SESSION_CHANNELS,
 	SETTINGS_CHANNELS,
 	SUBSCRIPTION_TABLE,
@@ -22,10 +25,48 @@ export {
 	UI_PLUGINS_CHANNELS,
 } from "./ipc-channels";
 
-/** Invoke and subscription members come from their own tables; native synchronous fields stay explicit. */
-export interface PiApi extends InvokeApi<typeof CHANNEL_TABLE>, SubscriptionApi<typeof SUBSCRIPTION_TABLE> {
-	/** 运行平台（preload 同步注入，供 renderer 按平台分流 UI） */
+type EnvironmentInvokeTable = Pick<
+	typeof CHANNEL_TABLE,
+	{
+		[K in keyof typeof CHANNEL_TABLE]: (typeof CHANNEL_TABLE)[K]["scope"] extends "environment" ? K : never;
+	}[keyof typeof CHANNEL_TABLE]
+>;
+type EnvironmentSubscriptionTable = Pick<
+	typeof SUBSCRIPTION_TABLE,
+	{
+		[K in keyof typeof SUBSCRIPTION_TABLE]: (typeof SUBSCRIPTION_TABLE)[K]["scope"] extends "environment"
+			? K
+			: never;
+	}[keyof typeof SUBSCRIPTION_TABLE]
+>;
+
+export type EnvironmentHandlers = import("./ipc-channels").InvokeHandlers<EnvironmentInvokeTable>;
+export type EnvironmentMethod = keyof EnvironmentInvokeTable;
+export type EnvironmentApi = InvokeApi<EnvironmentInvokeTable> &
+	SubscriptionApi<EnvironmentSubscriptionTable>;
+
+export type DesktopApi = InvokeApi<
+	Pick<
+		typeof CHANNEL_TABLE,
+		{
+			[K in keyof typeof CHANNEL_TABLE]: (typeof CHANNEL_TABLE)[K]["scope"] extends "desktop" ? K : never;
+		}[keyof typeof CHANNEL_TABLE]
+	>
+> &
+	SubscriptionApi<
+		Pick<
+			typeof SUBSCRIPTION_TABLE,
+			{
+				[K in keyof typeof SUBSCRIPTION_TABLE]: (typeof SUBSCRIPTION_TABLE)[K]["scope"] extends "desktop"
+					? K
+					: never;
+			}[keyof typeof SUBSCRIPTION_TABLE]
+		>
+	>;
+
+/** Environment operations are accessible only through an explicitly bound API. */
+export interface PiApi extends DesktopApi {
+	forEnvironment(environment: EnvironmentRef): EnvironmentApi;
 	readonly platform: "darwin" | "win32" | "linux" | (string & {});
-	/** Electron 沙箱渲染器中的 File 不再带 path；由 preload 同步解析拖入文件路径。 */
 	getPathForFile(file: unknown): string;
 }

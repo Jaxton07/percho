@@ -76,7 +76,7 @@ export function TurnDiffChip({
 	/** 相对路径文件行的解析基准（变更行里的路径是模型原样给出的，可能是相对的） */
 	const cwd = useSessionsStore(selectActiveCwd);
 	/** 文件行右键菜单：记住打开的那一行（target + 锚点） */
-	const [menu, setMenu] = useState<{ path: string; anchor: MenuAnchor } | null>(null);
+	const [menu, setMenu] = useState<{ path: string; cwd: string | null; anchor: MenuAnchor } | null>(null);
 	const enterCls = entering ? " turn-diff-enter" : "";
 
 	// 无变更轮：纯计时行（非交互，不占 details）
@@ -134,7 +134,7 @@ export function TurnDiffChip({
 						onClick={() => jumpTo(f.sections[0]?.toolCallKey)}
 						onContextMenu={(e) => {
 							e.preventDefault();
-							setMenu({ path: f.path, anchor: anchorOfElement(e.currentTarget) });
+							setMenu({ path: f.path, cwd, anchor: anchorOfElement(e.currentTarget) });
 						}}
 					>
 						<span className="turn-diff-path" title={f.path}>
@@ -152,7 +152,7 @@ export function TurnDiffChip({
 							aria-hidden="true"
 							onClick={(e) => {
 								e.stopPropagation();
-								setMenu({ path: f.path, anchor: anchorOfElement(e.currentTarget) });
+								setMenu({ path: f.path, cwd, anchor: anchorOfElement(e.currentTarget) });
 							}}
 						>
 							<MoreIcon />
@@ -161,7 +161,7 @@ export function TurnDiffChip({
 				))}
 			</div>
 			{menu && (
-				<FilePathMenu target={menu.path} cwd={cwd} anchor={menu.anchor} onClose={() => setMenu(null)} />
+				<FilePathMenu target={menu.path} cwd={menu.cwd} anchor={menu.anchor} onClose={() => setMenu(null)} />
 			)}
 		</details>
 	);

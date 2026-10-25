@@ -5,7 +5,15 @@ const piMock = vi.hoisted(() => ({
 	loadUiState: vi.fn(),
 	saveUiState: vi.fn(() => Promise.resolve()),
 }));
-vi.mock("../api", () => ({ getPi: () => piMock }));
+vi.mock("../api", () => ({
+	getPi: () =>
+		Object.assign(piMock, {
+			forEnvironment: (environment: { kind: string }) => {
+				if (environment.kind !== "local") throw new Error("Unexpected remote fixture");
+				return piMock;
+			},
+		}),
+}));
 
 import { useUiPreferencesStore } from "./ui-preferences";
 

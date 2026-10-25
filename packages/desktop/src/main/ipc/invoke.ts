@@ -1,5 +1,6 @@
-import type { AnyChannelDef, InvokeHandlers } from "@percho/shared";
+import { type AnyChannelDef, type InvokeHandlers, isEnvironmentInvocation } from "@percho/shared";
 import { ipcMain } from "electron";
+import { environmentRouter } from "../environment-router";
 
 /**
  * 表驱动 invoke 注册：通道字符串来自子表（shared/ipc-channels.ts 单一事实源），
@@ -11,6 +12,11 @@ export function registerInvokeHandlers<T extends Record<string, AnyChannelDef>>(
 ): void {
 	for (const [key, def] of Object.entries(table) as [keyof T & string, AnyChannelDef][]) {
 		const handler = handlers[key] as (args: unknown) => unknown;
-		ipcMain.handle(def.channel, (_e, args) => handler(args));
+		environmentRouter.registerLocal(def.channel, handler);
+		ipcMain.handle(def.channel, (_e, args: unknown) => {
+			if (def.scope === "environment" || isEnvironmentInvocation(args))
+				return environmentRouter.invoke(def.channel, args);
+			return handler(args);
+		});
 	}
 }

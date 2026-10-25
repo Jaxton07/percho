@@ -1,6 +1,6 @@
 import type { ContextUsageInfo } from "@percho/shared";
 import { useCallback, useEffect, useRef, useState } from "react";
-import { getPi } from "../api";
+import { getExecutionApi } from "../environment-api";
 
 /** 触发刷新的事件类型（流式 delta 类高频事件不刷新） */
 const REFRESH_EVENTS = new Set([
@@ -25,33 +25,34 @@ function isRefreshEvent(type: string): boolean {
 export function useContextUsage(sessionId: string | null): ContextUsageInfo | null {
 	const [usage, setUsage] = useState<ContextUsageInfo | null>(null);
 	// 取消标志：sessionId 切换后旧请求的迟到回写不再生效（防闪旧会话数据）
-	const cancelledRef = useRef(false);
+	const generationRef = useRef(0);
 
 	const refresh = useCallback(async () => {
+		const generation = ++generationRef.current;
 		// 新会话页（null）在后端还不存在，无上下文用量可查
 		if (!sessionId) {
 			setUsage(null);
 			return;
 		}
 		try {
-			const next = await getPi().getContextUsage({ sessionId });
-			if (!cancelledRef.current) setUsage(next);
+			const next = await getExecutionApi(sessionId).getContextUsage({ sessionId });
+			if (generation === generationRef.current) setUsage(next);
 		} catch {
-			if (!cancelledRef.current) setUsage(null);
+			if (generation === generationRef.current) setUsage(null);
 		}
 	}, [sessionId]);
 
 	useEffect(() => {
-		cancelledRef.current = false;
 		void refresh();
 		return () => {
-			cancelledRef.current = true;
+			generationRef.current += 1;
 		};
 	}, [refresh]);
 
 	// 事件驱动刷新：每轮结束/工具完成后取一次
 	useEffect(() => {
-		const off = getPi().onEvent(({ sessionId: sid, event }) => {
+		if (!sessionId) return;
+		const off = getExecutionApi(sessionId).onEvent(({ sessionId: sid, event }) => {
 			if (sid !== sessionId || !isRefreshEvent(event.type)) return;
 			void refresh();
 		});

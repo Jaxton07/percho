@@ -1,5 +1,7 @@
 export * from "./channel-subscriptions";
 export * from "./composer-document";
+export * from "./environment";
+export * from "./environment-ui-state";
 export * from "./errors";
 export * from "./extension-dialog";
 export * from "./ipc";
@@ -9,6 +11,8 @@ export * from "./marquee-motion";
 export * from "./mcp";
 export * from "./model-visibility";
 export * from "./packages";
+export * from "./remote-runtime";
+export * from "./runtime-node-policy";
 export * from "./session";
 export * from "./settings";
 export * from "./sidebar";

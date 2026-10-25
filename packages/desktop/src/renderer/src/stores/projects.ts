@@ -1,6 +1,14 @@
-import type { SessionMeta } from "@percho/shared";
+import {
+	type EnvironmentRef,
+	environmentEntityRef,
+	environmentKey,
+	LOCAL_ENVIRONMENT,
+	type SessionMeta,
+	sameEnvironment,
+} from "@percho/shared";
 import { create } from "zustand";
 import { getPi } from "../api";
+import { getExecutionApi } from "../environment-api";
 import { initDailyDir, isDailyCwd } from "../lib/daily";
 import { pathLastSegment } from "../lib/path-display";
 import { isPrimaryNavigationSession } from "../lib/session-visibility";
@@ -16,7 +24,15 @@ function loadAddedProjects(): string[] {
 	try {
 		const raw = localStorage.getItem(ADDED_KEY);
 		const parsed = raw ? (JSON.parse(raw) as unknown) : [];
-		return Array.isArray(parsed) ? parsed.filter((p): p is string => typeof p === "string") : [];
+		return Array.isArray(parsed)
+			? parsed.filter((p): p is string => {
+					try {
+						return typeof p === "string" && environmentEntityRef(p).environment.kind === "local";
+					} catch {
+						return false;
+					}
+				})
+			: [];
 	} catch {
 		return [];
 	}
@@ -44,23 +60,25 @@ interface ProjectsStore {
 	addedProjects: string[];
 	selectedCwd: string | null;
 	search: string;
+	catalogs: Record<string, { loading: boolean; loaded: boolean; failed: boolean }>;
 	loading: boolean;
 	loaded: boolean;
 	/**
 	 * 拉取目录并落 store（latest-wins：更晚的请求发起后，旧请求的成功/失败都不写）。
 	 * 启动恢复链**不依赖它的返回值**做裁剪判据 —— 它要的是一份「属于自己这次请求」的磁盘真值，见 `adoptCatalog`。
 	 */
-	load: () => Promise<void>;
+	load: (environment?: EnvironmentRef) => Promise<void>;
 	/**
 	 * 采纳一份**外部读到的**磁盘目录快照（启动恢复链用）：与 load 成功时同样的落库尾巴，并把序号线
 	 * 推进一步 —— 在飞的旧 load 不得用更旧的快照盖回去（latest-wins 不破）。
 	 */
-	adoptCatalog: (sessions: SessionMeta[]) => void;
+	adoptCatalog: (sessions: SessionMeta[], environment?: EnvironmentRef) => void;
 	/** 重命名成功后同步历史列表（见实现处注释） */
 	applySessionName: (sessionId: string, name: string | undefined) => void;
 	select: (cwd: string | null) => void;
 	setSearch: (search: string) => void;
 	addProject: () => Promise<void>;
+	addKnownProject: (cwd: string) => void;
 	/** 删除历史会话（含磁盘文件）；若该会话在顶栏打开中则一并关闭 */
 	deleteSession: (session: SessionMeta) => Promise<void>;
 	/** 删除整个项目：删除该项目下全部会话（含磁盘文件），并从已添加列表移除 */
@@ -73,7 +91,16 @@ interface ProjectsStore {
  * 列表刷新的单调序号（spec D6）：旧请求（含比新请求早发却晚回、或晚失败的那次）不得覆盖新请求的
  * `allSessions/loading/loaded`。模块级：不落盘、不进 store，重载归零也无意义。
  */
-let loadSeq = 0;
+const loadSeq = new Map<string, number>();
+function nextLoad(environment: EnvironmentRef): number {
+	const key = environmentKey(environment);
+	const seq = (loadSeq.get(key) ?? 0) + 1;
+	loadSeq.set(key, seq);
+	return seq;
+}
+function localProjects(projects: string[]): string[] {
+	return projects.filter((cwd) => environmentEntityRef(cwd).environment.kind === "local");
+}
 
 export const useProjectsStore = create<ProjectsStore>((set, get) => {
 	/**
@@ -81,13 +108,31 @@ export const useProjectsStore = create<ProjectsStore>((set, get) => {
 	 * 但内存里经手过的会话不能因此掉出目录 —— 0 消息会话此时还没有会话文件（SDK 追加首条 entry 才落盘），
 	 * 磁盘快照里必然没有它，补回来才不会在随后被内存策略卸载时从 UI 消失。
 	 */
-	const applyCatalog = (allSessions: SessionMeta[]): void => {
-		set({ allSessions, loading: false, loaded: true });
+	const status = (
+		environment: EnvironmentRef,
+		value: { loading: boolean; loaded: boolean; failed: boolean },
+	) => {
+		set((state) => ({
+			catalogs: { ...state.catalogs, [environmentKey(environment)]: value },
+			...(environment.kind === "local" ? { loading: value.loading, loaded: value.loaded } : {}),
+		}));
+	};
+	const applyCatalog = (sessions: SessionMeta[], environment: EnvironmentRef): void => {
+		set((state) => ({
+			allSessions: [
+				...state.allSessions.filter(
+					(session) => !sameEnvironment(environmentEntityRef(session.sessionId).environment, environment),
+				),
+				...sessions,
+			],
+		}));
+		status(environment, { loading: false, loaded: true, failed: false });
 		absorbOpenSessions(useSessionsStore.getState().sessions);
-		const { selectedCwd } = get();
-		if (!selectedCwd) {
-			const projects = deriveProjects(get());
-			if (projects[0]) set({ selectedCwd: projects[0].cwd });
+		if (!get().selectedCwd && environment.kind === "local") {
+			const first = deriveProjects(get()).find(
+				(project) => environmentEntityRef(project.cwd).environment.kind === "local",
+			);
+			if (first) set({ selectedCwd: first.cwd });
 		}
 	};
 
@@ -96,47 +141,53 @@ export const useProjectsStore = create<ProjectsStore>((set, get) => {
 		addedProjects: loadAddedProjects(),
 		selectedCwd: null,
 		search: "",
+		catalogs: {},
 		loading: false,
 		loaded: false,
 
-		load: async () => {
-			const seq = ++loadSeq;
-			set({ loading: true });
+		load: async (environment = LOCAL_ENVIRONMENT) => {
+			const seq = nextLoad(environment);
+			const key = environmentKey(environment);
+			status(environment, { loading: true, loaded: get().catalogs[key]?.loaded ?? false, failed: false });
 			try {
-				// 日常目录与全量会话并行取；目录进 lib/daily 模块缓存（isDailyCwd 同步判定供各组件用）
-				const [allSessions] = await Promise.all([getPi().listAllSessions(), initDailyDir()]);
-				// latest-wins：更晚的 load 已经发起 → 这份旧快照直接丢弃（loading 由最新那次收尾）
-				if (seq !== loadSeq) return;
-				applyCatalog(allSessions);
+				const [sessions] = await Promise.all([
+					getExecutionApi(environment).listAllSessions(),
+					initDailyDir(environment),
+				]);
+				if (seq !== loadSeq.get(key)) return;
+				applyCatalog(sessions, environment);
 			} catch {
-				// 旧请求失败也不得插手：既不能覆盖新结果，也不能提前把新请求的 loading 置 false
-				if (seq !== loadSeq) return;
-				set({ loading: false, loaded: true });
+				if (seq !== loadSeq.get(key)) return;
+				// Retain the last trusted catalog. Failure is not an empty snapshot.
+				status(environment, { loading: false, loaded: true, failed: true });
 			}
 		},
-
-		adoptCatalog: (sessions) => {
-			// 推进序号：这份快照是调用方刚读的磁盘真值，比任何在飞的旧 load 都新（旧 load 的 seq 更小，回来时会早退）；
-			// 而更晚发起的 load 序号更大，仍会在它之后生效 —— latest-wins 不破。
-			loadSeq += 1;
-			applyCatalog(sessions);
+		adoptCatalog: (sessions, environment = LOCAL_ENVIRONMENT) => {
+			nextLoad(environment);
+			applyCatalog(sessions, environment);
 		},
 
 		select: (cwd) => set({ selectedCwd: cwd, search: "" }),
 
 		setSearch: (search) => set({ search }),
 
+		addKnownProject: (cwd) => {
+			if (get().addedProjects.includes(cwd)) return;
+			const next = [...get().addedProjects, cwd];
+			localStorage.setItem(ADDED_KEY, JSON.stringify(localProjects(next)));
+			set({ addedProjects: next });
+		},
 		addProject: async () => {
 			const cwd = await getPi().pickDirectory();
 			if (!cwd) return;
 			// 信任前置：添加项目即决策（未决弹窗，结果落 trust.json），之后在新会话页/建会话都不再弹
-			void getPi()
+			void getExecutionApi(LOCAL_ENVIRONMENT)
 				.ensureProjectTrust({ cwd })
 				.catch(() => {});
 			const added = get().addedProjects;
 			if (!added.includes(cwd)) {
 				const next = [...added, cwd];
-				localStorage.setItem(ADDED_KEY, JSON.stringify(next));
+				localStorage.setItem(ADDED_KEY, JSON.stringify(localProjects(next)));
 				set({ addedProjects: next });
 			}
 			set({ selectedCwd: cwd });
@@ -150,7 +201,10 @@ export const useProjectsStore = create<ProjectsStore>((set, get) => {
 		},
 
 		deleteSession: async (session) => {
-			await getPi().deleteSession({ sessionId: session.sessionId, sessionFile: session.sessionFile });
+			await getExecutionApi(session.sessionId).deleteSession({
+				sessionId: session.sessionId,
+				sessionFile: session.sessionFile,
+			});
 			// 置顶列表清理：会话没了就没人能取消置顶，留着会变成永久残留 id
 			useUiPreferencesStore.getState().unpin(session.sessionId);
 			// D7：权限模式记录同理（与置顶并列；卸载/关会话**不**清，那是「记住」的意义）
@@ -180,7 +234,7 @@ export const useProjectsStore = create<ProjectsStore>((set, get) => {
 				await get().deleteSession(session);
 			}
 			const added = get().addedProjects.filter((p) => p !== cwd);
-			localStorage.setItem(ADDED_KEY, JSON.stringify(added));
+			localStorage.setItem(ADDED_KEY, JSON.stringify(localProjects(added)));
 			set({ addedProjects: added });
 			const { selectedCwd } = get();
 			if (selectedCwd === cwd) {

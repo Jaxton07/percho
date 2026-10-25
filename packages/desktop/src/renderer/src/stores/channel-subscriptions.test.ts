@@ -6,7 +6,15 @@ const piMock = vi.hoisted(() => ({
 	onChannelSubscriptionsChanged: vi.fn(),
 	getChannelSubscriptions: vi.fn(),
 }));
-vi.mock("../api", () => ({ getPi: () => piMock }));
+vi.mock("../api", () => ({
+	getPi: () =>
+		Object.assign(piMock, {
+			forEnvironment: (environment: { kind: string }) => {
+				if (environment.kind !== "local") throw new Error("Unexpected remote fixture");
+				return piMock;
+			},
+		}),
+}));
 
 import {
 	EMPTY_TOPICS,

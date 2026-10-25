@@ -375,7 +375,8 @@ export function assignEntryIds(messages: SessionMessage[], branch: readonly Sess
 		// 无正文的拆分消息（同 turn 正文后的工具组）不参与配对：无 fork 按钮不消费 entry 队列，
 		// 避免挤占后续正文消息的 entryId（同 ms timestamp 碰撞时）
 		if (message.role === "assistant") {
-			if (!message.text) continue;
+			// Empty failed rounds still need their authoritative entry for retry after reconnect.
+			if (!message.text && message.stopReason !== "error") continue;
 			const id = assistantByTimestamp.get(message.timestamp)?.shift();
 			if (id) message.entryId = id;
 			continue;

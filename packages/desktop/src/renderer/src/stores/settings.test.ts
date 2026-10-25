@@ -13,7 +13,15 @@ const piMock = vi.hoisted(() => ({
 	getContextManagerConfig: vi.fn(() => Promise.resolve({ mode: "evaporation" })),
 	setContextManagerMode: vi.fn(() => Promise.resolve()),
 }));
-vi.mock("../api", () => ({ getPi: () => piMock }));
+vi.mock("../api", () => ({
+	getPi: () =>
+		Object.assign(piMock, {
+			forEnvironment: (environment: { kind: string }) => {
+				if (environment.kind !== "local") throw new Error("Unexpected remote fixture");
+				return piMock;
+			},
+		}),
+}));
 
 import { useSettingsStore } from "./settings";
 

@@ -1,6 +1,8 @@
+import type { EnvironmentRef } from "@percho/shared";
 import { useState } from "react";
 import { useT } from "../../i18n";
 import { CoffeeIcon, EditIcon, FolderIcon, FolderOpenIcon, MoreIcon, PinIcon } from "../icons";
+import { RemoteEnvironmentIndicator } from "../remote/RemoteEnvironmentIndicator";
 import { ConfirmDialog } from "../ui/ConfirmDialog";
 import { ContextMenu } from "../ui/ContextMenu";
 import type { MenuAnchor } from "../ui/place-menu";
@@ -23,6 +25,7 @@ import { projectMenuItems } from "./ProjectMenu";
  */
 export function ProjectRow({
 	label,
+	environment,
 	kind,
 	expanded,
 	pinned = false,
@@ -33,6 +36,7 @@ export function ProjectRow({
 	onRemove,
 }: {
 	label: string;
+	environment?: EnvironmentRef;
 	kind: "daily" | "project";
 	expanded: boolean;
 	pinned?: boolean;
@@ -74,6 +78,7 @@ export function ProjectRow({
 					{icon}
 				</span>
 				<span className="min-w-0 flex-1 truncate text-left font-medium">{label}</span>
+				{environment && <RemoteEnvironmentIndicator environment={environment} />}
 				{pinned && (
 					<span className="grid h-4 w-4 shrink-0 place-items-center text-ink-faint" aria-hidden="true">
 						<PinIcon size={12} />

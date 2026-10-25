@@ -34,7 +34,7 @@ describe("ExtensionDialogHost", () => {
 			title: "选一个",
 			options: ["a", "b"],
 		});
-		expect(requests[0].id).toMatch(/^dlg-s1-\d+$/);
+		expect(requests[0].id).toMatch(/^dlg-[0-9a-f-]{36}$/);
 		expect(typeof requests[0].requestedAt).toBe("number");
 		expect(requests[0].timeoutMs).toBeUndefined();
 
