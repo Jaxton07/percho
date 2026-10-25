@@ -138,6 +138,7 @@ import {
 	writeContextManagerMode,
 } from "./tools/context-evaporation";
 import { collectMcpTools, makeMcpInventoryExtension } from "./tools/mcp-inventory";
+import { makeProjectExtraDirsExtension } from "./tools/project-extra-dirs/extension";
 import { makeShowImageTool } from "./tools/show-image";
 import { discoverAgents, isSubagentSessionPath, makeSubagentTool } from "./tools/subagent";
 import { applySubagentMutex, resolveSubagentPreferBuiltin } from "./tools/subagent/mutex";
@@ -297,7 +298,6 @@ export class PiBackend {
 			projectTrust: options.projectTrust,
 			desktopIntegration: options.desktopIntegration,
 			openUrl: options.openExternal,
-			projectExtraDirs: options.projectExtraDirs,
 		});
 	}
 
@@ -355,12 +355,14 @@ export class PiBackend {
 		| ReturnType<typeof makeChannelWatchExtension>
 		| ReturnType<typeof makeEvapExtension>
 		| ReturnType<typeof makeCompactionGuardExtension>
+		| ReturnType<typeof makeProjectExtraDirsExtension>
 	> {
 		const factories: Array<
 			| ReturnType<typeof makeTodoReminderExtension>
 			| ReturnType<typeof makeChannelWatchExtension>
 			| ReturnType<typeof makeEvapExtension>
 			| ReturnType<typeof makeCompactionGuardExtension>
+			| ReturnType<typeof makeProjectExtraDirsExtension>
 		> = [];
 		if (this.options.permissionGates !== false && this.options.permissionExtension !== false) {
 			// confirm 直接桥到 PermissionGate（携带 kind/suggestDir 元数据，驱动「允许此目录」）；
@@ -423,6 +425,17 @@ export class PiBackend {
 				},
 			}),
 		);
+		// 项目额外目录声明（spec project-extra-dirs）：写成 systemPromptOptions.sections 里的一段，
+		// 每轮 before_agent_start 现取（设置改了下一轮生效）；不配置则不注册，零开销。
+		const projectExtraDirs = this.options.projectExtraDirs;
+		if (projectExtraDirs) {
+			factories.push(
+				makeProjectExtraDirsExtension({
+					cwd,
+					getDirs: () => projectExtraDirs(cwd),
+				}),
+			);
+		}
 		// todo-reminder 最后：compaction 后恢复注入的任务列表不被上游折叠
 		factories.push(makeTodoReminderExtension());
 		// MCP 运行态聚合（spec §4.8.1）：三个时机聚合 `mcp__<server>__<tool>`，集合变化才发事件给面板
