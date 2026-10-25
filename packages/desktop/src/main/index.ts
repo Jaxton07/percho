@@ -58,7 +58,7 @@ app.whenReady().then(async () => {
 		// 桌面端集成：UI 插件技能目录 + 内置协作 skill 目录（均随包分发）+ 系统提示词段落
 		// MCP OAuth 授权页交给系统浏览器（官方内置 mcp 扩展用；缺省则扩展自行回落到平台默认浏览器）
 		openExternal: (url) => shell.openExternal(url),
-		// 项目额外目录：会话构造时按 cwd 现读 ui-state（新建/恢复都会走到），只拼提示词声明
+		// 项目额外目录：内置扩展 project-extra-dirs 每轮按 cwd 现读 ui-state，只拼提示词声明
 		projectExtraDirs: (cwd) => projectExtraDirsFor(cwd),
 		desktopIntegration: {
 			appendSystemPrompt: UI_PLUGIN_PROMPT,

@@ -199,7 +199,8 @@ export interface PiBackendOptions {
 	openExternal?: (url: string) => void | Promise<void>;
 	/**
 	 * 按 cwd 返回项目额外目录（桌面端从 ui-state 读；纯 CLI 环境不传）。
-	 * 只拼成一段系统提示词声明（模型知道这些目录存在、用绝对路径访问），不改变 cwd 与资源发现。
+	 * 由内置扩展 project-extra-dirs 每轮写成一段系统提示词声明（模型知道这些目录存在、用绝对路径访问），
+	 * 不改变 cwd 与资源发现。
 	 */
 	projectExtraDirs?: (cwd: string) => string[];
 }
@@ -426,7 +427,7 @@ export class PiBackend {
 			}),
 		);
 		// 项目额外目录声明（spec project-extra-dirs）：写成 systemPromptOptions.sections 里的一段，
-		// 每轮 before_agent_start 现取（设置改了下一轮生效）；不配置则不注册，零开销。
+		// 每轮 before_agent_start 现取（设置改了下一轮生效）；调用方不提供该选项则不注册。
 		const projectExtraDirs = this.options.projectExtraDirs;
 		if (projectExtraDirs) {
 			factories.push(

@@ -1,4 +1,4 @@
-import { cleanProjectExtraDirs, EMPTY_EXTRA_DIRS } from "@percho/shared";
+import { cleanProjectExtraDirs, EMPTY_EXTRA_DIRS, MAX_PROJECT_EXTRA_DIRS } from "@percho/shared";
 import { useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { getPi } from "../../api";
@@ -113,9 +113,11 @@ export function ProjectFoldersDialog({
 					))}
 				</div>
 
+				{/* 到上限就禁用：清洗会在 16 条处静默截断，不提示的话「点了没反应」很突兀 */}
 				<button
 					type="button"
-					className="mt-1.5 flex h-7 items-center gap-1.5 rounded-lg px-2 text-ui-13 text-ink-dim transition-colors hover:bg-hover hover:text-ink"
+					disabled={dirs.length >= MAX_PROJECT_EXTRA_DIRS}
+					className="mt-1.5 flex h-7 items-center gap-1.5 rounded-lg px-2 text-ui-13 text-ink-dim transition-colors hover:bg-hover hover:text-ink disabled:pointer-events-none disabled:opacity-40"
 					onClick={() => void addFolder()}
 				>
 					<PlusIcon size={13} />

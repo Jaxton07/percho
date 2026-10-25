@@ -184,6 +184,19 @@ describe("内置扩展接线（真实 SDK 的请求投影）", () => {
 		expect(prompts[1]).not.toContain("- /abs/before");
 	});
 
+	it("同一会话里把列表清空，下一轮段落就消失（不会留着上一轮的旧值）", async () => {
+		let dirs = ["/abs/gone"];
+		const { prompts } = await promptWith(
+			() => dirs,
+			undefined,
+			() => {
+				dirs = [];
+			},
+		);
+		expect(prompts[0]).toContain("- /abs/gone");
+		expect(prompts[1]).not.toContain("<project_extra_dirs>");
+	});
+
 	it("扩展名固定为 project-extra-dirs（设置页「扩展」里按这个名字显示）", () => {
 		expect(makeProjectExtraDirsExtension({ cwd: "/tmp/x", getDirs: () => [] }).name).toBe(
 			"project-extra-dirs",

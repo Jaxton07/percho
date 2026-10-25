@@ -10,6 +10,8 @@ import { cleanProjectExtraDirs } from "@percho/shared";
  *
  * 为什么不是 `appendSystemPrompt`：那个入口会替换文件发现的结果；扩展的 section 是叠加语义。
  * 每次 `before_agent_start` 现取一次目录：配置改了下一轮就生效（不做运行中的主动推送）。
+ * 段落只写不清：pi 每轮都从基础选项浅拷贝 `sections`，所以列表清空后下一轮自然没有这一段；
+ * 反过来「清空」会误删别的扩展/配置写进同名 section 的内容。
  */
 
 /** 段落名（会渲染成 `<project_extra_dirs>…</project_extra_dirs>`，也是 transcript 里的 section 名） */
@@ -37,7 +39,6 @@ export function makeProjectExtraDirsExtension(opts: {
 			pi.on("before_agent_start", (event) => {
 				const text = extraDirsPrompt(cleanProjectExtraDirs(opts.cwd, opts.getDirs()));
 				if (text) event.systemPromptOptions.sections[PROJECT_EXTRA_DIRS_SECTION] = text;
-				else delete event.systemPromptOptions.sections[PROJECT_EXTRA_DIRS_SECTION];
 			});
 		},
 	};
