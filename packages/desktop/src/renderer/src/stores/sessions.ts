@@ -32,6 +32,7 @@ import {
 	beginSessionBaseline,
 	finishSessionBaseline,
 	forgetSessionBoundary,
+	isEnvironmentSynchronizing,
 	pauseEnvironmentEvents,
 	pendingSessionBaselineToken,
 	resumeEnvironmentEvents,
@@ -631,10 +632,13 @@ export const useSessionsStore = create<SessionsStore>((_set, get) => ({
 		});
 		// 懒加载兜底（D4）：目标会话无 transcript 数据时补拉四件套（从历史打开、
 		// 事件桥断连期间的切换等都经此路径自愈；已有数据零成本短路）
-		if (environmentEntityRef(sessionId).environment.kind === "ssh" && !isHistoryReady(sessionId)) {
-			void loadSessionBundle(sessionId).catch((error) =>
-				pushToast("warning", "toast.sessionOpenFailed", errText(error)),
-			);
+		const environment = environmentEntityRef(sessionId).environment;
+		if (environment.kind === "ssh") {
+			// 离线或恢复期间只导航到缓存；恢复流程在事件接续后补拉当前会话。
+			if (!isEnvironmentSynchronizing(environment) && !isHistoryReady(sessionId))
+				void loadSessionBundle(sessionId).catch((error) =>
+					pushToast("warning", "toast.sessionOpenFailed", errText(error)),
+				);
 		} else if (!isHistoryReady(sessionId) && hasPendingSessionHistory(sessionId)) {
 			void retrySessionHistory(sessionId);
 		} else if (useTranscriptStore.getState().bySession[sessionId] === undefined) {
