@@ -62,6 +62,10 @@ jobs:
           merge-multiple: true
       - name: Prepare trusted runtime manifest
         run: node scripts/prepare-remote-runtime-manifest.mjs --input .local/runtime-release --output packages/desktop/resources/remote-runtime/manifest.json
+      - name: Verify private storage on native Windows filesystem and ACLs
+        run: npm run test -w packages/backend -- test/local-agent-storage.test.ts test/local-agent-storage-sdk.test.ts
+      - name: Test private storage startup decisions
+        run: npm run test -w packages/desktop -- src/main/storage-startup-controller.test.ts
       - name: Test actual NSIS hooks and read-only PowerShell collector
         run: node scripts/check-windows-update-diagnostics.mjs
       - run: npm run build
@@ -73,3 +77,17 @@ jobs:
         with:
           name: windows-update-diagnostic-harness
           path: .local/tmp/windows-update-hook-check/
+
+  local-storage-macos:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - name: Verify private storage on native macOS filesystem
+        run: npm run test -w packages/backend -- test/local-agent-storage.test.ts test/local-agent-storage-sdk.test.ts
+      - name: Test private storage startup decisions
+        run: npm run test -w packages/desktop -- src/main/storage-startup-controller.test.ts

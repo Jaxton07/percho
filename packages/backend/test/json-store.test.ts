@@ -130,3 +130,18 @@ describe("JsonStore sync 变体", () => {
 		expect(s.readSync()).toEqual({ fresh: true });
 	});
 });
+
+it("atomic text serializer preserves JSONC comments across both write variants", async () => {
+	const original = '{ // user explanation\n "path": "old", "unknown": true\n}';
+	const s = new JsonStore<string>({
+		path,
+		defaultValue: () => original,
+		parse: (raw) => raw,
+		stringify: (raw) => raw,
+	});
+	await s.write(original);
+	await s.update((raw) => raw.replace('"old"', '"new"'));
+	expect(readFileSync(path, "utf8")).toBe(original.replace('"old"', '"new"'));
+	s.writeSync(original);
+	expect(readFileSync(path, "utf8")).toBe(original);
+});

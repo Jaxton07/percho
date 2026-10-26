@@ -84,6 +84,7 @@ export async function seedDocs(): Promise<void> {
 	}
 	// examples 示例插件目录（拷成 _examples 防被 scanAll 当插件扫描）
 	await copyTree(join(uiPluginsResourcesDir(), "examples"), join(root, "_examples"));
+	if (process.env.PERCHO_AGENT_DIR) return; // Explicit isolated launches never create a global alias.
 	const link = join(homedir(), ".percho", "ui-plugins");
 	try {
 		const existing = await lstat(link).catch(() => null);

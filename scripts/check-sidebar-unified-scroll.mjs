@@ -15,7 +15,7 @@
  *
  * 为什么要样本：① 6 / 22 / 38 三档要在一个 **≥ 39 条会话**的组上才验证得了（38 是全档、不是被总数截断）；
  * ② 「搜索前折叠 → 搜索命中临时展开 → 换词/清空还原」需要一个**确定存在且可搜**的第二组（不靠日常组碰运气）。
- * 所以 `--seed` 在隔离的 dev agent dir（`~/.pi/agent-dev`，正式目录零写入）造两组样本会话：
+ * 所以 `--seed` 在隔离的 dev agent dir（`~/.percho/agent-dev`，正式目录零写入）造两组样本会话：
  * 主组 `SAMPLE_COUNT` 条（跨三档，断言里会真实打开它最旧的一条来验「active 越界」）+ 副组 `SAMPLE_SECOND_COUNT` 条
  * （搜索换词用），外加两个样本项目目录与 dev trust.json 的对应条目。会话目录只在应用启动时读一次 →
  * seed/clean 后要重启 dev；用完请 `--clean`（样本缺失时断言部分会直接报退出码 2，不会假绿）。
@@ -23,7 +23,7 @@
  * 样本的创建/清理是 **fail-closed** 的（见下方「样本」段的纪律）：不是自己签名创建的目录、文件或 trust 键，
  * 一律拒绝删改；`--selftest` 把每一条保护都在**每轮用 mkdtemp 新建的唯一隔离根**上跑一遍
  * （跑完自清；固定名 `.local/tmp/check-sidebar-sample-selftest*` 下的既有内容只作为「不许被删」的反例被检查，
- * 不碰 `~/.pi/agent-dev` 与任何正式目录）。
+ * 不碰 `~/.percho/agent-dev` 与任何正式目录）。
  *
  * 纪律（沿用旧脚本，见 docs/PITFALLS.md「嵌套滚动的归属验证」）：
  * - 用 **CDP 真实 wheel**（`Input.dispatchMouseEvent` type=mouseWheel）验证滚动归属，
@@ -100,11 +100,11 @@ const SAMPLE_NAME_PREFIX = SAMPLE_GROUPS[0].namePrefix;
 const SAMPLE_SECOND_COUNT = SAMPLE_GROUPS[1].count;
 const SAMPLE_SECOND_NAME_PREFIX = SAMPLE_GROUPS[1].namePrefix;
 
-/** 真实 dev 路径（`~/.pi/agent-dev`：隔离目录，正式 agent dir 零写入） */
+/** 真实 dev 路径（`~/.percho/agent-dev`：隔离目录，正式 agent dir 零写入） */
 const DEV_PATHS = {
-	agentDir: join(homedir(), ".pi", "agent-dev"),
-	sessionsRoot: join(homedir(), ".pi", "agent-dev", "sessions"),
-	trustFile: join(homedir(), ".pi", "agent-dev", "trust.json"),
+	agentDir: process.env.PERCHO_AGENT_DIR ?? join(homedir(), ".percho", "agent-dev"),
+	sessionsRoot: join(process.env.PERCHO_AGENT_DIR ?? join(homedir(), ".percho", "agent-dev"), "sessions"),
+	trustFile: join(process.env.PERCHO_AGENT_DIR ?? join(homedir(), ".percho", "agent-dev"), "trust.json"),
 };
 
 /** 会话目录名与 SDK 同口径：`--` + 去掉前导斜杠 + `/\:` 换 `-` + `--` */
@@ -616,7 +616,7 @@ async function selftest() {
 
 	const failed = cases.filter((c) => !c.ok);
 	console.log(
-		`\n${cases.length - failed.length}/${cases.length} PASS（每轮唯一隔离根，已清理；未触碰 ~/.pi/agent-dev）`,
+		`\n${cases.length - failed.length}/${cases.length} PASS（每轮唯一隔离根，已清理；未触碰 ~/.percho/agent-dev）`,
 	);
 	if (failed.length > 0) {
 		console.log("失败项：");

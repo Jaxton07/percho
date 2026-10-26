@@ -1,6 +1,29 @@
 import { UI_WORKBENCH_TRUST_COPY } from "@percho/shared";
 /** 中文语言包（作为 key 的结构定义，en.ts 与之同形） */
 export const zh = {
+	storageStartup: {
+		title: "准备 Percho 用户数据",
+		inspecting: "正在检查数据目录…",
+		choice: "将用户数据与 Pi CLI 分离",
+		existing: "发现已有的独立目录",
+		copying: "正在复制并校验数据…",
+		preferences: "正在备份并修正工作区引用…",
+		ready: "数据已准备好，正在启动…",
+		error: "准备未完成，原目录不会被修改。请查看原因后重试或退出。",
+		target: "Percho 数据目录",
+		source: "旧数据候选",
+		count: "{files} 个文件 · {mb} MB",
+		importHint:
+			"请先关闭旧 Percho 和正在使用该目录的 Pi CLI。复制会包含旧共享目录里的历史、账号和扩展配置，其中也可能有 CLI 数据；原目录保留。选择空目录不会导入这些内容。",
+		existingHint:
+			"将采用这里已有的数据，不合并或覆盖，也不会自动导入旧历史。若要导入，请退出后先移走这个目标目录。",
+		external: "以下显式外部资源仍可能共享：",
+		copy: "复制旧数据",
+		useEmpty: "使用空目录",
+		adopt: "采用已有目录",
+		retry: "重试",
+		exit: "取消并退出",
+	},
 	remote: {
 		unavailableProject: "不可用",
 		projectLocationHint: "选择项目所在的位置。添加后会话固定在该环境执行。",

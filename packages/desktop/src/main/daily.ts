@@ -9,7 +9,9 @@ import { join } from "node:path";
  * PI_CODING_AGENT_DIR 天然隔离，互不污染）。
  */
 export function getDailyDir(): string {
-	return join(homedir(), ".percho", "daily");
+	return process.env.PERCHO_AGENT_DIR
+		? join(process.env.PI_CODING_AGENT_DIR as string, "daily")
+		: join(homedir(), ".percho", "daily");
 }
 
 /** 懒创建（幂等）后返回目录；IPC 下发给 renderer 前统一走这里 */

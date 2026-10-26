@@ -94,6 +94,16 @@ export { LoginService, type LoginServiceDeps } from "./settings/login";
 export { ModelPrefsService } from "./settings/model-prefs";
 export { SettingsService } from "./settings/settings";
 export { BUILTIN_SLASH_COMMANDS, slashCommandsForLoader, slashCommandsForSession } from "./slash-commands";
+export {
+	initializeLocalStorage,
+	inspectLocalStorage,
+	type LocalStorageRecord,
+	readStorageRecord,
+	type StorageInspection,
+	type StorageProgress,
+} from "./storage/local-storage";
+export { migrateNavigation } from "./storage/preferences";
+export { type LocalSessionPaths, localSessionPaths } from "./storage/session-paths";
 export { makeShowImageTool, resolveShowImagePath, type ShowImageDetails } from "./tools/show-image";
 export { formatTodoList, makeTodoTool, normalizeTodos } from "./tools/todo";
 export { makeTodoReminderExtension } from "./tools/todo-reminder";

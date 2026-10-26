@@ -40,6 +40,8 @@ export interface JsonStoreOptions<T> {
 	mode?: number;
 	/** 解析钩子（默认 JSON.parse）；models.json 等 JSONC 文件用它先剥注释 */
 	parse?: (raw: string) => T;
+	/** 可保留 JSONC 注释的文本序列化；仍复用原子写和串行更新。 */
+	stringify?: (value: T) => string;
 }
 
 /** async 版 per-path 操作队列：串行化同路径的 update/write（load→merge→write 竞态修复）；空则清理 */
@@ -68,11 +70,13 @@ export class JsonStore<T> {
 	private readonly defaultValue: () => T;
 	private readonly mode: number | undefined;
 	private readonly parse: (raw: string) => T;
+	private readonly stringify: (value: T) => string;
 
 	constructor(options: JsonStoreOptions<T>) {
 		this.path = options.path;
 		this.defaultValue = options.defaultValue;
 		this.mode = options.mode;
+		this.stringify = options.stringify ?? ((value) => `${JSON.stringify(value, null, 2)}\n`);
 		this.parse = options.parse ?? (JSON.parse as (raw: string) => T);
 	}
 
@@ -116,7 +120,7 @@ export class JsonStore<T> {
 			`.${basename(this.path)}.${process.pid}.${Math.random().toString(36).slice(2)}.tmp`,
 		);
 		try {
-			await writeFile(tmp, `${JSON.stringify(value, null, 2)}\n`, { encoding: "utf8", mode: this.mode });
+			await writeFile(tmp, this.stringify(value), { encoding: "utf8", mode: this.mode });
 			await rename(tmp, this.path);
 		} catch (err) {
 			await rm(tmp, { force: true }).catch(() => {});
@@ -132,7 +136,7 @@ export class JsonStore<T> {
 			`.${basename(this.path)}.${process.pid}.${Math.random().toString(36).slice(2)}.tmp`,
 		);
 		try {
-			writeFileSync(tmp, `${JSON.stringify(value, null, 2)}\n`, { encoding: "utf8", mode: this.mode });
+			writeFileSync(tmp, this.stringify(value), { encoding: "utf8", mode: this.mode });
 			renameSync(tmp, this.path);
 		} catch (err) {
 			rmSync(tmp, { force: true });

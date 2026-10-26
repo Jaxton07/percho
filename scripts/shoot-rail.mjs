@@ -739,7 +739,7 @@ async function matrix(cdp) {
 			ghostFileExists: existsSync(
 				resolve(
 					process.env.HOME,
-					".pi/agent-dev/sessions/--Users-ericw-.percho-daily--/ghost-nonexistent.jsonl",
+					".percho/agent-dev/sessions/--Users-ericw-.percho-daily--/ghost-nonexistent.jsonl",
 				),
 			),
 		}),
