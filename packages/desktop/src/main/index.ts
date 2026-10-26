@@ -3,13 +3,14 @@ import "./dev-agent-dir";
 import "./fix-path";
 import { join } from "node:path";
 import { pathToFileURL } from "node:url";
-import { createLogger, initLogging, PiBackend } from "@percho/backend";
+import { createLogger, initLogging, localSessionPaths, PiBackend } from "@percho/backend";
 import { app, BrowserWindow, Menu, nativeTheme, net, protocol, screen, shell } from "electron";
 import { backgroundsDir } from "./background";
 import { registerIpc } from "./ipc";
 import { initLanObserver, type LanObserverHandle } from "./lan";
 import { remoteConnectionManager } from "./remote-connection";
 import { attachRendererWatchdog } from "./renderer-watchdog";
+import { prepareLocalStorage } from "./storage-startup";
 import { UiPluginManager, uiPluginsResourcesDir } from "./ui-plugins/manager";
 import { loadUiState } from "./ui-state";
 import { initUpdater, scheduleAutoUpdateCheck } from "./updater";
@@ -45,6 +46,7 @@ if (process.platform !== "darwin") Menu.setApplicationMenu(null);
 nativeTheme.on("updated", () => applyChromeTheme(nativeTheme.themeSource));
 
 app.whenReady().then(async () => {
+	const storage = await prepareLocalStorage();
 	initLogging(join(app.getPath("userData"), "logs"));
 	log.info("app ready", { version: app.getVersion(), userData: app.getPath("userData") });
 
@@ -56,11 +58,16 @@ app.whenReady().then(async () => {
 	});
 
 	backend = new PiBackend({
+		localSessionPaths: localSessionPaths(storage.record, storage.selection.legacyRoots),
 		// 桌面端集成：UI 插件技能目录 + 内置协作 skill 目录（均随包分发）+ 系统提示词段落
 		// MCP OAuth 授权页交给系统浏览器（官方内置 mcp 扩展用；缺省则扩展自行回落到平台默认浏览器）
 		openExternal: (url) => shell.openExternal(url),
 		desktopIntegration: {
-			appendSystemPrompt: UI_PLUGIN_PROMPT,
+			appendSystemPrompt: process.env.PERCHO_AGENT_DIR
+				? UI_PLUGIN_PROMPT.map((line) =>
+						line.replace("~/.percho/ui-plugins", join(app.getPath("userData"), "ui-plugins")),
+					)
+				: UI_PLUGIN_PROMPT,
 			additionalSkillPaths: [
 				join(uiPluginsResourcesDir(), "skills"),
 				// 内置协作 skill（channel-pickup/design-handoff）：语义上与 UI 插件无关，独立目录分发
@@ -91,6 +98,7 @@ app.whenReady().then(async () => {
 		screen.getAllDisplays().map((display) => display.workArea),
 	);
 	createWindow(resolveTheme(uiState?.theme), initialBounds);
+	storage.close();
 
 	app.on("activate", () => {
 		const [win] = BrowserWindow.getAllWindows();

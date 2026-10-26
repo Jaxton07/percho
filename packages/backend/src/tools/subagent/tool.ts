@@ -162,7 +162,7 @@ export function makeSubagentTool(deps: MakeSubagentToolDeps): ToolDefinition {
 		annotations: { readOnlyHint: false, destructiveHint: true },
 		label: "Subagent",
 		description:
-			"Delegate a self-contained read-only or project-scoped task to an isolated subagent session. Use {agent, task} for one run or {tasks:[{agent, task}, ...]} for parallel exploration (up to 8 tasks, 4 at once). Built-in agent: scout. More agents may be defined in ~/.pi/agent/agents/. The subagent returns only its final conclusion while its full session remains available from the result card.",
+			"Delegate a self-contained read-only or project-scoped task to an isolated subagent session. Use {agent, task} for one run or {tasks:[{agent, task}, ...]} for parallel exploration (up to 8 tasks, 4 at once). Built-in agent: scout. More agents may be defined in ~/.percho/agent/agents/. The subagent returns only its final conclusion while its full session remains available from the result card.",
 		parameters: subagentParams,
 		execute: async (
 			toolCallId,

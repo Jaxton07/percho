@@ -5,6 +5,7 @@ import { open } from "node:fs/promises";
 import { connect } from "node:net";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
+import { assertRemoteStorage } from "../storage/path-policy";
 import { RuntimeClient } from "./client";
 import { acquireOwner, type RuntimePaths, runtimePaths } from "./paths";
 import { assertRuntimeReleasePlatform, checkRuntimeRelease, readRuntimeRelease } from "./release";
@@ -92,6 +93,7 @@ export async function runRuntimeCli(root: string, command: string, authArgs: str
 	if (release) assertRuntimeReleasePlatform(release, report.header.glibcVersionRuntime);
 	if (command === "check") return checkRuntimeRelease(release);
 	const paths = await runtimePaths(root);
+	await assertRemoteStorage(paths.agent);
 	process.env.PI_CODING_AGENT_DIR = paths.agent;
 	if (command === "auth") {
 		const owner = await acquireOwner(paths);
@@ -100,6 +102,7 @@ export async function runRuntimeCli(root: string, command: string, authArgs: str
 				"AUTH_OWNER_BUSY: Stop the remote service and confirm owner release before authentication maintenance",
 			);
 		try {
+			await assertRemoteStorage(paths.agent);
 			const sdkCli = fileURLToPath(
 				new URL("./bundle/cli.js", import.meta.resolve("@earendil-works/pi-coding-agent")),
 			);

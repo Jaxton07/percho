@@ -16,7 +16,7 @@
  *
  * 判定口径：几何/动画一律用**帧后采样**（`setTimeout(0)` 紧跟该帧渲染之后读 rect）做断言；
  * rAF 回调里读到的是上一帧写值，只用来报告（阶段 0 已证明它是采样伪影）。
- * 只写隔离的 dev 数据（dev userData / ~/.pi/agent-dev），正式目录零写入。
+ * 只写隔离的 dev 数据（dev userData / ~/.percho/agent-dev），正式目录零写入。
  */
 import { readdirSync, statSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
@@ -664,7 +664,7 @@ async function pageScript() {
 
 /* ---------------- CDP 驱动 ---------------- */
 function sessionFiles() {
-	const root = join(homedir(), ".pi", "agent-dev", "sessions");
+	const root = join(process.env.PERCHO_AGENT_DIR ?? join(homedir(), ".percho", "agent-dev"), "sessions");
 	const files = [];
 	for (const dir of readdirSync(root, { withFileTypes: true })) {
 		if (!dir.isDirectory()) continue;

@@ -9,7 +9,7 @@ const log = createLogger("workspace-store");
 /** 每项目记忆条目上限（最旧淘汰；防无界增长） */
 const MAX_ALLOWED_PATTERNS = 200;
 
-/** 工作区配置（~/.pi/agent/workspaces.json，用户级）：多项目根 + 项目级 allowAlways 记忆 */
+/** 工作区配置（~/.percho/agent/workspaces.json，用户级）：多项目根 + 项目级 allowAlways 记忆 */
 export interface WorkspaceProjectEntry {
 	/** 额外信任根（绝对路径）：根内路径视为界内 */
 	roots: string[];

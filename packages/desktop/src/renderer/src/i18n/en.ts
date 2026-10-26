@@ -3,6 +3,30 @@ import type { Messages } from "./zh";
 
 /** English language pack (mirrors zh.ts shape) */
 export const en: Messages = {
+	storageStartup: {
+		title: "Prepare Percho user data",
+		inspecting: "Inspecting storage…",
+		choice: "Separate user data from Pi CLI",
+		existing: "An existing private directory was found",
+		copying: "Copying and verifying data…",
+		preferences: "Backing up and updating workspace references…",
+		ready: "Storage ready. Starting Percho…",
+		error:
+			"Preparation did not finish. The original directory is unchanged. Review the error and retry or exit.",
+		target: "Percho data directory",
+		source: "Legacy data candidate",
+		count: "{files} files · {mb} MB",
+		importHint:
+			"Close the old Percho and any Pi CLI using this directory first. The copy includes history, accounts, and extension settings from the shared directory, possibly including CLI data. The original stays in place. Starting empty imports none of it.",
+		existingHint:
+			"Use the data already here without merging, overwriting, or importing old history. To import instead, exit and move this target directory aside first.",
+		external: "These explicitly configured external resources may remain shared:",
+		copy: "Copy existing data",
+		useEmpty: "Start empty",
+		adopt: "Use this directory",
+		retry: "Retry",
+		exit: "Cancel and exit",
+	},
 	remote: {
 		unavailableProject: "Unlinked",
 		projectLocationHint: "Choose where this project lives. Its sessions stay in that environment.",

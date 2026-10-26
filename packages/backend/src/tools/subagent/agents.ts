@@ -127,7 +127,7 @@ async function readAgentDirectory(dir: string, source: AgentSource): Promise<Sub
 }
 
 /**
- * 发现 agent：builtin scout → user ~/.pi/agent/agents → trusted project .pi/agents。
+ * 发现 agent：builtin scout → user ~/.percho/agent/agents → trusted project .pi/agents。
  * 后加载的同名定义覆盖前者；projectTrusted=false 时完全不读取 project agents。
  */
 export async function discoverAgents(

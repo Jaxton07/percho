@@ -68,8 +68,30 @@ jobs:
       - name: Compile production Windows installer (no publish)
         working-directory: packages/desktop
         run: npx electron-builder --win nsis --x64 --publish never
+      - name: Verify actual packaged Windows startup with isolated agent/profile
+        run: node scripts/check-local-storage-startup.mjs --app "${{ github.workspace }}/packages/desktop/dist/win-unpacked/Percho.exe"
       - uses: actions/upload-artifact@v4
         if: always()
         with:
           name: windows-update-diagnostic-harness
-          path: .local/tmp/windows-update-hook-check/
+          path: |
+            .local/tmp/windows-update-hook-check/
+            .local/tmp/local-storage-startup-check/
+
+  local-storage:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [macos-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - name: Verify private storage on native filesystem and ACLs
+        run: npm run test -w packages/backend -- test/local-agent-storage.test.ts test/local-agent-storage-sdk.test.ts
+      - name: Test private storage startup decisions
+        run: npm run test -w packages/desktop -- src/main/storage-startup-controller.test.ts

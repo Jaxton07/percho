@@ -9,6 +9,7 @@
 | 包边界、IPC、会话数据与状态所有权 | [架构](architecture.md) |
 | 界面风格、字号、浮层、共享组件 | [UI 规范](ui.md) |
 | CDP、截图、交互验收、测试实例管理 | [UI 调试](ui-debugging.md) |
+| 用户级目录隔离、升级迁移、失败恢复 | [用户数据](local-agent-storage.md) |
 | SDK 行为、升级、资源释放、上下文 | [SDK 集成](sdk.md) |
 | pi 扩展在 GUI 中实际支持哪些交互 | [扩展 UI](extension-ui.md) |
 | SSH 远端使用、连接与恢复边界 | [远端开发](ssh-remote.md) |

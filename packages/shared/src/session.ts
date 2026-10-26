@@ -378,7 +378,7 @@ export interface ContextManagerConfigInfo {
 	mode: ContextManagerMode;
 }
 
-/** channel-watch 跨会话频道唤醒配置（设置 UI 开关；键在 ~/.pi/agent/settings.json，缺省=开） */
+/** channel-watch 跨会话频道唤醒配置（设置 UI 开关；键在 ~/.percho/agent/settings.json，缺省=开） */
 export interface ChannelWatchConfigInfo {
 	enabled: boolean;
 }
