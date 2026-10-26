@@ -160,25 +160,26 @@ async function scan(
 		for (const item of (await readdir(dir)).sort()) {
 			const file = join(dir, item),
 				name = relative(root, file),
+				key = process.platform === "win32" ? name.toLowerCase() : name,
 				stat = await statOrMissing(file);
 			if (!stat) throw new Error(`Source changed: ${file}`);
 			// proper-lockfile's exact transient auth lock directory, not arbitrary *.lock files.
-			if (name === "auth.json.lock" && stat.isDirectory()) {
+			if (key === "auth.json.lock" && stat.isDirectory()) {
 				if ((await readdir(file)).length) throw new Error(`Unexpected authentication lock contents: ${file}`);
 				continue;
 			}
-			if (name === LOCAL_STORAGE_RECORD || name === "environment.json")
+			if (key === LOCAL_STORAGE_RECORD || key === "environment.json")
 				throw new Error(`Source has an existing storage identity: ${file}`);
 			const base = { name, mode: stat.mode, mtime: stat.mtimeMs, size: stat.size };
 			if (stat.isSymbolicLink()) {
-				if (name === "sessions" || name === "sessions-subagents")
+				if (key === "sessions" || key === "sessions-subagents")
 					throw new Error(`Session roots must be ordinary directories: ${file}`);
 				const link = await readlink(file),
 					destination = await realpath(file);
 				if (!inside(root, destination)) {
 					if (
-						CORE.has(name) ||
-						name
+						CORE.has(key) ||
+						key
 							.split(sep)
 							.some((part, index) => index === 0 && ["sessions", "sessions-subagents"].includes(part))
 					)
@@ -187,7 +188,7 @@ async function scan(
 						throw new Error(`External link points to Pi data: ${file}`);
 					external.push(name);
 				}
-				const section = name.split(sep)[0] ?? "";
+				const section = key.split(sep)[0] ?? "";
 				if (["sessions", "sessions-subagents"].includes(section) && !inside(join(root, section), destination))
 					throw new Error(`Session link crosses its private history root: ${file}`);
 				const mapped = inside(root, destination) ? join(target, relative(root, destination)) : destination;
@@ -374,7 +375,8 @@ export async function initializeLocalStorage(
 			defaultValue: () => record,
 			mode: 0o600,
 		}).write(record);
-		const marker = await open(join(staging, LOCAL_STORAGE_RECORD), "r");
+		// Windows FlushFileBuffers requires a writable handle; r+ never truncates the record.
+		const marker = await open(join(staging, LOCAL_STORAGE_RECORD), "r+");
 		try {
 			await marker.sync();
 		} finally {

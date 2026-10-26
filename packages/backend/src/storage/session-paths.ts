@@ -34,8 +34,10 @@ export function localSessionPaths(record: LocalStorageRecord, legacyRoots: strin
 				mapped = resolve(mappedStoragePath(original, record));
 			const isOld = oldRoots.some((root) => inside(root, original));
 			const part = relative(record.target, mapped).split(sep);
-			const section = part[0] ?? "";
-			const managed = ["sessions", "sessions-subagents"].includes(section) && extname(mapped) === ".jsonl";
+			const section = process.platform === "win32" ? (part[0] ?? "").toLowerCase() : (part[0] ?? "");
+			const extension = process.platform === "win32" ? extname(mapped).toLowerCase() : extname(mapped);
+			const managed = ["sessions", "sessions-subagents"].includes(section) && extension === ".jsonl";
+			let result = mapped;
 			if (isOld && (mapped === original || !managed))
 				throw new Error(`Legacy session was not imported: ${file}`);
 			if (inside(record.target, mapped)) {
@@ -47,9 +49,12 @@ export function localSessionPaths(record: LocalStorageRecord, legacyRoots: strin
 					const stat = lstatSync(mapped);
 					if (!stat.isFile() && !stat.isSymbolicLink()) throw new Error(`Session is not a file: ${file}`);
 				}
+				// Use real spelling to deduplicate case aliases, with the SDK's canonical readonly section.
+				if (process.platform === "win32")
+					result = join(record.target, section, ...relative(record.target, actual).split(sep).slice(1));
 			} else if (oldRoots.some((root) => inside(root, realOrMissing(mapped))))
 				throw new Error(`Session points to Pi storage: ${file}`);
-			return mapped;
+			return result;
 		},
 		assertCwd(cwd) {
 			const actual = realOrMissing(resolve(cwd));

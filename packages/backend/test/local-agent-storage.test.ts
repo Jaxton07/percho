@@ -119,6 +119,37 @@ describe("private directory selection", () => {
 });
 
 describe("copy, publish, retry", () => {
+	it.runIf(process.platform === "win32")(
+		"classifies mixed-case core links and storage markers as private data",
+		async () => {
+			const source = await seed(),
+				outside = join(home, "outside-auth.json");
+			await writeFile(outside, "{}");
+			await rm(join(source, "auth.json"));
+			await symlink(outside, join(source, "AUTH.JSON"));
+			await expect(inspectLocalStorage(selection)).rejects.toThrow("Core storage");
+			await rm(join(source, "AUTH.JSON"));
+			await writeFile(join(source, LOCAL_STORAGE_RECORD.toUpperCase()), "{}");
+			await expect(inspectLocalStorage(selection)).rejects.toThrow("existing storage identity");
+			await expect(lstat(selection.target)).rejects.toMatchObject({ code: "ENOENT" });
+		},
+	);
+	it.runIf(process.platform === "win32")(
+		"refuses adoption when Windows ACL grants another account access",
+		async () => {
+			await mkdir(selection.target, { recursive: true });
+			await privateDirectory(selection.target, true);
+			await writeFile(join(selection.target, "sentinel"), "retain existing data");
+			execFileSync("icacls.exe", [selection.target, "/grant", "*S-1-1-0:(OI)(CI)(RX)"], { stdio: "pipe" });
+			await expect(initializeLocalStorage(await inspectLocalStorage(selection), "adopt")).rejects.toThrow(
+				"Storage grants another account access",
+			);
+			await expect(lstat(join(selection.target, LOCAL_STORAGE_RECORD))).rejects.toMatchObject({
+				code: "ENOENT",
+			});
+			expect(await readFile(join(selection.target, "sentinel"), "utf8")).toBe("retain existing data");
+		},
+	);
 	it("excludes only an empty SDK authentication lock and rejects unexpected contents", async () => {
 		const source = await seed(),
 			lock = join(source, "auth.json.lock");

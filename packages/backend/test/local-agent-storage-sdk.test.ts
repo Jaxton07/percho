@@ -97,6 +97,13 @@ it("real SDK opens imported parent/child, forks, renames and deletes only the ne
 	expect(JSON.stringify(await backend.getSessionMessages(p.sessionId))).toContain("fixture-response");
 	const c = await backend.openSession(childFile);
 	expect(c.readOnly).toBe(true);
+	if (process.platform === "win32") {
+		const alias = await backend.openSession(
+			childFile.replace("sessions-subagents", "SESSIONS-SUBAGENTS").replace(".jsonl", ".JSONL"),
+		);
+		expect(alias.readOnly).toBe(true);
+		expect(alias.sessionFile).toBe(c.sessionFile);
+	}
 	await expect(backend.prompt(c.sessionId, "must not send")).rejects.toThrow("read-only");
 	await backend.setSessionName(p.sessionId, "renamed-in-Percho");
 	expect(await backend.exportSession(p.sessionId, "jsonl")).toContain("renamed-in-Percho");
