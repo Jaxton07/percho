@@ -40,6 +40,15 @@ function StorageStartup() {
 		<main className="mx-auto flex h-screen max-w-[640px] flex-col overflow-y-auto gap-4 p-8 text-ui-13 text-ink-2">
 			<h1 className="text-ui-18 font-medium">{t("storageStartup.title")}</h1>
 			<p>{t(`storageStartup.${state?.phase ?? "inspecting"}`)}</p>
+			{busy && (
+				<div
+					role="progressbar"
+					aria-label={t(`storageStartup.${state?.phase ?? "inspecting"}`)}
+					className="h-1.5 shrink-0 overflow-hidden rounded-full bg-hover"
+				>
+					<div className="storage-startup-progress h-full w-1/3 rounded-full bg-ink" />
+				</div>
+			)}
 			{state?.target && (
 				<dl className="space-y-2 text-ui-12">
 					<dt className="text-ink-faint">{t("storageStartup.target")}</dt>
@@ -89,6 +98,7 @@ function StorageStartup() {
 	);
 }
 export function renderStorageStartup() {
+	document.documentElement.dataset.storageStartup = "true";
 	document.documentElement.dataset.appReady = "true";
 	document.getElementById("splash")?.remove();
 	const root = document.getElementById("root");
