@@ -473,6 +473,7 @@ it("losing the migration lease stops publication and retains the recovery copy",
 	await seed();
 	const original = lockfile.lock.bind(lockfile);
 	let compromise: ((error: Error) => void) | undefined, release: (() => Promise<void>) | undefined;
+	let injected = false;
 	const spy = vi.spyOn(lockfile, "lock").mockImplementation(async (path, options) => {
 		compromise = options?.onCompromised;
 		release = await original(path, options);
@@ -482,13 +483,16 @@ it("losing the migration lease stops publication and retains the recovery copy",
 		await expect(
 			initializeLocalStorage(await inspectLocalStorage(selection), "copy", {
 				onProgress: (p) => {
-					if (p.phase === "copy") compromise?.(new Error("injected lost lease"));
+					if (p.phase === "copy") {
+						injected = true;
+						compromise?.(new Error("injected lost lease"));
+					}
 				},
 			}),
 		).rejects.toThrow("lost its lock");
 		await expect(stat(selection.target)).rejects.toHaveProperty("code", "ENOENT");
 	} finally {
-		await release?.();
+		if (injected) await release?.();
 		spy.mockRestore();
 	}
 });

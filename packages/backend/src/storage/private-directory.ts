@@ -4,6 +4,10 @@ import { chmod, lstat } from "node:fs/promises";
 // Input is JSON on stdin, never interpolated into PowerShell code or interpreted as a command.
 const ACL_SCRIPT = `
 $ErrorActionPreference = 'Stop'
+$ProgressPreference = 'SilentlyContinue'
+# A pwsh -> Node -> powershell.exe launch can inherit incompatible PowerShell 7 modules.
+# This helper needs only Windows PowerShell's system modules, never user-provided modules.
+$env:PSModulePath = [System.IO.Path]::Combine($PSHOME, 'Modules')
 $v = [System.Text.Encoding]::UTF8.GetString([Convert]::FromBase64String([Console]::In.ReadToEnd())) | ConvertFrom-Json
 $p = [string]$v.path
 $me = [System.Security.Principal.WindowsIdentity]::GetCurrent().User
@@ -37,6 +41,8 @@ export async function privateDirectory(path: string, prepare: boolean): Promise<
 			[
 				"-NoProfile",
 				"-NonInteractive",
+				"-OutputFormat",
+				"Text",
 				"-EncodedCommand",
 				Buffer.from(ACL_SCRIPT, "utf16le").toString("base64"),
 			],
