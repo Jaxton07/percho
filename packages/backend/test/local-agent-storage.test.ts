@@ -369,10 +369,7 @@ describe("history references and navigation", () => {
 			profile = join(home, "profile");
 		await mkdir(profile);
 		const file = join(source, "sessions", "project", "parent.jsonl"),
-			remote =
-				"percho-env-v1:%5B%7B%22kind%22%3A%22ssh%22%2C%22connectionId%22%3A%22c%22%2C%22environmentId%22%3A%22e%22%7D%2C%22" +
-				encodeURIComponent(file) +
-				"%22%5D";
+			remote = environmentEntityKey({ kind: "ssh", connectionId: "c", environmentId: "e" }, file);
 		const legacy = {
 			sessionWorkspace: { files: [file], activeFile: file },
 			theme: "dark",
