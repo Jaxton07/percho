@@ -1,5 +1,6 @@
 import {
 	composerDocumentFromText,
+	emptyTranscript,
 	environmentEntityKey,
 	type SessionEvent,
 	type SessionMeta,
@@ -40,6 +41,7 @@ vi.mock("../api", () => ({
 
 import { selectActiveCwd } from "../lib/active-cwd";
 import { NEW_SESSION_DRAFT_KEY, useDraftStore } from "./drafts";
+import { pauseEnvironmentEvents, resumeEnvironmentEvents } from "./session-event-boundary";
 import { clearSessionHistory, isHistoryReady, retrySessionHistory } from "./session-history";
 import { useSessionWorkspaceStore } from "./session-workspace";
 import { partitionSessionsByPin, useSessionsStore } from "./sessions";
@@ -235,6 +237,26 @@ describe("closeSession", () => {
 });
 
 describe("switchSession", () => {
+	it("离线或恢复中的远端会话只展示缓存，不请求尚未接续的服务", async () => {
+		const environment = { kind: "ssh", connectionId: "offline", environmentId: "data" } as const;
+		const id = environmentEntityKey(environment, "cached");
+		const cwd = environmentEntityKey(environment, "/project");
+		const cached = { ...emptyTranscript(), pendingPermissions: [], pendingDialogs: [] };
+		useToastsStore.setState({ toasts: [] });
+		useSessionsStore.setState({ sessions: [realMeta(id, cwd)], activeSessionId: null });
+		useTranscriptStore.setState({ bySession: { [id]: cached } });
+		pauseEnvironmentEvents(environment);
+		try {
+			useSessionsStore.getState().switchSession(id);
+			await new Promise<void>((resolve) => setImmediate(resolve));
+			expect(useSessionsStore.getState().activeSessionId).toBe(id);
+			expect(useTranscriptStore.getState().bySession[id]).toBe(cached);
+			expect(useToastsStore.getState().toasts).toHaveLength(0);
+		} finally {
+			resumeEnvironmentEvents(environment);
+		}
+	});
+
 	it("切到真实会话：cwd 跟随该会话的项目", () => {
 		useSessionsStore.setState({
 			sessions: [realMeta("r1", "/proj/a")],
