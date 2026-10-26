@@ -156,9 +156,6 @@
 }
 
 /* Initial scanning has no known total; keep preparation visibly active without inventing a percentage. */
-html[data-storage-startup][data-app-ready] #root {
-	animation: none;
-}
 .storage-startup-progress {
 	animation: storage-startup-progress 1.5s linear infinite;
 }
@@ -727,6 +724,10 @@ body,
 	height: 100%;
 	margin: 0;
 	overflow: hidden;
+}
+
+html[data-storage-startup][data-app-ready] #root {
+	animation: none;
 }
 
 body {
