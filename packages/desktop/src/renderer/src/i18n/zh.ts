@@ -1,6 +1,9 @@
 import { UI_WORKBENCH_TRUST_COPY } from "@percho/shared";
 /** 中文语言包（作为 key 的结构定义，en.ts 与之同形） */
 export const zh = {
+	emptyState: {
+		slogan: "做你所想，如你所愿",
+	},
 	storageStartup: {
 		preparing: "正在准备…",
 		chooseTitle: "如何开始使用 Percho？",

@@ -98,3 +98,17 @@
 		font-size: calc(19px * var(--fs-ui-scale, 1));
 	}
 }
+
+/* 注册为 Tailwind utility，让空态的响应式字号前缀也能生成。 */
+@utility text-ui-28 {
+	font-size: calc(28px * var(--fs-ui-scale, 1));
+}
+@utility text-ui-32 {
+	font-size: calc(32px * var(--fs-ui-scale, 1));
+}
+@utility text-ui-36 {
+	font-size: calc(36px * var(--fs-ui-scale, 1));
+}
+@utility text-ui-40 {
+	font-size: calc(40px * var(--fs-ui-scale, 1));
+}

@@ -3,6 +3,9 @@ import type { Messages } from "./zh";
 
 /** English language pack (mirrors zh.ts shape) */
 export const en: Messages = {
+	emptyState: {
+		slogan: "Bring your ideas to life, your way.",
+	},
 	storageStartup: {
 		preparing: "Preparing…",
 		chooseTitle: "How would you like to start?",

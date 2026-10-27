@@ -389,9 +389,9 @@ export function Composer({ centered = false }: { centered?: boolean }) {
 	};
 
 	return (
-		<div ref={boxRef} className={centered ? "w-full max-w-[760px]" : "shrink-0 px-6 pb-3"}>
+		<div ref={boxRef} className={centered ? "w-full max-w-[800px]" : "shrink-0 px-6 pb-3"}>
 			{/* relative：ImageTray 悬浮层（absolute bottom-full）的定位锚，浮在错误条/菜单/输入框整列之上 */}
-			<div className="relative mx-auto max-w-[760px]">
+			<div className={centered ? "relative mx-auto max-w-[800px]" : "relative mx-auto max-w-[760px]"}>
 				{failedDraft && (
 					<button
 						type="button"
