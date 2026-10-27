@@ -11,7 +11,6 @@ import type { SessionHydrationGate } from "../src/session/hydration-gate";
 import type { EventRateTracker } from "../src/session/rates";
 import { type RegisteredSession, releaseEntryResources, SessionRegistry } from "../src/session/registry";
 import type { StreamGuard } from "../src/session/stream-guard";
-import type { GuardTriggerMarkers } from "../src/tools/compaction-guard/trigger-marker";
 
 const channelFactory = vi.hoisted(() => ({
 	options: undefined as
@@ -36,7 +35,6 @@ interface Internals {
 	historyGate: SessionHydrationGate;
 	channelSubs: ChannelSubscriptionRegistry;
 	streamGuard: StreamGuard;
-	guardTriggerMarkers: GuardTriggerMarkers;
 	eventRates: EventRateTracker;
 	channelWatchCleanups: WeakMap<RegisteredSession["modeRef"], () => void>;
 	traces: { stop(id: string): Promise<void>; disposeAll(): void };
@@ -104,7 +102,6 @@ function setup(id: string, shutdown: () => Promise<void> = async () => {}) {
 	if (!producer) throw Error("watcher producer callbacks not captured");
 	internal.channelSubs.noteSessionOpened(id);
 	internal.channelSubs.report(id, new Set(["topic"]));
-	internal.guardTriggerMarkers.mark(id);
 	internal.eventRates.tick(id);
 	const watcher = vi.fn(() => {
 		order.push("watcher");
@@ -158,9 +155,6 @@ function assertAuxiliaryReleased(fixture: ReturnType<typeof setup>, id: string) 
 	expect(internal.channelWatchCleanups.has(entry.modeRef)).toBe(false);
 	expect(internal.eventRates.snapshot().has(id)).toBe(false);
 	expect(internal.channelSubs.snapshot(id)).toMatchObject({ live: false, topics: [] });
-	expect(
-		internal.guardTriggerMarkers.rewrite(id, { type: "compaction_start", reason: "manual" }).reason,
-	).toBe("manual");
 	expect(
 		internal.streamGuard.inspect(id, {
 			type: "message_update",
@@ -351,14 +345,9 @@ describe("registered session lifetime uses real pending resources and auxiliary 
 		async (path) => {
 			const fixture = setup(`aux-${path}`),
 				{ internal } = fixture;
-			const marker = internal.guardTriggerMarkers.clear.bind(internal.guardTriggerMarkers);
 			const channel = internal.channelSubs.dispose.bind(internal.channelSubs);
 			const stream = internal.streamGuard.cleanup.bind(internal.streamGuard);
 			const rate = internal.eventRates.delete.bind(internal.eventRates);
-			const markerSpy = vi.spyOn(internal.guardTriggerMarkers, "clear").mockImplementation((id) => {
-				marker(id);
-				throw Error("marker fault");
-			});
 			fixture.historyCancel.mockImplementation((id) => {
 				fixture.native.history(id);
 				throw Error("history fault");
@@ -380,17 +369,9 @@ describe("registered session lifetime uses real pending resources and auxiliary 
 					? vi.spyOn(internal.traces, "stop").mockRejectedValue(Error("trace fault"))
 					: vi.spyOn(internal.traces, "disposeAll");
 			if (path === "normal")
-				await expect(fixture.backend.closeSession(`aux-${path}`)).rejects.toThrow("marker fault");
+				await expect(fixture.backend.closeSession(`aux-${path}`)).rejects.toThrow("history fault");
 			else expect(fixture.backend.dispose()).toBeUndefined();
-			for (const spy of [
-				markerSpy,
-				fixture.historyCancel,
-				channelSpy,
-				streamSpy,
-				rateSpy,
-				trace,
-				fixture.watcher,
-			])
+			for (const spy of [fixture.historyCancel, channelSpy, streamSpy, rateSpy, trace, fixture.watcher])
 				expect(spy).toHaveBeenCalledOnce();
 			expect(internal.registry.has(`aux-${path}`)).toBe(false);
 			expect(await fixture.permission).toBe(false);
@@ -775,6 +756,7 @@ it("stopping also cancels a dialog opened while a session is still being constru
 		dispose = vi.fn();
 	const session = {
 		sessionId: "constructing",
+		setCompactionPolicy: vi.fn(),
 		bindExtensions: async ({ uiContext }: { uiContext: { input: (title: string) => Promise<unknown> } }) => {
 			entered();
 			await uiContext.input("Startup input");

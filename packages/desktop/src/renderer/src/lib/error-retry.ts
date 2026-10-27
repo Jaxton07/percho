@@ -8,6 +8,7 @@ export function canRetryError(entry: SessionTranscriptState | undefined, cardId:
 		entry.phase !== "idle" ||
 		entry.streaming ||
 		entry.compacting ||
+		entry.compactionPause ||
 		entry.retrying ||
 		entry.followUpQueue.length > 0
 	)

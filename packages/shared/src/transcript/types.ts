@@ -1,6 +1,6 @@
 import type { ComposerDocument } from "../composer-document";
 import type { UiError } from "../errors";
-import type { ImageInput } from "../session";
+import type { CompactionPause, ImageInput } from "../session";
 import type { SkillInvocationDisplay } from "../skill-invocation";
 import type { TodoItem } from "../todo";
 
@@ -167,6 +167,9 @@ export interface StreamingState {
 export type SessionPhase = "idle" | "streaming" | "awaiting_permission";
 
 export interface SessionTranscriptState {
+	/** 存活会话的压缩暂停原因；不是持久历史，也不等同于模型回答失败。 */
+	compactionPause?: CompactionPause | null;
+	summarizationRetry?: RetryInfo | null;
 	messages: UIMessage[];
 	streaming: StreamingState | null;
 	phase: SessionPhase;
@@ -193,6 +196,8 @@ export interface SessionTranscriptState {
 
 export function emptyTranscript(): SessionTranscriptState {
 	return {
+		compactionPause: null,
+		summarizationRetry: null,
 		messages: [],
 		streaming: null,
 		phase: "idle",

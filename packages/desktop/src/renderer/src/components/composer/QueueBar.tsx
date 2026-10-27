@@ -1,13 +1,15 @@
 import { useT } from "../../i18n";
 import { UndoIcon } from "../icons";
 
-/** 排队消息条：显示首条排队文本，hover 出现「取回」按钮（点掉后内容放回输入框继续编辑） */
-export function QueueBar({ text, onRestore }: { text: string; onRestore: () => void }) {
+/** 排队消息条：按受理顺序展示，取回时仍一次恢复完整队列。 */
+export function QueueBar({ texts, onRestore }: { texts: readonly string[]; onRestore: () => void }) {
 	const t = useT();
 	return (
 		<div className="group/queue relative mb-1.5 flex items-center gap-2 overflow-hidden rounded-xl bg-surface px-3 py-1.5 shadow-soft">
 			<span className="shrink-0 text-ui-12 text-ink-faint">{t("composer.queueTitle")}</span>
-			<span className="min-w-0 flex-1 truncate text-ui-13 text-ink-2">{text}</span>
+			<div className="min-w-0 max-h-24 flex-1 overflow-y-auto whitespace-pre-line break-words text-ui-13 text-ink-2 thin-scrollbar">
+				{texts.join("\n")}
+			</div>
 			{/* 撤销层：hover 行才显示；渐变模糊压住下方文字，仅镂空图标可点（防误点） */}
 			<div className="pointer-events-none absolute inset-y-0 right-0 flex w-14 items-center justify-end pr-2.5 opacity-0 transition-opacity group-hover/queue:opacity-100">
 				<span

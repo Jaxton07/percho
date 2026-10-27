@@ -427,10 +427,7 @@ export function Composer({ centered = false }: { centered?: boolean }) {
 					/>
 				)}
 				{followUpQueue.length > 0 && (
-					<QueueBar
-						text={followUpQueue[0] ?? ""}
-						onRestore={() => void send.handleRestoreQueue(focusEditor)}
-					/>
+					<QueueBar texts={followUpQueue} onRestore={() => void send.handleRestoreQueue(focusEditor)} />
 				)}
 				{/* 扩展 setEditorText 预填提示（画板⑩）：一次性来源标注，首次键入即清除 */}
 				{extensionPrefillSource && (

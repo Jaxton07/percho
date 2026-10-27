@@ -237,6 +237,10 @@ export const REDUCED_EVENT_TYPES = [
 	"queue_update",
 	"compaction_start",
 	"compaction_end",
+	"compaction_pause",
+	"summarization_retry_scheduled",
+	"summarization_retry_attempt_start",
+	"summarization_retry_finished",
 	"subagent_mutex",
 	"auto_retry_start",
 	"auto_retry_end",
@@ -595,6 +599,33 @@ export function reduceEvent(state: SessionTranscriptState, event: SessionEvent):
 		case "queue_update":
 			// SDK 整组下发（steering 桌面端不用）；投递/清空都由 SDK 侧触发后推新数组
 			return { ...state, followUpQueue: [...event.followUp] };
+		case "compaction_pause":
+			return event.pause
+				? {
+						...state,
+						compactionPause: event.pause,
+						compacting: false,
+						phase: "idle",
+						agentActive: false,
+						retrying: null,
+						summarizationRetry: null,
+					}
+				: { ...state, compactionPause: null };
+		case "summarization_retry_scheduled":
+			return {
+				...state,
+				summarizationRetry: {
+					attempt: event.attempt,
+					maxAttempts: event.maxAttempts,
+					delayMs: event.delayMs,
+				},
+			};
+		case "summarization_retry_attempt_start":
+			return state.summarizationRetry
+				? { ...state, summarizationRetry: { ...state.summarizationRetry, delayMs: 0 } }
+				: state;
+		case "summarization_retry_finished":
+			return { ...state, summarizationRetry: null };
 		case "compaction_start": {
 			const pending: UIMessage = {
 				kind: "system",
@@ -606,6 +637,7 @@ export function reduceEvent(state: SessionTranscriptState, event: SessionEvent):
 			return { ...state, compacting: true, messages: [...state.messages, pending] };
 		}
 		case "compaction_end": {
+			state = { ...state, summarizationRetry: null };
 			// SDK errorMessage 自带 "Compaction failed: " 前缀，与 i18n 的「压缩失败：」重复，剥掉
 			const errorMessage = event.errorMessage?.replace(/^Compaction failed:\s*/i, "");
 			const info: CompactionUiState = event.aborted

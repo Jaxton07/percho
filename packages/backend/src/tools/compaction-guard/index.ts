@@ -5,9 +5,9 @@
  * - types / estimate / guard / bound：**纯函数核心**，零 SDK / 零仓库 import —— 单测不用 mock SDK，
  *   离线重放脚本（scripts/replay-compaction-bound.mts）import 同一份实现做同构验证（单一事实源）
  * - config：`settings.json` 的 `compactionGuard` 段（内部调参面，不进设置页）
- * - extension：InlineExtension 接线（agent_settled 触发 / session_before_compact 有界化 / 收尾观测）
+ * - request-policy：SDK 可选请求策略；extension：摘要输入有界化与收尾观测
  *
- * 行为规则唯一权威：.local/agent-work/spec/compaction-bounded.md（spec D1–D8 + §6 A1–A9）。
+ * 生命周期约束见 docs/sdk.md，具体边界由真实 SDK 回归覆盖。
  */
 
 export { type BoundOptions, boundMessages, capActive } from "./bound";

@@ -249,6 +249,8 @@ export const useTranscriptStore = create<TranscriptStore>((set) => ({
 						agentActive: false,
 						unseenCompletion: false,
 						compacting: false,
+						compactionPause: current?.compactionPause ?? null,
+						summarizationRetry: null,
 						followUpQueue: current?.followUpQueue ?? [],
 						// loadHistory 只换消息流（backend 回放会话树完整分支），todo 列表保留
 						todos: current?.todos ?? [],

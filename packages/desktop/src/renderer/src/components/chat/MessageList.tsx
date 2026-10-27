@@ -17,6 +17,7 @@ import { useSessionsStore } from "../../stores/sessions";
 import { selectTranscript, useTranscriptStore } from "../../stores/transcript";
 import { useUiPreferencesStore } from "../../stores/ui-preferences";
 import { CenterOrb } from "./CenterOrb";
+import { CompactionPauseNote } from "./CompactionPauseNote";
 import { HistoryImageRootProvider } from "./history-image/history-image-root";
 import { thumbnailService } from "./history-image/history-image-service";
 import { MessageItem } from "./MessageItem";
@@ -343,6 +344,8 @@ export function MessageList() {
 					<HistoryImageRootProvider root={historyImageRoot}>
 						{items}
 						{transcript.retrying && <RetryNote info={transcript.retrying} />}
+						{transcript.summarizationRetry && <RetryNote info={transcript.summarizationRetry} summary />}
+						{transcript.compactionPause && <CompactionPauseNote pause={transcript.compactionPause} />}
 					</HistoryImageRootProvider>
 				</div>
 			</div>

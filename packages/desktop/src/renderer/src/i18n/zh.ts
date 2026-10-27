@@ -321,6 +321,15 @@ export const zh = {
 		max: "最大",
 	},
 	compaction: {
+		retrying: "摘要请求重试中 · 第 {attempt}/{maxAttempts} 次 · 等待 {delay}s",
+		retryAttempt: "正在重试摘要 · 第 {attempt}/{maxAttempts} 次",
+		paused: {
+			failed: "任务已暂停：上下文压缩失败。",
+			overThreshold: "任务已暂停：压缩后上下文仍超过触发线。",
+			noHistory: "任务已暂停：上下文已超过触发线，但没有可压缩的历史。",
+			contextChanged: "任务已暂停：请求准备期间模型或会话上下文发生变化。",
+			resumeHint: "恢复网络或调整模型、待发送内容后，发送新消息继续。排队消息仍保留。",
+		},
 		running: "正在压缩上下文",
 		done: "已压缩上下文",
 		cancelled: "已取消压缩",

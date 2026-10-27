@@ -12,6 +12,7 @@ const piMock = vi.hoisted(() => ({
 	closeSession: vi.fn(() => Promise.resolve({ closed: true })),
 	getSessionMessages: vi.fn(() => Promise.resolve([])),
 	markSessionHistoryReady: vi.fn(() => Promise.resolve()),
+	getLoadedSessions: vi.fn(async () => []),
 	getFollowUpMessages: vi.fn(() => Promise.resolve([])),
 	getTodos: vi.fn(() => Promise.resolve([])),
 	getPermissionMode: vi.fn(() => Promise.resolve("default" as const)),
