@@ -61,10 +61,12 @@ try {
 	await run("npm", ["ci", "--ignore-scripts", "--no-audit", "--no-fund"]);
 	const patches = join(work, "patches");
 	await mkdir(patches);
-	await copyFile(
-		join(repo, "patches/@earendil-works+pi-coding-agent+1.4.0.patch"),
-		join(patches, "@earendil-works+pi-coding-agent+1.4.0.patch"),
-	);
+	for (const name of [
+		"@earendil-works+pi-agent-core+1.4.0.patch",
+		"@earendil-works+pi-coding-agent+1.4.0.patch",
+	]) {
+		await copyFile(join(repo, "patches", name), join(patches, name));
+	}
 	await run(process.execPath, [
 		join(stage, "node_modules/patch-package/index.js"),
 		"--patch-dir",
