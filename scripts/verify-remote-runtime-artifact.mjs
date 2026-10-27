@@ -2,8 +2,6 @@
 import assert from "node:assert/strict";
 import { execFile } from "node:child_process";
 import { access, mkdir, readFile } from "node:fs/promises";
-import { createRequire } from "node:module";
-import { pathToFileURL } from "node:url";
 import { promisify } from "node:util";
 
 const entry = process.env.PERCHO_RUNTIME_TEST_ENTRY;
@@ -14,11 +12,8 @@ for (const path of ["/work/packages", "/source/packages", "/work/node_modules", 
 	await assert.rejects(access(path), { code: "ENOENT" });
 }
 // Resolve from the unpacked package so checkout dependencies cannot hide an unpatched SDK.
-const runtimeRequire = createRequire("/runtime/package.json");
-const { Agent } = await import(pathToFileURL(runtimeRequire.resolve("@earendil-works/pi-agent-core")).href);
-const { AgentSession } = await import(
-	pathToFileURL(runtimeRequire.resolve("@earendil-works/pi-coding-agent")).href
-);
+const { Agent } = await import("/runtime/node_modules/@earendil-works/pi-agent-core/dist/index.js");
+const { AgentSession } = await import("/runtime/node_modules/@earendil-works/pi-coding-agent/dist/index.js");
 assert.equal(typeof AgentSession.prototype.setCompactionPolicy, "function", "coding-agent host policy patch");
 assert.equal(
 	typeof AgentSession.prototype.retryLastFailedTurn,
