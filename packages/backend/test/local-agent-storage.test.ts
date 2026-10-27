@@ -90,6 +90,11 @@ describe("private directory selection", () => {
 			"PERCHO_LEGACY_AGENT_ENV",
 		);
 		expect(selectLocalStorage(home, false, {}).target).toBe(join(home, ".percho", "agent-dev"));
+		expect(selectLocalStorage(home, true, {}, true).target).toBe(join(home, ".percho", "agent-beta"));
+		expect(selectLocalStorage(home, true, {}, true).source).toBeNull();
+		expect(selectLocalStorage(home, true, { PERCHO_AGENT_DIR: "~/isolated" }, true).target).toBe(
+			join(home, "isolated"),
+		);
 		expect(selectLocalStorage(home, true, { PERCHO_AGENT_DIR: "~/isolated" }).source).toBeNull();
 		for (const value of ["", " ", "relative"])
 			expect(() => selectLocalStorage(home, true, { PERCHO_AGENT_DIR: value })).toThrow();

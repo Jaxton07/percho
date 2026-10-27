@@ -11,6 +11,7 @@ export function AboutPanel() {
 	const [info, setInfo] = useState<AppInfo | null>(null);
 	const [diagnostics, setDiagnostics] = useState<UpdateDiagnosticsInfo | null>(null);
 	const state = useUpdateStore((s) => s.state);
+	const separateChannel = info?.releaseChannel === "beta" || info?.releaseChannel === "dev";
 
 	useEffect(() => {
 		let cancelled = false;
@@ -78,6 +79,7 @@ export function AboutPanel() {
 			<div className="mt-4 flex items-center gap-2">
 				<button
 					type="button"
+					disabled={separateChannel}
 					className="rounded-lg border border-border px-4 py-1.5 text-ui-13 text-ink-2 transition-colors hover:border-border-strong hover:bg-hover hover:text-ink"
 					onClick={() => {
 						if (state?.phase === "downloaded") void getPi().installUpdate();
@@ -85,7 +87,7 @@ export function AboutPanel() {
 						else void getPi().checkForUpdates();
 					}}
 				>
-					{buttonLabel}
+					{separateChannel ? t("update.separateChannel") : buttonLabel}
 				</button>
 				<button
 					type="button"

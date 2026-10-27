@@ -5,6 +5,7 @@ import { join } from "node:path";
 import { pathToFileURL } from "node:url";
 import { createLogger, initLogging, localSessionPaths, PiBackend } from "@percho/backend";
 import { app, BrowserWindow, Menu, nativeTheme, net, protocol, screen, shell } from "electron";
+import { releaseChannel } from "./app-identity";
 import { backgroundsDir } from "./background";
 import { registerIpc } from "./ipc";
 import { initLanObserver, type LanObserverHandle } from "./lan";
@@ -46,6 +47,7 @@ if (process.platform !== "darwin") Menu.setApplicationMenu(null);
 nativeTheme.on("updated", () => applyChromeTheme(nativeTheme.themeSource));
 
 app.whenReady().then(async () => {
+	if (releaseChannel === "dev") app.dock?.setIcon(join(__dirname, "../../build/icon-dev.png"));
 	const uiState = await loadUiState();
 	nativeTheme.themeSource = uiState?.theme ?? "system";
 	const initialBounds = sanitizeWindowBounds(
@@ -70,11 +72,12 @@ app.whenReady().then(async () => {
 			// MCP OAuth 授权页交给系统浏览器（官方内置 mcp 扩展用；缺省则扩展自行回落到平台默认浏览器）
 			openExternal: (url) => shell.openExternal(url),
 			desktopIntegration: {
-				appendSystemPrompt: process.env.PERCHO_AGENT_DIR
-					? UI_PLUGIN_PROMPT.map((line) =>
-							line.replace("~/.percho/ui-plugins", join(app.getPath("userData"), "ui-plugins")),
-						)
-					: UI_PLUGIN_PROMPT,
+				appendSystemPrompt:
+					process.env.PERCHO_AGENT_DIR || releaseChannel === "beta"
+						? UI_PLUGIN_PROMPT.map((line) =>
+								line.replace("~/.percho/ui-plugins", join(app.getPath("userData"), "ui-plugins")),
+							)
+						: UI_PLUGIN_PROMPT,
 				additionalSkillPaths: [
 					join(uiPluginsResourcesDir(), "skills"),
 					// 内置协作 skill（channel-pickup/design-handoff）：语义上与 UI 插件无关，独立目录分发

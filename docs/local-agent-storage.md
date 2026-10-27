@@ -1,6 +1,8 @@
 # 用户级数据隔离与升级迁移
 
-Percho 正式本机 agent 使用 `~/.percho/agent`，开发/预览使用 `~/.percho/agent-dev`。包含会话/轨迹、账号、模型、MCP、资源、权限和信任；与 Pi CLI 默认 `~/.pi/agent` 分离。Electron userData 和默认日常目录 `~/.percho/daily` 不搬迁。
+Percho 正式本机 agent 使用 `~/.percho/agent`，开发/预览使用 `~/.percho/agent-dev`，内测版使用 `~/.percho/agent-beta`。包含会话/轨迹、账号、模型、MCP、资源、权限和信任；与 Pi CLI 默认 `~/.pi/agent` 分离。正式与已有开发版的 Electron userData 和默认日常目录 `~/.percho/daily` 不搬迁。
+
+独立身份的 `Percho Beta` 使用自己的 Electron userData（macOS 为 `~/Library/Application Support/Percho Beta/`），日常空间为 `<agent-beta>/daily`，UI 插件只使用其 userData，不创建全局插件别名。首次启动不会自动导入正式版或 Pi CLI 数据；旧内测包曾使用正式身份，其数据仍保留在原位置。明确传入 `PERCHO_AGENT_DIR` 或 `--user-data-dir` 时使用指定路径，测试应同时隔离两者。三套应用身份和打包入口见[构建发布](build-release.md)。
 
 ## 首次启动
 

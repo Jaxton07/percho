@@ -1,0 +1,20 @@
+{
+	"stable": {
+		"name": "Percho",
+		"appId": "io.github.jaxton07.percho",
+		"badge": "",
+		"badgeColor": ""
+	},
+	"beta": {
+		"name": "Percho Beta",
+		"appId": "io.github.jaxton07.percho.beta",
+		"badge": "BETA",
+		"badgeColor": "#c47417"
+	},
+	"dev": {
+		"name": "Percho Dev",
+		"appId": "io.github.jaxton07.percho.dev",
+		"badge": "DEV",
+		"badgeColor": "#5271c4"
+	}
+}

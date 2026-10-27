@@ -7,11 +7,10 @@
 在仓库根目录准备 `.local/tmp/<任务>/` 存日志、截图和夹具。启动：
 
 ```bash
-cd packages/desktop
-npx electron-vite dev -- --remote-debugging-port=9224
+node scripts/dev-desktop.mjs --remote-debugging-port=9224
 ```
 
-不要改成 `npm run dev -- --remote-debugging-port=9224`：npm 会吞参数。需要 main inspector 的脚本还要按脚本头加入 `--inspect=9229`。
+该入口会使用带 DEV 角标、独立应用标识的开发外壳。不要改成根目录 `npm run dev -- --remote-debugging-port=9224`：嵌套 npm 会吞参数。需要 main inspector 的脚本还要按脚本头加入 `--inspect=9229`。
 
 1. 启动前检查目标端口，记录本次进程 PID；启动后确认日志出现 DevTools listening、没有端口绑定失败。
 2. CDP 连接后核对 `location.href` 与实际页面，`chrome-error://` 表示连到了错误页，不是业务组件不存在。

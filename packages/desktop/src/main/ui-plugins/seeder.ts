@@ -3,6 +3,7 @@ import { homedir } from "node:os";
 import { join } from "node:path";
 import { createLogger } from "@percho/backend";
 import { app } from "electron";
+import { releaseChannel } from "../app-identity";
 import { copyTree } from "./fs-tree";
 import { NAME_RE } from "./manifest";
 
@@ -84,7 +85,7 @@ export async function seedDocs(): Promise<void> {
 	}
 	// examples 示例插件目录（拷成 _examples 防被 scanAll 当插件扫描）
 	await copyTree(join(uiPluginsResourcesDir(), "examples"), join(root, "_examples"));
-	if (process.env.PERCHO_AGENT_DIR) return; // Explicit isolated launches never create a global alias.
+	if (process.env.PERCHO_AGENT_DIR || releaseChannel === "beta") return;
 	const link = join(homedir(), ".percho", "ui-plugins");
 	try {
 		const existing = await lstat(link).catch(() => null);

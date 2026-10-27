@@ -223,6 +223,7 @@ export const en: Messages = {
 		title: "Sessions",
 	},
 	update: {
+		separateChannel: "Install test build updates manually",
 		checkForUpdates: "Check for updates",
 		checking: "Checking for updates…",
 		available: "Version {version} available, click to download",

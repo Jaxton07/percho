@@ -211,6 +211,7 @@ export const zh = {
 		title: "会话",
 	},
 	update: {
+		separateChannel: "测试版本请手动安装更新",
 		checkForUpdates: "检查更新",
 		checking: "正在检查更新…",
 		available: "发现新版本 {version}，点击下载",

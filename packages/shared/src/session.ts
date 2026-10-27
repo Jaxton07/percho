@@ -411,6 +411,7 @@ export interface GitBranches {
 
 /** 应用信息（设置 → 关于页展示，来自主进程） */
 export interface AppInfo {
+	releaseChannel?: "stable" | "beta" | "dev";
 	/** 应用名 */
 	name: string;
 	/** 应用版本 */

@@ -6,6 +6,7 @@ import { dirname, join } from "node:path";
 import { createLogger } from "@percho/backend";
 import type { UpdateState } from "@percho/shared";
 import { app, autoUpdater as nativeAutoUpdater } from "electron";
+import { supportsUpdates } from "./app-identity";
 import {
 	redactUpdateText,
 	redactUpdateValue,
@@ -61,7 +62,7 @@ export async function buildUpdateDiagnosticReport(): Promise<
 	UpdateDiagnosticReport & { windowsSnapshot?: unknown }
 > {
 	const nsisTrace =
-		process.platform === "win32" && process.env.LOCALAPPDATA
+		supportsUpdates && process.platform === "win32" && process.env.LOCALAPPDATA
 			? join(process.env.LOCALAPPDATA, "Percho", "update-diagnostics", "nsis.log")
 			: undefined;
 	const diagnostic = getDiagnostics();
@@ -135,7 +136,7 @@ function emit(state: UpdateState): void {
 /** 初始化 autoUpdater 事件转发；dev 模式（未打包）无 app-update.yml，直接跳过 */
 export async function initUpdater(): Promise<void> {
 	const diagnostic = getDiagnostics();
-	if (!app.isPackaged) return;
+	if (!supportsUpdates) return;
 	// electron-updater 原本只写 console；专用文件同步写入，避免退出时丢失交接证据。
 	autoUpdater.logger = {
 		info: (...args: unknown[]) => diagnostic.record("sdk-info", ...args),
@@ -214,7 +215,7 @@ export async function initUpdater(): Promise<void> {
  * **绝不下载**——下载只经 downloadUpdate()（用户显式点击）。
  */
 export async function checkForUpdates(): Promise<void> {
-	if (!app.isPackaged) return;
+	if (!supportsUpdates) return;
 	getDiagnostics().record("check-requested");
 	try {
 		await autoUpdater.checkForUpdates();
@@ -230,7 +231,7 @@ export async function checkForUpdates(): Promise<void> {
  * 未发现新版 → 退化为先检查（检查到后用户再点一次下载，语义与按钮状态机一致）。
  */
 export async function downloadUpdate(): Promise<void> {
-	if (!app.isPackaged) return;
+	if (!supportsUpdates) return;
 	const action = nextUpdateAction({ latestVersion, downloaded, manualInstall });
 	getDiagnostics().record("download-action", { action, version: latestVersion });
 	try {
@@ -250,7 +251,7 @@ export async function downloadUpdate(): Promise<void> {
 
 /** 重启并安装（仅用户点击「重启」胶囊时调用；mac 上 Squirrel 退出后 stage，装完自动重启） */
 export function installUpdate(): void {
-	if (!app.isPackaged) return;
+	if (!supportsUpdates) return;
 	if (downloaded && latestVersion) getDiagnostics().beginInstall(latestVersion, "explicit");
 	getDiagnostics().record("install-requested", { downloaded, version: latestVersion });
 	try {
@@ -263,7 +264,7 @@ export function installUpdate(): void {
 
 /** 启动后延迟静默检查一次，之后每 2 小时一次（latest-mac.yml 仅几 KB，请求极轻；只检查不下载） */
 export function scheduleAutoUpdateCheck(): void {
-	if (!app.isPackaged) return;
+	if (!supportsUpdates) return;
 	setTimeout(() => {
 		void checkForUpdates();
 	}, 10_000);

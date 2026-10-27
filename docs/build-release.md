@@ -10,19 +10,22 @@
 
 ## 本地 macOS 内测包
 
-不改版本、不打 tag：
+内测使用独立的 `Percho Beta` 身份与橙色 BETA 角标，不改版本、不打 tag：
 
 ```bash
 cd packages/desktop
-npm run build
-npx electron-builder --mac --arm64
+npm run dist:beta -- --mac dmg --arm64
 ```
 
 **必须先 build。** dev 的 renderer 在内存中，直接打包可能把磁盘 `out/` 的旧 renderer 装进去，即使 main 已经是新代码。
 
-当前 yml 的 mac target 同时列出 arm64/x64，不能仅凭 CLI `--arm64` 推断只会生成一种架构；检查实际产物。产物位于 `packages/desktop/dist/`。
+当前 yml 的 mac target 同时列出 arm64/x64，不能仅凭 CLI `--arm64` 推断只会生成一种架构；检查实际产物。Beta 产物位于 `packages/desktop/dist/beta.noindex/`。正式发布仍用 `npm run dist`，不要把 Beta 包上传为正式安装包。
 
-当前 adhoc 包未公证。安装前先退出正式版；相同 Bundle ID 和正式用户数据不适合并发运行。首次打开可能需要用户右键“打开”或移除 quarantine。冒烟后退出测试包，避免与正式版争用 userData。
+三套名称与应用标识以 `packages/desktop/build/app-channels.json` 为准：正式版 `Percho` 无角标；内测版 `Percho Beta` 带 BETA 角标；开发版 `Percho Dev` 带 DEV 角标。Beta 与开发版不连接正式更新源，后续测试版本手动安装。数据目录和首次启动行为见[用户级数据隔离](local-agent-storage.md)。
+
+更新 `build/icon.svg` 后，运行 `npm run icons -w packages/desktop` 同步生成三套 PNG 与通道 SVG。macOS 的开发入口会缓存一份独立 Bundle ID 的 Electron 外壳，并临时签名，不改 `node_modules` 中的 Electron；正常 `npm run dev` 会自动使用它。生成图标需要能启动 Electron 的桌面环境，已生成的图标随仓库保存，常规 CI 打包无需启动图标生成器。
+
+当前 adhoc 包未公证。首次打开可能需要用户右键“打开”或移除 quarantine。新 Beta 可以与正式版并存；此前名称仍为 `Percho` 的旧内测包使用正式身份，不能继续按并存方式使用。冒烟后退出测试包。
 
 ## 验包看实际产物
 
