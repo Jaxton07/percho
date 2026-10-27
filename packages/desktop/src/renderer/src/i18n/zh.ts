@@ -797,6 +797,7 @@ export const zh = {
 			regionCornerTopRight: "聊天区右上角",
 			regionCornerBottomLeft: "聊天区左下角",
 			regionCornerBottomRight: "聊天区右下角",
+			regionComposerTop: "输入框上方",
 			regionSettingsPanel: "设置面板",
 			assignmentTitle: "槽位指派",
 			assignmentHint: "多个插件声明同一槽位时，选择生效的插件",

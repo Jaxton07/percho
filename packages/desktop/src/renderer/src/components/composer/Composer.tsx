@@ -392,6 +392,8 @@ export function Composer({ centered = false }: { centered?: boolean }) {
 		<div ref={boxRef} className={centered ? "w-full max-w-[760px]" : "shrink-0 px-6 pb-3"}>
 			{/* relative：ImageTray 悬浮层（absolute bottom-full）的定位锚，浮在错误条/菜单/输入框整列之上 */}
 			<div className="relative mx-auto max-w-[760px]">
+				{/* 输入框正上方（插件区域）：常驻的一行信息，如草稿摘要、状态提示 */}
+				<RegionHost region={UI_REGIONS.ComposerTop} />
 				{failedDraft && (
 					<button
 						type="button"

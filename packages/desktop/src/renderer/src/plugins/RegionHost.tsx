@@ -114,6 +114,9 @@ export function RegionHost({
 					{hasContent && list.map(renderContribution)}
 				</div>
 			);
+		case UI_REGIONS.ComposerTop:
+			// 输入框正上方区域：纵向堆叠（每贡献一行，宿主不包定位容器；交互由插件自己负责）
+			return <div className="mb-1.5 flex flex-col gap-1.5">{list.map(renderContribution)}</div>;
 		case UI_REGIONS.ComposerFooter:
 			// 输入框底部行内区域（ContextRing 旁）：横向排列，不抢 pointer-events（插件需交互自己开 auto）
 			return <>{list.map(renderContribution)}</>;

@@ -830,6 +830,7 @@ export const en: Messages = {
 			regionCornerTopRight: "Chat top-right",
 			regionCornerBottomLeft: "Chat bottom-left",
 			regionCornerBottomRight: "Chat bottom-right",
+			regionComposerTop: "Above the composer",
 			regionSettingsPanel: "Settings panel",
 			assignmentTitle: "Slot assignment",
 			assignmentHint: "Multiple plugins declare this slot; pick which one takes effect",

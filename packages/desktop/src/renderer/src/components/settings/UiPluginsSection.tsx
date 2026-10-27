@@ -22,6 +22,7 @@ const REGION_KEYS: Record<string, MessageKey> = {
 	"chat.corner.top-right": "settings.uiPlugins.regionCornerTopRight",
 	"chat.corner.bottom-left": "settings.uiPlugins.regionCornerBottomLeft",
 	"chat.corner.bottom-right": "settings.uiPlugins.regionCornerBottomRight",
+	"composer.top": "settings.uiPlugins.regionComposerTop",
 	"settings.panel": "settings.uiPlugins.regionSettingsPanel",
 };
 
