@@ -22,6 +22,8 @@ export function BrowseSection() {
 	const setCatalogQuery = useCatalogStore((s) => s.setCatalogQuery);
 	const setCatalogType = useCatalogStore((s) => s.setCatalogType);
 	const searchCatalog = useCatalogStore((s) => s.searchCatalog);
+	const refreshConfiguredPackages = useCatalogStore((s) => s.refreshConfiguredPackages);
+	const catalogPage = useCatalogStore((s) => s.catalogPage);
 
 	// name → 已配置条目（「已安装」态 + 卸载入口；只有 npm: 源能对上目录包）
 	const configuredByPackage = useMemo(() => {
@@ -34,10 +36,10 @@ export function BrowseSection() {
 	}, [configuredPackages]);
 
 	// 已配置包列表只需拉一次（安装成功后 store 会自刷）；目录首载（防抖搜索只在输入时触发）
+	// biome-ignore lint/correctness/useExhaustiveDependencies: only initialize on mount; subsequent loads are user actions
 	useEffect(() => {
-		const s = useCatalogStore.getState();
-		if (s.configuredPackages === null) void s.refreshConfiguredPackages();
-		if (s.catalogPage === 0 && !s.catalogLoading) void s.searchCatalog(false);
+		if (configuredPackages === null) void refreshConfiguredPackages();
+		if (catalogPage === 0 && !loading) void searchCatalog(false);
 	}, []);
 
 	const remaining = total - packages.length;

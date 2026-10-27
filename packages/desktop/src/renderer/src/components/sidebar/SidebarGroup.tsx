@@ -1,3 +1,4 @@
+import { environmentEntityRef } from "@percho/shared";
 import { useT } from "../../i18n";
 import type { SidebarGroup as Group } from "../../lib/sidebar-groups";
 import { hasMoreSessions, visibleSessions } from "../../lib/sidebar-visible-count";
@@ -41,6 +42,7 @@ export function SidebarGroup({
 	onRemove?: () => void;
 }) {
 	const t = useT();
+	const environment = environmentEntityRef(group.cwd).environment;
 	const openSession = useProjectsStore((s) => s.openSession);
 	const activateNewSessionDraftForCwd = useSessionsStore((s) => s.activateNewSessionDraftForCwd);
 	const sessionMenu = useSessionMenu();
@@ -54,6 +56,7 @@ export function SidebarGroup({
 		<div data-sidebar-group-key={group.key}>
 			<ProjectRow
 				label={group.label ?? t("sidebar.daily")}
+				environment={environment}
 				kind={group.kind}
 				expanded={expanded}
 				pinned={pinned}

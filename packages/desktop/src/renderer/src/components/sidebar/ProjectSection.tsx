@@ -1,7 +1,8 @@
+import { useState } from "react";
 import { useT } from "../../i18n";
 import type { SidebarProjectEntry } from "../../lib/sidebar-groups";
-import { useProjectsStore } from "../../stores/projects";
 import { PlusIcon } from "../icons";
+import { AddProjectDialog } from "./AddProjectDialog";
 import { SidebarGroup } from "./SidebarGroup";
 import type { SidebarBatching } from "./useSidebarBatching";
 
@@ -24,16 +25,17 @@ export function ProjectSection({
 	onRemoveProject: (cwd: string) => void;
 }) {
 	const t = useT();
-	const addProject = useProjectsStore((s) => s.addProject);
+	const [adding, setAdding] = useState(false);
 	return (
 		<div>
+			{adding && <AddProjectDialog onClose={() => setAdding(false)} />}
 			<div className="group/sect mt-2 flex h-8 items-center gap-[5px] rounded-[7px] px-[6px] text-ui-15 font-medium text-ink-dim">
 				<span className="min-w-0 flex-1 truncate">{t("sidebar.projectsSection")}</span>
 				<button
 					type="button"
 					aria-label={t("sidebar.addProject")}
 					className="flex h-5 w-5 shrink-0 items-center justify-center rounded-md text-ink-dim transition-colors hover:bg-hover hover:text-ink"
-					onClick={() => void addProject()}
+					onClick={() => setAdding(true)}
 				>
 					<PlusIcon size={15} />
 				</button>

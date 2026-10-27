@@ -6,7 +6,7 @@
  * 而比对要求截图内容可复现。若依赖 dev agent dir 里已有的历史会话，两次跑之间用户一旦聊过天，
  * 截图内容就漂了（比对出的差异与字号无关）。所以本脚本自带三个**固定内容**的样本会话
  * （markdown / 代码块 / 工具卡与 diff）、以及一份固定的 ui-state.json，全部只写隔离目录
- * （`~/.pi/agent-dev/` + dev userData），正式 `~/.pi/agent` 与正式 userData 零写入。
+ * （`~/.percho/agent-dev/` + dev userData），正式 `~/.pi/agent` 与正式 userData 零写入。
  *
  * **用法**（需要 dev 的脚本：`cd packages/desktop && npx electron-vite dev -- --remote-debugging-port=9224`，
  * 注意 `npm run dev -- --xxx` 会被 npm 吞掉参数）：
@@ -50,7 +50,7 @@ import { deflateSync, inflateSync } from "node:zlib";
 
 const REPO = resolve(import.meta.dirname, "..");
 const RENDERER_SRC = join(REPO, "packages/desktop/src/renderer/src");
-const DEV_AGENT_DIR = join(homedir(), ".pi/agent-dev");
+const DEV_AGENT_DIR = process.env.PERCHO_AGENT_DIR ?? join(homedir(), ".percho/agent-dev");
 const DEV_USER_DATA = join(homedir(), "Library/Application Support/@percho/desktop-dev");
 const TMP_DIR = join(REPO, ".local/tmp/font-size");
 const FIXTURE_MANIFEST = join(TMP_DIR, "fixture-manifest.json");

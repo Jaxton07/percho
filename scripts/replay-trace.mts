@@ -11,7 +11,7 @@ import { emptyTranscript, reduceEvent } from "../packages/shared/src/transcript/
 
 /** 递归找最新 trace 文件 */
 async function findLatestTrace(): Promise<string | null> {
-	const sessionsRoot = join(homedir(), ".pi", "agent", "sessions");
+	const sessionsRoot = join(homedir(), ".percho", "agent", "sessions");
 	let latest: { path: string; mtime: number } | null = null;
 	try {
 		const projectDirs = await readdir(sessionsRoot);

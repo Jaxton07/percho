@@ -27,6 +27,13 @@ describe("buildSendUiError — 发送路径失败信封", () => {
 		expect(err.detail).toBe("No active session");
 	});
 
+	it("远端结果未知时提供核查提示，不提供重试动作", () => {
+		const err = buildSendUiError("[PERCHO_REMOTE_OUTCOME_UNKNOWN] Remote operation outcome may be unknown");
+		expect(err.titleKey).toBe("remote.unknownTitle");
+		expect(err.hintKey).toBe("remote.unknownHint");
+		expect(err.actions).toEqual(["copyDetail"]);
+	});
+
 	it("网络类 → llmNetwork", () => {
 		const err = buildSendUiError("fetch failed: ECONNREFUSED");
 		expect(err.titleKey).toBe("error.title.llmNetwork");

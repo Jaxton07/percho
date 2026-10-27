@@ -7,6 +7,7 @@
 - `pi-backend.ts` 是门面，`project/builtin-extensions.ts` 负责官方内置扩展接入；`Model` / `ThinkingLevel` 类型从 `@earendil-works/pi-ai` 导入。
 - 扩展 UI 用 `session.bindExtensions` 注入，目前主会话绑定 `mode:"rpc"`，不依赖权限门开关。实际可用能力见 [扩展 UI](extension-ui.md)，不能宣称完整 TUI 兼容。
 - **`AgentSession.dispose()` 不发送 `session_shutdown`**。官方 MCP 扩展依赖该事件关连接，单独 dispose 会遗留 stdio 子进程。复用 `session/shutdown.ts` 的公开 API 桥接，先 shutdown 再 dispose。
+- 远端明确停服务先设置不可逆停止标记，取消构造中与已注册会话的等待交互、停止频道唤醒、清空队列并 abort；等待在途构造/请求和公开 `session_shutdown` 完成后再 dispose。清理失败或超时不宣称停止，专用服务的所有者文件描述符一直保留到进程真正退出，避免旧定时器在锁释放后运行。本机退出保留同步兜底。
 - 普通关闭需等待清理并保留首错；退出钩子不等异步完成，必须有同步兜底；注册冲突只能拆掉新构造实例，不碰旧 holder。修改时核对 `session/registry.ts` 与现有 shutdown/dispose 回归，不依赖 app 最后退出替每个会话收尾。
 - `before_agent_start` 按 `messageType` 区分用户与自定义起始消息，后者没有 `prompt`。启动处理期间会话已经 busy；取消可在实际请求开始前发生，传输层仍可能收到已取消的 signal，不能把进入传输回调当作已发出网络请求。
 - `agent_settled.aborted` 表示取消；`agent_end` 之后仍可能自动重试、压缩或续跑。子代理完成和忙碌释放继续以最终 settled 为边界。
@@ -49,3 +50,9 @@
    当前补丁将起始消息准备与共享运行主体分开，手动重试不重新触发启动扩展；失败原文保留在会话树中，通过持久化上下文省略退出后续模型请求。选择记录、接受回调或省略失败也必须释放忙碌状态。
 5. 跑 `smoke-sdk.mts`（升级后按实际版本更新口径）、全量 typecheck/test，以及相关专项冒烟；含真实网络/凭证的脚本先读文件头，不自动拿用户凭证执行。
 6. 构建并核对随包 SDK 资源、preload 与原生依赖，见 [构建发布](build-release.md)。
+
+## 远端认证维护
+
+远端 API key 与自定义服务商经已绑定设置入口写入 Percho 私有 agent 目录。桌面不传递本机凭据，也不承接远端交互登录的浏览器回调；服务端执行入口同样提前拒绝，不能只靠禁用按钮。模型列表的普通读取仍不联网，显式刷新与配置生效沿用现有 SettingsService 规则。
+
+设置 → 模型中的远端维护说明给出原服务器与原运行包的两步命令。先通过“远端连接”明确停止服务并确认退出，在外部终端进入该服务器，再运行该版本 `entry.mjs auth`，使用 SDK 自带的 `/login` 或 `/mcp login`；完成后退出维护并回桌面连接、刷新模型。维护从 Percho 私有目录启动同版 SDK CLI，设置独立 agent 目录，不写现有 `~/.pi/agent`；不提供本机账号复制或授权转交。维护与 daemon 使用同一个所有者锁，文件描述符也传给维护子进程，维护宿主意外退出不会提前释放仍运行子进程的锁。已有其他维护/daemon 时拒绝启动，不抢占。

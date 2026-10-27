@@ -79,7 +79,7 @@ const EXTENSION_THEME = new Theme(
  *
  * 背景：uiContext 是会话级共享单例（SDK runner.createContext 直接返回同一对象，调用点
  * 不携带 extensionPath），fire-and-forget 调用无法精确归因。stack 启发式：跳过宿主
- * （@earendil-works 系）与加载器（jiti/tsx）帧后，找 ~/.pi/agent/extensions/<name>.* 或
+ * （@earendil-works 系）与加载器（jiti/tsx）帧后，找 ~/.percho/agent/extensions/<name>.* 或
  * npm 包 node_modules/<name>/ 的路径帧。纯函数，可单测。
  */
 export function extensionNameFromStack(stack: string): string {

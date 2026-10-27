@@ -1,5 +1,6 @@
 import { type RefObject, useEffect, useState } from "react";
-import { getPi } from "../../api";
+import { getExecutionApi } from "../../environment-api";
+import { displayPath } from "../../lib/path-display";
 import { type AtToken, extractAtToken, filterFiles } from "./at-files";
 import type { ComposerEditorHandle } from "./ComposerEditor";
 
@@ -49,7 +50,7 @@ export function useAtCompletion(options: UseAtCompletionOptions) {
 	useEffect(() => {
 		if (!atToken || !cwd || atFilesCwd === cwd) return;
 		let cancelled = false;
-		void getPi()
+		void getExecutionApi(cwd)
 			.listProjectFiles({ cwd })
 			.then((list) => {
 				if (cancelled) return;
@@ -79,7 +80,7 @@ export function useAtCompletion(options: UseAtCompletionOptions) {
 		const isDir = path.endsWith("/");
 		if (!cwd || atFilesCwd !== cwd || !atFiltered.includes(path)) return;
 		if (!isDir) {
-			const absolute = `${cwd.replace(/[\\/]$/, "")}/${path}`;
+			const absolute = `${displayPath(cwd).replace(/[\\/]$/, "")}/${path}`;
 			options.editorRef.current?.insertReference(atToken.start, atToken.end, {
 				type: "file",
 				path: absolute,

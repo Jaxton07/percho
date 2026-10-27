@@ -75,14 +75,14 @@ describe("V03 panel effect callback ownership", () => {
 	it("providers effect is mount-scoped, independent of sub-tab state, and refreshes only network catalog", () => {
 		ProvidersPanel();
 		expect(harness.effects).toHaveLength(1);
-		expect(harness.effects[0]?.deps).toEqual([]);
+		expect(harness.effects[0]?.deps).toEqual([harness.state.refreshProvidersFromNetwork]);
 		harness.effects[0]?.callback();
 		expect(harness.state.refreshProvidersFromNetwork).toHaveBeenCalledTimes(1);
 		expect(harness.state.refreshLanStatus).not.toHaveBeenCalled();
 		harness.effects = [];
 		harness.tab = "subagents";
 		ProvidersPanel();
-		expect(harness.effects[0]?.deps).toEqual([]); // React keeps the same [] effect on sub-tab rerender.
+		expect(harness.effects[0]?.deps).toEqual([harness.state.refreshProvidersFromNetwork]); // The captured action stays stable on sub-tab rerender.
 	});
 	it("permission picker bootstraps the gate independently of opening settings", () => {
 		PermissionPicker();

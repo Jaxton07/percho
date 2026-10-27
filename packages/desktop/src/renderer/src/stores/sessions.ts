@@ -1,13 +1,21 @@
 import {
 	type AvailableModel,
 	composerDocumentFromText,
+	type EnvironmentRef,
+	emptyTranscript,
+	environmentEntityRef,
+	environmentKey,
+	LOCAL_ENVIRONMENT,
 	type PermissionMode,
 	type SessionCloseIntent,
 	type SessionMeta,
+	sameEnvironment,
 } from "@percho/shared";
 import { create } from "zustand";
 import { getPi } from "../api";
 import { releaseComposerEditor } from "../components/composer/editor-host";
+import { getExecutionApi } from "../environment-api";
+import { isEnvironmentRegistered } from "../environment-registry";
 import { selectActiveCwd } from "../lib/active-cwd";
 import { errText } from "../lib/error-text";
 import { clampThinkingLevel } from "../lib/thinking";
@@ -16,9 +24,19 @@ import {
 	appendDraftInput,
 	COMPOSER_FOCUS_EVENT,
 	EMPTY_DRAFT,
-	NEW_SESSION_DRAFT_KEY,
+	newSessionDraftKey,
 	useDraftStore,
 } from "./drafts";
+import { invalidateInteractions, synchronizeInteractions } from "./interactions";
+import {
+	beginSessionBaseline,
+	finishSessionBaseline,
+	forgetSessionBoundary,
+	isEnvironmentSynchronizing,
+	pauseEnvironmentEvents,
+	pendingSessionBaselineToken,
+	resumeEnvironmentEvents,
+} from "./session-event-boundary";
 import {
 	finishSessionHistory,
 	hasPendingSessionHistory,
@@ -52,6 +70,8 @@ import { useUiPreferencesStore } from "./ui-preferences";
  * 用这份快照建真实会话（快照优先于全局「最近使用」值）。
  */
 export interface NewSessionDraftConfig {
+	/** Captured execution owner; optional only for legacy local fixtures during migration. */
+	environment?: EnvironmentRef;
 	/** 目标项目目录；null = 还没选（可进入新会话页，但发不出去） */
 	cwd: string | null;
 	/** 起步模型；null = 还没定（等模型列表加载或用户选择补上） */
@@ -71,14 +91,17 @@ export interface NewSessionDraftConfig {
 }
 
 let draftGenerationSeq = 0;
+const modelLoads = new Map<string, number>();
 
 /**
  * 造一份 draft 配置。**有真实会话来源的字段才算「已定」**，没来源的一律留给 `loadModels`
  * 用持久化偏好回填（冷启动时 lastUsedThinkingLevel 还只是占位 `medium`，不能当成用户选择）。
  */
 function makeDraft(
-	state: Pick<SessionsStore, "cwd" | "lastUsedModel" | "lastUsedThinkingLevel">,
+	state: Pick<SessionsStore, "cwd" | "lastUsedModel" | "lastUsedThinkingLevel"> &
+		Partial<Pick<SessionsStore, "activeSessionId" | "newSessionDraft">>,
 	source: {
+		environment?: EnvironmentRef;
 		cwd?: string | null;
 		model?: { provider: string; modelId: string } | null;
 		thinkingLevel?: string | null;
@@ -87,6 +110,11 @@ function makeDraft(
 	const model = source.model ?? null;
 	draftGenerationSeq += 1;
 	return {
+		environment:
+			source.environment ??
+			(state.activeSessionId
+				? environmentEntityRef(state.activeSessionId).environment
+				: (state.newSessionDraft?.environment ?? LOCAL_ENVIRONMENT)),
 		cwd: source.cwd ?? state.cwd,
 		model,
 		// 未定时先用「最近使用」占位（UI 立刻有值），但标成未定，等 loadModels 用持久化偏好回填
@@ -190,18 +218,22 @@ async function optimisticSessionSetting(
 		>,
 	) =>
 		commitSessionState((state) => ({
-			...g,
+			...(state.activeSessionId === activeSessionId ? g : {}),
 			sessions: state.sessions.map((x) => (x.sessionId === activeSessionId ? { ...x, ...patch } : x)),
 			// draft 页没有会话条目可写：选择落在 draft 配置上（promotion 时随快照生效）
-			newSessionDraft: state.newSessionDraft ? { ...state.newSessionDraft, ...draft } : null,
+			newSessionDraft:
+				state.newSessionDraft && state.newSessionDraft.generation === s.newSessionDraft?.generation
+					? { ...state.newSessionDraft, ...draft }
+					: state.newSessionDraft,
 		}));
 	apply(global, sessionPatch, onDraftPage ? draftPatch : {});
-	getPi()
-		.saveUiState({ state: uiState })
-		.catch((error) => {
-			console.error("ui-state 持久化失败", error);
-			pushToast("warning", "toast.uiStateSaveFailed", errText(error));
-		});
+	(currentEnvironment(s).kind === "local"
+		? getPi().saveUiState({ state: uiState })
+		: Promise.resolve()
+	).catch((error) => {
+		console.error("ui-state 持久化失败", error);
+		pushToast("warning", "toast.uiStateSaveFailed", errText(error));
+	});
 	// 新会话页（activeSessionId === null）没有后端会话：选择只写 draft 配置 + 跟随值，不调 SDK
 	if (onDraftPage) return;
 	try {
@@ -216,9 +248,10 @@ async function optimisticSessionSetting(
 			// 不在 draft 页就没写过 draft，回滚也不能碰它（后台 draft 可能活着）
 			{},
 		);
-		getPi()
-			.saveUiState({ state: previousGlobal })
-			.catch((e) => console.error("ui-state 回滚持久化失败", e));
+		(currentEnvironment(s).kind === "local"
+			? getPi().saveUiState({ state: previousGlobal })
+			: Promise.resolve()
+		).catch((e) => console.error("ui-state 回滚持久化失败", e));
 		console.error(`${label}失败`, error);
 		pushToast("warning", toastKey, errText(error));
 	}
@@ -231,13 +264,14 @@ async function optimisticSessionSetting(
  * 即「用户当前真的在用哪个项目」（选择器选过即表态，见 REVIEW 阶段 1 补丁）。
  */
 function rememberCwd(cwd: string | null): void {
-	if (!cwd) return;
+	if (!cwd || currentEnvironment(useSessionsStore.getState()).kind !== "local") return;
 	useUiPreferencesStore.getState().setLastCwd(cwd);
 }
 
 /** 信任前置：未决项目弹窗（结果落 trust.json），draft 拉斜杠命令/promotion 建会话直接命中缓存 */
-function ensureTrust(cwd: string): void {
-	void getPi()
+function ensureTrust(cwd: string, environment: EnvironmentRef = environmentEntityRef(cwd).environment): void {
+	if (environment.kind === "ssh" && !isEnvironmentRegistered(environment)) return;
+	void getExecutionApi(environment)
 		.ensureProjectTrust({ cwd })
 		.then(() => commitSessionState((s) => ({ trustVersion: s.trustVersion + 1 })))
 		.catch((error) => {
@@ -258,10 +292,11 @@ async function promoteDraft(draft: NewSessionDraftConfig): Promise<string | null
 	// 用户发送 = 用户意图：迟到的启动恢复不得再把页面换成快照里的旧会话
 	noteUserIntent();
 	const targetCwd = draft.cwd;
+	const inputKey = newSessionDraftKey(draft.environment, draft.cwd);
 	if (!targetCwd) return null;
 	const token = claimActivation();
 	try {
-		const meta = await getPi().createSession({
+		const meta = await getExecutionApi(draft.environment ?? LOCAL_ENVIRONMENT).createSession({
 			options: {
 				cwd: targetCwd,
 				...(draft.model ?? {}),
@@ -280,12 +315,12 @@ async function promoteDraft(draft: NewSessionDraftConfig): Promise<string | null
 			isLatestActivation(token) &&
 			useSessionsStore.getState().newSessionDraft?.generation === draft.generation
 		) {
-			const remaining = useDraftStore.getState().bySession[NEW_SESSION_DRAFT_KEY];
+			const remaining = useDraftStore.getState().bySession[inputKey];
 			if (remaining) {
 				useDraftStore.getState().updateDraft(meta.sessionId, () => remaining);
-				useDraftStore.getState().updateDraft(NEW_SESSION_DRAFT_KEY, () => EMPTY_DRAFT);
+				useDraftStore.getState().updateDraft(inputKey, () => EMPTY_DRAFT);
 			}
-			releaseComposerEditor(NEW_SESSION_DRAFT_KEY);
+			releaseComposerEditor(inputKey);
 		}
 		commitSessionState((state) => {
 			// 同 id 已存在就不再 append（与 open pipeline 同一套防御性去重）
@@ -334,6 +369,7 @@ interface SessionsStore {
 	activeSessionId: string | null;
 	cwd: string | null;
 	models: AvailableModel[];
+	modelsByEnvironment: Record<string, AvailableModel[]>;
 	/** 全局唯一的新会话 draft；null = 当前已有真实会话（或还没初始化） */
 	newSessionDraft: NewSessionDraftConfig | null;
 	/** 上次使用的模型/思考深度（新会话与 draft 起步跟随；持久化 ui-state.json，语义 = 跟随最近选择，非独立默认设置） */
@@ -364,9 +400,9 @@ interface SessionsStore {
 	 * 从项目行进入新会话：仍复用全局唯一 draft，但明确把它改投到指定 cwd。
 	 * 与无参数入口不同，这里 cwd 是用户显式选择，必须覆盖已有 draft 的项目。
 	 */
-	activateNewSessionDraftForCwd: (cwd: string) => void;
+	activateNewSessionDraftForCwd: (cwd: string, environment?: EnvironmentRef) => void;
 	/** 设置新会话的目标项目目录（项目选择器）；draft 没有就一直只记全局默认 */
-	setDraftCwd: (cwd: string) => void;
+	setDraftCwd: (cwd: string, environment?: EnvironmentRef) => void;
 	/** draft 的权限档位（纯 renderer，promotion 时才应用到后端会话） */
 	setDraftPermissionMode: (mode: PermissionMode) => void;
 	switchSession: (sessionId: string) => void;
@@ -385,11 +421,19 @@ interface SessionsStore {
 	/** 自动命名等事件带来的标题变更 */
 	updateSessionName: (sessionId: string, name: string | undefined) => void;
 	pickDirectory: () => Promise<void>;
-	loadModels: () => Promise<void>;
+	loadModels: (environment?: EnvironmentRef) => Promise<void>;
 	setCurrentModel: (provider: string, modelId: string) => Promise<void>;
 	setThinkingLevel: (level: string) => Promise<void>;
 	/** 切换会话权限模式（真实会话乐观更新 + 失败回滚 + toast；draft 走 setDraftPermissionMode） */
 	setSessionPermissionMode: (sessionId: string, mode: PermissionMode) => Promise<void>;
+}
+
+function currentEnvironment(
+	state: Pick<SessionsStore, "activeSessionId" | "newSessionDraft">,
+): EnvironmentRef {
+	return state.activeSessionId
+		? environmentEntityRef(state.activeSessionId).environment
+		: (state.newSessionDraft?.environment ?? LOCAL_ENVIRONMENT);
 }
 
 /** Host-only commit projects the final patched state; external Zustand setState stays native. */
@@ -409,6 +453,7 @@ export const useSessionsStore = create<SessionsStore>((_set, get) => ({
 	activeSessionId: null,
 	cwd: null,
 	models: [],
+	modelsByEnvironment: {},
 	// 不变式：新会话页（`activeSessionId === null`）必须有一份 draft。开机就是新会话页，
 	// 所以初始化就建好（App 启动再把 lastCwd 种进来，见 App.tsx），不留「active=null 且 draft=null」的窗口
 	newSessionDraft: makeDraft({ cwd: null, lastUsedModel: null, lastUsedThinkingLevel: "medium" }),
@@ -442,18 +487,23 @@ export const useSessionsStore = create<SessionsStore>((_set, get) => ({
 		const activeSession = state.sessions.find((s) => s.sessionId === state.activeSessionId);
 		if (activeSession) {
 			// 从真实会话点顶部「新会话」：Codex 语义是以**当前对话**为模板，而不是回到后台 draft
-			// 之前记住的项目。输入内容仍挂在全局 NEW_SESSION_DRAFT_KEY 上，不会因此丢失。
+			// 之前记住的项目。输入内容仍挂在全局 inputKey 上，不会因此丢失。
 			// 显式 cwd 只供启动/内部调用覆盖目录；UI 顶部入口不传，因此自然采用当前会话 cwd。
 			const targetCwd = cwd ?? activeSession.cwd;
+			const environment = environmentEntityRef(activeSession.sessionId).environment;
 			claimActivation();
 			const nextDraft = makeDraft(state, {
+				environment,
 				cwd: targetCwd,
 				model: activeSession.model ?? state.lastUsedModel,
 				thinkingLevel: activeSession.thinkingLevel,
 			});
-			nextDraft.permissionMode = state.permissionModes[activeSession.sessionId] ?? "default";
+			nextDraft.permissionMode =
+				environment.kind === "local"
+					? (state.permissionModes[activeSession.sessionId] ?? "default")
+					: "default";
 			set({ activeSessionId: null, newSessionDraft: nextDraft });
-			ensureTrust(targetCwd);
+			ensureTrust(targetCwd, environment);
 			return;
 		}
 
@@ -462,49 +512,104 @@ export const useSessionsStore = create<SessionsStore>((_set, get) => ({
 			// 已经在 draft 页：再次点击只激活，不覆盖用户在 draft 内选过的配置。
 			// 只有「还没选项目」的那份（开机初始化/补种出来的，cwd === null）接受启动传入的 cwd。
 			const targetCwd = existing.cwd ?? cwd ?? state.cwd;
+			if (
+				targetCwd &&
+				!sameEnvironment(
+					environmentEntityRef(targetCwd).environment,
+					existing.environment ?? LOCAL_ENVIRONMENT,
+				)
+			) {
+				get().activateNewSessionDraftForCwd(targetCwd);
+				return;
+			}
 			set({
 				activeSessionId: null,
 				newSessionDraft: { ...existing, cwd: targetCwd },
 			});
-			if (targetCwd) ensureTrust(targetCwd);
+			if (targetCwd) ensureTrust(targetCwd, currentEnvironment(get()));
 			return;
 		}
 
 		const targetCwd = cwd ?? state.cwd;
 		set({
 			activeSessionId: null,
-			newSessionDraft: makeDraft(state, { cwd: targetCwd }),
+			newSessionDraft: makeDraft(state, {
+				cwd: targetCwd,
+				environment: targetCwd ? environmentEntityRef(targetCwd).environment : undefined,
+			}),
 		});
-		if (targetCwd) ensureTrust(targetCwd);
+		if (targetCwd) ensureTrust(targetCwd, currentEnvironment(get()));
 	},
 
-	activateNewSessionDraftForCwd: (cwd) => {
+	activateNewSessionDraftForCwd: (cwd, environment = environmentEntityRef(cwd).environment) => {
 		const state = get();
 		const activeSession = state.sessions.find((s) => s.sessionId === state.activeSessionId);
+		const sourceSession =
+			activeSession && sameEnvironment(environmentEntityRef(activeSession.sessionId).environment, environment)
+				? activeSession
+				: undefined;
+		const followsCurrentEnvironment = sameEnvironment(currentEnvironment(state), environment);
 		// 与普通「＋」不同，项目行点击即使已经在 draft 页也是一次新的导航意图：
 		// 淘汰在途 open/create/fork，且换 generation，避免旧 cwd 的 promotion single-flight 被复用。
 		claimActivation();
 		noteUserIntent();
 		const existing = state.newSessionDraft;
 		draftGenerationSeq += existing ? 1 : 0;
+		const changedEnvironment =
+			existing && !sameEnvironment(existing.environment ?? LOCAL_ENVIRONMENT, environment);
 		const newSessionDraft = existing
-			? { ...existing, cwd, generation: draftGenerationSeq }
-			: makeDraft(state, {
+			? {
+					...existing,
+					environment,
 					cwd,
-					model: activeSession?.model ?? state.lastUsedModel,
-					thinkingLevel: activeSession?.thinkingLevel,
+					generation: draftGenerationSeq,
+					...(changedEnvironment
+						? {
+								model: null,
+								modelResolved: false,
+								thinkingResolved: false,
+								permissionMode: "default" as const,
+							}
+						: {}),
+				}
+			: makeDraft(state, {
+					environment,
+					cwd,
+					model: sourceSession?.model ?? (followsCurrentEnvironment ? state.lastUsedModel : null),
+					thinkingLevel: sourceSession?.thinkingLevel,
 				});
 		set({ activeSessionId: null, newSessionDraft });
-		ensureTrust(cwd);
+		ensureTrust(cwd, environment);
 		rememberCwd(cwd);
 	},
 
-	setDraftCwd: (cwd) => {
+	setDraftCwd: (cwd, environment = environmentEntityRef(cwd).environment) => {
+		claimActivation();
+		noteUserIntent();
 		// cwd 变化即前置信任决策
-		ensureTrust(cwd);
-		set((state) => ({
-			newSessionDraft: state.newSessionDraft ? { ...state.newSessionDraft, cwd } : state.newSessionDraft,
-		}));
+		ensureTrust(cwd, environment);
+		set((state) => {
+			const draft = state.newSessionDraft;
+			if (!draft) return {};
+			const changed =
+				draft.cwd !== cwd || !sameEnvironment(draft.environment ?? LOCAL_ENVIRONMENT, environment);
+			return {
+				newSessionDraft: {
+					...draft,
+					environment,
+					cwd,
+					generation: changed ? ++draftGenerationSeq : draft.generation,
+					...(!sameEnvironment(draft.environment ?? LOCAL_ENVIRONMENT, environment)
+						? {
+								model: null,
+								modelResolved: false,
+								thinkingResolved: false,
+								permissionMode: "default" as const,
+							}
+						: {}),
+				},
+			};
+		});
 		// 在选择器里选过项目 = 用户明确表态要用它：立刻记住（典型场景：首启选了项目、还没发消息就退出）
 		rememberCwd(cwd);
 	},
@@ -527,7 +632,14 @@ export const useSessionsStore = create<SessionsStore>((_set, get) => ({
 		});
 		// 懒加载兜底（D4）：目标会话无 transcript 数据时补拉四件套（从历史打开、
 		// 事件桥断连期间的切换等都经此路径自愈；已有数据零成本短路）
-		if (!isHistoryReady(sessionId) && hasPendingSessionHistory(sessionId)) {
+		const environment = environmentEntityRef(sessionId).environment;
+		if (environment.kind === "ssh") {
+			// 离线或恢复期间只导航到缓存；恢复流程在事件接续后补拉当前会话。
+			if (!isEnvironmentSynchronizing(environment) && !isHistoryReady(sessionId))
+				void loadSessionBundle(sessionId).catch((error) =>
+					pushToast("warning", "toast.sessionOpenFailed", errText(error)),
+				);
+		} else if (!isHistoryReady(sessionId) && hasPendingSessionHistory(sessionId)) {
 			void retrySessionHistory(sessionId);
 		} else if (useTranscriptStore.getState().bySession[sessionId] === undefined) {
 			void loadSessionBundle(sessionId).catch((error) => {
@@ -546,7 +658,9 @@ export const useSessionsStore = create<SessionsStore>((_set, get) => ({
 	closeSession: async (sessionId, intent) => {
 		try {
 			// intent 只在本轮是「内存策略自动卸载」时带上，用户主动关不传（保持既有语义）
-			const { closed } = await getPi().closeSession(intent ? { sessionId, intent } : { sessionId });
+			const { closed } = await getExecutionApi(sessionId).closeSession(
+				intent ? { sessionId, intent } : { sessionId },
+			);
 			// 后端拒绝（agent 在跑 / 等审批）：**渲染层状态必须原样保留** —— 事务语义，
 			// 不能出现「后端会话还在、前端条目已消失」的半个动作（内存策略也会看走眼）
 			if (!closed) return { closed: false };
@@ -678,7 +792,7 @@ export const useSessionsStore = create<SessionsStore>((_set, get) => ({
 		const token = claimActivation();
 		noteUserIntent();
 		try {
-			const meta = await getPi().forkSession({ sessionId: activeSessionId, ref });
+			const meta = await getExecutionApi(activeSessionId).forkSession({ sessionId: activeSessionId, ref });
 			// fork 出的是用户刚开的新会话 → 记入临时工作区；迟到（已不是最新意图）只入列表，不抢 activeFile
 			const latest = isLatestActivation(token);
 			useSessionWorkspaceStore
@@ -704,7 +818,10 @@ export const useSessionsStore = create<SessionsStore>((_set, get) => ({
 		// 新会话页还没有消息，无可撤回（UI 上也到不了这里，防御性拦截）
 		if (!activeSessionId) return;
 		try {
-			const recalled = await getPi().recallMessage({ sessionId: activeSessionId, ref });
+			const recalled = await getExecutionApi(activeSessionId).recallMessage({
+				sessionId: activeSessionId,
+				ref,
+			});
 			// 内容回填草稿：已有草稿文本时换行拼接（与排队取回一致），图片追加在尾部
 			useDraftStore.getState().updateDraft(activeSessionId, (d) =>
 				appendDraftInput(d, {
@@ -728,11 +845,17 @@ export const useSessionsStore = create<SessionsStore>((_set, get) => ({
 		if (cwd) get().setDraftCwd(cwd);
 	},
 
-	loadModels: async () => {
+	loadModels: async (environment = currentEnvironment(get())) => {
+		const key = environmentKey(environment);
+		const seq = (modelLoads.get(key) ?? 0) + 1;
+		modelLoads.set(key, seq);
 		try {
-			const models = await getPi().listModels();
+			const models = await getExecutionApi(environment).listModels();
 			// 复用上次使用的模型/思考级别（失效则回退到第一个可用模型）
-			const saved = await getPi().loadUiState();
+			const saved = environment.kind === "local" ? await getPi().loadUiState() : null;
+			if (modelLoads.get(key) !== seq) return;
+			set((state) => ({ modelsByEnvironment: { ...state.modelsByEnvironment, [key]: models } }));
+			if (!sameEnvironment(environment, currentEnvironment(get()))) return;
 			const savedModel =
 				saved?.lastUsedModel &&
 				models.some(
@@ -740,7 +863,7 @@ export const useSessionsStore = create<SessionsStore>((_set, get) => ({
 				)
 					? saved.lastUsedModel
 					: null;
-			const current = get().lastUsedModel;
+			const current = environment.kind === "local" ? get().lastUsedModel : get().newSessionDraft?.model;
 			const fallback = models.find((m) => m.authed) ?? models[0];
 			const nextLastUsedModel =
 				savedModel ?? current ?? (fallback ? { provider: fallback.provider, modelId: fallback.id } : null);
@@ -807,7 +930,7 @@ export const useSessionsStore = create<SessionsStore>((_set, get) => ({
 				thinkingResolved: true,
 			},
 			uiState: { lastUsedModel: { provider, modelId }, lastUsedThinkingLevel: thinkingLevel },
-			sync: (sessionId) => getPi().setModel({ sessionId, provider, modelId }),
+			sync: (sessionId) => getExecutionApi(sessionId).setModel({ sessionId, provider, modelId }),
 		}));
 	},
 
@@ -819,7 +942,7 @@ export const useSessionsStore = create<SessionsStore>((_set, get) => ({
 			// draft 页：只置「档位已定」，**不得**碰 modelResolved（改档位 ≠ 改模型，模型仍要能按默认补齐）
 			draftPatch: { thinkingLevel: level, thinkingResolved: true },
 			uiState: { lastUsedThinkingLevel: level },
-			sync: (sessionId) => getPi().setThinkingLevel({ sessionId, level }),
+			sync: (sessionId) => getExecutionApi(sessionId).setThinkingLevel({ sessionId, level }),
 		}));
 	},
 
@@ -832,9 +955,11 @@ export const useSessionsStore = create<SessionsStore>((_set, get) => ({
 		const previous = get().permissionModes[sessionId] ?? "default";
 		set((state) => ({ permissionModes: withPermissionMode(state.permissionModes, sessionId, mode) }));
 		try {
-			await getPi().setPermissionMode({ sessionId, mode });
+			await getExecutionApi(sessionId).setPermissionMode({ sessionId, mode });
 			// D7：IPC 成功才记（失败回滚不记）；传 default 则会删键
-			useUiPreferencesStore.getState().rememberPermissionMode(sessionId, mode);
+			if (environmentEntityRef(sessionId).environment.kind === "local") {
+				useUiPreferencesStore.getState().rememberPermissionMode(sessionId, mode);
+			}
 		} catch (error) {
 			set((state) => ({ permissionModes: withPermissionMode(state.permissionModes, sessionId, previous) }));
 			console.error("切换权限模式失败", error);
@@ -855,6 +980,115 @@ const sessionLoader = createSessionLoader({
 });
 // Bind the coordinator methods directly; no private forwarding facade.
 const { loadSessionBundle, restorePermissionMode, ensureOpenSession } = sessionLoader;
+
+const remoteRecovery = new Map<string, number>();
+export function invalidateEnvironmentSessions(environment: EnvironmentRef): number {
+	const key = environmentKey(environment);
+	const generation = (remoteRecovery.get(key) ?? 0) + 1;
+	remoteRecovery.set(key, generation);
+	pauseEnvironmentEvents(environment);
+	invalidateInteractions(environment);
+	for (const meta of useSessionsStore.getState().sessions) {
+		if (!sameEnvironment(environmentEntityRef(meta.sessionId).environment, environment)) continue;
+		sessionLoader.forget(meta.sessionId, meta.sessionFile);
+		beginSessionBaseline(meta.sessionId);
+	}
+	return generation;
+}
+export async function synchronizeEnvironmentSessions(
+	environment: EnvironmentRef,
+	generation: number,
+): Promise<void> {
+	const key = environmentKey(environment);
+	const [summaries] = await Promise.all([
+		getExecutionApi(environment).getLoadedSessions(),
+		synchronizeInteractions(environment),
+	]);
+	if (remoteRecovery.get(key) !== generation) return;
+	const old = useSessionsStore.getState();
+	const active = old.activeSessionId;
+	const previousActive = old.sessions.find((meta) => meta.sessionId === active);
+	const loadedIds = new Set(summaries.map((summary) => summary.meta.sessionId));
+	for (const meta of old.sessions) {
+		if (
+			!sameEnvironment(environmentEntityRef(meta.sessionId).environment, environment) ||
+			loadedIds.has(meta.sessionId)
+		)
+			continue;
+		forgetSessionBoundary(meta.sessionId);
+		useTranscriptStore.setState((state) => {
+			const previous = state.bySession[meta.sessionId];
+			if (!previous) return state;
+			return {
+				bySession: {
+					...state.bySession,
+					[meta.sessionId]: {
+						...previous,
+						streaming: null,
+						agentActive: false,
+						compacting: false,
+						phase: "idle",
+						followUpQueue: [],
+						retrying: null,
+						pendingLlmError: null,
+						pendingPermissions: [],
+						pendingDialogs: [],
+					},
+				},
+			};
+		});
+	}
+	const tokens = new Map(
+		summaries.map((summary) => [
+			summary.meta.sessionId,
+			pendingSessionBaselineToken(summary.meta.sessionId) ?? beginSessionBaseline(summary.meta.sessionId),
+		]),
+	);
+	commitSessionState((state) => ({
+		sessions: [
+			...state.sessions.filter(
+				(meta) => !sameEnvironment(environmentEntityRef(meta.sessionId).environment, environment),
+			),
+			...summaries.map((summary) => summary.meta),
+		],
+	}));
+	for (const summary of summaries) {
+		const id = summary.meta.sessionId;
+		finishSessionBaseline(id, tokens.get(id) as number, summary.sequence, () => {
+			useTranscriptStore.setState((state) => {
+				const previous = state.bySession[id];
+				return {
+					bySession: {
+						...state.bySession,
+						[id]: {
+							...(previous ?? { ...emptyTranscript(), pendingPermissions: [], pendingDialogs: [] }),
+							streaming: null,
+							agentActive: summary.streaming,
+							compacting: summary.compacting,
+							phase: previous?.pendingPermissions.length
+								? "awaiting_permission"
+								: summary.streaming
+									? "streaming"
+									: "idle",
+							followUpQueue: summary.followUpQueue,
+						},
+					},
+				};
+			});
+			applyBackendPermissionMode(id, summary.permissionMode);
+		});
+	}
+	resumeEnvironmentEvents(environment);
+	if (active && previousActive && sameEnvironment(environmentEntityRef(active).environment, environment)) {
+		if (!summaries.some((summary) => summary.meta.sessionId === active) && previousActive.sessionFile)
+			await ensureOpenSession(previousActive.sessionFile, { loadBundle: false });
+		if (
+			remoteRecovery.get(key) === generation &&
+			useSessionsStore.getState().sessions.some((meta) => meta.sessionId === active)
+		)
+			await loadSessionBundle(active);
+	}
+}
 
 /**
  * 工作区 `activeFile` 跟随当前会话：**唯一同步点**。

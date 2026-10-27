@@ -2,7 +2,13 @@ import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { runInNewContext } from "node:vm";
-import { CHANNEL_TABLE, IpcChannels, type PiApi, SUBSCRIPTION_TABLE } from "@percho/shared";
+import {
+	CHANNEL_TABLE,
+	IpcChannels,
+	LOCAL_ENVIRONMENT,
+	type PiApi,
+	SUBSCRIPTION_TABLE,
+} from "@percho/shared";
 import { buildSync } from "esbuild";
 import ts from "typescript";
 import { describe, expect, it, vi } from "vitest";
@@ -35,7 +41,7 @@ const code = buildSync({
 	write: false,
 	external: ["electron"],
 }).outputFiles[0]?.text;
-type Listener = (event: unknown, payload?: unknown) => void;
+type Listener = (event: unknown, payload?: unknown, source?: unknown) => void;
 function bootPreload() {
 	if (!code) throw new Error("preload bundle missing");
 	let exposed: PiApi | undefined;
@@ -89,7 +95,12 @@ describe("single-source subscription contract and real bundled preload", () => {
 		for (const method of Object.keys(SUBSCRIPTION_TABLE) as Array<keyof typeof SUBSCRIPTION_TABLE>) {
 			const def = SUBSCRIPTION_TABLE[method];
 			const cb = vi.fn<(...args: unknown[]) => void>();
-			const off = api[method](cb);
+			const target = def.scope === "desktop" ? api : api.forEnvironment(LOCAL_ENVIRONMENT);
+			const subscribe = (
+				target as unknown as Record<string, (cb: (...args: unknown[]) => void) => () => void>
+			)[method];
+			if (!subscribe) throw new Error(`missing subscription ${method}`);
+			const off = subscribe(cb);
 			const registered = ipc.on.mock.calls.at(-1);
 			expect(registered?.[0]).toBe(def.channel);
 			const listener = registered?.[1];
@@ -127,14 +138,48 @@ describe("single-source subscription contract and real bundled preload", () => {
 		const file = { name: "image.png" };
 		expect(api.getPathForFile(file)).toBe("/fixture/image.png");
 		expect(getPathForFile).toHaveBeenCalledWith(file);
-		for (const name of Object.keys(CHANNEL_TABLE) as Array<keyof typeof CHANNEL_TABLE>)
-			expect(api[name]).toBeTypeOf("function");
+		for (const [name, def] of Object.entries(CHANNEL_TABLE))
+			expect((api as unknown as Record<string, unknown>)[name]).toBeTypeOf(
+				def.scope === "desktop" ? "function" : "undefined",
+			);
 		const args = { cwd: "/fixture/project" };
-		expect(await api.listSessions(args)).toBe("invoke-result");
-		expect(ipc.invoke).toHaveBeenLastCalledWith(CHANNEL_TABLE.listSessions.channel, args);
-		expect(ipc.invoke.mock.calls.at(-1)?.[1]).toBe(args);
-		await api.getQuota();
-		expect(ipc.invoke).toHaveBeenLastCalledWith(CHANNEL_TABLE.getQuota.channel, undefined);
+		expect(await api.forEnvironment(LOCAL_ENVIRONMENT).listSessions(args)).toBe("invoke-result");
+		expect(ipc.invoke).toHaveBeenLastCalledWith(CHANNEL_TABLE.listSessions.channel, {
+			__perchoEnvironment: 1,
+			environment: LOCAL_ENVIRONMENT,
+			args,
+		});
+		expect((ipc.invoke.mock.calls.at(-1)?.[1] as { args: unknown } | undefined)?.args).toBe(args);
+		await api.forEnvironment(LOCAL_ENVIRONMENT).getQuota();
+		expect(ipc.invoke).toHaveBeenLastCalledWith(CHANNEL_TABLE.getQuota.channel, {
+			__perchoEnvironment: 1,
+			environment: LOCAL_ENVIRONMENT,
+			args: undefined,
+		});
+	});
+	it("the sandboxed preload binds an immutable target and keeps remote events out of explicitly bound local listeners", async () => {
+		const { api, ipc, listeners } = bootPreload();
+		const remote = { kind: "ssh" as const, connectionId: "company", environmentId: "data" };
+		const bound = api.forEnvironment(remote);
+		remote.environmentId = "changed-after-binding";
+		await bound.listSessions({ cwd: "/project" });
+		expect(ipc.invoke).toHaveBeenLastCalledWith(CHANNEL_TABLE.listSessions.channel, {
+			__perchoEnvironment: 1,
+			environment: { kind: "ssh", connectionId: "company", environmentId: "data" },
+			args: { cwd: "/project" },
+		});
+		expect("openPath" in bound).toBe(false);
+		const local = vi.fn(),
+			foreign = vi.fn();
+		api.forEnvironment(LOCAL_ENVIRONMENT).onEvent(local);
+		const off = bound.onEvent(foreign);
+		const event = { sessionId: "same-id", event: { type: "agent_end", messages: [] } };
+		for (const listener of listeners.get(IpcChannels.Event) ?? []) {
+			listener({}, event, { kind: "ssh", connectionId: "company", environmentId: "data" });
+		}
+		expect(local).not.toHaveBeenCalled();
+		expect(foreign).toHaveBeenCalledExactlyOnceWith(event);
+		off();
 	});
 });
 

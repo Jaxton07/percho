@@ -6,7 +6,7 @@ import type { PermissionAction, PermissionOutside, PermissionRule, PermissionRul
 const log = createLogger("permission-rules");
 
 /**
- * 权限配置读取：~/.pi/agent/permissions.json（enabled + outside + rules），
+ * 权限配置读取：~/.percho/agent/permissions.json（enabled + outside + rules），
  * 文件规则按工具粒度替换默认；非法内容回退默认配置。
  * enabled 仅手改文件可关（UI 已无入口，spec permission-mode D7 隐藏逃生舱）；本模块不感知会话权限模式（D1：内存态）。
  */

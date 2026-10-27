@@ -17,13 +17,15 @@ npx electron-vite dev -- --remote-debugging-port=9224
 2. CDP 连接后核对 `location.href` 与实际页面，`chrome-error://` 表示连到了错误页，不是业务组件不存在。
 3. 测试结束关闭本次 Electron 及其 dev server，确认端口释放。只杀 electron-vite 包装进程可能留下 Electron；不要用宽泛的 `pkill -f Electron`，以免结束正式版。
 
+开始输入前等待 `html[data-app-ready="true"]` 且 `#splash` 已移除。开屏期间 React 节点已经存在，但 `#root` 的 `content-visibility: hidden` 会让焦点和输入无法到达；不能以查到按钮或输入节点作为可交互的证据。
+
 main 修改没有生效时先核对 `packages/desktop/out/main/index.js` 是否重建；改 store 后 HMR 可能留下旧订阅或实例。**最终验收用干净重启，不把 HMR 异常当产品结论。**
 
 ## 隔离与 seed
 
-- dev agent dir：`~/.pi/agent-dev/`。
+- dev agent dir：`~/.percho/agent-dev/`。
 - 当前开发 userData：`~/Library/Application Support/@percho/desktop-dev/`；不要使用改名前的 `percho-dev/`。
-- 路径逻辑以 `main/dev-agent-dir.ts` 为准；自定义隔离路径时让验收脚本使用同一份路径。
+- 路径逻辑以 `main/dev-agent-dir.ts` 为准；自定义隔离使用绝对 `PERCHO_AGENT_DIR` 和独立 `--user-data-dir`，脚本跟随同一根。首次未标记目标需明确采用；不能绕过启动页直接 seed 正式数据。详见[迁移与恢复](local-agent-storage.md)。
 - `ui-state.json` 必须在实例停止后 seed，否则运行中的 persist 会覆盖。会话目录夹具通常也需重启才能读入。
 - 工作区快照使用 `sessionWorkspace`，不再有 `tabs.json`；冷启动可恢复有效 activeFile，不要假设总是新会话页。
 - 尽量通过真实 UI 进入目标状态；不得直接修改正式配置、会话或凭证来凑验收场景。

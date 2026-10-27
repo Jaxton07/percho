@@ -2,6 +2,7 @@ import { memo, useState } from "react";
 import { useT } from "../../i18n";
 import { Slot } from "../../plugins/Slot";
 import { UI_SLOTS } from "../../plugins/slots";
+import { useSessionsStore } from "../../stores/sessions";
 import type { UIMessage } from "../../stores/transcript";
 import { AssistantMessage } from "./AssistantMessage";
 import { ErrorNote } from "./ErrorNote";
@@ -31,6 +32,9 @@ export const MessageItem = memo(function MessageItem({
 	sessionId?: string | null;
 }) {
 	const t = useT();
+	const cwd = useSessionsStore(
+		(s) => s.sessions.find((session) => session.sessionId === sessionId)?.cwd ?? null,
+	);
 	const [previewIndex, setPreviewIndex] = useState<number | null>(null);
 
 	if (message.kind === "user") {
@@ -86,6 +90,7 @@ export const MessageItem = memo(function MessageItem({
 	return (
 		<div className="group">
 			<AssistantMessage
+				cwd={cwd}
 				text={message.text}
 				thinking={message.thinking}
 				tools={message.tools}

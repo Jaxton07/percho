@@ -6,6 +6,7 @@ import { RefreshIcon } from "../../icons";
 import { CustomProviderForm } from "./CustomProviderForm";
 import { LoginDialog } from "./LoginDialog";
 import { IconAction, ProviderRow } from "./ProviderRow";
+import { RemoteAuthHelp } from "./RemoteAuthHelp";
 import { SubagentPanel } from "./SubagentPanel";
 
 type ModelSettingsTab = "providers" | "subagents";
@@ -25,11 +26,12 @@ export function ProvidersPanel() {
 	// 面板内的 providers↔subagents 子 tab 切换不重新挂载 ⇒ 不额外触发。
 	// 并发入口由 store 的 single-flight 兜底（同一在途请求复用；StrictMode 双跑也只发一次）。
 	useEffect(() => {
-		void useSettingsStore.getState().refreshProvidersFromNetwork();
-	}, []);
+		void refreshFromNetwork();
+	}, [refreshFromNetwork]);
 
 	return (
 		<div>
+			<RemoteAuthHelp />
 			<div className="mb-3 flex gap-1 border-b border-border">
 				{(["providers", "subagents"] as const).map((id) => (
 					<button

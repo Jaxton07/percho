@@ -1,3 +1,5 @@
+export { createExecutionHandlers } from "./execution-handlers";
+export { checkoutBranch, getGitBranch, listGitBranches } from "./git";
 export {
 	JsonStore,
 	JsonStoreCorruptedError,
@@ -16,6 +18,7 @@ export {
 export { type LanObserverBackend, LanObserverServer, type LanObserverServerOptions } from "./lan/server";
 export { createLogger, initLogging, type Logger } from "./log";
 export { fetchPackageCatalog, parseCatalogHtml } from "./packages/catalog";
+export { cleanPathText, resolveExistingPath, resolvePathTarget } from "./path-target";
 export {
 	createPermissionConfigLoader,
 	DEFAULT_PERMISSION_CONFIG,
@@ -50,6 +53,7 @@ export {
 } from "./permissions/extension";
 export { PermissionGate, type PermissionRequestMeta, type PermissionResponder } from "./permissions/gate";
 export { PiBackend, type PiBackendOptions } from "./pi-backend";
+export { validateProjectDirectory } from "./project/directory";
 export {
 	buildTrustOptions,
 	type ResolveTrustOptions,
@@ -70,6 +74,10 @@ export {
 	type WorkspacesConfig,
 	workspaceConfigPath,
 } from "./project/workspace-store";
+export { RemoteMutationUnknownError } from "./runtime/client";
+export { installSshRuntime } from "./runtime/install";
+export { remoteAuthGuide, SshRuntimeConnection, sshArguments, validateSshAlias } from "./runtime/ssh";
+export { checkSshRequirements, preflightSsh, sshFailureKind } from "./runtime/ssh-preflight";
 export {
 	assignEntryIds,
 	blockImages,
@@ -86,6 +94,16 @@ export { LoginService, type LoginServiceDeps } from "./settings/login";
 export { ModelPrefsService } from "./settings/model-prefs";
 export { SettingsService } from "./settings/settings";
 export { BUILTIN_SLASH_COMMANDS, slashCommandsForLoader, slashCommandsForSession } from "./slash-commands";
+export {
+	initializeLocalStorage,
+	inspectLocalStorage,
+	type LocalStorageRecord,
+	readStorageRecord,
+	type StorageInspection,
+	type StorageProgress,
+} from "./storage/local-storage";
+export { migrateNavigation } from "./storage/preferences";
+export { type LocalSessionPaths, localSessionPaths } from "./storage/session-paths";
 export { makeShowImageTool, resolveShowImagePath, type ShowImageDetails } from "./tools/show-image";
 export { formatTodoList, makeTodoTool, normalizeTodos } from "./tools/todo";
 export { makeTodoReminderExtension } from "./tools/todo-reminder";

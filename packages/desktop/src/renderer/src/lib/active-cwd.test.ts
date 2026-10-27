@@ -23,7 +23,7 @@ describe("current directory is pure and preserves null/unknown compatibility", (
 		expect(selectActiveCwd(state)).toBe(expected);
 		expect(state).toEqual(before);
 	});
-	it("leaf has no imports; all eight host readers import the actual selector", () => {
+	it("leaf has no imports; foreground host readers import the actual selector", () => {
 		const leaf = ts.createSourceFile(
 			"active-cwd.ts",
 			readFileSync(new URL("./active-cwd.ts", import.meta.url), "utf8"),
@@ -37,7 +37,6 @@ describe("current directory is pure and preserves null/unknown compatibility", (
 			"composer/Composer",
 			"session/ProjectBranchPicker",
 			"diff/DiffSidebar",
-			"chat/Markdown",
 			"chat/TurnDiffChip",
 			"settings/mcp/McpPanel",
 		]) {

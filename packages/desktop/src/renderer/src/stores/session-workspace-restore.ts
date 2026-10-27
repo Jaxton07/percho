@@ -1,5 +1,8 @@
+import { LOCAL_ENVIRONMENT } from "@percho/shared";
 import { getPi } from "../api";
+import { getExecutionApi } from "../environment-api";
 import { initDailyDir } from "../lib/daily";
+import { hasMixedWorkspaceState } from "../lib/mixed-workspace-state";
 import { useProjectsStore } from "./projects";
 import { isWorkspaceRecording, resolveMembersByFile, useSessionWorkspaceStore } from "./session-workspace";
 import {
@@ -25,6 +28,7 @@ import {
  * 4. **不阻塞开屏**：调用方 fire-and-forget，splash 仍由 loadModels 链收场。
  */
 export async function restoreSessionWorkspace(): Promise<void> {
+	if (hasMixedWorkspaceState()) return;
 	// 幂等：本次进程已经有成员 = 已恢复过（含 StrictMode 下 effect 重放），或用户已自己开了会话 —— 两种都不该再来一遍
 	if (useSessionWorkspaceStore.getState().members.length > 0) return;
 	// 双关（顶栏 + 轨道都关）：工作区语义上就是空的，不恢复也不写盘
@@ -52,7 +56,7 @@ export async function restoreSessionWorkspace(): Promise<void> {
 	// 目录快照：**恢复链自己读**（不用 projects.load 的返回值）—— 裁剪判据必须是这次请求拿到的磁盘真值，
 	// 而 load 是 latest-wins 的：被抢占时它返回的是别人的账，拿来做失效判定会误删有效成员。
 	// 读到之后交 store 采纳（adoptCatalog 会推进序号线，在飞的旧 load 不会把更旧的账盖回来）。
-	const catalog = await getPi()
+	const catalog = await getExecutionApi(LOCAL_ENVIRONMENT)
 		.listAllSessions()
 		.catch(() => null);
 	if (!catalog) {

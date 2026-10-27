@@ -1,6 +1,6 @@
 import type { UiError } from "@percho/shared";
 import { useMemo, useState } from "react";
-import { getPi } from "../../api";
+import { getExecutionApi } from "../../environment-api";
 import { type MessageKey, useT } from "../../i18n";
 import { canRetryError } from "../../lib/error-retry";
 import { retryFailedTurn } from "../../stores/session-retry";
@@ -90,7 +90,8 @@ export function ErrorNote({
 							disabled={action === "retry" && (!retryAvailable || readOnly)}
 							onClick={() => {
 								if (action === "retry" && sessionId) void retryFailedTurn(sessionId, cardId);
-								else if (action === "compact" && sessionId) void getPi().compact({ sessionId });
+								else if (action === "compact" && sessionId)
+									void getExecutionApi(sessionId).compact({ sessionId });
 								else if (action === "openSettings") useSettingsStore.getState().openWith();
 								else if (action === "copyDetail") void copyDetail();
 							}}

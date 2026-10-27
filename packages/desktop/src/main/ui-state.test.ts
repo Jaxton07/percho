@@ -1,6 +1,7 @@
 import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { environmentEntityKey } from "@percho/shared";
 import { afterAll, beforeEach, describe, expect, it, vi } from "vitest";
 
 /**
@@ -366,4 +367,24 @@ describe("字号档位（uiFontSize / codeFontSize）", () => {
 		expect(state?.uiFontSize).toBe(15);
 		expect(state?.codeFontSize).toBe(14);
 	});
+});
+
+it("legacy local UI persistence excludes remote paths and IDs while retaining local order and explicit empty collections", async () => {
+	const remote = { kind: "ssh" as const, connectionId: "company", environmentId: "data" };
+	const key = (id: string) => environmentEntityKey(remote, id);
+	await saveUiState({
+		pinnedSessions: ["local", key("local")],
+		pinnedProjects: [key("/p"), "/p"],
+		expandedGroups: [],
+		expandedGroupsTouched: true,
+		sessionPermissionModes: { [key("local")]: "fullAccess", local: "fullAccess" },
+		sessionWorkspace: { files: ["/a", key("/a"), "/b"], activeFile: key("/a") },
+	});
+	const state = await loadUiState();
+	expect(state?.pinnedSessions).toEqual(["local"]);
+	expect(state?.pinnedProjects).toEqual(["/p"]);
+	expect(state?.expandedGroups).toEqual([]);
+	expect(state?.expandedGroupsTouched).toBe(true);
+	expect(state?.sessionPermissionModes).toEqual({ local: "fullAccess" });
+	expect(state?.sessionWorkspace).toEqual({ files: ["/a", "/b"], activeFile: null });
 });

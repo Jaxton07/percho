@@ -1,10 +1,17 @@
 import type { PiBackend } from "@percho/backend";
-import { IpcChannels } from "@percho/shared";
+import { IpcChannels, REMOTE_CHANNELS, UI_WORKBENCH_TRUST_COPY } from "@percho/shared";
+import { app, dialog } from "electron";
+import { setEnvironmentUiAuthorization } from "../environment-ui-state";
 import type { LanObserverHandle } from "../lan";
+import { remoteConnectionManager } from "../remote-connection";
+import { discoverSshAliases } from "../ssh-config";
+import { loadUiPluginsConfig } from "../ui-plugins/config";
 import type { UiPluginManager } from "../ui-plugins/manager";
+import { UiWorkbenchTrust } from "../ui-plugins/workbench-trust";
 import { onUpdateState } from "../updater";
 import { registerAppIpc } from "./app";
 import { registerExtensionDialogIpc } from "./extension-dialogs";
+import { registerInvokeHandlers } from "./invoke";
 import { registerLanIpc } from "./lan";
 import { registerPackagesIpc } from "./packages";
 import { forward, sendToRenderer } from "./send";
@@ -21,12 +28,58 @@ export function registerIpc(
 	uiPluginsManager: UiPluginManager,
 	lan: LanObserverHandle,
 ): void {
+	const trust = new UiWorkbenchTrust(
+		loadUiPluginsConfig,
+		(names) => uiPluginsManager.updateConfig({ kind: "trust-workbench", names }),
+		async (names) => {
+			const copy = UI_WORKBENCH_TRUST_COPY[app.getLocale().startsWith("zh") ? "zh" : "en"];
+			const result = await dialog.showMessageBox({
+				type: "question",
+				title: copy.title,
+				message: copy.title,
+				detail: `${copy.detail}\n\n${names.join("\n")}`,
+				buttons: [copy.cancel, copy.allow],
+				defaultId: 0,
+				cancelId: 0,
+				noLink: true,
+			});
+			return result.response === 1;
+		},
+	);
+	const authorizeRemote = () => trust.authorizeRemote();
+	setEnvironmentUiAuthorization(authorizeRemote);
+	remoteConnectionManager.startAutoConnect(authorizeRemote);
+	registerInvokeHandlers(REMOTE_CHANNELS, {
+		remoteListSshAliases: () => discoverSshAliases(),
+		remoteAuthGuide: ({ environment }) => remoteConnectionManager.authGuide(environment),
+		remoteStopService: () => remoteConnectionManager.stopService(),
+		remotePreflight: async ({ alias }) => {
+			trust.resetDecline();
+			await authorizeRemote();
+			return remoteConnectionManager.preflight(alias);
+		},
+		remoteForget: () => remoteConnectionManager.forget(),
+		remoteCheckOperation: ({ operationId }) => remoteConnectionManager.checkOperation(operationId),
+		remoteDismissOperation: ({ operationId }) => remoteConnectionManager.dismissOperation(operationId),
+		remoteGetStatus: () => remoteConnectionManager.getStatus(),
+		remoteDisconnect: () => remoteConnectionManager.disconnect(),
+		remoteInstall: ({ token }) => remoteConnectionManager.installAndConnect(token),
+		remotePrepareInstall: async ({ alias }) => {
+			trust.resetDecline();
+			await authorizeRemote();
+			return remoteConnectionManager.prepareInstall(alias);
+		},
+		remoteConnect: ({ alias }) => {
+			trust.resetDecline();
+			return remoteConnectionManager.connect(alias);
+		},
+	});
 	registerSessionsIpc(backend);
 	registerSettingsIpc(backend);
 	registerPackagesIpc(backend);
 	registerAppIpc(backend);
 	registerExtensionDialogIpc(backend);
-	registerUiPluginsIpc(uiPluginsManager);
+	registerUiPluginsIpc(uiPluginsManager, trust);
 	registerLanIpc(lan);
 	// 热重载 watcher：插件源码变更 → 重建 → 推 changed 事件（renderer 经 loader reloadPlugin 热替换）
 	uiPluginsManager.startWatcher((name) => {
@@ -41,6 +94,7 @@ export function registerIpc(
 	// 权限裁决也回投渲染端：LAN 远程应答 / 其他来源应答时桌面卡片要同步撤掉
 	forward(backend.onPermissionResolved.bind(backend), IpcChannels.PermissionResolved);
 	forward(backend.onTrustRequest.bind(backend), IpcChannels.TrustRequest);
+	forward(backend.onTrustResolved.bind(backend), IpcChannels.TrustResolved);
 	// 扩展对话框四事件：请求/结算/notify/草稿预填（issue #45）
 	forward(backend.onExtensionDialogRequest.bind(backend), IpcChannels.ExtensionDialogRequest);
 	forward(backend.onExtensionDialogResolved.bind(backend), IpcChannels.ExtensionDialogResolved);

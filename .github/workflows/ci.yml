@@ -10,7 +10,11 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  runtime:
+    uses: ./.github/workflows/remote-runtime.yml
+
   check:
+    needs: runtime
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -19,6 +23,13 @@ jobs:
           node-version: 22
           cache: npm
       - run: npm ci
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: remote-runtime-*
+          path: .local/runtime-release
+          merge-multiple: true
+      - name: Prepare trusted runtime manifest
+        run: node scripts/prepare-remote-runtime-manifest.mjs --input .local/runtime-release --output packages/desktop/resources/remote-runtime/manifest.json
       - run: npm run lint
       - run: npm run typecheck
       - run: npm run test
@@ -35,6 +46,7 @@ jobs:
         run: npx electron-builder --dir
 
   windows-update-diagnostics:
+    needs: runtime
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@v4
@@ -43,14 +55,43 @@ jobs:
           node-version: 22
           cache: npm
       - run: npm ci
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: remote-runtime-*
+          path: .local/runtime-release
+          merge-multiple: true
+      - name: Prepare trusted runtime manifest
+        run: node scripts/prepare-remote-runtime-manifest.mjs --input .local/runtime-release --output packages/desktop/resources/remote-runtime/manifest.json
       - name: Test actual NSIS hooks and read-only PowerShell collector
         run: node scripts/check-windows-update-diagnostics.mjs
       - run: npm run build
       - name: Compile production Windows installer (no publish)
         working-directory: packages/desktop
         run: npx electron-builder --win nsis --x64 --publish never
+      - name: Verify actual packaged Windows startup with isolated agent/profile
+        run: node scripts/check-local-storage-startup.mjs --app "${{ github.workspace }}/packages/desktop/dist/win-unpacked/Percho.exe"
       - uses: actions/upload-artifact@v4
         if: always()
         with:
           name: windows-update-diagnostic-harness
-          path: .local/tmp/windows-update-hook-check/
+          path: |
+            .local/tmp/windows-update-hook-check/
+            .local/tmp/local-storage-startup-check/
+
+  local-storage:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [macos-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - name: Verify private storage on native filesystem and ACLs
+        run: npm run test -w packages/backend -- test/local-agent-storage.test.ts test/local-agent-storage-sdk.test.ts
+      - name: Test private storage startup decisions
+        run: npm run test -w packages/desktop -- src/main/storage-startup-controller.test.ts

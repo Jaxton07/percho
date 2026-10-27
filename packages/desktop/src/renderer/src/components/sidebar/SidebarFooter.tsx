@@ -3,7 +3,7 @@ import { useSettingsStore } from "../../stores/settings";
 import { GearIcon } from "../icons";
 
 /**
- * 左栏底部：只有「设置」（帮助已去掉）——左栏收起时整栏藏起，所以设置入口就只在侧栏，不另设临时图标。
+ * 左栏底部：设置入口——左栏收起时整栏藏起，所以设置入口就只在侧栏，不另设临时图标。
  * v9：顶栏常驻，「本轮改动」开关永远在顶栏右侧，左栏不再补这个入口。
  */
 export function SidebarFooter() {

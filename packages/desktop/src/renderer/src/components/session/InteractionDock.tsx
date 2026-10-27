@@ -1,7 +1,8 @@
 import type { ExtensionDialogRequest, ExtensionDialogRespond } from "@percho/shared";
 import { useCallback, useEffect, useRef, useState } from "react";
-import { getPi } from "../../api";
+import { getExecutionApi } from "../../environment-api";
 import { useT } from "../../i18n";
+import { useCanAnswerInteraction } from "../../stores/interactions";
 import { useTranscriptStore } from "../../stores/transcript";
 import { ClockIcon, FileTextIcon, HelpIcon, PencilIcon } from "../icons";
 
@@ -87,6 +88,7 @@ export function InteractionDock({ sessionId }: { sessionId: string | null }) {
 	// 应答 IPC 失败：请求保留在队列（扩展仍在等待），展示错误供重试（D3）
 	const [error, setError] = useState<string | null>(null);
 	const [sending, setSending] = useState(false);
+	const canAnswer = useCanAnswerInteraction(shown?.id);
 	// select 键盘高亮（默认第一项；↑↓ 移动 / Enter 确认 / 数字直选）
 	const [highlight, setHighlight] = useState(0);
 	const cardRef = useRef<HTMLDivElement>(null);
@@ -112,20 +114,20 @@ export function InteractionDock({ sessionId }: { sessionId: string | null }) {
 
 	// 聚焦：select/confirm 聚卡容器（吃方向键/数字/Enter），input/editor 聚输入件
 	useEffect(() => {
-		if (!shown || leaving) return;
+		if (!shown || leaving || !canAnswer) return;
 		if (shown.kind === "input") inputRef.current?.focus();
 		else if (shown.kind === "editor") editorRef.current?.focus();
 		else cardRef.current?.focus();
-	}, [shown, leaving]);
+	}, [shown, leaving, canAnswer]);
 
 	// 应答链：await IPC 成功才移除 UI（失败保留请求，扩展不丢等待）；resolved 事件双路径幂等
 	const respond = useCallback(
 		async (answer: ExtensionDialogRespond) => {
-			if (!shown || leaving || !sessionId || sending) return;
+			if (!shown || leaving || !sessionId || sending || !canAnswer) return;
 			setSending(true);
 			setError(null);
 			try {
-				await getPi().respondExtensionDialog({ requestId: shown.id, answer });
+				await getExecutionApi(shown.id).respondExtensionDialog({ requestId: shown.id, answer });
 				resolveExtensionDialog(sessionId, shown.id);
 			} catch (err) {
 				setError(err instanceof Error ? err.message : String(err));
@@ -133,7 +135,7 @@ export function InteractionDock({ sessionId }: { sessionId: string | null }) {
 				setSending(false);
 			}
 		},
-		[shown, leaving, sessionId, sending, resolveExtensionDialog],
+		[shown, leaving, sessionId, sending, canAnswer, resolveExtensionDialog],
 	);
 
 	const options = shown?.kind === "select" ? (shown.options ?? []) : [];
@@ -181,115 +183,118 @@ export function InteractionDock({ sessionId }: { sessionId: string | null }) {
 		// z-20 同 ApprovalDock：审批卡在下方时缩略图 × 会伸出容器顶
 		<div className="relative z-20 shrink-0 px-6 pb-3">
 			<div className="mx-auto max-w-[760px]">
-				<div
-					key={shown.id}
-					ref={cardRef}
-					// eslint-disable-next-line jsx-a11y/no-noninteractive-tabindex -- 聚焦容器吃键盘（select 方向键/数字直选）
-					tabIndex={-1}
-					role="dialog"
-					aria-modal
-					onKeyDown={onKeyDown}
-					className={`dock-in flex flex-col gap-2.5 rounded-[14px] bg-surface px-3.5 pt-3 pb-2.5 shadow-soft outline-none ${
-						leaving ? "dock-exit" : ""
-					}`}
-				>
-					<div className="flex min-h-5 items-center gap-2">
-						<span className="flex-none text-accent" aria-hidden="true">
-							<Glyph />
-						</span>
-						<h3 className="min-w-0 flex-1 truncate text-ui-13 font-medium tracking-[-0.01em] text-ink-2">
-							{shown.title}
-						</h3>
-						<HeadMeta request={shown} queueCount={queueCount} />
-					</div>
-
-					{shown.kind === "select" && (
-						<div className="-mx-1.5 flex flex-col gap-px">
-							{options.map((option, i) => (
-								<button
-									// biome-ignore lint/suspicious/noArrayIndexKey: 选项无稳定 id，顺序即语义
-									key={`${i}-${option}`}
-									type="button"
-									onClick={() => void respond({ value: option })}
-									onMouseEnter={() => setHighlight(i)}
-									className={`flex items-baseline gap-2 rounded-[9px] px-2.5 py-1.5 text-left text-ui-13 text-ink-2 transition-colors ${
-										i === highlight ? "bg-hover" : ""
-									}`}
-								>
-									<span className="w-3 flex-none text-right text-ui-105 text-ink-faint tabular-nums">
-										{i + 1}
-									</span>
-									<span className="min-w-0 break-words">{option}</span>
-								</button>
-							))}
+				{!canAnswer && <p className="mb-2 text-ui-12 text-ink-faint">{t("remote.waitingForConnection")}</p>}
+				<fieldset disabled={!canAnswer || sending} className="contents">
+					<div
+						key={shown.id}
+						ref={cardRef}
+						// eslint-disable-next-line jsx-a11y/no-noninteractive-tabindex -- 聚焦容器吃键盘（select 方向键/数字直选）
+						tabIndex={-1}
+						role="dialog"
+						aria-modal
+						onKeyDown={onKeyDown}
+						className={`dock-in flex flex-col gap-2.5 rounded-[14px] bg-surface px-3.5 pt-3 pb-2.5 shadow-soft outline-none ${
+							leaving ? "dock-exit" : ""
+						}`}
+					>
+						<div className="flex min-h-5 items-center gap-2">
+							<span className="flex-none text-accent" aria-hidden="true">
+								<Glyph />
+							</span>
+							<h3 className="min-w-0 flex-1 truncate text-ui-13 font-medium tracking-[-0.01em] text-ink-2">
+								{shown.title}
+							</h3>
+							<HeadMeta request={shown} queueCount={queueCount} />
 						</div>
-					)}
 
-					{shown.kind === "input" && (
-						<InputBody
-							inputRef={inputRef}
-							placeholder={shown.placeholder}
-							onSubmit={(value) => void respond({ value })}
-						/>
-					)}
+						{shown.kind === "select" && (
+							<div className="-mx-1.5 flex flex-col gap-px">
+								{options.map((option, i) => (
+									<button
+										// biome-ignore lint/suspicious/noArrayIndexKey: 选项无稳定 id，顺序即语义
+										key={`${i}-${option}`}
+										type="button"
+										onClick={() => void respond({ value: option })}
+										onMouseEnter={() => setHighlight(i)}
+										className={`flex items-baseline gap-2 rounded-[9px] px-2.5 py-1.5 text-left text-ui-13 text-ink-2 transition-colors ${
+											i === highlight ? "bg-hover" : ""
+										}`}
+									>
+										<span className="w-3 flex-none text-right text-ui-105 text-ink-faint tabular-nums">
+											{i + 1}
+										</span>
+										<span className="min-w-0 break-words">{option}</span>
+									</button>
+								))}
+							</div>
+						)}
 
-					{shown.kind === "editor" && (
-						<EditorBody
-							editorRef={editorRef}
-							prefill={shown.prefill}
-							onSubmit={(value) => void respond({ value })}
-						/>
-					)}
+						{shown.kind === "input" && (
+							<InputBody
+								inputRef={inputRef}
+								placeholder={shown.placeholder}
+								onSubmit={(value) => void respond({ value })}
+							/>
+						)}
 
-					{shown.kind === "confirm" && shown.message && (
-						<p className="text-ui-13 leading-relaxed break-words whitespace-pre-wrap text-ink-2">
-							{shown.message}
-						</p>
-					)}
+						{shown.kind === "editor" && (
+							<EditorBody
+								editorRef={editorRef}
+								prefill={shown.prefill}
+								onSubmit={(value) => void respond({ value })}
+							/>
+						)}
 
-					{error && (
-						<p className="rounded-lg bg-hover px-2.5 py-1.5 text-ui-12 break-all text-err">{error}</p>
-					)}
+						{shown.kind === "confirm" && shown.message && (
+							<p className="text-ui-13 leading-relaxed break-words whitespace-pre-wrap text-ink-2">
+								{shown.message}
+							</p>
+						)}
 
-					<div className="flex items-center gap-0.5">
-						<span className="text-ui-11 text-ink-faint">{hint}</span>
-						<div className="ml-auto flex items-center gap-0.5">
-							{shown.timeoutMs !== undefined && (
-								<span className="mr-1 text-ui-11 text-ink-faint">{t("interaction.timedOutNote")}</span>
-							)}
-							{shown.kind === "confirm" ? (
-								<>
-									<GhostAction onClick={() => void respond({ cancelled: true })}>
-										{t("interaction.no")}
-									</GhostAction>
-									<GhostAction strong onClick={() => void respond({ confirmed: true })}>
-										{t("interaction.yes")}
-									</GhostAction>
-								</>
-							) : (
-								<>
-									<GhostAction onClick={() => void respond({ cancelled: true })}>
-										{t("interaction.cancel")}
-									</GhostAction>
-									{(shown.kind === "input" || shown.kind === "editor") && (
-										<GhostAction
-											strong
-											onClick={() => {
-												const value =
-													shown.kind === "input"
-														? (inputRef.current?.value ?? "")
-														: (editorRef.current?.value ?? shown.prefill ?? "");
-												void respond({ value });
-											}}
-										>
-											{t("interaction.submit")}
+						{error && (
+							<p className="rounded-lg bg-hover px-2.5 py-1.5 text-ui-12 break-all text-err">{error}</p>
+						)}
+
+						<div className="flex items-center gap-0.5">
+							<span className="text-ui-11 text-ink-faint">{hint}</span>
+							<div className="ml-auto flex items-center gap-0.5">
+								{shown.timeoutMs !== undefined && (
+									<span className="mr-1 text-ui-11 text-ink-faint">{t("interaction.timedOutNote")}</span>
+								)}
+								{shown.kind === "confirm" ? (
+									<>
+										<GhostAction onClick={() => void respond({ cancelled: true })}>
+											{t("interaction.no")}
 										</GhostAction>
-									)}
-								</>
-							)}
+										<GhostAction strong onClick={() => void respond({ confirmed: true })}>
+											{t("interaction.yes")}
+										</GhostAction>
+									</>
+								) : (
+									<>
+										<GhostAction onClick={() => void respond({ cancelled: true })}>
+											{t("interaction.cancel")}
+										</GhostAction>
+										{(shown.kind === "input" || shown.kind === "editor") && (
+											<GhostAction
+												strong
+												onClick={() => {
+													const value =
+														shown.kind === "input"
+															? (inputRef.current?.value ?? "")
+															: (editorRef.current?.value ?? shown.prefill ?? "");
+													void respond({ value });
+												}}
+											>
+												{t("interaction.submit")}
+											</GhostAction>
+										)}
+									</>
+								)}
+							</div>
 						</div>
 					</div>
-				</div>
+				</fieldset>
 			</div>
 		</div>
 	);

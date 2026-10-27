@@ -2,6 +2,7 @@ import { IpcChannels, KNOWN_UI_SLOTS, UI_PLUGINS_CHANNELS } from "@percho/shared
 import { shell } from "electron";
 import { loadUiPluginsConfig } from "../ui-plugins/config";
 import type { UiPluginManager } from "../ui-plugins/manager";
+import type { UiWorkbenchTrust } from "../ui-plugins/workbench-trust";
 import { registerInvokeHandlers } from "./invoke";
 import { sendToRenderer } from "./send";
 
@@ -15,7 +16,10 @@ function pushConfigEvent(): void {
  * 安全细则（spec §9）：readCode/openDir 只接受 manager 白名单内的合法插件名（禁路径）；
  * 所有参数做类型检查，非法直接 return。
  */
-export function registerUiPluginsIpc(manager: UiPluginManager): void {
+export function registerUiPluginsIpc(
+	manager: UiPluginManager,
+	trust: Pick<UiWorkbenchTrust, "configurePlugin" | "serve">,
+): void {
 	registerInvokeHandlers(UI_PLUGINS_CHANNELS, {
 		uiPluginsGetConfig: () => loadUiPluginsConfig(),
 		// 启用=信任：enabled=true 时 trusted 一并落盘；await 落盘后才返回（renderer invoke 读到的是写入后的最新配置）
@@ -26,15 +30,22 @@ export function registerUiPluginsIpc(manager: UiPluginManager): void {
 		},
 		uiPluginsList: () => manager.list(),
 		// readCode/openDir 只接受 manager 白名单内的合法插件名（禁路径，spec §9）
-		uiPluginsReadCode: ({ name }) => {
+		uiPluginsReadCode: async ({ name }) => {
 			if (typeof name !== "string" || name.length === 0) return { error: "参数非法" };
-			return manager.readCode(name);
+			try {
+				return await trust.serve(name, () => manager.readCode(name));
+			} catch (error) {
+				return { error: error instanceof Error ? error.message : "Plugin trust check failed" };
+			}
 		},
 		uiPluginsSetPluginEnabled: async ({ name, enabled }) => {
 			if (typeof name !== "string" || typeof enabled !== "boolean") return;
 			const info = manager.info(name);
 			if (!info || info.invalidReason) return;
-			await manager.updateConfig({ kind: "set-plugin-enabled", name, enabled });
+			const changed = await trust.configurePlugin(name, enabled, () =>
+				manager.updateConfig({ kind: "set-plugin-enabled", name, enabled }),
+			);
+			if (!changed) return;
 			pushConfigEvent();
 		},
 		uiPluginsAssignSlot: async ({ slot, pluginName }) => {

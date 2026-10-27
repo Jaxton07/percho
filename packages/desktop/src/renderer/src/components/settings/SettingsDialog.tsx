@@ -1,13 +1,36 @@
+import { type EnvironmentRef, environmentEntityRef, environmentKey, LOCAL_ENVIRONMENT } from "@percho/shared";
 import type { ComponentType, CSSProperties } from "react";
-import { useMemo, useRef } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
+import { EnvironmentContext } from "../../environment-context";
+import { getEnvironments } from "../../environment-registry";
 import { useT } from "../../i18n";
 import { useEdgeFade } from "../../lib/use-edge-fade";
 import { PluginBoundary } from "../../plugins/PluginBoundary";
 import { EMPTY_CONTRIBUTIONS } from "../../plugins/RegionHost";
 import { type Contribution, useUiPluginRegistry } from "../../plugins/registry";
 import { UI_REGIONS } from "../../plugins/slots";
-import { type SettingsCategory, useSettingsStore } from "../../stores/settings";
+import { useRemoteConnectionStore } from "../../stores/remote-connection";
+import { useSessionsStore } from "../../stores/sessions";
+import {
+	getSettingsStore,
+	type SettingsCategory,
+	useLocalSettingsStore as useSettingsStore,
+} from "../../stores/settings";
 import { useUiPluginsStore } from "../../stores/ui-plugins";
+import {
+	ChevronDownIcon,
+	DevicesIcon,
+	FileTextIcon,
+	GearIcon,
+	InfoIcon,
+	PuzzleIcon,
+	ServerIcon,
+	SlidersIcon,
+	SubagentIcon,
+	SunIcon,
+} from "../icons";
+import { RemoteConnectionPanel } from "../remote/RemoteConnectionDialog";
+import { SelectionMenu } from "../ui/SelectionMenu";
 import { AboutPanel } from "./AboutPanel";
 import { AppearancePanel } from "./AppearancePanel";
 import { ExtensionsPanel } from "./extensions/ExtensionsPanel";
@@ -24,9 +47,22 @@ const STATIC_CATEGORIES = [
 	"skills",
 	"mcp",
 	"extensions",
+	"remote",
 	"lan",
 	"about",
 ] as const satisfies readonly SettingsCategory[];
+
+const CATEGORY_ICONS = {
+	general: GearIcon,
+	appearance: SunIcon,
+	models: SlidersIcon,
+	skills: FileTextIcon,
+	mcp: SubagentIcon,
+	extensions: PuzzleIcon,
+	remote: ServerIcon,
+	lan: DevicesIcon,
+	about: InfoIcon,
+} satisfies Record<(typeof STATIC_CATEGORIES)[number], ComponentType<{ size?: number }>>;
 
 /** 面板注册表：新增分类 = 写一个面板组件 + 在这里登记（未登记显示 coming soon） */
 const PANELS: Partial<Record<SettingsCategory, ComponentType>> = {
@@ -36,6 +72,7 @@ const PANELS: Partial<Record<SettingsCategory, ComponentType>> = {
 	skills: SkillsPanel,
 	mcp: McpPanel,
 	extensions: ExtensionsPanel,
+	remote: RemoteConnectionPanel,
 	lan: LanObserverPanel,
 	about: AboutPanel,
 };
@@ -61,12 +98,46 @@ function findPluginContribution(category: SettingsCategory, list: Contribution[]
 export function SettingsDialog() {
 	const open = useSettingsStore((s) => s.open);
 	if (!open) return null;
-	return <SettingsDialogBody />;
+	return <SettingsEnvironment />;
+}
+
+function SettingsEnvironment() {
+	const [environment, setEnvironment] = useState<EnvironmentRef>(() => {
+		const state = useSessionsStore.getState();
+		return state.activeSessionId
+			? environmentEntityRef(state.activeSessionId).environment
+			: (state.newSessionDraft?.environment ?? LOCAL_ENVIRONMENT);
+	});
+	const category = useSettingsStore((state) => state.category);
+	const key = environmentKey(environment);
+	useEffect(() => {
+		if (environment.kind !== "local" && category !== "remote")
+			getSettingsStore(environment).getState().openWith(category);
+	}, [environment, category]);
+	return (
+		<EnvironmentContext.Provider value={environment}>
+			<SettingsDialogBody key={key} environment={environment} onEnvironmentChange={setEnvironment} />
+		</EnvironmentContext.Provider>
+	);
 }
 
 /** 弹窗体：左侧分类导航 + 右侧内容，两列均可独立滚动；plugin 分类由 registry 动态拼接 */
-function SettingsDialogBody() {
+function SettingsDialogBody({
+	environment,
+	onEnvironmentChange,
+}: {
+	environment: EnvironmentRef;
+	onEnvironmentChange: (environment: EnvironmentRef) => void;
+}) {
 	const t = useT();
+	const [environmentAnchor, setEnvironmentAnchor] = useState<HTMLElement | null>(null);
+	const remoteStatus = useRemoteConnectionStore((state) => state.status);
+	const registeredEnvironments = getEnvironments();
+	const environments = registeredEnvironments.some(
+		(ref) => environmentKey(ref) === environmentKey(environment),
+	)
+		? registeredEnvironments
+		: [...registeredEnvironments, environment];
 	const setOpen = useSettingsStore((s) => s.setOpen);
 	const category = useSettingsStore((s) => s.category);
 	const setCategory = useSettingsStore((s) => s.setCategory);
@@ -99,6 +170,54 @@ function SettingsDialogBody() {
 				<div className="flex shrink-0 items-center justify-between px-4 py-3">
 					<h2 className="text-ui-14 leading-[calc(1.25_/_0.875)] font-semibold text-ink">
 						{t("settings.title")}
+						{category !== "remote" && (
+							<>
+								<button
+									type="button"
+									className="ml-3 inline-flex max-w-[240px] items-center gap-3 rounded-full border border-border bg-transparent px-2.5 py-1 text-ui-12 font-normal text-ink-dim outline-none transition-colors hover:bg-hover focus-visible:border-ink-faint"
+									aria-label={t("settings.environment")}
+									aria-haspopup="listbox"
+									aria-expanded={!!environmentAnchor}
+									onClick={(event) => setEnvironmentAnchor(environmentAnchor ? null : event.currentTarget)}
+									onKeyDown={(event) => {
+										if (event.key === "ArrowDown" || event.key === "ArrowUp") {
+											event.preventDefault();
+											setEnvironmentAnchor(event.currentTarget);
+										}
+									}}
+								>
+									<span className="truncate">
+										{environment.kind === "local"
+											? t("settings.localEnvironment")
+											: remoteStatus.environment?.connectionId === environment.connectionId
+												? (remoteStatus.alias ?? t("remote.alias"))
+												: t("remote.unavailableEnvironment")}
+									</span>
+									<ChevronDownIcon size={12} className="shrink-0" />
+								</button>
+								{environmentAnchor && (
+									<SelectionMenu
+										anchor={environmentAnchor}
+										label={t("settings.environment")}
+										value={environmentKey(environment)}
+										options={environments.map((ref) => ({
+											value: environmentKey(ref),
+											label:
+												ref.kind === "local"
+													? t("settings.localEnvironment")
+													: remoteStatus.environment?.connectionId === ref.connectionId
+														? (remoteStatus.alias ?? t("remote.alias"))
+														: t("remote.unavailableEnvironment"),
+										}))}
+										onSelect={(value) => {
+											const next = environments.find((ref) => environmentKey(ref) === value);
+											if (next) onEnvironmentChange(next);
+										}}
+										onClose={() => setEnvironmentAnchor(null)}
+									/>
+								)}
+							</>
+						)}
 					</h2>
 					<button
 						type="button"
@@ -116,20 +235,33 @@ function SettingsDialogBody() {
 						className="fade-rule-v edge-fade w-44 shrink-0 overflow-y-auto p-2"
 						style={{ "--edge-fade-size": "16px" } as CSSProperties}
 					>
-						{STATIC_CATEGORIES.map((id) => (
-							<button
-								key={id}
-								type="button"
-								className={`mb-0.5 w-full rounded-lg px-3 py-2 text-left text-ui-13 transition-colors ${
-									category === id
-										? "bg-hover font-medium text-ink"
-										: "text-ink-dim hover:bg-hover hover:text-ink"
-								}`}
-								onClick={() => setCategory(id)}
-							>
-								{t(`settings.category.${id}`)}
-							</button>
-						))}
+						{STATIC_CATEGORIES.map((id) => {
+							const Icon = CATEGORY_ICONS[id];
+							return (
+								<button
+									key={id}
+									type="button"
+									className={`mb-0.5 flex w-full items-center gap-2 rounded-lg px-3 py-2 text-left text-ui-13 transition-colors ${
+										category === id
+											? "bg-hover font-medium text-ink"
+											: "text-ink-dim hover:bg-hover hover:text-ink"
+									}`}
+									onClick={() => setCategory(id)}
+								>
+									<span className="flex w-3.5 shrink-0 items-center justify-center">
+										<Icon size={14} />
+									</span>
+									<span className="min-w-0">
+										{t(`settings.category.${id}`)}
+										{id === "remote" && (
+											<span className="ml-1 inline-block text-ui-11 font-normal text-ink-faint">
+												{t("settings.experimental")}
+											</span>
+										)}
+									</span>
+								</button>
+							);
+						})}
 						{/* 插件自带设置页分类：标题取 contribution.title（插件自定义字符串，不走宿主 i18n） */}
 						{pluginCategories.map((c) => {
 							const id = pluginCategoryId(c.pluginName, c.id);
@@ -137,14 +269,17 @@ function SettingsDialogBody() {
 								<button
 									key={id}
 									type="button"
-									className={`mb-0.5 w-full rounded-lg px-3 py-2 text-left text-ui-13 transition-colors ${
+									className={`mb-0.5 flex w-full items-center gap-2 rounded-lg px-3 py-2 text-left text-ui-13 transition-colors ${
 										category === id
 											? "bg-hover font-medium text-ink"
 											: "text-ink-dim hover:bg-hover hover:text-ink"
 									}`}
 									onClick={() => setCategory(id)}
 								>
-									{c.title ?? c.pluginName}
+									<span className="flex w-3.5 shrink-0 items-center justify-center">
+										<PuzzleIcon size={14} />
+									</span>
+									<span className="truncate">{c.title ?? c.pluginName}</span>
 								</button>
 							);
 						})}
