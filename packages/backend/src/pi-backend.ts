@@ -130,6 +130,7 @@ import { ModelPrefsService } from "./settings/model-prefs";
 import { makeQuotaService } from "./settings/quota";
 import { SettingsService } from "./settings/settings";
 import { slashCommandsForLoader, slashCommandsForSession } from "./slash-commands";
+import type { LocalSessionPaths } from "./storage/session-paths";
 import {
 	makeChannelWatchExtension,
 	readChannelWatchEnabled,
@@ -171,6 +172,8 @@ function sessionInfoToMeta(
 }
 
 export interface PiBackendOptions {
+	/** Desktop-only imported session path compatibility, installed before any session opens. */
+	localSessionPaths?: LocalSessionPaths;
 	/** 默认工作目录（createSession 未指定时使用） */
 	defaultCwd?: string;
 	/** Independent remote host validates literal directories before new execution. */
@@ -332,7 +335,7 @@ export class PiBackend {
 	private mcpServerNotices = new Map<string, { error?: string; needsAuth?: boolean; authUrl?: string }>();
 	/** 官方 notify 里不带 server 名的全局提示 */
 	private mcpGlobalNotice: McpGlobalNotice | undefined;
-	/** 项目信任决策记录（~/.pi/agent/trust.json，与 CLI 共享）+ 信任请求门控 */
+	/** 项目信任决策记录（~/.percho/agent/trust.json，Percho 私有）+ 信任请求门控 */
 	private readonly trustStore = new ProjectTrustStore(getAgentDir());
 	private readonly trustGate = new TrustGate(
 		(req) => this.publishInteraction(this.trustEmitter, req),
@@ -691,6 +694,7 @@ export class PiBackend {
 		const runtime = await this.getModelRuntime();
 		this.assertRunning();
 		const requested = options.cwd || this.options.defaultCwd || process.cwd();
+		this.options.localSessionPaths?.assertCwd(requested);
 		const cwd = this.options.validateWorkspace ? await validateProjectDirectory(requested) : requested;
 		this.assertRunning();
 		const model =
@@ -721,7 +725,7 @@ export class PiBackend {
 	 * - 失败（含构造失败）必清 in-flight key → 可重试。
 	 */
 	async openSession(filePath: string): Promise<SessionMeta> {
-		const key = resolve(filePath);
+		const key = this.options.localSessionPaths?.resolveFile(filePath) ?? resolve(filePath);
 		return this.trackCreation(() => this.openFlights.run(key, () => this.openSessionOnce(key)));
 	}
 
@@ -738,6 +742,7 @@ export class PiBackend {
 		const runtime = await this.getModelRuntime();
 		this.assertRunning();
 		const cwd = sessionManager.getCwd() || process.cwd();
+		this.options.localSessionPaths?.assertCwd(cwd);
 		const readOnly = isSubagentSessionPath(filePath);
 		const session = await this.wireSession(cwd, readOnly, async (deps) => {
 			const { settingsManager, resourceLoader } = await deps.load();
@@ -1086,7 +1091,10 @@ export class PiBackend {
 	async deleteSession(sessionId: string, sessionFile?: string): Promise<void> {
 		const entry = this.registry.get(sessionId);
 		const sessionDir = entry?.session.sessionManager.getSessionDir();
-		const file = sessionFile ?? entry?.session.sessionManager.getSessionFile();
+		const requestedFile = sessionFile ?? entry?.session.sessionManager.getSessionFile();
+		const file = requestedFile
+			? (this.options.localSessionPaths?.resolveFile(requestedFile, true) ?? requestedFile)
+			: undefined;
 		// 显式删除是用户的明确意图（既有行为：即便正跑着也删），**绕开 closeSession 的 isStreaming 拒绝**，
 		// 否则会变成「拒绝 dispose 但磁盘文件照删」的跛脚状态（阶段 0 实测确认这条路径不先 abort）
 		if (entry) await this.disposeSession(entry);
@@ -1109,6 +1117,7 @@ export class PiBackend {
 		document?: ComposerDocument,
 	): Promise<void> {
 		const entry = this.requireWritable(sessionId);
+		this.options.localSessionPaths?.assertCwd(entry.cwd);
 		if (this.options.validateWorkspace) {
 			await validateProjectDirectory(entry.cwd);
 			if (document)
@@ -1164,6 +1173,7 @@ export class PiBackend {
 	/** SDK 补丁公开入口：目标核验/同步占位/持久化排除失败响应均由会话层完成。 */
 	async retryLastFailedTurn(sessionId: string, ref: { timestamp: number; entryId: string }): Promise<void> {
 		const entry = this.requireWritable(sessionId);
+		this.options.localSessionPaths?.assertCwd(entry.cwd);
 		if (this.options.validateWorkspace) {
 			await validateProjectDirectory(entry.cwd);
 			if (this.requireWritable(sessionId) !== entry)
@@ -1415,9 +1425,10 @@ export class PiBackend {
 	private async findUnloadedSessionFile(sessionId: string, cwd?: string): Promise<string | undefined> {
 		if (cwd) {
 			const file = SessionManager.findById(cwd, sessionId);
-			if (file) return file;
+			if (file) return this.options.localSessionPaths?.resolveFile(file) ?? file;
 		}
-		return (await this.listAllSessions()).find((s) => s.sessionId === sessionId)?.sessionFile;
+		const file = (await this.listAllSessions()).find((s) => s.sessionId === sessionId)?.sessionFile;
+		return file ? (this.options.localSessionPaths?.resolveFile(file) ?? file) : undefined;
 	}
 
 	/** 导出会话内容（HTML/JSONL）；返回文件内容，由调用方保存 */
@@ -1521,7 +1532,10 @@ export class PiBackend {
 			throw new Error("This session has not been saved yet. Send a message first.");
 		}
 		// 在新打开的 manager 上分叉，避免动当前会话的 manager 状态
-		const forkedManager = SessionManager.open(file, sourceManager.getSessionDir());
+		const forkedManager = SessionManager.open(
+			this.options.localSessionPaths?.resolveFile(file) ?? file,
+			sourceManager.getSessionDir(),
+		);
 		const newPath = forkedManager.createBranchedSession(targetId);
 		if (!newPath) throw new Error("Failed to create forked session");
 		log.info("fork session", sessionId, { targetId, newPath });
@@ -1957,7 +1971,7 @@ export class PiBackend {
 		log.info("context manager mode", mode);
 	}
 
-	/** channel-watch 总开关（设置 UI 用；键在 ~/.pi/agent/settings.json，缺省=开） */
+	/** channel-watch 总开关（设置 UI 用；键在 ~/.percho/agent/settings.json，缺省=开） */
 	getChannelWatchConfig(): { enabled: boolean } {
 		return { enabled: readChannelWatchEnabled(getAgentDir()) };
 	}

@@ -2,7 +2,7 @@
  * #101 浏览器端到端：真实 ProviderRow 点击 → store → IPC → ModelPrefsService → 文件/模型菜单。
  * 在仓库根运行（仅允许 .local/ 下的隔离 agent，不使用真实密钥/生成/联网刷新）：
  *   node scripts/verify-model-visibility.mjs prepare .local/tmp/model-visibility/agent
- *   cd packages/desktop && PI_CODING_AGENT_DIR=<绝对 agent 路径> npx electron-vite dev -- --remote-debugging-port=9224 --inspect=9229 --user-data-dir=<隔离 userData>
+ *   cd packages/desktop && PERCHO_AGENT_DIR=<绝对 agent 路径> npx electron-vite dev -- --remote-debugging-port=9224 --inspect=9229 --user-data-dir=<隔离 userData>
  *   node scripts/verify-model-visibility.mjs before <agent 路径>
  *   退出并按原参数重启 dev（重启后后端 cache 消失）：
  *   node scripts/verify-model-visibility.mjs after <同一 agent 路径>

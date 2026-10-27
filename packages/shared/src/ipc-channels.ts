@@ -63,6 +63,7 @@ import type {
 	ProviderTestResult,
 	SubagentInfo,
 } from "./settings";
+import type { StorageStartupAction, StorageStartupState } from "./storage-startup";
 import type { TodoItem } from "./todo";
 import type { UiPluginInfo, UiPluginManifest, UiPluginsConfig, UiPluginsEventPayload } from "./ui-plugins";
 import type { UpdateState } from "./update";
@@ -761,7 +762,18 @@ export const REMOTE_CHANNELS = {
 } as const;
 
 /** 已表化通道全集（分批迁移，终态 = 全部 invoke 通道） */
+export const STORAGE_STARTUP_CHANNELS = {
+	storageStartupGet: ch("storageStartup:get", "desktop")<void, StorageStartupState>(),
+	storageStartupAct: ch(
+		"storageStartup:act",
+		"desktop",
+	)<{ action: StorageStartupAction }, void>({
+		action: input.oneOf("copy", "empty", "adopt", "retry", "cancel", "exit"),
+	}),
+} as const;
+
 export const CHANNEL_TABLE = {
+	...STORAGE_STARTUP_CHANNELS,
 	...REMOTE_CHANNELS,
 	...SESSION_CHANNELS,
 	...SETTINGS_CHANNELS,
@@ -816,6 +828,10 @@ function subscription<P, S extends ChannelScope = "environment">(scope: S = "env
 
 /** Sole subscription definition: API key + explicit legacy alias + channel + payload type. */
 export const SUBSCRIPTION_TABLE = {
+	onStorageStartup: subscription<StorageStartupState, "desktop">("desktop")(
+		"StorageStartup",
+		"storageStartup:changed",
+	),
 	onRemoteConnectionStatus: subscription<RemoteConnectionStatus, "desktop">("desktop")(
 		"RemoteConnectionStatus",
 		"remote:statusChanged",

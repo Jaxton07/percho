@@ -17,6 +17,7 @@ export * from "./session";
 export * from "./settings";
 export * from "./sidebar";
 export * from "./skill-invocation";
+export * from "./storage-startup";
 export * from "./subagent";
 export * from "./thinking";
 export * from "./todo";

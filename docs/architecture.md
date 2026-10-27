@@ -56,7 +56,7 @@ UI 插件的槽位/区域标识以 shared `ui-plugins.ts` 为单源。新增对�
 
 ## 用户数据与安全
 
-正式 agent 数据在 `~/.pi/agent/`，与 CLI 共享；开发/预览通过 `main/dev-agent-dir.ts` 隔离到 `~/.pi/agent-dev/`，Electron userData 使用 `-dev` 后缀。具体开发路径与实例管理见 [UI 调试](ui-debugging.md)。
+本机正式 agent 数据在 `~/.percho/agent/`，开发/预览在 `~/.percho/agent-dev/`；最早 bootstrap 固定目录，执行层启动前完成迁移与导航准备。桌面自定义目录使用 `PERCHO_AGENT_DIR`，SDK 内部使用其原变量。Electron userData 保持原位并为开发加 `-dev` 后缀。迁移/失败恢复、路径映射和隔离边界见[用户级数据隔离](local-agent-storage.md)，实例操作见 [UI 调试](ui-debugging.md)。
 
 权限模式属于会话，不是改写全局权限规则；第三方扩展的通用 confirm 不是工具授权。MCP/第三方工具无只读声明时不能默认放行，求值链以 backend `permissions/` 为准。
 

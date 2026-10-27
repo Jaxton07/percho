@@ -14,6 +14,7 @@ import {
 import { createExecutionHandlers } from "../execution-handlers";
 import { JsonStore } from "../json-store";
 import { PiBackend } from "../pi-backend";
+import { assertRemoteStorage } from "../storage/path-policy";
 import { bindExecutionEvents } from "./events";
 import { RuntimeWriter, readRuntimeFrames } from "./frames";
 import { MutationBook, MutationProtocolError } from "./mutations";
@@ -33,12 +34,14 @@ export async function startRuntimeServer(paths: RuntimePaths, exitStopped: () =>
 		} catch (error) {
 			if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
 		}
+		await assertRemoteStorage(paths.agent);
 		const identity = await new JsonStore<{ environmentId: string } | null>({
 			path: `${paths.agent}/environment.json`,
 			defaultValue: () => null,
 		}).update((value) => value ?? { environmentId: randomUUID() });
 		if (!identity || typeof identity.environmentId !== "string" || !identity.environmentId)
 			throw new Error("Invalid runtime environment identity");
+		await assertRemoteStorage(paths.agent);
 		backend = new PiBackend({ defaultCwd: paths.root, validateWorkspace: true });
 		await backend.init();
 		const runtimeBackend = backend;

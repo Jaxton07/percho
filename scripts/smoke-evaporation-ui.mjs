@@ -39,7 +39,7 @@ async function evalJs(expr) {
 	return result.result?.result?.value;
 }
 
-const settingsFile = `${process.env.HOME}/.pi/agent-dev/settings.json`;
+const settingsFile = `${process.env.PERCHO_AGENT_DIR ?? `${process.env.HOME}/.percho/agent-dev`}/settings.json`;
 const backupFile = `${settingsFile}.smoke-bak`;
 const readKeys = () => {
 	if (!existsSync(settingsFile)) return { acp: "(missing file)", evap: undefined };
