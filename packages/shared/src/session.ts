@@ -1,4 +1,7 @@
 import type { AgentSessionEvent as PiAgentSessionEvent } from "@earendil-works/pi-coding-agent";
+
+export type { CompactionPause } from "@earendil-works/pi-coding-agent";
+
 import type { ComposerDocument } from "./composer-document";
 import type { SkillInvocationDisplay } from "./skill-invocation";
 import type { SubagentRunData } from "./subagent";
@@ -522,6 +525,7 @@ export interface SessionBaseline {
 	permissionMode: PermissionMode;
 }
 export interface LoadedSessionSummary {
+	compactionPause?: import("@earendil-works/pi-coding-agent").CompactionPause | null;
 	sequence: number;
 	followUpQueue: string[];
 	permissionMode: PermissionMode;

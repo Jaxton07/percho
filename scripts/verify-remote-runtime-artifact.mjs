@@ -11,6 +11,22 @@ const exec = promisify(execFile);
 for (const path of ["/work/packages", "/source/packages", "/work/node_modules", "/source/node_modules"]) {
 	await assert.rejects(access(path), { code: "ENOENT" });
 }
+// Resolve from the unpacked package so checkout dependencies cannot hide an unpatched SDK.
+const { Agent } = await import("/runtime/node_modules/@earendil-works/pi-agent-core/dist/index.js");
+const { AgentSession } = await import("/runtime/node_modules/@earendil-works/pi-coding-agent/dist/index.js");
+assert.equal(typeof AgentSession.prototype.setCompactionPolicy, "function", "coding-agent host policy patch");
+assert.equal(
+	typeof AgentSession.prototype.retryLastFailedTurn,
+	"function",
+	"coding-agent manual retry patch",
+);
+assert.equal(typeof Agent.prototype.getQueuedMessages, "function", "agent-core pending input patch");
+const agent = new Agent();
+const pending = { role: "user", content: "isolated pending input", timestamp: 1 };
+agent.followUp(pending);
+assert.deepEqual(agent.getQueuedMessages(), [pending]);
+agent.commitPendingMessages([pending]);
+assert.deepEqual(agent.getQueuedMessages(), []);
 const checked = JSON.parse(
 	(
 		await exec(process.execPath, [entry, "check", "--root", "/state/check-must-not-exist"], {

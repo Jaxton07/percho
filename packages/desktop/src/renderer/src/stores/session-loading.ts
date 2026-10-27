@@ -109,11 +109,12 @@ export function createSessionLoader(ports: SessionDataPorts) {
 			useTranscriptStore.getState().bySession[sessionId]?.agentActive === true;
 		const transcriptBefore = useTranscriptStore.getState().bySession[sessionId];
 		const openingEpoch = historyOpenEpoch(sessionId);
-		const [history, followUpQueue, todos, permissionMode] = await Promise.all([
+		const [history, followUpQueue, todos, permissionMode, loaded] = await Promise.all([
 			skipHistory ? Promise.resolve(null) : getExecutionApi(sessionId).getSessionMessages({ sessionId }),
 			getExecutionApi(sessionId).getFollowUpMessages({ sessionId }),
 			getExecutionApi(sessionId).getTodos({ sessionId }),
 			getExecutionApi(sessionId).getPermissionMode({ sessionId }),
+			getExecutionApi(sessionId).getLoadedSessions(),
 		]);
 		// TOCTOU 复核：await 期间会话转为 live（如恰好有 prompt 竞态）时丢弃迟到历史，
 		// 防旧快照覆盖刚建立的流式态（queue/todo/permissionMode 是幂等快照，照常应用）
@@ -130,6 +131,16 @@ export function createSessionLoader(ports: SessionDataPorts) {
 		}
 		t.setFollowUpQueue(sessionId, followUpQueue);
 		t.loadTodos(sessionId, todos);
+		// 本机历史回放不携带实例运行态；只在读取期间没有新事件时采纳权威暂停值。
+		if (transcriptBefore === transcriptNow) {
+			const pause = loaded.find((summary) => summary.meta.sessionId === sessionId)?.compactionPause ?? null;
+			useTranscriptStore.setState((state) => {
+				const current = state.bySession[sessionId];
+				return current
+					? { bySession: { ...state.bySession, [sessionId]: { ...current, compactionPause: pause } } }
+					: state;
+			});
+		}
 		ports.writePermissionMode(sessionId, permissionMode);
 		if (historyNeedsRetry) {
 			deferSessionHistory(sessionId, () => ports.isOpen(sessionId));

@@ -8,6 +8,27 @@ import { describe, expect, it } from "vitest";
 import { sanitizeSessionEvent, sanitizeSessionMessage } from "../src/lan/sanitize";
 
 describe("sanitizeSessionMessage", () => {
+	it("forwards the bounded pause/retry contract through the existing event whitelist", () => {
+		const event = {
+			type: "compaction_pause",
+			pause: {
+				reason: "still-over-threshold",
+				tokens: 170000,
+				contextWindow: 200000,
+				thresholdTokens: 160000,
+			},
+		} satisfies SessionEvent;
+		expect(sanitizeSessionEvent(event)).toEqual(event);
+		expect(
+			sanitizeSessionEvent({
+				type: "summarization_retry_scheduled",
+				attempt: 1,
+				maxAttempts: 3,
+				delayMs: 2000,
+				errorMessage: "fetch failed",
+			}),
+		).not.toBeNull();
+	});
 	it("strips sourceText and replaces user images with placeholders (count preserved)", () => {
 		const message = {
 			role: "user",

@@ -1027,6 +1027,8 @@ export async function synchronizeEnvironmentSessions(
 						streaming: null,
 						agentActive: false,
 						compacting: false,
+						compactionPause: null,
+						summarizationRetry: null,
 						phase: "idle",
 						followUpQueue: [],
 						retrying: null,
@@ -1065,6 +1067,8 @@ export async function synchronizeEnvironmentSessions(
 							streaming: null,
 							agentActive: summary.streaming,
 							compacting: summary.compacting,
+							compactionPause: summary.compactionPause ?? null,
+							summarizationRetry: null,
 							phase: previous?.pendingPermissions.length
 								? "awaiting_permission"
 								: summary.streaming

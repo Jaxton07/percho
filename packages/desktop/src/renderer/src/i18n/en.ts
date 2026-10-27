@@ -336,6 +336,16 @@ export const en: Messages = {
 		max: "Max",
 	},
 	compaction: {
+		retrying: "Retrying summary · attempt {attempt}/{maxAttempts} · waiting {delay}s",
+		retryAttempt: "Retrying summary · attempt {attempt}/{maxAttempts}",
+		paused: {
+			failed: "Task paused: context compaction failed.",
+			overThreshold: "Task paused: context remains above the trigger after compaction.",
+			noHistory: "Task paused: context is above the trigger, with no history available to compact.",
+			contextChanged: "Task paused: the model or context changed while preparing the request.",
+			resumeHint:
+				"Restore the connection or adjust the model or pending input, then send a new message to continue. Queued messages are retained.",
+		},
 		running: "Compacting context",
 		done: "Context compacted",
 		cancelled: "Compaction cancelled",

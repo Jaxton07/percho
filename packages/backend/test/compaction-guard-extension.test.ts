@@ -1,6 +1,5 @@
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { join, resolve } from "node:path";
 import {
 	createAgentSession,
 	DefaultResourceLoader,
@@ -11,6 +10,7 @@ import { afterEach, describe, expect, it } from "vitest";
 import { estimateTokens } from "../src/tools/compaction-guard/estimate";
 import { makeCompactionGuardExtension } from "../src/tools/compaction-guard/extension";
 import { hardCapTokens } from "../src/tools/compaction-guard/guard";
+import { createCompactionRequestPolicy } from "../src/tools/compaction-guard/request-policy";
 import type { CompactionGuardObservation } from "../src/tools/compaction-guard/types";
 
 /**
@@ -22,17 +22,6 @@ import type { CompactionGuardObservation } from "../src/tools/compaction-guard/t
  * - 思考正文含 `THINKING-BODY-SECRET-i`；toolResult 中段含 `TOOLRESULT-MIDDLE-i-xxxx…`（头 5 行 / 尾 3 行保留、中段会被截）。
  * - 所以：**降级轮**的 `THINKING-BODY-SECRET-i` 与 `TOOLRESULT-MIDDLE-i` 必须消失；**保护区内**轮则原样保留。
  */
-
-const sleep = (ms: number): Promise<void> => new Promise((resolve) => setTimeout(resolve, ms));
-
-/** 压缩是 agent_settled 之后异步跑的：断言前等它收尾（最多 5s） */
-async function waitFor(predicate: () => boolean, timeoutMs = 5_000): Promise<void> {
-	const deadline = Date.now() + timeoutMs;
-	while (Date.now() < deadline) {
-		if (predicate()) return;
-		await sleep(25);
-	}
-}
 
 const ROOTS: string[] = [];
 afterEach(() => {
@@ -138,7 +127,9 @@ interface SetupOptions {
 }
 
 async function setup(options: SetupOptions = {}) {
-	const root = mkdtempSync(join(tmpdir(), "percho-guard-ext-"));
+	const base = resolve("../../.local/tmp/compaction-guard-extension");
+	mkdirSync(base, { recursive: true });
+	const root = mkdtempSync(join(base, "case-"));
 	ROOTS.push(root);
 	const agentDir = join(root, "agent");
 	const cwd = join(root, "project");
@@ -210,6 +201,7 @@ async function setup(options: SetupOptions = {}) {
 		settingsManager: SettingsManager.create(cwd, agentDir),
 		resourceLoader,
 	});
+	session.setCompactionPolicy(createCompactionRequestPolicy(agentDir));
 	const stream = makeFakeStream(options.stream ?? { text: "ok" });
 	session.agent.streamFunction = stream.fn;
 	options.history?.(session as unknown as Appendable);
@@ -373,6 +365,7 @@ describe("A5 三条触发路径都过钩子（reason 可见）", () => {
 		});
 		try {
 			await session.prompt("再问一句");
+			await session.prompt("下一次请求前检查");
 			const bound = observations.find((o) => o.phase === "bound");
 			expect(bound?.reason).toBe("threshold");
 			expect(bound?.degradedMessages ?? 0).toBeGreaterThan(0);
@@ -407,45 +400,23 @@ describe("A5 三条触发路径都过钩子（reason 可见）", () => {
 });
 
 describe("D7/D7b 契约：默认行为、逃生舱、与蒸发开关完全解耦、cap 跟着当前模型", () => {
-	it("三相位观测齐（A8）：trigger / bound / settled 各一条，字段口径一致", async () => {
+	it("请求前触发仍保留有界化与成功观测，正常完成后不再触发", async () => {
 		const { session, observations } = await setup({
 			contextWindow: 20_000,
 			sdkCompaction: { reserveTokens: 2000 },
 			guard: { thresholdPct: 80 },
-			// 17k < 20k − 2k（SDK 阈值够不到）但 17k/20k = 85% ≥ 80%（自研触发够得到）
-			stream: { text: "ok", usageInput: 17_000 },
-			history: bigHistory(),
-		});
-		try {
-			await session.prompt("问一句");
-			await waitFor(() => observations.some((o) => o.phase === "settled"));
-			const trigger = observations.find((o) => o.phase === "trigger");
-			const bound = observations.find((o) => o.phase === "bound");
-			const settled = observations.filter((o) => o.phase === "settled");
-			expect(trigger).toMatchObject({ reason: "threshold-pct", source: "guard", percentBasis: "usage" });
-			expect(trigger?.percent ?? 0).toBeGreaterThanOrEqual(80);
-			expect(bound).toMatchObject({ source: "guard", measure: expect.stringMatching(/^(cheap|exact)$/) });
-			expect(bound?.cap).toBe(10_000);
-			expect(settled.length).toBeGreaterThanOrEqual(1);
-			expect(settled.every((o) => o.outcome !== undefined)).toBe(true);
-		} finally {
-			session.dispose();
-		}
-	});
-
-	it("D7b 解耦：settings 里 contextEvaporation.enabled=false 不影响护栏（仍然触发+有界化）", async () => {
-		const { session, observations } = await setup({
-			contextWindow: 20_000,
-			sdkCompaction: { reserveTokens: 2000 },
 			contextEvaporation: { enabled: false },
-			guard: { thresholdPct: 80 },
 			stream: { text: "ok", usageInput: 17_000 },
 			history: bigHistory(),
 		});
 		try {
 			await session.prompt("问一句");
-			expect(observations.some((o) => o.phase === "trigger")).toBe(true);
+			const before = observations.length;
+			await session.prompt("继续");
+			expect(observations.length).toBeGreaterThan(before);
 			expect(observations.find((o) => o.phase === "bound")?.degradedMessages ?? 0).toBeGreaterThan(0);
+			expect(observations.find((o) => o.phase === "settled")?.outcome).toBe("ok");
+			expect(observations.some((o) => o.phase === "trigger")).toBe(false);
 		} finally {
 			session.dispose();
 		}
@@ -495,46 +466,21 @@ describe("D7/D7b 契约：默认行为、逃生舱、与蒸发开关完全解耦
 	});
 });
 
-describe("A6②（修订）compaction.enabled=false：SDK 全自动路径（含溢出恢复）都关掉，自研触发仍可用", () => {
-	/**
-	 * 事实（SDK 1.0.4 代码）：`_checkCompaction()` 第一件事就是 `if (!settings.enabled) return false;`
-	 * （`agent-session.js:2325-2328`），而溢出恢复（`:2377` / `:2403`）和其余自动阈值入口
-	 * （`_compactBeforeNextAssistantResponse` :429、虚拟模型路由 :480）都在其内部或由 `shouldCompact()` 门控
-	 * ⇒ **enabled=false 时 SDK 不做任何自动压缩**（spec §2 依赖②的原话与代码不符，已记 IMPL-NOTES）。
-	 * 对本机制的含义：此时唯一能压缩的路径就是自研 `ctx.compact()`（手动入口不看 enabled）——
-	 * 所以这个用例断言的是「溢出不再自动恢复 + 自研触发照样把输入有界化」。
-	 *
-	 * 另一条被这里证实的事实：error 终止的 assistant 消息**不参与 usage 口径**
-	 * （`getAssistantUsage()` 会跳过 aborted/error），此时 `getContextUsage().tokens` 退回纯估算，
-	 * 所以 percent 可能低于真实用量 —— 本用例用 40% 阈值让触发成立，并断言 `percentBasis = "estimate"`。
-	 */
-	it("溢出错误不再自动压缩；agent_settled 的自研触发仍压缩且有界", async () => {
+describe("SDK 自动压缩关闭的优先级", () => {
+	it("SDK 关闭后 settled 不再绕过开关；手动压缩仍有界", async () => {
 		const { session, observations } = await setup({
 			contextWindow: 20_000,
 			sdkCompaction: { enabled: false, reserveTokens: 2000 },
-			guard: { thresholdPct: 40 }, // 估算口径 ≈9k/20k ≈ 45% ⇒ 触发
-			stream: (callIndex) =>
-				callIndex === 0
-					? {
-							text: "",
-							stopReason: "error",
-							errorMessage: "Your input exceeds the context window of this model",
-							usageInput: 19_000,
-						}
-					: { text: "重试成功", usageInput: 100 },
+			guard: { thresholdPct: 40 },
+			stream: { text: "ok", usageInput: 19_000 },
 			history: bigHistory(),
 		});
 		try {
-			await session.prompt("再问一句");
-			// SDK 未走溢出恢复（enabled=false 的门在 _checkCompaction 开头）
-			expect(observations.some((o) => o.reason === "overflow")).toBe(false);
-			// 自研触发（95% ≥ 80%）压缩，且输入被有界化
-			const bound = observations.find((o) => o.phase === "bound");
-			expect(bound?.source).toBe("guard");
-			expect(bound?.degradedMessages ?? 0).toBeGreaterThan(0);
-			const trigger = observations.find((o) => o.phase === "trigger");
-			expect(trigger?.reason).toBe("threshold-pct");
-			expect(trigger?.percentBasis).toBe("estimate"); // error 轮的 usage 不算数 ⇒ 纯估算口径
+			await session.prompt("继续");
+			expect(observations).toEqual([]);
+			expect(session.compactionPause).toBeNull();
+			await session.compact();
+			expect(observations.find((o) => o.phase === "bound")?.degradedMessages ?? 0).toBeGreaterThan(0);
 		} finally {
 			session.dispose();
 		}
@@ -566,53 +512,53 @@ describe("cancelled runs", () => {
 	});
 });
 
-describe("A11 被拦下时留一条 skip 观测（review 追加：事后要能回答「它为什么没压」）", () => {
-	it("percent 已过线但冷却中 → 记 skip/cooldown，且不重复触发", async () => {
-		const { session, observations } = await setup({
+describe("无结束后触发器", () => {
+	it("没有可压缩历史时请求前暂停，不依赖冷却定时器续跑", async () => {
+		const { session, observations, captures } = await setup({
 			contextWindow: 20_000,
-			// SDK 阈值 = 20k − 2k = 18k > 12k ⇒ 原生路径够不到，只有护栏会动手
 			sdkCompaction: { reserveTokens: 2000 },
 			guard: { thresholdPct: 50 },
-			// 伪造 12k 用量（12k/20k = 60% ≥ 50%）但真实历史很小：第一次压缩会以
-			// 「Nothing to compact (session too small)」失败（不落 compaction entry，
-			// 因此不会踩到 SDK getContextUsage 在「压缩后 + 合成历史缺 usage」时的抛错）
 			stream: { text: "ok", usageInput: 12_000 },
 		});
 		try {
 			await session.prompt("第一轮");
-			await waitFor(() => observations.some((o) => o.phase === "settled" && o.outcome === "failed"));
-
 			await session.prompt("第二轮");
-			await waitFor(() => observations.some((o) => o.phase === "skip"));
-
-			const skips = observations.filter((o) => o.phase === "skip");
-			// 只有第一次真触发了；第二次过线但被冷却拦下，且只留一条 skip 行（不刷日志）
-			expect(observations.filter((o) => o.phase === "trigger")).toHaveLength(1);
-			expect(skips).toHaveLength(1);
-			expect(skips[0].skipReason).toBe("cooldown");
-			expect(skips[0].source).toBe("guard");
-			expect(skips[0].percent).toBeGreaterThanOrEqual(50);
-			expect(skips[0].tokensBefore).toBeGreaterThan(0);
-			expect(skips[0].contextWindow).toBe(20_000);
-			expect(skips[0].detail).toContain("被冷却拦下");
-		} finally {
-			session.dispose();
-		}
-	}, 30_000);
-
-	it("阈值未达时不产 skip 行（避免把正常跳过写进 trace）", async () => {
-		const { session, observations } = await setup({
-			contextWindow: 20_000,
-			sdkCompaction: { reserveTokens: 2000 },
-			guard: { thresholdPct: 100 }, // 永不触发
-			stream: { text: "ok", usageInput: 12_000 },
-		});
-		try {
-			await session.prompt("随便说点什么");
-			expect(observations.filter((o) => o.phase === "skip")).toHaveLength(0);
-			expect(observations.filter((o) => o.phase === "trigger")).toHaveLength(0);
+			expect(session.compactionPause).not.toBeNull();
+			expect(observations.some((o) => o.phase === "skip")).toBe(false);
+			expect(captures.filter((c) => !c.summarization)).toHaveLength(1);
+			expect(session.getFollowUpMessages()).toEqual(["第二轮"]);
 		} finally {
 			session.dispose();
 		}
 	});
+});
+
+it("bounds automatic summaries with the physical model behind a registered virtual selection", async () => {
+	const { session, observations, captures } = await setup({
+		contextWindow: 20_000,
+		sdkCompaction: { reserveTokens: 2000 },
+		guard: { thresholdPct: 30 },
+		history: bigHistory(),
+	});
+	try {
+		session.modelRuntime.registerVirtualModel({
+			provider: "fake",
+			id: "router",
+			name: "Fixture router",
+			route: () => ({ model: MODEL(20_000), thinkingLevel: "off" }),
+		});
+		const virtual = session.modelRuntime.getModel("fake", "router");
+		if (!virtual) throw new Error("Fixture virtual model was not registered");
+		expect(virtual.contextWindow).toBe(0);
+		await session.setModel(virtual);
+		await session.prompt("prepare with physical limits");
+		expect(session.compactionPause).toBeNull();
+		expect(observations.find((observation) => observation.phase === "bound")).toMatchObject({
+			reason: "threshold",
+			cap: 10_000,
+		});
+		expect(summarizationPrompts(captures)).not.toContain(`${SECRET_MIDDLE}-1-`);
+	} finally {
+		session.dispose();
+	}
 });

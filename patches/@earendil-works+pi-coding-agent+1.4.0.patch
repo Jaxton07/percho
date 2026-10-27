@@ -1,7 +1,43 @@
 diff --git a/node_modules/@earendil-works/pi-coding-agent/dist/core/agent-session.d.ts b/node_modules/@earendil-works/pi-coding-agent/dist/core/agent-session.d.ts
 --- a/node_modules/@earendil-works/pi-coding-agent/dist/core/agent-session.d.ts
 +++ b/node_modules/@earendil-works/pi-coding-agent/dist/core/agent-session.d.ts
-@@ -551,6 +551,10 @@
+@@ -54,6 +54,9 @@
+     type: "agent_settled";
+     aborted: boolean;
+ } | {
++    type: "compaction_pause";
++    pause: CompactionPause | null;
++} | {
+     type: "queue_update";
+     steering: readonly string[];
+     followUp: readonly string[];
+@@ -217,7 +220,25 @@
+     cost: number;
+     contextUsage?: ContextUsage;
+ }
++/** Percho optional request policy. No host control is active until explicitly installed. */
++export interface CompactionPause {
++    reason: "failed" | "still-over-threshold" | "nothing-to-compact" | "context-changed";
++    errorMessage?: string;
++    tokens?: number;
++    contextWindow?: number;
++    thresholdTokens?: number;
++}
++export interface CompactionRequestPolicy {
++    enabled(): boolean;
++    evaluate(input: { tokens: number; contextWindow: number; settings: { enabled: boolean; reserveTokens: number; keepRecentTokens: number } }): { trigger: boolean; thresholdTokens: number };
++    normalizeMessage?(message: AgentMessage): AgentMessage;
++    describeError?(error: unknown): string;
++    onResult(result: Omit<CompactionPause, "reason"> & { status: CompactionPause["reason"] | "success" | "cancelled" }): CompactionPause | null;
++    retry: { enabled: boolean; maxRetries: number; baseDelayMs: number; maxAgentDelayMs?: number };
++}
+ export declare class AgentSession {
++    setCompactionPolicy(policy: CompactionRequestPolicy | undefined): void;
++    readonly compactionPause: CompactionPause | null;
+     readonly agent: Agent;
+     readonly sessionManager: SessionManager;
+     readonly settingsManager: SettingsManager;
+@@ -551,6 +572,10 @@
       * @throws Error if no model selected or no API key available (when not streaming)
       */
      prompt(text: string, options?: PromptOptions): Promise<void>;
@@ -12,10 +48,322 @@ diff --git a/node_modules/@earendil-works/pi-coding-agent/dist/core/agent-sessio
      /**
       * Try to execute an extension command. Returns true if command was found and executed.
       */
+@@ -932,4 +957,4 @@
+     get extensionRunner(): ExtensionRunner;
+ }
+ export {};
+-//# sourceMappingURL=agent-session.d.ts.map
+\ No newline at end of file
++//# sourceMappingURL=agent-session.d.ts.map
 diff --git a/node_modules/@earendil-works/pi-coding-agent/dist/core/agent-session.js b/node_modules/@earendil-works/pi-coding-agent/dist/core/agent-session.js
 --- a/node_modules/@earendil-works/pi-coding-agent/dist/core/agent-session.js
 +++ b/node_modules/@earendil-works/pi-coding-agent/dist/core/agent-session.js
-@@ -1438,14 +1438,18 @@
+@@ -212,7 +212,211 @@
+         });
+         if (this._usesDefaultTools)
+             this._restoreToolsFromTranscript(this._defaultToolModifiers);
++    }
++    /** Percho: optional host policy; the SDK remains the sole queue/lifecycle owner. */
++    setCompactionPolicy(policy) {
++        this._hostPolicy = policy;
++        this._hostGeneration = (this._hostGeneration ?? 0) + 1;
++        this.agent.preparePendingRequest = policy ? (request, signal) => this._prepareHostPending(request, signal) : undefined;
++        this.agent.onPendingCommitted = policy ? (messages) => {
++            if (messages.some((m) => m.role === "user")) this._overflowRecoveryAttempted = false;
++            this._hostRequestPending = [];
++            this._hostRequestRoute = undefined;
++            this._hostPendingBaseline = undefined;
++            this._emitQueueUpdate();
++        } : undefined;
++        this.agent.onPendingRetained = policy ? () => this._emitQueueUpdate() : undefined;
++        this.agent.validatePendingMessages = policy ? (messages) => this._validateHostDispatch(messages) : undefined;
++    }
++    get compactionPause() { return this._hostPause ?? null; }
++    _hostEnabled() {
++        return !!this._hostPolicy?.enabled() && this.settingsManager.getCompactionEnabled();
++    }
++    _setHostPause(pause) {
++        this._hostPause = pause;
++        if (pause) this._hostResumeBatch = false;
++        this._emit({ type: "compaction_pause", pause });
++    }
++    _notifyHostResult(result) {
++        const pause = this._hostPolicy.onResult(result);
++        if (pause) this._setHostPause(pause);
++    }
++    _omitHostPending(messages) {
++        if (messages.length === 0) return;
++        const visible = new Set(this.sessionManager.buildSessionProjection().entries
++            .filter((entry) => entry.messages.length > 0).map((entry) => entry.sourceEntry.id));
++        for (const raw of messages) {
++            const published = this.agent.getPublishedPendingMessage(raw);
++            const entryId = published && this._entryIdsByMessage.get(published);
++            if (entryId && visible.delete(entryId) && published.role !== "system") {
++                const editId = this.sessionManager.appendContextEdit(entryId, null);
++                this._emit({ type: "entry_appended", entry: this.sessionManager.getEntry(editId) });
++            }
++        }
++    }
++    _validateHostDispatch(messages) {
++        const cancelled = messages.filter((raw) => this.agent.isPendingMessageCancelled(raw));
++        this._omitHostPending(cancelled);
++        const snapshot = this._hostDispatchSnapshot;
++        if (this._agentRunAbortRequested || this.agent.signal?.aborted || this._hostDisposed) return false;
++        if (cancelled.length > 0 || (this._hostEnabled() && snapshot && (snapshot.leaf !== this.sessionManager.getLeafId()
++            || snapshot.model !== this.model || snapshot.generation !== this._hostGeneration))) {
++            if (this._hostEnabled()) this._notifyHostResult({ status: "context-changed" });
++            return false;
++        }
++        return true;
++    }
++    _reconcileHostPending(raw) {
++        const projection = this.sessionManager.buildSessionProjection();
++        const ids = new Set(projection.entries.map((entry) => entry.sourceEntry.id));
++        // Published on another branch (or behind a compaction) is not delivered here.
++        // Explicit context omissions retain their source entry, so they are not resurrected.
++        for (const rawMessage of raw) {
++            const published = this.agent.getPublishedPendingMessage(rawMessage);
++            const entryId = published && this._entryIdsByMessage.get(published);
++            if (entryId && !ids.has(entryId)) this.agent.forgetPublishedPendingMessage(rawMessage);
++        }
+     }
++    _hostPendingContextIsCurrent(signal) {
++        const baseline = this._hostPendingBaseline;
++        if (!baseline || signal?.aborted || this._agentRunAbortRequested || this._hostDisposed) return false;
++        const branchIds = new Set(this.sessionManager.getBranch().map((entry) => entry.id));
++        const ids = new Set(this.sessionManager.buildSessionProjection().entries.map((entry) => entry.sourceEntry.id));
++        const missing = (this._hostRequestPending ?? []).some((raw) => {
++            if (this.agent.isPendingMessageCancelled(raw)) return false;
++            const published = this.agent.getPublishedPendingMessage(raw);
++            const entryId = published && this._entryIdsByMessage.get(published);
++            return entryId && !ids.has(entryId);
++        });
++        if (baseline.model !== this.model || baseline.generation !== this._hostGeneration
++            || (baseline.leaf && !branchIds.has(baseline.leaf)) || missing) {
++            this._notifyHostResult({ status: "context-changed" });
++            return false;
++        }
++        return true;
++    }
++    _hostCandidates(raw) {
++        const branch = this.sessionManager.getBranch();
++        const projection = this.sessionManager.buildSessionProjection();
++        const ids = new Set(projection.entries.map((entry) => entry.sourceEntry.id));
++        const messages = raw.map((message) => this.agent.getPublishedPendingMessage(message)
++            ?? this._hostPolicy?.normalizeMessage?.(message) ?? message);
++        const extra = messages.filter((message) => !ids.has(this._entryIdsByMessage.get(message)));
++        const estimate = estimateProjectedContextTokens(projection, branch);
++        return { projection, messages, tokens: estimate.tokens + extra.reduce((n, m) => n + estimateTokens(m), 0) };
++    }
++    _hostSnapshot() {
++        return { leaf: this.sessionManager.getLeafId(), model: this.model, generation: this._hostGeneration };
++    }
++    _hostSnapshotIsCurrent(snapshot, signal) {
++        if (signal?.aborted || this._agentRunAbortRequested || this._hostDisposed) return false;
++        if (snapshot.leaf !== this.sessionManager.getLeafId() || snapshot.model !== this.model
++            || snapshot.generation !== this._hostGeneration) {
++            this._notifyHostResult({ status: "context-changed" });
++            return false;
++        }
++        return true;
++    }
++    async _prepareHostRoute(raw, signal) {
++        const selection = this.model;
++        if (!selection || !isVirtualModel(selection)) return;
++        const baseline = this._hostSnapshot();
++        const candidate = this._hostCandidates(raw);
++        const ids = new Set(candidate.projection.entries.map((entry) => entry.sourceEntry.id));
++        const messages = [...candidate.projection.messages, ...candidate.messages.filter((message) =>
++            !ids.has(this._entryIdsByMessage.get(message)))];
++        const lastResponse = messages.findLastIndex((message) => message.role === "assistant");
++        const userTurn = messages.slice(lastResponse + 1).some((message) => message.role === "user");
++        const failed = this._failedResponse;
++        const state = getVirtualModelState(this.sessionManager.getBranch(), selection.provider, selection.id);
++        const route = await this._modelRuntime.resolveModel(selection, convertToLlm(messages), {
++            reason: failed ? "retry" : userTurn ? "user" : "continuation",
++            thinkingLevel: this.thinkingLevel, signal, failed, state,
++        });
++        if (!this._hostSnapshotIsCurrent(baseline, signal)) return;
++        if (route.state !== undefined && route.state !== state) {
++            const data = { provider: selection.provider, modelId: selection.id, state: route.state };
++            const entry = this.sessionManager.getEntry(this.sessionManager.appendCustomEntry(VIRTUAL_MODEL_STATE_ENTRY, data));
++            if (entry) {
++                baseline.leaf = entry.id;
++                this._emit({ type: "entry_appended", entry });
++            }
++        }
++        if (!this._hostSnapshotIsCurrent(baseline, signal)) return;
++        this._hostRequestRoute = { selection, route };
++    }
++    async _prepareHostPending(request, signal) {
++        let raw = this.agent.orderPendingMessages([
++            ...request.pendingMessages,
++            ...(this._hostResumeBatch ? this.agent.getQueuedMessages() : []),
++        ]);
++        this._hostRequestPending = raw;
++        if (this._hostDisposed || ((this._hostPause || this._hostAwaitingUser) && !this._hostResumeBatch)) return { action: "end", pendingMessages: raw };
++        if (this._hostResumeBatch) this._hostAwaitingUser = false;
++        if (this._hostPause && this._hostResumeBatch) this._setHostPause(null);
++        this._reconcileHostPending(raw);
++        this._hostRequestRoute = undefined;
++        this._hostRequestRouteError = undefined;
++        this._hostDispatchSnapshot = undefined;
++        if (this._hostEnabled()) {
++            const baseline = this._hostSnapshot();
++            try {
++                await this._prepareHostRoute(raw, signal);
++            }
++            catch (error) {
++                if (this._hostSnapshotIsCurrent(baseline, signal)) this._hostRequestRouteError = { error };
++            }
++            if (this._hostPause || signal?.aborted || this._agentRunAbortRequested || this._hostDisposed)
++                return { action: "end", pendingMessages: raw };
++            const effectiveModel = this._hostRequestRoute?.route.model ?? this.model;
++            if (!this._hostRequestRouteError) await this._checkHostRequest(raw, signal, true, effectiveModel);
++            // Include inputs accepted during a resumed summary before taking the dispatch snapshot.
++            if (this._hostResumeBatch && !this._hostPause) {
++                raw = this.agent.orderPendingMessages([...raw, ...this.agent.getQueuedMessages()]);
++                this._hostRequestPending = raw;
++                if (!this._hostRequestRouteError) await this._checkHostRequest(raw, signal, false, effectiveModel);
++            }
++        }
++        const candidate = this._hostCandidates(raw);
++        this._hostPendingBaseline = this._hostSnapshot();
++        return { pendingMessages: raw, messages: candidate.messages,
++            context: { ...request.context, messages: candidate.projection.messages },
++            model: this.model, thinkingLevel: this.thinkingLevel,
++            ...((this._hostPause || signal?.aborted || this._agentRunAbortRequested) ? { action: "end" } : {}) };
++    }
++    async _checkHostRequest(raw, signal, allowCompaction, effectiveModel = this.model) {
++        if (!this._hostEnabled() || signal?.aborted || this._agentRunAbortRequested) return;
++        const inspect = () => {
++            const candidate = this._hostCandidates(raw);
++            const settings = this.settingsManager.getCompactionSettings(effectiveModel);
++            const input = { tokens: candidate.tokens, contextWindow: effectiveModel?.contextWindow ?? 0, settings };
++            return { ...input, ...this._hostPolicy.evaluate(input) };
++        };
++        let check = inspect();
++        if (!check.trigger) return;
++        if (allowCompaction && !this._hostCompactedForRequest) {
++            this._hostCompactedForRequest = true;
++            await this._runAutoCompaction("threshold", false, effectiveModel);
++            if (signal?.aborted || this._agentRunAbortRequested || this._hostPause || !this._hostEnabled()) return;
++            check = inspect();
++        }
++        if (check.trigger) this._notifyHostResult({ status: "still-over-threshold", tokens: check.tokens,
++            contextWindow: check.contextWindow, thresholdTokens: check.thresholdTokens });
++    }
++    _hostProtectedRecentTokens() {
++        const pending = this._hostRequestPending ?? [];
++        const ids = new Set(pending.flatMap((raw) => {
++            const published = this.agent.getPublishedPendingMessage(raw);
++            const id = published && this._entryIdsByMessage.get(published);
++            return id ? [id] : [];
++        }));
++        const branch = this.sessionManager.getBranch();
++        const first = branch.findIndex((entry) => ids.has(entry.id));
++        if (first < 0) return 0;
++        return 1 + branch.slice(first).reduce((sum, entry) =>
++            sum + (entry.type === "message" ? estimateTokens(entry.message) : 0), 0);
++    }
++
+     get modelRuntime() {
+         return this._modelRuntime;
+     }
+@@ -424,7 +628,7 @@
+         const projection = this.sessionManager.buildSessionProjection();
+         // A virtual selection is checked in prepareRequest, against the model the request is routed to.
+         const model = this.model;
+-        if (!model || isVirtualModel(model) || !this._exceedsCompactionThreshold(model, projection)) {
++        if (this._hostEnabled() || !model || isVirtualModel(model) || !this._exceedsCompactionThreshold(model, projection)) {
+             return { ...context, messages: projection.messages };
+         }
+         await this._runAutoCompaction("threshold", false);
+@@ -451,9 +655,37 @@
+                 }, signal);
+                 return { previous, context: previous?.context ?? canonicalContext, projection };
+             };
++            if (this._hostEnabled() && !this._hostPendingContextIsCurrent(signal)) return { action: "end" };
++            const baseline = this._hostEnabled() ? this._hostSnapshot() : undefined;
+             let { previous, context, projection } = await prepare();
+             const model = previous?.model ?? this.agent.state.model;
+             const thinkingLevel = previous?.thinkingLevel ?? this.agent.state.thinkingLevel;
++            if (this._hostPolicy) {
++                if (baseline && !this._hostSnapshotIsCurrent(baseline, signal)) return { action: "end" };
++                // Routing failed before publication. Now the accepted input is durable, so use
++                // the ordinary model error/retry path instead of losing or repeatedly draining it.
++                if (this._hostRequestRouteError) {
++                    const { error } = this._hostRequestRouteError;
++                    this._hostRequestRouteError = undefined;
++                    this._hostResumeBatch = false;
++                    this._hostCompactedForRequest = false;
++                    this._hostDispatchSnapshot = this._hostSnapshot();
++                    throw error;
++                }
++                const routed = this._hostRequestRoute;
++                if (this._hostEnabled() && ((routed && routed.selection !== model)
++                    || (isVirtualModel(model) && !routed))) {
++                    this._notifyHostResult({ status: "context-changed" });
++                    return { action: "end" };
++                }
++                await this._checkHostRequest(this._hostRequestPending ?? [], signal, false, routed?.route.model ?? model);
++                if (this._hostPause || signal?.aborted || this._agentRunAbortRequested || this._hostDisposed) return { action: "end" };
++                this._hostCompactedForRequest = false;
++                this._hostResumeBatch = false;
++                this._hostDispatchSnapshot = this._hostSnapshot();
++                if (routed && this._hostEnabled())
++                    return { ...previous, context, model: routed.route.model, thinkingLevel: routed.route.thinkingLevel };
++            }
+             if (!isVirtualModel(model))
+                 return { ...previous, context, model, thinkingLevel };
+             // The selection stays in agent state; only this request uses the routed model. A routing
+@@ -654,8 +886,8 @@
+     _emitQueueUpdate() {
+         this._emit({
+             type: "queue_update",
+-            steering: [...this._steeringMessages],
+-            followUp: [...this._followUpMessages],
++            steering: [...this.getSteeringMessages()],
++            followUp: [...this.getFollowUpMessages()],
+         });
+     }
+     async _emitSessionCompactFailed(event) {
+@@ -728,7 +960,7 @@
+         }
+         // When a user message starts, check if it's from either queue and remove it BEFORE emitting
+         // This ensures the UI sees the updated queue state
+-        if (event.type === "message_start" && event.message.role === "user") {
++        if (!this._hostPolicy && event.type === "message_start" && event.message.role === "user") {
+             this._overflowRecoveryAttempted = false;
+             const messageText = contentText(event.message.content, "");
+             if (messageText) {
+@@ -797,6 +1029,7 @@
+         }
+     };
+     _willRetryAfterAgentEnd(event) {
++        if (this._hostPause || this._hostAwaitingUser || this._hostDisposed) return false;
+         if (this._agentRunAbortRequested)
+             return false;
+         const settings = this.settingsManager.getRetrySettings();
+@@ -1009,6 +1242,9 @@
+      * Call this when completely done with the session.
+      */
+     dispose() {
++        this._hostGeneration = (this._hostGeneration ?? 0) + 1;
++        this._hostDisposed = true;
++        this.abortCompaction();
+         try {
+             this.abortRetry();
+             this.abortCompaction();
+@@ -1421,6 +1657,7 @@
+      * @param onStarted Called once the run's messages are prepared, before the first request.
+      */
+     async _startRun(trigger, onStarted) {
++        this._hostCompactedForRequest = false;
+         this._isAgentRunActive = true;
+         this._agentRunAbortRequested = false;
+         let messages;
+@@ -1438,14 +1675,18 @@
          // have while idle. No run exists yet, so they cannot split a tool call from its result.
          this._flushPendingBashMessages();
          this._flushPendingCustomMessages();
@@ -41,7 +389,7 @@ diff --git a/node_modules/@earendil-works/pi-coding-agent/dist/core/agent-sessio
              await this.agent.prompt(messages);
              while (!this._agentRunAbortRequested) {
                  if (await this._handlePostAgentRun()) {
-@@ -1468,7 +1472,51 @@
+@@ -1468,7 +1709,52 @@
              this._runSystemPromptOptions = undefined;
              this._flushPendingBashMessages();
              this._flushPendingCustomMessages();
@@ -60,6 +408,7 @@ diff --git a/node_modules/@earendil-works/pi-coding-agent/dist/core/agent-sessio
 +     * re-running before_agent_start handlers. Retain the original failure in durable history.
 +     */
 +    async retryLastFailedTurn(ref, options) {
++        if (this._hostPause || this._hostAwaitingUser) throw new Error("Session paused: send a new message to resume");
 +        if (!this.isIdle || this._isEmittingAgentSettled || this._isBeforeSettle || this.agent.hasQueuedMessages()) {
 +            throw new Error("Cannot retry while the session is busy or has queued messages");
 +        }
@@ -94,3 +443,344 @@ diff --git a/node_modules/@earendil-works/pi-coding-agent/dist/core/agent-sessio
          }
      }
      /**
+@@ -1481,7 +1767,7 @@
+         // Check if we need to compact before sending (catches aborted responses).
+         // The starting message is sent below, so do not call agent.continue() here.
+         const lastAssistant = this._findLastAssistantMessage();
+-        if (lastAssistant) {
++        if (lastAssistant && !this._hostEnabled()) {
+             await this._checkCompaction(lastAssistant, false);
+         }
+         const selectedToolsBefore = this._baseSystemPromptOptions.selectedTools;
+@@ -1529,6 +1815,7 @@
+         return messages;
+     }
+     async _handlePostAgentRun() {
++        if (this._hostPause || this._hostAwaitingUser || this._hostDisposed) return false;
+         const message = this._lastAssistantMessage;
+         this._lastAssistantMessage = undefined;
+         if (this._agentRunAbortRequested) {
+@@ -1557,13 +1844,15 @@
+             this._retryAttempt = 0;
+         }
+         if (await this._checkCompaction(message)) {
+-            return !this._agentRunAbortRequested;
++            return !this._agentRunAbortRequested && !this._hostPause;
+         }
++        if (this._hostPause || this._hostAwaitingUser || this._hostDisposed) return false;
+         // The low-level loop drains both queues before agent_end. Messages queued by
+         // agent_end handlers require a fresh run before pre-settlement handlers fire.
+         return !this._agentRunAbortRequested && this.agent.hasQueuedMessages();
+     }
+     async _runBeforeSettleBoundary() {
++        if (this._hostPause || this._hostAwaitingUser || this._hostDisposed) return false;
+         if (!this._extensionRunner.hasHandlers("agent_before_settle"))
+             return this.agent.hasQueuedMessages();
+         this._isBeforeSettle = true;
+@@ -1660,6 +1949,15 @@
+         if (expandPromptTemplates) {
+             expandedText = this._expandSkillCommand(expandedText);
+             expandedText = expandPromptTemplate(expandedText, [...this.promptTemplates]);
++        }
++        if (this._hostPolicy && !this.isStreaming && (this._hostPause || this._hostAwaitingUser || this.agent.hasQueuedMessages())) {
++            if ((options?.source ?? "interactive") === "extension") {
++                await this._queueFollowUp(expandedText, currentImages);
++                preflightResult?.("queued");
++                return;
++            }
++            this._hostResumeBatch = true;
++            this._hostCompactedForRequest = false;
+         }
+         // If streaming, queue via steer() or followUp() based on option
+         if (this.isStreaming) {
+@@ -1793,8 +2091,7 @@
+      * Internal: Queue a steering message (already expanded, no extension command check).
+      */
+     async _queueSteer(text, images) {
+-        this._steeringMessages.push(text);
+-        this._emitQueueUpdate();
++        if (!this._hostPolicy) this._steeringMessages.push(text);
+         const content = [{ type: "text", text }];
+         if (images) {
+             content.push(...images);
+@@ -1804,18 +2101,19 @@
+             content,
+             timestamp: Date.now(),
+         });
++        this._emitQueueUpdate();
+     }
+     /**
+      * Internal: Queue a follow-up message (already expanded, no extension command check).
+      */
+     async _queueFollowUp(text, images) {
+-        this._followUpMessages.push(text);
+-        this._emitQueueUpdate();
++        if (!this._hostPolicy) this._followUpMessages.push(text);
+         const content = [{ type: "text", text }];
+         if (images) {
+             content.push(...images);
+         }
+         this.agent.followUp({ role: "user", content, timestamp: Date.now() });
++        this._emitQueueUpdate();
+     }
+     /**
+      * Throw an error if the text is an extension command.
+@@ -1851,6 +2149,13 @@
+             details: message.details,
+             timestamp: Date.now(),
+         };
++        if (this._hostPolicy) this.agent.orderPendingMessages([appMessage]);
++        if (this._hostPolicy && (this._hostPause || this._hostAwaitingUser)
++            && options?.triggerTurn && options.deliverAs !== "nextTurn") {
++            this.agent.followUp(appMessage);
++            this._emitQueueUpdate();
++            return;
++        }
+         if (options?.deliverAs === "nextTurn") {
+             this._pendingNextTurnMessages.push(appMessage);
+         }
+@@ -1942,25 +2247,27 @@
+      * @returns Object with steering and followUp arrays
+      */
+     clearQueue() {
+-        const steering = [...this._steeringMessages];
+-        const followUp = [...this._followUpMessages];
++        const steering = [...this.getSteeringMessages()];
++        const followUp = [...this.getFollowUpMessages()];
++        const pending = this._hostPolicy ? this.agent.getQueuedMessages() : [];
+         this._steeringMessages = [];
+         this._followUpMessages = [];
+         this.agent.clearAllQueues();
++        this._omitHostPending(pending);
+         this._emitQueueUpdate();
+         return { steering, followUp };
+     }
+     /** Number of pending messages (includes both steering and follow-up) */
+     get pendingMessageCount() {
+-        return this._steeringMessages.length + this._followUpMessages.length;
++        return this._hostPolicy ? this.agent.getQueuedMessages().length : this._steeringMessages.length + this._followUpMessages.length;
+     }
+     /** Get pending steering messages (read-only) */
+     getSteeringMessages() {
+-        return this._steeringMessages;
++        return this._hostPolicy ? this.agent.getQueuedMessages("steer").filter((m) => m.role === "user").map((m) => contentText(m.content, "")) : this._steeringMessages;
+     }
+     /** Get pending follow-up messages (read-only) */
+     getFollowUpMessages() {
+-        return this._followUpMessages;
++        return this._hostPolicy ? this.agent.getQueuedMessages("followUp").filter((m) => m.role === "user").map((m) => contentText(m.content, "")) : this._followUpMessages;
+     }
+     get resourceLoader() {
+         return this._resourceLoader;
+@@ -1969,6 +2276,15 @@
+      * Abort current operation and wait for agent to become idle.
+      */
+     async abort() {
++        if (this._hostEnabled()) {
++            this._hostAwaitingUser = true;
++            this._hostResumeBatch = false;
++            this._hostCompactedForRequest = false;
++        }
++        await this._abortCurrentOperation();
++    }
++    /** Cancel SDK work without treating internal lifecycle operations as a user stop. */
++    async _abortCurrentOperation() {
+         if (this._isAgentRunActive) {
+             this._agentRunAbortRequested = true;
+         }
+@@ -2011,6 +2327,7 @@
+         }
+         const previousModel = this.model;
+         const thinkingLevel = this._getThinkingLevelForModelSwitch(model);
++        this._hostGeneration = (this._hostGeneration ?? 0) + 1;
+         this.agent.state.model = model;
+         this.sessionManager.appendModelChange(model.provider, model.id);
+         if (options.persist) {
+@@ -2204,9 +2521,38 @@
+     // =========================================================================
+     /** Generate Pi's built-in compaction summary for manual and automatic compaction. */
+     async _runDefaultCompaction(preparation, model, customInstructions, signal, reason) {
+-        // Resolve the request only when Pi summarizes itself: routing may call models or fail.
+-        const request = await this._getSummarizationRequestAuth(model, signal);
+-        return compact(preparation, request.model, request.apiKey, request.headers, customInstructions, signal, request.thinkingLevel, this.agent.streamFunction, request.env, this.settingsManager.getRetrySettings(), this._summarizationRetryCallbacks({ source: "compaction", reason }), undefined);
++        const host = reason !== "manual" && this._hostEnabled();
++        if (!host) {
++            const request = await this._getSummarizationRequestAuth(model, signal);
++            return compact(preparation, request.model, request.apiKey, request.headers, customInstructions, signal,
++                request.thinkingLevel, this.agent.streamFunction, request.env, this.settingsManager.getRetrySettings(),
++                this._summarizationRetryCallbacks({ source: "compaction", reason }), undefined);
++        }
++        // Each summary's existing retry loop owns preparation and streaming together.
++        // No outer retry: a successful first part is never generated again.
++        const failure = (error, requestModel = model) => ({ role: "assistant", api: requestModel.api,
++            provider: requestModel.provider, model: requestModel.id, content: [], timestamp: Date.now(),
++            usage: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, totalTokens: 0,
++                cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 } },
++            stopReason: signal?.aborted ? "aborted" : "error",
++            errorMessage: this._hostPolicy.describeError?.(error) ?? String(error) });
++        const stream = async (_model, context, options) => {
++            let request;
++            try {
++                signal?.throwIfAborted();
++                request = await this._getSummarizationRequestAuth(model, signal);
++                signal?.throwIfAborted();
++                const response = await this.agent.streamFunction(request.model, context, {
++                    ...options, apiKey: request.apiKey, headers: request.headers, env: request.env,
++                    reasoning: request.model.reasoning && request.thinkingLevel !== "off" ? request.thinkingLevel : undefined,
++                });
++                return { ...response, result: async () => {
++                    try { return await response.result(); } catch (error) { return failure(error, request.model); }
++                } };
++            } catch (error) { return { result: async () => failure(error, request?.model) }; }
++        };
++        return compact(preparation, model, undefined, undefined, customInstructions, signal, this.thinkingLevel,
++            stream, undefined, this._hostPolicy.retry, this._summarizationRetryCallbacks({ source: "compaction", reason }), undefined);
+     }
+     _clearManualCompactionState() {
+         this._compactionAbortController = undefined;
+@@ -2228,7 +2574,7 @@
+      * @param customInstructions Optional instructions for the compaction summary
+      */
+     async compact(customInstructions) {
+-        await this.abort();
++        await this._abortCurrentOperation();
+         this._compactionAbortController = new AbortController();
+         this._emit({ type: "compaction_start", reason: "manual" });
+         let fromExtension = false;
+@@ -2440,12 +2786,14 @@
+             // Case 2: the response completed successfully. Compact, but do not retry because
+             // agent.continue() cannot continue from a completed assistant response.
+             if (!willRetry) {
++                if (this._hostEnabled()) return false;
+                 return await this._runAutoCompaction("overflow", false);
+             }
+             if (this._overflowRecoveryAttempted) {
+                 const errorMessage = contextOverflow
+                     ? "Context overflow recovery failed after one compact-and-retry attempt. Try reducing context or switching to a larger-context model."
+                     : "Truncated response recovery failed after one compact-and-retry attempt.";
++                if (this._hostEnabled()) this._notifyHostResult({ status: "failed", errorMessage });
+                 this._emit({
+                     type: "compaction_end",
+                     reason: "overflow",
+@@ -2466,11 +2814,12 @@
+             // Persistently omit the selected final attempt before post-run recovery compaction.
+             this._overflowRecoveryAttempted = true;
+             this._omitRecoveryAttempt(assistantMessage);
+-            const retry = await this._runAutoCompaction("overflow", willRetry);
++            const retry = await this._runAutoCompaction("overflow", willRetry, this._hostEnabled() ? messageModel ?? this.model : this.model);
+             if (retry)
+                 this._failedResponse = assistantMessage;
+             return retry;
+         }
++        if (this._hostEnabled()) return false;
+         // Case 3: threshold compaction without retry.
+         // For error messages or all-zero usage messages, estimate from the last valid response.
+         // This ensures sessions that hit persistent API errors (e.g. 529) or malformed zero-usage
+@@ -2518,9 +2867,9 @@
+      * @param willRetry Whether to continue the interrupted turn after overflow compaction
+      * @returns Whether the post-run loop should call `agent.continue()`
+      */
+-    async _runAutoCompaction(reason, willRetry) {
++    async _runAutoCompaction(reason, willRetry, effectiveModel = this.model) {
+         const model = this.model;
+-        const settings = this.settingsManager.getCompactionSettings(model);
++        const settings = this.settingsManager.getCompactionSettings(effectiveModel);
+         let abortController;
+         let started = false;
+         let fromExtension = false;
+@@ -2530,8 +2879,13 @@
+                 return false;
+             }
+             const pathEntries = this.sessionManager.getBranch();
+-            const preparation = prepareCompaction(pathEntries, settings);
++            const host = this._hostEnabled();
++            const baseline = { leaf: this.sessionManager.getLeafId(), model: this.model, generation: this._hostGeneration };
++            const preparation = prepareCompaction(pathEntries, host
++                ? { ...settings, keepRecentTokens: Math.max(settings.keepRecentTokens, this._hostProtectedRecentTokens()) }
++                : settings);
+             if (!preparation) {
++                if (host) this._notifyHostResult({ status: "nothing-to-compact" });
+                 return false;
+             }
+             abortController = new AbortController();
+@@ -2544,6 +2898,7 @@
+                 const extensionResult = (await this._extensionRunner.emit({
+                     type: "session_before_compact",
+                     preparation,
++                    model: effectiveModel,
+                     branchEntries: pathEntries,
+                     customInstructions: undefined,
+                     reason,
+@@ -2583,6 +2938,12 @@
+                 details = compactResult.details;
+             }
+             abortController.signal.throwIfAborted();
++            if (host && (baseline.leaf !== this.sessionManager.getLeafId() || baseline.model !== this.model
++                || baseline.generation !== this._hostGeneration || this._hostDisposed)) {
++                const error = new Error("Context changed before compaction could be committed");
++                error.contextChanged = true;
++                throw error;
++            }
+             this.sessionManager.appendCompaction(summary, firstKeptEntryId, tokensBefore, details, fromExtension, usage);
+             const newEntries = this.sessionManager.getEntries();
+             this._refreshFinalizedContext();
+@@ -2607,6 +2968,10 @@
+                 details,
+             };
+             this._emit({ type: "compaction_end", reason, result, aborted: false, willRetry });
++            if (this._hostEnabled()) {
++                this._hostCompactedForRequest = true;
++                this._notifyHostResult({ status: "success" });
++            }
+             if (willRetry)
+                 return true;
+             // Auto-compaction can complete while follow-up/steering/custom messages are waiting.
+@@ -2616,6 +2981,10 @@
+         catch (error) {
+             const message = error instanceof Error ? error.message : "compaction failed";
+             const aborted = abortController?.signal.aborted === true || cancelledByExtension;
++            if (this._hostEnabled() && !aborted && !this._hostDisposed) {
++                this._notifyHostResult({ status: error?.contextChanged ? "context-changed" : "failed", errorMessage: message });
++            }
++            if (this._hostEnabled() && aborted && !this._hostDisposed) this._notifyHostResult({ status: "cancelled" });
+             if (started) {
+                 const errorMessage = aborted
+                     ? undefined
+@@ -2996,6 +3365,7 @@
+         });
+     }
+     async reload(options) {
++        this._hostGeneration = (this._hostGeneration ?? 0) + 1;
+         const oldRunner = this._extensionRunner;
+         const previousFlagValues = oldRunner.getFlagValues();
+         await emitSessionShutdownEvent(oldRunner, { type: "session_shutdown", reason: "reload" });
+@@ -3633,4 +4003,4 @@
+         return this._extensionRunner;
+     }
+ }
+-//# sourceMappingURL=agent-session.js.map
+\ No newline at end of file
++//# sourceMappingURL=agent-session.js.map
+diff --git a/node_modules/@earendil-works/pi-coding-agent/dist/core/extensions/types.d.ts b/node_modules/@earendil-works/pi-coding-agent/dist/core/extensions/types.d.ts
+--- a/node_modules/@earendil-works/pi-coding-agent/dist/core/extensions/types.d.ts
++++ b/node_modules/@earendil-works/pi-coding-agent/dist/core/extensions/types.d.ts
+@@ -599,6 +599,8 @@
+ }
+ /** Fired before context compaction (can be cancelled or customized) */
+ export interface SessionBeforeCompactEvent {
++    /** Percho: effective physical request model for automatic compaction, when known. */
++    model?: Model<any>;
+     type: "session_before_compact";
+     preparation: CompactionPreparation;
+     branchEntries: SessionEntry[];
+diff --git a/node_modules/@earendil-works/pi-coding-agent/dist/index.d.ts b/node_modules/@earendil-works/pi-coding-agent/dist/index.d.ts
+--- a/node_modules/@earendil-works/pi-coding-agent/dist/index.d.ts
++++ b/node_modules/@earendil-works/pi-coding-agent/dist/index.d.ts
+@@ -1,6 +1,6 @@
+ export { type Args, parseArgs } from "./cli/args.ts";
+ export { CONFIG_DIR_NAME, getAgentDir, getDocsPath, getExamplesPath, getPackageDir, getReadmePath, VERSION, } from "./config.ts";
+-export { AgentSession, type AgentSessionConfig, type AgentSessionEvent, type AgentSessionEventListener, type ModelCycleResult, type ParsedSkillBlock, type PromptOptions, parseSkillBlock, type SessionStats, } from "./core/agent-session.ts";
++export { AgentSession, type AgentSessionConfig, type CompactionPause, type CompactionRequestPolicy, type AgentSessionEvent, type AgentSessionEventListener, type ModelCycleResult, type ParsedSkillBlock, type PromptOptions, parseSkillBlock, type SessionStats, } from "./core/agent-session.ts";
+ export { readStoredCredential } from "./core/auth-storage.ts";
+ export type { CacheWarmingDecision, CacheWarmingStatus } from "./core/cache-warmer.ts";
+ export { type BranchPreparation, type BranchSummaryResult, type CollectEntriesResult, type CompactionResult, type CutPointResult, calculateContextTokens, collectEntriesForBranchSummary, compact, DEFAULT_COMPACTION_SETTINGS, estimateTokens, type FileOperations, findCutPoint, findTurnStartIndex, type GenerateBranchSummaryOptions, generateBranchSummary, generateSummary, generateSummaryWithUsage, getLastAssistantUsage, prepareBranchEntries, serializeConversation, shouldCompact, } from "./core/compaction/index.ts";

@@ -1,0 +1,352 @@
+diff --git a/node_modules/@earendil-works/pi-agent-core/dist/agent-loop.js b/node_modules/@earendil-works/pi-agent-core/dist/agent-loop.js
+--- a/node_modules/@earendil-works/pi-agent-core/dist/agent-loop.js
++++ b/node_modules/@earendil-works/pi-agent-core/dist/agent-loop.js
+@@ -46,7 +46,7 @@
+     return stream;
+ }
+ export async function runAgentLoop(prompts, context, config, emit, signal, streamFn) {
+-    const initialMessages = declareToolChanges(context, prompts);
++    const initialMessages = config.preparePendingRequest ? [] : declareToolChanges(context, prompts);
+     const newMessages = [...initialMessages];
+     const currentContext = {
+         ...context,
+@@ -58,7 +58,7 @@
+         await emit({ type: "message_start", message });
+         await emit({ type: "message_end", message });
+     }
+-    await runLoop(currentContext, newMessages, config, signal, emit, streamFn ?? getDefaultStreamFn());
++    await runLoop(currentContext, newMessages, config.preparePendingRequest ? { ...config, initialPendingMessages: prompts } : config, signal, emit, streamFn ?? getDefaultStreamFn());
+     return newMessages;
+ }
+ export async function runAgentLoopContinue(context, config, emit, signal, streamFn) {
+@@ -85,6 +85,7 @@
+     let currentContext = initialContext;
+     let config = initialConfig;
+     let lastCompletedTurn;
++    let initialPending = config.initialPendingMessages ?? [];
+     let explicitContinuation = false;
+     // Check for steering messages at start (user may have typed while waiting)
+     let pendingMessages = (await config.getSteeringMessages?.()) || [];
+@@ -117,19 +118,81 @@
+                 }
+                 await emit({ type: "turn_start" });
+             }
++            // Percho: lease inputs before publishing or consuming them. Normal SDK users keep the old path.
++            let leased = [...initialPending, ...preparedMessages, ...pendingMessages];
++            let readyMessages = leased;
++            let publishedCandidates = leased;
++            initialPending = [];
++            if (config.preparePendingRequest) {
++                const update = await config.preparePendingRequest({ context: currentContext, pendingMessages: leased,
++                    model: config.model, thinkingLevel: config.reasoning ?? "off" }, signal);
++                leased = update?.pendingMessages ?? leased;
++                if (update?.action === "end" || signal?.aborted) {
++                    config.retainPendingMessages?.(leased);
++                    await emit({ type: "agent_end", messages: newMessages });
++                    return;
++                }
++                currentContext = update?.context ?? currentContext;
++                config = { ...config, model: update?.model ?? config.model,
++                    reasoning: update?.thinkingLevel === undefined ? config.reasoning
++                        : update.thinkingLevel === "off" ? undefined : update.thinkingLevel };
++                publishedCandidates = update?.messages ?? leased;
++                readyMessages = publishedCandidates.filter((_m, i) => !config.getPublishedPendingMessage?.(leased[i]));
++            }
+             // Process prepared and queued messages before the next assistant response.
+-            for (const message of declareToolChanges(currentContext, [...preparedMessages, ...pendingMessages])) {
++            const publishedByCandidate = new Map();
++            for (const message of declareToolChanges(currentContext, readyMessages)) {
+                 await emit({ type: "message_start", message });
+-                await emit({ type: "message_end", message });
++                const ended = { type: "message_end", message };
++                await emit(ended);
++                const candidate = readyMessages.includes(message) ? message
++                    : message.role === "system" ? readyMessages.findLast((m) => m.role === "system") : undefined;
++                if (candidate) publishedByCandidate.set(candidate, ended.message);
+                 currentContext.messages.push(message);
+                 newMessages.push(message);
+             }
++            if (config.preparePendingRequest) {
++                for (const raw of leased) {
++                    if (!config.getPublishedPendingMessage?.(raw)) {
++                        const index = leased.indexOf(raw);
++                        const candidate = publishedCandidates[index];
++                        config.recordPublishedPendingMessage?.(raw, publishedByCandidate.get(candidate) ?? candidate);
++                    }
++                }
++            }
+             pendingMessages = [];
+-            const requestUpdate = await config.prepareRequest?.({
+-                context: currentContext,
+-                model: config.model,
+-                thinkingLevel: config.reasoning ?? "off",
+-            }, signal);
++            let requestUpdate;
++            try {
++                requestUpdate = await config.prepareRequest?.({
++                    context: currentContext,
++                    model: config.model,
++                    thinkingLevel: config.reasoning ?? "off",
++                }, signal);
++            }
++            catch (error) {
++                if (config.preparePendingRequest) {
++                    if (signal?.aborted || config.validatePendingMessages?.(leased) === false) {
++                        config.retainPendingMessages?.(leased);
++                        await emit({ type: "agent_end", messages: newMessages });
++                        return;
++                    }
++                    // Published input belongs to this failed attempt. Ordinary model retry
++                    // reuses its history; leaving the lease queued would replay it forever.
++                    config.commitPendingMessages?.(leased);
++                }
++                throw error;
++            }
++            if (requestUpdate?.action === "end" || (config.preparePendingRequest && signal?.aborted)) {
++                config.retainPendingMessages?.(leased);
++                await emit({ type: "agent_end", messages: newMessages });
++                return;
++            }
++            if (config.preparePendingRequest && config.validatePendingMessages?.(leased) === false) {
++                config.retainPendingMessages?.(leased);
++                await emit({ type: "agent_end", messages: newMessages });
++                return;
++            }
++            if (config.preparePendingRequest) config.commitPendingMessages?.(leased);
+             if (requestUpdate) {
+                 currentContext = requestUpdate.context ?? currentContext;
+                 config = {
+@@ -678,4 +741,4 @@
+     await emit({ type: "message_start", message: toolResultMessage });
+     await emit({ type: "message_end", message: toolResultMessage });
+ }
+-//# sourceMappingURL=agent-loop.js.map
+\ No newline at end of file
++//# sourceMappingURL=agent-loop.js.map
+diff --git a/node_modules/@earendil-works/pi-agent-core/dist/agent.d.ts b/node_modules/@earendil-works/pi-agent-core/dist/agent.d.ts
+--- a/node_modules/@earendil-works/pi-agent-core/dist/agent.d.ts
++++ b/node_modules/@earendil-works/pi-agent-core/dist/agent.d.ts
+@@ -1,5 +1,5 @@
+ import { type ClientIdentity, type ImageContent, type Message, type SimpleStreamOptions, type ThinkingBudgets, type Transport } from "@earendil-works/pi-ai";
+-import type { AfterToolCallContext, AfterToolCallResult, AgentEvent, AgentLoopTurnUpdate, AgentMessage, AgentState, BeforeToolCallContext, BeforeToolCallResult, FinishTurn, PrepareNextTurnContext, PrepareRequest, QueueMode, StreamFn, ToolExecutionMode } from "./types.ts";
++import type { AfterToolCallContext, AfterToolCallResult, AgentEvent, AgentLoopTurnUpdate, AgentMessage, AgentState, BeforeToolCallContext, BeforeToolCallResult, FinishTurn, PreparePendingRequest, PrepareNextTurnContext, PrepareRequest, QueueMode, StreamFn, ToolExecutionMode } from "./types.ts";
+ export type { QueueMode } from "./types.ts";
+ /** Initial state for {@link Agent}. `systemPrompt` and `tools` become the leading system message unless `messages` already starts with one. */
+ export type AgentInitialState = Partial<Omit<AgentState, "pendingToolCalls" | "isStreaming" | "streamingMessage" | "errorMessage">>;
+@@ -17,6 +17,7 @@
+     afterToolCall?: (context: AfterToolCallContext, signal?: AbortSignal) => Promise<AfterToolCallResult | undefined>;
+     finishTurn?: FinishTurn;
+     prepareRequest?: PrepareRequest;
++    preparePendingRequest?: PreparePendingRequest;
+     prepareNextTurn?: (signal?: AbortSignal) => Promise<AgentLoopTurnUpdate | undefined> | AgentLoopTurnUpdate | undefined;
+     prepareNextTurnWithContext?: (context: PrepareNextTurnContext, signal?: AbortSignal) => Promise<AgentLoopTurnUpdate | undefined> | AgentLoopTurnUpdate | undefined;
+     steeringMode?: QueueMode;
+@@ -54,9 +55,11 @@
+     afterToolCall?: (context: AfterToolCallContext, signal?: AbortSignal) => Promise<AfterToolCallResult | undefined>;
+     finishTurn?: FinishTurn;
+     prepareRequest?: PrepareRequest;
++    preparePendingRequest?: PreparePendingRequest;
+     prepareNextTurn?: (signal?: AbortSignal) => Promise<AgentLoopTurnUpdate | undefined> | AgentLoopTurnUpdate | undefined;
+     prepareNextTurnWithContext?: (context: PrepareNextTurnContext, signal?: AbortSignal) => Promise<AgentLoopTurnUpdate | undefined> | AgentLoopTurnUpdate | undefined;
+     private activeRun?;
++    validatePendingMessages?: (messages: AgentMessage[]) => boolean;
+     /** Session identifier forwarded to providers for cache-aware backends. */
+     sessionId?: string;
+     /** Optional per-level thinking token budgets forwarded to the stream function. */
+@@ -107,6 +110,13 @@
+     hasQueuedMessages(): boolean;
+     /** Preview the messages selected for the next turn without consuming them. */
+     peekQueuedMessages(): AgentMessage[];
++    getQueuedMessages(kind?: "steer" | "followUp"): AgentMessage[];
++    orderPendingMessages(messages: AgentMessage[]): AgentMessage[];
++    retainPendingMessages(messages: AgentMessage[]): void;
++    commitPendingMessages(messages: AgentMessage[]): void;
++    getPublishedPendingMessage(message: AgentMessage): AgentMessage | undefined;
++    forgetPublishedPendingMessage(message: AgentMessage): void;
++    isPendingMessageCancelled(message: AgentMessage): boolean;
+     /** Active abort signal for the current run, if any. */
+     get signal(): AbortSignal | undefined;
+     /** Abort the current run, if one is active. */
+@@ -141,4 +151,4 @@
+      */
+     private processEvents;
+ }
+-//# sourceMappingURL=agent.d.ts.map
+\ No newline at end of file
++//# sourceMappingURL=agent.d.ts.map
+diff --git a/node_modules/@earendil-works/pi-agent-core/dist/agent.js b/node_modules/@earendil-works/pi-agent-core/dist/agent.js
+--- a/node_modules/@earendil-works/pi-agent-core/dist/agent.js
++++ b/node_modules/@earendil-works/pi-agent-core/dist/agent.js
+@@ -106,6 +106,14 @@
+     afterToolCall;
+     finishTurn;
+     prepareRequest;
++    preparePendingRequest;
++    onPendingCommitted;
++    onPendingRetained;
++    pendingOrder = new WeakMap();
++    publishedPending = new WeakMap();
++    cancelledPending = new WeakSet();
++    validatePendingMessages;
++    nextPendingOrder = 0;
+     prepareNextTurn;
+     prepareNextTurnWithContext;
+     activeRun;
+@@ -136,6 +144,7 @@
+         this.afterToolCall = runtimeOptions.afterToolCall;
+         this.finishTurn = runtimeOptions.finishTurn;
+         this.prepareRequest = runtimeOptions.prepareRequest;
++        this.preparePendingRequest = runtimeOptions.preparePendingRequest;
+         this.prepareNextTurn = runtimeOptions.prepareNextTurn;
+         this.prepareNextTurnWithContext = runtimeOptions.prepareNextTurnWithContext;
+         this.steeringQueue = new PendingMessageQueue(runtimeOptions.steeringMode ?? "one-at-a-time");
+@@ -185,18 +194,22 @@
+     }
+     /** Queue a message to be injected after the current assistant turn finishes. */
+     steer(message) {
++        if (this.preparePendingRequest) this.orderPendingMessages([message]);
+         this.steeringQueue.enqueue(message);
+     }
+     /** Queue a message to run only after the agent would otherwise stop. */
+     followUp(message) {
++        if (this.preparePendingRequest) this.orderPendingMessages([message]);
+         this.followUpQueue.enqueue(message);
+     }
+     /** Remove all queued steering messages. */
+     clearSteeringQueue() {
++        for (const message of this.steeringQueue.messages) if (message && typeof message === "object") this.cancelledPending.add(message);
+         this.steeringQueue.clear();
+     }
+     /** Remove all queued follow-up messages. */
+     clearFollowUpQueue() {
++        for (const message of this.followUpQueue.messages) if (message && typeof message === "object") this.cancelledPending.add(message);
+         this.followUpQueue.clear();
+     }
+     /** Remove all queued steering and follow-up messages. */
+@@ -213,6 +226,35 @@
+         const steering = this.steeringQueue.peek();
+         return steering.length > 0 ? steering : this.followUpQueue.peek();
+     }
++    /** Percho: identity-preserving queue leases, used only with preparePendingRequest. */
++    getQueuedMessages(kind) {
++        const messages = kind === "steer" ? this.steeringQueue.messages
++            : kind === "followUp" ? this.followUpQueue.messages
++            : [...this.steeringQueue.messages, ...this.followUpQueue.messages];
++        return this.orderPendingMessages(messages);
++    }
++    orderPendingMessages(messages) {
++        const unique = [...new Set(messages)].filter((message) => !this.cancelledPending.has(message));
++        for (const message of unique) {
++            if (!this.pendingOrder.has(message)) this.pendingOrder.set(message, this.nextPendingOrder++);
++        }
++        return unique.sort((a, b) => this.pendingOrder.get(a) - this.pendingOrder.get(b));
++    }
++    retainPendingMessages(messages) {
++        const queued = new Set(this.getQueuedMessages());
++        for (const message of this.orderPendingMessages(messages)) {
++            if (!queued.has(message)) this.followUpQueue.enqueue(message);
++        }
++        this.followUpQueue.messages = this.orderPendingMessages(this.followUpQueue.messages);
++    }
++    commitPendingMessages(messages) {
++        const selected = new Set(messages);
++        this.steeringQueue.messages = this.steeringQueue.messages.filter((m) => !selected.has(m));
++        this.followUpQueue.messages = this.followUpQueue.messages.filter((m) => !selected.has(m));
++    }
++    getPublishedPendingMessage(message) { return this.publishedPending.get(message); }
++    forgetPublishedPendingMessage(message) { this.publishedPending.delete(message); }
++    isPendingMessageCancelled(message) { return this.cancelledPending.has(message); }
+     /** Active abort signal for the current run, if any. */
+     get signal() {
+         return this.activeRun?.abortController.signal;
+@@ -260,12 +302,12 @@
+             throw new Error("No messages to continue from");
+         }
+         if (lastMessage.role === "assistant") {
+-            const queuedSteering = this.steeringQueue.drain();
++            const queuedSteering = this.preparePendingRequest ? this.steeringQueue.peek() : this.steeringQueue.drain();
+             if (queuedSteering.length > 0) {
+                 await this.runPromptMessages(queuedSteering, { skipInitialSteeringPoll: true });
+                 return;
+             }
+-            const queuedFollowUps = this.followUpQueue.drain();
++            const queuedFollowUps = this.preparePendingRequest ? this.followUpQueue.peek() : this.followUpQueue.drain();
+             if (queuedFollowUps.length > 0) {
+                 await this.runPromptMessages(queuedFollowUps);
+                 return;
+@@ -288,6 +330,7 @@
+         return [{ role: "user", content, timestamp: Date.now() }];
+     }
+     async runPromptMessages(messages, options = {}) {
++        if (this.preparePendingRequest) this.orderPendingMessages(messages);
+         await this.runWithLifecycle(async (signal) => {
+             await runAgentLoop(messages, this.createContextSnapshot(), this.createLoopConfig(options), (event) => this.processEvents(event), signal, this.streamFunction);
+         });
+@@ -321,6 +364,12 @@
+             afterToolCall: this.afterToolCall,
+             finishTurn: this.finishTurn,
+             prepareRequest: this.prepareRequest,
++            preparePendingRequest: this.preparePendingRequest,
++            validatePendingMessages: (messages) => this.validatePendingMessages?.(messages) ?? true,
++            retainPendingMessages: (messages) => { this.retainPendingMessages(messages); this.onPendingRetained?.(); },
++            commitPendingMessages: (messages) => { this.commitPendingMessages(messages); this.onPendingCommitted?.(messages); },
++            getPublishedPendingMessage: (message) => this.publishedPending.get(message),
++            recordPublishedPendingMessage: (raw, published) => this.publishedPending.set(raw, published),
+             prepareNextTurn: this.prepareNextTurnWithContext || this.prepareNextTurn
+                 ? async (context) => {
+                     if (this.prepareNextTurnWithContext) {
+@@ -337,9 +386,9 @@
+                     skipInitialSteeringPoll = false;
+                     return [];
+                 }
+-                return this.steeringQueue.drain();
++                return this.preparePendingRequest ? this.steeringQueue.peek() : this.steeringQueue.drain();
+             },
+-            getFollowUpMessages: async () => this.followUpQueue.drain(),
++            getFollowUpMessages: async () => this.preparePendingRequest ? this.followUpQueue.peek() : this.followUpQueue.drain(),
+         };
+     }
+     async runWithLifecycle(executor) {
+@@ -438,4 +487,4 @@
+         }
+     }
+ }
+-//# sourceMappingURL=agent.js.map
+\ No newline at end of file
++//# sourceMappingURL=agent.js.map
+diff --git a/node_modules/@earendil-works/pi-agent-core/dist/types.d.ts b/node_modules/@earendil-works/pi-agent-core/dist/types.d.ts
+--- a/node_modules/@earendil-works/pi-agent-core/dist/types.d.ts
++++ b/node_modules/@earendil-works/pi-agent-core/dist/types.d.ts
+@@ -147,7 +147,11 @@
+     thinkingLevel: ThinkingLevel;
+ }
+ /** Replacement runtime state for the provider request being prepared. */
+-export type AgentRequestUpdate = Omit<AgentLoopTurnUpdate, "messages">;
++export type AgentRequestUpdate = Omit<AgentLoopTurnUpdate, "messages"> & { action?: "end" };
++/** Percho: candidate inputs have not been consumed or published. */
++export type PreparePendingRequest = (request: PrepareRequestContext & { pendingMessages: AgentMessage[] }, signal?: AbortSignal) =>
++    Promise<(AgentLoopTurnUpdate & { pendingMessages?: AgentMessage[]; action?: "end" }) | void>;
++
+ /**
+  * Called immediately before every conversational provider request, including the first.
+  * Pending messages have already been appended and emitted when this callback runs.
+@@ -229,6 +233,12 @@
+      * replace the runtime values for this and later requests in the run. This hook does not poll queues.
+      */
+     prepareRequest?: PrepareRequest;
++    preparePendingRequest?: PreparePendingRequest;
++    retainPendingMessages?: (messages: AgentMessage[]) => void;
++    commitPendingMessages?: (messages: AgentMessage[]) => void;
++    validatePendingMessages?: (messages: AgentMessage[]) => boolean;
++    getPublishedPendingMessage?: (message: AgentMessage) => AgentMessage | undefined;
++    recordPublishedPendingMessage?: (raw: AgentMessage, published: AgentMessage) => void;
+     /**
+      * Called after `turn_end` when the loop will continue, immediately before the next turn starts.
+      * Return replacement context/model/thinking state or messages to append to affect that turn.
+@@ -490,4 +500,4 @@
+     /** Milliseconds `execute()` took, measured with a monotonic clock; absent when the tool did not run. */
+     durationMs?: number;
+ };
+-//# sourceMappingURL=types.d.ts.map
+\ No newline at end of file
++//# sourceMappingURL=types.d.ts.map

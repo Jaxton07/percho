@@ -234,8 +234,8 @@ export function useComposerSend(options: UseComposerSendOptions) {
 			pushToast("warning", "composer.imageUnsupported");
 			return;
 		}
-		// 单条排队上限：已有一条且本次是普通文本则挡住（斜杠命令 streaming 中也可立即执行，不受限）
-		if (followUpQueue.length >= 1 && (document || !content.startsWith("/"))) {
+		// 运行中保留单条排队上限；暂停或停止后的人工新消息必须能携带旧队列恢复。
+		if (agentActive && followUpQueue.length >= 1 && (document || !content.startsWith("/"))) {
 			showFeedback(t("composer.queueFull"), "warn");
 			return;
 		}
