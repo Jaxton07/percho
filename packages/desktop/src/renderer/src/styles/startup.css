@@ -1,0 +1,133 @@
+#startup-root {
+	position: fixed;
+	inset: 0;
+	z-index: 10000;
+	pointer-events: none;
+}
+#startup-root:has(.startup-layout) {
+	pointer-events: auto;
+}
+.startup-layout {
+	height: 100%;
+	display: grid;
+	grid-template-rows: 48px minmax(0, 1fr) 74px;
+}
+.startup-header {
+	-webkit-app-region: drag;
+	user-select: none;
+}
+.startup-content {
+	display: flex;
+	align-items: center;
+	justify-content: center;
+	min-height: 0;
+	padding: 8px 24px 18px;
+}
+.startup-page {
+	width: 420px;
+	max-width: 100%;
+}
+.startup-footer {
+	position: relative;
+}
+.startup-footer::before {
+	content: "";
+	position: absolute;
+	top: 0;
+	left: 24px;
+	right: 24px;
+	height: 1px;
+	background: linear-gradient(
+		90deg,
+		transparent,
+		var(--color-ink-faint) 35%,
+		var(--color-ink-faint) 65%,
+		transparent
+	);
+	opacity: 0.18;
+}
+.startup-track {
+	height: 3px;
+	width: min(320px, 100%);
+	overflow: hidden;
+	border-radius: 4px;
+	background: color-mix(in srgb, var(--color-ink) 10%, transparent);
+}
+.startup-track-fill,
+.startup-track-unknown {
+	height: 100%;
+	width: 100%;
+	transform-origin: left;
+	background: var(--color-ink-dim);
+	border-radius: inherit;
+}
+.startup-track-fill {
+	transition: transform 0.2s ease;
+}
+.startup-track-unknown {
+	background: linear-gradient(90deg, transparent, var(--color-ink-dim), transparent);
+	animation: startup-sweep 1.6s ease-in-out infinite;
+}
+dialog.startup-sheet {
+	margin: auto;
+	width: min(480px, calc(100vw - 48px));
+	max-height: calc(100dvh - 48px);
+}
+dialog.startup-sheet[open] {
+	display: flex;
+	flex-direction: column;
+}
+.startup-sheet::backdrop {
+	background: color-mix(in srgb, var(--color-ink) 16%, transparent);
+}
+.startup-sheet-body {
+	min-height: 0;
+	max-height: 280px;
+	overflow-y: auto;
+	overscroll-behavior: contain;
+}
+@keyframes startup-sweep {
+	from {
+		translate: -100%;
+	}
+	to {
+		translate: 100%;
+	}
+}
+@media (max-height: 580px) {
+	.startup-layout {
+		grid-template-rows: 48px minmax(0, 1fr) 60px;
+	}
+	.startup-emblem {
+		width: 40px;
+		height: 40px;
+		margin-bottom: 8px;
+	}
+	.startup-content {
+		padding-bottom: 8px;
+	}
+	.startup-page .mt-6 {
+		margin-top: 12px;
+	}
+	.startup-page .mt-5 {
+		margin-top: 12px;
+	}
+	.startup-page .mt-4 {
+		margin-top: 8px;
+	}
+	.startup-page label {
+		min-height: 60px;
+		padding-block: 8px;
+	}
+}
+@media (prefers-reduced-motion: reduce) {
+	.startup-track-fill,
+	.startup-track-unknown {
+		animation: none;
+		transition: none;
+	}
+	.startup-track-unknown {
+		width: 35%;
+		background: var(--color-ink-dim);
+	}
+}

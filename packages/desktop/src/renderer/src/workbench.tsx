@@ -7,7 +7,7 @@ import { QuitConfirmDialog } from "./components/ui/QuitConfirmDialog";
 import "./plugins/host-api";
 // monaco 缺失服务补注册（副作用，详见文件头）：代码块编辑器 UNKNOWN service 报错修复
 import "./monaco-contribs";
-import { initSplash } from "./splash";
+import { releaseSplash } from "./splash";
 import { initEnvironmentUiState } from "./stores/environment-ui-restore";
 import { useThemeStore } from "./stores/theme";
 import { useUiPreferencesStore } from "./stores/ui-preferences";
@@ -16,13 +16,12 @@ import "./styles/globals.css";
 const root = document.getElementById("root");
 if (!root) throw new Error("root element not found");
 
-// 开屏：同次运行已播过则立即移除，否则挂最长兜底（收場时机见 App.tsx 的 finishSplash）
-initSplash();
-
 // render 前先恢复主题/背景/UI 偏好（一次 IPC），避免深色模式启动闪白与轨道开关闪现
 void Promise.all([useThemeStore.getState().init(), useUiPreferencesStore.getState().init()])
 	.then(() => initEnvironmentUiState())
 	.finally(() => {
+		// The workbench can now mount. Data preparation never consumes this fallback timer.
+		releaseSplash();
 		createRoot(root).render(
 			<StrictMode>
 				{/* 全局边界：渲染期异常（含 #185 无限更新类）落到可恢复错误页而非整窗白屏 */}

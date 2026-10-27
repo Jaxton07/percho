@@ -151,16 +151,16 @@ html[data-theme="dark"] .sp-word {
 	text-shadow: 0 0 18px rgba(23, 23, 26, 0.85);
 }
 
-/* 慢加载细线：2.4s 后才淡入（正常启动永远看不到） */
+/* 慢加载细线：1.2s 后淡入，与整个启动共用同一起点。 */
 .sp-line {
-	width: 140px;
+	width: min(320px, calc(100vw - 48px));
 	height: 2px;
 	border-radius: 2px;
 	overflow: hidden;
 	background: rgba(24, 24, 27, 0.12);
 	opacity: 0;
 	transform: translateY(160px);
-	animation: sp-fade-in 0.6s ease-out 2.4s forwards;
+	animation: sp-fade-in 0.4s ease-out 1.2s forwards;
 }
 .sp-line::after {
 	content: "";
@@ -169,7 +169,7 @@ html[data-theme="dark"] .sp-word {
 	height: 100%;
 	background: linear-gradient(90deg, transparent, rgba(24, 24, 27, 0.55), transparent);
 	transform: translateX(-100%);
-	animation: sp-sweep 1.4s ease-in-out 2.4s infinite;
+	animation: sp-sweep 1.4s ease-in-out 1.2s infinite;
 }
 html[data-theme="dark"] .sp-line {
 	background: rgba(255, 255, 255, 0.14);
@@ -194,6 +194,43 @@ html[data-app-ready] .sp-rings::after {
 html[data-app-ready] .sp-line {
 	opacity: 1;
 	animation: sp-quick-out 0.2s ease-in forwards;
+}
+.sp-status {
+	transform: translateY(184px);
+	color: var(--color-ink-dim, #71717a);
+	line-height: 1.6;
+	opacity: 0;
+	animation: sp-fade-in 0.4s ease-out 1.2s forwards;
+}
+html[data-app-ready] .sp-status {
+	opacity: 0;
+	animation: none;
+}
+html[data-startup-view="setup"] #splash {
+	visibility: hidden;
+}
+html[data-startup-view="setup"][data-app-ready] #root,
+html[data-splash-static][data-app-ready] #root {
+	animation: sp-root-in 0.25s ease-out both;
+}
+html[data-splash-static] #splash * {
+	animation: none;
+}
+html[data-splash-static] .sp-swarm-in,
+html[data-splash-static] .sp-word,
+html[data-splash-static] .sp-line,
+html[data-splash-static] .sp-status {
+	opacity: 1;
+	transform: none;
+}
+html[data-splash-static] .sp-line {
+	transform: translateY(160px);
+}
+html[data-splash-static] .sp-status {
+	transform: translateY(184px);
+}
+html[data-splash-static][data-app-ready] #splash {
+	visibility: hidden;
 }
 html[data-app-ready] .sp-line::after {
 	animation: none;

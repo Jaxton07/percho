@@ -155,25 +155,6 @@
 	--scrollbar-thumb-hover: #5d5d66;
 }
 
-/* Initial scanning has no known total; keep preparation visibly active without inventing a percentage. */
-.storage-startup-progress {
-	animation: storage-startup-progress 1.5s linear infinite;
-}
-@keyframes storage-startup-progress {
-	from {
-		transform: translateX(-100%);
-	}
-	to {
-		transform: translateX(300%);
-	}
-}
-@media (prefers-reduced-motion: reduce) {
-	.storage-startup-progress {
-		animation: none;
-		transform: translateX(100%);
-	}
-}
-
 /* 预览行上滑切换：新行从下方滑入，旧行向上滑出（时长恒定 0.32s，与 PreviewTicker 的 ANIMATION_MS 同步；不随队列积压变化）。slide-out 必须 forwards：动画结束后保持透明/位移终态，否则旧行在 React 移除前弹回可见造成重叠 */
 .preview-slide-in {
 	animation: preview-slide-in 0.32s ease-out;
@@ -724,10 +705,6 @@ body,
 	height: 100%;
 	margin: 0;
 	overflow: hidden;
-}
-
-html[data-storage-startup][data-app-ready] #root {
-	animation: none;
 }
 
 body {

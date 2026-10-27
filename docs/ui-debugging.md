@@ -19,6 +19,8 @@ npx electron-vite dev -- --remote-debugging-port=9224
 
 开始输入前等待 `html[data-app-ready="true"]` 且 `#splash` 已移除。开屏期间 React 节点已经存在，但 `#root` 的 `content-visibility: hidden` 会让焦点和输入无法到达；不能以查到按钮或输入节点作为可交互的证据。
 
+验收首次数据准备时，等待 `html[data-startup-view="setup"] .startup-layout`，这时工作台尚未就绪，不能等 `data-app-ready`。已迁移用户应始终没有 `.startup-layout`；验证无闪屏须从首帧观察，而非只看启动完成后的截图。两种路径都应只有一个窗口和一次业务页面导航。
+
 main 修改没有生效时先核对 `packages/desktop/out/main/index.js` 是否重建；改 store 后 HMR 可能留下旧订阅或实例。**最终验收用干净重启，不把 HMR 异常当产品结论。**
 
 ## 隔离与 seed
