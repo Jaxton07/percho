@@ -1,3 +1,4 @@
+import { join } from "node:path";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import channels from "../../build/app-channels.json";
 
@@ -47,7 +48,7 @@ describe("application channel identity", () => {
 		identity.configureAppIdentity();
 		expect(identity.supportsUpdates).toBe(false);
 		expect(fake.setName).toHaveBeenCalledWith("Percho Beta");
-		expect(fake.setPath).toHaveBeenCalledWith("userData", "/isolated/support/Percho Beta");
+		expect(fake.setPath).toHaveBeenCalledWith("userData", join("/isolated/support", "Percho Beta"));
 	});
 	it("honors an explicit beta test profile", async () => {
 		fake.channel = "beta";
