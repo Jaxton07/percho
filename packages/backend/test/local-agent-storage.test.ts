@@ -149,6 +149,8 @@ describe("copy, publish, retry", () => {
 			});
 			expect(await readFile(join(selection.target, "sentinel"), "utf8")).toBe("retain existing data");
 		},
+		// Two native PowerShell launches plus icacls can exceed the default 5s on a cold Windows runner.
+		30000,
 	);
 	it("excludes only an empty SDK authentication lock and rejects unexpected contents", async () => {
 		const source = await seed(),

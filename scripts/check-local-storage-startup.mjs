@@ -98,7 +98,7 @@ async function connect(port, child, startup = false) {
 	return {
 		socket,
 		evaluate,
-		async click(index) {
+		async click(index, { exitsApp = false } = {}) {
 			const point = await evaluate(`(() => {
 				const button = [...document.querySelectorAll('main button')][${index}];
 				button.scrollIntoView({block:'nearest'});
@@ -106,8 +106,12 @@ async function connect(port, child, startup = false) {
 				if (!button.contains(document.elementFromPoint(x,y))) throw Error('Button covered');
 				return {x,y};
 			})()`);
-			for (const type of ["mousePressed", "mouseReleased"])
-				await send("Input.dispatchMouseEvent", { type, ...point, button: "left", clickCount: 1 });
+			for (const type of ["mousePressed", "mouseReleased"]) {
+				const delivered = send("Input.dispatchMouseEvent", { type, ...point, button: "left", clickCount: 1 });
+				// Quit can close CDP before release is acknowledged; the child-exit assertion verifies it.
+				if (exitsApp && type === "mouseReleased") void delivered.catch(() => undefined);
+				else await delivered;
+			}
 		},
 		async close() {
 			for (const call of pending.values()) {
@@ -169,7 +173,7 @@ async function scenario(name, agent, action) {
 				"legacy override rejection",
 			);
 			await assert.rejects(stat(agent), { code: "ENOENT" });
-			await ui.click(1); // Error screen: retry, then exit.
+			await ui.click(1, { exitsApp: true }); // Error screen: retry, then exit.
 		} else {
 			if (action === "adopt") {
 				await wait(
