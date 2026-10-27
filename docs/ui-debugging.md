@@ -29,7 +29,7 @@ main 修改没有生效时先核对 `packages/desktop/out/main/index.js` 是否�
 - 当前开发 userData：`~/Library/Application Support/@percho/desktop-dev/`；不要使用改名前的 `percho-dev/`。
 - 路径逻辑以 `main/dev-agent-dir.ts` 为准；自定义隔离使用绝对 `PERCHO_AGENT_DIR` 和独立 `--user-data-dir`，脚本跟随同一根。首次未标记目标需明确采用；不能绕过启动页直接 seed 正式数据。详见[迁移与恢复](local-agent-storage.md)。
 - `ui-state.json` 必须在实例停止后 seed，否则运行中的 persist 会覆盖。会话目录夹具通常也需重启才能读入。
-- 工作区快照使用 `sessionWorkspace`，不再有 `tabs.json`；冷启动可恢复有效 activeFile，不要假设总是新会话页。
+- 工作区快照使用 `sessionWorkspace`，不再有 `tabs.json`；冷启动只恢复成员，不自动打开保存的 `activeFile`。验收时应确认新会话页持续保留，旧对话仍可手动打开。
 - 尽量通过真实 UI 进入目标状态；不得直接修改正式配置、会话或凭证来凑验收场景。
 
 ## 现成工具
