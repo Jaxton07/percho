@@ -59,15 +59,6 @@ function ProjectPicker() {
 			<Dropdown
 				trigger={
 					<span className="flex items-center gap-1.5" data-project-picker>
-						{daily ? (
-							<span className="flex h-4.5 w-4.5 items-center justify-center rounded border border-border-strong bg-canvas text-ink">
-								<CoffeeIcon size={10} />
-							</span>
-						) : (
-							<span className="flex h-4.5 w-4.5 items-center justify-center rounded bg-ink text-ui-10 font-semibold text-on-ink">
-								{(name?.[0] ?? "P").toUpperCase()}
-							</span>
-						)}
 						{daily ? t("projects.daily") : (name ?? t("projects.selectProject"))}
 						{remote && (
 							<RemoteEnvironmentIndicator

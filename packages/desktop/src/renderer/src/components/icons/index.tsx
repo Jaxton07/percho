@@ -48,6 +48,41 @@ export function SunIcon({ size = 14, className }: IconProps) {
 	);
 }
 
+export function MoonIcon({ size = 14, className }: IconProps) {
+	return (
+		<svg
+			className={className}
+			width={size}
+			height={size}
+			viewBox="0 0 24 24"
+			{...strokeProps}
+			strokeLinecap="round"
+			strokeLinejoin="round"
+			aria-hidden="true"
+		>
+			<path d="M20.8 13.4A9 9 0 0 1 10.6 3.2a9 9 0 1 0 10.2 10.2Z" />
+		</svg>
+	);
+}
+
+export function MonitorIcon({ size = 14, className }: IconProps) {
+	return (
+		<svg
+			className={className}
+			width={size}
+			height={size}
+			viewBox="0 0 24 24"
+			{...strokeProps}
+			strokeLinecap="round"
+			strokeLinejoin="round"
+			aria-hidden="true"
+		>
+			<rect x="3" y="4" width="18" height="13" rx="2" />
+			<path d="M8 21h8M12 17v4" />
+		</svg>
+	);
+}
+
 export function SlidersIcon({ size = 14, className }: IconProps) {
 	return (
 		<svg

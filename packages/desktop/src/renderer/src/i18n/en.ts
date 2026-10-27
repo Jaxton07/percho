@@ -517,7 +517,7 @@ export const en: Messages = {
 		refreshGit: "Reload branches",
 		daily: "Daily",
 		untitled: "Untitled session",
-		selectProject: "Pick project directory",
+		selectProject: "Select project",
 		noGit: "No Git",
 	},
 	settings: {

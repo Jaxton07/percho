@@ -500,7 +500,7 @@ export const zh = {
 		refreshGit: "重新读取分支",
 		daily: "日常",
 		untitled: "未命名会话",
-		selectProject: "选择项目目录",
+		selectProject: "选择项目",
 		noGit: "无 Git",
 	},
 	settings: {
