@@ -17,7 +17,7 @@
 
 组件使用 `styles/typography.css` 的 `text-ui-*`，禁止 `text-[13px]`、`text-xs/sm/lg` 和行内固定 px 字号。
 
-- 可用 token：`text-ui-10/105/11/115/12/125/13/135/14/15/16/18/19`。
+- 可用 token：`text-ui-10/105/11/115/12/125/13/135/14/15/16/18/19/28/32/36/40`；28–40 用于空白对话页字标与主标语。
 - 档位与夹紧规则在 shared `typography.ts`；DOM 变量接线在 renderer `lib/typography.ts`。
 - `globals.css` 必须先 import Tailwind，再 import `typography.css`，否则 preflight 会压掉按钮、输入框等字号。
 - Monaco 是 JS 度量例外，复用 `monacoFontSizeFor` / `monacoLineHeightFor`。当前 Markdown 库只在创建编辑器时应用字号，换档需要重建代码块，不要误以为 CSS 变量会自动更新它。

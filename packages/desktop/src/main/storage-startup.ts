@@ -1,32 +1,28 @@
-import { join } from "node:path";
 import type { LocalStorageRecord } from "@percho/backend";
-import { IpcChannels, STORAGE_STARTUP_CHANNELS } from "@percho/shared";
-import { app, BrowserWindow, ipcMain } from "electron";
+import { IpcChannels, type Rect, STORAGE_STARTUP_CHANNELS } from "@percho/shared";
+import { app, ipcMain } from "electron";
 import type { LocalStorageSelection } from "../../../backend/src/storage/path-policy";
 import { localStorageSelection, localStorageSelectionError } from "./dev-agent-dir";
 import { StorageStartupController } from "./storage-startup-controller";
+import { createWindow } from "./window";
 
-export function prepareLocalStorage(): Promise<{
+export function prepareLocalStorage(
+	theme: "light" | "dark",
+	bounds: Rect | null,
+): Promise<{
 	record: LocalStorageRecord;
 	selection: LocalStorageSelection;
-	close: () => void;
+	launchWorkbench: () => void;
+	failWorkbench: (error: unknown) => void;
 }> {
-	const window = new BrowserWindow({
-		width: 680,
-		height: 520,
-		show: false,
-		title: "Percho",
-		backgroundColor: "#fafafa",
-		webPreferences: {
-			preload: join(import.meta.dirname, "../preload/index.cjs"),
-			contextIsolation: true,
-			sandbox: true,
-			nodeIntegration: false,
-		},
+	let launched = false;
+	let controller: StorageStartupController;
+	const window = createWindow(theme, bounds, {
+		isPreparing: () => !launched,
+		onClose: () => controller.act("exit"),
 	});
-	window.once("ready-to-show", () => window.show());
 	return new Promise((resolve) => {
-		const controller = new StorageStartupController({
+		controller = new StorageStartupController({
 			selection: localStorageSelection,
 			error: localStorageSelectionError,
 			userData: app.getPath("userData"),
@@ -43,9 +39,12 @@ export function prepareLocalStorage(): Promise<{
 				resolve({
 					record,
 					selection,
-					close: () => {
-						window.destroy();
+					launchWorkbench: () => {
+						if (window.isDestroyed()) return;
+						launched = true;
+						controller.launchWorkbench();
 					},
+					failWorkbench: (error) => controller.failWorkbench(error),
 				}),
 		});
 		for (const [name, def] of Object.entries(STORAGE_STARTUP_CHANNELS)) {
@@ -57,19 +56,9 @@ export function prepareLocalStorage(): Promise<{
 				controller.act((args as { action: Parameters<typeof controller.act>[0] }).action);
 			});
 		}
-		window.on("close", (event) => {
-			event.preventDefault();
-			controller.act("exit");
-		});
 		window.once("closed", () => {
 			for (const def of Object.values(STORAGE_STARTUP_CHANNELS)) ipcMain.removeHandler(def.channel);
 		});
-		const query = { "storage-startup": "1" };
-		if (process.env.ELECTRON_RENDERER_URL) {
-			const url = new URL(process.env.ELECTRON_RENDERER_URL);
-			url.searchParams.set("storage-startup", "1");
-			void window.loadURL(url.toString());
-		} else void window.loadFile(join(import.meta.dirname, "../renderer/index.html"), { query });
 		controller.start();
 	});
 }

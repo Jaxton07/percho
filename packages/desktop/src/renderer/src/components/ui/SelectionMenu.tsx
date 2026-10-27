@@ -12,6 +12,8 @@ export function SelectionMenu({
 	value,
 	onSelect,
 	onClose,
+	open,
+	onExited,
 }: {
 	anchor: HTMLElement;
 	/** 可输入选择器：列表固定在整个字段下方，并与字段等宽。 */
@@ -21,9 +23,15 @@ export function SelectionMenu({
 	value: string;
 	onSelect: (value: string) => void;
 	onClose: () => void;
+	/** 受控动画：关闭后暂留节点，退场完成再由调用方卸载。 */
+	open?: boolean;
+	onExited?: () => void;
 }) {
 	const ref = useRef<HTMLDivElement>(null);
 	const id = useId();
+	const exitedRef = useRef(onExited);
+	exitedRef.current = onExited;
+	const interruptedFrame = useRef<{ opacity: string; transform: string } | null>(null);
 	const [position, setPosition] = useState<{
 		x: number;
 		y: number;
@@ -52,16 +60,41 @@ export function SelectionMenu({
 			}),
 		);
 	}, [anchor, field]);
+	useLayoutEffect(() => {
+		const menu = ref.current;
+		if (!menu || !position || open === undefined) return;
+		if (window.matchMedia("(prefers-reduced-motion: reduce)").matches) {
+			if (!open) exitedRef.current?.();
+			return;
+		}
+		const offset = position.y < anchor.getBoundingClientRect().top ? 4 : -4;
+		const hidden = { opacity: "0", transform: `translateY(${offset}px)` };
+		const visible = { opacity: "1", transform: "translateY(0)" };
+		const animation = menu.animate(
+			[interruptedFrame.current ?? (open ? hidden : visible), open ? visible : hidden],
+			{ duration: open ? 160 : 120, easing: "cubic-bezier(0.2, 0, 0, 1)", fill: "both" },
+		);
+		animation.onfinish = () => {
+			if (!open) exitedRef.current?.();
+		};
+		return () => {
+			const style = getComputedStyle(menu);
+			interruptedFrame.current = { opacity: style.opacity, transform: style.transform };
+			animation.onfinish = null;
+			animation.cancel();
+		};
+	}, [anchor, open, position]);
 	useEffect(() => {
-		if (!position) return;
+		if (!position || open === false) return;
 		const menu = ref.current;
 		const selected =
 			menu?.querySelector<HTMLButtonElement>('[aria-selected="true"]:not(:disabled)') ??
 			menu?.querySelector<HTMLButtonElement>('[role="option"]:not(:disabled)') ??
 			menu;
 		selected?.focus({ preventScroll: true });
-	}, [position]);
+	}, [position, open]);
 	useEffect(() => {
+		if (open === false) return;
 		const outside = (event: PointerEvent) => {
 			if (!ref.current?.contains(event.target as Node) && !(field ?? anchor).contains(event.target as Node))
 				onClose();
@@ -77,13 +110,15 @@ export function SelectionMenu({
 			window.removeEventListener("scroll", scroll, true);
 			window.removeEventListener("resize", onClose);
 		};
-	}, [anchor, field, onClose]);
+	}, [anchor, field, onClose, open]);
 	return createPortal(
 		<div
 			ref={ref}
 			role="listbox"
 			tabIndex={-1}
 			aria-label={label}
+			aria-hidden={open === false ? true : undefined}
+			inert={open === false}
 			className="fixed z-50 max-h-60 max-w-[calc(100vw-16px)] overflow-y-auto rounded-xl bg-surface p-1 shadow-pop"
 			style={{
 				left: position?.x ?? 0,
@@ -94,6 +129,7 @@ export function SelectionMenu({
 				width: position?.width,
 				maxHeight: position?.maxHeight,
 				visibility: position ? "visible" : "hidden",
+				pointerEvents: open === false ? "none" : undefined,
 			}}
 			onKeyDown={(event) => {
 				const buttons = [

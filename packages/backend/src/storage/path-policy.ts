@@ -33,13 +33,14 @@ export function selectLocalStorage(
 	home: string,
 	packaged: boolean,
 	env: NodeJS.ProcessEnv,
+	beta = false,
 ): LocalStorageSelection {
 	const value = env.PERCHO_AGENT_DIR;
 	if (value === undefined && env.PI_CODING_AGENT_DIR !== undefined)
 		throw new Error(
 			"PERCHO_LEGACY_AGENT_ENV: Use PERCHO_AGENT_DIR or remove PI_CODING_AGENT_DIR before starting Percho.",
 		);
-	let target = join(home, ".percho", packaged ? "agent" : "agent-dev");
+	let target = join(home, ".percho", packaged ? (beta ? "agent-beta" : "agent") : "agent-dev");
 	if (value !== undefined) {
 		if (!value.trim()) throw new Error("PERCHO_AGENT_DIR must be an absolute, non-empty directory");
 		target =
@@ -54,7 +55,7 @@ export function selectLocalStorage(
 	return {
 		home,
 		target: resolve(target),
-		source: value === undefined ? (legacyRoots[packaged ? 0 : 1] as string) : null,
+		source: value === undefined && !beta ? (legacyRoots[packaged ? 0 : 1] as string) : null,
 		legacyRoots,
 		custom: value !== undefined,
 	};

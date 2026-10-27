@@ -27,11 +27,13 @@ export const CODE_FONT_SIZE_MIN = 9;
 export const CODE_FONT_SIZE_MAX = 20;
 
 /**
- * token 表里允许出现的 px 取值（= `styles/typography.css` 里的全部 `.text-ui-*`，13 个）。
+ * token 表里允许出现的 px 取值（= `styles/typography.css` 里的全部 `.text-ui-*`）。
  * 守护测试 `styles/typography.test.ts` 拿它和 CSS 里实际定义的 token 逐一对照
  * —— 防「新增了字号却忘了加 token」这类退化（spec D9.3）。
  */
-export const FONT_SIZE_TOKENS = [10, 10.5, 11, 11.5, 12, 12.5, 13, 13.5, 14, 15, 16, 18, 19] as const;
+export const FONT_SIZE_TOKENS = [
+	10, 10.5, 11, 11.5, 12, 12.5, 13, 13.5, 14, 15, 16, 18, 19, 28, 32, 36, 40,
+] as const;
 
 const isFiniteNumber = (value: unknown): value is number =>
 	typeof value === "number" && Number.isFinite(value);

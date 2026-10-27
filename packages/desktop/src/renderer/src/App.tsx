@@ -32,10 +32,7 @@ import {
 	invalidateChannelSubscriptionQueries,
 	syncActiveSession,
 } from "./stores/channel-subscriptions";
-import {
-	restoreEnvironmentUiNavigation,
-	startEnvironmentUiPersistence,
-} from "./stores/environment-ui-restore";
+import { startEnvironmentUiPersistence } from "./stores/environment-ui-restore";
 import { useInteractionStore } from "./stores/interactions";
 import { initRemoteConnectionBridge } from "./stores/remote-connection";
 import { restoreSessionWorkspace } from "./stores/session-workspace-restore";
@@ -109,10 +106,8 @@ export default function App() {
 		void Promise.allSettled([useSessionsStore.getState().loadModels(LOCAL_ENVIRONMENT)]).then(() =>
 			finishSplash(),
 		);
-		// 临时会话工作区恢复：fire-and-forget，不阻塞开屏（splash 仍由上面的 loadModels 链收场）。
-		// 它会自己等历史目录对账；只按需加载 activeFile 一条，且不抢用户已做出的导航
+		// 后台恢复工作区成员与顺序；历史内容只在用户点击会话时加载。
 		void restoreSessionWorkspace().finally(startEnvironmentUiPersistence);
-		restoreEnvironmentUiNavigation();
 		initUpdateStore();
 		// 退出确认（Windows）：挂载即向 main 声明接管，点 ✕ 才会拦下来弹窗
 		initAppQuit();

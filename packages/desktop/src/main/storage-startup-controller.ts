@@ -4,6 +4,7 @@ import {
 	type LocalStorageRecord,
 	migrateNavigation,
 	type StorageInspection,
+	type StorageProgress,
 } from "@percho/backend";
 import type { StorageStartupAction, StorageStartupState } from "@percho/shared";
 import {
@@ -19,10 +20,17 @@ export class StorageStartupController {
 	private busy = false;
 	private exiting = false;
 	private lastProgress = 0;
-	private progress(files: number, bytes: number) {
-		if (Date.now() - this.lastProgress >= 100) {
+	private progress(progress: StorageProgress) {
+		if (progress.phase !== this.state.workPhase || Date.now() - this.lastProgress >= 100) {
 			this.lastProgress = Date.now();
-			this.update({ files, bytes });
+			this.update({
+				workPhase: progress.phase,
+				files: progress.files,
+				bytes: progress.bytes,
+				...(progress.totalBytes === undefined
+					? {}
+					: { totalBytes: progress.totalBytes, totalFiles: progress.totalFiles }),
+			});
 		}
 	}
 	constructor(
@@ -52,12 +60,21 @@ export class StorageStartupController {
 		this.run(async () => {
 			if (this.options.error) throw this.options.error;
 			if (!this.options.selection) throw new Error("Missing storage selection");
-			this.update({ phase: "inspecting", error: undefined });
+			this.update({
+				phase: "inspecting",
+				error: undefined,
+				retryable: true,
+				workPhase: "scan",
+				files: 0,
+				bytes: 0,
+				totalFiles: undefined,
+				totalBytes: undefined,
+			});
 			this.selection = await validateStorageSelection(this.options.selection);
 			process.env.PI_CODING_AGENT_DIR = this.selection.target;
 			const inspection = await inspectLocalStorage(this.selection, {
 				signal: this.abort?.signal,
-				onProgress: (p) => this.progress(p.files, p.bytes),
+				onProgress: (p) => this.progress(p),
 			});
 			this.inspection = inspection;
 			this.update({
@@ -65,6 +82,8 @@ export class StorageStartupController {
 				source: this.selection.source,
 				files: inspection.files,
 				bytes: inspection.bytes,
+				totalFiles: inspection.files,
+				totalBytes: inspection.bytes,
 				external: inspection.external,
 			});
 			if (inspection.record) await this.finish(inspection.record);
@@ -79,15 +98,30 @@ export class StorageStartupController {
 			if (!this.busy) this.options.onExit();
 			return;
 		}
-		if (this.state.phase === "ready") throw new Error("Storage startup has completed");
+		if (this.state.phase === "ready" || this.state.phase === "launching")
+			throw new Error("Storage startup has completed");
 		if (this.busy) throw new Error("Storage preparation is busy");
 		if (action === "retry") {
+			if (this.state.retryable === false) throw new Error("Restart the application to retry initialization");
 			this.start();
 			return;
 		}
 		if ((this.state.phase !== "choice" && this.state.phase !== "existing") || !this.inspection)
 			throw new Error("Inspect storage before choosing");
 		this.run(() => this.initialize(action));
+	}
+	/** Business IPC is registered before this signal allows the renderer to import the workbench. */
+	launchWorkbench(): void {
+		if (this.exiting || this.state.phase !== "ready") return;
+		this.update({ phase: "launching" });
+	}
+	failWorkbench(error: unknown): void {
+		if (!this.exiting)
+			this.update({
+				phase: "error",
+				retryable: false,
+				error: error instanceof Error ? error.message : String(error),
+			});
 	}
 	private run(task: () => Promise<void>) {
 		if (this.busy) return;
@@ -105,10 +139,10 @@ export class StorageStartupController {
 	}
 	private async initialize(choice: "copy" | "empty" | "adopt") {
 		if (!this.inspection) throw new Error("Missing storage inspection");
-		this.update({ phase: "copying", error: undefined });
+		this.update({ phase: "copying", workPhase: "scan", files: 0, bytes: 0, error: undefined });
 		const record = await initializeLocalStorage(this.inspection, choice, {
 			signal: this.abort?.signal,
-			onProgress: (p) => this.progress(p.files, p.bytes),
+			onProgress: (p) => this.progress(p),
 		});
 		await this.finish(record);
 	}

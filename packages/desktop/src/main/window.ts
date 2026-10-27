@@ -112,7 +112,11 @@ export function applyChromeTheme(mode: ThemeMode): void {
 	}
 }
 
-export function createWindow(theme: "dark" | "light" = "light", bounds: Rect | null = null): BrowserWindow {
+export function createWindow(
+	theme: "dark" | "light" = "light",
+	bounds: Rect | null = null,
+	startup?: { isPreparing: () => boolean; onClose: () => void },
+): BrowserWindow {
 	const window = new BrowserWindow({
 		// 有持久化 bounds 就用它（已过 `sanitizeWindowBounds` 屏幕校验），否则走默认尺寸 + 系统摆放
 		...(bounds
@@ -153,8 +157,12 @@ export function createWindow(theme: "dark" | "light" = "light", bounds: Rect | n
 
 	// 位置/尺寸记忆：拖动、缩放都走这两条事件（**不要**依赖 `resized`/`moved` —— 实测 macOS 上
 	// `window.resizeTo` 只来 `resize`，`resized`/`moved` 一次都不来，见 IMPL-NOTES 阶段 1）
-	window.on("resize", () => scheduleBoundsPersist(window));
-	window.on("move", () => scheduleBoundsPersist(window));
+	window.on("resize", () => {
+		if (!startup?.isPreparing()) scheduleBoundsPersist(window);
+	});
+	window.on("move", () => {
+		if (!startup?.isPreparing()) scheduleBoundsPersist(window);
+	});
 
 	// 新文档开始加载（重载/HMR）→ 旧 guard 失效，等 renderer 重新挂载后再接管
 	window.webContents.on("did-start-loading", () => {
@@ -167,6 +175,12 @@ export function createWindow(theme: "dark" | "light" = "light", bounds: Rect | n
 	//   让用户看到「退出后正在跑的任务会终止」再决定
 	// - Linux：关窗即退，行为不变
 	window.on("close", (event) => {
+		// No navigation writes or macOS hide semantics until data preparation has completed.
+		if (startup?.isPreparing()) {
+			event.preventDefault();
+			startup.onClose();
+			return;
+		}
 		// 先兜底把待写的 bounds 同步落盘（无论哪个平台、无论下面拦不拦关窗），
 		// 拦下来（macOS 隐藏 / Windows 等确认弹窗）也不影响：写的是当前真实 bounds
 		flushBounds();
@@ -204,9 +218,12 @@ export function createWindow(theme: "dark" | "light" = "light", bounds: Rect | n
 	if (process.env.ELECTRON_RENDERER_URL) {
 		const url = new URL(process.env.ELECTRON_RENDERER_URL);
 		url.searchParams.set("theme", theme);
+		if (startup) url.searchParams.set("storage-startup", "1");
 		void window.loadURL(url.toString());
 	} else {
-		void window.loadFile(join(__dirname, "../renderer/index.html"), { search: `theme=${theme}` });
+		void window.loadFile(join(__dirname, "../renderer/index.html"), {
+			query: { theme, ...(startup ? { "storage-startup": "1" } : {}) },
+		});
 	}
 
 	return window;

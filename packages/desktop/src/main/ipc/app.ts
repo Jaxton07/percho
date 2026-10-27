@@ -2,6 +2,7 @@ import { writeFile } from "node:fs/promises";
 import { type PiBackend, validateProjectDirectory } from "@percho/backend";
 import { APP_CHANNELS, environmentEntityRef } from "@percho/shared";
 import { app, BrowserWindow, dialog, nativeTheme, shell } from "electron";
+import { releaseChannel } from "../app-identity";
 import { pickBackgroundImage } from "../background";
 import { ensureDailyDir } from "../daily";
 import { loadEnvironmentUiState, saveEnvironmentUiState } from "../environment-ui-state";
@@ -77,6 +78,7 @@ export function registerAppIpc(_backend: PiBackend): void {
 		},
 		getAppInfo: () => ({
 			name: app.getName(),
+			releaseChannel,
 			version: app.getVersion(),
 			electron: process.versions.electron ?? "",
 			chrome: process.versions.chrome ?? "",

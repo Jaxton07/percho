@@ -41,6 +41,8 @@ export interface StorageProgress {
 	phase: "scan" | "copy" | "verify" | "publish" | "preferences";
 	files: number;
 	bytes: number;
+	totalFiles?: number;
+	totalBytes?: number;
 }
 export interface StorageInspection {
 	selection: LocalStorageSelection;
@@ -348,10 +350,19 @@ export async function initializeLocalStorage(
 					files++;
 					bytes += entry.size;
 				}
-				work.onProgress?.({ phase: "copy", files, bytes });
+				work.onProgress?.({
+					phase: "copy",
+					files,
+					bytes,
+					totalFiles: before.files,
+					totalBytes: before.bytes,
+				});
 			}
 			work.onProgress?.({ phase: "verify", files, bytes });
-			const after = await scan(source, target, selection.legacyRoots, work);
+			const after = await scan(source, target, selection.legacyRoots, {
+				...work,
+				onProgress: (progress) => work.onProgress?.({ ...progress, phase: "verify" }),
+			});
 			if (
 				(await realpath(selection.source)) !== source ||
 				JSON.stringify(before.entries) !== JSON.stringify(after.entries)

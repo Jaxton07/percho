@@ -102,7 +102,7 @@ export const ComposerEditor = forwardRef<ComposerEditorHandle, Props>(function C
 		<LexicalExtensionEditorComposer initialEditor={entry.editor}>
 			<div className={`relative ${props.className ?? ""}`}>
 				<ContentEditable
-					className="composer-editor w-full min-h-[1.5lh] max-h-[200px] overflow-y-auto bg-transparent text-ui-14 leading-relaxed outline-none select-text thin-scrollbar"
+					className="composer-editor w-full min-h-[2lh] max-h-[200px] overflow-y-auto bg-transparent text-ui-14 leading-relaxed outline-none select-text thin-scrollbar"
 					aria-label={props.placeholder}
 					aria-placeholder={props.placeholder}
 					placeholder={

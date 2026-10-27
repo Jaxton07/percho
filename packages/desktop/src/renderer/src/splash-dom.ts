@@ -30,15 +30,15 @@ function buildDots(): string {
 
 const splash = document.createElement("div");
 splash.id = "splash";
-splash.setAttribute("aria-hidden", "true");
 splash.innerHTML = `
-	<div class="sp-swarm">
+	<div class="sp-swarm" aria-hidden="true">
 		<div class="sp-swarm-in">
 			<div class="sp-swarm-breathe">${buildDots()}</div>
 		</div>
 	</div>
-	<div class="sp-rings"></div>
-	<div class="sp-wave"></div>
-	<div class="sp-word">Percho</div>
-	<div class="sp-line"></div>`;
+	<div class="sp-rings" aria-hidden="true"></div>
+	<div class="sp-wave" aria-hidden="true"></div>
+	<div class="sp-word" aria-hidden="true">Percho</div>
+	<div class="sp-line" role="progressbar"></div>
+	<div class="sp-status text-ui-12" role="status"></div>`;
 document.body.append(splash);

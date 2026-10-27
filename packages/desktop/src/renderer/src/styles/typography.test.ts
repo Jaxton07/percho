@@ -37,7 +37,7 @@ describe("字号 token（typography.css）", () => {
 	it("token 集合与 px 值一一对应，没有多写也没有少写", () => {
 		const matches = [
 			...typography.matchAll(
-				/\.(text-ui-\d+)\s*\{\s*font-size:\s*calc\(([\d.]+)px \* var\(--fs-ui-scale, 1\)\);/g,
+				/(?:\.|@utility\s+)(text-ui-\d+)\s*\{\s*font-size:\s*calc\(([\d.]+)px \* var\(--fs-ui-scale, 1\)\);/g,
 			),
 		];
 		const actual = Object.fromEntries(matches.map((m) => [m[1], Number(m[2])]));
