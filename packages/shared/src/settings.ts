@@ -161,6 +161,25 @@ export interface CustomProviderInput {
 /** 更新自定义 provider：ID 为主键不可改；apiKey 留空 = 保持不变（删除凭证走行上的「移除凭证」/「删除」） */
 export type CustomProviderUpdateInput = CustomProviderInput;
 
+/** 上游 `/models` 返回的一条模型；能力字段由 SDK 内置目录补全，缺省 = 未知，跟随 SDK 默认 */
+export interface UpstreamModelInfo {
+	id: string;
+	name?: string;
+	reasoning?: boolean;
+	contextWindow?: number;
+	maxTokens?: number;
+	imageInput?: boolean;
+}
+
+/** 拉取上游模型清单的入参（providerId 只用于兜底已落盘的 baseUrl/api 与已存 key） */
+export interface UpstreamModelsInput {
+	providerId?: string;
+	baseUrl: string;
+	api: string;
+	/** 表单里临时输入的 key；留空则由所属后端通过 SDK 解析该 provider 的已有凭证 */
+	apiKey?: string;
+}
+
 export interface ProviderTestResult {
 	ok: boolean;
 	/** 失败原因（网络/鉴权等错误信息） */

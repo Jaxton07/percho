@@ -3,6 +3,7 @@ import {
 	formatTokenCount,
 	modelsToRows,
 	parseTokenCount,
+	rowFromUpstreamModel,
 	rowsToModelInputs,
 	rowsValid,
 	splitPastedModelIds,
@@ -112,5 +113,29 @@ describe("splitPastedModelIds", () => {
 		]);
 		expect(splitPastedModelIds("gpt-5")).toBeNull();
 		expect(splitPastedModelIds(",,\n")).toBeNull();
+	});
+});
+
+describe("rowFromUpstreamModel", () => {
+	it("选中上游模型后把 ID 与上下文/输出/思考/图像一起填好", () => {
+		expect(
+			rowFromUpstreamModel({
+				id: "m",
+				contextWindow: 200000,
+				maxTokens: 32000,
+				reasoning: true,
+				imageInput: true,
+			}),
+		).toEqual({ id: "m", contextWindow: "200k", maxTokens: "32k", reasoning: true, imageInput: true });
+	});
+
+	it("目录里查不到能力时留空，落盘时不写、跟随 SDK 默认", () => {
+		expect(rowFromUpstreamModel({ id: "m" })).toEqual({
+			id: "m",
+			contextWindow: "",
+			maxTokens: "",
+			reasoning: false,
+			imageInput: false,
+		});
 	});
 });

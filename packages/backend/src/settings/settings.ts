@@ -1,5 +1,5 @@
 import { join } from "node:path";
-import { builtinProviders } from "@earendil-works/pi-ai/providers/all";
+import { builtinProviders, getBuiltinModels, getBuiltinProviders } from "@earendil-works/pi-ai/providers/all";
 import { getAgentDir, type ModelRuntime } from "@earendil-works/pi-coding-agent";
 import type {
 	CustomProviderInput,
@@ -7,11 +7,28 @@ import type {
 	ListProvidersOptions,
 	ProviderInfo,
 	ProviderTestResult,
+	UpstreamModelInfo,
+	UpstreamModelsInput,
 } from "@percho/shared";
 import { JsonStore } from "../json-store";
+import { buildMetaIndex, enrichUpstreamModels, fetchUpstreamModels } from "./upstream-models";
 
 /** 内置 provider id 集合：models.json 里配置的 ID 命中它 = 「覆写内置」（有官方模型列表可共享），否则是全新自定义 provider */
 const BUILTIN_PROVIDER_IDS = new Set(builtinProviders().map((p) => p.id));
+
+// 只用随 SDK 发布的目录；运行时目录还包含用户手填和服务商覆写的能力，不能跨服务复用。
+const BUILTIN_MODEL_META = buildMetaIndex(
+	getBuiltinProviders().flatMap((provider) =>
+		getBuiltinModels(provider).map((model) => ({
+			id: model.id,
+			name: model.name,
+			reasoning: model.reasoning,
+			contextWindow: model.contextWindow,
+			maxTokens: model.maxTokens,
+			imageInput: model.input.includes("image"),
+		})),
+	),
+);
 
 /**
  * 1.0.4 内置 provider 改名的**读侧归一**：runtime id → 旧的 models.json 键。
@@ -201,6 +218,28 @@ export class SettingsService {
 		const runtime = await this.getRuntime();
 		await runtime.logout(providerId);
 		await this.refreshLocalModels();
+	}
+
+	/**
+	 * 从上游 provider 的 \`/models\` 拉模型清单，并用 SDK 内置目录给每个 ID 补能力元数据。
+	 * 网络请求和 key 都留在后端（key 不回给 renderer）；目录里查不到的模型只回 ID，
+	 * 表单留空即跟随 SDK 默认（128k / 16k / 仅文本）。
+	 */
+	async listUpstreamModels(input: UpstreamModelsInput): Promise<UpstreamModelInfo[]> {
+		const customs = await this.readCustomProviders();
+		const entry = input.providerId ? (customs[input.providerId] as JsonObject | undefined) : undefined;
+		const stored = (field: "baseUrl" | "api"): string =>
+			entry && typeof entry[field] === "string" ? (entry[field] as string) : "";
+		const baseUrl = (input.baseUrl.trim() || stored("baseUrl")).trim();
+		if (!/^https?:\/\//i.test(baseUrl)) throw new Error("baseUrl 必须以 http(s):// 开头");
+		const api = input.api.trim() || stored("api") || "openai-completions";
+		const runtime = await this.getRuntime();
+		// 复用 SDK 凭证解析：auth.json / models.json 中的环境变量与命令不能作为字面密钥发送。
+		const apiKey =
+			(input.apiKey ?? "").trim() ||
+			(input.providerId ? (await runtime.getAuth(input.providerId))?.auth.apiKey : undefined);
+		if (!apiKey) throw new Error("请先填 API Key，或先保存一次把 key 存进 auth.json 再获取");
+		return enrichUpstreamModels(await fetchUpstreamModels({ baseUrl, api, apiKey }), BUILTIN_MODEL_META);
 	}
 
 	/**

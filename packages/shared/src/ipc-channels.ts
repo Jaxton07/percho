@@ -62,6 +62,8 @@ import type {
 	ProviderInfo,
 	ProviderTestResult,
 	SubagentInfo,
+	UpstreamModelInfo,
+	UpstreamModelsInput,
 } from "./settings";
 import type { StorageStartupAction, StorageStartupState } from "./storage-startup";
 import type { TodoItem } from "./todo";
@@ -494,6 +496,17 @@ export const SETTINGS_CHANNELS = {
 		"environment",
 		"mutation",
 	)<{ input: CustomProviderUpdateInput }, void>({ input: input.jsonObject<CustomProviderUpdateInput>() }),
+	/** 从指定上游获取模型；凭证仅在所属执行环境解析和使用。 */
+	listUpstreamModels: ch(
+		"settings:listUpstreamModels",
+		"environment",
+		"read",
+	)<UpstreamModelsInput, UpstreamModelInfo[]>({
+		providerId: input.optional(input.id),
+		baseUrl: input.text,
+		api: input.text,
+		apiKey: input.optional(input.text),
+	}),
 	removeCustomProvider: ch(
 		"settings:removeCustomProvider",
 		"environment",
