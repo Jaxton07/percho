@@ -1,5 +1,6 @@
 import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { join, resolve } from "node:path";
+import { getBuiltinModel } from "@earendil-works/pi-ai/providers/all";
 import { ModelRuntime } from "@earendil-works/pi-coding-agent";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { SettingsService } from "../src/settings/settings";
@@ -43,10 +44,38 @@ async function setup(auth: object, configKey?: string) {
 		.fn()
 		.mockResolvedValue(new Response(JSON.stringify({ data: [{ id: "upstream-only-model" }] })));
 	vi.stubGlobal("fetch", fetchMock);
-	return { settings: new SettingsService(async () => runtime), fetchMock };
+	return { settings: new SettingsService(async () => runtime), fetchMock, runtime };
 }
 
 describe("上游模型获取复用真实 SDK 凭证解析", () => {
+	it("用户自定义模型不作为跨服务的能力来源，未知模型只返回 ID", async () => {
+		const { settings, fetchMock } = await setup({});
+		fetchMock.mockResolvedValue(new Response(JSON.stringify({ data: [{ id: "fixture-model" }] })));
+		const models = await settings.listUpstreamModels({
+			baseUrl: "https://different.invalid/v1",
+			api: "openai-completions",
+			apiKey: "fixture-explicit",
+		});
+		expect(models).toEqual([{ id: "fixture-model" }]);
+	});
+
+	it("内置模型的能力不受运行时同名模型覆写影响", async () => {
+		const { settings, fetchMock, runtime } = await setup({});
+		const builtin = getBuiltinModel("openai", "gpt-4o");
+		vi.spyOn(runtime, "getModels").mockReturnValue([{ ...builtin, contextWindow: 17000, maxTokens: 1234 }]);
+		fetchMock.mockResolvedValue(new Response(JSON.stringify({ data: [{ id: "gpt-4o" }] })));
+		const [model] = await settings.listUpstreamModels({
+			baseUrl: "https://different.invalid/v1",
+			api: "openai-completions",
+			apiKey: "fixture-explicit",
+		});
+		expect(model).toMatchObject({
+			id: "gpt-4o",
+			contextWindow: builtin.contextWindow,
+			maxTokens: builtin.maxTokens,
+		});
+	});
+
 	it.each(["auth", "models"])("解析 %s 配置中的环境变量，密钥不回传给界面", async (source) => {
 		vi.stubEnv("PERCHO_UPSTREAM_TEST_KEY", "fixture-env-value");
 		const reference = "$PERCHO_UPSTREAM_TEST_KEY";

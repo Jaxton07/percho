@@ -1,9 +1,8 @@
 import type { UpstreamModelInfo } from "@percho/shared";
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useT } from "../../../i18n";
 import { ChevronDownIcon, CloseIcon } from "../../icons";
-import { anchorOfElement, type MenuAnchor } from "../../ui/place-menu";
-import { Popup, SelectItem } from "../../ui/Select";
+import { SelectionMenu } from "../../ui/SelectionMenu";
 import { Tooltip } from "../../ui/Tooltip";
 import {
 	EMPTY_MODEL_ROW,
@@ -43,52 +42,71 @@ function ModelIdField({
 	onPick: (model: UpstreamModelInfo) => void;
 }) {
 	const t = useT();
-	const inputRef = useRef<HTMLInputElement>(null);
-	const [anchor, setAnchor] = useState<MenuAnchor | null>(null);
+	const fieldRef = useRef<HTMLDivElement>(null);
+	const buttonRef = useRef<HTMLButtonElement>(null);
+	const [anchor, setAnchor] = useState<HTMLButtonElement | null>(null);
+	useEffect(() => {
+		if (!options.length) setAnchor(null);
+	}, [options.length]);
 
 	return (
-		<div className="relative min-w-0 flex-1">
+		<div ref={fieldRef} className="relative min-w-0 flex-1">
 			<input
-				ref={inputRef}
 				className={`${inputClass} ${options.length > 0 ? "pr-7" : ""}`}
 				placeholder={t("settings.providers.customModelId")}
 				value={value}
 				onChange={(e) => onChange(e.target.value)}
+				onClick={() => setAnchor(null)}
 				onPaste={onPaste}
+				onKeyDown={(event) => {
+					if (options.length && (event.key === "ArrowDown" || event.key === "ArrowUp")) {
+						event.preventDefault();
+						setAnchor(buttonRef.current);
+					}
+				}}
 			/>
 			{options.length > 0 && (
 				<button
+					ref={buttonRef}
 					type="button"
 					aria-label={t("settings.providers.pickUpstreamModel")}
 					aria-expanded={anchor !== null}
-					className="absolute right-1 top-1/2 -translate-y-1/2 rounded p-1 text-ink-faint transition-colors hover:bg-hover hover:text-ink-dim"
-					onClick={() => {
-						const el = inputRef.current;
-						setAnchor((prev) => (prev ? null : el ? anchorOfElement(el) : null));
+					aria-haspopup="listbox"
+					className="absolute inset-y-0 right-0 flex w-7 items-center justify-center text-ink-faint"
+					onClick={(event) => {
+						const trigger = event.currentTarget;
+						setAnchor((previous) => (previous ? null : trigger));
+					}}
+					onKeyDown={(event) => {
+						if (event.key === "ArrowDown" || event.key === "ArrowUp") {
+							event.preventDefault();
+							setAnchor(event.currentTarget);
+						}
 					}}
 				>
 					<ChevronDownIcon size={9} />
 				</button>
 			)}
-			{anchor && (
-				<Popup anchor={anchor} width={anchor.width} onClose={() => setAnchor(null)}>
-					{options.map((model) => (
-						<SelectItem
-							key={model.id}
-							selected={model.id === value}
-							trailing={[model.contextWindow, model.maxTokens]
-								.filter((n): n is number => n !== undefined)
-								.map(compactTokens)
-								.join(" / ")}
-							onSelect={() => {
-								onPick(model);
-								setAnchor(null);
-							}}
-						>
-							{model.id}
-						</SelectItem>
-					))}
-				</Popup>
+			{anchor && options.length > 0 && (
+				<SelectionMenu
+					anchor={anchor}
+					field={fieldRef.current ?? undefined}
+					label={t("settings.providers.pickUpstreamModel")}
+					value={value}
+					options={options.map((model) => ({
+						value: model.id,
+						label: model.id,
+						description: [model.contextWindow, model.maxTokens]
+							.filter((n): n is number => n !== undefined)
+							.map(compactTokens)
+							.join(" / "),
+					}))}
+					onSelect={(id) => {
+						const model = options.find((model) => model.id === id);
+						if (model) onPick(model);
+					}}
+					onClose={() => setAnchor(null)}
+				/>
 			)}
 		</div>
 	);

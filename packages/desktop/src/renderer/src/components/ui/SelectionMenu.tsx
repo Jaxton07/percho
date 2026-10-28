@@ -16,10 +16,10 @@ export function SelectionMenu({
 	onExited,
 }: {
 	anchor: HTMLElement;
-	/** 可输入选择器：列表固定在整个字段下方，并与字段等宽。 */
+	/** 可输入选择器：列表与字段等宽，空间不足时上翻；关闭后焦点回到输入框。 */
 	field?: HTMLElement;
 	label: string;
-	options: { value: string; label: string; disabled?: boolean }[];
+	options: { value: string; label: string; description?: string; disabled?: boolean }[];
 	value: string;
 	onSelect: (value: string) => void;
 	onClose: () => void;
@@ -45,11 +45,18 @@ export function SelectionMenu({
 		if (!menu) return;
 		if (field) {
 			const rect = field.getBoundingClientRect();
+			const width = Math.min(rect.width, Math.max(0, window.innerWidth - 12));
+			const availableBelow = Math.max(0, window.innerHeight - rect.bottom - 10);
+			const availableAbove = Math.max(0, rect.top - 10);
+			const maxHeight = Math.min(240, Math.max(availableBelow, availableAbove));
 			setPosition({
-				x: rect.left,
-				y: rect.bottom + 4,
-				width: rect.width,
-				maxHeight: Math.min(240, Math.max(40, window.innerHeight - rect.bottom - 12)),
+				...placeMenu(
+					anchorOfElement(field),
+					{ width, height: Math.min(menu.getBoundingClientRect().height, maxHeight) },
+					{ width: window.innerWidth, height: window.innerHeight },
+				),
+				width,
+				maxHeight,
 			});
 			return;
 		}
@@ -183,6 +190,9 @@ export function SelectionMenu({
 					}}
 				>
 					<span className="min-w-0 flex-1 truncate">{option.label}</span>
+					{option.description && (
+						<span className="shrink-0 text-ui-10 text-ink-faint">{option.description}</span>
+					)}
 					<span className="flex w-3 shrink-0">{option.value === value && <CheckIcon />}</span>
 				</button>
 			))}

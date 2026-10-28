@@ -1,5 +1,5 @@
 import { join } from "node:path";
-import { builtinProviders } from "@earendil-works/pi-ai/providers/all";
+import { builtinProviders, getBuiltinModels, getBuiltinProviders } from "@earendil-works/pi-ai/providers/all";
 import { getAgentDir, type ModelRuntime } from "@earendil-works/pi-coding-agent";
 import type {
 	CustomProviderInput,
@@ -15,6 +15,20 @@ import { buildMetaIndex, enrichUpstreamModels, fetchUpstreamModels } from "./ups
 
 /** 内置 provider id 集合：models.json 里配置的 ID 命中它 = 「覆写内置」（有官方模型列表可共享），否则是全新自定义 provider */
 const BUILTIN_PROVIDER_IDS = new Set(builtinProviders().map((p) => p.id));
+
+// 只用随 SDK 发布的目录；运行时目录还包含用户手填和服务商覆写的能力，不能跨服务复用。
+const BUILTIN_MODEL_META = buildMetaIndex(
+	getBuiltinProviders().flatMap((provider) =>
+		getBuiltinModels(provider).map((model) => ({
+			id: model.id,
+			name: model.name,
+			reasoning: model.reasoning,
+			contextWindow: model.contextWindow,
+			maxTokens: model.maxTokens,
+			imageInput: model.input.includes("image"),
+		})),
+	),
+);
 
 /**
  * 1.0.4 内置 provider 改名的**读侧归一**：runtime id → 旧的 models.json 键。
@@ -225,21 +239,7 @@ export class SettingsService {
 			(input.apiKey ?? "").trim() ||
 			(input.providerId ? (await runtime.getAuth(input.providerId))?.auth.apiKey : undefined);
 		if (!apiKey) throw new Error("请先填 API Key，或先保存一次把 key 存进 auth.json 再获取");
-		// 内置目录是能力元数据的唯一来源：上游 /models 只给 ID，窗口/输出/思考/图像都从这里补
-		const index = buildMetaIndex(
-			runtime.getModels().map((model) => {
-				const meta = model as { reasoning?: boolean; input?: readonly string[] };
-				return {
-					id: model.id,
-					name: model.name,
-					reasoning: meta.reasoning === true,
-					contextWindow: model.contextWindow,
-					maxTokens: model.maxTokens,
-					imageInput: meta.input?.includes("image") === true,
-				};
-			}),
-		);
-		return enrichUpstreamModels(await fetchUpstreamModels({ baseUrl, api, apiKey }), index);
+		return enrichUpstreamModels(await fetchUpstreamModels({ baseUrl, api, apiKey }), BUILTIN_MODEL_META);
 	}
 
 	/**

@@ -679,16 +679,14 @@ export const en: Messages = {
 			clearModelRows: "Clear model list",
 			fetchUpstream: "Fetch",
 			fetchingUpstream: "Fetching…",
-			upstreamFetched:
-				"Fetched {count} models. Open the arrow next to a model ID to pick one; context, output, thinking and image are filled in for you.",
+			upstreamFetched: "Fetched {count} models. Select one to fill in known capabilities.",
 			upstreamEmpty: "The upstream returned no models",
 			upstreamError: "Fetch failed: {message}",
 			pickUpstreamModel: "Pick from upstream model list",
 			removeModelRow: "Remove row",
-			customModelsHint:
-				"One model per row; paste a comma/newline-separated list to split into rows; enable Think to unlock thinking levels for that model. Leave empty to reuse the provider\u2019s official model list (only baseUrl is overridden; thinking/window metadata stays official)",
+			customModelsHint: "One model per row. Paste model IDs separated by commas or newlines.",
 			customModelsEmptyHint:
-				"Currently empty: on save the provider keeps its official model list and only baseUrl is overridden. This fits overriding a built-in provider ID (e.g. openai / anthropic); a brand-new ID needs at least one model",
+				"New providers need at least one model. For built-in provider overrides, leave empty to use the official list.",
 			submitting: "Saving…",
 		},
 		login: {
