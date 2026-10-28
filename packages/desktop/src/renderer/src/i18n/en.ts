@@ -1,7 +1,190 @@
+import { UI_WORKBENCH_TRUST_COPY } from "@percho/shared";
 import type { Messages } from "./zh";
 
 /** English language pack (mirrors zh.ts shape) */
 export const en: Messages = {
+	emptyState: {
+		slogan: "Bring your ideas to life, your way.",
+	},
+	storageStartup: {
+		preparing: "Preparing…",
+		chooseTitle: "How would you like to start?",
+		chooseHint: "Previous data was found. Bring it with you to continue using Percho.",
+		copyOption: "Bring existing data",
+		copyOptionHint: "Copy history, accounts, and extension settings",
+		emptyOption: "Start fresh",
+		emptyOptionHint: "Create a private empty directory without importing old data",
+		sourceRetained: "Your original data will be kept.",
+		continue: "Continue",
+		back: "Back",
+		step: "Set up Percho · {step} / 2",
+		reviewTitle: "Bring your data to Percho",
+		reviewHint: "Copy it to a private directory. The original stays in place.",
+		contents: "History, accounts, and settings",
+		contentsHint: "Includes models, extensions, and Skills. It may also contain Pi CLI data.",
+		closeOldApps: "First close the old Percho and any Pi CLI using this directory.",
+		startCopy: "Start transfer",
+		emptyTitle: "Start with a fresh Percho",
+		emptyHint: "No old history, accounts, or extensions will be imported.",
+		newDirectory: "Create a private directory for Percho",
+		emptySummary: "Old data stays in place. New data will be saved in the new directory.",
+		existingTitle: "Continue with existing data",
+		adoptHint: "No merging, overwriting, or automatic import of other old history.",
+		progressTitle: "Preparing your Percho",
+		keepOpen: "Please keep the app open.",
+		scanning: "Checking data to copy…",
+		verifying: "Verifying data…",
+		publishing: "Saving transfer results…",
+		copyProgress: "{mb} / {total} MB · Copy stage {percent}%",
+		viewPaths: "View directories",
+		directoryDetails: "Directory locations",
+		sharedCount: "{count} external resources remain shared",
+		externalHint: "These resources still point to the same locations. Changes may also affect Pi CLI.",
+		errorTitle: "Unable to prepare data",
+		errorHint: "Review the details, resolve the issue, and check again. The original directory is unchanged.",
+		errorDetails: "Error details",
+		cancelTitle: "Cancel preparation and quit?",
+		cancelHint:
+			"The original directory and recovery copies will be kept. Percho will stop safely before quitting.",
+		keepWaiting: "Keep waiting",
+		done: "Done",
+		exitSetup: "Quit setup",
+		title: "Prepare Percho user data",
+		inspecting: "Inspecting storage…",
+		choice: "Separate user data from Pi CLI",
+		existing: "An existing private directory was found",
+		copying: "Copying data…",
+		preferences: "Backing up and updating workspace references…",
+		ready: "Opening workspace…",
+		error:
+			"Preparation did not finish. The original directory is unchanged. Review the error and retry or exit.",
+		target: "Percho data directory",
+		source: "Legacy data candidate",
+		count: "{files} files · {mb} MB",
+		importHint:
+			"Close the old Percho and any Pi CLI using this directory first. The copy includes history, accounts, and extension settings from the shared directory, possibly including CLI data. The original stays in place. Starting empty imports none of it.",
+		existingHint: "An existing Percho data directory was found.",
+		external: "These explicitly configured external resources may remain shared:",
+		copy: "Copy existing data",
+		useEmpty: "Start empty",
+		adopt: "Use this directory",
+		retry: "Retry",
+		exit: "Cancel and exit",
+	},
+	remote: {
+		unavailableProject: "Unlinked",
+		projectLocationHint: "Choose where this project lives. Its sessions stay in that environment.",
+		localProject: "Local project",
+		remoteProject: "Remote project",
+		unavailableEnvironment: "Original remote (connection unavailable)",
+		authHint:
+			"The remote uses its own models and credentials. Save API keys or custom providers here. Interactive login uses remote terminal maintenance; local accounts are never copied.",
+		authInstructions: "Show terminal login steps",
+		authStopFirst:
+			"Stop the service in SSH connection and confirm exit, then connect to the original server in an external terminal:",
+		authRunRemotely:
+			"Inside the server terminal, run the same-version maintenance entry and use /login, or /mcp login for MCP authorization. Maintenance refuses to start while the service owns the data directory:",
+		authFinish:
+			"Exit maintenance after login, reconnect in Percho, and refresh models. Credentials stay in this Percho-only directory, separate from an existing Pi CLI:",
+		stopping: "Stopping service",
+		stopService: "Stop remote service",
+		confirmStop: "Confirm stop",
+		stopHint:
+			"This aborts remote tasks and shuts down this user’s service. Disconnect instead to keep tasks running. Automatic reconnection stays paused for this app run.",
+		stopConfirmed: "Remote service exit and ownership release confirmed.",
+		service: {
+			running: "Service running",
+			stopped: "Service not running",
+			unreachable: "Service unreachable; verify the original owner",
+		},
+		checking: "Checking",
+		reconnecting: "Waiting to reconnect",
+		preflight: "Check",
+		installed: "Runtime installed",
+		notInstalled: "Runtime not installed",
+		gitMissing: "Git was not found. Project Git features will be unavailable.",
+		disconnectHint:
+			"Disconnect or cancel pauses this run only. Remote tasks continue; the next app launch tries again.",
+		forget: "Remove connection",
+		confirmForget: "Confirm removal",
+		forgetHint:
+			"Only local connection details are removed. Remote tasks and data remain. Existing projects keep their original environment.",
+		errorDetails: "Error details",
+		nodeRequired: {
+			title: "Node.js was not found on the server, or its version is unsupported",
+			install: "Install Node.js {version} on the remote server, then click Check or connect again.",
+			pathHint:
+				"If already installed, make sure node is available to commands run directly over SSH, not just in an interactive terminal.",
+			download: "View Node.js installation instructions",
+		},
+		failure: {
+			network: "Network failure. Retries are bounded and can be cancelled.",
+			authentication: "Configure non-interactive SSH key or agent authentication in an external terminal.",
+			hostKey: "Verify the host key externally. Percho never edits known_hosts.",
+			identity:
+				"Remote identity changed. Old projects are blocked; verify before explicitly removing and adding the connection.",
+			incompatible: "The runtime is incompatible. Use the explicit stop and update flow.",
+			notInstalled: "Install the runtime first. A check never installs it.",
+			busy: "Another client controls this service. Percho will not take over.",
+			requirements:
+				"Prepare compatible Node and basic commands, then check again. Percho does not modify the server environment.",
+			other: "Review the error details and retry.",
+		},
+
+		pendingAttention: "A remote project needs your attention",
+		pendingExpired: "This request is no longer pending.",
+		review: "Review request",
+
+		waitingForConnection: "Answers are available after reconnecting and verifying pending requests.",
+		restarted:
+			"The remote service restarted. Saved history is available; previous tasks will not resume automatically. Check their results.",
+		syncFailed: "Remote session synchronization failed. Open the session to retry.",
+		synchronizing: "Remote session is synchronizing. Wait before sending; stopping remains available.",
+		localFileRejected:
+			"Remote sessions accept local images. Other local files cannot be used as remote paths.",
+		unknownTitle: "Check the remote operation outcome",
+		unknownHint:
+			"Missing confirmation does not mean the operation did not run. Check the remote operation and project before continuing. It will not be resent automatically.",
+		check: "Check outcome",
+		checked: "Reviewed",
+		receipt: {
+			unknown: "Outcome unknown",
+			expired: "Confirmation unavailable",
+			pending: "Still processing",
+			succeeded: "Request confirmed",
+			failed: "Operation returned an error",
+			rejected: "Not executed",
+		},
+
+		title: "SSH connection",
+		installHint:
+			"The runtime is downloaded and verified. Confirm to install and start it in this server’s private directory. Node and project dependencies are prerequisites. Explicitly stop the old service before updating.",
+		confirmInstall: "Install and connect",
+		prepareUpdate: "Prepare update",
+		preparedRuntime:
+			"Connect an existing SSH alias. If needed, the runtime is downloaded automatically and installed after confirmation.",
+		chooseAlias: "Choose SSH alias",
+		refreshAliases: "Refresh local SSH configuration",
+		aliasesLoading: "Reading local SSH configuration…",
+		aliasesConnected: "Connected. You can browse aliases; disconnect before choosing another alias.",
+		aliasesHint: "From local SSH configuration. Select an alias, then check or connect.",
+		aliasesEmpty: "No SSH aliases found. You can enter an existing alias manually.",
+		aliasesIncomplete: "Some SSH configuration could not be read. Manual entry is still available.",
+		alias: "SSH alias",
+		disconnected: "Disconnected",
+		connecting: "Connecting",
+		connected: "Connected",
+		error: "Connection failed",
+		disconnect: "Disconnect",
+		connect: "Connect",
+		nodePath: "Node path",
+		dataDirectory: "Data directory",
+		runtimePackage: "Runtime",
+		recentProjects: "Recent projects",
+		projectPath: "Remote project directory",
+		openProject: "Open project",
+		label: "Remote",
+	},
 	common: {
 		save: "Save",
 		cancel: "Cancel",
@@ -40,6 +223,7 @@ export const en: Messages = {
 		title: "Sessions",
 	},
 	update: {
+		separateChannel: "Install test build updates manually",
 		checkForUpdates: "Check for updates",
 		checking: "Checking for updates…",
 		available: "Version {version} available, click to download",
@@ -96,6 +280,7 @@ export const en: Messages = {
 		queueTitle: "Queued",
 		queueRestore: "Take back to editor",
 		queueFull: "A message is already queued — take it back first",
+		targetChanged: "The project has changed. Return to the original project to retry sending.",
 		removeQuote: "Remove quote",
 		permissionMode: "Permission mode",
 		permissionDefault: "Default",
@@ -119,7 +304,10 @@ export const en: Messages = {
 			compact: { label: "compact", description: "Compress session context", argumentHint: "[focus]" },
 			name: { label: "name", description: "Set session display name", argumentHint: "<name>" },
 			export: { label: "export", description: "Export session (.html/.jsonl)", argumentHint: "[path]" },
-			settings: { label: "settings", description: "Open settings" },
+			settings: {
+				label: "settings",
+				description: "Open settings",
+			},
 		},
 		group: {
 			builtin: "Built-in",
@@ -148,6 +336,16 @@ export const en: Messages = {
 		max: "Max",
 	},
 	compaction: {
+		retrying: "Retrying summary · attempt {attempt}/{maxAttempts} · waiting {delay}s",
+		retryAttempt: "Retrying summary · attempt {attempt}/{maxAttempts}",
+		paused: {
+			failed: "Task paused: context compaction failed.",
+			overThreshold: "Task paused: context remains above the trigger after compaction.",
+			noHistory: "Task paused: context is above the trigger, with no history available to compact.",
+			contextChanged: "Task paused: the model or context changed while preparing the request.",
+			resumeHint:
+				"Restore the connection or adjust the model or pending input, then send a new message to continue. Queued messages are retained.",
+		},
 		running: "Compacting context",
 		done: "Context compacted",
 		cancelled: "Compaction cancelled",
@@ -326,16 +524,21 @@ export const en: Messages = {
 		showMore: "Show more",
 	},
 	projects: {
+		refreshGit: "Reload branches",
 		daily: "Daily",
 		untitled: "Untitled session",
-		selectProject: "Pick project directory",
+		selectProject: "Select project",
 		noGit: "No Git",
 	},
 	settings: {
+		environment: "Execution environment",
+		experimental: "(Experimental)",
+		localEnvironment: "Local",
 		title: "Settings",
 		loading: "Loading…",
 		comingSoon: "Settings for this category are coming in a future release.",
 		category: {
+			remote: "SSH Connection",
 			general: "General",
 			appearance: "Appearance",
 			models: "Models",
@@ -669,8 +872,7 @@ export const en: Messages = {
 		},
 		uiPlugins: {
 			title: "UI Plugins",
-			masterHint:
-				"Plugins from your local user directory can replace built-in components such as the tool call card, subagent card, and todo panel; turning the switch off disables them all immediately (files and config are kept)",
+			masterHint: UI_WORKBENCH_TRUST_COPY.en.detail,
 			pluginCount: "{count} plugin(s)",
 			empty:
 				"No plugins yet. The plugin directory lives under ui-plugins in the user data directory (ask an agent to write one following the SPEC)",
@@ -746,6 +948,7 @@ export const en: Messages = {
 		retryFailed: "Retry failed",
 	},
 	toast: {
+		remotePathAction: "Open remote files on the server. You can copy their paths here.",
 		tabsSaveFailed: "Failed to save tabs",
 		uiStateSaveFailed: "Failed to save UI state",
 		trustFailed: "Failed to check project trust",

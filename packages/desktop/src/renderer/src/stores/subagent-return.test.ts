@@ -8,6 +8,7 @@ const piMock = vi.hoisted(() => ({
 	closeSession: vi.fn(() => Promise.resolve({ closed: true })),
 	getSessionMessages: vi.fn(() => Promise.resolve([])),
 	markSessionHistoryReady: vi.fn(() => Promise.resolve()),
+	getLoadedSessions: vi.fn(async () => []),
 	getFollowUpMessages: vi.fn(() => Promise.resolve([])),
 	getTodos: vi.fn(() => Promise.resolve([])),
 	getPermissionMode: vi.fn(() => Promise.resolve("default" as const)),
@@ -15,7 +16,15 @@ const piMock = vi.hoisted(() => ({
 	saveUiState: vi.fn(() => Promise.resolve()),
 	loadUiState: vi.fn(() => Promise.resolve(undefined)),
 }));
-vi.mock("../api", () => ({ getPi: () => piMock }));
+vi.mock("../api", () => ({
+	getPi: () =>
+		Object.assign(piMock, {
+			forEnvironment: (environment: { kind: string }) => {
+				if (environment.kind !== "local") throw new Error("Unexpected remote fixture");
+				return piMock;
+			},
+		}),
+}));
 
 import { useProjectsStore } from "./projects";
 import { clearSessionHistory } from "./session-history";

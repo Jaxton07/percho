@@ -11,7 +11,7 @@
 //   npx tsx scripts/smoke-channel-watch.mts v7     # 订阅快照上报 + GC intent 守卫（无模型）
 //   npx tsx scripts/smoke-channel-watch.mts v8     # 关闭重开补投一次、不重复（无模型）
 //   npx tsx scripts/smoke-channel-watch.mts all    # 按依赖序全跑（含 v7/v8）
-// 仅使用 dev agent 目录（~/.pi/agent-dev），正式目录零写入。
+// 仅使用 dev agent 目录（~/.percho/agent-dev），正式目录零写入。
 import { appendFile, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { watch } from "node:fs";
 import { randomUUID } from "node:crypto";
@@ -19,7 +19,7 @@ import { homedir, tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { performance } from "node:perf_hooks";
 
-process.env.PI_CODING_AGENT_DIR = join(homedir(), ".pi", "agent-dev");
+process.env.PI_CODING_AGENT_DIR = process.env.PERCHO_AGENT_DIR ?? join(homedir(), ".percho", "agent-dev");
 
 const {
 	DefaultResourceLoader,

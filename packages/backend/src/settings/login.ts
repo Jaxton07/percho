@@ -79,6 +79,7 @@ export class LoginService {
 
 		try {
 			const runtime = await this.deps.getRuntime();
+			if (login.abort.signal.aborted) throw new Error("Login cancelled");
 			const provider = runtime.getProvider(providerId);
 			if (!provider) throw new Error(`未知 provider：${providerId}`);
 			// oauth 优先；无 oauth 但有交互式 api_key 登录（如 Google Vertex）走 api_key 交互流程
@@ -155,6 +156,10 @@ export class LoginService {
 	}
 
 	/** 流程结束回收：防御性拒掉仍挂起的 prompt（正常完成时列表已为空） */
+	dispose(): void {
+		if (this.active) this.settle(this.active);
+	}
+
 	private settle(login: ActiveLogin): void {
 		if (this.active === login) this.active = undefined;
 		login.abort.abort();

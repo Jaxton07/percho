@@ -1,5 +1,6 @@
 import type { UiError } from "@percho/shared";
 import { type MessageKey, useT } from "../../i18n";
+import { useRemoteConnectionStore } from "../../stores/remote-connection";
 import { ErrorCircleIcon, RefreshIcon } from "../icons";
 
 /**
@@ -15,8 +16,21 @@ export function SendErrorBar({ error, onRetry }: { error: UiError; onRetry: () =
 			</span>
 			<div className="min-w-0">
 				<div className="se-title truncate">{t(error.titleKey as MessageKey, error.titleParams)}</div>
-				{error.detail && <div className="se-sub truncate">{error.detail}</div>}
+				{error.detail && (
+					<div className="se-sub truncate">
+						{error.titleKey === "remote.unknownTitle" ? t("remote.unknownHint") : error.detail}
+					</div>
+				)}
 			</div>
+			{error.titleKey === "remote.unknownTitle" && (
+				<button
+					type="button"
+					className="se-retry"
+					onClick={() => useRemoteConnectionStore.getState().setOpen(true)}
+				>
+					{t("remote.check")}
+				</button>
+			)}
 			{error.actions.includes("retry") && (
 				<button type="button" className="se-retry" onClick={onRetry}>
 					<RefreshIcon />

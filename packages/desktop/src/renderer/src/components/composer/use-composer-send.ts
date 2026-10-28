@@ -6,17 +6,19 @@ import {
 } from "@percho/shared";
 import { useEffect, useRef, useState } from "react";
 import { getPi } from "../../api";
+import { getExecutionApi } from "../../environment-api";
 import { useT } from "../../i18n";
 import {
 	appendDraftInput,
 	type DraftEntry,
 	draftText,
 	EMPTY_DRAFT,
-	NEW_SESSION_DRAFT_KEY,
+	newSessionDraftKey,
 	restoreRejectedDraft,
 	takeDraft,
 	useDraftStore,
 } from "../../stores/drafts";
+import { isSessionSynchronizing } from "../../stores/session-event-boundary";
 import { useSessionsStore } from "../../stores/sessions";
 import { useSettingsStore } from "../../stores/settings";
 import { pushToast } from "../../stores/toasts";
@@ -67,7 +69,10 @@ export function useComposerSend(options: UseComposerSendOptions) {
 	/** 确保有活跃会话（新会话页则把那唯一一份 draft 转正），返回 sessionId */
 	const ensureSession = async (): Promise<string | null> => {
 		const current = options.activeSessionId;
-		if (current) return current;
+		if (current) {
+			if (isSessionSynchronizing(current)) throw new Error(t("remote.synchronizing"));
+			return current;
+		}
 		// draft 页：promotion 用 draft 快照建真实会话（模型/思考/权限都从 `newSessionDraft` 取，
 		// 调用方不再自己拼 cwd/权限）。无 draft 的防御态（调用顺序异常）先建一份再转正。
 		if (!useSessionsStore.getState().newSessionDraft) {
@@ -82,7 +87,7 @@ export function useComposerSend(options: UseComposerSendOptions) {
 	const runSlashCommand = async (content: string, sessionId: string): Promise<boolean> => {
 		const [name, ...rest] = content.slice(1).split(/\s+/);
 		const arg = rest.join(" ").trim();
-		const pi = getPi();
+		const pi = getExecutionApi(sessionId);
 		switch (name) {
 			case "compact":
 				// 输入框上方不提醒（成功/失败都不提醒）：对话区的压缩分割线已经把「在干什么、成没成」说全了
@@ -103,7 +108,7 @@ export function useComposerSend(options: UseComposerSendOptions) {
 			case "export": {
 				const format = arg === "html" ? "html" : arg === "jsonl" ? "jsonl" : "jsonl";
 				const contentOut = await pi.exportSession({ sessionId, format });
-				const path = await pi.saveFileDialog({
+				const path = await getPi().saveFileDialog({
 					defaultName: `pi-session-${Date.now()}.${format}`,
 					content: contentOut,
 				});
@@ -139,6 +144,13 @@ export function useComposerSend(options: UseComposerSendOptions) {
 		setError(null);
 		try {
 			if (!sessionId) {
+				const target = useSessionsStore.getState().newSessionDraft;
+				if (
+					target?.generation !== generation ||
+					newSessionDraftKey(target?.environment, target?.cwd) !== options.draftKey
+				) {
+					throw new Error(t("composer.targetChanged"));
+				}
 				sessionId = await ensureSession();
 				if (!sessionId) throw new Error(t("slash.feedback.noSession"));
 				recoveryKey = sessionId;
@@ -159,7 +171,7 @@ export function useComposerSend(options: UseComposerSendOptions) {
 					: useTranscriptStore
 							.getState()
 							.appendOptimisticUser(sessionId, { text: content, images: draft.images, document });
-			await getPi().prompt({
+			await getExecutionApi(sessionId).prompt({
 				sessionId,
 				text: content,
 				document,
@@ -174,7 +186,7 @@ export function useComposerSend(options: UseComposerSendOptions) {
 			restoreRejectedDraft(
 				recoveryKey,
 				draft,
-				recoveryKey === NEW_SESSION_DRAFT_KEY && generation !== newGeneration,
+				!options.activeSessionId && recoveryKey === options.draftKey && generation !== newGeneration,
 			);
 			setError(error instanceof Error ? error.message : String(error), recoveryKey);
 		} finally {
@@ -222,8 +234,8 @@ export function useComposerSend(options: UseComposerSendOptions) {
 			pushToast("warning", "composer.imageUnsupported");
 			return;
 		}
-		// 单条排队上限：已有一条且本次是普通文本则挡住（斜杠命令 streaming 中也可立即执行，不受限）
-		if (followUpQueue.length >= 1 && (document || !content.startsWith("/"))) {
+		// 运行中保留单条排队上限；暂停或停止后的人工新消息必须能携带旧队列恢复。
+		if (agentActive && followUpQueue.length >= 1 && (document || !content.startsWith("/"))) {
 			showFeedback(t("composer.queueFull"), "warn");
 			return;
 		}
@@ -240,7 +252,7 @@ export function useComposerSend(options: UseComposerSendOptions) {
 	};
 
 	const restoreQueue = async (sessionId: string) => {
-		const cleared = await getPi().clearQueue({ sessionId });
+		const cleared = await getExecutionApi(sessionId).clearQueue({ sessionId });
 		const inputs =
 			cleared.followUpInputs ??
 			cleared.followUp.map((text) => ({ document: composerDocumentFromText(text), images: [] }));
@@ -252,7 +264,7 @@ export function useComposerSend(options: UseComposerSendOptions) {
 		if (!sessionId) return;
 		try {
 			await restoreQueue(sessionId);
-			await getPi().abort({ sessionId });
+			await getExecutionApi(sessionId).abort({ sessionId });
 		} catch (error) {
 			setError(error instanceof Error ? error.message : String(error), sessionId);
 		}

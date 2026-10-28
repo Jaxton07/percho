@@ -8,7 +8,27 @@ permissions:
   contents: write
 
 jobs:
+  runtime:
+    uses: ./.github/workflows/remote-runtime.yml
+    with:
+      release_tag: ${{ github.ref_name }}
+  publish-runtime:
+    needs: runtime
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: remote-runtime-*
+          path: artifacts
+          merge-multiple: true
+      - name: Publish verified runtime assets before desktop references
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          RELEASE_TAG: ${{ github.ref_name }}
+          GH_REPO: ${{ github.repository }}
+        run: gh release create "$RELEASE_TAG" artifacts/* --title "$RELEASE_TAG" --notes "Verified Linux runtime artifacts; desktop packages follow after their builds complete."
   build:
+    needs: publish-runtime
     strategy:
       fail-fast: false
       matrix:
@@ -26,6 +46,13 @@ jobs:
           node-version: 22
           cache: npm
       - run: npm ci
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: remote-runtime-*
+          path: .local/runtime-release
+          merge-multiple: true
+      - name: Verify published runtime assets and prepare desktop references
+        run: node scripts/prepare-remote-runtime-manifest.mjs --input .local/runtime-release --output packages/desktop/resources/remote-runtime/manifest.json --require-published
       - run: npm run dist -w packages/desktop -- --publish never
       - uses: actions/upload-artifact@v4
         with:
@@ -45,16 +72,15 @@ jobs:
     steps:
       - uses: actions/download-artifact@v4
         with:
+          pattern: dist-*
           path: artifacts
           merge-multiple: true
-      - name: Create GitHub release
+      - name: Add desktop packages to the runtime release
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          gh release create "${{ github.ref_name }}" artifacts/* \
-            -R "${{ github.repository }}" \
-            --title "${{ github.ref_name }}" \
-            --notes-file - <<'EOF'
+          gh release upload "${{ github.ref_name }}" artifacts/* -R "${{ github.repository }}"
+          gh release edit "${{ github.ref_name }}" -R "${{ github.repository }}" --notes-file - <<'EOF'
           | Platform | Download |
           | --- | --- |
           | macOS (Apple Silicon) | `percho-mac-arm64.dmg` |

@@ -5,8 +5,10 @@ import { ChevronDownIcon } from "../icons";
 export function Dropdown({
 	trigger,
 	children,
+	onOpen,
 }: {
 	trigger: React.ReactNode;
+	onOpen?: () => void;
 	children: (close: () => void) => React.ReactNode;
 }) {
 	const [open, setOpen] = useState(false);
@@ -26,7 +28,10 @@ export function Dropdown({
 			<button
 				type="button"
 				className="flex items-center gap-1 rounded-lg px-2 py-1 transition-colors hover:bg-hover hover:text-ink"
-				onClick={() => setOpen((v) => !v)}
+				onClick={() => {
+					if (!open) onOpen?.();
+					setOpen((v) => !v);
+				}}
 			>
 				{trigger}
 				<ChevronDownIcon />

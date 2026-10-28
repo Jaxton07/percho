@@ -52,14 +52,14 @@ export function PermissionPicker() {
 	const chip = (
 		<button
 			type="button"
-			className={`flex items-center gap-1 rounded-full px-2.5 py-1 text-ui-12 leading-[calc(1_/_0.75)] transition-colors hover:bg-hover ${
+			className={`flex items-center gap-1 whitespace-nowrap rounded-full px-2.5 py-1 text-ui-14 leading-[calc(1_/_0.75)] transition-colors hover:bg-hover ${
 				mode === "fullAccess" ? "text-warn hover:text-warn" : "text-ink-dim hover:text-ink"
 			} ${gateOff ? "cursor-not-allowed opacity-40 hover:bg-transparent" : ""}`}
 			aria-label={t("composer.permissionMode")}
 			disabled={gateOff === true}
 			onClick={() => setOpen((v) => !v)}
 		>
-			{mode === "fullAccess" ? <WarningIcon size={12} /> : <ShieldIcon size={12} />}
+			{mode === "fullAccess" ? <WarningIcon size={14} /> : <ShieldIcon size={14} />}
 			<span>
 				{mode === "fullAccess" ? t("composer.permissionFullAccess") : t("composer.permissionDefault")}
 			</span>

@@ -1,6 +1,8 @@
 import type { McpServerView } from "@percho/shared";
+import { environmentEntityRef, sameEnvironment } from "@percho/shared";
 import { useEffect, useState } from "react";
-import { getPi } from "../../../api";
+import { getExecutionApi } from "../../../environment-api";
+import { useEnvironment } from "../../../environment-context";
 import { useT } from "../../../i18n";
 import { selectActiveCwd } from "../../../lib/active-cwd";
 import { useMcpStore } from "../../../stores/mcp";
@@ -66,17 +68,27 @@ function Group({ title, path, children }: { title: string; path?: string; childr
  * 这里分两个概念：配置读写用 `cwd`；运行态（连接/工具清单）靠会话上报，用 `hasSession` 判断。
  */
 function useProjectCwd(): string | undefined {
-	return useSessionsStore((s) => selectActiveCwd(s) ?? undefined);
+	const environment = useEnvironment();
+	return useSessionsStore((s) => {
+		const cwd = selectActiveCwd(s);
+		return cwd && sameEnvironment(environmentEntityRef(cwd).environment, environment) ? cwd : undefined;
+	});
 }
 
 /** 是否有活跃会话（运行态报告来源）：draft 新会话页为 null */
 function useHasActiveSession(): boolean {
-	return useSessionsStore((s) => s.activeSessionId !== null);
+	const environment = useEnvironment();
+	return useSessionsStore(
+		(s) =>
+			s.activeSessionId !== null &&
+			sameEnvironment(environmentEntityRef(s.activeSessionId).environment, environment),
+	);
 }
 
 /** MCP 设置面板：mcp.json 的增删改 + 运行态（连接/工具/失效原因）。连接与授权都交给官方内置 mcp 扩展 */
 export function McpPanel() {
 	const t = useT();
+	const environment = useEnvironment();
 	const { config, loading, load, notice, lastReload, applyServersChanged } = useMcpStore();
 	const cwd = useProjectCwd();
 	const hasSession = useHasActiveSession();
@@ -97,9 +109,9 @@ export function McpPanel() {
 	}, [load, cwd]);
 
 	useEffect(() => {
-		const off = getPi().onMcpServersChanged((payload) => applyServersChanged(payload));
+		const off = getExecutionApi(environment).onMcpServersChanged((payload) => applyServersChanged(payload));
 		return off;
-	}, [applyServersChanged]);
+	}, [applyServersChanged, environment]);
 
 	const servers = sortServers([...(config?.global ?? []), ...(config?.project ?? [])]);
 	const projectTrusted = config?.projectTrusted ?? false;

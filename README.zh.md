@@ -45,8 +45,8 @@
 
 Percho 把官方 Pi SDK（`@earendil-works/pi-coding-agent`）跑在 Electron 主进程里。**不是 fork，也不是重新实现** —— 它和 Pi CLI 用的是同一套引擎，完整继承 Pi 的原生优势：
 
-- **可扩展性** —— 为 Pi CLI 安装的 TypeScript 扩展、Skills、Prompt 模板在这里同样生效，包括项目级资源（加载前会有信任确认）。让 Pi 适应你的工作流，无需 fork。
-- **配置共享** —— 与 CLI 共用 `~/.pi/agent/` 目录：会话、认证、模型配置全部互通。终端里开的会话，可以在 GUI 里继续。
+- **可扩展性** —— 支持 Pi 的 TypeScript 扩展、Skills 和 Prompt 模板。用户级资源由 Percho 独立管理，项目级资源继续兼容，加载前会有信任确认。让 Pi 适应你的工作流，无需 fork。
+- **独立用户数据** —— 会话、账号和模型配置保存在 `~/.percho/agent/`，与 Pi CLI 分离；首次启动可选择复制旧目录中的数据并保留原目录，也可全新开始。项目级 `.pi/` 继续兼容，详见[迁移与恢复](docs/local-agent-storage.md)。
 - **模型来源** —— 支持订阅（Claude Pro/Max、ChatGPT Plus/Pro Codex、GitHub Copilot，应用内 OAuth 登录）以及 Anthropic、OpenAI、Gemini、DeepSeek、Bedrock 等 API key；还支持自定义 provider 与 base URL 覆写（中转站场景）。
 
 同时，为更喜欢图形界面的用户提供：

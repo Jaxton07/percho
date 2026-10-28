@@ -1,6 +1,6 @@
 import type { ChannelSubscriptionsSnapshot } from "@percho/shared";
 import { create } from "zustand";
-import { getPi } from "../api";
+import { getExecutionApi, subscribeExecutionEnvironments } from "../environment-api";
 
 /**
  * 频道订阅快照（spec D1）· renderer 侧唯一读模型。
@@ -159,9 +159,11 @@ export function useChannelTopics(sessionId: string | null): readonly string[] {
  * 返回取消订阅函数（React effect cleanup 直接 return 它）。
  */
 export function initChannelSubscriptions(): () => void {
-	return getPi().onChannelSubscriptionsChanged((snapshot) => {
-		useChannelSubscriptionsStore.getState().apply(snapshot);
-	});
+	return subscribeExecutionEnvironments((api) =>
+		api.onChannelSubscriptionsChanged((snapshot) => {
+			useChannelSubscriptionsStore.getState().apply(snapshot);
+		}),
+	);
 }
 
 /**
@@ -185,7 +187,7 @@ export async function syncActiveSession(sessionId: string | null): Promise<void>
 	const forgetToken = useChannelSubscriptionsStore.getState().forgetTokens[sessionId] ?? 0;
 	let snapshot: ChannelSubscriptionsSnapshot;
 	try {
-		snapshot = await getPi().getChannelSubscriptions({ sessionId });
+		snapshot = await getExecutionApi(sessionId).getChannelSubscriptions({ sessionId });
 	} catch (error) {
 		// 查询失败不抛给调用方（没有订阅胶囊只是少一个只读展示，不该影响会话打开）
 		console.error("[channel-subscriptions] 订阅快照查询失败", error);

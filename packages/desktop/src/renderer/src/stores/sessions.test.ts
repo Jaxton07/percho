@@ -1,4 +1,10 @@
-import { composerDocumentFromText, type SessionEvent, type SessionMeta } from "@percho/shared";
+import {
+	composerDocumentFromText,
+	emptyTranscript,
+	environmentEntityKey,
+	type SessionEvent,
+	type SessionMeta,
+} from "@percho/shared";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 /** window.pi 的 mock：sessions store 经 getPi() 访问，测试环境无 preload 注入 */
@@ -15,6 +21,8 @@ const piMock = vi.hoisted(() => ({
 	forkSession: vi.fn(),
 	getSessionMessages: vi.fn(() => Promise.resolve([])),
 	markSessionHistoryReady: vi.fn(() => Promise.resolve()),
+	getLoadedSessions: vi.fn(),
+	getPendingInteractions: vi.fn(async () => ({ revision: 1, permissions: [], dialogs: [], trust: [] })),
 	getFollowUpMessages: vi.fn(() => Promise.resolve([])),
 	getTodos: vi.fn(() => Promise.resolve([])),
 	getPermissionMode: vi.fn(() => Promise.resolve("default" as const)),
@@ -23,13 +31,31 @@ const piMock = vi.hoisted(() => ({
 	listModels: vi.fn(),
 	loadUiState: vi.fn(),
 }));
-vi.mock("../api", () => ({ getPi: () => piMock }));
+vi.mock("../api", () => ({
+	getPi: () =>
+		Object.assign(piMock, {
+			forEnvironment: (environment: { kind: string }) => {
+				if (
+					environment.kind !== "local" &&
+					(environment as { connectionId?: string }).connectionId !== "compaction-snapshot"
+				)
+					throw new Error("Unexpected remote fixture");
+				return piMock;
+			},
+		}),
+}));
 
 import { selectActiveCwd } from "../lib/active-cwd";
 import { NEW_SESSION_DRAFT_KEY, useDraftStore } from "./drafts";
+import { pauseEnvironmentEvents, resumeEnvironmentEvents } from "./session-event-boundary";
 import { clearSessionHistory, isHistoryReady, retrySessionHistory } from "./session-history";
 import { useSessionWorkspaceStore } from "./session-workspace";
-import { partitionSessionsByPin, useSessionsStore } from "./sessions";
+import {
+	invalidateEnvironmentSessions,
+	partitionSessionsByPin,
+	synchronizeEnvironmentSessions,
+	useSessionsStore,
+} from "./sessions";
 import { useToastsStore } from "./toasts";
 import { useTranscriptStore } from "./transcript";
 import { useUiPreferencesStore } from "./ui-preferences";
@@ -69,6 +95,7 @@ beforeEach(() => {
 	// openSession 的 mockImplementation 是持久实现（clearAllMocks 不清），用例之间必须显式复位
 	piMock.openSession.mockReset();
 	piMock.getSessionMessages.mockReset().mockResolvedValue([]);
+	piMock.getLoadedSessions.mockReset().mockResolvedValue([]);
 	resetStore();
 	useTranscriptStore.setState({ bySession: {} });
 });
@@ -222,6 +249,67 @@ describe("closeSession", () => {
 });
 
 describe("switchSession", () => {
+	it("reconciles a remote pause from the live instance and discards it when that instance disappears", async () => {
+		const environment = {
+			kind: "ssh",
+			connectionId: "compaction-snapshot",
+			environmentId: "isolated",
+		} as const;
+		const id = environmentEntityKey(environment, "paused");
+		const meta: SessionMeta = {
+			sessionId: id,
+			cwd: environmentEntityKey(environment, "/fixture"),
+			active: true,
+			messageCount: 1,
+			createdAt: 1,
+		};
+		useSessionsStore.setState({ sessions: [meta], activeSessionId: null });
+		useTranscriptStore.getState().loadHistory(id, []);
+		piMock.getLoadedSessions.mockResolvedValue([
+			{
+				meta: { ...meta, sessionId: "paused", cwd: "/fixture" },
+				sequence: 3,
+				followUpQueue: ["pending"],
+				streaming: false,
+				compacting: false,
+				permissionMode: "default",
+				compactionPause: { reason: "still-over-threshold", tokens: 170000, thresholdTokens: 160000 },
+			},
+		]);
+		await synchronizeEnvironmentSessions(environment, invalidateEnvironmentSessions(environment));
+		expect(useTranscriptStore.getState().bySession[id]).toMatchObject({
+			compactionPause: { reason: "still-over-threshold" },
+			followUpQueue: ["pending"],
+			agentActive: false,
+		});
+		piMock.getLoadedSessions.mockResolvedValue([]);
+		await synchronizeEnvironmentSessions(environment, invalidateEnvironmentSessions(environment));
+		expect(useTranscriptStore.getState().bySession[id]).toMatchObject({
+			compactionPause: null,
+			summarizationRetry: null,
+			followUpQueue: [],
+		});
+	});
+	it("离线或恢复中的远端会话只展示缓存，不请求尚未接续的服务", async () => {
+		const environment = { kind: "ssh", connectionId: "offline", environmentId: "data" } as const;
+		const id = environmentEntityKey(environment, "cached");
+		const cwd = environmentEntityKey(environment, "/project");
+		const cached = { ...emptyTranscript(), pendingPermissions: [], pendingDialogs: [] };
+		useToastsStore.setState({ toasts: [] });
+		useSessionsStore.setState({ sessions: [realMeta(id, cwd)], activeSessionId: null });
+		useTranscriptStore.setState({ bySession: { [id]: cached } });
+		pauseEnvironmentEvents(environment);
+		try {
+			useSessionsStore.getState().switchSession(id);
+			await new Promise<void>((resolve) => setImmediate(resolve));
+			expect(useSessionsStore.getState().activeSessionId).toBe(id);
+			expect(useTranscriptStore.getState().bySession[id]).toBe(cached);
+			expect(useToastsStore.getState().toasts).toHaveLength(0);
+		} finally {
+			resumeEnvironmentEvents(environment);
+		}
+	});
+
 	it("切到真实会话：cwd 跟随该会话的项目", () => {
 		useSessionsStore.setState({
 			sessions: [realMeta("r1", "/proj/a")],
@@ -1760,4 +1848,14 @@ describe("工作区接线", () => {
 		expect(memberIds()).toEqual([]);
 		expect(activeFile()).toBeNull();
 	});
+});
+
+it("cold start remote cwd keeps its environment and never requests local project trust", () => {
+	const environment = { kind: "ssh", connectionId: "saved", environmentId: "data" } as const;
+	const cwd = environmentEntityKey(environment, "/company/project");
+	useSessionsStore.getState().activateNewSessionDraft();
+	useSessionsStore.getState().activateNewSessionDraft(cwd);
+	expect(useSessionsStore.getState().newSessionDraft?.environment).toEqual(environment);
+	expect(useSessionsStore.getState().newSessionDraft?.cwd).toBe(cwd);
+	expect(piMock.ensureProjectTrust).not.toHaveBeenCalled();
 });

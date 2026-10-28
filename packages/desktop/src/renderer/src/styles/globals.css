@@ -57,11 +57,6 @@
 	--color-on-accent: #ffffff;
 	--color-skill-reference-bg: #e7f1ff;
 	--color-skill-reference-ink: #176ac4;
-	/* 首页字标（手稿构造版 WordmarkConstruct）：字描边 / 主构造线 / 次级虚线 / 标注文字 */
-	--lg-ol: #a1a1aa;
-	--lg-c1: #c9c9d1;
-	--lg-c2: #e0e0e6;
-	--lg-lb: #b0b0b8;
 	/* 「重启」胶囊：很浅的蓝底 + 比背景深一档的中蓝字 */
 	--color-update: #e0f2fe;
 	--color-on-update: #0284c7;
@@ -80,7 +75,6 @@
 	--markdown-quote-border: #e4e4e7;
 	--markdown-quote-text: #71717a;
 	--markdown-table-border: #e4e4e7;
-	--markdown-table-head-bg: #f8fafc;
 	--markdown-link-decoration: #c4b5fd;
 	--markdown-link-hover: #6d28d9;
 	/* 扫光高光色 = 文字颜色的推移方向：日间往黑推（文字加深，对比度升高）；
@@ -125,11 +119,6 @@
 	--bar-knob: #ffffff;
 	--bar-tick-on: rgba(255, 255, 255, 0.55);
 	--color-rule: #34343c;
-	/* 首页字标手稿构造版深色：描边与构造线压到 canvas 上刚好可辨的灰 */
-	--lg-ol: #5f5f66;
-	--lg-c1: #35353c;
-	--lg-c2: #2b2b32;
-	--lg-lb: #4a4a52;
 	--color-update: #0c4a6e;
 	--color-on-update: #7dd3fc;
 	--color-err: #f87171;
@@ -143,7 +132,6 @@
 	--markdown-quote-border: #4b4b53;
 	--markdown-quote-text: #9a9aa3;
 	--markdown-table-border: #38383f;
-	--markdown-table-head-bg: #212126;
 	--markdown-link-decoration: #6d28d9;
 	--markdown-link-hover: #a78bfa;
 	/* 扫光高光色 = 往白推（文字提亮，与日间方向相反） */
@@ -1217,16 +1205,18 @@ code {
 	font-size: calc(12.5px * var(--fs-code-scale, 1));
 }
 .markdown-body .table-node {
+	border: 0;
 	font-size: calc(13px * var(--fs-ui-scale, 1));
 }
 .markdown-body .table-node th,
 .markdown-body .table-node td {
-	border: 1px solid var(--markdown-table-border);
-	padding: 0.25rem 0.5rem;
+	border: 0;
+	border-bottom: 1px solid var(--markdown-table-border);
+	padding: 0.75rem 0.5rem;
 	text-align: left;
 }
 .markdown-body .table-node th {
-	background: var(--markdown-table-head-bg);
+	background: transparent;
 }
 .markdown-body .hr-node,
 .markdown-body .thematic-break {

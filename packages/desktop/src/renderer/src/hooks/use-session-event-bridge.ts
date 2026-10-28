@@ -1,9 +1,11 @@
 import type { SessionEvent, TrustRequest } from "@percho/shared";
 import { useEffect } from "react";
-import { getPi } from "../api";
+import { subscribeExecutionEnvironments } from "../environment-api";
 import { useDraftStore, withDraftText } from "../stores/drafts";
 import { EventConflator } from "../stores/event-conflator";
+import { acceptInteractionEvent, useInteractionStore } from "../stores/interactions";
 import { useProjectsStore } from "../stores/projects";
+import { acceptSessionEvent, onSessionBoundaryReset } from "../stores/session-event-boundary";
 import { retrySessionHistory } from "../stores/session-history";
 import { useSessionsStore } from "../stores/sessions";
 import { pushExtensionToast } from "../stores/toasts";
@@ -22,7 +24,6 @@ export function useSessionEventBridge({
 	onTrustRequest: (req: TrustRequest) => void;
 }): void {
 	useEffect(() => {
-		const pi = getPi();
 		const conflator = new EventConflator({
 			apply: (sessionId, event) => {
 				useTranscriptStore.getState().applyEvent(sessionId, event, {
@@ -32,47 +33,74 @@ export function useSessionEventBridge({
 				if (event.type === "agent_settled") void retrySessionHistory(sessionId);
 			},
 		});
-		const offEvent = pi.onEvent(({ sessionId, event }: { sessionId: string; event: SessionEvent }) => {
-			if (event.type === "session_info_changed") {
-				useSessionsStore.getState().updateSessionName(sessionId, event.name);
-				// 新会话先以「未命名」meta 写穿进目录，首条消息随后才触发自动命名。
-				// 目录也必须同步，否则 GC 卸载内存项后，左栏会退回 cwd 末级名（如 percho）。
-				useProjectsStore.getState().applySessionName(sessionId, event.name);
-				return; // 会话名走 sessions + projects 两份投影；reducer 对该类型本就无操作
-			}
-			conflator.push(sessionId, event);
+		const offBoundary = onSessionBoundaryReset((sessionId) => conflator.discard(sessionId));
+		const offEnvironments = subscribeExecutionEnvironments((pi, environment) => {
+			const offEvent = pi.onEvent(
+				({ sessionId, event, sequence }: { sessionId: string; event: SessionEvent; sequence?: number }) => {
+					acceptSessionEvent(sessionId, sequence, event, () => {
+						if (event.type === "session_info_changed") {
+							useSessionsStore.getState().updateSessionName(sessionId, event.name);
+							// 新会话先以「未命名」meta 写穿进目录，首条消息随后才触发自动命名。
+							// 目录也必须同步，否则 GC 卸载内存项后，左栏会退回 cwd 末级名（如 percho）。
+							useProjectsStore.getState().applySessionName(sessionId, event.name);
+							return; // 会话名走 sessions + projects 两份投影；reducer 对该类型本就无操作
+						}
+						conflator.push(sessionId, event);
+					});
+				},
+			);
+			const offPermission = pi.onPermissionRequest((req) => {
+				acceptInteractionEvent(environment, req.revision, req, () => {
+					useTranscriptStore.getState().addPermission(req.sessionId, req);
+				});
+			});
+			const offPermissionResolved = pi.onPermissionResolved((result) => {
+				acceptInteractionEvent(environment, result.revision, result, () => {
+					useTranscriptStore.getState().resolvePermission(result.sessionId, result.requestId);
+				});
+			});
+			// 扩展对话框（issue #45）：入队/撤卡 + notify→Toast + 预填→草稿（来源带一次性提示）
+			const offDialogRequest = pi.onExtensionDialogRequest((req) => {
+				acceptInteractionEvent(environment, req.revision, req, () => {
+					useTranscriptStore.getState().addExtensionDialog(req.sessionId, req);
+				});
+			});
+			const offDialogResolved = pi.onExtensionDialogResolved((result) => {
+				acceptInteractionEvent(environment, result.revision, result, () => {
+					useTranscriptStore.getState().resolveExtensionDialog(result.sessionId, result.requestId);
+				});
+			});
+			const offNotify = pi.onExtensionNotify((event) => {
+				pushExtensionToast(event.level, event.message, event.extensionPath || undefined);
+			});
+			const offEditorText = pi.onExtensionEditorText((event) => {
+				useDraftStore.getState().updateDraft(event.sessionId, (d) => withDraftText(d, event.text));
+				useTranscriptStore.getState().markExtensionPrefill(event.sessionId, event.source ?? "");
+			});
+			const offTrust = pi.onTrustRequest((req) =>
+				acceptInteractionEvent(environment, req.revision, req, () => onTrustRequest(req)),
+			);
+			const offTrustResolved = pi.onTrustResolved((result) =>
+				acceptInteractionEvent(environment, result.revision, result, () =>
+					useInteractionStore.getState().removeTrust(result.requestId),
+				),
+			);
+			return () => {
+				offEvent();
+				offPermission();
+				offPermissionResolved();
+				offDialogRequest();
+				offDialogResolved();
+				offNotify();
+				offEditorText();
+				offTrust();
+				offTrustResolved();
+			};
 		});
-		const offPermission = pi.onPermissionRequest((req) => {
-			useTranscriptStore.getState().addPermission(req.sessionId, req);
-		});
-		const offPermissionResolved = pi.onPermissionResolved((result) => {
-			useTranscriptStore.getState().resolvePermission(result.sessionId, result.requestId);
-		});
-		// 扩展对话框（issue #45）：入队/撤卡 + notify→Toast + 预填→草稿（来源带一次性提示）
-		const offDialogRequest = pi.onExtensionDialogRequest((req) => {
-			useTranscriptStore.getState().addExtensionDialog(req.sessionId, req);
-		});
-		const offDialogResolved = pi.onExtensionDialogResolved((result) => {
-			useTranscriptStore.getState().resolveExtensionDialog(result.sessionId, result.requestId);
-		});
-		const offNotify = pi.onExtensionNotify((event) => {
-			pushExtensionToast(event.level, event.message, event.extensionPath || undefined);
-		});
-		const offEditorText = pi.onExtensionEditorText((event) => {
-			useDraftStore.getState().updateDraft(event.sessionId, (d) => withDraftText(d, event.text));
-			useTranscriptStore.getState().markExtensionPrefill(event.sessionId, event.source ?? "");
-		});
-		const offTrust = pi.onTrustRequest(onTrustRequest);
 		return () => {
-			offEvent();
+			offBoundary();
+			offEnvironments();
 			conflator.dispose();
-			offPermission();
-			offPermissionResolved();
-			offDialogRequest();
-			offDialogResolved();
-			offNotify();
-			offEditorText();
-			offTrust();
 		};
 	}, [onTrustRequest]);
 }

@@ -10,8 +10,7 @@ const log = createLogger("compaction-guard-config");
  *
  * - 缺 key / 非法值 → 逐字段回退默认值（默认值即产品行为）；
  * - 读失败（除 ENOENT）→ 记 warn 并按默认值继续（fail-soft，绝不影响会话）；
- * - **不做 TTL 缓存**（与蒸发的 2s 缓存不同）：本配置每次 `agent_settled` 才读一次（每轮一次，
- *   不是每请求），直接读盘的代价可忽略，而没有缓存就不存在「改配置后 2s 内仍用旧值」的窗口。
+ * - 不做 TTL 缓存：请求边界和摘要输入钩子读取最新配置，不需要在保存/reload 后补内存覆盖。
  * - JSONC 容错解析（剥注释/尾随逗号）沿袭 `context-evaporation/config.ts`、`channel-watch/config.ts` 既有写法。
  */
 

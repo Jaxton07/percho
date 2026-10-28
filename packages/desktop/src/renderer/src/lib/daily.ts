@@ -1,32 +1,44 @@
-import { getPi } from "../api";
+import { type EnvironmentRef, environmentEntityRef, environmentKey, LOCAL_ENVIRONMENT } from "@percho/shared";
+import { getExecutionApi } from "../environment-api";
 
-/**
- * 日常空间目录的 renderer 侧缓存：App 启动时 init 一次，之后同步读。
- * 日常空间 = 固定工作台 cwd（main 侧 ~/.percho/daily，懒创建），所有日常会话按 cwd 归属该空间；
- * 项目页/空态/胶囊统一经 isDailyCwd 判定，不在各处散落路径字符串。
- */
-let dailyDir: string | null = null;
+// Paths are renderer identities, not paths to use for local IO.
+const dailyDirs = new Map<string, string>();
 
-/** 拉取并缓存日常目录（幂等；失败静默回退 null，日常入口退化为不显示） */
-export async function initDailyDir(): Promise<string | null> {
-	if (dailyDir) return dailyDir;
+export async function initDailyDir(environment: EnvironmentRef = LOCAL_ENVIRONMENT): Promise<string | null> {
+	const key = environmentKey(environment);
+	const cached = dailyDirs.get(key);
+	if (cached) return cached;
 	try {
-		dailyDir = await getPi().getDailyDir();
+		const dir = await getExecutionApi(environment).getDailyDir();
+		if (dir) dailyDirs.set(key, dir);
 	} catch (error) {
 		console.error("日常空间目录获取失败", error);
 	}
-	return dailyDir;
+	return dailyDirs.get(key) ?? null;
 }
 
-export function getDailyDirCached(): string | null {
-	return dailyDir;
+export function getDailyDirCached(environment: EnvironmentRef = LOCAL_ENVIRONMENT): string | null {
+	return dailyDirs.get(environmentKey(environment)) ?? null;
+}
+
+export function getDailyDirsCached(): string[] {
+	return [...dailyDirs.values()];
 }
 
 export function isDailyCwd(cwd: string | null | undefined): boolean {
-	return typeof cwd === "string" && dailyDir !== null && cwd === dailyDir;
+	return typeof cwd === "string" && getDailyDirCached(environmentEntityRef(cwd).environment) === cwd;
 }
 
-/** 测试注入用（deriveProjects 等纯函数依赖模块缓存，单测先 set 再断言） */
-export function setDailyDirForTest(dir: string | null): void {
-	dailyDir = dir;
+export function setDailyDirForTest(
+	dir: string | null,
+	environment: EnvironmentRef = LOCAL_ENVIRONMENT,
+): void {
+	const key = environmentKey(environment);
+	if (dir === null) dailyDirs.delete(key);
+	else dailyDirs.set(key, dir);
+}
+
+/** Restore only previously known environment directory identities; no filesystem access. */
+export function rememberDailyDirectory(cwd: string): void {
+	dailyDirs.set(environmentKey(environmentEntityRef(cwd).environment), cwd);
 }

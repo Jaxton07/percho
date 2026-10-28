@@ -1,9 +1,10 @@
 import { useEffect } from "react";
-import { getPi } from "../api";
+import { getExecutionApi } from "../environment-api";
+import { getEnvironments } from "../environment-registry";
 import { useSessionsStore } from "../stores/sessions";
 import { useTranscriptStore } from "../stores/transcript";
 import type { SessionGcEntry } from "./session-gc";
-import { runSessionGcRound } from "./session-gc-run";
+import { runEnvironmentSessionGc } from "./session-gc-run";
 
 /**
  * 会话内存策略接线层：把 store/IPC 接到 `lib/session-gc-run.ts` 的一轮编排上
@@ -44,24 +45,21 @@ export function useSessionGc(): void {
 			if (running) return;
 			running = true;
 			try {
-				await runSessionGcRound({
+				await runEnvironmentSessionGc(getEnvironments(), {
 					getOpen: () => {
 						const state = useSessionsStore.getState();
 						return {
 							activeSessionId: state.activeSessionId,
 							open: state.sessions.map((session) => ({
 								sessionId: session.sessionId,
-								// 缺打点理论不可达（每个进 sessions 的路径都打点）；真缺了当「最久未用」处理
 								lastUsedAt: state.lastUsedAt[session.sessionId] ?? 0,
-								// 磁盘元数据（打开时读一次；本次进程内新建的会话恒为 0）：与 transcript 实时条数
-								// 一起交给纯层判「有没有会话文件」，见 lib/session-gc.ts 的 isProtected；
-								// hasChannelSubscriptions 由本轮编排从 backend 快照映射进来
 								messageCount: session.messageCount,
 							})),
 						};
 					},
 					entryOf,
-					listSubscriptionSessionIds: () => getPi().getChannelSubscriptionSessionIds(),
+					listSubscriptionSessionIds: (environment) =>
+						getExecutionApi(environment).getChannelSubscriptionSessionIds(),
 					unload: (sessionId) => useSessionsStore.getState().unloadSession(sessionId),
 					now: Date.now(),
 					keep: KEEP,

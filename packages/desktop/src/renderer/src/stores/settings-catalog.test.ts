@@ -33,7 +33,15 @@ const api = vi.hoisted(() => ({
 	startProviderLogin: vi.fn(),
 	onProviderLoginEvent: vi.fn(),
 }));
-vi.mock("../api", () => ({ getPi: () => api }));
+vi.mock("../api", () => ({
+	getPi: () =>
+		Object.assign(api, {
+			forEnvironment: (environment: { kind: string }) => {
+				if (environment.kind !== "local") throw new Error("Unexpected remote fixture");
+				return api;
+			},
+		}),
+}));
 const toasts = vi.hoisted(() => ({ pushToast: vi.fn() }));
 vi.mock("./toasts", () => ({ pushToast: toasts.pushToast }));
 // settings store 只用到 sessions store 的 activeSessionId + loadModels
@@ -142,28 +150,36 @@ describe("V03 settings consumer matrix (ticket 11 target)", () => {
 });
 
 describe("D10 consumer and mutation responsibilities", () => {
-	it.each(["general", "models", "skills", "extensions", "lan", "appearance", "mcp", "about", "plugin:test"])(
-		"openWith(%s) only reads its settings domains plus the shared gate",
-		async (category) => {
-			api.listProviders.mockResolvedValue([]);
-			sessionsState.activeSessionId = "matrix-session";
-			store.getState().openWith(category as import("./settings").SettingsCategory);
-			await store.getState().loadPermissionGate();
-			const full = category.startsWith("plugin:");
-			if (full) await vi.waitFor(() => expect(api.getLoadedResources).toHaveBeenCalledOnce());
-			for (const [mock, enabled] of [
-				[api.getContextManagerConfig, full || category === "general"],
-				[api.getChannelWatchConfig, full || category === "general"],
-				[api.listProviders, full || category === "models"],
-				[api.getModelPrefs, full || category === "models"],
-				[api.listSubagents, full || category === "models"],
-				[api.getLoadedResources, full || category === "skills" || category === "extensions"],
-				[api.lanGetStatus, full || category === "lan"],
-			] as const)
-				expect(mock).toHaveBeenCalledTimes(enabled ? 1 : 0);
-			expect(api.getPermissionConfig).toHaveBeenCalledOnce();
-		},
-	);
+	it.each([
+		"general",
+		"models",
+		"skills",
+		"extensions",
+		"lan",
+		"appearance",
+		"mcp",
+		"about",
+		"remote",
+		"plugin:test",
+	])("openWith(%s) only reads its settings domains plus the shared gate", async (category) => {
+		api.listProviders.mockResolvedValue([]);
+		sessionsState.activeSessionId = "matrix-session";
+		store.getState().openWith(category as import("./settings").SettingsCategory);
+		await store.getState().loadPermissionGate();
+		const full = category.startsWith("plugin:");
+		if (full) await vi.waitFor(() => expect(api.getLoadedResources).toHaveBeenCalledOnce());
+		for (const [mock, enabled] of [
+			[api.getContextManagerConfig, full || category === "general"],
+			[api.getChannelWatchConfig, full || category === "general"],
+			[api.listProviders, full || category === "models"],
+			[api.getModelPrefs, full || category === "models"],
+			[api.listSubagents, full || category === "models"],
+			[api.getLoadedResources, full || category === "skills" || category === "extensions"],
+			[api.lanGetStatus, full || category === "lan"],
+		] as const)
+			expect(mock).toHaveBeenCalledTimes(enabled ? 1 : 0);
+		expect(api.getPermissionConfig).toHaveBeenCalledOnce();
+	});
 	it("closed category/same category/read-once marker never turns into TTL; reentry reads again without clearing other domains", async () => {
 		api.listProviders.mockResolvedValue(providers("kept"));
 		await store.getState().refresh();
@@ -399,7 +415,7 @@ describe("D3 写盘世代：变更后的重读与并发目录", () => {
 		const local = store.getState().refresh(); // 面板打开时的本地读取（在途）
 		const network = store.getState().refreshProvidersFromNetwork(); // 自动联网（在途，含要被删的 custom-x）
 		const remove = store.getState().removeCustom("custom-x"); // 用户删除（写盘成功 → afterMutation）
-		await Promise.resolve();
+		await vi.waitFor(() => expect(reads).toHaveLength(2));
 		expect(reads.length).toBe(2); // 写盘后的重读**新发**一次，没复用写盘前那次
 		at(reads, 1).resolve(providers("keep"));
 		await remove;
@@ -429,7 +445,7 @@ describe("D3 写盘世代：变更后的重读与并发目录", () => {
 
 		const network = store.getState().refreshProvidersFromNetwork();
 		const remove = store.getState().removeCustom("custom-x");
-		await Promise.resolve();
+		await vi.waitFor(() => expect(reads).toHaveLength(1));
 		at(reads, 0).resolve(providers("keep"));
 		await remove;
 		expect(api.loadModels).toHaveBeenCalledTimes(1); // 变更路径的那次
@@ -451,7 +467,7 @@ describe("D3 写盘世代：变更后的重读与并发目录", () => {
 
 		const first = store.getState().refresh(); // 旧 local（在途）
 		const save = store.getState().saveKey("p", "k"); // 写盘 → 新 local
-		await Promise.resolve();
+		await vi.waitFor(() => expect(reads).toHaveLength(2));
 		expect(reads.length).toBe(2);
 		at(reads, 0).resolve(providers("stale"));
 		await first;

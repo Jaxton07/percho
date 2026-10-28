@@ -1,5 +1,6 @@
 import { messagesToUIMessages } from "@percho/shared";
-import { getPi } from "../api";
+import { getExecutionApi } from "../environment-api";
+import { forgetSessionBoundary } from "./session-event-boundary";
 import { useTranscriptStore } from "./transcript";
 
 /** 历史就绪不是「收过实时事件」：打开中 agent 可抢先创建一个不完整 transcript。 */
@@ -23,6 +24,7 @@ export function hasPendingSessionHistory(sessionId: string): boolean {
 }
 
 export function clearSessionHistory(sessionId: string): void {
+	forgetSessionBoundary(sessionId);
 	openEpoch.set(sessionId, historyOpenEpoch(sessionId) + 1);
 	ready.delete(sessionId);
 	pending.delete(sessionId);
@@ -33,7 +35,7 @@ export function clearSessionHistory(sessionId: string): void {
 export function finishSessionHistory(sessionId: string): void {
 	pending.delete(sessionId);
 	ready.add(sessionId);
-	void getPi()
+	void getExecutionApi(sessionId)
 		.markSessionHistoryReady({ sessionId })
 		.catch((error: unknown) => {
 			console.warn("会话历史就绪回执失败", error);
@@ -56,7 +58,7 @@ export async function retrySessionHistory(sessionId: string): Promise<void> {
 	try {
 		// 快照必须重新读取：先前被丢弃的那一份可能不含刚结束的 run。
 		const before = useTranscriptStore.getState().bySession[sessionId];
-		const history = await getPi().getSessionMessages({ sessionId });
+		const history = await getExecutionApi(sessionId).getSessionMessages({ sessionId });
 		const after = useTranscriptStore.getState().bySession[sessionId];
 		if (pending.get(sessionId)?.generation !== work.generation || !work.isOpen()) {
 			stale = true;

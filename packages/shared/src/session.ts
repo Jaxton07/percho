@@ -1,4 +1,7 @@
 import type { AgentSessionEvent as PiAgentSessionEvent } from "@earendil-works/pi-coding-agent";
+
+export type { CompactionPause } from "@earendil-works/pi-coding-agent";
+
 import type { ComposerDocument } from "./composer-document";
 import type { SkillInvocationDisplay } from "./skill-invocation";
 import type { SubagentRunData } from "./subagent";
@@ -333,6 +336,7 @@ export interface CreateSessionOptions {
 export type PermissionRequestKind = "path" | "command" | "other";
 
 export interface PermissionRequest {
+	revision?: number;
 	id: string;
 	sessionId: string;
 	title: string;
@@ -346,6 +350,7 @@ export type PermissionAnswer = "allow" | "deny" | "allowAlways" | "allowDir";
 
 /** 权限请求已裁决（answered=true 为批准/拒绝，false 为取消/过期）。 */
 export interface PermissionResolved {
+	revision?: number;
 	sessionId: string;
 	requestId: string;
 	answered: boolean;
@@ -376,7 +381,7 @@ export interface ContextManagerConfigInfo {
 	mode: ContextManagerMode;
 }
 
-/** channel-watch 跨会话频道唤醒配置（设置 UI 开关；键在 ~/.pi/agent/settings.json，缺省=开） */
+/** channel-watch 跨会话频道唤醒配置（设置 UI 开关；键在 ~/.percho/agent/settings.json，缺省=开） */
 export interface ChannelWatchConfigInfo {
 	enabled: boolean;
 }
@@ -392,6 +397,7 @@ export interface TrustOption {
 
 /** 项目信任请求（发生在会话创建前，无 sessionId） */
 export interface TrustRequest {
+	revision?: number;
 	id: string;
 	cwd: string;
 	options: TrustOption[];
@@ -408,6 +414,7 @@ export interface GitBranches {
 
 /** 应用信息（设置 → 关于页展示，来自主进程） */
 export interface AppInfo {
+	releaseChannel?: "stable" | "beta" | "dev";
 	/** 应用名 */
 	name: string;
 	/** 应用版本 */
@@ -504,6 +511,36 @@ export type SessionEvent =
 
 /** 渲染进程收到的统一事件包络 */
 export interface SessionEventEnvelope {
+	/** Present for independent-runtime events; local legacy observers need not use a boundary. */
+	sequence?: number;
 	sessionId: string;
 	event: SessionEvent;
+}
+
+/** Consistent per-session capture; sequence is the boundary for subsequent onEvent increments. */
+export interface SessionBaseline {
+	meta: SessionMeta;
+	sequence: number;
+	transcript: import("./transcript").SessionTranscriptState;
+	permissionMode: PermissionMode;
+}
+export interface LoadedSessionSummary {
+	compactionPause?: import("@earendil-works/pi-coding-agent").CompactionPause | null;
+	sequence: number;
+	followUpQueue: string[];
+	permissionMode: PermissionMode;
+	meta: SessionMeta;
+	streaming: boolean;
+	compacting: boolean;
+}
+
+export interface TrustResolved {
+	requestId: string;
+	revision?: number;
+}
+export interface PendingInteractions {
+	revision: number;
+	permissions: PermissionRequest[];
+	dialogs: import("./extension-dialog").ExtensionDialogRequest[];
+	trust: TrustRequest[];
 }

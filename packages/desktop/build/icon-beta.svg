@@ -1,0 +1,16 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="0 0 1024 1024">
+<title>Percho · 正四棱锥</title>
+<!-- a=320; b=512.6402247190518; h=460.000000。三维顶点投影，左右对称。 -->
+<rect x="64" y="64" width="896" height="896" rx="220" fill="#fff"/>
+<g id="guides" display="none" fill="none" stroke="#c8c8d1" stroke-width="2.5" stroke-dasharray="7 8">
+ <path d="M285.726 634.474L738.274 634.474M512.000 503.835L512.000 765.114M512.000 258.886L512.000 634.474"/>
+ <path d="M512.000 258.886H240M512.000 634.474H240M250 258.8860599124049V634.4744871391589"/>
+</g>
+<g id="hidden" display="inline" fill="none" stroke="#b9bac1" stroke-width="5" stroke-dasharray="10 12" stroke-linecap="round" stroke-linejoin="round">
+ <path d="M512.000 503.835L285.726 634.474M512.000 503.835L738.274 634.474M512.000 258.886L512.000 503.835"/>
+</g>
+<g id="pyramid" fill="none" stroke="#73737b" stroke-width="16" stroke-linecap="round" stroke-linejoin="round">
+ <path d="M512.000 258.886L285.726 634.474L512.000 765.114M512.000 258.886L738.274 634.474L512.000 765.114"/><path d="M512.000 258.886L512.000 765.114"/>
+</g><rect x="612" y="800" width="300" height="112" rx="38" fill="#c47417"/>
+<text x="762" y="876" text-anchor="middle" font-family="Arial, sans-serif" font-size="64" font-weight="700" letter-spacing="2" fill="#fff">BETA</text>
+</svg>

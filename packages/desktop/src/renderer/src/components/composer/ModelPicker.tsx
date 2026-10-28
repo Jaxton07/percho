@@ -122,7 +122,7 @@ export function ModelPicker() {
 		<div ref={ref} className="relative">
 			<button
 				type="button"
-				className="flex max-w-[208px] items-center gap-1 rounded-full px-2.5 py-1 text-ui-12 leading-[calc(1_/_0.75)] text-ink-dim transition-colors hover:bg-hover hover:text-ink"
+				className="flex max-w-[208px] items-center gap-1 rounded-full px-2.5 py-1 text-ui-14 leading-[calc(1_/_0.75)] text-ink-dim transition-colors hover:bg-hover hover:text-ink"
 				onClick={() => setOpen((v) => !v)}
 			>
 				{/* 模型名先截断，档位后缀永不截断（否则长模型名下看不到当前档位） */}

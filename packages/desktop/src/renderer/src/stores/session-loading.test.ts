@@ -1,18 +1,32 @@
 import { readFileSync } from "node:fs";
-import type { PermissionMode, SessionMeta } from "@percho/shared";
+import {
+	emptyTranscript,
+	type LoadedSessionSummary,
+	type PermissionMode,
+	type SessionMeta,
+} from "@percho/shared";
 import ts from "typescript";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const pi = vi.hoisted(() => ({
 	openSession: vi.fn(),
 	getSessionMessages: vi.fn(),
+	getLoadedSessions: vi.fn(async (): Promise<LoadedSessionSummary[]> => []),
 	getFollowUpMessages: vi.fn(),
 	getTodos: vi.fn(),
 	getPermissionMode: vi.fn(),
 	setPermissionMode: vi.fn(),
 	markSessionHistoryReady: vi.fn(),
 }));
-vi.mock("../api", () => ({ getPi: () => pi }));
+vi.mock("../api", () => ({
+	getPi: () =>
+		Object.assign(pi, {
+			forEnvironment: (environment: { kind: string }) => {
+				if (environment.kind !== "local") throw new Error("Unexpected remote fixture");
+				return pi;
+			},
+		}),
+}));
 
 import { clearSessionHistory, isHistoryReady } from "./session-history";
 import { createSessionLoader } from "./session-loading";
@@ -84,6 +98,35 @@ afterEach(() => {
 });
 
 describe("session loader owns flights and data, not navigation", () => {
+	it("restores an existing instance pause on local history reload and clears it when that instance is gone", async () => {
+		const f = fixture("paused");
+		pi.getLoadedSessions.mockResolvedValue([
+			{
+				meta: meta("paused"),
+				sequence: 2,
+				followUpQueue: ["pending"],
+				permissionMode: "default",
+				streaming: false,
+				compacting: false,
+				compactionPause: { reason: "failed", errorMessage: "offline" },
+			},
+		]);
+		pi.getFollowUpMessages.mockResolvedValue(["pending"]);
+		await f.loader.loadSessionBundle("paused");
+		expect(useTranscriptStore.getState().bySession.paused).toMatchObject({
+			compactionPause: { reason: "failed", errorMessage: "offline" },
+			followUpQueue: ["pending"],
+			agentActive: false,
+		});
+		useTranscriptStore.getState().loadHistory("paused", []);
+		expect(useTranscriptStore.getState().bySession.paused?.compactionPause?.reason).toBe("failed");
+		pi.getLoadedSessions.mockResolvedValue([]);
+		pi.getFollowUpMessages.mockResolvedValue([]);
+		await f.loader.loadSessionBundle("paused");
+		expect(useTranscriptStore.getState().bySession.paused?.compactionPause).toBeNull();
+		expect(useTranscriptStore.getState().bySession.paused?.followUpQueue).toEqual([]);
+		expect(emptyTranscript().compactionPause).toBeNull();
+	});
 	it("forget invalidates old file landing; old finally cannot remove a new flight", async () => {
 		const f = fixture("file"),
 			old = deferred<SessionMeta>(),
@@ -295,7 +338,13 @@ describe("session loader owns flights and data, not navigation", () => {
 			.filter(ts.isImportDeclaration)
 			.map((item) => (item.moduleSpecifier as ts.StringLiteral).text);
 		expect(imports).toEqual(
-			expect.arrayContaining(["../api", "./session-history", "./transcript", "./ui-preferences", "./toasts"]),
+			expect.arrayContaining([
+				"../environment-api",
+				"./session-history",
+				"./transcript",
+				"./ui-preferences",
+				"./toasts",
+			]),
 		);
 		expect(
 			imports.filter((name) => /(?:sessions|projects|workspace|navigation|drafts)(?:$|\/)/.test(name)),

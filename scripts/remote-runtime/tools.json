@@ -1,0 +1,16 @@
+{
+	"rg": {
+		"version": "15.2.0",
+		"source": "https://github.com/BurntSushi/ripgrep/releases/tag/15.2.0",
+		"url": "https://github.com/BurntSushi/ripgrep/releases/download/15.2.0/ripgrep-15.2.0-{target}-unknown-linux-musl.tar.gz",
+		"arm64": "800b1e7206afe799dfb5a6901f23147cfaabe0e52210538100f61e86e1740915",
+		"x64": "33e15bcf1624b25cdd2a55813a47a2f95dbe126268203e76aa6a585d1e7b149c"
+	},
+	"fd": {
+		"version": "10.5.0",
+		"source": "https://github.com/sharkdp/fd/releases/tag/v10.5.0",
+		"url": "https://github.com/sharkdp/fd/releases/download/v10.5.0/fd-v10.5.0-{target}-unknown-linux-musl.tar.gz",
+		"arm64": "d76c4317f7d5dba69f8a2a15856c90c777e7f0dd4e85f0de8c76de6992c374d4",
+		"x64": "761c72dc8e120d85b22292063be8a796e2eeb20eb3e4f38b8fa2343ccf3514a7"
+	}
+}

@@ -67,6 +67,20 @@ function textContent(content: unknown): string {
 		: "";
 }
 
+/** 候选检查与正式 message_end 共用；不发事件、不改历史，也不重读资源。 */
+export function normalizeComposerMessage<T>(message: T): T {
+	const raw = message as { role?: string; content?: unknown };
+	if (raw?.role !== "user") return message;
+	const decoded = decodeComposerTransport(textContent(raw.content));
+	if (!decoded) return message;
+	const blocks = Array.isArray(raw.content) ? raw.content : [];
+	return {
+		...message,
+		content: [{ type: "text", text: decoded.text }, ...blocks.filter((block) => block.type !== "text")],
+		perchoInput: decoded.document,
+	};
+}
+
 /** Outbound copies only: keep the actual SDK message/content authoritative for requests and JSONL. */
 export function projectComposerMessage<T>(message: T): T {
 	const raw = message as { role?: string; content?: unknown; perchoInput?: unknown };
@@ -107,19 +121,8 @@ export class ComposerInputBridge {
 			pi.on("message_end", (event, ctx) => {
 				if (event.message.role !== "user") return;
 				try {
-					const decoded = decodeComposerTransport(textContent(event.message.content));
-					if (!decoded) return;
-					const blocks = Array.isArray(event.message.content) ? event.message.content : [];
-					return {
-						message: {
-							...event.message,
-							content: [
-								{ type: "text" as const, text: decoded.text },
-								...blocks.filter((b) => b.type !== "text"),
-							],
-							perchoInput: decoded.document,
-						},
-					};
+					const message = normalizeComposerMessage(event.message);
+					return message === event.message ? undefined : { message };
 				} catch (error) {
 					// Handler exceptions alone are swallowed by the SDK. Abort and replace the damaged payload.
 					void ctx.abort();

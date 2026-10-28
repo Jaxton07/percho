@@ -1,5 +1,6 @@
 import { isModelVisible, type ModelPrefs, type ProviderInfo, providerModelVisibility } from "@percho/shared";
 import { useState } from "react";
+import { useEnvironment } from "../../../environment-context";
 import { useT } from "../../../i18n";
 import { useProviderLoginStore } from "../../../stores/provider-login";
 import { useSettingsStore } from "../../../stores/settings";
@@ -53,6 +54,7 @@ export function ProviderRow({ provider }: { provider: ProviderInfo }) {
 	const removeCredential = useSettingsStore((s) => s.removeCredential);
 	const removeCustom = useSettingsStore((s) => s.removeCustom);
 	const test = useSettingsStore((s) => s.test);
+	const environment = useEnvironment();
 	const startLogin = useProviderLoginStore((s) => s.startProviderLogin);
 	const loginActive = useProviderLoginStore((s) => s.login !== null);
 	const testResult = useSettingsStore((s) => s.testResults[provider.id]);
@@ -141,7 +143,7 @@ export function ProviderRow({ provider }: { provider: ProviderInfo }) {
 								? (provider.oauth.loginLabel ?? t("settings.providers.login"))
 								: t("settings.providers.loginApiKey")
 						}
-						disabled={loginActive}
+						disabled={loginActive || environment.kind === "ssh"}
 						onClick={() => void startLogin(provider)}
 					>
 						<LoginIcon />

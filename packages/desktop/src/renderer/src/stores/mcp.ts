@@ -7,8 +7,10 @@ import type {
 	McpServerView,
 	McpUpsertInput,
 } from "@percho/shared";
-import { create } from "zustand";
-import { getPi } from "../api";
+import { type EnvironmentRef, environmentKey, environmentRef, LOCAL_ENVIRONMENT } from "@percho/shared";
+import { create, useStore } from "zustand";
+import { getExecutionApi } from "../environment-api";
+import { useEnvironment } from "../environment-context";
 import { useToastsStore } from "./toasts";
 
 interface McpStore {
@@ -58,50 +60,78 @@ function statusFrom(config: McpConfigListResult): Record<string, McpServerStatus
 	return Object.fromEntries(entries) as Record<string, McpServerStatus>;
 }
 
-export const useMcpStore = create<McpStore>((set, get) => ({
-	config: null,
-	loading: false,
-	status: {},
-	lastReload: null,
+function createMcpStore(environment: EnvironmentRef) {
+	return create<McpStore>((set, get) => {
+		let loadSeq = 0;
+		return {
+			config: null,
+			loading: false,
+			status: {},
+			lastReload: null,
 
-	load: async (cwd) => {
-		set({ loading: true });
-		try {
-			const config = await getPi().mcpConfigList({ cwd });
-			const status = { ...statusFrom(config), ...get().status };
-			set({ config: mergeStatus(config, status), status, notice: config.notice, loading: false });
-		} catch (error) {
-			set({ loading: false });
-			useToastsStore.getState().push("error", "toast.mcpLoadFailed");
-			console.error("MCP 配置读取失败", error);
-		}
-	},
+			load: async (cwd) => {
+				const seq = ++loadSeq;
+				set({ loading: true });
+				try {
+					const config = await getExecutionApi(environment).mcpConfigList({ cwd });
+					if (seq !== loadSeq) return;
+					const status = { ...statusFrom(config), ...get().status };
+					set({ config: mergeStatus(config, status), status, notice: config.notice, loading: false });
+				} catch (error) {
+					if (seq !== loadSeq) return;
+					set({ loading: false });
+					useToastsStore.getState().push("error", "toast.mcpLoadFailed");
+					console.error("MCP 配置读取失败", error);
+				}
+			},
 
-	upsert: async (input) => {
-		const { config, reload } = await getPi().mcpConfigUpsert(input);
-		set({
-			config: mergeStatus(config, get().status),
-			notice: config.notice,
-			lastReload: reload,
-		});
-	},
+			upsert: async (input) => {
+				const { config, reload } = await getExecutionApi(environment).mcpConfigUpsert(input);
+				set({
+					config: mergeStatus(config, get().status),
+					notice: config.notice,
+					lastReload: reload,
+				});
+			},
 
-	remove: async (input) => {
-		const { config, reload } = await getPi().mcpConfigRemove(input);
-		set({ config: mergeStatus(config, get().status), notice: config.notice, lastReload: reload });
-	},
+			remove: async (input) => {
+				const { config, reload } = await getExecutionApi(environment).mcpConfigRemove(input);
+				set({ config: mergeStatus(config, get().status), notice: config.notice, lastReload: reload });
+			},
 
-	reload: async (cwd) => {
-		const { config, reload } = await getPi().mcpConfigReload({ cwd });
-		set({ config: mergeStatus(config, get().status), notice: config.notice, lastReload: reload });
-	},
+			reload: async (cwd) => {
+				const { config, reload } = await getExecutionApi(environment).mcpConfigReload({ cwd });
+				set({ config: mergeStatus(config, get().status), notice: config.notice, lastReload: reload });
+			},
 
-	applyServersChanged: ({ servers, notice }) => {
-		const status = Object.fromEntries(servers.map((server) => [server.name, server])) as Record<
-			string,
-			McpServerStatus
-		>;
-		const config = get().config;
-		set({ status, notice, config: config ? mergeStatus(config, status) : config });
-	},
-}));
+			applyServersChanged: ({ servers, notice }) => {
+				const status = Object.fromEntries(servers.map((server) => [server.name, server])) as Record<
+					string,
+					McpServerStatus
+				>;
+				const config = get().config;
+				set({ status, notice, config: config ? mergeStatus(config, status) : config });
+			},
+		};
+	});
+}
+
+const stores = new Map<string, ReturnType<typeof createMcpStore>>();
+export function getMcpStore(reference: EnvironmentRef = LOCAL_ENVIRONMENT) {
+	const environment = environmentRef(reference);
+	const key = environmentKey(environment);
+	let store = stores.get(key);
+	if (!store) {
+		store = createMcpStore(environment);
+		stores.set(key, store);
+	}
+	return store;
+}
+const localStore = getMcpStore();
+export const useLocalMcpStore = localStore;
+function useBoundMcpStore<T = McpStore>(selector?: (state: McpStore) => T): T {
+	const store = getMcpStore(useEnvironment());
+	return useStore(store, selector ?? ((state) => state as unknown as T));
+}
+// Static access is the local compatibility entry. Environment operations use getMcpStore(ref).
+export const useMcpStore = Object.assign(useBoundMcpStore, localStore);

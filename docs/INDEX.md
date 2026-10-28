@@ -9,8 +9,10 @@
 | 包边界、IPC、会话数据与状态所有权 | [架构](architecture.md) |
 | 界面风格、字号、浮层、共享组件 | [UI 规范](ui.md) |
 | CDP、截图、交互验收、测试实例管理 | [UI 调试](ui-debugging.md) |
+| 用户级目录隔离、升级迁移、失败恢复 | [用户数据](local-agent-storage.md) |
 | SDK 行为、升级、资源释放、上下文 | [SDK 集成](sdk.md) |
 | pi 扩展在 GUI 中实际支持哪些交互 | [扩展 UI](extension-ui.md) |
+| SSH 远端使用、连接与恢复边界 | [远端开发](ssh-remote.md) |
 | 构建、打包、验包 | [构建发布](build-release.md) |
 | Windows 更新取证、恢复 | [Windows 更新](WINDOWS-UPDATES.md) |
 | 按症状选择排查方向 | [排障入口](PITFALLS.md) |
@@ -44,6 +46,7 @@
 | 主题、字号、基础样式、文案 | renderer `styles/`、`stores/theme.ts`、`lib/typography.ts`、`i18n/`；字号档位在 shared `typography.ts` |
 | 窗口、退出、尺寸恢复、开发数据隔离 | desktop `main/window.ts`、`window-bounds.ts`、`dev-agent-dir.ts` |
 | 自动更新和诊断 | desktop `main/updater.ts`、`update-policy.ts`、`update-diagnostics.ts`、`build/update-diagnostics.nsh` |
+| SSH 独立服务与环境路由 | backend `runtime/`；desktop `main/remote-connection.ts`、`environment-router.ts`；renderer `environment-api.ts`、`components/remote/` |
 | 跨设备互联 | shared `lan.ts`；backend `lan/`；desktop `main/lan.ts`、`src/lan-web/` |
 | 日志、事件 trace 与崩溃 | backend `log.ts`、`session/trace*.ts`；desktop `main/renderer-watchdog.ts` |
 

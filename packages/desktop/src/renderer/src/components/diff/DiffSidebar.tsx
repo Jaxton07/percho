@@ -1,8 +1,9 @@
-import { deriveTurnChanges, type TurnChanges } from "@percho/shared";
+import { deriveTurnChanges, environmentEntityRef, sameEnvironment, type TurnChanges } from "@percho/shared";
 import { useEffect, useMemo, useRef, useState } from "react";
-import { getPi } from "../../api";
+import { getExecutionApi } from "../../environment-api";
 import { useT } from "../../i18n";
 import { selectActiveCwd } from "../../lib/active-cwd";
+import { useRemoteConnectionStore } from "../../stores/remote-connection";
 import { useSessionsStore } from "../../stores/sessions";
 import { useTranscriptStore } from "../../stores/transcript";
 import { useUiStore } from "../../stores/ui";
@@ -19,33 +20,49 @@ const EMPTY_TURNS: TurnChanges[] = [];
  * 有消息内容才显示（新会话与输入框下方 ProjectBranchPicker 重复）；非 git 目录不渲染。
  */
 function BranchRow() {
-	const activeSessionId = useSessionsStore((s) => s.activeSessionId);
 	const cwd = useSessionsStore(selectActiveCwd);
+	return <BranchRowForDirectory key={cwd ?? "none"} cwd={cwd} />;
+}
+function BranchRowForDirectory({ cwd }: { cwd: string | null }) {
+	const activeSessionId = useSessionsStore((s) => s.activeSessionId);
 	const messages = useTranscriptStore((s) =>
 		activeSessionId ? s.bySession[activeSessionId]?.messages : undefined,
 	);
 	const [branches, setBranches] = useState<string[]>([]);
 	const [current, setCurrent] = useState<string | null>(null);
 	const [open, setOpen] = useState(false);
+	const [error, setError] = useState<string | null>(null);
+	const status = useRemoteConnectionStore((state) => state.status);
+	const online =
+		!cwd ||
+		environmentEntityRef(cwd).environment.kind === "local" ||
+		(status.state === "connected" &&
+			!!status.environment &&
+			sameEnvironment(environmentEntityRef(cwd).environment, status.environment));
+	const instance =
+		cwd && environmentEntityRef(cwd).environment.kind === "ssh" ? status.instanceId : undefined;
 	const hasContent = !!messages && messages.length > 0;
 
 	// cwd 变化（切会话/切项目）即刷新；展开时也重拉一次（分支可能在终端被切走）
 	// biome-ignore lint/correctness/useExhaustiveDependencies: open 是有意触发源——展开时重拉一次（分支可能在终端被切走）
 	useEffect(() => {
-		if (!cwd || !hasContent) return;
+		if (!cwd || !hasContent || !online) return;
 		let cancelled = false;
-		void getPi()
+		void getExecutionApi(cwd)
 			.listGitBranches({ cwd })
 			.then((r) => {
 				if (cancelled) return;
 				setBranches(r.branches);
 				setCurrent(r.current);
+				setError(null);
 			})
-			.catch(() => {});
+			.catch((error) => {
+				if (!cancelled) setError(error instanceof Error ? error.message : String(error));
+			});
 		return () => {
 			cancelled = true;
 		};
-	}, [cwd, hasContent, open]);
+	}, [cwd, activeSessionId, hasContent, open, online, instance]);
 
 	// 点击外部关闭（Dropdown 同款）
 	useEffect(() => {
@@ -58,7 +75,9 @@ function BranchRow() {
 		return () => window.removeEventListener("pointerdown", onPointerDown);
 	}, [open]);
 
-	if (!hasContent || !cwd || !current || branches.length === 0) return null;
+	if (!hasContent || !cwd) return null;
+	if (error) return <p className="px-3 text-ui-11 text-err">{error}</p>;
+	if (!current || branches.length === 0) return null;
 
 	return (
 		<div className="diff-side-branch" data-branch-row>
@@ -203,7 +222,7 @@ export function DiffSidebar() {
 								</div>
 								{tc.files.map((f, fi) => (
 									<DiffFileCard
-										key={`${tc.turnIndex}:${f.path}`}
+										key={`${activeSessionId}:${tc.turnIndex}:${f.path}`}
 										file={f}
 										cwd={sessionCwd}
 										/* 默认只展开「最近一轮组的第一张卡」，其余收起 */

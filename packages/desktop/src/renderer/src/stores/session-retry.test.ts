@@ -12,7 +12,9 @@ import { retryFailedTurn } from "./session-retry";
 import { useTranscriptStore } from "./transcript";
 
 const { retry, prompt, toast } = vi.hoisted(() => ({ retry: vi.fn(), prompt: vi.fn(), toast: vi.fn() }));
-vi.mock("../api", () => ({ getPi: () => ({ retryLastFailedTurn: retry, prompt }) }));
+vi.mock("../api", () => ({
+	getPi: () => ({ forEnvironment: () => ({ retryLastFailedTurn: retry, prompt }) }),
+}));
 vi.mock("./toasts", () => ({ pushToast: toast }));
 
 function errorCard(id = "failure", timestamp = 100): UIMessage {
@@ -35,6 +37,13 @@ beforeEach(() => {
 });
 
 describe("failed turn retry", () => {
+	it("blocks retrying an old model failure while context compaction is paused", () => {
+		seed();
+		const store = useTranscriptStore.getState();
+		expect(canRetryError(store.bySession.s, "failure")).toBe(true);
+		store.applyEvent("s", { type: "compaction_pause", pause: { reason: "failed" } });
+		expect(canRetryError(useTranscriptStore.getState().bySession.s, "failure")).toBe(false);
+	});
 	it("sends only failure ref, never re-sends user text, images or skill command", async () => {
 		seed([
 			{

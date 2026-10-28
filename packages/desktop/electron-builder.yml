@@ -1,5 +1,8 @@
 appId: io.github.jaxton07.percho
 productName: Percho
+extraMetadata:
+  releaseChannel: stable
+beforePack: resources/remote-runtime/before-pack.cjs
 directories:
   output: dist
 files:
@@ -15,6 +18,9 @@ asarUnpack:
 # pi SDK 包资源镜像：docs/examples/README 不进 asar，agent 的 read/bash 工具都能直接访问。
 # main 进程经 PI_PACKAGE_DIR 指到这里（export-html/themes/package.json 同根解析，必须一起带）。
 extraResources:
+  - from: "resources/remote-runtime"
+    to: "remote-runtime"
+    filter: ["manifest.json"]
   - from: "../../node_modules/@earendil-works/pi-coding-agent/docs"
     to: "pi-package/docs"
   - from: "../../node_modules/@earendil-works/pi-coding-agent/examples"

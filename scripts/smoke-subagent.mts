@@ -1,11 +1,11 @@
 // 阶段 0 冒烟：真实 SDK 验证进程内子会话的 loader、目录隔离、开销和事件/usage。
-// 仅使用 dev agent 目录，避免正式 ~/.pi/agent/ 被写入；需要已有凭证才能执行真实任务。
+// 仅使用 dev agent 目录，避免正式 ~/.percho/agent/ 被写入；需要已有凭证才能执行真实任务。
 import { mkdtemp, rm } from "node:fs/promises";
 import { homedir } from "node:os";
 import { join, resolve } from "node:path";
 import { performance } from "node:perf_hooks";
 
-process.env.PI_CODING_AGENT_DIR = join(homedir(), ".pi", "agent-dev");
+process.env.PI_CODING_AGENT_DIR = process.env.PERCHO_AGENT_DIR ?? join(homedir(), ".percho", "agent-dev");
 
 const {
 	DefaultResourceLoader,
@@ -32,7 +32,7 @@ try {
 	const available = await runtime.getAvailable();
 	const model = available[0];
 	if (!model) {
-		throw new Error("No authenticated model available in ~/.pi/agent-dev; configure dev credentials before running smoke-subagent");
+		throw new Error("No authenticated model available in ~/.percho/agent-dev; configure dev credentials before running smoke-subagent");
 	}
 
 	const loader = new DefaultResourceLoader({

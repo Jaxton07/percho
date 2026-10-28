@@ -4,7 +4,10 @@ import {
 	composerDocumentFromText,
 	composerDocumentText,
 	EMPTY_COMPOSER_DOCUMENT,
+	type EnvironmentRef,
+	environmentEntityKey,
 	type ImageInput,
+	LOCAL_ENVIRONMENT,
 	type QueuedInput,
 	type UiError,
 } from "@percho/shared";
@@ -15,6 +18,16 @@ import { create } from "zustand";
  * 单例 draft：全局只有这一份新会话内容，新建/再点「＋」/promotion 前后都不换 key。
  */
 export const NEW_SESSION_DRAFT_KEY = "__new__";
+
+/** Remote new-session inputs belong to their environment/project, never the local compatibility key. */
+export function newSessionDraftKey(
+	environment: EnvironmentRef = LOCAL_ENVIRONMENT,
+	cwd?: string | null,
+): string {
+	return environment.kind === "local"
+		? NEW_SESSION_DRAFT_KEY
+		: environmentEntityKey(environment, `draft:${cwd ?? ""}`);
+}
 
 /** 请求聚焦输入框的窗口事件名（撤回回填草稿后由 store 派发，Composer 监听聚焦编辑器） */
 export const COMPOSER_FOCUS_EVENT = "pi:composer-focus";
