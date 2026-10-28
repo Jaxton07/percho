@@ -66,7 +66,7 @@ export interface UiState {
 	 * `activeFile` 一条，其余成员靠历史目录投影画胶囊。
 	 */
 	sessionWorkspace: SessionWorkspaceSnapshot;
-	/** 左侧栏收起（宽 0，彻底藏起；只有顶栏最左按钮能改）；旧版本文件缺省为 false */
+	/** 兼容旧版保存的侧栏开合状态；新版启动时始终收起，不再读写此偏好。 */
 	sidebarCollapsed: boolean;
 	/**
 	 * 左侧栏宽度（px）= **用户意图值**，取值域 `[SIDEBAR_MIN_WIDTH, SIDEBAR_MAX_WIDTH]`（`src/sidebar.ts`）。

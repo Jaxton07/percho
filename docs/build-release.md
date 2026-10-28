@@ -22,18 +22,20 @@ npm run package:beta -- --version 0.6.6-beta.1 --arch arm64
 
 默认输出为 `packages/desktop/dist/releases/<版本>/<平台>/artifacts/`；要求输出目录不存在，失败后重试可指定新的 `--output`。macOS 的 `--arch all` 生成 arm64/x64，实际启动验收只覆盖本机架构，其他架构核验包内容和签名。Windows/Linux 桌面目标为 x64。`npm run dist:beta` 与 `npm run dist` 分别是 Beta 和通用入口的别名，不再接受 electron-builder 的任意参数；通用入口为 `npm run package:release`。
 
+macOS 打包中间文件放在输出目录的 `build.noindex/`。验收结束会注销临时应用及其 Helper 的系统登记；完整打包成功后删除中间目录，只保留安装包、摘要和报告，避免开发副本持续出现在应用搜索中。失败或显式 `--dir` 时保留中间文件便于检查，但仍注销登记。开发入口为每次启动创建独立的临时外壳，退出时删除并注销；只注销而保留 `.app` 仍可能被系统重新发现，因此不长期缓存开发应用。安装到 `/Applications` 的版本和用户数据不参与清理。
+
 三套名称与应用标识以 `packages/desktop/build/app-channels.json` 为准：正式版 `Percho` 无角标；内测版 `Percho Beta` 带 BETA 角标；开发版 `Percho Dev` 带 DEV 角标。Beta 与开发版不连接正式更新源，后续测试版本手动安装。数据目录和首次启动行为见[用户级数据隔离](local-agent-storage.md)。
 
-更新 `build/icon.svg` 后，运行 `npm run icons -w packages/desktop` 同步生成三套 PNG 与通道 SVG。macOS 的开发入口会缓存一份独立 Bundle ID 的 Electron 外壳，并临时签名，不改 `node_modules` 中的 Electron；正常 `npm run dev` 会自动使用它。生成图标需要能启动 Electron 的桌面环境，已生成的图标随仓库保存，常规 CI 打包无需启动图标生成器。
+更新 `build/icon.svg` 后，运行 `npm run icons -w packages/desktop` 同步生成三套 PNG 与通道 SVG。macOS 的开发入口使用独立 Bundle ID 的 Electron 外壳并临时签名，不改 `node_modules` 中的 Electron；正常 `npm run dev` 会自动使用它。生成图标需要能启动 Electron 的桌面环境，已生成的图标随仓库保存，常规 CI 打包无需启动图标生成器。
 
 当前 adhoc 包未公证。首次打开可能需要用户右键“打开”或移除 quarantine。新 Beta 可以与正式版并存；此前名称仍为 `Percho` 的旧内测包使用正式身份，不能继续按并存方式使用。冒烟后退出测试包。
 
 ## 验包看实际产物
 
-在仓库根目录用一个新的任务子目录解包：
+一般由打包入口自动验包。需要手动检查时先用 `--dir` 保留解包应用，再在仓库根目录用一个新的任务子目录提取 asar：
 
 ```bash
-npx asar extract "packages/desktop/dist/releases/0.6.6-beta.1/darwin/mac-arm64/Percho Beta.app/Contents/Resources/app.asar" .local/tmp/package-review/app
+npx asar extract "packages/desktop/dist/releases/0.6.6-beta.1/darwin/build.noindex/mac-arm64/Percho Beta.app/Contents/Resources/app.asar" .local/tmp/package-review/app
 ```
 
 然后检查其 `out/main/`、`out/preload/`、`out/renderer/assets/` 中本次改动的实际代码。不能只凭构建时间或 main 新字符串证明 renderer 已更新。
