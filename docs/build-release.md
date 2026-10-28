@@ -10,16 +10,17 @@
 
 ## 本地 macOS 内测包
 
-内测使用独立的 `Percho Beta` 身份与橙色 BETA 角标，不改版本、不打 tag：
+内测使用独立的 `Percho Beta` 身份与橙色 BETA 角标。版本遵循 `X.Y.Z-beta.N`（候选版可用 `X.Y.Z-rc.N`），每次可分发构建递增 N，不复用正式版版本。版本由发布 tag 或命令显式指定，统一写入桌面包、文件名和远端运行包；不为本地打包修改源码中的开发基线版本。
+
+先从同一提交、同一版本的 Release 构建下载两种架构的 `remote-runtime-*` 产物到 `.local/runtime-release/`，再在根目录执行：
 
 ```bash
-cd packages/desktop
-npm run dist:beta -- --mac dmg --arm64
+npm run package:beta -- --version 0.6.6-beta.1 --arch arm64
 ```
 
-**必须先 build。** dev 的 renderer 在内存中，直接打包可能把磁盘 `out/` 的旧 renderer 装进去，即使 main 已经是新代码。
+这一个命令依次核验远端归档、重新 build、打包、核验包内版本/资源/清单、macOS 签名和 DMG 完整性，并在隔离 agent/profile 中启动实际应用验收，最后生成 SHA256 和验收报告。任一步失败均返回失败，不发布、不安装。`--dir` 只生成解包应用用于快速冒烟，其报告不能用于发布。
 
-当前 yml 的 mac target 同时列出 arm64/x64，不能仅凭 CLI `--arm64` 推断只会生成一种架构；检查实际产物。Beta 产物位于 `packages/desktop/dist/beta.noindex/`。正式发布仍用 `npm run dist`，不要把 Beta 包上传为正式安装包。
+默认输出为 `packages/desktop/dist/releases/<版本>/<平台>/artifacts/`；要求输出目录不存在，失败后重试可指定新的 `--output`。macOS 的 `--arch all` 生成 arm64/x64，实际启动验收只覆盖本机架构，其他架构核验包内容和签名。Windows/Linux 桌面目标为 x64。`npm run dist:beta` 与 `npm run dist` 分别是 Beta 和通用入口的别名，不再接受 electron-builder 的任意参数；通用入口为 `npm run package:release`。
 
 三套名称与应用标识以 `packages/desktop/build/app-channels.json` 为准：正式版 `Percho` 无角标；内测版 `Percho Beta` 带 BETA 角标；开发版 `Percho Dev` 带 DEV 角标。Beta 与开发版不连接正式更新源，后续测试版本手动安装。数据目录和首次启动行为见[用户级数据隔离](local-agent-storage.md)。
 
@@ -32,7 +33,7 @@ npm run dist:beta -- --mac dmg --arm64
 在仓库根目录用一个新的任务子目录解包：
 
 ```bash
-npx asar extract packages/desktop/dist/mac-arm64/Percho.app/Contents/Resources/app.asar .local/tmp/package-review/app
+npx asar extract "packages/desktop/dist/releases/0.6.6-beta.1/darwin/mac-arm64/Percho Beta.app/Contents/Resources/app.asar" .local/tmp/package-review/app
 ```
 
 然后检查其 `out/main/`、`out/preload/`、`out/renderer/assets/` 中本次改动的实际代码。不能只凭构建时间或 main 新字符串证明 renderer 已更新。
@@ -52,6 +53,12 @@ npx asar extract packages/desktop/dist/mac-arm64/Percho.app/Contents/Resources/a
 
 ## 发布与平台验证
 
+Release workflow 支持推送 `vX.Y.Z[-beta.N|-rc.N]` tag，或手动指定版本。手动运行默认只构建验包，下载 GitHub Actions 产物即可内测；勾选 publish 才发布。版本从唯一入口传给两种 Linux 运行包和三个桌面构建，不依赖提前发布运行包。
+
+PR CI 复用同一个三平台打包验收工作流，使用基线版本加 `beta.<CI运行编号>` 的临时版本，覆盖完整安装包、隔离启动和最终整套产物校验，不创建 tag 或公开发行。Windows 安装日志也按产品名分目录，Beta 不写入正式版的安装日志目录。
+
+流程在同一提交上完成检查、两种远端包的离线/安装验收、三平台桌面打包和本机架构启动验收。最后重新验证所有产物、版本、提交和摘要，全部上传到 GitHub 草稿后才公开；失败不公开半套安装包。Beta/RC 标为 prerelease，不能成为 latest，也不触发官网正式版本刷新。正式版保留现有下载文件名和更新源。已有公开 release 拒绝覆盖，同提交的草稿可重试上传。验收报告和摘要随安装包发布，便于追溯。
+
 本机维护者的 tag、签名、网络等操作见 `.local/docs/release.md`（不入库）；文件不存在时从仓库 workflow 和 builder 配置核对，不猜发布步骤。未经用户明确要求不 push、不创建发布或覆盖已发布资产。
 
 Windows 更新诊断及旧卸载器边界见 [WINDOWS-UPDATES.md](WINDOWS-UPDATES.md)。NSIS 改动须用 Windows CI 的真实 installer 编译和隔离 harness 验证，macOS 上的编译结果不能替代 Windows 行为证据。
@@ -66,7 +73,7 @@ Windows 更新诊断及旧卸载器边界见 [WINDOWS-UPDATES.md](WINDOWS-UPDATE
 
 安装器另用 `verify-remote-runtime-install.mjs` 在隔离目标执行：挂载实际归档、原始 desktop bootstrap 与 scripts，使用可执行的私有暂存目录；验证成功安装及摘要、截断、架构、越界、并发失败保护。它不替代仓库外 SDK 验包。
 
-两份验包产物经 `prepare-remote-runtime-manifest.mjs --input <同目录两份归档和摘要> --output packages/desktop/resources/remote-runtime/manifest.json` 生成桌面清单。生成文件不入库；打包前检查它与桌面版本对应，缺失时阻止打包。普通 renderer/main 构建仍可独立运行。公开发行流程先发布验过的运行包，再用 `--require-published` 核对固定官方 URL，之后才构建和上传引用它们的桌面；不读取任意 latest、不覆盖在用运行包，也不把本地生成清单当成资产已经公开的证据。未经用户授权不触发发布流程。
+统一打包入口从两份验包产物生成桌面清单，生成文件不入库；版本、源码提交、大小或摘要不匹配均阻止打包。单独调试可用 `prepare-remote-runtime-manifest.mjs --input <产物目录> --output packages/desktop/resources/remote-runtime/manifest.json --version <版本>`；`--require-published` 仅用于检查已经公开的发行，不是构建前提。普通 renderer/main 构建仍可独立运行。运行包与引用它的桌面按上面的统一流程同时发布；不读取任意 latest、不覆盖在用运行包，也不把本地生成清单当成资产已经公开的证据。未经用户授权不触发发布流程。
 
 SSH 首次安装由桌面执行：先只读检测已有 Host 别名、Node >=22.19.0、glibc 2.35+ 与基础命令；已存在兼容服务直接附着，已装且停止的包按原版本启动，不读取新发行清单。缺包时按随附清单从固定官方 URL 下载到本机缓存并核对大小/摘要，展示版本及服务器私有安装目录，点击“确认安装并连接”才修改目标。后台自动连接缺包只提示，不代用户确认。开发态安装需要先生成资源清单，普通构建不会生成可信发行清单。
 

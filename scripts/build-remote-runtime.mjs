@@ -19,6 +19,7 @@ import { dirname, join, resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { promisify } from "node:util";
 import nodePolicy from "../packages/shared/src/runtime-node-policy.json" with { type: "json" };
+import { currentRelease } from "./release/plan.mjs";
 import { runtimeBuildLock } from "./remote-runtime/production-lock.mjs";
 
 const exec = promisify(execFile),
@@ -38,11 +39,8 @@ if (!/^22\./.test(process.versions.node) || Number(process.versions.node.split("
 await mkdir(out, { recursive: true });
 const work = await mkdtemp(join(out, ".runtime-build-")),
 	stage = join(work, "package");
-const desktop = JSON.parse(await readFile(join(repo, "packages/desktop/package.json"), "utf8")),
-	releaseId = `v${desktop.version}`;
-if (process.env.PERCHO_BUILD_RELEASE_TAG && process.env.PERCHO_BUILD_RELEASE_TAG !== releaseId)
-	throw new Error("Release tag does not match desktop version");
-if (!/^v\d+\.\d+\.\d+(?:-[a-zA-Z0-9.-]+)?$/.test(releaseId)) throw new Error("Invalid fixed release version");
+const release = await currentRelease();
+const releaseId = release.tag;
 const run = (command, argv, cwd = stage) =>
 	exec(command, argv, {
 		cwd,
@@ -54,7 +52,7 @@ try {
 	await mkdir(stage);
 	const selected = runtimeBuildLock(
 		JSON.parse(await readFile(join(repo, "package-lock.json"), "utf8")),
-		desktop.version,
+		release.version,
 	);
 	await writeFile(join(stage, "package.json"), JSON.stringify(selected.manifest, null, 2));
 	await writeFile(join(stage, "package-lock.json"), JSON.stringify(selected.lock, null, 2));
@@ -134,6 +132,7 @@ try {
 	delete selected.manifest.devDependencies;
 	selected.manifest.perchoRuntime = {
 		releaseId,
+		sourceCommit: release.sourceCommit,
 		platform: "linux",
 		arch,
 		minimumGlibc: "2.35",
@@ -177,7 +176,8 @@ try {
 	const manifest = {
 		version: 1,
 		releaseId,
-		runtimeVersion: desktop.version,
+		runtimeVersion: release.version,
+		sourceCommit: release.sourceCommit,
 		protocol: checked.protocol,
 		sdkVersion: checked.sdkVersion,
 		minimumGlibc: "2.35",

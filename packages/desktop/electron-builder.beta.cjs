@@ -8,9 +8,9 @@ module.exports = {
 	icon: "build/icon-beta.png",
 	extraMetadata: { releaseChannel: "beta", productName: beta.name },
 	directories: { output: "dist/beta.noindex" },
-	artifactName: "percho-beta-${os}-${arch}.${ext}",
-	mac: { artifactName: "percho-beta-mac-${arch}.${ext}" },
-	win: { artifactName: "percho-beta-windows-${arch}.${ext}" },
-	linux: { artifactName: "percho-beta-linux-${arch}.${ext}", executableName: "percho-beta" },
+	artifactName: "percho-beta-${version}-${os}-${arch}.${ext}",
+	mac: { artifactName: "percho-beta-${version}-mac-${arch}.${ext}" },
+	win: { artifactName: "percho-beta-${version}-windows-${arch}.${ext}" },
+	linux: { artifactName: "percho-beta-${version}-linux-${arch}.${ext}", executableName: "percho-beta" },
 	publish: null,
 };
