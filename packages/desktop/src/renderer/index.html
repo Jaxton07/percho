@@ -11,6 +11,12 @@
     <!-- 开屏动画（黑白哑光粒子光团 → 散场）：样式 splash.css（渲染阻塞，首帧前就绪）；
          DOM 由 splash-dom.ts 在首帧前同步生成（粒子参数程序化生成）；收場控制见 splash.ts。 -->
     <link rel="stylesheet" href="/src/styles/splash.css" />
+    <link rel="preload" as="image" href="/src/assets/splash/dot-light.png" />
+    <link rel="preload" as="image" href="/src/assets/splash/dot-dark.png" />
+    <link rel="preload" as="image" href="/src/assets/splash/ring-light.png" />
+    <link rel="preload" as="image" href="/src/assets/splash/ring-dark.png" />
+    <link rel="preload" as="image" href="/src/assets/splash/wave-light.png" />
+    <link rel="preload" as="image" href="/src/assets/splash/wave-dark.png" />
   </head>
   <body>
     <div id="root"></div>

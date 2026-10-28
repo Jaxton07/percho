@@ -226,8 +226,28 @@ async function scenario(name, agent, action) {
 			assert.equal(record.kind, action === "adopt" ? "adopt" : "empty");
 			await privateDirectory(agent, false);
 			assert.ok(await ui.evaluate("window.pi.getAppInfo().then(info => !!info.version)"));
+			assert.equal(
+				await ui.evaluate("!!document.querySelector('.sidebar.is-collapsed')"),
+				true,
+				"Sidebar must start collapsed, including after restart",
+			);
+			if (name === "fresh") {
+				await ui.click("[data-sidebar-toggle]");
+				await wait(
+					() => ui.evaluate("!!document.querySelector('.sidebar:not(.is-collapsed)')"),
+					"manual sidebar expansion",
+				);
+				// Reproduce an old saved preference; restart must ignore it as well as the current open UI.
+				await ui.evaluate("window.pi.saveUiState({state:{sidebarCollapsed:false}}).then(()=>true)");
+			}
 			await ui.evaluate("void window.pi.confirmQuit(); true");
-			results.push({ name, recordId: record.id, kind: record.kind, singlePage: true });
+			results.push({
+				name,
+				recordId: record.id,
+				kind: record.kind,
+				singlePage: true,
+				sidebarStartsCollapsed: true,
+			});
 		}
 		await wait(() => closed, "native process exit", 15000);
 		if (failure) throw failure;

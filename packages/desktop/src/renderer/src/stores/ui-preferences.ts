@@ -26,7 +26,7 @@ interface UiPreferencesStore {
 	barSessionsVisible: boolean;
 	/** 左侧会话短线轨道开关（设置页，默认**关**）；与顶栏开关各自独立，两个都关则清空工作区 */
 	sessionRailEnabled: boolean;
-	/** 左侧栏收起（宽 0，彻底藏起；只有顶栏最左按钮能改，默认展开） */
+	/** 左侧栏收起（宽 0；每次启动收起，由顶栏最左按钮展开） */
 	sidebarCollapsed: boolean;
 	/**
 	 * 左侧栏宽度（px）= **用户意图值**（拖拽的落点，越界已在写入时 clamp）。
@@ -100,7 +100,7 @@ export const useUiPreferencesStore = create<UiPreferencesStore>((set, get) => ({
 	sessionPermissionModes: {},
 	barSessionsVisible: true,
 	sessionRailEnabled: false,
-	sidebarCollapsed: false,
+	sidebarCollapsed: true,
 	sidebarWidth: SIDEBAR_DEFAULT_WIDTH,
 	/** 左侧栏展开分组的记录（`setExpandedGroups` 同时置 touched 位） */
 	expandedGroups: [],
@@ -123,7 +123,8 @@ export const useUiPreferencesStore = create<UiPreferencesStore>((set, get) => ({
 			sessionPermissionModes: saved?.sessionPermissionModes ?? {},
 			barSessionsVisible: saved?.barSessionsVisible ?? true,
 			sessionRailEnabled: saved?.sessionRailEnabled ?? false,
-			sidebarCollapsed: saved?.sidebarCollapsed ?? false,
+			// 每次启动都收起；忽略旧版保存的开合状态，避免首屏自动展开。
+			sidebarCollapsed: true,
 			sidebarWidth: clampSidebarWidth(saved?.sidebarWidth),
 			expandedGroups: saved?.expandedGroups ?? [],
 			expandedGroupsTouched: saved?.expandedGroupsTouched ?? false,
@@ -176,7 +177,6 @@ export const useUiPreferencesStore = create<UiPreferencesStore>((set, get) => ({
 	toggleSidebarCollapsed: () => {
 		const collapsed = !get().sidebarCollapsed;
 		set({ sidebarCollapsed: collapsed });
-		persistPatch({ sidebarCollapsed: collapsed });
 	},
 
 	previewSidebarWidth: (width) => {
