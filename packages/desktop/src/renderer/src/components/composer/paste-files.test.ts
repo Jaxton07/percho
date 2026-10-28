@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import { fileReferencePart, planFilePaste } from "./paste-files";
+import { fileReferencePart, fileReferenceParts, planFilePaste } from "./paste-files";
 
 const pathOf = (file: unknown) => (file as { path: string }).path;
 
@@ -110,5 +110,21 @@ describe("fileReferencePart", () => {
 
 	it("falls back to the path when it ends with a separator", () => {
 		expect(fileReferencePart("/tmp/dir/")).toEqual({ type: "file", path: "/tmp/dir/", label: "/tmp/dir/" });
+	});
+});
+
+describe("fileReferenceParts", () => {
+	it("marks directories so the chip can use a folder icon", () => {
+		expect(fileReferenceParts(["/tmp/docs", "/tmp/README.md"], ["directory", "file"])).toEqual([
+			{ type: "file", path: "/tmp/docs", label: "docs", kind: "directory" },
+			{ type: "file", path: "/tmp/README.md", label: "README.md" },
+		]);
+	});
+
+	it("falls back to file when the kind lookup has no answer", () => {
+		expect(fileReferenceParts(["/tmp/docs"])).toEqual([{ type: "file", path: "/tmp/docs", label: "docs" }]);
+		expect(fileReferenceParts(["/tmp/docs"], [])).toEqual([
+			{ type: "file", path: "/tmp/docs", label: "docs" },
+		]);
 	});
 });

@@ -43,3 +43,14 @@ export function fileReferencePart(path: string): Exclude<ComposerPart, { type: "
 	const label = path.split(/[\\/]/).at(-1) ?? path;
 	return { type: "file", path, label: label || path };
 }
+
+/** 目录与文件共用同一种引用，只靠 kind 决定图标；类型缺失时按文件展示。 */
+export function fileReferenceParts(
+	paths: string[],
+	kinds?: ReadonlyArray<"file" | "directory">,
+): Array<Exclude<ComposerPart, { type: "text" }>> {
+	return paths.map((path, index) => {
+		const part = fileReferencePart(path);
+		return kinds?.[index] === "directory" ? { ...part, kind: "directory" as const } : part;
+	});
+}

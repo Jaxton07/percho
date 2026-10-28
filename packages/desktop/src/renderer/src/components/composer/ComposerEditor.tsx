@@ -18,7 +18,12 @@ import {
 	useMemo,
 	useRef,
 } from "react";
-import { $readComposerSelection, $selectComposerOffset, $selectComposerRange } from "./editor-document";
+import {
+	$readComposerRange,
+	$readComposerSelection,
+	$selectComposerOffset,
+	$selectComposerRange,
+} from "./editor-document";
 import { getComposerEditor, syncComposerDocument } from "./editor-host";
 import { $createReferenceNode } from "./ReferenceNode";
 
@@ -26,8 +31,13 @@ export interface ComposerEditorHandle {
 	focus: (position?: number | "end") => void;
 	replaceText: (start: number, end: number, text: string) => void;
 	insertReference: (start: number, end: number, reference: Exclude<ComposerPart, { type: "text" }>) => void;
-	/** 在光标处插入引用（有选区时替换选区），一次事务、可撤销 */
-	insertReferences: (references: Array<Exclude<ComposerPart, { type: "text" }>>) => void;
+	/** 当前选区（UTF-16 偏移）；粘贴时先记下来，异步取完路径类型仍插在原选区 */
+	selectionRange: () => { start: number; end: number };
+	/** 在给定选区（缺省用当前光标/选区）插入引用，一次事务、可撤销 */
+	insertReferences: (
+		references: Array<Exclude<ComposerPart, { type: "text" }>>,
+		range?: { start: number; end: number },
+	) => void;
 }
 
 interface Props {
@@ -71,12 +81,20 @@ export const ComposerEditor = forwardRef<ComposerEditorHandle, Props>(function C
 				);
 				entry.editor.focus();
 			},
-			insertReferences: (references) => {
+			selectionRange: () => {
+				let range = { start: 0, end: 0 };
+				entry.editor.getEditorState().read(() => {
+					range = $readComposerRange();
+				});
+				return range;
+			},
+			insertReferences: (references, range) => {
 				if (references.length === 0) return;
 				entry.editor.update(
 					() => {
+						if (range) $selectComposerRange(range.start, range.end);
 						// 粘贴目标就是当前光标/选区；没有选区（例如失去焦点后粘贴）时退到末尾
-						if (!$isRangeSelection($getSelection())) $getRoot().selectEnd();
+						else if (!$isRangeSelection($getSelection())) $getRoot().selectEnd();
 						$insertNodes(
 							references.flatMap((reference) => [$createReferenceNode(reference), $createTextNode(" ")]),
 						);

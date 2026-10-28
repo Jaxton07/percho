@@ -38,7 +38,7 @@ import { resolveDroppedFilePaths } from "./drop-files";
 import { ImageTray } from "./ImageTray";
 import { ModelPicker } from "./ModelPicker";
 import { PermissionPicker } from "./PermissionPicker";
-import { fileReferencePart, planFilePaste } from "./paste-files";
+import { fileReferenceParts, planFilePaste } from "./paste-files";
 import { QueueBar } from "./QueueBar";
 import { QuoteChip } from "./QuoteChip";
 import { SendErrorBar } from "./SendErrorBar";
@@ -121,19 +121,24 @@ export function Composer({ centered = false }: { centered?: boolean }) {
 	const appendAttachments = useCallback(
 		(paths: string[]) => {
 			if (!paths.length) return;
-			updateDraft(draftKey, (d) => ({
-				...d,
-				document: normalizeComposerDocument({
-					version: 1,
-					parts: [
-						...d.document.parts,
-						...paths.flatMap((path) => [
-							{ type: "text" as const, text: " " },
-							{ type: "file" as const, path, label: path.split(/[\\/]/).at(-1) },
-						]),
-					],
-				}),
-			}));
+			const append = (kinds?: Array<"file" | "directory">) =>
+				updateDraft(draftKey, (d) => ({
+					...d,
+					document: normalizeComposerDocument({
+						version: 1,
+						parts: [
+							...d.document.parts,
+							...fileReferenceParts(paths, kinds).flatMap((part) => [
+								{ type: "text" as const, text: " " },
+								part,
+							]),
+						],
+					}),
+				}));
+			// 目录与文件用同一个引用，图标靠主进程给出路径类型
+			void getPi()
+				.pathKinds({ paths })
+				.then(append, () => append());
 		},
 		[draftKey, updateDraft],
 	);
@@ -395,7 +400,15 @@ export function Composer({ centered = false }: { centered?: boolean }) {
 		if (plan.remoteRejected) pushToast("warning", "remote.localFileRejected");
 		// 顶栏右侧 toast 卡（不用内联反馈：该提示不阻塞继续输入，卡片可手动关）
 		if (plan.imagesRejected) pushToast("warning", "composer.imageUnsupported");
-		if (plan.paths.length > 0) editorRef.current?.insertReferences(plan.paths.map(fileReferencePart));
+		if (plan.paths.length > 0) {
+			// 先记下粘贴时的选区：路径类型要问主进程，回来时用户可能已经挪了光标
+			const range = editorRef.current?.selectionRange();
+			const insert = (kinds?: Array<"file" | "directory">) =>
+				editorRef.current?.insertReferences(fileReferenceParts(plan.paths, kinds), range);
+			void getPi()
+				.pathKinds({ paths: plan.paths })
+				.then(insert, () => insert());
+		}
 		if (plan.images.length > 0) handleFiles(plan.images);
 	};
 

@@ -1,4 +1,5 @@
-import { writeFile } from "node:fs/promises";
+import { stat, writeFile } from "node:fs/promises";
+import { isAbsolute } from "node:path";
 import { type PiBackend, validateProjectDirectory } from "@percho/backend";
 import { APP_CHANNELS, environmentEntityRef } from "@percho/shared";
 import { app, BrowserWindow, dialog, nativeTheme, shell } from "electron";
@@ -20,6 +21,16 @@ import { registerInvokeHandlers } from "./invoke";
 
 /** 项目仓库地址（帮助跳转 + 关于页） */
 const REPO_URL = "https://github.com/Jaxton07/percho";
+
+/** 只回答本机路径的类型；相对路径/不存在一律按文件算，避免把 UI 文案当路径去探。 */
+async function localPathKind(path: string): Promise<"file" | "directory"> {
+	if (!isAbsolute(path)) return "file";
+	try {
+		return (await stat(path)).isDirectory() ? "directory" : "file";
+	} catch {
+		return "file";
+	}
+}
 
 /** Native file actions must never interpret a remote UI reference as a local path. */
 function localDirectory(cwd: string | null): string | null {
@@ -75,6 +86,12 @@ export function registerAppIpc(_backend: PiBackend): void {
 		revealPath: ({ target, cwd }) => {
 			shell.showItemInFolder(resolveExistingPath(target, localDirectory(cwd)));
 		},
+		pathKinds: ({ paths }) =>
+			Promise.all(
+				(Array.isArray(paths) ? paths : [])
+					.slice(0, 64)
+					.map((path) => (typeof path === "string" ? localPathKind(path) : Promise.resolve("file" as const))),
+			),
 		getAppInfo: () => ({
 			name: app.getName(),
 			version: app.getVersion(),

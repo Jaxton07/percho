@@ -2,7 +2,7 @@
 export type ComposerPart =
 	| { type: "text"; text: string }
 	| { type: "skill"; id: string; label: string }
-	| { type: "file"; path: string; label?: string };
+	| { type: "file"; path: string; label?: string; kind?: "file" | "directory" };
 
 export interface ComposerDocument {
 	version: 1;
@@ -82,10 +82,13 @@ export function parseComposerDocument(value: unknown): ComposerDocument {
 		}
 		if (part.type === "file" && typeof part.path === "string" && part.path) {
 			if (part.label !== undefined && typeof part.label !== "string") throw new Error("Invalid file label");
+			if (part.kind !== undefined && part.kind !== "file" && part.kind !== "directory")
+				throw new Error("Invalid file kind");
 			return {
 				type: "file",
 				path: part.path,
 				...(part.label === undefined ? {} : { label: part.label as string }),
+				...(part.kind === undefined ? {} : { kind: part.kind as "file" | "directory" }),
 			};
 		}
 		throw new Error("Invalid composer part");
