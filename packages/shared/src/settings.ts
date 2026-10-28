@@ -176,7 +176,7 @@ export interface UpstreamModelsInput {
 	providerId?: string;
 	baseUrl: string;
 	api: string;
-	/** 表单里临时输入的 key；留空则读该 provider 已存进 auth.json 的 key */
+	/** 表单里临时输入的 key；留空则由所属后端通过 SDK 解析该 provider 的已有凭证 */
 	apiKey?: string;
 }
 

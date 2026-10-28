@@ -4,14 +4,16 @@ import {
 	type ProviderInfo,
 	type UpstreamModelInfo,
 } from "@percho/shared";
-import { useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useT } from "../../../i18n";
-import { errText } from "../../../lib/error-text";
 import { useSettingsStore } from "../../../stores/settings";
 import { Select } from "../../ui/Select";
 import { Tooltip } from "../../ui/Tooltip";
 import { ModelRowsEditor } from "./ModelRowsEditor";
 import { EMPTY_MODEL_ROW, type ModelRow, modelsToRows, rowsToModelInputs, rowsValid } from "./model-rows";
+import { createUpstreamModelsLoader, EMPTY_UPSTREAM_MODELS_STATE } from "./upstream-models-loader";
+
+const EMPTY_UPSTREAM_MODELS: UpstreamModelInfo[] = [];
 
 interface ProviderFormState {
 	id: string;
@@ -65,34 +67,28 @@ function ProviderConfigForm({
 	const listUpstreamModels = useSettingsStore((s) => s.listUpstreamModels);
 	const [form, setForm] = useState(initial);
 	const [submitting, setSubmitting] = useState(false);
-	// 上游候选只在本次表单生命周期内有效：不落盘，baseUrl/api/key 变了解析结果就不可信
-	const [upstream, setUpstream] = useState<UpstreamModelInfo[]>([]);
-	const [fetchingUpstream, setFetchingUpstream] = useState(false);
-	const [upstreamError, setUpstreamError] = useState<string | null>(null);
+	const [upstream, setUpstream] = useState(EMPTY_UPSTREAM_MODELS_STATE);
+	const upstreamLoader = useMemo(
+		() => createUpstreamModelsLoader(listUpstreamModels, setUpstream),
+		[listUpstreamModels],
+	);
+	useEffect(() => () => upstreamLoader.dispose(), [upstreamLoader]);
 
-	/** 自动获取模型：key 留空时后端读 auth.json 里已存的（编辑态常态），失败就地显示不打断表单 */
-	const fetchUpstream = async () => {
-		setFetchingUpstream(true);
-		setUpstreamError(null);
-		try {
-			const models = await listUpstreamModels({
-				providerId: lockId ? form.id : undefined,
-				baseUrl: form.baseUrl,
-				api: form.api,
-				apiKey: form.apiKey,
-			});
-			setUpstream(models);
-			if (models.length === 0) setUpstreamError(t("settings.providers.upstreamEmpty"));
-		} catch (error) {
-			setUpstream([]);
-			setUpstreamError(errText(error) ?? String(error));
-		} finally {
-			setFetchingUpstream(false);
-		}
+	/** 密钥留空时由所属后端经 SDK 解析已有凭证，失败就地显示。 */
+	const fetchUpstream = () =>
+		upstreamLoader.load({
+			providerId: lockId ? form.id : undefined,
+			baseUrl: form.baseUrl,
+			api: form.api,
+			apiKey: form.apiKey,
+		});
+
+	const update = (field: "id" | "name" | "baseUrl" | "api" | "apiKey", value: string) => {
+		if (field !== "name") upstreamLoader.invalidate();
+		setForm((f) => ({ ...f, [field]: value }));
 	};
-
-	const set = (field: keyof ProviderFormState) => (e: { target: { value: string } }) =>
-		setForm((f) => ({ ...f, [field]: e.target.value }));
+	const set = (field: "id" | "name" | "baseUrl" | "apiKey") => (e: { target: { value: string } }) =>
+		update(field, e.target.value);
 
 	const submit = async () => {
 		setSubmitting(true);
@@ -146,7 +142,7 @@ function ProviderConfigForm({
 				<Select
 					value={form.api}
 					options={apiOptions.map((api) => ({ value: api, label: api }))}
-					onChange={(api) => setForm((f) => ({ ...f, api }))}
+					onChange={(api) => update("api", api)}
 				/>
 				<input
 					className={inputClass}
@@ -158,9 +154,11 @@ function ProviderConfigForm({
 				<ModelRowsEditor
 					rows={form.models}
 					onChange={(models) => setForm((f) => ({ ...f, models }))}
-					upstream={upstream}
-					fetching={fetchingUpstream}
-					fetchError={upstreamError}
+					upstream={upstream.models ?? EMPTY_UPSTREAM_MODELS}
+					fetching={upstream.loading}
+					fetchError={
+						upstream.error ?? (upstream.models?.length === 0 ? t("settings.providers.upstreamEmpty") : null)
+					}
 					onFetch={() => void fetchUpstream()}
 				/>
 			</div>

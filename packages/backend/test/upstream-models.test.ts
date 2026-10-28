@@ -34,6 +34,21 @@ describe("metaLookupKeys", () => {
 });
 
 describe("enrichUpstreamModels", () => {
+	it.each(["vendor/model", "model-250617", "vendor/model-20250617"])(
+		"精确 ID 优先于先入索引的别名 %s，且不依赖目录顺序",
+		(alias) => {
+			const approximate = { id: alias, contextWindow: 32000, maxTokens: 4096 };
+			const exact = { id: "model", contextWindow: 128000, maxTokens: 16384, imageInput: true };
+			for (const models of [
+				[approximate, exact],
+				[exact, approximate],
+			]) {
+				expect(enrichUpstreamModels([{ id: "model" }], buildMetaIndex(models))).toEqual([exact]);
+				expect(enrichUpstreamModels([{ id: alias }], buildMetaIndex(models))).toEqual([approximate]);
+			}
+		},
+	);
+
 	it("用目录补上下文/输出/思考/图像，未知模型只回 ID", () => {
 		const index = buildMetaIndex([
 			{

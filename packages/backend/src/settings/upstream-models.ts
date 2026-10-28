@@ -57,9 +57,13 @@ export function metaLookupKeys(id: string): string[] {
 	return [...keys];
 }
 
-/** SDK 内置目录按退化键建索引（先到先得，避免后建的 provider 覆盖官方条目） */
+/** 先收齐精确 ID，再补别名；别名不能抢占后面的精确模型。相同 ID 仍保持目录顺序。 */
 export function buildMetaIndex(models: readonly UpstreamModelInfo[]): Map<string, UpstreamModelInfo> {
 	const index = new Map<string, UpstreamModelInfo>();
+	for (const model of models) {
+		const key = model.id.trim().toLowerCase();
+		if (key && !index.has(key)) index.set(key, model);
+	}
 	for (const model of models) {
 		for (const key of metaLookupKeys(model.id)) if (!index.has(key)) index.set(key, model);
 	}

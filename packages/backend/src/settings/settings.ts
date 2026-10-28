@@ -206,15 +206,6 @@ export class SettingsService {
 		await this.refreshLocalModels();
 	}
 
-	/** 读 auth.json 里该 provider 已存的 api key：表单留空时兜底，key 不回读给 renderer */
-	private async readStoredApiKey(providerId: string | undefined): Promise<string | undefined> {
-		if (!providerId) return undefined;
-		const auth = await readJsonFile(this.authPath);
-		const entry = auth[providerId];
-		const key = entry && typeof entry === "object" ? (entry as JsonObject).key : undefined;
-		return typeof key === "string" && key.trim() ? key.trim() : undefined;
-	}
-
 	/**
 	 * 从上游 provider 的 \`/models\` 拉模型清单，并用 SDK 内置目录给每个 ID 补能力元数据。
 	 * 网络请求和 key 都留在后端（key 不回给 renderer）；目录里查不到的模型只回 ID，
@@ -228,12 +219,12 @@ export class SettingsService {
 		const baseUrl = (input.baseUrl.trim() || stored("baseUrl")).trim();
 		if (!/^https?:\/\//i.test(baseUrl)) throw new Error("baseUrl 必须以 http(s):// 开头");
 		const api = input.api.trim() || stored("api") || "openai-completions";
+		const runtime = await this.getRuntime();
+		// 复用 SDK 凭证解析：auth.json / models.json 中的环境变量与命令不能作为字面密钥发送。
 		const apiKey =
 			(input.apiKey ?? "").trim() ||
-			(await this.readStoredApiKey(input.providerId)) ||
-			(entry && typeof entry.apiKey === "string" ? entry.apiKey : "");
+			(input.providerId ? (await runtime.getAuth(input.providerId))?.auth.apiKey : undefined);
 		if (!apiKey) throw new Error("请先填 API Key，或先保存一次把 key 存进 auth.json 再获取");
-		const runtime = await this.getRuntime();
 		// 内置目录是能力元数据的唯一来源：上游 /models 只给 ID，窗口/输出/思考/图像都从这里补
 		const index = buildMetaIndex(
 			runtime.getModels().map((model) => {
