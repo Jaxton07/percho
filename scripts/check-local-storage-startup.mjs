@@ -134,11 +134,19 @@ async function scenario(name, agent, action) {
 		delete env.PERCHO_AGENT_DIR;
 		env.PI_CODING_AGENT_DIR = agent;
 	}
-	const child = spawn(executable, [`--user-data-dir=${profile}`, `--remote-debugging-port=${port}`], {
-		cwd: root,
-		env,
-		stdio: ["ignore", "pipe", "pipe"],
-	});
+	const child = spawn(
+		executable,
+		[
+			`--user-data-dir=${profile}`,
+			`--remote-debugging-port=${port}`,
+			...(process.platform === "linux" && process.env.CI ? ["--no-sandbox"] : []),
+		],
+		{
+			cwd: root,
+			env,
+			stdio: ["ignore", "pipe", "pipe"],
+		},
+	);
 	let log = "",
 		closed = false,
 		failure;

@@ -5,7 +5,7 @@
  */
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
-import { mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { createRequire } from "node:module";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -56,6 +56,7 @@ const cases = [
 	{ name: "launch-error", inputCode: 77, flag: true, exit: 0, current: false },
 	{ name: "uninstall-failed", inputCode: 2, flag: false, exit: 2, current: false },
 	{ name: "trace-unwritable", inputCode: 0, flag: false, exit: 0, current: false },
+	{ name: "beta-isolation", inputCode: 0, flag: false, exit: 0, current: false, productName: "Percho Beta" },
 ];
 for (const test of cases) {
 	const dir = join(output, test.name);
@@ -66,6 +67,7 @@ for (const test of cases) {
 	const script = `Unicode true
 !include LogicLib.nsh
 !define VERSION "diagnostic-harness"
+!define PRODUCT_NAME "${test.productName || "Percho"}"
 !define INSTALL_REGISTRY_KEY "Software\\Percho-DiagnosticHarness-NotARealInstall"
 !define UNINSTALL_REGISTRY_KEY "Software\\Percho-DiagnosticHarness-NotARealInstall"
 ${flags}
@@ -141,11 +143,15 @@ SectionEnd
 	assert.equal(run.status, test.exit, run.error?.message ?? `wrong exit for ${test.name}`);
 	if (test.exit === 0) assert.equal(readFileSync(marker, "utf8"), "continued");
 	if (test.name !== "trace-unwritable") {
-		const trace = readFileSync(join(localAppData, "Percho/update-diagnostics/nsis.log"), "utf16le");
+		const trace = readFileSync(
+			join(localAppData, test.productName || "Percho", "update-diagnostics/nsis.log"),
+			"utf16le",
+		);
 		assert.ok(trace.includes(`exit-code=${test.inputCode}`));
 		assert.ok(trace.includes("用户"));
 		assert.ok(trace.includes("updated=1|force-run=1"));
 		assert.ok(trace.includes(`launch-failed=${test.flag ? 1 : 0}`));
+		if (test.productName) assert.equal(existsSync(join(localAppData, "Percho")), false);
 	}
 	console.log(`PASS execute ${test.name}: exit ${run.status}, stock decision preserved`);
 }

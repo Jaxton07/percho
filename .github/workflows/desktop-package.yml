@@ -1,0 +1,68 @@
+name: Desktop package acceptance
+
+on:
+  workflow_call:
+    inputs:
+      release_tag:
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  build-and-verify:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: macos-latest
+            arch: all
+          - os: windows-latest
+            arch: x64
+          - os: ubuntu-latest
+            arch: x64
+    runs-on: ${{ matrix.os }}
+    env:
+      CSC_IDENTITY_AUTO_DISCOVERY: "false"
+      # PR builds otherwise skip signing entirely; our mac identity is explicitly ad-hoc ("-").
+      CSC_FOR_PULL_REQUEST: "true"
+      NODE_OPTIONS: "--max-old-space-size=4096"
+      PERCHO_BUILD_RELEASE_TAG: ${{ inputs.release_tag }}
+      PERCHO_BUILD_SOURCE_COMMIT: ${{ github.sha }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: remote-runtime-*
+          path: .local/runtime-release
+          merge-multiple: true
+      - name: Verify Windows installer hooks
+        if: runner.os == 'Windows'
+        run: node scripts/check-windows-update-diagnostics.mjs
+      - name: Build and verify desktop package
+        if: runner.os != 'Linux'
+        run: npm run package:release -- --arch ${{ matrix.arch }} --output .local/release-output
+      - name: Build and verify Linux desktop under a virtual display
+        if: runner.os == 'Linux'
+        run: xvfb-run -a npm run package:release -- --arch x64 --output .local/release-output
+      - uses: actions/upload-artifact@v4
+        with:
+          name: desktop-${{ runner.os }}
+          path: .local/release-output/artifacts/*
+          include-hidden-files: true
+          compression-level: 0
+          if-no-files-found: error
+      - uses: actions/upload-artifact@v4
+        if: failure()
+        with:
+          name: startup-logs-${{ runner.os }}
+          path: |
+            .local/tmp/local-storage-startup-check/
+            .local/tmp/windows-update-hook-check/
+          include-hidden-files: true

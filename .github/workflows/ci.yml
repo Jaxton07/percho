@@ -5,16 +5,33 @@ on:
   push:
     branches: [main]
 
+permissions:
+  contents: read
+
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:
+  prepare:
+    runs-on: ubuntu-latest
+    outputs:
+      tag: ${{ steps.plan.outputs.tag }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - id: plan
+        run: node scripts/release-info.mjs --ci-beta
+
   runtime:
+    needs: prepare
     uses: ./.github/workflows/remote-runtime.yml
+    with:
+      release_tag: ${{ needs.prepare.outputs.tag }}
 
   check:
-    needs: runtime
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -23,60 +40,39 @@ jobs:
           node-version: 22
           cache: npm
       - run: npm ci
-      - uses: actions/download-artifact@v4
-        with:
-          pattern: remote-runtime-*
-          path: .local/runtime-release
-          merge-multiple: true
-      - name: Prepare trusted runtime manifest
-        run: node scripts/prepare-remote-runtime-manifest.mjs --input .local/runtime-release --output packages/desktop/resources/remote-runtime/manifest.json
       - run: npm run lint
       - run: npm run typecheck
       - run: npm run test
-      - run: npm run build
-      # 打包冒烟：只解包不出安装器（--dir，此时 electron-builder 不做 publish），
-      # 让打包层回归（electron-builder.yml 解析、files/asarUnpack glob、图标、原生模块 unpack）
-      # 在 PR 阶段暴露，而不是发版打 tag 时才爆。Electron 二进制走缓存。
-      - uses: actions/cache@v4
-        with:
-          path: ~/.cache/electron
-          key: electron-${{ runner.os }}-${{ hashFiles('packages/desktop/package.json') }}
-      - name: Packaging smoke (electron-builder --dir)
-        working-directory: packages/desktop
-        run: npx electron-builder --dir
 
-  windows-update-diagnostics:
-    needs: runtime
-    runs-on: windows-latest
+  desktop:
+    needs: [prepare, runtime, check]
+    uses: ./.github/workflows/desktop-package.yml
+    with:
+      release_tag: ${{ needs.prepare.outputs.tag }}
+
+  release-bundle:
+    needs: [prepare, desktop]
+    runs-on: ubuntu-latest
+    env:
+      PERCHO_BUILD_RELEASE_TAG: ${{ needs.prepare.outputs.tag }}
+      PERCHO_BUILD_SOURCE_COMMIT: ${{ github.sha }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
           node-version: 22
-          cache: npm
-      - run: npm ci
       - uses: actions/download-artifact@v4
         with:
           pattern: remote-runtime-*
-          path: .local/runtime-release
+          path: .local/release-bundle
           merge-multiple: true
-      - name: Prepare trusted runtime manifest
-        run: node scripts/prepare-remote-runtime-manifest.mjs --input .local/runtime-release --output packages/desktop/resources/remote-runtime/manifest.json
-      - name: Test actual NSIS hooks and read-only PowerShell collector
-        run: node scripts/check-windows-update-diagnostics.mjs
-      - run: npm run build
-      - name: Compile production Windows installer (no publish)
-        working-directory: packages/desktop
-        run: npx electron-builder --win nsis --x64 --publish never
-      - name: Verify actual packaged Windows startup with isolated agent/profile
-        run: node scripts/check-local-storage-startup.mjs --app "${{ github.workspace }}/packages/desktop/dist/win-unpacked/Percho.exe"
-      - uses: actions/upload-artifact@v4
-        if: always()
+      - uses: actions/download-artifact@v4
         with:
-          name: windows-update-diagnostic-harness
-          path: |
-            .local/tmp/windows-update-hook-check/
-            .local/tmp/local-storage-startup-check/
+          pattern: desktop-*
+          path: .local/release-bundle
+          merge-multiple: true
+      - name: Verify complete Beta release without publishing
+        run: node scripts/publish-release.mjs .local/release-bundle
 
   local-storage:
     strategy:

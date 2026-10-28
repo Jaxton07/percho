@@ -46,8 +46,8 @@ Var /GLOBAL perchoTraceForceRun
     Pop $R9
     ReadEnvStr $perchoTraceRoot "LOCALAPPDATA"
     StrCmp $perchoTraceRoot "" percho_trace_done_${STAGE}
-    StrCpy $perchoTracePath "$perchoTraceRoot\Percho\update-diagnostics\nsis.log"
-    CreateDirectory "$perchoTraceRoot\Percho\update-diagnostics"
+    StrCpy $perchoTracePath "$perchoTraceRoot\${PRODUCT_NAME}\update-diagnostics\nsis.log"
+    CreateDirectory "$perchoTraceRoot\${PRODUCT_NAME}\update-diagnostics"
     ClearErrors
     FileOpen $perchoTraceFile "$perchoTracePath" a
     IfErrors percho_trace_done_${STAGE}
