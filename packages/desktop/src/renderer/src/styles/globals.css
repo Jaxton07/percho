@@ -75,7 +75,6 @@
 	--markdown-quote-border: #e4e4e7;
 	--markdown-quote-text: #71717a;
 	--markdown-table-border: #e4e4e7;
-	--markdown-table-head-bg: #f8fafc;
 	--markdown-link-decoration: #c4b5fd;
 	--markdown-link-hover: #6d28d9;
 	/* 扫光高光色 = 文字颜色的推移方向：日间往黑推（文字加深，对比度升高）；
@@ -133,7 +132,6 @@
 	--markdown-quote-border: #4b4b53;
 	--markdown-quote-text: #9a9aa3;
 	--markdown-table-border: #38383f;
-	--markdown-table-head-bg: #212126;
 	--markdown-link-decoration: #6d28d9;
 	--markdown-link-hover: #a78bfa;
 	/* 扫光高光色 = 往白推（文字提亮，与日间方向相反） */
@@ -1207,16 +1205,18 @@ code {
 	font-size: calc(12.5px * var(--fs-code-scale, 1));
 }
 .markdown-body .table-node {
+	border: 0;
 	font-size: calc(13px * var(--fs-ui-scale, 1));
 }
 .markdown-body .table-node th,
 .markdown-body .table-node td {
-	border: 1px solid var(--markdown-table-border);
-	padding: 0.25rem 0.5rem;
+	border: 0;
+	border-bottom: 1px solid var(--markdown-table-border);
+	padding: 0.75rem 0.5rem;
 	text-align: left;
 }
 .markdown-body .table-node th {
-	background: var(--markdown-table-head-bg);
+	background: transparent;
 }
 .markdown-body .hr-node,
 .markdown-body .thematic-break {
