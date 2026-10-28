@@ -25,6 +25,8 @@ jobs:
     runs-on: ${{ matrix.os }}
     env:
       CSC_IDENTITY_AUTO_DISCOVERY: "false"
+      # PR builds otherwise skip signing entirely; our mac identity is explicitly ad-hoc ("-").
+      CSC_FOR_PULL_REQUEST: "true"
       NODE_OPTIONS: "--max-old-space-size=4096"
       PERCHO_BUILD_RELEASE_TAG: ${{ inputs.release_tag }}
       PERCHO_BUILD_SOURCE_COMMIT: ${{ github.sha }}
