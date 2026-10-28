@@ -38,6 +38,7 @@ import { resolveDroppedFilePaths } from "./drop-files";
 import { ImageTray } from "./ImageTray";
 import { ModelPicker } from "./ModelPicker";
 import { PermissionPicker } from "./PermissionPicker";
+import { fileReferencePart, planFilePaste } from "./paste-files";
 import { QueueBar } from "./QueueBar";
 import { QuoteChip } from "./QuoteChip";
 import { SendErrorBar } from "./SendErrorBar";
@@ -366,39 +367,36 @@ export function Composer({ centered = false }: { centered?: boolean }) {
 	}, [appendAttachments, readOnly, environment.kind, handleFiles]);
 
 	/**
-	 * 截图/复制图片后 Ctrl+V 粘贴到输入框。
-	 * 从 Finder 粘贴文件另走一条：沙箱里 File 只有 name 没有 path，原生路径必须由 preload 的
-	 * webUtils 还原（与拖放同一条 resolveDroppedFilePaths 管线），否则输入框里只会留下一个孤立文件名。
+	 * 截图/复制图片后 Ctrl+V 粘贴到输入框；从 Finder 粘贴文件落成带完整路径的文件引用。
+	 * 沙箱里 File 只有 name 没有 path，原生路径必须由 preload 的 webUtils 还原（与拖放同一条
+	 * resolveDroppedFilePaths 管线），否则输入框里只会留下一个孤立文件名。
+	 * 引用插在光标处并替换选区；同一次粘贴里的图片照常加入，远端会话沿用拖放的本地文件限制。
 	 */
 	const handlePaste = (e: React.ClipboardEvent<HTMLDivElement>) => {
 		const clipboard = e.clipboardData;
 		if (!clipboard) return;
 		const documents = Array.from(clipboard.files).filter((file) => !file.type.startsWith("image/"));
-		const paths = resolveDroppedFilePaths(documents, getPi().getPathForFile);
-		if (paths.length > 0) {
-			e.preventDefault();
-			appendAttachments(paths);
-			return;
+		const images: File[] = [];
+		for (const item of Array.from(clipboard.items ?? [])) {
+			if (!item.type.startsWith("image/")) continue;
+			const file = item.getAsFile();
+			if (file) images.push(file);
 		}
-		const items = clipboard.items;
-		if (!items) return;
-		const files: File[] = [];
-		for (const item of items) {
-			if (item.type.startsWith("image/")) {
-				const file = item.getAsFile();
-				if (file) files.push(file);
-			}
-		}
-		if (files.length === 0) return;
-		// 图片门控：纯文本模型拦截粘贴（默认行为可能把图片数据塞进文本框，必须 preventDefault）
-		if (!imagesSupported) {
-			e.preventDefault();
-			// 顶栏右侧 toast 卡（不用内联反馈：该提示不阻塞继续输入，卡片可手动关）
-			pushToast("warning", "composer.imageUnsupported");
-			return;
-		}
+		const plan = planFilePaste({
+			documents,
+			images,
+			isRemote: environment.kind === "ssh",
+			imagesSupported,
+			getPathForFile: getPi().getPathForFile,
+		});
+		if (!plan.handled) return;
+		// 文件/图片由我们接管，别让默认行为把文件名或图片数据塞进文本框
 		e.preventDefault();
-		handleFiles(files);
+		if (plan.remoteRejected) pushToast("warning", "remote.localFileRejected");
+		// 顶栏右侧 toast 卡（不用内联反馈：该提示不阻塞继续输入，卡片可手动关）
+		if (plan.imagesRejected) pushToast("warning", "composer.imageUnsupported");
+		if (plan.paths.length > 0) editorRef.current?.insertReferences(plan.paths.map(fileReferencePart));
+		if (plan.images.length > 0) handleFiles(plan.images);
 	};
 
 	return (

@@ -26,6 +26,8 @@ export interface ComposerEditorHandle {
 	focus: (position?: number | "end") => void;
 	replaceText: (start: number, end: number, text: string) => void;
 	insertReference: (start: number, end: number, reference: Exclude<ComposerPart, { type: "text" }>) => void;
+	/** 在光标处插入引用（有选区时替换选区），一次事务、可撤销 */
+	insertReferences: (references: Array<Exclude<ComposerPart, { type: "text" }>>) => void;
 }
 
 interface Props {
@@ -64,6 +66,20 @@ export const ComposerEditor = forwardRef<ComposerEditorHandle, Props>(function C
 					() => {
 						$selectComposerRange(start, end);
 						$insertNodes([$createReferenceNode(reference), $createTextNode(" ")]);
+					},
+					{ tag: HISTORY_PUSH_TAG },
+				);
+				entry.editor.focus();
+			},
+			insertReferences: (references) => {
+				if (references.length === 0) return;
+				entry.editor.update(
+					() => {
+						// 粘贴目标就是当前光标/选区；没有选区（例如失去焦点后粘贴）时退到末尾
+						if (!$isRangeSelection($getSelection())) $getRoot().selectEnd();
+						$insertNodes(
+							references.flatMap((reference) => [$createReferenceNode(reference), $createTextNode(" ")]),
+						);
 					},
 					{ tag: HISTORY_PUSH_TAG },
 				);
