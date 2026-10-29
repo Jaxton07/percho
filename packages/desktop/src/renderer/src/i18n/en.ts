@@ -6,7 +6,6 @@ export const en: Messages = {
 	notifications: {
 		...TASK_NOTIFICATION_COPY.en,
 		title: "Desktop task notifications",
-		hint: "Notify when tasks finish while the app is in the background. Applies to all environments on this computer.",
 		test: "Send test notification",
 		submitted: "Request submitted. Visibility depends on system notification permissions and Do Not Disturb.",
 		unsupported: "Desktop notifications are unavailable on this system.",
@@ -559,6 +558,7 @@ export const en: Messages = {
 			lan: "Cross-device",
 			about: "About",
 		},
+		moreInfo: "More info",
 		language: "Language",
 		languageHint: "Follows system language by default",
 		appearance: {
@@ -587,7 +587,7 @@ export const en: Messages = {
 		backgroundDim: "Overlay opacity",
 		channelWatch: "Cross-session channel collaboration (channel-watch)",
 		channelWatchHint:
-			"After a session subscribes to a channel it watches .local/agent-work/channel/<topic>/ for file updates; writes from another session wake this session to pick them up (per the HANDOFF.md protocol). Subscriptions persist via appendEntry and restore on session reopen; built-in loop protection. On by default, fully effective for trusted projects.",
+			"After a session subscribes to a channel it watches .local/agent-work/channel/<topic>/ for file updates; writes from another session wake this session to pick them up (HANDOFF.md protocol). Subscriptions persist with the session; built-in loop protection. On by default, fully effective for trusted projects.",
 		topBar: "Show sessions in the top bar",
 		topBarHint:
 			"The top bar is always there (window dragging, sidebar toggle, current changes). Turn this off and it simply stops showing the temporary-workspace pills — every session stays in the left sidebar.",
@@ -679,7 +679,7 @@ export const en: Messages = {
 			customModelOut: "Max output tokens; blank = SDK default 16k",
 			customModelReasoning: "Think",
 			customModelImage: "Image",
-			addModelRow: "+ Add model",
+			addModelRow: "Add model",
 			clearModelRows: "Clear model list",
 			fetchUpstream: "Fetch",
 			fetchingUpstream: "Fetching…",
@@ -688,9 +688,10 @@ export const en: Messages = {
 			upstreamError: "Fetch failed: {message}",
 			pickUpstreamModel: "Pick from upstream model list",
 			removeModelRow: "Remove row",
+			modelsSection: "Models",
 			customModelsHint: "One model per row. Paste model IDs separated by commas or newlines.",
-			customModelsEmptyHint:
-				"New providers need at least one model. For built-in provider overrides, leave empty to use the official list.",
+			customModelsHintAll:
+				"One model per row. Paste IDs separated by commas or newlines; new providers need at least one, built-in overrides may stay empty to keep the official list.",
 			submitting: "Saving…",
 		},
 		login: {

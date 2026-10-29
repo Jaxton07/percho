@@ -27,7 +27,6 @@ export function TaskNotificationSettings() {
 				<h3 className="text-ui-13 font-medium text-ink">{t("notifications.title")}</h3>
 				<Switch checked={enabled} onCheckedChange={(value) => void setEnabled(value)} />
 			</div>
-			<p className="mt-0.5 text-ui-11 leading-relaxed text-ink-faint">{t("notifications.hint")}</p>
 			<button
 				type="button"
 				disabled={sending}

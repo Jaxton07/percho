@@ -5,7 +5,7 @@ import { backgroundImageUrl, useThemeStore } from "../../stores/theme";
 import { useUiPreferencesStore } from "../../stores/ui-preferences";
 import { ChevronDownIcon, MonitorIcon, MoonIcon, SunIcon } from "../icons";
 import { SelectionMenu } from "../ui/SelectionMenu";
-import { Switch } from "../ui/Switch";
+import { SettingsSwitchRow } from "./SettingsSwitchRow";
 import { UiPluginsSection } from "./UiPluginsSection";
 
 /** 档位名（四个档位通用）：小 / 默认 / 大 / 更大 —— 与档位数组下标一一对应 */
@@ -43,7 +43,7 @@ function FontSizeSelect({
 				aria-label={`${label}: ${formatFontSize(value)}`}
 				aria-haspopup="listbox"
 				aria-expanded={open}
-				className="flex min-w-32 shrink-0 items-center gap-3 rounded-xl bg-hover px-3.5 py-2.5 text-ui-13 text-ink outline-none transition-colors hover:bg-border/50 focus-visible:ring-2 focus-visible:ring-ink-faint"
+				className="flex shrink-0 items-center justify-end gap-2 rounded-lg bg-transparent px-2 py-1.5 text-ui-12 text-ink outline-none transition-colors hover:bg-hover focus-visible:ring-2 focus-visible:ring-ink-faint"
 				onClick={(event) => {
 					setAnchor(event.currentTarget);
 					setOpen((value) => !value);
@@ -56,7 +56,7 @@ function FontSizeSelect({
 					}
 				}}
 			>
-				<span className="flex-1 text-center tabular-nums">{value}</span>
+				<span className="tabular-nums">{value}</span>
 				<span className="text-ink-dim">px</span>
 				<ChevronDownIcon
 					size={12}
@@ -215,27 +215,24 @@ function AppearanceBasics() {
 					</div>
 				)}
 			</div>
-			<div>
-				<div className="flex items-center justify-between gap-4">
-					<h3 className="text-ui-13 font-medium text-ink">{t("settings.topBar")}</h3>
-					<Switch checked={barSessionsVisible} onCheckedChange={setBarSessionsVisible} />
-				</div>
-				<p className="mt-0.5 text-ui-11 leading-relaxed text-ink-faint">{t("settings.topBarHint")}</p>
-			</div>
-			<div>
-				<div className="flex items-center justify-between gap-4">
-					<h3 className="text-ui-13 font-medium text-ink">{t("settings.sessionRail")}</h3>
-					<Switch checked={sessionRailEnabled} onCheckedChange={setSessionRailEnabled} />
-				</div>
-				<p className="mt-0.5 text-ui-11 leading-relaxed text-ink-faint">{t("settings.sessionRailHint")}</p>
-			</div>
-			<div>
-				<div className="flex items-center justify-between gap-4">
-					<h3 className="text-ui-13 font-medium text-ink">{t("settings.centerOrb")}</h3>
-					<Switch checked={centerOrbEnabled} onCheckedChange={setCenterOrbEnabled} />
-				</div>
-				<p className="mt-0.5 text-ui-11 leading-relaxed text-ink-faint">{t("settings.centerOrbHint")}</p>
-			</div>
+			<SettingsSwitchRow
+				title={t("settings.topBar")}
+				hint={t("settings.topBarHint")}
+				checked={barSessionsVisible}
+				onCheckedChange={setBarSessionsVisible}
+			/>
+			<SettingsSwitchRow
+				title={t("settings.sessionRail")}
+				hint={t("settings.sessionRailHint")}
+				checked={sessionRailEnabled}
+				onCheckedChange={setSessionRailEnabled}
+			/>
+			<SettingsSwitchRow
+				title={t("settings.centerOrb")}
+				hint={t("settings.centerOrbHint")}
+				checked={centerOrbEnabled}
+				onCheckedChange={setCenterOrbEnabled}
+			/>
 		</div>
 	);
 }
@@ -251,7 +248,7 @@ export function AppearancePanel() {
 
 	return (
 		<div>
-			<div className="flex gap-5 border-b border-border px-0.5 pt-0.5">
+			<div className="flex w-fit gap-5 border-b border-border px-0.5 pt-0.5">
 				{APPEARANCE_TABS.map((tabDef) => (
 					<button
 						key={tabDef.id}

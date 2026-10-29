@@ -2,7 +2,7 @@ import type { Language } from "../../i18n";
 import { useI18nStore, useT } from "../../i18n";
 import { useSettingsStore } from "../../stores/settings";
 import { Select } from "../ui/Select";
-import { Switch } from "../ui/Switch";
+import { SettingsSwitchRow } from "./SettingsSwitchRow";
 import { TaskNotificationSettings } from "./TaskNotificationSettings";
 
 const LANGUAGES: Language[] = ["zh", "en"];
@@ -24,8 +24,9 @@ export function GeneralPanel() {
 						<h3 className="text-ui-13 font-medium text-ink">{t("settings.language")}</h3>
 						<p className="mt-0.5 text-ui-11 text-ink-faint">{t("settings.languageHint")}</p>
 					</div>
-					<div className="w-32 shrink-0">
+					<div className="shrink-0">
 						<Select
+							variant="ghost"
 							ariaLabel={t("settings.language")}
 							value={language}
 							options={LANGUAGES.map((lang) => ({ value: lang, label: t(`lang.${lang}`) }))}
@@ -34,21 +35,13 @@ export function GeneralPanel() {
 					</div>
 				</div>
 			</div>
-			<div>
-				<div className="flex items-center justify-between gap-4">
-					<div className="min-w-0">
-						<h3 className="text-ui-13 font-medium text-ink">{t("settings.channelWatch")}</h3>
-						<p className="mt-0.5 text-ui-11 leading-relaxed text-ink-faint">
-							{t("settings.channelWatchHint")}
-						</p>
-					</div>
-					<Switch
-						checked={channelWatchEnabled === true}
-						disabled={channelWatchEnabled === null}
-						onCheckedChange={(enabled) => void setChannelWatchEnabled(enabled)}
-					/>
-				</div>
-			</div>
+			<SettingsSwitchRow
+				title={t("settings.channelWatch")}
+				hint={t("settings.channelWatchHint")}
+				checked={channelWatchEnabled === true}
+				disabled={channelWatchEnabled === null}
+				onCheckedChange={(enabled) => void setChannelWatchEnabled(enabled)}
+			/>
 		</div>
 	);
 }

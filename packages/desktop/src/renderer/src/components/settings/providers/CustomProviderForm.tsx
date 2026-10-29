@@ -53,6 +53,7 @@ function ProviderConfigForm({
 	title,
 	initial,
 	lockId,
+	embedded,
 	onSubmit,
 	onCancel,
 }: {
@@ -60,6 +61,8 @@ function ProviderConfigForm({
 	initial: ProviderFormState;
 	/** 编辑模式锁定 ID：它是 models.json/auth.json/会话模型引用的主键，不可改 */
 	lockId?: boolean;
+	/** 嵌在 provider 卡片里展开：只画一条分隔线，不再套第二层边框 */
+	embedded?: boolean;
 	onSubmit: (form: ProviderFormState) => Promise<void>;
 	onCancel: () => void;
 }) {
@@ -128,9 +131,9 @@ function ProviderConfigForm({
 	);
 
 	return (
-		<div className="rounded-xl border border-border p-3">
+		<div className={embedded ? "mt-2 border-t border-border pt-2.5" : "rounded-xl border border-border p-3"}>
 			<h3 className="text-ui-13 font-medium text-ink">{title}</h3>
-			<div className="mt-2 grid grid-cols-2 gap-2">
+			<div className="mt-2.5 grid grid-cols-2 gap-2">
 				{lockId ? (
 					<Tooltip label={t("settings.providers.customIdLocked")} className="w-full">
 						{idInput}
@@ -167,6 +170,9 @@ function ProviderConfigForm({
 					value={form.apiKey}
 					onChange={set("apiKey")}
 				/>
+			</div>
+			<div className="mt-3 border-t border-border pt-2.5">
+				<h4 className="text-ui-11 font-medium text-ink-dim">{t("settings.providers.modelsSection")}</h4>
 				<ModelRowsEditor
 					rows={form.models}
 					onChange={(models) => setForm((f) => ({ ...f, models }))}
@@ -178,7 +184,7 @@ function ProviderConfigForm({
 					onFetch={() => void fetchUpstream()}
 				/>
 			</div>
-			<div className="mt-2 flex justify-end gap-2">
+			<div className="mt-3 flex justify-end gap-2 border-t border-border pt-3">
 				<button
 					type="button"
 					className="rounded-lg px-3 py-1.5 text-ui-12 text-ink-dim transition-colors hover:bg-hover"
@@ -233,7 +239,15 @@ export function CustomProviderForm() {
 }
 
 /** 编辑已添加的自定义 provider（ProviderRow 行内展开）：全字段可改，ID 锁定，Key 留空保持不变 */
-export function CustomProviderEditForm({ provider, onDone }: { provider: ProviderInfo; onDone: () => void }) {
+export function CustomProviderEditForm({
+	provider,
+	onDone,
+	embedded,
+}: {
+	provider: ProviderInfo;
+	onDone: () => void;
+	embedded?: boolean;
+}) {
 	const t = useT();
 	const updateCustom = useSettingsStore((s) => s.updateCustom);
 
@@ -251,6 +265,7 @@ export function CustomProviderEditForm({ provider, onDone }: { provider: Provide
 				models: modelsToRows(provider.customModels ?? []),
 			}}
 			lockId
+			embedded={embedded}
 			onSubmit={async (form) => {
 				await updateCustom(toInput(form));
 				onDone();

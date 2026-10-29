@@ -1,7 +1,7 @@
 import type { UpstreamModelInfo } from "@percho/shared";
 import { useEffect, useRef, useState } from "react";
 import { useT } from "../../../i18n";
-import { ChevronDownIcon, CloseIcon } from "../../icons";
+import { ChevronDownIcon, CloseIcon, DownloadIcon, PlusIcon } from "../../icons";
 import { SelectionMenu } from "../../ui/SelectionMenu";
 import { Tooltip } from "../../ui/Tooltip";
 import {
@@ -162,7 +162,7 @@ export function ModelRowsEditor({
 		return (
 			<Tooltip label={tooltip} className="w-[4.5rem] shrink-0">
 				<input
-					className={`${inputClass} text-center ${invalid ? "border-red-400" : ""}`}
+					className={`${inputClass} px-1.5 text-center ${invalid ? "border-red-400" : ""}`}
 					placeholder={placeholder}
 					value={value}
 					onChange={(e) => onValue(e.target.value)}
@@ -175,7 +175,7 @@ export function ModelRowsEditor({
 		<button
 			type="button"
 			aria-pressed={active}
-			className={`shrink-0 rounded-md border px-1.5 py-1 text-ui-10 transition-colors ${
+			className={`shrink-0 rounded-full border px-2 py-1 text-ui-10 transition-colors ${
 				active ? "border-ink-faint bg-hover text-ink" : "border-border text-ink-faint hover:text-ink-dim"
 			}`}
 			onClick={onToggle}
@@ -185,7 +185,7 @@ export function ModelRowsEditor({
 	);
 
 	return (
-		<div className="col-span-2">
+		<div className="mt-1.5">
 			{rows.map((row, i) => (
 				// 行随增删变化，无稳定 id，用序号做 key（局部编辑器，重排场景不存在）
 				// biome-ignore lint/suspicious/noArrayIndexKey: 行编辑器无稳定标识
@@ -215,38 +215,42 @@ export function ModelRowsEditor({
 					{toggle(row.imageInput, t("settings.providers.customModelImage"), () =>
 						setRow(i, { imageInput: !row.imageInput }),
 					)}
-					<button
-						type="button"
-						aria-label={t("settings.providers.removeModelRow")}
-						className="flex h-5 w-5 shrink-0 items-center justify-center rounded text-ink-faint transition-colors hover:bg-hover hover:text-ink-dim"
-						onClick={() => removeRow(i)}
-					>
-						<CloseIcon size={9} />
-					</button>
+					{(rows.length > 1 || row.id.trim()) && (
+						<button
+							type="button"
+							aria-label={t("settings.providers.removeModelRow")}
+							className="flex h-5 w-5 shrink-0 items-center justify-center rounded text-ink-faint transition-colors hover:bg-hover hover:text-ink-dim"
+							onClick={() => removeRow(i)}
+						>
+							<CloseIcon size={9} />
+						</button>
+					)}
 				</div>
 			))}
-			<div className="flex items-center gap-3">
+			<div className="mt-1 flex items-center gap-1.5">
 				<button
 					type="button"
-					className="rounded-md px-1.5 py-1 text-ui-11 text-ink-dim transition-colors hover:bg-hover"
+					className="flex items-center gap-1 rounded-lg border border-border px-2 py-1 text-ui-11 text-ink-dim transition-colors hover:border-border-strong hover:text-ink"
 					onClick={() => onChange([...rows, { ...EMPTY_MODEL_ROW }])}
 				>
+					<PlusIcon size={10} />
 					{t("settings.providers.addModelRow")}
 				</button>
 				{onFetch && (
 					<button
 						type="button"
-						className="rounded-md px-1.5 py-1 text-ui-11 text-ink-dim transition-colors hover:bg-hover disabled:opacity-40"
+						className="flex items-center gap-1 rounded-lg bg-hover px-2 py-1 text-ui-11 text-ink-dim transition-colors hover:text-ink disabled:opacity-40"
 						disabled={fetching}
 						onClick={onFetch}
 					>
+						<DownloadIcon size={11} />
 						{fetching ? t("settings.providers.fetchingUpstream") : t("settings.providers.fetchUpstream")}
 					</button>
 				)}
 				{rows.some((row) => row.id.trim()) && (
 					<button
 						type="button"
-						className="rounded-md px-1.5 py-1 text-ui-11 text-ink-dim transition-colors hover:bg-hover"
+						className="ml-auto rounded-md px-1.5 py-1 text-ui-11 text-ink-faint transition-colors hover:bg-hover hover:text-ink-dim"
 						onClick={() => onChange([{ ...EMPTY_MODEL_ROW }])}
 					>
 						{t("settings.providers.clearModelRows")}
@@ -264,13 +268,10 @@ export function ModelRowsEditor({
 				</p>
 			)}
 			<p className="mt-1 text-ui-10 leading-relaxed text-ink-faint">
-				{t("settings.providers.customModelsHint")}
+				{rows.every((row) => !row.id.trim())
+					? t("settings.providers.customModelsHintAll")
+					: t("settings.providers.customModelsHint")}
 			</p>
-			{rows.every((row) => !row.id.trim()) && (
-				<p className="mt-1 text-ui-10 leading-relaxed text-ink-dim">
-					{t("settings.providers.customModelsEmptyHint")}
-				</p>
-			)}
 		</div>
 	);
 }

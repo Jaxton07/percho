@@ -209,6 +209,25 @@ export function InfoIcon({ size = 14, className }: IconProps) {
 	);
 }
 
+/** 问号（设置页标题旁的解释入口，配合 Tooltip 使用） */
+export function QuestionIcon({ size = 14, className }: IconProps) {
+	return (
+		<svg
+			className={className}
+			width={size}
+			height={size}
+			viewBox="0 0 24 24"
+			{...strokeProps}
+			strokeLinecap="round"
+			aria-hidden="true"
+		>
+			<circle cx="12" cy="12" r="9" />
+			<path d="M9.6 9.2a2.5 2.5 0 1 1 3.6 2.3c-.7.4-1.2 1-1.2 1.8v.4" />
+			<circle cx="12" cy="17" r="0.7" fill="currentColor" stroke="none" />
+		</svg>
+	);
+}
+
 /** 铅笔（扩展输入卡 / 预填提示 glyph，设计稿 extension-dialogs 画板③⑩） */
 export function PencilIcon({ size = 14, className }: IconProps) {
 	return (
