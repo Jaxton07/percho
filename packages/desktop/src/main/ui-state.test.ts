@@ -28,6 +28,16 @@ afterAll(() => {
 });
 
 describe("lastCwd 白名单", () => {
+	it("normalizes notification defaults and preserves a disabled preference", async () => {
+		for (const raw of ["{}", '{"taskNotificationsEnabled":"false"}']) {
+			writeFileSync(file(), raw);
+			expect((await loadUiState())?.taskNotificationsEnabled).toBe(true);
+		}
+		await saveUiState({ taskNotificationsEnabled: false });
+		expect((await loadUiState())?.taskNotificationsEnabled).toBe(false);
+		await saveUiState({ sidebarWidth: 260 });
+		expect((await loadUiState())?.taskNotificationsEnabled).toBe(false);
+	});
 	it("文件缺失时返回 null（不阻塞启动）", async () => {
 		expect(await loadUiState()).toBeNull();
 	});

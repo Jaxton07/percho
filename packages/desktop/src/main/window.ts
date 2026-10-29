@@ -1,6 +1,8 @@
 import { join } from "node:path";
 import { IpcChannels, type Rect, type ThemeMode } from "@percho/shared";
 import { app, BrowserWindow, nativeTheme, shell } from "electron";
+import { attachComposerEditMenu } from "./composer-edit-menu";
+import { taskNotificationNavigation } from "./task-notifications";
 import { saveUiState, saveUiStateSync } from "./ui-state";
 import {
 	BOUNDS_SAVE_DEBOUNCE_MS,
@@ -145,6 +147,7 @@ export function createWindow(
 		},
 	});
 
+	attachComposerEditMenu(window);
 	window.on("ready-to-show", () => {
 		window.show();
 		// macOS 首次 show() 会把窗口 x 抬到 ≥221 DIP（≈15% 屏宽，详见 docs/PITFALLS.md 与 IMPL-NOTES X1）——
@@ -166,6 +169,7 @@ export function createWindow(
 
 	// 新文档开始加载（重载/HMR）→ 旧 guard 失效，等 renderer 重新挂载后再接管
 	window.webContents.on("did-start-loading", () => {
+		taskNotificationNavigation.setReady(false);
 		quitGuard = false;
 	});
 

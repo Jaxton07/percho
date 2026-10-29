@@ -12,9 +12,12 @@ import { create } from "zustand";
 import { getPi } from "../api";
 import { toggleInList } from "../lib/toggle-in-list";
 import { applyFontScales } from "../lib/typography";
+import { pushToast } from "./toasts";
 
 /** 应用级 UI 偏好（持久化在 ui-state.json，与主题/背景同源；主进程 normalize 负责旧文件缺省） */
 interface UiPreferencesStore {
+	taskNotificationsEnabled: boolean;
+	setTaskNotificationsEnabled: (enabled: boolean) => Promise<void>;
 	/** 中央状态动画：任务运行时对话区中央显示放大 orb（z-20 文字层之上 + canvas 一体遮罩压文字）；与 Working/Thinking 行前小 orb 解耦，小 orb 恒显示 */
 	centerOrbEnabled: boolean;
 	/** 置顶会话（id，新置顶在前）：**v8 起就是顶栏胶囊的内容**（左栏只靠图钉标记，不改顺序） */
@@ -95,6 +98,15 @@ function persistPatch(patch: Partial<UiState>): void {
 }
 
 export const useUiPreferencesStore = create<UiPreferencesStore>((set, get) => ({
+	taskNotificationsEnabled: true,
+	setTaskNotificationsEnabled: async (enabled) => {
+		set({ taskNotificationsEnabled: enabled });
+		try {
+			await getPi().saveUiState({ state: { taskNotificationsEnabled: enabled } });
+		} catch {
+			pushToast("warning", "notifications.saveFailed");
+		}
+	},
 	centerOrbEnabled: false,
 	pinnedSessions: [],
 	sessionPermissionModes: {},
@@ -118,6 +130,8 @@ export const useUiPreferencesStore = create<UiPreferencesStore>((set, get) => ({
 		const uiFontSize = clampUiFontSize(saved?.uiFontSize);
 		const codeFontSize = clampCodeFontSize(saved?.codeFontSize);
 		set({
+			taskNotificationsEnabled:
+				typeof saved?.taskNotificationsEnabled === "boolean" ? saved.taskNotificationsEnabled : true,
 			centerOrbEnabled: saved?.centerOrbEnabled ?? false,
 			pinnedSessions: saved?.pinnedSessions ?? [],
 			sessionPermissionModes: saved?.sessionPermissionModes ?? {},

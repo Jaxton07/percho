@@ -9,6 +9,7 @@ import { createServer } from "node:net";
 import { dirname, isAbsolute, join, resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { build } from "esbuild";
+import { expectNativeExit } from "./release/native-exit.mjs";
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const executable = process.argv[3];
@@ -192,7 +193,9 @@ async function scenario(name, agent, action) {
 				"legacy override rejection",
 			);
 			await assert.rejects(stat(agent), { code: "ENOENT" });
-			await ui.click(".startup-footer > div:first-child button", { exitsApp: true });
+			await expectNativeExit(child, () =>
+				ui.click(".startup-footer > div:first-child button", { exitsApp: true }),
+			);
 		} else {
 			if (action === "adopt") {
 				await wait(
@@ -240,7 +243,7 @@ async function scenario(name, agent, action) {
 				// Reproduce an old saved preference; restart must ignore it as well as the current open UI.
 				await ui.evaluate("window.pi.saveUiState({state:{sidebarCollapsed:false}}).then(()=>true)");
 			}
-			await ui.evaluate("void window.pi.confirmQuit(); true");
+			await expectNativeExit(child, () => ui.evaluate("void window.pi.confirmQuit(); true"));
 			results.push({
 				name,
 				recordId: record.id,
@@ -249,9 +252,7 @@ async function scenario(name, agent, action) {
 				sidebarStartsCollapsed: true,
 			});
 		}
-		await wait(() => closed, "native process exit", 15000);
 		if (failure) throw failure;
-		assert.equal(child.exitCode, 0);
 		if (name === "legacy-env") results.push({ name, rejectedBeforeMkdir: true });
 	} finally {
 		await ui?.close();

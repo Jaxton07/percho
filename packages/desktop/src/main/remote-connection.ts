@@ -11,6 +11,7 @@ import {
 	sshFailureKind,
 	validateSshAlias,
 } from "@percho/backend";
+import type { LoadedSessionSummary, SessionEventEnvelope } from "@percho/shared";
 import {
 	type EnvironmentRef,
 	type MutationReceipt,
@@ -29,6 +30,7 @@ import {
 	type RuntimeManifest,
 	readRuntimeManifest,
 } from "./remote-runtime-download";
+import { observeTaskNotification, taskNotificationObserver } from "./task-notifications";
 
 interface SavedConnection {
 	connectionId: string;
@@ -266,6 +268,7 @@ export class RemoteConnectionManager {
 		}
 	}
 	disconnect(): RemoteConnectionStatus {
+		if (this.status.environment) taskNotificationObserver.detach(this.status.environment);
 		this.pauseAutoConnect();
 		clearTimeout(this.retryTimer);
 		this.retryTimer = undefined;
@@ -344,6 +347,7 @@ export class RemoteConnectionManager {
 			clearTimeout(this.retryTimer);
 		}
 		const generation = ++this.generation;
+		if (this.status.environment) taskNotificationObserver.detach(this.status.environment);
 		this.installation = undefined;
 		const controller = new AbortController();
 		this.controller = controller;
@@ -396,6 +400,18 @@ export class RemoteConnectionManager {
 				preflight: probe,
 				onEvent: (method, payload) => {
 					if (!environment || generation !== this.generation) return;
+					if (method === "onEvent") {
+						const source = environment,
+							target = connection;
+						observeTaskNotification(source, payload as SessionEventEnvelope, async () => {
+							const summaries = (await target?.invoke("getLoadedSessions", undefined)) as
+								| LoadedSessionSummary[]
+								| undefined;
+							return summaries?.find(
+								(item) => item.meta.sessionId === (payload as SessionEventEnvelope).sessionId,
+							)?.meta;
+						});
+					}
 					const definition = SUBSCRIPTION_TABLE[method as keyof typeof SUBSCRIPTION_TABLE];
 					if (definition?.scope !== "environment") return;
 					sendToRenderer(
@@ -407,6 +423,7 @@ export class RemoteConnectionManager {
 				onClose: () => {
 					transportClosed = true;
 					if (generation !== this.generation || !this.connection) return;
+					if (environment) taskNotificationObserver.detach(environment);
 					this.detach?.();
 					this.detach = undefined;
 					this.connection = undefined;
@@ -452,7 +469,12 @@ export class RemoteConnectionManager {
 			this.detach = environmentRouter.attach(environment, {
 				invoke: async (method, args) => {
 					try {
-						return await target.invoke(method, args);
+						const result = await target.invoke(method, args);
+						if (environment && method === "deleteSession")
+							taskNotificationObserver.delete(environment, (args as { sessionId: string }).sessionId);
+						if (environment && method === "closeSession" && (result as { closed: boolean }).closed)
+							taskNotificationObserver.unload(environment, (args as { sessionId: string }).sessionId);
+						return result;
 					} catch (error) {
 						if (error instanceof RemoteMutationUnknownError) this.track(error, environment as EnvironmentRef);
 						throw error;

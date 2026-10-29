@@ -1,8 +1,19 @@
-import { UI_WORKBENCH_TRUST_COPY } from "@percho/shared";
+import { TASK_NOTIFICATION_COPY, UI_WORKBENCH_TRUST_COPY } from "@percho/shared";
 import type { Messages } from "./zh";
 
 /** English language pack (mirrors zh.ts shape) */
 export const en: Messages = {
+	notifications: {
+		...TASK_NOTIFICATION_COPY.en,
+		title: "Desktop task notifications",
+		hint: "Notify when tasks finish while the app is in the background. Applies to all environments on this computer.",
+		test: "Send test notification",
+		submitted: "Request submitted. Visibility depends on system notification permissions and Do Not Disturb.",
+		unsupported: "Desktop notifications are unavailable on this system.",
+		failed: "Could not submit the notification. Check system notification settings.",
+		saveFailed: "Could not save the notification preference. Your choice still applies for this run.",
+		targetUnavailable: "The notification's session or connection is no longer available.",
+	},
 	emptyState: {
 		slogan: "Bring your ideas to life, your way.",
 	},

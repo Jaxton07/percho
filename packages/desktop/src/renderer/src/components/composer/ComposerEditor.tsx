@@ -18,6 +18,7 @@ import {
 	useMemo,
 	useRef,
 } from "react";
+import { getPi } from "../../api";
 import { $readComposerSelection, $selectComposerOffset, $selectComposerRange } from "./editor-document";
 import { getComposerEditor, syncComposerDocument } from "./editor-host";
 import { $createReferenceNode } from "./ReferenceNode";
@@ -46,6 +47,30 @@ export const ComposerEditor = forwardRef<ComposerEditorHandle, Props>(function C
 	const entry = useMemo(() => getComposerEditor(props.draftKey, props.document), [props.draftKey]);
 	const latest = useRef(props);
 	latest.current = props;
+	// biome-ignore lint/correctness/useExhaustiveDependencies: editor identity and editability invalidate native menu ownership
+	const menuToken = useMemo(() => crypto.randomUUID(), [entry, props.readOnly]);
+	const host = useRef<HTMLDivElement>(null);
+	useEffect(() => {
+		const cancel = () => {
+			void getPi()
+				.cancelComposerEditMenu({ token: menuToken })
+				.catch(() => {});
+		};
+		const focus = (event: FocusEvent) => {
+			if (!host.current?.contains(event.target as Node)) cancel();
+		};
+		document.addEventListener("focusin", focus);
+		return () => {
+			document.removeEventListener("focusin", focus);
+			cancel();
+		};
+	}, [menuToken]);
+	// biome-ignore lint/correctness/useExhaustiveDependencies: external document replacement invalidates the saved native selection
+	useEffect(() => {
+		void getPi()
+			.cancelComposerEditMenu({ token: menuToken })
+			.catch(() => {});
+	}, [menuToken, props.document]);
 	useImperativeHandle(
 		ref,
 		() => ({
@@ -100,10 +125,15 @@ export const ComposerEditor = forwardRef<ComposerEditorHandle, Props>(function C
 	);
 	return (
 		<LexicalExtensionEditorComposer initialEditor={entry.editor}>
-			<div className={`relative ${props.className ?? ""}`}>
+			<div ref={host} className={`relative ${props.className ?? ""}`}>
 				<ContentEditable
 					className="composer-editor w-full min-h-[2lh] max-h-[200px] overflow-y-auto bg-transparent text-ui-14 leading-relaxed outline-none select-text thin-scrollbar"
 					aria-label={props.placeholder}
+					onContextMenu={(event) => {
+						void getPi()
+							.showComposerEditMenu({ token: menuToken, x: event.clientX, y: event.clientY })
+							.catch((error) => console.warn("Editor menu unavailable", error));
+					}}
 					aria-placeholder={props.placeholder}
 					placeholder={
 						<span className="pointer-events-none absolute top-0 left-0 text-ui-14 leading-relaxed text-ink-faint">

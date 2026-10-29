@@ -659,6 +659,17 @@ export const SETTINGS_CHANNELS = {
 
 /** 应用域：窗口级功能（对话框/背景/更新/tabs/ui-state/git/外链等，多为非透传 handler） */
 export const APP_CHANNELS = {
+	setTaskNotificationNavigationReady: ch("notifications:navigationReady", "desktop")<
+		{ ready: boolean },
+		void
+	>(),
+	setNotificationLanguage: ch("notifications:language", "desktop")<{ language: "zh" | "en" }, void>(),
+	testTaskNotification: ch("notifications:test", "desktop")<
+		void,
+		import("./task-notifications").NotificationSendResult
+	>(),
+	showComposerEditMenu: ch("composer:editMenu", "desktop")<{ token: string; x: number; y: number }, void>(),
+	cancelComposerEditMenu: ch("composer:cancelEditMenu", "desktop")<{ token: string }, void>(),
 	validateProjectDirectory: ch(
 		"project:validateDirectory",
 		"environment",
@@ -841,6 +852,9 @@ function subscription<P, S extends ChannelScope = "environment">(scope: S = "env
 
 /** Sole subscription definition: API key + explicit legacy alias + channel + payload type. */
 export const SUBSCRIPTION_TABLE = {
+	onTaskNotificationClick: subscription<import("./task-notifications").TaskNotificationClick, "desktop">(
+		"desktop",
+	)("TaskNotificationClick", "notifications:clicked"),
 	onStorageStartup: subscription<StorageStartupState, "desktop">("desktop")(
 		"StorageStartup",
 		"storageStartup:changed",

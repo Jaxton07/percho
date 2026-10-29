@@ -3,6 +3,7 @@ import type { Language } from "../../i18n";
 import { useI18nStore, useT } from "../../i18n";
 import { useSettingsStore } from "../../stores/settings";
 import { Switch } from "../ui/Switch";
+import { TaskNotificationSettings } from "./TaskNotificationSettings";
 
 const CONTEXT_MANAGER_MODES: ContextManagerMode[] = ["evaporation", "off"];
 
@@ -18,6 +19,7 @@ export function GeneralPanel() {
 
 	return (
 		<div className="flex flex-col gap-6">
+			<TaskNotificationSettings />
 			<div>
 				<h3 className="text-ui-13 font-medium text-ink">{t("settings.language")}</h3>
 				<p className="mt-0.5 text-ui-11 text-ink-faint">{t("settings.languageHint")}</p>

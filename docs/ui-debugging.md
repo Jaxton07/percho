@@ -79,3 +79,9 @@ node scripts/shoot-sidebar.mjs both .local/tmp/ui-review
 | 浮层 rect 正确但显示不全 | mask 裁绘与 portal，见 [UI 规范](ui.md) |
 | 带图发送后短暂空白 | 乐观用户气泡与附件预缩放，见 [SDK 集成](sdk.md) |
 | 历史图成本或占位跳动 | `check-history-images.mjs`、历史图片资源层；必须覆盖 build 的 file:// 与 worker 链路 |
+
+## 原生输入菜单
+
+对话编辑菜单需将 renderer 本次请求与 Electron 原生 context-menu 的 frame、位置、editFlags 配对，不能只用合成 DOM 事件验证。原生菜单不在 CDP 页面树中；用 macOS 辅助功能实际选择菜单项，页面内容和选区仍由 CDP 核对，不使用系统截图。测试剪贴板前保存原始格式，结束恢复并删除备份，不打印内容。
+
+Cocoa 可能先调用 popup 关闭回调，再派发所选菜单项的 click。菜单关闭不能立即撤销当前编辑目标；目标切换、只读变化、导航或新右键上下文必须独立失效。否则菜单看似可用但复制/粘贴会被关闭回调提前拦掉。
