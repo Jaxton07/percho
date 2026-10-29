@@ -1,12 +1,17 @@
-import type { UpstreamModelInfo, UpstreamModelsInput } from "@percho/shared";
+import type { UpstreamModelsInput, UpstreamModelsResult } from "@percho/shared";
 import { describe, expect, it, vi } from "vitest";
 import { createUpstreamModelsLoader, EMPTY_UPSTREAM_MODELS_STATE } from "./upstream-models-loader";
 
 const input: UpstreamModelsInput = { baseUrl: "https://example.invalid/v1", api: "openai-completions" };
+/** 后端返回模型清单 + 实际可用的 baseUrl（探测可能补成 /v1） */
+const result = (models: { id: string }[], baseUrl = input.baseUrl): UpstreamModelsResult => ({
+	models,
+	baseUrl,
+});
 function deferred() {
-	let resolve!: (models: UpstreamModelInfo[]) => void;
+	let resolve!: (value: UpstreamModelsResult) => void;
 	let reject!: (error: Error) => void;
-	const promise = new Promise<UpstreamModelInfo[]>((yes, no) => {
+	const promise = new Promise<UpstreamModelsResult>((yes, no) => {
 		resolve = yes;
 		reject = no;
 	});
@@ -18,7 +23,7 @@ describe("上游候选请求的归属", () => {
 		const publish = vi.fn();
 		const request = vi
 			.fn()
-			.mockResolvedValueOnce([{ id: "old" }])
+			.mockResolvedValueOnce(result([{ id: "old" }]))
 			.mockRejectedValueOnce(new Error("failed"));
 		const loader = createUpstreamModelsLoader(request, publish);
 		await loader.load(input);
@@ -44,12 +49,12 @@ describe("上游候选请求的归属", () => {
 			const changed = { ...input, baseUrl: "https://new.invalid/v1", apiKey: "fixture-only" };
 			const second = loader.load(changed);
 			const count = publish.mock.calls.length;
-			if (outcome === "success") old.resolve([{ id: "stale" }]);
+			if (outcome === "success") old.resolve(result([{ id: "stale" }]));
 			else old.reject(new Error("stale failure"));
 			await first;
 			expect(publish).toHaveBeenCalledTimes(count);
 			expect(publish).toHaveBeenLastCalledWith({ models: null, loading: true, error: null });
-			next.resolve([{ id: "new" }]);
+			next.resolve(result([{ id: "new" }]));
 			await second;
 			expect(request).toHaveBeenLastCalledWith(changed);
 			expect(publish).toHaveBeenLastCalledWith({ models: [{ id: "new" }], loading: false, error: null });
@@ -66,11 +71,28 @@ describe("上游候选请求的归属", () => {
 		);
 		const first = loader.load(input);
 		const second = loader.load(input);
-		next.resolve([]);
+		next.resolve(result([]));
 		await second;
-		old.resolve([{ id: "stale" }]);
+		old.resolve(result([{ id: "stale" }]));
 		await first;
 		expect(publish).toHaveBeenLastCalledWith({ models: [], loading: false, error: null });
+	});
+
+	it("把实际可用的基址回传给调用方；被新请求取代时返回 null（不覆盖新表单）", async () => {
+		const first = deferred();
+		const publish = vi.fn();
+		const request = vi.fn().mockReturnValueOnce(first.promise);
+		const loader = createUpstreamModelsLoader(request, publish);
+		const pending = loader.load(input);
+		loader.invalidate();
+		first.resolve(result([{ id: "m" }], "https://relay.example.com/v1"));
+		await expect(pending).resolves.toBeNull();
+
+		const fixed = result([{ id: "m" }], "https://relay.example.com/v1");
+		request.mockResolvedValueOnce(fixed);
+		await expect(
+			loader.load({ baseUrl: "https://relay.example.com", api: "openai-completions" }),
+		).resolves.toEqual(fixed);
 	});
 
 	it("表单卸载后不再发布结果", async () => {
@@ -80,7 +102,7 @@ describe("上游候选请求的归属", () => {
 		const work = loader.load(input);
 		loader.dispose();
 		publish.mockClear();
-		pending.resolve([{ id: "late" }]);
+		pending.resolve(result([{ id: "late" }]));
 		await work;
 		expect(publish).not.toHaveBeenCalled();
 	});

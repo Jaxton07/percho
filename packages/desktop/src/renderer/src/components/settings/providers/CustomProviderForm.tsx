@@ -68,6 +68,8 @@ function ProviderConfigForm({
 	const [form, setForm] = useState(initial);
 	const [submitting, setSubmitting] = useState(false);
 	const [upstream, setUpstream] = useState(EMPTY_UPSTREAM_MODELS_STATE);
+	/** 后端探测补全过的基址（站点根 → .../v1）：非空时取代静态提示 */
+	const [normalizedBaseUrl, setNormalizedBaseUrl] = useState<string | null>(null);
 	const upstreamLoader = useMemo(
 		() => createUpstreamModelsLoader(listUpstreamModels, setUpstream),
 		[listUpstreamModels],
@@ -75,16 +77,25 @@ function ProviderConfigForm({
 	useEffect(() => () => upstreamLoader.dispose(), [upstreamLoader]);
 
 	/** 密钥留空时由所属后端经 SDK 解析已有凭证，失败就地显示。 */
-	const fetchUpstream = () =>
-		upstreamLoader.load({
+	const fetchUpstream = async () => {
+		const result = await upstreamLoader.load({
 			providerId: lockId ? form.id : undefined,
 			baseUrl: form.baseUrl,
 			api: form.api,
 			apiKey: form.apiKey,
 		});
+		if (!result) return;
+		// 中转站面板给的「API 地址」常是站点根，后端探测出真实端点后回填，保存的就是这个地址
+		if (result.baseUrl === form.baseUrl.trim().replace(/\/+$/, "")) return;
+		setForm((f) => ({ ...f, baseUrl: result.baseUrl }));
+		setNormalizedBaseUrl(result.baseUrl);
+	};
 
 	const update = (field: "id" | "name" | "baseUrl" | "api" | "apiKey", value: string) => {
-		if (field !== "name") upstreamLoader.invalidate();
+		if (field !== "name") {
+			upstreamLoader.invalidate();
+			setNormalizedBaseUrl(null);
+		}
 		setForm((f) => ({ ...f, [field]: value }));
 	};
 	const set = (field: "id" | "name" | "baseUrl" | "apiKey") => (e: { target: { value: string } }) =>
@@ -139,6 +150,11 @@ function ProviderConfigForm({
 					value={form.baseUrl}
 					onChange={set("baseUrl")}
 				/>
+				<p className="col-span-2 -mt-1 text-ui-10 leading-relaxed text-ink-faint">
+					{normalizedBaseUrl
+						? t("settings.providers.upstreamBaseUrlFixed", { baseUrl: normalizedBaseUrl })
+						: t("settings.providers.customBaseUrlHint")}
+				</p>
 				<Select
 					value={form.api}
 					options={apiOptions.map((api) => ({ value: api, label: api }))}

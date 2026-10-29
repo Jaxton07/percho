@@ -10,8 +10,8 @@ import type {
 	ProviderTestResult,
 	ResourceDiagnosticInfo,
 	SubagentInfo,
-	UpstreamModelInfo,
 	UpstreamModelsInput,
+	UpstreamModelsResult,
 } from "@percho/shared";
 import {
 	type EnvironmentRef,
@@ -85,7 +85,7 @@ interface SettingsStore {
 	saveKey: (providerId: string, key: string) => Promise<void>;
 	removeCredential: (providerId: string) => Promise<void>;
 	addCustom: (input: CustomProviderInput) => Promise<void>;
-	listUpstreamModels: (input: UpstreamModelsInput) => Promise<UpstreamModelInfo[]>;
+	listUpstreamModels: (input: UpstreamModelsInput) => Promise<UpstreamModelsResult>;
 	updateCustom: (input: CustomProviderUpdateInput) => Promise<void>;
 	removeCustom: (providerId: string) => Promise<void>;
 	/** 内置 provider 的可选 baseUrl 覆写（留空 = 清除覆写回官方） */

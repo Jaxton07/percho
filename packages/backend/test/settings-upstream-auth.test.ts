@@ -13,7 +13,7 @@ afterEach(async () => {
 	directory = undefined;
 });
 
-async function setup(auth: object, configKey?: string) {
+async function setup(auth: object, configKey?: string, providerModels: object[] = [{ id: "fixture-model" }]) {
 	const root = resolve(import.meta.dirname, "../../../.local/tmp/pr125-auth");
 	await mkdir(root, { recursive: true });
 	directory = await mkdtemp(join(root, "case-"));
@@ -28,7 +28,7 @@ async function setup(auth: object, configKey?: string) {
 				proxy: {
 					baseUrl: "https://example.invalid/v1",
 					api: "openai-completions",
-					models: [{ id: "fixture-model" }],
+					models: providerModels,
 					...(configKey ? { apiKey: configKey } : {}),
 				},
 			},
@@ -47,6 +47,23 @@ async function setup(auth: object, configKey?: string) {
 	return { settings: new SettingsService(async () => runtime), fetchMock, runtime };
 }
 
+describe("自定义 provider 回填", () => {
+	it("编辑表单能拿到落盘的思考档位映射，非法档位被丢弃", async () => {
+		const thinkingLevelMap = { off: "none", minimal: null, high: " high ", bogus: "x" };
+		const { settings } = await setup({}, undefined, [
+			{ id: "fixture-model", reasoning: true, thinkingLevelMap },
+		]);
+		const provider = (await settings.listProviders()).find((entry) => entry.id === "proxy");
+		expect(provider?.customModels).toEqual([
+			{
+				id: "fixture-model",
+				reasoning: true,
+				thinkingLevelMap: { off: "none", minimal: null, high: "high" },
+			},
+		]);
+	});
+});
+
 describe("上游模型获取复用真实 SDK 凭证解析", () => {
 	it("用户自定义模型不作为跨服务的能力来源，未知模型只返回 ID", async () => {
 		const { settings, fetchMock } = await setup({});
@@ -56,7 +73,8 @@ describe("上游模型获取复用真实 SDK 凭证解析", () => {
 			api: "openai-completions",
 			apiKey: "fixture-explicit",
 		});
-		expect(models).toEqual([{ id: "fixture-model" }]);
+		expect(models.models).toEqual([{ id: "fixture-model" }]);
+		expect(models.baseUrl).toBe("https://different.invalid/v1");
 	});
 
 	it("内置模型的能力不受运行时同名模型覆写影响", async () => {
@@ -64,11 +82,13 @@ describe("上游模型获取复用真实 SDK 凭证解析", () => {
 		const builtin = getBuiltinModel("openai", "gpt-4o");
 		vi.spyOn(runtime, "getModels").mockReturnValue([{ ...builtin, contextWindow: 17000, maxTokens: 1234 }]);
 		fetchMock.mockResolvedValue(new Response(JSON.stringify({ data: [{ id: "gpt-4o" }] })));
-		const [model] = await settings.listUpstreamModels({
-			baseUrl: "https://different.invalid/v1",
-			api: "openai-completions",
-			apiKey: "fixture-explicit",
-		});
+		const [model] = (
+			await settings.listUpstreamModels({
+				baseUrl: "https://different.invalid/v1",
+				api: "openai-completions",
+				apiKey: "fixture-explicit",
+			})
+		).models;
 		expect(model).toMatchObject({
 			id: "gpt-4o",
 			contextWindow: builtin.contextWindow,
@@ -88,7 +108,7 @@ describe("上游模型获取复用真实 SDK 凭证解析", () => {
 			"https://example.invalid/v1/models",
 			expect.objectContaining({ headers: { Authorization: "Bearer fixture-env-value" } }),
 		);
-		expect(models).toEqual([{ id: "upstream-only-model" }]);
+		expect(models.models).toEqual([{ id: "upstream-only-model" }]);
 	});
 
 	it("执行已保存的密钥命令，发送其输出", async () => {

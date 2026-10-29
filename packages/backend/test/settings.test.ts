@@ -154,6 +154,32 @@ describe("SettingsService provider mutations", () => {
 		expect(providers.relay.models[1]).toEqual({ id: "gpt-5-mini" });
 	});
 
+	it("writes thinkingLevelMap from the catalog, dropping unknown levels and empty maps", async () => {
+		const { settings } = makeSettings();
+		await settings.addCustomProvider({
+			id: "relay",
+			baseUrl: "https://www.aicodemirror.ai/v1",
+			api: "openai-completions",
+			models: [
+				{
+					id: "gpt-5.6-terra",
+					reasoning: true,
+					thinkingLevelMap: { minimal: "minimal", medium: null, high: " high ", bogus: "x" } as never,
+				},
+				{ id: "gpt-5-mini", thinkingLevelMap: {} },
+			],
+		});
+		const providers = JSON.parse(files.get("/agent/models.json") ?? "{}").providers;
+		// 只留 SDK 认得的档位；字符串 trim；null（不支持）保留原义
+		expect(providers.relay.models[0]).toEqual({
+			id: "gpt-5.6-terra",
+			reasoning: true,
+			thinkingLevelMap: { minimal: "minimal", medium: null, high: "high" },
+		});
+		// 空映射不落盘，跟随 SDK 默认
+		expect(providers.relay.models[1]).toEqual({ id: "gpt-5-mini" });
+	});
+
 	it("rejects non-positive contextWindow/maxTokens", async () => {
 		const { settings } = makeSettings();
 		await expect(

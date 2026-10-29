@@ -22,6 +22,7 @@
 - 同名工具有不同优先层：`replaceable` 表示让位，双方非 replaceable 时同组先注册者胜，`customTools` 又可覆盖扩展工具。不要只调整 inline 扩展注册顺序来实现“内置优先”；复用 `tools/subagent/mutex.ts` 的既有方案。
 - `getAllTools()` 属于工厂闭包的 `ExtensionAPI`，不在 handler 的 `ctx` 上；权限声明读取不要猜工具来源或默认信任 MCP。
 - 工具参数 schema 保持顶层单 object；顶层 Union/Intersect 可能被 provider 拒绝。
+- 自定义 provider 的 `baseUrl` 由 SDK 原样当 OpenAI 客户端基址用，不会自动补版本段。中转站面板给的“API 地址”通常是站点根，而它们（New API 类网关）对未知路径回 200 + 前端 HTML，SDK 按 SSE 解出空流，只报 `Stream ended without finish_reason`。保存与拉模型清单时统一经 `settings/upstream-models.ts` 的探测补 `/v1`；新增写入口时不要绕过它直接落盘原始 baseUrl。
 
 ## 持久化、上下文与回放
 

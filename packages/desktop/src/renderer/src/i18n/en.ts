@@ -679,7 +679,10 @@ export const en: Messages = {
 			customKeyKeep: "API Key (leave blank to keep current)",
 			customId: "ID, e.g. ai-ops",
 			customName: "Display name (optional)",
-			customBaseUrl: "baseUrl, e.g. https://api.deepseek.com",
+			customBaseUrl: "baseUrl, e.g. https://api.example.com/v1",
+			customBaseUrlHint:
+				"Most relays and OpenAI-compatible services need /v1. A bare host is probed and filled in when fetching models.",
+			upstreamBaseUrlFixed: "Address completed to {baseUrl} (the upstream serves its model list there).",
 			customKey: "API Key (optional, stored in auth.json)",
 			customModelId: "Model ID",
 			customModelCtx: "Context window in tokens; blank = SDK default 128k",
@@ -940,6 +943,7 @@ export const en: Messages = {
 			llmRateLimit: "Model request failed: rate limited",
 			llmOverflow: "Model request failed: context limit exceeded",
 			llmNetwork: "Model request failed: network error",
+			llmInvalidEndpoint: "Model request failed: endpoint or protocol mismatch",
 			llmGeneric: "Model request failed",
 			streamGuard: "Reply aborted by safety guard",
 			sendFailed: "Failed to send",
@@ -950,6 +954,8 @@ export const en: Messages = {
 			rateLimit: "Too many requests or server-side throttling; try again shortly.",
 			compact: "Context is too long. Run /compact to compress, or fork from here to start a new session.",
 			network: "Network connection issue; check your connection and retry.",
+			checkBaseUrl:
+				"The upstream did not return a parseable model stream. Usually the baseUrl is missing /v1 (most relays expose the OpenAI-compatible API under /v1) or the API protocol is wrong. Check the address and protocol in Settings → Model providers.",
 			streamGuard: "Abnormal model output (pathological stream) was aborted by the safety guard.",
 		},
 		retrying: "Auto-retrying · attempt {attempt}/{maxAttempts} · waiting {delay}s",

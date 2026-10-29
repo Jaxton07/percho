@@ -62,8 +62,8 @@ import type {
 	ProviderInfo,
 	ProviderTestResult,
 	SubagentInfo,
-	UpstreamModelInfo,
 	UpstreamModelsInput,
+	UpstreamModelsResult,
 } from "./settings";
 import type { StorageStartupAction, StorageStartupState } from "./storage-startup";
 import type { TodoItem } from "./todo";
@@ -501,7 +501,7 @@ export const SETTINGS_CHANNELS = {
 		"settings:listUpstreamModels",
 		"environment",
 		"read",
-	)<UpstreamModelsInput, UpstreamModelInfo[]>({
+	)<UpstreamModelsInput, UpstreamModelsResult>({
 		providerId: input.optional(input.id),
 		baseUrl: input.text,
 		api: input.text,
