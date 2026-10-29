@@ -3,18 +3,13 @@
  *
  * 模块分层（arch §1）：
  * - types/estimate/evaporate：纯函数核心，零 SDK/零仓库 import（replay --core 同构共用）
- * - config：配置链路（单一决策 key + 单一写者原子写 + 二态派生读）
+ * - config：配置链路（contextEvaporation 阈值容错读；蒸发常开，无用户开关）
  * - extension：InlineExtension 接线（context 钩子 / session_start / session_compact）
  *
  * 行为规则唯一权威：.local/agent-work/spec/context-evaporation.md（spec v2）。
  */
 
-export {
-	clearEvapConfigCache,
-	readContextManagerMode,
-	readEvapConfig,
-	writeContextManagerMode,
-} from "./config";
+export { clearEvapConfigCache, readEvapConfig } from "./config";
 export { IMAGE_STUB_TEXT, inspectParts } from "./evaporate";
 export type { EvapExtensionOptions } from "./extension";
 export { makeEvapExtension, reportEvapBatch } from "./extension";

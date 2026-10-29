@@ -78,8 +78,8 @@ export function ProviderRow({ provider }: { provider: ProviderInfo }) {
 	const [modelsOpen, setModelsOpen] = useState(false);
 
 	return (
-		<li className="py-2.5">
-			<div className="flex items-center gap-1">
+		<li className={`rounded-xl border-[0.5px] border-border bg-surface p-3 ${editing ? "col-span-2" : ""}`}>
+			<div className="flex items-start justify-between gap-2">
 				<div className="min-w-0 flex-1">
 					<div className="flex items-center gap-1.5">
 						<span className="truncate text-ui-13 font-medium text-ink">{provider.name}</span>
@@ -93,16 +93,20 @@ export function ProviderRow({ provider }: { provider: ProviderInfo }) {
 							</span>
 						) : null}
 					</div>
-					<div className="mt-0.5 flex items-center gap-1 text-ui-11 text-ink-faint">
-						{provider.overridesBuiltin && provider.baseUrl && (
-							<span className="mr-1 max-w-[220px] truncate text-ui-10 text-ink-dim" title={provider.baseUrl}>
-								→ {provider.baseUrl}
-							</span>
-						)}
+					<div className="mt-1 flex flex-wrap items-center gap-x-1.5 gap-y-1 text-ui-11 text-ink-faint">
+						<span
+							className={`shrink-0 rounded-full px-1.5 py-0.5 text-ui-10 ${
+								provider.configured ? "bg-emerald-50 text-emerald-600" : "bg-hover text-ink-faint"
+							}`}
+						>
+							{provider.configured
+								? t("settings.providers.configured")
+								: t("settings.providers.unconfigured")}
+						</span>
 						{provider.configured ? (
 							<button
 								type="button"
-								className="flex items-center gap-1 rounded hover:text-ink"
+								className="flex shrink-0 items-center gap-1 rounded hover:text-ink"
 								onClick={() => setModelsOpen((open) => !open)}
 								aria-expanded={modelsOpen}
 							>
@@ -110,18 +114,43 @@ export function ProviderRow({ provider }: { provider: ProviderInfo }) {
 								<ExpandArrowIcon className={`transition-transform ${modelsOpen ? "rotate-90" : ""}`} />
 							</button>
 						) : (
-							<span>{t("settings.providers.modelCount", { count: provider.models.length })}</span>
+							<span className="shrink-0">
+								{t("settings.providers.modelCount", { count: provider.models.length })}
+							</span>
 						)}
-						{provider.configured && provider.authLabel ? ` · ${provider.authLabel}` : ""}
+						{provider.configured && provider.authLabel ? (
+							<span className="min-w-0 truncate" title={provider.authLabel}>
+								{provider.authLabel}
+							</span>
+						) : null}
 					</div>
 				</div>
-				<span
-					className={`mr-1 shrink-0 rounded-full px-2 py-0.5 text-ui-11 ${
-						provider.configured ? "bg-emerald-50 text-emerald-600" : "bg-hover text-ink-faint"
-					}`}
+				<Tooltip
+					label={
+						allHidden
+							? t("settings.providers.showAllModels", { name: provider.name })
+							: t("settings.providers.hideAllModels", { name: provider.name })
+					}
+					align="end"
 				>
-					{provider.configured ? t("settings.providers.configured") : t("settings.providers.unconfigured")}
-				</span>
+					<Switch
+						checked={allVisible}
+						indeterminate={mixed}
+						onCheckedChange={() => void setProviderModelsHidden(provider.id, !allHidden)}
+						aria-label={
+							allHidden
+								? t("settings.providers.showAllModels", { name: provider.name })
+								: t("settings.providers.hideAllModels", { name: provider.name })
+						}
+					/>
+				</Tooltip>
+			</div>
+			{provider.overridesBuiltin && provider.baseUrl && (
+				<p className="mt-1 truncate text-ui-10 text-ink-dim" title={provider.baseUrl}>
+					→ {provider.baseUrl}
+				</p>
+			)}
+			<div className="mt-2 flex items-center gap-0.5">
 				{provider.configured && (
 					<IconAction
 						label={t("settings.providers.test")}
@@ -171,27 +200,6 @@ export function ProviderRow({ provider }: { provider: ProviderInfo }) {
 						</IconAction>
 					)
 				)}
-				{/* 行末批量开关：一键全显示/全隐藏该 provider 的所有模型（openrouter 这类几百个模型的供应商先全藏再挑）。
-					tooltip 右对齐（align=end）：开关紧贴滚动容器右缘，居中气泡会向右溢出 */}
-				<Tooltip
-					label={
-						allHidden
-							? t("settings.providers.showAllModels", { name: provider.name })
-							: t("settings.providers.hideAllModels", { name: provider.name })
-					}
-					align="end"
-				>
-					<Switch
-						checked={allVisible}
-						indeterminate={mixed}
-						onCheckedChange={() => void setProviderModelsHidden(provider.id, !allHidden)}
-						aria-label={
-							allHidden
-								? t("settings.providers.showAllModels", { name: provider.name })
-								: t("settings.providers.hideAllModels", { name: provider.name })
-						}
-					/>
-				</Tooltip>
 			</div>
 			{testResult && testResult !== "testing" && (
 				<p

@@ -108,6 +108,18 @@ const LLM_ERROR_PATTERNS: ReadonlyArray<{ pattern: RegExp; cls: LlmErrorClass }>
 			actions: ["retry", "copyDetail"],
 		},
 	},
+	{
+		// 上游返回的不是可解析的流：网关对未知路径回 200 + 前端 HTML 首页（New API 等），SDK 按 SSE 解出空流，
+		// 只报「Stream ended without finish_reason」。典型原因是 baseUrl 少了 /v1 或 api 协议选错，
+		// 光看原始报错用户无法自己定位，所以单列一类并给「去设置检查地址」。
+		pattern: /stream\s+ended\s+without\s+finish_reason|unexpected\s+token\s+'<'|<!doctype\s+html/i,
+		cls: {
+			titleKey: "error.title.llmInvalidEndpoint",
+			hintKey: "error.hint.checkBaseUrl",
+			source: "llm",
+			actions: ["retry", "openSettings", "copyDetail"],
+		},
+	},
 ];
 
 /** 兜底：无法归类的模型请求失败 */

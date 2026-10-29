@@ -138,4 +138,22 @@ describe("rowFromUpstreamModel", () => {
 			imageInput: false,
 		});
 	});
+
+	it("带出 SDK 目录的思考档位映射，并在行 → 提交之间原样保住", () => {
+		const thinkingLevelMap = { minimal: "minimal", low: "low", medium: null, high: "high", xhigh: "xhigh" };
+		const row = rowFromUpstreamModel({ id: "m", reasoning: true, thinkingLevelMap });
+
+		expect(row).toMatchObject({ id: "m", reasoning: true, thinkingLevelMap });
+		expect(rowsToModelInputs([row])).toEqual([{ id: "m", reasoning: true, thinkingLevelMap }]);
+	});
+
+	it("已落盘的 thinkingLevelMap 编辑回填再提交不丢", () => {
+		const thinkingLevelMap = { low: "low", high: "high", max: null as null | string };
+		expect(modelsToRows([{ id: "m", reasoning: true, thinkingLevelMap }])).toEqual([
+			{ id: "m", contextWindow: "", maxTokens: "", reasoning: true, imageInput: false, thinkingLevelMap },
+		]);
+		expect(rowsToModelInputs(modelsToRows([{ id: "m", reasoning: true, thinkingLevelMap }]))).toEqual([
+			{ id: "m", reasoning: true, thinkingLevelMap },
+		]);
+	});
 });

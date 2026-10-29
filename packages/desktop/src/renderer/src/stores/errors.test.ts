@@ -63,6 +63,22 @@ describe("classifyLlmError — 模式表按序首命中", () => {
 		}
 	});
 
+	it("空流 / HTML 首页 → llmInvalidEndpoint（retry/openSettings/copyDetail + hint.checkBaseUrl）", () => {
+		// 实测中转站 baseUrl 少写 /v1：网关对未知路径回 200 + 前端 HTML，SDK 按 SSE 解出空流
+		for (const text of [
+			"Stream ended without finish_reason",
+			"Unexpected token '<', \"<!doctype html>\" is not valid JSON",
+			'<!DOCTYPE html><html lang="en">',
+		]) {
+			expect(classifyLlmError(text)).toEqual({
+				titleKey: "error.title.llmInvalidEndpoint",
+				hintKey: "error.hint.checkBaseUrl",
+				source: "llm",
+				actions: ["retry", "openSettings", "copyDetail"],
+			});
+		}
+	});
+
 	it("大小写不敏感", () => {
 		expect(classifyLlmError("RATE LIMIT REACHED")).toMatchObject({ titleKey: "error.title.llmRateLimit" });
 		expect(classifyLlmError("UNAUTHORIZED")).toMatchObject({ titleKey: "error.title.llmAuth" });

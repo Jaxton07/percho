@@ -4,7 +4,6 @@ export const zh = {
 	notifications: {
 		...TASK_NOTIFICATION_COPY.zh,
 		title: "桌面任务通知",
-		hint: "仅在应用处于后台时提醒任务结束；适用于这台电脑的所有执行环境。",
 		test: "发送测试通知",
 		submitted: "已向系统提交请求；是否显示取决于系统通知权限和勿扰设置。",
 		unsupported: "当前系统不支持桌面通知。",
@@ -541,6 +540,7 @@ export const zh = {
 			lan: "跨设备互联",
 			about: "关于",
 		},
+		moreInfo: "更多说明",
 		language: "语言",
 		languageHint: "默认跟随系统语言",
 		appearance: {
@@ -567,19 +567,9 @@ export const zh = {
 		backgroundChange: "更换图片",
 		backgroundClear: "清除背景",
 		backgroundDim: "遮罩浓度",
-		contextManager: "上下文管理",
-		contextManagerMode: {
-			evaporation: "蒸发",
-			off: "关闭",
-		},
-		contextManagerHint: {
-			evaporation:
-				"默认开启。按水位线把到龄的工具输出蒸发为带恢复指令的占位符（如「输出已淘汰，可用相同参数重读」）：60% 起截断工具输出、85% 起淘汰为占位；零 LLM 调用、对话原文保留、会话文件不动。切换后无需重开会话。",
-			off: "关闭全部上下文管理：不做主动压缩/蒸发，依赖 SDK 在接近窗口上限时的原生压缩兜底。长会话可能中断等待压缩。",
-		},
 		channelWatch: "跨会话频道协作（channel-watch）",
 		channelWatchHint:
-			"会话订阅频道后自动监听 .local/agent-work/channel/<主题>/ 的文件更新，另一会话写入时唤醒本会话查收（按 HANDOFF.md 沟通协议）。订阅经 appendEntry 持久化，重开会话自动恢复；内置防环保护。默认开启，对已信任项目完全生效。",
+			"会话订阅频道后自动监听 .local/agent-work/channel/<主题>/ 的文件更新，另一会话写入时唤醒本会话查收（HANDOFF.md 协议）。订阅随会话持久化，内置防环保护；默认开启，对已信任项目完全生效。",
 		topBar: "顶栏显示会话",
 		topBarHint:
 			"顶栏常驻（窗口拖动、左栏开合、本轮改动都在这里）；关掉后顶栏不再显示临时会话工作区胶囊，会话都在左侧栏。",
@@ -657,14 +647,16 @@ export const zh = {
 			customKeyKeep: "API Key（留空则保持不变）",
 			customId: "ID，如 ai-ops",
 			customName: "显示名（可选）",
-			customBaseUrl: "baseUrl，如 https://api.deepseek.com",
+			customBaseUrl: "baseUrl，如 https://api.example.com/v1",
+			customBaseUrlHint: "多数中转站与兼容 OpenAI 的服务要写到 /v1；只填站点根时，获取模型会探测并自动补全。",
+			upstreamBaseUrlFixed: "地址已补全为 {baseUrl}（上游在这个路径下返回模型清单）。",
 			customKey: "API Key（可选，存 auth.json）",
 			customModelId: "模型 ID",
 			customModelCtx: "上下文窗口 tokens，留空默认 128k",
 			customModelOut: "最大输出 tokens，留空默认 16k",
 			customModelReasoning: "思考",
 			customModelImage: "图像",
-			addModelRow: "+ 添加模型",
+			addModelRow: "添加模型",
 			clearModelRows: "清空模型列表",
 			fetchUpstream: "自动获取",
 			fetchingUpstream: "获取中…",
@@ -673,8 +665,10 @@ export const zh = {
 			upstreamError: "获取失败：{message}",
 			pickUpstreamModel: "从上游模型列表选择",
 			removeModelRow: "删除此行",
+			modelsSection: "模型",
 			customModelsHint: "每行一个模型，支持粘贴逗号或换行分隔的模型 ID。",
-			customModelsEmptyHint: "新服务商至少添加一个模型；覆盖内置服务商时可留空，沿用官方列表。",
+			customModelsHintAll:
+				"每行一个模型，支持粘贴逗号或换行分隔的模型 ID；新服务商至少添加一个，覆盖内置服务商可留空沿用官方列表。",
 			submitting: "保存中…",
 		},
 		login: {
@@ -903,6 +897,7 @@ export const zh = {
 			llmRateLimit: "模型请求失败：请求过于频繁",
 			llmOverflow: "模型请求失败：上下文超限",
 			llmNetwork: "模型请求失败：网络错误",
+			llmInvalidEndpoint: "模型请求失败：接口地址或协议不匹配",
 			llmGeneric: "模型请求失败",
 			streamGuard: "回复已被安全机制中止",
 			sendFailed: "发送失败",
@@ -913,6 +908,8 @@ export const zh = {
 			rateLimit: "请求过于频繁或服务端限流，稍候重试。",
 			compact: "会话过长。可执行 /compact 压缩上下文，或从此处分叉开启新会话。",
 			network: "网络连接异常，请检查网络后重试。",
+			checkBaseUrl:
+				"上游没有返回可解析的模型流。常见原因是 baseUrl 少了 /v1（中转站多在 /v1 下提供 OpenAI 兼容接口），或服务商协议选错；到「设置 → 模型服务」检查地址与协议。",
 			streamGuard: "模型输出异常（病态流），已被安全机制中止。",
 		},
 		retrying: "自动重试中 · 第 {attempt}/{maxAttempts} 次 · 等待 {delay}s",

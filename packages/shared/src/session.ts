@@ -373,16 +373,6 @@ export type PermissionMode = "default" | "fullAccess";
  */
 export type SessionCloseIntent = "user" | "gc";
 
-/** 上下文管理模式（二态；缺省 evaporation。
- * 物理存储 = settings.json 单一决策 key contextEvaporation.enabled
- * （缺整个 key 或 enabled≠false → evaporation；遗留 acpCompressionEnabled 键读侧忽略、写侧顺带清除） */
-export type ContextManagerMode = "evaporation" | "off";
-
-/** 上下文管理配置（设置 UI 二态控件） */
-export interface ContextManagerConfigInfo {
-	mode: ContextManagerMode;
-}
-
 /** channel-watch 跨会话频道唤醒配置（设置 UI 开关；键在 ~/.percho/agent/settings.json，缺省=开） */
 export interface ChannelWatchConfigInfo {
 	enabled: boolean;

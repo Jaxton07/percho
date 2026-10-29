@@ -32,7 +32,7 @@ export function ProvidersPanel() {
 	return (
 		<div>
 			<RemoteAuthHelp />
-			<div className="mb-3 flex gap-1 border-b border-border">
+			<div className="mb-3 flex w-fit gap-1 border-b border-border">
 				{(["providers", "subagents"] as const).map((id) => (
 					<button
 						key={id}
@@ -85,7 +85,7 @@ function ProviderList({ providers }: { providers: ProviderInfo[] }) {
 		return <p className="py-4 text-center text-ui-13 text-ink-faint">{t("settings.providers.empty")}</p>;
 	}
 	return (
-		<ul className="divide-y divide-border">
+		<ul className="grid grid-cols-2 items-start gap-2.5">
 			{providers.map((provider) => (
 				<ProviderRow key={provider.id} provider={provider} />
 			))}

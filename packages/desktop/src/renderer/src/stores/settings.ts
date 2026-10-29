@@ -1,5 +1,4 @@
 import type {
-	ContextManagerMode,
 	CustomProviderInput,
 	CustomProviderUpdateInput,
 	LanStatus,
@@ -10,8 +9,8 @@ import type {
 	ProviderTestResult,
 	ResourceDiagnosticInfo,
 	SubagentInfo,
-	UpstreamModelInfo,
 	UpstreamModelsInput,
+	UpstreamModelsResult,
 } from "@percho/shared";
 import {
 	type EnvironmentRef,
@@ -57,8 +56,6 @@ interface SettingsStore {
 	refreshing: boolean;
 	/** 内置权限门控已被手改 permissions.json 关闭（逃生舱态；null = 未加载，false 不禁用 chip） */
 	permissionGateOff: boolean | null;
-	/** 上下文管理模式（evaporation / off；null = 未加载） */
-	contextManagerMode: ContextManagerMode | null;
 	/** channel-watch 跨会话频道唤醒开关（null = 未加载） */
 	channelWatchEnabled: boolean | null;
 	/** 局域网观察服务运行状态（null = 未加载）。 */
@@ -85,7 +82,7 @@ interface SettingsStore {
 	saveKey: (providerId: string, key: string) => Promise<void>;
 	removeCredential: (providerId: string) => Promise<void>;
 	addCustom: (input: CustomProviderInput) => Promise<void>;
-	listUpstreamModels: (input: UpstreamModelsInput) => Promise<UpstreamModelInfo[]>;
+	listUpstreamModels: (input: UpstreamModelsInput) => Promise<UpstreamModelsResult>;
 	updateCustom: (input: CustomProviderUpdateInput) => Promise<void>;
 	removeCustom: (providerId: string) => Promise<void>;
 	/** 内置 provider 的可选 baseUrl 覆写（留空 = 清除覆写回官方） */
@@ -99,7 +96,6 @@ interface SettingsStore {
 	setSubagentThinking: (agent: string, level: string | null) => Promise<void>;
 	/** 内置 subagent 执行器优先（新会话生效） */
 	setSubagentPreferBuiltin: (enabled: boolean) => Promise<void>;
-	setContextManagerMode: (mode: ContextManagerMode) => Promise<void>;
 	setChannelWatchEnabled: (enabled: boolean) => Promise<void>;
 	refreshLanStatus: () => Promise<void>;
 	setLanEnabled: (enabled: boolean) => Promise<void>;
@@ -364,10 +360,6 @@ function createSettingsStore(environment: EnvironmentRef) {
 		};
 		const loadGeneral = (): void => {
 			void getExecutionApi(environment)
-				.getContextManagerConfig()
-				.then((cm) => set({ contextManagerMode: cm.mode }))
-				.catch(() => {});
-			void getExecutionApi(environment)
 				.getChannelWatchConfig()
 				.then((cw) => set({ channelWatchEnabled: cw.enabled }))
 				.catch(() => {});
@@ -429,7 +421,6 @@ function createSettingsStore(environment: EnvironmentRef) {
 			loading: false,
 			refreshing: false,
 			permissionGateOff: null,
-			contextManagerMode: null,
 			channelWatchEnabled: null,
 			lanStatus: null,
 			lanSaving: false,
@@ -482,19 +473,6 @@ function createSettingsStore(environment: EnvironmentRef) {
 				if (!published || token === selectorRefreshToken) return;
 				selectorRefreshToken = token;
 				await useSessionsStore.getState().loadModels(environment);
-			},
-
-			setContextManagerMode: async (mode) => {
-				const previous = get().contextManagerMode;
-				set({ contextManagerMode: mode });
-				try {
-					await getExecutionApi(environment).setContextManagerMode({ mode });
-				} catch (error) {
-					set({
-						contextManagerMode: previous,
-						error: error instanceof Error ? error.message : String(error),
-					});
-				}
 			},
 
 			setChannelWatchEnabled: async (enabled) => {

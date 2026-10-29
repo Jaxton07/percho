@@ -134,11 +134,21 @@ export interface LoginResult {
 	error?: string;
 }
 
+/** 思考档位（与 SDK ModelThinkingLevel 一致） */
+export type ModelThinkingLevel = "off" | "minimal" | "low" | "medium" | "high" | "xhigh" | "max";
+/**
+ * 档位 → 上游 reasoning_effort 取值；`null` = 该档不支持（SDK thinkingLevelMap 语义）。
+ * 缺省的档位（undefined）对 off~high 视为支持、对 xhigh/max 视为不支持。
+ */
+export type ModelThinkingLevelMap = Partial<Record<ModelThinkingLevel, string | null>>;
+
 export interface CustomProviderModelInput {
 	id: string;
 	name?: string;
 	/** 支持思考/推理；缺省 SDK 按 false 处理（思考深度会被钳到 off） */
 	reasoning?: boolean;
+	/** 逐档思考力度映射；从 SDK 内置目录带出，缺省 = 只用 off~high */
+	thinkingLevelMap?: ModelThinkingLevelMap;
 	/** 上下文窗口 tokens；缺省 SDK 按 128000 */
 	contextWindow?: number;
 	/** 最大输出 tokens；缺省 SDK 按 16384 */
@@ -166,6 +176,8 @@ export interface UpstreamModelInfo {
 	id: string;
 	name?: string;
 	reasoning?: boolean;
+	/** 从 SDK 内置目录带出的逐档思考力度映射（/models 本身不返回） */
+	thinkingLevelMap?: ModelThinkingLevelMap;
 	contextWindow?: number;
 	maxTokens?: number;
 	imageInput?: boolean;
@@ -178,6 +190,12 @@ export interface UpstreamModelsInput {
 	api: string;
 	/** 表单里临时输入的 key；留空则由所属后端通过 SDK 解析该 provider 的已有凭证 */
 	apiKey?: string;
+}
+
+/** 拉取结果：`baseUrl` 是实际可用的基址（站点根会被探测补成 `/v1`），表单据此回填 */
+export interface UpstreamModelsResult {
+	models: UpstreamModelInfo[];
+	baseUrl: string;
 }
 
 export interface ProviderTestResult {
