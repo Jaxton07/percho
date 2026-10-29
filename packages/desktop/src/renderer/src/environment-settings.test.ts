@@ -10,7 +10,7 @@ import { describe, expect, it, vi } from "vitest";
 const fixture = vi.hoisted(() => {
 	const api = () => ({
 		listModels: vi.fn(async (): Promise<AvailableModel[]> => []),
-		setContextManagerMode: vi.fn(async (_args: unknown) => {}),
+		setChannelWatchEnabled: vi.fn(async (_args: unknown) => {}),
 		mcpConfigList: vi.fn(async (_args: unknown) => ({ global: [], project: [] })),
 		listConfiguredPackages: vi.fn(async () => []),
 		listGitBranches: vi.fn(async (_args: unknown) => ({ current: "main", branches: ["main"] })),
@@ -37,23 +37,23 @@ describe("settings operation ownership", () => {
 	it("late remote failure rolls back only its own settings after switching to a local project", async () => {
 		const remoteStore = getSettingsStore(remote);
 		const localStore = getSettingsStore(LOCAL_ENVIRONMENT);
-		remoteStore.setState({ contextManagerMode: "off", error: null });
-		localStore.setState({ contextManagerMode: "off", error: null });
+		remoteStore.setState({ channelWatchEnabled: true, error: null });
+		localStore.setState({ channelWatchEnabled: true, error: null });
 		let fail!: (error: Error) => void;
-		fixture.remote.setContextManagerMode.mockImplementationOnce(
+		fixture.remote.setChannelWatchEnabled.mockImplementationOnce(
 			() =>
 				new Promise((_resolve, reject) => {
 					fail = reject;
 				}),
 		);
-		const pending = remoteStore.getState().setContextManagerMode("evaporation");
+		const pending = remoteStore.getState().setChannelWatchEnabled(false);
 		useSessionsStore.setState({ activeSessionId: null, newSessionDraft: null, cwd: "/same" });
-		await localStore.getState().setContextManagerMode("evaporation");
+		await localStore.getState().setChannelWatchEnabled(false);
 		fail(new Error("remote disk read-only"));
 		await pending;
-		expect(fixture.remote.setContextManagerMode).toHaveBeenCalledWith({ mode: "evaporation" });
-		expect(remoteStore.getState().contextManagerMode).toBe("off");
-		expect(localStore.getState().contextManagerMode).toBe("evaporation");
+		expect(fixture.remote.setChannelWatchEnabled).toHaveBeenCalledWith({ enabled: false });
+		expect(remoteStore.getState().channelWatchEnabled).toBe(true);
+		expect(localStore.getState().channelWatchEnabled).toBe(false);
 		expect(localStore.getState().error).toBeNull();
 	});
 	it("MCP, package catalog and Git use the captured environment and unwrap only the owned directory", async () => {

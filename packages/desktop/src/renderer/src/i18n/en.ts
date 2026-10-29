@@ -585,16 +585,6 @@ export const en: Messages = {
 		backgroundChange: "Change image",
 		backgroundClear: "Remove",
 		backgroundDim: "Overlay opacity",
-		contextManager: "Context management",
-		contextManagerMode: {
-			evaporation: "Evaporation",
-			off: "Off",
-		},
-		contextManagerHint: {
-			evaporation:
-				"On by default. Evaporates aged tool output into self-describing stubs by watermark (e.g. “output evicted, re-read with the same arguments”): tool output truncated from 60%, evicted into placeholders from 85%; zero LLM calls, conversation text preserved, session files untouched. Switching applies without restarting sessions.",
-			off: "Disables all context management: no active compression/evaporation; the SDK's native compaction kicks in near the window limit. Long sessions may pause for compaction.",
-		},
 		channelWatch: "Cross-session channel collaboration (channel-watch)",
 		channelWatchHint:
 			"After a session subscribes to a channel it watches .local/agent-work/channel/<topic>/ for file updates; writes from another session wake this session to pick them up (per the HANDOFF.md protocol). Subscriptions persist via appendEntry and restore on session reopen; built-in loop protection. On by default, fully effective for trusted projects.",

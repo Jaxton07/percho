@@ -16,7 +16,6 @@ const api = vi.hoisted(() => ({
 	listSubagents: vi.fn(),
 	getLoadedResources: vi.fn(),
 	getPermissionConfig: vi.fn(),
-	getContextManagerConfig: vi.fn(),
 	getChannelWatchConfig: vi.fn(),
 	lanGetStatus: vi.fn(),
 	getModelPrefs: vi.fn(),
@@ -77,7 +76,6 @@ beforeEach(async () => {
 	vi.resetModules();
 	vi.resetAllMocks();
 	api.getPermissionConfig.mockResolvedValue({ enabled: true });
-	api.getContextManagerConfig.mockResolvedValue({ mode: "evaporation" });
 	api.getChannelWatchConfig.mockResolvedValue({ enabled: true });
 	api.lanGetStatus.mockResolvedValue(null);
 	api.getModelPrefs.mockResolvedValue({ hiddenModels: {}, subagentModels: {} });
@@ -115,7 +113,6 @@ describe("V03 settings consumer matrix (ticket 11 target)", () => {
 		await store.getState().refresh();
 		for (const mock of [
 			api.getPermissionConfig,
-			api.getContextManagerConfig,
 			api.getChannelWatchConfig,
 			api.lanGetStatus,
 			api.getModelPrefs,
@@ -143,7 +140,6 @@ describe("V03 settings consumer matrix (ticket 11 target)", () => {
 		await vi.waitFor(() => expect(store.getState().permissionGateOff).toBe(true));
 		expect(api.getPermissionConfig).toHaveBeenCalledTimes(2);
 		expect(api.lanGetStatus).not.toHaveBeenCalled();
-		expect(api.getContextManagerConfig).toHaveBeenCalledTimes(2);
 		expect(api.getChannelWatchConfig).toHaveBeenCalledTimes(2);
 		expect(coldCalls()).toEqual([]);
 	});
@@ -169,7 +165,6 @@ describe("D10 consumer and mutation responsibilities", () => {
 		const full = category.startsWith("plugin:");
 		if (full) await vi.waitFor(() => expect(api.getLoadedResources).toHaveBeenCalledOnce());
 		for (const [mock, enabled] of [
-			[api.getContextManagerConfig, full || category === "general"],
 			[api.getChannelWatchConfig, full || category === "general"],
 			[api.listProviders, full || category === "models"],
 			[api.getModelPrefs, full || category === "models"],
@@ -196,14 +191,13 @@ describe("D10 consumer and mutation responsibilities", () => {
 		expect(api.listProviders).not.toHaveBeenCalled();
 		expect(store.getState().providers).toBe(kept);
 		store.getState().setCategory("general");
-		expect(api.getContextManagerConfig).toHaveBeenCalledOnce();
+		expect(api.getChannelWatchConfig).toHaveBeenCalledOnce();
 		store.getState().setCategory("general");
-		expect(api.getContextManagerConfig).toHaveBeenCalledOnce();
+		expect(api.getChannelWatchConfig).toHaveBeenCalledOnce();
 		store.getState().setOpen(false);
 		store.getState().setOpen(true);
 		await store.getState().loadPermissionGate();
 		expect(api.getPermissionConfig).toHaveBeenCalledTimes(2);
-		expect(api.getContextManagerConfig).toHaveBeenCalledTimes(2);
 	});
 	it("independent gate startup coalesces pending reads and retries after failure, then reopens detect edited config", async () => {
 		const gate = deferred<{ enabled: boolean }>();
@@ -236,12 +230,7 @@ describe("D10 consumer and mutation responsibilities", () => {
 			expect(api.listSubagents).toHaveBeenCalledOnce();
 			expect(api.loadModels).toHaveBeenCalledOnce();
 			expect(api.getLoadedResources).toHaveBeenCalledTimes(domain === "packages" ? 1 : 0);
-			for (const mock of [
-				api.getPermissionConfig,
-				api.getContextManagerConfig,
-				api.getChannelWatchConfig,
-				api.lanGetStatus,
-			])
+			for (const mock of [api.getPermissionConfig, api.getChannelWatchConfig, api.lanGetStatus])
 				expect(mock).not.toHaveBeenCalled();
 		},
 	);
@@ -298,12 +287,7 @@ describe("D10 consumer and mutation responsibilities", () => {
 		expect(api.getLoadedResources).toHaveBeenCalledTimes(2);
 		expect(off).toHaveBeenCalledOnce();
 		expect(login.getState().login).toBeNull();
-		for (const mock of [
-			api.getPermissionConfig,
-			api.getContextManagerConfig,
-			api.getChannelWatchConfig,
-			api.lanGetStatus,
-		])
+		for (const mock of [api.getPermissionConfig, api.getChannelWatchConfig, api.lanGetStatus])
 			expect(mock).not.toHaveBeenCalled();
 	});
 });

@@ -24,8 +24,6 @@ import type {
 	AppInfo,
 	AvailableModel,
 	ChannelWatchConfigInfo,
-	ContextManagerConfigInfo,
-	ContextManagerMode,
 	ContextUsageInfo,
 	CreateSessionOptions,
 	GitBranches,
@@ -632,16 +630,6 @@ export const SETTINGS_CHANNELS = {
 		sessionId: input.id,
 		mode: input.oneOf("default", "fullAccess"),
 	}),
-	/** 读取上下文管理模式（evaporation / off 二态派生） */
-	getContextManagerConfig: ch("contextManager:getConfig", "environment", "read")<
-		void,
-		ContextManagerConfigInfo
-	>(),
-	setContextManagerMode: ch(
-		"contextManager:setMode",
-		"environment",
-		"mutation",
-	)<{ mode: ContextManagerMode }, void>({ mode: input.oneOf("evaporation", "off") }),
 	/** channel-watch 跨会话频道唤醒开关 */
 	getChannelWatchConfig: ch("channelWatch:getConfig", "environment", "read")<void, ChannelWatchConfigInfo>(),
 	setChannelWatchEnabled: ch(

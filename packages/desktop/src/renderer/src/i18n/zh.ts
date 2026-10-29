@@ -567,16 +567,6 @@ export const zh = {
 		backgroundChange: "更换图片",
 		backgroundClear: "清除背景",
 		backgroundDim: "遮罩浓度",
-		contextManager: "上下文管理",
-		contextManagerMode: {
-			evaporation: "蒸发",
-			off: "关闭",
-		},
-		contextManagerHint: {
-			evaporation:
-				"默认开启。按水位线把到龄的工具输出蒸发为带恢复指令的占位符（如「输出已淘汰，可用相同参数重读」）：60% 起截断工具输出、85% 起淘汰为占位；零 LLM 调用、对话原文保留、会话文件不动。切换后无需重开会话。",
-			off: "关闭全部上下文管理：不做主动压缩/蒸发，依赖 SDK 在接近窗口上限时的原生压缩兜底。长会话可能中断等待压缩。",
-		},
 		channelWatch: "跨会话频道协作（channel-watch）",
 		channelWatchHint:
 			"会话订阅频道后自动监听 .local/agent-work/channel/<主题>/ 的文件更新，另一会话写入时唤醒本会话查收（按 HANDOFF.md 沟通协议）。订阅经 appendEntry 持久化，重开会话自动恢复；内置防环保护。默认开启，对已信任项目完全生效。",

@@ -1,6 +1,6 @@
 import type { ExtensionContext, InlineExtension } from "@earendil-works/pi-coding-agent";
 import { createLogger } from "../../log";
-import { readContextManagerMode, readEvapConfig } from "./config";
+import { readEvapConfig } from "./config";
 import { evaporateWire } from "./evaporate";
 import type { EvapWireMessage } from "./types";
 import { createEvapState, type EvapBatchInfo, type EvapConfig, type EvapState } from "./types";
@@ -13,19 +13,18 @@ const log = createLogger("context-evaporation");
  * 接线一览（全部 try/catch，钩子绝不 throw；异常 → log + 返回 undefined 原样放行）：
  * - session_start：全新空决策 Map（startup/resume/new/fork/reload 一律重来——冷启动
  *   重算安全，replay §5.5：重算集 ⊇ live 集，首 call 一次性补齐且本就全量 cache miss）
- * - context：liveEnabled 实时读派生 mode（2s TTL）→ withLock → evaporateWire 纯函数
+ * - context：enabled() 实时判定（常开）→ withLock → evaporateWire 纯函数
  *   → 有动作时 reporter(batch)（P3 起接 trace）；Tier 0 / 无变化返回 undefined 零干扰
  * - session_compact：重置决策 Map（arch §4.2：compact 边界前的 part 整体消失，防幽灵决策）
  *
- * 二态激活（单一写者保证）：mode==="evaporation" 才启用（缺省即蒸发），off 可运行时关闭，
- * 切换 ≤2s 生效免重开会话。
+ * 常开策略：蒸发是内置能力，不暴露用户开关；`isEnabled` 仅供测试注入关闭路径。
  *
  * 扩展不注册任何工具、不改 system prompt——stub 自带恢复指令，零 prompt 污染。
  */
 
 export interface EvapExtensionOptions {
 	agentDir: string;
-	/** 开关判定（缺省 readContextManagerMode(agentDir) === "evaporation"，测试可注入） */
+	/** 开关判定（缺省常开；测试可注入关闭路径） */
 	isEnabled?: () => boolean;
 	/** 配置读取（缺省 readEvapConfig(agentDir)，测试可注入） */
 	getConfig?: () => EvapConfig;
@@ -38,7 +37,7 @@ export function makeEvapExtension(options: EvapExtensionOptions): InlineExtensio
 	return {
 		name: "context-evaporation",
 		factory: (pi) => {
-			const enabled = options.isEnabled ?? (() => readContextManagerMode(options.agentDir) === "evaporation");
+			const enabled = options.isEnabled ?? (() => true);
 			const getConfig = options.getConfig ?? (() => readEvapConfig(options.agentDir));
 			const report =
 				options.reporter ?? ((sessionId: string, batch: EvapBatchInfo) => reportBatch(sessionId, batch));
@@ -48,8 +47,7 @@ export function makeEvapExtension(options: EvapExtensionOptions): InlineExtensio
 			let active = false;
 			let state: EvapState = createEvapState();
 
-			/** 实时生效判定：active 表示 session_start 时曾启用，
-			 * 开关同进程翻转（开→关）时闭包 active 停留 true，入口每次实时读 enabled() */
+			/** 实时生效判定：active 表示本次会话已激活；入口每次实时读 enabled()（测试注入关闭时立即生效） */
 			const liveEnabled = (): boolean => active && enabled();
 
 			let lockTail: Promise<unknown> = Promise.resolve();

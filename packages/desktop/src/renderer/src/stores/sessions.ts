@@ -951,7 +951,7 @@ export const useSessionsStore = create<SessionsStore>((_set, get) => ({
 	},
 
 	/**
-	 * 切换会话权限模式：乐观更新 + IPC 同步，失败回滚 + toast（范式同 setContextManagerMode）。
+	 * 切换会话权限模式：乐观更新 + IPC 同步，失败回滚 + toast（范式同 setChannelWatchEnabled）。
 	 * 新会话页的档位不走这里（它存在 `newSessionDraft.permissionMode`，promotion 后由 store 应用）。
 	 * 后端为内存态即时生效（每次 tool_call 实时读），无需重升会话。
 	 */

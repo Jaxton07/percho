@@ -23,7 +23,6 @@ import {
 import type {
 	AvailableModel,
 	ChannelSubscriptionsSnapshot,
-	ContextManagerMode,
 	ContextUsageInfo,
 	CreateSessionOptions,
 	ExtensionDialogRequest,
@@ -138,12 +137,7 @@ import {
 } from "./tools/channel-watch";
 import { makeCompactionGuardExtension } from "./tools/compaction-guard";
 import { createCompactionRequestPolicy } from "./tools/compaction-guard/request-policy";
-import {
-	makeEvapExtension,
-	readContextManagerMode,
-	reportEvapBatch,
-	writeContextManagerMode,
-} from "./tools/context-evaporation";
+import { makeEvapExtension, reportEvapBatch } from "./tools/context-evaporation";
 import { collectMcpTools, makeMcpInventoryExtension } from "./tools/mcp-inventory";
 import { makeShowImageTool } from "./tools/show-image";
 import { discoverAgents, isSubagentSessionPath, makeSubagentTool } from "./tools/subagent";
@@ -1944,22 +1938,6 @@ export class PiBackend {
 		if (!entry) throw new Error(`Session not found: ${sessionId}`);
 		entry.modeRef.current = mode;
 		log.info("permission mode", sessionId, { mode });
-	}
-
-	/** 上下文管理模式（二态：evaporation / off；单一 key 派生读，缺省蒸发） */
-	getContextManagerConfig(): { mode: ContextManagerMode } {
-		return { mode: readContextManagerMode(getAgentDir()) };
-	}
-
-	/** 写上下文管理模式（单一写者原子写，写后即效：下一轮 context 钩子见新值）。损坏拒写时上抛 */
-	setContextManagerMode(mode: ContextManagerMode): void {
-		try {
-			writeContextManagerMode(getAgentDir(), mode);
-		} catch (err) {
-			log.error("settings.json 写入失败（contextManager mode 未保存）", err);
-			throw err; // ipcMain.handle，reject 传回 renderer
-		}
-		log.info("context manager mode", mode);
 	}
 
 	/** channel-watch 总开关（设置 UI 用；键在 ~/.percho/agent/settings.json，缺省=开） */
