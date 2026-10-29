@@ -19,6 +19,7 @@ export * from "./sidebar";
 export * from "./skill-invocation";
 export * from "./storage-startup";
 export * from "./subagent";
+export * from "./task-notifications";
 export * from "./thinking";
 export * from "./todo";
 export * from "./transcript";

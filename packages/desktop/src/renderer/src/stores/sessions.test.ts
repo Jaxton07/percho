@@ -322,6 +322,13 @@ describe("switchSession", () => {
 });
 
 describe("openFromHistory", () => {
+	it("lands history without stealing focus when an external notification target guard expires", async () => {
+		piMock.openSession.mockResolvedValue(realMeta("expired-target", "/project"));
+		const previous = useSessionsStore.getState().activeSessionId;
+		const result = await useSessionsStore.getState().openFromHistory("/project/expired.jsonl", () => false);
+		expect(result).toMatchObject({ ok: true, latest: false });
+		expect(useSessionsStore.getState().activeSessionId).toBe(previous);
+	});
 	it("运行中子会话已收到实时事件时保留流式进度，不回放静态历史覆盖", async () => {
 		piMock.openSession.mockResolvedValue(realMeta("sub-1", "/proj"));
 		useTranscriptStore.getState().applyEvent("sub-1", { type: "agent_start" } as SessionEvent);

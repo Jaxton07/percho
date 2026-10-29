@@ -1,6 +1,7 @@
 import type { TrustRequest } from "@percho/shared";
 import { environmentEntityRef, LOCAL_ENVIRONMENT } from "@percho/shared";
 import { useCallback, useEffect, useRef } from "react";
+import { getPi } from "./api";
 import { CornerStack } from "./components/chat/CornerStack";
 import { EmptyState } from "./components/chat/EmptyState";
 import { MessageList } from "./components/chat/MessageList";
@@ -18,6 +19,7 @@ import { Sidebar } from "./components/sidebar/Sidebar";
 import { Toaster } from "./components/Toaster";
 import { getExecutionApi } from "./environment-api";
 import { useSessionEventBridge } from "./hooks/use-session-event-bridge";
+import { useI18nStore } from "./i18n";
 import { selectActiveCwd } from "./lib/active-cwd";
 import { initDailyDir } from "./lib/daily";
 import { useSessionGc } from "./lib/use-session-gc";
@@ -38,6 +40,7 @@ import { initRemoteConnectionBridge } from "./stores/remote-connection";
 import { restoreSessionWorkspace } from "./stores/session-workspace-restore";
 import { useSessionsStore } from "./stores/sessions";
 import { useHasParentRelation } from "./stores/subagent-return";
+import { initTaskNotificationNavigation } from "./stores/task-notification-navigation";
 import { backgroundImageUrl, useThemeStore } from "./stores/theme";
 import { useTranscriptStore } from "./stores/transcript";
 import { useUiPreferencesStore } from "./stores/ui-preferences";
@@ -92,6 +95,15 @@ export default function App() {
 	// 会话内存策略（K=3 热会话 + 受保护不卸）：全局挂一次，策略细节在 lib/session-gc.ts
 	useSessionGc();
 	useEffect(() => initRemoteConnectionBridge(), []);
+	useEffect(() => {
+		const sync = () => {
+			void getPi()
+				.setNotificationLanguage({ language: useI18nStore.getState().language })
+				.catch(() => {});
+		};
+		sync();
+		return useI18nStore.subscribe(sync);
+	}, []);
 
 	useEffect(() => {
 		// 上次项目目录：启动即预填（用户不用重选项目）。**只带 cwd，不恢复任何会话**——
@@ -117,6 +129,7 @@ export default function App() {
 		void initUiPlugins();
 	}, []);
 
+	useEffect(() => initTaskNotificationNavigation(), []);
 	const respondTrust = async (requestId: string, optionIndex: number) => {
 		await getExecutionApi(requestId).respondTrust({ requestId, answer: optionIndex });
 		useInteractionStore.getState().removeTrust(requestId);

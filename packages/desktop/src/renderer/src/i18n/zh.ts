@@ -1,6 +1,17 @@
-import { UI_WORKBENCH_TRUST_COPY } from "@percho/shared";
+import { TASK_NOTIFICATION_COPY, UI_WORKBENCH_TRUST_COPY } from "@percho/shared";
 /** 中文语言包（作为 key 的结构定义，en.ts 与之同形） */
 export const zh = {
+	notifications: {
+		...TASK_NOTIFICATION_COPY.zh,
+		title: "桌面任务通知",
+		hint: "仅在应用处于后台时提醒任务结束；适用于这台电脑的所有执行环境。",
+		test: "发送测试通知",
+		submitted: "已向系统提交请求；是否显示取决于系统通知权限和勿扰设置。",
+		unsupported: "当前系统不支持桌面通知。",
+		failed: "通知未能提交，请检查系统通知设置。",
+		saveFailed: "通知偏好未能保存，本次运行仍采用你的选择。",
+		targetUnavailable: "通知对应的会话或连接已不可用。",
+	},
 	emptyState: {
 		slogan: "做你所想，如你所愿",
 	},

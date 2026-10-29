@@ -1,13 +1,16 @@
 import type { PiBackend } from "@percho/backend";
-import { IpcChannels, REMOTE_CHANNELS, UI_WORKBENCH_TRUST_COPY } from "@percho/shared";
+import { IpcChannels, LOCAL_ENVIRONMENT, REMOTE_CHANNELS, UI_WORKBENCH_TRUST_COPY } from "@percho/shared";
 import { app, dialog } from "electron";
 import { setEnvironmentUiAuthorization } from "../environment-ui-state";
 import type { LanObserverHandle } from "../lan";
+import { initializeNativeNotifications, nativeNotifications } from "../native-notifications";
 import { remoteConnectionManager } from "../remote-connection";
 import { discoverSshAliases } from "../ssh-config";
+import { initializeTaskNotifications, observeTaskNotification } from "../task-notifications";
 import { loadUiPluginsConfig } from "../ui-plugins/config";
 import type { UiPluginManager } from "../ui-plugins/manager";
 import { UiWorkbenchTrust } from "../ui-plugins/workbench-trust";
+import { loadUiState } from "../ui-state";
 import { onUpdateState } from "../updater";
 import { registerAppIpc } from "./app";
 import { registerExtensionDialogIpc } from "./extension-dialogs";
@@ -28,6 +31,9 @@ export function registerIpc(
 	uiPluginsManager: UiPluginManager,
 	lan: LanObserverHandle,
 ): void {
+	initializeNativeNotifications();
+	initializeTaskNotifications();
+	nativeNotifications.restoreEnabled(async () => (await loadUiState())?.taskNotificationsEnabled ?? true);
 	const trust = new UiWorkbenchTrust(
 		loadUiPluginsConfig,
 		(names) => uiPluginsManager.updateConfig({ kind: "trust-workbench", names }),
@@ -88,6 +94,11 @@ export function registerIpc(
 
 	// onEvent 载荷是 (sessionId, event) → 信封封装，不透明传，单行保留
 	backend.onEvent((sessionId, event) => {
+		observeTaskNotification(
+			LOCAL_ENVIRONMENT,
+			{ sessionId, event, sequence: backend.getSessionEventSequence(sessionId) },
+			() => backend.getLoadedSessions().find((summary) => summary.meta.sessionId === sessionId)?.meta,
+		);
 		sendToRenderer(IpcChannels.Event, { sessionId, event });
 	});
 	forward(backend.onPermissionRequest.bind(backend), IpcChannels.PermissionRequest);

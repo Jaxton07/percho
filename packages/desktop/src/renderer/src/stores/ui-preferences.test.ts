@@ -15,6 +15,7 @@ vi.mock("../api", () => ({
 		}),
 }));
 
+import { useToastsStore } from "./toasts";
 import { useUiPreferencesStore } from "./ui-preferences";
 
 /**
@@ -48,6 +49,22 @@ beforeEach(() => {
 });
 
 describe("useUiPreferencesStore", () => {
+	it("keeps the user's in-memory disable choice and reports a failed save without private details", async () => {
+		piMock.saveUiState.mockRejectedValueOnce(new Error("private disk path"));
+		await useUiPreferencesStore.getState().setTaskNotificationsEnabled(false);
+		expect(useUiPreferencesStore.getState().taskNotificationsEnabled).toBe(false);
+		const toast = useToastsStore.getState().toasts.at(-1);
+		expect(toast?.titleKey).toBe("notifications.saveFailed");
+		expect(toast?.detail).toBeUndefined();
+	});
+	it("restores desktop notification preferences and applies changes immediately", async () => {
+		piMock.loadUiState.mockResolvedValue({ taskNotificationsEnabled: false });
+		await useUiPreferencesStore.getState().init();
+		expect(useUiPreferencesStore.getState().taskNotificationsEnabled).toBe(false);
+		await useUiPreferencesStore.getState().setTaskNotificationsEnabled(true);
+		expect(useUiPreferencesStore.getState().taskNotificationsEnabled).toBe(true);
+		expect(piMock.saveUiState).toHaveBeenLastCalledWith({ state: { taskNotificationsEnabled: true } });
+	});
 	it("默认关闭（旧版本 ui-state 无该字段）", () => {
 		expect(useUiPreferencesStore.getState().centerOrbEnabled).toBe(false);
 	});

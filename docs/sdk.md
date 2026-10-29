@@ -11,6 +11,7 @@
 - 普通关闭需等待清理并保留首错；退出钩子不等异步完成，必须有同步兜底；注册冲突只能拆掉新构造实例，不碰旧 holder。修改时核对 `session/registry.ts` 与现有 shutdown/dispose 回归，不依赖 app 最后退出替每个会话收尾。
 - `before_agent_start` 按 `messageType` 区分用户与自定义起始消息，后者没有 `prompt`。启动处理期间会话已经 busy；取消可在实际请求开始前发生，传输层仍可能收到已取消的 signal，不能把进入传输回调当作已发出网络请求。
 - `agent_settled.aborted` 表示取消；`agent_end` 之后仍可能自动重试、压缩或续跑。子代理完成和忙碌释放继续以最终 settled 为边界。
+- 任务提醒观察从实际 `agent_start` 到最终 `agent_settled` 的整个忙碌区间。SDK 可在同一次运行里消耗多条 follow-up，也可在 settled 前再次 start；`turn_end`、输入框解锁或 `agentActive=false` 均不能单独证明任务已完成。提醒还需可信助手终态，压缩暂停和主动取消不通知，明确保护失败即使伴随 abort 也按失败处理。
 
 ## 模型与工具
 
