@@ -1,6 +1,7 @@
 // @vitest-environment happy-dom
 import type { ComposerDocument } from "@percho/shared";
-import { act } from "react";
+import { UNDO_COMMAND } from "lexical";
+import { act, createRef } from "react";
 import { createRoot } from "react-dom/client";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
@@ -12,8 +13,10 @@ vi.mock("../../api", () => ({
 	getPi: () => ({ showComposerEditMenu: fixture.show, cancelComposerEditMenu: fixture.cancel }),
 }));
 
-import { ComposerEditor } from "./ComposerEditor";
-import { releaseComposerEditor } from "./editor-host";
+import { ComposerEditor, type ComposerEditorHandle } from "./ComposerEditor";
+import { $readComposerSelection, $selectComposerRange } from "./editor-document";
+import { getComposerEditor, releaseComposerEditor } from "./editor-host";
+import { fileReferencePart } from "./paste-files";
 
 vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
 const container = document.createElement("div");
@@ -42,10 +45,44 @@ function context() {
 	container.querySelector("[contenteditable]")?.dispatchEvent(event);
 	return event;
 }
+
+async function renderWithHandle(draftKey: string, document: ComposerDocument) {
+	const ref = createRef<ComposerEditorHandle>();
+	await act(async () =>
+		root.render(
+			<ComposerEditor
+				ref={ref}
+				draftKey={draftKey}
+				readOnly={false}
+				document={document}
+				placeholder="Fixture"
+				onChange={noop}
+				onSelectionChange={noop}
+				onKeyDown={noop}
+				onPaste={noop}
+			/>,
+		),
+	);
+	return ref;
+}
+
+/** 直接读内核状态：组件不一定重渲染，onChange 也已经交给上层草稿。 */
+function readComposer(draftKey: string) {
+	let document: ComposerDocument = empty;
+	let text = "";
+	getComposerEditor(draftKey, empty)
+		.editor.getEditorState()
+		.read(() => {
+			({ document, text } = $readComposerSelection());
+		});
+	return { document, text };
+}
+
 afterEach(async () => {
 	await act(async () => root.unmount());
 	root = createRoot(container);
-	for (const key of ["menu-one", "menu-two"]) releaseComposerEditor(key);
+	for (const key of ["menu-one", "menu-two", "paste-caret", "paste-selection", "paste-undo"])
+		releaseComposerEditor(key);
 	vi.clearAllMocks();
 });
 describe("composer menu ownership", () => {
@@ -75,5 +112,65 @@ describe("composer menu ownership", () => {
 		fixture.cancel.mockClear();
 		document.body.dispatchEvent(new FocusEvent("focusin", { bubbles: true }));
 		expect(fixture.cancel).toHaveBeenCalledWith({ token: second?.token });
+	});
+});
+
+describe("paste insertion", () => {
+	it("inserts references at the caret instead of appending", async () => {
+		const handle = await renderWithHandle("paste-caret", {
+			version: 1,
+			parts: [{ type: "text", text: "ab" }],
+		});
+
+		await act(async () => handle.current?.focus(1));
+		const range = handle.current?.selectionRange();
+		expect(range).toEqual({ start: 1, end: 1 });
+
+		await act(async () => handle.current?.insertReferences([fileReferencePart("/tmp/report.pdf")], range));
+		expect(readComposer("paste-caret").document.parts).toEqual([
+			{ type: "text", text: "a" },
+			{ type: "file", path: "/tmp/report.pdf", label: "report.pdf" },
+			{ type: "text", text: " b" },
+		]);
+	});
+
+	it("replaces the current selection", async () => {
+		const handle = await renderWithHandle("paste-selection", {
+			version: 1,
+			parts: [{ type: "text", text: "hello world" }],
+		});
+		const entry = getComposerEditor("paste-selection", empty);
+
+		await act(async () => entry.editor.update(() => $selectComposerRange(0, 6)));
+		const range = handle.current?.selectionRange();
+		expect(range).toEqual({ start: 0, end: 6 });
+
+		await act(async () => handle.current?.insertReferences([fileReferencePart("/tmp/report.pdf")], range));
+		expect(readComposer("paste-selection").text).toBe("@report.pdf world");
+	});
+
+	it("restores the text with a single undo", async () => {
+		const handle = await renderWithHandle("paste-undo", {
+			version: 1,
+			parts: [{ type: "text", text: "ab" }],
+		});
+
+		await act(async () => handle.current?.focus(1));
+		await act(async () =>
+			handle.current?.insertReferences(
+				[fileReferencePart("/tmp/report.pdf")],
+				handle.current.selectionRange(),
+			),
+		);
+		expect(readComposer("paste-undo").text).toBe("a@report.pdf b");
+
+		const entry = getComposerEditor("paste-undo", empty);
+		await act(async () => {
+			expect(entry.editor.dispatchCommand(UNDO_COMMAND, undefined)).toBe(true);
+		});
+		expect(readComposer("paste-undo").document).toEqual({
+			version: 1,
+			parts: [{ type: "text", text: "ab" }],
+		});
 	});
 });

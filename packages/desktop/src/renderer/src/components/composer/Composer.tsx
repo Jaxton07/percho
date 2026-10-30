@@ -38,7 +38,7 @@ import { resolveDroppedFilePaths } from "./drop-files";
 import { ImageTray } from "./ImageTray";
 import { ModelPicker } from "./ModelPicker";
 import { PermissionPicker } from "./PermissionPicker";
-import { fileReferenceParts, planFilePaste } from "./paste-files";
+import { commitFilePaste, fileReferenceParts, planFilePaste } from "./paste-files";
 import { QueueBar } from "./QueueBar";
 import { QuoteChip } from "./QuoteChip";
 import { SendErrorBar } from "./SendErrorBar";
@@ -397,19 +397,14 @@ export function Composer({ centered = false }: { centered?: boolean }) {
 		if (!plan.handled) return;
 		// 文件/图片由我们接管，别让默认行为把文件名或图片数据塞进文本框
 		e.preventDefault();
-		if (plan.remoteRejected) pushToast("warning", "remote.localFileRejected");
 		// 顶栏右侧 toast 卡（不用内联反馈：该提示不阻塞继续输入，卡片可手动关）
-		if (plan.imagesRejected) pushToast("warning", "composer.imageUnsupported");
-		if (plan.paths.length > 0) {
-			// 先记下粘贴时的选区：路径类型要问主进程，回来时用户可能已经挪了光标
-			const range = editorRef.current?.selectionRange();
-			const insert = (kinds?: Array<"file" | "directory">) =>
-				editorRef.current?.insertReferences(fileReferenceParts(plan.paths, kinds), range);
-			void getPi()
-				.pathKinds({ paths: plan.paths })
-				.then(insert, () => insert());
-		}
-		if (plan.images.length > 0) handleFiles(plan.images);
+		commitFilePaste(plan, {
+			selectionRange: () => editorRef.current?.selectionRange() ?? { start: 0, end: 0 },
+			insertReferences: (references, range) => editorRef.current?.insertReferences(references, range),
+			addImages: handleFiles,
+			pathKinds: (paths) => getPi().pathKinds({ paths }),
+			toast: (message) => pushToast("warning", message),
+		});
 	};
 
 	return (
