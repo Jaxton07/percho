@@ -32,7 +32,7 @@ export interface ComposerEditorHandle {
 	focus: (position?: number | "end") => void;
 	replaceText: (start: number, end: number, text: string) => void;
 	insertReference: (start: number, end: number, reference: Exclude<ComposerPart, { type: "text" }>) => void;
-	/** 当前选区（UTF-16 偏移）；粘贴时先记下来，异步取完路径类型仍插在原选区 */
+	/** 当前选区（UTF-16 偏移）；粘贴时用它把引用插在光标处并替换选区 */
 	selectionRange: () => { start: number; end: number };
 	/** 在给定选区（缺省用当前光标/选区）插入引用，一次事务、可撤销 */
 	insertReferences: (

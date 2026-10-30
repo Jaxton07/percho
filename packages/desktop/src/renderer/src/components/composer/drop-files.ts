@@ -32,8 +32,10 @@ export function readTransferItems(items: ArrayLike<TransferItemLike>): TransferF
 		if (item.kind !== "file") continue;
 		const file = item.getAsFile();
 		if (!file) continue;
-		files.push({ file, directory: isDirectory(item) });
-		if (file.type.startsWith("image/")) images.push(file);
+		const image = file.type.startsWith("image/");
+		// 图片不会走文件引用，也不用问 entry。
+		files.push({ file, directory: image ? false : isDirectory(item) });
+		if (image) images.push(file);
 	}
 	return { files, images };
 }
