@@ -34,7 +34,7 @@ import { AtMenu } from "./AtMenu";
 import { ComposerEditor, type ComposerEditorHandle } from "./ComposerEditor";
 import { ContextRing } from "./ContextRing";
 import "./composer-editor.css";
-import { resolveDroppedFilePaths } from "./drop-files";
+import { type NativeFileRef, readTransferItems, resolveTransferPaths } from "./drop-files";
 import { ImageTray } from "./ImageTray";
 import { ModelPicker } from "./ModelPicker";
 import { PermissionPicker } from "./PermissionPicker";
@@ -119,26 +119,18 @@ export function Composer({ centered = false }: { centered?: boolean }) {
 		updateDraft(draftKey, (d) => ({ ...d, slashCommand: command }));
 	};
 	const appendAttachments = useCallback(
-		(paths: string[]) => {
-			if (!paths.length) return;
-			const append = (kinds?: Array<"file" | "directory">) =>
-				updateDraft(draftKey, (d) => ({
-					...d,
-					document: normalizeComposerDocument({
-						version: 1,
-						parts: [
-							...d.document.parts,
-							...fileReferenceParts(paths, kinds).flatMap((part) => [
-								{ type: "text" as const, text: " " },
-								part,
-							]),
-						],
-					}),
-				}));
-			// 目录与文件用同一个引用，图标靠主进程给出路径类型
-			void getPi()
-				.pathKinds({ paths })
-				.then(append, () => append());
+		(refs: ReadonlyArray<NativeFileRef>) => {
+			if (!refs.length) return;
+			updateDraft(draftKey, (d) => ({
+				...d,
+				document: normalizeComposerDocument({
+					version: 1,
+					parts: [
+						...d.document.parts,
+						...fileReferenceParts(refs).flatMap((part) => [{ type: "text" as const, text: " " }, part]),
+					],
+				}),
+			}));
 		},
 		[draftKey, updateDraft],
 	);
@@ -356,12 +348,12 @@ export function Composer({ centered = false }: { centered?: boolean }) {
 		const onDrop = (event: DragEvent) => {
 			if (!containsFiles(event) || !event.dataTransfer) return;
 			event.preventDefault();
+			const { files, images } = readTransferItems(event.dataTransfer.items);
 			if (environment.kind === "ssh") {
-				const files = Array.from(event.dataTransfer.files);
-				if (files.some((file) => !file.type.startsWith("image/")))
+				if (files.some((entry) => !entry.file.type.startsWith("image/")))
 					pushToast("warning", "remote.localFileRejected");
-				handleFiles(files.filter((file) => file.type.startsWith("image/")));
-			} else appendAttachments(resolveDroppedFilePaths(event.dataTransfer.files, getPi().getPathForFile));
+				handleFiles(images);
+			} else appendAttachments(resolveTransferPaths(files, getPi().getPathForFile));
 		};
 		window.addEventListener("dragover", onDragOver);
 		window.addEventListener("drop", onDrop);
@@ -374,22 +366,15 @@ export function Composer({ centered = false }: { centered?: boolean }) {
 	/**
 	 * 截图/复制图片后 Ctrl+V 粘贴到输入框；从 Finder 粘贴文件落成带完整路径的文件引用。
 	 * 沙箱里 File 只有 name 没有 path，原生路径必须由 preload 的 webUtils 还原（与拖放同一条
-	 * resolveDroppedFilePaths 管线），否则输入框里只会留下一个孤立文件名。
+	 * readTransferItems 管线），否则输入框里只会留下一个孤立文件名。目录身份取自
+	 * FileSystemEntry，全程同步。
 	 * 引用插在光标处并替换选区；同一次粘贴里的图片照常加入，远端会话沿用拖放的本地文件限制。
 	 */
 	const handlePaste = (e: React.ClipboardEvent<HTMLDivElement>) => {
 		const clipboard = e.clipboardData;
 		if (!clipboard) return;
-		const documents = Array.from(clipboard.files).filter((file) => !file.type.startsWith("image/"));
-		const images: File[] = [];
-		for (const item of Array.from(clipboard.items ?? [])) {
-			if (!item.type.startsWith("image/")) continue;
-			const file = item.getAsFile();
-			if (file) images.push(file);
-		}
 		const plan = planFilePaste({
-			documents,
-			images,
+			items: clipboard.items,
 			isRemote: environment.kind === "ssh",
 			imagesSupported,
 			getPathForFile: getPi().getPathForFile,
@@ -402,7 +387,6 @@ export function Composer({ centered = false }: { centered?: boolean }) {
 			selectionRange: () => editorRef.current?.selectionRange() ?? { start: 0, end: 0 },
 			insertReferences: (references, range) => editorRef.current?.insertReferences(references, range),
 			addImages: handleFiles,
-			pathKinds: (paths) => getPi().pathKinds({ paths }),
 			toast: (message) => pushToast("warning", message),
 		});
 	};

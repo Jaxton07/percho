@@ -695,8 +695,6 @@ export const APP_CHANNELS = {
 	openPath: ch("app:openPath", "desktop")<{ target: string; cwd: string | null }, void>(),
 	/** 在系统文件管理器中显示该文件（macOS = 访达；路径解析同上） */
 	revealPath: ch("app:revealPath", "desktop")<{ target: string; cwd: string | null }, void>(),
-	/** 本机路径是文件还是目录（粘贴/拖放的引用选图标；按输入顺序返回，非绝对路径或读取失败按文件算） */
-	pathKinds: ch("app:pathKinds", "desktop")<{ paths: string[] }, Array<"file" | "directory">>(),
 	/** 应用信息（版本/运行时版本/仓库地址，设置关于页用） */
 	getAppInfo: ch("app:getInfo", "desktop")<void, AppInfo>(),
 	/** 日常空间工作台目录（懒创建后返回；日常会话的固定 cwd） */
