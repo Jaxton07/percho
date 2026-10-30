@@ -9,6 +9,7 @@ const piMock = vi.hoisted(() => ({
 	openSession: vi.fn(),
 	getSessionMessages: vi.fn(() => Promise.resolve([])),
 	markSessionHistoryReady: vi.fn(() => Promise.resolve()),
+	getLoadedSessions: vi.fn(async () => []),
 	getFollowUpMessages: vi.fn(() => Promise.resolve([])),
 	getTodos: vi.fn(() => Promise.resolve([])),
 	getPermissionMode: vi.fn(() => Promise.resolve("default" as const)),
@@ -76,7 +77,7 @@ beforeEach(async () => {
 });
 
 describe("restoreSessionWorkspace（冷启动恢复）", () => {
-	it("只按需加载 activeFile 一条：其它成员只进工作区，不调 openSession", async () => {
+	it("即使保存了有效 activeFile，也只恢复成员而不加载任何对话", async () => {
 		piMock.loadUiState.mockResolvedValue({
 			sessionWorkspace: { files: [FILE_A, FILE_B], activeFile: FILE_B },
 		});
@@ -85,12 +86,12 @@ describe("restoreSessionWorkspace（冷启动恢复）", () => {
 
 		await restoreSessionWorkspace();
 
-		expect(piMock.openSession).toHaveBeenCalledTimes(1);
-		expect(piMock.openSession).toHaveBeenCalledWith({ filePath: FILE_B });
-		expect(useSessionsStore.getState().activeSessionId).toBe("b");
+		expect(piMock.openSession).not.toHaveBeenCalled();
+		expect(piMock.getSessionMessages).not.toHaveBeenCalled();
+		expect(useSessionsStore.getState().activeSessionId).toBeNull();
 		// 成员按快照顺序恢复（顺序 = 上次的工作区顺序，不是目录排序）
 		expect(useSessionWorkspaceStore.getState().members.map((m) => m.file)).toEqual([FILE_A, FILE_B]);
-		expect(useSessionWorkspaceStore.getState().activeFile).toBe(FILE_B);
+		expect(useSessionWorkspaceStore.getState().activeFile).toBeNull();
 	});
 
 	it("目录对账失败（IPC 抛错）：不裁剪、不写盘、不打开会话", async () => {
@@ -120,7 +121,7 @@ describe("restoreSessionWorkspace（冷启动恢复）", () => {
 		expect(useSessionWorkspaceStore.getState().members.map((m) => m.file)).toEqual([FILE_A]);
 		await vi.waitFor(() =>
 			expect(piMock.saveUiState).toHaveBeenLastCalledWith({
-				state: { sessionWorkspace: { files: [FILE_A], activeFile: FILE_A } },
+				state: { sessionWorkspace: { files: [FILE_A], activeFile: null } },
 			}),
 		);
 	});
@@ -268,7 +269,7 @@ describe("restoreSessionWorkspace（冷启动恢复）", () => {
 		expect(piMock.loadUiState).not.toHaveBeenCalled();
 	});
 
-	it("恢复打开失败（文件已不在磁盘）：不 panic、不改工作区，交由按需打开报错", async () => {
+	it("旧对话无法打开也不影响启动，因为只恢复成员而不尝试打开", async () => {
 		piMock.loadUiState.mockResolvedValue({
 			sessionWorkspace: { files: [FILE_A], activeFile: FILE_A },
 		});
@@ -279,5 +280,6 @@ describe("restoreSessionWorkspace（冷启动恢复）", () => {
 
 		expect(useSessionWorkspaceStore.getState().members.map((m) => m.file)).toEqual([FILE_A]);
 		expect(useSessionsStore.getState().activeSessionId).toBeNull();
+		expect(piMock.openSession).not.toHaveBeenCalled();
 	});
 });

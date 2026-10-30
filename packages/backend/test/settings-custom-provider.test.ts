@@ -2,7 +2,7 @@ import { mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { ModelRuntime } from "@earendil-works/pi-coding-agent";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { SettingsService } from "../src/settings/settings";
 
 /** 构造假 runtime：getProvider 用于「空模型列表」校验（内置 id 存在 / 全新 id 不存在） */
@@ -204,4 +204,107 @@ describe("SettingsService.setProviderBaseUrl — 内置 provider 端点覆写", 
 		const svc2 = makeService([]);
 		await expect(svc2.setProviderBaseUrl("openai", "not-a-url")).rejects.toThrow(/http/);
 	});
+});
+
+/**
+ * 中转站面板给的「API 地址」是站点根，OpenAI 兼容端点通常在 /v1 下；照抄会打到
+ * `{根}/chat/completions`，New API 对未知路径回 200 + HTML 首页，SDK 只报
+ * 「Stream ended without finish_reason」。保存时按 /models 实测补版本段，用户不需要懂这些。
+ */
+describe("SettingsService — 保存时按 /models 探测补版本段", () => {
+	function withTmpAgentDir(body: (svc: SettingsService, dir: string) => Promise<void>) {
+		return async () => {
+			const dir = mkdtempSync(join(tmpdir(), "percho-probe-"));
+			const prev = process.env.PI_CODING_AGENT_DIR;
+			process.env.PI_CODING_AGENT_DIR = dir;
+			const svc = makeService(["openai"]);
+			try {
+				await body(svc, dir);
+			} finally {
+				process.env.PI_CODING_AGENT_DIR = prev;
+				vi.unstubAllGlobals();
+			}
+		};
+	}
+
+	it(
+		"站点根只回 HTML 首页、/v1 可用 → 落盘补成 /v1",
+		withTmpAgentDir(async (svc, dir) => {
+			vi.stubGlobal(
+				"fetch",
+				vi.fn(async (url: string) => {
+					if (url === "https://relay.example.com/models") {
+						return { ok: true, status: 200, json: async () => JSON.parse("<!doctype html>") };
+					}
+					return { ok: true, status: 200, json: async () => ({ data: [{ id: "gpt-x" }] }) };
+				}),
+			);
+			await svc.addCustomProvider({
+				id: "relay",
+				baseUrl: "https://relay.example.com",
+				api: "openai-completions",
+				models: [{ id: "gpt-x" }],
+				apiKey: "sk-test",
+			});
+			const saved = JSON.parse(readFileSync(join(dir, "models.json"), "utf-8"));
+			expect(saved.providers.relay.baseUrl).toBe("https://relay.example.com/v1");
+		}),
+	);
+
+	it(
+		"探测全失败（离线/HTML 首页）→ 原样保存，不阻断用户",
+		withTmpAgentDir(async (svc, dir) => {
+			vi.stubGlobal(
+				"fetch",
+				vi.fn(async () => {
+					throw new Error("fetch failed");
+				}),
+			);
+			await svc.addCustomProvider({
+				id: "relay",
+				baseUrl: "https://relay.example.com",
+				api: "openai-completions",
+				models: [{ id: "gpt-x" }],
+				apiKey: "sk-test",
+			});
+			const saved = JSON.parse(readFileSync(join(dir, "models.json"), "utf-8"));
+			expect(saved.providers.relay.baseUrl).toBe("https://relay.example.com");
+		}),
+	);
+
+	it(
+		"已写 /v1 的地址不发探测请求（尊重用户输入）",
+		withTmpAgentDir(async (svc, dir) => {
+			const fetchMock = vi.fn();
+			vi.stubGlobal("fetch", fetchMock);
+			await svc.addCustomProvider({
+				id: "relay",
+				baseUrl: "https://relay.example.com/v1",
+				api: "openai-completions",
+				models: [{ id: "gpt-x" }],
+				apiKey: "sk-test",
+			});
+			expect(fetchMock).not.toHaveBeenCalled();
+			const saved = JSON.parse(readFileSync(join(dir, "models.json"), "utf-8"));
+			expect(saved.providers.relay.baseUrl).toBe("https://relay.example.com/v1");
+		}),
+	);
+
+	it(
+		"内置端点覆写同样补版本段",
+		withTmpAgentDir(async (svc, dir) => {
+			vi.stubGlobal(
+				"fetch",
+				vi.fn(async (url: string) => {
+					if (url === "https://relay.example.com/models") {
+						return { ok: true, status: 200, json: async () => JSON.parse("<!doctype html>") };
+					}
+					return { ok: true, status: 200, json: async () => ({ data: [{ id: "gpt-4o" }] }) };
+				}),
+			);
+			await svc.setProviderBaseUrl("openai", "https://relay.example.com", "sk-123");
+			const saved = JSON.parse(readFileSync(join(dir, "models.json"), "utf-8"));
+			expect(saved.providers.openai).toEqual({ baseUrl: "https://relay.example.com/v1" });
+		}),
+	);
 });

@@ -3,42 +3,53 @@ name: Release
 on:
   push:
     tags: ["v*"]
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Release version, e.g. 0.6.6-beta.1 or 0.6.6"
+        required: true
+        type: string
+      publish:
+        description: "Publish after all platforms pass (otherwise build only)"
+        type: boolean
+        default: false
 
 permissions:
-  contents: write
+  contents: read
+
+# Never run two publishers for the same ref concurrently. Do not interrupt an upload.
+concurrency:
+  group: percho-release
+  cancel-in-progress: false
 
 jobs:
+  prepare:
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.plan.outputs.version }}
+      tag: ${{ steps.plan.outputs.tag }}
+      channel: ${{ steps.plan.outputs.channel }}
+      sourceCommit: ${{ steps.plan.outputs.sourceCommit }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - id: plan
+        env:
+          RELEASE_VERSION: ${{ inputs.version }}
+          PERCHO_BUILD_RELEASE_TAG: ${{ github.event_name == 'push' && github.ref_name || '' }}
+          PERCHO_BUILD_SOURCE_COMMIT: ${{ github.sha }}
+        run: node scripts/release-info.mjs
+
   runtime:
+    needs: prepare
     uses: ./.github/workflows/remote-runtime.yml
     with:
-      release_tag: ${{ github.ref_name }}
-  publish-runtime:
-    needs: runtime
+      release_tag: ${{ needs.prepare.outputs.tag }}
+
+  check:
     runs-on: ubuntu-latest
-    steps:
-      - uses: actions/download-artifact@v4
-        with:
-          pattern: remote-runtime-*
-          path: artifacts
-          merge-multiple: true
-      - name: Publish verified runtime assets before desktop references
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          RELEASE_TAG: ${{ github.ref_name }}
-          GH_REPO: ${{ github.repository }}
-        run: gh release create "$RELEASE_TAG" artifacts/* --title "$RELEASE_TAG" --notes "Verified Linux runtime artifacts; desktop packages follow after their builds complete."
-  build:
-    needs: publish-runtime
-    strategy:
-      fail-fast: false
-      matrix:
-        os: [macos-latest, windows-latest, ubuntu-latest]
-    runs-on: ${{ matrix.os }}
-    env:
-      # 无开发者证书：mac 显式走 adhoc 签名（identity: "-"），禁用 runner 上的证书自动发现
-      CSC_IDENTITY_AUTO_DISCOVERY: "false"
-      # renderer 含 Mermaid/KaTeX/Monaco 大量懒加载 chunk；macOS arm64 runner 的 Node 默认约 2GB 堆会 OOM
-      NODE_OPTIONS: "--max-old-space-size=4096"
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -46,54 +57,51 @@ jobs:
           node-version: 22
           cache: npm
       - run: npm ci
+      - run: npm run lint
+      - run: npm run typecheck
+      - run: npm run test
+
+  build:
+    needs: [prepare, runtime, check]
+    uses: ./.github/workflows/desktop-package.yml
+    with:
+      release_tag: ${{ needs.prepare.outputs.tag }}
+
+  publish:
+    needs: [prepare, build]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    env:
+      PERCHO_BUILD_RELEASE_TAG: ${{ needs.prepare.outputs.tag }}
+      PERCHO_BUILD_SOURCE_COMMIT: ${{ needs.prepare.outputs.sourceCommit }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
       - uses: actions/download-artifact@v4
         with:
           pattern: remote-runtime-*
-          path: .local/runtime-release
+          path: .local/release-bundle
           merge-multiple: true
-      - name: Verify published runtime assets and prepare desktop references
-        run: node scripts/prepare-remote-runtime-manifest.mjs --input .local/runtime-release --output packages/desktop/resources/remote-runtime/manifest.json --require-published
-      - run: npm run dist -w packages/desktop -- --publish never
-      - uses: actions/upload-artifact@v4
-        with:
-          name: dist-${{ matrix.os }}
-          path: |
-            packages/desktop/dist/*
-            !packages/desktop/dist/mac
-            !packages/desktop/dist/mac-arm64
-            !packages/desktop/dist/win-unpacked
-            !packages/desktop/dist/linux-unpacked
-            # electron-builder 每次构建都会写入的诊断文件，不足发布产物
-            !packages/desktop/dist/builder-debug.yml
-          if-no-files-found: error
-  publish:
-    needs: build
-    runs-on: ubuntu-latest
-    steps:
       - uses: actions/download-artifact@v4
         with:
-          pattern: dist-*
-          path: artifacts
+          pattern: desktop-*
+          path: .local/release-bundle
           merge-multiple: true
-      - name: Add desktop packages to the runtime release
+      - name: Verify complete release bundle
+        run: node scripts/publish-release.mjs .local/release-bundle
+      - name: Upload draft and publish complete release
+        if: github.event_name == 'push' || inputs.publish
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: |
-          gh release upload "${{ github.ref_name }}" artifacts/* -R "${{ github.repository }}"
-          gh release edit "${{ github.ref_name }}" -R "${{ github.repository }}" --notes-file - <<'EOF'
-          | Platform | Download |
-          | --- | --- |
-          | macOS (Apple Silicon) | `percho-mac-arm64.dmg` |
-          | macOS (Intel) | `percho-mac-x64.dmg` |
-          | Windows | `percho-windows-x64.exe` (installer) or `percho-windows-x64.zip` |
-          | Linux (x64) | `percho-linux-x86_64.AppImage` |
+          GH_REPO: ${{ github.repository }}
+        run: node scripts/publish-release.mjs .local/release-bundle --publish
 
-          > Ad-hoc signed (no Developer ID). On macOS, if Gatekeeper blocks the app, right-click it and choose **Open** (or run `xattr -cr "/Applications/Percho.app"`). Windows and Linux builds update automatically in-app. On Linux, `chmod +x` the AppImage before first launch (and install `libfuse2` on Ubuntu 22.04+/24.04+ if it won't start).
-          EOF
-  # 刷新官网（percho-website，Cloudflare Pages）：触发 Deploy Hook 重建，同步版本号与 changelog。
-  # 需要 repo secret CF_PAGES_DEPLOY_HOOK（Cloudflare Pages → Settings → Builds → Deploy hooks 创建）；未配置时跳过不影响发布
   website:
-    needs: publish
+    needs: [prepare, publish]
+    if: needs.prepare.outputs.channel == 'stable' && (github.event_name == 'push' || inputs.publish)
     runs-on: ubuntu-latest
     steps:
       - name: Trigger Cloudflare Pages deploy hook

@@ -9,6 +9,7 @@ import { ChevronDownIcon, FolderOpenIcon, LoginIcon, PowerIcon, RefreshIcon, Unp
 import { Button } from "../ui/Button";
 import { SelectionMenu } from "../ui/SelectionMenu";
 import { Tooltip } from "../ui/Tooltip";
+import { RemoteConnectionError } from "./RemoteConnectionError";
 
 /** Existing project/error entry points now route to the settings category. */
 export function RemoteConnectionDialog() {
@@ -328,9 +329,10 @@ export function RemoteConnectionPanel() {
 					)}
 				</div>
 			)}
-			{matchesAlias && status.errorKind && (
-				<p className="mt-2 text-ui-12 text-ink-faint">{t(`remote.failure.${status.errorKind}`)}</p>
-			)}
+			<RemoteConnectionError
+				error={error || (matchesAlias ? status.error : undefined)}
+				kind={matchesAlias ? status.errorKind : undefined}
+			/>
 			<p className="mt-2 text-ui-12 text-ink-faint">{t("remote.disconnectHint")}</p>
 			{status.state === "connected" && (
 				<div className="mt-5">
@@ -434,9 +436,6 @@ export function RemoteConnectionPanel() {
 						</div>
 					))}
 				</div>
-			)}
-			{(error || (matchesAlias && status.error)) && (
-				<p className="mt-3 break-words text-ui-12 text-err">{error || status.error}</p>
 			)}
 		</section>
 	);

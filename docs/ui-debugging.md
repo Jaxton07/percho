@@ -7,17 +7,18 @@
 在仓库根目录准备 `.local/tmp/<任务>/` 存日志、截图和夹具。启动：
 
 ```bash
-cd packages/desktop
-npx electron-vite dev -- --remote-debugging-port=9224
+node scripts/dev-desktop.mjs --remote-debugging-port=9224
 ```
 
-不要改成 `npm run dev -- --remote-debugging-port=9224`：npm 会吞参数。需要 main inspector 的脚本还要按脚本头加入 `--inspect=9229`。
+该入口会使用带 DEV 角标、独立应用标识的开发外壳。不要改成根目录 `npm run dev -- --remote-debugging-port=9224`：嵌套 npm 会吞参数。需要 main inspector 的脚本还要按脚本头加入 `--inspect=9229`。
 
 1. 启动前检查目标端口，记录本次进程 PID；启动后确认日志出现 DevTools listening、没有端口绑定失败。
 2. CDP 连接后核对 `location.href` 与实际页面，`chrome-error://` 表示连到了错误页，不是业务组件不存在。
 3. 测试结束关闭本次 Electron 及其 dev server，确认端口释放。只杀 electron-vite 包装进程可能留下 Electron；不要用宽泛的 `pkill -f Electron`，以免结束正式版。
 
 开始输入前等待 `html[data-app-ready="true"]` 且 `#splash` 已移除。开屏期间 React 节点已经存在，但 `#root` 的 `content-visibility: hidden` 会让焦点和输入无法到达；不能以查到按钮或输入节点作为可交互的证据。
+
+验收首次数据准备时，等待 `html[data-startup-view="setup"] .startup-layout`，这时工作台尚未就绪，不能等 `data-app-ready`。已迁移用户应始终没有 `.startup-layout`；验证无闪屏须从首帧观察，而非只看启动完成后的截图。两种路径都应只有一个窗口和一次业务页面导航。
 
 main 修改没有生效时先核对 `packages/desktop/out/main/index.js` 是否重建；改 store 后 HMR 可能留下旧订阅或实例。**最终验收用干净重启，不把 HMR 异常当产品结论。**
 
@@ -27,7 +28,7 @@ main 修改没有生效时先核对 `packages/desktop/out/main/index.js` 是否�
 - 当前开发 userData：`~/Library/Application Support/@percho/desktop-dev/`；不要使用改名前的 `percho-dev/`。
 - 路径逻辑以 `main/dev-agent-dir.ts` 为准；自定义隔离使用绝对 `PERCHO_AGENT_DIR` 和独立 `--user-data-dir`，脚本跟随同一根。首次未标记目标需明确采用；不能绕过启动页直接 seed 正式数据。详见[迁移与恢复](local-agent-storage.md)。
 - `ui-state.json` 必须在实例停止后 seed，否则运行中的 persist 会覆盖。会话目录夹具通常也需重启才能读入。
-- 工作区快照使用 `sessionWorkspace`，不再有 `tabs.json`；冷启动可恢复有效 activeFile，不要假设总是新会话页。
+- 工作区快照使用 `sessionWorkspace`，不再有 `tabs.json`；冷启动只恢复成员，不自动打开保存的 `activeFile`。验收时应确认新会话页持续保留，旧对话仍可手动打开。
 - 尽量通过真实 UI 进入目标状态；不得直接修改正式配置、会话或凭证来凑验收场景。
 
 ## 现成工具
@@ -78,3 +79,9 @@ node scripts/shoot-sidebar.mjs both .local/tmp/ui-review
 | 浮层 rect 正确但显示不全 | mask 裁绘与 portal，见 [UI 规范](ui.md) |
 | 带图发送后短暂空白 | 乐观用户气泡与附件预缩放，见 [SDK 集成](sdk.md) |
 | 历史图成本或占位跳动 | `check-history-images.mjs`、历史图片资源层；必须覆盖 build 的 file:// 与 worker 链路 |
+
+## 原生输入菜单
+
+对话编辑菜单需将 renderer 本次请求与 Electron 原生 context-menu 的 frame、位置、editFlags 配对，不能只用合成 DOM 事件验证。原生菜单不在 CDP 页面树中；用 macOS 辅助功能实际选择菜单项，页面内容和选区仍由 CDP 核对，不使用系统截图。测试剪贴板前保存原始格式，结束恢复并删除备份，不打印内容。
+
+Cocoa 可能先调用 popup 关闭回调，再派发所选菜单项的 click。菜单关闭不能立即撤销当前编辑目标；目标切换、只读变化、导航或新右键上下文必须独立失效。否则菜单看似可用但复制/粘贴会被关闭回调提前拦掉。

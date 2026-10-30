@@ -1,5 +1,7 @@
 appId: io.github.jaxton07.percho
 productName: Percho
+extraMetadata:
+  releaseChannel: stable
 beforePack: resources/remote-runtime/before-pack.cjs
 directories:
   output: dist

@@ -53,7 +53,14 @@ async function start(
 	const dir = await mkdtemp(join(tmpdir(), "percho-lan-"));
 	dirs.push(dir);
 	const config = new LanConfigService(join(dir, "lan-observer.json"));
+	// 配置层不接受 0；先申请测试专用端口，避免退回正式版默认的 7331。
+	const lease = port === 0 ? createServer() : undefined;
+	if (lease) {
+		await new Promise<void>((resolve) => lease.listen(0, "127.0.0.1", resolve));
+		port = (lease.address() as { port: number }).port;
+	}
 	await config.save({ enabled: true, port, token, remoteControl: options.remoteControl ?? false });
+	if (lease) await new Promise<void>((resolve) => lease.close(() => resolve()));
 	const server = new LanObserverServer(observer, config, {
 		pageHtml: "<h1>observer</h1>",
 		auditPath: options.auditPath,

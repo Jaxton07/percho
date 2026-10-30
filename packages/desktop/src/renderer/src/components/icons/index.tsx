@@ -48,6 +48,41 @@ export function SunIcon({ size = 14, className }: IconProps) {
 	);
 }
 
+export function MoonIcon({ size = 14, className }: IconProps) {
+	return (
+		<svg
+			className={className}
+			width={size}
+			height={size}
+			viewBox="0 0 24 24"
+			{...strokeProps}
+			strokeLinecap="round"
+			strokeLinejoin="round"
+			aria-hidden="true"
+		>
+			<path d="M20.8 13.4A9 9 0 0 1 10.6 3.2a9 9 0 1 0 10.2 10.2Z" />
+		</svg>
+	);
+}
+
+export function MonitorIcon({ size = 14, className }: IconProps) {
+	return (
+		<svg
+			className={className}
+			width={size}
+			height={size}
+			viewBox="0 0 24 24"
+			{...strokeProps}
+			strokeLinecap="round"
+			strokeLinejoin="round"
+			aria-hidden="true"
+		>
+			<rect x="3" y="4" width="18" height="13" rx="2" />
+			<path d="M8 21h8M12 17v4" />
+		</svg>
+	);
+}
+
 export function SlidersIcon({ size = 14, className }: IconProps) {
 	return (
 		<svg
@@ -170,6 +205,25 @@ export function InfoIcon({ size = 14, className }: IconProps) {
 			<circle cx="12" cy="12" r="9" />
 			<path d="M12 11v5" />
 			<circle cx="12" cy="7.8" r="0.7" fill="currentColor" stroke="none" />
+		</svg>
+	);
+}
+
+/** 问号（设置页标题旁的解释入口，配合 Tooltip 使用） */
+export function QuestionIcon({ size = 14, className }: IconProps) {
+	return (
+		<svg
+			className={className}
+			width={size}
+			height={size}
+			viewBox="0 0 24 24"
+			{...strokeProps}
+			strokeLinecap="round"
+			aria-hidden="true"
+		>
+			<circle cx="12" cy="12" r="9" />
+			<path d="M9.6 9.2a2.5 2.5 0 1 1 3.6 2.3c-.7.4-1.2 1-1.2 1.8v.4" />
+			<circle cx="12" cy="17" r="0.7" fill="currentColor" stroke="none" />
 		</svg>
 	);
 }

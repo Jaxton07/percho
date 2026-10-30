@@ -413,9 +413,9 @@ export function Composer({ centered = false }: { centered?: boolean }) {
 	};
 
 	return (
-		<div ref={boxRef} className={centered ? "w-full max-w-[760px]" : "shrink-0 px-6 pb-3"}>
+		<div ref={boxRef} className={centered ? "w-full max-w-[800px]" : "shrink-0 px-6 pb-3"}>
 			{/* relative：ImageTray 悬浮层（absolute bottom-full）的定位锚，浮在错误条/菜单/输入框整列之上 */}
-			<div className="relative mx-auto max-w-[760px]">
+			<div className={centered ? "relative mx-auto max-w-[800px]" : "relative mx-auto max-w-[760px]"}>
 				{failedDraft && (
 					<button
 						type="button"
@@ -451,10 +451,7 @@ export function Composer({ centered = false }: { centered?: boolean }) {
 					/>
 				)}
 				{followUpQueue.length > 0 && (
-					<QueueBar
-						text={followUpQueue[0] ?? ""}
-						onRestore={() => void send.handleRestoreQueue(focusEditor)}
-					/>
+					<QueueBar texts={followUpQueue} onRestore={() => void send.handleRestoreQueue(focusEditor)} />
 				)}
 				{/* 扩展 setEditorText 预填提示（画板⑩）：一次性来源标注，首次键入即清除 */}
 				{extensionPrefillSource && (

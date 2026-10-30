@@ -3,11 +3,15 @@ import { isAbsolute } from "node:path";
 import { type PiBackend, validateProjectDirectory } from "@percho/backend";
 import { APP_CHANNELS, environmentEntityRef } from "@percho/shared";
 import { app, BrowserWindow, dialog, nativeTheme, shell } from "electron";
+import { releaseChannel } from "../app-identity";
 import { pickBackgroundImage } from "../background";
+import { cancelComposerEditMenu, showComposerEditMenu } from "../composer-edit-menu";
 import { ensureDailyDir } from "../daily";
 import { loadEnvironmentUiState, saveEnvironmentUiState } from "../environment-ui-state";
 import { checkoutBranch, getGitBranch, listGitBranches } from "../git";
+import { nativeNotifications } from "../native-notifications";
 import { resolveExistingPath } from "../path-target";
+import { setTaskNotificationNavigationReady } from "../task-notifications";
 import { loadUiState, saveUiState } from "../ui-state";
 import {
 	buildUpdateDiagnosticReport,
@@ -46,6 +50,11 @@ function localDirectory(cwd: string | null): string | null {
  */
 export function registerAppIpc(_backend: PiBackend): void {
 	registerInvokeHandlers(APP_CHANNELS, {
+		setTaskNotificationNavigationReady,
+		setNotificationLanguage: ({ language }) => nativeNotifications.setLanguage(language),
+		testTaskNotification: () => nativeNotifications.send("test"),
+		showComposerEditMenu,
+		cancelComposerEditMenu,
 		loadEnvironmentUiState,
 		saveEnvironmentUiState: ({ state }) => saveEnvironmentUiState(state),
 		validateProjectDirectory: ({ path }) => validateProjectDirectory(path),
@@ -92,8 +101,9 @@ export function registerAppIpc(_backend: PiBackend): void {
 					.slice(0, 64)
 					.map((path) => (typeof path === "string" ? localPathKind(path) : Promise.resolve("file" as const))),
 			),
-		getAppInfo: () => ({
+		getAppInfo: (): import("@percho/shared").AppInfo => ({
 			name: app.getName(),
+			releaseChannel,
 			version: app.getVersion(),
 			electron: process.versions.electron ?? "",
 			chrome: process.versions.chrome ?? "",
@@ -106,6 +116,8 @@ export function registerAppIpc(_backend: PiBackend): void {
 		getDailyDir: () => ensureDailyDir(),
 		loadUiState: () => loadUiState(),
 		saveUiState: ({ state }) => {
+			if (typeof state.taskNotificationsEnabled === "boolean")
+				nativeNotifications.setEnabled(state.taskNotificationsEnabled);
 			// 主题变更 → 对齐 main 原生主题（themeSource 赋值触发 updated 事件，窗口底色/Windows 按钮覆盖层随之刷新）
 			if (state.theme) nativeTheme.themeSource = state.theme;
 			return saveUiState(state);

@@ -34,12 +34,12 @@ html[data-app-ready] #root {
 	position: relative;
 	width: 220px;
 	height: 220px;
-	color: #18181b;
+	--sp-dot-image: url("../assets/splash/dot-light.png");
 	animation: sp-spin 60s linear infinite;
 	will-change: transform;
 }
 html[data-theme="dark"] .sp-swarm {
-	color: #f4f4f5;
+	--sp-dot-image: url("../assets/splash/dot-dark.png");
 }
 .sp-swarm-in {
 	width: 100%;
@@ -62,8 +62,7 @@ html[data-theme="dark"] .sp-swarm {
 	width: var(--s);
 	height: var(--s);
 	margin: calc(var(--s) / -2);
-	border-radius: 50%;
-	background: radial-gradient(circle, currentColor 28%, transparent 72%);
+	background: var(--sp-dot-image) center / 100% 100% no-repeat;
 	opacity: var(--o);
 	transform: translate(var(--x), var(--y));
 	animation: sp-dot-drift var(--t) ease-in-out var(--dl) infinite;
@@ -77,21 +76,15 @@ html[data-theme="dark"] .sp-swarm {
 	position: relative;
 	width: 220px;
 	height: 220px;
+	--sp-ring-image: url("../assets/splash/ring-light.png");
 }
 .sp-rings::before,
 .sp-rings::after {
 	content: "";
 	position: absolute;
 	inset: 0;
-	/* 柔边细环用 radial-gradient 画（不用 filter: blur）：blur + scale 动画会每帧重新光栅化，
-	   放大到 2.3x / 12x 时是开屏最贵的一项；gradient 版本可纯合成 */
-	background: radial-gradient(
-		closest-side,
-		transparent 97%,
-		var(--sp-ring-c, rgba(255, 255, 255, 0.6)) 98.6%,
-		transparent 100%
-	);
-	border-radius: 50%;
+	/* 共享预生成软边贴图，让各动画层复用相同纹理，减少渐变与圆形裁剪计算。 */
+	background: var(--sp-ring-image) center / 100% 100% no-repeat;
 	opacity: 0;
 	animation: sp-sonar 3.2s cubic-bezier(0.16, 1, 0.3, 1) 1.4s infinite;
 	will-change: transform, opacity;
@@ -100,7 +93,7 @@ html[data-theme="dark"] .sp-swarm {
 	animation-delay: 3s;
 }
 html[data-theme="dark"] .sp-rings {
-	--sp-ring-c: rgba(24, 24, 27, 0.6);
+	--sp-ring-image: url("../assets/splash/ring-dark.png");
 }
 
 /* 收場涟漪：细环 + 模糊柔边的双环（主环 + 淡回波），从中心扩散出屏。
@@ -109,16 +102,15 @@ html[data-theme="dark"] .sp-rings {
 	position: relative;
 	width: 220px;
 	height: 220px;
-	--sp-wave-c: rgba(24, 24, 27, 0.4);
+	--sp-wave-image: url("../assets/splash/wave-light.png");
 	--po: 0.7;
 }
 html[data-theme="dark"] .sp-wave {
-	--sp-wave-c: rgba(244, 244, 245, 0.55);
+	--sp-wave-image: url("../assets/splash/wave-dark.png");
 }
 .sp-wave,
 .sp-wave::after {
-	background: radial-gradient(closest-side, transparent 96.5%, var(--sp-wave-c) 98.4%, transparent 100%);
-	border-radius: 50%;
+	background: var(--sp-wave-image) center / 100% 100% no-repeat;
 	opacity: 0;
 	will-change: transform, opacity;
 }
@@ -151,16 +143,16 @@ html[data-theme="dark"] .sp-word {
 	text-shadow: 0 0 18px rgba(23, 23, 26, 0.85);
 }
 
-/* 慢加载细线：2.4s 后才淡入（正常启动永远看不到） */
+/* 慢加载细线：1.2s 后淡入，与整个启动共用同一起点。 */
 .sp-line {
-	width: 140px;
+	width: min(320px, calc(100vw - 48px));
 	height: 2px;
 	border-radius: 2px;
 	overflow: hidden;
 	background: rgba(24, 24, 27, 0.12);
 	opacity: 0;
 	transform: translateY(160px);
-	animation: sp-fade-in 0.6s ease-out 2.4s forwards;
+	animation: sp-fade-in 0.4s ease-out 1.2s forwards;
 }
 .sp-line::after {
 	content: "";
@@ -169,7 +161,7 @@ html[data-theme="dark"] .sp-word {
 	height: 100%;
 	background: linear-gradient(90deg, transparent, rgba(24, 24, 27, 0.55), transparent);
 	transform: translateX(-100%);
-	animation: sp-sweep 1.4s ease-in-out 2.4s infinite;
+	animation: sp-sweep 1.4s ease-in-out 1.2s infinite;
 }
 html[data-theme="dark"] .sp-line {
 	background: rgba(255, 255, 255, 0.14);
@@ -194,6 +186,43 @@ html[data-app-ready] .sp-rings::after {
 html[data-app-ready] .sp-line {
 	opacity: 1;
 	animation: sp-quick-out 0.2s ease-in forwards;
+}
+.sp-status {
+	transform: translateY(184px);
+	color: var(--color-ink-dim, #71717a);
+	line-height: 1.6;
+	opacity: 0;
+	animation: sp-fade-in 0.4s ease-out 1.2s forwards;
+}
+html[data-app-ready] .sp-status {
+	opacity: 0;
+	animation: none;
+}
+html[data-startup-view="setup"] #splash {
+	visibility: hidden;
+}
+html[data-startup-view="setup"][data-app-ready] #root,
+html[data-splash-static][data-app-ready] #root {
+	animation: sp-root-in 0.25s ease-out both;
+}
+html[data-splash-static] #splash * {
+	animation: none;
+}
+html[data-splash-static] .sp-swarm-in,
+html[data-splash-static] .sp-word,
+html[data-splash-static] .sp-line,
+html[data-splash-static] .sp-status {
+	opacity: 1;
+	transform: none;
+}
+html[data-splash-static] .sp-line {
+	transform: translateY(160px);
+}
+html[data-splash-static] .sp-status {
+	transform: translateY(184px);
+}
+html[data-splash-static][data-app-ready] #splash {
+	visibility: hidden;
 }
 html[data-app-ready] .sp-line::after {
 	animation: none;

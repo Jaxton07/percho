@@ -27,6 +27,7 @@ async function waitFor(test: () => boolean) {
 	await turn();
 }
 function make(error?: Error) {
+	const changes: string[] = [];
 	let ready = 0,
 		exits = 0;
 	const selection = selectLocalStorage(root, true, {});
@@ -34,7 +35,9 @@ function make(error?: Error) {
 		selection,
 		error,
 		userData: join(root, "profile"),
-		onChange: () => {},
+		onChange: (state) => {
+			changes.push(state.phase);
+		},
 		onReady: () => {
 			ready++;
 		},
@@ -45,6 +48,7 @@ function make(error?: Error) {
 	return {
 		controller,
 		selection,
+		changes,
 		get ready() {
 			return ready;
 		},
@@ -68,6 +72,10 @@ describe("pre-backend startup preparation", () => {
 		second.controller.start();
 		await waitFor(() => second.ready === 1);
 		expect(second.controller.state.phase).toBe("ready");
+		expect(second.changes).not.toContain("choice");
+		expect(second.changes).not.toContain("existing");
+		second.controller.launchWorkbench();
+		expect(second.controller.state.phase).toBe("launching");
 	});
 	it("new isolated storage starts empty without asking and existing unmarked storage requires adoption", async () => {
 		const first = make();
@@ -121,4 +129,17 @@ it("exit remains available after publication while the workbench is still starti
 	run.controller.act("exit");
 	expect(run.exits).toBe(1);
 	expect(await readdir(run.selection.target)).toContain(".percho-local-storage.json");
+	run.controller.launchWorkbench();
+	expect(run.controller.state.phase).toBe("ready");
+});
+
+it("never grants workbench access before storage is ready and reports initialization failures without reimporting", async () => {
+	const run = make();
+	run.controller.launchWorkbench();
+	expect(run.controller.state.phase).toBe("inspecting");
+	run.controller.start();
+	await waitFor(() => run.ready === 1);
+	run.controller.failWorkbench(Error("backend initialization failed"));
+	expect(run.controller.state).toMatchObject({ phase: "error", retryable: false });
+	expect(() => run.controller.act("retry")).toThrow("Restart the application");
 });

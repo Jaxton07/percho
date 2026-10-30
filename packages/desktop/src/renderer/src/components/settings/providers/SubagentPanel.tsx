@@ -4,10 +4,8 @@ import { type MessageKey, useT } from "../../../i18n";
 import { useCatalogStore } from "../../../stores/catalog";
 import { useSessionsStore } from "../../../stores/sessions";
 import { useSettingsStore } from "../../../stores/settings";
+import { Select } from "../../ui/Select";
 import { Switch } from "../../ui/Switch";
-
-const SELECT_CLASS =
-	"w-full rounded-lg border border-border bg-surface px-2.5 py-1.5 text-ui-12 text-ink outline-none focus:border-ink-faint";
 
 /** 已配置包中疑似提供 subagent 能力的（npm: 前缀剥掉后按启发式判定，spec D5）。 */
 function subagentPackageNames(packages: { source: string }[] | null): string[] {
@@ -83,37 +81,33 @@ export function SubagentPanel() {
 									{agent.description && <p className="text-ui-11 text-ink-faint">{agent.description}</p>}
 								</div>
 								<div className="grid grid-cols-[minmax(0,1fr)_auto] gap-2">
-									<select
-										className={SELECT_CLASS}
+									<Select
 										value={selected}
-										onChange={(event) => void setSubagentModel(agent.name, event.target.value || null)}
-									>
-										<option value="">{t("settings.models.inherit")}</option>
-										{selected && !hasSelectedModel && <option value={selected}>{selected}</option>}
-										{models.map((model) => (
-											<option key={`${model.provider}/${model.id}`} value={`${model.provider}/${model.id}`}>
-												{model.providerName} · {model.label}
-											</option>
-										))}
-									</select>
-									<select
-										className={SELECT_CLASS}
+										options={[
+											{ value: "", label: t("settings.models.inherit") },
+											...(selected && !hasSelectedModel ? [{ value: selected, label: selected }] : []),
+											...models.map((model) => ({
+												value: `${model.provider}/${model.id}`,
+												label: `${model.providerName} · ${model.label}`,
+											})),
+										]}
+										onChange={(value) => void setSubagentModel(agent.name, value || null)}
+									/>
+									<Select
 										value={thinking}
-										onChange={(event) => void setSubagentThinking(agent.name, event.target.value || null)}
-									>
-										<option value="">
-											{agent.thinking
-												? t("settings.models.subagentThinkingInheritWith", {
-														level: thinkingLabel(agent.thinking),
-													})
-												: t("settings.models.subagentThinkingInherit")}
-										</option>
-										{THINKING_LEVELS.map((level) => (
-											<option key={level} value={level}>
-												{thinkingLabel(level)}
-											</option>
-										))}
-									</select>
+										options={[
+											{
+												value: "",
+												label: agent.thinking
+													? t("settings.models.subagentThinkingInheritWith", {
+															level: thinkingLabel(agent.thinking),
+														})
+													: t("settings.models.subagentThinkingInherit"),
+											},
+											...THINKING_LEVELS.map((level) => ({ value: level, label: thinkingLabel(level) })),
+										]}
+										onChange={(value) => void setSubagentThinking(agent.name, value || null)}
+									/>
 								</div>
 								{agent.thinkingWarning && (
 									<p className="mt-1 text-ui-11 text-ink-faint">

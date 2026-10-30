@@ -1,4 +1,4 @@
-import { environmentEntityKey, LOCAL_ENVIRONMENT } from "@percho/shared";
+import { emptyTranscript, environmentEntityKey, LOCAL_ENVIRONMENT, reduceEvent } from "@percho/shared";
 import { describe, expect, it, vi } from "vitest";
 import type { SessionGcEntry, SessionGcOpen } from "./session-gc";
 import { runEnvironmentSessionGc, runSessionGcRound, type SessionGcRoundDeps } from "./session-gc-run";
@@ -170,4 +170,25 @@ it("remote protection failure skips only remote candidates, while local uses its
 	expect(results[0]?.unloaded).toEqual(["a"]);
 	expect(results[1]?.skipped).toBe("subscription-snapshot-failed");
 	expect(unload).toHaveBeenCalledTimes(1);
+});
+
+it("retains paused queues independently in local and remote environments", async () => {
+	const remote = { kind: "ssh" as const, connectionId: "fixture", environmentId: "isolated" };
+	const remoteId = environmentEntityKey(remote, "paused");
+	const { deps, unload } = makeDeps({
+		open: ["paused", remoteId, "idle"].map((id) => openSession(id, NOW - 10_000_000)),
+		keep: 0,
+	});
+	let paused = reduceEvent(emptyTranscript(), { type: "queue_update", steering: [], followUp: ["pending"] });
+	paused = reduceEvent(paused, { type: "compaction_pause", pause: { reason: "failed" } });
+	const results = await runEnvironmentSessionGc([LOCAL_ENVIRONMENT, remote], {
+		...deps,
+		entryOf: (id) =>
+			id === "idle"
+				? IDLE_ENTRY
+				: { ...paused, messageCount: paused.messages.length, pendingPermissions: [], pendingDialogs: [] },
+		listSubscriptionSessionIds: async () => [],
+	});
+	expect(results.flatMap((result) => result.unloaded)).toEqual(["idle"]);
+	expect(unload).toHaveBeenCalledExactlyOnceWith("idle");
 });

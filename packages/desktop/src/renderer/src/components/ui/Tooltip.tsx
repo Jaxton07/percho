@@ -11,12 +11,15 @@ import type { ReactNode } from "react";
 export function Tooltip({
 	label,
 	align = "center",
+	multiline = false,
 	className,
 	children,
 }: {
 	label: string;
 	/** 气泡水平锚定：center = 居中（默认）；start = 左缘对齐（左缘元素用，不向左溢出）；end = 右缘对齐（右缘元素用，不向右溢出） */
 	align?: "center" | "start" | "end";
+	/** 长段落：气泡限宽换行（默认单行不换行） */
+	multiline?: boolean;
 	/** 追加到触发元素包裹层（如 w-full 让栅格内的禁用输入撑满） */
 	className?: string;
 	children: ReactNode;
@@ -26,9 +29,9 @@ export function Tooltip({
 			{children}
 			<span
 				role="tooltip"
-				className={`pointer-events-none absolute top-full z-50 mt-1.5 whitespace-nowrap rounded-md bg-white px-2 py-1 text-ui-11 text-ink opacity-0 shadow-pop transition-opacity duration-150 group-hover/tooltip:opacity-100 group-hover/tooltip:delay-300 dark:bg-black ${
-					align === "end" ? "right-0" : align === "start" ? "left-0" : "left-1/2 -translate-x-1/2"
-				}`}
+				className={`pointer-events-none absolute top-full z-50 mt-1.5 rounded-md bg-white px-2 py-1 text-ui-11 text-ink opacity-0 shadow-pop transition-opacity duration-150 group-hover/tooltip:opacity-100 group-hover/tooltip:delay-300 dark:bg-black ${
+					multiline ? "w-max max-w-[280px] whitespace-normal text-left leading-relaxed" : "whitespace-nowrap"
+				} ${align === "end" ? "right-0" : align === "start" ? "left-0" : "left-1/2 -translate-x-1/2"}`}
 			>
 				{label}
 			</span>

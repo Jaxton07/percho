@@ -3,6 +3,7 @@ import {
 	formatTokenCount,
 	modelsToRows,
 	parseTokenCount,
+	rowFromUpstreamModel,
 	rowsToModelInputs,
 	rowsValid,
 	splitPastedModelIds,
@@ -112,5 +113,47 @@ describe("splitPastedModelIds", () => {
 		]);
 		expect(splitPastedModelIds("gpt-5")).toBeNull();
 		expect(splitPastedModelIds(",,\n")).toBeNull();
+	});
+});
+
+describe("rowFromUpstreamModel", () => {
+	it("选中上游模型后把 ID 与上下文/输出/思考/图像一起填好", () => {
+		expect(
+			rowFromUpstreamModel({
+				id: "m",
+				contextWindow: 200000,
+				maxTokens: 32000,
+				reasoning: true,
+				imageInput: true,
+			}),
+		).toEqual({ id: "m", contextWindow: "200k", maxTokens: "32k", reasoning: true, imageInput: true });
+	});
+
+	it("目录里查不到能力时留空，落盘时不写、跟随 SDK 默认", () => {
+		expect(rowFromUpstreamModel({ id: "m" })).toEqual({
+			id: "m",
+			contextWindow: "",
+			maxTokens: "",
+			reasoning: false,
+			imageInput: false,
+		});
+	});
+
+	it("带出 SDK 目录的思考档位映射，并在行 → 提交之间原样保住", () => {
+		const thinkingLevelMap = { minimal: "minimal", low: "low", medium: null, high: "high", xhigh: "xhigh" };
+		const row = rowFromUpstreamModel({ id: "m", reasoning: true, thinkingLevelMap });
+
+		expect(row).toMatchObject({ id: "m", reasoning: true, thinkingLevelMap });
+		expect(rowsToModelInputs([row])).toEqual([{ id: "m", reasoning: true, thinkingLevelMap }]);
+	});
+
+	it("已落盘的 thinkingLevelMap 编辑回填再提交不丢", () => {
+		const thinkingLevelMap = { low: "low", high: "high", max: null as null | string };
+		expect(modelsToRows([{ id: "m", reasoning: true, thinkingLevelMap }])).toEqual([
+			{ id: "m", contextWindow: "", maxTokens: "", reasoning: true, imageInput: false, thinkingLevelMap },
+		]);
+		expect(rowsToModelInputs(modelsToRows([{ id: "m", reasoning: true, thinkingLevelMap }]))).toEqual([
+			{ id: "m", reasoning: true, thinkingLevelMap },
+		]);
 	});
 });

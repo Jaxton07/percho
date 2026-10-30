@@ -409,7 +409,10 @@ interface SessionsStore {
 	closeSession: (sessionId: string, intent?: SessionCloseIntent) => Promise<{ closed: boolean }>;
 	/** 自动卸载（内存策略专用，见实现处注释）；传 intent="gc" 让后端区分自动 GC 与用户意图 */
 	unloadSession: (sessionId: string) => Promise<{ closed: boolean }>;
-	openFromHistory: (filePath: string) => Promise<OpenFromHistoryResult>;
+	openFromHistory: (
+		filePath: string,
+		canActivate?: (meta: SessionMeta) => boolean,
+	) => Promise<OpenFromHistoryResult>;
 	/** 子代理检视打开（spec D4）：捕获父目标 + 只在最新导航意图下建立返回关系 */
 	openSubagentSession: (filePath: string) => Promise<OpenFromHistoryResult>;
 	/** 从子代理检视页回到父会话（父仍加载则切，已卸载则按文件重开） */
@@ -726,7 +729,7 @@ export const useSessionsStore = create<SessionsStore>((_set, get) => ({
 	 *  返回 `closed=false` 表示后端拒绝（竞态：策略判定后它恰好又开始跑了/刚订阅了）。 */
 	unloadSession: (sessionId) => get().closeSession(sessionId, "gc"),
 
-	openFromHistory: async (filePath) => {
+	openFromHistory: async (filePath, canActivate) => {
 		// 先领号再发请求：这次点击就是当前最新意图（同文件双击则第二次领号，自然胜出）
 		const token = claimActivation();
 		noteUserIntent();
@@ -734,7 +737,8 @@ export const useSessionsStore = create<SessionsStore>((_set, get) => ({
 		// 失败已由共享链报过一次；这里的提前返回同时保证不对用户的新选择做任何回滚
 		if (!meta) return { ok: false };
 		// 迟到（用户已切走）：会话确实开起来了，但**不能抢焦点** —— 调用方据此只落数据
-		if (!isLatestActivation(token)) return { ok: true, latest: false, meta, token };
+		if (!isLatestActivation(token) || (canActivate && !canActivate(meta)))
+			return { ok: true, latest: false, meta, token };
 		set({ activeSessionId: meta.sessionId });
 		// 先记 cwd 再拉数据：即便随后装载失败，用户「在用哪个项目」的事实也已经成立
 		rememberCwd(meta.cwd);
@@ -947,7 +951,7 @@ export const useSessionsStore = create<SessionsStore>((_set, get) => ({
 	},
 
 	/**
-	 * 切换会话权限模式：乐观更新 + IPC 同步，失败回滚 + toast（范式同 setContextManagerMode）。
+	 * 切换会话权限模式：乐观更新 + IPC 同步，失败回滚 + toast（范式同 setChannelWatchEnabled）。
 	 * 新会话页的档位不走这里（它存在 `newSessionDraft.permissionMode`，promotion 后由 store 应用）。
 	 * 后端为内存态即时生效（每次 tool_call 实时读），无需重升会话。
 	 */
@@ -1027,6 +1031,8 @@ export async function synchronizeEnvironmentSessions(
 						streaming: null,
 						agentActive: false,
 						compacting: false,
+						compactionPause: null,
+						summarizationRetry: null,
 						phase: "idle",
 						followUpQueue: [],
 						retrying: null,
@@ -1065,6 +1071,8 @@ export async function synchronizeEnvironmentSessions(
 							streaming: null,
 							agentActive: summary.streaming,
 							compacting: summary.compacting,
+							compactionPause: summary.compactionPause ?? null,
+							summarizationRetry: null,
 							phase: previous?.pendingPermissions.length
 								? "awaiting_permission"
 								: summary.streaming

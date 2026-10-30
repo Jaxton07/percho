@@ -1,5 +1,5 @@
 import { type AnyChannelDef, type InvokeHandlers, isEnvironmentInvocation } from "@percho/shared";
-import { ipcMain } from "electron";
+import { type IpcMainInvokeEvent, ipcMain } from "electron";
 import { environmentRouter } from "../environment-router";
 
 /**
@@ -8,15 +8,20 @@ import { environmentRouter } from "../environment-router";
  */
 export function registerInvokeHandlers<T extends Record<string, AnyChannelDef>>(
 	table: T,
-	handlers: InvokeHandlers<T>,
+	handlers: {
+		[K in keyof T]: (
+			args: Parameters<InvokeHandlers<T>[K]>[0],
+			event?: IpcMainInvokeEvent,
+		) => ReturnType<InvokeHandlers<T>[K]>;
+	},
 ): void {
 	for (const [key, def] of Object.entries(table) as [keyof T & string, AnyChannelDef][]) {
-		const handler = handlers[key] as (args: unknown) => unknown;
+		const handler = handlers[key] as (args: unknown, event?: IpcMainInvokeEvent) => unknown;
 		environmentRouter.registerLocal(def.channel, handler);
-		ipcMain.handle(def.channel, (_e, args: unknown) => {
+		ipcMain.handle(def.channel, (event, args: unknown) => {
 			if (def.scope === "environment" || isEnvironmentInvocation(args))
 				return environmentRouter.invoke(def.channel, args);
-			return handler(args);
+			return handler(args, event);
 		});
 	}
 }

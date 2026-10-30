@@ -18,8 +18,13 @@
 		"postinstall": "patch-package && node node_modules/electron/install.js",
 		"build": "npm run build -w packages/desktop",
 		"typecheck": "npm run typecheck --workspaces",
-		"test": "npm run test --workspaces --if-present",
-		"dist": "npm run dist -w packages/desktop",
+		"test": "npm run test:release && npm run test --workspaces --if-present",
+		"test:release": "node --test scripts/release/*.test.mjs",
+		"splash:textures": "node scripts/generate-splash-textures.mjs",
+		"package:release": "node scripts/package-release.mjs",
+		"package:beta": "node scripts/package-release.mjs --channel beta",
+		"dist": "npm run package:release --",
+		"dist:beta": "npm run package:beta --",
 		"lint": "biome check ."
 	},
 	"engines": {
@@ -27,7 +32,9 @@
 	},
 	"devDependencies": {
 		"@biomejs/biome": "^2.4.0",
-		"patch-package": "^8.0.1"
+		"@electron/asar": "^3.4.1",
+		"patch-package": "^8.0.1",
+		"pngjs": "^7.0.0"
 	},
 	"allowScripts": {
 		"electron@43.3.0": true

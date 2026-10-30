@@ -23,7 +23,6 @@ import {
 import type {
 	AvailableModel,
 	ChannelSubscriptionsSnapshot,
-	ContextManagerMode,
 	ContextUsageInfo,
 	CreateSessionOptions,
 	ExtensionDialogRequest,
@@ -136,13 +135,9 @@ import {
 	readChannelWatchEnabled,
 	writeChannelWatchEnabled,
 } from "./tools/channel-watch";
-import { GuardTriggerMarkers, makeCompactionGuardExtension } from "./tools/compaction-guard";
-import {
-	makeEvapExtension,
-	readContextManagerMode,
-	reportEvapBatch,
-	writeContextManagerMode,
-} from "./tools/context-evaporation";
+import { makeCompactionGuardExtension } from "./tools/compaction-guard";
+import { createCompactionRequestPolicy } from "./tools/compaction-guard/request-policy";
+import { makeEvapExtension, reportEvapBatch } from "./tools/context-evaporation";
 import { collectMcpTools, makeMcpInventoryExtension } from "./tools/mcp-inventory";
 import { makeShowImageTool } from "./tools/show-image";
 import { discoverAgents, isSubagentSessionPath, makeSubagentTool } from "./tools/subagent";
@@ -343,12 +338,6 @@ export class PiBackend {
 	);
 	/** 会话事件 trace（JSONL，离线可重放） */
 	private readonly traces = new SessionTraces();
-	/**
-	 * 压缩护栏的一次性标记（spec D8）：护栏自研触发时置标记，转发咽喉点把该次压缩的
-	 * `compaction_start/end.reason` 从 SDK 的 `"manual"` 改写成 `"threshold"`（副本，不动 SDK 事件），
-	 * 这样对话区显示「自动（上下文阈值）」而不是「手动」；真实 `/compact` 不受影响。
-	 */
-	private readonly guardTriggerMarkers = new GuardTriggerMarkers();
 	private readonly streamGuard = new StreamGuard();
 	private readonly historyGate = new SessionHydrationGate();
 	/**
@@ -478,20 +467,13 @@ export class PiBackend {
 				},
 			}),
 		);
-		// 压缩护栏（默认开启，spec compaction-bounded）：`agent_settled` 内**同步**判百分比水位并触发压缩，
-		// `session_before_compact` 把摘要输入有界化。**没有 context 钩子**，与蒸发/视觉代理无语义交互，
-		// 注册位置不敏感；放蒸发之后只为保持「内置扩展同一段」的可读性。
+		// 摘要输入限制与观测。主动压缩在 wireSession 绑定的请求策略中，不在 settled 启动。
 		// 观测双通道：log（快速 grep）+ trace_custom `compaction_guard` 行（reducer 未知类型 no-op）
 		factories.push(
 			makeCompactionGuardExtension({
 				agentDir: getAgentDir(),
 				reporter: (sessionId, observation) => {
 					this.traces.recordCustom(sessionId, "compaction_guard", observation);
-					// 触发 → 置一次性标记（D8）。**这里不主动清**：UI 卡片文案是 `compaction_end` 覆盖写入的，
-					// 而 end 可能比 `session_compact` 晚到（实测压缩耗时 15s）——标记由 end 配对消费，另有 TTL 兜底。
-					if (observation.phase === "trigger" && observation.source === "guard") {
-						this.guardTriggerMarkers.mark(sessionId);
-					}
 				},
 			}),
 		);
@@ -608,6 +590,7 @@ export class PiBackend {
 			permissionMode: entry.modeRef.current,
 			streaming: entry.session.isStreaming,
 			compacting: entry.session.isCompacting,
+			compactionPause: entry.session.compactionPause,
 		}));
 	}
 	getSessionBaseline(sessionId: string): import("@percho/shared").SessionBaseline {
@@ -620,7 +603,12 @@ export class PiBackend {
 		return {
 			meta: this.registry.toMeta(entry),
 			sequence: live.sequence,
-			transcript: { ...transcript, todos: this.readTodos(entry) },
+			transcript: {
+				...transcript,
+				compactionPause: entry.session.compactionPause ?? null,
+				followUpQueue: entry.session.getFollowUpMessages().map(composerQueueText),
+				todos: this.readTodos(entry),
+			},
 			permissionMode: entry.modeRef.current,
 		};
 	}
@@ -804,6 +792,7 @@ export class PiBackend {
 			this.assertRunning();
 			const { session, extensionsResult } = await makeSession({ gate, preferBuiltin, load });
 			candidate = session;
+			if (!readOnly) session.setCompactionPolicy(createCompactionRequestPolicy(getAgentDir()));
 			this.assertRunning();
 			const mutex = applySubagentMutex(session, extensionsResult, preferBuiltin);
 			if (mutex.shadowed.length > 0) {
@@ -827,8 +816,7 @@ export class PiBackend {
 						? { ...event, message: projectComposerMessage(event.message) }
 						: event,
 				);
-				// D8：自研触发的那次压缩在 UI 上说「自动（上下文阈值）」——只改转发副本
-				this.emitEvent(session.sessionId, this.guardTriggerMarkers.rewrite(session.sessionId, event));
+				this.emitEvent(session.sessionId, event);
 			});
 			this.constructionGates.delete(gate);
 			try {
@@ -964,6 +952,9 @@ export class PiBackend {
 		const entry = this.registry.get(sessionId);
 		// 没有该会话 = 它本来就没在跑（幂等成功）：调用方该照常清掉自己的会话条目
 		if (!entry) return { closed: true };
+		if (intent === "gc" && entry.session.pendingMessageCount > 0) {
+			return { closed: false };
+		}
 		if (entry.session.isStreaming) {
 			// 等审批也在此列（实测 isStreaming 两态都为 true）：用户切走/自动卸载都不能把这一轮掐掉
 			log.warn("closeSession ignored: streaming", sessionId);
@@ -981,13 +972,7 @@ export class PiBackend {
 
 	/** Registered-session-only auxiliary groups; conflict cleanup must not touch holder ids. */
 	private beforeSessionShutdown(entry: RegisteredSession): void {
-		const id = entry.session.sessionId;
 		const failures: unknown[] = [];
-		try {
-			this.guardTriggerMarkers.clear(id);
-		} catch (error) {
-			failures.push(error);
-		}
 		try {
 			this.channelWatchCleanups.get(entry.modeRef)?.();
 		} catch (error) {
@@ -1953,22 +1938,6 @@ export class PiBackend {
 		if (!entry) throw new Error(`Session not found: ${sessionId}`);
 		entry.modeRef.current = mode;
 		log.info("permission mode", sessionId, { mode });
-	}
-
-	/** 上下文管理模式（二态：evaporation / off；单一 key 派生读，缺省蒸发） */
-	getContextManagerConfig(): { mode: ContextManagerMode } {
-		return { mode: readContextManagerMode(getAgentDir()) };
-	}
-
-	/** 写上下文管理模式（单一写者原子写，写后即效：下一轮 context 钩子见新值）。损坏拒写时上抛 */
-	setContextManagerMode(mode: ContextManagerMode): void {
-		try {
-			writeContextManagerMode(getAgentDir(), mode);
-		} catch (err) {
-			log.error("settings.json 写入失败（contextManager mode 未保存）", err);
-			throw err; // ipcMain.handle，reject 传回 renderer
-		}
-		log.info("context manager mode", mode);
 	}
 
 	/** channel-watch 总开关（设置 UI 用；键在 ~/.percho/agent/settings.json，缺省=开） */

@@ -5,6 +5,7 @@ import { join } from "node:path";
 import { pathToFileURL } from "node:url";
 import { createLogger, initLogging, localSessionPaths, PiBackend } from "@percho/backend";
 import { app, BrowserWindow, Menu, nativeTheme, net, protocol, screen, shell } from "electron";
+import { releaseChannel } from "./app-identity";
 import { backgroundsDir } from "./background";
 import { registerIpc } from "./ipc";
 import { initLanObserver, type LanObserverHandle } from "./lan";
@@ -46,71 +47,73 @@ if (process.platform !== "darwin") Menu.setApplicationMenu(null);
 nativeTheme.on("updated", () => applyChromeTheme(nativeTheme.themeSource));
 
 app.whenReady().then(async () => {
-	const storage = await prepareLocalStorage();
-	initLogging(join(app.getPath("userData"), "logs"));
-	log.info("app ready", { version: app.getVersion(), userData: app.getPath("userData") });
-
-	// 自定义背景图协议：pi-bg://background/<文件名> → userData/backgrounds/<文件名>（文件名白名单防路径穿越）
-	protocol.handle(BG_PROTOCOL, (request) => {
-		const name = decodeURIComponent(new URL(request.url).pathname).replace(/^\/+/, "");
-		if (!/^[\w.-]+$/.test(name)) return new Response("invalid background name", { status: 400 });
-		return net.fetch(pathToFileURL(join(backgroundsDir(), name)).toString());
-	});
-
-	backend = new PiBackend({
-		localSessionPaths: localSessionPaths(storage.record, storage.selection.legacyRoots),
-		// 桌面端集成：UI 插件技能目录 + 内置协作 skill 目录（均随包分发）+ 系统提示词段落
-		// MCP OAuth 授权页交给系统浏览器（官方内置 mcp 扩展用；缺省则扩展自行回落到平台默认浏览器）
-		openExternal: (url) => shell.openExternal(url),
-		desktopIntegration: {
-			appendSystemPrompt: process.env.PERCHO_AGENT_DIR
-				? UI_PLUGIN_PROMPT.map((line) =>
-						line.replace("~/.percho/ui-plugins", join(app.getPath("userData"), "ui-plugins")),
-					)
-				: UI_PLUGIN_PROMPT,
-			additionalSkillPaths: [
-				join(uiPluginsResourcesDir(), "skills"),
-				// 内置协作 skill（channel-pickup/design-handoff）：语义上与 UI 插件无关，独立目录分发
-				app.isPackaged ? join(process.resourcesPath, "skills") : join(__dirname, "../../resources/skills"),
-			],
-		},
-	});
-	await backend.init();
-	attachRendererWatchdog(backend);
-
-	lanObserver = await initLanObserver(
-		backend,
-		join(app.getPath("userData"), "lan-observer.json"),
-		join(app.getPath("userData"), "lan-audit.jsonl"),
-	);
-	uiPluginsManager = new UiPluginManager();
-	await uiPluginsManager.init();
-	registerIpc(backend, uiPluginsManager, lanObserver);
-	await initUpdater();
-	scheduleAutoUpdateCheck();
+	if (releaseChannel === "dev") app.dock?.setIcon(join(__dirname, "../../build/icon-dev.png"));
 	const uiState = await loadUiState();
-	// main 进程原生主题与 app 设置对齐（Windows 窗口按钮覆盖层/后续主题切换的 system 解析依赖它）
 	nativeTheme.themeSource = uiState?.theme ?? "system";
-	// 窗口位置/尺寸记忆：写盘时只保证尺寸合法，「这块屏还在不在」在这里校验（进程就绪后才能取 screen）——
-	// 拔屏/换屏后的旧 bounds 会被判空或夹回可见区，不会把窗口开到看不见的地方
 	const initialBounds = sanitizeWindowBounds(
 		uiState?.windowBounds ?? null,
 		screen.getAllDisplays().map((display) => display.workArea),
 	);
-	createWindow(resolveTheme(uiState?.theme), initialBounds);
-	storage.close();
+	const storage = await prepareLocalStorage(resolveTheme(uiState?.theme), initialBounds);
+	try {
+		initLogging(join(app.getPath("userData"), "logs"));
+		log.info("app ready", { version: app.getVersion(), userData: app.getPath("userData") });
 
-	app.on("activate", () => {
-		const [win] = BrowserWindow.getAllWindows();
-		// macOS 关窗只是隐藏窗口：点 Dock 图标要把原窗口（含会话与草稿）原样带回来
-		if (win) {
-			if (win.isMinimized()) win.restore();
-			win.show();
-			win.focus();
-			return;
-		}
-		createWindow(resolveTheme(uiState?.theme), initialBounds);
-	});
+		// 自定义背景图协议：pi-bg://background/<文件名> → userData/backgrounds/<文件名>（文件名白名单防路径穿越）
+		protocol.handle(BG_PROTOCOL, (request) => {
+			const name = decodeURIComponent(new URL(request.url).pathname).replace(/^\/+/, "");
+			if (!/^[\w.-]+$/.test(name)) return new Response("invalid background name", { status: 400 });
+			return net.fetch(pathToFileURL(join(backgroundsDir(), name)).toString());
+		});
+
+		backend = new PiBackend({
+			localSessionPaths: localSessionPaths(storage.record, storage.selection.legacyRoots),
+			// 桌面端集成：UI 插件技能目录 + 内置协作 skill 目录（均随包分发）+ 系统提示词段落
+			// MCP OAuth 授权页交给系统浏览器（官方内置 mcp 扩展用；缺省则扩展自行回落到平台默认浏览器）
+			openExternal: (url) => shell.openExternal(url),
+			desktopIntegration: {
+				appendSystemPrompt:
+					process.env.PERCHO_AGENT_DIR || releaseChannel === "beta"
+						? UI_PLUGIN_PROMPT.map((line) =>
+								line.replace("~/.percho/ui-plugins", join(app.getPath("userData"), "ui-plugins")),
+							)
+						: UI_PLUGIN_PROMPT,
+				additionalSkillPaths: [
+					join(uiPluginsResourcesDir(), "skills"),
+					// 内置协作 skill（channel-pickup/design-handoff）：语义上与 UI 插件无关，独立目录分发
+					app.isPackaged ? join(process.resourcesPath, "skills") : join(__dirname, "../../resources/skills"),
+				],
+			},
+		});
+		await backend.init();
+		attachRendererWatchdog(backend);
+
+		lanObserver = await initLanObserver(
+			backend,
+			join(app.getPath("userData"), "lan-observer.json"),
+			join(app.getPath("userData"), "lan-audit.jsonl"),
+		);
+		uiPluginsManager = new UiPluginManager();
+		await uiPluginsManager.init();
+		registerIpc(backend, uiPluginsManager, lanObserver);
+		await initUpdater();
+		scheduleAutoUpdateCheck();
+		storage.launchWorkbench();
+
+		app.on("activate", () => {
+			const [win] = BrowserWindow.getAllWindows();
+			// macOS 关窗只是隐藏窗口：点 Dock 图标要把原窗口（含会话与草稿）原样带回来
+			if (win) {
+				if (win.isMinimized()) win.restore();
+				win.show();
+				win.focus();
+				return;
+			}
+			createWindow(resolveTheme(uiState?.theme), initialBounds);
+		});
+	} catch (error) {
+		storage.failWorkbench(error);
+	}
 });
 
 app.on("window-all-closed", () => {

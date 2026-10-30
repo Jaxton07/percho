@@ -57,6 +57,7 @@ export function createExecutionHandlers(
 		saveApiKey: ({ providerId, key }) => backend.settings.saveApiKey(providerId, key),
 		removeCredential: ({ providerId }) => backend.settings.removeCredential(providerId),
 		addCustomProvider: ({ input }) => backend.settings.addCustomProvider(input),
+		listUpstreamModels: (input) => backend.settings.listUpstreamModels(input),
 		updateCustomProvider: ({ input }) => backend.settings.updateCustomProvider(input),
 		removeCustomProvider: ({ providerId }) => backend.settings.removeCustomProvider(providerId),
 		setProviderBaseUrl: ({ providerId, baseUrl, apiKey }) =>
@@ -86,8 +87,6 @@ export function createExecutionHandlers(
 		getPermissionConfig: () => backend.getPermissionConfig(),
 		getPermissionMode: ({ sessionId }) => backend.getSessionPermissionMode(sessionId),
 		setPermissionMode: ({ sessionId, mode }) => backend.setSessionPermissionMode(sessionId, mode),
-		getContextManagerConfig: () => backend.getContextManagerConfig(),
-		setContextManagerMode: ({ mode }) => backend.setContextManagerMode(mode),
 		getChannelWatchConfig: () => backend.getChannelWatchConfig(),
 		setChannelWatchEnabled: ({ enabled }) => backend.setChannelWatchEnabled(enabled),
 		respondTrust: ({ requestId, answer }) => backend.respondTrust(requestId, answer),

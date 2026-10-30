@@ -2,6 +2,7 @@ import type { ProviderInfo } from "@percho/shared";
 import { useState } from "react";
 import { useT } from "../../../i18n";
 import { useSettingsStore } from "../../../stores/settings";
+import { HintIcon } from "../HintIcon";
 
 const inputClass =
 	"w-full rounded-lg border border-border px-2.5 py-1.5 text-ui-12 outline-none focus:border-ink-faint disabled:cursor-not-allowed disabled:text-ink-faint";
@@ -36,10 +37,13 @@ export function BuiltinProviderEditForm({
 	};
 
 	return (
-		<div className="mt-2 rounded-xl border border-border p-3">
-			<h3 className="text-ui-13 font-medium text-ink">
-				{t("settings.providers.builtinEditTitle", { name: provider.name })}
-			</h3>
+		<div className="mt-2 border-t border-border pt-2.5">
+			<div className="flex items-center gap-1.5">
+				<h3 className="text-ui-13 font-medium text-ink">
+					{t("settings.providers.builtinEditTitle", { name: provider.name })}
+				</h3>
+				<HintIcon label={t("settings.providers.builtinHint", { name: provider.name })} />
+			</div>
 			<div className="mt-2">
 				<input
 					className={inputClass}
@@ -57,7 +61,6 @@ export function BuiltinProviderEditForm({
 					onChange={(e) => setKey(e.target.value)}
 				/>
 			</div>
-			<p className="mt-2 text-ui-10 leading-relaxed text-ink-faint">{t("settings.providers.builtinHint")}</p>
 			<div className="mt-2 flex justify-end gap-2">
 				<button
 					type="button"

@@ -6,6 +6,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 const fake = vi.hoisted(() => ({
 	dir: "",
 	packaged: true,
+	allowed: true,
 	sdkHandlers: new Map<string, (...args: any[]) => void>(),
 	appHandlers: new Map<string, (...args: any[]) => void>(),
 	nativeHandlers: new Map<string, (...args: any[]) => void>(),
@@ -20,6 +21,11 @@ const fake = vi.hoisted(() => ({
 	},
 }));
 vi.mock("node:module", () => ({ createRequire: () => () => ({ autoUpdater: fake.updater }) }));
+vi.mock("./app-identity", () => ({
+	get supportsUpdates() {
+		return fake.packaged && fake.allowed;
+	},
+}));
 vi.mock("node:child_process", () => ({
 	execFile: vi.fn((_file, _args, _options, callback) =>
 		callback(null, "", "Authority=Developer ID Application\nTeamIdentifier=TEST"),
@@ -46,6 +52,7 @@ beforeEach(() => {
 	mkdirSync(root, { recursive: true });
 	fake.dir = mkdtempSync(join(root, "case-"));
 	fake.packaged = true;
+	fake.allowed = true;
 	fake.sdkHandlers.clear();
 	fake.appHandlers.clear();
 	fake.nativeHandlers.clear();
@@ -60,6 +67,19 @@ const attempt = () =>
 	JSON.parse(readFileSync(join(fake.dir, "update-diagnostics/install-attempt.json"), "utf8"));
 
 describe("updater diagnostic wiring", () => {
+	it("never checks, downloads or installs stable updates for a separate test channel", async () => {
+		fake.allowed = false;
+		const updater = await import("./updater");
+		await updater.initUpdater();
+		await updater.checkForUpdates();
+		await updater.downloadUpdate();
+		updater.installUpdate();
+		updater.scheduleAutoUpdateCheck();
+		expect(fake.updater.on).not.toHaveBeenCalled();
+		expect(fake.updater.checkForUpdates).not.toHaveBeenCalled();
+		expect(fake.updater.downloadUpdate).not.toHaveBeenCalled();
+		expect(fake.updater.quitAndInstall).not.toHaveBeenCalled();
+	});
 	it("connects SDK logger and emits bounded metadata without changing download policy", async () => {
 		const updater = await import("./updater");
 		await updater.initUpdater();

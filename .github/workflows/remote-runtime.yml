@@ -25,6 +25,7 @@ jobs:
       PLATFORM: ${{ matrix.platform }}
       ARTIFACT_ARCH: ${{ matrix.arch }}
       PERCHO_BUILD_RELEASE_TAG: ${{ inputs.release_tag }}
+      PERCHO_BUILD_SOURCE_COMMIT: ${{ github.sha }}
     steps:
       - uses: actions/checkout@v4
       - uses: docker/setup-buildx-action@v3
@@ -36,6 +37,7 @@ jobs:
           mkdir -p ".local/runtime-${ARTIFACT_ARCH}" node_modules
           docker run --rm --platform "$PLATFORM" \
             -e PERCHO_BUILD_RELEASE_TAG \
+            -e PERCHO_BUILD_SOURCE_COMMIT \
             -v "$PWD:/source:ro" --tmpfs /source/node_modules \
             -v "$PWD/.local/runtime-${ARTIFACT_ARCH}:/output" \
             percho-runtime-build node /source/scripts/build-remote-runtime.mjs --out /output
@@ -72,6 +74,8 @@ jobs:
       - uses: actions/upload-artifact@v4
         with:
           name: remote-runtime-${{ matrix.arch }}
+          include-hidden-files: true
+          compression-level: 0
           path: |
             .local/runtime-${{ matrix.arch }}/percho-runtime-linux-${{ matrix.arch }}.tar.gz
             .local/runtime-${{ matrix.arch }}/runtime-linux-${{ matrix.arch }}.json

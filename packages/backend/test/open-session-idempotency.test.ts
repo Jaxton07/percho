@@ -127,14 +127,12 @@ describe("PiBackend.wireSession 注册冲突（D4 最后防线）", () => {
 		const lifecycle = backend as unknown as {
 			channelSubs: import("../src/channel-subscriptions").ChannelSubscriptionRegistry;
 			historyGate: import("../src/session/hydration-gate").SessionHydrationGate;
-			guardTriggerMarkers: import("../src/tools/compaction-guard/trigger-marker").GuardTriggerMarkers;
 			eventRates: import("../src/session/rates").EventRateTracker;
 			channelWatchCleanups: WeakMap<RegisteredSession["modeRef"], () => void>;
 		};
 		lifecycle.channelSubs.noteSessionOpened("sess-dup");
 		lifecycle.channelSubs.report("sess-dup", new Set(["holder"]));
 		const snapshot = lifecycle.channelSubs.snapshot("sess-dup");
-		lifecycle.guardTriggerMarkers.mark("sess-dup");
 		lifecycle.eventRates.tick("sess-dup");
 		const holderWatcher = vi.fn();
 		lifecycle.channelWatchCleanups.set(holder.modeRef, holderWatcher);
@@ -152,6 +150,7 @@ describe("PiBackend.wireSession 注册冲突（D4 最后防线）", () => {
 		const dialogsDispose = vi.spyOn(ExtensionDialogHost.prototype, "dispose");
 		const session = {
 			sessionId: "sess-dup",
+			setCompactionPolicy: vi.fn(),
 			sessionFile: file,
 			sessionName: undefined,
 			model: null,
@@ -192,17 +191,12 @@ describe("PiBackend.wireSession 注册冲突（D4 最后防线）", () => {
 			expect(holderWatcher).not.toHaveBeenCalled();
 			expect(lifecycle.channelWatchCleanups.has(holder.modeRef)).toBe(true);
 			expect(lifecycle.eventRates.snapshot().has("sess-dup")).toBe(true);
-			expect(
-				lifecycle.guardTriggerMarkers.rewrite("sess-dup", { type: "compaction_start", reason: "manual" })
-					.reason,
-			).toBe("threshold");
 		} finally {
 			gateDispose.mockRestore();
 			dialogsDispose.mockRestore();
 			lifecycle.historyGate.cancel("sess-dup");
 			await history;
 			lifecycle.channelSubs.dispose("sess-dup");
-			lifecycle.guardTriggerMarkers.clear("sess-dup");
 			lifecycle.eventRates.delete("sess-dup");
 			lifecycle.channelWatchCleanups.delete(holder.modeRef);
 		}

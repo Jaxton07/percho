@@ -12,18 +12,26 @@ export function SelectionMenu({
 	value,
 	onSelect,
 	onClose,
+	open,
+	onExited,
 }: {
 	anchor: HTMLElement;
-	/** 可输入选择器：列表固定在整个字段下方，并与字段等宽。 */
+	/** 可输入选择器：列表与字段等宽，空间不足时上翻；关闭后焦点回到输入框。 */
 	field?: HTMLElement;
 	label: string;
-	options: { value: string; label: string; disabled?: boolean }[];
+	options: { value: string; label: string; description?: string; disabled?: boolean }[];
 	value: string;
 	onSelect: (value: string) => void;
 	onClose: () => void;
+	/** 受控动画：关闭后暂留节点，退场完成再由调用方卸载。 */
+	open?: boolean;
+	onExited?: () => void;
 }) {
 	const ref = useRef<HTMLDivElement>(null);
 	const id = useId();
+	const exitedRef = useRef(onExited);
+	exitedRef.current = onExited;
+	const interruptedFrame = useRef<{ opacity: string; transform: string } | null>(null);
 	const [position, setPosition] = useState<{
 		x: number;
 		y: number;
@@ -37,11 +45,18 @@ export function SelectionMenu({
 		if (!menu) return;
 		if (field) {
 			const rect = field.getBoundingClientRect();
+			const width = Math.min(rect.width, Math.max(0, window.innerWidth - 12));
+			const availableBelow = Math.max(0, window.innerHeight - rect.bottom - 10);
+			const availableAbove = Math.max(0, rect.top - 10);
+			const maxHeight = Math.min(240, Math.max(availableBelow, availableAbove));
 			setPosition({
-				x: rect.left,
-				y: rect.bottom + 4,
-				width: rect.width,
-				maxHeight: Math.min(240, Math.max(40, window.innerHeight - rect.bottom - 12)),
+				...placeMenu(
+					anchorOfElement(field),
+					{ width, height: Math.min(menu.getBoundingClientRect().height, maxHeight) },
+					{ width: window.innerWidth, height: window.innerHeight },
+				),
+				width,
+				maxHeight,
 			});
 			return;
 		}
@@ -52,16 +67,41 @@ export function SelectionMenu({
 			}),
 		);
 	}, [anchor, field]);
+	useLayoutEffect(() => {
+		const menu = ref.current;
+		if (!menu || !position || open === undefined) return;
+		if (window.matchMedia("(prefers-reduced-motion: reduce)").matches) {
+			if (!open) exitedRef.current?.();
+			return;
+		}
+		const offset = position.y < anchor.getBoundingClientRect().top ? 4 : -4;
+		const hidden = { opacity: "0", transform: `translateY(${offset}px)` };
+		const visible = { opacity: "1", transform: "translateY(0)" };
+		const animation = menu.animate(
+			[interruptedFrame.current ?? (open ? hidden : visible), open ? visible : hidden],
+			{ duration: open ? 160 : 120, easing: "cubic-bezier(0.2, 0, 0, 1)", fill: "both" },
+		);
+		animation.onfinish = () => {
+			if (!open) exitedRef.current?.();
+		};
+		return () => {
+			const style = getComputedStyle(menu);
+			interruptedFrame.current = { opacity: style.opacity, transform: style.transform };
+			animation.onfinish = null;
+			animation.cancel();
+		};
+	}, [anchor, open, position]);
 	useEffect(() => {
-		if (!position) return;
+		if (!position || open === false) return;
 		const menu = ref.current;
 		const selected =
 			menu?.querySelector<HTMLButtonElement>('[aria-selected="true"]:not(:disabled)') ??
 			menu?.querySelector<HTMLButtonElement>('[role="option"]:not(:disabled)') ??
 			menu;
 		selected?.focus({ preventScroll: true });
-	}, [position]);
+	}, [position, open]);
 	useEffect(() => {
+		if (open === false) return;
 		const outside = (event: PointerEvent) => {
 			if (!ref.current?.contains(event.target as Node) && !(field ?? anchor).contains(event.target as Node))
 				onClose();
@@ -77,13 +117,15 @@ export function SelectionMenu({
 			window.removeEventListener("scroll", scroll, true);
 			window.removeEventListener("resize", onClose);
 		};
-	}, [anchor, field, onClose]);
+	}, [anchor, field, onClose, open]);
 	return createPortal(
 		<div
 			ref={ref}
 			role="listbox"
 			tabIndex={-1}
 			aria-label={label}
+			aria-hidden={open === false ? true : undefined}
+			inert={open === false}
 			className="fixed z-50 max-h-60 max-w-[calc(100vw-16px)] overflow-y-auto rounded-xl bg-surface p-1 shadow-pop"
 			style={{
 				left: position?.x ?? 0,
@@ -94,6 +136,7 @@ export function SelectionMenu({
 				width: position?.width,
 				maxHeight: position?.maxHeight,
 				visibility: position ? "visible" : "hidden",
+				pointerEvents: open === false ? "none" : undefined,
 			}}
 			onKeyDown={(event) => {
 				const buttons = [
@@ -147,6 +190,9 @@ export function SelectionMenu({
 					}}
 				>
 					<span className="min-w-0 flex-1 truncate">{option.label}</span>
+					{option.description && (
+						<span className="shrink-0 text-ui-10 text-ink-faint">{option.description}</span>
+					)}
 					<span className="flex w-3 shrink-0">{option.value === value && <CheckIcon />}</span>
 				</button>
 			))}

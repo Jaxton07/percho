@@ -9,6 +9,7 @@ import { createServer } from "node:net";
 import { dirname, isAbsolute, join, resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { build } from "esbuild";
+import { expectNativeExit } from "./release/native-exit.mjs";
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const executable = process.argv[3];
@@ -47,7 +48,7 @@ async function unusedPort() {
 	await new Promise((resolve) => server.close(resolve));
 	return port;
 }
-async function connect(port, child, startup = false) {
+async function connect(port, child) {
 	let page;
 	await wait(async () => {
 		assert.equal(child.exitCode, null, "Application exited before renderer connected");
@@ -55,10 +56,7 @@ async function connect(port, child, startup = false) {
 			const response = await fetch(`http://127.0.0.1:${port}/json`, {
 				signal: AbortSignal.timeout(1000),
 			});
-			page = (await response.json()).find(
-				(p) =>
-					p.type === "page" && p.url.startsWith("file:") && p.url.includes("storage-startup") === startup,
-			);
+			page = (await response.json()).find((p) => p.type === "page" && p.url.startsWith("file:"));
 			return !!page;
 		} catch {
 			return false;
@@ -95,12 +93,15 @@ async function connect(port, child, startup = false) {
 		if (result.exceptionDetails) throw new Error(JSON.stringify(result.exceptionDetails));
 		return result.result.value;
 	};
+	await send("Emulation.setFocusEmulationEnabled", { enabled: true });
 	return {
+		pageId: page.id,
 		socket,
 		evaluate,
-		async click(index, { exitsApp = false } = {}) {
+		async click(selector, { exitsApp = false } = {}) {
 			const point = await evaluate(`(() => {
-				const button = [...document.querySelectorAll('main button')][${index}];
+				const button = document.querySelector(${JSON.stringify(selector)});
+				if (!button) throw Error('Missing startup action');
 				button.scrollIntoView({block:'nearest'});
 				const r = button.getBoundingClientRect(), x = r.x+r.width/2, y=r.y+r.height/2;
 				if (!button.contains(document.elementFromPoint(x,y))) throw Error('Button covered');
@@ -134,11 +135,19 @@ async function scenario(name, agent, action) {
 		delete env.PERCHO_AGENT_DIR;
 		env.PI_CODING_AGENT_DIR = agent;
 	}
-	const child = spawn(executable, [`--user-data-dir=${profile}`, `--remote-debugging-port=${port}`], {
-		cwd: root,
-		env,
-		stdio: ["ignore", "pipe", "pipe"],
-	});
+	const child = spawn(
+		executable,
+		[
+			`--user-data-dir=${profile}`,
+			`--remote-debugging-port=${port}`,
+			...(process.platform === "linux" && process.env.CI ? ["--no-sandbox"] : []),
+		],
+		{
+			cwd: root,
+			env,
+			stdio: ["ignore", "pipe", "pipe"],
+		},
+	);
 	let log = "",
 		closed = false,
 		failure;
@@ -156,13 +165,24 @@ async function scenario(name, agent, action) {
 	});
 	let ui;
 	try {
-		ui = await connect(port, child, action === "adopt" || name === "legacy-env");
+		ui = await connect(port, child);
+		const timeOrigin = await ui.evaluate(`(() => {
+			window.__startupSmoke = { setupSeen: !!document.querySelector('.startup-layout') };
+			const observer = new MutationObserver(() => {
+				if (document.querySelector('.startup-layout')) window.__startupSmoke.setupSeen = true;
+			});
+			observer.observe(document, { childList: true, subtree: true });
+			return performance.timeOrigin;
+		})()`);
+		const expectsSetup = action === "adopt" || name === "legacy-env";
 		await wait(
 			() =>
 				ui.evaluate(
-					"!!window.pi && document.documentElement?.dataset.appReady==='true' && !document.getElementById('splash')",
+					expectsSetup
+						? "!!window.pi && document.documentElement?.dataset.startupView==='setup' && !!document.querySelector('.startup-layout')"
+						: "!!window.pi && document.documentElement?.dataset.appReady==='true' && !document.getElementById('splash')",
 				),
-			"interactive renderer",
+			expectsSetup ? "interactive storage setup" : "interactive workbench",
 		);
 		if (name === "legacy-env") {
 			await wait(
@@ -173,7 +193,9 @@ async function scenario(name, agent, action) {
 				"legacy override rejection",
 			);
 			await assert.rejects(stat(agent), { code: "ENOENT" });
-			await ui.click(1, { exitsApp: true }); // Error screen: retry, then exit.
+			await expectNativeExit(child, () =>
+				ui.click(".startup-footer > div:first-child button", { exitsApp: true }),
+			);
 		} else {
 			if (action === "adopt") {
 				await wait(
@@ -186,27 +208,51 @@ async function scenario(name, agent, action) {
 					true,
 					"Normal IPC must not start before adoption",
 				);
-				await ui.click(0);
-				await ui.close();
-				ui = await connect(port, child);
+				await ui.click("main[data-phase='existing'] .startup-footer > div:last-child button");
 			}
 			await wait(
 				() =>
 					ui.evaluate(
-						"document.documentElement?.dataset.appReady==='true' && !document.getElementById('splash') && !location.search.includes('storage-startup')",
+						"document.documentElement?.dataset.appReady==='true' && !document.getElementById('splash') && !document.querySelector('.startup-layout')",
 					),
 				"normal workbench",
 			);
+			assert.equal(await ui.evaluate("performance.timeOrigin"), timeOrigin, "Startup must not navigate");
+			const pages = (await (await fetch(`http://127.0.0.1:${port}/json`)).json()).filter(
+				(page) => page.type === "page" && page.url.startsWith("file:"),
+			);
+			assert.equal(pages.length, 1, "Startup must keep a single window");
+			assert.equal(pages[0].id, ui.pageId, "Workbench must reuse the setup page");
+			if (action !== "adopt")
+				assert.equal(await ui.evaluate("window.__startupSmoke.setupSeen"), false, "Unexpected setup page");
 			const record = JSON.parse(await readFile(join(agent, ".percho-local-storage.json"), "utf8"));
 			assert.equal(record.kind, action === "adopt" ? "adopt" : "empty");
 			await privateDirectory(agent, false);
 			assert.ok(await ui.evaluate("window.pi.getAppInfo().then(info => !!info.version)"));
-			await ui.evaluate("window.pi.confirmQuit()");
-			results.push({ name, recordId: record.id, kind: record.kind });
+			assert.equal(
+				await ui.evaluate("!!document.querySelector('.sidebar.is-collapsed')"),
+				true,
+				"Sidebar must start collapsed, including after restart",
+			);
+			if (name === "fresh") {
+				await ui.click("[data-sidebar-toggle]");
+				await wait(
+					() => ui.evaluate("!!document.querySelector('.sidebar:not(.is-collapsed)')"),
+					"manual sidebar expansion",
+				);
+				// Reproduce an old saved preference; restart must ignore it as well as the current open UI.
+				await ui.evaluate("window.pi.saveUiState({state:{sidebarCollapsed:false}}).then(()=>true)");
+			}
+			await expectNativeExit(child, () => ui.evaluate("void window.pi.confirmQuit(); true"));
+			results.push({
+				name,
+				recordId: record.id,
+				kind: record.kind,
+				singlePage: true,
+				sidebarStartsCollapsed: true,
+			});
 		}
-		await wait(() => closed, "native process exit", 15000);
 		if (failure) throw failure;
-		assert.equal(child.exitCode, 0);
 		if (name === "legacy-env") results.push({ name, rejectedBeforeMkdir: true });
 	} finally {
 		await ui?.close();

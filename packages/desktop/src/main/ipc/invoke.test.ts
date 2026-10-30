@@ -15,6 +15,15 @@ import { environmentRouter } from "../environment-router";
 import { registerInvokeHandlers } from "./invoke";
 
 describe("public IPC target boundary", () => {
+	it("preserves Electron provenance for native handlers without adding it to the payload", () => {
+		const handler = vi.fn();
+		registerInvokeHandlers({ menu: APP_CHANNELS.showComposerEditMenu }, { menu: handler });
+		const native = fixture.handlers.get(APP_CHANNELS.showComposerEditMenu.channel);
+		const event = { sender: {}, senderFrame: {} };
+		const args = { token: "editor", x: 10, y: 20 };
+		native?.(event, args);
+		expect(handler).toHaveBeenCalledWith(args, event);
+	});
 	it("rejects implicit execution and mismatched environments; native methods remain desktop-owned", async () => {
 		const branch = vi.fn(async () => "local-main");
 		const pick = vi.fn(async () => "/local");

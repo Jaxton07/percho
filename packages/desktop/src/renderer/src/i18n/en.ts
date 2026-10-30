@@ -1,16 +1,71 @@
-import { UI_WORKBENCH_TRUST_COPY } from "@percho/shared";
+import { TASK_NOTIFICATION_COPY, UI_WORKBENCH_TRUST_COPY } from "@percho/shared";
 import type { Messages } from "./zh";
 
 /** English language pack (mirrors zh.ts shape) */
 export const en: Messages = {
+	notifications: {
+		...TASK_NOTIFICATION_COPY.en,
+		title: "Desktop task notifications",
+		test: "Send test notification",
+		submitted: "Request submitted. Visibility depends on system notification permissions and Do Not Disturb.",
+		unsupported: "Desktop notifications are unavailable on this system.",
+		failed: "Could not submit the notification. Check system notification settings.",
+		saveFailed: "Could not save the notification preference. Your choice still applies for this run.",
+		targetUnavailable: "The notification's session or connection is no longer available.",
+	},
+	emptyState: {
+		slogan: "Bring your ideas to life, your way.",
+	},
 	storageStartup: {
+		preparing: "Preparing…",
+		chooseTitle: "How would you like to start?",
+		chooseHint: "Previous data was found. Bring it with you to continue using Percho.",
+		copyOption: "Bring existing data",
+		copyOptionHint: "Copy history, accounts, and extension settings",
+		emptyOption: "Start fresh",
+		emptyOptionHint: "Create a private empty directory without importing old data",
+		sourceRetained: "Your original data will be kept.",
+		continue: "Continue",
+		back: "Back",
+		step: "Set up Percho · {step} / 2",
+		reviewTitle: "Bring your data to Percho",
+		reviewHint: "Copy it to a private directory. The original stays in place.",
+		contents: "History, accounts, and settings",
+		contentsHint: "Includes models, extensions, and Skills. It may also contain Pi CLI data.",
+		closeOldApps: "First close the old Percho and any Pi CLI using this directory.",
+		startCopy: "Start transfer",
+		emptyTitle: "Start with a fresh Percho",
+		emptyHint: "No old history, accounts, or extensions will be imported.",
+		newDirectory: "Create a private directory for Percho",
+		emptySummary: "Old data stays in place. New data will be saved in the new directory.",
+		existingTitle: "Continue with existing data",
+		adoptHint: "No merging, overwriting, or automatic import of other old history.",
+		progressTitle: "Preparing your Percho",
+		keepOpen: "Please keep the app open.",
+		scanning: "Checking data to copy…",
+		verifying: "Verifying data…",
+		publishing: "Saving transfer results…",
+		copyProgress: "{mb} / {total} MB · Copy stage {percent}%",
+		viewPaths: "View directories",
+		directoryDetails: "Directory locations",
+		sharedCount: "{count} external resources remain shared",
+		externalHint: "These resources still point to the same locations. Changes may also affect Pi CLI.",
+		errorTitle: "Unable to prepare data",
+		errorHint: "Review the details, resolve the issue, and check again. The original directory is unchanged.",
+		errorDetails: "Error details",
+		cancelTitle: "Cancel preparation and quit?",
+		cancelHint:
+			"The original directory and recovery copies will be kept. Percho will stop safely before quitting.",
+		keepWaiting: "Keep waiting",
+		done: "Done",
+		exitSetup: "Quit setup",
 		title: "Prepare Percho user data",
 		inspecting: "Inspecting storage…",
 		choice: "Separate user data from Pi CLI",
 		existing: "An existing private directory was found",
-		copying: "Copying and verifying data…",
+		copying: "Copying data…",
 		preferences: "Backing up and updating workspace references…",
-		ready: "Storage ready. Starting Percho…",
+		ready: "Opening workspace…",
 		error:
 			"Preparation did not finish. The original directory is unchanged. Review the error and retry or exit.",
 		target: "Percho data directory",
@@ -18,8 +73,7 @@ export const en: Messages = {
 		count: "{files} files · {mb} MB",
 		importHint:
 			"Close the old Percho and any Pi CLI using this directory first. The copy includes history, accounts, and extension settings from the shared directory, possibly including CLI data. The original stays in place. Starting empty imports none of it.",
-		existingHint:
-			"Use the data already here without merging, overwriting, or importing old history. To import instead, exit and move this target directory aside first.",
+		existingHint: "An existing Percho data directory was found.",
 		external: "These explicitly configured external resources may remain shared:",
 		copy: "Copy existing data",
 		useEmpty: "Start empty",
@@ -65,6 +119,14 @@ export const en: Messages = {
 		confirmForget: "Confirm removal",
 		forgetHint:
 			"Only local connection details are removed. Remote tasks and data remain. Existing projects keep their original environment.",
+		errorDetails: "Error details",
+		nodeRequired: {
+			title: "Node.js was not found on the server, or its version is unsupported",
+			install: "Install Node.js {version} on the remote server, then click Check or connect again.",
+			pathHint:
+				"If already installed, make sure node is available to commands run directly over SSH, not just in an interactive terminal.",
+			download: "View Node.js installation instructions",
+		},
 		failure: {
 			network: "Network failure. Retries are bounded and can be cancelled.",
 			authentication: "Configure non-interactive SSH key or agent authentication in an external terminal.",
@@ -171,6 +233,7 @@ export const en: Messages = {
 		title: "Sessions",
 	},
 	update: {
+		separateChannel: "Install test build updates manually",
 		checkForUpdates: "Check for updates",
 		checking: "Checking for updates…",
 		available: "Version {version} available, click to download",
@@ -283,6 +346,16 @@ export const en: Messages = {
 		max: "Max",
 	},
 	compaction: {
+		retrying: "Retrying summary · attempt {attempt}/{maxAttempts} · waiting {delay}s",
+		retryAttempt: "Retrying summary · attempt {attempt}/{maxAttempts}",
+		paused: {
+			failed: "Task paused: context compaction failed.",
+			overThreshold: "Task paused: context remains above the trigger after compaction.",
+			noHistory: "Task paused: context is above the trigger, with no history available to compact.",
+			contextChanged: "Task paused: the model or context changed while preparing the request.",
+			resumeHint:
+				"Restore the connection or adjust the model or pending input, then send a new message to continue. Queued messages are retained.",
+		},
 		running: "Compacting context",
 		done: "Context compacted",
 		cancelled: "Compaction cancelled",
@@ -464,7 +537,7 @@ export const en: Messages = {
 		refreshGit: "Reload branches",
 		daily: "Daily",
 		untitled: "Untitled session",
-		selectProject: "Pick project directory",
+		selectProject: "Select project",
 		noGit: "No Git",
 	},
 	settings: {
@@ -485,6 +558,7 @@ export const en: Messages = {
 			lan: "Cross-device",
 			about: "About",
 		},
+		moreInfo: "More info",
 		language: "Language",
 		languageHint: "Follows system language by default",
 		appearance: {
@@ -511,19 +585,9 @@ export const en: Messages = {
 		backgroundChange: "Change image",
 		backgroundClear: "Remove",
 		backgroundDim: "Overlay opacity",
-		contextManager: "Context management",
-		contextManagerMode: {
-			evaporation: "Evaporation",
-			off: "Off",
-		},
-		contextManagerHint: {
-			evaporation:
-				"On by default. Evaporates aged tool output into self-describing stubs by watermark (e.g. “output evicted, re-read with the same arguments”): tool output truncated from 60%, evicted into placeholders from 85%; zero LLM calls, conversation text preserved, session files untouched. Switching applies without restarting sessions.",
-			off: "Disables all context management: no active compression/evaporation; the SDK's native compaction kicks in near the window limit. Long sessions may pause for compaction.",
-		},
 		channelWatch: "Cross-session channel collaboration (channel-watch)",
 		channelWatchHint:
-			"After a session subscribes to a channel it watches .local/agent-work/channel/<topic>/ for file updates; writes from another session wake this session to pick them up (per the HANDOFF.md protocol). Subscriptions persist via appendEntry and restore on session reopen; built-in loop protection. On by default, fully effective for trusted projects.",
+			"After a session subscribes to a channel it watches .local/agent-work/channel/<topic>/ for file updates; writes from another session wake this session to pick them up (HANDOFF.md protocol). Subscriptions persist with the session; built-in loop protection. On by default, fully effective for trusted projects.",
 		topBar: "Show sessions in the top bar",
 		topBarHint:
 			"The top bar is always there (window dragging, sidebar toggle, current changes). Turn this off and it simply stops showing the temporary-workspace pills — every session stays in the left sidebar.",
@@ -605,20 +669,29 @@ export const en: Messages = {
 			customKeyKeep: "API Key (leave blank to keep current)",
 			customId: "ID, e.g. ai-ops",
 			customName: "Display name (optional)",
-			customBaseUrl: "baseUrl, e.g. https://api.deepseek.com",
+			customBaseUrl: "baseUrl, e.g. https://api.example.com/v1",
+			customBaseUrlHint:
+				"Most relays and OpenAI-compatible services need /v1. A bare host is probed and filled in when fetching models.",
+			upstreamBaseUrlFixed: "Address completed to {baseUrl} (the upstream serves its model list there).",
 			customKey: "API Key (optional, stored in auth.json)",
 			customModelId: "Model ID",
 			customModelCtx: "Context window in tokens; blank = SDK default 128k",
 			customModelOut: "Max output tokens; blank = SDK default 16k",
 			customModelReasoning: "Think",
 			customModelImage: "Image",
-			addModelRow: "+ Add model",
+			addModelRow: "Add model",
 			clearModelRows: "Clear model list",
+			fetchUpstream: "Fetch",
+			fetchingUpstream: "Fetching…",
+			upstreamFetched: "Fetched {count} models. Select one to fill in known capabilities.",
+			upstreamEmpty: "The upstream returned no models",
+			upstreamError: "Fetch failed: {message}",
+			pickUpstreamModel: "Pick from upstream model list",
 			removeModelRow: "Remove row",
-			customModelsHint:
-				"One model per row; paste a comma/newline-separated list to split into rows; enable Think to unlock thinking levels for that model. Leave empty to reuse the provider\u2019s official model list (only baseUrl is overridden; thinking/window metadata stays official)",
-			customModelsEmptyHint:
-				"Currently empty: on save the provider keeps its official model list and only baseUrl is overridden. This fits overriding a built-in provider ID (e.g. openai / anthropic); a brand-new ID needs at least one model",
+			modelsSection: "Models",
+			customModelsHint: "One model per row. Paste model IDs separated by commas or newlines.",
+			customModelsHintAll:
+				"One model per row. Paste IDs separated by commas or newlines; new providers need at least one, built-in overrides may stay empty to keep the official list.",
 			submitting: "Saving…",
 		},
 		login: {
@@ -861,6 +934,7 @@ export const en: Messages = {
 			llmRateLimit: "Model request failed: rate limited",
 			llmOverflow: "Model request failed: context limit exceeded",
 			llmNetwork: "Model request failed: network error",
+			llmInvalidEndpoint: "Model request failed: endpoint or protocol mismatch",
 			llmGeneric: "Model request failed",
 			streamGuard: "Reply aborted by safety guard",
 			sendFailed: "Failed to send",
@@ -871,6 +945,8 @@ export const en: Messages = {
 			rateLimit: "Too many requests or server-side throttling; try again shortly.",
 			compact: "Context is too long. Run /compact to compress, or fork from here to start a new session.",
 			network: "Network connection issue; check your connection and retry.",
+			checkBaseUrl:
+				"The upstream did not return a parseable model stream. Usually the baseUrl is missing /v1 (most relays expose the OpenAI-compatible API under /v1) or the API protocol is wrong. Check the address and protocol in Settings → Model providers.",
 			streamGuard: "Abnormal model output (pathological stream) was aborted by the safety guard.",
 		},
 		retrying: "Auto-retrying · attempt {attempt}/{maxAttempts} · waiting {delay}s",

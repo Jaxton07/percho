@@ -1,4 +1,7 @@
 import type { AgentSessionEvent as PiAgentSessionEvent } from "@earendil-works/pi-coding-agent";
+
+export type { CompactionPause } from "@earendil-works/pi-coding-agent";
+
 import type { ComposerDocument } from "./composer-document";
 import type { SkillInvocationDisplay } from "./skill-invocation";
 import type { SubagentRunData } from "./subagent";
@@ -41,6 +44,8 @@ export interface UiState {
 	background: BackgroundSettings;
 	/** 中央状态动画开关（任务运行时对话区中央显示放大 orb，盖文字层之上 + 半透明遮罩压暗身后文字；与状态行小 orb 解耦；旧版本文件缺省为 false） */
 	centerOrbEnabled: boolean;
+	/** Desktop-only system task notifications; missing/invalid values default to true. */
+	taskNotificationsEnabled?: boolean;
 	/** 置顶会话 id（新置顶在前；只存 app 本地 ui-state.json，不写会话文件、不跨设备同步；已删除的会话 id 由写侧清理） */
 	pinnedSessions: string[];
 	/**
@@ -63,7 +68,7 @@ export interface UiState {
 	 * `activeFile` 一条，其余成员靠历史目录投影画胶囊。
 	 */
 	sessionWorkspace: SessionWorkspaceSnapshot;
-	/** 左侧栏收起（宽 0，彻底藏起；只有顶栏最左按钮能改）；旧版本文件缺省为 false */
+	/** 兼容旧版保存的侧栏开合状态；新版启动时始终收起，不再读写此偏好。 */
 	sidebarCollapsed: boolean;
 	/**
 	 * 左侧栏宽度（px）= **用户意图值**，取值域 `[SIDEBAR_MIN_WIDTH, SIDEBAR_MAX_WIDTH]`（`src/sidebar.ts`）。
@@ -368,16 +373,6 @@ export type PermissionMode = "default" | "fullAccess";
  */
 export type SessionCloseIntent = "user" | "gc";
 
-/** 上下文管理模式（二态；缺省 evaporation。
- * 物理存储 = settings.json 单一决策 key contextEvaporation.enabled
- * （缺整个 key 或 enabled≠false → evaporation；遗留 acpCompressionEnabled 键读侧忽略、写侧顺带清除） */
-export type ContextManagerMode = "evaporation" | "off";
-
-/** 上下文管理配置（设置 UI 二态控件） */
-export interface ContextManagerConfigInfo {
-	mode: ContextManagerMode;
-}
-
 /** channel-watch 跨会话频道唤醒配置（设置 UI 开关；键在 ~/.percho/agent/settings.json，缺省=开） */
 export interface ChannelWatchConfigInfo {
 	enabled: boolean;
@@ -411,6 +406,7 @@ export interface GitBranches {
 
 /** 应用信息（设置 → 关于页展示，来自主进程） */
 export interface AppInfo {
+	releaseChannel?: "stable" | "beta" | "dev";
 	/** 应用名 */
 	name: string;
 	/** 应用版本 */
@@ -521,6 +517,7 @@ export interface SessionBaseline {
 	permissionMode: PermissionMode;
 }
 export interface LoadedSessionSummary {
+	compactionPause?: import("@earendil-works/pi-coding-agent").CompactionPause | null;
 	sequence: number;
 	followUpQueue: string[];
 	permissionMode: PermissionMode;

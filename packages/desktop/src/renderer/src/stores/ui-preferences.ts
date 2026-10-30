@@ -12,9 +12,12 @@ import { create } from "zustand";
 import { getPi } from "../api";
 import { toggleInList } from "../lib/toggle-in-list";
 import { applyFontScales } from "../lib/typography";
+import { pushToast } from "./toasts";
 
 /** 应用级 UI 偏好（持久化在 ui-state.json，与主题/背景同源；主进程 normalize 负责旧文件缺省） */
 interface UiPreferencesStore {
+	taskNotificationsEnabled: boolean;
+	setTaskNotificationsEnabled: (enabled: boolean) => Promise<void>;
 	/** 中央状态动画：任务运行时对话区中央显示放大 orb（z-20 文字层之上 + canvas 一体遮罩压文字）；与 Working/Thinking 行前小 orb 解耦，小 orb 恒显示 */
 	centerOrbEnabled: boolean;
 	/** 置顶会话（id，新置顶在前）：**v8 起就是顶栏胶囊的内容**（左栏只靠图钉标记，不改顺序） */
@@ -26,7 +29,7 @@ interface UiPreferencesStore {
 	barSessionsVisible: boolean;
 	/** 左侧会话短线轨道开关（设置页，默认**关**）；与顶栏开关各自独立，两个都关则清空工作区 */
 	sessionRailEnabled: boolean;
-	/** 左侧栏收起（宽 0，彻底藏起；只有顶栏最左按钮能改，默认展开） */
+	/** 左侧栏收起（宽 0；每次启动收起，由顶栏最左按钮展开） */
 	sidebarCollapsed: boolean;
 	/**
 	 * 左侧栏宽度（px）= **用户意图值**（拖拽的落点，越界已在写入时 clamp）。
@@ -95,12 +98,21 @@ function persistPatch(patch: Partial<UiState>): void {
 }
 
 export const useUiPreferencesStore = create<UiPreferencesStore>((set, get) => ({
+	taskNotificationsEnabled: true,
+	setTaskNotificationsEnabled: async (enabled) => {
+		set({ taskNotificationsEnabled: enabled });
+		try {
+			await getPi().saveUiState({ state: { taskNotificationsEnabled: enabled } });
+		} catch {
+			pushToast("warning", "notifications.saveFailed");
+		}
+	},
 	centerOrbEnabled: false,
 	pinnedSessions: [],
 	sessionPermissionModes: {},
 	barSessionsVisible: true,
 	sessionRailEnabled: false,
-	sidebarCollapsed: false,
+	sidebarCollapsed: true,
 	sidebarWidth: SIDEBAR_DEFAULT_WIDTH,
 	/** 左侧栏展开分组的记录（`setExpandedGroups` 同时置 touched 位） */
 	expandedGroups: [],
@@ -118,12 +130,15 @@ export const useUiPreferencesStore = create<UiPreferencesStore>((set, get) => ({
 		const uiFontSize = clampUiFontSize(saved?.uiFontSize);
 		const codeFontSize = clampCodeFontSize(saved?.codeFontSize);
 		set({
+			taskNotificationsEnabled:
+				typeof saved?.taskNotificationsEnabled === "boolean" ? saved.taskNotificationsEnabled : true,
 			centerOrbEnabled: saved?.centerOrbEnabled ?? false,
 			pinnedSessions: saved?.pinnedSessions ?? [],
 			sessionPermissionModes: saved?.sessionPermissionModes ?? {},
 			barSessionsVisible: saved?.barSessionsVisible ?? true,
 			sessionRailEnabled: saved?.sessionRailEnabled ?? false,
-			sidebarCollapsed: saved?.sidebarCollapsed ?? false,
+			// 每次启动都收起；忽略旧版保存的开合状态，避免首屏自动展开。
+			sidebarCollapsed: true,
 			sidebarWidth: clampSidebarWidth(saved?.sidebarWidth),
 			expandedGroups: saved?.expandedGroups ?? [],
 			expandedGroupsTouched: saved?.expandedGroupsTouched ?? false,
@@ -176,7 +191,6 @@ export const useUiPreferencesStore = create<UiPreferencesStore>((set, get) => ({
 	toggleSidebarCollapsed: () => {
 		const collapsed = !get().sidebarCollapsed;
 		set({ sidebarCollapsed: collapsed });
-		persistPatch({ sidebarCollapsed: collapsed });
 	},
 
 	previewSidebarWidth: (width) => {

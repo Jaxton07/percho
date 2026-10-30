@@ -24,8 +24,6 @@ import type {
 	AppInfo,
 	AvailableModel,
 	ChannelWatchConfigInfo,
-	ContextManagerConfigInfo,
-	ContextManagerMode,
 	ContextUsageInfo,
 	CreateSessionOptions,
 	GitBranches,
@@ -62,6 +60,8 @@ import type {
 	ProviderInfo,
 	ProviderTestResult,
 	SubagentInfo,
+	UpstreamModelsInput,
+	UpstreamModelsResult,
 } from "./settings";
 import type { StorageStartupAction, StorageStartupState } from "./storage-startup";
 import type { TodoItem } from "./todo";
@@ -494,6 +494,17 @@ export const SETTINGS_CHANNELS = {
 		"environment",
 		"mutation",
 	)<{ input: CustomProviderUpdateInput }, void>({ input: input.jsonObject<CustomProviderUpdateInput>() }),
+	/** 从指定上游获取模型；凭证仅在所属执行环境解析和使用。 */
+	listUpstreamModels: ch(
+		"settings:listUpstreamModels",
+		"environment",
+		"read",
+	)<UpstreamModelsInput, UpstreamModelsResult>({
+		providerId: input.optional(input.id),
+		baseUrl: input.text,
+		api: input.text,
+		apiKey: input.optional(input.text),
+	}),
 	removeCustomProvider: ch(
 		"settings:removeCustomProvider",
 		"environment",
@@ -619,16 +630,6 @@ export const SETTINGS_CHANNELS = {
 		sessionId: input.id,
 		mode: input.oneOf("default", "fullAccess"),
 	}),
-	/** 读取上下文管理模式（evaporation / off 二态派生） */
-	getContextManagerConfig: ch("contextManager:getConfig", "environment", "read")<
-		void,
-		ContextManagerConfigInfo
-	>(),
-	setContextManagerMode: ch(
-		"contextManager:setMode",
-		"environment",
-		"mutation",
-	)<{ mode: ContextManagerMode }, void>({ mode: input.oneOf("evaporation", "off") }),
 	/** channel-watch 跨会话频道唤醒开关 */
 	getChannelWatchConfig: ch("channelWatch:getConfig", "environment", "read")<void, ChannelWatchConfigInfo>(),
 	setChannelWatchEnabled: ch(
@@ -646,6 +647,17 @@ export const SETTINGS_CHANNELS = {
 
 /** 应用域：窗口级功能（对话框/背景/更新/tabs/ui-state/git/外链等，多为非透传 handler） */
 export const APP_CHANNELS = {
+	setTaskNotificationNavigationReady: ch("notifications:navigationReady", "desktop")<
+		{ ready: boolean },
+		void
+	>(),
+	setNotificationLanguage: ch("notifications:language", "desktop")<{ language: "zh" | "en" }, void>(),
+	testTaskNotification: ch("notifications:test", "desktop")<
+		void,
+		import("./task-notifications").NotificationSendResult
+	>(),
+	showComposerEditMenu: ch("composer:editMenu", "desktop")<{ token: string; x: number; y: number }, void>(),
+	cancelComposerEditMenu: ch("composer:cancelEditMenu", "desktop")<{ token: string }, void>(),
 	validateProjectDirectory: ch(
 		"project:validateDirectory",
 		"environment",
@@ -830,6 +842,9 @@ function subscription<P, S extends ChannelScope = "environment">(scope: S = "env
 
 /** Sole subscription definition: API key + explicit legacy alias + channel + payload type. */
 export const SUBSCRIPTION_TABLE = {
+	onTaskNotificationClick: subscription<import("./task-notifications").TaskNotificationClick, "desktop">(
+		"desktop",
+	)("TaskNotificationClick", "notifications:clicked"),
 	onStorageStartup: subscription<StorageStartupState, "desktop">("desktop")(
 		"StorageStartup",
 		"storageStartup:changed",

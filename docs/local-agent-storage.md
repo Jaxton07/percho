@@ -1,8 +1,12 @@
 # 用户级数据隔离与升级迁移
 
-Percho 正式本机 agent 使用 `~/.percho/agent`，开发/预览使用 `~/.percho/agent-dev`。包含会话/轨迹、账号、模型、MCP、资源、权限和信任；与 Pi CLI 默认 `~/.pi/agent` 分离。Electron userData 和默认日常目录 `~/.percho/daily` 不搬迁。
+Percho 正式本机 agent 使用 `~/.percho/agent`，开发/预览使用 `~/.percho/agent-dev`，内测版使用 `~/.percho/agent-beta`。包含会话/轨迹、账号、模型、MCP、资源、权限和信任；与 Pi CLI 默认 `~/.pi/agent` 分离。正式与已有开发版的 Electron userData 和默认日常目录 `~/.percho/daily` 不搬迁。
+
+独立身份的 `Percho Beta` 使用自己的 Electron userData（macOS 为 `~/Library/Application Support/Percho Beta/`），日常空间为 `<agent-beta>/daily`，UI 插件只使用其 userData，不创建全局插件别名。首次启动不会自动导入正式版或 Pi CLI 数据；旧内测包曾使用正式身份，其数据仍保留在原位置。明确传入 `PERCHO_AGENT_DIR` 或 `--user-data-dir` 时使用指定路径，测试应同时隔离两者。三套应用身份和打包入口见[构建发布](build-release.md)。
 
 ## 首次启动
+
+数据准备与工作台使用同一个窗口、同一份开屏 DOM。已有有效迁移记录的启动只显示品牌开屏，不挂载设置页；只有需要选择、采用已有目录或处理错误时才显示设置。数据准备完成不等于业务已就绪，须等主进程装配业务 IPC 后才在原文档导入工作台，不通过重载页面衔接。开屏兜底只在工作台可挂载后计时，不能令迁移中的等待或错误页超时进入工作台。
 
 目标不存在且有旧同模式数据时，关闭旧 Percho 和正在使用源目录的 Pi CLI，再选择复制或空目录。复制可能包含 CLI 历史和账号，因为来源已经混合；源不移动、不删除。目标已经存在（包括空目录）时只允许明确采用，不自动合并或覆盖。想重新导入，须退出后先另行备份并移走目标，不能覆盖已经使用过的新数据。
 

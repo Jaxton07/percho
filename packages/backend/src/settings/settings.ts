@@ -1,17 +1,91 @@
 import { join } from "node:path";
-import { builtinProviders } from "@earendil-works/pi-ai/providers/all";
+import { builtinProviders, getBuiltinModels, getBuiltinProviders } from "@earendil-works/pi-ai/providers/all";
 import { getAgentDir, type ModelRuntime } from "@earendil-works/pi-coding-agent";
 import type {
 	CustomProviderInput,
+	CustomProviderModelInput,
 	CustomProviderUpdateInput,
 	ListProvidersOptions,
+	ModelThinkingLevelMap,
 	ProviderInfo,
 	ProviderTestResult,
+	UpstreamModelInfo,
+	UpstreamModelsInput,
+	UpstreamModelsResult,
 } from "@percho/shared";
 import { JsonStore } from "../json-store";
+import {
+	BASE_URL_PROBE_TIMEOUT_MS,
+	buildMetaIndex,
+	type CatalogModel,
+	enrichUpstreamModels,
+	fetchUpstreamModels,
+	needsApiVersionProbe,
+	resolveUpstreamBaseUrl,
+} from "./upstream-models";
 
 /** 内置 provider id 集合：models.json 里配置的 ID 命中它 = 「覆写内置」（有官方模型列表可共享），否则是全新自定义 provider */
 const BUILTIN_PROVIDER_IDS = new Set(builtinProviders().map((p) => p.id));
+
+// 只用随 SDK 发布的目录；运行时目录还包含用户手填和服务商覆写的能力，不能跨服务复用。
+const BUILTIN_MODEL_CATALOG: CatalogModel[] = getBuiltinProviders().flatMap((provider) =>
+	getBuiltinModels(provider).map((model) => ({
+		id: model.id,
+		name: model.name,
+		reasoning: model.reasoning,
+		// 思考档位只能从目录带出：自定义 provider 的 /models 没有这些信息
+		...(model.thinkingLevelMap ? { thinkingLevelMap: model.thinkingLevelMap } : {}),
+		contextWindow: model.contextWindow,
+		maxTokens: model.maxTokens,
+		imageInput: model.input.includes("image"),
+		// 同一 ID 可能挂在多个 provider 下，档位映射按厂商不同；建索引时用来选正主
+		provider,
+		api: model.api,
+	})),
+);
+
+/** 目录索引缓存：不同 api 家族要选不同的厂商官方条目（openai / anthropic / google） */
+const BUILTIN_META_CACHE = new Map<string, Map<string, UpstreamModelInfo>>();
+
+function builtinMetaFor(api: string): Map<string, UpstreamModelInfo> {
+	let index = BUILTIN_META_CACHE.get(api);
+	if (!index) {
+		index = buildMetaIndex(BUILTIN_MODEL_CATALOG, { provider: vendorProviderFor(api), api });
+		BUILTIN_META_CACHE.set(api, index);
+	}
+	return index;
+}
+
+/** OpenAI / Anthropic / Google 兼容协议对应的厂商官方 provider id */
+function vendorProviderFor(api: string): string | undefined {
+	if (api.startsWith("openai")) return "openai";
+	if (api.startsWith("anthropic")) return "anthropic";
+	if (api.startsWith("google")) return "google";
+	return undefined;
+}
+
+const THINKING_LEVELS = ["off", "minimal", "low", "medium", "high", "xhigh", "max"] as const;
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+	return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+/**
+ * 校验并归一 IPC 传来的档位映射：只留 SDK 认得的档位与合法的 string/null 值。
+ * 空映射（或全被丢弃）返 undefined——不写进 models.json，跟 SDK 默认一致。
+ */
+function normalizeThinkingLevelMap(
+	map: CustomProviderModelInput["thinkingLevelMap"],
+): ModelThinkingLevelMap | undefined {
+	if (!map) return undefined;
+	const out: ModelThinkingLevelMap = {};
+	for (const level of THINKING_LEVELS) {
+		const value = map[level];
+		if (value === null) out[level] = null;
+		else if (typeof value === "string" && value.trim()) out[level] = value.trim();
+	}
+	return Object.keys(out).length > 0 ? out : undefined;
+}
 
 /**
  * 1.0.4 内置 provider 改名的**读侧归一**：runtime id → 旧的 models.json 键。
@@ -57,6 +131,13 @@ async function readJsonFile(path: string): Promise<JsonObject> {
 	return jsonStoreFor(path).read();
 }
 
+/** 内置 provider 的协议类型（同一 provider 的模型共用；取不到就不探测版本段） */
+function builtinApiOf(id: string): string | undefined {
+	if (!BUILTIN_PROVIDER_IDS.has(id)) return undefined;
+	const models = getBuiltinModels(id as Parameters<typeof getBuiltinModels>[0]);
+	return models[0]?.api;
+}
+
 /**
  * Provider / 模型可视化配置服务。
  * auth.json 与 models.json 由 pi 读取（本服务负责写入），
@@ -76,6 +157,13 @@ export class SettingsService {
 	private async readCustomProviders(): Promise<JsonObject> {
 		const data = await readJsonFile(this.modelsJsonPath);
 		return (data.providers as JsonObject | undefined) ?? {};
+	}
+
+	/** models.json 里是否存在该 provider（旧 id 归一的兜底也算存在） */
+	private async hasCustomProvider(id: string): Promise<boolean> {
+		const customs = await this.readCustomProviders();
+		const legacyId = LEGACY_PROVIDER_IDS[id];
+		return id in customs || (!!legacyId && legacyId in customs);
 	}
 
 	private async refreshLocalModels(): Promise<void> {
@@ -160,6 +248,13 @@ export class SettingsService {
 									id: String(raw.id),
 									...(typeof raw.name === "string" ? { name: raw.name } : {}),
 									...(raw.reasoning === true ? { reasoning: true } : {}),
+									...(isRecord(raw.thinkingLevelMap)
+										? {
+												thinkingLevelMap: normalizeThinkingLevelMap(
+													raw.thinkingLevelMap as ModelThinkingLevelMap,
+												),
+											}
+										: {}),
 									...(typeof raw.contextWindow === "number" ? { contextWindow: raw.contextWindow } : {}),
 									...(typeof raw.maxTokens === "number" ? { maxTokens: raw.maxTokens } : {}),
 									...(Array.isArray(raw.input) && raw.input.includes("image") ? { imageInput: true } : {}),
@@ -204,6 +299,32 @@ export class SettingsService {
 	}
 
 	/**
+	 * 从上游 provider 的 \`/models\` 拉模型清单，并用 SDK 内置目录给每个 ID 补能力元数据。
+	 * 网络请求和 key 都留在后端（key 不回给 renderer）；目录里查不到的模型只回 ID，
+	 * 表单留空即跟随 SDK 默认（128k / 16k / 仅文本）。
+	 */
+	async listUpstreamModels(input: UpstreamModelsInput): Promise<UpstreamModelsResult> {
+		const customs = await this.readCustomProviders();
+		const entry = input.providerId ? (customs[input.providerId] as JsonObject | undefined) : undefined;
+		const stored = (field: "baseUrl" | "api"): string =>
+			entry && typeof entry[field] === "string" ? (entry[field] as string) : "";
+		const baseUrl = (input.baseUrl.trim() || stored("baseUrl")).trim();
+		if (!/^https?:\/\//i.test(baseUrl)) throw new Error("baseUrl 必须以 http(s):// 开头");
+		const api = input.api.trim() || stored("api") || "openai-completions";
+		const runtime = await this.getRuntime();
+		// 复用 SDK 凭证解析：auth.json / models.json 中的环境变量与命令不能作为字面密钥发送。
+		const apiKey =
+			(input.apiKey ?? "").trim() ||
+			(input.providerId ? (await runtime.getAuth(input.providerId))?.auth.apiKey : undefined);
+		if (!apiKey) throw new Error("请先填 API Key，或先保存一次把 key 存进 auth.json 再获取");
+		const upstream = await fetchUpstreamModels({ baseUrl, api, apiKey });
+		return {
+			models: enrichUpstreamModels(upstream.models, builtinMetaFor(api)),
+			baseUrl: upstream.baseUrl,
+		};
+	}
+
+	/**
 	 * 空模型列表的合法性：覆写内置 provider（ID 为内置）时可留空以共享其官方模型列表
 	 * （SDK applyModelsJson 语义：无 models 时内置模型全保留、只覆写 baseUrl）；
 	 * 全新 provider 空模型无意义（SDK 会加载出零模型 provider），直接拒绝。
@@ -219,8 +340,8 @@ export class SettingsService {
 		}
 	}
 
-	/** 校验并构建 models.json 条目（add/update 共用）；id 由调用方单独校验 */
-	private buildCustomEntry(input: CustomProviderInput): JsonObject {
+	/** 校验并构建 models.json 条目（add/update 共用）；id 由调用方单独校验。`baseUrl` 传实测可用的地址 */
+	private buildCustomEntry(input: CustomProviderInput, baseUrl = input.baseUrl.trim()): JsonObject {
 		if (!input.baseUrl.trim()) throw new Error("baseUrl 不能为空");
 		if (!/^https?:\/\//i.test(input.baseUrl.trim())) {
 			throw new Error("baseUrl 必须以 http(s):// 开头");
@@ -229,7 +350,7 @@ export class SettingsService {
 		const models = input.models.filter((m) => m.id.trim());
 		return {
 			...(input.name?.trim() ? { name: input.name.trim() } : {}),
-			baseUrl: input.baseUrl.trim(),
+			baseUrl,
 			api: input.api.trim(),
 			// 模型留空不写 models 键：SDK 按「共享内置模型列表、仅覆写 baseUrl」处理（官方语义）
 			...(models.length > 0
@@ -244,10 +365,12 @@ export class SettingsService {
 								}
 							}
 							// 缺省字段不写进 models.json，跟随 SDK 默认（reasoning:false / 128000 / 16384 / 仅文本）
+							const thinkingLevelMap = normalizeThinkingLevelMap(m.thinkingLevelMap);
 							return {
 								id: m.id.trim(),
 								...(m.name?.trim() ? { name: m.name.trim() } : {}),
 								...(m.reasoning ? { reasoning: true } : {}),
+								...(thinkingLevelMap ? { thinkingLevelMap } : {}),
 								...(m.contextWindow ? { contextWindow: Math.round(m.contextWindow) } : {}),
 								...(m.maxTokens ? { maxTokens: Math.round(m.maxTokens) } : {}),
 								...(m.imageInput ? { input: ["text", "image"] } : {}),
@@ -256,6 +379,37 @@ export class SettingsService {
 					}
 				: {}),
 		};
+	}
+
+	/**
+	 * 保存前把「裸站点根」实测补成可用基址（见 resolveUpstreamBaseUrl）。
+	 * 只影响「OpenAI 兼容协议 + 没写路径」的地址；任何探测失败（离线/密钥错/取不到已存凭证）
+	 * 都原样返回——补全是锦上添花，绝不能拦住保存。
+	 */
+	private async effectiveBaseUrlForSave(
+		baseUrl: string,
+		api: string,
+		apiKey: string | undefined,
+		providerId?: string,
+	): Promise<string> {
+		const trimmed = baseUrl.trim();
+		if (!needsApiVersionProbe(trimmed, api)) return trimmed;
+		try {
+			const runtime = await this.getRuntime();
+			// 与 listUpstreamModels 同一套凭证解析：编辑时 key 留空 = 用已存的那把
+			const key =
+				apiKey?.trim() || (providerId ? (await runtime.getAuth(providerId))?.auth.apiKey : undefined);
+			if (!key) return trimmed;
+			const resolved = await resolveUpstreamBaseUrl({
+				baseUrl: trimmed,
+				api,
+				apiKey: key,
+				timeoutMs: BASE_URL_PROBE_TIMEOUT_MS,
+			});
+			return resolved.baseUrl;
+		} catch {
+			return trimmed;
+		}
 	}
 
 	/** 写 models.json 自定义 provider；可选把 key 存进 auth.json */
@@ -270,9 +424,12 @@ export class SettingsService {
 			input.models.filter((m) => m.id.trim()),
 		);
 
+		// 先校验并构建条目：模型元数据非法要立即报错，不能先发探测请求（也避免给无效配置白跑网络）
+		const entry = this.buildCustomEntry(input);
+		const baseUrl = await this.effectiveBaseUrlForSave(input.baseUrl, input.api, input.apiKey, id);
 		await jsonStoreFor(this.modelsJsonPath).update((draft) => {
 			const providers = (draft.providers as JsonObject | undefined) ?? {};
-			providers[id] = this.buildCustomEntry(input);
+			providers[id] = { ...entry, baseUrl };
 			draft.providers = providers;
 		});
 
@@ -300,6 +457,10 @@ export class SettingsService {
 			id,
 			input.models.filter((m) => m.id.trim()),
 		);
+		const entry = this.buildCustomEntry(input);
+		// 存在性要在探测前判定：未知 id 不该先去打一趟网络
+		if (!(await this.hasCustomProvider(id))) throw new Error(`自定义 provider 不存在：${id}`);
+		const baseUrl = await this.effectiveBaseUrlForSave(input.baseUrl, input.api, input.apiKey, id);
 		await jsonStoreFor(this.modelsJsonPath).update((draft) => {
 			const providers = (draft.providers as JsonObject | undefined) ?? {};
 			if (!(id in providers)) throw new Error(`自定义 provider 不存在：${id}`);
@@ -307,7 +468,7 @@ export class SettingsService {
 			// 表单管理字段（name/baseUrl/api/models）以表单为准。
 			const preserved = { ...(providers[id] as JsonObject) };
 			for (const field of MANAGED_PROVIDER_FIELDS) delete preserved[field];
-			providers[id] = { ...preserved, ...this.buildCustomEntry(input) };
+			providers[id] = { ...preserved, ...entry, baseUrl };
 			draft.providers = providers;
 		});
 
@@ -338,13 +499,18 @@ export class SettingsService {
 		if (trimmedBase && !/^https?:\/\//i.test(trimmedBase)) {
 			throw new Error("baseUrl 必须以 http(s):// 开头");
 		}
+		// 内置端点被覆写成中转站站点根时同样需要补版本段（同 addCustomProvider）
+		const api = trimmedBase ? builtinApiOf(id) : undefined;
+		const effectiveBase = api
+			? await this.effectiveBaseUrlForSave(trimmedBase, api, apiKey, id)
+			: trimmedBase;
 		await jsonStoreFor(this.modelsJsonPath).update((draft) => {
 			const providers = (draft.providers as JsonObject | undefined) ?? {};
 			const legacyId = LEGACY_PROVIDER_IDS[id];
 			// 旧 id 条目当作本 provider 的现值读取，写入时归到新 id（编辑即迁移，不留孤儿）
 			const entry = (providers[id] ?? (legacyId ? providers[legacyId] : undefined)) as JsonObject | undefined;
-			if (trimmedBase) {
-				providers[id] = { ...entry, baseUrl: trimmedBase };
+			if (effectiveBase) {
+				providers[id] = { ...entry, baseUrl: effectiveBase };
 			} else if (entry) {
 				delete providers[id];
 			}

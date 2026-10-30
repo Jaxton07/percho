@@ -1,79 +1,47 @@
-import type { ContextManagerMode } from "@percho/shared";
 import type { Language } from "../../i18n";
 import { useI18nStore, useT } from "../../i18n";
 import { useSettingsStore } from "../../stores/settings";
-import { Switch } from "../ui/Switch";
+import { Select } from "../ui/Select";
+import { SettingsSwitchRow } from "./SettingsSwitchRow";
+import { TaskNotificationSettings } from "./TaskNotificationSettings";
 
-const CONTEXT_MANAGER_MODES: ContextManagerMode[] = ["evaporation", "off"];
+const LANGUAGES: Language[] = ["zh", "en"];
 
-/** 通用设置面板：语言选择 + 上下文管理二态 + channel-watch 开关 */
+/** 通用设置面板：语言下拉 + channel-watch 开关（上下文蒸发为内置常开策略，不提供开关） */
 export function GeneralPanel() {
 	const t = useT();
 	const language = useI18nStore((s) => s.language);
 	const setLanguage = useI18nStore((s) => s.setLanguage);
-	const contextManagerMode = useSettingsStore((s) => s.contextManagerMode);
-	const setContextManagerMode = useSettingsStore((s) => s.setContextManagerMode);
 	const channelWatchEnabled = useSettingsStore((s) => s.channelWatchEnabled);
 	const setChannelWatchEnabled = useSettingsStore((s) => s.setChannelWatchEnabled);
 
 	return (
 		<div className="flex flex-col gap-6">
-			<div>
-				<h3 className="text-ui-13 font-medium text-ink">{t("settings.language")}</h3>
-				<p className="mt-0.5 text-ui-11 text-ink-faint">{t("settings.languageHint")}</p>
-				<div className="mt-2 flex gap-2">
-					{(["zh", "en"] as Language[]).map((lang) => (
-						<button
-							key={lang}
-							type="button"
-							className={`rounded-lg border px-3 py-1.5 text-ui-13 transition-colors ${
-								language === lang
-									? "border-ink bg-ink text-on-ink"
-									: "border-border text-ink-2 hover:border-border-strong hover:bg-hover"
-							}`}
-							onClick={() => setLanguage(lang)}
-						>
-							{t(`lang.${lang}`)}
-						</button>
-					))}
-				</div>
-			</div>
+			<TaskNotificationSettings />
 			<div>
 				<div className="flex items-center justify-between gap-4">
-					<h3 className="text-ui-13 font-medium text-ink">{t("settings.contextManager")}</h3>
-					<div className="flex gap-2">
-						{CONTEXT_MANAGER_MODES.map((mode) => (
-							<button
-								key={mode}
-								type="button"
-								disabled={contextManagerMode === null}
-								className={`rounded-lg border px-3 py-1.5 text-ui-13 transition-colors disabled:opacity-50 ${
-									contextManagerMode === mode
-										? "border-ink bg-ink text-on-ink"
-										: "border-border text-ink-2 hover:border-border-strong hover:bg-hover"
-								}`}
-								onClick={() => void setContextManagerMode(mode)}
-							>
-								{t(`settings.contextManagerMode.${mode}`)}
-							</button>
-						))}
+					<div className="min-w-0">
+						<h3 className="text-ui-13 font-medium text-ink">{t("settings.language")}</h3>
+						<p className="mt-0.5 text-ui-11 text-ink-faint">{t("settings.languageHint")}</p>
+					</div>
+					<div className="shrink-0">
+						<Select
+							variant="ghost"
+							ariaLabel={t("settings.language")}
+							value={language}
+							options={LANGUAGES.map((lang) => ({ value: lang, label: t(`lang.${lang}`) }))}
+							onChange={(value) => setLanguage(value as Language)}
+						/>
 					</div>
 				</div>
-				<p className="mt-0.5 text-ui-11 leading-relaxed text-ink-faint">
-					{contextManagerMode ? t(`settings.contextManagerHint.${contextManagerMode}`) : ""}
-				</p>
 			</div>
-			<div>
-				<div className="flex items-center justify-between gap-4">
-					<h3 className="text-ui-13 font-medium text-ink">{t("settings.channelWatch")}</h3>
-					<Switch
-						checked={channelWatchEnabled === true}
-						disabled={channelWatchEnabled === null}
-						onCheckedChange={(enabled) => void setChannelWatchEnabled(enabled)}
-					/>
-				</div>
-				<p className="mt-0.5 text-ui-11 leading-relaxed text-ink-faint">{t("settings.channelWatchHint")}</p>
-			</div>
+			<SettingsSwitchRow
+				title={t("settings.channelWatch")}
+				hint={t("settings.channelWatchHint")}
+				checked={channelWatchEnabled === true}
+				disabled={channelWatchEnabled === null}
+				onCheckedChange={(enabled) => void setChannelWatchEnabled(enabled)}
+			/>
 		</div>
 	);
 }

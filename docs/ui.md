@@ -17,7 +17,7 @@
 
 组件使用 `styles/typography.css` 的 `text-ui-*`，禁止 `text-[13px]`、`text-xs/sm/lg` 和行内固定 px 字号。
 
-- 可用 token：`text-ui-10/105/11/115/12/125/13/135/14/15/16/18/19`。
+- 可用 token：`text-ui-10/105/11/115/12/125/13/135/14/15/16/18/19/28/32/36/40`；28–40 用于空白对话页字标与主标语。
 - 档位与夹紧规则在 shared `typography.ts`；DOM 变量接线在 renderer `lib/typography.ts`。
 - `globals.css` 必须先 import Tailwind，再 import `typography.css`，否则 preflight 会压掉按钮、输入框等字号。
 - Monaco 是 JS 度量例外，复用 `monacoFontSizeFor` / `monacoLineHeightFor`。当前 Markdown 库只在创建编辑器时应用字号，换档需要重建代码块，不要误以为 CSS 变量会自动更新它。
@@ -32,6 +32,8 @@
 - 拖动结束不只监听 pointerup，也要覆盖 pointercancel / lostpointercapture 等取消路径，避免窗口外松手后永久停在拖动态。
 - 动画遵守 `prefers-reduced-motion`。避免通过逐帧改变布局宽度让聊天内容连续重排；优先固定尺寸 + transform。
 - 文案用 `useT()`，同时维护 `i18n/zh.ts` 与 `en.ts`；第三方原名不强行翻译。
+
+桌面通知开关属于当前应用通道的 userData，不属于设置弹窗正在查看的执行环境。测试通知可以显式绕过应用内开关和前后台条件，但不能绕过系统权限；“请求已提交”不能表述为“用户已看到”，勿扰下可能没有任何可见通知。
 
 ## 消息与图片的特殊边界
 

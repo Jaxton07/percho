@@ -131,7 +131,7 @@ describe("mixed navigation cold start", () => {
 		);
 		expect(s.prefs.getState().expandedGroups).toEqual([]);
 		expect(s.prefs.getState().expandedGroupsTouched).toBe(true);
-		api.restoreEnvironmentUiNavigation();
+		expect(s.workspace.getState().activeFile).toBeNull();
 		await Promise.resolve();
 		expect(fixture.loaded).not.toHaveBeenCalled();
 		expect(s.projects.getState().addedProjects).toContain(key("/remote"));
@@ -139,15 +139,13 @@ describe("mixed navigation cold start", () => {
 		expect(JSON.stringify(saved)).not.toContain("must-not-persist");
 		expect(saved.catalog[0].active).toBe(false);
 	});
-	it("late connection cannot override a newer local navigation or bind old projects to a replacement", async () => {
+	it("远端稍后连接也不会自动打开旧对话或改绑已有项目", async () => {
 		const api = await import("./environment-ui-restore");
 		await api.initEnvironmentUiState();
-		api.restoreEnvironmentUiNavigation();
 		const s = await stores();
-		(await import("./session-navigation")).noteUserIntent();
 		s.remote.setState({ status: { revision: 1, state: "connected", environment: remote } });
-		await vi.waitFor(() => expect(fixture.loaded).toHaveBeenCalledOnce());
 		await Promise.resolve();
+		expect(fixture.loaded).not.toHaveBeenCalled();
 		expect(fixture.open).not.toHaveBeenCalled();
 		expect(fixture.switch).not.toHaveBeenCalled();
 		s.remote.setState({
@@ -155,15 +153,30 @@ describe("mixed navigation cold start", () => {
 		});
 		expect(s.projects.getState().addedProjects).toContain(key("/remote"));
 	});
-	it("restores a still-live zero-message registry entry instead of reopening a nonexistent history file", async () => {
+	it("远端仍存活的零消息会话保留为成员，不在启动时切入或请求历史", async () => {
 		fixture.loaded.mockResolvedValue([{ meta: snapshot().catalog[0] }]);
 		const api = await import("./environment-ui-restore");
 		await api.initEnvironmentUiState();
-		api.restoreEnvironmentUiNavigation();
 		const s = await stores();
 		s.remote.setState({ status: { revision: 1, state: "connected", environment: remote } });
-		await vi.waitFor(() => expect(fixture.switch).toHaveBeenCalledWith(key("remote-id")));
+		await Promise.resolve();
+		expect(fixture.switch).not.toHaveBeenCalled();
+		expect(fixture.loaded).not.toHaveBeenCalled();
 		expect(fixture.open).not.toHaveBeenCalled();
+		expect(s.workspace.getState().members).toEqual(snapshot().workspace.members);
+		expect(s.workspace.getState().activeFile).toBeNull();
+	});
+	it("混合工作区中上次查看的是本机对话时也从空白页开始", async () => {
+		const value = snapshot();
+		value.workspace.activeFile = "/local/l.jsonl";
+		fixture.read.mockResolvedValue(parseEnvironmentUiState(value));
+		const api = await import("./environment-ui-restore");
+		await api.initEnvironmentUiState();
+		const s = await stores();
+		expect(s.workspace.getState().members).toEqual(value.workspace.members);
+		expect(s.workspace.getState().activeFile).toBeNull();
+		expect(fixture.open).not.toHaveBeenCalled();
+		expect(fixture.switch).not.toHaveBeenCalled();
 	});
 	it("does not publish an empty mixed authority before legacy restoration finishes", async () => {
 		fixture.read.mockResolvedValue(null);

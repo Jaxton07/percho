@@ -9,9 +9,17 @@ module.exports = async ({ packager }) => {
 			);
 		}),
 	);
+	const { releasePlan } = await import("../../../../scripts/release/plan.mjs");
+	releasePlan(
+		packager.appInfo.version,
+		manifest.sourceCommit,
+		packager.config.extraMetadata?.releaseChannel || "stable",
+	);
 	if (
 		manifest.version !== 1 ||
 		manifest.releaseId !== `v${packager.appInfo.version}` ||
+		(packager.config.extraMetadata?.perchoBuildCommit &&
+			manifest.sourceCommit !== packager.config.extraMetadata.perchoBuildCommit) ||
 		!manifest.artifacts?.x64 ||
 		!manifest.artifacts?.arm64
 	)

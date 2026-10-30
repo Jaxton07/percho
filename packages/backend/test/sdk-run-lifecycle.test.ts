@@ -26,6 +26,7 @@ import {
 import { toBranchSessionMessages } from "../src/session/messages";
 import type { RegisteredSession, SessionRegistry } from "../src/session/registry";
 import { emitSessionShutdown } from "../src/session/shutdown";
+import { createCompactionRequestPolicy } from "../src/tools/compaction-guard/request-policy";
 
 const roots: string[] = [];
 const sessions: AgentSession[] = [];
@@ -156,6 +157,23 @@ async function fixture(
 }
 
 describe("SDK 1.4 real offline run lifecycle", () => {
+	it("host request candidates normalize composer input once, retaining the original input in persisted history", async () => {
+		const f = await fixture(() => []);
+		f.session.setCompactionPolicy(createCompactionRequestPolicy(f.cwd));
+		const document: ComposerDocument = { version: 1, parts: [{ type: "text", text: "original input" }] };
+		await f.composer.accept(f.resourceLoader, document, (text) =>
+			f.session.prompt(text ?? "", { source: "rpc", expandPromptTemplates: false }),
+		);
+		expect(f.requests).toHaveLength(1);
+		expect(JSON.stringify(f.requests)).toContain("original input");
+		expect(JSON.stringify(f.requests)).not.toContain("percho-input-");
+		const messages = f.session.sessionManager
+			.getBranch()
+			.filter((entry) => entry.type === "message" && entry.message.role === "user");
+		expect(messages).toHaveLength(1);
+		expect(JSON.stringify(messages)).not.toContain("percho-input-");
+		expect(messages[0]).toMatchObject({ message: { perchoInput: document } });
+	});
 	it("releases handled input and rejects damaged transport before model delivery", async () => {
 		let handled = true,
 			damage = false;

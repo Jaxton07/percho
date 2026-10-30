@@ -15,6 +15,7 @@ vi.mock("../api", () => ({
 		}),
 }));
 
+import { useToastsStore } from "./toasts";
 import { useUiPreferencesStore } from "./ui-preferences";
 
 /**
@@ -36,7 +37,7 @@ beforeEach(() => {
 		pinnedSessions: [],
 		barSessionsVisible: true,
 		sessionRailEnabled: false,
-		sidebarCollapsed: false,
+		sidebarCollapsed: true,
 		sidebarWidth: 240,
 		expandedGroups: [],
 		expandedGroupsTouched: false,
@@ -48,6 +49,22 @@ beforeEach(() => {
 });
 
 describe("useUiPreferencesStore", () => {
+	it("keeps the user's in-memory disable choice and reports a failed save without private details", async () => {
+		piMock.saveUiState.mockRejectedValueOnce(new Error("private disk path"));
+		await useUiPreferencesStore.getState().setTaskNotificationsEnabled(false);
+		expect(useUiPreferencesStore.getState().taskNotificationsEnabled).toBe(false);
+		const toast = useToastsStore.getState().toasts.at(-1);
+		expect(toast?.titleKey).toBe("notifications.saveFailed");
+		expect(toast?.detail).toBeUndefined();
+	});
+	it("restores desktop notification preferences and applies changes immediately", async () => {
+		piMock.loadUiState.mockResolvedValue({ taskNotificationsEnabled: false });
+		await useUiPreferencesStore.getState().init();
+		expect(useUiPreferencesStore.getState().taskNotificationsEnabled).toBe(false);
+		await useUiPreferencesStore.getState().setTaskNotificationsEnabled(true);
+		expect(useUiPreferencesStore.getState().taskNotificationsEnabled).toBe(true);
+		expect(piMock.saveUiState).toHaveBeenLastCalledWith({ state: { taskNotificationsEnabled: true } });
+	});
 	it("默认关闭（旧版本 ui-state 无该字段）", () => {
 		expect(useUiPreferencesStore.getState().centerOrbEnabled).toBe(false);
 	});
@@ -75,12 +92,12 @@ describe("useUiPreferencesStore", () => {
 	});
 
 	describe("左侧栏", () => {
-		it("默认展开 + 显示顶栏（旧版本 ui-state 无这些字段）", async () => {
+		it("默认收起 + 显示顶栏（旧版本 ui-state 无这些字段）", async () => {
 			piMock.loadUiState.mockResolvedValue({});
 			await useUiPreferencesStore.getState().init();
 			const state = useUiPreferencesStore.getState();
 			expect(state.barSessionsVisible).toBe(true);
-			expect(state.sidebarCollapsed).toBe(false);
+			expect(state.sidebarCollapsed).toBe(true);
 			expect(state.expandedGroups).toEqual([]);
 			expect(state.pinnedProjects).toEqual([]);
 		});
@@ -98,6 +115,21 @@ describe("useUiPreferencesStore", () => {
 			expect(state.sidebarCollapsed).toBe(true);
 			expect(state.expandedGroups).toEqual(["__projects__", "/work/alpha"]);
 			expect(state.pinnedProjects).toEqual(["/work/alpha"]);
+		});
+
+		it("上次展开或加载失败，重新启动仍收起；本次运行可手动开合", async () => {
+			piMock.loadUiState.mockResolvedValue({ sidebarCollapsed: false });
+			await useUiPreferencesStore.getState().init();
+			expect(useUiPreferencesStore.getState().sidebarCollapsed).toBe(true);
+			useUiPreferencesStore.getState().toggleSidebarCollapsed();
+			expect(useUiPreferencesStore.getState().sidebarCollapsed).toBe(false);
+			expect(piMock.saveUiState).not.toHaveBeenCalled();
+			await useUiPreferencesStore.getState().init();
+			expect(useUiPreferencesStore.getState().sidebarCollapsed).toBe(true);
+			useUiPreferencesStore.getState().toggleSidebarCollapsed();
+			piMock.loadUiState.mockRejectedValue(new Error("no file"));
+			await useUiPreferencesStore.getState().init();
+			expect(useUiPreferencesStore.getState().sidebarCollapsed).toBe(true);
 		});
 
 		it("默认：顶栏开、轨道关（旧文件缺 rail 字段）", async () => {
@@ -122,14 +154,14 @@ describe("useUiPreferencesStore", () => {
 			expect(piMock.saveUiState).toHaveBeenLastCalledWith({ state: { sessionRailEnabled: true } });
 		});
 
-		it("四项各自落盘补丁（顶栏显隐 / 收起 / 展开分组 / 项目置顶）", () => {
+		it("侧栏开合只影响本次运行，其他偏好各自落盘", () => {
 			const store = useUiPreferencesStore.getState();
 			store.setBarSessionsVisible(false);
 			expect(piMock.saveUiState).toHaveBeenLastCalledWith({ state: { barSessionsVisible: false } });
 
 			store.toggleSidebarCollapsed();
-			expect(useUiPreferencesStore.getState().sidebarCollapsed).toBe(true);
-			expect(piMock.saveUiState).toHaveBeenLastCalledWith({ state: { sidebarCollapsed: true } });
+			expect(useUiPreferencesStore.getState().sidebarCollapsed).toBe(false);
+			expect(piMock.saveUiState).toHaveBeenCalledTimes(1);
 
 			store.setExpandedGroups(["__projects__"]);
 			expect(piMock.saveUiState).toHaveBeenLastCalledWith({

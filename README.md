@@ -45,8 +45,8 @@
 
 Percho embeds the official Pi SDK (`@earendil-works/pi-coding-agent`) in the Electron main process. It is **not a fork and not a reimplementation** — it runs the same engine as the Pi CLI and inherits Pi's native strengths:
 
-- **Extensibility** — TypeScript extensions, skills, and prompt templates installed for the Pi CLI work here too, including project-local ones (with a trust prompt before loading). Adapt Pi to your workflows, no forking required.
-- **Private user data** — sessions, accounts, and model settings live in `~/.percho/agent/`, separate from Pi CLI. Existing shared data can be copied on first launch without changing the original. Project-level `.pi/` stays compatible. See [migration and recovery](docs/local-agent-storage.md).
+- **Extensibility** — supports Pi's TypeScript extensions, skills, and prompt templates. Percho manages user-level resources independently; project-local resources remain compatible, with a trust prompt before loading. Adapt Pi to your workflows, no forking required.
+- **Private user data** — sessions, accounts, and model settings live in `~/.percho/agent/`, separate from Pi CLI. On first launch, you can copy data from the old directory while keeping the original, or start fresh. Project-level `.pi/` stays compatible. See [migration and recovery](docs/local-agent-storage.md).
 - **Providers** — subscriptions (Claude Pro/Max, ChatGPT Plus/Pro Codex, GitHub Copilot, logged in via an in-app OAuth flow) and API keys for Anthropic, OpenAI, Gemini, DeepSeek, Bedrock, and more; custom providers and base-URL overrides for relay gateways.
 
 And for those who prefer a GUI over a TUI:

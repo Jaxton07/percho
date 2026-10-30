@@ -1,4 +1,4 @@
-import type { CustomProviderModelInput } from "@percho/shared";
+import type { CustomProviderModelInput, ModelThinkingLevelMap } from "@percho/shared";
 
 /** 模型行编辑器的一行：数字字段保留原文（支持 k 后缀），提交时才解析 */
 export interface ModelRow {
@@ -7,6 +7,8 @@ export interface ModelRow {
 	maxTokens: string;
 	reasoning: boolean;
 	imageInput: boolean;
+	/** 从 SDK 内置目录带出的思考档位映射；行内不可编辑，原样回传落盘 */
+	thinkingLevelMap?: ModelThinkingLevelMap;
 }
 
 export const EMPTY_MODEL_ROW: ModelRow = {
@@ -45,6 +47,7 @@ export function modelsToRows(
 		id: string;
 		name?: string;
 		reasoning?: boolean;
+		thinkingLevelMap?: ModelThinkingLevelMap;
 		contextWindow?: number;
 		maxTokens?: number;
 		imageInput?: boolean;
@@ -56,6 +59,7 @@ export function modelsToRows(
 		maxTokens: m.maxTokens !== undefined ? formatTokenCount(m.maxTokens) : "",
 		reasoning: m.reasoning === true,
 		imageInput: m.imageInput === true,
+		...(m.thinkingLevelMap ? { thinkingLevelMap: { ...m.thinkingLevelMap } } : {}),
 	}));
 	return rows.length > 0 ? rows : [{ ...EMPTY_MODEL_ROW }];
 }
@@ -67,6 +71,7 @@ export function rowsToModelInputs(rows: ModelRow[]): CustomProviderModelInput[] 
 		.map((row) => ({
 			id: row.id.trim(),
 			reasoning: row.reasoning || undefined,
+			...(row.thinkingLevelMap ? { thinkingLevelMap: row.thinkingLevelMap } : {}),
 			contextWindow: (row.contextWindow.trim() && parseTokenCount(row.contextWindow)) || undefined,
 			maxTokens: (row.maxTokens.trim() && parseTokenCount(row.maxTokens)) || undefined,
 			imageInput: row.imageInput || undefined,
@@ -94,4 +99,26 @@ export function splitPastedModelIds(text: string): [string, ...string[]] | null 
 		.filter(Boolean);
 	const [first, ...rest] = ids;
 	return first === undefined ? null : [first, ...rest];
+}
+
+/**
+ * 上游模型（含 SDK 目录补全的能力）→ 行：ID 与 ctx/out/思考/图像一次填好。
+ * 目录里查不到能力的字段留空，落盘时不写，跟随 SDK 默认（128k / 16k / 仅文本）。
+ */
+export function rowFromUpstreamModel(model: {
+	id: string;
+	reasoning?: boolean;
+	thinkingLevelMap?: ModelThinkingLevelMap;
+	contextWindow?: number;
+	maxTokens?: number;
+	imageInput?: boolean;
+}): ModelRow {
+	return {
+		id: model.id,
+		contextWindow: model.contextWindow === undefined ? "" : formatTokenCount(model.contextWindow),
+		maxTokens: model.maxTokens === undefined ? "" : formatTokenCount(model.maxTokens),
+		reasoning: model.reasoning === true,
+		imageInput: model.imageInput === true,
+		...(model.thinkingLevelMap ? { thinkingLevelMap: { ...model.thinkingLevelMap } } : {}),
+	};
 }

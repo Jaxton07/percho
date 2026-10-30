@@ -1,6 +1,7 @@
 import type { TrustRequest } from "@percho/shared";
 import { environmentEntityRef, LOCAL_ENVIRONMENT } from "@percho/shared";
 import { useCallback, useEffect, useRef } from "react";
+import { getPi } from "./api";
 import { CornerStack } from "./components/chat/CornerStack";
 import { EmptyState } from "./components/chat/EmptyState";
 import { MessageList } from "./components/chat/MessageList";
@@ -18,6 +19,7 @@ import { Sidebar } from "./components/sidebar/Sidebar";
 import { Toaster } from "./components/Toaster";
 import { getExecutionApi } from "./environment-api";
 import { useSessionEventBridge } from "./hooks/use-session-event-bridge";
+import { useI18nStore } from "./i18n";
 import { selectActiveCwd } from "./lib/active-cwd";
 import { initDailyDir } from "./lib/daily";
 import { useSessionGc } from "./lib/use-session-gc";
@@ -32,15 +34,13 @@ import {
 	invalidateChannelSubscriptionQueries,
 	syncActiveSession,
 } from "./stores/channel-subscriptions";
-import {
-	restoreEnvironmentUiNavigation,
-	startEnvironmentUiPersistence,
-} from "./stores/environment-ui-restore";
+import { startEnvironmentUiPersistence } from "./stores/environment-ui-restore";
 import { useInteractionStore } from "./stores/interactions";
 import { initRemoteConnectionBridge } from "./stores/remote-connection";
 import { restoreSessionWorkspace } from "./stores/session-workspace-restore";
 import { useSessionsStore } from "./stores/sessions";
 import { useHasParentRelation } from "./stores/subagent-return";
+import { initTaskNotificationNavigation } from "./stores/task-notification-navigation";
 import { backgroundImageUrl, useThemeStore } from "./stores/theme";
 import { useTranscriptStore } from "./stores/transcript";
 import { useUiPreferencesStore } from "./stores/ui-preferences";
@@ -95,6 +95,15 @@ export default function App() {
 	// 会话内存策略（K=3 热会话 + 受保护不卸）：全局挂一次，策略细节在 lib/session-gc.ts
 	useSessionGc();
 	useEffect(() => initRemoteConnectionBridge(), []);
+	useEffect(() => {
+		const sync = () => {
+			void getPi()
+				.setNotificationLanguage({ language: useI18nStore.getState().language })
+				.catch(() => {});
+		};
+		sync();
+		return useI18nStore.subscribe(sync);
+	}, []);
 
 	useEffect(() => {
 		// 上次项目目录：启动即预填（用户不用重选项目）。**只带 cwd，不恢复任何会话**——
@@ -109,10 +118,8 @@ export default function App() {
 		void Promise.allSettled([useSessionsStore.getState().loadModels(LOCAL_ENVIRONMENT)]).then(() =>
 			finishSplash(),
 		);
-		// 临时会话工作区恢复：fire-and-forget，不阻塞开屏（splash 仍由上面的 loadModels 链收场）。
-		// 它会自己等历史目录对账；只按需加载 activeFile 一条，且不抢用户已做出的导航
+		// 后台恢复工作区成员与顺序；历史内容只在用户点击会话时加载。
 		void restoreSessionWorkspace().finally(startEnvironmentUiPersistence);
-		restoreEnvironmentUiNavigation();
 		initUpdateStore();
 		// 退出确认（Windows）：挂载即向 main 声明接管，点 ✕ 才会拦下来弹窗
 		initAppQuit();
@@ -122,6 +129,7 @@ export default function App() {
 		void initUiPlugins();
 	}, []);
 
+	useEffect(() => initTaskNotificationNavigation(), []);
 	const respondTrust = async (requestId: string, optionIndex: number) => {
 		await getExecutionApi(requestId).respondTrust({ requestId, answer: optionIndex });
 		useInteractionStore.getState().removeTrust(requestId);

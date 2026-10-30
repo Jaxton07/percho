@@ -1,18 +1,134 @@
+import type { UpstreamModelInfo } from "@percho/shared";
+import { useEffect, useRef, useState } from "react";
 import { useT } from "../../../i18n";
-import { CloseIcon } from "../../icons";
+import { ChevronDownIcon, CloseIcon, DownloadIcon, PlusIcon } from "../../icons";
+import { SelectionMenu } from "../../ui/SelectionMenu";
 import { Tooltip } from "../../ui/Tooltip";
-import { EMPTY_MODEL_ROW, type ModelRow, parseTokenCount, splitPastedModelIds } from "./model-rows";
+import {
+	EMPTY_MODEL_ROW,
+	type ModelRow,
+	parseTokenCount,
+	rowFromUpstreamModel,
+	splitPastedModelIds,
+} from "./model-rows";
 
 const inputClass =
 	"w-full rounded-lg border border-border px-2.5 py-1.5 text-ui-12 outline-none focus:border-ink-faint disabled:cursor-not-allowed disabled:text-ink-faint";
+
+/** 候选列表里的能力摘要：按 k / M 缩写，避免 1048576 这种长数字把行挤爆 */
+function compactTokens(n: number): string {
+	return n >= 1_000_000
+		? `${Math.round(n / 1_000_000)}M`
+		: n >= 1000
+			? `${Math.round(n / 1000)}k`
+			: String(n);
+}
+
+/**
+ * 模型 ID 输入 + 上游候选下拉（options 为空时不显示箭头）。
+ * 选中一条即用 rowFromUpstreamModel 把 ID、上下文、输出、思考、图像一次填好。
+ */
+function ModelIdField({
+	value,
+	options,
+	onChange,
+	onPaste,
+	onPick,
+}: {
+	value: string;
+	options: readonly UpstreamModelInfo[];
+	onChange: (value: string) => void;
+	onPaste: (e: React.ClipboardEvent<HTMLInputElement>) => void;
+	onPick: (model: UpstreamModelInfo) => void;
+}) {
+	const t = useT();
+	const fieldRef = useRef<HTMLDivElement>(null);
+	const buttonRef = useRef<HTMLButtonElement>(null);
+	const [anchor, setAnchor] = useState<HTMLButtonElement | null>(null);
+	useEffect(() => {
+		if (!options.length) setAnchor(null);
+	}, [options.length]);
+
+	return (
+		<div ref={fieldRef} className="relative min-w-0 flex-1">
+			<input
+				className={`${inputClass} ${options.length > 0 ? "pr-7" : ""}`}
+				placeholder={t("settings.providers.customModelId")}
+				value={value}
+				onChange={(e) => onChange(e.target.value)}
+				onClick={() => setAnchor(null)}
+				onPaste={onPaste}
+				onKeyDown={(event) => {
+					if (options.length && (event.key === "ArrowDown" || event.key === "ArrowUp")) {
+						event.preventDefault();
+						setAnchor(buttonRef.current);
+					}
+				}}
+			/>
+			{options.length > 0 && (
+				<button
+					ref={buttonRef}
+					type="button"
+					aria-label={t("settings.providers.pickUpstreamModel")}
+					aria-expanded={anchor !== null}
+					aria-haspopup="listbox"
+					className="absolute inset-y-0 right-0 flex w-7 items-center justify-center text-ink-faint"
+					onClick={(event) => {
+						const trigger = event.currentTarget;
+						setAnchor((previous) => (previous ? null : trigger));
+					}}
+					onKeyDown={(event) => {
+						if (event.key === "ArrowDown" || event.key === "ArrowUp") {
+							event.preventDefault();
+							setAnchor(event.currentTarget);
+						}
+					}}
+				>
+					<ChevronDownIcon size={9} />
+				</button>
+			)}
+			{anchor && options.length > 0 && (
+				<SelectionMenu
+					anchor={anchor}
+					field={fieldRef.current ?? undefined}
+					label={t("settings.providers.pickUpstreamModel")}
+					value={value}
+					options={options.map((model) => ({
+						value: model.id,
+						label: model.id,
+						description: [model.contextWindow, model.maxTokens]
+							.filter((n): n is number => n !== undefined)
+							.map(compactTokens)
+							.join(" / "),
+					}))}
+					onSelect={(id) => {
+						const model = options.find((model) => model.id === id);
+						if (model) onPick(model);
+					}}
+					onClose={() => setAnchor(null)}
+				/>
+			)}
+		</div>
+	);
+}
 
 /** 模型行编辑器：每行一个模型；ctx/out 留空跟随 SDK 默认（128k/16k），非法值红框且禁止保存 */
 export function ModelRowsEditor({
 	rows,
 	onChange,
+	upstream = [],
+	fetching = false,
+	fetchError = null,
+	onFetch,
 }: {
 	rows: ModelRow[];
 	onChange: (rows: ModelRow[]) => void;
+	/** 从上游 /models 拉到的候选（已带 SDK 目录补全的能力）；空 = 还没获取过 */
+	upstream?: readonly UpstreamModelInfo[];
+	fetching?: boolean;
+	fetchError?: string | null;
+	/** 触发「自动获取模型」；不传则不显示该按钮 */
+	onFetch?: () => void;
 }) {
 	const t = useT();
 
@@ -46,7 +162,7 @@ export function ModelRowsEditor({
 		return (
 			<Tooltip label={tooltip} className="w-[4.5rem] shrink-0">
 				<input
-					className={`${inputClass} text-center ${invalid ? "border-red-400" : ""}`}
+					className={`${inputClass} px-1.5 text-center ${invalid ? "border-red-400" : ""}`}
 					placeholder={placeholder}
 					value={value}
 					onChange={(e) => onValue(e.target.value)}
@@ -59,7 +175,7 @@ export function ModelRowsEditor({
 		<button
 			type="button"
 			aria-pressed={active}
-			className={`shrink-0 rounded-md border px-1.5 py-1 text-ui-10 transition-colors ${
+			className={`shrink-0 rounded-full border px-2 py-1 text-ui-10 transition-colors ${
 				active ? "border-ink-faint bg-hover text-ink" : "border-border text-ink-faint hover:text-ink-dim"
 			}`}
 			onClick={onToggle}
@@ -69,17 +185,17 @@ export function ModelRowsEditor({
 	);
 
 	return (
-		<div className="col-span-2">
+		<div className="mt-1.5">
 			{rows.map((row, i) => (
 				// 行随增删变化，无稳定 id，用序号做 key（局部编辑器，重排场景不存在）
 				// biome-ignore lint/suspicious/noArrayIndexKey: 行编辑器无稳定标识
 				<div key={i} className="mb-1.5 flex items-center gap-1.5">
-					<input
-						className={`${inputClass} min-w-0 flex-1`}
-						placeholder={t("settings.providers.customModelId")}
+					<ModelIdField
 						value={row.id}
-						onChange={(e) => setRow(i, { id: e.target.value })}
+						options={upstream}
+						onChange={(id) => setRow(i, { id })}
 						onPaste={onIdPaste(i)}
+						onPick={(model) => setRow(i, rowFromUpstreamModel(model))}
 					/>
 					{numberField(
 						row.contextWindow,
@@ -99,42 +215,63 @@ export function ModelRowsEditor({
 					{toggle(row.imageInput, t("settings.providers.customModelImage"), () =>
 						setRow(i, { imageInput: !row.imageInput }),
 					)}
-					<button
-						type="button"
-						aria-label={t("settings.providers.removeModelRow")}
-						className="flex h-5 w-5 shrink-0 items-center justify-center rounded text-ink-faint transition-colors hover:bg-hover hover:text-ink-dim"
-						onClick={() => removeRow(i)}
-					>
-						<CloseIcon size={9} />
-					</button>
+					{(rows.length > 1 || row.id.trim()) && (
+						<button
+							type="button"
+							aria-label={t("settings.providers.removeModelRow")}
+							className="flex h-5 w-5 shrink-0 items-center justify-center rounded text-ink-faint transition-colors hover:bg-hover hover:text-ink-dim"
+							onClick={() => removeRow(i)}
+						>
+							<CloseIcon size={9} />
+						</button>
+					)}
 				</div>
 			))}
-			<div className="flex items-center gap-3">
+			<div className="mt-1 flex items-center gap-1.5">
 				<button
 					type="button"
-					className="rounded-md px-1.5 py-1 text-ui-11 text-ink-dim transition-colors hover:bg-hover"
+					className="flex items-center gap-1 rounded-lg border border-border px-2 py-1 text-ui-11 text-ink-dim transition-colors hover:border-border-strong hover:text-ink"
 					onClick={() => onChange([...rows, { ...EMPTY_MODEL_ROW }])}
 				>
+					<PlusIcon size={10} />
 					{t("settings.providers.addModelRow")}
 				</button>
+				{onFetch && (
+					<button
+						type="button"
+						className="flex items-center gap-1 rounded-lg bg-hover px-2 py-1 text-ui-11 text-ink-dim transition-colors hover:text-ink disabled:opacity-40"
+						disabled={fetching}
+						onClick={onFetch}
+					>
+						<DownloadIcon size={11} />
+						{fetching ? t("settings.providers.fetchingUpstream") : t("settings.providers.fetchUpstream")}
+					</button>
+				)}
 				{rows.some((row) => row.id.trim()) && (
 					<button
 						type="button"
-						className="rounded-md px-1.5 py-1 text-ui-11 text-ink-dim transition-colors hover:bg-hover"
+						className="ml-auto rounded-md px-1.5 py-1 text-ui-11 text-ink-faint transition-colors hover:bg-hover hover:text-ink-dim"
 						onClick={() => onChange([{ ...EMPTY_MODEL_ROW }])}
 					>
 						{t("settings.providers.clearModelRows")}
 					</button>
 				)}
 			</div>
-			<p className="mt-1 text-ui-10 leading-relaxed text-ink-faint">
-				{t("settings.providers.customModelsHint")}
-			</p>
-			{rows.every((row) => !row.id.trim()) && (
+			{upstream.length > 0 && (
 				<p className="mt-1 text-ui-10 leading-relaxed text-ink-dim">
-					{t("settings.providers.customModelsEmptyHint")}
+					{t("settings.providers.upstreamFetched", { count: upstream.length })}
 				</p>
 			)}
+			{fetchError && (
+				<p className="mt-1 text-ui-10 leading-relaxed text-err">
+					{t("settings.providers.upstreamError", { message: fetchError })}
+				</p>
+			)}
+			<p className="mt-1 text-ui-10 leading-relaxed text-ink-faint">
+				{rows.every((row) => !row.id.trim())
+					? t("settings.providers.customModelsHintAll")
+					: t("settings.providers.customModelsHint")}
+			</p>
 		</div>
 	);
 }

@@ -8,6 +8,12 @@ const fixture = vi.hoisted(() => ({
 	close: vi.fn(),
 	stop: vi.fn(),
 	send: vi.fn(),
+	observe: vi.fn(),
+	detachNotices: vi.fn(),
+}));
+vi.mock("./task-notifications", () => ({
+	observeTaskNotification: fixture.observe,
+	taskNotificationObserver: { detach: fixture.detachNotices },
 }));
 vi.mock("electron", () => ({ app: { getPath: () => "/isolated-test-data" } }));
 vi.mock("./ipc/send", () => ({ sendToRenderer: fixture.send }));
@@ -84,6 +90,22 @@ afterEach(() => {
 });
 
 describe("remote connection intent and ownership", () => {
+	it("forwards only current-connection live task events to notification observation", async () => {
+		await manager.connect("dev");
+		const callbacks = fixture.connect.mock.calls.at(-1)?.[1];
+		const payload = { sessionId: "s", sequence: 1, event: { type: "agent_start" } };
+		callbacks.onEvent("onEvent", payload);
+		expect(fixture.observe).toHaveBeenCalledWith(
+			expect.objectContaining({ kind: "ssh", environmentId: "data" }),
+			payload,
+			expect.any(Function),
+		);
+		manager.disconnect();
+		expect(fixture.detachNotices).toHaveBeenCalled();
+		fixture.observe.mockClear();
+		callbacks.onEvent("onEvent", payload);
+		expect(fixture.observe).not.toHaveBeenCalled();
+	});
 	it("keeps a check read-only and cancelled checks cannot publish success", async () => {
 		let finish!: (value: unknown) => void;
 		fixture.probe.mockReturnValue(
