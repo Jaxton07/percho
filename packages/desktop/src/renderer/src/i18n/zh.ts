@@ -270,6 +270,7 @@ export const zh = {
 		thinkingDepth: "思考深度",
 		addImage: "添加图片",
 		imageUnsupported: "当前模型不支持图片输入，请移除图片或切换多模态模型",
+		filePathUnavailable: "无法读取这个文件的路径，请重新从文件管理器复制或拖入",
 		removeImage: "移除图片",
 		removeAttachment: "移除引用",
 		previewImage: "查看图片",

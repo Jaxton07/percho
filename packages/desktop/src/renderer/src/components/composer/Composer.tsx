@@ -353,7 +353,11 @@ export function Composer({ centered = false }: { centered?: boolean }) {
 				if (files.some((entry) => !entry.file.type.startsWith("image/")))
 					pushToast("warning", "remote.localFileRejected");
 				handleFiles(images);
-			} else appendAttachments(resolveTransferPaths(files, getPi().getPathForFile));
+			} else {
+				const { refs, unreadable } = resolveTransferPaths(files, getPi().getPathForFile);
+				if (unreadable > 0) pushToast("warning", "composer.filePathUnavailable");
+				appendAttachments(refs);
+			}
 		};
 		window.addEventListener("dragover", onDragOver);
 		window.addEventListener("drop", onDrop);

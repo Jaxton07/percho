@@ -60,10 +60,14 @@ describe("resolveTransferPaths", () => {
 		];
 		const getPathForFile = vi.fn(pathOf);
 
-		expect(resolveTransferPaths(files, getPathForFile)).toEqual([
-			{ path: "C:\\a.txt", kind: "file" },
-			{ path: "C:\\docs", kind: "directory" },
-		]);
+		expect(resolveTransferPaths(files, getPathForFile)).toEqual({
+			refs: [
+				{ path: "C:\\a.txt", kind: "file" },
+				{ path: "C:\\docs", kind: "directory" },
+			],
+			// 空路径算读不出；重复路径不算
+			unreadable: 1,
+		});
 		expect(getPathForFile).toHaveBeenCalledTimes(4);
 	});
 
@@ -71,7 +75,10 @@ describe("resolveTransferPaths", () => {
 		const path = "/tmp/report.pdf ";
 		const files = [{ file: { path } as unknown as File, directory: false }];
 
-		expect(resolveTransferPaths(files, pathOf)).toEqual([{ path, kind: "file" }]);
+		expect(resolveTransferPaths(files, pathOf)).toEqual({
+			refs: [{ path, kind: "file" }],
+			unreadable: 0,
+		});
 	});
 
 	it("ignores entries whose path lookup throws instead of aborting the batch", () => {
@@ -90,6 +97,6 @@ describe("resolveTransferPaths", () => {
 				],
 				getPathForFile,
 			),
-		).toEqual([{ path: "/tmp/report.pdf", kind: "file" }]);
+		).toEqual({ refs: [{ path: "/tmp/report.pdf", kind: "file" }], unreadable: 1 });
 	});
 });

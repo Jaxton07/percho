@@ -90,6 +90,7 @@ describe("planFilePaste", () => {
 			images: [],
 			remoteRejected: false,
 			imagesRejected: false,
+			filesRejected: false,
 			handled: false,
 		});
 	});
@@ -107,6 +108,30 @@ describe("planFilePaste", () => {
 		expect(plan.remoteRejected).toBe(true);
 		expect(plan.imagesRejected).toBe(true);
 		expect(plan.handled).toBe(true);
+	});
+
+	it("asks the user to copy again when the file has no native path", () => {
+		const plan = planFilePaste({
+			items: [fileItem("/tmp/README.md")],
+			isRemote: false,
+			imagesSupported: true,
+			getPathForFile: () => "",
+		});
+
+		expect(plan.refs).toEqual([]);
+		expect(plan.filesRejected).toBe(true);
+		expect(plan.handled).toBe(true);
+	});
+
+	it("keeps silent when every file resolves", () => {
+		const plan = planFilePaste({
+			items: [fileItem("/tmp/README.md")],
+			isRemote: false,
+			imagesSupported: true,
+			getPathForFile: pathOf,
+		});
+
+		expect(plan.filesRejected).toBe(false);
 	});
 
 	it("falls back to a file reference when the entry cannot report a directory", () => {
@@ -189,6 +214,21 @@ describe("commitFilePaste", () => {
 		);
 		expect(targets.addImages).toHaveBeenCalledWith(plan.images);
 		expect(targets.toast).not.toHaveBeenCalled();
+	});
+
+	it("reports files whose path cannot be read", () => {
+		const plan = planFilePaste({
+			items: [fileItem("/tmp/README.md")],
+			isRemote: false,
+			imagesSupported: true,
+			getPathForFile: () => "",
+		});
+		const targets = pasteTargets();
+
+		commitFilePaste(plan, targets);
+
+		expect(targets.toast).toHaveBeenCalledWith("composer.filePathUnavailable");
+		expect(targets.insertReferences).not.toHaveBeenCalled();
 	});
 
 	it("keeps images of a remote paste and never resolves local paths", () => {

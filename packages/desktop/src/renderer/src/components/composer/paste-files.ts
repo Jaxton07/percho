@@ -18,6 +18,8 @@ export interface PastePlan {
 	remoteRejected: boolean;
 	/** 当前模型不支持图片，图片被丢弃 */
 	imagesRejected: boolean;
+	/** 有文件拿不到原生路径，落不成引用（需要提示用户换来源重试） */
+	filesRejected: boolean;
 	/** 需要接管这次粘贴；false 时交回编辑器默认行为（纯文字粘贴） */
 	handled: boolean;
 }
@@ -37,15 +39,20 @@ export function planFilePaste(input: {
 	const documents = files.filter((entry) => !entry.file.type.startsWith("image/"));
 	const remoteRejected = input.isRemote && documents.length > 0;
 	// 远端不解析本机路径（连读取都不做），普通文件因此整体丢弃。
-	const refs = input.isRemote ? [] : resolveTransferPaths(documents, input.getPathForFile);
+	const resolved = input.isRemote
+		? { refs: [], unreadable: 0 }
+		: resolveTransferPaths(documents, input.getPathForFile);
+	const filesRejected = resolved.unreadable > 0;
 	const imagesRejected = images.length > 0 && !input.imagesSupported;
 	const keptImages = imagesRejected ? [] : images;
 	return {
-		refs,
+		refs: resolved.refs,
 		images: keptImages,
 		remoteRejected,
 		imagesRejected,
-		handled: refs.length > 0 || keptImages.length > 0 || remoteRejected || imagesRejected,
+		filesRejected,
+		handled:
+			resolved.refs.length > 0 || keptImages.length > 0 || remoteRejected || imagesRejected || filesRejected,
 	};
 }
 
@@ -67,7 +74,9 @@ export interface FilePasteTargets {
 	selectionRange: () => InsertRange;
 	insertReferences: (references: ReferencePart[], range: InsertRange) => void;
 	addImages: (files: File[]) => void;
-	toast: (message: "remote.localFileRejected" | "composer.imageUnsupported") => void;
+	toast: (
+		message: "remote.localFileRejected" | "composer.imageUnsupported" | "composer.filePathUnavailable",
+	) => void;
 }
 
 /**
@@ -77,6 +86,7 @@ export interface FilePasteTargets {
 export function commitFilePaste(plan: PastePlan, targets: FilePasteTargets): void {
 	if (plan.remoteRejected) targets.toast("remote.localFileRejected");
 	if (plan.imagesRejected) targets.toast("composer.imageUnsupported");
+	if (plan.filesRejected) targets.toast("composer.filePathUnavailable");
 	if (plan.refs.length > 0) {
 		// 同步读取：编辑器仍然是粘贴事件发生时的光标/选区。
 		targets.insertReferences(fileReferenceParts(plan.refs), targets.selectionRange());

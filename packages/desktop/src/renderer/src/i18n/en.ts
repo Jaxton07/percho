@@ -284,6 +284,7 @@ export const en: Messages = {
 		addImage: "Add image",
 		imageUnsupported:
 			"The current model doesn't support image input — remove the image or switch to a multimodal model",
+		filePathUnavailable: "Can't read this file's path — copy or drag it again from your file manager",
 		removeImage: "Remove image",
 		removeAttachment: "Remove reference",
 		previewImage: "View image",

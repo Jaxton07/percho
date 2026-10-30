@@ -82,13 +82,12 @@ export function parseComposerDocument(value: unknown): ComposerDocument {
 		}
 		if (part.type === "file" && typeof part.path === "string" && part.path) {
 			if (part.label !== undefined && typeof part.label !== "string") throw new Error("Invalid file label");
-			if (part.kind !== undefined && part.kind !== "file" && part.kind !== "directory")
-				throw new Error("Invalid file kind");
+			// kind 只决定图标，认不出的值当作没有：不能让一个展示字段把整条消息变成占位符。
 			return {
 				type: "file",
 				path: part.path,
 				...(part.label === undefined ? {} : { label: part.label as string }),
-				...(part.kind === undefined ? {} : { kind: part.kind as "file" | "directory" }),
+				...(part.kind === "directory" ? { kind: "directory" as const } : {}),
 			};
 		}
 		throw new Error("Invalid composer part");

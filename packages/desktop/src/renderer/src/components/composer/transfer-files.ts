@@ -54,24 +54,39 @@ export interface NativeFileRef {
 	kind: "file" | "directory";
 }
 
-/** 原生路径 + 目录标记；去重、跳过拿不到原生路径的条目（JS 造的 File、非本机项）。 */
+export interface TransferResolution {
+	refs: NativeFileRef[];
+	/** 拿不到原生路径、落不成引用的文件数（重复路径不算） */
+	unreadable: number;
+}
+
+/**
+ * 原生路径 + 目录标记；去重、跳过拿不到原生路径的条目（JS 造的 File、非本机项），
+ * 并把这类条目计数出来，交给调用方决定是否提示——静默丢掉整批文件太难排查。
+ */
 export function resolveTransferPaths(
 	files: ReadonlyArray<TransferFile>,
 	getPathForFile: (file: unknown) => string,
-): NativeFileRef[] {
+): TransferResolution {
 	const refs: NativeFileRef[] = [];
 	const seen = new Set<string>();
+	let unreadable = 0;
 	for (const { file, directory } of files) {
 		let path = "";
 		try {
 			path = getPathForFile(file);
 		} catch {
-			// 不是原生 File：忽略这一条，不打断整批粘贴/拖放。
+			// 不是原生 File：跳过这一条，不打断整批粘贴/拖放。
+			unreadable += 1;
 			continue;
 		}
-		if (!path || seen.has(path)) continue;
+		if (!path) {
+			unreadable += 1;
+			continue;
+		}
+		if (seen.has(path)) continue;
 		seen.add(path);
 		refs.push({ path, kind: directory ? "directory" : "file" });
 	}
-	return refs;
+	return { refs, unreadable };
 }
