@@ -4,7 +4,7 @@ import {
 	readTransferItems,
 	resolveTransferPaths,
 	type TransferItemLike,
-} from "./drop-files";
+} from "./transfer-files";
 
 type ReferencePart = Exclude<ComposerPart, { type: "text" }>;
 type InsertRange = { start: number; end: number };

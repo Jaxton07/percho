@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
-import type { TransferItemLike } from "./drop-files";
 import { commitFilePaste, fileReferencePart, fileReferenceParts, planFilePaste } from "./paste-files";
+import type { TransferItemLike } from "./transfer-files";
 
 const pathOf = (file: unknown) => (file as { path: string }).path;
 

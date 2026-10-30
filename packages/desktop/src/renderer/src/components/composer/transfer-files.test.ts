@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import { readTransferItems, resolveTransferPaths, type TransferItemLike } from "./drop-files";
+import { readTransferItems, resolveTransferPaths, type TransferItemLike } from "./transfer-files";
 
 function item(file: { path?: string; type?: string } | null, directory?: boolean): TransferItemLike {
 	const value = file ? ({ type: "", ...file } as unknown as File) : null;
