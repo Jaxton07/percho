@@ -34,15 +34,16 @@ import { AtMenu } from "./AtMenu";
 import { ComposerEditor, type ComposerEditorHandle } from "./ComposerEditor";
 import { ContextRing } from "./ContextRing";
 import "./composer-editor.css";
-import { resolveDroppedFilePaths } from "./drop-files";
 import { ImageTray } from "./ImageTray";
 import { ModelPicker } from "./ModelPicker";
 import { PermissionPicker } from "./PermissionPicker";
+import { commitFilePaste, fileReferenceParts, planFilePaste } from "./paste-files";
 import { QueueBar } from "./QueueBar";
 import { QuoteChip } from "./QuoteChip";
 import { SendErrorBar } from "./SendErrorBar";
 import { SlashMenu } from "./SlashMenu";
 import { slashPresentation } from "./slash-label";
+import { type NativeFileRef, readTransferItems, resolveTransferPaths } from "./transfer-files";
 import { useAtCompletion } from "./use-at-completion";
 import { useComposerSend } from "./use-composer-send";
 import { useSlashMenu } from "./use-slash-menu";
@@ -118,18 +119,15 @@ export function Composer({ centered = false }: { centered?: boolean }) {
 		updateDraft(draftKey, (d) => ({ ...d, slashCommand: command }));
 	};
 	const appendAttachments = useCallback(
-		(paths: string[]) => {
-			if (!paths.length) return;
+		(refs: ReadonlyArray<NativeFileRef>) => {
+			if (!refs.length) return;
 			updateDraft(draftKey, (d) => ({
 				...d,
 				document: normalizeComposerDocument({
 					version: 1,
 					parts: [
 						...d.document.parts,
-						...paths.flatMap((path) => [
-							{ type: "text" as const, text: " " },
-							{ type: "file" as const, path, label: path.split(/[\\/]/).at(-1) },
-						]),
+						...fileReferenceParts(refs).flatMap((part) => [{ type: "text" as const, text: " " }, part]),
 					],
 				}),
 			}));
@@ -350,12 +348,16 @@ export function Composer({ centered = false }: { centered?: boolean }) {
 		const onDrop = (event: DragEvent) => {
 			if (!containsFiles(event) || !event.dataTransfer) return;
 			event.preventDefault();
+			const { files, images } = readTransferItems(event.dataTransfer.items);
 			if (environment.kind === "ssh") {
-				const files = Array.from(event.dataTransfer.files);
-				if (files.some((file) => !file.type.startsWith("image/")))
+				if (files.some((entry) => !entry.file.type.startsWith("image/")))
 					pushToast("warning", "remote.localFileRejected");
-				handleFiles(files.filter((file) => file.type.startsWith("image/")));
-			} else appendAttachments(resolveDroppedFilePaths(event.dataTransfer.files, getPi().getPathForFile));
+				handleFiles(images);
+			} else {
+				const { refs, unreadable } = resolveTransferPaths(files, getPi().getPathForFile);
+				if (unreadable > 0) pushToast("warning", "composer.filePathUnavailable");
+				appendAttachments(refs);
+			}
 		};
 		window.addEventListener("dragover", onDragOver);
 		window.addEventListener("drop", onDrop);
@@ -365,27 +367,32 @@ export function Composer({ centered = false }: { centered?: boolean }) {
 		};
 	}, [appendAttachments, readOnly, environment.kind, handleFiles]);
 
-	/** 截图/复制图片后 Ctrl+V 粘贴到输入框 */
+	/**
+	 * 截图/复制图片后 Ctrl+V 粘贴到输入框；从 Finder 粘贴文件落成带完整路径的文件引用。
+	 * 沙箱里 File 只有 name 没有 path，原生路径必须由 preload 的 webUtils 还原（与拖放同一条
+	 * readTransferItems 管线），否则输入框里只会留下一个孤立文件名。目录身份取自
+	 * FileSystemEntry，全程同步。
+	 * 引用插在光标处并替换选区；同一次粘贴里的图片照常加入，远端会话沿用拖放的本地文件限制。
+	 */
 	const handlePaste = (e: React.ClipboardEvent<HTMLDivElement>) => {
-		const items = e.clipboardData?.items;
-		if (!items) return;
-		const files: File[] = [];
-		for (const item of items) {
-			if (item.type.startsWith("image/")) {
-				const file = item.getAsFile();
-				if (file) files.push(file);
-			}
-		}
-		if (files.length === 0) return;
-		// 图片门控：纯文本模型拦截粘贴（默认行为可能把图片数据塞进文本框，必须 preventDefault）
-		if (!imagesSupported) {
-			e.preventDefault();
-			// 顶栏右侧 toast 卡（不用内联反馈：该提示不阻塞继续输入，卡片可手动关）
-			pushToast("warning", "composer.imageUnsupported");
-			return;
-		}
+		const clipboard = e.clipboardData;
+		if (!clipboard) return;
+		const plan = planFilePaste({
+			items: clipboard.items,
+			isRemote: environment.kind === "ssh",
+			imagesSupported,
+			getPathForFile: getPi().getPathForFile,
+		});
+		if (!plan.handled) return;
+		// 文件/图片由我们接管，别让默认行为把文件名或图片数据塞进文本框
 		e.preventDefault();
-		handleFiles(files);
+		// 顶栏右侧 toast 卡（不用内联反馈：该提示不阻塞继续输入，卡片可手动关）
+		commitFilePaste(plan, {
+			selectionRange: () => editorRef.current?.selectionRange() ?? { start: 0, end: 0 },
+			insertReferences: (references, range) => editorRef.current?.insertReferences(references, range),
+			addImages: handleFiles,
+			toast: (message) => pushToast("warning", message),
+		});
 	};
 
 	return (

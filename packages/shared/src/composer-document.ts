@@ -2,7 +2,7 @@
 export type ComposerPart =
 	| { type: "text"; text: string }
 	| { type: "skill"; id: string; label: string }
-	| { type: "file"; path: string; label?: string };
+	| { type: "file"; path: string; label?: string; kind?: "file" | "directory" };
 
 export interface ComposerDocument {
 	version: 1;
@@ -82,10 +82,12 @@ export function parseComposerDocument(value: unknown): ComposerDocument {
 		}
 		if (part.type === "file" && typeof part.path === "string" && part.path) {
 			if (part.label !== undefined && typeof part.label !== "string") throw new Error("Invalid file label");
+			// kind 只决定图标，认不出的值当作没有：不能让一个展示字段把整条消息变成占位符。
 			return {
 				type: "file",
 				path: part.path,
 				...(part.label === undefined ? {} : { label: part.label as string }),
+				...(part.kind === "directory" ? { kind: "directory" as const } : {}),
 			};
 		}
 		throw new Error("Invalid composer part");

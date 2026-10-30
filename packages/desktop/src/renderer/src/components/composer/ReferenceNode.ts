@@ -40,6 +40,8 @@ export class ReferenceNode extends TextNode {
 	createDOM(config: EditorConfig) {
 		const element = super.createDOM(config);
 		element.classList.add("composer-reference", `composer-reference-${this.__reference.type}`);
+		if (this.__reference.type === "file" && this.__reference.kind === "directory")
+			element.classList.add("composer-reference-directory");
 		element.spellcheck = false;
 		return element;
 	}

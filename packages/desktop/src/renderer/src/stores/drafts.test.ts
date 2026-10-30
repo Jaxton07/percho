@@ -26,6 +26,15 @@ describe("输入快照与失败恢复", () => {
 		expect(() => parseComposerDocument(raw.perchoInput)).toThrow();
 	});
 
+	it("未知的 file kind 只丢图标，不把整条消息变成占位符", () => {
+		const raw = {
+			perchoInput: { version: 1, parts: [{ type: "file", path: "/tmp/a.md", kind: "symlink" }] },
+			content: "PRIVATE_DEFINITION",
+		};
+		expect(readComposerDocument(raw)?.parts).toEqual([{ type: "file", path: "/tmp/a.md" }]);
+		expect(parseComposerDocument(raw.perchoInput).parts).toEqual([{ type: "file", path: "/tmp/a.md" }]);
+	});
+
 	it("发送期间的新编辑不被拒绝结果覆盖，可交换恢复两份内容", () => {
 		useDraftStore.getState().updateDraft("a", (d) => withDraftText(d, "发送前"));
 		const sent = takeDraft("a");
