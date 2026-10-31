@@ -415,10 +415,8 @@ export const zh = {
 		imageRetry: "重新加载",
 		imageLoadError: "图片加载失败",
 		subagent: {
-			failedCommands: "{count} 条命令失败",
 			queued: "排队中",
 			aborted: "已中止",
-			files: "改动 {count} 个文件",
 			running: "工作中",
 			done: "已完成",
 			/** 子代理检视页左上角返回父会话入口（spec D4） */

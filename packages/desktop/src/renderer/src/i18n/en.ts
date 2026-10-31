@@ -432,10 +432,8 @@ export const en: Messages = {
 		imageRetry: "Reload",
 		imageLoadError: "Image failed to load",
 		subagent: {
-			failedCommands: "{count} commands failed",
 			queued: "Queued",
 			aborted: "Aborted",
-			files: "{count} files changed",
 			running: "Working",
 			done: "Done",
 			/** Back-to-parent entry on the subagent inspection page (spec D4) */

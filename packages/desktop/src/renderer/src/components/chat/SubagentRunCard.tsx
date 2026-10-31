@@ -8,7 +8,7 @@ function displayName(name: string): string {
 	return name.charAt(0).toUpperCase() + name.slice(1);
 }
 
-/** 单个子代理行：状态点（工作中呼吸动画 / 完成勾 / 失败红点）+ 加粗名称 + 状态；有会话文件时可点击打开 */
+/** 单个子代理行：状态点 + 名称与思考档位；有会话文件时可点击打开 */
 function SubagentRunRow({ run }: { run: SubagentRunUi }) {
 	const t = useT();
 	// 走统一入口：它同步捕获父目标并只在「仍是最新导航意图」时记下返回关系（spec D4）
@@ -42,13 +42,25 @@ function SubagentRunRow({ run }: { run: SubagentRunUi }) {
 			} px-1.5 transition-colors`}
 		>
 			{run.status === "running" ? (
-				<span className="h-1.5 w-1.5 shrink-0 animate-pulse rounded-full bg-accent" />
+				<span
+					role="img"
+					aria-label={statusLabel}
+					className="h-1.5 w-1.5 shrink-0 animate-pulse rounded-full bg-accent"
+				/>
 			) : run.status === "error" ? (
-				<span className="h-1.5 w-1.5 shrink-0 rounded-full bg-red-500" />
+				<span role="img" aria-label={statusLabel} className="h-1.5 w-1.5 shrink-0 rounded-full bg-red-500" />
 			) : run.status === "aborted" || run.status === "queued" ? (
-				<span className="h-1.5 w-1.5 shrink-0 rounded-full bg-ink-faint" />
+				<span
+					role="img"
+					aria-label={statusLabel}
+					className="h-1.5 w-1.5 shrink-0 rounded-full bg-ink-faint"
+				/>
 			) : (
-				<span className="h-1.5 w-1.5 shrink-0 rounded-full bg-green-500" />
+				<span
+					role="img"
+					aria-label={statusLabel}
+					className="h-1.5 w-1.5 shrink-0 rounded-full bg-green-500"
+				/>
 			)}
 			<span className="truncate text-ui-13 font-semibold text-ink">
 				{displayName(run.agent)}
@@ -57,17 +69,6 @@ function SubagentRunRow({ run }: { run: SubagentRunUi }) {
 			{run.thinkingLevel && (
 				<span className="shrink-0 text-ui-11 text-ink-faint">
 					{t(`thinkingLevels.${run.thinkingLevel}` as MessageKey)}
-				</span>
-			)}
-			<span className="shrink-0 text-ui-11 text-ink-faint">{statusLabel}</span>
-			{run.summary && (
-				<span className="shrink-0 text-ui-11 text-ink-faint">
-					{t("message.subagent.files", { count: run.summary.changedFiles.length })}
-				</span>
-			)}
-			{run.summary && run.summary.failedCommands > 0 && (
-				<span className="shrink-0 text-ui-11 text-ink-faint">
-					{t("message.subagent.failedCommands", { count: run.summary.failedCommands })}
 				</span>
 			)}
 		</button>
