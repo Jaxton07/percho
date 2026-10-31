@@ -11,6 +11,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { PermissionGate } from "../src/permissions/gate";
 import { ProjectResourceLoader } from "../src/project/trust-loader";
 import type { SessionTraces } from "../src/session/traces";
+import { describeBoundaries, REPORT_GUIDE, SUBAGENT_CORE } from "../src/tools/subagent/prompt";
 import { runSubagent } from "../src/tools/subagent/runner";
 
 const { createAgentSessionMock } = vi.hoisted(() => ({ createAgentSessionMock: vi.fn() }));
@@ -239,7 +240,13 @@ describe("subagent APPEND_SYSTEM discovery with agent instructions", () => {
 	it.each([true, false])("respects parent trust=%s while keeping agent instructions", async (trusted) => {
 		const { resourceLoader, settingsManager } = await childLoader(trusted);
 		expect(settingsManager?.isProjectTrusted()).toBe(trusted);
-		expect(resourceLoader.getAppendSystemPrompt()).toEqual([AGENT, trusted ? PROJECT : USER]);
+		expect(resourceLoader.getAppendSystemPrompt()).toEqual([
+			AGENT,
+			SUBAGENT_CORE,
+			describeBoundaries({ agentDir, deny: [] }),
+			REPORT_GUIDE,
+			trusted ? PROJECT : USER,
+		]);
 		expect(resourceLoader.getAppendSystemPromptSources()).toEqual([
 			{ path: trusted ? projectFile : userFile },
 		]);
@@ -248,13 +255,24 @@ describe("subagent APPEND_SYSTEM discovery with agent instructions", () => {
 	it("falls back to user file when project file is missing", async () => {
 		await rm(projectFile);
 		const { resourceLoader } = await childLoader(true);
-		expect(resourceLoader.getAppendSystemPrompt()).toEqual([AGENT, USER]);
+		expect(resourceLoader.getAppendSystemPrompt()).toEqual([
+			AGENT,
+			SUBAGENT_CORE,
+			describeBoundaries({ agentDir, deny: [] }),
+			REPORT_GUIDE,
+			USER,
+		]);
 	});
 
 	it("keeps agent instructions when neither file exists", async () => {
 		await Promise.all([rm(projectFile), rm(userFile)]);
 		const { resourceLoader } = await childLoader(true);
-		expect(resourceLoader.getAppendSystemPrompt()).toEqual([AGENT]);
+		expect(resourceLoader.getAppendSystemPrompt()).toEqual([
+			AGENT,
+			SUBAGENT_CORE,
+			describeBoundaries({ agentDir, deny: [] }),
+			REPORT_GUIDE,
+		]);
 	});
 
 	it("reload updates file contents without repeating agent instructions or loading skills", async () => {
@@ -265,7 +283,13 @@ describe("subagent APPEND_SYSTEM discovery with agent instructions", () => {
 		await writeFile(projectFile, "PROJECT_UPDATED");
 		await resourceLoader.reload();
 		await resourceLoader.reload();
-		expect(resourceLoader.getAppendSystemPrompt()).toEqual([AGENT, "PROJECT_UPDATED"]);
+		expect(resourceLoader.getAppendSystemPrompt()).toEqual([
+			AGENT,
+			SUBAGENT_CORE,
+			describeBoundaries({ agentDir, deny: [] }),
+			REPORT_GUIDE,
+			"PROJECT_UPDATED",
+		]);
 		expect(resourceLoader.getSkills().skills).toEqual([]);
 	});
 });

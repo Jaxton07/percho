@@ -2,7 +2,7 @@ import { readComposerDocument } from "../composer-document";
 import { buildStreamGuardUiError, type UiError } from "../errors";
 import type { ImageInput, SessionEvent } from "../session";
 import { parseExpandedSkillInvocation } from "../skill-invocation";
-import { extractSubagentRuns } from "../subagent";
+import { extractSubagentRuns, subagentUiStatus } from "../subagent";
 import { extractTodos, TODO_TOOL_NAME } from "../todo";
 import {
 	emptyStreaming,
@@ -388,17 +388,20 @@ export function reduceEvent(state: SessionTranscriptState, event: SessionEvent):
 				const parallelTasks = Array.isArray(startArgs.tasks) ? startArgs.tasks : [];
 				const runInputs =
 					event.toolName === "subagent" && startArgs.action == null
-						? typeof startArgs.agent === "string"
-							? [{ agent: startArgs.agent, task: startArgs.task }]
-							: parallelTasks.filter((task) => typeof task.agent === "string")
+						? parallelTasks.length
+							? parallelTasks
+							: typeof startArgs.task === "string" || typeof startArgs.agent === "string"
+								? [{ agent: startArgs.agent, task: startArgs.task }]
+								: []
 						: [];
 				if (runInputs.length > 0) {
 					const start = streaming.subagentRuns.length;
 					const runs: SubagentRunUi[] = runInputs.map((input, index) => ({
 						key: `${event.toolCallId}:${index}`,
-						agent: typeof input.agent === "string" && input.agent.length > 0 ? input.agent : "subagent",
+						agent: typeof input.agent === "string" && input.agent.length > 0 ? input.agent : "worker",
 						task: typeof input.task === "string" && input.task.length > 0 ? input.task : undefined,
-						status: "running",
+						status: "queued",
+						index: runInputs.length > 1 ? index + 1 : undefined,
 					}));
 					// ticker 摘条（spec §9.0）：subagent 不进 Working 预览行——toolcall_start 已在
 					// activity 留了 `c${blockIndex}` 条目，移出折叠区时同步摘除
@@ -435,27 +438,24 @@ export function reduceEvent(state: SessionTranscriptState, event: SessionEvent):
 					: null;
 				let subagentRuns = streaming.subagentRuns;
 				if (placement && progress) {
-					// 子会话在 runner 创建后立即通过 partialResult 上报 sessionFile；只回填路径，
-					// 保住 running 状态（其 exitCode=-1，不能被 extract 的 error 判定覆盖）。
+					const rawResults = (event.partialResult as { details?: { results?: Array<{ status?: unknown }> } })
+						?.details?.results;
 					const next = [...subagentRuns];
-					for (const update of progress) {
-						if (!update.sessionFile) continue;
-						const index = next.findIndex(
-							(run, i) =>
-								i >= placement.start &&
-								i < placement.start + placement.count &&
-								run.sessionFile == null &&
-								run.agent === update.agent &&
-								(update.task == null || run.task === update.task),
-						);
-						const current = index >= 0 ? next[index] : undefined;
+					progress.forEach((update, offset) => {
+						const index = placement.start + offset;
+						const current = offset < placement.count ? next[index] : undefined;
 						if (current)
 							next[index] = {
 								...current,
-								sessionFile: update.sessionFile,
-								...(update.thinkingLevel ? { thinkingLevel: update.thinkingLevel } : {}),
+								...update,
+								key: current.key,
+								// 旧执行器的部分结果无 status，exitCode=-1 只代表尚在运行。
+								status:
+									rawResults?.[offset]?.status == null && update.exitCode === -1
+										? "running"
+										: subagentUiStatus(update.status),
 							};
-					}
+					});
 					subagentRuns = next;
 				}
 				if (!delta && subagentRuns === streaming.subagentRuns) return streaming;
@@ -499,7 +499,11 @@ export function reduceEvent(state: SessionTranscriptState, event: SessionEvent):
 				const placeholders = placement ? streaming.subagentRuns.slice(start, start + count) : [];
 				const runs: SubagentRunUi[] =
 					extracted && extracted.length > 0
-						? extracted.map((run, index) => ({ ...run, key: `${event.toolCallId}:${index}` }))
+						? extracted.map((run, index) => ({
+								...run,
+								status: subagentUiStatus(run.status),
+								key: `${event.toolCallId}:${index}`,
+							}))
 						: placeholders.map((placeholder) => ({
 								key: placeholder.key,
 								agent: placeholder.agent,

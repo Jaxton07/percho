@@ -2,6 +2,7 @@
  * bash 命令链解析（引号感知）：切段、命令替换提取、包装执行剥壳、求值候选收集。
  * 供权限规则求值（pattern.ts）与项目级记忆匹配共用；纯函数可独立单测。
  */
+import { basename } from "node:path";
 
 /**
  * bash 命令链切段：引号感知扫描，&& || & | ; 与换行仅在引号外分隔，去空段。
@@ -153,7 +154,7 @@ export function extractShellExecArg(segment: string): string | null {
 	if (tokens[0] === "eval" && tokens.length > 1) {
 		return extractQuoted(tokens.slice(1).join(" ").trim());
 	}
-	if (!WRAPPER_SHELLS.has(tokens[0] ?? "")) return null;
+	if (!WRAPPER_SHELLS.has(basename(tokens[0] ?? ""))) return null;
 	let i = 1;
 	while (i < tokens.length) {
 		const flag = tokens[i];

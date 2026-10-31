@@ -18,6 +18,7 @@ import { makePermissionGateExtension, type PermissionConfirm } from "../src/perm
 import { PermissionGate } from "../src/permissions/gate";
 import { isTemporaryPath } from "../src/permissions/tmp-zone";
 import { workspaceConfigPath } from "../src/project/workspace-store";
+import { READ_ONLY_GIT_COMMANDS, type SubagentPolicy } from "../src/tools/subagent/policy";
 
 type ToolCallHandler = ExtensionHandler<ToolCallEvent, ToolCallEventResult>;
 
@@ -71,6 +72,7 @@ function makeHarness(
 		cwd?: string;
 		mode?: PermissionModeRef;
 		tools?: ToolInfo[];
+		subagentPolicy?: SubagentPolicy;
 	},
 ) {
 	const confirmCalls = options?.confirmCalls;
@@ -85,6 +87,7 @@ function makeHarness(
 		projectRoot: options?.projectRoot,
 		confirm,
 		getMode: mode ? () => mode.current : undefined,
+		subagentPolicy: options?.subagentPolicy,
 	});
 	if (typeof extension === "function" || !("factory" in extension)) {
 		throw new Error("expected named inline extension");
@@ -116,6 +119,71 @@ function makeHarness(
 }
 
 describe("permission-gate 扩展", () => {
+	it("代理 git 白名单覆盖参数、包装与替换，非 git 不受影响", async () => {
+		const dir = makeAgentDir();
+		try {
+			const { call, confirms } = makeHarness(dir, false, { subagentPolicy: { agentDir: dir, deny: [] } });
+			for (const command of [
+				"git commit",
+				"git -c user.name=x commit",
+				"git -C /repo commit",
+				"/usr/bin/git push",
+				'bash -c "git push"',
+				"echo $(git push)",
+				"git fetch",
+				"git branch -D x",
+				"git config",
+				"git gc",
+				"git apply",
+				"git --git-dir=x status",
+				"git --work-tree=x status",
+			]) {
+				expect(await call("bash", { command }), command).toMatchObject({
+					block: true,
+					reason: expect.stringContaining("代理边界"),
+				});
+			}
+			for (const subcommand of READ_ONLY_GIT_COMMANDS)
+				expect(await call("bash", { command: `git ${subcommand}` })).toBeUndefined();
+			expect(await call("bash", { command: "npm test" })).toBeUndefined();
+			expect(confirms).toHaveLength(0);
+		} finally {
+			rmSync(dir, { recursive: true, force: true });
+		}
+	});
+
+	it.each(["default", "fullAccess", "disabled"])("硬边界早于授权、记忆与门控：%s", async (mode) => {
+		const dir = makeAgentDir();
+		try {
+			if (mode === "disabled")
+				writeFileSync(join(dir, "permissions.json"), JSON.stringify({ enabled: false }));
+			writeFileSync(
+				workspaceConfigPath(dir),
+				JSON.stringify({ projects: { "/project": { allowed: ["bash: npm publish*", "write"] } } }),
+			);
+			const { call, confirms } = makeHarness(dir, true, {
+				projectRoot: "/project",
+				mode: { current: mode === "fullAccess" ? "fullAccess" : "default" },
+				subagentPolicy: { agentDir: dir, deny: ["bash: npm publish*"] },
+			});
+			for (const [tool, input] of [
+				["bash", { command: "npm publish" }],
+				["bash", { command: "git push" }],
+				["bash", { command: "echo '{}' > permissions.json" }],
+				["write", { path: join(dir, "auth.json") }],
+				["edit", { path: join(dir, "../", dir.split("/").at(-1) ?? "", "settings.json") }],
+			] as const) {
+				expect(await call(tool, input)).toMatchObject({
+					block: true,
+					reason: expect.stringContaining("permissions.json 无法放行"),
+				});
+			}
+			expect(await call("write", { path: "/project/unexpected.ts" })).toBeUndefined();
+			expect(confirms).toHaveLength(0);
+		} finally {
+			rmSync(dir, { recursive: true, force: true });
+		}
+	});
 	it("默认规则：普通 bash/文件工具直接放行，不弹窗", async () => {
 		const { call, confirms } = makeHarness(makeAgentDir());
 		await expect(call("bash", { command: "npm test" })).resolves.toBeUndefined();

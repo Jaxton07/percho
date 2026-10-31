@@ -142,6 +142,7 @@ import { collectMcpTools, makeMcpInventoryExtension } from "./tools/mcp-inventor
 import { makeShowImageTool } from "./tools/show-image";
 import { discoverAgents, isSubagentSessionPath, makeSubagentTool } from "./tools/subagent";
 import { applySubagentMutex, resolveSubagentPreferBuiltin } from "./tools/subagent/mutex";
+import type { SubagentRunHandle } from "./tools/subagent/runner";
 import { makeTodoTool } from "./tools/todo";
 import { makeTodoReminderExtension } from "./tools/todo-reminder";
 import { makeWebFetchTool } from "./tools/webfetch";
@@ -379,7 +380,11 @@ export class PiBackend {
 	}
 
 	/** 自定义工具 = 调用方传入的 + 内置 webfetch（webFetch:false 关闭）+ show_image + todo + subagent */
-	private buildCustomTools(gate: PermissionGate, preferBuiltin: boolean): ToolDefinition[] {
+	private buildCustomTools(
+		gate: PermissionGate,
+		preferBuiltin: boolean,
+		getPermissionMode: () => PermissionMode,
+	): ToolDefinition[] {
 		const tools = [...(this.options.customTools ?? [])];
 		const webFetch = this.options.webFetch;
 		if (webFetch !== false) {
@@ -394,8 +399,26 @@ export class PiBackend {
 					getSubagentModel: (agentName) => this.modelPrefs.getSubagentModel(agentName),
 					getSubagentThinkingLevel: (agentName) => this.modelPrefs.getSubagentThinking(agentName),
 					gate,
+					getPermissionMode,
 					traces: this.traces,
-					onEvent: (sessionId, event) => this.emitEvent(sessionId, event),
+					registerRun: (id, handle) => {
+						this.assertRunning();
+						this.runningSubagents.set(id, handle);
+					},
+					unregisterRun: (id) => {
+						this.runningSubagents.delete(id);
+						if (!this.registry.has(id)) {
+							this.liveTranscripts.delete(id);
+							this.streamGuard.cleanup(id);
+							this.eventRates.delete(id);
+						}
+					},
+					onEvent: (sessionId, event, abort) =>
+						this.emitEvent(sessionId, event, {
+							forward: this.registry.has(sessionId),
+							recordTrace: false,
+							abort,
+						}),
 				}),
 			);
 		}
@@ -563,8 +586,9 @@ export class PiBackend {
 		return this.modelRuntime;
 	}
 
+	private readonly runningSubagents = new Map<string, SubagentRunHandle>();
 	private readonly liveTranscripts = new Map<string, LiveTranscript>();
-	private publishEvent(sessionId: string, event: SessionEvent): void {
+	private publishEvent(sessionId: string, event: SessionEvent, forward = true): void {
 		let live = this.liveTranscripts.get(sessionId);
 		if (!live) {
 			live = new LiveTranscript();
@@ -574,10 +598,12 @@ export class PiBackend {
 		live.apply(
 			event,
 			event.type === "turn_start"
-				? (this.registry.get(sessionId)?.session.sessionManager.getBranch() ?? [])
+				? (this.runningSubagents.get(sessionId)?.getBranch() ??
+						this.registry.get(sessionId)?.session.sessionManager.getBranch() ??
+						[])
 				: [],
 		);
-		this.eventEmitter.emit({ sessionId, event });
+		if (forward) this.eventEmitter.emit({ sessionId, event });
 	}
 	getSessionEventSequence(sessionId: string): number {
 		return this.liveTranscripts.get(sessionId)?.sequence ?? 0;
@@ -596,7 +622,7 @@ export class PiBackend {
 	getSessionBaseline(sessionId: string): import("@percho/shared").SessionBaseline {
 		const entry = this.requireSession(sessionId);
 		const live = this.liveTranscripts.get(sessionId) ?? new LiveTranscript();
-		const transcript = live.snapshot(entry.session.sessionManager.getBranch(), {
+		const transcript = live.snapshot(this.sessionBranch(entry), {
 			streaming: entry.session.isStreaming,
 			compacting: entry.session.isCompacting,
 		});
@@ -612,7 +638,11 @@ export class PiBackend {
 			permissionMode: entry.modeRef.current,
 		};
 	}
-	private emitEvent(sessionId: string, event: SessionEvent): void {
+	private emitEvent(
+		sessionId: string,
+		event: SessionEvent,
+		options: { forward?: boolean; recordTrace?: boolean; abort?: () => Promise<void> } = {},
+	): void {
 		if (event.type === "message_start" || event.type === "message_end")
 			event = { ...event, message: projectComposerMessage(event.message) };
 		if (event.type === "agent_end")
@@ -653,17 +683,21 @@ export class PiBackend {
 		if (verdict !== "pass") {
 			if (verdict !== "suppress") {
 				log.error("stream guard tripped, aborting session", sessionId, { verdict });
-				void this.abort(sessionId).catch(() => {});
+				void (options.abort ? options.abort() : this.abort(sessionId)).catch(() => {});
 				// 熔断显形：合成 stream_guard_tripped UI 事件（subagent_mutex 同款：union + IPC 转发 +
 				// 不进 trace），reducer 产 warning 条——否则「回复戛然而止」零 UI 信号。
 				// 合成事件直接 emit，不喂回 streamGuard.inspect（防线不能自触发）。
-				this.publishEvent(sessionId, { type: "stream_guard_tripped", verdict });
+				this.publishEvent(sessionId, { type: "stream_guard_tripped", verdict }, options.forward);
 			}
 			return;
 		}
-		if (event.type !== "subagent_mutex" && event.type !== "stream_guard_tripped")
+		if (
+			options.recordTrace !== false &&
+			event.type !== "subagent_mutex" &&
+			event.type !== "stream_guard_tripped"
+		)
 			this.traces.record(sessionId, event);
-		this.publishEvent(sessionId, event);
+		this.publishEvent(sessionId, event, options.forward);
 	}
 
 	async init(): Promise<void> {
@@ -695,7 +729,7 @@ export class PiBackend {
 				model,
 				thinkingLevel: options.thinkingLevel as ThinkingLevel | undefined,
 				tools: this.options.tools,
-				customTools: this.buildCustomTools(deps.gate, deps.preferBuiltin),
+				customTools: this.buildCustomTools(deps.gate, deps.preferBuiltin, deps.getPermissionMode),
 				sessionManager: SessionManager.create(cwd),
 				settingsManager,
 				resourceLoader,
@@ -742,7 +776,7 @@ export class PiBackend {
 				tools: this.options.tools,
 				settingsManager,
 				resourceLoader,
-				customTools: this.buildCustomTools(deps.gate, deps.preferBuiltin),
+				customTools: this.buildCustomTools(deps.gate, deps.preferBuiltin, deps.getPermissionMode),
 			});
 		});
 		log.info("session opened", session.sessionId, { file: filePath });
@@ -761,6 +795,7 @@ export class PiBackend {
 		readOnly: boolean | undefined,
 		makeSession: (deps: {
 			gate: PermissionGate;
+			getPermissionMode: () => PermissionMode;
 			preferBuiltin: boolean;
 			/** 两阶段资源加载（信任决策走 projectLoader 既有链路）；懒执行：makeSession 决定时机 */
 			load: () => Promise<{ settingsManager: SettingsManagerType; resourceLoader: DefaultResourceLoader }>;
@@ -790,7 +825,12 @@ export class PiBackend {
 			};
 			const preferBuiltin = await this.subagentPreferBuiltin();
 			this.assertRunning();
-			const { session, extensionsResult } = await makeSession({ gate, preferBuiltin, load });
+			const { session, extensionsResult } = await makeSession({
+				gate,
+				preferBuiltin,
+				load,
+				getPermissionMode: () => modeRef.current,
+			});
 			candidate = session;
 			if (!readOnly) session.setCompactionPolicy(createCompactionRequestPolicy(getAgentDir()));
 			this.assertRunning();
@@ -1172,6 +1212,11 @@ export class PiBackend {
 	}
 
 	async abort(sessionId: string): Promise<void> {
+		const child = this.runningSubagents.get(sessionId);
+		if (child) {
+			await child.abort();
+			return;
+		}
 		const entry = this.registry.get(sessionId);
 		if (!entry) return;
 		log.info("abort", sessionId);
@@ -1455,7 +1500,15 @@ export class PiBackend {
 	/** 读取会话树当前分支的完整历史（compaction 只裁模型上下文，不裁 UI 历史） */
 	async getSessionMessages(sessionId: string): Promise<SessionMessage[]> {
 		const entry = this.requireSession(sessionId);
-		return toBranchSessionMessages(entry.session.sessionManager.getBranch());
+		return toBranchSessionMessages(this.sessionBranch(entry));
+	}
+
+	/** 检视副本不会随运行实例更新；运行时取真分支，结束后重新读盘，避免重取历史仍是旧快照。 */
+	private sessionBranch(entry: RegisteredSession): ReturnType<SessionManager["getBranch"]> {
+		if (!entry.readOnly || !entry.session.sessionFile) return entry.session.sessionManager.getBranch();
+		const running = this.runningSubagents.get(entry.session.sessionId);
+		if (running) return running.getBranch();
+		return SessionManager.open(entry.session.sessionFile).getBranch();
 	}
 
 	/**
@@ -1629,12 +1682,13 @@ export class PiBackend {
 		const agents = await discoverAgents(this.options.defaultCwd ?? process.cwd(), { projectTrusted: false });
 		return agents
 			.filter((agent) => agent.source !== "project")
-			.map(({ name, description, source, thinking, thinkingWarning }) => ({
+			.map(({ name, description, source, thinking, thinkingWarning, denyWarnings }) => ({
 				name,
 				description,
 				source: source === "builtin" ? "builtin" : "user",
 				...(thinking ? { thinking } : {}),
 				...(thinkingWarning ? { thinkingWarning } : {}),
+				...(denyWarnings ? { denyWarnings } : {}),
 			}));
 	}
 
@@ -1962,6 +2016,10 @@ export class PiBackend {
 
 	dispose(): void {
 		this.stopping = true;
+		for (const child of this.runningSubagents.values()) {
+			void child.abort().catch((error) => log.warn("subagent shutdown abort failed", error));
+			child.dispose();
+		}
 		this.registry.disposeAll({
 			beforeShutdown: (entry) => {
 				this.beforeSessionShutdown(entry);

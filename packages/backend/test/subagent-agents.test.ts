@@ -11,6 +11,31 @@ afterEach(async () => {
 });
 
 describe("subagent agent definitions", () => {
+	it("唯一内置 worker 提供开发工具", async () => {
+		const root = join(process.cwd(), ".local/tmp/subagent-dev-capability/empty");
+		const agents = await discoverAgents(root, { agentDir: root, projectTrusted: false });
+		expect(agents).toHaveLength(1);
+		expect(agents[0]).toMatchObject({
+			name: "worker",
+			source: "builtin",
+			tools: ["read", "write", "edit", "bash", "grep", "find", "ls", "webfetch"],
+		});
+	});
+
+	it("可选边界字段：合法保留、非法丢弃并保留 deny 警示", () => {
+		const definition = (fields: string) => parseAgentMarkdown(`---\nname: worker\n${fields}\n---\nRole`);
+		expect(definition('permissionMode: fullAccess\ndeny: ["bash: npm publish*", write]')).toMatchObject({
+			permissionMode: "fullAccess",
+			deny: ["bash: npm publish*", "write"],
+		});
+		expect(definition('deny:\n  - "bash: rm *"\n  - 42\n  - "bad:pattern"')).toMatchObject({
+			deny: ["bash: rm *"],
+			denyWarnings: ["42", "bad:pattern"],
+		});
+		expect(definition('deny: ["unterminated')).toMatchObject({ denyWarnings: expect.any(Array) });
+		expect(definition("permissionMode: invalid\nunknown: ignored")?.permissionMode).toBeUndefined();
+		expect(definition("")?.deny).toBeUndefined();
+	});
 	it("parses frontmatter and body", () => {
 		const agent = parseAgentMarkdown(
 			`---\nname: scout\ndescription: Code scout\ntools: read, grep, find\nmodel: provider/model # optional\n---\n\nInspect files only.`,
@@ -56,21 +81,21 @@ describe("subagent agent definitions", () => {
 		await mkdir(join(agentDir, "agents"), { recursive: true });
 		await mkdir(join(root, ".pi", "agents"), { recursive: true });
 		await writeFile(
-			join(agentDir, "agents", "scout.md"),
-			"---\nname: scout\ndescription: user\ntools: read\n---\nuser",
+			join(agentDir, "agents", "worker.md"),
+			"---\nname: worker\ndescription: user\ntools: read\n---\nuser",
 		);
 		await writeFile(
-			join(root, ".pi", "agents", "scout.md"),
-			"---\nname: scout\ndescription: project\ntools: grep\n---\nproject",
+			join(root, ".pi", "agents", "worker.md"),
+			"---\nname: worker\ndescription: project\ntools: grep\n---\nproject",
 		);
 
 		const trusted = await discoverAgents(root, { agentDir, projectTrusted: true });
-		expect(trusted.find((agent) => agent.name === "scout")).toMatchObject({
+		expect(trusted.find((agent) => agent.name === "worker")).toMatchObject({
 			description: "project",
 			source: "project",
 		});
 		const untrusted = await discoverAgents(root, { agentDir, projectTrusted: false });
-		expect(untrusted.find((agent) => agent.name === "scout")).toMatchObject({
+		expect(untrusted.find((agent) => agent.name === "worker")).toMatchObject({
 			description: "user",
 			source: "user",
 		});

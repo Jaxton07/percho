@@ -7,19 +7,39 @@ export function SubagentCard({ runs }: { runs: SubagentRunUi[] }) {
 	return (
 		<div className="agent-box">
 			{runs.map((run) => {
-				const state = run.status === "running" ? "run" : run.status === "error" ? "bad" : "ok";
-				const statusLabel =
-					run.status === "running"
-						? t("subagent.running")
-						: run.status === "error"
-							? t("subagent.failed")
-							: t("subagent.done");
+				const state = ({ running: "run", queued: "", aborted: "", error: "bad", done: "ok" } as const)[
+					run.status
+				];
+				const statusLabel = t(
+					(
+						{
+							running: "subagent.running",
+							queued: "subagent.queued",
+							aborted: "subagent.aborted",
+							error: "subagent.failed",
+							done: "subagent.done",
+						} as const
+					)[run.status],
+				);
 				return (
 					<div key={run.key} className="agent-row">
 						<span className={`pulse-dot sm ${state === "run" ? "violet" : state === "bad" ? "bad" : ""}`} />
-						<span className="agent-name">{run.agent.charAt(0).toUpperCase() + run.agent.slice(1)}</span>
+						<span className="agent-name">
+							{run.agent.charAt(0).toUpperCase() + run.agent.slice(1)}
+							{run.index != null ? ` #${run.index}` : ""}
+						</span>
 						{run.task && <span className="agent-task">{run.task}</span>}
 						<span className={`agent-state ${state}`}>{statusLabel}</span>
+						{run.summary && (
+							<span className="agent-task">
+								{t("subagent.files").replace("{count}", String(run.summary.changedFiles.length))}
+							</span>
+						)}
+						{run.summary && run.summary.failedCommands > 0 && (
+							<span className="agent-task">
+								{t("subagent.failedCommands").replace("{count}", String(run.summary.failedCommands))}
+							</span>
+						)}
 					</div>
 				);
 			})}

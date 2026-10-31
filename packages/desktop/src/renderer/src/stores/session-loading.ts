@@ -21,6 +21,7 @@ import { useUiPreferencesStore } from "./ui-preferences";
 
 export interface SessionDataPorts {
 	isOpen(sessionId: string): boolean;
+	isReadOnly(sessionId: string): boolean;
 	landMeta(meta: SessionMeta): void;
 	readPermissionMode(sessionId: string): PermissionMode | undefined;
 	writePermissionMode(sessionId: string, mode: PermissionMode): void;
@@ -67,7 +68,8 @@ export function createSessionLoader(ports: SessionDataPorts) {
 		sessionId: string,
 		opts?: { skipHistoryIfLive?: boolean },
 	): Promise<void> {
-		if (environmentEntityRef(sessionId).environment.kind === "ssh") {
+		// 子代理打开前没有接收事件；本机检视也需要「历史 + 进行中轮次」的基线。
+		if (environmentEntityRef(sessionId).environment.kind === "ssh" || ports.isReadOnly(sessionId)) {
 			const openingEpoch = historyOpenEpoch(sessionId);
 			const token = beginSessionBaseline(sessionId);
 			try {

@@ -16,12 +16,17 @@ function SubagentRunRow({ run }: { run: SubagentRunUi }) {
 
 	// runner 创建会话文件后即回填 sessionFile；运行中同样允许打开只读检视页。
 	const clickable = run.sessionFile != null;
-	const statusLabel =
-		run.status === "running"
-			? t("message.subagent.running")
-			: run.status === "error"
-				? t("message.subagent.failed")
-				: t("message.subagent.done");
+	const statusLabel = t(
+		(
+			{
+				running: "message.subagent.running",
+				queued: "message.subagent.queued",
+				aborted: "message.subagent.aborted",
+				error: "message.subagent.failed",
+				done: "message.subagent.done",
+			} as const
+		)[run.status],
+	);
 
 	return (
 		<button
@@ -40,16 +45,31 @@ function SubagentRunRow({ run }: { run: SubagentRunUi }) {
 				<span className="h-1.5 w-1.5 shrink-0 animate-pulse rounded-full bg-accent" />
 			) : run.status === "error" ? (
 				<span className="h-1.5 w-1.5 shrink-0 rounded-full bg-red-500" />
+			) : run.status === "aborted" || run.status === "queued" ? (
+				<span className="h-1.5 w-1.5 shrink-0 rounded-full bg-ink-faint" />
 			) : (
 				<span className="h-1.5 w-1.5 shrink-0 rounded-full bg-green-500" />
 			)}
-			<span className="truncate text-ui-13 font-semibold text-ink">{displayName(run.agent)}</span>
+			<span className="truncate text-ui-13 font-semibold text-ink">
+				{displayName(run.agent)}
+				{run.index != null ? ` #${run.index}` : ""}
+			</span>
 			{run.thinkingLevel && (
 				<span className="shrink-0 text-ui-11 text-ink-faint">
 					{t(`thinkingLevels.${run.thinkingLevel}` as MessageKey)}
 				</span>
 			)}
 			<span className="shrink-0 text-ui-11 text-ink-faint">{statusLabel}</span>
+			{run.summary && (
+				<span className="shrink-0 text-ui-11 text-ink-faint">
+					{t("message.subagent.files", { count: run.summary.changedFiles.length })}
+				</span>
+			)}
+			{run.summary && run.summary.failedCommands > 0 && (
+				<span className="shrink-0 text-ui-11 text-ink-faint">
+					{t("message.subagent.failedCommands", { count: run.summary.failedCommands })}
+				</span>
+			)}
 		</button>
 	);
 }

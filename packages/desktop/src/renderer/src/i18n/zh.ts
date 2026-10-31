@@ -415,6 +415,10 @@ export const zh = {
 		imageRetry: "重新加载",
 		imageLoadError: "图片加载失败",
 		subagent: {
+			failedCommands: "{count} 条命令失败",
+			queued: "排队中",
+			aborted: "已中止",
+			files: "改动 {count} 个文件",
 			running: "工作中",
 			done: "已完成",
 			/** 子代理检视页左上角返回父会话入口（spec D4） */
@@ -612,6 +616,7 @@ export const zh = {
 			subagentsEmpty: "未发现可配置的子代理",
 			subagentThinkingInherit: "跟随 agent 定义",
 			subagentThinkingInheritWith: "跟随 agent 定义（{level}）",
+			subagentDenyInvalid: "已忽略无效 deny 规则：{value}",
 			subagentThinkingInvalid: '定义中的 thinking "{value}" 无效，已忽略',
 			subagentExecutorTitle: "优先使用内置 subagent 执行器",
 			subagentExecutorHint: "开启时遮蔽第三方 subagent 扩展的同名工具；仅对新会话（含重开）生效。",

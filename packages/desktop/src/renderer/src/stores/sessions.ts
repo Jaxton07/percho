@@ -974,6 +974,8 @@ export const useSessionsStore = create<SessionsStore>((_set, get) => ({
 
 const sessionLoader = createSessionLoader({
 	isOpen: (sessionId) => useSessionsStore.getState().sessions.some((s) => s.sessionId === sessionId),
+	isReadOnly: (sessionId) =>
+		useSessionsStore.getState().sessions.some((s) => s.sessionId === sessionId && s.readOnly === true),
 	landMeta: (meta) =>
 		commitSessionState((state) => ({
 			sessions: [...state.sessions.filter((s) => s.sessionId !== meta.sessionId), meta],
