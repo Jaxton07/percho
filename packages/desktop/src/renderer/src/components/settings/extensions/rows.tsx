@@ -1,5 +1,10 @@
-import type { CatalogPackage, LoadedExtension, ResourceScope } from "@percho/shared";
-import { isSubagentPackage, isSubagentToolName, NPM_NOT_FOUND_SENTINEL } from "@percho/shared";
+import type { CatalogPackage, LoadedExtension, PackageUpdateInfo, ResourceScope } from "@percho/shared";
+import {
+	isSubagentPackage,
+	isSubagentToolName,
+	NPM_NOT_FOUND_SENTINEL,
+	npmSourceToPackageName,
+} from "@percho/shared";
 import { useRef, useState } from "react";
 import { useT } from "../../../i18n";
 import { useCatalogStore } from "../../../stores/catalog";
@@ -15,13 +20,7 @@ export function formatDownloads(n: number): string {
 }
 
 /** 已配置 source → 包名（仅 npm: 源能与目录匹配；剥版本后缀，兼容 scoped 名） */
-export function npmSourceToName(source: string): string | null {
-	if (!source.startsWith("npm:")) return null;
-	const spec = source.slice(4);
-	const searchFrom = spec.startsWith("@") ? spec.indexOf("/") + 1 : 1;
-	const at = spec.indexOf("@", searchFrom);
-	return at > 0 ? spec.slice(0, at) : spec;
-}
+export const npmSourceToName = npmSourceToPackageName;
 
 /** 卸载按钮：点击进入确认态（红字，再点执行）；鼠标移出或 3s 后自动恢复 */
 function UninstallButton({ source, scope }: { source: string; scope: "user" | "project" }) {
@@ -98,9 +97,12 @@ function Stat({ label }: { label: string }) {
 export function ExtensionRow({
 	extension,
 	configured,
+	update,
 }: {
 	extension: LoadedExtension;
 	configured: { source: string; scope: "user" | "project" } | null;
+	/** 可用更新信息（npm: 源且查到 registry 时才有） */
+	update: PackageUpdateInfo | null;
 }) {
 	const t = useT();
 	return (
@@ -118,9 +120,19 @@ export function ExtensionRow({
 					</span>
 				)}
 				<ScopeBadge scope={extension.scope} />
+				{update?.hasUpdate && (
+					<Tooltip label={t("settings.extensions.updateHint")}>
+						<span className="shrink-0 rounded bg-accent/10 px-1.5 py-0.5 text-ui-10 font-medium text-accent">
+							{t("settings.extensions.updateAvailable", { version: update.latest })}
+						</span>
+					</Tooltip>
+				)}
 				{configured && <UninstallButton source={configured.source} scope={configured.scope} />}
 			</div>
 			<div className="mt-0.5 flex flex-wrap items-center gap-x-3 gap-y-1">
+				{update?.installed && (
+					<Stat label={t("settings.extensions.version", { version: update.installed })} />
+				)}
 				{extension.toolsCount > 0 && (
 					<Stat label={t("settings.extensions.tools", { count: extension.toolsCount })} />
 				)}

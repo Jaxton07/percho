@@ -11,7 +11,12 @@ import type {
 } from "./extension-dialog";
 import type { LanStatus } from "./lan";
 import type { McpConfigListResult, McpMutationResult, McpServersChangedPayload, McpUpsertInput } from "./mcp";
-import type { CatalogPackageType, CatalogSearchResult, ConfiguredPackageInfo } from "./packages";
+import type {
+	CatalogPackageType,
+	CatalogSearchResult,
+	ConfiguredPackageInfo,
+	PackageUpdateInfo,
+} from "./packages";
 import type {
 	MutationReceipt,
 	RemoteAuthGuide,
@@ -392,6 +397,8 @@ export const PACKAGES_CHANNELS = {
 		void,
 		ConfiguredPackageInfo[]
 	>(),
+	/** 检查已配置扩展的可用更新（只读：读本地版本 + 查 registry，不触发安装/重载） */
+	checkPackageUpdates: ch("packages:checkUpdates", "environment", "read")<void, PackageUpdateInfo[]>(),
 } as const;
 
 /** MCP 域：官方内置扩展的 mcp.json 读写（连接/展开交给官方；工具运行态走 mcp.tools:changed 事件） */

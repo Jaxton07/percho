@@ -94,6 +94,7 @@ export function createExecutionHandlers(
 		installPackage: ({ name }) => backend.packages.installPackage(name),
 		removePackage: ({ source, scope }) => backend.packages.removePackage(source, scope),
 		listConfiguredPackages: () => backend.packages.listConfiguredPackages(),
+		checkPackageUpdates: () => backend.packages.checkPackageUpdates(),
 		respondExtensionDialog: ({ requestId, answer }) => backend.respondExtensionDialog(requestId, answer),
 		getGitBranch: ({ cwd }) => getGitBranch(cwd),
 		listGitBranches: ({ cwd }) => listGitBranches(cwd),
