@@ -123,11 +123,20 @@ declare module "@percho/plugin-api" {
 		endedAt?: number;
 	}
 
+	export interface SubagentRunSummary {
+		changedFiles: Array<{ path: string; added: number; removed: number }>;
+		commands: Array<{ command: string; isError: boolean }>;
+		failedCommands: number;
+		durationMs: number;
+	}
+
 	export interface SubagentRunUi {
 		key: string;
 		agent: string;
 		task?: string;
-		status: "running" | "done" | "error";
+		status: "running" | "done" | "error" | "queued" | "aborted";
+		summary?: SubagentRunSummary;
+		index?: number;
 		model?: string;
 		thinkingLevel?: string;
 		tokens?: number;

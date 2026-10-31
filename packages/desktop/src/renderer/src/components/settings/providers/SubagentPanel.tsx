@@ -109,6 +109,11 @@ export function SubagentPanel() {
 										onChange={(value) => void setSubagentThinking(agent.name, value || null)}
 									/>
 								</div>
+								{agent.denyWarnings?.length ? (
+									<p className="mt-1 text-ui-11 text-ink-faint">
+										{t("settings.models.subagentDenyInvalid", { value: agent.denyWarnings.join(", ") })}
+									</p>
+								) : null}
 								{agent.thinkingWarning && (
 									<p className="mt-1 text-ui-11 text-ink-faint">
 										{t("settings.models.subagentThinkingInvalid", { value: agent.thinkingWarning })}

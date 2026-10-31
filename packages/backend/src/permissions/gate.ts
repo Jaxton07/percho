@@ -41,15 +41,29 @@ export class PermissionGate {
 	}
 
 	/** 实现 ExtensionUIContext.confirm 的语义；meta 由内置权限扩展携带（kind/suggestDir） */
-	confirm(title: string, message: string, meta?: PermissionRequestMeta): Promise<boolean> {
-		if (this.closed) return Promise.resolve(false);
+	confirm(
+		title: string,
+		message: string,
+		meta?: PermissionRequestMeta,
+		signal?: AbortSignal,
+	): Promise<boolean> {
+		if (this.closed || signal?.aborted) return Promise.resolve(false);
 		if (this.alwaysAllowed.has(title)) {
 			return Promise.resolve(true);
 		}
 		const id = `perm-${randomUUID()}`;
 		return new Promise<boolean>((resolve) => {
-			this.pending.set(id, { resolve, message, meta });
+			const cancel = () => this.cancelRequest(id);
+			this.pending.set(id, {
+				resolve: (answer) => {
+					signal?.removeEventListener("abort", cancel);
+					resolve(answer);
+				},
+				message,
+				meta,
+			});
 			this.titles.set(id, title);
+			signal?.addEventListener("abort", cancel, { once: true });
 			this.onRequest({
 				id,
 				sessionId: this.sessionId,
@@ -98,12 +112,15 @@ export class PermissionGate {
 	}
 
 	cancelPending(): void {
-		for (const [requestId, { resolve }] of this.pending) {
-			this.pending.delete(requestId);
-			this.titles.delete(requestId);
-			resolve(false);
-			this.onResolved({ sessionId: this.sessionId, requestId, answered: false });
-		}
+		for (const requestId of this.pending.keys()) this.cancelRequest(requestId);
+	}
+	private cancelRequest(requestId: string): void {
+		const entry = this.pending.get(requestId);
+		if (!entry) return;
+		this.pending.delete(requestId);
+		this.titles.delete(requestId);
+		entry.resolve(false);
+		this.onResolved({ sessionId: this.sessionId, requestId, answered: false });
 	}
 	dispose(): void {
 		this.closed = true;

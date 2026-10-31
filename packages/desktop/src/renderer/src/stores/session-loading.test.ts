@@ -11,6 +11,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 const pi = vi.hoisted(() => ({
 	openSession: vi.fn(),
 	getSessionMessages: vi.fn(),
+	getSessionBaseline: vi.fn(),
 	getLoadedSessions: vi.fn(async (): Promise<LoadedSessionSummary[]> => []),
 	getFollowUpMessages: vi.fn(),
 	getTodos: vi.fn(),
@@ -74,6 +75,7 @@ function fixture(id: string) {
 	});
 	const loader = createSessionLoader({
 		isOpen: (key) => sessions.has(key),
+		isReadOnly: (key) => sessions.get(key)?.readOnly === true,
 		landMeta,
 		readPermissionMode: (key) => modes.get(key),
 		writePermissionMode,
@@ -98,6 +100,24 @@ afterEach(() => {
 });
 
 describe("session loader owns flights and data, not navigation", () => {
+	it("本机只读子代理使用进行中基线，确保打开后可见运行态", async () => {
+		const id = "local-running-child";
+		const f = fixture(id);
+		const child = { ...meta(id), readOnly: true };
+		f.sessions.set(id, child);
+		pi.getSessionBaseline.mockResolvedValue({
+			meta: child,
+			sequence: 12,
+			transcript: { ...emptyTranscript(), phase: "streaming", agentActive: true },
+			permissionMode: "default",
+		});
+		await f.loader.loadSessionBundle(id);
+		expect(pi.getSessionBaseline).toHaveBeenCalledWith({ sessionId: id });
+		expect(pi.getSessionMessages).not.toHaveBeenCalled();
+		expect(useTranscriptStore.getState().bySession[id]?.phase).toBe("streaming");
+		expect(useTranscriptStore.getState().bySession[id]?.agentActive).toBe(true);
+		expect(isHistoryReady(id)).toBe(true);
+	});
 	it("restores an existing instance pause on local history reload and clears it when that instance is gone", async () => {
 		const f = fixture("paused");
 		pi.getLoadedSessions.mockResolvedValue([
@@ -327,7 +347,7 @@ describe("session loader owns flights and data, not navigation", () => {
 		expect(isLatestNavigation(activation)).toBe(true);
 		expect(isLatestUserIntent(intent)).toBe(false);
 	});
-	it("production imports and four declared data ports enforce narrow dependency direction", () => {
+	it("production imports and declared data ports enforce narrow dependency direction", () => {
 		const source = ts.createSourceFile(
 			"session-loading.ts",
 			readFileSync(new URL("./session-loading.ts", import.meta.url), "utf8"),
@@ -355,6 +375,7 @@ describe("session loader owns flights and data, not navigation", () => {
 		);
 		expect(ports?.members.map((member) => member.name?.getText(source)).sort()).toEqual([
 			"isOpen",
+			"isReadOnly",
 			"landMeta",
 			"readPermissionMode",
 			"writePermissionMode",

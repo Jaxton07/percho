@@ -432,6 +432,8 @@ export const en: Messages = {
 		imageRetry: "Reload",
 		imageLoadError: "Image failed to load",
 		subagent: {
+			queued: "Queued",
+			aborted: "Aborted",
 			running: "Working",
 			done: "Done",
 			/** Back-to-parent entry on the subagent inspection page (spec D4) */
@@ -631,6 +633,7 @@ export const en: Messages = {
 			subagentsEmpty: "No configurable subagents found",
 			subagentThinkingInherit: "Follow agent definition",
 			subagentThinkingInheritWith: "Follow agent definition ({level})",
+			subagentDenyInvalid: "Invalid deny rules ignored: {value}",
 			subagentThinkingInvalid: 'Definition thinking "{value}" is invalid and was ignored',
 			subagentExecutorTitle: "Prefer built-in subagent executor",
 			subagentExecutorHint:

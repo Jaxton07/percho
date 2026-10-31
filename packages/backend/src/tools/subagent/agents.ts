@@ -1,8 +1,9 @@
 import type { Dirent } from "node:fs";
 import { readdir, readFile } from "node:fs/promises";
 import { join } from "node:path";
-import { getAgentDir } from "@earendil-works/pi-coding-agent";
-import { isThinkingLevel, type ThinkingLevel } from "@percho/shared";
+import { getAgentDir, parseFrontmatter } from "@earendil-works/pi-coding-agent";
+import { isThinkingLevel, type PermissionMode, type ThinkingLevel } from "@percho/shared";
+import { isDenyPattern } from "./policy";
 
 export type AgentSource = "builtin" | "user" | "project";
 
@@ -11,6 +12,9 @@ export interface SubagentDefinition {
 	description: string;
 	tools: string[];
 	model?: string;
+	permissionMode?: PermissionMode;
+	deny?: string[];
+	denyWarnings?: string[];
 	/** frontmatter `thinking`（合法档位才保留；非法值丢弃并由 thinkingWarning 带原文） */
 	thinking?: ThinkingLevel;
 	/** frontmatter thinking 非法时的原文（设置页警示用；合法/缺失时 undefined） */
@@ -25,12 +29,13 @@ export interface DiscoverAgentsOptions {
 	agentDir?: string;
 }
 
-const BUILTIN_SCOUT: SubagentDefinition = {
-	name: "scout",
-	description: "快速代码侦察，读取并总结项目上下文，不修改文件。",
-	tools: ["read", "grep", "find", "ls", "webfetch"],
-	systemPrompt:
-		"You are scout, a read-only reconnaissance agent. Inspect files and answer the assigned task concisely. Never modify files or run mutating commands.",
+export const DEFAULT_AGENT = "worker";
+
+const BUILTIN_WORKER: SubagentDefinition = {
+	name: DEFAULT_AGENT,
+	description: "实现开发任务并自主验证，返回结论与改动。",
+	tools: ["read", "write", "edit", "bash", "grep", "find", "ls", "webfetch"],
+	systemPrompt: "You are worker, a development subagent responsible for implementing the assigned task.",
 	source: "builtin",
 };
 
@@ -84,6 +89,25 @@ export function parseAgentMarkdown(
 	const description = parseScalar(metadata.get("description") ?? "");
 	const tools = parseTools(metadata.get("tools") ?? "read");
 	const model = parseScalar(metadata.get("model") ?? "") || undefined;
+	const rawMode = parseScalar(metadata.get("permissionMode") ?? "");
+	const permissionMode = rawMode === "default" || rawMode === "fullAccess" ? rawMode : undefined;
+	const denyLines = lines
+		.slice(1, end)
+		.join("\n")
+		.match(/^deny:.*(?:\n[ \t]+.*)*/m)?.[0];
+	const deny: string[] = [];
+	const denyWarnings: string[] = [];
+	if (denyLines) {
+		try {
+			const raw = parseFrontmatter(`---\n${denyLines}\n---`).frontmatter.deny;
+			for (const pattern of Array.isArray(raw) ? raw : [raw]) {
+				if (isDenyPattern(pattern)) deny.push(pattern);
+				else denyWarnings.push(String(pattern));
+			}
+		} catch {
+			denyWarnings.push(denyLines);
+		}
+	}
 	// 非法 thinking 不阻断加载：丢弃档位、留原文供设置页提示（spec D3）
 	const rawThinking = parseScalar(metadata.get("thinking") ?? "");
 	const thinking = isThinkingLevel(rawThinking) ? rawThinking : undefined;
@@ -93,6 +117,9 @@ export function parseAgentMarkdown(
 		description,
 		tools,
 		model,
+		...(permissionMode ? { permissionMode } : {}),
+		...(deny.length ? { deny } : {}),
+		...(denyWarnings.length ? { denyWarnings } : {}),
 		...(thinking ? { thinking } : {}),
 		...(thinkingWarning ? { thinkingWarning } : {}),
 		systemPrompt: lines
@@ -127,14 +154,14 @@ async function readAgentDirectory(dir: string, source: AgentSource): Promise<Sub
 }
 
 /**
- * 发现 agent：builtin scout → user ~/.percho/agent/agents → trusted project .pi/agents。
+ * 发现 agent：builtin worker → user ~/.percho/agent/agents → trusted project .pi/agents。
  * 后加载的同名定义覆盖前者；projectTrusted=false 时完全不读取 project agents。
  */
 export async function discoverAgents(
 	cwd: string,
 	options: DiscoverAgentsOptions,
 ): Promise<SubagentDefinition[]> {
-	const byName = new Map<string, SubagentDefinition>([[BUILTIN_SCOUT.name, BUILTIN_SCOUT]]);
+	const byName = new Map<string, SubagentDefinition>([[BUILTIN_WORKER.name, BUILTIN_WORKER]]);
 	const userAgents = await readAgentDirectory(join(options.agentDir ?? getAgentDir(), "agents"), "user");
 	for (const agent of userAgents) byName.set(agent.name, agent);
 	if (options.projectTrusted) {
