@@ -209,6 +209,7 @@ export function getExecutionApi(reference: EnvironmentRef | string): Environment
 						"respondTrust",
 						"respondExtensionDialog",
 						"markSessionHistoryReady",
+						"setViewedSubagent",
 					];
 					if (
 						definition.operation === "mutation" &&

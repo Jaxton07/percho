@@ -27,6 +27,7 @@ const fixture = vi.hoisted(() => {
 			createSession: vi.fn(async () => meta),
 			openSession: vi.fn(async () => meta),
 			getSessionMessages: vi.fn(async (): Promise<unknown[]> => []),
+			setViewedSubagent: vi.fn(async () => {}),
 			getSessionBaseline: vi.fn(async () => ({
 				meta,
 				sequence: 0,
@@ -136,6 +137,13 @@ afterEach(() => {
 });
 
 describe("session ownership through the actual renderer execution boundary", () => {
+	it("子代理观察按所属环境切换，停止远端观察不改动本机", async () => {
+		const id = environmentEntityKey(remote, "same-id");
+		await getExecutionApi(id).setViewedSubagent({ sessionId: id });
+		await getExecutionApi(id).setViewedSubagent({});
+		expect(fixture.remote.setViewedSubagent.mock.calls).toEqual([[{ sessionId: "same-id" }], [{}]]);
+		expect(fixture.local.setViewedSubagent).not.toHaveBeenCalled();
+	});
 	it("opens identical local/remote session IDs independently and sends only raw IDs to their owner", async () => {
 		const local = await getExecutionApi(LOCAL_ENVIRONMENT).openSession({ filePath: "/same/history.jsonl" });
 		const file = environmentEntityKey(remote, "/same/history.jsonl");

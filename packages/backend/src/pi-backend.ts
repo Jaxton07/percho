@@ -413,12 +413,7 @@ export class PiBackend {
 							this.eventRates.delete(id);
 						}
 					},
-					onEvent: (sessionId, event, abort) =>
-						this.emitEvent(sessionId, event, {
-							forward: this.registry.has(sessionId),
-							recordTrace: false,
-							abort,
-						}),
+					onEvent: (sessionId, event, abort) => this.emitSubagentEvent(sessionId, event, abort),
 				}),
 			);
 		}
@@ -587,6 +582,20 @@ export class PiBackend {
 	}
 
 	private readonly runningSubagents = new Map<string, SubagentRunHandle>();
+	private viewedSubagentId: string | undefined;
+
+	setViewedSubagent(sessionId?: string): void {
+		this.viewedSubagentId = sessionId;
+	}
+
+	private emitSubagentEvent(sessionId: string, event: SessionEvent, abort: () => Promise<void>): void {
+		this.emitEvent(sessionId, event, {
+			forward: this.viewedSubagentId === sessionId && this.registry.has(sessionId),
+			recordTrace: false,
+			abort,
+		});
+	}
+
 	private readonly liveTranscripts = new Map<string, LiveTranscript>();
 	private publishEvent(sessionId: string, event: SessionEvent, forward = true): void {
 		let live = this.liveTranscripts.get(sessionId);

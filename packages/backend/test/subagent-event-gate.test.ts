@@ -53,7 +53,7 @@ describe("子会话转发闸门", () => {
 			rmSync(root, { recursive: true, force: true });
 		}
 	});
-	it("未打开时不发 renderer 事件但保留进行中基线；打开后继续转发；不重复 trace", () => {
+	it("只有当前检视的子代理推详细事件；切回父会话后基线照常记录，父会话事件不受影响", () => {
 		const backend = new PiBackend();
 		const internal = backend as unknown as {
 			emitEvent: (
@@ -61,12 +61,12 @@ describe("子会话转发闸门", () => {
 				event: SessionEvent,
 				options: { forward: boolean; recordTrace: boolean },
 			) => void;
+			emitSubagentEvent: (id: string, event: SessionEvent, abort: () => Promise<void>) => void;
 			liveTranscripts: Map<string, LiveTranscript>;
 			traces: SessionTraces;
 			registry: SessionRegistry;
 		};
-		const emit = (event: SessionEvent) =>
-			internal.emitEvent("child", event, { forward: internal.registry.has("child"), recordTrace: false });
+		const emit = (event: SessionEvent) => internal.emitSubagentEvent("child", event, async () => {});
 		const forwarded: SessionEvent[] = [];
 		backend.onEvent((_id, event) => forwarded.push(event));
 		const trace = vi.spyOn(internal.traces, "record");
@@ -88,11 +88,29 @@ describe("子会话转发闸门", () => {
 		).toContain("in progress");
 		vi.spyOn(internal.registry, "has").mockReturnValue(true);
 		emit({ type: "agent_settled", aborted: false } as SessionEvent);
+		expect(forwarded).toHaveLength(0); // 已打开但未检视，仍不转发
+		backend.setViewedSubagent("child");
+		emit({ type: "agent_settled", aborted: false } as SessionEvent);
 		expect(forwarded.map((e) => e.type)).toEqual(["agent_settled"]);
-		vi.mocked(internal.registry.has).mockReturnValue(false);
+		backend.setViewedSubagent();
 		emit({ type: "agent_settled", aborted: false } as SessionEvent);
 		expect(forwarded).toHaveLength(1);
+		backend.setViewedSubagent("other-child");
+		emit({ type: "agent_start" });
+		expect(forwarded).toHaveLength(1);
+		expect(internal.liveTranscripts.get("child")?.sequence).toBeGreaterThan(6);
+		backend.setViewedSubagent("child");
+		emit({ type: "agent_settled", aborted: false } as SessionEvent);
+		expect(forwarded).toHaveLength(2);
+		vi.mocked(internal.registry.has).mockReturnValue(false);
+		emit({ type: "agent_settled", aborted: false } as SessionEvent);
+		expect(forwarded).toHaveLength(2);
 		expect(trace).not.toHaveBeenCalled();
+		internal.emitEvent("parent", { type: "tool_execution_update" } as SessionEvent, {
+			forward: true,
+			recordTrace: false,
+		});
+		expect(forwarded.at(-1)?.type).toBe("tool_execution_update");
 		backend.dispose();
 	});
 

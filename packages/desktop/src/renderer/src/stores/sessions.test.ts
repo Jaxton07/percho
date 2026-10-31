@@ -2,6 +2,7 @@ import {
 	composerDocumentFromText,
 	emptyTranscript,
 	environmentEntityKey,
+	type SessionBaseline,
 	type SessionEvent,
 	type SessionMeta,
 } from "@percho/shared";
@@ -20,6 +21,8 @@ const piMock = vi.hoisted(() => ({
 	openSession: vi.fn(),
 	forkSession: vi.fn(),
 	getSessionMessages: vi.fn(() => Promise.resolve([])),
+	getSessionBaseline: vi.fn(),
+	setViewedSubagent: vi.fn(async () => {}),
 	markSessionHistoryReady: vi.fn(() => Promise.resolve()),
 	getLoadedSessions: vi.fn(),
 	getPendingInteractions: vi.fn(async () => ({ revision: 1, permissions: [], dialogs: [], trust: [] })),
@@ -60,6 +63,58 @@ import { useToastsStore } from "./toasts";
 import { useTranscriptStore } from "./transcript";
 import { useUiPreferencesStore } from "./ui-preferences";
 
+describe("子代理详细事件跟随当前页面", () => {
+	const parent = realMeta("observation-parent", "/fixture");
+	const child = { ...realMeta("observation-child", "/fixture"), readOnly: true };
+	const other = { ...realMeta("observation-other", "/fixture"), readOnly: true };
+	const baseline = (meta = child, sequence = 1): SessionBaseline => ({
+		meta,
+		sequence,
+		permissionMode: "default",
+		transcript: { ...emptyTranscript(), agentActive: sequence === 1, phase: "idle" },
+	});
+
+	it("进入、返回父会话、再次进入、切换其他子代理和新会话页都会同步观察目标", async () => {
+		useSessionsStore.setState({ sessions: [parent, child, other], activeSessionId: parent.sessionId });
+		piMock.getSessionBaseline.mockResolvedValueOnce(baseline()).mockResolvedValueOnce(baseline(child, 9));
+		useSessionsStore.getState().switchSession(child.sessionId);
+		await vi.waitFor(() => expect(isHistoryReady(child.sessionId)).toBe(true));
+		expect(piMock.setViewedSubagent).toHaveBeenLastCalledWith({ sessionId: child.sessionId });
+		expect(useTranscriptStore.getState().bySession[child.sessionId]?.agentActive).toBe(true);
+
+		useSessionsStore.getState().switchSession(parent.sessionId);
+		expect(piMock.setViewedSubagent).toHaveBeenLastCalledWith({});
+		expect(isHistoryReady(child.sessionId)).toBe(false);
+		useSessionsStore.getState().switchSession(child.sessionId);
+		await vi.waitFor(() => expect(isHistoryReady(child.sessionId)).toBe(true));
+		expect(piMock.getSessionBaseline).toHaveBeenCalledTimes(2);
+		expect(useTranscriptStore.getState().bySession[child.sessionId]?.agentActive).toBe(false);
+
+		piMock.getSessionBaseline.mockResolvedValueOnce(baseline(other));
+		useSessionsStore.getState().switchSession(other.sessionId);
+		await vi.waitFor(() => expect(isHistoryReady(other.sessionId)).toBe(true));
+		expect(piMock.setViewedSubagent).toHaveBeenLastCalledWith({ sessionId: other.sessionId });
+		useSessionsStore.getState().activateNewSessionDraftForCwd("/fixture");
+		expect(piMock.setViewedSubagent).toHaveBeenLastCalledWith({});
+	});
+
+	it("快速离开再进入时，新基线不等待旧请求，迟到结果不能覆盖新内容", async () => {
+		const old = deferred<SessionBaseline>();
+		useSessionsStore.setState({ sessions: [parent, child], activeSessionId: parent.sessionId });
+		piMock.getSessionBaseline.mockReturnValueOnce(old.promise).mockResolvedValueOnce(baseline(child, 9));
+		useSessionsStore.getState().switchSession(child.sessionId);
+		await vi.waitFor(() => expect(piMock.getSessionBaseline).toHaveBeenCalledTimes(1));
+		useSessionsStore.getState().switchSession(parent.sessionId);
+		useSessionsStore.getState().switchSession(child.sessionId);
+		await vi.waitFor(() => expect(isHistoryReady(child.sessionId)).toBe(true));
+		old.resolve(baseline());
+		await old.promise;
+		expect(useTranscriptStore.getState().bySession[child.sessionId]?.agentActive).toBe(false);
+		expect(piMock.setViewedSubagent).toHaveBeenLastCalledWith({ sessionId: child.sessionId });
+		useSessionsStore.getState().switchSession(parent.sessionId);
+	});
+});
+
 function realMeta(sessionId: string, cwd: string): SessionMeta {
 	return {
 		sessionId,
@@ -95,6 +150,7 @@ beforeEach(() => {
 	// openSession 的 mockImplementation 是持久实现（clearAllMocks 不清），用例之间必须显式复位
 	piMock.openSession.mockReset();
 	piMock.getSessionMessages.mockReset().mockResolvedValue([]);
+	piMock.getSessionBaseline.mockReset();
 	piMock.getLoadedSessions.mockReset().mockResolvedValue([]);
 	resetStore();
 	useTranscriptStore.setState({ bySession: {} });

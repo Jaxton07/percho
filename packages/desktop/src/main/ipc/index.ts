@@ -99,7 +99,11 @@ export function registerIpc(
 			{ sessionId, event, sequence: backend.getSessionEventSequence(sessionId) },
 			() => backend.getLoadedSessions().find((summary) => summary.meta.sessionId === sessionId)?.meta,
 		);
-		sendToRenderer(IpcChannels.Event, { sessionId, event });
+		sendToRenderer(IpcChannels.Event, {
+			sessionId,
+			event,
+			sequence: backend.getSessionEventSequence(sessionId),
+		});
 	});
 	forward(backend.onPermissionRequest.bind(backend), IpcChannels.PermissionRequest);
 	// 权限裁决也回投渲染端：LAN 远程应答 / 其他来源应答时桌面卡片要同步撤掉
