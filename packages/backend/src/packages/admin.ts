@@ -1,10 +1,20 @@
+import { readFile } from "node:fs/promises";
+import { join } from "node:path";
 import { DefaultPackageManager, getAgentDir, SettingsManager } from "@earendil-works/pi-coding-agent";
-import type { CatalogPackageType, CatalogSearchResult, ConfiguredPackageInfo } from "@percho/shared";
-import { NPM_NOT_FOUND_SENTINEL } from "@percho/shared";
+import type {
+	CatalogPackageType,
+	CatalogSearchResult,
+	ConfiguredPackageInfo,
+	PackageUpdateInfo,
+} from "@percho/shared";
+import { isNewerVersion, NPM_NOT_FOUND_SENTINEL, npmSourceToPackageName } from "@percho/shared";
 import { createLogger } from "../log";
 import { fetchPackageCatalog } from "./catalog";
 
 const log = createLogger("backend");
+
+/** registry 查询超时：单个包卡住不能拖垮整张表 */
+const UPDATE_CHECK_TIMEOUT_MS = 8_000;
 
 export { NPM_NOT_FOUND_SENTINEL };
 
@@ -103,5 +113,54 @@ export class PackageAdmin {
 		if (!removed) throw new Error(`Package not installed: ${source}`);
 		log.info("package removed", source, { scope });
 		await this.deps.reloadIdleSessions();
+	}
+
+	/** 本地已装版本（读 agentDir/npm/node_modules/<name>/package.json）；读不到返回 undefined */
+	private async readInstalledVersion(name: string): Promise<string | undefined> {
+		try {
+			const raw = await readFile(join(getAgentDir(), "npm", "node_modules", name, "package.json"), "utf8");
+			const version = (JSON.parse(raw) as { version?: unknown }).version;
+			return typeof version === "string" ? version : undefined;
+		} catch {
+			return undefined;
+		}
+	}
+
+	/** registry 上的 latest 版本；失败/超时返回 undefined（不抛，避免一个包拖垮整表） */
+	private async fetchLatestVersion(name: string): Promise<string | undefined> {
+		try {
+			const res = await fetch(`https://registry.npmjs.org/${name.replace("/", "%2F")}/latest`, {
+				signal: AbortSignal.timeout(UPDATE_CHECK_TIMEOUT_MS),
+			});
+			if (!res.ok) return undefined;
+			const version = ((await res.json()) as { version?: unknown }).version;
+			return typeof version === "string" ? version : undefined;
+		} catch {
+			return undefined;
+		}
+	}
+
+	/** 检查已配置扩展的可用更新（只读：不安装、不重载） */
+	async checkPackageUpdates(): Promise<PackageUpdateInfo[]> {
+		const seen = new Map<string, string>();
+		for (const p of await this.listConfiguredPackages()) {
+			const name = npmSourceToPackageName(p.source);
+			if (name && !seen.has(name)) seen.set(name, p.source);
+		}
+		return Promise.all(
+			[...seen].map(async ([name, source]) => {
+				const [installed, latest] = await Promise.all([
+					this.readInstalledVersion(name),
+					this.fetchLatestVersion(name),
+				]);
+				return {
+					name,
+					source,
+					installed: installed ?? "",
+					latest: latest ?? "",
+					hasUpdate: Boolean(installed && latest && isNewerVersion(latest, installed)),
+				};
+			}),
+		);
 	}
 }

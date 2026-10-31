@@ -1,4 +1,5 @@
-import { useMemo } from "react";
+import type { PackageUpdateInfo } from "@percho/shared";
+import { useEffect, useMemo } from "react";
 import { useT } from "../../../i18n";
 import { useCatalogStore } from "../../../stores/catalog";
 import { useSettingsStore } from "../../../stores/settings";
@@ -13,6 +14,20 @@ export function LoadedSection() {
 	const errors = diagnostics.filter((d) => d.level !== "info");
 	const notices = diagnostics.filter((d) => d.level === "info");
 	const configuredPackages = useCatalogStore((s) => s.configuredPackages);
+	const packageUpdates = useCatalogStore((s) => s.packageUpdates);
+	const checkUpdates = useCatalogStore((s) => s.checkUpdates);
+
+	// 进面板就查一次（只读：读本地版本 + registry latest，不安装）
+	useEffect(() => {
+		void checkUpdates();
+	}, [checkUpdates]);
+
+	// 已配置 source → 更新信息
+	const updateBySource = useMemo(() => {
+		const map = new Map<string, PackageUpdateInfo>();
+		for (const u of Object.values(packageUpdates ?? {})) map.set(u.source, u);
+		return map;
+	}, [packageUpdates]);
 
 	// 已加载扩展的 source 命中已配置包 → 可卸载（source 为 npm:/git: 等安装源时）
 	const configuredBySource = useMemo(() => {
@@ -39,6 +54,7 @@ export function LoadedSection() {
 							key={extension.path}
 							extension={extension}
 							configured={configuredBySource.get(extension.source) ?? null}
+							update={updateBySource.get(extension.source) ?? null}
 						/>
 					))}
 				</ul>

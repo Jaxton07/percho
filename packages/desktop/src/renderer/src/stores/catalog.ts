@@ -1,4 +1,9 @@
-import type { CatalogPackage, CatalogPackageType, ConfiguredPackageInfo } from "@percho/shared";
+import type {
+	CatalogPackage,
+	CatalogPackageType,
+	ConfiguredPackageInfo,
+	PackageUpdateInfo,
+} from "@percho/shared";
 import { type EnvironmentRef, environmentKey, environmentRef, LOCAL_ENVIRONMENT } from "@percho/shared";
 import { create, useStore } from "zustand";
 import { getExecutionApi } from "../environment-api";
@@ -29,6 +34,11 @@ interface CatalogStore {
 	removeErrors: Record<string, string>;
 	/** settings.json 已配置的包（null = 未加载；「已安装」态匹配/卸载用） */
 	configuredPackages: ConfiguredPackageInfo[] | null;
+	/** 扩展更新检查结果（null = 未查；按 source 索引） */
+	packageUpdates: Record<string, PackageUpdateInfo> | null;
+	checkingUpdates: boolean;
+	/** 检查已配置扩展的可用更新（只读） */
+	checkUpdates: () => Promise<void>;
 	setExtensionsTab: (tab: "browse" | "loaded") => void;
 	setCatalogQuery: (query: string) => void;
 	setCatalogType: (type: "" | CatalogPackageType) => void;
@@ -66,6 +76,8 @@ function createCatalogStore(environment: EnvironmentRef) {
 			removingSources: {},
 			removeErrors: {},
 			configuredPackages: null,
+			packageUpdates: null,
+			checkingUpdates: false,
 
 			setExtensionsTab: (extensionsTab) => set({ extensionsTab }),
 
@@ -172,6 +184,19 @@ function createCatalogStore(environment: EnvironmentRef) {
 						delete removingSources[source];
 						return { removingSources };
 					});
+				}
+			},
+			checkUpdates: async () => {
+				set({ checkingUpdates: true });
+				try {
+					const list = await getExecutionApi(environment).checkPackageUpdates();
+					set({
+						packageUpdates: Object.fromEntries(list.map((u) => [u.source, u])),
+						checkingUpdates: false,
+					});
+				} catch {
+					// 查不到（离线/超时）就当作没有更新信息，不打断面板
+					set({ checkingUpdates: false });
 				}
 			},
 		};
