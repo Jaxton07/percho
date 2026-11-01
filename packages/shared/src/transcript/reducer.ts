@@ -163,6 +163,7 @@ function finalizeStreaming(state: SessionTranscriptState): SessionTranscriptStat
 		id: newMessageId(),
 		images: img.images,
 		paths: img.paths,
+		...(img.toolCallId ? { toolCallId: img.toolCallId } : {}),
 		timestamp: Date.now(),
 	}));
 	const hasContent = streaming.text.length > 0 || streaming.thinking.length > 0 || streaming.tools.length > 0;
@@ -542,7 +543,9 @@ export function reduceEvent(state: SessionTranscriptState, event: SessionEvent):
 				streaming: {
 					...streaming,
 					tools,
-					pendingImages: shown ? [...streaming.pendingImages, shown] : streaming.pendingImages,
+					pendingImages: shown
+						? [...streaming.pendingImages, { ...shown, toolCallId: event.toolCallId }]
+						: streaming.pendingImages,
 				},
 			};
 		}

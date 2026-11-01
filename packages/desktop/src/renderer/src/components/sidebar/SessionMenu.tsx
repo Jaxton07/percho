@@ -2,6 +2,7 @@ import type { SessionMeta } from "@percho/shared";
 import { useState } from "react";
 import { useT } from "../../i18n";
 import { useProjectsStore } from "../../stores/projects";
+import { useSessionMediaMaintenanceStore } from "../../stores/session-media-maintenance";
 import { useUiPreferencesStore } from "../../stores/ui-preferences";
 import { RenamePopover } from "../session/RenamePopover";
 import {
@@ -44,6 +45,9 @@ export function useSessionMenu() {
 						pinned: pinnedSessions.includes(menu.session.sessionId),
 						onRename: () => setRenaming({ session: menu.session, anchor: menu.anchor }),
 						onCopyDiagnostics: () => void copySessionDiagnostics(menu.session),
+						onMediaMaintenance: menu.session.sessionFile
+							? () => useSessionMediaMaintenanceStore.getState().open(menu.session)
+							: undefined,
 						onDelete: () => setDeleting(menu.session),
 					})}
 				/>

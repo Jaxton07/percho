@@ -11,6 +11,7 @@ import { DiffSidebar } from "./components/diff/DiffSidebar";
 import { RemoteAttentionBanner } from "./components/remote/RemoteAttentionBanner";
 import { RemoteConnectionDialog } from "./components/remote/RemoteConnectionDialog";
 import { DockSlot } from "./components/session/DockSlot";
+import { SessionMediaMaintenanceDialog } from "./components/session/SessionMediaMaintenanceDialog";
 import { SessionRail } from "./components/session/SessionRail";
 import { SessionTabBar } from "./components/session/SessionTabBar";
 import { TrustDialog } from "./components/session/TrustDialog";
@@ -190,6 +191,7 @@ export default function App() {
 			{/* 悬浮贡献层：内容列之后、设置弹窗之前（z-20 < z-40，插件层永在弹窗之下） */}
 			<RegionHost region={UI_REGIONS.AppOverlay} />
 			<SettingsDialog />
+			<SessionMediaMaintenanceDialog />
 			<RemoteConnectionDialog />
 			<RemoteAttentionBanner />
 			<TrustDialog requests={visibleTrustRequests} onRespond={respondTrust} />

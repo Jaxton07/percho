@@ -8,6 +8,71 @@ import { describe, expect, it } from "vitest";
 import { sanitizeSessionEvent, sanitizeSessionMessage } from "../src/lan/sanitize";
 
 describe("sanitizeSessionMessage", () => {
+	it.each(["user", "image"] as const)("%s中的内联/引用混合只保留占位，不泄露来源、entry或摘要", (role) => {
+		const reference = {
+			kind: "reference" as const,
+			ownerSessionId: "private-owner",
+			id: "asset:private-digest",
+			revision: "private-version",
+			mimeType: "image/png",
+		};
+		const images = [reference, { data: "private-base64", mimeType: "image/png" }];
+		const message: SessionMessage =
+			role === "user"
+				? { role, text: "visible", thinking: "", tools: [], entryId: "private-entry", images, timestamp: 1 }
+				: {
+						role,
+						entryId: "private-entry",
+						ownerSessionId: "private-owner",
+						images,
+						paths: ["/private/source.png"],
+						timestamp: 1,
+					};
+		const out = sanitizeSessionMessage(message),
+			encoded = JSON.stringify(out);
+		expect(out.images).toHaveLength(2);
+		for (const secret of [
+			"private-owner",
+			"private-entry",
+			"private-digest",
+			"private-version",
+			"private-base64",
+			"/private/source",
+			"reference",
+		])
+			expect(encoded).not.toContain(secret);
+		expect(out.images.every((image) => image.data === LAN_IMAGE_PLACEHOLDER)).toBe(true);
+	});
+	it("实时show_image引用与旧图片块也不能旁带来源字段", () => {
+		const reference = {
+			kind: "reference",
+			ownerSessionId: "private-owner",
+			id: "asset:private-digest",
+			revision: "private-version",
+			mimeType: "image/png",
+		};
+		const event = {
+			type: "tool_execution_end",
+			toolName: "show_image",
+			toolCallId: "call",
+			isError: false,
+			result: {
+				content: [{ type: "image", ...reference, data: "private-base64" }],
+				details: { images: [reference], paths: ["/private/source.png"] },
+			},
+		} as SessionEvent;
+		const encoded = JSON.stringify(sanitizeSessionEvent(event));
+		for (const secret of [
+			"private-owner",
+			"private-digest",
+			"private-version",
+			"private-base64",
+			"/private/source",
+			"reference",
+		])
+			expect(encoded).not.toContain(secret);
+		expect(encoded).toContain(LAN_IMAGE_PLACEHOLDER);
+	});
 	it("forwards the bounded pause/retry contract through the existing event whitelist", () => {
 		const event = {
 			type: "compaction_pause",

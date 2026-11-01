@@ -1,11 +1,12 @@
 import type { PermissionMode, SessionMeta } from "@percho/shared";
-import { environmentEntityRef, messagesToUIMessages } from "@percho/shared";
+import { environmentEntityRef } from "@percho/shared";
 import { getExecutionApi } from "../environment-api";
 import { errText } from "../lib/error-text";
+import { measureRendererSwitch } from "../lib/session-switch-probe";
+import { installSessionBaseline } from "./session-baseline-install";
 import {
 	beginSessionBaseline,
 	failSessionBaseline,
-	finishSessionBaseline,
 	isCurrentSessionBaseline,
 } from "./session-event-boundary";
 import {
@@ -71,103 +72,53 @@ export function createSessionLoader(ports: SessionDataPorts) {
 		sessionId: string,
 		opts?: { skipHistoryIfLive?: boolean; observeSubagent?: boolean },
 	): Promise<void> {
-		// 子代理打开前没有接收事件；本机检视也需要「历史 + 进行中轮次」的基线。
-		if (environmentEntityRef(sessionId).environment.kind === "ssh" || ports.isReadOnly(sessionId)) {
-			const openingEpoch = historyOpenEpoch(sessionId);
-			const token = beginSessionBaseline(sessionId);
-			try {
-				// 先建立增量缓冲，再开启推送并读取基线，覆盖暂停观察期间的内容。
-				if (opts?.observeSubagent) await getExecutionApi(sessionId).setViewedSubagent({ sessionId });
-				if (historyOpenEpoch(sessionId) !== openingEpoch) return;
-				const baseline = await getExecutionApi(sessionId).getSessionBaseline({ sessionId });
-				if (
-					historyOpenEpoch(sessionId) !== openingEpoch ||
-					!ports.isOpen(sessionId) ||
-					!isCurrentSessionBaseline(sessionId, token)
-				)
-					return;
-				finishSessionBaseline(sessionId, token, baseline.sequence, () => {
-					const previous = useTranscriptStore.getState().bySession[sessionId];
-					useTranscriptStore.setState((state) => ({
-						bySession: {
-							...state.bySession,
-							[sessionId]: {
-								...baseline.transcript,
-								phase: previous?.pendingPermissions.length
-									? "awaiting_permission"
-									: baseline.transcript.phase,
-								pendingPermissions: previous?.pendingPermissions ?? [],
-								pendingDialogs: previous?.pendingDialogs ?? [],
-							},
-						},
-					}));
-					ports.landMeta(baseline.meta);
-					ports.writePermissionMode(sessionId, baseline.permissionMode);
-				});
-				finishSessionHistory(sessionId);
-			} catch (error) {
-				failSessionBaseline(sessionId, token);
-				throw error;
-			}
+		// 已完整装载的活动会话不用再覆盖；GC重开和尚未就绪的活动会话必须恢复原子基线。
+		if (
+			opts?.skipHistoryIfLive &&
+			isHistoryReady(sessionId) &&
+			useTranscriptStore.getState().bySession[sessionId]?.agentActive
+		)
 			return;
-		}
-		// skip 判定在入口一次性取值：并行发起 IPC 前先确定是否跳过历史（agent 运行中保流式态，见 openFromHistory 注释）
-		const skipHistory =
-			opts?.skipHistoryIfLive === true &&
-			useTranscriptStore.getState().bySession[sessionId]?.agentActive === true;
-		const transcriptBefore = useTranscriptStore.getState().bySession[sessionId];
 		const openingEpoch = historyOpenEpoch(sessionId);
-		const [history, followUpQueue, todos, permissionMode, loaded] = await Promise.all([
-			skipHistory ? Promise.resolve(null) : getExecutionApi(sessionId).getSessionMessages({ sessionId }),
-			getExecutionApi(sessionId).getFollowUpMessages({ sessionId }),
-			getExecutionApi(sessionId).getTodos({ sessionId }),
-			getExecutionApi(sessionId).getPermissionMode({ sessionId }),
-			getExecutionApi(sessionId).getLoadedSessions(),
-		]);
-		// TOCTOU 复核：await 期间会话转为 live（如恰好有 prompt 竞态）时丢弃迟到历史，
-		// 防旧快照覆盖刚建立的流式态（queue/todo/permissionMode 是幂等快照，照常应用）
-		const transcriptNow = useTranscriptStore.getState().bySession[sessionId];
-		const liveNow = transcriptNow?.agentActive === true;
-		// 不能只看 liveNow：IPC 期间恰好跑完的一轮可能已改写 transcript，旧快照仍过期。
-		// 关闭后的迟到 bundle 也绝不能重建该 session 的 UI 条目。
-		if (historyOpenEpoch(sessionId) !== openingEpoch || !ports.isOpen(sessionId)) return;
-		const t = useTranscriptStore.getState();
-		const historyNeedsRetry = !history || liveNow || transcriptBefore !== transcriptNow;
-		if (history && !historyNeedsRetry) {
-			t.loadHistory(sessionId, messagesToUIMessages(history));
-			finishSessionHistory(sessionId);
-		}
-		t.setFollowUpQueue(sessionId, followUpQueue);
-		t.loadTodos(sessionId, todos);
-		// 本机历史回放不携带实例运行态；只在读取期间没有新事件时采纳权威暂停值。
-		if (transcriptBefore === transcriptNow) {
-			const pause = loaded.find((summary) => summary.meta.sessionId === sessionId)?.compactionPause ?? null;
-			useTranscriptStore.setState((state) => {
-				const current = state.bySession[sessionId];
-				return current
-					? { bySession: { ...state.bySession, [sessionId]: { ...current, compactionPause: pause } } }
-					: state;
+		const token = beginSessionBaseline(sessionId);
+		try {
+			if (opts?.observeSubagent) await getExecutionApi(sessionId).setViewedSubagent({ sessionId });
+			if (historyOpenEpoch(sessionId) !== openingEpoch) return;
+			const endRead = measureRendererSwitch("historyRoundTrip");
+			const baseline = await getExecutionApi(sessionId).getSessionBaseline({
+				sessionId,
+				imageMode: "references",
 			});
-		}
-		ports.writePermissionMode(sessionId, permissionMode);
-		if (historyNeedsRetry) {
-			deferSessionHistory(sessionId, () => ports.isOpen(sessionId));
-		}
-		// D7：本机记住过的档位盖过后端默认值（后端 mode 不落盘，重启/卸载重开后恒为 default）。
-		// 这里 await 而不是 fire-and-forget：保证「打开完就是正确档位」，验收才能确定性断言。
-		const remembered =
-			environmentEntityRef(sessionId).environment.kind === "local"
-				? useUiPreferencesStore.getState().sessionPermissionModes[sessionId]
-				: undefined;
-		if (remembered && remembered !== permissionMode) {
-			try {
-				await getExecutionApi(sessionId).setPermissionMode({ sessionId, mode: remembered });
-				if (historyOpenEpoch(sessionId) === openingEpoch && ports.isOpen(sessionId)) {
-					ports.writePermissionMode(sessionId, remembered);
+			endRead();
+			if (
+				historyOpenEpoch(sessionId) !== openingEpoch ||
+				!ports.isOpen(sessionId) ||
+				!isCurrentSessionBaseline(sessionId, token)
+			)
+				return;
+			const installed = installSessionBaseline(sessionId, token, baseline, () => {
+				ports.landMeta(baseline.meta);
+				ports.writePermissionMode(sessionId, baseline.permissionMode);
+			});
+			if (!installed) return;
+			finishSessionHistory(sessionId, baseline.hydrationToken);
+			// 本机持久偏好只在对应打开代次仍有效时恢复，不能盖到重开的同ID实例上。
+			const remembered =
+				environmentEntityRef(sessionId).environment.kind === "local"
+					? useUiPreferencesStore.getState().sessionPermissionModes[sessionId]
+					: undefined;
+			if (remembered && remembered !== baseline.permissionMode) {
+				try {
+					await getExecutionApi(sessionId).setPermissionMode({ sessionId, mode: remembered });
+					if (historyOpenEpoch(sessionId) === openingEpoch && ports.isOpen(sessionId))
+						ports.writePermissionMode(sessionId, remembered);
+				} catch (error) {
+					console.warn("恢复会话权限模式失败", error);
 				}
-			} catch (error) {
-				console.warn("恢复会话权限模式失败", error);
 			}
+		} catch (error) {
+			failSessionBaseline(sessionId, token);
+			throw error;
 		}
 	}
 

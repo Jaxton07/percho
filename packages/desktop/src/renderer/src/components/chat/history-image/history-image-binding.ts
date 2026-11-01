@@ -12,7 +12,7 @@
  * 为什么不是「先 acquire 再 setVisible(false)」：service 的 buffer 请求照样会被调度（只是优先级低），
  * 那就是「全量挂载 + 保 48 张」，不是加载区门；实测会被 reviewer 的用例抓住（posted 立即 ≥1）。
  */
-import type { ImageInput } from "@percho/shared";
+import type { DisplayImage } from "@percho/shared";
 import type { HistoryImageObserver } from "./history-image-observer";
 import type { ThumbnailHandle, ThumbnailService, ThumbnailSnapshot } from "./history-image-service";
 
@@ -29,7 +29,7 @@ export interface HistoryImageBinding {
 
 export interface HistoryImageBindingOptions {
 	service: ThumbnailService;
-	image: ImageInput;
+	image: DisplayImage;
 	/** 观察目标（外盒元素）；为 null 时彻底惰性 */
 	element: Element | null;
 	/** 共享观察者；为 null 时彻底惰性 */

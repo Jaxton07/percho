@@ -9,6 +9,7 @@ import {
 	environmentKey,
 	environmentRef,
 	extractSubagentRuns,
+	isReferenceImage,
 	type PiApi,
 	type SessionMeta,
 	SUBSCRIPTION_TABLE,
@@ -55,10 +56,39 @@ function subagentDetails(value: unknown, environment: EnvironmentRef): unknown {
 	};
 }
 
-function toolResult(value: unknown, environment: EnvironmentRef): unknown {
-	return record(value) && extractSubagentRuns(value.details)
-		? { ...value, details: subagentDetails(value.details, environment) }
+function imageFor(value: unknown, environment: EnvironmentRef): unknown {
+	return isReferenceImage(value)
+		? { ...value, ownerSessionId: environmentEntityKey(environment, value.ownerSessionId) }
 		: value;
+}
+function imageMessage<T>(value: T, environment: EnvironmentRef): T {
+	if (!record(value)) return value;
+	return {
+		...value,
+		...(Array.isArray(value.images)
+			? { images: value.images.map((image) => imageFor(image, environment)) }
+			: {}),
+		...(typeof value.ownerSessionId === "string"
+			? { ownerSessionId: environmentEntityKey(environment, value.ownerSessionId) }
+			: {}),
+	} as T;
+}
+function toolResult(value: unknown, environment: EnvironmentRef): unknown {
+	if (!record(value) || !record(value.details)) return value;
+	const details = value.details;
+	return {
+		...value,
+		details: subagentDetails(
+			{
+				...details,
+				...(Array.isArray(details.images)
+					? { images: details.images.map((image) => imageFor(image, environment)) }
+					: {}),
+				...(details.image ? { image: imageFor(details.image, environment) } : {}),
+			},
+			environment,
+		),
+	};
 }
 
 export function scopeSessionMeta(value: SessionMeta, environment: EnvironmentRef): SessionMeta {
@@ -114,12 +144,18 @@ function resultFor(method: string, value: unknown, environment: EnvironmentRef):
 				transcript: {
 					...baseline.transcript,
 					messages: baseline.transcript.messages.map((message) =>
-						message.kind === "subagent" ? { ...message, runs: message.runs.map(run) } : message,
+						imageMessage(
+							message.kind === "subagent" ? { ...message, runs: message.runs.map(run) } : message,
+							environment,
+						),
 					),
 					streaming: baseline.transcript.streaming
 						? {
 								...baseline.transcript.streaming,
 								subagentRuns: baseline.transcript.streaming.subagentRuns.map(run),
+								pendingImages: baseline.transcript.streaming.pendingImages.map((images) =>
+									imageMessage(images, environment),
+								),
 							}
 						: null,
 				},
@@ -128,16 +164,19 @@ function resultFor(method: string, value: unknown, environment: EnvironmentRef):
 
 		case "getSessionMessages":
 			return (value as unknown[]).map((message) =>
-				record(message) && message.role === "subagent" && Array.isArray(message.runs)
-					? {
-							...message,
-							runs: message.runs.map((run) =>
-								record(run) && typeof run.sessionFile === "string"
-									? { ...run, sessionFile: environmentEntityKey(environment, run.sessionFile) }
-									: run,
-							),
-						}
-					: message,
+				imageMessage(
+					record(message) && message.role === "subagent" && Array.isArray(message.runs)
+						? {
+								...message,
+								runs: message.runs.map((run) =>
+									record(run) && typeof run.sessionFile === "string"
+										? { ...run, sessionFile: environmentEntityKey(environment, run.sessionFile) }
+										: run,
+								),
+							}
+						: message,
+					environment,
+				),
 			);
 		default:
 			return value;

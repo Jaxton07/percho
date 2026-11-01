@@ -93,10 +93,10 @@ export function registerIpc(
 	});
 
 	// onEvent 载荷是 (sessionId, event) → 信封封装，不透明传，单行保留
-	backend.onEvent((sessionId, event) => {
+	backend.onEvent((sessionId, event, sequence) => {
 		observeTaskNotification(
 			LOCAL_ENVIRONMENT,
-			{ sessionId, event, sequence: backend.getSessionEventSequence(sessionId) },
+			{ sessionId, event, sequence: sequence ?? backend.getSessionEventSequence(sessionId) },
 			() => backend.getLoadedSessions().find((summary) => summary.meta.sessionId === sessionId)?.meta,
 		);
 		sendToRenderer(IpcChannels.Event, {

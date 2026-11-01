@@ -78,6 +78,7 @@ try {
 			cli: "packages/backend/src/runtime/cli.ts",
 			client: "packages/backend/src/runtime/client.ts",
 			server: "packages/backend/src/runtime/server.ts",
+			"session-media-worker": "packages/backend/src/session/media-maintenance-worker.ts",
 		},
 		bundle: true,
 		splitting: true,
@@ -146,6 +147,7 @@ try {
 	await access(sdkRequire.resolve("@silvia-odwyer/photon-node/photon_rs_bg.wasm"));
 	await access(sdkRequire.resolve("quickjs-wasi/quickjs.wasm"));
 	for (const file of [
+		"session-media-worker.mjs",
 		"node_modules/@earendil-works/pi-coding-agent/dist/bundle/cli.js",
 		"node_modules/@earendil-works/pi-coding-agent/dist/core/export-html/template.html",
 	])

@@ -29,9 +29,15 @@ export function createExecutionHandlers(
 		getPendingInteractions: () => backend.getPendingInteractions(),
 		getLoadedSessions: () => backend.getLoadedSessions(),
 		setViewedSubagent: ({ sessionId }) => backend.setViewedSubagent(sessionId),
-		getSessionBaseline: ({ sessionId }) => backend.getSessionBaseline(sessionId),
-		getSessionMessages: ({ sessionId }) => backend.getSessionMessages(sessionId),
-		markSessionHistoryReady: ({ sessionId }) => backend.markSessionHistoryReady(sessionId),
+		getSessionBaseline: ({ sessionId, imageMode }) => backend.getSessionBaseline(sessionId, { imageMode }),
+		getSessionMessages: ({ sessionId, imageMode }) => backend.getSessionMessages(sessionId, { imageMode }),
+		startSessionMediaPreview: ({ sessionFile }) => backend.startSessionMediaPreview(sessionFile),
+		getSessionMediaJob: ({ jobId }) => backend.getSessionMediaJob(jobId),
+		cancelSessionMediaJob: ({ jobId }) => backend.cancelSessionMediaJob(jobId),
+		getSessionImage: ({ sessionId, imageId, revision }) =>
+			backend.getSessionImage(sessionId, imageId, revision),
+		markSessionHistoryReady: ({ sessionId, hydrationToken }) =>
+			backend.markSessionHistoryReady(sessionId, hydrationToken),
 		getTodos: ({ sessionId }) => backend.getTodos(sessionId),
 		compact: ({ sessionId, customInstructions }) => backend.compact(sessionId, customInstructions),
 		getStats: ({ sessionId }) => backend.getStats(sessionId),

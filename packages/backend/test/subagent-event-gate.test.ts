@@ -33,6 +33,7 @@ describe("子会话转发闸门", () => {
 			},
 		});
 		const stale = SessionManager.open(manager.getSessionFile() as string);
+		const id = manager.getSessionId();
 		manager.appendMessage({ role: "user", content: "added after opening", timestamp: 3 });
 		const backend = new PiBackend();
 		const internal = backend as unknown as {
@@ -41,13 +42,13 @@ describe("子会话转发闸门", () => {
 		};
 		vi.spyOn(internal.registry, "get").mockReturnValue({
 			readOnly: true,
-			session: { sessionId: "child", sessionFile: manager.getSessionFile(), sessionManager: stale },
+			session: { sessionId: id, sessionFile: manager.getSessionFile(), sessionManager: stale },
 		} as RegisteredSession);
 		try {
-			internal.runningSubagents.set("child", { getBranch: () => manager.getBranch() });
-			expect(JSON.stringify(await backend.getSessionMessages("child"))).toContain("added after opening");
-			internal.runningSubagents.delete("child");
-			expect(JSON.stringify(await backend.getSessionMessages("child"))).toContain("added after opening");
+			internal.runningSubagents.set(id, { getBranch: () => manager.getBranch() });
+			expect(JSON.stringify(await backend.getSessionMessages(id))).toContain("added after opening");
+			internal.runningSubagents.delete(id);
+			expect(JSON.stringify(await backend.getSessionMessages(id))).toContain("added after opening");
 		} finally {
 			backend.dispose();
 			rmSync(root, { recursive: true, force: true });

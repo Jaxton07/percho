@@ -2,6 +2,7 @@ import { readFileSync } from "node:fs";
 import {
 	emptyTranscript,
 	type LoadedSessionSummary,
+	messagesToUIMessages,
 	type PermissionMode,
 	type SessionBaseline,
 	type SessionMeta,
@@ -67,9 +68,11 @@ const meta = (id: string, name?: string): SessionMeta => {
 		name,
 	};
 };
+let fixtureSessions = new Map<string, SessionMeta>();
 function fixture(id: string) {
 	const sessions = new Map([[id, meta(id)]]),
 		modes = new Map<string, PermissionMode>();
+	fixtureSessions = sessions;
 	const landMeta = vi.fn((value: SessionMeta) => {
 		sessions.set(value.sessionId, value);
 	});
@@ -88,6 +91,33 @@ function fixture(id: string) {
 beforeEach(() => {
 	vi.resetAllMocks();
 	pi.getSessionMessages.mockResolvedValue([]);
+	// 兼容原有持久历史夹具；产品只调用getSessionBaseline，不再分别调用这些旧读取方法。
+	pi.getSessionBaseline.mockImplementation(
+		async ({ sessionId }: { sessionId: string }): Promise<SessionBaseline> => {
+			const [history, queue, todos, mode, loaded] = await Promise.all([
+				pi.getSessionMessages({ sessionId }),
+				pi.getFollowUpMessages({ sessionId }),
+				pi.getTodos({ sessionId }),
+				pi.getPermissionMode({ sessionId }),
+				pi.getLoadedSessions(),
+			]);
+			return {
+				hydrationToken: `open:${sessionId}`,
+				meta: fixtureSessions.get(sessionId) ?? meta(sessionId),
+				sequence: 0,
+				permissionMode: mode,
+				transcript: {
+					...emptyTranscript(),
+					messages: messagesToUIMessages(history),
+					followUpQueue: queue,
+					todos,
+					compactionPause:
+						loaded.find((item: LoadedSessionSummary) => item.meta.sessionId === sessionId)?.compactionPause ??
+						null,
+				},
+			};
+		},
+	);
 	pi.getFollowUpMessages.mockResolvedValue([]);
 	pi.getTodos.mockResolvedValue([]);
 	pi.getPermissionMode.mockResolvedValue("default");
@@ -111,6 +141,7 @@ describe("session loader owns flights and data, not navigation", () => {
 		f.sessions.set(id, child);
 		const old = deferred<SessionBaseline>();
 		const baseline: SessionBaseline = {
+			hydrationToken: `open:${id}`,
 			meta: child,
 			sequence: 20,
 			transcript: emptyTranscript(),
@@ -178,7 +209,7 @@ describe("session loader owns flights and data, not navigation", () => {
 			permissionMode: "default",
 		});
 		await f.loader.loadSessionBundle(id);
-		expect(pi.getSessionBaseline).toHaveBeenCalledWith({ sessionId: id });
+		expect(pi.getSessionBaseline).toHaveBeenCalledWith({ sessionId: id, imageMode: "references" });
 		expect(pi.getSessionMessages).not.toHaveBeenCalled();
 		expect(useTranscriptStore.getState().bySession[id]?.phase).toBe("streaming");
 		expect(useTranscriptStore.getState().bySession[id]?.agentActive).toBe(true);
@@ -354,7 +385,7 @@ describe("session loader owns flights and data, not navigation", () => {
 		pi.getTodos.mockRejectedValueOnce(Error("bundle failure")).mockResolvedValue([]);
 		await expect(f.loader.loadSessionBundle("bundle-retry")).rejects.toThrow("bundle failure");
 		await expect(f.loader.loadSessionBundle("bundle-retry")).resolves.toBeUndefined();
-		expect(pi.getTodos).toHaveBeenCalledTimes(2);
+		expect(pi.getTodos).toHaveBeenCalledTimes(3);
 		expect(isHistoryReady("bundle-retry")).toBe(true);
 	});
 	it("late remembered permission success cannot project into a reopened incarnation", async () => {

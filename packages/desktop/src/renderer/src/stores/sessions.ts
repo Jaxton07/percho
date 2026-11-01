@@ -13,6 +13,7 @@ import {
 } from "@percho/shared";
 import { create } from "zustand";
 import { getPi } from "../api";
+import { invalidateImageEnvironment } from "../components/chat/history-image/image-lifetime";
 import { releaseComposerEditor } from "../components/composer/editor-host";
 import { getExecutionApi } from "../environment-api";
 import { isEnvironmentRegistered } from "../environment-registry";
@@ -37,12 +38,7 @@ import {
 	pendingSessionBaselineToken,
 	resumeEnvironmentEvents,
 } from "./session-event-boundary";
-import {
-	finishSessionHistory,
-	hasPendingSessionHistory,
-	isHistoryReady,
-	retrySessionHistory,
-} from "./session-history";
+import { hasPendingSessionHistory, isHistoryReady, retrySessionHistory } from "./session-history";
 import { createSessionLoader } from "./session-loading";
 import {
 	claimActivation,
@@ -346,8 +342,8 @@ async function promoteDraft(draft: NewSessionDraftConfig): Promise<string | null
 			};
 		});
 		useTranscriptStore.getState().resetSession(meta.sessionId);
-		// 全新会话的历史底座天然为空；在首次用户消息前即确认就绪。
-		finishSessionHistory(meta.sessionId);
+		// 同样安装带打开代次的权威基线，再开始首条prompt；不能发送无令牌ACK。
+		await loadSessionBundle(meta.sessionId).catch((error) => console.warn("新会话基线补拉失败", error));
 		if (isLatestActivation(token)) rememberCwd(targetCwd);
 		// draft 上选过的权限档位（入口快照）：后端新会话一律 default 起步，这里补上
 		// （失败只 toast，不回滚转正）
@@ -995,6 +991,7 @@ export function invalidateEnvironmentSessions(environment: EnvironmentRef): numb
 	const generation = (remoteRecovery.get(key) ?? 0) + 1;
 	remoteRecovery.set(key, generation);
 	pauseEnvironmentEvents(environment);
+	invalidateImageEnvironment(environment);
 	invalidateInteractions(environment);
 	for (const meta of useSessionsStore.getState().sessions) {
 		if (!sameEnvironment(environmentEntityRef(meta.sessionId).environment, environment)) continue;

@@ -3,6 +3,7 @@ import type { AgentSessionEvent as PiAgentSessionEvent } from "@earendil-works/p
 export type { CompactionPause } from "@earendil-works/pi-coding-agent";
 
 import type { ComposerDocument } from "./composer-document";
+import type { DisplayImage } from "./display-image";
 import type { SkillInvocationDisplay } from "./skill-invocation";
 import type { SubagentRunData } from "./subagent";
 
@@ -177,8 +178,8 @@ interface SessionBaseMessage {
 	text: string;
 	thinking: string;
 	tools: SessionToolCall[];
-	/** 消息附带的图片 */
-	images: ImageInput[];
+	/** 展示图片；发送/排队/撤回仍使用 ImageInput。 */
+	images: DisplayImage[];
 	timestamp: number;
 	/** 会话树中的 entry id（撤回/fork 精确定位用，匹配失败时缺省） */
 	entryId?: string;
@@ -206,7 +207,10 @@ export interface SessionAssistantMessage extends SessionBaseMessage {
 /** show_image 工具主动展示给用户的图片（独立消息，不进工具卡） */
 export interface SessionImageMessage {
 	role: "image";
-	images: ImageInput[];
+	images: DisplayImage[];
+	/** 图片真实来源，不通过时间戳猜配。 */
+	entryId?: string;
+	ownerSessionId?: string;
 	/** 原文件路径（工具参数，仅调试用） */
 	paths: string[];
 	timestamp: number;
@@ -511,6 +515,8 @@ export interface SessionEventEnvelope {
 
 /** Consistent per-session capture; sequence is the boundary for subsequent onEvent increments. */
 export interface SessionBaseline {
+	/** 只对本次注册实例有效，与跨GC图片revision分离。 */
+	hydrationToken: string;
 	meta: SessionMeta;
 	sequence: number;
 	transcript: import("./transcript").SessionTranscriptState;

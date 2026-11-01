@@ -488,6 +488,19 @@ export const zh = {
 		reveal: "在访达中显示",
 		copyPath: "复制路径",
 	},
+	mediaPreview: {
+		title: "预览截图整理收益",
+		readOnly: "仅扫描此会话全部分支，不修改会话或媒体。备份不会自动删除，也不计入节省。",
+		refresh: "重新预览",
+		cancelled: "扫描已取消，原文件和媒体未改。",
+		failed: "读取失败",
+		unsupported: "文件格式不是当前支持版本，或会话头损坏；不能执行整理，原文件未改。",
+		noBenefit: "没有可整理的展示图，或预计不能缩小活跃文件。",
+		scanning: "后台扫描中：{done} / {total}。可关闭并取消，不阻塞其他会话。",
+		summary:
+			"活跃文件预计 {before} → {after}；展示图 {count} 张（去重 {unique} 张）；备份 {backup}，额外峰值空间上界 {peak}。已有原图可复用，预估保守计算全部新增。",
+		preserved: "保留坏行 {invalid} 条，跳过无法安全整理的图片 {skipped} 张；用户附件和read图片不变。",
+	},
 	sessionMenu: {
 		copyDiagnostics: "复制诊断信息",
 		delete: "删除会话",
@@ -604,6 +617,12 @@ export const zh = {
 			version: "版本",
 			poweredBy: "基于 Pi Coding Agent 构建",
 			sourceCode: "源码与反馈",
+			switchDiagnosticsHint: "会话切换诊断仅在显式隔离的合成测试实例运行，不读取正式会话。",
+			switchDiagnosticsRun: "运行合成切换诊断（150次）",
+			switchDiagnosticsError:
+				"无法运行。请按诊断文档准备合成夹具并启动隔离实例；运行失败时检查本次测试日志。",
+			switchDiagnosticsDone: "诊断完成。结果仅含计时、大小和资源计数。",
+			switchDiagnosticsExport: "导出切换诊断",
 		},
 		models: {
 			providers: "Provider 配置",

@@ -2,11 +2,13 @@ import {
 	composerDocumentFromText,
 	emptyTranscript,
 	environmentEntityKey,
+	messagesToUIMessages,
 	type SessionBaseline,
 	type SessionEvent,
 	type SessionMeta,
 } from "@percho/shared";
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { subscribeImageInvalidation } from "../components/chat/history-image/image-invalidation";
 
 /** window.pi 的 mock：sessions store 经 getPi() 访问，测试环境无 preload 注入 */
 const piMock = vi.hoisted(() => ({
@@ -20,15 +22,16 @@ const piMock = vi.hoisted(() => ({
 	ensureProjectTrust: vi.fn(() => Promise.resolve(true)),
 	openSession: vi.fn(),
 	forkSession: vi.fn(),
-	getSessionMessages: vi.fn(() => Promise.resolve([])),
+	recallMessage: vi.fn(),
+	getSessionMessages: vi.fn((_args?: { sessionId: string }) => Promise.resolve([])),
 	getSessionBaseline: vi.fn(),
 	setViewedSubagent: vi.fn(async () => {}),
 	markSessionHistoryReady: vi.fn(() => Promise.resolve()),
 	getLoadedSessions: vi.fn(),
 	getPendingInteractions: vi.fn(async () => ({ revision: 1, permissions: [], dialogs: [], trust: [] })),
-	getFollowUpMessages: vi.fn(() => Promise.resolve([])),
-	getTodos: vi.fn(() => Promise.resolve([])),
-	getPermissionMode: vi.fn(() => Promise.resolve("default" as const)),
+	getFollowUpMessages: vi.fn((_args?: { sessionId: string }) => Promise.resolve([])),
+	getTodos: vi.fn((_args?: { sessionId: string }) => Promise.resolve([])),
+	getPermissionMode: vi.fn((_args?: { sessionId: string }) => Promise.resolve("default" as const)),
 	setPermissionMode: vi.fn(() => Promise.resolve()),
 	// loadModels 的输入（阶段 0 的 draft 默认模型补齐用例）：无类型 mock，用例内 mockImplementation 喂数据
 	listModels: vi.fn(),
@@ -50,7 +53,11 @@ vi.mock("../api", () => ({
 
 import { selectActiveCwd } from "../lib/active-cwd";
 import { NEW_SESSION_DRAFT_KEY, useDraftStore } from "./drafts";
-import { pauseEnvironmentEvents, resumeEnvironmentEvents } from "./session-event-boundary";
+import {
+	acceptSessionEvent,
+	pauseEnvironmentEvents,
+	resumeEnvironmentEvents,
+} from "./session-event-boundary";
 import { clearSessionHistory, isHistoryReady, retrySessionHistory } from "./session-history";
 import { useSessionWorkspaceStore } from "./session-workspace";
 import {
@@ -67,7 +74,8 @@ describe("子代理详细事件跟随当前页面", () => {
 	const parent = realMeta("observation-parent", "/fixture");
 	const child = { ...realMeta("observation-child", "/fixture"), readOnly: true };
 	const other = { ...realMeta("observation-other", "/fixture"), readOnly: true };
-	const baseline = (meta = child, sequence = 1): SessionBaseline => ({
+	const baseline = (meta: SessionMeta = child, sequence = 1): SessionBaseline => ({
+		hydrationToken: `open:${meta.sessionId}`,
 		meta,
 		sequence,
 		permissionMode: "default",
@@ -76,7 +84,10 @@ describe("子代理详细事件跟随当前页面", () => {
 
 	it("进入、返回父会话、再次进入、切换其他子代理和新会话页都会同步观察目标", async () => {
 		useSessionsStore.setState({ sessions: [parent, child, other], activeSessionId: parent.sessionId });
-		piMock.getSessionBaseline.mockResolvedValueOnce(baseline()).mockResolvedValueOnce(baseline(child, 9));
+		piMock.getSessionBaseline
+			.mockResolvedValueOnce(baseline())
+			.mockResolvedValueOnce(baseline(parent))
+			.mockResolvedValueOnce(baseline(child, 9));
 		useSessionsStore.getState().switchSession(child.sessionId);
 		await vi.waitFor(() => expect(isHistoryReady(child.sessionId)).toBe(true));
 		expect(piMock.setViewedSubagent).toHaveBeenLastCalledWith({ sessionId: child.sessionId });
@@ -87,7 +98,7 @@ describe("子代理详细事件跟随当前页面", () => {
 		expect(isHistoryReady(child.sessionId)).toBe(false);
 		useSessionsStore.getState().switchSession(child.sessionId);
 		await vi.waitFor(() => expect(isHistoryReady(child.sessionId)).toBe(true));
-		expect(piMock.getSessionBaseline).toHaveBeenCalledTimes(2);
+		expect(piMock.getSessionBaseline).toHaveBeenCalledTimes(3);
 		expect(useTranscriptStore.getState().bySession[child.sessionId]?.agentActive).toBe(false);
 
 		piMock.getSessionBaseline.mockResolvedValueOnce(baseline(other));
@@ -149,11 +160,105 @@ beforeEach(() => {
 	vi.clearAllMocks();
 	// openSession 的 mockImplementation 是持久实现（clearAllMocks 不清），用例之间必须显式复位
 	piMock.openSession.mockReset();
+	piMock.recallMessage.mockReset();
 	piMock.getSessionMessages.mockReset().mockResolvedValue([]);
-	piMock.getSessionBaseline.mockReset();
+	piMock.getSessionBaseline
+		.mockReset()
+		.mockImplementation(async ({ sessionId }: { sessionId: string }): Promise<SessionBaseline> => {
+			const [history, queue, todos, mode, loaded] = await Promise.all([
+				piMock.getSessionMessages({ sessionId }),
+				piMock.getFollowUpMessages({ sessionId }),
+				piMock.getTodos({ sessionId }),
+				piMock.getPermissionMode({ sessionId }),
+				piMock.getLoadedSessions(),
+			]);
+			return {
+				hydrationToken: `open:${sessionId}`,
+				meta:
+					useSessionsStore.getState().sessions.find((item) => item.sessionId === sessionId) ??
+					realMeta(sessionId, "/fixture"),
+				sequence: 0,
+				permissionMode: mode,
+				transcript: {
+					...emptyTranscript(),
+					messages: messagesToUIMessages(history),
+					followUpQueue: queue,
+					todos,
+					compactionPause:
+						loaded?.find((item: { meta: SessionMeta }) => item.meta.sessionId === sessionId)
+							?.compactionPause ?? null,
+				},
+			};
+		});
 	piMock.getLoadedSessions.mockReset().mockResolvedValue([]);
 	resetStore();
 	useTranscriptStore.setState({ bySession: {} });
+});
+
+describe("环境失效接入图片生命周期", () => {
+	it("重连入口通知对应图片预览，不误清本机或另一执行环境", () => {
+		const environment = { kind: "ssh" as const, connectionId: "ssh", environmentId: "one" };
+		const remote = vi.fn(),
+			local = vi.fn(),
+			other = vi.fn();
+		const image = (ownerSessionId: string) => ({
+			kind: "reference" as const,
+			ownerSessionId,
+			id: "entry:image:show:0",
+			revision: "version",
+			mimeType: "image/png",
+		});
+		const cleanups = [
+			subscribeImageInvalidation(image(environmentEntityKey(environment, "session")), remote),
+			subscribeImageInvalidation(image("local"), local),
+			subscribeImageInvalidation(
+				image(environmentEntityKey({ ...environment, environmentId: "another" }, "session")),
+				other,
+			),
+		];
+		try {
+			invalidateEnvironmentSessions(environment);
+			expect(remote).toHaveBeenCalledTimes(1);
+			expect(local).not.toHaveBeenCalled();
+			expect(other).not.toHaveBeenCalled();
+		} finally {
+			for (const cleanup of cleanups) cleanup();
+		}
+	});
+});
+
+describe("引用历史撤回恢复真实多附件", () => {
+	it.each([false, true])("撤回返回时切到另一会话=%s，原图仍只进入原目标草稿", async (changed) => {
+		const a = realMeta("recall-a", "/fixture/a"),
+			b = realMeta("recall-b", "/fixture/b");
+		const images = [
+			{ data: "AQID", mimeType: "image/png" },
+			{ data: "BAUG", mimeType: "image/png" },
+		];
+		useSessionsStore.setState({ sessions: [a, b], activeSessionId: a.sessionId });
+		const response = deferred<{ text: string; images: typeof images }>();
+		piMock.recallMessage.mockReturnValueOnce(response.promise);
+		vi.stubGlobal("window", { dispatchEvent: vi.fn() });
+		try {
+			const recalling = useSessionsStore.getState().recallMessage({ entryId: "actual-user-entry" });
+			if (changed) useSessionsStore.setState({ activeSessionId: b.sessionId });
+			response.resolve({ text: "recalled", images });
+			await recalling;
+			expect(piMock.recallMessage).toHaveBeenCalledExactlyOnceWith({
+				sessionId: a.sessionId,
+				ref: { entryId: "actual-user-entry" },
+			});
+			expect(useDraftStore.getState().bySession[a.sessionId]?.images).toEqual(images);
+			expect(useDraftStore.getState().bySession[b.sessionId]).toBeUndefined();
+			expect(useSessionsStore.getState().activeSessionId).toBe(changed ? b.sessionId : a.sessionId);
+			expect(piMock.getSessionBaseline).toHaveBeenCalledWith({
+				sessionId: a.sessionId,
+				imageMode: "references",
+			});
+		} finally {
+			vi.unstubAllGlobals();
+		}
+	});
 });
 
 describe("V04 current directory projection (ticket 10 target)", () => {
@@ -389,12 +494,20 @@ describe("openFromHistory", () => {
 		piMock.openSession.mockResolvedValue(realMeta("sub-1", "/proj"));
 		useTranscriptStore.getState().applyEvent("sub-1", { type: "agent_start" } as SessionEvent);
 
+		piMock.getSessionBaseline.mockResolvedValueOnce({
+			hydrationToken: "open:sub-1",
+			meta: realMeta("sub-1", "/proj"),
+			sequence: 1,
+			permissionMode: "default",
+			transcript: useTranscriptStore.getState().bySession["sub-1"],
+		});
 		await useSessionsStore.getState().openFromHistory("/tmp/sub-1.jsonl");
 
 		expect(piMock.getSessionMessages).not.toHaveBeenCalled();
-		// skipHistoryIfLive 只跳过历史，队列/todo 仍照常装载
-		expect(piMock.getFollowUpMessages).toHaveBeenCalledTimes(1);
-		expect(piMock.getTodos).toHaveBeenCalledTimes(1);
+		expect(piMock.getSessionBaseline).toHaveBeenCalledWith({ sessionId: "sub-1", imageMode: "references" });
+		// 活动轮次、队列和todo来自同一基线，不再分别读取静态快照。
+		expect(piMock.getFollowUpMessages).not.toHaveBeenCalled();
+		expect(piMock.getTodos).not.toHaveBeenCalled();
 		expect(useTranscriptStore.getState().bySession["sub-1"]?.agentActive).toBe(true);
 		expect(useSessionsStore.getState().activeSessionId).toBe("sub-1");
 	});
@@ -448,19 +561,23 @@ describe("历史就绪屏障", () => {
 			},
 		] as never[];
 
-	it("打开前已有实时 run：不以 live entry 冒充完整历史，settled 后补最新分支", async () => {
+	it("打开前已有实时run：原子安装完整分支及活动轮次，并用本次令牌ACK", async () => {
 		piMock.openSession.mockImplementationOnce(async () => {
 			useTranscriptStore.getState().applyEvent("wake", { type: "agent_start" } as SessionEvent);
 			return realMeta("wake", "/proj");
 		});
+		piMock.getSessionBaseline.mockImplementationOnce(async () => ({
+			hydrationToken: "open:wake",
+			meta: realMeta("wake", "/proj"),
+			sequence: 1,
+			permissionMode: "default",
+			transcript: {
+				...useTranscriptStore.getState().bySession.wake,
+				messages: messagesToUIMessages(history("旧消息", 1).concat(history("频道提醒", 2))),
+			},
+		}));
 		await useSessionsStore.getState().openFromHistory("/proj/wake.jsonl");
-		expect(isHistoryReady("wake")).toBe(false);
-		expect(piMock.markSessionHistoryReady).not.toHaveBeenCalled();
-		piMock.getSessionMessages.mockResolvedValueOnce(history("旧消息", 1).concat(history("频道提醒", 2)));
-		useTranscriptStore
-			.getState()
-			.applyEvent("wake", { type: "agent_settled", aborted: false } as SessionEvent);
-		await retrySessionHistory("wake");
+		expect(useTranscriptStore.getState().bySession.wake?.agentActive).toBe(true);
 		await vi.waitFor(() => expect(isHistoryReady("wake")).toBe(true));
 		expect(
 			useTranscriptStore
@@ -471,22 +588,27 @@ describe("历史就绪屏障", () => {
 		expect(piMock.markSessionHistoryReady).toHaveBeenCalledTimes(1);
 	});
 
-	it("历史 IPC 途中 agent 抢跑：不覆盖 streaming，结束后重新读而非用旧快照", async () => {
+	it("历史IPC期间新轮次抢跑：安装边界后的增量保留streaming，无需整段重拉", async () => {
 		const snapshot = deferred<never[]>();
 		piMock.openSession.mockResolvedValue(realMeta("race", "/proj"));
 		piMock.getSessionMessages.mockImplementationOnce(() => snapshot.promise);
 		const opening = useSessionsStore.getState().openFromHistory("/proj/race.jsonl");
 		await vi.waitFor(() => expect(piMock.getSessionMessages).toHaveBeenCalledTimes(1));
-		useTranscriptStore.getState().applyEvent("race", { type: "agent_start" } as SessionEvent);
-		snapshot.resolve(history("过期快照", 1));
+		const start = { type: "agent_start" } as SessionEvent;
+		const delta = {
+			type: "message_update",
+			assistantMessageEvent: { type: "text_delta", contentIndex: 0, delta: "进行中" },
+		} as SessionEvent;
+		acceptSessionEvent("race", 1, start, () => useTranscriptStore.getState().applyEvent("race", start));
+		acceptSessionEvent("race", 2, delta, () => useTranscriptStore.getState().applyEvent("race", delta));
+		snapshot.resolve(history("完整历史", 1));
 		await opening;
 		expect(useTranscriptStore.getState().bySession.race?.agentActive).toBe(true);
-		expect(isHistoryReady("race")).toBe(false);
-		piMock.getSessionMessages.mockResolvedValueOnce(history("完整历史", 1));
-		useTranscriptStore
-			.getState()
-			.applyEvent("race", { type: "agent_settled", aborted: false } as SessionEvent);
-		await retrySessionHistory("race");
+		expect(useTranscriptStore.getState().bySession.race?.streaming?.text).toBe("进行中");
+		expect(isHistoryReady("race")).toBe(true);
+		const settled = { type: "agent_settled", aborted: false } as SessionEvent;
+		acceptSessionEvent("race", 3, settled, () => useTranscriptStore.getState().applyEvent("race", settled));
+		expect(piMock.getSessionMessages).toHaveBeenCalledTimes(1);
 		await vi.waitFor(() => expect(isHistoryReady("race")).toBe(true));
 		expect(
 			useTranscriptStore
@@ -502,11 +624,18 @@ describe("历史就绪屏障", () => {
 		piMock.getSessionMessages.mockImplementationOnce(() => snapshot.promise);
 		const opening = useSessionsStore.getState().openFromHistory("/proj/fast.jsonl");
 		await vi.waitFor(() => expect(piMock.getSessionMessages).toHaveBeenCalledTimes(1));
-		useTranscriptStore.getState().applyEvent("fast", { type: "agent_start" } as SessionEvent);
-		useTranscriptStore
-			.getState()
-			.applyEvent("fast", { type: "agent_settled", aborted: false } as SessionEvent);
-		piMock.getSessionMessages.mockResolvedValueOnce(history("新一轮已写入", 2));
+		const events = [
+			{ type: "agent_start" },
+			{
+				type: "message_start",
+				message: { role: "user", timestamp: 2, content: [{ type: "text", text: "新一轮已写入" }] },
+			},
+			{ type: "agent_settled", aborted: false },
+		] as SessionEvent[];
+		for (const [index, event] of events.entries())
+			acceptSessionEvent("fast", index + 1, event, () =>
+				useTranscriptStore.getState().applyEvent("fast", event),
+			);
 		snapshot.resolve(history("开工前快照", 1));
 		await opening;
 		await vi.waitFor(() => expect(isHistoryReady("fast")).toBe(true));
@@ -515,7 +644,7 @@ describe("历史就绪屏障", () => {
 				.getState()
 				.bySession.fast?.messages.filter((m) => m.kind === "user")
 				.map((m) => m.text),
-		).toEqual(["新一轮已写入"]);
+		).toEqual(["开工前快照", "新一轮已写入"]);
 	});
 
 	it("关闭后同 ID 重开：旧实例迟到快照不能覆盖新实例或提前 ACK", async () => {
@@ -1552,7 +1681,10 @@ describe("promotion：首条消息把 draft 转成真实会话", () => {
 		expect(state.activeSessionId).toBe("new-1");
 		expect(state.cwd).toBe("/proj/alpha");
 		expect(isHistoryReady("new-1")).toBe(true); // 新会话的历史底座天然为空
-		expect(piMock.markSessionHistoryReady).toHaveBeenCalledWith({ sessionId: "new-1" });
+		expect(piMock.markSessionHistoryReady).toHaveBeenCalledWith({
+			sessionId: "new-1",
+			hydrationToken: "open:new-1",
+		});
 	});
 
 	it("并发两次（发送 + 命令）共享一次 pi.createSession，返回同一个 id", async () => {

@@ -8,6 +8,14 @@ export default defineConfig({
 		plugins: [externalizeDepsPlugin({ exclude: ["@percho/backend", "@percho/shared"] })],
 		build: {
 			rollupOptions: {
+				input: {
+					index: resolve(__dirname, "src/main/index.ts"),
+					"session-media-worker": resolve(__dirname, "../backend/src/session/media-maintenance-worker.ts"),
+				},
+				output: {
+					entryFileNames: (chunk) =>
+						chunk.name === "session-media-worker" ? "session-media-worker.mjs" : "[name].js",
+				},
 				external: ["@earendil-works/pi-coding-agent"],
 			},
 		},

@@ -50,6 +50,8 @@ import type {
 	TrustResolved,
 	UiState,
 } from "./session";
+import type { SessionMediaJob } from "./session-media-maintenance";
+import type { SessionSwitchFixture, SessionSwitchProbe } from "./session-switch-diagnostics";
 import type {
 	CustomProviderInput,
 	CustomProviderUpdateInput,
@@ -224,19 +226,49 @@ export const SESSION_CHANNELS = {
 		"session:getBaseline",
 		"environment",
 		"read",
-	)<{ sessionId: string }, SessionBaseline>({ sessionId: input.id }),
+	)<{ sessionId: string; imageMode?: "references" }, SessionBaseline>({
+		sessionId: input.id,
+		imageMode: input.optional(input.oneOf("references")),
+	}),
 
 	getSessionMessages: ch(
 		"session:getMessages",
 		"environment",
 		"read",
-	)<{ sessionId: string }, SessionMessage[]>({ sessionId: input.id }),
+	)<{ sessionId: string; imageMode?: "references" }, SessionMessage[]>({
+		sessionId: input.id,
+		imageMode: input.optional(input.oneOf("references")),
+	}),
+	startSessionMediaPreview: ch(
+		"session:mediaPreview",
+		"environment",
+		"read",
+	)<{ sessionFile: string }, SessionMediaJob>({ sessionFile: input.text }),
+	getSessionMediaJob: ch(
+		"session:mediaJob",
+		"environment",
+		"read",
+	)<{ jobId: string }, SessionMediaJob>({ jobId: input.id }),
+	cancelSessionMediaJob: ch(
+		"session:mediaJobCancel",
+		"environment",
+		"mutation",
+	)<{ jobId: string }, SessionMediaJob>({ jobId: input.id }),
+	getSessionImage: ch(
+		"session:getImage",
+		"environment",
+		"read",
+	)<{ sessionId: string; imageId: string; revision: string }, ImageInput & { byteLength: number }>({
+		sessionId: input.id,
+		imageId: input.id,
+		revision: input.id,
+	}),
 	/** 首份完整历史已落到 renderer；解除启动期频道唤醒屏障 */
 	markSessionHistoryReady: ch(
 		"session:historyReady",
 		"environment",
 		"mutation",
-	)<{ sessionId: string }, void>({ sessionId: input.id }),
+	)<{ sessionId: string; hydrationToken: string }, void>({ sessionId: input.id, hydrationToken: input.id }),
 	/** 读取会话当前 todo 列表（无则空数组） */
 	getTodos: ch(
 		"session:getTodos",
@@ -297,7 +329,7 @@ export const SESSION_CHANNELS = {
 	exportSession: ch(
 		"session:export",
 		"environment",
-		"mutation",
+		"read",
 	)<{ sessionId: string; format: "html" | "jsonl" }, string>({
 		sessionId: input.id,
 		format: input.oneOf("html", "jsonl"),
@@ -653,6 +685,12 @@ export const SETTINGS_CHANNELS = {
 
 /** 应用域：窗口级功能（对话框/背景/更新/tabs/ui-state/git/外链等，多为非透传 handler） */
 export const APP_CHANNELS = {
+	getSessionSwitchFixtures: ch("app:sessionSwitchFixtures", "desktop", "read")<
+		void,
+		SessionSwitchFixture[]
+	>(),
+	beginSessionSwitchProbe: ch("app:beginSessionSwitchProbe", "desktop", "mutation")<void, void>(),
+	finishSessionSwitchProbe: ch("app:finishSessionSwitchProbe", "desktop", "read")<void, SessionSwitchProbe>(),
 	setTaskNotificationNavigationReady: ch("notifications:navigationReady", "desktop")<
 		{ ready: boolean },
 		void

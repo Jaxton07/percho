@@ -504,6 +504,22 @@ export const en: Messages = {
 		reveal: "Reveal in Finder",
 		copyPath: "Copy Path",
 	},
+	mediaPreview: {
+		title: "Preview screenshot compaction",
+		readOnly:
+			"Scans all branches in this session only; no transcript or media is changed. Backups are retained and are not counted as savings.",
+		refresh: "Preview again",
+		cancelled: "Scan cancelled; the original and media are unchanged.",
+		failed: "Read failed",
+		unsupported:
+			"The session version is unsupported or its header is invalid. Compaction is unavailable; the original is unchanged.",
+		noBenefit: "No eligible display images, or no estimated reduction of the active file.",
+		scanning: "Scanning in the background: {done} / {total}. Close to cancel; other sessions remain usable.",
+		summary:
+			"Estimated active file: {before} → {after}; {count} display images ({unique} unique); backup: {backup}; conservative additional peak: {peak}. Existing images may be reused; the estimate assumes all are new.",
+		preserved:
+			"Preserved {invalid} invalid lines; skipped {skipped} images that cannot be safely compacted. User attachments and read images stay unchanged.",
+	},
 	sessionMenu: {
 		copyDiagnostics: "Copy diagnostics",
 		delete: "Delete session",
@@ -623,6 +639,13 @@ export const en: Messages = {
 			version: "Version",
 			poweredBy: "Built on Pi Coding Agent",
 			sourceCode: "Source code & feedback",
+			switchDiagnosticsHint:
+				"Session diagnostics run only in an explicitly isolated synthetic test instance, never on regular sessions.",
+			switchDiagnosticsRun: "Run synthetic switch diagnostics (150 runs)",
+			switchDiagnosticsError:
+				"Could not run. Prepare synthetic fixtures and an isolated instance as described in the diagnostics guide; check this test instance's logs for failures.",
+			switchDiagnosticsDone: "Diagnostics complete. Results contain only timings, sizes and resource counts.",
+			switchDiagnosticsExport: "Export switch diagnostics",
 		},
 		models: {
 			providers: "Provider configuration",

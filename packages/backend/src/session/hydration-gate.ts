@@ -14,31 +14,34 @@ export class SessionHydrationGate {
 
 	constructor(private readonly timeoutMs = 15_000) {}
 
-	wait(sessionId: string): Promise<boolean> {
-		if (this.ready.has(sessionId)) return Promise.resolve(true);
-		const existing = this.pending.get(sessionId);
+	wait(sessionId: string, token = "legacy"): Promise<boolean> {
+		const key = JSON.stringify([sessionId, token]);
+		if (this.ready.has(key)) return Promise.resolve(true);
+		const existing = this.pending.get(key);
 		if (existing) return existing.promise;
 		let release = (_allowed: boolean) => {};
 		const promise = new Promise<boolean>((resolve) => {
 			release = resolve;
 		});
-		const timer = setTimeout(() => this.ack(sessionId), this.timeoutMs);
-		this.pending.set(sessionId, { promise, release, timer });
+		const timer = setTimeout(() => this.ack(sessionId, token), this.timeoutMs);
+		this.pending.set(key, { promise, release, timer });
 		return promise;
 	}
 
-	ack(sessionId: string): void {
-		this.ready.add(sessionId);
-		this.release(sessionId, true);
+	ack(sessionId: string, token = "legacy"): void {
+		const key = JSON.stringify([sessionId, token]);
+		this.ready.add(key);
+		this.release(key, true);
 	}
 
-	cancel(sessionId: string): void {
-		this.ready.delete(sessionId);
-		this.release(sessionId, false);
+	cancel(sessionId: string, token = "legacy"): void {
+		const key = JSON.stringify([sessionId, token]);
+		this.ready.delete(key);
+		this.release(key, false);
 	}
 
 	dispose(): void {
-		for (const id of this.pending.keys()) this.cancel(id);
+		for (const key of this.pending.keys()) this.release(key, false);
 		this.ready.clear();
 	}
 

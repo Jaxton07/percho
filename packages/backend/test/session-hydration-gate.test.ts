@@ -4,6 +4,24 @@ import { SessionHydrationGate } from "../src/session/hydration-gate";
 afterEach(() => vi.useRealTimers());
 
 describe("SessionHydrationGate", () => {
+	it("同ID重开后旧ACK/旧取消不能放行或取消新实例；图片版本不参与门控", async () => {
+		vi.useFakeTimers();
+		const gate = new SessionHydrationGate(100);
+		const old = gate.wait("same", "open-old");
+		gate.cancel("same", "open-old");
+		expect(await old).toBe(false);
+		const release = vi.fn();
+		const fresh = gate.wait("same", "open-new").then(release);
+		gate.ack("same", "open-old");
+		gate.cancel("same", "open-old");
+		gate.ack("same");
+		await Promise.resolve();
+		expect(release).not.toHaveBeenCalled();
+		gate.ack("same", "open-new");
+		await fresh;
+		expect(release).toHaveBeenCalledExactlyOnceWith(true);
+		gate.dispose();
+	});
 	it("显式 ACK 解除同一会话的等待；其它会话不受影响", async () => {
 		const gate = new SessionHydrationGate();
 		const a = gate.wait("a");

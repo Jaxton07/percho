@@ -1,8 +1,9 @@
-import type { ImageInput } from "@percho/shared";
+import { type DisplayImage, environmentEntityKey, type ImageInput } from "@percho/shared";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
 	ACTIVE_SLOT_LIMIT,
 	CACHE_BYTE_LIMIT,
+	CACHE_ENTRY_LIMIT,
 	TASK_TIMEOUT_MS,
 	THUMBNAIL_MAX_SIDE,
 	WAITING_LIMIT,
@@ -101,7 +102,13 @@ function workerOf(workers: FakeWorker[]): FakeWorker {
 	return worker;
 }
 
-function fakeService(options: { timeoutMs?: number; createWorker?: () => Worker } = {}) {
+function fakeService(
+	options: {
+		timeoutMs?: number;
+		createWorker?: () => Worker;
+		resolveImage?: (image: DisplayImage, signal?: AbortSignal) => Promise<ImageInput>;
+	} = {},
+) {
 	const workers: FakeWorker[] = [];
 	const createdUrls: string[] = [];
 	const revokedUrls: string[] = [];
@@ -122,9 +129,180 @@ function fakeService(options: { timeoutMs?: number; createWorker?: () => Worker 
 			revokedUrls.push(url);
 		},
 		timeoutMs: options.timeoutMs,
+		resolveImage: options.resolveImage,
 	});
 	return { service, workers, createdUrls, revokedUrls, worker: () => workerOf(workers) };
 }
+
+describe("跨切换的有界引用缩略图", () => {
+	const owned = new Set<ReturnType<typeof createThumbnailService>>();
+	afterEach(() => {
+		for (const service of owned) service.reset();
+		owned.clear();
+	});
+	const ref = (ownerSessionId = "source", revision = "version", id = "entry:actual:show:0") => ({
+		kind: "reference" as const,
+		ownerSessionId,
+		revision,
+		id,
+		mimeType: "image/png",
+	});
+	it("远端换代只清该环境缓存，本机缓存和另一远端活跃图不受影响", async () => {
+		const resolveImage = vi.fn(async () => image("raw")),
+			h = fakeService({ resolveImage });
+		owned.add(h.service);
+		const localRef = ref("local"),
+			a = { kind: "ssh" as const, connectionId: "ssh", environmentId: "a" },
+			b = { kind: "ssh" as const, connectionId: "ssh", environmentId: "b" };
+		const local = h.service.acquire(localRef);
+		await Promise.resolve();
+		h.worker().completeLast({ width: 123 });
+		local.release();
+		const remote = h.service.acquire(ref(environmentEntityKey(a, "same")));
+		await Promise.resolve();
+		h.worker().completeLast({ width: 234 });
+		remote.release();
+		const other = h.service.acquire(ref(environmentEntityKey(b, "same")));
+		await Promise.resolve();
+		h.worker().completeLast({ width: 345 });
+		const url = other.getSnapshot().url;
+		h.service.invalidateEnvironment(a);
+		expect(h.service.stats()).toMatchObject({ cacheEntries: 1, active: 1, urls: 1 });
+		expect(other.getSnapshot().url).toBe(url);
+		const reused = h.service.acquire({ ...localRef });
+		expect(reused.getSnapshot().width).toBe(123);
+		expect(resolveImage).toHaveBeenCalledTimes(3);
+		reused.release();
+		other.release();
+	});
+	it("远端换代取消未完成读取，旧回应不复活资源，也不阻止本机解码", async () => {
+		let finish!: (value: ImageInput) => void;
+		const remote = { kind: "ssh" as const, connectionId: "ssh", environmentId: "old" };
+		const remoteRef = ref(environmentEntityKey(remote, "same"));
+		const h = fakeService({
+			resolveImage: (input) =>
+				input === remoteRef
+					? new Promise((resolve) => {
+							finish = resolve;
+						})
+					: Promise.resolve(image("local")),
+		});
+		owned.add(h.service);
+		const old = h.service.acquire(remoteRef),
+			local = h.service.acquire(ref("local"));
+		h.service.invalidateEnvironment(remote);
+		await Promise.resolve();
+		h.worker().completeLast();
+		const url = local.getSnapshot().url;
+		finish(image("late"));
+		await Promise.resolve();
+		expect(local.getSnapshot().url).toBe(url);
+		expect(old.getSnapshot().status).toBe("idle");
+		expect(h.service.stats()).toMatchObject({ active: 1, urls: 1, outstandingRequests: 0 });
+		old.release();
+		local.release();
+	});
+
+	it("取消视图只撤URL/句柄，重建相同来源引用命中Blob，不再取图解码", async () => {
+		const resolveImage = vi.fn(async () => image("raw"));
+		const h = fakeService({ resolveImage });
+		owned.add(h.service);
+		const first = h.service.acquire(ref());
+		await Promise.resolve();
+		h.worker().completeLast();
+		const firstUrl = first.getSnapshot().url;
+		h.service.cancelView();
+		expect(h.service.stats()).toMatchObject({ keys: 0, urls: 0, cacheEntries: 1, inFlight: false });
+		expect(first.getSnapshot().status).toBe("idle");
+		expect(h.revokedUrls).toContain(firstUrl);
+		const second = h.service.acquire(ref());
+		expect(second.getSnapshot().status).toBe("ready");
+		expect(second.getSnapshot().url).not.toBe(firstUrl);
+		expect(resolveImage).toHaveBeenCalledOnce();
+		expect(h.workers).toHaveLength(1);
+		expect(h.service.stats().cacheHits).toBe(1);
+		first.release();
+		expect(second.getSnapshot().status).toBe("ready");
+		second.release();
+		h.service.reset();
+		expect(h.service.stats().cacheEntries).toBe(0);
+	});
+	it("同entry不同owner或版本不共享；删除只失效目标owner，不影响其它缓存", async () => {
+		const resolveImage = vi.fn(async () => image("raw"));
+		const h = fakeService({ resolveImage });
+		owned.add(h.service);
+		for (const owner of ["first", "second"]) {
+			const handle = h.service.acquire(ref(owner));
+			await Promise.resolve();
+			h.worker().completeLast();
+			handle.release();
+		}
+		h.service.cancelView();
+		expect(h.service.stats().cacheEntries).toBe(2);
+		h.service.invalidateOwner("first");
+		expect(h.service.stats().cacheEntries).toBe(1);
+		const kept = h.service.acquire(ref("second"));
+		expect(kept.getSnapshot().status).toBe("ready");
+		kept.release();
+		const changed = h.service.acquire(ref("second", "new-version"));
+		await Promise.resolve();
+		h.worker().completeLast();
+		changed.release();
+		expect(resolveImage).toHaveBeenCalledTimes(3);
+	});
+	it("持续换代的大Blob仍受16MiB约束，旧句柄快照稳定且没有多worker或身份残留", async () => {
+		const h = fakeService({ resolveImage: async () => image("raw") });
+		owned.add(h.service);
+		for (let generation = 0; generation < 24; generation++) {
+			const handle = h.service.acquire(ref(`owner-${generation}`));
+			const loading = handle.getSnapshot();
+			expect(handle.getSnapshot()).toBe(loading);
+			await Promise.resolve();
+			h.worker().completeLast({ bytes: 2 * 1024 * 1024 });
+			const ready = handle.getSnapshot();
+			expect(handle.getSnapshot()).toBe(ready);
+			h.service.cancelView();
+			const idle = handle.getSnapshot();
+			expect(handle.getSnapshot()).toBe(idle);
+			expect(idle.status).toBe("idle");
+			handle.release();
+			const stats = h.service.stats();
+			expect(stats).toMatchObject({
+				keys: 0,
+				urls: 0,
+				active: 0,
+				waiting: 0,
+				inFlight: false,
+				outstandingRequests: 0,
+			});
+			expect(stats.cacheEntries).toBeLessThanOrEqual(8);
+			expect(stats.cacheBytes).toBeLessThanOrEqual(CACHE_BYTE_LIMIT);
+			expect(stats.workerCreated - stats.workerTerminated).toBeLessThanOrEqual(1);
+		}
+		expect(h.service.stats().cacheEntries).toBe(8);
+		h.service.reset();
+		expect(h.service.stats()).toMatchObject({ keys: 0, cacheEntries: 0, cacheBytes: 0 });
+	});
+	it("跨视图缓存的条数与字节数仍有界；被淘汰项可重新读取", async () => {
+		const resolveImage = vi.fn(async () => image("raw"));
+		const h = fakeService({ resolveImage });
+		owned.add(h.service);
+		for (let i = 0; i <= CACHE_ENTRY_LIMIT; i++) {
+			const handle = h.service.acquire(ref("source", "v", `entry:e${i}:show:0`));
+			await Promise.resolve();
+			h.worker().completeLast();
+			handle.release();
+		}
+		h.service.cancelView();
+		expect(h.service.stats().cacheEntries).toBe(CACHE_ENTRY_LIMIT);
+		expect(h.service.stats().cacheBytes).toBeLessThanOrEqual(CACHE_BYTE_LIMIT);
+		const evicted = h.service.acquire(ref("source", "v", "entry:e0:show:0"));
+		await Promise.resolve();
+		h.worker().completeLast();
+		evicted.release();
+		expect(resolveImage).toHaveBeenCalledTimes(CACHE_ENTRY_LIMIT + 2);
+	});
+});
 
 describe("ActiveSlotRegistry（活跃 slot 与等待队列的纯策略）", () => {
 	it("活跃 slot 上限：满了就没有下一个任务", () => {

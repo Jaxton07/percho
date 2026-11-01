@@ -8,6 +8,7 @@ import {
 } from "@percho/shared";
 import { create } from "zustand";
 import { getPi } from "../api";
+import { invalidateImageOwner } from "../components/chat/history-image/image-lifetime";
 import { getExecutionApi } from "../environment-api";
 import { initDailyDir, isDailyCwd } from "../lib/daily";
 import { pathLastSegment } from "../lib/path-display";
@@ -205,6 +206,7 @@ export const useProjectsStore = create<ProjectsStore>((set, get) => {
 				sessionId: session.sessionId,
 				sessionFile: session.sessionFile,
 			});
+			invalidateImageOwner(session.sessionId);
 			// 置顶列表清理：会话没了就没人能取消置顶，留着会变成永久残留 id
 			useUiPreferencesStore.getState().unpin(session.sessionId);
 			// D7：权限模式记录同理（与置顶并列；卸载/关会话**不**清，那是「记住」的意义）

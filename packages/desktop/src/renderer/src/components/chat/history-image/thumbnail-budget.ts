@@ -21,8 +21,9 @@ export interface ActiveSlotLimits {
 	waiting: number;
 }
 
+export type ThumbnailKey = number | string;
 interface SlotRecord {
-	key: number;
+	key: ThumbnailKey;
 	/** 可见性按**每个订阅者**汇总：>0 即视为可见（不可被后订阅的缓冲降级） */
 	visibleRefs: number;
 	state: SlotState;
@@ -43,13 +44,13 @@ interface SlotRecord {
  *    但不放宽上限。
  */
 export class ActiveSlotRegistry {
-	private records = new Map<number, SlotRecord>();
+	private records = new Map<ThumbnailKey, SlotRecord>();
 	private seq = 0;
 
 	constructor(private limits: ActiveSlotLimits = { active: ACTIVE_SLOT_LIMIT, waiting: WAITING_LIMIT }) {}
 
 	/** 订阅（同一 key 多次订阅只算一次资源需求；返回是否新建） */
-	subscribe(key: number, visible: boolean): { state: SlotState; isNew: boolean } {
+	subscribe(key: ThumbnailKey, visible: boolean): { state: SlotState; isNew: boolean } {
 		const existing = this.records.get(key);
 		if (existing) {
 			existing.subscribers += 1;
@@ -69,7 +70,7 @@ export class ActiveSlotRegistry {
 	}
 
 	/** 某个句柄的可见性变化：只动可见性汇总与（idle 时的）入队，不碰 loading/ready/error */
-	updateHandleVisibility(key: number, wasVisible: boolean, isVisible: boolean): void {
+	updateHandleVisibility(key: ThumbnailKey, wasVisible: boolean, isVisible: boolean): void {
 		const record = this.records.get(key);
 		if (!record || wasVisible === isVisible) return;
 		if (isVisible) {
@@ -80,7 +81,7 @@ export class ActiveSlotRegistry {
 	}
 
 	/** 返回 true 表示该 key 已无订阅者（调用方负责释放资源） */
-	unsubscribe(key: number, visible: boolean): boolean {
+	unsubscribe(key: ThumbnailKey, visible: boolean): boolean {
 		const record = this.records.get(key);
 		if (!record) return true;
 		record.subscribers -= 1;
@@ -91,7 +92,7 @@ export class ActiveSlotRegistry {
 	}
 
 	/** 重试：**只对 error 生效**（loading/ready/waiting 的重复调用是 no-op） */
-	requeue(key: number): boolean {
+	requeue(key: ThumbnailKey): boolean {
 		const record = this.records.get(key);
 		if (record?.state !== "error") return false;
 		record.state = "waiting";
@@ -100,7 +101,7 @@ export class ActiveSlotRegistry {
 		return true;
 	}
 
-	setState(key: number, state: SlotState): void {
+	setState(key: ThumbnailKey, state: SlotState): void {
 		const record = this.records.get(key);
 		if (record) record.state = state;
 	}
@@ -143,7 +144,7 @@ export class ActiveSlotRegistry {
 	}
 
 	/** 下一个该跑的任务：可见优先，其次 FIFO；没有则 null（不改状态，由调用方标记 loading） */
-	nextWaiting(): number | null {
+	nextWaiting(): ThumbnailKey | null {
 		const best = this.pickWaiting();
 		return best ? best.key : null;
 	}
@@ -152,7 +153,7 @@ export class ActiveSlotRegistry {
 	 * 可被回收的 ready 项：**非可见**且最老。用于「真实可见等 slot 但预算已满」时让位
 	 * （调用方负责撤 URL、把 Blob 放回非活跃 LRU、并把状态退回占位）。
 	 */
-	oldestEvictableReady(): number | null {
+	oldestEvictableReady(): ThumbnailKey | null {
 		let best: SlotRecord | null = null;
 		for (const record of this.records.values()) {
 			if (record.state !== "ready" || record.visibleRefs > 0) continue;
@@ -161,26 +162,30 @@ export class ActiveSlotRegistry {
 		return best ? best.key : null;
 	}
 
-	state(key: number): SlotState | null {
+	state(key: ThumbnailKey): SlotState | null {
 		return this.records.get(key)?.state ?? null;
 	}
 
-	visibility(key: number): ThumbnailVisibility | null {
+	visibility(key: ThumbnailKey): ThumbnailVisibility | null {
 		const record = this.records.get(key);
 		if (!record) return null;
 		return record.visibleRefs > 0 ? "visible" : "buffer";
 	}
 
-	subscribers(key: number): number {
+	subscribers(key: ThumbnailKey): number {
 		return this.records.get(key)?.subscribers ?? 0;
 	}
 
-	visibleRefs(key: number): number {
+	visibleRefs(key: ThumbnailKey): number {
 		return this.records.get(key)?.visibleRefs ?? 0;
 	}
 
-	keys(): number[] {
+	keys(): ThumbnailKey[] {
 		return [...this.records.keys()];
+	}
+
+	remove(key: ThumbnailKey): void {
+		this.records.delete(key);
 	}
 
 	/** 可见项不会被计数“藏起来”：visible 与 buffer 分列，便于断言预算真实性 */
@@ -304,19 +309,19 @@ export interface ThumbnailCacheLimits {
  * （spec：禁止 pin 导致 16MiB 上限名存实亡）。
  */
 export class ThumbnailCache {
-	private items = new Map<number, ThumbnailCacheEntry>();
-	private order: number[] = [];
+	private items = new Map<ThumbnailKey, ThumbnailCacheEntry>();
+	private order: ThumbnailKey[] = [];
 	private bytes = 0;
 
 	constructor(
 		private limits: ThumbnailCacheLimits = { entries: CACHE_ENTRY_LIMIT, bytes: CACHE_BYTE_LIMIT },
 	) {}
 
-	has(key: number): boolean {
+	has(key: ThumbnailKey): boolean {
 		return this.items.has(key);
 	}
 
-	get(key: number): ThumbnailCacheEntry | undefined {
+	get(key: ThumbnailKey): ThumbnailCacheEntry | undefined {
 		const entry = this.items.get(key);
 		if (!entry) return undefined;
 		this.touch(key);
@@ -324,7 +329,7 @@ export class ThumbnailCache {
 	}
 
 	/** 返回是否真的缓存了（单条超字节上限时 false，不为它挤掉整个缓存） */
-	set(key: number, entry: ThumbnailCacheEntry): boolean {
+	set(key: ThumbnailKey, entry: ThumbnailCacheEntry): boolean {
 		if (entry.blob.size > this.limits.bytes) return false;
 		const previous = this.items.get(key);
 		if (previous) {
@@ -339,7 +344,7 @@ export class ThumbnailCache {
 		return this.items.has(key);
 	}
 
-	delete(key: number): void {
+	delete(key: ThumbnailKey): void {
 		const entry = this.items.get(key);
 		if (!entry) return;
 		this.bytes -= entry.blob.size;
@@ -362,7 +367,11 @@ export class ThumbnailCache {
 		};
 	}
 
-	private touch(key: number): void {
+	keys(): ThumbnailKey[] {
+		return [...this.items.keys()];
+	}
+
+	private touch(key: ThumbnailKey): void {
 		this.order = this.order.filter((item) => item !== key);
 		this.order.push(key);
 	}

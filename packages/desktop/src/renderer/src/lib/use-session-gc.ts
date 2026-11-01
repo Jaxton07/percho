@@ -54,6 +54,7 @@ export function useSessionGc(): void {
 								sessionId: session.sessionId,
 								lastUsedAt: state.lastUsedAt[session.sessionId] ?? 0,
 								messageCount: session.messageCount,
+								readOnly: session.readOnly,
 							})),
 						};
 					},

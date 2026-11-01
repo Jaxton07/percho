@@ -1,8 +1,10 @@
 import { parseSessionEntries, type SessionEntry, type SessionManager } from "@earendil-works/pi-coding-agent";
 import {
 	composerDocumentText,
+	displayImagesFromDetails,
 	extractSubagentRuns,
 	type ImageInput,
+	isReferenceImage,
 	parseExpandedSkillInvocation,
 	readComposerDocument,
 	type SessionMessage,
@@ -28,6 +30,8 @@ export interface ContentBlock {
 
 export interface RawMessage {
 	role: string;
+	/** 由 entry 外壳注入，绝不从 message 的同名持久字段采信。 */
+	sourceEntryId?: string;
 	perchoInput?: unknown;
 	content?: string | ContentBlock[];
 	toolCallId?: string;
@@ -50,23 +54,7 @@ export interface RawMessage {
 }
 
 /** show_image toolResult.details → { images, paths }（兼容旧单图 { path, image } 形状；不符返回 null） */
-function showImageFromDetails(details: unknown): { images: ImageInput[]; paths: string[] } | null {
-	const d = details as { paths?: unknown; images?: unknown; path?: unknown; image?: unknown } | undefined;
-	const toImage = (raw: unknown): ImageInput | null => {
-		const img = raw as { data?: unknown; mimeType?: unknown } | undefined;
-		if (typeof img?.data !== "string" || typeof img?.mimeType !== "string") return null;
-		return { data: img.data, mimeType: img.mimeType };
-	};
-	if (Array.isArray(d?.images)) {
-		const images = d.images.map(toImage).filter((img): img is ImageInput => img !== null);
-		if (images.length === 0) return null;
-		const paths = Array.isArray(d?.paths) ? d.paths.filter((p): p is string => typeof p === "string") : [];
-		return { images, paths };
-	}
-	const legacy = toImage(d?.image);
-	if (!legacy) return null;
-	return { images: [legacy], paths: typeof d?.path === "string" ? [d.path] : [] };
-}
+const showImageFromDetails = displayImagesFromDetails;
 
 export function blockText(content: string | ContentBlock[] | undefined): string {
 	if (typeof content === "string") return content;
@@ -201,15 +189,18 @@ export function readSessionMessagesFromContent(content: string): SessionMessage[
  * compaction entry 也按分支顺序插回去：压缩分割线的位置就是 entry 在树上的位置
  * （压缩发生时 entry 追加在当时的 leaf 之后），重开会话才能看到当时压过。
  */
-export function toBranchSessionMessages(branch: readonly SessionEntry[]): SessionMessage[] {
+export function toBranchSessionMessages(
+	branch: readonly SessionEntry[],
+	ownerSessionId?: string,
+): SessionMessage[] {
 	// 摊平成「消息 + 压缩标记」混合流后再走 toSessionMessages：toolResult 靠 toolCallId 配对，
 	// 标记插在中间不影响回填；assignEntryIds 只认 user/assistant，自动跳过标记
 	const raw: unknown[] = [];
 	for (const entry of branch) {
-		if (entry.type === "message") raw.push(entry.message);
+		if (entry.type === "message") raw.push({ ...entry.message, sourceEntryId: entry.id });
 		else if (entry.type === "compaction") raw.push(compactionMarker(entry));
 	}
-	const messages = toSessionMessages(raw);
+	const messages = toSessionMessages(raw, ownerSessionId);
 	assignEntryIds(messages, branch);
 	return messages;
 }
@@ -229,7 +220,10 @@ function compactionMarker(entry: Extract<SessionEntry, { type: "compaction" }>):
  * pi 消息 → 中立 SessionMessage 列表。
  * toolResult 消息单独出现（带 toolCallId），把输出回填到对应工具卡片。
  */
-export function toSessionMessages(rawMessages: readonly unknown[]): SessionMessage[] {
+export function toSessionMessages(
+	rawMessages: readonly unknown[],
+	ownerSessionId?: string,
+): SessionMessage[] {
 	const out: SessionMessage[] = [];
 	const toolById = new Map<string, SessionToolCall>();
 	for (const raw of rawMessages as RawMessage[]) {
@@ -249,6 +243,7 @@ export function toSessionMessages(rawMessages: readonly unknown[]): SessionMessa
 			const invocation = document ? null : parseExpandedSkillInvocation(sourceText);
 			out.push({
 				role: "user",
+				...(raw.sourceEntryId ? { entryId: raw.sourceEntryId } : {}),
 				text: document ? composerDocumentText(document) : invocation ? (invocation.args ?? "") : sourceText,
 				...(document ? { document, sourceText } : {}),
 				thinking: "",
@@ -329,7 +324,11 @@ export function toSessionMessages(rawMessages: readonly unknown[]): SessionMessa
 					if (shown) {
 						out.push({
 							role: "image",
-							images: shown.images,
+							images: shown.images.map((image) =>
+								isReferenceImage(image) && ownerSessionId ? { ...image, ownerSessionId } : image,
+							),
+							...(raw.sourceEntryId ? { entryId: raw.sourceEntryId } : {}),
+							...(ownerSessionId ? { ownerSessionId } : {}),
 							paths: shown.paths,
 							timestamp: raw.timestamp ?? Date.now(),
 						});
@@ -383,7 +382,7 @@ export function assignEntryIds(messages: SessionMessage[], branch: readonly Sess
 		}
 		if (message.role === "user") {
 			const id = userByTimestamp.get(message.timestamp)?.shift();
-			if (id) message.entryId = id;
+			if (id && !message.entryId) message.entryId = id;
 		}
 	}
 }

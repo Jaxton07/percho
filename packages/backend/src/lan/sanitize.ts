@@ -63,7 +63,7 @@ function sanitizeContentBlocks(content: unknown): unknown {
 	if (!Array.isArray(content)) return content;
 	return content.map((block: unknown) => {
 		if (block && typeof block === "object" && (block as { type?: string }).type === "image") {
-			return { ...(block as Record<string, unknown>), ...PLACEHOLDER_IMAGE };
+			return { type: "image", ...PLACEHOLDER_IMAGE };
 		}
 		return block;
 	});
@@ -98,11 +98,11 @@ function sanitizeAgentMessage(message: unknown): unknown {
 /** 历史消息 sanitize（snapshot transcripts 用）。 */
 export function sanitizeSessionMessage(message: SessionMessage): SessionMessage {
 	if (message.role === "user") {
-		const { sourceText: _st, document: _doc, ...rest } = message;
+		const { sourceText: _st, document: _doc, entryId: _entry, ...rest } = message;
 		return { ...rest, images: placeholderImages(message.images) };
 	}
 	if (message.role === "assistant") {
-		const { sourceText: _st, ...rest } = message;
+		const { sourceText: _st, entryId: _entry, ...rest } = message;
 		return { ...rest, images: placeholderImages(message.images) };
 	}
 	if (message.role === "compaction") {
@@ -111,7 +111,8 @@ export function sanitizeSessionMessage(message: SessionMessage): SessionMessage 
 	}
 	if (message.role === "image") {
 		// show_image 历史：占位保留（客户端显示图片占位），本地路径剥除
-		return { ...message, images: placeholderImages(message.images), paths: [] };
+		const { ownerSessionId: _owner, entryId: _entry, ...rest } = message;
+		return { ...rest, images: placeholderImages(message.images), paths: [] };
 	}
 	// subagent 结果消息：剥本地路径
 	return {

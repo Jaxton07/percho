@@ -46,7 +46,15 @@ export function messagesToUIMessages(messages: SessionMessage[]): UIMessage[] {
 		}
 		if (m.role === "image") {
 			flushError();
-			ui.push({ kind: "image", id, images: m.images, paths: m.paths, timestamp: m.timestamp });
+			ui.push({
+				kind: "image",
+				id,
+				images: m.images,
+				paths: m.paths,
+				timestamp: m.timestamp,
+				...(m.entryId ? { entryId: m.entryId } : {}),
+				...(m.ownerSessionId ? { ownerSessionId: m.ownerSessionId } : {}),
+			});
 			continue;
 		}
 		if (m.role === "subagent") {

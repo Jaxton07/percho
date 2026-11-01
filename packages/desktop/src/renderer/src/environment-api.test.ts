@@ -27,8 +27,10 @@ const fixture = vi.hoisted(() => {
 			createSession: vi.fn(async () => meta),
 			openSession: vi.fn(async () => meta),
 			getSessionMessages: vi.fn(async (): Promise<unknown[]> => []),
+			getSessionImage: vi.fn(async () => ({ data: "cmVtb3Rl", mimeType: "image/png" })),
 			setViewedSubagent: vi.fn(async () => {}),
 			getSessionBaseline: vi.fn(async () => ({
+				hydrationToken: "open-token",
 				meta,
 				sequence: 0,
 				permissionMode: "default",
@@ -109,6 +111,53 @@ import { useUiPreferencesStore } from "./stores/ui-preferences";
 const remote: EnvironmentRef = { kind: "ssh", connectionId: "company", environmentId: "remote-data" };
 const disposers: Array<() => void> = [];
 
+describe("图片引用的执行环境边界", () => {
+	it("历史引用绑定返回它的环境，混合内联内容不被改造成定位符", async () => {
+		const reference = {
+			kind: "reference",
+			ownerSessionId: "same-id",
+			id: "entry:r:show:0",
+			revision: "version",
+			mimeType: "image/png",
+		};
+		fixture.remote.getSessionMessages.mockResolvedValueOnce([
+			{
+				role: "image",
+				timestamp: 1,
+				images: [reference, { data: "AQID", mimeType: "image/png" }],
+				paths: [],
+			},
+		]);
+		const messages = await getExecutionApi(remote).getSessionMessages({
+			sessionId: environmentEntityKey(remote, "same-id"),
+			imageMode: "references",
+		});
+		expect(messages.find((message) => message.role === "image")?.images).toEqual([
+			{ ...reference, ownerSessionId: environmentEntityKey(remote, "same-id") },
+			{ data: "AQID", mimeType: "image/png" },
+		]);
+		expect(fixture.local.getSessionMessages).not.toHaveBeenCalled();
+	});
+	it("同名本机/远端会话单图只走引用所属环境，失败没有本机或路径回退", async () => {
+		const api = getExecutionApi(remote),
+			args = {
+				sessionId: environmentEntityKey(remote, "same-id"),
+				imageId: "entry:r:show:0",
+				revision: "version",
+			};
+		expect(await api.getSessionImage(args)).toEqual({ data: "cmVtb3Rl", mimeType: "image/png" });
+		expect(fixture.remote.getSessionImage).toHaveBeenCalledWith({ ...args, sessionId: "same-id" });
+		fixture.remote.getSessionImage.mockRejectedValueOnce(new Error("remote missing"));
+		await expect(api.getSessionImage(args)).rejects.toThrow("remote missing");
+		expect(fixture.local.getSessionImage).not.toHaveBeenCalled();
+		const other = { ...remote, environmentId: "another" };
+		await expect(
+			api.getSessionImage({ ...args, sessionId: environmentEntityKey(other, "same-id") }),
+		).rejects.toThrow();
+		expect(fixture.remote.getSessionImage).toHaveBeenCalledTimes(2);
+	});
+});
+
 beforeEach(() => {
 	vi.clearAllMocks();
 	fixture.local.events.clear();
@@ -116,6 +165,7 @@ beforeEach(() => {
 	fixture.local.permissions.clear();
 	fixture.remote.permissions.clear();
 	fixture.remote.getSessionMessages.mockResolvedValue([]);
+	fixture.remote.getSessionImage.mockReset().mockResolvedValue({ data: "cmVtb3Rl", mimeType: "image/png" });
 	for (const session of useSessionsStore.getState().sessions) clearSessionHistory(session.sessionId);
 	useSessionsStore.setState({
 		sessions: [],
@@ -219,8 +269,14 @@ describe("session ownership through the actual renderer execution boundary", () 
 		expect(result.ok).toBe(true);
 		expect(useSessionsStore.getState().permissionModes[sessionId]).toBeUndefined();
 		expect(fixture.remote.setPermissionMode).not.toHaveBeenCalled();
-		expect(fixture.remote.getSessionBaseline).toHaveBeenCalledExactlyOnceWith({ sessionId: "same-id" });
-		expect(fixture.remote.markSessionHistoryReady).toHaveBeenCalledExactlyOnceWith({ sessionId: "same-id" });
+		expect(fixture.remote.getSessionBaseline).toHaveBeenCalledExactlyOnceWith({
+			sessionId: "same-id",
+			imageMode: "references",
+		});
+		expect(fixture.remote.markSessionHistoryReady).toHaveBeenCalledExactlyOnceWith({
+			sessionId: "same-id",
+			hydrationToken: "open-token",
+		});
 	});
 
 	it("installs a remote baseline and its later increments without replacing the selected local transcript", async () => {

@@ -3,6 +3,7 @@ import { useEffect, useState } from "react";
 import { getPi } from "../../api";
 import { useT } from "../../i18n";
 import { useUpdateStore } from "../../stores/update";
+import { SessionSwitchDiagnostics } from "./SessionSwitchDiagnostics";
 import { UpdateHelp } from "./UpdateHelp";
 
 /** 关于面板：应用标识 + 软件版本 + 检查更新 + 仓库入口，居中展示 */
@@ -99,6 +100,7 @@ export function AboutPanel() {
 					{t("settings.about.sourceCode")}
 				</button>
 			</div>
+			<SessionSwitchDiagnostics />
 			{statusText && <p className="mt-1 text-ui-11 text-ink-faint">{statusText}</p>}
 			{info && (
 				<UpdateHelp diagnostics={diagnostics} windows={info.platform === "win32"} repoUrl={info.repoUrl} />

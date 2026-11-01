@@ -1,6 +1,8 @@
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
-import { join, resolve } from "node:path";
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { dirname, join, resolve } from "node:path";
+import { PassThrough } from "node:stream";
 import { type AssistantMessage, createAssistantMessageEventStream, type Model } from "@earendil-works/pi-ai";
+import { streamSimple } from "@earendil-works/pi-ai/api/openai-completions";
 import {
 	type AgentSession,
 	createAgentSession,
@@ -11,28 +13,37 @@ import {
 	type ModelRuntime,
 	SessionManager,
 	SettingsManager,
+	type ToolDefinition,
 } from "@earendil-works/pi-coding-agent";
-import type { ComposerDocument } from "@percho/shared";
+import { type ComposerDocument, SESSION_CHANNELS } from "@percho/shared";
+import { Type } from "typebox";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { sanitizeSessionEvent, sanitizeSessionMessage } from "../src/lan/sanitize";
 import { makePermissionGateExtension } from "../src/permissions/extension";
 import { PiBackend } from "../src/pi-backend";
+import { RuntimeWriter, readRuntimeFrames } from "../src/runtime/frames";
 import {
 	bindComposerInputBridge,
 	createComposerInputBridge,
 	projectComposerMessage,
 	skillResourceId,
 } from "../src/session/composer-input";
+import { prepareMediaFork } from "../src/session/media-fork";
+import { SessionMediaStore } from "../src/session/media-store";
 import { toBranchSessionMessages } from "../src/session/messages";
 import type { RegisteredSession, SessionRegistry } from "../src/session/registry";
 import { emitSessionShutdown } from "../src/session/shutdown";
+import { beginSessionSwitchProbe, finishSessionSwitchProbe } from "../src/session/switch-diagnostics";
 import { createCompactionRequestPolicy } from "../src/tools/compaction-guard/request-policy";
 
 const roots: string[] = [];
 const sessions: AgentSession[] = [];
-afterEach(() => {
+const backends: PiBackend[] = [];
+afterEach(async () => {
+	for (const backend of backends.splice(0)) await backend.dispose();
 	for (const session of sessions.splice(0)) session.dispose();
 	for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true });
+	vi.unstubAllEnvs();
 });
 
 const model: Model<"openai-completions"> = {
@@ -41,7 +52,7 @@ const model: Model<"openai-completions"> = {
 	provider: "test",
 	api: "openai-completions",
 	baseUrl: "https://example.invalid",
-	input: ["text"],
+	input: ["text", "image"],
 	reasoning: false,
 	contextWindow: 128_000,
 	maxTokens: 1024,
@@ -51,16 +62,18 @@ const model: Model<"openai-completions"> = {
 async function fixture(
 	extension: InlineExtension | ((paths: { agentDir: string; cwd: string }) => InlineExtension[]),
 	noTools: "all" | "builtin" = "all",
+	providedManager?: SessionManager,
 ) {
 	const fixtureRoot = resolve("../../.local/tmp/sdk-lifecycle");
 	mkdirSync(fixtureRoot, { recursive: true });
 	const root = mkdtempSync(join(fixtureRoot, "run-"));
 	roots.push(root);
-	const cwd = join(root, "project"),
+	const cwd = providedManager?.getCwd() ?? join(root, "project"),
 		agentDir = join(root, "agent");
-	mkdirSync(cwd);
+	mkdirSync(cwd, { recursive: true });
 	mkdirSync(agentDir);
-	mkdirSync(join(cwd, "fixture-skills"));
+	vi.stubEnv("PI_CODING_AGENT_DIR", agentDir);
+	mkdirSync(join(cwd, "fixture-skills"), { recursive: true });
 	const composer = createComposerInputBridge();
 	const settingsManager = SettingsManager.inMemory({
 		compaction: { enabled: false },
@@ -91,7 +104,7 @@ async function fixture(
 		settingsManager,
 		resourceLoader,
 		noTools,
-		sessionManager: SessionManager.create(cwd, join(root, "sessions")),
+		sessionManager: providedManager ?? SessionManager.create(cwd, join(root, "sessions")),
 		modelRuntime: {
 			getModel: () => model,
 			hasConfiguredAuth: () => true,
@@ -157,6 +170,264 @@ async function fixture(
 }
 
 describe("SDK 1.4 real offline run lifecycle", () => {
+	it("诊断开关不改变真实SDK模型消息或扩展触发次数", async () => {
+		const run = async (enabled: boolean) => {
+			let starts = 0;
+			if (enabled) beginSessionSwitchProbe();
+			try {
+				const f = await fixture({
+					name: "diagnostic-passive",
+					factory: (pi) => {
+						pi.on("before_agent_start", () => {
+							starts++;
+						});
+					},
+				});
+				await f.session.prompt("same synthetic request");
+				return {
+					starts,
+					requests: f.requests.map((request) =>
+						(request as { role: string; content: unknown }[]).map(({ role, content }) => ({ role, content })),
+					),
+				};
+			} finally {
+				finishSessionSwitchProbe();
+			}
+		};
+		const disabled = await run(false),
+			enabled = await run(true);
+		expect(enabled).toEqual(disabled);
+		expect(enabled.starts).toBe(1);
+		expect(enabled.requests).toHaveLength(1);
+	});
+	it("原字节show_image新写入只持久化私有asset引用；真实provider编码仍只发送轻量文本", async () => {
+		let media!: SessionMediaStore, backend!: PiBackend;
+		const modeRef = { current: "default" as const };
+		const bytes = Buffer.from(
+			"iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR4AWP4z8DwHwAFAAH/e+m+7wAAAABJRU5ErkJggg==",
+			"base64",
+		);
+		const f = await fixture(({ agentDir }) => {
+			media = new SessionMediaStore(join(agentDir, "session-media"));
+			backend = new PiBackend({
+				projectTrust: false,
+				permissionGates: false,
+				webFetch: false,
+				sessionMediaStore: media,
+			});
+			backends.push(backend);
+			const tools = (
+				backend as unknown as {
+					buildCustomTools(
+						gate: unknown,
+						builtin: boolean,
+						getMode: () => string,
+						mode: typeof modeRef,
+					): ToolDefinition[];
+				}
+			).buildCustomTools({}, false, () => "default", modeRef);
+			const tool = tools.find((tool) => tool.name === "show_image");
+			if (!tool) throw new Error("Missing production show_image");
+			return [{ name: "show-assets", factory: (pi) => pi.registerTool(tool) }];
+		}, "builtin");
+		(backend as unknown as { registry: SessionRegistry }).registry.add({
+			session: f.session,
+			cwd: f.cwd,
+			unsubscribe: () => {},
+			gate: { dispose: () => {} } as never,
+			dialogs: { dispose: () => {} } as never,
+			modeRef,
+		});
+		writeFileSync(join(f.cwd, "actual.png"), bytes);
+		const originalStream = f.session.agent.streamFunction,
+			bodies: unknown[] = [];
+		const forbiddenNetwork = vi.fn(async () => {
+			throw new Error("Network is forbidden in this offline test");
+		});
+		f.session.agent.streamFunction = async (requested, context, options) => {
+			if (
+				!context.messages.some(
+					(message) => message.role === "toolResult" && message.toolName === "show_image",
+				)
+			)
+				return originalStream(requested, context, options);
+			return streamSimple(requested, context, {
+				...options,
+				apiKey: "synthetic-test-only",
+				transport: "sse",
+				fetch: forbiddenNetwork,
+				onPayload: (payload) => {
+					bodies.push(structuredClone(payload));
+					throw new Error("CAPTURE_ONLY");
+				},
+			});
+		};
+		const result = await f.callTool("show_image", { paths: ["actual.png"] });
+		expect(result?.isError).toBe(false);
+		if (!result) throw new Error("Missing tool result");
+		const reference = (
+			result.details as { images: { id: string; revision: string; ownerSessionId: string }[] }
+		).images[0];
+		if (!reference) throw new Error("Missing asset reference");
+		expect(reference.id).toMatch(/^asset:[a-f0-9]{64}$/);
+		expect(reference.ownerSessionId).toBe(f.session.sessionId);
+		expect((await media.read(f.session.sessionId, reference.id, reference.revision)).data).toBe(
+			bytes.toString("base64"),
+		);
+		expect(readFileSync(f.session.sessionFile as string, "utf8")).not.toContain(bytes.toString("base64"));
+		expect(bodies, JSON.stringify(f.session.messages.at(-1))).toHaveLength(1);
+		expect(JSON.stringify(bodies)).not.toContain("asset:");
+		expect(JSON.stringify(bodies)).not.toContain(bytes.toString("base64"));
+		expect(forbiddenNetwork).not.toHaveBeenCalled();
+		expect(result?.content.every((block) => block.type === "text")).toBe(true);
+		const registeredOwner = (backend as unknown as { registry: SessionRegistry }).registry.get(
+			f.session.sessionId,
+		);
+		if (!registeredOwner) throw new Error("Missing production owner");
+		registeredOwner.modeRef = { current: "default" };
+		f.session.agent.streamFunction = originalStream;
+		const denied = await f.callTool("show_image", { paths: ["actual.png"] });
+		expect(denied?.isError).toBe(true);
+		expect(JSON.stringify(denied?.content)).toContain("current writable SDK session");
+	});
+	it("媒体分叉不改变源manager；删源后以分叉owner导出自包含JSONL/HTML，超过4MiB的只读传输可往返", async () => {
+		let media!: SessionMediaStore;
+		const original = Buffer.alloc(4 * 1024 * 1024, 17);
+		const f = await fixture(({ agentDir }) => {
+			media = new SessionMediaStore(join(agentDir, "session-media"));
+			return [
+				{
+					name: "asset-fixture",
+					factory: (pi) =>
+						pi.registerTool({
+							name: "show_image",
+							label: "show_image",
+							description: "Synthetic persisted media",
+							parameters: Type.Object({}),
+							execute: async (_id, _args, _signal, _update, ctx) => {
+								const reference = await media.put(
+									media.lease(ctx.sessionManager.getSessionId(), () => true),
+									original,
+									"image/png",
+								);
+								return {
+									content: [{ type: "text", text: "Image displayed" }],
+									details: { images: [reference], paths: [] },
+								};
+							},
+						}),
+				},
+			];
+		}, "builtin");
+		await f.callTool("show_image", {});
+		const manager = f.session.sessionManager,
+			sourceId = manager.getSessionId(),
+			file = manager.getSessionFile(),
+			leaf = manager.getLeafId();
+		if (!file || !leaf) throw new Error("Missing SDK source");
+		const before = JSON.stringify([manager.getHeader(), ...manager.getEntries()]),
+			beforeFile = readFileSync(file, "utf8");
+		const forkFile = await prepareMediaFork(
+			manager,
+			file,
+			leaf,
+			media,
+			join(dirname(media.rootDirectory), "session-media-forks"),
+		);
+		expect(manager.getSessionId()).toBe(sourceId);
+		expect(manager.getSessionFile()).toBe(file);
+		expect(manager.getLeafId()).toBe(leaf);
+		expect(JSON.stringify([manager.getHeader(), ...manager.getEntries()])).toBe(before);
+		expect(readFileSync(file, "utf8")).toBe(beforeFile);
+		const other = await fixture(() => [], "all", SessionManager.open(forkFile));
+		const fork = other.session.sessionManager;
+		expect(fork.getSessionId()).not.toBe(sourceId);
+		expect(fork.getHeader()?.parentSession).toBe(file);
+		expect(fork.getEntries().map((entry) => entry.id)).toEqual(manager.getBranch().map((entry) => entry.id));
+		const backend = new PiBackend({ projectTrust: false, permissionGates: false, sessionMediaStore: media });
+		const registry = (backend as unknown as { registry: SessionRegistry }).registry;
+		for (const item of [f, other])
+			registry.add({
+				session: item.session,
+				cwd: item.cwd,
+				unsubscribe: () => {},
+				gate: { dispose: () => {} } as never,
+				dialogs: { dispose: () => {} } as never,
+				modeRef: { current: "default" },
+			});
+		try {
+			await backend.deleteSession(sourceId);
+			const messages = await backend.getSessionMessages(fork.getSessionId(), { imageMode: "references" });
+			const image = messages.find((message) => message.role === "image")?.images[0];
+			if (!image || !("id" in image)) throw new Error("Missing fork image");
+			expect(image.ownerSessionId).toBe(fork.getSessionId());
+			expect((await backend.getSessionImage(fork.getSessionId(), image.id, image.revision)).data).toBe(
+				original.toString("base64"),
+			);
+			const jsonl = await backend.exportSession(fork.getSessionId(), "jsonl");
+			expect(Buffer.byteLength(jsonl)).toBeGreaterThan(4 * 1024 * 1024);
+			expect(jsonl).not.toContain("asset:");
+			expect(jsonl).toContain(original.toString("base64"));
+			const html = await backend.exportSession(fork.getSessionId(), "html");
+			const payload = html.match(/<script id="session-data" type="application\/json">([^<]+)<\/script>/)?.[1];
+			if (!payload) throw new Error("Missing HTML data");
+			const decoded = Buffer.from(payload, "base64").toString("utf8");
+			expect(decoded).not.toContain("asset:");
+			expect(decoded).toContain(original.toString("base64"));
+			expect(SESSION_CHANNELS.exportSession.operation).toBe("read");
+			const persistedTool = fork
+				.getEntries()
+				.find(
+					(entry) =>
+						entry.type === "message" &&
+						entry.message.role === "toolResult" &&
+						entry.message.toolName === "show_image",
+				);
+			if (persistedTool?.type !== "message" || persistedTool.message.role !== "toolResult")
+				throw new Error("Missing persisted fork tool result");
+			const persistedReference = (
+				persistedTool.message.details as {
+					images: { ownerSessionId: string; id: string; revision: string }[];
+				}
+			).images[0];
+			expect(persistedReference?.ownerSessionId).toBe(sourceId);
+			// 预算按导出中每次出现计数：同一原图重复引用也会重复序列化base64，不能按摘要去重预算。
+			fork.appendMessage({
+				role: "toolResult",
+				toolCallId: "oversized-export",
+				toolName: "show_image",
+				content: [{ type: "text", text: "Repeated export images" }],
+				details: { images: Array.from({ length: 20 }, () => persistedReference) },
+				isError: false,
+				timestamp: Date.now(),
+			});
+			const unchanged = readFileSync(forkFile, "utf8");
+			for (const format of ["jsonl", "html"] as const)
+				await expect(backend.exportSession(fork.getSessionId(), format)).rejects.toThrow(/budget/);
+			expect(readFileSync(forkFile, "utf8")).toBe(unchanged);
+			await media.deleteOwner(fork.getSessionId());
+			for (const format of ["jsonl", "html"] as const)
+				await expect(backend.exportSession(fork.getSessionId(), format)).rejects.toThrow();
+			expect(readFileSync(forkFile, "utf8")).toBe(unchanged);
+			const stream = new PassThrough(),
+				writer = new RuntimeWriter(stream);
+			let reader!: ReturnType<typeof readRuntimeFrames>;
+			const received = new Promise<unknown>((resolve, reject) => {
+				reader = readRuntimeFrames(resolve, reject);
+				stream.on("data", reader);
+			});
+			try {
+				writer.write({ type: "response", id: "large-export", result: jsonl });
+				expect(await received).toEqual({ type: "response", id: "large-export", result: jsonl });
+			} finally {
+				writer.dispose();
+				reader.dispose();
+				stream.destroy();
+			}
+		} finally {
+			await backend.dispose();
+		}
+	}, 15_000);
 	it("host request candidates normalize composer input once, retaining the original input in persisted history", async () => {
 		const f = await fixture(() => []);
 		f.session.setCompactionPolicy(createCompactionRequestPolicy(f.cwd));
@@ -247,7 +518,7 @@ describe("SDK 1.4 real offline run lifecycle", () => {
 			],
 		};
 		const image = {
-			data: "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAFgwJ/lP3xWQAAAABJRU5ErkJggg==",
+			data: "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR4AWP4z8DwHwAFAAH/e+m+7wAAAABJRU5ErkJggg==",
 			mimeType: "image/png",
 		};
 		const stream = f.session.agent.streamFunction;
@@ -278,17 +549,20 @@ describe("SDK 1.4 real offline run lifecycle", () => {
 		try {
 			await backend.prompt(f.session.sessionId, "first");
 			await entering;
-			await backend.prompt(f.session.sessionId, "ignored", [image], document);
-			await f.session.steer("steering", [{ type: "image", ...image }]);
+			await backend.prompt(f.session.sessionId, "ignored", [image, { ...image }], document);
+			await f.session.steer("steering", [
+				{ type: "image", ...image },
+				{ type: "image", ...image },
+			]);
 			writeFileSync(file, "---\nname: queued\ndescription: fixture\n---\nQUEUE_NEW");
 			const mode = f.session.agent.followUpMode;
 			const restored = await backend.clearQueue(f.session.sessionId);
-			expect(restored.followUpInputs).toEqual([{ document, images: [image] }]);
-			expect(restored.steeringInputs?.[0].images).toEqual([image]);
+			expect(restored.followUpInputs).toEqual([{ document, images: [image, image] }]);
+			expect(restored.steeringInputs?.[0].images).toEqual([image, image]);
 			expect(restored.followUp).toEqual(["queued queued"]);
 			expect(f.session.agent.followUpMode).toBe(mode);
 			expect(f.session.agent.hasQueuedMessages()).toBe(false);
-			await backend.prompt(f.session.sessionId, "ignored", [image], document);
+			await backend.prompt(f.session.sessionId, "ignored", [image, { ...image }], document);
 			rmSync(file);
 			release();
 			await settled;
@@ -309,8 +583,27 @@ describe("SDK 1.4 real offline run lifecycle", () => {
 				document,
 			});
 			const recalled = await backend.recallMessage(f.session.sessionId, { entryId: user.id });
-			expect(recalled).toMatchObject({ document, images: [image] });
+			expect(recalled).toMatchObject({ document, images: [image, image] });
 			await expect(backend.prompt(f.session.sessionId, "ignored", undefined, document)).rejects.toThrow();
+			writeFileSync(file, "---\nname: queued\ndescription: fixture\n---\nQUEUE_RESTORED");
+			const resent = new Promise<void>((resolve) => {
+				const off = f.session.subscribe((event) => {
+					if (event.type === "agent_settled") {
+						off();
+						resolve();
+					}
+				});
+			});
+			await backend.prompt(f.session.sessionId, recalled.text, recalled.images, recalled.document);
+			await resent;
+			const userRequest = (
+				f.requests.at(-1) as { role: string; content: { type: string; data?: string }[] }[]
+			).findLast((message) => message.role === "user");
+			expect(
+				userRequest?.content.filter((block) => block.type === "image").map((block) => block.data),
+			).toEqual([image.data, image.data]);
+			expect(JSON.stringify(f.requests.at(-1))).toContain("QUEUE_RESTORED");
+			expect(JSON.stringify(f.requests.at(-1))).not.toContain('"kind":"reference"');
 		} finally {
 			release();
 			await backend.dispose();

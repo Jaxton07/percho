@@ -1,6 +1,7 @@
+import { randomUUID } from "node:crypto";
 import { existsSync } from "node:fs";
 import { mkdtemp, readFile, rm, unlink } from "node:fs/promises";
-import { join, resolve } from "node:path";
+import { dirname, join, resolve } from "node:path";
 import type { Model, ThinkingLevel } from "@earendil-works/pi-ai";
 import { getSupportedThinkingLevels } from "@earendil-works/pi-ai";
 import {
@@ -90,6 +91,7 @@ import { walkProjectFiles } from "./project/files";
 import { TrustGate } from "./project/trust";
 import { ProjectResourceLoader } from "./project/trust-loader";
 import { addAllowedPattern, addWorkspaceRoot } from "./project/workspace-store";
+import { RUNTIME_MESSAGE_BYTES } from "./runtime/frames";
 import {
 	composerInputBridge,
 	composerQueueDocument,
@@ -98,8 +100,13 @@ import {
 } from "./session/composer-input";
 import { slimBulkyEvent, slimMessageUpdate } from "./session/event-slim";
 import { ExtensionDialogHost } from "./session/extension-dialog-host";
+import { SessionFileOperations } from "./session/file-operations";
 import { SessionHydrationGate } from "./session/hydration-gate";
 import { LiveTranscript } from "./session/live-transcript";
+import { displayImageEntryIds, inlineSessionAssets } from "./session/media-entries";
+import { prepareMediaFork } from "./session/media-fork";
+import { SessionMediaMaintenanceJobs } from "./session/media-maintenance-jobs";
+import { SessionMediaStore } from "./session/media-store";
 import {
 	blockImages,
 	blockText,
@@ -111,6 +118,8 @@ import {
 } from "./session/messages";
 import { autoNameSession } from "./session/naming";
 import { EventRateTracker } from "./session/rates";
+import { exportReadOnlyHtml } from "./session/read-only-html";
+import { ReadOnlySessionView } from "./session/read-only-view";
 import {
 	type EventForwarder,
 	type RegisteredSession,
@@ -120,7 +129,9 @@ import {
 import { renameSessionFile } from "./session/rename";
 import { emitSessionShutdown } from "./session/shutdown";
 import { KeyedSingleFlight } from "./session/single-flight";
+import { SessionSourceSnapshots } from "./session/source-snapshot";
 import { StreamGuard } from "./session/stream-guard";
+import { measureSessionSwitch, recordSessionSwitchPayload } from "./session/switch-diagnostics";
 import { TraceRecorder } from "./session/trace";
 import { SessionTraces } from "./session/traces";
 import { makeUiContext } from "./session/ui-context";
@@ -129,6 +140,7 @@ import { ModelPrefsService } from "./settings/model-prefs";
 import { makeQuotaService } from "./settings/quota";
 import { SettingsService } from "./settings/settings";
 import { slashCommandsForLoader, slashCommandsForSession } from "./slash-commands";
+import { privateDirectory } from "./storage/private-directory";
 import type { LocalSessionPaths } from "./storage/session-paths";
 import {
 	makeChannelWatchExtension,
@@ -168,6 +180,8 @@ function sessionInfoToMeta(
 }
 
 export interface PiBackendOptions {
+	/** 可注入隔离媒体仓库，不改变SDK agentDir或正式用户配置。 */
+	sessionMediaStore?: SessionMediaStore;
 	/** Desktop-only imported session path compatibility, installed before any session opens. */
 	localSessionPaths?: LocalSessionPaths;
 	/** 默认工作目录（createSession 未指定时使用） */
@@ -256,6 +270,7 @@ export class PiBackend {
 		attempt(() => this.trustGate.dispose());
 		attempt(() => this.login.dispose());
 		attempt(() => this.historyGate.dispose());
+		attempt(() => this.sourceSnapshots.dispose());
 		for (const gate of this.constructionGates) attempt(() => gate.dispose());
 		this.constructionGates.clear();
 		for (const host of this.constructionDialogs) attempt(() => host.dispose());
@@ -263,7 +278,7 @@ export class PiBackend {
 			attempt(() => this.beforeSessionShutdown(entry));
 			attempt(() => entry.gate.dispose());
 			attempt(() => entry.dialogs.dispose());
-			attempt(() => entry.session.clearQueue());
+			if (!entry.readOnly) attempt(() => entry.session.clearQueue());
 		}
 		this.shutdownAborts = Promise.allSettled(
 			this.registry.list().map((entry) => Promise.resolve().then(() => entry.session.abort())),
@@ -299,7 +314,7 @@ export class PiBackend {
 	readonly modelPrefs = new ModelPrefsService(join(getAgentDir(), "model-prefs.json"));
 	/** 社区包管理（安装/卸载 + 会话热重载）。readonly 直暴露 */
 	readonly packages: PackageAdmin;
-	private readonly eventEmitter = new Emitter<{ sessionId: string; event: SessionEvent }>();
+	private readonly eventEmitter = new Emitter<{ sessionId: string; event: SessionEvent; sequence: number }>();
 	private readonly permissionEmitter = new Emitter<PermissionRequest>();
 	private readonly permissionResolvedEmitter = new Emitter<PermissionResolved>();
 	private readonly trustEmitter = new Emitter<TrustRequest>();
@@ -341,6 +356,39 @@ export class PiBackend {
 	private readonly traces = new SessionTraces();
 	private readonly streamGuard = new StreamGuard();
 	private readonly historyGate = new SessionHydrationGate();
+	private readonly historyTokens = new WeakMap<PermissionModeRef, string>();
+	private readonly sourceSnapshots = new SessionSourceSnapshots();
+	private readonly media: SessionMediaStore;
+	private readonly fileOperations = new SessionFileOperations();
+	private mediaMaintenance?: SessionMediaMaintenanceJobs;
+	private maintenanceJobs(): SessionMediaMaintenanceJobs {
+		this.assertRunning();
+		const paths = this.options.localSessionPaths;
+		if (!paths) throw new Error("Maintenance requires configured session paths");
+		if (!this.mediaMaintenance)
+			this.mediaMaintenance = new SessionMediaMaintenanceJobs({
+				resolveFile: (file) => paths.resolveFile(file, true),
+				read: (file, work) => this.fileOperations.run([file], "media-preview", work),
+			});
+		return this.mediaMaintenance;
+	}
+	startSessionMediaPreview(sessionFile: string) {
+		return this.maintenanceJobs().startPreview(sessionFile);
+	}
+	getSessionMediaJob(jobId: string) {
+		return this.maintenanceJobs().get(jobId);
+	}
+	cancelSessionMediaJob(jobId: string) {
+		return this.maintenanceJobs().cancel(jobId);
+	}
+	private historyToken(modeRef: PermissionModeRef): string {
+		let token = this.historyTokens.get(modeRef);
+		if (!token) {
+			token = randomUUID();
+			this.historyTokens.set(modeRef, token);
+		}
+		return token;
+	}
 	/**
 	 * 频道 watcher 的会话级清理（按 modeRef 键控）。
 	 * ❗SDK 的 `dispose()` **不发 `session_shutdown`**（pi 1.0.4），所以 disposeSession 里除了
@@ -364,6 +412,7 @@ export class PiBackend {
 	private readonly projectLoader: ProjectResourceLoader;
 
 	constructor(private readonly options: PiBackendOptions = {}) {
+		this.media = options.sessionMediaStore ?? new SessionMediaStore(join(getAgentDir(), "media"));
 		this.packages = new PackageAdmin({
 			reloadIdleSessions: () => this.reloadIdleSessions(undefined),
 			defaultCwd: options.defaultCwd,
@@ -384,13 +433,25 @@ export class PiBackend {
 		gate: PermissionGate,
 		preferBuiltin: boolean,
 		getPermissionMode: () => PermissionMode,
+		modeRef: PermissionModeRef,
 	): ToolDefinition[] {
 		const tools = [...(this.options.customTools ?? [])];
 		const webFetch = this.options.webFetch;
 		if (webFetch !== false) {
 			tools.push(makeWebFetchTool(typeof webFetch === "object" ? webFetch : undefined));
 		}
-		tools.push(makeShowImageTool());
+		tools.push(
+			makeShowImageTool((owner, file) => {
+				const entry = this.registry.get(owner);
+				if (!entry || entry.readOnly || entry.modeRef !== modeRef || entry.session.sessionFile !== file)
+					throw new Error("Image owner is not the current writable SDK session");
+				const lease = this.media.lease(
+					owner,
+					() => !this.stopping && this.registry.get(owner) === entry && !this.sessionDisposals.has(entry),
+				);
+				return { assert: lease.assert, publish: (bytes, mimeType) => this.media.put(lease, bytes, mimeType) };
+			}),
+		);
 		tools.push(makeTodoTool());
 		if (preferBuiltin) {
 			tools.push(
@@ -506,7 +567,8 @@ export class PiBackend {
 					const current = this.registry.get(sessionId);
 					if (!current || current.modeRef === modeRef) this.reportChannelSubscriptions(sessionId, topics);
 				},
-				waitForHistoryReady: (sessionId) => this.historyGate.wait(sessionId),
+				waitForHistoryReady: (sessionId) =>
+					modeRef ? this.historyGate.wait(sessionId, this.historyToken(modeRef)) : Promise.resolve(false),
 				isSessionAlive: (sessionId) =>
 					!this.stopping && modeRef !== undefined && this.registry.get(sessionId)?.modeRef === modeRef,
 				onSessionCleanup: (cleanup) => {
@@ -597,7 +659,36 @@ export class PiBackend {
 	}
 
 	private readonly liveTranscripts = new Map<string, LiveTranscript>();
-	private publishEvent(sessionId: string, event: SessionEvent, forward = true): void {
+	private publishEvent(
+		sessionId: string,
+		event: SessionEvent,
+		forward = true,
+		rawUser?: object,
+		rawToolResult?: object,
+	): void {
+		if (["entry_appended", "message_end", "session_info_changed", "agent_settled"].includes(event.type)) {
+			const owner = this.registry.get(sessionId);
+			queueMicrotask(() => {
+				const source = this.runningSubagents.get(sessionId)?.getSource?.();
+				const manager =
+					source?.sessionManager ?? (owner && !owner.readOnly ? owner.session.sessionManager : undefined);
+				if (!manager) return;
+				this.sourceSnapshots.notePersisted(manager, manager.getSessionFile());
+				if (
+					!owner ||
+					this.registry.get(sessionId) !== owner ||
+					!this.sourceSnapshots.has(this.sourceOwner(owner))
+				)
+					return;
+				this.sourceSnapshots.noteAppend(
+					this.sourceOwner(owner),
+					manager.getEntry(manager.getLeafId() ?? ""),
+					manager.getEntryCount(),
+					manager.getSessionFile(),
+					manager,
+				);
+			});
+		}
 		let live = this.liveTranscripts.get(sessionId);
 		if (!live) {
 			live = new LiveTranscript();
@@ -611,8 +702,10 @@ export class PiBackend {
 						this.registry.get(sessionId)?.session.sessionManager.getBranch() ??
 						[])
 				: [],
+			rawUser,
+			rawToolResult,
 		);
-		if (forward) this.eventEmitter.emit({ sessionId, event });
+		if (forward) this.eventEmitter.emit({ sessionId, event, sequence: live.sequence });
 	}
 	getSessionEventSequence(sessionId: string): number {
 		return this.liveTranscripts.get(sessionId)?.sequence ?? 0;
@@ -628,14 +721,30 @@ export class PiBackend {
 			compactionPause: entry.session.compactionPause,
 		}));
 	}
-	getSessionBaseline(sessionId: string): import("@percho/shared").SessionBaseline {
+	getSessionBaseline(
+		sessionId: string,
+		options: { imageMode?: "references" } = {},
+	): import("@percho/shared").SessionBaseline {
 		const entry = this.requireSession(sessionId);
+		const source = options.imageMode === "references" ? this.sourceSnapshot(entry) : undefined;
 		const live = this.liveTranscripts.get(sessionId) ?? new LiveTranscript();
-		const transcript = live.snapshot(this.sessionBranch(entry), {
-			streaming: entry.session.isStreaming,
-			compacting: entry.session.isCompacting,
-		});
-		return {
+		const endProjection = measureSessionSwitch("historyProjection");
+		const transcript = live.snapshot(
+			source?.branch ?? this.sessionBranch(entry),
+			{
+				ownerSessionId: entry.session.sessionId,
+				streaming: entry.session.isStreaming,
+				compacting: entry.session.isCompacting,
+			},
+			source ? (branch) => this.sourceSnapshots.project(source, true, branch) : undefined,
+			source
+				? (sourceId, kind, images, details) =>
+						this.sourceSnapshots.projectTransient(source, sourceId, kind, images, details)
+				: undefined,
+		);
+		endProjection();
+		const baseline: import("@percho/shared").SessionBaseline = {
+			hydrationToken: this.historyToken(entry.modeRef),
 			meta: this.registry.toMeta(entry),
 			sequence: live.sequence,
 			transcript: {
@@ -646,12 +755,18 @@ export class PiBackend {
 			},
 			permissionMode: entry.modeRef.current,
 		};
+		recordSessionSwitchPayload(baseline);
+		return baseline;
 	}
 	private emitEvent(
 		sessionId: string,
 		event: SessionEvent,
 		options: { forward?: boolean; recordTrace?: boolean; abort?: () => Promise<void> } = {},
 	): void {
+		const rawUser =
+			event.type === "message_start" && event.message.role === "user" ? event.message : undefined;
+		const rawToolResult =
+			event.type === "message_end" && event.message.role === "toolResult" ? event.message : undefined;
 		if (event.type === "message_start" || event.type === "message_end")
 			event = { ...event, message: projectComposerMessage(event.message) };
 		if (event.type === "agent_end")
@@ -706,7 +821,7 @@ export class PiBackend {
 			event.type !== "stream_guard_tripped"
 		)
 			this.traces.record(sessionId, event);
-		this.publishEvent(sessionId, event, options.forward);
+		this.publishEvent(sessionId, event, options.forward, rawUser, rawToolResult);
 	}
 
 	async init(): Promise<void> {
@@ -738,7 +853,12 @@ export class PiBackend {
 				model,
 				thinkingLevel: options.thinkingLevel as ThinkingLevel | undefined,
 				tools: this.options.tools,
-				customTools: this.buildCustomTools(deps.gate, deps.preferBuiltin, deps.getPermissionMode),
+				customTools: this.buildCustomTools(
+					deps.gate,
+					deps.preferBuiltin,
+					deps.getPermissionMode,
+					deps.modeRef,
+				),
 				sessionManager: SessionManager.create(cwd),
 				settingsManager,
 				resourceLoader,
@@ -757,24 +877,50 @@ export class PiBackend {
 	 */
 	async openSession(filePath: string): Promise<SessionMeta> {
 		const key = this.options.localSessionPaths?.resolveFile(filePath) ?? resolve(filePath);
-		return this.trackCreation(() => this.openFlights.run(key, () => this.openSessionOnce(key)));
+		return this.trackCreation(() =>
+			this.openFlights.run(this.fileOperations.key(key), () =>
+				this.fileOperations.run([key], "open", () => this.openSessionOnce(key)),
+			),
+		);
 	}
 
 	private async openSessionOnce(filePath: string): Promise<SessionMeta> {
-		// 读 header 拿到 sessionId（只读文件头，不构造会话）后先查 registry：
-		// 子代理产物目录下的会话文件 = 只读检视（spec §8.1：防能力静默漂移/递归绕过）。
-		// 其运行 trace 由 runner 管理，检视页不可写，故不另建 recorder（避免覆盖运行中的 recorder）。
+		// 先按规范路径复用在册实例，不能为了查header再次完整解析图片文件。
+		const targetFile = this.fileOperations.key(filePath);
+		const registered = this.registry.list().find((entry) => {
+			if (!entry.session.sessionFile) return false;
+			try {
+				return this.fileOperations.key(entry.session.sessionFile) === targetFile;
+			} catch {
+				return false;
+			} // 无关的损坏来源不能阻止本次打开。
+		});
+		if (registered) {
+			const disposing = this.sessionDisposals.get(registered);
+			if (disposing) {
+				await disposing;
+				return this.openSessionOnce(filePath);
+			}
+			return this.registry.toMeta(registered);
+		}
+		if (isSubagentSessionPath(filePath)) return this.openReadOnlySession(filePath);
+		const sourceVersion = this.sourceSnapshots.fileVersion(filePath);
+		const endParse = measureSessionSwitch("sdkParse");
 		const sessionManager = SessionManager.open(filePath);
+		this.sourceSnapshots.noteLoaded(sessionManager, filePath, sourceVersion);
+		endParse();
 		const existing = this.registry.get(sessionManager.getSessionId());
 		if (existing) {
 			log.info("session open short-circuited", sessionManager.getSessionId(), { file: filePath });
 			return this.registry.toMeta(existing);
 		}
+		const endRuntime = measureSessionSwitch("runtime");
 		const runtime = await this.getModelRuntime();
+		endRuntime();
 		this.assertRunning();
 		const cwd = sessionManager.getCwd() || process.cwd();
 		this.options.localSessionPaths?.assertCwd(cwd);
-		const readOnly = isSubagentSessionPath(filePath);
+		const readOnly = false;
 		const session = await this.wireSession(cwd, readOnly, async (deps) => {
 			const { settingsManager, resourceLoader } = await deps.load();
 			return createAgentSession({
@@ -785,7 +931,12 @@ export class PiBackend {
 				tools: this.options.tools,
 				settingsManager,
 				resourceLoader,
-				customTools: this.buildCustomTools(deps.gate, deps.preferBuiltin, deps.getPermissionMode),
+				customTools: this.buildCustomTools(
+					deps.gate,
+					deps.preferBuiltin,
+					deps.getPermissionMode,
+					deps.modeRef,
+				),
 			});
 		});
 		log.info("session opened", session.sessionId, { file: filePath });
@@ -799,12 +950,87 @@ export class PiBackend {
 	 * 传了反而覆盖用户原选择，见 sdk.js 恢复分支）→
 	 * subagent mutex 通知 → 扩展绑定 → 订阅/注册（gate/dialogs/modeRef 随 entry 单记录）→ trace。
 	 */
+	private async openReadOnlySession(file: string): Promise<SessionMeta> {
+		const sourceOwner = {},
+			target = this.fileOperations.key(file);
+		const running = [...this.runningSubagents.values()].find((handle) => {
+			const source = handle.getSource?.();
+			return source?.sessionFile && this.fileOperations.key(source.sessionFile) === target;
+		});
+		const live = running?.getSource?.();
+		const { owner: sessionId, header } = live
+			? this.sourceSnapshots.capture(sourceOwner, {
+					sessionId: live.sessionId,
+					file: live.sessionFile && existsSync(live.sessionFile) ? live.sessionFile : undefined,
+					branch: () => live.sessionManager.getBranch(),
+					entries: () => live.sessionManager.getEntries(),
+					header: () => live.sessionManager.getHeader(),
+					loadedFrom: live.sessionManager,
+				})
+			: this.sourceSnapshots.openReadOnly(sourceOwner, file);
+		// 回调只保留小header，不捕获完整初始快照，否则换版本后旧原图仍会被闭包持有。
+		const fallbackHeader = header && {
+			type: header.type,
+			id: header.id,
+			version: header.version,
+			cwd: header.cwd,
+			timestamp: header.timestamp,
+			parentSession: header.parentSession,
+		};
+		try {
+			if (this.registry.has(sessionId))
+				throw new Error("Session identity is already loaded from a different file");
+			const cwd = header?.cwd || process.cwd();
+			this.options.localSessionPaths?.assertCwd(cwd);
+			const modeRef: PermissionModeRef = { current: "default" },
+				gate = new PermissionGate(() => modeRef.current);
+			const dialogs = new ExtensionDialogHost({ onRequest: () => {}, onResolved: () => {} });
+			gate.bindSession(sessionId);
+			dialogs.bind(sessionId, cwd);
+			const view = new ReadOnlySessionView(sessionId, file, sourceOwner, {
+				running: () => this.runningSubagents.get(sessionId)?.getSource?.(),
+				snapshot: () => {
+					const active = this.runningSubagents.get(sessionId),
+						manager = active?.getSource?.()?.sessionManager;
+					if (!active && !existsSync(file)) throw new Error("Read-only source file is missing");
+					return this.sourceSnapshots.capture(sourceOwner, {
+						sessionId,
+						file: existsSync(file) ? file : undefined,
+						readOnly: !active,
+						branch: () => manager?.getBranch() ?? active?.getBranch() ?? [],
+						entries: () => manager?.getEntries() ?? active?.getBranch() ?? [],
+						header: () => manager?.getHeader() ?? fallbackHeader,
+						loadedFrom: manager,
+					});
+				},
+				exportHtml: exportReadOnlyHtml,
+			});
+			const entry = {
+				session: view,
+				cwd,
+				unsubscribe: () => {},
+				modeRef,
+				gate,
+				dialogs,
+				readOnly: true as const,
+			};
+			const meta = this.registry.toMeta(entry);
+			this.registry.add(entry);
+			this.historyToken(modeRef);
+			return meta;
+		} catch (error) {
+			this.sourceSnapshots.release(sourceOwner);
+			throw error;
+		}
+	}
+
 	private async wireSession(
 		cwd: string,
-		readOnly: boolean | undefined,
+		readOnly: false | undefined,
 		makeSession: (deps: {
 			gate: PermissionGate;
 			getPermissionMode: () => PermissionMode;
+			modeRef: PermissionModeRef;
 			preferBuiltin: boolean;
 			/** 两阶段资源加载（信任决策走 projectLoader 既有链路）；懒执行：makeSession 决定时机 */
 			load: () => Promise<{ settingsManager: SettingsManagerType; resourceLoader: DefaultResourceLoader }>;
@@ -828,18 +1054,23 @@ export class PiBackend {
 			let loaded: { settingsManager: SettingsManagerType; resourceLoader: DefaultResourceLoader } | undefined;
 			const load = async () => {
 				this.assertRunning();
+				const endResources = measureSessionSwitch("resourceLoad");
 				loaded ??= await this.projectLoader.load(cwd, { confirm: confirmBridge, modeRef });
+				endResources();
 				this.assertRunning();
 				return loaded;
 			};
 			const preferBuiltin = await this.subagentPreferBuiltin();
 			this.assertRunning();
+			const endCreate = measureSessionSwitch("createSession");
 			const { session, extensionsResult } = await makeSession({
 				gate,
 				preferBuiltin,
 				load,
 				getPermissionMode: () => modeRef.current,
+				modeRef,
 			});
+			endCreate();
 			candidate = session;
 			if (!readOnly) session.setCompactionPolicy(createCompactionRequestPolicy(getAgentDir()));
 			this.assertRunning();
@@ -855,7 +1086,9 @@ export class PiBackend {
 				}
 			}
 			gate.bindSession(session.sessionId);
+			const endBind = measureSessionSwitch("bindExtensions");
 			const dialogs = await this.bindSessionExtensions(session, session.sessionId, cwd);
+			endBind();
 			candidateDialogs = dialogs;
 			this.assertRunning();
 			const unsubscribe = session.subscribe((event) => {
@@ -879,9 +1112,11 @@ export class PiBackend {
 					readOnly: readOnly || undefined,
 				});
 				registered = true;
+				this.media.openOwner(session.sessionId, modeRef);
 				// 这一代开始了：领取新代次（早报过的会话也在这里拿到最终代次；dispose 后重开会是新的一代）
 				this.channelSubs.noteSessionOpened(session.sessionId);
 			} catch (error) {
+				this.historyGate.cancel(session.sessionId, this.historyToken(modeRef));
 				try {
 					this.channelWatchCleanups.get(modeRef)?.();
 				} catch (cleanupError) {
@@ -921,6 +1156,7 @@ export class PiBackend {
 						log.warn("unregistered session cleanup failed", failure);
 					}
 				};
+				await attempt(() => this.historyGate.cancel(unregistered.sessionId, this.historyToken(modeRef)));
 				await attempt(() => this.channelWatchCleanups.get(modeRef)?.());
 				this.channelWatchCleanups.delete(modeRef);
 				await attempt(() => candidateDialogs?.dispose());
@@ -1001,6 +1237,10 @@ export class PiBackend {
 		const entry = this.registry.get(sessionId);
 		// 没有该会话 = 它本来就没在跑（幂等成功）：调用方该照常清掉自己的会话条目
 		if (!entry) return { closed: true };
+		if (entry.readOnly) {
+			await this.disposeSession(entry);
+			return { closed: true };
+		}
 		if (intent === "gc" && entry.session.pendingMessageCount > 0) {
 			return { closed: false };
 		}
@@ -1021,6 +1261,8 @@ export class PiBackend {
 
 	/** Registered-session-only auxiliary groups; conflict cleanup must not touch holder ids. */
 	private beforeSessionShutdown(entry: RegisteredSession): void {
+		this.sourceSnapshots.release(this.sourceOwner(entry));
+		if (!entry.readOnly) this.media.closeOwner(entry.session.sessionId, entry.modeRef);
 		const failures: unknown[] = [];
 		try {
 			this.channelWatchCleanups.get(entry.modeRef)?.();
@@ -1033,11 +1275,12 @@ export class PiBackend {
 	}
 
 	private afterSessionDispose(entry: RegisteredSession): void {
-		this.liveTranscripts.delete(entry.session.sessionId);
+		if (!entry.readOnly || !this.runningSubagents.has(entry.session.sessionId))
+			this.liveTranscripts.delete(entry.session.sessionId);
 		const id = entry.session.sessionId;
 		const failures: unknown[] = [];
 		try {
-			this.channelSubs.dispose(id);
+			if (!entry.readOnly) this.channelSubs.dispose(id);
 		} catch (error) {
 			failures.push(error);
 		}
@@ -1096,7 +1339,7 @@ export class PiBackend {
 		}
 		// Normal close keeps history cancellation after SDK dispose and before entry release.
 		try {
-			this.historyGate.cancel(sessionId);
+			this.historyGate.cancel(sessionId, this.historyToken(entry.modeRef));
 		} catch (error) {
 			failures.push(error);
 		}
@@ -1113,7 +1356,7 @@ export class PiBackend {
 			failures.push(error);
 		}
 		try {
-			await this.traces.stop(sessionId);
+			if (!entry.readOnly) await this.traces.stop(sessionId);
 		} catch (error) {
 			failures.push(error);
 		}
@@ -1123,6 +1366,22 @@ export class PiBackend {
 
 	/** 删除历史会话（pi 无删除 API，会话即磁盘 jsonl，直接删文件） */
 	async deleteSession(sessionId: string, sessionFile?: string): Promise<void> {
+		const file = this.registry.get(sessionId)?.session.sessionFile ?? sessionFile;
+		return this.fileOperations.run(file ? [file] : [], "delete", () =>
+			this.deleteSessionUnlocked(sessionId, sessionFile),
+		);
+	}
+	private async deleteSessionUnlocked(sessionId: string, sessionFile?: string): Promise<void> {
+		const requested = sessionFile ?? this.registry.get(sessionId)?.session.sessionFile;
+		for (const [id, handle] of this.runningSubagents) {
+			const file = handle.getSource?.()?.sessionFile;
+			if (id !== sessionId && (!requested || !file || resolve(file) !== resolve(requested))) continue;
+			if (id !== sessionId) throw new Error("Session owner does not match the running source");
+			if (!handle.completion)
+				throw new Error("Cannot safely delete a running subagent without completion tracking");
+			await handle.abort();
+			await handle.completion;
+		}
 		const entry = this.registry.get(sessionId);
 		const sessionDir = entry?.session.sessionManager.getSessionDir();
 		const requestedFile = sessionFile ?? entry?.session.sessionManager.getSessionFile();
@@ -1139,6 +1398,8 @@ export class PiBackend {
 		await unlink(file).catch((error: NodeJS.ErrnoException) => {
 			if (error.code !== "ENOENT") throw error;
 		});
+		this.sourceSnapshots.invalidateOwner(sessionId);
+		await this.media.deleteOwner(sessionId);
 		if (sessionDir) await TraceRecorder.removeAll(sessionDir, sessionId);
 		this.channelSubs.delete(sessionId);
 		log.info("session deleted", sessionId);
@@ -1246,6 +1507,7 @@ export class PiBackend {
 	async clearQueue(sessionId: string): Promise<QueuedMessages> {
 		const entry = this.registry.get(sessionId);
 		if (!entry) return { steering: [], followUp: [] };
+		if (entry.readOnly) throw new Error("Cannot clear the queue of a read-only view");
 		log.info("clearQueue", sessionId);
 		// Public previews honor drain modes and prefer steering. During this synchronous clear-all,
 		// preview all steering, clear that queue, then preview all follow-ups. No second queue is kept.
@@ -1360,7 +1622,8 @@ export class PiBackend {
 
 	/** 列出斜杠命令：内置（标记 supported）+ prompt 模板 + skill + 扩展命令 */
 	async listSlashCommands(sessionId: string): Promise<SlashCommandInfo[]> {
-		return slashCommandsForSession(this.requireSession(sessionId).session);
+		const entry = this.requireSession(sessionId);
+		return entry.readOnly ? [] : slashCommandsForSession(entry.session);
 	}
 
 	/**
@@ -1390,7 +1653,8 @@ export class PiBackend {
 	/** 读取会话已加载的资源（skills/扩展；设置页展示用） */
 	async getLoadedResources(sessionId: string): Promise<LoadedResources> {
 		const entry = this.requireSession(sessionId);
-		const session = entry.session;
+		const session = entry.readOnly ? this.runningSubagents.get(sessionId)?.getSource?.() : entry.session;
+		if (!session) return { skills: [], skillDiagnostics: [], extensions: [], extensionErrors: [] };
 		const skillResult = session.resourceLoader.getSkills();
 		const extResult = session.resourceLoader.getExtensions();
 		return {
@@ -1441,7 +1705,13 @@ export class PiBackend {
 			if (entry.readOnly) throw new Error("Session is read-only (subagent transcript)");
 			// 新建未发消息的会话改名**是合法操作**：sessionFile（路径）建会话时就有，SDK 把 session_info
 			// 追加进内存 fileEntries，首条 user 消息落盘时一起写入（不丢名）。所以这里不加 !sessionFile 拦。
-			entry.session.setSessionName(name);
+			await this.fileOperations.run(
+				entry.session.sessionFile ? [entry.session.sessionFile] : [],
+				"rename",
+				async () => {
+					entry.session.setSessionName(name);
+				},
+			);
 			return;
 		}
 		// 历史会话（顶栏没打开的）：离线追加 session_info（与 CLI /name 同源）
@@ -1449,7 +1719,9 @@ export class PiBackend {
 		if (!file) throw new Error(`Session not found: ${sessionId}`);
 		// subagent 产物会话只读（与 listAllSessions 的 readOnly 判定同一谓词）
 		if (isSubagentSessionPath(file)) throw new Error("Session is read-only (subagent transcript)");
-		renameSessionFile(file, name);
+		await this.fileOperations.run([file], "rename", async () => {
+			renameSessionFile(file, name);
+		});
 	}
 
 	/**
@@ -1472,52 +1744,128 @@ export class PiBackend {
 
 	/** 导出会话内容（HTML/JSONL）；返回文件内容，由调用方保存 */
 	async exportSession(sessionId: string, format: "html" | "jsonl"): Promise<string> {
-		const entry = this.requireSession(sessionId);
-		const manager = entry.session.sessionManager;
-		if (format === "jsonl")
-			return `${[manager.getHeader(), ...manager.getBranch()].map((e) => JSON.stringify(e)).join("\n")}\n`;
-		const directory = await mkdtemp(join(manager.getSessionDir(), ".percho-export-"));
+		const file = this.requireSession(sessionId).session.sessionFile;
+		return this.fileOperations.run(file ? [file] : [], "export", () =>
+			this.exportSessionUnlocked(sessionId, format),
+		);
+	}
+	private async exportSessionUnlocked(sessionId: string, format: "html" | "jsonl"): Promise<string> {
+		const entry = this.requireSession(sessionId),
+			manager = entry.session.sessionManager;
+		if (format === "jsonl") {
+			const branch = await inlineSessionAssets(
+				manager.getBranch(),
+				manager.getSessionId(),
+				this.media,
+				RUNTIME_MESSAGE_BYTES - 4096,
+			);
+			return this.checkedExport(
+				`${[manager.getHeader(), ...branch].map((node) => JSON.stringify(node)).join("\n")}\n`,
+			);
+		}
+		const directory = await mkdtemp(
+			join(entry.readOnly ? dirname(entry.session.sessionFile) : manager.getSessionDir(), ".percho-export-"),
+		);
 		try {
+			await privateDirectory(directory, true);
 			const path = await entry.session.exportToHtml(join(directory, "session.html"));
 			const html = await readFile(path, "utf8");
-			if (!/<script id="session-data" type="application\/json">[A-Za-z0-9+/=]+<\/script>/.test(html)) {
-				throw new Error("Unsupported SDK HTML export format");
-			}
-			return html.replace(
-				/(<script id="session-data" type="application\/json">)([A-Za-z0-9+/=]+)(<\/script>)/,
-				(_match, start: string, payload: string, end: string) => {
-					const data = JSON.parse(Buffer.from(payload, "base64").toString("utf8"));
-					data.entries = data.entries.map((item: { type: string; message?: unknown }) => {
-						if (item.type !== "message") return item;
-						const projected = projectComposerMessage(item.message) as Record<string, unknown>;
-						const { perchoInput: _input, ...message } = projected;
-						return { ...item, message };
-					});
-					return start + Buffer.from(JSON.stringify(data)).toString("base64") + end;
-				},
+			const embedded =
+				/(<script id="session-data" type="application\/json">)([A-Za-z0-9+/=]+)(<\/script>)/.exec(html);
+			if (!embedded) throw new Error("Unsupported SDK HTML export format");
+			const data = JSON.parse(Buffer.from(embedded[2] ?? "", "base64").toString("utf8"));
+			if (!Array.isArray(data.entries)) throw new Error("SDK HTML session entries are unavailable");
+			const entries = await inlineSessionAssets(
+				data.entries as unknown[],
+				manager.getSessionId(),
+				this.media,
+				Math.floor(RUNTIME_MESSAGE_BYTES * 0.7),
 			);
+			data.perchoImageEntries = displayImageEntryIds(entries);
+			data.entries = entries.map((item) => {
+				const node = item as { type?: string; message?: unknown };
+				if (node.type !== "message") return item;
+				const projected = projectComposerMessage(node.message) as Record<string, unknown>;
+				const { perchoInput: _input, ...message } = projected;
+				return { ...node, message };
+			});
+			// 先await回填，再替换；绝不能向String.replace传async回调。
+			const body = `${embedded[1]}${Buffer.from(JSON.stringify(data)).toString("base64")}${embedded[3]}`;
+			const result = html.slice(0, embedded.index) + body + html.slice(embedded.index + embedded[0].length);
+			return this.checkedExport(result);
 		} finally {
 			await rm(directory, { recursive: true, force: true });
 		}
 	}
+	private checkedExport(content: string): string {
+		if (Buffer.byteLength(JSON.stringify(content), "utf8") + 4096 > RUNTIME_MESSAGE_BYTES)
+			throw new Error(
+				"Self-contained export exceeds the 64MiB transport budget; back up the full agent directory instead",
+			);
+		return content;
+	}
 
 	/** renderer 已落下首份完整历史；放行启动期频道 watcher + 离线对账。 */
-	markSessionHistoryReady(sessionId: string): void {
-		if (this.registry.has(sessionId)) this.historyGate.ack(sessionId);
+	markSessionHistoryReady(sessionId: string, hydrationToken?: string): void {
+		const entry = this.registry.get(sessionId);
+		if (entry && hydrationToken === this.historyToken(entry.modeRef))
+			this.historyGate.ack(sessionId, hydrationToken);
 	}
 
 	/** 读取会话树当前分支的完整历史（compaction 只裁模型上下文，不裁 UI 历史） */
-	async getSessionMessages(sessionId: string): Promise<SessionMessage[]> {
+	async getSessionMessages(
+		sessionId: string,
+		options: { imageMode?: "references" } = {},
+	): Promise<SessionMessage[]> {
 		const entry = this.requireSession(sessionId);
-		return toBranchSessionMessages(this.sessionBranch(entry));
+		const endProjection = measureSessionSwitch("historyProjection");
+		const result =
+			options.imageMode === "references"
+				? this.sourceSnapshots.project(this.sourceSnapshot(entry))
+				: toBranchSessionMessages(this.sessionBranch(entry), entry.session.sessionId);
+		endProjection();
+		recordSessionSwitchPayload(result);
+		return result;
 	}
 
-	/** 检视副本不会随运行实例更新；运行时取真分支，结束后重新读盘，避免重取历史仍是旧快照。 */
-	private sessionBranch(entry: RegisteredSession): ReturnType<SessionManager["getBranch"]> {
-		if (!entry.readOnly || !entry.session.sessionFile) return entry.session.sessionManager.getBranch();
+	getSessionSourceStats() {
+		return this.sourceSnapshots.stats();
+	}
+
+	async getSessionImage(
+		sessionId: string,
+		imageId: string,
+		revision: string,
+	): Promise<ImageInput & { byteLength: number }> {
+		const entry = this.requireSession(sessionId);
+		if (this.sessionDisposals.has(entry)) throw new Error("Image owner is closing");
+		if (imageId.startsWith("asset:")) return this.media.read(sessionId, imageId, revision);
+		return this.sourceSnapshots.resolve(this.sourceOwner(entry), sessionId, imageId, revision);
+	}
+
+	private sourceOwner(entry: RegisteredSession): object {
+		return entry.session instanceof ReadOnlySessionView ? entry.session.sourceOwner : entry;
+	}
+
+	private sourceSnapshot(entry: RegisteredSession) {
+		if (entry.session instanceof ReadOnlySessionView) return entry.session.snapshot;
 		const running = this.runningSubagents.get(entry.session.sessionId);
-		if (running) return running.getBranch();
-		return SessionManager.open(entry.session.sessionFile).getBranch();
+		const manager = running ?? entry.session.sessionManager;
+		const file = entry.session.sessionFile;
+		return this.sourceSnapshots.capture(entry, {
+			sessionId: entry.session.sessionId,
+			file: file && existsSync(file) ? file : undefined,
+			branch: () => manager.getBranch(),
+			entries: () => (running ? running.getBranch() : entry.session.sessionManager.getEntries()),
+			readOnly: !!entry.readOnly && !running,
+			loadedFrom: entry.session.sessionManager,
+		});
+	}
+
+	/** 检视副本不会随运行实例更新；结束后的只读源按指纹复用一次纯解析。 */
+	private sessionBranch(entry: RegisteredSession): Readonly<ReturnType<SessionManager["getBranch"]>> {
+		if (!entry.readOnly || !entry.session.sessionFile) return entry.session.sessionManager.getBranch();
+		return this.sourceSnapshot(entry).branch;
 	}
 
 	/**
@@ -1548,7 +1896,7 @@ export class PiBackend {
 		return this.readTodos(entry);
 	}
 	private readTodos(entry: RegisteredSession): TodoItem[] {
-		const branch = entry.session.sessionManager.getBranch();
+		const branch = this.sessionBranch(entry);
 		for (let i = branch.length - 1; i >= 0; i--) {
 			const item = branch[i];
 			if (item?.type !== "message") continue;
@@ -1578,15 +1926,19 @@ export class PiBackend {
 		if (!file || !existsSync(file)) {
 			throw new Error("This session has not been saved yet. Send a message first.");
 		}
-		// 在新打开的 manager 上分叉，避免动当前会话的 manager 状态
-		const forkedManager = SessionManager.open(
-			this.options.localSessionPaths?.resolveFile(file) ?? file,
-			sourceManager.getSessionDir(),
-		);
-		const newPath = forkedManager.createBranchedSession(targetId);
-		if (!newPath) throw new Error("Failed to create forked session");
-		log.info("fork session", sessionId, { targetId, newPath });
-		return this.openSession(newPath);
+		const approved = this.options.localSessionPaths?.resolveFile(file) ?? file;
+		return this.fileOperations.run([approved], "fork", async () => {
+			const newPath = await prepareMediaFork(
+				sourceManager,
+				approved,
+				targetId,
+				this.media,
+				join(dirname(this.media.rootDirectory), "session-media-forks"),
+				() => !this.stopping,
+			);
+			log.info("fork session", sessionId, { targetId, newPath });
+			return this.openSession(newPath);
+		});
 	}
 
 	/** 撤回的 custom entry 标记类型：追加在回退点后使 leaf 移动落盘持久（重启后撤回仍生效） */
@@ -1701,8 +2053,10 @@ export class PiBackend {
 			}));
 	}
 
-	onEvent(handler: (sessionId: string, event: SessionEvent) => void): () => void {
-		return this.eventEmitter.subscribe(({ sessionId, event }) => handler(sessionId, event));
+	onEvent(handler: (sessionId: string, event: SessionEvent, sequence?: number) => void): () => void {
+		return this.eventEmitter.subscribe(({ sessionId, event, sequence }) =>
+			handler(sessionId, event, sequence),
+		);
 	}
 
 	onPermissionRequest(handler: (req: PermissionRequest) => void): () => void {
@@ -1906,7 +2260,7 @@ export class PiBackend {
 		const skipped: McpReloadReport["skipped"] = [];
 		let reloaded = 0;
 		for (const entry of this.registry.list()) {
-			if (cwd && entry.cwd !== cwd) continue;
+			if (entry.readOnly || (cwd && entry.cwd !== cwd)) continue;
 			const { isStreaming, isCompacting } = entry.session;
 			if (isStreaming || isCompacting) {
 				skipped.push({
@@ -2025,6 +2379,7 @@ export class PiBackend {
 
 	dispose(): void {
 		this.stopping = true;
+		void this.mediaMaintenance?.dispose().catch((error) => log.warn("maintenance shutdown failed", error));
 		for (const child of this.runningSubagents.values()) {
 			void child.abort().catch((error) => log.warn("subagent shutdown abort failed", error));
 			child.dispose();
@@ -2036,7 +2391,7 @@ export class PiBackend {
 			afterDispose: (entry) => {
 				const id = entry.session.sessionId;
 				try {
-					this.historyGate.cancel(id);
+					this.historyGate.cancel(id, this.historyToken(entry.modeRef));
 				} catch (error) {
 					log.warn("history cancel failed", id, error);
 				}
@@ -2044,6 +2399,7 @@ export class PiBackend {
 			},
 		});
 		this.historyGate.dispose();
+		this.sourceSnapshots.dispose();
 		this.eventEmitter.clear();
 		this.permissionEmitter.clear();
 		this.permissionResolvedEmitter.clear();

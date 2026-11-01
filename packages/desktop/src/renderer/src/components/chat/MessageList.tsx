@@ -122,7 +122,7 @@ export function MessageList() {
 	// 不做这一步也能靠组件卸载清掉订阅，但 worker 在途任务与 LRU 会跨会话残留
 	// biome-ignore lint/correctness/useExhaustiveDependencies: activeSessionId 是刻意的重跑触发器
 	useEffect(() => {
-		thumbnailService().reset();
+		thumbnailService().cancelView();
 	}, [activeSessionId]);
 
 	// biome-ignore lint/correctness/useExhaustiveDependencies: activeSessionId 是刻意的重跑触发器（切换会话时重新贴底）
