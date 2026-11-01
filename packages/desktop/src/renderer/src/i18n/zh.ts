@@ -415,6 +415,7 @@ export const zh = {
 		imageRetry: "重新加载",
 		imageLoadError: "图片加载失败",
 		subagent: {
+			worker: "Worker",
 			queued: "排队中",
 			aborted: "已中止",
 			running: "工作中",
