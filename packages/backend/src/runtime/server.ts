@@ -127,7 +127,10 @@ export async function startRuntimeServer(paths: RuntimePaths, exitStopped: () =>
 			socket.once("close", () => {
 				sockets.delete(socket);
 				writers.delete(socket);
-				if (controller?.socket === socket) controller = undefined;
+				if (controller?.socket === socket) {
+					controller = undefined;
+					runtimeBackend.setViewedSubagent();
+				}
 			});
 			socket.on("error", () => socket.destroy());
 			const result = (id: string, value: unknown) => write(socket, { type: "result", id, result: value });

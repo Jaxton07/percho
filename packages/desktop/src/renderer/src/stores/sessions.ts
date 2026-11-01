@@ -633,6 +633,8 @@ export const useSessionsStore = create<SessionsStore>((_set, get) => ({
 				lastUsedAt: { ...state.lastUsedAt, [sessionId]: Date.now() },
 			};
 		});
+		// 只读子代理的订阅和最新基线由下方焦点订阅统一维护。
+		if (get().sessions.find((meta) => meta.sessionId === sessionId)?.readOnly) return;
 		// 懒加载兜底（D4）：目标会话无 transcript 数据时补拉四件套（从历史打开、
 		// 事件桥断连期间的切换等都经此路径自愈；已有数据零成本短路）
 		const environment = environmentEntityRef(sessionId).environment;
@@ -1011,6 +1013,8 @@ export async function synchronizeEnvironmentSessions(
 		synchronizeInteractions(environment),
 	]);
 	if (remoteRecovery.get(key) !== generation) return;
+	await getExecutionApi(environment).setViewedSubagent({});
+	if (remoteRecovery.get(key) !== generation) return;
 	const old = useSessionsStore.getState();
 	const active = old.activeSessionId;
 	const previousActive = old.sessions.find((meta) => meta.sessionId === active);
@@ -1094,11 +1098,35 @@ export async function synchronizeEnvironmentSessions(
 			await ensureOpenSession(previousActive.sessionFile, { loadBundle: false });
 		if (
 			remoteRecovery.get(key) === generation &&
+			useSessionsStore.getState().activeSessionId === active &&
 			useSessionsStore.getState().sessions.some((meta) => meta.sessionId === active)
 		)
-			await loadSessionBundle(active);
+			await loadSessionBundle(active, { observeSubagent: previousActive.readOnly === true });
 	}
 }
+
+/** 焦点是子代理详细事件的唯一观察目标；离开时使在途基线失效，重新进入必须补齐后台内容。 */
+useSessionsStore.subscribe((state, prev) => {
+	const viewed = (value: SessionsStore) =>
+		value.sessions.find((meta) => meta.sessionId === value.activeSessionId && meta.readOnly)?.sessionId;
+	const previous = viewed(prev);
+	const current = viewed(state);
+	if (previous === current) return;
+	if (previous) {
+		sessionLoader.invalidateBundle(previous);
+		void getExecutionApi(previous)
+			.setViewedSubagent({})
+			.catch((error) => {
+				console.warn("停止观察子代理失败", error);
+			});
+	}
+	if (current && !isEnvironmentSynchronizing(environmentEntityRef(current).environment)) {
+		sessionLoader.invalidateBundle(current);
+		void loadSessionBundle(current, { observeSubagent: true }).catch((error) =>
+			pushToast("warning", "toast.sessionOpenFailed", errText(error)),
+		);
+	}
+});
 
 /**
  * 工作区 `activeFile` 跟随当前会话：**唯一同步点**。

@@ -40,7 +40,10 @@ export function createSessionLoader(ports: SessionDataPorts) {
 	 * 同会话同时在途时复用同一个 Promise（spec D3，见 `ensureOpenSession`）：open 完成时 meta 会先落进
 	 * `sessions`，用户这时再点那一行就走 `switchSession` 的懒加载，两条路会撞车重复拉四件套。
 	 */
-	function loadSessionBundle(sessionId: string, opts?: { skipHistoryIfLive?: boolean }): Promise<void> {
+	function loadSessionBundle(
+		sessionId: string,
+		opts?: { skipHistoryIfLive?: boolean; observeSubagent?: boolean },
+	): Promise<void> {
 		const existing = bundleInFlight.get(sessionId);
 		if (existing) return existing;
 		const openingEpoch = historyOpenEpoch(sessionId);
@@ -66,13 +69,16 @@ export function createSessionLoader(ports: SessionDataPorts) {
 
 	async function loadSessionBundleInner(
 		sessionId: string,
-		opts?: { skipHistoryIfLive?: boolean },
+		opts?: { skipHistoryIfLive?: boolean; observeSubagent?: boolean },
 	): Promise<void> {
 		// 子代理打开前没有接收事件；本机检视也需要「历史 + 进行中轮次」的基线。
 		if (environmentEntityRef(sessionId).environment.kind === "ssh" || ports.isReadOnly(sessionId)) {
 			const openingEpoch = historyOpenEpoch(sessionId);
 			const token = beginSessionBaseline(sessionId);
 			try {
+				// 先建立增量缓冲，再开启推送并读取基线，覆盖暂停观察期间的内容。
+				if (opts?.observeSubagent) await getExecutionApi(sessionId).setViewedSubagent({ sessionId });
+				if (historyOpenEpoch(sessionId) !== openingEpoch) return;
 				const baseline = await getExecutionApi(sessionId).getSessionBaseline({ sessionId });
 				if (
 					historyOpenEpoch(sessionId) !== openingEpoch ||
@@ -237,5 +243,9 @@ export function createSessionLoader(ports: SessionDataPorts) {
 		if (file) openInFlight.delete(file.trim());
 		bundleInFlight.delete(sessionId);
 	}
-	return { ensureOpenSession, loadSessionBundle, restorePermissionMode, forget };
+	function invalidateBundle(sessionId: string): void {
+		clearSessionHistory(sessionId);
+		bundleInFlight.delete(sessionId);
+	}
+	return { ensureOpenSession, loadSessionBundle, restorePermissionMode, forget, invalidateBundle };
 }
