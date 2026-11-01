@@ -642,7 +642,7 @@ export const zh = {
 			builtinEditTitle: "配置 {name} 端点",
 			builtinBaseUrl: "baseUrl（可选，留空走官方端点）",
 			builtinHint:
-				"模型沿用 {name} 官方配置（思考/窗口等元数据不变），仅覆写请求端点；清空 baseUrl 保存即回到官方端点。Key 填到 ~/.pi/agent/auth.json，与其他 pi 客户端共享。",
+				"模型沿用 {name} 官方配置（思考/窗口等元数据不变），仅覆写请求端点；清空 baseUrl 保存即回到官方端点。Key 保存在 Percho 自己的 auth.json（用户数据目录内），不与 Pi CLI 等其他客户端共享。",
 			addCustom: "+ 添加自定义 Provider",
 			customTitle: "自定义 Provider",
 			editCustom: "编辑",
@@ -688,7 +688,7 @@ export const zh = {
 		},
 		skills: {
 			title: "已加载的 Skills",
-			hint: "当前项目（活跃会话）加载的 skills，来自 ~/.pi/agent/skills 与项目 .pi/skills",
+			hint: "当前项目（活跃会话）加载的 skills，来自 Percho 的用户级 skills 目录与项目 .pi/skills",
 			empty: "当前项目没有加载任何 skill",
 			emptyNoSession: "没有打开的会话。先创建或打开一个会话，这里会显示该项目加载的 skills",
 			scopeUser: "用户级",

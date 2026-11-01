@@ -420,7 +420,7 @@ export interface AppInfo {
 	repoUrl: string;
 }
 
-/** 已加载资源的作用域（用户级 ~/.pi/agent / 项目级 / 临时合成） */
+/** 已加载资源的作用域（用户级 <agentDir>，即 ~/.percho/agent / 项目级 / 临时合成） */
 export type ResourceScope = "user" | "project" | "temporary";
 
 /** 已加载的 skill（设置页 skills 面板数据源） */
