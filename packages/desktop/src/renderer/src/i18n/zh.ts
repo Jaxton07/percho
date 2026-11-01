@@ -816,6 +816,9 @@ export const zh = {
 			install: "安装",
 			installing: "安装中…",
 			installed: "已安装",
+			version: "版本 {version}",
+			updateAvailable: "可更新 {version}",
+			updateHint: "npm 上有更新版本，当前仅提供版本提示。",
 			npmNotFound:
 				"未检测到 npm（Node.js 包管理器）。请先安装 Node.js（如 brew install node）后重启 Percho；若已安装在非标准路径，请将其加入系统 PATH 后重启",
 			uninstall: "卸载",
