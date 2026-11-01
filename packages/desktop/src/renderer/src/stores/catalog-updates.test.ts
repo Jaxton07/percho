@@ -33,6 +33,21 @@ beforeEach(async () => {
 afterEach(() => vi.useRealTimers());
 
 describe("package update checks", () => {
+	it.each(["constructor", "toString", "hasOwnProperty"])(
+		"does not treat inherited property %s as cached package data",
+		async (name) => {
+			api.listConfiguredPackages.mockResolvedValue([
+				{ source: `npm:${name}`, scope: "user", installedVersion: "1.0.0" },
+			]);
+			api.checkPackageUpdates.mockResolvedValue([{ name, latest: "2.0.0" }]);
+			await store.getState().refreshConfiguredPackages();
+			await store.getState().checkUpdates();
+			expect(api.checkPackageUpdates).toHaveBeenCalledWith({ names: [name] });
+			expect(Object.hasOwn(store.getState().packageUpdates, name)).toBe(true);
+			await store.getState().checkUpdates();
+			expect(api.checkPackageUpdates).toHaveBeenCalledOnce();
+		},
+	);
 	it("does not discard a pending local read when installation fails", async () => {
 		const local = deferred<ConfiguredPackageInfo[]>();
 		api.listConfiguredPackages.mockReturnValueOnce(local.promise);

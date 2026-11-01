@@ -213,7 +213,8 @@ function createCatalogStore(environment: EnvironmentRef) {
 						}),
 					),
 				].filter((name) => {
-					const cached = get().packageUpdates[name];
+					const updates = get().packageUpdates;
+					const cached = Object.hasOwn(updates, name) ? updates[name] : undefined;
 					return !cached || Date.now() - cached.checkedAt >= 5 * 60_000;
 				});
 				if (!names.length) return;

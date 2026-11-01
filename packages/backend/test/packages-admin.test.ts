@@ -39,7 +39,7 @@ import type { SessionRegistry } from "../src/session/registry";
 beforeEach(() => {
 	external.install.mockReset().mockResolvedValue(undefined);
 	external.remove.mockReset().mockResolvedValue(true);
-	external.settings.mockReset().mockReturnValue({ drainErrors: () => [] });
+	external.settings.mockReset().mockReturnValue({ drainErrors: () => [], flush: async () => {} });
 	external.options = [];
 });
 

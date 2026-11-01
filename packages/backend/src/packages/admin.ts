@@ -52,6 +52,8 @@ function rethrowPackageError(err: unknown): never {
  * 装/卸后委托空闲会话热重载；忙碌者跳过，不排队补重载（对齐 CLI /reload）。
  */
 export class PackageAdmin {
+	private mutationQueue: Promise<void> = Promise.resolve();
+
 	constructor(
 		private readonly deps: {
 			reloadIdleSessions: (cwd?: string) => Promise<unknown>;
@@ -60,14 +62,14 @@ export class PackageAdmin {
 	) {}
 
 	/** 每次读取新的设置快照；项目上下文由已登记会话提供，不从启动目录猜测。 */
-	private getPackageManager(context?: PackageContext): DefaultPackageManager {
+	private createPackageManager(context?: PackageContext) {
 		const cwd = context?.cwd ?? this.deps.defaultCwd ?? process.cwd();
 		const settingsManager = SettingsManager.create(cwd, getAgentDir(), {
 			projectTrusted: context?.projectTrusted ?? false,
 		});
 		const [failure] = settingsManager.drainErrors();
 		if (failure) throw failure.error;
-		return new DefaultPackageManager({
+		const packageManager = new DefaultPackageManager({
 			cwd,
 			agentDir: getAgentDir(),
 			settingsManager,
@@ -75,6 +77,28 @@ export class PackageAdmin {
 			// 未知的 builtin:<name>（如未接的 llama.cpp）只降级为 info 说明，不阻塞（见 getLoadedResources）
 			builtinExtensions: ["codemode", "tool-search", "mcp"],
 		});
+		return { packageManager, settingsManager };
+	}
+
+	/** 读快照、执行、落盘和重载属于同一个写操作；失败不阻塞后续操作。 */
+	private mutate(
+		context: PackageContext | undefined,
+		action: (manager: DefaultPackageManager) => Promise<void>,
+	) {
+		const work = this.mutationQueue.then(async () => {
+			try {
+				const { packageManager, settingsManager } = this.createPackageManager(context);
+				await action(packageManager);
+				await settingsManager.flush();
+				const [failure] = settingsManager.drainErrors();
+				if (failure) throw failure.error;
+			} catch (err) {
+				rethrowPackageError(err);
+			}
+			await this.deps.reloadIdleSessions(context?.cwd);
+		});
+		this.mutationQueue = work.catch(() => {});
+		return work;
 	}
 
 	/** 搜索 pi.dev 社区包目录（设置页扩展面板浏览用） */
@@ -89,8 +113,8 @@ export class PackageAdmin {
 	/** 列出 settings.json 已配置的包（「已安装」态匹配用） */
 	async listConfiguredPackages(context?: PackageContext): Promise<ConfiguredPackageInfo[]> {
 		return Promise.all(
-			this.getPackageManager(context)
-				.listConfiguredPackages()
+			this.createPackageManager(context)
+				.packageManager.listConfiguredPackages()
 				.map(async (p) => ({
 					source: p.source,
 					scope: p.scope,
@@ -106,29 +130,20 @@ export class PackageAdmin {
 		if (!PACKAGE_NAME_PATTERN.test(name)) {
 			throw new Error(`Invalid package name: ${name}`);
 		}
-		try {
-			await this.getPackageManager().installAndPersist(`npm:${name}`);
-		} catch (err) {
-			rethrowPackageError(err);
-		}
+		await this.mutate(undefined, (manager) => manager.installAndPersist(`npm:${name}`));
 		log.info("package installed", name);
-		await this.deps.reloadIdleSessions();
 	}
 
 	/** 卸载已配置的包（按 source + scope 移除并持久化）；成功后委托空闲会话重载。 */
 	async removePackage(source: string, scope: "user" | "project", context?: PackageContext): Promise<void> {
 		if (scope === "project" && !context) throw new Error("Project package removal requires a session");
-		let removed: boolean;
-		try {
-			removed = await this.getPackageManager(context).removeAndPersist(source, {
+		await this.mutate(scope === "project" ? context : undefined, async (manager) => {
+			const removed = await manager.removeAndPersist(source, {
 				local: scope === "project",
 			});
-		} catch (err) {
-			rethrowPackageError(err);
-		}
-		if (!removed) throw new Error(`Package not installed: ${source}`);
+			if (!removed) throw new Error(`Package not installed: ${source}`);
+		});
 		log.info("package removed", source, { scope });
-		await this.deps.reloadIdleSessions(scope === "project" ? context?.cwd : undefined);
 	}
 
 	/** 复用 SDK 的路径解析，覆盖项目安装和旧全局安装目录。 */
