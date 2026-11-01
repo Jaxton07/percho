@@ -190,7 +190,7 @@ export interface SessionTranscriptState {
 	 * —— SDK 每个 retry 轮都发 turn_end(error)，立即落卡会在重试场景产多张卡且成功后残留，
 	 * 违背「只有最终失败才落卡」）。清空时机：agent_end/agent_settled/stream_guard_tripped。 */
 	pendingLlmError: UiError | null;
-	/** SDK 自动重试瞬时信息（auto_retry_start → 状态行；auto_retry_end/turn_start/agent_settled 清） */
+	/** SDK 自动重试瞬时信息（auto_retry_start → 状态行；有效思考/正文增量、auto_retry_end 或 agent_settled 清） */
 	retrying: RetryInfo | null;
 	/** 最近一次 agent run 的固化结束时刻（agent_end willRetry=false / agent_settled 盖戳，agent_start 清）；
 	 * 最后一轮计时定格用——晚于最后一条消息落地，取 max 防「运行中末帧 > 定格值」回退 */

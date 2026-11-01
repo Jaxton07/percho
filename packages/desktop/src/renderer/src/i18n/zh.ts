@@ -332,8 +332,7 @@ export const zh = {
 		max: "最大",
 	},
 	compaction: {
-		retrying: "摘要请求重试中 · 第 {attempt}/{maxAttempts} 次 · 等待 {delay}s",
-		retryAttempt: "正在重试摘要 · 第 {attempt}/{maxAttempts} 次",
+		retrying: "正在重试摘要 {attempt}/{maxAttempts}",
 		paused: {
 			failed: "任务已暂停：上下文压缩失败。",
 			overThreshold: "任务已暂停：压缩后上下文仍超过触发线。",
@@ -920,7 +919,7 @@ export const zh = {
 				"上游没有返回可解析的模型流。常见原因是 baseUrl 少了 /v1（中转站多在 /v1 下提供 OpenAI 兼容接口），或服务商协议选错；到「设置 → 模型服务」检查地址与协议。",
 			streamGuard: "模型输出异常（病态流），已被安全机制中止。",
 		},
-		retrying: "自动重试中 · 第 {attempt}/{maxAttempts} 次 · 等待 {delay}s",
+		retrying: "正在重新连接 {attempt}/{maxAttempts}",
 		retryDone: "重试成功",
 		retryFailed: "重试失败",
 	},

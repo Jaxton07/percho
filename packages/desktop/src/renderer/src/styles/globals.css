@@ -2247,36 +2247,21 @@ code {
 	height: 12px;
 }
 
-/* ---- 自动重试瞬时状态行（无底色，文字 + 琥珀旋转 glyph；跟随 working 行下方） ---- */
+/* ---- 自动重试瞬时状态行（无底色，灰色连接图标与文字；跟随 working 行下方） ---- */
 .retry-note {
 	display: flex;
 	align-items: center;
-	gap: 7px;
-	font-size: calc(12px * var(--fs-ui-scale, 1));
-	color: var(--color-ink-faint);
+	gap: 8px;
+	color: var(--color-ink-dim);
 }
 .retry-note svg {
-	width: 12px;
-	height: 12px;
-	color: var(--color-warn);
 	flex: none;
-	animation: retry-spin 1.6s linear infinite;
-}
-@keyframes retry-spin {
-	to {
-		transform: rotate(360deg);
-	}
-}
-.retry-note .r-detail {
-	color: var(--color-ink-faint);
-	opacity: 0.75;
 }
 
 @media (prefers-reduced-motion: reduce) {
 	.error-note summary,
 	.error-note-chev,
-	.error-note-act,
-	.retry-note svg {
+	.error-note-act {
 		transition: none;
 		animation: none;
 	}

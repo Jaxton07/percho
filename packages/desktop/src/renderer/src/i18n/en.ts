@@ -347,8 +347,7 @@ export const en: Messages = {
 		max: "Max",
 	},
 	compaction: {
-		retrying: "Retrying summary · attempt {attempt}/{maxAttempts} · waiting {delay}s",
-		retryAttempt: "Retrying summary · attempt {attempt}/{maxAttempts}",
+		retrying: "Retrying summary {attempt}/{maxAttempts}",
 		paused: {
 			failed: "Task paused: context compaction failed.",
 			overThreshold: "Task paused: context remains above the trigger after compaction.",
@@ -958,7 +957,7 @@ export const en: Messages = {
 				"The upstream did not return a parseable model stream. Usually the baseUrl is missing /v1 (most relays expose the OpenAI-compatible API under /v1) or the API protocol is wrong. Check the address and protocol in Settings → Model providers.",
 			streamGuard: "Abnormal model output (pathological stream) was aborted by the safety guard.",
 		},
-		retrying: "Auto-retrying · attempt {attempt}/{maxAttempts} · waiting {delay}s",
+		retrying: "Reconnecting {attempt}/{maxAttempts}",
 		retryDone: "Retry succeeded",
 		retryFailed: "Retry failed",
 	},
