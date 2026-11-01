@@ -39,14 +39,16 @@ afterEach(async () => {
 });
 async function render() {
 	await act(async () => root.render(<GeneralPanel />));
-	return host.querySelectorAll<HTMLButtonElement>('[role="switch"]');
+	const [main, only] = host.querySelectorAll<HTMLButtonElement>('[role="switch"]');
+	if (!main || !only) throw new Error("Missing Code Mode switches");
+	return { main, only };
 }
 it("独占模式默认关闭，可以保存；中英文名称一致", async () => {
 	const switches = await render();
 	expect(host.textContent).toContain("Code Mode 独占模式");
-	expect(switches[1].getAttribute("aria-checked")).toBe("false");
-	expect(switches[1].disabled).toBe(false);
-	await act(async () => switches[1].click());
+	expect(switches.only.getAttribute("aria-checked")).toBe("false");
+	expect(switches.only.disabled).toBe(false);
+	await act(async () => switches.only.click());
 	expect(settings.setCodemodeOnly).toHaveBeenCalledWith(true);
 	await act(async () => useI18nStore.setState({ language: "en" }));
 	expect(host.textContent).toContain("Code Mode only");
@@ -55,14 +57,14 @@ it.each([false, null])("总开关关闭或未加载时不能操作独占模式�
 	settings.codemodeEnabled = enabled;
 	settings.codemodeOnly = true;
 	const switches = await render();
-	expect(switches[1].disabled).toBe(true);
-	expect(switches[1].getAttribute("aria-checked")).toBe("true");
-	await act(async () => switches[1].click());
+	expect(switches.only.disabled).toBe(true);
+	expect(switches.only.getAttribute("aria-checked")).toBe("true");
+	await act(async () => switches.only.click());
 	expect(settings.setCodemodeOnly).not.toHaveBeenCalled();
 });
 it("保存期间两个开关都禁用，避免交错写入", async () => {
 	settings.codemodeSaving = true;
 	const switches = await render();
-	expect(switches[0].disabled).toBe(true);
-	expect(switches[1].disabled).toBe(true);
+	expect(switches.main.disabled).toBe(true);
+	expect(switches.only.disabled).toBe(true);
 });
