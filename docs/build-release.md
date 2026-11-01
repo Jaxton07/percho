@@ -77,6 +77,8 @@ Windows 更新诊断及旧卸载器边界见 [WINDOWS-UPDATES.md](WINDOWS-UPDATE
 
 构建与仓库外验包由 `.github/workflows/remote-runtime.yml` 复用：目标容器内运行 `node scripts/build-remote-runtime.mjs --out <隔离产物目录>`；验包容器只挂归档、scripts 和私有 /state，关闭外网，执行 `scripts/remote-runtime/check-artifact.sh`。临时 /runtime 须允许执行包内搜索程序；不要把测试目录的 noexec 挂载误诊为工具缺失。验收覆盖主工具、用户扩展/MCP/子代理、两种 WASM 与图片 worker 无回退、完整导出、断线恢复和认证维护锁；CPU 仿真结果需标明，不能冒充物理目标性能或三桌面验收。
 
+backend/shared 新增参与运行包打包的依赖时，需同步核对 `runtimeBuildLock` 的隔离安装清单和 `runtimeBuildAliases` 的解析路径；CI 会屏蔽源码目录的 `node_modules`，本机桌面构建能解析不代表远端构建能解析。
+
 安装器另用 `verify-remote-runtime-install.mjs` 在隔离目标执行：挂载实际归档、原始 desktop bootstrap 与 scripts，使用可执行的私有暂存目录；验证成功安装及摘要、截断、架构、越界、并发失败保护。它不替代仓库外 SDK 验包。
 
 统一打包入口从两份验包产物生成桌面清单，生成文件不入库；版本、源码提交、大小或摘要不匹配均阻止打包。单独调试可用 `prepare-remote-runtime-manifest.mjs --input <产物目录> --output packages/desktop/resources/remote-runtime/manifest.json --version <版本>`；`--require-published` 仅用于检查已经公开的发行，不是构建前提。普通 renderer/main 构建仍可独立运行。运行包与引用它的桌面按上面的统一流程同时发布；不读取任意 latest、不覆盖在用运行包，也不把本地生成清单当成资产已经公开的证据。未经用户授权不触发发布流程。

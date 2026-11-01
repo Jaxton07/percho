@@ -1,4 +1,4 @@
-import { posix } from "node:path";
+import { join, posix } from "node:path";
 import nodePolicy from "../../packages/shared/src/runtime-node-policy.json" with { type: "json" };
 
 /** Select exact installed lock entries, without introducing another dependency/version solver. */
@@ -51,6 +51,11 @@ export function runtimeBuildLock(lock, version) {
 		throw new Error("Backend TypeBox build dependency changed; update the explicit runtime build alias");
 	devDependencies["percho-typebox-build"] = "npm:typebox@1.3.7";
 	packages["node_modules/percho-typebox-build"] = { ...typebox, name: "typebox", dev: true };
+	const semver = lock.packages[locate("packages/shared", "semver")];
+	if (Object.keys(semver.dependencies ?? {}).length || Object.keys(semver.optionalDependencies ?? {}).length)
+		throw new Error("Shared semver build dependency changed; update the explicit runtime build alias");
+	devDependencies["percho-semver-build"] = `npm:semver@${semver.version}`;
+	packages["node_modules/percho-semver-build"] = { ...semver, name: "semver", dev: true };
 	const manifest = {
 		name: "percho-remote-runtime",
 		version,
@@ -70,5 +75,14 @@ export function runtimeBuildLock(lock, version) {
 			requires: true,
 			packages: { "": manifest, ...packages },
 		},
+	};
+}
+
+/** Workspace imports must resolve against the isolated install, never checkout node_modules. */
+export function runtimeBuildAliases(repo, stage) {
+	return {
+		"@percho/shared": join(repo, "packages/shared/src/index.ts"),
+		typebox: join(stage, "node_modules/percho-typebox-build"),
+		semver: join(stage, "node_modules/percho-semver-build"),
 	};
 }
