@@ -90,6 +90,8 @@ export function createExecutionHandlers(
 		setPermissionMode: ({ sessionId, mode }) => backend.setSessionPermissionMode(sessionId, mode),
 		getChannelWatchConfig: () => backend.getChannelWatchConfig(),
 		getCodemodeConfig: () => backend.getCodemodeConfig(),
+		getCacheWarming: () => backend.getCacheWarming(),
+		setCacheWarming: ({ mode }) => backend.setCacheWarming(mode),
 		setCodemodeEnabled: ({ enabled }) => backend.setCodemodeEnabled(enabled),
 		setChannelWatchEnabled: ({ enabled }) => backend.setChannelWatchEnabled(enabled),
 		respondTrust: ({ requestId, answer }) => backend.respondTrust(requestId, answer),

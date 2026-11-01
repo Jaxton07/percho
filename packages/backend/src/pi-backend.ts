@@ -124,6 +124,7 @@ import { StreamGuard } from "./session/stream-guard";
 import { TraceRecorder } from "./session/trace";
 import { SessionTraces } from "./session/traces";
 import { makeUiContext } from "./session/ui-context";
+import { CacheWarmingSettings } from "./settings/cache-warming";
 import { codemodeSessionOptions, readCodemodeEnabled, writeCodemodeEnabled } from "./settings/codemode";
 import { LoginService } from "./settings/login";
 import { ModelPrefsService } from "./settings/model-prefs";
@@ -220,6 +221,12 @@ export interface PiBackendOptions {
  */
 export class PiBackend {
 	private readonly registry = new SessionRegistry();
+	private readonly cacheWarming = new CacheWarmingSettings(getAgentDir, () =>
+		this.registry
+			.list()
+			.filter((entry) => !entry.readOnly)
+			.map((entry) => entry.session),
+	);
 	private stopping = false;
 	private shutdownPromise?: Promise<void>;
 	private readonly creationFlights = new Set<Promise<unknown>>();
@@ -872,16 +879,23 @@ export class PiBackend {
 			});
 			this.constructionGates.delete(gate);
 			try {
-				this.registry.add({
-					session,
-					unsubscribe,
-					cwd,
-					gate,
-					dialogs,
-					modeRef,
-					readOnly: readOnly || undefined,
-				});
-				registered = true;
+				if (this.registry.has(session.sessionId))
+					throw new Error(`Session already registered: ${session.sessionId}`);
+				const register = () => {
+					this.assertRunning();
+					this.registry.add({
+						session,
+						unsubscribe,
+						cwd,
+						gate,
+						dialogs,
+						modeRef,
+						readOnly: readOnly || undefined,
+					});
+					registered = true;
+				};
+				if (readOnly) register();
+				else await this.cacheWarming.register(session, register);
 				// 这一代开始了：领取新代次（早报过的会话也在这里拿到最终代次；dispose 后重开会是新的一代）
 				this.channelSubs.noteSessionOpened(session.sessionId);
 			} catch (error) {
@@ -2008,6 +2022,13 @@ export class PiBackend {
 
 	getCodemodeConfig(): { enabled: boolean } {
 		return { enabled: readCodemodeEnabled(getAgentDir()) };
+	}
+
+	getCacheWarming() {
+		return this.cacheWarming.get();
+	}
+	setCacheWarming(mode: import("@percho/shared").CacheWarmingMode) {
+		return this.cacheWarming.set(mode);
 	}
 
 	async setCodemodeEnabled(enabled: boolean): Promise<void> {

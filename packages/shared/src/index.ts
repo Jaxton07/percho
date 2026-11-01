@@ -1,3 +1,4 @@
+export * from "./cache-warming";
 export * from "./channel-subscriptions";
 export * from "./composer-document";
 export * from "./environment";

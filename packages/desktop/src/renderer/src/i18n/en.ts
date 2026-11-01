@@ -486,6 +486,7 @@ export const en: Messages = {
 			codemode: "Run script",
 			ls: "Ls",
 			glob: "Glob",
+			find: "Find",
 			grep: "Grep",
 			webfetch: "Webfetch",
 			show_image: "Show_image",
@@ -591,6 +592,28 @@ export const en: Messages = {
 		backgroundDim: "Overlay opacity",
 		channelWatch: "Cross-session channel collaboration (channel-watch)",
 		codemode: "Code Mode",
+		cacheWarming: "Prompt cache warming",
+		cacheWarmingHint:
+			"Keep the model's prompt cache warm to reduce repeated context processing. Runs only when supported and expected to save money; refresh requests may incur extra costs. Defaults to active runs only. Changes apply immediately to loaded main sessions in this environment; enabling takes effect on subsequent model requests.",
+		cacheWarmingLoading: "Loading cache warming status…",
+		cacheWarmingEmpty: "No main sessions are loaded in this environment.",
+		cacheWarmingModes: { off: "Off", streaming: "Active runs only", idle: "Including idle time" },
+		cacheWarmingStates: {
+			inactive: "Inactive",
+			scheduled: "Next refresh",
+			refreshing: "Refreshing",
+			unavailable: "Status unavailable",
+		},
+		cacheWarmingReasons: {
+			disabled: "Disabled",
+			waiting: "Waiting for the first model request",
+			settled: "Run finished",
+			unsupported: "Request does not qualify",
+			uneconomical: "Insufficient expected savings",
+			changed: "Context changed",
+			limit: "Warming time limit reached",
+			other: "No refresh needed",
+		},
 		codemodeHint:
 			"Let AI combine tool calls in scripts, run them in parallel, and filter results. On by default; applies to new sessions or after restarting the app.",
 		channelWatchHint:

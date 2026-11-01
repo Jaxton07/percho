@@ -25,14 +25,14 @@ export async function writeCodemodeEnabled(agentDir: string, enabled: boolean): 
 	});
 }
 
-/** 只调整 Code Mode，保留 SDK 解析后的其他默认工具；关闭时阻止 MCP 再次激活。 */
+/** 无用户工具配置时补充只读辅助工具；保留显式选择，另应用 Code Mode 开关。 */
 export function codemodeSessionOptions(settings: SettingsManager, agentDir: string) {
 	const enabled = readCodemodeEnabled(agentDir);
 	const defaults = settings.getDefaultTools();
 	settings.applyOverrides({
 		defaultTools: defaults
 			? [...defaults.filter((name) => name !== "codemode"), ...(enabled ? ["codemode"] : [])]
-			: [enabled ? "+codemode" : "-codemode"],
+			: ["+grep", "+find", "+ls", enabled ? "+codemode" : "-codemode"],
 	});
 	return { excludeTools: enabled ? undefined : ["codemode"] };
 }

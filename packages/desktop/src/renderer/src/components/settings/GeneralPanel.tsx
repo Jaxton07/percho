@@ -2,6 +2,7 @@ import type { Language } from "../../i18n";
 import { useI18nStore, useT } from "../../i18n";
 import { useSettingsStore } from "../../stores/settings";
 import { Select } from "../ui/Select";
+import { CacheWarmingSettings } from "./CacheWarmingSettings";
 import { SettingsSwitchRow } from "./SettingsSwitchRow";
 import { TaskNotificationSettings } from "./TaskNotificationSettings";
 
@@ -21,6 +22,7 @@ export function GeneralPanel() {
 	return (
 		<div className="flex flex-col gap-6">
 			<TaskNotificationSettings />
+			<CacheWarmingSettings />
 			<SettingsSwitchRow
 				title={t("settings.codemode")}
 				hint={t("settings.codemodeHint")}

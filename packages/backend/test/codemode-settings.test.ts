@@ -47,7 +47,7 @@ it.each([undefined, ["read", "tool_search"], ["+grep", "-write"]])(
 	async (defaultTools) => {
 		const dir = isolatedDir();
 		const settings = SettingsManager.inMemory({ defaultTools });
-		const before = settings.getDefaultTools() ?? ["read", "bash", "edit", "write"];
+		const before = settings.getDefaultTools() ?? ["read", "bash", "edit", "write", "grep", "find", "ls"];
 		codemodeSessionOptions(settings, dir);
 		expect(settings.getDefaultTools()).toEqual([...before, "codemode"]);
 	},
@@ -78,6 +78,7 @@ it.each([true, false])("真实 SDK 的激活与排除行为：enabled=%s", async
 	});
 	try {
 		expect(session.getActiveToolNames().includes("codemode")).toBe(enabled);
+		expect(session.getActiveToolNames()).toEqual(expect.arrayContaining(["grep", "find", "ls"]));
 		if (!enabled) {
 			// MCP 的自动激活也经这个公开入口，关闭后不能重新加入。
 			session.setActiveToolsByName([...session.getActiveToolNames(), "codemode"]);
