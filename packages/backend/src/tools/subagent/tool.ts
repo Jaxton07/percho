@@ -6,20 +6,20 @@ import {
 	type ModelRuntime,
 	type ToolDefinition,
 } from "@earendil-works/pi-coding-agent";
+import type { PermissionMode } from "@percho/shared";
 import { type Static, Type } from "typebox";
 import type { PermissionGate } from "../../permissions/gate";
 import type { SessionTraces } from "../../session/traces";
-import { discoverAgents, findAgent } from "./agents";
-import { runSubagent, type SingleResult } from "./runner";
+import { DEFAULT_AGENT, discoverAgents, findAgent } from "./agents";
+import { runSubagent, type SingleResult, type SubagentRunHandle } from "./runner";
 
 const MAX_TASKS = 8;
 const MAX_CONCURRENCY = 4;
 const MAX_CONTENT = 50_000;
 
 const taskSchema = Type.Object({
-	agent: Type.String({ minLength: 1, description: "Agent definition name, e.g. scout" }),
+	agent: Type.Optional(Type.String({ minLength: 1, description: "Custom agent name; defaults to worker" })),
 	task: Type.String({ minLength: 1, description: "Self-contained task for the subagent" }),
-	cwd: Type.Optional(Type.String({ minLength: 1, description: "Optional working directory" })),
 });
 
 /**
@@ -31,12 +31,11 @@ const taskSchema = Type.Object({
  */
 export const subagentParams = Type.Object({
 	agent: Type.Optional(
-		Type.String({ minLength: 1, description: "Agent definition name, e.g. scout (single run)" }),
+		Type.String({ minLength: 1, description: "Custom agent name; defaults to worker (single run)" }),
 	),
 	task: Type.Optional(
 		Type.String({ minLength: 1, description: "Self-contained task for the subagent (single run)" }),
 	),
-	cwd: Type.Optional(Type.String({ minLength: 1, description: "Optional working directory" })),
 	tasks: Type.Optional(
 		Type.Array(taskSchema, {
 			minItems: 1,
@@ -52,10 +51,13 @@ export interface MakeSubagentToolDeps {
 	getSubagentModel: (agentName: string) => Promise<string | undefined>;
 	/** 设置页的 per-agent 思考深度覆盖；无配置时返回 undefined 并继续走 frontmatter。 */
 	getSubagentThinkingLevel: (agentName: string) => Promise<string | undefined>;
+	getPermissionMode?: () => PermissionMode;
 	gate: PermissionGate;
 	traces: SessionTraces;
 	/** 把运行中子会话事件转发给桌面会话订阅方。 */
-	onEvent?: (sessionId: string, event: AgentSessionEvent) => void;
+	onEvent?: (sessionId: string, event: AgentSessionEvent, abort: () => Promise<void>) => void;
+	registerRun?: (sessionId: string, handle: SubagentRunHandle) => void;
+	unregisterRun?: (sessionId: string) => void;
 }
 
 interface SubagentDetails {
@@ -95,27 +97,29 @@ async function withConcurrency<T>(
 }
 
 function isFailed(result: SingleResult): boolean {
-	return result.exitCode !== 0 || result.error != null;
+	return result.status ? result.status !== "done" : result.exitCode !== 0 || result.error != null;
 }
 
 function contentForResults(results: SingleResult[], mode: SubagentDetails["mode"]): string {
-	if (mode === "single") {
-		const result = results[0];
-		if (!result) return "";
-		// 失败必须让模型看到诊断（spec §6：失败 = isError + 诊断）——空 content 会被当成「成功但无输出」
-		if (isFailed(result)) return `Subagent ${result.agent} failed: ${result.error ?? "aborted"}`;
-		return truncate(result.content ?? "");
-	}
-	return truncate(
-		results
-			.map((result, index) => {
-				const header = `## ${index + 1}. ${result.agent}`;
-				// 每任务独立截断，防单个超长输出挤掉其他任务（对齐官方 example 的 per-task cap）
-				const body = result.error ? `Error: ${result.error}` : (result.content ?? "");
-				return `${header}\n${truncate(body)}`;
-			})
-			.join("\n\n"),
-	);
+	return results
+		.map((result, index) => {
+			const diagnostic =
+				result.status === "aborted"
+					? "Aborted by the user; not a task failure. 已由用户中止、不是任务失败。"
+					: isFailed(result)
+						? `Error: ${result.error ?? "subagent failed"}`
+						: "";
+			const summary = result.summary;
+			const files = summary?.changedFiles ?? [];
+			const facts = [
+				`Changed ${files.length} files:`,
+				...files.slice(0, 15).map((file) => `- ${file.path} (+${file.added}/-${file.removed})`),
+				...(files.length > 15 ? [`... ${files.length - 15} more files`] : []),
+				`Duration: ${summary?.durationMs ?? 0} ms; tokens: ${result.usage.totalTokens.tokens}`,
+			].join("\n");
+			return `${mode === "parallel" ? `## ${index + 1}. ${result.agent}\n` : ""}${diagnostic ? `${diagnostic}\n` : ""}${truncate(result.content ?? "")}\n\n${facts}`;
+		})
+		.join("\n\n");
 }
 
 /**
@@ -157,12 +161,12 @@ export function makeSubagentTool(deps: MakeSubagentToolDeps): ToolDefinition {
 	// defineTool：官方 1.0.4 的类型收窄入口（execute 参数由 TParams 推导）
 	return defineTool({
 		name: "subagent",
-		// 子会话会跑工具（可能改环境），且它不带权限扩展 → 这里如实声明为写且可破坏
+		// 子会话会跑工具（可能改环境），权限由子会话扩展求值 → 这里如实声明为写且可破坏
 		// （声明不参与本机弹窗判定：自研工具在权限门控里走「内置短路」，见 permissions/annotations.ts）
 		annotations: { readOnlyHint: false, destructiveHint: true },
 		label: "Subagent",
 		description:
-			"Delegate a self-contained read-only or project-scoped task to an isolated subagent session. Use {agent, task} for one run or {tasks:[{agent, task}, ...]} for parallel exploration (up to 8 tasks, 4 at once). Built-in agent: scout. More agents may be defined in ~/.percho/agent/agents/. The subagent returns only its final conclusion while its full session remains available from the result card.",
+			"Delegate one self-contained task to an isolated subagent with its own context window. It can read\nand edit files, run commands and tests, and fetch docs. It cannot see this conversation, cannot\nspawn further subagents, cannot commit or push, and cannot change Percho's own configuration.\n\nUse it for work you can specify with a clear acceptance criterion: multi-file implementation or\nrefactor, fixing a failing suite, investigating an unfamiliar area. Do not delegate a single file\nread or a one-line answer — do that yourself.\n\nWrite the brief as if to a capable engineer who just joined: the goal, relevant paths, constraints,\nthe acceptance criteria, and what you already know. Anything you omit will be rediscovered at extra\ncost.\n\n{task, agent?} runs one task. {tasks:[...]} runs independent tasks in parallel (up to 8, 4 at a\ntime); the call returns after all of them finish. Omit `agent` to use the built-in subagent.\n\nReturns its final report plus machine-derived facts (files changed, duration, tokens). The full\ntranscript is not returned — the user can open it from the card. Runs are one-shot: to continue the\nwork, dispatch again with the new information.\n\nSpecify agent only for a custom definition. Bash is not path-restricted except for the git allowlist and text-level Percho state protection. Write scope is not enforced. Agent deny, the git allowlist, and read-only <agentDir> always apply, including fullAccess and permissions.json disabled; boundaries can only be tightened.",
 		parameters: subagentParams,
 		execute: async (
 			toolCallId,
@@ -179,23 +183,20 @@ export function makeSubagentTool(deps: MakeSubagentToolDeps): ToolDefinition {
 			if (parallelTasks) {
 				tasks = parallelTasks;
 			} else {
-				if (!params.agent || !params.task) {
-					throw new Error(
-						'Missing "agent"/"task": pass { agent, task } for one run or { tasks: [...] } for parallel',
-					);
+				if (!params.task) {
+					throw new Error('Missing "task": pass { task } for one run or { tasks: [...] } for parallel');
 				}
-				tasks = [{ agent: params.agent, task: params.task, ...(params.cwd ? { cwd: params.cwd } : {}) }];
+				tasks = [{ agent: params.agent, task: params.task }];
 			}
 			const mode: SubagentDetails["mode"] = parallelTasks ? "parallel" : "single";
 			const shouldConfirm = params.confirmProjectAgents !== false;
 			const projectTrusted = ctx.isProjectTrusted();
-			const definitions = await Promise.all(
-				tasks.map(async (task) => {
-					const cwd = task.cwd ?? ctx.cwd;
-					const agents = await discoverAgents(cwd, { projectTrusted });
-					return { task, cwd, agents, agent: findAgent(agents, task.agent) };
-				}),
-			);
+			const agents = await discoverAgents(ctx.cwd, { projectTrusted });
+			const definitions = tasks.map((task) => ({
+				task,
+				cwd: ctx.cwd,
+				agent: findAgent(agents, task.agent ?? DEFAULT_AGENT),
+			}));
 			await confirmProjectAgents(
 				ctx,
 				shouldConfirm,
@@ -203,10 +204,21 @@ export function makeSubagentTool(deps: MakeSubagentToolDeps): ToolDefinition {
 			);
 
 			// 固定槽位：结果按请求顺序归位（完成顺序不定），模型看到的结果顺序与请求一致
-			const slots: Array<SingleResult | undefined> = new Array(definitions.length);
-			const filled = () => slots.filter((slot): slot is SingleResult => slot !== undefined);
-			const emit = () => onUpdate?.(partialResult(mode, filled()));
+			const slots: SingleResult[] = definitions.map(({ agent, task }, index) => ({
+				agent: agent.name,
+				task: task.task,
+				status: "queued",
+				exitCode: -1,
+				index: definitions.length > 1 ? index + 1 : undefined,
+				usage: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, cost: 0, totalTokens: { tokens: 0 } },
+				artifactPaths: {},
+			}));
+			const emit = () => onUpdate?.(partialResult(mode, slots));
+			emit();
 			await withConcurrency(definitions, MAX_CONCURRENCY, async ({ task, cwd, agent }, index) => {
+				slots[index] = { ...slots[index]!, status: "running" };
+				emit();
+				const startedAt = Date.now();
 				let result: SingleResult;
 				try {
 					result = await runSubagent(deps, {
@@ -214,6 +226,7 @@ export function makeSubagentTool(deps: MakeSubagentToolDeps): ToolDefinition {
 						task: task.task,
 						cwd,
 						projectTrusted,
+						batchIndex: definitions.length > 1 ? index + 1 : undefined,
 						model: ctx.model,
 						signal,
 						onProgress: (progress) => {
@@ -226,6 +239,14 @@ export function makeSubagentTool(deps: MakeSubagentToolDeps): ToolDefinition {
 						agent: agent.name,
 						task: task.task,
 						exitCode: 1,
+						status: signal?.aborted ? "aborted" : "failed",
+						index: definitions.length > 1 ? index + 1 : undefined,
+						summary: {
+							changedFiles: [],
+							commands: [],
+							failedCommands: 0,
+							durationMs: Date.now() - startedAt,
+						},
 						error: error instanceof Error ? error.message : String(error),
 						usage: {
 							input: 0,
@@ -241,8 +262,7 @@ export function makeSubagentTool(deps: MakeSubagentToolDeps): ToolDefinition {
 				slots[index] = result;
 				emit();
 			});
-			const results = filled();
-			return finalizeSubagentResult(mode, results);
+			return finalizeSubagentResult(mode, slots);
 		},
 	});
 }

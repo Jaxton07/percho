@@ -26,11 +26,12 @@ describe("subagentParams schema（provider 兼容，0.4.5 回归）", () => {
 		expect(schema.allOf).toBeUndefined();
 	});
 
-	it("完整 properties：agent/task/cwd/tasks/confirmProjectAgents 均带描述", () => {
+	it("完整 properties：agent/task/tasks/confirmProjectAgents 均带描述", () => {
 		const props = schema.properties as Record<string, { description?: string }>;
 		expect(Object.keys(props)).toEqual(
-			expect.arrayContaining(["agent", "task", "cwd", "tasks", "confirmProjectAgents"]),
+			expect.arrayContaining(["agent", "task", "tasks", "confirmProjectAgents"]),
 		);
+		expect(props.cwd).toBeUndefined();
 		for (const key of ["agent", "task", "tasks"]) {
 			expect(props[key]?.description, `${key} 缺 description`).toBeTruthy();
 		}
@@ -42,10 +43,35 @@ describe("subagentParams schema（provider 兼容，0.4.5 回归）", () => {
 });
 
 describe("finalizeSubagentResult（失败语义 spec §6）", () => {
+	it("中止不会误导重试，事实块独立保留，长文本按每任务截断", () => {
+		const summary = {
+			changedFiles: Array.from({ length: 20 }, (_, i) => ({ path: `file-${i}`, added: 1, removed: 2 })),
+			commands: [{ command: "private-command", isError: true }],
+			failedCommands: 1,
+			durationMs: 123,
+		};
+		const result = finalizeSubagentResult("parallel", [
+			makeResult({ status: "aborted", content: "a".repeat(60000), summary }),
+			makeResult({ status: "done", content: "b".repeat(60000), summary }),
+		]);
+		const text = (result.content[0] as { text: string }).text;
+		expect(text).toContain("已由用户中止、不是任务失败");
+		expect(text).toContain("a".repeat(50000));
+		expect(text).toContain("b".repeat(50000));
+		expect(text).not.toContain("a".repeat(50001));
+		expect(text).toContain("5 more files");
+		expect(text).toContain("Duration: 123 ms");
+		expect(text).not.toContain("private-command");
+		expect(result.isError).toBeUndefined();
+		expect(finalizeSubagentResult("single", [makeResult({ status: "aborted" })]).isError).toBe(true);
+	});
 	it("single 成功：content 为结论，无 isError", () => {
 		const result = finalizeSubagentResult("single", [makeResult({ content: "done" })]);
 		expect(result.isError).toBeUndefined();
-		expect(result.content[0]).toEqual({ type: "text", text: "done" });
+		expect(result.content[0]).toMatchObject({
+			type: "text",
+			text: expect.stringContaining("done\n\nChanged 0 files:"),
+		});
 	});
 
 	it("single 失败：isError + content 带诊断（不给模型空字符串）", () => {
@@ -55,14 +81,17 @@ describe("finalizeSubagentResult（失败语义 spec §6）", () => {
 		expect(result.isError).toBe(true);
 		expect(result.content[0]).toEqual({
 			type: "text",
-			text: "Subagent scout failed: model exploded",
+			text: expect.stringContaining("Error: model exploded"),
 		});
 	});
 
 	it("single 无错误消息的失败（abort）：回落 aborted 诊断", () => {
 		const result = finalizeSubagentResult("single", [makeResult({ exitCode: 1 })]);
 		expect(result.isError).toBe(true);
-		expect(result.content[0]).toEqual({ type: "text", text: "Subagent scout failed: aborted" });
+		expect(result.content[0]).toMatchObject({
+			type: "text",
+			text: expect.stringContaining("Error: subagent failed"),
+		});
 	});
 
 	it("parallel 部分失败：不置 isError，Error 行在 content 里", () => {

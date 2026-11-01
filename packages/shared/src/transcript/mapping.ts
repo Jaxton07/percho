@@ -1,5 +1,6 @@
 import type { UiError } from "../errors";
 import type { SessionMessage } from "../session";
+import { subagentUiStatus } from "../subagent";
 import { newSubagentKey, newToolKey } from "./helpers";
 import { buildRoundErrorCard, isLlmErrorRound } from "./llm-errors";
 import type { UIMessage, UIToolCall } from "./types";
@@ -53,7 +54,7 @@ export function messagesToUIMessages(messages: SessionMessage[]): UIMessage[] {
 			ui.push({
 				kind: "subagent",
 				id,
-				runs: m.runs.map((run) => ({ ...run, key: newSubagentKey() })),
+				runs: m.runs.map((run) => ({ ...run, status: subagentUiStatus(run.status), key: newSubagentKey() })),
 				timestamp: m.timestamp,
 			});
 			continue;

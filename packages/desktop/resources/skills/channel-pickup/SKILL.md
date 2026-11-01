@@ -39,7 +39,7 @@ description: 从本项目的跨会话沟通频道接手已交接的实施任务�
 - 按 plan 阶段推进；**阶段 0 冒烟验证先行**，其断言是后续所有决策的地基。
 - plan/spec 与代码现状冲突、或冒烟断言失败 → 停下来写进 `IMPL-NOTES.md` 并告知用户，**不要自由发挥绕过**。
 - 遇到 HANDOFF 列的「待决策点」：自行决策，决策与理由记入 `IMPL-NOTES.md`。
-- 项目通用纪律全适用（AGENTS.md 踩坑记录先读）：dev 数据隔离（`~/.pi/agent-dev/`、`*-dev` userData，正式目录零写入）、默认路径零行为变化、UI 文案 zh/en 双字典、Zustand selector 稳定引用、preload 保持 CJS 等。
+- 项目通用纪律全适用（AGENTS.md 踩坑记录先读）：dev 数据隔离（`~/.percho/agent-dev/`、`*-dev` userData，正式目录零写入）、默认路径零行为变化、UI 文案 zh/en 双字典、Zustand selector 稳定引用、preload 保持 CJS 等。
 - 测试完毕后关闭过程中起的服务和进程（dev 实例、冒烟脚本、CDP 端口）。
 
 ## 阶段门：干完一个阶段就停手等 review

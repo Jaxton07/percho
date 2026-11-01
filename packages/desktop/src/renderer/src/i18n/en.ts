@@ -432,6 +432,9 @@ export const en: Messages = {
 		imageRetry: "Reload",
 		imageLoadError: "Image failed to load",
 		subagent: {
+			worker: "Worker",
+			queued: "Queued",
+			aborted: "Aborted",
 			running: "Working",
 			done: "Done",
 			/** Back-to-parent entry on the subagent inspection page (spec D4) */
@@ -631,6 +634,7 @@ export const en: Messages = {
 			subagentsEmpty: "No configurable subagents found",
 			subagentThinkingInherit: "Follow agent definition",
 			subagentThinkingInheritWith: "Follow agent definition ({level})",
+			subagentDenyInvalid: "Invalid deny rules ignored: {value}",
 			subagentThinkingInvalid: 'Definition thinking "{value}" is invalid and was ignored',
 			subagentExecutorTitle: "Prefer built-in subagent executor",
 			subagentExecutorHint:
@@ -661,7 +665,7 @@ export const en: Messages = {
 			builtinEditTitle: "Configure {name} endpoint",
 			builtinBaseUrl: "baseUrl (optional; blank = official endpoint)",
 			builtinHint:
-				"Models keep {name}'s official config (thinking/window metadata unchanged); only the request endpoint is overridden. Clear baseUrl and save to return to the official endpoint. Key is stored in ~/.pi/agent/auth.json, shared with other pi clients.",
+				"Models keep {name}'s official config (thinking/window metadata unchanged); only the request endpoint is overridden. Clear baseUrl and save to return to the official endpoint. The key is stored in Percho's own auth.json (inside its user data directory), not shared with the Pi CLI or other clients.",
 			addCustom: "+ Add custom provider",
 			customTitle: "Custom Provider",
 			editCustom: "Edit",
@@ -709,7 +713,7 @@ export const en: Messages = {
 		},
 		skills: {
 			title: "Loaded Skills",
-			hint: "Skills loaded for the current project (active session), from ~/.pi/agent/skills and project .pi/skills",
+			hint: "Skills loaded for the current project (active session), from Percho's user-level skills directory and project .pi/skills",
 			empty: "No skills loaded for the current project",
 			emptyNoSession:
 				"No open session. Create or open a session first, then the loaded skills for that project will show here",

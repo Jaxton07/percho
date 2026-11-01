@@ -28,6 +28,7 @@ export function createExecutionHandlers(
 		setThinkingLevel: ({ sessionId, level }) => backend.setThinkingLevel(sessionId, level),
 		getPendingInteractions: () => backend.getPendingInteractions(),
 		getLoadedSessions: () => backend.getLoadedSessions(),
+		setViewedSubagent: ({ sessionId }) => backend.setViewedSubagent(sessionId),
 		getSessionBaseline: ({ sessionId }) => backend.getSessionBaseline(sessionId),
 		getSessionMessages: ({ sessionId }) => backend.getSessionMessages(sessionId),
 		markSessionHistoryReady: ({ sessionId }) => backend.markSessionHistoryReady(sessionId),

@@ -362,6 +362,9 @@ describe("V07 complete plugin contract guard (no import of side-effectful host A
 				),
 			).toThrow();
 		}
+		const summary = await source("../../../../shared/src/subagent.ts");
+		expect(fields(summary, "SubagentRunSummary")).toEqual(fields(data.declaration, "SubagentRunSummary"));
+		expect(fields(summary, "SubagentRunSummary")).toEqual(fields(snippets, "SubagentRunSummary"));
 		const assets = objectVariable(data.build, "ASSET_LOADERS")
 			.properties.map((prop) => name(prop.name))
 			.sort();

@@ -219,6 +219,12 @@ export const SESSION_CHANNELS = {
 		PendingInteractions
 	>(),
 	getLoadedSessions: ch("session:getLoaded", "environment", "read")<void, LoadedSessionSummary[]>(),
+	/** 仅当前检视的子代理转发详细事件；省略 ID 停止观察，不停止运行。 */
+	setViewedSubagent: ch(
+		"session:setViewedSubagent",
+		"environment",
+		"mutation",
+	)<{ sessionId?: string }, void>({ sessionId: input.optional(input.id) }),
 	getSessionBaseline: ch(
 		"session:getBaseline",
 		"environment",

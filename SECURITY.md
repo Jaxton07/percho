@@ -13,6 +13,6 @@ You can expect an initial response within a few days. Once the issue is confirme
 This application handles API keys for LLM providers:
 
 - Keys are supplied by the user via environment variables (referenced as `$VAR` in `models.json`) and are never stored in this repository or bundled into releases.
-- User data under `~/.pi/agent/` (`sessions/*.jsonl`, `auth.json`) may contain sensitive content. Be careful what you include in bug reports — redact keys and personal data.
+- User data under `~/.percho/agent/` (`~/.percho/agent-dev/` and `~/.percho/agent-beta/` for development and Beta builds; `sessions/*.jsonl`, `auth.json`) may contain sensitive content. Be careful what you include in bug reports — redact keys and personal data.
 
 If you find a code path that could leak keys into logs, the renderer, or crash reports, that is in scope and we'd like to hear about it.

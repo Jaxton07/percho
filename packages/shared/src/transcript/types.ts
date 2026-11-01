@@ -2,6 +2,7 @@ import type { ComposerDocument } from "../composer-document";
 import type { UiError } from "../errors";
 import type { CompactionPause, ImageInput } from "../session";
 import type { SkillInvocationDisplay } from "../skill-invocation";
+import type { SubagentRunSummary } from "../subagent";
 import type { TodoItem } from "../todo";
 
 /** SDK 自动重试（auto_retry_start）即时信息：状态行文案 + 出现/清除时机都来自事件流 */
@@ -19,7 +20,9 @@ export interface SubagentRunUi {
 	key: string;
 	agent: string;
 	task?: string;
-	status: "running" | "done" | "error";
+	status: "running" | "done" | "error" | "queued" | "aborted";
+	summary?: SubagentRunSummary;
+	index?: number;
 	model?: string;
 	/** 子代理实际生效的思考档位（运行中/完成后均可用） */
 	thinkingLevel?: string;

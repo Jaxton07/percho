@@ -1,27 +1,26 @@
-import { type MessageKey, useT } from "../../i18n";
+import { useT } from "../../i18n";
 import { withSessionSlide } from "../../lib/session-page-slide";
 import { useSessionsStore } from "../../stores/sessions";
 import type { SubagentRunUi } from "../../stores/transcript";
 
-/** 子代理名展示：首字母大写，其余原样（不翻译、不改写） */
-function displayName(name: string): string {
-	return name.charAt(0).toUpperCase() + name.slice(1);
-}
+const STATUS_KEYS = {
+	running: "message.subagent.running",
+	queued: "message.subagent.queued",
+	done: "message.subagent.done",
+	error: "message.subagent.failed",
+	aborted: "message.subagent.aborted",
+} as const;
 
-/** 单个子代理行：状态点（工作中呼吸动画 / 完成勾 / 失败红点）+ 加粗名称 + 状态；有会话文件时可点击打开 */
-function SubagentRunRow({ run }: { run: SubagentRunUi }) {
+/** 单个子代理行：Worker 编号 + 工作态打字点 / 终态圆点；有会话文件时可点击打开 */
+function SubagentRunRow({ run, index }: { run: SubagentRunUi; index: number }) {
 	const t = useT();
 	// 走统一入口：它同步捕获父目标并只在「仍是最新导航意图」时记下返回关系（spec D4）
 	const openSubagentSession = useSessionsStore((s) => s.openSubagentSession);
 
 	// runner 创建会话文件后即回填 sessionFile；运行中同样允许打开只读检视页。
 	const clickable = run.sessionFile != null;
-	const statusLabel =
-		run.status === "running"
-			? t("message.subagent.running")
-			: run.status === "error"
-				? t("message.subagent.failed")
-				: t("message.subagent.done");
+	const statusLabel = t(STATUS_KEYS[run.status]);
+	const label = `${t("message.subagent.worker")} ${index}`;
 
 	return (
 		<button
@@ -32,24 +31,26 @@ function SubagentRunRow({ run }: { run: SubagentRunUi }) {
 				if (!clickable || !run.sessionFile) return;
 				void withSessionSlide("push", () => openSubagentSession(run.sessionFile as string));
 			}}
-			className={`flex w-full items-center gap-2 py-1 text-left ${
+			className={`flex w-fit items-center gap-2.5 py-1 text-left ${
 				clickable ? "cursor-pointer rounded-md hover:bg-hover" : "cursor-default"
 			} px-1.5 transition-colors`}
 		>
-			{run.status === "running" ? (
-				<span className="h-1.5 w-1.5 shrink-0 animate-pulse rounded-full bg-accent" />
-			) : run.status === "error" ? (
-				<span className="h-1.5 w-1.5 shrink-0 rounded-full bg-red-500" />
-			) : (
-				<span className="h-1.5 w-1.5 shrink-0 rounded-full bg-green-500" />
-			)}
-			<span className="truncate text-ui-13 font-semibold text-ink">{displayName(run.agent)}</span>
-			{run.thinkingLevel && (
-				<span className="shrink-0 text-ui-11 text-ink-faint">
-					{t(`thinkingLevels.${run.thinkingLevel}` as MessageKey)}
+			<span className="truncate text-ui-13 font-semibold text-ink">{label}</span>
+			<span className="subagent-slot">
+				<span
+					className="subagent-cap"
+					data-state={run.status}
+					role="img"
+					aria-label={statusLabel}
+					title={`${label} · ${statusLabel}`}
+				>
+					<span className="subagent-dots" aria-hidden="true">
+						<i />
+						<i />
+						<i />
+					</span>
 				</span>
-			)}
-			<span className="shrink-0 text-ui-11 text-ink-faint">{statusLabel}</span>
+			</span>
 		</button>
 	);
 }
@@ -58,8 +59,8 @@ function SubagentRunRow({ run }: { run: SubagentRunUi }) {
 export function SubagentRunCard({ runs }: { runs: SubagentRunUi[] }) {
 	return (
 		<div className="mt-1">
-			{runs.map((run) => (
-				<SubagentRunRow key={run.key} run={run} />
+			{runs.map((run, i) => (
+				<SubagentRunRow key={run.key} run={run} index={i + 1} />
 			))}
 		</div>
 	);

@@ -3,6 +3,7 @@ import {
 	emptyTranscript,
 	type LoadedSessionSummary,
 	type PermissionMode,
+	type SessionBaseline,
 	type SessionMeta,
 } from "@percho/shared";
 import ts from "typescript";
@@ -11,6 +12,8 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 const pi = vi.hoisted(() => ({
 	openSession: vi.fn(),
 	getSessionMessages: vi.fn(),
+	getSessionBaseline: vi.fn(),
+	setViewedSubagent: vi.fn(async () => {}),
 	getLoadedSessions: vi.fn(async (): Promise<LoadedSessionSummary[]> => []),
 	getFollowUpMessages: vi.fn(),
 	getTodos: vi.fn(),
@@ -28,6 +31,7 @@ vi.mock("../api", () => ({
 		}),
 }));
 
+import { acceptSessionEvent } from "./session-event-boundary";
 import { clearSessionHistory, isHistoryReady } from "./session-history";
 import { createSessionLoader } from "./session-loading";
 import {
@@ -74,6 +78,7 @@ function fixture(id: string) {
 	});
 	const loader = createSessionLoader({
 		isOpen: (key) => sessions.has(key),
+		isReadOnly: (key) => sessions.get(key)?.readOnly === true,
 		landMeta,
 		readPermissionMode: (key) => modes.get(key),
 		writePermissionMode,
@@ -87,6 +92,7 @@ beforeEach(() => {
 	pi.getTodos.mockResolvedValue([]);
 	pi.getPermissionMode.mockResolvedValue("default");
 	pi.setPermissionMode.mockResolvedValue(undefined);
+	pi.setViewedSubagent.mockResolvedValue(undefined);
 	pi.markSessionHistoryReady.mockResolvedValue(undefined);
 	useTranscriptStore.setState({ bySession: {} });
 	useUiPreferencesStore.setState({ sessionPermissionModes: {} });
@@ -98,6 +104,86 @@ afterEach(() => {
 });
 
 describe("session loader owns flights and data, not navigation", () => {
+	it("暂停后重新观察不复用旧基线请求，旧请求结束也不会覆盖新结果", async () => {
+		const id = "reentered-child";
+		const f = fixture(id);
+		const child = { ...meta(id), readOnly: true };
+		f.sessions.set(id, child);
+		const old = deferred<SessionBaseline>();
+		const baseline: SessionBaseline = {
+			meta: child,
+			sequence: 20,
+			transcript: emptyTranscript(),
+			permissionMode: "default",
+		};
+		pi.getSessionBaseline.mockReturnValueOnce(old.promise).mockResolvedValueOnce(baseline);
+		const first = f.loader.loadSessionBundle(id, { observeSubagent: true });
+		await vi.waitFor(() => expect(pi.getSessionBaseline).toHaveBeenCalledOnce());
+		f.loader.invalidateBundle(id);
+		await f.loader.loadSessionBundle(id, { observeSubagent: true });
+		old.resolve({ ...baseline, sequence: 2, transcript: { ...emptyTranscript(), agentActive: true } });
+		await first;
+		expect(pi.getSessionBaseline).toHaveBeenCalledTimes(2);
+		expect(useTranscriptStore.getState().bySession[id]?.agentActive).toBe(false);
+		expect(isHistoryReady(id)).toBe(true);
+	});
+	it("开启观察的回执迟到时，已经离开的页面不再请求或安装基线", async () => {
+		const id = "left-child";
+		const f = fixture(id);
+		f.sessions.set(id, { ...meta(id), readOnly: true });
+		const enabling = deferred<void>();
+		pi.setViewedSubagent.mockReturnValueOnce(enabling.promise);
+		const loading = f.loader.loadSessionBundle(id, { observeSubagent: true });
+		f.loader.invalidateBundle(id);
+		enabling.resolve();
+		await loading;
+		expect(pi.getSessionBaseline).not.toHaveBeenCalled();
+		expect(isHistoryReady(id)).toBe(false);
+	});
+	it("恢复观察前先缓冲增量，基线落地后只接续较新的事件", async () => {
+		const id = "resume-child";
+		const f = fixture(id);
+		const child = { ...meta(id), readOnly: true };
+		f.sessions.set(id, child);
+		const enabling = deferred<void>();
+		pi.setViewedSubagent.mockReturnValueOnce(enabling.promise);
+		pi.getSessionBaseline.mockResolvedValue({
+			meta: child,
+			sequence: 12,
+			transcript: emptyTranscript(),
+			permissionMode: "default",
+		});
+		const applyOld = vi.fn(),
+			applyNew = vi.fn();
+		const loading = f.loader.loadSessionBundle(id, { observeSubagent: true });
+		expect(pi.setViewedSubagent).toHaveBeenCalledWith({ sessionId: id });
+		expect(pi.getSessionBaseline).not.toHaveBeenCalled();
+		acceptSessionEvent(id, 12, {}, applyOld);
+		acceptSessionEvent(id, 13, {}, applyNew);
+		expect(applyNew).not.toHaveBeenCalled();
+		enabling.resolve();
+		await loading;
+		expect(applyOld).not.toHaveBeenCalled();
+		expect(applyNew).toHaveBeenCalledOnce();
+	});
+	it("本机只读子代理使用进行中基线，确保打开后可见运行态", async () => {
+		const id = "local-running-child";
+		const f = fixture(id);
+		const child = { ...meta(id), readOnly: true };
+		f.sessions.set(id, child);
+		pi.getSessionBaseline.mockResolvedValue({
+			meta: child,
+			sequence: 12,
+			transcript: { ...emptyTranscript(), phase: "streaming", agentActive: true },
+			permissionMode: "default",
+		});
+		await f.loader.loadSessionBundle(id);
+		expect(pi.getSessionBaseline).toHaveBeenCalledWith({ sessionId: id });
+		expect(pi.getSessionMessages).not.toHaveBeenCalled();
+		expect(useTranscriptStore.getState().bySession[id]?.phase).toBe("streaming");
+		expect(useTranscriptStore.getState().bySession[id]?.agentActive).toBe(true);
+		expect(isHistoryReady(id)).toBe(true);
+	});
 	it("restores an existing instance pause on local history reload and clears it when that instance is gone", async () => {
 		const f = fixture("paused");
 		pi.getLoadedSessions.mockResolvedValue([
@@ -327,7 +413,7 @@ describe("session loader owns flights and data, not navigation", () => {
 		expect(isLatestNavigation(activation)).toBe(true);
 		expect(isLatestUserIntent(intent)).toBe(false);
 	});
-	it("production imports and four declared data ports enforce narrow dependency direction", () => {
+	it("production imports and declared data ports enforce narrow dependency direction", () => {
 		const source = ts.createSourceFile(
 			"session-loading.ts",
 			readFileSync(new URL("./session-loading.ts", import.meta.url), "utf8"),
@@ -355,6 +441,7 @@ describe("session loader owns flights and data, not navigation", () => {
 		);
 		expect(ports?.members.map((member) => member.name?.getText(source)).sort()).toEqual([
 			"isOpen",
+			"isReadOnly",
 			"landMeta",
 			"readPermissionMode",
 			"writePermissionMode",

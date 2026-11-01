@@ -3,6 +3,7 @@ import type { InlineExtension } from "@earendil-works/pi-coding-agent";
 import type { PermissionMode } from "@percho/shared";
 import { createLogger } from "../log";
 import { createWorkspacesLoader, suggestRootCandidate } from "../project/workspace-store";
+import { type SubagentPolicy, subagentBoundaryViolation } from "../tools/subagent/policy";
 import {
 	createPermissionConfigLoader,
 	evaluateBashCommand,
@@ -39,6 +40,8 @@ export interface PermissionGateOptions {
 	confirm?: PermissionConfirm;
 	/** 会话权限模式实时读取（每次 tool_call 调，切换即时生效）；缺省恒 default（与现状行为一致） */
 	getMode?: () => PermissionMode;
+	/** 仅子代理注入；不可被全局门控与用户授权放宽。 */
+	subagentPolicy?: SubagentPolicy;
 }
 
 /** 按会话权限模式的可变引用（PiBackend 持有 map，随扩展工厂闭包注入求值链） */
@@ -72,12 +75,25 @@ export function makePermissionGateExtension(
 			const loadWorkspaces = createWorkspacesLoader(agentDir);
 			const audit = new PermissionAuditLog(permissionAuditPath(agentDir));
 			pi.on("tool_call", async (event, ctx) => {
+				const input = (event.input ?? {}) as Record<string, unknown>;
+				const matchText = matchTextFor(event.toolName, input);
+				if (options?.subagentPolicy) {
+					const violation = subagentBoundaryViolation(
+						options.subagentPolicy,
+						event.toolName,
+						matchText,
+						projectRoot ?? ctx.cwd,
+					);
+					if (violation)
+						return {
+							block: true,
+							reason: `代理边界 (subagent boundary): ${violation}. permissions.json 无法放行；自定义 deny 可修改 agent 定义收紧或移除，git 白名单与 Percho 目录只读不可放宽。不要换写法重试。`,
+						};
+				}
 				const config = loadConfig();
 				if (!config.enabled) return;
 				// fullAccess：一切放行 + 高危留痕（每次 tool_call 实时读，切换即时生效）
 				const fullAccess = options?.getMode?.() === "fullAccess";
-				const input = (event.input ?? {}) as Record<string, unknown>;
-				const matchText = matchTextFor(event.toolName, input);
 				// 相对路径 resolve 基准：projectRoot ?? ctx.cwd（皆缺时 tmp 豁免仅绝对路径可判，fail-safe）
 				const base: string | undefined = projectRoot ?? ctx.cwd;
 				// bash 单次求值同时拿到命中段（弹窗标题定位用）；段豁免钩子（②'）：rm 家族且

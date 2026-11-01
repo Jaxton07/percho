@@ -18,6 +18,88 @@ const canonicalSkill = (args?: string) =>
 	`<skill name="mindmap" location="/tmp/skills/mindmap/SKILL.md">\nReferences are relative to /tmp/skills/mindmap.\n\n# Mind map\n\nBody\n</skill>${args ? `\n\n${args}` : ""}`;
 
 describe("transcript reducer", () => {
+	it("六任务逐行排队、运行、完成和中止；最终结果覆盖部分结果", () => {
+		let state = reduceEvent(emptyTranscript(), ev("agent_start"));
+		state = reduceEvent(
+			state,
+			ev("tool_execution_start", {
+				toolCallId: "six",
+				toolName: "subagent",
+				args: { tasks: Array.from({ length: 6 }, (_, i) => ({ task: `task ${i}` })) },
+			}),
+		);
+		const results = ["running", "running", "running", "running", "queued", "queued"].map((status, i) => ({
+			agent: "worker",
+			task: `task ${i}`,
+			status,
+			exitCode: -1,
+		}));
+		const update = () => {
+			state = reduceEvent(
+				state,
+				ev("tool_execution_update", {
+					toolCallId: "six",
+					toolName: "subagent",
+					partialResult: { details: { results } },
+				}),
+			);
+		};
+		update();
+		expect(state.streaming?.subagentRuns.map((r) => r.status)).toEqual([
+			"running",
+			"running",
+			"running",
+			"running",
+			"queued",
+			"queued",
+		]);
+		results[0] = { ...results[0]!, status: "done", exitCode: 0 };
+		results[4] = { ...results[4]!, status: "running" };
+		update();
+		expect(state.streaming?.subagentRuns.map((r) => r.status)).toEqual([
+			"done",
+			"running",
+			"running",
+			"running",
+			"running",
+			"queued",
+		]);
+		const summary = {
+			changedFiles: [{ path: "file", added: 1, removed: 0 }],
+			commands: [],
+			failedCommands: 0,
+			durationMs: 10,
+		};
+		state = reduceEvent(
+			state,
+			ev("tool_execution_end", {
+				toolCallId: "six",
+				toolName: "subagent",
+				isError: false,
+				result: {
+					details: {
+						results: results.map((r, i) => ({
+							...r,
+							status: i === 0 ? "aborted" : i === 1 ? "failed" : "done",
+							summary,
+						})),
+					},
+				},
+			}),
+		);
+		expect(state.streaming?.subagentRuns.map((r) => r.status)).toEqual([
+			"aborted",
+			"error",
+			"done",
+			"done",
+			"done",
+			"done",
+		]);
+		expect(state.streaming?.subagentRuns.map((r) => r.key)).toEqual(
+			Array.from({ length: 6 }, (_, i) => `six:${i}`),
+		);
+		expect(state.streaming?.subagentRuns[0]?.summary).toEqual(summary);
+	});
 	it("subagent 互斥事件生成系统消息（结构化 + 同扩展去重）", () => {
 		let state = reduceEvent(emptyTranscript(), {
 			type: "subagent_mutex",
@@ -841,7 +923,7 @@ describe("transcript reducer", () => {
 		expect(state.streaming?.subagentRuns[0]).toMatchObject({
 			agent: "reviewer",
 			task: "review diff",
-			status: "running",
+			status: "queued",
 		});
 	});
 
@@ -954,7 +1036,7 @@ describe("transcript reducer", () => {
 			},
 		} as unknown as AgentSessionEvent);
 		expect(state.streaming?.subagentRuns).toHaveLength(2);
-		expect(state.streaming?.subagentRuns.map((run) => run.status)).toEqual(["running", "running"]);
+		expect(state.streaming?.subagentRuns.map((run) => run.status)).toEqual(["queued", "queued"]);
 		expect(state.streaming?.subagentRuns.map((run) => run.key)).toEqual(["parallel-1:0", "parallel-1:1"]);
 		state = reduceEvent(state, {
 			type: "tool_execution_end",
