@@ -46,6 +46,7 @@ import type {
 	SessionBaseline,
 	SessionCloseIntent,
 	SessionEventEnvelope,
+	SessionHistoryPage,
 	SessionMessage,
 	SessionMeta,
 	SessionStats,
@@ -55,7 +56,7 @@ import type {
 	TrustResolved,
 	UiState,
 } from "./session";
-import type { SessionMediaJob } from "./session-media-maintenance";
+import type { SessionMediaJob, SessionMediaTransaction } from "./session-media-maintenance";
 import type { SessionSwitchFixture, SessionSwitchProbe } from "./session-switch-diagnostics";
 import type {
 	CustomProviderInput,
@@ -231,9 +232,10 @@ export const SESSION_CHANNELS = {
 		"session:getBaseline",
 		"environment",
 		"read",
-	)<{ sessionId: string; imageMode?: "references" }, SessionBaseline>({
+	)<{ sessionId: string; imageMode?: "references"; historyTurns?: number }, SessionBaseline>({
 		sessionId: input.id,
 		imageMode: input.optional(input.oneOf("references")),
+		historyTurns: input.optional(input.number),
 	}),
 
 	getSessionMessages: ch(
@@ -244,6 +246,56 @@ export const SESSION_CHANNELS = {
 		sessionId: input.id,
 		imageMode: input.optional(input.oneOf("references")),
 	}),
+	getSessionHistoryPage: ch(
+		"session:historyPage",
+		"environment",
+		"read",
+	)<{ sessionId: string; cursor: string }, SessionHistoryPage>({ sessionId: input.id, cursor: input.id }),
+	startSessionMediaCompaction: ch(
+		"session:mediaCompact",
+		"environment",
+		"mutation",
+	)<{ sessionFile: string; requestId: string; expectedHash: string; confirmed: boolean }, SessionMediaJob>({
+		sessionFile: input.text,
+		requestId: input.id,
+		expectedHash: input.id,
+		confirmed: input.boolean,
+	}),
+	startSessionMediaRestore: ch(
+		"session:mediaRestore",
+		"environment",
+		"mutation",
+	)<{ requestId: string; compactionRequestId: string; confirmed: boolean }, SessionMediaJob>({
+		requestId: input.id,
+		compactionRequestId: input.id,
+		confirmed: input.boolean,
+	}),
+	resumeSessionMediaJob: ch(
+		"session:mediaResume",
+		"environment",
+		"mutation",
+	)<{ requestId: string; confirmed: boolean }, SessionMediaJob>({
+		requestId: input.id,
+		confirmed: input.boolean,
+	}),
+	abandonSessionMediaJob: ch(
+		"session:mediaAbandon",
+		"environment",
+		"mutation",
+	)<{ requestId: string; confirmed: boolean }, SessionMediaJob>({
+		requestId: input.id,
+		confirmed: input.boolean,
+	}),
+	getSessionMediaTransaction: ch(
+		"session:mediaTransaction",
+		"environment",
+		"read",
+	)<{ requestId: string }, SessionMediaTransaction | null>({ requestId: input.id }),
+	getSessionMediaMaintenance: ch(
+		"session:mediaMaintenance",
+		"environment",
+		"read",
+	)<{ sessionFile: string }, SessionMediaTransaction | null>({ sessionFile: input.text }),
 	startSessionMediaPreview: ch(
 		"session:mediaPreview",
 		"environment",

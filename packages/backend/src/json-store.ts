@@ -204,6 +204,13 @@ export class JsonStore<T> {
 		}
 	}
 
+	/** 安全事务读取：缺失用default，损坏及IO错误必须上抛，不能伪装成无事务。 */
+	async readStrict(): Promise<T> {
+		const result = await this.readRaw();
+		if (result.kind === "corrupted") throw new JsonStoreCorruptedError(this.path, result.error);
+		return result.value;
+	}
+
 	readSync(): T {
 		try {
 			const result = this.readRawSync();

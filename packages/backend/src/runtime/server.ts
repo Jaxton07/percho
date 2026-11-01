@@ -42,7 +42,11 @@ export async function startRuntimeServer(paths: RuntimePaths, exitStopped: () =>
 		if (!identity || typeof identity.environmentId !== "string" || !identity.environmentId)
 			throw new Error("Invalid runtime environment identity");
 		await assertRemoteStorage(paths.agent);
-		backend = new PiBackend({ defaultCwd: paths.root, validateWorkspace: true });
+		backend = new PiBackend({
+			defaultCwd: paths.root,
+			validateWorkspace: true,
+			maintenanceSessionRoot: paths.agent,
+		});
 		await backend.init();
 		const runtimeBackend = backend;
 		const handlers = createExecutionHandlers(runtimeBackend, { allowInteractiveAuth: false });

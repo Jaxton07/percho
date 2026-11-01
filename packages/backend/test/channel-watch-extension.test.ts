@@ -3,6 +3,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import { ChannelSubscriptionRegistry } from "../src/channel-subscriptions";
+import { SessionHydrationGate } from "../src/session/hydration-gate";
 import {
 	buildWakeMessage,
 	type ChannelWatchOptions,
@@ -733,23 +734,24 @@ describe("P1 · 首次订阅基线与 watcher 就绪竞态", () => {
 });
 
 describe("P1 · 恢复补投（catch-up）", () => {
-	it("打开时先等历史 ACK：不启动 watcher、不推进 cursor；放行后补投恰好一次", async () => {
+	it("分页权威首屏ACK即可唤醒：旧token不放行，不等旧历史，补投恰好一次", async () => {
 		const cwd = join(testRoot, "history-barrier");
 		await mkdir(topicDir(cwd, "t1"), { recursive: true });
 		await writeFile(messagesFile(cwd, "t1"), "v2\n");
-		let release = () => {};
-		const ready = new Promise<boolean>((resolve) => {
-			release = () => resolve(true);
-		});
+		const gate = new SessionHydrationGate();
 		const { pi } = await wire({
 			cwd,
 			entries: subsEntries(["t1"], { t1: "stale-hash" }),
-			waitForHistoryReady: () => ready,
+			waitForHistoryReady: (id) => gate.wait(id, "paged-open"),
 		});
 		expect(pi.wakes).toHaveLength(0);
 		expect(pi.appended).toHaveLength(0);
-		// SDK session_start 已返回：此处模拟 renderer 完成历史回放后 ACK。
-		release();
+		// session_start已返回。分页首屏就绪是唯一屏障；不要求旧页已读取。
+		gate.ack("s-test", "old-open");
+		await sleep(20);
+		expect(pi.wakes).toHaveLength(0);
+		expect(pi.appended).toHaveLength(0);
+		gate.ack("s-test", "paged-open");
 		await vi.waitFor(() => expect(pi.wakes).toHaveLength(1));
 		expect(lastPayload(pi).cursors).toEqual({ t1: contentHash("v2\n") });
 		await pi.emit({ type: "session_shutdown" }, makeFakeCtx());

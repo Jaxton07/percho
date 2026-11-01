@@ -12,21 +12,23 @@ export function messagesToUIMessages(messages: SessionMessage[]): UIMessage[] {
 	// 条 assistant(error)）只留最后一张卡；遇到任何非 error 消息或流结束先落卡（与 live 的
 	// agent_end willRetry 判定语义一致，决策 D1）。
 	let pendingError: UiError | null = null;
+	let pendingErrorId: string | undefined;
 	const flushError = () => {
 		if (!pendingError) return;
 		ui.push({
 			kind: "error" as const,
-			id: `e${ui.length}`,
+			id: pendingErrorId ?? `e${ui.length}`,
 			text: "",
 			timestamp: pendingError.timestamp,
 			error: pendingError,
 		});
 		pendingError = null;
+		pendingErrorId = undefined;
 	};
 	for (let i = 0; i < messages.length; i++) {
 		const m = messages[i];
 		if (!m) continue;
-		const id = `h${i}`;
+		const id = m.historyId ?? `h${i}`;
 		if (m.role === "compaction") {
 			// 重开会话回放的压缩分割线（实时路径由 compaction_start/end 事件产生）。
 			// 不 flushError：与实时同序 —— 溢出恢复的压缩发生在 pending 错误卡落卡之前，
@@ -62,7 +64,11 @@ export function messagesToUIMessages(messages: SessionMessage[]): UIMessage[] {
 			ui.push({
 				kind: "subagent",
 				id,
-				runs: m.runs.map((run) => ({ ...run, status: subagentUiStatus(run.status), key: newSubagentKey() })),
+				runs: m.runs.map((run, index) => ({
+					...run,
+					status: subagentUiStatus(run.status),
+					key: m.historyId ? `${id}:run:${index}` : newSubagentKey(),
+				})),
 				timestamp: m.timestamp,
 			});
 			continue;
@@ -88,8 +94,8 @@ export function messagesToUIMessages(messages: SessionMessage[]): UIMessage[] {
 		}
 		const text = m.text;
 		const sourceText = m.sourceText;
-		const tools: UIToolCall[] = m.tools.map((tool) => ({
-			key: tool.id || newToolKey(),
+		const tools: UIToolCall[] = m.tools.map((tool, index) => ({
+			key: m.historyId ? `${id}:tool:${index}` : tool.id || newToolKey(),
 			id: tool.id,
 			name: tool.name,
 			args: tool.args,
@@ -111,6 +117,7 @@ export function messagesToUIMessages(messages: SessionMessage[]): UIMessage[] {
 		// 错误轮：partial 正文照常展示（保留），错误卡挂起——连续错误轮合并，非 error 消息或流结束才落卡
 		// 判定与 reducer live 路径共用 isLlmErrorRound（决策 D1 单一事实源，llm-errors.ts）
 		if (isLlmErrorRound(m)) {
+			pendingErrorId = m.historyId ? `${m.historyId}:error` : undefined;
 			pendingError = buildRoundErrorCard(m, m.timestamp);
 			if (text || m.thinking.length > 0 || tools.length > 0) ui.push(assistant);
 			continue;

@@ -15,6 +15,7 @@ import {
 	type RuntimeRequest,
 	type SessionBaseline,
 } from "@percho/shared";
+import { Type } from "typebox";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { createExecutionHandlers } from "../src/execution-handlers";
 import { PiBackend } from "../src/pi-backend";
@@ -24,6 +25,7 @@ import { SessionMediaStore } from "../src/session/media-store";
 import { ReadOnlySessionView } from "../src/session/read-only-view";
 import type { SessionRegistry } from "../src/session/registry";
 import type { SubagentRunHandle } from "../src/tools/subagent/runner";
+import { runtimeLoopback } from "./helpers/runtime-loopback";
 
 let directory: string, file: string;
 const backends = new Set<PiBackend>();
@@ -127,6 +129,100 @@ afterEach(async () => {
 });
 
 describe("只读检视不是第二个SDK会话", () => {
+	it("分页不隐式协商引用图片，旧页沿用首屏选择的图片模式", async () => {
+		const small = { mimeType: "image/png", data: Buffer.from("small legacy fixture").toString("base64") };
+		const paired = (await readFile(file, "utf8"))
+			.split("\n")
+			.filter(Boolean)
+			.map((line) => JSON.parse(line));
+		paired.find((entry) => entry.id === "r").message.details.images = [small];
+		paired
+			.find((entry) => entry.id === "a")
+			.message.content.push({ type: "toolCall", id: "c", name: "show_image", arguments: {} });
+		await writeFile(
+			file,
+			`${paired.map((entry) => JSON.stringify(entry)).join("\n")}\n${JSON.stringify({
+				type: "message",
+				id: "later",
+				parentId: "r",
+				timestamp: "2026-01-01T00:00:00Z",
+				message: { role: "user", content: "Later round", timestamp: 5 },
+			})}\n`,
+		);
+		const { backend: b } = backend();
+		await b.openSession(file);
+		const full = b.getSessionBaseline("child", { historyTurns: 2 });
+		expect(full.transcript.messages.find((message) => message.kind === "image")?.images[0]).toEqual(small);
+		const tail = b.getSessionBaseline("child", { historyTurns: 1 });
+		const cursor = tail.transcript.history?.cursor;
+		if (!cursor) throw new Error("Expected an older history page");
+		const older = await b.getSessionHistoryPage("child", cursor);
+		expect(older.messages.find((message) => message.kind === "image")?.images[0]).toEqual(small);
+		const references = b.getSessionBaseline("child", { imageMode: "references", historyTurns: 2 });
+		expect(
+			references.transcript.messages.find((message) => message.kind === "image")?.images[0],
+		).toMatchObject({ kind: "reference" });
+	});
+	it("生产可选基线默认四轮，向上重建等于全量且不写原文件/重建runtime", async () => {
+		const rows = [await readFile(file, "utf8")];
+		let parentId = "r";
+		for (let index = 0; index < 10; index++) {
+			const user = `page-u-${index}`,
+				assistantId = `page-a-${index}`;
+			rows.push(
+				JSON.stringify({
+					type: "message",
+					id: user,
+					parentId,
+					timestamp: "2026-01-01T00:00:00Z",
+					message: { role: "user", content: `Question ${index}`, timestamp: 1 },
+				}),
+			);
+			rows.push(
+				JSON.stringify({
+					type: "message",
+					id: assistantId,
+					parentId: user,
+					timestamp: "2026-01-01T00:00:00Z",
+					message: assistant(),
+				}),
+			);
+			parentId = assistantId;
+		}
+		await writeFile(file, rows.join("\n"));
+		const before = await readFile(file);
+		const { backend: b, modelRuntimeFactory } = backend(),
+			handlers = createExecutionHandlers(b, { allowInteractiveAuth: false });
+		await b.openSession(file);
+		const full = await handlers.getSessionBaseline({ sessionId: "child", imageMode: "references" });
+		expect(full.transcript.history).toBeUndefined();
+		const tail = await handlers.getSessionBaseline({
+			sessionId: "child",
+			imageMode: "references",
+			historyTurns: 4,
+		});
+		expect(tail.transcript.history?.pageTurns).toBe(4);
+		expect(b.getSessionHistoryStats().projectedEntries).toBe(8);
+		let messages = tail.transcript.messages,
+			cursor = tail.transcript.history?.cursor;
+		const staleCursor = cursor;
+		if (!staleCursor) throw new Error("No cursor");
+		while (cursor) {
+			const page = await handlers.getSessionHistoryPage({ sessionId: "child", cursor });
+			messages = [...page.messages, ...messages];
+			cursor = page.history.cursor;
+		}
+		expect(messages).toEqual(full.transcript.messages);
+		expect(await readFile(file)).toEqual(before);
+		expect(modelRuntimeFactory).not.toHaveBeenCalled();
+		await b.closeSession("child");
+		await b.openSession(file);
+		await expect(
+			Promise.resolve().then(() =>
+				handlers.getSessionHistoryPage({ sessionId: "child", cursor: staleCursor }),
+			),
+		).rejects.toThrow("HISTORY_CURSOR_INVALID");
+	});
 	it("生产handler与分块协议传递引用基线和单图原字节，不接受路径式读取", async () => {
 		const { backend: b } = backend(),
 			handlers = createExecutionHandlers(b, { allowInteractiveAuth: false });
@@ -258,6 +354,191 @@ describe("只读检视不是第二个SDK会话", () => {
 		expect(await readFile(file)).toEqual(before);
 		expect(await readdir(resolve(file, ".."))).toEqual(["child.jsonl"]);
 		expect(modelRuntimeFactory).not.toHaveBeenCalled();
+	}, 30000);
+	it("运行子代理分页与大活动正文在真实SDK/分块桥接续；SDK正常追加保留旧前缀游标", async () => {
+		const manager = SessionManager.open(file),
+			settings = SettingsManager.inMemory({ retry: { enabled: false }, compaction: { enabled: false } });
+		for (let index = 0; index < 6; index++) {
+			manager.appendMessage({
+				role: "user",
+				content: `Persistent round ${index}`,
+				timestamp: 10 + index * 10,
+			});
+			manager.appendMessage({ ...assistant(), timestamp: 15 + index * 10 });
+		}
+		const loader = new DefaultResourceLoader({
+			cwd: directory,
+			agentDir: directory,
+			settingsManager: settings,
+			noExtensions: true,
+		});
+		await loader.reload();
+		const runtime = {
+			getModel: () => model,
+			hasConfiguredAuth: () => true,
+			checkAuth: async () => ({ status: "ok" }),
+			getAuthApiKey: async () => "synthetic-test-only",
+		} as unknown as ModelRuntime;
+		let releaseTool!: () => void, toolStarted!: () => void;
+		const toolGate = new Promise<void>((resolve) => {
+				releaseTool = resolve;
+			}),
+			executing = new Promise<void>((resolve) => {
+				toolStarted = resolve;
+			});
+		const { session } = await createAgentSession({
+			cwd: directory,
+			agentDir: directory,
+			mode: "rpc",
+			model,
+			modelRuntime: runtime,
+			settingsManager: settings,
+			sessionManager: manager,
+			resourceLoader: loader,
+			noTools: "builtin",
+			tools: ["synthetic_wait"],
+			customTools: [
+				{
+					name: "synthetic_wait",
+					label: "Synthetic gate",
+					description: "Isolated tool gate; no filesystem/network",
+					parameters: Type.Object({}),
+					execute: async () => {
+						toolStarted();
+						await toolGate;
+						return { content: [{ type: "text", text: "Synthetic tool completed" }], details: {} };
+					},
+				},
+			],
+		});
+		session.setActiveToolsByName(["synthetic_wait"]);
+		expect(session.getActiveToolNames()).toContain("synthetic_wait");
+		const { backend: b, modelRuntimeFactory } = backend(),
+			internal = b as unknown as { runningSubagents: Map<string, SubagentRunHandle> };
+		let settle!: () => void, entered!: () => void;
+		const completion = new Promise<void>((resolve) => {
+				settle = resolve;
+			}),
+			started = new Promise<void>((resolve) => {
+				entered = resolve;
+			});
+		internal.runningSubagents.set("child", {
+			completion,
+			getSource: () => session,
+			getBranch: () => manager.getBranch(),
+			abort: () => session.abort(),
+			dispose: () => session.dispose(),
+		});
+		const stream = createAssistantMessageEventStream();
+		let calls = 0;
+		session.agent.streamFunction = async () => {
+			if (calls++ === 0) {
+				entered();
+				return stream;
+			}
+			const final = createAssistantMessageEventStream();
+			final.push({ type: "done", reason: "stop", message: assistant() });
+			return final;
+		};
+		const off = session.subscribe((event) => b.emitSubagentEvent("child", event, () => session.abort())),
+			run = session.prompt("current prompt, exactly once"),
+			bridge = runtimeLoopback(b, directory);
+		const text = "Live source, not historical page. ".repeat(50000),
+			tool = { type: "toolCall" as const, id: "live-call", name: "synthetic_wait", arguments: {} },
+			active: AssistantMessage = {
+				...assistant(),
+				stopReason: "toolUse",
+				content: [{ type: "text", text }, tool],
+			};
+		try {
+			await started;
+			await bridge.client.attach("paged-readonly");
+			await bridge.client.invoke("openSession", { filePath: file });
+			await bridge.client.invoke("setViewedSubagent", { sessionId: "child" });
+			stream.push({ type: "start", partial: active });
+			stream.push({ type: "text_start", contentIndex: 0, partial: active });
+			stream.push({ type: "text_delta", contentIndex: 0, delta: text, partial: active });
+			stream.push({ type: "toolcall_start", contentIndex: 1, partial: active });
+			stream.push({ type: "toolcall_delta", contentIndex: 1, delta: "{}", partial: active });
+			stream.push({ type: "toolcall_end", contentIndex: 1, toolCall: tool, partial: active });
+			stream.push({ type: "done", reason: "toolUse", message: active });
+			await executing;
+			await session.followUp("Queued while old history is read");
+			await vi.waitFor(
+				() =>
+					expect(
+						b.getSessionBaseline("child", { imageMode: "references", historyTurns: 4 }).transcript.streaming
+							?.text,
+					).toBe(text),
+				{ timeout: 10000 },
+			);
+			const baseline = (await bridge.client.invoke("getSessionBaseline", {
+				sessionId: "child",
+				imageMode: "references",
+				historyTurns: 4,
+			})) as SessionBaseline;
+			expect(baseline.transcript.history?.hasOlder).toBe(true);
+			expect(baseline.transcript.agentActive).toBe(true);
+			expect(baseline.transcript.streaming?.text).toBe(text);
+			expect(baseline.transcript.streaming?.tools.find((tool) => tool.id === "live-call")?.state).toBe(
+				"running",
+			);
+			expect(baseline.transcript.followUpQueue).toEqual(["Queued while old history is read"]);
+			expect(
+				baseline.transcript.messages.filter(
+					(message) => message.kind === "user" && message.text === "current prompt, exactly once",
+				),
+			).toHaveLength(1);
+			expect(
+				baseline.transcript.messages.some(
+					(message) => message.kind === "user" && message.text === "Persistent round 0",
+				),
+			).toBe(false);
+			const cursor = baseline.transcript.history?.cursor;
+			if (!cursor) throw new Error("No history cursor");
+			const page = (await bridge.client.invoke("getSessionHistoryPage", {
+				sessionId: "child",
+				cursor,
+			})) as import("@percho/shared").SessionHistoryPage;
+			expect(page.messages.some((message) => message.kind === "image")).toBe(true);
+			expect(
+				page.messages.some(
+					(message) => message.kind === "user" && message.text === "current prompt, exactly once",
+				),
+			).toBe(false);
+			expect(session.isStreaming).toBe(true);
+			expect(
+				b.getSessionBaseline("child", { imageMode: "references", historyTurns: 4 }).transcript.streaming
+					?.text,
+			).toBe(text);
+			expect(bridge.chunkCount()).toBeGreaterThan(0);
+			session.clearQueue();
+			releaseTool();
+			await run;
+			const after = (await bridge.client.invoke("getSessionHistoryPage", {
+				sessionId: "child",
+				cursor,
+			})) as import("@percho/shared").SessionHistoryPage;
+			expect(after).toEqual(page);
+			expect(
+				bridge.events.some((frame) => {
+					const payload = frame.payload as { sequence?: number };
+					return typeof payload.sequence === "number" && payload.sequence > baseline.sequence;
+				}),
+			).toBe(true);
+			expect(modelRuntimeFactory).not.toHaveBeenCalled();
+			expect(b.getSessionSourceStats().parses).toBe(0);
+		} finally {
+			session.clearQueue();
+			stream.push({ type: "done", reason: "toolUse", message: active });
+			releaseTool();
+			await run;
+			settle();
+			off();
+			bridge.close();
+			internal.runningSubagents.delete("child");
+			session.dispose();
+		}
 	}, 30000);
 	it("正在运行时借用真正SDK；检视GC不停止它、不给它派发shutdown或关闭媒体所有者", async () => {
 		const manager = SessionManager.open(file),

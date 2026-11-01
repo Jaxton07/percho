@@ -4,7 +4,7 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { Worker } from "node:worker_threads";
 import { CURRENT_SESSION_VERSION } from "@earendil-works/pi-coding-agent";
-import type { SessionMediaJob, SessionMediaPreview } from "@percho/shared";
+import type { SessionMediaJob, SessionMediaPreview, SessionMediaTransaction } from "@percho/shared";
 
 const QUEUE_LIMIT = 4;
 const HISTORY_LIMIT = 32;
@@ -16,6 +16,53 @@ export class SessionMediaMaintenanceJobs {
 	private readonly queue: string[] = [];
 	private active?: { id: string; worker?: Worker };
 	private stopped = false;
+	private readonly operations = new Map<
+		string,
+		(options: {
+			onWorker: (worker: Worker) => void;
+			onProgress: (done: number, total: number) => void;
+			cancelled: () => boolean;
+		}) => Promise<SessionMediaTransaction>
+	>();
+	assertCapacity(): void {
+		if (this.stopped) throw new Error("Maintenance service is stopping");
+		if (this.queue.length + (this.active ? 1 : 0) >= QUEUE_LIMIT)
+			throw new Error("Maintenance queue is full");
+	}
+	enqueue(
+		record: SessionMediaTransaction,
+		execute: (options: {
+			onWorker: (worker: Worker) => void;
+			onProgress: (done: number, total: number) => void;
+			cancelled: () => boolean;
+		}) => Promise<SessionMediaTransaction>,
+	): SessionMediaJob {
+		const existing = this.jobs.get(record.operationId);
+		if (existing && (!terminal(existing) || this.active?.id === record.operationId))
+			return structuredClone(existing);
+		const done = record.phase === "complete" || record.phase === "aborted";
+		if (!done) this.assertCapacity();
+		const job: SessionMediaJob = {
+			jobId: record.operationId,
+			requestId: record.requestId,
+			kind: record.kind,
+			sessionFile: record.sessionFile,
+			transaction: record,
+			status: done ? (record.phase === "complete" ? "completed" : "cancelled") : "queued",
+			createdAt: record.createdAt,
+			updatedAt: Date.now(),
+			processedBytes: 0,
+			totalBytes: record.preview?.fileBytes ?? 0,
+		};
+		this.jobs.set(job.jobId, job);
+		if (!done) {
+			this.operations.set(job.jobId, execute);
+			this.queue.push(job.jobId);
+		}
+		this.trim();
+		this.pump();
+		return structuredClone(job);
+	}
 	private work?: Promise<void>;
 	constructor(
 		private readonly deps: {
@@ -29,7 +76,7 @@ export class SessionMediaMaintenanceJobs {
 		if (this.stopped) throw new Error("Maintenance service is stopping");
 		const file = this.deps.resolveFile(sessionFile);
 		for (const job of this.jobs.values())
-			if (job.sessionFile === file && !terminal(job)) return structuredClone(job);
+			if (job.kind === "preview" && job.sessionFile === file && !terminal(job)) return structuredClone(job);
 		if (this.queue.length + (this.active ? 1 : 0) >= QUEUE_LIMIT)
 			throw new Error("Maintenance queue is full");
 		const now = Date.now(),
@@ -49,6 +96,10 @@ export class SessionMediaMaintenanceJobs {
 		this.pump();
 		return structuredClone(job);
 	}
+	find(jobId: string): SessionMediaJob | undefined {
+		const job = this.jobs.get(jobId);
+		return job ? structuredClone(job) : undefined;
+	}
 	get(jobId: string): SessionMediaJob {
 		const job = this.jobs.get(jobId);
 		if (!job) throw new Error("Maintenance job is unavailable");
@@ -64,6 +115,7 @@ export class SessionMediaMaintenanceJobs {
 		else {
 			const index = this.queue.indexOf(jobId);
 			if (index !== -1) this.queue.splice(index, 1);
+			this.operations.delete(jobId);
 		}
 		return structuredClone(job);
 	}
@@ -99,7 +151,28 @@ export class SessionMediaMaintenanceJobs {
 		current.updatedAt = Date.now();
 		this.active = { id: current.jobId };
 		this.work = Promise.resolve()
-			.then(() => this.deps.read(current.sessionFile, () => this.scan(current)))
+			.then(async () => {
+				if (current.kind === "preview") {
+					await this.deps.read(current.sessionFile, () => this.scan(current));
+					if (current.status !== "cancelling") current.status = "completed";
+					return;
+				}
+				const execute = this.operations.get(current.jobId);
+				if (!execute) throw new Error("Maintenance executor unavailable");
+				const result = await execute({
+					onWorker: (worker) => {
+						if (this.active?.id === current.jobId) this.active.worker = worker;
+					},
+					onProgress: (done, total) => {
+						current.processedBytes = done;
+						current.totalBytes = total;
+						current.updatedAt = Date.now();
+					},
+					cancelled: () => current.status === "cancelling",
+				});
+				current.transaction = result;
+				current.status = result.phase === "complete" ? "completed" : "cancelled";
+			})
 			.catch((error) => {
 				if (current.status !== "cancelling") {
 					current.status = "failed";
@@ -109,6 +182,7 @@ export class SessionMediaMaintenanceJobs {
 			.finally(() => {
 				if (current.status === "cancelling") current.status = "cancelled";
 				current.updatedAt = Date.now();
+				this.operations.delete(current.jobId);
 				this.active = undefined;
 				this.trim();
 				this.pump();
@@ -150,11 +224,9 @@ export class SessionMediaMaintenanceJobs {
 						outcome = true;
 						job.result = message.result;
 						job.processedBytes = job.totalBytes = message.result.fileBytes;
-						job.status = "completed";
 					} else if (message.type === "error") {
 						outcome = true;
-						job.status = "failed";
-						job.error = message.error ?? "Maintenance scan failed";
+						workerError = new Error(message.error ?? "Maintenance scan failed");
 					}
 				},
 			);

@@ -832,6 +832,9 @@ export const useSessionsStore = create<SessionsStore>((_set, get) => ({
 				}),
 			);
 			// 重建消息流 + 队列/todo 对齐（同 fork 的恢复套路；会话 meta 不变无需更新）
+			// An older bundle may still be awaiting permission-mode restoration.
+			// Never reuse its pre-recall baseline for the new branch.
+			sessionLoader.invalidateBundle(activeSessionId);
 			await loadSessionBundle(activeSessionId);
 			if (get().activeSessionId === activeSessionId)
 				window.dispatchEvent(new CustomEvent(COMPOSER_FOCUS_EVENT, { detail: { moveToEnd: true } }));
@@ -995,7 +998,7 @@ export function invalidateEnvironmentSessions(environment: EnvironmentRef): numb
 	invalidateInteractions(environment);
 	for (const meta of useSessionsStore.getState().sessions) {
 		if (!sameEnvironment(environmentEntityRef(meta.sessionId).environment, environment)) continue;
-		sessionLoader.forget(meta.sessionId, meta.sessionFile);
+		sessionLoader.forget(meta.sessionId, meta.sessionFile, { preserveHistoryAck: true });
 		beginSessionBaseline(meta.sessionId);
 	}
 	return generation;

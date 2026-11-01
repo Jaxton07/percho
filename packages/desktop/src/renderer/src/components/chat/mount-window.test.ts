@@ -4,6 +4,7 @@ import {
 	expandWindowStart,
 	INITIAL_MOUNTED_ROWS,
 	MOUNT_CHUNK_ROWS,
+	prependWindowStart,
 	tailWindowStart,
 } from "./mount-window";
 
@@ -38,6 +39,18 @@ describe("expandWindowStart", () => {
 	it("已在顶部保持 0", () => {
 		expect(expandWindowStart(0, 200)).toBe(0);
 		expect(expandWindowStart(-1, 200)).toBe(0);
+	});
+});
+
+describe("prependWindowStart", () => {
+	it("前插先平移旧起点，仅新增30行挂载，旧窗口不被吞掉", () => {
+		expect(prependWindowStart(0, 100, 120)).toBe(70);
+		expect(120 - prependWindowStart(0, 100, 120)).toBe(20 + MOUNT_CHUNK_ROWS);
+		expect(prependWindowStart(40, 100, 180)).toBe(110);
+	});
+	it("短页可全部补挂，继续前插仍可按块展开", () => {
+		expect(prependWindowStart(0, 8, 28)).toBe(0);
+		expect(expandWindowStart(prependWindowStart(0, 100, 120), 120)).toBe(40);
 	});
 });
 

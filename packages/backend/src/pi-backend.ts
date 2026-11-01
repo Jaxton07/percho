@@ -50,6 +50,7 @@ import type {
 	QuotaInfo,
 	SessionCloseIntent,
 	SessionEvent,
+	SessionMediaJob,
 	SessionMessage,
 	SessionMeta,
 	SessionStats,
@@ -101,11 +102,14 @@ import {
 import { slimBulkyEvent, slimMessageUpdate } from "./session/event-slim";
 import { ExtensionDialogHost } from "./session/extension-dialog-host";
 import { SessionFileOperations } from "./session/file-operations";
+import { type SelectedHistory, SessionHistoryPager } from "./session/history-pager";
 import { SessionHydrationGate } from "./session/hydration-gate";
 import { LiveTranscript } from "./session/live-transcript";
+import { maintenancePaths } from "./session/maintenance-paths";
 import { displayImageEntryIds, inlineSessionAssets } from "./session/media-entries";
 import { prepareMediaFork } from "./session/media-fork";
 import { SessionMediaMaintenanceJobs } from "./session/media-maintenance-jobs";
+import { SessionMediaTransactions } from "./session/media-maintenance-transactions";
 import { SessionMediaStore } from "./session/media-store";
 import {
 	blockImages,
@@ -184,6 +188,8 @@ export interface PiBackendOptions {
 	sessionMediaStore?: SessionMediaStore;
 	/** Desktop-only imported session path compatibility, installed before any session opens. */
 	localSessionPaths?: LocalSessionPaths;
+	/** 远端仅为显式媒体维护批准agent会话根，不重定向普通open路径。 */
+	maintenanceSessionRoot?: string;
 	/** 默认工作目录（createSession 未指定时使用） */
 	defaultCwd?: string;
 	/** Independent remote host validates literal directories before new execution. */
@@ -358,13 +364,65 @@ export class PiBackend {
 	private readonly historyGate = new SessionHydrationGate();
 	private readonly historyTokens = new WeakMap<PermissionModeRef, string>();
 	private readonly sourceSnapshots = new SessionSourceSnapshots();
+	private readonly historyPager = new SessionHistoryPager();
+	getSessionHistoryStats() {
+		return this.historyPager.stats();
+	}
 	private readonly media: SessionMediaStore;
-	private readonly fileOperations = new SessionFileOperations();
+	private readonly fileOperations = new SessionFileOperations(async (files, kind) => {
+		if (
+			(!this.options.localSessionPaths && !this.options.maintenanceSessionRoot) ||
+			kind.startsWith("media-")
+		)
+			return;
+		for (const file of files)
+			await this.transactionService().assertOpenAllowed(this.fileOperations.key(file));
+	});
+	private mediaTransactions?: SessionMediaTransactions;
+	private maintenancePolicy() {
+		if (!this.options.localSessionPaths && !this.options.maintenanceSessionRoot)
+			throw new Error("Maintenance requires configured session paths");
+		return maintenancePaths(
+			this.options.maintenanceSessionRoot ?? getAgentDir(),
+			this.options.localSessionPaths,
+		);
+	}
+	private transactionService(): SessionMediaTransactions {
+		this.assertRunning();
+		const paths = this.maintenancePolicy();
+		if (!this.mediaTransactions)
+			this.mediaTransactions = new SessionMediaTransactions({
+				root: join(this.options.maintenanceSessionRoot ?? getAgentDir(), "session-maintenance"),
+				media: this.media,
+				resolveFile: (file) => paths.resolveFile(file, true),
+				exclusive: (file, work) => this.fileOperations.run([file], "media-transaction", work),
+				assertIdle: (file, owner) => {
+					const key = this.fileOperations.key(file);
+					if (
+						this.registry
+							.list()
+							.some(
+								(entry) =>
+									entry.session.sessionId === owner ||
+									(entry.session.sessionFile && this.fileOperations.key(entry.session.sessionFile) === key),
+							)
+					)
+						throw new Error("Close the session and all read-only views before maintenance");
+					for (const [id, run] of this.runningSubagents) {
+						const source = run.getSource?.()?.sessionFile;
+						if (id === owner || (source && this.fileOperations.key(source) === key))
+							throw new Error("Running subagent source cannot be maintained");
+					}
+					if (owner && this.channelSubs.snapshot(owner).topics.length)
+						throw new Error("Channel-resident session cannot be maintained");
+				},
+			});
+		return this.mediaTransactions;
+	}
 	private mediaMaintenance?: SessionMediaMaintenanceJobs;
 	private maintenanceJobs(): SessionMediaMaintenanceJobs {
 		this.assertRunning();
-		const paths = this.options.localSessionPaths;
-		if (!paths) throw new Error("Maintenance requires configured session paths");
+		const paths = this.maintenancePolicy();
 		if (!this.mediaMaintenance)
 			this.mediaMaintenance = new SessionMediaMaintenanceJobs({
 				resolveFile: (file) => paths.resolveFile(file, true),
@@ -375,11 +433,98 @@ export class PiBackend {
 	startSessionMediaPreview(sessionFile: string) {
 		return this.maintenanceJobs().startPreview(sessionFile);
 	}
-	getSessionMediaJob(jobId: string) {
-		return this.maintenanceJobs().get(jobId);
+	async getSessionMediaJob(jobId: string): Promise<SessionMediaJob> {
+		const job = this.maintenanceJobs().find(jobId);
+		if (job?.kind === "preview") return job;
+		const record = job?.requestId
+			? await this.transactionService().get(job.requestId)
+			: await this.transactionService().byJobId(jobId);
+		if (!record) throw new Error("Maintenance job is unavailable");
+		if (job) return { ...job, transaction: record };
+		return {
+			jobId: record.operationId,
+			requestId: record.requestId,
+			kind: record.kind,
+			sessionFile: record.sessionFile,
+			status: record.phase === "complete" ? "completed" : record.phase === "aborted" ? "cancelled" : "failed",
+			transaction: record,
+			createdAt: record.createdAt,
+			updatedAt: record.updatedAt,
+			processedBytes: 0,
+			totalBytes: record.preview?.fileBytes ?? 0,
+			...(record.phase !== "complete" && record.phase !== "aborted"
+				? { error: "Interrupted maintenance requires explicit recovery" }
+				: {}),
+		};
 	}
-	cancelSessionMediaJob(jobId: string) {
-		return this.maintenanceJobs().cancel(jobId);
+	async cancelSessionMediaJob(jobId: string) {
+		const job = this.maintenanceJobs().find(jobId);
+		if (job) {
+			const cancelled = this.maintenanceJobs().cancel(jobId);
+			if (cancelled.status === "cancelled" && cancelled.requestId)
+				await this.transactionService().cancelUnstarted(cancelled.requestId);
+		} else {
+			const record = await this.transactionService().byJobId(jobId);
+			if (!record) throw new Error("Maintenance job is unavailable");
+			await this.transactionService().cancelUnstarted(record.requestId);
+		}
+		return this.getSessionMediaJob(jobId);
+	}
+	getSessionMediaTransaction(requestId: string) {
+		return this.transactionService().get(requestId);
+	}
+	getSessionMediaMaintenance(sessionFile: string) {
+		return this.transactionService().forFile(this.maintenancePolicy().resolveFile(sessionFile, true));
+	}
+	async startSessionMediaCompaction(input: {
+		requestId: string;
+		sessionFile: string;
+		expectedHash: string;
+		confirmed: boolean;
+	}) {
+		const service = this.transactionService();
+		const known = await service.get(input.requestId);
+		if (!known) this.maintenanceJobs().assertCapacity();
+		const record = await service.create(input);
+		return this.maintenanceJobs().enqueue(record, (options) => service.execute(record.requestId, options));
+	}
+	async startSessionMediaRestore(requestId: string, compactionRequestId: string, confirmed: boolean) {
+		const service = this.transactionService(),
+			original = await service.get(compactionRequestId);
+		if (!original?.outputHash) throw new Error("Completed compaction is unavailable");
+		return this.startRestoreRecord({
+			requestId,
+			sessionFile: original.sessionFile,
+			expectedHash: original.outputHash,
+			confirmed,
+			restoreFrom: compactionRequestId,
+		});
+	}
+	private async startRestoreRecord(input: {
+		requestId: string;
+		sessionFile: string;
+		expectedHash: string;
+		confirmed: boolean;
+		restoreFrom: string;
+	}) {
+		const service = this.transactionService();
+		if (!(await service.get(input.requestId))) this.maintenanceJobs().assertCapacity();
+		const record = await service.create(input);
+		return this.maintenanceJobs().enqueue(record, (options) => service.execute(record.requestId, options));
+	}
+	async resumeSessionMediaJob(requestId: string, confirmed: boolean) {
+		if (!confirmed) throw new Error("Explicit recovery confirmation required");
+		const service = this.transactionService(),
+			record = await service.get(requestId);
+		if (!record) throw new Error("Maintenance job is unavailable");
+		return this.maintenanceJobs().enqueue(record, (options) => service.execute(record.requestId, options));
+	}
+	async abandonSessionMediaJob(requestId: string, confirmed: boolean) {
+		if (!confirmed) throw new Error("Explicit recovery confirmation required");
+		const service = this.transactionService(),
+			record = await service.get(requestId);
+		if (!record) throw new Error("Maintenance job is unavailable");
+		return this.maintenanceJobs().enqueue(record, (options) => service.abandon(record.requestId, options));
 	}
 	private historyToken(modeRef: PermissionModeRef): string {
 		let token = this.historyTokens.get(modeRef);
@@ -723,10 +868,14 @@ export class PiBackend {
 	}
 	getSessionBaseline(
 		sessionId: string,
-		options: { imageMode?: "references" } = {},
+		options: { imageMode?: "references"; historyTurns?: number } = {},
 	): import("@percho/shared").SessionBaseline {
 		const entry = this.requireSession(sessionId);
-		const source = options.imageMode === "references" ? this.sourceSnapshot(entry) : undefined;
+		const source =
+			options.imageMode === "references" || options.historyTurns !== undefined
+				? this.sourceSnapshot(entry)
+				: undefined;
+		let window: SelectedHistory | undefined;
 		const live = this.liveTranscripts.get(sessionId) ?? new LiveTranscript();
 		const endProjection = measureSessionSwitch("historyProjection");
 		const transcript = live.snapshot(
@@ -736,13 +885,34 @@ export class PiBackend {
 				streaming: entry.session.isStreaming,
 				compacting: entry.session.isCompacting,
 			},
-			source ? (branch) => this.sourceSnapshots.project(source, true, branch) : undefined,
 			source
+				? (branch) => {
+						if (options.historyTurns !== undefined) {
+							window = this.historyPager.tail(
+								source,
+								branch,
+								{
+									turns: options.historyTurns,
+									hydrationToken: this.historyToken(entry.modeRef),
+									references: options.imageMode === "references",
+								},
+								(history, references) =>
+									references
+										? this.sourceSnapshots.project(source, true, history)
+										: toBranchSessionMessages(history, entry.session.sessionId),
+							);
+							return window.messages;
+						}
+						return this.sourceSnapshots.project(source, true, branch);
+					}
+				: undefined,
+			source && options.imageMode === "references"
 				? (sourceId, kind, images, details) =>
 						this.sourceSnapshots.projectTransient(source, sourceId, kind, images, details)
 				: undefined,
 		);
 		endProjection();
+		if (window) transcript.history = window.history;
 		const baseline: import("@percho/shared").SessionBaseline = {
 			hydrationToken: this.historyToken(entry.modeRef),
 			meta: this.registry.toMeta(entry),
@@ -755,8 +925,29 @@ export class PiBackend {
 			},
 			permissionMode: entry.modeRef.current,
 		};
+		if (window && Buffer.byteLength(JSON.stringify(baseline)) > RUNTIME_MESSAGE_BYTES - 4096)
+			throw new Error(
+				"HISTORY_PAGE_TOO_LARGE: complete history and active output exceed the logical message budget; nothing was truncated",
+			);
 		recordSessionSwitchPayload(baseline);
 		return baseline;
+	}
+	getSessionHistoryPage(sessionId: string, cursor: string): import("@percho/shared").SessionHistoryPage {
+		const entry = this.requireSession(sessionId),
+			source = this.sourceSnapshot(entry);
+		const live = this.liveTranscripts.get(sessionId) ?? new LiveTranscript();
+		const prefix = live.persistentPrefix(source.branch);
+		const selected = this.historyPager.older(
+			source,
+			prefix,
+			cursor,
+			{ hydrationToken: this.historyToken(entry.modeRef) },
+			(history, references) =>
+				references
+					? this.sourceSnapshots.project(source, true, history)
+					: toBranchSessionMessages(history, entry.session.sessionId),
+		);
+		return { messages: selected.uiMessages, history: selected.history };
 	}
 	private emitEvent(
 		sessionId: string,

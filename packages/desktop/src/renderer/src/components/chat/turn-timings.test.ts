@@ -43,7 +43,7 @@ describe("deriveTurnTimings", () => {
 
 	it("单轮正文收尾：startedAt = user timestamp，endedAt = assistant timestamp", () => {
 		expect(deriveTurnTimings([user("u1", 1000), assistant("a1", 8000)])).toEqual([
-			{ turnIndex: 0, startedAt: 1000, endedAt: 8000 },
+			{ turnId: "u1", turnIndex: 0, startedAt: 1000, endedAt: 8000 },
 		]);
 	});
 
@@ -52,7 +52,7 @@ describe("deriveTurnTimings", () => {
 			user("u1", 1000),
 			assistant("a1", 2000, [tool("bash", { endedAt: 9000 })]),
 		]);
-		expect(timings).toEqual([{ turnIndex: 0, startedAt: 1000, endedAt: 9000 }]);
+		expect(timings).toEqual([{ turnId: "u1", turnIndex: 0, startedAt: 1000, endedAt: 9000 }]);
 	});
 
 	it("多轮边界：各轮独立切分（轮内最大值取结束）", () => {
@@ -63,25 +63,25 @@ describe("deriveTurnTimings", () => {
 			assistant("a2", 25000),
 		]);
 		expect(timings).toHaveLength(2);
-		expect(at(timings, 0)).toEqual({ turnIndex: 0, startedAt: 1000, endedAt: 9500 });
-		expect(at(timings, 1)).toEqual({ turnIndex: 1, startedAt: 20000, endedAt: 25000 });
+		expect(at(timings, 0)).toEqual({ turnId: "u1", turnIndex: 0, startedAt: 1000, endedAt: 9500 });
+		expect(at(timings, 1)).toEqual({ turnId: "u2", turnIndex: 1, startedAt: 20000, endedAt: 25000 });
 	});
 
 	it("进行中轮（末轮 user 后无内容）：endedAt 缺省", () => {
 		const timings = deriveTurnTimings([user("u1", 1000), assistant("a1", 5000), user("u2", 8000)]);
-		expect(at(timings, 0)).toEqual({ turnIndex: 0, startedAt: 1000, endedAt: 5000 });
-		expect(at(timings, 1)).toEqual({ turnIndex: 1, startedAt: 8000 });
+		expect(at(timings, 0)).toEqual({ turnId: "u1", turnIndex: 0, startedAt: 1000, endedAt: 5000 });
+		expect(at(timings, 1)).toEqual({ turnId: "u2", turnIndex: 1, startedAt: 8000 });
 		expect(at(timings, 1).endedAt).toBeUndefined();
 	});
 
 	it("runEndedAt 只补最后一轮定格且取 max；早于开始时刻的残留戳被过滤", () => {
 		// 定格晚于消息推导 → 采纳
 		expect(deriveTurnTimings([user("u1", 1000), assistant("a1", 5000)], 6000)).toEqual([
-			{ turnIndex: 0, startedAt: 1000, endedAt: 6000 },
+			{ turnId: "u1", turnIndex: 0, startedAt: 1000, endedAt: 6000 },
 		]);
 		// 定格早于消息推导（异常时钟）→ 不回退，保留推导值
 		expect(deriveTurnTimings([user("u1", 1000), assistant("a1", 5000)], 4000)).toEqual([
-			{ turnIndex: 0, startedAt: 1000, endedAt: 5000 },
+			{ turnId: "u1", turnIndex: 0, startedAt: 1000, endedAt: 5000 },
 		]);
 		// 多轮时只动最后一轮
 		const multi = deriveTurnTimings(
@@ -127,7 +127,7 @@ describe("buildChatRows 轮末行（timer 行）", () => {
 		const footer = at(footers, 0);
 		if (footer.kind !== "turnDiff") throw new Error("expected turnDiff");
 		expect(footer.changes).toBeUndefined();
-		expect(footer.timing).toEqual({ turnIndex: 0, startedAt: 1000, endedAt: 5000 });
+		expect(footer.timing).toEqual({ turnId: "u1", turnIndex: 0, startedAt: 1000, endedAt: 5000 });
 		expect(footer.running).toBe(false);
 	});
 
@@ -149,7 +149,7 @@ describe("buildChatRows 轮末行（timer 行）", () => {
 		const tail = at(footers, footers.length - 1);
 		if (tail.kind !== "turnDiff") throw new Error("expected turnDiff");
 		expect(tail.running).toBe(true);
-		expect(tail.timing).toEqual({ turnIndex: 1, startedAt: 8000 });
+		expect(tail.timing).toEqual({ turnId: "u2", turnIndex: 1, startedAt: 8000 });
 	});
 
 	it("轮末的 system 行（压缩分割线）排在计时行下面 —— 分割线不该插在计时行上面", () => {

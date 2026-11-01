@@ -17,7 +17,7 @@ import {
 	isHistoryReady,
 } from "./session-history";
 import { pushToast } from "./toasts";
-import { useTranscriptStore } from "./transcript";
+import { setSessionHistoryLoadError, useTranscriptStore } from "./transcript";
 import { useUiPreferencesStore } from "./ui-preferences";
 
 export interface SessionDataPorts {
@@ -88,6 +88,7 @@ export function createSessionLoader(ports: SessionDataPorts) {
 			const baseline = await getExecutionApi(sessionId).getSessionBaseline({
 				sessionId,
 				imageMode: "references",
+				historyTurns: 4,
 			});
 			endRead();
 			if (
@@ -118,6 +119,12 @@ export function createSessionLoader(ports: SessionDataPorts) {
 			}
 		} catch (error) {
 			failSessionBaseline(sessionId, token);
+			if (
+				isCurrentSessionBaseline(sessionId, token) &&
+				historyOpenEpoch(sessionId) === openingEpoch &&
+				ports.isOpen(sessionId)
+			)
+				setSessionHistoryLoadError(sessionId, error);
 			throw error;
 		}
 	}
@@ -189,13 +196,13 @@ export function createSessionLoader(ports: SessionDataPorts) {
 		return isCurrent() ? meta : null;
 	}
 
-	function forget(sessionId: string, file?: string): void {
-		clearSessionHistory(sessionId);
+	function forget(sessionId: string, file?: string, options: { preserveHistoryAck?: boolean } = {}): void {
+		clearSessionHistory(sessionId, options);
 		if (file) openInFlight.delete(file.trim());
 		bundleInFlight.delete(sessionId);
 	}
 	function invalidateBundle(sessionId: string): void {
-		clearSessionHistory(sessionId);
+		clearSessionHistory(sessionId, { preserveHistoryAck: true });
 		bundleInFlight.delete(sessionId);
 	}
 	return { ensureOpenSession, loadSessionBundle, restorePermissionMode, forget, invalidateBundle };

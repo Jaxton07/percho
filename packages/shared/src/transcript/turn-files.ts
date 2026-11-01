@@ -33,6 +33,8 @@ export interface TurnFileChange {
 }
 
 export interface TurnChanges {
+	/** 用户消息的稳定展示身份；turnIndex只作位置/编号展示。 */
+	turnId?: string;
 	/** 第几轮（从 0 计，user 消息为边界） */
 	turnIndex: number;
 	files: TurnFileChange[];
@@ -78,12 +80,14 @@ function sectionFromTool(
 export function deriveTurnChanges(messages: UIMessage[]): TurnChanges[] {
 	const turns: TurnChanges[] = [];
 	let turnIndex = -1;
+	let turnId = "";
 	let files = new Map<string, TurnFileChange>();
 
 	const flush = (): void => {
 		if (files.size === 0) return;
 		const list = [...files.values()];
 		turns.push({
+			turnId,
 			turnIndex,
 			files: list,
 			totalAdded: list.reduce((s, f) => s + f.added, 0),
@@ -95,6 +99,7 @@ export function deriveTurnChanges(messages: UIMessage[]): TurnChanges[] {
 		if (m.kind === "user") {
 			flush();
 			turnIndex++;
+			turnId = m.id;
 			files = new Map();
 			continue;
 		}

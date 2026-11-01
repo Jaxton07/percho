@@ -148,7 +148,8 @@ export const en: Messages = {
 		waitingForConnection: "Answers are available after reconnecting and verifying pending requests.",
 		restarted:
 			"The remote service restarted. Saved history is available; previous tasks will not resume automatically. Check their results.",
-		syncFailed: "Remote session synchronization failed. Open the session to retry.",
+		syncFailed:
+			"Remote session synchronization failed. Retrying automatically; sending is paused until recovery.",
 		synchronizing: "Remote session is synchronizing. Wait before sending; stopping remains available.",
 		localFileRejected:
 			"Remote sessions accept local images. Other local files cannot be used as remote paths.",
@@ -415,6 +416,13 @@ export const en: Messages = {
 		showMore: "Show more",
 		showLess: "Show less",
 		scrollToBottom: "Back to bottom",
+		historyLoading: "Loading earlier history…",
+		historyLoadEarlier: "Show earlier history",
+		historyLoadFailed: "History could not be loaded. Retry or reload this session.",
+		historyTooLarge:
+			"A complete round exceeds the page limit. Nothing was truncated. You can load the full history.",
+		historyReload: "Reload current history",
+		historyLoadFull: "Load full history (may be slow)",
 		thinking: "Thinking",
 		thinkingPreview: "Thinking",
 		working: "Working",
@@ -504,8 +512,46 @@ export const en: Messages = {
 		reveal: "Reveal in Finder",
 		copyPath: "Copy Path",
 	},
+	mediaMaintenance: {
+		working: "Processing in background…",
+		background:
+			"The confirmed operation runs in the background. Closing this dialog does not stop it; reopen to query durable state.",
+		closedRequired:
+			"Only this session is affected. Close the session, read-only views and running writers before execution.",
+		backupKept: "Independent original backup (never removed automatically):",
+		appendSafety:
+			"Direct restore is refused after new messages or source changes. Keep both the current file and original backup; retain a separate backup copy rather than overwrite new data.",
+		noPreview: "Obtain a fresh, supported preview with a benefit first.",
+		noRecord: "The durable record is unavailable; query it again.",
+		action: {
+			compact: "Compact and retain original",
+			restore: "Restore independent original",
+			resume: "Check and resume recovery",
+			abandon: "Safely abandon unpublished work",
+		},
+		confirm: {
+			compact:
+				"Compact display screenshots in this session only? An independent original is retained. Original images and the candidate are validated before atomic replacement. Additional space is needed for backup, candidate and media. User attachments, read images and other records stay unchanged.",
+			restore:
+				"Restore the original? Replacement is allowed only while the current file still matches the compacted version, with no new messages. Source or backup mismatches are refused. New data is never overwritten, and the backup remains.",
+			resume:
+				"Inspect the durable transaction and resume safe recovery. Source, backup and candidate are checked; uncertainty stops the operation and retains data. An old backup is never written over new messages.",
+			abandon:
+				"Finish interrupted work only when the source is confirmed untouched or already correctly published. Conflicts are not forced through, and the independent backup remains.",
+		},
+		phase: {
+			queued: "Accepted, not yet complete.",
+			"backed-up": "Independent backup validated; not published.",
+			prepared: "Candidate prepared; not published.",
+			publishing: "Publication state needs recovery verification.",
+			published: "Published; completion record needs recovery.",
+			complete: "Transaction complete.",
+			aborted: "Work safely ended; backup retained.",
+			conflict: "The source matches neither digest. Data and backup are retained; no automatic overwrite.",
+		},
+	},
 	mediaPreview: {
-		title: "Preview screenshot compaction",
+		title: "Screenshot compaction and recovery",
 		readOnly:
 			"Scans all branches in this session only; no transcript or media is changed. Backups are retained and are not counted as savings.",
 		refresh: "Preview again",

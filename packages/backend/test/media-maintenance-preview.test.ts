@@ -49,6 +49,36 @@ const header = (version = CURRENT_SESSION_VERSION) => ({
 });
 
 describe("后台单文件只读整理预览", () => {
+	it("释放预览文件门后才公布完成，完成回执允许立即进入整理", async () => {
+		const file = join(root, "completion.jsonl");
+		await writeFile(file, `${JSON.stringify(header())}\n`);
+		const gate = new SessionFileOperations();
+		let release!: () => void;
+		const held = new Promise<void>((resolve) => {
+			release = resolve;
+		});
+		const jobs = new SessionMediaMaintenanceJobs({
+			resolveFile: (path) => path,
+			read: (path, operation) =>
+				gate.run([path], "preview", async () => {
+					await operation();
+					await held;
+				}),
+		});
+		services.push(jobs);
+		const started = jobs.startPreview(file);
+		try {
+			await vi.waitFor(() => expect(jobs.get(started.jobId).result).toBeDefined(), { timeout: 10_000 });
+			expect(gate.has(file)).toBe(true);
+			expect(jobs.get(started.jobId).status).toBe("running");
+		} finally {
+			release();
+		}
+		expect((await finished(jobs, started)).status).toBe("completed");
+		expect(gate.has(file)).toBe(false);
+		const lease = gate.acquire([file], "delete");
+		lease.release();
+	});
 	it("真实worker扫描所有分支，去重空间但逐处计替换，保留坏行/未知字段/user和read图", async () => {
 		const file = join(root, "source.jsonl"),
 			image = {
@@ -168,7 +198,7 @@ describe("后台单文件只读整理预览", () => {
 		expect(gate.has(first)).toBe(true);
 		expect(() => gate.acquire([first], "delete")).toThrow("busy");
 		jobs.cancel(initial.jobId);
-		await finished(jobs, initial);
+		expect((await finished(jobs, initial)).status).toBe("cancelled");
 		await vi.waitFor(() => expect(gate.has(first)).toBe(false));
 		expect(await readFile(first, "utf8")).toBe(JSON.stringify(header()));
 		await jobs.dispose();

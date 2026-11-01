@@ -35,6 +35,11 @@ export function clampWindowStart(start: number, totalRows: number): number {
 	return Math.floor(start);
 }
 
+/** 新页先平移旧窗口起点，再只新增一个30行挂载块，不能吞页或一次挂完新页。 */
+export function prependWindowStart(start: number, addedRows: number, totalRows: number): number {
+	return expandWindowStart(clampWindowStart(start + Math.max(0, addedRows), totalRows), totalRows);
+}
+
 /** 向上补挂一块（夹到 0；到顶后返回 0，调用方可据此停止） */
 export function expandWindowStart(start: number, totalRows: number): number {
 	if (!Number.isFinite(start) || start <= 0) return 0;

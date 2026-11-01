@@ -1,4 +1,4 @@
-import { useEffect, useRef } from "react";
+import { type ReactNode, useEffect, useRef } from "react";
 import { createPortal } from "react-dom";
 import { CloseIcon } from "../icons";
 
@@ -15,6 +15,8 @@ export function ConfirmDialog({
 	closeLabel,
 	danger = false,
 	autoFocusConfirm = false,
+	confirmDisabled = false,
+	children,
 	onConfirm,
 	onCancel,
 }: {
@@ -28,6 +30,8 @@ export function ConfirmDialog({
 	danger?: boolean;
 	/** 弹窗打开即把焦点给确认按钮（Enter 直接确认）。默认关：破坏性操作不该被一个回车顺手做掉 */
 	autoFocusConfirm?: boolean;
+	confirmDisabled?: boolean;
+	children?: ReactNode;
 	onConfirm: () => void;
 	onCancel: () => void;
 }) {
@@ -76,6 +80,7 @@ export function ConfirmDialog({
 				>
 					<CloseIcon size={14} />
 				</button>
+				{children}
 				<div className="mt-[18px] flex justify-end gap-2">
 					<button
 						type="button"
@@ -86,10 +91,11 @@ export function ConfirmDialog({
 					</button>
 					<button
 						type="button"
-						className={`flex h-8 items-center rounded-[9px] px-3.5 text-ui-13 font-medium transition-colors ${
+						className={`flex h-8 items-center rounded-[9px] px-3.5 text-ui-13 font-medium transition-colors disabled:cursor-not-allowed disabled:opacity-50 ${
 							danger ? "bg-red-600/12 text-red-600 hover:bg-red-600/20" : "bg-ink text-on-ink hover:bg-ink-2"
 						}`}
 						ref={confirmRef}
+						disabled={confirmDisabled}
 						onClick={onConfirm}
 					>
 						{confirmLabel}

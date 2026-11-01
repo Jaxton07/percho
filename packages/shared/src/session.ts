@@ -173,16 +173,21 @@ export interface SessionToolCall {
 	isError: boolean;
 }
 
+export interface SessionMessageOrigin {
+	/** 真实SDK entry，定位不依赖timestamp或页内下标。 */
+	entryId?: string;
+	/** 同一entry拆分后的稳定展示片段；只用于历史展示身份。 */
+	historyId?: string;
+}
+
 /** user/assistant 历史消息公共基座（两形态同构字段收敛；专用字段在子接口） */
-interface SessionBaseMessage {
+interface SessionBaseMessage extends SessionMessageOrigin {
 	text: string;
 	thinking: string;
 	tools: SessionToolCall[];
 	/** 展示图片；发送/排队/撤回仍使用 ImageInput。 */
 	images: DisplayImage[];
 	timestamp: number;
-	/** 会话树中的 entry id（撤回/fork 精确定位用，匹配失败时缺省） */
-	entryId?: string;
 	/** 已持久化的完整文本（skill 展开或展示净化后保留）；只供撤回/fork 匹配，绝不能展示、复制或进入可访问文本 */
 	sourceText?: string;
 }
@@ -205,11 +210,10 @@ export interface SessionAssistantMessage extends SessionBaseMessage {
 }
 
 /** show_image 工具主动展示给用户的图片（独立消息，不进工具卡） */
-export interface SessionImageMessage {
+export interface SessionImageMessage extends SessionMessageOrigin {
 	role: "image";
 	images: DisplayImage[];
 	/** 图片真实来源，不通过时间戳猜配。 */
-	entryId?: string;
 	ownerSessionId?: string;
 	/** 原文件路径（工具参数，仅调试用） */
 	paths: string[];
@@ -217,14 +221,14 @@ export interface SessionImageMessage {
 }
 
 /** subagent 工具调用的结果（独立消息，不进工具卡折叠区） */
-export interface SessionSubagentMessage {
+export interface SessionSubagentMessage extends SessionMessageOrigin {
 	role: "subagent";
 	runs: SubagentRunData[];
 	timestamp: number;
 }
 
 /** 历史压缩标记（compaction entry 回放）：实时分割线走 compaction_start/end 事件，重开会话只能从会话树回放 */
-export interface SessionCompactionMessage {
+export interface SessionCompactionMessage extends SessionMessageOrigin {
 	role: "compaction";
 	timestamp: number;
 	/** 摘要正文（与实时分割线展开的摘要同源） */
@@ -514,6 +518,10 @@ export interface SessionEventEnvelope {
 }
 
 /** Consistent per-session capture; sequence is the boundary for subsequent onEvent increments. */
+export interface SessionHistoryPage {
+	messages: import("./transcript").UIMessage[];
+	history: import("./session-history").SessionHistoryWindow;
+}
 export interface SessionBaseline {
 	/** 只对本次注册实例有效，与跨GC图片revision分离。 */
 	hydrationToken: string;

@@ -73,6 +73,20 @@ function imageMessage<T>(value: T, environment: EnvironmentRef): T {
 			: {}),
 	} as T;
 }
+function subagentRun(value: import("@percho/shared").SubagentRunUi, environment: EnvironmentRef) {
+	return {
+		...value,
+		...(value.sessionFile ? { sessionFile: environmentEntityKey(environment, value.sessionFile) } : {}),
+	};
+}
+function historyMessage(value: import("@percho/shared").UIMessage, environment: EnvironmentRef) {
+	return imageMessage(
+		value.kind === "subagent"
+			? { ...value, runs: value.runs.map((run) => subagentRun(run, environment)) }
+			: value,
+		environment,
+	);
+}
 function toolResult(value: unknown, environment: EnvironmentRef): unknown {
 	if (!record(value) || !record(value.details)) return value;
 	const details = value.details;
@@ -134,25 +148,18 @@ function resultFor(method: string, value: unknown, environment: EnvironmentRef):
 			}));
 		case "getSessionBaseline": {
 			const baseline = value as import("@percho/shared").SessionBaseline;
-			const run = (item: import("@percho/shared").SubagentRunUi) => ({
-				...item,
-				...(item.sessionFile ? { sessionFile: environmentEntityKey(environment, item.sessionFile) } : {}),
-			});
 			return {
 				...baseline,
 				meta: scopeSessionMeta(baseline.meta, environment),
 				transcript: {
 					...baseline.transcript,
-					messages: baseline.transcript.messages.map((message) =>
-						imageMessage(
-							message.kind === "subagent" ? { ...message, runs: message.runs.map(run) } : message,
-							environment,
-						),
-					),
+					messages: baseline.transcript.messages.map((message) => historyMessage(message, environment)),
 					streaming: baseline.transcript.streaming
 						? {
 								...baseline.transcript.streaming,
-								subagentRuns: baseline.transcript.streaming.subagentRuns.map(run),
+								subagentRuns: baseline.transcript.streaming.subagentRuns.map((run) =>
+									subagentRun(run, environment),
+								),
 								pendingImages: baseline.transcript.streaming.pendingImages.map((images) =>
 									imageMessage(images, environment),
 								),
@@ -162,6 +169,10 @@ function resultFor(method: string, value: unknown, environment: EnvironmentRef):
 			};
 		}
 
+		case "getSessionHistoryPage": {
+			const page = value as import("@percho/shared").SessionHistoryPage;
+			return { ...page, messages: page.messages.map((message) => historyMessage(message, environment)) };
+		}
 		case "getSessionMessages":
 			return (value as unknown[]).map((message) =>
 				imageMessage(
@@ -207,12 +218,18 @@ function eventFor(method: string, value: unknown, environment: EnvironmentRef): 
 	return next;
 }
 
-function argumentsFor(value: unknown, environment: EnvironmentRef): unknown {
+function argumentsFor(method: string, value: unknown, environment: EnvironmentRef): unknown {
 	if (!record(value)) return value;
 	const next = { ...value };
-	for (const key of ["sessionId", "requestId", "sessionFile", "filePath"]) {
+	for (const key of ["sessionId", "sessionFile", "filePath"]) {
 		if (typeof next[key] === "string") next[key] = environmentEntityId(environment, next[key]);
 	}
+	// Interaction handles are scoped entities; maintenance request IDs are opaque idempotency keys.
+	if (
+		["respondPermission", "respondTrust", "respondExtensionDialog"].includes(method) &&
+		typeof next.requestId === "string"
+	)
+		next.requestId = environmentEntityId(environment, next.requestId);
 	// Explicitly bound directory input may be literal (e.g. the add-project field).
 	const directory = (cwd: string) =>
 		cwd.startsWith("percho-env-v1:") ? environmentEntityId(environment, cwd) : cwd;
@@ -265,7 +282,7 @@ export function getExecutionApi(reference: EnvironmentRef | string): Environment
 						throw new Error("Remote session is synchronizing; wait before submitting new work");
 				}
 				const call = raw[method as EnvironmentMethod] as (input?: unknown) => Promise<unknown>;
-				const value = args === undefined ? await call() : await call(argumentsFor(args, environment));
+				const value = args === undefined ? await call() : await call(argumentsFor(method, args, environment));
 				return resultFor(method, value, environment);
 			},
 		]);

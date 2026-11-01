@@ -178,7 +178,7 @@ describe("buildChatRows", () => {
 		expect(rows[1]).toMatchObject({ key: "streaming-subagents" });
 	});
 
-	it("group keys are positional and session-scoped", () => {
+	it("group keys are scoped to their stable prefix/turn and session", () => {
 		const t = {
 			...emptyTranscript(),
 			messages: [assistant("甲", { tools: [tool("read")] }), assistant("乙", { tools: [tool("read")] })],
@@ -186,7 +186,10 @@ describe("buildChatRows", () => {
 		const keys = buildChatRows(t, "s1")
 			.filter((r) => r.kind === "metaGroup")
 			.map((r) => r.key);
-		expect(keys).toEqual(["meta-s1-g0", "meta-s1-g1"]);
+		expect(keys).toEqual([
+			`meta-s1-prefix:${t.messages[0]?.id}-g0`,
+			`meta-s1-prefix:${t.messages[0]?.id}-g1`,
+		]);
 	});
 });
 

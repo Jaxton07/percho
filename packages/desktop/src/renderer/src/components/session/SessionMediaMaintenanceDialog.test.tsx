@@ -10,6 +10,12 @@ const fake = vi.hoisted(() => ({
 	startSessionMediaPreview: vi.fn(),
 	getSessionMediaJob: vi.fn(),
 	cancelSessionMediaJob: vi.fn(),
+	getSessionMediaMaintenance: vi.fn(),
+	getSessionMediaTransaction: vi.fn(),
+	startSessionMediaCompaction: vi.fn(),
+	startSessionMediaRestore: vi.fn(),
+	resumeSessionMediaJob: vi.fn(),
+	abandonSessionMediaJob: vi.fn(),
 }));
 vi.mock("../../environment-api", () => ({ getExecutionApi: () => fake }));
 vi.mock("../../i18n", () => ({
@@ -32,6 +38,8 @@ beforeEach(() => {
 	vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
 	vi.clearAllMocks();
 	fake.cancelSessionMediaJob.mockResolvedValue({ ...running, status: "cancelled" });
+	fake.getSessionMediaMaintenance.mockResolvedValue(null);
+	fake.getSessionMediaTransaction.mockResolvedValue(null);
 	useSessionMediaMaintenanceStore.setState({ session: null });
 	host = document.createElement("div");
 	document.body.append(host);
@@ -137,6 +145,114 @@ describe("单文件整理收益对话框", () => {
 			vi.advanceTimersByTime(250);
 		});
 		expect(document.querySelector('[role="dialog"]')?.textContent).toContain("mediaPreview.noBenefit");
+	});
+	it("执行必须二次确认，携带预览摘要和稳定requestId；关闭不取消持久整理", async () => {
+		fake.startSessionMediaPreview.mockResolvedValue({
+			...running,
+			status: "completed",
+			result: {
+				supported: true,
+				sourceHash: "verified-hash",
+				fileBytes: 10000,
+				projectedFileBytes: 1000,
+				imageCount: 1,
+				uniqueImages: 1,
+				backupBytes: 10000,
+				additionalPeakBytes: 21000,
+			},
+		});
+		fake.startSessionMediaCompaction.mockResolvedValue({
+			...running,
+			kind: "compact",
+			jobId: "durable",
+			status: "running",
+		});
+		await render();
+		const find = (text: string) =>
+			Array.from(document.querySelectorAll<HTMLButtonElement>("button")).find((button) =>
+				button.textContent?.includes(text),
+			);
+		let button = find("mediaMaintenance.action.compact");
+		if (!button) throw new Error("No compact button");
+		await act(async () => button?.click());
+		expect(fake.startSessionMediaCompaction).not.toHaveBeenCalled();
+		button = find("mediaMaintenance.action.compact");
+		if (!button) throw new Error("No confirmation button");
+		await act(async () => button?.click());
+		expect(fake.startSessionMediaCompaction).toHaveBeenCalledWith({
+			sessionFile: session.sessionFile,
+			requestId: expect.any(String),
+			expectedHash: "verified-hash",
+			confirmed: true,
+		});
+		const close = document.querySelector<HTMLButtonElement>('[role="dialog"] > button');
+		if (!close) throw new Error("No close button");
+		await act(async () => close.click());
+		expect(fake.cancelSessionMediaJob).not.toHaveBeenCalled();
+	});
+	it("启动结果未知时按同requestId查询，不自动重投新的整理", async () => {
+		fake.startSessionMediaPreview.mockResolvedValue({
+			...running,
+			status: "completed",
+			result: {
+				supported: true,
+				sourceHash: "verified-hash",
+				fileBytes: 10000,
+				projectedFileBytes: 1000,
+				imageCount: 1,
+				uniqueImages: 1,
+				backupBytes: 10000,
+				additionalPeakBytes: 21000,
+			},
+		});
+		fake.startSessionMediaCompaction.mockRejectedValue(new Error("Connection lost"));
+		fake.getSessionMediaTransaction.mockResolvedValue({
+			requestId: "existing",
+			operationId: "durable",
+			kind: "compact",
+			phase: "publishing",
+		});
+		fake.getSessionMediaJob.mockResolvedValue({
+			...running,
+			kind: "compact",
+			status: "failed",
+			transaction: { requestId: "existing", operationId: "durable", kind: "compact", phase: "publishing" },
+		});
+		await render();
+		const select = () =>
+			Array.from(document.querySelectorAll<HTMLButtonElement>("button")).find((button) =>
+				button.textContent?.includes("mediaMaintenance.action.compact"),
+			);
+		await act(async () => select()?.click());
+		await act(async () => select()?.click());
+		expect(fake.startSessionMediaCompaction).toHaveBeenCalledTimes(1);
+		const request = fake.startSessionMediaCompaction.mock.calls[0]?.[0];
+		expect(request?.requestId).toBeTruthy();
+		expect(fake.getSessionMediaTransaction).toHaveBeenCalledWith({ requestId: request.requestId });
+		expect(fake.getSessionMediaJob).toHaveBeenCalledWith({ jobId: "durable" });
+	});
+	it("重开查询持久未完成状态，提供检查恢复和安全放弃，不重新启动整理", async () => {
+		const transaction = {
+			requestId: "original-request",
+			operationId: "durable",
+			kind: "compact",
+			phase: "publishing",
+			backup: "/private/backup",
+		};
+		fake.getSessionMediaMaintenance.mockResolvedValue(transaction);
+		fake.getSessionMediaJob.mockResolvedValue({
+			...running,
+			kind: "compact",
+			status: "failed",
+			transaction,
+			error: "Interrupted",
+		});
+		await render();
+		expect(document.body.textContent).toContain("mediaMaintenance.action.resume");
+		expect(document.body.textContent).toContain("mediaMaintenance.action.abandon");
+		expect(document.body.textContent).toContain("/private/backup");
+		expect(fake.startSessionMediaPreview).not.toHaveBeenCalled();
+		expect(fake.startSessionMediaCompaction).not.toHaveBeenCalled();
 	});
 	it("读取错误明确反馈且没有执行整理入口", async () => {
 		fake.startSessionMediaPreview.mockRejectedValue(new Error("Source changed"));

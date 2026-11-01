@@ -101,20 +101,23 @@ describe("SSH runtime boundary", () => {
 		).rejects.toThrow("concrete SSH Host alias");
 		expect(fixture.spawn).not.toHaveBeenCalled();
 	});
-	it("rejects an incomplete event/method contract before opening a business bridge", async () => {
-		const info = fixture.info as RuntimeInfo;
-		fixture.info = { ...info, methods: info.methods.filter((method) => method !== "abort") };
-		await expect(
-			SshRuntimeConnection.connect("company", {
-				signal: new AbortController().signal,
-				onEvent: () => {},
-				onClose: () => {},
-			}),
-		).rejects.toThrow("incompatible execution/event contract");
-		expect(fixture.spawn).toHaveBeenCalledTimes(3);
-	});
-	it.each([2, 4, 5])(
-		"rejects older event contract %s, including mutation-classified exports",
+	it.each(["abort", "getSessionHistoryPage"])(
+		"rejects an incomplete contract missing %s before opening a business bridge",
+		async (missing) => {
+			const info = fixture.info as RuntimeInfo;
+			fixture.info = { ...info, methods: info.methods.filter((method) => method !== missing) };
+			await expect(
+				SshRuntimeConnection.connect("company", {
+					signal: new AbortController().signal,
+					onEvent: () => {},
+					onClose: () => {},
+				}),
+			).rejects.toThrow("incompatible execution/event contract");
+			expect(fixture.spawn).toHaveBeenCalledTimes(3);
+		},
+	);
+	it.each([2, 4, 5, 6])(
+		"rejects older event contract %s, including full-only history and mutation-classified exports",
 		async (eventContract) => {
 			fixture.info = { ...(fixture.info as RuntimeInfo), eventContract };
 			await expect(

@@ -31,6 +31,15 @@ describe("JsonStore async", () => {
 		expect(value).toEqual({ seeded: true });
 	});
 
+	it("严格读取只对缺失回default，损坏或IO错误不伪装成无事务", async () => {
+		await expect(store().readStrict()).resolves.toEqual({ seeded: true });
+		writeFileSync(path, "broken");
+		await expect(store().readStrict()).rejects.toBeInstanceOf(JsonStoreCorruptedError);
+		expect(readFileSync(path, "utf8")).toBe("broken");
+		rmSync(path);
+		mkdirSync(path);
+		await expect(store().readStrict()).rejects.toMatchObject({ code: "EISDIR" });
+	});
 	it("损坏 → read 回 default，update 抛 JsonStoreCorruptedError", async () => {
 		writeFileSync(path, "{ not json", "utf8");
 		const s = store();

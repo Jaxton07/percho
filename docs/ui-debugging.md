@@ -16,7 +16,7 @@ node scripts/dev-desktop.mjs --remote-debugging-port=9224
 2. CDP 连接后核对 `location.href` 与实际页面，`chrome-error://` 表示连到了错误页，不是业务组件不存在。
 3. 测试结束关闭本次 Electron 及其 dev server，确认端口释放。只杀 electron-vite 包装进程可能留下 Electron；不要用宽泛的 `pkill -f Electron`，以免结束正式版。
 
-开始输入前等待 `html[data-app-ready="true"]` 且 `#splash` 已移除。开屏期间 React 节点已经存在，但 `#root` 的 `content-visibility: hidden` 会让焦点和输入无法到达；不能以查到按钮或输入节点作为可交互的证据。
+开始输入前等待 `html[data-app-ready="true"]` 且 `#splash` 已移除。调用 `Page.reload` 后先等新页面的 `Page.loadEventFired`，再检查就绪标识；reload返回时旧文档可能仍然就绪，过早操作会被新页面启动恢复覆盖。开屏期间 React 节点已经存在，但 `#root` 的 `content-visibility: hidden` 会让焦点和输入无法到达；不能以查到按钮或输入节点作为可交互的证据。
 
 验收首次数据准备时，等待 `html[data-startup-view="setup"] .startup-layout`，这时工作台尚未就绪，不能等 `data-app-ready`。已迁移用户应始终没有 `.startup-layout`；验证无闪屏须从首帧观察，而非只看启动完成后的截图。两种路径都应只有一个窗口和一次业务页面导航。
 

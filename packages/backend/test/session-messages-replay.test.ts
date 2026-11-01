@@ -43,6 +43,7 @@ describe("压缩分割线回放（会话文件 → UI 历史）", () => {
 			{
 				role: "user",
 				entryId: "m1",
+				historyId: "entry:m1:0",
 				text: "压缩前的消息",
 				thinking: "",
 				tools: [],
@@ -51,6 +52,8 @@ describe("压缩分割线回放（会话文件 → UI 历史）", () => {
 			},
 			{
 				role: "compaction",
+				entryId: "c1",
+				historyId: "entry:c1:0",
 				timestamp: 5_000,
 				summary: "这段是被压掉的上下文摘要",
 				tokensBefore: 330_930,
@@ -58,6 +61,7 @@ describe("压缩分割线回放（会话文件 → UI 历史）", () => {
 			{
 				role: "user",
 				entryId: "m2",
+				historyId: "entry:m2:0",
 				text: "压缩后的消息",
 				thinking: "",
 				tools: [],

@@ -209,7 +209,11 @@ describe("session loader owns flights and data, not navigation", () => {
 			permissionMode: "default",
 		});
 		await f.loader.loadSessionBundle(id);
-		expect(pi.getSessionBaseline).toHaveBeenCalledWith({ sessionId: id, imageMode: "references" });
+		expect(pi.getSessionBaseline).toHaveBeenCalledWith({
+			sessionId: id,
+			imageMode: "references",
+			historyTurns: 4,
+		});
 		expect(pi.getSessionMessages).not.toHaveBeenCalled();
 		expect(useTranscriptStore.getState().bySession[id]?.phase).toBe("streaming");
 		expect(useTranscriptStore.getState().bySession[id]?.agentActive).toBe(true);

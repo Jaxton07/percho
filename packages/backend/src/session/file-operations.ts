@@ -3,6 +3,7 @@ import { resolve } from "node:path";
 
 /** 同一来源的普通操作和维护共用一把门；不是另一个普通打开缓存。 */
 export class SessionFileOperations {
+	constructor(private readonly before?: (files: readonly string[], kind: string) => Promise<void>) {}
 	private readonly busy = new Map<string, { kind: string; token: object }>();
 	key(file: string): string {
 		try {
@@ -31,8 +32,11 @@ export class SessionFileOperations {
 		};
 	}
 	async run<T>(files: readonly string[], kind: string, work: () => Promise<T>): Promise<T> {
+		// 恢复门拒绝的打开不能先占文件门，反过来抢断已排队的维护；取得租约后仍须复核。
+		await this.before?.(files, kind);
 		const lease = this.acquire(files, kind);
 		try {
+			await this.before?.(files, kind);
 			return await work();
 		} finally {
 			lease.release();

@@ -18,6 +18,8 @@ import type { UIMessage } from "./types";
 
 /** 一轮的工作时间区间（endedAt 缺省 = 尚未结束/推不出结束，渲染端运行中用 now 跳动） */
 export interface TurnTiming {
+	/** 用户消息的稳定展示身份；旧调用方可省略，派生结果始终提供。 */
+	turnId?: string;
 	/** 第几轮（从 0 计，user 消息为边界，与 TurnChanges.turnIndex 同规则） */
 	turnIndex: number;
 	startedAt: number;
@@ -40,6 +42,7 @@ function stampOf(message: UIMessage): number | undefined {
 export function deriveTurnTimings(messages: UIMessage[], runEndedAt?: number): TurnTiming[] {
 	const timings: TurnTiming[] = [];
 	let turnIndex = -1;
+	let turnId = "";
 	let startedAt = 0;
 	let endedAt: number | undefined;
 	let open = false; // 已见 user 边界、尚未切下一轮
@@ -48,6 +51,7 @@ export function deriveTurnTimings(messages: UIMessage[], runEndedAt?: number): T
 		if (!open) return;
 		// endedAt 必须晚于开始才有效：runEndedAt 残留戳 < 新轮 startedAt 时（新轮刚开始）自然落空
 		timings.push({
+			turnId,
 			turnIndex,
 			startedAt,
 			...(endedAt !== undefined && endedAt > startedAt ? { endedAt } : {}),
@@ -58,6 +62,7 @@ export function deriveTurnTimings(messages: UIMessage[], runEndedAt?: number): T
 		if (message.kind === "user") {
 			flush();
 			turnIndex++;
+			turnId = message.id;
 			open = true;
 			startedAt = message.timestamp;
 			endedAt = undefined;

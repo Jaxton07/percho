@@ -17,6 +17,34 @@ export interface SessionMediaPreview {
 	invalidLines: number;
 	skippedImages: number;
 }
+export type SessionMediaTransactionPhase =
+	| "queued"
+	| "backed-up"
+	| "prepared"
+	| "publishing"
+	| "published"
+	| "complete"
+	| "aborted"
+	| "conflict";
+export interface SessionMediaTransaction {
+	version: 1;
+	requestId: string;
+	operationId: string;
+	kind: "compact" | "restore";
+	sessionFile: string;
+	expectedHash: string;
+	phase: SessionMediaTransactionPhase;
+	backup: string;
+	candidate: string;
+	createdAt: number;
+	updatedAt: number;
+	originalRequestId?: string;
+	backupHash?: string;
+	outputHash?: string;
+	outputBytes?: number;
+	sourceFingerprint?: string;
+	preview?: SessionMediaPreview;
+}
 export type SessionMediaJobStatus =
 	| "queued"
 	| "running"
@@ -26,7 +54,9 @@ export type SessionMediaJobStatus =
 	| "failed";
 export interface SessionMediaJob {
 	jobId: string;
-	kind: "preview";
+	kind: "preview" | "compact" | "restore";
+	requestId?: string;
+	transaction?: SessionMediaTransaction;
 	sessionFile: string;
 	status: SessionMediaJobStatus;
 	processedBytes: number;

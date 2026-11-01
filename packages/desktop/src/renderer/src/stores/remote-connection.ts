@@ -29,6 +29,46 @@ interface RemoteConnectionStore {
 let projectAttempt = 0;
 let registered: string | undefined;
 let unregister: (() => void) | undefined;
+let synchronizationEpoch = 0;
+let synchronizationRetry: ReturnType<typeof setTimeout> | undefined;
+function cancelSynchronization(): void {
+	synchronizationEpoch++;
+	clearTimeout(synchronizationRetry);
+	synchronizationRetry = undefined;
+}
+function startSynchronization(
+	environment: NonNullable<RemoteConnectionStatus["environment"]>,
+	generation: number,
+): void {
+	const epoch = synchronizationEpoch;
+	const current = () => {
+		const status = useRemoteConnectionStore.getState().status;
+		return (
+			epoch === synchronizationEpoch &&
+			status.state === "connected" &&
+			status.environment &&
+			environmentKey(status.environment) === environmentKey(environment)
+		);
+	};
+	const attempt = async (token: number, retry: number): Promise<void> => {
+		try {
+			await synchronizeEnvironmentSessions(environment, token);
+		} catch (error) {
+			if (!current()) return;
+			console.warn("Remote session synchronization failed", error);
+			if (retry === 0) pushToast("warning", "remote.syncFailed", errText(error));
+			// Keep mutations paused until a fresh summary succeeds. Disconnect cancels the retry.
+			synchronizationRetry = setTimeout(
+				() => {
+					synchronizationRetry = undefined;
+					if (current()) void attempt(invalidateEnvironmentSessions(environment), retry + 1);
+				},
+				Math.min(1000 * 2 ** Math.min(retry, 4), 10_000),
+			);
+		}
+	};
+	void attempt(generation, 0);
+}
 export const useRemoteConnectionStore = create<RemoteConnectionStore>((set, get) => ({
 	open: false,
 	status: { revision: -1, state: "disconnected" },
@@ -40,6 +80,14 @@ export const useRemoteConnectionStore = create<RemoteConnectionStore>((set, get)
 		if (status.revision <= get().status.revision) return;
 		const previous = get().status;
 		const environment = status.environment;
+		const changedEnvironment =
+			!!previous.environment &&
+			(!environment || environmentKey(previous.environment) !== environmentKey(environment));
+		const needsSynchronization =
+			environment &&
+			status.state === "connected" &&
+			(previous.state !== "connected" || changedEnvironment || previous.instanceId !== status.instanceId);
+		if (status.state !== "connected" || needsSynchronization) cancelSynchronization();
 		if (!environment && registered) {
 			unregister?.();
 			unregister = undefined;
@@ -50,18 +98,19 @@ export const useRemoteConnectionStore = create<RemoteConnectionStore>((set, get)
 			unregister = registerEnvironment(environment);
 			registered = environmentKey(environment);
 		}
-		if (environment && status.state !== "connected" && previous.state === "connected")
-			invalidateEnvironmentSessions(environment);
+		if (
+			previous.environment &&
+			previous.state === "connected" &&
+			(status.state !== "connected" || changedEnvironment)
+		)
+			invalidateEnvironmentSessions(previous.environment);
 		set({ status });
 		if (environment && status.state === "connected") {
-			if (previous.state !== "connected") {
+			if (needsSynchronization) {
 				if (previous.instanceId && status.instanceId && previous.instanceId !== status.instanceId)
 					pushToast("warning", "remote.restarted");
 				const generation = invalidateEnvironmentSessions(environment);
-				void synchronizeEnvironmentSessions(environment, generation).catch((error) => {
-					console.warn("Remote session synchronization failed", error);
-					pushToast("warning", "remote.syncFailed", errText(error));
-				});
+				startSynchronization(environment, generation);
 				void useProjectsStore.getState().load(environment);
 				void useSessionsStore.getState().loadModels(environment);
 			}
@@ -136,6 +185,7 @@ export function initRemoteConnectionBridge(): () => void {
 		.catch(() => {});
 	return () => {
 		disposed = true;
+		cancelSynchronization();
 		off();
 	};
 }

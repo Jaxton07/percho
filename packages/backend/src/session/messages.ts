@@ -210,6 +210,7 @@ function compactionMarker(entry: Extract<SessionEntry, { type: "compaction" }>):
 	const parsed = entry.timestamp ? Date.parse(entry.timestamp) : Number.NaN;
 	return {
 		role: "compaction",
+		sourceEntryId: entry.id,
 		timestamp: Number.isNaN(parsed) ? Date.now() : parsed,
 		...(entry.summary ? { summary: entry.summary } : {}),
 		...(typeof entry.tokensBefore === "number" ? { tokensBefore: entry.tokensBefore } : {}),
@@ -227,125 +228,136 @@ export function toSessionMessages(
 	const out: SessionMessage[] = [];
 	const toolById = new Map<string, SessionToolCall>();
 	for (const raw of rawMessages as RawMessage[]) {
-		if (raw.role === "compaction") {
-			// 历史回放的压缩分割线（实时路径由 compaction_start/end 事件产生）
-			out.push({
-				role: "compaction",
-				timestamp: raw.timestamp ?? Date.now(),
-				...(raw.summary ? { summary: raw.summary } : {}),
-				...(typeof raw.tokensBefore === "number" ? { tokensBefore: raw.tokensBefore } : {}),
-			});
-			continue;
-		}
-		if (raw.role === "user") {
-			const sourceText = blockText(raw.content);
-			const document = readComposerDocument(raw);
-			const invocation = document ? null : parseExpandedSkillInvocation(sourceText);
-			out.push({
-				role: "user",
-				...(raw.sourceEntryId ? { entryId: raw.sourceEntryId } : {}),
-				text: document ? composerDocumentText(document) : invocation ? (invocation.args ?? "") : sourceText,
-				...(document ? { document, sourceText } : {}),
-				thinking: "",
-				tools: [],
-				images: blockImages(raw.content),
-				timestamp: raw.timestamp ?? Date.now(),
-				...(invocation ? { skill: { name: invocation.name, args: invocation.args }, sourceText } : {}),
-			});
-			continue;
-		}
-		if (raw.role === "assistant") {
-			const content = Array.isArray(raw.content) ? raw.content : [];
-			const toolBlocks = blockToolCalls(content);
-			const tools = toolBlocks.map((b) => b.tool);
-			for (const tool of tools) toolById.set(tool.id, tool);
-			const text = blockText(raw.content);
-			// 正文后的工具（块序在首个 text 块之后，同 turn 内 text→toolCall 交错）：拆成独立 meta 消息
-			// 排在正文消息之后，与 renderer finalizeStreaming 的拆分一致——否则渲染时会被倒挂到正文上方
-			const textIndex = content.findIndex((c) => c?.type === "text" && c.text);
-			const postBlocks = text && textIndex >= 0 ? toolBlocks.filter((b) => b.index > textIndex) : [];
-			if (postBlocks.length > 0) {
-				const preTools = toolBlocks.filter((b) => b.index < textIndex).map((b) => b.tool);
-				const timestamp = raw.timestamp ?? Date.now();
-				if (text || preTools.length > 0) {
-					out.push({
-						role: "assistant",
-						text,
-						thinking: blockThinking(content),
-						tools: preTools,
-						images: [],
-						timestamp,
-					});
-				}
+		const start = out.length;
+		try {
+			if (raw.role === "compaction") {
+				// 历史回放的压缩分割线（实时路径由 compaction_start/end 事件产生）
 				out.push({
-					role: "assistant",
-					text: "",
-					thinking: "",
-					tools: postBlocks.map((b) => b.tool),
-					images: [],
-					timestamp,
+					role: "compaction",
+					timestamp: raw.timestamp ?? Date.now(),
+					...(raw.summary ? { summary: raw.summary } : {}),
+					...(typeof raw.tokensBefore === "number" ? { tokensBefore: raw.tokensBefore } : {}),
 				});
 				continue;
 			}
-			const message: SessionMessage = {
-				role: "assistant",
-				text,
-				thinking: blockThinking(content),
-				tools,
-				images: [],
-				timestamp: raw.timestamp ?? Date.now(),
-				...(raw.stopReason ? { stopReason: raw.stopReason } : {}),
-				...(typeof raw.errorMessage === "string" && raw.errorMessage.length > 0
-					? { errorMessage: raw.errorMessage }
-					: {}),
-			};
-			// 错误轮次（LLM 请求失败）text/thinking/tools 全空，但错误信息必须在回放中可见——
-			// 否则历史回放产不出错误卡（live 产卡与回放必须一致，spec §2 原则 1）
-			if (message.text || message.thinking || message.tools.length > 0 || message.stopReason === "error") {
-				out.push(message);
+			if (raw.role === "user") {
+				const sourceText = blockText(raw.content);
+				const document = readComposerDocument(raw);
+				const invocation = document ? null : parseExpandedSkillInvocation(sourceText);
+				out.push({
+					role: "user",
+					...(raw.sourceEntryId ? { entryId: raw.sourceEntryId } : {}),
+					text: document ? composerDocumentText(document) : invocation ? (invocation.args ?? "") : sourceText,
+					...(document ? { document, sourceText } : {}),
+					thinking: "",
+					tools: [],
+					images: blockImages(raw.content),
+					timestamp: raw.timestamp ?? Date.now(),
+					...(invocation ? { skill: { name: invocation.name, args: invocation.args }, sourceText } : {}),
+				});
+				continue;
 			}
-			continue;
-		}
-		if (raw.role === "toolResult") {
-			const tool = raw.toolCallId ? toolById.get(raw.toolCallId) : undefined;
-			if (tool) {
-				tool.output = blockText(raw.content);
-				tool.isError = raw.isError === true;
-				// 工具执行结束时刻（entry 自带；轮次计时 deriveTurnTimings 的历史回放数据源）
-				if (typeof raw.timestamp === "number") tool.endedAt = raw.timestamp;
-				// edit：unified patch 提取进 SessionToolCall.diff（diff 侧栏历史回放数据源；模型不可见）
-				if (tool.name === "edit" && !tool.isError) {
-					const patch = (raw.details as { patch?: unknown } | undefined)?.patch;
-					if (typeof patch === "string" && patch.length > 0) tool.diff = patch;
-				}
-				// show_image：图片从 details 提取为独立图片消息（紧随其 assistant 消息之后）
-				if (tool.name === "show_image" && !tool.isError) {
-					const shown = showImageFromDetails(raw.details);
-					if (shown) {
+			if (raw.role === "assistant") {
+				const content = Array.isArray(raw.content) ? raw.content : [];
+				const toolBlocks = blockToolCalls(content);
+				const tools = toolBlocks.map((b) => b.tool);
+				for (const tool of tools) toolById.set(tool.id, tool);
+				const text = blockText(raw.content);
+				// 正文后的工具（块序在首个 text 块之后，同 turn 内 text→toolCall 交错）：拆成独立 meta 消息
+				// 排在正文消息之后，与 renderer finalizeStreaming 的拆分一致——否则渲染时会被倒挂到正文上方
+				const textIndex = content.findIndex((c) => c?.type === "text" && c.text);
+				const postBlocks = text && textIndex >= 0 ? toolBlocks.filter((b) => b.index > textIndex) : [];
+				if (postBlocks.length > 0) {
+					const preTools = toolBlocks.filter((b) => b.index < textIndex).map((b) => b.tool);
+					const timestamp = raw.timestamp ?? Date.now();
+					if (text || preTools.length > 0) {
 						out.push({
-							role: "image",
-							images: shown.images.map((image) =>
-								isReferenceImage(image) && ownerSessionId ? { ...image, ownerSessionId } : image,
-							),
-							...(raw.sourceEntryId ? { entryId: raw.sourceEntryId } : {}),
-							...(ownerSessionId ? { ownerSessionId } : {}),
-							paths: shown.paths,
-							timestamp: raw.timestamp ?? Date.now(),
+							role: "assistant",
+							text,
+							thinking: blockThinking(content),
+							tools: preTools,
+							images: [],
+							timestamp,
 						});
 					}
+					out.push({
+						role: "assistant",
+						text: "",
+						thinking: "",
+						tools: postBlocks.map((b) => b.tool),
+						images: [],
+						timestamp,
+					});
+					continue;
 				}
-				// subagent：details 带 results/sessionFile → 独立子代理消息（结构检测，不依赖工具名）
-				if (!tool.isError) {
-					const runs = extractSubagentRuns(raw.details);
-					if (runs) {
-						out.push({
-							role: "subagent",
-							runs,
-							timestamp: raw.timestamp ?? Date.now(),
-						});
+				const message: SessionMessage = {
+					role: "assistant",
+					text,
+					thinking: blockThinking(content),
+					tools,
+					images: [],
+					timestamp: raw.timestamp ?? Date.now(),
+					...(raw.stopReason ? { stopReason: raw.stopReason } : {}),
+					...(typeof raw.errorMessage === "string" && raw.errorMessage.length > 0
+						? { errorMessage: raw.errorMessage }
+						: {}),
+				};
+				// 错误轮次（LLM 请求失败）text/thinking/tools 全空，但错误信息必须在回放中可见——
+				// 否则历史回放产不出错误卡（live 产卡与回放必须一致，spec §2 原则 1）
+				if (message.text || message.thinking || message.tools.length > 0 || message.stopReason === "error") {
+					out.push(message);
+				}
+				continue;
+			}
+			if (raw.role === "toolResult") {
+				const tool = raw.toolCallId ? toolById.get(raw.toolCallId) : undefined;
+				if (tool) {
+					tool.output = blockText(raw.content);
+					tool.isError = raw.isError === true;
+					// 工具执行结束时刻（entry 自带；轮次计时 deriveTurnTimings 的历史回放数据源）
+					if (typeof raw.timestamp === "number") tool.endedAt = raw.timestamp;
+					// edit：unified patch 提取进 SessionToolCall.diff（diff 侧栏历史回放数据源；模型不可见）
+					if (tool.name === "edit" && !tool.isError) {
+						const patch = (raw.details as { patch?: unknown } | undefined)?.patch;
+						if (typeof patch === "string" && patch.length > 0) tool.diff = patch;
+					}
+					// show_image：图片从 details 提取为独立图片消息（紧随其 assistant 消息之后）
+					if (tool.name === "show_image" && !tool.isError) {
+						const shown = showImageFromDetails(raw.details);
+						if (shown) {
+							out.push({
+								role: "image",
+								images: shown.images.map((image) =>
+									isReferenceImage(image) && ownerSessionId ? { ...image, ownerSessionId } : image,
+								),
+								...(raw.sourceEntryId ? { entryId: raw.sourceEntryId } : {}),
+								...(ownerSessionId ? { ownerSessionId } : {}),
+								paths: shown.paths,
+								timestamp: raw.timestamp ?? Date.now(),
+							});
+						}
+					}
+					// subagent：details 带 results/sessionFile → 独立子代理消息（结构检测，不依赖工具名）
+					if (!tool.isError) {
+						const runs = extractSubagentRuns(raw.details);
+						if (runs) {
+							out.push({
+								role: "subagent",
+								runs,
+								timestamp: raw.timestamp ?? Date.now(),
+							});
+						}
 					}
 				}
 			}
+		} finally {
+			if (raw.sourceEntryId)
+				for (let index = start; index < out.length; index++) {
+					const message = out[index];
+					if (!message) continue;
+					message.entryId = raw.sourceEntryId;
+					message.historyId = `entry:${ownerSessionId ? `${encodeURIComponent(ownerSessionId)}:` : ""}${raw.sourceEntryId}:${index - start}`;
+				}
 		}
 	}
 	return out;
@@ -377,7 +389,7 @@ export function assignEntryIds(messages: SessionMessage[], branch: readonly Sess
 			// Empty failed rounds still need their authoritative entry for retry after reconnect.
 			if (!message.text && message.stopReason !== "error") continue;
 			const id = assistantByTimestamp.get(message.timestamp)?.shift();
-			if (id) message.entryId = id;
+			if (id && !message.entryId) message.entryId = id;
 			continue;
 		}
 		if (message.role === "user") {

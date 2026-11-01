@@ -2,6 +2,7 @@ import type { ComposerDocument } from "../composer-document";
 import type { DisplayImage } from "../display-image";
 import type { UiError } from "../errors";
 import type { CompactionPause } from "../session";
+import type { SessionHistoryWindow } from "../session-history";
 import type { SkillInvocationDisplay } from "../skill-invocation";
 import type { SubagentRunSummary } from "../subagent";
 import type { TodoItem } from "../todo";
@@ -174,6 +175,8 @@ export interface StreamingState {
 export type SessionPhase = "idle" | "streaming" | "awaiting_permission";
 
 export interface SessionTranscriptState {
+	/** 缺省为完整历史；分页元数据仅由同源baseline/历史页推进。 */
+	history?: SessionHistoryWindow;
 	/** 存活会话的压缩暂停原因；不是持久历史，也不等同于模型回答失败。 */
 	compactionPause?: CompactionPause | null;
 	summarizationRetry?: RetryInfo | null;

@@ -29,9 +29,19 @@ export function createExecutionHandlers(
 		getPendingInteractions: () => backend.getPendingInteractions(),
 		getLoadedSessions: () => backend.getLoadedSessions(),
 		setViewedSubagent: ({ sessionId }) => backend.setViewedSubagent(sessionId),
-		getSessionBaseline: ({ sessionId, imageMode }) => backend.getSessionBaseline(sessionId, { imageMode }),
+		getSessionBaseline: ({ sessionId, imageMode, historyTurns }) =>
+			backend.getSessionBaseline(sessionId, { imageMode, historyTurns }),
+		getSessionHistoryPage: ({ sessionId, cursor }) => backend.getSessionHistoryPage(sessionId, cursor),
 		getSessionMessages: ({ sessionId, imageMode }) => backend.getSessionMessages(sessionId, { imageMode }),
 		startSessionMediaPreview: ({ sessionFile }) => backend.startSessionMediaPreview(sessionFile),
+		startSessionMediaCompaction: (input) => backend.startSessionMediaCompaction(input),
+		startSessionMediaRestore: ({ requestId, compactionRequestId, confirmed }) =>
+			backend.startSessionMediaRestore(requestId, compactionRequestId, confirmed),
+		resumeSessionMediaJob: ({ requestId, confirmed }) => backend.resumeSessionMediaJob(requestId, confirmed),
+		abandonSessionMediaJob: ({ requestId, confirmed }) =>
+			backend.abandonSessionMediaJob(requestId, confirmed),
+		getSessionMediaTransaction: ({ requestId }) => backend.getSessionMediaTransaction(requestId),
+		getSessionMediaMaintenance: ({ sessionFile }) => backend.getSessionMediaMaintenance(sessionFile),
 		getSessionMediaJob: ({ jobId }) => backend.getSessionMediaJob(jobId),
 		cancelSessionMediaJob: ({ jobId }) => backend.cancelSessionMediaJob(jobId),
 		getSessionImage: ({ sessionId, imageId, revision }) =>

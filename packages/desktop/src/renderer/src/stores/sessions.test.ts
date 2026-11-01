@@ -228,6 +228,70 @@ describe("环境失效接入图片生命周期", () => {
 });
 
 describe("引用历史撤回恢复真实多附件", () => {
+	it("旧基线已安装但权限恢复未结束时，撤回必须另取新分支而非复用旧bundle", async () => {
+		const meta = realMeta("recall-pending-bundle", "/fixture");
+		const permission = deferred<void>();
+		piMock.setPermissionMode.mockImplementationOnce(() => permission.promise);
+		piMock.getSessionMessages
+			.mockResolvedValueOnce([
+				{
+					role: "user",
+					text: "old branch",
+					images: [],
+					thinking: "",
+					tools: [],
+					timestamp: 1,
+					entryId: "old",
+				},
+			] as never)
+			.mockResolvedValueOnce([
+				{
+					role: "user",
+					text: "new branch",
+					images: [],
+					thinking: "",
+					tools: [],
+					timestamp: 1,
+					entryId: "new",
+				},
+			] as never);
+		useSessionsStore.setState({
+			sessions: [meta],
+			activeSessionId: meta.sessionId,
+			permissionModes: { [meta.sessionId]: "fullAccess" },
+		});
+		useUiPreferencesStore.setState({ sessionPermissionModes: { [meta.sessionId]: "fullAccess" } });
+		piMock.openSession.mockResolvedValue(meta);
+		const opening = useSessionsStore.getState().openFromHistory(meta.sessionFile!);
+		vi.stubGlobal("window", { dispatchEvent: vi.fn() });
+		try {
+			await vi.waitFor(() => expect(piMock.setPermissionMode).toHaveBeenCalledTimes(1));
+			piMock.recallMessage.mockResolvedValueOnce({ text: "recalled", images: [] });
+			const recalling = useSessionsStore.getState().recallMessage({ entryId: "old" });
+			await vi.waitFor(() => expect(piMock.getSessionBaseline).toHaveBeenCalledTimes(2));
+			await recalling;
+			permission.resolve();
+			await opening;
+			await Promise.resolve();
+			expect(useTranscriptStore.getState().bySession[meta.sessionId]?.messages).toEqual(
+				messagesToUIMessages([
+					{
+						role: "user",
+						text: "new branch",
+						images: [],
+						thinking: "",
+						tools: [],
+						timestamp: 1,
+						entryId: "new",
+					},
+				]),
+			);
+		} finally {
+			permission.resolve();
+			await opening;
+			vi.unstubAllGlobals();
+		}
+	});
 	it.each([false, true])("撤回返回时切到另一会话=%s，原图仍只进入原目标草稿", async (changed) => {
 		const a = realMeta("recall-a", "/fixture/a"),
 			b = realMeta("recall-b", "/fixture/b");
@@ -254,6 +318,7 @@ describe("引用历史撤回恢复真实多附件", () => {
 			expect(piMock.getSessionBaseline).toHaveBeenCalledWith({
 				sessionId: a.sessionId,
 				imageMode: "references",
+				historyTurns: 4,
 			});
 		} finally {
 			vi.unstubAllGlobals();
@@ -504,7 +569,11 @@ describe("openFromHistory", () => {
 		await useSessionsStore.getState().openFromHistory("/tmp/sub-1.jsonl");
 
 		expect(piMock.getSessionMessages).not.toHaveBeenCalled();
-		expect(piMock.getSessionBaseline).toHaveBeenCalledWith({ sessionId: "sub-1", imageMode: "references" });
+		expect(piMock.getSessionBaseline).toHaveBeenCalledWith({
+			sessionId: "sub-1",
+			imageMode: "references",
+			historyTurns: 4,
+		});
 		// 活动轮次、队列和todo来自同一基线，不再分别读取静态快照。
 		expect(piMock.getFollowUpMessages).not.toHaveBeenCalled();
 		expect(piMock.getTodos).not.toHaveBeenCalled();

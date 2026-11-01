@@ -93,7 +93,7 @@ describe("压缩后的 UI 历史", () => {
 			content: "压缩前保留条目",
 			timestamp: 3,
 		} satisfies Message);
-		sm.appendCompaction("模型上下文摘要", kept, 10_000);
+		const compact = sm.appendCompaction("模型上下文摘要", kept, 10_000);
 		sm.appendMessage({ role: "user", content: "压缩后消息", timestamp: 4 } satisfies Message);
 
 		const uiHistory = toBranchSessionMessages(sm.getBranch());
@@ -103,7 +103,14 @@ describe("压缩后的 UI 历史", () => {
 			uiHistory.map((message) => (message.role === "compaction" ? "「压缩分割线」" : message.text)),
 		).toEqual(["压缩前第一条", "压缩前第二条", "压缩前保留条目", "「压缩分割线」", "压缩后消息"]);
 		expect(uiHistory.filter((m) => m.role === "compaction")).toEqual([
-			{ role: "compaction", timestamp: expect.any(Number), summary: "模型上下文摘要", tokensBefore: 10_000 },
+			{
+				role: "compaction",
+				entryId: compact,
+				historyId: `entry:${compact}:0`,
+				timestamp: expect.any(Number),
+				summary: "模型上下文摘要",
+				tokensBefore: 10_000,
+			},
 		]);
 		// SDK 上下文确实已缩短，证明测试没有把两种数据源混为一谈。
 		expect(sm.buildSessionContext().messages.length).toBeLessThan(4);
@@ -128,7 +135,12 @@ describe("压缩后的 UI 历史", () => {
 		sm.appendCompaction("", "", undefined as unknown as number);
 
 		const divider = toBranchSessionMessages(sm.getBranch()).find((m) => m.role === "compaction");
-		expect(divider).toEqual({ role: "compaction", timestamp: expect.any(Number) });
+		expect(divider).toEqual({
+			role: "compaction",
+			entryId: sm.getLeafId(),
+			historyId: `entry:${sm.getLeafId()}:0`,
+			timestamp: expect.any(Number),
+		});
 	});
 });
 

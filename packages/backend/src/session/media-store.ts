@@ -176,6 +176,11 @@ export class SessionMediaStore {
 		};
 	}
 
+	/** 完整性验证不构造界面/导出所需的base64副本。 */
+	async verify(owner: string, id: string, revision: string): Promise<void> {
+		await this.readOriginal(owner, id, revision);
+	}
+
 	private async readOriginal(
 		owner: string,
 		id: string,

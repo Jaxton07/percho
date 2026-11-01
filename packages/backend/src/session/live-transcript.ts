@@ -55,6 +55,13 @@ export class LiveTranscript {
 				),
 			};
 	}
+	/** 活动anchor之前的持久前缀；先划分边界再分页，活动轮不能截断。 */
+	persistentPrefix(branch: readonly SessionEntry[]): readonly SessionEntry[] {
+		const index = this.anchor ? branch.findIndex((entry) => entry.id === this.anchor) : -1;
+		if (this.anchor && index < 0) throw new Error("Session branch changed during an active turn");
+		return this.anchor === undefined ? branch : branch.slice(0, index + 1);
+	}
+
 	snapshot(
 		branch: readonly SessionEntry[],
 		runtime: { streaming: boolean; compacting: boolean; ownerSessionId?: string },
@@ -67,9 +74,7 @@ export class LiveTranscript {
 			details?: object,
 		) => DisplayImage[],
 	): SessionTranscriptState {
-		const index = this.anchor ? branch.findIndex((entry) => entry.id === this.anchor) : -1;
-		if (this.anchor && index < 0) throw new Error("Session branch changed during an active turn");
-		const history = this.anchor === undefined ? branch : branch.slice(0, index + 1);
+		const history = this.persistentPrefix(branch);
 		const userEntries = new Map<string, string>();
 		for (const entry of branch)
 			if (entry.type === "message" && entry.message.role === "user") {

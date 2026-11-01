@@ -1,12 +1,14 @@
-// 只依赖Node及擦除类型：开发测试可由Node strip-types启动，打包时独立构建为mjs。
+// 仅Node与擦除类型。源码可strip-types运行，桌面/远端另构建独立mjs，不加载SDK运行上下文。
 import { createHash } from "node:crypto";
 import { constants } from "node:fs";
-import { lstat, open } from "node:fs/promises";
+import type { FileHandle } from "node:fs/promises";
+import { chmod, copyFile, lstat, open } from "node:fs/promises";
+import { dirname } from "node:path";
 import { parentPort, workerData } from "node:worker_threads";
 import type { SessionMediaPreview } from "@percho/shared";
 
-const MAX_LINE = 128 * 1024 * 1024;
-const MAX_IMAGE = 10 * 1024 * 1024;
+const MAX_LINE = 128 * 1024 * 1024,
+	MAX_IMAGE = 10 * 1024 * 1024;
 const MIME = new Set([
 	"image/png",
 	"image/jpeg",
@@ -18,21 +20,102 @@ const MIME = new Set([
 ]);
 const fingerprint = (s: { dev: bigint; ino: bigint; size: bigint; mtimeNs: bigint; ctimeNs: bigint }) =>
 	`${s.dev}:${s.ino}:${s.size}:${s.mtimeNs}:${s.ctimeNs}`;
-
-async function preview(file: string, currentVersion: number): Promise<SessionMediaPreview> {
-	const before = await lstat(file, { bigint: true });
-	if (!before.isFile() || before.isSymbolicLink())
-		throw new Error("Maintenance requires a regular, unlinked session file");
-	if (before.size > 2n * 1024n * 1024n * 1024n)
+let nextRequest = 0;
+async function request<T>(type: string, payload: unknown): Promise<T> {
+	const port = parentPort;
+	if (!port) throw new Error("Missing maintenance coordinator");
+	const requestId = ++nextRequest;
+	return new Promise((resolve, reject) => {
+		const receive = (message: { requestId?: number; value?: T; error?: string }) => {
+			if (message.requestId !== requestId) return;
+			port.off("message", receive);
+			if (message.error) reject(new Error(message.error));
+			else resolve(message.value as T);
+		};
+		port.on("message", receive);
+		port.postMessage({ type, payload, requestId });
+	});
+}
+async function regular(file: string) {
+	const stat = await lstat(file, { bigint: true });
+	if (!stat.isFile() || stat.isSymbolicLink())
+		throw new Error("Maintenance requires a regular, unlinked file");
+	if (stat.size > 2n * 1024n * 1024n * 1024n)
 		throw new Error("Session exceeds the bounded maintenance size limit");
-	const handle = await open(file, constants.O_RDONLY | (constants.O_NOFOLLOW ?? 0));
+	return stat;
+}
+async function hashFile(file: string) {
+	const before = await regular(file),
+		handle = await open(file, constants.O_RDONLY | (constants.O_NOFOLLOW ?? 0));
 	try {
 		if (fingerprint(await handle.stat({ bigint: true })) !== fingerprint(before))
+			throw new Error("Source changed before hashing");
+		const hash = createHash("sha256");
+		for await (const chunk of handle.createReadStream({ autoClose: false, highWaterMark: 64 * 1024 }))
+			hash.update(chunk);
+		if (
+			fingerprint(await handle.stat({ bigint: true })) !== fingerprint(before) ||
+			fingerprint(await regular(file)) !== fingerprint(before)
+		)
+			throw new Error("Source changed while hashing");
+		return { hash: hash.digest("hex"), fingerprint: fingerprint(before), bytes: Number(before.size) };
+	} finally {
+		await handle.close();
+	}
+}
+async function writeAll(file: FileHandle, bytes: Buffer): Promise<void> {
+	let offset = 0;
+	while (offset < bytes.length) {
+		const result = await file.write(bytes, offset, bytes.length - offset);
+		if (!result.bytesWritten) throw new Error("Short maintenance write");
+		offset += result.bytesWritten;
+	}
+}
+async function* rawLines(handle: FileHandle) {
+	let parts: Buffer[] = [],
+		size = 0;
+	for await (const chunk of handle.createReadStream({ autoClose: false, highWaterMark: 64 * 1024 })) {
+		const buffer = chunk as Buffer;
+		let offset = 0;
+		for (;;) {
+			const newline = buffer.indexOf(10, offset),
+				end = newline < 0 ? buffer.length : newline + 1;
+			const piece = buffer.subarray(offset, end);
+			size += piece.length;
+			if (size > MAX_LINE) throw new Error("Session contains a line beyond the bounded maintenance limit");
+			parts.push(piece);
+			if (newline < 0) break;
+			const line = Buffer.concat(parts, size);
+			parts = [];
+			size = 0;
+			offset = end;
+			yield line;
+			if (offset === buffer.length) break;
+		}
+	}
+	if (size) {
+		const line = Buffer.concat(parts, size);
+		parts = [];
+		yield line;
+	}
+}
+
+async function scan(
+	file: string,
+	currentVersion: number,
+	writer?: FileHandle,
+	verifyAssets = false,
+): Promise<SessionMediaPreview & { outputHash: string }> {
+	const before = await regular(file),
+		identity = fingerprint(before);
+	const handle = await open(file, constants.O_RDONLY | (constants.O_NOFOLLOW ?? 0));
+	try {
+		if (fingerprint(await handle.stat({ bigint: true })) !== identity)
 			throw new Error("Source changed before scanning");
 		const result: SessionMediaPreview = {
 			supported: false,
 			sourceHash: "",
-			sourceFingerprint: fingerprint(before),
+			sourceFingerprint: identity,
 			fileBytes: Number(before.size),
 			projectedFileBytes: 0,
 			imageCount: 0,
@@ -44,19 +127,31 @@ async function preview(file: string, currentVersion: number): Promise<SessionMed
 			skippedImages: 0,
 		};
 		const hash = createHash("sha256"),
-			unique = new Map<string, number>();
+			outputHash = createHash("sha256"),
+			unique = new Map<string, number>(),
+			verified = new Set<string>();
 		let headerSeen = false,
 			processed = 0,
 			progressAt = 0;
-		function replaceImage(value: unknown): unknown {
+		async function image(value: unknown): Promise<unknown> {
 			if (!value || typeof value !== "object" || Array.isArray(value)) return value;
-			const image = value as Record<string, unknown>;
-			if (typeof image.data !== "string" || typeof image.mimeType !== "string") return value;
-			if (!MIME.has(image.mimeType) || image.data.length > Math.ceil(MAX_IMAGE / 3) * 4 + 1024) {
+			const original = value as Record<string, unknown>;
+			if (typeof original.data !== "string" || typeof original.mimeType !== "string") {
+				if ((writer || verifyAssets) && original.kind === "reference") {
+					const key = `${original.id}:${original.revision}`;
+					if (!verified.has(key)) {
+						if (verified.size >= 100_000) throw new Error("Too many asset references");
+						await request("verify", { id: original.id, revision: original.revision });
+						verified.add(key);
+					}
+				}
+				return value;
+			}
+			if (!MIME.has(original.mimeType) || original.data.length > Math.ceil(MAX_IMAGE / 3) * 4 + 1024) {
 				result.skippedImages++;
 				return value;
 			}
-			const encoded = image.data.replace(/\s/g, "");
+			const encoded = original.data.replace(/\s/g, "");
 			if (!encoded || !/^[a-zA-Z0-9+/]+={0,2}$/.test(encoded) || encoded.length % 4 === 1) {
 				result.skippedImages++;
 				return value;
@@ -76,23 +171,24 @@ async function preview(file: string, currentVersion: number): Promise<SessionMed
 				unique.set(digest, bytes.length);
 			}
 			result.imageCount++;
-			const replacement = { ...image };
+			const replacement = { ...original };
 			delete replacement.data;
-			return {
-				...replacement,
-				kind: "reference",
-				ownerSessionId: result.sessionId,
-				id: `asset:${digest}`,
-				revision: digest,
-				byteLength: bytes.length,
-			};
+			const reference = writer
+				? await request<Record<string, unknown>>("asset", { bytes, digest, mimeType: original.mimeType })
+				: {
+						kind: "reference",
+						ownerSessionId: result.sessionId,
+						id: `asset:${digest}`,
+						revision: digest,
+						byteLength: bytes.length,
+					};
+			return { ...replacement, ...reference };
 		}
-		function line(raw: Buffer): void {
+		async function convert(raw: Buffer): Promise<Buffer> {
 			const end = raw.at(-1) === 10 ? (raw.at(-2) === 13 ? raw.length - 2 : raw.length - 1) : raw.length;
 			const body = raw.subarray(0, end),
 				text = body.toString("utf8");
-			result.projectedFileBytes += raw.length;
-			if (!text.trim()) return;
+			if (!text.trim()) return raw;
 			let row: Record<string, any>;
 			try {
 				row = JSON.parse(text);
@@ -102,7 +198,7 @@ async function preview(file: string, currentVersion: number): Promise<SessionMed
 					headerSeen = true;
 					result.reason = "invalid-header";
 				}
-				return;
+				return raw;
 			}
 			if (!headerSeen) {
 				headerSeen = true;
@@ -113,13 +209,13 @@ async function preview(file: string, currentVersion: number): Promise<SessionMed
 					!/^[a-zA-Z0-9_-]{1,128}$/.test(row.id)
 				) {
 					result.reason = "invalid-header";
-					return;
+					return raw;
 				}
 				result.sourceVersion = row.version;
 				result.sessionId = row.id;
 				result.supported = row.version === currentVersion;
 				if (!result.supported) result.reason = "unsupported-version";
-				return;
+				return raw;
 			}
 			if (
 				!result.supported ||
@@ -130,41 +226,29 @@ async function preview(file: string, currentVersion: number): Promise<SessionMed
 				typeof row.message.details !== "object" ||
 				Array.isArray(row.message.details)
 			)
-				return;
-			// 对不合法UTF-8的目标行也不重编码，避免损坏未知字段。
+				return raw;
 			if (!Buffer.from(text).equals(body)) {
 				result.skippedImages++;
-				return;
+				return raw;
 			}
 			const details = row.message.details,
 				previousCount = result.imageCount;
-			if (Array.isArray(details.images)) details.images = details.images.map(replaceImage);
-			else if (details.image) details.image = replaceImage(details.image);
-			if (result.imageCount !== previousCount)
-				result.projectedFileBytes += Buffer.byteLength(JSON.stringify(row)) - body.length;
+			if (Array.isArray(details.images)) {
+				const images = [];
+				for (const value of details.images) images.push(await image(value));
+				details.images = images;
+			} else if (details.image) details.image = await image(details.image);
+			return result.imageCount === previousCount
+				? raw
+				: Buffer.concat([Buffer.from(JSON.stringify(row)), raw.subarray(end)]);
 		}
-		let parts: Buffer[] = [],
-			length = 0;
-		for await (const chunk of handle.createReadStream({ autoClose: false, highWaterMark: 64 * 1024 })) {
-			const buffer = chunk as Buffer;
-			hash.update(buffer);
-			processed += buffer.length;
-			let offset = 0;
-			for (;;) {
-				const newline = buffer.indexOf(10, offset),
-					end = newline === -1 ? buffer.length : newline + 1;
-				const piece = buffer.subarray(offset, end);
-				length += piece.length;
-				if (length > MAX_LINE)
-					throw new Error("Session contains a line beyond the bounded maintenance limit");
-				parts.push(piece);
-				if (newline === -1) break;
-				line(Buffer.concat(parts, length));
-				parts = [];
-				length = 0;
-				offset = end;
-				if (offset === buffer.length) break;
-			}
+		for await (const raw of rawLines(handle)) {
+			hash.update(raw);
+			processed += raw.length;
+			const output = await convert(raw);
+			outputHash.update(output);
+			result.projectedFileBytes += output.length;
+			if (writer) await writeAll(writer, output);
 			if (Date.now() - progressAt > 100) {
 				parentPort?.postMessage({
 					type: "progress",
@@ -174,31 +258,143 @@ async function preview(file: string, currentVersion: number): Promise<SessionMed
 				progressAt = Date.now();
 			}
 		}
-		if (length) line(Buffer.concat(parts, length));
 		if (
-			fingerprint(await handle.stat({ bigint: true })) !== result.sourceFingerprint ||
-			fingerprint(await lstat(file, { bigint: true })) !== result.sourceFingerprint
+			fingerprint(await handle.stat({ bigint: true })) !== identity ||
+			fingerprint(await regular(file)) !== identity
 		)
 			throw new Error("Source changed during scanning; retry preview");
 		if (!headerSeen) result.reason = "invalid-header";
 		result.sourceHash = hash.digest("hex");
 		result.uniqueImages = unique.size;
-		result.originalImageBytes = [...unique.values()].reduce((sum, n) => sum + n, 0);
+		result.originalImageBytes = [...unique.values()].reduce((sum, bytes) => sum + bytes, 0);
 		result.additionalPeakBytes = result.backupBytes + result.projectedFileBytes + result.originalImageBytes;
 		if (result.supported && (!result.imageCount || result.projectedFileBytes >= result.fileBytes))
 			result.reason = "no-benefit";
-		return result;
+		return { ...result, outputHash: outputHash.digest("hex") };
 	} finally {
 		await handle.close();
 	}
 }
 
-if (!parentPort || workerData?.kind !== "preview") throw new Error("Invalid maintenance worker invocation");
-void preview(workerData.file, workerData.currentVersion).then(
-	(result) => parentPort?.postMessage({ type: "result", result }),
-	(error) =>
+async function syncFile(file: string) {
+	const handle = await open(file, constants.O_RDONLY | (constants.O_NOFOLLOW ?? 0));
+	try {
+		await handle.sync();
+	} finally {
+		await handle.close();
+	}
+}
+async function prepare(data: {
+	file: string;
+	currentVersion: number;
+	expectedHash: string;
+	backup: string;
+	candidate: string;
+}) {
+	const preview = await scan(data.file, data.currentVersion);
+	if (!preview.supported || preview.reason || !preview.sessionId)
+		throw new Error("Compaction requires a supported, beneficial preview");
+	if (preview.sourceHash !== data.expectedHash) throw new Error("Source changed since confirmation");
+	await request("preflight", preview);
+	try {
+		await copyFile(data.file, data.backup, constants.COPYFILE_EXCL);
+		await chmod(data.backup, 0o600);
+		await syncFile(data.backup);
+		if (process.platform !== "win32") {
+			const directory = await open(dirname(data.backup), "r");
+			try {
+				await directory.sync();
+			} finally {
+				await directory.close();
+			}
+		}
+	} catch (error) {
+		if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error;
+	}
+	const backup = await hashFile(data.backup);
+	if (backup.hash !== data.expectedHash)
+		throw new Error("Independent backup integrity check failed; original was not replaced");
+	await request("backedUp", { hash: backup.hash });
+	const writer = await open(data.candidate, "wx", 0o600);
+	let converted: Awaited<ReturnType<typeof scan>>;
+	try {
+		converted = await scan(data.file, data.currentVersion, writer);
+		await writer.sync();
+	} finally {
+		await writer.close();
+	}
+	if (converted.sourceHash !== data.expectedHash || converted.sourceFingerprint !== preview.sourceFingerprint)
+		throw new Error("Source changed during candidate preparation");
+	const candidate = await hashFile(data.candidate);
+	if (candidate.hash !== converted.outputHash) throw new Error("Candidate integrity check failed");
+	const source = await hashFile(data.file);
+	if (source.hash !== data.expectedHash || source.fingerprint !== preview.sourceFingerprint)
+		throw new Error("Source changed before publication");
+	return {
+		preview,
+		outputHash: candidate.hash,
+		outputBytes: candidate.bytes,
+		sourceFingerprint: source.fingerprint,
+	};
+}
+async function restoreCandidate(data: {
+	file: string;
+	expectedHash: string;
+	backup: string;
+	backupHash: string;
+	candidate: string;
+}) {
+	const source = await hashFile(data.file),
+		backup = await hashFile(data.backup);
+	if (source.hash !== data.expectedHash)
+		throw new Error("Session changed or appended after compaction; refusing to overwrite new data");
+	if (backup.hash !== data.backupHash) throw new Error("Backup integrity check failed");
+	await copyFile(data.backup, data.candidate, constants.COPYFILE_EXCL);
+	await chmod(data.candidate, 0o600);
+	await syncFile(data.candidate);
+	const candidate = await hashFile(data.candidate),
+		after = await hashFile(data.file);
+	if (
+		candidate.hash !== backup.hash ||
+		after.hash !== source.hash ||
+		after.fingerprint !== source.fingerprint
+	)
+		throw new Error("Source or restore candidate changed");
+	return { outputHash: candidate.hash, outputBytes: candidate.bytes, sourceFingerprint: after.fingerprint };
+}
+async function main() {
+	if (!parentPort) throw new Error("Invalid maintenance worker invocation");
+	switch (workerData?.kind) {
+		case "preview":
+		case "verify": {
+			const { outputHash: _outputHash, ...result } = await scan(
+				workerData.file,
+				workerData.currentVersion,
+				undefined,
+				workerData.kind === "verify",
+			);
+			return result;
+		}
+		case "hash":
+			return hashFile(workerData.file);
+		case "prepare":
+			return prepare(workerData);
+		case "restore":
+			return restoreCandidate(workerData);
+		default:
+			throw new Error("Invalid maintenance worker invocation");
+	}
+}
+void main().then(
+	(result) => {
+		parentPort?.postMessage({ type: "result", result });
+		parentPort?.close();
+	},
+	(error) => {
 		parentPort?.postMessage({
 			type: "error",
-			error: error instanceof Error ? error.message : "Maintenance scan failed",
-		}),
+			error: error instanceof Error ? error.message : "Maintenance failed",
+		});
+		parentPort?.close();
+	},
 );

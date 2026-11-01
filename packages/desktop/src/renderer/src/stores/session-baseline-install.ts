@@ -18,6 +18,7 @@ export function installSessionBaseline(
 				...state.bySession,
 				[sessionId]: {
 					...baseline.transcript,
+					baselineRevision: (previous?.baselineRevision ?? 0) + 1,
 					phase: previous?.pendingPermissions.length ? "awaiting_permission" : baseline.transcript.phase,
 					pendingPermissions: previous?.pendingPermissions ?? [],
 					pendingDialogs: previous?.pendingDialogs ?? [],
