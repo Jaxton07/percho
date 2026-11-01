@@ -1,4 +1,4 @@
-import type { ModelRuntime } from "@earendil-works/pi-coding-agent";
+import { getAgentDir, type ModelRuntime, SettingsManager } from "@earendil-works/pi-coding-agent";
 import type { LoginAuthEvent, LoginAuthPrompt, LoginEventPayload, LoginResult } from "@percho/shared";
 
 /**
@@ -57,6 +57,7 @@ export function filterAuthSelectOptions<TOption extends { id: string; label: str
 
 export class LoginService {
 	private active: ActiveLogin | undefined;
+	private settingsManager: SettingsManager | undefined;
 
 	constructor(private readonly deps: LoginServiceDeps) {}
 
@@ -90,11 +91,24 @@ export class LoginService {
 					: undefined;
 			if (!method) throw new Error(`${provider.name || providerId} 不支持登录`);
 			// 凭证持久化由 SDK models.login 内部完成（auth.json + 运行时可用性同步）
-			await runtime.login(providerId, method, {
-				signal: login.abort.signal,
-				notify: (event) => this.notify(login, event),
-				prompt: (prompt) => this.prompt(login, prompt),
-			});
+			await runtime.login(
+				providerId,
+				method,
+				{
+					signal: login.abort.signal,
+					notify: (event) => this.notify(login, event),
+					prompt: (prompt) => this.prompt(login, prompt),
+				},
+				{
+					getDeviceId: () => {
+						// 设备标识属于安装实例，由 SDK 持久化；项目配置不能覆盖它。
+						this.settingsManager ??= SettingsManager.create(process.cwd(), getAgentDir(), {
+							projectTrusted: false,
+						});
+						return this.settingsManager.getOrCreateDeviceId();
+					},
+				},
+			);
 			return { ok: true };
 		} catch (error) {
 			const message = error instanceof Error ? error.message : String(error);
