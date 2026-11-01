@@ -1,5 +1,9 @@
+import { environmentEntityRef, sameEnvironment } from "@percho/shared";
+import { useEffect } from "react";
+import { useEnvironment } from "../../../environment-context";
 import { useT } from "../../../i18n";
 import { useCatalogStore } from "../../../stores/catalog";
+import { useSessionsStore } from "../../../stores/sessions";
 import { BrowseSection } from "./BrowseSection";
 import { LoadedSection } from "./LoadedSection";
 
@@ -8,6 +12,24 @@ export function ExtensionsPanel() {
 	const t = useT();
 	const tab = useCatalogStore((s) => s.extensionsTab);
 	const setExtensionsTab = useCatalogStore((s) => s.setExtensionsTab);
+	const refreshConfiguredPackages = useCatalogStore((s) => s.refreshConfiguredPackages);
+	const checkUpdates = useCatalogStore((s) => s.checkUpdates);
+	const environment = useEnvironment();
+	const activeSessionId = useSessionsStore((s) => s.activeSessionId);
+	const sessionId =
+		activeSessionId && sameEnvironment(environmentEntityRef(activeSessionId).environment, environment)
+			? activeSessionId
+			: null;
+
+	useEffect(() => {
+		let cancelled = false;
+		void refreshConfiguredPackages(sessionId).then(() => {
+			if (!cancelled && tab === "loaded") void checkUpdates();
+		});
+		return () => {
+			cancelled = true;
+		};
+	}, [refreshConfiguredPackages, checkUpdates, sessionId, tab]);
 
 	return (
 		<div>
@@ -27,7 +49,9 @@ export function ExtensionsPanel() {
 					</button>
 				))}
 			</div>
-			<div className="mt-3">{tab === "browse" ? <BrowseSection /> : <LoadedSection />}</div>
+			<div className="mt-3">
+				{tab === "browse" ? <BrowseSection sessionId={sessionId} /> : <LoadedSection sessionId={sessionId} />}
+			</div>
 		</div>
 	);
 }

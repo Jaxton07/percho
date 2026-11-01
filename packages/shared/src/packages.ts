@@ -1,3 +1,6 @@
+import gt from "semver/functions/gt.js";
+import valid from "semver/functions/valid.js";
+
 /** pi.dev 社区包目录（packages 页）跨进程类型 */
 
 /** npm 不在 PATH 上的错误哨兵（backend 抛出、renderer 映射为 i18n 文案；IPC 只保留 message，故放 message 前缀） */
@@ -37,4 +40,31 @@ export interface CatalogSearchResult {
 export interface ConfiguredPackageInfo {
 	source: string;
 	scope: "user" | "project";
+	/** SDK 实际安装路径中的版本；无需联网，未安装或无法读取时省略。 */
+	installedVersion?: string;
+}
+
+/** 同一安装源可以同时存在于用户与项目范围。 */
+export function configuredPackageKey(pkg: { source: string; scope: string }): string {
+	return `${pkg.scope}:${pkg.source}`;
+}
+
+/** npm 版本查询结果；与项目、安装范围及本地安装版本无关。 */
+export interface PackageUpdateInfo {
+	name: string;
+	/** registry 上的 latest；查不到时为空串 */
+	latest: string;
+}
+
+export function isNewerVersion(latest: string, installed: string): boolean {
+	return Boolean(valid(latest) && valid(installed) && gt(latest, installed));
+}
+
+/** npm: 源 → 包名（剥版本后缀，兼容 @scope/name） */
+export function npmSourceToPackageName(source: string): string | null {
+	if (!source.startsWith("npm:")) return null;
+	const spec = source.slice(4);
+	const searchFrom = spec.startsWith("@") ? spec.indexOf("/") + 1 : 1;
+	const at = spec.indexOf("@", searchFrom);
+	return at > 0 ? spec.slice(0, at) : spec;
 }

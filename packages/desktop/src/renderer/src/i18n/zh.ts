@@ -332,8 +332,7 @@ export const zh = {
 		max: "最大",
 	},
 	compaction: {
-		retrying: "摘要请求重试中 · 第 {attempt}/{maxAttempts} 次 · 等待 {delay}s",
-		retryAttempt: "正在重试摘要 · 第 {attempt}/{maxAttempts} 次",
+		retrying: "正在重试摘要 {attempt}/{maxAttempts}",
 		paused: {
 			failed: "任务已暂停：上下文压缩失败。",
 			overThreshold: "任务已暂停：压缩后上下文仍超过触发线。",
@@ -415,6 +414,7 @@ export const zh = {
 		imageRetry: "重新加载",
 		imageLoadError: "图片加载失败",
 		subagent: {
+			worker: "Worker",
 			queued: "排队中",
 			aborted: "已中止",
 			running: "工作中",
@@ -844,6 +844,9 @@ export const zh = {
 			install: "安装",
 			installing: "安装中…",
 			installed: "已安装",
+			version: "版本 {version}",
+			updateAvailable: "可更新 {version}",
+			updateHint: "npm 上有更新版本，当前仅提供版本提示。",
 			npmNotFound:
 				"未检测到 npm（Node.js 包管理器）。请先安装 Node.js（如 brew install node）后重启 Percho；若已安装在非标准路径，请将其加入系统 PATH 后重启",
 			uninstall: "卸载",
@@ -945,7 +948,7 @@ export const zh = {
 				"上游没有返回可解析的模型流。常见原因是 baseUrl 少了 /v1（中转站多在 /v1 下提供 OpenAI 兼容接口），或服务商协议选错；到「设置 → 模型服务」检查地址与协议。",
 			streamGuard: "模型输出异常（病态流），已被安全机制中止。",
 		},
-		retrying: "自动重试中 · 第 {attempt}/{maxAttempts} 次 · 等待 {delay}s",
+		retrying: "正在重新连接 {attempt}/{maxAttempts}",
 		retryDone: "重试成功",
 		retryFailed: "重试失败",
 	},

@@ -9,7 +9,7 @@ import { CatalogRow, npmSourceToName } from "./rows";
 const CATALOG_TYPES: ("" | CatalogPackageType)[] = ["", "extension", "skill", "prompt", "theme"];
 
 /** 浏览社区：pi.dev 目录搜索 + 安装 */
-export function BrowseSection() {
+export function BrowseSection({ sessionId = null }: { sessionId?: string | null }) {
 	const t = useT();
 	const query = useCatalogStore((s) => s.catalogQuery);
 	const type = useCatalogStore((s) => s.catalogType);
@@ -18,11 +18,12 @@ export function BrowseSection() {
 	const loading = useCatalogStore((s) => s.catalogLoading);
 	const loadingMore = useCatalogStore((s) => s.catalogLoadingMore);
 	const error = useCatalogStore((s) => s.catalogError);
-	const configuredPackages = useCatalogStore((s) => s.configuredPackages);
+	const configuredPackages = useCatalogStore((s) =>
+		s.configuredSessionId === sessionId ? s.configuredPackages : null,
+	);
 	const setCatalogQuery = useCatalogStore((s) => s.setCatalogQuery);
 	const setCatalogType = useCatalogStore((s) => s.setCatalogType);
 	const searchCatalog = useCatalogStore((s) => s.searchCatalog);
-	const refreshConfiguredPackages = useCatalogStore((s) => s.refreshConfiguredPackages);
 	const catalogPage = useCatalogStore((s) => s.catalogPage);
 
 	// name → 已配置条目（「已安装」态 + 卸载入口；只有 npm: 源能对上目录包）
@@ -35,10 +36,9 @@ export function BrowseSection() {
 		return map;
 	}, [configuredPackages]);
 
-	// 已配置包列表只需拉一次（安装成功后 store 会自刷）；目录首载（防抖搜索只在输入时触发）
+	// 安装清单由父面板加载；这里只负责社区目录首载。
 	// biome-ignore lint/correctness/useExhaustiveDependencies: only initialize on mount; subsequent loads are user actions
 	useEffect(() => {
-		if (configuredPackages === null) void refreshConfiguredPackages();
 		if (catalogPage === 0 && !loading) void searchCatalog(false);
 	}, []);
 
