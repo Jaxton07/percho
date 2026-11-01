@@ -372,10 +372,20 @@ export function reduceEvent(state: SessionTranscriptState, event: SessionEvent):
 			}
 			return { ...state, messages: [...state.messages, message] };
 		}
-		case "message_update":
+		case "message_update": {
+			const update = event.assistantMessageEvent;
+			// 开始请求不代表恢复；收到有效思考或正文后才撤下重试提示。
+			if (
+				state.retrying &&
+				(update.type === "text_delta" || update.type === "thinking_delta") &&
+				update.delta.trim().length > 0
+			) {
+				state = { ...state, retrying: null };
+			}
 			return withStreaming(state, (streaming) =>
 				applyAssistantMessageUpdate(streaming, event.assistantMessageEvent),
 			);
+		}
 		case "tool_execution_start":
 			return withStreaming(state, (streaming) => {
 				// subagent：单代理或 parallel tasks 都从折叠区移出建独立工作中行；

@@ -20,7 +20,7 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 import { promisify } from "node:util";
 import nodePolicy from "../packages/shared/src/runtime-node-policy.json" with { type: "json" };
 import { currentRelease } from "./release/plan.mjs";
-import { runtimeBuildLock } from "./remote-runtime/production-lock.mjs";
+import { runtimeBuildAliases, runtimeBuildLock } from "./remote-runtime/production-lock.mjs";
 
 const exec = promisify(execFile),
 	repo = resolve(dirname(fileURLToPath(import.meta.url)), "..");
@@ -90,10 +90,7 @@ try {
 		outdir: stage,
 		outExtension: { ".js": ".mjs" },
 		external: ["@earendil-works/pi-coding-agent", "@earendil-works/pi-ai"],
-		alias: {
-			"@percho/shared": join(repo, "packages/shared/src/index.ts"),
-			typebox: join(stage, "node_modules/percho-typebox-build"),
-		},
+		alias: runtimeBuildAliases(repo, stage),
 		logLevel: "warning",
 	});
 	await copyFile(join(repo, "packages/backend/src/runtime/entry.mjs"), join(stage, "entry.mjs"));

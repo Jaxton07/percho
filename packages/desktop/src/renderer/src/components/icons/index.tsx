@@ -797,6 +797,24 @@ export function EditIcon({ size = 13, className }: IconProps) {
 	);
 }
 
+/** 连接状态（无线信号弧线） */
+export function WifiIcon({ size = 16, className }: IconProps) {
+	return (
+		<svg
+			className={className}
+			width={size}
+			height={size}
+			viewBox="0 0 24 24"
+			{...strokeProps}
+			strokeLinecap="round"
+			aria-hidden="true"
+		>
+			<path d="M2 7.5a16 16 0 0 1 20 0M5 11.5a11 11 0 0 1 14 0M8.5 15.5a5.5 5.5 0 0 1 7 0" />
+			<circle cx="12" cy="19.5" r="1" fill="currentColor" stroke="none" />
+		</svg>
+	);
+}
+
 /** 刷新（循环箭头，设置页联网刷新模型目录） */
 export function RefreshIcon({ size = 13, className }: IconProps) {
 	return (

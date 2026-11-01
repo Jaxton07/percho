@@ -97,6 +97,53 @@ describe("reducer — LLM 错误卡（决策 D1：agent_end 落卡）", () => {
 });
 
 describe("reducer — auto_retry 瞬时状态（retrying）", () => {
+	const retryStart: Event = {
+		type: "auto_retry_start",
+		attempt: 1,
+		maxAttempts: 3,
+		delayMs: 2000,
+		errorMessage: "429: x",
+	};
+	const output = (type: "text_delta" | "thinking_delta", delta: string): Event =>
+		({
+			type: "message_update",
+			assistantMessageEvent: { type, delta, contentIndex: 0 },
+		}) as Event;
+
+	it.each(["text_delta", "thinking_delta"] as const)("%s 有效输出立即清除提示并保留内容", (type) => {
+		let s = reduceEvent(emptyTranscript(), retryStart);
+		s = reduceEvent(s, { type: "turn_start" });
+		s = reduceEvent(s, output(type, "恢复输出"));
+		expect(s.retrying).toBeNull();
+		expect(type === "text_delta" ? s.streaming?.text : s.streaming?.thinking).toBe("恢复输出");
+		// 后续再次失败，仍应显示新一轮的重试信息。
+		s = reduceEvent(s, { ...retryStart, attempt: 2 });
+		expect(s.retrying).toEqual({ attempt: 2, maxAttempts: 3, delayMs: 2000 });
+		s = reduceEvent(s, output(type, "再次恢复"));
+		expect(s.retrying).toBeNull();
+		s = reduceEvent(s, { type: "auto_retry_end", success: true, attempt: 2 });
+		expect(s.retrying).toBeNull();
+	});
+
+	it.each(["text_delta", "thinking_delta"] as const)("%s 空增量和纯空白不清除提示", (type) => {
+		let s = reduceEvent(emptyTranscript(), retryStart);
+		s = reduceEvent(s, { type: "turn_start" });
+		for (const delta of ["", " \n\t"]) {
+			s = reduceEvent(s, output(type, delta));
+			expect(s.retrying).toEqual({ attempt: 1, maxAttempts: 3, delayMs: 2000 });
+		}
+	});
+
+	it("工具调用增量不清除提示", () => {
+		let s = reduceEvent(emptyTranscript(), retryStart);
+		s = reduceEvent(s, { type: "turn_start" });
+		s = reduceEvent(s, {
+			type: "message_update",
+			assistantMessageEvent: { type: "toolcall_delta", contentIndex: 0, delta: '{"command":"ls"}' },
+		} as Event);
+		expect(s.retrying).toEqual({ attempt: 1, maxAttempts: 3, delayMs: 2000 });
+	});
+
 	it("auto_retry_start → 状态行数据齐全；auto_retry_end 清除", () => {
 		let s = reduceEvent(emptyTranscript(), {
 			type: "auto_retry_start",
@@ -110,7 +157,7 @@ describe("reducer — auto_retry 瞬时状态（retrying）", () => {
 		expect(s.retrying).toBeNull();
 	});
 
-	it("retry 轮继续（turn_start/turn_end）不清除状态行（实测：auto_retry_start 后紧接重试轮）", () => {
+	it("重试轮开始但尚未收到有效输出时保留提示", () => {
 		let s = reduceEvent(emptyTranscript(), {
 			type: "auto_retry_start",
 			attempt: 2,

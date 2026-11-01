@@ -66,6 +66,9 @@
 	--color-info: #a1a1aa;
 	/* 正常运转状态色（UI 插件状态点等）：与 severity 同类的 graphics 专用 token */
 	--color-ok: #059669;
+	/* 子代理终态圆点：Apple 系统色。只给子代理用，不改通用 ok/severity 和 UI 插件状态点 */
+	--color-subagent-ok: #34c759;
+	--color-subagent-err: #ff3b30;
 	/* 开关（Switch）关闭态轨道：独立中性浅灰，不随 border-strong 走 slate 蓝调 */
 	--color-switch-off: #d4d4d8;
 	/* 自定义背景图遮罩（rgb 分量；不透明度由 .app-bg-scrim 的 inline opacity 控制） */
@@ -125,6 +128,8 @@
 	--color-warn: #f0b84a;
 	--color-info: #6e6e77;
 	--color-ok: #34d399;
+	--color-subagent-ok: #30d158;
+	--color-subagent-err: #ff453a;
 	--color-switch-off: #4b4b53;
 	--color-scrim: 23 23 26;
 	--markdown-code-bg: #2b2b31;
@@ -141,6 +146,115 @@
 	--shadow-dialog: 0 12px 40px rgba(255, 255, 255, 0.18);
 	--scrollbar-thumb: #4b4b53;
 	--scrollbar-thumb-hover: #5d5d66;
+}
+
+/* 子代理状态：工作中在 80×22 透明区域里放三颗打字点；终态从右向左收成 6px 圆点（左端固定）。
+   终态用 Apple 系统绿/红，只作用于子代理，不影响通用 severity / UI 插件状态点。 */
+.subagent-slot {
+	display: flex;
+	align-items: center;
+	height: 22px;
+}
+
+.subagent-cap {
+	position: relative;
+	width: 80px;
+	height: 22px;
+	flex: none;
+	border-radius: 11px;
+	background-color: transparent;
+	overflow: hidden;
+	isolation: isolate;
+	transition:
+		width 0.55s cubic-bezier(0.16, 1, 0.3, 1),
+		height 0.55s cubic-bezier(0.16, 1, 0.3, 1),
+		border-radius 0.55s cubic-bezier(0.16, 1, 0.3, 1),
+		background-color 0.55s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+.subagent-cap[data-state="done"] {
+	width: 6px;
+	height: 6px;
+	border-radius: 50%;
+	background-color: var(--color-subagent-ok);
+}
+
+.subagent-cap[data-state="error"] {
+	width: 6px;
+	height: 6px;
+	border-radius: 50%;
+	background-color: var(--color-subagent-err);
+}
+
+.subagent-cap[data-state="aborted"] {
+	width: 6px;
+	height: 6px;
+	border-radius: 50%;
+	background-color: var(--color-ink-faint);
+}
+
+.subagent-dots {
+	position: absolute;
+	inset: 0;
+	display: flex;
+	align-items: center;
+	justify-content: center;
+	gap: 7px;
+	opacity: 1;
+	transition: opacity 0.3s;
+}
+
+.subagent-cap[data-state="done"] .subagent-dots,
+.subagent-cap[data-state="error"] .subagent-dots,
+.subagent-cap[data-state="aborted"] .subagent-dots {
+	opacity: 0;
+}
+
+.subagent-dots i {
+	width: 5px;
+	height: 5px;
+	border-radius: 50%;
+	background-color: var(--color-ink-2);
+	animation: subagent-dot-wave 1.25s ease-in-out infinite;
+}
+
+.subagent-dots i:nth-child(2) {
+	animation-delay: 0.12s;
+}
+
+.subagent-dots i:nth-child(3) {
+	animation-delay: 0.24s;
+}
+
+/* 终态点仍留在 DOM 里完成淡出，但不再跑无限动画；持久化的历史卡片尤其需要 */
+.subagent-cap[data-state="done"] .subagent-dots i,
+.subagent-cap[data-state="error"] .subagent-dots i,
+.subagent-cap[data-state="aborted"] .subagent-dots i {
+	animation-play-state: paused;
+}
+
+@keyframes subagent-dot-wave {
+	0%,
+	60%,
+	100% {
+		transform: translateY(0);
+		opacity: 0.4;
+	}
+	30% {
+		transform: translateY(-4px);
+		opacity: 1;
+	}
+}
+
+@media (prefers-reduced-motion: reduce) {
+	.subagent-dots i {
+		animation: none;
+		opacity: 0.7;
+	}
+
+	.subagent-cap {
+		transition: none;
+	}
 }
 
 /* 预览行上滑切换：新行从下方滑入，旧行向上滑出（时长恒定 0.32s，与 PreviewTicker 的 ANIMATION_MS 同步；不随队列积压变化）。slide-out 必须 forwards：动画结束后保持透明/位移终态，否则旧行在 React 移除前弹回可见造成重叠 */
@@ -2133,36 +2247,21 @@ code {
 	height: 12px;
 }
 
-/* ---- 自动重试瞬时状态行（无底色，文字 + 琥珀旋转 glyph；跟随 working 行下方） ---- */
+/* ---- 自动重试瞬时状态行（无底色，灰色连接图标与文字；跟随 working 行下方） ---- */
 .retry-note {
 	display: flex;
 	align-items: center;
-	gap: 7px;
-	font-size: calc(12px * var(--fs-ui-scale, 1));
-	color: var(--color-ink-faint);
+	gap: 8px;
+	color: var(--color-ink-dim);
 }
 .retry-note svg {
-	width: 12px;
-	height: 12px;
-	color: var(--color-warn);
 	flex: none;
-	animation: retry-spin 1.6s linear infinite;
-}
-@keyframes retry-spin {
-	to {
-		transform: rotate(360deg);
-	}
-}
-.retry-note .r-detail {
-	color: var(--color-ink-faint);
-	opacity: 0.75;
 }
 
 @media (prefers-reduced-motion: reduce) {
 	.error-note summary,
 	.error-note-chev,
-	.error-note-act,
-	.retry-note svg {
+	.error-note-act {
 		transition: none;
 		animation: none;
 	}

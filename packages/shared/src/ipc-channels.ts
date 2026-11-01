@@ -11,7 +11,12 @@ import type {
 } from "./extension-dialog";
 import type { LanStatus } from "./lan";
 import type { McpConfigListResult, McpMutationResult, McpServersChangedPayload, McpUpsertInput } from "./mcp";
-import type { CatalogPackageType, CatalogSearchResult, ConfiguredPackageInfo } from "./packages";
+import type {
+	CatalogPackageType,
+	CatalogSearchResult,
+	ConfiguredPackageInfo,
+	PackageUpdateInfo,
+} from "./packages";
 import type {
 	MutationReceipt,
 	RemoteAuthGuide,
@@ -421,15 +426,23 @@ export const PACKAGES_CHANNELS = {
 		"packages:remove",
 		"environment",
 		"mutation",
-	)<{ source: string; scope: "user" | "project" }, void>({
+	)<{ source: string; scope: "user" | "project"; sessionId?: string }, void>({
 		source: input.text,
 		scope: input.oneOf("user", "project"),
+		sessionId: input.optional(input.id),
 	}),
 	/** 列出 settings.json 已配置的包（「已安装」态匹配用） */
-	listConfiguredPackages: ch("packages:listConfigured", "environment", "read")<
-		void,
-		ConfiguredPackageInfo[]
-	>(),
+	listConfiguredPackages: ch(
+		"packages:listConfigured",
+		"environment",
+		"read",
+	)<{ sessionId?: string }, ConfiguredPackageInfo[]>({ sessionId: input.optional(input.id) }),
+	/** 只查 npm 最新版本，不重复读取本地安装清单。 */
+	checkPackageUpdates: ch(
+		"packages:checkUpdates",
+		"environment",
+		"read",
+	)<{ names: string[] }, PackageUpdateInfo[]>({ names: input.array(input.text) }),
 } as const;
 
 /** MCP 域：官方内置扩展的 mcp.json 读写（连接/展开交给官方；工具运行态走 mcp.tools:changed 事件） */
