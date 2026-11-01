@@ -10,15 +10,20 @@ import type {
 import { NPM_NOT_FOUND_SENTINEL, npmSourceToPackageName } from "@percho/shared";
 import { createLogger } from "../log";
 import { fetchPackageCatalog } from "./catalog";
-import { isNewerVersion } from "./version";
 
 const log = createLogger("backend");
 
 /** 整轮 registry 查询共用时间预算，避免包数量放大离线等待。 */
 const UPDATE_CHECK_TIMEOUT_MS = 8_000;
 const UPDATE_CHECK_CONCURRENCY = 4;
+const PACKAGE_NAME_PATTERN = /^(@[a-z0-9][a-z0-9._-]*\/)?[a-z0-9][a-z0-9._-]*$/i;
 
 export { NPM_NOT_FOUND_SENTINEL };
+
+export interface PackageContext {
+	cwd: string;
+	projectTrusted: boolean;
+}
 
 /** 判断错误是否为 spawn npm ENOENT（GUI 启动 PATH 不含 npm 安装目录时的典型报错，issue #18） */
 export function isNpmSpawnEnoent(err: unknown): boolean {
@@ -47,29 +52,29 @@ function rethrowPackageError(err: unknown): never {
  * 装/卸后委托空闲会话热重载；忙碌者跳过，不排队补重载（对齐 CLI /reload）。
  */
 export class PackageAdmin {
-	private packageManager: DefaultPackageManager | undefined;
-
 	constructor(
 		private readonly deps: {
-			reloadIdleSessions: () => Promise<unknown>;
+			reloadIdleSessions: (cwd?: string) => Promise<unknown>;
 			defaultCwd?: string;
 		},
 	) {}
 
-	/** 包管理器（用户级安装/卸载，懒加载；settingsManager 仅用于读写 settings.json 安装记录） */
-	private getPackageManager(): DefaultPackageManager {
-		if (!this.packageManager) {
-			const cwd = this.deps.defaultCwd || process.cwd();
-			this.packageManager = new DefaultPackageManager({
-				cwd,
-				agentDir: getAgentDir(),
-				settingsManager: SettingsManager.create(cwd, getAgentDir()),
-				// 已注册的内置扩展名（1.0.4）：包解析时能把 `+builtin:tool-search` 这类条目认成已知内置；
-				// 未知的 builtin:<name>（如未接的 llama.cpp）只降级为 info 说明，不阻塞（见 getLoadedResources）
-				builtinExtensions: ["codemode", "tool-search", "mcp"],
-			});
-		}
-		return this.packageManager;
+	/** 每次读取新的设置快照；项目上下文由已登记会话提供，不从启动目录猜测。 */
+	private getPackageManager(context?: PackageContext): DefaultPackageManager {
+		const cwd = context?.cwd ?? this.deps.defaultCwd ?? process.cwd();
+		const settingsManager = SettingsManager.create(cwd, getAgentDir(), {
+			projectTrusted: context?.projectTrusted ?? false,
+		});
+		const [failure] = settingsManager.drainErrors();
+		if (failure) throw failure.error;
+		return new DefaultPackageManager({
+			cwd,
+			agentDir: getAgentDir(),
+			settingsManager,
+			// 已注册的内置扩展名（1.0.4）：包解析时能把 `+builtin:tool-search` 这类条目认成已知内置；
+			// 未知的 builtin:<name>（如未接的 llama.cpp）只降级为 info 说明，不阻塞（见 getLoadedResources）
+			builtinExtensions: ["codemode", "tool-search", "mcp"],
+		});
 	}
 
 	/** 搜索 pi.dev 社区包目录（设置页扩展面板浏览用） */
@@ -82,9 +87,9 @@ export class PackageAdmin {
 	}
 
 	/** 列出 settings.json 已配置的包（「已安装」态匹配用） */
-	async listConfiguredPackages(): Promise<ConfiguredPackageInfo[]> {
+	async listConfiguredPackages(context?: PackageContext): Promise<ConfiguredPackageInfo[]> {
 		return Promise.all(
-			this.getPackageManager()
+			this.getPackageManager(context)
 				.listConfiguredPackages()
 				.map(async (p) => ({
 					source: p.source,
@@ -98,7 +103,7 @@ export class PackageAdmin {
 
 	/** 安装社区包（npm:<name>，用户级）；成功后委托空闲会话重载。 */
 	async installPackage(name: string): Promise<void> {
-		if (!/^(@[a-z0-9][a-z0-9._-]*\/)?[a-z0-9][a-z0-9._-]*$/i.test(name)) {
+		if (!PACKAGE_NAME_PATTERN.test(name)) {
 			throw new Error(`Invalid package name: ${name}`);
 		}
 		try {
@@ -111,10 +116,11 @@ export class PackageAdmin {
 	}
 
 	/** 卸载已配置的包（按 source + scope 移除并持久化）；成功后委托空闲会话重载。 */
-	async removePackage(source: string, scope: "user" | "project"): Promise<void> {
+	async removePackage(source: string, scope: "user" | "project", context?: PackageContext): Promise<void> {
+		if (scope === "project" && !context) throw new Error("Project package removal requires a session");
 		let removed: boolean;
 		try {
-			removed = await this.getPackageManager().removeAndPersist(source, {
+			removed = await this.getPackageManager(context).removeAndPersist(source, {
 				local: scope === "project",
 			});
 		} catch (err) {
@@ -122,7 +128,7 @@ export class PackageAdmin {
 		}
 		if (!removed) throw new Error(`Package not installed: ${source}`);
 		log.info("package removed", source, { scope });
-		await this.deps.reloadIdleSessions();
+		await this.deps.reloadIdleSessions(scope === "project" ? context?.cwd : undefined);
 	}
 
 	/** 复用 SDK 的路径解析，覆盖项目安装和旧全局安装目录。 */
@@ -152,13 +158,11 @@ export class PackageAdmin {
 	}
 
 	/** 检查已配置扩展的可用更新（只读：不安装、不重载） */
-	async checkPackageUpdates(): Promise<PackageUpdateInfo[]> {
-		const packages = (await this.listConfiguredPackages()).flatMap((p) => {
-			const name = npmSourceToPackageName(p.source);
-			return name ? [{ ...p, name }] : [];
-		});
-		// 只对联网请求按包名去重，安装记录及各自的本地版本不能合并。
-		const names = [...new Set(packages.map((p) => p.name))];
+	async checkPackageUpdates(packageNames: string[]): Promise<PackageUpdateInfo[]> {
+		const names = [...new Set(packageNames)];
+		if (names.some((name) => !PACKAGE_NAME_PATTERN.test(name))) {
+			throw new Error("Invalid package name");
+		}
 		const latestByName = new Map<string, string | undefined>();
 		const signal = AbortSignal.timeout(UPDATE_CHECK_TIMEOUT_MS);
 		let next = 0;
@@ -170,10 +174,6 @@ export class PackageAdmin {
 				}
 			}),
 		);
-		return packages.map(({ name, source, scope, installedVersion }) => {
-			const installed = installedVersion ?? "";
-			const latest = latestByName.get(name) ?? "";
-			return { name, source, scope, installed, latest, hasUpdate: isNewerVersion(latest, installed) };
-		});
+		return names.map((name) => ({ name, latest: latestByName.get(name) ?? "" }));
 	}
 }

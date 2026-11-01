@@ -1,11 +1,6 @@
-import type {
-	CatalogPackage,
-	ConfiguredPackageInfo,
-	LoadedExtension,
-	PackageUpdateInfo,
-	ResourceScope,
-} from "@percho/shared";
+import type { CatalogPackage, ConfiguredPackageInfo, LoadedExtension, ResourceScope } from "@percho/shared";
 import {
+	isNewerVersion,
 	isSubagentPackage,
 	isSubagentToolName,
 	NPM_NOT_FOUND_SENTINEL,
@@ -103,12 +98,11 @@ function Stat({ label }: { label: string }) {
 export function ExtensionRow({
 	extension,
 	configured,
-	update,
+	latestVersion,
 }: {
 	extension: LoadedExtension;
 	configured: ConfiguredPackageInfo | null;
-	/** 可用更新信息（npm: 源且查到 registry 时才有） */
-	update: PackageUpdateInfo | null;
+	latestVersion?: string;
 }) {
 	const t = useT();
 	return (
@@ -126,13 +120,15 @@ export function ExtensionRow({
 					</span>
 				)}
 				<ScopeBadge scope={extension.scope} />
-				{update?.hasUpdate && (
-					<Tooltip label={t("settings.extensions.updateHint")}>
-						<span className="shrink-0 rounded bg-accent/10 px-1.5 py-0.5 text-ui-10 font-medium text-accent">
-							{t("settings.extensions.updateAvailable", { version: update.latest })}
-						</span>
-					</Tooltip>
-				)}
+				{latestVersion &&
+					configured?.installedVersion &&
+					isNewerVersion(latestVersion, configured.installedVersion) && (
+						<Tooltip label={t("settings.extensions.updateHint")}>
+							<span className="shrink-0 rounded bg-accent/10 px-1.5 py-0.5 text-ui-10 font-medium text-accent">
+								{t("settings.extensions.updateAvailable", { version: latestVersion })}
+							</span>
+						</Tooltip>
+					)}
 				{configured && <UninstallButton source={configured.source} scope={configured.scope} />}
 			</div>
 			<div className="mt-0.5 flex flex-wrap items-center gap-x-3 gap-y-1">

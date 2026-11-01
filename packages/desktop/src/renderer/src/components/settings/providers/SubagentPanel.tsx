@@ -28,13 +28,15 @@ export function SubagentPanel() {
 	const setSubagentThinking = useSettingsStore((s) => s.setSubagentThinking);
 	const setSubagentPreferBuiltin = useSettingsStore((s) => s.setSubagentPreferBuiltin);
 	const models = useSessionsStore((s) => s.models);
-	const configuredPackages = useCatalogStore((s) => s.configuredPackages);
+	const configuredPackages = useCatalogStore((s) =>
+		s.configuredSessionId === null ? s.configuredPackages : null,
+	);
 	const refreshConfiguredPackages = useCatalogStore((s) => s.refreshConfiguredPackages);
 
-	// G4 静态提示数据源：进面板按需拉一次已配置包（null = 未加载；已加载则不重复请求）
+	// 全局执行器提示只读用户级安装，不沿用其他项目的清单。
 	useEffect(() => {
-		if (configuredPackages === null) void refreshConfiguredPackages();
-	}, [configuredPackages, refreshConfiguredPackages]);
+		void refreshConfiguredPackages(null);
+	}, [refreshConfiguredPackages]);
 
 	if (loading && prefs === null) {
 		return <p className="py-8 text-center text-ui-13 text-ink-faint">{t("settings.loading")}</p>;

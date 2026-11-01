@@ -1,15 +1,10 @@
-import type {
-	CatalogPackage,
-	CatalogPackageType,
-	ConfiguredPackageInfo,
-	PackageUpdateInfo,
-} from "@percho/shared";
+import type { CatalogPackage, CatalogPackageType, ConfiguredPackageInfo } from "@percho/shared";
 import {
-	configuredPackageKey,
 	type EnvironmentRef,
 	environmentKey,
 	environmentRef,
 	LOCAL_ENVIRONMENT,
+	npmSourceToPackageName,
 } from "@percho/shared";
 import { create, useStore } from "zustand";
 import { getExecutionApi } from "../environment-api";
@@ -40,9 +35,10 @@ interface CatalogStore {
 	removeErrors: Record<string, string>;
 	/** settings.json 已配置的包（null = 未加载；「已安装」态匹配/卸载用） */
 	configuredPackages: ConfiguredPackageInfo[] | null;
-	/** 扩展更新检查结果（null = 未查；按 scope + source 索引） */
-	packageUpdates: Record<string, PackageUpdateInfo> | null;
-	checkingUpdates: boolean;
+	/** 本地清单所属会话；null 只查用户级配置。 */
+	configuredSessionId: string | null;
+	/** npm 最新版本按包名缓存，本地安装变更不使其失效。 */
+	packageUpdates: Record<string, { latest: string; checkedAt: number }>;
 	/** 检查已配置扩展的可用更新（只读） */
 	checkUpdates: () => Promise<void>;
 	setExtensionsTab: (tab: "browse" | "loaded") => void;
@@ -54,21 +50,13 @@ interface CatalogStore {
 	installCatalogPackage: (name: string) => Promise<void>;
 	/** 卸载已配置的包，成功后刷新已配置列表与已加载资源 */
 	removeConfiguredPackage: (source: string, scope: "user" | "project") => Promise<void>;
-	refreshConfiguredPackages: () => Promise<void>;
+	refreshConfiguredPackages: (sessionId?: string | null) => Promise<void>;
 }
 
 function createCatalogStore(environment: EnvironmentRef) {
 	return create<CatalogStore>((set, get) => {
 		let configuredSeq = 0;
-		let updatesRevision = 0;
-		let updatesRequest: Promise<void> | undefined;
-		let updatesCheckedAt = 0;
-		const invalidateUpdates = () => {
-			updatesRevision++;
-			updatesRequest = undefined;
-			updatesCheckedAt = 0;
-			set({ packageUpdates: null, checkingUpdates: false });
-		};
+		let updatesRequest: { names: string[]; promise: Promise<void> } | undefined;
 		/** 目录搜索防抖（query/type 变更 300ms 后触发） */
 		let catalogDebounceTimer: ReturnType<typeof setTimeout> | undefined;
 		const scheduleCatalogSearch = () => {
@@ -92,8 +80,8 @@ function createCatalogStore(environment: EnvironmentRef) {
 			removingSources: {},
 			removeErrors: {},
 			configuredPackages: null,
-			packageUpdates: null,
-			checkingUpdates: false,
+			configuredSessionId: null,
+			packageUpdates: {},
 
 			setExtensionsTab: (extensionsTab) => set({ extensionsTab }),
 
@@ -141,8 +129,6 @@ function createCatalogStore(environment: EnvironmentRef) {
 			},
 
 			installCatalogPackage: async (name) => {
-				configuredSeq++;
-				invalidateUpdates();
 				set((state) => {
 					const installErrors = { ...state.installErrors };
 					delete installErrors[name];
@@ -150,8 +136,8 @@ function createCatalogStore(environment: EnvironmentRef) {
 				});
 				try {
 					await getExecutionApi(environment).installPackage({ name });
-					invalidateUpdates();
 					await get().refreshConfiguredPackages();
+					if (get().extensionsTab === "loaded") void get().checkUpdates();
 					// backend reload后刷新模型域与已加载资源，不读取general/LAN。
 					void getSettingsStore(environment).getState().refreshAfterMutation("packages");
 				} catch (error) {
@@ -170,25 +156,16 @@ function createCatalogStore(environment: EnvironmentRef) {
 				}
 			},
 
-			refreshConfiguredPackages: async () => {
+			refreshConfiguredPackages: async (sessionId = get().configuredSessionId) => {
 				const seq = ++configuredSeq;
+				if (get().configuredSessionId !== sessionId) {
+					set({ configuredSessionId: sessionId, configuredPackages: null });
+				}
 				try {
-					const configured = await getExecutionApi(environment).listConfiguredPackages();
+					const configured = await getExecutionApi(environment).listConfiguredPackages({
+						sessionId: sessionId ?? undefined,
+					});
 					if (seq !== configuredSeq) return;
-					const previous = get().configuredPackages;
-					if (
-						previous?.length === configured.length &&
-						previous.every((p, i) => {
-							const next = configured[i];
-							return (
-								next &&
-								configuredPackageKey(p) === configuredPackageKey(next) &&
-								p.installedVersion === next.installedVersion
-							);
-						})
-					)
-						return;
-					invalidateUpdates();
 					set({ configuredPackages: configured });
 				} catch {
 					// 离线保留最后可信的本地版本；不把读取失败视作已卸载。
@@ -196,17 +173,20 @@ function createCatalogStore(environment: EnvironmentRef) {
 			},
 
 			removeConfiguredPackage: async (source, scope) => {
-				configuredSeq++;
-				invalidateUpdates();
+				const sessionId = get().configuredSessionId;
 				set((state) => {
 					const removeErrors = { ...state.removeErrors };
 					delete removeErrors[source];
 					return { removingSources: { ...state.removingSources, [source]: true }, removeErrors };
 				});
 				try {
-					await getExecutionApi(environment).removePackage({ source, scope });
-					invalidateUpdates();
+					await getExecutionApi(environment).removePackage({
+						source,
+						scope,
+						sessionId: sessionId ?? undefined,
+					});
 					await get().refreshConfiguredPackages();
+					if (get().extensionsTab === "loaded") void get().checkUpdates();
 					// backend reload后刷新模型域与已加载资源，不读取general/LAN。
 					void getSettingsStore(environment).getState().refreshAfterMutation("packages");
 				} catch (error) {
@@ -225,26 +205,42 @@ function createCatalogStore(environment: EnvironmentRef) {
 				}
 			},
 			checkUpdates: async () => {
-				if (updatesRequest) return updatesRequest;
-				if (get().packageUpdates !== null && Date.now() - updatesCheckedAt < 5 * 60_000) return;
-				const revision = updatesRevision;
-				set({ checkingUpdates: true });
-				updatesRequest = Promise.resolve().then(async () => {
+				const names = [
+					...new Set(
+						(get().configuredPackages ?? []).flatMap((p) => {
+							const name = npmSourceToPackageName(p.source);
+							return name ? [name] : [];
+						}),
+					),
+				].filter((name) => {
+					const cached = get().packageUpdates[name];
+					return !cached || Date.now() - cached.checkedAt >= 5 * 60_000;
+				});
+				if (!names.length) return;
+				if (updatesRequest) {
+					const pending = updatesRequest;
+					await pending.promise;
+					// 同一批失败不立即重试；新项目或新安装的包接在当前请求之后查询。
+					if (names.some((name) => !pending.names.includes(name))) await get().checkUpdates();
+					return;
+				}
+				const request = Promise.resolve().then(async () => {
 					try {
-						const list = await getExecutionApi(environment).checkPackageUpdates();
-						if (revision !== updatesRevision) return;
-						set({ packageUpdates: Object.fromEntries(list.map((u) => [configuredPackageKey(u), u])) });
-						updatesCheckedAt = list.every((u) => u.latest) ? Date.now() : 0;
+						const list = await getExecutionApi(environment).checkPackageUpdates({ names });
+						const checkedAt = Date.now();
+						const entries = list
+							.filter((p) => p.latest)
+							.map((p) => [p.name, { latest: p.latest, checkedAt }]);
+						if (entries.length)
+							set((s) => ({ packageUpdates: { ...s.packageUpdates, ...Object.fromEntries(entries) } }));
 					} catch {
 						// 查询失败不打断列表，下次进入面板时可重试。
 					} finally {
-						if (revision === updatesRevision) {
-							updatesRequest = undefined;
-							set({ checkingUpdates: false });
-						}
+						if (updatesRequest?.promise === request) updatesRequest = undefined;
 					}
 				});
-				return updatesRequest;
+				updatesRequest = { names, promise: request };
+				return request;
 			},
 		};
 	});

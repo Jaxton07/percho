@@ -1,3 +1,6 @@
+import gt from "semver/functions/gt.js";
+import valid from "semver/functions/valid.js";
+
 /** pi.dev 社区包目录（packages 页）跨进程类型 */
 
 /** npm 不在 PATH 上的错误哨兵（backend 抛出、renderer 映射为 i18n 文案；IPC 只保留 message，故放 message 前缀） */
@@ -46,19 +49,15 @@ export function configuredPackageKey(pkg: { source: string; scope: string }): st
 	return `${pkg.scope}:${pkg.source}`;
 }
 
-/** 扩展更新检查结果（仅 npm: 源；只读，不触发安装/重载） */
+/** npm 版本查询结果；与项目、安装范围及本地安装版本无关。 */
 export interface PackageUpdateInfo {
-	/** npm 包名（已剥版本后缀） */
 	name: string;
-	/** 原始安装源，如 npm:@scope/name */
-	source: string;
-	scope: "user" | "project";
-	/** 本地已装版本；读不到时为空串 */
-	installed: string;
 	/** registry 上的 latest；查不到时为空串 */
 	latest: string;
-	/** latest 比 installed 新 */
-	hasUpdate: boolean;
+}
+
+export function isNewerVersion(latest: string, installed: string): boolean {
+	return Boolean(valid(latest) && valid(installed) && gt(latest, installed));
 }
 
 /** npm: 源 → 包名（剥版本后缀，兼容 @scope/name） */

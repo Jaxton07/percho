@@ -58,12 +58,13 @@ describe("settings operation ownership", () => {
 	});
 	it("MCP, package catalog and Git use the captured environment and unwrap only the owned directory", async () => {
 		await getMcpStore(remote).getState().load(key("/same"));
-		await getCatalogStore(remote).getState().refreshConfiguredPackages();
+		await getCatalogStore(remote).getState().refreshConfiguredPackages(key("session"));
 		const git = getExecutionApi(key("/same"));
 		useSessionsStore.setState({ cwd: "/elsewhere" });
 		await git.listGitBranches({ cwd: key("/same") });
 		expect(fixture.remote.mcpConfigList).toHaveBeenCalledWith({ cwd: "/same" });
 		expect(fixture.remote.listConfiguredPackages).toHaveBeenCalledOnce();
+		expect(fixture.remote.listConfiguredPackages).toHaveBeenCalledWith({ sessionId: "session" });
 		expect(fixture.remote.listGitBranches).toHaveBeenCalledWith({ cwd: "/same" });
 		expect(fixture.local.mcpConfigList).not.toHaveBeenCalled();
 		expect(fixture.local.listConfiguredPackages).not.toHaveBeenCalled();

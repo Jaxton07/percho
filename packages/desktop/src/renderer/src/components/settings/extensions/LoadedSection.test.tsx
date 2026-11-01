@@ -1,4 +1,4 @@
-import type { ConfiguredPackageInfo, LoadedExtension, PackageUpdateInfo } from "@percho/shared";
+import type { ConfiguredPackageInfo, LoadedExtension } from "@percho/shared";
 import * as React from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
@@ -7,9 +7,8 @@ const state = vi.hoisted(() => ({
 	extensions: [] as LoadedExtension[],
 	extensionErrors: [],
 	configuredPackages: [] as ConfiguredPackageInfo[],
-	packageUpdates: null as Record<string, PackageUpdateInfo> | null,
-	checkUpdates: vi.fn(),
-	refreshConfiguredPackages: vi.fn(),
+	configuredSessionId: null,
+	packageUpdates: {} as Record<string, { latest: string; checkedAt: number }>,
 	removingSources: {},
 }));
 vi.mock("../../../stores/catalog", () => ({
@@ -26,7 +25,7 @@ import { LoadedSection } from "./LoadedSection";
 
 beforeEach(() => {
 	vi.stubGlobal("React", React);
-	state.packageUpdates = null;
+	state.packageUpdates = {};
 	state.configuredPackages = [
 		{ source: "npm:demo", scope: "user", installedVersion: "1.0.0" },
 		{ source: "npm:demo", scope: "project", installedVersion: "2.0.0" },
@@ -53,19 +52,12 @@ it("renders both local versions before registry results exist", () => {
 	expect(html).not.toContain("settings.extensions.updateAvailable");
 });
 
-it("matches the update hint to the installation scope", () => {
+it("compares the cached npm version against each scope's own installed version", () => {
 	state.packageUpdates = {
-		"user:npm:demo": {
-			name: "demo",
-			source: "npm:demo",
-			scope: "user",
-			installed: "1.0.0",
-			latest: "3.0.0",
-			hasUpdate: true,
-		},
+		demo: { latest: "2.0.0", checkedAt: Date.now() },
 	};
 	const html = renderToStaticMarkup(React.createElement(LoadedSection));
 	const rows = html.match(/<li\b[^>]*>[\s\S]*?<\/li>/g);
-	expect(rows?.[0]).toContain("settings.extensions.updateAvailable 3.0.0");
+	expect(rows?.[0]).toContain("settings.extensions.updateAvailable 2.0.0");
 	expect(rows?.[1]).not.toContain("settings.extensions.updateAvailable");
 });

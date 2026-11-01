@@ -39,13 +39,13 @@ import type { SessionRegistry } from "../src/session/registry";
 beforeEach(() => {
 	external.install.mockReset().mockResolvedValue(undefined);
 	external.remove.mockReset().mockResolvedValue(true);
-	external.settings.mockReset().mockReturnValue({});
+	external.settings.mockReset().mockReturnValue({ drainErrors: () => [] });
 	external.options = [];
 });
 
 // Only external SDK install/persist is mocked. No npm spawn, downloads or registry replacement.
 describe("PackageAdmin public mutations", () => {
-	it("install/remove delegate exactly once, preserve void and persistence args, and lazily retain default cwd", async () => {
+	it("install/remove delegate once with fresh settings and the captured project context", async () => {
 		const reloadIdleSessions = vi.fn().mockResolvedValue({ reloaded: 2, skipped: [] });
 		const cwd = join(tmpdir(), "package-admin-cwd");
 		const admin = new PackageAdmin({ reloadIdleSessions, defaultCwd: cwd });
@@ -55,12 +55,16 @@ describe("PackageAdmin public mutations", () => {
 		expect(reloadIdleSessions).toHaveBeenCalledTimes(1);
 		expect(external.options).toHaveLength(1);
 		expect(external.options[0]).toMatchObject({ cwd, agentDir: getAgentDir() });
-		await expect(admin.removePackage("npm:@scope/demo", "project")).resolves.toBeUndefined();
+		await expect(
+			admin.removePackage("npm:@scope/demo", "project", { cwd, projectTrusted: true }),
+		).resolves.toBeUndefined();
 		expect(external.remove).toHaveBeenCalledWith("npm:@scope/demo", { local: true });
 		expect(reloadIdleSessions).toHaveBeenCalledTimes(2);
-		expect(external.options).toHaveLength(1);
+		expect(reloadIdleSessions).toHaveBeenLastCalledWith(cwd);
+		expect(external.options).toHaveLength(2);
 		await admin.removePackage("npm:@scope/demo", "user");
 		expect(external.remove).toHaveBeenLastCalledWith("npm:@scope/demo", { local: false });
+		expect(external.options).toHaveLength(3);
 	});
 	it("invalid name, install/remove failure and not-installed never trigger reload", async () => {
 		const reloadIdleSessions = vi.fn();
@@ -113,6 +117,21 @@ function backendWithSessions(sessions: AgentSession[]) {
 }
 
 describe("PackageAdmin real backend reload wiring", () => {
+	it("project removal reloads only idle sessions in that project", async () => {
+		const own = stubSession({ sessionId: "own" });
+		const other = stubSession({ sessionId: "other" });
+		const backend = backendWithSessions([own.session, other.session]);
+		const registry = (backend as unknown as { registry: SessionRegistry }).registry;
+		const ownEntry = registry.get("own");
+		const otherEntry = registry.get("other");
+		if (!ownEntry || !otherEntry) throw new Error("Missing fixture session");
+		const cwd = join(process.cwd(), ".local/tmp/package-own");
+		ownEntry.cwd = cwd;
+		otherEntry.cwd = join(process.cwd(), ".local/tmp/package-other");
+		await backend.packages.removePackage("npm:demo", "project", { cwd, projectTrusted: true });
+		expect(own.reload).toHaveBeenCalledOnce();
+		expect(other.reload).not.toHaveBeenCalled();
+	});
 	it.each(["install", "remove"] as const)(
 		"%s uses the common streaming/compacting guard and continues after reload failure",
 		async (kind) => {

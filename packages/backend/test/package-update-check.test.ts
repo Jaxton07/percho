@@ -7,7 +7,7 @@ const sdk = vi.hoisted(() => ({
 }));
 vi.mock("@earendil-works/pi-coding-agent", () => ({
 	getAgentDir: () => "unused-agent-dir",
-	SettingsManager: { create: () => ({}) },
+	SettingsManager: { create: () => ({ drainErrors: () => [] }) },
 	DefaultPackageManager: class {
 		listConfiguredPackages() {
 			return sdk.packages;
@@ -51,6 +51,10 @@ async function installed(folder: string, version: unknown) {
 }
 
 describe("PackageAdmin version reads and checks", () => {
+	it("rejects invalid registry names before making requests", async () => {
+		await expect(admin.checkPackageUpdates(["../private"])).rejects.toThrow("Invalid package name");
+		expect(fetchMock).not.toHaveBeenCalled();
+	});
 	it("uses SDK paths for user, project and legacy installs; deduplicates only registry requests", async () => {
 		sdk.packages = [
 			{ source: "npm:demo", scope: "user", installedPath: await installed("user", "1.0.0") },
@@ -61,12 +65,10 @@ describe("PackageAdmin version reads and checks", () => {
 		const configured = await admin.listConfiguredPackages();
 		expect(configured.map((p) => p.installedVersion)).toEqual(["1.0.0", "2.0.0", "2.1.0", "3.0.0"]);
 		expect(fetchMock).not.toHaveBeenCalled();
-		const updates = await admin.checkPackageUpdates();
-		expect(updates.map((p) => [p.source, p.scope, p.installed, p.hasUpdate])).toEqual([
-			["npm:demo", "user", "1.0.0", true],
-			["npm:demo", "project", "2.0.0", true],
-			["npm:demo@2.1.0", "project", "2.1.0", true],
-			["npm:@scope/demo", "user", "3.0.0", false],
+		const updates = await admin.checkPackageUpdates(["demo", "demo", "@scope/demo"]);
+		expect(updates).toEqual([
+			{ name: "demo", latest: "3.0.0" },
+			{ name: "@scope/demo", latest: "3.0.0" },
 		]);
 		expect(fetchMock.mock.calls.map(([url]) => url)).toEqual([
 			"https://registry.npmjs.org/demo/latest",
@@ -83,12 +85,10 @@ describe("PackageAdmin version reads and checks", () => {
 			{ source: "npm:invalid", scope: "user", installedPath: await installed("invalid", 42) },
 			{ source: "git:example/demo", scope: "user" },
 		];
-		expect((await admin.checkPackageUpdates()).map((p) => [p.installed, p.hasUpdate])).toEqual([
-			["", false],
-			["", false],
-			["", false],
-		]);
-		expect(fetchMock).toHaveBeenCalledTimes(3);
+		expect((await admin.listConfiguredPackages()).map((p) => p.installedVersion)).toEqual(
+			Array(4).fill(undefined),
+		);
+		expect(fetchMock).not.toHaveBeenCalled();
 	});
 
 	it("network failures preserve installed versions and do not hide successful checks", async () => {
@@ -104,9 +104,11 @@ describe("PackageAdmin version reads and checks", () => {
 			if (String(url).includes("bad-json")) return new Response("{");
 			return Response.json({ version: "2.0.0" });
 		});
-		const updates = await admin.checkPackageUpdates();
-		expect(updates.map((p) => p.installed)).toEqual(Array(4).fill("1.0.0"));
-		expect(updates.map((p) => p.hasUpdate)).toEqual([true, false, false, false]);
+		const updates = await admin.checkPackageUpdates(["good", "offline", "missing", "bad-json"]);
+		expect((await admin.listConfiguredPackages()).map((p) => p.installedVersion)).toEqual(
+			Array(4).fill("1.0.0"),
+		);
+		expect(updates.map((p) => p.latest)).toEqual(["2.0.0", "", "", ""]);
 	});
 
 	it("limits concurrent requests while checking every unique package", async () => {
@@ -123,7 +125,7 @@ describe("PackageAdmin version reads and checks", () => {
 			active--;
 			return Response.json({ version: "2.0.0" });
 		});
-		const pending = admin.checkPackageUpdates();
+		const pending = admin.checkPackageUpdates(sdk.packages.map((p) => p.source.slice(4)));
 		await started.promise;
 		expect(fetchMock).toHaveBeenCalledTimes(4);
 		release.resolve();
@@ -144,12 +146,12 @@ describe("PackageAdmin version reads and checks", () => {
 					if (fetchMock.mock.calls.length === 4) started.resolve();
 				}),
 		);
-		const pending = admin.checkPackageUpdates();
+		const pending = admin.checkPackageUpdates(sdk.packages.map((p) => p.source.slice(4)));
 		await started.promise;
 		controller.abort();
 		const updates = await pending;
 		expect(updates).toHaveLength(9);
-		expect(updates.every((p) => p.latest === "" && !p.hasUpdate)).toBe(true);
+		expect(updates.every((p) => p.latest === "")).toBe(true);
 		expect(fetchMock).toHaveBeenCalledTimes(4);
 	});
 });

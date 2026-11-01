@@ -1,4 +1,4 @@
-import { type ConfiguredPackageInfo, configuredPackageKey, type PackageUpdateInfo } from "@percho/shared";
+import type { ConfiguredPackageInfo, PackageUpdateInfo } from "@percho/shared";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const api = vi.hoisted(() => ({
@@ -11,24 +11,18 @@ vi.mock("../environment-api", () => ({ getExecutionApi: () => api }));
 vi.mock("./settings", () => ({
 	getSettingsStore: () => ({ getState: () => ({ refreshAfterMutation: vi.fn() }) }),
 }));
-
 function deferred<T>() {
 	let resolve!: (value: T) => void;
-	let reject!: (reason: Error) => void;
-	const promise = new Promise<T>((yes, no) => {
-		resolve = yes;
-		reject = no;
+	const promise = new Promise<T>((done) => {
+		resolve = done;
 	});
-	return { promise, resolve, reject };
+	return { promise, resolve };
 }
 const configured = (installedVersion = "1.0.0"): ConfiguredPackageInfo[] => [
 	{ source: "npm:demo", scope: "user", installedVersion },
 ];
-const result = (installed = "1.0.0"): PackageUpdateInfo[] => [
-	{ name: "demo", source: "npm:demo", scope: "user", installed, latest: "3.0.0", hasUpdate: true },
-];
+const result = (): PackageUpdateInfo[] => [{ name: "demo", latest: "3.0.0" }];
 let store: ReturnType<typeof import("./catalog").getCatalogStore>;
-const key = configuredPackageKey({ source: "npm:demo", scope: "user" });
 beforeEach(async () => {
 	vi.resetModules();
 	vi.resetAllMocks();
@@ -39,20 +33,34 @@ beforeEach(async () => {
 afterEach(() => vi.useRealTimers());
 
 describe("package update checks", () => {
-	it("publishes local versions while network requests are still pending", async () => {
+	it("does not discard a pending local read when installation fails", async () => {
+		const local = deferred<ConfiguredPackageInfo[]>();
+		api.listConfiguredPackages.mockReturnValueOnce(local.promise);
+		const pending = store.getState().refreshConfiguredPackages();
+		api.installPackage.mockRejectedValueOnce(new Error("disk failure"));
+		await store.getState().installCatalogPackage("demo");
+		local.resolve(configured());
+		await pending;
+		expect(store.getState().configuredPackages?.[0]?.installedVersion).toBe("1.0.0");
+	});
+	it("publishes current local versions without waiting for or copying them from the registry", async () => {
+		await store.getState().refreshConfiguredPackages();
 		const network = deferred<PackageUpdateInfo[]>();
 		api.checkPackageUpdates.mockReturnValue(network.promise);
 		const pending = store.getState().checkUpdates();
+		api.listConfiguredPackages.mockResolvedValue(configured("2.0.0"));
 		await store.getState().refreshConfiguredPackages();
-		expect(store.getState().configuredPackages?.[0]?.installedVersion).toBe("1.0.0");
-		expect(store.getState().packageUpdates).toBeNull();
+		expect(store.getState().configuredPackages?.[0]?.installedVersion).toBe("2.0.0");
 		network.resolve(result());
 		await pending;
+		expect(store.getState().configuredPackages?.[0]?.installedVersion).toBe("2.0.0");
+		expect(store.getState().packageUpdates.demo?.latest).toBe("3.0.0");
 	});
 
-	it("shares in-flight checks and reuses successful results for five minutes", async () => {
+	it("shares in-flight checks and caches successful versions for five minutes", async () => {
 		vi.useFakeTimers();
 		vi.setSystemTime(new Date("2026-11-01T00:00:00Z"));
+		await store.getState().refreshConfiguredPackages();
 		const network = deferred<PackageUpdateInfo[]>();
 		api.checkPackageUpdates.mockReturnValueOnce(network.promise);
 		const first = store.getState().checkUpdates();
@@ -68,85 +76,89 @@ describe("package update checks", () => {
 		expect(api.checkPackageUpdates).toHaveBeenCalledTimes(2);
 	});
 
-	it("does not discard the network cache when local records are unchanged", async () => {
-		await store.getState().refreshConfiguredPackages();
-		const previous = store.getState().configuredPackages;
-		await store.getState().checkUpdates();
+	it.each(["install", "remove"])("preserves valid hints when %s fails", async (kind) => {
 		await store.getState().refreshConfiguredPackages();
 		await store.getState().checkUpdates();
-		expect(store.getState().configuredPackages).toBe(previous);
-		expect(api.checkPackageUpdates).toHaveBeenCalledOnce();
-	});
-
-	it("rejects a late local read and preserves trusted versions after a read failure", async () => {
-		const old = deferred<ConfiguredPackageInfo[]>();
-		api.listConfiguredPackages.mockReturnValueOnce(old.promise).mockResolvedValue(configured("2.0.0"));
-		const first = store.getState().refreshConfiguredPackages();
-		await store.getState().refreshConfiguredPackages();
-		old.resolve(configured());
-		await first;
-		expect(store.getState().configuredPackages?.[0]?.installedVersion).toBe("2.0.0");
-		api.listConfiguredPackages.mockRejectedValueOnce(new Error("disconnected"));
-		await store.getState().refreshConfiguredPackages();
-		expect(store.getState().configuredPackages?.[0]?.installedVersion).toBe("2.0.0");
-	});
-
-	it("rejects an old response after local records change, without clearing the newer request's busy state", async () => {
-		await store.getState().refreshConfiguredPackages();
-		const old = deferred<PackageUpdateInfo[]>();
-		const current = deferred<PackageUpdateInfo[]>();
-		api.checkPackageUpdates.mockReturnValueOnce(old.promise).mockReturnValueOnce(current.promise);
-		const first = store.getState().checkUpdates();
-		await Promise.resolve();
-		api.listConfiguredPackages.mockResolvedValue(configured("2.0.0"));
-		await store.getState().refreshConfiguredPackages();
-		const second = store.getState().checkUpdates();
-		old.resolve(result());
-		await first;
-		expect(store.getState().checkingUpdates).toBe(true);
-		expect(store.getState().packageUpdates).toBeNull();
-		current.resolve(result("2.0.0"));
-		await second;
-		expect(store.getState().packageUpdates?.[key]?.installed).toBe("2.0.0");
-		expect(store.getState().checkingUpdates).toBe(false);
-	});
-
-	it.each(["install", "remove"])(
-		"invalidates requests across %s even if the final local records are unchanged",
-		async (kind) => {
-			await store.getState().refreshConfiguredPackages();
-			const old = deferred<PackageUpdateInfo[]>();
-			api.checkPackageUpdates.mockReturnValueOnce(old.promise).mockResolvedValue(result("2.0.0"));
-			const pending = store.getState().checkUpdates();
-			await Promise.resolve();
-			if (kind === "install") await store.getState().installCatalogPackage("demo");
-			else await store.getState().removeConfiguredPackage("npm:demo", "user");
-			await store.getState().checkUpdates();
-			old.resolve(result());
-			await pending;
-			expect(store.getState().packageUpdates?.[key]?.installed).toBe("2.0.0");
-		},
-	);
-
-	it("retries a failed request or incomplete registry result and preserves local versions", async () => {
-		await store.getState().refreshConfiguredPackages();
-		api.checkPackageUpdates
-			.mockRejectedValueOnce(new Error("offline"))
-			.mockResolvedValueOnce([{ ...result()[0], latest: "" }])
-			.mockResolvedValueOnce(result());
-		await store.getState().checkUpdates();
-		expect(store.getState().checkingUpdates).toBe(false);
-		await store.getState().checkUpdates();
-		await store.getState().checkUpdates();
-		expect(api.checkPackageUpdates).toHaveBeenCalledTimes(3);
+		const previous = store.getState().packageUpdates;
+		api.installPackage.mockRejectedValueOnce(new Error("disk failure"));
+		api.removePackage.mockRejectedValueOnce(new Error("disk failure"));
+		if (kind === "install") await store.getState().installCatalogPackage("demo");
+		else await store.getState().removeConfiguredPackage("npm:demo", "user");
+		expect(store.getState().packageUpdates).toBe(previous);
 		expect(store.getState().configuredPackages?.[0]?.installedVersion).toBe("1.0.0");
 	});
 
-	it("keeps same-source records in different scopes separate", async () => {
-		const user = result()[0];
-		api.checkPackageUpdates.mockResolvedValue([user, { ...user, scope: "project", installed: "2.0.0" }]);
+	it("refreshes unchanged local records without discarding npm cache", async () => {
+		await store.getState().refreshConfiguredPackages();
 		await store.getState().checkUpdates();
-		expect(store.getState().packageUpdates?.[key]?.installed).toBe("1.0.0");
-		expect(store.getState().packageUpdates?.["project:npm:demo"]?.installed).toBe("2.0.0");
+		const previous = store.getState().packageUpdates;
+		await store.getState().refreshConfiguredPackages();
+		await store.getState().checkUpdates();
+		expect(store.getState().packageUpdates).toBe(previous);
+		expect(api.checkPackageUpdates).toHaveBeenCalledOnce();
+	});
+
+	it("rejects late local reads after a project switch and does not restore another project's data on failure", async () => {
+		const old = deferred<ConfiguredPackageInfo[]>();
+		api.listConfiguredPackages.mockReturnValueOnce(old.promise).mockResolvedValue(configured("2.0.0"));
+		const first = store.getState().refreshConfiguredPackages("a");
+		await store.getState().refreshConfiguredPackages("b");
+		old.resolve(configured());
+		await first;
+		expect(store.getState().configuredSessionId).toBe("b");
+		expect(store.getState().configuredPackages?.[0]?.installedVersion).toBe("2.0.0");
+		api.listConfiguredPackages.mockRejectedValueOnce(new Error("disconnected"));
+		await store.getState().refreshConfiguredPackages("c");
+		expect(store.getState().configuredPackages).toBeNull();
+		expect(api.listConfiguredPackages).toHaveBeenLastCalledWith({ sessionId: "c" });
+	});
+
+	it("checks newly installed packages after the current registry request completes", async () => {
+		await store.getState().refreshConfiguredPackages();
+		const old = deferred<PackageUpdateInfo[]>();
+		api.checkPackageUpdates
+			.mockReturnValueOnce(old.promise)
+			.mockResolvedValueOnce([{ name: "other", latest: "4.0.0" }]);
+		const first = store.getState().checkUpdates();
+		await Promise.resolve();
+		api.listConfiguredPackages.mockResolvedValue([...configured(), { source: "npm:other", scope: "user" }]);
+		await store.getState().refreshConfiguredPackages();
+		const second = store.getState().checkUpdates();
+		old.resolve(result());
+		await Promise.all([first, second]);
+		expect(api.checkPackageUpdates.mock.calls).toEqual([[{ names: ["demo"] }], [{ names: ["other"] }]]);
+		expect(store.getState().packageUpdates.other?.latest).toBe("4.0.0");
+	});
+
+	it("retries only failed package names, keeping successful results", async () => {
+		api.listConfiguredPackages.mockResolvedValue([
+			...configured(),
+			{ source: "npm:other", scope: "project" },
+		]);
+		await store.getState().refreshConfiguredPackages();
+		api.checkPackageUpdates
+			.mockResolvedValueOnce([...result(), { name: "other", latest: "" }])
+			.mockResolvedValueOnce([{ name: "other", latest: "4.0.0" }]);
+		await store.getState().checkUpdates();
+		await store.getState().checkUpdates();
+		await store.getState().checkUpdates();
+		expect(api.checkPackageUpdates.mock.calls).toEqual([
+			[{ names: ["demo", "other"] }],
+			[{ names: ["other"] }],
+		]);
+		expect(store.getState().packageUpdates.demo?.latest).toBe("3.0.0");
+	});
+
+	it("keeps the removal target captured while another project becomes active", async () => {
+		await store.getState().refreshConfiguredPackages("a");
+		const mutation = deferred<void>();
+		api.removePackage.mockReturnValue(mutation.promise);
+		const pending = store.getState().removeConfiguredPackage("npm:demo", "project");
+		await store.getState().refreshConfiguredPackages("b");
+		mutation.resolve();
+		await pending;
+		expect(api.removePackage).toHaveBeenCalledWith({ source: "npm:demo", scope: "project", sessionId: "a" });
+		expect(store.getState().configuredSessionId).toBe("b");
+		expect(api.listConfiguredPackages).toHaveBeenLastCalledWith({ sessionId: "b" });
 	});
 });

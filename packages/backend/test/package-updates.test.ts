@@ -1,6 +1,5 @@
-import { npmSourceToPackageName } from "@percho/shared";
+import { isNewerVersion, npmSourceToPackageName } from "@percho/shared";
 import { describe, expect, it } from "vitest";
-import { isNewerVersion } from "../src/packages/version";
 
 describe("npmSourceToPackageName", () => {
 	it("剥掉版本后缀", () => {

@@ -1,30 +1,22 @@
-import { type ConfiguredPackageInfo, configuredPackageKey } from "@percho/shared";
-import { useEffect, useMemo } from "react";
+import { type ConfiguredPackageInfo, configuredPackageKey, npmSourceToPackageName } from "@percho/shared";
+import { useMemo } from "react";
 import { useT } from "../../../i18n";
 import { useCatalogStore } from "../../../stores/catalog";
 import { useSettingsStore } from "../../../stores/settings";
 import { ExtensionRow } from "./rows";
 
 /** 已加载：当前项目（活跃会话）加载的扩展及其注册的工具/命令 */
-export function LoadedSection() {
+export function LoadedSection({ sessionId = null }: { sessionId?: string | null }) {
 	const t = useT();
 	const extensions = useSettingsStore((s) => s.extensions);
 	const diagnostics = useSettingsStore((s) => s.extensionErrors);
 	// 1.0.4：诊断分两档 —— info（不阻塞的说明，如未接的官方内置扩展）走灰字，error 才走红块
 	const errors = diagnostics.filter((d) => d.level !== "info");
 	const notices = diagnostics.filter((d) => d.level === "info");
-	const configuredPackages = useCatalogStore((s) => s.configuredPackages);
+	const configuredPackages = useCatalogStore((s) =>
+		s.configuredSessionId === sessionId ? s.configuredPackages : null,
+	);
 	const packageUpdates = useCatalogStore((s) => s.packageUpdates);
-	const checkUpdates = useCatalogStore((s) => s.checkUpdates);
-	const refreshConfiguredPackages = useCatalogStore((s) => s.refreshConfiguredPackages);
-
-	// 本地版本独立加载，不等待 registry；重复进入只复用未过期的联网结果。
-	useEffect(() => {
-		void refreshConfiguredPackages();
-	}, [refreshConfiguredPackages]);
-	useEffect(() => {
-		if (configuredPackages !== null) void checkUpdates();
-	}, [checkUpdates, configuredPackages]);
 
 	// 已加载扩展的 source 命中已配置包 → 可卸载（source 为 npm:/git: 等安装源时）
 	const configuredBySource = useMemo(() => {
@@ -51,7 +43,7 @@ export function LoadedSection() {
 							key={extension.path}
 							extension={extension}
 							configured={configuredBySource.get(configuredPackageKey(extension)) ?? null}
-							update={packageUpdates?.[configuredPackageKey(extension)] ?? null}
+							latestVersion={packageUpdates[npmSourceToPackageName(extension.source) ?? ""]?.latest}
 						/>
 					))}
 				</ul>

@@ -297,7 +297,7 @@ export class PiBackend {
 	private readonly channelSubs = new ChannelSubscriptionRegistry((id) => this.registry.has(id));
 	/** 用户级模型可见性与子代理模型偏好（独立于 CLI 共用 settings.json）。readonly 直暴露 */
 	readonly modelPrefs = new ModelPrefsService(join(getAgentDir(), "model-prefs.json"));
-	/** 社区包管理（安装/卸载 + 会话热重载）。readonly 直暴露 */
+	/** 社区包管理；项目相关操作由门面绑定会话上下文。 */
 	readonly packages: PackageAdmin;
 	private readonly eventEmitter = new Emitter<{ sessionId: string; event: SessionEvent }>();
 	private readonly permissionEmitter = new Emitter<PermissionRequest>();
@@ -365,7 +365,7 @@ export class PiBackend {
 
 	constructor(private readonly options: PiBackendOptions = {}) {
 		this.packages = new PackageAdmin({
-			reloadIdleSessions: () => this.reloadIdleSessions(undefined),
+			reloadIdleSessions: (cwd) => this.reloadIdleSessions(cwd),
 			defaultCwd: options.defaultCwd,
 		});
 		this.projectLoader = new ProjectResourceLoader({
@@ -1385,6 +1385,21 @@ export class PiBackend {
 		const cleaned = path.replace(/\/index\.(ts|js)$/, "");
 		const base = cleaned.split("/").filter(Boolean).pop();
 		return base ?? path;
+	}
+
+	private packageContext(sessionId?: string) {
+		if (!sessionId) return undefined;
+		const entry = this.requireSession(sessionId);
+		return { cwd: entry.cwd, projectTrusted: entry.session.settingsManager.isProjectTrusted() };
+	}
+
+	listConfiguredPackages(sessionId?: string) {
+		return this.packages.listConfiguredPackages(this.packageContext(sessionId));
+	}
+
+	removePackage(source: string, scope: "user" | "project", sessionId?: string) {
+		const context = scope === "project" ? this.packageContext(sessionId) : undefined;
+		return this.packages.removePackage(source, scope, context);
 	}
 
 	/** 读取会话已加载的资源（skills/扩展；设置页展示用） */
