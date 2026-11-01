@@ -3,7 +3,9 @@ import {
 	createCodemodeExtension,
 	createMcpExtension,
 	createToolSearchExtension,
+	getAgentDir,
 } from "@earendil-works/pi-coding-agent";
+import { readCodemodeConfig } from "../settings/codemode";
 
 /**
  * 官方内置扩展（照抄 CLI 侧元数据，spec §4.1）—— 不要自己发明字段：
@@ -14,9 +16,19 @@ import {
  * 被 package.json exports map 拦，实测 ERR_PACKAGE_PATH_NOT_EXPORTED），本批不接；
  * 官方一旦导出 `builtInExtensions`，在这里补一行即可（spec §4.4）。
  */
-export function builtinExtensions(deps: { openUrl?: (url: string) => void }): InlineExtension[] {
+export function builtinExtensions(deps: {
+	openUrl?: (url: string) => void;
+	agentDir?: string;
+}): InlineExtension[] {
 	return [
-		{ name: "codemode", factory: createCodemodeExtension(), builtin: true, replaceable: true },
+		{
+			name: "codemode",
+			factory: createCodemodeExtension({
+				mode: readCodemodeConfig(deps.agentDir ?? getAgentDir()).only ? "only" : "on",
+			}),
+			builtin: true,
+			replaceable: true,
+		},
 		{ name: "tool-search", factory: createToolSearchExtension(), builtin: true, replaceable: true },
 		// openUrl：MCP OAuth 授权页交给 Electron 打开（缺省则扩展回落到平台默认浏览器）
 		{ name: "mcp", factory: createMcpExtension({ openUrl: deps.openUrl }), builtin: true, replaceable: true },

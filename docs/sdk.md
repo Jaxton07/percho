@@ -15,6 +15,8 @@
 
 ## 模型与工具
 
+- 缓存保温沿用 SDK 的用户级 `cacheWarming` 设置，不接受项目级覆盖；默认 `streaming`。设置页读取 SDK 真实状态，不把“已开启”当作“正在保温”；关闭使用公开 `setCacheWarmingMode` 即时终止保温。模式保存与主会话注册串行，避免构造中的会话带入旧设置；子代理和只读历史检视不纳入主会话的实时同步与状态列表。
+
 - `getAvailable()` 受凭证影响，可能是空数组，不能当完整模型目录；具体查询与目录刷新复用现有 runtime/settings 入口。
 - `runtime.refresh()` 默认可能联网，本地读取应显式 `allowNetwork:false`；联网刷新由宿主选择时机并约束等待，不因普通列表读取隐式触网。
 - Google Vertex 不接受 API key，使用 ADC/服务账号；OAuth/登录桥接复用 `settings/login.ts`，不要向用户提供已知必败路径。
