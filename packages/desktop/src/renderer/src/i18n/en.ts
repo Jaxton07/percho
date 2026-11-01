@@ -432,6 +432,7 @@ export const en: Messages = {
 		imageRetry: "Reload",
 		imageLoadError: "Image failed to load",
 		subagent: {
+			worker: "Worker",
 			queued: "Queued",
 			aborted: "Aborted",
 			running: "Working",
