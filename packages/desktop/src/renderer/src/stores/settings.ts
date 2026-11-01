@@ -59,6 +59,7 @@ interface SettingsStore {
 	/** channel-watch 跨会话频道唤醒开关（null = 未加载） */
 	channelWatchEnabled: boolean | null;
 	codemodeEnabled: boolean | null;
+	codemodeOnly: boolean | null;
 	codemodeSaving: boolean;
 	/** 局域网观察服务运行状态（null = 未加载）。 */
 	lanStatus: LanStatus | null;
@@ -100,6 +101,7 @@ interface SettingsStore {
 	setSubagentPreferBuiltin: (enabled: boolean) => Promise<void>;
 	setChannelWatchEnabled: (enabled: boolean) => Promise<void>;
 	setCodemodeEnabled: (enabled: boolean) => Promise<void>;
+	setCodemodeOnly: (only: boolean) => Promise<void>;
 	refreshLanStatus: () => Promise<void>;
 	setLanEnabled: (enabled: boolean) => Promise<void>;
 	setLanRemoteControl: (enabled: boolean) => Promise<void>;
@@ -368,7 +370,7 @@ function createSettingsStore(environment: EnvironmentRef) {
 				.getCodemodeConfig()
 				.then((config) => {
 					if (revision === codemodeRevision && !get().codemodeSaving)
-						set({ codemodeEnabled: config.enabled });
+						set({ codemodeEnabled: config.enabled, codemodeOnly: config.only === true });
 				})
 				.catch((error) => {
 					if (revision === codemodeRevision) set({ error: errorMessage(error) });
@@ -437,6 +439,7 @@ function createSettingsStore(environment: EnvironmentRef) {
 			permissionGateOff: null,
 			channelWatchEnabled: null,
 			codemodeEnabled: null,
+			codemodeOnly: null,
 			codemodeSaving: false,
 			lanStatus: null,
 			lanSaving: false,
@@ -510,6 +513,21 @@ function createSettingsStore(environment: EnvironmentRef) {
 				try {
 					await getExecutionApi(environment).setCodemodeEnabled({ enabled });
 					set({ codemodeEnabled: enabled, error: null });
+				} catch (error) {
+					set({ error: errorMessage(error) });
+				} finally {
+					++codemodeRevision;
+					set({ codemodeSaving: false });
+				}
+			},
+
+			setCodemodeOnly: async (only) => {
+				if (get().codemodeSaving) return;
+				++codemodeRevision;
+				set({ codemodeSaving: true });
+				try {
+					await getExecutionApi(environment).setCodemodeOnly({ only });
+					set({ codemodeOnly: only, error: null });
 				} catch (error) {
 					set({ error: errorMessage(error) });
 				} finally {

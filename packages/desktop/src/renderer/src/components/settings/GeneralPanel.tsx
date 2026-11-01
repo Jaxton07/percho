@@ -14,6 +14,8 @@ export function GeneralPanel() {
 	const codemodeEnabled = useSettingsStore((s) => s.codemodeEnabled);
 	const codemodeSaving = useSettingsStore((s) => s.codemodeSaving);
 	const setCodemodeEnabled = useSettingsStore((s) => s.setCodemodeEnabled);
+	const codemodeOnly = useSettingsStore((s) => s.codemodeOnly);
+	const setCodemodeOnly = useSettingsStore((s) => s.setCodemodeOnly);
 	const language = useI18nStore((s) => s.language);
 	const setLanguage = useI18nStore((s) => s.setLanguage);
 	const channelWatchEnabled = useSettingsStore((s) => s.channelWatchEnabled);
@@ -30,6 +32,15 @@ export function GeneralPanel() {
 				disabled={codemodeEnabled === null || codemodeSaving}
 				onCheckedChange={(enabled) => void setCodemodeEnabled(enabled)}
 			/>
+			<div>
+				<SettingsSwitchRow
+					title={t("settings.codemodeOnly")}
+					hint={t("settings.codemodeOnlyHint")}
+					checked={codemodeOnly === true}
+					disabled={codemodeEnabled !== true || codemodeOnly === null || codemodeSaving}
+					onCheckedChange={(only) => void setCodemodeOnly(only)}
+				/>
+			</div>
 			<div>
 				<div className="flex items-center justify-between gap-4">
 					<div className="min-w-0">

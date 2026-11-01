@@ -3,7 +3,7 @@ import type { SettingsManager } from "@earendil-works/pi-coding-agent";
 import { JsonStore } from "../json-store";
 
 function configStore(agentDir: string) {
-	return new JsonStore<{ enabled?: boolean }>({
+	return new JsonStore<{ enabled?: boolean; only?: boolean }>({
 		path: join(agentDir, "codemode.json"),
 		defaultValue: () => ({}),
 		parse: (raw) => {
@@ -16,7 +16,18 @@ function configStore(agentDir: string) {
 }
 
 export function readCodemodeEnabled(agentDir: string): boolean {
-	return configStore(agentDir).readSync().enabled !== false;
+	return readCodemodeConfig(agentDir).enabled;
+}
+
+export function readCodemodeConfig(agentDir: string): { enabled: boolean; only: boolean } {
+	const config = configStore(agentDir).readSync();
+	return { enabled: config.enabled !== false, only: config.only === true };
+}
+
+export async function writeCodemodeOnly(agentDir: string, only: boolean): Promise<void> {
+	await configStore(agentDir).update((draft) => {
+		draft.only = only;
+	});
 }
 
 export async function writeCodemodeEnabled(agentDir: string, enabled: boolean): Promise<void> {

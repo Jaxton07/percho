@@ -8,7 +8,13 @@ import {
 	SettingsManager,
 } from "@earendil-works/pi-coding-agent";
 import { afterEach, expect, it } from "vitest";
-import { codemodeSessionOptions, readCodemodeEnabled, writeCodemodeEnabled } from "../src/settings/codemode";
+import {
+	codemodeSessionOptions,
+	readCodemodeConfig,
+	readCodemodeEnabled,
+	writeCodemodeEnabled,
+	writeCodemodeOnly,
+} from "../src/settings/codemode";
 
 const roots: string[] = [];
 function isolatedDir() {
@@ -20,6 +26,17 @@ function isolatedDir() {
 }
 afterEach(() => {
 	for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true });
+});
+
+it("独占模式默认关闭，和总开关独立保存；并发写入不互相覆盖", async () => {
+	const dir = isolatedDir();
+	expect(readCodemodeConfig(dir)).toEqual({ enabled: true, only: false });
+	await Promise.all([writeCodemodeOnly(dir, true), writeCodemodeEnabled(dir, false)]);
+	expect(readCodemodeConfig(dir)).toEqual({ enabled: false, only: true });
+	await writeCodemodeEnabled(dir, true);
+	expect(readCodemodeConfig(dir)).toEqual({ enabled: true, only: true });
+	await writeCodemodeOnly(dir, false);
+	expect(readCodemodeConfig(dir)).toEqual({ enabled: true, only: false });
 });
 
 it("缺省开启，保存关闭与重新开启；不覆盖其他字段", async () => {

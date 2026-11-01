@@ -639,7 +639,15 @@ export const SETTINGS_CHANNELS = {
 	}),
 	/** channel-watch 跨会话频道唤醒开关 */
 	getChannelWatchConfig: ch("channelWatch:getConfig", "environment", "read")<void, ChannelWatchConfigInfo>(),
-	getCodemodeConfig: ch("codemode:getConfig", "environment", "read")<void, { enabled: boolean }>(),
+	getCodemodeConfig: ch("codemode:getConfig", "environment", "read")<
+		void,
+		{ enabled: boolean; only: boolean }
+	>(),
+	setCodemodeOnly: ch(
+		"codemode:setOnly",
+		"environment",
+		"mutation",
+	)<{ only: boolean }, void>({ only: input.boolean }),
 	getCacheWarming: ch("cacheWarming:get", "environment", "read")<void, CacheWarmingInfo>(),
 	setCacheWarming: ch(
 		"cacheWarming:set",

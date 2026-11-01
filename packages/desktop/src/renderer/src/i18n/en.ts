@@ -592,6 +592,9 @@ export const en: Messages = {
 		backgroundDim: "Overlay opacity",
 		channelWatch: "Cross-session channel collaboration (channel-watch)",
 		codemode: "Code Mode",
+		codemodeOnly: "Code Mode only",
+		codemodeOnlyHint:
+			"Requires Code Mode. Route script-callable tools through Run script. Tool permission rules still apply. Off by default; applies to new sessions or after restarting the app.",
 		cacheWarming: "Prompt cache warming",
 		cacheWarmingHint:
 			"Keep the model's prompt cache warm to reduce repeated context processing. Runs only when supported and expected to save money; refresh requests may incur extra costs. Defaults to active runs only. Changes apply immediately to loaded main sessions in this environment; enabling takes effect on subsequent model requests.",

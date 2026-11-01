@@ -574,6 +574,9 @@ export const zh = {
 		backgroundDim: "遮罩浓度",
 		channelWatch: "跨会话频道协作（channel-watch）",
 		codemode: "Code Mode",
+		codemodeOnly: "Code Mode 独占模式",
+		codemodeOnlyHint:
+			"需要开启 Code Mode。支持脚本调用的工具统一通过“组合执行”使用，各工具的权限规则保持不变。默认关闭，新建会话或重启应用后生效。",
 		cacheWarming: "缓存保温",
 		cacheWarmingHint:
 			"保持模型的提示词缓存，减少后续请求重复处理上下文。仅在模型支持且预计节省费用时运行，保温请求可能产生额外费用。默认仅任务运行时；更改立即作用于当前环境已加载的主会话，开启后从后续模型请求开始生效。",

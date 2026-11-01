@@ -125,7 +125,12 @@ import { TraceRecorder } from "./session/trace";
 import { SessionTraces } from "./session/traces";
 import { makeUiContext } from "./session/ui-context";
 import { CacheWarmingSettings } from "./settings/cache-warming";
-import { codemodeSessionOptions, readCodemodeEnabled, writeCodemodeEnabled } from "./settings/codemode";
+import {
+	codemodeSessionOptions,
+	readCodemodeConfig,
+	writeCodemodeEnabled,
+	writeCodemodeOnly,
+} from "./settings/codemode";
 import { LoginService } from "./settings/login";
 import { ModelPrefsService } from "./settings/model-prefs";
 import { makeQuotaService } from "./settings/quota";
@@ -2020,8 +2025,11 @@ export class PiBackend {
 		log.info("permission mode", sessionId, { mode });
 	}
 
-	getCodemodeConfig(): { enabled: boolean } {
-		return { enabled: readCodemodeEnabled(getAgentDir()) };
+	getCodemodeConfig(): { enabled: boolean; only: boolean } {
+		return readCodemodeConfig(getAgentDir());
+	}
+	async setCodemodeOnly(only: boolean): Promise<void> {
+		await writeCodemodeOnly(getAgentDir(), only);
 	}
 
 	getCacheWarming() {
