@@ -7,14 +7,16 @@ import type {
 	ConfiguredPackageInfo,
 	PackageUpdateInfo,
 } from "@percho/shared";
-import { isNewerVersion, NPM_NOT_FOUND_SENTINEL, npmSourceToPackageName } from "@percho/shared";
+import { NPM_NOT_FOUND_SENTINEL, npmSourceToPackageName } from "@percho/shared";
 import { createLogger } from "../log";
 import { fetchPackageCatalog } from "./catalog";
+import { isNewerVersion } from "./version";
 
 const log = createLogger("backend");
 
-/** registry 查询超时：单个包卡住不能拖垮整张表 */
+/** 整轮 registry 查询共用时间预算，避免包数量放大离线等待。 */
 const UPDATE_CHECK_TIMEOUT_MS = 8_000;
+const UPDATE_CHECK_CONCURRENCY = 4;
 
 export { NPM_NOT_FOUND_SENTINEL };
 
@@ -81,9 +83,17 @@ export class PackageAdmin {
 
 	/** 列出 settings.json 已配置的包（「已安装」态匹配用） */
 	async listConfiguredPackages(): Promise<ConfiguredPackageInfo[]> {
-		return this.getPackageManager()
-			.listConfiguredPackages()
-			.map((p) => ({ source: p.source, scope: p.scope }));
+		return Promise.all(
+			this.getPackageManager()
+				.listConfiguredPackages()
+				.map(async (p) => ({
+					source: p.source,
+					scope: p.scope,
+					installedVersion: npmSourceToPackageName(p.source)
+						? await this.readInstalledVersion(p.installedPath)
+						: undefined,
+				})),
+		);
 	}
 
 	/** 安装社区包（npm:<name>，用户级）；成功后委托空闲会话重载。 */
@@ -115,10 +125,11 @@ export class PackageAdmin {
 		await this.deps.reloadIdleSessions();
 	}
 
-	/** 本地已装版本（读 agentDir/npm/node_modules/<name>/package.json）；读不到返回 undefined */
-	private async readInstalledVersion(name: string): Promise<string | undefined> {
+	/** 复用 SDK 的路径解析，覆盖项目安装和旧全局安装目录。 */
+	private async readInstalledVersion(installedPath: string | undefined): Promise<string | undefined> {
+		if (!installedPath) return undefined;
 		try {
-			const raw = await readFile(join(getAgentDir(), "npm", "node_modules", name, "package.json"), "utf8");
+			const raw = await readFile(join(installedPath, "package.json"), "utf8");
 			const version = (JSON.parse(raw) as { version?: unknown }).version;
 			return typeof version === "string" ? version : undefined;
 		} catch {
@@ -127,10 +138,10 @@ export class PackageAdmin {
 	}
 
 	/** registry 上的 latest 版本；失败/超时返回 undefined（不抛，避免一个包拖垮整表） */
-	private async fetchLatestVersion(name: string): Promise<string | undefined> {
+	private async fetchLatestVersion(name: string, signal: AbortSignal): Promise<string | undefined> {
 		try {
 			const res = await fetch(`https://registry.npmjs.org/${name.replace("/", "%2F")}/latest`, {
-				signal: AbortSignal.timeout(UPDATE_CHECK_TIMEOUT_MS),
+				signal,
 			});
 			if (!res.ok) return undefined;
 			const version = ((await res.json()) as { version?: unknown }).version;
@@ -142,25 +153,27 @@ export class PackageAdmin {
 
 	/** 检查已配置扩展的可用更新（只读：不安装、不重载） */
 	async checkPackageUpdates(): Promise<PackageUpdateInfo[]> {
-		const seen = new Map<string, string>();
-		for (const p of await this.listConfiguredPackages()) {
+		const packages = (await this.listConfiguredPackages()).flatMap((p) => {
 			const name = npmSourceToPackageName(p.source);
-			if (name && !seen.has(name)) seen.set(name, p.source);
-		}
-		return Promise.all(
-			[...seen].map(async ([name, source]) => {
-				const [installed, latest] = await Promise.all([
-					this.readInstalledVersion(name),
-					this.fetchLatestVersion(name),
-				]);
-				return {
-					name,
-					source,
-					installed: installed ?? "",
-					latest: latest ?? "",
-					hasUpdate: Boolean(installed && latest && isNewerVersion(latest, installed)),
-				};
+			return name ? [{ ...p, name }] : [];
+		});
+		// 只对联网请求按包名去重，安装记录及各自的本地版本不能合并。
+		const names = [...new Set(packages.map((p) => p.name))];
+		const latestByName = new Map<string, string | undefined>();
+		const signal = AbortSignal.timeout(UPDATE_CHECK_TIMEOUT_MS);
+		let next = 0;
+		await Promise.all(
+			Array.from({ length: Math.min(UPDATE_CHECK_CONCURRENCY, names.length) }, async () => {
+				while (next < names.length && !signal.aborted) {
+					const name = names[next++];
+					if (name) latestByName.set(name, await this.fetchLatestVersion(name, signal));
+				}
 			}),
 		);
+		return packages.map(({ name, source, scope, installedVersion }) => {
+			const installed = installedVersion ?? "";
+			const latest = latestByName.get(name) ?? "";
+			return { name, source, scope, installed, latest, hasUpdate: isNewerVersion(latest, installed) };
+		});
 	}
 }

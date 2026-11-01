@@ -1,4 +1,10 @@
-import type { CatalogPackage, LoadedExtension, PackageUpdateInfo, ResourceScope } from "@percho/shared";
+import type {
+	CatalogPackage,
+	ConfiguredPackageInfo,
+	LoadedExtension,
+	PackageUpdateInfo,
+	ResourceScope,
+} from "@percho/shared";
 import {
 	isSubagentPackage,
 	isSubagentToolName,
@@ -100,7 +106,7 @@ export function ExtensionRow({
 	update,
 }: {
 	extension: LoadedExtension;
-	configured: { source: string; scope: "user" | "project" } | null;
+	configured: ConfiguredPackageInfo | null;
 	/** 可用更新信息（npm: 源且查到 registry 时才有） */
 	update: PackageUpdateInfo | null;
 }) {
@@ -130,8 +136,8 @@ export function ExtensionRow({
 				{configured && <UninstallButton source={configured.source} scope={configured.scope} />}
 			</div>
 			<div className="mt-0.5 flex flex-wrap items-center gap-x-3 gap-y-1">
-				{update?.installed && (
-					<Stat label={t("settings.extensions.version", { version: update.installed })} />
+				{configured?.installedVersion && (
+					<Stat label={t("settings.extensions.version", { version: configured.installedVersion })} />
 				)}
 				{extension.toolsCount > 0 && (
 					<Stat label={t("settings.extensions.tools", { count: extension.toolsCount })} />

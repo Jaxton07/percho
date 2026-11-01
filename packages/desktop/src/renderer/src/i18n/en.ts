@@ -853,7 +853,7 @@ export const en: Messages = {
 			version: "Version {version}",
 			updateAvailable: "v{version} available",
 			updateHint:
-				"A newer version exists on the registry. This build only reports it; the update action is planned next.",
+				"A newer version is available on npm. Version information only; updating is not available here yet.",
 			npmNotFound:
 				"npm (Node.js package manager) not found. Install Node.js (e.g. brew install node) and restart Percho; if npm lives in a non-standard path, add it to the system PATH and restart.",
 			uninstall: "Uninstall",

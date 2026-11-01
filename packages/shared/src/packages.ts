@@ -37,6 +37,13 @@ export interface CatalogSearchResult {
 export interface ConfiguredPackageInfo {
 	source: string;
 	scope: "user" | "project";
+	/** SDK 实际安装路径中的版本；无需联网，未安装或无法读取时省略。 */
+	installedVersion?: string;
+}
+
+/** 同一安装源可以同时存在于用户与项目范围。 */
+export function configuredPackageKey(pkg: { source: string; scope: string }): string {
+	return `${pkg.scope}:${pkg.source}`;
 }
 
 /** 扩展更新检查结果（仅 npm: 源；只读，不触发安装/重载） */
@@ -45,6 +52,7 @@ export interface PackageUpdateInfo {
 	name: string;
 	/** 原始安装源，如 npm:@scope/name */
 	source: string;
+	scope: "user" | "project";
 	/** 本地已装版本；读不到时为空串 */
 	installed: string;
 	/** registry 上的 latest；查不到时为空串 */
@@ -60,20 +68,4 @@ export function npmSourceToPackageName(source: string): string | null {
 	const searchFrom = spec.startsWith("@") ? spec.indexOf("/") + 1 : 1;
 	const at = spec.indexOf("@", searchFrom);
 	return at > 0 ? spec.slice(0, at) : spec;
-}
-
-/** 只比数字段（忽略预发布标记）：latest 比 installed 新时返回 true */
-export function isNewerVersion(latest: string, installed: string): boolean {
-	const parse = (v: string) => {
-		const core = v.split("-")[0] ?? "";
-		return core.split(".").map((n) => Number.parseInt(n, 10) || 0);
-	};
-	const a = parse(latest);
-	const b = parse(installed);
-	for (let i = 0; i < Math.max(a.length, b.length); i++) {
-		const x = a[i] ?? 0;
-		const y = b[i] ?? 0;
-		if (x !== y) return x > y;
-	}
-	return false;
 }

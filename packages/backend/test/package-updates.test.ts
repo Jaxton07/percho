@@ -1,5 +1,6 @@
-import { isNewerVersion, npmSourceToPackageName } from "@percho/shared";
+import { npmSourceToPackageName } from "@percho/shared";
 import { describe, expect, it } from "vitest";
+import { isNewerVersion } from "../src/packages/version";
 
 describe("npmSourceToPackageName", () => {
 	it("剥掉版本后缀", () => {
@@ -37,13 +38,18 @@ describe("isNewerVersion", () => {
 		expect(isNewerVersion("4.4.6", "4.4.7")).toBe(false);
 	});
 
-	it("忽略预发布标记，只比数字段", () => {
+	it("遵循预发布版本顺序", () => {
 		expect(isNewerVersion("1.2.0-beta.1", "1.1.9")).toBe(true);
-		expect(isNewerVersion("1.2.0", "1.2.0-beta.1")).toBe(false);
+		expect(isNewerVersion("1.2.0", "1.2.0-beta.1")).toBe(true);
+		expect(isNewerVersion("1.2.0-beta.10", "1.2.0-beta.2")).toBe(true);
+		expect(isNewerVersion("1.2.0-beta.1", "1.2.0")).toBe(false);
 	});
 
-	it("段数不一致时按 0 补齐", () => {
+	it("无效版本不提示更新，构建信息不参与比较", () => {
 		expect(isNewerVersion("1.2", "1.2.0")).toBe(false);
-		expect(isNewerVersion("1.2.1", "1.2")).toBe(true);
+		expect(isNewerVersion("1.2.1", "1.2")).toBe(false);
+		expect(isNewerVersion("", "1.0.0")).toBe(false);
+		expect(isNewerVersion("2.0.0", "invalid")).toBe(false);
+		expect(isNewerVersion("1.2.0+build.9", "1.2.0+build.1")).toBe(false);
 	});
 });

@@ -1,4 +1,4 @@
-import type { PackageUpdateInfo } from "@percho/shared";
+import { type ConfiguredPackageInfo, configuredPackageKey } from "@percho/shared";
 import { useEffect, useMemo } from "react";
 import { useT } from "../../../i18n";
 import { useCatalogStore } from "../../../stores/catalog";
@@ -16,24 +16,21 @@ export function LoadedSection() {
 	const configuredPackages = useCatalogStore((s) => s.configuredPackages);
 	const packageUpdates = useCatalogStore((s) => s.packageUpdates);
 	const checkUpdates = useCatalogStore((s) => s.checkUpdates);
+	const refreshConfiguredPackages = useCatalogStore((s) => s.refreshConfiguredPackages);
 
-	// 进面板就查一次（只读：读本地版本 + registry latest，不安装）
+	// 本地版本独立加载，不等待 registry；重复进入只复用未过期的联网结果。
 	useEffect(() => {
-		void checkUpdates();
-	}, [checkUpdates]);
-
-	// 已配置 source → 更新信息
-	const updateBySource = useMemo(() => {
-		const map = new Map<string, PackageUpdateInfo>();
-		for (const u of Object.values(packageUpdates ?? {})) map.set(u.source, u);
-		return map;
-	}, [packageUpdates]);
+		void refreshConfiguredPackages();
+	}, [refreshConfiguredPackages]);
+	useEffect(() => {
+		if (configuredPackages !== null) void checkUpdates();
+	}, [checkUpdates, configuredPackages]);
 
 	// 已加载扩展的 source 命中已配置包 → 可卸载（source 为 npm:/git: 等安装源时）
 	const configuredBySource = useMemo(() => {
-		const map = new Map<string, { source: string; scope: "user" | "project" }>();
+		const map = new Map<string, ConfiguredPackageInfo>();
 		for (const p of configuredPackages ?? []) {
-			if (!map.has(p.source)) map.set(p.source, { source: p.source, scope: p.scope });
+			map.set(configuredPackageKey(p), p);
 		}
 		return map;
 	}, [configuredPackages]);
@@ -53,8 +50,8 @@ export function LoadedSection() {
 						<ExtensionRow
 							key={extension.path}
 							extension={extension}
-							configured={configuredBySource.get(extension.source) ?? null}
-							update={updateBySource.get(extension.source) ?? null}
+							configured={configuredBySource.get(configuredPackageKey(extension)) ?? null}
+							update={packageUpdates?.[configuredPackageKey(extension)] ?? null}
 						/>
 					))}
 				</ul>
