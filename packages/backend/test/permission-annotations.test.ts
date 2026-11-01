@@ -76,7 +76,7 @@ describe("非内置工具的声明层判定（spec §3.1-7）", () => {
 		expect(applyToolAnnotationsRule(DEFAULT_RULES, "mcp__docs__write", "ask", () => tools[0])).toBe("ask");
 	});
 
-	it("规则已给出 ask（如 codemode 默认规则）→ 声明层不改写", () => {
+	it("用户显式将 codemode 设为 ask/deny → 声明层不改写", () => {
 		const tools = [info("codemode", { path: "builtin:codemode" })];
 		const rules = { "*": "allow", codemode: "ask" } as unknown as PermissionRules;
 		expect(applyToolAnnotationsRule(rules, "codemode", "ask", (n) => tools.find((t) => t.name === n))).toBe(

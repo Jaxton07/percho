@@ -124,6 +124,7 @@ import { StreamGuard } from "./session/stream-guard";
 import { TraceRecorder } from "./session/trace";
 import { SessionTraces } from "./session/traces";
 import { makeUiContext } from "./session/ui-context";
+import { codemodeSessionOptions, readCodemodeEnabled, writeCodemodeEnabled } from "./settings/codemode";
 import { LoginService } from "./settings/login";
 import { ModelPrefsService } from "./settings/model-prefs";
 import { makeQuotaService } from "./settings/quota";
@@ -742,6 +743,7 @@ export class PiBackend {
 				sessionManager: SessionManager.create(cwd),
 				settingsManager,
 				resourceLoader,
+				...codemodeSessionOptions(settingsManager, getAgentDir()),
 			});
 		});
 		log.info("session created", session.sessionId, { cwd });
@@ -785,6 +787,7 @@ export class PiBackend {
 				tools: this.options.tools,
 				settingsManager,
 				resourceLoader,
+				...codemodeSessionOptions(settingsManager, getAgentDir()),
 				customTools: this.buildCustomTools(deps.gate, deps.preferBuiltin, deps.getPermissionMode),
 			});
 		});
@@ -2001,6 +2004,14 @@ export class PiBackend {
 		if (!entry) throw new Error(`Session not found: ${sessionId}`);
 		entry.modeRef.current = mode;
 		log.info("permission mode", sessionId, { mode });
+	}
+
+	getCodemodeConfig(): { enabled: boolean } {
+		return { enabled: readCodemodeEnabled(getAgentDir()) };
+	}
+
+	async setCodemodeEnabled(enabled: boolean): Promise<void> {
+		await writeCodemodeEnabled(getAgentDir(), enabled);
 	}
 
 	/** channel-watch 总开关（设置 UI 用；键在 ~/.percho/agent/settings.json，缺省=开） */

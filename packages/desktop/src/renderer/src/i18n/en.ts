@@ -483,6 +483,7 @@ export const en: Messages = {
 			edit: "Edit",
 			write: "Write",
 			bash: "Bash",
+			codemode: "Run script",
 			ls: "Ls",
 			glob: "Glob",
 			grep: "Grep",
@@ -589,6 +590,9 @@ export const en: Messages = {
 		backgroundClear: "Remove",
 		backgroundDim: "Overlay opacity",
 		channelWatch: "Cross-session channel collaboration (channel-watch)",
+		codemode: "Code Mode",
+		codemodeHint:
+			"Let AI combine tool calls in scripts, run them in parallel, and filter results. On by default; applies to new sessions or after restarting the app.",
 		channelWatchHint:
 			"After a session subscribes to a channel it watches .local/agent-work/channel/<topic>/ for file updates; writes from another session wake this session to pick them up (HANDOFF.md protocol). Subscriptions persist with the session; built-in loop protection. On by default, fully effective for trusted projects.",
 		topBar: "Show sessions in the top bar",

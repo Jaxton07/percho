@@ -17,6 +17,7 @@ const api = vi.hoisted(() => ({
 	getLoadedResources: vi.fn(),
 	getPermissionConfig: vi.fn(),
 	getChannelWatchConfig: vi.fn(),
+	getCodemodeConfig: vi.fn(() => Promise.resolve({ enabled: true })),
 	lanGetStatus: vi.fn(),
 	getModelPrefs: vi.fn(),
 	loadModels: vi.fn(),
@@ -102,11 +103,26 @@ beforeEach(async () => {
 });
 
 describe("V03 settings consumer matrix (ticket 11 target)", () => {
+	it.each(["setOpen", "openWith"] as const)("%s 每次普通打开都进入通用，显式分类仍可跳转", (entry) => {
+		expect(store.getState().category).toBe("general");
+		store.getState().openWith("models");
+		expect(store.getState().category).toBe("models");
+		store.getState().setOpen(false);
+		if (entry === "setOpen") store.getState().setOpen(true);
+		else store.getState().openWith();
+		expect(store.getState().category).toBe("general");
+		store.getState().setCategory("appearance");
+		store.getState().setOpen(true);
+		expect(store.getState().category).toBe("appearance");
+		store.getState().setOpen(false);
+		store.getState().openWith("mcp");
+		expect(store.getState().category).toBe("mcp");
+	});
 	it("import is lazy; category changes and closing perform no requests", () => {
 		expect(store.getState().permissionGateOff).toBeNull();
 		store.getState().setCategory("general");
 		store.getState().setOpen(false);
-		for (const mock of Object.values(api)) expect(mock).not.toHaveBeenCalled();
+		for (const mock of Object.values(api).filter(vi.isMockFunction)) expect(mock).not.toHaveBeenCalled();
 	});
 	it("refresh reads all local domains once; resources are conditional on an active session", async () => {
 		api.listProviders.mockResolvedValue([]);
@@ -182,7 +198,7 @@ describe("D10 consumer and mutation responsibilities", () => {
 		vi.clearAllMocks();
 		store.getState().setCategory("appearance");
 		expect(api.getPermissionConfig).not.toHaveBeenCalled();
-		store.getState().setOpen(true);
+		store.getState().openWith("appearance");
 		await store.getState().loadPermissionGate();
 		store.getState().setOpen(true);
 		store.getState().setCategory("appearance");

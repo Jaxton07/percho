@@ -5,6 +5,8 @@ const piMock = vi.hoisted(() => ({
 	// refresh() 会并行拉多个本地配置，无关成员给最小 stub
 	getPermissionConfig: vi.fn(() => Promise.resolve({ enabled: true })),
 	getChannelWatchConfig: vi.fn(() => Promise.resolve({ enabled: true })),
+	getCodemodeConfig: vi.fn(() => Promise.resolve({ enabled: true })),
+	setCodemodeEnabled: vi.fn(() => Promise.resolve()),
 	setChannelWatchEnabled: vi.fn(() => Promise.resolve()),
 	lanGetStatus: vi.fn(() => Promise.resolve(null)),
 	listProviders: vi.fn(() => Promise.resolve([])),
@@ -26,6 +28,8 @@ import { useSettingsStore } from "./settings";
 function resetStore() {
 	useSettingsStore.setState({
 		channelWatchEnabled: null,
+		codemodeEnabled: null,
+		codemodeSaving: false,
 		error: null,
 		loading: false,
 	});
@@ -63,5 +67,39 @@ describe("settings store：channelWatchEnabled（乐观更新 + 失败回滚）"
 		await useSettingsStore.getState().setChannelWatchEnabled(false);
 		expect(useSettingsStore.getState().channelWatchEnabled).toBe(true);
 		expect(useSettingsStore.getState().error).toBe("disk full");
+	});
+});
+
+describe("Code Mode 设置", () => {
+	it("通用设置加载默认开启状态", async () => {
+		await useSettingsStore.getState().refresh();
+		expect(useSettingsStore.getState().codemodeEnabled).toBe(true);
+	});
+
+	it("保存成功才发布新状态；失败保留原值", async () => {
+		useSettingsStore.setState({ codemodeEnabled: true });
+		await useSettingsStore.getState().setCodemodeEnabled(false);
+		expect(piMock.setCodemodeEnabled).toHaveBeenCalledWith({ enabled: false });
+		expect(useSettingsStore.getState().codemodeEnabled).toBe(false);
+		piMock.setCodemodeEnabled.mockRejectedValueOnce(new Error("disk full"));
+		await useSettingsStore.getState().setCodemodeEnabled(true);
+		expect(useSettingsStore.getState().codemodeEnabled).toBe(false);
+		expect(useSettingsStore.getState().codemodeSaving).toBe(false);
+		expect(useSettingsStore.getState().error).toBe("disk full");
+	});
+
+	it("保存之后到达的旧读取不能覆盖开关", async () => {
+		let finish!: (config: { enabled: boolean }) => void;
+		piMock.getCodemodeConfig.mockImplementationOnce(
+			() =>
+				new Promise((resolve) => {
+					finish = resolve;
+				}),
+		);
+		await useSettingsStore.getState().refresh();
+		await useSettingsStore.getState().setCodemodeEnabled(false);
+		finish({ enabled: true });
+		await Promise.resolve();
+		expect(useSettingsStore.getState().codemodeEnabled).toBe(false);
 	});
 });

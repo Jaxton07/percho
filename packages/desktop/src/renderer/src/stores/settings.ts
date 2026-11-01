@@ -58,6 +58,8 @@ interface SettingsStore {
 	permissionGateOff: boolean | null;
 	/** channel-watch 跨会话频道唤醒开关（null = 未加载） */
 	channelWatchEnabled: boolean | null;
+	codemodeEnabled: boolean | null;
+	codemodeSaving: boolean;
 	/** 局域网观察服务运行状态（null = 未加载）。 */
 	lanStatus: LanStatus | null;
 	lanSaving: boolean;
@@ -97,6 +99,7 @@ interface SettingsStore {
 	/** 内置 subagent 执行器优先（新会话生效） */
 	setSubagentPreferBuiltin: (enabled: boolean) => Promise<void>;
 	setChannelWatchEnabled: (enabled: boolean) => Promise<void>;
+	setCodemodeEnabled: (enabled: boolean) => Promise<void>;
 	refreshLanStatus: () => Promise<void>;
 	setLanEnabled: (enabled: boolean) => Promise<void>;
 	setLanRemoteControl: (enabled: boolean) => Promise<void>;
@@ -344,6 +347,7 @@ function createSettingsStore(environment: EnvironmentRef) {
 		 * 其余本地配置/偏好/资源各自独立发布 —— 不得因为目录请求被拒而丢字段。
 		 */
 		let permissionFlight: Promise<void> | null = null;
+		let codemodeRevision = 0;
 		const loadPermissionGate = (): Promise<void> => {
 			if (permissionFlight) return permissionFlight;
 			const work = getExecutionApi(environment)
@@ -359,6 +363,16 @@ function createSettingsStore(environment: EnvironmentRef) {
 			return work;
 		};
 		const loadGeneral = (): void => {
+			const revision = ++codemodeRevision;
+			void getExecutionApi(environment)
+				.getCodemodeConfig()
+				.then((config) => {
+					if (revision === codemodeRevision && !get().codemodeSaving)
+						set({ codemodeEnabled: config.enabled });
+				})
+				.catch((error) => {
+					if (revision === codemodeRevision) set({ error: errorMessage(error) });
+				});
 			void getExecutionApi(environment)
 				.getChannelWatchConfig()
 				.then((cw) => set({ channelWatchEnabled: cw.enabled }))
@@ -414,7 +428,7 @@ function createSettingsStore(environment: EnvironmentRef) {
 
 		return {
 			open: false,
-			category: "models",
+			category: "general",
 			providers: [],
 			modelPrefs: null,
 			subagents: [],
@@ -422,6 +436,8 @@ function createSettingsStore(environment: EnvironmentRef) {
 			refreshing: false,
 			permissionGateOff: null,
 			channelWatchEnabled: null,
+			codemodeEnabled: null,
+			codemodeSaving: false,
 			lanStatus: null,
 			lanSaving: false,
 			skills: null,
@@ -432,17 +448,16 @@ function createSettingsStore(environment: EnvironmentRef) {
 			error: null,
 
 			setOpen: (open) => {
-				const wasOpen = get().open;
-				set({ open, testResults: {}, error: null });
-				if (open && !wasOpen) {
-					void loadPermissionGate();
-					loadPanel(get().category);
+				if (open && !get().open) {
+					get().openWith();
+					return;
 				}
+				set({ open, testResults: {}, error: null });
 			},
 
 			openWith: (category) => {
 				const previous = get();
-				const target = category ?? previous.category;
+				const target = category ?? "general";
 				set({ category: target, open: true, testResults: {}, error: null });
 				if (!previous.open) void loadPermissionGate();
 				if (!previous.open || previous.category !== target) loadPanel(target);
@@ -485,6 +500,21 @@ function createSettingsStore(environment: EnvironmentRef) {
 						channelWatchEnabled: previous,
 						error: error instanceof Error ? error.message : String(error),
 					});
+				}
+			},
+
+			setCodemodeEnabled: async (enabled) => {
+				if (get().codemodeSaving) return;
+				++codemodeRevision;
+				set({ codemodeSaving: true });
+				try {
+					await getExecutionApi(environment).setCodemodeEnabled({ enabled });
+					set({ codemodeEnabled: enabled, error: null });
+				} catch (error) {
+					set({ error: errorMessage(error) });
+				} finally {
+					++codemodeRevision;
+					set({ codemodeSaving: false });
 				}
 			},
 

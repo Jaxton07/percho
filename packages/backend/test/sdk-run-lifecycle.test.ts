@@ -1,4 +1,4 @@
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { type AssistantMessage, createAssistantMessageEventStream, type Model } from "@earendil-works/pi-ai";
 import {
@@ -863,7 +863,7 @@ describe("SDK 1.4 real offline tools", () => {
 		},
 	);
 
-	it("codemode executes a pure script through the permission gate and persists its store", async () => {
+	it("codemode executes a pure script without approval and persists its store", async () => {
 		const confirm = vi.fn(async () => true);
 		const f = await fixture(
 			({ agentDir, cwd }) => [
@@ -874,7 +874,7 @@ describe("SDK 1.4 real offline tools", () => {
 		);
 		f.session.setActiveToolsByName(["codemode"]);
 		const result = await f.callTool("codemode", { code: 'store("fixture", 14); text(2 + 2);' });
-		expect(confirm).toHaveBeenCalledOnce();
+		expect(confirm).not.toHaveBeenCalled();
 		expect(result).toMatchObject({ isError: false });
 		expect(JSON.stringify(result)).toContain("4");
 		expect(
@@ -882,5 +882,39 @@ describe("SDK 1.4 real offline tools", () => {
 				.getBranch()
 				.some((entry) => entry.type === "custom" && entry.customType === "codemode-store"),
 		).toBe(true);
+	});
+
+	it("codemode 内工作区读写免确认，越界写入、高危命令和受保护文件仍需确认", async () => {
+		const confirm = vi.fn(async (_title: string) => false);
+		const f = await fixture(
+			({ agentDir, cwd }) => [
+				makePermissionGateExtension(agentDir, { projectRoot: cwd, confirm }),
+				{ name: "codemode", builtin: true, factory: createCodemodeExtension({ models: false }) },
+			],
+			"builtin",
+		);
+		f.session.setActiveToolsByName(["read", "write", "edit", "bash", "codemode"]);
+		const result = await f.callTool("codemode", {
+			code: 'await tools.write({path:"note.txt",content:"before"}); await tools.edit({path:"note.txt",oldText:"before",newText:"after"}); text(await tools.read({path:"note.txt"}));',
+		});
+		expect(result).toMatchObject({ isError: false });
+		expect(readFileSync(join(f.cwd, "note.txt"), "utf8")).toBe("after");
+		expect(confirm).not.toHaveBeenCalled();
+		const outside = resolve(f.cwd, "../outside.txt");
+		await f.callTool("codemode", {
+			code: `await tools.write({path:${JSON.stringify(outside)},content:"blocked"});`,
+		});
+		expect(confirm).toHaveBeenCalledTimes(1);
+		expect(confirm.mock.calls[0]?.[0]).toContain("write");
+		expect(existsSync(outside)).toBe(false);
+		await f.callTool("codemode", { code: 'await tools.bash({command:"sudo echo blocked"});' });
+		expect(confirm).toHaveBeenCalledTimes(2);
+		expect(confirm.mock.calls[1]?.[0]).toContain("bash");
+		await f.callTool("codemode", {
+			code: 'await tools.write({path:"permissions.json",content:"blocked"});',
+		});
+		expect(confirm).toHaveBeenCalledTimes(3);
+		expect(confirm.mock.calls[2]?.[0]).toContain("write");
+		expect(existsSync(join(f.cwd, "permissions.json"))).toBe(false);
 	});
 });

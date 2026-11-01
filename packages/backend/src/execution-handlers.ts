@@ -89,6 +89,8 @@ export function createExecutionHandlers(
 		getPermissionMode: ({ sessionId }) => backend.getSessionPermissionMode(sessionId),
 		setPermissionMode: ({ sessionId, mode }) => backend.setSessionPermissionMode(sessionId, mode),
 		getChannelWatchConfig: () => backend.getChannelWatchConfig(),
+		getCodemodeConfig: () => backend.getCodemodeConfig(),
+		setCodemodeEnabled: ({ enabled }) => backend.setCodemodeEnabled(enabled),
 		setChannelWatchEnabled: ({ enabled }) => backend.setChannelWatchEnabled(enabled),
 		respondTrust: ({ requestId, answer }) => backend.respondTrust(requestId, answer),
 		searchCatalog: ({ query, type, page }) => backend.packages.searchPackages(query, type, page),

@@ -467,6 +467,7 @@ export const zh = {
 			edit: "编辑",
 			write: "写入",
 			bash: "执行命令",
+			codemode: "组合执行",
 			ls: "列出文件",
 			glob: "查找文件",
 			grep: "搜索内容",
@@ -571,6 +572,8 @@ export const zh = {
 		backgroundClear: "清除背景",
 		backgroundDim: "遮罩浓度",
 		channelWatch: "跨会话频道协作（channel-watch）",
+		codemode: "Code Mode",
+		codemodeHint: "允许 AI 通过脚本组合调用工具、并行处理和筛选结果。默认开启，新建会话或重启应用后生效。",
 		channelWatchHint:
 			"会话订阅频道后自动监听 .local/agent-work/channel/<主题>/ 的文件更新，另一会话写入时唤醒本会话查收（HANDOFF.md 协议）。订阅随会话持久化，内置防环保护；默认开启，对已信任项目完全生效。",
 		topBar: "顶栏显示会话",

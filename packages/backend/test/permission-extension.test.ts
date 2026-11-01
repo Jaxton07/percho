@@ -434,14 +434,14 @@ describe("permission-gate 扩展", () => {
 		expect(confirms).toHaveLength(0);
 	});
 
-	it("codemode 默认动作是 ask（1.0.4 新增内置扩展的默认规则）", async () => {
+	it("codemode 默认放行，内部工具各自检查权限", async () => {
 		const dir = makeAgentDir();
 		const { call, confirms } = makeHarness(dir, true, {
 			tools: [toolInfo("codemode", { path: "builtin:codemode" })],
 		});
 
 		await expect(call("codemode", { code: "1" })).resolves.toBeUndefined();
-		expect(confirms).toHaveLength(1);
+		expect(confirms).toHaveLength(0);
 	});
 
 	it("MCP 工具也吃显式规则：规则 allow 时不弹窗、规则 deny 时直接 block", async () => {

@@ -8,6 +8,7 @@ const BUILTIN_TOOL_NAMES = new Set<string>([
 	"edit",
 	"write",
 	"bash",
+	"codemode",
 	"ls",
 	"glob",
 	"grep",

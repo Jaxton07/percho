@@ -7,9 +7,12 @@ import { TaskNotificationSettings } from "./TaskNotificationSettings";
 
 const LANGUAGES: Language[] = ["zh", "en"];
 
-/** 通用设置面板：语言下拉 + channel-watch 开关（上下文蒸发为内置常开策略，不提供开关） */
+/** 通用设置面板（上下文蒸发为内置常开策略，不提供开关） */
 export function GeneralPanel() {
 	const t = useT();
+	const codemodeEnabled = useSettingsStore((s) => s.codemodeEnabled);
+	const codemodeSaving = useSettingsStore((s) => s.codemodeSaving);
+	const setCodemodeEnabled = useSettingsStore((s) => s.setCodemodeEnabled);
 	const language = useI18nStore((s) => s.language);
 	const setLanguage = useI18nStore((s) => s.setLanguage);
 	const channelWatchEnabled = useSettingsStore((s) => s.channelWatchEnabled);
@@ -18,6 +21,13 @@ export function GeneralPanel() {
 	return (
 		<div className="flex flex-col gap-6">
 			<TaskNotificationSettings />
+			<SettingsSwitchRow
+				title={t("settings.codemode")}
+				hint={t("settings.codemodeHint")}
+				checked={codemodeEnabled === true}
+				disabled={codemodeEnabled === null || codemodeSaving}
+				onCheckedChange={(enabled) => void setCodemodeEnabled(enabled)}
+			/>
 			<div>
 				<div className="flex items-center justify-between gap-4">
 					<div className="min-w-0">
