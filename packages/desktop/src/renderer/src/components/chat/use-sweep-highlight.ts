@@ -61,11 +61,74 @@ export function useSweepHighlight(
 		if (!label) return;
 		// 光带中心（视口绝对 x）；NaN = 首帧初始化：放在并集左界外（光带完全不可见处）起步
 		let centerAbs = Number.NaN;
+		let dirty = true;
+		let pairs: { el: HTMLElement; rect: DOMRect }[] = [];
+		const observer = new ResizeObserver(() => {
+			dirty = true;
+		});
+		const observed = new Set<Element>();
+		// Ancestor widths can move centered labels without changing their own size.
+		for (let parent: Element | null = label; parent; parent = parent.parentElement) {
+			observer.observe(parent);
+			observed.add(parent);
+		}
+		const moving = new Map<EventTarget, Set<string>>();
+		const motion = (event: TransitionEvent) => {
+			if (
+				!/^(width|height|transform|translate|left|right|top|bottom|margin.*|padding.*|flex.*|grid.*)$/.test(
+					event.propertyName,
+				) ||
+				!event.target
+			)
+				return;
+			dirty = true;
+			if (event.type === "transitionrun") {
+				const properties = moving.get(event.target) ?? new Set<string>();
+				properties.add(event.propertyName);
+				moving.set(event.target, properties);
+			} else {
+				const properties = moving.get(event.target);
+				properties?.delete(event.propertyName);
+				if (!properties?.size) moving.delete(event.target);
+			}
+		};
+		const invalidate = () => {
+			dirty = true;
+		};
+		const mutations = new MutationObserver(invalidate);
+		if (wrapRef.current)
+			mutations.observe(wrapRef.current, { childList: true, subtree: true, characterData: true });
+		document.addEventListener("scroll", invalidate, true);
+		window.addEventListener("resize", invalidate);
+		for (const event of ["transitionrun", "transitionend", "transitioncancel"])
+			document.addEventListener(event, motion as EventListener, true);
 		const paint = () => {
+			// Detached transitions cannot deliver their end/cancel event to document.
+			for (const target of moving.keys()) {
+				if (target instanceof Node && !target.isConnected) {
+					moving.delete(target);
+					dirty = true;
+				}
+			}
 			// 切换动画期间新旧两行并存：全部纳入（同 x 位置堆叠，新行立即有扫光）
-			const nameEls = Array.from(wrapRef.current?.querySelectorAll<HTMLElement>("[data-shimmer-name]") ?? []);
-			const targets: HTMLElement[] = [label, ...nameEls];
-			const pairs = targets.map((el) => ({ el, rect: el.getBoundingClientRect() }));
+			if (dirty || moving.size) {
+				dirty = false;
+				const nameEls = Array.from(
+					wrapRef.current?.querySelectorAll<HTMLElement>("[data-shimmer-name]") ?? [],
+				);
+				const targets = [label, ...nameEls];
+				for (const el of targets)
+					if (!observed.has(el)) {
+						observer.observe(el);
+						observed.add(el);
+					}
+				for (const el of observed)
+					if (!el.isConnected) {
+						observer.unobserve(el);
+						observed.delete(el);
+					}
+				pairs = targets.map((el) => ({ el, rect: el.getBoundingClientRect() }));
+			}
 			const visible = pairs.filter((p) => p.rect.width > 0);
 			if (visible.length === 0) return;
 			const left = Math.min(...visible.map((p) => p.rect.left));
@@ -82,7 +145,10 @@ export function useSweepHighlight(
 				el.style.backgroundImage = bandGradient(centerAbs - rect.left);
 			}
 		};
-		paintRef.current = paint;
+		paintRef.current = () => {
+			dirty = true;
+			paint();
+		};
 		let raf = 0;
 		let last = performance.now();
 		const tick = (now: number) => {
@@ -96,6 +162,14 @@ export function useSweepHighlight(
 		raf = requestAnimationFrame(tick);
 		return () => {
 			cancelAnimationFrame(raf);
+			observer.disconnect();
+			mutations.disconnect();
+			moving.clear();
+			observed.clear();
+			document.removeEventListener("scroll", invalidate, true);
+			window.removeEventListener("resize", invalidate);
+			for (const event of ["transitionrun", "transitionend", "transitioncancel"])
+				document.removeEventListener(event, motion as EventListener, true);
 			paintRef.current = () => {};
 			clearSweepStyles([
 				labelRef.current,

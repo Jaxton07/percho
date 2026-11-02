@@ -1,7 +1,9 @@
-import { useEffect, useRef, useState } from "react";
+import { memo, useEffect, useMemo, useRef, useState } from "react";
 import { useT } from "../../i18n";
 import type { UIToolCall } from "../../stores/transcript";
 import { ExpandArrowIcon } from "../icons";
+import { DeferredDetails } from "../ui/DeferredDetails";
+import { SelectableText } from "../ui/SelectableText";
 import { displayName } from "./tool-label";
 
 export { displayName } from "./tool-label";
@@ -25,6 +27,7 @@ const measureQueue = new Map<HTMLElement, MeasureEntry>();
 /** rAF 停摆（窗口隐藏/遮挡）时的兜底间隔，与 stores/event-conflator.ts 同一约定 */
 const MEASURE_FALLBACK_MS = 250;
 let measureScheduled = false;
+let cancelScheduledMeasure: (() => void) | undefined;
 
 function flushMeasures(): void {
 	measureScheduled = false;
@@ -48,15 +51,21 @@ function scheduleMeasure(entry: MeasureEntry): void {
 	measureScheduled = true;
 	// rAF 优先（读阶段贴近本帧布局），隐藏态 rAF 停摆时定时器兜底——否则队列会一直卡着不 flush
 	let done = false;
-	const run = () => {
-		if (done) return;
+	const cancel = () => {
 		done = true;
 		cancelAnimationFrame(raf);
 		clearTimeout(timer);
+		measureScheduled = false;
+		cancelScheduledMeasure = undefined;
+	};
+	const run = () => {
+		if (done) return;
+		cancel();
 		flushMeasures();
 	};
 	const raf = requestAnimationFrame(run);
 	const timer = setTimeout(run, MEASURE_FALLBACK_MS);
+	cancelScheduledMeasure = cancel;
 }
 
 /** 行元素 → 测量项（RO 回调要重测的是「已测量过」的行，队列里可能已清空，故另存持久表） */
@@ -96,10 +105,10 @@ export function summarizeArgs(args: string): string {
 }
 
 /** 工具调用行：无边框、默认折叠；折叠态 = 工具名 + 执行对象（单行渐变截断），展开显示完整参数与结果 */
-export function ToolCallCard({ tool }: { tool: UIToolCall }) {
+export const ToolCallCard = memo(function ToolCallCard({ tool }: { tool: UIToolCall }) {
 	const t = useT();
 	const name = displayName(tool.name, t);
-	const summary = summarizeArgs(tool.args);
+	const summary = useMemo(() => summarizeArgs(tool.args), [tool.args]);
 	/** 内容是否超过一行（决定渐变 + 箭头是否贴行尾） */
 	const [overflowing, setOverflowing] = useState(false);
 	const textRef = useRef<HTMLSpanElement>(null);
@@ -118,6 +127,7 @@ export function ToolCallCard({ tool }: { tool: UIToolCall }) {
 		scheduleMeasure(entry);
 		return () => {
 			measureQueue.delete(row);
+			if (measureQueue.size === 0) cancelScheduledMeasure?.();
 			rowEntries.delete(row);
 			rowResizeObserver?.unobserve(row);
 		};
@@ -131,42 +141,49 @@ export function ToolCallCard({ tool }: { tool: UIToolCall }) {
 		"relative overflow-hidden whitespace-nowrap font-mono text-ui-12 text-ink-faint transition-colors group-hover/row:text-ink";
 
 	return (
-		<details className="group/dets drawer-details">
-			<summary
-				ref={rowRef}
-				className="group/row flex cursor-pointer items-center gap-2 py-0.5 select-none [&::-webkit-details-marker]:hidden"
-			>
-				<span className={nameClass}>{name}</span>
-				{summary && (
-					<span
-						ref={textRef}
-						className={overflowing ? `${summaryClass} min-w-0 flex-1` : `${summaryClass} shrink-0`}
-					>
-						{summary}
-						{overflowing && (
-							<span className="pointer-events-none absolute inset-y-0 right-0 w-10 bg-gradient-to-l from-canvas to-transparent" />
-						)}
-					</span>
-				)}
-				{tool.state === "running" && summary && (
-					<span className="shrink-0 font-mono text-ui-12 text-ink-faint transition-colors group-hover/row:text-ink-2">
-						…
-					</span>
-				)}
-				<ExpandArrowIcon className="shrink-0 text-ink-faint opacity-0 transition-[opacity,transform,color] group-hover/row:opacity-100 group-hover/row:text-ink-2 group-open/dets:rotate-90" />
-			</summary>
-			<div className="flex flex-col gap-1.5 py-1 pl-4">
-				{tool.args && (
-					<pre className="max-h-56 overflow-y-auto font-mono text-ui-12 leading-relaxed break-all whitespace-pre-wrap text-ink-dim select-text">
-						{tool.args}
-					</pre>
-				)}
-				{tool.output && (
-					<pre className="max-h-56 overflow-y-auto font-mono text-ui-12 leading-relaxed break-all whitespace-pre-wrap text-ink-2 select-text">
-						{tool.output}
-					</pre>
-				)}
-			</div>
-		</details>
+		<DeferredDetails
+			className="group/dets drawer-details"
+			viewKey={`tool:${tool.key}`}
+			summaryRef={rowRef}
+			summaryClassName="group/row flex cursor-pointer items-center gap-2 py-0.5 select-none [&::-webkit-details-marker]:hidden"
+			summary={
+				<>
+					<span className={nameClass}>{name}</span>
+					{summary && (
+						<span
+							ref={textRef}
+							className={overflowing ? `${summaryClass} min-w-0 flex-1` : `${summaryClass} shrink-0`}
+						>
+							{summary}
+							{overflowing && (
+								<span className="pointer-events-none absolute inset-y-0 right-0 w-10 bg-gradient-to-l from-canvas to-transparent" />
+							)}
+						</span>
+					)}
+					{tool.state === "running" && summary && (
+						<span className="shrink-0 font-mono text-ui-12 text-ink-faint transition-colors group-hover/row:text-ink-2">
+							…
+						</span>
+					)}
+					<ExpandArrowIcon className="shrink-0 text-ink-faint opacity-0 transition-[opacity,transform,color] group-hover/row:opacity-100 group-hover/row:text-ink-2 group-open/dets:rotate-90" />
+				</>
+			}
+			bodyClassName="flex flex-col gap-1.5 py-1 pl-4"
+		>
+			{() => (
+				<>
+					{tool.args && (
+						<pre className="max-h-56 overflow-y-auto font-mono text-ui-12 leading-relaxed break-all whitespace-pre-wrap text-ink-dim select-text">
+							<SelectableText text={tool.args} />
+						</pre>
+					)}
+					{tool.output && (
+						<pre className="max-h-56 overflow-y-auto font-mono text-ui-12 leading-relaxed break-all whitespace-pre-wrap text-ink-2 select-text">
+							<SelectableText text={tool.output} />
+						</pre>
+					)}
+				</>
+			)}
+		</DeferredDetails>
 	);
-}
+});

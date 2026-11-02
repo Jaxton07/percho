@@ -37,6 +37,20 @@ jobs:
           node-version: 22
           cache: npm
       - run: npm ci
+      - name: Verify Windows long-session rendering regressions
+        if: runner.os == 'Windows'
+        run: >-
+          npm run test -w packages/desktop --
+          src/renderer/src/components/chat/MetaGroup.lazy.test.tsx
+          src/renderer/src/components/chat/use-sweep-highlight.test.tsx
+          src/renderer/src/components/chat/turn-files.test.ts
+          src/renderer/src/components/composer/Composer.run-state.test.tsx
+          src/renderer/src/components/composer/use-composer-send.test.tsx
+          src/renderer/src/components/diff/DiffSidebar.test.tsx
+          src/renderer/src/components/ui/DeferredDetails.test.tsx
+          src/renderer/src/stores/session-view.test.ts
+          src/renderer/src/stores/ui-plugin-config-baseline.test.ts
+          src/main/ui-plugins/manifest.test.ts
       - uses: actions/download-artifact@v4
         with:
           pattern: remote-runtime-*

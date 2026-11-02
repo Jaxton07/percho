@@ -1,6 +1,8 @@
 import type { SessionBaseline } from "@percho/shared";
 import { measureRendererSwitch } from "../lib/session-switch-probe";
+import { sessionDetailKeys } from "../lib/session-view-keys";
 import { finishSessionBaseline } from "./session-event-boundary";
+import { useSessionViewStore } from "./session-view";
 import { useTranscriptStore } from "./transcript";
 
 /** 历史和进行中轮次一同替换，之后按sequence重放读取期间的增量。 */
@@ -13,6 +15,8 @@ export function installSessionBaseline(
 	return finishSessionBaseline(sessionId, token, baseline.sequence, () => {
 		const end = measureRendererSwitch("historyInstall");
 		const previous = useTranscriptStore.getState().bySession[sessionId];
+		useSessionViewStore.getState().ensure(sessionId);
+		useSessionViewStore.getState().prune(sessionId, sessionDetailKeys(baseline.transcript, sessionId));
 		useTranscriptStore.setState((state) => ({
 			bySession: {
 				...state.bySession,

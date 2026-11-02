@@ -98,6 +98,72 @@ describe("多附件输入不能被历史展示引用替换", () => {
 	});
 });
 
+describe("运行展示不放宽原发送资格", () => {
+	it.each(["compacting", "full-queue"])("%s 拒绝普通草稿且保留正文和附件", async (reason) => {
+		useTranscriptStore.getState().loadHistory("fixture", []);
+		useTranscriptStore.setState((state) => ({
+			bySession: {
+				...state.bySession,
+				fixture: {
+					...emptyTranscript(),
+					pendingPermissions: [],
+					pendingDialogs: [],
+					agentActive: true,
+					phase: "idle",
+					compacting: reason === "compacting",
+					followUpQueue: reason === "full-queue" ? ["queued"] : [],
+				},
+			},
+		}));
+		const draft = {
+			...EMPTY_DRAFT,
+			document: composerDocumentFromText("keep this"),
+			images: [{ data: "AQID", mimeType: "image/png" }],
+		};
+		useDraftStore.getState().updateDraft("fixture", () => draft);
+		await composer().handleSend();
+		expect(prompt).not.toHaveBeenCalled();
+		expect(useDraftStore.getState().bySession.fixture).toBe(draft);
+	});
+	it("工具轮结束的 idle 间隔仍按活跃任务排队，不插入空闲发送的乐观气泡", async () => {
+		useTranscriptStore.getState().loadHistory("fixture", []);
+		useTranscriptStore.getState().applyEvent("fixture", { type: "agent_start" });
+		useTranscriptStore.getState().applyEvent("fixture", {
+			type: "turn_end",
+			toolResults: [],
+			message: {
+				role: "assistant",
+				stopReason: "toolUse",
+				content: [],
+				api: "openai-completions",
+				provider: "fixture",
+				model: "fixture",
+				timestamp: 0,
+				usage: {
+					input: 0,
+					output: 0,
+					cacheRead: 0,
+					cacheWrite: 0,
+					totalTokens: 0,
+					cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
+				},
+			},
+		});
+		expect(useTranscriptStore.getState().bySession.fixture).toMatchObject({
+			agentActive: true,
+			phase: "idle",
+		});
+		useDraftStore
+			.getState()
+			.updateDraft("fixture", () => ({ ...EMPTY_DRAFT, document: composerDocumentFromText("follow up") }));
+		await composer().handleSend();
+		expect(prompt).toHaveBeenCalledOnce();
+		expect(useTranscriptStore.getState().bySession.fixture?.messages.some((m) => m.kind === "user")).toBe(
+			false,
+		);
+	});
+});
+
 describe("compaction recovery send", () => {
 	it.each(["paused", "stopped"])(
 		"accepts a human correction with a retained queue after %s",

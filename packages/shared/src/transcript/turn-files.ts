@@ -54,7 +54,7 @@ function parseToolArgs(args: string): Record<string, unknown> | null {
 }
 
 /** 单个工具调用 → path + DiffSection + 统计；不符合口径返回 null */
-function sectionFromTool(
+function parseToolSection(
 	tool: UIToolCall,
 ): { path: string; section: DiffSection; added: number; removed: number } | null {
 	const args = parseToolArgs(tool.args);
@@ -77,27 +77,64 @@ function sectionFromTool(
 	};
 }
 
+type ToolSection = ReturnType<typeof parseToolSection>;
+const toolSections = new WeakMap<UIToolCall, ToolSection>();
+const messageChanges = new WeakMap<UIMessage[], TurnChanges[]>();
+const userTurns = new WeakMap<UIMessage, TurnChanges>();
+function sectionFromTool(tool: UIToolCall): ToolSection {
+	const known = toolSections.get(tool);
+	if (known !== undefined) return known;
+	const parsed = parseToolSection(tool);
+	toolSections.set(tool, parsed);
+	return parsed;
+}
+
+/** Immutable source objects are the cache boundary; no global session/string index. */
 export function deriveTurnChanges(messages: UIMessage[]): TurnChanges[] {
+	const known = messageChanges.get(messages);
+	if (known) return known;
 	const turns: TurnChanges[] = [];
 	let turnIndex = -1;
 	let turnId = "";
 	let files = new Map<string, TurnFileChange>();
+	let user: UIMessage | undefined;
 
 	const flush = (): void => {
 		if (files.size === 0) return;
-		const list = [...files.values()];
-		turns.push({
+		const previous = user ? userTurns.get(user) : undefined;
+		const previousFiles = new Map(previous?.files.map((file) => [file.path, file]));
+		const list = [...files.values()].map((file) => {
+			const old = previousFiles.get(file.path);
+			return old &&
+				old.sections.length === file.sections.length &&
+				old.sections.every((section, i) => section === file.sections[i])
+				? old
+				: file;
+		});
+		if (
+			previous &&
+			previous.turnIndex === turnIndex &&
+			previous.files.length === list.length &&
+			previous.files.every((file, i) => file === list[i])
+		) {
+			turns.push(previous);
+			return;
+		}
+		const value: TurnChanges = {
 			turnId,
 			turnIndex,
 			files: list,
 			totalAdded: list.reduce((s, f) => s + f.added, 0),
 			totalRemoved: list.reduce((s, f) => s + f.removed, 0),
-		});
+		};
+		if (user) userTurns.set(user, value);
+		turns.push(value);
 	};
 
 	for (const m of messages) {
 		if (m.kind === "user") {
 			flush();
+			user = m;
 			turnIndex++;
 			turnId = m.id;
 			files = new Map();
@@ -125,5 +162,6 @@ export function deriveTurnChanges(messages: UIMessage[]): TurnChanges[] {
 		}
 	}
 	flush();
+	messageChanges.set(messages, turns);
 	return turns;
 }

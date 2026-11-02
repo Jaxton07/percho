@@ -1,7 +1,26 @@
 // @vitest-environment node
 import type { UiPluginContribution } from "@percho/shared";
 import { describe, expect, it } from "vitest";
-import { filterContributions } from "./manifest";
+import { filterContributions, validateManifest } from "./manifest";
+
+it("旧工具卡槽位拒绝整个清单，包含混合能力的插件", () => {
+	for (const extra of [
+		{},
+		{ headless: true },
+		{ contributions: [{ id: "overlay", region: "app.overlay", export: "Overlay" }] },
+	]) {
+		const manifest = {
+			name: "old-card",
+			perchoUi: 1,
+			main: "src/index.tsx",
+			slots: { "chat.tool-call-card": "OldCard", "chat.todo-panel": "Todo" },
+			...extra,
+		};
+		const before = JSON.stringify(manifest);
+		expect(validateManifest("old-card", manifest)).toBe("槽位 chat.tool-call-card 未知");
+		expect(JSON.stringify(manifest)).toBe(before);
+	}
+});
 
 /** filterContributions 纯函数测试：坏 manifest 的 contributions 防御（B2 配套；随实现迁至 manifest.ts） */
 

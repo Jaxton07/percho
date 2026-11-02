@@ -168,6 +168,40 @@ async function assertRendererAligned() {
 }
 
 describe("ticket 02 atomic commands and ordered cache publication", () => {
+	it("旧工具槽位使混合插件整体无效且不改写用户文件或旧分配，合法插件仍可构建", async () => {
+		const dir = join(state.root, "plugins", "old-card");
+		await mkdir(join(dir, "src"), { recursive: true });
+		await mkdir(join(dir, "dist"), { recursive: true });
+		const manifest = JSON.stringify({
+			name: "old-card",
+			perchoUi: 1,
+			main: "src/index.ts",
+			headless: true,
+			slots: { "chat.tool-call-card": "Old", "chat.todo-panel": "Todo" },
+			contributions: [{ id: "overlay", region: "app.overlay", export: "Overlay" }],
+		});
+		const source = "export function Todo(){return null;}";
+		const compiled = 'throw new Error("must not be loaded")';
+		await writeFile(join(dir, "plugin.json"), manifest);
+		await writeFile(join(dir, "src/index.ts"), source);
+		await writeFile(join(dir, "dist/index.js"), compiled);
+		await updateUiPluginsConfig({ kind: "set-plugin-enabled", name: "old-card", enabled: true });
+		await updateUiPluginsConfig({ kind: "assign-slot", slot: "chat.tool-call-card", pluginName: "old-card" });
+		const configBefore = await readFile(join(state.root, "ui-plugins.json"), "utf8");
+		await manager.scanAll();
+		expect(manager.list().find((p) => p.name === "old-card")?.invalidReason).toBe(
+			"槽位 chat.tool-call-card 未知",
+		);
+		expect(await manager.readCode("old-card")).toHaveProperty("error");
+		expect(await readFile(join(dir, "plugin.json"), "utf8")).toBe(manifest);
+		expect(await readFile(join(dir, "src/index.ts"), "utf8")).toBe(source);
+		expect(await readFile(join(dir, "dist/index.js"), "utf8")).toBe(compiled);
+		expect(await readFile(join(state.root, "ui-plugins.json"), "utf8")).toBe(configBefore);
+		const legal = join(state.root, "plugins", "alpha");
+		await mkdir(join(legal, "src"), { recursive: true });
+		await writeFile(join(legal, "src/index.ts"), source);
+		expect(await manager.readCode("alpha")).toHaveProperty("code");
+	});
 	it("real JsonStore preserves two concurrent commands even without manager serialization", async () => {
 		await bounded(
 			Promise.all([
@@ -189,14 +223,14 @@ describe("ticket 02 atomic commands and ordered cache publication", () => {
 				invoke("uiPluginsSetPluginEnabled", { name: "alpha", enabled: true }),
 				invoke("uiPluginsSetPluginEnabled", { name: "beta", enabled: true }),
 				invoke("uiPluginsAssignSlot", { slot: "chat.todo-panel", pluginName: "alpha" }),
-				invoke("uiPluginsAssignSlot", { slot: "chat.tool-call-card", pluginName: "beta" }),
+				invoke("uiPluginsAssignSlot", { slot: "chat.subagent-card", pluginName: "beta" }),
 			]),
 			"IPC commands",
 		);
 		expect(Object.keys((await loadUiPluginsConfig()).plugins).sort()).toEqual(["alpha", "beta"]);
 		expect((await loadUiPluginsConfig()).assignments).toEqual({
 			"chat.todo-panel": "alpha",
-			"chat.tool-call-card": "beta",
+			"chat.subagent-card": "beta",
 		});
 		expect(state.send).toHaveBeenCalledTimes(4);
 		await assertRendererAligned();

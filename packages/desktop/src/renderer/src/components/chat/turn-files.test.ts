@@ -1,5 +1,5 @@
 import { deriveTurnChanges, type UIMessage, type UIToolCall } from "@percho/shared";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 
 /** noUncheckedIndexedAccess 下的数组取值断言 */
 function at<T>(arr: readonly T[], i: number): T {
@@ -46,6 +46,36 @@ function assistant(id: string, tools: UIToolCall[], text = "a"): UIMessage {
 }
 
 describe("deriveTurnChanges", () => {
+	it("复用未变化来源和汇总，新增输出不重新解析旧工具；真实替换只失效对应文件", () => {
+		const first = tool("write", { path: "a.ts", content: "first" });
+		const second = tool("write", { path: "b.ts", content: "second" });
+		const messages = [user("u1"), assistant("a1", [first, second])];
+		const parse = vi.spyOn(JSON, "parse");
+		const initial = deriveTurnChanges(messages);
+		expect(parse).toHaveBeenCalledTimes(2);
+		expect(deriveTurnChanges(messages)).toBe(initial);
+		expect(deriveTurnChanges([...messages, assistant("a2", [])])[0]).toBe(initial[0]);
+		expect(parse).toHaveBeenCalledTimes(2);
+		const replaced = { ...first, args: JSON.stringify({ path: "a.ts", content: "changed\nmore" }) };
+		const next = deriveTurnChanges([at(messages, 0), assistant("a1", [replaced, second])]);
+		expect(next[0]?.files[0]?.sections[0]?.content).toBe("changed\nmore");
+		expect(next[0]?.files[1]).toBe(initial[0]?.files[1]);
+		expect(parse).toHaveBeenCalledTimes(3);
+		parse.mockRestore();
+	});
+	it("整体重建和跨会话相同标识不复用旧内容；前插仅改变编号", () => {
+		const original = [user("same"), assistant("a", [tool("write", { path: "a", content: "one" })])];
+		const before = deriveTurnChanges(original);
+		const other = deriveTurnChanges([
+			user("same"),
+			assistant("a", [tool("write", { path: "a", content: "two" })]),
+		]);
+		expect(other[0]?.files[0]?.sections[0]?.content).toBe("two");
+		expect(other[0]).not.toBe(before[0]);
+		const prepend = deriveTurnChanges([user("earlier"), ...original]);
+		expect(prepend[0]?.turnIndex).toBe(1);
+		expect(prepend[0]?.files[0]).toBe(before[0]?.files[0]);
+	});
 	it("空消息 / 无变更 → []", () => {
 		expect(deriveTurnChanges([])).toEqual([]);
 		expect(deriveTurnChanges([user("u1"), assistant("a1", [tool("read", { path: "x" })])])).toEqual([]);

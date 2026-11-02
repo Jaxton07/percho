@@ -25,7 +25,7 @@ describe("ui-plugins build", () => {
 import { useState } from "react";
 import { Button, useT } from "@percho/plugin-api";
 
-export function ToolCallCard({ tool }: { tool: { name: string } }) {
+export function ExamplePanel({ tool }: { tool: { name: string } }) {
 	const [n, setN] = useState(0);
 	const t = useT();
 	return <Button onClick={() => setN(n + 1)}>{t("message.thinking")}{tool.name}{n}</Button>;

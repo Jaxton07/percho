@@ -90,14 +90,14 @@ describe("工具名称中文投影", () => {
 		useI18nStore.setState({ language: "en" });
 		expect(renderToStaticMarkup(createElement(ToolCallCard, { tool }))).toContain("Show_image");
 	});
-	it("单独 show_image 也包在外层折叠中，摘要无工具名，明细保留", () => {
+	it("单独 show_image 也包在外层折叠中，摘要无工具名，关闭时不挂明细", () => {
 		const items: MetaItem[] = [{ thinking: "", tools: [tool] }];
 		const html = renderToStaticMarkup(createElement(MetaGroup, { items, working: false }));
 		expect(html).toContain("group/outer");
 		const outerSummary = html.slice(html.indexOf("<summary"), html.indexOf("</summary>"));
 		expect(outerSummary).toContain("已完成");
 		expect(outerSummary).not.toContain("展示图片");
-		expect(html.slice(html.indexOf("</summary>"))).toContain("展示图片");
+		expect(html.slice(html.indexOf("</summary>"))).not.toContain("展示图片");
 	});
 });
 

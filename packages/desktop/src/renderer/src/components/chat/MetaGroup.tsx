@@ -3,9 +3,10 @@ import { Fragment, memo, useMemo } from "react";
 import type { OrbState } from "thinking-orbs";
 import { ThinkingOrb } from "thinking-orbs";
 import { useT } from "../../i18n";
-import { Slot } from "../../plugins/Slot";
-import { UI_SLOTS } from "../../plugins/slots";
+import { thinkingViewKey } from "../../lib/session-view-keys";
 import { ExpandArrowIcon } from "../icons";
+import { DeferredDetails } from "../ui/DeferredDetails";
+import { SelectableText } from "../ui/SelectableText";
 import { summaryLabel } from "./meta-summary-label";
 import { type LivePreviewItem, PreviewTicker } from "./PreviewTicker";
 import { ToolCallCard } from "./ToolCallCard";
@@ -15,22 +16,27 @@ import { useSweepHighlight } from "./use-sweep-highlight";
 export type { MetaItem };
 
 /** 思考过程行（内层折叠，与 tool call 行同风格） */
-function ThinkingRow({ thinking }: { thinking: string }) {
+const ThinkingRow = memo(function ThinkingRow({ thinking, viewKey }: { thinking: string; viewKey: string }) {
 	const t = useT();
 	return (
-		<details className="group/dets drawer-details">
-			<summary className="group/row flex cursor-pointer items-center gap-2 py-0.5 select-none [&::-webkit-details-marker]:hidden">
-				<span className="shrink-0 text-ui-13 font-semibold text-ink-faint transition-colors group-hover/row:text-ink">
-					{t("message.thinking")}
-				</span>
-				<ExpandArrowIcon className="shrink-0 text-ink-faint opacity-0 transition-[opacity,transform,color] group-hover/row:opacity-100 group-hover/row:text-ink-2 group-open/dets:rotate-90" />
-			</summary>
-			<div className="py-1 pl-4 text-ui-13 leading-relaxed whitespace-pre-wrap break-words text-ink-dim select-text">
-				{thinking}
-			</div>
-		</details>
+		<DeferredDetails
+			viewKey={viewKey}
+			className="group/dets drawer-details"
+			summaryClassName="group/row flex cursor-pointer items-center gap-2 py-0.5 select-none [&::-webkit-details-marker]:hidden"
+			summary={
+				<>
+					<span className="shrink-0 text-ui-13 font-semibold text-ink-faint transition-colors group-hover/row:text-ink">
+						{t("message.thinking")}
+					</span>
+					<ExpandArrowIcon className="shrink-0 text-ink-faint opacity-0 transition-[opacity,transform,color] group-hover/row:opacity-100 group-hover/row:text-ink-2 group-open/dets:rotate-90" />
+				</>
+			}
+			bodyClassName="py-1 pl-4 text-ui-13 leading-relaxed whitespace-pre-wrap break-words text-ink-dim select-text"
+		>
+			{() => <SelectableText text={thinking} />}
+		</DeferredDetails>
 	);
-}
+});
 /** 圆点样式：done = 实心 ink-dim（与 worked 态标题同色，弱化存在感），error = 琥珀 warn token，running = 空心呼吸（globals.css meta-dot-running）；4px 小点紧密成串 */
 function dotClass(state: MetaDot["state"]): string {
 	const base = "h-1 w-1 shrink-0 rounded-full";
@@ -53,10 +59,23 @@ function dotClass(state: MetaDot["state"]): string {
  * 语言切换不受影响：useT/i18n 订阅在组件内部，父级 memo 拦不住也不需要拦。
  */
 function metaGroupPropsEqual(
-	a: { items: MetaItem[]; working: boolean; endImmediately?: boolean; subagentCount?: number },
-	b: { items: MetaItem[]; working: boolean; endImmediately?: boolean; subagentCount?: number },
+	a: {
+		items: MetaItem[];
+		working: boolean;
+		endImmediately?: boolean;
+		subagentCount?: number;
+		viewKey?: string;
+	},
+	b: {
+		items: MetaItem[];
+		working: boolean;
+		endImmediately?: boolean;
+		subagentCount?: number;
+		viewKey?: string;
+	},
 ): boolean {
 	if (
+		a.viewKey !== b.viewKey ||
 		a.working !== b.working ||
 		a.endImmediately !== b.endImmediately ||
 		a.subagentCount !== b.subagentCount ||
@@ -74,12 +93,14 @@ export const MetaGroup = memo(function MetaGroup({
 	working,
 	endImmediately = false,
 	subagentCount = 0,
+	viewKey,
 }: {
 	items: MetaItem[];
 	working: boolean;
 	endImmediately?: boolean;
 	/** 该组派生的子代理数（统计行正向显示「子代理 ×N」；由 MessageList 按组归属计算） */
 	subagentCount?: number;
+	viewKey?: string;
 }) {
 	const t = useT();
 	const count = items.reduce((n, item) => n + (item.thinking ? 1 : 0) + item.tools.length, 0);
@@ -93,13 +114,17 @@ export const MetaGroup = memo(function MetaGroup({
 	const shownWorking = useShownWorking(working, endImmediately);
 	// 状态行小 orb 恒显示：中央动画开关（centerOrbEnabled）与本行解耦，互不让位
 
-	const rows = items.flatMap((item, i) => [
-		// biome-ignore lint/suspicious/noArrayIndexKey: 折叠组内项无独立 id，列表顺序稳定
-		item.thinking ? <ThinkingRow key={`thinking-${i}`} thinking={item.thinking} /> : null,
-		...item.tools.map((tool) => (
-			<Slot key={tool.key} name={UI_SLOTS.ToolCallCard} props={{ tool }} fallback={ToolCallCard} />
-		)),
-	]);
+	const content = () =>
+		items.flatMap((item, i) => [
+			item.thinking ? (
+				<ThinkingRow
+					key={thinkingViewKey(item.sourceId, viewKey, i)}
+					thinking={item.thinking}
+					viewKey={thinkingViewKey(item.sourceId, viewKey, i)}
+				/>
+			) : null,
+			...item.tools.map((tool) => <ToolCallCard key={tool.key} tool={tool} />),
+		]);
 	// orb 状态（名字是包的渲染器名，与我们的语义不同名）：
 	// tool 运行中 → connecting（星座连线 + 信号跑边）
 	// 纯 thinking → working（粒子轨道，转速更快）
@@ -145,64 +170,71 @@ export const MetaGroup = memo(function MetaGroup({
 	const hasShowImage = items.some((item) => item.tools.some((tool) => tool.name === "show_image"));
 	const showWrapper = count >= 2 || shownWorking || subagentCount > 0 || hasShowImage;
 	if (!showWrapper) {
-		return <div className="-mb-4 flex flex-col gap-1.5">{rows}</div>;
+		return <div className="-mb-4 flex flex-col gap-1.5">{content()}</div>;
 	}
 
 	return (
 		// -mb-4：抵消容器 gap-6 的一部分，折叠行与后续正文净距 8px（成组与单行一致）
 		<div className="-mb-4">
-			<details className="group/outer peer drawer-details">
-				<summary className="group/row flex cursor-pointer select-none flex-col [&::-webkit-details-marker]:hidden">
-					{/* min-h-6：与内联预览行（h-6）等高，working/worked 切换首行行高不变 */}
-					<div className="flex min-h-6 w-full items-center gap-2 py-0.5">
-						{shownWorking ? (
-							<>
-								<div className="flex shrink-0 items-center gap-2">
-									<ThinkingOrb state={orbState} size={20} paused={false} />
-									<span
-										ref={labelRef}
-										className="sweep-target text-ui-14 font-bold text-ink-working transition-colors group-hover/row:text-ink"
-									>
-										{t(labelKey)}
-									</span>
-								</div>
-								{/* 实时预览内联进标题行（单行截断，展开组时隐藏） */}
-								<div ref={tickerWrapRef} className="min-w-0 flex-1 group-open/outer:hidden">
-									<PreviewTicker items={liveItems} reserveSpace />
-								</div>
-							</>
-						) : segments.length > 0 ? (
-							/* worked 态标题 = 分类统计（原展开区速读行提上来）；单行截断，hover 变色提示可展开 */
-							<span className="min-w-0 flex-1 truncate text-ui-13 text-ink-dim transition-colors group-hover/row:text-ink">
-								{segments.map((seg, i) => (
-									<Fragment key={seg.key}>
-										{i > 0 && <span className="opacity-50"> · </span>}
-										{summaryLabel(t, seg)}
-									</Fragment>
-								))}
-							</span>
-						) : (
-							<span
-								ref={labelRef}
-								className="text-ui-14 font-bold text-ink-dim transition-colors group-hover/row:text-ink"
-							>
-								{t("message.worked")}
-							</span>
-						)}
-					</div>
-					{/* 圆点行：一次 tool call 一粒（running 空心呼吸 → done 实心 ink-dim / error ink-faint），working 期实时追加、
+			<DeferredDetails
+				viewKey={viewKey ? `meta:${viewKey}` : undefined}
+				className="group/outer peer drawer-details"
+				summaryClassName="group/row flex cursor-pointer select-none flex-col [&::-webkit-details-marker]:hidden"
+				summary={
+					<>
+						{/* min-h-6：与内联预览行（h-6）等高，working/worked 切换首行行高不变 */}
+						<div className="flex min-h-6 w-full items-center gap-2 py-0.5">
+							{shownWorking ? (
+								<>
+									<div className="flex shrink-0 items-center gap-2">
+										<ThinkingOrb state={orbState} size={20} paused={false} />
+										<span
+											ref={labelRef}
+											className="sweep-target text-ui-14 font-bold text-ink-working transition-colors group-hover/row:text-ink"
+										>
+											{t(labelKey)}
+										</span>
+									</div>
+									{/* 实时预览内联进标题行（单行截断，展开组时隐藏） */}
+									<div ref={tickerWrapRef} className="min-w-0 flex-1 group-open/outer:hidden">
+										<PreviewTicker items={liveItems} reserveSpace />
+									</div>
+								</>
+							) : segments.length > 0 ? (
+								/* worked 态标题 = 分类统计（原展开区速读行提上来）；单行截断，hover 变色提示可展开 */
+								<span className="min-w-0 flex-1 truncate text-ui-13 text-ink-dim transition-colors group-hover/row:text-ink">
+									{segments.map((seg, i) => (
+										<Fragment key={seg.key}>
+											{i > 0 && <span className="opacity-50"> · </span>}
+											{summaryLabel(t, seg)}
+										</Fragment>
+									))}
+								</span>
+							) : (
+								<span
+									ref={labelRef}
+									className="text-ui-14 font-bold text-ink-dim transition-colors group-hover/row:text-ink"
+								>
+									{t("message.worked")}
+								</span>
+							)}
+						</div>
+						{/* 圆点行：一次 tool call 一粒（running 空心呼吸 → done 实心 ink-dim / error ink-faint），working 期实时追加、
 					    结束后随 items 冻结原位；超长 flex-wrap 换行；展开组时隐藏（展开区有完整工具卡）。
 					    左缘与状态行（orb/标签）对齐；gap-1 紧密成串（密度感） */}
-					{dots.length > 0 && (
-						<div className="mb-0.5 flex flex-wrap gap-1 py-0.5 group-open/outer:hidden">
-							{dots.map((dot) => (
-								<span key={dot.key} className={dotClass(dot.state)} />
-							))}
-						</div>
-					)}
-				</summary>
-				<div className="flex flex-col gap-1.5 py-1">{rows}</div>
-			</details>
+						{dots.length > 0 && (
+							<div className="mb-0.5 flex flex-wrap gap-1 py-0.5 group-open/outer:hidden">
+								{dots.map((dot) => (
+									<span key={dot.key} className={dotClass(dot.state)} />
+								))}
+							</div>
+						)}
+					</>
+				}
+				bodyClassName="flex flex-col gap-1.5 py-1"
+			>
+				{content}
+			</DeferredDetails>
 		</div>
 	);
 }, metaGroupPropsEqual);

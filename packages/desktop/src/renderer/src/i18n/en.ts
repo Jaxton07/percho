@@ -1000,7 +1000,6 @@ export const en: Messages = {
 			statusBuildFailed: "Build failed",
 			statusLoadFailed: "Load failed",
 			slotsLabel: "Slots",
-			slotToolCallCard: "Tool call card",
 			slotSubagentCard: "Subagent card",
 			slotTodoPanel: "Todo panel",
 			contributionsLabel: "Contributions",

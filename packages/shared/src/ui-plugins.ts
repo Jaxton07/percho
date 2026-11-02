@@ -5,7 +5,6 @@
 
 /** 槽位/区域标识的唯一来源；renderer重导出，main manifest校验从值派生。 */
 export const UI_SLOTS = {
-	ToolCallCard: "chat.tool-call-card",
 	SubagentCard: "chat.subagent-card",
 	TodoPanel: "chat.todo-panel",
 } as const;
