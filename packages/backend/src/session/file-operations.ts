@@ -7,7 +7,10 @@ export class SessionFileOperations {
 	private readonly busy = new Map<string, { kind: string; token: object }>();
 	key(file: string): string {
 		try {
-			return realpathSync(file);
+			// Legacy realpath on Windows can retain the caller's casing even when it
+			// names the same file. Native resolution preserves the filesystem's actual
+			// spelling for identity/locks without lowercasing paths used for I/O.
+			return realpathSync.native(file);
 		} catch (error) {
 			if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
 			return resolve(file);

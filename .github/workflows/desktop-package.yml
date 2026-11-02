@@ -53,7 +53,7 @@ jobs:
         run: xvfb-run -a npm run package:release -- --arch x64 --output .local/release-output
       - name: Verify Windows media filesystem contracts
         if: runner.os == 'Windows'
-        run: npm run test -w packages/backend -- media-store.test.ts media-maintenance-preview.test.ts media-maintenance-transactions.test.ts --maxWorkers=2
+        run: npm run test -w packages/backend -- file-operations.test.ts json-store-durable.test.ts media-store.test.ts media-maintenance-preview.test.ts media-maintenance-transactions.test.ts --maxWorkers=2
       - name: Verify Windows packaged media worker and recovery
         if: runner.os == 'Windows'
         run: node scripts/check-session-media-package.mjs --build-output .local/release-output

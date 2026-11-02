@@ -277,7 +277,9 @@ async function scan(
 }
 
 async function syncFile(file: string) {
-	const handle = await open(file, constants.O_RDONLY | (constants.O_NOFOLLOW ?? 0));
+	// FlushFileBuffers requires write access on Windows, even when no bytes are changed.
+	const access = process.platform === "win32" ? constants.O_RDWR : constants.O_RDONLY;
+	const handle = await open(file, access | (constants.O_NOFOLLOW ?? 0));
 	try {
 		await handle.sync();
 	} finally {

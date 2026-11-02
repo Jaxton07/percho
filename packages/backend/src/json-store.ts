@@ -133,15 +133,16 @@ export class JsonStore<T> {
 			`.${basename(this.path)}.${process.pid}.${Math.random().toString(36).slice(2)}.tmp`,
 		);
 		try {
-			await writeFile(tmp, this.stringify(value), { encoding: "utf8", mode: this.mode });
 			if (this.durable) {
-				const handle = await open(tmp, "r");
+				// Flush the original writable handle: Windows rejects fsync on read-only handles.
+				const handle = await open(tmp, "wx", this.mode);
 				try {
+					await handle.writeFile(this.stringify(value), "utf8");
 					await handle.sync();
 				} finally {
 					await handle.close();
 				}
-			}
+			} else await writeFile(tmp, this.stringify(value), { encoding: "utf8", mode: this.mode });
 			await rename(tmp, this.path);
 			if (this.durable && process.platform !== "win32") {
 				const handle = await open(dir, "r");
@@ -165,15 +166,15 @@ export class JsonStore<T> {
 			`.${basename(this.path)}.${process.pid}.${Math.random().toString(36).slice(2)}.tmp`,
 		);
 		try {
-			writeFileSync(tmp, this.stringify(value), { encoding: "utf8", mode: this.mode });
 			if (this.durable) {
-				const fd = openSync(tmp, "r");
+				const fd = openSync(tmp, "wx", this.mode);
 				try {
+					writeFileSync(fd, this.stringify(value), "utf8");
 					fsyncSync(fd);
 				} finally {
 					closeSync(fd);
 				}
-			}
+			} else writeFileSync(tmp, this.stringify(value), { encoding: "utf8", mode: this.mode });
 			renameSync(tmp, this.path);
 			if (this.durable && process.platform !== "win32") {
 				const fd = openSync(dir, "r");
