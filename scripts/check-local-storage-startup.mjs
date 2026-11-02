@@ -94,6 +94,18 @@ async function connect(port, child) {
 		return result.result.value;
 	};
 	await send("Emulation.setFocusEmulationEnabled", { enabled: true });
+	// TargetInfo can advertise the file URL before its initial navigation commits.
+	// Capture timeOrigin/observe startup only in the real preload-backed document,
+	// not the transient about:blank execution context. Do not wait for app-ready:
+	// the setup/no-flash and no-subsequent-navigation assertions still apply.
+	await wait(async () => {
+		try {
+			return await evaluate("location.protocol==='file:' && !!document.documentElement && !!window.pi");
+		} catch (error) {
+			if (/context.*destroyed|Cannot find context|navigated/i.test(String(error))) return false;
+			throw error;
+		}
+	}, "initial application document");
 	return {
 		pageId: page.id,
 		socket,
