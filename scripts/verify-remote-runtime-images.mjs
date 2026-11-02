@@ -1,7 +1,7 @@
 /** Disposable Linux fixture only. /work is read-only; all runtime/model data belongs to /state/i. */
 import { execFile } from "node:child_process";
-import { createHash, randomBytes } from "node:crypto";
-import { chmod, mkdir, readFile, writeFile } from "node:fs/promises";
+import { createHash, randomBytes, randomUUID } from "node:crypto";
+import { chmod, mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { createServer } from "node:http";
 import { dirname, join } from "node:path";
 import { pathToFileURL } from "node:url";
@@ -51,6 +51,7 @@ const png = Buffer.concat([
 ]);
 await writeFile(`${project}/noise.png`, png);
 let modelSawImages = false,
+	modelSawRead = false,
 	modelError;
 const model = createServer(async (request, response) => {
 	try {
@@ -63,6 +64,23 @@ const model = createServer(async (request, response) => {
 			user.content.filter((part) => part.type === "image_url").length !== 2
 		)
 			throw new Error("Model did not receive both images");
+		const expectedUrl = `data:image/png;base64,${png.toString("base64")}`;
+		if (
+			user.content
+				.filter((part) => part.type === "image_url")
+				.some((part) => part.image_url?.url !== expectedUrl)
+		)
+			throw new Error("Input images were transformed");
+		if (parsed.messages.some((message) => message.role === "tool")) {
+			const images = parsed.messages.flatMap((message) =>
+				Array.isArray(message.content) ? message.content.filter((part) => part.type === "image_url") : [],
+			);
+			if (images.length !== 3 || images.some((part) => part.image_url?.url !== expectedUrl))
+				throw new Error("read lost original bytes or display-only images leaked to the model");
+			if (JSON.stringify(parsed).includes(createHash("sha256").update(png).digest("hex")))
+				throw new Error("Display asset locator leaked to the model");
+			modelSawRead = true;
+		}
 		modelSawImages = true;
 		response.writeHead(200, { "Content-Type": "text/event-stream" });
 		const send = (delta, finish_reason = null) =>
@@ -129,6 +147,142 @@ await writeFile(
 const cli = async (...args) =>
 	JSON.parse((await exec(process.execPath, [entry, ...args, "--root", root], { timeout: 40000 })).stdout);
 let client;
+async function verifyMaintenance(session, socket, initialInstance) {
+	await client.invoke("closeSession", { sessionId: session.sessionId });
+	const source = (await readFile(session.sessionFile, "utf8")).trimEnd().split("\n");
+	const owner = randomUUID(),
+		file = join(dirname(session.sessionFile), `maintenance-${owner}.jsonl`);
+	const legacy = source.map((line) => {
+		const entry = JSON.parse(line);
+		if (entry.type === "session") entry.id = owner;
+		if (
+			entry.type === "message" &&
+			entry.message?.role === "toolResult" &&
+			entry.message.toolName === "show_image"
+		)
+			entry.message.details.images = [
+				{ data: png.toString("base64"), mimeType: "image/png" },
+				{ data: png.toString("base64"), mimeType: "image/png" },
+			];
+		return JSON.stringify(entry);
+	});
+	legacy.push("", "invalid legacy line kept verbatim");
+	const original = Buffer.from(legacy.join("\n") + "\n"),
+		hash = createHash("sha256").update(original).digest("hex");
+	await writeFile(file, original, { mode: 0o600, flag: "wx" });
+	const queries = [],
+		poll = async (job) => {
+			const deadline = performance.now() + 40000;
+			while (["queued", "running", "cancelling"].includes(job.status)) {
+				if (performance.now() > deadline) throw new Error("Linux maintenance worker timed out");
+				await new Promise((resolve) => setTimeout(resolve, 15));
+				const started = performance.now();
+				job = await client.invoke("getSessionMediaJob", { jobId: job.jobId });
+				queries.push(performance.now() - started);
+			}
+			if (job.status !== "completed") throw new Error(job.error ?? job.status);
+			return job;
+		};
+	const start = performance.now();
+	const preview = await poll(await client.invoke("startSessionMediaPreview", { sessionFile: file }));
+	if (
+		preview.result.imageCount !== 2 ||
+		preview.result.invalidLines !== 1 ||
+		preview.result.sourceHash !== hash ||
+		!original.equals(await readFile(file))
+	)
+		throw new Error("Linux worker preview changed data or counts");
+	const requestId = randomUUID(),
+		compactStart = performance.now();
+	const job = await client.invoke("startSessionMediaCompaction", {
+		sessionFile: file,
+		requestId,
+		expectedHash: hash,
+		confirmed: true,
+	});
+	const startMilliseconds = performance.now() - compactStart;
+	client.close();
+	client = await RuntimeClient.connect(socket, () => {});
+	await client.attach("maintenance-reconnected");
+	await Promise.all([client.invoke("getLoadedSessions"), client.invoke("getPendingInteractions")]);
+	const complete = await poll(await client.invoke("getSessionMediaJob", { jobId: job.jobId }));
+	const transactionMilliseconds = performance.now() - compactStart;
+	let controlledSlowIo = false;
+	if (process.env.PERCHO_MEDIA_SLOW_TEST === "1") {
+		const proof = JSON.parse(await readFile("/state/slow-worker.json", "utf8"));
+		if (proof.kind !== "prepare" || proof.delayMs !== 32000 || transactionMilliseconds < 32000)
+			throw new Error("Actual Linux worker did not execute the controlled slow IO checkpoint");
+		controlledSlowIo = true;
+	}
+	if (
+		complete.transaction?.phase !== "complete" ||
+		!original.equals(await readFile(complete.transaction.backup))
+	)
+		throw new Error("Linux compaction backup/receipt mismatch");
+	const candidate = await readFile(file, "utf8");
+	for (const line of legacy) {
+		let entry;
+		try {
+			entry = JSON.parse(line);
+		} catch {
+			if (line && !candidate.includes(line)) throw new Error("Bad line disappeared");
+			continue;
+		}
+		if (
+			entry.type === "message" &&
+			(entry.message?.role === "user" || entry.message?.toolName === "read") &&
+			!candidate.includes(line)
+		)
+			throw new Error("Input/read line was rewritten");
+	}
+	client.close();
+	await cli("stop");
+	const restarted = await cli("start");
+	if (restarted.instanceId === initialInstance) throw new Error("Daemon restart did not change instance");
+	client = await RuntimeClient.connect(socket, () => {});
+	await client.attach("maintenance-restarted");
+	await Promise.all([client.invoke("getLoadedSessions"), client.invoke("getPendingInteractions")]);
+	const transaction = await client.invoke("getSessionMediaTransaction", { requestId });
+	if (
+		transaction?.phase !== "complete" ||
+		transaction.outputHash !== createHash("sha256").update(candidate).digest("hex")
+	)
+		throw new Error("Restart lost the durable receipt");
+	const replay = await client.invoke("startSessionMediaCompaction", {
+		sessionFile: file,
+		requestId,
+		expectedHash: hash,
+		confirmed: true,
+	});
+	if (
+		replay.transaction?.operationId !== transaction.operationId ||
+		(await readFile(file, "utf8")) !== candidate
+	)
+		throw new Error("Request id replay changed published content");
+	await poll(
+		await client.invoke("startSessionMediaRestore", {
+			requestId: randomUUID(),
+			compactionRequestId: requestId,
+			confirmed: true,
+		}),
+	);
+	if (!original.equals(await readFile(file))) throw new Error("Linux restore was not byte-identical");
+	return {
+		previewWorker: true,
+		controlledSlowIo,
+		transactionMilliseconds: Math.round(transactionMilliseconds),
+		originalBytes: original.length,
+		compactedBytes: Buffer.byteLength(candidate),
+		startMilliseconds: Math.round(startMilliseconds * 100) / 100,
+		maxQueryMilliseconds: Math.round(Math.max(0, ...queries) * 100) / 100,
+		detachedCompletion: true,
+		durableAfterDaemonRestart: true,
+		sameRequestIdNotReapplied: true,
+		inputReadAndBadLinesUnchanged: true,
+		restoreByteIdentical: true,
+		durationMs: Math.round(performance.now() - start),
+	};
+}
 const start = performance.now(),
 	rssBefore = process.memoryUsage().rss;
 try {
@@ -157,7 +311,10 @@ try {
 	const deadline = Date.now() + 20000;
 	while (Date.now() < deadline) {
 		if (modelError) throw modelError;
-		messages = await client.invoke("getSessionMessages", { sessionId: session.sessionId });
+		messages = await client.invoke("getSessionMessages", {
+			sessionId: session.sessionId,
+			imageMode: "references",
+		});
 		if (
 			JSON.stringify(messages).includes("REMOTE_IMAGES_COMPLETE") &&
 			!(await client.invoke("getStats", { sessionId: session.sessionId })).streaming
@@ -165,26 +322,84 @@ try {
 			break;
 		await new Promise((resolve) => setTimeout(resolve, 50));
 	}
-	if (!modelSawImages || !JSON.stringify(messages).includes("REMOTE_IMAGES_COMPLETE"))
+	if (!modelSawImages || !modelSawRead || !JSON.stringify(messages).includes("REMOTE_IMAGES_COMPLETE"))
 		throw new Error("Image task did not complete");
 	const shown = events.find((payload) => payload.event.toolName === "show_image")?.event.result?.details
 		?.images;
-	if (shown?.length !== 2 || shown.some((image) => image.data !== png.toString("base64")))
-		throw new Error("show_image lost image bytes");
+	if (shown?.length !== 2 || shown.some((image) => image.kind !== "reference" || image.data))
+		throw new Error("show_image did not publish lightweight display references");
+	const baseline = await client.invoke("getSessionBaseline", {
+		sessionId: session.sessionId,
+		imageMode: "references",
+		historyTurns: 4,
+	});
+	const displayed = baseline.transcript.messages.find(
+		(message) => message.kind === "image" && message.images.length === 2,
+	);
+	if (!displayed || displayed.images.some((image) => image.kind !== "reference"))
+		throw new Error("Displayed images missing from the authoritative baseline");
+	const sourceBefore = createHash("sha256")
+		.update(await readFile(session.sessionFile))
+		.digest("hex");
+	await rm(`${project}/noise.png`); // 只读图按资产/entry来源，不回读原始工作区路径。
+	for (const image of displayed.images) {
+		const original = await client.invoke("getSessionImage", {
+			sessionId: image.ownerSessionId,
+			imageId: image.id,
+			revision: image.revision,
+		});
+		if (original.data !== png.toString("base64"))
+			throw new Error("Reference lookup lost original image bytes");
+	}
+	let denied = false;
+	try {
+		await client.invoke("getSessionImage", {
+			sessionId: session.sessionId,
+			imageId: `${project}/noise.png`,
+			revision: displayed.images[0].revision,
+		});
+	} catch {
+		denied = true;
+	}
+	if (!denied) throw new Error("Path-shaped image locator was accepted");
+	if (
+		createHash("sha256")
+			.update(await readFile(session.sessionFile))
+			.digest("hex") !== sourceBefore
+	)
+		throw new Error("History/image reads rewrote the source");
+	const legacy = await client.invoke("getSessionMessages", { sessionId: session.sessionId });
+	const userImages = legacy.find((message) => message.role === "user")?.images;
+	if (userImages?.length !== 2 || userImages.some((image) => image.data !== png.toString("base64")))
+		throw new Error("Full-mode input image compatibility changed");
+	if (Buffer.byteLength(JSON.stringify(baseline)) > 256 * 1024)
+		throw new Error("Standard image baseline exceeds its page budget");
 	const read = events.find((payload) => payload.event.toolName === "read")?.event.result?.content;
-	if (!read?.some((item) => item.type === "image" && item.data))
-		throw new Error("read image event did not arrive");
+	if (!read?.some((item) => item.type === "image")) throw new Error("read image event did not arrive");
+	await writeFile(`${project}/noise.png`, png, { mode: 0o600 }); // 后续离线验包场景复用该合成文件；删除期间已完成资产字节验证。
+	const maintenance = await verifyMaintenance(session, socket, info.instanceId);
 	console.log(
 		JSON.stringify({
 			passed: true,
 			arch: process.arch,
+			maintenance,
 			inputBytes: png.length * 2,
 			historyBytes: Buffer.byteLength(JSON.stringify(messages)),
 			durationMs: Math.round(performance.now() - start),
 			clientRssDeltaMiB: Math.round((process.memoryUsage().rss - rssBefore) / 1048576),
-			serverRssKiB: Number((await readFile(`/proc/${info.pid}/status`, "utf8")).match(/VmRSS:\s+(\d+)/)?.[1]),
+			serverRssKiB: Number(
+				(await readFile(`/proc/${(await cli("status")).pid}/status`, "utf8")).match(/VmRSS:\s+(\d+)/)?.[1],
+			),
 			showImageCount: shown.length,
 			readImage: true,
+			displayReferences: true,
+			originalImageBytesVerified: true,
+			modelInputAndReadUnchanged: modelSawRead,
+			displayImagesNotInModel: true,
+			baselineBytes: Buffer.byteLength(JSON.stringify(baseline)),
+			fullModeInputCompatibility: true,
+			pathRejected: true,
+			sourceUnchanged: true,
 		}),
 	);
 } finally {

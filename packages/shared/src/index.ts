@@ -1,6 +1,7 @@
 export * from "./cache-warming";
 export * from "./channel-subscriptions";
 export * from "./composer-document";
+export * from "./display-image";
 export * from "./environment";
 export * from "./environment-ui-state";
 export * from "./errors";
@@ -15,6 +16,9 @@ export * from "./packages";
 export * from "./remote-runtime";
 export * from "./runtime-node-policy";
 export * from "./session";
+export * from "./session-history";
+export * from "./session-media-maintenance";
+export * from "./session-switch-diagnostics";
 export * from "./settings";
 export * from "./sidebar";
 export * from "./skill-invocation";

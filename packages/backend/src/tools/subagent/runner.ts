@@ -79,6 +79,10 @@ export interface RunSubagentDeps {
 }
 
 export interface SubagentRunHandle {
+	/** 仅借用公开读取面；检视页不能创建另一个SDK运行上下文。 */
+	getSource?: () => import("../../session/read-only-view").RunningSessionSource;
+	/** 完整runner清理完成；删除必须等待，不能只等待SDK abort。 */
+	completion?: Promise<void>;
 	abort: () => Promise<void>;
 	dispose: () => void;
 	getBranch: () => ReturnType<SessionManager["getBranch"]>;
@@ -292,7 +296,12 @@ export async function runSubagent(deps: RunSubagentDeps, input: RunSubagentInput
 	};
 	let aborted = false;
 	let disposed = false;
+	let complete!: () => void;
+	const completion = new Promise<void>((resolve) => {
+		complete = resolve;
+	});
 	const handle: SubagentRunHandle = {
+		completion,
 		abort: async () => {
 			aborted = true;
 			cancellation.abort();
@@ -305,6 +314,7 @@ export async function runSubagent(deps: RunSubagentDeps, input: RunSubagentInput
 			}
 		},
 		getBranch: () => session.sessionManager.getBranch(),
+		getSource: () => session,
 	};
 	let settled = false;
 	let failure: string | undefined;
@@ -363,15 +373,22 @@ export async function runSubagent(deps: RunSubagentDeps, input: RunSubagentInput
 		result.exitCode = 1;
 		result.error = failure;
 	} finally {
-		unsubscribeEvents?.();
-		input.signal?.removeEventListener("abort", abort);
-		result.summary = summarizeSubagentRun(session.sessionManager, Date.now() - startedAt);
-		deps.traces.recordCustom?.(session.sessionId, "subagent_summary", result.summary);
 		try {
+			unsubscribeEvents?.();
+			input.signal?.removeEventListener("abort", abort);
+			result.summary = summarizeSubagentRun(session.sessionManager, Date.now() - startedAt);
+			deps.traces.recordCustom?.(session.sessionId, "subagent_summary", result.summary);
 			await deps.traces.stop(session.sessionId);
 		} finally {
-			handle.dispose();
-			deps.unregisterRun?.(session.sessionId);
+			try {
+				handle.dispose();
+			} finally {
+				try {
+					deps.unregisterRun?.(session.sessionId);
+				} finally {
+					complete();
+				}
+			}
 		}
 	}
 	if (aborted || input.signal?.aborted) result.status = "aborted";

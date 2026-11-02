@@ -47,6 +47,7 @@ import type {
 	SessionBaseline,
 	SessionCloseIntent,
 	SessionEventEnvelope,
+	SessionHistoryPage,
 	SessionMessage,
 	SessionMeta,
 	SessionStats,
@@ -56,6 +57,8 @@ import type {
 	TrustResolved,
 	UiState,
 } from "./session";
+import type { SessionMediaJob, SessionMediaTransaction } from "./session-media-maintenance";
+import type { SessionSwitchFixture, SessionSwitchProbe } from "./session-switch-diagnostics";
 import type {
 	CustomProviderInput,
 	CustomProviderUpdateInput,
@@ -230,19 +233,100 @@ export const SESSION_CHANNELS = {
 		"session:getBaseline",
 		"environment",
 		"read",
-	)<{ sessionId: string }, SessionBaseline>({ sessionId: input.id }),
+	)<{ sessionId: string; imageMode?: "references"; historyTurns?: number }, SessionBaseline>({
+		sessionId: input.id,
+		imageMode: input.optional(input.oneOf("references")),
+		historyTurns: input.optional(input.number),
+	}),
 
 	getSessionMessages: ch(
 		"session:getMessages",
 		"environment",
 		"read",
-	)<{ sessionId: string }, SessionMessage[]>({ sessionId: input.id }),
+	)<{ sessionId: string; imageMode?: "references" }, SessionMessage[]>({
+		sessionId: input.id,
+		imageMode: input.optional(input.oneOf("references")),
+	}),
+	getSessionHistoryPage: ch(
+		"session:historyPage",
+		"environment",
+		"read",
+	)<{ sessionId: string; cursor: string }, SessionHistoryPage>({ sessionId: input.id, cursor: input.id }),
+	startSessionMediaCompaction: ch(
+		"session:mediaCompact",
+		"environment",
+		"mutation",
+	)<{ sessionFile: string; requestId: string; expectedHash: string; confirmed: boolean }, SessionMediaJob>({
+		sessionFile: input.text,
+		requestId: input.id,
+		expectedHash: input.id,
+		confirmed: input.boolean,
+	}),
+	startSessionMediaRestore: ch(
+		"session:mediaRestore",
+		"environment",
+		"mutation",
+	)<{ requestId: string; compactionRequestId: string; confirmed: boolean }, SessionMediaJob>({
+		requestId: input.id,
+		compactionRequestId: input.id,
+		confirmed: input.boolean,
+	}),
+	resumeSessionMediaJob: ch(
+		"session:mediaResume",
+		"environment",
+		"mutation",
+	)<{ requestId: string; confirmed: boolean }, SessionMediaJob>({
+		requestId: input.id,
+		confirmed: input.boolean,
+	}),
+	abandonSessionMediaJob: ch(
+		"session:mediaAbandon",
+		"environment",
+		"mutation",
+	)<{ requestId: string; confirmed: boolean }, SessionMediaJob>({
+		requestId: input.id,
+		confirmed: input.boolean,
+	}),
+	getSessionMediaTransaction: ch(
+		"session:mediaTransaction",
+		"environment",
+		"read",
+	)<{ requestId: string }, SessionMediaTransaction | null>({ requestId: input.id }),
+	getSessionMediaMaintenance: ch(
+		"session:mediaMaintenance",
+		"environment",
+		"read",
+	)<{ sessionFile: string }, SessionMediaTransaction | null>({ sessionFile: input.text }),
+	startSessionMediaPreview: ch(
+		"session:mediaPreview",
+		"environment",
+		"read",
+	)<{ sessionFile: string }, SessionMediaJob>({ sessionFile: input.text }),
+	getSessionMediaJob: ch(
+		"session:mediaJob",
+		"environment",
+		"read",
+	)<{ jobId: string }, SessionMediaJob>({ jobId: input.id }),
+	cancelSessionMediaJob: ch(
+		"session:mediaJobCancel",
+		"environment",
+		"mutation",
+	)<{ jobId: string }, SessionMediaJob>({ jobId: input.id }),
+	getSessionImage: ch(
+		"session:getImage",
+		"environment",
+		"read",
+	)<{ sessionId: string; imageId: string; revision: string }, ImageInput & { byteLength: number }>({
+		sessionId: input.id,
+		imageId: input.id,
+		revision: input.id,
+	}),
 	/** 首份完整历史已落到 renderer；解除启动期频道唤醒屏障 */
 	markSessionHistoryReady: ch(
 		"session:historyReady",
 		"environment",
 		"mutation",
-	)<{ sessionId: string }, void>({ sessionId: input.id }),
+	)<{ sessionId: string; hydrationToken: string }, void>({ sessionId: input.id, hydrationToken: input.id }),
 	/** 读取会话当前 todo 列表（无则空数组） */
 	getTodos: ch(
 		"session:getTodos",
@@ -303,7 +387,7 @@ export const SESSION_CHANNELS = {
 	exportSession: ch(
 		"session:export",
 		"environment",
-		"mutation",
+		"read",
 	)<{ sessionId: string; format: "html" | "jsonl" }, string>({
 		sessionId: input.id,
 		format: input.oneOf("html", "jsonl"),
@@ -689,6 +773,12 @@ export const SETTINGS_CHANNELS = {
 
 /** 应用域：窗口级功能（对话框/背景/更新/tabs/ui-state/git/外链等，多为非透传 handler） */
 export const APP_CHANNELS = {
+	getSessionSwitchFixtures: ch("app:sessionSwitchFixtures", "desktop", "read")<
+		void,
+		SessionSwitchFixture[]
+	>(),
+	beginSessionSwitchProbe: ch("app:beginSessionSwitchProbe", "desktop", "mutation")<void, void>(),
+	finishSessionSwitchProbe: ch("app:finishSessionSwitchProbe", "desktop", "read")<void, SessionSwitchProbe>(),
 	setTaskNotificationNavigationReady: ch("notifications:navigationReady", "desktop")<
 		{ ready: boolean },
 		void

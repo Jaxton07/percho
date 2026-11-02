@@ -39,6 +39,21 @@ const ids = (over: Partial<SessionGcInput> = {}) =>
 	pickUnloadCandidates(input(over)).map((candidate) => candidate.sessionId);
 
 describe("pickUnloadCandidates · 单条保护条件", () => {
+	it("只读检视可卸载而不停止实际运行者，但仍保护当前页、未决交互及未读完成", () => {
+		const open = [
+			session("view", NOW - 10_000_000, { readOnly: true, messageCount: 0, hasChannelSubscriptions: true }),
+		];
+		const busy = {
+			...IDLE_ENTRY,
+			agentActive: true,
+			compacting: true,
+			followUpQueue: ["owned by actual child"],
+		};
+		expect(ids({ open, entryOf: () => busy })).toEqual(["view"]);
+		expect(ids({ open, activeSessionId: "view", entryOf: () => busy })).toEqual([]);
+		for (const extra of [{ pendingPermissions: [{}] }, { pendingDialogs: [{}] }, { unseenCompletion: true }])
+			expect(ids({ open, entryOf: () => ({ ...busy, ...extra }) })).toEqual([]);
+	});
 	it("活跃会话不卸（哪怕它是内存里最久未用的那个）", () => {
 		const open = [
 			session("a", NOW - 10_000_000),

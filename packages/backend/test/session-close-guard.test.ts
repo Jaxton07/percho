@@ -4,6 +4,7 @@ import { join } from "node:path";
 import type { AgentSession } from "@earendil-works/pi-coding-agent";
 import { afterAll, describe, expect, it, vi } from "vitest";
 import { PiBackend } from "../src/pi-backend";
+import { SessionMediaStore } from "../src/session/media-store";
 import type { SessionRegistry } from "../src/session/registry";
 
 /**
@@ -16,7 +17,11 @@ const root = mkdtempSync(join(tmpdir(), "pi-close-guard-"));
 afterAll(() => rmSync(root, { recursive: true, force: true }));
 
 function makeBackend(sessionId: string, streaming: boolean, sessionFile?: string, topics: string[] = []) {
-	const backend = new PiBackend({ projectTrust: false, permissionGates: false });
+	const backend = new PiBackend({
+		projectTrust: false,
+		permissionGates: false,
+		sessionMediaStore: new SessionMediaStore(join(root, "media")),
+	});
 	const registry = (backend as unknown as { registry: SessionRegistry }).registry;
 	const dispose = vi.fn();
 	registry.add({

@@ -9,6 +9,7 @@ import {
 	environmentKey,
 	environmentRef,
 	extractSubagentRuns,
+	isReferenceImage,
 	type PiApi,
 	type SessionMeta,
 	SUBSCRIPTION_TABLE,
@@ -55,10 +56,53 @@ function subagentDetails(value: unknown, environment: EnvironmentRef): unknown {
 	};
 }
 
-function toolResult(value: unknown, environment: EnvironmentRef): unknown {
-	return record(value) && extractSubagentRuns(value.details)
-		? { ...value, details: subagentDetails(value.details, environment) }
+function imageFor(value: unknown, environment: EnvironmentRef): unknown {
+	return isReferenceImage(value)
+		? { ...value, ownerSessionId: environmentEntityKey(environment, value.ownerSessionId) }
 		: value;
+}
+function imageMessage<T>(value: T, environment: EnvironmentRef): T {
+	if (!record(value)) return value;
+	return {
+		...value,
+		...(Array.isArray(value.images)
+			? { images: value.images.map((image) => imageFor(image, environment)) }
+			: {}),
+		...(typeof value.ownerSessionId === "string"
+			? { ownerSessionId: environmentEntityKey(environment, value.ownerSessionId) }
+			: {}),
+	} as T;
+}
+function subagentRun(value: import("@percho/shared").SubagentRunUi, environment: EnvironmentRef) {
+	return {
+		...value,
+		...(value.sessionFile ? { sessionFile: environmentEntityKey(environment, value.sessionFile) } : {}),
+	};
+}
+function historyMessage(value: import("@percho/shared").UIMessage, environment: EnvironmentRef) {
+	return imageMessage(
+		value.kind === "subagent"
+			? { ...value, runs: value.runs.map((run) => subagentRun(run, environment)) }
+			: value,
+		environment,
+	);
+}
+function toolResult(value: unknown, environment: EnvironmentRef): unknown {
+	if (!record(value) || !record(value.details)) return value;
+	const details = value.details;
+	return {
+		...value,
+		details: subagentDetails(
+			{
+				...details,
+				...(Array.isArray(details.images)
+					? { images: details.images.map((image) => imageFor(image, environment)) }
+					: {}),
+				...(details.image ? { image: imageFor(details.image, environment) } : {}),
+			},
+			environment,
+		),
+	};
 }
 
 export function scopeSessionMeta(value: SessionMeta, environment: EnvironmentRef): SessionMeta {
@@ -104,40 +148,46 @@ function resultFor(method: string, value: unknown, environment: EnvironmentRef):
 			}));
 		case "getSessionBaseline": {
 			const baseline = value as import("@percho/shared").SessionBaseline;
-			const run = (item: import("@percho/shared").SubagentRunUi) => ({
-				...item,
-				...(item.sessionFile ? { sessionFile: environmentEntityKey(environment, item.sessionFile) } : {}),
-			});
 			return {
 				...baseline,
 				meta: scopeSessionMeta(baseline.meta, environment),
 				transcript: {
 					...baseline.transcript,
-					messages: baseline.transcript.messages.map((message) =>
-						message.kind === "subagent" ? { ...message, runs: message.runs.map(run) } : message,
-					),
+					messages: baseline.transcript.messages.map((message) => historyMessage(message, environment)),
 					streaming: baseline.transcript.streaming
 						? {
 								...baseline.transcript.streaming,
-								subagentRuns: baseline.transcript.streaming.subagentRuns.map(run),
+								subagentRuns: baseline.transcript.streaming.subagentRuns.map((run) =>
+									subagentRun(run, environment),
+								),
+								pendingImages: baseline.transcript.streaming.pendingImages.map((images) =>
+									imageMessage(images, environment),
+								),
 							}
 						: null,
 				},
 			};
 		}
 
+		case "getSessionHistoryPage": {
+			const page = value as import("@percho/shared").SessionHistoryPage;
+			return { ...page, messages: page.messages.map((message) => historyMessage(message, environment)) };
+		}
 		case "getSessionMessages":
 			return (value as unknown[]).map((message) =>
-				record(message) && message.role === "subagent" && Array.isArray(message.runs)
-					? {
-							...message,
-							runs: message.runs.map((run) =>
-								record(run) && typeof run.sessionFile === "string"
-									? { ...run, sessionFile: environmentEntityKey(environment, run.sessionFile) }
-									: run,
-							),
-						}
-					: message,
+				imageMessage(
+					record(message) && message.role === "subagent" && Array.isArray(message.runs)
+						? {
+								...message,
+								runs: message.runs.map((run) =>
+									record(run) && typeof run.sessionFile === "string"
+										? { ...run, sessionFile: environmentEntityKey(environment, run.sessionFile) }
+										: run,
+								),
+							}
+						: message,
+					environment,
+				),
 			);
 		default:
 			return value;
@@ -168,12 +218,18 @@ function eventFor(method: string, value: unknown, environment: EnvironmentRef): 
 	return next;
 }
 
-function argumentsFor(value: unknown, environment: EnvironmentRef): unknown {
+function argumentsFor(method: string, value: unknown, environment: EnvironmentRef): unknown {
 	if (!record(value)) return value;
 	const next = { ...value };
-	for (const key of ["sessionId", "requestId", "sessionFile", "filePath"]) {
+	for (const key of ["sessionId", "sessionFile", "filePath"]) {
 		if (typeof next[key] === "string") next[key] = environmentEntityId(environment, next[key]);
 	}
+	// Interaction handles are scoped entities; maintenance request IDs are opaque idempotency keys.
+	if (
+		["respondPermission", "respondTrust", "respondExtensionDialog"].includes(method) &&
+		typeof next.requestId === "string"
+	)
+		next.requestId = environmentEntityId(environment, next.requestId);
 	// Explicitly bound directory input may be literal (e.g. the add-project field).
 	const directory = (cwd: string) =>
 		cwd.startsWith("percho-env-v1:") ? environmentEntityId(environment, cwd) : cwd;
@@ -226,7 +282,7 @@ export function getExecutionApi(reference: EnvironmentRef | string): Environment
 						throw new Error("Remote session is synchronizing; wait before submitting new work");
 				}
 				const call = raw[method as EnvironmentMethod] as (input?: unknown) => Promise<unknown>;
-				const value = args === undefined ? await call() : await call(argumentsFor(args, environment));
+				const value = args === undefined ? await call() : await call(argumentsFor(method, args, environment));
 				return resultFor(method, value, environment);
 			},
 		]);

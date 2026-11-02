@@ -3,6 +3,7 @@ import { SessionManager } from "@earendil-works/pi-coding-agent";
 import type { SessionEvent } from "@percho/shared";
 import { describe, expect, it } from "vitest";
 import { LiveTranscript } from "../src/session/live-transcript";
+import { SessionSourceSnapshots } from "../src/session/source-snapshot";
 
 const assistant = (text: string, timestamp: number) =>
 	({
@@ -16,6 +17,58 @@ const assistant = (text: string, timestamp: number) =>
 	}) as Message;
 
 describe("current-turn baseline projection", () => {
+	it("活动基线的用户附件和未落盘show结果都只带引用，并保持实际SDK用户entry", () => {
+		const manager = SessionManager.inMemory();
+		const live = new LiveTranscript();
+		const emit = (event: unknown) => live.apply(event as SessionEvent, manager.getBranch());
+		emit({ type: "agent_start" });
+		emit({ type: "turn_start" });
+		const user = {
+			role: "user" as const,
+			timestamp: 1,
+			content: [
+				{ type: "text" as const, text: "user" },
+				{ type: "image" as const, mimeType: "image/png", data: "AQID" },
+			],
+		};
+		emit({ type: "message_start", message: user });
+		const userId = manager.appendMessage(user);
+		emit({
+			type: "message_update",
+			assistantMessageEvent: { type: "text_delta", contentIndex: 0, delta: "working" },
+		});
+		emit({
+			type: "tool_execution_end",
+			toolCallId: "real-call",
+			toolName: "show_image",
+			isError: false,
+			result: { content: [], details: { images: [{ mimeType: "image/png", data: "BAUG" }], paths: [] } },
+		});
+		const sources = new SessionSourceSnapshots();
+		const owner = {};
+		const view = sources.capture(owner, {
+			sessionId: manager.getSessionId(),
+			branch: () => manager.getBranch(),
+			entries: () => manager.getEntries(),
+		});
+		const snapshot = live.snapshot(
+			manager.getBranch(),
+			{ streaming: true, compacting: false },
+			(branch) => sources.project(view, true, branch),
+			(id, kind, images) => sources.projectTransient(view, id, kind, images),
+		);
+		const json = JSON.stringify(snapshot);
+		expect(json).not.toContain("AQID");
+		expect(json).not.toContain("BAUG");
+		const row = snapshot.messages.find((message) => message.kind === "user");
+		expect(row?.entryId).toBe(userId);
+		const pending = snapshot.streaming?.pendingImages[0]?.images[0];
+		if (!pending || !("id" in pending)) throw new Error("Missing active source reference");
+		expect(sources.resolve(owner, manager.getSessionId(), pending.id, pending.revision).data).toBe("BAUG");
+		expect(snapshot.streaming?.text).toBe("working");
+		sources.release(owner);
+		expect(sources.stats().views).toBe(0);
+	});
 	it("joins a complete compacted branch to unfinished text/tools once, then observes branch/recall changes", () => {
 		const manager = SessionManager.inMemory();
 		const first = manager.appendMessage({ role: "user", content: "old request", timestamp: 1 });

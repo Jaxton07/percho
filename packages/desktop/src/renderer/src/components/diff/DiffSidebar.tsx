@@ -212,7 +212,7 @@ export function DiffSidebar() {
 						<div className="diff-side-empty">{t("diff.empty")}</div>
 					) : (
 						groups.map((tc, gi) => (
-							<div className="diff-turn-group" key={tc.turnIndex}>
+							<div className="diff-turn-group" key={tc.turnId ?? tc.turnIndex}>
 								<div className="diff-tg-head">
 									<span className="diff-tg-title">{t("diff.turnLabel", { n: tc.turnIndex + 1 })}</span>
 									<span className="diff-tg-sum">
@@ -222,7 +222,7 @@ export function DiffSidebar() {
 								</div>
 								{tc.files.map((f, fi) => (
 									<DiffFileCard
-										key={`${activeSessionId}:${tc.turnIndex}:${f.path}`}
+										key={`${activeSessionId}:${tc.turnId ?? tc.turnIndex}:${f.path}`}
 										file={f}
 										cwd={sessionCwd}
 										/* 默认只展开「最近一轮组的第一张卡」，其余收起 */

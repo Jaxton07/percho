@@ -10,6 +10,11 @@ import { loadEnvironmentUiState, saveEnvironmentUiState } from "../environment-u
 import { checkoutBranch, getGitBranch, listGitBranches } from "../git";
 import { nativeNotifications } from "../native-notifications";
 import { resolveExistingPath } from "../path-target";
+import {
+	beginIsolatedSessionSwitchProbe,
+	finishIsolatedSessionSwitchProbe,
+	getSessionSwitchFixtures,
+} from "../session-switch-diagnostics";
 import { setTaskNotificationNavigationReady } from "../task-notifications";
 import { loadUiState, saveUiState } from "../ui-state";
 import {
@@ -37,8 +42,14 @@ function localDirectory(cwd: string | null): string | null {
  * 应用域：窗口级功能（不依赖 PiBackend 会话状态的部分也在此，backend 参数仅为对齐签名）。
  * tabs/ui-state 持久化、背景图、更新、文件/目录对话框、git 分支、外链与应用信息。
  */
-export function registerAppIpc(_backend: PiBackend): void {
+export function registerAppIpc(backend: PiBackend): void {
 	registerInvokeHandlers(APP_CHANNELS, {
+		getSessionSwitchFixtures,
+		beginSessionSwitchProbe: beginIsolatedSessionSwitchProbe,
+		finishSessionSwitchProbe: async () => ({
+			...(await finishIsolatedSessionSwitchProbe()),
+			source: backend.getSessionSourceStats(),
+		}),
 		setTaskNotificationNavigationReady,
 		setNotificationLanguage: ({ language }) => nativeNotifications.setLanguage(language),
 		testTaskNotification: () => nativeNotifications.send("test"),

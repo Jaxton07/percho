@@ -5,14 +5,12 @@ import type { PermissionModeRef } from "../permissions/extension";
 import type { PermissionGate } from "../permissions/gate";
 import type { ExtensionDialogHost } from "./extension-dialog-host";
 import { deriveSessionTimes, fallbackSessionTimes } from "./meta";
+import type { ReadOnlySessionView } from "./read-only-view";
 import { emitSessionShutdown } from "./shutdown";
 
-export interface RegisteredSession {
-	session: AgentSession;
+interface RegisteredSessionBase {
 	unsubscribe: () => void;
 	cwd: string;
-	/** 只读会话（subagent 产物检视）：prompt/fork/recall/setModel 等写操作全部拒绝 */
-	readOnly?: boolean;
 	/** 会话级权限确认队列（会话生命周期内唯一，随 entry 清理） */
 	gate: PermissionGate;
 	/** 扩展对话框宿主（每会话一个；GUI 停靠槽数据源，GUI-only 不进 LAN） */
@@ -20,6 +18,13 @@ export interface RegisteredSession {
 	/** 会话权限模式引用（default 缺省；随工厂闭包注入求值链，不落盘） */
 	modeRef: PermissionModeRef;
 }
+export type WritableRegisteredSession = RegisteredSessionBase & { session: AgentSession; readOnly?: false };
+/** 检视者没有独立AgentSession，不能改变真正运行者的模型/工具/扩展上下文。 */
+export type ReadOnlyRegisteredSession = RegisteredSessionBase & {
+	session: ReadOnlySessionView;
+	readOnly: true;
+};
+export type RegisteredSession = WritableRegisteredSession | ReadOnlyRegisteredSession;
 
 const log = createLogger("session-registry");
 
@@ -55,6 +60,7 @@ export function releaseEntryResources(
 /** 维护 sessionId → AgentSession 实例（会话级状态单条记录：gate/dialogs/modeRef 都在 entry 上） */
 export class SessionRegistry {
 	private readonly sessions = new Map<string, RegisteredSession>();
+	private readonly lastMeta = new WeakMap<RegisteredSession, SessionMeta>();
 
 	/**
 	 * 注册会话。同 sessionId 重复 add **同一个 entry** = 幂等；
@@ -94,6 +100,19 @@ export class SessionRegistry {
 	}
 
 	toMeta(entry: RegisteredSession): SessionMeta {
+		try {
+			const meta = this.readMeta(entry);
+			this.lastMeta.set(entry, meta);
+			return meta;
+		} catch (error) {
+			// 坏掉的只读文件不能阻断其他会话列表；历史本身仍由来源层明确报错。
+			const last = this.lastMeta.get(entry);
+			if (entry.readOnly && last) return last;
+			throw error;
+		}
+	}
+
+	private readMeta(entry: RegisteredSession): SessionMeta {
 		const { session, cwd } = entry;
 		// 时间口径唯一出处见 meta.ts（spec D1）：header + entries 权威（与 SDK 磁盘枚举同语义，
 		// 不能用文件 birthtime/mtime 替代——复制/恢复文件会改 birthtime，channel cursor 等

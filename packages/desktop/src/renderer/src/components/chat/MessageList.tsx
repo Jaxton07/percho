@@ -13,6 +13,8 @@ import { useT } from "../../i18n";
 import { useEdgeFade } from "../../lib/use-edge-fade";
 import { Slot } from "../../plugins/Slot";
 import { UI_SLOTS } from "../../plugins/slots";
+import { reloadSessionHistory } from "../../stores/session-history";
+import { loadOlderHistory } from "../../stores/session-history-paging";
 import { useSessionsStore } from "../../stores/sessions";
 import { selectTranscript, useTranscriptStore } from "../../stores/transcript";
 import { useUiPreferencesStore } from "../../stores/ui-preferences";
@@ -22,7 +24,13 @@ import { HistoryImageRootProvider } from "./history-image/history-image-root";
 import { thumbnailService } from "./history-image/history-image-service";
 import { MessageItem } from "./MessageItem";
 import { MetaGroup } from "./MetaGroup";
-import { clampWindowStart, expandWindowStart, MOUNT_TRIGGER_PX, tailWindowStart } from "./mount-window";
+import {
+	clampWindowStart,
+	expandWindowStart,
+	MOUNT_TRIGGER_PX,
+	prependWindowStart,
+	tailWindowStart,
+} from "./mount-window";
 import { RetryNote } from "./RetryNote";
 import { SelectionToolbar } from "./SelectionToolbar";
 import { SubagentRunCard } from "./SubagentRunCard";
@@ -50,6 +58,7 @@ export function MessageList() {
 	const activeSessionId = useSessionsStore((s) => s.activeSessionId);
 	const transcript = useTranscriptStore((s) => selectTranscript(s, activeSessionId));
 	const streaming = transcript.streaming;
+	const historyGeneration = transcript.history?.generation ?? transcript.baselineRevision;
 	/** agent 运行中且正文未出现 → 折叠组标题 working；正文已出但工具/子代理还在跑时不熄灯 */
 	const agentWorking = isAgentWorking(transcript);
 
@@ -122,14 +131,14 @@ export function MessageList() {
 	// 不做这一步也能靠组件卸载清掉订阅，但 worker 在途任务与 LRU 会跨会话残留
 	// biome-ignore lint/correctness/useExhaustiveDependencies: activeSessionId 是刻意的重跑触发器
 	useEffect(() => {
-		thumbnailService().reset();
+		thumbnailService().cancelView();
 	}, [activeSessionId]);
 
 	// biome-ignore lint/correctness/useExhaustiveDependencies: activeSessionId 是刻意的重跑触发器（切换会话时重新贴底）
 	useEffect(() => {
 		updateFollowing(true);
 		pinToBottom();
-	}, [activeSessionId, pinToBottom, updateFollowing]);
+	}, [activeSessionId, historyGeneration, pinToBottom, updateFollowing]);
 
 	// 展开/折叠任何折叠组（details summary）→ 释放底部跟随：否则贴底 RO 会在高度动画期间
 	// 持续拉回底部，出现「Worked 上移 + 内容下展」两边同动的不稳定感。释放后视口钉在点击处、
@@ -146,14 +155,30 @@ export function MessageList() {
 		() => deriveTurnTimings(transcript.messages, transcript.runEndedAt),
 		[transcript.messages, transcript.runEndedAt],
 	);
-	const turnBaselineRef = useRef({ sid: activeSessionId, count: 0 });
-	if (turnBaselineRef.current.sid !== activeSessionId) {
-		turnBaselineRef.current = { sid: activeSessionId, count: turnTimings.length };
+	const lastTurnId = turnTimings.at(-1)?.turnId;
+	const turnBaselineRef = useRef({
+		sid: activeSessionId,
+		generation: historyGeneration,
+		last: lastTurnId,
+		entering: null as string | null,
+	});
+	if (
+		turnBaselineRef.current.sid !== activeSessionId ||
+		turnBaselineRef.current.generation !== historyGeneration
+	) {
+		turnBaselineRef.current = {
+			sid: activeSessionId,
+			generation: historyGeneration,
+			last: lastTurnId,
+			entering: null,
+		};
+	} else if (turnBaselineRef.current.last !== lastTurnId) {
+		const previous = turnBaselineRef.current.last;
+		turnBaselineRef.current.entering =
+			previous && turnTimings.some((turn) => turn.turnId === previous) ? (lastTurnId ?? null) : null;
+		turnBaselineRef.current.last = lastTurnId;
 	}
-	const enteringTurn =
-		turnTimings.length > turnBaselineRef.current.count
-			? (turnTimings[turnTimings.length - 1]?.turnIndex ?? null)
-			: null;
+	const enteringTurn = turnBaselineRef.current.entering;
 
 	// 行序列由 shared buildChatRows 产出（与 lan-web 同一分组大脑）；此处只做行模型 → JSX 映射。
 	// useMemo：滚动/跟随等本组件局部 state 翻转不重跑（历史长会话单次 ~60µs+）；transcript 每
@@ -195,35 +220,75 @@ export function MessageList() {
 	// 切到会话只挂尾部窗口（会话切换耗时与会话长度解耦）；更早的行在用户上滑接近顶部时成块补挂。
 	// 窗口只增不减：流式/工具结果追加都在尾部，起点不动 → 长会话连挂载规模都保持在窗口量级。
 	const [mountFrom, setMountFrom] = useState(0);
-	const viewSessionRef = useRef<string | null>(null);
-	// 渲染期直接调整派生 state（React 允许、不提交本轮输出）：切会话立即回到尾部窗口。
-	// 本轮同时用 sessionChanged 直接取尾部窗口——被丢弃的那一轮不白算整份行序列。
-	const sessionChanged = viewSessionRef.current !== activeSessionId;
-	if (sessionChanged) {
-		viewSessionRef.current = activeSessionId;
-		setMountFrom(tailWindowStart(rows.length));
-	}
+	const viewSessionRef = useRef<{
+		sid: string | null;
+		generation: string | number | undefined;
+		first?: string;
+	}>({ sid: null, generation: undefined });
+	const sessionChanged =
+		viewSessionRef.current.sid !== activeSessionId || viewSessionRef.current.generation !== historyGeneration;
+	const previousFirst = viewSessionRef.current.first;
+	const prepended =
+		!sessionChanged && previousFirst
+			? Math.max(
+					0,
+					rows.findIndex((row) => row.key === previousFirst),
+				)
+			: 0;
 	const renderedFrom = sessionChanged
 		? tailWindowStart(rows.length)
-		: clampWindowStart(mountFrom, rows.length);
+		: prepended > 0
+			? prependWindowStart(mountFrom, prepended, rows.length)
+			: clampWindowStart(mountFrom, rows.length);
+	if (sessionChanged || prepended > 0) setMountFrom(renderedFrom);
+	viewSessionRef.current = { sid: activeSessionId, generation: historyGeneration, first: rows[0]?.key };
 	const renderedFromRef = useRef(renderedFrom);
 	renderedFromRef.current = renderedFrom;
 	/** 补挂前的锚点：旧首行元素 + 它的视口相对 top。DOM 更新后若浏览器滚动锚定没把它钉住，用它补差 */
-	const prependAnchorRef = useRef<{ el: Element; viewportTop: number } | null>(null);
+	const prependAnchorRef = useRef<{ key?: string; el: Element; viewportTop: number } | null>(null);
 
 	/** 补挂一块更早的行；滚动处理器调用（同一事件内重复调用只生效一次：同基于当前 renderedFrom 计算） */
-	const requestEarlierRows = () => {
-		const next = expandWindowStart(renderedFromRef.current, rows.length);
-		if (next === renderedFromRef.current) return; // 已到顶 / 无更早的行
-		const anchor = contentRef.current?.firstElementChild;
-		if (!anchor) return;
-		const scroller = scrollRef.current;
-		if (!scroller) return;
+	const capturePrependAnchor = () => {
+		if (
+			viewSessionRef.current.sid !== activeSessionId ||
+			viewSessionRef.current.generation !== historyGeneration
+		)
+			return;
+		const anchor = contentRef.current?.querySelector("[data-chat-row-key]")?.firstElementChild,
+			scroller = scrollRef.current;
+		if (!anchor || !scroller) return;
 		prependAnchorRef.current = {
+			key: rows[renderedFromRef.current]?.key,
 			el: anchor,
 			viewportTop: anchor.getBoundingClientRect().top - scroller.getBoundingClientRect().top,
 		};
-		setMountFrom(next);
+	};
+	const requestEarlierRows = (retry = false) => {
+		const next = expandWindowStart(renderedFromRef.current, rows.length);
+		if (next !== renderedFromRef.current) {
+			updateFollowing(false);
+			capturePrependAnchor();
+			setMountFrom(next);
+			return;
+		}
+		if (
+			!activeSessionId ||
+			!transcript.history?.hasOlder ||
+			transcript.historyFetch?.loading ||
+			(!retry && transcript.historyFetch?.error)
+		)
+			return;
+		updateFollowing(false);
+		void loadOlderHistory(activeSessionId, capturePrependAnchor);
+	};
+	const reloadHistory = (full = false) => {
+		if (!activeSessionId) return;
+		const sessionId = activeSessionId;
+		void reloadSessionHistory(
+			sessionId,
+			() => useSessionsStore.getState().sessions.some((session) => session.sessionId === sessionId),
+			full,
+		);
 	};
 
 	// 仅「向上滚动」脱离跟随（程序性向下贴底/平滑回底不中断跟随）；到达底部恢复。
@@ -235,11 +300,12 @@ export function MessageList() {
 		if (!el) return;
 		const heightShrank = el.scrollHeight < lastScrollHeightRef.current;
 		const atBottom = el.scrollHeight - el.scrollTop - el.clientHeight <= BOTTOM_THRESHOLD;
+		const upward = el.scrollTop < lastScrollTopRef.current && !heightShrank;
 		if (atBottom) updateFollowing(true);
 		else if (el.scrollTop < lastScrollTopRef.current && !heightShrank) updateFollowing(false);
 		lastScrollTopRef.current = el.scrollTop;
 		lastScrollHeightRef.current = el.scrollHeight;
-		if (renderedFromRef.current > 0 && el.scrollTop < MOUNT_TRIGGER_PX) requestEarlierRows();
+		if ((renderedFromRef.current > 0 || upward) && el.scrollTop < MOUNT_TRIGGER_PX) requestEarlierRows();
 	};
 
 	// 补挂的锚定交给**浏览器滚动锚定**（容器不能加 overflow-anchor: none）：新行整块插在视口上方，
@@ -255,12 +321,18 @@ export function MessageList() {
 		const el = scrollRef.current;
 		const pending = prependAnchorRef.current;
 		prependAnchorRef.current = null;
-		if (el && pending?.el.isConnected) {
-			const drift = pending.el.getBoundingClientRect().top - pending.viewportTop;
+		const keyed = pending?.key
+			? [...(contentRef.current?.querySelectorAll("[data-chat-row-key]") ?? [])].find(
+					(row) => row.getAttribute("data-chat-row-key") === pending.key,
+				)?.firstElementChild
+			: undefined;
+		const anchor = pending?.el.isConnected ? pending.el : keyed;
+		if (el && pending && anchor) {
+			const drift = anchor.getBoundingClientRect().top - el.getBoundingClientRect().top - pending.viewportTop;
 			if (drift !== 0) el.scrollTop += drift;
 		}
 		if (el && renderedFromRef.current > 0 && el.scrollHeight <= el.clientHeight) requestEarlierRows();
-	}, [renderedFrom]);
+	}, [renderedFrom, transcript.history?.firstEntryId, historyGeneration]);
 
 	const items: React.ReactNode[] = [];
 	const visibleRows = renderedFrom > 0 ? rows.slice(renderedFrom) : rows;
@@ -330,10 +402,56 @@ export function MessageList() {
 			<div
 				ref={attachScroller}
 				onScroll={handleScroll}
+				onWheel={(event) => {
+					if (event.deltaY < 0 && (scrollRef.current?.scrollTop ?? Infinity) < MOUNT_TRIGGER_PX) {
+						updateFollowing(false);
+						requestEarlierRows();
+					}
+				}}
 				onClickCapture={handleSummaryToggle}
 				style={{ "--edge-fade-size": "28px" } as CSSProperties}
 				className="edge-fade chat-scrollbar relative z-10 h-full overflow-x-hidden overflow-y-auto [overflow-anchor:auto] [scrollbar-gutter:stable]"
 			>
+				{(transcript.history?.hasOlder || transcript.historyFetch?.error || transcript.historyLoadError) && (
+					<div
+						className="mx-auto max-w-[760px] px-6 pt-4 text-center text-ui-12 text-ink-3"
+						data-history-paging
+					>
+						{transcript.history?.hasOlder && (
+							<button
+								type="button"
+								className="hover:text-ink"
+								disabled={transcript.historyFetch?.loading}
+								onClick={() => requestEarlierRows(true)}
+							>
+								{transcript.historyFetch?.loading
+									? t("message.historyLoading")
+									: t("message.historyLoadEarlier")}
+							</button>
+						)}
+						{(transcript.historyFetch?.error || transcript.historyLoadError) && (
+							<div role="status">
+								<p>
+									{(transcript.historyFetch?.error ?? transcript.historyLoadError)?.includes(
+										"HISTORY_PAGE_TOO_LARGE",
+									)
+										? t("message.historyTooLarge")
+										: t("message.historyLoadFailed")}
+								</p>
+								<button type="button" className="hover:text-ink" onClick={() => reloadHistory()}>
+									{t("message.historyReload")}
+								</button>
+								{(transcript.historyFetch?.error ?? transcript.historyLoadError)?.includes(
+									"HISTORY_PAGE_TOO_LARGE",
+								) && (
+									<button type="button" className="ml-3 hover:text-ink" onClick={() => reloadHistory(true)}>
+										{t("message.historyLoadFull")}
+									</button>
+								)}
+							</div>
+						)}
+					</div>
+				)}
 				{/* data-chat-column：对话区列的几何锚点（「返回父会话」入口靠它把自己摆到左侧空带正中，见 subagent-back-offset.ts） */}
 				<div
 					ref={contentRef}
@@ -342,7 +460,15 @@ export function MessageList() {
 				>
 					{/* root 私有接线：历史图片靠它判断「是否在滚动容器可视区内」，拿不到就只渲染占位 */}
 					<HistoryImageRootProvider root={historyImageRoot}>
-						{items}
+						{items.map((item, index) => (
+							<div
+								key={`${activeSessionId}:${visibleRows[index]?.key}`}
+								data-chat-row-key={visibleRows[index]?.key}
+								className="contents"
+							>
+								{item}
+							</div>
+						))}
 						{transcript.retrying && <RetryNote info={transcript.retrying} />}
 						{transcript.summarizationRetry && <RetryNote info={transcript.summarizationRetry} summary />}
 						{transcript.compactionPause && <CompactionPauseNote pause={transcript.compactionPause} />}

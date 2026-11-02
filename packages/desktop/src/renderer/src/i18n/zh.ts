@@ -137,7 +137,7 @@ export const zh = {
 
 		waitingForConnection: "连接恢复并核验请求后才可应答。",
 		restarted: "远端服务已重启。可恢复已保存的历史；之前任务不会自动续跑，操作结果需核查。",
-		syncFailed: "远端会话同步失败，打开会话后可重试。",
+		syncFailed: "远端会话同步失败，正在自动重试；恢复前暂不能发送。",
 		synchronizing: "远端会话正在同步，请稍后再发送。停止任务仍可使用。",
 		localFileRejected: "远端会话只支持传入图片，普通本机文件无法作为远端路径使用。",
 		unknownTitle: "远端操作结果待核查",
@@ -398,6 +398,12 @@ export const zh = {
 		showMore: "显示更多",
 		showLess: "收起",
 		scrollToBottom: "回到底部",
+		historyLoading: "正在读取更早记录…",
+		historyLoadEarlier: "显示更早记录",
+		historyLoadFailed: "历史读取失败，可重试或重新读取当前会话。",
+		historyTooLarge: "完整轮次超出分页上限，内容未截断。可选择读取完整历史。",
+		historyReload: "重新读取当前历史",
+		historyLoadFull: "读取完整历史（可能较慢）",
 		thinking: "思考过程",
 		thinkingPreview: "思考中",
 		working: "工作中",
@@ -489,6 +495,54 @@ export const zh = {
 		open: "打开文件",
 		reveal: "在访达中显示",
 		copyPath: "复制路径",
+	},
+	mediaMaintenance: {
+		working: "后台处理中…",
+		background: "任务在后台处理。关闭弹窗不会停止已确认的整理；重新打开可查询持久状态。",
+		closedRequired: "仅处理所选会话；执行前必须关闭会话、只读检视和运行写者。",
+		backupKept: "独立原件备份（不会自动删除）：",
+		appendSafety:
+			"新增消息或来源变化后拒绝直接还原。请保留当前文件与原件备份，另行留存备份再处理，不要覆盖新消息。",
+		noPreview: "需要重新取得有收益且受支持的预览。",
+		noRecord: "持久任务记录不可用，请重新查询。",
+		action: {
+			compact: "整理并保留原件",
+			restore: "恢复独立原件",
+			resume: "检查并继续恢复",
+			abandon: "安全放弃未发布任务",
+		},
+		confirm: {
+			compact:
+				"确认仅整理此会话的展示截图？将独立保留完整原件，校验原图和候选后原子替换。需要备份、候选及原图的额外空间。用户附件、read图片和非目标记录不改。",
+			restore:
+				"确认恢复原件？仅在当前文件仍是整理后的版本且没有新增消息时允许替换。来源或备份不一致会拒绝；不会覆盖新数据，也不会删除备份。",
+			resume:
+				"检查此文件的持久任务并继续安全恢复。会核对来源、备份及候选，不能确认时停止并保留数据；不会把旧原件覆盖到新增消息上。",
+			abandon: "仅在能确认原件未被替换或已正确发布时结束未完成任务。来源冲突不会强行解除；独立备份继续保留。",
+		},
+		phase: {
+			queued: "任务已接受，尚未完成。",
+			"backed-up": "独立备份已校验，尚未发布。",
+			prepared: "候选已准备，尚未发布。",
+			publishing: "发布状态待检查，请恢复确认。",
+			published: "文件已发布，完成记录待恢复确认。",
+			complete: "事务已完成。",
+			aborted: "任务已安全结束，备份仍保留。",
+			conflict: "来源与整理前后摘要均不符；已保留数据和备份，不自动覆盖。",
+		},
+	},
+	mediaPreview: {
+		title: "截图整理与恢复",
+		readOnly: "仅扫描此会话全部分支，不修改会话或媒体。备份不会自动删除，也不计入节省。",
+		refresh: "重新预览",
+		cancelled: "扫描已取消，原文件和媒体未改。",
+		failed: "读取失败",
+		unsupported: "文件格式不是当前支持版本，或会话头损坏；不能执行整理，原文件未改。",
+		noBenefit: "没有可整理的展示图，或预计不能缩小活跃文件。",
+		scanning: "后台扫描中：{done} / {total}。可关闭并取消，不阻塞其他会话。",
+		summary:
+			"活跃文件预计 {before} → {after}；展示图 {count} 张（去重 {unique} 张）；备份 {backup}，额外峰值空间上界 {peak}。已有原图可复用，预估保守计算全部新增。",
+		preserved: "保留坏行 {invalid} 条，跳过无法安全整理的图片 {skipped} 张；用户附件和read图片不变。",
 	},
 	sessionMenu: {
 		copyDiagnostics: "复制诊断信息",
@@ -633,6 +687,12 @@ export const zh = {
 			version: "版本",
 			poweredBy: "基于 Pi Coding Agent 构建",
 			sourceCode: "源码与反馈",
+			switchDiagnosticsHint: "会话切换诊断仅在显式隔离的合成测试实例运行，不读取正式会话。",
+			switchDiagnosticsRun: "运行合成切换诊断（150次）",
+			switchDiagnosticsError:
+				"无法运行。请按诊断文档准备合成夹具并启动隔离实例；运行失败时检查本次测试日志。",
+			switchDiagnosticsDone: "诊断完成。结果仅含计时、大小和资源计数。",
+			switchDiagnosticsExport: "导出切换诊断",
 		},
 		models: {
 			providers: "Provider 配置",

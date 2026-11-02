@@ -229,6 +229,7 @@ describe("manual retry SDK patch (real offline lifecycle)", () => {
 		expect(received).toHaveBeenCalledWith(
 			f.session.sessionId,
 			expect.objectContaining({ retryEntryId: raw.id }),
+			expect.any(Number),
 		);
 		expect(event).not.toHaveProperty("retryEntryId");
 		expect(raw.message).not.toHaveProperty("entryId");

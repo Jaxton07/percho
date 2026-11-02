@@ -8,8 +8,10 @@ import { PermissionGate } from "../src/permissions/gate";
 import { PiBackend } from "../src/pi-backend";
 import { ExtensionDialogHost } from "../src/session/extension-dialog-host";
 import type { SessionHydrationGate } from "../src/session/hydration-gate";
+import { SessionMediaStore } from "../src/session/media-store";
 import type { EventRateTracker } from "../src/session/rates";
 import { type RegisteredSession, releaseEntryResources, SessionRegistry } from "../src/session/registry";
+import type { SessionSourceSnapshots } from "../src/session/source-snapshot";
 import type { StreamGuard } from "../src/session/stream-guard";
 
 const channelFactory = vi.hoisted(() => ({
@@ -32,7 +34,10 @@ vi.mock("../src/tools/channel-watch", async (importOriginal) => ({
 interface Internals {
 	buildExtensionFactories(cwd: string, confirm: undefined, modeRef: RegisteredSession["modeRef"]): unknown[];
 	registry: SessionRegistry;
+	sourceSnapshots: SessionSourceSnapshots;
+	media: SessionMediaStore;
 	historyGate: SessionHydrationGate;
+	historyToken(modeRef: RegisteredSession["modeRef"]): string;
 	channelSubs: ChannelSubscriptionRegistry;
 	streamGuard: StreamGuard;
 	eventRates: EventRateTracker;
@@ -49,6 +54,9 @@ afterEach(() => {
 });
 function setup(id: string, shutdown: () => Promise<void> = async () => {}) {
 	const backend = new PiBackend({
+		sessionMediaStore: new SessionMediaStore(
+			join(import.meta.dirname, "../../../.local/tmp/session-dispose-resources/media"),
+		),
 		projectTrust: false,
 		permissionGates: false,
 		subagentPreferBuiltin: false,
@@ -97,6 +105,9 @@ function setup(id: string, shutdown: () => Promise<void> = async () => {}) {
 		modeRef: { current: "default" },
 	} as unknown as RegisteredSession;
 	internal.registry.add(entry);
+	internal.sourceSnapshots.capture(entry, { sessionId: id, branch: () => [], entries: () => [] });
+	internal.media.openOwner(id, entry.modeRef);
+	const mediaLease = internal.media.lease(id, () => true);
 	internal.buildExtensionFactories(entry.cwd, undefined, entry.modeRef);
 	const producer = channelFactory.options;
 	if (!producer) throw Error("watcher producer callbacks not captured");
@@ -110,7 +121,7 @@ function setup(id: string, shutdown: () => Promise<void> = async () => {}) {
 	// Real pending resources; cancel/dispose must settle them rather than merely call spies.
 	const permission = gate.confirm("Approval", "fixture operation");
 	const dialog = dialogs.ask("confirm", { title: "Dialog", message: "fixture" }, { timeout: 60000 });
-	const history = internal.historyGate.wait(id);
+	const history = internal.historyGate.wait(id, internal.historyToken(entry.modeRef));
 	const native = {
 		gate: gate.dispose.bind(gate),
 		dialogs: dialogs.dispose.bind(dialogs),
@@ -119,7 +130,7 @@ function setup(id: string, shutdown: () => Promise<void> = async () => {}) {
 	pendingResourceCleanup.push(() => {
 		native.gate();
 		native.dialogs();
-		native.history(id);
+		native.history(id, internal.historyToken(entry.modeRef));
 		sdkEvents.removeAllListeners();
 	});
 	const gateDispose = vi.spyOn(gate, "dispose"),
@@ -133,6 +144,7 @@ function setup(id: string, shutdown: () => Promise<void> = async () => {}) {
 	return {
 		backend,
 		internal,
+		mediaLease,
 		producer,
 		sdkEvents,
 		native,
@@ -151,6 +163,9 @@ function setup(id: string, shutdown: () => Promise<void> = async () => {}) {
 function assertAuxiliaryReleased(fixture: ReturnType<typeof setup>, id: string) {
 	const { internal, entry } = fixture;
 	expect(internal.registry.has(id)).toBe(false);
+	expect(internal.sourceSnapshots.has(entry)).toBe(false);
+	expect(internal.sourceSnapshots.stats().views).toBe(0);
+	expect(() => fixture.mediaLease.assert()).toThrow("no longer writable");
 	expect(fixture.sdkEvents.listenerCount("event")).toBe(0);
 	expect(internal.channelWatchCleanups.has(entry.modeRef)).toBe(false);
 	expect(internal.eventRates.snapshot().has(id)).toBe(false);
@@ -176,9 +191,9 @@ describe("registered session lifetime uses real pending resources and auxiliary 
 		);
 		const { backend, internal, entry, order } = fixture;
 		const oldCancel = fixture.native.history;
-		fixture.historyCancel.mockImplementation((id) => {
+		fixture.historyCancel.mockImplementation((id, token) => {
 			order.push("history");
-			oldCancel(id);
+			oldCancel(id, token);
 		});
 		const oldGate = fixture.native.gate,
 			oldDialogs = fixture.native.dialogs;
@@ -348,8 +363,8 @@ describe("registered session lifetime uses real pending resources and auxiliary 
 			const channel = internal.channelSubs.dispose.bind(internal.channelSubs);
 			const stream = internal.streamGuard.cleanup.bind(internal.streamGuard);
 			const rate = internal.eventRates.delete.bind(internal.eventRates);
-			fixture.historyCancel.mockImplementation((id) => {
-				fixture.native.history(id);
+			fixture.historyCancel.mockImplementation((id, token) => {
+				fixture.native.history(id, token);
 				throw Error("history fault");
 			});
 			const channelSpy = vi.spyOn(internal.channelSubs, "dispose").mockImplementation((id) => {
@@ -568,7 +583,10 @@ describe("normal disposal errors and overlapping entry ownership", () => {
 					fixture.internal.registry.add(next);
 					fixture.internal.channelSubs.noteSessionOpened("quit-race");
 					fixture.internal.channelSubs.report("quit-race", new Set(["new"]));
-					nextHistory = fixture.internal.historyGate.wait("quit-race");
+					nextHistory = fixture.internal.historyGate.wait(
+						"quit-race",
+						fixture.internal.historyToken(next.modeRef),
+					);
 				}
 				const current = fixture.internal.channelSubs.snapshot("quit-race");
 				if (reopen) expect(current.generation).toBeGreaterThan(closed.generation);
@@ -588,13 +606,16 @@ describe("normal disposal errors and overlapping entry ownership", () => {
 				if (next) {
 					expect(fixture.internal.registry.get("quit-race")).toBe(next);
 					expect(next.session.dispose).not.toHaveBeenCalled();
-					fixture.internal.historyGate.ack("quit-race");
+					fixture.internal.historyGate.ack("quit-race", fixture.internal.historyToken(next.modeRef));
 					expect(await nextHistory).toBe(true);
 				}
 			} finally {
 				releaseShutdown();
 				await Promise.allSettled([close]);
-				fixture.internal.historyGate.cancel("quit-race");
+				fixture.internal.historyGate.cancel(
+					"quit-race",
+					fixture.internal.historyToken((next ?? fixture.entry).modeRef),
+				);
 				await nextHistory;
 			}
 		},

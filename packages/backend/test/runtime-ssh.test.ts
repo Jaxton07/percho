@@ -101,28 +101,34 @@ describe("SSH runtime boundary", () => {
 		).rejects.toThrow("concrete SSH Host alias");
 		expect(fixture.spawn).not.toHaveBeenCalled();
 	});
-	it("rejects an incomplete event/method contract before opening a business bridge", async () => {
-		const info = fixture.info as RuntimeInfo;
-		fixture.info = { ...info, methods: info.methods.filter((method) => method !== "abort") };
-		await expect(
-			SshRuntimeConnection.connect("company", {
-				signal: new AbortController().signal,
-				onEvent: () => {},
-				onClose: () => {},
-			}),
-		).rejects.toThrow("incompatible execution/event contract");
-		expect(fixture.spawn).toHaveBeenCalledTimes(3);
-	});
-	it("rejects the older event contract that cannot represent compaction pauses", async () => {
-		fixture.info = { ...(fixture.info as RuntimeInfo), eventContract: 2 };
-		await expect(
-			SshRuntimeConnection.connect("company", {
-				signal: new AbortController().signal,
-				onEvent: () => {},
-				onClose: () => {},
-			}),
-		).rejects.toThrow("incompatible execution/event contract");
-	});
+	it.each(["abort", "getSessionHistoryPage"])(
+		"rejects an incomplete contract missing %s before opening a business bridge",
+		async (missing) => {
+			const info = fixture.info as RuntimeInfo;
+			fixture.info = { ...info, methods: info.methods.filter((method) => method !== missing) };
+			await expect(
+				SshRuntimeConnection.connect("company", {
+					signal: new AbortController().signal,
+					onEvent: () => {},
+					onClose: () => {},
+				}),
+			).rejects.toThrow("incompatible execution/event contract");
+			expect(fixture.spawn).toHaveBeenCalledTimes(3);
+		},
+	);
+	it.each([2, 4, 5, 6])(
+		"rejects older event contract %s, including full-only history and mutation-classified exports",
+		async (eventContract) => {
+			fixture.info = { ...(fixture.info as RuntimeInfo), eventContract };
+			await expect(
+				SshRuntimeConnection.connect("company", {
+					signal: new AbortController().signal,
+					onEvent: () => {},
+					onClose: () => {},
+				}),
+			).rejects.toThrow("incompatible execution/event contract");
+		},
+	);
 	it("preserves split UTF-8 identity, strictly verifies hosts and uses a bridge bound to that runtime", async () => {
 		const connection = await SshRuntimeConnection.connect("company-dev", {
 			signal: new AbortController().signal,

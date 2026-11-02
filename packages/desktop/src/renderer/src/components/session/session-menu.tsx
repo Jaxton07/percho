@@ -95,6 +95,7 @@ export function sessionMenuItems(
 		pinned: boolean;
 		onRename: () => void;
 		onCopyDiagnostics?: () => void;
+		onMediaMaintenance?: () => void;
 		onDelete?: () => void;
 	},
 ): ContextMenuItem[] {
@@ -106,6 +107,9 @@ export function sessionMenuItems(
 			icon: <PinIcon size={13} />,
 			onSelect: () => toggleSessionPin(options.sessionId),
 		},
+		...(options.onMediaMaintenance
+			? [{ key: "media-maintenance", label: t("mediaPreview.title"), onSelect: options.onMediaMaintenance }]
+			: []),
 		...(options.onCopyDiagnostics
 			? [
 					{

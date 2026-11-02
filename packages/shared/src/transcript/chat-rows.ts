@@ -105,7 +105,7 @@ export interface TurnDiffRowsOptions {
 	/** 每轮计时（桌面 deriveTurnTimings 产出；不传 = 不产 timer 行） */
 	turnTimings?: TurnTiming[];
 	/** 进场动画目标轮（桌面 MessageList 的 baseline 逻辑算出） */
-	enteringTurn?: number | null;
+	enteringTurn?: string | number | null;
 }
 
 export function buildChatRows(
@@ -125,9 +125,11 @@ export function buildChatRows(
 	 * agentActive 期间本轮尚未定稿，末段先不挂（agent_end 后自然出现）。
 	 */
 	const turnFinalTextIds = new Set<string>();
+	const turnIds: string[] = [];
 	let lastTextId: string | null = null;
 	for (const message of transcript.messages) {
 		if (message.kind === "user") {
+			turnIds.push(message.id);
 			if (lastTextId) turnFinalTextIds.add(lastTextId);
 			lastTextId = null;
 			continue;
@@ -136,14 +138,15 @@ export function buildChatRows(
 	}
 	if (!transcript.agentActive && lastTextId) turnFinalTextIds.add(lastTextId);
 
-	/** 组序号：同会话内 key 按位置稳定（streaming→committed 转换不 remount）；key 含会话 id：切会话强制 remount */
+	/** 组序号只在稳定用户轮次内计数，前插不改变既有组key；streaming→committed仍保留key。 */
 	let groupIndex = 0;
+	let groupTurnId = `prefix:${transcript.messages[0]?.id ?? "empty"}`;
 	const flushMeta = (isLatest = false, forceEmpty = false, subagentCount = 0): void => {
 		if (metaItems.length === 0 && !forceEmpty && subagentCount === 0) return;
 		const endImmediately = transcript.compacting || Boolean(streaming?.text) || !transcript.agentActive;
 		rows.push({
 			kind: "metaGroup",
-			key: `meta-${sessionId}-g${groupIndex++}`,
+			key: `meta-${sessionId}-${groupTurnId}-g${groupIndex++}`,
 			items: metaItems,
 			working: isLatest && agentWorking,
 			endImmediately,
@@ -158,8 +161,16 @@ export function buildChatRows(
 	// 进 messages，天然不满足「turn_end 后才出现」）传了 turnTimings 则每轮必产行（计时恒显，diff 条件渲染）；
 	// 只传 turnChanges（lan-web 老路径）则保持原行为：有文件变更才产行。
 	const { turnChanges, turnTimings, enteringTurn } = opts ?? {};
-	const changeByTurn = turnChanges ? new Map(turnChanges.map((tc) => [tc.turnIndex, tc])) : null;
-	const timingByTurn = turnTimings ? new Map(turnTimings.map((tt) => [tt.turnIndex, tt])) : null;
+	const changeByTurn = turnChanges
+		? new Map(turnChanges.map((tc) => [tc.turnId ?? `legacy:${tc.turnIndex}`, tc]))
+		: null;
+	const timingByTurn = turnTimings
+		? new Map(turnTimings.map((tt) => [tt.turnId ?? `legacy:${tt.turnIndex}`, tt]))
+		: null;
+	const changesFor = (index: number) =>
+		changeByTurn?.get(turnIds[index] ?? "") ?? changeByTurn?.get(`legacy:${index}`);
+	const timingFor = (index: number) =>
+		timingByTurn?.get(turnIds[index] ?? "") ?? timingByTurn?.get(`legacy:${index}`);
 	let userRowCount = 0;
 	/**
 	 * 轮末行的插入点：放到尾部的「通知块」之前。
@@ -187,17 +198,16 @@ export function buildChatRows(
 		const at = footerInsertAt();
 		rows.splice(at, 0, {
 			kind: "turnDiff",
-			key: `turn-diff-${turnIndex}`,
-			changes: changeByTurn?.get(turnIndex),
-			timing: timingByTurn?.get(turnIndex),
+			key: `turn-diff-${sessionId}-${turnIds[turnIndex] ?? turnIndex}`,
+			changes: changesFor(turnIndex),
+			timing: timingFor(turnIndex),
 			running,
 			// 前一行是折叠组（纯工具轮/被打断轮无正文，组自带 -mb-4 对消 gap）→ chip 不再上提
 			afterMetaGroup: rows[at - 1]?.kind === "metaGroup",
-			entering: turnIndex === enteringTurn,
+			entering: turnIds[turnIndex] === enteringTurn || turnIndex === enteringTurn,
 		});
 	};
-	const hasFooterRow = (turnIndex: number): boolean =>
-		Boolean(changeByTurn?.get(turnIndex) || timingByTurn?.get(turnIndex));
+	const hasFooterRow = (turnIndex: number): boolean => Boolean(changesFor(turnIndex) || timingFor(turnIndex));
 
 	for (const message of transcript.messages) {
 		if (message.kind === "subagent") {
@@ -216,6 +226,10 @@ export function buildChatRows(
 		}
 		if (message.kind !== "assistant") {
 			flushMeta();
+			if (message.kind === "user") {
+				groupTurnId = message.id;
+				groupIndex = 0;
+			}
 			if (message.kind === "user" && (changeByTurn || timingByTurn)) {
 				if (hasFooterRow(userRowCount - 1)) pushTurnDiffRow(userRowCount - 1, false);
 				userRowCount++;

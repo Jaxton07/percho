@@ -89,6 +89,7 @@ export {
 	toSessionMessages,
 } from "./session/messages";
 export { type RegisteredSession, SessionRegistry } from "./session/registry";
+export { beginSessionSwitchProbe, finishSessionSwitchProbe } from "./session/switch-diagnostics";
 export { TraceRecorder } from "./session/trace";
 export { LoginService, type LoginServiceDeps } from "./settings/login";
 export { ModelPrefsService } from "./settings/model-prefs";

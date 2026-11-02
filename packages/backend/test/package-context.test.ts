@@ -97,6 +97,17 @@ it("routes project reads and removals through the requested session, not the sta
 	expect(() => handlers.listConfiguredPackages({ sessionId: "gone" })).toThrow("Session not found");
 });
 
+it("does not borrow project trust or require a settings runtime for read-only subagent views", async () => {
+	const { handlers, entries, backend } = await setupSessions();
+	entries.set("readonly", {
+		cwd: entries.get("a")?.cwd,
+		readOnly: true,
+		session: { sessionId: "readonly" },
+	} as RegisteredSession);
+	expect(await handlers.listConfiguredPackages({ sessionId: "readonly" })).toEqual([]);
+	await expect(backend.removePackage("npm:demo", "project", "readonly")).rejects.toThrow();
+});
+
 it("does not read untrusted project settings or fall back to the startup project", async () => {
 	const { handlers, backend } = await setupSessions();
 	expect(await handlers.listConfiguredPackages({ sessionId: "denied" })).toEqual([]);

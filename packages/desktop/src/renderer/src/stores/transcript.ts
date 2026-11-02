@@ -27,6 +27,12 @@ export type { ActivityEntry, SessionPhase, StreamingState, SubagentRunUi, UIMess
 export type PermissionRequest = SharedPermissionRequest;
 
 export interface SessionEntry extends SessionTranscriptState {
+	/** 同SID的全量/分页基线replace也必须重置视图窗口。 */
+	baselineRevision?: number;
+	/** 最近一次基线读取失败；成功安装后清除。 */
+	historyLoadError?: string;
+	/** 本地历史页请求状态，不属于服务端活动态。 */
+	historyFetch?: { generation: string; cursor: string; loading: boolean; error?: string };
 	pendingPermissions: PermissionRequest[];
 	/** 扩展对话框待应答队列（InteractionDock 渲染队首；D6 仲裁时权限优先于对话框） */
 	pendingDialogs: ExtensionDialogRequest[];
@@ -35,6 +41,18 @@ export interface SessionEntry extends SessionTranscriptState {
 }
 
 const EMPTY_ENTRY: SessionEntry = { ...emptyTranscript(), pendingPermissions: [], pendingDialogs: [] };
+
+export function setSessionHistoryLoadError(sessionId: string, error: unknown): void {
+	useTranscriptStore.setState((state) => ({
+		bySession: {
+			...state.bySession,
+			[sessionId]: {
+				...(state.bySession[sessionId] ?? EMPTY_ENTRY),
+				historyLoadError: error instanceof Error ? error.message : String(error),
+			},
+		},
+	}));
+}
 
 /** 空 todo 列表稳定引用（面板 selector 缺省用，禁内联新数组） */
 export const EMPTY_TODOS: TodoItem[] = [];

@@ -27,24 +27,31 @@ const fixture = vi.hoisted(() => {
 			createSession: vi.fn(async () => meta),
 			openSession: vi.fn(async () => meta),
 			getSessionMessages: vi.fn(async (): Promise<unknown[]> => []),
+			getSessionHistoryPage: vi.fn(async (): Promise<unknown> => ({ messages: [], history: {} })),
+			getSessionImage: vi.fn(async () => ({ data: "cmVtb3Rl", mimeType: "image/png" })),
 			setViewedSubagent: vi.fn(async () => {}),
-			getSessionBaseline: vi.fn(async () => ({
-				meta,
-				sequence: 0,
-				permissionMode: "default",
-				transcript: {
-					messages: [],
-					streaming: null,
-					phase: "idle",
-					agentActive: false,
-					unseenCompletion: false,
-					followUpQueue: [],
-					compacting: false,
-					todos: [],
-					pendingLlmError: null,
-					retrying: null,
-				},
-			})),
+			getSessionBaseline: vi.fn(
+				async (): Promise<import("@percho/shared").SessionBaseline> => ({
+					hydrationToken: "open-token",
+					meta,
+					sequence: 0,
+					permissionMode: "default",
+					transcript: {
+						messages: [],
+						streaming: null,
+						phase: "idle",
+						agentActive: false,
+						unseenCompletion: false,
+						followUpQueue: [],
+						compacting: false,
+						compactionPause: null,
+						summarizationRetry: null,
+						todos: [],
+						pendingLlmError: null,
+						retrying: null,
+					},
+				}),
+			),
 			getPendingInteractions: vi.fn(
 				async (): Promise<unknown> => ({ revision: 0, permissions: [], dialogs: [], trust: [] }),
 			),
@@ -65,6 +72,11 @@ const fixture = vi.hoisted(() => {
 			markSessionHistoryReady: vi.fn(async () => {}),
 			ensureProjectTrust: vi.fn(async () => true),
 			prompt: vi.fn(async () => {}),
+			startSessionMediaCompaction: vi.fn(async () => ({ jobId: "job" })),
+			startSessionMediaRestore: vi.fn(async () => ({ jobId: "job" })),
+			resumeSessionMediaJob: vi.fn(async () => ({ jobId: "job" })),
+			abandonSessionMediaJob: vi.fn(async () => ({ jobId: "job" })),
+			getSessionMediaTransaction: vi.fn(async () => null),
 			abort: vi.fn(async () => {}),
 			respondPermission: vi.fn(async () => {}),
 			saveUiState: vi.fn(async () => {}),
@@ -101,13 +113,184 @@ import { registerEnvironment } from "./environment-registry";
 import { NEW_SESSION_DRAFT_KEY, newSessionDraftKey, useDraftStore } from "./stores/drafts";
 import { acceptSessionEvent } from "./stores/session-event-boundary";
 import { clearSessionHistory } from "./stores/session-history";
+import { loadOlderHistory } from "./stores/session-history-paging";
 import { useSessionWorkspaceStore } from "./stores/session-workspace";
-import { useSessionsStore } from "./stores/sessions";
+import {
+	invalidateEnvironmentSessions,
+	synchronizeEnvironmentSessions,
+	useSessionsStore,
+} from "./stores/sessions";
 import { useTranscriptStore } from "./stores/transcript";
 import { useUiPreferencesStore } from "./stores/ui-preferences";
 
 const remote: EnvironmentRef = { kind: "ssh", connectionId: "company", environmentId: "remote-data" };
 const disposers: Array<() => void> = [];
+
+describe("媒体维护的执行环境边界", () => {
+	it("远端仅解包文件定位，不转换事务的原始幂等请求ID", async () => {
+		const api = getExecutionApi(remote);
+		const requestId = "maintenance-request";
+		const compactionRequestId = "original-compaction";
+		await api.startSessionMediaCompaction({
+			sessionFile: environmentEntityKey(remote, "/remote/session.jsonl"),
+			requestId,
+			expectedHash: "hash",
+			confirmed: true,
+		});
+		expect(fixture.remote.startSessionMediaCompaction).toHaveBeenCalledWith({
+			sessionFile: "/remote/session.jsonl",
+			requestId,
+			expectedHash: "hash",
+			confirmed: true,
+		});
+		await api.startSessionMediaRestore({ requestId, compactionRequestId, confirmed: true });
+		expect(fixture.remote.startSessionMediaRestore).toHaveBeenCalledWith({
+			requestId,
+			compactionRequestId,
+			confirmed: true,
+		});
+		await api.resumeSessionMediaJob({ requestId, confirmed: true });
+		await api.abandonSessionMediaJob({ requestId, confirmed: true });
+		await api.getSessionMediaTransaction({ requestId });
+		expect(fixture.remote.resumeSessionMediaJob).toHaveBeenCalledWith({ requestId, confirmed: true });
+		expect(fixture.remote.abandonSessionMediaJob).toHaveBeenCalledWith({ requestId, confirmed: true });
+		expect(fixture.remote.getSessionMediaTransaction).toHaveBeenCalledWith({ requestId });
+	});
+});
+
+describe("图片引用的执行环境边界", () => {
+	it("历史引用绑定返回它的环境，混合内联内容不被改造成定位符", async () => {
+		const reference = {
+			kind: "reference",
+			ownerSessionId: "same-id",
+			id: "entry:r:show:0",
+			revision: "version",
+			mimeType: "image/png",
+		};
+		fixture.remote.getSessionMessages.mockResolvedValueOnce([
+			{
+				role: "image",
+				timestamp: 1,
+				images: [reference, { data: "AQID", mimeType: "image/png" }],
+				paths: [],
+			},
+		]);
+		const messages = await getExecutionApi(remote).getSessionMessages({
+			sessionId: environmentEntityKey(remote, "same-id"),
+			imageMode: "references",
+		});
+		expect(messages.find((message) => message.role === "image")?.images).toEqual([
+			{ ...reference, ownerSessionId: environmentEntityKey(remote, "same-id") },
+			{ data: "AQID", mimeType: "image/png" },
+		]);
+		expect(fixture.local.getSessionMessages).not.toHaveBeenCalled();
+	});
+	it("远端旧页图片与子代理定位沿用首屏的环境边界，游标和任意正文保持原样", async () => {
+		const reference = {
+			kind: "reference",
+			ownerSessionId: "same-id",
+			id: "entry:older:show:0",
+			revision: "version",
+			mimeType: "image/png",
+		};
+		const history = {
+			generation: "snapshot",
+			sourceVersion: "version",
+			hydrationToken: "open",
+			hasOlder: true,
+			cursor: "opaque:/same/native:cursor",
+			firstEntryId: "older",
+			pageEntries: 3,
+			pageTurns: 1,
+		};
+		fixture.remote.getSessionHistoryPage.mockResolvedValueOnce({
+			history,
+			messages: [
+				{
+					kind: "image",
+					id: "entry:image:0",
+					entryId: "older",
+					ownerSessionId: "same-id",
+					images: [reference, { data: "AQID", mimeType: "image/png" }],
+					paths: [],
+					timestamp: 1,
+				},
+				{
+					kind: "user",
+					id: "entry:user:0",
+					entryId: "user",
+					text: "/same/child.jsonl",
+					images: [reference],
+					timestamp: 1,
+				},
+				{
+					kind: "subagent",
+					id: "entry:child:0",
+					timestamp: 1,
+					runs: [
+						{
+							key: "child-key",
+							agent: "scout",
+							status: "done",
+							sessionFile: "/same/child.jsonl",
+							task: "/same/child.jsonl",
+						},
+					],
+				},
+			],
+		});
+		const api = getExecutionApi(remote),
+			sessionId = environmentEntityKey(remote, "same-id"),
+			page = await api.getSessionHistoryPage({ sessionId, cursor: history.cursor });
+		expect(fixture.remote.getSessionHistoryPage).toHaveBeenCalledExactlyOnceWith({
+			sessionId: "same-id",
+			cursor: history.cursor,
+		});
+		expect(page.history).toEqual(history);
+		const image = page.messages.find((message) => message.kind === "image"),
+			user = page.messages.find((message) => message.kind === "user"),
+			child = page.messages.find((message) => message.kind === "subagent");
+		expect(image?.ownerSessionId).toBe(sessionId);
+		expect(image?.images).toEqual([
+			{ ...reference, ownerSessionId: sessionId },
+			{ data: "AQID", mimeType: "image/png" },
+		]);
+		expect(user?.images[0]).toEqual({ ...reference, ownerSessionId: sessionId });
+		expect(user?.text).toBe("/same/child.jsonl");
+		expect(child?.runs[0]?.sessionFile).toBe(environmentEntityKey(remote, "/same/child.jsonl"));
+		expect(child?.runs[0]?.task).toBe("/same/child.jsonl");
+		await getExecutionApi(sessionId).getSessionImage({
+			sessionId,
+			imageId: reference.id,
+			revision: reference.revision,
+		});
+		expect(fixture.remote.getSessionImage).toHaveBeenCalledWith({
+			sessionId: "same-id",
+			imageId: reference.id,
+			revision: reference.revision,
+		});
+		expect(fixture.local.getSessionHistoryPage).not.toHaveBeenCalled();
+		expect(fixture.local.getSessionImage).not.toHaveBeenCalled();
+	});
+	it("同名本机/远端会话单图只走引用所属环境，失败没有本机或路径回退", async () => {
+		const api = getExecutionApi(remote),
+			args = {
+				sessionId: environmentEntityKey(remote, "same-id"),
+				imageId: "entry:r:show:0",
+				revision: "version",
+			};
+		expect(await api.getSessionImage(args)).toEqual({ data: "cmVtb3Rl", mimeType: "image/png" });
+		expect(fixture.remote.getSessionImage).toHaveBeenCalledWith({ ...args, sessionId: "same-id" });
+		fixture.remote.getSessionImage.mockRejectedValueOnce(new Error("remote missing"));
+		await expect(api.getSessionImage(args)).rejects.toThrow("remote missing");
+		expect(fixture.local.getSessionImage).not.toHaveBeenCalled();
+		const other = { ...remote, environmentId: "another" };
+		await expect(
+			api.getSessionImage({ ...args, sessionId: environmentEntityKey(other, "same-id") }),
+		).rejects.toThrow();
+		expect(fixture.remote.getSessionImage).toHaveBeenCalledTimes(2);
+	});
+});
 
 beforeEach(() => {
 	vi.clearAllMocks();
@@ -116,6 +299,9 @@ beforeEach(() => {
 	fixture.local.permissions.clear();
 	fixture.remote.permissions.clear();
 	fixture.remote.getSessionMessages.mockResolvedValue([]);
+	fixture.remote.getSessionHistoryPage.mockReset().mockResolvedValue({ messages: [], history: {} });
+	fixture.local.getSessionHistoryPage.mockReset().mockResolvedValue({ messages: [], history: {} });
+	fixture.remote.getSessionImage.mockReset().mockResolvedValue({ data: "cmVtb3Rl", mimeType: "image/png" });
 	for (const session of useSessionsStore.getState().sessions) clearSessionHistory(session.sessionId);
 	useSessionsStore.setState({
 		sessions: [],
@@ -219,8 +405,15 @@ describe("session ownership through the actual renderer execution boundary", () 
 		expect(result.ok).toBe(true);
 		expect(useSessionsStore.getState().permissionModes[sessionId]).toBeUndefined();
 		expect(fixture.remote.setPermissionMode).not.toHaveBeenCalled();
-		expect(fixture.remote.getSessionBaseline).toHaveBeenCalledExactlyOnceWith({ sessionId: "same-id" });
-		expect(fixture.remote.markSessionHistoryReady).toHaveBeenCalledExactlyOnceWith({ sessionId: "same-id" });
+		expect(fixture.remote.getSessionBaseline).toHaveBeenCalledExactlyOnceWith({
+			sessionId: "same-id",
+			imageMode: "references",
+			historyTurns: 4,
+		});
+		expect(fixture.remote.markSessionHistoryReady).toHaveBeenCalledExactlyOnceWith({
+			sessionId: "same-id",
+			hydrationToken: "open-token",
+		});
 	});
 
 	it("installs a remote baseline and its later increments without replacing the selected local transcript", async () => {
@@ -264,6 +457,97 @@ describe("session ownership through the actual renderer execution boundary", () 
 		expect(useSessionsStore.getState().activeSessionId).toBe("local");
 	});
 
+	it.each([
+		{ active: false, sameInstance: true },
+		{ active: true, sameInstance: true },
+		{ active: true, sameInstance: false },
+	])(
+		"remote reconnect drops an old page after summary release (active=$active, same instance=$sameInstance)",
+		async ({ active, sameInstance }) => {
+			const raw = await fixture.remote.getSessionBaseline(),
+				id = environmentEntityKey(remote, "same-id"),
+				oldHistory = {
+					generation: "old-page",
+					sourceVersion: "version",
+					hydrationToken: raw.hydrationToken,
+					hasOlder: true,
+					cursor: "opaque-old",
+					pageEntries: 2,
+					pageTurns: 1,
+				};
+			const tail = {
+				kind: "user" as const,
+				id: "tail",
+				entryId: "tail-entry",
+				text: "Retained tail",
+				images: [],
+				timestamp: 1,
+			};
+			fixture.remote.getSessionBaseline.mockResolvedValueOnce({
+				...raw,
+				transcript: { ...emptyTranscript(), messages: [tail], history: oldHistory },
+			});
+			await useSessionsStore.getState().openFromHistory(environmentEntityKey(remote, "/same/history.jsonl"));
+			if (!active) await useSessionsStore.getState().openFromHistory("/same/history.jsonl");
+			const local = useTranscriptStore.getState().bySession["same-id"];
+			let release!: (value: unknown) => void;
+			fixture.remote.getSessionHistoryPage.mockImplementationOnce(
+				() =>
+					new Promise((resolve) => {
+						release = resolve;
+					}),
+			);
+			const pending = loadOlderHistory(id);
+			await vi.waitFor(() => expect(fixture.remote.getSessionHistoryPage).toHaveBeenCalled());
+			if (active) {
+				let projected = reduceEvent(emptyTranscript(), { type: "agent_start" });
+				projected = reduceEvent(projected, {
+					type: "message_update",
+					assistantMessageEvent: { type: "text_delta", contentIndex: 0, delta: "Recovered activity" },
+				} as never);
+				fixture.remote.getSessionBaseline.mockImplementationOnce(async () => {
+					acceptSessionEvent(id, 3, {}, () =>
+						useTranscriptStore.getState().applyEvent(id, {
+							type: "message_update",
+							assistantMessageEvent: { type: "text_delta", contentIndex: 0, delta: " + subsequent event" },
+						} as never),
+					);
+					return {
+						...raw,
+						sequence: 2,
+						hydrationToken: sameInstance ? raw.hydrationToken : "new-runtime-open",
+						transcript: {
+							...projected,
+							messages: [tail],
+							history: {
+								...oldHistory,
+								hydrationToken: sameInstance ? raw.hydrationToken : "new-runtime-open",
+								generation: "fresh-page",
+								cursor: "opaque-new",
+							},
+						},
+					};
+				});
+			}
+			const generation = invalidateEnvironmentSessions(remote);
+			await synchronizeEnvironmentSessions(remote, generation);
+			const before = useTranscriptStore.getState().bySession[id];
+			release({
+				history: { ...oldHistory, hasOlder: false, cursor: undefined },
+				messages: [{ ...tail, id: "stale-old-page", text: "Must not be installed" }],
+			});
+			await pending;
+			const after = useTranscriptStore.getState().bySession[id];
+			expect(after?.messages.map((message) => message.id)).toEqual(["tail"]);
+			expect(after).toBe(before);
+			expect(after?.historyFetch?.error).toBeUndefined();
+			if (active) {
+				expect(after?.streaming?.text).toBe("Recovered activity + subsequent event");
+				expect(after?.history?.generation).toBe("fresh-page");
+			} else expect(useTranscriptStore.getState().bySession["same-id"]).toBe(local);
+			expect(fixture.remote.markSessionHistoryReady).toHaveBeenCalledTimes(active && !sameInstance ? 2 : 1);
+		},
+	);
 	it("keeps nested subagent navigation scoped but preserves arbitrary tool content", async () => {
 		let received: unknown;
 		const off = getExecutionApi(remote).onEvent((event) => {

@@ -1,4 +1,4 @@
-import type { ImageInput } from "../session";
+import { type DisplayImage, displayImagesFromDetails } from "../display-image";
 import type { ActivityEntry, StreamingState } from "./types";
 
 /** reducer 内部共用工具：本地 id 生成、事件载荷解析、流式容器构造 */
@@ -103,23 +103,8 @@ export function extractExecutionDelta(partialResult: unknown): string | null {
 }
 
 /** show_image 工具结果 → 待发图片（兼容旧单图 details.image；结构不符返回 null） */
-export function extractShowImage(result: unknown): { images: ImageInput[]; paths: string[] } | null {
-	const details = (result as { details?: unknown } | null | undefined)?.details;
-	const d = details as { paths?: unknown; images?: unknown; path?: unknown; image?: unknown } | undefined;
-	const toImage = (raw: unknown): ImageInput | null => {
-		const img = raw as { data?: unknown; mimeType?: unknown } | undefined;
-		if (typeof img?.data !== "string" || typeof img?.mimeType !== "string") return null;
-		return { data: img.data, mimeType: img.mimeType };
-	};
-	const toPaths = (raw: unknown): string[] =>
-		Array.isArray(raw) ? raw.filter((p): p is string => typeof p === "string") : [];
-	if (Array.isArray(d?.images)) {
-		const images = d.images.map(toImage).filter((img): img is ImageInput => img !== null);
-		return images.length > 0 ? { images, paths: toPaths(d.paths) } : null;
-	}
-	const legacy = toImage(d?.image);
-	if (!legacy) return null;
-	return { images: [legacy], paths: typeof d?.path === "string" ? [d.path] : [] };
+export function extractShowImage(result: unknown): { images: DisplayImage[]; paths: string[] } | null {
+	return displayImagesFromDetails((result as { details?: unknown } | null | undefined)?.details);
 }
 
 /** edit 工具结果 → unified patch（details.patch 由 SDK edit-diff 产出；结构不符/非字符串返回 null） */

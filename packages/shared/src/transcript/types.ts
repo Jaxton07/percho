@@ -1,6 +1,8 @@
 import type { ComposerDocument } from "../composer-document";
+import type { DisplayImage } from "../display-image";
 import type { UiError } from "../errors";
-import type { CompactionPause, ImageInput } from "../session";
+import type { CompactionPause } from "../session";
+import type { SessionHistoryWindow } from "../session-history";
 import type { SkillInvocationDisplay } from "../skill-invocation";
 import type { SubagentRunSummary } from "../subagent";
 import type { TodoItem } from "../todo";
@@ -49,7 +51,7 @@ export type UIMessage =
 	| (UIBaseMessage & {
 			kind: "user";
 			document?: ComposerDocument;
-			images: ImageInput[];
+			images: DisplayImage[];
 			/** 已展开 skill 的安全展示信息（不含正文或路径） */
 			skill?: SkillInvocationDisplay;
 			/**
@@ -84,7 +86,10 @@ export type UIMessage =
 			/** show_image 工具发给用户看的图片（assistant 侧独立消息，tool_execution_end 时立即落 messages） */
 			kind: "image";
 			id: string;
-			images: ImageInput[];
+			entryId?: string;
+			ownerSessionId?: string;
+			toolCallId?: string;
+			images: DisplayImage[];
 			paths: string[];
 			timestamp: number;
 	  }
@@ -148,7 +153,7 @@ export interface StreamingState {
 	thinking: string;
 	tools: UIToolCall[];
 	/** show_image 发图缓冲：tool_execution_end 先入缓冲，turn_end 固化时排在 assistant 消息之后（与历史回放顺序一致） */
-	pendingImages: { images: ImageInput[]; paths: string[] }[];
+	pendingImages: { images: DisplayImage[]; paths: string[]; toolCallId?: string }[];
 	/** 子代理运行缓冲：tool_execution_start 建占位（工作中），end 用 details 完善，turn_end 固化为独立消息 */
 	subagentRuns: SubagentRunUi[];
 	/** toolCallId → subagentRuns 起点与占位数（parallel 一次调用可对应多行） */
@@ -170,6 +175,8 @@ export interface StreamingState {
 export type SessionPhase = "idle" | "streaming" | "awaiting_permission";
 
 export interface SessionTranscriptState {
+	/** 缺省为完整历史；分页元数据仅由同源baseline/历史页推进。 */
+	history?: SessionHistoryWindow;
 	/** 存活会话的压缩暂停原因；不是持久历史，也不等同于模型回答失败。 */
 	compactionPause?: CompactionPause | null;
 	summarizationRetry?: RetryInfo | null;

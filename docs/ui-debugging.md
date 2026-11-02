@@ -16,7 +16,7 @@ node scripts/dev-desktop.mjs --remote-debugging-port=9224
 2. CDP 连接后核对 `location.href` 与实际页面，`chrome-error://` 表示连到了错误页，不是业务组件不存在。
 3. 测试结束关闭本次 Electron 及其 dev server，确认端口释放。只杀 electron-vite 包装进程可能留下 Electron；不要用宽泛的 `pkill -f Electron`，以免结束正式版。
 
-开始输入前等待 `html[data-app-ready="true"]` 且 `#splash` 已移除。开屏期间 React 节点已经存在，但 `#root` 的 `content-visibility: hidden` 会让焦点和输入无法到达；不能以查到按钮或输入节点作为可交互的证据。
+开始输入前等待 `html[data-app-ready="true"]` 且 `#splash` 已移除。调用 `Page.reload` 后先等新页面的 `Page.loadEventFired`，再检查就绪标识；reload返回时旧文档可能仍然就绪，过早操作会被新页面启动恢复覆盖。开屏期间 React 节点已经存在，但 `#root` 的 `content-visibility: hidden` 会让焦点和输入无法到达；不能以查到按钮或输入节点作为可交互的证据。
 
 验收首次数据准备时，等待 `html[data-startup-view="setup"] .startup-layout`，这时工作台尚未就绪，不能等 `data-app-ready`。已迁移用户应始终没有 `.startup-layout`；验证无闪屏须从首帧观察，而非只看启动完成后的截图。两种路径都应只有一个窗口和一次业务页面导航。
 
@@ -61,7 +61,7 @@ node scripts/shoot-sidebar.mjs both .local/tmp/ui-review
 - **窗口行为**：CDP 鼠标不驱动 `-webkit-app-region: drag` 的原生拖窗；人工确认。当前 Electron 不支持 `Browser.setWindowBounds` 时可用页面 `window.resizeTo` 调整尺寸。
 - **状态夹具**：注入 store 使用完整对象形状，并在 finally 恢复；不能靠夹具绕过被测生产链路。contextBridge 的 `window.pi` 只读，不要指望赋值替换 IPC 来注入失败。
 - **断言有效性**：异步操作等待实际完成屏障，不用固定 sleep 判断落盘；断言应能被反例击穿。环境不满足和业务断言失败分开报告。
-- **性能**：固定样本、窗口和阶段，区分首次挂载、切会话、真实滚动补挂、图片解码；不要把模块基建堆占用全部算成会话成本。
+- **性能**：固定样本、窗口和阶段，区分首次挂载、切会话、真实滚动补挂、图片解码；不要把模块基建堆占用全部算成会话成本。GC重开不等于物理冷盘，两次rAF不等于图片已解码或OS已呈现，包含关系的阶段不能相加。可分享报告不包含正文、图片、凭证或本机路径；专项复现步骤和阶段验收记录放对应change，不放长期文档。
 
 ## 原生窗口的特殊边界
 

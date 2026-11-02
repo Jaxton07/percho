@@ -38,6 +38,8 @@ export interface SessionGcEntry {
 /** `sessions` store 里的一个打开中的会话（会话侧字段） */
 export interface SessionGcOpen {
 	sessionId: string;
+	/** 子代理检视者不拥有正在运行的SDK、队列或频道订阅。 */
+	readOnly?: boolean;
 	/** 最近使用时刻（切会话/打开/新建时打点；毫秒） */
 	lastUsedAt: number;
 	/** 消息条数（磁盘元数据，打开时读一次）：与 transcript 条数取大值判断「有没有会话文件」 */
@@ -86,6 +88,11 @@ export const GC_DEFAULTS = {
  * transcript 侧六条见 `SessionGcEntry`。导出给单测与接线层复用（接线层算候选时无需重复这套判断）。
  */
 export function isProtected(item: SessionGcOpen, entry: SessionGcEntry | undefined): boolean {
+	if (item.readOnly)
+		return (
+			!!entry &&
+			(entry.pendingPermissions.length > 0 || entry.pendingDialogs.length > 0 || entry.unseenCompletion)
+		);
 	// 有频道订阅 = 明确驻留语义（spec channel-watch retention §6.2）：卸载会停 watcher，
 	// 会话从此收不到频道唤醒——用户显式订阅了就该留在内存里（退订即恢复普通 GC 资格）。
 	if (item.hasChannelSubscriptions) return true;

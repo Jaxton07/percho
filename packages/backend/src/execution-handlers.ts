@@ -29,9 +29,25 @@ export function createExecutionHandlers(
 		getPendingInteractions: () => backend.getPendingInteractions(),
 		getLoadedSessions: () => backend.getLoadedSessions(),
 		setViewedSubagent: ({ sessionId }) => backend.setViewedSubagent(sessionId),
-		getSessionBaseline: ({ sessionId }) => backend.getSessionBaseline(sessionId),
-		getSessionMessages: ({ sessionId }) => backend.getSessionMessages(sessionId),
-		markSessionHistoryReady: ({ sessionId }) => backend.markSessionHistoryReady(sessionId),
+		getSessionBaseline: ({ sessionId, imageMode, historyTurns }) =>
+			backend.getSessionBaseline(sessionId, { imageMode, historyTurns }),
+		getSessionHistoryPage: ({ sessionId, cursor }) => backend.getSessionHistoryPage(sessionId, cursor),
+		getSessionMessages: ({ sessionId, imageMode }) => backend.getSessionMessages(sessionId, { imageMode }),
+		startSessionMediaPreview: ({ sessionFile }) => backend.startSessionMediaPreview(sessionFile),
+		startSessionMediaCompaction: (input) => backend.startSessionMediaCompaction(input),
+		startSessionMediaRestore: ({ requestId, compactionRequestId, confirmed }) =>
+			backend.startSessionMediaRestore(requestId, compactionRequestId, confirmed),
+		resumeSessionMediaJob: ({ requestId, confirmed }) => backend.resumeSessionMediaJob(requestId, confirmed),
+		abandonSessionMediaJob: ({ requestId, confirmed }) =>
+			backend.abandonSessionMediaJob(requestId, confirmed),
+		getSessionMediaTransaction: ({ requestId }) => backend.getSessionMediaTransaction(requestId),
+		getSessionMediaMaintenance: ({ sessionFile }) => backend.getSessionMediaMaintenance(sessionFile),
+		getSessionMediaJob: ({ jobId }) => backend.getSessionMediaJob(jobId),
+		cancelSessionMediaJob: ({ jobId }) => backend.cancelSessionMediaJob(jobId),
+		getSessionImage: ({ sessionId, imageId, revision }) =>
+			backend.getSessionImage(sessionId, imageId, revision),
+		markSessionHistoryReady: ({ sessionId, hydrationToken }) =>
+			backend.markSessionHistoryReady(sessionId, hydrationToken),
 		getTodos: ({ sessionId }) => backend.getTodos(sessionId),
 		compact: ({ sessionId, customInstructions }) => backend.compact(sessionId, customInstructions),
 		getStats: ({ sessionId }) => backend.getStats(sessionId),

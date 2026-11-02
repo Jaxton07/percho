@@ -1,5 +1,14 @@
-import { mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
-import { mkdir, readFile, rename, rm, writeFile } from "node:fs/promises";
+import {
+	closeSync,
+	fsyncSync,
+	mkdirSync,
+	openSync,
+	readFileSync,
+	renameSync,
+	rmSync,
+	writeFileSync,
+} from "node:fs";
+import { mkdir, open, readFile, rename, rm, writeFile } from "node:fs/promises";
 import { basename, dirname, join } from "node:path";
 import { createLogger } from "./log";
 
@@ -38,6 +47,8 @@ export interface JsonStoreOptions<T> {
 	defaultValue: () => T;
 	/** 文件权限（如 auth 类 0600）；缺省走进程 umask */
 	mode?: number;
+	/** 媒体/事务清单需要断电持久性：文件fsync后rename，再刷目录（Windows不支持目录fsync）。 */
+	durable?: boolean;
 	/** 解析钩子（默认 JSON.parse）；models.json 等 JSONC 文件用它先剥注释 */
 	parse?: (raw: string) => T;
 	/** 可保留 JSONC 注释的文本序列化；仍复用原子写和串行更新。 */
@@ -65,10 +76,33 @@ function isEnoent(err: unknown): boolean {
 	return typeof err === "object" && err !== null && (err as { code?: string }).code === "ENOENT";
 }
 
+// Windows scanners/readers can briefly hold a JSON record without delete sharing.
+// Retry only atomic metadata rename, never unlink the old file or retry session publication.
+async function renameJsonRecord(source: string, target: string): Promise<void> {
+	const delays = [10, 25, 50, 100];
+	for (let attempt = 0; ; attempt++) {
+		try {
+			await rename(source, target);
+			return;
+		} catch (error) {
+			const code = (error as NodeJS.ErrnoException).code;
+			const delay = delays[attempt];
+			if (
+				process.platform !== "win32" ||
+				!["EPERM", "EACCES", "EBUSY"].includes(code ?? "") ||
+				delay === undefined
+			)
+				throw error;
+			await new Promise((resolve) => setTimeout(resolve, delay));
+		}
+	}
+}
+
 export class JsonStore<T> {
 	private readonly path: string;
 	private readonly defaultValue: () => T;
 	private readonly mode: number | undefined;
+	private readonly durable: boolean;
 	private readonly parse: (raw: string) => T;
 	private readonly stringify: (value: T) => string;
 
@@ -76,6 +110,7 @@ export class JsonStore<T> {
 		this.path = options.path;
 		this.defaultValue = options.defaultValue;
 		this.mode = options.mode;
+		this.durable = options.durable ?? false;
 		this.stringify = options.stringify ?? ((value) => `${JSON.stringify(value, null, 2)}\n`);
 		this.parse = options.parse ?? (JSON.parse as (raw: string) => T);
 	}
@@ -120,8 +155,25 @@ export class JsonStore<T> {
 			`.${basename(this.path)}.${process.pid}.${Math.random().toString(36).slice(2)}.tmp`,
 		);
 		try {
-			await writeFile(tmp, this.stringify(value), { encoding: "utf8", mode: this.mode });
-			await rename(tmp, this.path);
+			if (this.durable) {
+				// Flush the original writable handle: Windows rejects fsync on read-only handles.
+				const handle = await open(tmp, "wx", this.mode);
+				try {
+					await handle.writeFile(this.stringify(value), "utf8");
+					await handle.sync();
+				} finally {
+					await handle.close();
+				}
+			} else await writeFile(tmp, this.stringify(value), { encoding: "utf8", mode: this.mode });
+			await renameJsonRecord(tmp, this.path);
+			if (this.durable && process.platform !== "win32") {
+				const handle = await open(dir, "r");
+				try {
+					await handle.sync();
+				} finally {
+					await handle.close();
+				}
+			}
 		} catch (err) {
 			await rm(tmp, { force: true }).catch(() => {});
 			throw err;
@@ -136,8 +188,24 @@ export class JsonStore<T> {
 			`.${basename(this.path)}.${process.pid}.${Math.random().toString(36).slice(2)}.tmp`,
 		);
 		try {
-			writeFileSync(tmp, this.stringify(value), { encoding: "utf8", mode: this.mode });
+			if (this.durable) {
+				const fd = openSync(tmp, "wx", this.mode);
+				try {
+					writeFileSync(fd, this.stringify(value), "utf8");
+					fsyncSync(fd);
+				} finally {
+					closeSync(fd);
+				}
+			} else writeFileSync(tmp, this.stringify(value), { encoding: "utf8", mode: this.mode });
 			renameSync(tmp, this.path);
+			if (this.durable && process.platform !== "win32") {
+				const fd = openSync(dir, "r");
+				try {
+					fsyncSync(fd);
+				} finally {
+					closeSync(fd);
+				}
+			}
 		} catch (err) {
 			rmSync(tmp, { force: true });
 			throw err;
@@ -157,6 +225,13 @@ export class JsonStore<T> {
 			log.warn("json 文件读取失败，read 回退默认值", this.path, err);
 			return this.defaultValue();
 		}
+	}
+
+	/** 安全事务读取：缺失用default，损坏及IO错误必须上抛，不能伪装成无事务。 */
+	async readStrict(): Promise<T> {
+		const result = await this.readRaw();
+		if (result.kind === "corrupted") throw new JsonStoreCorruptedError(this.path, result.error);
+		return result.value;
 	}
 
 	readSync(): T {

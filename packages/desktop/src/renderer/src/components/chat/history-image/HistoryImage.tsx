@@ -1,4 +1,4 @@
-import type { ImageInput } from "@percho/shared";
+import type { DisplayImage } from "@percho/shared";
 import { type Ref, useCallback, useEffect, useRef, useState, useSyncExternalStore } from "react";
 import { useT } from "../../../i18n";
 import { createHistoryImageBinding, type HistoryImageBinding, INERT_SNAPSHOT } from "./history-image-binding";
@@ -20,7 +20,7 @@ import { type ThumbnailService, type ThumbnailSnapshot, thumbnailService } from 
  * 拿不到 root（没接线）时只渲染同尺寸占位，**不做任何加载**。
  */
 export interface HistoryImageProps {
-	image: ImageInput;
+	image: DisplayImage;
 	/** 外盒（固定尺寸）与盒内 img 的 class，来自 history-image-layout */
 	boxClass: string;
 	imgClass: string;
