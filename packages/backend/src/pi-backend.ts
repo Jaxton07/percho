@@ -139,6 +139,13 @@ import { measureSessionSwitch, recordSessionSwitchPayload } from "./session/swit
 import { TraceRecorder } from "./session/trace";
 import { SessionTraces } from "./session/traces";
 import { makeUiContext } from "./session/ui-context";
+import { CacheWarmingSettings } from "./settings/cache-warming";
+import {
+	codemodeSessionOptions,
+	readCodemodeConfig,
+	writeCodemodeEnabled,
+	writeCodemodeOnly,
+} from "./settings/codemode";
 import { LoginService } from "./settings/login";
 import { ModelPrefsService } from "./settings/model-prefs";
 import { makeQuotaService } from "./settings/quota";
@@ -239,6 +246,12 @@ export interface PiBackendOptions {
  */
 export class PiBackend {
 	private readonly registry = new SessionRegistry();
+	private readonly cacheWarming = new CacheWarmingSettings(getAgentDir, () =>
+		this.registry
+			.list()
+			.filter((entry) => !entry.readOnly)
+			.map((entry) => entry.session),
+	);
 	private stopping = false;
 	private shutdownPromise?: Promise<void>;
 	private readonly creationFlights = new Set<Promise<unknown>>();
@@ -1053,6 +1066,7 @@ export class PiBackend {
 				sessionManager: SessionManager.create(cwd),
 				settingsManager,
 				resourceLoader,
+				...codemodeSessionOptions(settingsManager, getAgentDir()),
 			});
 		});
 		log.info("session created", session.sessionId, { cwd });
@@ -1122,6 +1136,7 @@ export class PiBackend {
 				tools: this.options.tools,
 				settingsManager,
 				resourceLoader,
+				...codemodeSessionOptions(settingsManager, getAgentDir()),
 				customTools: this.buildCustomTools(
 					deps.gate,
 					deps.preferBuiltin,
@@ -1293,17 +1308,24 @@ export class PiBackend {
 			});
 			this.constructionGates.delete(gate);
 			try {
-				this.registry.add({
-					session,
-					unsubscribe,
-					cwd,
-					gate,
-					dialogs,
-					modeRef,
-					readOnly: readOnly || undefined,
-				});
-				registered = true;
-				this.media.openOwner(session.sessionId, modeRef);
+				if (this.registry.has(session.sessionId))
+					throw new Error(`Session already registered: ${session.sessionId}`);
+				const register = () => {
+					this.assertRunning();
+					this.registry.add({
+						session,
+						unsubscribe,
+						cwd,
+						gate,
+						dialogs,
+						modeRef,
+						readOnly: readOnly || undefined,
+					});
+					registered = true;
+					this.media.openOwner(session.sessionId, modeRef);
+				};
+				if (readOnly) register();
+				else await this.cacheWarming.register(session, register);
 				// 这一代开始了：领取新代次（早报过的会话也在这里拿到最终代次；dispose 后重开会是新的一代）
 				this.channelSubs.noteSessionOpened(session.sessionId);
 			} catch (error) {
@@ -2565,6 +2587,24 @@ export class PiBackend {
 		if (!entry) throw new Error(`Session not found: ${sessionId}`);
 		entry.modeRef.current = mode;
 		log.info("permission mode", sessionId, { mode });
+	}
+
+	getCodemodeConfig(): { enabled: boolean; only: boolean } {
+		return readCodemodeConfig(getAgentDir());
+	}
+	async setCodemodeOnly(only: boolean): Promise<void> {
+		await writeCodemodeOnly(getAgentDir(), only);
+	}
+
+	getCacheWarming() {
+		return this.cacheWarming.get();
+	}
+	setCacheWarming(mode: import("@percho/shared").CacheWarmingMode) {
+		return this.cacheWarming.set(mode);
+	}
+
+	async setCodemodeEnabled(enabled: boolean): Promise<void> {
+		await writeCodemodeEnabled(getAgentDir(), enabled);
 	}
 
 	/** channel-watch 总开关（设置 UI 用；键在 ~/.percho/agent/settings.json，缺省=开） */

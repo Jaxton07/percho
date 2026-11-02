@@ -13,6 +13,7 @@ const api = vi.hoisted(() => ({
 	listSubagents: vi.fn(),
 	getPermissionConfig: vi.fn(),
 	getChannelWatchConfig: vi.fn(),
+	getCodemodeConfig: vi.fn(() => Promise.resolve({ enabled: true })),
 	lanGetStatus: vi.fn(),
 	loadModels: vi.fn(),
 }));
