@@ -68,9 +68,11 @@ export function Composer({ centered = false }: { centered?: boolean }) {
 	const cwd = useSessionsStore(selectActiveCwd);
 	/** 信任决策应答后递增：新会话页的斜杠菜单按新决策（信任与否）重拉命令 */
 	const trustVersion = useSessionsStore((s) => s.trustVersion);
-	const transcript = useTranscriptStore((s) => selectTranscript(s, activeSessionId));
 	/** 扩展 setEditorText 预填来源（一次性提示；用户首次键入清除） */
-	const extensionPrefillSource = transcript.extensionPrefillSource;
+	const extensionPrefillSource = useTranscriptStore(
+		(s) => selectTranscript(s, activeSessionId).extensionPrefillSource,
+	);
+	const agentActive = useTranscriptStore((s) => selectTranscript(s, activeSessionId).agentActive);
 	/** 图片门控数据源：当前生效模型（会话覆写 ?? 全局默认 → models 表解析，useActiveModelInfo 收拢点） */
 	const activeModelInfo = useActiveModelInfo();
 	/** 当前模型是否支持图片输入；fail-open：模型未知/字段缺省一律按支持，只拦 imageInput === false */
@@ -145,9 +147,9 @@ export function Composer({ centered = false }: { centered?: boolean }) {
 	const boxRef = useRef<HTMLDivElement>(null);
 	const fileInputRef = useRef<HTMLInputElement>(null);
 
-	const followUpQueue = transcript.followUpQueue;
+	const followUpQueue = useTranscriptStore((s) => selectTranscript(s, activeSessionId).followUpQueue);
 	/** 压缩进行中：禁发（SDK 拒绝压缩中的 prompt；提前拦截保住草稿，warn 提示代替报错丢文本） */
-	const compacting = transcript.compacting;
+	const compacting = useTranscriptStore((s) => selectTranscript(s, activeSessionId).compacting);
 	/** 输入框有内容：streaming 中按钮从停止切回发送（入队后文本清空自动切回停止） */
 	const hasContent = Boolean(text.trim()) || images.length > 0 || Boolean(slashCommand) || quotes.length > 0;
 
@@ -190,7 +192,7 @@ export function Composer({ centered = false }: { centered?: boolean }) {
 		event.preventDefault();
 		editorRef.current?.focus();
 	};
-	const isStreaming = transcript.phase === "streaming" || sending;
+	const isStreaming = agentActive || sending;
 	const placeholder = readOnly
 		? t("composer.placeholderReadOnly")
 		: compacting

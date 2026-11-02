@@ -18,6 +18,7 @@ import { loadOlderHistory } from "../../stores/session-history-paging";
 import { useSessionsStore } from "../../stores/sessions";
 import { selectTranscript, useTranscriptStore } from "../../stores/transcript";
 import { useUiPreferencesStore } from "../../stores/ui-preferences";
+import { SessionViewContext } from "../ui/DeferredDetails";
 import { CenterOrb } from "./CenterOrb";
 import { CompactionPauseNote } from "./CompactionPauseNote";
 import { HistoryImageRootProvider } from "./history-image/history-image-root";
@@ -358,6 +359,7 @@ export function MessageList() {
 			items.push(
 				<MetaGroup
 					key={row.key}
+					viewKey={row.key}
 					items={row.items}
 					working={row.working}
 					endImmediately={row.endImmediately}
@@ -390,120 +392,124 @@ export function MessageList() {
 	});
 
 	return (
-		<div className="relative h-full">
-			{/* 中央状态动画：z-20 在文字层（z-10 滚动容器）之上——canvas 一体遮罩压住身后文字、
+		<SessionViewContext.Provider value={activeSessionId}>
+			<div className="relative h-full">
+				{/* 中央状态动画：z-20 在文字层（z-10 滚动容器）之上——canvas 一体遮罩压住身后文字、
 			    凸显动画本体（用户规格：工作中不看文字）；pointer-events-none 不拦截交互 */}
-			{centerOrbEnabled && <CenterOrb visible={shownWorking} />}
-			{/* overflow-x-hidden：任何行内容异常超宽都只裁剪，不产生页面级横向滚动条 */}
-			{/* scrollbar-gutter:stable：永久保留滚动条槽位——展开折叠组跨过溢出阈值时滚动条出现/消失
+				{centerOrbEnabled && <CenterOrb visible={shownWorking} />}
+				{/* overflow-x-hidden：任何行内容异常超宽都只裁剪，不产生页面级横向滚动条 */}
+				{/* scrollbar-gutter:stable：永久保留滚动条槽位——展开折叠组跨过溢出阈值时滚动条出现/消失
 			    会挤掉布局宽度，导致居中列（mx-auto max-w-760）整体左右横移；悬浮滚动条模式下无副作用 */}
-			{/* relative z-10：无背景；CenterOrb（z-20）连同其 canvas 遮罩盖在本层之上（工作中场景），
+				{/* relative z-10：无背景；CenterOrb（z-20）连同其 canvas 遮罩盖在本层之上（工作中场景），
 			    交互不受影响（orb 整层 pointer-events-none） */}
-			<div
-				ref={attachScroller}
-				onScroll={handleScroll}
-				onWheel={(event) => {
-					if (event.deltaY < 0 && (scrollRef.current?.scrollTop ?? Infinity) < MOUNT_TRIGGER_PX) {
-						updateFollowing(false);
-						requestEarlierRows();
-					}
-				}}
-				onClickCapture={handleSummaryToggle}
-				style={{ "--edge-fade-size": "28px" } as CSSProperties}
-				className="edge-fade chat-scrollbar relative z-10 h-full overflow-x-hidden overflow-y-auto [overflow-anchor:auto] [scrollbar-gutter:stable]"
-			>
-				{(transcript.history?.hasOlder || transcript.historyFetch?.error || transcript.historyLoadError) && (
-					<div
-						className="mx-auto max-w-[760px] px-6 pt-4 text-center text-ui-12 text-ink-3"
-						data-history-paging
-					>
-						{transcript.history?.hasOlder && (
-							<button
-								type="button"
-								className="hover:text-ink"
-								disabled={transcript.historyFetch?.loading}
-								onClick={() => requestEarlierRows(true)}
-							>
-								{transcript.historyFetch?.loading
-									? t("message.historyLoading")
-									: t("message.historyLoadEarlier")}
-							</button>
-						)}
-						{(transcript.historyFetch?.error || transcript.historyLoadError) && (
-							<div role="status">
-								<p>
+				<div
+					ref={attachScroller}
+					onScroll={handleScroll}
+					onWheel={(event) => {
+						if (event.deltaY < 0 && (scrollRef.current?.scrollTop ?? Infinity) < MOUNT_TRIGGER_PX) {
+							updateFollowing(false);
+							requestEarlierRows();
+						}
+					}}
+					onClickCapture={handleSummaryToggle}
+					style={{ "--edge-fade-size": "28px" } as CSSProperties}
+					className="edge-fade chat-scrollbar relative z-10 h-full overflow-x-hidden overflow-y-auto [overflow-anchor:auto] [scrollbar-gutter:stable]"
+				>
+					{(transcript.history?.hasOlder ||
+						transcript.historyFetch?.error ||
+						transcript.historyLoadError) && (
+						<div
+							className="mx-auto max-w-[760px] px-6 pt-4 text-center text-ui-12 text-ink-3"
+							data-history-paging
+						>
+							{transcript.history?.hasOlder && (
+								<button
+									type="button"
+									className="hover:text-ink"
+									disabled={transcript.historyFetch?.loading}
+									onClick={() => requestEarlierRows(true)}
+								>
+									{transcript.historyFetch?.loading
+										? t("message.historyLoading")
+										: t("message.historyLoadEarlier")}
+								</button>
+							)}
+							{(transcript.historyFetch?.error || transcript.historyLoadError) && (
+								<div role="status">
+									<p>
+										{(transcript.historyFetch?.error ?? transcript.historyLoadError)?.includes(
+											"HISTORY_PAGE_TOO_LARGE",
+										)
+											? t("message.historyTooLarge")
+											: t("message.historyLoadFailed")}
+									</p>
+									<button type="button" className="hover:text-ink" onClick={() => reloadHistory()}>
+										{t("message.historyReload")}
+									</button>
 									{(transcript.historyFetch?.error ?? transcript.historyLoadError)?.includes(
 										"HISTORY_PAGE_TOO_LARGE",
-									)
-										? t("message.historyTooLarge")
-										: t("message.historyLoadFailed")}
-								</p>
-								<button type="button" className="hover:text-ink" onClick={() => reloadHistory()}>
-									{t("message.historyReload")}
-								</button>
-								{(transcript.historyFetch?.error ?? transcript.historyLoadError)?.includes(
-									"HISTORY_PAGE_TOO_LARGE",
-								) && (
-									<button type="button" className="ml-3 hover:text-ink" onClick={() => reloadHistory(true)}>
-										{t("message.historyLoadFull")}
-									</button>
-								)}
-							</div>
-						)}
-					</div>
-				)}
-				{/* data-chat-column：对话区列的几何锚点（「返回父会话」入口靠它把自己摆到左侧空带正中，见 subagent-back-offset.ts） */}
-				<div
-					ref={contentRef}
-					data-chat-column
-					className="mx-auto flex max-w-[760px] flex-col gap-6 px-6 pt-8 pb-16"
-				>
-					{/* root 私有接线：历史图片靠它判断「是否在滚动容器可视区内」，拿不到就只渲染占位 */}
-					<HistoryImageRootProvider root={historyImageRoot}>
-						{items.map((item, index) => (
-							<div
-								key={`${activeSessionId}:${visibleRows[index]?.key}`}
-								data-chat-row-key={visibleRows[index]?.key}
-								className="contents"
-							>
-								{item}
-							</div>
-						))}
-						{transcript.retrying && <RetryNote info={transcript.retrying} />}
-						{transcript.summarizationRetry && <RetryNote info={transcript.summarizationRetry} summary />}
-						{transcript.compactionPause && <CompactionPauseNote pause={transcript.compactionPause} />}
-					</HistoryImageRootProvider>
-				</div>
-			</div>
-			{/* 选中文字浮出菜单：定位在滚动容器内以便判断选区归属（fixed 定位不受父级影响） */}
-			<SelectionToolbar containerRef={scrollRef} />
-			{!following && (
-				<button
-					type="button"
-					onClick={() => {
-						updateFollowing(true);
-						pinToBottom(window.matchMedia("(prefers-reduced-motion: reduce)").matches ? "auto" : "smooth");
-					}}
-					className="absolute bottom-4 left-1/2 z-10 flex -translate-x-1/2 items-center gap-1.5 rounded-full border border-border bg-surface/95 px-3 py-1.5 text-ui-12 leading-[calc(1_/_0.75)] text-ink-2 shadow-pop backdrop-blur transition-colors hover:bg-hover"
-					aria-label={t("message.scrollToBottom")}
-				>
-					<svg
-						width="13"
-						height="13"
-						viewBox="0 0 24 24"
-						fill="none"
-						stroke="currentColor"
-						strokeWidth="2"
-						strokeLinecap="round"
-						strokeLinejoin="round"
-						aria-hidden="true"
+									) && (
+										<button type="button" className="ml-3 hover:text-ink" onClick={() => reloadHistory(true)}>
+											{t("message.historyLoadFull")}
+										</button>
+									)}
+								</div>
+							)}
+						</div>
+					)}
+					{/* data-chat-column：对话区列的几何锚点（「返回父会话」入口靠它把自己摆到左侧空带正中，见 subagent-back-offset.ts） */}
+					<div
+						ref={contentRef}
+						data-chat-column
+						className="mx-auto flex max-w-[760px] flex-col gap-6 px-6 pt-8 pb-16"
 					>
-						<path d="M12 5v14" />
-						<path d="m19 12-7 7-7-7" />
-					</svg>
-					{t("message.scrollToBottom")}
-				</button>
-			)}
-		</div>
+						{/* root 私有接线：历史图片靠它判断「是否在滚动容器可视区内」，拿不到就只渲染占位 */}
+						<HistoryImageRootProvider root={historyImageRoot}>
+							{items.map((item, index) => (
+								<div
+									key={`${activeSessionId}:${visibleRows[index]?.key}`}
+									data-chat-row-key={visibleRows[index]?.key}
+									className="contents"
+								>
+									{item}
+								</div>
+							))}
+							{transcript.retrying && <RetryNote info={transcript.retrying} />}
+							{transcript.summarizationRetry && <RetryNote info={transcript.summarizationRetry} summary />}
+							{transcript.compactionPause && <CompactionPauseNote pause={transcript.compactionPause} />}
+						</HistoryImageRootProvider>
+					</div>
+				</div>
+				{/* 选中文字浮出菜单：定位在滚动容器内以便判断选区归属（fixed 定位不受父级影响） */}
+				<SelectionToolbar containerRef={scrollRef} />
+				{!following && (
+					<button
+						type="button"
+						onClick={() => {
+							updateFollowing(true);
+							pinToBottom(window.matchMedia("(prefers-reduced-motion: reduce)").matches ? "auto" : "smooth");
+						}}
+						className="absolute bottom-4 left-1/2 z-10 flex -translate-x-1/2 items-center gap-1.5 rounded-full border border-border bg-surface/95 px-3 py-1.5 text-ui-12 leading-[calc(1_/_0.75)] text-ink-2 shadow-pop backdrop-blur transition-colors hover:bg-hover"
+						aria-label={t("message.scrollToBottom")}
+					>
+						<svg
+							width="13"
+							height="13"
+							viewBox="0 0 24 24"
+							fill="none"
+							stroke="currentColor"
+							strokeWidth="2"
+							strokeLinecap="round"
+							strokeLinejoin="round"
+							aria-hidden="true"
+						>
+							<path d="M12 5v14" />
+							<path d="m19 12-7 7-7-7" />
+						</svg>
+						{t("message.scrollToBottom")}
+					</button>
+				)}
+			</div>
+		</SessionViewContext.Provider>
 	);
 }

@@ -9,7 +9,6 @@ import { Tooltip } from "../ui/Tooltip";
 
 /** 槽位名 → i18n key（KNOWN_UI_SLOTS 与 renderer slots.ts 对齐） */
 const SLOT_KEYS: Record<string, MessageKey> = {
-	"chat.tool-call-card": "settings.uiPlugins.slotToolCallCard",
 	"chat.subagent-card": "settings.uiPlugins.slotSubagentCard",
 	"chat.todo-panel": "settings.uiPlugins.slotTodoPanel",
 };

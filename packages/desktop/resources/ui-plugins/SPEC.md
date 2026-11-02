@@ -2,7 +2,7 @@
 
 > 本文件随 Percho 分发（`userData/ui-plugins/SPEC.md`），是 agent 编写 UI 插件的唯一权威依据。
 > 配套类型声明：同目录 `percho-ui.d.ts`（与宿主 `window.PerchoUI` 暴露清单**逐名一致**）。
-> 完整示例：`examples/terminal-tool-card/`。槽位契约设计见宿主仓库 `.local/docs/design/spec/ui-plugin-system.md`。
+> 完整示例：`examples/token-meter/` 与 `examples/overlay-pet/`。
 
 ## 1. 什么是 UI 插件
 
@@ -19,23 +19,10 @@ my-plugin/
 
 | 槽位名 | props | 默认组件 |
 |---|---|---|
-| `chat.tool-call-card` | `{ tool: UIToolCall }` | 工具调用卡（折叠行：工具名 + 参数摘要 + 输出） |
 | `chat.subagent-card` | `{ runs: SubagentRunUi[] }` | 子代理独立行（状态点 + 名称 + 点击打开子会话） |
 | `chat.todo-panel` | `{}` | 任务列表面板（右上角胶囊，内部自行取数） |
 
 ```ts
-interface UIToolCall {
-	key: string;      // 本地稳定 id（React key 用）
-	id: string;       // 真实 toolCall id
-	name: string;     // 工具名，如 "bash"
-	args: string;     // 参数摘要（JSON 或纯文本）
-	output: string;   // 执行输出累积
-	state: "running" | "done" | "error";
-	blockIndex?: number;
-	diff?: string;     // edit成功后的unified patch（可选）
-	endedAt?: number;  // 执行结束时间戳（可选）
-}
-
 interface SubagentRunSummary {
 	changedFiles: Array<{ path: string; added: number; removed: number }>;
 	commands: Array<{ command: string; isError: boolean }>;
@@ -63,13 +50,13 @@ interface SubagentRunUi {
 
 ```json
 {
-	"name": "my-terminal-card",
+	"name": "my-subagent-card",
 	"version": "0.1.0",
-	"displayName": "终端风工具卡",
-	"description": "把工具调用卡改成终端样式",
+	"displayName": "子代理卡",
+	"description": "自定义子代理运行摘要",
 	"perchoUi": 1,
 	"main": "src/index.tsx",
-	"slots": { "chat.tool-call-card": "ToolCallCard" }
+	"slots": { "chat.subagent-card": "SubagentCard" }
 }
 ```
 
@@ -150,7 +137,7 @@ export const stores: {                      // 宿主 zustand store（与宿主�
 
 ## 8. 完整示例
 
-`_examples/terminal-tool-card/`（随包分发，seedDocs 拷进插件根目录时改名为 `_examples`——下划线开头不被当插件扫描），要点齐全：memo 包裹、语义 token、useT、折叠 details 结构。照抄改即可。
+`_examples/token-meter/` 与 `_examples/overlay-pet/` 随包分发（下划线开头不被当插件扫描），演示状态订阅、语义样式和区域贡献。工具卡使用内置展示，不提供替换槽位；未知槽位使整个清单无效，不部分加载，也不改写用户插件文件。
 
 ## 9. 交付闭环（agent 标准流程）
 

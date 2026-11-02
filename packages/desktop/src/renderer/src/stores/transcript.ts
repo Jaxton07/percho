@@ -20,6 +20,8 @@ import {
 	type UIToolCall,
 } from "@percho/shared";
 import { create } from "zustand";
+import { sessionDetailKeys } from "../lib/session-view-keys";
+import { useSessionViewStore } from "./session-view";
 
 export type { ActivityEntry, SessionPhase, StreamingState, SubagentRunUi, UIMessage, UIToolCall };
 
@@ -92,6 +94,7 @@ interface TranscriptStore {
 export const useTranscriptStore = create<TranscriptStore>((set) => ({
 	bySession: {},
 	applyEvent: (sessionId, event, opts) => {
+		useSessionViewStore.getState().ensure(sessionId);
 		set((state) => {
 			const current = state.bySession[sessionId];
 			const prev = current ?? emptyTranscript();
@@ -132,6 +135,7 @@ export const useTranscriptStore = create<TranscriptStore>((set) => ({
 		});
 	},
 	appendOptimisticUser: (sessionId, input) => {
+		useSessionViewStore.getState().ensure(sessionId);
 		let id = "";
 		set((state) => {
 			// 新会话第一条时 entry 还不存在（首个事件才建）——自己补建，否则乐观气泡无处可放
@@ -243,6 +247,7 @@ export const useTranscriptStore = create<TranscriptStore>((set) => ({
 		});
 	},
 	resetSession: (sessionId) => {
+		useSessionViewStore.getState().forget(sessionId);
 		// 删 key 而非写空 entry：读取点全部走 `?? EMPTY_ENTRY` / `?.`（selectTranscript 兜底），
 		// 「会话无数据」状态与从未打开过的会话一致，也是 switchSession 懒加载的判定依据
 		set((state) => {
@@ -253,6 +258,10 @@ export const useTranscriptStore = create<TranscriptStore>((set) => ({
 		});
 	},
 	loadHistory: (sessionId, messages) => {
+		useSessionViewStore.getState().ensure(sessionId);
+		useSessionViewStore
+			.getState()
+			.prune(sessionId, sessionDetailKeys({ ...emptyTranscript(), messages }, sessionId));
 		set((state) => {
 			const current = state.bySession[sessionId];
 			const notices =
@@ -262,6 +271,7 @@ export const useTranscriptStore = create<TranscriptStore>((set) => ({
 					...state.bySession,
 					[sessionId]: {
 						messages: [...notices, ...messages],
+						baselineRevision: (current?.baselineRevision ?? 0) + 1,
 						streaming: null,
 						phase: "idle",
 						agentActive: false,

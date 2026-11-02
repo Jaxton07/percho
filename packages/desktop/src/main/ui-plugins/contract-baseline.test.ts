@@ -346,7 +346,7 @@ describe("V07 complete plugin contract guard (no import of side-effectful host A
 				.map(([key]) => key)
 				.sort(),
 		).toEqual([...KNOWN_UI_SLOTS].sort());
-		for (const id of ["UIToolCall", "SubagentRunUi"]) {
+		for (const id of ["SubagentRunUi"]) {
 			expect(fields(types, id)).toEqual(fields(data.declaration, id));
 			expect(fields(types, id)).toEqual(fields(snippets, id));
 			expect(() =>
@@ -390,7 +390,7 @@ describe("V07 complete plugin contract guard (no import of side-effectful host A
 				.map(([key, path], index) => `const alias${index}: typeof A.${path.join(".")} = A.${key};`);
 			await writeFile(
 				fixture,
-				`import * as A from "@percho/plugin-api";\n${aliases.join("\n")}\n${assetChecks.join("\n")}\ndeclare const tool: A.UIToolCall; declare const run: A.SubagentRunUi;\nconst end: number | undefined = tool.endedAt; const diff: string | undefined = tool.diff;\nconst thinking: string | undefined = run.thinkingLevel; const store: unknown = A.useProjectsStore;`,
+				`import * as A from "@percho/plugin-api";\n${aliases.join("\n")}\n${assetChecks.join("\n")}\ndeclare const run: A.SubagentRunUi;\nconst thinking: string | undefined = run.thinkingLevel; const store: unknown = A.useProjectsStore;`,
 			);
 			const declaration = new URL("../../../resources/ui-plugins/percho-ui.d.ts", import.meta.url).pathname;
 			const program = ts.createProgram([fixture, declaration], {

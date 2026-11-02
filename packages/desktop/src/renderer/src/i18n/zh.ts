@@ -952,7 +952,6 @@ export const zh = {
 			statusBuildFailed: "构建失败",
 			statusLoadFailed: "加载失败",
 			slotsLabel: "覆盖槽位",
-			slotToolCallCard: "工具调用卡",
 			slotSubagentCard: "子代理卡",
 			slotTodoPanel: "任务列表面板",
 			contributionsLabel: "贡献",

@@ -444,6 +444,7 @@ export function SessionTabBar() {
 					diffSidebarOpen ? "bg-hover text-ink" : "text-ink-dim hover:bg-hover hover:text-ink"
 				}`}
 				onClick={toggleDiffSidebar}
+				data-diff-toggle=""
 				aria-label={t("diff.toggle")}
 			>
 				<DiffIcon size={16} />

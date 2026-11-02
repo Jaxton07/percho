@@ -73,6 +73,7 @@ export function TurnDiffChip({
 	const t = useT();
 	const setDiffSidebarOpen = useUiStore((s) => s.setDiffSidebarOpen);
 	const setDiffFocus = useUiStore((s) => s.setDiffFocus);
+	const sessionId = useSessionsStore((s) => s.activeSessionId);
 	/** 相对路径文件行的解析基准（变更行里的路径是模型原样给出的，可能是相对的） */
 	const cwd = useSessionsStore(selectActiveCwd);
 	/** 文件行右键菜单：记住打开的那一行（target + 锚点） */
@@ -90,7 +91,7 @@ export function TurnDiffChip({
 
 	const jumpTo = (sectionKey?: string) => {
 		setDiffSidebarOpen(true);
-		if (sectionKey) setDiffFocus(sectionKey);
+		if (sectionKey) setDiffFocus(sectionKey, sessionId ?? undefined);
 	};
 	const fileCount = changes.files.length;
 

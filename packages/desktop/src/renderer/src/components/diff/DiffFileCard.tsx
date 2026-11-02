@@ -1,7 +1,8 @@
 import { type PatchHunk, parsePatch, type TurnFileChange } from "@percho/shared";
-import { type CSSProperties, Fragment, useEffect, useMemo, useRef, useState } from "react";
+import { type CSSProperties, memo, useMemo, useState } from "react";
 import { useT } from "../../i18n";
 import { MoreIcon } from "../icons";
+import { DeferredDetails, useDetailValue } from "../ui/DeferredDetails";
 import { FilePathMenu } from "../ui/FilePathMenu";
 import { anchorOfElement, type MenuAnchor } from "../ui/place-menu";
 
@@ -35,10 +36,10 @@ function DiffLine({
 }
 
 /** edit 段：unified patch 结构化渲染；解析失败（空 hunks）回退纯文本 pre */
-function PatchView({ patch }: { patch: string }) {
+const PatchView = memo(function PatchView({ patch, viewKey }: { patch: string; viewKey: string }) {
 	const t = useT();
 	const hunks = useMemo(() => parsePatch(patch), [patch]);
-	const [expanded, setExpanded] = useState(false);
+	const [expanded, setExpanded] = useDetailValue(viewKey);
 
 	// 拍平成「hunk 头 / 行」序列并统一编号（stagger 的 --i），折叠按条数截断
 	const flat = useMemo(() => {
@@ -92,12 +93,12 @@ function PatchView({ patch }: { patch: string }) {
 			)}
 		</>
 	);
-}
+});
 
 /** write 段：无改前内容，全量 + 行伪 diff（口径差异已在 spec 确认） */
-function WriteView({ content }: { content: string }) {
+const WriteView = memo(function WriteView({ content, viewKey }: { content: string; viewKey: string }) {
 	const t = useT();
-	const [expanded, setExpanded] = useState(false);
+	const [expanded, setExpanded] = useDetailValue(viewKey);
 	const lines = useMemo(() => content.split("\n"), [content]);
 	const overflow = lines.length - COLLAPSE_LINES;
 	const visible = !expanded && overflow > 0 ? lines.slice(0, COLLAPSE_LINES) : lines;
@@ -116,116 +117,108 @@ function WriteView({ content }: { content: string }) {
 			)}
 		</>
 	);
-}
+});
 
 /**
  * 文件卡片（手风琴）：头部 = mono path + 增删统计 + chevron；体 = sections 逐个渲染
  * （同轮同文件多次 edit 为多段，段间细分割线）。
- * <details> 非受控（drawer-details 抽屉动画）；内容体每次展开重挂（key=openCount）让行 stagger 重播。
- * chip 跳转由 DiffSidebar 直接操作 DOM（open=true + scrollIntoView + jump-flash），不经 props。
+ * 轻量展开状态随驻留会话保存；退场结束后释放明细，再展开时重播原行进入动画。
+ * 定位由侧栏解析来源、展开卡片，等对应段落挂载后滚动。
  */
-export function DiffFileCard({
+export const DiffFileCard = memo(function DiffFileCard({
 	file,
+	viewKey,
 	defaultOpen,
 	cwd,
 }: {
 	file: TurnFileChange;
+	viewKey: string;
 	defaultOpen: boolean;
 	/** 会话工作目录（相对路径解析基准） */
 	cwd: string | null;
 }) {
-	const ref = useRef<HTMLDetailsElement>(null);
-	const [openCount, setOpenCount] = useState(0);
-	/** 文件卡头部右键/「⋯」菜单锚点（null = 关闭） */
 	const [menuAnchor, setMenuAnchor] = useState<MenuAnchor | null>(null);
-
-	// 非受控初值：挂载后补 open（不能用 open prop——React 重渲染会覆盖用户/程序的 DOM 侧切换）
-	// biome-ignore lint/correctness/useExhaustiveDependencies: 仅挂载时应用一次初值
-	useEffect(() => {
-		if (defaultOpen && ref.current) ref.current.open = true;
-	}, []);
-
 	return (
-		<details
-			ref={ref}
-			className="diff-file-card drawer-details"
-			data-section-key={file.sections[0]?.toolCallKey}
-			onToggle={(e) => {
-				if (e.currentTarget.open) setOpenCount((c) => c + 1);
-			}}
-		>
-			{/* biome-ignore lint/a11y/noStaticElementInteractions: <summary> 本身就是 details 的交互头（左键折叠），右键菜单是附加入口 */}
-			<summary
-				className="diff-file-head [&::-webkit-details-marker]:hidden"
-				onContextMenu={(e) => {
-					e.preventDefault();
-					setMenuAnchor(anchorOfElement(e.currentTarget));
+		<>
+			<DeferredDetails
+				viewKey={viewKey}
+				defaultOpen={defaultOpen}
+				className="diff-file-card drawer-details"
+				summaryClassName="diff-file-head [&::-webkit-details-marker]:hidden"
+				summaryOnContextMenu={(event) => {
+					event.preventDefault();
+					setMenuAnchor(anchorOfElement(event.currentTarget));
 				}}
+				summary={
+					<>
+						<svg
+							width="12"
+							height="12"
+							viewBox="0 0 24 24"
+							fill="none"
+							stroke="currentColor"
+							strokeWidth="1.8"
+							strokeLinecap="round"
+							className="diff-file-icon"
+							aria-hidden="true"
+						>
+							<path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8Z" />
+							<path d="M14 2v6h6" />
+						</svg>
+						<span className="diff-file-path" title={file.path}>
+							{/* LRM 前缀：RTL 截断时防路径开头的 "/" 被 bidi 算法甩到行尾 */}
+							{`\u200e${file.path}`}
+						</span>
+						<span className="turn-diff-stat">
+							<span className="turn-diff-added">+{file.added}</span>{" "}
+							<span className="turn-diff-removed">−{file.removed}</span>
+						</span>
+						{/* hover 浮出的「⋯」：右键的可发现入口，与右键共用同一菜单（左键折叠仍是卡片主操作） */}
+						<span
+							className="diff-file-more"
+							aria-hidden="true"
+							onClick={(e) => {
+								e.preventDefault();
+								e.stopPropagation();
+								setMenuAnchor(anchorOfElement(e.currentTarget));
+							}}
+						>
+							<MoreIcon />
+						</span>
+						<span className="diff-file-chev" aria-hidden="true">
+							<svg
+								width="11"
+								height="11"
+								viewBox="0 0 24 24"
+								fill="none"
+								stroke="currentColor"
+								strokeWidth="2.2"
+								strokeLinecap="round"
+								aria-hidden="true"
+							>
+								<path d="m9 6 6 6-6 6" />
+							</svg>
+						</span>
+					</>
+				}
+				bodyClassName="diff-card-body"
 			>
-				<svg
-					width="12"
-					height="12"
-					viewBox="0 0 24 24"
-					fill="none"
-					stroke="currentColor"
-					strokeWidth="1.8"
-					strokeLinecap="round"
-					className="diff-file-icon"
-					aria-hidden="true"
-				>
-					<path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8Z" />
-					<path d="M14 2v6h6" />
-				</svg>
-				<span className="diff-file-path" title={file.path}>
-					{/* LRM 前缀：RTL 截断时防路径开头的 "/" 被 bidi 算法甩到行尾 */}
-					{`\u200e${file.path}`}
-				</span>
-				<span className="turn-diff-stat">
-					<span className="turn-diff-added">+{file.added}</span>{" "}
-					<span className="turn-diff-removed">−{file.removed}</span>
-				</span>
-				{/* hover 浮出的「⋯」：右键的可发现入口，与右键共用同一菜单（左键折叠仍是卡片主操作） */}
-				<span
-					className="diff-file-more"
-					aria-hidden="true"
-					onClick={(e) => {
-						e.preventDefault();
-						e.stopPropagation();
-						setMenuAnchor(anchorOfElement(e.currentTarget));
-					}}
-				>
-					<MoreIcon />
-				</span>
-				<span className="diff-file-chev" aria-hidden="true">
-					<svg
-						width="11"
-						height="11"
-						viewBox="0 0 24 24"
-						fill="none"
-						stroke="currentColor"
-						strokeWidth="2.2"
-						strokeLinecap="round"
-						aria-hidden="true"
-					>
-						<path d="m9 6 6 6-6 6" />
-					</svg>
-				</span>
-			</summary>
-			<div className="diff-card-body" key={openCount}>
-				{file.sections.map((sec, i) => (
-					<Fragment key={sec.toolCallKey}>
-						{i > 0 && <div className="diff-section-sep" aria-hidden="true" />}
-						{sec.kind === "edit" && sec.patch ? (
-							<PatchView patch={sec.patch} />
-						) : (
-							<WriteView content={sec.content ?? ""} />
-						)}
-					</Fragment>
-				))}
-			</div>
+				{() =>
+					file.sections.map((sec, i) => (
+						<div key={sec.toolCallKey} data-section-key={sec.toolCallKey}>
+							{i > 0 && <div className="diff-section-sep" aria-hidden="true" />}
+							{sec.kind === "edit" && sec.patch ? (
+								<PatchView viewKey={`full:${sec.toolCallKey}`} patch={sec.patch} />
+							) : (
+								<WriteView viewKey={`full:${sec.toolCallKey}`} content={sec.content ?? ""} />
+							)}
+						</div>
+					))
+				}
+			</DeferredDetails>
 			{menuAnchor && (
 				<FilePathMenu target={file.path} cwd={cwd} anchor={menuAnchor} onClose={() => setMenuAnchor(null)} />
 			)}
-		</details>
+		</>
 	);
-}
+});

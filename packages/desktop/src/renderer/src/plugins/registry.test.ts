@@ -45,17 +45,17 @@ describe("ui plugin registry", () => {
 	it("applyPlugin 注册声明的槽位 override", () => {
 		const res = useUiPluginRegistry.getState().applyPlugin(
 			manifest({
-				[UI_SLOTS.ToolCallCard]: "ToolCallCard",
+				[UI_SLOTS.TodoPanel]: "TodoPanel",
 				[UI_SLOTS.SubagentCard]: "SubagentCard",
 			}),
-			{ ToolCallCard: noop, SubagentCard: noop },
-			[UI_SLOTS.ToolCallCard, UI_SLOTS.SubagentCard],
+			{ TodoPanel: noop, SubagentCard: noop },
+			[UI_SLOTS.TodoPanel, UI_SLOTS.SubagentCard],
 		);
 		expect(res).toEqual({ ok: true, missing: [] });
 		const overrides = useUiPluginRegistry.getState().overrides;
-		expect(overrides[UI_SLOTS.ToolCallCard]).toMatchObject({
+		expect(overrides[UI_SLOTS.TodoPanel]).toMatchObject({
 			pluginName: "test-plugin",
-			exportName: "ToolCallCard",
+			exportName: "TodoPanel",
 		});
 		expect(overrides[UI_SLOTS.SubagentCard]).toMatchObject({ exportName: "SubagentCard" });
 	});
@@ -63,17 +63,17 @@ describe("ui plugin registry", () => {
 	it("导出缺失/非函数 → 记入 missing 且不注册该槽位（其余槽位照常）", () => {
 		const res = useUiPluginRegistry.getState().applyPlugin(
 			manifest({
-				[UI_SLOTS.ToolCallCard]: "ToolCallCard",
+				[UI_SLOTS.TodoPanel]: "TodoPanel",
 				[UI_SLOTS.SubagentCard]: "NotExported",
 			}),
-			{ ToolCallCard: noop, NotExported: "not-a-function" },
-			[UI_SLOTS.ToolCallCard, UI_SLOTS.SubagentCard],
+			{ TodoPanel: noop, NotExported: "not-a-function" },
+			[UI_SLOTS.TodoPanel, UI_SLOTS.SubagentCard],
 		);
 		expect(res.ok).toBe(false);
 		expect(res.missing).toEqual(["chat.subagent-card → NotExported"]);
 		const overrides = useUiPluginRegistry.getState().overrides;
 		expect(overrides[UI_SLOTS.SubagentCard]).toBeUndefined();
-		expect(overrides[UI_SLOTS.ToolCallCard]).toBeDefined();
+		expect(overrides[UI_SLOTS.TodoPanel]).toBeDefined();
 	});
 
 	it("同一槽位后注册的插件顶掉前一个（一槽一 override）", () => {
@@ -93,9 +93,9 @@ describe("ui plugin registry", () => {
 		useUiPluginRegistry
 			.getState()
 			.applyPlugin(
-				manifest({ [UI_SLOTS.ToolCallCard]: "A", [UI_SLOTS.TodoPanel]: "A2" }),
+				manifest({ [UI_SLOTS.SubagentCard]: "A", [UI_SLOTS.TodoPanel]: "A2" }),
 				{ A: noop, A2: noop },
-				[UI_SLOTS.ToolCallCard, UI_SLOTS.TodoPanel],
+				[UI_SLOTS.SubagentCard, UI_SLOTS.TodoPanel],
 			);
 		useUiPluginRegistry
 			.getState()
@@ -103,7 +103,6 @@ describe("ui plugin registry", () => {
 		useUiPluginRegistry.getState().reportCrash("test-plugin");
 		useUiPluginRegistry.getState().removePlugin("test-plugin");
 		const state = useUiPluginRegistry.getState();
-		expect(state.overrides[UI_SLOTS.ToolCallCard]).toBeUndefined();
 		expect(state.overrides[UI_SLOTS.TodoPanel]).toBeUndefined();
 		expect(state.overrides[UI_SLOTS.SubagentCard]).toMatchObject({ pluginName: "other" });
 		expect(state.crashCounts["test-plugin"]).toBeUndefined();
@@ -130,14 +129,14 @@ describe("ui plugin registry", () => {
 	it("无关操作不重建已注册 override（selector 稳定引用）", () => {
 		useUiPluginRegistry
 			.getState()
-			.applyPlugin(manifest({ [UI_SLOTS.ToolCallCard]: "A" }), { A: noop }, [UI_SLOTS.ToolCallCard]);
-		const before = useUiPluginRegistry.getState().overrides[UI_SLOTS.ToolCallCard];
+			.applyPlugin(manifest({ [UI_SLOTS.TodoPanel]: "A" }), { A: noop }, [UI_SLOTS.TodoPanel]);
+		const before = useUiPluginRegistry.getState().overrides[UI_SLOTS.TodoPanel];
 		// 注册另一个插件的槽位、上报他人崩溃：都不该重建 A 的 override 对象
 		useUiPluginRegistry
 			.getState()
 			.applyPlugin(manifest({ [UI_SLOTS.SubagentCard]: "B" }, "other"), { B: noop }, [UI_SLOTS.SubagentCard]);
 		useUiPluginRegistry.getState().reportCrash("other");
-		expect(useUiPluginRegistry.getState().overrides[UI_SLOTS.ToolCallCard]).toBe(before);
+		expect(useUiPluginRegistry.getState().overrides[UI_SLOTS.TodoPanel]).toBe(before);
 	});
 
 	it("React.memo 包装的组件导出（对象）也能注册（spec §13 要求插件用 memo）", () => {
@@ -147,12 +146,12 @@ describe("ui plugin registry", () => {
 		});
 		const res = useUiPluginRegistry
 			.getState()
-			.applyPlugin(manifest({ [UI_SLOTS.ToolCallCard]: "ToolCallCard" }), { ToolCallCard: memoized }, [
-				UI_SLOTS.ToolCallCard,
+			.applyPlugin(manifest({ [UI_SLOTS.TodoPanel]: "TodoPanel" }), { TodoPanel: memoized }, [
+				UI_SLOTS.TodoPanel,
 			]);
 		expect(res).toEqual({ ok: true, missing: [] });
-		expect(useUiPluginRegistry.getState().overrides[UI_SLOTS.ToolCallCard]).toMatchObject({
-			exportName: "ToolCallCard",
+		expect(useUiPluginRegistry.getState().overrides[UI_SLOTS.TodoPanel]).toMatchObject({
+			exportName: "TodoPanel",
 		});
 		// 普通对象（非 React 包装）仍拒绝
 		const res2 = useUiPluginRegistry
