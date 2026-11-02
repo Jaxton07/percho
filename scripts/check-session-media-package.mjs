@@ -268,20 +268,40 @@ try {
 			if (lock.exitCode !== null) throw new Error(`File lock helper failed: ${lockError}`);
 			return ready.includes("LOCK_READY");
 		}, "Windows exclusive-delete lock");
+		const lockedRequestId = randomUUID();
 		const failed = await poll(
 			await invoke("startSessionMediaCompaction", {
 				sessionFile: file,
-				requestId: randomUUID(),
+				requestId: lockedRequestId,
 				expectedHash: preview.result.sourceHash,
 				confirmed: true,
 			}),
 			true,
 		);
-		assert.notEqual(failed.status, "completed");
+		assert.equal(failed.status, "failed");
+		assert.match(failed.error, /EPERM|EACCES|EBUSY/);
+		const interrupted = await invoke("getSessionMediaTransaction", { requestId: lockedRequestId });
+		assert.equal(interrupted.phase, "publishing");
+		assert.equal(hash(await readFile(interrupted.backup)), hash(original));
 		assert.equal(hash(await readFile(file)), hash(original));
 		lockedFailure = true;
 		lock.stdin.end("release\n");
 		await wait(() => lock.exitCode !== null, "release Windows file lock");
+		// A failed replace retains its durable recovery record; a fresh request
+		// must not bypass that guard. Recover the same transaction after unlock.
+		const resumed = await poll(
+			await invoke("resumeSessionMediaJob", { requestId: lockedRequestId, confirmed: true }),
+		);
+		assert.equal(resumed.transaction.phase, "complete");
+		const reset = await poll(
+			await invoke("startSessionMediaRestore", {
+				requestId: randomUUID(),
+				compactionRequestId: lockedRequestId,
+				confirmed: true,
+			}),
+		);
+		assert.equal(reset.transaction.phase, "complete");
+		assert.equal(hash(await readFile(file)), hash(original));
 	}
 	const requestId = randomUUID(),
 		input = { sessionFile: file, requestId, expectedHash: preview.result.sourceHash, confirmed: true },
@@ -316,6 +336,7 @@ try {
 		linkEscapeRejected: true,
 		windowsLockedFileFailure: process.platform === "win32" ? lockedFailure : "not-Windows",
 		retryAfterUnlock: process.platform === "win32" ? true : "not-Windows",
+		resumedInterruptedTransaction: process.platform === "win32" ? true : "not-Windows",
 		idempotentReceipt: true,
 		backupAndRestoreExact: true,
 		paidModelRequests: 0,

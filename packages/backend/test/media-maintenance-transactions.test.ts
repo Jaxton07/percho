@@ -196,6 +196,28 @@ describe("单文件持久整理事务", () => {
 			await fresh.assertOpenAllowed(file);
 		},
 	);
+	it("中断发布后新requestId不能越过恢复门；原事务恢复并还原后才能开始新请求", async () => {
+		const interrupted = controller({ fail: "publishing" });
+		await interrupted.create(input());
+		await expect(interrupted.execute(input().requestId)).rejects.toThrow("crash:publishing");
+		expect(await readFile(file, "utf8")).toBe(original);
+		const service = controller();
+		await expect(service.create({ ...input(), requestId: "next-request" })).rejects.toThrow("unfinished");
+		const resumed = await service.execute(input().requestId);
+		expect(resumed.phase).toBe("complete");
+		expect(await readFile(resumed.backup, "utf8")).toBe(original);
+		const restore = await service.create({
+			...input(),
+			requestId: "restore-resumed",
+			expectedHash: hash(await readFile(file)),
+			restoreFrom: resumed.requestId,
+		});
+		expect((await service.execute(restore.requestId)).phase).toBe("complete");
+		expect(await readFile(file, "utf8")).toBe(original);
+		await expect(service.create({ ...input(), requestId: "next-request" })).resolves.toMatchObject({
+			phase: "queued",
+		});
+	});
 	it("驻留/未确认/不足空间不发布；requestId不能绑定不同输入", async () => {
 		const service = controller();
 		loaded = true;
