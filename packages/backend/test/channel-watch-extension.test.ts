@@ -992,7 +992,15 @@ describe("P1 · 恢复补投（catch-up）", () => {
 		await mkdir(topicDir(cwd, "t1"), { recursive: true });
 		for (let i = 0; i < 6; i++) {
 			await writeFile(mf, `v${i}\n`);
-			await sleep(150);
+			// This case requires six distinct deliveries, not coalesced writes. Wait
+			// for delivery/persistence rather than assuming filesystem latency <150ms.
+			await vi.waitFor(
+				() => {
+					expect(pi.wakes).toHaveLength(i + 1);
+					expect(lastPayload(pi).cursors).toEqual({ t1: contentHash(`v${i}\n`) });
+				},
+				{ timeout: 1000, interval: 20 },
+			);
 		}
 		// 前 6 次投递，第 6 次触发乒乓暂停
 		expect(pi.wakes).toHaveLength(6);
@@ -1006,9 +1014,13 @@ describe("P1 · 恢复补投（catch-up）", () => {
 		expect(lastPayload(pi).cursors).toEqual({ t1: contentHash("v5\n") }); // 也不推进 cursor
 
 		await subscribe(pi, "t1"); // 显式重新订阅 → 恢复暂停 + 合并补投一次
-		await sleep(80);
-		expect(pi.wakes).toHaveLength(7);
-		expect(lastPayload(pi).cursors).toEqual({ t1: contentHash("v7\n") });
+		await vi.waitFor(
+			() => {
+				expect(pi.wakes).toHaveLength(7);
+				expect(lastPayload(pi).cursors).toEqual({ t1: contentHash("v7\n") });
+			},
+			{ timeout: 1000, interval: 20 },
+		);
 	});
 
 	it("unsubscribe 删除 cursor（不给幽灵复活留基线）", async () => {
