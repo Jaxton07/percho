@@ -1,8 +1,8 @@
-import { useId, useLayoutEffect, useRef, useState } from "react";
+import { type ReactNode, useId, useLayoutEffect, useRef, useState } from "react";
 import { useT } from "../../i18n";
 
 /** 只裁剪正文的展示，不截断原文；自然高度独立于折叠状态，避免测量反馈循环。 */
-export function UserMessageText({ text }: { text: string }) {
+export function UserMessageText({ children }: { children: ReactNode }) {
 	const t = useT();
 	const id = useId();
 	const contentRef = useRef<HTMLDivElement>(null);
@@ -32,7 +32,7 @@ export function UserMessageText({ text }: { text: string }) {
 				data-collapsed={overflowing && !expanded ? "true" : undefined}
 			>
 				<div ref={contentRef} className="whitespace-pre-wrap break-words">
-					{text}
+					{children}
 				</div>
 			</div>
 			{overflowing && (

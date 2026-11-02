@@ -38,7 +38,7 @@ import { UserMessageText } from "./UserMessageText";
 
 function render(text = "完整原文") {
 	harness.cursor = 0;
-	return renderToStaticMarkup(createElement(UserMessageText, { text }));
+	return renderToStaticMarkup(createElement(UserMessageText, null, text));
 }
 
 beforeEach(() => {
