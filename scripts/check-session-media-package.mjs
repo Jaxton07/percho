@@ -271,7 +271,9 @@ try {
 		const lockedRequestId = randomUUID();
 		const failed = await poll(
 			await invoke("startSessionMediaCompaction", {
-				sessionFile: file,
+				// Create through a case alias, then exercise the ordinary-open guard
+				// through the original spelling while durable recovery is pending.
+				sessionFile: join(sessions, "SYNTHETIC.JSONL"),
 				requestId: lockedRequestId,
 				expectedHash: preview.result.sourceHash,
 				confirmed: true,
@@ -282,6 +284,11 @@ try {
 		assert.match(failed.error, /EPERM|EACCES|EBUSY/);
 		const interrupted = await invoke("getSessionMediaTransaction", { requestId: lockedRequestId });
 		assert.equal(interrupted.phase, "publishing");
+		await assert.rejects(invoke("openSession", { filePath: file }), /unfinished maintenance/);
+		await assert.rejects(
+			invoke("openSession", { filePath: join(sessions, "SYNTHETIC.JSONL") }),
+			/unfinished maintenance/,
+		);
 		assert.equal(hash(await readFile(interrupted.backup)), hash(original));
 		assert.equal(hash(await readFile(file)), hash(original));
 		lockedFailure = true;
@@ -337,6 +344,7 @@ try {
 		windowsLockedFileFailure: process.platform === "win32" ? lockedFailure : "not-Windows",
 		retryAfterUnlock: process.platform === "win32" ? true : "not-Windows",
 		resumedInterruptedTransaction: process.platform === "win32" ? true : "not-Windows",
+		caseAliasRecoveryGuard: process.platform === "win32" ? true : "not-Windows",
 		idempotentReceipt: true,
 		backupAndRestoreExact: true,
 		paidModelRequests: 0,

@@ -76,6 +76,28 @@ function isEnoent(err: unknown): boolean {
 	return typeof err === "object" && err !== null && (err as { code?: string }).code === "ENOENT";
 }
 
+// Windows scanners/readers can briefly hold a JSON record without delete sharing.
+// Retry only atomic metadata rename, never unlink the old file or retry session publication.
+async function renameJsonRecord(source: string, target: string): Promise<void> {
+	const delays = [10, 25, 50, 100];
+	for (let attempt = 0; ; attempt++) {
+		try {
+			await rename(source, target);
+			return;
+		} catch (error) {
+			const code = (error as NodeJS.ErrnoException).code;
+			const delay = delays[attempt];
+			if (
+				process.platform !== "win32" ||
+				!["EPERM", "EACCES", "EBUSY"].includes(code ?? "") ||
+				delay === undefined
+			)
+				throw error;
+			await new Promise((resolve) => setTimeout(resolve, delay));
+		}
+	}
+}
+
 export class JsonStore<T> {
 	private readonly path: string;
 	private readonly defaultValue: () => T;
@@ -143,7 +165,7 @@ export class JsonStore<T> {
 					await handle.close();
 				}
 			} else await writeFile(tmp, this.stringify(value), { encoding: "utf8", mode: this.mode });
-			await rename(tmp, this.path);
+			await renameJsonRecord(tmp, this.path);
 			if (this.durable && process.platform !== "win32") {
 				const handle = await open(dir, "r");
 				try {

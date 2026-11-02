@@ -5,9 +5,13 @@ const paths = vi.hoisted(() => ({
 	legacy: vi.fn((file: string) => file),
 	native: vi.fn((file: string) => file),
 }));
-vi.mock("node:fs", () => ({ realpathSync: Object.assign(paths.legacy, { native: paths.native }) }));
+vi.mock("node:fs", () => ({
+	realpathSync: Object.assign(paths.legacy, { native: paths.native }),
+	lstatSync: () => ({ isSymbolicLink: () => false, isFile: () => true }),
+}));
 
 import { SessionFileOperations } from "../src/session/file-operations";
+import { maintenancePaths } from "../src/session/maintenance-paths";
 
 beforeEach(() => {
 	paths.legacy.mockReset().mockImplementation((file) => file);
@@ -27,6 +31,15 @@ describe("session file identity", () => {
 		expect(() => operations.acquire([alias], "open")).toThrow("busy");
 		lease.release();
 		expect(operations.has(alias)).toBe(false);
+	});
+	it("indexes maintenance recovery using the same native identity as the ordinary-open guard", () => {
+		const root = resolve("fixtures/agent");
+		const canonical = resolve(root, "sessions/session.jsonl");
+		const alias = resolve(root, "sessions/session.JSONL");
+		paths.native.mockImplementation((file) => (file === alias ? canonical : file));
+		const indexedFile = maintenancePaths(root).resolveFile(alias);
+		const openGuardFile = new SessionFileOperations().key(canonical);
+		expect(indexedFile).toBe(openGuardFile);
 	});
 	it("does not turn a native permission failure into a different path identity", () => {
 		const error = Object.assign(new Error("denied"), { code: "EACCES" });

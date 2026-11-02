@@ -28,8 +28,10 @@ export function maintenancePaths(
 			}
 			const stat = lstatSync(approved);
 			if (!stat.isFile()) throw new Error("Maintenance requires an existing regular session file");
-			const actual = realpathSync(approved),
-				actualRoot = realpathSync(base);
+			// Match SessionFileOperations.key: recovery indexes and the open guard
+			// must never disagree about Windows case aliases for the same file.
+			const actual = realpathSync.native(approved),
+				actualRoot = realpathSync.native(base);
 			if (!actual.startsWith(actualRoot + sep))
 				throw new Error("Maintenance source escapes the private session root");
 			return actual;
