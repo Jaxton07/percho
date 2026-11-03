@@ -107,7 +107,7 @@ export function ApprovalDock({ sessionId }: { sessionId: string | null }) {
 	return (
 		// z-20 同 DockSlot：审批卡在下方时缩略图 × 同样会伸出容器顶
 		<div className="relative z-20 shrink-0 px-6 pb-3">
-			<div className="mx-auto max-w-[760px]">
+			<div className="chat-column-width mx-auto">
 				{!canAnswer && <p className="mb-2 text-ui-12 text-ink-faint">{t("remote.waitingForConnection")}</p>}
 				<fieldset disabled={!canAnswer || sending} className="contents">
 					<div

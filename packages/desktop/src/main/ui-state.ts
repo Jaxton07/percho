@@ -5,6 +5,7 @@ import {
 	clampSidebarWidth,
 	clampUiFontSize,
 	environmentEntityRef,
+	normalizeChatColumnWidth,
 	type PermissionMode,
 	type Rect,
 	type SessionWorkspaceSnapshot,
@@ -150,6 +151,7 @@ function normalize(parsed: UiStateFileShape): UiState {
 		sidebarCollapsed: typeof parsed.sidebarCollapsed === "boolean" ? parsed.sidebarCollapsed : false,
 		// 侧栏宽度：脏值/越界一律归一化（手改文件、未来改上下界都在这里归一；renderer 只做渲染期夹紧、不回写）
 		sidebarWidth: clampSidebarWidth(parsed.sidebarWidth),
+		chatColumnWidth: normalizeChatColumnWidth(parsed.chatColumnWidth),
 		// 字号档位：脏值/缺字段一律回落基准档（13 / 12.5 => 乘数 1，等于迁移前现状）
 		uiFontSize: clampUiFontSize(parsed.uiFontSize),
 		codeFontSize: clampCodeFontSize(parsed.codeFontSize),

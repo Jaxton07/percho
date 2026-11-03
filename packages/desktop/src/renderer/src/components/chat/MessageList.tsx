@@ -72,7 +72,7 @@ const rowKind = (row: ChatRow): RowKind =>
 				: "other";
 
 /**
- * 中央消息流：最大宽度 760px 居中。
+ * 中央消息流：用户可调整的最大宽度，默认 760px 居中。
  * 合并规则：assistant 消息的思考/工具全部并入一个折叠组，正文（text）是边界。
  *
  * 底部跟随：ResizeObserver 监听内容/容器尺寸，跟随中即时贴底；仅「向上滚动」脱离跟随，
@@ -717,7 +717,7 @@ export function MessageList() {
 						transcript.historyFetch?.error ||
 						transcript.historyLoadError) && (
 						<div
-							className="mx-auto max-w-[760px] px-6 pt-4 text-center text-ui-12 text-ink-dim"
+							className="chat-column-width mx-auto px-6 pt-4 text-center text-ui-12 text-ink-dim"
 							data-history-paging
 						>
 							{transcript.history?.hasOlder && (
@@ -759,7 +759,7 @@ export function MessageList() {
 					<div
 						ref={contentRef}
 						data-chat-column
-						className="mx-auto flex max-w-[760px] flex-col gap-6 px-6 pt-8 pb-16"
+						className="chat-column-width mx-auto flex flex-col gap-6 px-6 pt-8 pb-16"
 					>
 						<HistoryImageRootProvider root={historyImageRoot}>
 							{/* 占位不参与原生滚动锚定选锚，锚点只会是真实行（否则窗口移动时锚定会钉在占位上失效） */}

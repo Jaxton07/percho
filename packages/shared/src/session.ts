@@ -77,6 +77,8 @@ export interface UiState {
 	 * 它**不是**实际渲染宽：窗口太窄时渲染宽还要被「容器宽 - 聊天列最小宽」夹紧，那是 renderer 的渲染期派生值（`lib/sidebar-width.ts`），不回写这里。
 	 */
 	sidebarWidth: number;
+	/** Intended chat-column max-width (px); CSS clamps the actual width to the container without changing this value. */
+	chatColumnWidth: number;
 	/**
 	 * 界面字号（px）：基准 13（= 迁移前现状，乘数 1），四档 12 / 13 / 15 / 17（shared/typography.ts）。
 	 * 影响全部界面文字（含对话正文），图标与布局尺寸不受影响。
