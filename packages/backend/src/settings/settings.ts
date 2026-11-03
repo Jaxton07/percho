@@ -144,7 +144,14 @@ function builtinApiOf(id: string): string | undefined {
  * 写完统一经 ModelRuntime.refresh() 让运行中的会话生效。
  */
 export class SettingsService {
-	constructor(private readonly getRuntime: () => Promise<ModelRuntime>) {}
+	constructor(
+		private readonly getRuntime: () => Promise<ModelRuntime>,
+		private readonly onNetworkRefresh?: (result: Awaited<ReturnType<ModelRuntime["refresh"]>>) => void,
+		private readonly refreshModels = (
+			runtime: ModelRuntime,
+			options: Parameters<ModelRuntime["refresh"]>[0],
+		) => runtime.refresh(options),
+	) {}
 
 	private get authPath(): string {
 		return join(getAgentDir(), "auth.json");
@@ -169,7 +176,7 @@ export class SettingsService {
 	private async refreshLocalModels(): Promise<void> {
 		const runtime = await this.getRuntime();
 		// Mutations are already durable; network catalog freshness must never block their IPC response.
-		await runtime.refresh({ allowNetwork: false });
+		await this.refreshModels(runtime, { allowNetwork: false });
 	}
 
 	/** 从 models.json 原文提取 per-model 元数据（保留「未设置」状态，编辑表单预填用） */
@@ -190,15 +197,16 @@ export class SettingsService {
 		if (options?.forceNetwork) {
 			// 用户显式刷新 / 进入设置「模型」分类自动刷新才联网；SDK 的目录请求无内置超时，
 			// 这里兜底，超时抛错（UI 层回退到已加载的本地数据）
-			const result = await runtime.refresh({
+			const result = await this.refreshModels(runtime, {
 				allowNetwork: true,
 				force: true,
 				signal: AbortSignal.timeout(NETWORK_REFRESH_TIMEOUT_MS),
 			});
 			if (result.aborted) throw new Error("刷新模型目录超时，请检查网络后重试");
+			this.onNetworkRefresh?.(result);
 		} else {
 			// 默认纯本地：内置目录 + models-store.json 缓存（refresh 的 allowNetwork 缺省为 true，必须显式关）
-			await runtime.refresh({ allowNetwork: false });
+			await this.refreshModels(runtime, { allowNetwork: false });
 		}
 		const customs = await this.readCustomProviders();
 		const customIds = new Set(Object.keys(customs));

@@ -1,4 +1,10 @@
-import type { ProviderInfo } from "@percho/shared";
+import {
+	type AvailableModel,
+	type EnvironmentRef,
+	environmentKey,
+	LOCAL_ENVIRONMENT,
+	type ProviderInfo,
+} from "@percho/shared";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 /**
@@ -21,6 +27,11 @@ const api = vi.hoisted(() => ({
 	lanGetStatus: vi.fn(),
 	getModelPrefs: vi.fn(),
 	loadModels: vi.fn(),
+	listModels: vi.fn(),
+	loadUiState: vi.fn(),
+	saveUiState: vi.fn(),
+	createSession: vi.fn(),
+	setModel: vi.fn(),
 	addCustomProvider: vi.fn(),
 	updateCustomProvider: vi.fn(),
 	removeCustomProvider: vi.fn(),
@@ -33,11 +44,15 @@ const api = vi.hoisted(() => ({
 	startProviderLogin: vi.fn(),
 	onProviderLoginEvent: vi.fn(),
 }));
+const remoteFixture = vi.hoisted(() => ({ api: null as typeof api | null }));
 vi.mock("../api", () => ({
 	getPi: () =>
 		Object.assign(api, {
 			forEnvironment: (environment: { kind: string }) => {
-				if (environment.kind !== "local") throw new Error("Unexpected remote fixture");
+				if (environment.kind !== "local") {
+					if (!remoteFixture.api) throw new Error("Unexpected remote fixture");
+					return remoteFixture.api;
+				}
 				return api;
 			},
 		}),
@@ -46,7 +61,12 @@ const toasts = vi.hoisted(() => ({ pushToast: vi.fn() }));
 vi.mock("./toasts", () => ({ pushToast: toasts.pushToast }));
 // settings store 只用到 sessions store 的 activeSessionId + loadModels
 const sessionsState = vi.hoisted(() => ({ activeSessionId: null as string | null, loadModels: vi.fn() }));
-vi.mock("./sessions", () => ({ useSessionsStore: { getState: () => sessionsState } }));
+const realSessions = vi.hoisted(() => ({
+	store: null as typeof import("./sessions").useSessionsStore | null,
+}));
+vi.mock("./sessions", () => ({
+	useSessionsStore: { getState: () => realSessions.store?.getState() ?? sessionsState },
+}));
 
 function deferred<T>() {
 	let resolve!: (value: T) => void;
@@ -74,6 +94,8 @@ const coldCalls = () => api.listProviders.mock.calls.map((call) => call[0]?.opti
 let store: typeof import("./settings").useSettingsStore;
 
 beforeEach(async () => {
+	realSessions.store = null;
+	remoteFixture.api = null;
 	vi.resetModules();
 	vi.resetAllMocks();
 	api.getPermissionConfig.mockResolvedValue({ enabled: true });
@@ -250,6 +272,56 @@ describe("D10 consumer and mutation responsibilities", () => {
 				expect(mock).not.toHaveBeenCalled();
 		},
 	);
+	it.each(["install", "remove"] as const)(
+		"package %s refreshes the picker while loaded resources are pending",
+		async (operation) => {
+			const { useSessionsStore: sessions } = await vi.importActual<typeof import("./sessions")>("./sessions");
+			realSessions.store = sessions;
+			const model: AvailableModel = {
+				provider: "fixture-provider",
+				providerName: "Fixture provider",
+				id: "fixture-model",
+				label: "Fixture model",
+				authed: true,
+			};
+			const expected = operation === "install" ? [model] : [];
+			sessions.setState({ activeSessionId: "packages", models: operation === "install" ? [] : [model] });
+			api.listModels.mockResolvedValue(expected);
+			api.loadUiState.mockResolvedValue({});
+			api.listProviders.mockResolvedValue(providers("fixture-provider"));
+			api.listConfiguredPackages.mockResolvedValue([]);
+			api.installPackage.mockResolvedValue(undefined);
+			api.removePackage.mockResolvedValue(undefined);
+			const resources = deferred<{
+				skills: [];
+				skillDiagnostics: [];
+				extensions: [];
+				extensionErrors: [];
+			}>();
+			api.getLoadedResources.mockReturnValueOnce(resources.promise);
+			const catalog = (await import("./catalog")).useCatalogStore;
+			try {
+				if (operation === "install") await catalog.getState().installCatalogPackage("fixture");
+				else await catalog.getState().removeConfiguredPackage("npm:fixture", "user");
+				await vi.waitFor(() => expect(api.getLoadedResources).toHaveBeenCalledOnce());
+				await vi.waitFor(() => expect(sessions.getState().models).toEqual(expected));
+				expect(api.listModels).toHaveBeenCalledOnce();
+				for (const mock of [
+					api.getPermissionConfig,
+					api.getChannelWatchConfig,
+					api.getCodemodeConfig,
+					api.lanGetStatus,
+					api.createSession,
+					api.setModel,
+					api.saveUiState,
+				])
+					expect(mock).not.toHaveBeenCalled();
+			} finally {
+				resources.resolve({ skills: [], skillDiagnostics: [], extensions: [], extensionErrors: [] });
+				await vi.waitFor(() => expect(store.getState().extensions).toEqual([]));
+			}
+		},
+	);
 	it.each(["failed", "cancelled"] as const)(
 		"actual login %s keeps its existing error/cancel ownership and never refreshes domains",
 		async (outcome) => {
@@ -306,6 +378,103 @@ describe("D10 consumer and mutation responsibilities", () => {
 		for (const mock of [api.getPermissionConfig, api.getChannelWatchConfig, api.lanGetStatus])
 			expect(mock).not.toHaveBeenCalled();
 	});
+});
+
+describe("package mutations with a sessionless picker", () => {
+	it.each([
+		LOCAL_ENVIRONMENT,
+		{ kind: "ssh", connectionId: "fixture-connection", environmentId: "fixture-environment" },
+	] satisfies EnvironmentRef[])(
+		"$kind keeps draft models scoped and rejects late reads",
+		async (environment) => {
+			const { useSessionsStore: sessions } = await vi.importActual<typeof import("./sessions")>("./sessions");
+			realSessions.store = sessions;
+			const target =
+				environment.kind === "local"
+					? api
+					: {
+							...api,
+							listProviders: vi.fn(),
+							listModels: vi.fn(),
+							getModelPrefs: vi.fn(),
+							listSubagents: vi.fn(),
+							installPackage: vi.fn(),
+							removePackage: vi.fn(),
+							listConfiguredPackages: vi.fn(),
+						};
+			if (environment.kind !== "local") remoteFixture.api = target;
+			target.listProviders.mockResolvedValue(providers("fixture-provider"));
+			target.getModelPrefs.mockResolvedValue({ hiddenModels: {}, subagentModels: {} });
+			target.listSubagents.mockResolvedValue([]);
+			target.listConfiguredPackages.mockResolvedValue([]);
+			target.installPackage.mockResolvedValue(undefined);
+			target.removePackage.mockResolvedValue(undefined);
+			const base: AvailableModel = {
+				provider: "fixture-provider",
+				providerName: "Fixture provider",
+				id: "base-model",
+				label: "Base model",
+				authed: true,
+			};
+			const extension: AvailableModel = { ...base, id: "extension-model", label: "Extension model" };
+			const selected = { provider: base.provider, modelId: base.id };
+			const draft = sessions.getState().newSessionDraft;
+			if (!draft) throw new Error("Expected initial draft");
+			const localModels = [base];
+			sessions.setState({
+				models: localModels,
+				modelsByEnvironment: { [environmentKey(LOCAL_ENVIRONMENT)]: localModels },
+				lastUsedModel: selected,
+				newSessionDraft: { ...draft, environment, model: selected, modelResolved: true },
+			});
+			api.loadUiState.mockResolvedValue({ lastUsedModel: selected });
+			const catalog = (await import("./catalog")).getCatalogStore(environment);
+			const settings = (await import("./settings")).getSettingsStore(environment);
+			for (const operation of ["install", "remove"] as const) {
+				const previous = sessions.getState().models;
+				const expected = operation === "install" ? [base, extension] : [base];
+				const stale = deferred<AvailableModel[]>();
+				target.listModels.mockReturnValueOnce(stale.promise).mockResolvedValue(expected);
+				const pending = sessions.getState().loadModels(environment);
+				try {
+					if (operation === "install") await catalog.getState().installCatalogPackage("fixture-extension");
+					else await catalog.getState().removeConfiguredPackage("npm:fixture-extension", "user");
+					await vi.waitFor(() => expect(sessions.getState().models).toEqual(expected));
+				} finally {
+					stale.resolve(previous);
+					await pending;
+				}
+				expect(sessions.getState().models).toEqual(expected);
+				expect(sessions.getState().modelsByEnvironment[environmentKey(environment)]).toEqual(expected);
+				expect(sessions.getState().newSessionDraft?.model).toEqual(selected);
+				expect(sessions.getState().lastUsedModel).toEqual(selected);
+			}
+			expect(sessions.getState().sessions).toEqual([]);
+			expect(sessions.getState().activeSessionId).toBeNull();
+			expect(settings.getState().extensions).toBeNull();
+			expect(target.listModels.mock.calls.every((call) => call.length === 0)).toBe(true);
+			for (const mock of [
+				api.getLoadedResources,
+				api.getPermissionConfig,
+				api.getChannelWatchConfig,
+				api.getCodemodeConfig,
+				api.lanGetStatus,
+				api.createSession,
+				api.setModel,
+				api.saveUiState,
+				api.saveApiKey,
+			])
+				expect(mock).not.toHaveBeenCalled();
+			if (environment.kind !== "local") {
+				expect(sessions.getState().modelsByEnvironment[environmentKey(LOCAL_ENVIRONMENT)]).toBe(localModels);
+				expect(api.listModels).not.toHaveBeenCalled();
+				expect(api.listProviders).not.toHaveBeenCalled();
+				expect(api.getModelPrefs).not.toHaveBeenCalled();
+				expect(api.listSubagents).not.toHaveBeenCalled();
+				expect(store.getState().providers).toEqual([]);
+			}
+		},
+	);
 });
 
 describe("D3 触发面：谁发请求", () => {

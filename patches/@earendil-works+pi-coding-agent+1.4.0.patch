@@ -746,6 +746,23 @@ diff --git a/node_modules/@earendil-works/pi-coding-agent/dist/core/agent-sessio
              if (started) {
                  const errorMessage = aborted
                      ? undefined
+@@ -2845,12 +3214,12 @@
+             executeTool: (callerId, name, args, options) => this._executeNestedToolCall(callerId, name, args, options),
+             getCallableTools: () => this._getCallableTools(),
+         }, {
+-            registerProvider: (name, config) => {
+-                this._modelRuntime.registerProvider(name, config);
++            registerProvider: (name, config, extensionPath) => {
++                this._modelRuntime.registerProvider(name, config, extensionPath);
+                 this._refreshCurrentModelFromRegistry();
+             },
+-            registerNativeProvider: (provider) => {
+-                this._modelRuntime.registerNativeProvider(provider);
++            registerNativeProvider: (provider, extensionPath) => {
++                this._modelRuntime.registerNativeProvider(provider, extensionPath);
+                 this._refreshCurrentModelFromRegistry();
+             },
+             unregisterProvider: (name) => {
 @@ -2996,6 +3365,7 @@
          });
      }
@@ -784,3 +801,193 @@ diff --git a/node_modules/@earendil-works/pi-coding-agent/dist/index.d.ts b/node
  export { readStoredCredential } from "./core/auth-storage.ts";
  export type { CacheWarmingDecision, CacheWarmingStatus } from "./core/cache-warmer.ts";
  export { type BranchPreparation, type BranchSummaryResult, type CollectEntriesResult, type CompactionResult, type CutPointResult, calculateContextTokens, collectEntriesForBranchSummary, compact, DEFAULT_COMPACTION_SETTINGS, estimateTokens, type FileOperations, findCutPoint, findTurnStartIndex, type GenerateBranchSummaryOptions, generateBranchSummary, generateSummary, generateSummaryWithUsage, getLastAssistantUsage, prepareBranchEntries, serializeConversation, shouldCompact, } from "./core/compaction/index.ts";
+diff --git a/node_modules/@earendil-works/pi-coding-agent/dist/core/model-runtime.js b/node_modules/@earendil-works/pi-coding-agent/dist/core/model-runtime.js
+--- a/node_modules/@earendil-works/pi-coding-agent/dist/core/model-runtime.js
++++ b/node_modules/@earendil-works/pi-coding-agent/dist/core/model-runtime.js
+@@ -47,6 +47,25 @@
+     builtins = new Map();
+     nativeExtensionProviders = new Map();
+     extensionProviders = new Map();
++    // 记录普通扩展的来源，区分同源会话重注册和外部替换。
++    providerRegistrationSources = new Map();
++    registrationRefreshes = new Set();
++    registrationRefreshError;
++    // 仅跟踪注册入口的隐式刷新，不改变 refresh 的并发或重入语义。
++    trackRegistrationRefresh(work) {
++        const settled = work.catch((error) => {
++            this.registrationRefreshError ??= error instanceof Error ? error : new Error(String(error));
++        }).finally(() => this.registrationRefreshes.delete(settled));
++        this.registrationRefreshes.add(settled);
++    }
++    async settleRegistrationRefreshes() {
++        while (this.registrationRefreshes.size > 0)
++            await Promise.all([...this.registrationRefreshes]);
++        const error = this.registrationRefreshError;
++        this.registrationRefreshError = undefined;
++        if (error)
++            throw error;
++    }
+     /** Virtual models by provider id, then model id. */
+     virtualModels = new Map();
+     compositionErrors = new Map();
+@@ -350,6 +369,9 @@
+     getRegisteredProviderIds() {
+         return [...new Set([...this.extensionProviders.keys(), ...this.nativeExtensionProviders.keys()])];
+     }
++    getRegisteredProviderSource(providerId) {
++        return this.providerRegistrationSources.get(providerId);
++    }
+     getRegisteredNativeProvider(providerId) {
+         return this.nativeExtensionProviders.get(providerId);
+     }
+@@ -632,15 +654,16 @@
+         }
+         return { aborted: result.aborted || (options.signal?.aborted ?? false), errors };
+     }
+-    registerNativeProvider(provider) {
++    registerNativeProvider(provider, extensionPath) {
+         if (!provider.id.trim())
+             throw new Error("Provider id must not be empty.");
+         this.extensionProviders.delete(provider.id);
+         this.nativeExtensionProviders.set(provider.id, provider);
++        this.providerRegistrationSources.set(provider.id, extensionPath);
+         this.recomposeProvider(provider.id);
+         this.updateModelSnapshot();
+         this.markProvisionallyConfigured(provider.id, configuredRequestAuthStatus(this.config.getProvider(provider.id), undefined), provider.auth.oauth && !provider.auth.apiKey ? "oauth" : "api_key");
+-        void this.refresh({ allowNetwork: false });
++        this.trackRegistrationRefresh(this.refresh({ allowNetwork: false }));
+     }
+     /**
+      * Mark a newly registered provider as configured when it has a stored credential or a configured
+@@ -662,7 +685,7 @@
+             available: this.snapshot.all.filter((model) => configuredProviders.has(model.provider)),
+         };
+     }
+-    registerProvider(providerId, config) {
++    registerProvider(providerId, config, extensionPath) {
+         // Validate the incoming registration on its own, like the legacy registry:
+         // a broken re-registration must throw without touching the stored config.
+         validateExtensionProvider(providerId, this.builtins.get(providerId), this.config.getProvider(providerId), config);
+@@ -676,17 +699,19 @@
+                 effective[key] = value;
+         }
+         this.extensionProviders.set(providerId, effective);
++        this.providerRegistrationSources.set(providerId, extensionPath);
+         this.recomposeProvider(providerId);
+         this.updateModelSnapshot();
+         this.markProvisionallyConfigured(providerId, configuredRequestAuthStatus(this.config.getProvider(providerId), effective), effective.oauth && !effective.apiKey ? "oauth" : "api_key");
+-        void this.refresh({ allowNetwork: false });
++        this.trackRegistrationRefresh(this.refresh({ allowNetwork: false }));
+     }
+     unregisterProvider(providerId) {
++        this.providerRegistrationSources.delete(providerId);
+         this.extensionProviders.delete(providerId);
+         this.nativeExtensionProviders.delete(providerId);
+         this.recomposeProvider(providerId);
+         this.updateModelSnapshot();
+-        void this.refresh({ allowNetwork: false });
++        this.trackRegistrationRefresh(this.refresh({ allowNetwork: false }));
+     }
+     /**
+      * Register a virtual model under `definition.provider`, which may also list physical models or
+diff --git a/node_modules/@earendil-works/pi-coding-agent/dist/core/model-runtime.d.ts b/node_modules/@earendil-works/pi-coding-agent/dist/core/model-runtime.d.ts
+--- a/node_modules/@earendil-works/pi-coding-agent/dist/core/model-runtime.d.ts
++++ b/node_modules/@earendil-works/pi-coding-agent/dist/core/model-runtime.d.ts
+@@ -107,14 +107,18 @@
+     login(providerId: string, type: AuthType, interaction: AuthInteraction, options?: LoginOptions): Promise<Credential>;
+     logout(providerId: string, options?: AuthOperationOptions): Promise<void>;
+     refresh(options?: ModelsRefreshOptions): Promise<ModelsRefreshResult>;
+-    registerNativeProvider(provider: Provider): void;
++    /** 等待注册/注销触发的隐式离线刷新完成；不会启动额外刷新。 */
++    settleRegistrationRefreshes(): Promise<void>;
++    /** 普通扩展注册的来源；未标记的直接注册返回 undefined。 */
++    getRegisteredProviderSource(providerId: string): string | undefined;
++    registerNativeProvider(provider: Provider, extensionPath?: string): void;
+     /**
+      * Mark a newly registered provider as configured when it has a stored credential or a configured
+      * API key. Availability checks run asynchronously, and callers such as initial model selection
+      * read the snapshot before they finish. The next availability pass replaces this entry.
+      */
+     private markProvisionallyConfigured;
+-    registerProvider(providerId: string, config: ProviderConfigInput): void;
++    registerProvider(providerId: string, config: ProviderConfigInput, extensionPath?: string): void;
+     unregisterProvider(providerId: string): void;
+     /**
+      * Register a virtual model under `definition.provider`, which may also list physical models or
+diff --git a/node_modules/@earendil-works/pi-coding-agent/dist/core/agent-session-services.js b/node_modules/@earendil-works/pi-coding-agent/dist/core/agent-session-services.js
+--- a/node_modules/@earendil-works/pi-coding-agent/dist/core/agent-session-services.js
++++ b/node_modules/@earendil-works/pi-coding-agent/dist/core/agent-session-services.js
+@@ -71,7 +71,7 @@
+     const extensionsResult = resourceLoader.getExtensions();
+     for (const { name, config, extensionPath } of extensionsResult.runtime.pendingProviderRegistrations) {
+         try {
+-            modelRuntime.registerProvider(name, config);
++            modelRuntime.registerProvider(name, config, extensionPath);
+         }
+         catch (error) {
+             const message = error instanceof Error ? error.message : String(error);
+@@ -84,7 +84,7 @@
+     extensionsResult.runtime.pendingProviderRegistrations = [];
+     for (const { provider, extensionPath } of extensionsResult.runtime.pendingNativeProviderRegistrations) {
+         try {
+-            modelRuntime.registerNativeProvider(provider);
++            modelRuntime.registerNativeProvider(provider, extensionPath);
+         }
+         catch (error) {
+             const message = error instanceof Error ? error.message : String(error);
+diff --git a/node_modules/@earendil-works/pi-coding-agent/dist/core/extensions/runner.js b/node_modules/@earendil-works/pi-coding-agent/dist/core/extensions/runner.js
+--- a/node_modules/@earendil-works/pi-coding-agent/dist/core/extensions/runner.js
++++ b/node_modules/@earendil-works/pi-coding-agent/dist/core/extensions/runner.js
+@@ -249,7 +249,7 @@
+         for (const { name, config, extensionPath } of this.runtime.pendingProviderRegistrations) {
+             try {
+                 if (providerActions?.registerProvider) {
+-                    providerActions.registerProvider(name, config);
++                    providerActions.registerProvider(name, config, extensionPath);
+                 }
+                 else {
+                     this.modelRegistry.registerProvider(name, config);
+@@ -268,7 +268,7 @@
+         for (const { provider, extensionPath } of this.runtime.pendingNativeProviderRegistrations) {
+             try {
+                 if (providerActions?.registerNativeProvider) {
+-                    providerActions.registerNativeProvider(provider);
++                    providerActions.registerNativeProvider(provider, extensionPath);
+                 }
+                 else {
+                     this.modelRegistry.registerProvider(provider);
+@@ -306,16 +306,16 @@
+         this.runtime.pendingVirtualModelRegistrations = [];
+         // From this point on, provider registration/unregistration takes effect immediately
+         // without requiring a /reload.
+-        this.runtime.registerProvider = (name, config) => {
++        this.runtime.registerProvider = (name, config, extensionPath) => {
+             if (providerActions?.registerProvider) {
+-                providerActions.registerProvider(name, config);
++                providerActions.registerProvider(name, config, extensionPath);
+                 return;
+             }
+             this.modelRegistry.registerProvider(name, config);
+         };
+-        this.runtime.registerNativeProvider = (provider) => {
++        this.runtime.registerNativeProvider = (provider, extensionPath) => {
+             if (providerActions?.registerNativeProvider) {
+-                providerActions.registerNativeProvider(provider);
++                providerActions.registerNativeProvider(provider, extensionPath);
+                 return;
+             }
+             this.modelRegistry.registerProvider(provider);
+diff --git a/node_modules/@earendil-works/pi-coding-agent/dist/core/extensions/runner.d.ts b/node_modules/@earendil-works/pi-coding-agent/dist/core/extensions/runner.d.ts
+--- a/node_modules/@earendil-works/pi-coding-agent/dist/core/extensions/runner.d.ts
++++ b/node_modules/@earendil-works/pi-coding-agent/dist/core/extensions/runner.d.ts
+@@ -116,8 +116,8 @@
+     private activeUIPrompt;
+     constructor(extensions: Extension[], runtime: ExtensionRuntime, cwd: string, sessionManager: SessionManager, modelRegistry: ModelRegistry);
+     bindCore(actions: ExtensionActions, contextActions: ExtensionContextActions, providerActions?: {
+-        registerProvider?: (name: string, config: ProviderConfig) => void;
+-        registerNativeProvider?: (provider: Provider) => void;
++        registerProvider?: (name: string, config: ProviderConfig, extensionPath?: string) => void;
++        registerNativeProvider?: (provider: Provider, extensionPath?: string) => void;
+         unregisterProvider?: (name: string) => void;
+         registerVirtualModel?: (definition: VirtualModelDefinition) => void;
+         unregisterVirtualModel?: (provider: string, id: string) => void;

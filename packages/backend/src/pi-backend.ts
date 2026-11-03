@@ -8,6 +8,8 @@ import {
 	type AgentSession,
 	type CreateAgentSessionResult,
 	createAgentSession,
+	createAgentSessionServices,
+	createEventBus,
 	type DefaultResourceLoader,
 	type ExtensionError,
 	getAgentDir,
@@ -148,6 +150,8 @@ import {
 } from "./settings/codemode";
 import { LoginService } from "./settings/login";
 import { ModelPrefsService } from "./settings/model-prefs";
+import { ModelRefreshCoordinator } from "./settings/model-refresh";
+import { PROVIDER_ACTIVATION_EVENT, ProviderStartup } from "./settings/provider-startup";
 import { makeQuotaService } from "./settings/quota";
 import { SettingsService } from "./settings/settings";
 import { slashCommandsForLoader, slashCommandsForSession } from "./slash-commands";
@@ -253,6 +257,7 @@ export class PiBackend {
 			.map((entry) => entry.session),
 	);
 	private stopping = false;
+	private readonly providerShutdown = new AbortController();
 	private shutdownPromise?: Promise<void>;
 	private readonly creationFlights = new Set<Promise<unknown>>();
 	private readonly constructionGates = new Set<PermissionGate>();
@@ -286,6 +291,8 @@ export class PiBackend {
 				this.shutdownFailures.push(error);
 			}
 		};
+		this.providerShutdown.abort();
+		attempt(() => this.providerStartup?.stop());
 		attempt(() => this.trustGate.dispose());
 		attempt(() => this.login.dispose());
 		attempt(() => this.historyGate.dispose());
@@ -307,6 +314,9 @@ export class PiBackend {
 	shutdown(): Promise<void> {
 		this.beginShutdown();
 		this.shutdownPromise ??= (async () => {
+			await Promise.allSettled([this.modelPromise]);
+			await this.modelRefresh.join();
+			await this.providerStartup?.join();
 			await Promise.allSettled([...this.creationFlights]);
 			const entries = this.registry.list();
 			const aborted = await this.shutdownAborts;
@@ -556,9 +566,28 @@ export class PiBackend {
 	/** 每会话事件速率（60s 窗口；心跳/临终快照数据源） */
 	private readonly eventRates = new EventRateTracker();
 	private modelRuntime: ModelRuntime | undefined;
+	private providerStartup?: ProviderStartup;
+	private readonly modelRefresh = new ModelRefreshCoordinator();
 	private modelPromise: Promise<ModelRuntime> | undefined;
 	/** 设置页（provider/模型/凭证配置）服务 */
-	readonly settings = new SettingsService(() => this.getModelRuntime());
+	readonly settings = new SettingsService(
+		() => this.getModelRuntime(),
+		(result) => this.providerStartup?.observeRefresh(result),
+		(runtime, options) =>
+			this.modelRefresh.run(() => {
+				this.assertRunning();
+				return runtime.refresh({
+					...options,
+					signal: AbortSignal.any([
+						this.providerShutdown.signal,
+						...(options?.signal ? [options.signal] : []),
+					]),
+				});
+			}),
+	);
+	getProviderStartupDiagnostics() {
+		return this.providerStartup?.getDiagnostics() ?? [];
+	}
 	/** opencode-go 套餐额度（TTL 缓存；无 key 返回 null） */
 	private readonly quota = makeQuotaService(() => this.getModelRuntime());
 	/** provider 交互登录服务（OAuth + api_key 交互，如 Google Vertex），事件经 onLoginEvent 分发 */
@@ -572,7 +601,10 @@ export class PiBackend {
 	constructor(private readonly options: PiBackendOptions = {}) {
 		this.media = options.sessionMediaStore ?? new SessionMediaStore(join(getAgentDir(), "media"));
 		this.packages = new PackageAdmin({
-			reloadIdleSessions: (cwd) => this.reloadIdleSessions(cwd),
+			reloadIdleSessions: async (cwd) => {
+				if (!cwd) await this.loadUserProviders(await this.getModelRuntime());
+				return this.reloadIdleSessions(cwd);
+			},
 			defaultCwd: options.defaultCwd,
 		});
 		this.projectLoader = new ProjectResourceLoader({
@@ -793,12 +825,94 @@ export class PiBackend {
 	}
 
 	private async getModelRuntime(): Promise<ModelRuntime> {
+		this.assertRunning();
 		if (this.modelRuntime) return this.modelRuntime;
 		if (!this.modelPromise) {
-			this.modelPromise = ModelRuntime.create();
+			this.modelPromise = (async () => {
+				const runtime = await ModelRuntime.create();
+				await this.loadUserProviders(runtime);
+				this.assertRunning();
+				return runtime;
+			})().catch(async (error) => {
+				this.providerStartup?.stop();
+				await this.providerStartup?.join();
+				this.modelPromise = undefined;
+				throw error;
+			});
 		}
 		this.modelRuntime = await this.modelPromise;
 		return this.modelRuntime;
+	}
+
+	private loadUserProviders(runtime: ModelRuntime): Promise<void> {
+		return this.modelRefresh.run(() => this.loadUserProvidersOnce(runtime));
+	}
+
+	private async loadUserProvidersOnce(runtime: ModelRuntime): Promise<void> {
+		this.assertRunning();
+		this.providerStartup?.stop();
+		await this.providerStartup?.join();
+		this.assertRunning();
+		const cwd = this.options.defaultCwd ?? process.cwd();
+		const startup = new ProviderStartup((work, signal) => this.modelRefresh.run(work, signal));
+		this.providerStartup = startup;
+		const eventBus = createEventBus();
+		eventBus.on(PROVIDER_ACTIVATION_EVENT, (value) => startup.collect(value));
+		const registrations = new Map<string, string>();
+		let invalidate = () => eventBus.clear();
+		try {
+			const services = await createAgentSessionServices({
+				cwd,
+				modelRuntime: runtime,
+				settingsManager: SettingsManager.create(cwd, getAgentDir(), { projectTrusted: false }),
+				resourceLoaderOptions: {
+					eventBus,
+					extensionsOverride: (result) => {
+						invalidate = () => {
+							result.runtime.invalidate();
+							eventBus.clear();
+						};
+						this.assertRunning();
+						const pending = [
+							...result.runtime.pendingProviderRegistrations.map((item) => ({
+								id: item.name,
+								source: item.extensionPath,
+							})),
+							...result.runtime.pendingNativeProviderRegistrations.map((item) => ({
+								id: item.provider.id,
+								source: item.extensionPath,
+							})),
+						];
+						const seen = new Set<string>();
+						for (const { id } of pending) {
+							if (
+								seen.has(id) ||
+								runtime.getRegisteredNativeProvider(id) ||
+								runtime.getRegisteredProviderConfig(id)
+							) {
+								throw new Error(`Provider registration conflict: ${id}`);
+							}
+							seen.add(id);
+						}
+						for (const { id, source } of pending) registrations.set(id, source);
+						return result;
+					},
+				},
+			}).finally(() => startup.adopt(runtime, registrations, invalidate));
+			// 事件总线不携带扩展来源；任一工厂失败时不能证明声明来自成功工厂，整代拒绝。
+			if (
+				services.resourceLoader.getExtensions().errors.length ||
+				services.diagnostics.some((d) => d.type === "error")
+			) {
+				throw new Error("Provider resource loading failed");
+			}
+			this.assertRunning();
+			await startup.activate(runtime);
+		} catch (error) {
+			startup.stop();
+			await startup.join();
+			throw error;
+		}
 	}
 
 	private readonly runningSubagents = new Map<string, SubagentRunHandle>();
@@ -2628,6 +2742,8 @@ export class PiBackend {
 	}
 
 	dispose(): void {
+		this.providerShutdown.abort();
+		this.providerStartup?.stop();
 		this.stopping = true;
 		void this.mediaMaintenance?.dispose().catch((error) => log.warn("maintenance shutdown failed", error));
 		for (const child of this.runningSubagents.values()) {
