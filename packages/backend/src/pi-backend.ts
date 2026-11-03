@@ -60,11 +60,13 @@ import type {
 	TrustAnswer,
 	TrustRequest,
 	TrustResolved,
+	TurnSpeedInfo,
 } from "@percho/shared";
 import {
 	type ComposerDocument,
 	composerDocumentFromText,
 	composerDocumentText,
+	deriveTurnSpeed,
 	extractTodos,
 	formatSkillCommand,
 	isModelVisible,
@@ -74,6 +76,7 @@ import {
 	readComposerDocument,
 	TODO_TOOL_NAME,
 	type TodoItem,
+	type TurnSpeedSample,
 } from "@percho/shared";
 import { ChannelSubscriptionRegistry } from "./channel-subscriptions";
 import { Emitter } from "./emitter";
@@ -2196,6 +2199,41 @@ export class PiBackend {
 		const usage = entry.session.getContextUsage();
 		if (!usage) return null;
 		return { tokens: usage.tokens, contextWindow: usage.contextWindow, percent: usage.percent };
+	}
+
+	/**
+	 * 当前轮 token 生成速度：最后一条 user 消息之后的 assistant 消息（轮边界规则与
+	 * deriveTurnTimings 一致——依赖 toBranchSessionMessages 对 user entry 的 1:1 无过滤映射，
+	 * 若 UI 层将来过滤 user 消息，两处需同步）→ deriveTurnSpeed 聚合（Σ usage.output ÷ Σ durationMs，
+	 * 逐消息生成耗时，不含工具执行/排队/失败重试）。null = 无有效样本（宁缺勿错）。
+	 */
+	async getTurnSpeed(sessionId: string): Promise<TurnSpeedInfo | null> {
+		const entry = this.requireSession(sessionId);
+		const branch = entry.session.sessionManager.getBranch();
+		// 轮边界 = 最后一条 user 消息；找不到则从分支头取（无 user 的分支没有 assistant 样本）
+		let start = 0;
+		for (let i = branch.length - 1; i >= 0; i--) {
+			const item = branch[i];
+			if (item?.type === "message" && item.message.role === "user") {
+				start = i + 1;
+				break;
+			}
+		}
+		const samples: TurnSpeedSample[] = [];
+		for (const item of branch.slice(start)) {
+			if (item.type !== "message" || item.message.role !== "assistant") continue;
+			const message = item.message as {
+				stopReason?: string;
+				usage?: { output?: unknown };
+				durationMs?: unknown;
+			};
+			samples.push({
+				output: message.usage?.output,
+				durationMs: message.durationMs,
+				stopReason: message.stopReason,
+			});
+		}
+		return deriveTurnSpeed(samples);
 	}
 
 	/** opencode-go 套餐额度（实现在 settings/quota.ts：TTL 缓存 + 官方 API） */

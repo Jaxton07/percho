@@ -7,6 +7,7 @@ import type { Tooltip } from "../components/ui/Tooltip";
 import type { useContextUsage } from "../hooks/use-context-usage";
 import type { useLanguage } from "../hooks/use-language";
 import type { useQuota } from "../hooks/use-quota";
+import type { useTurnSpeed } from "../hooks/use-turn-speed";
 import type { useT } from "../i18n";
 import type { useProjectsStore } from "../stores/projects";
 import type { useSessionsStore } from "../stores/sessions";
@@ -37,6 +38,7 @@ export interface PerchoUiApi {
 		useT: typeof useT;
 		useContextUsage: typeof useContextUsage;
 		useQuota: typeof useQuota;
+		useTurnSpeed: typeof useTurnSpeed;
 		useLanguage: typeof useLanguage;
 	};
 	stores: {

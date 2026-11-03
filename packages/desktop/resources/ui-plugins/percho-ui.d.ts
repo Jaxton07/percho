@@ -81,6 +81,18 @@ declare module "@percho/plugin-api" {
 		percent: number | null;
 	}
 
+	/** 当前轮 token 生成速度（useTurnSpeed 返回值；speed = outputTokens ÷ (durationMs/1000)） */
+	export interface TurnSpeedInfo {
+		/** 轮内 Σ 输出 token（API 权威值，非估算） */
+		outputTokens: number;
+		/** 轮内 Σ 生成耗时（ms）；逐消息实测，不含工具执行/排队 */
+		durationMs: number;
+		/** tok/s */
+		speed: number;
+		/** 有效样本数（计入的 LLM 消息条数） */
+		samples: number;
+	}
+
 	/** opencode-go 套餐额度窗口 key（5h 滚动 / 日历周 / 计费月） */
 	export type QuotaWindowKey = "rolling" | "weekly" | "monthly";
 
@@ -170,6 +182,8 @@ declare module "@percho/plugin-api" {
 		useContextUsage(sessionId: string | null): ContextUsageInfo | null;
 		/** opencode-go 套餐额度（全局；无 key/无订阅返回 null，插件应隐藏；turn 结束刷新 + 60s 轮询）——额度圆环用 */
 		useQuota(): QuotaInfo | null;
+		/** 当前轮 token 生成速度（事件驱动刷新：assistant message_end/turn_end/agent_settled/session_info_changed/compaction_end；无有效样本返回 null，插件应隐藏）——token 速度用 */
+		useTurnSpeed(sessionId: string | null): TurnSpeedInfo | null;
 		/** 当前界面语言（"zh" | "en"）——插件自有文案跟随中英 */
 		useLanguage(): "zh" | "en";
 	};
@@ -193,6 +207,7 @@ declare module "@percho/plugin-api" {
 	export const useT: typeof hooks.useT;
 	export const useContextUsage: typeof hooks.useContextUsage;
 	export const useQuota: typeof hooks.useQuota;
+	export const useTurnSpeed: typeof hooks.useTurnSpeed;
 	export const useLanguage: typeof hooks.useLanguage;
 	// store hooks 顶层便捷导出（与 shim 解构一致，例：import { useSessionsStore } from "@percho/plugin-api"）
 	export const useTranscriptStore: unknown;

@@ -25,6 +25,7 @@ export {
 	type TurnChanges,
 	type TurnFileChange,
 } from "./turn-files";
+export { deriveTurnSpeed, type TurnSpeedInfo, type TurnSpeedSample } from "./turn-speed";
 export { deriveTurnTimings, type TurnTiming } from "./turn-timings";
 export {
 	type ActivityEntry,
