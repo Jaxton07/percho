@@ -1,6 +1,6 @@
 # 构建、打包与验包
 
-仅在构建/发布相关任务阅读。依赖版本、平台目标和脚本以根及 desktop 的 package.json、`packages/desktop/electron-builder.yml`、`.github/workflows/` 为准，不在文档维护完整配置副本。
+本页保留构建、验包和包内资源约束。正式发版、Beta/RC、Release note和失败恢复统一看 [发版流程](release.md)。依赖版本、平台目标和脚本以根及 desktop 的 package.json、`packages/desktop/electron-builder.yml`、`.github/workflows/` 为准，不在文档维护完整配置副本。
 
 ## 常规检查
 
@@ -55,17 +55,11 @@ npx asar extract "packages/desktop/dist/releases/0.6.6-beta.1/darwin/build.noind
 - Release 构建出现 V8 heap OOM 时检查 workflow 的 Node 堆上限；这是构建峰值，不是应用运行时内存。别把 Rollup annotation warning 当根因。
 - `patches/` 由 patch-package 在 postinstall 应用。修改依赖后更新补丁，升级依赖时重核官方实现与补丁必要性。
 
-## 发布与平台验证
+## 平台验收边界
 
-Release workflow 支持推送 `vX.Y.Z[-beta.N|-rc.N]` tag，或手动指定版本。手动运行默认只构建验包，下载 GitHub Actions 产物即可内测；勾选 publish 才发布。版本从唯一入口传给两种 Linux 运行包和三个桌面构建，不依赖提前发布运行包。
-
-PR CI 复用同一个三平台打包验收工作流，使用基线版本加 `beta.<CI运行编号>` 的临时版本，覆盖完整安装包、隔离启动和最终整套产物校验，不创建 tag 或公开发行。Windows 安装日志也按产品名分目录，Beta 不写入正式版的安装日志目录。
+PR CI 复用三平台打包验收工作流，使用基线版本加 `beta.<CI运行编号>` 的临时版本。Windows 安装日志也按产品名分目录，Beta 不写入正式版的安装日志目录。
 
 electron-builder 默认跳过 PR 的签名；验收任务显式启用现有的 macOS adhoc 签名（identity 为 `-`，关闭证书自动发现，不提供证书密钥），否则修改 Electron 包内容后会残留失效签名，无法通过严格验包。
-
-流程在同一提交上完成检查、两种远端包的离线/安装验收、三平台桌面打包和本机架构启动验收。最后重新验证所有产物、版本、提交和摘要，全部上传到 GitHub 草稿后才公开；失败不公开半套安装包。Beta/RC 标为 prerelease，不能成为 latest，也不触发官网正式版本刷新。正式版保留现有下载文件名和更新源。已有公开 release 拒绝覆盖，同提交的草稿可重试上传。验收报告和摘要随安装包发布，便于追溯。
-
-本机维护者的 tag、签名、网络等操作见 `.local/docs/release.md`（不入库）；文件不存在时从仓库 workflow 和 builder 配置核对，不猜发布步骤。未经用户明确要求不 push、不创建发布或覆盖已发布资产。
 
 Windows 更新诊断及旧卸载器边界见 [WINDOWS-UPDATES.md](WINDOWS-UPDATES.md)。NSIS 改动须用 Windows CI 的真实 installer 编译和隔离 harness 验证，macOS 上的编译结果不能替代 Windows 行为证据。
 

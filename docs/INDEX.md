@@ -14,7 +14,8 @@
 | SDK 行为、升级、资源释放、上下文 | [SDK 集成](sdk.md) |
 | pi 扩展在 GUI 中实际支持哪些交互 | [扩展 UI](extension-ui.md) |
 | SSH 远端使用、连接与恢复边界 | [远端开发](ssh-remote.md) |
-| 构建、打包、验包 | [构建发布](build-release.md) |
+| 发版、Release note、公开核验、失败恢复 | [发版流程](release.md) |
+| 本地构建、打包、包内资源与运行包约束 | [构建与验包](build-release.md) |
 | Windows 更新取证、恢复 | [Windows 更新](WINDOWS-UPDATES.md) |
 | 按症状选择排查方向 | [排障入口](PITFALLS.md) |
 
@@ -61,4 +62,4 @@
 
 ## 临时资料
 
-`.local/` 不入库：`docs/release.md` 为本机发版操作，`design/` 为设计稿，`agent-work/` 为临时 spec/plan/channel。不要在这里登记各阶段产物；接手频道任务必须先加载 `channel-pickup` skill，再读 HANDOFF。
+`.local/` 不入库：`design/` 为设计稿，`agent-work/` 为临时 spec/plan/channel。正式发版规则只维护在上面的发版流程中，不依赖本机临时资料。不要在这里登记各阶段产物；接手频道任务必须先加载 `channel-pickup` skill，再读 HANDOFF。
