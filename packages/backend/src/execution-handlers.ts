@@ -53,6 +53,7 @@ export function createExecutionHandlers(
 		compact: ({ sessionId, customInstructions }) => backend.compact(sessionId, customInstructions),
 		getStats: ({ sessionId }) => backend.getStats(sessionId),
 		getContextUsage: ({ sessionId }) => backend.getContextUsage(sessionId),
+		getTurnSpeed: ({ sessionId }) => backend.getTurnSpeed(sessionId),
 		getQuota: () => backend.getQuota(),
 		clearQueue: ({ sessionId }) => backend.clearQueue(sessionId),
 		getFollowUpMessages: ({ sessionId }) => backend.getFollowUpMessages(sessionId),

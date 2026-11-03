@@ -1,0 +1,16 @@
+{
+	"name": "token-speed",
+	"version": "0.1.0",
+	"displayName": "Token 速度（示例）",
+	"description": "输入框底部行内 chip：当前轮 token 生成速度（composer.footer，useTurnSpeed，Σ 输出 token ÷ Σ 生成耗时，不含工具执行）",
+	"perchoUi": 1,
+	"main": "src/index.tsx",
+	"contributions": [
+		{
+			"id": "speed",
+			"region": "composer.footer",
+			"export": "TokenSpeed",
+			"title": "Token 速度"
+		}
+	]
+}
