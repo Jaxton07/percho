@@ -35,7 +35,9 @@ export function UserMessage({ message }: { message: Extract<UIMessage, { kind: "
 				)}
 				{message.document ? (
 					<div className="rounded-2xl rounded-br-md bg-user-bubble px-4 py-2.5 text-ui-15 leading-[1.7] text-ink shadow-soft select-text">
-						<ReferenceText document={message.document} />
+						<UserMessageText key={message.id}>
+							<ReferenceText document={message.document} />
+						</UserMessageText>
 					</div>
 				) : message.skill ? (
 					<div className="rounded-2xl rounded-br-md bg-user-bubble px-4 py-2.5 text-ui-15 leading-[1.7] text-ink shadow-soft select-text">
@@ -46,12 +48,12 @@ export function UserMessage({ message }: { message: Extract<UIMessage, { kind: "
 						>
 							{t("message.skillInvocation", { name: message.skill.name })}
 						</div>
-						{message.text && <UserMessageText key={message.id} text={message.text} />}
+						{message.text && <UserMessageText key={message.id}>{message.text}</UserMessageText>}
 					</div>
 				) : (
 					message.text && (
 						<div className="rounded-2xl rounded-br-md bg-user-bubble px-4 py-2.5 text-ui-15 leading-[1.7] text-ink shadow-soft select-text">
-							<UserMessageText key={message.id} text={message.text} />
+							<UserMessageText key={message.id}>{message.text}</UserMessageText>
 						</div>
 					)
 				)}
