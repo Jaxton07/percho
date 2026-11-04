@@ -38,7 +38,7 @@ import { thumbnailService } from "./history-image/history-image-service";
 import { MessageItem } from "./MessageItem";
 import { MessageRail } from "./MessageRail";
 import { MetaGroup } from "./MetaGroup";
-import { activeNode, type RailNode, railNodes } from "./message-rail";
+import { type RailNode, railNodes, turnsInView } from "./message-rail";
 import { RetryNote } from "./RetryNote";
 import { type RowKind, RowPositions } from "./row-positions";
 import { SelectionToolbar } from "./SelectionToolbar";
@@ -408,14 +408,21 @@ export function MessageList() {
 		// 用户向上滚 = scrollTop 变小且距底变大。视口上方变矮时原生锚定也会减小 scrollTop，但距底不变；
 		// 内容变矮夹位会落到底。两个量都在本次事件里读，不依赖可能过期的旧高度。
 		const upward = el.scrollTop < lastScrollTopRef.current && remaining > lastRemainingRef.current + 1;
-		if (atBottom) updateFollowing(true);
+		// 跳转进行中（含按需加载历史的等待期）：不能因为「此刻还在底部」重新打开跟随，
+		// 否则 ResizeObserver 会把前插的历史里的跳转拉回底部（实测重型会话点未加载节点不动）
+		if (atBottom && !pendingJumpRef.current && !jumpLoadingRef.current) updateFollowing(true);
 		else if (upward) updateFollowing(false);
 		lastScrollTopRef.current = el.scrollTop;
 		lastRemainingRef.current = remaining;
 		scheduleLayout();
 		// 触顶 = 真实滚动位置离「已加载第 0 行」很近。第 0 行的位置 = 内容列顶 + 0，不受窗口影响；
 		// 不用「窗口 start===0」，它在下一帧才更新，连续滚轮时一直是旧值（实测停在 scrollTop 0 却不翻页）
-		if (upward && el.scrollTop - rowTop() < HISTORY_TRIGGER_PX) {
+		if (
+			upward &&
+			el.scrollTop - rowTop() < HISTORY_TRIGGER_PX &&
+			!pendingJumpRef.current &&
+			!jumpLoadingRef.current
+		) {
 			if (el.scrollTop === 0) captureAnchor();
 			requestOlderHistory();
 		}
@@ -438,16 +445,24 @@ export function MessageList() {
 	const nodes = useMemo(() => railNodes(rows, navigationEntries), [rows, navigationEntries]);
 	const [railTick, setRailTick] = useState(0);
 	void railTick;
-	const el = scrollRef.current;
 	const viewTop = Math.max(0, viewportRef.current.top);
-	// 判定线在视口顶下方略过跳转偏移处：跳到某轮后它的顶边在 12px，必须算作「当前」（否则高亮停在上一轮）
+	// 视口内的轮次：由位置索引二分得到视口首末行，再映射到轮次（不依赖历史 DOM 是否挂载）。
+	// 顶部判定线略过跳转偏移：跳到某轮后它的顶边在 12px，应算作在视口内的第一轮
 	const firstVisible = positions.indexAt(viewTop + JUMP_OFFSET + 4);
-	const lastVisible = positions.indexAt(viewTop + viewportRef.current.height);
-	const atBottom = el ? el.scrollHeight - el.scrollTop - el.clientHeight <= 2 : true;
-	const activeOrdinal = activeNode(nodes, firstVisible, lastVisible, atBottom);
+	const lastVisible = positions.indexAt(viewTop + viewportRef.current.height - 1);
+	const turns = turnsInView(nodes, firstVisible, lastVisible);
+	const inViewFrom = turns?.from ?? -1;
+	const inViewTo = turns?.to ?? -1;
+	const inView = useMemo(
+		() => (inViewFrom < 0 ? null : { from: inViewFrom, to: inViewTo }),
+		[inViewFrom, inViewTo],
+	);
 
-	/** 跳到第 index 行：粗跳到估算位置 → 行渲染并实测后精对齐（估算误差在第二步消掉） */
-	const pendingJumpRef = useRef<{ key: string; tries: number } | null>(null);
+	/** 跳到第 index 行：粗跳到估算位置 → 行渲染并实测后精对齐（估算误差在第二步消掉）。
+	 *  smooth：目标已挂载时用浏览器平滑滚动；目标未挂载（远处）时先瞬跳再对齐，避免平滑滚动穿过大量占位 */
+	const pendingJumpRef = useRef<{ key: string; tries: number; smooth: boolean } | null>(null);
+	/** 按需加载历史到跳转目标的等待期；每次跳转一个 token，后发的跳转覆盖先发的 */
+	const jumpLoadingRef = useRef<object | null>(null);
 	const alignJump = useCallback(() => {
 		const pending = pendingJumpRef.current;
 		const el = scrollRef.current;
@@ -463,12 +478,25 @@ export function MessageList() {
 		)?.firstElementChild;
 		if (node) {
 			const delta = node.getBoundingClientRect().top - el.getBoundingClientRect().top - JUMP_OFFSET;
+			if (pending.smooth && Math.abs(delta) > 1) {
+				// 已挂载的目标：平滑滚动。滚动中上方行会首测、目标会移动，所以滚动结束后再按瞬跳精对齐
+				pending.smooth = false;
+				el.scrollTo({ top: el.scrollTop + delta, behavior: "smooth" });
+				const realign = () => {
+					if (pendingJumpRef.current === pending) requestAnimationFrame(alignJump);
+				};
+				el.addEventListener("scrollend", realign, { once: true });
+				// 不支持 scrollend 或滚动被打断时的兜底
+				setTimeout(realign, 900);
+				return;
+			}
 			if (Math.abs(delta) > 1) el.scrollTop += delta;
 			pending.tries++;
 			// 目标行刚挂上、上方行刚首测时还会有一次位移：再对一帧，最多 4 次
 			if (Math.abs(delta) <= 1 || pending.tries >= 4) pendingJumpRef.current = null;
 		} else {
 			el.scrollTop = rowTop() + positions.offsetOf(index) - JUMP_OFFSET;
+			pending.smooth = false;
 			pending.tries++;
 			if (pending.tries >= 8) pendingJumpRef.current = null;
 		}
@@ -477,35 +505,86 @@ export function MessageList() {
 		if (pendingJumpRef.current) requestAnimationFrame(alignJump);
 	}, [positions, rowTop]);
 	const jumpToKey = useCallback(
-		(key: string) => {
+		(key: string, behavior: ScrollBehavior = "instant") => {
 			updateFollowing(false);
-			pendingJumpRef.current = { key, tries: 0 };
+			const reduced = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+			pendingJumpRef.current = { key, tries: 0, smooth: behavior === "smooth" && !reduced };
 			requestAnimationFrame(alignJump);
 		},
 		[alignJump, updateFollowing],
 	);
-	const jumpToNode = (node: RailNode) => {
+	const jumpToNode = (node: RailNode, behavior: ScrollBehavior = "instant") => {
 		if (node.index >= 0) {
 			const key = rows[node.index]?.key;
-			if (key) jumpToKey(key);
+			jumpLoadingRef.current = null;
+			if (key) jumpToKey(key, behavior);
 			return;
 		}
 		if (!activeSessionId || !node.entryId) return;
 		const entryId = node.entryId;
 		updateFollowing(false);
-		void loadHistoryThrough(activeSessionId, entryId).then((ok) => {
-			if (!ok) return;
-			const row = useTranscriptStore
-				.getState()
-				.bySession[activeSessionId]?.messages.find(
-					(message) => message.kind === "user" && message.entryId === entryId,
-				);
-			if (row) jumpToKey(row.id);
-		});
+		// 未加载：先按需加载到目标所在轮次，再跳（远处一律瞬跳，避免平滑滚动穿过大量占位）。
+		// 加载期间标记「跳转中」，防止「还在底部」的滚动事件重新打开跟随
+		const token = {};
+		jumpLoadingRef.current = token;
+		void loadHistoryThrough(activeSessionId, entryId)
+			.then((ok) => {
+				if (!ok || jumpLoadingRef.current !== token) return;
+				const row = useTranscriptStore
+					.getState()
+					.bySession[activeSessionId]?.messages.find(
+						(message) => message.kind === "user" && message.entryId === entryId,
+					);
+				if (row) jumpToKey(row.id);
+			})
+			.finally(() => {
+				if (jumpLoadingRef.current === token) jumpLoadingRef.current = null;
+			});
 	};
 
 	const sessionRailVisible = useUiPreferencesStore((state) => state.sessionRailEnabled);
 	const sessionRailHasMembers = useSessionWorkspaceStore((state) => state.members.length > 0);
+
+	// Alt+↑/↓：跳到上一/下一条用户消息（参考 pi-gna 的 ⌥↑/⌥↓）。以视口内首轮为基准：
+	// 向下 = 下一轮；向上 = 当前轮开头（已在开头则上一轮）。输入框有内容时让给输入框。
+	const railKeys = useRef({ nodes, inView, jump: jumpToNode });
+	railKeys.current = { nodes, inView, jump: jumpToNode };
+	useEffect(() => {
+		const onKey = (event: KeyboardEvent) => {
+			if (event.defaultPrevented || !event.altKey || event.shiftKey || event.ctrlKey || event.metaKey) return;
+			if (event.key !== "ArrowUp" && event.key !== "ArrowDown") return;
+			const target = event.target;
+			if (target instanceof HTMLElement && target.isContentEditable && target.textContent) return;
+			if ((target instanceof HTMLTextAreaElement || target instanceof HTMLInputElement) && target.value)
+				return;
+			const { nodes: list, inView: view, jump } = railKeys.current;
+			if (list.length === 0) return;
+			const current = view?.from ?? list.length - 1;
+			let next = current;
+			if (event.key === "ArrowDown") next = current + 1;
+			else {
+				const scroller = scrollRef.current;
+				const start = list[current];
+				const key = start && start.index >= 0 ? rows[start.index]?.key : undefined;
+				const node = key
+					? contentRef.current?.querySelector(`:scope > [data-chat-row-key="${CSS.escape(key)}"]`)
+							?.firstElementChild
+					: undefined;
+				const offset =
+					node && scroller
+						? node.getBoundingClientRect().top - scroller.getBoundingClientRect().top - JUMP_OFFSET
+						: 0;
+				// 已经在本轮开头（误差 24px 内，同 pi-gna AT_TOP）就去上一轮
+				next = offset < -24 ? current : current - 1;
+			}
+			const target2 = list[next];
+			if (!target2) return;
+			event.preventDefault();
+			jump(target2, "smooth");
+		};
+		document.addEventListener("keydown", onKey);
+		return () => document.removeEventListener("keydown", onKey);
+	}, [rows]);
 
 	const renderRow = (row: ChatRow): ReactNode => {
 		if (row.kind === "turnDiff") {
@@ -553,7 +632,19 @@ export function MessageList() {
 					ref={attachScroller}
 					onScroll={handleScroll}
 					onWheel={(event) => {
-						if (event.deltaY < 0) updateFollowing(false);
+						if (event.deltaY >= 0) return;
+						updateFollowing(false);
+						// 已在顶部时向上滚不会产生 scroll 事件（scrollTop 已是 0），分页只能从这里触发（与基线一致）
+						const el = scrollRef.current;
+						if (
+							el &&
+							el.scrollTop - rowTop() < HISTORY_TRIGGER_PX &&
+							!pendingJumpRef.current &&
+							!jumpLoadingRef.current
+						) {
+							if (el.scrollTop === 0) captureAnchor();
+							requestOlderHistory();
+						}
 					}}
 					onClickCapture={handleSummaryToggle}
 					style={{ "--edge-fade-size": "28px" } as CSSProperties}
@@ -640,14 +731,8 @@ export function MessageList() {
 				<MessageRail
 					key={activeSessionId ?? "none"}
 					nodes={nodes}
-					activeOrdinal={activeOrdinal}
+					inView={inView}
 					onJump={jumpToNode}
-					onWheel={(deltaY) => {
-						const scroller = scrollRef.current;
-						if (!scroller) return;
-						if (deltaY < 0) updateFollowing(false);
-						scroller.scrollTop += deltaY;
-					}}
 					inset={sessionRailVisible && sessionRailHasMembers ? 36 : 0}
 					columnRef={contentRef}
 				/>

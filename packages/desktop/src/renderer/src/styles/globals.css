@@ -2633,3 +2633,113 @@ body > div.markstream-react.ms-tooltip[role="tooltip"]:not(.tooltip-element) {
 	max-height: 220px;
 	margin: 0;
 }
+
+/* ── 对话 Minimap（#110）────────────────────────────────────────────────
+   规则移植自 MIT 项目 pi-gna 的 .turn-rail-*（manuelcecchetto/pi-gna，src/renderer/src/styles.css；
+   其作者说明参考过 Codex 客户端导航轨道的 CSS）。只换成 Percho 的颜色变量：
+   每条用户消息一行 10px；线固定 26×2、按 scaleX 收到 6px；悬停 1、相邻三格 0.7/0.4/0.2；
+   默认 muted×0.4，视口内轮次 fg×0.6，悬停时视口内轮次退回默认；列表内部滚动、隐藏滚动条、两端渐隐。 */
+.message-rail-list {
+	position: relative;
+	display: flex;
+	flex-direction: column;
+	max-height: min(70vh, 40rem);
+	overflow-y: auto;
+	overscroll-behavior: contain;
+	scrollbar-width: none;
+}
+.message-rail-list::-webkit-scrollbar {
+	display: none;
+}
+.message-rail-list[data-fade] {
+	mask-image: linear-gradient(
+		to bottom,
+		var(--fade-top, #000),
+		#000 2.5rem,
+		#000 calc(100% - 2.5rem),
+		var(--fade-bottom, #000)
+	);
+}
+.message-rail-list[data-fade~="top"] {
+	--fade-top: transparent;
+}
+.message-rail-list[data-fade~="bottom"] {
+	--fade-bottom: transparent;
+}
+.message-rail-item {
+	display: flex;
+	flex-shrink: 0;
+	align-items: center;
+	width: 36px;
+	height: 10px;
+	border: 0;
+	background: transparent;
+	padding: 0;
+	cursor: pointer;
+	outline: none;
+}
+.message-rail-marker {
+	--progress: 0;
+	position: relative;
+	display: flex;
+	width: 26px;
+	height: 2px;
+	color: var(--color-ink-dim);
+	opacity: 0.4;
+}
+.message-rail-line {
+	width: 100%;
+	height: 100%;
+	border-radius: 1px;
+	background: currentColor;
+	transform-origin: left;
+	transform: scaleX(calc(0.2308 + 0.7692 * var(--progress)));
+	transition: transform 0.16s
+		linear(0, 0.398 10%, 0.682 20%, 0.843 30%, 0.925 40%, 0.972 50%, 1.004 60%, 1.008 70%, 1.003 80%, 1);
+}
+.message-rail-item[aria-current="true"] .message-rail-marker {
+	color: var(--color-ink);
+	opacity: 0.6;
+}
+.message-rail-list:has([data-hot])
+	.message-rail-item[aria-current="true"]:not([data-hot])
+	.message-rail-marker {
+	color: var(--color-ink-dim);
+	opacity: 0.4;
+}
+.message-rail-marker[data-near="3"] {
+	--progress: 0.2;
+}
+.message-rail-marker[data-near="2"] {
+	--progress: 0.4;
+}
+.message-rail-marker[data-near="1"] {
+	--progress: 0.7;
+}
+.message-rail-item[data-hot] .message-rail-marker {
+	--progress: 1;
+	color: var(--color-ink);
+	opacity: 1;
+}
+.message-rail-item:focus-visible .message-rail-marker {
+	color: var(--color-ink);
+	opacity: 1;
+}
+.message-rail-list[data-scrubbing] .message-rail-line {
+	transition-duration: 0s;
+}
+.message-rail-card {
+	animation: message-rail-card-in 0.12s ease-out;
+}
+@keyframes message-rail-card-in {
+	from {
+		opacity: 0;
+	}
+}
+@media (prefers-reduced-motion: reduce) {
+	.message-rail-line,
+	.message-rail-card {
+		transition-duration: 0s;
+		animation: none;
+	}
+}
