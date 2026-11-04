@@ -32,6 +32,9 @@ export function createExecutionHandlers(
 		getSessionBaseline: ({ sessionId, imageMode, historyTurns }) =>
 			backend.getSessionBaseline(sessionId, { imageMode, historyTurns }),
 		getSessionHistoryPage: ({ sessionId, cursor }) => backend.getSessionHistoryPage(sessionId, cursor),
+		getSessionNavigation: ({ sessionId }) => backend.getSessionNavigation(sessionId),
+		getSessionHistoryThrough: ({ sessionId, cursor, entryId }) =>
+			backend.getSessionHistoryThrough(sessionId, cursor, entryId),
 		getSessionMessages: ({ sessionId, imageMode }) => backend.getSessionMessages(sessionId, { imageMode }),
 		startSessionMediaPreview: ({ sessionFile }) => backend.startSessionMediaPreview(sessionFile),
 		startSessionMediaCompaction: (input) => backend.startSessionMediaCompaction(input),

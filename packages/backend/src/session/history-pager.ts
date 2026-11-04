@@ -2,15 +2,20 @@ import { createHash, randomUUID } from "node:crypto";
 import type { SessionEntry } from "@earendil-works/pi-coding-agent";
 import {
 	messagesToUIMessages,
+	previewExcerpt,
 	type SessionHistoryWindow,
 	type SessionMessage,
+	type SessionNavigation,
+	type SessionNavigationEntry,
 	type UIMessage,
 } from "@percho/shared";
 import { RUNTIME_MESSAGE_BYTES } from "../runtime/frames";
+import { blockImages, blockText, deriveUserMessage } from "./messages";
 import type { SourceSnapshot } from "./source-snapshot";
 
 const TARGET_HISTORY_BYTES = 248 * 1024; // 标准样本目标，保留元数据余量；不强拆大单轮。
 const MAX_HISTORY_BYTES = RUNTIME_MESSAGE_BYTES - 64 * 1024;
+const MAX_HISTORY_THROUGH_BYTES = 24 * 1024 * 1024;
 const DEFAULT_TURNS = 4;
 type Cursor = {
 	v: 2;
@@ -35,7 +40,8 @@ export interface SelectedHistory {
 	uiMessages: UIMessage[];
 	history: SessionHistoryWindow;
 }
-const user = (entry: SessionEntry | undefined) => entry?.type === "message" && entry.message.role === "user";
+const user = (entry: SessionEntry | undefined): entry is Extract<SessionEntry, { type: "message" }> =>
+	entry?.type === "message" && entry.message.role === "user";
 const fail = (message: string): never => {
 	throw new Error(`HISTORY_CURSOR_INVALID: ${message}`);
 };
@@ -84,6 +90,36 @@ export class SessionHistoryPager {
 			return fail("invalid cursor fields");
 		return parsed;
 	}
+	/** 只读 user entry 与每轮首段助手正文的轻量导航索引；不投影工具/图片。新鲜度由渲染端 history.generation 驱动重取。 */
+	navigation(view: SourceSnapshot, prefix: readonly SessionEntry[]): SessionNavigation {
+		if (prefix.length > view.branch.length || prefix.at(-1)?.id !== view.branch[prefix.length - 1]?.id)
+			return fail("persistent prefix is not from this source");
+		const entries: SessionNavigationEntry[] = [];
+		const clip = (text: string) => previewExcerpt(text, 120);
+		for (const entry of prefix) {
+			if (entry.type !== "message") continue;
+			const raw = entry.message as import("./messages").RawMessage;
+			if (raw.role === "assistant") {
+				const last = entries.at(-1);
+				if (last && last.reply === undefined) {
+					const reply = clip(blockText(raw.content));
+					if (reply) last.reply = reply;
+				}
+				continue;
+			}
+			if (!user(entry)) continue;
+			const { text: displayText } = deriveUserMessage(raw);
+			const timestamp = typeof raw.timestamp === "number" ? raw.timestamp : Date.parse(entry.timestamp);
+			entries.push({
+				entryId: entry.id,
+				ordinal: entries.length,
+				excerpt: clip(displayText),
+				timestamp: Number.isFinite(timestamp) ? timestamp : 0,
+				images: blockImages(raw.content).length,
+			});
+		}
+		return { entries };
+	}
 	tail(
 		view: SourceSnapshot,
 		prefix: readonly SessionEntry[],
@@ -123,6 +159,32 @@ export class SessionHistoryPager {
 		context: Context,
 		project: Project,
 	): SelectedHistory {
+		const parsed = this.validateCursor(view, prefix, cursor, context);
+		return this.select(view, prefix, parsed.beforeAt, parsed, project);
+	}
+	through(
+		view: SourceSnapshot,
+		prefix: readonly SessionEntry[],
+		cursor: string,
+		entryId: string,
+		context: Context,
+		project: Project,
+	): SelectedHistory {
+		const parsed = this.validateCursor(view, prefix, cursor, context);
+		const targetAt = prefix.findIndex((entry) => entry.id === entryId);
+		if (targetAt < 0 || !user(prefix[targetAt]) || targetAt >= parsed.beforeAt)
+			return fail("target is not an older user entry on this branch");
+		return this.select(view, prefix, parsed.beforeAt, parsed, project, {
+			startAt: targetAt,
+			maxBytes: MAX_HISTORY_THROUGH_BYTES,
+		});
+	}
+	private validateCursor(
+		view: SourceSnapshot,
+		prefix: readonly SessionEntry[],
+		cursor: string,
+		context: Context,
+	): Cursor {
 		const parsed = this.decode(cursor);
 		if (
 			parsed.owner !== view.owner ||
@@ -142,7 +204,7 @@ export class SessionHistoryPager {
 			!user(prefix[parsed.beforeAt])
 		)
 			return fail("branch or page boundary changed");
-		return this.select(view, prefix, parsed.beforeAt, parsed, project);
+		return parsed;
 	}
 	private prefixHash(branch: readonly SessionEntry[], end: number): string {
 		this.counts.validatedEntries += Math.min(end, branch.length);
@@ -158,17 +220,20 @@ export class SessionHistoryPager {
 		end: number,
 		cursor: Cursor,
 		project: Project,
+		options: { startAt?: number; maxBytes?: number } = {},
 	): SelectedHistory {
 		if (prefix.length > view.branch.length || prefix.at(-1)?.id !== view.branch[prefix.length - 1]?.id)
 			return fail("persistent prefix is not from this source");
 		let limit = cursor.turns;
 		for (;;) {
-			let start = end,
-				rounds = 0;
-			while (start > 0) {
-				start--;
-				this.counts.selectedEntries++;
-				if (user(prefix[start]) && ++rounds === limit) break;
+			let start = options.startAt ?? end,
+				rounds = options.startAt === undefined ? 0 : 1;
+			if (options.startAt === undefined) {
+				while (start > 0) {
+					start--;
+					this.counts.selectedEntries++;
+					if (user(prefix[start]) && ++rounds === limit) break;
+				}
 			}
 			// 前导无user段也必须最终可取回。工具结果若跨user边界，向前扩到真实调用所在整轮。
 			let scan = start;
@@ -206,11 +271,11 @@ export class SessionHistoryPager {
 			const messages = project(selected, cursor.references),
 				uiMessages = messagesToUIMessages(messages);
 			const bytes = Buffer.byteLength(JSON.stringify(uiMessages));
-			if (bytes > TARGET_HISTORY_BYTES && limit > 1) {
+			if (options.startAt === undefined && bytes > TARGET_HISTORY_BYTES && limit > 1) {
 				limit = Math.max(1, Math.floor(Math.min(limit, rounds || 1) / 2));
 				continue;
 			}
-			if (bytes > MAX_HISTORY_BYTES) {
+			if (bytes > (options.maxBytes ?? MAX_HISTORY_BYTES)) {
 				throw new Error(
 					"HISTORY_PAGE_TOO_LARGE: a complete round or dependency group exceeds the logical message budget; nothing was truncated",
 				);

@@ -3,15 +3,26 @@ import {
 	reduceEvent,
 	type SessionHistoryPage,
 	type SessionHistoryWindow,
+	type SessionNavigation,
 	type UIMessage,
 } from "@percho/shared";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { beginSessionBaseline, forgetSessionBoundary } from "./session-event-boundary";
 import { clearSessionHistory, finishSessionHistory } from "./session-history";
-import { installOlderHistory, loadOlderHistory } from "./session-history-paging";
+import {
+	installOlderHistory,
+	loadHistoryThrough,
+	loadOlderHistory,
+	loadSessionNavigation,
+} from "./session-history-paging";
 import { useTranscriptStore } from "./transcript";
 
-const api = vi.hoisted(() => ({ getSessionHistoryPage: vi.fn(), markSessionHistoryReady: vi.fn() }));
+const api = vi.hoisted(() => ({
+	getSessionHistoryPage: vi.fn(),
+	getSessionHistoryThrough: vi.fn(),
+	getSessionNavigation: vi.fn(),
+	markSessionHistoryReady: vi.fn(),
+}));
 vi.mock("../environment-api", () => ({ getExecutionApi: () => api }));
 const message = (id: string): UIMessage => ({
 	kind: "user",
@@ -63,7 +74,35 @@ beforeEach(() => {
 	forgetSessionBoundary("session");
 	clearSessionHistory("session");
 	api.markSessionHistoryReady.mockResolvedValue(undefined);
+	api.getSessionNavigation.mockResolvedValue({ entries: [] } satisfies SessionNavigation);
+	api.getSessionHistoryThrough.mockResolvedValue(page());
 	seed();
+});
+
+describe("导航与目标页", () => {
+	it("加载导航并在旧远端或 generation 变化时返回 null", async () => {
+		await expect(loadSessionNavigation("session")).resolves.toEqual({ entries: [] });
+		api.getSessionNavigation.mockRejectedValueOnce(new Error("Unknown or desktop-only method"));
+		await expect(loadSessionNavigation("session")).resolves.toBeNull();
+		const pending = deferred<SessionNavigation>();
+		api.getSessionNavigation.mockReturnValueOnce(pending.promise);
+		const request = loadSessionNavigation("session");
+		seed("two");
+		pending.resolve({ entries: [] });
+		await expect(request).resolves.toBeNull();
+	});
+	it("loads through a target and serializes behind ordinary paging", async () => {
+		api.getSessionHistoryThrough.mockResolvedValueOnce({
+			messages: [message("older:one")],
+			history: { ...window(), hasOlder: true, cursor: "next-cursor" },
+		});
+		await expect(loadHistoryThrough("session", "older:one")).resolves.toBe(true);
+		expect(api.getSessionHistoryThrough).toHaveBeenCalledWith({
+			sessionId: "session",
+			cursor: "cursor:one",
+			entryId: "older:one",
+		});
+	});
 });
 
 describe("旧页前插与活动态隔离", () => {

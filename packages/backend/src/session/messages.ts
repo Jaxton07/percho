@@ -96,6 +96,18 @@ export function blockImages(content: string | ContentBlock[] | undefined): Image
 		.map((c) => ({ data: c.data as string, mimeType: (c.mimeType as string) ?? "image/png" }));
 }
 
+export function deriveUserMessage(raw: RawMessage) {
+	const sourceText = blockText(raw.content);
+	const document = readComposerDocument(raw);
+	const invocation = document ? null : parseExpandedSkillInvocation(sourceText);
+	return {
+		sourceText,
+		document,
+		invocation,
+		text: document ? composerDocumentText(document) : invocation ? (invocation.args ?? "") : sourceText,
+	};
+}
+
 /**
  * 解析撤回目标 user entry：entryId 直接校验（非 user 消息拒绝）；否则按 text（+timestamp
  * 优先比对）从分支尾部向前匹配最近一条 user 消息 entry（实时消息无 entryId 时兜底）。
@@ -241,13 +253,11 @@ export function toSessionMessages(
 				continue;
 			}
 			if (raw.role === "user") {
-				const sourceText = blockText(raw.content);
-				const document = readComposerDocument(raw);
-				const invocation = document ? null : parseExpandedSkillInvocation(sourceText);
+				const { sourceText, document, invocation, text } = deriveUserMessage(raw);
 				out.push({
 					role: "user",
 					...(raw.sourceEntryId ? { entryId: raw.sourceEntryId } : {}),
-					text: document ? composerDocumentText(document) : invocation ? (invocation.args ?? "") : sourceText,
+					text,
 					...(document ? { document, sourceText } : {}),
 					thinking: "",
 					tools: [],

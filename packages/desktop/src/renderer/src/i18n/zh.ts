@@ -389,6 +389,10 @@ export const zh = {
 		deny: "不信任",
 		queued: "还有 {count} 个项目等待确认",
 	},
+	messageRail: {
+		ariaLabel: "消息导航",
+		jump: "跳转到这条消息",
+	},
 	message: {
 		copy: "复制",
 		copied: "已复制",

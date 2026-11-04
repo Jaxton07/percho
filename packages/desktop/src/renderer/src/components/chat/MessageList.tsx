@@ -1,7 +1,14 @@
-import { buildChatRows, deriveTurnChanges, deriveTurnTimings, isAgentWorking } from "@percho/shared";
+import {
+	buildChatRows,
+	type ChatRow,
+	deriveTurnChanges,
+	deriveTurnTimings,
+	isAgentWorking,
+} from "@percho/shared";
 import {
 	type CSSProperties,
 	type MouseEvent,
+	type ReactNode,
 	useCallback,
 	useEffect,
 	useLayoutEffect,
@@ -14,7 +21,12 @@ import { useEdgeFade } from "../../lib/use-edge-fade";
 import { Slot } from "../../plugins/Slot";
 import { UI_SLOTS } from "../../plugins/slots";
 import { reloadSessionHistory } from "../../stores/session-history";
-import { loadOlderHistory } from "../../stores/session-history-paging";
+import {
+	loadHistoryThrough,
+	loadOlderHistory,
+	loadSessionNavigation,
+} from "../../stores/session-history-paging";
+import { useSessionWorkspaceStore } from "../../stores/session-workspace";
 import { useSessionsStore } from "../../stores/sessions";
 import { selectTranscript, useTranscriptStore } from "../../stores/transcript";
 import { useUiPreferencesStore } from "../../stores/ui-preferences";
@@ -24,35 +36,63 @@ import { CompactionPauseNote } from "./CompactionPauseNote";
 import { HistoryImageRootProvider } from "./history-image/history-image-root";
 import { thumbnailService } from "./history-image/history-image-service";
 import { MessageItem } from "./MessageItem";
+import { MessageRail } from "./MessageRail";
 import { MetaGroup } from "./MetaGroup";
-import {
-	clampWindowStart,
-	expandWindowStart,
-	MOUNT_TRIGGER_PX,
-	prependWindowStart,
-	tailWindowStart,
-} from "./mount-window";
+import { activeNode, type RailNode, railNodes } from "./message-rail";
 import { RetryNote } from "./RetryNote";
+import { type RowKind, RowPositions } from "./row-positions";
 import { SelectionToolbar } from "./SelectionToolbar";
 import { SubagentRunCard } from "./SubagentRunCard";
 import { TurnDiffChip } from "./TurnDiffChip";
 import { useShownWorking } from "./use-shown-working";
+import { windowFor } from "./virtual-window";
 
 /** 距底 ≤ 此值视为「在底部」，自动恢复跟随 */
 const BOTTOM_THRESHOLD = 48;
+/** 行间距：与内容列 gap-6 一致（行测量取 margin box，间距由位置索引统一加） */
+const ROW_GAP = 24;
+/** 距顶 ≤ 此值且还有更早历史：请求下一页（与旧挂载窗口的触发距离一致） */
+const HISTORY_TRIGGER_PX = 1000;
+/** 跳转目标落在视口顶下方的距离 */
+const JUMP_OFFSET = 12;
+
+const rowKind = (row: ChatRow): RowKind =>
+	row.kind === "message"
+		? row.message.kind === "user"
+			? "user"
+			: row.message.kind === "assistant"
+				? "assistant"
+				: "other"
+		: row.kind === "metaGroup"
+			? "metaGroup"
+			: row.kind === "turnDiff"
+				? "turnDiff"
+				: "other";
+
+/** 行元素（包装是 display:contents，自身矩形恒为 0）的 margin box 高度；已卸载的行返回 null */
+function rowHeight(wrapper: Element): number | null {
+	const child = wrapper.firstElementChild;
+	// 脱离文档的元素 computed style 为空，量出来是 NaN/0，不能写进索引
+	if (!(child instanceof HTMLElement) || !child.isConnected) return null;
+	const style = getComputedStyle(child);
+	const height =
+		child.getBoundingClientRect().height +
+		Number.parseFloat(style.marginTop) +
+		Number.parseFloat(style.marginBottom);
+	return Number.isFinite(height) ? height : null;
+}
 
 /**
  * 中央消息流：最大宽度 760px 居中。
- * 合并规则：assistant 消息的思考/工具全部并入一个折叠组，正文（text）是边界——
- * 正文出现时组关闭、正文作为独立块渲染（与 working 定义一致：用户消息 → 下一次正文之间）。
+ * 合并规则：assistant 消息的思考/工具全部并入一个折叠组，正文（text）是边界。
  *
- * 底部跟随：ResizeObserver 监听内容/容器尺寸（流式追加、图片加载、窗口缩放），
- * 跟随中即时贴底（RO 回调早于 paint，无闪烁）；仅「向上滚动」脱离跟随，回到底部恢复；
- * 用户发出新消息与切换会话时强制回底。脱离跟随时显示浮动回底按钮。
+ * 底部跟随：ResizeObserver 监听内容/容器尺寸，跟随中即时贴底；仅「向上滚动」脱离跟随，
+ * 回到底部恢复；用户发出新消息与切换会话时强制回底。
  *
- * 挂载窗口（长会话切换性能，见 mount-window.ts）：切到会话只挂尾部一段行，更早的行在用户
- * 上滑接近顶部时成块补挂（只增不减）。切换瞬间的挂载量与会话长度解耦——两三千条消息的会话
- * 不再在切换时把主线程冻结一秒。
+ * 有界渲染（#110）：只渲染视口上下各约一屏的行，其余用上下占位撑出高度；DOM 行数有硬上限，
+ * 与会话长度无关。行高按 key 缓存（row-positions.ts），未测行用估算，位置查询走二分。
+ * 锚定仍交给浏览器原生滚动锚定（占位不参与选锚，见下），视口上方行的异步定型（Monaco、图片）
+ * 与窗口移动都由它补偿；只在 scrollTop===0（Chromium 不调整）时按锚点补差。
  */
 export function MessageList() {
 	const t = useT();
@@ -60,14 +100,10 @@ export function MessageList() {
 	const transcript = useTranscriptStore((s) => selectTranscript(s, activeSessionId));
 	const streaming = transcript.streaming;
 	const historyGeneration = transcript.history?.generation ?? transcript.baselineRevision;
-	/** agent 运行中且正文未出现 → 折叠组标题 working；正文已出但工具/子代理还在跑时不熄灯 */
 	const agentWorking = isAgentWorking(transcript);
 
-	// 中央状态动画（设置开关，与状态行小 orb 解耦）：与 MetaGroup 同一 working 信号 + 同一滞后缓冲，
-	// 显隐节奏一致；动画两态合一为中速单动画（无状态切换），CenterOrb 只收 visible。
-	// 滞后缓冲只在 run 存活期内生效：正文在输出或 run 已终结（!agentActive）时立即结束——
-	// 杜绝结束/中止后的 1.5s 滞留；resetKey=会话 id：切会话立即对齐新信号，不滞留旧动画
 	const centerOrbEnabled = useUiPreferencesStore((s) => s.centerOrbEnabled);
+	const codeFontSize = useUiPreferencesStore((s) => s.codeFontSize);
 	const shownWorking = useShownWorking(
 		agentWorking,
 		transcript.compacting || Boolean(streaming?.text) || !transcript.agentActive,
@@ -76,24 +112,16 @@ export function MessageList() {
 
 	const scrollRef = useRef<HTMLDivElement>(null);
 	const contentRef = useRef<HTMLDivElement>(null);
-	// 历史图片的私有 root：滚动容器元素本身。用 state 而不是只存 ref —— 挂载顺序上
-	// 后代 effect 需要拿到**已存在**的 DOM 元素才能建立观察，state 变化会触发它们重跑
 	const [historyImageRoot, setHistoryImageRoot] = useState<HTMLElement | null>(null);
-	// ref 用 useCallback 固定：否则每次渲染都是新函数，React 会先 detach 再 attach，
-	// 既让 setHistoryImageRoot 反复触发，也会让历史图的观察目标重挂
 	const attachScroller = useCallback((element: HTMLDivElement | null) => {
 		scrollRef.current = element;
 		setHistoryImageRoot((previous) => (previous === element ? previous : element));
 	}, []);
-	// 对话正文的边界淡出：**只淡上沿**（在顶栏下渐隐）——
-	// 下沿紧贴输入框，那里不要淡出（用户明确不要）；28px < 内容区 pt-8（32px），
-	// 所以静止在顶时只会淡到空白内边距，不会咬正文
 	useEdgeFade(scrollRef, "top");
-	/** 跟随状态的 ref 镜像：ResizeObserver / scroll 回调里读最新值 */
 	const followingRef = useRef(true);
 	const [following, setFollowing] = useState(true);
 	const lastScrollTopRef = useRef(0);
-	const lastScrollHeightRef = useRef(0);
+	const lastRemainingRef = useRef(0);
 
 	const updateFollowing = useCallback((value: boolean) => {
 		followingRef.current = value;
@@ -105,7 +133,6 @@ export function MessageList() {
 		if (el) el.scrollTo({ top: el.scrollHeight, behavior });
 	}, []);
 
-	// 尺寸变化（流式追加、图片加载、窗口缩放）→ 跟随中保持贴底
 	useEffect(() => {
 		const scroll = scrollRef.current;
 		const content = contentRef.current;
@@ -118,7 +145,6 @@ export function MessageList() {
 		return () => observer.disconnect();
 	}, [pinToBottom]);
 
-	// 用户发出新消息（末条变为 user）→ 立即回底并恢复跟随
 	const lastMessage = transcript.messages[transcript.messages.length - 1];
 	const lastUserMessageId = lastMessage?.kind === "user" ? lastMessage.id : null;
 	useEffect(() => {
@@ -127,9 +153,6 @@ export function MessageList() {
 		pinToBottom();
 	}, [lastUserMessageId, pinToBottom, updateFollowing]);
 
-	// 切换会话 → 回到底部并恢复跟随
-	// 切会话：缩略图服务换代（terminate worker、清队列/在途/缓存），旧句柄随组件卸载释放；
-	// 不做这一步也能靠组件卸载清掉订阅，但 worker 在途任务与 LRU 会跨会话残留
 	// biome-ignore lint/correctness/useExhaustiveDependencies: activeSessionId 是刻意的重跑触发器
 	useEffect(() => {
 		thumbnailService().cancelView();
@@ -141,16 +164,10 @@ export function MessageList() {
 		pinToBottom();
 	}, [activeSessionId, historyGeneration, pinToBottom, updateFollowing]);
 
-	// 展开/折叠任何折叠组（details summary）→ 释放底部跟随：否则贴底 RO 会在高度动画期间
-	// 持续拉回底部，出现「Worked 上移 + 内容下展」两边同动的不稳定感。释放后视口钉在点击处、
-	// 新内容向下展开，与「向上滚动脱离」同一语义（滚回底部即恢复跟随）
 	const handleSummaryToggle = (e: MouseEvent) => {
 		if (e.target instanceof Element && e.target.closest("summary")) updateFollowing(false);
 	};
 
-	// 轮次数据：文件变更 + 计时。进场动画只给「本会话查看期间新出现的最后一轮」播：基线在切会话/
-	// 历史重建时对齐，不随渲染更新（防 turn_end 紧随的二次渲染摘掉动画类）；行定位/上提规则全部在
-	// shared buildChatRows 内完成（opts 传入，与 lan-web 同一分组大脑）
 	const turnChanges = useMemo(() => deriveTurnChanges(transcript.messages), [transcript.messages]);
 	const turnTimings = useMemo(
 		() => deriveTurnTimings(transcript.messages, transcript.runEndedAt),
@@ -181,11 +198,6 @@ export function MessageList() {
 	}
 	const enteringTurn = turnBaselineRef.current.entering;
 
-	// 行序列由 shared buildChatRows 产出（与 lan-web 同一分组大脑）；此处只做行模型 → JSX 映射。
-	// useMemo：滚动/跟随等本组件局部 state 翻转不重跑（历史长会话单次 ~60µs+）；transcript 每
-	// 次变更（合流后 ≤ 1 次/帧）重跑一次是预期成本；turnChanges/turnTimings/enteringTurn 是轮末行输入
-	// 订阅收窄（ChatRowsInput）：rows 只随 messages/streaming/agentActive/compacting/runEndedAt 重算——
-	// todos/pendingPermissions 等同会话其它字段更新（新 entry 引用）不再触发全量 buildChatRows
 	const rows = useMemo(
 		() =>
 			buildChatRows(
@@ -217,61 +229,129 @@ export function MessageList() {
 		],
 	);
 
-	// —— 挂载窗口 ——
-	// 切到会话只挂尾部窗口（会话切换耗时与会话长度解耦）；更早的行在用户上滑接近顶部时成块补挂。
-	// 窗口只增不减：流式/工具结果追加都在尾部，起点不动 → 长会话连挂载规模都保持在窗口量级。
-	const [mountFrom, setMountFrom] = useState(0);
-	const viewSessionRef = useRef<{
-		sid: string | null;
-		generation: string | number | undefined;
-		first?: string;
-	}>({ sid: null, generation: undefined });
-	const sessionChanged =
-		viewSessionRef.current.sid !== activeSessionId || viewSessionRef.current.generation !== historyGeneration;
-	const previousFirst = viewSessionRef.current.first;
-	const prepended =
-		!sessionChanged && previousFirst
-			? Math.max(
-					0,
-					rows.findIndex((row) => row.key === previousFirst),
-				)
-			: 0;
-	const renderedFrom = sessionChanged
-		? tailWindowStart(rows.length)
-		: prepended > 0
-			? prependWindowStart(mountFrom, prepended, rows.length)
-			: clampWindowStart(mountFrom, rows.length);
-	if (sessionChanged || prepended > 0) setMountFrom(renderedFrom);
-	viewSessionRef.current = { sid: activeSessionId, generation: historyGeneration, first: rows[0]?.key };
-	const renderedFromRef = useRef(renderedFrom);
-	renderedFromRef.current = renderedFrom;
-	/** 补挂前的锚点：旧首行元素 + 它的视口相对 top。DOM 更新后若浏览器滚动锚定没把它钉住，用它补差 */
-	const prependAnchorRef = useRef<{ key?: string; el: Element; viewportTop: number } | null>(null);
-
-	/** 补挂一块更早的行；滚动处理器调用（同一事件内重复调用只生效一次：同基于当前 renderedFrom 计算） */
-	const capturePrependAnchor = () => {
-		if (
-			viewSessionRef.current.sid !== activeSessionId ||
-			viewSessionRef.current.generation !== historyGeneration
-		)
-			return;
-		const anchor = contentRef.current?.querySelector("[data-chat-row-key]")?.firstElementChild,
-			scroller = scrollRef.current;
-		if (!anchor || !scroller) return;
-		prependAnchorRef.current = {
-			key: rows[renderedFromRef.current]?.key,
-			el: anchor,
-			viewportTop: anchor.getBoundingClientRect().top - scroller.getBoundingClientRect().top,
-		};
-	};
-	const requestEarlierRows = (retry = false) => {
-		const next = expandWindowStart(renderedFromRef.current, rows.length);
-		if (next !== renderedFromRef.current) {
-			updateFollowing(false);
-			capturePrependAnchor();
-			setMountFrom(next);
-			return;
+	// —— 位置索引（每会话一份，切回来复用已测高度）——
+	const positionsBySession = useRef(new Map<string, RowPositions>());
+	const positions = useMemo(() => {
+		const key = String(activeSessionId);
+		let found = positionsBySession.current.get(key);
+		if (!found) {
+			found = new RowPositions(ROW_GAP);
+			positionsBySession.current.set(key, found);
+			// 只留最近几个会话的缓存
+			if (positionsBySession.current.size > 8) {
+				const oldest = positionsBySession.current.keys().next().value;
+				if (oldest !== undefined) positionsBySession.current.delete(oldest);
+			}
 		}
+		return found;
+	}, [activeSessionId]);
+	positions.sync(useMemo(() => rows.map((row) => ({ key: row.key, kind: rowKind(row) })), [rows]));
+	// 代码字号变化：已测高度整体作废（Monaco 重建后重新测）
+	const fontRef = useRef(codeFontSize);
+	if (fontRef.current !== codeFontSize) {
+		fontRef.current = codeFontSize;
+		for (const cached of positionsBySession.current.values()) cached.invalidateMeasurements();
+	}
+
+	// —— 窗口 ——
+	// 渲染区间由滚动位置算出；测量后高度变化也需要重算（state 只存触发计数，区间每次渲染现算）
+	const [layoutTick, setLayoutTick] = useState(0);
+	const viewportRef = useRef({ top: 0, height: 800 });
+	const { start, end } = windowFor(
+		positions,
+		viewportRef.current.top,
+		viewportRef.current.height,
+		followingRef.current,
+	);
+	const topSpacer = positions.offsetOf(start);
+	const bottomSpacer =
+		end > 0 && end < rows.length ? positions.total() - positions.offsetOf(end) + ROW_GAP : 0;
+	const rendered = rows.slice(start, end);
+	const windowRef = useRef({ start, end });
+	windowRef.current = { start, end };
+	void layoutTick;
+
+	/** 第 0 行顶在滚动容器内容坐标中的位置（容器顶 → 内容列内边距之下） */
+	const rowTop = useCallback(() => {
+		const content = contentRef.current;
+		return content ? content.offsetTop + Number.parseFloat(getComputedStyle(content).paddingTop) : 0;
+	}, []);
+	const scheduleRef = useRef(0);
+	/** 滚动/尺寸变化合并到一帧：读视口 → 必要时触发重渲染（区间变化才 setState） */
+	const scheduleLayout = useCallback(() => {
+		if (scheduleRef.current) return;
+		scheduleRef.current = requestAnimationFrame(() => {
+			scheduleRef.current = 0;
+			const el = scrollRef.current;
+			const content = contentRef.current;
+			if (!el || !content) return;
+			// 内容列的顶内边距在第 0 行之前：视口坐标换算到行坐标
+			viewportRef.current = { top: el.scrollTop - rowTop(), height: el.clientHeight };
+			// 跳转对齐期间由 alignJump 自己推进窗口，这里不重算（否则两边互相覆盖）
+			if (pendingJumpRef.current) return;
+			const next = windowFor(positions, viewportRef.current.top, el.clientHeight, followingRef.current);
+			if (next.start !== windowRef.current.start || next.end !== windowRef.current.end)
+				setLayoutTick((n) => n + 1);
+			setRailTick((n) => n + 1);
+		});
+	}, [positions, rowTop]);
+	// 取消时必须清零：StrictMode 会卸载再挂载，残留的帧 id 会让 scheduleLayout 永远提前返回
+	useEffect(
+		() => () => {
+			cancelAnimationFrame(scheduleRef.current);
+			scheduleRef.current = 0;
+		},
+		[],
+	);
+
+	// 已渲染行的高度测量：单个 ResizeObserver，回调里批量写索引；从不在滚动时遍历行
+	const measureRef = useRef<ResizeObserver | null>(null);
+	useEffect(() => {
+		const observer = new ResizeObserver((entries) => {
+			let changed = false;
+			for (const entry of entries) {
+				const wrapper = entry.target.parentElement;
+				const key = wrapper?.dataset.chatRowKey;
+				if (!entry.target.isConnected) {
+					// 已卸载：停止观察，保留它最后一次实测的高度
+					observer.unobserve(entry.target);
+					continue;
+				}
+				if (!wrapper || !key) continue;
+				const height = rowHeight(wrapper);
+				if (height !== null && positions.setHeight(key, height) !== 0) changed = true;
+			}
+			if (changed) scheduleLayout();
+		});
+		measureRef.current = observer;
+		return () => {
+			observer.disconnect();
+			measureRef.current = null;
+		};
+	}, [positions, scheduleLayout]);
+	// 新挂上的行交给观察器（RO 首次 observe 会回调一次，即首测）
+	// biome-ignore lint/correctness/useExhaustiveDependencies: 区间/行变化后才需要接线新行
+	useLayoutEffect(() => {
+		const observer = measureRef.current;
+		const content = contentRef.current;
+		if (!observer || !content) return;
+		for (const wrapper of content.querySelectorAll<HTMLElement>(":scope > [data-chat-row-key]")) {
+			const child = wrapper.firstElementChild;
+			if (child && !(child as HTMLElement & { __observed?: boolean }).__observed) {
+				(child as HTMLElement & { __observed?: boolean }).__observed = true;
+				observer.observe(child);
+			}
+		}
+	}, [start, end, rows]);
+
+	// 首次进入/切会话：窗口按「跟随=锁尾」计算；首帧后读真实视口
+	// biome-ignore lint/correctness/useExhaustiveDependencies: 会话/代次变化是刻意触发器
+	useLayoutEffect(() => {
+		scheduleLayout();
+	}, [activeSessionId, historyGeneration, scheduleLayout]);
+
+	// —— 历史分页 ——
+	const requestOlderHistory = (retry = false) => {
 		if (
 			!activeSessionId ||
 			!transcript.history?.hasOlder ||
@@ -280,7 +360,7 @@ export function MessageList() {
 		)
 			return;
 		updateFollowing(false);
-		void loadOlderHistory(activeSessionId, capturePrependAnchor);
+		void loadOlderHistory(activeSessionId);
 	};
 	const reloadHistory = (full = false) => {
 		if (!activeSessionId) return;
@@ -291,125 +371,189 @@ export function MessageList() {
 			full,
 		);
 	};
+	// 前插的行在视口上方：浏览器原生锚定补偿；scrollTop===0 时 Chromium 不调整，这里按首个可见行补差
+	const anchorRef = useRef<{ key: string; top: number } | null>(null);
+	const captureAnchor = () => {
+		const el = scrollRef.current;
+		const content = contentRef.current;
+		if (!el || !content) return;
+		const box = el.getBoundingClientRect();
+		for (const wrapper of content.querySelectorAll<HTMLElement>(":scope > [data-chat-row-key]")) {
+			const rect = wrapper.firstElementChild?.getBoundingClientRect();
+			if (rect && rect.height > 0 && rect.bottom > box.top) {
+				anchorRef.current = { key: wrapper.dataset.chatRowKey ?? "", top: rect.top - box.top };
+				return;
+			}
+		}
+	};
+	// biome-ignore lint/correctness/useExhaustiveDependencies: 首行变化（前插）才需要补差
+	useLayoutEffect(() => {
+		const el = scrollRef.current;
+		const anchor = anchorRef.current;
+		anchorRef.current = null;
+		if (!el || !anchor) return;
+		const node = contentRef.current?.querySelector(
+			`:scope > [data-chat-row-key="${CSS.escape(anchor.key)}"]`,
+		)?.firstElementChild;
+		if (!node) return;
+		const drift = node.getBoundingClientRect().top - el.getBoundingClientRect().top - anchor.top;
+		if (drift !== 0) el.scrollTop += drift;
+	}, [rows[0]?.key, historyGeneration]);
 
-	// 仅「向上滚动」脱离跟随（程序性向下贴底/平滑回底不中断跟随）；到达底部恢复。
-	// 压缩/消息重建会让内容变矮——高度收缩导致的位置下降不是用户意图，不释放跟随
-	// （否则每次 compaction 后跟随静默死亡）；RO 会随即重新贴底。
-	// 同时作为挂载窗口的补挂触发器：接近顶部时向更早的行补挂一块。
 	const handleScroll = () => {
 		const el = scrollRef.current;
 		if (!el) return;
-		const heightShrank = el.scrollHeight < lastScrollHeightRef.current;
-		const atBottom = el.scrollHeight - el.scrollTop - el.clientHeight <= BOTTOM_THRESHOLD;
-		const upward = el.scrollTop < lastScrollTopRef.current && !heightShrank;
+		const remaining = el.scrollHeight - el.scrollTop - el.clientHeight;
+		const atBottom = remaining <= BOTTOM_THRESHOLD;
+		// 用户向上滚 = scrollTop 变小且距底变大。视口上方变矮时原生锚定也会减小 scrollTop，但距底不变；
+		// 内容变矮夹位会落到底。两个量都在本次事件里读，不依赖可能过期的旧高度。
+		const upward = el.scrollTop < lastScrollTopRef.current && remaining > lastRemainingRef.current + 1;
 		if (atBottom) updateFollowing(true);
-		else if (el.scrollTop < lastScrollTopRef.current && !heightShrank) updateFollowing(false);
+		else if (upward) updateFollowing(false);
 		lastScrollTopRef.current = el.scrollTop;
-		lastScrollHeightRef.current = el.scrollHeight;
-		if ((renderedFromRef.current > 0 || upward) && el.scrollTop < MOUNT_TRIGGER_PX) requestEarlierRows();
+		lastRemainingRef.current = remaining;
+		scheduleLayout();
+		// 触顶 = 真实滚动位置离「已加载第 0 行」很近。第 0 行的位置 = 内容列顶 + 0，不受窗口影响；
+		// 不用「窗口 start===0」，它在下一帧才更新，连续滚轮时一直是旧值（实测停在 scrollTop 0 却不翻页）
+		if (upward && el.scrollTop - rowTop() < HISTORY_TRIGGER_PX) {
+			if (el.scrollTop === 0) captureAnchor();
+			requestOlderHistory();
+		}
 	};
 
-	// 补挂的锚定交给**浏览器滚动锚定**（容器不能加 overflow-anchor: none）：新行整块插在视口上方，
-	// 浏览器会自己把 scrollTop 补回来，且**异步定型的内容**（monaco 迟到定型、图片加载）引起的
-	// 视口上方高度变化它也会一并补偿——手写补偿只看提交那一刻的高度，
-	// 定型后内容变矮会把位置往下钳，钳到底部还会被误判成「用户到底」而复活跟随（用户会感到上滚被反复拽回底部）。
-	// （markstream 容器原本的 content-visibility 600px 估值占位也是这类异步高度源，已在 globals.css 关掉）
-	// 这里只兜底一种情况：Chromium 在 scrollTop === 0 时不调整锚点（到顶了没地方调），此时按锚点的
-	// 视口位置漂移补差；浏览器已经钉住时 drift === 0，本段是 no-op，不会与它叠加。
-	// 顺带补一屏下限：窗口里的行特别矮（连续折叠行）时内容填不满视口，继续补挂直到填满或到顶。
-	// biome-ignore lint/correctness/useExhaustiveDependencies: renderedFrom 是刻意的重跑触发器（窗口变化后才需要补差 / 补足一屏）
-	useLayoutEffect(() => {
-		const el = scrollRef.current;
-		const pending = prependAnchorRef.current;
-		prependAnchorRef.current = null;
-		const keyed = pending?.key
-			? [...(contentRef.current?.querySelectorAll("[data-chat-row-key]") ?? [])].find(
-					(row) => row.getAttribute("data-chat-row-key") === pending.key,
-				)?.firstElementChild
-			: undefined;
-		const anchor = pending?.el.isConnected ? pending.el : keyed;
-		if (el && pending && anchor) {
-			const drift = anchor.getBoundingClientRect().top - el.getBoundingClientRect().top - pending.viewportTop;
-			if (drift !== 0) el.scrollTop += drift;
-		}
-		if (el && renderedFromRef.current > 0 && el.scrollHeight <= el.clientHeight) requestEarlierRows();
-	}, [renderedFrom, transcript.history?.firstEntryId, historyGeneration]);
+	// —— Minimap ——
+	const [navigationEntries, setNavigationEntries] = useState<Parameters<typeof railNodes>[1]>(null);
+	// biome-ignore lint/correctness/useExhaustiveDependencies: 会话/历史代次变化才重取全历史索引
+	useEffect(() => {
+		setNavigationEntries(null);
+		if (!activeSessionId || !transcript.history?.hasOlder) return;
+		let live = true;
+		void loadSessionNavigation(activeSessionId).then((result) => {
+			if (live) setNavigationEntries(result?.entries ?? null);
+		});
+		return () => {
+			live = false;
+		};
+	}, [activeSessionId, historyGeneration]);
+	const nodes = useMemo(() => railNodes(rows, navigationEntries), [rows, navigationEntries]);
+	const [railTick, setRailTick] = useState(0);
+	void railTick;
+	const el = scrollRef.current;
+	const viewTop = Math.max(0, viewportRef.current.top);
+	// 判定线在视口顶下方略过跳转偏移处：跳到某轮后它的顶边在 12px，必须算作「当前」（否则高亮停在上一轮）
+	const firstVisible = positions.indexAt(viewTop + JUMP_OFFSET + 4);
+	const lastVisible = positions.indexAt(viewTop + viewportRef.current.height);
+	const atBottom = el ? el.scrollHeight - el.scrollTop - el.clientHeight <= 2 : true;
+	const activeOrdinal = activeNode(nodes, firstVisible, lastVisible, atBottom);
 
-	const items: React.ReactNode[] = [];
-	const visibleRows = renderedFrom > 0 ? rows.slice(renderedFrom) : rows;
-	visibleRows.forEach((row) => {
+	/** 跳到第 index 行：粗跳到估算位置 → 行渲染并实测后精对齐（估算误差在第二步消掉） */
+	const pendingJumpRef = useRef<{ key: string; tries: number } | null>(null);
+	const alignJump = useCallback(() => {
+		const pending = pendingJumpRef.current;
+		const el = scrollRef.current;
+		const content = contentRef.current;
+		if (!pending || !el || !content) return;
+		const index = positions.indexOfKey(pending.key);
+		if (index < 0) {
+			pendingJumpRef.current = null;
+			return;
+		}
+		const node = content.querySelector(
+			`:scope > [data-chat-row-key="${CSS.escape(pending.key)}"]`,
+		)?.firstElementChild;
+		if (node) {
+			const delta = node.getBoundingClientRect().top - el.getBoundingClientRect().top - JUMP_OFFSET;
+			if (Math.abs(delta) > 1) el.scrollTop += delta;
+			pending.tries++;
+			// 目标行刚挂上、上方行刚首测时还会有一次位移：再对一帧，最多 4 次
+			if (Math.abs(delta) <= 1 || pending.tries >= 4) pendingJumpRef.current = null;
+		} else {
+			el.scrollTop = rowTop() + positions.offsetOf(index) - JUMP_OFFSET;
+			pending.tries++;
+			if (pending.tries >= 8) pendingJumpRef.current = null;
+		}
+		viewportRef.current = { top: el.scrollTop - rowTop(), height: el.clientHeight };
+		setLayoutTick((n) => n + 1);
+		if (pendingJumpRef.current) requestAnimationFrame(alignJump);
+	}, [positions, rowTop]);
+	const jumpToKey = useCallback(
+		(key: string) => {
+			updateFollowing(false);
+			pendingJumpRef.current = { key, tries: 0 };
+			requestAnimationFrame(alignJump);
+		},
+		[alignJump, updateFollowing],
+	);
+	const jumpToNode = (node: RailNode) => {
+		if (node.index >= 0) {
+			const key = rows[node.index]?.key;
+			if (key) jumpToKey(key);
+			return;
+		}
+		if (!activeSessionId || !node.entryId) return;
+		const entryId = node.entryId;
+		updateFollowing(false);
+		void loadHistoryThrough(activeSessionId, entryId).then((ok) => {
+			if (!ok) return;
+			const row = useTranscriptStore
+				.getState()
+				.bySession[activeSessionId]?.messages.find(
+					(message) => message.kind === "user" && message.entryId === entryId,
+				);
+			if (row) jumpToKey(row.id);
+		});
+	};
+
+	const sessionRailVisible = useUiPreferencesStore((state) => state.sessionRailEnabled);
+	const sessionRailHasMembers = useSessionWorkspaceStore((state) => state.members.length > 0);
+
+	const renderRow = (row: ChatRow): ReactNode => {
 		if (row.kind === "turnDiff") {
-			// 已完成轮次保留上提 16px，和普通消息的 8px 净距对齐；两条不上提：
-			// ① 当前运行轮（running）——MetaGroup 的圆点仍会实时追加，上提会贴到圆点行上；
-			// ② 前面紧邻的是折叠组（afterMetaGroup，纯工具轮 / 被打断轮无正文，组自带 -mb-4 对消 gap）——
-			//    再上提 16px 会与组的圆点行重叠 8px（组结束圆点仍冻结原位）。
-			items.push(
-				<div key={row.key} className={row.running || row.afterMetaGroup ? undefined : "-mt-4"}>
+			return (
+				<div className={row.running || row.afterMetaGroup ? undefined : "-mt-4"}>
 					<TurnDiffChip
 						changes={row.changes}
 						timing={row.timing}
 						running={row.running}
 						entering={row.entering}
 					/>
-				</div>,
+				</div>
 			);
-			return;
 		}
 		if (row.kind === "metaGroup") {
-			items.push(
+			return (
 				<MetaGroup
-					key={row.key}
 					viewKey={row.key}
 					items={row.items}
 					working={row.working}
 					endImmediately={row.endImmediately}
 					subagentCount={row.subagentCount}
-				/>,
+				/>
 			);
-			return;
 		}
 		if (row.kind === "streamingSubagents") {
-			items.push(
-				<Slot
-					key={row.key}
-					name={UI_SLOTS.SubagentCard}
-					props={{ runs: row.runs }}
-					fallback={SubagentRunCard}
-				/>,
-			);
-			return;
+			return <Slot name={UI_SLOTS.SubagentCard} props={{ runs: row.runs }} fallback={SubagentRunCard} />;
 		}
-		items.push(
+		return (
 			<MessageItem
-				key={row.key}
 				message={row.message}
 				metaInGroup={row.metaInGroup}
 				showActions={row.showActions}
 				streaming={row.streaming}
 				sessionId={activeSessionId}
-			/>,
+			/>
 		);
-	});
+	};
 
 	return (
 		<SessionViewContext.Provider value={activeSessionId}>
 			<div className="relative h-full">
-				{/* 中央状态动画：z-20 在文字层（z-10 滚动容器）之上——canvas 一体遮罩压住身后文字、
-			    凸显动画本体（用户规格：工作中不看文字）；pointer-events-none 不拦截交互 */}
 				{centerOrbEnabled && <CenterOrb visible={shownWorking} />}
-				{/* overflow-x-hidden：任何行内容异常超宽都只裁剪，不产生页面级横向滚动条 */}
-				{/* scrollbar-gutter:stable：永久保留滚动条槽位——展开折叠组跨过溢出阈值时滚动条出现/消失
-			    会挤掉布局宽度，导致居中列（mx-auto max-w-760）整体左右横移；悬浮滚动条模式下无副作用 */}
-				{/* relative z-10：无背景；CenterOrb（z-20）连同其 canvas 遮罩盖在本层之上（工作中场景），
-			    交互不受影响（orb 整层 pointer-events-none） */}
 				<div
 					ref={attachScroller}
 					onScroll={handleScroll}
 					onWheel={(event) => {
-						if (event.deltaY < 0 && (scrollRef.current?.scrollTop ?? Infinity) < MOUNT_TRIGGER_PX) {
-							updateFollowing(false);
-							requestEarlierRows();
-						}
+						if (event.deltaY < 0) updateFollowing(false);
 					}}
 					onClickCapture={handleSummaryToggle}
 					style={{ "--edge-fade-size": "28px" } as CSSProperties}
@@ -419,7 +563,7 @@ export function MessageList() {
 						transcript.historyFetch?.error ||
 						transcript.historyLoadError) && (
 						<div
-							className="mx-auto max-w-[760px] px-6 pt-4 text-center text-ui-12 text-ink-3"
+							className="mx-auto max-w-[760px] px-6 pt-4 text-center text-ui-12 text-ink-dim"
 							data-history-paging
 						>
 							{transcript.history?.hasOlder && (
@@ -427,7 +571,7 @@ export function MessageList() {
 									type="button"
 									className="hover:text-ink"
 									disabled={transcript.historyFetch?.loading}
-									onClick={() => requestEarlierRows(true)}
+									onClick={() => requestOlderHistory(true)}
 								>
 									{transcript.historyFetch?.loading
 										? t("message.historyLoading")
@@ -457,30 +601,56 @@ export function MessageList() {
 							)}
 						</div>
 					)}
-					{/* data-chat-column：对话区列的几何锚点（「返回父会话」入口靠它把自己摆到左侧空带正中，见 subagent-back-offset.ts） */}
+					{/* data-chat-column：对话区列的几何锚点（「返回父会话」入口与 Minimap 靠它定位） */}
 					<div
 						ref={contentRef}
 						data-chat-column
 						className="mx-auto flex max-w-[760px] flex-col gap-6 px-6 pt-8 pb-16"
 					>
-						{/* root 私有接线：历史图片靠它判断「是否在滚动容器可视区内」，拿不到就只渲染占位 */}
 						<HistoryImageRootProvider root={historyImageRoot}>
-							{items.map((item, index) => (
+							{/* 占位不参与原生滚动锚定选锚，锚点只会是真实行（否则窗口移动时锚定会钉在占位上失效） */}
+							{topSpacer > 0 && (
 								<div
-									key={`${activeSessionId}:${visibleRows[index]?.key}`}
-									data-chat-row-key={visibleRows[index]?.key}
-									className="contents"
-								>
-									{item}
+									aria-hidden="true"
+									data-chat-spacer
+									className="[overflow-anchor:none]"
+									style={{ height: topSpacer - ROW_GAP, flexShrink: 0 }}
+								/>
+							)}
+							{rendered.map((row) => (
+								<div key={`${activeSessionId}:${row.key}`} data-chat-row-key={row.key} className="contents">
+									{renderRow(row)}
 								</div>
 							))}
+							{bottomSpacer > 0 && (
+								<div
+									aria-hidden="true"
+									data-chat-spacer
+									className="[overflow-anchor:none]"
+									style={{ height: bottomSpacer - ROW_GAP, flexShrink: 0 }}
+								/>
+							)}
 							{transcript.retrying && <RetryNote info={transcript.retrying} />}
 							{transcript.summarizationRetry && <RetryNote info={transcript.summarizationRetry} summary />}
 							{transcript.compactionPause && <CompactionPauseNote pause={transcript.compactionPause} />}
 						</HistoryImageRootProvider>
 					</div>
 				</div>
-				{/* 选中文字浮出菜单：定位在滚动容器内以便判断选区归属（fixed 定位不受父级影响） */}
+				{/* 按会话重建：焦点/悬停等状态不能带到下一个会话 */}
+				<MessageRail
+					key={activeSessionId ?? "none"}
+					nodes={nodes}
+					activeOrdinal={activeOrdinal}
+					onJump={jumpToNode}
+					onWheel={(deltaY) => {
+						const scroller = scrollRef.current;
+						if (!scroller) return;
+						if (deltaY < 0) updateFollowing(false);
+						scroller.scrollTop += deltaY;
+					}}
+					inset={sessionRailVisible && sessionRailHasMembers ? 36 : 0}
+					columnRef={contentRef}
+				/>
 				<SelectionToolbar containerRef={scrollRef} />
 				{!following && (
 					<button

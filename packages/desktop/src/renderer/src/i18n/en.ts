@@ -407,6 +407,10 @@ export const en: Messages = {
 		deny: "Do not trust",
 		queued: "{count} more projects awaiting decision",
 	},
+	messageRail: {
+		ariaLabel: "Message navigation",
+		jump: "Jump to this message",
+	},
 	message: {
 		copy: "Copy",
 		copied: "Copied",

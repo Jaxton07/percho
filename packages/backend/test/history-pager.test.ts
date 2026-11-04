@@ -1,5 +1,5 @@
 import type { SessionEntry } from "@earendil-works/pi-coding-agent";
-import { messagesToUIMessages } from "@percho/shared";
+import { composerDocumentFromText, messagesToUIMessages } from "@percho/shared";
 import { describe, expect, it } from "vitest";
 import { SessionHistoryPager } from "../src/session/history-pager";
 import { toBranchSessionMessages } from "../src/session/messages";
@@ -45,6 +45,143 @@ function snapshot(entries: SessionEntry[]): SourceSnapshot {
 }
 const context = { hydrationToken: "open-one" };
 const project = (entries: readonly SessionEntry[]) => toBranchSessionMessages(entries, "source");
+
+describe("会话导航索引", () => {
+	it("只列当前分支用户消息，沿用显示文本派生并隐藏源正文", () => {
+		const rows = branch(3);
+		rows[0] = {
+			...rows[0],
+			message: {
+				...rows[0]?.message,
+				content: [
+					{ type: "text", text: "expanded private body" },
+					{ type: "image", data: "private-image-payload", mimeType: "image/png" },
+				],
+				perchoInput: composerDocumentFromText("  visible\ncomposer  "),
+			},
+		} as SessionEntry;
+		rows[4] = {
+			...rows[4],
+			message: {
+				...rows[4]?.message,
+				content: [
+					{
+						type: "text",
+						text: '<skill name="mindmap" location="/tmp/mindmap">\nReferences are relative to /tmp/mindmap.\n\nbody\n</skill>\n\n  skill args  ',
+					},
+				],
+			},
+		} as SessionEntry;
+		rows.push(entry("assistant-only", "a2", { role: "assistant", content: [{ type: "text", text: "No" }] }));
+		const navigation = new SessionHistoryPager().navigation(snapshot(rows), rows);
+		expect(navigation.entries).toHaveLength(3);
+		expect(navigation.entries[0]?.images).toBe(1);
+		expect(navigation.entries[1]?.images).toBe(0);
+		expect(JSON.stringify(navigation)).not.toContain("private-image-payload");
+		expect(navigation.entries.map(({ entryId, ordinal, excerpt }) => [entryId, ordinal, excerpt])).toEqual([
+			["u0", 0, "visible composer"],
+			["u1", 1, "Question 1"],
+			["u2", 2, "skill args"],
+		]);
+		expect(JSON.stringify(navigation)).not.toContain("expanded private body");
+		expect(JSON.stringify(navigation)).not.toContain("mindmap");
+	});
+	it("each round carries the first assistant text as a short reply excerpt; tool-only rounds have none", () => {
+		const rows = [
+			entry("u0", null, { role: "user", content: [{ type: "text", text: "Question" }] }),
+			entry("a0", "u0", {
+				role: "assistant",
+				content: [{ type: "toolCall", id: "t", name: "read", arguments: {} }],
+			}),
+			entry("a1", "a0", {
+				role: "assistant",
+				content: [{ type: "text", text: `  First\n\nreply ${"x".repeat(200)}` }],
+			}),
+			entry("a2", "a1", { role: "assistant", content: [{ type: "text", text: "Second reply ignored" }] }),
+			entry("u1", "a2", { role: "user", content: [{ type: "text", text: "Tool only" }] }),
+			entry("a3", "u1", {
+				role: "assistant",
+				content: [{ type: "toolCall", id: "t2", name: "read", arguments: {} }],
+			}),
+		];
+		const [first, second] = new SessionHistoryPager().navigation(snapshot(rows), rows).entries;
+		expect(first?.reply?.startsWith("First reply x")).toBe(true);
+		expect(Array.from(first?.reply ?? "")).toHaveLength(120);
+		expect(second?.reply).toBeUndefined();
+	});
+	it("whitespace collapses and excerpts stop at 120 characters", () => {
+		const rows = [
+			entry("u", null, { role: "user", content: [{ type: "text", text: `  ${"x".repeat(130)}\n y ` }] }),
+		];
+		expect(new SessionHistoryPager().navigation(snapshot(rows), rows).entries[0]?.excerpt).toBe(
+			"x".repeat(120),
+		);
+	});
+});
+
+describe("按目标轮次加载历史", () => {
+	it("从目标轮起连续加载至当前边界，后续普通分页继续且不重叠", () => {
+		const rows = branch(30),
+			view = snapshot(rows),
+			pager = new SessionHistoryPager();
+		const tail = pager.tail(view, rows, { hydrationToken: "open", turns: 3 }, project);
+		if (!tail.history.cursor) throw new Error("Expected an older cursor");
+		const through = pager.through(
+			view,
+			rows,
+			tail.history.cursor,
+			"u12",
+			{ hydrationToken: "open" },
+			project,
+		);
+		expect(through.messages[0]?.text).toBe("Question 12");
+		expect(through.messages.at(-1)?.text).toBe("Answer 26");
+		expect(through.history.hasOlder).toBe(true);
+		expect(through.history.cursor).toBeTruthy();
+		const older = pager.older(
+			view,
+			rows,
+			through.history.cursor as string,
+			{ hydrationToken: "open" },
+			project,
+		);
+		expect(older.messages.at(-1)?.entryId).toBe("a11");
+		expect(new Set([...through.uiMessages, ...older.uiMessages].map((message) => message.id)).size).toBe(
+			through.uiMessages.length + older.uiMessages.length,
+		);
+	});
+	it("拒绝未知、非用户、非旧目标与超预算整轮", () => {
+		const rows = branch(3),
+			view = snapshot(rows),
+			pager = new SessionHistoryPager();
+		const tail = pager.tail(view, rows, { hydrationToken: "open", turns: 1 }, project);
+		if (!tail.history.cursor) throw new Error("Expected an older cursor");
+		expect(() =>
+			pager.through(view, rows, tail.history.cursor as string, "missing", context, project),
+		).toThrow("HISTORY_CURSOR_INVALID");
+		expect(() => pager.through(view, rows, tail.history.cursor as string, "a1", context, project)).toThrow(
+			"HISTORY_CURSOR_INVALID",
+		);
+		const huge = [
+			entry("u0", null, { role: "user", content: [{ type: "text", text: "x".repeat(25 * 1024 * 1024) }] }),
+			entry("u1", "u0", { role: "user", content: [{ type: "text", text: "tail" }] }),
+			entry("a1", "u1", { role: "assistant", content: [{ type: "text", text: "answer" }] }),
+		];
+		const hugeView = snapshot(huge),
+			hugeTail = pager.tail(hugeView, huge, { hydrationToken: "open", turns: 1 }, project);
+		if (!hugeTail.history.cursor) throw new Error("Expected huge target to be older than tail");
+		expect(() =>
+			pager.through(
+				hugeView,
+				huge,
+				hugeTail.history.cursor as string,
+				"u0",
+				{ hydrationToken: "open" },
+				project,
+			),
+		).toThrow("HISTORY_PAGE_TOO_LARGE");
+	});
+});
 
 describe("先选原始完整轮次再投影", () => {
 	it("同叶及分页边界ID不变时，祖先链改变也必须拒绝旧游标", () => {

@@ -945,6 +945,13 @@ export class PiBackend {
 		recordSessionSwitchPayload(baseline);
 		return baseline;
 	}
+	getSessionNavigation(sessionId: string): import("@percho/shared").SessionNavigation {
+		const entry = this.requireSession(sessionId),
+			source = this.sourceSnapshot(entry),
+			live = this.liveTranscripts.get(sessionId) ?? new LiveTranscript(),
+			prefix = live.persistentPrefix(source.branch);
+		return this.historyPager.navigation(source, prefix);
+	}
 	getSessionHistoryPage(sessionId: string, cursor: string): import("@percho/shared").SessionHistoryPage {
 		const entry = this.requireSession(sessionId),
 			source = this.sourceSnapshot(entry);
@@ -960,6 +967,28 @@ export class PiBackend {
 					? this.sourceSnapshots.project(source, true, history)
 					: toBranchSessionMessages(history, entry.session.sessionId),
 		);
+		return { messages: selected.uiMessages, history: selected.history };
+	}
+	getSessionHistoryThrough(
+		sessionId: string,
+		cursor: string,
+		entryId: string,
+	): import("@percho/shared").SessionHistoryPage {
+		const entry = this.requireSession(sessionId),
+			source = this.sourceSnapshot(entry),
+			live = this.liveTranscripts.get(sessionId) ?? new LiveTranscript(),
+			prefix = live.persistentPrefix(source.branch),
+			selected = this.historyPager.through(
+				source,
+				prefix,
+				cursor,
+				entryId,
+				{ hydrationToken: this.historyToken(entry.modeRef) },
+				(history, references) =>
+					references
+						? this.sourceSnapshots.project(source, true, history)
+						: toBranchSessionMessages(history, entry.session.sessionId),
+			);
 		return { messages: selected.uiMessages, history: selected.history };
 	}
 	private emitEvent(
