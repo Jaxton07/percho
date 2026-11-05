@@ -1234,13 +1234,24 @@ code {
 	border: none;
 	margin-inline: 8px;
 	box-shadow: var(--shadow-soft);
+	/* 单行代码块的自然高度只有一行（18px），而悬浮 header 里的复制按钮是 22px 高、距顶 8px
+	   （占 8–30px），底边被容器的 overflow-hidden 裁掉（实测容器 18px / 按钮可见 10px）。
+	   保底固定 36px（按钮高度不随 --fs-ui-scale 变，此处不乘档位）并让代码行垂直居中；
+	   两行及以上高度由内容决定，不受影响。 */
+	min-height: 36px;
+	display: flex;
+	flex-direction: column;
+	justify-content: center;
 }
 /* 代码块「纯净化」：标题栏悬浮 —— 常态隐身（纯代码），hover / 键盘聚焦时浮现。
    header DOM 必须保留（复制按钮在里面，showHeader:false 会把按钮一起去掉），
    语言标签/折叠按钮已裁：语言胶囊在下方 display:none，折叠经 codeBlockProps
    showCollapseButton:false 关闭（Markdown.tsx）。
-   组件把 header 背景用 inline style 钉成编辑器主题色，需 !important 压掉。 */
-.markdown-body .code-block-container .code-block-header {
+   组件把 header 背景用 inline style 钉成编辑器主题色，需 !important 压掉。
+   diff 变体单独写一条：库的 `.code-block-container.is-diff .code-block-header` 与这条同优先级
+   且后加载，不抬一级就会留下 18px 上内边距，按钮在单行/两行块里被裁到容器外。 */
+.markdown-body .code-block-container .code-block-header,
+.markdown-body .code-block-container.is-diff .code-block-header {
 	position: absolute;
 	top: 0;
 	left: 0;
