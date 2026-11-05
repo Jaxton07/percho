@@ -3,7 +3,10 @@ import { act, createRef } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-vi.mock("../../i18n", () => ({ useT: () => (key: string) => key }));
+const locale = vi.hoisted(() => ({ current: "zh" }));
+vi.mock("../../i18n", () => ({
+	useT: () => () => (locale.current === "zh" ? "对话导航" : "Conversation navigation"),
+}));
 
 import { MessageRail } from "./MessageRail";
 import type { RailNode } from "./message-rail";
@@ -22,6 +25,7 @@ let host: HTMLDivElement;
 let column: HTMLDivElement;
 
 beforeEach(() => {
+	locale.current = "zh";
 	vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
 	vi.stubGlobal(
 		"ResizeObserver",
@@ -68,6 +72,55 @@ const over = (index: number) =>
 	act(async () => items()[index]?.dispatchEvent(new MouseEvent("pointerover", { bubbles: true })));
 
 describe("MessageRail", () => {
+	it("千轮只挂载视口附近，滚动两端的点击、悬停与拖动使用全局序号", async () => {
+		vi.useFakeTimers();
+		const nodes = make(1000);
+		const jump = await render(nodes);
+		const rail = host.querySelector<HTMLElement>(".message-rail-list");
+		if (!rail) throw new Error("missing rail");
+		Object.defineProperty(rail, "clientHeight", { configurable: true, value: 100 });
+		Object.defineProperty(rail, "scrollHeight", { configurable: true, value: 10000 });
+		rail.getBoundingClientRect = () =>
+			({ top: 0, bottom: 100, left: 0, right: 36, width: 36, height: 100 }) as DOMRect;
+		rail.setPointerCapture = vi.fn();
+		await act(async () => rail.dispatchEvent(new Event("scroll")));
+		expect(items().length).toBeLessThanOrEqual(18);
+		await act(async () => items()[0]?.click());
+		expect(jump).toHaveBeenLastCalledWith(nodes[0], "smooth");
+		rail.scrollTop = 9900;
+		await act(async () => rail.dispatchEvent(new Event("scroll")));
+		expect(items().length).toBeLessThanOrEqual(18);
+		const last = host.querySelector<HTMLElement>('[data-rail-index="999"]');
+		if (!last) throw new Error("missing last marker");
+		await act(async () => last.click());
+		expect(jump).toHaveBeenLastCalledWith(nodes[999], "smooth");
+		await act(async () => last.dispatchEvent(new MouseEvent("pointerover", { bubbles: true })));
+		await act(async () => vi.advanceTimersByTime(160));
+		expect(host.querySelector("[data-rail-preview-title]")?.textContent).toBe("问题 999");
+		expect(
+			host.querySelector<HTMLElement>('[data-rail-index="998"] .message-rail-marker')?.dataset.near,
+		).toBe("1");
+		const pointer = (type: string, y: number) =>
+			new PointerEvent(type, { bubbles: true, pointerId: 7, button: 0, clientY: y });
+		await act(async () => last.dispatchEvent(pointer("pointerdown", 95)));
+		await act(async () => rail.dispatchEvent(pointer("pointermove", 5)));
+		expect(jump).toHaveBeenLastCalledWith(nodes[989], "instant");
+		await act(async () => rail.dispatchEvent(pointer("pointercancel", 5)));
+		expect(rail.dataset.scrubbing).toBeUndefined();
+		const calls = jump.mock.calls.length;
+		await act(async () => vi.advanceTimersByTime(100));
+		expect(jump).toHaveBeenCalledTimes(calls);
+		const firstVisible = items()[4];
+		if (!firstVisible) throw new Error("missing visible marker");
+		await act(async () => firstVisible.dispatchEvent(pointer("pointerdown", 5)));
+		const beforeEdge = rail.scrollTop;
+		await act(async () => rail.dispatchEvent(pointer("pointermove", -10)));
+		await act(async () => vi.advanceTimersByTime(48));
+		expect(rail.scrollTop).toBeLessThan(beforeEdge - 10);
+		await act(async () => rail.dispatchEvent(pointer("lostpointercapture", 5)));
+		expect(rail.dataset.scrubbing).toBeUndefined();
+	});
+
 	it("少于 4 条不显示；每条用户消息一个刻度，未加载节点也在列中", async () => {
 		await render(make(3));
 		expect(host.querySelector("[data-message-rail]")).toBeNull();
@@ -137,6 +190,50 @@ describe("MessageRail", () => {
 		const onJump = await render(nodes);
 		await act(async () => items()[0]?.dispatchEvent(new MouseEvent("click", { bubbles: true })));
 		expect(onJump).toHaveBeenCalledWith(nodes[0], "smooth");
+	});
+
+	it("悬停中的活动回复持续更新，刻度身份保持不变", async () => {
+		vi.useFakeTimers();
+		const nodes = make(6);
+		await render(nodes, { from: 5, to: 5 });
+		await over(5);
+		await act(async () => vi.advanceTimersByTime(160));
+		const before = items();
+		for (const reply of ["首段回复", "首段回复继续输出"]) {
+			await render(
+				nodes.map((node, i) => (i === 5 ? { ...node, reply } : node)),
+				{ from: 5, to: 5 },
+			);
+			expect(host.querySelector("[data-rail-preview-reply]")?.textContent).toBe(reply);
+			expect(items().every((el, i) => el === before[i])).toBe(true);
+		}
+	});
+
+	it("切换界面语言刷新导航标签，不改变当前预览归属", async () => {
+		vi.useFakeTimers();
+		const nodes = make(6);
+		await render(nodes);
+		await over(3);
+		await act(async () => vi.advanceTimersByTime(160));
+		expect(host.querySelector("[data-message-rail]")?.getAttribute("aria-label")).toBe("对话导航");
+		locale.current = "en";
+		await render(nodes);
+		expect(host.querySelector("[data-message-rail]")?.getAttribute("aria-label")).toBe(
+			"Conversation navigation",
+		);
+		expect(host.querySelector("[data-rail-preview-title]")?.textContent).toBe("问题 3");
+		expect(host.querySelector("[data-rail-preview-reply]")?.textContent).toBe("回复 3");
+	});
+
+	it("来源重装后，同一刻度的标题和加载状态分别刷新", async () => {
+		const nodes = make(6);
+		await render(nodes);
+		expect(items()[0]?.dataset.unloaded).toBe("true");
+		const renamed = nodes.map((node, i) => (i === 0 ? { ...node, excerpt: "新的提问" } : node));
+		await render(renamed);
+		expect(items()[0]?.getAttribute("aria-label")).toBe("新的提问");
+		await render(renamed.map((node, i) => (i === 0 ? { ...node, index: 0 } : node)));
+		expect(items()[0]?.dataset.unloaded).toBeUndefined();
 	});
 
 	it("流式输出只改摘要时刻度不重绘（同一批 DOM 节点）", async () => {

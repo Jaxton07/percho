@@ -20,7 +20,7 @@ import { useT } from "../../i18n";
 import { useEdgeFade } from "../../lib/use-edge-fade";
 import { Slot } from "../../plugins/Slot";
 import { UI_SLOTS } from "../../plugins/slots";
-import { reloadSessionHistory } from "../../stores/session-history";
+import { historyOpenEpoch, reloadSessionHistory } from "../../stores/session-history";
 import {
 	loadHistoryThrough,
 	loadOlderHistory,
@@ -43,7 +43,10 @@ import { RetryNote } from "./RetryNote";
 import { type RowKind, RowPositions } from "./row-positions";
 import { SelectionToolbar } from "./SelectionToolbar";
 import { SubagentRunCard } from "./SubagentRunCard";
+import { scrollIntentIsCurrent } from "./scroll-intent";
 import { TurnDiffChip } from "./TurnDiffChip";
+import { useNativeSelectionRange } from "./use-native-selection-range";
+import { restoreRowAnchor, useRowGeometry } from "./use-row-geometry";
 import { useShownWorking } from "./use-shown-working";
 import { windowFor } from "./virtual-window";
 
@@ -69,19 +72,6 @@ const rowKind = (row: ChatRow): RowKind =>
 				? "turnDiff"
 				: "other";
 
-/** 行元素（包装是 display:contents，自身矩形恒为 0）的 margin box 高度；已卸载的行返回 null */
-function rowHeight(wrapper: Element): number | null {
-	const child = wrapper.firstElementChild;
-	// 脱离文档的元素 computed style 为空，量出来是 NaN/0，不能写进索引
-	if (!(child instanceof HTMLElement) || !child.isConnected) return null;
-	const style = getComputedStyle(child);
-	const height =
-		child.getBoundingClientRect().height +
-		Number.parseFloat(style.marginTop) +
-		Number.parseFloat(style.marginBottom);
-	return Number.isFinite(height) ? height : null;
-}
-
 /**
  * 中央消息流：最大宽度 760px 居中。
  * 合并规则：assistant 消息的思考/工具全部并入一个折叠组，正文（text）是边界。
@@ -89,10 +79,10 @@ function rowHeight(wrapper: Element): number | null {
  * 底部跟随：ResizeObserver 监听内容/容器尺寸，跟随中即时贴底；仅「向上滚动」脱离跟随，
  * 回到底部恢复；用户发出新消息与切换会话时强制回底。
  *
- * 有界渲染（#110）：只渲染视口上下各约一屏的行，其余用上下占位撑出高度；DOM 行数有硬上限，
- * 与会话长度无关。行高按 key 缓存（row-positions.ts），未测行用估算，位置查询走二分。
+ * 有界渲染（#110）：只渲染视口和附近行，其余用上下占位撑出高度；120 行是常态预算，
+ * 超大视口可超过预算。行高按 key 缓存，未测行用估算，位置查询走前缀树。
  * 锚定仍交给浏览器原生滚动锚定（占位不参与选锚，见下），视口上方行的异步定型（Monaco、图片）
- * 与窗口移动都由它补偿；只在 scrollTop===0（Chromium 不调整）时按锚点补差。
+ * 与窗口移动都由它补偿；顶部前插及测量失效使用实际偏移补差。
  */
 export function MessageList() {
 	const t = useT();
@@ -104,6 +94,7 @@ export function MessageList() {
 
 	const centerOrbEnabled = useUiPreferencesStore((s) => s.centerOrbEnabled);
 	const codeFontSize = useUiPreferencesStore((s) => s.codeFontSize);
+	const uiFontSize = useUiPreferencesStore((s) => s.uiFontSize);
 	const shownWorking = useShownWorking(
 		agentWorking,
 		transcript.compacting || Boolean(streaming?.text) || !transcript.agentActive,
@@ -118,6 +109,19 @@ export function MessageList() {
 		setHistoryImageRoot((previous) => (previous === element ? previous : element));
 	}, []);
 	useEdgeFade(scrollRef, "top");
+	const intentRef = useRef<
+		| { kind: "following" | "reading"; sequence: number }
+		| {
+				kind: "jump";
+				sequence: number;
+				phase: "waiting" | "aligning";
+				key?: string;
+				tries: number;
+				smooth: boolean;
+		  }
+	>({ kind: "following", sequence: 0 });
+	const jumpCleanupRef = useRef<(() => void) | null>(null);
+	const bottomCleanupRef = useRef<(() => void) | null>(null);
 	const followingRef = useRef(true);
 	const [following, setFollowing] = useState(true);
 	const lastScrollTopRef = useRef(0);
@@ -128,30 +132,55 @@ export function MessageList() {
 		setFollowing(value);
 	}, []);
 
+	const cancelIntent = useCallback(
+		(kind: "following" | "reading") => {
+			const previous = intentRef.current;
+			intentRef.current = { kind, sequence: previous.sequence + 1 };
+			jumpCleanupRef.current?.();
+			jumpCleanupRef.current = null;
+			const wasBottomScrolling = bottomCleanupRef.current !== null;
+			bottomCleanupRef.current?.();
+			if (previous.kind === "jump" || wasBottomScrolling) {
+				const el = scrollRef.current;
+				if (el) el.scrollTo({ top: el.scrollTop, behavior: "instant" });
+			}
+			updateFollowing(kind === "following");
+		},
+		[updateFollowing],
+	);
+
+	// Session ids are environment-qualified. Epoch also rejects close/reopen of the same id.
+	const opening = activeSessionId ? historyOpenEpoch(activeSessionId) : 0;
+	// biome-ignore lint/correctness/useExhaustiveDependencies: each identity change invalidates pending work
+	useLayoutEffect(() => {
+		cancelIntent("following");
+		return () => cancelIntent("reading");
+	}, [activeSessionId, opening, historyGeneration, cancelIntent]);
+
 	const pinToBottom = useCallback((behavior: ScrollBehavior = "auto") => {
 		const el = scrollRef.current;
-		if (el) el.scrollTo({ top: el.scrollHeight, behavior });
+		if (!el) return;
+		bottomCleanupRef.current?.();
+		if (behavior === "smooth") {
+			const cleanup = () => {
+				clearTimeout(timer);
+				el.removeEventListener("scrollend", cleanup);
+				if (bottomCleanupRef.current === cleanup) bottomCleanupRef.current = null;
+			};
+			const timer = setTimeout(cleanup, 900);
+			bottomCleanupRef.current = cleanup;
+			el.addEventListener("scrollend", cleanup, { once: true });
+		}
+		el.scrollTo({ top: el.scrollHeight, behavior });
 	}, []);
-
-	useEffect(() => {
-		const scroll = scrollRef.current;
-		const content = contentRef.current;
-		if (!scroll || !content) return;
-		const observer = new ResizeObserver(() => {
-			if (followingRef.current) pinToBottom();
-		});
-		observer.observe(content);
-		observer.observe(scroll);
-		return () => observer.disconnect();
-	}, [pinToBottom]);
 
 	const lastMessage = transcript.messages[transcript.messages.length - 1];
 	const lastUserMessageId = lastMessage?.kind === "user" ? lastMessage.id : null;
 	useEffect(() => {
 		if (!lastUserMessageId) return;
-		updateFollowing(true);
+		cancelIntent("following");
 		pinToBottom();
-	}, [lastUserMessageId, pinToBottom, updateFollowing]);
+	}, [lastUserMessageId, pinToBottom, cancelIntent]);
 
 	// biome-ignore lint/correctness/useExhaustiveDependencies: activeSessionId 是刻意的重跑触发器
 	useEffect(() => {
@@ -165,7 +194,7 @@ export function MessageList() {
 	}, [activeSessionId, historyGeneration, pinToBottom, updateFollowing]);
 
 	const handleSummaryToggle = (e: MouseEvent) => {
-		if (e.target instanceof Element && e.target.closest("summary")) updateFollowing(false);
+		if (e.target instanceof Element && e.target.closest("summary")) cancelIntent("reading");
 	};
 
 	const turnChanges = useMemo(() => deriveTurnChanges(transcript.messages), [transcript.messages]);
@@ -229,46 +258,48 @@ export function MessageList() {
 		],
 	);
 
-	// —— 位置索引（每会话一份，切回来复用已测高度）——
-	const positionsBySession = useRef(new Map<string, RowPositions>());
-	const positions = useMemo(() => {
-		const key = String(activeSessionId);
-		let found = positionsBySession.current.get(key);
-		if (!found) {
-			found = new RowPositions(ROW_GAP);
-			positionsBySession.current.set(key, found);
-			// 只留最近几个会话的缓存
-			if (positionsBySession.current.size > 8) {
-				const oldest = positionsBySession.current.keys().next().value;
-				if (oldest !== undefined) positionsBySession.current.delete(oldest);
-			}
-		}
-		return found;
-	}, [activeSessionId]);
-	positions.sync(useMemo(() => rows.map((row) => ({ key: row.key, kind: rowKind(row) })), [rows]));
-	// 代码字号变化：已测高度整体作废（Monaco 重建后重新测）
-	const fontRef = useRef(codeFontSize);
-	if (fontRef.current !== codeFontSize) {
-		fontRef.current = codeFontSize;
-		for (const cached of positionsBySession.current.values()) cached.invalidateMeasurements();
-	}
+	// 索引只属于当前会话和历史来源；切换或换代即释放。
+	// biome-ignore lint/correctness/useExhaustiveDependencies: 会话和来源代次决定索引身份
+	const positions = useMemo(() => new RowPositions(ROW_GAP), [activeSessionId, historyGeneration]);
+	useMemo(() => positions.sync(rows.map((row) => ({ key: row.key, kind: rowKind(row) }))), [positions, rows]);
 
 	// —— 窗口 ——
 	// 渲染区间由滚动位置算出；测量后高度变化也需要重算（state 只存触发计数，区间每次渲染现算）
+	const anchorRef = useRef<{ key: string; top: number; owner: RowPositions } | null>(null);
+	const geometryAnchorRef = useRef<{ key: string; owner: RowPositions } | null>(null);
 	const [layoutTick, setLayoutTick] = useState(0);
 	const viewportRef = useRef({ top: 0, height: 800 });
-	const { start, end } = windowFor(
+	const normalWindow = windowFor(
 		positions,
 		viewportRef.current.top,
 		viewportRef.current.height,
 		followingRef.current,
+	);
+	const selectionRange = useNativeSelectionRange(contentRef, positions);
+	const anchorIndex =
+		anchorRef.current?.owner === positions ? positions.indexOfKey(anchorRef.current.key) : -1;
+	const geometryAnchorIndex =
+		geometryAnchorRef.current?.owner === positions && intentRef.current.kind !== "jump"
+			? positions.indexOfKey(geometryAnchorRef.current.key)
+			: -1;
+	const start = Math.min(
+		normalWindow.start,
+		selectionRange?.start ?? normalWindow.start,
+		anchorIndex >= 0 ? anchorIndex : normalWindow.start,
+		geometryAnchorIndex >= 0 ? geometryAnchorIndex : normalWindow.start,
+	);
+	const end = Math.max(
+		normalWindow.end,
+		selectionRange?.end ?? normalWindow.end,
+		anchorIndex >= 0 ? anchorIndex + 1 : normalWindow.end,
+		geometryAnchorIndex >= 0 ? geometryAnchorIndex + 1 : normalWindow.end,
 	);
 	const topSpacer = positions.offsetOf(start);
 	const bottomSpacer =
 		end > 0 && end < rows.length ? positions.total() - positions.offsetOf(end) + ROW_GAP : 0;
 	const rendered = rows.slice(start, end);
 	const windowRef = useRef({ start, end });
-	windowRef.current = { start, end };
+	windowRef.current = normalWindow;
 	void layoutTick;
 
 	/** 第 0 行顶在滚动容器内容坐标中的位置（容器顶 → 内容列内边距之下） */
@@ -288,7 +319,7 @@ export function MessageList() {
 			// 内容列的顶内边距在第 0 行之前：视口坐标换算到行坐标
 			viewportRef.current = { top: el.scrollTop - rowTop(), height: el.clientHeight };
 			// 跳转对齐期间由 alignJump 自己推进窗口，这里不重算（否则两边互相覆盖）
-			if (pendingJumpRef.current) return;
+			if (intentRef.current.kind === "jump" && intentRef.current.phase === "aligning") return;
 			const next = windowFor(positions, viewportRef.current.top, el.clientHeight, followingRef.current);
 			if (next.start !== windowRef.current.start || next.end !== windowRef.current.end)
 				setLayoutTick((n) => n + 1);
@@ -296,53 +327,38 @@ export function MessageList() {
 		});
 	}, [positions, rowTop]);
 	// 取消时必须清零：StrictMode 会卸载再挂载，残留的帧 id 会让 scheduleLayout 永远提前返回
-	useEffect(
+	// biome-ignore lint/correctness/useExhaustiveDependencies: 索引变更时取消旧索引的待执行帧
+	useLayoutEffect(
 		() => () => {
 			cancelAnimationFrame(scheduleRef.current);
 			scheduleRef.current = 0;
 		},
-		[],
+		[scheduleLayout],
 	);
 
-	// 已渲染行的高度测量：单个 ResizeObserver，回调里批量写索引；从不在滚动时遍历行
-	const measureRef = useRef<ResizeObserver | null>(null);
-	useEffect(() => {
-		const observer = new ResizeObserver((entries) => {
-			let changed = false;
-			for (const entry of entries) {
-				const wrapper = entry.target.parentElement;
-				const key = wrapper?.dataset.chatRowKey;
-				if (!entry.target.isConnected) {
-					// 已卸载：停止观察，保留它最后一次实测的高度
-					observer.unobserve(entry.target);
-					continue;
-				}
-				if (!wrapper || !key) continue;
-				const height = rowHeight(wrapper);
-				if (height !== null && positions.setHeight(key, height) !== 0) changed = true;
-			}
-			if (changed) scheduleLayout();
-		});
-		measureRef.current = observer;
-		return () => {
-			observer.disconnect();
-			measureRef.current = null;
-		};
-	}, [positions, scheduleLayout]);
-	// 新挂上的行交给观察器（RO 首次 observe 会回调一次，即首测）
-	// biome-ignore lint/correctness/useExhaustiveDependencies: 区间/行变化后才需要接线新行
-	useLayoutEffect(() => {
-		const observer = measureRef.current;
-		const content = contentRef.current;
-		if (!observer || !content) return;
-		for (const wrapper of content.querySelectorAll<HTMLElement>(":scope > [data-chat-row-key]")) {
-			const child = wrapper.firstElementChild;
-			if (child && !(child as HTMLElement & { __observed?: boolean }).__observed) {
-				(child as HTMLElement & { __observed?: boolean }).__observed = true;
-				observer.observe(child);
-			}
-		}
-	}, [start, end, rows]);
+	useRowGeometry(
+		contentRef,
+		scrollRef,
+		positions,
+		`${uiFontSize}:${codeFontSize}`,
+		rows,
+		start,
+		end,
+		layoutTick,
+		following,
+		() => {
+			setLayoutTick((n) => n + 1);
+			scheduleLayout();
+		},
+		() => {
+			if (followingRef.current) pinToBottom();
+			scheduleLayout();
+		},
+		(key) => {
+			geometryAnchorRef.current = key ? { key, owner: positions } : null;
+		},
+		() => intentRef.current.kind === "reading",
+	);
 
 	// 首次进入/切会话：窗口按「跟随=锁尾」计算；首帧后读真实视口
 	// biome-ignore lint/correctness/useExhaustiveDependencies: 会话/代次变化是刻意触发器
@@ -360,7 +376,7 @@ export function MessageList() {
 		)
 			return;
 		updateFollowing(false);
-		void loadOlderHistory(activeSessionId);
+		void loadOlderHistory(activeSessionId, captureAnchor);
 	};
 	const reloadHistory = (full = false) => {
 		if (!activeSessionId) return;
@@ -372,8 +388,8 @@ export function MessageList() {
 		);
 	};
 	// 前插的行在视口上方：浏览器原生锚定补偿；scrollTop===0 时 Chromium 不调整，这里按首个可见行补差
-	const anchorRef = useRef<{ key: string; top: number } | null>(null);
 	const captureAnchor = () => {
+		if (followingRef.current || intentRef.current.kind === "jump") return;
 		const el = scrollRef.current;
 		const content = contentRef.current;
 		if (!el || !content) return;
@@ -381,23 +397,21 @@ export function MessageList() {
 		for (const wrapper of content.querySelectorAll<HTMLElement>(":scope > [data-chat-row-key]")) {
 			const rect = wrapper.firstElementChild?.getBoundingClientRect();
 			if (rect && rect.height > 0 && rect.bottom > box.top) {
-				anchorRef.current = { key: wrapper.dataset.chatRowKey ?? "", top: rect.top - box.top };
+				anchorRef.current = {
+					key: wrapper.dataset.chatRowKey ?? "",
+					top: rect.top - box.top,
+					owner: positions,
+				};
 				return;
 			}
 		}
 	};
 	// biome-ignore lint/correctness/useExhaustiveDependencies: 首行变化（前插）才需要补差
 	useLayoutEffect(() => {
-		const el = scrollRef.current;
-		const anchor = anchorRef.current;
+		if (anchorRef.current?.owner === positions)
+			restoreRowAnchor(contentRef.current, scrollRef.current, anchorRef.current);
 		anchorRef.current = null;
-		if (!el || !anchor) return;
-		const node = contentRef.current?.querySelector(
-			`:scope > [data-chat-row-key="${CSS.escape(anchor.key)}"]`,
-		)?.firstElementChild;
-		if (!node) return;
-		const drift = node.getBoundingClientRect().top - el.getBoundingClientRect().top - anchor.top;
-		if (drift !== 0) el.scrollTop += drift;
+		scheduleLayout();
 	}, [rows[0]?.key, historyGeneration]);
 
 	const handleScroll = () => {
@@ -410,19 +424,20 @@ export function MessageList() {
 		const upward = el.scrollTop < lastScrollTopRef.current && remaining > lastRemainingRef.current + 1;
 		// 跳转进行中（含按需加载历史的等待期）：不能因为「此刻还在底部」重新打开跟随，
 		// 否则 ResizeObserver 会把前插的历史里的跳转拉回底部（实测重型会话点未加载节点不动）
-		if (atBottom && !pendingJumpRef.current && !jumpLoadingRef.current) updateFollowing(true);
-		else if (upward) updateFollowing(false);
+		if (intentRef.current.kind !== "jump" && geometryAnchorRef.current?.owner !== positions) {
+			if (atBottom) updateFollowing(true);
+			else if (upward) updateFollowing(false);
+			intentRef.current = {
+				kind: atBottom ? "following" : followingRef.current ? "following" : "reading",
+				sequence: intentRef.current.sequence,
+			};
+		}
 		lastScrollTopRef.current = el.scrollTop;
 		lastRemainingRef.current = remaining;
 		scheduleLayout();
 		// 触顶 = 真实滚动位置离「已加载第 0 行」很近。第 0 行的位置 = 内容列顶 + 0，不受窗口影响；
 		// 不用「窗口 start===0」，它在下一帧才更新，连续滚轮时一直是旧值（实测停在 scrollTop 0 却不翻页）
-		if (
-			upward &&
-			el.scrollTop - rowTop() < HISTORY_TRIGGER_PX &&
-			!pendingJumpRef.current &&
-			!jumpLoadingRef.current
-		) {
+		if (upward && el.scrollTop - rowTop() < HISTORY_TRIGGER_PX && intentRef.current.kind !== "jump") {
 			if (el.scrollTop === 0) captureAnchor();
 			requestOlderHistory();
 		}
@@ -458,88 +473,113 @@ export function MessageList() {
 		[inViewFrom, inViewTo],
 	);
 
-	/** 跳到第 index 行：粗跳到估算位置 → 行渲染并实测后精对齐（估算误差在第二步消掉）。
-	 *  smooth：目标已挂载时用浏览器平滑滚动；目标未挂载（远处）时先瞬跳再对齐，避免平滑滚动穿过大量占位 */
-	const pendingJumpRef = useRef<{ key: string; tries: number; smooth: boolean } | null>(null);
-	/** 按需加载历史到跳转目标的等待期；每次跳转一个 token，后发的跳转覆盖先发的 */
-	const jumpLoadingRef = useRef<object | null>(null);
-	const alignJump = useCallback(() => {
-		const pending = pendingJumpRef.current;
-		const el = scrollRef.current;
-		const content = contentRef.current;
-		if (!pending || !el || !content) return;
-		const index = positions.indexOfKey(pending.key);
-		if (index < 0) {
-			pendingJumpRef.current = null;
-			return;
-		}
-		const node = content.querySelector(
-			`:scope > [data-chat-row-key="${CSS.escape(pending.key)}"]`,
-		)?.firstElementChild;
-		if (node) {
-			const delta = node.getBoundingClientRect().top - el.getBoundingClientRect().top - JUMP_OFFSET;
-			if (pending.smooth && Math.abs(delta) > 1) {
-				// 已挂载的目标：平滑滚动。滚动中上方行会首测、目标会移动，所以滚动结束后再按瞬跳精对齐
-				pending.smooth = false;
-				el.scrollTo({ top: el.scrollTop + delta, behavior: "smooth" });
-				const realign = () => {
-					if (pendingJumpRef.current === pending) requestAnimationFrame(alignJump);
-				};
-				el.addEventListener("scrollend", realign, { once: true });
-				// 不支持 scrollend 或滚动被打断时的兜底
-				setTimeout(realign, 900);
-				return;
-			}
-			if (Math.abs(delta) > 1) el.scrollTop += delta;
-			pending.tries++;
-			// 目标行刚挂上、上方行刚首测时还会有一次位移：再对一帧，最多 4 次
-			if (Math.abs(delta) <= 1 || pending.tries >= 4) pendingJumpRef.current = null;
-		} else {
-			el.scrollTop = rowTop() + positions.offsetOf(index) - JUMP_OFFSET;
-			pending.smooth = false;
-			pending.tries++;
-			if (pending.tries >= 8) pendingJumpRef.current = null;
-		}
-		viewportRef.current = { top: el.scrollTop - rowTop(), height: el.clientHeight };
-		setLayoutTick((n) => n + 1);
-		if (pendingJumpRef.current) requestAnimationFrame(alignJump);
-	}, [positions, rowTop]);
-	const jumpToKey = useCallback(
-		(key: string, behavior: ScrollBehavior = "instant") => {
-			updateFollowing(false);
-			const reduced = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
-			pendingJumpRef.current = { key, tries: 0, smooth: behavior === "smooth" && !reduced };
-			requestAnimationFrame(alignJump);
-		},
-		[alignJump, updateFollowing],
-	);
 	const jumpToNode = (node: RailNode, behavior: ScrollBehavior = "instant") => {
+		if (!activeSessionId) return;
+		cancelIntent("reading");
+		const intent = {
+			kind: "jump" as const,
+			sequence: intentRef.current.sequence + 1,
+			phase: "waiting" as "waiting" | "aligning",
+			key: undefined as string | undefined,
+			tries: 0,
+			smooth: behavior === "smooth" && !window.matchMedia("(prefers-reduced-motion: reduce)").matches,
+		};
+		intentRef.current = intent;
+		const sid = activeSessionId;
+		// This predicate is also the integration point for the cancellable pager (ticket 05).
+		const isCurrent = scrollIntentIsCurrent(
+			{ sessionId: sid, openEpoch: opening, historyGeneration, sequence: intent.sequence },
+			() => {
+				const current = useTranscriptStore.getState().bySession[sid];
+				return {
+					sessionId: useSessionsStore.getState().activeSessionId,
+					openEpoch: historyOpenEpoch(sid),
+					historyGeneration: current?.history?.generation ?? current?.baselineRevision,
+					sequence: intentRef.current.sequence,
+				};
+			},
+		);
+		let frame = 0;
+		let timer: ReturnType<typeof setTimeout> | undefined;
+		let listening: HTMLElement | null = null;
+		const cleanup = () => {
+			cancelAnimationFrame(frame);
+			if (timer !== undefined) clearTimeout(timer);
+			listening?.removeEventListener("scrollend", realign);
+			listening = null;
+		};
+		const finish = () => {
+			if (!isCurrent()) return;
+			cleanup();
+			jumpCleanupRef.current = null;
+			intentRef.current = { kind: "reading", sequence: intent.sequence };
+			scheduleLayout();
+		};
+		const queue = () => {
+			if (isCurrent()) frame = requestAnimationFrame(align);
+		};
+		const realign = () => {
+			cleanup();
+			queue();
+		};
+		const align = () => {
+			if (!isCurrent() || !intent.key) return;
+			const el = scrollRef.current;
+			const content = contentRef.current;
+			if (!el || !content) return finish();
+			const index = positions.indexOfKey(intent.key);
+			if (index < 0) return finish();
+			const target = content.querySelector(
+				`:scope > [data-chat-row-key="${CSS.escape(intent.key)}"]`,
+			)?.firstElementChild;
+			if (target) {
+				const delta = target.getBoundingClientRect().top - el.getBoundingClientRect().top - JUMP_OFFSET;
+				if (intent.smooth && Math.abs(delta) > 1) {
+					intent.smooth = false;
+					el.scrollTo({ top: el.scrollTop + delta, behavior: "smooth" });
+					listening = el;
+					el.addEventListener("scrollend", realign, { once: true });
+					timer = setTimeout(realign, 900);
+					return;
+				}
+				if (Math.abs(delta) > 1) el.scrollTop += delta;
+				intent.tries++;
+				if (Math.abs(delta) <= 1 || intent.tries >= 4) return finish();
+			} else {
+				el.scrollTop = rowTop() + positions.offsetOf(index) - JUMP_OFFSET;
+				intent.smooth = false;
+				if (++intent.tries >= 8) return finish();
+			}
+			viewportRef.current = { top: el.scrollTop - rowTop(), height: el.clientHeight };
+			setLayoutTick((n) => n + 1);
+			queue();
+		};
+		jumpCleanupRef.current = cleanup;
+		const start = (key: string) => {
+			if (!isCurrent()) return;
+			intent.phase = "aligning";
+			intent.key = key;
+			queue();
+		};
 		if (node.index >= 0) {
 			const key = rows[node.index]?.key;
-			jumpLoadingRef.current = null;
-			if (key) jumpToKey(key, behavior);
+			if (key) start(key);
+			else finish();
 			return;
 		}
-		if (!activeSessionId || !node.entryId) return;
+		if (!node.entryId) return finish();
 		const entryId = node.entryId;
-		updateFollowing(false);
-		// 未加载：先按需加载到目标所在轮次，再跳（远处一律瞬跳，避免平滑滚动穿过大量占位）。
-		// 加载期间标记「跳转中」，防止「还在底部」的滚动事件重新打开跟随
-		const token = {};
-		jumpLoadingRef.current = token;
-		void loadHistoryThrough(activeSessionId, entryId)
-			.then((ok) => {
-				if (!ok || jumpLoadingRef.current !== token) return;
-				const row = useTranscriptStore
+		intent.smooth = false;
+		void loadHistoryThrough(sid, entryId, undefined, isCurrent).then((ok) => {
+			if (!isCurrent()) return;
+			const row =
+				ok &&
+				useTranscriptStore
 					.getState()
-					.bySession[activeSessionId]?.messages.find(
-						(message) => message.kind === "user" && message.entryId === entryId,
-					);
-				if (row) jumpToKey(row.id);
-			})
-			.finally(() => {
-				if (jumpLoadingRef.current === token) jumpLoadingRef.current = null;
-			});
+					.bySession[sid]?.messages.find((message) => message.kind === "user" && message.entryId === entryId);
+			if (row) start(row.id);
+			else finish();
+		}, finish);
 	};
 
 	const sessionRailVisible = useUiPreferencesStore((state) => state.sessionRailEnabled);
@@ -547,6 +587,23 @@ export function MessageList() {
 
 	// Alt+↑/↓：跳到上一/下一条用户消息（参考 pi-gna 的 ⌥↑/⌥↓）。以视口内首轮为基准：
 	// 向下 = 下一轮；向上 = 当前轮开头（已在开头则上一轮）。输入框有内容时让给输入框。
+	useEffect(() => {
+		const onReadingKey = (event: KeyboardEvent) => {
+			if (event.defaultPrevented || event.altKey || event.ctrlKey || event.metaKey) return;
+			if (!["ArrowUp", "ArrowDown", "PageUp", "PageDown", "Home", "End", " "].includes(event.key)) return;
+			const target = event.target;
+			if (
+				target instanceof HTMLElement &&
+				(target.isContentEditable || target.closest("input, textarea, select, button"))
+			)
+				return;
+			if (target === document.body || (target instanceof Node && scrollRef.current?.contains(target)))
+				cancelIntent("reading");
+		};
+		document.addEventListener("keydown", onReadingKey);
+		return () => document.removeEventListener("keydown", onReadingKey);
+	}, [cancelIntent]);
+
 	const railKeys = useRef({ nodes, inView, jump: jumpToNode });
 	railKeys.current = { nodes, inView, jump: jumpToNode };
 	useEffect(() => {
@@ -573,7 +630,9 @@ export function MessageList() {
 				const offset =
 					node && scroller
 						? node.getBoundingClientRect().top - scroller.getBoundingClientRect().top - JUMP_OFFSET
-						: 0;
+						: start && scroller
+							? positions.offsetOf(start.index) + rowTop() - scroller.scrollTop - JUMP_OFFSET
+							: 0;
 				// 已经在本轮开头（误差 24px 内，同 pi-gna AT_TOP）就去上一轮
 				next = offset < -24 ? current : current - 1;
 			}
@@ -584,7 +643,7 @@ export function MessageList() {
 		};
 		document.addEventListener("keydown", onKey);
 		return () => document.removeEventListener("keydown", onKey);
-	}, [rows]);
+	}, [positions, rowTop, rows]);
 
 	const renderRow = (row: ChatRow): ReactNode => {
 		if (row.kind === "turnDiff") {
@@ -632,19 +691,27 @@ export function MessageList() {
 					ref={attachScroller}
 					onScroll={handleScroll}
 					onWheel={(event) => {
-						if (event.deltaY >= 0) return;
-						updateFollowing(false);
-						// 已在顶部时向上滚不会产生 scroll 事件（scrollTop 已是 0），分页只能从这里触发（与基线一致）
 						const el = scrollRef.current;
 						if (
-							el &&
-							el.scrollTop - rowTop() < HISTORY_TRIGGER_PX &&
-							!pendingJumpRef.current &&
-							!jumpLoadingRef.current
-						) {
+							event.deltaY !== 0 &&
+							(intentRef.current.kind === "jump" ||
+								event.deltaY < 0 ||
+								(el && el.scrollHeight - el.scrollTop - el.clientHeight > BOTTOM_THRESHOLD))
+						)
+							cancelIntent("reading");
+						if (event.deltaY >= 0) return;
+						// 已在顶部时向上滚不会产生 scroll 事件（scrollTop 已是 0），分页只能从这里触发（与基线一致）
+						if (el && el.scrollTop - rowTop() < HISTORY_TRIGGER_PX && intentRef.current.kind !== "jump") {
 							if (el.scrollTop === 0) captureAnchor();
 							requestOlderHistory();
 						}
+					}}
+					onTouchStart={() => {
+						if (intentRef.current.kind === "jump") cancelIntent("reading");
+					}}
+					onPointerDown={(event) => {
+						if (event.target === event.currentTarget && intentRef.current.kind === "jump")
+							cancelIntent("reading");
 					}}
 					onClickCapture={handleSummaryToggle}
 					style={{ "--edge-fade-size": "28px" } as CSSProperties}
@@ -741,7 +808,7 @@ export function MessageList() {
 					<button
 						type="button"
 						onClick={() => {
-							updateFollowing(true);
+							cancelIntent("following");
 							pinToBottom(window.matchMedia("(prefers-reduced-motion: reduce)").matches ? "auto" : "smooth");
 						}}
 						className="absolute bottom-4 left-1/2 z-10 flex -translate-x-1/2 items-center gap-1.5 rounded-full border border-border bg-surface/95 px-3 py-1.5 text-ui-12 leading-[calc(1_/_0.75)] text-ink-2 shadow-pop backdrop-blur transition-colors hover:bg-hover"

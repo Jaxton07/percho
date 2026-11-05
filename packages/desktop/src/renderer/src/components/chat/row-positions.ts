@@ -55,7 +55,7 @@ export class RowPositions {
 		if (rows.length === this.rows.length) {
 			let identical = true;
 			for (let i = 0; i < rows.length; i++) {
-				if (rows[i]!.key !== this.rows[i]!.key) {
+				if (rows[i]!.key !== this.rows[i]!.key || rows[i]!.kind !== this.rows[i]!.kind) {
 					identical = false;
 					break;
 				}
@@ -78,11 +78,26 @@ export class RowPositions {
 					measured: false,
 				};
 				this.cache.set(row.key, cached);
-			} else {
+			} else if (cached.kind !== row.kind) {
+				if (cached.measured) {
+					this.measuredSums[cached.kind] -= cached.height;
+					this.measuredCounts[cached.kind]--;
+				}
 				cached.kind = row.kind;
+				cached.estimate = this.estimates[row.kind];
+				cached.height = cached.estimate;
+				cached.measured = false;
 			}
 			nextHeights[i] = cached.height;
 			nextIndices.set(row.key, i);
+		}
+		for (const [key, cached] of this.cache) {
+			if (nextIndices.has(key)) continue;
+			if (cached.measured) {
+				this.measuredSums[cached.kind] -= cached.height;
+				this.measuredCounts[cached.kind]--;
+			}
+			this.cache.delete(key);
 		}
 		this.rows = nextRows;
 		this.heights = nextHeights;
@@ -163,6 +178,7 @@ export class RowPositions {
 			this.measuredCounts[kind] = 0;
 		}
 		for (const cached of this.cache.values()) {
+			cached.estimate = this.estimates[cached.kind];
 			cached.height = cached.estimate;
 			cached.measured = false;
 		}

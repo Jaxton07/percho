@@ -47,7 +47,7 @@ describe("RowPositions", () => {
 		expect(positions.setHeight("missing", 10)).toBe(0);
 	});
 
-	it("reuses estimates and measurements across prepend, append, and removal", () => {
+	it("reuses measurements across prepend but releases removed keys", () => {
 		const positions = new RowPositions(6);
 		positions.sync([row("a"), row("b")]);
 		positions.setHeight("a", 90);
@@ -59,8 +59,8 @@ describe("RowPositions", () => {
 		positions.sync([row("b"), row("tail")]);
 		expect(positions.indexOfKey("a")).toBe(-1);
 		positions.sync([row("a"), row("tail")]);
-		expect(positions.heightOf(0)).toBe(90);
-		expect(positions.isMeasured("a")).toBe(true);
+		expect(positions.heightOf(0)).toBe(48);
+		expect(positions.isMeasured("a")).toBe(false);
 	});
 
 	it("keeps a key estimate frozen after the measured mean changes", () => {
@@ -142,7 +142,7 @@ describe("RowPositions", () => {
 		expect(positions.heightOf(1)).toBe(72);
 		expect(positions.heightOf(2)).toBe(72);
 		expect(positions.heightOf(3)).toBe(72);
-		expect(positions.heightOf(4)).toBe(200);
+		expect(positions.heightOf(4)).toBe(72);
 	});
 
 	it("matches a naive index and offset implementation for randomized rows and updates", () => {

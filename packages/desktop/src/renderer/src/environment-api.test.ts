@@ -28,7 +28,6 @@ const fixture = vi.hoisted(() => {
 			openSession: vi.fn(async () => meta),
 			getSessionMessages: vi.fn(async (): Promise<unknown[]> => []),
 			getSessionHistoryPage: vi.fn(async (): Promise<unknown> => ({ messages: [], history: {} })),
-			getSessionHistoryThrough: vi.fn(async (): Promise<unknown> => ({ messages: [], history: {} })),
 			getSessionNavigation: vi.fn(async (): Promise<unknown> => ({ generation: "generation", entries: [] })),
 			getSessionImage: vi.fn(async () => ({ data: "cmVtb3Rl", mimeType: "image/png" })),
 			setViewedSubagent: vi.fn(async () => {}),
@@ -129,28 +128,6 @@ const remote: EnvironmentRef = { kind: "ssh", connectionId: "company", environme
 const disposers: Array<() => void> = [];
 
 describe("媒体维护的执行环境边界", () => {
-	it("远端导航只解包会话 ID，entryId 与 through 游标保持原始身份", async () => {
-		const navigation = {
-			generation: "g",
-			entries: [{ entryId: "native-entry", ordinal: 0, excerpt: "text", timestamp: 1, images: 0 }],
-		};
-		fixture.remote.getSessionNavigation.mockResolvedValueOnce(navigation);
-		const sessionId = environmentEntityKey(remote, "same-id"),
-			result = await getExecutionApi(remote).getSessionNavigation({ sessionId });
-		expect(fixture.remote.getSessionNavigation).toHaveBeenCalledExactlyOnceWith({ sessionId: "same-id" });
-		expect(result).toEqual(navigation);
-		fixture.remote.getSessionHistoryThrough.mockResolvedValueOnce({ messages: [], history: {} });
-		await getExecutionApi(remote).getSessionHistoryThrough({
-			sessionId,
-			cursor: "opaque",
-			entryId: "native-entry",
-		});
-		expect(fixture.remote.getSessionHistoryThrough).toHaveBeenCalledExactlyOnceWith({
-			sessionId: "same-id",
-			cursor: "opaque",
-			entryId: "native-entry",
-		});
-	});
 	it("远端导航请求只解包会话 ID，entryId 保持原始身份", async () => {
 		const navigation = {
 			generation: "g",
@@ -161,17 +138,6 @@ describe("媒体维护的执行环境边界", () => {
 			result = await getExecutionApi(remote).getSessionNavigation({ sessionId });
 		expect(fixture.remote.getSessionNavigation).toHaveBeenCalledExactlyOnceWith({ sessionId: "same-id" });
 		expect(result).toEqual(navigation);
-		fixture.remote.getSessionHistoryThrough.mockResolvedValueOnce({ messages: [], history: {} });
-		await getExecutionApi(remote).getSessionHistoryThrough({
-			sessionId,
-			cursor: "opaque",
-			entryId: "native-entry",
-		});
-		expect(fixture.remote.getSessionHistoryThrough).toHaveBeenCalledExactlyOnceWith({
-			sessionId: "same-id",
-			cursor: "opaque",
-			entryId: "native-entry",
-		});
 	});
 	it("远端仅解包文件定位，不转换事务的原始幂等请求ID", async () => {
 		const api = getExecutionApi(remote);
@@ -347,8 +313,6 @@ beforeEach(() => {
 	fixture.remote.getSessionMessages.mockResolvedValue([]);
 	fixture.remote.getSessionHistoryPage.mockReset().mockResolvedValue({ messages: [], history: {} });
 	fixture.local.getSessionHistoryPage.mockReset().mockResolvedValue({ messages: [], history: {} });
-	fixture.remote.getSessionHistoryThrough.mockReset().mockResolvedValue({ messages: [], history: {} });
-	fixture.local.getSessionHistoryThrough.mockReset().mockResolvedValue({ messages: [], history: {} });
 	fixture.remote.getSessionNavigation
 		.mockReset()
 		.mockResolvedValue({ generation: "generation", entries: [] });

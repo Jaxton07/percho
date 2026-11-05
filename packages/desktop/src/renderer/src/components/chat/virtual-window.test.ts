@@ -38,6 +38,19 @@ describe("windowFor", () => {
 		expect(end).toBeGreaterThan(first);
 	});
 
+	it("covers all visible rows beyond the budget and retains the following tail", () => {
+		const p = new RowPositions(0);
+		p.sync(Array.from({ length: 5000 }, (_, i) => ({ key: `r${i}`, kind: "other" as const })));
+		for (let i = 0; i < 5000; i++) p.setHeight(`r${i}`, 1);
+		for (const following of [false, true]) {
+			const top = following ? 4000 : 1700;
+			const result = windowFor(p, top, 1000, following);
+			expect(result.start).toBeLessThanOrEqual(p.indexAt(top));
+			expect(result.end).toBeGreaterThan(p.indexAt(top + 999));
+			if (following) expect(result.end).toBe(p.count);
+		}
+	});
+
 	it("short list renders everything", () => {
 		const p = positions(5);
 		expect(windowFor(p, 0, 800, false)).toEqual({ start: 0, end: 5 });

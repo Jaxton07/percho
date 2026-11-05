@@ -258,15 +258,6 @@ export const SESSION_CHANNELS = {
 		"environment",
 		"read",
 	)<{ sessionId: string }, SessionNavigation>({ sessionId: input.id }),
-	getSessionHistoryThrough: ch(
-		"session:historyThrough",
-		"environment",
-		"read",
-	)<{ sessionId: string; cursor: string; entryId: string }, SessionHistoryPage>({
-		sessionId: input.id,
-		cursor: input.text,
-		entryId: input.id,
-	}),
 	startSessionMediaCompaction: ch(
 		"session:mediaCompact",
 		"environment",

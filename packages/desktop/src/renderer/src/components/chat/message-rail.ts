@@ -26,7 +26,17 @@ export const RAIL_MIN_NODES = 4;
 /** 悬停放大影响的最远距离（pi-gna: nearDistance，0–3） */
 export const NEAR_RANGE = 3;
 
-const excerptOf = (text: string) => previewExcerpt(text, RAIL_EXCERPT_CHARS);
+// 已提交消息不可变，按对象而非 entryId 缓存：重装/分支换代可复用 ID，但正文可能不同。
+// WeakMap 不延长历史消息的生命周期；流式行每次创建新对象，自然重新计算。
+const excerpts = new WeakMap<object, { excerpt: string; hasText: boolean }>();
+const excerptOf = (message: { text: string }) => {
+	let cached = excerpts.get(message);
+	if (!cached) {
+		cached = { excerpt: previewExcerpt(message.text, RAIL_EXCERPT_CHARS), hasText: !!message.text.trim() };
+		excerpts.set(message, cached);
+	}
+	return cached;
+};
 
 /**
  * 全历史节点 = 服务端索引里「早于已加载首条 user entry」的部分 + 已加载行里的全部用户消息（含实时新消息）。
@@ -44,13 +54,16 @@ export function railNodes(
 		if (message.kind === "assistant") {
 			// 本轮第一段有正文的助手消息作为预览摘要（后续段落/工具不再覆盖）
 			const last = loaded.at(-1);
-			if (last && last.reply === undefined && message.text.trim()) last.reply = excerptOf(message.text);
+			if (last && last.reply === undefined) {
+				const preview = excerptOf(message);
+				if (preview.hasText) last.reply = preview.excerpt;
+			}
 			return;
 		}
 		if (message.kind !== "user") return;
 		const entryId = message.entryId;
 		if (firstEntryId === undefined && entryId) firstEntryId = entryId;
-		loaded.push({ key: row.key, excerpt: excerptOf(message.text), index, entryId });
+		loaded.push({ key: row.key, excerpt: excerptOf(message).excerpt, index, entryId });
 	});
 	if (!navigation?.length) return loaded;
 	// 已加载首条在索引中的位置之前，才是未加载部分；找不到（索引过期或非持久消息）就不补，避免错位
@@ -59,8 +72,8 @@ export function railNodes(
 	if (cut <= 0) return loaded;
 	const unloaded = navigation.slice(0, cut).map((entry) => ({
 		key: `nav:${entry.entryId}`,
-		excerpt: excerptOf(entry.excerpt),
-		reply: entry.reply ? excerptOf(entry.reply) : undefined,
+		excerpt: entry.excerpt,
+		reply: entry.reply || undefined,
 		index: -1,
 		entryId: entry.entryId,
 	}));
@@ -68,12 +81,23 @@ export function railNodes(
 }
 
 /**
- * 只在刻度本身变化时才算变化（pi-gna: sameMarkers）：流式输出只改最后一轮的摘要，轨道不重绘。
+ * 比较刻度实际渲染的内容：流式回复变化不重绘，重装后的标题和加载状态仍须更新。
  */
 export function sameMarkers(a: readonly RailNode[], b: readonly RailNode[]): boolean {
 	if (a === b) return true;
 	if (a.length !== b.length) return false;
-	for (let i = 0; i < a.length; i++) if (a[i]?.key !== b[i]?.key) return false;
+	for (let i = 0; i < a.length; i++) {
+		const left = a[i];
+		const right = b[i];
+		if (
+			!left ||
+			!right ||
+			left.key !== right.key ||
+			left.excerpt !== right.excerpt ||
+			left.index < 0 !== right.index < 0
+		)
+			return false;
+	}
 	return true;
 }
 

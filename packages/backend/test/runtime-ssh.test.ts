@@ -105,9 +105,7 @@ describe("SSH runtime boundary", () => {
 		const info = fixture.info as RuntimeInfo;
 		fixture.info = {
 			...info,
-			methods: info.methods.filter(
-				(method) => !["getSessionNavigation", "getSessionHistoryThrough"].includes(method),
-			),
+			methods: info.methods.filter((method) => method !== "getSessionNavigation"),
 		};
 		const connection = await SshRuntimeConnection.connect("company", {
 			signal: new AbortController().signal,

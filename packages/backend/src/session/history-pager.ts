@@ -15,7 +15,6 @@ import type { SourceSnapshot } from "./source-snapshot";
 
 const TARGET_HISTORY_BYTES = 248 * 1024; // 标准样本目标，保留元数据余量；不强拆大单轮。
 const MAX_HISTORY_BYTES = RUNTIME_MESSAGE_BYTES - 64 * 1024;
-const MAX_HISTORY_THROUGH_BYTES = 24 * 1024 * 1024;
 const DEFAULT_TURNS = 4;
 type Cursor = {
 	v: 2;
@@ -48,6 +47,12 @@ const fail = (message: string): never => {
 
 /** 原始SDK branch先选完整轮次/依赖，再投影；游标只保存三个由entry身份复核的位置，无额外全树索引。 */
 export class SessionHistoryPager {
+	// SDK entries are immutable once appended; weak keys release previews with their source.
+	private readonly navigationUsers = new WeakMap<
+		SessionEntry,
+		Omit<SessionNavigationEntry, "entryId" | "ordinal">
+	>();
+	private readonly navigationReplies = new WeakMap<SessionEntry, string>();
 	private counts = {
 		indexEntries: 0,
 		validatedEntries: 0,
@@ -102,21 +107,28 @@ export class SessionHistoryPager {
 			if (raw.role === "assistant") {
 				const last = entries.at(-1);
 				if (last && last.reply === undefined) {
-					const reply = clip(blockText(raw.content));
+					let reply = this.navigationReplies.get(entry);
+					if (reply === undefined) {
+						reply = clip(blockText(raw.content));
+						this.navigationReplies.set(entry, reply);
+					}
 					if (reply) last.reply = reply;
 				}
 				continue;
 			}
 			if (!user(entry)) continue;
-			const { text: displayText } = deriveUserMessage(raw);
-			const timestamp = typeof raw.timestamp === "number" ? raw.timestamp : Date.parse(entry.timestamp);
-			entries.push({
-				entryId: entry.id,
-				ordinal: entries.length,
-				excerpt: clip(displayText),
-				timestamp: Number.isFinite(timestamp) ? timestamp : 0,
-				images: blockImages(raw.content).length,
-			});
+			let preview = this.navigationUsers.get(entry);
+			if (!preview) {
+				const { text: displayText } = deriveUserMessage(raw);
+				const timestamp = typeof raw.timestamp === "number" ? raw.timestamp : Date.parse(entry.timestamp);
+				preview = {
+					excerpt: clip(displayText),
+					timestamp: Number.isFinite(timestamp) ? timestamp : 0,
+					images: blockImages(raw.content).length,
+				};
+				this.navigationUsers.set(entry, preview);
+			}
+			entries.push({ ...preview, entryId: entry.id, ordinal: entries.length });
 		}
 		return { entries };
 	}
@@ -162,23 +174,6 @@ export class SessionHistoryPager {
 		const parsed = this.validateCursor(view, prefix, cursor, context);
 		return this.select(view, prefix, parsed.beforeAt, parsed, project);
 	}
-	through(
-		view: SourceSnapshot,
-		prefix: readonly SessionEntry[],
-		cursor: string,
-		entryId: string,
-		context: Context,
-		project: Project,
-	): SelectedHistory {
-		const parsed = this.validateCursor(view, prefix, cursor, context);
-		const targetAt = prefix.findIndex((entry) => entry.id === entryId);
-		if (targetAt < 0 || !user(prefix[targetAt]) || targetAt >= parsed.beforeAt)
-			return fail("target is not an older user entry on this branch");
-		return this.select(view, prefix, parsed.beforeAt, parsed, project, {
-			startAt: targetAt,
-			maxBytes: MAX_HISTORY_THROUGH_BYTES,
-		});
-	}
 	private validateCursor(
 		view: SourceSnapshot,
 		prefix: readonly SessionEntry[],
@@ -220,20 +215,17 @@ export class SessionHistoryPager {
 		end: number,
 		cursor: Cursor,
 		project: Project,
-		options: { startAt?: number; maxBytes?: number } = {},
 	): SelectedHistory {
 		if (prefix.length > view.branch.length || prefix.at(-1)?.id !== view.branch[prefix.length - 1]?.id)
 			return fail("persistent prefix is not from this source");
 		let limit = cursor.turns;
 		for (;;) {
-			let start = options.startAt ?? end,
-				rounds = options.startAt === undefined ? 0 : 1;
-			if (options.startAt === undefined) {
-				while (start > 0) {
-					start--;
-					this.counts.selectedEntries++;
-					if (user(prefix[start]) && ++rounds === limit) break;
-				}
+			let start = end,
+				rounds = 0;
+			while (start > 0) {
+				start--;
+				this.counts.selectedEntries++;
+				if (user(prefix[start]) && ++rounds === limit) break;
 			}
 			// 前导无user段也必须最终可取回。工具结果若跨user边界，向前扩到真实调用所在整轮。
 			let scan = start;
@@ -271,11 +263,11 @@ export class SessionHistoryPager {
 			const messages = project(selected, cursor.references),
 				uiMessages = messagesToUIMessages(messages);
 			const bytes = Buffer.byteLength(JSON.stringify(uiMessages));
-			if (options.startAt === undefined && bytes > TARGET_HISTORY_BYTES && limit > 1) {
+			if (bytes > TARGET_HISTORY_BYTES && limit > 1) {
 				limit = Math.max(1, Math.floor(Math.min(limit, rounds || 1) / 2));
 				continue;
 			}
-			if (bytes > (options.maxBytes ?? MAX_HISTORY_BYTES)) {
+			if (bytes > MAX_HISTORY_BYTES) {
 				throw new Error(
 					"HISTORY_PAGE_TOO_LARGE: a complete round or dependency group exceeds the logical message budget; nothing was truncated",
 				);

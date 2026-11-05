@@ -20,6 +20,9 @@ const GUTTER = 48;
 /** pi-gna: OPEN_DELAY / CLOSE_DELAY */
 const OPEN_DELAY = 150;
 const CLOSE_DELAY = 120;
+const ROW_HEIGHT = 10;
+const OVERSCAN = 4;
+const FALLBACK_HEIGHT = 640;
 
 /**
  * 对话 Minimap（#110）。交互机制参考 MIT 项目 pi-gna 的 TurnRail（manuelcecchetto/pi-gna）：
@@ -56,19 +59,42 @@ function Rail({
 	const [card, setCard] = useState(false);
 	const [scrubbing, setScrubbing] = useState(false);
 	const [fade, setFade] = useState("");
+	const [viewport, setViewport] = useState({ top: 0, height: FALLBACK_HEIGHT });
 	const nav = useRef<HTMLElement>(null);
 	const list = useRef<HTMLDivElement>(null);
 	const box = useRef<HTMLDivElement>(null);
 	const opening = useRef<ReturnType<typeof setTimeout>>(undefined);
 	const closing = useRef<ReturnType<typeof setTimeout>>(undefined);
-	const scrub = useRef<{ pointerId: number; index: number; moved: boolean } | null>(null);
+	const scrub = useRef<{ pointerId: number; index: number; moved: boolean; y: number } | null>(null);
+	const frame = useRef<number | null>(null);
 	/** 拖动结束时会在起点刻度上触发一次 click，那一次不能再跳回去 */
 	const dragged = useRef(false);
+	const pressedIndex = useRef<number | null>(null);
 	const settle = useCallback(() => {
 		clearTimeout(opening.current);
 		clearTimeout(closing.current);
 	}, []);
-	useEffect(() => settle, [settle]);
+	useEffect(
+		() => () => {
+			settle();
+			if (frame.current !== null) cancelAnimationFrame(frame.current);
+		},
+		[settle],
+	);
+	const updateViewport = useCallback((element: HTMLElement) => {
+		const top = element.scrollTop;
+		const height = element.clientHeight || FALLBACK_HEIGHT;
+		setViewport((old) => (old.top === top && old.height === height ? old : { top, height }));
+		setFade(edges(element));
+	}, []);
+	useLayoutEffect(() => {
+		const element = list.current;
+		if (!element) return;
+		const observer = new ResizeObserver(() => updateViewport(element));
+		observer.observe(element);
+		updateViewport(element);
+		return () => observer.disconnect();
+	}, [updateViewport]);
 
 	const hover = (index: number) => {
 		settle();
@@ -90,10 +116,14 @@ function Rail({
 		const state = scrub.current;
 		if (state?.pointerId !== event.pointerId) return;
 		scrub.current = null;
+		if (frame.current !== null) cancelAnimationFrame(frame.current);
+		frame.current = null;
 		setScrubbing(false);
 		dragged.current = state.moved;
+		if (event.type !== "pointerup") pressedIndex.current = null;
 		setTimeout(() => {
 			dragged.current = false;
+			pressedIndex.current = null;
 		}, 0);
 		if (!nav.current?.matches(":hover")) leave();
 	};
@@ -106,34 +136,68 @@ function Rail({
 	useLayoutEffect(() => {
 		const element = list.current;
 		if (!element || count === 0) return;
+		const height = element.clientHeight || FALLBACK_HEIGHT;
 		for (const index of [to, from]) {
-			const button = index < 0 ? undefined : (element.children[index] as HTMLElement | undefined);
-			if (!button) continue;
-			if (button.offsetTop < element.scrollTop) element.scrollTop = button.offsetTop;
-			else if (button.offsetTop + button.offsetHeight > element.scrollTop + element.clientHeight) {
-				element.scrollTop = button.offsetTop + button.offsetHeight - element.clientHeight;
+			if (index < 0 || index >= count) continue;
+			const top = index * ROW_HEIGHT;
+			if (top < element.scrollTop) element.scrollTop = top;
+			else if (top + ROW_HEIGHT > element.scrollTop + height) {
+				element.scrollTop = top + ROW_HEIGHT - height;
 			}
 		}
-		setFade(edges(element));
-	}, [from, to, count]);
+		updateViewport(element);
+	}, [from, to, count, updateViewport]);
 
 	// 卡片在被悬停刻度右侧，垂直对准它，夹在聊天区内
 	useLayoutEffect(() => {
 		const host = nav.current;
 		const element = box.current;
-		const button = hot === null ? undefined : (list.current?.children[hot] as HTMLElement | undefined);
-		if (!host || !element || !button) return;
-		const marker = button.getBoundingClientRect();
+		const rail = list.current;
+		if (!host || !element || !rail || hot === null) return;
+		const markerTop = rail.getBoundingClientRect().top + hot * ROW_HEIGHT - rail.scrollTop;
 		const bounds = (host.offsetParent ?? document.body).getBoundingClientRect();
 		const half = element.offsetHeight / 2;
 		const center = Math.min(
-			Math.max(marker.top + marker.height / 2, bounds.top + 8 + half),
+			Math.max(markerTop + ROW_HEIGHT / 2, bounds.top + 8 + half),
 			bounds.bottom - 8 - half,
 		);
 		element.style.top = `${center - host.getBoundingClientRect().top}px`;
 	});
 
 	const hotNode = hot === null ? undefined : nodes[hot];
+	const start = Math.max(0, Math.min(count, Math.floor(viewport.top / ROW_HEIGHT) - OVERSCAN));
+	const end = Math.max(
+		start,
+		Math.min(count, Math.ceil((viewport.top + viewport.height) / ROW_HEIGHT) + OVERSCAN),
+	);
+
+	const moveScrub = () => {
+		const state = scrub.current;
+		const element = list.current;
+		if (!state || !element) return;
+		const rect = element.getBoundingClientRect();
+		const direction = state.y < rect.top + ROW_HEIGHT ? -1 : state.y >= rect.bottom - ROW_HEIGHT ? 1 : 0;
+		if (direction) element.scrollTop += direction * ROW_HEIGHT;
+		updateViewport(element);
+		const y = Math.min(Math.max(state.y - rect.top, 0), Math.max(0, element.clientHeight - 1));
+		const index = Math.min(count - 1, Math.max(0, Math.floor((element.scrollTop + y) / ROW_HEIGHT)));
+		const node = nodes[index];
+		if (node && index !== state.index) {
+			state.index = index;
+			state.moved = true;
+			settle();
+			setHot(index);
+			setCard(true);
+			onJump(node, "instant");
+		}
+		if (
+			direction &&
+			((direction < 0 && element.scrollTop > 0) ||
+				(direction > 0 && element.scrollTop + element.clientHeight < element.scrollHeight))
+		) {
+			frame.current = requestAnimationFrame(moveScrub);
+		} else frame.current = null;
+	};
 	return (
 		<nav
 			ref={nav}
@@ -155,9 +219,11 @@ function Rail({
 				className="message-rail-list"
 				data-fade={fade || undefined}
 				data-scrubbing={scrubbing || undefined}
-				onScroll={(event) => setFade(edges(event.currentTarget))}
+				onScroll={(event) => updateViewport(event.currentTarget)}
 				onClick={(event) => {
-					const node = nodes[indexAt(event.target) ?? -1];
+					const index = indexAt(event.target) ?? pressedIndex.current;
+					pressedIndex.current = null;
+					const node = nodes[index ?? -1];
 					if (!node || dragged.current) return;
 					onJump(node, "smooth");
 				}}
@@ -169,30 +235,34 @@ function Rail({
 				onPointerDown={(event) => {
 					const index = indexAt(event.target);
 					if (event.button !== 0 || index === undefined) return;
-					scrub.current = { pointerId: event.pointerId, index, moved: false };
-					(event.target as Element).closest("button")?.setPointerCapture(event.pointerId);
+					pressedIndex.current = index;
+					scrub.current = { pointerId: event.pointerId, index, moved: false, y: event.clientY };
+					event.currentTarget.setPointerCapture(event.pointerId);
 					setScrubbing(true);
 					setHot(index);
 				}}
 				onPointerMove={(event) => {
 					const state = scrub.current;
 					if (state?.pointerId !== event.pointerId) return;
-					const rect = event.currentTarget.getBoundingClientRect();
-					const y = Math.min(Math.max(event.clientY, rect.top), rect.bottom - 1);
-					const index = indexAt(document.elementFromPoint(rect.left + rect.width / 2, y));
-					const node = index === undefined ? undefined : nodes[index];
-					if (index === undefined || !node || index === state.index) return;
-					scrub.current = { ...state, index, moved: true };
-					settle();
-					setHot(index);
-					setCard(true);
-					onJump(node, "instant");
+					state.y = event.clientY;
+					if (frame.current !== null) cancelAnimationFrame(frame.current);
+					frame.current = null;
+					moveScrub();
 				}}
 				onPointerUp={endScrub}
 				onPointerCancel={endScrub}
 				onLostPointerCapture={endScrub}
 			>
-				<Markers nodes={nodes} hot={hot} from={inView?.from ?? -1} to={inView?.to ?? -1} />
+				<div aria-hidden style={{ height: start * ROW_HEIGHT, flexShrink: 0 }} />
+				<Markers
+					nodes={nodes}
+					start={start}
+					end={end}
+					hot={hot}
+					from={inView?.from ?? -1}
+					to={inView?.to ?? -1}
+				/>
+				<div aria-hidden style={{ height: (count - end) * ROW_HEIGHT, flexShrink: 0 }} />
 			</div>
 			{card && hotNode && (
 				<div
@@ -214,39 +284,48 @@ function Rail({
 const Markers = memo(
 	function Markers({
 		nodes,
+		start,
+		end,
 		hot,
 		from,
 		to,
 	}: {
 		nodes: readonly RailNode[];
+		start: number;
+		end: number;
 		hot: number | null;
 		from: number;
 		to: number;
 	}) {
 		return (
 			<>
-				{nodes.map((node, index) => (
-					<button
-						key={node.key}
-						type="button"
-						tabIndex={-1}
-						data-rail-index={index}
-						data-rail-node={node.key}
-						data-hot={hot === index || undefined}
-						data-unloaded={node.index < 0 || undefined}
-						aria-current={index >= from && index <= to ? "true" : undefined}
-						aria-label={node.excerpt}
-						className="message-rail-item"
-					>
-						<span className="message-rail-marker" data-near={nearDistance(index, hot)}>
-							<span className="message-rail-line" />
-						</span>
-					</button>
-				))}
+				{nodes.slice(start, end).map((node, offset) => {
+					const index = start + offset;
+					return (
+						<button
+							key={node.key}
+							type="button"
+							tabIndex={-1}
+							data-rail-index={index}
+							data-rail-node={node.key}
+							data-hot={hot === index || undefined}
+							data-unloaded={node.index < 0 || undefined}
+							aria-current={index >= from && index <= to ? "true" : undefined}
+							aria-label={node.excerpt}
+							className="message-rail-item"
+						>
+							<span className="message-rail-marker" data-near={nearDistance(index, hot)}>
+								<span className="message-rail-line" />
+							</span>
+						</button>
+					);
+				})}
 			</>
 		);
 	},
 	(previous, next) =>
+		previous.start === next.start &&
+		previous.end === next.end &&
 		previous.hot === next.hot &&
 		previous.from === next.from &&
 		previous.to === next.to &&

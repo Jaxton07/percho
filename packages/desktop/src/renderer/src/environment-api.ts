@@ -169,8 +169,7 @@ function resultFor(method: string, value: unknown, environment: EnvironmentRef):
 			};
 		}
 
-		case "getSessionHistoryPage":
-		case "getSessionHistoryThrough": {
+		case "getSessionHistoryPage": {
 			const page = value as import("@percho/shared").SessionHistoryPage;
 			return { ...page, messages: page.messages.map((message) => historyMessage(message, environment)) };
 		}

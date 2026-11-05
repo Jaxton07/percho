@@ -1,5 +1,6 @@
-import type { ChatRow, SessionNavigationEntry } from "@percho/shared";
-import { describe, expect, it } from "vitest";
+import { type ChatRow, previewExcerpt, type SessionNavigationEntry } from "@percho/shared";
+import { describe, expect, it, vi } from "vitest";
+
 import {
 	NEAR_RANGE,
 	nearDistance,
@@ -9,6 +10,11 @@ import {
 	sameMarkers,
 	turnsInView,
 } from "./message-rail";
+
+vi.mock("@percho/shared", async (importOriginal) => {
+	const shared = await importOriginal<typeof import("@percho/shared")>();
+	return { ...shared, previewExcerpt: vi.fn(shared.previewExcerpt) };
+});
 
 const user = (key: string, text: string, entryId?: string): ChatRow =>
 	({
@@ -84,6 +90,55 @@ describe("railNodes", () => {
 		expect(nodes[2]?.excerpt).toBe("third");
 	});
 
+	it("前插、同文本不同来源和重装换代时保持预览归属", () => {
+		const first = user("u1", "**same**", "e1");
+		const second = user("u2", "**same**", "e2");
+		const rows = [first, assistant("a1", "first reply"), second, assistant("a2", "second reply")];
+		expect(railNodes(rows, null).map((node) => [node.key, node.excerpt, node.reply])).toEqual([
+			["u1", "same", "first reply"],
+			["u2", "same", "second reply"],
+		]);
+		expect(railNodes([user("u0", "earlier", "e0"), ...rows], null).map((node) => node.index)).toEqual([
+			0, 1, 3,
+		]);
+		const replaced = railNodes([user("u1", "new branch", "e1"), assistant("a1", "new reply")], null);
+		expect(replaced[0]).toMatchObject({ key: "u1", excerpt: "new branch", reply: "new reply" });
+		expect(railNodes(rows, null)[0]?.reply).toBe("first reply");
+	});
+
+	it("服务端摘要原样使用，不再次去除其内容", () => {
+		const entries = [
+			{ ...nav("e1", "literal * and ` characters"), reply: "literal ** and [text]" },
+			nav("e2"),
+		];
+		expect(railNodes([user("u2", "loaded", "e2")], entries)[0]).toMatchObject({
+			excerpt: "literal * and ` characters",
+			reply: "literal ** and [text]",
+		});
+	});
+
+	it("流式增量只格式化新回复，不重复处理千轮稳定历史", () => {
+		const rows = Array.from({ length: 1000 }, (_, i) => [
+			user(`u${i}`, `question ${i}`),
+			assistant(`a${i}`),
+		]).flat();
+		const active = user("active", "latest question");
+		vi.mocked(previewExcerpt).mockClear();
+		railNodes([...rows, active], null);
+		expect(previewExcerpt).toHaveBeenCalledTimes(2001);
+		vi.mocked(previewExcerpt).mockClear();
+		for (let i = 0; i < 150; i++) {
+			const nodes = railNodes([...rows, active, assistant("stream", `**reply ${i}**`)], null);
+			expect(nodes.at(-1)?.reply).toBe(`reply ${i}`);
+		}
+		expect(previewExcerpt).toHaveBeenCalledTimes(150);
+		const withFirstReply = railNodes(
+			[...rows, active, assistant("done", "first"), assistant("stream", "later")],
+			null,
+		);
+		expect(withFirstReply.at(-1)?.reply).toBe("first");
+	});
+
 	it("索引里找不到已加载首条（过期/错位）时不补未加载节点", () => {
 		const nodes = railNodes([user("u9", "x", "e9")], [nav("e1"), nav("e2")]);
 		expect(nodes.map((node) => node.key)).toEqual(["u9"]);
@@ -97,6 +152,8 @@ describe("sameMarkers", () => {
 		expect(sameMarkers(a, b)).toBe(true);
 		expect(sameMarkers(a, [...b, { key: "u2", excerpt: "q2", index: 3 }])).toBe(false);
 		expect(sameMarkers(a, [{ key: "u9", excerpt: "q", index: 0 }])).toBe(false);
+		expect(sameMarkers(a, [{ key: "u1", excerpt: "changed", index: 0 }])).toBe(false);
+		expect(sameMarkers(a, [{ key: "u1", excerpt: "q", index: -1 }])).toBe(false);
 	});
 });
 

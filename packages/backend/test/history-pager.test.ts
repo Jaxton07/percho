@@ -47,6 +47,32 @@ const context = { hydrationToken: "open-one" };
 const project = (entries: readonly SessionEntry[]) => toBranchSessionMessages(entries, "source");
 
 describe("会话导航索引", () => {
+	it("重复读取复用不可变来源摘要，同 ID 新来源仍更新回复", () => {
+		const rows = branch(2);
+		const firstReply = rows[1];
+		if (firstReply?.type !== "message") throw new Error("Missing assistant fixture");
+		const content = (firstReply.message as { content: unknown }).content;
+		let reads = 0;
+		Object.defineProperty(firstReply.message, "content", {
+			get: () => {
+				reads++;
+				return content;
+			},
+		});
+		const pager = new SessionHistoryPager();
+		const initial = pager.navigation(snapshot(rows), rows);
+		const initialReads = reads;
+		expect(initialReads).toBeGreaterThan(0);
+		expect(pager.navigation(snapshot(rows), rows)).toEqual(initial);
+		expect(reads).toBe(initialReads);
+		const replaced = rows.map((item) =>
+			item.id === "a0"
+				? entry("a0", "u0", { role: "assistant", content: [{ type: "text", text: "New reply" }] })
+				: item,
+		);
+		expect(pager.navigation(snapshot(replaced), replaced).entries[0]?.reply).toBe("New reply");
+		expect(initial.entries[0]?.reply).toBe("Answer 0");
+	});
 	it("只列当前分支用户消息，沿用显示文本派生并隐藏源正文", () => {
 		const rows = branch(3);
 		rows[0] = {
@@ -119,67 +145,27 @@ describe("会话导航索引", () => {
 	});
 });
 
-describe("按目标轮次加载历史", () => {
-	it("从目标轮起连续加载至当前边界，后续普通分页继续且不重叠", () => {
-		const rows = branch(30),
-			view = snapshot(rows),
+describe("大历史逐页加载", () => {
+	it("累计超过 24 MiB 的合法轮次可以逐页取回", () => {
+		const rows = Array.from({ length: 7 }, (_, i) =>
+			entry(`u${i}`, i ? `u${i - 1}` : null, {
+				role: "user",
+				content: [{ type: "text", text: "x".repeat(5 * 1024 * 1024) }],
+			}),
+		);
+		const view = snapshot(rows),
 			pager = new SessionHistoryPager();
-		const tail = pager.tail(view, rows, { hydrationToken: "open", turns: 3 }, project);
-		if (!tail.history.cursor) throw new Error("Expected an older cursor");
-		const through = pager.through(
-			view,
-			rows,
-			tail.history.cursor,
-			"u12",
-			{ hydrationToken: "open" },
-			project,
-		);
-		expect(through.messages[0]?.text).toBe("Question 12");
-		expect(through.messages.at(-1)?.text).toBe("Answer 26");
-		expect(through.history.hasOlder).toBe(true);
-		expect(through.history.cursor).toBeTruthy();
-		const older = pager.older(
-			view,
-			rows,
-			through.history.cursor as string,
-			{ hydrationToken: "open" },
-			project,
-		);
-		expect(older.messages.at(-1)?.entryId).toBe("a11");
-		expect(new Set([...through.uiMessages, ...older.uiMessages].map((message) => message.id)).size).toBe(
-			through.uiMessages.length + older.uiMessages.length,
-		);
-	});
-	it("拒绝未知、非用户、非旧目标与超预算整轮", () => {
-		const rows = branch(3),
-			view = snapshot(rows),
-			pager = new SessionHistoryPager();
-		const tail = pager.tail(view, rows, { hydrationToken: "open", turns: 1 }, project);
-		if (!tail.history.cursor) throw new Error("Expected an older cursor");
-		expect(() =>
-			pager.through(view, rows, tail.history.cursor as string, "missing", context, project),
-		).toThrow("HISTORY_CURSOR_INVALID");
-		expect(() => pager.through(view, rows, tail.history.cursor as string, "a1", context, project)).toThrow(
-			"HISTORY_CURSOR_INVALID",
-		);
-		const huge = [
-			entry("u0", null, { role: "user", content: [{ type: "text", text: "x".repeat(25 * 1024 * 1024) }] }),
-			entry("u1", "u0", { role: "user", content: [{ type: "text", text: "tail" }] }),
-			entry("a1", "u1", { role: "assistant", content: [{ type: "text", text: "answer" }] }),
-		];
-		const hugeView = snapshot(huge),
-			hugeTail = pager.tail(hugeView, huge, { hydrationToken: "open", turns: 1 }, project);
-		if (!hugeTail.history.cursor) throw new Error("Expected huge target to be older than tail");
-		expect(() =>
-			pager.through(
-				hugeView,
-				huge,
-				hugeTail.history.cursor as string,
-				"u0",
-				{ hydrationToken: "open" },
-				project,
-			),
-		).toThrow("HISTORY_PAGE_TOO_LARGE");
+		let selected = pager.tail(view, rows, { hydrationToken: "open", turns: 1 }, project);
+		let bytes = 0,
+			pages = 0;
+		while (selected.history.cursor) {
+			selected = pager.older(view, rows, selected.history.cursor, { hydrationToken: "open" }, project);
+			bytes += Buffer.byteLength(JSON.stringify(selected.uiMessages));
+			pages++;
+		}
+		expect(pages).toBe(6);
+		expect(bytes).toBeGreaterThan(24 * 1024 * 1024);
+		expect(selected.messages[0]?.entryId).toBe("u0");
 	});
 });
 
