@@ -1,10 +1,15 @@
 import { Duplex, PassThrough } from "node:stream";
-import { REMOTE_PROTOCOL_VERSION, type RuntimeAttachment, type RuntimeRequest } from "@percho/shared";
+import {
+	REMOTE_METHOD_UNSUPPORTED,
+	REMOTE_PROTOCOL_VERSION,
+	type RuntimeAttachment,
+	type RuntimeRequest,
+} from "@percho/shared";
 import { describe, expect, it, vi } from "vitest";
 import { RuntimeClient } from "../src/runtime/client";
 import { readRuntimeFrames } from "../src/runtime/frames";
 
-function fixture() {
+function fixture(extra: { methods?: string[] } = {}) {
 	const input = new PassThrough();
 	const output = new PassThrough();
 	const requests: RuntimeRequest[] = [];
@@ -18,6 +23,7 @@ function fixture() {
 		uid: 1,
 		pid: 2,
 		startedAt: 1,
+		...extra,
 	};
 	output.on(
 		"data",
@@ -103,6 +109,25 @@ describe("runtime client transport ownership", () => {
 		f.client.close();
 		await failed;
 		expect(f.requests.filter((request) => request.type === "invoke")).toHaveLength(1);
+	});
+	it("a method the remote does not advertise is refused locally without consuming a mutation sequence", async () => {
+		const f = fixture({ methods: ["prompt"] });
+		try {
+			await f.client.attach("desktop");
+			await expect(f.client.invoke("updatePackage", { source: "npm:demo", scope: "user" })).rejects.toThrow(
+				REMOTE_METHOD_UNSUPPORTED,
+			);
+			expect(f.requests.filter((request) => request.type === "invoke")).toHaveLength(0);
+			const pending = f.client.invoke("prompt", { sessionId: "same", text: "write" });
+			await vi.waitFor(() => expect(f.requests.at(-1)?.type).toBe("invoke"));
+			const request = f.requests.at(-1);
+			if (request?.type !== "invoke") throw new Error("Missing invocation");
+			expect(request.mutationSeq).toBe(1);
+			f.write({ type: "result", id: request.id, result: null });
+			await pending;
+		} finally {
+			f.client.close();
+		}
 	});
 });
 

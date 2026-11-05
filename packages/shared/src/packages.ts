@@ -56,6 +56,17 @@ export interface PackageUpdateInfo {
 	latest: string;
 }
 
+/**
+ * 单包原地更新的结果。
+ * - `from`/`to`：更新前后版本；`to === from` 表示版本未变（已是最新或 registry 不可达）。
+ * - `deferred`：因正在运行而未重载的会话数，它们结束后才会加载新版本。
+ */
+export interface PackageUpdateResult {
+	from?: string;
+	to?: string;
+	deferred?: number;
+}
+
 export function isNewerVersion(latest: string, installed: string): boolean {
 	return Boolean(valid(latest) && valid(installed) && gt(latest, installed));
 }
@@ -67,4 +78,12 @@ export function npmSourceToPackageName(source: string): string | null {
 	const searchFrom = spec.startsWith("@") ? spec.indexOf("/") + 1 : 1;
 	const at = spec.indexOf("@", searchFrom);
 	return at > 0 ? spec.slice(0, at) : spec;
+}
+
+/** 允许原地更新的来源：npm 包且未锁定精确版本（与 SDK 一致：`npm:x@1.2.3` 视为固定，范围仍可更新） */
+export function isUpdatableSource(source: string): boolean {
+	const name = npmSourceToPackageName(source);
+	if (!name) return false;
+	const version = source.slice(4 + name.length + 1);
+	return !/^v?\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?(?:\+[0-9A-Za-z.-]+)?$/.test(version);
 }

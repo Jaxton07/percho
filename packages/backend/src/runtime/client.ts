@@ -6,6 +6,7 @@ import {
 	type EnvironmentMethod,
 	type MutationReceipt,
 	type MutationReference,
+	REMOTE_METHOD_UNSUPPORTED,
 	REMOTE_OUTCOME_UNKNOWN,
 	REMOTE_PROTOCOL_VERSION,
 	type RuntimeAttachment,
@@ -201,6 +202,10 @@ export class RuntimeClient {
 		const target = this.requireAttachment();
 		const definition = CHANNEL_TABLE[method];
 		if (definition?.scope !== "environment") throw new Error("Unknown execution method");
+		// 旧远程端没有的可选方法在本地拒绝：发出去会被拒，但变更序号已推进，后续变更全部断号
+		const advertised = target.info.methods;
+		if (Array.isArray(advertised) && !advertised.includes(method))
+			throw new Error(`${REMOTE_METHOD_UNSUPPORTED} Remote runtime does not support ${method}`);
 		definition.validate(args);
 		const mutation =
 			definition.operation === "mutation"

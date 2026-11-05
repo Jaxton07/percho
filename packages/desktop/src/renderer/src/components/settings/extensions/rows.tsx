@@ -3,12 +3,13 @@ import {
 	isNewerVersion,
 	isSubagentPackage,
 	isSubagentToolName,
+	isUpdatableSource,
 	NPM_NOT_FOUND_SENTINEL,
 	npmSourceToPackageName,
 } from "@percho/shared";
 import { useRef, useState } from "react";
 import { useT } from "../../../i18n";
-import { useCatalogStore } from "../../../stores/catalog";
+import { type PackageUpdateOutcome, useCatalogStore } from "../../../stores/catalog";
 import { CheckIcon, TrashIcon } from "../../icons";
 import { Button } from "../../ui/Button";
 import { Tooltip } from "../../ui/Tooltip";
@@ -71,6 +72,50 @@ function UninstallButton({ source, scope }: { source: string; scope: "user" | "p
 	);
 }
 
+/** 更新按钮：只在有新版本且来源可更新时出现；更新中转圈，结果留在本行 */
+function UpdateButton({ source, scope }: { source: string; scope: "user" | "project" }) {
+	const t = useT();
+	const updating = useCatalogStore((s) => s.updatingSources[source] === true);
+	const updateConfiguredPackage = useCatalogStore((s) => s.updateConfiguredPackage);
+	return (
+		<button
+			type="button"
+			className="shrink-0 rounded-lg px-2 py-1 text-ui-12 font-medium text-accent transition-colors hover:bg-accent/10 disabled:opacity-60"
+			disabled={updating}
+			onClick={() => void updateConfiguredPackage(source, scope)}
+		>
+			{updating ? (
+				<span className="inline-flex items-center gap-1.5">
+					<span className="h-3 w-3 animate-spin rounded-full border-[1.5px] border-current border-t-transparent" />
+					{t("settings.extensions.updating")}
+				</span>
+			) : (
+				t("settings.extensions.update")
+			)}
+		</button>
+	);
+}
+
+/** 本行最近一次更新的结果；成功后版本号已刷新，这里只补充「何时生效」与失败原因 */
+function UpdateOutcomeLine({ outcome }: { outcome: PackageUpdateOutcome }) {
+	const t = useT();
+	if (outcome.kind === "error")
+		return (
+			<p className="mt-1 break-words text-ui-11 text-red-500">
+				{t("settings.extensions.updateFailed", { message: outcome.message })}
+			</p>
+		);
+	const text =
+		outcome.kind === "updated"
+			? outcome.deferred
+				? t("settings.extensions.updatedToDeferred", { version: outcome.version, count: outcome.deferred })
+				: t("settings.extensions.updatedTo", { version: outcome.version })
+			: outcome.kind === "unchanged"
+				? t("settings.extensions.updateUnchanged")
+				: t("settings.extensions.updateUnsupported");
+	return <p className="mt-1 text-ui-11 text-ink-dim">{text}</p>;
+}
+
 /** 来源作用域 badge：用户级中性色，项目级 accent 系，临时合成最弱 */
 function ScopeBadge({ scope }: { scope: ResourceScope }) {
 	const t = useT();
@@ -105,6 +150,13 @@ export function ExtensionRow({
 	latestVersion?: string;
 }) {
 	const t = useT();
+	const outcome = useCatalogStore((s) => (configured ? s.updateResults[configured.source] : undefined));
+	const hasUpdate = Boolean(
+		latestVersion &&
+			configured?.installedVersion &&
+			isNewerVersion(latestVersion, configured.installedVersion),
+	);
+	const canUpdate = hasUpdate && configured !== null && isUpdatableSource(configured.source);
 	return (
 		<li className="py-2.5">
 			<div className="flex items-center gap-2">
@@ -120,15 +172,16 @@ export function ExtensionRow({
 					</span>
 				)}
 				<ScopeBadge scope={extension.scope} />
-				{latestVersion &&
-					configured?.installedVersion &&
-					isNewerVersion(latestVersion, configured.installedVersion) && (
-						<Tooltip label={t("settings.extensions.updateHint")}>
-							<span className="shrink-0 rounded bg-accent/10 px-1.5 py-0.5 text-ui-10 font-medium text-accent">
-								{t("settings.extensions.updateAvailable", { version: latestVersion })}
-							</span>
-						</Tooltip>
-					)}
+				{hasUpdate && (
+					<Tooltip
+						label={t(canUpdate ? "settings.extensions.updateHint" : "settings.extensions.updatePinnedHint")}
+					>
+						<span className="shrink-0 rounded bg-accent/10 px-1.5 py-0.5 text-ui-10 font-medium text-accent">
+							{t("settings.extensions.updateAvailable", { version: latestVersion as string })}
+						</span>
+					</Tooltip>
+				)}
+				{canUpdate && configured && <UpdateButton source={configured.source} scope={configured.scope} />}
 				{configured && <UninstallButton source={configured.source} scope={configured.scope} />}
 			</div>
 			<div className="mt-0.5 flex flex-wrap items-center gap-x-3 gap-y-1">
@@ -149,6 +202,7 @@ export function ExtensionRow({
 				)}
 			</div>
 			<p className="mt-1 truncate font-mono text-ui-10 text-ink-faint">{extension.path}</p>
+			{outcome && <UpdateOutcomeLine outcome={outcome} />}
 		</li>
 	);
 }
