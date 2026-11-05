@@ -50,6 +50,7 @@ import type {
 	SessionHistoryPage,
 	SessionMessage,
 	SessionMeta,
+	SessionNavigation,
 	SessionStats,
 	SlashCommandInfo,
 	TrustAnswer,
@@ -252,6 +253,11 @@ export const SESSION_CHANNELS = {
 		"environment",
 		"read",
 	)<{ sessionId: string; cursor: string }, SessionHistoryPage>({ sessionId: input.id, cursor: input.id }),
+	getSessionNavigation: ch(
+		"session:navigation",
+		"environment",
+		"read",
+	)<{ sessionId: string }, SessionNavigation>({ sessionId: input.id }),
 	startSessionMediaCompaction: ch(
 		"session:mediaCompact",
 		"environment",

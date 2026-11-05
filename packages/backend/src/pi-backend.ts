@@ -1059,6 +1059,13 @@ export class PiBackend {
 		recordSessionSwitchPayload(baseline);
 		return baseline;
 	}
+	getSessionNavigation(sessionId: string): import("@percho/shared").SessionNavigation {
+		const entry = this.requireSession(sessionId),
+			source = this.sourceSnapshot(entry),
+			live = this.liveTranscripts.get(sessionId) ?? new LiveTranscript(),
+			prefix = live.persistentPrefix(source.branch);
+		return this.historyPager.navigation(source, prefix);
+	}
 	getSessionHistoryPage(sessionId: string, cursor: string): import("@percho/shared").SessionHistoryPage {
 		const entry = this.requireSession(sessionId),
 			source = this.sourceSnapshot(entry);

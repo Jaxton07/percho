@@ -407,6 +407,10 @@ export const en: Messages = {
 		deny: "Do not trust",
 		queued: "{count} more projects awaiting decision",
 	},
+	messageRail: {
+		ariaLabel: "Message navigation",
+		jump: "Jump to this message",
+	},
 	message: {
 		copy: "Copy",
 		copied: "Copied",
@@ -686,9 +690,9 @@ export const en: Messages = {
 		topBar: "Show sessions in the top bar",
 		topBarHint:
 			"The top bar is always there (window dragging, sidebar toggle, current changes). Turn this off and it simply stops showing the temporary-workspace pills — every session stays in the left sidebar.",
-		sessionRail: "Left session rail",
+		sessionRail: "Right session rail",
 		sessionRailHint:
-			"A column of short lines at the left edge of the chat area (off by default): hover or focus expands one into a capsule with its title and status. The rail and the top bar show the same temporary workspace; turning both off clears it (running tasks are unaffected — they just stop being recorded).",
+			"A column of short lines at the right edge of the chat area (off by default): hover or focus expands one leftward into a capsule with its title and status. The rail and the top bar show the same temporary workspace; turning both off clears it (running tasks are unaffected — they just stop being recorded).",
 		centerOrb: "Centered status animation",
 		centerOrbHint:
 			"While a task is running, shows an enlarged status animation at the center of the conversation area (above the text, with a translucent scrim dimming whatever is behind it). Only controls the centered animation — the small orb before the Working/Thinking row always stays.",
