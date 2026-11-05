@@ -25,6 +25,7 @@
 
 ## 浮层与交互
 
+- 会话轨道和外观设置入口暂时隐藏，组件、样式及旧偏好保留，由同一个 UI 可用性标记控制；不清理旧工作区数据。恢复后的轨道位于聊天区右缘、胶囊向左展开并避让 Diff。消息索引独立位于正文左侧，不受此开关影响。
 - fixed 浮层通过 `createPortal(..., document.body)` 挂载。`.edge-fade` 的 mask 会裁剪整个绘制子树，子元素 rect 正确也可能只绘制出一部分。
 - 优先复用 `components/ui/` 的 Tooltip、ContextMenu、ConfirmDialog、Switch 等；新增提示不用原生 title。右缘 Tooltip 用 `align="end"`，避免撑出横向滚动。
 - 弹层尺寸和方向按可用视口夹紧。越界元素的 autoFocus 可能带动根容器程序性横滚；只看截图不够，需验证真实命中与溢出。

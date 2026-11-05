@@ -36,6 +36,7 @@
 }
 
 :root {
+	--diff-sidebar-width: min(420px, 38vw);
 	--color-canvas: #ffffff;
 	--color-surface: #ffffff;
 	/* hover/选中底：中性锌灰，不带蓝调（slate 系 #f1f5f9 偏蓝，已弃） */
@@ -633,14 +634,14 @@ html[data-session-slide] {
 	}
 }
 
-/* 左侧会话轨道（设置 → 外观开关「左侧会话轨道」，默认关）：与顶栏同一份**临时会话工作区**，
+/* 右侧会话轨道（设置 → 外观开关「右侧会话轨道」，默认关）：与顶栏同一份**临时会话工作区**，
    顺序就是工作区顺序。点击按需打开未加载的成员，× = 从工作区移出（不关会话，与顶栏同语义）。
    以下动画细节沿用 v10 定稿（来自 git bcd3e04^）。
 
-   轨道挂在聊天列左缘（App.tsx：main + DockSlot 的父容器），定位基准是 tab bar 以下的整列，
+   轨道挂在聊天列右缘（App.tsx：main + DockSlot 的父容器），定位基准是 tab bar 以下的整列，
    输入框高度变化不压缩它的居中参考系。收起态是纯覆盖层（pointer-events-none），不挤压聊天布局。
 
-   —— v10 定稿的设计说明：聊天页左侧垂直居中一列**直角细线**（codex 风），
+   —— 动画设计：聊天页右侧垂直居中一列**直角细线**，
    悬停/聚焦时原地「变形」为悬浮胶囊，上下邻居按行距分级跟涨成**半大/迷你胶囊**（dock 波浪：
    展开 208×32 → ±1 胶囊 104×24（内容可见、标题裁断） → ±2 迷你空胶囊 44×14 → 细线），
    状态类 is-expanded/is-near-1/is-near-2 由 JS 按行距下发（比 :has 链易控：呼吸/内容显隐按距离精确开关）。
@@ -650,6 +651,16 @@ html[data-session-slide] {
    展开/跟涨 = 先在小尺寸上 90ms 翻色/翻圆角（深色线 → 白胶囊），再回弹放大（340/300/280ms 随档位递减）；
    收起 = 先 260ms 收缩（仍是白胶囊），颜色/圆角延迟 150ms 到接近尾声才变回细线。
    避免旧版「深色线拉长到一半才闪白」的颜色逆变闪烁。 */
+/* 与 Diff 使用同一宽度来源；不挤压正文，窄窗口仅占用仍然可用的聊天区域。 */
+.session-rail {
+	--session-rail-inset: 0px;
+	right: var(--session-rail-inset);
+	width: max(0px, min(288px, calc(100% - var(--session-rail-inset))));
+	container-type: inline-size;
+}
+.session-rail[data-diff-open] {
+	--session-rail-inset: var(--diff-sidebar-width);
+}
 /* 行高波浪：transition 同样取目标态定义（收起走基线 260ms） */
 .session-rail-item {
 	transition: height 260ms cubic-bezier(0.34, 1.15, 0.64, 1);
@@ -668,10 +679,11 @@ html[data-session-slide] {
 }
 .session-rail-item .rail-capsule {
 	position: absolute;
-	left: 6px;
+	right: 6px;
 	top: 50%;
 	display: flex;
 	align-items: center;
+	max-width: max(0px, calc(100cqw - 6px));
 	/* 无 padding：否则 border-box 下收起态高度被 padding 撑成 12px，就不是一条线了。
 	   内距在内容包裹层（JSX 的 px-2.5），收起时随内容一起被 overflow 裁掉 */
 	border-radius: 0;
@@ -696,7 +708,7 @@ html[data-session-slide] {
 	z-index: 4;
 }
 .session-rail-item.is-expanded .rail-capsule {
-	/* 与顶栏胶囊**同宽同圆角**（w-52 + rounded-full，两处是同一个对象，不许飘开）；窄窗口按视口收缩，不越过右缘 */
+	/* 与顶栏胶囊同宽同圆角；从右向左展开，窄空间再由轨道容器的 max-width 约束。 */
 	width: min(208px, calc(100vw - 40px));
 	height: 32px;
 	border-radius: 9999px;
@@ -1634,7 +1646,7 @@ code {
 	inset-block: 0;
 	right: 0;
 	z-index: 30;
-	width: min(420px, 38vw);
+	width: var(--diff-sidebar-width);
 	overflow: hidden;
 	border-radius: 12px 0 0 12px;
 	background: var(--color-canvas);

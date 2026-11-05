@@ -26,7 +26,6 @@ import {
 	loadOlderHistory,
 	loadSessionNavigation,
 } from "../../stores/session-history-paging";
-import { useSessionWorkspaceStore } from "../../stores/session-workspace";
 import { useSessionsStore } from "../../stores/sessions";
 import { selectTranscript, useTranscriptStore } from "../../stores/transcript";
 import { useUiPreferencesStore } from "../../stores/ui-preferences";
@@ -582,9 +581,6 @@ export function MessageList() {
 		}, finish);
 	};
 
-	const sessionRailVisible = useUiPreferencesStore((state) => state.sessionRailEnabled);
-	const sessionRailHasMembers = useSessionWorkspaceStore((state) => state.members.length > 0);
-
 	// Alt+↑/↓：跳到上一/下一条用户消息（参考 pi-gna 的 ⌥↑/⌥↓）。以视口内首轮为基准：
 	// 向下 = 下一轮；向上 = 当前轮开头（已在开头则上一轮）。输入框有内容时让给输入框。
 	useEffect(() => {
@@ -800,7 +796,7 @@ export function MessageList() {
 					nodes={nodes}
 					inView={inView}
 					onJump={jumpToNode}
-					inset={sessionRailVisible && sessionRailHasMembers ? 36 : 0}
+					inset={0}
 					columnRef={contentRef}
 				/>
 				<SelectionToolbar containerRef={scrollRef} />

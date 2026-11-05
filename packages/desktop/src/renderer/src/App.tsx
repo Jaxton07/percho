@@ -162,8 +162,8 @@ export default function App() {
 						data-session-page=""
 						data-session-id={activeSessionId ?? ""}
 					>
-						{/* 左侧会话轨道（临时工作区）：挂在 main + DockSlot 的父容器上，定位基准是 tab bar 以下的整列内容区——
-						    输入框高度变化不压缩它的居中参考系；收起态是纯覆盖层，不占宽、不挤压聊天布局（设置里默认关） */}
+						{/* 会话轨道当前暂停展示，组件内由统一可用性标记控制，代码与旧偏好保留。
+						    挂载点仍在 main + DockSlot 的父容器，恢复后不受输入框高度影响。 */}
 						<SessionRail />
 						{/* 右侧 DiffSidebar 是独立浮层，不参与中间聊天列宽度与布局动画。 */}
 						<main className="relative min-h-0 flex-1">
