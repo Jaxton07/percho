@@ -954,8 +954,19 @@ export const en: Messages = {
 			installed: "Installed",
 			version: "Version {version}",
 			updateAvailable: "v{version} available",
-			updateHint:
-				"A newer version is available on npm. Version information only; updating is not available here yet.",
+			updateHint: "A newer version is available on npm. Update upgrades it in place.",
+			updatePinnedHint:
+				"A newer version is available on npm. This package is pinned to an exact version, so it is not upgraded.",
+			update: "Update",
+			updating: "Updating…",
+			updateAll: "Update all ({count})",
+			updatedTo: "Updated to {version}. Running sessions pick it up after they finish.",
+			updateUnchanged:
+				"The version did not change: it may already be the latest, or npm could not be reached.",
+			updateUnsupported: "The remote runtime is too old to update packages from here.",
+			updateFailed: "Update failed: {message}",
+			updatedToDeferred:
+				"Updated to {version}. {count} running session(s) will pick it up after they finish; other sessions already use it.",
 			npmNotFound:
 				"npm (Node.js package manager) not found. Install Node.js (e.g. brew install node) and restart Percho; if npm lives in a non-standard path, add it to the system PATH and restart.",
 			uninstall: "Uninstall",

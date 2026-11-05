@@ -6,6 +6,7 @@ import type {
 	CatalogSearchResult,
 	ConfiguredPackageInfo,
 	PackageUpdateInfo,
+	PackageUpdateResult,
 } from "@percho/shared";
 import { NPM_NOT_FOUND_SENTINEL, npmSourceToPackageName } from "@percho/shared";
 import { createLogger } from "../log";
@@ -47,6 +48,27 @@ function rethrowPackageError(err: unknown): never {
 	throw err;
 }
 
+/** 重载报告里因正在运行而跳过的会话数（报告形状见 McpReloadReport） */
+function skippedCount(report: unknown): number {
+	const skipped = (report as { skipped?: unknown } | undefined)?.skipped;
+	return Array.isArray(skipped) ? skipped.length : 0;
+}
+
+/**
+ * SDK 1.4 的 `update(source)` 按包名在 user + project 两级里匹配，无法指定只更新哪一级；
+ * 它内部委托的 `updateConfiguredSources([{ source, scope }])` 正好是「只更新这一条」。
+ * shortcut: 私有方法，升级 SDK 时由此处的类型守卫快速失败；SDK 提供按 scope 更新的公开 API 后改用它。
+ */
+async function updateConfiguredSource(
+	manager: DefaultPackageManager,
+	entry: { source: string; scope: "user" | "project" },
+): Promise<void> {
+	// SAFETY: 私有成员不在 .d.ts 里；只读取属性，紧接着用 typeof 确认是函数再调用，签名对照 SDK 1.4 dist 源码
+	const update = (manager as unknown as { updateConfiguredSources?: unknown }).updateConfiguredSources;
+	if (typeof update !== "function") throw new Error("This pi version cannot update a single package scope");
+	await (update as (sources: (typeof entry)[]) => Promise<void>).call(manager, [entry]);
+}
+
 /**
  * pi.dev 社区包管理：目录搜索 + 用户级安装/卸载 + 已配置清单。
  * 装/卸后委托空闲会话热重载；忙碌者跳过，不排队补重载（对齐 CLI /reload）。
@@ -80,11 +102,11 @@ export class PackageAdmin {
 		return { packageManager, settingsManager };
 	}
 
-	/** 读快照、执行、落盘和重载属于同一个写操作；失败不阻塞后续操作。 */
+	/** 读快照、执行、落盘和重载属于同一个写操作；失败不阻塞后续操作。返回重载报告。 */
 	private mutate(
 		context: PackageContext | undefined,
 		action: (manager: DefaultPackageManager) => Promise<void>,
-	) {
+	): Promise<unknown> {
 		const work = this.mutationQueue.then(async () => {
 			try {
 				const { packageManager, settingsManager } = this.createPackageManager(context);
@@ -95,9 +117,12 @@ export class PackageAdmin {
 			} catch (err) {
 				rethrowPackageError(err);
 			}
-			await this.deps.reloadIdleSessions(context?.cwd);
+			return this.deps.reloadIdleSessions(context?.cwd);
 		});
-		this.mutationQueue = work.catch(() => {});
+		this.mutationQueue = work.then(
+			() => {},
+			() => {},
+		);
 		return work;
 	}
 
@@ -144,6 +169,34 @@ export class PackageAdmin {
 			if (!removed) throw new Error(`Package not installed: ${source}`);
 		});
 		log.info("package removed", source, { scope });
+	}
+
+	/**
+	 * 原地更新已配置的 npm 包（在原安装目录 npm install <name>@latest），成功后委托空闲会话重载。
+	 * 只更新这一条 source + scope：SDK 的 `update(source)` 按包名匹配，会把同名的另一级配置一并更新。
+	 * 返回前后版本；未变化（已是最新 / registry 不可达）时 `to === from`，由界面提示而不是报成功。
+	 */
+	async updatePackage(
+		source: string,
+		scope: "user" | "project",
+		context?: PackageContext,
+	): Promise<PackageUpdateResult> {
+		if (scope === "project" && !context) throw new Error("Project package update requires a session");
+		if (!npmSourceToPackageName(source)) throw new Error(`Only npm packages can be updated here: ${source}`);
+		let result: PackageUpdateResult = {};
+		const reload = await this.mutate(scope === "project" ? context : undefined, async (manager) => {
+			const configured = manager
+				.listConfiguredPackages()
+				.find((p) => p.source === source && p.scope === scope);
+			if (!configured) throw new Error(`Package not installed: ${source}`);
+			const from = await this.readInstalledVersion(configured.installedPath);
+			await updateConfiguredSource(manager, { source, scope });
+			result = { from, to: await this.readInstalledVersion(manager.getInstalledPath(source, scope)) };
+		});
+		const deferred = skippedCount(reload);
+		if (deferred) result = { ...result, deferred };
+		log.info("package update", source, { scope, from: result.from, to: result.to });
+		return result;
 	}
 
 	/** 复用 SDK 的路径解析，覆盖项目安装和旧全局安装目录。 */

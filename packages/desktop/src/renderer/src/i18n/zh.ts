@@ -910,7 +910,17 @@ export const zh = {
 			installed: "已安装",
 			version: "版本 {version}",
 			updateAvailable: "可更新 {version}",
-			updateHint: "npm 上有更新版本，当前仅提供版本提示。",
+			updateHint: "npm 上有更新版本，点「更新」在原安装位置升级。",
+			updatePinnedHint: "npm 上有更新版本；这个包配置为固定版本，不会自动升级。",
+			update: "更新",
+			updating: "更新中…",
+			updateAll: "全部更新（{count}）",
+			updatedTo: "已更新到 {version}。正在运行的会话结束后才会加载新版本。",
+			updateUnchanged: "版本没有变化：可能已是最新，或暂时连不上 npm。",
+			updateUnsupported: "远程端版本较旧，不支持在这里更新。",
+			updateFailed: "更新失败：{message}",
+			updatedToDeferred:
+				"已更新到 {version}。{count} 个正在运行的会话结束后才会加载，其他会话已经在用新版本。",
 			npmNotFound:
 				"未检测到 npm（Node.js 包管理器）。请先安装 Node.js（如 brew install node）后重启 Percho；若已安装在非标准路径，请将其加入系统 PATH 后重启",
 			uninstall: "卸载",
