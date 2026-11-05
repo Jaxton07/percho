@@ -2,11 +2,15 @@ import { createHash, randomUUID } from "node:crypto";
 import type { SessionEntry } from "@earendil-works/pi-coding-agent";
 import {
 	messagesToUIMessages,
+	previewExcerpt,
 	type SessionHistoryWindow,
 	type SessionMessage,
+	type SessionNavigation,
+	type SessionNavigationEntry,
 	type UIMessage,
 } from "@percho/shared";
 import { RUNTIME_MESSAGE_BYTES } from "../runtime/frames";
+import { blockImages, blockText, deriveUserMessage } from "./messages";
 import type { SourceSnapshot } from "./source-snapshot";
 
 const TARGET_HISTORY_BYTES = 248 * 1024; // 标准样本目标，保留元数据余量；不强拆大单轮。
@@ -35,13 +39,20 @@ export interface SelectedHistory {
 	uiMessages: UIMessage[];
 	history: SessionHistoryWindow;
 }
-const user = (entry: SessionEntry | undefined) => entry?.type === "message" && entry.message.role === "user";
+const user = (entry: SessionEntry | undefined): entry is Extract<SessionEntry, { type: "message" }> =>
+	entry?.type === "message" && entry.message.role === "user";
 const fail = (message: string): never => {
 	throw new Error(`HISTORY_CURSOR_INVALID: ${message}`);
 };
 
 /** 原始SDK branch先选完整轮次/依赖，再投影；游标只保存三个由entry身份复核的位置，无额外全树索引。 */
 export class SessionHistoryPager {
+	// SDK entries are immutable once appended; weak keys release previews with their source.
+	private readonly navigationUsers = new WeakMap<
+		SessionEntry,
+		Omit<SessionNavigationEntry, "entryId" | "ordinal">
+	>();
+	private readonly navigationReplies = new WeakMap<SessionEntry, string>();
 	private counts = {
 		indexEntries: 0,
 		validatedEntries: 0,
@@ -84,6 +95,43 @@ export class SessionHistoryPager {
 			return fail("invalid cursor fields");
 		return parsed;
 	}
+	/** 只读 user entry 与每轮首段助手正文的轻量导航索引；不投影工具/图片。新鲜度由渲染端 history.generation 驱动重取。 */
+	navigation(view: SourceSnapshot, prefix: readonly SessionEntry[]): SessionNavigation {
+		if (prefix.length > view.branch.length || prefix.at(-1)?.id !== view.branch[prefix.length - 1]?.id)
+			return fail("persistent prefix is not from this source");
+		const entries: SessionNavigationEntry[] = [];
+		const clip = (text: string) => previewExcerpt(text, 120);
+		for (const entry of prefix) {
+			if (entry.type !== "message") continue;
+			const raw = entry.message as import("./messages").RawMessage;
+			if (raw.role === "assistant") {
+				const last = entries.at(-1);
+				if (last && last.reply === undefined) {
+					let reply = this.navigationReplies.get(entry);
+					if (reply === undefined) {
+						reply = clip(blockText(raw.content));
+						this.navigationReplies.set(entry, reply);
+					}
+					if (reply) last.reply = reply;
+				}
+				continue;
+			}
+			if (!user(entry)) continue;
+			let preview = this.navigationUsers.get(entry);
+			if (!preview) {
+				const { text: displayText } = deriveUserMessage(raw);
+				const timestamp = typeof raw.timestamp === "number" ? raw.timestamp : Date.parse(entry.timestamp);
+				preview = {
+					excerpt: clip(displayText),
+					timestamp: Number.isFinite(timestamp) ? timestamp : 0,
+					images: blockImages(raw.content).length,
+				};
+				this.navigationUsers.set(entry, preview);
+			}
+			entries.push({ ...preview, entryId: entry.id, ordinal: entries.length });
+		}
+		return { entries };
+	}
 	tail(
 		view: SourceSnapshot,
 		prefix: readonly SessionEntry[],
@@ -123,6 +171,15 @@ export class SessionHistoryPager {
 		context: Context,
 		project: Project,
 	): SelectedHistory {
+		const parsed = this.validateCursor(view, prefix, cursor, context);
+		return this.select(view, prefix, parsed.beforeAt, parsed, project);
+	}
+	private validateCursor(
+		view: SourceSnapshot,
+		prefix: readonly SessionEntry[],
+		cursor: string,
+		context: Context,
+	): Cursor {
 		const parsed = this.decode(cursor);
 		if (
 			parsed.owner !== view.owner ||
@@ -142,7 +199,7 @@ export class SessionHistoryPager {
 			!user(prefix[parsed.beforeAt])
 		)
 			return fail("branch or page boundary changed");
-		return this.select(view, prefix, parsed.beforeAt, parsed, project);
+		return parsed;
 	}
 	private prefixHash(branch: readonly SessionEntry[], end: number): string {
 		this.counts.validatedEntries += Math.min(end, branch.length);

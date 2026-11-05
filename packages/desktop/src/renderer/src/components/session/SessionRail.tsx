@@ -2,11 +2,13 @@ import type { SessionMeta } from "@percho/shared";
 import { useState } from "react";
 import { useT } from "../../i18n";
 import { isDailyCwd } from "../../lib/daily";
+import { SESSION_RAIL_AVAILABLE } from "../../lib/session-rail-availability";
 import { useListShift } from "../../lib/use-list-shift";
 import { useWorkspaceRemoval } from "../../lib/workspace-actions";
 import { useProjectsStore } from "../../stores/projects";
 import { resolveWorkspaceSessions, useSessionWorkspaceStore } from "../../stores/session-workspace";
 import { useSessionsStore } from "../../stores/sessions";
+import { useUiStore } from "../../stores/ui";
 import { useUiPreferencesStore } from "../../stores/ui-preferences";
 import { CloseIcon, CoffeeIcon, PinIcon } from "../icons";
 import {
@@ -18,7 +20,8 @@ import {
 } from "./session-status";
 
 /**
- * 左侧会话轨道（设置 → 外观「左侧会话轨道」，默认关）：聊天列左缘垂直居中一列短线。
+ * 右侧会话轨道：当前通过 SESSION_RAIL_AVAILABLE 暂停展示，组件和偏好保留。
+ * 恢复后位于聊天列右缘，默认关闭，设置入口与轨道使用同一可用性标记。
  *
  * 数据源与顶栏**同一份临时会话工作区**（`resolveWorkspaceSessions`：tabs 优先、目录兜底）——
  * 因此内存策略卸载掉的成员照样在，顺序就是工作区顺序。点击未加载成员走按需打开，
@@ -32,8 +35,8 @@ import {
  * **行高同步分级撑开**（16 → 40/32/20px = 胶囊 + 留白，同时长同曲线）：按钮在文档流内，
  * 行一撑上下邻居自然让位，胶囊各行其道互不叠压；垂直居中列以悬停项为中心对称「分开」。
  * 收起态是纯覆盖层（pointer-events-none），不挤压聊天布局；胶囊 absolute 于按钮垂直居中。
- * 命中区宽 24px（w-6）：窄窗口（760px）下正文左边缘在 x≈264，24px 的条带正好不蓋住正文；
- * 比它更宽的条带会在窄窗口里抢掉正文首字符的点击/选字（阶段 3 CDP 实测）。
+ * 命中区宽 24px（w-6），胶囊向左展开，不扩大收起态的指针遮挡。
+ * Diff 浮层打开时沿其左缘避让；可用空间不足时裁剪到聊天区域，不覆盖左侧栏。
  * 动画细节与档位曲线见 styles/globals.css 的 `.session-rail-item*`（v10 定稿搬回）。
  */
 export function SessionRail() {
@@ -41,7 +44,7 @@ export function SessionRail() {
 	const members = useSessionWorkspaceStore((s) => s.members);
 	const sessions = useSessionsStore((s) => s.sessions);
 	const allSessions = useProjectsStore((s) => s.allSessions);
-	if (!enabled || members.length === 0) return null;
+	if (!SESSION_RAIL_AVAILABLE || !enabled || members.length === 0) return null;
 	return <SessionRailInner members={members} sessions={sessions} allSessions={allSessions} />;
 }
 
@@ -61,6 +64,7 @@ function SessionRailInner({
 }) {
 	const t = useT();
 	const activeSessionId = useSessionsStore((s) => s.activeSessionId);
+	const diffSidebarOpen = useUiStore((s) => s.diffSidebarOpen);
 	const openSession = useProjectsStore((s) => s.openSession);
 	const removeFromWorkspace = useWorkspaceRemoval();
 	const [expandedId, setExpandedId] = useState<string | null>(null);
@@ -86,14 +90,19 @@ function SessionRailInner({
 	};
 
 	return (
-		<nav className="pointer-events-none absolute inset-y-0 left-0 z-30" aria-label={t("rail.ariaLabel")}>
-			{/* 容器只占视口外沿 288px 且不接指针：短线按钮列（w-8）单独可点可滚；胶囊向右浮出被 x 裁剪在容器内 */}
+		<nav
+			className="session-rail pointer-events-none absolute inset-y-0 z-30"
+			data-session-rail=""
+			data-diff-open={diffSidebarOpen || undefined}
+			aria-label={t("rail.ariaLabel")}
+		>
+			{/* 仅右缘 24px 短线可命中；胶囊朝左展开，宽度受当前可用空间约束。 */}
 			<div
 				ref={listShiftRef}
-				className="h-full w-[288px] overflow-y-auto overflow-x-hidden [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
+				className="h-full w-full overflow-y-auto overflow-x-hidden [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
 			>
 				{/* min-h-full + justify-center：不足一屏时垂直居中，超出时自然撑开从顶部滚动；无 gap、行高 16px 的紧凑间距 */}
-				<div className="flex min-h-full flex-col justify-center py-6">
+				<div className="flex min-h-full flex-col items-end justify-center py-6">
 					{items.map((session, index) => (
 						<RailItem
 							key={session.sessionId}

@@ -6,6 +6,7 @@ import {
 	executionContract,
 	type MutationReceipt,
 	type MutationReference,
+	OPTIONAL_EXECUTION_METHODS,
 	REMOTE_PROTOCOL_VERSION,
 	type RuntimeInfo,
 	type SshPreflight,
@@ -42,7 +43,9 @@ function checkContract(info: RuntimeInfo): void {
 		info.eventContract !== expected.eventContract ||
 		!Array.isArray(info.methods) ||
 		!Array.isArray(info.subscriptions) ||
-		!expected.methods.every((method) => info.methods.includes(method)) ||
+		!expected.methods
+			.filter((method) => !(OPTIONAL_EXECUTION_METHODS as readonly string[]).includes(method))
+			.every((method) => info.methods.includes(method)) ||
 		!expected.subscriptions.every((method) => info.subscriptions.includes(method))
 	)
 		throw new Error("Remote runtime has an incompatible execution/event contract");

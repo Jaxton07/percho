@@ -1,4 +1,4 @@
-import type { SessionHistoryPage } from "@percho/shared";
+import type { SessionHistoryPage, SessionHistoryWindow, SessionNavigation } from "@percho/shared";
 import { getExecutionApi } from "../environment-api";
 import { isSessionSynchronizing } from "./session-event-boundary";
 import { historyOpenEpoch } from "./session-history";
@@ -6,8 +6,36 @@ import { useTranscriptStore } from "./transcript";
 
 const inFlight = new Map<
 	string,
-	{ generation: string; cursor: string; opening: number; promise: Promise<void> }
+	{
+		history: SessionHistoryWindow;
+		cursor: string;
+		opening: number;
+		promise: Promise<unknown>;
+	}
 >();
+
+function sameSource(a: SessionHistoryWindow | undefined, b: SessionHistoryWindow): boolean {
+	return (
+		a?.generation === b.generation &&
+		a.sourceVersion === b.sourceVersion &&
+		a.hydrationToken === b.hydrationToken
+	);
+}
+
+function isCurrent(
+	sessionId: string,
+	opening: number,
+	history: SessionHistoryWindow,
+	cursor?: string,
+): boolean {
+	const current = useTranscriptStore.getState().bySession[sessionId]?.history;
+	return (
+		!isSessionSynchronizing(sessionId) &&
+		historyOpenEpoch(sessionId) === opening &&
+		sameSource(current, history) &&
+		(cursor === undefined || current?.cursor === cursor)
+	);
+}
 
 /** 旧页只推进同一安装代的历史边界；绝不安装活动态、队列、权限或发送ACK。 */
 export function installOlderHistory(
@@ -55,6 +83,22 @@ export function installOlderHistory(
 }
 
 /** 同一页单飞；同SID被replace后可读取新代，旧回应/失败/finally都不能碰新请求。 */
+export function loadSessionNavigation(sessionId: string): Promise<SessionNavigation | null> {
+	const opening = historyOpenEpoch(sessionId),
+		generation = useTranscriptStore.getState().bySession[sessionId]?.history?.generation;
+	return Promise.resolve()
+		.then(() => getExecutionApi(sessionId).getSessionNavigation({ sessionId }))
+		.then((navigation) => {
+			const current = useTranscriptStore.getState().bySession[sessionId]?.history;
+			if (historyOpenEpoch(sessionId) !== opening || current?.generation !== generation) return null;
+			return navigation;
+		})
+		.catch((error: unknown) => {
+			if (import.meta.env.DEV) console.debug("Session navigation unavailable", error);
+			return null;
+		});
+}
+
 export function loadOlderHistory(sessionId: string, beforePrepend?: () => void): Promise<void> {
 	if (isSessionSynchronizing(sessionId)) return Promise.resolve();
 	const history = useTranscriptStore.getState().bySession[sessionId]?.history,
@@ -63,11 +107,12 @@ export function loadOlderHistory(sessionId: string, beforePrepend?: () => void):
 	const opening = historyOpenEpoch(sessionId),
 		previous = inFlight.get(sessionId);
 	if (
-		previous?.generation === history.generation &&
+		previous &&
+		sameSource(previous.history, history) &&
 		previous.cursor === cursor &&
 		previous.opening === opening
 	)
-		return previous.promise;
+		return previous.promise as Promise<void>;
 	const generation = history.generation;
 	useTranscriptStore.setState((state) => {
 		const current = state.bySession[sessionId];
@@ -81,11 +126,11 @@ export function loadOlderHistory(sessionId: string, beforePrepend?: () => void):
 	});
 	const promise = Promise.resolve()
 		.then(() => {
-			if (historyOpenEpoch(sessionId) !== opening) throw new Error("HISTORY_PAGE_OBSOLETE");
+			if (!isCurrent(sessionId, opening, history, cursor)) throw new Error("HISTORY_PAGE_OBSOLETE");
 			return getExecutionApi(sessionId).getSessionHistoryPage({ sessionId, cursor });
 		})
 		.then((page) => {
-			if (historyOpenEpoch(sessionId) !== opening) return;
+			if (!isCurrent(sessionId, opening, history, cursor)) return;
 			const installed = installOlderHistory(sessionId, generation, cursor, page, beforePrepend);
 			const current = useTranscriptStore.getState().bySession[sessionId]?.history;
 			if (
@@ -97,7 +142,7 @@ export function loadOlderHistory(sessionId: string, beforePrepend?: () => void):
 				throw new Error("HISTORY_PAGE_STALE: reload the current history baseline");
 		})
 		.catch((error: unknown) => {
-			if (isSessionSynchronizing(sessionId) || historyOpenEpoch(sessionId) !== opening) return;
+			if (!isCurrent(sessionId, opening, history, cursor)) return;
 			useTranscriptStore.setState((state) => {
 				const current = state.bySession[sessionId];
 				if (current?.history?.generation !== generation || current.history.cursor !== cursor) return state;
@@ -120,6 +165,37 @@ export function loadOlderHistory(sessionId: string, beforePrepend?: () => void):
 		.finally(() => {
 			if (inFlight.get(sessionId)?.promise === promise) inFlight.delete(sessionId);
 		});
-	inFlight.set(sessionId, { generation, cursor, opening, promise });
+	inFlight.set(sessionId, { history, cursor, opening, promise });
 	return promise;
+}
+
+export async function loadHistoryThrough(
+	sessionId: string,
+	entryId: string,
+	beforePrepend?: () => void,
+	intentIsCurrent: () => boolean = () => true,
+): Promise<boolean> {
+	const history = useTranscriptStore.getState().bySession[sessionId]?.history;
+	if (!history || !intentIsCurrent() || isSessionSynchronizing(sessionId)) return false;
+	const opening = historyOpenEpoch(sessionId);
+	const seen = new Set<string>();
+	while (isCurrent(sessionId, opening, history) && intentIsCurrent()) {
+		const current = useTranscriptStore.getState().bySession[sessionId];
+		if (current?.messages.some((message) => "entryId" in message && message.entryId === entryId)) return true;
+		const cursor = current?.history?.cursor;
+		if (!current?.history?.hasOlder || !cursor || seen.has(cursor)) return false;
+		seen.add(cursor);
+		const count = current.messages.length;
+		await loadOlderHistory(sessionId, () => {
+			if (intentIsCurrent() && isCurrent(sessionId, opening, history)) beforePrepend?.();
+		});
+		if (!isCurrent(sessionId, opening, history) || !intentIsCurrent()) return false;
+		const next = useTranscriptStore.getState().bySession[sessionId];
+		if (next?.messages.some((message) => "entryId" in message && message.entryId === entryId)) return true;
+		if (next?.historyFetch?.error || next?.history?.cursor === cursor || next?.messages.length === count)
+			return false;
+		await new Promise<void>((resolve) => setTimeout(resolve, 0));
+		if (!isCurrent(sessionId, opening, history) || !intentIsCurrent()) return false;
+	}
+	return false;
 }

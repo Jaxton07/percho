@@ -522,6 +522,19 @@ export interface SessionHistoryPage {
 	messages: import("./transcript").UIMessage[];
 	history: import("./session-history").SessionHistoryWindow;
 }
+export interface SessionNavigationEntry {
+	entryId: string;
+	ordinal: number;
+	excerpt: string;
+	timestamp: number;
+	images: number;
+	/** 本轮助手首段正文摘要（≤120 字）；该轮还没有助手正文或旧远端不提供时缺省 */
+	reply?: string;
+}
+/** 当前分支全部 user 消息的轻量导航索引；新鲜度由渲染端 history.generation 判断。 */
+export interface SessionNavigation {
+	entries: SessionNavigationEntry[];
+}
 export interface SessionBaseline {
 	/** 只对本次注册实例有效，与跨GC图片revision分离。 */
 	hydrationToken: string;

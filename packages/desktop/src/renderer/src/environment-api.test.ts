@@ -28,6 +28,7 @@ const fixture = vi.hoisted(() => {
 			openSession: vi.fn(async () => meta),
 			getSessionMessages: vi.fn(async (): Promise<unknown[]> => []),
 			getSessionHistoryPage: vi.fn(async (): Promise<unknown> => ({ messages: [], history: {} })),
+			getSessionNavigation: vi.fn(async (): Promise<unknown> => ({ generation: "generation", entries: [] })),
 			getSessionImage: vi.fn(async () => ({ data: "cmVtb3Rl", mimeType: "image/png" })),
 			setViewedSubagent: vi.fn(async () => {}),
 			getSessionBaseline: vi.fn(
@@ -127,6 +128,17 @@ const remote: EnvironmentRef = { kind: "ssh", connectionId: "company", environme
 const disposers: Array<() => void> = [];
 
 describe("媒体维护的执行环境边界", () => {
+	it("远端导航请求只解包会话 ID，entryId 保持原始身份", async () => {
+		const navigation = {
+			generation: "g",
+			entries: [{ entryId: "native-entry", ordinal: 0, excerpt: "text", timestamp: 1, images: 0 }],
+		};
+		fixture.remote.getSessionNavigation.mockResolvedValueOnce(navigation);
+		const sessionId = environmentEntityKey(remote, "same-id"),
+			result = await getExecutionApi(remote).getSessionNavigation({ sessionId });
+		expect(fixture.remote.getSessionNavigation).toHaveBeenCalledExactlyOnceWith({ sessionId: "same-id" });
+		expect(result).toEqual(navigation);
+	});
 	it("远端仅解包文件定位，不转换事务的原始幂等请求ID", async () => {
 		const api = getExecutionApi(remote);
 		const requestId = "maintenance-request";
@@ -301,6 +313,10 @@ beforeEach(() => {
 	fixture.remote.getSessionMessages.mockResolvedValue([]);
 	fixture.remote.getSessionHistoryPage.mockReset().mockResolvedValue({ messages: [], history: {} });
 	fixture.local.getSessionHistoryPage.mockReset().mockResolvedValue({ messages: [], history: {} });
+	fixture.remote.getSessionNavigation
+		.mockReset()
+		.mockResolvedValue({ generation: "generation", entries: [] });
+	fixture.local.getSessionNavigation.mockReset().mockResolvedValue({ generation: "generation", entries: [] });
 	fixture.remote.getSessionImage.mockReset().mockResolvedValue({ data: "cmVtb3Rl", mimeType: "image/png" });
 	for (const session of useSessionsStore.getState().sessions) clearSessionHistory(session.sessionId);
 	useSessionsStore.setState({

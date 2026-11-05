@@ -42,6 +42,10 @@ node scripts/shoot-sidebar.mjs both .local/tmp/ui-review
 
 `cdp-shot.mjs` 用于页面截图；`shoot-sidebar.mjs` 是动画逐帧模板。专项脚本查 `scripts/check-*`、`verify-*`、`shoot-*` 的文件头，那里定义参数、退出码、夹具清理与安全前提。
 
+对话导航和流式对照使用 `scripts/check-conversation-minimap.mjs --help`；固定合成历史在 `scripts/fixtures/conversation-minimap.mjs`，汇总用 `scripts/report-conversation-minimap.mjs`（只合并同版本、同构建模式的样本）。采集器先校验 `MINIMAP_OWNER`、agent/userData、源码目录与调试端口，不拥有也不关闭外部启动的 Electron，调用方必须负责清理。主进程合成事件经真实 preload/事件桥，不包括模型或网络耗时；切换动作到两次 rAF 不是 OS 最终呈现时间。
+
+构建版使用 `scripts/prepare-conversation-minimap-host.mjs --help` 冻结到任务目录，再以采集器 `--module` 连接。诊断导出只追加到复制的 JS，不修改发布产物；当前外壳复制仅支持 macOS，结果属于 built-renderer，不等同签名安装包、Windows 或真实 SSH 验收。准备脚本也不拥有运行中的实例。
+
 窗口被遮挡/最小化时 `document.hidden` 可能为 true，rAF 与滚动事件会停摆。脚本连接后先调用 `Emulation.setFocusEmulationEnabled({ enabled: true })`，不要让等待 rAF 的脚本无限挂住。
 
 ## 确定性截图

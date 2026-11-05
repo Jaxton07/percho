@@ -6,6 +6,7 @@ import { CHANNEL_TABLE, SUBSCRIPTION_TABLE } from "./ipc-channels";
 export const REMOTE_PROTOCOL_VERSION = 3;
 export const REMOTE_OUTCOME_UNKNOWN = "[PERCHO_REMOTE_OUTCOME_UNKNOWN]";
 export const EXECUTION_EVENT_CONTRACT_VERSION = 7;
+export const OPTIONAL_EXECUTION_METHODS = ["getSessionNavigation"] as const;
 export function executionContract() {
 	return {
 		eventContract: EXECUTION_EVENT_CONTRACT_VERSION,
