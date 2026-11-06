@@ -75,7 +75,7 @@ import type {
 } from "./settings";
 import type { StorageStartupAction, StorageStartupState } from "./storage-startup";
 import type { TodoItem } from "./todo";
-import type { TurnSpeedInfo } from "./transcript";
+import type { TurnSpeedSnapshot } from "./transcript";
 import type { UiPluginInfo, UiPluginManifest, UiPluginsConfig, UiPluginsEventPayload } from "./ui-plugins";
 import type { UpdateState } from "./update";
 import type { UpdateDiagnosticsInfo } from "./update-diagnostics";
@@ -359,12 +359,12 @@ export const SESSION_CHANNELS = {
 		"environment",
 		"read",
 	)<{ sessionId: string }, ContextUsageInfo | null>({ sessionId: input.id }),
-	/** 当前轮 token 生成速度（Σ 输出 token ÷ Σ 生成耗时；无有效样本返回 null） */
+	/** Token 生成速度快照：当前轮 + 最近 40 轮 + 全会话累计（api 口径；无有效样本的轮不入列表） */
 	getTurnSpeed: ch(
 		"session:getTurnSpeed",
 		"environment",
 		"read",
-	)<{ sessionId: string }, TurnSpeedInfo | null>({ sessionId: input.id }),
+	)<{ sessionId: string }, TurnSpeedSnapshot>({ sessionId: input.id }),
 	/** 清空运行中排队的消息，返回被清内容（还原草稿用） */
 	clearQueue: ch(
 		"session:clearQueue",
