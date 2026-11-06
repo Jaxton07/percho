@@ -81,16 +81,57 @@ declare module "@percho/plugin-api" {
 		percent: number | null;
 	}
 
-	/** 当前轮 token 生成速度（useTurnSpeed 返回值；speed = outputTokens ÷ (durationMs/1000)） */
-	export interface TurnSpeedInfo {
-		/** 轮内 Σ 输出 token（API 权威值，非估算） */
+	/** 一组 LLM 消息的聚合速度（speed = null ⇒ 无有效样本） */
+	export interface SpeedAggregate {
+		/** Σ 输出 token（API 权威值，非估算） */
 		outputTokens: number;
-		/** 轮内 Σ 生成耗时（ms）；逐消息实测，不含工具执行/排队 */
+		/** Σ api 时长（ms）：含 prefill/网络，不含工具执行/排队 */
 		durationMs: number;
-		/** tok/s */
-		speed: number;
+		/** Σ prompt 规模（input + cacheRead + cacheWrite） */
+		promptTokens: number;
 		/** 有效样本数（计入的 LLM 消息条数） */
 		samples: number;
+		speed: number | null;
+	}
+
+	/** 一轮的速度（turnIndex 与轮末计时器同规则，从 0 计） */
+	export interface SpeedTurn extends SpeedAggregate {
+		turnIndex: number;
+		/** 本轮最后一个有 model 的样本 */
+		model?: string;
+	}
+
+	/**
+	 * token 生成速度视图（useTurnSpeed 返回值）。
+	 * 口径必须可辨：api 含 prefill/网络（长 prompt 轮可低 30%+），decode 已剔除 prefill；
+	 * wall 口径（含工具执行/排队）不在本视图内，实测会稀释 ≈7×。
+	 */
+	export interface TurnSpeedView {
+		/** 展示口径：decode = 已用实测 TTFT 剔除 prefill；api = 含 prefill/网络 */
+		metric: "decode" | "api";
+		/** metric 对应的速度（tok/s） */
+		speed: number;
+		apiSpeed: number | null;
+		decodeSpeed: number | null;
+		/** metric 口径的分子（token）与分母（ms） */
+		outputTokens: number;
+		durationMs: number;
+		/** 当前轮 Σ api 时长；Σ 实测 prefill（null = 本轮无可拆分样本） */
+		apiMs: number;
+		prefillMs: number | null;
+		promptTokens: number;
+		samples: number;
+		model?: string;
+		/** 本轮是否仍在生成 */
+		live: boolean;
+		/** 流式期间累计估算 token（非权威，仅供“正在生成”动态指示） */
+		liveTokens: number | null;
+		/** 流式期间滚动窗口速率（估算 tok/s） */
+		liveSpeed: number | null;
+		/** 最近若干轮（含当前轮）；历史轮同样有速度 */
+		turns: SpeedTurn[];
+		/** 全会话累计 */
+		session: SpeedAggregate;
 	}
 
 	/** opencode-go 套餐额度窗口 key（5h 滚动 / 日历周 / 计费月） */
@@ -182,8 +223,11 @@ declare module "@percho/plugin-api" {
 		useContextUsage(sessionId: string | null): ContextUsageInfo | null;
 		/** opencode-go 套餐额度（全局；无 key/无订阅返回 null，插件应隐藏；turn 结束刷新 + 60s 轮询）——额度圆环用 */
 		useQuota(): QuotaInfo | null;
-		/** 当前轮 token 生成速度（事件驱动刷新：assistant message_end/turn_end/agent_settled/session_info_changed/compaction_end；无有效样本返回 null，插件应隐藏）——token 速度用 */
-		useTurnSpeed(sessionId: string | null): TurnSpeedInfo | null;
+		/**
+		 * token 生成速度（事件驱动刷新：assistant message_end/turn_end/agent_settled/session_info_changed/
+		 * compaction_end；流式期间另有 live 估算每 500ms 刷新）。返回 null = 无任何可用数据（含 live），
+		 * 插件应隐藏。展示时必须标出口径（metric），api 与 decode 不可裸比较。——token 速度用 */
+		useTurnSpeed(sessionId: string | null): TurnSpeedView | null;
 		/** 当前界面语言（"zh" | "en"）——插件自有文案跟随中英 */
 		useLanguage(): "zh" | "en";
 	};

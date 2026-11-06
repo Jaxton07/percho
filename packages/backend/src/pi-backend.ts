@@ -60,7 +60,7 @@ import type {
 	TrustAnswer,
 	TrustRequest,
 	TrustResolved,
-	TurnSpeedInfo,
+	TurnSpeedSnapshot,
 } from "@percho/shared";
 import {
 	type ComposerDocument,
@@ -2202,38 +2202,51 @@ export class PiBackend {
 	}
 
 	/**
-	 * 当前轮 token 生成速度：最后一条 user 消息之后的 assistant 消息（轮边界规则与
-	 * deriveTurnTimings 一致——依赖 toBranchSessionMessages 对 user entry 的 1:1 无过滤映射，
-	 * 若 UI 层将来过滤 user 消息，两处需同步）→ deriveTurnSpeed 聚合（Σ usage.output ÷ Σ durationMs，
-	 * 逐消息生成耗时，不含工具执行/排队/失败重试）。null = 无有效样本（宁缺勿错）。
+	 * Token 生成速度快照（token 速度组件数据源）：整条分支按 user entry 切轮 → 逐轮取 assistant
+	 * 原始字段（usage.output / durationMs / usage 规模 / model）→ shared deriveTurnSpeed 聚合。
+	 *
+	 * 口径与样本过滤全在 deriveTurnSpeed（api 口径：Σ output ÷ Σ durationMs，不含工具执行/排队；
+	 * decode 口径由渲染端用实测 TTFT 拆分，见 use-turn-speed）。返回 { current, turns, session }：
+	 * current = 最后一轮（null = 无有效样本，宁缺勿错），turns = 最近 40 轮（历史轮也有速度），
+	 * session = 全会话累计。O(branch) 单趟；调用频率 = assistant message_end / turn_end / settled。
 	 */
-	async getTurnSpeed(sessionId: string): Promise<TurnSpeedInfo | null> {
+	async getTurnSpeed(sessionId: string): Promise<TurnSpeedSnapshot> {
 		const entry = this.requireSession(sessionId);
 		const branch = entry.session.sessionManager.getBranch();
-		// 轮边界 = 最后一条 user 消息；找不到则从分支头取（无 user 的分支没有 assistant 样本）
-		let start = 0;
-		for (let i = branch.length - 1; i >= 0; i--) {
-			const item = branch[i];
-			if (item?.type === "message" && item.message.role === "user") {
-				start = i + 1;
-				break;
+		const turns: TurnSpeedSample[][] = [];
+		let current: TurnSpeedSample[] | undefined;
+		const tokenCount = (value: unknown): number => (typeof value === "number" && value > 0 ? value : 0);
+		for (const item of branch) {
+			if (item.type !== "message") continue;
+			const message = item.message;
+			if (message.role === "user") {
+				current = [];
+				turns.push(current);
+				continue;
 			}
-		}
-		const samples: TurnSpeedSample[] = [];
-		for (const item of branch.slice(start)) {
-			if (item.type !== "message" || item.message.role !== "assistant") continue;
-			const message = item.message as {
+			if (message.role !== "assistant" || !current) continue; // 首条 user 之前的消息不计
+			const raw = message as {
 				stopReason?: string;
-				usage?: { output?: unknown };
+				model?: string;
+				provider?: string;
+				usage?: { output?: unknown; input?: unknown; cacheRead?: unknown; cacheWrite?: unknown };
 				durationMs?: unknown;
 			};
-			samples.push({
-				output: message.usage?.output,
-				durationMs: message.durationMs,
-				stopReason: message.stopReason,
+			const usage = raw.usage;
+			const promptTokens =
+				usage === undefined
+					? undefined
+					: tokenCount(usage.input) + tokenCount(usage.cacheRead) + tokenCount(usage.cacheWrite);
+			current.push({
+				output: usage?.output,
+				durationMs: raw.durationMs,
+				stopReason: raw.stopReason,
+				...(promptTokens === undefined ? {} : { promptTokens }),
+				model: raw.model,
+				provider: raw.provider,
 			});
 		}
-		return deriveTurnSpeed(samples);
+		return deriveTurnSpeed(turns);
 	}
 
 	/** opencode-go 套餐额度（实现在 settings/quota.ts：TTL 缓存 + 官方 API） */
