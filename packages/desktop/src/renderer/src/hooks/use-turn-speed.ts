@@ -1,5 +1,5 @@
 import type { LiveEstimate, TurnSpeedSnapshot, TurnSpeedView } from "@percho/shared";
-import { buildTurnSpeedView, estimateStreamingTokens } from "@percho/shared";
+import { buildTurnSpeedView, estimateStreamingTokens, toSpeedMessage } from "@percho/shared";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { getExecutionApi } from "../environment-api";
 import { useTranscriptStore } from "../stores/transcript";
@@ -39,19 +39,35 @@ export function useTurnSpeed(sessionId: string | null): TurnSpeedView | null {
 	/** 本 hook 观测到的逐条 prefill（ms）；null = 该条没观测到首 delta */
 	const ttftRef = useRef<(number | null)[]>([]);
 	const generationRef = useRef(0);
+	const inFlightRef = useRef(false);
+	const pendingRef = useRef(false);
 
+	/**
+	 * 权威快照刷新（合并并发请求）：message_end 与 turn_end 常同时到达，长会话每次都要遍历分支，
+	 * 因此在途期间只置 pending，回来后补一轮——保证最后一拍（agent_settled）不被丢弃。
+	 */
 	const refresh = useCallback(async () => {
-		const generation = ++generationRef.current;
-		if (!sessionId) {
-			setSnapshot(null);
+		if (inFlightRef.current) {
+			pendingRef.current = true;
 			return;
 		}
-		try {
-			const next = await getExecutionApi(sessionId).getTurnSpeed({ sessionId });
-			if (generation === generationRef.current) setSnapshot(next);
-		} catch {
-			if (generation === generationRef.current) setSnapshot(null);
+		inFlightRef.current = true;
+		for (;;) {
+			pendingRef.current = false;
+			const generation = ++generationRef.current;
+			if (!sessionId) {
+				setSnapshot(null);
+				break;
+			}
+			try {
+				const next = await getExecutionApi(sessionId).getTurnSpeed({ sessionId });
+				if (generation === generationRef.current) setSnapshot(next);
+			} catch {
+				if (generation === generationRef.current) setSnapshot(null);
+			}
+			if (!pendingRef.current) break;
 		}
+		inFlightRef.current = false;
 	}, [sessionId]);
 
 	useEffect(() => {
@@ -89,6 +105,24 @@ export function useTurnSpeed(sessionId: string | null): TurnSpeedView | null {
 			}
 			if (event.type === "message_end") {
 				if (event.message.role !== "assistant") return;
+				// 槽位必须与后端样本数组同规则：失败尝试/零输出被后端过滤，这里也不能占位，
+				// 否则尾部对齐会错位（重试轮的 prefill 会被安到别的消息上）
+				const raw = event.message as unknown as {
+					usage?: { output?: unknown };
+					durationMs?: unknown;
+					stopReason?: unknown;
+				};
+				if (
+					toSpeedMessage({
+						output: raw.usage?.output,
+						durationMs: raw.durationMs,
+						stopReason: raw.stopReason,
+					}) === null
+				) {
+					firstDeltaAt = undefined;
+					void refresh();
+					return;
+				}
 				// pi 定义：assistant.timestamp = 请求发起时刻；同机同源可比，跨机不可比（split 落空）
 				const startedAt = event.message.timestamp;
 				const observedAt = firstDeltaAt;
@@ -99,7 +133,7 @@ export function useTurnSpeed(sessionId: string | null): TurnSpeedView | null {
 				void refresh();
 				return;
 			}
-			if (REFRESH_EVENTS.has(event.type)) void refresh();
+			if (REFRESH_EVENTS.has(event.type)) refresh();
 		});
 		return off;
 	}, [sessionId, refresh]);
