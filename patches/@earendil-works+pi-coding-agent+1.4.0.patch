@@ -58,7 +58,7 @@ diff --git a/node_modules/@earendil-works/pi-coding-agent/dist/core/agent-sessio
 diff --git a/node_modules/@earendil-works/pi-coding-agent/dist/core/agent-session.js b/node_modules/@earendil-works/pi-coding-agent/dist/core/agent-session.js
 --- a/node_modules/@earendil-works/pi-coding-agent/dist/core/agent-session.js
 +++ b/node_modules/@earendil-works/pi-coding-agent/dist/core/agent-session.js
-@@ -212,7 +212,211 @@
+@@ -212,7 +212,214 @@
          });
          if (this._usesDefaultTools)
              this._restoreToolsFromTranscript(this._defaultToolModifiers);
@@ -71,7 +71,7 @@ diff --git a/node_modules/@earendil-works/pi-coding-agent/dist/core/agent-sessio
 +        this.agent.onPendingCommitted = policy ? (messages) => {
 +            if (messages.some((m) => m.role === "user")) this._overflowRecoveryAttempted = false;
 +            this._hostRequestPending = [];
-+            this._hostRequestRoute = undefined;
++            // Keep the dispatch route for usage display until its first reply or the next request.
 +            this._hostPendingBaseline = undefined;
 +            this._emitQueueUpdate();
 +        } : undefined;
@@ -193,7 +193,7 @@ diff --git a/node_modules/@earendil-works/pi-coding-agent/dist/core/agent-sessio
 +            }
 +        }
 +        if (!this._hostSnapshotIsCurrent(baseline, signal)) return;
-+        this._hostRequestRoute = { selection, route };
++        this._hostRequestRoute = { selection, route, baseline: this._hostSnapshot() };
 +    }
 +    async _prepareHostPending(request, signal) {
 +        let raw = this.agent.orderPendingMessages([
@@ -229,6 +229,9 @@ diff --git a/node_modules/@earendil-works/pi-coding-agent/dist/core/agent-sessio
 +        }
 +        const candidate = this._hostCandidates(raw);
 +        this._hostPendingBaseline = this._hostSnapshot();
++        if (this._hostRequestRoute && !this._hostPause
++            && this._hostRequestRoute.baseline.generation === this._hostGeneration)
++            this._hostRequestRoute.baseline = this._hostPendingBaseline;
 +        return { pendingMessages: raw, messages: candidate.messages,
 +            context: { ...request.context, messages: candidate.projection.messages },
 +            model: this.model, thinkingLevel: this.thinkingLevel,
@@ -279,7 +282,7 @@ diff --git a/node_modules/@earendil-works/pi-coding-agent/dist/core/agent-sessio
              return { ...context, messages: projection.messages };
          }
          await this._runAutoCompaction("threshold", false);
-@@ -451,9 +655,37 @@
+@@ -451,9 +655,38 @@
                  }, signal);
                  return { previous, context: previous?.context ?? canonicalContext, projection };
              };
@@ -306,6 +309,7 @@ diff --git a/node_modules/@earendil-works/pi-coding-agent/dist/core/agent-sessio
 +                    this._notifyHostResult({ status: "context-changed" });
 +                    return { action: "end" };
 +                }
++                if (routed) routed.baseline = this._hostSnapshot();
 +                await this._checkHostRequest(this._hostRequestPending ?? [], signal, false, routed?.route.model ?? model);
 +                if (this._hostPause || signal?.aborted || this._agentRunAbortRequested || this._hostDisposed) return { action: "end" };
 +                this._hostCompactedForRequest = false;
@@ -711,7 +715,7 @@ diff --git a/node_modules/@earendil-works/pi-coding-agent/dist/core/agent-sessio
                      branchEntries: pathEntries,
                      customInstructions: undefined,
                      reason,
-@@ -2583,6 +2938,12 @@
+@@ -2583,6 +2938,13 @@
                  details = compactResult.details;
              }
              abortController.signal.throwIfAborted();
@@ -722,6 +726,7 @@ diff --git a/node_modules/@earendil-works/pi-coding-agent/dist/core/agent-sessio
 +                throw error;
 +            }
              this.sessionManager.appendCompaction(summary, firstKeptEntryId, tokensBefore, details, fromExtension, usage);
++            if (host && this._hostRequestRoute) this._hostRequestRoute.baseline = this._hostSnapshot();
              const newEntries = this.sessionManager.getEntries();
              this._refreshFinalizedContext();
 @@ -2607,6 +2968,10 @@
@@ -754,6 +759,18 @@ diff --git a/node_modules/@earendil-works/pi-coding-agent/dist/core/agent-sessio
          const oldRunner = this._extensionRunner;
          const previousFlagValues = oldRunner.getFlagValues();
          await emitSessionShutdownEvent(oldRunner, { type: "session_shutdown", reason: "reload" });
+@@ -3500,5 +3875,10 @@
+     getContextUsage() {
+-        const model = this._limitsModel();
++        const routed = this._hostRequestRoute;
++        const baseline = routed?.baseline;
++        const model = routed && baseline && routed.selection === this.model && baseline.model === this.model
++            && baseline.generation === this._hostGeneration
++            && baseline.leaf === this.sessionManager.getLeafId()
++            ? routed.route.model : this._limitsModel();
+         if (!model)
+             return undefined;
+         const contextWindow = model.contextWindow ?? 0;
 @@ -3524,7 +3894,7 @@
              if (!hasPostCompactionUsage)
                  return { tokens: null, contextWindow, percent: null };

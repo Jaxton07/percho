@@ -254,6 +254,75 @@ describe("compaction cross-scenario regressions", () => {
 		},
 	);
 
+	it.each(["selection", "branch", "policy", "reload"] as const)(
+		"shows the current virtual route before its first reply and discards it after %s changes",
+		async (change) => {
+			const f = await fixture({ usage: 100 });
+			await f.session.compact();
+			f.session.settingsManager.applyOverrides({ compaction: { keepRecentTokens: 20_000 } });
+			f.setNormal(async () => answer("previous physical route", 100_000));
+			await f.session.prompt("previous request");
+			const previousUsage = f.session.getContextUsage();
+			const previousLeaf = f.sm.getLeafId();
+			if (!previousLeaf || !previousUsage) throw new Error("Missing previous request state");
+			const nextModel = { ...model, id: "next-physical-model", contextWindow: 20_000 };
+			f.session.modelRuntime.resolveModel = async () => ({ model: nextModel, thinkingLevel: "off" });
+			const selection = virtualModel();
+			await f.session.setModel(selection);
+			f.requests.length = 0;
+			let usageAtPause: ReturnType<AgentSession["getContextUsage"]>;
+			f.session.subscribe((event) => {
+				if (event.type === "compaction_pause" && event.pause) usageAtPause = f.session.getContextUsage();
+			});
+			await f.session.prompt("pending input ".repeat(3_000));
+			expect(f.session.compactionPause?.reason).toBe("nothing-to-compact");
+			expect(f.requests).toEqual([]);
+			const usage = f.session.getContextUsage();
+			expect(usageAtPause).toEqual(usage);
+			expect(usage?.contextWindow).toBe(nextModel.contextWindow);
+			expect(usage?.tokens).toBeLessThan(20_000);
+			expect(previousUsage.tokens).toBeGreaterThan(90_000);
+			expect(usage?.percent).toBe(((usage?.tokens ?? 0) / nextModel.contextWindow) * 100);
+			if (change === "selection") await f.session.setModel(selection);
+			else if (change === "branch") await f.session.navigateTree(previousLeaf);
+			else if (change === "policy") f.session.setCompactionPolicy(f.policy);
+			else await f.session.reload();
+			expect(f.session.getContextUsage()).toEqual(previousUsage);
+		},
+	);
+
+	it.each([false, true])(
+		"shows the dispatched virtual route until its first reply, failed: %s",
+		async (failed) => {
+			const f = await fixture({ usage: 100 });
+			await f.session.compact();
+			f.session.settingsManager.applyOverrides({ compaction: { keepRecentTokens: 20_000 } });
+			f.setNormal(async () => answer("previous physical route", 100_000));
+			await f.session.prompt("previous request");
+			const nextModel = { ...model, id: "next-physical-model", contextWindow: 100_000 };
+			f.session.modelRuntime.getPhysicalModel = (provider, id) =>
+				provider === nextModel.provider && id === nextModel.id ? nextModel : model;
+			f.session.modelRuntime.resolveModel = async () => ({ model: nextModel, thinkingLevel: "off" });
+			await f.session.setModel(virtualModel());
+			let usageAtDispatch: ReturnType<AgentSession["getContextUsage"]>;
+			f.setNormal(async () => {
+				usageAtDispatch = f.session.getContextUsage();
+				return {
+					...answer("new route reply", 40_000, failed ? "401 denied" : undefined),
+					model: nextModel.id,
+				};
+			});
+			await f.session.prompt("request on new route");
+			expect(f.session.compactionPause).toBeNull();
+			expect(usageAtDispatch?.contextWindow).toBe(nextModel.contextWindow);
+			expect(usageAtDispatch?.tokens).toBeLessThan(20_000);
+			if (!failed) {
+				expect(f.session.getContextUsage()?.contextWindow).toBe(nextModel.contextWindow);
+				expect(f.session.getContextUsage()?.tokens).toBeGreaterThan(40_000);
+			}
+		},
+	);
+
 	it("uses fresh usage from the new model rather than permanently ignoring usage", async () => {
 		const f = await fixture({ usage: 100 });
 		await f.session.compact();
