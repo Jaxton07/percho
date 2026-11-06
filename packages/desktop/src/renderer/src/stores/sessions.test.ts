@@ -55,10 +55,17 @@ import { selectActiveCwd } from "../lib/active-cwd";
 import { NEW_SESSION_DRAFT_KEY, useDraftStore } from "./drafts";
 import {
 	acceptSessionEvent,
+	beginSessionBaseline,
+	finishSessionBaseline,
 	pauseEnvironmentEvents,
 	resumeEnvironmentEvents,
 } from "./session-event-boundary";
-import { clearSessionHistory, isHistoryReady, retrySessionHistory } from "./session-history";
+import {
+	clearSessionHistory,
+	finishSessionHistory,
+	isHistoryReady,
+	retrySessionHistory,
+} from "./session-history";
 import { useSessionWorkspaceStore } from "./session-workspace";
 import {
 	invalidateEnvironmentSessions,
@@ -1131,6 +1138,48 @@ describe("同 sessionFile 的 open single-flight（spec D3）", () => {
 				.sessions.map((s) => s.sessionId)
 				.sort(),
 		).toEqual(["a", "c"]);
+	});
+});
+
+describe("incident: events after GC close and immediate selection", () => {
+	it("new backend events (sequence restarts at 1) reach the renderer", async () => {
+		const id = "incident-reopen";
+		useSessionsStore.setState({
+			sessions: [realMeta("other", "/fixture"), realMeta(id, "/fixture")],
+			activeSessionId: "other",
+			cwd: "/fixture",
+		});
+		useTranscriptStore.getState().setFollowUpQueue(id, []);
+		const oldToken = beginSessionBaseline(id);
+		finishSessionBaseline(id, oldToken, 10000, () => {});
+		finishSessionHistory(id);
+		const closing = deferred<{ closed: boolean }>();
+		piMock.closeSession.mockImplementationOnce(() => closing.promise);
+		piMock.openSession.mockResolvedValueOnce(realMeta(id, "/fixture"));
+		const unloading = useSessionsStore.getState().unloadSession(id);
+		useSessionsStore.getState().switchSession(id);
+		closing.resolve({ closed: true });
+		expect(await unloading).toEqual({ closed: false });
+		expect(piMock.openSession).toHaveBeenCalledWith({ filePath: `/tmp/${id}.jsonl` });
+		// Same optimistic UI entry as sending a prompt; backend was recreated so its sequence starts again.
+		useTranscriptStore.getState().markAgentActive(id, true);
+		let received = 0;
+		for (let sequence = 1; sequence <= 5570; sequence++) {
+			const event = {
+				type: sequence === 5570 ? "agent_settled" : "queue_update",
+				aborted: false,
+				steering: [],
+				followUp: [],
+			} as SessionEvent;
+			acceptSessionEvent(id, sequence, event, () => {
+				received++;
+				if (sequence === 5570) useTranscriptStore.getState().applyEvent(id, event);
+			});
+		}
+		expect({ received, active: useTranscriptStore.getState().bySession[id]?.agentActive }).toEqual({
+			received: 5570,
+			active: false,
+		});
 	});
 });
 
