@@ -173,6 +173,111 @@ function virtualModel() {
 }
 
 describe("compaction cross-scenario regressions", () => {
+	it.each(["same", "model", "provider", "back-to-original"] as const)(
+		"does not reuse another model's post-compaction usage: %s",
+		async (change) => {
+			const f = await fixture({ usage: 100 });
+			await f.session.compact();
+			f.session.settingsManager.applyOverrides({ compaction: { keepRecentTokens: 20_000 } });
+			f.setNormal(async () => answer("post-compaction answer", 170_000));
+			await f.session.prompt("first request after compaction");
+			const oldUsage = f.session.getContextUsage()?.tokens;
+			expect(oldUsage).toBeGreaterThan(160_000);
+			if (change === "back-to-original") await f.session.setModel({ ...model, id: "temporary" });
+			await f.session.setModel({
+				...model,
+				id: change === "model" ? "other-model" : model.id,
+				provider: change === "provider" ? "other-provider" : model.provider,
+			});
+			f.requests.length = 0;
+			f.setNormal(async () => answer("continued", 100));
+			await f.session.prompt("continue after selection");
+			if (change === "same" || change === "back-to-original") {
+				expect(f.requests).toEqual([]);
+				expect(f.session.compactionPause?.reason).toBe("nothing-to-compact");
+			} else {
+				expect(f.session.compactionPause).toBeNull();
+				expect(f.requests.map((request) => request.summary)).toEqual([false]);
+			}
+		},
+	);
+
+	it.each(["error", "aborted", "zero"] as const)(
+		"does not revive old usage after a model switch followed by %s",
+		async (failure) => {
+			const f = await fixture({ usage: 100 });
+			await f.session.compact();
+			f.session.settingsManager.applyOverrides({ compaction: { keepRecentTokens: 20_000 } });
+			f.setNormal(async () => answer("old model usage", 170_000));
+			await f.session.prompt("first request after compaction");
+			const selected = { ...model, id: "new-model" };
+			await f.session.setModel(selected);
+			f.setNormal(async () => ({
+				...answer("", 0),
+				model: selected.id,
+				stopReason: failure === "zero" ? "stop" : failure,
+				usage: { ...answer("", 0).usage, output: 0, totalTokens: 0 },
+			}));
+			await f.session.prompt("new model failed");
+			expect(f.session.getContextUsage()?.tokens).toBeLessThan(160_000);
+			f.requests.length = 0;
+			f.setNormal(async () => ({ ...answer("recovered", 100), model: selected.id }));
+			await f.session.prompt("manual continuation");
+			expect(f.session.compactionPause).toBeNull();
+			expect(f.requests.map((request) => request.summary)).toEqual([false]);
+		},
+	);
+
+	it.each([false, true])(
+		"checks physical route usage after virtual selection, changed: %s",
+		async (changed) => {
+			const f = await fixture({ usage: 100 });
+			await f.session.compact();
+			f.session.settingsManager.applyOverrides({ compaction: { keepRecentTokens: 20_000 } });
+			f.setNormal(async () => answer("old route usage", 170_000));
+			await f.session.prompt("first request after compaction");
+			f.session.modelRuntime.resolveModel = async () => ({
+				model: { ...model, id: changed ? "other-physical-model" : model.id },
+				thinkingLevel: "off",
+			});
+			await f.session.setModel(virtualModel());
+			f.requests.length = 0;
+			f.setNormal(async () => answer("continued", 100));
+			await f.session.prompt("virtual selection continuation");
+			if (changed) {
+				expect(f.session.compactionPause).toBeNull();
+				expect(f.requests.map((request) => request.summary)).toEqual([false]);
+			} else {
+				expect(f.requests).toEqual([]);
+				expect(f.session.compactionPause?.reason).toBe("nothing-to-compact");
+			}
+		},
+	);
+
+	it("uses fresh usage from the new model rather than permanently ignoring usage", async () => {
+		const f = await fixture({ usage: 100 });
+		await f.session.compact();
+		f.session.settingsManager.applyOverrides({ compaction: { keepRecentTokens: 20_000 } });
+		await f.session.setModel({ ...model, id: "new-model" });
+		f.setNormal(async () => ({ ...answer("new model usage", 170_000), model: "new-model" }));
+		await f.session.prompt("new model request");
+		expect(f.session.getContextUsage()?.tokens).toBeGreaterThan(160_000);
+		f.requests.length = 0;
+		await f.session.prompt("over threshold again");
+		expect(f.session.compactionPause?.reason).toBe("nothing-to-compact");
+		expect(f.requests).toEqual([]);
+	});
+
+	it("keeps a genuinely oversized projection blocked after switching models", async () => {
+		const f = await fixture({ usage: 100 });
+		await f.session.compact();
+		f.session.settingsManager.applyOverrides({ compaction: { keepRecentTokens: 20_000 } });
+		await f.session.setModel({ ...model, id: "new-model" });
+		await f.session.prompt("new input ".repeat(100_000));
+		expect(f.session.compactionPause).not.toBeNull();
+		expect(f.requests.filter((request) => !request.summary)).toEqual([]);
+	});
+
 	it("saves input on normal routing failure and allows an ordinary manual retry", async () => {
 		const f = await fixture({ usage: 100 });
 		const route = vi.fn(async () => {

@@ -145,14 +145,14 @@ diff --git a/node_modules/@earendil-works/pi-coding-agent/dist/core/agent-sessio
 +        }
 +        return true;
 +    }
-+    _hostCandidates(raw) {
++    _hostCandidates(raw, effectiveModel = this._limitsModel()) {
 +        const branch = this.sessionManager.getBranch();
 +        const projection = this.sessionManager.buildSessionProjection();
 +        const ids = new Set(projection.entries.map((entry) => entry.sourceEntry.id));
 +        const messages = raw.map((message) => this.agent.getPublishedPendingMessage(message)
 +            ?? this._hostPolicy?.normalizeMessage?.(message) ?? message);
 +        const extra = messages.filter((message) => !ids.has(this._entryIdsByMessage.get(message)));
-+        const estimate = estimateProjectedContextTokens(projection, branch);
++        const estimate = estimateProjectedContextTokens(projection, branch, effectiveModel);
 +        return { projection, messages, tokens: estimate.tokens + extra.reduce((n, m) => n + estimateTokens(m), 0) };
 +    }
 +    _hostSnapshot() {
@@ -237,7 +237,7 @@ diff --git a/node_modules/@earendil-works/pi-coding-agent/dist/core/agent-sessio
 +    async _checkHostRequest(raw, signal, allowCompaction, effectiveModel = this.model) {
 +        if (!this._hostEnabled() || signal?.aborted || this._agentRunAbortRequested) return;
 +        const inspect = () => {
-+            const candidate = this._hostCandidates(raw);
++            const candidate = this._hostCandidates(raw, effectiveModel);
 +            const settings = this.settingsManager.getCompactionSettings(effectiveModel);
 +            const input = { tokens: candidate.tokens, contextWindow: effectiveModel?.contextWindow ?? 0, settings };
 +            return { ...input, ...this._hostPolicy.evaluate(input) };
@@ -754,6 +754,15 @@ diff --git a/node_modules/@earendil-works/pi-coding-agent/dist/core/agent-sessio
          const oldRunner = this._extensionRunner;
          const previousFlagValues = oldRunner.getFlagValues();
          await emitSessionShutdownEvent(oldRunner, { type: "session_shutdown", reason: "reload" });
+@@ -3524,7 +3894,7 @@
+             if (!hasPostCompactionUsage)
+                 return { tokens: null, contextWindow, percent: null };
+         }
+-        const estimate = estimateProjectedContextTokens(projection, branch);
++        const estimate = estimateProjectedContextTokens(projection, branch, model);
+         const percent = (estimate.tokens / contextWindow) * 100;
+         return {
+             tokens: estimate.tokens,
 @@ -3633,4 +4003,4 @@
          return this._extensionRunner;
      }
@@ -761,6 +770,42 @@ diff --git a/node_modules/@earendil-works/pi-coding-agent/dist/core/agent-sessio
 -//# sourceMappingURL=agent-session.js.map
 \ No newline at end of file
 +//# sourceMappingURL=agent-session.js.map
+diff --git a/node_modules/@earendil-works/pi-coding-agent/dist/core/compaction/compaction.d.ts b/node_modules/@earendil-works/pi-coding-agent/dist/core/compaction/compaction.d.ts
+--- a/node_modules/@earendil-works/pi-coding-agent/dist/core/compaction/compaction.d.ts
++++ b/node_modules/@earendil-works/pi-coding-agent/dist/core/compaction/compaction.d.ts
+@@ -52,7 +52,7 @@
+  */
+ export declare function estimateContextTokens(messages: AgentMessage[]): ContextUsageEstimate;
+ /** Estimate projected context without trusting usage captured before a later edit or compaction. */
+-export declare function estimateProjectedContextTokens(projection: SessionProjection, branchEntries: SessionEntry[]): ContextUsageEstimate;
++export declare function estimateProjectedContextTokens(projection: SessionProjection, branchEntries: SessionEntry[], model?: Pick<Model, "provider" | "id">): ContextUsageEstimate;
+ /**
+  * Check if compaction should trigger based on context usage.
+  */
+diff --git a/node_modules/@earendil-works/pi-coding-agent/dist/core/compaction/compaction.js b/node_modules/@earendil-works/pi-coding-agent/dist/core/compaction/compaction.js
+--- a/node_modules/@earendil-works/pi-coding-agent/dist/core/compaction/compaction.js
++++ b/node_modules/@earendil-works/pi-coding-agent/dist/core/compaction/compaction.js
+@@ -134,7 +134,7 @@
+     };
+ }
+ /** Estimate projected context without trusting usage captured before a later edit or compaction. */
+-export function estimateProjectedContextTokens(projection, branchEntries) {
++export function estimateProjectedContextTokens(projection, branchEntries, model) {
+     const estimate = estimateContextTokens(projection.messages);
+     if (estimate.lastUsageIndex !== null) {
+         let projectedMessageIndex = 0;
+@@ -156,7 +156,10 @@
+                 break;
+             }
+         }
+-        if (usageEntryIndex > latestInvalidatingEntryIndex)
++        const usageMessage = projection.messages[estimate.lastUsageIndex];
++        // Compare the physical request route, not a virtual selection or an intermediate model switch.
++        const sameModel = !model || (usageMessage.provider === model.provider && usageMessage.model === model.id);
++        if (usageEntryIndex > latestInvalidatingEntryIndex && sameModel)
+             return estimate;
+     }
+     const currentSystem = getCurrentSystemMessage(projection.messages);
 diff --git a/node_modules/@earendil-works/pi-coding-agent/dist/core/extensions/types.d.ts b/node_modules/@earendil-works/pi-coding-agent/dist/core/extensions/types.d.ts
 --- a/node_modules/@earendil-works/pi-coding-agent/dist/core/extensions/types.d.ts
 +++ b/node_modules/@earendil-works/pi-coding-agent/dist/core/extensions/types.d.ts
