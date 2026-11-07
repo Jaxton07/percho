@@ -83,58 +83,64 @@ export function useTurnSpeed(sessionId: string | null): TurnSpeedView | null {
 	useEffect(() => {
 		if (!sessionId) return;
 		let firstDeltaAt: number | undefined;
-		const off = getExecutionApi(sessionId).onEvent(({ sessionId: sid, event }) => {
-			if (sid !== sessionId) return;
-			if (event.type === "message_start") {
-				firstDeltaAt = undefined;
-				// 新轮边界：清空观测，避免与上一轮尾部错位对齐（与 deriveTurnTimings 同规则）
-				if (event.message.role === "user") ttftRef.current = [];
-				return;
-			}
-			if (event.type === "message_update") {
-				const delta = event.assistantMessageEvent;
-				if (
-					firstDeltaAt === undefined &&
-					(delta?.type === "text_delta" ||
-						delta?.type === "thinking_delta" ||
-						delta?.type === "toolcall_delta")
-				) {
-					firstDeltaAt = Date.now();
+		let off: (() => void) | undefined;
+		try {
+			off = getExecutionApi(sessionId).onEvent(({ sessionId: sid, event }) => {
+				if (sid !== sessionId) return;
+				if (event.type === "message_start") {
+					firstDeltaAt = undefined;
+					// 新轮边界：清空观测，避免与上一轮尾部错位对齐（与 deriveTurnTimings 同规则）
+					if (event.message.role === "user") ttftRef.current = [];
+					return;
 				}
-				return;
-			}
-			if (event.type === "message_end") {
-				if (event.message.role !== "assistant") return;
-				// 槽位必须与后端样本数组同规则：失败尝试/零输出被后端过滤，这里也不能占位，
-				// 否则尾部对齐会错位（重试轮的 prefill 会被安到别的消息上）
-				const raw = event.message as unknown as {
-					usage?: { output?: unknown };
-					durationMs?: unknown;
-					stopReason?: unknown;
-				};
-				if (
-					toSpeedMessage({
-						output: raw.usage?.output,
-						durationMs: raw.durationMs,
-						stopReason: raw.stopReason,
-					}) === null
-				) {
+				if (event.type === "message_update") {
+					const delta = event.assistantMessageEvent;
+					if (
+						firstDeltaAt === undefined &&
+						(delta?.type === "text_delta" ||
+							delta?.type === "thinking_delta" ||
+							delta?.type === "toolcall_delta")
+					) {
+						firstDeltaAt = Date.now();
+					}
+					return;
+				}
+				if (event.type === "message_end") {
+					if (event.message.role !== "assistant") return;
+					// 槽位必须与后端样本数组同规则：失败尝试/零输出被后端过滤，这里也不能占位，
+					// 否则尾部对齐会错位（重试轮的 prefill 会被安到别的消息上）
+					const raw = event.message as unknown as {
+						usage?: { output?: unknown };
+						durationMs?: unknown;
+						stopReason?: unknown;
+					};
+					if (
+						toSpeedMessage({
+							output: raw.usage?.output,
+							durationMs: raw.durationMs,
+							stopReason: raw.stopReason,
+						}) === null
+					) {
+						firstDeltaAt = undefined;
+						void refresh();
+						return;
+					}
+					// pi 定义：assistant.timestamp = 请求发起时刻；同机同源可比，跨机不可比（split 落空）
+					const startedAt = event.message.timestamp;
+					const observedAt = firstDeltaAt;
+					const ttft =
+						observedAt !== undefined && typeof startedAt === "number" ? observedAt - startedAt : null;
+					ttftRef.current = [...ttftRef.current, ttft].slice(-MAX_TTFT_SAMPLES);
 					firstDeltaAt = undefined;
 					void refresh();
 					return;
 				}
-				// pi 定义：assistant.timestamp = 请求发起时刻；同机同源可比，跨机不可比（split 落空）
-				const startedAt = event.message.timestamp;
-				const observedAt = firstDeltaAt;
-				const ttft =
-					observedAt !== undefined && typeof startedAt === "number" ? observedAt - startedAt : null;
-				ttftRef.current = [...ttftRef.current, ttft].slice(-MAX_TTFT_SAMPLES);
-				firstDeltaAt = undefined;
-				void refresh();
-				return;
-			}
-			if (REFRESH_EVENTS.has(event.type)) refresh();
-		});
+				if (REFRESH_EVENTS.has(event.type)) void refresh();
+			});
+		} catch {
+			// 环境 API 不可用（无 preload 的测试宿主 / 环境已销毁）：不订阅；刷新路径自带保护
+			return;
+		}
 		return off;
 	}, [sessionId, refresh]);
 

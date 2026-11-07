@@ -1,4 +1,5 @@
 import type { TurnChanges } from "./turn-files";
+import type { TurnSpeedRow } from "./turn-speed";
 import type { TurnTiming } from "./turn-timings";
 import type { ActivityEntry, StreamingState, SubagentRunUi, UIMessage, UIToolCall } from "./types";
 
@@ -56,6 +57,8 @@ export type ChatRow =
 			afterMetaGroup: boolean;
 			/** 本会话查看期间新完成的最后一轮（进场动画） */
 			entering: boolean;
+			/** 本轮生成速度（桌面 useTurnSpeed 产出；无有效样本/对不上轮 = 不显示） */
+			speed?: TurnSpeedRow;
 	  };
 
 /**
@@ -108,6 +111,8 @@ export interface TurnDiffRowsOptions {
 	turnTimings?: TurnTiming[];
 	/** 进场动画目标轮（桌面 MessageList 的 baseline 逻辑算出） */
 	enteringTurn?: string | number | null;
+	/** 每轮生成速度（桌面 alignTurnSpeedRows 产出；不传 = 不显示速度） */
+	turnSpeed?: TurnSpeedRow[];
 }
 
 export function buildChatRows(
@@ -162,17 +167,22 @@ export function buildChatRows(
 	// （不锚消息行：轮末 assistant 无正文时会被吸进折叠组，没有独立行可锚。streaming 中的轮次工具未固化
 	// 进 messages，天然不满足「turn_end 后才出现」）传了 turnTimings 则每轮必产行（计时恒显，diff 条件渲染）；
 	// 只传 turnChanges（lan-web 老路径）则保持原行为：有文件变更才产行。
-	const { turnChanges, turnTimings, enteringTurn } = opts ?? {};
+	const { turnChanges, turnTimings, enteringTurn, turnSpeed } = opts ?? {};
 	const changeByTurn = turnChanges
 		? new Map(turnChanges.map((tc) => [tc.turnId ?? `legacy:${tc.turnIndex}`, tc]))
 		: null;
 	const timingByTurn = turnTimings
 		? new Map(turnTimings.map((tt) => [tt.turnId ?? `legacy:${tt.turnIndex}`, tt]))
 		: null;
+	const speedByTurn = turnSpeed
+		? new Map(turnSpeed.map((ts) => [ts.turnId ?? `legacy:${ts.turnIndex}`, ts]))
+		: null;
 	const changesFor = (index: number) =>
 		changeByTurn?.get(turnIds[index] ?? "") ?? changeByTurn?.get(`legacy:${index}`);
 	const timingFor = (index: number) =>
 		timingByTurn?.get(turnIds[index] ?? "") ?? timingByTurn?.get(`legacy:${index}`);
+	const speedFor = (index: number) =>
+		speedByTurn?.get(turnIds[index] ?? "") ?? speedByTurn?.get(`legacy:${index}`);
 	let userRowCount = 0;
 	/**
 	 * 轮末行的插入点：放到尾部的「通知块」之前。
@@ -203,6 +213,7 @@ export function buildChatRows(
 			key: `turn-diff-${sessionId}-${turnIds[turnIndex] ?? turnIndex}`,
 			changes: changesFor(turnIndex),
 			timing: timingFor(turnIndex),
+			speed: speedFor(turnIndex),
 			running,
 			// 前一行是折叠组（纯工具轮/被打断轮无正文，组自带 -mb-4 对消 gap）→ chip 不再上提
 			afterMetaGroup: rows[at - 1]?.kind === "metaGroup",

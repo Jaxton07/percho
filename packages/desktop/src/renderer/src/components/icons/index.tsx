@@ -1027,6 +1027,24 @@ export function ClockIcon({ size = 12, className }: IconProps) {
 	);
 }
 
+/** 闪电（轮末生成速度 glyph，lucide zap 风格） */
+export function BoltIcon({ size = 12, className }: IconProps) {
+	return (
+		<svg
+			className={className}
+			width={size}
+			height={size}
+			viewBox="0 0 24 24"
+			{...strokeProps}
+			strokeLinecap="round"
+			strokeLinejoin="round"
+			aria-hidden="true"
+		>
+			<path d="M13 2 3 14h9l-1 8 11-12h-9l1-8Z" />
+		</svg>
+	);
+}
+
 /** 图钉（置顶标记 11px / 菜单项 13px，设计稿 issue-55 画板①；笔尖朝下 + 针） */
 /**
  * 图钉（置顶标记）：用户指定的 filled 斜图钉（`assets` 同族图标，同 `expand.svg`）。

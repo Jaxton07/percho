@@ -1,10 +1,10 @@
-import type { TurnChanges, TurnTiming } from "@percho/shared";
+import type { TurnChanges, TurnSpeedRow, TurnTiming } from "@percho/shared";
 import { useEffect, useReducer, useState } from "react";
 import { useT } from "../../i18n";
 import { selectActiveCwd } from "../../lib/active-cwd";
 import { useSessionsStore } from "../../stores/sessions";
 import { useUiStore } from "../../stores/ui";
-import { ClockIcon, MoreIcon } from "../icons";
+import { BoltIcon, ClockIcon, MoreIcon } from "../icons";
 import { FilePathMenu } from "../ui/FilePathMenu";
 import { anchorOfElement, type MenuAnchor } from "../ui/place-menu";
 
@@ -53,6 +53,67 @@ function TurnTimer({ timing, running }: { timing: TurnTiming; running: boolean }
 	);
 }
 
+/** 速度数值：>=100 取整，否则一位小数（tabular-nums 已防宽窄跳动） */
+function formatSpeed(value: number): string {
+	return value >= 100 ? String(Math.round(value)) : value.toFixed(1);
+}
+
+/** 秒数（tooltip 用，保留一位） */
+const formatSeconds = (ms: number) => `${(ms / 1000).toFixed(ms < 10_000 ? 1 : 0)}s`;
+
+/** token 规模缩写：1_250_000 → 1.25M，63_000 → 63k */
+function formatTokens(value: number): string {
+	if (value >= 1_000_000) return `${(value / 1_000_000).toFixed(2)}M`;
+	if (value >= 1000) return `${Math.round(value / 1000)}k`;
+	return String(value);
+}
+
+/**
+ * 轮末生成速度（宿主原生，非插件）：紧跟计时器。
+ * **口径必须上标**（dec / api）：api 含 prefill/网络，decode 已剔实测 prefill，
+ * 同一轮两者可差 30%+；裸数字跨轮不可比。live = 流式期间估算值（≈ 前缀），权威值一到即覆盖。
+ */
+function TurnSpeed({ row }: { row: TurnSpeedRow }) {
+	const t = useT();
+	const live = row.live && row.liveSpeed !== null;
+	const shown = live ? (row.liveSpeed as number) : row.speed;
+	if (!(shown > 0) || !Number.isFinite(shown)) return null; // 宁缺勿错：无有效样本不挂假速度
+	const parts = [t("diff.speedTitle", { speed: formatSpeed(shown), metric: row.metric })];
+	if (row.apiSpeed !== null && row.apiSpeed !== shown) {
+		parts.push(t("diff.speedApi", { speed: formatSpeed(row.apiSpeed) }));
+	}
+	if (row.decodeSpeed !== null && row.decodeSpeed !== shown) {
+		parts.push(t("diff.speedDecode", { speed: formatSpeed(row.decodeSpeed) }));
+	}
+	if (row.prefillMs !== null) {
+		parts.push(
+			t("diff.speedPrefill", {
+				prefill: formatSeconds(row.prefillMs),
+				api: formatSeconds(row.apiMs ?? row.durationMs),
+				duration: formatSeconds(row.durationMs),
+			}),
+		);
+	}
+	if (row.samples > 0) {
+		parts.push(t("diff.speedSamples", { count: row.samples, prompt: formatTokens(row.promptTokens) }));
+	}
+	if (live) parts.push(t("diff.speedLive"));
+	if (row.model) parts.push(row.model);
+	const label = parts.join(" · ");
+	return (
+		// 只用 title（generic span 无 role，挂 aria-label 会被 AT 忽略并报 a11y；title 已是可及名来源）
+		<span className={`turn-diff-speed${live ? " turn-diff-speed-live" : ""}`} title={label}>
+			<BoltIcon size={12} />
+			<span className="turn-diff-speed-num">
+				{live ? "\u2248" : ""}
+				{formatSpeed(shown)}
+			</span>
+			<span className="turn-diff-speed-unit">tok/s</span>
+			<sup className="turn-diff-speed-metric">{row.metric === "decode" ? "dec" : "api"}</sup>
+		</span>
+	);
+}
+
 /**
  * 轮末行：计时恒在最前（每轮必有），文件变更 chip 条件渲染。
  * 有 diff 时整行 = details（点头部展开文件列表，drawer-details 同款动画，与 MetaGroup 一致）；
@@ -62,11 +123,13 @@ function TurnTimer({ timing, running }: { timing: TurnTiming; running: boolean }
 export function TurnDiffChip({
 	changes,
 	timing,
+	speed,
 	running,
 	entering,
 }: {
 	changes?: TurnChanges;
 	timing?: TurnTiming;
+	speed?: TurnSpeedRow;
 	running: boolean;
 	entering: boolean;
 }) {
@@ -85,6 +148,14 @@ export function TurnDiffChip({
 		return timing ? (
 			<div className={`turn-diff-plain${enterCls}`}>
 				<TurnTimer timing={timing} running={running} />
+				{speed && (
+					<>
+						<span className="turn-diff-sep" aria-hidden="true">
+							·
+						</span>
+						<TurnSpeed row={speed} />
+					</>
+				)}
 			</div>
 		) : null;
 	}
@@ -101,6 +172,14 @@ export function TurnDiffChip({
 				{timing && (
 					<>
 						<TurnTimer timing={timing} running={running} />
+						<span className="turn-diff-sep" aria-hidden="true">
+							·
+						</span>
+					</>
+				)}
+				{speed && (
+					<>
+						<TurnSpeed row={speed} />
 						<span className="turn-diff-sep" aria-hidden="true">
 							·
 						</span>

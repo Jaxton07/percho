@@ -61,7 +61,10 @@ export interface SpeedAggregate {
 
 /** 一轮的速度（turnIndex 与 deriveTurnTimings / TurnChanges 同规则，从 0 计） */
 export interface SpeedTurn extends SpeedAggregate {
+	/** 分支内的绝对轮序（与渲染端窗口内的 turnIndex 不同基，不能直接比对） */
 	turnIndex: number;
+	/** 本轮 user 消息的 timestamp（ms）——跨端对齐锚：与 deriveTurnTimings 的 startedAt 同源同值 */
+	startedAt?: number;
 	/** 本轮最后一个有 model 的样本（tooltip 显示用） */
 	model?: string;
 	/** 逐条样本；仅当前轮提供（历史轮不带，控制载荷） */
@@ -127,7 +130,7 @@ export function aggregateSpeed(messages: readonly SpeedMessage[]): SpeedAggregat
 /** 逐轮原始样本（轮序 = turnIndex 升序）→ 快照；无 user 边界的前置消息由调用方剔除 */
 export function deriveTurnSpeed(
 	turnsSamples: readonly (readonly TurnSpeedSample[])[],
-	options: { maxTurns?: number; maxMessages?: number } = {},
+	options: { maxTurns?: number; maxMessages?: number; turnStarts?: readonly (number | undefined)[] } = {},
 ): TurnSpeedSnapshot {
 	const maxTurns = options.maxTurns ?? DEFAULT_MAX_TURNS;
 	const maxMessages = options.maxMessages ?? MAX_MESSAGES_PER_TURN;
@@ -146,7 +149,13 @@ export function deriveTurnSpeed(
 		const aggregate = aggregateSpeed(messages);
 		if (aggregate.samples === 0) continue; // 无有效样本的轮不进入列表（宁缺勿错）
 		const model = messages.findLast((message) => message.model !== undefined)?.model;
-		turns.push({ turnIndex, ...aggregate, ...(model ? { model } : {}) });
+		const startedAt = options.turnStarts?.[turnIndex];
+		turns.push({
+			turnIndex,
+			...aggregate,
+			...(typeof startedAt === "number" && Number.isFinite(startedAt) ? { startedAt } : {}),
+			...(model ? { model } : {}),
+		});
 		lastMessages = messages.slice(-maxMessages);
 	}
 	const lastTurn = turns[turns.length - 1];
@@ -159,6 +168,102 @@ export function deriveTurnSpeed(
 		session: aggregateSpeed(all),
 		truncated,
 	};
+}
+
+/* ---------- 渲染端行对齐（快照 → 轮末 chip 数据；纯函数可测） ---------- */
+
+/** 轮末行（turnDiff）的速度展示数据 */
+export interface TurnSpeedRow {
+	/** 渲染端 UIMessage id（deriveTurnTimings 的 turnId，同源）；chat-rows 按它挂行 */
+	turnId?: string;
+	/** 渲染端窗口内的轮序（turnId 缺失时的退化键） */
+	turnIndex: number;
+	/** 展示口径：历史轮只有 api（无首 delta 观测） */
+	metric: "decode" | "api";
+	speed: number;
+	apiSpeed: number | null;
+	decodeSpeed: number | null;
+	outputTokens: number;
+	/** metric 口径的分母（decode = 已剔 prefill 的生成窗口） */
+	durationMs: number;
+	apiMs?: number;
+	prefillMs: number | null;
+	promptTokens: number;
+	samples: number;
+	model?: string;
+	/** 本轮仍在生成（值为估算） */
+	live: boolean;
+	liveSpeed: number | null;
+}
+
+/**
+ * 快照（绝对轮序 + startedAt）↔ 渲染端轮次（窗口内轮序 + turnId）对齐。
+ * 两端 turnIndex 不同基（后端走整条分支，渲染端只装了历史窗口），因此**按 startedAt 对齐**：
+ * user 消息 timestamp 同源同值（JSONL message.timestamp，ms 精度），双指针同向扫描即可；
+ * 对不上就不挂速度——宁缺勿错，绝不把上一轮的数安到这一轮。
+ * 当前轮用 view 覆盖（decode 口径 / live 估算），历史轮只有 api 口径。
+ */
+export function alignTurnSpeedRows(
+	timings: readonly { turnId?: string; turnIndex: number; startedAt: number }[],
+	view: TurnSpeedView | null,
+): TurnSpeedRow[] {
+	if (!view) return [];
+	const rows: TurnSpeedRow[] = [];
+	const turns = view.turns;
+	const currentTurn = turns.length > 0 ? (turns[turns.length - 1] as SpeedTurn) : undefined;
+	let cursor = 0;
+	for (const timing of timings) {
+		while (cursor < turns.length && ((turns[cursor] as SpeedTurn).startedAt ?? -1) < timing.startedAt) {
+			cursor++;
+		}
+		const turn = turns[cursor] as SpeedTurn | undefined;
+		if (!turn || turn.startedAt !== timing.startedAt || turn.speed === null) continue;
+		const isCurrent = currentTurn !== undefined && turn.turnIndex === currentTurn.turnIndex;
+		rows.push({
+			...(timing.turnId !== undefined ? { turnId: timing.turnId } : {}),
+			turnIndex: timing.turnIndex,
+			metric: isCurrent ? view.metric : "api",
+			speed: isCurrent ? view.speed : turn.speed,
+			apiSpeed: isCurrent ? view.apiSpeed : turn.speed,
+			decodeSpeed: isCurrent ? view.decodeSpeed : null,
+			outputTokens: isCurrent ? view.outputTokens : turn.outputTokens,
+			durationMs: isCurrent ? view.durationMs : turn.durationMs,
+			apiMs: isCurrent ? view.apiMs : turn.durationMs,
+			prefillMs: isCurrent ? view.prefillMs : null,
+			promptTokens: turn.promptTokens,
+			samples: turn.samples,
+			...(turn.model !== undefined ? { model: turn.model } : {}),
+			live: isCurrent ? view.live : false,
+			liveSpeed: isCurrent ? view.liveSpeed : null,
+		});
+	}
+	// 新轮刚开始（还没有权威样本）但已有 live 估算：给最后一轮挂纯 live 行，生成中也看得到速度
+	const last = timings[timings.length - 1];
+	if (
+		view.live &&
+		view.liveSpeed !== null &&
+		last &&
+		!rows.some((row) => row.turnId !== undefined && row.turnId === last.turnId)
+	) {
+		rows.push({
+			...(last.turnId !== undefined ? { turnId: last.turnId } : {}),
+			turnIndex: last.turnIndex,
+			metric: view.metric,
+			speed: view.liveSpeed,
+			apiSpeed: view.apiSpeed,
+			decodeSpeed: view.decodeSpeed,
+			outputTokens: view.outputTokens,
+			durationMs: view.durationMs,
+			apiMs: view.apiMs,
+			prefillMs: view.prefillMs,
+			promptTokens: view.promptTokens,
+			samples: view.samples,
+			live: true,
+			liveSpeed: view.liveSpeed,
+			...(view.model !== undefined ? { model: view.model } : {}),
+		});
+	}
+	return rows;
 }
 
 /* ---------- decode 口径（渲染端 TTFT 实测 → 拆分 prefill/decode） ---------- */

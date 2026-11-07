@@ -1,5 +1,6 @@
 import {
 	aggregateDecode,
+	alignTurnSpeedRows,
 	buildTurnSpeedView,
 	deriveTurnSpeed,
 	estimateStreamingTokens,
@@ -166,5 +167,58 @@ describe("estimateStreamingTokens（流式期间瞬时指示，非权威值）",
 		expect(estimateStreamingTokens(["中文字"])).toBe(3);
 		expect(estimateStreamingTokens(["中文", "abcd"])).toBe(3); // 2 CJK + 4 latin(≈1)
 		expect(estimateStreamingTokens(["", ""])).toBe(0);
+	});
+});
+
+describe("alignTurnSpeedRows（跨端按 startedAt 对齐，宁缺勿错）", () => {
+	const timing = (turnId: string, turnIndex: number, startedAt: number) => ({ turnId, turnIndex, startedAt });
+
+	it("两端 turnIndex 不同基也能挂对行：按 user timestamp（同源同值）匹配", () => {
+		const snapshot = deriveTurnSpeed([[sample(100, 2000)], [sample(200, 4000)]], {
+			turnStarts: [1000, 5000],
+		});
+		const view = buildTurnSpeedView(snapshot, [], null);
+		// 渲染端窗口只装了后两轮，轮序从 5 起（绝对轮序 5/6 vs 分支 0/1）
+		const rows = alignTurnSpeedRows([timing("u-a", 5, 1000), timing("u-b", 6, 5000)], view);
+		expect(rows.map((row) => row.turnId)).toEqual(["u-a", "u-b"]);
+		expect(rows.map((row) => row.turnIndex)).toEqual([5, 6]);
+		expect(rows.map((row) => row.metric)).toEqual(["api", "api"]);
+		expect(rows[0]?.speed).toBeCloseTo(100 / 2, 6);
+		expect(rows[1]?.speed).toBeCloseTo(200 / 4, 6);
+	});
+
+	it("当前轮用 view 覆盖（有实测 TTFT → decode 口径 + 拆解分量），历史轮只 api", () => {
+		const snapshot = deriveTurnSpeed([[sample(100, 2000)], [sample(200, 4000)]], {
+			turnStarts: [1000, 5000],
+		});
+		const view = buildTurnSpeedView(snapshot, [200, 300], null);
+		const rows = alignTurnSpeedRows([timing("u-a", 0, 1000), timing("u-b", 1, 5000)], view);
+		expect(rows[0]?.metric).toBe("api");
+		expect(rows[0]?.prefillMs).toBeNull();
+		expect(rows[1]?.metric).toBe("decode");
+		expect(rows[1]?.decodeSpeed).toBeCloseTo(200 / 3.7, 6);
+		expect(rows[1]?.prefillMs).toBe(300);
+		expect(rows[1]?.apiSpeed).toBeCloseTo(200 / 4, 6);
+	});
+
+	it("对不上就不挂：时间戳不匹配（分支/窗口错位）时绝不把别轮的数安到这一轮", () => {
+		const snapshot = deriveTurnSpeed([[sample(100, 2000)]], { turnStarts: [1000] });
+		const view = buildTurnSpeedView(snapshot, [], null);
+		const rows = alignTurnSpeedRows([timing("u-x", 0, 9999), timing("u-y", 1, 8888)], view);
+		expect(rows).toEqual([]);
+	});
+
+	it("无有效样本的轮不挂行（speed = null）", () => {
+		const snapshot = deriveTurnSpeed([[sample(0, 2000)]], { turnStarts: [1000] });
+		const view = buildTurnSpeedView(snapshot, [], null);
+		expect(alignTurnSpeedRows([timing("u-a", 0, 1000)], view)).toEqual([]);
+	});
+
+	it("新轮刚开始（无权威样本）但有 live 估算 → 给最后一轮挂纯 live 行", () => {
+		const snapshot = deriveTurnSpeed([], {});
+		const view = buildTurnSpeedView(snapshot, [], { tokens: 420, speed: 38.5 });
+		const rows = alignTurnSpeedRows([timing("u-a", 0, 1000), timing("u-b", 1, 5000)], view);
+		expect(rows.length).toBe(1);
+		expect(rows[0]).toMatchObject({ turnId: "u-b", turnIndex: 1, live: true, liveSpeed: 38.5 });
 	});
 });

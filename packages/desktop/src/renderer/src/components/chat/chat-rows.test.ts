@@ -285,6 +285,37 @@ describe("turnDiff chip 行（桌面路径）", () => {
 		}
 	});
 
+	it("turnSpeed 按 turnId 挂到对应轮行；对不上的轮不挂", () => {
+		const t = {
+			...emptyTranscript(),
+			messages: [user("一"), assistant("答一"), user("二"), assistant("答二")],
+		};
+		const rows = buildChatRows(t, "s1", 1, {
+			turnChanges: [changes(0), changes(1)],
+			enteringTurn: null,
+			turnSpeed: [
+				{
+					turnId: "u-一",
+					turnIndex: 0,
+					metric: "api",
+					speed: 41.2,
+					apiSpeed: 41.2,
+					decodeSpeed: null,
+					outputTokens: 100,
+					durationMs: 2400,
+					prefillMs: null,
+					promptTokens: 5000,
+					samples: 1,
+					live: false,
+					liveSpeed: null,
+				},
+			],
+		});
+		const chips = rows.filter((r) => r.kind === "turnDiff");
+		expect(chips[0]?.speed?.speed).toBe(41.2);
+		expect(chips[1]?.speed).toBeUndefined();
+	});
+
 	it("最后一轮 chip running = agentActive；afterMetaGroup = 前一行是折叠组", () => {
 		const t = {
 			...emptyTranscript(),
