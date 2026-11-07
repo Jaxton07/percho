@@ -28,6 +28,7 @@ export {
 export {
 	aggregateDecode,
 	aggregateSpeed,
+	alignTurnSpeedRows,
 	buildTurnSpeedView,
 	type DecodeAggregate,
 	deriveTurnSpeed,
@@ -39,6 +40,7 @@ export {
 	type SpeedSplit,
 	type SpeedTurn,
 	splitPrefillDecode,
+	type TurnSpeedRow,
 	type TurnSpeedSample,
 	type TurnSpeedSnapshot,
 	type TurnSpeedView,

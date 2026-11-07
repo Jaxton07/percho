@@ -1,4 +1,5 @@
 import {
+	alignTurnSpeedRows,
 	buildChatRows,
 	type ChatRow,
 	deriveTurnChanges,
@@ -16,6 +17,7 @@ import {
 	useRef,
 	useState,
 } from "react";
+import { useTurnSpeed } from "../../hooks/use-turn-speed";
 import { useT } from "../../i18n";
 import { useEdgeFade } from "../../lib/use-edge-fade";
 import { Slot } from "../../plugins/Slot";
@@ -201,6 +203,10 @@ export function MessageList() {
 		() => deriveTurnTimings(transcript.messages, transcript.runEndedAt),
 		[transcript.messages, transcript.runEndedAt],
 	);
+	// 轮末行的生成速度（宿主原生，非插件）：后端权威快照 + 本端 TTFT 实测 + 流式估算。
+	// rows 已依赖 streaming（每个 delta 批都重建），多一个 speedRows 依赖不新增重建类。
+	const speedView = useTurnSpeed(activeSessionId === null ? null : String(activeSessionId));
+	const speedRows = useMemo(() => alignTurnSpeedRows(turnTimings, speedView), [turnTimings, speedView]);
 	const lastTurnId = turnTimings.at(-1)?.turnId;
 	const turnBaselineRef = useRef({
 		sid: activeSessionId,
@@ -242,6 +248,7 @@ export function MessageList() {
 					turnChanges,
 					turnTimings,
 					enteringTurn,
+					turnSpeed: speedRows,
 				},
 			),
 		[
@@ -254,6 +261,7 @@ export function MessageList() {
 			turnChanges,
 			turnTimings,
 			enteringTurn,
+			speedRows,
 		],
 	);
 
@@ -648,6 +656,7 @@ export function MessageList() {
 					<TurnDiffChip
 						changes={row.changes}
 						timing={row.timing}
+						speed={row.speed}
 						running={row.running}
 						entering={row.entering}
 					/>

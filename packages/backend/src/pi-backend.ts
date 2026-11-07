@@ -1852,11 +1852,16 @@ export class PiBackend {
 		const branch = entry.session.sessionManager.getBranch();
 		const turns: TurnSpeedSample[][] = [];
 		let current: TurnSpeedSample[] | undefined;
+		// 轮锚：user entry 的 message.timestamp（ms）——渲染端 deriveTurnTimings.startedAt 同源同值，
+		// 两端 turnIndex 不同基（这边是整条分支的绝对轮序），靠 startedAt 对齐才能挂对行
+		const turnStarts: (number | undefined)[] = [];
 		const tokenCount = (value: unknown): number => (typeof value === "number" && value > 0 ? value : 0);
 		for (const item of branch) {
 			if (item.type !== "message") continue;
 			const message = item.message;
 			if (message.role === "user") {
+				const stamp = (message as { timestamp?: unknown }).timestamp;
+				turnStarts.push(typeof stamp === "number" && Number.isFinite(stamp) ? stamp : undefined);
 				current = [];
 				turns.push(current);
 				continue;
@@ -1883,7 +1888,7 @@ export class PiBackend {
 				provider: raw.provider,
 			});
 		}
-		return deriveTurnSpeed(turns);
+		return deriveTurnSpeed(turns, { turnStarts });
 	}
 
 	/** opencode-go 套餐额度（实现在 settings/quota.ts：TTL 缓存 + 官方 API） */
