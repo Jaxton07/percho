@@ -18,6 +18,7 @@ import { useTranscriptStore } from "../stores/transcript";
 import { useUiStore } from "../stores/ui";
 import { useUiPreferencesStore } from "../stores/ui-preferences";
 import type { PerchoUiApi } from "./env";
+import { flushPluginStateWrites, usePluginState } from "./plugin-state";
 
 /**
  * 宿主 API：把宿主能力挂到 window.PerchoUI（插件运行时的唯一入口，与宿主共享同一 React 实例）。
@@ -47,6 +48,7 @@ window.PerchoUI = {
 		useContextUsage,
 		useQuota,
 		useLanguage,
+		usePluginState,
 	},
 	stores: {
 		useTranscriptStore,
@@ -57,3 +59,6 @@ window.PerchoUI = {
 		useUiPreferencesStore,
 	},
 } satisfies PerchoUiApi;
+
+// 关窗/重载前把排队中的插件状态（300ms 防抖）立刻写出，不丢最后一次拖动
+window.addEventListener("pagehide", flushPluginStateWrites);
