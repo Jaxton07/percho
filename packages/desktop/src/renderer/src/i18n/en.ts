@@ -516,6 +516,8 @@ export const en: Messages = {
 	pathMenu: {
 		open: "Open File",
 		reveal: "Reveal in Finder",
+		revealExplorer: "Show in File Explorer",
+		revealFolder: "Show in Folder",
 		copyPath: "Copy Path",
 	},
 	mediaMaintenance: {
@@ -1087,6 +1089,8 @@ export const en: Messages = {
 		sessionRenameFailed: "Failed to rename session",
 		pathOpenFailed: "Could not open file",
 		pathRevealFailed: "Could not reveal in Finder",
+		pathRevealFailedExplorer: "Could not show in File Explorer",
+		pathRevealFailedFolder: "Could not show in folder",
 		pathCopyFailed: "Could not copy path",
 		pathCopied: "Absolute path copied",
 	},
