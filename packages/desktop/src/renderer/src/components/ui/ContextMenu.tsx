@@ -1,6 +1,7 @@
 import { Fragment, type ReactNode, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { type MenuAnchor, placeMenu } from "./place-menu";
+import { Tooltip } from "./Tooltip";
 
 /** 菜单项规格（设计语言：有边框卡片 + 分隔线 + 危险红项，设计稿画板 D） */
 export interface ContextMenuItem {
@@ -12,6 +13,8 @@ export interface ContextMenuItem {
 	danger?: boolean;
 	/** 在本项之前画一条分隔线（分隔常规操作与危险操作） */
 	separatorBefore?: boolean;
+	disabled?: boolean;
+	tooltip?: string;
 	onSelect: () => void;
 }
 
@@ -66,28 +69,40 @@ export function ContextMenu({
 	const renderRow = (item: ContextMenuItem) => (
 		<Fragment key={item.key}>
 			{item.separatorBefore && <div className="mx-1.5 my-1 h-px bg-border" />}
-			<button
-				type="button"
-				role="menuitem"
-				className={`group/item flex h-[30px] w-full items-center gap-[10px] rounded-[7px] px-2 text-left text-ui-13 transition-colors hover:bg-hover ${
-					item.danger ? "text-red-600" : "text-ink-2 hover:text-ink"
-				}`}
-				onClick={() => {
-					item.onSelect();
-					onClose();
-				}}
-			>
-				{item.icon !== undefined && (
-					<span
-						className={`flex shrink-0 transition-colors ${
-							item.danger ? "text-red-600" : "text-ink-dim group-hover/item:text-ink"
+			{(() => {
+				const button = (
+					<button
+						type="button"
+						role="menuitem"
+						disabled={item.disabled}
+						className={`group/item flex h-[30px] w-full items-center gap-[10px] rounded-[7px] px-2 text-left text-ui-13 transition-colors hover:bg-hover ${
+							item.danger ? "text-red-600" : "text-ink-2 hover:text-ink"
 						}`}
+						onClick={() => {
+							item.onSelect();
+							onClose();
+						}}
 					>
-						{item.icon}
-					</span>
-				)}
-				<span className="truncate">{item.label}</span>
-			</button>
+						{item.icon !== undefined && (
+							<span
+								className={`flex shrink-0 transition-colors ${
+									item.danger ? "text-red-600" : "text-ink-dim group-hover/item:text-ink"
+								}`}
+							>
+								{item.icon}
+							</span>
+						)}
+						<span className="truncate">{item.label}</span>
+					</button>
+				);
+				return item.tooltip ? (
+					<Tooltip label={item.tooltip} align="start" multiline className="w-full">
+						{button}
+					</Tooltip>
+				) : (
+					button
+				);
+			})()}
 		</Fragment>
 	);
 	return createPortal(

@@ -39,6 +39,7 @@ function makeEntry(order: string[], sessionId = "s1"): RegisteredSession {
 /** 绕过 private 取内部方法（只为验证调用契约，不碰真实会话） */
 type BackendInternals = {
 	disposeSession(entry: RegisteredSession): Promise<void>;
+	disposeSessionStrict(entry: RegisteredSession): Promise<void>;
 	registry: SessionRegistry;
 	channelSubs: ChannelSubscriptions;
 	channelWatchCleanups: WeakMap<RegisteredSession["modeRef"], () => void>;
@@ -115,6 +116,29 @@ describe("V05 close/quit resource ordering characteristics", () => {
 		resolveShutdown();
 		await Promise.resolve();
 		unsubscribe();
+	});
+});
+
+describe("archive strict cleanup", () => {
+	it("retains the real entry and watcher on failure, then retries cleanup", async () => {
+		const backend = new PiBackend();
+		const internal = backend as unknown as BackendInternals;
+		const order: string[] = [];
+		const entry = makeEntry(order);
+		internal.registry.add(entry);
+		let calls = 0;
+		internal.channelWatchCleanups.set(entry.modeRef, () => {
+			if (++calls === 1) throw new Error("watcher failure");
+		});
+		await expect(internal.disposeSessionStrict(entry)).rejects.toThrow("watcher failure");
+		expect(internal.registry.get("s1")).toBe(entry);
+		expect(internal.channelWatchCleanups.has(entry.modeRef)).toBe(true);
+		await expect(backend.getSessionMessages("s1")).rejects.toThrow("Archive cleanup is pending");
+		await internal.disposeSessionStrict(entry);
+		expect(calls).toBe(2);
+		expect(order).toEqual(["emit:session_shutdown:quit", "dispose"]);
+		expect(internal.registry.get("s1")).toBeUndefined();
+		backend.dispose();
 	});
 });
 

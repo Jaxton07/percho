@@ -95,6 +95,14 @@ export class SessionRegistry {
 		}
 	}
 
+	/** Keep ownership when a resource refuses cleanup so archive can retry it. */
+	deleteStrict(sessionId: string): void {
+		const entry = this.sessions.get(sessionId);
+		if (!entry) return;
+		releaseEntryResources(entry);
+		this.sessions.delete(sessionId);
+	}
+
 	list(): RegisteredSession[] {
 		return [...this.sessions.values()];
 	}

@@ -1,6 +1,5 @@
-import { mkdtemp, readFile, rm } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rm } from "node:fs/promises";
 import { createServer, get, request as requestRaw } from "node:http";
-import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { LanConfigService } from "../src/lan/config";
@@ -27,7 +26,14 @@ function backend(): LanObserverBackend {
 		modifiedAt: 2,
 	};
 	return {
-		listAllSessions: async () => [session],
+		querySessionCatalog: async () => ({ sessions: [session], revision: "1", complete: true, errors: 0 }),
+		verifySessionCatalog: async (refs) =>
+			refs.map((reference) =>
+				reference.sessionId === session.sessionId || reference.sessionId === "hist-1"
+					? { reference, status: "present" as const, meta: session }
+					: { reference, status: "missing" as const },
+			),
+		getLoadedSessions: () => [{ meta: session } as never],
 		getSessionMessages: async () =>
 			[{ role: "assistant", text: "hello", thinking: "", tools: [], images: [], timestamp: 1 }] as never,
 		getTodos: async () => [{ content: "ship", status: "in_progress" }],
@@ -50,7 +56,9 @@ async function start(
 	observer: LanObserverBackend = backend(),
 	options: { auditPath?: string; remoteControl?: boolean; pingMs?: number } = {},
 ): Promise<LanObserverServer> {
-	const dir = await mkdtemp(join(tmpdir(), "percho-lan-"));
+	const root = join(process.cwd(), ".local/tmp/session-archive-catalog/ticket08");
+	await mkdir(root, { recursive: true });
+	const dir = await mkdtemp(join(root, "percho-lan-"));
 	dirs.push(dir);
 	const config = new LanConfigService(join(dir, "lan-observer.json"));
 	// 配置层不接受 0；先申请测试专用端口，避免退回正式版默认的 7331。
@@ -157,6 +165,85 @@ function sseCollect(url: string, predicate: (text: string) => boolean, timeoutMs
 }
 
 describe("LanObserverServer", () => {
+	it("retains active projections when catalog verification is uncertain", async () => {
+		const base = backend();
+		let mode = "present";
+		const observer: LanObserverBackend = {
+			...base,
+			verifySessionCatalog: async (refs) => {
+				if (mode === "throw") throw new Error("offline");
+				if (mode === "present") return base.verifySessionCatalog(refs);
+				return refs.map((reference) => ({ reference, status: mode as "unknown" | "archived" }));
+			},
+		};
+		const server = await start(0, observer);
+		const url = `http://127.0.0.1:${server.status().port}/api/snapshot?t=${token}`;
+		for (mode of ["unknown", "throw"]) {
+			const snapshot = JSON.parse((await request(url)).text);
+			expect(snapshot.views).toHaveLength(1);
+		}
+		mode = "archived";
+		expect(JSON.parse((await request(url)).text).views).toHaveLength(0);
+	});
+	it("uses bounded cursor pages and rejects archived and ambiguous direct access", async () => {
+		const base = backend();
+		const queries: unknown[] = [];
+		const refs: unknown[] = [];
+		let peeks = 0;
+		const observer: LanObserverBackend = {
+			...base,
+			querySessionCatalog: async (query) => {
+				queries.push(query);
+				if (query.cursor && query.cursor !== "next") throw new Error("stale cursor");
+				return {
+					sessions: [],
+					nextCursor: query.cursor ? undefined : "next",
+					complete: true,
+					revision: "1",
+					errors: 0,
+				};
+			},
+			verifySessionCatalog: async (references) => {
+				refs.push(references);
+				return references.map((reference) =>
+					reference.sessionId === "session-1"
+						? {
+								reference,
+								status: "present" as const,
+								meta: { sessionId: "session-1", cwd: "/work", active: true, messageCount: 0, createdAt: 1 },
+							}
+						: {
+								reference,
+								status: reference.sessionId === "archived" ? ("archived" as const) : ("ambiguous" as const),
+							},
+				);
+			},
+			peekSessionMessages: async () => {
+				peeks++;
+				return [];
+			},
+		};
+		const server = await start(0, observer, { remoteControl: true });
+		const url = `http://127.0.0.1:${server.status().port}`;
+		const snapshot = JSON.parse((await request(`${url}/api/snapshot?t=${token}`)).text);
+		expect(snapshot.list).toEqual([]);
+		expect(snapshot.views).toHaveLength(1);
+		expect(snapshot.nextCursor).toBe("next");
+		expect((await request(`${url}/api/sessions?t=${token}&cursor=next`)).status).toBe(200);
+		expect((await request(`${url}/api/sessions?t=${token}&cursor=bad`)).status).toBe(400);
+		for (const id of ["archived", "ambiguous"]) {
+			expect((await request(`${url}/api/sessions/${id}/transcript?t=${token}`)).status).toBe(404);
+			expect(
+				(await post(`${url}/api/sessions/${id}/abort`, {}, { Authorization: `Bearer ${token}` })).status,
+			).toBe(404);
+		}
+		expect(peeks).toBe(0);
+		expect(queries).toEqual(
+			expect.arrayContaining([{ archived: false, sort: "modified", limit: 100, cursor: "next" }]),
+		);
+		expect(refs.every((ref) => (ref as unknown[]).length === 1)).toBe(true);
+	});
+
 	it("requires a valid token and serves snapshot plus SSE", async () => {
 		const server = await start();
 		const port = server.status().port;
@@ -197,9 +284,9 @@ describe("LanObserverServer", () => {
 		let eventHandler: ((sessionId: string, event: never) => void) | undefined;
 		const observer: LanObserverBackend = {
 			...backend(),
-			listAllSessions: async () => {
+			querySessionCatalog: async () => {
 				listCalls++;
-				return [];
+				return { sessions: [], revision: "1", complete: false, errors: 0 };
 			},
 			onEvent: (handler) => {
 				eventHandler = handler as (sessionId: string, event: never) => void;
@@ -443,7 +530,9 @@ describe("LanObserverServer", () => {
 		servers.splice(servers.indexOf(off), 1);
 
 		// remoteControl 开启
-		const auditDir = await mkdtemp(join(tmpdir(), "percho-lan-audit-"));
+		const auditDir = await mkdtemp(
+			join(process.cwd(), ".local/tmp/session-archive-catalog/ticket08/percho-lan-audit-"),
+		);
 		dirs.push(auditDir);
 		const auditPath = join(auditDir, "lan-audit.jsonl");
 		const server = await start(0, observer, { auditPath, remoteControl: true });
@@ -478,8 +567,13 @@ describe("LanObserverServer", () => {
 		const roBackend = { ...observer, checkSessionWritable: () => "read_only" as const };
 		const serverRO = await start(0, roBackend, { remoteControl: true });
 		expect(
-			(await post(`http://127.0.0.1:${serverRO.status().port}/api/sessions/sub/prompt`, { text: "hi" }, auth))
-				.status,
+			(
+				await post(
+					`http://127.0.0.1:${serverRO.status().port}/api/sessions/session-1/prompt`,
+					{ text: "hi" },
+					auth,
+				)
+			).status,
 		).toBe(403);
 		await serverRO.stop();
 		servers.splice(servers.indexOf(serverRO), 1);

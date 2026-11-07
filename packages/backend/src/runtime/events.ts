@@ -24,6 +24,7 @@ export function bindExecutionEvents(
 		onProviderLoginEvent: (handler) => backend.onLoginEvent(handler),
 		onMcpServersChanged: (handler) => backend.onMcpServersChanged(handler),
 		onChannelSubscriptionsChanged: (handler) => backend.onChannelSubscriptionsChanged(handler),
+		onSessionCatalogChanged: (handler) => backend.onSessionCatalogChanged(handler),
 	};
 	const offs = Object.entries(subscriptions).map(([method, subscribe]) =>
 		subscribe((payload: unknown) => emit(method as EventMethod, payload)),

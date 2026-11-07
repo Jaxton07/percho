@@ -4,6 +4,7 @@ import { getExecutionApi } from "../../environment-api";
 import type { Translate } from "../../i18n";
 import { buildDiagnosticsText } from "../../lib/diagnostics";
 import { useProjectsStore } from "../../stores/projects";
+import { archiveDisabledReason, archiveHasSubscriptions, archiveSession } from "../../stores/session-archive";
 import { useSessionsStore } from "../../stores/sessions";
 import { useToastsStore } from "../../stores/toasts";
 import { useUiPreferencesStore } from "../../stores/ui-preferences";
@@ -92,6 +93,7 @@ export function sessionMenuItems(
 	t: Translate,
 	options: {
 		sessionId: string;
+		session?: SessionMeta;
 		pinned: boolean;
 		onRename: () => void;
 		onCopyDiagnostics?: () => void;
@@ -118,6 +120,25 @@ export function sessionMenuItems(
 						icon: <CopyIcon size={13} />,
 						onSelect: options.onCopyDiagnostics,
 					} satisfies ContextMenuItem,
+				]
+			: []),
+		...(options.session
+			? [
+					(() => {
+						const session = options.session;
+						const reason = archiveDisabledReason(session);
+						return {
+							key: "archive",
+							label: t("sessionArchive.action"),
+							disabled: !!reason,
+							tooltip: reason
+								? t(`sessionArchive.${reason}`)
+								: archiveHasSubscriptions(session.sessionId)
+									? t("sessionArchive.subscriptions")
+									: undefined,
+							onSelect: () => void archiveSession(session),
+						} satisfies ContextMenuItem;
+					})(),
 				]
 			: []),
 		...(options.onDelete

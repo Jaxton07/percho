@@ -75,6 +75,10 @@
 - 压缩来源由 SDK 的开始/结束事件直接携带；自动请求检查使用 `threshold`，实际溢出恢复使用 `overflow`，手动操作仍为 `manual`，宿主不再用一次性标记改写来源。
 - 蒸发与压缩护栏各自拥有配置与纯函数核心；调参使用 `scripts/replay-evaporation.mts` / `replay-compaction-bound.mts`，不要复制一份近似线上算法来证明线上正确。
 
+## 会话目录性能回归
+
+在仓库根目录执行 `node scripts/bench-session-catalog.mjs 1000`，也可指定 `10000`。脚本使用真实目录宿主及 Worker，分别在新进程测量新索引和已有索引加 80% 批量归档；夹具、隔离环境、索引与结果 JSON 均保留在 `.local/tmp/session-catalog-bench-*`。预算超限返回退出码 1；阈值是宽松的本机回归线，不是 SLA。刚写入的夹具可能处于暖 OS 缓存，新进程不等于真实冷盘。Linux、Windows 和 Electron 的实际表现须各自另验，不能以此脚本宣称完整验收。
+
 ## SDK 升级清单
 
 1. 核对依赖实际解析版本：`PI_PACKAGE_DIR` 可影响 SDK 导出的 VERSION，不能据它判断 node_modules 的版本；参考 `scripts/smoke-sdk.mts` 的 `import.meta.resolve` 检查。

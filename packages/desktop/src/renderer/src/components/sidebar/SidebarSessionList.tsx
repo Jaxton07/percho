@@ -1,4 +1,5 @@
 import type { SessionMeta } from "@percho/shared";
+import { useT } from "../../i18n";
 import type { SidebarSession } from "../../lib/sidebar-groups";
 import type { MenuAnchor } from "../ui/place-menu";
 import { SessionRow } from "./SessionRow";
@@ -22,6 +23,7 @@ export function SidebarSessionList({
 	onShowMore,
 	onSelect,
 	onContextMenu,
+	paging,
 }: {
 	/** 当前应显示的会话（已由调用方按 `6 + 16 × 点击数` 裁剪，顺序不变） */
 	sessions: readonly SidebarSession[];
@@ -33,12 +35,35 @@ export function SidebarSessionList({
 	onShowMore: () => void;
 	onSelect: (session: SessionMeta) => void;
 	onContextMenu: (session: SessionMeta, anchor: MenuAnchor) => void;
+	paging?: { loading: boolean; error?: string; partial: boolean; onRetry: () => void };
 }) {
-	if (sessions.length === 0) {
+	const t = useT();
+	if (sessions.length === 0 && !paging?.loading && !paging?.error && !paging?.partial) {
 		return <p className="py-1 pl-[30px] text-ui-12 text-ink-faint">{emptyLabel}</p>;
 	}
 	return (
 		<div>
+			{paging?.loading && (
+				<p className="py-1 pl-[30px] text-ui-12 text-ink-faint">{t("sidebar.catalogLoading")}</p>
+			)}
+			{paging?.partial && !paging.loading && (
+				<button
+					type="button"
+					className="py-1 pl-[30px] text-ui-12 text-ink-faint hover:text-ink-2"
+					onClick={paging.onRetry}
+				>
+					{t("sidebar.catalogPartial")}
+				</button>
+			)}
+			{paging?.error && (
+				<button
+					type="button"
+					className="py-1 pl-[30px] text-ui-12 text-ink-faint hover:text-ink-2"
+					onClick={paging.onRetry}
+				>
+					{t("sidebar.catalogRetry")}
+				</button>
+			)}
 			{/* 可测试性只读属性（验收脚本按它定位列表并断言「这里没有自己的滚动」；纯属性，不影响视觉） */}
 			<div data-sidebar-session-list="">
 				{sessions.map(({ session, pinned }) => (
@@ -54,7 +79,7 @@ export function SidebarSessionList({
 			</div>
 			{/* 幽灵文字按钮（左侧缩进与会话标题同为 30px），行高沿用 31px 保持纵向节奏；
 			    点击只增行、不动视口位置。放在列表容器**外面**：列表容器里只有会话行 */}
-			{hasMore && (
+			{hasMore && !paging?.loading && (
 				<button
 					type="button"
 					data-sidebar-show-more=""

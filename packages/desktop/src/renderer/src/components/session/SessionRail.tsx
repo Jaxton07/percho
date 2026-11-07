@@ -1,11 +1,11 @@
 import type { SessionMeta } from "@percho/shared";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useT } from "../../i18n";
 import { isDailyCwd } from "../../lib/daily";
 import { SESSION_RAIL_AVAILABLE } from "../../lib/session-rail-availability";
 import { useListShift } from "../../lib/use-list-shift";
 import { useWorkspaceRemoval } from "../../lib/workspace-actions";
-import { useProjectsStore } from "../../stores/projects";
+import { loadReferencedSessionMetadata, useProjectsStore } from "../../stores/projects";
 import { resolveWorkspaceSessions, useSessionWorkspaceStore } from "../../stores/session-workspace";
 import { useSessionsStore } from "../../stores/sessions";
 import { useUiStore } from "../../stores/ui";
@@ -44,6 +44,12 @@ export function SessionRail() {
 	const members = useSessionWorkspaceStore((s) => s.members);
 	const sessions = useSessionsStore((s) => s.sessions);
 	const allSessions = useProjectsStore((s) => s.allSessions);
+	useEffect(() => {
+		if (enabled && SESSION_RAIL_AVAILABLE)
+			void loadReferencedSessionMetadata(
+				members.map((member) => ({ sessionId: member.sessionId, sessionFile: member.file })),
+			);
+	}, [enabled, members]);
 	if (!SESSION_RAIL_AVAILABLE || !enabled || members.length === 0) return null;
 	return <SessionRailInner members={members} sessions={sessions} allSessions={allSessions} />;
 }

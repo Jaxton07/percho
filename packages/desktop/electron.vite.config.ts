@@ -11,10 +11,10 @@ export default defineConfig({
 				input: {
 					index: resolve(__dirname, "src/main/index.ts"),
 					"session-media-worker": resolve(__dirname, "../backend/src/session/media-maintenance-worker.ts"),
+					"session-catalog-worker": resolve(__dirname, "../backend/src/session/catalog-worker.ts"),
 				},
 				output: {
-					entryFileNames: (chunk) =>
-						chunk.name === "session-media-worker" ? "session-media-worker.mjs" : "[name].js",
+					entryFileNames: (chunk) => (chunk.name.endsWith("-worker") ? "[name].mjs" : "[name].js"),
 				},
 				external: ["@earendil-works/pi-coding-agent"],
 			},

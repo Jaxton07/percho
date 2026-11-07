@@ -7,6 +7,7 @@ import { getDailyDirCached, isDailyCwd } from "../../lib/daily";
 import { pathLastSegment } from "../../lib/path-display";
 import { deriveProjects, useProjectsStore } from "../../stores/projects";
 import { useRemoteConnectionStore } from "../../stores/remote-connection";
+import { useSessionCatalogStore } from "../../stores/session-catalog";
 import { useSessionsStore } from "../../stores/sessions";
 import { CoffeeIcon } from "../icons";
 import { RemoteEnvironmentIndicator } from "../remote/RemoteEnvironmentIndicator";
@@ -43,9 +44,14 @@ function ProjectPicker() {
 	const setDraftCwd = useSessionsStore((s) => s.setDraftCwd);
 	const allSessions = useProjectsStore((s) => s.allSessions);
 	const addedProjects = useProjectsStore((s) => s.addedProjects);
+	const catalogs = useSessionCatalogStore((s) => s.byEnvironment);
 	const projects = useMemo(
-		() => deriveProjects({ allSessions, addedProjects }),
-		[allSessions, addedProjects],
+		() =>
+			deriveProjects(
+				{ allSessions, addedProjects },
+				Object.values(catalogs).flatMap((entry) => entry.projects?.projects ?? []),
+			),
+		[allSessions, addedProjects, catalogs],
 	);
 	const name = cwd ? pathLastSegment(cwd) : undefined;
 	const daily = isDailyCwd(cwd);

@@ -1,10 +1,33 @@
 import type { SessionMeta } from "@percho/shared";
 import { describe, expect, it } from "vitest";
-import { canOpenSessionMenu, sidebarMenuKind } from "./session-menu";
+import type { Translate } from "../../i18n";
+import { useChannelSubscriptionsStore } from "../../stores/channel-subscriptions";
+import { canOpenSessionMenu, sessionMenuItems, sidebarMenuKind } from "./session-menu";
 
 function meta(overrides: Partial<SessionMeta>): SessionMeta {
 	return { sessionId: "s1", cwd: "/proj/demo", active: true, messageCount: 0, createdAt: 1, ...overrides };
 }
+
+describe("archive menu", () => {
+	it("appears before delete and explains active subscriptions", () => {
+		useChannelSubscriptionsStore.setState({
+			bySession: { s1: { topics: ["news"], revision: 1, generation: 1 } },
+		});
+		const items = sessionMenuItems(((key: string) => key) as Translate, {
+			sessionId: "s1",
+			session: meta({ sessionFile: "/a", messageCount: 1 }),
+			pinned: false,
+			onRename: () => {},
+			onDelete: () => {},
+		});
+		expect(items.map((item) => item.key).slice(-2)).toEqual(["archive", "delete"]);
+		expect(items.find((item) => item.key === "archive")).toMatchObject({
+			disabled: false,
+			tooltip: "sessionArchive.subscriptions",
+		});
+		useChannelSubscriptionsStore.setState({ bySession: {} });
+	});
+});
 
 describe("canOpenSessionMenu", () => {
 	it("普通会话给菜单", () => {

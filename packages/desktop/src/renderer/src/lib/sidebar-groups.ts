@@ -61,6 +61,10 @@ function mergeSessionMeta(history: SessionMeta, memory: SessionMeta): SessionMet
 		...memory,
 		createdAt: history.createdAt,
 		modifiedAt: memory.modifiedAt ?? history.modifiedAt,
+		messageCount: Math.max(history.messageCount, memory.messageCount),
+		archiveRevision: history.archiveRevision,
+		archivedAt: history.archivedAt,
+		archiveCleanupPending: history.archiveCleanupPending,
 	};
 }
 
