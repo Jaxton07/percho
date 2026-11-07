@@ -2,6 +2,8 @@ import type { TrustRequest } from "@percho/shared";
 import { environmentEntityRef, LOCAL_ENVIRONMENT } from "@percho/shared";
 import { useCallback, useEffect, useRef } from "react";
 import { getPi } from "./api";
+import { ChatColumn } from "./components/chat/ChatColumn";
+import { ChatColumnResizeHandles } from "./components/chat/ChatColumnResizeHandles";
 import { CornerStack } from "./components/chat/CornerStack";
 import { EmptyState } from "./components/chat/EmptyState";
 import { MessageList } from "./components/chat/MessageList";
@@ -157,17 +159,14 @@ export default function App() {
 					<Sidebar />
 					{/* 聊天页容器：会话推/出过渡的动画主体（lib/session-page-slide.ts 认 data-session-page 找它，
 					   用 data-session-id 判定「新内容已上屏」）。顶栏与左栏不在此容器内 ⇒ 导航时保持静态 */}
-					<div
-						className="relative flex min-w-0 flex-1 flex-col"
-						data-session-page=""
-						data-session-id={activeSessionId ?? ""}
-					>
+					<ChatColumn sessionId={activeSessionId}>
 						{/* 会话轨道当前暂停展示，组件内由统一可用性标记控制，代码与旧偏好保留。
 						    挂载点仍在 main + DockSlot 的父容器，恢复后不受输入框高度影响。 */}
 						<SessionRail />
 						{/* 右侧 DiffSidebar 是独立浮层，不参与中间聊天列宽度与布局动画。 */}
 						<main className="relative min-h-0 flex-1">
 							{showEmpty ? <EmptyState /> : <MessageList />}
+							<ChatColumnResizeHandles empty={showEmpty} />
 							{/* Todo 槽位宿主：display:contents 不产生盒子（插件/默认 Todo 的原绝对定位不受影响），
 							    只给 CornerStack 一个可 observe 的挂载点（它去测量渲染根的实际底边） */}
 							<div ref={todoSlotHostRef} style={{ display: "contents" }}>
@@ -184,7 +183,7 @@ export default function App() {
 							<RegionHost region={UI_REGIONS.CornerBottomRight} />
 						</main>
 						<DockSlot sessionId={activeSessionId} hideComposer={showEmpty} />
-					</div>
+					</ChatColumn>
 					<DiffSidebar />
 				</div>
 			</div>
