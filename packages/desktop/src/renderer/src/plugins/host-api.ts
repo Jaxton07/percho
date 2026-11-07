@@ -10,6 +10,7 @@ import { Tooltip } from "../components/ui/Tooltip";
 import { useContextUsage } from "../hooks/use-context-usage";
 import { useLanguage } from "../hooks/use-language";
 import { useQuota } from "../hooks/use-quota";
+import { useTurnSpeed } from "../hooks/use-turn-speed";
 import { useT } from "../i18n";
 import { useProjectsStore } from "../stores/projects";
 import { useSessionsStore } from "../stores/sessions";
@@ -21,8 +22,8 @@ import type { PerchoUiApi } from "./env";
 
 /**
  * 宿主 API：把宿主能力挂到 window.PerchoUI（插件运行时的唯一入口，与宿主共享同一 React 实例）。
- * 暴露清单与 main/ui-plugins/build.ts 的 SHIMS、Phase 2 的 resources/ui-plugins/percho-ui.d.ts
- * **逐名一致**（新增暴露 = 改这三处 + host-api + shim + percho-ui.d.ts，同步进行）。
+ * 暴露清单与 plugins/env.d.ts（PerchoUiApi）、main/ui-plugins/build.ts 的 SHIMS、
+ * resources/ui-plugins/percho-ui.d.ts **逐名一致**（新增暴露 = 本文件 + env.d.ts + SHIMS + percho-ui.d.ts 四处同步进行）。
  * main.tsx 在 render 前 import 本模块（副作用挂载），确保任何插件代码运行前已就绪。
  */
 window.PerchoUI = {
@@ -46,6 +47,7 @@ window.PerchoUI = {
 		useT,
 		useContextUsage,
 		useQuota,
+		useTurnSpeed,
 		useLanguage,
 	},
 	stores: {

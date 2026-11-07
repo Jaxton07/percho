@@ -2,7 +2,7 @@
 
 > 本文件随 Percho 分发（`userData/ui-plugins/SPEC.md`），是 agent 编写 UI 插件的唯一权威依据。
 > 配套类型声明：同目录 `percho-ui.d.ts`（与宿主 `window.PerchoUI` 暴露清单**逐名一致**）。
-> 完整示例：`examples/token-meter/` 与 `examples/overlay-pet/`。
+> 完整示例：`examples/token-meter/`、`examples/overlay-pet/` 与 `examples/token-speed/`。
 
 ## 1. 什么是 UI 插件
 
@@ -109,6 +109,7 @@ export const hooks: {
 	useT(): (key: string, params?) => string; // i18n（key 用宿主既有字典，如 "message.working"）
 	useContextUsage(sessionId: string | null): ContextUsageInfo | null; // 上下文用量（圆环数据）
 	useQuota(): QuotaInfo | null;      // opencode-go 套餐额度（全局；null = 无订阅，插件应隐藏）
+	useTurnSpeed(sessionId: string | null): TurnSpeedView | null; // token 生成速度（当前轮 + 最近 40 轮 + 全会话累计；api/decode 双口径 + 流式 live 估算；null = 无任何可用数据，插件应隐藏）
 	useLanguage(): "zh" | "en";       // 插件自有文案跟随中英
 };
 export const stores: {                      // 宿主 zustand store（与宿主同一实例）
@@ -137,7 +138,7 @@ export const stores: {                      // 宿主 zustand store（与宿主�
 
 ## 8. 完整示例
 
-`_examples/token-meter/` 与 `_examples/overlay-pet/` 随包分发（下划线开头不被当插件扫描），演示状态订阅、语义样式和区域贡献。工具卡使用内置展示，不提供替换槽位；未知槽位使整个清单无效，不部分加载，也不改写用户插件文件。
+`_examples/token-meter/`、`_examples/overlay-pet/` 与 `_examples/token-speed/` 随包分发（下划线开头不被当插件扫描），演示状态订阅、语义样式和区域贡献。工具卡使用内置展示，不提供替换槽位；未知槽位使整个清单无效，不部分加载，也不改写用户插件文件。
 
 ## 9. 交付闭环（agent 标准流程）
 
@@ -194,7 +195,7 @@ z 序：背景 0 < 内容 10 < overlay 20 < 设置弹窗 40 < 信任弹窗/全�
 - `settings.panel` 贡献渲染为设置弹窗的独立分类（分类 id `plugin:<name>:<cid>`，标题 = `title`），随插件启停自动增删；
 - 排查：贡献根元素外层的宿主容器挂 `data-plugin="<name>"` 属性（插件无需自己做）；
 - **内置插件**：`resources/ui-plugins/builtin/` 随包分发，应用首次启动/升级时导出到用户插件目录（与用户插件同一条扫描/构建/热重载路径，面板带「内置」badge、启用遵循同一工作台级信任确认）。**直接改内置副本会在下次升级被覆盖——魔改请把目录改名另存**（`plugin.json` 的 `name` 同步改）；手动删除的目录本版本内不会回来，下次升级重新导出；
-- 新 hooks（`percho-ui.d.ts` 已声明）：`useContextUsage(sessionId)` 返回 `{ tokens, contextWindow, percent }`（事件驱动刷新，token 仪表盘用）；`useQuota()` 返回 `{ windows, updatedAt, error? }`（全局额度，无 key/无订阅返回 null，turn 结束刷新 + 60s 轮询，额度圆环用）；`useLanguage()` 返回 `"zh" | "en"`（插件自有文案跟随中英）。
+- 新 hooks（`percho-ui.d.ts` 已声明）：`useContextUsage(sessionId)` 返回 `{ tokens, contextWindow, percent }`（事件驱动刷新，token 仪表盘用）；`useQuota()` 返回 `{ windows, updatedAt, error? }`（全局额度，无 key/无订阅返回 null，turn 结束刷新 + 60s 轮询，额度圆环用）；`useTurnSpeed(sessionId)` 返回 `TurnSpeedView`（token 生成速度：`speed`/`metric` 为展示口径（`decode` = 已剔除实测 prefill，`api` = 含 prefill/网络），另给 `apiSpeed`/`decodeSpeed`/`prefillMs`/`promptTokens`/`turns`（最近 40 轮，历史轮也有值）/`session` 累计与 `liveSpeed`（流式期间每 500ms 刷新）。**口径必须标注**：两口径可差 30%+；wall 口径（含工具执行/排队）实测稀释 ≈7×，不在本 hook 内。message_end/turn_end/agent_settled 事件驱动刷新，无有效样本且无 live 时返回 null，token 速度组件用）。**轮末行已内置该展示**（宿主 `TurnDiffChip`：⚡ 数值 + `dec`/`api` 口径上标 + hover 拆解），插件不必重复做同款；本 hook 供自定义展示位（composer 状态条、轨道、历史面板等）使用；`useLanguage()` 返回 `"zh" | "en"`（插件自有文案跟随中英）。
 - `composer.footer` 行内区域：挂在 ContextRing 旁的 flex 行内，贡献组件无 props；需要悬停交互的子树自己开 `pointer-events-auto`（Tooltip 内部已处理）。
 
 ### 10.4 示例

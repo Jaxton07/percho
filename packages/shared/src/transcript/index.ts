@@ -25,6 +25,27 @@ export {
 	type TurnChanges,
 	type TurnFileChange,
 } from "./turn-files";
+export {
+	aggregateDecode,
+	aggregateSpeed,
+	alignTurnSpeedRows,
+	buildTurnSpeedView,
+	type DecodeAggregate,
+	deriveTurnSpeed,
+	estimateStreamingTokens,
+	type LiveEstimate,
+	type SpeedAggregate,
+	type SpeedMessage,
+	type SpeedSession,
+	type SpeedSplit,
+	type SpeedTurn,
+	splitPrefillDecode,
+	type TurnSpeedRow,
+	type TurnSpeedSample,
+	type TurnSpeedSnapshot,
+	type TurnSpeedView,
+	toSpeedMessage,
+} from "./turn-speed";
 export { deriveTurnTimings, type TurnTiming } from "./turn-timings";
 export {
 	type ActivityEntry,
