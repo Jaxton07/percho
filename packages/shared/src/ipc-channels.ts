@@ -17,6 +17,7 @@ import type {
 	CatalogSearchResult,
 	ConfiguredPackageInfo,
 	PackageUpdateInfo,
+	PackageUpdateResult,
 } from "./packages";
 import type {
 	MutationReceipt,
@@ -486,6 +487,16 @@ export const PACKAGES_CHANNELS = {
 		"environment",
 		"mutation",
 	)<{ source: string; scope: "user" | "project"; sessionId?: string }, void>({
+		source: input.text,
+		scope: input.oneOf("user", "project"),
+		sessionId: input.optional(input.id),
+	}),
+	/** 原地更新已配置的 npm 包到 latest（只更新这一条 source + scope）；成功后热重载非流式活跃会话 */
+	updatePackage: ch(
+		"packages:update",
+		"environment",
+		"mutation",
+	)<{ source: string; scope: "user" | "project"; sessionId?: string }, PackageUpdateResult>({
 		source: input.text,
 		scope: input.oneOf("user", "project"),
 		sessionId: input.optional(input.id),
