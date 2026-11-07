@@ -355,12 +355,17 @@ export function reduceEvent(state: SessionTranscriptState, event: SessionEvent):
 			};
 			// 乐观回显认领：本次发送已本地插了一条同位置气泡（appendOptimisticUserMessage），
 			// 权威消息到达就**原位替换**（不追加）——气泡不闪、不重排，缩略图换成权威那版。
-			// 判据：存在 pending 用户消息，且它之后**没有再插过用户消息**（中间可能夹了 system 通知行，忽略）；
-			// 只有空闲发送才插 pending，而运行中发送走队列、队列在本次用户消息之后才 drain，所以它一定还尾着。
-			const pendingIndex = findLastIndex(state.messages, (m) => m.kind === "user" && m.pending === true);
-			const claimable =
-				pendingIndex >= 0 && !state.messages.slice(pendingIndex + 1).some((m) => m.kind === "user");
-			if (claimable) {
+			// 暂停后人工恢复会留下多个 pending，SDK 按受理顺序发布旧队列与新消息；
+			// 从最后一条已确认用户消息之后，认领最早的 pending（忽略夹入的系统通知）。
+			// 不比较文本：模板/skill 展开会改正文，用户也可能确实连发相同内容。
+			let pendingIndex = -1;
+			for (let index = state.messages.length - 1; index >= 0; index--) {
+				const candidate = state.messages[index];
+				if (candidate?.kind !== "user") continue;
+				if (!candidate.pending) break;
+				pendingIndex = index;
+			}
+			if (pendingIndex >= 0) {
 				return {
 					...state,
 					messages: [
