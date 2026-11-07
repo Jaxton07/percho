@@ -474,8 +474,11 @@ function createSettingsStore(environment: EnvironmentRef) {
 			loadPermissionGate,
 			refreshAfterMutation: async (domain) => {
 				await loadModelsData("mutation");
-				if (domain === "packages") await loadLoadedResources();
-				await useSessionsStore.getState().loadModels(environment);
+				// 已加载资源不应阻塞模型选择器同步；两者独立刷新，仍等待全部完成。
+				await Promise.all([
+					useSessionsStore.getState().loadModels(environment),
+					domain === "packages" ? loadLoadedResources() : Promise.resolve(),
+				]);
 			},
 
 			refresh: async () => {

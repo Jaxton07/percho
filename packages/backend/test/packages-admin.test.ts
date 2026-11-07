@@ -110,6 +110,13 @@ function stubSession(state: { sessionId: string; isStreaming?: boolean; isCompac
 }
 function backendWithSessions(sessions: AgentSession[]) {
 	const backend = new PiBackend();
+	// 此组只验证包变更后的会话重载门；真实用户资源加载由 provider-startup.test.ts 覆盖。
+	const lifecycle = backend as unknown as {
+		getModelRuntime(): Promise<unknown>;
+		loadUserProviders(runtime: unknown): Promise<void>;
+	};
+	vi.spyOn(lifecycle, "getModelRuntime").mockResolvedValue({});
+	vi.spyOn(lifecycle, "loadUserProviders").mockResolvedValue(undefined);
 	const registry = (backend as unknown as { registry: SessionRegistry }).registry;
 	for (const session of sessions)
 		registry.add({ session, unsubscribe: () => {}, cwd: join(tmpdir(), "package-cwd") });
