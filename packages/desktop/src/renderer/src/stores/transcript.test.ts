@@ -197,6 +197,55 @@ describe("transcript reducer", () => {
 			expect((state.messages[0] as { pending?: boolean }).pending).toBeUndefined();
 		});
 
+		it.each(["恢复时的新消息", "暂停前的消息"])(
+			"暂停恢复按受理顺序认领多个气泡，恢复正文为 %s",
+			(resumeText) => {
+				let state = appendOptimisticUserMessage(emptyTranscript(), {
+					text: "暂停前的消息",
+					images: [],
+				}).state;
+				state = reduceEvent(state, ev("agent_start"));
+				state = reduceEvent(state, {
+					type: "compaction_pause",
+					pause: { reason: "nothing-to-compact" },
+				});
+				state = reduceEvent(state, { type: "queue_update", steering: [], followUp: ["暂停前的消息"] });
+				state = reduceEvent(state, { type: "agent_settled", aborted: false });
+				state = appendOptimisticUserMessage(state, { text: resumeText, images: [] }).state;
+				state = reduceEvent(state, ev("agent_start"));
+				state = reduceEvent(state, { type: "compaction_pause", pause: null });
+
+				state = reduceEvent(state, userStart("暂停前的消息"));
+				expect(state.messages).toHaveLength(2);
+				expect(state.messages[0]).toMatchObject({ kind: "user", text: "暂停前的消息" });
+				expect(state.messages[0]).not.toHaveProperty("pending");
+				expect(state.messages[1]).toMatchObject({ kind: "user", text: resumeText, pending: true });
+
+				state = reduceEvent(state, userStart(resumeText));
+				state = reduceEvent(state, { type: "queue_update", steering: [], followUp: [] });
+				expect(
+					state.messages.map((message) => (message.kind === "user" ? message.text : message.kind)),
+				).toEqual(["暂停前的消息", resumeText]);
+				expect(state.messages.every((message) => message.kind !== "user" || !message.pending)).toBe(true);
+			},
+		);
+
+		it("多个待认领气泡之间夹系统通知时仍按顺序认领", () => {
+			let state = appendOptimisticUserMessage(emptyTranscript(), { text: "旧消息", images: [] }).state;
+			state = reduceEvent(state, { type: "subagent_mutex", extensionPath: "/tmp/x.ts", tools: ["subagent"] });
+			state = appendOptimisticUserMessage(state, { text: "新消息", images: [] }).state;
+			state = reduceEvent(state, userStart("旧消息", 1));
+			state = reduceEvent(state, userStart("新消息"));
+			expect(
+				state.messages.map((message) => (message.kind === "user" ? message.text : message.kind)),
+			).toEqual(["旧消息", "system", "新消息"]);
+			expect(state.messages[0]).toMatchObject({
+				kind: "user",
+				images: [{ data: "AAAA", mimeType: "image/png" }],
+			});
+			expect(state.messages.every((message) => message.kind !== "user" || !message.pending)).toBe(true);
+		});
+
 		it("撤回只删未认领的那条", () => {
 			const first = appendOptimisticUserMessage(emptyTranscript(), { text: "发失败的", images: [] });
 			expect(removeOptimisticUserMessage(first.state, first.id).messages).toHaveLength(0);
