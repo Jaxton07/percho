@@ -1,16 +1,16 @@
 diff --git a/node_modules/@earendil-works/pi-coding-agent/dist/core/agent-session.d.ts b/node_modules/@earendil-works/pi-coding-agent/dist/core/agent-session.d.ts
 --- a/node_modules/@earendil-works/pi-coding-agent/dist/core/agent-session.d.ts
 +++ b/node_modules/@earendil-works/pi-coding-agent/dist/core/agent-session.d.ts
-@@ -54,6 +54,9 @@
+@@ -53,6 +53,9 @@
+ } | {
      type: "agent_settled";
      aborted: boolean;
- } | {
++} | {
 +    type: "compaction_pause";
 +    pause: CompactionPause | null;
-+} | {
+ } | {
      type: "queue_update";
      steering: readonly string[];
-     followUp: readonly string[];
 @@ -217,7 +220,25 @@
      cost: number;
      contextUsage?: ContextUsage;
@@ -58,11 +58,19 @@ diff --git a/node_modules/@earendil-works/pi-coding-agent/dist/core/agent-sessio
 diff --git a/node_modules/@earendil-works/pi-coding-agent/dist/core/agent-session.js b/node_modules/@earendil-works/pi-coding-agent/dist/core/agent-session.js
 --- a/node_modules/@earendil-works/pi-coding-agent/dist/core/agent-session.js
 +++ b/node_modules/@earendil-works/pi-coding-agent/dist/core/agent-session.js
-@@ -212,7 +212,214 @@
-         });
+@@ -25,7 +25,7 @@
+ import { formatNoApiKeyFoundMessage, formatNoModelSelectedMessage } from "./auth-guidance.js";
+ import { executeBashWithOperations } from "./bash-executor.js";
+ import { generateBugReportSummary } from "./bug-report.js";
+-import { calculateContextTokens, collectEntriesForBranchSummary, compact, estimateContextTokens, estimateProjectedContextTokens, estimateTokens, generateBranchSummary, prepareCompaction, shouldCompact, } from "./compaction/index.js";
++import { calculateContextTokens, collectEntriesForBranchSummary, compact, estimateProjectedContextTokens, estimateTokens, generateBranchSummary, prepareCompaction, shouldCompact, } from "./compaction/index.js";
+ import { DEFAULT_THINKING_LEVEL, THINKING_LEVEL_OPTIONS } from "./defaults.js";
+ import { exportSessionToHtml } from "./export-html/index.js";
+ import { createToolHtmlRenderer } from "./export-html/tool-renderer.js";
+@@ -213,6 +213,220 @@
          if (this._usesDefaultTools)
              this._restoreToolsFromTranscript(this._defaultToolModifiers);
-+    }
+     }
 +    /** Percho: optional host policy; the SDK remains the sole queue/lifecycle owner. */
 +    setCompactionPolicy(policy) {
 +        this._hostPolicy = policy;
@@ -126,7 +134,7 @@ diff --git a/node_modules/@earendil-works/pi-coding-agent/dist/core/agent-sessio
 +            const entryId = published && this._entryIdsByMessage.get(published);
 +            if (entryId && !ids.has(entryId)) this.agent.forgetPublishedPendingMessage(rawMessage);
 +        }
-     }
++    }
 +    _hostPendingContextIsCurrent(signal) {
 +        const baseline = this._hostPendingBaseline;
 +        if (!baseline || signal?.aborted || this._agentRunAbortRequested || this._hostDisposed) return false;
@@ -154,6 +162,13 @@ diff --git a/node_modules/@earendil-works/pi-coding-agent/dist/core/agent-sessio
 +        const extra = messages.filter((message) => !ids.has(this._entryIdsByMessage.get(message)));
 +        const estimate = estimateProjectedContextTokens(projection, branch, effectiveModel);
 +        return { projection, messages, tokens: estimate.tokens + extra.reduce((n, m) => n + estimateTokens(m), 0) };
++    }
++    _hostUsageRoute() {
++        const routed = this._hostRequestRoute;
++        const baseline = routed?.baseline;
++        return routed && baseline && routed.selection === this.model && baseline.model === this.model
++            && baseline.generation === this._hostGeneration
++            && baseline.leaf === this.sessionManager.getLeafId() ? routed : undefined;
 +    }
 +    _hostSnapshot() {
 +        return { leaf: this.sessionManager.getLeafId(), model: this.model, generation: this._hostGeneration };
@@ -273,7 +288,14 @@ diff --git a/node_modules/@earendil-works/pi-coding-agent/dist/core/agent-sessio
      get modelRuntime() {
          return this._modelRuntime;
      }
-@@ -424,7 +628,7 @@
+@@ -418,13 +632,13 @@
+     _exceedsCompactionThreshold(model, projection) {
+         if (model.contextWindow <= 0)
+             return false;
+-        return shouldCompact(estimateProjectedContextTokens(projection, this.sessionManager.getBranch()).tokens, model.contextWindow, this.settingsManager.getCompactionSettings(this.model));
++        return shouldCompact(estimateProjectedContextTokens(projection, this.sessionManager.getBranch(), model).tokens, model.contextWindow, this.settingsManager.getCompactionSettings(model));
+     }
+     async _compactBeforeNextAssistantResponse(context) {
          const projection = this.sessionManager.buildSessionProjection();
          // A virtual selection is checked in prepareRequest, against the model the request is routed to.
          const model = this.model;
@@ -282,7 +304,7 @@ diff --git a/node_modules/@earendil-works/pi-coding-agent/dist/core/agent-sessio
              return { ...context, messages: projection.messages };
          }
          await this._runAutoCompaction("threshold", false);
-@@ -451,9 +655,38 @@
+@@ -451,9 +665,38 @@
                  }, signal);
                  return { previous, context: previous?.context ?? canonicalContext, projection };
              };
@@ -321,7 +343,16 @@ diff --git a/node_modules/@earendil-works/pi-coding-agent/dist/core/agent-sessio
              if (!isVirtualModel(model))
                  return { ...previous, context, model, thinkingLevel };
              // The selection stays in agent state; only this request uses the routed model. A routing
-@@ -654,8 +886,8 @@
+@@ -478,7 +721,7 @@
+             // The route stands: the router already decided this request. The state entry does not change
+             // the projection.
+             if (this._exceedsCompactionThreshold(route.model, projection)) {
+-                await this._runAutoCompaction("threshold", false);
++                await this._runAutoCompaction("threshold", false, route.model);
+                 ({ previous, context } = await prepare());
+             }
+             return { ...previous, context, model: route.model, thinkingLevel: route.thinkingLevel };
+@@ -654,8 +897,8 @@
      _emitQueueUpdate() {
          this._emit({
              type: "queue_update",
@@ -332,7 +363,7 @@ diff --git a/node_modules/@earendil-works/pi-coding-agent/dist/core/agent-sessio
          });
      }
      async _emitSessionCompactFailed(event) {
-@@ -728,7 +960,7 @@
+@@ -728,7 +971,7 @@
          }
          // When a user message starts, check if it's from either queue and remove it BEFORE emitting
          // This ensures the UI sees the updated queue state
@@ -341,7 +372,27 @@ diff --git a/node_modules/@earendil-works/pi-coding-agent/dist/core/agent-sessio
              this._overflowRecoveryAttempted = false;
              const messageText = contentText(event.message.content, "");
              if (messageText) {
-@@ -797,6 +1029,7 @@
+@@ -753,6 +996,7 @@
+         this._emit(event.type === "agent_end" ? { ...event, willRetry: this._willRetryAfterAgentEnd(event) } : event);
+         // Handle session persistence
+         if (event.type === "message_end") {
++            const usageRoute = this._hostUsageRoute();
+             let entryId;
+             // Check if this is a custom message from extensions
+             if (event.message.role === "custom") {
+@@ -768,6 +1012,11 @@
+             }
+             if (entryId)
+                 this._entryIdsByMessage.set(event.message, entryId);
++            // A failed/zero-usage reply still belongs to the dispatched physical route.
++            if (usageRoute && event.message.role === "assistant"
++                && event.message.provider === usageRoute.route.model.provider
++                && event.message.model === usageRoute.route.model.id)
++                usageRoute.baseline = this._hostSnapshot();
+             // Other message types (bashExecution, compactionSummary, branchSummary) are persisted elsewhere
+             if (event.message.role === "assistant") {
+                 const assistantMsg = event.message;
+@@ -797,6 +1046,7 @@
          }
      };
      _willRetryAfterAgentEnd(event) {
@@ -349,7 +400,7 @@ diff --git a/node_modules/@earendil-works/pi-coding-agent/dist/core/agent-sessio
          if (this._agentRunAbortRequested)
              return false;
          const settings = this.settingsManager.getRetrySettings();
-@@ -1009,6 +1242,9 @@
+@@ -1009,6 +1259,9 @@
       * Call this when completely done with the session.
       */
      dispose() {
@@ -359,7 +410,7 @@ diff --git a/node_modules/@earendil-works/pi-coding-agent/dist/core/agent-sessio
          try {
              this.abortRetry();
              this.abortCompaction();
-@@ -1421,6 +1657,7 @@
+@@ -1421,6 +1674,7 @@
       * @param onStarted Called once the run's messages are prepared, before the first request.
       */
      async _startRun(trigger, onStarted) {
@@ -367,7 +418,7 @@ diff --git a/node_modules/@earendil-works/pi-coding-agent/dist/core/agent-sessio
          this._isAgentRunActive = true;
          this._agentRunAbortRequested = false;
          let messages;
-@@ -1438,14 +1675,18 @@
+@@ -1438,14 +1692,18 @@
          // have while idle. No run exists yet, so they cannot split a tool call from its result.
          this._flushPendingBashMessages();
          this._flushPendingCustomMessages();
@@ -393,7 +444,7 @@ diff --git a/node_modules/@earendil-works/pi-coding-agent/dist/core/agent-sessio
              await this.agent.prompt(messages);
              while (!this._agentRunAbortRequested) {
                  if (await this._handlePostAgentRun()) {
-@@ -1468,7 +1709,52 @@
+@@ -1468,7 +1726,52 @@
              this._runSystemPromptOptions = undefined;
              this._flushPendingBashMessages();
              this._flushPendingCustomMessages();
@@ -447,7 +498,7 @@ diff --git a/node_modules/@earendil-works/pi-coding-agent/dist/core/agent-sessio
          }
      }
      /**
-@@ -1481,7 +1767,7 @@
+@@ -1481,7 +1784,7 @@
          // Check if we need to compact before sending (catches aborted responses).
          // The starting message is sent below, so do not call agent.continue() here.
          const lastAssistant = this._findLastAssistantMessage();
@@ -456,7 +507,7 @@ diff --git a/node_modules/@earendil-works/pi-coding-agent/dist/core/agent-sessio
              await this._checkCompaction(lastAssistant, false);
          }
          const selectedToolsBefore = this._baseSystemPromptOptions.selectedTools;
-@@ -1529,6 +1815,7 @@
+@@ -1529,6 +1832,7 @@
          return messages;
      }
      async _handlePostAgentRun() {
@@ -464,7 +515,7 @@ diff --git a/node_modules/@earendil-works/pi-coding-agent/dist/core/agent-sessio
          const message = this._lastAssistantMessage;
          this._lastAssistantMessage = undefined;
          if (this._agentRunAbortRequested) {
-@@ -1557,13 +1844,15 @@
+@@ -1557,13 +1861,15 @@
              this._retryAttempt = 0;
          }
          if (await this._checkCompaction(message)) {
@@ -481,11 +532,10 @@ diff --git a/node_modules/@earendil-works/pi-coding-agent/dist/core/agent-sessio
          if (!this._extensionRunner.hasHandlers("agent_before_settle"))
              return this.agent.hasQueuedMessages();
          this._isBeforeSettle = true;
-@@ -1660,6 +1949,15 @@
-         if (expandPromptTemplates) {
+@@ -1661,6 +1967,15 @@
              expandedText = this._expandSkillCommand(expandedText);
              expandedText = expandPromptTemplate(expandedText, [...this.promptTemplates]);
-+        }
+         }
 +        if (this._hostPolicy && !this.isStreaming && (this._hostPause || this._hostAwaitingUser || this.agent.hasQueuedMessages())) {
 +            if ((options?.source ?? "interactive") === "extension") {
 +                await this._queueFollowUp(expandedText, currentImages);
@@ -494,10 +544,11 @@ diff --git a/node_modules/@earendil-works/pi-coding-agent/dist/core/agent-sessio
 +            }
 +            this._hostResumeBatch = true;
 +            this._hostCompactedForRequest = false;
-         }
++        }
          // If streaming, queue via steer() or followUp() based on option
          if (this.isStreaming) {
-@@ -1793,8 +2091,7 @@
+             if (!options?.streamingBehavior) {
+@@ -1793,8 +2108,7 @@
       * Internal: Queue a steering message (already expanded, no extension command check).
       */
      async _queueSteer(text, images) {
@@ -507,7 +558,7 @@ diff --git a/node_modules/@earendil-works/pi-coding-agent/dist/core/agent-sessio
          const content = [{ type: "text", text }];
          if (images) {
              content.push(...images);
-@@ -1804,18 +2101,19 @@
+@@ -1804,18 +2118,19 @@
              content,
              timestamp: Date.now(),
          });
@@ -529,7 +580,7 @@ diff --git a/node_modules/@earendil-works/pi-coding-agent/dist/core/agent-sessio
      }
      /**
       * Throw an error if the text is an extension command.
-@@ -1851,6 +2149,13 @@
+@@ -1851,6 +2166,13 @@
              details: message.details,
              timestamp: Date.now(),
          };
@@ -543,7 +594,7 @@ diff --git a/node_modules/@earendil-works/pi-coding-agent/dist/core/agent-sessio
          if (options?.deliverAs === "nextTurn") {
              this._pendingNextTurnMessages.push(appMessage);
          }
-@@ -1942,25 +2247,27 @@
+@@ -1942,25 +2264,27 @@
       * @returns Object with steering and followUp arrays
       */
      clearQueue() {
@@ -576,7 +627,7 @@ diff --git a/node_modules/@earendil-works/pi-coding-agent/dist/core/agent-sessio
      }
      get resourceLoader() {
          return this._resourceLoader;
-@@ -1969,6 +2276,15 @@
+@@ -1969,6 +2293,15 @@
       * Abort current operation and wait for agent to become idle.
       */
      async abort() {
@@ -592,7 +643,7 @@ diff --git a/node_modules/@earendil-works/pi-coding-agent/dist/core/agent-sessio
          if (this._isAgentRunActive) {
              this._agentRunAbortRequested = true;
          }
-@@ -2011,6 +2327,7 @@
+@@ -2011,6 +2344,7 @@
          }
          const previousModel = this.model;
          const thinkingLevel = this._getThinkingLevelForModelSwitch(model);
@@ -600,7 +651,7 @@ diff --git a/node_modules/@earendil-works/pi-coding-agent/dist/core/agent-sessio
          this.agent.state.model = model;
          this.sessionManager.appendModelChange(model.provider, model.id);
          if (options.persist) {
-@@ -2204,9 +2521,38 @@
+@@ -2204,9 +2538,38 @@
      // =========================================================================
      /** Generate Pi's built-in compaction summary for manual and automatic compaction. */
      async _runDefaultCompaction(preparation, model, customInstructions, signal, reason) {
@@ -642,7 +693,7 @@ diff --git a/node_modules/@earendil-works/pi-coding-agent/dist/core/agent-sessio
      }
      _clearManualCompactionState() {
          this._compactionAbortController = undefined;
-@@ -2228,7 +2574,7 @@
+@@ -2228,7 +2591,7 @@
       * @param customInstructions Optional instructions for the compaction summary
       */
      async compact(customInstructions) {
@@ -651,12 +702,13 @@ diff --git a/node_modules/@earendil-works/pi-coding-agent/dist/core/agent-sessio
          this._compactionAbortController = new AbortController();
          this._emit({ type: "compaction_start", reason: "manual" });
          let fromExtension = false;
-@@ -2440,12 +2786,14 @@
+@@ -2440,12 +2803,14 @@
              // Case 2: the response completed successfully. Compact, but do not retry because
              // agent.continue() cannot continue from a completed assistant response.
              if (!willRetry) {
+-                return await this._runAutoCompaction("overflow", false);
 +                if (this._hostEnabled()) return false;
-                 return await this._runAutoCompaction("overflow", false);
++                return await this._runAutoCompaction("overflow", false, messageModel ?? this.model);
              }
              if (this._overflowRecoveryAttempted) {
                  const errorMessage = contextOverflow
@@ -666,12 +718,12 @@ diff --git a/node_modules/@earendil-works/pi-coding-agent/dist/core/agent-sessio
                  this._emit({
                      type: "compaction_end",
                      reason: "overflow",
-@@ -2466,11 +2814,12 @@
+@@ -2466,45 +2831,20 @@
              // Persistently omit the selected final attempt before post-run recovery compaction.
              this._overflowRecoveryAttempted = true;
              this._omitRecoveryAttempt(assistantMessage);
 -            const retry = await this._runAutoCompaction("overflow", willRetry);
-+            const retry = await this._runAutoCompaction("overflow", willRetry, this._hostEnabled() ? messageModel ?? this.model : this.model);
++            const retry = await this._runAutoCompaction("overflow", willRetry, messageModel ?? this.model);
              if (retry)
                  this._failedResponse = assistantMessage;
              return retry;
@@ -680,7 +732,45 @@ diff --git a/node_modules/@earendil-works/pi-coding-agent/dist/core/agent-sessio
          // Case 3: threshold compaction without retry.
          // For error messages or all-zero usage messages, estimate from the last valid response.
          // This ensures sessions that hit persistent API errors (e.g. 529) or malformed zero-usage
-@@ -2518,9 +2867,9 @@
+         // responses can still compact and do not reset context accounting.
+-        let contextTokens;
+-        const projection = currentProjection;
+-        const hasContextEdits = projection.entries.some((entry) => entry.sourceEntry.type === "context_edit");
+-        const directContextTokens = assistantMessage.usage ? calculateContextTokens(assistantMessage.usage) : 0;
+-        if (hasContextEdits) {
+-            contextTokens = estimateProjectedContextTokens(projection, branch).tokens;
+-        }
+-        else if (assistantMessage.stopReason === "error" || directContextTokens === 0) {
+-            const messages = this.agent.state.messages;
+-            const estimate = estimateContextTokens(messages);
+-            // Without provider usage, estimate.tokens is the pure message-size estimate.
+-            // Only usage-backed estimates need the stale pre-compaction check.
+-            if (estimate.lastUsageIndex !== null) {
+-                // Verify the usage source is post-compaction. Kept pre-compaction messages
+-                // have stale usage reflecting the old (larger) context and would falsely
+-                // trigger compaction right after one just finished.
+-                const usageMsg = messages[estimate.lastUsageIndex];
+-                if (compactionEntry &&
+-                    usageMsg.role === "assistant" &&
+-                    usageMsg.timestamp <= new Date(compactionEntry.timestamp).getTime()) {
+-                    return false;
+-                }
+-            }
+-            contextTokens = estimate.tokens;
+-        }
+-        else {
+-            contextTokens = directContextTokens;
+-        }
+-        if (shouldCompact(contextTokens, contextWindow, settings)) {
+-            return await this._runAutoCompaction("threshold", false);
++        const effectiveModel = messageModel ?? this._limitsModel();
++        const contextTokens = estimateProjectedContextTokens(currentProjection, branch, effectiveModel).tokens;
++        if (shouldCompact(contextTokens, effectiveModel?.contextWindow ?? 0, this.settingsManager.getCompactionSettings(effectiveModel))) {
++            return await this._runAutoCompaction("threshold", false, effectiveModel);
+         }
+         return false;
+     }
+@@ -2518,9 +2858,9 @@
       * @param willRetry Whether to continue the interrupted turn after overflow compaction
       * @returns Whether the post-run loop should call `agent.continue()`
       */
@@ -692,7 +782,7 @@ diff --git a/node_modules/@earendil-works/pi-coding-agent/dist/core/agent-sessio
          let abortController;
          let started = false;
          let fromExtension = false;
-@@ -2530,8 +2879,13 @@
+@@ -2530,8 +2870,13 @@
                  return false;
              }
              const pathEntries = this.sessionManager.getBranch();
@@ -707,7 +797,7 @@ diff --git a/node_modules/@earendil-works/pi-coding-agent/dist/core/agent-sessio
                  return false;
              }
              abortController = new AbortController();
-@@ -2544,6 +2898,7 @@
+@@ -2544,6 +2889,7 @@
                  const extensionResult = (await this._extensionRunner.emit({
                      type: "session_before_compact",
                      preparation,
@@ -715,7 +805,7 @@ diff --git a/node_modules/@earendil-works/pi-coding-agent/dist/core/agent-sessio
                      branchEntries: pathEntries,
                      customInstructions: undefined,
                      reason,
-@@ -2583,6 +2938,13 @@
+@@ -2583,7 +2929,14 @@
                  details = compactResult.details;
              }
              abortController.signal.throwIfAborted();
@@ -729,7 +819,8 @@ diff --git a/node_modules/@earendil-works/pi-coding-agent/dist/core/agent-sessio
 +            if (host && this._hostRequestRoute) this._hostRequestRoute.baseline = this._hostSnapshot();
              const newEntries = this.sessionManager.getEntries();
              this._refreshFinalizedContext();
-@@ -2607,6 +2968,10 @@
+             const estimatedTokensAfter = estimateMessagesTokens(this.sessionManager.buildSessionProjection().messages);
+@@ -2607,6 +2960,10 @@
                  details,
              };
              this._emit({ type: "compaction_end", reason, result, aborted: false, willRetry });
@@ -740,7 +831,7 @@ diff --git a/node_modules/@earendil-works/pi-coding-agent/dist/core/agent-sessio
              if (willRetry)
                  return true;
              // Auto-compaction can complete while follow-up/steering/custom messages are waiting.
-@@ -2616,6 +2981,10 @@
+@@ -2616,6 +2973,10 @@
          catch (error) {
              const message = error instanceof Error ? error.message : "compaction failed";
              const aborted = abortController?.signal.aborted === true || cancelledByExtension;
@@ -751,7 +842,7 @@ diff --git a/node_modules/@earendil-works/pi-coding-agent/dist/core/agent-sessio
              if (started) {
                  const errorMessage = aborted
                      ? undefined
-@@ -2996,6 +3365,7 @@
+@@ -2996,6 +3357,7 @@
          });
      }
      async reload(options) {
@@ -759,19 +850,25 @@ diff --git a/node_modules/@earendil-works/pi-coding-agent/dist/core/agent-sessio
          const oldRunner = this._extensionRunner;
          const previousFlagValues = oldRunner.getFlagValues();
          await emitSessionShutdownEvent(oldRunner, { type: "session_shutdown", reason: "reload" });
-@@ -3500,5 +3875,10 @@
+@@ -3376,6 +3738,8 @@
+                 // Non-user message: leaf = selected node
+                 newLeafId = targetId;
+             }
++            // Navigation invalidates a request route even if the user later returns to its old leaf.
++            this._hostRequestRoute = undefined;
+             // Switch leaf (with or without summary)
+             // Summary is attached at the navigation target position (newLeafId), not the old branch
+             let summaryEntry;
+@@ -3498,7 +3862,7 @@
+         };
+     }
      getContextUsage() {
 -        const model = this._limitsModel();
-+        const routed = this._hostRequestRoute;
-+        const baseline = routed?.baseline;
-+        const model = routed && baseline && routed.selection === this.model && baseline.model === this.model
-+            && baseline.generation === this._hostGeneration
-+            && baseline.leaf === this.sessionManager.getLeafId()
-+            ? routed.route.model : this._limitsModel();
++        const model = this._hostUsageRoute()?.route.model ?? this._limitsModel();
          if (!model)
              return undefined;
          const contextWindow = model.contextWindow ?? 0;
-@@ -3524,7 +3894,7 @@
+@@ -3524,7 +3888,7 @@
              if (!hasPostCompactionUsage)
                  return { tokens: null, contextWindow, percent: null };
          }
@@ -780,7 +877,7 @@ diff --git a/node_modules/@earendil-works/pi-coding-agent/dist/core/agent-sessio
          const percent = (estimate.tokens / contextWindow) * 100;
          return {
              tokens: estimate.tokens,
-@@ -3633,4 +4003,4 @@
+@@ -3633,4 +3997,4 @@
          return this._extensionRunner;
      }
  }

@@ -173,6 +173,107 @@ function virtualModel() {
 }
 
 describe("compaction cross-scenario regressions", () => {
+	it.each(["stop", "error", "aborted", "zero"] as const)(
+		"uses model-aware accounting without a host policy after %s replies",
+		async (result) => {
+			const f = await fixture({ enabled: false, compaction: { keepRecentTokens: 20_000 } });
+			const selected = { ...model, id: "new-model" };
+			await f.session.setModel(selected);
+			const compact = vi.spyOn(
+				f.session as unknown as { _runAutoCompaction: (...args: unknown[]) => Promise<boolean> },
+				"_runAutoCompaction",
+			);
+			f.setNormal(async () => ({
+				...answer("new reply", result === "stop" ? 100 : 0, result === "error" ? "401 denied" : undefined),
+				model: selected.id,
+				stopReason: result === "zero" ? "stop" : result,
+				...(result === "zero" ? { usage: { ...answer("", 0).usage, output: 0, totalTokens: 0 } } : {}),
+			}));
+			await f.session.prompt("continue on new model");
+			expect(compact).not.toHaveBeenCalled();
+			expect(f.requests.map((request) => request.summary)).toEqual([false]);
+			expect(f.session.getContextUsage()?.tokens).toBeLessThan(20_000);
+		},
+	);
+
+	it.each(["before-request", "after-reply"] as const)(
+		"uses the physical model's retention budget for native compaction %s",
+		async (boundary) => {
+			const physical = { ...model, id: "physical-route", contextWindow: 1_000 };
+			const f = await fixture({
+				enabled: false,
+				usage: 100,
+				compaction: {
+					keepRecentTokens: 20_000,
+					modelOverrides: {
+						[`${physical.provider}/${physical.id}`]: { keepRecentTokens: 50, reserveTokens: 900 },
+					},
+				},
+			});
+			f.session.modelRuntime.getPhysicalModel = (_provider, id) => (id === physical.id ? physical : model);
+			f.session.modelRuntime.resolveModel = async () => ({ model: physical, thinkingLevel: "off" });
+			await f.session.setModel(virtualModel());
+			if (boundary === "after-reply") {
+				f.sm.appendMessage({ ...answer("physical reply", 200), model: physical.id });
+				f.session.refreshContext();
+			}
+			const compact = vi.spyOn(
+				f.session as unknown as { _runAutoCompaction: (...args: unknown[]) => Promise<boolean> },
+				"_runAutoCompaction",
+			);
+			f.setNormal(async () => ({ ...answer("done", 10), model: physical.id }));
+			await f.session.prompt("continue");
+			expect(compact).toHaveBeenCalledWith("threshold", false, physical);
+			expect(f.requests.some((request) => request.summary)).toBe(true);
+		},
+	);
+
+	it.each(["error", "stop"] as const)(
+		"uses the physical model's retention budget for native overflow recovery: %s",
+		async (result) => {
+			const physical = { ...model, id: "overflow-route" };
+			const f = await fixture({
+				enabled: false,
+				usage: 100,
+				compaction: {
+					keepRecentTokens: 20_000,
+					modelOverrides: { [`${physical.provider}/${physical.id}`]: { keepRecentTokens: 50 } },
+				},
+			});
+			f.session.modelRuntime.getPhysicalModel = (_provider, id) => (id === physical.id ? physical : model);
+			f.session.modelRuntime.resolveModel = async () => ({ model: physical, thinkingLevel: "off" });
+			await f.session.setModel(virtualModel());
+			let replies = 0;
+			f.setNormal(async () => {
+				const firstReply = replies++ === 0;
+				return {
+					...answer(
+						"reply",
+						firstReply ? 300_000 : 100,
+						result === "error" && firstReply ? "prompt is too long" : undefined,
+					),
+					model: physical.id,
+				};
+			});
+			const compact = vi.spyOn(
+				f.session as unknown as { _runAutoCompaction: (...args: unknown[]) => Promise<boolean> },
+				"_runAutoCompaction",
+			);
+			await f.session.prompt("continue");
+			expect(compact).toHaveBeenCalledWith("overflow", result === "error", physical);
+			expect(f.requests.some((request) => request.summary)).toBe(true);
+			expect(replies).toBe(result === "error" ? 2 : 1);
+		},
+	);
+
+	it("keeps usage unknown after compaction until a valid reply, even after switching models", async () => {
+		const f = await fixture({ usage: 100 });
+		await f.session.compact();
+		await f.session.setModel({ ...model, id: "new-model", contextWindow: 100_000 });
+		const usage = f.session.getContextUsage();
+		expect(usage).toEqual({ tokens: null, contextWindow: 100_000, percent: null });
+	});
+
 	it.each(["same", "model", "provider", "back-to-original"] as const)(
 		"does not reuse another model's post-compaction usage: %s",
 		async (change) => {
@@ -254,8 +355,8 @@ describe("compaction cross-scenario regressions", () => {
 		},
 	);
 
-	it.each(["selection", "branch", "policy", "reload"] as const)(
-		"shows the current virtual route before its first reply and discards it after %s changes",
+	it.each(["selection", "branch", "cancelled-branch", "policy", "reload"] as const)(
+		"shows the current virtual route before its first reply and handles %s changes",
 		async (change) => {
 			const f = await fixture({ usage: 100 });
 			await f.session.compact();
@@ -283,17 +384,35 @@ describe("compaction cross-scenario regressions", () => {
 			expect(usage?.tokens).toBeLessThan(20_000);
 			expect(previousUsage.tokens).toBeGreaterThan(90_000);
 			expect(usage?.percent).toBe(((usage?.tokens ?? 0) / nextModel.contextWindow) * 100);
+			if (change === "cancelled-branch") {
+				const runner = f.session.extensionRunner;
+				const handlers = vi.spyOn(runner, "hasHandlers").mockReturnValue(true);
+				const emit = vi.spyOn(runner, "emit").mockResolvedValue({ cancel: true } as never);
+				try {
+					expect(await f.session.navigateTree(previousLeaf)).toMatchObject({ cancelled: true });
+					expect(f.session.getContextUsage()).toEqual(usage);
+				} finally {
+					handlers.mockRestore();
+					emit.mockRestore();
+				}
+				return;
+			}
 			if (change === "selection") await f.session.setModel(selection);
-			else if (change === "branch") await f.session.navigateTree(previousLeaf);
-			else if (change === "policy") f.session.setCompactionPolicy(f.policy);
+			else if (change === "branch") {
+				const pausedLeaf = f.sm.getLeafId();
+				if (!pausedLeaf) throw new Error("Missing paused request leaf");
+				await f.session.navigateTree(previousLeaf);
+				expect(f.session.getContextUsage()).toEqual(previousUsage);
+				await f.session.navigateTree(pausedLeaf);
+			} else if (change === "policy") f.session.setCompactionPolicy(f.policy);
 			else await f.session.reload();
 			expect(f.session.getContextUsage()).toEqual(previousUsage);
 		},
 	);
 
-	it.each([false, true])(
-		"shows the dispatched virtual route until its first reply, failed: %s",
-		async (failed) => {
+	it.each(["stop", "error", "aborted", "zero"] as const)(
+		"shows the dispatched virtual route after its first %s reply",
+		async (result) => {
 			const f = await fixture({ usage: 100 });
 			await f.session.compact();
 			f.session.settingsManager.applyOverrides({ compaction: { keepRecentTokens: 20_000 } });
@@ -308,18 +427,19 @@ describe("compaction cross-scenario regressions", () => {
 			f.setNormal(async () => {
 				usageAtDispatch = f.session.getContextUsage();
 				return {
-					...answer("new route reply", 40_000, failed ? "401 denied" : undefined),
+					...answer("new route reply", 40_000, result === "error" ? "401 denied" : undefined),
 					model: nextModel.id,
+					stopReason: result === "zero" ? "stop" : result,
+					...(result === "zero" ? { usage: { ...answer("", 0).usage, output: 0, totalTokens: 0 } } : {}),
 				};
 			});
 			await f.session.prompt("request on new route");
 			expect(f.session.compactionPause).toBeNull();
 			expect(usageAtDispatch?.contextWindow).toBe(nextModel.contextWindow);
 			expect(usageAtDispatch?.tokens).toBeLessThan(20_000);
-			if (!failed) {
-				expect(f.session.getContextUsage()?.contextWindow).toBe(nextModel.contextWindow);
-				expect(f.session.getContextUsage()?.tokens).toBeGreaterThan(40_000);
-			}
+			expect(f.session.getContextUsage()?.contextWindow).toBe(nextModel.contextWindow);
+			if (result === "stop") expect(f.session.getContextUsage()?.tokens).toBeGreaterThan(40_000);
+			else expect(f.session.getContextUsage()?.tokens).toBeLessThan(20_000);
 		},
 	);
 
