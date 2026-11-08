@@ -629,6 +629,8 @@ export const en: Messages = {
 		removeProjectDesc:
 			"This deletes {count} unarchived and {archived} archived sessions under this project in Percho; the project files on your computer stay untouched.",
 		removeProjectRetry: "Could not remove {name}. Retry",
+		catalogOffline: "Remote disconnected",
+		catalogConnect: "Connect",
 		catalogLoading: "Loading…",
 		catalogPartial: "Organizing session catalog…",
 		catalogRetry: "Loading failed. Retry",

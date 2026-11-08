@@ -9,6 +9,21 @@ function meta(overrides: Partial<SessionMeta>): SessionMeta {
 }
 
 describe("archive menu", () => {
+	it("shows media and archive icons while preserving disabled archive behavior", () => {
+		const items = sessionMenuItems(((key: string) => key) as Translate, {
+			sessionId: "s1",
+			session: meta({ readOnly: true }),
+			pinned: false,
+			onRename: () => {},
+			onMediaMaintenance: () => {},
+		});
+		expect(items.find((item) => item.key === "media-maintenance")?.icon).toBeTruthy();
+		expect(items.find((item) => item.key === "archive")).toMatchObject({
+			disabled: true,
+			icon: expect.anything(),
+		});
+	});
+
 	it("appears before delete and explains active subscriptions", () => {
 		useChannelSubscriptionsStore.setState({
 			bySession: { s1: { topics: ["news"], revision: 1, generation: 1 } },

@@ -204,7 +204,7 @@ export function ArchivedChatsPanel() {
 				placeholder={t("archive.search")}
 				value={search}
 				onChange={(event) => setSearch(event.target.value)}
-				className="w-full rounded-lg border border-border bg-surface px-2.5 py-1.5 text-ui-12 text-ink"
+				className="w-full rounded-full border border-border bg-surface px-2.5 py-1.5 text-ui-12 text-ink focus-visible:outline-1 focus-visible:outline-ink-faint"
 			/>
 			<div className="flex min-w-0 gap-2">
 				<Select

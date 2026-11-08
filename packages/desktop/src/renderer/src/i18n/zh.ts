@@ -605,6 +605,8 @@ export const zh = {
 		removeProjectDesc:
 			"这会删除 Percho 中该项目下的 {count} 个未归档会话和 {archived} 个已归档会话；你电脑上的项目文件不受影响。",
 		removeProjectRetry: "移除 {name} 失败，请重试",
+		catalogOffline: "远端未连接",
+		catalogConnect: "连接",
 		catalogLoading: "正在加载…",
 		catalogPartial: "会话目录整理中…",
 		catalogRetry: "加载失败，点击重试",

@@ -8,7 +8,7 @@ import { archiveDisabledReason, archiveHasSubscriptions, archiveSession } from "
 import { useSessionsStore } from "../../stores/sessions";
 import { useToastsStore } from "../../stores/toasts";
 import { useUiPreferencesStore } from "../../stores/ui-preferences";
-import { CopyIcon, PencilIcon, PinIcon, TrashIcon } from "../icons";
+import { ArchiveIcon, CopyIcon, ImageIcon, PencilIcon, PinIcon, TrashIcon } from "../icons";
 import type { ContextMenuItem } from "../ui/ContextMenu";
 
 /**
@@ -110,7 +110,14 @@ export function sessionMenuItems(
 			onSelect: () => toggleSessionPin(options.sessionId),
 		},
 		...(options.onMediaMaintenance
-			? [{ key: "media-maintenance", label: t("mediaPreview.title"), onSelect: options.onMediaMaintenance }]
+			? [
+					{
+						key: "media-maintenance",
+						label: t("mediaPreview.title"),
+						icon: <ImageIcon size={13} />,
+						onSelect: options.onMediaMaintenance,
+					},
+				]
 			: []),
 		...(options.onCopyDiagnostics
 			? [
@@ -130,6 +137,7 @@ export function sessionMenuItems(
 						return {
 							key: "archive",
 							label: t("sessionArchive.action"),
+							icon: <ArchiveIcon size={13} />,
 							disabled: !!reason,
 							tooltip: reason
 								? t(`sessionArchive.${reason}`)

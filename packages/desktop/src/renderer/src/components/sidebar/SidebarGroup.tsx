@@ -6,6 +6,7 @@ import { isPrimaryNavigationSession, mergeSidebarSessions } from "../../lib/side
 import { hasMoreSessions, visibleSessions } from "../../lib/sidebar-visible-count";
 import { COMPOSER_FOCUS_EVENT } from "../../stores/drafts";
 import { useProjectsStore } from "../../stores/projects";
+import { useRemoteConnectionStore } from "../../stores/remote-connection";
 import {
 	EMPTY_CATALOG_ENVIRONMENT,
 	sessionCatalogPageKey,
@@ -57,6 +58,13 @@ export function SidebarGroup({
 }) {
 	const t = useT();
 	const environment = environmentEntityRef(group.cwd).environment;
+	const online = useRemoteConnectionStore(
+		(state) =>
+			environment.kind === "local" ||
+			(state.status.state === "connected" &&
+				!!state.status.environment &&
+				environmentKey(state.status.environment) === environmentKey(environment)),
+	);
 	const openSession = useProjectsStore((s) => s.openSession);
 	const activateNewSessionDraftForCwd = useSessionsStore((s) => s.activateNewSessionDraftForCwd);
 	const sessionMenu = useSessionMenu();
@@ -72,14 +80,19 @@ export function SidebarGroup({
 	const memory = useSessionsStore((s) => s.sessions);
 	const pagingEnabled = paging !== undefined;
 	useEffect(() => {
-		if (pagingEnabled && expanded && !page)
-			void useSessionCatalogStore.getState().loadPage(environmentEntityRef(group.cwd).environment, {
-				cwd: group.cwd,
-				...(search ? { search } : {}),
-				archived: false,
-				limit: 6,
-			});
-	}, [pagingEnabled, expanded, page, group.cwd, search]);
+		if (pagingEnabled && expanded && online)
+			void useSessionCatalogStore.getState().loadPage(
+				environmentEntityRef(group.cwd).environment,
+				{
+					cwd: group.cwd,
+					...(search ? { search } : {}),
+					archived: false,
+					limit: 6,
+				},
+				false,
+				true,
+			);
+	}, [pagingEnabled, expanded, online, group.cwd, search]);
 	const pins = new Set(paging?.pinnedSessions ?? []);
 	const extras = paging
 		? [
@@ -162,7 +175,9 @@ export function SidebarGroup({
 						paging={
 							paging
 								? {
-										loading: !page || page.loading,
+										offline: !online,
+										onConnect: () => useRemoteConnectionStore.getState().setOpen(true),
+										loading: online && (!page || page.loading),
 										error: page?.error,
 										partial: !!page && !page.complete,
 										onRetry: () => void useSessionCatalogStore.getState().loadPage(environment, query),

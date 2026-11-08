@@ -12,6 +12,7 @@ import { pathLastSegment } from "../../lib/path-display";
 import { deriveSidebarGroups } from "../../lib/sidebar-groups";
 import { useLocalSessionsStore } from "../../stores/local-sessions";
 import { type ProjectEntry, useProjectsStore } from "../../stores/projects";
+import { useRemoteConnectionStore } from "../../stores/remote-connection";
 import { sessionCatalogPageKey, useSessionCatalogStore } from "../../stores/session-catalog";
 import { useSessionsStore } from "../../stores/sessions";
 
@@ -24,6 +25,16 @@ export function usePagedSidebar(input: {
 	expandedGroupsTouched: boolean;
 }) {
 	const environments = useSyncExternalStore(onEnvironmentsChanged, getEnvironments);
+	const connectedEnvironment = useRemoteConnectionStore((s) =>
+		s.status.state === "connected" && s.status.environment ? environmentKey(s.status.environment) : undefined,
+	);
+	const watchedEnvironments = useMemo(
+		() =>
+			environments.filter(
+				(environment) => environment.kind === "local" || environmentKey(environment) === connectedEnvironment,
+			),
+		[environments, connectedEnvironment],
+	);
 	const catalogs = useSessionCatalogStore((s) => s.byEnvironment);
 	const memory = useSessionsStore((s) => s.sessions);
 	const known = useProjectsStore((s) => s.allSessions);
@@ -60,11 +71,13 @@ export function usePagedSidebar(input: {
 	}
 	const [verified, setVerified] = useState<SessionMeta[]>([]);
 	useEffect(() => {
-		const unwatch = environments.map((environment) => useSessionCatalogStore.getState().watch(environment));
+		const unwatch = watchedEnvironments.map((environment) =>
+			useSessionCatalogStore.getState().watch(environment),
+		);
 		return () => {
 			for (const off of unwatch) off();
 		};
-	}, [environments]);
+	}, [watchedEnvironments]);
 	useEffect(() => {
 		let active = true;
 		setVerified([]);
