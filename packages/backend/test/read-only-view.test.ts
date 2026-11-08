@@ -635,9 +635,24 @@ describe("只读检视不是第二个SDK会话", () => {
 			// SDK停止不代表runner收尾完成，最后一次写入仍必须在删除之前。
 			manager.appendCustomEntry("late-finalize", { safe: true });
 			expect(await readFile(file, "utf8")).toContain("late-finalize");
-			internal.runningSubagents.delete("child");
+			// 收尾期间新 runner 接管同一身份：旧删除必须拒绝，不能删除新任务的源。
+			const replacement: SubagentRunHandle = {
+				completion: Promise.resolve(),
+				getSource: () => session,
+				getBranch: () => manager.getBranch(),
+				abort: vi.fn(async () => {}),
+				dispose: vi.fn(),
+			};
+			internal.runningSubagents.set("child", replacement);
 			completeRun();
-			await deleting;
+			await expect(deleting).rejects.toThrow(/runner changed/);
+			expect(await readFile(file, "utf8")).toContain("late-finalize");
+			internal.runningSubagents.delete("child");
+			const indexRemove = vi
+				.spyOn(b.getSessionCatalog(), "remove")
+				.mockRejectedValueOnce(new Error("index unavailable"));
+			await b.deleteSession("child", file);
+			expect(indexRemove).toHaveBeenCalledOnce();
 			await expect(readFile(file)).rejects.toMatchObject({ code: "ENOENT" });
 			expect(() => liveLease.assert()).toThrow();
 		} finally {

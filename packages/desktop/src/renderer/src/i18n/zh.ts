@@ -212,7 +212,7 @@ export const zh = {
 		sessionList: "会话列表",
 		/** 顶栏 × （v12 起 = 从临时工作区移出，不是关会话、也不是取消置顶） */
 	},
-	/** 左侧会话轨道（设置 → 外观；默认关） */
+	/** 右侧会话轨道（设置 → 外观；默认关） */
 	rail: {
 		/** nav 的无障碍名：一条就说明白怎么用（只能靠键盘逐条移出时尤其重要） */
 		ariaLabel: "会话轨道：上下方向键在条目间移动，Delete 或 Backspace 将当前条目移出工作区（不关闭会话）",
@@ -389,6 +389,10 @@ export const zh = {
 		deny: "不信任",
 		queued: "还有 {count} 个项目等待确认",
 	},
+	messageRail: {
+		ariaLabel: "消息导航",
+		jump: "跳转到这条消息",
+	},
 	message: {
 		copy: "复制",
 		copied: "已复制",
@@ -546,6 +550,37 @@ export const zh = {
 			"活跃文件预计 {before} → {after}；展示图 {count} 张（去重 {unique} 张）；备份 {backup}，额外峰值空间上界 {peak}。已有原图可复用，预估保守计算全部新增。",
 		preserved: "保留坏行 {invalid} 条，跳过无法安全整理的图片 {skipped} 张；用户附件和read图片不变。",
 	},
+	archive: {
+		search: "搜索标题或会话 ID",
+		project: "项目",
+		allProjects: "所有项目",
+		sort: "排序",
+		archived: "最近归档",
+		modified: "最近更新",
+		created: "创建时间",
+		name: "名称",
+		archivedTime: "归档时间",
+		modifiedTime: "更新时间",
+		createdTime: "创建时间",
+		empty: "暂无已归档聊天",
+		noMatch: "没有匹配的聊天",
+		partial: "会话目录整理中，结果可能不完整。",
+		offline: "环境离线，无法读取或更改归档。",
+		error: "读取失败，请重试。",
+		unarchive: "取消归档",
+		operationFailed: "操作失败，请重试。",
+		cleanupPending: "已归档，资源清理尚未完成。",
+	},
+	sessionArchive: {
+		action: "归档",
+		history: "没有持久化的聊天记录，无法归档",
+		busy: "会话正在运行或有待处理事项，无法归档",
+		offline: "所属环境未连接，无法归档",
+		subscriptions: "归档会退订此会话的频道",
+		success: "已归档",
+		cleanupPending: "已归档，资源释放未完成",
+		failed: "归档失败",
+	},
 	sessionMenu: {
 		copyDiagnostics: "复制诊断信息",
 		delete: "删除会话",
@@ -569,8 +604,14 @@ export const zh = {
 		unpin: "取消置顶",
 		removeProject: "移除项目",
 		removeProjectTitle: "移除 {name}？",
-		removeProjectDesc: "这会把 Percho 中该项目下的 {count} 个会话一并删除；你电脑上的项目文件不受影响。",
-		removeProjectDescEmpty: "该项目下暂无会话；你电脑上的项目文件不受影响。",
+		removeProjectDesc:
+			"这会删除 Percho 中该项目下的 {count} 个未归档会话和 {archived} 个已归档会话；你电脑上的项目文件不受影响。",
+		removeProjectRetry: "移除 {name} 失败，请重试",
+		catalogOffline: "远端未连接",
+		catalogConnect: "连接",
+		catalogLoading: "正在加载…",
+		catalogPartial: "会话目录整理中…",
+		catalogRetry: "加载失败，点击重试",
 		searchEmpty: "没有匹配的会话",
 		noSessions: "暂无会话",
 		/** 每组末尾「显示更多」按钮（每次多显示 16 条） */
@@ -591,6 +632,7 @@ export const zh = {
 		loading: "加载中…",
 		comingSoon: "该分类的设置将在后续版本提供。",
 		category: {
+			archived: "已归档的聊天",
 			remote: "SSH 连接",
 			general: "通用",
 			appearance: "外观",
@@ -661,9 +703,9 @@ export const zh = {
 		topBar: "顶栏显示会话",
 		topBarHint:
 			"顶栏常驻（窗口拖动、左栏开合、本轮改动都在这里）；关掉后顶栏不再显示临时会话工作区胶囊，会话都在左侧栏。",
-		sessionRail: "左侧会话轨道",
+		sessionRail: "右侧会话轨道",
 		sessionRailHint:
-			"聊天区左缘的一列短线（默认关）：悬停/聚焦展开成胶囊，可见会话标题与状态。顶栏与它看的是同一份临时工作区，两处都关掉会清空工作区（正在跑的任务不受影响，只是不再记录）。",
+			"聊天区右缘的一列短线（默认关）：悬停/聚焦向左展开成胶囊，可见会话标题与状态。顶栏与它看的是同一份临时工作区，两处都关掉会清空工作区（正在跑的任务不受影响，只是不再记录）。",
 		centerOrb: "居中放大状态动画",
 		centerOrbHint:
 			"任务运行时在对话区域中央显示放大的状态动画（盖在文字之上，半透明遮罩压暗身后文字——工作时专心看动画即可）。只控制中央动画，Working/Thinking 状态行前的小动画始终显示。",

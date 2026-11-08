@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { existsSync } from "node:fs";
 import { mkdtemp, readFile, rm, unlink } from "node:fs/promises";
+import { homedir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import type { Model, ThinkingLevel } from "@earendil-works/pi-ai";
 import { getSupportedThinkingLevels } from "@earendil-works/pi-ai";
@@ -93,6 +94,8 @@ import { TrustGate } from "./project/trust";
 import { ProjectResourceLoader } from "./project/trust-loader";
 import { addAllowedPattern, addWorkspaceRoot } from "./project/workspace-store";
 import { RUNTIME_MESSAGE_BYTES } from "./runtime/frames";
+import { readSessionHeaderId, SessionArchiveService } from "./session/archive";
+import { SessionCatalog } from "./session/catalog";
 import {
 	composerInputBridge,
 	composerQueueDocument,
@@ -121,6 +124,7 @@ import {
 	toBranchSessionMessages,
 } from "./session/messages";
 import { autoNameSession } from "./session/naming";
+import { SessionProjectDeletion } from "./session/project-deletion";
 import { EventRateTracker } from "./session/rates";
 import { exportReadOnlyHtml } from "./session/read-only-html";
 import { ReadOnlySessionView } from "./session/read-only-view";
@@ -320,6 +324,10 @@ export class PiBackend {
 		return this.shutdownPromise;
 	}
 	private readonly sessionDisposals = new WeakMap<RegisteredSession, Promise<void>>();
+	private readonly archiveFrozen = new WeakSet<RegisteredSession>();
+	private readonly archiveShutdown = new WeakSet<RegisteredSession>();
+	private readonly archiveSdkDisposed = new WeakSet<RegisteredSession>();
+	private readonly shutdownErrors = new WeakMap<AgentSession, ExtensionError[]>();
 	/** open 的 single-flight（key = 规范化绝对路径）：同文件并发 open 共享一次构造（spec D4） */
 	private readonly openFlights = new KeyedSingleFlight<SessionMeta>();
 	/**
@@ -329,6 +337,171 @@ export class PiBackend {
 	 * `getChannelSubscriptions`（单会话快照，**不**过滤 —— 扩展可能早于 registry.add 上报）。
 	 */
 	private readonly channelSubs = new ChannelSubscriptionRegistry((id) => this.registry.has(id));
+
+	private readonly catalogEmitter = new Emitter<import("@percho/shared").SessionCatalogChange>();
+	private sessionCatalog?: SessionCatalog;
+	private archiveService?: SessionArchiveService;
+	private archiveInitialization?: Promise<void>;
+	private projectDeletion?: SessionProjectDeletion;
+	private readonly projectLeases = new Set<string>();
+	private readonly deletingSessions = new Set<string>();
+	private getProjectDeletion(): SessionProjectDeletion {
+		this.projectDeletion ??= new SessionProjectDeletion({
+			catalog: () => this.getSessionCatalog(),
+			getLoaded: () => this.getLoadedSessions().map((item) => item.meta),
+			loadedIdentity: (id) => this.registry.get(id),
+			deleteSession: async (id, file) => {
+				await this.deleteSession(id, file || undefined);
+			},
+			isProtected: (cwd) =>
+				[join(getAgentDir(), "daily"), join(homedir(), ".percho", "daily")].some(
+					(daily) => resolve(cwd) === resolve(daily),
+				),
+			isBusy: (id) => {
+				if (this.creationFlights.size > 0) return true;
+				if (this.projectLeases.has(id)) return false;
+				const entry = this.registry.get(id);
+				if (!entry || entry.readOnly) return false;
+				const lease = entry.session.tryAcquireIdleLease();
+				if (!lease) return true;
+				lease.release();
+				return false;
+			},
+			freeze: (id) => {
+				const entry = this.registry.get(id);
+				if (!entry || entry.readOnly) return () => {};
+				const lease = entry.session.tryAcquireIdleLease();
+				if (!lease) throw new Error("Project contains busy sessions");
+				this.projectLeases.add(id);
+				return () => {
+					this.projectLeases.delete(id);
+					lease.release();
+				};
+			},
+		});
+		return this.projectDeletion;
+	}
+	async previewSessionProjectDeletion(
+		cwd: string,
+	): Promise<import("@percho/shared").SessionProjectDeletionPreview> {
+		this.assertRunning();
+		await this.archives();
+		return this.getProjectDeletion().preview(cwd);
+	}
+	async deleteSessionProject(
+		cwd: string,
+		token: string,
+	): Promise<import("@percho/shared").SessionProjectDeletionResult> {
+		this.assertRunning();
+		await this.archives();
+		if (this.creationFlights.size > 0) throw new Error("Session initialization is in progress");
+		return this.getProjectDeletion().delete(cwd, token);
+	}
+	getSessionCatalog(): SessionCatalog {
+		this.sessionCatalog ??= new SessionCatalog({
+			sessionsDir: join(getAgentDir(), "sessions"),
+			indexPath: join(getAgentDir(), "session-catalog.sqlite"),
+			onChange: (change) => this.catalogEmitter.emit(change),
+		});
+		return this.sessionCatalog;
+	}
+	private async archives(): Promise<SessionArchiveService> {
+		this.archiveService ??= new SessionArchiveService({
+			agentDir: getAgentDir(),
+			catalog: () => this.getSessionCatalog(),
+			getSession: (id) => {
+				const entry = this.registry.get(id);
+				return entry && !entry.readOnly ? entry.session : undefined;
+			},
+			hasPending: (id) => {
+				const pending = this.getPendingInteractions();
+				const entry = this.registry.get(id);
+				return (
+					!!(entry && this.sessionDisposals.has(entry)) ||
+					this.constructionGates.size > 0 ||
+					pending.permissions.some((p) => p.sessionId === id) ||
+					pending.dialogs.some((p) => p.sessionId === id)
+				);
+			},
+			disposeSession: async (id) => {
+				const entry = this.registry.get(id);
+				if (entry) await this.disposeSessionStrict(entry);
+			},
+			withFile: (files, operation) => this.fileOperations.run(files, "archive", operation),
+			resolveFile: (file) => this.options.localSessionPaths?.resolveFile(file, true) ?? file,
+		});
+		this.archiveInitialization ??= this.archiveService
+			.init()
+			.then(async () => {
+				const projections = await this.archiveService!.projections();
+				try {
+					await this.getSessionCatalog().setArchiveOverlay(projections);
+				} catch (error) {
+					// Queries retry the dirty projection; an index failure cannot invalidate authority.
+					log.warn("Archive catalog initialization failed", error);
+				}
+			})
+			.catch((error) => {
+				this.archiveInitialization = undefined;
+				throw error;
+			});
+		await this.archiveInitialization;
+		return this.archiveService;
+	}
+	async querySessionProjects(): Promise<import("@percho/shared").SessionCatalogProjects> {
+		this.assertRunning();
+		await this.archives();
+		return this.getSessionCatalog().projects();
+	}
+	async querySessionCatalog(
+		query: import("@percho/shared").SessionCatalogQuery,
+	): Promise<import("@percho/shared").SessionCatalogPage> {
+		this.assertRunning();
+		await this.archives();
+		const page = await this.getSessionCatalog().query(query);
+		return {
+			...page,
+			sessions: page.sessions.map((meta) => ({ ...meta, active: this.registry.has(meta.sessionId) })),
+		};
+	}
+	async verifySessionCatalog(
+		references: import("@percho/shared").SessionCatalogReference[],
+	): Promise<import("@percho/shared").SessionCatalogVerification[]> {
+		this.assertRunning();
+		await this.archives();
+		return this.getSessionCatalog().verify(
+			references.map((r) => ({
+				...r,
+				sessionFile: r.sessionFile
+					? (this.options.localSessionPaths?.resolveFile(r.sessionFile, true) ?? r.sessionFile)
+					: undefined,
+			})),
+		);
+	}
+	onSessionCatalogChanged(
+		handler: (change: import("@percho/shared").SessionCatalogChange) => void,
+	): () => void {
+		return this.catalogEmitter.subscribe(handler);
+	}
+	async archiveSession(
+		input: import("@percho/shared").SessionArchiveInput,
+	): Promise<import("@percho/shared").SessionArchiveResult> {
+		this.assertRunning();
+		try {
+			const service = this.archiveService ?? (await this.archives());
+			return await service.archive(input);
+		} catch (error) {
+			this.archiveInitialization = undefined;
+			throw error;
+		}
+	}
+	async unarchiveSession(
+		input: import("@percho/shared").SessionArchiveInput,
+	): Promise<import("@percho/shared").SessionArchiveResult> {
+		this.assertRunning();
+		return (await this.archives()).unarchive(input);
+	}
+
 	/** 用户级模型可见性与子代理模型偏好（独立于 CLI 共用 settings.json）。readonly 直暴露 */
 	readonly modelPrefs = new ModelPrefsService(join(getAgentDir(), "model-prefs.json"));
 	/** 社区包管理；项目相关操作由门面绑定会话上下文。 */
@@ -622,6 +795,7 @@ export class PiBackend {
 					traces: this.traces,
 					registerRun: (id, handle) => {
 						this.assertRunning();
+						if (this.deletingSessions.has(id)) throw new Error("Session deletion is in progress");
 						this.runningSubagents.set(id, handle);
 					},
 					unregisterRun: (id) => {
@@ -758,6 +932,7 @@ export class PiBackend {
 		dialogs.bind(sessionId, cwd);
 		this.constructionDialogs.add(dialogs);
 		const recordExtensionError = (err: ExtensionError): void => {
+			if (err.event === "session_shutdown") this.shutdownErrors.get(session)?.push(err);
 			log.error("extension error", sessionId, err);
 			try {
 				this.traces.recordCustom(sessionId, "extension_error", {
@@ -863,6 +1038,11 @@ export class PiBackend {
 			rawUser,
 			rawToolResult,
 		);
+		if (this.sessionCatalog && (event.type === "agent_settled" || event.type === "session_info_changed")) {
+			const file = this.registry.get(sessionId)?.session.sessionManager.getSessionFile();
+			if (file)
+				void this.sessionCatalog.invalidate(file).catch((error) => log.warn("catalog update failed", error));
+		}
 		if (forward) this.eventEmitter.emit({ sessionId, event, sequence: live.sequence });
 	}
 	getSessionEventSequence(sessionId: string): number {
@@ -870,7 +1050,7 @@ export class PiBackend {
 	}
 	getLoadedSessions(): import("@percho/shared").LoadedSessionSummary[] {
 		return this.registry.list().map((entry) => ({
-			meta: this.registry.toMeta(entry),
+			meta: this.catalogMeta(this.registry.toMeta(entry)),
 			sequence: this.getSessionEventSequence(entry.session.sessionId),
 			followUpQueue: entry.session.getFollowUpMessages().map(composerQueueText),
 			permissionMode: entry.modeRef.current,
@@ -928,7 +1108,7 @@ export class PiBackend {
 		if (window) transcript.history = window.history;
 		const baseline: import("@percho/shared").SessionBaseline = {
 			hydrationToken: this.historyToken(entry.modeRef),
-			meta: this.registry.toMeta(entry),
+			meta: this.catalogMeta(this.registry.toMeta(entry)),
 			sequence: live.sequence,
 			transcript: {
 				...transcript,
@@ -944,6 +1124,13 @@ export class PiBackend {
 			);
 		recordSessionSwitchPayload(baseline);
 		return baseline;
+	}
+	getSessionNavigation(sessionId: string): import("@percho/shared").SessionNavigation {
+		const entry = this.requireSession(sessionId),
+			source = this.sourceSnapshot(entry),
+			live = this.liveTranscripts.get(sessionId) ?? new LiveTranscript(),
+			prefix = live.persistentPrefix(source.branch);
+		return this.historyPager.navigation(source, prefix);
 	}
 	getSessionHistoryPage(sessionId: string, cursor: string): import("@percho/shared").SessionHistoryPage {
 		const entry = this.requireSession(sessionId),
@@ -1038,6 +1225,8 @@ export class PiBackend {
 	}
 
 	createSession(options: CreateSessionOptions): Promise<SessionMeta> {
+		if (this.projectDeletion?.isDeleting(options.cwd || this.options.defaultCwd || process.cwd()))
+			throw new Error("Project deletion is in progress");
 		return this.trackCreation(() => this.createSessionOnce(options));
 	}
 	private async createSessionOnce(options: CreateSessionOptions): Promise<SessionMeta> {
@@ -1046,6 +1235,7 @@ export class PiBackend {
 		const requested = options.cwd || this.options.defaultCwd || process.cwd();
 		this.options.localSessionPaths?.assertCwd(requested);
 		const cwd = this.options.validateWorkspace ? await validateProjectDirectory(requested) : requested;
+		if (this.projectDeletion?.isDeleting(cwd)) throw new Error("Project deletion is in progress");
 		this.assertRunning();
 		const model =
 			options.provider && options.modelId ? runtime.getModel(options.provider, options.modelId) : undefined;
@@ -1084,7 +1274,10 @@ export class PiBackend {
 		const key = this.options.localSessionPaths?.resolveFile(filePath) ?? resolve(filePath);
 		return this.trackCreation(() =>
 			this.openFlights.run(this.fileOperations.key(key), () =>
-				this.fileOperations.run([key], "open", () => this.openSessionOnce(key)),
+				this.fileOperations.run([key], "open", async () => {
+					await (await this.archives()).assertOpen(key);
+					return this.openSessionOnce(key);
+				}),
 			),
 		);
 	}
@@ -1101,29 +1294,41 @@ export class PiBackend {
 			} // 无关的损坏来源不能阻止本次打开。
 		});
 		if (registered) {
+			if (this.projectDeletion?.isDeleting(registered.cwd))
+				throw new Error("Project deletion is in progress");
+			if (existsSync(filePath) && (await readSessionHeaderId(filePath)) !== registered.session.sessionId)
+				throw new Error("Session file identity changed");
 			const disposing = this.sessionDisposals.get(registered);
 			if (disposing) {
 				await disposing;
 				return this.openSessionOnce(filePath);
 			}
-			return this.registry.toMeta(registered);
+			return this.catalogMeta(this.registry.toMeta(registered));
 		}
 		if (isSubagentSessionPath(filePath)) return this.openReadOnlySession(filePath);
 		const sourceVersion = this.sourceSnapshots.fileVersion(filePath);
 		const endParse = measureSessionSwitch("sdkParse");
 		const sessionManager = SessionManager.open(filePath);
+		if (this.deletingSessions.has(sessionManager.getSessionId()))
+			throw new Error("Session deletion is in progress");
+		if (this.projectDeletion?.isDeleting(sessionManager.getCwd()))
+			throw new Error("Project deletion is in progress");
 		this.sourceSnapshots.noteLoaded(sessionManager, filePath, sourceVersion);
 		endParse();
 		const existing = this.registry.get(sessionManager.getSessionId());
 		if (existing) {
+			const owned = existing.session.sessionManager.getSessionFile();
+			if (!owned || this.fileOperations.key(owned) !== this.fileOperations.key(filePath))
+				throw new Error("Session identity is ambiguous");
 			log.info("session open short-circuited", sessionManager.getSessionId(), { file: filePath });
-			return this.registry.toMeta(existing);
+			return this.catalogMeta(this.registry.toMeta(existing));
 		}
 		const endRuntime = measureSessionSwitch("runtime");
 		const runtime = await this.getModelRuntime();
 		endRuntime();
 		this.assertRunning();
 		const cwd = sessionManager.getCwd() || process.cwd();
+		if (this.projectDeletion?.isDeleting(cwd)) throw new Error("Project deletion is in progress");
 		this.options.localSessionPaths?.assertCwd(cwd);
 		const readOnly = false;
 		const session = await this.wireSession(cwd, readOnly, async (deps) => {
@@ -1220,7 +1425,7 @@ export class PiBackend {
 				dialogs,
 				readOnly: true as const,
 			};
-			const meta = this.registry.toMeta(entry);
+			const meta = this.catalogMeta(this.registry.toMeta(entry));
 			this.registry.add(entry);
 			this.historyToken(modeRef);
 			return meta;
@@ -1385,24 +1590,30 @@ export class PiBackend {
 	async listSessions(cwd?: string): Promise<SessionMeta[]> {
 		const target = cwd || this.options.defaultCwd || process.cwd();
 		const activeIds = this.activeSessionIds();
-		return (await SessionManager.list(target))
-			.filter((info) => !activeIds.has(info.id))
-			.map((info) => sessionInfoToMeta(info, { cwdFallback: target, active: false }));
+		return (await this.catalogSessions(target)).filter((item) => !activeIds.has(item.sessionId));
 	}
 
-	/** 跨全部项目目录枚举会话（项目管理页用，含活跃会话） */
+	/** Compatibility snapshot from the catalog, without reading session bodies. */
 	async listAllSessions(): Promise<SessionMeta[]> {
 		const activeIds = this.activeSessionIds();
-		return (await SessionManager.listAll())
-			.filter((info) => info.cwd)
-			.map((info) =>
-				sessionInfoToMeta(info, {
-					cwdFallback: "",
-					active: activeIds.has(info.id),
-					// subagent 产物会话只读（LAN 列表/写端点禁用判定用）
-					readOnly: isSubagentSessionPath(info.path) || undefined,
-				}),
-			);
+		return (await this.catalogSessions()).map((item) => ({ ...item, active: activeIds.has(item.sessionId) }));
+	}
+
+	private async catalogSessions(cwd?: string): Promise<SessionMeta[]> {
+		await this.archives();
+		await this.getSessionCatalog().refresh();
+		const items: SessionMeta[] = [];
+		let cursor: string | undefined;
+		let revision: string | undefined;
+		do {
+			const page = await this.getSessionCatalog().query({ cwd, limit: 100, cursor });
+			if (!page.complete || page.errors || (revision && page.revision !== revision))
+				throw new Error("Session catalog snapshot is incomplete or changed");
+			revision = page.revision;
+			items.push(...page.sessions);
+			cursor = page.nextCursor;
+		} while (cursor);
+		return items;
 	}
 
 	private activeSessionIds(): Set<string> {
@@ -1448,8 +1659,13 @@ export class PiBackend {
 	 */
 	async closeSession(sessionId: string, intent: SessionCloseIntent = "user"): Promise<{ closed: boolean }> {
 		const entry = this.registry.get(sessionId);
+		if (entry && this.archiveFrozen.has(entry)) throw new Error("Archive cleanup is pending");
 		// 没有该会话 = 它本来就没在跑（幂等成功）：调用方该照常清掉自己的会话条目
 		if (!entry) return { closed: true };
+		const sourceFile = entry.session.sessionManager.getSessionFile();
+		if (sourceFile && this.archiveService?.peek(sessionId, sourceFile)?.blocked) return { closed: false };
+		if (sourceFile && this.fileOperations.has(sourceFile) && !this.sessionDisposals.has(entry))
+			return { closed: false };
 		if (entry.readOnly) {
 			await this.disposeSession(entry);
 			return { closed: true };
@@ -1473,7 +1689,7 @@ export class PiBackend {
 	}
 
 	/** Registered-session-only auxiliary groups; conflict cleanup must not touch holder ids. */
-	private beforeSessionShutdown(entry: RegisteredSession): void {
+	private beforeSessionShutdown(entry: RegisteredSession, strict = false): void {
 		this.sourceSnapshots.release(this.sourceOwner(entry));
 		if (!entry.readOnly) this.media.closeOwner(entry.session.sessionId, entry.modeRef);
 		const failures: unknown[] = [];
@@ -1482,7 +1698,7 @@ export class PiBackend {
 		} catch (error) {
 			failures.push(error);
 		} finally {
-			this.channelWatchCleanups.delete(entry.modeRef);
+			if (!strict || failures.length === 0) this.channelWatchCleanups.delete(entry.modeRef);
 		}
 		if (failures.length) throw failures[0];
 	}
@@ -1510,6 +1726,43 @@ export class PiBackend {
 		if (failures.length) throw failures[0];
 	}
 
+	/** Archive keeps ownership after failure; the service retries the same entry. */
+	private async disposeSessionStrict(entry: RegisteredSession): Promise<void> {
+		this.archiveFrozen.add(entry);
+		const pending = this.sessionDisposals.get(entry);
+		if (pending) await pending;
+		if (this.registry.get(entry.session.sessionId) !== entry)
+			throw new Error("Archive session owner changed");
+		const disposal = (async () => {
+			this.beforeSessionShutdown(entry, true);
+			if (!this.archiveShutdown.has(entry)) {
+				const errors: ExtensionError[] = [];
+				if (!(entry.session instanceof ReadOnlySessionView)) this.shutdownErrors.set(entry.session, errors);
+				try {
+					await emitSessionShutdown(entry.session);
+				} finally {
+					if (!(entry.session instanceof ReadOnlySessionView)) this.shutdownErrors.delete(entry.session);
+				}
+				if (errors.length) throw new Error(`session_shutdown failed: ${errors[0]?.error}`);
+				this.archiveShutdown.add(entry);
+			}
+			if (!this.archiveSdkDisposed.has(entry)) {
+				entry.session.dispose();
+				this.archiveSdkDisposed.add(entry);
+			}
+			this.historyGate.cancel(entry.session.sessionId, this.historyToken(entry.modeRef));
+			this.afterSessionDispose(entry);
+			if (!entry.readOnly) await this.traces.stop(entry.session.sessionId);
+			this.registry.deleteStrict(entry.session.sessionId);
+		})();
+		this.sessionDisposals.set(entry, disposal);
+		try {
+			await disposal;
+		} finally {
+			this.sessionDisposals.delete(entry);
+		}
+	}
+
 	/** 真正的处置：dispose + registry/全局键控子系统清理（closeSession 与 deleteSession 共用） */
 	private disposeSession(entry: RegisteredSession): Promise<void> {
 		const pending = this.sessionDisposals.get(entry);
@@ -1517,6 +1770,9 @@ export class PiBackend {
 		// Publish the identity-keyed Promise before running cleanup, including reentrant callers.
 		const disposal = Promise.resolve().then(() => this.disposeRegisteredSession(entry));
 		this.sessionDisposals.set(entry, disposal);
+		void disposal.catch(() => {
+			if (this.sessionDisposals.get(entry) === disposal) this.sessionDisposals.delete(entry);
+		});
 		return disposal;
 	}
 
@@ -1579,25 +1835,138 @@ export class PiBackend {
 
 	/** 删除历史会话（pi 无删除 API，会话即磁盘 jsonl，直接删文件） */
 	async deleteSession(sessionId: string, sessionFile?: string): Promise<void> {
-		const file = this.registry.get(sessionId)?.session.sessionFile ?? sessionFile;
-		return this.fileOperations.run(file ? [file] : [], "delete", () =>
-			this.deleteSessionUnlocked(sessionId, sessionFile),
-		);
+		const cleanup = this.registry.get(sessionId);
+		// Capture a concurrent close's result before its failed promise is evicted from the owner cache.
+		const closing = cleanup && this.sessionDisposals.get(cleanup);
+		if (closing) await closing;
+		if (cleanup && this.archiveFrozen.has(cleanup)) {
+			const source = cleanup.session.sessionManager.getSessionFile();
+			if (!source) throw new Error("Archive cleanup is pending");
+			await (await this.archives()).retryCleanup(sessionId, source);
+		}
+		let file = sessionFile
+			? (this.options.localSessionPaths?.resolveFile(sessionFile, true) ?? sessionFile)
+			: this.registry.get(sessionId)?.session.sessionFile;
+		if (!file) {
+			const catalog = this.getSessionCatalog();
+			await this.archives();
+			await catalog.refresh();
+			const [verified] = await catalog.verify([{ sessionId }]);
+			if (!verified?.meta?.sessionFile || (verified.status !== "present" && verified.status !== "archived"))
+				throw new Error("Session identity is unavailable");
+			file = verified.meta.sessionFile;
+		}
+		const archiveState = await (await this.archives()).state(sessionId, file);
+		if (archiveState.phase === "prepared" || archiveState.cleanupPending)
+			throw new Error("Archive operation is unresolved");
+		if (this.deletingSessions.has(sessionId)) throw new Error("Session deletion is in progress");
+		this.deletingSessions.add(sessionId);
+		try {
+			const removedFile = await this.fileOperations.run(file ? [file] : [], "delete", () =>
+				this.deleteSessionUnlocked(
+					sessionId,
+					file,
+					cleanup && !this.archiveFrozen.has(cleanup) ? cleanup : undefined,
+				),
+			);
+			// Archive records acquire their own file lease; never re-enter it while holding delete's lease.
+			await (await this.archives()).removeRecord(sessionId, removedFile);
+			await this.sessionCatalog
+				?.remove(removedFile)
+				.catch((error) => log.warn("catalog deletion update failed", error));
+		} finally {
+			this.deletingSessions.delete(sessionId);
+		}
 	}
-	private async deleteSessionUnlocked(sessionId: string, sessionFile?: string): Promise<void> {
+	private async deleteSessionUnlocked(
+		sessionId: string,
+		sessionFile?: string,
+		expectedEntry?: RegisteredSession,
+	): Promise<string> {
 		const requested = sessionFile ?? this.registry.get(sessionId)?.session.sessionFile;
+		let controlledSource: string | undefined;
 		for (const [id, handle] of this.runningSubagents) {
 			const file = handle.getSource?.()?.sessionFile;
 			if (id !== sessionId && (!requested || !file || resolve(file) !== resolve(requested))) continue;
-			if (id !== sessionId) throw new Error("Session owner does not match the running source");
+			if (id !== sessionId || (requested && file && resolve(requested) !== resolve(file)))
+				throw new Error("Session owner does not match the running source");
+			controlledSource = file ?? requested;
 			if (!handle.completion)
 				throw new Error("Cannot safely delete a running subagent without completion tracking");
 			await handle.abort();
 			await handle.completion;
+			const current = this.runningSubagents.get(id);
+			if (current && current !== handle) throw new Error("Session runner changed during deletion");
 		}
-		const entry = this.registry.get(sessionId);
+		const currentEntry = this.registry.get(sessionId);
+		if (expectedEntry && currentEntry && currentEntry !== expectedEntry)
+			throw new Error("Session owner changed");
+		const entry = currentEntry ?? expectedEntry;
+		if (entry && this.archiveFrozen.has(entry)) throw new Error("Archive cleanup is pending");
+		const disposal = entry && this.sessionDisposals.get(entry);
+		if (disposal) await disposal;
+		const replacement = this.registry.get(sessionId);
+		if (entry && replacement && replacement !== entry) throw new Error("Session owner changed");
+		const loadedFile = entry?.session.sessionManager.getSessionFile();
+		if (
+			loadedFile &&
+			sessionFile &&
+			this.fileOperations.key(loadedFile) !== this.fileOperations.key(sessionFile)
+		)
+			throw new Error("Session identity mismatch");
+		if (loadedFile && existsSync(loadedFile) && (await readSessionHeaderId(loadedFile)) !== sessionId)
+			throw new Error("Session file identity changed");
+		if (entry && !entry.readOnly && loadedFile) {
+			if (existsSync(loadedFile) && (await readSessionHeaderId(loadedFile)) !== sessionId)
+				throw new Error("Session file identity changed");
+			const catalog = this.getSessionCatalog();
+			// Bulk deletion already established a complete, frozen project scope.
+			if (!this.projectDeletion?.isDeleting(entry.cwd)) await catalog.refresh();
+			const [verified] = await catalog.verify([{ sessionId }]);
+			if (
+				!verified ||
+				(verified.status !== "missing" &&
+					!(
+						["present", "archived"].includes(verified.status) &&
+						verified.meta?.sessionFile &&
+						this.fileOperations.key(verified.meta.sessionFile) === this.fileOperations.key(loadedFile)
+					))
+			)
+				throw new Error("Session identity unavailable or ambiguous");
+		}
+		const childFile =
+			controlledSource ?? (sessionFile && isSubagentSessionPath(sessionFile) ? sessionFile : undefined);
+		if (!entry && childFile) {
+			if (
+				(!existsSync(childFile) && !controlledSource) ||
+				(existsSync(childFile) && (await readSessionHeaderId(childFile)) !== sessionId)
+			)
+				throw new Error("Session owner does not match the source header");
+			sessionFile = childFile;
+		}
+		if (!entry && !childFile) {
+			await this.archives();
+			const catalog = this.getSessionCatalog();
+			let [checked] = await catalog.verify([{ sessionId, sessionFile }]);
+			if (checked?.status === "unknown") {
+				await catalog.refresh();
+				[checked] = await catalog.verify([{ sessionId, sessionFile }]);
+			}
+			if (!checked || !["present", "archived", "missing"].includes(checked.status))
+				throw new Error("Session identity unavailable or ambiguous");
+			if (checked.meta?.sessionFile) {
+				if (
+					checked.meta.sessionId !== sessionId ||
+					(sessionFile &&
+						this.fileOperations.key(sessionFile) !== this.fileOperations.key(checked.meta.sessionFile))
+				)
+					throw new Error("Session source changed; confirm again");
+				sessionFile = checked.meta.sessionFile;
+			} else if (checked.status !== "missing" || !sessionFile)
+				throw new Error("Session identity unavailable or ambiguous");
+		}
 		const sessionDir = entry?.session.sessionManager.getSessionDir();
-		const requestedFile = sessionFile ?? entry?.session.sessionManager.getSessionFile();
+		const requestedFile = sessionFile ?? loadedFile;
 		const file = requestedFile
 			? (this.options.localSessionPaths?.resolveFile(requestedFile, true) ?? requestedFile)
 			: undefined;
@@ -1616,6 +1985,7 @@ export class PiBackend {
 		if (sessionDir) await TraceRecorder.removeAll(sessionDir, sessionId);
 		this.channelSubs.delete(sessionId);
 		log.info("session deleted", sessionId);
+		return file;
 	}
 
 	async prompt(
@@ -1934,13 +2304,17 @@ export class PiBackend {
 	async setSessionName(sessionId: string, name: string, cwd?: string): Promise<void> {
 		const entry = this.registry.get(sessionId);
 		if (entry) {
-			if (entry.readOnly) throw new Error("Session is read-only (subagent transcript)");
+			this.requireWritable(sessionId);
 			// 新建未发消息的会话改名**是合法操作**：sessionFile（路径）建会话时就有，SDK 把 session_info
 			// 追加进内存 fileEntries，首条 user 消息落盘时一起写入（不丢名）。所以这里不加 !sessionFile 拦。
 			await this.fileOperations.run(
 				entry.session.sessionFile ? [entry.session.sessionFile] : [],
 				"rename",
 				async () => {
+					if (this.requireWritable(sessionId) !== entry) throw new Error("Session changed");
+					if (entry.session.sessionFile)
+						await (await this.archives()).assertOpen(entry.session.sessionFile, sessionId);
+					if (this.requireWritable(sessionId) !== entry) throw new Error("Session changed");
 					entry.session.setSessionName(name);
 				},
 			);
@@ -1952,6 +2326,16 @@ export class PiBackend {
 		// subagent 产物会话只读（与 listAllSessions 的 readOnly 判定同一谓词）
 		if (isSubagentSessionPath(file)) throw new Error("Session is read-only (subagent transcript)");
 		await this.fileOperations.run([file], "rename", async () => {
+			await (await this.archives()).assertOpen(file);
+			const [verified] = await this.getSessionCatalog().verify([{ sessionId, sessionFile: file }]);
+			if (
+				verified?.status !== "present" ||
+				!verified.meta ||
+				this.fileOperations.key(verified.meta.sessionFile ?? "") !== this.fileOperations.key(file)
+			)
+				throw new Error("Session identity unavailable or changed");
+			if (this.projectDeletion?.isDeleting(verified.meta.cwd))
+				throw new Error("Project deletion is in progress");
 			renameSessionFile(file, name);
 		});
 	}
@@ -1966,12 +2350,14 @@ export class PiBackend {
 	 * （已与 review 确认保留兜底）。UI 热路径（改名）永远带 cwd，不会走到枚举。
 	 */
 	private async findUnloadedSessionFile(sessionId: string, cwd?: string): Promise<string | undefined> {
-		if (cwd) {
-			const file = SessionManager.findById(cwd, sessionId);
-			if (file) return this.options.localSessionPaths?.resolveFile(file) ?? file;
-		}
-		const file = (await this.listAllSessions()).find((s) => s.sessionId === sessionId)?.sessionFile;
-		return file ? (this.options.localSessionPaths?.resolveFile(file) ?? file) : undefined;
+		await this.archives();
+		const [result] = await this.getSessionCatalog().verify([{ sessionId }]);
+		if (!result || result.status === "missing") return undefined;
+		if (result.status !== "present" || !result.meta?.sessionFile)
+			throw new Error("Session unavailable or archived");
+		if (cwd && result.meta.cwd !== cwd) return undefined;
+		await (await this.archives()).assertOpen(result.meta.sessionFile);
+		return this.options.localSessionPaths?.resolveFile(result.meta.sessionFile) ?? result.meta.sessionFile;
 	}
 
 	/** 导出会话内容（HTML/JSONL）；返回文件内容，由调用方保存 */
@@ -1984,6 +2370,7 @@ export class PiBackend {
 	private async exportSessionUnlocked(sessionId: string, format: "html" | "jsonl"): Promise<string> {
 		const entry = this.requireSession(sessionId),
 			manager = entry.session.sessionManager;
+		if (entry.session.sessionFile) await (await this.archives()).assertOpen(entry.session.sessionFile);
 		if (format === "jsonl") {
 			const branch = await inlineSessionAssets(
 				manager.getBranch(),
@@ -2160,6 +2547,8 @@ export class PiBackend {
 		}
 		const approved = this.options.localSessionPaths?.resolveFile(file) ?? file;
 		return this.fileOperations.run([approved], "fork", async () => {
+			await (await this.archives()).assertOpen(approved);
+			if (this.archiveFrozen.has(entry)) throw new Error("Archive cleanup is pending");
 			const newPath = await prepareMediaFork(
 				sourceManager,
 				approved,
@@ -2629,6 +3018,7 @@ export class PiBackend {
 
 	dispose(): void {
 		this.stopping = true;
+		void this.sessionCatalog?.dispose().catch((error) => log.warn("catalog shutdown failed", error));
 		void this.mediaMaintenance?.dispose().catch((error) => log.warn("maintenance shutdown failed", error));
 		for (const child of this.runningSubagents.values()) {
 			void child.abort().catch((error) => log.warn("subagent shutdown abort failed", error));
@@ -2669,6 +3059,7 @@ export class PiBackend {
 	private requireSession(sessionId: string) {
 		const entry = this.registry.get(sessionId);
 		if (!entry) throw new Error(`Session not found: ${sessionId}`);
+		if (this.archiveFrozen.has(entry)) throw new Error("Archive cleanup is pending");
 		return entry;
 	}
 
@@ -2677,13 +3068,25 @@ export class PiBackend {
 		this.assertRunning();
 		const entry = this.requireSession(sessionId);
 		if (entry.readOnly) throw new Error("Session is read-only (subagent transcript)");
+		if (this.projectDeletion?.isDeleting(entry.cwd)) throw new Error("Project deletion is in progress");
 		return entry;
 	}
 
+	private catalogMeta(meta: SessionMeta): SessionMeta {
+		const state = meta.sessionFile ? this.archiveService?.peek(meta.sessionId, meta.sessionFile) : undefined;
+		return state
+			? {
+					...meta,
+					archiveRevision: state.revision,
+					archivedAt: state.archived ? state.archivedAt : undefined,
+					archiveCleanupPending: state.cleanupPending,
+				}
+			: meta;
+	}
 	private toMetaOrThrow(sessionId: string): SessionMeta {
 		const entry = this.registry.get(sessionId);
 		if (!entry) throw new Error(`Session not found: ${sessionId}`);
-		return this.registry.toMeta(entry);
+		return this.catalogMeta(this.registry.toMeta(entry));
 	}
 }
 

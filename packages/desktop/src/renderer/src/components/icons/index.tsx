@@ -11,6 +11,59 @@ const strokeProps = {
 	strokeWidth: 2,
 } as const;
 
+export function FilterIcon({ size = 14, className }: IconProps) {
+	return (
+		<svg
+			className={className}
+			width={size}
+			height={size}
+			viewBox="0 0 24 24"
+			{...strokeProps}
+			strokeLinecap="round"
+			aria-hidden="true"
+		>
+			<path d="M4 6h16M7 12h10M10 18h4" />
+		</svg>
+	);
+}
+
+export function ArchiveIcon({ size = 14, className }: IconProps) {
+	return (
+		<svg
+			className={className}
+			width={size}
+			height={size}
+			viewBox="0 0 24 24"
+			{...strokeProps}
+			strokeLinecap="round"
+			strokeLinejoin="round"
+			aria-hidden="true"
+		>
+			<rect x="3" y="4" width="18" height="5" rx="1" />
+			<path d="M5 9v10a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1V9M10 13h4" />
+		</svg>
+	);
+}
+
+export function ImageIcon({ size = 14, className }: IconProps) {
+	return (
+		<svg
+			className={className}
+			width={size}
+			height={size}
+			viewBox="0 0 24 24"
+			{...strokeProps}
+			strokeLinecap="round"
+			strokeLinejoin="round"
+			aria-hidden="true"
+		>
+			<rect x="3" y="3" width="18" height="18" rx="2" />
+			<circle cx="8.5" cy="8.5" r="1.5" />
+			<path d="m21 16-5-5L5 21" />
+		</svg>
+	);
+}
+
 /** 远端运行环境：服务器机架，不与本机目录或终端操作混淆。 */
 export function ServerIcon({ size = 14, className }: IconProps) {
 	return (

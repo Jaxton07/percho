@@ -3,8 +3,8 @@ import {
 	environmentEntityRef,
 	environmentKey,
 	LOCAL_ENVIRONMENT,
+	type SessionCatalogProject,
 	type SessionMeta,
-	sameEnvironment,
 } from "@percho/shared";
 import { create } from "zustand";
 import { getPi } from "../api";
@@ -14,6 +14,8 @@ import { initDailyDir, isDailyCwd } from "../lib/daily";
 import { pathLastSegment } from "../lib/path-display";
 import { isPrimaryNavigationSession } from "../lib/session-visibility";
 import { useChannelSubscriptionsStore } from "./channel-subscriptions";
+import { useLocalSessionsStore } from "./local-sessions";
+import { useSessionCatalogStore } from "./session-catalog";
 import { useSessionWorkspaceStore } from "./session-workspace";
 import { useSessionsStore } from "./sessions";
 import { useSubagentReturnStore } from "./subagent-return";
@@ -74,6 +76,7 @@ interface ProjectsStore {
 	 * 推进一步 —— 在飞的旧 load 不得用更旧的快照盖回去（latest-wins 不破）。
 	 */
 	adoptCatalog: (sessions: SessionMeta[], environment?: EnvironmentRef) => void;
+	mergeKnownSessions: (sessions: SessionMeta[]) => void;
 	/** 重命名成功后同步历史列表（见实现处注释） */
 	applySessionName: (sessionId: string, name: string | undefined) => void;
 	select: (cwd: string | null) => void;
@@ -83,7 +86,7 @@ interface ProjectsStore {
 	/** 删除历史会话（含磁盘文件）；若该会话在顶栏打开中则一并关闭 */
 	deleteSession: (session: SessionMeta) => Promise<void>;
 	/** 删除整个项目：删除该项目下全部会话（含磁盘文件），并从已添加列表移除 */
-	deleteProject: (cwd: string) => Promise<void>;
+	deleteProject: (cwd: string, token?: string) => Promise<void>;
 	/** 从历史会话打开并切回聊天视图；若已在内存里则直接切换。**用户入口**：真正打开成功后才记入工作区 */
 	openSession: (session: SessionMeta) => Promise<void>;
 }
@@ -121,18 +124,20 @@ export const useProjectsStore = create<ProjectsStore>((set, get) => {
 	const applyCatalog = (sessions: SessionMeta[], environment: EnvironmentRef): void => {
 		set((state) => ({
 			allSessions: [
-				...state.allSessions.filter(
-					(session) => !sameEnvironment(environmentEntityRef(session.sessionId).environment, environment),
-				),
-				...sessions,
+				...new Map(
+					[...state.allSessions, ...sessions].map((session) => [session.sessionId, session]),
+				).values(),
 			],
 		}));
 		status(environment, { loading: false, loaded: true, failed: false });
 		absorbOpenSessions(useSessionsStore.getState().sessions);
 		if (!get().selectedCwd && environment.kind === "local") {
-			const first = deriveProjects(get()).find(
-				(project) => environmentEntityRef(project.cwd).environment.kind === "local",
-			);
+			const first = deriveProjects(
+				get(),
+				Object.values(useSessionCatalogStore.getState().byEnvironment).flatMap(
+					(entry) => entry.projects?.projects ?? [],
+				),
+			).find((project) => environmentEntityRef(project.cwd).environment.kind === "local");
 			if (first) set({ selectedCwd: first.cwd });
 		}
 	};
@@ -151,18 +156,27 @@ export const useProjectsStore = create<ProjectsStore>((set, get) => {
 			const key = environmentKey(environment);
 			status(environment, { loading: true, loaded: get().catalogs[key]?.loaded ?? false, failed: false });
 			try {
-				const [sessions] = await Promise.all([
-					getExecutionApi(environment).listAllSessions(),
+				await Promise.all([
+					useSessionCatalogStore.getState().loadProjects(environment),
 					initDailyDir(environment),
 				]);
 				if (seq !== loadSeq.get(key)) return;
-				applyCatalog(sessions, environment);
+				const catalog = useSessionCatalogStore.getState().byEnvironment[key];
+				if (catalog?.error) throw new Error(catalog.error);
+				status(environment, { loading: false, loaded: true, failed: false });
+				absorbOpenSessions(useSessionsStore.getState().sessions);
 			} catch {
 				if (seq !== loadSeq.get(key)) return;
 				// Retain the last trusted catalog. Failure is not an empty snapshot.
-				status(environment, { loading: false, loaded: true, failed: true });
+				status(environment, { loading: false, loaded: get().catalogs[key]?.loaded ?? false, failed: true });
 			}
 		},
+		mergeKnownSessions: (sessions) =>
+			set((state) => {
+				const known = new Map(state.allSessions.map((session) => [session.sessionId, session]));
+				for (const session of sessions) known.set(session.sessionId, session);
+				return { allSessions: [...known.values()] };
+			}),
 		adoptCatalog: (sessions, environment = LOCAL_ENVIRONMENT) => {
 			nextLoad(environment);
 			applyCatalog(sessions, environment);
@@ -206,6 +220,7 @@ export const useProjectsStore = create<ProjectsStore>((set, get) => {
 				sessionId: session.sessionId,
 				sessionFile: session.sessionFile,
 			});
+			useLocalSessionsStore.getState().forget(session.sessionId);
 			invalidateImageOwner(session.sessionId);
 			// 置顶列表清理：会话没了就没人能取消置顶，留着会变成永久残留 id
 			useUiPreferencesStore.getState().unpin(session.sessionId);
@@ -228,13 +243,27 @@ export const useProjectsStore = create<ProjectsStore>((set, get) => {
 			}));
 		},
 
-		deleteProject: async (cwd) => {
-			// 内置日常空间不可删（侧栏本就不渲染删除钮，这里兜底防 IPC 重放等旁路）
+		deleteProject: async (cwd, token) => {
 			if (isDailyCwd(cwd)) return;
-			const { allSessions } = get();
-			for (const session of allSessions.filter((s) => s.cwd === cwd)) {
-				await get().deleteSession(session);
+			if (!token) throw new Error("Project deletion requires a preview token");
+			const result = await getExecutionApi(cwd).deleteSessionProject({ cwd, token });
+			const deleted = new Set(result.deleted);
+			for (const id of deleted) {
+				invalidateImageOwner(id);
+				useUiPreferencesStore.getState().unpin(id);
+				useUiPreferencesStore.getState().forgetPermissionMode(id);
+				useSessionWorkspaceStore.getState().removeMember(id);
+				useSubagentReturnStore.getState().forgetChildrenOf(id);
+				useSubagentReturnStore.getState().forgetChild(id);
+				useChannelSubscriptionsStore.getState().forget(id);
+				if (useSessionsStore.getState().sessions.some((session) => session.sessionId === id))
+					await useSessionsStore.getState().closeSession(id);
 			}
+			set((state) => ({
+				allSessions: state.allSessions.filter((session) => !deleted.has(session.sessionId)),
+			}));
+			if (result.failed.length)
+				throw new Error(result.failed.map((item) => `${item.sessionId}: ${item.error}`).join("; "));
 			const added = get().addedProjects.filter((p) => p !== cwd);
 			localStorage.setItem(ADDED_KEY, JSON.stringify(localProjects(added)));
 			set({ addedProjects: added });
@@ -293,6 +322,51 @@ function absorbOpenSessions(open: readonly SessionMeta[]): void {
 	useProjectsStore.setState({ allSessions: [...state.allSessions, ...missing] });
 }
 
+export async function loadReferencedSessionMetadata(
+	references: readonly { sessionId: string; sessionFile?: string }[],
+): Promise<void> {
+	const known = useProjectsStore.getState().allSessions;
+	const groups = new Map<
+		string,
+		{ environment: EnvironmentRef; references: { sessionId: string; sessionFile?: string }[] }
+	>();
+	for (const reference of references) {
+		if (
+			known.some(
+				(meta) =>
+					meta.sessionId === reference.sessionId ||
+					(reference.sessionFile && meta.sessionFile === reference.sessionFile),
+			)
+		)
+			continue;
+		const environment = environmentEntityRef(reference.sessionId).environment;
+		const key = environmentKey(environment);
+		const group = groups.get(key) ?? { environment, references: [] };
+		group.references.push(
+			reference.sessionFile === reference.sessionId
+				? { sessionFile: reference.sessionFile, sessionId: "" }
+				: reference,
+		);
+		groups.set(key, group);
+	}
+	for (const { environment, references: refs } of groups.values()) {
+		for (let i = 0; i < refs.length; i += 100) {
+			try {
+				const results = await getExecutionApi(environment).verifySessionCatalog({
+					references: refs.slice(i, i + 100).map(({ sessionId, sessionFile }) => ({
+						...(sessionId ? { sessionId } : {}),
+						...(sessionFile ? { sessionFile } : {}),
+					})),
+				});
+				const found = results.flatMap((item) => (item.status === "present" && item.meta ? [item.meta] : []));
+				if (found.length) useProjectsStore.getState().mergeKnownSessions(found);
+			} catch {
+				/* Offline is not evidence of deletion. */
+			}
+		}
+	}
+}
+
 // 写穿接线：**只此一处** —— 任何「会话进入内存」的路径（新建/打开/fork/从历史打开）都经它落目录，
 // 将来新增路径也不会漏（不依赖各调用点自觉）。放在这里是因为依赖方向就是 projects → sessions。
 useSessionsStore.subscribe((state, prev) => {
@@ -300,7 +374,11 @@ useSessionsStore.subscribe((state, prev) => {
 });
 
 /** 项目列表 = 有历史会话的目录 ∪ 手动添加的目录（日常空间 cwd 除外，它在侧栏单独钉顶）；手动添加的按添加时间倒排（最新在前），未添加过的按最后活动排后 */
-export function deriveProjects(state: Pick<ProjectsStore, "allSessions" | "addedProjects">): ProjectEntry[] {
+const EMPTY_SUMMARIES: readonly SessionCatalogProject[] = [];
+export function deriveProjects(
+	state: Pick<ProjectsStore, "allSessions" | "addedProjects">,
+	summaries: readonly SessionCatalogProject[] = EMPTY_SUMMARIES,
+): ProjectEntry[] {
 	const byCwd = new Map<string, ProjectEntry>();
 	for (const session of state.allSessions) {
 		if (!session.cwd || isDailyCwd(session.cwd)) continue;
@@ -319,6 +397,16 @@ export function deriveProjects(state: Pick<ProjectsStore, "allSessions" | "added
 				addedIndex: -1,
 			});
 		}
+	}
+	for (const summary of summaries) {
+		if (isDailyCwd(summary.cwd)) continue;
+		byCwd.set(summary.cwd, {
+			cwd: summary.cwd,
+			name: pathLastSegment(summary.cwd) ?? summary.cwd,
+			sessionCount: summary.sessionCount,
+			lastActive: summary.lastActive,
+			addedIndex: -1,
+		});
 	}
 	for (const [idx, cwd] of state.addedProjects.entries()) {
 		// 手动添加列表若混入日常目录（老版本/手改 localStorage）按未添加处理，不生成项目条目

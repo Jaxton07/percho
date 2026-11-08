@@ -24,7 +24,7 @@ import { selectActiveCwd } from "../../lib/active-cwd";
 import { prefersReducedMotion, useListShift } from "../../lib/use-list-shift";
 import { useWorkspaceRemoval } from "../../lib/workspace-actions";
 import { COMPOSER_FOCUS_EVENT } from "../../stores/drafts";
-import { useProjectsStore } from "../../stores/projects";
+import { loadReferencedSessionMetadata, useProjectsStore } from "../../stores/projects";
 import {
 	resolveWorkspaceSessions,
 	useSessionWorkspaceStore,
@@ -271,6 +271,12 @@ export function SessionTabBar() {
 	const stripShiftRef = useListShift({ skip: activeId !== null });
 	// 历史列表：工作区里「未加载」的成员要能从目录投影里拿到 meta（否则画不出胶囊）
 	const allSessions = useProjectsStore((s) => s.allSessions);
+	useEffect(() => {
+		void loadReferencedSessionMetadata([
+			...workspaceMembers.map((member) => ({ sessionId: member.sessionId, sessionFile: member.file })),
+			...pinnedSessions.map((sessionId) => ({ sessionId })),
+		]);
+	}, [workspaceMembers, pinnedSessions]);
 	/** 右键菜单：目标会话 + 触发胶囊矩形（null = 关闭） */
 	const [menu, setMenu] = useState<AnchorState | null>(null);
 	/** 重命名浮层：与菜单同锚点，菜单选中后菜单卸载、浮层同帧展开 */
@@ -299,6 +305,7 @@ export function SessionTabBar() {
 	const contextMenuItems = (sessionId: string): ContextMenuItem[] =>
 		sessionMenuItems(t, {
 			sessionId,
+			session: barSessions.find((s) => s.sessionId === sessionId),
 			pinned: pinnedSessions.includes(sessionId),
 			onRename: () => setRenaming(menu),
 		});

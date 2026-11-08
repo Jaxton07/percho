@@ -1,17 +1,29 @@
 import {
 	emptyTranscript,
+	environmentEntityKey,
 	reduceEvent,
 	type SessionHistoryPage,
 	type SessionHistoryWindow,
+	type SessionNavigation,
 	type UIMessage,
 } from "@percho/shared";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { beginSessionBaseline, forgetSessionBoundary } from "./session-event-boundary";
-import { clearSessionHistory, finishSessionHistory } from "./session-history";
-import { installOlderHistory, loadOlderHistory } from "./session-history-paging";
+import { clearSessionHistory, finishSessionHistory, reloadSessionHistory } from "./session-history";
+import {
+	installOlderHistory,
+	loadHistoryThrough,
+	loadOlderHistory,
+	loadSessionNavigation,
+} from "./session-history-paging";
 import { useTranscriptStore } from "./transcript";
 
-const api = vi.hoisted(() => ({ getSessionHistoryPage: vi.fn(), markSessionHistoryReady: vi.fn() }));
+const api = vi.hoisted(() => ({
+	getSessionBaseline: vi.fn(),
+	getSessionHistoryPage: vi.fn(),
+	getSessionNavigation: vi.fn(),
+	markSessionHistoryReady: vi.fn(),
+}));
 vi.mock("../environment-api", () => ({ getExecutionApi: () => api }));
 const message = (id: string): UIMessage => ({
 	kind: "user",
@@ -63,7 +75,202 @@ beforeEach(() => {
 	forgetSessionBoundary("session");
 	clearSessionHistory("session");
 	api.markSessionHistoryReady.mockResolvedValue(undefined);
+	api.getSessionNavigation.mockResolvedValue({ entries: [] } satisfies SessionNavigation);
+	api.getSessionHistoryPage.mockReset();
 	seed();
+});
+
+describe("历史代隔离", () => {
+	it("真实重装后不等待旧目标请求，旧等待链及迟到成功不能污染新页", async () => {
+		const old = deferred<SessionHistoryPage>();
+		api.getSessionHistoryPage.mockReturnValueOnce(old.promise);
+		const target = loadHistoryThrough("session", "missing");
+		await Promise.resolve();
+		const waiting = loadOlderHistory("session");
+		api.getSessionBaseline.mockResolvedValueOnce({
+			hydrationToken: "open-two",
+			meta: {
+				sessionId: "session",
+				sessionFile: "/session",
+				cwd: "/",
+				active: true,
+				messageCount: 0,
+				createdAt: 1,
+			},
+			sequence: 0,
+			permissionMode: "default",
+			transcript: { ...emptyTranscript(), messages: [message("new-tail")], history: window("two") },
+		});
+		await reloadSessionHistory("session", () => true);
+		api.getSessionHistoryPage.mockResolvedValueOnce(page("two"));
+		await loadOlderHistory("session");
+		expect(useTranscriptStore.getState().bySession.session?.messages.map((item) => item.id)).toEqual([
+			"older:two",
+			"new-tail",
+		]);
+		old.resolve(page());
+		await Promise.all([target, waiting]);
+		expect(api.getSessionHistoryPage).toHaveBeenCalledTimes(2);
+		expect(useTranscriptStore.getState().bySession.session?.messages.map((item) => item.id)).toEqual([
+			"older:two",
+			"new-tail",
+		]);
+	});
+
+	it.each(["sourceVersion", "hydrationToken"] as const)("%s 换代和旧失败不影响新请求", async (field) => {
+		const old = deferred<SessionHistoryPage>(),
+			fresh = deferred<SessionHistoryPage>();
+		api.getSessionHistoryPage.mockReturnValueOnce(old.promise).mockReturnValueOnce(fresh.promise);
+		const first = loadHistoryThrough("session", "target");
+		await Promise.resolve();
+		useTranscriptStore.setState((state) => {
+			const current = state.bySession.session;
+			if (!current) return state;
+			return {
+				bySession: { ...state.bySession, session: { ...current, history: { ...window(), [field]: "new" } } },
+			};
+		});
+		const second = loadOlderHistory("session");
+		await Promise.resolve();
+		old.reject(new Error("obsolete"));
+		await first;
+		expect(loadOlderHistory("session")).toBe(second);
+		expect(useTranscriptStore.getState().bySession.session?.historyFetch?.loading).toBe(true);
+		const response = page();
+		response.history[field] = "new";
+		fresh.resolve(response);
+		await second;
+		expect(useTranscriptStore.getState().bySession.session?.messages[0]?.id).toBe("older:one");
+	});
+
+	it("关闭重开同 SID 后旧等待链不再发请求", async () => {
+		const old = deferred<SessionHistoryPage>();
+		api.getSessionHistoryPage.mockReturnValueOnce(old.promise);
+		const first = loadHistoryThrough("session", "target");
+		await Promise.resolve();
+		const waiting = loadOlderHistory("session");
+		clearSessionHistory("session");
+		seed();
+		api.getSessionHistoryPage.mockResolvedValueOnce(page());
+		await loadOlderHistory("session");
+		old.resolve(page());
+		await Promise.all([first, waiting]);
+		expect(api.getSessionHistoryPage).toHaveBeenCalledTimes(2);
+	});
+
+	it("不同环境的相同 SID 分页互不等待", async () => {
+		const remote = environmentEntityKey(
+			{ kind: "ssh", connectionId: "connection", environmentId: "remote" },
+			"session",
+		);
+		useTranscriptStore.setState((state) => ({
+			bySession: {
+				...state.bySession,
+				[remote]: {
+					...emptyTranscript(),
+					pendingPermissions: [],
+					pendingDialogs: [],
+					history: window(),
+					messages: [message("remote-tail")],
+				},
+			},
+		}));
+		const old = deferred<SessionHistoryPage>();
+		api.getSessionHistoryPage.mockReturnValueOnce(old.promise);
+		const first = loadHistoryThrough("session", "target");
+		await Promise.resolve();
+		api.getSessionHistoryPage.mockResolvedValueOnce(page());
+		await loadOlderHistory(remote);
+		expect(useTranscriptStore.getState().bySession[remote]?.messages.map((item) => item.id)).toEqual([
+			"older:one",
+			"remote-tail",
+		]);
+		old.resolve(page());
+		await first;
+		clearSessionHistory(remote);
+	});
+});
+
+describe("导航与目标页", () => {
+	it("加载导航并在旧远端或 generation 变化时返回 null", async () => {
+		await expect(loadSessionNavigation("session")).resolves.toEqual({ entries: [] });
+		api.getSessionNavigation.mockRejectedValueOnce(new Error("Unknown or desktop-only method"));
+		await expect(loadSessionNavigation("session")).resolves.toBeNull();
+		api.getSessionHistoryPage.mockResolvedValueOnce(page());
+		await loadOlderHistory("session");
+		expect(useTranscriptStore.getState().bySession.session?.messages[0]?.id).toBe("older:one");
+		const pending = deferred<SessionNavigation>();
+		api.getSessionNavigation.mockReturnValueOnce(pending.promise);
+		const request = loadSessionNavigation("session");
+		seed("two");
+		pending.resolve({ entries: [] });
+		await expect(request).resolves.toBeNull();
+	});
+	it("逐页加载目标并复用普通分页", async () => {
+		api.getSessionHistoryPage
+			.mockResolvedValueOnce({
+				messages: [message("middle")],
+				history: { ...window(), cursor: "next-cursor" },
+			})
+			.mockResolvedValueOnce(page());
+		await expect(loadHistoryThrough("session", "older:one")).resolves.toBe(true);
+		expect(api.getSessionHistoryPage.mock.calls).toEqual([
+			[{ sessionId: "session", cursor: "cursor:one" }],
+			[{ sessionId: "session", cursor: "next-cursor" }],
+		]);
+	});
+	it("取消在途跳转后不再续页", async () => {
+		const pending = deferred<SessionHistoryPage>();
+		api.getSessionHistoryPage.mockReturnValueOnce(pending.promise);
+		let current = true;
+		const beforePrepend = vi.fn();
+		const result = loadHistoryThrough("session", "target", beforePrepend, () => current);
+		await Promise.resolve();
+		current = false;
+		pending.resolve({ messages: [message("middle")], history: { ...window(), cursor: "next" } });
+		await expect(result).resolves.toBe(false);
+		expect(beforePrepend).not.toHaveBeenCalled();
+		expect(api.getSessionHistoryPage).toHaveBeenCalledTimes(1);
+		expect(useTranscriptStore.getState().bySession.session?.historyFetch?.error).toBeUndefined();
+	});
+	it("新目标共享在途普通页，旧意图失效后仍可继续", async () => {
+		const pending = deferred<SessionHistoryPage>();
+		api.getSessionHistoryPage.mockReturnValueOnce(pending.promise).mockResolvedValueOnce(page());
+		let current = true;
+		const old = loadHistoryThrough("session", "missing", undefined, () => current);
+		await Promise.resolve();
+		current = false;
+		const fresh = loadHistoryThrough("session", "older:one");
+		pending.resolve({ messages: [message("middle")], history: { ...window(), cursor: "next" } });
+		await expect(old).resolves.toBe(false);
+		await expect(fresh).resolves.toBe(true);
+		expect(api.getSessionHistoryPage).toHaveBeenCalledTimes(2);
+	});
+	it("目标不存在不记分页错误，真实读取失败仍可重试", async () => {
+		api.getSessionHistoryPage.mockResolvedValueOnce(page());
+		await expect(loadHistoryThrough("session", "missing")).resolves.toBe(false);
+		expect(useTranscriptStore.getState().bySession.session?.historyFetch?.error).toBeUndefined();
+		seed();
+		api.getSessionHistoryPage.mockRejectedValueOnce(new Error("Offline")).mockResolvedValueOnce(page());
+		await expect(loadHistoryThrough("session", "older:one")).resolves.toBe(false);
+		expect(useTranscriptStore.getState().bySession.session?.historyFetch?.error).toBe("Offline");
+		await expect(loadHistoryThrough("session", "older:one")).resolves.toBe(true);
+	});
+	it("没有新增消息时停止，不记分页错误", async () => {
+		api.getSessionHistoryPage.mockResolvedValueOnce({
+			messages: [message("tail")],
+			history: { ...window(), cursor: "next" },
+		});
+		await expect(loadHistoryThrough("session", "missing")).resolves.toBe(false);
+		expect(api.getSessionHistoryPage).toHaveBeenCalledTimes(1);
+		expect(useTranscriptStore.getState().bySession.session?.historyFetch?.error).toBeUndefined();
+	});
+	it("重复游标时停止，不记分页错误", async () => {
+		api.getSessionHistoryPage.mockResolvedValueOnce({ messages: [message("middle")], history: window() });
+		await expect(loadHistoryThrough("session", "missing")).resolves.toBe(false);
+		expect(api.getSessionHistoryPage).toHaveBeenCalledTimes(1);
+		expect(useTranscriptStore.getState().bySession.session?.historyFetch?.error).toBeUndefined();
+	});
 });
 
 describe("旧页前插与活动态隔离", () => {

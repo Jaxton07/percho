@@ -31,6 +31,17 @@ const pkg = JSON.parse(readFileSync(join(pkgRoot, "package.json"), "utf8")) as {
 info.push(`resolve 到 ${pkg.name}@${pkg.version}（${pkgRoot}）；mod.VERSION 报 ${mod.VERSION}`);
 check("1 resolve 到的 SDK === 1.4.0", pkg.version === "1.4.0", `实际 ${pkg.version}`);
 check("1b 手动重试补丁已应用", typeof mod.AgentSession.prototype.retryLastFailedTurn === "function");
+check("1c 独占空闲维护补丁已应用", typeof mod.AgentSession.prototype.tryAcquireIdleLease === "function");
+{
+	const dts = readFileSync(join(pkgRoot, "dist/core/agent-session.d.ts"), "utf8");
+	const exports = readFileSync(join(pkgRoot, "dist/index.d.ts"), "utf8");
+	check(
+		"1d 空闲维护声明与根类型导出存在",
+		/tryAcquireIdleLease\(\): SessionIdleLease \| undefined/.test(dts) &&
+			/appendCustomEntry<T\s*=\s*unknown>\(customType: string, data\?: T\): string/.test(dts) &&
+			/type SessionIdleLease/.test(exports),
+	);
+}
 
 // 2. 三个内置扩展工厂可从包根 import（llama.cpp 不在其中，见 3/4）
 check(
