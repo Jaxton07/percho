@@ -33,6 +33,7 @@ import { pushToast } from "./toasts";
 export type SettingsCategory =
 	| "general"
 	| "appearance"
+	| "archived"
 	| "models"
 	| "skills"
 	| "mcp"

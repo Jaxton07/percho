@@ -407,6 +407,10 @@ export const en: Messages = {
 		deny: "Do not trust",
 		queued: "{count} more projects awaiting decision",
 	},
+	messageRail: {
+		ariaLabel: "Message navigation",
+		jump: "Jump to this message",
+	},
 	message: {
 		copy: "Copy",
 		copied: "Copied",
@@ -568,6 +572,37 @@ export const en: Messages = {
 		preserved:
 			"Preserved {invalid} invalid lines; skipped {skipped} images that cannot be safely compacted. User attachments and read images stay unchanged.",
 	},
+	archive: {
+		search: "Search titles or session IDs",
+		project: "Project",
+		allProjects: "All projects",
+		sort: "Sort",
+		archived: "Recently archived",
+		modified: "Recently updated",
+		created: "Created",
+		name: "Name",
+		archivedTime: "Archived",
+		modifiedTime: "Updated",
+		createdTime: "Created",
+		empty: "No archived chats",
+		noMatch: "No matching chats",
+		partial: "The catalog is being organized; results may be incomplete.",
+		offline: "Environment offline; archives cannot be read or changed.",
+		error: "Could not load. Please retry.",
+		unarchive: "Unarchive",
+		operationFailed: "Operation failed. Please retry.",
+		cleanupPending: "Archived; resource cleanup is still pending.",
+	},
+	sessionArchive: {
+		action: "Archive",
+		history: "No saved chat history to archive",
+		busy: "This chat is running or has pending work",
+		offline: "The owning environment is offline",
+		subscriptions: "Archiving unsubscribes this chat from its channels",
+		success: "Archived",
+		cleanupPending: "Archived, but resource cleanup is incomplete",
+		failed: "Could not archive",
+	},
 	sessionMenu: {
 		copyDiagnostics: "Copy diagnostics",
 		delete: "Delete session",
@@ -592,9 +627,13 @@ export const en: Messages = {
 		removeProject: "Remove project",
 		removeProjectTitle: "Remove {name}?",
 		removeProjectDesc:
-			"This deletes all {count} sessions under this project in Percho; the project files on your computer stay untouched.",
-		removeProjectDescEmpty:
-			"This removes the project from Percho; it has no sessions, and the project files on your computer stay untouched.",
+			"This deletes {count} unarchived and {archived} archived sessions under this project in Percho; the project files on your computer stay untouched.",
+		removeProjectRetry: "Could not remove {name}. Retry",
+		catalogOffline: "Remote disconnected",
+		catalogConnect: "Connect",
+		catalogLoading: "Loading…",
+		catalogPartial: "Organizing session catalog…",
+		catalogRetry: "Loading failed. Retry",
 		searchEmpty: "No matching sessions",
 		noSessions: "No sessions",
 		/** Per-group "show more" button at the end of the list (16 more rows each click) */
@@ -615,6 +654,7 @@ export const en: Messages = {
 		loading: "Loading…",
 		comingSoon: "Settings for this category are coming in a future release.",
 		category: {
+			archived: "Archived chats",
 			remote: "SSH Connection",
 			general: "General",
 			appearance: "Appearance",
@@ -686,9 +726,9 @@ export const en: Messages = {
 		topBar: "Show sessions in the top bar",
 		topBarHint:
 			"The top bar is always there (window dragging, sidebar toggle, current changes). Turn this off and it simply stops showing the temporary-workspace pills — every session stays in the left sidebar.",
-		sessionRail: "Left session rail",
+		sessionRail: "Right session rail",
 		sessionRailHint:
-			"A column of short lines at the left edge of the chat area (off by default): hover or focus expands one into a capsule with its title and status. The rail and the top bar show the same temporary workspace; turning both off clears it (running tasks are unaffected — they just stop being recorded).",
+			"A column of short lines at the right edge of the chat area (off by default): hover or focus expands one leftward into a capsule with its title and status. The rail and the top bar show the same temporary workspace; turning both off clears it (running tasks are unaffected — they just stop being recorded).",
 		centerOrb: "Centered status animation",
 		centerOrbHint:
 			"While a task is running, shows an enlarged status animation at the center of the conversation area (above the text, with a translucent scrim dimming whatever is behind it). Only controls the centered animation — the small orb before the Working/Thinking row always stays.",

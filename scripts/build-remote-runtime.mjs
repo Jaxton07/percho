@@ -79,6 +79,7 @@ try {
 			client: "packages/backend/src/runtime/client.ts",
 			server: "packages/backend/src/runtime/server.ts",
 			"session-media-worker": "packages/backend/src/session/media-maintenance-worker.ts",
+			"session-catalog-worker": "packages/backend/src/session/catalog-worker.ts",
 		},
 		bundle: true,
 		splitting: true,
@@ -145,6 +146,7 @@ try {
 	await access(sdkRequire.resolve("quickjs-wasi/quickjs.wasm"));
 	for (const file of [
 		"session-media-worker.mjs",
+		"session-catalog-worker.mjs",
 		"node_modules/@earendil-works/pi-coding-agent/dist/bundle/cli.js",
 		"node_modules/@earendil-works/pi-coding-agent/dist/core/export-html/template.html",
 	])

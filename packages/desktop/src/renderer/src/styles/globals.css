@@ -36,6 +36,7 @@
 }
 
 :root {
+	--diff-sidebar-width: min(420px, 38vw);
 	--color-canvas: #ffffff;
 	--color-surface: #ffffff;
 	/* hover/选中底：中性锌灰，不带蓝调（slate 系 #f1f5f9 偏蓝，已弃） */
@@ -633,14 +634,14 @@ html[data-session-slide] {
 	}
 }
 
-/* 左侧会话轨道（设置 → 外观开关「左侧会话轨道」，默认关）：与顶栏同一份**临时会话工作区**，
+/* 右侧会话轨道（设置 → 外观开关「右侧会话轨道」，默认关）：与顶栏同一份**临时会话工作区**，
    顺序就是工作区顺序。点击按需打开未加载的成员，× = 从工作区移出（不关会话，与顶栏同语义）。
    以下动画细节沿用 v10 定稿（来自 git bcd3e04^）。
 
-   轨道挂在聊天列左缘（App.tsx：main + DockSlot 的父容器），定位基准是 tab bar 以下的整列，
+   轨道挂在聊天列右缘（App.tsx：main + DockSlot 的父容器），定位基准是 tab bar 以下的整列，
    输入框高度变化不压缩它的居中参考系。收起态是纯覆盖层（pointer-events-none），不挤压聊天布局。
 
-   —— v10 定稿的设计说明：聊天页左侧垂直居中一列**直角细线**（codex 风），
+   —— 动画设计：聊天页右侧垂直居中一列**直角细线**，
    悬停/聚焦时原地「变形」为悬浮胶囊，上下邻居按行距分级跟涨成**半大/迷你胶囊**（dock 波浪：
    展开 208×32 → ±1 胶囊 104×24（内容可见、标题裁断） → ±2 迷你空胶囊 44×14 → 细线），
    状态类 is-expanded/is-near-1/is-near-2 由 JS 按行距下发（比 :has 链易控：呼吸/内容显隐按距离精确开关）。
@@ -650,6 +651,16 @@ html[data-session-slide] {
    展开/跟涨 = 先在小尺寸上 90ms 翻色/翻圆角（深色线 → 白胶囊），再回弹放大（340/300/280ms 随档位递减）；
    收起 = 先 260ms 收缩（仍是白胶囊），颜色/圆角延迟 150ms 到接近尾声才变回细线。
    避免旧版「深色线拉长到一半才闪白」的颜色逆变闪烁。 */
+/* 与 Diff 使用同一宽度来源；不挤压正文，窄窗口仅占用仍然可用的聊天区域。 */
+.session-rail {
+	--session-rail-inset: 0px;
+	right: var(--session-rail-inset);
+	width: max(0px, min(288px, calc(100% - var(--session-rail-inset))));
+	container-type: inline-size;
+}
+.session-rail[data-diff-open] {
+	--session-rail-inset: var(--diff-sidebar-width);
+}
 /* 行高波浪：transition 同样取目标态定义（收起走基线 260ms） */
 .session-rail-item {
 	transition: height 260ms cubic-bezier(0.34, 1.15, 0.64, 1);
@@ -668,10 +679,11 @@ html[data-session-slide] {
 }
 .session-rail-item .rail-capsule {
 	position: absolute;
-	left: 6px;
+	right: 6px;
 	top: 50%;
 	display: flex;
 	align-items: center;
+	max-width: max(0px, calc(100cqw - 6px));
 	/* 无 padding：否则 border-box 下收起态高度被 padding 撑成 12px，就不是一条线了。
 	   内距在内容包裹层（JSX 的 px-2.5），收起时随内容一起被 overflow 裁掉 */
 	border-radius: 0;
@@ -696,7 +708,7 @@ html[data-session-slide] {
 	z-index: 4;
 }
 .session-rail-item.is-expanded .rail-capsule {
-	/* 与顶栏胶囊**同宽同圆角**（w-52 + rounded-full，两处是同一个对象，不许飘开）；窄窗口按视口收缩，不越过右缘 */
+	/* 与顶栏胶囊同宽同圆角；从右向左展开，窄空间再由轨道容器的 max-width 约束。 */
 	width: min(208px, calc(100vw - 40px));
 	height: 32px;
 	border-radius: 9999px;
@@ -1222,13 +1234,24 @@ code {
 	border: none;
 	margin-inline: 8px;
 	box-shadow: var(--shadow-soft);
+	/* 单行代码块的自然高度只有一行（18px），而悬浮 header 里的复制按钮是 22px 高、距顶 8px
+	   （占 8–30px），底边被容器的 overflow-hidden 裁掉（实测容器 18px / 按钮可见 10px）。
+	   保底固定 36px（按钮高度不随 --fs-ui-scale 变，此处不乘档位）并让代码行垂直居中；
+	   两行及以上高度由内容决定，不受影响。 */
+	min-height: 36px;
+	display: flex;
+	flex-direction: column;
+	justify-content: center;
 }
 /* 代码块「纯净化」：标题栏悬浮 —— 常态隐身（纯代码），hover / 键盘聚焦时浮现。
    header DOM 必须保留（复制按钮在里面，showHeader:false 会把按钮一起去掉），
    语言标签/折叠按钮已裁：语言胶囊在下方 display:none，折叠经 codeBlockProps
    showCollapseButton:false 关闭（Markdown.tsx）。
-   组件把 header 背景用 inline style 钉成编辑器主题色，需 !important 压掉。 */
-.markdown-body .code-block-container .code-block-header {
+   组件把 header 背景用 inline style 钉成编辑器主题色，需 !important 压掉。
+   diff 变体单独写一条：库的 `.code-block-container.is-diff .code-block-header` 与这条同优先级
+   且后加载，不抬一级就会留下 18px 上内边距，按钮在单行/两行块里被裁到容器外。 */
+.markdown-body .code-block-container .code-block-header,
+.markdown-body .code-block-container.is-diff .code-block-header {
 	position: absolute;
 	top: 0;
 	left: 0;
@@ -1634,7 +1657,7 @@ code {
 	inset-block: 0;
 	right: 0;
 	z-index: 30;
-	width: min(420px, 38vw);
+	width: var(--diff-sidebar-width);
 	overflow: hidden;
 	border-radius: 12px 0 0 12px;
 	background: var(--color-canvas);
@@ -2632,4 +2655,114 @@ body > div.markstream-react.ms-tooltip[role="tooltip"]:not(.tooltip-element) {
 .markdown-body .md-mermaid .md-mermaid-fail-code {
 	max-height: 220px;
 	margin: 0;
+}
+
+/* ── 对话 Minimap（#110）────────────────────────────────────────────────
+   规则移植自 MIT 项目 pi-gna 的 .turn-rail-*（manuelcecchetto/pi-gna，src/renderer/src/styles.css；
+   其作者说明参考过 Codex 客户端导航轨道的 CSS）。只换成 Percho 的颜色变量：
+   每条用户消息一行 10px；线固定 26×2、按 scaleX 收到 6px；悬停 1、相邻三格 0.7/0.4/0.2；
+   默认 muted×0.4，视口内轮次 fg×0.6，悬停时视口内轮次退回默认；列表内部滚动、隐藏滚动条、两端渐隐。 */
+.message-rail-list {
+	position: relative;
+	display: flex;
+	flex-direction: column;
+	max-height: min(70vh, 40rem);
+	overflow-y: auto;
+	overscroll-behavior: contain;
+	scrollbar-width: none;
+}
+.message-rail-list::-webkit-scrollbar {
+	display: none;
+}
+.message-rail-list[data-fade] {
+	mask-image: linear-gradient(
+		to bottom,
+		var(--fade-top, #000),
+		#000 2.5rem,
+		#000 calc(100% - 2.5rem),
+		var(--fade-bottom, #000)
+	);
+}
+.message-rail-list[data-fade~="top"] {
+	--fade-top: transparent;
+}
+.message-rail-list[data-fade~="bottom"] {
+	--fade-bottom: transparent;
+}
+.message-rail-item {
+	display: flex;
+	flex-shrink: 0;
+	align-items: center;
+	width: 36px;
+	height: 10px;
+	border: 0;
+	background: transparent;
+	padding: 0;
+	cursor: pointer;
+	outline: none;
+}
+.message-rail-marker {
+	--progress: 0;
+	position: relative;
+	display: flex;
+	width: 26px;
+	height: 2px;
+	color: var(--color-ink-dim);
+	opacity: 0.4;
+}
+.message-rail-line {
+	width: 100%;
+	height: 100%;
+	border-radius: 1px;
+	background: currentColor;
+	transform-origin: left;
+	transform: scaleX(calc(0.2308 + 0.7692 * var(--progress)));
+	transition: transform 0.16s
+		linear(0, 0.398 10%, 0.682 20%, 0.843 30%, 0.925 40%, 0.972 50%, 1.004 60%, 1.008 70%, 1.003 80%, 1);
+}
+.message-rail-item[aria-current="true"] .message-rail-marker {
+	color: var(--color-ink);
+	opacity: 0.6;
+}
+.message-rail-list:has([data-hot])
+	.message-rail-item[aria-current="true"]:not([data-hot])
+	.message-rail-marker {
+	color: var(--color-ink-dim);
+	opacity: 0.4;
+}
+.message-rail-marker[data-near="3"] {
+	--progress: 0.2;
+}
+.message-rail-marker[data-near="2"] {
+	--progress: 0.4;
+}
+.message-rail-marker[data-near="1"] {
+	--progress: 0.7;
+}
+.message-rail-item[data-hot] .message-rail-marker {
+	--progress: 1;
+	color: var(--color-ink);
+	opacity: 1;
+}
+.message-rail-item:focus-visible .message-rail-marker {
+	color: var(--color-ink);
+	opacity: 1;
+}
+.message-rail-list[data-scrubbing] .message-rail-line {
+	transition-duration: 0s;
+}
+.message-rail-card {
+	animation: message-rail-card-in 0.12s ease-out;
+}
+@keyframes message-rail-card-in {
+	from {
+		opacity: 0;
+	}
+}
+@media (prefers-reduced-motion: reduce) {
+	.message-rail-line,
+	.message-rail-card {
+		transition-duration: 0s;
+		animation: none;
+	}
 }

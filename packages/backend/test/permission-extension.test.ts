@@ -248,28 +248,38 @@ describe("permission-gate 扩展", () => {
 
 	it("项目边界：界外写确认（含 ../../ 相对逃逸），界内与不设边界放行", async () => {
 		const dir = makeAgentDir();
-		const root = join(dir, "proj");
+		const fixtureParent = fileURLToPath(
+			new URL("../../../.local/tmp/session-archive-catalog/tests/", import.meta.url),
+		);
+		mkdirSync(fixtureParent, { recursive: true });
+		const fixture = mkdtempSync(join(fixtureParent, "permission-boundary-"));
+		const root = join(fixture, "nested", "proj");
 		mkdirSync(root, { recursive: true });
-		const { call, confirms } = makeHarness(dir, false, { projectRoot: root });
-		// 根内绝对/相对路径直接放行
-		await expect(call("edit", { path: join(root, "a.ts") })).resolves.toBeUndefined();
-		await expect(call("read", { path: "src/b.ts" })).resolves.toBeUndefined();
-		// 根外绝对路径与相对逃逸都确认（confirmAnswer=false → block）；沙箱在 tmpdir 下，
-		// 逃逸深度 +1 才能落出临时区（../../escape.ts 落入 T 根，会被 temporary=allow 豁免）
-		await expect(call("edit", { path: "/etc/hosts" })).resolves.toMatchObject({ block: true });
-		const escapePath = resolve(root, "../../../escape.ts");
-		const escapeResult = await call("write", { path: "../../../escape.ts" });
-		expect(escapeResult).toMatchObject({ block: true });
-		// 标题 = 记忆模式键：macOS 的临时区有父目录，按目录授权；Linux 会逃到 /，
-		// 根目录过宽时降级为精确文件授权。
-		const expectedEscapeTitle =
-			dirname(escapePath) === sep ? `write: ${escapePath}` : `write: ${dirname(escapePath)}${sep}*`;
-		expect(confirms.map((c) => c.title)).toEqual(["edit: /etc/*", expectedEscapeTitle]);
-		// 不传 projectRoot → 无边界检查，任意路径放行
-		const open = makeHarness(dir, false);
-		await expect(open.call("edit", { path: "/etc/hosts" })).resolves.toBeUndefined();
-		// bash 无法路径约束，不受边界影响
-		await expect(call("bash", { command: "ls /etc" })).resolves.toBeUndefined();
+		try {
+			const { call, confirms } = makeHarness(dir, false, { projectRoot: root });
+			// 根内绝对/相对路径直接放行
+			await expect(call("edit", { path: join(root, "a.ts") })).resolves.toBeUndefined();
+			await expect(call("read", { path: "src/b.ts" })).resolves.toBeUndefined();
+			// 根外绝对路径与相对逃逸都确认（confirmAnswer=false → block）。
+			expect(isTemporaryPath(resolve(root, "../../../escape.ts"))).toBe(false);
+			await expect(call("edit", { path: "/etc/hosts" })).resolves.toMatchObject({ block: true });
+			const escapePath = resolve(root, "../../../escape.ts");
+			const escapeResult = await call("write", { path: "../../../escape.ts" });
+			expect(escapeResult).toMatchObject({ block: true });
+			// 标题 = 记忆模式键：macOS 的临时区有父目录，按目录授权；Linux 会逃到 /，
+			// 根目录过宽时降级为精确文件授权。
+			const expectedEscapeTitle =
+				dirname(escapePath) === sep ? `write: ${escapePath}` : `write: ${dirname(escapePath)}${sep}*`;
+			expect(confirms.map((c) => c.title)).toEqual(["edit: /etc/*", expectedEscapeTitle]);
+			// 不传 projectRoot → 无边界检查，任意路径放行
+			const open = makeHarness(dir, false);
+			await expect(open.call("edit", { path: "/etc/hosts" })).resolves.toBeUndefined();
+			// bash 无法路径约束，不受边界影响
+			await expect(call("bash", { command: "ls /etc" })).resolves.toBeUndefined();
+		} finally {
+			rmSync(fixture, { recursive: true, force: true });
+			rmSync(dir, { recursive: true, force: true });
+		}
 	});
 
 	it("读写分离：界外读默认放行（outside.read=allow）", async () => {

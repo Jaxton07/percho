@@ -101,8 +101,32 @@ describe("SSH runtime boundary", () => {
 		).rejects.toThrow("concrete SSH Host alias");
 		expect(fixture.spawn).not.toHaveBeenCalled();
 	});
+	it("accepts a remote runtime that omits optional navigation methods", async () => {
+		const info = fixture.info as RuntimeInfo;
+		fixture.info = {
+			...info,
+			methods: info.methods.filter((method) => method !== "getSessionNavigation"),
+		};
+		const connection = await SshRuntimeConnection.connect("company", {
+			signal: new AbortController().signal,
+			onEvent: () => {},
+			onClose: () => {},
+		});
+		connection.disconnect();
+		expect(fixture.spawn).toHaveBeenCalledTimes(4);
+	});
+	it("accepts a newer remote that advertises extra optional execution methods", async () => {
+		const info = fixture.info as RuntimeInfo;
+		fixture.info = { ...info, methods: [...info.methods, "futureMethod"] };
+		const connection = await SshRuntimeConnection.connect("company", {
+			signal: new AbortController().signal,
+			onEvent: () => {},
+			onClose: () => {},
+		});
+		connection.disconnect();
+	});
 	it.each(["abort", "getSessionHistoryPage"])(
-		"rejects an incomplete contract missing %s before opening a business bridge",
+		"rejects an incomplete contract missing required method %s before opening a business bridge",
 		async (missing) => {
 			const info = fixture.info as RuntimeInfo;
 			fixture.info = { ...info, methods: info.methods.filter((method) => method !== missing) };

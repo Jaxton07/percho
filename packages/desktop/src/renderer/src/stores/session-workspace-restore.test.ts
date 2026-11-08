@@ -4,7 +4,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 /** window.pi 的 mock：恢复链经 getPi() 访问，测试环境无 preload 注入 */
 const piMock = vi.hoisted(() => ({
 	loadUiState: vi.fn(),
-	listAllSessions: vi.fn(),
+	verifySessionCatalog: vi.fn(),
 	getDailyDir: vi.fn(() => Promise.resolve(null)),
 	openSession: vi.fn(),
 	getSessionMessages: vi.fn(() => Promise.resolve([])),
@@ -50,6 +50,14 @@ function meta(sessionId: string, sessionFile: string, extra: Partial<SessionMeta
 	};
 }
 
+function verifyWith(sessions: SessionMeta[]) {
+	return async ({ references }: { references: { sessionFile: string }[] }) =>
+		references.map((reference) => {
+			const found = sessions.find((item) => item.sessionFile === reference.sessionFile);
+			return found ? { reference, status: "present", meta: found } : { reference, status: "missing" };
+		});
+}
+
 function resetStores(): void {
 	// 顺序有讲究：先清工作区再动 sessions —— sessions 的 activeSessionId 订阅会按成员表重算 activeFile，
 	// 反过来的话会在每次复位时白写一次 ui-state（测试里表现成调用数谜之 +1）
@@ -69,7 +77,8 @@ beforeEach(async () => {
 	// 先让上一条用例遗留的合并式持久化 flush 跑完（它是异步串行的），否则它会计入本用例的调用数
 	for (let i = 0; i < 5; i++) await Promise.resolve();
 	vi.clearAllMocks();
-	piMock.listAllSessions.mockResolvedValue([]);
+	piMock.verifySessionCatalog.mockReset();
+	piMock.verifySessionCatalog.mockImplementation(verifyWith([]));
 	piMock.loadUiState.mockResolvedValue({});
 	// 默认打开失败：测试必须**显式**声明「这次应该打开成功」——否则本不该发生的 open 会被静默放过
 	piMock.openSession.mockRejectedValue(new Error("no such session"));
@@ -77,11 +86,33 @@ beforeEach(async () => {
 });
 
 describe("restoreSessionWorkspace（冷启动恢复）", () => {
+	it("逐项保留未知成员，确认归档和缺失才裁剪，并按 100 条分批", async () => {
+		const files = Array.from({ length: 102 }, (_, i) => `/sessions/${i}.jsonl`);
+		piMock.loadUiState.mockResolvedValue({ sessionWorkspace: { files, activeFile: null } });
+		useUiPreferencesStore.setState({ pinnedSessions: ["archived"] });
+		piMock.verifySessionCatalog.mockImplementation(
+			async ({ references }: { references: { sessionFile: string }[] }) =>
+				references.map((reference) => {
+					if (reference.sessionFile === files[0])
+						return { reference, status: "archived", meta: meta("archived", files[0]) };
+					if (reference.sessionFile === files[1]) return { reference, status: "missing" };
+					if (reference.sessionFile === files[2])
+						return { reference, status: "present", meta: meta("present", files[2]) };
+					return { reference, status: "unknown" };
+				}),
+		);
+		await restoreSessionWorkspace();
+		expect(piMock.verifySessionCatalog.mock.calls.map(([arg]) => arg.references.length)).toEqual([100, 2]);
+		expect(useSessionWorkspaceStore.getState().members).toHaveLength(100);
+		expect(useSessionWorkspaceStore.getState().members[0]).toEqual({ file: files[2], sessionId: "present" });
+		expect(useSessionWorkspaceStore.getState().members[1]).toEqual({ file: files[3], sessionId: files[3] });
+		expect(useUiPreferencesStore.getState().pinnedSessions).not.toContain("archived");
+	});
 	it("即使保存了有效 activeFile，也只恢复成员而不加载任何对话", async () => {
 		piMock.loadUiState.mockResolvedValue({
 			sessionWorkspace: { files: [FILE_A, FILE_B], activeFile: FILE_B },
 		});
-		piMock.listAllSessions.mockResolvedValue([meta("a", FILE_A), meta("b", FILE_B)]);
+		piMock.verifySessionCatalog.mockImplementation(verifyWith([meta("a", FILE_A), meta("b", FILE_B)]));
 		piMock.openSession.mockResolvedValue(meta("b", FILE_B));
 
 		await restoreSessionWorkspace();
@@ -94,18 +125,16 @@ describe("restoreSessionWorkspace（冷启动恢复）", () => {
 		expect(useSessionWorkspaceStore.getState().activeFile).toBeNull();
 	});
 
-	it("目录对账失败（IPC 抛错）：不裁剪、不写盘、不打开会话", async () => {
+	it("目录对账失败（IPC 抛错）：成员未知时保留原路径，不打开会话", async () => {
 		piMock.loadUiState.mockResolvedValue({
 			sessionWorkspace: { files: [FILE_A, FILE_B], activeFile: FILE_B },
 		});
-		piMock.listAllSessions.mockRejectedValue(new Error("目录不可用"));
+		piMock.verifySessionCatalog.mockRejectedValue(new Error("目录不可用"));
 
 		await restoreSessionWorkspace();
 
-		expect(useSessionWorkspaceStore.getState().members).toEqual([]);
+		expect(useSessionWorkspaceStore.getState().members.map((m) => m.file)).toEqual([FILE_A, FILE_B]);
 		expect(piMock.openSession).not.toHaveBeenCalled();
-		// 关键：宁可这次不恢复，也不能把「读不到目录」当成「成员都失效了」写回文件
-		expect(piMock.saveUiState).not.toHaveBeenCalled();
 	});
 
 	it("失效项裁剪并落盘修复快照：已删成员、0 消息会话（只有计划路径）都剔除", async () => {
@@ -113,7 +142,7 @@ describe("restoreSessionWorkspace（冷启动恢复）", () => {
 		piMock.loadUiState.mockResolvedValue({
 			sessionWorkspace: { files: [FILE_GONE, FILE_A, FILE_EMPTY], activeFile: FILE_A },
 		});
-		piMock.listAllSessions.mockResolvedValue([meta("a", FILE_A)]);
+		piMock.verifySessionCatalog.mockImplementation(verifyWith([meta("a", FILE_A)]));
 		piMock.openSession.mockResolvedValue(meta("a", FILE_A));
 
 		await restoreSessionWorkspace();
@@ -130,7 +159,7 @@ describe("restoreSessionWorkspace（冷启动恢复）", () => {
 		piMock.loadUiState.mockResolvedValue({
 			sessionWorkspace: { files: [FILE_A, FILE_GONE], activeFile: FILE_GONE },
 		});
-		piMock.listAllSessions.mockResolvedValue([meta("a", FILE_A)]);
+		piMock.verifySessionCatalog.mockImplementation(verifyWith([meta("a", FILE_A)]));
 
 		await restoreSessionWorkspace();
 
@@ -145,7 +174,7 @@ describe("restoreSessionWorkspace（冷启动恢复）", () => {
 
 		await restoreSessionWorkspace();
 
-		expect(piMock.listAllSessions).not.toHaveBeenCalled();
+		expect(piMock.verifySessionCatalog).not.toHaveBeenCalled();
 		expect(piMock.openSession).not.toHaveBeenCalled();
 		expect(useSessionWorkspaceStore.getState().members).toEqual([]);
 	});
@@ -159,7 +188,7 @@ describe("restoreSessionWorkspace（冷启动恢复）", () => {
 		await restoreSessionWorkspace();
 
 		expect(piMock.loadUiState).not.toHaveBeenCalled();
-		expect(piMock.listAllSessions).not.toHaveBeenCalled();
+		expect(piMock.verifySessionCatalog).not.toHaveBeenCalled();
 		expect(useSessionWorkspaceStore.getState().members).toEqual([]);
 	});
 
@@ -168,10 +197,10 @@ describe("restoreSessionWorkspace（冷启动恢复）", () => {
 			sessionWorkspace: { files: [FILE_A, FILE_B], activeFile: FILE_B },
 		});
 		// 目录还在读时，用户真正点了一个会话（switchSession = 一次导航，会领号）
-		piMock.listAllSessions.mockImplementation(() => {
+		piMock.verifySessionCatalog.mockImplementation((input) => {
 			useSessionsStore.setState({ sessions: [meta("x", "/sessions/x.jsonl")] });
 			useSessionsStore.getState().switchSession("x");
-			return Promise.resolve([meta("a", FILE_A), meta("b", FILE_B)]);
+			return verifyWith([meta("a", FILE_A), meta("b", FILE_B)])(input);
 		});
 
 		await restoreSessionWorkspace();
@@ -186,9 +215,9 @@ describe("restoreSessionWorkspace（冷启动恢复）", () => {
 			sessionWorkspace: { files: [FILE_A], activeFile: FILE_A },
 		});
 		// 真实导航：点「＋」/项目行 —— activeSessionId 保持 null，但导航号必须前进
-		piMock.listAllSessions.mockImplementation(() => {
+		piMock.verifySessionCatalog.mockImplementation((input) => {
 			useSessionsStore.getState().activateNewSessionDraft();
-			return Promise.resolve([meta("a", FILE_A)]);
+			return verifyWith([meta("a", FILE_A)])(input);
 		});
 
 		await restoreSessionWorkspace();
@@ -211,9 +240,9 @@ describe("restoreSessionWorkspace（冷启动恢复）", () => {
 			sessionWorkspace: { files: [FILE_A, FILE_B], activeFile: FILE_B },
 		});
 		// 用户在恢复等待期间从左栏打开 C（真实入口 = projects.openSession → addMember）
-		piMock.listAllSessions.mockImplementation(() => {
+		piMock.verifySessionCatalog.mockImplementation((input) => {
 			useSessionWorkspaceStore.getState().addMember({ file: FILE_C, sessionId: "c" });
-			return Promise.resolve([meta("a", FILE_A), meta("b", FILE_B), meta("c", FILE_C)]);
+			return verifyWith([meta("a", FILE_A), meta("b", FILE_B), meta("c", FILE_C)])(input);
 		});
 
 		await restoreSessionWorkspace();
@@ -230,29 +259,29 @@ describe("restoreSessionWorkspace（冷启动恢复）", () => {
 		);
 	});
 
-	it("恢复自己读目录（不依赖 projects.load 的返回值）：读到了就落 store", async () => {
+	it("恢复自己核验引用并补充元数据", async () => {
 		piMock.loadUiState.mockResolvedValue({
 			sessionWorkspace: { files: [FILE_A], activeFile: FILE_A },
 		});
-		piMock.listAllSessions.mockResolvedValue([meta("a", FILE_A)]);
+		piMock.verifySessionCatalog.mockImplementation(verifyWith([meta("a", FILE_A)]));
 		piMock.openSession.mockResolvedValue(meta("a", FILE_A));
 
 		await restoreSessionWorkspace();
 
-		expect(piMock.listAllSessions).toHaveBeenCalledTimes(1);
+		expect(piMock.verifySessionCatalog).toHaveBeenCalledTimes(1);
 		// 目录投影落到 store（未加载成员的胶囊靠它拿 meta）
 		expect(useProjectsStore.getState().allSessions.map((s) => s.sessionId)).toEqual(["a"]);
-		expect(useProjectsStore.getState().loaded).toBe(true);
+		expect(useProjectsStore.getState().loaded).toBe(false);
 	});
 
 	it("恢复途中用户关掉开关清空工作区：迟到的恢复不得把成员复活", async () => {
 		piMock.loadUiState.mockResolvedValue({
 			sessionWorkspace: { files: [FILE_A, FILE_B], activeFile: FILE_B },
 		});
-		piMock.listAllSessions.mockImplementation(() => {
+		piMock.verifySessionCatalog.mockImplementation((input) => {
 			// 用户在恢复在途时关掉两处开关 → 工作区清空 + 代次自增
 			useUiPreferencesStore.setState({ barSessionsVisible: false, sessionRailEnabled: false });
-			return Promise.resolve([meta("a", FILE_A), meta("b", FILE_B)]);
+			return verifyWith([meta("a", FILE_A), meta("b", FILE_B)])(input);
 		});
 
 		await restoreSessionWorkspace();
@@ -273,7 +302,7 @@ describe("restoreSessionWorkspace（冷启动恢复）", () => {
 		piMock.loadUiState.mockResolvedValue({
 			sessionWorkspace: { files: [FILE_A], activeFile: FILE_A },
 		});
-		piMock.listAllSessions.mockResolvedValue([meta("a", FILE_A)]);
+		piMock.verifySessionCatalog.mockImplementation(verifyWith([meta("a", FILE_A)]));
 		piMock.openSession.mockRejectedValue(new Error("ENOENT"));
 
 		await restoreSessionWorkspace();

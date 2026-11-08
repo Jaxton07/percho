@@ -1,6 +1,7 @@
 import { CODE_FONT_SIZE_PRESETS, formatFontSize, type ThemeMode, UI_FONT_SIZE_PRESETS } from "@percho/shared";
 import { useState } from "react";
 import { useT } from "../../i18n";
+import { SESSION_RAIL_AVAILABLE } from "../../lib/session-rail-availability";
 import { backgroundImageUrl, useThemeStore } from "../../stores/theme";
 import { useUiPreferencesStore } from "../../stores/ui-preferences";
 import { ChevronDownIcon, MonitorIcon, MoonIcon, SunIcon } from "../icons";
@@ -221,12 +222,14 @@ function AppearanceBasics() {
 				checked={barSessionsVisible}
 				onCheckedChange={setBarSessionsVisible}
 			/>
-			<SettingsSwitchRow
-				title={t("settings.sessionRail")}
-				hint={t("settings.sessionRailHint")}
-				checked={sessionRailEnabled}
-				onCheckedChange={setSessionRailEnabled}
-			/>
+			{SESSION_RAIL_AVAILABLE && (
+				<SettingsSwitchRow
+					title={t("settings.sessionRail")}
+					hint={t("settings.sessionRailHint")}
+					checked={sessionRailEnabled}
+					onCheckedChange={setSessionRailEnabled}
+				/>
+			)}
 			<SettingsSwitchRow
 				title={t("settings.centerOrb")}
 				hint={t("settings.centerOrbHint")}
