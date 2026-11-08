@@ -3,9 +3,11 @@ import { getPi } from "../api";
 import { getExecutionApi } from "../environment-api";
 import { initDailyDir } from "../lib/daily";
 import { hasMixedWorkspaceState } from "../lib/mixed-workspace-state";
+import { isPrimaryNavigationSession } from "../lib/session-visibility";
 import { useProjectsStore } from "./projects";
-import { isWorkspaceRecording, resolveMembersByFile, useSessionWorkspaceStore } from "./session-workspace";
+import { isWorkspaceRecording, useSessionWorkspaceStore } from "./session-workspace";
 import { useSessionsStore } from "./sessions";
+import { useUiPreferencesStore } from "./ui-preferences";
 
 /**
  * 冷启动只恢复临时会话工作区成员，不装载或打开上次的活动会话。
@@ -43,21 +45,44 @@ export async function restoreSessionWorkspace(): Promise<void> {
 	// 目录快照：**恢复链自己读**（不用 projects.load 的返回值）—— 裁剪判据必须是这次请求拿到的磁盘真值，
 	// 而 load 是 latest-wins 的：被抢占时它返回的是别人的账，拿来做失效判定会误删有效成员。
 	// 读到之后交 store 采纳（adoptCatalog 会推进序号线，在飞的旧 load 不会把更旧的账盖回来）。
-	const catalog = await getExecutionApi(LOCAL_ENVIRONMENT)
-		.listAllSessions()
-		.catch(() => null);
-	if (!catalog) {
-		console.warn("会话目录读取失败，本次启动跳过工作区恢复（保留原快照）");
-		return;
+	const verification = new Map<
+		string,
+		Awaited<ReturnType<ReturnType<typeof getExecutionApi>["verifySessionCatalog"]>>[number]
+	>();
+	for (let i = 0; i < snapshot.files.length; i += 100) {
+		const files = snapshot.files.slice(i, i + 100);
+		try {
+			const results = await getExecutionApi(LOCAL_ENVIRONMENT).verifySessionCatalog({
+				references: files.map((sessionFile) => ({ sessionFile })),
+			});
+			for (const item of results)
+				if (item.reference.sessionFile) verification.set(item.reference.sessionFile, item);
+		} catch {
+			// An unavailable batch is unknown, not missing.
+		}
 	}
-	useProjectsStore.getState().adoptCatalog(catalog);
+	if (useSessionWorkspaceStore.getState().epoch !== epoch) return;
+	const catalog = [...verification.values()].flatMap((item) =>
+		item.status === "present" && item.meta ? [item.meta] : [],
+	);
+	useProjectsStore.getState().mergeKnownSessions(catalog);
+	for (const item of verification.values())
+		if (item.status === "archived" && item.meta) useUiPreferencesStore.getState().unpin(item.meta.sessionId);
 	// 日常目录（胶囊/左栏的日常分组标签要用它）：与目录读取同一批启动工作，失败静默回退
 	await initDailyDir().catch(() => null);
 	if (useSessionWorkspaceStore.getState().epoch !== epoch) return;
 
 	// 按路径解析：查不到（已删/外部移除）、只读子代理、0 消息会话（只有计划路径、磁盘无文件）都在这里被裁掉。
 	// 落地用 hydrate 而不是替换：用户可能在上面两个 await 期间已经开了会话（那是真实的新成员）
-	const members = resolveMembersByFile(snapshot.files, catalog);
+	const members = snapshot.files.flatMap((file) => {
+		const item = verification.get(file);
+		if (item?.status === "missing" || item?.status === "archived") return [];
+		if (item?.status === "present" && item.meta) {
+			return isPrimaryNavigationSession(item.meta) ? [{ file, sessionId: item.meta.sessionId }] : [];
+		}
+		const known = useProjectsStore.getState().allSessions.find((meta) => meta.sessionFile === file);
+		return [{ file, sessionId: known?.sessionId ?? file }];
+	});
 	// 不恢复旧指针；hydrate 仍会保留恢复期间由用户主动打开的当前成员。
 	useSessionWorkspaceStore.getState().hydrateFromSnapshot(members, null);
 }

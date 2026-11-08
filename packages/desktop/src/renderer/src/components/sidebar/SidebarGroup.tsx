@@ -1,9 +1,17 @@
-import { environmentEntityRef } from "@percho/shared";
+import { environmentEntityRef, environmentKey, type SessionMeta } from "@percho/shared";
+import { useEffect } from "react";
 import { useT } from "../../i18n";
 import type { SidebarGroup as Group } from "../../lib/sidebar-groups";
+import { isPrimaryNavigationSession, mergeSidebarSessions } from "../../lib/sidebar-groups";
 import { hasMoreSessions, visibleSessions } from "../../lib/sidebar-visible-count";
 import { COMPOSER_FOCUS_EVENT } from "../../stores/drafts";
 import { useProjectsStore } from "../../stores/projects";
+import { useRemoteConnectionStore } from "../../stores/remote-connection";
+import {
+	EMPTY_CATALOG_ENVIRONMENT,
+	sessionCatalogPageKey,
+	useSessionCatalogStore,
+} from "../../stores/session-catalog";
 import { useSessionsStore } from "../../stores/sessions";
 import { ProjectRow } from "./ProjectRow";
 import { useSessionMenu } from "./SessionMenu";
@@ -31,6 +39,7 @@ export function SidebarGroup({
 	totalSessions = 0,
 	onTogglePin,
 	onRemove,
+	paging,
 }: {
 	group: Group;
 	activeSessionId: string | null;
@@ -40,14 +49,89 @@ export function SidebarGroup({
 	totalSessions?: number;
 	onTogglePin?: (cwd: string) => void;
 	onRemove?: () => void;
+	paging?: {
+		search: string;
+		verified: SessionMeta[];
+		pinnedSessions: readonly string[];
+		known: readonly SessionMeta[];
+	};
 }) {
 	const t = useT();
 	const environment = environmentEntityRef(group.cwd).environment;
+	const online = useRemoteConnectionStore(
+		(state) =>
+			environment.kind === "local" ||
+			(state.status.state === "connected" &&
+				!!state.status.environment &&
+				environmentKey(state.status.environment) === environmentKey(environment)),
+	);
 	const openSession = useProjectsStore((s) => s.openSession);
 	const activateNewSessionDraftForCwd = useSessionsStore((s) => s.activateNewSessionDraftForCwd);
 	const sessionMenu = useSessionMenu();
 	const expanded = batching.isExpanded(group.key, group.expanded);
 	const moreClicks = batching.moreClicks(group.key);
+	const search = paging?.search.trim() ?? "";
+	const query = { cwd: group.cwd, ...(search ? { search } : {}), archived: false, limit: 6 };
+	const pageKey = sessionCatalogPageKey(query);
+	const catalog = useSessionCatalogStore(
+		(s) => s.byEnvironment[environmentKey(environment)] ?? EMPTY_CATALOG_ENVIRONMENT,
+	);
+	const page = catalog.pages[pageKey];
+	const memory = useSessionsStore((s) => s.sessions);
+	const pagingEnabled = paging !== undefined;
+	useEffect(() => {
+		if (pagingEnabled && expanded && online)
+			void useSessionCatalogStore.getState().loadPage(
+				environmentEntityRef(group.cwd).environment,
+				{
+					cwd: group.cwd,
+					...(search ? { search } : {}),
+					archived: false,
+					limit: 6,
+				},
+				false,
+				true,
+			);
+	}, [pagingEnabled, expanded, online, group.cwd, search]);
+	const pins = new Set(paging?.pinnedSessions ?? []);
+	const extras = paging
+		? [
+				...paging.verified,
+				...paging.known.filter((s) => !s.sessionFile && !s.archivedAt),
+				...memory.filter((s) => !s.sessionFile && !s.archivedAt),
+			]
+		: [];
+	const selected = paging
+		? mergeSidebarSessions(
+				[
+					...(page?.sessions ?? []),
+					...extras.filter(
+						(s) =>
+							s.cwd === group.cwd &&
+							(!search ||
+								(s.name ?? "").toLowerCase().includes(search.toLowerCase()) ||
+								s.sessionId.toLowerCase().includes(search.toLowerCase())),
+					),
+				],
+				memory.filter(
+					(s) =>
+						s.cwd === group.cwd &&
+						((page?.sessions ?? []).some((item) => item.sessionId === s.sessionId) ||
+							extras.some((item) => item.sessionId === s.sessionId)),
+				),
+			)
+		: [];
+	const pagedSessions = selected
+		.filter((session) => !session.archivedAt && isPrimaryNavigationSession(session))
+		.map((session) => ({ session, pinned: pins.has(session.sessionId) }))
+		.sort(
+			(a, b) =>
+				Number(b.pinned) - Number(a.pinned) ||
+				(b.session.modifiedAt ?? b.session.createdAt) - (a.session.modifiedAt ?? a.session.createdAt),
+		)
+		.slice(0, 6 + 16 * moreClicks);
+	if (paging && search && page && !page.loading && !page.error && page.complete && pagedSessions.length === 0)
+		return null;
 	const openNewSession = () => {
 		activateNewSessionDraftForCwd(group.cwd);
 		requestAnimationFrame(() => window.dispatchEvent(new CustomEvent(COMPOSER_FOCUS_EVENT)));
@@ -74,12 +158,32 @@ export function SidebarGroup({
 			>
 				<div className="sidebar-group-content-inner">
 					<SidebarSessionList
-						sessions={visibleSessions(group.sessions, moreClicks)}
+						sessions={paging ? pagedSessions : visibleSessions(group.sessions, moreClicks)}
 						activeSessionId={activeSessionId}
 						emptyLabel={t("sidebar.noSessions")}
 						showMoreLabel={t("sidebar.showMore")}
-						hasMore={hasMoreSessions(group.sessions.length, moreClicks)}
-						onShowMore={() => batching.showMore(group.key)}
+						hasMore={
+							paging
+								? !!page?.nextCursor || selected.length > pagedSessions.length
+								: hasMoreSessions(group.sessions.length, moreClicks)
+						}
+						onShowMore={() => {
+							batching.showMore(group.key);
+							if (paging && page?.nextCursor)
+								void useSessionCatalogStore.getState().loadPage(environment, query, true);
+						}}
+						paging={
+							paging
+								? {
+										offline: !online,
+										onConnect: () => useRemoteConnectionStore.getState().setOpen(true),
+										loading: online && (!page || page.loading),
+										error: page?.error,
+										partial: !!page && !page.complete,
+										onRetry: () => void useSessionCatalogStore.getState().loadPage(environment, query),
+									}
+								: undefined
+						}
 						onSelect={(session) => void openSession(session)}
 						onContextMenu={(session, anchor) => sessionMenu.open(session, anchor)}
 					/>

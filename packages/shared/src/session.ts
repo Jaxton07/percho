@@ -148,6 +148,10 @@ export interface SessionMeta {
 	createdAt: number;
 	/** 最后活动时间（unix 毫秒，历史会话列表排序/分组用） */
 	modifiedAt?: number;
+	/** 后端归档权威状态的目录投影；缺省为未归档，不可替代执行前核验。 */
+	archivedAt?: number;
+	archiveRevision?: number;
+	archiveCleanupPending?: boolean;
 }
 
 export interface SessionStats {

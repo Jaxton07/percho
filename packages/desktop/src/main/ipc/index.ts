@@ -119,5 +119,6 @@ export function registerIpc(
 	forward(backend.onMcpServersChanged.bind(backend), IpcChannels.McpServersChanged);
 	// 频道订阅快照变化（spec D1）：payload 自带 generation+revision，renderer 自行判新旧
 	forward(backend.onChannelSubscriptionsChanged.bind(backend), IpcChannels.ChannelSubscriptionsChanged);
+	forward(backend.onSessionCatalogChanged.bind(backend), IpcChannels.SessionCatalogChanged);
 	forward(onUpdateState, IpcChannels.UpdateEvent);
 }

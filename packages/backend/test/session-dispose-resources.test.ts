@@ -1,11 +1,11 @@
 import { EventEmitter } from "node:events";
-import { existsSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { ChannelSubscriptionRegistry } from "../src/channel-subscriptions";
 import { PermissionGate } from "../src/permissions/gate";
 import { PiBackend } from "../src/pi-backend";
+import type { SessionCatalog } from "../src/session/catalog";
 import { ExtensionDialogHost } from "../src/session/extension-dialog-host";
 import type { SessionHydrationGate } from "../src/session/hydration-gate";
 import { SessionMediaStore } from "../src/session/media-store";
@@ -34,6 +34,7 @@ vi.mock("../src/tools/channel-watch", async (importOriginal) => ({
 interface Internals {
 	buildExtensionFactories(cwd: string, confirm: undefined, modeRef: RegisteredSession["modeRef"]): unknown[];
 	registry: SessionRegistry;
+	sessionCatalog?: SessionCatalog;
 	sourceSnapshots: SessionSourceSnapshots;
 	media: SessionMediaStore;
 	historyGate: SessionHydrationGate;
@@ -46,17 +47,43 @@ interface Internals {
 }
 const backends: PiBackend[] = [];
 const pendingResourceCleanup: Array<() => void> = [];
-afterEach(() => {
-	for (const backend of backends.splice(0)) backend.dispose();
+const fixtureRoot = join(
+	import.meta.dirname,
+	"../../../.local/tmp/session-archive-catalog/final-dispose-fixture",
+);
+let directory: string;
+beforeEach(() => {
+	mkdirSync(fixtureRoot, { recursive: true });
+	directory = mkdtempSync(join(fixtureRoot, "case-"));
+	const agentDir = join(directory, "agent");
+	mkdirSync(join(agentDir, "sessions"), { recursive: true });
+	vi.stubEnv("PI_CODING_AGENT_DIR", agentDir);
+});
+afterEach(async () => {
 	// Assertions may fail before a deferred release; settle retained resource timers independently.
 	for (const cleanup of pendingResourceCleanup.splice(0)) cleanup();
+	for (const backend of backends.splice(0)) {
+		await (backend as unknown as Internals).sessionCatalog?.dispose();
+		backend.dispose();
+	}
 	vi.restoreAllMocks();
+	vi.unstubAllEnvs();
+	rmSync(directory, { recursive: true, force: true });
 });
+function sessionFile(fixture: ReturnType<typeof setup>, id: string) {
+	const project = join(directory, "agent", "sessions", "project");
+	mkdirSync(project, { recursive: true });
+	const file = join(project, "session.jsonl");
+	writeFileSync(
+		file,
+		`${JSON.stringify({ type: "session", id, cwd: fixture.entry.cwd, timestamp: new Date().toISOString() })}\n`,
+	);
+	vi.spyOn(fixture.entry.session.sessionManager, "getSessionFile").mockReturnValue(file);
+	return file;
+}
 function setup(id: string, shutdown: () => Promise<void> = async () => {}) {
 	const backend = new PiBackend({
-		sessionMediaStore: new SessionMediaStore(
-			join(import.meta.dirname, "../../../.local/tmp/session-dispose-resources/media"),
-		),
+		sessionMediaStore: new SessionMediaStore(join(directory, "media")),
 		projectTrust: false,
 		permissionGates: false,
 		subagentPreferBuiltin: false,
@@ -430,12 +457,10 @@ describe("normal disposal errors and overlapping entry ownership", () => {
 	it.each(["SDK", "entry", "trace"])(
 		"%s failure preserves first error identity, cleans tail and prevents delete unlink",
 		async (stage) => {
-			const directory = mkdtempSync(join(tmpdir(), "dispose-error-")),
-				file = join(directory, "session.jsonl");
 			const failure = Error(`${stage} first`),
 				later = Error("later trace error");
 			const fixture = setup(`error-${stage}`);
-			writeFileSync(file, "fixture");
+			const file = sessionFile(fixture, `error-${stage}`);
 			const stop = vi.spyOn(fixture.internal.traces, "stop");
 			if (stage === "SDK")
 				vi.mocked(fixture.entry.session.dispose).mockImplementation(() => {
@@ -447,26 +472,22 @@ describe("normal disposal errors and overlapping entry ownership", () => {
 					throw failure;
 				});
 			stop.mockRejectedValue(stage === "trace" ? failure : later);
-			try {
-				const close = fixture.backend.closeSession(`error-${stage}`),
-					deletion = fixture.backend.deleteSession(`error-${stage}`, file);
-				await Promise.all([expect(close).rejects.toBe(failure), expect(deletion).rejects.toBe(failure)]);
-				expect(existsSync(file)).toBe(true);
-				assertAuxiliaryReleased(fixture, `error-${stage}`);
-				expect(await fixture.permission).toBe(false);
-				expect(await fixture.dialog).toBe(false);
-				expect(await fixture.history).toBe(false);
-				for (const spy of [
-					fixture.entry.session.dispose,
-					fixture.entry.unsubscribe,
-					fixture.gateDispose,
-					fixture.dialogDispose,
-					stop,
-				])
-					expect(spy).toHaveBeenCalledOnce();
-			} finally {
-				rmSync(directory, { recursive: true, force: true });
-			}
+			const close = fixture.backend.closeSession(`error-${stage}`),
+				deletion = fixture.backend.deleteSession(`error-${stage}`, file);
+			await Promise.all([expect(close).rejects.toBe(failure), expect(deletion).rejects.toBe(failure)]);
+			expect(existsSync(file)).toBe(true);
+			assertAuxiliaryReleased(fixture, `error-${stage}`);
+			expect(await fixture.permission).toBe(false);
+			expect(await fixture.dialog).toBe(false);
+			expect(await fixture.history).toBe(false);
+			for (const spy of [
+				fixture.entry.session.dispose,
+				fixture.entry.unsubscribe,
+				fixture.gateDispose,
+				fixture.dialogDispose,
+				stop,
+			])
+				expect(spy).toHaveBeenCalledOnce();
 		},
 	);
 	it.each(["close", "delete"])(
@@ -481,9 +502,7 @@ describe("normal disposal errors and overlapping entry ownership", () => {
 						releaseShutdown = resolve;
 					}),
 			);
-			const directory = mkdtempSync(join(tmpdir(), "dispose-overlap-")),
-				file = join(directory, "session.jsonl");
-			writeFileSync(file, "fixture");
+			const file = sessionFile(fixture, `overlap-${secondAction}`);
 			const channel = vi.spyOn(fixture.internal.channelSubs, "dispose");
 			const traceCompleted = new Promise<void>((resolve) => {
 				releaseTrace = resolve;
@@ -531,7 +550,6 @@ describe("normal disposal errors and overlapping entry ownership", () => {
 				releaseShutdown();
 				releaseTrace();
 				await Promise.allSettled([first, second]);
-				rmSync(directory, { recursive: true, force: true });
 			}
 		},
 	);

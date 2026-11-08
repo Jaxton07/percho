@@ -42,6 +42,7 @@ export function useSessionMenu() {
 					onClose={() => setMenu(null)}
 					items={sessionMenuItems(t, {
 						sessionId: menu.session.sessionId,
+						session: menu.session,
 						pinned: pinnedSessions.includes(menu.session.sessionId),
 						onRename: () => setRenaming({ session: menu.session, anchor: menu.anchor }),
 						onCopyDiagnostics: () => void copySessionDiagnostics(menu.session),

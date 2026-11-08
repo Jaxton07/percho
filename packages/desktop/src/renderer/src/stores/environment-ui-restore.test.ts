@@ -11,6 +11,7 @@ const fixture = vi.hoisted(() => ({
 	open: vi.fn(),
 	switch: vi.fn(),
 	load: vi.fn(),
+	verify: vi.fn(),
 }));
 function trackStore<T>(store: StoreApi<T>): StoreApi<T> {
 	const subscribe = store.subscribe;
@@ -25,12 +26,19 @@ function trackStore<T>(store: StoreApi<T>): StoreApi<T> {
 vi.mock("../api", () => ({
 	getPi: () => ({ loadEnvironmentUiState: fixture.read, saveEnvironmentUiState: fixture.save }),
 }));
-vi.mock("../environment-api", () => ({ getExecutionApi: () => ({ getLoadedSessions: fixture.loaded }) }));
+vi.mock("../environment-api", () => ({
+	getExecutionApi: () => ({ getLoadedSessions: fixture.loaded, verifySessionCatalog: fixture.verify }),
+}));
 vi.mock("./projects", async () => {
 	const { create } = await import("zustand");
 	return {
 		useProjectsStore: trackStore(
-			create(() => ({ addedProjects: ["/legacy"], allSessions: [], load: fixture.load })),
+			create((set) => ({
+				addedProjects: ["/legacy"],
+				allSessions: [],
+				load: fixture.load,
+				mergeKnownSessions: (sessions: unknown[]) => set({ allSessions: sessions }),
+			})),
 		),
 	};
 });
@@ -38,7 +46,11 @@ vi.mock("./ui-preferences", async () => {
 	const { create } = await import("zustand");
 	return {
 		useUiPreferencesStore: trackStore(
-			create(() => ({
+			create((set) => ({
+				unpin: (id: string) =>
+					set((state: { pinnedSessions: string[] }) => ({
+						pinnedSessions: state.pinnedSessions.filter((item) => item !== id),
+					})),
 				pinnedSessions: ["legacy"],
 				pinnedProjects: ["/legacy"],
 				expandedGroups: ["/legacy"],
@@ -52,7 +64,18 @@ vi.mock("./session-workspace", async () => {
 	const { create } = await import("zustand");
 	return {
 		isWorkspaceRecording: () => true,
-		useSessionWorkspaceStore: trackStore(create(() => ({ members: [], activeFile: null, recentFile: null }))),
+		useSessionWorkspaceStore: trackStore(
+			create((set) => ({
+				members: [] as { file: string; sessionId: string }[],
+				activeFile: null,
+				recentFile: null,
+				epoch: 0,
+				removeMember: (file: string) =>
+					set((state: { members: { file: string; sessionId: string }[] }) => ({
+						members: state.members.filter((item) => item.file !== file),
+					})),
+			})),
+		),
 	};
 });
 vi.mock("./sessions", async () => {
@@ -112,6 +135,10 @@ beforeEach(() => {
 	fixture.save.mockResolvedValue(undefined);
 	fixture.load.mockResolvedValue(undefined);
 	fixture.loaded.mockResolvedValue([]);
+	fixture.verify.mockReset();
+	fixture.verify.mockImplementation(async ({ references }) =>
+		references.map((reference: unknown) => ({ reference, status: "unknown" })),
+	);
 });
 async function stores() {
 	return {
@@ -122,6 +149,27 @@ async function stores() {
 	};
 }
 describe("mixed navigation cold start", () => {
+	it("逐项未知保留成员，归档成员和置顶被裁剪，等待期间新增成员保留", async () => {
+		let release!: (results: unknown[]) => void;
+		fixture.verify.mockImplementationOnce(
+			() =>
+				new Promise((resolve) => {
+					release = resolve;
+				}),
+		);
+		const api = await import("./environment-ui-restore");
+		await api.initEnvironmentUiState();
+		const s = await stores();
+		const extra = { file: "/local/new.jsonl", sessionId: "new" };
+		s.workspace.setState({ members: [...s.workspace.getState().members, extra] });
+		const reference = { sessionFile: key("/remote/r.jsonl"), sessionId: key("remote-id") };
+		release([{ reference, status: "archived", meta: snapshot().catalog[0] }]);
+		await vi.waitFor(() =>
+			expect(s.workspace.getState().members).toEqual([snapshot().workspace.members[1], extra]),
+		);
+		expect(s.prefs.getState().pinnedSessions).toEqual(["local-id"]);
+		expect(fixture.verify).toHaveBeenCalledTimes(2);
+	});
 	it("restores the single mixed order and explicit empty expansion, retaining offline references", async () => {
 		const api = await import("./environment-ui-restore");
 		await api.initEnvironmentUiState();

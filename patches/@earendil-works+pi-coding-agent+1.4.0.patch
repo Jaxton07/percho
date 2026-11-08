@@ -1,17 +1,17 @@
 diff --git a/node_modules/@earendil-works/pi-coding-agent/dist/core/agent-session.d.ts b/node_modules/@earendil-works/pi-coding-agent/dist/core/agent-session.d.ts
 --- a/node_modules/@earendil-works/pi-coding-agent/dist/core/agent-session.d.ts
 +++ b/node_modules/@earendil-works/pi-coding-agent/dist/core/agent-session.d.ts
-@@ -53,6 +53,9 @@
- } | {
+@@ -54,6 +54,9 @@
      type: "agent_settled";
      aborted: boolean;
-+} | {
+ } | {
 +    type: "compaction_pause";
 +    pause: CompactionPause | null;
- } | {
++} | {
      type: "queue_update";
      steering: readonly string[];
-@@ -217,7 +220,25 @@
+     followUp: readonly string[];
+@@ -217,7 +220,30 @@
      cost: number;
      contextUsage?: ContextUsage;
  }
@@ -31,13 +31,18 @@ diff --git a/node_modules/@earendil-works/pi-coding-agent/dist/core/agent-sessio
 +    onResult(result: Omit<CompactionPause, "reason"> & { status: CompactionPause["reason"] | "success" | "cancelled" }): CompactionPause | null;
 +    retry: { enabled: boolean; maxRetries: number; baseDelayMs: number; maxAgentDelayMs?: number };
 +}
++export interface SessionIdleLease {
++    appendCustomEntry<T = unknown>(customType: string, data?: T): string;
++    release(): void;
++}
  export declare class AgentSession {
++    tryAcquireIdleLease(): SessionIdleLease | undefined;
 +    setCompactionPolicy(policy: CompactionRequestPolicy | undefined): void;
 +    readonly compactionPause: CompactionPause | null;
      readonly agent: Agent;
      readonly sessionManager: SessionManager;
      readonly settingsManager: SettingsManager;
-@@ -551,6 +572,10 @@
+@@ -551,6 +577,10 @@
       * @throws Error if no model selected or no API key available (when not streaming)
       */
      prompt(text: string, options?: PromptOptions): Promise<void>;
@@ -48,7 +53,7 @@ diff --git a/node_modules/@earendil-works/pi-coding-agent/dist/core/agent-sessio
      /**
       * Try to execute an extension command. Returns true if command was found and executed.
       */
-@@ -932,4 +957,4 @@
+@@ -932,4 +962,4 @@
      get extensionRunner(): ExtensionRunner;
  }
  export {};
@@ -67,12 +72,109 @@ diff --git a/node_modules/@earendil-works/pi-coding-agent/dist/core/agent-sessio
  import { DEFAULT_THINKING_LEVEL, THINKING_LEVEL_OPTIONS } from "./defaults.js";
  import { exportSessionToHtml } from "./export-html/index.js";
  import { createToolHtmlRenderer } from "./export-html/tool-renderer.js";
-@@ -213,6 +213,220 @@
+@@ -88,6 +88,9 @@
+     _unsubscribeAgent;
+     _eventListeners = [];
+     _isAgentRunActive = false;
++    _idleLease;
++    _idleOperationCount = 0;
++    _idleDisposed = false;
+     _agentRunAbortRequested = false;
+     _idleWaitPromise;
+     _resolveIdleWait;
+@@ -213,6 +216,307 @@
          if (this._usesDefaultTools)
              this._restoreToolsFromTranscript(this._defaultToolModifiers);
      }
++    _assertIdleOperationAllowed() {
++        if (this._idleDisposed) throw new Error("Session is disposed");
++        if (this._idleLease) throw new Error("Session idle lease is held");
++    }
++    _beginIdleOperation() {
++        this._assertIdleOperationAllowed();
++        this._idleOperationCount++;
++        let ended = false;
++        return () => { if (!ended) { ended = true; this._idleOperationCount--; } };
++    }
++    _idleSync(fn) {
++        const end = this._beginIdleOperation();
++        try { return fn(); } finally { end(); }
++    }
++    async _idleAsync(fn) {
++        const end = this._beginIdleOperation();
++        try { return await fn(); } finally { end(); }
++    }
++    async _idleCleanup(fn) {
++        // Cleanup may run under a lease or after disposal, but owns responsibility until settled.
++        this._idleOperationCount++;
++        try { return await fn(); } finally { this._idleOperationCount--; }
++    }
++    _appendCustomEntry(customType, data, options) {
++        const id = this.sessionManager.appendCustomEntry(customType, data, options);
++        const entry = this.sessionManager.getEntry(id);
++        if (entry) this._emit({ type: "entry_appended", entry });
++        return id;
++    }
++    tryAcquireIdleLease() {
++        // A scheduled or in-flight warmer can write later, even if its status reports inactive.
++        if (this._idleDisposed || this._idleLease || this._idleOperationCount || !this.isIdle || this.isCompacting
++            || this._isBeforeSettle || this._isEmittingAgentSettled || this._pendingNextTurnMessages.length
++            || this._pendingCustomMessages.length || this._pendingBashMessages.length || this._deferredSettledActions.length
++            || this.agent.hasQueuedMessages() || this._bashAbortControllers.size || this._retryAbortController
++            || this._branchSummaryAbortController || this._hostPause || this._hostAwaitingUser
++            || this._cacheWarmer?.hasPendingWork) return undefined;
++        const lease = {
++            appendCustomEntry: (customType, data) => {
++                if (this._idleDisposed || this._idleLease !== lease) throw new Error("Session idle lease is no longer active");
++                if (!this.sessionManager.getSessionFile() || !this.sessionManager.getEntries().some((entry) =>
++                    entry.type === "message" && (entry.message.role === "user" || entry.message.role === "assistant"))) {
++                    throw new Error("Idle maintenance requires persisted conversation history");
++                }
++                this._idleOperationCount++;
++                try { return this._appendCustomEntry(customType, data, { requireExisting: true }); }
++                finally { this._idleOperationCount--; }
++            },
++            release: () => { if (this._idleLease === lease) this._idleLease = undefined; },
++        };
++        this._idleLease = lease;
++        return lease;
++    }
++    async prompt(...args) { return this._idleAsync(() => this._idleBody_prompt(...args)); }
++    async sendUserMessage(...args) { return this._idleAsync(() => this._idleBody_sendUserMessage(...args)); }
++    async sendCustomMessage(...args) { return this._idleAsync(() => this._idleBody_sendCustomMessage(...args)); }
++    async steer(...args) { return this._idleAsync(() => this._idleBody_steer(...args)); }
++    async followUp(...args) { return this._idleAsync(() => this._idleBody_followUp(...args)); }
++    async retryLastFailedTurn(...args) { return this._idleAsync(() => this._idleBody_retryLastFailedTurn(...args)); }
++    async compact(...args) { return this._idleAsync(() => this._idleBody_compact(...args)); }
++    async bindExtensions(...args) { return this._idleAsync(() => this._idleBody_bindExtensions(...args)); }
++    async extendResourcesFromExtensions(...args) { return this._idleAsync(() => this._idleBody_extendResourcesFromExtensions(...args)); }
++    async reload(...args) { return this._idleAsync(() => this._idleBody_reload(...args)); }
++    async executeBash(...args) { return this._idleAsync(() => this._idleBody_executeBash(...args)); }
++    async navigateTree(...args) { return this._idleAsync(() => this._idleBody_navigateTree(...args)); }
++    async setModel(...args) { return this._idleAsync(() => this._idleBody_setModel(...args)); }
++    async cycleModel(...args) { return this._idleAsync(() => this._idleBody_cycleModel(...args)); }
++    async _executeNestedToolCall(...args) { return this._idleAsync(() => this._idleBody_executeNestedToolCall(...args)); }
++    async summarizeForBugReport(...args) { return this._idleAsync(() => this._idleBody_summarizeForBugReport(...args)); }
++    async _emitAgentSettled(...args) {
++        return this._idleCleanup(() => this._idleBody_emitAgentSettled(...args));
++    }
++    setCompactionPolicy(...args) { return this._idleSync(() => this._idleBody_setCompactionPolicy(...args)); }
++    refreshContext(...args) { return this._idleSync(() => this._idleBody_refreshContext(...args)); }
++    setCacheWarmingMode(...args) { return this._idleSync(() => this._idleBody_setCacheWarmingMode(...args)); }
++    setActiveToolsByName(...args) { return this._idleSync(() => this._idleBody_setActiveToolsByName(...args)); }
++    setScopedModels(...args) { return this._idleSync(() => this._idleBody_setScopedModels(...args)); }
++    clearQueue(...args) { return this._idleSync(() => this._idleBody_clearQueue(...args)); }
++    setThinkingLevel(...args) { return this._idleSync(() => this._idleBody_setThinkingLevel(...args)); }
++    cycleThinkingLevel(...args) { return this._idleSync(() => this._idleBody_cycleThinkingLevel(...args)); }
++    syncQueueModesFromSettings(...args) { return this._idleSync(() => this._idleBody_syncQueueModesFromSettings(...args)); }
++    setSteeringMode(...args) { return this._idleSync(() => this._idleBody_setSteeringMode(...args)); }
++    setFollowUpMode(...args) { return this._idleSync(() => this._idleBody_setFollowUpMode(...args)); }
++    setAutoCompactionEnabled(...args) { return this._idleSync(() => this._idleBody_setAutoCompactionEnabled(...args)); }
++    setAutoRetryEnabled(...args) { return this._idleSync(() => this._idleBody_setAutoRetryEnabled(...args)); }
++    recordBashResult(...args) { return this._idleSync(() => this._idleBody_recordBashResult(...args)); }
++    setSessionName(...args) { return this._idleSync(() => this._idleBody_setSessionName(...args)); }
 +    /** Percho: optional host policy; the SDK remains the sole queue/lifecycle owner. */
-+    setCompactionPolicy(policy) {
++    _idleBody_setCompactionPolicy(policy) {
 +        this._hostPolicy = policy;
 +        this._hostGeneration = (this._hostGeneration ?? 0) + 1;
 +        this.agent.preparePendingRequest = policy ? (request, signal) => this._prepareHostPending(request, signal) : undefined;
@@ -288,7 +390,16 @@ diff --git a/node_modules/@earendil-works/pi-coding-agent/dist/core/agent-sessio
      get modelRuntime() {
          return this._modelRuntime;
      }
-@@ -418,13 +632,13 @@
+@@ -384,7 +688,7 @@
+      * Run a call that the tool call `parentToolCallId` made through `ctx.executeTool()`. It goes
+      * through the agent's tool pipeline with the session's hooks, against the callable tools.
+      */
+-    async _executeNestedToolCall(parentToolCallId, name, args, options) {
++    async _idleBody_executeNestedToolCall(parentToolCallId, name, args, options) {
+         this._nestedToolCalls ??= new NestedToolCallRunner({
+             getTools: () => this._getCallableTools(),
+             isSequential: () => this.agent.toolExecution === "sequential",
+@@ -418,13 +722,13 @@
      _exceedsCompactionThreshold(model, projection) {
          if (model.contextWindow <= 0)
              return false;
@@ -304,7 +415,7 @@ diff --git a/node_modules/@earendil-works/pi-coding-agent/dist/core/agent-sessio
              return { ...context, messages: projection.messages };
          }
          await this._runAutoCompaction("threshold", false);
-@@ -451,9 +665,38 @@
+@@ -451,9 +755,38 @@
                  }, signal);
                  return { previous, context: previous?.context ?? canonicalContext, projection };
              };
@@ -343,7 +454,7 @@ diff --git a/node_modules/@earendil-works/pi-coding-agent/dist/core/agent-sessio
              if (!isVirtualModel(model))
                  return { ...previous, context, model, thinkingLevel };
              // The selection stays in agent state; only this request uses the routed model. A routing
-@@ -478,7 +721,7 @@
+@@ -478,7 +811,7 @@
              // The route stands: the router already decided this request. The state entry does not change
              // the projection.
              if (this._exceedsCompactionThreshold(route.model, projection)) {
@@ -352,7 +463,7 @@ diff --git a/node_modules/@earendil-works/pi-coding-agent/dist/core/agent-sessio
                  ({ previous, context } = await prepare());
              }
              return { ...previous, context, model: route.model, thinkingLevel: route.thinkingLevel };
-@@ -654,8 +897,8 @@
+@@ -654,8 +987,8 @@
      _emitQueueUpdate() {
          this._emit({
              type: "queue_update",
@@ -363,7 +474,24 @@ diff --git a/node_modules/@earendil-works/pi-coding-agent/dist/core/agent-sessio
          });
      }
      async _emitSessionCompactFailed(event) {
-@@ -728,7 +971,7 @@
+@@ -680,13 +1013,14 @@
+         this._resolveIdleWait = undefined;
+         resolve();
+     }
+-    async _emitAgentSettled() {
++    async _idleBody_emitAgentSettled() {
+         this._cacheWarmer?.onAgentSettled();
+         this._isAgentRunActive = false;
+         this._isEmittingAgentSettled = true;
+         try {
+             const aborted = this._agentRunAbortRequested;
+-            await this._extensionRunner.emit({ type: "agent_settled", aborted });
++            // Disposed extensions must not restart work; the host still receives settlement.
++            if (!this._idleDisposed) await this._extensionRunner.emit({ type: "agent_settled", aborted });
+             this._emit({ type: "agent_settled", aborted });
+         }
+         finally {
+@@ -728,7 +1062,7 @@
          }
          // When a user message starts, check if it's from either queue and remove it BEFORE emitting
          // This ensures the UI sees the updated queue state
@@ -372,7 +500,7 @@ diff --git a/node_modules/@earendil-works/pi-coding-agent/dist/core/agent-sessio
              this._overflowRecoveryAttempted = false;
              const messageText = contentText(event.message.content, "");
              if (messageText) {
-@@ -753,6 +996,7 @@
+@@ -753,6 +1087,7 @@
          this._emit(event.type === "agent_end" ? { ...event, willRetry: this._willRetryAfterAgentEnd(event) } : event);
          // Handle session persistence
          if (event.type === "message_end") {
@@ -380,7 +508,7 @@ diff --git a/node_modules/@earendil-works/pi-coding-agent/dist/core/agent-sessio
              let entryId;
              // Check if this is a custom message from extensions
              if (event.message.role === "custom") {
-@@ -768,6 +1012,11 @@
+@@ -768,6 +1103,11 @@
              }
              if (entryId)
                  this._entryIdsByMessage.set(event.message, entryId);
@@ -392,7 +520,7 @@ diff --git a/node_modules/@earendil-works/pi-coding-agent/dist/core/agent-sessio
              // Other message types (bashExecution, compactionSummary, branchSummary) are persisted elsewhere
              if (event.message.role === "assistant") {
                  const assistantMsg = event.message;
-@@ -797,6 +1046,7 @@
+@@ -797,6 +1137,7 @@
          }
      };
      _willRetryAfterAgentEnd(event) {
@@ -400,17 +528,55 @@ diff --git a/node_modules/@earendil-works/pi-coding-agent/dist/core/agent-sessio
          if (this._agentRunAbortRequested)
              return false;
          const settings = this.settingsManager.getRetrySettings();
-@@ -1009,6 +1259,9 @@
+@@ -1009,6 +1350,11 @@
       * Call this when completely done with the session.
       */
      dispose() {
++        this._idleDisposed = true;
++        this._idleLease = undefined;
 +        this._hostGeneration = (this._hostGeneration ?? 0) + 1;
 +        this._hostDisposed = true;
 +        this.abortCompaction();
          try {
              this.abortRetry();
              this.abortCompaction();
-@@ -1421,6 +1674,7 @@
+@@ -1032,7 +1378,7 @@
+     // Read-only State Access
+     // =========================================================================
+     /** Refresh the public finalized transcript from the canonical session projection. */
+-    refreshContext() {
++    _idleBody_refreshContext() {
+         this._refreshFinalizedContext();
+     }
+     /** Full agent state */
+@@ -1044,7 +1390,7 @@
+         return this._cacheWarmer?.status;
+     }
+     /** Persist the cache-warming mode and immediately reconcile active warming. */
+-    setCacheWarmingMode(mode) {
++    _idleBody_setCacheWarmingMode(mode) {
+         this.settingsManager.setCacheWarmingMode(mode);
+         this._cacheWarmer?.onModeChanged();
+     }
+@@ -1116,7 +1462,7 @@
+      * Also rebuilds the system prompt to reflect the new tool set.
+      * Changes take effect on the next agent turn.
+      */
+-    setActiveToolsByName(toolNames) {
++    _idleBody_setActiveToolsByName(toolNames) {
+         const previous = this.getActiveToolNames();
+         this._setActiveTools(toolNames);
+         // A loadout that deactivates a tool replaces the restored one, whose pending tools are dropped.
+@@ -1255,7 +1601,7 @@
+         return this._scopedModels;
+     }
+     /** Update scoped models for cycling */
+-    setScopedModels(scopedModels) {
++    _idleBody_setScopedModels(scopedModels) {
+         this._scopedModels = scopedModels;
+     }
+     /** File-based prompt templates */
+@@ -1421,6 +1767,7 @@
       * @param onStarted Called once the run's messages are prepared, before the first request.
       */
      async _startRun(trigger, onStarted) {
@@ -418,7 +584,7 @@ diff --git a/node_modules/@earendil-works/pi-coding-agent/dist/core/agent-sessio
          this._isAgentRunActive = true;
          this._agentRunAbortRequested = false;
          let messages;
-@@ -1438,14 +1692,18 @@
+@@ -1438,14 +1785,18 @@
          // have while idle. No run exists yet, so they cannot split a tool call from its result.
          this._flushPendingBashMessages();
          this._flushPendingCustomMessages();
@@ -444,7 +610,7 @@ diff --git a/node_modules/@earendil-works/pi-coding-agent/dist/core/agent-sessio
              await this.agent.prompt(messages);
              while (!this._agentRunAbortRequested) {
                  if (await this._handlePostAgentRun()) {
-@@ -1468,7 +1726,52 @@
+@@ -1468,7 +1819,52 @@
              this._runSystemPromptOptions = undefined;
              this._flushPendingBashMessages();
              this._flushPendingCustomMessages();
@@ -462,7 +628,7 @@ diff --git a/node_modules/@earendil-works/pi-coding-agent/dist/core/agent-sessio
 +     * Percho patch: retry the terminal failed response without adding user/custom input or
 +     * re-running before_agent_start handlers. Retain the original failure in durable history.
 +     */
-+    async retryLastFailedTurn(ref, options) {
++    async _idleBody_retryLastFailedTurn(ref, options) {
 +        if (this._hostPause || this._hostAwaitingUser) throw new Error("Session paused: send a new message to resume");
 +        if (!this.isIdle || this._isEmittingAgentSettled || this._isBeforeSettle || this.agent.hasQueuedMessages()) {
 +            throw new Error("Cannot retry while the session is busy or has queued messages");
@@ -498,7 +664,7 @@ diff --git a/node_modules/@earendil-works/pi-coding-agent/dist/core/agent-sessio
          }
      }
      /**
-@@ -1481,7 +1784,7 @@
+@@ -1481,7 +1877,7 @@
          // Check if we need to compact before sending (catches aborted responses).
          // The starting message is sent below, so do not call agent.continue() here.
          const lastAssistant = this._findLastAssistantMessage();
@@ -507,7 +673,7 @@ diff --git a/node_modules/@earendil-works/pi-coding-agent/dist/core/agent-sessio
              await this._checkCompaction(lastAssistant, false);
          }
          const selectedToolsBefore = this._baseSystemPromptOptions.selectedTools;
-@@ -1529,6 +1832,7 @@
+@@ -1529,6 +1925,7 @@
          return messages;
      }
      async _handlePostAgentRun() {
@@ -515,13 +681,14 @@ diff --git a/node_modules/@earendil-works/pi-coding-agent/dist/core/agent-sessio
          const message = this._lastAssistantMessage;
          this._lastAssistantMessage = undefined;
          if (this._agentRunAbortRequested) {
-@@ -1557,13 +1861,15 @@
+@@ -1557,13 +1954,15 @@
              this._retryAttempt = 0;
          }
          if (await this._checkCompaction(message)) {
 -            return !this._agentRunAbortRequested;
+-        }
 +            return !this._agentRunAbortRequested && !this._hostPause;
-         }
++        }
 +        if (this._hostPause || this._hostAwaitingUser || this._hostDisposed) return false;
          // The low-level loop drains both queues before agent_end. Messages queued by
          // agent_end handlers require a fresh run before pre-settlement handlers fire.
@@ -532,10 +699,20 @@ diff --git a/node_modules/@earendil-works/pi-coding-agent/dist/core/agent-sessio
          if (!this._extensionRunner.hasHandlers("agent_before_settle"))
              return this.agent.hasQueuedMessages();
          this._isBeforeSettle = true;
-@@ -1661,6 +1967,15 @@
+@@ -1628,7 +2027,7 @@
+      * @throws Error if streaming and no streamingBehavior specified
+      * @throws Error if no model selected or no API key available (when not streaming)
+      */
+-    async prompt(text, options) {
++    async _idleBody_prompt(text, options) {
+         if (this._isEmittingAgentSettled) {
+             this._deferredSettledActions.push(async () => await this.prompt(text, options));
+             return;
+@@ -1660,6 +2059,15 @@
+         if (expandPromptTemplates) {
              expandedText = this._expandSkillCommand(expandedText);
              expandedText = expandPromptTemplate(expandedText, [...this.promptTemplates]);
-         }
++        }
 +        if (this._hostPolicy && !this.isStreaming && (this._hostPause || this._hostAwaitingUser || this.agent.hasQueuedMessages())) {
 +            if ((options?.source ?? "interactive") === "extension") {
 +                await this._queueFollowUp(expandedText, currentImages);
@@ -544,11 +721,27 @@ diff --git a/node_modules/@earendil-works/pi-coding-agent/dist/core/agent-sessio
 +            }
 +            this._hostResumeBatch = true;
 +            this._hostCompactedForRequest = false;
-+        }
+         }
          // If streaming, queue via steer() or followUp() based on option
          if (this.isStreaming) {
-             if (!options?.streamingBehavior) {
-@@ -1793,8 +2108,7 @@
+@@ -1775,7 +2183,7 @@
+      * @param options Input source; defaults to interactive
+      * @throws Error if text is an extension command
+      */
+-    async steer(text, images, options) {
++    async _idleBody_steer(text, images, options) {
+         return this._queueUserInput(text, images, "steer", options?.source ?? "interactive");
+     }
+     /**
+@@ -1786,15 +2194,14 @@
+      * @param options Input source; defaults to interactive
+      * @throws Error if text is an extension command
+      */
+-    async followUp(text, images, options) {
++    async _idleBody_followUp(text, images, options) {
+         return this._queueUserInput(text, images, "followUp", options?.source ?? "interactive");
+     }
+     /**
       * Internal: Queue a steering message (already expanded, no extension command check).
       */
      async _queueSteer(text, images) {
@@ -558,7 +751,7 @@ diff --git a/node_modules/@earendil-works/pi-coding-agent/dist/core/agent-sessio
          const content = [{ type: "text", text }];
          if (images) {
              content.push(...images);
-@@ -1804,18 +2118,19 @@
+@@ -1804,18 +2211,19 @@
              content,
              timestamp: Date.now(),
          });
@@ -580,7 +773,16 @@ diff --git a/node_modules/@earendil-works/pi-coding-agent/dist/core/agent-sessio
      }
      /**
       * Throw an error if the text is an extension command.
-@@ -1851,6 +2166,13 @@
+@@ -1841,7 +2249,7 @@
+      * @param options.triggerTurn If true and not streaming, triggers a new LLM turn
+      * @param options.deliverAs Delivery mode: "steer", "followUp", or "nextTurn"
+      */
+-    async sendCustomMessage(message, options) {
++    async _idleBody_sendCustomMessage(message, options) {
+         const appMessage = {
+             role: "custom",
+             customType: message.customType,
+@@ -1851,6 +2259,13 @@
              details: message.details,
              timestamp: Date.now(),
          };
@@ -594,12 +796,23 @@ diff --git a/node_modules/@earendil-works/pi-coding-agent/dist/core/agent-sessio
          if (options?.deliverAs === "nextTurn") {
              this._pendingNextTurnMessages.push(appMessage);
          }
-@@ -1942,25 +2264,27 @@
+@@ -1907,7 +2322,7 @@
+      * @param options.deliverAs Delivery mode when streaming: "steer" or "followUp"
+      * @param options.expandPromptTemplates Whether to dispatch extension commands and expand skill commands and prompt templates. Default: false.
+      */
+-    async sendUserMessage(content, options) {
++    async _idleBody_sendUserMessage(content, options) {
+         // Normalize content to text string + optional images
+         let text;
+         let images;
+@@ -1941,26 +2356,28 @@
+      * Useful for restoring to editor when user aborts.
       * @returns Object with steering and followUp arrays
       */
-     clearQueue() {
+-    clearQueue() {
 -        const steering = [...this._steeringMessages];
 -        const followUp = [...this._followUpMessages];
++    _idleBody_clearQueue() {
 +        const steering = [...this.getSteeringMessages()];
 +        const followUp = [...this.getFollowUpMessages()];
 +        const pending = this._hostPolicy ? this.agent.getQueuedMessages() : [];
@@ -627,7 +840,7 @@ diff --git a/node_modules/@earendil-works/pi-coding-agent/dist/core/agent-sessio
      }
      get resourceLoader() {
          return this._resourceLoader;
-@@ -1969,6 +2293,15 @@
+@@ -1969,6 +2386,15 @@
       * Abort current operation and wait for agent to become idle.
       */
      async abort() {
@@ -643,7 +856,14 @@ diff --git a/node_modules/@earendil-works/pi-coding-agent/dist/core/agent-sessio
          if (this._isAgentRunActive) {
              this._agentRunAbortRequested = true;
          }
-@@ -2011,6 +2344,7 @@
+@@ -2005,12 +2431,13 @@
+      * Persists to global defaults only when options.persist is true.
+      * @throws Error if no auth is configured for the model
+      */
+-    async setModel(model, options = {}) {
++    async _idleBody_setModel(model, options = {}) {
+         if (!(await this._modelRuntime.checkAuth(model.provider))) {
+             throw new Error(`No API key for ${model.provider}/${model.id}`);
          }
          const previousModel = this.model;
          const thinkingLevel = this._getThinkingLevelForModelSwitch(model);
@@ -651,7 +871,61 @@ diff --git a/node_modules/@earendil-works/pi-coding-agent/dist/core/agent-sessio
          this.agent.state.model = model;
          this.sessionManager.appendModelChange(model.provider, model.id);
          if (options.persist) {
-@@ -2204,9 +2538,38 @@
+@@ -2043,7 +2470,7 @@
+      * @param direction - "forward" (default) or "backward"
+      * @returns The new model info, or undefined if only one model available
+      */
+-    async cycleModel(direction = "forward", options = {}) {
++    async _idleBody_cycleModel(direction = "forward", options = {}) {
+         if (this._scopedModels.length > 0) {
+             return this._cycleScopedModel(direction, options);
+         }
+@@ -2111,7 +2538,7 @@
+      * Saves the clamped level to the session transcript only if the level actually changes.
+      * Persists the requested level to global defaults only when options.persist is true.
+      */
+-    setThinkingLevel(level, options = {}) {
++    _idleBody_setThinkingLevel(level, options = {}) {
+         const availableLevels = this.getAvailableThinkingLevels();
+         const effectiveLevel = availableLevels.includes(level) ? level : this._clampThinkingLevel(level, availableLevels);
+         // Only persist if actually changing
+@@ -2135,7 +2562,7 @@
+      * Cycle to next thinking level.
+      * @returns New level, or undefined if model doesn't support thinking
+      */
+-    cycleThinkingLevel(options = {}) {
++    _idleBody_cycleThinkingLevel(options = {}) {
+         if (!this.supportsThinking())
+             return undefined;
+         const levels = this.getAvailableThinkingLevels();
+@@ -2179,7 +2606,7 @@
+     // =========================================================================
+     // Queue Mode Management
+     // =========================================================================
+-    syncQueueModesFromSettings() {
++    _idleBody_syncQueueModesFromSettings() {
+         this.agent.steeringMode = this.settingsManager.getSteeringMode();
+         this.agent.followUpMode = this.settingsManager.getFollowUpMode();
+     }
+@@ -2187,7 +2614,7 @@
+      * Set steering message mode.
+      * Saves to settings.
+      */
+-    setSteeringMode(mode) {
++    _idleBody_setSteeringMode(mode) {
+         this.agent.steeringMode = mode;
+         this.settingsManager.setSteeringMode(mode);
+     }
+@@ -2195,7 +2622,7 @@
+      * Set follow-up message mode.
+      * Saves to settings.
+      */
+-    setFollowUpMode(mode) {
++    _idleBody_setFollowUpMode(mode) {
+         this.agent.followUpMode = mode;
+         this.settingsManager.setFollowUpMode(mode);
+     }
+@@ -2204,9 +2631,38 @@
      // =========================================================================
      /** Generate Pi's built-in compaction summary for manual and automatic compaction. */
      async _runDefaultCompaction(preparation, model, customInstructions, signal, reason) {
@@ -693,16 +967,18 @@ diff --git a/node_modules/@earendil-works/pi-coding-agent/dist/core/agent-sessio
      }
      _clearManualCompactionState() {
          this._compactionAbortController = undefined;
-@@ -2228,7 +2591,7 @@
+@@ -2227,8 +2683,8 @@
+      *
       * @param customInstructions Optional instructions for the compaction summary
       */
-     async compact(customInstructions) {
+-    async compact(customInstructions) {
 -        await this.abort();
++    async _idleBody_compact(customInstructions) {
 +        await this._abortCurrentOperation();
          this._compactionAbortController = new AbortController();
          this._emit({ type: "compaction_start", reason: "manual" });
          let fromExtension = false;
-@@ -2440,12 +2803,14 @@
+@@ -2440,12 +2896,14 @@
              // Case 2: the response completed successfully. Compact, but do not retry because
              // agent.continue() cannot continue from a completed assistant response.
              if (!willRetry) {
@@ -718,7 +994,7 @@ diff --git a/node_modules/@earendil-works/pi-coding-agent/dist/core/agent-sessio
                  this._emit({
                      type: "compaction_end",
                      reason: "overflow",
-@@ -2466,45 +2831,20 @@
+@@ -2466,45 +2924,20 @@
              // Persistently omit the selected final attempt before post-run recovery compaction.
              this._overflowRecoveryAttempted = true;
              this._omitRecoveryAttempt(assistantMessage);
@@ -770,7 +1046,7 @@ diff --git a/node_modules/@earendil-works/pi-coding-agent/dist/core/agent-sessio
          }
          return false;
      }
-@@ -2518,9 +2858,9 @@
+@@ -2518,9 +2951,9 @@
       * @param willRetry Whether to continue the interrupted turn after overflow compaction
       * @returns Whether the post-run loop should call `agent.continue()`
       */
@@ -782,7 +1058,7 @@ diff --git a/node_modules/@earendil-works/pi-coding-agent/dist/core/agent-sessio
          let abortController;
          let started = false;
          let fromExtension = false;
-@@ -2530,8 +2870,13 @@
+@@ -2530,8 +2963,13 @@
                  return false;
              }
              const pathEntries = this.sessionManager.getBranch();
@@ -797,7 +1073,7 @@ diff --git a/node_modules/@earendil-works/pi-coding-agent/dist/core/agent-sessio
                  return false;
              }
              abortController = new AbortController();
-@@ -2544,6 +2889,7 @@
+@@ -2544,6 +2982,7 @@
                  const extensionResult = (await this._extensionRunner.emit({
                      type: "session_before_compact",
                      preparation,
@@ -805,7 +1081,7 @@ diff --git a/node_modules/@earendil-works/pi-coding-agent/dist/core/agent-sessio
                      branchEntries: pathEntries,
                      customInstructions: undefined,
                      reason,
-@@ -2583,7 +2929,14 @@
+@@ -2583,7 +3022,14 @@
                  details = compactResult.details;
              }
              abortController.signal.throwIfAborted();
@@ -820,7 +1096,7 @@ diff --git a/node_modules/@earendil-works/pi-coding-agent/dist/core/agent-sessio
              const newEntries = this.sessionManager.getEntries();
              this._refreshFinalizedContext();
              const estimatedTokensAfter = estimateMessagesTokens(this.sessionManager.buildSessionProjection().messages);
-@@ -2607,6 +2960,10 @@
+@@ -2607,6 +3053,10 @@
                  details,
              };
              this._emit({ type: "compaction_end", reason, result, aborted: false, willRetry });
@@ -831,7 +1107,7 @@ diff --git a/node_modules/@earendil-works/pi-coding-agent/dist/core/agent-sessio
              if (willRetry)
                  return true;
              // Auto-compaction can complete while follow-up/steering/custom messages are waiting.
-@@ -2616,6 +2973,10 @@
+@@ -2616,6 +3066,10 @@
          catch (error) {
              const message = error instanceof Error ? error.message : "compaction failed";
              const aborted = abortController?.signal.aborted === true || cancelledByExtension;
@@ -842,15 +1118,167 @@ diff --git a/node_modules/@earendil-works/pi-coding-agent/dist/core/agent-sessio
              if (started) {
                  const errorMessage = aborted
                      ? undefined
-@@ -2996,6 +3357,7 @@
+@@ -2650,14 +3104,14 @@
+     /**
+      * Toggle auto-compaction setting.
+      */
+-    setAutoCompactionEnabled(enabled) {
++    _idleBody_setAutoCompactionEnabled(enabled) {
+         this.settingsManager.setCompactionEnabled(enabled);
+     }
+     /** Whether auto-compaction is enabled */
+     get autoCompactionEnabled() {
+         return this.settingsManager.getCompactionEnabled();
+     }
+-    async bindExtensions(bindings) {
++    async _idleBody_bindExtensions(bindings) {
+         if (bindings.uiContext !== undefined) {
+             this._extensionUIContext = bindings.uiContext;
+         }
+@@ -2681,7 +3135,7 @@
+         this._extensionRunner.reportUnhandledMcpServers();
+         await this.extendResourcesFromExtensions(this._sessionStartEvent.reason === "reload" ? "reload" : "startup");
+     }
+-    async extendResourcesFromExtensions(reason) {
++    async _idleBody_extendResourcesFromExtensions(reason) {
+         if (!this._extensionRunner.hasHandlers("resources_discover")) {
+             return;
+         }
+@@ -2762,6 +3216,9 @@
+             return [...extensionCommands, ...templates, ...skills];
+         };
+         runner.bindCore({
++            runSessionOperation: (operation) => this._idleAsync(operation),
++            runSessionCleanup: (operation) => this._idleCleanup(operation),
++            runSessionOperationSync: (operation) => this._idleSync(operation),
+             sendMessage: (message, options) => {
+                 this.sendCustomMessage(message, options).catch((err) => {
+                     runner.emitError({
+@@ -2780,27 +3237,21 @@
+                     });
+                 });
+             },
+-            appendEntry: (customType, data) => {
+-                const entryId = this.sessionManager.appendCustomEntry(customType, data);
+-                const entry = this.sessionManager.getEntry(entryId);
+-                if (entry) {
+-                    this._emit({ type: "entry_appended", entry });
+-                }
+-            },
++            appendEntry: (customType, data) => this._idleSync(() => { this._appendCustomEntry(customType, data); }),
+             setSessionName: (name) => {
+                 this.setSessionName(name);
+             },
+             getSessionName: () => {
+                 return this.sessionManager.getSessionName();
+             },
+-            setLabel: (entryId, label) => {
++            setLabel: (entryId, label) => this._idleSync(() => {
+                 this.sessionManager.appendLabelChange(entryId, label);
+-            },
++            }),
+             getActiveTools: () => this.getActiveToolNames(),
+             getAllTools: () => this.getAllTools(),
+             getSettings: () => this.settingsManager.getSettings(),
+             setActiveTools: (toolNames) => this.setActiveToolsByName(toolNames),
+-            refreshTools: () => this._refreshToolRegistry(),
++            refreshTools: () => this._idleSync(() => this._refreshToolRegistry()),
+             getCommands,
+             setModel: async (model) => {
+                 if (!this._modelRuntime.hasConfiguredAuth(model.provider))
+@@ -2845,26 +3296,26 @@
+             executeTool: (callerId, name, args, options) => this._executeNestedToolCall(callerId, name, args, options),
+             getCallableTools: () => this._getCallableTools(),
+         }, {
+-            registerProvider: (name, config) => {
++            registerProvider: (name, config) => this._idleSync(() => {
+                 this._modelRuntime.registerProvider(name, config);
+                 this._refreshCurrentModelFromRegistry();
+-            },
+-            registerNativeProvider: (provider) => {
++            }),
++            registerNativeProvider: (provider) => this._idleSync(() => {
+                 this._modelRuntime.registerNativeProvider(provider);
+                 this._refreshCurrentModelFromRegistry();
+-            },
+-            unregisterProvider: (name) => {
++            }),
++            unregisterProvider: (name) => this._idleSync(() => {
+                 this._modelRuntime.unregisterProvider(name);
+                 this._refreshCurrentModelFromRegistry();
+-            },
+-            registerVirtualModel: (definition) => {
++            }),
++            registerVirtualModel: (definition) => this._idleSync(() => {
+                 this._modelRuntime.registerVirtualModel(definition);
+                 this._refreshCurrentModelFromRegistry();
+-            },
+-            unregisterVirtualModel: (provider, id) => {
++            }),
++            unregisterVirtualModel: (provider, id) => this._idleSync(() => {
+                 this._modelRuntime.unregisterVirtualModel(provider, id);
+                 this._refreshCurrentModelFromRegistry();
+-            },
++            }),
          });
      }
-     async reload(options) {
+     _refreshToolRegistry(options) {
+@@ -2995,7 +3446,8 @@
+             includeAllExtensionTools: options.includeAllExtensionTools,
+         });
+     }
+-    async reload(options) {
++    async _idleBody_reload(options) {
 +        this._hostGeneration = (this._hostGeneration ?? 0) + 1;
          const oldRunner = this._extensionRunner;
          const previousFlagValues = oldRunner.getFlagValues();
          await emitSessionShutdownEvent(oldRunner, { type: "session_shutdown", reason: "reload" });
-@@ -3376,6 +3738,8 @@
+@@ -3140,7 +3592,7 @@
+     /**
+      * Toggle auto-retry setting.
+      */
+-    setAutoRetryEnabled(enabled) {
++    _idleBody_setAutoRetryEnabled(enabled) {
+         this.settingsManager.setRetryEnabled(enabled);
+     }
+     // =========================================================================
+@@ -3155,7 +3607,7 @@
+      * @param options.id Optional identifier included in bash execution update events
+      * @param options.operations Custom BashOperations for remote execution
+      */
+-    async executeBash(command, onChunk, options) {
++    async _idleBody_executeBash(command, onChunk, options) {
+         const abortController = new AbortController();
+         this._bashAbortControllers.add(abortController);
+         // Apply command prefix if configured (e.g., "shopt -s expand_aliases" for alias support)
+@@ -3181,7 +3633,7 @@
+      * Record a bash execution result in session history.
+      * Used by executeBash and by extensions that handle bash execution themselves.
+      */
+-    recordBashResult(command, result, options) {
++    _idleBody_recordBashResult(command, result, options) {
+         const bashMessage = {
+             role: "bashExecution",
+             command,
+@@ -3238,7 +3690,7 @@
+     /**
+      * Set a display name for the current session.
+      */
+-    setSessionName(name) {
++    _idleBody_setSessionName(name) {
+         this.sessionManager.appendSessionInfo(name);
+         const event = { type: "session_info_changed", name: this.sessionManager.getSessionName() };
+         this._emit(event);
+@@ -3258,7 +3710,7 @@
+      * @param options.label Label to attach to the branch summary entry
+      * @returns Result with editorText (if user message) and cancelled status
+      */
+-    async navigateTree(targetId, options = {}) {
++    async _idleBody_navigateTree(targetId, options = {}) {
+         if (this.isStreaming) {
+             throw new Error("Wait for the current response to finish before navigating the session tree.");
+         }
+@@ -3376,6 +3828,8 @@
                  // Non-user message: leaf = selected node
                  newLeafId = targetId;
              }
@@ -859,7 +1287,7 @@ diff --git a/node_modules/@earendil-works/pi-coding-agent/dist/core/agent-sessio
              // Switch leaf (with or without summary)
              // Summary is attached at the navigation target position (newLeafId), not the old branch
              let summaryEntry;
-@@ -3498,7 +3862,7 @@
+@@ -3498,7 +3952,7 @@
          };
      }
      getContextUsage() {
@@ -868,7 +1296,7 @@ diff --git a/node_modules/@earendil-works/pi-coding-agent/dist/core/agent-sessio
          if (!model)
              return undefined;
          const contextWindow = model.contextWindow ?? 0;
-@@ -3524,7 +3888,7 @@
+@@ -3524,7 +3978,7 @@
              if (!hasPostCompactionUsage)
                  return { tokens: null, contextWindow, percent: null };
          }
@@ -877,13 +1305,86 @@ diff --git a/node_modules/@earendil-works/pi-coding-agent/dist/core/agent-sessio
          const percent = (estimate.tokens / contextWindow) * 100;
          return {
              tokens: estimate.tokens,
-@@ -3633,4 +3997,4 @@
+@@ -3565,7 +4019,7 @@
+      * Ask the current model to describe what went wrong in this session for a bug report.
+      * Used when the user declines to share the transcript itself.
+      */
+-    async summarizeForBugReport(options) {
++    async _idleBody_summarizeForBugReport(options) {
+         const model = this.model;
+         if (!model) {
+             throw new Error("No model selected");
+@@ -3633,4 +4087,4 @@
          return this._extensionRunner;
      }
  }
 -//# sourceMappingURL=agent-session.js.map
 \ No newline at end of file
 +//# sourceMappingURL=agent-session.js.map
+diff --git a/node_modules/@earendil-works/pi-coding-agent/dist/core/cache-warmer.d.ts b/node_modules/@earendil-works/pi-coding-agent/dist/core/cache-warmer.d.ts
+--- a/node_modules/@earendil-works/pi-coding-agent/dist/core/cache-warmer.d.ts
++++ b/node_modules/@earendil-works/pi-coding-agent/dist/core/cache-warmer.d.ts
+@@ -71,6 +71,7 @@
+  */
+ export declare class CacheWarmer {
+     private run?;
++    private refreshesInFlight;
+     private inactive;
+     private readonly models;
+     private readonly sessionManager;
+@@ -80,6 +81,7 @@
+     /** Called with the persisted usage entry after each successful refresh. */
+     onWarmed?: (entry: UsageEntry) => void;
+     constructor(models: Pick<ModelRuntime, "streamSimple">, sessionManager: Pick<SessionManager, "appendUsage" | "getBranch">, getMode: () => CacheWarmingMode, decide?: (event: CacheWarmingDecisionEvent) => Promise<CacheWarmingAction>);
++    get hasPendingWork(): boolean;
+     get status(): CacheWarmingStatus;
+     /** Keep the prompt cache entry written by `request` warm while `isCurrent` holds. */
+     start(request: CacheWarmRequest, isCurrent: () => boolean): void;
+@@ -91,6 +93,7 @@
+     private stop;
+     private schedule;
+     private refresh;
++    private refreshBody;
+     private refreshDeadlineMissed;
+     private validateRun;
+     private getModeStopReason;
+diff --git a/node_modules/@earendil-works/pi-coding-agent/dist/core/cache-warmer.js b/node_modules/@earendil-works/pi-coding-agent/dist/core/cache-warmer.js
+--- a/node_modules/@earendil-works/pi-coding-agent/dist/core/cache-warmer.js
++++ b/node_modules/@earendil-works/pi-coding-agent/dist/core/cache-warmer.js
+@@ -73,6 +73,7 @@
+  */
+ export class CacheWarmer {
+     run;
++    refreshesInFlight = 0;
+     inactive;
+     models;
+     sessionManager;
+@@ -88,6 +89,9 @@
+         this.decide = decide;
+         this.inactive = { state: "inactive", reason: "waiting for first request" };
+     }
++    get hasPendingWork() {
++        return this.run !== undefined || this.refreshesInFlight > 0;
++    }
+     get status() {
+         if (this.getMode() === "off")
+             return { state: "inactive", reason: "cache warming disabled" };
+@@ -201,6 +205,15 @@
+         run.timer.unref?.();
+     }
+     async refresh(run) {
++        this.refreshesInFlight++;
++        try {
++            await this.refreshBody(run);
++        }
++        finally {
++            this.refreshesInFlight--;
++        }
++    }
++    async refreshBody(run) {
+         run.timer = undefined;
+         if (!this.validateRun(run))
+             return;
 diff --git a/node_modules/@earendil-works/pi-coding-agent/dist/core/compaction/compaction.d.ts b/node_modules/@earendil-works/pi-coding-agent/dist/core/compaction/compaction.d.ts
 --- a/node_modules/@earendil-works/pi-coding-agent/dist/core/compaction/compaction.d.ts
 +++ b/node_modules/@earendil-works/pi-coding-agent/dist/core/compaction/compaction.d.ts
@@ -920,6 +1421,311 @@ diff --git a/node_modules/@earendil-works/pi-coding-agent/dist/core/compaction/c
              return estimate;
      }
      const currentSystem = getCurrentSystemMessage(projection.messages);
+diff --git a/node_modules/@earendil-works/pi-coding-agent/dist/core/extensions/loader.js b/node_modules/@earendil-works/pi-coding-agent/dist/core/extensions/loader.js
+--- a/node_modules/@earendil-works/pi-coding-agent/dist/core/extensions/loader.js
++++ b/node_modules/@earendil-works/pi-coding-agent/dist/core/extensions/loader.js
+@@ -118,6 +118,9 @@
+         }
+     };
+     const runtime = {
++        runSessionOperation: (operation) => operation(),
++        runSessionCleanup: (operation) => operation(),
++        runSessionOperationSync: (operation) => operation(),
+         sendMessage: notInitialized,
+         sendUserMessage: notInitialized,
+         appendEntry: notInitialized,
+@@ -204,7 +207,7 @@
+         if (state === "loading")
+             pendingRuntimeChanges.push(change);
+         else
+-            change();
++            runtime.runSessionOperationSync(change);
+     };
+     const clearPending = () => {
+         pendingFlagValues.clear();
+@@ -215,32 +218,36 @@
+         // Registration methods - write to extension
+         on(event, handler) {
+             assertActive();
+-            const registeredHandler = (...args) => handler(...args);
+-            const list = extension.handlers.get(event) ?? [];
+-            list.push(registeredHandler);
+-            extension.handlers.set(event, list);
+-            return () => {
+-                const handlers = extension.handlers.get(event);
+-                if (!handlers)
+-                    return;
+-                const handlerIndex = handlers.indexOf(registeredHandler);
+-                if (handlerIndex === -1)
+-                    return;
+-                handlers.splice(handlerIndex, 1);
+-                if (handlers.length === 0)
+-                    extension.handlers.delete(event);
+-            };
++            return runtime.runSessionOperationSync(() => {
++                const registeredHandler = (...args) => handler(...args);
++                const list = extension.handlers.get(event) ?? [];
++                list.push(registeredHandler);
++                extension.handlers.set(event, list);
++                return () => {
++                    const handlers = extension.handlers.get(event);
++                    if (!handlers)
++                        return;
++                    const handlerIndex = handlers.indexOf(registeredHandler);
++                    if (handlerIndex === -1)
++                        return;
++                    handlers.splice(handlerIndex, 1);
++                    if (handlers.length === 0)
++                        extension.handlers.delete(event);
++                };
++            });
+         },
+         registerTool(tool) {
+             assertActive();
+             if (typeof tool.parameters !== "object" || tool.parameters === null || Array.isArray(tool.parameters)) {
+                 throw new Error(`Tool "${tool.name}" registered by extension "${extension.path}" must define an object parameter schema.`);
+             }
+-            extension.tools.set(tool.name, {
+-                definition: tool,
+-                sourceInfo: extension.sourceInfo,
++            runtime.runSessionOperationSync(() => {
++                extension.tools.set(tool.name, {
++                    definition: tool,
++                    sourceInfo: extension.sourceInfo,
++                });
++                runtime.refreshTools();
+             });
+-            runtime.refreshTools();
+         },
+         registerCommand(name, options) {
+             assertActive();
+@@ -250,49 +257,55 @@
+             if (typeof options?.handler !== "function") {
+                 throw new Error(`Command "/${name}" registered by extension "${extension.path}" must define handler().`);
+             }
+-            extension.commands.set(name, {
++            runtime.runSessionOperationSync(() => extension.commands.set(name, {
+                 name,
+                 sourceInfo: extension.sourceInfo,
+                 ...options,
+-            });
++            }));
+         },
+         registerShortcut(shortcut, options) {
+             assertActive();
+-            extension.shortcuts.set(shortcut, { shortcut, extensionPath: extension.path, ...options });
++            runtime.runSessionOperationSync(() => extension.shortcuts.set(shortcut, { shortcut, extensionPath: extension.path, ...options }));
+         },
+         registerFlag(name, options) {
+             assertActive();
+             if (options.default !== undefined && typeof options.default !== options.type) {
+                 throw new Error(`Invalid default for flag "${name}": expected ${options.type}, got ${typeof options.default}`);
+             }
+-            extension.flags.set(name, { name, extensionPath: extension.path, ...options });
+-            if (options.default !== undefined && !runtime.flagValues.has(name)) {
+-                if (state === "loading") {
+-                    if (!pendingFlagValues.has(name))
+-                        pendingFlagValues.set(name, options.default);
++            runtime.runSessionOperationSync(() => {
++                extension.flags.set(name, { name, extensionPath: extension.path, ...options });
++                if (options.default !== undefined && !runtime.flagValues.has(name)) {
++                    if (state === "loading") {
++                        if (!pendingFlagValues.has(name))
++                            pendingFlagValues.set(name, options.default);
++                    }
++                    else {
++                        runtime.flagValues.set(name, options.default);
++                    }
+                 }
+-                else {
+-                    runtime.flagValues.set(name, options.default);
+-                }
+-            }
++            });
+         },
+         registerMessageRenderer(customType, renderer) {
+             assertActive();
+-            extension.messageRenderers.set(customType, renderer);
++            runtime.runSessionOperationSync(() => extension.messageRenderers.set(customType, renderer));
+         },
+         registerMarkdownTransformer(transformer) {
+             assertActive();
+-            extension.markdownTransformer = transformer;
++            runtime.runSessionOperationSync(() => { extension.markdownTransformer = transformer; });
+         },
+         registerEntryRenderer(customType, renderer) {
+             assertActive();
+-            extension.entryRenderers ??= new Map();
+-            extension.entryRenderers.set(customType, renderer);
++            runtime.runSessionOperationSync(() => {
++                extension.entryRenderers ??= new Map();
++                extension.entryRenderers.set(customType, renderer);
++            });
+         },
+         registerToolRenderer(resolver) {
+             assertActive();
+-            extension.toolRenderers ??= [];
+-            extension.toolRenderers.push(resolver);
++            runtime.runSessionOperationSync(() => {
++                extension.toolRenderers ??= [];
++                extension.toolRenderers.push(resolver);
++            });
+         },
+         // Flag access - checks extension registered it, reads from runtime
+         getFlag(name) {
+@@ -328,7 +341,7 @@
+         },
+         exec(command, args, options) {
+             assertActive();
+-            return execCommand(command, args, options?.cwd ?? cwd, options);
++            return runtime.runSessionOperation(() => execCommand(command, args, options?.cwd ?? cwd, options));
+         },
+         getActiveTools() {
+             assertActive();
+diff --git a/node_modules/@earendil-works/pi-coding-agent/dist/core/extensions/runner.js b/node_modules/@earendil-works/pi-coding-agent/dist/core/extensions/runner.js
+--- a/node_modules/@earendil-works/pi-coding-agent/dist/core/extensions/runner.js
++++ b/node_modules/@earendil-works/pi-coding-agent/dist/core/extensions/runner.js
+@@ -207,6 +207,9 @@
+     }
+     bindCore(actions, contextActions, providerActions) {
+         // Copy actions into the shared runtime (all extension APIs reference this)
++        this.runtime.runSessionOperation = actions.runSessionOperation ?? ((operation) => operation());
++        this.runtime.runSessionCleanup = actions.runSessionCleanup ?? ((operation) => operation());
++        this.runtime.runSessionOperationSync = actions.runSessionOperationSync ?? ((operation) => operation());
+         this.runtime.sendMessage = actions.sendMessage;
+         this.runtime.sendUserMessage = actions.sendUserMessage;
+         this.runtime.appendEntry = actions.appendEntry;
+@@ -756,7 +759,8 @@
+         };
+         return context;
+     }
+-    async emitBoundary(baseEvent, buildContext) {
++    async emitBoundary(...args) { return this.runtime.runSessionOperation(() => this.#emitBoundary(...args)); }
++    async #emitBoundary(baseEvent, buildContext) {
+         const ctx = this.createContext();
+         let entries = [];
+         let shouldContinue = false;
+@@ -811,6 +815,10 @@
+             event.type === "session_before_tree");
+     }
+     async emit(event) {
++        if (event.type === "session_shutdown") return this.runtime.runSessionCleanup(() => this.#emit(event));
++        return this.runtime.runSessionOperation(() => this.#emit(event));
++    }
++    async #emit(event) {
+         const ctx = this.createContext();
+         let result;
+         for (const { ext, handlers } of snapshotEventHandlers(this.extensions, event.type)) {
+@@ -839,7 +847,8 @@
+         return result;
+     }
+     /** Returns the event's own action unless a handler overrides it; the last override wins. */
+-    async emitCacheWarmingDecision(event) {
++    async emitCacheWarmingDecision(...args) { return this.runtime.runSessionOperation(() => this.#emitCacheWarmingDecision(...args)); }
++    async #emitCacheWarmingDecision(event) {
+         const ctx = this.createContext();
+         let action = event.action;
+         for (const { ext, handlers } of snapshotEventHandlers(this.extensions, event.type)) {
+@@ -861,7 +870,8 @@
+         }
+         return action;
+     }
+-    async emitMessageEnd(event) {
++    async emitMessageEnd(...args) { return this.runtime.runSessionOperation(() => this.#emitMessageEnd(...args)); }
++    async #emitMessageEnd(event) {
+         const ctx = this.createContext();
+         let currentMessage = event.message;
+         let modified = false;
+@@ -897,7 +907,8 @@
+         }
+         return modified ? currentMessage : undefined;
+     }
+-    async emitToolResult(event) {
++    async emitToolResult(...args) { return this.runtime.runSessionOperation(() => this.#emitToolResult(...args)); }
++    async #emitToolResult(event) {
+         const ctx = this.createContext();
+         const currentEvent = { ...event };
+         let modified = false;
+@@ -954,7 +965,8 @@
+             usage: currentEvent.usage,
+         };
+     }
+-    async emitToolCall(event) {
++    async emitToolCall(...args) { return this.runtime.runSessionOperation(() => this.#emitToolCall(...args)); }
++    async #emitToolCall(event) {
+         const ctx = this.createContext();
+         let result;
+         for (const { handlers } of snapshotEventHandlers(this.extensions, "tool_call")) {
+@@ -970,7 +982,8 @@
+         }
+         return result;
+     }
+-    async emitUserBash(event) {
++    async emitUserBash(...args) { return this.runtime.runSessionOperation(() => this.#emitUserBash(...args)); }
++    async #emitUserBash(event) {
+         const ctx = this.createContext();
+         for (const { ext, handlers } of snapshotEventHandlers(this.extensions, "user_bash")) {
+             for (const handler of handlers) {
+@@ -1003,7 +1016,8 @@
+      * only and Pi restores the prompt and tool state after each; `context_with_system`
+      * handlers then see the full transcript and their output is used as returned.
+      */
+-    async emitContext(messages) {
++    async emitContext(...args) { return this.runtime.runSessionOperation(() => this.#emitContext(...args)); }
++    async #emitContext(messages) {
+         const ctx = this.createContext();
+         let currentMessages = structuredClone(messages);
+         for (const { ext, handlers } of snapshotEventHandlers(this.extensions, "context")) {
+@@ -1063,7 +1077,8 @@
+         }
+         return currentMessages;
+     }
+-    async emitBeforeProviderRequest(payload) {
++    async emitBeforeProviderRequest(...args) { return this.runtime.runSessionOperation(() => this.#emitBeforeProviderRequest(...args)); }
++    async #emitBeforeProviderRequest(payload) {
+         const ctx = this.createContext();
+         let currentPayload = payload;
+         for (const { ext, handlers } of snapshotEventHandlers(this.extensions, "before_provider_request")) {
+@@ -1092,7 +1107,8 @@
+         }
+         return currentPayload;
+     }
+-    async emitBeforeProviderHeaders(headers) {
++    async emitBeforeProviderHeaders(...args) { return this.runtime.runSessionOperation(() => this.#emitBeforeProviderHeaders(...args)); }
++    async #emitBeforeProviderHeaders(headers) {
+         const ctx = this.createContext();
+         for (const { ext, handlers } of snapshotEventHandlers(this.extensions, "before_provider_headers")) {
+             for (const handler of handlers) {
+@@ -1118,7 +1134,8 @@
+         }
+         return headers;
+     }
+-    async emitBeforeAgentStart(trigger, systemPromptOptions) {
++    async emitBeforeAgentStart(...args) { return this.runtime.runSessionOperation(() => this.#emitBeforeAgentStart(...args)); }
++    async #emitBeforeAgentStart(trigger, systemPromptOptions) {
+         const currentOptions = normalizeBuildSystemPromptOptions(systemPromptOptions);
+         const renderCurrentSystemPrompt = () => buildSystemPrompt(currentOptions);
+         const ctx = Object.defineProperties({}, Object.getOwnPropertyDescriptors(this.createContext()));
+@@ -1162,7 +1179,8 @@
+         }
+         return { messages, systemPromptOptions: currentOptions };
+     }
+-    async emitResourcesDiscover(cwd, reason) {
++    async emitResourcesDiscover(...args) { return this.runtime.runSessionOperation(() => this.#emitResourcesDiscover(...args)); }
++    async #emitResourcesDiscover(cwd, reason) {
+         const ctx = this.createContext();
+         const skillPaths = [];
+         const promptPaths = [];
+@@ -1198,7 +1216,8 @@
+         return { skillPaths, promptPaths, themePaths };
+     }
+     /** Emit input event. Transforms chain, "handled" short-circuits. */
+-    async emitInput(text, images, source, streamingBehavior) {
++    async emitInput(...args) { return this.runtime.runSessionOperation(() => this.#emitInput(...args)); }
++    async #emitInput(text, images, source, streamingBehavior) {
+         const ctx = this.createContext();
+         let currentText = text;
+         let currentImages = images;
 diff --git a/node_modules/@earendil-works/pi-coding-agent/dist/core/extensions/types.d.ts b/node_modules/@earendil-works/pi-coding-agent/dist/core/extensions/types.d.ts
 --- a/node_modules/@earendil-works/pi-coding-agent/dist/core/extensions/types.d.ts
 +++ b/node_modules/@earendil-works/pi-coding-agent/dist/core/extensions/types.d.ts
@@ -932,6 +1738,110 @@ diff --git a/node_modules/@earendil-works/pi-coding-agent/dist/core/extensions/t
      type: "session_before_compact";
      preparation: CompactionPreparation;
      branchEntries: SessionEntry[];
+@@ -1594,6 +1596,9 @@
+  * Contains flag values (defaults set during registration, CLI values set after).
+  */
+ export interface ExtensionRuntimeState {
++    runSessionOperation: <T>(operation: () => Promise<T>) => Promise<T>;
++    runSessionCleanup: <T>(operation: () => Promise<T>) => Promise<T>;
++    runSessionOperationSync: <T>(operation: () => T) => T;
+     flagValues: Map<string, boolean | string>;
+     /** Legacy provider-config registrations queued during extension loading, processed when runner binds. */
+     pendingProviderRegistrations: Array<{
+@@ -1638,6 +1643,9 @@
+  * Provided to runner.initialize(), copied into the shared runtime.
+  */
+ export interface ExtensionActions {
++    runSessionOperation?: <T>(operation: () => Promise<T>) => Promise<T>;
++    runSessionCleanup?: <T>(operation: () => Promise<T>) => Promise<T>;
++    runSessionOperationSync?: <T>(operation: () => T) => T;
+     sendMessage: SendMessageHandler;
+     sendUserMessage: SendUserMessageHandler;
+     appendEntry: AppendEntryHandler;
+diff --git a/node_modules/@earendil-works/pi-coding-agent/dist/core/session-manager.d.ts b/node_modules/@earendil-works/pi-coding-agent/dist/core/session-manager.d.ts
+--- a/node_modules/@earendil-works/pi-coding-agent/dist/core/session-manager.d.ts
++++ b/node_modules/@earendil-works/pi-coding-agent/dist/core/session-manager.d.ts
+@@ -252,7 +252,7 @@
+      * first assistant reply) keeps the prompt on disk if the first turn never completes (#10000).
+      */
+     private _hasConversation;
+-    _persist(entry: SessionEntry): void;
++    _persist(entry: SessionEntry, requireExisting?: boolean): void;
+     private _appendEntry;
+     /** Append a message as child of current leaf, then advance leaf. Returns entry id.
+      * Does not allow writing CompactionSummaryMessage and BranchSummaryMessage directly.
+@@ -270,7 +270,7 @@
+     /** Append a compaction summary as child of current leaf, then advance leaf. Returns entry id. */
+     appendCompaction<T = unknown>(summary: string, firstKeptEntryId: string | null, tokensBefore: number, details?: T, fromHook?: boolean, usage?: Usage): string;
+     /** Append a custom entry (for extensions) as child of current leaf, then advance leaf. Returns entry id. */
+-    appendCustomEntry(customType: string, data?: unknown): string;
++    appendCustomEntry(customType: string, data?: unknown, options?: { requireExisting?: boolean }): string;
+     /** Append a session info entry (e.g., display name). Returns entry id. */
+     appendSessionInfo(name: string): string;
+     /** Get the current session name from the latest session_info entry, if any. */
+diff --git a/node_modules/@earendil-works/pi-coding-agent/dist/core/session-manager.js b/node_modules/@earendil-works/pi-coding-agent/dist/core/session-manager.js
+--- a/node_modules/@earendil-works/pi-coding-agent/dist/core/session-manager.js
++++ b/node_modules/@earendil-works/pi-coding-agent/dist/core/session-manager.js
+@@ -1,6 +1,6 @@
+ import { getCurrentSystemMessage, uuidv7, } from "@earendil-works/pi-ai";
+ import { randomUUID } from "crypto";
+-import { appendFileSync, closeSync, createReadStream, existsSync, mkdirSync, openSync, readdirSync, readSync, statSync, writeFileSync, } from "fs";
++import { appendFileSync, closeSync, constants, createReadStream, existsSync, mkdirSync, openSync, readdirSync, readSync, statSync, writeFileSync, } from "fs";
+ import { readdir, stat } from "fs/promises";
+ import { basename, join, resolve } from "path";
+ import { createInterface } from "readline";
+@@ -791,7 +791,10 @@
+     _hasConversation() {
+         return this.fileEntries.some((e) => e.type === "message" && (e.message.role === "user" || e.message.role === "assistant"));
+     }
+-    _persist(entry) {
++    _persist(entry, requireExisting = false) {
++        if (requireExisting && (!this.persist || !this.sessionFile || !this.flushed)) {
++            throw new Error("Maintenance requires an existing persisted session");
++        }
+         if (!this.persist || !this.sessionFile)
+             return;
+         if (!this.flushed) {
+@@ -809,14 +812,16 @@
+             this.flushed = true;
+         }
+         else {
+-            appendFileSync(this.sessionFile, `${JSON.stringify(entry)}\n`);
+-        }
+-    }
+-    _appendEntry(entry) {
++            // O_APPEND without O_CREAT must not recreate a history deleted by another owner.
++            appendFileSync(this.sessionFile, `${JSON.stringify(entry)}\n`,
++                requireExisting ? { flag: constants.O_WRONLY | constants.O_APPEND } : undefined);
++        }
++    }
++    _appendEntry(entry, requireExisting = false) {
+         this.fileEntries.push(entry);
+         this.byId.set(entry.id, entry);
+         this.leafId = entry.id;
+-        this._persist(entry);
++        this._persist(entry, requireExisting);
+     }
+     /** Append a message as child of current leaf, then advance leaf. Returns entry id.
+      * Does not allow writing CompactionSummaryMessage and BranchSummaryMessage directly.
+@@ -898,7 +903,7 @@
+         return entry.id;
+     }
+     /** Append a custom entry (for extensions) as child of current leaf, then advance leaf. Returns entry id. */
+-    appendCustomEntry(customType, data) {
++    appendCustomEntry(customType, data, options) {
+         const entry = {
+             type: "custom",
+             customType,
+@@ -907,7 +912,7 @@
+             parentId: this.leafId,
+             timestamp: new Date().toISOString(),
+         };
+-        this._appendEntry(entry);
++        this._appendEntry(entry, options?.requireExisting);
+         return entry.id;
+     }
+     /** Append a session info entry (e.g., display name). Returns entry id. */
 diff --git a/node_modules/@earendil-works/pi-coding-agent/dist/index.d.ts b/node_modules/@earendil-works/pi-coding-agent/dist/index.d.ts
 --- a/node_modules/@earendil-works/pi-coding-agent/dist/index.d.ts
 +++ b/node_modules/@earendil-works/pi-coding-agent/dist/index.d.ts
@@ -939,7 +1849,7 @@ diff --git a/node_modules/@earendil-works/pi-coding-agent/dist/index.d.ts b/node
  export { type Args, parseArgs } from "./cli/args.ts";
  export { CONFIG_DIR_NAME, getAgentDir, getDocsPath, getExamplesPath, getPackageDir, getReadmePath, VERSION, } from "./config.ts";
 -export { AgentSession, type AgentSessionConfig, type AgentSessionEvent, type AgentSessionEventListener, type ModelCycleResult, type ParsedSkillBlock, type PromptOptions, parseSkillBlock, type SessionStats, } from "./core/agent-session.ts";
-+export { AgentSession, type AgentSessionConfig, type CompactionPause, type CompactionRequestPolicy, type AgentSessionEvent, type AgentSessionEventListener, type ModelCycleResult, type ParsedSkillBlock, type PromptOptions, parseSkillBlock, type SessionStats, } from "./core/agent-session.ts";
++export { AgentSession, type SessionIdleLease, type AgentSessionConfig, type CompactionPause, type CompactionRequestPolicy, type AgentSessionEvent, type AgentSessionEventListener, type ModelCycleResult, type ParsedSkillBlock, type PromptOptions, parseSkillBlock, type SessionStats, } from "./core/agent-session.ts";
  export { readStoredCredential } from "./core/auth-storage.ts";
  export type { CacheWarmingDecision, CacheWarmingStatus } from "./core/cache-warmer.ts";
  export { type BranchPreparation, type BranchSummaryResult, type CollectEntriesResult, type CompactionResult, type CutPointResult, calculateContextTokens, collectEntriesForBranchSummary, compact, DEFAULT_COMPACTION_SETTINGS, estimateTokens, type FileOperations, findCutPoint, findTurnStartIndex, type GenerateBranchSummaryOptions, generateBranchSummary, generateSummary, generateSummaryWithUsage, getLastAssistantUsage, prepareBranchEntries, serializeConversation, shouldCompact, } from "./core/compaction/index.ts";

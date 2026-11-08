@@ -3,7 +3,6 @@ import { useState } from "react";
 import { useT } from "../../i18n";
 import { CoffeeIcon, EditIcon, FolderIcon, FolderOpenIcon, MoreIcon, PinIcon } from "../icons";
 import { RemoteEnvironmentIndicator } from "../remote/RemoteEnvironmentIndicator";
-import { ConfirmDialog } from "../ui/ConfirmDialog";
 import { ContextMenu } from "../ui/ContextMenu";
 import type { MenuAnchor } from "../ui/place-menu";
 import { projectMenuItems } from "./ProjectMenu";
@@ -16,8 +15,7 @@ import { projectMenuItems } from "./ProjectMenu";
  *
  * 行末按钮是行的**兄弟节点**（绝对定位浮在行右端）而不是嵌套 button——避免 button 套 button；
  * 菜单锚点用**指针点**（同 SessionRow 右键菜单），不然 placeMenu 会把按钮高度再算一遍、菜单掉到行下方左侧。
- * 「移除项目」走二次确认（ConfirmDialog，z-60 压过菜单）：菜单项 onSelect 先执行（开弹窗）、ContextMenu
- * 随后自己关闭，所以视觉上是「菜单消失 → 弹窗已在」；文案里的会话条数用 totalSessions（不受搜索影响）。
+ * 移除操作交给项目区域预览并确认。
  *
  * 图标槽：folder/folder-open/咖啡/图钉/箭头都装在 **16×16 固定容器**里居中
  * （v6 定稿）：图标自身宽度不同曾把标题顶得左右跳，现在文字 x 恒定；会话行缩进 6+16+8=30 也不变。
@@ -29,7 +27,6 @@ export function ProjectRow({
 	kind,
 	expanded,
 	pinned = false,
-	totalSessions = 0,
 	onToggle,
 	onNewSession,
 	onTogglePin,
@@ -40,7 +37,6 @@ export function ProjectRow({
 	kind: "daily" | "project";
 	expanded: boolean;
 	pinned?: boolean;
-	/** 会话总数（只有项目组传）：移除确认文案里的真实条数 */
 	totalSessions?: number;
 	onToggle: () => void;
 	/** 在该分组 cwd 下打开全局唯一 draft；日常与项目都有 */
@@ -52,7 +48,6 @@ export function ProjectRow({
 }) {
 	const t = useT();
 	const [anchor, setAnchor] = useState<MenuAnchor | null>(null);
-	const [confirming, setConfirming] = useState(false);
 	const togglePin = onTogglePin;
 	const remove = onRemove;
 	const icon =
@@ -114,27 +109,9 @@ export function ProjectRow({
 					items={projectMenuItems(t, {
 						pinned,
 						onTogglePin: togglePin,
-						onRemove: remove ? () => setConfirming(true) : undefined,
+						onRemove: remove,
 					})}
 					onClose={() => setAnchor(null)}
-				/>
-			)}
-			{confirming && remove && (
-				<ConfirmDialog
-					danger
-					title={t("sidebar.removeProjectTitle", { name: label })}
-					description={
-						totalSessions > 0
-							? t("sidebar.removeProjectDesc", { count: totalSessions })
-							: t("sidebar.removeProjectDescEmpty")
-					}
-					confirmLabel={t("sidebar.removeProject")}
-					cancelLabel={t("common.cancel")}
-					onConfirm={() => {
-						setConfirming(false);
-						remove();
-					}}
-					onCancel={() => setConfirming(false)}
 				/>
 			)}
 		</div>

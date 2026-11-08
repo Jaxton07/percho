@@ -105,7 +105,7 @@ async function fixture(
 		settingsManager,
 		resourceLoader,
 		noTools,
-		sessionManager: providedManager ?? SessionManager.create(cwd, join(root, "sessions")),
+		sessionManager: providedManager ?? SessionManager.create(cwd),
 		modelRuntime: {
 			getModel: () => model,
 			hasConfiguredAuth: () => true,
@@ -165,6 +165,7 @@ async function fixture(
 		},
 		composer,
 		resourceLoader,
+		agentDir,
 		cwd,
 		session,
 		requests,
@@ -353,6 +354,8 @@ describe("SDK 1.4 real offline run lifecycle", () => {
 		expect(fork.getSessionId()).not.toBe(sourceId);
 		expect(fork.getHeader()?.parentSession).toBe(file);
 		expect(fork.getEntries().map((entry) => entry.id)).toEqual(manager.getBranch().map((entry) => entry.id));
+		// Both registered sources belong to the first backend environment, not the fork runtime's settings.
+		vi.stubEnv("PI_CODING_AGENT_DIR", f.agentDir);
 		const backend = new PiBackend({ projectTrust: false, permissionGates: false, sessionMediaStore: media });
 		const registry = (backend as unknown as { registry: SessionRegistry }).registry;
 		for (const item of [f, other])

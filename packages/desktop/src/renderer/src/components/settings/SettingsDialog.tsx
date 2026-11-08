@@ -18,6 +18,7 @@ import {
 } from "../../stores/settings";
 import { useUiPluginsStore } from "../../stores/ui-plugins";
 import {
+	ArchiveIcon,
 	ChevronDownIcon,
 	DevicesIcon,
 	FileTextIcon,
@@ -33,6 +34,7 @@ import { RemoteConnectionPanel } from "../remote/RemoteConnectionDialog";
 import { SelectionMenu } from "../ui/SelectionMenu";
 import { AboutPanel } from "./AboutPanel";
 import { AppearancePanel } from "./AppearancePanel";
+import { ArchivedChatsPanel } from "./ArchivedChatsPanel";
 import { ExtensionsPanel } from "./extensions/ExtensionsPanel";
 import { GeneralPanel } from "./GeneralPanel";
 import { LanObserverPanel } from "./LanObserverPanel";
@@ -43,6 +45,7 @@ import { SkillsPanel } from "./SkillsPanel";
 const STATIC_CATEGORIES = [
 	"general",
 	"appearance",
+	"archived",
 	"models",
 	"skills",
 	"mcp",
@@ -55,6 +58,7 @@ const STATIC_CATEGORIES = [
 const CATEGORY_ICONS = {
 	general: GearIcon,
 	appearance: SunIcon,
+	archived: ArchiveIcon,
 	models: SlidersIcon,
 	skills: FileTextIcon,
 	mcp: SubagentIcon,
@@ -68,6 +72,7 @@ const CATEGORY_ICONS = {
 const PANELS: Partial<Record<SettingsCategory, ComponentType>> = {
 	general: GeneralPanel,
 	appearance: AppearancePanel,
+	archived: ArchivedChatsPanel,
 	models: ProvidersPanel,
 	skills: SkillsPanel,
 	mcp: McpPanel,

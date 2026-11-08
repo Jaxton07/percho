@@ -1,9 +1,10 @@
-import { type CSSProperties, useMemo, useRef, useState } from "react";
+import { environmentKey } from "@percho/shared";
+import { type CSSProperties, useRef, useState } from "react";
 import { useT } from "../../i18n";
 import { selectActiveCwd } from "../../lib/active-cwd";
-import { deriveSidebarNavigation } from "../../lib/sidebar-groups";
 import { useEdgeFade } from "../../lib/use-edge-fade";
 import { useProjectsStore } from "../../stores/projects";
+import { useSessionCatalogStore } from "../../stores/session-catalog";
 import { useSessionsStore } from "../../stores/sessions";
 import { useUiPreferencesStore } from "../../stores/ui-preferences";
 import { ProjectSection } from "./ProjectSection";
@@ -11,6 +12,7 @@ import { SidebarFooter } from "./SidebarFooter";
 import { SidebarGroup } from "./SidebarGroup";
 import { SidebarHeader } from "./SidebarHeader";
 import { SidebarResizeHandle } from "./SidebarResizeHandle";
+import { usePagedSidebar } from "./usePagedSidebar";
 import { useSidebarBatching } from "./useSidebarBatching";
 import { useSidebarRenderWidth } from "./useSidebarRenderWidth";
 
@@ -42,37 +44,18 @@ export function Sidebar() {
 	const addedProjects = useProjectsStore((s) => s.addedProjects);
 	const deleteProject = useProjectsStore((s) => s.deleteProject);
 	const activeSessionId = useSessionsStore((s) => s.activeSessionId);
-	// 内存会话（含刚创建还没进历史的真实会话与只读子会话）：与磁盘历史合并成左栏数据源（spec D2）
-	const memorySessions = useSessionsStore((s) => s.sessions);
 	// 默认展开组使用同一当前目录规则，不依赖外部seed的兼容镜像。
 	const activeCwd = useSessionsStore(selectActiveCwd);
 
-	// 装配全在纯函数层（含只读子会话过滤 + 项目表同源），Sidebar 只负责取数与分发
-	const data = useMemo(
-		() =>
-			deriveSidebarNavigation({
-				history: allSessions,
-				memory: memorySessions,
-				addedProjects,
-				search,
-				activeCwd,
-				pinnedSessions,
-				pinnedProjects,
-				expandedGroups,
-				expandedGroupsTouched,
-			}),
-		[
-			allSessions,
-			memorySessions,
-			addedProjects,
-			search,
-			activeCwd,
-			pinnedSessions,
-			pinnedProjects,
-			expandedGroups,
-			expandedGroupsTouched,
-		],
-	);
+	const { data, verified, catalogs, environments } = usePagedSidebar({
+		addedProjects,
+		activeCwd,
+		pinnedSessions,
+		pinnedProjects,
+		expandedGroups,
+		expandedGroupsTouched,
+	});
+	const paging = { search, verified, pinnedSessions, known: allSessions };
 
 	// 分批显示（每组 6 条 + 显示更多）与搜索临时展开：纯内存态，只在渲染时叠加到派生结果上。
 	// 首次开合的起点由派生层给（当前会话所在组），组件不自己再算一遍。
@@ -108,26 +91,47 @@ export function Sidebar() {
 							group={group}
 							activeSessionId={activeSessionId}
 							batching={batching}
+							paging={paging}
 						/>
 					))}
 					<ProjectSection
 						projects={data.projects}
 						activeSessionId={activeSessionId}
 						batching={batching}
+						paging={paging}
 						onTogglePin={toggleProjectPin}
-						onRemoveProject={(cwd) => {
-							// 计数等删除真的成功再清：失败了就留着，别让「已显示多少条」比真实数据跑在前面
-							void deleteProject(cwd).then(
-								() => batching.forget(cwd),
-								(error: unknown) => console.error("移除项目失败", error),
-							);
+						activeCwd={activeCwd}
+						visible={!collapsed}
+						onRemoveProject={async (cwd, token) => {
+							await deleteProject(cwd, token);
+							batching.forget(cwd);
 						}}
 					/>
-					{empty && (
-						<p className="px-1.5 py-6 text-center text-ui-12 text-ink-faint">
-							{search ? t("sidebar.searchEmpty") : t("sidebar.noSessions")}
-						</p>
-					)}
+					{environments.map((environment) => {
+						const catalog = catalogs[environmentKey(environment)];
+						return catalog?.error ? (
+							<button
+								key={environmentKey(environment)}
+								type="button"
+								className="px-1.5 text-ui-12 text-ink-faint hover:text-ink-2"
+								onClick={() => void useSessionCatalogStore.getState().loadProjects(environment)}
+							>
+								{t("sidebar.catalogRetry")}
+							</button>
+						) : catalog?.projects && !catalog.projects.complete ? (
+							<p key={environmentKey(environment)} className="px-1.5 text-ui-12 text-ink-faint">
+								{t("sidebar.catalogPartial")}
+							</p>
+						) : null;
+					})}
+					{empty &&
+						environments.every(
+							(environment) => catalogs[environmentKey(environment)]?.projects?.complete,
+						) && (
+							<p className="px-1.5 py-6 text-center text-ui-12 text-ink-faint">
+								{search ? t("sidebar.searchEmpty") : t("sidebar.noSessions")}
+							</p>
+						)}
 				</div>
 				<SidebarFooter />
 			</div>

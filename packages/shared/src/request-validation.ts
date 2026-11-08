@@ -42,6 +42,9 @@ export const input = {
 	text: rule<string>((value) => typeof value === "string"),
 	id: rule<string>((value) => typeof value === "string" && value.length > 0),
 	number: rule<number>((value) => typeof value === "number" && Number.isFinite(value)),
+	nonNegativeInt: rule<number>(
+		(value) => typeof value === "number" && Number.isSafeInteger(value) && value >= 0,
+	),
 	boolean: rule<boolean>((value) => typeof value === "boolean"),
 	optional<T>(value: InputRule<T>): InputRule<T> & { optional: true } {
 		return { ...value, optional: true };
