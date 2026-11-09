@@ -30,6 +30,7 @@ import type {
 	AppInfo,
 	AvailableModel,
 	ChannelWatchConfigInfo,
+	CompressionConfig,
 	ContextUsageInfo,
 	CreateSessionOptions,
 	GitBranches,
@@ -840,6 +841,18 @@ export const SETTINGS_CHANNELS = {
 		"environment",
 		"mutation",
 	)<{ enabled: boolean }, void>({ enabled: input.boolean }),
+	/** 上下文压缩两层开关（SDK 自动压缩 / Percho 护栏）：读当前归属，写后回读最新值 */
+	getCompressionConfig: ch("compression:getConfig", "environment", "read")<void, CompressionConfig>(),
+	setSdkAutoCompression: ch(
+		"compression:setSdkAutoEnabled",
+		"environment",
+		"mutation",
+	)<{ enabled: boolean }, CompressionConfig>({ enabled: input.boolean }),
+	setCompactionGuardEnabled: ch(
+		"compression:setGuardEnabled",
+		"environment",
+		"mutation",
+	)<{ enabled: boolean }, CompressionConfig>({ enabled: input.boolean }),
 	/** 项目信任请求应答（选项下标） */
 	respondTrust: ch(
 		"trust:respond",

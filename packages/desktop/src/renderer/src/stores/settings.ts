@@ -59,6 +59,10 @@ interface SettingsStore {
 	permissionGateOff: boolean | null;
 	/** channel-watch 跨会话频道唤醒开关（null = 未加载） */
 	channelWatchEnabled: boolean | null;
+	/** 上下文压缩两层开关（null = 未加载）：SDK 原生自动压缩 / Percho 压缩护栏 */
+	compressionSdkAuto: boolean | null;
+	compressionGuard: boolean | null;
+	compressionSaving: boolean;
 	codemodeEnabled: boolean | null;
 	codemodeOnly: boolean | null;
 	codemodeSaving: boolean;
@@ -101,6 +105,8 @@ interface SettingsStore {
 	/** 内置 subagent 执行器优先（新会话生效） */
 	setSubagentPreferBuiltin: (enabled: boolean) => Promise<void>;
 	setChannelWatchEnabled: (enabled: boolean) => Promise<void>;
+	setCompressionSdkAuto: (enabled: boolean) => Promise<void>;
+	setCompressionGuard: (enabled: boolean) => Promise<void>;
 	setCodemodeEnabled: (enabled: boolean) => Promise<void>;
 	setCodemodeOnly: (only: boolean) => Promise<void>;
 	refreshLanStatus: () => Promise<void>;
@@ -380,6 +386,11 @@ function createSettingsStore(environment: EnvironmentRef) {
 				.getChannelWatchConfig()
 				.then((cw) => set({ channelWatchEnabled: cw.enabled }))
 				.catch(() => {});
+			// 压缩两层开关：读不到就留 null（UI 置灰），绝不拿默认值冒充当前状态
+			void getExecutionApi(environment)
+				.getCompressionConfig()
+				.then((c) => set({ compressionSdkAuto: c.sdkAutoEnabled, compressionGuard: c.guardEnabled }))
+				.catch(() => {});
 		};
 		const loadModelsData = async (mode: "local" | "mutation"): Promise<void> => {
 			void readPrefs().catch((error) =>
@@ -439,6 +450,9 @@ function createSettingsStore(environment: EnvironmentRef) {
 			refreshing: false,
 			permissionGateOff: null,
 			channelWatchEnabled: null,
+			compressionSdkAuto: null,
+			compressionGuard: null,
+			compressionSaving: false,
 			codemodeEnabled: null,
 			codemodeOnly: null,
 			codemodeSaving: false,
@@ -504,6 +518,43 @@ function createSettingsStore(environment: EnvironmentRef) {
 						channelWatchEnabled: previous,
 						error: error instanceof Error ? error.message : String(error),
 					});
+				}
+			},
+
+			setCompressionSdkAuto: async (enabled) => {
+				if (get().compressionSaving) return;
+				const previous = { sdk: get().compressionSdkAuto, guard: get().compressionGuard };
+				set({ compressionSaving: true, compressionSdkAuto: enabled });
+				try {
+					// 后端回读权威值（两层一起返回，避免 UI 与盘上不一致）
+					const next = await getExecutionApi(environment).setSdkAutoCompression({ enabled });
+					set({ compressionSdkAuto: next.sdkAutoEnabled, compressionGuard: next.guardEnabled, error: null });
+				} catch (error) {
+					set({
+						compressionSdkAuto: previous.sdk,
+						compressionGuard: previous.guard,
+						error: error instanceof Error ? error.message : String(error),
+					});
+				} finally {
+					set({ compressionSaving: false });
+				}
+			},
+
+			setCompressionGuard: async (enabled) => {
+				if (get().compressionSaving) return;
+				const previous = { sdk: get().compressionSdkAuto, guard: get().compressionGuard };
+				set({ compressionSaving: true, compressionGuard: enabled });
+				try {
+					const next = await getExecutionApi(environment).setCompactionGuardEnabled({ enabled });
+					set({ compressionSdkAuto: next.sdkAutoEnabled, compressionGuard: next.guardEnabled, error: null });
+				} catch (error) {
+					set({
+						compressionSdkAuto: previous.sdk,
+						compressionGuard: previous.guard,
+						error: error instanceof Error ? error.message : String(error),
+					});
+				} finally {
+					set({ compressionSaving: false });
 				}
 			},
 

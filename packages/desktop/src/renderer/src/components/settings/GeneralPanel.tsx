@@ -8,7 +8,7 @@ import { TaskNotificationSettings } from "./TaskNotificationSettings";
 
 const LANGUAGES: Language[] = ["zh", "en"];
 
-/** 通用设置面板（上下文蒸发为内置常开策略，不提供开关） */
+/** 通用设置面板（上下文压缩：内核自动压缩 / Percho 护栏各一个开关；上下文蒸发为内置常开策略，不提供开关） */
 export function GeneralPanel() {
 	const t = useT();
 	const codemodeEnabled = useSettingsStore((s) => s.codemodeEnabled);
@@ -20,6 +20,11 @@ export function GeneralPanel() {
 	const setLanguage = useI18nStore((s) => s.setLanguage);
 	const channelWatchEnabled = useSettingsStore((s) => s.channelWatchEnabled);
 	const setChannelWatchEnabled = useSettingsStore((s) => s.setChannelWatchEnabled);
+	const compressionSdkAuto = useSettingsStore((s) => s.compressionSdkAuto);
+	const compressionGuard = useSettingsStore((s) => s.compressionGuard);
+	const compressionSaving = useSettingsStore((s) => s.compressionSaving);
+	const setCompressionSdkAuto = useSettingsStore((s) => s.setCompressionSdkAuto);
+	const setCompressionGuard = useSettingsStore((s) => s.setCompressionGuard);
 
 	return (
 		<div className="flex flex-col gap-6">
@@ -39,6 +44,22 @@ export function GeneralPanel() {
 					checked={codemodeOnly === true}
 					disabled={codemodeEnabled !== true || codemodeOnly === null || codemodeSaving}
 					onCheckedChange={(only) => void setCodemodeOnly(only)}
+				/>
+			</div>
+			<div>
+				<SettingsSwitchRow
+					title={t("settings.compressionSdk")}
+					hint={t("settings.compressionSdkHint")}
+					checked={compressionSdkAuto === true}
+					disabled={compressionSdkAuto === null || compressionSaving}
+					onCheckedChange={(enabled) => void setCompressionSdkAuto(enabled)}
+				/>
+				<SettingsSwitchRow
+					title={t("settings.compressionGuard")}
+					hint={t("settings.compressionGuardHint")}
+					checked={compressionGuard === true}
+					disabled={compressionGuard === null || compressionSaving}
+					onCheckedChange={(enabled) => void setCompressionGuard(enabled)}
 				/>
 			</div>
 			<div>
