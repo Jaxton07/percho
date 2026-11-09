@@ -712,7 +712,7 @@ export const en: Messages = {
 			"Turns everything else off: kernel auto-compaction, the compaction guard, and context evaporation. Turning it off restores each layer to its own pre-takeover state (not simply “all on”). A plugin can only cancel the kernel's threshold/overflow compaction — the guard and evaporation can only be disabled here.",
 		compressionEvaporation: "Context evaporation (Percho)",
 		compressionEvaporationHint:
-			"Built-in and always on, with no switch of its own; it trims each tool result as it enters the context and interferes with third-party compression, so it steps aside during takeover.",
+			"Trims older tool results as they enter the context — a different mechanism from summarizing the whole history. A third-party plugin cannot cancel it, so takeover forces it off.",
 		codemode: "Code Mode",
 		codemodeOnly: "Code Mode only",
 		codemodeOnlyHint:

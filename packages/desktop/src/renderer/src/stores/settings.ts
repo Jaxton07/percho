@@ -109,6 +109,7 @@ interface SettingsStore {
 	setChannelWatchEnabled: (enabled: boolean) => Promise<void>;
 	setCompressionSdkAuto: (enabled: boolean) => Promise<void>;
 	setCompressionTakeover: (enabled: boolean) => Promise<void>;
+	setCompressionEvaporation: (enabled: boolean) => Promise<void>;
 	setCompressionGuard: (enabled: boolean) => Promise<void>;
 	setCodemodeEnabled: (enabled: boolean) => Promise<void>;
 	setCodemodeOnly: (only: boolean) => Promise<void>;
@@ -530,6 +531,37 @@ function createSettingsStore(environment: EnvironmentRef) {
 						channelWatchEnabled: previous,
 						error: error instanceof Error ? error.message : String(error),
 					});
+				}
+			},
+
+			setCompressionEvaporation: async (enabled) => {
+				if (get().compressionSaving) return;
+				const previous = {
+					sdk: get().compressionSdkAuto,
+					guard: get().compressionGuard,
+					takeover: get().compressionTakeover,
+					evap: get().compressionEvaporation,
+				};
+				set({ compressionSaving: true, compressionEvaporation: enabled });
+				try {
+					const next = await getExecutionApi(environment).setEvaporationEnabled({ enabled });
+					set({
+						compressionTakeover: next.takeover,
+						compressionSdkAuto: next.sdkAutoEnabled,
+						compressionGuard: next.guardEnabled,
+						compressionEvaporation: next.evaporationEnabled,
+						error: null,
+					});
+				} catch (error) {
+					set({
+						compressionTakeover: previous.takeover,
+						compressionSdkAuto: previous.sdk,
+						compressionGuard: previous.guard,
+						compressionEvaporation: previous.evap,
+						error: error instanceof Error ? error.message : String(error),
+					});
+				} finally {
+					set({ compressionSaving: false });
 				}
 			},
 

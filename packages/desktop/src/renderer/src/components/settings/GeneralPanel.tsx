@@ -8,7 +8,7 @@ import { TaskNotificationSettings } from "./TaskNotificationSettings";
 
 const LANGUAGES: Language[] = ["zh", "en"];
 
-/** 通用设置面板（上下文压缩：主开关“第三方接管”+ 三个可见子层；蒸发无自有开关，接管期间自动让位） */
+/** 通用设置面板（上下文压缩：主开关“第三方接管”+ 三个可见子层；接管会记住各层原值，解除时逐项恢复） */
 export function GeneralPanel() {
 	const t = useT();
 	const codemodeEnabled = useSettingsStore((s) => s.codemodeEnabled);
@@ -24,6 +24,7 @@ export function GeneralPanel() {
 	const compressionTakeover = useSettingsStore((s) => s.compressionTakeover);
 	const compressionEvaporation = useSettingsStore((s) => s.compressionEvaporation);
 	const setCompressionTakeover = useSettingsStore((s) => s.setCompressionTakeover);
+	const setCompressionEvaporation = useSettingsStore((s) => s.setCompressionEvaporation);
 	const compressionGuard = useSettingsStore((s) => s.compressionGuard);
 	const compressionSaving = useSettingsStore((s) => s.compressionSaving);
 	const setCompressionSdkAuto = useSettingsStore((s) => s.setCompressionSdkAuto);
@@ -77,8 +78,8 @@ export function GeneralPanel() {
 						title={t("settings.compressionEvaporation")}
 						hint={t("settings.compressionEvaporationHint")}
 						checked={compressionEvaporation === true}
-						disabled
-						onCheckedChange={() => {}}
+						disabled={compressionEvaporation === null || compressionSaving || compressionTakeover === true}
+						onCheckedChange={(enabled) => void setCompressionEvaporation(enabled)}
 					/>
 				</div>
 			</div>
