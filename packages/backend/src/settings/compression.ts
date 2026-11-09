@@ -63,10 +63,20 @@ function readSettings(agentDir: string): Record<string, unknown> {
 
 export function readCompressionConfig(agentDir: string): CompressionConfig {
 	const settings = readSettings(agentDir);
+	const takeover = isRecord(settings.compressionTakeover) && settings.compressionTakeover.enabled === true;
+	return {
+		...layerStates(settings),
+		takeover,
+		// 蒸发无自有开关（上游已废 `enabled`、内置常开）：它的状态由接管意图派生。
+		evaporationEnabled: !takeover,
+	};
+}
+
+/** 两层各自的盘上状态（缺 key = 开，只有显式 false 才关）+ 护栏阈值 */
+function layerStates(settings: Record<string, unknown>) {
 	const compaction = isRecord(settings.compaction) ? settings.compaction : {};
 	const guard = isRecord(settings.compactionGuard) ? settings.compactionGuard : {};
 	return {
-		// 缺 key = 开（两层都是「只有显式 false 才关」）
 		sdkAutoEnabled: compaction.enabled !== false,
 		guardEnabled: guard.enabled !== false,
 		thresholdPct:
@@ -106,4 +116,45 @@ export function writeCompactionGuardEnabled(agentDir: string, enabled: boolean):
 		existing.compactionGuard = guard;
 	});
 	log.info("压缩护栏开关已保存", enabled);
+}
+
+/**
+ * 主开关：第三方压缩接管（billion-context 等）。它的语义是「意图」而不是第三个并列布尔：
+ * 开 = 先把两层当前值快照到 `compressionTakeover.saved`，再把两层强制关（蒸发由 `evaporationEnabled` 派生关）；
+ * 关 = 按快照逐项恢复（不是统统打开——原本就是关的层保持关）。
+ *
+ * 为什么不能只在读时 override：SDK 自己的阈值压缩直读 `compaction.enabled`（settings-manager），
+ * 不经本模块，所以必须落盘才真能让位。
+ *
+ * 重复开不覆盖快照（否则第二次开会把“已全部关”当成原值钉死）；没开过就关 → 不动任何层。
+ */
+export function setCompressionTakeover(agentDir: string, enabled: boolean): void {
+	settingsStore(agentDir).updateSync((existing) => {
+		const takeover = isRecord(existing.compressionTakeover) ? existing.compressionTakeover : {};
+		const wasOn = takeover.enabled === true;
+		if (enabled) {
+			if (!wasOn) {
+				const states = layerStates(existing);
+				takeover.saved = { sdk: states.sdkAutoEnabled, guard: states.guardEnabled };
+			}
+			const compaction = isRecord(existing.compaction) ? existing.compaction : {};
+			compaction.enabled = false;
+			existing.compaction = compaction;
+			const guard = isRecord(existing.compactionGuard) ? existing.compactionGuard : {};
+			guard.enabled = false;
+			existing.compactionGuard = guard;
+		} else if (wasOn) {
+			const saved = isRecord(takeover.saved) ? takeover.saved : {};
+			const compaction = isRecord(existing.compaction) ? existing.compaction : {};
+			compaction.enabled = saved.sdk !== false;
+			existing.compaction = compaction;
+			const guard = isRecord(existing.compactionGuard) ? existing.compactionGuard : {};
+			guard.enabled = saved.guard !== false;
+			existing.compactionGuard = guard;
+			delete takeover.saved;
+		}
+		takeover.enabled = enabled;
+		existing.compressionTakeover = takeover;
+	});
+	log.info("第三方压缩接管开关已保存", enabled);
 }

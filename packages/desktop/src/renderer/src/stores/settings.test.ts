@@ -10,13 +10,40 @@ const piMock = vi.hoisted(() => ({
 	setCodemodeEnabled: vi.fn(() => Promise.resolve()),
 	setChannelWatchEnabled: vi.fn(() => Promise.resolve()),
 	getCompressionConfig: vi.fn(() =>
-		Promise.resolve({ sdkAutoEnabled: true, guardEnabled: true, thresholdPct: 80 }),
+		Promise.resolve({
+			takeover: false,
+			sdkAutoEnabled: true,
+			guardEnabled: true,
+			evaporationEnabled: true,
+			thresholdPct: 80,
+		}),
 	),
 	setSdkAutoCompression: vi.fn(() =>
-		Promise.resolve({ sdkAutoEnabled: false, guardEnabled: true, thresholdPct: 80 }),
+		Promise.resolve({
+			takeover: false,
+			sdkAutoEnabled: false,
+			guardEnabled: true,
+			evaporationEnabled: true,
+			thresholdPct: 80,
+		}),
 	),
 	setCompactionGuardEnabled: vi.fn(() =>
-		Promise.resolve({ sdkAutoEnabled: false, guardEnabled: false, thresholdPct: 80 }),
+		Promise.resolve({
+			takeover: false,
+			sdkAutoEnabled: false,
+			guardEnabled: false,
+			evaporationEnabled: true,
+			thresholdPct: 80,
+		}),
+	),
+	setCompressionTakeover: vi.fn(() =>
+		Promise.resolve({
+			takeover: true,
+			sdkAutoEnabled: false,
+			guardEnabled: false,
+			evaporationEnabled: false,
+			thresholdPct: 80,
+		}),
 	),
 	lanGetStatus: vi.fn(() => Promise.resolve(null)),
 	listProviders: vi.fn(() => Promise.resolve([])),
@@ -40,6 +67,8 @@ function resetStore() {
 		channelWatchEnabled: null,
 		compressionSdkAuto: null,
 		compressionGuard: null,
+		compressionTakeover: null,
+		compressionEvaporation: null,
 		compressionSaving: false,
 		codemodeEnabled: null,
 		codemodeOnly: null,
@@ -57,18 +86,26 @@ beforeEach(() => {
 describe("settings store：上下文压缩两层开关（乐观 + 后端回读权威值 + 失败回滚）", () => {
 	it("独立加载：两层状态进 store；读不到保持 null", async () => {
 		piMock.getCompressionConfig.mockResolvedValue({
+			takeover: false,
 			sdkAutoEnabled: true,
 			guardEnabled: false,
+			evaporationEnabled: true,
 			thresholdPct: 60,
 		});
 		await useSettingsStore.getState().refresh();
 		expect(useSettingsStore.getState().compressionSdkAuto).toBe(true);
 		expect(useSettingsStore.getState().compressionGuard).toBe(false);
 		piMock.getCompressionConfig.mockRejectedValue(new Error("boom"));
-		useSettingsStore.setState({ compressionSdkAuto: null, compressionGuard: null });
+		useSettingsStore.setState({
+			compressionSdkAuto: null,
+			compressionGuard: null,
+			compressionTakeover: null,
+			compressionEvaporation: null,
+		});
 		await useSettingsStore.getState().refresh();
 		expect(useSettingsStore.getState().compressionSdkAuto).toBeNull();
 		expect(useSettingsStore.getState().compressionGuard).toBeNull();
+		expect(useSettingsStore.getState().compressionTakeover).toBeNull();
 	});
 
 	it("关护栏：以后端回读的两层值为准（不只信本地那个开关）", async () => {
@@ -88,6 +125,40 @@ describe("settings store：上下文压缩两层开关（乐观 + 后端回读�
 		expect(useSettingsStore.getState().compressionGuard).toBe(true);
 		expect(useSettingsStore.getState().error).toBe("写盘失败");
 		expect(useSettingsStore.getState().compressionSaving).toBe(false);
+	});
+
+	it("接管主开关：子层以后端回读值为准（连带关掉，不只信本地）", async () => {
+		useSettingsStore.setState({
+			compressionTakeover: false,
+			compressionSdkAuto: true,
+			compressionGuard: true,
+			compressionEvaporation: true,
+		});
+		await useSettingsStore.getState().setCompressionTakeover(true);
+		expect(piMock.setCompressionTakeover).toHaveBeenCalledWith({ enabled: true });
+		const s = useSettingsStore.getState();
+		expect(s.compressionTakeover).toBe(true);
+		expect(s.compressionSdkAuto).toBe(false);
+		expect(s.compressionGuard).toBe(false);
+		expect(s.compressionEvaporation).toBe(false);
+	});
+
+	it("接管写失败：四个值一起回滚", async () => {
+		useSettingsStore.setState({
+			compressionTakeover: false,
+			compressionSdkAuto: true,
+			compressionGuard: false,
+			compressionEvaporation: true,
+		});
+		piMock.setCompressionTakeover.mockRejectedValueOnce(new Error("接管写盘失败"));
+		await useSettingsStore.getState().setCompressionTakeover(true);
+		const s = useSettingsStore.getState();
+		expect(s.compressionTakeover).toBe(false);
+		expect(s.compressionSdkAuto).toBe(true);
+		expect(s.compressionGuard).toBe(false);
+		expect(s.compressionEvaporation).toBe(true);
+		expect(s.error).toBe("接管写盘失败");
+		expect(s.compressionSaving).toBe(false);
 	});
 });
 

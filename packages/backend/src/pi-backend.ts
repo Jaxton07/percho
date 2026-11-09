@@ -152,6 +152,7 @@ import {
 } from "./settings/codemode";
 import {
 	readCompressionConfig,
+	setCompressionTakeover,
 	writeCompactionGuardEnabled,
 	writeSdkAutoCompression,
 } from "./settings/compression";
@@ -877,6 +878,8 @@ export class PiBackend {
 		factories.push(
 			makeEvapExtension({
 				agentDir: getAgentDir(),
+				// 接管期间蒸发让位（第三方插件接管全部上下文管理）：每次实时读，切开关不需重开会话。
+				isEnabled: () => readCompressionConfig(getAgentDir()).evaporationEnabled,
 				reporter: (sessionId, batch) => {
 					reportEvapBatch(sessionId, batch);
 					this.traces.recordCustom(sessionId, "evap_batch", batch);
@@ -3050,6 +3053,27 @@ export class PiBackend {
 	setCompactionGuardEnabled(enabled: boolean): import("@percho/shared").CompressionConfig {
 		writeCompactionGuardEnabled(getAgentDir(), enabled);
 		return readCompressionConfig(getAgentDir());
+	}
+
+	/**
+	 * 主开关：第三方压缩接管。落盘（快照+强关两层）+ 把 SDK 层热推到已跑会话；
+	 * 蒸发层靠 `isEnabled` 闭包实时读，无需推送。
+	 */
+	setCompressionTakeover(enabled: boolean): import("@percho/shared").CompressionConfig {
+		setCompressionTakeover(getAgentDir(), enabled);
+		const next = readCompressionConfig(getAgentDir());
+		for (const entry of this.registry.list()) {
+			if (entry.readOnly) continue;
+			try {
+				entry.session.settingsManager?.setCompactionEnabled(next.sdkAutoEnabled);
+			} catch (err) {
+				log.warn("接管切换时会话内压缩开关热推失败（不影响已落盘值）", {
+					cwd: entry.cwd,
+					error: err instanceof Error ? err.message : String(err),
+				});
+			}
+		}
+		return next;
 	}
 
 	respondTrust(requestId: string, answer: TrustAnswer): void {
