@@ -1,75 +1,200 @@
 import { type RefObject, useLayoutEffect, useRef } from "react";
 
-/** 与顶栏拖拽让位（`SORT_EASE` 220ms）同一手感：增删让位和拖拽让位不该是两套节奏 */
-const SHIFT_EASE = "cubic-bezier(0.2, 0, 0, 1)";
-const SHIFT_DURATION = 220;
-/** 新出现的项淡入（比让位短，避免和让位叠加时显得拖沓） */
-const APPEAR_DURATION = 140;
-
+interface Point {
+	x: number;
+	y: number;
+	layoutOnly: boolean;
+}
+const duration = 220;
+const easing = "cubic-bezier(0.2, 0, 0, 1)";
 export function prefersReducedMotion(): boolean {
 	return window.matchMedia("(prefers-reduced-motion: reduce)").matches;
 }
 
-interface ItemBox {
-	x: number;
-	y: number;
-	el: HTMLElement;
+function cancelAnimation(animation: Animation | null) {
+	if (!animation) return;
+	// Layout changes deliberately cancel in-flight effects; their finished promise rejects on cancel.
+	void animation.finished.catch(() => {});
+	animation.cancel();
+}
+
+function cancelAnimations(
+	height: { current: Animation | null },
+	moves: Map<HTMLElement, Animation>,
+	incoming: Set<Animation>,
+) {
+	cancelAnimation(height.current);
+	height.current = null;
+	for (const animation of moves.values()) cancelAnimation(animation);
+	moves.clear();
+	for (const animation of incoming) cancelAnimation(animation);
+	incoming.clear();
 }
 
 /**
- * 列表**增删**时让其余项滑动到位（FLIP），而不是瞬间跳位。
- *
- * 为什么不用 View Transitions：它会把整页做成快照（含根快照跨淡），和流式正文、侧栏宽度过渡叠加
- * 容易出闪；这里只需要一列胶囊/一列短线，自己量前后位置更可控、也更好测。
- *
- * 为什么只处理「增删」不处理「重排」：重排只来自 dnd-kit 拖拽，而它自带让位/落位过渡
- * （`useSortable({transition})`）—— 两套都上会互相打架。
- *
- * 约定：容器内每个项带 `data-shift-key="<稳定 id>"`；位置取 `offsetLeft/offsetTop`
- * （相对 offsetParent，天然免疫容器自身滚动 —— 用 `getBoundingClientRect` 会因为
- * 顶栏横向滚动产生幻影位移）。返回的 ref 挂到容器上。
- *
- * 每次渲染都记录位置（只在 key 变化时记录会拿到过期基线）；`skip` 用于拖拽在途时让位。
+ * FLIP 让位动画：容器内带 data-shift-key 的项增减时，让现有项从旧位置滑向新位置。
+ * 不处理纯重排，拖拽在途用 skip；只用局部布局坐标，不把滚动当成位移。
+ * 不用全页 View Transitions，避免根快照跨淡与流式正文/侧栏宽度过渡叠加而闪。
+ * collapse 同时照顾列表高度/尾部，并在收拢完成后淡入补页项，避免新旧行交叠。
  */
-export function useListShift(opts?: { skip?: boolean }): RefObject<HTMLDivElement | null> {
-	const containerRef = useRef<HTMLDivElement | null>(null);
-	const prev = useRef(new Map<string, ItemBox>());
-	const skip = opts?.skip ?? false;
+export function useListShift({
+	collapse = false,
+	skip = false,
+}: {
+	collapse?: boolean;
+	skip?: boolean;
+} = {}): RefObject<HTMLDivElement | null> {
+	const ref = useRef<HTMLDivElement>(null);
+	const previous = useRef(new Map<string, Point>());
+	const previousHeight = useRef(0);
+	const heightAnimation = useRef<Animation | null>(null);
+	const moves = useRef(new Map<HTMLElement, Animation>());
+	const incoming = useRef(new Set<Animation>());
+	const settlingUntil = useRef(0);
 
 	useLayoutEffect(() => {
-		const container = containerRef.current;
-		if (!container) return;
-		const items = new Map<string, ItemBox>();
-		for (const el of container.querySelectorAll<HTMLElement>("[data-shift-key]")) {
-			const key = el.dataset.shiftKey;
-			if (key) items.set(key, { x: el.offsetLeft, y: el.offsetTop, el });
+		const container = ref.current;
+		if (!container) {
+			cancelAnimations(heightAnimation, moves.current, incoming.current);
+			previous.current.clear();
+			previousHeight.current = 0;
+			settlingUntil.current = 0;
+			return;
 		}
-		const before = prev.current;
-		const added = [...items.keys()].filter((key) => !before.has(key));
-		const removedKeys = [...before.keys()].filter((key) => !items.has(key));
-		// 只在集合真的变了才动（纯重排交给 dnd-kit）；首帧（before 为空）不动
-		const setChanged = before.size > 0 && (added.length > 0 || removedKeys.length > 0);
-		if (setChanged && !skip && !prefersReducedMotion()) {
-			for (const [key, item] of items) {
-				const from = before.get(key);
-				if (!from) {
-					item.el.animate([{ opacity: 0 }, { opacity: 1 }], {
-						duration: APPEAR_DURATION,
-						easing: SHIFT_EASE,
-					});
-					continue;
-				}
-				const dx = from.x - item.x;
-				const dy = from.y - item.y;
-				if (Math.abs(dx) < 0.5 && Math.abs(dy) < 0.5) continue;
-				item.el.animate(
-					[{ transform: `translate(${dx}px, ${dy}px)` }, { transform: "translate(0px, 0px)" }],
-					{ duration: SHIFT_DURATION, easing: SHIFT_EASE },
-				);
+		const nodes = Array.from(container.querySelectorAll<HTMLElement>("[data-shift-key]"));
+		const live = new Set(nodes);
+		for (const [node, animation] of moves.current) {
+			if (!live.has(node)) {
+				cancelAnimation(animation);
+				moves.current.delete(node);
 			}
 		}
-		prev.current = items;
+		for (const animation of incoming.current) {
+			const target = (animation.effect as KeyframeEffect | null)?.target;
+			if (!target || !live.has(target as HTMLElement)) {
+				cancelAnimation(animation);
+				incoming.current.delete(animation);
+			}
+		}
+		const reduced = prefersReducedMotion();
+		if (reduced) cancelAnimations(heightAnimation, moves.current, incoming.current);
+		const next = new Map<string, Point>();
+		for (const node of nodes) {
+			const key = node.dataset.shiftKey;
+			if (key)
+				next.set(key, {
+					x: node.offsetLeft,
+					y: node.offsetTop,
+					layoutOnly: node.hasAttribute("data-shift-layout-only"),
+				});
+		}
+		const prev = previous.current;
+		previous.current = next;
+		// A footer disappearing on the final page is not a removed session.
+		const removed = [...prev].some(([key, point]) => !next.has(key) && (!collapse || !point.layoutOnly));
+		const changed = removed || [...next.keys()].some((key) => !prev.has(key));
+		if (!changed || prev.size === 0 || reduced || skip) {
+			if (!heightAnimation.current) previousHeight.current = container.offsetHeight;
+			return;
+		}
+
+		const now = performance.now();
+		// Progressive catalog pages replace keys while keeping their size: that is refresh, not deletion.
+		const shrank =
+			collapse &&
+			removed &&
+			[...next.values()].filter((point) => !point.layoutOnly).length <
+				[...prev.values()].filter((point) => !point.layoutOnly).length;
+		if (collapse && removed && !shrank) {
+			// A refreshed page must not renew an earlier deletion's hidden phase.
+			cancelAnimations(heightAnimation, moves.current, incoming.current);
+			settlingUntil.current = 0;
+		}
+		const collapsing = collapse && (shrank || now < settlingUntil.current);
+		if (collapse && !collapsing) {
+			previousHeight.current = container.offsetHeight;
+			return;
+		}
+		if (collapsing) {
+			const fromHeight = heightAnimation.current
+				? container.getBoundingClientRect().height
+				: previousHeight.current;
+			cancelAnimation(heightAnimation.current);
+			heightAnimation.current = null;
+			const toHeight = container.offsetHeight;
+			previousHeight.current = toHeight;
+			settlingUntil.current = now + duration;
+			if (fromHeight !== toHeight) {
+				const animation = container.animate([{ height: `${fromHeight}px` }, { height: `${toHeight}px` }], {
+					duration,
+					easing,
+				});
+				heightAnimation.current = animation;
+				animation.onfinish = () => {
+					if (heightAnimation.current === animation) heightAnimation.current = null;
+				};
+			}
+		}
+
+		for (const node of nodes) {
+			const key = node.dataset.shiftKey;
+			const old = key ? prev.get(key) : undefined;
+			const point = key ? next.get(key) : undefined;
+			if (!point) continue;
+			if (!old) {
+				if (collapsing) {
+					const animation = node.animate(
+						[
+							{ opacity: 0, visibility: "hidden" },
+							{ opacity: 1, visibility: "visible" },
+						],
+						{
+							duration: 100,
+							delay: Math.max(0, settlingUntil.current - performance.now()),
+							fill: "backwards",
+						},
+					);
+					incoming.current.add(animation);
+					animation.onfinish = () => incoming.current.delete(animation);
+				} else if (!collapse) {
+					node.animate([{ opacity: 0 }, { opacity: 1 }], { duration: 140, easing });
+				}
+				continue;
+			}
+			let dx = old.x - point.x;
+			let dy = old.y - point.y;
+			if (Math.abs(dx) < 0.5 && Math.abs(dy) < 0.5) continue;
+			if (collapse) {
+				const active = moves.current.get(node);
+				if (active) {
+					const transform = getComputedStyle(node).transform;
+					if (transform && transform !== "none") {
+						const matrix = new DOMMatrixReadOnly(transform);
+						dx += matrix.m41;
+						dy += matrix.m42;
+					}
+					cancelAnimation(active);
+					moves.current.delete(node);
+				}
+			}
+			if (Math.abs(dx) < 0.5 && Math.abs(dy) < 0.5) continue;
+			const animation = node.animate(
+				[{ transform: `translate(${dx}px, ${dy}px)` }, { transform: "translate(0px, 0px)" }],
+				{ duration, easing },
+			);
+			if (collapse) {
+				moves.current.set(node, animation);
+				animation.onfinish = () => {
+					if (moves.current.get(node) === animation) moves.current.delete(node);
+				};
+			}
+		}
 	});
 
-	return containerRef;
+	useLayoutEffect(() => {
+		const animations = moves.current;
+		const fades = incoming.current;
+		return () => cancelAnimations(heightAnimation, animations, fades);
+	}, []);
+	return ref;
 }

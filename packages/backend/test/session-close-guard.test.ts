@@ -14,7 +14,16 @@ import type { SessionRegistry } from "../src/session/registry";
 // OS 临时目录（同 test/permission-extension.test.ts 的约定）：**不要**用 `process.cwd()/.local/tmp`
 // —— workspace 脚本的 cwd 是 packages/backend，仓根跑与包内跑不一致会让整个文件加载失败（= 测试静默不跑）
 const root = mkdtempSync(join(tmpdir(), "pi-close-guard-"));
-afterAll(() => rmSync(root, { recursive: true, force: true }));
+const previousAgentDir = process.env.PI_CODING_AGENT_DIR;
+process.env.PI_CODING_AGENT_DIR = join(root, "agent");
+mkdirSync(join(process.env.PI_CODING_AGENT_DIR, "sessions"), { recursive: true });
+const backends: PiBackend[] = [];
+afterAll(async () => {
+	for (const backend of backends) await backend.dispose();
+	if (previousAgentDir === undefined) delete process.env.PI_CODING_AGENT_DIR;
+	else process.env.PI_CODING_AGENT_DIR = previousAgentDir;
+	rmSync(root, { recursive: true, force: true });
+});
 
 function makeBackend(sessionId: string, streaming: boolean, sessionFile?: string, topics: string[] = []) {
 	const backend = new PiBackend({
@@ -22,6 +31,7 @@ function makeBackend(sessionId: string, streaming: boolean, sessionFile?: string
 		permissionGates: false,
 		sessionMediaStore: new SessionMediaStore(join(root, "media")),
 	});
+	backends.push(backend);
 	const registry = (backend as unknown as { registry: SessionRegistry }).registry;
 	const dispose = vi.fn();
 	registry.add({
@@ -69,7 +79,10 @@ describe("PiBackend.deleteSession 绕开守卫", () => {
 		const dir = join(root, "proj");
 		mkdirSync(dir, { recursive: true });
 		const file = join(dir, "s4.jsonl");
-		writeFileSync(file, "");
+		writeFileSync(
+			file,
+			`${JSON.stringify({ type: "session", id: "s4", cwd: root, timestamp: new Date().toISOString() })}\n`,
+		);
 		const { backend, registry, dispose } = makeBackend("s4", true, file);
 
 		await backend.deleteSession("s4", file);
@@ -121,7 +134,10 @@ describe("PiBackend · GC 意图（intent）与频道订阅守卫", () => {
 		const dir = join(root, "proj-sub");
 		mkdirSync(dir, { recursive: true });
 		const file = join(dir, "g6.jsonl");
-		writeFileSync(file, "");
+		writeFileSync(
+			file,
+			`${JSON.stringify({ type: "session", id: "g6", cwd: root, timestamp: new Date().toISOString() })}\n`,
+		);
 		const { backend, registry, dispose } = makeBackend("g6", true, file, ["t1"]);
 
 		await backend.deleteSession("g6", file);

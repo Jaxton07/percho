@@ -124,6 +124,58 @@ function resultFor(method: string, value: unknown, environment: EnvironmentRef):
 		case "listSessions":
 		case "listAllSessions":
 			return (value as SessionMeta[]).map((meta) => scopeSessionMeta(meta, environment));
+		case "querySessionCatalog": {
+			const page = value as import("@percho/shared").SessionCatalogPage;
+			return { ...page, sessions: page.sessions.map((meta) => scopeSessionMeta(meta, environment)) };
+		}
+		case "querySessionProjects": {
+			const result = value as import("@percho/shared").SessionCatalogProjects;
+			return {
+				...result,
+				projects: result.projects.map((project) => ({
+					...project,
+					cwd: environmentEntityKey(environment, project.cwd),
+				})),
+			};
+		}
+		case "verifySessionCatalog":
+			return (value as import("@percho/shared").SessionCatalogVerification[]).map((item) => ({
+				...item,
+				reference: {
+					...item.reference,
+					...(item.reference.sessionId
+						? { sessionId: environmentEntityKey(environment, item.reference.sessionId) }
+						: {}),
+					...(item.reference.sessionFile
+						? { sessionFile: environmentEntityKey(environment, item.reference.sessionFile) }
+						: {}),
+				},
+				...(item.meta ? { meta: scopeSessionMeta(item.meta, environment) } : {}),
+			}));
+		case "archiveSession":
+		case "unarchiveSession": {
+			const result = value as import("@percho/shared").SessionArchiveResult;
+			return {
+				...result,
+				sessionId: environmentEntityKey(environment, result.sessionId),
+				sessionFile: environmentEntityKey(environment, result.sessionFile),
+			};
+		}
+		case "previewSessionProjectDeletion": {
+			const result = value as import("@percho/shared").SessionProjectDeletionPreview;
+			return { ...result, cwd: environmentEntityKey(environment, result.cwd) };
+		}
+		case "deleteSessionProject": {
+			const result = value as import("@percho/shared").SessionProjectDeletionResult;
+			return {
+				...result,
+				deleted: result.deleted.map((id) => environmentEntityKey(environment, id)),
+				failed: result.failed.map((item) => ({
+					...item,
+					sessionId: environmentEntityKey(environment, item.sessionId),
+				})),
+			};
+		}
 		case "getDailyDir":
 			return environmentEntityKey(environment, value as string);
 		case "getChannelSubscriptionSessionIds":
@@ -233,6 +285,21 @@ function argumentsFor(method: string, value: unknown, environment: EnvironmentRe
 	// Explicitly bound directory input may be literal (e.g. the add-project field).
 	const directory = (cwd: string) =>
 		cwd.startsWith("percho-env-v1:") ? environmentEntityId(environment, cwd) : cwd;
+	if (method === "querySessionCatalog" && record(next.query) && typeof next.query.cwd === "string")
+		next.query = { ...next.query, cwd: directory(next.query.cwd) };
+	if (method === "verifySessionCatalog" && Array.isArray(next.references))
+		next.references = next.references.map((reference) => {
+			if (!record(reference)) return reference;
+			return {
+				...reference,
+				...(typeof reference.sessionId === "string"
+					? { sessionId: environmentEntityId(environment, reference.sessionId) }
+					: {}),
+				...(typeof reference.sessionFile === "string"
+					? { sessionFile: environmentEntityId(environment, reference.sessionFile) }
+					: {}),
+			};
+		});
 	if (typeof next.cwd === "string") next.cwd = directory(next.cwd);
 	if (record(next.options) && typeof next.options.cwd === "string")
 		next.options = { ...next.options, cwd: directory(next.options.cwd) };
@@ -282,6 +349,7 @@ export function getExecutionApi(reference: EnvironmentRef | string): Environment
 						throw new Error("Remote session is synchronizing; wait before submitting new work");
 				}
 				const call = raw[method as EnvironmentMethod] as (input?: unknown) => Promise<unknown>;
+				if (typeof call !== "function") throw new Error(`Execution environment does not support ${method}`);
 				const value = args === undefined ? await call() : await call(argumentsFor(method, args, environment));
 				return resultFor(method, value, environment);
 			},
@@ -294,6 +362,8 @@ export function getExecutionApi(reference: EnvironmentRef | string): Environment
 				const subscribe = raw[method as keyof EnvironmentApi] as (
 					callback: (payload: unknown) => void,
 				) => () => void;
+				if (typeof subscribe !== "function")
+					throw new Error(`Execution environment does not support ${method}`);
 				return subscribe((payload) => cb(eventFor(method, payload, environment)));
 			},
 		]);

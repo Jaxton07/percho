@@ -9,7 +9,12 @@ import type {
 	LanStatus,
 	LanTranscriptHistory,
 	LanTranscriptProjection,
+	LoadedSessionSummary,
 	PermissionRequest,
+	SessionCatalogPage,
+	SessionCatalogQuery,
+	SessionCatalogReference,
+	SessionCatalogVerification,
 	SessionEvent,
 	SessionMessage,
 	SessionMeta,
@@ -104,7 +109,9 @@ function readJsonBody(
 
 /** LAN server 所需的 PiBackend 只读/订阅面；方便无 SDK 的单测替身。 */
 export interface LanObserverBackend {
-	listAllSessions(): Promise<SessionMeta[]>;
+	querySessionCatalog(query: SessionCatalogQuery): Promise<SessionCatalogPage>;
+	verifySessionCatalog(references: SessionCatalogReference[]): Promise<SessionCatalogVerification[]>;
+	getLoadedSessions(): LoadedSessionSummary[];
 	getSessionMessages(sessionId: string): Promise<SessionMessage[]>;
 	/** 历史会话只读透视（未打开的会话纯解析文件）；不存在返回 null。 */
 	peekSessionMessages(sessionId: string): Promise<SessionMessage[] | null>;
@@ -151,7 +158,7 @@ export class LanObserverServer {
 	private readonly dirty = new Set<string>();
 	/** 首个事件到达而尚未完成快照种子的会话，逐会话有界缓存。 */
 	private readonly pendingEvents = new Map<string, SessionEvent[]>();
-	/** 同一未知 session 只能有一个 listAllSessions 种子请求在途。 */
+	/** 同一未知 session 只能有一个种子请求在途。 */
 	private readonly seedInFlight = new Map<string, Promise<void>>();
 	/** 未出现在最近一次快照的 session（典型为 sessions-subagents）；reconcile 时清空以允许重试。 */
 	private readonly unseedableSessions = new Set<string>();
@@ -159,6 +166,8 @@ export class LanObserverServer {
 	/** 每会话待合并的 delta 事件（text/thinking/toolcall delta 50ms 微批）。 */
 	private readonly deltaBatches = new Map<string, { event: SessionEvent; timer: NodeJS.Timeout }>();
 	private list: LanSessionBrief[] = [];
+	private nextCursor: string | undefined;
+	private listComplete = false;
 	private seq = 0;
 	private unsubscribers: Array<() => void> = [];
 	private dirtyTimer: ReturnType<typeof setInterval> | null = null;
@@ -258,7 +267,10 @@ export class LanObserverServer {
 		}
 		const isGetApi =
 			req.method === "GET" &&
-			(path === "/api/snapshot" || path === "/api/stream" || matchTranscriptRoute(path) !== null);
+			(path === "/api/snapshot" ||
+				path === "/api/stream" ||
+				path === "/api/sessions" ||
+				matchTranscriptRoute(path) !== null);
 		const writeRoute = req.method === "POST" ? matchWriteRoute(path) : null;
 		if (!isGetApi && !writeRoute) return this.sendJson(res, 404, { error: "not found" });
 		// 鉴权：POST 优先 Authorization: Bearer，回落 ?t=（无 cookie/ambient auth → CSRF 天然免疫）
@@ -267,7 +279,25 @@ export class LanObserverServer {
 		if (!(await this.authorized(token))) {
 			return this.sendJson(res, 401, { error: "invalid token" });
 		}
+		if (path === "/api/sessions") {
+			try {
+				const page = await this.backend.querySessionCatalog({
+					archived: false,
+					sort: "modified",
+					limit: 100,
+					cursor: url.searchParams.get("cursor") ?? undefined,
+				});
+				return this.sendJson(res, 200, {
+					list: page.sessions.map(toBrief),
+					nextCursor: page.nextCursor,
+					complete: page.complete,
+				});
+			} catch {
+				return this.sendJson(res, 400, { error: "invalid cursor or catalog unavailable" });
+			}
+		}
 		if (path === "/api/snapshot") {
+			await this.pruneProjections();
 			// 先冲刷待合并 delta 再记录序号：客户端丢弃 seq ≤ snapshotSeq 的 event 帧（效果已含在快照内）。
 			// seq 边界与消息收集须对事件投递原子（getSessionMessages 全链路同步，仅微任务让出，事件在
 			// macrotask 投递插不进来）；稳定性双重校验是保险：若未来链条里混入真实 await，重试一轮取一致快照。
@@ -279,12 +309,16 @@ export class LanObserverServer {
 				transcripts = this.collectTranscripts();
 				if (this.seq === snapshotSeq) break;
 			}
-			const snapshot: LanSnapshot = {
+			const snapshot: LanSnapshot & { nextCursor?: string; complete: boolean } = {
 				serverTime: Date.now(),
 				list: this.list,
+				nextCursor: this.nextCursor,
+				complete: this.listComplete,
 				views: [...this.projections].map(([id, projection]) => deriveView(id, projection)),
 				transcripts,
-				pendingPermissions: this.backend.getPendingPermissionRequests(),
+				pendingPermissions: this.backend
+					.getPendingPermissionRequests()
+					.filter((request) => this.projections.has(request.sessionId)),
 				remoteControl: this.config.cached()?.remoteControl ?? false,
 				snapshotSeq,
 			};
@@ -292,12 +326,15 @@ export class LanObserverServer {
 			return;
 		}
 		if (path === "/api/stream") {
+			await this.pruneProjections();
 			this.openStream(req, res);
 			return;
 		}
 		// 历史会话按需拉取（M1 补：快照只带活跃会话 transcript；点历史会话时单独拉）
 		const transcriptId = matchTranscriptRoute(path);
 		if (transcriptId) {
+			if (!(await this.verifyPresent(transcriptId)))
+				return this.sendJson(res, 404, { error: "session not found" });
 			const messages = await this.backend.peekSessionMessages(transcriptId);
 			if (!messages) return this.sendJson(res, 404, { error: "session not found" });
 			const transcript: LanTranscriptHistory = {
@@ -332,6 +369,10 @@ export class LanObserverServer {
 	/** M2 写端点处理（均已通过 token + remoteControl 双闸门）。 */
 	private async handleWrite(req: IncomingMessage, res: ServerResponse, route: WriteRoute): Promise<void> {
 		if (route.action === "prompt" || route.action === "abort") {
+			if (!(await this.verifyPresent(route.id))) {
+				this.audit(req, route.action, route.id, "denied: not_found");
+				return this.sendJson(res, 404, { error: "session not found" });
+			}
 			const writable = this.backend.checkSessionWritable(route.id);
 			if (writable === "not_found") {
 				this.audit(req, route.action, route.id, "denied: not_found");
@@ -383,6 +424,8 @@ export class LanObserverServer {
 			this.audit(req, "perm", route.id, "denied: not_found");
 			return this.sendJson(res, 404, { error: "request not found" });
 		}
+		if (!(await this.verifyPresent(pending.sessionId)))
+			return this.sendJson(res, 404, { error: "session not found" });
 		this.backend.respondPermission(route.id, answer === "allowOnce" ? "allow" : "deny");
 		this.audit(req, "perm", route.id, `ok: ${answer}`);
 		return this.sendJson(res, 200, { ok: true });
@@ -420,12 +463,18 @@ export class LanObserverServer {
 	}
 
 	private handleEvent(sessionId: string, event: SessionEvent): void {
+		if (
+			this.projections.has(sessionId) &&
+			!this.backend.getLoadedSessions().some((item) => item.meta.sessionId === sessionId)
+		) {
+			this.projections.delete(sessionId);
+		}
 		if (this.projections.has(sessionId)) {
 			// 投影与广播同链：sanitize → delta 微批 → projectEvent（reduce + 帧广播一次完成，
 			// 客户端收到的每一帧都已同步进服务端投影，重连快照无缝续接）
 			this.relayEvent(sessionId, event);
 			return;
-		} // 子代理子会话也会转发原生事件，却不在 listAllSessions（物理隔离）中；
+		} // 子代理子会话也会转发原生事件，却不在本机会话目录（物理隔离）中；
 		// 对已知不可种子的 id 直接丢弃，避免每个 delta 都触发磁盘扫描。
 		// 未知会话的事件绝不转发为 event 帧（R1 防护不退化）。
 		if (this.unseedableSessions.has(sessionId)) return;
@@ -493,8 +542,9 @@ export class LanObserverServer {
 
 	private handlePermissionRequest(req: PermissionRequest): void {
 		// perm 帧即时转发（M2 远程应答依赖 requestId；快照种子也从 gate 快照补）
-		this.broadcast({ event: "perm", data: { sessionId: req.sessionId, request: req, seq: ++this.seq } });
 		const projection = this.projections.get(req.sessionId);
+		if (projection)
+			this.broadcast({ event: "perm", data: { sessionId: req.sessionId, request: req, seq: ++this.seq } });
 		if (projection) {
 			this.projections.set(req.sessionId, applyPermissionRequest(projection, req));
 			this.dirty.add(req.sessionId);
@@ -508,49 +558,69 @@ export class LanObserverServer {
 		requestId: string;
 		answered: boolean;
 	}): void {
-		this.broadcast({ event: "perm_resolved", data: { ...result, seq: ++this.seq } });
 		const projection = this.projections.get(result.sessionId);
+		if (projection) this.broadcast({ event: "perm_resolved", data: { ...result, seq: ++this.seq } });
 		if (!projection) return;
 		this.projections.set(result.sessionId, applyPermissionResolved(projection));
 		this.dirty.add(result.sessionId);
 	}
 
 	private async reconcile(): Promise<void> {
-		const sessions = await this.backend.listAllSessions();
+		const page = await this.backend.querySessionCatalog({ archived: false, sort: "modified", limit: 100 });
+		const sessions = page.sessions;
+		this.nextCursor = page.nextCursor;
+		this.listComplete = page.complete;
 		// 下一个对账周期允许未知 session 再试一次（例如刚创建、尚未落盘的主会话）。
 		this.unseedableSessions.clear();
 		const nextList = sessions.map(toBrief);
 		const listChanged = JSON.stringify(nextList) !== JSON.stringify(this.list);
 		this.list = nextList;
-		const activeIds = new Set(
-			sessions.filter((session) => session.active).map((session) => session.sessionId),
-		);
+		const activeIds = new Set(this.backend.getLoadedSessions().map((session) => session.meta.sessionId));
 		for (const id of this.projections.keys()) if (!activeIds.has(id)) this.projections.delete(id);
-		await Promise.all([...activeIds].map((sessionId) => this.seedSession(sessionId, sessions)));
+		await Promise.all([...activeIds].map((sessionId) => this.seedSession(sessionId)));
 		if (listChanged) this.broadcast(this.listFrame());
 	}
 
-	private seedSession(
-		sessionId: string,
-		sessions?: Awaited<ReturnType<LanObserverBackend["listAllSessions"]>>,
-	): Promise<void> {
-		if (this.projections.has(sessionId) || (!sessions && this.unseedableSessions.has(sessionId)))
-			return Promise.resolve();
+	private seedSession(sessionId: string): Promise<void> {
+		if (this.projections.has(sessionId) || this.unseedableSessions.has(sessionId)) return Promise.resolve();
 		const existing = this.seedInFlight.get(sessionId);
 		if (existing) return existing;
-		const seed = this.seedSessionImpl(sessionId, sessions).finally(() => this.seedInFlight.delete(sessionId));
+		const seed = this.seedSessionImpl(sessionId).finally(() => this.seedInFlight.delete(sessionId));
 		this.seedInFlight.set(sessionId, seed);
 		return seed;
 	}
 
-	private async seedSessionImpl(
-		sessionId: string,
-		sessions?: Awaited<ReturnType<LanObserverBackend["listAllSessions"]>>,
-	): Promise<void> {
+	private async pruneProjections(): Promise<void> {
+		const loaded = new Set(this.backend.getLoadedSessions().map((item) => item.meta.sessionId));
+		await Promise.all(
+			[...this.projections.keys()].map(async (id) => {
+				if (!loaded.has(id)) {
+					this.projections.delete(id);
+					return;
+				}
+				try {
+					const [result] = await this.backend.verifySessionCatalog([{ sessionId: id }]);
+					if (result?.status === "missing" || result?.status === "archived") this.projections.delete(id);
+				} catch {
+					// An unavailable catalog is not evidence that an active session disappeared.
+				}
+			}),
+		);
+	}
+
+	private async verifyPresent(sessionId: string): Promise<SessionMeta | undefined> {
+		try {
+			const [result] = await this.backend.verifySessionCatalog([{ sessionId }]);
+			return result?.status === "present" ? result.meta : undefined;
+		} catch {
+			return undefined;
+		}
+	}
+
+	private async seedSessionImpl(sessionId: string): Promise<void> {
 		if (this.projections.has(sessionId)) return;
-		const all = sessions ?? (await this.backend.listAllSessions());
-		const meta = all.find((session) => session.sessionId === sessionId && session.active);
-		if (!meta) {
+		const meta = await this.verifyPresent(sessionId);
+		if (!meta || !this.backend.getLoadedSessions().some((session) => session.meta.sessionId === sessionId)) {
 			this.pendingEvents.delete(sessionId);
 			this.markUnseedable(sessionId);
 			return;
@@ -562,6 +632,14 @@ export class LanObserverServer {
 			this.backend.getStats(sessionId).catch(() => null),
 			this.backend.getSessionMessages(sessionId).catch(() => []),
 		]);
+		if (
+			!this.server ||
+			!this.backend.getLoadedSessions().some((item) => item.meta.sessionId === sessionId) ||
+			!(await this.verifyPresent(sessionId))
+		) {
+			this.pendingEvents.delete(sessionId);
+			return;
+		}
 		// 种子消息经 sanitize 后映射（与 LAN 客户端历史拉取同净化标准）；pendingEvents 原始事件
 		// replay 走 sanitize → reduce（projectEvent 不广播，种子期无订阅者续帧需求）
 		let projection = seedProjection(
@@ -644,9 +722,7 @@ export class LanObserverServer {
 	}
 }
 
-function toBrief(
-	session: Awaited<ReturnType<LanObserverBackend["listAllSessions"]>>[number],
-): LanSessionBrief {
+function toBrief(session: SessionMeta): LanSessionBrief {
 	return {
 		sessionId: session.sessionId,
 		name: session.name?.trim() || "New session",

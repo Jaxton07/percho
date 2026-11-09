@@ -167,6 +167,70 @@ export const SESSION_CHANNELS = {
 	}),
 	/** 跨全部项目目录枚举历史会话（项目管理页用，含活跃） */
 	listAllSessions: ch("session:listAll", "environment", "read")<void, SessionMeta[]>(),
+	previewSessionProjectDeletion: ch(
+		"session:projectDeletePreview",
+		"environment",
+		"read",
+	)<{ cwd: string }, import("./session-catalog").SessionProjectDeletionPreview>({ cwd: input.id }),
+	deleteSessionProject: ch(
+		"session:projectDelete",
+		"environment",
+		"mutation",
+	)<{ cwd: string; token: string }, import("./session-catalog").SessionProjectDeletionResult>({
+		cwd: input.id,
+		token: input.id,
+	}),
+	querySessionProjects: ch("session:catalogProjects", "environment", "read")<
+		void,
+		import("./session-catalog").SessionCatalogProjects
+	>(),
+	querySessionCatalog: ch(
+		"session:catalogQuery",
+		"environment",
+		"read",
+	)<
+		{ query: import("./session-catalog").SessionCatalogQuery },
+		import("./session-catalog").SessionCatalogPage
+	>({
+		query: input.object({
+			cwd: input.optional(input.id),
+			search: input.optional(input.text),
+			archived: input.optional(input.boolean),
+			sort: input.optional(input.oneOf("archived", "modified", "created", "name")),
+			limit: input.optional(input.number),
+			cursor: input.optional(input.id),
+		}),
+	}),
+	verifySessionCatalog: ch(
+		"session:catalogVerify",
+		"environment",
+		"read",
+	)<
+		{ references: import("./session-catalog").SessionCatalogReference[] },
+		import("./session-catalog").SessionCatalogVerification[]
+	>({
+		references: input.array(
+			input.object({ sessionId: input.optional(input.id), sessionFile: input.optional(input.id) }),
+		),
+	}),
+	archiveSession: ch(
+		"session:archive",
+		"environment",
+		"mutation",
+	)<import("./session-catalog").SessionArchiveInput, import("./session-catalog").SessionArchiveResult>({
+		sessionId: input.id,
+		sessionFile: input.id,
+		expectedRevision: input.nonNegativeInt,
+	}),
+	unarchiveSession: ch(
+		"session:unarchive",
+		"environment",
+		"mutation",
+	)<import("./session-catalog").SessionArchiveInput, import("./session-catalog").SessionArchiveResult>({
+		sessionId: input.id,
+		sessionFile: input.id,
+		expectedRevision: input.nonNegativeInt,
+	}),
 	openSession: ch(
 		"session:open",
 		"environment",
@@ -978,6 +1042,10 @@ function subscription<P, S extends ChannelScope = "environment">(scope: S = "env
 
 /** Sole subscription definition: API key + explicit legacy alias + channel + payload type. */
 export const SUBSCRIPTION_TABLE = {
+	onSessionCatalogChanged: subscription<import("./session-catalog").SessionCatalogChange>()(
+		"SessionCatalogChanged",
+		"session:catalogChanged",
+	),
 	onTaskNotificationClick: subscription<import("./task-notifications").TaskNotificationClick, "desktop">(
 		"desktop",
 	)("TaskNotificationClick", "notifications:clicked"),

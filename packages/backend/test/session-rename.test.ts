@@ -1,6 +1,6 @@
-import { mkdtemp, readFile, rm } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { mkdir, mkdtemp, readFile, rm } from "node:fs/promises";
 import { join } from "node:path";
+import { fileURLToPath } from "node:url";
 import type { Message } from "@earendil-works/pi-ai";
 import type { AgentSession } from "@earendil-works/pi-coding-agent";
 import { getAgentDir, SessionManager } from "@earendil-works/pi-coding-agent";
@@ -17,7 +17,11 @@ let testRoot = "";
 let sessionFile = "";
 
 beforeAll(async () => {
-	testRoot = await mkdtemp(join(tmpdir(), "session-rename-"));
+	const tmpRoot = fileURLToPath(
+		new URL("../../../.local/tmp/session-archive-catalog/tests/", import.meta.url),
+	);
+	await mkdir(tmpRoot, { recursive: true });
+	testRoot = await mkdtemp(join(tmpRoot, "session-rename-"));
 	const sm = SessionManager.create("/tmp/project", testRoot);
 	sessionFile = sm.getSessionFile() ?? "";
 	sm.appendMessage({ role: "user", content: "原始内容", timestamp: Date.now() } satisfies Message);
@@ -38,6 +42,10 @@ afterAll(async () => {
 
 function makeBackend(session: Partial<AgentSession> = {}): PiBackend {
 	const backend = new PiBackend({ projectTrust: false, permissionGates: false });
+	// 此文件只测试改名分支；归档服务明确模拟未归档。
+	vi.spyOn(backend as never, "archives").mockResolvedValue({
+		assertOpen: vi.fn().mockResolvedValue(undefined),
+	} as never);
 	const registry = (backend as unknown as { registry: SessionRegistry }).registry;
 	registry.add({
 		session: {
@@ -79,6 +87,30 @@ describe("renameSessionFile（历史会话离线改名）", () => {
 	});
 });
 
+describe("PiBackend 目录快照", () => {
+	it("公开列表使用目录分页，不调用 SDK 全量扫描", async () => {
+		const backend = makeBackend();
+		const query = vi.fn().mockResolvedValue({
+			sessions: [meta({})],
+			complete: true,
+			errors: 0,
+			revision: "1",
+		});
+		const refresh = vi.fn().mockResolvedValue(undefined);
+		vi.spyOn(backend, "getSessionCatalog").mockReturnValue({ query, refresh } as never);
+		const sdkListAll = vi.spyOn(SessionManager, "listAll");
+		try {
+			expect(await backend.listAllSessions()).toEqual([meta({})]);
+			expect(refresh).toHaveBeenCalledOnce();
+			expect(refresh.mock.invocationCallOrder[0]).toBeLessThan(query.mock.invocationCallOrder[0]);
+			expect(query).toHaveBeenCalledWith({ cwd: undefined, limit: 100, cursor: undefined });
+			expect(sdkListAll).not.toHaveBeenCalled();
+		} finally {
+			sdkListAll.mockRestore();
+		}
+	});
+});
+
 describe("PiBackend.setSessionName 分支", () => {
 	it("活跃会话走 SDK（autoName 事件由 SDK 发，不碰磁盘）", async () => {
 		const setSessionName = vi.fn();
@@ -98,41 +130,45 @@ describe("PiBackend.setSessionName 分支", () => {
 		await expect(backend.setSessionName("active-1", "x")).rejects.toThrow("read-only");
 	});
 
-	it("历史会话走离线文件写（registry 未命中）——无 cwd 时回退枚举", async () => {
+	it("历史会话走目录身份核验后离线改名（无 cwd）", async () => {
 		const backend = makeBackend();
-		vi.spyOn(backend, "listAllSessions").mockResolvedValue([meta({})]);
-
+		const verify = vi.fn().mockResolvedValue([{ status: "present", meta: meta({}) }]);
+		vi.spyOn(backend, "getSessionCatalog").mockReturnValue({ verify } as never);
 		await backend.setSessionName("hist-1", "历史改名");
-
+		expect(verify).toHaveBeenCalledWith([{ sessionId: "hist-1" }]);
 		expect(SessionManager.open(sessionFile).getSessionName()).toBe("历史改名");
 	});
 
-	// 1.0.4 新增 findById：只扫该项目的会话目录，不读全部会话 header（会话多时是数百毫秒的差别）
-	it("历史会话带 cwd → 走 findById 精确查表，不做全量枚举", async () => {
+	it("历史会话带 cwd → 核验目录，不做全量枚举", async () => {
 		const backend = makeBackend();
-		const findById = vi.spyOn(SessionManager, "findById").mockReturnValue(sessionFile);
-		const listAll = vi.spyOn(backend, "listAllSessions").mockResolvedValue([]);
-
-		await backend.setSessionName("hist-1", "精确查表改名", "/tmp/project");
-
-		expect(findById).toHaveBeenCalledWith("/tmp/project", "hist-1");
-		expect(listAll).not.toHaveBeenCalled();
-		expect(SessionManager.open(sessionFile).getSessionName()).toBe("精确查表改名");
+		const verify = vi.fn().mockResolvedValue([{ status: "present", meta: meta({}) }]);
+		vi.spyOn(backend, "getSessionCatalog").mockReturnValue({ verify } as never);
+		const listAll = vi.spyOn(backend, "listAllSessions");
+		const sdkListAll = vi.spyOn(SessionManager, "listAll");
+		try {
+			await backend.setSessionName("hist-1", "精确查表改名", "/tmp/project");
+			expect(verify).toHaveBeenCalledWith([{ sessionId: "hist-1" }]);
+			expect(listAll).not.toHaveBeenCalled();
+			expect(sdkListAll).not.toHaveBeenCalled();
+			expect(SessionManager.open(sessionFile).getSessionName()).toBe("精确查表改名");
+		} finally {
+			sdkListAll.mockRestore();
+		}
 	});
 
-	it("带 cwd 但 findById 查不到 → 回退枚举（投影与磁盘不一致时的兜底）", async () => {
+	it("目录返回的 cwd 不匹配时拒绝改名", async () => {
 		const backend = makeBackend();
-		vi.spyOn(SessionManager, "findById").mockReturnValue(undefined);
-		vi.spyOn(backend, "listAllSessions").mockResolvedValue([meta({})]);
-
-		await backend.setSessionName("hist-1", "回退改名", "/tmp/other");
-
-		expect(SessionManager.open(sessionFile).getSessionName()).toBe("回退改名");
+		vi.spyOn(backend, "getSessionCatalog").mockReturnValue({
+			verify: vi.fn().mockResolvedValue([{ status: "present", meta: meta({}) }]),
+		} as never);
+		await expect(backend.setSessionName("hist-1", "x", "/tmp/other")).rejects.toThrow("Session not found");
 	});
 
 	it("历史会话不存在 → 抛 Session not found", async () => {
 		const backend = makeBackend();
-		vi.spyOn(backend, "listAllSessions").mockResolvedValue([]);
+		vi.spyOn(backend, "getSessionCatalog").mockReturnValue({
+			verify: vi.fn().mockResolvedValue([{ status: "missing" }]),
+		} as never);
 
 		await expect(backend.setSessionName("ghost", "x")).rejects.toThrow("Session not found");
 	});
@@ -141,7 +177,9 @@ describe("PiBackend.setSessionName 分支", () => {
 		const backend = makeBackend();
 		// 只读判定靠 isSubagentSessionPath（前缀匹配 agent dir 下的 sessions-subagents）
 		const subagentFile = join(getAgentDir(), "sessions-subagents", "sub.jsonl");
-		vi.spyOn(backend, "listAllSessions").mockResolvedValue([meta({ sessionFile: subagentFile })]);
+		vi.spyOn(backend, "getSessionCatalog").mockReturnValue({
+			verify: vi.fn().mockResolvedValue([{ status: "present", meta: meta({ sessionFile: subagentFile }) }]),
+		} as never);
 
 		await expect(backend.setSessionName("hist-1", "x")).rejects.toThrow("read-only");
 	});
@@ -160,10 +198,19 @@ describe("PiBackend.setSessionName 分支", () => {
 		expect(setSessionName).toHaveBeenCalledWith("x");
 	});
 
-	it("历史元信息缺文件路径（磁盘枚举不会出现）→ 报 Session not found", async () => {
+	it("历史元信息缺文件路径 → 拒绝不可信身份", async () => {
 		const backend = makeBackend();
-		vi.spyOn(backend, "listAllSessions").mockResolvedValue([meta({ sessionFile: undefined })]);
+		vi.spyOn(backend, "getSessionCatalog").mockReturnValue({
+			verify: vi.fn().mockResolvedValue([{ status: "present", meta: meta({ sessionFile: undefined }) }]),
+		} as never);
+		await expect(backend.setSessionName("hist-1", "x")).rejects.toThrow("Session unavailable or archived");
+	});
 
-		await expect(backend.setSessionName("hist-1", "x")).rejects.toThrow("Session not found");
+	it("目录标记已归档 → 拒绝改名", async () => {
+		const backend = makeBackend();
+		vi.spyOn(backend, "getSessionCatalog").mockReturnValue({
+			verify: vi.fn().mockResolvedValue([{ status: "archived", meta: meta({}) }]),
+		} as never);
+		await expect(backend.setSessionName("hist-1", "x")).rejects.toThrow("Session unavailable or archived");
 	});
 });

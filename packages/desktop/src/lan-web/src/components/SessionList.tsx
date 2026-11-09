@@ -1,3 +1,5 @@
+import type { LanSessionBrief } from "@percho/shared";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { t } from "../i18n";
 import { useLanStore } from "../store";
 import { ChevronRightIcon, ShieldIcon } from "./icons";
@@ -11,10 +13,47 @@ export function SessionList() {
 	const views = useLanStore((s) => s.views);
 	const perms = useLanStore((s) => s.pendingPerms);
 	const select = useLanStore((s) => s.select);
-
-	if (list.length === 0) {
-		return <div className="empty">{t("list.empty")}</div>;
-	}
+	const token = useLanStore((s) => s.token);
+	const [cursor, setCursor] = useState<string>();
+	const [loading, setLoading] = useState(false);
+	const [error, setError] = useState(false);
+	const generation = useRef(0);
+	const loadPage = useCallback(
+		async (next?: string) => {
+			const current = ++generation.current;
+			setLoading(true);
+			try {
+				const params = new URLSearchParams({ t: token });
+				if (next) params.set("cursor", next);
+				const response = await fetch(`/api/sessions?${params}`, { cache: "no-store" });
+				if (!response.ok) throw new Error("catalog unavailable");
+				const page = (await response.json()) as { list: LanSessionBrief[]; nextCursor?: string };
+				if (generation.current !== current) return;
+				useLanStore.setState((state) => ({
+					list: next
+						? [
+								...state.list,
+								...page.list.filter((item) => !state.list.some((old) => old.sessionId === item.sessionId)),
+							]
+						: page.list,
+				}));
+				setCursor(page.nextCursor);
+				setError(false);
+			} catch {
+				if (generation.current === current) setError(true);
+			} finally {
+				if (generation.current === current) setLoading(false);
+			}
+		},
+		[token],
+	);
+	useEffect(() => {
+		setCursor(undefined);
+		void loadPage();
+		return () => {
+			generation.current++;
+		};
+	}, [loadPage]);
 	const sorted = [...list].sort((a, b) => Number(b.active) - Number(a.active) || b.modifiedAt - a.modifiedAt);
 	const activeItems = sorted.filter((item) => views[item.sessionId]);
 	const historyItems = sorted.filter((item) => !views[item.sessionId]);
@@ -62,6 +101,7 @@ export function SessionList() {
 
 	return (
 		<div className="list-scroll">
+			{list.length === 0 && <div className="empty">{t("list.empty")}</div>}
 			{activeItems.length > 0 && (
 				<>
 					<div className="section-label">
@@ -79,6 +119,17 @@ export function SessionList() {
 					</div>
 					{historyItems.map(renderCard)}
 				</>
+			)}
+			{(cursor || error) && (
+				<button type="button" disabled={loading} onClick={() => void loadPage(error ? undefined : cursor)}>
+					{error
+						? navigator.language.startsWith("zh")
+							? "刷新列表"
+							: "Refresh list"
+						: navigator.language.startsWith("zh")
+							? "加载更多"
+							: "Load more"}
+				</button>
 			)}
 		</div>
 	);

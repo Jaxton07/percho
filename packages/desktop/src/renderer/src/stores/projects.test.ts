@@ -3,7 +3,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 /** window.pi 的 mock：store 的 load 经 getPi() 访问（测试环境无 preload 注入） */
 const piMock = vi.hoisted(() => ({
-	listAllSessions: vi.fn(),
+	querySessionProjects: vi.fn(),
 	forEnvironment: vi.fn(),
 	getDailyDir: vi.fn(() => Promise.resolve(null)),
 	// 用户入口 openSession / deleteSession 会走这些 IPC（其余四件套的拉取见 sessions store）
@@ -29,6 +29,7 @@ vi.mock("../api", () => ({
 import { setDailyDirForTest } from "../lib/daily";
 import { deriveSidebarNavigation } from "../lib/sidebar-groups";
 import { deriveProjects, useProjectsStore } from "./projects";
+import { useSessionCatalogStore } from "./session-catalog";
 import { useSessionWorkspaceStore } from "./session-workspace";
 import { useSessionsStore } from "./sessions";
 import { useUiPreferencesStore } from "./ui-preferences";
@@ -47,6 +48,12 @@ function session(cwd: string, modifiedAt: number): SessionMeta {
 }
 
 const DAILY = "/Users/test/.percho/daily";
+const summary = (cwd: string, lastActive: number) => ({
+	projects: [{ cwd, lastActive, sessionCount: 1, archivedCount: 0 }],
+	revision: String(lastActive),
+	complete: true,
+	errors: 0,
+});
 
 describe("deriveProjects", () => {
 	it.each([
@@ -176,7 +183,7 @@ describe("会话目录写穿（存在性只依赖目录）", () => {
 
 	it("全量对账（load）不把内存里经手过的会话挤出目录", async () => {
 		// 磁盘上一个都没有：0 消息会话还没会话文件，重拉必然拿不到它
-		piMock.listAllSessions.mockResolvedValue([]);
+		piMock.querySessionProjects.mockResolvedValue({ projects: [], revision: "1", complete: true, errors: 0 });
 		useSessionsStore.setState({ sessions: [freshMeta("new-1", "/p")] });
 		await useProjectsStore.getState().load();
 		expect(ids()).toEqual(["new-1"]);
@@ -218,7 +225,8 @@ describe("会话目录写穿（存在性只依赖目录）", () => {
 describe("projects.load latest-wins（spec D6）", () => {
 	beforeEach(() => {
 		vi.clearAllMocks();
-		piMock.listAllSessions.mockReset();
+		piMock.querySessionProjects.mockReset();
+		useSessionCatalogStore.getState().clear();
 		useProjectsStore.setState({
 			allSessions: [],
 			selectedCwd: null,
@@ -229,42 +237,52 @@ describe("projects.load latest-wins（spec D6）", () => {
 	});
 
 	it("load A 后 load B，B 先返回、A 后返回：最终 store 是 B，loading=false", async () => {
-		const a = deferred<SessionMeta[]>();
-		const b = deferred<SessionMeta[]>();
-		piMock.listAllSessions.mockImplementationOnce(() => a.promise).mockImplementationOnce(() => b.promise);
+		const a = deferred<ReturnType<typeof summary>>();
+		const b = deferred<ReturnType<typeof summary>>();
+		piMock.querySessionProjects
+			.mockImplementationOnce(() => a.promise)
+			.mockImplementationOnce(() => b.promise);
 
 		const loadA = useProjectsStore.getState().load();
 		const loadB = useProjectsStore.getState().load();
-		b.resolve([session("/p", 200)]);
+		b.resolve(summary("/p", 200));
 		await loadB;
-		a.resolve([session("/p", 100)]);
+		a.resolve(summary("/p", 100));
 		await loadA;
 
-		expect(ids()).toEqual(["/p-200"]);
+		expect(
+			useSessionCatalogStore.getState().byEnvironment[environmentKey({ kind: "local" })]?.projects,
+		).toEqual(summary("/p", 200));
 		expect(useProjectsStore.getState().loading).toBe(false);
 		expect(useProjectsStore.getState().loaded).toBe(true);
 	});
 
 	it("旧请求失败：不得覆盖新请求成功结果", async () => {
-		const a = deferred<SessionMeta[]>();
-		const b = deferred<SessionMeta[]>();
-		piMock.listAllSessions.mockImplementationOnce(() => a.promise).mockImplementationOnce(() => b.promise);
+		const a = deferred<ReturnType<typeof summary>>();
+		const b = deferred<ReturnType<typeof summary>>();
+		piMock.querySessionProjects
+			.mockImplementationOnce(() => a.promise)
+			.mockImplementationOnce(() => b.promise);
 
 		const loadA = useProjectsStore.getState().load();
 		const loadB = useProjectsStore.getState().load();
-		b.resolve([session("/p", 300)]);
+		b.resolve(summary("/p", 300));
 		await loadB;
 		a.reject(new Error("boom"));
 		await loadA;
 
-		expect(ids()).toEqual(["/p-300"]);
+		expect(
+			useSessionCatalogStore.getState().byEnvironment[environmentKey({ kind: "local" })]?.projects,
+		).toEqual(summary("/p", 300));
 		expect(useProjectsStore.getState().loading).toBe(false);
 	});
 
 	it("旧请求先失败：不得提前把 loading 置 false（新请求仍在途）", async () => {
-		const a = deferred<SessionMeta[]>();
-		const b = deferred<SessionMeta[]>();
-		piMock.listAllSessions.mockImplementationOnce(() => a.promise).mockImplementationOnce(() => b.promise);
+		const a = deferred<ReturnType<typeof summary>>();
+		const b = deferred<ReturnType<typeof summary>>();
+		piMock.querySessionProjects
+			.mockImplementationOnce(() => a.promise)
+			.mockImplementationOnce(() => b.promise);
 
 		const loadA = useProjectsStore.getState().load();
 		const loadB = useProjectsStore.getState().load();
@@ -272,9 +290,11 @@ describe("projects.load latest-wins（spec D6）", () => {
 		await loadA;
 		expect(useProjectsStore.getState().loading).toBe(true);
 
-		b.resolve([session("/p", 400)]);
+		b.resolve(summary("/p", 400));
 		await loadB;
-		expect(ids()).toEqual(["/p-400"]);
+		expect(
+			useSessionCatalogStore.getState().byEnvironment[environmentKey({ kind: "local" })]?.projects,
+		).toEqual(summary("/p", 400));
 		expect(useProjectsStore.getState().loading).toBe(false);
 	});
 });
@@ -294,7 +314,8 @@ describe("工作区接线 · projects", () => {
 
 	beforeEach(() => {
 		vi.clearAllMocks();
-		piMock.listAllSessions.mockReset();
+		piMock.querySessionProjects.mockReset();
+		useSessionCatalogStore.getState().clear();
 		piMock.openSession.mockReset();
 		useSessionWorkspaceStore.setState({ members: [], activeFile: null, epoch: 0 });
 		useProjectsStore.setState({
@@ -376,26 +397,29 @@ describe("工作区接线 · projects", () => {
 
 	describe("目录 latest-wins（adoptCatalog 参与排号）", () => {
 		it("在飞的旧 load 晚回：不得把恢复采纳的新快照盖回去", async () => {
-			const stale = deferred<SessionMeta[]>();
-			piMock.listAllSessions.mockImplementation(() => stale.promise);
+			const stale = deferred<ReturnType<typeof summary>>();
+			piMock.querySessionProjects.mockImplementation(() => stale.promise);
 			const loading = useProjectsStore.getState().load();
 
 			// 启动恢复链自己读到一份新快照并采纳
 			useProjectsStore.getState().adoptCatalog([loaded("fresh")]);
 			expect(useProjectsStore.getState().allSessions.map((s) => s.sessionId)).toEqual(["fresh"]);
 
-			stale.resolve([loaded("stale")]);
+			stale.resolve(summary("/stale", 1));
 			await loading;
 			expect(useProjectsStore.getState().allSessions.map((s) => s.sessionId)).toEqual(["fresh"]);
 		});
 
 		it("采纳之后的 load 仍能生效（后发起的请求序号更大）", async () => {
 			useProjectsStore.getState().adoptCatalog([loaded("old")]);
-			piMock.listAllSessions.mockResolvedValue([loaded("newer")]);
+			piMock.querySessionProjects.mockResolvedValue(summary("/newer", 2));
 
 			await useProjectsStore.getState().load();
 
-			expect(useProjectsStore.getState().allSessions.map((s) => s.sessionId)).toEqual(["newer"]);
+			expect(useProjectsStore.getState().allSessions.map((s) => s.sessionId)).toEqual(["old"]);
+			expect(
+				useSessionCatalogStore.getState().byEnvironment[environmentKey({ kind: "local" })]?.projects,
+			).toEqual(summary("/newer", 2));
 		});
 	});
 
@@ -454,26 +478,34 @@ describe("environment catalog isolation", () => {
 		setDailyDirForTest(null);
 	});
 	it("interleaved remote refresh preserves local snapshot and failed remote refresh preserves its last good snapshot", async () => {
-		let complete!: (sessions: SessionMeta[]) => void;
+		let complete!: (value: ReturnType<typeof summary>) => void;
 		const listRemote = vi.fn(
 			() =>
-				new Promise<SessionMeta[]>((resolve) => {
+				new Promise<ReturnType<typeof summary>>((resolve) => {
 					complete = resolve;
 				}),
 		);
-		piMock.forEnvironment.mockReturnValue({ listAllSessions: listRemote, getDailyDir: async () => "/daily" });
+		piMock.forEnvironment.mockReturnValue({
+			querySessionProjects: listRemote,
+			getDailyDir: async () => "/daily",
+		});
 		const store = useProjectsStore.getState();
 		const pending = store.load(remote);
 		store.adoptCatalog([session("/same", 10)]);
 		expect(useProjectsStore.getState().loading).toBe(false);
 		expect(useProjectsStore.getState().catalogs[environmentKey(remote)]?.loading).toBe(true);
-		complete([session("/same", 10)]);
+		complete(summary("/same", 10));
 		await pending;
-		expect(useProjectsStore.getState().allSessions.map((s) => s.cwd)).toEqual(["/same", key("/same")]);
-		expect(deriveProjects(useProjectsStore.getState()).map((p) => p.name)).toEqual(["same", "same"]);
+		expect(useProjectsStore.getState().allSessions.map((s) => s.cwd)).toEqual(["/same"]);
+		expect(useSessionCatalogStore.getState().byEnvironment[environmentKey(remote)]?.projects).toEqual(
+			summary(key("/same"), 10),
+		);
 		listRemote.mockRejectedValueOnce(new Error("offline"));
 		await store.load(remote);
-		expect(useProjectsStore.getState().allSessions).toHaveLength(2);
+		expect(useProjectsStore.getState().allSessions).toHaveLength(1);
+		expect(useSessionCatalogStore.getState().byEnvironment[environmentKey(remote)]?.projects).toEqual(
+			summary(key("/same"), 10),
+		);
 		expect(useProjectsStore.getState().selectedCwd).toBe("/same");
 		expect(useProjectsStore.getState().catalogs[environmentKey(remote)]?.failed).toBe(true);
 	});

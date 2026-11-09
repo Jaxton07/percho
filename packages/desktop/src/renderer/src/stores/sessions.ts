@@ -29,6 +29,7 @@ import {
 	useDraftStore,
 } from "./drafts";
 import { invalidateInteractions, synchronizeInteractions } from "./interactions";
+import { useLocalSessionsStore } from "./local-sessions";
 import {
 	beginSessionBaseline,
 	finishSessionBaseline,
@@ -299,6 +300,7 @@ async function promoteDraft(draft: NewSessionDraftConfig): Promise<string | null
 				thinkingLevel: draft.thinkingLevel,
 			},
 		});
+		useLocalSessionsStore.getState().record(meta);
 		// 转正成功 = 用户刚开的会话 → 记入临时工作区（锚点 = 上一刻在看的成员，落在它右侧）。
 		// 迟到（已不是最新意图）只进工作区、不抢 activeFile（与下面的焦点处理同一口径）。
 		useSessionWorkspaceStore
@@ -403,6 +405,7 @@ interface SessionsStore {
 	setDraftPermissionMode: (mode: PermissionMode) => void;
 	switchSession: (sessionId: string) => void;
 	closeSession: (sessionId: string, intent?: SessionCloseIntent) => Promise<{ closed: boolean }>;
+	forgetArchivedSession: (sessionId: string, navigate: boolean) => void;
 	/** 自动卸载（内存策略专用，见实现处注释）；传 intent="gc" 让后端区分自动 GC 与用户意图 */
 	unloadSession: (sessionId: string) => Promise<{ closed: boolean }>;
 	openFromHistory: (
@@ -656,6 +659,34 @@ export const useSessionsStore = create<SessionsStore>((_set, get) => ({
 			sessions: state.sessions.map((s) => (s.sessionId === sessionId ? { ...s, name } : s)),
 		})),
 
+	forgetArchivedSession: (sessionId, navigate) => {
+		const state = get();
+		const closing = state.sessions.find((s) => s.sessionId === sessionId);
+		if (navigate && state.activeSessionId === sessionId) get().activateNewSessionDraft(closing?.cwd);
+		releaseComposerEditor(sessionId);
+		sessionLoader.forget(sessionId, closing?.sessionFile);
+		useTranscriptStore.getState().resetSession(sessionId);
+		useChannelSubscriptionsStore.getState().forget(sessionId);
+		set((current) => {
+			const lastUsedAt = { ...current.lastUsedAt };
+			delete lastUsedAt[sessionId];
+			const orphanedFocus = current.activeSessionId === sessionId;
+			const draft = orphanedFocus
+				? (current.newSessionDraft ??
+					makeDraft(current, {
+						cwd: closing?.cwd ?? current.cwd,
+						environment: environmentEntityRef(sessionId).environment,
+					}))
+				: current.newSessionDraft;
+			return {
+				sessions: current.sessions.filter((s) => s.sessionId !== sessionId),
+				permissionModes: withPermissionMode(current.permissionModes, sessionId, "default"),
+				lastUsedAt,
+				...(orphanedFocus ? { activeSessionId: null, newSessionDraft: draft, cwd: draft?.cwd ?? null } : {}),
+			};
+		});
+	},
+
 	closeSession: async (sessionId, intent) => {
 		try {
 			// intent 只在本轮是「内存策略自动卸载」时带上，用户主动关不传（保持既有语义）
@@ -797,6 +828,7 @@ export const useSessionsStore = create<SessionsStore>((_set, get) => ({
 		noteUserIntent();
 		try {
 			const meta = await getExecutionApi(activeSessionId).forkSession({ sessionId: activeSessionId, ref });
+			useLocalSessionsStore.getState().record(meta);
 			// fork 出的是用户刚开的新会话 → 记入临时工作区；迟到（已不是最新意图）只入列表，不抢 activeFile
 			const latest = isLatestActivation(token);
 			useSessionWorkspaceStore

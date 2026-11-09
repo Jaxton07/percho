@@ -24,6 +24,28 @@ const fixture = vi.hoisted(() => {
 		return {
 			events,
 			permissions,
+			archiveSession: vi.fn(async () => ({
+				sessionId: "same-id",
+				sessionFile: "/same/history.jsonl",
+				archived: true,
+				revision: 1,
+			})),
+			unarchiveSession: vi.fn(async () => ({
+				sessionId: "same-id",
+				sessionFile: "/same/history.jsonl",
+				archived: false,
+				revision: 2,
+			})),
+			previewSessionProjectDeletion: vi.fn(async () => ({
+				cwd: "/same",
+				token: "opaque",
+				sessionCount: 2,
+				archivedCount: 1,
+			})),
+			deleteSessionProject: vi.fn(async () => ({
+				deleted: ["same-id"],
+				failed: [{ sessionId: "other", error: "literal error" }],
+			})),
 			createSession: vi.fn(async () => meta),
 			openSession: vi.fn(async () => meta),
 			getSessionMessages: vi.fn(async (): Promise<unknown[]> => []),
@@ -126,6 +148,34 @@ import { useUiPreferencesStore } from "./stores/ui-preferences";
 
 const remote: EnvironmentRef = { kind: "ssh", connectionId: "company", environmentId: "remote-data" };
 const disposers: Array<() => void> = [];
+
+describe("目录操作的执行环境边界", () => {
+	it("只转换明确的会话和目录身份，保留预览 token 与错误文本", async () => {
+		const api = getExecutionApi(remote);
+		const sessionId = environmentEntityKey(remote, "same-id");
+		const sessionFile = environmentEntityKey(remote, "/same/history.jsonl");
+		const cwd = environmentEntityKey(remote, "/same");
+		expect(await api.archiveSession({ sessionId, sessionFile, expectedRevision: 0 })).toMatchObject({
+			sessionId,
+			sessionFile,
+		});
+		expect(fixture.remote.archiveSession).toHaveBeenCalledWith({
+			sessionId: "same-id",
+			sessionFile: "/same/history.jsonl",
+			expectedRevision: 0,
+		});
+		expect(await api.unarchiveSession({ sessionId, sessionFile, expectedRevision: 1 })).toMatchObject({
+			sessionId,
+			sessionFile,
+		});
+		expect(await api.previewSessionProjectDeletion({ cwd })).toMatchObject({ cwd, token: "opaque" });
+		expect(await api.deleteSessionProject({ cwd, token: "opaque" })).toEqual({
+			deleted: [sessionId],
+			failed: [{ sessionId: environmentEntityKey(remote, "other"), error: "literal error" }],
+		});
+		expect(fixture.remote.deleteSessionProject).toHaveBeenCalledWith({ cwd: "/same", token: "opaque" });
+	});
+});
 
 describe("媒体维护的执行环境边界", () => {
 	it("远端导航请求只解包会话 ID，entryId 保持原始身份", async () => {
