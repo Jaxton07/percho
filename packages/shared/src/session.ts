@@ -399,8 +399,12 @@ export interface ChannelWatchConfigInfo {
  * - `thresholdPct`：护栏触发阈值（只读展示；调参仍走 settings.json）。
  */
 export interface CompressionConfig {
+	/** 主开关（意图）：第三方压缩接管。开 = 下面三层全部让位 */
+	takeover: boolean;
 	sdkAutoEnabled: boolean;
 	guardEnabled: boolean;
+	/** 蒸发无自有开关（内置常开策略），接管期间为 false——派生只读值 */
+	evaporationEnabled: boolean;
 	thresholdPct?: number;
 }
 

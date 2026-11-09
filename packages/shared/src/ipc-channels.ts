@@ -853,6 +853,12 @@ export const SETTINGS_CHANNELS = {
 		"environment",
 		"mutation",
 	)<{ enabled: boolean }, CompressionConfig>({ enabled: input.boolean }),
+	/** 主开关：第三方压缩接管（开＝快照并关掉各层；关＝按快照恢复） */
+	setCompressionTakeover: ch(
+		"compression:setTakeover",
+		"environment",
+		"mutation",
+	)<{ enabled: boolean }, CompressionConfig>({ enabled: input.boolean }),
 	/** 项目信任请求应答（选项下标） */
 	respondTrust: ch(
 		"trust:respond",

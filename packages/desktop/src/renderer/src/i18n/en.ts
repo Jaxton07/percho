@@ -703,10 +703,16 @@ export const en: Messages = {
 		channelWatch: "Cross-session channel collaboration (channel-watch)",
 		compressionSdk: "Automatic context compaction (kernel)",
 		compressionSdkHint:
-			"Summarizes history automatically as the context window fills up. Turn this off when a third-party compression plugin takes over — two compressors otherwise stack and cancel each other out.",
+			"Summarizes history automatically as the context window fills up. For a third-party takeover use the takeover switch above — turning off this layer alone is not enough.",
 		compressionGuard: "Compaction guard (Percho)",
 		compressionGuardHint:
-			"Triggers compaction at a threshold and bounds the summary input size. Its compaction runs through the manual path a plugin cannot cancel — turn it off too when handing over.",
+			"Triggers compaction at a threshold and bounds summary input size. Its compaction runs through the manual path a plugin cannot cancel — only the takeover switch can disable it.",
+		compressionTakeover: "Third-party compression takeover (billion-context, etc.)",
+		compressionTakeoverHint:
+			"Turns everything else off: kernel auto-compaction, the compaction guard, and context evaporation. Turning it off restores each layer to its own pre-takeover state (not simply “all on”). A plugin can only cancel the kernel's threshold/overflow compaction — the guard and evaporation can only be disabled here.",
+		compressionEvaporation: "Context evaporation (Percho)",
+		compressionEvaporationHint:
+			"Built-in and always on, with no switch of its own; it trims each tool result as it enters the context and interferes with third-party compression, so it steps aside during takeover.",
 		codemode: "Code Mode",
 		codemodeOnly: "Code Mode only",
 		codemodeOnlyHint:

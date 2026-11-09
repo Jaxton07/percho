@@ -8,7 +8,7 @@ import { TaskNotificationSettings } from "./TaskNotificationSettings";
 
 const LANGUAGES: Language[] = ["zh", "en"];
 
-/** 通用设置面板（上下文压缩：内核自动压缩 / Percho 护栏各一个开关；上下文蒸发为内置常开策略，不提供开关） */
+/** 通用设置面板（上下文压缩：主开关“第三方接管”+ 三个可见子层；蒸发无自有开关，接管期间自动让位） */
 export function GeneralPanel() {
 	const t = useT();
 	const codemodeEnabled = useSettingsStore((s) => s.codemodeEnabled);
@@ -21,6 +21,9 @@ export function GeneralPanel() {
 	const channelWatchEnabled = useSettingsStore((s) => s.channelWatchEnabled);
 	const setChannelWatchEnabled = useSettingsStore((s) => s.setChannelWatchEnabled);
 	const compressionSdkAuto = useSettingsStore((s) => s.compressionSdkAuto);
+	const compressionTakeover = useSettingsStore((s) => s.compressionTakeover);
+	const compressionEvaporation = useSettingsStore((s) => s.compressionEvaporation);
+	const setCompressionTakeover = useSettingsStore((s) => s.setCompressionTakeover);
 	const compressionGuard = useSettingsStore((s) => s.compressionGuard);
 	const compressionSaving = useSettingsStore((s) => s.compressionSaving);
 	const setCompressionSdkAuto = useSettingsStore((s) => s.setCompressionSdkAuto);
@@ -46,21 +49,38 @@ export function GeneralPanel() {
 					onCheckedChange={(only) => void setCodemodeOnly(only)}
 				/>
 			</div>
-			<div>
+			<div className="flex flex-col gap-3">
 				<SettingsSwitchRow
-					title={t("settings.compressionSdk")}
-					hint={t("settings.compressionSdkHint")}
-					checked={compressionSdkAuto === true}
-					disabled={compressionSdkAuto === null || compressionSaving}
-					onCheckedChange={(enabled) => void setCompressionSdkAuto(enabled)}
+					title={t("settings.compressionTakeover")}
+					hint={t("settings.compressionTakeoverHint")}
+					checked={compressionTakeover === true}
+					disabled={compressionTakeover === null || compressionSaving}
+					onCheckedChange={(enabled) => void setCompressionTakeover(enabled)}
 				/>
-				<SettingsSwitchRow
-					title={t("settings.compressionGuard")}
-					hint={t("settings.compressionGuardHint")}
-					checked={compressionGuard === true}
-					disabled={compressionGuard === null || compressionSaving}
-					onCheckedChange={(enabled) => void setCompressionGuard(enabled)}
-				/>
+				{/* 子项：接管打开时子开关置灰（它们已被主开关强制关，单独改会跟主开关说谎） */}
+				<div className="flex flex-col gap-3 border-l border-ink/10 pl-4">
+					<SettingsSwitchRow
+						title={t("settings.compressionSdk")}
+						hint={t("settings.compressionSdkHint")}
+						checked={compressionSdkAuto === true}
+						disabled={compressionSdkAuto === null || compressionSaving || compressionTakeover === true}
+						onCheckedChange={(enabled) => void setCompressionSdkAuto(enabled)}
+					/>
+					<SettingsSwitchRow
+						title={t("settings.compressionGuard")}
+						hint={t("settings.compressionGuardHint")}
+						checked={compressionGuard === true}
+						disabled={compressionGuard === null || compressionSaving || compressionTakeover === true}
+						onCheckedChange={(enabled) => void setCompressionGuard(enabled)}
+					/>
+					<SettingsSwitchRow
+						title={t("settings.compressionEvaporation")}
+						hint={t("settings.compressionEvaporationHint")}
+						checked={compressionEvaporation === true}
+						disabled
+						onCheckedChange={() => {}}
+					/>
+				</div>
 			</div>
 			<div>
 				<div className="flex items-center justify-between gap-4">

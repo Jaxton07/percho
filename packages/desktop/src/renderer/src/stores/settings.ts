@@ -59,7 +59,9 @@ interface SettingsStore {
 	permissionGateOff: boolean | null;
 	/** channel-watch 跨会话频道唤醒开关（null = 未加载） */
 	channelWatchEnabled: boolean | null;
-	/** 上下文压缩两层开关（null = 未加载）：SDK 原生自动压缩 / Percho 压缩护栏 */
+	/** 上下文压缩（null = 未加载）：takeover 主开关 / SDK 自动压缩 / 护栏 / 蒸发（派生只读） */
+	compressionTakeover: boolean | null;
+	compressionEvaporation: boolean | null;
 	compressionSdkAuto: boolean | null;
 	compressionGuard: boolean | null;
 	compressionSaving: boolean;
@@ -106,6 +108,7 @@ interface SettingsStore {
 	setSubagentPreferBuiltin: (enabled: boolean) => Promise<void>;
 	setChannelWatchEnabled: (enabled: boolean) => Promise<void>;
 	setCompressionSdkAuto: (enabled: boolean) => Promise<void>;
+	setCompressionTakeover: (enabled: boolean) => Promise<void>;
 	setCompressionGuard: (enabled: boolean) => Promise<void>;
 	setCodemodeEnabled: (enabled: boolean) => Promise<void>;
 	setCodemodeOnly: (only: boolean) => Promise<void>;
@@ -389,7 +392,14 @@ function createSettingsStore(environment: EnvironmentRef) {
 			// 压缩两层开关：读不到就留 null（UI 置灰），绝不拿默认值冒充当前状态
 			void getExecutionApi(environment)
 				.getCompressionConfig()
-				.then((c) => set({ compressionSdkAuto: c.sdkAutoEnabled, compressionGuard: c.guardEnabled }))
+				.then((c) =>
+					set({
+						compressionTakeover: c.takeover,
+						compressionSdkAuto: c.sdkAutoEnabled,
+						compressionGuard: c.guardEnabled,
+						compressionEvaporation: c.evaporationEnabled,
+					}),
+				)
 				.catch(() => {});
 		};
 		const loadModelsData = async (mode: "local" | "mutation"): Promise<void> => {
@@ -451,6 +461,8 @@ function createSettingsStore(environment: EnvironmentRef) {
 			permissionGateOff: null,
 			channelWatchEnabled: null,
 			compressionSdkAuto: null,
+			compressionTakeover: null,
+			compressionEvaporation: null,
 			compressionGuard: null,
 			compressionSaving: false,
 			codemodeEnabled: null,
@@ -521,6 +533,38 @@ function createSettingsStore(environment: EnvironmentRef) {
 				}
 			},
 
+			setCompressionTakeover: async (enabled) => {
+				if (get().compressionSaving) return;
+				const previous = {
+					takeover: get().compressionTakeover,
+					sdk: get().compressionSdkAuto,
+					guard: get().compressionGuard,
+					evap: get().compressionEvaporation,
+				};
+				set({ compressionSaving: true, compressionTakeover: enabled });
+				try {
+					// 接管会连带改子层：以后端回读的四个值为准
+					const next = await getExecutionApi(environment).setCompressionTakeover({ enabled });
+					set({
+						compressionTakeover: next.takeover,
+						compressionSdkAuto: next.sdkAutoEnabled,
+						compressionGuard: next.guardEnabled,
+						compressionEvaporation: next.evaporationEnabled,
+						error: null,
+					});
+				} catch (error) {
+					set({
+						compressionTakeover: previous.takeover,
+						compressionSdkAuto: previous.sdk,
+						compressionGuard: previous.guard,
+						compressionEvaporation: previous.evap,
+						error: error instanceof Error ? error.message : String(error),
+					});
+				} finally {
+					set({ compressionSaving: false });
+				}
+			},
+
 			setCompressionSdkAuto: async (enabled) => {
 				if (get().compressionSaving) return;
 				const previous = { sdk: get().compressionSdkAuto, guard: get().compressionGuard };
@@ -528,7 +572,13 @@ function createSettingsStore(environment: EnvironmentRef) {
 				try {
 					// 后端回读权威值（两层一起返回，避免 UI 与盘上不一致）
 					const next = await getExecutionApi(environment).setSdkAutoCompression({ enabled });
-					set({ compressionSdkAuto: next.sdkAutoEnabled, compressionGuard: next.guardEnabled, error: null });
+					set({
+						compressionSdkAuto: next.sdkAutoEnabled,
+						compressionGuard: next.guardEnabled,
+						compressionTakeover: next.takeover,
+						compressionEvaporation: next.evaporationEnabled,
+						error: null,
+					});
 				} catch (error) {
 					set({
 						compressionSdkAuto: previous.sdk,
@@ -546,7 +596,13 @@ function createSettingsStore(environment: EnvironmentRef) {
 				set({ compressionSaving: true, compressionGuard: enabled });
 				try {
 					const next = await getExecutionApi(environment).setCompactionGuardEnabled({ enabled });
-					set({ compressionSdkAuto: next.sdkAutoEnabled, compressionGuard: next.guardEnabled, error: null });
+					set({
+						compressionSdkAuto: next.sdkAutoEnabled,
+						compressionGuard: next.guardEnabled,
+						compressionTakeover: next.takeover,
+						compressionEvaporation: next.evaporationEnabled,
+						error: null,
+					});
 				} catch (error) {
 					set({
 						compressionSdkAuto: previous.sdk,

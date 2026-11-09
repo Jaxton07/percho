@@ -678,11 +678,16 @@ export const zh = {
 		backgroundDim: "遮罩浓度",
 		channelWatch: "跨会话频道协作（channel-watch）",
 		compressionSdk: "上下文自动压缩（内核）",
-		compressionSdkHint:
-			"接近上下文窗口上限时自动摘要历史。第三方压缩插件接管时请关闭，否则两套压缩会叠加、互相截胡。",
+		compressionSdkHint: "接近上下文窗口上限时自动摘要历史。第三方接管请走上面的接管开关；只关这一层不够。",
 		compressionGuard: "压缩护栏（Percho）",
 		compressionGuardHint:
-			"按阈值主动触发压缩，并限制摘要输入体积。它触发的压缩走手动路径，插件拦不到——接管时请一并关闭。",
+			"按阈值主动触发压缩，并限制摘要输入体积。它触发的压缩走手动路径，插件拦不到——只能由接管开关关。",
+		compressionTakeover: "第三方压缩接管（billion-context 等）",
+		compressionTakeoverHint:
+			"打开即让位：内核自动压缩、压缩护栏、上下文蒸发全部关闭；关掉时按接管前的各自状态恢复（不是统统打开）。插件只能取消内核的阈值/溢出压缩，护栏和蒸发只能靠这里关。",
+		compressionEvaporation: "上下文蒸发（Percho）",
+		compressionEvaporationHint:
+			"内置常开、无独立开关；它裁的是每次工具结果的即时内容，与第三方压缩会互相干扰，所以接管期间自动让位。",
 		codemode: "Code Mode",
 		codemodeOnly: "Code Mode 独占模式",
 		codemodeOnlyHint:
