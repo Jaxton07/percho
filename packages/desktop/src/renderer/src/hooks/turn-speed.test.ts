@@ -214,6 +214,16 @@ describe("alignTurnSpeedRows（跨端按 startedAt 对齐，宁缺勿错）", ()
 		expect(alignTurnSpeedRows([timing("u-a", 0, 1000)], view)).toEqual([]);
 	});
 
+	it("流式期间 live 只挂最后一轮，不污染上一轮（快照最后一轮仍是上一轮时）", () => {
+		// 上一轮有权威样本（api 口径）；新轮刚开始：快照里还没有它的轮
+		const snapshot = deriveTurnSpeed([[sample(12, 10000)]], { turnStarts: [1000] });
+		const view = buildTurnSpeedView(snapshot, [], { tokens: 400, speed: 71.1 });
+		const rows = alignTurnSpeedRows([timing("u-prev", 0, 1000), timing("u-new", 1, 9000)], view);
+		expect(rows.length).toBe(2);
+		expect(rows[0]).toMatchObject({ turnId: "u-prev", live: false, speed: 1.2, metric: "api" });
+		expect(rows[1]).toMatchObject({ turnId: "u-new", live: true, liveSpeed: 71.1, metric: "api" });
+	});
+
 	it("新轮刚开始（无权威样本）但有 live 估算 → 给最后一轮挂纯 live 行", () => {
 		const snapshot = deriveTurnSpeed([], {});
 		const view = buildTurnSpeedView(snapshot, [], { tokens: 420, speed: 38.5 });

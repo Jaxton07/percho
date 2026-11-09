@@ -211,6 +211,7 @@ export function alignTurnSpeedRows(
 	const rows: TurnSpeedRow[] = [];
 	const turns = view.turns;
 	const currentTurn = turns.length > 0 ? (turns[turns.length - 1] as SpeedTurn) : undefined;
+	const lastTiming = timings[timings.length - 1];
 	let cursor = 0;
 	for (const timing of timings) {
 		while (cursor < turns.length && ((turns[cursor] as SpeedTurn).startedAt ?? -1) < timing.startedAt) {
@@ -218,7 +219,13 @@ export function alignTurnSpeedRows(
 		}
 		const turn = turns[cursor] as SpeedTurn | undefined;
 		if (!turn || turn.startedAt !== timing.startedAt || turn.speed === null) continue;
-		const isCurrent = currentTurn !== undefined && turn.turnIndex === currentTurn.turnIndex;
+		// 「当前轮」必须就是渲染端最后一轮：新轮还在生成、快照尚未有它的样本时，快照的最后一轮
+		// 仍是上一轮——live/decode 覆盖只能落在最后一行，否则会把生成中的速度安到上一轮（实测泄漏过）
+		const isCurrent =
+			currentTurn !== undefined &&
+			turn.turnIndex === currentTurn.turnIndex &&
+			lastTiming !== undefined &&
+			timing.startedAt === lastTiming.startedAt;
 		rows.push({
 			...(timing.turnId !== undefined ? { turnId: timing.turnId } : {}),
 			turnIndex: timing.turnIndex,
@@ -238,7 +245,7 @@ export function alignTurnSpeedRows(
 		});
 	}
 	// 新轮刚开始（还没有权威样本）但已有 live 估算：给最后一轮挂纯 live 行，生成中也看得到速度
-	const last = timings[timings.length - 1];
+	const last = lastTiming;
 	if (
 		view.live &&
 		view.liveSpeed !== null &&
