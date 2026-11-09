@@ -4,8 +4,8 @@ import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
 import { markdownParseOptions } from "./markdown-parse-options";
 
-function renderCode(content: string, final = true) {
-	const html = renderToStaticMarkup(
+function renderMarkup(content: string, final = true) {
+	return renderToStaticMarkup(
 		createElement(MarkdownRender, {
 			content,
 			final,
@@ -13,7 +13,14 @@ function renderCode(content: string, final = true) {
 			renderCodeBlocksAsPre: true,
 		}),
 	);
-	return html.match(/<code[^>]*>([\s\S]*?)<\/code>/)?.[1];
+}
+
+function renderCode(content: string, final = true) {
+	return renderMarkup(content, final).match(/<code[^>]*>([\s\S]*?)<\/code>/)?.[1];
+}
+
+function renderLanguage(content: string, final = true) {
+	return renderMarkup(content, final).match(/data-language="([^"]*)"/)?.[1];
 }
 
 describe("代码块末尾换行", () => {
@@ -38,5 +45,12 @@ describe("代码块末尾换行", () => {
 	it("处理引用和列表内的代码块", () => {
 		expect(renderCode("> ```js\n> first\n> \n> ```")).toBe("first\n");
 		expect(renderCode("- item\n\n  ```js\n  first\n  ```")).toBe("first");
+	});
+
+	it("流式围栏尚未进入正文时不暴露半截语言名，进入正文或闭合后恢复", () => {
+		expect(renderLanguage("```ma", false)).toBe("plaintext");
+		expect(renderLanguage("```markdown\n", false)).toBe("plaintext");
+		expect(renderLanguage("```markdown\n这是一行 markdown 块", false)).toBe("markdown");
+		expect(renderLanguage("```markdown\n```", false)).toBe("markdown");
 	});
 });
