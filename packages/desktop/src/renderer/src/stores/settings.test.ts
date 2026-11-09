@@ -9,6 +9,15 @@ const piMock = vi.hoisted(() => ({
 	setCodemodeOnly: vi.fn(() => Promise.resolve()),
 	setCodemodeEnabled: vi.fn(() => Promise.resolve()),
 	setChannelWatchEnabled: vi.fn(() => Promise.resolve()),
+	getCompressionConfig: vi.fn(() =>
+		Promise.resolve({ sdkAutoEnabled: true, guardEnabled: true, thresholdPct: 80 }),
+	),
+	setSdkAutoCompression: vi.fn(() =>
+		Promise.resolve({ sdkAutoEnabled: false, guardEnabled: true, thresholdPct: 80 }),
+	),
+	setCompactionGuardEnabled: vi.fn(() =>
+		Promise.resolve({ sdkAutoEnabled: false, guardEnabled: false, thresholdPct: 80 }),
+	),
 	lanGetStatus: vi.fn(() => Promise.resolve(null)),
 	listProviders: vi.fn(() => Promise.resolve([])),
 	getModelPrefs: vi.fn(() => Promise.resolve({ hiddenModels: {}, subagentModels: {} })),
@@ -29,6 +38,9 @@ import { useSettingsStore } from "./settings";
 function resetStore() {
 	useSettingsStore.setState({
 		channelWatchEnabled: null,
+		compressionSdkAuto: null,
+		compressionGuard: null,
+		compressionSaving: false,
 		codemodeEnabled: null,
 		codemodeOnly: null,
 		codemodeSaving: false,
@@ -40,6 +52,43 @@ function resetStore() {
 beforeEach(() => {
 	vi.clearAllMocks();
 	resetStore();
+});
+
+describe("settings store：上下文压缩两层开关（乐观 + 后端回读权威值 + 失败回滚）", () => {
+	it("独立加载：两层状态进 store；读不到保持 null", async () => {
+		piMock.getCompressionConfig.mockResolvedValue({
+			sdkAutoEnabled: true,
+			guardEnabled: false,
+			thresholdPct: 60,
+		});
+		await useSettingsStore.getState().refresh();
+		expect(useSettingsStore.getState().compressionSdkAuto).toBe(true);
+		expect(useSettingsStore.getState().compressionGuard).toBe(false);
+		piMock.getCompressionConfig.mockRejectedValue(new Error("boom"));
+		useSettingsStore.setState({ compressionSdkAuto: null, compressionGuard: null });
+		await useSettingsStore.getState().refresh();
+		expect(useSettingsStore.getState().compressionSdkAuto).toBeNull();
+		expect(useSettingsStore.getState().compressionGuard).toBeNull();
+	});
+
+	it("关护栏：以后端回读的两层值为准（不只信本地那个开关）", async () => {
+		useSettingsStore.setState({ compressionSdkAuto: false, compressionGuard: true });
+		await useSettingsStore.getState().setCompressionGuard(false);
+		expect(piMock.setCompactionGuardEnabled).toHaveBeenCalledWith({ enabled: false });
+		expect(useSettingsStore.getState().compressionGuard).toBe(false);
+		expect(useSettingsStore.getState().compressionSdkAuto).toBe(false);
+		expect(useSettingsStore.getState().compressionSaving).toBe(false);
+	});
+
+	it("写失败：两层都回滚并记录错误", async () => {
+		useSettingsStore.setState({ compressionSdkAuto: true, compressionGuard: true });
+		piMock.setSdkAutoCompression.mockRejectedValueOnce(new Error("写盘失败"));
+		await useSettingsStore.getState().setCompressionSdkAuto(false);
+		expect(useSettingsStore.getState().compressionSdkAuto).toBe(true);
+		expect(useSettingsStore.getState().compressionGuard).toBe(true);
+		expect(useSettingsStore.getState().error).toBe("写盘失败");
+		expect(useSettingsStore.getState().compressionSaving).toBe(false);
+	});
 });
 
 describe("settings store：channelWatchEnabled（乐观更新 + 失败回滚）", () => {

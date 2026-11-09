@@ -391,6 +391,20 @@ export interface ChannelWatchConfigInfo {
 }
 
 /**
+ * 上下文压缩归属（设置 UI 开关；两层开关都在 ~/.percho/agent/settings.json，缺省=开）。
+ *
+ * - `sdkAutoEnabled`：SDK 原生自动压缩（`compaction.enabled`）——接近上下文窗口上限时自动摘要历史。
+ * - `guardEnabled`：Percho 压缩护栏（`compactionGuard.enabled`）——按阈值主动触发压缩并限制摘要输入体积。
+ *   它触发的压缩走 SDK 手动路径（`reason:"manual"`），第三方压缩插件拦不到——接管场景两层都要关。
+ * - `thresholdPct`：护栏触发阈值（只读展示；调参仍走 settings.json）。
+ */
+export interface CompressionConfig {
+	sdkAutoEnabled: boolean;
+	guardEnabled: boolean;
+	thresholdPct?: number;
+}
+
+/**
  * 项目信任选项（添加项目/创建会话前，项目含 .pi/ 资源或祖先 .agents/skills 需用户决策）。
  * 刻意从 CLI 的五选项精简为两个（信任/不信任，均落盘）：「仅本次」在 draft 拉命令
  * + 建会话双检查点的流程里语义不明且场景极少。

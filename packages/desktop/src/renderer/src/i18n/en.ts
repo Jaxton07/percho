@@ -695,6 +695,12 @@ export const en: Messages = {
 		backgroundClear: "Remove",
 		backgroundDim: "Overlay opacity",
 		channelWatch: "Cross-session channel collaboration (channel-watch)",
+		compressionSdk: "Automatic context compaction (kernel)",
+		compressionSdkHint:
+			"Summarizes history automatically as the context window fills up. Turn this off when a third-party compression plugin takes over — two compressors otherwise stack and cancel each other out.",
+		compressionGuard: "Compaction guard (Percho)",
+		compressionGuardHint:
+			"Triggers compaction at a threshold and bounds the summary input size. Its compaction runs through the manual path a plugin cannot cancel — turn it off too when handing over.",
 		codemode: "Code Mode",
 		codemodeOnly: "Code Mode only",
 		codemodeOnlyHint:

@@ -671,6 +671,12 @@ export const zh = {
 		backgroundClear: "清除背景",
 		backgroundDim: "遮罩浓度",
 		channelWatch: "跨会话频道协作（channel-watch）",
+		compressionSdk: "上下文自动压缩（内核）",
+		compressionSdkHint:
+			"接近上下文窗口上限时自动摘要历史。第三方压缩插件接管时请关闭，否则两套压缩会叠加、互相截胡。",
+		compressionGuard: "压缩护栏（Percho）",
+		compressionGuardHint:
+			"按阈值主动触发压缩，并限制摘要输入体积。它触发的压缩走手动路径，插件拦不到——接管时请一并关闭。",
 		codemode: "Code Mode",
 		codemodeOnly: "Code Mode 独占模式",
 		codemodeOnlyHint:

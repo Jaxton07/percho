@@ -150,6 +150,11 @@ import {
 	writeCodemodeEnabled,
 	writeCodemodeOnly,
 } from "./settings/codemode";
+import {
+	readCompressionConfig,
+	writeCompactionGuardEnabled,
+	writeSdkAutoCompression,
+} from "./settings/compression";
 import { LoginService } from "./settings/login";
 import { ModelPrefsService } from "./settings/model-prefs";
 import { makeQuotaService } from "./settings/quota";
@@ -3010,6 +3015,41 @@ export class PiBackend {
 			throw err; // ipcMain.handle，reject 传回 renderer
 		}
 		log.info("channel watch enabled", enabled);
+	}
+
+	/**
+	 * 上下文压缩两层开关（设置 UI）：SDK 原生自动压缩 + Percho 压缩护栏。
+	 * 接管场景（第三方压缩插件）两层都得关：插件只 cancel `reason:"threshold"|"overflow"`，
+	 * 护栏自己触发的压缩走手动路径（`reason:"manual"`），它拦不到。
+	 */
+	getCompressionConfig(): import("@percho/shared").CompressionConfig {
+		return readCompressionConfig(getAgentDir());
+	}
+
+	/**
+	 * 写 SDK 自动压缩开关：写盘 + 推给已在跑的会话（`session.settingsManager`），
+	 * 下一回合的 `shouldCompact()` 就用新值。护栏不受这个键影响，所以另开一个开关。
+	 */
+	setSdkAutoCompression(enabled: boolean): import("@percho/shared").CompressionConfig {
+		writeSdkAutoCompression(getAgentDir(), enabled);
+		for (const entry of this.registry.list()) {
+			if (entry.readOnly) continue;
+			try {
+				entry.session.settingsManager?.setCompactionEnabled(enabled);
+			} catch (err) {
+				log.warn("会话内压缩开关热推失败（不影响已落盘的开关）", {
+					cwd: entry.cwd,
+					error: err instanceof Error ? err.message : String(err),
+				});
+			}
+		}
+		return readCompressionConfig(getAgentDir());
+	}
+
+	/** 写护栏开关：护栏在请求边界读最新配置（不缓存），因此写完即生效，无需重载会话 */
+	setCompactionGuardEnabled(enabled: boolean): import("@percho/shared").CompressionConfig {
+		writeCompactionGuardEnabled(getAgentDir(), enabled);
+		return readCompressionConfig(getAgentDir());
 	}
 
 	respondTrust(requestId: string, answer: TrustAnswer): void {
