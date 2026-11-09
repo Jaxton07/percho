@@ -1,7 +1,7 @@
 import { environmentEntityRef, LOCAL_ENVIRONMENT } from "@percho/shared";
 import { getPi } from "../../api";
 import { getExecutionApi } from "../../environment-api";
-import { useT } from "../../i18n";
+import { type MessageKey, useT } from "../../i18n";
 import { errText } from "../../lib/error-text";
 import { remoteFilePath } from "../../lib/remote-file-path";
 import { useToastsStore } from "../../stores/toasts";
@@ -11,7 +11,7 @@ import type { MenuAnchor } from "./place-menu";
 
 /**
  * 文件路径右键菜单（轮末文件行 / 变更侧栏文件卡共用）：
- * 打开文件（系统默认应用）/ 在访达中显示 / 复制路径。
+ * 打开文件（系统默认应用）/ 在系统文件管理器中显示（文案按平台）/ 复制路径。
  * 本机路径解析保留原生规则；远端只复制字面 POSIX 路径，不访问文件系统。
  * 路径不存在时三个动作各自 toast 报错（不做禁用态 —— 禁用态说不清原因）。
  */
@@ -32,6 +32,7 @@ export function FilePathMenu({
 }) {
 	const t = useT();
 	const environment = cwd ? environmentEntityRef(cwd).environment : LOCAL_ENVIRONMENT;
+	const reveal = revealCopy(getPi().platform);
 
 	const run = async (action: "open" | "reveal" | "copy") => {
 		try {
@@ -58,7 +59,7 @@ export function FilePathMenu({
 				action === "copy"
 					? "toast.pathCopyFailed"
 					: action === "reveal"
-						? "toast.pathRevealFailed"
+						? reveal.failed
 						: "toast.pathOpenFailed";
 			useToastsStore.getState().push("error", key, errText(error));
 		}
@@ -73,7 +74,7 @@ export function FilePathMenu({
 		},
 		{
 			key: "reveal",
-			label: t("pathMenu.reveal"),
+			label: t(reveal.label),
 			icon: <FolderIcon size={13} />,
 			onSelect: () => void run("reveal"),
 		},
@@ -103,4 +104,12 @@ export function FilePathMenu({
 			onClose={onClose}
 		/>
 	);
+}
+
+/** 「在系统文件管理器中显示」按平台取词：macOS 访达 / Windows 文件资源管理器 / 其他通用文件夹 */
+export function revealCopy(platform: string): { label: MessageKey; failed: MessageKey } {
+	if (platform === "darwin") return { label: "pathMenu.reveal", failed: "toast.pathRevealFailed" };
+	if (platform === "win32")
+		return { label: "pathMenu.revealExplorer", failed: "toast.pathRevealFailedExplorer" };
+	return { label: "pathMenu.revealFolder", failed: "toast.pathRevealFailedFolder" };
 }

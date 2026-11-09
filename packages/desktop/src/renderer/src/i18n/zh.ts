@@ -498,6 +498,8 @@ export const zh = {
 	pathMenu: {
 		open: "打开文件",
 		reveal: "在访达中显示",
+		revealExplorer: "在文件资源管理器中显示",
+		revealFolder: "在文件夹中显示",
 		copyPath: "复制路径",
 	},
 	mediaMaintenance: {
@@ -1077,6 +1079,8 @@ export const zh = {
 		sessionRenameFailed: "重命名失败",
 		pathOpenFailed: "无法打开文件",
 		pathRevealFailed: "无法在访达中显示",
+		pathRevealFailedExplorer: "无法在文件资源管理器中显示",
+		pathRevealFailedFolder: "无法在文件夹中显示",
 		pathCopyFailed: "复制路径失败",
 		pathCopied: "已复制绝对路径",
 	},
