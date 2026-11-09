@@ -45,6 +45,15 @@ const piMock = vi.hoisted(() => ({
 			thresholdPct: 80,
 		}),
 	),
+	setEvaporationEnabled: vi.fn(() =>
+		Promise.resolve({
+			takeover: false,
+			sdkAutoEnabled: true,
+			guardEnabled: true,
+			evaporationEnabled: false,
+			thresholdPct: 80,
+		}),
+	),
 	lanGetStatus: vi.fn(() => Promise.resolve(null)),
 	listProviders: vi.fn(() => Promise.resolve([])),
 	getModelPrefs: vi.fn(() => Promise.resolve({ hiddenModels: {}, subagentModels: {} })),
@@ -125,6 +134,22 @@ describe("settings store：上下文压缩两层开关（乐观 + 后端回读�
 		expect(useSettingsStore.getState().compressionGuard).toBe(true);
 		expect(useSettingsStore.getState().error).toBe("写盘失败");
 		expect(useSettingsStore.getState().compressionSaving).toBe(false);
+	});
+
+	it("蒸发单独关：只动蒸发，其余三层以后端回读值为准", async () => {
+		useSettingsStore.setState({
+			compressionTakeover: false,
+			compressionSdkAuto: true,
+			compressionGuard: true,
+			compressionEvaporation: true,
+		});
+		await useSettingsStore.getState().setCompressionEvaporation(false);
+		expect(piMock.setEvaporationEnabled).toHaveBeenCalledWith({ enabled: false });
+		const s = useSettingsStore.getState();
+		expect(s.compressionEvaporation).toBe(false);
+		expect(s.compressionTakeover).toBe(false);
+		expect(s.compressionSdkAuto).toBe(true);
+		expect(s.compressionGuard).toBe(true);
 	});
 
 	it("接管主开关：子层以后端回读值为准（连带关掉，不只信本地）", async () => {

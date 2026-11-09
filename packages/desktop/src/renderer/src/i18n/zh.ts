@@ -681,7 +681,7 @@ export const zh = {
 			"打开即让位：内核自动压缩、压缩护栏、上下文蒸发全部关闭；关掉时按接管前的各自状态恢复（不是统统打开）。插件只能取消内核的阈值/溢出压缩，护栏和蒸发只能靠这里关。",
 		compressionEvaporation: "上下文蒸发（Percho）",
 		compressionEvaporationHint:
-			"内置常开、无独立开关；它裁的是每次工具结果的即时内容，与第三方压缩会互相干扰，所以接管期间自动让位。",
+			"工具结果进入上下文后，旧内容会被即时裁剪（跟“整批历史摘要”是两回事）。第三方压缩插件拦不到它，所以接管期间会被强制关。",
 		codemode: "Code Mode",
 		codemodeOnly: "Code Mode 独占模式",
 		codemodeOnlyHint:

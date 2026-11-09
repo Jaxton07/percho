@@ -852,6 +852,11 @@ export const SETTINGS_CHANNELS = {
 		"environment",
 		"mutation",
 	)<{ enabled: boolean }, CompressionConfig>({ enabled: input.boolean }),
+	setEvaporationEnabled: ch(
+		"compression:setEvaporationEnabled",
+		"environment",
+		"mutation",
+	)<{ enabled: boolean }, CompressionConfig>({ enabled: input.boolean }),
 	/** 项目信任请求应答（选项下标） */
 	respondTrust: ch(
 		"trust:respond",

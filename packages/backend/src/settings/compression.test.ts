@@ -6,6 +6,7 @@ import {
 	readCompressionConfig,
 	setCompressionTakeover,
 	writeCompactionGuardEnabled,
+	writeEvaporationEnabled,
 	writeSdkAutoCompression,
 } from "./compression";
 
@@ -95,7 +96,7 @@ describe("第三方压缩接管（主开关：快照 → 强关 → 按快照恢
 			guardEnabled: false,
 			evaporationEnabled: false,
 		});
-		expect(takeoverSection()).toEqual({ enabled: true, saved: { sdk: true, guard: false } });
+		expect(takeoverSection()).toEqual({ enabled: true, saved: { sdk: true, guard: false, evap: true } });
 	});
 
 	it("关：按快照逐项恢复（原本关着的那层不会被打开），并清掉快照", () => {
@@ -114,7 +115,7 @@ describe("第三方压缩接管（主开关：快照 → 强关 → 按快照恢
 	it("重复开不覆盖快照；没开过就关 → 不动任何层", () => {
 		setCompressionTakeover(dir, true);
 		setCompressionTakeover(dir, true);
-		expect(takeoverSection().saved).toEqual({ sdk: true, guard: true });
+		expect(takeoverSection().saved).toEqual({ sdk: true, guard: true, evap: true });
 		setCompressionTakeover(dir, false);
 		setCompressionTakeover(dir, false);
 		expect(readCompressionConfig(dir)).toMatchObject({
@@ -131,6 +132,7 @@ describe("第三方压缩接管（主开关：快照 → 强关 → 按快照恢
 			JSON.stringify({
 				compaction: { reserveTokens: 65536 },
 				compactionGuard: { thresholdPct: 60 },
+				contextEvaporation: { budgetTokens: 8000 },
 				defaultTools: { Bash: true },
 			}),
 		);
@@ -138,7 +140,24 @@ describe("第三方压缩接管（主开关：快照 → 强关 → 按快照恢
 		const raw = readRaw();
 		expect(raw.compaction).toEqual({ reserveTokens: 65536, enabled: false });
 		expect(raw.compactionGuard).toEqual({ thresholdPct: 60, enabled: false });
+		expect(raw.contextEvaporation).toEqual({ budgetTokens: 8000, enabled: false });
 		expect(raw.defaultTools).toEqual({ Bash: true });
 		expect(readCompressionConfig(dir).thresholdPct).toBe(60);
+	});
+
+	it("蒸发有自己的开关：默认开、显式 false 才关、不动阀值调参键", () => {
+		expect(readCompressionConfig(dir).evaporationEnabled).toBe(true);
+		writeFileSync(join(dir, "settings.json"), JSON.stringify({ contextEvaporation: { budgetTokens: 8000 } }));
+		writeEvaporationEnabled(dir, false);
+		expect(readCompressionConfig(dir).evaporationEnabled).toBe(false);
+		expect(readRaw().contextEvaporation).toEqual({ budgetTokens: 8000, enabled: false });
+	});
+
+	it("蒸发已关时接管：快照记住 false，解除接管不会被顺手打开", () => {
+		writeEvaporationEnabled(dir, false);
+		setCompressionTakeover(dir, true);
+		expect(readCompressionConfig(dir)).toMatchObject({ takeover: true, evaporationEnabled: false });
+		setCompressionTakeover(dir, false);
+		expect(readCompressionConfig(dir)).toMatchObject({ takeover: false, evaporationEnabled: false });
 	});
 });

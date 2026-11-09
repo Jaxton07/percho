@@ -154,6 +154,7 @@ import {
 	readCompressionConfig,
 	setCompressionTakeover,
 	writeCompactionGuardEnabled,
+	writeEvaporationEnabled,
 	writeSdkAutoCompression,
 } from "./settings/compression";
 import { LoginService } from "./settings/login";
@@ -3055,9 +3056,15 @@ export class PiBackend {
 		return readCompressionConfig(getAgentDir());
 	}
 
+	/** 蒸发开关：生效点是注入给 makeEvapExtension 的 `isEnabled` 闭包（每次实时读），无需重载会话 */
+	setEvaporationEnabled(enabled: boolean): import("@percho/shared").CompressionConfig {
+		writeEvaporationEnabled(getAgentDir(), enabled);
+		return readCompressionConfig(getAgentDir());
+	}
+
 	/**
-	 * 主开关：第三方压缩接管。落盘（快照+强关两层）+ 把 SDK 层热推到已跑会话；
-	 * 蒸发层靠 `isEnabled` 闭包实时读，无需推送。
+	 * 主开关：第三方压缩接管。落盘（快照三层当前值 + 全部强关）+ 把 SDK 层热推到已跑会话；
+	 * 护栏与蒸发在请求边界实时读配置，无需推送。
 	 */
 	setCompressionTakeover(enabled: boolean): import("@percho/shared").CompressionConfig {
 		setCompressionTakeover(getAgentDir(), enabled);

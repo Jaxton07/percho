@@ -64,21 +64,24 @@ function readSettings(agentDir: string): Record<string, unknown> {
 export function readCompressionConfig(agentDir: string): CompressionConfig {
 	const settings = readSettings(agentDir);
 	const takeover = isRecord(settings.compressionTakeover) && settings.compressionTakeover.enabled === true;
+	const states = layerStates(settings);
 	return {
-		...layerStates(settings),
+		...states,
 		takeover,
-		// 蒸发无自有开关（上游已废 `enabled`、内置常开）：它的状态由接管意图派生。
-		evaporationEnabled: !takeover,
+		// 接管期间蒸发也让位：读时再 AND 一次，防手改 `contextEvaporation.enabled` 跟主开关跑。
+		evaporationEnabled: states.evaporationEnabled && !takeover,
 	};
 }
 
-/** 两层各自的盘上状态（缺 key = 开，只有显式 false 才关）+ 护栏阈值 */
+/** 三层各自的盘上状态（缺 key = 开，只有显式 false 才关）+ 护栏阈值 */
 function layerStates(settings: Record<string, unknown>) {
 	const compaction = isRecord(settings.compaction) ? settings.compaction : {};
 	const guard = isRecord(settings.compactionGuard) ? settings.compactionGuard : {};
+	const evaporation = isRecord(settings.contextEvaporation) ? settings.contextEvaporation : {};
 	return {
 		sdkAutoEnabled: compaction.enabled !== false,
 		guardEnabled: guard.enabled !== false,
+		evaporationEnabled: evaporation.enabled !== false,
 		thresholdPct:
 			typeof guard.thresholdPct === "number"
 				? guard.thresholdPct
@@ -119,8 +122,23 @@ export function writeCompactionGuardEnabled(agentDir: string, enabled: boolean):
 }
 
 /**
- * 主开关：第三方压缩接管（billion-context 等）。它的语义是「意图」而不是第三个并列布尔：
- * 开 = 先把两层当前值快照到 `compressionTakeover.saved`，再把两层强制关（蒸发由 `evaporationEnabled` 派生关）；
+ * 蒸发开关。注意：`contextEvaporation.enabled` 在上游已被退役（蒸发内置常开，见
+ * `tools/context-evaporation/config.ts` 顶部注释），本模块把它重新当作用户开关写回，
+ * 生效点不在那个 config 模块，而在 `pi-backend` 给 `makeEvapExtension` 注入的 `isEnabled` 闭包。
+ * 只写 `enabled`，保留同段阀值调参键。
+ */
+export function writeEvaporationEnabled(agentDir: string, enabled: boolean): void {
+	settingsStore(agentDir).updateSync((existing) => {
+		const evaporation = isRecord(existing.contextEvaporation) ? existing.contextEvaporation : {};
+		evaporation.enabled = enabled;
+		existing.contextEvaporation = evaporation;
+	});
+	log.info("上下文蒸发开关已保存", enabled);
+}
+
+/**
+ * 主开关：第三方压缩接管（billion-context 等）。它的语义是「意图」而不是第四个并列布尔：
+ * 开 = 先把三层当前值快照到 `compressionTakeover.saved`，再把三层强制关；
  * 关 = 按快照逐项恢复（不是统统打开——原本就是关的层保持关）。
  *
  * 为什么不能只在读时 override：SDK 自己的阈值压缩直读 `compaction.enabled`（settings-manager），
@@ -135,22 +153,29 @@ export function setCompressionTakeover(agentDir: string, enabled: boolean): void
 		if (enabled) {
 			if (!wasOn) {
 				const states = layerStates(existing);
-				takeover.saved = { sdk: states.sdkAutoEnabled, guard: states.guardEnabled };
+				takeover.saved = {
+					sdk: states.sdkAutoEnabled,
+					guard: states.guardEnabled,
+					evap: states.evaporationEnabled,
+				};
 			}
-			const compaction = isRecord(existing.compaction) ? existing.compaction : {};
-			compaction.enabled = false;
-			existing.compaction = compaction;
-			const guard = isRecord(existing.compactionGuard) ? existing.compactionGuard : {};
-			guard.enabled = false;
-			existing.compactionGuard = guard;
+			for (const key of ["compaction", "compactionGuard", "contextEvaporation"] as const) {
+				const section = isRecord(existing[key]) ? existing[key] : {};
+				section.enabled = false;
+				existing[key] = section;
+			}
 		} else if (wasOn) {
 			const saved = isRecord(takeover.saved) ? takeover.saved : {};
-			const compaction = isRecord(existing.compaction) ? existing.compaction : {};
-			compaction.enabled = saved.sdk !== false;
-			existing.compaction = compaction;
-			const guard = isRecord(existing.compactionGuard) ? existing.compactionGuard : {};
-			guard.enabled = saved.guard !== false;
-			existing.compactionGuard = guard;
+			const restored: Array<[string, unknown]> = [
+				["compaction", saved.sdk],
+				["compactionGuard", saved.guard],
+				["contextEvaporation", saved.evap],
+			];
+			for (const [key, value] of restored) {
+				const section = isRecord(existing[key]) ? existing[key] : {};
+				section.enabled = value !== false;
+				existing[key] = section;
+			}
 			delete takeover.saved;
 		}
 		takeover.enabled = enabled;
