@@ -1684,7 +1684,17 @@ export class PiBackend {
 			log.info("closeSession ignored: channel subscriptions", sessionId);
 			return { closed: false };
 		}
-		await this.disposeSession(entry);
+		if (intent === "gc") {
+			const lease = entry.session.tryAcquireIdleLease();
+			if (!lease) return { closed: false };
+			try {
+				await this.disposeSession(entry);
+			} finally {
+				lease.release();
+			}
+		} else {
+			await this.disposeSession(entry);
+		}
 		return { closed: true };
 	}
 
@@ -2870,11 +2880,8 @@ export class PiBackend {
 	 * 包安装/卸载与 MCP 变更的唯一空闲重载实现。官方 mcp 扩展在 session_start/reload 时读配置。
 	 * `cwd` 给定 = 只重载该项目下的会话（项目级配置只影响它们）；缺省 = 全局配置，重载全部。
 	 *
-	 * ❗**必须跳过运行中的会话**：`AgentSession.reload()` 内部既没有 `isStreaming` 守卫也不 abort
-	 * 在跑的 turn，却会 `emitSessionShutdown` —— 官方 mcp 扩展收到就关掉全部连接、旧 runner 被
-	 * invalidate。用户在别的会话跑长任务时顺手改一下 MCP 配置，就会静默打断那个任务
-	 * （失败还被 catch 吞掉 → 用户视角"点了没反应"）。跳过并把名单回给 UI（空闲后生效）。
-	 * 与 `forkSession` 用的同一把守卫。
+	 * 预检运行状态并将跳过的会话回报 UI；SDK 的 reload 也会在 shutdown 前拒绝忙碌会话，
+	 * 因此预检之后状态变化不会静默中断在途任务。
 	 */
 	private async reloadIdleSessions(cwd: string | undefined): Promise<McpReloadReport> {
 		this.assertRunning();
@@ -2896,6 +2903,14 @@ export class PiBackend {
 				reloaded++;
 			} catch (err) {
 				log.warn("session reload failed", entry.session.sessionId, err);
+				skipped.push({
+					sessionId: entry.session.sessionId,
+					reason: entry.session.isStreaming
+						? "streaming"
+						: entry.session.isCompacting
+							? "compacting"
+							: "failed",
+				});
 			}
 		}
 		return { reloaded, skipped };

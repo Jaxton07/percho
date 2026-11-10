@@ -8,7 +8,7 @@ import { afterEach, beforeEach, expect, it, vi } from "vitest";
 const api = vi.hoisted(() => ({ getCacheWarming: vi.fn(), setCacheWarming: vi.fn() }));
 vi.mock("../../environment-api", () => ({ getExecutionApi: () => api }));
 
-import { useI18nStore } from "../../i18n";
+import { translate, useI18nStore } from "../../i18n";
 import { CacheWarmingSettings } from "./CacheWarmingSettings";
 
 const info = (mode: CacheWarmingInfo["mode"] = "streaming"): CacheWarmingInfo => ({
@@ -47,6 +47,17 @@ async function choose(label: string) {
 	if (!option) throw new Error(`Missing option: ${label}`);
 	await act(async () => option.click());
 }
+it("默认提示说明空闲保温及潜在费用，读取结果仍以真实状态为准", async () => {
+	expect(translate("zh", "settings.cacheWarmingHint")).toContain("默认包含空闲时");
+	expect(translate("zh", "settings.cacheWarmingHint")).toContain("额外费用");
+	expect(translate("en", "settings.cacheWarmingHint")).toContain("Defaults to including idle time");
+	expect(translate("en", "settings.cacheWarmingHint")).toContain("extra costs");
+	api.getCacheWarming.mockResolvedValueOnce(info("idle"));
+	await render();
+	expect(host.querySelector('[role="combobox"]')?.textContent).toContain("包含空闲时");
+	expect(host.textContent).toContain("等待首次模型请求");
+});
+
 it("显示真实模式和会话等待状态，可即时保存；英文同步翻译", async () => {
 	await render();
 	expect(host.textContent).toContain("仅任务运行时");

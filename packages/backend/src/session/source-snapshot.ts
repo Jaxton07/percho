@@ -91,12 +91,11 @@ export class SessionSourceSnapshots {
 		const previous = this.loaded.get(manager);
 		try {
 			const next = this.fileVersion(file);
-			this.loaded.set(manager, {
-				fingerprint: next,
-				trusted:
-					previous?.trusted !== false &&
-					(!previous?.fingerprint || previous.fingerprint.identity === next.identity),
-			});
+			// 有加载基线时不能仅凭文件仍同 inode 就承认变化；可能先发生了失败的部分写入。
+			// 有活动 view 时由 noteAppend 验证完整增量后推进基线，否则保持旧基线供 capture 拒绝。
+			if (!previous) this.loaded.set(manager, { fingerprint: next, trusted: true });
+			else if (previous.fingerprint?.identity !== next.identity)
+				this.loaded.set(manager, { ...previous, trusted: false });
 		} catch {
 			if (previous) this.loaded.set(manager, { ...previous, trusted: false });
 		}
@@ -247,13 +246,18 @@ export class SessionSourceSnapshots {
 			const current = fingerprint(view.file);
 			if (
 				current.identity !== view.fingerprint?.identity ||
-				(!creating && same(view.fingerprint, current)) ||
+				(!creating &&
+					Number(current.stamp.split(":")[0]) - Number(view.fingerprint.stamp.split(":")[0]) !==
+						Buffer.byteLength(`${JSON.stringify(appended)}\n`)) ||
 				!persistedTailMatches(view.file, current, appended) ||
 				!same(current, fingerprint(view.file))
 			) {
 				distrust();
 				return;
 			}
+			const loaded = manager ? this.loaded.get(manager) : undefined;
+			if (manager && loaded?.trusted && same(loaded.fingerprint, view.fingerprint))
+				this.loaded.set(manager, { fingerprint: current, trusted: true });
 			view.fingerprint = current;
 			view.entryCount = entryCount;
 			view.lastEntryId = appended.id;

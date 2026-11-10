@@ -20,7 +20,38 @@ assert.equal(
 	"function",
 	"coding-agent manual retry patch",
 );
-assert.equal(typeof Agent.prototype.getQueuedMessages, "function", "agent-core pending input patch");
+assert.equal(typeof AgentSession.prototype.tryAcquireIdleLease, "function", "exclusive idle lease patch");
+const pendingMethods = [
+	"getQueuedMessages",
+	"orderPendingMessages",
+	"retainPendingMessages",
+	"commitPendingMessages",
+];
+for (const name of pendingMethods)
+	assert.equal(typeof Agent.prototype[name], "function", `agent-core ${name} patch`);
+for (const name of ["pi-coding-agent", "pi-agent-core", "pi-ai"]) {
+	const pkg = JSON.parse(
+		await readFile(`/runtime/node_modules/@earendil-works/${name}/package.json`, "utf8"),
+	);
+	assert.equal(pkg.version, "1.5.1", `${name} resolved artifact version`);
+}
+const sessionTypes = await readFile(
+	"/runtime/node_modules/@earendil-works/pi-coding-agent/dist/core/agent-session.d.ts",
+	"utf8",
+);
+const rootTypes = await readFile(
+	"/runtime/node_modules/@earendil-works/pi-coding-agent/dist/index.d.ts",
+	"utf8",
+);
+const agentTypes = await readFile(
+	"/runtime/node_modules/@earendil-works/pi-agent-core/dist/agent.d.ts",
+	"utf8",
+);
+assert.match(sessionTypes, /tryAcquireIdleLease\(\): SessionIdleLease \| undefined/);
+assert.match(sessionTypes, /setCompactionPolicy\(policy: CompactionRequestPolicy \| undefined\)/);
+assert.match(sessionTypes, /type: "agent_settled"/);
+assert.match(rootTypes, /type SessionIdleLease/);
+for (const name of pendingMethods) assert.match(agentTypes, new RegExp(`${name}\\(`));
 const agent = new Agent();
 const pending = { role: "user", content: "isolated pending input", timestamp: 1 };
 agent.followUp(pending);

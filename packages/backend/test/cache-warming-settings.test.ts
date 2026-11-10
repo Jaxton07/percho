@@ -36,24 +36,48 @@ it("保留默认模式；保存到所属环境并更新存活会话，不影响�
 		() => root,
 		() => [live],
 	);
-	expect(settings.get().mode).toBe("streaming");
-	const saved = await settings.set("idle");
-	expect(saved.mode).toBe("idle");
-	expect(live.setCacheWarmingMode).toHaveBeenCalledWith("idle");
-	expect(saved.sessions[0]).toMatchObject({ name: "test session", mode: "idle", reason: "waiting" });
+	expect(settings.get().mode).toBe("idle");
+	const saved = await settings.set("streaming");
+	expect(saved.mode).toBe("streaming");
+	expect(live.setCacheWarmingMode).toHaveBeenCalledWith("streaming");
+	expect(saved.sessions[0]).toMatchObject({ name: "test session", mode: "streaming", reason: "waiting" });
 	expect(JSON.parse(readFileSync(join(root, "settings.json"), "utf8"))).toMatchObject({
 		defaultModel: "kept",
-		cacheWarming: "idle",
+		cacheWarming: "streaming",
 	});
 	expect(
 		new CacheWarmingSettings(
 			() => other,
 			() => [],
 		).get().mode,
-	).toBe("streaming");
+	).toBe("idle");
 	await settings.set("off");
 	expect(live.setCacheWarmingMode).toHaveBeenLastCalledWith("off");
 });
+it("无效模式遵循 SDK 默认值，不改写原设置", () => {
+	const root = dir();
+	const original = JSON.stringify({ cacheWarming: "invalid" });
+	writeFileSync(join(root, "settings.json"), original);
+	const settings = new CacheWarmingSettings(
+		() => root,
+		() => [],
+	);
+	expect(settings.get().mode).toBe("idle");
+	expect(readFileSync(join(root, "settings.json"), "utf8")).toBe(original);
+});
+
+it.each(["off", "streaming", "idle"] as const)("保留显式模式 %s，读取不迁移设置", (mode) => {
+	const root = dir();
+	const original = JSON.stringify({ cacheWarming: mode, defaultModel: "kept" });
+	writeFileSync(join(root, "settings.json"), original);
+	const settings = new CacheWarmingSettings(
+		() => root,
+		() => [],
+	);
+	expect(settings.get().mode).toBe(mode);
+	expect(readFileSync(join(root, "settings.json"), "utf8")).toBe(original);
+});
+
 it("持久化失败不上报成功，也不更新存活会话", async () => {
 	const root = dir();
 	writeFileSync(join(root, "settings.json"), "{");
@@ -74,13 +98,13 @@ it("并发保存与会话注册串行，新会话不会保留构造时的旧模�
 		() => sessions,
 	);
 	const live = session();
-	const idle = settings.set("idle");
+	const streaming = settings.set("streaming");
 	const register = settings.register(live, () => sessions.push(live));
 	const off = settings.set("off");
-	await Promise.all([idle, register, off]);
+	await Promise.all([streaming, register, off]);
 	expect(settings.get().mode).toBe("off");
 	expect(live.settingsManager.getCacheWarmingMode()).toBe("off");
-	expect(live.setCacheWarmingMode.mock.calls.map(([mode]) => mode)).toEqual(["idle", "off"]);
+	expect(live.setCacheWarmingMode.mock.calls.map(([mode]) => mode)).toEqual(["streaming", "off"]);
 });
 
 it("一个会话同步失败也继续关闭其他会话", async () => {

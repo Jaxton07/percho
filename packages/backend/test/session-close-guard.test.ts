@@ -38,6 +38,7 @@ function makeBackend(sessionId: string, streaming: boolean, sessionFile?: string
 		session: {
 			sessionId,
 			isStreaming: streaming,
+			tryAcquireIdleLease: () => ({ release: () => {} }),
 			dispose,
 			sessionFile,
 			sessionManager: { getSessionDir: () => root, getSessionFile: () => sessionFile },

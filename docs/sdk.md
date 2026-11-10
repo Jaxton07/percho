@@ -1,6 +1,6 @@
 # pi SDK 集成
 
-适用于 SDK 接入、升级和生命周期/上下文问题。以下反直觉行为按当前钉住的 **1.4.0** 整理，升级时必须重核，不当作永久 API 保证。生产适配边界见 [架构](architecture.md)。
+适用于 SDK 接入、升级和生命周期/上下文问题。以下反直觉行为按当前钉住的 **1.5.1** 整理，升级时必须重核，不当作永久 API 保证。生产适配边界见 [架构](architecture.md)。
 
 ## 接入与资源所有权
 
@@ -8,6 +8,7 @@
 - 扩展 UI 用 `session.bindExtensions` 注入，目前主会话绑定 `mode:"rpc"`，不依赖权限门开关。实际可用能力见 [扩展 UI](extension-ui.md)，不能宣称完整 TUI 兼容。
 - **`AgentSession.dispose()` 不发送 `session_shutdown`**。官方 MCP 扩展依赖该事件关连接，单独 dispose 会遗留 stdio 子进程。复用 `session/shutdown.ts` 的公开 API 桥接，先 shutdown 再 dispose。
 - 远端明确停服务先设置不可逆停止标记，取消构造中与已注册会话的等待交互、停止频道唤醒、清空队列并 abort；等待在途构造/请求和公开 `session_shutdown` 完成后再 dispose。清理失败或超时不宣称停止，专用服务的所有者文件描述符一直保留到进程真正退出，避免旧定时器在锁释放后运行。本机退出保留同步兜底。
+- 自动内存卸载在整个异步关闭期间持有 SDK 空闲租约，不主动取消未完成的预热或其他受理责任；普通用户关闭保留原有取消/清理语义，不让缓存配置绑架显式关闭。重载的宿主预检仍保留，SDK 也会在 shutdown 前拒绝忙碌 reload；所有未成功的重载都进入报告，不仅是预检跳过。
 - 普通关闭需等待清理并保留首错；退出钩子不等异步完成，必须有同步兜底；注册冲突只能拆掉新构造实例，不碰旧 holder。修改时核对 `session/registry.ts` 与现有 shutdown/dispose 回归，不依赖 app 最后退出替每个会话收尾。
 - `before_agent_start` 按 `messageType` 区分用户与自定义起始消息，后者没有 `prompt`。启动处理期间会话已经 busy；取消可在实际请求开始前发生，传输层仍可能收到已取消的 signal，不能把进入传输回调当作已发出网络请求。
 - `agent_settled.aborted` 表示取消；`agent_end` 之后仍可能自动重试、压缩或续跑。子代理完成和忙碌释放继续以最终 settled 为边界。
@@ -39,7 +40,7 @@
 
 ## 模型与工具
 
-- 缓存保温沿用 SDK 的用户级 `cacheWarming` 设置，不接受项目级覆盖；默认 `streaming`。设置页读取 SDK 真实状态，不把“已开启”当作“正在保温”；关闭使用公开 `setCacheWarmingMode` 即时终止保温。模式保存与主会话注册串行，避免构造中的会话带入旧设置；子代理和只读历史检视不纳入主会话的实时同步与状态列表。
+- 缓存保温沿用 SDK 的用户级 `cacheWarming` 设置，不接受项目级覆盖；未有效配置时默认 `idle`，已有显式 `off` / `streaming` / `idle` 不迁移。空闲预热仅在缓存符合条件且预计划算时执行，可能产生额外请求与费用。设置页读取 SDK 真实状态，不把“已开启”当作“正在保温”；关闭使用公开 `setCacheWarmingMode` 即时终止保温。模式保存与主会话注册串行，避免构造中的会话带入旧设置；子代理和只读历史检视不纳入主会话的实时同步与状态列表。
 
 - `getAvailable()` 受凭证影响，可能是空数组，不能当完整模型目录；具体查询与目录刷新复用现有 runtime/settings 入口。
 - `runtime.refresh()` 默认可能联网，本地读取应显式 `allowNetwork:false`；联网刷新由宿主选择时机并约束等待，不因普通列表读取隐式触网。
@@ -47,7 +48,9 @@
 - `createAgentSession({tools:[...]})` 的数组是允许清单，可能把扩展工具过滤掉；不要把“只想补几个内置工具”误写成不完整清单。
 - 同名工具有不同优先层：`replaceable` 表示让位，双方非 replaceable 时同组先注册者胜，`customTools` 又可覆盖扩展工具。不要只调整 inline 扩展注册顺序来实现“内置优先”；复用 `tools/subagent/mutex.ts` 的既有方案。
 - `getAllTools()` 属于工厂闭包的 `ExtensionAPI`，不在 handler 的 `ctx` 上；权限声明读取不要猜工具来源或默认信任 MCP。
-- 工具参数 schema 保持顶层单 object；顶层 Union/Intersect 可能被 provider 拒绝。
+- 工具参数 schema 保持顶层单 object；顶层 Union/Intersect 可能被 provider 拒绝。校验由 `pi-schema` 执行，普通 JSON Schema/MCP 参数也会进行数值和数组等转换；不要依赖 TypeBox 特有 refinement、codec 或旧版错误文案。宿主从 `typebox` 导入类型，扩展加载器的兼容映射不代表普通 Node import 也提供这些导出。
+- Anthropic 官方端点默认使用 message threads，正常续跑只发送增量；上下文或工具变化后由 SDK 完整重建，不复用过期投影。缓存预热通过 `disableContinuation` 隔离，不推进主对话 thread；不对未知网关自动开启此能力。
+- 费用总额沿用 SDK `usage.cost.total`，可能来自服务商实报，不能以目录价分项重算。会话累计统计包含所有分支、摘要和预热，不能仅统计当前分支，否则只读检视与运行实例不一致。
 - 自定义 provider 的 `baseUrl` 由 SDK 原样当 OpenAI 客户端基址用，不会自动补版本段。中转站面板给的“API 地址”通常是站点根，而它们（New API 类网关）对未知路径回 200 + 前端 HTML，SDK 按 SSE 解出空流，只报 `Stream ended without finish_reason`。保存与拉模型清单时统一经 `settings/upstream-models.ts` 的探测补 `/v1`；新增写入口时不要绕过它直接落盘原始 baseUrl。
 
 ## 持久化、上下文与回放
