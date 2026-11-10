@@ -49,10 +49,13 @@ function same(a: Fingerprint | null | undefined, b: Fingerprint | null | undefin
 }
 
 /** 只有这个检视实例持有原始entry。跨GC的LRU严格只含路径、文件指纹及版本。 */
-function persistedTailMatches(file: string, current: Fingerprint, entry: SessionEntry): boolean {
+function appendedJson(entries: readonly SessionEntry[]): string {
+	return entries.map((entry) => `${JSON.stringify(entry)}\n`).join("");
+}
+
+function persistedTailMatches(file: string, current: Fingerprint, json: string): boolean {
 	// 只验证本次新追加，不扫描历史图片；尾部换行也防止部分写入被误认证。
-	const json = `${JSON.stringify(entry)}\n`,
-		size = Number(current.stamp.split(":")[0]);
+	const size = Number(current.stamp.split(":")[0]);
 	if (!Number.isSafeInteger(size) || size < Buffer.byteLength(json)) return false;
 	let start = Math.max(0, json.length - 64 * 1024);
 	const code = json.charCodeAt(start);
@@ -86,15 +89,33 @@ export class SessionSourceSnapshots {
 	private parses = 0;
 	private peakViews = 0;
 
-	notePersisted(manager: object, file: string | undefined): void {
+	notePersisted(
+		manager: object,
+		file: string | undefined,
+		appended?: SessionEntry | readonly SessionEntry[],
+	): void {
 		if (!file) return;
 		const previous = this.loaded.get(manager);
 		try {
-			const next = this.fileVersion(file);
-			// 有加载基线时不能仅凭文件仍同 inode 就承认变化；可能先发生了失败的部分写入。
-			// 有活动 view 时由 noteAppend 验证完整增量后推进基线，否则保持旧基线供 capture 拒绝。
+			file = realpathSync(file);
+			const next = fingerprint(file);
 			if (!previous) this.loaded.set(manager, { fingerprint: next, trusted: true });
-			else if (previous.fingerprint?.identity !== next.identity)
+			else if (appended && previous.trusted && previous.fingerprint && !same(previous.fingerprint, next)) {
+				const baseline = previous.fingerprint;
+				const json = appendedJson("type" in appended ? [appended] : appended);
+				if (
+					baseline.identity === next.identity &&
+					Number(next.stamp.split(":")[0]) - Number(baseline.stamp.split(":")[0]) ===
+						Buffer.byteLength(json) &&
+					persistedTailMatches(file, next, json) &&
+					same(next, fingerprint(file))
+				) {
+					this.loaded.set(manager, { fingerprint: next, trusted: true });
+					const cached = this.metadata.get(file);
+					if (cached && same(cached.fingerprint, baseline))
+						this.remember(file, { ...cached, fingerprint: next });
+				} else this.loaded.set(manager, { ...previous, trusted: false });
+			} else if (previous.fingerprint?.identity !== next.identity)
 				this.loaded.set(manager, { ...previous, trusted: false });
 		} catch {
 			if (previous) this.loaded.set(manager, { ...previous, trusted: false });
@@ -249,7 +270,7 @@ export class SessionSourceSnapshots {
 				(!creating &&
 					Number(current.stamp.split(":")[0]) - Number(view.fingerprint.stamp.split(":")[0]) !==
 						Buffer.byteLength(`${JSON.stringify(appended)}\n`)) ||
-				!persistedTailMatches(view.file, current, appended) ||
+				!persistedTailMatches(view.file, current, appendedJson([appended])) ||
 				!same(current, fingerprint(view.file))
 			) {
 				distrust();

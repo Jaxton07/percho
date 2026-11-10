@@ -1431,10 +1431,18 @@ index 9b1a409..7c821f2 100644
      }
      const currentSystem = getCurrentSystemMessage(projection.messages);
 diff --git a/node_modules/@earendil-works/pi-coding-agent/dist/core/extensions/loader.js b/node_modules/@earendil-works/pi-coding-agent/dist/core/extensions/loader.js
-index 7fad6e0..9ada610 100644
+index 7fad6e0..5e01262 100644
 --- a/node_modules/@earendil-works/pi-coding-agent/dist/core/extensions/loader.js
 +++ b/node_modules/@earendil-works/pi-coding-agent/dist/core/extensions/loader.js
-@@ -120,6 +120,9 @@ export function createExtensionRuntime() {
+@@ -2,6 +2,7 @@
+  * Extension loader - loads TypeScript extension modules using jiti.
+  *
+  */
++import { AsyncLocalStorage } from "node:async_hooks";
+ import * as fs from "node:fs";
+ import { createRequire } from "node:module";
+ import * as path from "node:path";
+@@ -120,6 +121,9 @@ export function createExtensionRuntime() {
          }
      };
      const runtime = {
@@ -1444,7 +1452,15 @@ index 7fad6e0..9ada610 100644
          sendMessage: notInitialized,
          sendUserMessage: notInitialized,
          appendEntry: notInitialized,
-@@ -207,7 +210,7 @@ function createExtensionAPI(extension, runtime, cwd, eventBus) {
+@@ -193,6 +197,7 @@ export function createExtensionRuntime() {
+  */
+ const DEFAULT_MARKDOWN_MESSAGE_TYPES = ["user", "assistant", "assistant-thinking"];
+ function createExtensionAPI(extension, runtime, cwd, eventBus) {
++    const shutdownScope = new AsyncLocalStorage();
+     const pendingFlagValues = new Map();
+     const pendingRuntimeChanges = [];
+     const loadingUnsubscribers = [];
+@@ -207,7 +212,7 @@ function createExtensionAPI(extension, runtime, cwd, eventBus) {
          if (state === "loading")
              pendingRuntimeChanges.push(change);
          else
@@ -1453,7 +1469,7 @@ index 7fad6e0..9ada610 100644
      };
      const clearPending = () => {
          pendingFlagValues.clear();
-@@ -218,32 +221,36 @@ function createExtensionAPI(extension, runtime, cwd, eventBus) {
+@@ -218,32 +223,44 @@ function createExtensionAPI(extension, runtime, cwd, eventBus) {
          // Registration methods - write to extension
          on(event, handler) {
              assertActive();
@@ -1473,7 +1489,15 @@ index 7fad6e0..9ada610 100644
 -                    extension.handlers.delete(event);
 -            };
 +            return runtime.runSessionOperationSync(() => {
-+                const registeredHandler = (...args) => handler(...args);
++                const registeredHandler = event === "session_shutdown"
++                    ? (...args) => {
++                        const scope = { active: true };
++                        return shutdownScope.run(scope, async () => {
++                            try { return await handler(...args); }
++                            finally { scope.active = false; }
++                        });
++                    }
++                    : (...args) => handler(...args);
 +                const list = extension.handlers.get(event) ?? [];
 +                list.push(registeredHandler);
 +                extension.handlers.set(event, list);
@@ -1509,7 +1533,7 @@ index 7fad6e0..9ada610 100644
          },
          registerCommand(name, options) {
              assertActive();
-@@ -253,52 +260,56 @@ function createExtensionAPI(extension, runtime, cwd, eventBus) {
+@@ -253,52 +270,56 @@ function createExtensionAPI(extension, runtime, cwd, eventBus) {
              if (typeof options?.handler !== "function") {
                  throw new Error(`Command "/${name}" registered by extension "${extension.path}" must define handler().`);
              }
@@ -1585,12 +1609,13 @@ index 7fad6e0..9ada610 100644
          },
          // Flag access - checks extension registered it, reads from runtime
          getFlag(name) {
-@@ -334,7 +345,7 @@ function createExtensionAPI(extension, runtime, cwd, eventBus) {
+@@ -334,7 +355,8 @@ function createExtensionAPI(extension, runtime, cwd, eventBus) {
          },
          exec(command, args, options) {
              assertActive();
 -            return execCommand(command, args, options?.cwd ?? cwd, options);
-+            return runtime.runSessionOperation(() => execCommand(command, args, options?.cwd ?? cwd, options));
++            const run = shutdownScope.getStore()?.active ? runtime.runSessionCleanup : runtime.runSessionOperation;
++            return run(() => execCommand(command, args, options?.cwd ?? cwd, options));
          },
          getActiveTools() {
              assertActive();

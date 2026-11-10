@@ -1001,12 +1001,31 @@ export class PiBackend {
 	): void {
 		if (["entry_appended", "message_end", "session_info_changed", "agent_settled"].includes(event.type)) {
 			const owner = this.registry.get(sessionId);
+			const source = this.runningSubagents.get(sessionId)?.getSource?.();
+			const manager =
+				source?.sessionManager ?? (owner && !owner.readOnly ? owner.session.sessionManager : undefined);
+			// 逐追加事件同步认证；无论有无检视，都不能将连续追加合并成不可认证的增量。
+			if (manager) {
+				const viewOwner = owner && this.sourceOwner(owner);
+				const hasView = !!viewOwner && this.sourceSnapshots.has(viewOwner);
+				if (event.type === "entry_appended" && viewOwner && hasView)
+					this.sourceSnapshots.noteAppend(
+						viewOwner,
+						event.entry,
+						manager.getEntryCount(),
+						manager.getSessionFile(),
+						manager,
+					);
+				this.sourceSnapshots.notePersisted(
+					manager,
+					manager.getSessionFile(),
+					event.type === "entry_appended" && !hasView ? event.entry : undefined,
+				);
+			}
 			queueMicrotask(() => {
-				const source = this.runningSubagents.get(sessionId)?.getSource?.();
-				const manager =
-					source?.sessionManager ?? (owner && !owner.readOnly ? owner.session.sessionManager : undefined);
-				if (!manager) return;
-				this.sourceSnapshots.notePersisted(manager, manager.getSessionFile());
+				const delayedManager = manager ?? this.runningSubagents.get(sessionId)?.getSource?.()?.sessionManager;
+				if (!delayedManager) return;
+				if (!manager) this.sourceSnapshots.notePersisted(delayedManager, delayedManager.getSessionFile());
 				if (
 					!owner ||
 					this.registry.get(sessionId) !== owner ||
@@ -1015,10 +1034,10 @@ export class PiBackend {
 					return;
 				this.sourceSnapshots.noteAppend(
 					this.sourceOwner(owner),
-					manager.getEntry(manager.getLeafId() ?? ""),
-					manager.getEntryCount(),
-					manager.getSessionFile(),
-					manager,
+					delayedManager.getEntry(delayedManager.getLeafId() ?? ""),
+					delayedManager.getEntryCount(),
+					delayedManager.getSessionFile(),
+					delayedManager,
 				);
 			});
 		}
@@ -1331,6 +1350,7 @@ export class PiBackend {
 		if (this.projectDeletion?.isDeleting(cwd)) throw new Error("Project deletion is in progress");
 		this.options.localSessionPaths?.assertCwd(cwd);
 		const readOnly = false;
+		const initialEntryCount = sessionManager.getEntryCount();
 		const session = await this.wireSession(cwd, readOnly, async (deps) => {
 			const { settingsManager, resourceLoader } = await deps.load();
 			return createAgentSession({
@@ -1350,6 +1370,12 @@ export class PiBackend {
 				),
 			});
 		});
+		// SDK 构造可在宿主订阅前补写模型/思考设置；只认证这些新条目的精确落盘增量。
+		this.sourceSnapshots.notePersisted(
+			sessionManager,
+			filePath,
+			sessionManager.getEntries().slice(initialEntryCount),
+		);
 		log.info("session opened", session.sessionId, { file: filePath });
 		return this.toMetaOrThrow(session.sessionId);
 	}

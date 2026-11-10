@@ -729,6 +729,59 @@ describe("SDK exclusive idle maintenance", () => {
 		},
 	);
 
+	it("isolates shutdown exec cleanup from concurrent and expired contexts", async () => {
+		const entered = barrier();
+		const finish = barrier();
+		const late = barrier();
+		const lateDone = barrier();
+		let lateError: unknown;
+		let cleanupExit: number | null | undefined;
+		const f = await fixture((pi) => {
+			pi.on("session_shutdown", async () => {
+				void late.promise.then(async () => {
+					try {
+						await pi.exec(process.execPath, ["-e", "process.exit(0)"]);
+					} catch (error) {
+						lateError = error;
+					} finally {
+						lateDone.resolve();
+					}
+				});
+				entered.resolve();
+				await finish.promise;
+				expect(() => pi.appendEntry("blocked", {})).toThrow(/idle lease/);
+				expect(() => pi.on("input", () => ({ action: "continue" }))).toThrow(/idle lease/);
+				const result = await pi.exec(process.execPath, [
+					"--eval",
+					"require('node:fs').writeFileSync(process.argv[1], 'clean')",
+					join(f.cwd, "clean"),
+				]);
+				cleanupExit = result.code;
+			});
+		});
+		const lease = acquire(f.session);
+		const shutdown = emitSessionShutdown(f.session);
+		try {
+			await entered.promise;
+			await expect(f.api.exec(process.execPath, ["-e", "process.exit(0)"])).rejects.toThrow(/idle lease/);
+			await expect(f.session.prompt("blocked")).rejects.toThrow(/idle lease/);
+			finish.resolve();
+			await shutdown;
+			expect(f.errors).toEqual([]);
+			expect(cleanupExit).toBe(0);
+			expect(existsSync(join(f.cwd, "clean"))).toBe(true);
+			late.resolve();
+			await lateDone.promise;
+			expect(lateError).toBeInstanceOf(Error);
+			expect(String(lateError)).toMatch(/idle lease/);
+		} finally {
+			finish.resolve();
+			late.resolve();
+			await shutdown;
+			lease.release();
+		}
+	});
+
 	it("rejects SDK extension exec before spawning while held", async () => {
 		const f = await fixture();
 		const output = join(f.cwd, "must-not-exist");

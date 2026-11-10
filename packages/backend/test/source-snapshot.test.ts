@@ -66,6 +66,51 @@ function fixture(id = "source", suffix = "") {
 }
 
 describe("原始来源快照与轻量跨GC身份", () => {
+	it("GC重开后首次读取前正常追加，旧图片引用跨再次GC仍有效", () => {
+		const manager = SessionManager.create(directory, join(directory, "sessions"));
+		const id = manager.appendMessage({
+			role: "user",
+			timestamp: 1,
+			content: [{ type: "image", mimeType: "image/png", data: "AQID" }],
+		});
+		manager.appendMessage({ role: "assistant", timestamp: 2, content: [] } as never);
+		const file = manager.getSessionFile();
+		if (!file) throw new Error("Missing source file");
+		const sources = new SessionSourceSnapshots();
+		const input = (m: SessionManager) => ({
+			sessionId: m.getSessionId(),
+			file,
+			branch: () => m.getBranch(),
+			entries: () => m.getEntries(),
+			loadedFrom: m,
+		});
+		const owner = {};
+		const first = sources.capture(owner, input(manager));
+		expect(sources.resolve(owner, manager.getSessionId(), `entry:${id}:user:0`, first.version).data).toBe(
+			"AQID",
+		);
+		sources.release(owner);
+		const stamp = sources.fileVersion(file);
+		const reopened = SessionManager.open(file);
+		sources.noteLoaded(reopened, file, stamp);
+		for (let n = 0; n < 2; n++) {
+			const appended = reopened.appendMessage({ role: "user", timestamp: 3 + n, content: `追加 ${n}` });
+			sources.notePersisted(reopened, file, reopened.getEntry(appended));
+		}
+		const middleOwner = {};
+		const middle = sources.capture(middleOwner, input(reopened));
+		expect(middle.version).toBe(first.version);
+		sources.release(middleOwner);
+		const finalStamp = sources.fileVersion(file);
+		const finalManager = SessionManager.open(file);
+		sources.noteLoaded(finalManager, file, finalStamp);
+		const finalOwner = {};
+		const final = sources.capture(finalOwner, input(finalManager));
+		expect(final.version).toBe(first.version);
+		expect(
+			sources.resolve(finalOwner, manager.getSessionId(), `entry:${id}:user:0`, first.version).data,
+		).toBe("AQID");
+	});
 	it.each(["none", "partial", "complete"] as const)("SDK追加失败（写入=%s）回滚后跨GC安全", (written) => {
 		const f = fixture(),
 			sources = new SessionSourceSnapshots(),
@@ -133,7 +178,7 @@ describe("原始来源快照与轻量跨GC身份", () => {
 		expect(reopenedManager.getEntry(failedId) !== undefined).toBe(written === "complete");
 		expect(reopenedManager.getEntry(id) !== undefined).toBe(written !== "partial");
 	});
-	it("失败部分写入后无活动检视，后续成功通知不能刷新旧manager的加载基线", () => {
+	it.each(["none", "partial", "complete"] as const)("无检视失败写入=%s", (written) => {
 		const f = fixture();
 		const sources = new SessionSourceSnapshots();
 		sources.noteLoaded(f.manager, f.file, sources.fileVersion(f.file));
@@ -142,7 +187,8 @@ describe("原始来源快照与轻量跨GC身份", () => {
 		sources.release(owner);
 		const original = fs.appendFileSync;
 		const append = vi.spyOn(fs, "appendFileSync").mockImplementationOnce((path, data, options) => {
-			original(path, String(data).slice(0, 100), options);
+			if (written !== "none")
+				original(path, written === "partial" ? String(data).slice(0, 100) : data, options);
 			throw new Error("disk full");
 		});
 		syncBuiltinESMExports();
@@ -157,10 +203,10 @@ describe("原始来源快照与轻量跨GC身份", () => {
 			timestamp: 3,
 			content: [{ type: "image", mimeType: "image/png", data: "BwgJ" }],
 		});
-		sources.notePersisted(f.manager, f.file);
+		sources.notePersisted(f.manager, f.file, f.manager.getEntry(id));
 		const live = sources.capture({}, { ...f.input, loadedFrom: f.manager });
-		expect(live.shareable).toBe(false);
-		expect(sources.stats().metadata).toBe(0);
+		expect(live.shareable).toBe(written === "none");
+		expect(sources.stats().metadata).toBe(written === "none" ? 1 : 0);
 		const stamp = sources.fileVersion(f.file);
 		const manager = SessionManager.open(f.file);
 		sources.noteLoaded(manager, f.file, stamp);
@@ -171,10 +217,12 @@ describe("原始来源快照与轻量跨GC身份", () => {
 			entries: () => manager.getEntries(),
 			loadedFrom: manager,
 		});
-		expect(manager.getEntry(id)).toBeUndefined();
-		expect(reopened.version).not.toBe(live.version);
-		expect(reopened.version).not.toBe(originalView.version);
-		expect(() => sources.resolve(newOwner, "source", `entry:${id}:user:0`, live.version)).toThrow();
+		expect(manager.getEntry(id) !== undefined).toBe(written !== "partial");
+		expect(reopened.version === live.version).toBe(written === "none");
+		expect(reopened.version === originalView.version).toBe(written === "none");
+		if (written === "none")
+			expect(sources.resolve(newOwner, "source", `entry:${id}:user:0`, live.version).data).toBe("BwgJ");
+		else expect(() => sources.resolve(newOwner, "source", `entry:${id}:user:0`, live.version)).toThrow();
 	});
 	it("外部改写后旧SDK仍读原内存，但不把旧像素认证成GC后新文件的同版本", () => {
 		const f = fixture(),
