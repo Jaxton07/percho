@@ -178,6 +178,32 @@ describe("原始来源快照与轻量跨GC身份", () => {
 		expect(reopenedManager.getEntry(failedId) !== undefined).toBe(written === "complete");
 		expect(reopenedManager.getEntry(id) !== undefined).toBe(written !== "partial");
 	});
+	it("does not certify a large appended image with same-length corruption before its tail", () => {
+		const f = fixture();
+		const sources = new SessionSourceSnapshots();
+		const owner = {};
+		sources.noteLoaded(f.manager, f.file, sources.fileVersion(f.file));
+		sources.capture(owner, { ...f.input, loadedFrom: f.manager });
+		const original = fs.appendFileSync;
+		const append = vi.spyOn(fs, "appendFileSync").mockImplementationOnce((path, data, options) => {
+			original(path, String(data).replace('"data":"A', '"data":"B'), options);
+		});
+		syncBuiltinESMExports();
+		let id: string;
+		try {
+			id = f.manager.appendMessage({
+				role: "user",
+				timestamp: 2,
+				content: [{ type: "image", mimeType: "image/png", data: "A".repeat(128 * 1024) }],
+			});
+		} finally {
+			append.mockRestore();
+			syncBuiltinESMExports();
+		}
+		sources.noteAppend(owner, f.manager.getEntry(id), f.manager.getEntryCount(), f.file, f.manager);
+		expect(sources.capture(owner, { ...f.input, loadedFrom: f.manager }).shareable).toBe(false);
+	});
+
 	it.each(["none", "partial", "complete"] as const)("无检视失败写入=%s", (written) => {
 		const f = fixture();
 		const sources = new SessionSourceSnapshots();

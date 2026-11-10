@@ -1431,7 +1431,7 @@ index 9b1a409..7c821f2 100644
      }
      const currentSystem = getCurrentSystemMessage(projection.messages);
 diff --git a/node_modules/@earendil-works/pi-coding-agent/dist/core/extensions/loader.js b/node_modules/@earendil-works/pi-coding-agent/dist/core/extensions/loader.js
-index 7fad6e0..5e01262 100644
+index 7fad6e0..762b87f 100644
 --- a/node_modules/@earendil-works/pi-coding-agent/dist/core/extensions/loader.js
 +++ b/node_modules/@earendil-works/pi-coding-agent/dist/core/extensions/loader.js
 @@ -2,6 +2,7 @@
@@ -1469,7 +1469,7 @@ index 7fad6e0..5e01262 100644
      };
      const clearPending = () => {
          pendingFlagValues.clear();
-@@ -218,32 +223,44 @@ function createExtensionAPI(extension, runtime, cwd, eventBus) {
+@@ -218,32 +223,53 @@ function createExtensionAPI(extension, runtime, cwd, eventBus) {
          // Registration methods - write to extension
          on(event, handler) {
              assertActive();
@@ -1492,9 +1492,18 @@ index 7fad6e0..5e01262 100644
 +                const registeredHandler = event === "session_shutdown"
 +                    ? (...args) => {
 +                        const scope = { active: true };
-+                        return shutdownScope.run(scope, async () => {
-+                            try { return await handler(...args); }
-+                            finally { scope.active = false; }
++                        return shutdownScope.run(scope, () => {
++                            let pending = false;
++                            try {
++                                const result = handler(...args);
++                                if (result && typeof result.then === "function") {
++                                    const cleanup = Promise.resolve(result).finally(() => { scope.active = false; });
++                                    pending = true;
++                                    return cleanup;
++                                }
++                                return result;
++                            }
++                            finally { if (!pending) scope.active = false; }
 +                        });
 +                    }
 +                    : (...args) => handler(...args);
@@ -1533,7 +1542,7 @@ index 7fad6e0..5e01262 100644
          },
          registerCommand(name, options) {
              assertActive();
-@@ -253,52 +270,56 @@ function createExtensionAPI(extension, runtime, cwd, eventBus) {
+@@ -253,52 +279,56 @@ function createExtensionAPI(extension, runtime, cwd, eventBus) {
              if (typeof options?.handler !== "function") {
                  throw new Error(`Command "/${name}" registered by extension "${extension.path}" must define handler().`);
              }
@@ -1609,7 +1618,7 @@ index 7fad6e0..5e01262 100644
          },
          // Flag access - checks extension registered it, reads from runtime
          getFlag(name) {
-@@ -334,7 +355,8 @@ function createExtensionAPI(extension, runtime, cwd, eventBus) {
+@@ -334,7 +364,8 @@ function createExtensionAPI(extension, runtime, cwd, eventBus) {
          },
          exec(command, args, options) {
              assertActive();

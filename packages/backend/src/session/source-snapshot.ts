@@ -53,21 +53,29 @@ function appendedJson(entries: readonly SessionEntry[]): string {
 	return entries.map((entry) => `${JSON.stringify(entry)}\n`).join("");
 }
 
-function persistedTailMatches(file: string, current: Fingerprint, json: string): boolean {
-	// 只验证本次新追加，不扫描历史图片；尾部换行也防止部分写入被误认证。
+function persistedAppendMatches(file: string, current: Fingerprint, json: string): boolean {
+	// 分块核验本次新增字节，不扫描既有历史，也不因大图片只检查末尾而漏掉前部损坏。
 	const size = Number(current.stamp.split(":")[0]);
-	if (!Number.isSafeInteger(size) || size < Buffer.byteLength(json)) return false;
-	let start = Math.max(0, json.length - 64 * 1024);
-	const code = json.charCodeAt(start);
-	if (code >= 0xdc00 && code <= 0xdfff) start++;
-	const expected = Buffer.from(json.slice(start)),
-		actual = Buffer.alloc(expected.byteLength),
-		fd = openSync(file, "r");
+	const bytes = Buffer.byteLength(json);
+	if (!json.length || !Number.isSafeInteger(size) || size < bytes) return false;
+	const fd = openSync(file, "r");
 	try {
-		return (
-			readSync(fd, actual, 0, actual.byteLength, size - actual.byteLength) === actual.byteLength &&
-			actual.equals(expected)
-		);
+		let position = size - bytes;
+		for (let start = 0; start < json.length; ) {
+			let end = Math.min(start + 16 * 1024, json.length);
+			const last = json.charCodeAt(end - 1);
+			if (end < json.length && last >= 0xd800 && last <= 0xdbff) end--;
+			const expected = Buffer.from(json.slice(start, end));
+			const actual = Buffer.allocUnsafe(expected.byteLength);
+			if (
+				readSync(fd, actual, 0, actual.byteLength, position) !== actual.byteLength ||
+				!actual.equals(expected)
+			)
+				return false;
+			position += expected.byteLength;
+			start = end;
+		}
+		return true;
 	} finally {
 		closeSync(fd);
 	}
@@ -107,7 +115,7 @@ export class SessionSourceSnapshots {
 					baseline.identity === next.identity &&
 					Number(next.stamp.split(":")[0]) - Number(baseline.stamp.split(":")[0]) ===
 						Buffer.byteLength(json) &&
-					persistedTailMatches(file, next, json) &&
+					persistedAppendMatches(file, next, json) &&
 					same(next, fingerprint(file))
 				) {
 					this.loaded.set(manager, { fingerprint: next, trusted: true });
@@ -270,7 +278,7 @@ export class SessionSourceSnapshots {
 				(!creating &&
 					Number(current.stamp.split(":")[0]) - Number(view.fingerprint.stamp.split(":")[0]) !==
 						Buffer.byteLength(`${JSON.stringify(appended)}\n`)) ||
-				!persistedTailMatches(view.file, current, appendedJson([appended])) ||
+				!persistedAppendMatches(view.file, current, appendedJson([appended])) ||
 				!same(current, fingerprint(view.file))
 			) {
 				distrust();

@@ -729,6 +729,43 @@ describe("SDK exclusive idle maintenance", () => {
 		},
 	);
 
+	it.each(["sync", "throwing-promise"] as const)(
+		"expires %s shutdown cleanup before detached microtasks run",
+		async (mode) => {
+			const queued = barrier();
+			let late: Promise<unknown> | undefined;
+			const f = await fixture((pi) => {
+				pi.on("session_shutdown", () => {
+					queueMicrotask(() => {
+						late = pi.exec(process.execPath, ["-e", ""]).then(
+							(result) => result,
+							(error) => error,
+						);
+						queued.resolve();
+					});
+					if (mode === "throwing-promise") {
+						const result = Promise.resolve();
+						Object.defineProperty(result, "constructor", {
+							get() {
+								throw new Error("invalid promise constructor");
+							},
+						});
+						return result;
+					}
+				});
+			});
+			const lease = acquire(f.session);
+			try {
+				await emitSessionShutdown(f.session);
+				await queued.promise;
+				expect(await late).toBeInstanceOf(Error);
+				expect(String(await late)).toMatch(/idle lease/);
+			} finally {
+				lease.release();
+			}
+		},
+	);
+
 	it("isolates shutdown exec cleanup from concurrent and expired contexts", async () => {
 		const entered = barrier();
 		const finish = barrier();
