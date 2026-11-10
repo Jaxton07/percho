@@ -516,6 +516,9 @@ export const en: Messages = {
 		title: "Todo List",
 	},
 	pathMenu: {
+		openFinder: "Open in Finder",
+		openExplorer: "Open in File Explorer",
+		openFolder: "Open Folder",
 		open: "Open File",
 		reveal: "Reveal in Finder",
 		revealExplorer: "Show in File Explorer",
@@ -1125,6 +1128,7 @@ export const en: Messages = {
 		thinkingSwitchFailed: "Failed to switch thinking level",
 		mcpLoadFailed: "Failed to read MCP config",
 		sessionRenameFailed: "Failed to rename session",
+		directoryOpenFailed: "Could not open project directory",
 		pathOpenFailed: "Could not open file",
 		pathRevealFailed: "Could not reveal in Finder",
 		pathRevealFailedExplorer: "Could not show in File Explorer",
