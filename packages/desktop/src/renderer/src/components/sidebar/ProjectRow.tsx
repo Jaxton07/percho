@@ -23,6 +23,7 @@ import { projectMenuItems } from "./ProjectMenu";
  */
 export function ProjectRow({
 	label,
+	cwd,
 	environment,
 	kind,
 	expanded,
@@ -33,6 +34,7 @@ export function ProjectRow({
 	onRemove,
 }: {
 	label: string;
+	cwd?: string;
 	environment?: EnvironmentRef;
 	kind: "daily" | "project";
 	expanded: boolean;
@@ -107,6 +109,7 @@ export function ProjectRow({
 				<ContextMenu
 					anchor={anchor}
 					items={projectMenuItems(t, {
+						cwd: kind === "project" ? cwd : undefined,
 						pinned,
 						onTogglePin: togglePin,
 						onRemove: remove,

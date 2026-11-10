@@ -498,6 +498,9 @@ export const zh = {
 		title: "任务清单",
 	},
 	pathMenu: {
+		openFinder: "在 Finder 中打开",
+		openExplorer: "在文件资源管理器中打开",
+		openFolder: "打开文件夹",
 		open: "打开文件",
 		reveal: "在访达中显示",
 		revealExplorer: "在文件资源管理器中显示",
@@ -1079,6 +1082,7 @@ export const zh = {
 		thinkingSwitchFailed: "切换思考深度失败",
 		mcpLoadFailed: "MCP 配置读取失败",
 		sessionRenameFailed: "重命名失败",
+		directoryOpenFailed: "无法打开项目目录",
 		pathOpenFailed: "无法打开文件",
 		pathRevealFailed: "无法在访达中显示",
 		pathRevealFailedExplorer: "无法在文件资源管理器中显示",

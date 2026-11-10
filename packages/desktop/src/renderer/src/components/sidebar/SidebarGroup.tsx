@@ -140,6 +140,7 @@ export function SidebarGroup({
 		<div data-sidebar-group-key={group.key}>
 			<ProjectRow
 				label={group.label ?? t("sidebar.daily")}
+				cwd={group.cwd}
 				environment={environment}
 				kind={group.kind}
 				expanded={expanded}
