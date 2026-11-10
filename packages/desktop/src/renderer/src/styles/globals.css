@@ -963,6 +963,9 @@ code {
 .user-message-text {
 	max-height: var(--user-message-full-height, none);
 	overflow: hidden;
+}
+
+.user-message-text[data-animate="true"] {
 	transition: max-height 280ms cubic-bezier(0.4, 0, 0.2, 1);
 }
 
@@ -973,7 +976,7 @@ code {
 }
 
 @media (prefers-reduced-motion: reduce) {
-	.user-message-text {
+	.user-message-text[data-animate="true"] {
 		transition: none;
 	}
 }
@@ -1411,11 +1414,15 @@ code {
 .turn-diff-plain {
 	font-size: calc(12.5px * var(--fs-ui-scale, 1));
 	display: flex;
+	align-items: center;
+	gap: 7px;
 }
 .turn-diff-head {
 	display: inline-flex;
+	flex-wrap: wrap;
 	align-items: center;
 	gap: 7px;
+	white-space: nowrap;
 	cursor: pointer;
 	user-select: none;
 	list-style: none;

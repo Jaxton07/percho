@@ -5,6 +5,7 @@ import {
 	extractSubagentRuns,
 	type ImageInput,
 	isReferenceImage,
+	modelGenerationStats,
 	parseExpandedSkillInvocation,
 	readComposerDocument,
 	type SessionMessage,
@@ -45,6 +46,9 @@ export interface RawMessage {
 	customType?: string;
 	/** LLM 停因（assistant 消息；"error" 时历史回放产错误卡；旧会话文件无此字段 → undefined） */
 	stopReason?: string;
+	/** 模型输出用量与生成耗时，旧记录可能缺失。 */
+	usage?: { output?: number };
+	durationMs?: number;
 	/** LLM 错误详情（stopReason==="error" 时存在） */
 	errorMessage?: string;
 	/** 压缩回放标记（合成项，role==="compaction"）：摘要正文 */
@@ -273,6 +277,7 @@ export function toSessionMessages(
 				const tools = toolBlocks.map((b) => b.tool);
 				for (const tool of tools) toolById.set(tool.id, tool);
 				const text = blockText(raw.content);
+				const generation = modelGenerationStats(raw);
 				// 正文后的工具（块序在首个 text 块之后，同 turn 内 text→toolCall 交错）：拆成独立 meta 消息
 				// 排在正文消息之后，与 renderer finalizeStreaming 的拆分一致——否则渲染时会被倒挂到正文上方
 				const textIndex = content.findIndex((c) => c?.type === "text" && c.text);
@@ -286,6 +291,7 @@ export function toSessionMessages(
 							text,
 							thinking: blockThinking(content),
 							tools: preTools,
+							...(generation ? { generation } : {}),
 							images: [],
 							timestamp,
 						});
@@ -295,6 +301,7 @@ export function toSessionMessages(
 						text: "",
 						thinking: "",
 						tools: postBlocks.map((b) => b.tool),
+						generation: null,
 						images: [],
 						timestamp,
 					});
@@ -305,6 +312,7 @@ export function toSessionMessages(
 					text,
 					thinking: blockThinking(content),
 					tools,
+					...(generation ? { generation } : {}),
 					images: [],
 					timestamp: raw.timestamp ?? Date.now(),
 					...(raw.stopReason ? { stopReason: raw.stopReason } : {}),
@@ -312,11 +320,9 @@ export function toSessionMessages(
 						? { errorMessage: raw.errorMessage }
 						: {}),
 				};
-				// 错误轮次（LLM 请求失败）text/thinking/tools 全空，但错误信息必须在回放中可见——
-				// 否则历史回放产不出错误卡（live 产卡与回放必须一致，spec §2 原则 1）
-				if (message.text || message.thinking || message.tools.length > 0 || message.stopReason === "error") {
-					out.push(message);
-				}
+				// 真实空回复也是请求：保留未知统计，避免把缺失请求跳过后误显整轮均速。
+				// 无内容的 assistant 不生成可见行；错误卡仍按 stopReason/errorMessage 派生。
+				out.push(message);
 				continue;
 			}
 			if (raw.role === "toolResult") {

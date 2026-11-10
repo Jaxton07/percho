@@ -463,6 +463,8 @@ export const zh = {
 		title: "变更",
 		filesChanged: "修改了 {count} 个文件",
 		workedFor: "本轮工作 {duration}",
+		outputSpeed: "本轮平均输出速度 {speed} tokens/s",
+		tokensPerSecond: "{speed} tokens/s",
 		filesSummary: "{count} 文件",
 		scopeAll: "全部",
 		scopeLatest: "最近一轮",

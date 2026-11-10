@@ -1,6 +1,8 @@
 import { join, posix } from "node:path";
 import nodePolicy from "../../packages/shared/src/runtime-node-policy.json" with { type: "json" };
 
+export const RUNTIME_NPM_REGISTRY = "https://registry.npmjs.org";
+
 /** Select exact installed lock entries, without introducing another dependency/version solver. */
 export function runtimeBuildLock(lock, version) {
 	const dependencies = { "@earendil-works/pi-coding-agent": "1.4.0", "@earendil-works/pi-ai": "1.4.0" };
@@ -56,6 +58,13 @@ export function runtimeBuildLock(lock, version) {
 		throw new Error("Shared semver build dependency changed; update the explicit runtime build alias");
 	devDependencies["percho-semver-build"] = `npm:semver@${semver.version}`;
 	packages["node_modules/percho-semver-build"] = { ...semver, name: "semver", dev: true };
+	// The isolated build has no warm checkout cache. Avoid a regional mirror/CDN dependency,
+	// while preserving the committed versions and integrity checks (and never mutating that lock).
+	const mirror = "https://registry.npmmirror.com/";
+	for (const entry of Object.values(packages)) {
+		if (entry.resolved?.startsWith(mirror))
+			entry.resolved = `${RUNTIME_NPM_REGISTRY}/${entry.resolved.slice(mirror.length)}`;
+	}
 	const manifest = {
 		name: "percho-remote-runtime",
 		version,

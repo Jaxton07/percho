@@ -481,6 +481,8 @@ export const en: Messages = {
 		title: "Changes",
 		filesChanged: "{count} {unit} changed",
 		workedFor: "Worked for {duration}",
+		outputSpeed: "Average output speed this turn: {speed} tokens/s",
+		tokensPerSecond: "{speed} tokens/s",
 		filesSummary: "{count} files",
 		scopeAll: "All",
 		scopeLatest: "Latest turn",
