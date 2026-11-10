@@ -13,7 +13,7 @@ import type { UIMessage } from "./types";
  *   最后一条消息落地，与推导值取 max，保证「运行中末帧 ≤ 定格值」单调不回退
  *
  * 已知下界：正文收尾轮的历史回放 endedAt = 最后 LLM 请求发起时刻，低估最后一段输出时长
- * （jsonl 无逐轮耗时字段；工具收尾轮准确）。彻底精确需持久化逐轮耗时进会话文件，暂不做。
+ * （此计时口径未使用逐请求 durationMs；工具收尾轮准确）。输出速度独立使用请求实测耗时，不能除以本轮工作时长。
  */
 
 /** 一轮的工作时间区间（endedAt 缺省 = 尚未结束/推不出结束，渲染端运行中用 now 跳动） */
@@ -24,6 +24,8 @@ export interface TurnTiming {
 	turnIndex: number;
 	startedAt: number;
 	endedAt?: number;
+	/** 本轮输出 token 总数 / 模型请求总秒数；任一真实回复缺统计则未知，不含工具耗时。 */
+	outputTokensPerSecond?: number;
 }
 
 /** 单条消息的结束时刻分量（user 自身是边界不参与；system/error 不算工作时间） */
@@ -46,6 +48,9 @@ export function deriveTurnTimings(messages: UIMessage[], runEndedAt?: number): T
 	let startedAt = 0;
 	let endedAt: number | undefined;
 	let open = false; // 已见 user 边界、尚未切下一轮
+	let outputTokens = 0;
+	let generationMs = 0;
+	let generationComplete = true;
 
 	const flush = (): void => {
 		if (!open) return;
@@ -54,6 +59,12 @@ export function deriveTurnTimings(messages: UIMessage[], runEndedAt?: number): T
 			turnId,
 			turnIndex,
 			startedAt,
+			...(generationComplete &&
+			generationMs > 0 &&
+			Number.isFinite(generationMs) &&
+			Number.isFinite(outputTokens / (generationMs / 1000))
+				? { outputTokensPerSecond: outputTokens / (generationMs / 1000) }
+				: {}),
 			...(endedAt !== undefined && endedAt > startedAt ? { endedAt } : {}),
 		});
 	};
@@ -66,9 +77,28 @@ export function deriveTurnTimings(messages: UIMessage[], runEndedAt?: number): T
 			open = true;
 			startedAt = message.timestamp;
 			endedAt = undefined;
+			outputTokens = 0;
+			generationMs = 0;
+			generationComplete = true;
 			continue;
 		}
 		if (!open) continue; // 首条 user 之前的消息不计（理论不存在）
+		if (message.kind === "assistant" && message.generation !== null) {
+			const generation = message.generation;
+			if (
+				!generation ||
+				!Number.isFinite(generation.outputTokens) ||
+				generation.outputTokens < 0 ||
+				!Number.isFinite(generation.durationMs) ||
+				generation.durationMs <= 0
+			) {
+				generationComplete = false;
+			} else {
+				outputTokens += generation.outputTokens;
+				generationMs += generation.durationMs;
+			}
+		}
+		if (message.kind === "error") generationComplete = false;
 		const stamp = stampOf(message);
 		if (stamp !== undefined && (endedAt === undefined || stamp > endedAt)) endedAt = stamp;
 	}

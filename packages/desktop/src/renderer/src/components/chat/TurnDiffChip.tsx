@@ -40,16 +40,35 @@ function TurnTimer({ timing, running }: { timing: TurnTiming; running: boolean }
 		: timing.endedAt !== undefined
 			? Math.max(0, timing.endedAt - timing.startedAt)
 			: null;
-	if (elapsed === null) return null;
+	const speed = timing.outputTokensPerSecond;
 	return (
-		<span
-			role="timer"
-			className={`turn-diff-timer${running ? " turn-diff-timer-live" : ""}`}
-			aria-label={t("diff.workedFor", { duration: formatDuration(elapsed) })}
-		>
-			<ClockIcon size={12} />
-			<span className="turn-diff-timer-num">{formatDuration(elapsed)}</span>
-		</span>
+		<>
+			{elapsed !== null && (
+				<span
+					role="timer"
+					className={`turn-diff-timer${running ? " turn-diff-timer-live" : ""}`}
+					aria-label={t("diff.workedFor", { duration: formatDuration(elapsed) })}
+				>
+					<ClockIcon size={12} />
+					<span className="turn-diff-timer-num">{formatDuration(elapsed)}</span>
+				</span>
+			)}
+			{!running && speed !== undefined && Number.isFinite(speed) && speed >= 0 && (
+				<>
+					{elapsed !== null && (
+						<span className="turn-diff-sep" aria-hidden="true">
+							·
+						</span>
+					)}
+					<output
+						className="shrink-0 text-ink-faint tabular-nums whitespace-nowrap"
+						aria-label={t("diff.outputSpeed", { speed: speed.toFixed(1) })}
+					>
+						{t("diff.tokensPerSecond", { speed: speed.toFixed(1) })}
+					</output>
+				</>
+			)}
+		</>
 	);
 }
 

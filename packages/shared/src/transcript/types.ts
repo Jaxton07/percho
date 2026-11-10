@@ -1,6 +1,7 @@
 import type { ComposerDocument } from "../composer-document";
 import type { DisplayImage } from "../display-image";
 import type { UiError } from "../errors";
+import type { ModelGenerationStats } from "../model-generation";
 import type { CompactionPause } from "../session";
 import type { SessionHistoryWindow } from "../session-history";
 import type { SkillInvocationDisplay } from "../skill-invocation";
@@ -62,6 +63,8 @@ export type UIMessage =
 	  })
 	| (UIBaseMessage & {
 			kind: "assistant";
+			/** undefined = 真实回复统计未知；null = 同一回复拆出的展示片段。 */
+			generation?: ModelGenerationStats | null;
 			thinking: string;
 			tools: UIToolCall[];
 	  })

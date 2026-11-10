@@ -1414,11 +1414,15 @@ code {
 .turn-diff-plain {
 	font-size: calc(12.5px * var(--fs-ui-scale, 1));
 	display: flex;
+	align-items: center;
+	gap: 7px;
 }
 .turn-diff-head {
 	display: inline-flex;
+	flex-wrap: wrap;
 	align-items: center;
 	gap: 7px;
+	white-space: nowrap;
 	cursor: pointer;
 	user-select: none;
 	list-style: none;

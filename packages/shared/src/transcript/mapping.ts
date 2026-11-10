@@ -106,6 +106,7 @@ export function messagesToUIMessages(messages: SessionMessage[]): UIMessage[] {
 		}));
 		const assistant: UIMessage = {
 			kind: "assistant",
+			...(m.generation !== undefined ? { generation: m.generation } : {}),
 			id,
 			text,
 			thinking: m.thinking,
@@ -119,7 +120,8 @@ export function messagesToUIMessages(messages: SessionMessage[]): UIMessage[] {
 		if (isLlmErrorRound(m)) {
 			pendingErrorId = m.historyId ? `${m.historyId}:error` : undefined;
 			pendingError = buildRoundErrorCard(m, m.timestamp);
-			if (text || m.thinking.length > 0 || tools.length > 0) ui.push(assistant);
+			// 空错误回复也保留为不可见统计载体；实时重试成功后同样不能冒充完整数据。
+			ui.push(assistant);
 			continue;
 		}
 		flushError();
