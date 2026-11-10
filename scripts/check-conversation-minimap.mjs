@@ -6,6 +6,7 @@ import { mkdir, realpath, writeFile } from "node:fs/promises";
 import { dirname, join, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 import { writeFixtures } from "./fixtures/conversation-minimap.mjs";
+import { validateWorkPath } from "./performance/paths.mjs";
 import { connect } from "./session-rendering-cdp.mjs";
 
 const help = `Dev-only collector, NOT a packaged-build or final acceptance test.
@@ -74,9 +75,9 @@ export function parseOptions(args) {
 async function run() {
 	const options = parseOptions(process.argv.slice(2));
 	const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
-	const tmp = await realpath(join(root, ".local/tmp"));
 	const task = await realpath(options.task);
-	assert(task.startsWith(tmp + sep), "Task must be inside isolated temporary root");
+	if (!task.startsWith(join(root, ".local/tmp") + sep)) validateWorkPath(root, resolve(options.task));
+	assert.equal(task, resolve(options.task), "Task must not contain symlinks");
 	const source = await realpath(options.source ?? root);
 	const moduleFile = options.module ? await realpath(options.module) : null;
 	if (moduleFile) assert(moduleFile.startsWith(task + sep), "Diagnostic module must belong to task");

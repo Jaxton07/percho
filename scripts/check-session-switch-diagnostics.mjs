@@ -2,6 +2,14 @@
 /** Dev CDP runner, sharing the actual Settings diagnostic/navigation implementation. No mock IPC. */
 import { writeFile } from "node:fs/promises";
 import { resolve } from "node:path";
+import { suiteRoot } from "./performance/paths.mjs";
+
+const root = suiteRoot(
+	resolve(import.meta.dirname, ".."),
+	"switch",
+	".local/tmp/session-switch-diagnostics",
+	"PERCHO_SESSION_SWITCH_DIAGNOSTICS_ROOT",
+);
 
 const port = Number(process.env.PERCHO_CDP_PORT ?? 9224);
 if (!Number.isInteger(port) || port < 1 || port > 65535) throw new Error("Invalid diagnostic CDP port");
@@ -45,7 +53,7 @@ let focused = false;
 try {
 	// 端口可能属于另一个worktree：在任何焦点/导航改变之前确认本次根目录的隔离门。
 	const fixtures = await evaluate("window.__diagnosticPreflight = window.pi.getSessionSwitchFixtures()");
-	const expected = resolve(import.meta.dirname, "../.local/tmp/session-switch-diagnostics/agent/sessions");
+	const expected = resolve(root, "agent/sessions");
 	if (
 		!Array.isArray(fixtures) ||
 		fixtures.length !== 5 ||
@@ -81,8 +89,7 @@ try {
 	if (/base64|Synthetic task|Synthetic output|\/Users\/|api[_-]?key/i.test(encoded))
 		throw new Error("Diagnostic content/path leak");
 	await writeFile(
-		process.env.PERCHO_SESSION_SWITCH_REPORT_FILE ??
-			resolve(import.meta.dirname, "../.local/tmp/session-switch-diagnostics/dev-baseline.json"),
+		process.env.PERCHO_SESSION_SWITCH_REPORT_FILE ?? resolve(root, "dev-baseline.json"),
 		encoded,
 		{ mode: 0o600 },
 	);

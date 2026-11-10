@@ -12,11 +12,14 @@ import { spawn } from "node:child_process";
 import { open, realpath, stat } from "node:fs/promises";
 import { createServer } from "node:net";
 import { resolve } from "node:path";
+import { suiteRoot } from "./performance/paths.mjs";
 
 const repo = resolve(import.meta.dirname, ".."),
-	root = resolve(repo, ".local/tmp/session-rendering-baseline");
+	root = suiteRoot(repo, "rendering", ".local/tmp/session-rendering-baseline", "PERCHO_RENDERING_ROOT");
+const cdp = Number(process.env.PERCHO_CDP_PORT ?? 9244),
+	inspect = Number(process.env.PERCHO_INSPECT_PORT ?? 9245);
 assert.equal(await realpath(root), root);
-for (const port of [9244, 9245])
+for (const port of [cdp, inspect])
 	await new Promise((resolve, reject) => {
 		const server = createServer();
 		server.once("error", reject);
@@ -33,7 +36,7 @@ const env = { ...process.env, PERCHO_AGENT_DIR: agent };
 delete env.ELECTRON_RENDERER_URL;
 const child = spawn(
 	executable,
-	[host, "--remote-debugging-port=9244", "--inspect=9245", `--user-data-dir=${userData}`],
+	[host, `--remote-debugging-port=${cdp}`, `--inspect=${inspect}`, `--user-data-dir=${userData}`],
 	{ cwd: repo, env, detached: true, stdio: ["ignore", log.fd, log.fd] },
 );
 let collector;
@@ -45,8 +48,8 @@ try {
 			throw new Error("Diagnostic Electron exited before ready");
 		try {
 			if (
-				(await fetch("http://127.0.0.1:9244/json/list")).ok &&
-				(await fetch("http://127.0.0.1:9245/json/list")).ok
+				(await fetch(`http://127.0.0.1:${cdp}/json/list`)).ok &&
+				(await fetch(`http://127.0.0.1:${inspect}/json/list`)).ok
 			)
 				break;
 		} catch {}
@@ -83,7 +86,7 @@ try {
 	}
 	await log.close();
 	await pause(300);
-	for (const port of [9244, 9245])
+	for (const port of [cdp, inspect])
 		await new Promise((resolve, reject) => {
 			const server = createServer();
 			server.once("error", reject);
