@@ -21,6 +21,44 @@ test("runtime build lock pins shared semver as an isolated build dependency", ()
 	assert.equal(selected.manifest.dependencies["percho-semver-build"], undefined);
 });
 
+test("runtime install uses the official tarball source without changing versions, integrity or the checkout lock", () => {
+	const source = structuredClone(lock);
+	const key = "node_modules/@earendil-works/pi-ai";
+	source.packages[key].resolved = "https://registry.npmmirror.com/@earendil-works/pi-ai/-/pi-ai-1.4.0.tgz";
+	const original = structuredClone(source);
+	const selected = runtimeBuildLock(source, "0.0.0-test");
+	assert.equal(
+		selected.lock.packages[key].resolved,
+		"https://registry.npmjs.org/@earendil-works/pi-ai/-/pi-ai-1.4.0.tgz",
+	);
+	for (const [path, entry] of Object.entries(selected.lock.packages)) {
+		if (!path) continue;
+		assert.equal(entry.resolved?.startsWith("https://registry.npmmirror.com/"), false);
+		const originalEntry =
+			path === "node_modules/percho-typebox-build"
+				? (source.packages["packages/backend/node_modules/typebox"] ??
+					source.packages["node_modules/typebox"])
+				: path === "node_modules/percho-semver-build"
+					? source.packages[relative(root, dirname(semverPath)).replaceAll("\\", "/")]
+					: source.packages[path];
+		assert.equal(entry.version, originalEntry.version);
+		assert.equal(entry.integrity, originalEntry.integrity);
+	}
+	assert.deepEqual(source, original);
+});
+
+test("runtime install preserves official and unrelated tarball hosts", () => {
+	const source = structuredClone(lock);
+	const key = "node_modules/@earendil-works/pi-ai";
+	for (const resolved of [
+		"https://registry.npmjs.org/@earendil-works/pi-ai/-/pi-ai-1.4.0.tgz",
+		"https://registry.npmmirror.com.example.test/package.tgz",
+	]) {
+		source.packages[key].resolved = resolved;
+		assert.equal(runtimeBuildLock(source, "0.0.0-test").lock.packages[key].resolved, resolved);
+	}
+});
+
 test("runtime bundle resolves semver subpaths without checkout dependencies", async (t) => {
 	const parent = join(root, ".local/tmp/runtime-build-tests");
 	await mkdir(parent, { recursive: true });
