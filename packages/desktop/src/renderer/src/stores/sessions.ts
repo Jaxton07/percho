@@ -702,6 +702,8 @@ export const useSessionsStore = create<SessionsStore>((_set, get) => ({
 			// 只重建 backend（loadBundle:false）：**不**重载磁盘历史，idle transcript 原样保留。
 			if (intent === "gc" && get().activeSessionId === sessionId) {
 				const file = get().sessions.find((s) => s.sessionId === sessionId)?.sessionFile;
+				// 重建的后端事件序号从 1 重新计数；旧边界会把它们当成过期事件全部丢弃（界面停在「思考中」）。
+				forgetSessionBoundary(sessionId);
 				if (file && (await ensureOpenSession(file, { loadBundle: false }))) {
 					await restorePermissionMode(sessionId);
 					return { closed: false };
