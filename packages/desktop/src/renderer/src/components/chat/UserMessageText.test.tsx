@@ -3,7 +3,7 @@ import { renderToStaticMarkup } from "react-dom/server";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const harness = vi.hoisted(() => ({
-	states: [false, false],
+	states: [false, false, false],
 	cursor: 0,
 	height: 153,
 	lineHeight: 25.5,
@@ -42,7 +42,7 @@ function render(text = "完整原文") {
 }
 
 beforeEach(() => {
-	harness.states = [false, false];
+	harness.states = [false, false, false];
 	harness.height = 153;
 	harness.lineHeight = 25.5;
 	harness.disconnect.mockClear();

@@ -963,6 +963,9 @@ code {
 .user-message-text {
 	max-height: var(--user-message-full-height, none);
 	overflow: hidden;
+}
+
+.user-message-text[data-animate="true"] {
 	transition: max-height 280ms cubic-bezier(0.4, 0, 0.2, 1);
 }
 
@@ -973,7 +976,7 @@ code {
 }
 
 @media (prefers-reduced-motion: reduce) {
-	.user-message-text {
+	.user-message-text[data-animate="true"] {
 		transition: none;
 	}
 }

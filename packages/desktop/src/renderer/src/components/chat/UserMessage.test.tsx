@@ -98,6 +98,30 @@ const references: ComposerPart[] = [
 ];
 
 describe("用户引用消息共用正文折叠", () => {
+	it("首次测量和切回会话不启用动画，只有手动展开/收起才启用", async () => {
+		height = 300;
+		const value = message();
+		await render(value);
+		expect(content().getAttribute("data-collapsed")).toBe("true");
+		expect(content().hasAttribute("data-animate")).toBe(false);
+
+		await click();
+		expect(content().getAttribute("data-animate")).toBe("true");
+		expect(content().hasAttribute("data-collapsed")).toBe(false);
+		await click();
+		expect(content().getAttribute("data-animate")).toBe("true");
+		expect(content().getAttribute("data-collapsed")).toBe("true");
+
+		await act(async () => root.render(null));
+		await render(value);
+		expect(content().getAttribute("data-collapsed")).toBe("true");
+		expect(content().hasAttribute("data-animate")).toBe(false);
+		await act(async () => {
+			for (const measure of observers.values()) measure();
+		});
+		expect(content().hasAttribute("data-animate")).toBe(false);
+	});
+
 	it.each(references)("长引用消息可展开/收起且保留全文和引用样式：%j", async (reference) => {
 		height = 178.5;
 		const value = message(reference);
