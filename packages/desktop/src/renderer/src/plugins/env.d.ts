@@ -14,6 +14,7 @@ import type { useSettingsStore } from "../stores/settings";
 import type { useTranscriptStore } from "../stores/transcript";
 import type { useUiStore } from "../stores/ui";
 import type { useUiPreferencesStore } from "../stores/ui-preferences";
+import type { usePluginState } from "./plugin-state";
 
 /** window.PerchoUI 的类型（插件与宿主自身代码共用；与 host-api.ts 的挂载内容一一对应） */
 export interface PerchoUiApi {
@@ -38,6 +39,7 @@ export interface PerchoUiApi {
 		useContextUsage: typeof useContextUsage;
 		useQuota: typeof useQuota;
 		useLanguage: typeof useLanguage;
+		usePluginState: typeof usePluginState;
 	};
 	stores: {
 		useTranscriptStore: typeof useTranscriptStore;

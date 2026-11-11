@@ -172,6 +172,15 @@ declare module "@percho/plugin-api" {
 		useQuota(): QuotaInfo | null;
 		/** 当前界面语言（"zh" | "en"）——插件自有文案跟随中英 */
 		useLanguage(): "zh" | "en";
+		/**
+		 * 插件持久化状态（重启 Percho 后仍在），用法同 useState：
+		 * `const [pos, setPos, ready] = usePluginState("position", { x: 0, y: 0 })`。
+		 * - 每个插件只能读写自己的状态；key 为字母数字开头、最长 64（`[A-Za-z0-9._-]`）。
+		 * - 值必须是 JSON 数据；整份上限 64 KB、最多 64 个 key。set 后 300ms 无新值才落盘（拖动中不会狂写）。
+		 * - ready=false 表示还在读磁盘，此时返回 fallback；需要「读到再显示」可据此延后渲染。
+		 * - 只能在插件组件渲染时调用（无头插件的 activate() 里不可用）。
+		 */
+		usePluginState<T>(key: string, fallback: T): [T, (next: T | ((prev: T) => T)) => void, boolean];
 	};
 	export const stores: {
 		useTranscriptStore: unknown;
@@ -194,6 +203,7 @@ declare module "@percho/plugin-api" {
 	export const useContextUsage: typeof hooks.useContextUsage;
 	export const useQuota: typeof hooks.useQuota;
 	export const useLanguage: typeof hooks.useLanguage;
+	export const usePluginState: typeof hooks.usePluginState;
 	// store hooks 顶层便捷导出（与 shim 解构一致，例：import { useSessionsStore } from "@percho/plugin-api"）
 	export const useTranscriptStore: unknown;
 	export const useSessionsStore: unknown;
