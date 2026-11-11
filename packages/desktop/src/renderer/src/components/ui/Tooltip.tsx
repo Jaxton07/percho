@@ -1,4 +1,60 @@
-import type { ReactNode } from "react";
+import { type ReactNode, type RefObject, useLayoutEffect, useRef, useState } from "react";
+import { createPortal } from "react-dom";
+import { anchorOfElement, placeMenu } from "./place-menu";
+
+const BUBBLE_CLASS =
+	"pointer-events-none z-50 rounded-md bg-white px-2 py-1 text-ui-11 text-ink shadow-pop dark:bg-black";
+
+/** 受控提示挂到 body，避免被选项列表的 overflow 裁剪。 */
+function AnchoredTooltip({
+	label,
+	id,
+	anchor,
+}: {
+	label: string;
+	id?: string;
+	anchor: RefObject<HTMLSpanElement | null>;
+}) {
+	const bubble = useRef<HTMLSpanElement>(null);
+	const [position, setPosition] = useState<{ x: number; y: number } | null>(null);
+	const [visible, setVisible] = useState(false);
+	useLayoutEffect(() => {
+		const update = () => {
+			if (!anchor.current || !bubble.current) return;
+			setPosition(
+				placeMenu(anchorOfElement(anchor.current), bubble.current.getBoundingClientRect(), {
+					width: window.innerWidth,
+					height: window.innerHeight,
+				}),
+			);
+		};
+		update();
+		const timer = window.setTimeout(() => setVisible(true), 300);
+		window.addEventListener("scroll", update, true);
+		window.addEventListener("resize", update);
+		return () => {
+			window.clearTimeout(timer);
+			window.removeEventListener("scroll", update, true);
+			window.removeEventListener("resize", update);
+		};
+	}, [anchor]);
+	return createPortal(
+		<span
+			ref={bubble}
+			id={id}
+			role="tooltip"
+			className={`${BUBBLE_CLASS} fixed w-max max-w-[min(280px,calc(100vw-12px))] whitespace-normal text-left leading-relaxed [overflow-wrap:anywhere]`}
+			style={{
+				left: position?.x ?? 0,
+				top: position?.y ?? 0,
+				visibility: visible && position ? "visible" : "hidden",
+			}}
+		>
+			{label}
+		</span>,
+		document.body,
+	);
+}
 
 /** 轻量自定义 tooltip，替代原生 title（延迟不可控/跟随鼠标/系统样式）：
    悬停 300ms 后淡入（防扫过闪烁），离开立即消失；固定锚在触发元素下方居中。
@@ -13,6 +69,8 @@ export function Tooltip({
 	align = "center",
 	multiline = false,
 	className,
+	open,
+	id,
 	children,
 }: {
 	label: string;
@@ -22,19 +80,32 @@ export function Tooltip({
 	multiline?: boolean;
 	/** 追加到触发元素包裹层（如 w-full 让栅格内的禁用输入撑满） */
 	className?: string;
+	/** 受控模式：在滚动容器外定位并限宽换行；省略时保留原有 hover 用法。 */
+	open?: boolean;
+	id?: string;
 	children: ReactNode;
 }) {
+	const anchor = useRef<HTMLSpanElement>(null);
 	return (
-		<span className={`group/tooltip relative inline-flex shrink-0 ${className ?? ""}`}>
+		<span
+			ref={anchor}
+			className={`group/tooltip relative ${open === undefined ? "inline-flex shrink-0" : "flex"} ${className ?? ""}`}
+		>
 			{children}
-			<span
-				role="tooltip"
-				className={`pointer-events-none absolute top-full z-50 mt-1.5 rounded-md bg-white px-2 py-1 text-ui-11 text-ink opacity-0 shadow-pop transition-opacity duration-150 group-hover/tooltip:opacity-100 group-hover/tooltip:delay-300 dark:bg-black ${
-					multiline ? "w-max max-w-[280px] whitespace-normal text-left leading-relaxed" : "whitespace-nowrap"
-				} ${align === "end" ? "right-0" : align === "start" ? "left-0" : "left-1/2 -translate-x-1/2"}`}
-			>
-				{label}
-			</span>
+			{open !== undefined ? (
+				open && <AnchoredTooltip key={label} label={label} id={id} anchor={anchor} />
+			) : (
+				<span
+					role="tooltip"
+					className={`${BUBBLE_CLASS} absolute top-full mt-1.5 opacity-0 transition-opacity duration-150 group-hover/tooltip:opacity-100 group-hover/tooltip:delay-300 ${
+						multiline
+							? "w-max max-w-[280px] whitespace-normal text-left leading-relaxed"
+							: "whitespace-nowrap"
+					} ${align === "end" ? "right-0" : align === "start" ? "left-0" : "left-1/2 -translate-x-1/2"}`}
+				>
+					{label}
+				</span>
+			)}
 		</span>
 	);
 }

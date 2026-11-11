@@ -1,5 +1,5 @@
 import type { AvailableModel } from "@percho/shared";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useId, useMemo, useRef, useState } from "react";
 import { useActiveModelInfo, useThinkingLevelState } from "../../hooks/use-session-state";
 import { useT } from "../../i18n";
 import { thinkingLevelKey } from "../../lib/thinking";
@@ -34,6 +34,8 @@ export function ModelPicker() {
 	const [open, setOpen] = useState(false);
 	/** 搜索词（每次打开重置为空） */
 	const [query, setQuery] = useState("");
+	const [tooltipKey, setTooltipKey] = useState<string | null>(null);
+	const tooltipId = useId();
 	/** 键盘高亮项（null = 落在当前选中模型 / 首项） */
 	const [activeKey, setActiveKey] = useState<string | null>(null);
 	const ref = useRef<HTMLDivElement>(null);
@@ -45,6 +47,7 @@ export function ModelPicker() {
 		if (!open) return;
 		setQuery("");
 		setActiveKey(null);
+		setTooltipKey(null);
 	}, [open]);
 
 	useEffect(() => {
@@ -97,6 +100,13 @@ export function ModelPicker() {
 		// Esc / 点弹层外关闭。
 	};
 
+	const showTooltip = (key: string) => {
+		const text = listRef.current?.querySelector<HTMLElement>(
+			`[data-model-key="${CSS.escape(key)}"] .truncate`,
+		);
+		setTooltipKey(text && text.scrollWidth > text.clientWidth ? key : null);
+	};
+
 	const onSearchKeyDown = (e: React.KeyboardEvent) => {
 		if (e.key === "ArrowDown" || e.key === "ArrowUp") {
 			e.preventDefault();
@@ -105,7 +115,10 @@ export function ModelPicker() {
 			const next =
 				e.key === "ArrowDown" ? (at + 1 + flat.length) % flat.length : (at <= 0 ? flat.length : at) - 1;
 			const target = flat[next];
-			if (target) setActiveKey(modelKey(target));
+			if (target) {
+				setActiveKey(modelKey(target));
+				showTooltip(modelKey(target));
+			}
 			return;
 		}
 		if (e.key === "Enter") {
@@ -147,7 +160,12 @@ export function ModelPicker() {
 							// biome-ignore lint/a11y/noAutofocus: 弹层打开即聚焦搜索框（键盘用户直接输入过滤）
 							autoFocus
 							value={query}
-							onChange={(e) => setQuery(e.target.value)}
+							onChange={(e) => {
+								setQuery(e.target.value);
+								setTooltipKey(null);
+							}}
+							onBlur={() => setTooltipKey(null)}
+							aria-describedby={tooltipKey ? tooltipId : undefined}
 							onKeyDown={onSearchKeyDown}
 							placeholder={t("composer.modelSearchPlaceholder")}
 							className="w-full bg-transparent text-ui-12 leading-[calc(1_/_0.75)] text-ink placeholder:text-ink-faint focus:outline-none"
@@ -159,6 +177,7 @@ export function ModelPicker() {
 									className="shrink-0 text-ink-faint transition-colors hover:text-ink-2"
 									onClick={() => {
 										setQuery("");
+										setTooltipKey(null);
 										inputRef.current?.focus();
 									}}
 								>
@@ -178,6 +197,7 @@ export function ModelPicker() {
 					    （搜索行多了 pr-3 那 4px）；限高带矮窗口护栏，见 LIST_MAX_HEIGHT */}
 					<div
 						ref={listRef}
+						onWheel={() => setTooltipKey(null)}
 						className="thin-scrollbar max-h-64 overflow-y-auto [scrollbar-gutter:stable]"
 						style={{ maxHeight: LIST_MAX_HEIGHT }}
 					>
@@ -191,19 +211,33 @@ export function ModelPicker() {
 									const selected = currentModelKey === key;
 									const active = highlightedKey === key;
 									return (
-										<button
+										<Tooltip
 											key={key}
-											type="button"
-											data-model-key={key}
-											className={`flex w-full items-center justify-between gap-2 rounded-lg px-2 py-1.5 text-left text-ui-12 leading-[calc(1_/_0.75)] transition-colors ${
-												selected ? "text-ink" : "text-ink-2 hover:text-ink"
-											} ${active ? "bg-hover" : "hover:bg-hover"}`}
-											onMouseEnter={() => setActiveKey(key)}
-											onClick={() => select(m)}
+											label={m.label}
+											id={tooltipId}
+											open={tooltipKey === key}
+											className="w-full min-w-0"
 										>
-											<span className="truncate">{m.label}</span>
-											{selected && <CheckIcon size={12} />}
-										</button>
+											<button
+												type="button"
+												aria-describedby={tooltipKey === key ? tooltipId : undefined}
+												data-model-key={key}
+												className={`flex w-full items-center justify-between gap-2 rounded-lg px-2 py-1.5 text-left text-ui-12 leading-[calc(1_/_0.75)] transition-colors ${
+													selected ? "text-ink" : "text-ink-2 hover:text-ink"
+												} ${active ? "bg-hover" : "hover:bg-hover"}`}
+												onMouseEnter={() => {
+													setActiveKey(key);
+													showTooltip(key);
+												}}
+												onMouseLeave={() => setTooltipKey(null)}
+												onFocus={() => showTooltip(key)}
+												onBlur={() => setTooltipKey(null)}
+												onClick={() => select(m)}
+											>
+												<span className="truncate">{m.label}</span>
+												{selected && <CheckIcon size={12} />}
+											</button>
+										</Tooltip>
 									);
 								})}
 							</div>
