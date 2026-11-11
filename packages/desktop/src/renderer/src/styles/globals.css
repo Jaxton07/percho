@@ -1,6 +1,76 @@
 @import "tailwindcss";
 @import "./typography.css";
 
+.chat-column-width {
+	max-width: var(--chat-column-width, 760px);
+}
+.chat-column-width-centered {
+	max-width: calc(var(--chat-column-width, 760px) + 40px);
+}
+/* Match MessageList's reserved scrollbar gutter without scrolling the controls. */
+.chat-column-resize-layer {
+	position: absolute;
+	inset: 0;
+	z-index: 15;
+	overflow: hidden;
+	scrollbar-gutter: stable;
+	pointer-events: none;
+}
+.chat-column-resize-layer::-webkit-scrollbar {
+	width: 4px;
+}
+.chat-column-resize-frame {
+	position: relative;
+	width: 100%;
+	max-width: var(--chat-column-width, 760px);
+	height: 100%;
+	margin-inline: auto;
+}
+.chat-column-resize-layer[data-empty] {
+	scrollbar-gutter: auto;
+}
+.chat-column-resize-layer[data-empty] .chat-column-resize-frame {
+	width: calc(100% - 64px);
+	max-width: calc(var(--chat-column-width, 760px) + 40px);
+}
+.chat-column-resize-handle {
+	position: absolute;
+	top: 16px;
+	bottom: 16px;
+	width: 8px;
+	height: auto;
+	margin: 0;
+	border: 0;
+	cursor: col-resize;
+	touch-action: none;
+	pointer-events: auto;
+}
+.chat-column-resize-handle[data-side="left"] {
+	left: 0;
+}
+.chat-column-resize-handle[data-side="right"] {
+	right: 0;
+}
+.chat-column-resize-layer[data-empty] .chat-column-resize-handle[data-side="left"] {
+	left: -8px;
+}
+.chat-column-resize-layer[data-empty] .chat-column-resize-handle[data-side="right"] {
+	right: -8px;
+}
+.chat-column-resize-handle::after {
+	content: "";
+	position: absolute;
+	inset: 0 3px;
+	border-radius: 2px;
+	background: var(--color-ink-dim);
+	opacity: 0;
+}
+.chat-column-resize-handle:hover::after,
+.chat-column-resize-handle:focus-visible::after,
+.chat-column-resize-layer[data-resizing] .chat-column-resize-handle::after {
+	opacity: 0.5;
+}
+
 /* dark: 工具类挂到 data-theme（手动切换），不走 prefers-color-scheme */
 @custom-variant dark (&:where([data-theme="dark"], [data-theme="dark"] *));
 
