@@ -26,9 +26,16 @@ describe("previewExcerpt", () => {
 	it("不误删正文里的下划线标识符", () => {
 		expect(previewExcerpt("调用 snake_case_name 函数")).toBe("调用 snake_case_name 函数");
 	});
+	it("支持巨型普通正文的常规摘要长度", () => {
+		const unit = "普通正文 😀 café\n";
+		const expected = originalExcerpt(unit.repeat(40), 120);
+		expect(previewExcerpt(unit.repeat(180000), 120)).toBe(expected);
+	});
 	it("与原实现保持一致，包括长正文、边界标记和特殊截断长度", () => {
 		const texts = [
-			"普通正文 😀 café\n".repeat(180000),
+			// Still exceeds the 4096-unit fast-path boundary without allocating millions of
+			// output code points for every negative/infinite slice parameter on CI.
+			"普通正文 😀 café\n".repeat(600),
 			`${"文".repeat(4095)}😀尾`,
 			`${"文".repeat(4095)}*强调*`,
 			`${"文".repeat(4090)}[链接](地址)`,
