@@ -123,6 +123,7 @@ export function createExecutionHandlers(
 		searchCatalog: ({ query, type, page }) => backend.packages.searchPackages(query, type, page),
 		installPackage: ({ name }) => backend.packages.installPackage(name),
 		removePackage: ({ source, scope, sessionId }) => backend.removePackage(source, scope, sessionId),
+		updatePackage: ({ source, scope, sessionId }) => backend.updatePackage(source, scope, sessionId),
 		listConfiguredPackages: ({ sessionId }) => backend.listConfiguredPackages(sessionId),
 		checkPackageUpdates: ({ names }) => backend.packages.checkPackageUpdates(names),
 		respondExtensionDialog: ({ requestId, answer }) => backend.respondExtensionDialog(requestId, answer),

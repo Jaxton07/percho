@@ -5,11 +5,19 @@ import {
 	environmentRef,
 	LOCAL_ENVIRONMENT,
 	npmSourceToPackageName,
+	REMOTE_METHOD_UNSUPPORTED,
 } from "@percho/shared";
 import { create, useStore } from "zustand";
 import { getExecutionApi } from "../environment-api";
 import { useEnvironment } from "../environment-context";
 import { getSettingsStore } from "./settings";
+
+/** 单行更新结果；unchanged = 已是最新或 registry 不可达，unsupported = 旧版远程端 */
+export type PackageUpdateOutcome =
+	| { kind: "updated"; version: string; deferred?: number }
+	| { kind: "unchanged" }
+	| { kind: "unsupported" }
+	| { kind: "error"; message: string };
 
 interface CatalogStore {
 	/** 扩展面板分段：浏览社区 / 已加载（进 store 保「切面板往返不丢 tab」） */
@@ -33,6 +41,10 @@ interface CatalogStore {
 	removingSources: Record<string, true>;
 	/** 按 source 的卸载错误 */
 	removeErrors: Record<string, string>;
+	/** 更新中的 source 集合（含「全部更新」里排队等待的） */
+	updatingSources: Record<string, true>;
+	/** 按 source 的最近一次更新结果；错误与「版本未变」都留在该行展示 */
+	updateResults: Record<string, PackageUpdateOutcome>;
 	/** settings.json 已配置的包（null = 未加载；「已安装」态匹配/卸载用） */
 	configuredPackages: ConfiguredPackageInfo[] | null;
 	/** 本地清单所属会话；null 只查用户级配置。 */
@@ -50,6 +62,10 @@ interface CatalogStore {
 	installCatalogPackage: (name: string) => Promise<void>;
 	/** 卸载已配置的包，成功后刷新已配置列表与已加载资源 */
 	removeConfiguredPackage: (source: string, scope: "user" | "project") => Promise<void>;
+	/** 原地更新一个已配置的 npm 包到 latest */
+	updateConfiguredPackage: (source: string, scope: "user" | "project") => Promise<void>;
+	/** 顺序更新给定的包；单个失败不影响其余，全部结束后统一刷新 */
+	updatePackages: (targets: { source: string; scope: "user" | "project" }[]) => Promise<void>;
 	refreshConfiguredPackages: (sessionId?: string | null) => Promise<void>;
 }
 
@@ -79,6 +95,8 @@ function createCatalogStore(environment: EnvironmentRef) {
 			installErrors: {},
 			removingSources: {},
 			removeErrors: {},
+			updatingSources: {},
+			updateResults: {},
 			configuredPackages: null,
 			configuredSessionId: null,
 			packageUpdates: {},
@@ -203,6 +221,58 @@ function createCatalogStore(environment: EnvironmentRef) {
 						return { removingSources };
 					});
 				}
+			},
+			updateConfiguredPackage: (source, scope) => get().updatePackages([{ source, scope }]),
+			updatePackages: async (targets) => {
+				const queued = targets.filter(({ source }) => !Object.hasOwn(get().updatingSources, source));
+				if (!queued.length) return;
+				const sessionId = get().configuredSessionId;
+				set((state) => {
+					const updateResults = { ...state.updateResults };
+					for (const { source } of queued) delete updateResults[source];
+					return {
+						updatingSources: {
+							...state.updatingSources,
+							...Object.fromEntries(queued.map(({ source }) => [source, true as const])),
+						},
+						updateResults,
+					};
+				});
+				let changed = false;
+				// 后端也串行化；这里顺序提交是为了逐行报告结果，并把重载压成末尾一次刷新
+				for (const { source, scope } of queued) {
+					let outcome: PackageUpdateOutcome;
+					try {
+						const result = await getExecutionApi(environment).updatePackage({
+							source,
+							scope,
+							sessionId: sessionId ?? undefined,
+						});
+						const updated = Boolean(result.to && result.to !== result.from);
+						changed ||= updated;
+						outcome = updated
+							? {
+									kind: "updated",
+									version: result.to as string,
+									...(result.deferred ? { deferred: result.deferred } : {}),
+								}
+							: { kind: "unchanged" };
+					} catch (error) {
+						const message = error instanceof Error ? error.message : String(error);
+						outcome = message.includes(REMOTE_METHOD_UNSUPPORTED)
+							? { kind: "unsupported" }
+							: { kind: "error", message };
+					}
+					set((state) => {
+						const updatingSources = { ...state.updatingSources };
+						delete updatingSources[source];
+						return { updatingSources, updateResults: { ...state.updateResults, [source]: outcome } };
+					});
+				}
+				if (!changed) return;
+				await get().refreshConfiguredPackages();
+				// backend reload后刷新模型域与已加载资源，不读取general/LAN。
+				void getSettingsStore(environment).getState().refreshAfterMutation("packages");
 			},
 			checkUpdates: async () => {
 				const names = [
