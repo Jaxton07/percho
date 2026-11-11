@@ -19,6 +19,7 @@ import { mkdir, readFile, realpath, stat, writeFile } from "node:fs/promises";
 import { resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 import { build } from "esbuild";
+import { createCheckpoint } from "./performance/checkpoint.mjs";
 import { suiteRoot } from "./performance/paths.mjs";
 import { connect } from "./session-rendering-cdp.mjs";
 import { renderingFixture, renderingSession } from "./session-rendering-fixture.mjs";
@@ -58,6 +59,7 @@ if (production)
 	assert((await realpath(moduleFile)).startsWith(`${process.env.PERCHO_RENDERING_MODULE ? root : host}/`));
 const toolCount = smoke || short ? 80 : 2600;
 assert.match(label, /^[a-z-]+$/);
+const checkpoint = createCheckpoint(resolve(root, `${label}-checkpoint.json`));
 await build({
 	stdin: {
 		contents: 'export { IpcChannels } from "./packages/shared/src/ipc-channels.ts";',
@@ -124,7 +126,13 @@ try {
 		`(()=>{const d=window.__renderDiag; d.events=${JSON.stringify(events)}; d.expected=d.events.reduce(d.core.reduceEvent,d.core.emptyTranscript());d.summary=s=>({messages:s.messages.length,tools:s.messages.flatMap(m=>m.tools??[]).map(t=>[t.id,t.name,t.args.length,t.output.length,t.state]),compactions:s.messages.filter(m=>m.compact?.status==='done').length,active:s.agentActive,streaming:!!s.streaming}); return d.summary(d.expected);})()`,
 	);
 	assert.equal(expected.tools.length, toolCount);
-	const snapshot = async (stage, round) => {
+	const snapshot = async (stage, round, timing) => {
+		// Timing stops before observer RPCs and checkpoint I/O. Persist it even if those probes fail.
+		const timedSample = timing ? { stage, round, ...timing } : null;
+		if (timedSample) {
+			samples.push(timedSample);
+			await checkpoint.save({ label, samples });
+		}
 		const processes = await main.eval(
 			"process.getBuiltinModule('module').createRequire(process.cwd()+'/package.json')('electron').app.getAppMetrics().map(p=>({type:p.type,memory:p.memory}))",
 		);
@@ -133,7 +141,7 @@ try {
 		const state = await renderer.eval(
 			`(()=>{const d=window.__renderDiag,s=d.transcripts.getState().bySession[d.sid]??d.core.emptyTranscript();return {messages:s.messages.length,tools:s.messages.reduce((n,m)=>n+(m.tools?.length??0),0),elements:document.querySelectorAll('*').length,diffLines:document.querySelectorAll('.diff-line').length,toolCards:document.querySelectorAll("details[class*='group/dets']").length,frames:d.frames.splice(0),longTasks:d.longTasks.splice(0),inputs:d.inputs.splice(0),dpr:devicePixelRatio,width:innerWidth,height:innerHeight,hidden:document.hidden};})()`,
 		);
-		samples.push({
+		const sample = {
 			stage,
 			round,
 			...state,
@@ -153,10 +161,10 @@ try {
 					.map((m) => [m.name, m.value]),
 			),
 			processes,
-		});
-		await writeFile(resolve(root, `${label}-checkpoint.json`), JSON.stringify({ label, samples }, null, 2), {
-			mode: 0o600,
-		});
+		};
+		if (timedSample) Object.assign(timedSample, sample);
+		else samples.push(sample);
+		await checkpoint.save({ label, samples });
 		console.log(
 			JSON.stringify({
 				stage,
@@ -257,8 +265,7 @@ try {
 		await renderer.eval(
 			"(()=>{const d=__renderDiag;d.transcripts.getState().loadHistory(d.sid,d.expected.messages);d.sessions.setState({activeSessionId:d.sid,newSessionDraft:null});return new Promise(r=>requestAnimationFrame(()=>requestAnimationFrame(()=>r(true))))})()",
 		);
-		await snapshot("local-history-mount", round);
-		samples.at(-1).mountRoundTripMs = performance.now() - start;
+		await snapshot("local-history-mount", round, { mountRoundTripMs: performance.now() - start });
 		await renderer.eval(
 			"(async()=>{const d=__renderDiag;d.sessions.getState().activateNewSessionDraft();await d.sessions.getState().closeSession(d.sid);})()",
 		);
@@ -272,8 +279,7 @@ try {
 		await renderer.eval(
 			`(async()=>{const d=__renderDiag;const result=await d.sessions.getState().openFromHistory(${JSON.stringify(historyFile)});if(!result.ok)throw new Error('Synthetic history open failed');d.sid=result.meta.sessionId;return new Promise(r=>requestAnimationFrame(()=>requestAnimationFrame(()=>r(true))))})()`,
 		);
-		await snapshot("backend-history-open", round);
-		samples.at(-1).openRoundTripMs = performance.now() - start;
+		await snapshot("backend-history-open", round, { openRoundTripMs: performance.now() - start });
 		if (resources) await installResourceProbe(renderer);
 		if (viewOnly) {
 			await renderer.eval(

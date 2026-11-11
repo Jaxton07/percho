@@ -3,6 +3,7 @@ import { constants } from "node:fs";
 import { lstat, mkdir, open, readdir, readFile, realpath, rename, unlink, writeFile } from "node:fs/promises";
 import { dirname, join, resolve } from "node:path";
 import { summarize } from "../report-conversation-minimap.mjs";
+import { validRawEvidence } from "./raw-evidence.mjs";
 
 const escapeHtml = (value) =>
 	String(value)
@@ -26,6 +27,10 @@ const envKeys = ["platform", "arch", "osRelease", "cpuModel", "machineHash", "no
 const contractKeys = ["version", "mode", "fixtureHash", "parameters"];
 const statuses = new Set(["running", "passed", "failed", "interrupted", "partial", "skipped", "pending"]);
 const object = (value) => value !== null && typeof value === "object" && !Array.isArray(value);
+const known = (value) => typeof value === "string" && value.trim().length > 0;
+const viewportValid = (viewport) =>
+	object(viewport) &&
+	[viewport.width, viewport.height, viewport.dpr].every((value) => Number.isFinite(value) && value > 0);
 function validateRun(run) {
 	if (
 		!object(run) ||
@@ -159,17 +164,92 @@ export class RunStore {
 		return runs;
 	}
 
-	async setBaseline(id) {
-		const run = await this.read(id);
+	async eligibility(run, name, suite) {
+		const reasons = [];
+		if (run.kind !== "run") reasons.push("legacy metadata is unknown");
+		if (run.status !== "passed") reasons.push("run not passed");
 		if (
-			run.kind !== "run" ||
-			run.status !== "passed" ||
-			!Object.values(run.suites ?? {}).some(
-				(suite) =>
-					suite.status === "passed" && suite.metrics?.some((metric) => Number.isFinite(metric.value)),
+			typeof run.finishedAt !== "string" ||
+			!Number.isFinite(Date.parse(run.finishedAt)) ||
+			Date.parse(run.finishedAt) < Date.parse(run.startedAt)
+		)
+			reasons.push("finishedAt is invalid or unknown");
+		if (!known(run.profile)) reasons.push("profile is unknown");
+		for (const key of envKeys.filter((key) => key !== "electron"))
+			if (!known(run.environment?.[key])) reasons.push(`environment.${key} is unknown`);
+		if (!suite) return [...reasons, "suite missing"];
+		if (suite.status !== "passed") reasons.push("suite not passed");
+		if (
+			!(
+				(Number.isInteger(suite.contract?.version) && suite.contract.version > 0) ||
+				known(suite.contract?.version)
 			)
 		)
-			throw new Error("Baseline requires a passed measured run");
+			reasons.push("contract.version is invalid or unknown");
+		for (const key of ["mode", "fixtureHash"])
+			if (!known(suite.contract?.[key])) reasons.push(`contract.${key} is unknown`);
+		if (!object(suite.contract?.parameters)) reasons.push("contract.parameters is invalid");
+		if (suite.contract?.measurementVersion !== 2)
+			reasons.push("contract.measurementVersion is invalid or unknown");
+		if (
+			!known(suite.contract?.measurementHash) ||
+			suite.contract.measurementHash.trim().toLowerCase() === "unknown"
+		)
+			reasons.push("contract.measurementHash is unknown");
+		const mode = suite.contract?.mode;
+		if (mode !== "node" && mode !== "node-worker") {
+			if (!known(run.environment?.electron)) reasons.push("environment.electron is unknown");
+			const viewport = suite.contract?.viewport;
+			const valid =
+				name === "rendering"
+					? viewportValid(viewport?.initial) &&
+						object(viewport?.stages) &&
+						Object.keys(viewport.stages).length > 0 &&
+						Object.values(viewport.stages).every(viewportValid)
+					: viewportValid(viewport);
+			if (!valid) reasons.push("contract.viewport is invalid or unknown");
+		}
+		if (!suite.metrics.length && name !== "images") reasons.push("metrics missing");
+		if (!suite.rawFiles.length) reasons.push("rawFiles missing");
+		let completedReports = 0;
+		for (const file of suite.rawFiles) {
+			const parts = file.split("/");
+			if (
+				parts.length < 2 ||
+				parts[0] !== "raw" ||
+				parts.some((part) => !part || part === "." || part === ".." || part.includes("\\"))
+			) {
+				reasons.push(`invalid raw file: ${file}`);
+				continue;
+			}
+			try {
+				let path = await this.runDir(run.id);
+				for (let i = 0; i < parts.length; i++) {
+					path = join(path, parts[i]);
+					const stat = await lstat(path);
+					if (stat.isSymbolicLink() || (i === parts.length - 1 ? !stat.isFile() : !stat.isDirectory()))
+						throw new Error("Invalid raw path");
+				}
+				const data = JSON.parse(await safeRead(path));
+				// Checkpoints are auxiliary forensic data, not completed measurement evidence.
+				if (!/checkpoint/i.test(parts.at(-1))) {
+					if (!validRawEvidence(name, data)) throw new Error("Invalid raw evidence");
+					completedReports++;
+				}
+			} catch {
+				reasons.push(`invalid raw file: ${file}`);
+			}
+		}
+		if (completedReports === 0) reasons.push("no completed raw report");
+		return reasons;
+	}
+
+	async setBaseline(id) {
+		const run = await this.read(id);
+		const suites = Object.entries(run.suites);
+		const eligibility = await Promise.all(suites.map(([name, suite]) => this.eligibility(run, name, suite)));
+		if (!suites.some(([, suite]) => suite.metrics.length) || eligibility.some((reasons) => reasons.length))
+			throw new Error(`Baseline requires a passed measured run: ${eligibility.flat().join(", ")}`);
 		await this.atomic(join(this.root, "baseline.json"), `${JSON.stringify({ id }, null, 2)}\n`);
 	}
 
@@ -200,7 +280,7 @@ export class RunStore {
 		for (const key of envKeys) {
 			const a = current.environment?.[key],
 				b = baseline.environment?.[key];
-			if (key === "electron" && a == null && b == null) continue;
+			if (key === "electron") continue;
 			if (a == null || b == null || a !== b) common.push(`environment.${key} differs or is unknown`);
 		}
 		const available = [
@@ -214,61 +294,78 @@ export class RunStore {
 		)
 			throw new Error("Unknown or duplicated comparison suite");
 		const names = (suiteNames ?? available).slice().sort();
-		const suites = names.map((name) => {
-			const before = baseline.suites?.[name],
-				after = current.suites?.[name];
-			const reasons = [...common];
-			if (!before || !after) reasons.push("suite missing");
-			else {
-				if (before.status !== "passed" || after.status !== "passed") reasons.push("suite not passed");
-				for (const key of contractKeys)
-					if (
-						before.contract?.[key] == null ||
-						after.contract?.[key] == null ||
-						!equal(before.contract[key], after.contract[key])
-					)
-						reasons.push(`contract.${key} differs or is unknown`);
-				const optional = new Set([
-					...Object.keys(before.contract ?? {}),
-					...Object.keys(after.contract ?? {}),
-				]);
-				for (const key of optional)
-					if (!contractKeys.includes(key) && !equal(before.contract?.[key], after.contract?.[key]))
-						reasons.push(`contract.${key} differs`);
-			}
-			if (legacy) reasons.push("legacy metadata is unknown");
-			let status = legacy ? "reference-only" : reasons.length ? "incompatible" : "comparable";
-			const metrics = [];
-			if (status === "comparable")
-				for (const metric of after.metrics ?? []) {
-					const previous = (before.metrics ?? []).find(
-						(item) =>
-							item.name === metric.name &&
-							item.unit === metric.unit &&
-							item.lowerIsBetter === metric.lowerIsBetter,
-					);
-					if (previous && Number.isFinite(previous.value) && Number.isFinite(metric.value)) {
-						const delta = metric.value - previous.value;
-						metrics.push({
-							name: metric.name,
-							unit: metric.unit,
-							before: previous.value,
-							after: metric.value,
-							delta,
-							percent: previous.value === 0 ? null : (delta / previous.value) * 100,
-						});
-					}
+		const suites = await Promise.all(
+			names.map(async (name) => {
+				const before = baseline.suites?.[name],
+					after = current.suites?.[name];
+				const reasons = [
+					...new Set([
+						...common,
+						...(await this.eligibility(baseline, name, before)),
+						...(await this.eligibility(current, name, after)),
+					]),
+				];
+				if (
+					before &&
+					after &&
+					before.contract?.mode !== "node" &&
+					before.contract?.mode !== "node-worker" &&
+					current.environment?.electron !== baseline.environment?.electron
+				)
+					reasons.push("environment.electron differs");
+				if (!before || !after) reasons.push("suite missing");
+				else {
+					if (before.status !== "passed" || after.status !== "passed") reasons.push("suite not passed");
+					for (const key of contractKeys)
+						if (
+							before.contract?.[key] == null ||
+							after.contract?.[key] == null ||
+							!equal(before.contract[key], after.contract[key])
+						)
+							reasons.push(`contract.${key} differs or is unknown`);
+					const optional = new Set([
+						...Object.keys(before.contract ?? {}),
+						...Object.keys(after.contract ?? {}),
+					]);
+					for (const key of optional)
+						if (!contractKeys.includes(key) && !equal(before.contract?.[key], after.contract?.[key]))
+							reasons.push(`contract.${key} differs`);
 				}
-			if (
-				status === "comparable" &&
-				(metrics.length !== (after.metrics ?? []).length || metrics.length !== (before.metrics ?? []).length)
-			) {
-				reasons.push("metrics missing or incompatible");
-				status = "incompatible";
-				metrics.length = 0;
-			}
-			return { name, status, reasons, metrics };
-		});
+				if (legacy) reasons.push("legacy metadata is unknown");
+				let status = legacy ? "reference-only" : reasons.length ? "incompatible" : "comparable";
+				const metrics = [];
+				if (status === "comparable")
+					for (const metric of after.metrics ?? []) {
+						const previous = (before.metrics ?? []).find(
+							(item) =>
+								item.name === metric.name &&
+								item.unit === metric.unit &&
+								item.lowerIsBetter === metric.lowerIsBetter,
+						);
+						if (previous && Number.isFinite(previous.value) && Number.isFinite(metric.value)) {
+							const delta = metric.value - previous.value;
+							metrics.push({
+								name: metric.name,
+								unit: metric.unit,
+								before: previous.value,
+								after: metric.value,
+								delta,
+								percent: previous.value === 0 ? null : (delta / previous.value) * 100,
+							});
+						}
+					}
+				if (
+					status === "comparable" &&
+					(metrics.length !== (after.metrics ?? []).length ||
+						metrics.length !== (before.metrics ?? []).length)
+				) {
+					reasons.push("metrics missing or incompatible");
+					status = "incompatible";
+					metrics.length = 0;
+				}
+				return { name, status, reasons, metrics };
+			}),
+		);
 		const reasons = [...common];
 		if (!names.length) reasons.push("no suites");
 		if (legacy) reasons.push("legacy metadata is unknown");
@@ -396,18 +493,20 @@ export class RunStore {
 		const rows = [];
 		for (const run of runs)
 			for (const [name, suite] of Object.entries(run.suites ?? {})) {
-				const eligible =
-					run.kind === "run" &&
-					run.status === "passed" &&
-					suite.status === "passed" &&
-					run.profile &&
-					envKeys.filter((key) => key !== "electron").every((key) => run.environment?.[key] != null) &&
-					contractKeys.every((key) => suite.contract?.[key] != null);
+				const invalid = await this.eligibility(run, name, suite);
+				const eligible = invalid.length === 0;
+				if (!eligible && run.kind === "run") errors.push(`${run.id} (${name}): ${invalid.join(", ")}`);
 				const key = eligible
 					? JSON.stringify(
 							canonical({
 								profile: run.profile,
-								environment: Object.fromEntries(envKeys.map((key) => [key, run.environment?.[key] ?? null])),
+								environment: Object.fromEntries(
+									envKeys
+										.filter(
+											(key) => key !== "electron" || !["node", "node-worker"].includes(suite.contract.mode),
+										)
+										.map((key) => [key, run.environment?.[key] ?? null]),
+								),
 								contract: suite.contract,
 								suite: name,
 								metrics: (suite.metrics ?? [])

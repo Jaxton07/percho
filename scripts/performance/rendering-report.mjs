@@ -47,6 +47,7 @@ export function summarizeRenderingRuns(reports) {
 						.flatMap((sample) => sample.inputs ?? [])
 						.map((point) => (typeof point === "number" ? point : point.ms)),
 				],
+				["mountP95Ms", samples.map((sample) => sample.mountRoundTripMs)],
 				["openP95Ms", samples.map((sample) => sample.openRoundTripMs)],
 				["expandP95Ms", samples.map((sample) => sample.expandRoundTripMs)],
 			]) {

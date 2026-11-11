@@ -1,7 +1,8 @@
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
-import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
+import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { dirname, join, relative } from "node:path";
+import { createCheckpoint, safeErrorMessage } from "./checkpoint.mjs";
 import { desktopOverrides, withDesktop } from "./desktop.mjs";
 import { validateRunOwner, validateWorkPath } from "./paths.mjs";
 
@@ -71,8 +72,11 @@ export async function runLargeText({ repo, runDir, profile, env = {}, signal, cl
 	await writeFile(file, fixture.jsonl, { flag: "wx", mode: 0o600 });
 	const rawFile = join(runDir, "raw/large-text.json");
 	const records = [];
-	let viewport;
-	const save = async (status) => {
+	let viewport,
+		current,
+		stopped = false;
+	const checkpoint = createCheckpoint(rawFile);
+	const save = async (status, error) => {
 		const data = {
 			version: 2,
 			status,
@@ -82,17 +86,23 @@ export async function runLargeText({ repo, runDir, profile, env = {}, signal, cl
 			bodyHash: fixture.bodyHash,
 			bodyCharacters: fixture.body.length,
 			samples: records,
+			...(error ? { error: safeErrorMessage(error) } : {}),
 		};
-		const temporary = `${rawFile}.tmp`;
-		await writeFile(temporary, `${JSON.stringify(data, null, 2)}\n`, { mode: 0o600 });
-		await rename(temporary, rawFile);
+		await checkpoint.save(data);
 	};
 	await save("running");
 	try {
 		await withDesktop(
-			{ repo, directory: join(root, "host-run"), kind: "large-text", env: desktopOverrides(env), signal },
+			{
+				repo,
+				directory: join(root, "host-run"),
+				kind: "large-text",
+				env: desktopOverrides(env),
+				signal,
+				cleanupResults,
+			},
 			async (host) => {
-				cleanupResults.push(host.cleanupResult);
+				if (!cleanupResults.includes(host.cleanupResult)) cleanupResults.push(host.cleanupResult);
 				const { renderer, main, moduleFile } = host;
 				await renderer.eval(
 					`(async()=>{window.__perfLargeText=await import(${JSON.stringify(moduleFile)});return true})()`,
@@ -122,6 +132,11 @@ export async function runLargeText({ repo, runDir, profile, env = {}, signal, cl
 					assert(opened, "Opening the isolated history timed out");
 					assert(!opened.error, opened.error);
 					const row = opened.value;
+					signal?.throwIfAborted();
+					if (stopped) throw new Error("Collection stopped");
+					current = { ...row, warmup: index < config.warmup, status: "validating" };
+					records.push(current);
+					await save("running");
 					const persisted = await main.eval(
 						`globalThis.__perfBackend().getSessionMessages(${JSON.stringify(row.id)},{imageMode:'references'})`,
 					);
@@ -152,17 +167,26 @@ export async function runLargeText({ repo, runDir, profile, env = {}, signal, cl
 						await pause(20);
 					} while (Date.now() < until);
 					assert.equal(stats?.views, 0, "GC retained views");
-					records.push({ ...row, views: stats.views, warmup: index < config.warmup });
+					signal?.throwIfAborted();
+					if (stopped) throw new Error("Collection stopped");
+					Object.assign(current, { views: stats.views, status: "passed" });
+					current = undefined;
 					await save("running");
 				}
 			},
 		);
 		await save("passed");
 	} catch (error) {
-		await save(signal?.aborted ? "interrupted" : "failed");
+		stopped = true;
+		if (current)
+			Object.assign(current, {
+				status: signal?.aborted ? "interrupted" : "failed",
+				error: safeErrorMessage(error),
+			});
+		await save(signal?.aborted ? "interrupted" : "failed", error);
 		throw error;
 	}
-	const measured = records.filter((record) => !record.warmup);
+	const measured = records.filter((record) => !record.warmup && record.status === "passed");
 	const metrics = [];
 	for (const key of ["navigation", "firstPaint", "ready"]) {
 		const values = measured.map((record) => record[key]).sort((a, b) => a - b);

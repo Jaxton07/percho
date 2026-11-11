@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { execFile } from "node:child_process";
-import { chmod, mkdir, readdir, readFile, rm, writeFile } from "node:fs/promises";
+import { chmod, mkdir, mkdtemp, readdir, readFile, rm, writeFile } from "node:fs/promises";
+import { createServer } from "node:net";
 import { join, resolve } from "node:path";
 import { test } from "node:test";
 import { promisify } from "node:util";
@@ -120,6 +121,43 @@ test("work removal failure still saves a final failed manifest and releases the 
 		await done;
 		if (locked) await chmod(locked, 0o700).catch(() => {});
 		if (id) await rm(join(records, id), { recursive: true, force: true });
+	}
+});
+
+test("preflight failure is recorded exactly once without launching a desktop", {
+	skip: process.platform !== "darwin",
+}, async () => {
+	const bin = await mkdtemp(resolve(".local/tmp/preflight-bin-"));
+	const server = createServer();
+	let id;
+	try {
+		await writeFile(join(bin, "npm"), "#!/bin/sh\nexit 0\n", { mode: 0o700 });
+		await new Promise((ok, no) => {
+			server.once("error", (error) => (error.code === "EADDRINUSE" ? ok() : no(error)));
+			server.listen(5173, "127.0.0.1", ok);
+		});
+		const result = await exec(
+			process.execPath,
+			["scripts/performance.mjs", "run", "--suite=images", "--json"],
+			{
+				cwd: repo,
+				env: { ...process.env, PATH: `${bin}:${process.env.PATH}` },
+				timeout: 60000,
+				maxBuffer: 1024 * 1024,
+			},
+		).catch((error) => error);
+		assert.equal(result.code, 1);
+		const run = JSON.parse(result.stdout);
+		id = run.id;
+		assert.equal(run.status, "failed");
+		assert.equal(run.cleanup.operations.length, 1);
+		assert.equal(run.cleanup.operations[0].phase, "not-started");
+		assert.equal(run.cleanup.operations[0].completed, true);
+		assert.match(run.cleanup.operations[0].failure, /port|5173/i);
+	} finally {
+		if (server.listening) await new Promise((ok) => server.close(ok));
+		if (id) await rm(join(records, id), { recursive: true, force: true });
+		await rm(bin, { recursive: true, force: true });
 	}
 });
 

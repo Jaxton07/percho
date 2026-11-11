@@ -1,7 +1,19 @@
 import assert from "node:assert/strict";
 import { execFile, spawn } from "node:child_process";
 import { randomUUID } from "node:crypto";
-import { cp, mkdir, open, readdir, readFile, realpath, symlink, writeFile } from "node:fs/promises";
+import { constants } from "node:fs";
+import {
+	chmod,
+	copyFile,
+	cp,
+	mkdir,
+	open,
+	readdir,
+	readFile,
+	realpath,
+	symlink,
+	writeFile,
+} from "node:fs/promises";
 import { createRequire } from "node:module";
 import { createServer } from "node:net";
 import { dirname, join, relative, resolve, sep } from "node:path";
@@ -10,6 +22,7 @@ import { SettingsManager } from "@earendil-works/pi-coding-agent";
 import { transform } from "esbuild";
 import { retireMacApplication } from "../macos-app-cleanup.mjs";
 import { connect } from "../session-rendering-cdp.mjs";
+import { runOwnedTask } from "./owned-task.mjs";
 import { validateNoSymlinks } from "./paths.mjs";
 import { cleanOwnedGroup } from "./process.mjs";
 
@@ -29,8 +42,10 @@ export function desktopOverrides(env) {
 const pause = (ms) => new Promise((r) => setTimeout(r, ms));
 function boundedClient(client) {
 	const pending = new Set();
+	let closed = false;
 	const invoke = (method, args) =>
 		new Promise((resolveValue, reject) => {
+			if (closed) return reject(new Error("Owned desktop connection closed"));
 			const finish = (error, value) => {
 				clearTimeout(timer);
 				pending.delete(fail);
@@ -51,6 +66,8 @@ function boundedClient(client) {
 		eval: (...args) => invoke("eval", args),
 		send: (...args) => invoke("send", args),
 		close() {
+			if (closed) return;
+			closed = true;
 			for (const fail of pending) fail(new Error("Owned desktop connection closed"));
 			client.close();
 		},
@@ -133,9 +150,26 @@ async function prepare(repo, directory, owner, kind) {
  * directory and owner marker via PERCHO_PERF_RUN_DIR and PERCHO_PERF_OWNER.
  * Built large-text hosts expose backendStats(); cleanup failures carry cleanupResult.
  */
-export async function withDesktop(
+export async function withDesktop(options, callback) {
+	const result = { kind: "desktop", phase: "preparing", completed: false, errors: [], warnings: [] };
+	options.cleanupResults?.push(result);
+	try {
+		return await startDesktop(options, callback, result);
+	} catch (error) {
+		if (result.phase === "preparing") {
+			result.phase = "not-started";
+			result.completed = true;
+			result.failure = error.message;
+			error.cleanupResult ??= result;
+		}
+		throw error;
+	}
+}
+
+async function startDesktop(
 	{ repo, directory, mode = "built-renderer", kind = "minimap", env = {}, signal },
 	callback,
+	cleanupResult,
 ) {
 	signal?.throwIfAborted();
 	if (process.platform !== "darwin")
@@ -250,7 +284,7 @@ export async function withDesktop(
 		renderer,
 		pid,
 		identityVerified = false;
-	const cleanupResult = { completed: false, errors: [], warnings: [] };
+	cleanupResult.phase = "starting";
 	const host = {
 		cdpPort,
 		inspectPort,
@@ -266,7 +300,9 @@ export async function withDesktop(
 		pid: null,
 		cleanupResult,
 	};
+	let failure;
 	try {
+		log = await open(join(directory, "desktop.log"), "wx", 0o600);
 		if (mode === "built-renderer") {
 			// Record the owned bundle path even if preparation fails midway.
 			app = join(directory, "Diagnostic.app");
@@ -285,7 +321,6 @@ export async function withDesktop(
 		const command = mode === "dev" ? process.execPath : host.executable;
 		const launchArgs =
 			mode === "dev" ? [join(repo, "scripts/dev-desktop.mjs"), ...args] : [host.hostDir, ...args];
-		log = await open(join(directory, "desktop.log"), "w", 0o600);
 		child = spawn(command, launchArgs, {
 			cwd: mode === "dev" ? repo : join(repo, "packages/desktop"),
 			env: cleanEnv,
@@ -359,18 +394,31 @@ export async function withDesktop(
 			assert(Date.now() < deadline, "Desktop startup timed out");
 			await pause(100);
 		}
-		let onAbort;
-		try {
-			signal?.throwIfAborted();
-			if (!signal) return await callback(host);
-			const aborted = new Promise((_, reject) => {
-				onAbort = () => reject(signal.reason ?? new Error("Desktop interrupted"));
-				signal.addEventListener("abort", onAbort, { once: true });
-			});
-			return await Promise.race([callback(host), aborted]);
-		} finally {
-			if (onAbort) signal.removeEventListener("abort", onAbort);
+		return await runOwnedTask(
+			{
+				signal,
+				cancel: () => {
+					for (const client of [renderer, main]) {
+						try {
+							client?.close();
+						} catch (error) {
+							cleanupResult.errors.push(error.message);
+						}
+					}
+				},
+			},
+			() => callback(host),
+		);
+	} catch (error) {
+		failure = error;
+		if (log) {
+			try {
+				await log.write(`\nDesktop error: ${error?.stack ?? String(error)}\n`);
+			} catch (logError) {
+				cleanupResult.errors.push(logError.message);
+			}
 		}
+		throw error;
 	} finally {
 		const attempt = async (fn) => {
 			try {
@@ -395,18 +443,10 @@ export async function withDesktop(
 			return true;
 		};
 		const soft = async (fn) => {
-			let timer;
 			try {
-				await Promise.race([
-					fn(),
-					new Promise((_, reject) => {
-						timer = setTimeout(() => reject(new Error("Desktop shutdown RPC timed out")), 3000);
-					}),
-				]);
+				await fn();
 			} catch (error) {
 				cleanupResult.warnings.push(error.message);
-			} finally {
-				clearTimeout(timer);
 			}
 		};
 		if (renderer)
@@ -442,17 +482,39 @@ export async function withDesktop(
 				),
 				pause(5000),
 			]);
-			await attempt(() => cleanOwnedGroup(child));
+			await attempt(async () => {
+				await cleanOwnedGroup(child);
+				if (child.exitCode === null && child.signalCode === null)
+					await new Promise((resolveExit) => child.once("exit", resolveExit));
+			});
 		}
-		if (log) await attempt(() => log.close());
+		if (log) {
+			await attempt(() => log.close());
+			await attempt(async () => {
+				const logs = join(dirname(work), "logs");
+				validateNoSymlinks(logs);
+				await mkdir(logs, { recursive: true, mode: 0o700 });
+				const archive = join(logs, `desktop-${owner}.log`);
+				validateNoSymlinks(archive);
+				await copyFile(join(directory, "desktop.log"), archive, constants.COPYFILE_EXCL);
+				await chmod(archive, 0o600);
+			});
+		}
 		if (app) await attempt(() => retireMacApplication(app, { remove: true }));
 		for (const n of [cdpPort, inspectPort, ...(mode === "dev" ? [5173] : [])]) await attempt(() => port(n));
 		cleanupResult.completed = cleanupResult.errors.length === 0;
+		cleanupResult.phase = cleanupResult.completed ? "closed" : "cleanup-failed";
 		// Cleanup failures must be visible even when the callback was already failing.
 		if (!cleanupResult.completed)
 			// biome-ignore lint/correctness/noUnsafeFinally: cleanup failure must not be silently ignored
-			throw Object.assign(new Error(`Desktop cleanup failed: ${cleanupResult.errors.join("; ")}`), {
-				cleanupResult,
-			});
+			throw Object.assign(
+				new Error(
+					`${failure ? `${failure.message}; ` : ""}Desktop cleanup failed: ${cleanupResult.errors.join("; ")}`,
+					{ cause: failure },
+				),
+				{
+					cleanupResult,
+				},
+			);
 	}
 }

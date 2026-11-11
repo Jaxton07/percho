@@ -1,12 +1,14 @@
 import { strict as assert } from "node:assert";
 import { mkdir, mkdtemp, realpath, rm, symlink, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { test } from "node:test";
+import { fileURLToPath } from "node:url";
 import { validateNoSymlinks, validateRunOwner, validateRunPath, validateWorkPath } from "./paths.mjs";
 
 test("accepts only non-symlink paths in a run work directory", async () => {
-	const repo = await mkdtemp(join(await realpath(tmpdir()), "perf-paths-"));
+	const baseDir = join(dirname(fileURLToPath(import.meta.url)), "../../.local/tmp/performance-tooling");
+	await mkdir(baseDir, { recursive: true });
+	const repo = await mkdtemp(join(await realpath(baseDir), "perf-paths-"));
 	try {
 		const base = join(repo, ".local/test/performance");
 		await mkdir(join(base, "run/work"), { recursive: true });

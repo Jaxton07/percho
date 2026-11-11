@@ -7,6 +7,7 @@ import { arch, cpus, hostname, platform, release, totalmem } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { parseArgs, promisify } from "node:util";
+import { archiveSuiteArtifacts } from "./artifacts.mjs";
 import { validateNoSymlinks } from "./paths.mjs";
 import { runProcess } from "./process.mjs";
 import { RunStore } from "./store.mjs";
@@ -136,8 +137,8 @@ async function execute(repo, store, options) {
 	const unlock = await lock(store.root);
 	const controller = new AbortController();
 	const interrupt = () => controller.abort(new Error("Performance run interrupted"));
-	process.once("SIGINT", interrupt);
-	process.once("SIGTERM", interrupt);
+	process.on("SIGINT", interrupt);
+	process.on("SIGTERM", interrupt);
 	let run;
 	let error;
 	const cleanupResults = [];
@@ -196,6 +197,7 @@ async function execute(repo, store, options) {
 			}
 			run.suites[name].status = "running";
 			await store.save(run);
+			let suiteError;
 			try {
 				run.suites[name] = await runSuite(name, {
 					repo,
@@ -209,12 +211,22 @@ async function execute(repo, store, options) {
 			} catch (caught) {
 				run.suites[name].status = controller.signal.aborted ? "interrupted" : "failed";
 				run.suites[name].notes.push(clean(caught.message));
-				if (caught.cleanupResult) cleanupResults.push(caught.cleanupResult);
-				throw caught;
-			} finally {
-				await store.save(run);
+				if (caught.cleanupResult && !cleanupResults.includes(caught.cleanupResult))
+					cleanupResults.push(caught.cleanupResult);
+				suiteError = caught;
 			}
+			try {
+				const artifacts = await archiveSuiteArtifacts({ runDir, suite: name });
+				run.suites[name].rawFiles = [...new Set([...run.suites[name].rawFiles, ...artifacts])];
+			} catch (archiveError) {
+				run.suites[name].status = "failed";
+				run.suites[name].notes.push(`Artifact archive failed: ${clean(archiveError.message)}`);
+				suiteError ??= archiveError;
+			}
+			await store.save(run);
+			if (suiteError) throw suiteError;
 		}
+		controller.signal.throwIfAborted();
 		run.status = Object.values(run.suites).every((suite) => suite.status === "passed") ? "passed" : "partial";
 	} catch (caught) {
 		error = caught;
@@ -226,6 +238,7 @@ async function execute(repo, store, options) {
 	} finally {
 		try {
 			if (run) {
+				if (controller.signal.aborted && run.status === "passed") run.status = "interrupted";
 				for (const suite of Object.values(run.suites))
 					if (suite.status === "pending" || suite.status === "running") {
 						suite.status = "skipped";
@@ -236,6 +249,7 @@ async function execute(repo, store, options) {
 					completed: cleanupResults.every((result) => result.completed),
 					operations: cleanupResults.map((result) => ({
 						...result,
+						...(result.failure ? { failure: clean(result.failure) } : {}),
 						errors: result.errors?.map(clean) ?? [],
 					})),
 				};
@@ -257,9 +271,12 @@ async function execute(repo, store, options) {
 				await store.writeHistory();
 			}
 		} finally {
-			process.removeListener("SIGINT", interrupt);
-			process.removeListener("SIGTERM", interrupt);
-			await unlock();
+			try {
+				await unlock();
+			} finally {
+				process.removeListener("SIGINT", interrupt);
+				process.removeListener("SIGTERM", interrupt);
+			}
 		}
 	}
 	return { run, error };

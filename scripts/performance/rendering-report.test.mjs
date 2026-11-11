@@ -23,6 +23,12 @@ test("rendering contracts preserve intentional per-stage viewport changes", () =
 	assert.equal(viewport.stages["interactions:narrow"].width, 640);
 	assert.equal(metrics.find((point) => point.name === "performance.empty.frameP95Ms").value, 20);
 });
+test("mount latency is retained independently from open and expand", () => {
+	const { metrics } = summarizeRenderingRuns([
+		{ label: "performance", report: { samples: [{ ...sample("mount"), mountRoundTripMs: 42 }] } },
+	]);
+	assert.equal(metrics.find((point) => point.name === "performance.mount.mountP95Ms")?.value, 42);
+});
 test("different independent host viewports and drifting same-stage samples are rejected", () => {
 	assert.throws(
 		() =>

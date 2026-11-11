@@ -11,9 +11,20 @@ async function setup(t) {
 }
 const suite = (value) => ({
 	status: "passed",
-	contract: { version: 1, mode: "built", fixtureHash: "hash", parameters: {}, viewport: { width: 800 } },
+	contract: {
+		version: 1,
+		measurementVersion: 2,
+		measurementHash: "hash",
+		mode: "built",
+		fixtureHash: "hash",
+		parameters: {},
+		viewport: {
+			initial: { width: 800, height: 600, dpr: 1 },
+			stages: { open: { width: 800, height: 600, dpr: 1 } },
+		},
+	},
 	metrics: [{ name: "time", unit: "ms", value, lowerIsBetter: true }],
-	rawFiles: [],
+	rawFiles: ["raw/sample.json"],
 	notes: [],
 });
 const metadata = {
@@ -30,6 +41,20 @@ const metadata = {
 	},
 	suites: { rendering: suite(10) },
 };
+
+async function finish(store, run) {
+	await writeFile(
+		join(store.root, run.id, "raw/sample.json"),
+		JSON.stringify(
+			run.suites.images
+				? { cases: [{ mode: "one", imageCount: 1 }] }
+				: { label: "smoke", samples: [{ stage: "open", elements: 1 }] },
+		),
+	);
+	run.finishedAt = new Date().toISOString();
+	run.status = "passed";
+	await store.save(run);
+}
 
 test("create and list runs in a real private directory", async (t) => {
 	const { root, store } = await setup(t);
@@ -52,8 +77,7 @@ test("save status and explicitly move only valid baselines", async (t) => {
 	await store.save(run);
 	assert.equal((await store.read(run.id)).status, "failed");
 	await assert.rejects(store.setBaseline(run.id));
-	run.status = "passed";
-	await store.save(run);
+	await finish(store, run);
 	await store.setBaseline(run.id);
 	assert.equal(await store.getBaseline(), run.id);
 });
@@ -61,16 +85,14 @@ test("save status and explicitly move only valid baselines", async (t) => {
 test("compare contracts and environment per suite, ignoring source changes", async (t) => {
 	const { store } = await setup(t);
 	const before = await store.create(metadata);
-	before.status = "passed";
-	await store.save(before);
+	await finish(store, before);
 	await store.setBaseline(before.id);
 	const after = await store.create({
 		...metadata,
 		source: { commit: "new" },
 		suites: { rendering: suite(15) },
 	});
-	after.status = "passed";
-	await store.save(after);
+	await finish(store, after);
 	let result = await store.compare(after.id, {});
 	assert.equal(result.status, "comparable");
 	assert.equal(result.suites[0].metrics[0].delta, 5);
@@ -112,8 +134,7 @@ test("history separates compatible groups and ignores source and sdk", async (t)
 			environment: { ...metadata.environment, node, sdk: commit },
 			source: { commit },
 		});
-		run.status = "passed";
-		await store.save(run);
+		await finish(store, run);
 	}
 	await store.writeHistory();
 	const html = await readFile(join(root, "history.html"), "utf8");
@@ -134,12 +155,15 @@ test("import actual minimap summary metrics without fabricating metadata", async
 
 test("functional suites compare without metrics, but failed runs cannot compare", async (t) => {
 	const { store } = await setup(t);
-	const functional = { ...suite(1), metrics: [] };
+	const functional = {
+		...suite(1),
+		contract: { ...suite(1).contract, viewport: { width: 800, height: 600, dpr: 1 } },
+		metrics: [],
+	};
 	const before = await store.create({ ...metadata, suites: { images: functional } });
 	const after = await store.create({ ...metadata, suites: { images: functional } });
-	before.status = after.status = "passed";
-	await store.save(before);
-	await store.save(after);
+	await finish(store, before);
+	await finish(store, after);
 	assert.equal((await store.compare(after.id, { baselineId: before.id })).status, "comparable");
 	for (const status of ["failed", "interrupted", "partial", "running"]) {
 		after.status = status;
@@ -201,8 +225,7 @@ test("history draws isolated escaped compatible metric trends", async (t) => {
 			label: "<unsafe>",
 			environment: { ...metadata.environment, node },
 		});
-		run.status = "passed";
-		await store.save(run);
+		await finish(store, run);
 	}
 	await store.writeHistory();
 	const html = await readFile(join(root, "history.html"), "utf8");

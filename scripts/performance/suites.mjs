@@ -5,6 +5,7 @@ import { join, relative } from "node:path";
 import { summarize } from "../report-conversation-minimap.mjs";
 import { desktopOverrides, withDesktop } from "./desktop.mjs";
 import { runLargeText } from "./large-text.mjs";
+import { measurementFingerprint } from "./measurement.mjs";
 import { summarizeRenderingRuns } from "./rendering-report.mjs";
 
 export const SUITES = ["minimap", "rendering", "large-text", "switch", "images", "catalog"];
@@ -35,7 +36,7 @@ async function rawCopy(context, source, name) {
 	return relative(context.runDir, target);
 }
 function rememberCleanup(context, host) {
-	context.cleanupResults.push(host.cleanupResult);
+	if (!context.cleanupResults.includes(host.cleanupResult)) context.cleanupResults.push(host.cleanupResult);
 }
 async function minimap(context) {
 	const { repo, runDir, profile, env, runCommand, signal } = context;
@@ -59,6 +60,7 @@ async function minimap(context) {
 				kind: "minimap",
 				env: desktopOverrides(env),
 				signal,
+				cleanupResults: context.cleanupResults,
 			},
 			async (host) => {
 				rememberCleanup(context, host);
@@ -131,7 +133,14 @@ async function rendering(context) {
 	for (const [label, args] of modes) {
 		const modeDirectory = join(directory, label);
 		await withDesktop(
-			{ repo, directory: modeDirectory, kind: "rendering", env: desktopOverrides(env), signal },
+			{
+				repo,
+				directory: modeDirectory,
+				kind: "rendering",
+				env: desktopOverrides(env),
+				signal,
+				cleanupResults: context.cleanupResults,
+			},
 			async (host) => {
 				rememberCleanup(context, host);
 				const childEnv = {
@@ -206,6 +215,7 @@ async function switchSuite(context, images = false) {
 			kind,
 			env: { ...desktopOverrides(env), PERCHO_SESSION_SWITCH_DIAGNOSTICS_ROOT: root },
 			signal,
+			cleanupResults: context.cleanupResults,
 		},
 		async (host) => {
 			rememberCleanup(context, host);
@@ -340,6 +350,8 @@ export async function runSuite(name, context) {
 	if (!Object.hasOwn(runners, name)) throw new Error(`Unknown performance suite: ${name}`);
 	const runner = runners[name];
 	const output = await runner(context);
+	output.contract.measurementVersion = 2;
+	output.contract.measurementHash = await measurementFingerprint(context.repo);
 	if (name !== "catalog") {
 		output.contract.harnessHash = await hash(context.repo, ["scripts/performance/desktop.mjs"]);
 		output.contract.runtimePolicy = "private-agent-project-trust-never";

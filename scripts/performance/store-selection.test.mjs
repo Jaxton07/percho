@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
-import { mkdtemp, rm } from "node:fs/promises";
-import { resolve } from "node:path";
+import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { join, resolve } from "node:path";
 import { test } from "node:test";
 import { RunStore } from "./store.mjs";
 
@@ -10,9 +10,17 @@ test("an explicit suite selection compares an incremental run with a full baseli
 	const store = new RunStore({ root });
 	const measured = {
 		status: "passed",
-		contract: { version: 1, mode: "built", fixtureHash: "same", parameters: {} },
+		contract: {
+			version: 1,
+			measurementVersion: 2,
+			measurementHash: "hash",
+			mode: "built",
+			fixtureHash: "same",
+			parameters: {},
+			viewport: { width: 800, height: 600, dpr: 1 },
+		},
 		metrics: [{ name: "time", value: 10, unit: "ms", lowerIsBetter: true }],
-		rawFiles: [],
+		rawFiles: ["raw/sample.json"],
 	};
 	const metadata = {
 		profile: "full",
@@ -26,10 +34,35 @@ test("an explicit suite selection compares an incremental run with a full baseli
 			electron: "43",
 		},
 	};
-	const before = await store.create({ ...metadata, suites: { rendering: measured, "large-text": measured } });
+	const before = await store.create({
+		...metadata,
+		suites: {
+			rendering: {
+				...measured,
+				rawFiles: ["raw/rendering.json"],
+				contract: {
+					...measured.contract,
+					viewport: { initial: measured.contract.viewport, stages: { open: measured.contract.viewport } },
+				},
+			},
+			"large-text": measured,
+		},
+	});
+	await writeFile(
+		join(root, before.id, "raw/rendering.json"),
+		JSON.stringify({ label: "smoke", samples: [{ stage: "open", elements: 1 }] }),
+	);
+	const raw = JSON.stringify({
+		status: "passed",
+		samples: [{ navigation: 1, ready: 2, firstPaint: 3, views: 0, warmup: false, status: "passed" }],
+	});
+	await writeFile(join(root, before.id, "raw/sample.json"), raw);
+	before.finishedAt = new Date().toISOString();
 	before.status = "passed";
 	await store.save(before);
 	const after = await store.create({ ...metadata, suites: { "large-text": measured } });
+	await writeFile(join(root, after.id, "raw/sample.json"), raw);
+	after.finishedAt = new Date().toISOString();
 	after.status = "passed";
 	await store.save(after);
 	assert.equal((await store.compare(after.id, { baselineId: before.id })).status, "incompatible");
