@@ -1,4 +1,4 @@
-// Pi SDK 1.4.0 安装与资源冒烟；在隔离 HOME/agent/TMPDIR、无正式凭证的环境执行。
+// Pi SDK 1.5.1 安装与资源冒烟；在隔离 HOME/agent/TMPDIR、无正式凭证的环境执行。
 // 用法：node scripts/smoke-sdk.mts（全过 exit 0；任一失败 exit 1）。
 //
 // ❗ 不要用 mod.VERSION 判版本：Percho 打包态设了 PI_PACKAGE_DIR，SDK 的 VERSION = getPackageDir()
@@ -29,7 +29,7 @@ while (!existsSync(join(pkgRoot, "package.json"))) {
 }
 const pkg = JSON.parse(readFileSync(join(pkgRoot, "package.json"), "utf8")) as { name: string; version: string };
 info.push(`resolve 到 ${pkg.name}@${pkg.version}（${pkgRoot}）；mod.VERSION 报 ${mod.VERSION}`);
-check("1 resolve 到的 SDK === 1.4.0", pkg.version === "1.4.0", `实际 ${pkg.version}`);
+check("1 resolve 到的 SDK === 1.5.1", pkg.version === "1.5.1", `实际 ${pkg.version}`);
 check("1b 手动重试补丁已应用", typeof mod.AgentSession.prototype.retryLastFailedTurn === "function");
 check("1c 独占空闲维护补丁已应用", typeof mod.AgentSession.prototype.tryAcquireIdleLease === "function");
 {

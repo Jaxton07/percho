@@ -13,8 +13,8 @@
 		"test": "vitest run"
 	},
 	"dependencies": {
-		"@earendil-works/pi-ai": "1.4.0",
-		"@earendil-works/pi-coding-agent": "1.4.0",
+		"@earendil-works/pi-ai": "1.5.1",
+		"@earendil-works/pi-coding-agent": "1.5.1",
 		"@percho/shared": "*",
 		"jsonc-parser": "^3.3.1",
 		"proper-lockfile": "^4.1.2",

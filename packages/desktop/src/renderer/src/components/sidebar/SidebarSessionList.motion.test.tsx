@@ -104,16 +104,79 @@ it("preserves the ordinary list's existing entrance fade", async () => {
 	});
 });
 
+it("skip cancels ordinary movement and entrance animations", async () => {
+	await act(() => root.render(<PlainList ids={["a", "b"]} />));
+	await act(() => root.render(<PlainList ids={["b", "c"]} />));
+	const owned = animate.mock.results.map((result) => result.value as Animation);
+	expect(owned).toHaveLength(2);
+	await act(() => root.render(<PlainList ids={["b", "c"]} skip />));
+	for (const animation of owned) expect(animation.cancel).toHaveBeenCalled();
+});
+
 it("preserves the drag-in-progress skip contract", async () => {
 	await act(() => root.render(<PlainList ids={["a", "b"]} />));
 	await act(() => root.render(<PlainList ids={["b", "c"]} skip />));
 	expect(animate).not.toHaveBeenCalled();
 	await act(() => root.render(<PlainList ids={["c", "d"]} />));
+	expect(animate).not.toHaveBeenCalled();
+	await act(() => root.render(<PlainList ids={["d", "e"]} />));
 	expect(animate).toHaveBeenCalledWith(
 		[{ transform: "translate(0px, 31px)" }, { transform: "translate(0px, 0px)" }],
 		{ duration: 220, easing: "cubic-bezier(0.2, 0, 0, 1)" },
 	);
 });
+
+function CollapseList({ ids, skip = false }: { ids: string[]; skip?: boolean }) {
+	const ref = useListShift({ collapse: true, skip });
+	return (
+		<div ref={ref} data-sidebar-session-list>
+			{ids.map((id) => (
+				<div key={id} data-shift-key={id}>
+					{id}
+				</div>
+			))}
+		</div>
+	);
+}
+
+it.each(["skip", "reduced"] as const)(
+	"%s cancels animations without reading geometry and resets the baseline",
+	async (mode) => {
+		vi.spyOn(performance, "now").mockReturnValue(0);
+		const rect = vi.spyOn(HTMLElement.prototype, "getBoundingClientRect");
+		const top = vi.mocked(Object.getOwnPropertyDescriptor(HTMLElement.prototype, "offsetTop")?.get);
+		const left = vi.mocked(Object.getOwnPropertyDescriptor(HTMLElement.prototype, "offsetLeft")?.get);
+		const height = vi.mocked(Object.getOwnPropertyDescriptor(HTMLElement.prototype, "offsetHeight")?.get);
+		const show = (ids: string[], skip = false) =>
+			act(() => root.render(<CollapseList ids={ids} skip={skip} />));
+		await show(["a", "b", "c"]);
+		await show(["a", "c"]);
+		await show(["a", "c", "d"]);
+		const owned = animate.mock.results.map((result) => result.value as Animation);
+		expect(owned.length).toBeGreaterThan(2);
+		animate.mockClear();
+		top?.mockClear();
+		left?.mockClear();
+		height?.mockClear();
+		rect.mockClear();
+		if (mode === "reduced") vi.mocked(window.matchMedia).mockReturnValue({ matches: true } as MediaQueryList);
+		await show(["c", "d"], mode === "skip");
+		expect(top).not.toHaveBeenCalled();
+		expect(left).not.toHaveBeenCalled();
+		expect(height).not.toHaveBeenCalled();
+		expect(rect).not.toHaveBeenCalled();
+		for (const animation of owned) expect(animation.cancel).toHaveBeenCalled();
+		expect(animate).not.toHaveBeenCalled();
+		vi.mocked(window.matchMedia).mockReturnValue({ matches: false } as MediaQueryList);
+		await show(["d", "e"]);
+		expect(animate).not.toHaveBeenCalled();
+		await show(["e"]);
+		expect(animate).toHaveBeenCalledWith(
+			[{ transform: "translate(0px, 31px)" }, { transform: "translate(0px, 0px)" }],
+			{ duration: 220, easing: "cubic-bezier(0.2, 0, 0, 1)" },
+		);
+	},
+);
 
 it("a page replacement also stops a previous collapse instead of extending its hidden phase", async () => {
 	vi.spyOn(performance, "now").mockReturnValue(0);

@@ -20,6 +20,8 @@
 		"typecheck": "npm run typecheck --workspaces",
 		"test": "npm run test:release && npm run test --workspaces --if-present",
 		"test:release": "node --test scripts/release/*.test.mjs",
+		"test:perf": "node --import ./scripts/performance/test-setup.mjs --test scripts/performance/*.test.mjs",
+		"perf": "node scripts/performance.mjs",
 		"splash:textures": "node scripts/generate-splash-textures.mjs",
 		"package:release": "node scripts/package-release.mjs",
 		"package:beta": "node scripts/package-release.mjs --channel beta",

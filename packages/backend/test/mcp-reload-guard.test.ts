@@ -7,8 +7,7 @@ import type { SessionRegistry } from "../src/session/registry";
 
 /**
  * mcp.json 变更后的 reload 守卫（REVIEW §3）：运行中（streaming/compacting）的会话必须**跳过**。
- * `AgentSession.reload()` 没有运行中守卫、不 abort 在跑的 turn，却会 `emitSessionShutdown`
- * → 官方 mcp 扩展收到就关掉全部连接、旧 runner 被废弃：在别的会话跑长任务时改配置会静默打断它。
+ * SDK reload 在 shutdown 前拒绝忙碌会话；预检和 catch 都必须报告未成功项。
  *
  * ❗**必须隔离 agentDir**：`upsertMcpServer` 会真的写「全局 `<agentDir>/mcp.json`」。不 mock
  * `getAgentDir` 就写开发者真实的 `~/.pi/agent/mcp.json` —— 而且断言一旦失败，用例后半段的
@@ -87,13 +86,25 @@ describe("MCP reload 守卫", () => {
 			cwd: project,
 			command: "node",
 		});
-		expect(changed.reload).toEqual({ reloaded: 1, skipped: [{ sessionId: "busy", reason: "streaming" }] });
+		expect(changed.reload).toEqual({
+			reloaded: 1,
+			skipped: [
+				{ sessionId: "failed", reason: "failed" },
+				{ sessionId: "busy", reason: "streaming" },
+			],
+		});
 		expect(other.reload).not.toHaveBeenCalled();
 		const removed = await backend.removeMcpServer({ scope: "project", name: "demo", cwd: project });
 		expect(removed.reload).toEqual(changed.reload);
 		expect(other.reload).not.toHaveBeenCalled();
 		const global = await backend.reloadMcpServers({ cwd: project });
-		expect(global.reload).toEqual({ reloaded: 2, skipped: [{ sessionId: "busy", reason: "streaming" }] });
+		expect(global.reload).toEqual({
+			reloaded: 2,
+			skipped: [
+				{ sessionId: "failed", reason: "failed" },
+				{ sessionId: "busy", reason: "streaming" },
+			],
+		});
 		expect(failed.reload).toHaveBeenCalledTimes(3);
 		expect(later.reload).toHaveBeenCalledTimes(3);
 		expect(other.reload).toHaveBeenCalledTimes(1);
@@ -126,6 +137,22 @@ describe("MCP reload 守卫", () => {
 			expect(next.reload).not.toHaveBeenCalled();
 		},
 	);
+	it.each(["streaming", "compacting"] as const)(
+		"reports %s when reload becomes busy after preflight",
+		async (reason) => {
+			const state = { sessionId: "race", isStreaming: false, isCompacting: false };
+			const race = stubSession(state);
+			race.reload.mockImplementation(async () => {
+				if (reason === "streaming") state.isStreaming = true;
+				else state.isCompacting = true;
+				throw new Error("busy");
+			});
+			const backend = makeBackend([{ session: race.session }]);
+			const result = await backend.reloadMcpServers({ cwd: project });
+			expect(result.reload).toEqual({ reloaded: 0, skipped: [{ sessionId: "race", reason }] });
+		},
+	);
+
 	it("运行中的会话被跳过并回报原因，空闲会话照常 reload", async () => {
 		const streaming = stubSession({ sessionId: "running", isStreaming: true });
 		const compacting = stubSession({ sessionId: "compacting", isCompacting: true });

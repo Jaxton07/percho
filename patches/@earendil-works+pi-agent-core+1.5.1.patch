@@ -1,7 +1,8 @@
 diff --git a/node_modules/@earendil-works/pi-agent-core/dist/agent-loop.js b/node_modules/@earendil-works/pi-agent-core/dist/agent-loop.js
+index 48f56a2..bdbf8e3 100644
 --- a/node_modules/@earendil-works/pi-agent-core/dist/agent-loop.js
 +++ b/node_modules/@earendil-works/pi-agent-core/dist/agent-loop.js
-@@ -46,7 +46,7 @@
+@@ -46,7 +46,7 @@ export function agentLoopContinue(context, config, signal, streamFn) {
      return stream;
  }
  export async function runAgentLoop(prompts, context, config, emit, signal, streamFn) {
@@ -10,7 +11,7 @@ diff --git a/node_modules/@earendil-works/pi-agent-core/dist/agent-loop.js b/nod
      const newMessages = [...initialMessages];
      const currentContext = {
          ...context,
-@@ -58,7 +58,7 @@
+@@ -58,7 +58,7 @@ export async function runAgentLoop(prompts, context, config, emit, signal, strea
          await emit({ type: "message_start", message });
          await emit({ type: "message_end", message });
      }
@@ -19,7 +20,7 @@ diff --git a/node_modules/@earendil-works/pi-agent-core/dist/agent-loop.js b/nod
      return newMessages;
  }
  export async function runAgentLoopContinue(context, config, emit, signal, streamFn) {
-@@ -85,6 +85,7 @@
+@@ -85,6 +85,7 @@ async function runLoop(initialContext, newMessages, initialConfig, signal, emit,
      let currentContext = initialContext;
      let config = initialConfig;
      let lastCompletedTurn;
@@ -27,7 +28,7 @@ diff --git a/node_modules/@earendil-works/pi-agent-core/dist/agent-loop.js b/nod
      let explicitContinuation = false;
      // Check for steering messages at start (user may have typed while waiting)
      let pendingMessages = (await config.getSteeringMessages?.()) || [];
-@@ -117,19 +118,81 @@
+@@ -117,19 +118,81 @@ async function runLoop(initialContext, newMessages, initialConfig, signal, emit,
                  }
                  await emit({ type: "turn_start" });
              }
@@ -116,14 +117,8 @@ diff --git a/node_modules/@earendil-works/pi-agent-core/dist/agent-loop.js b/nod
              if (requestUpdate) {
                  currentContext = requestUpdate.context ?? currentContext;
                  config = {
-@@ -678,4 +741,4 @@
-     await emit({ type: "message_start", message: toolResultMessage });
-     await emit({ type: "message_end", message: toolResultMessage });
- }
--//# sourceMappingURL=agent-loop.js.map
-\ No newline at end of file
-+//# sourceMappingURL=agent-loop.js.map
 diff --git a/node_modules/@earendil-works/pi-agent-core/dist/agent.d.ts b/node_modules/@earendil-works/pi-agent-core/dist/agent.d.ts
+index 0147d05..8cf05cb 100644
 --- a/node_modules/@earendil-works/pi-agent-core/dist/agent.d.ts
 +++ b/node_modules/@earendil-works/pi-agent-core/dist/agent.d.ts
 @@ -1,5 +1,5 @@
@@ -133,7 +128,7 @@ diff --git a/node_modules/@earendil-works/pi-agent-core/dist/agent.d.ts b/node_m
  export type { QueueMode } from "./types.ts";
  /** Initial state for {@link Agent}. `systemPrompt` and `tools` become the leading system message unless `messages` already starts with one. */
  export type AgentInitialState = Partial<Omit<AgentState, "pendingToolCalls" | "isStreaming" | "streamingMessage" | "errorMessage">>;
-@@ -17,6 +17,7 @@
+@@ -17,6 +17,7 @@ export interface AgentOptions {
      afterToolCall?: (context: AfterToolCallContext, signal?: AbortSignal) => Promise<AfterToolCallResult | undefined>;
      finishTurn?: FinishTurn;
      prepareRequest?: PrepareRequest;
@@ -141,7 +136,7 @@ diff --git a/node_modules/@earendil-works/pi-agent-core/dist/agent.d.ts b/node_m
      prepareNextTurn?: (signal?: AbortSignal) => Promise<AgentLoopTurnUpdate | undefined> | AgentLoopTurnUpdate | undefined;
      prepareNextTurnWithContext?: (context: PrepareNextTurnContext, signal?: AbortSignal) => Promise<AgentLoopTurnUpdate | undefined> | AgentLoopTurnUpdate | undefined;
      steeringMode?: QueueMode;
-@@ -54,9 +55,11 @@
+@@ -54,9 +55,11 @@ export declare class Agent {
      afterToolCall?: (context: AfterToolCallContext, signal?: AbortSignal) => Promise<AfterToolCallResult | undefined>;
      finishTurn?: FinishTurn;
      prepareRequest?: PrepareRequest;
@@ -153,7 +148,7 @@ diff --git a/node_modules/@earendil-works/pi-agent-core/dist/agent.d.ts b/node_m
      /** Session identifier forwarded to providers for cache-aware backends. */
      sessionId?: string;
      /** Optional per-level thinking token budgets forwarded to the stream function. */
-@@ -107,6 +110,13 @@
+@@ -107,6 +110,13 @@ export declare class Agent {
      hasQueuedMessages(): boolean;
      /** Preview the messages selected for the next turn without consuming them. */
      peekQueuedMessages(): AgentMessage[];
@@ -167,17 +162,11 @@ diff --git a/node_modules/@earendil-works/pi-agent-core/dist/agent.d.ts b/node_m
      /** Active abort signal for the current run, if any. */
      get signal(): AbortSignal | undefined;
      /** Abort the current run, if one is active. */
-@@ -141,4 +151,4 @@
-      */
-     private processEvents;
- }
--//# sourceMappingURL=agent.d.ts.map
-\ No newline at end of file
-+//# sourceMappingURL=agent.d.ts.map
 diff --git a/node_modules/@earendil-works/pi-agent-core/dist/agent.js b/node_modules/@earendil-works/pi-agent-core/dist/agent.js
+index e34d91a..ef9b9cf 100644
 --- a/node_modules/@earendil-works/pi-agent-core/dist/agent.js
 +++ b/node_modules/@earendil-works/pi-agent-core/dist/agent.js
-@@ -106,6 +106,14 @@
+@@ -106,6 +106,14 @@ export class Agent {
      afterToolCall;
      finishTurn;
      prepareRequest;
@@ -192,7 +181,7 @@ diff --git a/node_modules/@earendil-works/pi-agent-core/dist/agent.js b/node_mod
      prepareNextTurn;
      prepareNextTurnWithContext;
      activeRun;
-@@ -136,6 +144,7 @@
+@@ -136,6 +144,7 @@ export class Agent {
          this.afterToolCall = runtimeOptions.afterToolCall;
          this.finishTurn = runtimeOptions.finishTurn;
          this.prepareRequest = runtimeOptions.prepareRequest;
@@ -200,7 +189,7 @@ diff --git a/node_modules/@earendil-works/pi-agent-core/dist/agent.js b/node_mod
          this.prepareNextTurn = runtimeOptions.prepareNextTurn;
          this.prepareNextTurnWithContext = runtimeOptions.prepareNextTurnWithContext;
          this.steeringQueue = new PendingMessageQueue(runtimeOptions.steeringMode ?? "one-at-a-time");
-@@ -185,18 +194,22 @@
+@@ -185,18 +194,22 @@ export class Agent {
      }
      /** Queue a message to be injected after the current assistant turn finishes. */
      steer(message) {
@@ -223,7 +212,7 @@ diff --git a/node_modules/@earendil-works/pi-agent-core/dist/agent.js b/node_mod
          this.followUpQueue.clear();
      }
      /** Remove all queued steering and follow-up messages. */
-@@ -213,6 +226,35 @@
+@@ -213,6 +226,35 @@ export class Agent {
          const steering = this.steeringQueue.peek();
          return steering.length > 0 ? steering : this.followUpQueue.peek();
      }
@@ -259,7 +248,7 @@ diff --git a/node_modules/@earendil-works/pi-agent-core/dist/agent.js b/node_mod
      /** Active abort signal for the current run, if any. */
      get signal() {
          return this.activeRun?.abortController.signal;
-@@ -260,12 +302,12 @@
+@@ -260,12 +302,12 @@ export class Agent {
              throw new Error("No messages to continue from");
          }
          if (lastMessage.role === "assistant") {
@@ -274,7 +263,7 @@ diff --git a/node_modules/@earendil-works/pi-agent-core/dist/agent.js b/node_mod
              if (queuedFollowUps.length > 0) {
                  await this.runPromptMessages(queuedFollowUps);
                  return;
-@@ -288,6 +330,7 @@
+@@ -288,6 +330,7 @@ export class Agent {
          return [{ role: "user", content, timestamp: Date.now() }];
      }
      async runPromptMessages(messages, options = {}) {
@@ -282,7 +271,7 @@ diff --git a/node_modules/@earendil-works/pi-agent-core/dist/agent.js b/node_mod
          await this.runWithLifecycle(async (signal) => {
              await runAgentLoop(messages, this.createContextSnapshot(), this.createLoopConfig(options), (event) => this.processEvents(event), signal, this.streamFunction);
          });
-@@ -321,6 +364,12 @@
+@@ -321,6 +364,12 @@ export class Agent {
              afterToolCall: this.afterToolCall,
              finishTurn: this.finishTurn,
              prepareRequest: this.prepareRequest,
@@ -295,7 +284,7 @@ diff --git a/node_modules/@earendil-works/pi-agent-core/dist/agent.js b/node_mod
              prepareNextTurn: this.prepareNextTurnWithContext || this.prepareNextTurn
                  ? async (context) => {
                      if (this.prepareNextTurnWithContext) {
-@@ -337,9 +386,9 @@
+@@ -337,9 +386,9 @@ export class Agent {
                      skipInitialSteeringPoll = false;
                      return [];
                  }
@@ -307,17 +296,11 @@ diff --git a/node_modules/@earendil-works/pi-agent-core/dist/agent.js b/node_mod
          };
      }
      async runWithLifecycle(executor) {
-@@ -438,4 +487,4 @@
-         }
-     }
- }
--//# sourceMappingURL=agent.js.map
-\ No newline at end of file
-+//# sourceMappingURL=agent.js.map
 diff --git a/node_modules/@earendil-works/pi-agent-core/dist/types.d.ts b/node_modules/@earendil-works/pi-agent-core/dist/types.d.ts
+index 7555969..29d5b24 100644
 --- a/node_modules/@earendil-works/pi-agent-core/dist/types.d.ts
 +++ b/node_modules/@earendil-works/pi-agent-core/dist/types.d.ts
-@@ -147,7 +147,11 @@
+@@ -147,7 +147,11 @@ export interface PrepareRequestContext {
      thinkingLevel: ThinkingLevel;
  }
  /** Replacement runtime state for the provider request being prepared. */
@@ -330,7 +313,7 @@ diff --git a/node_modules/@earendil-works/pi-agent-core/dist/types.d.ts b/node_m
  /**
   * Called immediately before every conversational provider request, including the first.
   * Pending messages have already been appended and emitted when this callback runs.
-@@ -229,6 +233,12 @@
+@@ -229,6 +233,12 @@ export interface AgentLoopConfig extends SimpleStreamOptions {
       * replace the runtime values for this and later requests in the run. This hook does not poll queues.
       */
      prepareRequest?: PrepareRequest;
@@ -343,10 +326,3 @@ diff --git a/node_modules/@earendil-works/pi-agent-core/dist/types.d.ts b/node_m
      /**
       * Called after `turn_end` when the loop will continue, immediately before the next turn starts.
       * Return replacement context/model/thinking state or messages to append to affect that turn.
-@@ -490,4 +500,4 @@
-     /** Milliseconds `execute()` took, measured with a monotonic clock; absent when the tool did not run. */
-     durationMs?: number;
- };
--//# sourceMappingURL=types.d.ts.map
-\ No newline at end of file
-+//# sourceMappingURL=types.d.ts.map

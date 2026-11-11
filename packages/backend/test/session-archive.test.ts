@@ -340,6 +340,15 @@ it("retains a real SDK lease after cleanup failure until disposal succeeds", asy
 	});
 	try {
 		await service.init();
+		const before = await readFile(f.file, "utf8");
+		const lease = session.tryAcquireIdleLease();
+		expect(lease).toBeDefined();
+		try {
+			await expect(service.archive(f.input)).rejects.toThrow(/busy/);
+			expect(await readFile(f.file, "utf8")).toBe(before);
+		} finally {
+			lease?.release();
+		}
 		const write = JsonStore.prototype.write;
 		const spy = vi.spyOn(JsonStore.prototype, "write").mockImplementationOnce(async function (value) {
 			await write.call(this, value);

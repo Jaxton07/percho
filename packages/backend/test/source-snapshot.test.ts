@@ -66,15 +66,65 @@ function fixture(id = "source", suffix = "") {
 }
 
 describe("原始来源快照与轻量跨GC身份", () => {
-	it.each([false, true])("SDK追加失败（部分写入=%s）不可把未保存图片认证给GC后的实例", (partial) => {
+	it("GC重开后首次读取前正常追加，旧图片引用跨再次GC仍有效", () => {
+		const manager = SessionManager.create(directory, join(directory, "sessions"));
+		const id = manager.appendMessage({
+			role: "user",
+			timestamp: 1,
+			content: [{ type: "image", mimeType: "image/png", data: "AQID" }],
+		});
+		manager.appendMessage({ role: "assistant", timestamp: 2, content: [] } as never);
+		const file = manager.getSessionFile();
+		if (!file) throw new Error("Missing source file");
+		const sources = new SessionSourceSnapshots();
+		const input = (m: SessionManager) => ({
+			sessionId: m.getSessionId(),
+			file,
+			branch: () => m.getBranch(),
+			entries: () => m.getEntries(),
+			loadedFrom: m,
+		});
+		const owner = {};
+		const first = sources.capture(owner, input(manager));
+		expect(sources.resolve(owner, manager.getSessionId(), `entry:${id}:user:0`, first.version).data).toBe(
+			"AQID",
+		);
+		sources.release(owner);
+		const stamp = sources.fileVersion(file);
+		const reopened = SessionManager.open(file);
+		sources.noteLoaded(reopened, file, stamp);
+		for (let n = 0; n < 2; n++) {
+			const appended = reopened.appendMessage({ role: "user", timestamp: 3 + n, content: `追加 ${n}` });
+			sources.notePersisted(reopened, file, reopened.getEntry(appended));
+		}
+		const middleOwner = {};
+		const middle = sources.capture(middleOwner, input(reopened));
+		expect(middle.version).toBe(first.version);
+		sources.release(middleOwner);
+		const finalStamp = sources.fileVersion(file);
+		const finalManager = SessionManager.open(file);
+		sources.noteLoaded(finalManager, file, finalStamp);
+		const finalOwner = {};
+		const final = sources.capture(finalOwner, input(finalManager));
+		expect(final.version).toBe(first.version);
+		expect(
+			sources.resolve(finalOwner, manager.getSessionId(), `entry:${id}:user:0`, first.version).data,
+		).toBe("AQID");
+	});
+	it.each(["none", "partial", "complete"] as const)("SDK追加失败（写入=%s）回滚后跨GC安全", (written) => {
 		const f = fixture(),
 			sources = new SessionSourceSnapshots(),
 			owner = {};
 		sources.noteLoaded(f.manager, f.file, sources.fileVersion(f.file));
 		const view = sources.capture(owner, { ...f.input, loadedFrom: f.manager });
 		const original = fs.appendFileSync;
+		const entries = f.manager.getEntries();
+		const leaf = f.manager.getLeafId();
+		let failedId = "";
 		const append = vi.spyOn(fs, "appendFileSync").mockImplementationOnce((path, data, options) => {
-			if (partial) original(path, String(data).slice(0, 100), options);
+			failedId = JSON.parse(String(data)).id;
+			if (written !== "none")
+				original(path, written === "partial" ? String(data).slice(0, 100) : data, options);
 			throw Object.assign(new Error("synthetic disk full"), { code: "ENOSPC" });
 		});
 		syncBuiltinESMExports();
@@ -94,14 +144,111 @@ describe("原始来源快照与轻量跨GC身份", () => {
 			append.mockRestore();
 			syncBuiltinESMExports();
 		}
+		expect(f.manager.getEntries()).toEqual(entries);
+		expect(f.manager.getLeafId()).toBe(leaf);
+		expect(f.manager.getEntry(failedId)).toBeUndefined();
+		// 失败不会派发 entry_appended；随后成功写入才走真实通知路径。
+		const id = f.manager.appendMessage({
+			role: "user",
+			timestamp: 3,
+			content: [{ type: "image", mimeType: "image/png", data: "BwgJ" }],
+		});
 		sources.notePersisted(f.manager, f.file);
-		sources.noteAppend(owner, f.manager.getEntries().at(-1), f.manager.getEntryCount(), f.file, f.manager);
-		expect(view.shareable).toBe(false);
-		expect(sources.stats().metadata).toBe(0);
+		sources.noteAppend(owner, f.manager.getEntry(id), f.manager.getEntryCount(), f.file, f.manager);
+		const live = sources.capture(owner, { ...f.input, loadedFrom: f.manager });
+		expect(live.shareable).toBe(written === "none");
+		expect(sources.resolve(owner, "source", "entry:r:show:0", live.version).data).toBe(f.data);
 		sources.release(owner);
-		const sameRuntime = sources.capture({}, { ...f.input, loadedFrom: f.manager });
-		expect(sameRuntime.shareable).toBe(false);
-		expect(sources.stats().metadata).toBe(0);
+		const beforeOpen = sources.fileVersion(f.file);
+		const reopenedManager = SessionManager.open(f.file);
+		sources.noteLoaded(reopenedManager, f.file, beforeOpen);
+		const reopenedOwner = {};
+		const reopened = sources.capture(reopenedOwner, {
+			...f.input,
+			branch: () => reopenedManager.getBranch(),
+			entries: () => reopenedManager.getEntries(),
+			loadedFrom: reopenedManager,
+		});
+		expect(reopened.version === view.version).toBe(written === "none");
+		if (written === "none") {
+			expect(sources.resolve(reopenedOwner, "source", `entry:${id}:user:0`, view.version).data).toBe("BwgJ");
+		} else {
+			expect(() => sources.resolve(reopenedOwner, "source", `entry:${id}:user:0`, view.version)).toThrow();
+		}
+		expect(reopenedManager.getEntry(failedId) !== undefined).toBe(written === "complete");
+		expect(reopenedManager.getEntry(id) !== undefined).toBe(written !== "partial");
+	});
+	it("does not certify a large appended image with same-length corruption before its tail", () => {
+		const f = fixture();
+		const sources = new SessionSourceSnapshots();
+		const owner = {};
+		sources.noteLoaded(f.manager, f.file, sources.fileVersion(f.file));
+		sources.capture(owner, { ...f.input, loadedFrom: f.manager });
+		const original = fs.appendFileSync;
+		const append = vi.spyOn(fs, "appendFileSync").mockImplementationOnce((path, data, options) => {
+			original(path, String(data).replace('"data":"A', '"data":"B'), options);
+		});
+		syncBuiltinESMExports();
+		let id: string;
+		try {
+			id = f.manager.appendMessage({
+				role: "user",
+				timestamp: 2,
+				content: [{ type: "image", mimeType: "image/png", data: "A".repeat(128 * 1024) }],
+			});
+		} finally {
+			append.mockRestore();
+			syncBuiltinESMExports();
+		}
+		sources.noteAppend(owner, f.manager.getEntry(id), f.manager.getEntryCount(), f.file, f.manager);
+		expect(sources.capture(owner, { ...f.input, loadedFrom: f.manager }).shareable).toBe(false);
+	});
+
+	it.each(["none", "partial", "complete"] as const)("无检视失败写入=%s", (written) => {
+		const f = fixture();
+		const sources = new SessionSourceSnapshots();
+		sources.noteLoaded(f.manager, f.file, sources.fileVersion(f.file));
+		const owner = {};
+		const originalView = sources.capture(owner, { ...f.input, loadedFrom: f.manager });
+		sources.release(owner);
+		const original = fs.appendFileSync;
+		const append = vi.spyOn(fs, "appendFileSync").mockImplementationOnce((path, data, options) => {
+			if (written !== "none")
+				original(path, written === "partial" ? String(data).slice(0, 100) : data, options);
+			throw new Error("disk full");
+		});
+		syncBuiltinESMExports();
+		try {
+			expect(() => f.manager.appendMessage({ role: "user", timestamp: 2, content: "failed" })).toThrow();
+		} finally {
+			append.mockRestore();
+			syncBuiltinESMExports();
+		}
+		const id = f.manager.appendMessage({
+			role: "user",
+			timestamp: 3,
+			content: [{ type: "image", mimeType: "image/png", data: "BwgJ" }],
+		});
+		sources.notePersisted(f.manager, f.file, f.manager.getEntry(id));
+		const live = sources.capture({}, { ...f.input, loadedFrom: f.manager });
+		expect(live.shareable).toBe(written === "none");
+		expect(sources.stats().metadata).toBe(written === "none" ? 1 : 0);
+		const stamp = sources.fileVersion(f.file);
+		const manager = SessionManager.open(f.file);
+		sources.noteLoaded(manager, f.file, stamp);
+		const newOwner = {};
+		const reopened = sources.capture(newOwner, {
+			...f.input,
+			branch: () => manager.getBranch(),
+			entries: () => manager.getEntries(),
+			loadedFrom: manager,
+		});
+		expect(manager.getEntry(id) !== undefined).toBe(written !== "partial");
+		expect(reopened.version === live.version).toBe(written === "none");
+		expect(reopened.version === originalView.version).toBe(written === "none");
+		if (written === "none")
+			expect(sources.resolve(newOwner, "source", `entry:${id}:user:0`, live.version).data).toBe("BwgJ");
+		else expect(() => sources.resolve(newOwner, "source", `entry:${id}:user:0`, live.version)).toThrow();
 	});
 	it("外部改写后旧SDK仍读原内存，但不把旧像素认证成GC后新文件的同版本", () => {
 		const f = fixture(),
@@ -188,11 +335,12 @@ describe("原始来源快照与轻量跨GC身份", () => {
 		if (!pending || !("id" in pending)) throw new Error("Missing reference");
 		expect(pending.id).toMatch(/^pending:/);
 		expect(sources.resolve(owner, "source", pending.id, pending.revision).data).toBe("BAUG");
-		f.manager.appendMessage({
+		const callId = f.manager.appendMessage({
 			role: "assistant",
 			timestamp: 2,
 			content: [{ type: "toolCall", id: "call", name: "show_image", arguments: {} }],
 		} as never);
+		sources.noteAppend(owner, f.manager.getEntry(callId), f.manager.getEntryCount());
 		const id = f.manager.appendMessage(message);
 		sources.noteAppend(owner, f.manager.getEntry(id), f.manager.getEntryCount());
 		const latest = sources.capture(owner, f.input);

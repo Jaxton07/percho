@@ -15,6 +15,7 @@ import { FilePathMenu } from "../ui/FilePathMenu";
 import { anchorOfElement, type MenuAnchor } from "../ui/place-menu";
 import { classifyMarkdownLink } from "./markdown-link";
 import { markdownParseOptions } from "./markdown-parse-options";
+import { plainParagraphNodes } from "./plain-paragraph";
 // 副作用 import：MermaidBlock 在模块加载时向 markstream 注册 mermaid 节点的自定义组件（见该文件末尾）
 import "./MermaidBlock";
 
@@ -133,6 +134,10 @@ export function Markdown({
 			},
 		};
 	}, [codeFontSize]);
+	const plainNodes = useMemo(
+		() => plainParagraphNodes(text, { streaming, smoothStreaming: smoothableRef.current }),
+		[text, streaming],
+	);
 	return (
 		<>
 			{/* biome-ignore lint/a11y/noStaticElementInteractions: delegates native anchor clicks */}
@@ -148,6 +153,7 @@ export function Markdown({
 				<MarkdownRender
 					key={`code-font-${codeFontSize}`}
 					content={text}
+					nodes={plainNodes}
 					final={!streaming}
 					parseOptions={markdownParseOptions}
 					fade={false}

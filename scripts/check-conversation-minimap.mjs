@@ -6,6 +6,8 @@ import { mkdir, realpath, writeFile } from "node:fs/promises";
 import { dirname, join, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 import { writeFixtures } from "./fixtures/conversation-minimap.mjs";
+import { createCheckpoint, safeErrorMessage } from "./performance/checkpoint.mjs";
+import { validateWorkPath } from "./performance/paths.mjs";
 import { connect } from "./session-rendering-cdp.mjs";
 
 const help = `Dev-only collector, NOT a packaged-build or final acceptance test.
@@ -74,9 +76,9 @@ export function parseOptions(args) {
 async function run() {
 	const options = parseOptions(process.argv.slice(2));
 	const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
-	const tmp = await realpath(join(root, ".local/tmp"));
 	const task = await realpath(options.task);
-	assert(task.startsWith(tmp + sep), "Task must be inside isolated temporary root");
+	if (!task.startsWith(join(root, ".local/tmp") + sep)) validateWorkPath(root, resolve(options.task));
+	assert.equal(task, resolve(options.task), "Task must not contain symlinks");
 	const source = await realpath(options.source ?? root);
 	const moduleFile = options.module ? await realpath(options.module) : null;
 	if (moduleFile) assert(moduleFile.startsWith(task + sep), "Diagnostic module must belong to task");
@@ -90,7 +92,22 @@ async function run() {
 		main,
 		verified = false;
 	const samples = [];
-	let phase = "connect";
+	let phase = "connect",
+		stopped = false,
+		finalWrite;
+	const checkpoint = createCheckpoint(join(task, "minimap-checkpoint.json"));
+	const save = (status, error) =>
+		checkpoint.save({
+			status,
+			phase,
+			mode: moduleFile ? "built-renderer" : "dev",
+			rounds: options.rounds,
+			switchesPerDirection: options.switches,
+			turns: options.turns,
+			samples,
+			...(error ? { error: safeErrorMessage(error) } : {}),
+		});
+	await save("running");
 	const pause = (ms) => new Promise((r) => setTimeout(r, ms));
 	const wait = async (fn, timeout = 30000) => {
 		const end = Date.now() + timeout;
@@ -119,7 +136,20 @@ async function run() {
 		main?.close();
 	};
 	const stop = () => {
-		void cleanup().finally(() => process.exit(130));
+		if (stopped) return;
+		stopped = true;
+		void (async () => {
+			try {
+				await save("interrupted");
+				await finalWrite;
+				await checkpoint.flush();
+			} catch (error) {
+				console.error("Checkpoint failed:", safeErrorMessage(error));
+			} finally {
+				await cleanup();
+				process.exit(130);
+			}
+		})();
 	};
 	process.once("SIGINT", stop);
 	process.once("SIGTERM", stop);
@@ -180,12 +210,15 @@ async function run() {
 			const start = performance.now();
 			const value = await fn();
 			await frame();
-			samples.push({
+			const sample = {
 				name,
 				elapsedMs: performance.now() - start,
 				...(await renderer.eval("__minimap.finish()")),
 				...value,
-			});
+			};
+			if (stopped) throw new Error("Collection stopped");
+			samples.push(sample);
+			await save("running");
 		};
 		const switchTo = async (n) => {
 			await renderer.eval(`__minimap.s.getState().switchSession('review-${n}')`);
@@ -279,7 +312,11 @@ async function run() {
 					return { inputs, increments: await main.eval("__minimapStream.count") };
 				});
 			}
-		await writeFile(
+		if (stopped) throw new Error("Collection stopped");
+		await save("passed");
+		const window = await renderer.eval("({width:innerWidth,height:innerHeight,dpr:devicePixelRatio})");
+		if (stopped) throw new Error("Collection stopped");
+		finalWrite = writeFile(
 			join(task, "minimap-results.json"),
 			JSON.stringify(
 				{
@@ -287,7 +324,7 @@ async function run() {
 					rounds: options.rounds,
 					switchesPerDirection: options.switches,
 					turns: options.turns,
-					window: await renderer.eval("({width:innerWidth,height:innerHeight,dpr:devicePixelRatio})"),
+					window,
 					samples,
 				},
 				null,
@@ -295,11 +332,15 @@ async function run() {
 			),
 			{ mode: 0o600 },
 		);
+		await finalWrite;
 		console.log("Collection complete; synthetic timings saved to isolated task directory.");
+	} catch (error) {
+		if (!stopped) await save("failed", error);
+		throw error;
 	} finally {
 		process.removeListener("SIGINT", stop);
 		process.removeListener("SIGTERM", stop);
-		await cleanup();
+		if (!stopped) await cleanup();
 	}
 }
 if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url))

@@ -49,22 +49,33 @@ function same(a: Fingerprint | null | undefined, b: Fingerprint | null | undefin
 }
 
 /** 只有这个检视实例持有原始entry。跨GC的LRU严格只含路径、文件指纹及版本。 */
-function persistedTailMatches(file: string, current: Fingerprint, entry: SessionEntry): boolean {
-	// 只验证本次新追加，不扫描历史图片；尾部换行也防止部分写入被误认证。
-	const json = `${JSON.stringify(entry)}\n`,
-		size = Number(current.stamp.split(":")[0]);
-	if (!Number.isSafeInteger(size) || size < Buffer.byteLength(json)) return false;
-	let start = Math.max(0, json.length - 64 * 1024);
-	const code = json.charCodeAt(start);
-	if (code >= 0xdc00 && code <= 0xdfff) start++;
-	const expected = Buffer.from(json.slice(start)),
-		actual = Buffer.alloc(expected.byteLength),
-		fd = openSync(file, "r");
+function appendedJson(entries: readonly SessionEntry[]): string {
+	return entries.map((entry) => `${JSON.stringify(entry)}\n`).join("");
+}
+
+function persistedAppendMatches(file: string, current: Fingerprint, json: string): boolean {
+	// 分块核验本次新增字节，不扫描既有历史，也不因大图片只检查末尾而漏掉前部损坏。
+	const size = Number(current.stamp.split(":")[0]);
+	const bytes = Buffer.byteLength(json);
+	if (!json.length || !Number.isSafeInteger(size) || size < bytes) return false;
+	const fd = openSync(file, "r");
 	try {
-		return (
-			readSync(fd, actual, 0, actual.byteLength, size - actual.byteLength) === actual.byteLength &&
-			actual.equals(expected)
-		);
+		let position = size - bytes;
+		for (let start = 0; start < json.length; ) {
+			let end = Math.min(start + 16 * 1024, json.length);
+			const last = json.charCodeAt(end - 1);
+			if (end < json.length && last >= 0xd800 && last <= 0xdbff) end--;
+			const expected = Buffer.from(json.slice(start, end));
+			const actual = Buffer.allocUnsafe(expected.byteLength);
+			if (
+				readSync(fd, actual, 0, actual.byteLength, position) !== actual.byteLength ||
+				!actual.equals(expected)
+			)
+				return false;
+			position += expected.byteLength;
+			start = end;
+		}
+		return true;
 	} finally {
 		closeSync(fd);
 	}
@@ -86,17 +97,34 @@ export class SessionSourceSnapshots {
 	private parses = 0;
 	private peakViews = 0;
 
-	notePersisted(manager: object, file: string | undefined): void {
+	notePersisted(
+		manager: object,
+		file: string | undefined,
+		appended?: SessionEntry | readonly SessionEntry[],
+	): void {
 		if (!file) return;
 		const previous = this.loaded.get(manager);
 		try {
-			const next = this.fileVersion(file);
-			this.loaded.set(manager, {
-				fingerprint: next,
-				trusted:
-					previous?.trusted !== false &&
-					(!previous?.fingerprint || previous.fingerprint.identity === next.identity),
-			});
+			file = realpathSync(file);
+			const next = fingerprint(file);
+			if (!previous) this.loaded.set(manager, { fingerprint: next, trusted: true });
+			else if (appended && previous.trusted && previous.fingerprint && !same(previous.fingerprint, next)) {
+				const baseline = previous.fingerprint;
+				const json = appendedJson("type" in appended ? [appended] : appended);
+				if (
+					baseline.identity === next.identity &&
+					Number(next.stamp.split(":")[0]) - Number(baseline.stamp.split(":")[0]) ===
+						Buffer.byteLength(json) &&
+					persistedAppendMatches(file, next, json) &&
+					same(next, fingerprint(file))
+				) {
+					this.loaded.set(manager, { fingerprint: next, trusted: true });
+					const cached = this.metadata.get(file);
+					if (cached && same(cached.fingerprint, baseline))
+						this.remember(file, { ...cached, fingerprint: next });
+				} else this.loaded.set(manager, { ...previous, trusted: false });
+			} else if (previous.fingerprint?.identity !== next.identity)
+				this.loaded.set(manager, { ...previous, trusted: false });
 		} catch {
 			if (previous) this.loaded.set(manager, { ...previous, trusted: false });
 		}
@@ -247,13 +275,18 @@ export class SessionSourceSnapshots {
 			const current = fingerprint(view.file);
 			if (
 				current.identity !== view.fingerprint?.identity ||
-				(!creating && same(view.fingerprint, current)) ||
-				!persistedTailMatches(view.file, current, appended) ||
+				(!creating &&
+					Number(current.stamp.split(":")[0]) - Number(view.fingerprint.stamp.split(":")[0]) !==
+						Buffer.byteLength(`${JSON.stringify(appended)}\n`)) ||
+				!persistedAppendMatches(view.file, current, appendedJson([appended])) ||
 				!same(current, fingerprint(view.file))
 			) {
 				distrust();
 				return;
 			}
+			const loaded = manager ? this.loaded.get(manager) : undefined;
+			if (manager && loaded?.trusted && same(loaded.fingerprint, view.fingerprint))
+				this.loaded.set(manager, { fingerprint: current, trusted: true });
 			view.fingerprint = current;
 			view.entryCount = entryCount;
 			view.lastEntryId = appended.id;
