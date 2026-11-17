@@ -47,6 +47,14 @@ if (process.platform !== "darwin") Menu.setApplicationMenu(null);
 nativeTheme.on("updated", () => applyChromeTheme(nativeTheme.themeSource));
 
 app.whenReady().then(async () => {
+	// 必须早于 prepareLocalStorage：它会创建并加载首个文档，后补 handler 对该文档不生效。
+	// 自定义背景图协议：pi-bg://background/<文件名> → userData/backgrounds/<文件名>（文件名白名单防路径穿越）
+	protocol.handle(BG_PROTOCOL, (request) => {
+		const name = decodeURIComponent(new URL(request.url).pathname).replace(/^\/+/, "");
+		if (!/^[\w.-]+$/.test(name)) return new Response("invalid background name", { status: 400 });
+		return net.fetch(pathToFileURL(join(backgroundsDir(), name)).toString());
+	});
+
 	if (releaseChannel === "dev") app.dock?.setIcon(join(__dirname, "../../build/icon-dev.png"));
 	const uiState = await loadUiState();
 	nativeTheme.themeSource = uiState?.theme ?? "system";
@@ -58,13 +66,6 @@ app.whenReady().then(async () => {
 	try {
 		initLogging(join(app.getPath("userData"), "logs"));
 		log.info("app ready", { version: app.getVersion(), userData: app.getPath("userData") });
-
-		// 自定义背景图协议：pi-bg://background/<文件名> → userData/backgrounds/<文件名>（文件名白名单防路径穿越）
-		protocol.handle(BG_PROTOCOL, (request) => {
-			const name = decodeURIComponent(new URL(request.url).pathname).replace(/^\/+/, "");
-			if (!/^[\w.-]+$/.test(name)) return new Response("invalid background name", { status: 400 });
-			return net.fetch(pathToFileURL(join(backgroundsDir(), name)).toString());
-		});
 
 		backend = new PiBackend({
 			localSessionPaths: localSessionPaths(storage.record, storage.selection.legacyRoots),
