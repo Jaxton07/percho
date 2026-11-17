@@ -101,6 +101,31 @@ it("follows keyboard highlights and focus, and Escape dismisses it", async () =>
 	expect(rows()).toHaveLength(0);
 });
 
+it.each(["mouseout", "focusout"])(
+	"keeps the keyboard hint when a different row receives %s",
+	async (eventType) => {
+		const row = rows()[0];
+		if (!row) throw new Error("Missing model row");
+		await act(() => row.dispatchEvent(new MouseEvent("mouseover", { bubbles: true })));
+		await delay();
+		expect(tooltip()?.textContent).toBe(models[0]?.label);
+		await key("ArrowDown");
+		await delay();
+		const hint = tooltip();
+		expect(hint?.textContent).toBe(models[1]?.label);
+		await act(() => {
+			row.dispatchEvent(
+				eventType === "mouseout"
+					? new MouseEvent(eventType, { bubbles: true })
+					: new FocusEvent(eventType, { bubbles: true }),
+			);
+		});
+		expect(tooltip()).toBe(hint);
+		expect(tooltip()?.style.visibility).toBe("visible");
+		expect(host.querySelector("input")?.getAttribute("aria-describedby")).toBe(hint?.id);
+	},
+);
+
 it("clears stale hints on search, scrolling, and closing", async () => {
 	await key("ArrowDown");
 	await delay();

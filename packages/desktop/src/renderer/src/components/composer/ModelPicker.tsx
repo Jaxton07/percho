@@ -107,6 +107,10 @@ export function ModelPicker() {
 		setTooltipKey(text && text.scrollWidth > text.clientWidth ? key : null);
 	};
 
+	const hideTooltip = (key: string) => {
+		setTooltipKey((current) => (current === key ? null : current));
+	};
+
 	const onSearchKeyDown = (e: React.KeyboardEvent) => {
 		if (e.key === "ArrowDown" || e.key === "ArrowUp") {
 			e.preventDefault();
@@ -229,9 +233,9 @@ export function ModelPicker() {
 													setActiveKey(key);
 													showTooltip(key);
 												}}
-												onMouseLeave={() => setTooltipKey(null)}
+												onMouseLeave={() => hideTooltip(key)}
 												onFocus={() => showTooltip(key)}
-												onBlur={() => setTooltipKey(null)}
+												onBlur={() => hideTooltip(key)}
 												onClick={() => select(m)}
 											>
 												<span className="truncate">{m.label}</span>
