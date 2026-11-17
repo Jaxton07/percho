@@ -19,6 +19,8 @@ import { mkdir, readFile, realpath, stat, writeFile } from "node:fs/promises";
 import { resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 import { build } from "esbuild";
+import { createCheckpoint } from "./performance/checkpoint.mjs";
+import { suiteRoot } from "./performance/paths.mjs";
 import { connect } from "./session-rendering-cdp.mjs";
 import { renderingFixture, renderingSession } from "./session-rendering-fixture.mjs";
 import { measureInteractions } from "./session-rendering-interactions.mjs";
@@ -26,8 +28,9 @@ import { installResourceProbe, readResources, removeResourceProbe } from "./sess
 import { verifyDiffViewState } from "./session-rendering-view-state.mjs";
 
 const repo = resolve(import.meta.dirname, ".."),
-	root = resolve(repo, ".local/tmp/session-rendering-baseline");
+	root = suiteRoot(repo, "rendering", ".local/tmp/session-rendering-baseline", "PERCHO_RENDERING_ROOT");
 await mkdir(root, { recursive: true });
+await mkdir(resolve(root, "project"), { recursive: true, mode: 0o700 });
 assert.equal(await realpath(root), root, "No symlink diagnostic root");
 for (const path of [root, resolve(root, "agent")]) {
 	assert.equal(await realpath(path), path, "No symlink diagnostic directory");
@@ -44,16 +47,19 @@ const viewOnly = process.argv.includes("--view-only");
 const resources = process.argv.includes("--resources");
 const host = resolve(root, after ? "frozen-after-host" : "frozen-host");
 const moduleFile = production
-	? JSON.parse(
+	? (process.env.PERCHO_RENDERING_MODULE ??
+		JSON.parse(
 			await readFile(
 				resolve(root, after ? "production-module-after.json" : "production-module.json"),
 				"utf8",
 			),
-		).file
+		).file)
 	: null;
-if (production) assert((await realpath(moduleFile)).startsWith(host + "/"));
+if (production)
+	assert((await realpath(moduleFile)).startsWith(`${process.env.PERCHO_RENDERING_MODULE ? root : host}/`));
 const toolCount = smoke || short ? 80 : 2600;
 assert.match(label, /^[a-z-]+$/);
+const checkpoint = createCheckpoint(resolve(root, `${label}-checkpoint.json`));
 await build({
 	stdin: {
 		contents: 'export { IpcChannels } from "./packages/shared/src/ipc-channels.ts";',
@@ -68,8 +74,8 @@ await build({
 const { IpcChannels } = await import(pathToFileURL(resolve(root, "contract.mjs")));
 
 const pause = (ms) => new Promise((r) => setTimeout(r, ms));
-const renderer = await connect(9244),
-	main = await connect(9245);
+const renderer = await connect(Number(process.env.PERCHO_CDP_PORT ?? 9244)),
+	main = await connect(Number(process.env.PERCHO_INSPECT_PORT ?? 9245));
 let owned = false;
 const samples = [];
 try {
@@ -78,13 +84,14 @@ try {
 	);
 	assert.equal(identity.agent, resolve(root, "agent"));
 	assert.equal(identity.userData, resolve(root, "user-data-dev"));
-	if (process.env.PERCHO_RENDERING_OWNER_PID)
+	if (process.env.PERCHO_RENDERING_PID ?? process.env.PERCHO_RENDERING_OWNER_PID)
 		assert.equal(
 			identity.pid,
-			Number(process.env.PERCHO_RENDERING_OWNER_PID),
+			Number(process.env.PERCHO_RENDERING_PID ?? process.env.PERCHO_RENDERING_OWNER_PID),
 			"CDP does not belong to the launched child",
 		);
-	if (production) assert.equal(identity.appPath, host);
+	if (production)
+		assert.equal(identity.appPath, process.env.PERCHO_RENDERING_MODULE ? resolve(root, "host") : host);
 	owned = true;
 	await renderer.send("Emulation.setFocusEmulationEnabled", { enabled: true });
 	await renderer.send("Performance.enable");
@@ -119,7 +126,13 @@ try {
 		`(()=>{const d=window.__renderDiag; d.events=${JSON.stringify(events)}; d.expected=d.events.reduce(d.core.reduceEvent,d.core.emptyTranscript());d.summary=s=>({messages:s.messages.length,tools:s.messages.flatMap(m=>m.tools??[]).map(t=>[t.id,t.name,t.args.length,t.output.length,t.state]),compactions:s.messages.filter(m=>m.compact?.status==='done').length,active:s.agentActive,streaming:!!s.streaming}); return d.summary(d.expected);})()`,
 	);
 	assert.equal(expected.tools.length, toolCount);
-	const snapshot = async (stage, round) => {
+	const snapshot = async (stage, round, timing) => {
+		// Timing stops before observer RPCs and checkpoint I/O. Persist it even if those probes fail.
+		const timedSample = timing ? { stage, round, ...timing } : null;
+		if (timedSample) {
+			samples.push(timedSample);
+			await checkpoint.save({ label, samples });
+		}
 		const processes = await main.eval(
 			"process.getBuiltinModule('module').createRequire(process.cwd()+'/package.json')('electron').app.getAppMetrics().map(p=>({type:p.type,memory:p.memory}))",
 		);
@@ -128,7 +141,7 @@ try {
 		const state = await renderer.eval(
 			`(()=>{const d=window.__renderDiag,s=d.transcripts.getState().bySession[d.sid]??d.core.emptyTranscript();return {messages:s.messages.length,tools:s.messages.reduce((n,m)=>n+(m.tools?.length??0),0),elements:document.querySelectorAll('*').length,diffLines:document.querySelectorAll('.diff-line').length,toolCards:document.querySelectorAll("details[class*='group/dets']").length,frames:d.frames.splice(0),longTasks:d.longTasks.splice(0),inputs:d.inputs.splice(0),dpr:devicePixelRatio,width:innerWidth,height:innerHeight,hidden:document.hidden};})()`,
 		);
-		samples.push({
+		const sample = {
 			stage,
 			round,
 			...state,
@@ -148,10 +161,10 @@ try {
 					.map((m) => [m.name, m.value]),
 			),
 			processes,
-		});
-		await writeFile(resolve(root, `${label}-checkpoint.json`), JSON.stringify({ label, samples }, null, 2), {
-			mode: 0o600,
-		});
+		};
+		if (timedSample) Object.assign(timedSample, sample);
+		else samples.push(sample);
+		await checkpoint.save({ label, samples });
 		console.log(
 			JSON.stringify({
 				stage,
@@ -165,9 +178,22 @@ try {
 		return samples.at(-1);
 	};
 	for (let round = 0; round < (interactionsOnly || viewOnly ? 0 : smoke ? 1 : 3); round++) {
-		const sid = await renderer.eval(
-			`(async()=>{const d=__renderDiag;d.meta=await d.getExecutionApi({kind:"local"}).createSession({options:{cwd:${JSON.stringify(resolve(root, "project"))}}});return d.meta.sessionId})()`,
+		await renderer.eval(
+			`(()=>{const d=__renderDiag;d.pendingCreate=null;d.getExecutionApi({kind:'local'}).createSession({options:{cwd:${JSON.stringify(resolve(root, "project"))}}}).then(meta=>{d.meta=meta;d.pendingCreate={sid:meta.sessionId}},error=>d.pendingCreate={error:String(error)});return true})()`,
 		);
+		let created;
+		const createUntil = Date.now() + 30000;
+		while (Date.now() < createUntil) {
+			created = await renderer.eval("__renderDiag.pendingCreate");
+			if (created) break;
+			if (process.env.PERCHO_PERF_RUN_DIR)
+				await renderer.eval(
+					"(()=>{const b=[...document.querySelectorAll('button')].find(b=>/不信任|Don't trust/.test(b.textContent??''));b?.click();return !!b})()",
+				);
+			await pause(50);
+		}
+		assert(created && !created.error, created?.error ?? "Isolated session creation timed out");
+		const sid = created.sid;
 		await renderer.eval(
 			`(()=>{const d=window.__renderDiag;d.observer?.disconnect();cancelAnimationFrame(d.raf);clearInterval(d.interact);d.sid=${JSON.stringify(sid)};d.transcripts.getState().resetSession(d.sid);d.sessions.setState({sessions:[d.meta],activeSessionId:d.sid,newSessionDraft:null});d.frames=[];d.longTasks=[];d.inputs=[];d.last=0;d.observer=new PerformanceObserver(list=>{for(const e of list.getEntries())d.longTasks.push(e.duration)});d.observer.observe({entryTypes:['longtask']});const tick=t=>{if(d.last)d.frames.push(t-d.last);d.last=t;d.raf=requestAnimationFrame(tick)};d.raf=requestAnimationFrame(tick);})()`,
 		);
@@ -239,8 +265,7 @@ try {
 		await renderer.eval(
 			"(()=>{const d=__renderDiag;d.transcripts.getState().loadHistory(d.sid,d.expected.messages);d.sessions.setState({activeSessionId:d.sid,newSessionDraft:null});return new Promise(r=>requestAnimationFrame(()=>requestAnimationFrame(()=>r(true))))})()",
 		);
-		await snapshot("local-history-mount", round);
-		samples.at(-1).mountRoundTripMs = performance.now() - start;
+		await snapshot("local-history-mount", round, { mountRoundTripMs: performance.now() - start });
 		await renderer.eval(
 			"(async()=>{const d=__renderDiag;d.sessions.getState().activateNewSessionDraft();await d.sessions.getState().closeSession(d.sid);})()",
 		);
@@ -254,8 +279,7 @@ try {
 		await renderer.eval(
 			`(async()=>{const d=__renderDiag;const result=await d.sessions.getState().openFromHistory(${JSON.stringify(historyFile)});if(!result.ok)throw new Error('Synthetic history open failed');d.sid=result.meta.sessionId;return new Promise(r=>requestAnimationFrame(()=>requestAnimationFrame(()=>r(true))))})()`,
 		);
-		await snapshot("backend-history-open", round);
-		samples.at(-1).openRoundTripMs = performance.now() - start;
+		await snapshot("backend-history-open", round, { openRoundTripMs: performance.now() - start });
 		if (resources) await installResourceProbe(renderer);
 		if (viewOnly) {
 			await renderer.eval(

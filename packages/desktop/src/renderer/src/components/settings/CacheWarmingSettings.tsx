@@ -75,7 +75,7 @@ export function CacheWarmingSettings() {
 				<Select
 					variant="ghost"
 					ariaLabel={t("settings.cacheWarming")}
-					value={info?.mode ?? "streaming"}
+					value={info?.mode ?? "idle"}
 					disabled={!info || saving}
 					options={CACHE_WARMING_MODES.map((mode) => ({
 						value: mode,

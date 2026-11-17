@@ -689,12 +689,17 @@ describe("request boundary compaction", () => {
 		await f.session.prompt("do not modify, only inspect");
 		const request = f.requests.find((r) => !r.summary);
 		const serialized = JSON.stringify(request);
-		expect(serialized.indexOf("modify configuration")).toBeLessThan(
+		for (const text of ["modify configuration", "automatic wake", "do not modify, only inspect"]) {
+			expect(serialized.split(text)).toHaveLength(2);
+		}
+		expect(serialized.indexOf("modify configuration")).toBeLessThan(serialized.indexOf("automatic wake"));
+		expect(serialized.indexOf("automatic wake")).toBeLessThan(
 			serialized.indexOf("do not modify, only inspect"),
 		);
-		expect(serialized).toContain("automatic wake");
 		expect(f.session.getFollowUpMessages()).toEqual([]);
 		expect(f.session.compactionPause).toBeNull();
+		expect(f.events.at(-1)?.type).toBe("agent_settled");
+		expect(f.session.isIdle).toBe(true);
 	});
 
 	it.each(["creation", "result"] as const)(
@@ -1087,7 +1092,7 @@ describe("request boundary compaction", () => {
 		expect(f.session.agent.getQueuedMessages()).toEqual([]);
 	});
 
-	it.each(["reload", "dispose"] as const)("rejects a late summary after %s", async (operation) => {
+	it.each(["reload", "dispose"] as const)("handles %s while a summary is in flight", async (operation) => {
 		const f = await fixture();
 		let entered = () => {};
 		const started = new Promise<void>((resolve) => {
@@ -1104,12 +1109,22 @@ describe("request boundary compaction", () => {
 		});
 		const running = f.session.prompt("pending");
 		await started;
-		if (operation === "reload") await f.session.reload();
-		else f.session.dispose();
-		release();
+		try {
+			if (operation === "reload")
+				await expect(f.session.reload()).rejects.toThrow(/finish before reloading/i);
+			else f.session.dispose();
+		} finally {
+			release();
+		}
 		await running;
-		expect(f.sm.getEntries().some((entry) => entry.type === "compaction")).toBe(false);
-		expect(f.requests.filter((request) => !request.summary)).toEqual([]);
+		if (operation === "reload") {
+			expect(f.sm.getEntries().some((entry) => entry.type === "compaction")).toBe(true);
+			expect(f.requests.filter((request) => !request.summary)).toHaveLength(1);
+			expect(f.events.at(-1)?.type).toBe("agent_settled");
+		} else {
+			expect(f.sm.getEntries().some((entry) => entry.type === "compaction")).toBe(false);
+			expect(f.requests.filter((request) => !request.summary)).toEqual([]);
+		}
 	});
 	it("keeps custom wakeups after stop frozen without starting or spinning a run", async () => {
 		const f = await fixture({ usage: 100 });

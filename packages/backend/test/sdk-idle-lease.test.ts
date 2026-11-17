@@ -11,6 +11,7 @@ import type {
 } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
 import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from "vitest";
+import { emitSessionShutdown } from "../src/session/shutdown";
 
 let sdk: typeof import("@earendil-works/pi-coding-agent");
 let ai: typeof import("@earendil-works/pi-ai");
@@ -66,7 +67,11 @@ afterAll(() => {
 	if (root) rmSync(root, { recursive: true, force: true });
 });
 
-async function fixture(extension?: InlineExtension, bind = true, cacheWarming: "off" | "streaming" = "off") {
+async function fixture(
+	extension?: InlineExtension,
+	bind = true,
+	cacheWarming: "off" | "streaming" | "idle" = "off",
+) {
 	const cwd = mkdtempSync(join(root, "project-"));
 	let api!: ExtensionAPI;
 	const errors: string[] = [];
@@ -430,11 +435,14 @@ describe("SDK exclusive idle maintenance", () => {
 		await expect(f.session.prompt("disposed")).rejects.toThrow(/disposed/);
 	});
 
-	it("allows an idle lease when cache warming is configured but has no pending work", async () => {
-		const f = await fixture(undefined, true, "streaming");
-		expect(f.session.cacheWarmingStatus?.state).toBe("inactive");
-		acquire(f.session).release();
-	});
+	it.each(["streaming", "idle"] as const)(
+		"allows an idle lease with %s configured but no pending work",
+		async (mode) => {
+			const f = await fixture(undefined, true, mode);
+			expect(f.session.cacheWarmingStatus?.state).toBe("inactive");
+			acquire(f.session).release();
+		},
+	);
 
 	it("keeps a cancelled but unfinished warming decision busy until it settles", async () => {
 		const f = await fixture();
@@ -493,11 +501,115 @@ describe("SDK exclusive idle maintenance", () => {
 			finish.resolve();
 			await vi.advanceTimersByTimeAsync(0);
 			acquire(session).release();
+			warmer.start(
+				{ model: { ...model, promptCache: { short: 100 } }, context: { messages: [] }, options: {} },
+				() => true,
+			);
+			vi.setSystemTime(Date.now() + 60 * 60 * 1000);
+			await vi.advanceTimersToNextTimerAsync();
+			expect(session.cacheWarmingStatus?.state).toBe("inactive");
+			acquire(session).release();
 		} finally {
 			finish.resolve();
 			warmer.cancel();
 			vi.useRealTimers();
 		}
+	});
+
+	it("keeps a cancelled in-flight cache refresh busy until transport settles", async () => {
+		const f = await fixture();
+		f.session.dispose();
+		const { CacheWarmer } = await import(
+			pathToFileURL(
+				resolve(
+					import.meta.dirname,
+					"../../../node_modules/@earendil-works/pi-coding-agent/dist/core/cache-warmer.js",
+				),
+			).href
+		);
+		const entered = barrier();
+		const finish = barrier();
+		const warmer: NonNullable<AgentSessionConfig["cacheWarmer"]> = new CacheWarmer(
+			{
+				streamSimple: () => ({
+					result: async () => {
+						entered.resolve();
+						await finish.promise;
+						throw new Error("cancelled");
+					},
+				}),
+			},
+			f.session.sessionManager,
+			() => "idle",
+			async () => "warm",
+		);
+		const session = new sdk.AgentSession({
+			agent: f.session.agent,
+			sessionManager: f.session.sessionManager,
+			settingsManager: f.session.settingsManager,
+			resourceLoader: f.session.resourceLoader,
+			modelRuntime: f.session.modelRuntime,
+			cwd: f.cwd,
+			cacheWarmer: warmer,
+		});
+		sessions.push(session);
+		vi.useFakeTimers();
+		try {
+			warmer.start(
+				{ model: { ...model, promptCache: { short: 100 } }, context: { messages: [] }, options: {} },
+				() => true,
+			);
+			await vi.advanceTimersToNextTimerAsync();
+			await entered.promise;
+			warmer.cancel();
+			expect(session.cacheWarmingStatus?.state).toBe("inactive");
+			expect(session.tryAcquireIdleLease()).toBeUndefined();
+			finish.resolve();
+			await vi.advanceTimersByTimeAsync(0);
+			acquire(session).release();
+		} finally {
+			finish.resolve();
+			warmer.cancel();
+			vi.useRealTimers();
+		}
+	});
+
+	it("rejects a busy reload without shutting down the running extension", async () => {
+		let shutdowns = 0;
+		const f = await fixture((pi) => {
+			pi.on("session_shutdown", () => {
+				shutdowns++;
+			});
+		});
+		const held = f.holdNextRequest();
+		const running = f.session.prompt("running");
+		try {
+			await held.started;
+			await expect(f.session.reload()).rejects.toThrow();
+			expect(shutdowns).toBe(0);
+		} finally {
+			held.release();
+			await running;
+		}
+	});
+
+	it("awaits real SDK shutdown handlers before disposal", async () => {
+		const entered = barrier();
+		const finish = barrier();
+		const f = await fixture((pi) => {
+			pi.on("session_shutdown", async () => {
+				entered.resolve();
+				await finish.promise;
+			});
+		});
+		const shutdown = emitSessionShutdown(f.session);
+		await entered.promise;
+		expect(f.session.tryAcquireIdleLease()).toBeUndefined();
+		finish.resolve();
+		await shutdown;
+		f.session.dispose();
+		expect(f.session.tryAcquireIdleLease()).toBeUndefined();
+		await expect(f.session.prompt("closed")).rejects.toThrow(/disposed/);
 	});
 
 	it("rejects extension registrations before mutating their registries", async () => {
@@ -616,6 +728,96 @@ describe("SDK exclusive idle maintenance", () => {
 			acquire(f.session).release();
 		},
 	);
+
+	it.each(["sync", "throwing-promise"] as const)(
+		"expires %s shutdown cleanup before detached microtasks run",
+		async (mode) => {
+			const queued = barrier();
+			let late: Promise<unknown> | undefined;
+			const f = await fixture((pi) => {
+				pi.on("session_shutdown", () => {
+					queueMicrotask(() => {
+						late = pi.exec(process.execPath, ["-e", ""]).then(
+							(result) => result,
+							(error) => error,
+						);
+						queued.resolve();
+					});
+					if (mode === "throwing-promise") {
+						const result = Promise.resolve();
+						Object.defineProperty(result, "constructor", {
+							get() {
+								throw new Error("invalid promise constructor");
+							},
+						});
+						return result;
+					}
+				});
+			});
+			const lease = acquire(f.session);
+			try {
+				await emitSessionShutdown(f.session);
+				await queued.promise;
+				expect(await late).toBeInstanceOf(Error);
+				expect(String(await late)).toMatch(/idle lease/);
+			} finally {
+				lease.release();
+			}
+		},
+	);
+
+	it("isolates shutdown exec cleanup from concurrent and expired contexts", async () => {
+		const entered = barrier();
+		const finish = barrier();
+		const late = barrier();
+		const lateDone = barrier();
+		let lateError: unknown;
+		let cleanupExit: number | null | undefined;
+		const f = await fixture((pi) => {
+			pi.on("session_shutdown", async () => {
+				void late.promise.then(async () => {
+					try {
+						await pi.exec(process.execPath, ["-e", "process.exit(0)"]);
+					} catch (error) {
+						lateError = error;
+					} finally {
+						lateDone.resolve();
+					}
+				});
+				entered.resolve();
+				await finish.promise;
+				expect(() => pi.appendEntry("blocked", {})).toThrow(/idle lease/);
+				expect(() => pi.on("input", () => ({ action: "continue" }))).toThrow(/idle lease/);
+				const result = await pi.exec(process.execPath, [
+					"--eval",
+					"require('node:fs').writeFileSync(process.argv[1], 'clean')",
+					join(f.cwd, "clean"),
+				]);
+				cleanupExit = result.code;
+			});
+		});
+		const lease = acquire(f.session);
+		const shutdown = emitSessionShutdown(f.session);
+		try {
+			await entered.promise;
+			await expect(f.api.exec(process.execPath, ["-e", "process.exit(0)"])).rejects.toThrow(/idle lease/);
+			await expect(f.session.prompt("blocked")).rejects.toThrow(/idle lease/);
+			finish.resolve();
+			await shutdown;
+			expect(f.errors).toEqual([]);
+			expect(cleanupExit).toBe(0);
+			expect(existsSync(join(f.cwd, "clean"))).toBe(true);
+			late.resolve();
+			await lateDone.promise;
+			expect(lateError).toBeInstanceOf(Error);
+			expect(String(lateError)).toMatch(/idle lease/);
+		} finally {
+			finish.resolve();
+			late.resolve();
+			await shutdown;
+			lease.release();
+		}
+	});
 
 	it("rejects SDK extension exec before spawning while held", async () => {
 		const f = await fixture();

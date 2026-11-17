@@ -4,8 +4,14 @@ import { randomUUID } from "node:crypto";
 import { lstat, mkdir, realpath, rename, writeFile } from "node:fs/promises";
 import { join, resolve } from "node:path";
 import { PNG } from "pngjs";
+import { suiteRoot } from "./performance/paths.mjs";
 
-const root = resolve(import.meta.dirname, "../.local/tmp/session-switch-diagnostics");
+const root = suiteRoot(
+	resolve(import.meta.dirname, ".."),
+	"switch",
+	".local/tmp/session-switch-diagnostics",
+	"PERCHO_SESSION_SWITCH_DIAGNOSTICS_ROOT",
+);
 const cwd = join(root, "project");
 const agent = join(root, "agent");
 await mkdir(root, { recursive: true, mode: 0o700 });

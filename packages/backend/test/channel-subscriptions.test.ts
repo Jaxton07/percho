@@ -218,6 +218,7 @@ describe("PiBackend 接线（stub session 注入私有 registry，同 session-cl
 			session: {
 				sessionId,
 				isStreaming: false,
+				tryAcquireIdleLease: () => ({ release: () => {} }),
 				dispose: () => {},
 				sessionFile: join(root, `${sessionId}.jsonl`),
 				sessionManager: { getSessionDir: () => root, getSessionFile: () => join(root, `${sessionId}.jsonl`) },

@@ -4,8 +4,14 @@ import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
 import { mkdir, readFile, rm, unlink, writeFile } from "node:fs/promises";
 import { dirname, join, resolve, sep } from "node:path";
+import { suiteRoot } from "./performance/paths.mjs";
 
-const root = resolve(import.meta.dirname, "../.local/tmp/session-switch-diagnostics");
+const root = suiteRoot(
+	resolve(import.meta.dirname, ".."),
+	"switch",
+	".local/tmp/session-switch-diagnostics",
+	"PERCHO_SESSION_SWITCH_DIAGNOSTICS_ROOT",
+);
 const port = Number(process.env.PERCHO_CDP_PORT ?? 9224);
 const target = (await (await fetch(`http://127.0.0.1:${port}/json`)).json()).find(
 	(item) => item.type === "page",

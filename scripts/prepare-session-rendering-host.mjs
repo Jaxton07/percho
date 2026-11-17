@@ -6,16 +6,17 @@
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
 import { cp, mkdir, readdir, readFile, realpath, writeFile } from "node:fs/promises";
-import { dirname, join, resolve } from "node:path";
+import { dirname, resolve } from "node:path";
 import { transform } from "esbuild";
+import { suiteRoot } from "./performance/paths.mjs";
 import { connect } from "./session-rendering-cdp.mjs";
 
 const after = process.argv.includes("--after");
 const repo = resolve(import.meta.dirname, ".."),
-	root = resolve(repo, ".local/tmp/session-rendering-baseline"),
+	root = suiteRoot(repo, "rendering", ".local/tmp/session-rendering-baseline", "PERCHO_RENDERING_ROOT"),
 	host = resolve(root, after ? "frozen-after-host" : "frozen-host");
 assert.equal(await realpath(root), root);
-const main = after ? null : await connect(9245);
+const main = after ? null : await connect(Number(process.env.PERCHO_INSPECT_PORT ?? 9245));
 try {
 	const identity = after
 		? {

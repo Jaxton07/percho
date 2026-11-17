@@ -70,8 +70,8 @@ try {
 	const patches = join(work, "patches");
 	await mkdir(patches);
 	for (const name of [
-		"@earendil-works+pi-agent-core+1.4.0.patch",
-		"@earendil-works+pi-coding-agent+1.4.0.patch",
+		"@earendil-works+pi-agent-core+1.5.1.patch",
+		"@earendil-works+pi-coding-agent+1.5.1.patch",
 	]) {
 		await copyFile(join(repo, "patches", name), join(patches, name));
 	}

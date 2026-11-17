@@ -5,7 +5,7 @@ export const RUNTIME_NPM_REGISTRY = "https://registry.npmjs.org";
 
 /** Select exact installed lock entries, without introducing another dependency/version solver. */
 export function runtimeBuildLock(lock, version) {
-	const dependencies = { "@earendil-works/pi-coding-agent": "1.4.0", "@earendil-works/pi-ai": "1.4.0" };
+	const dependencies = { "@earendil-works/pi-coding-agent": "1.5.1", "@earendil-works/pi-ai": "1.5.1" };
 	const devDependencies = { esbuild: "0.25.12", "patch-package": "8.0.1" };
 	const packages = {};
 	const production = new Set();

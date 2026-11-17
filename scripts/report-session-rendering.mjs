@@ -3,15 +3,25 @@
 import assert from "node:assert/strict";
 import { readFile, writeFile } from "node:fs/promises";
 import { resolve } from "node:path";
+import { suiteRoot } from "./performance/paths.mjs";
 
-const root = resolve(import.meta.dirname, "../.local/tmp/session-rendering-baseline");
+const root = suiteRoot(
+	resolve(import.meta.dirname, ".."),
+	"rendering",
+	".local/tmp/session-rendering-baseline",
+	"PERCHO_RENDERING_ROOT",
+);
+const args = process.argv.slice(2);
+const rootOption = args.find((value) => value.startsWith("--root="));
+if (rootOption && resolve(rootOption.slice(7)) !== root)
+	throw new Error("Report root does not match performance root");
 const quantile = (values, q) => {
 	const ordered = [...values].sort((a, b) => a - b);
 	return ordered[Math.min(ordered.length - 1, Math.ceil(ordered.length * q) - 1)] ?? 0;
 };
 const range = (values) => `${Math.min(...values).toFixed(1)}–${Math.max(...values).toFixed(1)}`;
 const reports = [];
-for (const label of process.argv.slice(2)) {
+for (const label of args.filter((value) => value !== rootOption)) {
 	assert.match(label, /^[a-z-]+$/);
 	const report = JSON.parse(await readFile(resolve(root, `${label}.json`), "utf8"));
 	const lines = [

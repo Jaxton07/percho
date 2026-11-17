@@ -5,6 +5,7 @@ import { execFileSync } from "node:child_process";
 import { cp, mkdir, readdir, readFile, realpath, symlink, writeFile } from "node:fs/promises";
 import { dirname, join, resolve, sep } from "node:path";
 import { transform } from "esbuild";
+import { validateWorkPath } from "./performance/paths.mjs";
 import { connect } from "./session-rendering-cdp.mjs";
 
 const root = resolve(import.meta.dirname, "..");
@@ -23,7 +24,7 @@ All measurement is built-renderer diagnostic mode, not a signed release-package 
 }
 assert(options.task && options.owner, "Specify task and owner");
 const task = resolve(options.task);
-assert(task.startsWith(join(root, ".local/tmp") + sep));
+if (!task.startsWith(join(root, ".local/tmp") + sep)) validateWorkPath(root, task);
 await mkdir(task, { recursive: true, mode: 0o700 });
 assert.equal(await realpath(task), task);
 const source = await realpath(options.source ?? root);
@@ -34,7 +35,9 @@ try {
 	);
 	assert.equal(identity.owner, options.owner);
 	assert.equal(await realpath(identity.cwd), await realpath(join(source, "packages/desktop")));
-	assert(identity.agent.startsWith(join(root, ".local/tmp") + sep));
+	if (task.startsWith(join(root, ".local/tmp") + sep))
+		assert(identity.agent.startsWith(join(root, ".local/tmp") + sep));
+	else assert.equal(identity.agent, join(task, "agent"));
 	assert(identity.exe.includes(`${sep}.local${sep}runtime${sep}dev.noindex${sep}`));
 	const host = join(task, "host");
 	await mkdir(host, { mode: 0o700 });

@@ -9,6 +9,7 @@
 | 包边界、IPC、会话数据与状态所有权 | [架构](architecture.md) |
 | 界面风格、字号、浮层、共享组件 | [UI 规范](ui.md) |
 | CDP、截图、交互验收、测试实例管理 | [UI 调试](ui-debugging.md) |
+| 交互/性能统一入口、留档、基线与趋势 | [性能评测](performance-testing.md) |
 | 图片输入/展示边界、资源归属与备份 | [会话图片](session-images.md) |
 | 用户级目录隔离、升级迁移、失败恢复 | [用户数据](local-agent-storage.md) |
 | SDK 行为、升级、资源释放、上下文 | [SDK 集成](sdk.md) |

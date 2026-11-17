@@ -134,13 +134,14 @@ export class ReadOnlySessionView {
 				value.cost && typeof value.cost === "object" ? (value.cost as { total?: unknown }).total : undefined;
 			if (typeof amount === "number" && Number.isFinite(amount)) cost += amount;
 		};
-		for (const entry of this.sessionManager.getBranch()) {
+		for (const entry of this.sessionManager.getEntries()) {
 			if (
 				entry.type === "message" &&
 				(entry.message.role === "assistant" || entry.message.role === "toolResult")
 			)
 				add(entry.message.usage);
-			else if (entry.type === "usage") add(entry.usage);
+			else if (entry.type === "usage" || entry.type === "compaction" || entry.type === "branch_summary")
+				add(entry.usage);
 		}
 		tokens.total = tokens.input + tokens.output + tokens.cacheRead + tokens.cacheWrite;
 		return {

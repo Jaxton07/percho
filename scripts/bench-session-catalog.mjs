@@ -3,6 +3,7 @@ import { appendFile, mkdir, mkdtemp, readFile, realpath, writeFile } from "node:
 import { basename, dirname, join, relative, resolve } from "node:path";
 import { monitorEventLoopDelay, performance } from "node:perf_hooks";
 import { fileURLToPath, pathToFileURL } from "node:url";
+import { suiteRoot, validateNoSymlinks, validateWorkPath } from "./performance/paths.mjs";
 
 const script = fileURLToPath(import.meta.url);
 const repo = resolve(dirname(script), "..");
@@ -12,19 +13,24 @@ const count = Number(process.argv[2]);
 if (![1000, 10000].includes(count))
 	throw new Error("Usage: node scripts/bench-session-catalog.mjs 1000|10000");
 
+const catalogRoot = process.env.PERCHO_PERF_RUN_DIR
+	? suiteRoot(repo, "catalog", ".local/tmp", "PERCHO_CATALOG_ROOT")
+	: null;
 const phase = process.argv[3];
 if (phase) {
 	if (!["first", "existing"].includes(phase) || !process.env.CATALOG_BENCH_DIR)
 		throw new Error("Invalid child phase");
-	const root = await realpath(tempRoot);
+	const root = await realpath(catalogRoot ? join(catalogRoot, String(count)) : tempRoot);
 	const data = await realpath(process.env.CATALOG_BENCH_DIR);
 	if (dirname(data) !== root || !basename(data).startsWith("session-catalog-bench-")) {
 		throw new Error("Invalid benchmark directory");
 	}
 	await runPhase(data, phase);
 } else {
-	await mkdir(tempRoot, { recursive: true });
-	const data = await mkdtemp(join(tempRoot, "session-catalog-bench-"));
+	const parent = catalogRoot ? join(catalogRoot, String(count)) : tempRoot;
+	if (catalogRoot) validateWorkPath(repo, parent);
+	await mkdir(parent, { recursive: true, mode: 0o700 });
+	const data = await mkdtemp(join(parent, "session-catalog-bench-"));
 	for (const key of Object.keys(process.env)) {
 		if (key.startsWith("PI_") || key.startsWith("XDG_") || key === "NODE_OPTIONS") delete process.env[key];
 	}
@@ -107,6 +113,15 @@ if (phase) {
 	result.budgetFailures = failures;
 	const resultPath = join(data, "results.json");
 	await writeFile(resultPath, `${JSON.stringify(result, null, 2)}\n`, { flag: "wx" });
+	if (process.env.PERCHO_CATALOG_REPORT_FILE) {
+		if (!catalogRoot) throw new Error("Report requires a performance run");
+		const report = validateNoSymlinks(process.env.PERCHO_CATALOG_REPORT_FILE);
+		const raw = join(resolve(process.env.PERCHO_PERF_RUN_DIR), "raw");
+		if (dirname(report) !== raw || !/^catalog-\d+\.json$/.test(basename(report)))
+			throw new Error("Invalid catalog report path");
+		if ((await realpath(raw)) !== raw) throw new Error("Invalid report directory");
+		await writeFile(report, `${JSON.stringify(result, null, 2)}\n`, { flag: "wx", mode: 0o600 });
+	}
 	console.log(JSON.stringify(result, null, 2));
 	console.log(
 		`${failures.length ? "FAIL" : "PASS"} ${relative(repo, resultPath)}: local regression budgets, not SLA`,

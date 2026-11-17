@@ -3,6 +3,27 @@ import assert from "node:assert/strict";
 export async function measureSweep(renderer, main, channel, snapshot, round) {
 	const pause = (ms) => new Promise((r) => setTimeout(r, ms)),
 		sid = await renderer.eval("__renderDiag.sid");
+	// The preceding large-group interaction deliberately browses old history.
+	// Return via real wheel before requiring the new activity row to be mounted.
+	const bottom = await renderer.eval(
+		"(()=>{const e=document.querySelector('.chat-scrollbar'),r=e.getBoundingClientRect();return {x:r.left+r.width/2,y:r.top+r.height/2}})()",
+	);
+	await renderer.send("Input.dispatchMouseEvent", { type: "mouseMoved", ...bottom });
+	await renderer.send("Input.dispatchMouseEvent", {
+		type: "mouseWheel",
+		...bottom,
+		deltaX: 0,
+		deltaY: 100000,
+	});
+	const until = Date.now() + 10000;
+	while (
+		!(await renderer.eval(
+			"(()=>{const e=document.querySelector('.chat-scrollbar');return Math.abs(e.scrollHeight-e.clientHeight-e.scrollTop)<=2})()",
+		))
+	) {
+		assert(Date.now() < until, "Real wheel must reach the bottom before measuring active sweep targets");
+		await pause(20);
+	}
 	const events = [
 		{ type: "agent_start" },
 		{ type: "turn_start" },

@@ -22,6 +22,7 @@ function cancelAnimations(
 	height: { current: Animation | null },
 	moves: Map<HTMLElement, Animation>,
 	incoming: Set<Animation>,
+	ordinary: Set<Animation>,
 ) {
 	cancelAnimation(height.current);
 	height.current = null;
@@ -29,6 +30,8 @@ function cancelAnimations(
 	moves.clear();
 	for (const animation of incoming) cancelAnimation(animation);
 	incoming.clear();
+	for (const animation of ordinary) cancelAnimation(animation);
+	ordinary.clear();
 }
 
 /**
@@ -50,12 +53,13 @@ export function useListShift({
 	const heightAnimation = useRef<Animation | null>(null);
 	const moves = useRef(new Map<HTMLElement, Animation>());
 	const incoming = useRef(new Set<Animation>());
+	const ordinary = useRef(new Set<Animation>());
 	const settlingUntil = useRef(0);
 
 	useLayoutEffect(() => {
 		const container = ref.current;
-		if (!container) {
-			cancelAnimations(heightAnimation, moves.current, incoming.current);
+		if (!container || skip || prefersReducedMotion()) {
+			cancelAnimations(heightAnimation, moves.current, incoming.current, ordinary.current);
 			previous.current.clear();
 			previousHeight.current = 0;
 			settlingUntil.current = 0;
@@ -76,8 +80,6 @@ export function useListShift({
 				incoming.current.delete(animation);
 			}
 		}
-		const reduced = prefersReducedMotion();
-		if (reduced) cancelAnimations(heightAnimation, moves.current, incoming.current);
 		const next = new Map<string, Point>();
 		for (const node of nodes) {
 			const key = node.dataset.shiftKey;
@@ -93,7 +95,7 @@ export function useListShift({
 		// A footer disappearing on the final page is not a removed session.
 		const removed = [...prev].some(([key, point]) => !next.has(key) && (!collapse || !point.layoutOnly));
 		const changed = removed || [...next.keys()].some((key) => !prev.has(key));
-		if (!changed || prev.size === 0 || reduced || skip) {
+		if (!changed || prev.size === 0) {
 			if (!heightAnimation.current) previousHeight.current = container.offsetHeight;
 			return;
 		}
@@ -107,7 +109,7 @@ export function useListShift({
 				[...prev.values()].filter((point) => !point.layoutOnly).length;
 		if (collapse && removed && !shrank) {
 			// A refreshed page must not renew an earlier deletion's hidden phase.
-			cancelAnimations(heightAnimation, moves.current, incoming.current);
+			cancelAnimations(heightAnimation, moves.current, incoming.current, ordinary.current);
 			settlingUntil.current = 0;
 		}
 		const collapsing = collapse && (shrank || now < settlingUntil.current);
@@ -157,7 +159,9 @@ export function useListShift({
 					incoming.current.add(animation);
 					animation.onfinish = () => incoming.current.delete(animation);
 				} else if (!collapse) {
-					node.animate([{ opacity: 0 }, { opacity: 1 }], { duration: 140, easing });
+					const animation = node.animate([{ opacity: 0 }, { opacity: 1 }], { duration: 140, easing });
+					ordinary.current.add(animation);
+					animation.onfinish = () => ordinary.current.delete(animation);
 				}
 				continue;
 			}
@@ -187,6 +191,9 @@ export function useListShift({
 				animation.onfinish = () => {
 					if (moves.current.get(node) === animation) moves.current.delete(node);
 				};
+			} else {
+				ordinary.current.add(animation);
+				animation.onfinish = () => ordinary.current.delete(animation);
 			}
 		}
 	});
@@ -194,7 +201,8 @@ export function useListShift({
 	useLayoutEffect(() => {
 		const animations = moves.current;
 		const fades = incoming.current;
-		return () => cancelAnimations(heightAnimation, animations, fades);
+		const ordinaryAnimations = ordinary.current;
+		return () => cancelAnimations(heightAnimation, animations, fades, ordinaryAnimations);
 	}, []);
 	return ref;
 }

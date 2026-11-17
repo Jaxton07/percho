@@ -3,6 +3,18 @@
  * 折叠空白，按码点截断。只用于展示一两行预览，不追求完整 Markdown 语义。
  */
 export function previewExcerpt(text: string, max = 120): string {
+	// 只在前缀不含任何可能参与 Markdown 匹配的字符时提前返回；数字可能是有序列表前缀。
+	// 多取一个归一化码点，确保截断位置的空格不会因后文缺失而被 trim 掉。
+	if (Number.isFinite(max) && max > 0 && max < 4096) {
+		let prefix = text.slice(0, 4096);
+		if (prefix.length < text.length && /[\uD800-\uDBFF]$/u.test(prefix)) {
+			prefix = prefix.slice(0, -1);
+		}
+		if (!/[`~!*_[\]#>+\d-]/u.test(prefix)) {
+			const chars = Array.from(prefix.replace(/\s+/gu, " ").trim());
+			if (chars.length > Math.trunc(max)) return chars.slice(0, max).join("");
+		}
+	}
 	const plain = text
 		.replace(/^\s*(```|~~~)[^\n]*$/gmu, " ")
 		.replace(/`([^`]*)`/gu, "$1")
