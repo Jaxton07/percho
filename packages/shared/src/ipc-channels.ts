@@ -570,12 +570,23 @@ export const PACKAGES_CHANNELS = {
 
 /** MCP 域：官方内置扩展的 mcp.json 读写（连接/展开交给官方；工具运行态走 mcp.tools:changed 事件） */
 export const MCP_CHANNELS = {
+	mcpLogin: ch(
+		"mcp:login",
+		"environment",
+		"mutation",
+	)<{ instanceId: string; name: string }, void>({
+		instanceId: input.id,
+		name: input.id,
+	}),
 	/** 读全局 + 项目级 mcp.json（项目级只在受信项目读，与官方 trust-manager 同款） */
 	mcpConfigList: ch(
 		"mcp:configList",
 		"environment",
 		"read",
-	)<{ cwd?: string }, McpConfigListResult>({ cwd: input.optional(input.id) }),
+	)<{ cwd?: string; instanceId?: string }, McpConfigListResult>({
+		cwd: input.optional(input.id),
+		instanceId: input.optional(input.id),
+	}),
 	/** 新增/编辑一个 server（新建默认写 exposure: "deferred"；新建文件时顶层写 autoEnableCodemode: false） */
 	mcpConfigUpsert: ch(
 		"mcp:configUpsert",
@@ -590,7 +601,15 @@ export const MCP_CHANNELS = {
 		url: input.optional(input.text),
 		description: input.optional(input.text),
 		enabled: input.optional(input.boolean),
-		exposure: input.optional(input.oneOf("direct", "deferred", "codemode")),
+		exposure: input.optional(input.oneOf("direct", "deferred", "codemode", "model-only", "hidden")),
+	}),
+	mcpConfigImport: ch(
+		"mcp:configImport",
+		"environment",
+		"mutation",
+	)<{ json: string; cwd?: string }, McpMutationResult>({
+		json: input.text,
+		cwd: input.optional(input.id),
 	}),
 	/** 重连：reload 会话让官方 mcp 扩展重读配置并重连（面板「重连」入口） */
 	mcpConfigReload: ch(

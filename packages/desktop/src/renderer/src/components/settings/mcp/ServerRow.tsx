@@ -1,6 +1,5 @@
 import type { McpServerView } from "@percho/shared";
 import { useState } from "react";
-import { getPi } from "../../../api";
 import { useT } from "../../../i18n";
 import { useMcpStore } from "../../../stores/mcp";
 import { useSessionsStore } from "../../../stores/sessions";
@@ -13,7 +12,7 @@ function StateDot({ state }: { state: ReturnType<typeof serverState> }) {
 	const cls =
 		state === "connected"
 			? "bg-emerald-500"
-			: state === "error"
+			: state === "error" || state === "failed"
 				? "bg-err"
 				: state === "disabled"
 					? "bg-ink-faint/60"
@@ -25,16 +24,24 @@ function StateDot({ state }: { state: ReturnType<typeof serverState> }) {
 function StateWord({ state }: { state: ReturnType<typeof serverState> }) {
 	const t = useT();
 	if (state === "connected") return null;
-	const key =
-		state === "needs-auth"
-			? "settings.mcp.state.needAuth"
-			: state === "error"
-				? "settings.mcp.state.error"
-				: state === "disabled"
-					? "settings.mcp.state.disabled"
-					: "settings.mcp.state.idle";
+	const keys = {
+		"needs-auth": "settings.mcp.state.needAuth",
+		error: "settings.mcp.state.error",
+		idle: "settings.mcp.state.idle",
+		disabled: "settings.mcp.state.disabled",
+		"not-started": "settings.mcp.state.not-started",
+		unknown: "settings.mcp.state.unknown",
+		connecting: "settings.mcp.state.connecting",
+		disconnected: "settings.mcp.state.disconnected",
+		failed: "settings.mcp.state.failed",
+		closed: "settings.mcp.state.closed",
+		overridden: "settings.mcp.state.overridden",
+	} as const;
+	const key = keys[state];
 	return (
-		<span className={`shrink-0 text-ui-11 ${state === "error" ? "text-err" : "text-ink-faint"}`}>
+		<span
+			className={`shrink-0 text-ui-11 ${state === "error" || state === "failed" ? "text-err" : "text-ink-faint"}`}
+		>
 			{t(key)}
 		</span>
 	);
@@ -50,11 +57,12 @@ export function ServerRow({
 	onEdit: (server: McpServerView) => void;
 }) {
 	const t = useT();
-	const { upsert, remove, reload } = useMcpStore();
+	const { upsert, remove, reload, login } = useMcpStore();
 	const [toolsOpen, setToolsOpen] = useState(false);
 	const [reasonOpen, setReasonOpen] = useState(false);
 	const [confirming, setConfirming] = useState(false);
 	const [loginWaiting, setLoginWaiting] = useState(false);
+	const [loginError, setLoginError] = useState<string>();
 	const state = serverState(server);
 	const summary = toolsSummary(server.tools);
 	const command = transportSummary(server);
@@ -93,12 +101,15 @@ export function ServerRow({
 				<span className="shrink-0 whitespace-nowrap text-ui-11 text-ink-faint">{transportWord}</span>
 				<StateWord state={state} />
 				<span className="flex-1" />
+				{state === "connected" && !summary && (
+					<span className="text-ui-11 text-ink-faint">{t("settings.mcp.connectedZero")}</span>
+				)}
 				{summary && (
 					<button type="button" className={`${ghost} shrink-0`} onClick={() => setToolsOpen((v) => !v)}>
 						{t("settings.mcp.toolsCount", { count: summary.count })}
 					</button>
 				)}
-				{state === "error" && (
+				{(state === "error" || state === "failed" || (state === "disconnected" && server.error)) && (
 					<button
 						type="button"
 						className={`${ghostStrong} flex shrink-0 items-center gap-1 whitespace-nowrap`}
@@ -115,9 +126,13 @@ export function ServerRow({
 						type="button"
 						className={`${ghostStrong} shrink-0`}
 						onClick={() => {
-							// 真实动作：官方 notify 给了授权页 URL 就打开系统浏览器；没有就展开说明文字
-							if (server.authUrl) void getPi().openExternal({ url: server.authUrl });
 							setLoginWaiting(true);
+							setLoginError(undefined);
+							void login(server.name)
+								.catch((error: unknown) => {
+									setLoginError(error instanceof Error ? error.message : String(error));
+								})
+								.finally(() => setLoginWaiting(false));
 						}}
 					>
 						{t("settings.mcp.login")}
@@ -183,7 +198,7 @@ export function ServerRow({
 					<div className="flex flex-col gap-1">
 						{server.tools.map((tool) => (
 							<div key={tool.name} className="flex items-center gap-2 font-mono text-ui-115 text-ink-dim">
-								<span className="text-ink-2">{tool.name.replace(/^mcp__[^_]+__/, "")}</span>
+								<span className="text-ink-2">{tool.name}</span>
 								<span className="font-sans text-ui-11 text-ink-faint">
 									{tool.readOnly ? t("settings.mcp.toolReadOnly") : t("settings.mcp.toolWrite")}
 								</span>
@@ -201,24 +216,9 @@ export function ServerRow({
 				</div>
 			)}
 
-			{(loginWaiting || (state === "needs-auth" && reasonOpen)) && (
-				<div className="mb-1 ml-[15px] mt-2 flex items-start gap-2 rounded-[10px] bg-hover px-3 py-2.5 text-ui-115 text-ink-dim">
-					{loginWaiting && (
-						<span className="mt-[3px] h-2.5 w-2.5 shrink-0 animate-spin rounded-full border border-ink-faint border-t-ink-2" />
-					)}
-					<div className="flex-1 leading-relaxed">
-						{server.authUrl ? (
-							<>
-								<span>{t("settings.mcp.loginWaiting")}</span>
-								<p className="mt-1 break-all font-mono text-ui-11 text-ink-faint">{server.authUrl}</p>
-							</>
-						) : (
-							<span>{t("settings.mcp.loginManual")}</span>
-						)}
-					</div>
-					<button type="button" className={ghost} onClick={() => setLoginWaiting(false)}>
-						{t("settings.mcp.cancel")}
-					</button>
+			{(loginWaiting || loginError) && (
+				<div className="mb-1 ml-[15px] mt-2 rounded-[10px] bg-hover px-3 py-2.5 text-ui-115 text-ink-dim">
+					{loginError ?? t("settings.mcp.loginWaiting")}
 				</div>
 			)}
 

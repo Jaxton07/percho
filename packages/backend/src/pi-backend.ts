@@ -36,12 +36,9 @@ import type {
 	LoadedResources,
 	LoginEventPayload,
 	McpConfigListResult,
-	McpGlobalNotice,
 	McpMutationResult,
 	McpReloadReport,
-	McpServerStatus,
 	McpServersChangedPayload,
-	McpToolView,
 	McpUpsertInput,
 	PendingInteractions,
 	PermissionAnswer,
@@ -70,6 +67,7 @@ import {
 	isModelVisible,
 	parseComposerDocument,
 	parseExpandedSkillInvocation,
+	projectMcpRuntime,
 	type QueuedMessages,
 	readComposerDocument,
 	TODO_TOOL_NAME,
@@ -78,8 +76,8 @@ import {
 import { ChannelSubscriptionRegistry } from "./channel-subscriptions";
 import { Emitter } from "./emitter";
 import { createLogger } from "./log";
-import { listMcpServers, removeMcpServer, upsertMcpServer } from "./mcp/config-store";
-import { parseMcpNotice } from "./mcp/notices";
+import { importMcpServers, listMcpServers, removeMcpServer, upsertMcpServer } from "./mcp/config-store";
+import { McpRuntimeStore } from "./mcp/runtime-store";
 import { PackageAdmin } from "./packages/admin";
 import { loadPermissionConfig } from "./permissions";
 import {
@@ -165,7 +163,6 @@ import {
 import { makeCompactionGuardExtension } from "./tools/compaction-guard";
 import { createCompactionRequestPolicy } from "./tools/compaction-guard/request-policy";
 import { makeEvapExtension, reportEvapBatch } from "./tools/context-evaporation";
-import { collectMcpTools, makeMcpInventoryExtension } from "./tools/mcp-inventory";
 import { makeShowImageTool } from "./tools/show-image";
 import { discoverAgents, isSubagentSessionPath, makeSubagentTool } from "./tools/subagent";
 import { applySubagentMutex, resolveSubagentPreferBuiltin } from "./tools/subagent/mutex";
@@ -532,12 +529,11 @@ export class PiBackend {
 	private readonly extensionEditorTextEmitter = new Emitter<ExtensionEditorTextEvent>();
 	/** MCP 运行态变化（spec §4.8.1：面板刷新用） */
 	private readonly mcpServersChangedEmitter = new Emitter<McpServersChangedPayload>();
-	/** 最近一次聚合的「server → 工具（带只读标记）」（面板初次打开时不必等下一个 turn） */
-	private mcpToolsByServer = new Map<string, McpToolView[]>();
-	/** 官方 notify 给出的每台 server 的失效原因 / 需登录（key = server 名） */
-	private mcpServerNotices = new Map<string, { error?: string; needsAuth?: boolean; authUrl?: string }>();
-	/** 官方 notify 里不带 server 名的全局提示 */
-	private mcpGlobalNotice: McpGlobalNotice | undefined;
+	private readonly mcpRuntime = new McpRuntimeStore((snapshot) =>
+		this.mcpServersChangedEmitter.emit(snapshot),
+	);
+	private readonly mcpOwners = new WeakMap<PermissionModeRef, ReturnType<McpRuntimeStore["owner"]>>();
+
 	/** 项目信任决策记录（~/.percho/agent/trust.json，Percho 私有）+ 信任请求门控 */
 	private readonly trustStore = new ProjectTrustStore(getAgentDir());
 	private readonly trustGate = new TrustGate(
@@ -910,8 +906,6 @@ export class PiBackend {
 		);
 		// todo-reminder 最后：compaction 后恢复注入的任务列表不被上游折叠
 		factories.push(makeTodoReminderExtension());
-		// MCP 运行态聚合（spec §4.8.1）：三个时机聚合 `mcp__<server>__<tool>`，集合变化才发事件给面板
-		factories.push(makeMcpInventoryExtension((servers) => this.emitMcpServersChanged(servers)));
 		return factories;
 	}
 
@@ -949,7 +943,6 @@ export class PiBackend {
 				uiContext: makeUiContext({
 					dialogs,
 					onNotify: (message, level, source) => {
-						this.handleMcpNotice(sessionId, message);
 						this.extensionNotifyEmitter.emit({ sessionId, extensionPath: source, message, level });
 					},
 					onEditorText: (text, source) => this.extensionEditorTextEmitter.emit({ sessionId, text, source }),
@@ -1480,6 +1473,8 @@ export class PiBackend {
 		);
 		this.constructionGates.add(gate);
 		const modeRef: PermissionModeRef = { current: "default" };
+		const mcpOwner = this.mcpRuntime.owner(cwd);
+		this.mcpOwners.set(modeRef, mcpOwner);
 		let candidate: AgentSession | undefined;
 		let candidateDialogs: ExtensionDialogHost | undefined;
 		let registered = false,
@@ -1492,7 +1487,11 @@ export class PiBackend {
 			const load = async () => {
 				this.assertRunning();
 				const endResources = measureSessionSwitch("resourceLoad");
-				loaded ??= await this.projectLoader.load(cwd, { confirm: confirmBridge, modeRef });
+				loaded ??= await this.projectLoader.load(cwd, {
+					confirm: confirmBridge,
+					modeRef,
+					mcpObserver: mcpOwner.observer,
+				});
 				endResources();
 				this.assertRunning();
 				return loaded;
@@ -1509,6 +1508,7 @@ export class PiBackend {
 			});
 			endCreate();
 			candidate = session;
+			mcpOwner.bind(session.sessionId);
 			if (!readOnly) session.setCompactionPolicy(createCompactionRequestPolicy(getAgentDir()));
 			this.assertRunning();
 			const mutex = applySubagentMutex(session, extensionsResult, preferBuiltin);
@@ -1589,6 +1589,7 @@ export class PiBackend {
 			this.assertRunning();
 			return session;
 		} catch (error) {
+			mcpOwner.close();
 			if (this.constructionGates.delete(gate)) gate.dispose();
 			if (candidate && !registered && !released) {
 				const unregistered = candidate;
@@ -1726,6 +1727,7 @@ export class PiBackend {
 
 	/** Registered-session-only auxiliary groups; conflict cleanup must not touch holder ids. */
 	private beforeSessionShutdown(entry: RegisteredSession, strict = false): void {
+		this.mcpOwners.get(entry.modeRef)?.close();
 		this.sourceSnapshots.release(this.sourceOwner(entry));
 		if (!entry.readOnly) this.media.closeOwner(entry.session.sessionId, entry.modeRef);
 		const failures: unknown[] = [];
@@ -2732,7 +2734,7 @@ export class PiBackend {
 		return this.trustEmitter.subscribe(handler);
 	}
 
-	/** MCP 运行态变化订阅（每 server 的工具 + 失效原因 + 全局提示；main 转发 renderer 面板用） */
+	/** MCP 完整运行实例快照订阅。 */
 	onMcpServersChanged(handler: (payload: McpServersChangedPayload) => void): () => void {
 		return this.mcpServersChangedEmitter.subscribe(handler);
 	}
@@ -2741,137 +2743,41 @@ export class PiBackend {
 		return this.loginEmitter.subscribe(handler);
 	}
 
-	/** MCP 运行态聚合回调入口（扩展侧调用）：缓存工具集 + 广播（附官方 notify 带来的失效原因） */
-	private emitMcpServersChanged(servers: McpServerStatus[]): void {
-		this.mcpToolsByServer = new Map(servers.map((server) => [server.name, server.tools]));
-		this.emitMcpStatus();
-	}
-
-	/** 广播当前运行态（工具集来自缓存/实时聚合，原因来自 notify 缓存） */
-	private emitMcpStatus(): void {
-		const tools = this.mcpToolsMap();
-		const names = new Set([...tools.keys(), ...this.mcpServerNotices.keys()]);
-		const servers: McpServerStatus[] = [...names].sort().map((name) => {
-			const notice = this.mcpServerNotices.get(name);
-			return {
-				name,
-				tools: tools.get(name) ?? [],
-				error: notice?.error,
-				needsAuth: notice?.needsAuth || undefined,
-				authUrl: notice?.authUrl,
-			};
-		});
-		this.mcpServersChangedEmitter.emit({ servers, notice: this.mcpGlobalNotice });
-	}
-
-	/**
-	 * 官方 mcp 扩展的 notify 分流（spec §7.6）：面板要显示「失败原因 / 需要登录 / 工具不可达」，
-	 * 而官方没有状态 API —— 它在这三种时机 notify 结构化文本，按 `mcp/notices.ts` 的形状解析，
-	 * 解析不出来就**不猜**（回落到「未连上」档）。有变化才广播，避免重复刷面板。
-	 */
-	private handleMcpNotice(sessionId: string, message: string): void {
-		const update = parseMcpNotice(message);
-		if (!update) return;
-		let changed = false;
-		for (const entry of update.servers) {
-			const current = this.mcpServerNotices.get(entry.name) ?? {};
-			if (entry.clear) {
-				if (this.mcpServerNotices.delete(entry.name)) changed = true;
-				continue;
-			}
-			const next = {
-				error: entry.error,
-				needsAuth: entry.needsAuth || undefined,
-				authUrl: entry.authUrl ?? (entry.needsAuth ? current.authUrl : undefined),
-			};
-			if (
-				current.error !== next.error ||
-				current.needsAuth !== next.needsAuth ||
-				current.authUrl !== next.authUrl
-			) {
-				this.mcpServerNotices.set(entry.name, next);
-				changed = true;
-			}
-		}
-		if (update.global !== undefined) {
-			if (update.global === null) {
-				if (this.mcpGlobalNotice) {
-					this.mcpGlobalNotice = undefined;
-					changed = true;
-				}
-			} else if (this.mcpGlobalNotice?.message !== update.global.message) {
-				this.mcpGlobalNotice = update.global;
-				changed = true;
-			}
-		}
-		if (changed) {
-			log.info("mcp notice", sessionId, { message: message.slice(0, 120) });
-			this.emitMcpStatus();
-		}
-	}
-
-	/**
-	 * MCP 面板：当前「server → 工具名」。**事件缓存 + 实时聚合合流**：
-	 * 官方 mcp 扩展在 `session_start` 之后才异步连上服务器，而我们的事件只在三个钩子上报——
-	 * 只信缓存会在「刚重连／面板刚打开」时显示空集（实测踩到）。所以这里以 registry 里各会话的
-	 * `getAllTools()` 为准（晚合并覆盖早值），事件缓存只作没有活跃会话时的兜底。
-	 */
-	private mcpToolsMap(): Map<string, McpToolView[]> {
-		const merged = new Map<string, McpToolView[]>(this.mcpToolsByServer);
-		for (const entry of this.registry.list()) {
-			try {
-				const tools = collectMcpTools(
-					entry.session.getAllTools().map((tool) => ({
-						name: tool.name,
-						readOnly: tool.annotations?.readOnlyHint === true,
-					})),
-				);
-				for (const [name, list] of tools) merged.set(name, list);
-			} catch (err) {
-				log.warn("mcp tools aggregate failed", entry.session.sessionId, err);
-			}
-		}
-		return merged;
-	}
-
 	/**
 	 * MCP 配置列表（spec §5：全局 + 项目级；项目级仅受信时读）。
 	 * 只做 JSON 读写 + 形状校验，连接与 `${VAR}` 展开都交给官方 mcp 扩展。
 	 */
-	async getMcpConfig(options: { cwd?: string } = {}): Promise<McpConfigListResult> {
-		const cwd = options.cwd ?? this.options.defaultCwd;
-		return listMcpServers({
-			cwd,
-			projectTrusted: this.isProjectTrusted(cwd),
-			toolsByServer: this.mcpToolsMap(),
-			noticesByServer: this.mcpServerNotices,
-			globalNotice: this.mcpGlobalNotice,
-		});
+	async getMcpConfig(
+		options: { cwd?: string; instanceId?: string | null } = {},
+	): Promise<McpConfigListResult> {
+		const cwd = options.cwd;
+		const config = await listMcpServers({ cwd, projectTrusted: this.isProjectTrusted(cwd) });
+		return projectMcpRuntime({ ...config, contextCwd: cwd }, this.mcpRuntime.snapshot(), options.instanceId);
+	}
+
+	async importMcpServers(input: { json: string; cwd?: string }): Promise<McpMutationResult> {
+		const cwd = input.cwd;
+		await importMcpServers({ ...input, cwd }, { projectTrusted: this.isProjectTrusted(cwd) });
+		const reload = await this.reloadIdleSessions(undefined);
+		return { config: await this.getMcpConfig({ cwd }), reload };
 	}
 
 	/** 新增/编辑一个 MCP server；写盘后 reload 空闲会话（运行中的跳过并回报，见 reloadIdleSessions） */
 	async upsertMcpServer(input: McpUpsertInput): Promise<McpMutationResult> {
-		const cwd = input.cwd ?? this.options.defaultCwd;
+		const cwd = input.cwd;
+		if (input.scope === "project" && !cwd) throw new Error("项目级 MCP 配置需要项目目录");
 		const projectTrusted = this.isProjectTrusted(cwd);
-		const config = await upsertMcpServer(
-			{ ...input, cwd },
-			{
-				projectTrusted,
-				toolsByServer: this.mcpToolsMap(),
-				noticesByServer: this.mcpServerNotices,
-				globalNotice: this.mcpGlobalNotice,
-			},
-		);
+		await upsertMcpServer({ ...input, cwd }, { projectTrusted });
 		const reload = await this.reloadIdleSessions(input.scope === "project" ? cwd : undefined);
-		return { config, reload };
+		return { config: await this.getMcpConfig({ cwd }), reload };
 	}
 
 	/**
 	 * 重连（面板入口）：reload 会话 → 官方 mcp 扩展重读 mcp.json、重连 server。
-	 * 对应官方 `/mcp` 的 reconnect；连接失败/需要登录一律以官方 notify 文本呈现（面板不自己解析）。
+	 * 对应官方 `/mcp` 的 reconnect；连接状态来自官方运行态快照。
 	 */
 	async reloadMcpServers(input: { cwd?: string } = {}): Promise<McpMutationResult> {
-		const cwd = input.cwd ?? this.options.defaultCwd;
+		const cwd = input.cwd;
 		const reload = await this.reloadIdleSessions(undefined); // 全局配置影响所有会话
 		return { config: await this.getMcpConfig({ cwd }), reload };
 	}
@@ -2882,10 +2788,40 @@ export class PiBackend {
 		cwd?: string;
 		name: string;
 	}): Promise<McpMutationResult> {
-		const cwd = input.cwd ?? this.options.defaultCwd;
-		await removeMcpServer({ ...input, cwd });
+		const cwd = input.cwd;
+		if (input.scope === "project") {
+			if (!cwd) throw new Error("项目级 MCP 配置需要项目目录");
+			if (!this.isProjectTrusted(cwd)) throw new Error("项目未受信，不能修改 MCP 配置");
+		}
+		await removeMcpServer({ ...input, cwd, projectTrusted: this.isProjectTrusted(cwd) });
 		const reload = await this.reloadIdleSessions(input.scope === "project" ? cwd : undefined);
 		return { config: await this.getMcpConfig({ cwd }), reload };
+	}
+
+	/** Use the SDK command only for the currently observed owner and server. */
+	async mcpLogin(input: { instanceId: string; name: string }): Promise<void> {
+		const instance = this.mcpRuntime
+			.snapshot()
+			.instances.find((item) => item.instanceId === input.instanceId);
+		const entry = instance && this.registry.get(instance.sessionId);
+		if (!instance || !entry || entry.readOnly || this.stopping || this.sessionDisposals.has(entry))
+			throw new Error("MCP 实例已失效，请重新选择会话");
+		if (
+			!instance.available ||
+			!instance.servers.some((server) => server.name === input.name && server.state === "needs-auth")
+		)
+			throw new Error("MCP 服务器当前不需要登录或状态不可用");
+		if (!this.options.openExternal) throw new Error("此环境无法打开授权页面，请在服务器侧使用维护入口登录");
+		// The observed original name has already passed the official SDK loader's validation.
+		if (!entry.session.extensionRunner.getCommand("mcp")) throw new Error("MCP 登录命令不可用");
+		// During agent_settled the SDK defers prompt; a later reload could remove the command.
+		// The public lease excludes that window, and is released before prompt synchronously.
+		if (!entry.session.isStreaming) {
+			const lease = entry.session.tryAcquireIdleLease();
+			if (!lease) throw new Error("会话正在切换，请稍后重试 MCP 登录");
+			lease.release();
+		}
+		await entry.session.prompt(`/mcp login ${input.name}`);
 	}
 
 	/**
@@ -2926,6 +2862,7 @@ export class PiBackend {
 			try {
 				this.assertRunning();
 				await entry.session.reload();
+				this.mcpOwners.get(entry.modeRef)?.ensurePresent();
 				reloaded++;
 			} catch (err) {
 				log.warn("session reload failed", entry.session.sessionId, err);

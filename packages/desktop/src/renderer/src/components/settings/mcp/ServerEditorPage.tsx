@@ -3,7 +3,6 @@ import { useState } from "react";
 import { useT } from "../../../i18n";
 import { useMcpStore } from "../../../stores/mcp";
 import { ArrowLeftIcon } from "../../icons";
-import { parsePastedServers } from "./pure";
 
 /** 暴露档位：五档全部平铺（总共就 5 个，折叠反而多一次点击；设计稿 v1.2） */
 const EXPOSURES: McpExposure[] = ["deferred", "codemode", "direct", "model-only", "hidden"];
@@ -128,11 +127,11 @@ export function ServerEditorPage({
 			setError(t("settings.mcp.needName"));
 			return;
 		}
-		if (form.transport === "command" && !form.command.trim()) {
+		if (!server?.isOverride && form.transport === "command" && !form.command.trim()) {
 			setError(t("settings.mcp.needTransport"));
 			return;
 		}
-		if (form.transport === "url" && !form.url.trim()) {
+		if (!server?.isOverride && form.transport === "url" && !form.url.trim()) {
 			setError(t("settings.mcp.needTransport"));
 			return;
 		}
@@ -142,11 +141,14 @@ export function ServerEditorPage({
 				scope: form.scope,
 				cwd,
 				name: server ? server.name : form.name.trim(),
-				command: form.transport === "command" ? form.command.trim() : undefined,
-				args: form.transport === "command" && form.args.trim() ? form.args.trim().split(/\s+/) : undefined,
-				url: form.transport === "url" ? form.url.trim() : undefined,
-				description: form.description,
-				exposure: form.exposure,
+				command: !server?.isOverride && form.transport === "command" ? form.command.trim() : undefined,
+				args:
+					!server?.isOverride && form.transport === "command" && form.args.trim()
+						? form.args.trim().split(/\s+/)
+						: undefined,
+				url: !server?.isOverride && form.transport === "url" ? form.url.trim() : undefined,
+				description: server?.isOverride ? undefined : form.description,
+				exposure: server?.isOverride && form.exposure === server.exposure ? undefined : form.exposure,
 			};
 			await upsert(payload);
 			onBack();
@@ -186,7 +188,7 @@ export function ServerEditorPage({
 						<Segmented
 							value={form.scope}
 							options={[
-								{ value: "user", label: t("settings.mcp.scopeGlobal") },
+								{ value: "user", label: t("settings.mcp.scopeGlobal"), disabled: !!server?.isOverride },
 								{ value: "project", label: t("settings.mcp.scopeProject"), disabled: projectDisabled },
 							]}
 							onChange={(scope) => setForm({ ...form, scope })}
@@ -197,73 +199,80 @@ export function ServerEditorPage({
 							</p>
 						)}
 					</div>
-					<div>
-						<span className={label}>{t("settings.mcp.transport")}</span>
-						<Segmented
-							value={form.transport}
-							options={[
-								{ value: "command", label: t("settings.mcp.transportCommand") },
-								{ value: "url", label: t("settings.mcp.transportUrlOption") },
-							]}
-							onChange={(transport) => setForm({ ...form, transport })}
-						/>
-					</div>
+					{!server?.isOverride && (
+						<div>
+							<span className={label}>{t("settings.mcp.transport")}</span>
+							<Segmented
+								value={form.transport}
+								options={[
+									{ value: "command", label: t("settings.mcp.transportCommand") },
+									{ value: "url", label: t("settings.mcp.transportUrlOption") },
+								]}
+								onChange={(transport) => setForm({ ...form, transport })}
+							/>
+						</div>
+					)}
 				</div>
 
-				{form.transport === "command" ? (
-					<>
+				{!server?.isOverride &&
+					(form.transport === "command" ? (
+						<>
+							<div>
+								<label className={label} htmlFor="mcp-command">
+									{t("settings.mcp.command")}
+								</label>
+								<input
+									id="mcp-command"
+									className={`${monoInput} ${absolutePathHint ? "border-err" : ""}`}
+									value={form.command}
+									placeholder="/opt/homebrew/bin/npx"
+									onChange={(event) => setForm({ ...form, command: event.target.value })}
+								/>
+								{absolutePathHint && (
+									<p className={`${hint} text-err`}>{t("settings.mcp.absolutePathHint")}</p>
+								)}
+							</div>
+							<div>
+								<label className={label} htmlFor="mcp-args">
+									{t("settings.mcp.args")}
+								</label>
+								<input
+									id="mcp-args"
+									className={monoInput}
+									value={form.args}
+									placeholder="-y @modelcontextprotocol/server-everything"
+									onChange={(event) => setForm({ ...form, args: event.target.value })}
+								/>
+							</div>
+						</>
+					) : (
 						<div>
-							<label className={label} htmlFor="mcp-command">
-								{t("settings.mcp.command")}
+							<label className={label} htmlFor="mcp-url">
+								{t("settings.mcp.url")}
 							</label>
 							<input
-								id="mcp-command"
-								className={`${monoInput} ${absolutePathHint ? "border-err" : ""}`}
-								value={form.command}
-								placeholder="/opt/homebrew/bin/npx"
-								onChange={(event) => setForm({ ...form, command: event.target.value })}
-							/>
-							{absolutePathHint && <p className={`${hint} text-err`}>{t("settings.mcp.absolutePathHint")}</p>}
-						</div>
-						<div>
-							<label className={label} htmlFor="mcp-args">
-								{t("settings.mcp.args")}
-							</label>
-							<input
-								id="mcp-args"
+								id="mcp-url"
 								className={monoInput}
-								value={form.args}
-								placeholder="-y @modelcontextprotocol/server-everything"
-								onChange={(event) => setForm({ ...form, args: event.target.value })}
+								value={form.url}
+								placeholder="https://example.com/mcp"
+								onChange={(event) => setForm({ ...form, url: event.target.value })}
 							/>
 						</div>
-					</>
-				) : (
+					))}
+
+				{!server?.isOverride && (
 					<div>
-						<label className={label} htmlFor="mcp-url">
-							{t("settings.mcp.url")}
+						<label className={label} htmlFor="mcp-desc">
+							{t("settings.mcp.description")}
 						</label>
 						<input
-							id="mcp-url"
-							className={monoInput}
-							value={form.url}
-							placeholder="https://example.com/mcp"
-							onChange={(event) => setForm({ ...form, url: event.target.value })}
+							id="mcp-desc"
+							className={input}
+							value={form.description}
+							onChange={(event) => setForm({ ...form, description: event.target.value })}
 						/>
 					</div>
 				)}
-
-				<div>
-					<label className={label} htmlFor="mcp-desc">
-						{t("settings.mcp.description")}
-					</label>
-					<input
-						id="mcp-desc"
-						className={input}
-						value={form.description}
-						onChange={(event) => setForm({ ...form, description: event.target.value })}
-					/>
-				</div>
 
 				<div>
 					<span className={label}>{t("settings.mcp.exposure")}</span>
@@ -303,22 +312,15 @@ export function ServerEditorPage({
 /** 「粘贴 JSON 配置」二级页面：把别处抄来的片段直接导入（一次性，不再逐字段填） */
 export function PasteJsonPage({ cwd, onBack }: { cwd?: string; onBack: () => void }) {
 	const t = useT();
-	const { upsert } = useMcpStore();
+	const { importServers } = useMcpStore();
 	const [text, setText] = useState("");
 	const [error, setError] = useState<string | null>(null);
 	const [saving, setSaving] = useState(false);
 
 	const save = async () => {
-		const parsed = parsePastedServers(text);
-		if (parsed.error) {
-			setError(parsed.error);
-			return;
-		}
 		setSaving(true);
 		try {
-			for (const entry of parsed.entries) {
-				await upsert({ ...entry, scope: "user", cwd });
-			}
+			await importServers(text, cwd);
 			onBack();
 		} catch (err) {
 			setError(err instanceof Error ? err.message : String(err));

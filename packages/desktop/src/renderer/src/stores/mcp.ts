@@ -1,82 +1,170 @@
-import type {
-	McpConfigListResult,
-	McpGlobalNotice,
-	McpReloadReport,
-	McpServerStatus,
-	McpServersChangedPayload,
-	McpServerView,
-	McpUpsertInput,
+import {
+	type EnvironmentRef,
+	environmentKey,
+	environmentRef,
+	LOCAL_ENVIRONMENT,
+	type McpConfigListResult,
+	type McpGlobalNotice,
+	type McpReloadReport,
+	type McpRuntimeInventory,
+	type McpServersChangedPayload,
+	type McpUpsertInput,
+	projectMcpRuntime,
 } from "@percho/shared";
-import { type EnvironmentRef, environmentKey, environmentRef, LOCAL_ENVIRONMENT } from "@percho/shared";
 import { create, useStore } from "zustand";
 import { getExecutionApi } from "../environment-api";
 import { useEnvironment } from "../environment-context";
 import { useToastsStore } from "./toasts";
 
 interface McpStore {
-	/** 最近一次 mcp.configList 结果（null = 未加载） */
 	config: McpConfigListResult | null;
 	loading: boolean;
-	/** 运行态快照（由 `mcp.servers:changed` 事件维护；初次打开时以 configList 里的为准） */
-	status: Record<string, McpServerStatus>;
-	/** 官方 notify 的全局提示（工具不可达 / 配置错误） */
 	notice?: McpGlobalNotice;
-	/** 最近一次写盘/重连的 reload 结果（面板提示「已重连 N / M 个运行中未重连」） */
 	lastReload: McpReloadReport | null;
-	load: (cwd?: string) => Promise<void>;
+	selectedInstanceId: string | null | undefined;
+	load: (cwd?: string, activeSessionId?: string) => Promise<void>;
+	selectInstance: (id: string | null) => void;
+	login: (name: string) => Promise<void>;
 	upsert: (input: McpUpsertInput) => Promise<void>;
+	importServers: (json: string, cwd?: string) => Promise<void>;
 	remove: (input: { scope: "user" | "project"; cwd?: string; name: string }) => Promise<void>;
-	/** 重连：reload 空闲会话让官方 mcp 扩展重读配置重连（运行中的会话会被跳过并回报） */
 	reload: (cwd?: string) => Promise<void>;
-	/** 事件入口（main 转发 `mcp.servers:changed`） */
 	applyServersChanged: (payload: McpServersChangedPayload) => void;
-}
-
-/** 把运行态合流进视图（工具 / 失败原因 / 需登录都以运行态为准，configList 里的同名字段只作兜底） */
-function mergeStatus(
-	config: McpConfigListResult,
-	status: Record<string, McpServerStatus>,
-): McpConfigListResult {
-	const withStatus = (servers: McpServerView[]) =>
-		servers.map((server) => {
-			const live = status[server.name];
-			if (!live) return server;
-			return {
-				...server,
-				tools: live.tools.length > 0 ? live.tools : server.tools,
-				error: live.error ?? server.error,
-				needsAuth: live.needsAuth ?? server.needsAuth,
-			};
-		});
-	return { ...config, global: withStatus(config.global), project: withStatus(config.project) };
-}
-
-/** 运行态快照也带一份视图（configList 的 tools 只是打开面板那一刻的快照） */
-function statusFrom(config: McpConfigListResult): Record<string, McpServerStatus> {
-	const entries = [...config.global, ...config.project].map((server) => [
-		server.name,
-		{ name: server.name, tools: server.tools, error: server.error, needsAuth: server.needsAuth },
-	]);
-	return Object.fromEntries(entries) as Record<string, McpServerStatus>;
 }
 
 function createMcpStore(environment: EnvironmentRef) {
 	return create<McpStore>((set, get) => {
 		let loadSeq = 0;
+		let operationSeq = 0;
+		let selectionSeq = 0;
+		let reconcileFailedOperation: (() => Promise<void>) | undefined;
+		// Concurrent IPC completion can install a newer recovery while this operation is awaiting.
+		const reconcileAfterWrite = () => reconcileFailedOperation?.();
+		const retiredEpochs = new Set<string>();
+		let contextCwd: string | undefined;
+		let runtime: McpRuntimeInventory | undefined;
+		let eventSeq = 0;
+		let activeSession: string | undefined;
+		const project = (config: McpConfigListResult) => {
+			if (!runtime) return config;
+			let selected = get().selectedInstanceId;
+			if (selected === undefined && activeSession) {
+				selected = runtime.instances.find(
+					(instance) => instance.cwd === config.contextCwd && instance.sessionId === activeSession,
+				)?.instanceId;
+			}
+			const result = projectMcpRuntime(config, runtime, selected);
+			// Once selected, keep the identity even if the instance disappears.
+			if (selected === undefined && result.selectedInstanceId) selected = result.selectedInstanceId;
+			set({ selectedInstanceId: selected });
+			return result;
+		};
+		const acceptBase = (incoming: McpRuntimeInventory | undefined, startedAt: number) => {
+			if (!incoming) return;
+			if (retiredEpochs.has(incoming.epoch)) return;
+			if (
+				runtime &&
+				((runtime.epoch === incoming.epoch && runtime.revision > incoming.revision) ||
+					(runtime.epoch !== incoming.epoch && eventSeq !== startedAt))
+			)
+				return;
+			if (runtime && runtime.epoch !== incoming.epoch) retiredEpochs.add(runtime.epoch);
+			runtime = incoming;
+		};
+		const commit = (config: McpConfigListResult) => {
+			const projected = project(config);
+			set({ config: projected, notice: projected.notice });
+		};
+		const mutationSelection = () => {
+			const id = get().selectedInstanceId;
+			const instance = runtime?.instances.find(
+				(item) => item.instanceId === id && item.cwd === get().config?.contextCwd,
+			);
+			return { id, sessionId: instance?.sessionId, cwd: get().config?.contextCwd, selectionSeq };
+		};
+		const followMutation = (selection: ReturnType<typeof mutationSelection>) => {
+			if (
+				selection.selectionSeq !== selectionSeq ||
+				!selection.sessionId ||
+				get().selectedInstanceId !== selection.id ||
+				get().config?.contextCwd !== selection.cwd
+			)
+				return;
+			const next = runtime?.instances.find(
+				(item) => item.cwd === selection.cwd && item.sessionId === selection.sessionId,
+			);
+			if (next) set({ selectedInstanceId: next.instanceId });
+		};
+		const mutate = async (
+			request: () => Promise<{ config: McpConfigListResult; reload: McpReloadReport }>,
+		) => {
+			const seq = loadSeq;
+			const operation = ++operationSeq;
+			reconcileFailedOperation = undefined;
+			const startedAt = eventSeq;
+			const selection = mutationSelection();
+			const cwd = contextCwd;
+			const current = () => seq === loadSeq && operation === operationSeq;
+			let recoverySeq = 0;
+			const recover = async () => {
+				if (!current()) return;
+				const read = ++recoverySeq;
+				try {
+					const recoveryStartedAt = eventSeq;
+					const config = await getExecutionApi(environment).mcpConfigList({ cwd });
+					if (current() && read === recoverySeq) {
+						acceptBase(config.runtime, recoveryStartedAt);
+						followMutation(selection);
+						commit(config);
+					}
+				} catch {
+					// Keep the mutation's original failure; another pending write may trigger reconciliation.
+				}
+			};
+			let result: { config: McpConfigListResult; reload: McpReloadReport };
+			try {
+				result = await request();
+			} catch (error) {
+				if (current()) reconcileFailedOperation = recover;
+				await reconcileAfterWrite();
+				throw error;
+			}
+			if (!current()) {
+				// A later preflight can fail before this earlier write lands. Re-read after it settles,
+				// rather than discard the only evidence that the persisted configuration changed.
+				await reconcileAfterWrite();
+				return;
+			}
+			acceptBase(result.config.runtime, startedAt);
+			followMutation(selection);
+			commit(result.config);
+			set({ lastReload: result.reload });
+		};
 		return {
 			config: null,
 			loading: false,
-			status: {},
 			lastReload: null,
-
-			load: async (cwd) => {
+			selectedInstanceId: undefined,
+			load: async (cwd, sessionId) => {
 				const seq = ++loadSeq;
+				const operation = ++operationSeq;
+				if (contextCwd !== cwd || activeSession !== sessionId || !get().config) {
+					contextCwd = cwd;
+					activeSession = sessionId;
+					set({ config: null, notice: undefined, selectedInstanceId: undefined });
+				}
+				const startedAt = eventSeq;
 				set({ loading: true });
 				try {
 					const config = await getExecutionApi(environment).mcpConfigList({ cwd });
 					if (seq !== loadSeq) return;
-					const status = { ...statusFrom(config), ...get().status };
-					set({ config: mergeStatus(config, status), status, notice: config.notice, loading: false });
+					if (operation !== operationSeq) {
+						set({ loading: false });
+						return;
+					}
+					acceptBase(config.runtime, startedAt);
+					commit(config);
+					set({ loading: false });
 				} catch (error) {
 					if (seq !== loadSeq) return;
 					set({ loading: false });
@@ -84,33 +172,32 @@ function createMcpStore(environment: EnvironmentRef) {
 					console.error("MCP 配置读取失败", error);
 				}
 			},
-
-			upsert: async (input) => {
-				const { config, reload } = await getExecutionApi(environment).mcpConfigUpsert(input);
-				set({
-					config: mergeStatus(config, get().status),
-					notice: config.notice,
-					lastReload: reload,
-				});
-			},
-
-			remove: async (input) => {
-				const { config, reload } = await getExecutionApi(environment).mcpConfigRemove(input);
-				set({ config: mergeStatus(config, get().status), notice: config.notice, lastReload: reload });
-			},
-
-			reload: async (cwd) => {
-				const { config, reload } = await getExecutionApi(environment).mcpConfigReload({ cwd });
-				set({ config: mergeStatus(config, get().status), notice: config.notice, lastReload: reload });
-			},
-
-			applyServersChanged: ({ servers, notice }) => {
-				const status = Object.fromEntries(servers.map((server) => [server.name, server])) as Record<
-					string,
-					McpServerStatus
-				>;
+			selectInstance: (id) => {
+				selectionSeq++;
+				set({ selectedInstanceId: id });
 				const config = get().config;
-				set({ status, notice, config: config ? mergeStatus(config, status) : config });
+				if (config) commit(config);
+			},
+			login: async (name) => {
+				const instanceId = get().selectedInstanceId;
+				if (!instanceId) throw new Error("MCP instance is not selected");
+				await getExecutionApi(environment).mcpLogin({ instanceId, name });
+			},
+			upsert: (input) => mutate(() => getExecutionApi(environment).mcpConfigUpsert(input)),
+			importServers: (json, cwd) => mutate(() => getExecutionApi(environment).mcpConfigImport({ json, cwd })),
+			remove: (input) => mutate(() => getExecutionApi(environment).mcpConfigRemove(input)),
+			reload: (cwd) => mutate(() => getExecutionApi(environment).mcpConfigReload({ cwd })),
+			applyServersChanged: (payload) => {
+				if (
+					retiredEpochs.has(payload.epoch) ||
+					(runtime?.epoch === payload.epoch && runtime.revision >= payload.revision)
+				)
+					return;
+				if (runtime && runtime.epoch !== payload.epoch) retiredEpochs.add(runtime.epoch);
+				eventSeq++;
+				runtime = payload;
+				const config = get().config;
+				if (config) commit(config);
 			},
 		};
 	});
@@ -133,5 +220,4 @@ function useBoundMcpStore<T = McpStore>(selector?: (state: McpStore) => T): T {
 	const store = getMcpStore(useEnvironment());
 	return useStore(store, selector ?? ((state) => state as unknown as T));
 }
-// Static access is the local compatibility entry. Environment operations use getMcpStore(ref).
 export const useMcpStore = Object.assign(useBoundMcpStore, localStore);

@@ -14,7 +14,7 @@ type CurrentSlot = LivePreviewItem;
 /** thinking 行的固定身份在 MetaGroup；此处只显示对应的流式正文。 */
 function ThinkingPreviewRow({ text }: { text: string }) {
 	return (
-		<div className="flex min-w-0 items-center py-0.5 text-ui-13 text-ink-dim">
+		<div className="flex min-w-0 items-center py-0.5 text-ui-13 text-ink-dim group-open/outer:hidden">
 			<StreamingMarquee text={text} />
 		</div>
 	);
@@ -25,10 +25,17 @@ function ToolPreviewRow({ name, text }: { name: string; text: string }) {
 	const t = useT();
 	return (
 		<div className="flex min-w-0 items-center gap-2 py-0.5">
-			<span data-shimmer-name className="sweep-target shrink-0 font-mono text-ui-13 text-ink-working">
+			<span
+				data-shimmer-name
+				className="sweep-target max-w-full shrink-0 truncate font-mono text-ui-13 font-bold text-ink-working"
+			>
 				{displayName(name, t)}
 			</span>
-			{text && <StreamingMarquee text={text} />}
+			{text && (
+				<div className="min-w-0 flex-1 group-open/outer:hidden">
+					<StreamingMarquee text={text} />
+				</div>
+			)}
 		</div>
 	);
 }
@@ -130,6 +137,17 @@ export function PreviewTicker({
 		const timer = setTimeout(() => setPrevious(null), PREV_CLEANUP_MS);
 		return () => clearTimeout(timer);
 	}, [previous]);
+
+	// 调度器的停留和退场期间不能让当前工具标题缺席或显示旧工具。
+	// 待调度追上后恢复原有串行动画；标题与参数仍使用同一行组件。
+	const latest = items.at(-1);
+	if (latest?.kind === "tool" && shown?.id !== latest.id) {
+		return (
+			<div className="relative h-6 overflow-hidden text-ink-dim [mask-image:linear-gradient(to_bottom,transparent,black_20%,black_80%,transparent)]">
+				<div className="preview-slide-in absolute inset-x-0 top-0">{rowOf(latest)}</div>
+			</div>
+		);
+	}
 
 	if (!shown && !previous) return reserveSpace ? <div className="relative h-6 overflow-hidden" /> : null;
 

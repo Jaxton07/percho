@@ -1891,8 +1891,201 @@ index 7ee0501..9d290bb 100644
          return entry.id;
      }
      /** Append a session info entry (e.g., display name). Returns entry id. */
+diff --git a/node_modules/@earendil-works/pi-coding-agent/dist/extensions/mcp/index.d.ts b/node_modules/@earendil-works/pi-coding-agent/dist/extensions/mcp/index.d.ts
+index 2ee96fa..1bd50b7 100644
+--- a/node_modules/@earendil-works/pi-coding-agent/dist/extensions/mcp/index.d.ts
++++ b/node_modules/@earendil-works/pi-coding-agent/dist/extensions/mcp/index.d.ts
+@@ -30,7 +30,23 @@ import { type LoadedMcpConfig, type McpServerConfigPatch, type McpServerEntry }
+ import type { McpOAuthCredentialStore } from "./oauth.ts";
+ import type { McpTransportFactory } from "./runtime.ts";
+ export type { McpTransportFactory } from "./runtime.ts";
++export interface McpRuntimeSnapshot {
++    phase: "starting" | "running" | "closed";
++    servers: Array<{
++        name: string;
++        source: string;
++        scope: "global" | "project" | "extension";
++        override?: string;
++        state: "connecting" | "connected" | "disconnected" | "needs-auth" | "failed" | "closed" | "disabled";
++        error?: string;
++        tools: Array<{ name: string; readOnly?: boolean }>;
++    }>;
++    errors: string[];
++    notice?: { level: "info" | "warning" | "error"; message: string };
++}
+ export interface McpExtensionOptions {
++    /** Receives complete snapshots without config or credentials; external error text is unchanged. */
++    onStatus?: (snapshot: McpRuntimeSnapshot) => void;
+     /** Defaults to reading `mcp.json` from the agent directory and the trusted project. */
+     loadConfig?: (ctx: ExtensionContext) => LoadedMcpConfig;
+     /** Defaults to stdio and streamable HTTP transports built from the server config. */
+diff --git a/node_modules/@earendil-works/pi-coding-agent/dist/extensions/mcp/index.js b/node_modules/@earendil-works/pi-coding-agent/dist/extensions/mcp/index.js
+index 69edd29..55f7fc5 100644
+--- a/node_modules/@earendil-works/pi-coding-agent/dist/extensions/mcp/index.js
++++ b/node_modules/@earendil-works/pi-coding-agent/dist/extensions/mcp/index.js
+@@ -233,9 +233,33 @@ export function createMcpExtension(options = {}) {
+             return work;
+         };
+         const listeners = new Set();
++        let phase = "closed";
++        let notice;
++        const emitStatus = () => {
++            if (!options.onStatus) return;
++            const snapshot = {
++                phase,
++                servers: phase === "closed" ? [] : servers.map(({ entry, connection, runtimeError }) => ({
++                    name: entry.name, source: entry.source, scope: entry.scope ?? "global",
++                    ...(entry.override ? { override: entry.override } : {}),
++                    state: !isEnabled({ entry }) ? "disabled" : runtimeError ? "failed" : connection?.state ?? "connecting",
++                    ...((runtimeError || connection?.error) ? { error: runtimeError || connection.error } : {}),
++                    tools: [...(serverTools.get(entry.name) ?? [])].map((name) => {
++                        const owner = toolOwners.get(name);
++                        const tool = connection?.tools.find((item) => owner === `${entry.name}\0${item.name}`);
++                        const readOnly = tool?.annotations?.readOnlyHint;
++                        return { name, ...(typeof readOnly === "boolean" ? { readOnly } : {}) };
++                    }),
++                })),
++                errors: phase === "closed" ? [] : [...configErrors],
++                ...(phase !== "closed" && notice ? { notice: { ...notice } } : {}),
++            };
++            try { options.onStatus(snapshot); } catch { /* Observers cannot affect the extension. */ }
++        };
+         const emitChange = () => {
+             for (const listener of listeners)
+                 listener();
++            if (phase === "running") emitStatus();
+         };
+         const subscribe = (listener) => {
+             listeners.add(listener);
+@@ -417,15 +441,23 @@ export function createMcpExtension(options = {}) {
+             if (activate.length > 0)
+                 pi.setActiveTools([...active, ...activate]);
+             const reachable = [...active, ...activate];
+-            if (hasCodemode && reachable.includes(CODEMODE_TOOL_NAME))
+-                return;
+-            if (hasToolSearch && reachable.includes(TOOL_SEARCH_TOOL_NAME))
++            if ((hasCodemode && reachable.includes(CODEMODE_TOOL_NAME)) ||
++                (hasToolSearch && reachable.includes(TOOL_SEARCH_TOOL_NAME))) {
++                if (notice) {
++                    notice = undefined;
++                    warnedUnreachable = false;
++                    emitChange();
++                }
+                 return;
++            }
+             if (warnedUnreachable)
+                 return;
+             warnedUnreachable = true;
+             const reason = needsCodemode && hasCodemode && !autoEnableCodemode ? " (autoEnableCodemode is false)" : "";
+-            ctx.ui.notify(`MCP tools are only reachable from the codemode or tool_search tool, but neither is active${reason}; they cannot be called.`, "warning");
++            const message = `MCP tools are only reachable from the codemode or tool_search tool, but neither is active${reason}; they cannot be called.`;
++            notice = { level: "warning", message };
++            emitChange();
++            ctx.ui.notify(message, "warning");
+         };
+         /**
+          * Stored tokens of servers waiting for a sign-in, as they were when the sign-in was needed.
+@@ -466,8 +498,10 @@ export function createMcpExtension(options = {}) {
+                 providerToken: async (provider) => modelRegistry?.getApiKeyForProvider(provider),
+                 log: getServerLog(runtime),
+                 onTools: (connection) => {
+-                    if (isCurrent())
++                    if (isCurrent()) {
+                         registerTools(connection);
++                        emitChange();
++                    }
+                 },
+                 onChange: (connection) => {
+                     if (isCurrent())
+@@ -489,6 +523,7 @@ export function createMcpExtension(options = {}) {
+             const { signal } = session;
+             const attempt = Symbol();
+             server.attempt = attempt;
++            server.runtimeError = undefined;
+             const isCurrent = () => !signal.aborted && server.attempt === attempt && isEnabled(server) && servers.includes(server);
+             const ready = (async () => {
+                 await after;
+@@ -499,7 +534,12 @@ export function createMcpExtension(options = {}) {
+                     return;
+                 await connection.getClient().catch(() => undefined);
+             })();
+-            server.ready = ready.catch(() => undefined);
++            server.ready = ready.catch((error) => {
++                if (isCurrent()) {
++                    server.runtimeError = errorMessage(error);
++                    emitChange();
++                }
++            });
+             return ready;
+         };
+         /** Wait for the latest connection attempts, including ones queued while waiting, or an abort. */
+@@ -970,7 +1010,22 @@ export function createMcpExtension(options = {}) {
+             ctx.ui.notify(`Signed in to MCP server "${name}" (${server.connection?.tools.length ?? 0} tools).`, "info");
+         };
+         pi.on("session_start", (_event, ctx) => {
+-            const loaded = (options.loadConfig ?? defaultLoadConfig)(ctx);
++            servers = [];
++            configErrors = [];
++            serverTools.clear();
++            toolOwners.clear();
++            notice = undefined;
++            phase = "starting";
++            emitStatus();
++            let loaded;
++            try {
++                loaded = (options.loadConfig ?? defaultLoadConfig)(ctx);
++            } catch (error) {
++                configErrors = [errorMessage(error)];
++                phase = "running";
++                emitStatus();
++                throw error;
++            }
+             configErrors = loaded.errors;
+             projectConfig = loaded.projectConfig;
+             autoEnableCodemode = loaded.autoEnableCodemode ?? true;
+@@ -984,6 +1039,7 @@ export function createMcpExtension(options = {}) {
+             const registered = registeredServers();
+             overridden = registered.overridden;
+             servers = [...loaded.servers.map((entry) => ({ entry })), ...registered.servers];
++            phase = "running";
+             emitChange();
+             // Codemode or tool_search is activated from the config: the first prompt does not wait for
+             // servers whose tools are not declared to the model, and scripts or searches wait for them.
+@@ -1113,6 +1169,8 @@ export function createMcpExtension(options = {}) {
+             reportProblems(ctx, connecting);
+         });
+         pi.on("session_shutdown", async () => {
++            phase = "closed";
++            emitStatus();
+             session.abort();
+             const closing = connections();
+             servers = [];
+diff --git a/node_modules/@earendil-works/pi-coding-agent/dist/extensions/mcp/runtime.js b/node_modules/@earendil-works/pi-coding-agent/dist/extensions/mcp/runtime.js
+index bad9188..9bad6e0 100644
+--- a/node_modules/@earendil-works/pi-coding-agent/dist/extensions/mcp/runtime.js
++++ b/node_modules/@earendil-works/pi-coding-agent/dist/extensions/mcp/runtime.js
+@@ -226,6 +226,11 @@ export class McpServerConnection {
+     }
+     /** Connect again with fresh credentials, for example after signing in. */
+     async reconnect() {
++        if (!this.closed) {
++            this.state = "connecting";
++            this.error = undefined;
++            this.changed();
++        }
+         await this.opening?.catch(() => undefined);
+         if (this.client)
+             await this.dropClient(this.client);
+@@ -259,6 +264,7 @@ export class McpServerConnection {
+     }
+     async open() {
+         this.state = "connecting";
++        this.error = undefined;
+         this.changed();
+         const retries = "url" in this.entry.config ? CONNECT_RETRY_DELAYS_MS : [];
+         for (let attempt = 0;; attempt++) {
 diff --git a/node_modules/@earendil-works/pi-coding-agent/dist/index.d.ts b/node_modules/@earendil-works/pi-coding-agent/dist/index.d.ts
-index bb8acdb..191a042 100644
+index bb8acdb..9c4b73c 100644
 --- a/node_modules/@earendil-works/pi-coding-agent/dist/index.d.ts
 +++ b/node_modules/@earendil-works/pi-coding-agent/dist/index.d.ts
 @@ -1,6 +1,6 @@
@@ -1903,3 +2096,33 @@ index bb8acdb..191a042 100644
  export { readStoredCredential } from "./core/auth-storage.ts";
  export type { CacheWarmingDecision, CacheWarmingStatus } from "./core/cache-warmer.ts";
  export { type BranchPreparation, type BranchSummaryResult, type CollectEntriesResult, type CompactionResult, type CutPointResult, calculateContextTokens, collectEntriesForBranchSummary, compact, DEFAULT_COMPACTION_SETTINGS, estimateTokens, type FileOperations, findCutPoint, findTurnStartIndex, type GenerateBranchSummaryOptions, generateBranchSummary, generateSummary, generateSummaryWithUsage, getLastAssistantUsage, prepareBranchEntries, serializeConversation, shouldCompact, } from "./core/compaction/index.ts";
+@@ -8,7 +8,7 @@ export { createEventBus, type EventBus, type EventBusController } from "./core/e
+ export type { AfterProviderResponseEvent, AgentActivityOutcome, AgentBeforeSettleEvent, AgentBeforeSettleEventResult, AgentEndEvent, AgentSettledEvent, AgentStartEvent, AgentToolResult, AgentToolUpdateCallback, AppKeybinding, AutocompleteProviderFactory, BashToolCallEvent, BeforeAgentStartCustomEvent, BeforeAgentStartEvent, BeforeAgentStartEventResult, BeforeAgentStartUserEvent, BeforeProviderHeadersEvent, BeforeProviderRequestEvent, BeforeProviderRequestEventResult, BoundaryContextPreview, BoundaryResult, BoundaryState, BuildSystemPromptOptions, CacheWarmingDecisionEvent, CacheWarmingDecisionEventResult, CompactionEntryDraft, CompactOptions, ContextEditEntryDraft, ContextEvent, ContextEventResult, ContextUsage, ContextWithSystemEvent, CustomEntryDraft, CustomMessageEntryDraft, CustomToolCallEvent, EditToolCallEvent, EntryRenderer, EntryRenderOptions, ExecOptions, ExecResult, ExecuteToolOptions, Extension, ExtensionActions, ExtensionAPI, ExtensionCommandContext, ExtensionCommandContextActions, ExtensionContext, ExtensionContextActions, ExtensionError, ExtensionEvent, ExtensionFactory, ExtensionFlag, ExtensionHandler, ExtensionRuntime, ExtensionShortcut, ExtensionToolContext, ExtensionUIContext, ExtensionUIDialogOptions, ExtensionVirtualModel, ExtensionWidgetOptions, FindToolCallEvent, GrepToolCallEvent, InlineExtension, InputEvent, InputEventResult, InputSource, KeybindingHints, KeybindingsManager, LoadExtensionsResult, LsToolCallEvent, MarkdownMessageType, MarkdownTransformContext, MarkdownTransformer, MarkdownTransformerOptions, MarkdownTransformerRegistration, McpServersChangeEvent, MessageEndEvent, MessageEndEventResult, MessageRenderer, MessageRenderOptions, MessageStartEvent, MessageUpdateEvent, ModelSelectEvent, ModelSelectSource, NormalizedBuildSystemPromptOptions, PowerShellToolCallEvent, ProjectTrustContext, ProjectTrustEvent, ProjectTrustEventDecision, ProjectTrustEventResult, ProjectTrustHandler, ProviderConfig, ProviderModelConfig, ProviderStreamEvent, ReadToolCallEvent, RegisteredCommand, RegisteredTool, ResolvedCommand, ResourcesDiscoverEvent, ResourcesDiscoverResult, SessionBeforeCompactEvent, SessionBeforeCompactResult, SessionBeforeForkEvent, SessionBeforeForkResult, SessionBeforeSwitchEvent, SessionBeforeSwitchResult, SessionBeforeTreeEvent, SessionBeforeTreeResult, SessionBoundaryDraft, SessionCompactEvent, SessionCompactFailedEvent, SessionInfoChangedEvent, SessionShutdownEvent, SessionStartEvent, SessionTreeEvent, SlashCommandInfo, SlashCommandSource, SourceInfo, TerminalInputHandler, ThinkingLevelSelectEvent, ToolAnnotations, ToolCallEvent, ToolCallEventResult, ToolDefinition, ToolExecutionEndEvent, ToolExecutionMode, ToolExecutionStartEvent, ToolExecutionUpdateEvent, ToolExposure, ToolInfo, ToolLoadout, ToolLoadoutChanges, ToolNamespace, ToolRendererResolver, ToolRenderers, ToolRenderResultOptions, ToolResultEvent, ToolResultEventResult, TurnEndEvent, TurnEndEventResult, TurnStartEvent, UIPromptEndEvent, UIPromptKind, UIPromptStartEvent, UserBashEvent, UserBashEventResult, WidgetPlacement, WorkingIndicatorOptions, WriteToolCallEvent, } from "./core/extensions/index.ts";
+ export { createExtensionRuntime, defineTool, discoverAndLoadExtensions, ExtensionRunner, isBashToolResult, isEditToolResult, isFindToolResult, isGrepToolResult, isLsToolResult, isPowerShellToolResult, isReadToolResult, isToolCallEventType, isWriteToolResult, wrapRegisteredTool, wrapRegisteredTools, } from "./core/extensions/index.ts";
+ export type { ReadonlyFooterDataProvider } from "./core/footer-data-provider.ts";
+-export type { RegisteredMcpServer } from "./core/mcp-servers.ts";
++export { validateMcpServerConfig, type RegisteredMcpServer } from "./core/mcp-servers.ts";
+ export { convertToLlm } from "./core/messages.ts";
+ export { ModelRegistry } from "./core/model-registry.ts";
+ export { type ModelScopeDiagnostic, type ResolveCliModelResult, type ResolveModelScopeResult, resolveCliModel, resolveModelScopeWithDiagnostics, type ScopedModel, } from "./core/model-resolver.ts";
+@@ -30,7 +30,7 @@ export { type ModelRoute, type ModelRouteReason, type ModelRouteRequest, VIRTUAL
+ export { type CodemodeExtensionOptions, createCodemodeExtension } from "./extensions/codemode/index.ts";
+ export type { CodemodeStoreEntryData, CodemodeToolDetails } from "./extensions/codemode/tool.ts";
+ export type { LoadedMcpConfig, McpExposure, McpServerConfig, McpServerEntry } from "./extensions/mcp/config.ts";
+-export { createMcpExtension, type McpExtensionOptions, type McpTransportFactory } from "./extensions/mcp/index.ts";
++export { createMcpExtension, type McpExtensionOptions, type McpRuntimeSnapshot, type McpTransportFactory } from "./extensions/mcp/index.ts";
+ export { createToolSearchExtension } from "./extensions/tool-search/index.ts";
+ export { type MainOptions, main } from "./main.ts";
+ export { InteractiveMode, type InteractiveModeOptions, type JsonAgentSessionEvent, type ModelInfo, type PrintModeOptions, RpcClient, type RpcClientOptions, type RpcCommand, type RpcEventListener, type RpcExtensionUIRequest, type RpcExtensionUIResponse, type RpcResponse, type RpcSessionState, runPrintMode, runRpcMode, } from "./modes/index.ts";
+diff --git a/node_modules/@earendil-works/pi-coding-agent/dist/index.js b/node_modules/@earendil-works/pi-coding-agent/dist/index.js
+index ab5cfcc..b5b0928 100644
+--- a/node_modules/@earendil-works/pi-coding-agent/dist/index.js
++++ b/node_modules/@earendil-works/pi-coding-agent/dist/index.js
+@@ -34,6 +34,7 @@ export { VIRTUAL_MODEL_STATE_ENTRY, } from "./core/virtual-models.js";
+ // Built-in extensions. The CLI loads them; SDK sessions add them to their extension factories.
+ export { createCodemodeExtension } from "./extensions/codemode/index.js";
+ export { createMcpExtension } from "./extensions/mcp/index.js";
++export { validateMcpServerConfig } from "./core/mcp-servers.js";
+ export { createToolSearchExtension } from "./extensions/tool-search/index.js";
+ // Main entry point
+ export { main } from "./main.js";

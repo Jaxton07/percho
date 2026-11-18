@@ -57,8 +57,6 @@ export function useSweepHighlight(
 	useEffect(() => {
 		if (!enabled) return;
 		if (window.matchMedia("(prefers-reduced-motion: reduce)").matches) return;
-		const label = labelRef.current;
-		if (!label) return;
 		// 光带中心（视口绝对 x）；NaN = 首帧初始化：放在并集左界外（光带完全不可见处）起步
 		let centerAbs = Number.NaN;
 		let dirty = true;
@@ -67,11 +65,6 @@ export function useSweepHighlight(
 			dirty = true;
 		});
 		const observed = new Set<Element>();
-		// Ancestor widths can move centered labels without changing their own size.
-		for (let parent: Element | null = label; parent; parent = parent.parentElement) {
-			observer.observe(parent);
-			observed.add(parent);
-		}
 		const moving = new Map<EventTarget, Set<string>>();
 		const motion = (event: TransitionEvent) => {
 			if (
@@ -96,13 +89,33 @@ export function useSweepHighlight(
 			dirty = true;
 		};
 		const mutations = new MutationObserver(invalidate);
-		if (wrapRef.current)
-			mutations.observe(wrapRef.current, { childList: true, subtree: true, characterData: true });
+		let currentWrap: HTMLDivElement | null = null;
+		let currentLabel: HTMLSpanElement | null = null;
 		document.addEventListener("scroll", invalidate, true);
 		window.addEventListener("resize", invalidate);
 		for (const event of ["transitionrun", "transitionend", "transitioncancel"])
 			document.addEventListener(event, motion as EventListener, true);
 		const paint = () => {
+			// Refs may attach or change after this effect, even without a targetsKey change.
+			if (currentWrap !== wrapRef.current || currentLabel !== labelRef.current) {
+				currentWrap = wrapRef.current;
+				currentLabel = labelRef.current;
+				mutations.disconnect();
+				if (currentWrap)
+					mutations.observe(currentWrap, { childList: true, subtree: true, characterData: true });
+				for (
+					let parent: Element | null = currentWrap ?? currentLabel;
+					parent;
+					parent = parent.parentElement
+				) {
+					if (!observed.has(parent)) {
+						observer.observe(parent);
+						observed.add(parent);
+					}
+				}
+				dirty = true;
+			}
+			if (pairs.some(({ el }) => !el.isConnected)) dirty = true;
 			// Detached transitions cannot deliver their end/cancel event to document.
 			for (const target of moving.keys()) {
 				if (target instanceof Node && !target.isConnected) {
@@ -116,7 +129,8 @@ export function useSweepHighlight(
 				const nameEls = Array.from(
 					wrapRef.current?.querySelectorAll<HTMLElement>("[data-shimmer-name]") ?? [],
 				);
-				const targets = [label, ...nameEls];
+				const targets = [...(labelRef.current ? [labelRef.current] : []), ...nameEls];
+				clearSweepStyles(pairs.filter(({ el }) => !targets.includes(el)).map(({ el }) => el));
 				for (const el of targets)
 					if (!observed.has(el)) {
 						observer.observe(el);
@@ -172,6 +186,7 @@ export function useSweepHighlight(
 				document.removeEventListener(event, motion as EventListener, true);
 			paintRef.current = () => {};
 			clearSweepStyles([
+				...pairs.map(({ el }) => el),
 				labelRef.current,
 				...Array.from(wrapRef.current?.querySelectorAll<HTMLElement>("[data-shimmer-name]") ?? []),
 			]);

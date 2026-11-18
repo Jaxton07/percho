@@ -1,4 +1,4 @@
-import type { InlineExtension } from "@earendil-works/pi-coding-agent";
+import type { InlineExtension, McpRuntimeSnapshot } from "@earendil-works/pi-coding-agent";
 import {
 	createCodemodeExtension,
 	createMcpExtension,
@@ -19,6 +19,7 @@ import { readCodemodeConfig } from "../settings/codemode";
 export function builtinExtensions(deps: {
 	openUrl?: (url: string) => void;
 	agentDir?: string;
+	mcpObserver?: () => (snapshot: McpRuntimeSnapshot) => void;
 }): InlineExtension[] {
 	return [
 		{
@@ -31,6 +32,11 @@ export function builtinExtensions(deps: {
 		},
 		{ name: "tool-search", factory: createToolSearchExtension(), builtin: true, replaceable: true },
 		// openUrl：MCP OAuth 授权页交给 Electron 打开（缺省则扩展回落到平台默认浏览器）
-		{ name: "mcp", factory: createMcpExtension({ openUrl: deps.openUrl }), builtin: true, replaceable: true },
+		{
+			name: "mcp",
+			factory: (pi) => createMcpExtension({ openUrl: deps.openUrl, onStatus: deps.mcpObserver?.() })(pi),
+			builtin: true,
+			replaceable: true,
+		},
 	];
 }

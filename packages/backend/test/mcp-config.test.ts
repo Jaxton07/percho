@@ -1,6 +1,6 @@
 import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { validateMcpServerConfig } from "@earendil-works/pi-mcp";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const agentDir = vi.hoisted(() => ({ value: "" }));
@@ -16,7 +16,9 @@ let root = "";
 let cwd = "";
 
 beforeEach(() => {
-	root = mkdtempSync(join(tmpdir(), "percho-mcp-config-"));
+	const base = join(process.cwd(), "../../.local/tmp");
+	mkdirSync(base, { recursive: true });
+	root = mkdtempSync(join(base, "percho-mcp-config-"));
 	agentDir.value = join(root, "agent");
 	cwd = join(root, "project");
 	mkdirSync(agentDir.value, { recursive: true });
@@ -32,6 +34,92 @@ function readGlobal(): Record<string, unknown> {
 }
 
 describe("mcp.json 读写（spec §4.8）", () => {
+	it("按 SDK 校验名称并保留合法名称", async () => {
+		for (const name of ["my-server", "double__underscore", "a".repeat(200)]) {
+			await upsertMcpServer({ scope: "user", name, command: "node" }, { projectTrusted: false });
+		}
+		const before = readFileSync(join(agentDir.value, "mcp.json"), "utf8");
+		for (const name of ["a.b", "a b", "中文"]) {
+			await expect(
+				upsertMcpServer({ scope: "user", name, command: "node" }, { projectTrusted: false }),
+			).rejects.toThrow(/invalid server name/i);
+		}
+		expect(readFileSync(join(agentDir.value, "mcp.json"), "utf8")).toBe(before);
+	});
+
+	it("诊断现有非法配置及跨受信项目命名空间冲突，同名覆盖合法", async () => {
+		writeFileSync(
+			join(agentDir.value, "mcp.json"),
+			JSON.stringify({
+				other: 42,
+				mcpServers: { "my-server": { command: "node" }, "bad.name": { command: "node" } },
+			}),
+		);
+		mkdirSync(join(cwd, ".pi"), { recursive: true });
+		writeFileSync(
+			join(cwd, ".pi", "mcp.json"),
+			JSON.stringify({ mcpServers: { my_server: { command: "node" } } }),
+		);
+		const result = await listMcpServers({ cwd, projectTrusted: true });
+		expect(result.global.map((s) => s.name)).toContain("bad.name");
+		expect(result.errors.join(" ")).toMatch(/bad.name/);
+		expect(result.errors.join(" ")).toMatch(/my-server.*my_server|my_server.*my-server/);
+		const before = readFileSync(join(agentDir.value, "mcp.json"), "utf8");
+		await expect(
+			upsertMcpServer({ scope: "user", cwd, name: "new", command: "node" }, { projectTrusted: true }),
+		).rejects.toThrow();
+		expect(readFileSync(join(agentDir.value, "mcp.json"), "utf8")).toBe(before);
+		writeFileSync(
+			join(cwd, ".pi", "mcp.json"),
+			JSON.stringify({ mcpServers: { "my-server": { command: "other" } } }),
+		);
+		const override = await listMcpServers({ cwd, projectTrusted: true });
+		expect(override.errors.join(" ")).not.toMatch(/my-server/);
+	});
+
+	it("同真实 SDK 对照名称、传输及受信项目覆盖", async () => {
+		for (const [name, config] of [
+			["my-server", { command: "node" }],
+			["x__y", { command: "node" }],
+			["a".repeat(200), { command: "node" }],
+			["bad.name", { command: "node" }],
+			["bad", { url: "invalid" }],
+		] as const) {
+			const expected = validateMcpServerConfig(name, config).kind !== "invalid";
+			writeFileSync(join(agentDir.value, "mcp.json"), JSON.stringify({ mcpServers: { [name]: config } }));
+			const result = await listMcpServers({ projectTrusted: false });
+			expect(result.errors.length === 0).toBe(expected);
+		}
+		writeFileSync(
+			join(agentDir.value, "mcp.json"),
+			JSON.stringify({ mcpServers: { "my-server": { command: "node" } } }),
+		);
+		mkdirSync(join(cwd, ".pi"), { recursive: true });
+		writeFileSync(
+			join(cwd, ".pi", "mcp.json"),
+			JSON.stringify({ mcpServers: { "my-server": { enabled: false } } }),
+		);
+		expect((await listMcpServers({ cwd, projectTrusted: true })).errors).toEqual([]);
+		const before = readFileSync(join(agentDir.value, "mcp.json"), "utf8");
+		await expect(
+			upsertMcpServer({ scope: "user", cwd, name: "my_server", command: "node" }, { projectTrusted: true }),
+		).rejects.toThrow(/my-server/);
+		expect(readFileSync(join(agentDir.value, "mcp.json"), "utf8")).toBe(before);
+		writeFileSync(
+			join(cwd, ".pi", "mcp.json"),
+			JSON.stringify({ mcpServers: { my_server: { command: "node" } } }),
+		);
+		await upsertMcpServer({ scope: "user", cwd, name: "other", command: "node" }, { projectTrusted: false });
+	});
+
+	it("拒绝 SDK 不支持的传输并保留文件", async () => {
+		await upsertMcpServer({ scope: "user", name: "ok", command: "node" }, { projectTrusted: false });
+		const before = readFileSync(join(agentDir.value, "mcp.json"), "utf8");
+		await expect(
+			upsertMcpServer({ scope: "user", name: "bad", url: "not-a-url" }, { projectTrusted: false }),
+		).rejects.toThrow(/url/i);
+		expect(readFileSync(join(agentDir.value, "mcp.json"), "utf8")).toBe(before);
+	});
 	it("新建文件时写顶层 autoEnableCodemode: false，server 缺省 exposure 写 deferred", async () => {
 		await upsertMcpServer(
 			{ scope: "user", name: "demo", command: "node", args: ["server.mjs"], description: "本地 demo" },
@@ -104,18 +192,15 @@ describe("mcp.json 读写（spec §4.8）", () => {
 		expect(modern?.transport).toEqual({ kind: "url", url: "https://a.example/mcp" });
 	});
 
-	it("运行态工具按 server 合并进视图", async () => {
+	it("配置读取不推断运行态工具", async () => {
 		writeFileSync(
 			join(agentDir.value, "mcp.json"),
 			JSON.stringify({ mcpServers: { demo: { command: "node" } } }),
 		);
 
-		const result = await listMcpServers({
-			projectTrusted: false,
-			toolsByServer: new Map([["demo", [{ name: "mcp__demo__echo", readOnly: true }]]]),
-		});
+		const result = await listMcpServers({ projectTrusted: false });
 
-		expect(result.global[0]?.tools).toEqual([{ name: "mcp__demo__echo", readOnly: true }]);
+		expect(result.global[0]?.tools).toEqual([]);
 	});
 
 	it("项目级配置只在受信项目读；写入项目级在未受信时被拒", async () => {
@@ -147,7 +232,7 @@ describe("mcp.json 读写（spec §4.8）", () => {
 
 		const result = await listMcpServers({ projectTrusted: false });
 
-		expect(result.global).toEqual([]);
+		expect(result.global).toMatchObject([{ name: "bad", transport: { kind: "unknown" } }]);
 		expect(result.errors[0]).toContain("bad");
 	});
 
@@ -163,6 +248,6 @@ describe("mcp.json 读写（spec §4.8）", () => {
 	it("server 名非法被拒（它是工具名前缀，必须安全）", async () => {
 		await expect(
 			upsertMcpServer({ scope: "user", name: "a b/c", command: "node" }, { projectTrusted: false }),
-		).rejects.toThrow("只能包含字母");
+		).rejects.toThrow(/invalid server name/i);
 	});
 });

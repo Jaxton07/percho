@@ -1,5 +1,5 @@
 import type { McpServerView } from "@percho/shared";
-import { environmentEntityRef, sameEnvironment } from "@percho/shared";
+import { environmentEntityRef, LOCAL_ENVIRONMENT, sameEnvironment } from "@percho/shared";
 import { useEffect, useState } from "react";
 import { getExecutionApi } from "../../../environment-api";
 import { useEnvironment } from "../../../environment-context";
@@ -9,7 +9,7 @@ import { useMcpStore } from "../../../stores/mcp";
 import { useSessionsStore } from "../../../stores/sessions";
 import { selectTranscript, useTranscriptStore } from "../../../stores/transcript";
 import { ChevronRightIcon, PlusIcon } from "../../icons";
-import { filterServers, showSearch, sortServers, toolsSummary } from "./pure";
+import { filterServers, serverState, showSearch, sortServers, toolsSummary } from "./pure";
 import { PasteJsonPage, ServerEditorPage } from "./ServerEditorPage";
 import { ServerRow } from "./ServerRow";
 
@@ -70,8 +70,15 @@ function Group({ title, path, children }: { title: string; path?: string; childr
 function useProjectCwd(): string | undefined {
 	const environment = useEnvironment();
 	return useSessionsStore((s) => {
+		const owner = s.activeSessionId
+			? environmentEntityRef(s.activeSessionId).environment
+			: s.newSessionDraft
+				? (s.newSessionDraft.environment ?? LOCAL_ENVIRONMENT)
+				: undefined;
+		if (!owner || !sameEnvironment(owner, environment)) return undefined;
 		const cwd = selectActiveCwd(s);
-		return cwd && sameEnvironment(environmentEntityRef(cwd).environment, environment) ? cwd : undefined;
+		const ref = cwd ? environmentEntityRef(cwd) : undefined;
+		return ref && sameEnvironment(ref.environment, environment) ? ref.id : undefined;
 	});
 }
 
@@ -89,7 +96,16 @@ function useHasActiveSession(): boolean {
 export function McpPanel() {
 	const t = useT();
 	const environment = useEnvironment();
-	const { config, loading, load, notice, lastReload, applyServersChanged } = useMcpStore();
+	const {
+		config,
+		loading,
+		load,
+		notice,
+		lastReload,
+		applyServersChanged,
+		selectedInstanceId,
+		selectInstance,
+	} = useMcpStore();
 	const cwd = useProjectCwd();
 	const hasSession = useHasActiveSession();
 	/** 二级页面（不是浮层）：列表 ↔ 添加/编辑/粘贴 JSON —— 返回按钮在左上角 */
@@ -101,12 +117,15 @@ export function McpPanel() {
 	const [pathsOpen, setPathsOpen] = useState(false);
 	const activeId = useSessionsStore((s) => s.activeSessionId);
 	const running = useTranscriptStore((s) =>
-		activeId ? selectTranscript(s, activeId).phase === "streaming" : false,
+		activeId && sameEnvironment(environmentEntityRef(activeId).environment, environment)
+			? selectTranscript(s, activeId).phase === "streaming"
+			: false,
 	);
 
 	useEffect(() => {
-		void load(cwd);
-	}, [load, cwd]);
+		const ref = activeId ? environmentEntityRef(activeId) : undefined;
+		void load(cwd, ref && sameEnvironment(ref.environment, environment) ? ref.id : undefined);
+	}, [load, cwd, activeId, environment]);
 
 	useEffect(() => {
 		const off = getExecutionApi(environment).onMcpServersChanged((payload) => applyServersChanged(payload));
@@ -118,6 +137,11 @@ export function McpPanel() {
 	const toolCount = servers.reduce((sum, server) => sum + (toolsSummary(server.tools)?.count ?? 0), 0);
 	const connected = servers.filter((server) => serverStateConnected(server)).length;
 	const visible = (servers: McpServerView[]) => filterServers(sortServers(servers), query);
+	const candidates =
+		config?.runtime?.instances.filter((instance) => instance.cwd === config.contextCwd) ?? [];
+	const selectedEnded =
+		typeof selectedInstanceId === "string" &&
+		!candidates.some((instance) => instance.instanceId === selectedInstanceId);
 
 	if (!config && loading) {
 		return <p className="py-8 text-center text-ui-13 text-ink-faint">{t("settings.mcp.loading")}</p>;
@@ -162,6 +186,38 @@ export function McpPanel() {
 					<PlusIcon size={12} /> {t("settings.mcp.addServer")}
 				</button>
 			</div>
+
+			{config && (
+				<div className="mt-3 flex flex-wrap items-center gap-2 text-ui-11 text-ink-faint">
+					<span>
+						{t("settings.mcp.context")}: {config.contextCwd ?? "—"}
+					</span>
+					{candidates.length > 0 ? (
+						<select
+							aria-label={t("settings.mcp.chooseSession")}
+							className="rounded-full bg-hover px-2 py-1 text-ink-2"
+							value={config.selectedInstanceId ?? ""}
+							onChange={(event) => selectInstance(event.target.value || null)}
+						>
+							<option value="">
+								{selectedEnded ? t("settings.mcp.instanceEnded") : t("settings.mcp.chooseSession")}
+							</option>
+							{candidates.map((instance) => (
+								<option key={instance.instanceId} value={instance.instanceId}>
+									{instance.sessionId.slice(0, 8)}
+								</option>
+							))}
+						</select>
+					) : (
+						<span>{selectedEnded ? t("settings.mcp.instanceEnded") : t("settings.mcp.noInstance")}</span>
+					)}
+				</div>
+			)}
+			{config?.runtimeErrors?.map((error) => (
+				<p key={error} className="mt-2 text-ui-11 text-err">
+					{error}
+				</p>
+			))}
 
 			{/* 官方 notify 的全局提示（工具不可达 / 配置错误） */}
 			{notice && (
@@ -316,5 +372,5 @@ export function McpPanel() {
 }
 
 function serverStateConnected(server: McpServerView): boolean {
-	return server.enabled && server.tools.length > 0 && !server.error;
+	return serverState(server) === "connected";
 }
