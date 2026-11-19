@@ -88,7 +88,7 @@ import idleUrl from "./assets/idle.png";                // 插件目录内图片
 
 - ❌ 禁止 import 任何其他 npm 包（构建器只重写上述四个 specifier，其余裸导入构建直接失败）；
 - ❌ 禁止 Node API（`process`/`fs`/`path`/`require` 等都不存在——代码跑在浏览器沙箱渲染进程）；
-- ❌ 禁止 `fetch`/网络请求、`localStorage`（宿主未授权，且 CSP 会拦）；
+- ❌ 禁止 `fetch`/网络请求、`localStorage`（宿主未授权，且 CSP 会拦）；需要跨重启记住的小状态用 `usePluginState`（见 §4）；
 - ❌ 禁止直接访问 `window.pi` 做任何 IPC 调用（公开契约约定只使用 `window.PerchoUI`；这不是隔离沙箱，不能据此声称插件无法访问其他工作台数据）；
 - ✅ 允许 `window.PerchoUI` 的 hooks 取宿主 store 数据（如 todo 面板替换）。
 
@@ -110,6 +110,8 @@ export const hooks: {
 	useContextUsage(sessionId: string | null): ContextUsageInfo | null; // 上下文用量（圆环数据）
 	useQuota(): QuotaInfo | null;      // opencode-go 套餐额度（全局；null = 无订阅，插件应隐藏）
 	useLanguage(): "zh" | "en";       // 插件自有文案跟随中英
+	// 持久化状态（重启 Percho 后仍在），用法同 useState；只能读写本插件自己的那份
+	usePluginState<T>(key: string, fallback: T): [T, (next: T | ((prev: T) => T)) => void, boolean /* ready */];
 };
 export const stores: {                      // 宿主 zustand store（与宿主同一实例）
 	useTranscriptStore; useSessionsStore; useUiStore; useProjectsStore; useSettingsStore;
@@ -118,6 +120,19 @@ export const stores: {                      // 宿主 zustand store（与宿主�
 ```
 
 `react` 的完整导出（`Children`/`Component`/`memo`/`useEffect` 等全部 hooks）也可用，见 `percho-ui.d.ts`。
+
+### `usePluginState`：记住位置、开关等小状态
+
+```tsx
+const [pos, setPos, ready] = usePluginState("position", { x: 0, y: 0 });
+// 拖动中用普通 useState 更新画面，松手时 setPos(最终位置) 存一次；ready 后按当前窗口 clamp 再恢复
+```
+
+- 存在 `userData/ui-plugin-state/<插件名>.json`；插件名由宿主注入，只能读写自己的那份，禁用或未信任的插件读到空、写入被拒。
+- key：字母数字开头、最长 64（`[A-Za-z0-9._-]`）；value：JSON 数据（函数被丢弃、Date 变字符串）；整份上限 64 KB、最多 64 个 key。`setX(undefined)` 删除该 key。
+- set 立刻更新画面；落盘在 300ms 无新值后合并成一次，关窗前会把排队的写入立刻写出。
+- `ready` 为 false 时还在读磁盘，返回的是 fallback；需要「读到再显示」可据此延后渲染。
+- 只能在插件组件渲染时使用（无头插件的 `activate()` 里不可用）。不要存密钥或会话内容——文件是明文 JSON。
 
 ## 5. 样式纪律（强制）
 

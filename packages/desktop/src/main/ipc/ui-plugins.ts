@@ -2,6 +2,7 @@ import { IpcChannels, KNOWN_UI_SLOTS, UI_PLUGINS_CHANNELS } from "@percho/shared
 import { shell } from "electron";
 import { loadUiPluginsConfig } from "../ui-plugins/config";
 import type { UiPluginManager } from "../ui-plugins/manager";
+import { isValidPluginStateKey, readPluginState, writePluginState } from "../ui-plugins/plugin-state";
 import type { UiWorkbenchTrust } from "../ui-plugins/workbench-trust";
 import { registerInvokeHandlers } from "./invoke";
 import { sendToRenderer } from "./send";
@@ -71,5 +72,26 @@ export function registerUiPluginsIpc(
 			if (!dir) return;
 			void shell.openPath(dir);
 		},
+		// 插件状态只给已扫描、已启用且受信任的插件；宿主按它自己的名字调用，插件代码拿不到这个 IPC
+		uiPluginsReadState: async ({ name }) => {
+			if (typeof name !== "string" || !canUseState(manager, name)) return {};
+			return readPluginState(name);
+		},
+		uiPluginsWriteState: async ({ name, key, value }) => {
+			if (typeof name !== "string" || !canUseState(manager, name))
+				return { ok: false as const, error: "Plugin is not enabled" };
+			if (!isValidPluginStateKey(key)) return { ok: false as const, error: "Invalid state key" };
+			try {
+				await writePluginState(name, key, value);
+				return { ok: true as const };
+			} catch (error) {
+				return { ok: false as const, error: error instanceof Error ? error.message : String(error) };
+			}
+		},
 	});
+}
+
+function canUseState(manager: UiPluginManager, name: string): boolean {
+	const info = manager.info(name);
+	return Boolean(info?.enabled && info.trusted && !info.invalidReason);
 }

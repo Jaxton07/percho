@@ -957,6 +957,13 @@ export const UI_PLUGINS_CHANNELS = {
 	>(),
 	/** 打开插件目录（不传 name 开根目录；shell.openPath） */
 	uiPluginsOpenDir: ch("uiPlugins:openDir", "desktop")<{ name?: string }, void>(),
+	/** 读插件自己的持久化状态（整份）。name 必须是已启用、受信任的插件；否则返回空对象 */
+	uiPluginsReadState: ch("uiPlugins:readState", "desktop")<{ name: string }, Record<string, unknown>>(),
+	/** 写插件状态的一个 key（value 省略 = 删除）。只接受 JSON 数据，整份有大小上限 */
+	uiPluginsWriteState: ch("uiPlugins:writeState", "desktop")<
+		{ name: string; key: string; value?: unknown },
+		{ ok: true } | { ok: false; error: string }
+	>(),
 } as const;
 
 /** Desktop-owned connection control; never forwarded to a remote business handler. */
