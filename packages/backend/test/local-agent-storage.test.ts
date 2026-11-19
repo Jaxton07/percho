@@ -531,16 +531,19 @@ describe("links and resource settings", () => {
 				};
 				if (!duringCopy) mutate();
 				let changed = false;
-				await expect(
-					initializeLocalStorage(preview, "copy", {
-						onProgress: (p) => {
-							if (duringCopy && !changed && p.phase === "copy") {
-								changed = true;
-								mutate();
-							}
-						},
-					}),
-				).rejects.toThrow("Source changed");
+				const failure = await initializeLocalStorage(preview, "copy", {
+					onProgress: (p) => {
+						if (duringCopy && !changed && p.phase === "copy") {
+							changed = true;
+							mutate();
+						}
+					},
+				}).catch((error: unknown) => error);
+				expect(failure).toBeInstanceOf(StorageInitializationError);
+				if (process.platform === "win32" && change === "valid-type-change") {
+					// A Windows file symlink cannot resolve a directory: preserve the native permission failure.
+					expect((failure as StorageInitializationError).cause).toHaveProperty("code", "EPERM");
+				} else expect((failure as Error).message).toContain("Source changed");
 				await expect(lstat(selection.target)).rejects.toHaveProperty("code", "ENOENT");
 				await rm(source, { recursive: true, force: true });
 				await rm(join(home, "valid"), { recursive: true, force: true });
