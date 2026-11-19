@@ -129,7 +129,7 @@ function validWarnings(warnings: unknown): warnings is StorageMigrationWarning[]
 			Object.keys(warning).sort().join(",") !== "path,reason" ||
 			typeof warning.path !== "string" ||
 			warning.reason !== "missing-link-target" ||
-			warning.path.includes("\\") ||
+			(process.platform === "win32" && warning.path.includes("\\")) ||
 			isAbsolute(warning.path) ||
 			/^[A-Za-z]:/.test(warning.path)
 		)

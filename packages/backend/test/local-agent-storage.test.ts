@@ -580,17 +580,45 @@ describe("links and resource settings", () => {
 		await symlink(join(home, "missing"), join(source, "Skills", "broken"), "junction");
 		const preview = await inspectLocalStorage(selection);
 		expect(preview.warnings).toEqual([{ path: "Skills/broken", reason: "missing-link-target" }]);
-		await initializeLocalStorage(preview, "copy");
+		const record = await initializeLocalStorage(preview, "copy");
 		expect((await readStorageRecord(selection.target))?.warnings).toEqual(preview.warnings);
+		for (const path of ["skills\\broken", "skills/..\\auth.json", "skills/\\absolute"]) {
+			await writeFile(
+				join(selection.target, LOCAL_STORAGE_RECORD),
+				JSON.stringify({
+					...record,
+					warnings: [{ path, reason: "missing-link-target" }],
+				}),
+			);
+			await expect(readStorageRecord(selection.target)).rejects.toThrow("Invalid local storage record");
+		}
 	});
-	it.skipIf(process.platform === "win32")(
-		"rejects an unrepresentable warning path before publishing",
-		async () => {
-			const source = selection.source as string;
-			await mkdir(join(source, "skills"), { recursive: true });
-			await symlink(join(home, "missing"), join(source, "skills", "bad\\name"));
-			await expect(inspectLocalStorage(selection)).rejects.toThrow("warning");
-			await expect(lstat(selection.target)).rejects.toHaveProperty("code", "ENOENT");
+	it.skipIf(process.platform === "win32").each(["skills", "extensions", "prompts", "themes"])(
+		"imports %s while preserving literal backslashes in broken link warnings",
+		async (resource) => {
+			const source = await seed();
+			const directory = join(source, resource);
+			const missing = join(home, "missing");
+			await mkdir(directory, { recursive: true });
+			await writeFile(join(directory, "good.txt"), "keep this resource");
+			for (const name of ["..\\auth.json", "bad\\name"]) await symlink(missing, join(directory, name));
+			const warnings = [
+				{ path: `${resource}/..\\auth.json`, reason: "missing-link-target" },
+				{ path: `${resource}/bad\\name`, reason: "missing-link-target" },
+			];
+			const preview = await inspectLocalStorage(selection);
+			expect(preview.warnings).toEqual(warnings);
+			await initializeLocalStorage(preview, "copy");
+			expect((await readStorageRecord(selection.target))?.warnings).toEqual(warnings);
+			expect((await inspectLocalStorage(selection)).state).toBe("ready");
+			expect(await readFile(join(selection.target, resource, "good.txt"), "utf8")).toBe("keep this resource");
+			for (const name of ["..\\auth.json", "bad\\name"]) {
+				expect(await readlink(join(directory, name))).toBe(missing);
+				await expect(lstat(join(selection.target, resource, name))).rejects.toHaveProperty("code", "ENOENT");
+			}
+			expect(await readFile(join(selection.target, "auth.json"), "utf8")).toBe(
+				await readFile(join(source, "auth.json"), "utf8"),
+			);
 		},
 	);
 	it.each(["skills", "extensions", "prompts", "themes"])(
