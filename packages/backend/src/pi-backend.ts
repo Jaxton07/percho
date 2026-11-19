@@ -2288,6 +2288,11 @@ export class PiBackend {
 		return this.packages.removePackage(source, scope, context);
 	}
 
+	updatePackage(source: string, scope: "user" | "project", sessionId?: string) {
+		const context = scope === "project" ? this.packageContext(sessionId) : undefined;
+		return this.packages.updatePackage(source, scope, context);
+	}
+
 	/** 读取会话已加载的资源（skills/扩展；设置页展示用） */
 	async getLoadedResources(sessionId: string): Promise<LoadedResources> {
 		const entry = this.requireSession(sessionId);
