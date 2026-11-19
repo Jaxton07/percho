@@ -318,26 +318,28 @@ export function McpPanel() {
 			</div>
 			{detailsOpen && config && (
 				<section aria-label={t("settings.mcp.details")} className="mt-1 flex flex-col gap-2">
-					<div className="flex items-center gap-2 text-ui-11 text-ink-dim">
+					<div className="flex items-start gap-2 text-ui-11 text-ink-dim">
 						<span className="w-20 shrink-0 text-ink-faint">{t("settings.mcp.context")}</span>
-						<span className="truncate font-mono">{config.contextCwd ?? "—"}</span>
+						<span className="min-w-0 flex-1 whitespace-pre-wrap break-all font-mono">
+							{config.contextCwd ?? "—"}
+						</span>
 					</div>
 					<div className="flex items-center gap-2 text-ui-11 text-ink-dim">
 						<span className="w-20 shrink-0 text-ink-faint">{t("settings.mcp.sessionLabel")}</span>
 						{sessionPicker}
 					</div>
-					<div className="flex items-center gap-2 font-mono text-ui-115 text-ink-dim">
-						<span className="w-[52px] shrink-0 text-ui-11 text-ink-faint">
+					<div className="flex items-start gap-2 font-mono text-ui-115 text-ink-dim">
+						<span className="w-20 shrink-0 font-sans text-ui-11 text-ink-faint">
 							{t("settings.mcp.pathGlobal")}
 						</span>
-						<span className="truncate">{config.globalPath}</span>
+						<span className="min-w-0 flex-1 whitespace-pre-wrap break-all">{config.globalPath}</span>
 					</div>
 					{config.projectPath && (
-						<div className="flex items-center gap-2 font-mono text-ui-115 text-ink-dim">
-							<span className="w-[52px] shrink-0 text-ui-11 text-ink-faint">
+						<div className="flex items-start gap-2 font-mono text-ui-115 text-ink-dim">
+							<span className="w-20 shrink-0 font-sans text-ui-11 text-ink-faint">
 								{t("settings.mcp.pathProject")}
 							</span>
-							<span className="truncate">{config.projectPath}</span>
+							<span className="min-w-0 flex-1 whitespace-pre-wrap break-all">{config.projectPath}</span>
 						</div>
 					)}
 				</section>

@@ -238,7 +238,13 @@ it("IPC 只接受 SDK 支持的档位", () => {
 	).toThrow();
 });
 
-it("项目覆盖保存不发送传输和描述字段", async () => {
+it.each([
+	{ transport: server.transport, expected: "/bin/example" },
+	{
+		transport: { kind: "url" as const, url: "https://inherited.invalid/mcp" },
+		expected: "https://inherited.invalid/mcp",
+	},
+])("覆盖详情可查看继承配置，保存不复制传输字段（$expected）", async ({ transport, expected }) => {
 	vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
 	fixture.upsert.mockClear();
 	const host = document.createElement("div");
@@ -247,13 +253,20 @@ it("项目覆盖保存不发送传输和描述字段", async () => {
 		await act(async () =>
 			root.render(
 				<ServerEditorPage
-					server={{ ...server, source: "project", isOverride: true }}
+					server={{ ...server, source: "project", isOverride: true, transport }}
 					cwd="/project"
 					projectTrusted
 					onBack={() => {}}
 				/>,
 			),
 		);
+		expect(host.textContent).toContain(expected);
+		expect(host.textContent).toContain("settings.mcp.inheritedSettings");
+		expect(host.querySelector("#mcp-command")).toBeNull();
+		expect(host.querySelector("#mcp-url")).toBeNull();
+		if (transport.kind === "stdio") {
+			expect(host.querySelector("pre")?.textContent).toBe(JSON.stringify(transport.args ?? [], null, 2));
+		}
 		await act(async () =>
 			[...host.querySelectorAll("button")].find((b) => b.textContent === "settings.mcp.save")!.click(),
 		);

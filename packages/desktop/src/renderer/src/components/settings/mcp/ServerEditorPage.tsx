@@ -217,6 +217,42 @@ export function ServerEditorPage({
 					)}
 				</div>
 
+				{server?.isOverride && (
+					<section aria-label={t("settings.mcp.inheritedSettings")} className="rounded-[10px] bg-hover p-3">
+						<p className="text-ui-12 text-ink-2">{t("settings.mcp.inheritedSettings")}</p>
+						<dl className="mt-2 space-y-2 text-ui-115 text-ink-dim">
+							{server.transport.kind === "stdio" ? (
+								<>
+									<dt className={label}>{t("settings.mcp.command")}</dt>
+									<dd className="whitespace-pre-wrap break-all font-mono">{server.transport.command}</dd>
+									<dt className={label}>{t("settings.mcp.args")}</dt>
+									<dd>
+										<pre className="whitespace-pre-wrap break-all font-mono">
+											{JSON.stringify(server.transport.args ?? [], null, 2)}
+										</pre>
+									</dd>
+								</>
+							) : server.transport.kind === "url" ? (
+								<>
+									<dt className={label}>{t("settings.mcp.url")}</dt>
+									<dd className="whitespace-pre-wrap break-all font-mono">{server.transport.url}</dd>
+								</>
+							) : (
+								<>
+									<dt className={label}>{t("settings.mcp.transport")}</dt>
+									<dd>{t("settings.mcp.transportUnknown")}</dd>
+								</>
+							)}
+							{server.description && (
+								<>
+									<dt className={label}>{t("settings.mcp.description")}</dt>
+									<dd className="whitespace-pre-wrap break-all">{server.description}</dd>
+								</>
+							)}
+						</dl>
+					</section>
+				)}
+
 				{!server?.isOverride &&
 					(form.transport === "command" ? (
 						<>

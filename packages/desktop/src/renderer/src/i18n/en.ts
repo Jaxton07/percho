@@ -937,6 +937,7 @@ export const en: Messages = {
 			addServer: "Add server",
 			editServer: "Edit server",
 			viewServer: "View {name}",
+			inheritedSettings: "Inherited from global (read-only)",
 			back: "Back",
 			name: "Name",
 			nameHint: "Tool-name prefix: mcp__<name>__<tool> (letters, digits, . _ -)",

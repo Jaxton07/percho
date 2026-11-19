@@ -898,6 +898,7 @@ export const zh = {
 			addServer: "添加服务器",
 			editServer: "编辑服务器",
 			viewServer: "查看 {name}",
+			inheritedSettings: "继承自全局（只读）",
 			back: "返回",
 			name: "名称",
 			nameHint: "工具名前缀：mcp__<名称>__<工具>（字母数字与 . _ -）",
