@@ -11,7 +11,13 @@ import type {
 	ExtensionNotifyEvent,
 } from "./extension-dialog";
 import type { LanStatus } from "./lan";
-import type { McpConfigListResult, McpMutationResult, McpServersChangedPayload, McpUpsertInput } from "./mcp";
+import {
+	MCP_EXPOSURES,
+	type McpConfigListResult,
+	type McpMutationResult,
+	type McpServersChangedPayload,
+	type McpUpsertInput,
+} from "./mcp";
 import type {
 	CatalogPackageType,
 	CatalogSearchResult,
@@ -568,14 +574,25 @@ export const PACKAGES_CHANNELS = {
 	)<{ names: string[] }, PackageUpdateInfo[]>({ names: input.array(input.text) }),
 } as const;
 
-/** MCP 域：官方内置扩展的 mcp.json 读写（连接/展开交给官方；工具运行态走 mcp.tools:changed 事件） */
+/** MCP 域：配置只落盘，重启后生效；重连委托官方命令，状态走 mcp.servers:changed。 */
 export const MCP_CHANNELS = {
+	mcpLogin: ch(
+		"mcp:login",
+		"environment",
+		"mutation",
+	)<{ instanceId: string; name: string }, void>({
+		instanceId: input.id,
+		name: input.id,
+	}),
 	/** 读全局 + 项目级 mcp.json（项目级只在受信项目读，与官方 trust-manager 同款） */
 	mcpConfigList: ch(
 		"mcp:configList",
 		"environment",
 		"read",
-	)<{ cwd?: string }, McpConfigListResult>({ cwd: input.optional(input.id) }),
+	)<{ cwd?: string; instanceId?: string }, McpConfigListResult>({
+		cwd: input.optional(input.id),
+		instanceId: input.optional(input.id),
+	}),
 	/** 新增/编辑一个 server（新建默认写 exposure: "deferred"；新建文件时顶层写 autoEnableCodemode: false） */
 	mcpConfigUpsert: ch(
 		"mcp:configUpsert",
@@ -590,14 +607,25 @@ export const MCP_CHANNELS = {
 		url: input.optional(input.text),
 		description: input.optional(input.text),
 		enabled: input.optional(input.boolean),
-		exposure: input.optional(input.oneOf("direct", "deferred", "codemode")),
+		exposure: input.optional(input.oneOf(...MCP_EXPOSURES)),
 	}),
-	/** 重连：reload 会话让官方 mcp 扩展重读配置并重连（面板「重连」入口） */
-	mcpConfigReload: ch(
-		"mcp:configReload",
+	mcpConfigImport: ch(
+		"mcp:configImport",
 		"environment",
 		"mutation",
-	)<{ cwd?: string }, McpMutationResult>({ cwd: input.optional(input.id) }),
+	)<{ json: string; cwd?: string }, McpMutationResult>({
+		json: input.text,
+		cwd: input.optional(input.id),
+	}),
+	/** 只重连所选运行实例中的服务器，不重读配置或重载会话。 */
+	mcpReconnect: ch(
+		"mcp:reconnect",
+		"environment",
+		"mutation",
+	)<{ instanceId: string; name: string }, void>({
+		instanceId: input.id,
+		name: input.id,
+	}),
 	/** 删除一个 server（按 name + scope）；运行中的会话跳过重连并回报 */
 	mcpConfigRemove: ch(
 		"mcp:configRemove",

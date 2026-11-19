@@ -23,8 +23,10 @@ function server(overrides: Partial<McpServerView> = {}): McpServerView {
 }
 
 describe("serverState（设计稿 §3 状态矩阵）", () => {
-	it("有工具 = 已连；无工具 = 未连；enabled:false = 停用（优先于一切）", () => {
-		expect(serverState(server({ tools: [{ name: "mcp__demo__echo" }] }))).toBe("connected");
+	it("显式状态独立于工具数量；停用优先", () => {
+		expect(serverState(server({ state: "connected", tools: [] }))).toBe("connected");
+		expect(serverState(server({ tools: [{ name: "mcp__demo__echo" }] }))).toBe("idle");
+		expect(serverState(server({ state: "disconnected", tools: [{ name: "x" }] }))).toBe("disconnected");
 		expect(serverState(server())).toBe("idle");
 		expect(serverState(server({ enabled: false, tools: [{ name: "mcp__demo__echo" }] }))).toBe("disabled");
 	});

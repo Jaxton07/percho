@@ -1,21 +1,17 @@
 import type { McpServerView, McpToolView, McpUpsertInput } from "@percho/shared";
 
 /** 行的状态（设计稿 §3 状态矩阵）—— 只用一枚 7px 圆点表达，不叠色块 */
-export type ServerState = "connected" | "idle" | "disabled" | "error" | "needs-auth";
+export type ServerState = NonNullable<McpServerView["state"]> | "idle" | "error";
 
-/**
- * 状态判定（面板的核心语义，纯函数便于单测）：
- * - `error` / `needsAuth` 来自官方 notify（后端解析后随视图带过来）；
- * - `enabled:false` → 停用（哪怕之前连过）；
- * - 有工具 → 已连上；否则 = 未连上（没开会话 / 正在连 / deferred 未激活，用户视角一样：暂时没有可用工具）。
- */
+/** 连接只以显式状态为准；旧视图缺少状态时兼容授权、错误和 idle。 */
 export function serverState(
-	server: Pick<McpServerView, "enabled" | "tools" | "error" | "needsAuth">,
+	server: Pick<McpServerView, "enabled" | "tools" | "error" | "needsAuth" | "state">,
 ): ServerState {
+	if (server.state) return server.state;
 	if (!server.enabled) return "disabled";
 	if (server.needsAuth) return "needs-auth";
 	if (server.error) return "error";
-	return server.tools.length > 0 ? "connected" : "idle";
+	return "idle";
 }
 
 /** 工具摘要：「N 个工具 · 只读 M 个」；无工具给 null（交给状态词） */

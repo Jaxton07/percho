@@ -35,6 +35,9 @@ check("1c 独占空闲维护补丁已应用", typeof mod.AgentSession.prototype.
 {
 	const dts = readFileSync(join(pkgRoot, "dist/core/agent-session.d.ts"), "utf8");
 	const exports = readFileSync(join(pkgRoot, "dist/index.d.ts"), "utf8");
+	const mcpDts = readFileSync(join(pkgRoot, "dist/extensions/mcp/index.d.ts"), "utf8");
+	check("1e MCP 运行态观察声明及根类型导出存在", /onStatus\?: \(snapshot: McpRuntimeSnapshot\) => void/.test(mcpDts) && /type McpRuntimeSnapshot/.test(exports));
+	check("1f MCP 官方校验函数根导出存在", typeof mod.validateMcpServerConfig === "function" && /validateMcpServerConfig/.test(exports));
 	check(
 		"1d 空闲维护声明与根类型导出存在",
 		/tryAcquireIdleLease\(\): SessionIdleLease \| undefined/.test(dts) &&

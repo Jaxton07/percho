@@ -46,7 +46,7 @@ function dotClass(state: MetaDot["state"]): string {
 
 /**
  * 外层折叠组：聚合多条非正文消息的思考/工具。
- * 标题行：working 期 = Working/Thinking 标签 + 内联预览行；worked 期 = 分类统计单行
+ * 标题行：working 期 = 思考标签或工具名 + 内联预览行；worked 期 = 分类统计单行
  * （读取/编辑/探索/搜索/执行命令，未知工具按原名计数；无工具时回退 Worked 标签）。
  * 其下圆点行按 tool call 逐粒追加（done 实心 ink / error 灰 / running 空心呼吸），working 期
  * 实时、结束后随 items 冻结，展开组时隐藏。展开区为完整思考行/工具卡。
@@ -140,7 +140,6 @@ export const MetaGroup = memo(function MetaGroup({
 	}, [items]);
 	const isTool = latestActivity?.kind === "tool";
 	const orbState: OrbState = isTool ? "connecting" : "working";
-	const labelKey = isTool ? "message.working" : "message.thinkingLabel";
 
 	// 实时预览：完整活动序列按到达顺序展开，ticker 在 thinking/tool 间保持 latest-wins。
 	// 内容已由 reducer 分块累计；这里不重新合并、解析或摘要。
@@ -160,7 +159,7 @@ export const MetaGroup = memo(function MetaGroup({
 	}, [items]);
 
 	// 扫光目标集合（预览行 id）标识：集合变化 → hook 内同帧补样式，消除新行首帧实色闪烁
-	const liveKey = liveItems.map((i) => i.id).join(",");
+	const liveKey = `${isTool}:${liveItems.map((i) => i.id).join(",")}`;
 	const { labelRef, wrapRef: tickerWrapRef } = useSweepHighlight(shownWorking, liveKey);
 
 	/** 单条已结束（如正文前的思考）直接裸行展示，不套 "已完成 · 1" 外壳；-mb-4 与包装组一致：
@@ -188,15 +187,17 @@ export const MetaGroup = memo(function MetaGroup({
 								<>
 									<div className="flex shrink-0 items-center gap-2">
 										<ThinkingOrb state={orbState} size={20} paused={false} />
-										<span
-											ref={labelRef}
-											className="sweep-target text-ui-14 font-bold text-ink-working transition-colors group-hover/row:text-ink"
-										>
-											{t(labelKey)}
-										</span>
+										{!isTool && (
+											<span
+												ref={labelRef}
+												className="sweep-target text-ui-14 font-bold text-ink-working transition-colors group-hover/row:text-ink"
+											>
+												{t(latestActivity ? "message.thinkingLabel" : "message.working")}
+											</span>
+										)}
 									</div>
-									{/* 实时预览内联进标题行（单行截断，展开组时隐藏） */}
-									<div ref={tickerWrapRef} className="min-w-0 flex-1 group-open/outer:hidden">
+									{/* 展开时隐藏预览正文，保留工具标题 */}
+									<div ref={tickerWrapRef} className="min-w-0 flex-1">
 										<PreviewTicker items={liveItems} reserveSpace />
 									</div>
 								</>

@@ -1,5 +1,5 @@
 import type { McpServerView } from "@percho/shared";
-import { environmentEntityRef, sameEnvironment } from "@percho/shared";
+import { environmentEntityRef, environmentKey, LOCAL_ENVIRONMENT, sameEnvironment } from "@percho/shared";
 import { useEffect, useState } from "react";
 import { getExecutionApi } from "../../../environment-api";
 import { useEnvironment } from "../../../environment-context";
@@ -7,9 +7,8 @@ import { useT } from "../../../i18n";
 import { selectActiveCwd } from "../../../lib/active-cwd";
 import { useMcpStore } from "../../../stores/mcp";
 import { useSessionsStore } from "../../../stores/sessions";
-import { selectTranscript, useTranscriptStore } from "../../../stores/transcript";
 import { ChevronRightIcon, PlusIcon } from "../../icons";
-import { filterServers, showSearch, sortServers, toolsSummary } from "./pure";
+import { filterServers, serverState, showSearch, sortServers, toolsSummary } from "./pure";
 import { PasteJsonPage, ServerEditorPage } from "./ServerEditorPage";
 import { ServerRow } from "./ServerRow";
 
@@ -48,12 +47,11 @@ function Notice({
 	);
 }
 
-function Group({ title, path, children }: { title: string; path?: string; children: React.ReactNode }) {
+function Group({ title, children }: { title: string; children: React.ReactNode }) {
 	return (
 		<div>
 			<div className="flex items-baseline gap-2 px-2.5 pb-0.5">
 				<span className="text-ui-11 text-ink-faint">{title}</span>
-				{path && <span className="truncate font-mono text-ui-11 text-ink-faint">{path}</span>}
 			</div>
 			{children}
 		</div>
@@ -65,48 +63,50 @@ function Group({ title, path, children }: { title: string; path?: string; childr
  *
  * 先前是「在 sessions 列表里按 activeSessionId 找 cwd」，但列表是异步加载的子集：刚打开会话、
  * 列表还没跟上时找不到那条 → cwd 为 undefined → 面板误报「当前没有打开的会话」（实测踩过）。
- * 这里分两个概念：配置读写用 `cwd`；运行态（连接/工具清单）靠会话上报，用 `hasSession` 判断。
+ * 目录用于配置及操作目标归属；运行实例由后端报告，不必常显上下文信息。
  */
 function useProjectCwd(): string | undefined {
 	const environment = useEnvironment();
 	return useSessionsStore((s) => {
+		const owner = s.activeSessionId
+			? environmentEntityRef(s.activeSessionId).environment
+			: s.newSessionDraft
+				? (s.newSessionDraft.environment ?? LOCAL_ENVIRONMENT)
+				: undefined;
+		if (!owner || !sameEnvironment(owner, environment)) return undefined;
 		const cwd = selectActiveCwd(s);
-		return cwd && sameEnvironment(environmentEntityRef(cwd).environment, environment) ? cwd : undefined;
+		const ref = cwd ? environmentEntityRef(cwd) : undefined;
+		return ref && sameEnvironment(ref.environment, environment) ? ref.id : undefined;
 	});
-}
-
-/** 是否有活跃会话（运行态报告来源）：draft 新会话页为 null */
-function useHasActiveSession(): boolean {
-	const environment = useEnvironment();
-	return useSessionsStore(
-		(s) =>
-			s.activeSessionId !== null &&
-			sameEnvironment(environmentEntityRef(s.activeSessionId).environment, environment),
-	);
 }
 
 /** MCP 设置面板：mcp.json 的增删改 + 运行态（连接/工具/失效原因）。连接与授权都交给官方内置 mcp 扩展 */
 export function McpPanel() {
 	const t = useT();
 	const environment = useEnvironment();
-	const { config, loading, load, notice, lastReload, applyServersChanged } = useMcpStore();
+	const {
+		config,
+		loading,
+		load,
+		notice,
+		restartRequired,
+		applyServersChanged,
+		selectedInstanceId,
+		selectInstance,
+	} = useMcpStore();
 	const cwd = useProjectCwd();
-	const hasSession = useHasActiveSession();
 	/** 二级页面（不是浮层）：列表 ↔ 添加/编辑/粘贴 JSON —— 返回按钮在左上角 */
 	const [view, setView] = useState<
 		{ mode: "add" } | { mode: "edit"; server: McpServerView } | { mode: "paste" } | null
 	>(null);
 	const [query, setQuery] = useState("");
-	const [runningDismissed, setRunningDismissed] = useState(false);
-	const [pathsOpen, setPathsOpen] = useState(false);
+	const [detailsOpen, setDetailsOpen] = useState(false);
 	const activeId = useSessionsStore((s) => s.activeSessionId);
-	const running = useTranscriptStore((s) =>
-		activeId ? selectTranscript(s, activeId).phase === "streaming" : false,
-	);
 
 	useEffect(() => {
-		void load(cwd);
-	}, [load, cwd]);
+		const ref = activeId ? environmentEntityRef(activeId) : undefined;
+		void load(cwd, ref && sameEnvironment(ref.environment, environment) ? ref.id : undefined);
+	}, [load, cwd, activeId, environment]);
 
 	useEffect(() => {
 		const off = getExecutionApi(environment).onMcpServersChanged((payload) => applyServersChanged(payload));
@@ -118,6 +118,32 @@ export function McpPanel() {
 	const toolCount = servers.reduce((sum, server) => sum + (toolsSummary(server.tools)?.count ?? 0), 0);
 	const connected = servers.filter((server) => serverStateConnected(server)).length;
 	const visible = (servers: McpServerView[]) => filterServers(sortServers(servers), query);
+	const candidates =
+		config?.runtime?.instances.filter((instance) => instance.cwd === config.contextCwd) ?? [];
+	const selectedEnded =
+		typeof selectedInstanceId === "string" &&
+		!candidates.some((instance) => instance.instanceId === selectedInstanceId);
+	const needsSelection = candidates.length > 0 && !config?.selectedInstanceId;
+	const sessionPicker =
+		candidates.length > 0 ? (
+			<select
+				aria-label={t("settings.mcp.chooseSession")}
+				className="rounded-full bg-hover px-2 py-1 text-ink-2"
+				value={config?.selectedInstanceId ?? ""}
+				onChange={(event) => selectInstance(event.target.value || null)}
+			>
+				<option value="">
+					{selectedEnded ? t("settings.mcp.instanceEnded") : t("settings.mcp.chooseSession")}
+				</option>
+				{candidates.map((instance) => (
+					<option key={instance.instanceId} value={instance.instanceId}>
+						{instance.sessionId.slice(0, 8)}
+					</option>
+				))}
+			</select>
+		) : (
+			<span>{selectedEnded ? t("settings.mcp.instanceEnded") : t("settings.mcp.noInstance")}</span>
+		);
 
 	if (!config && loading) {
 		return <p className="py-8 text-center text-ui-13 text-ink-faint">{t("settings.mcp.loading")}</p>;
@@ -163,6 +189,15 @@ export function McpPanel() {
 				</button>
 			</div>
 
+			{needsSelection && !detailsOpen && (
+				<div className="mt-3 text-ui-11 text-ink-faint">{sessionPicker}</div>
+			)}
+			{config?.runtimeErrors?.map((error) => (
+				<p key={error} className="mt-2 text-ui-11 text-err">
+					{error}
+				</p>
+			))}
+
 			{/* 官方 notify 的全局提示（工具不可达 / 配置错误） */}
 			{notice && (
 				<div className="mt-3">
@@ -173,14 +208,15 @@ export function McpPanel() {
 				</div>
 			)}
 
-			{/* 运行中：重连会打断当前会话，这里把原因说出来（不是 hover title） */}
-			{running && !runningDismissed && (
+			{restartRequired && config && (
 				<div className="mt-3">
 					<Notice
-						glyph="warn"
-						message={t("settings.mcp.runningNotice")}
-						action={t("settings.mcp.gotIt")}
-						onAction={() => setRunningDismissed(true)}
+						glyph="info"
+						message={t(
+							environment.kind === "local"
+								? "settings.mcp.restartRequired"
+								: "settings.mcp.restartRequiredRemote",
+						)}
 					/>
 				</div>
 			)}
@@ -239,7 +275,7 @@ export function McpPanel() {
 						<Group title={t("settings.mcp.groupGlobal")}>
 							{visible(config?.global ?? []).map((server) => (
 								<ServerRow
-									key={`user:${server.name}`}
+									key={`${environmentKey(environment)}:user:${server.name}:${selectedInstanceId ?? ""}`}
 									server={server}
 									cwd={cwd}
 									onEdit={(s) => setView({ mode: "edit", server: s })}
@@ -248,10 +284,10 @@ export function McpPanel() {
 						</Group>
 					)}
 					{(config?.project.length ?? 0) > 0 && (
-						<Group title={t("settings.mcp.groupProject")} path={config?.projectPath}>
+						<Group title={t("settings.mcp.groupProject")}>
 							{visible(config?.project ?? []).map((server) => (
 								<ServerRow
-									key={`project:${server.name}`}
+									key={`${environmentKey(environment)}:project:${server.name}:${selectedInstanceId ?? ""}`}
 									server={server}
 									cwd={cwd}
 									onEdit={(s) => setView({ mode: "edit", server: s })}
@@ -262,59 +298,56 @@ export function McpPanel() {
 					{config && !config.projectTrusted && config.projectPath && (
 						<p className="px-2.5 text-ui-11 text-ink-faint">{t("settings.mcp.projectUntrusted")}</p>
 					)}
-					{!hasSession && (
-						<p className="px-2.5 text-ui-11 text-ink-faint">{t("settings.mcp.noActiveSession")}</p>
-					)}
 				</div>
 			)}
 
-			{/* 页脚：运维信息收进来（默认折叠）+ 最近一次重连结果 */}
+			{/* 上下文及配置路径默认收起，不影响原有会话归属与选择。 */}
 			<div className="mt-auto flex items-center gap-2 pt-4">
 				<button
 					type="button"
 					className="flex items-center gap-1 rounded-full py-0.5 pl-1 pr-2 text-ui-11 text-ink-faint transition-colors hover:bg-hover hover:text-ink-2"
-					onClick={() => setPathsOpen((v) => !v)}
+					aria-expanded={detailsOpen}
+					onClick={() => setDetailsOpen((v) => !v)}
 				>
 					<ChevronRightIcon
-						className={pathsOpen ? "rotate-90 transition-transform" : "transition-transform"}
+						className={detailsOpen ? "rotate-90 transition-transform" : "transition-transform"}
 					/>
-					{t("settings.mcp.configFiles")}
+					{t("settings.mcp.details")}
 				</button>
 				<span className="flex-1" />
-				{lastReload && (
-					<span className="text-ui-11 text-ink-faint">
-						{lastReload.skipped.length === 0
-							? t("settings.mcp.reloadApplied", { count: lastReload.reloaded })
-							: t("settings.mcp.reloadSkipped", {
-									count: lastReload.skipped.length,
-									reloaded: lastReload.reloaded,
-								})}
-					</span>
-				)}
 			</div>
-			{pathsOpen && config && (
-				<div className="mt-1 flex flex-col gap-1">
-					<div className="flex items-center gap-2 font-mono text-ui-115 text-ink-dim">
-						<span className="w-[52px] shrink-0 text-ui-11 text-ink-faint">
+			{detailsOpen && config && (
+				<section aria-label={t("settings.mcp.details")} className="mt-1 flex flex-col gap-2">
+					<div className="flex items-start gap-2 text-ui-11 text-ink-dim">
+						<span className="w-20 shrink-0 text-ink-faint">{t("settings.mcp.context")}</span>
+						<span className="min-w-0 flex-1 whitespace-pre-wrap break-all font-mono">
+							{config.contextCwd ?? "—"}
+						</span>
+					</div>
+					<div className="flex items-center gap-2 text-ui-11 text-ink-dim">
+						<span className="w-20 shrink-0 text-ink-faint">{t("settings.mcp.sessionLabel")}</span>
+						{sessionPicker}
+					</div>
+					<div className="flex items-start gap-2 font-mono text-ui-115 text-ink-dim">
+						<span className="w-20 shrink-0 font-sans text-ui-11 text-ink-faint">
 							{t("settings.mcp.pathGlobal")}
 						</span>
-						<span className="truncate">{config.globalPath}</span>
+						<span className="min-w-0 flex-1 whitespace-pre-wrap break-all">{config.globalPath}</span>
 					</div>
 					{config.projectPath && (
-						<div className="flex items-center gap-2 font-mono text-ui-115 text-ink-dim">
-							<span className="w-[52px] shrink-0 text-ui-11 text-ink-faint">
+						<div className="flex items-start gap-2 font-mono text-ui-115 text-ink-dim">
+							<span className="w-20 shrink-0 font-sans text-ui-11 text-ink-faint">
 								{t("settings.mcp.pathProject")}
 							</span>
-							<span className="truncate">{config.projectPath}</span>
+							<span className="min-w-0 flex-1 whitespace-pre-wrap break-all">{config.projectPath}</span>
 						</div>
 					)}
-					<p className="text-ui-11 leading-relaxed text-ink-faint">{t("settings.mcp.reloadExplain")}</p>
-				</div>
+				</section>
 			)}
 		</div>
 	);
 }
 
 function serverStateConnected(server: McpServerView): boolean {
-	return server.enabled && server.tools.length > 0 && !server.error;
+	return serverState(server) === "connected";
 }

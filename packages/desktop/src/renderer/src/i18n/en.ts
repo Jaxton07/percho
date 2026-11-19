@@ -872,7 +872,20 @@ export const en: Messages = {
 			title: "MCP",
 			hint: "The built-in mcp extension handles connections; this edits mcp.json only (env vars are expanded by the official extension)",
 			summary: "{connected} connected · {total} server(s) · {tools} tool(s)",
+			connectedZero: "Connected · 0 tools",
+			context: "Project folder",
+			sessionLabel: "Session",
+			chooseSession: "Choose a session",
+			instanceEnded: "The selected session instance ended; choose another",
+			noInstance: "No running instance in this project",
 			state: {
+				"not-started": "Not started",
+				unknown: "Unknown",
+				connecting: "Connecting",
+				disconnected: "Disconnected",
+				failed: "Failed",
+				closed: "Closed",
+				overridden: "Overridden by project configuration",
 				connected: "Connected",
 				idle: "Not connected",
 				disabled: "Disabled",
@@ -897,12 +910,15 @@ export const en: Messages = {
 			deleteAsk: "Remove {name}? The mcp.json entry is removed immediately.",
 			deleteNow: "Remove",
 			enable: "Enable",
-			reconnectDisabledHint: "Reconnect disabled (this session is running)",
-			configFiles: "Config files",
-			pathGlobal: "Global",
-			pathProject: "Project",
-			reloadExplain:
-				"Reconnect reloads sessions so the official mcp extension re-reads the config; sessions that are running are skipped (so the current turn is not interrupted) and pick it up when idle.",
+			restartRequired:
+				"Configuration saved. Restart Percho to apply it; existing connections remain unchanged.",
+			restartRequiredRemote:
+				"Configuration saved. Restart the corresponding remote Percho service to apply it; existing connections remain unchanged.",
+			waitingForRestart: "Restart pending",
+			reconnecting: "Reconnecting…",
+			details: "Details",
+			pathGlobal: "Global config",
+			pathProject: "Project config",
 			searchPlaceholder: "Search servers",
 			emptyTitle: "No MCP servers yet",
 			emptyDesc:
@@ -917,11 +933,12 @@ export const en: Messages = {
 			projectUntrusted:
 				"Project is not trusted, so .pi/mcp.json is not read; trust the project to manage its servers here.",
 			projectNeedsCwd: "No open session: project-level config is not editable.",
-			runningNotice:
-				"This session is running: reconnecting would interrupt it. Saved changes take effect when idle — or reconnect after the turn ends.",
 			gotIt: "Got it",
 			addServer: "Add server",
 			editServer: "Edit server",
+			viewServer: "View {name}",
+			inheritedSettings: "Inherited from global (read-only)",
+			back: "Back",
 			name: "Name",
 			nameHint: "Tool-name prefix: mcp__<name>__<tool> (letters, digits, . _ -)",
 			scope: "Write to",
@@ -941,7 +958,6 @@ export const en: Messages = {
 				deferred: "Deferred",
 				codemode: "Scripts only",
 				direct: "Direct",
-				"model-only": "Model only",
 				hidden: "Hidden",
 			},
 			exposureExplain: {
@@ -950,21 +966,16 @@ export const en: Messages = {
 				codemode:
 					"Scripts only (codemode): callable from codemode scripts, invisible to the model (good for bulky tools).",
 				direct: "Direct: tools go straight into the model tool list — simplest, costs the most context.",
-				"model-only": "Model only: visible to the model, not callable from scripts.",
 				hidden: "Hidden: registered but exposed to neither model nor scripts (temporarily disable a server).",
 			},
 			advancedHint:
-				"Need env vars, working directory and other advanced options? Edit mcp.json directly (paths are under Config files in the footer).",
+				"Need env vars, working directory or other advanced options? Edit mcp.json directly; return to the list and expand Details for the config file paths.",
 			needName: "Server name is required",
 			needTransport: "Fill command (stdio) or url (remote)",
 			loading: "Loading…",
 			cancel: "Cancel",
 			save: "Save",
-			reloadApplied: "Reconnected {count} idle session(s)",
-			reloadSkipped:
-				"Saved: {count} running session(s) were not reconnected (takes effect when idle); {reloaded} reconnected",
 			reconnect: "Reconnect",
-			reconnectRunning: "This session is running — reconnecting would interrupt it; retry when the turn ends",
 			edit: "Edit",
 			remove: "Remove",
 			enabled: "Enabled",
@@ -973,7 +984,7 @@ export const en: Messages = {
 			transportUrl: "Remote",
 			transportUnknown: "Incomplete config",
 			noActiveSession:
-				"No open session: connection state and tool inventory are reported from sessions (open one or hit Reconnect).",
+				"No open session: connection state and tool inventory are reported by running instances.",
 			reloadFailed: "Reconnect failed",
 		},
 		extensions: {

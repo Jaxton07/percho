@@ -91,6 +91,7 @@ export function runtimeBuildLock(lock, version) {
 export function runtimeBuildAliases(repo, stage) {
 	return {
 		"@percho/shared": join(repo, "packages/shared/src/index.ts"),
+		"@earendil-works/pi-mcp": join(stage, "node_modules/@earendil-works/pi-mcp"),
 		typebox: join(stage, "node_modules/percho-typebox-build"),
 		semver: join(stage, "node_modules/percho-semver-build"),
 	};
