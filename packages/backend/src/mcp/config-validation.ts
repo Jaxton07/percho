@@ -5,9 +5,21 @@ function record(value: unknown): value is Record<string, unknown> {
 	return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
-/** Validate in SDK load order, retaining valid global entries for project overrides. */
-export function validateMcpConfigs(global: unknown, project?: unknown): string[] {
+/**
+ * Validate candidate objects before writing. The SDK file loader only accepts paths, so this adapter
+ * keeps its merge order without staging candidate files; upgrade tests compare it with the real loader.
+ */
+export function inspectMcpConfigs(
+	global: unknown,
+	project?: unknown,
+): {
+	errors: string[];
+	validGlobalNames: Set<string>;
+	overriddenGlobalNames: Set<string>;
+} {
 	const errors: string[] = [];
+	const validGlobalNames = new Set<string>();
+	const overriddenGlobalNames = new Set<string>();
 	const effective = new Map<string, Record<string, unknown>>();
 	for (const [scope, file] of [
 		["global", global],
@@ -57,7 +69,13 @@ export function validateMcpConfigs(global: unknown, project?: unknown): string[]
 				continue;
 			}
 			effective.set(name, result as unknown as Record<string, unknown>);
+			if (scope === "global") validGlobalNames.add(name);
+			else if (validGlobalNames.has(name)) overriddenGlobalNames.add(name);
 		}
 	}
-	return errors;
+	return { errors, validGlobalNames, overriddenGlobalNames };
+}
+
+export function validateMcpConfigs(global: unknown, project?: unknown): string[] {
+	return inspectMcpConfigs(global, project).errors;
 }

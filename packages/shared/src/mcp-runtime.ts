@@ -14,6 +14,7 @@ export function projectMcpRuntime(
 				: undefined
 			: candidates.find((instance) => instance.instanceId === instanceId);
 	const withStatus = (server: McpServerView): McpServerView => {
+		const configuredEnabled = server.configuredEnabled ?? server.enabled;
 		const path = server.source === "user" ? config.globalPath : config.projectPath;
 		const live = selected?.available
 			? selected.servers.find(
@@ -22,20 +23,23 @@ export function projectMcpRuntime(
 			: undefined;
 		const overridden =
 			server.source === "user" &&
-			(selected
-				? selected.available &&
-					selected.servers.some(
+			(selected?.available
+				? selected.servers.some(
 						(status) =>
 							status.name === server.name && (status.override ?? status.source) === config.projectPath,
 					)
-				: config.errors.length === 0 && config.project.some((project) => project.name === server.name));
+				: config.project.some(
+						(project) =>
+							project.name === server.name && (project.overridesGlobal ?? config.errors.length === 0),
+					));
 		return {
 			...server,
+			configuredEnabled,
+			enabled: live?.state ? live.state !== "disabled" : configuredEnabled,
 			state: overridden
 				? "overridden"
-				: !server.enabled
-					? "disabled"
-					: (live?.state ?? (candidates.length === 0 ? "not-started" : "unknown")),
+				: (live?.state ??
+					(!configuredEnabled ? "disabled" : candidates.length === 0 ? "not-started" : "unknown")),
 			tools: live?.tools ?? [],
 			error: live?.error,
 			needsAuth: live?.state === "needs-auth" || undefined,

@@ -914,7 +914,6 @@ export const zh = {
 				deferred: "按需激活",
 				codemode: "仅脚本",
 				direct: "直接",
-				"model-only": "仅模型",
 				hidden: "隐藏",
 			},
 			exposureExplain: {
@@ -922,7 +921,6 @@ export const zh = {
 					"按需激活（deferred）：工具不进模型工具表，模型用 tool_search 找到后调用 —— 省上下文，推荐。",
 				codemode: "仅脚本（codemode）：工具只能被 codemode 脚本调用，模型看不到（适合返回体积大的工具）。",
 				direct: "直接（direct）：工具直接进模型工具表，最省事但最占上下文。",
-				"model-only": "仅模型（model-only）：只在模型工具表里出现，脚本调用不了。",
 				hidden: "隐藏（hidden）：注册但不暴露给模型与脚本（临时停用某台服务器时用）。",
 			},
 			advancedHint: "需要环境变量、工作目录等高级项？直接编辑 mcp.json（页脚「配置文件」里有路径）。",

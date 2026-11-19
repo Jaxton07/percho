@@ -2,15 +2,16 @@ import { readFile, stat } from "node:fs/promises";
 import { join } from "node:path";
 import { getAgentDir } from "@earendil-works/pi-coding-agent";
 import { isMcpServerOverride } from "@earendil-works/pi-mcp";
-import type {
-	McpConfigListResult,
-	McpExposure,
-	McpServerView,
-	McpTransportView,
-	McpUpsertInput,
+import {
+	MCP_EXPOSURES,
+	type McpConfigListResult,
+	type McpExposure,
+	type McpServerView,
+	type McpTransportView,
+	type McpUpsertInput,
 } from "@percho/shared";
 import { JsonStore } from "../json-store";
-import { validateMcpConfigs } from "./config-validation";
+import { inspectMcpConfigs, validateMcpConfigs } from "./config-validation";
 
 /**
  * `mcp.json` 读写（spec §4.8）：官方内置 mcp 扩展读这两个文件去连服务器，我们只做
@@ -41,11 +42,19 @@ function record(value: unknown): value is Record<string, unknown> {
 	return !!value && typeof value === "object" && !Array.isArray(value);
 }
 
-const EXPOSURES: ReadonlySet<string> = new Set(["direct", "model-only", "codemode", "deferred", "hidden"]);
+const EXPOSURES: ReadonlySet<string> = new Set(MCP_EXPOSURES);
 
 interface McpFile {
 	mcpServers?: Record<string, unknown>;
 	[key: string]: unknown;
+}
+
+function parseMcpJson(raw: string): McpFile {
+	return JSON.parse(raw.startsWith("\uFEFF") ? raw.slice(1) : raw) as McpFile;
+}
+
+function mcpStore(path: string): JsonStore<McpFile> {
+	return new JsonStore<McpFile>({ path, defaultValue: () => ({}), parse: parseMcpJson });
 }
 
 export function globalMcpPath(): string {
@@ -80,12 +89,18 @@ function toolExposureOf(value: unknown): Record<string, McpExposure> | undefined
 	const out: Record<string, McpExposure> = {};
 	for (const [tool, raw] of Object.entries(value as Record<string, unknown>)) {
 		const exposure = exposureOf(raw);
-		if (exposure) out[tool] = exposure;
+		if (exposure)
+			Object.defineProperty(out, tool, {
+				value: exposure,
+				enumerable: true,
+				configurable: true,
+				writable: true,
+			});
 	}
 	return Object.keys(out).length > 0 ? out : undefined;
 }
 
-/** 把一个 mcp.json 读成视图列表（含**有效 exposure**：exposureRaw ?? "codemode"） */
+/** 把一个 mcp.json 读成视图列表；保留原始档位，支持值与官方诊断分开呈现。 */
 function toViews(raw: unknown, source: "user" | "project", errors: string[]): McpServerView[] {
 	const servers = (raw as McpFile | null | undefined)?.mcpServers;
 	if (servers === undefined) return [];
@@ -110,7 +125,7 @@ function toViews(raw: unknown, source: "user" | "project", errors: string[]): Mc
 			continue;
 		}
 		const entry = value as Record<string, unknown>;
-		const exposureRaw = exposureOf(entry.exposure);
+		const exposureRaw = typeof entry.exposure === "string" ? entry.exposure : undefined;
 		views.push({
 			name,
 			source,
@@ -118,7 +133,7 @@ function toViews(raw: unknown, source: "user" | "project", errors: string[]): Mc
 			description: typeof entry.description === "string" ? entry.description : undefined,
 			enabled: entry.enabled !== false,
 			exposureRaw,
-			exposure: exposureRaw ?? "codemode", // 官方默认（core/mcp-servers.js: config.exposure ?? "codemode"）
+			exposure: exposureOf(entry.exposure) ?? "codemode", // 非法原值另由官方校验报告，不当作支持档位。
 			toolExposure: toolExposureOf(entry.toolExposure),
 			tools: [],
 		});
@@ -147,7 +162,7 @@ async function readServersFile(
 	}
 	let parsed: unknown;
 	try {
-		parsed = JSON.parse(text);
+		parsed = parseMcpJson(text);
 	} catch (err) {
 		errors.push(`${path} 解析失败：${err instanceof Error ? err.message : String(err)}`);
 		return [];
@@ -182,27 +197,27 @@ export async function listMcpServers(options: {
 			projectRaw = raw;
 		});
 	}
+	const inspection = inspectMcpConfigs(globalRaw, projectRaw);
+	for (const view of result.project) view.overridesGlobal = inspection.overriddenGlobalNames.has(view.name);
 	if (record(projectRaw) && record(projectRaw.mcpServers)) {
 		for (const view of result.project) {
 			const raw = projectRaw.mcpServers[view.name];
 			const base = global.find((item) => item.name === view.name);
-			const globalEntry =
-				record(globalRaw) && record(globalRaw.mcpServers) ? globalRaw.mcpServers[view.name] : undefined;
 			if (
 				record(raw) &&
 				isMcpServerOverride(raw) &&
 				base &&
 				base.transport.kind !== "unknown" &&
-				validateMcpConfigs({ mcpServers: { [view.name]: globalEntry } }).length === 0
+				inspection.validGlobalNames.has(view.name)
 			) {
 				view.isOverride = true;
 				view.transport = base.transport;
 				view.enabled = typeof raw.enabled === "boolean" ? raw.enabled : base.enabled;
-				view.exposure = view.exposureRaw ?? base.exposure;
+				view.exposure = exposureOf(view.exposureRaw) ?? base.exposure;
 			}
 		}
 	}
-	errors.push(...validateMcpConfigs(globalRaw, projectRaw));
+	errors.push(...inspection.errors);
 	return result;
 }
 
@@ -223,16 +238,14 @@ export async function upsertMcpServer(
 	}
 	return serialize(async () => {
 		const path = input.scope === "project" ? projectMcpPath(input.cwd as string) : globalMcpPath();
-		const store = new JsonStore<McpFile>({ path, defaultValue: () => ({}) });
+		const store = mcpStore(path);
 		const otherPath =
 			input.scope === "project"
 				? globalMcpPath()
 				: input.cwd && context.projectTrusted
 					? projectMcpPath(input.cwd)
 					: undefined;
-		const other = otherPath
-			? await new JsonStore<McpFile>({ path: otherPath, defaultValue: () => ({}) }).readStrict()
-			: undefined;
+		const other = otherPath ? await mcpStore(otherPath).readStrict() : undefined;
 
 		await store.update((draft) => {
 			if (
@@ -247,7 +260,7 @@ export async function upsertMcpServer(
 			if (draft.mcpServers === undefined && draft.autoEnableCodemode === undefined)
 				draft.autoEnableCodemode = false;
 			const servers = (draft.mcpServers ?? {}) as Record<string, unknown>;
-			const existing = (servers[name] as Record<string, unknown> | undefined) ?? {};
+			const existing = Object.hasOwn(servers, name) && record(servers[name]) ? servers[name] : {};
 			const entry: Record<string, unknown> = { ...existing };
 			if (hasCommand) {
 				entry.command = (input.command as string).trim();
@@ -279,7 +292,12 @@ export async function upsertMcpServer(
 				)
 			)
 				entry.exposure = "deferred";
-			servers[name] = entry;
+			Object.defineProperty(servers, name, {
+				value: entry,
+				enumerable: true,
+				configurable: true,
+				writable: true,
+			});
 			draft.mcpServers = servers;
 			const errors =
 				input.scope === "project" ? validateMcpConfigs(other, draft) : validateMcpConfigs(draft, other);
@@ -303,23 +321,12 @@ export async function removeMcpServer(input: {
 	if (input.scope === "project" && !input.cwd) throw new Error("项目级配置需要 cwd");
 	await serialize(async () => {
 		const path = input.scope === "project" ? projectMcpPath(input.cwd as string) : globalMcpPath();
-		const store = new JsonStore<McpFile>({ path, defaultValue: () => ({}) });
-		const otherPath =
-			input.scope === "project" ? globalMcpPath() : input.cwd ? projectMcpPath(input.cwd) : undefined;
-		// Only trusted projects may be consulted; callers must explicitly pass the trust context.
-		const other =
-			otherPath && (input.scope === "project" || input.projectTrusted)
-				? await new JsonStore<McpFile>({ path: otherPath, defaultValue: () => ({}) }).readStrict()
-				: undefined;
+		const store = mcpStore(path);
 		await store.update((draft) => {
 			if (!record(draft) || (draft.mcpServers !== undefined && !record(draft.mcpServers)))
 				throw new Error("mcpServers 必须是对象");
-			const servers = (draft.mcpServers ?? {}) as Record<string, unknown>;
-			delete servers[input.name];
-			draft.mcpServers = servers;
-			const errors =
-				input.scope === "project" ? validateMcpConfigs(other, draft) : validateMcpConfigs(draft, other);
-			if (errors.length) throw new Error(errors.join("\n"));
+			// Removal is a repair operation: remaining legacy errors must not lock it out.
+			if (record(draft.mcpServers)) delete draft.mcpServers[input.name];
 		});
 	});
 }
@@ -329,7 +336,7 @@ export async function importMcpServers(
 	input: { json: string; cwd?: string },
 	context: { projectTrusted: boolean },
 ): Promise<McpConfigListResult> {
-	const parsed: unknown = JSON.parse(input.json);
+	const parsed: unknown = parseMcpJson(input.json);
 	if (!record(parsed)) throw new Error("导入配置必须是对象");
 	const entries = Object.hasOwn(parsed, "mcpServers") ? parsed.mcpServers : parsed;
 	if (!record(entries) || Object.keys(entries).length === 0) throw new Error("mcpServers 必须是非空对象");
@@ -338,10 +345,7 @@ export async function importMcpServers(
 	return serialize(async () => {
 		const other =
 			input.cwd && context.projectTrusted
-				? await new JsonStore<McpFile>({
-						path: projectMcpPath(input.cwd),
-						defaultValue: () => ({}),
-					}).readStrict()
+				? await mcpStore(projectMcpPath(input.cwd)).readStrict()
 				: undefined;
 		const path = globalMcpPath();
 		const exists = await stat(path).then(
@@ -351,15 +355,21 @@ export async function importMcpServers(
 				throw error;
 			},
 		);
-		const store = new JsonStore<McpFile>({ path, defaultValue: () => ({}) });
+		const store = mcpStore(path);
 		await store.update((draft) => {
 			if (!record(draft) || (draft.mcpServers !== undefined && !record(draft.mcpServers)))
 				throw new Error("mcpServers 必须是对象");
 			const servers = { ...draft.mcpServers };
 			for (const [name, raw] of Object.entries(entries)) {
 				if (!record(raw)) throw new Error(`server「${name}」的配置必须是对象`);
-				servers[name] = { ...(record(servers[name]) ? servers[name] : {}), ...raw };
-				const entry = servers[name] as Record<string, unknown>;
+				const existing = Object.hasOwn(servers, name) && record(servers[name]) ? servers[name] : {};
+				const entry: Record<string, unknown> = { ...existing, ...raw };
+				Object.defineProperty(servers, name, {
+					value: entry,
+					enumerable: true,
+					configurable: true,
+					writable: true,
+				});
 				if (entry.exposure === undefined) entry.exposure = "deferred";
 			}
 			if (!exists && draft.autoEnableCodemode === undefined) draft.autoEnableCodemode = false;

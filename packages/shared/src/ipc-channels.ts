@@ -11,7 +11,13 @@ import type {
 	ExtensionNotifyEvent,
 } from "./extension-dialog";
 import type { LanStatus } from "./lan";
-import type { McpConfigListResult, McpMutationResult, McpServersChangedPayload, McpUpsertInput } from "./mcp";
+import {
+	MCP_EXPOSURES,
+	type McpConfigListResult,
+	type McpMutationResult,
+	type McpServersChangedPayload,
+	type McpUpsertInput,
+} from "./mcp";
 import type {
 	CatalogPackageType,
 	CatalogSearchResult,
@@ -601,7 +607,7 @@ export const MCP_CHANNELS = {
 		url: input.optional(input.text),
 		description: input.optional(input.text),
 		enabled: input.optional(input.boolean),
-		exposure: input.optional(input.oneOf("direct", "deferred", "codemode", "model-only", "hidden")),
+		exposure: input.optional(input.oneOf(...MCP_EXPOSURES)),
 	}),
 	mcpConfigImport: ch(
 		"mcp:configImport",

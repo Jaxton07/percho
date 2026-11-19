@@ -8,7 +8,8 @@
  */
 
 /** 官方 `McpExposure`（server 级 / 逐工具覆盖都用它）；**缺省 = "codemode"**（不是 direct） */
-export type McpExposure = "direct" | "model-only" | "codemode" | "deferred" | "hidden";
+export const MCP_EXPOSURES = ["deferred", "codemode", "direct", "hidden"] as const;
+export type McpExposure = (typeof MCP_EXPOSURES)[number];
 
 /** 传输方式（面板只做展示与表单，不解析 `${VAR}`） */
 export type McpTransportView =
@@ -66,12 +67,16 @@ export interface McpServerView {
 	source: "user" | "project";
 	/** 项目条目只覆盖全局服务器的运行设置。 */
 	isOverride?: boolean;
+	/** 项目配置实际有效地覆盖了同名全局配置。 */
+	overridesGlobal?: boolean;
 	transport: McpTransportView;
 	description?: string;
 	enabled: boolean;
-	/** 配置里显式写的 exposure；缺省 undefined = 走官方默认 codemode */
-	exposureRaw?: McpExposure;
-	/** 生效的 exposure（exposureRaw ?? "codemode"） */
+	/** 投影前的配置启用状态，不受运行实例影响。 */
+	configuredEnabled?: boolean;
+	/** 原配置中的档位字符串；非法值也保留供诊断，编辑时不能静默替换。 */
+	exposureRaw?: string;
+	/** 支持的展示档位；缺省/非法值回落 codemode，非法原值另附官方诊断。 */
 	exposure: McpExposure;
 	/** 逐工具覆盖（原样呈现） */
 	toolExposure?: Record<string, McpExposure>;

@@ -953,7 +953,6 @@ export const en: Messages = {
 				deferred: "Deferred",
 				codemode: "Scripts only",
 				direct: "Direct",
-				"model-only": "Model only",
 				hidden: "Hidden",
 			},
 			exposureExplain: {
@@ -962,7 +961,6 @@ export const en: Messages = {
 				codemode:
 					"Scripts only (codemode): callable from codemode scripts, invisible to the model (good for bulky tools).",
 				direct: "Direct: tools go straight into the model tool list — simplest, costs the most context.",
-				"model-only": "Model only: visible to the model, not callable from scripts.",
 				hidden: "Hidden: registered but exposed to neither model nor scripts (temporarily disable a server).",
 			},
 			advancedHint:

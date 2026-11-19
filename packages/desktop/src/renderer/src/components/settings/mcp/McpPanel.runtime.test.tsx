@@ -28,6 +28,38 @@ vi.mock("../../../i18n", () => ({
 
 import { McpPanel } from "./McpPanel";
 
+it("手写的不支持配置仍展示服务器及 SDK 诊断", async () => {
+	vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
+	fixture.api.mcpConfigList.mockResolvedValue({
+		global: [
+			{
+				name: "legacy",
+				source: "user",
+				transport: { kind: "stdio", command: "node" },
+				enabled: true,
+				exposure: "codemode",
+				tools: [],
+			},
+		],
+		project: [],
+		errors: ['global: server "legacy": exposure must be one of "codemode", "deferred", "direct", "hidden"'],
+		projectTrusted: true,
+		globalPath: "/global",
+		contextCwd: "/a",
+	});
+	fixture.api.onMcpServersChanged.mockReturnValue(() => {});
+	const host = document.createElement("div");
+	const root = createRoot(host);
+	try {
+		await act(async () => root.render(<McpPanel />));
+		expect(host.textContent).toContain("legacy");
+		expect(host.textContent).toContain('server "legacy": exposure must be one of');
+	} finally {
+		await act(() => root.unmount());
+		vi.unstubAllGlobals();
+	}
+});
+
 it("真实面板接收事件后清空错误及工具，并显示零工具已连接", async () => {
 	vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
 	const instance = {

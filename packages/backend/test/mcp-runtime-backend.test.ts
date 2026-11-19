@@ -285,7 +285,7 @@ readline.createInterface({input:process.stdin}).on('line', line => {
 	15000,
 );
 
-it("reports unknown when a third-party extension replaces MCP", async () => {
+it("reports unknown connections but preserves valid overrides when a third-party extension replaces MCP", async () => {
 	const base = resolve("../../.local/tmp");
 	mkdirSync(base, { recursive: true });
 	const root = mkdtempSync(join(base, "mcp-replacement-"));
@@ -302,6 +302,7 @@ it("reports unknown when a third-party extension replaces MCP", async () => {
 		join(agentDir.value, "mcp.json"),
 		JSON.stringify({ mcpServers: { demo: { command: "missing-command" } } }),
 	);
+	writeFileSync(join(root, ".pi", "mcp.json"), JSON.stringify({ mcpServers: { demo: { enabled: true } } }));
 	new ProjectTrustStore(agentDir.value).set(root, true);
 	const backend = new PiBackend({ projectTrust: false, permissionGates: false });
 	const events: import("@percho/shared").McpRuntimeInventory[] = [];
@@ -309,7 +310,9 @@ it("reports unknown when a third-party extension replaces MCP", async () => {
 	try {
 		await backend.createSession({ cwd: root });
 		const result = await backend.getMcpConfig({ cwd: root });
-		expect(result.global[0]).toMatchObject({ state: "unknown", tools: [] });
+		expect(result.errors).toEqual([]);
+		expect(result.global[0]).toMatchObject({ state: "overridden", tools: [] });
+		expect(result.project[0]).toMatchObject({ state: "unknown", tools: [] });
 		expect(result.runtime?.instances[0]).toMatchObject({ available: false, servers: [] });
 		expect(events.at(-1)?.revision).toBe(result.runtime?.revision);
 	} finally {
@@ -319,6 +322,78 @@ it("reports unknown when a third-party extension replaces MCP", async () => {
 		rmSync(root, { recursive: true, force: true });
 	}
 });
+
+it("prefers real SDK enable and disable status over stale configuration", async () => {
+	const base = resolve("../../.local/tmp");
+	mkdirSync(base, { recursive: true });
+	const root = mkdtempSync(join(base, "mcp-live-enabled-"));
+	agentDir.value = join(root, "agent");
+	mkdirSync(agentDir.value);
+	mkdirSync(join(root, ".pi"));
+	const previous = process.env.PI_CODING_AGENT_DIR;
+	process.env.PI_CODING_AGENT_DIR = agentDir.value;
+	const server = join(root, "server.mjs");
+	writeFileSync(
+		server,
+		`import readline from 'node:readline';
+readline.createInterface({input:process.stdin}).on('line', line => {
+ const m=JSON.parse(line); if(m.id===undefined)return;
+ const result=m.method==='initialize'?{protocolVersion:'2025-03-26',capabilities:{tools:{}},serverInfo:{name:'test',version:'1'}}:{tools:[]};
+ process.stdout.write(JSON.stringify({jsonrpc:'2.0',id:m.id,result})+'\\n');
+});`,
+	);
+	const configPath = join(agentDir.value, "mcp.json");
+	const save = (enabled: boolean) =>
+		writeFileSync(
+			configPath,
+			JSON.stringify({
+				mcpServers: { demo: { command: process.execPath, args: [server], enabled } },
+			}),
+		);
+	save(false);
+	new ProjectTrustStore(agentDir.value).set(root, true);
+	const backend = new PiBackend({ projectTrust: false, permissionGates: false });
+	try {
+		await backend.createSession({ cwd: root });
+		save(true);
+		await backend.reloadMcpServers({ cwd: root });
+		await vi.waitFor(
+			async () => {
+				expect((await backend.getMcpConfig({ cwd: root })).runtime?.instances[0]?.servers[0]?.state).toBe(
+					"connected",
+				);
+			},
+			{ timeout: 10000 },
+		);
+		save(false);
+		let result = await backend.getMcpConfig({ cwd: root });
+		expect(result.global[0]).toMatchObject({ state: "connected", enabled: true, tools: [] });
+		// New project config must not be mistaken for the source of an existing global connection.
+		writeFileSync(join(root, ".pi", "mcp.json"), JSON.stringify({ mcpServers: { demo: { enabled: true } } }));
+		result = await backend.getMcpConfig({ cwd: root });
+		expect(result.global[0]).toMatchObject({ state: "connected", enabled: true });
+		expect(result.project[0]?.state).toBe("unknown");
+		rmSync(join(root, ".pi", "mcp.json"));
+		save(false);
+		await backend.reloadMcpServers({ cwd: root });
+		await vi.waitFor(
+			async () => {
+				expect((await backend.getMcpConfig({ cwd: root })).runtime?.instances[0]?.servers[0]?.state).toBe(
+					"disabled",
+				);
+			},
+			{ timeout: 10000 },
+		);
+		save(true);
+		result = await backend.getMcpConfig({ cwd: root });
+		expect(result.global[0]).toMatchObject({ state: "disabled", enabled: false, tools: [] });
+	} finally {
+		await backend.shutdown();
+		if (previous === undefined) delete process.env.PI_CODING_AGENT_DIR;
+		else process.env.PI_CODING_AGENT_DIR = previous;
+		rmSync(root, { recursive: true, force: true });
+	}
+}, 20000);
 
 it("publishes real tool withdrawal and clears a connection failure on reload", async () => {
 	const base = resolve("../../.local/tmp");

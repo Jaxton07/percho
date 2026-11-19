@@ -35,11 +35,13 @@ interface McpStore {
 function createMcpStore(environment: EnvironmentRef) {
 	return create<McpStore>((set, get) => {
 		let loadSeq = 0;
+		let contextSeq = 0;
 		let operationSeq = 0;
 		let selectionSeq = 0;
 		let reconcileFailedOperation: (() => Promise<void>) | undefined;
 		// Concurrent IPC completion can install a newer recovery while this operation is awaiting.
 		const reconcileAfterWrite = () => reconcileFailedOperation?.();
+		const reconcileCurrentContext = () => reconcileAfterWrite() ?? get().load(contextCwd, activeSession);
 		const retiredEpochs = new Set<string>();
 		let contextCwd: string | undefined;
 		let runtime: McpRuntimeInventory | undefined;
@@ -98,26 +100,28 @@ function createMcpStore(environment: EnvironmentRef) {
 		const mutate = async (
 			request: () => Promise<{ config: McpConfigListResult; reload: McpReloadReport }>,
 		) => {
-			const seq = loadSeq;
+			const seq = contextSeq;
 			const operation = ++operationSeq;
 			reconcileFailedOperation = undefined;
 			const startedAt = eventSeq;
 			const selection = mutationSelection();
 			const cwd = contextCwd;
-			const current = () => seq === loadSeq && operation === operationSeq;
-			let recoverySeq = 0;
+			const current = () => seq === contextSeq && operation === operationSeq;
 			const recover = async () => {
 				if (!current()) return;
-				const read = ++recoverySeq;
+				const read = ++loadSeq;
 				try {
 					const recoveryStartedAt = eventSeq;
 					const config = await getExecutionApi(environment).mcpConfigList({ cwd });
-					if (current() && read === recoverySeq) {
+					if (current() && read === loadSeq) {
 						acceptBase(config.runtime, recoveryStartedAt);
 						followMutation(selection);
 						commit(config);
+						set({ loading: false });
 					}
 				} catch {
+					// Failed reads also finish their generation; otherwise the invalidated load stays busy.
+					if (current() && read === loadSeq) set({ loading: false });
 					// Keep the mutation's original failure; another pending write may trigger reconciliation.
 				}
 			};
@@ -126,19 +130,21 @@ function createMcpStore(environment: EnvironmentRef) {
 				result = await request();
 			} catch (error) {
 				if (current()) reconcileFailedOperation = recover;
-				await reconcileAfterWrite();
+				await reconcileCurrentContext();
 				throw error;
 			}
 			if (!current()) {
 				// A later preflight can fail before this earlier write lands. Re-read after it settles,
 				// rather than discard the only evidence that the persisted configuration changed.
-				await reconcileAfterWrite();
+				await reconcileCurrentContext();
 				return;
 			}
+			// Acknowledged writes supersede any reads that began before they completed.
+			loadSeq++;
 			acceptBase(result.config.runtime, startedAt);
 			followMutation(selection);
 			commit(result.config);
-			set({ lastReload: result.reload });
+			set({ lastReload: result.reload, loading: false });
 		};
 		return {
 			config: null,
@@ -147,8 +153,10 @@ function createMcpStore(environment: EnvironmentRef) {
 			selectedInstanceId: undefined,
 			load: async (cwd, sessionId) => {
 				const seq = ++loadSeq;
-				const operation = ++operationSeq;
-				if (contextCwd !== cwd || activeSession !== sessionId || !get().config) {
+				const operation = operationSeq;
+				if (contextSeq === 0 || contextCwd !== cwd || activeSession !== sessionId) {
+					contextSeq++;
+					reconcileFailedOperation = undefined;
 					contextCwd = cwd;
 					activeSession = sessionId;
 					set({ config: null, notice: undefined, selectedInstanceId: undefined });

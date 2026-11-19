@@ -1,11 +1,8 @@
-import type { McpExposure, McpServerView, McpUpsertInput } from "@percho/shared";
+import { MCP_EXPOSURES, type McpExposure, type McpServerView, type McpUpsertInput } from "@percho/shared";
 import { useState } from "react";
 import { useT } from "../../../i18n";
 import { useMcpStore } from "../../../stores/mcp";
 import { ArrowLeftIcon } from "../../icons";
-
-/** 暴露档位：五档全部平铺（总共就 5 个，折叠反而多一次点击；设计稿 v1.2） */
-const EXPOSURES: McpExposure[] = ["deferred", "codemode", "direct", "model-only", "hidden"];
 
 interface FormState {
 	name: string;
@@ -15,7 +12,7 @@ interface FormState {
 	args: string;
 	url: string;
 	description: string;
-	exposure: McpExposure;
+	exposure: McpExposure | undefined;
 }
 
 function formOf(server?: McpServerView): FormState {
@@ -39,7 +36,7 @@ function formOf(server?: McpServerView): FormState {
 		args: server.transport.kind === "stdio" ? (server.transport.args ?? []).join(" ") : "",
 		url: server.transport.kind === "url" ? server.transport.url : "",
 		description: server.description ?? "",
-		exposure: server.exposureRaw ?? server.exposure,
+		exposure: MCP_EXPOSURES.find((value) => value === (server.exposureRaw ?? server.exposure)),
 	};
 }
 
@@ -57,7 +54,7 @@ function Segmented<T extends string>({
 	options,
 	onChange,
 }: {
-	value: T;
+	value: T | undefined;
 	options: { value: T; label: string; disabled?: boolean }[];
 	onChange: (value: T) => void;
 }) {
@@ -115,6 +112,7 @@ export function ServerEditorPage({
 	const t = useT();
 	const { upsert } = useMcpStore();
 	const [form, setForm] = useState<FormState>(() => formOf(server));
+	const [argsEdited, setArgsEdited] = useState(false);
 	const [error, setError] = useState<string | null>(null);
 	const [saving, setSaving] = useState(false);
 
@@ -143,8 +141,12 @@ export function ServerEditorPage({
 				name: server ? server.name : form.name.trim(),
 				command: !server?.isOverride && form.transport === "command" ? form.command.trim() : undefined,
 				args:
-					!server?.isOverride && form.transport === "command" && form.args.trim()
-						? form.args.trim().split(/\s+/)
+					!server?.isOverride && form.transport === "command"
+						? !argsEdited && server?.transport.kind === "stdio"
+							? server.transport.args
+							: form.args.trim()
+								? form.args.trim().split(/\s+/) // 新编辑的参数仍按空白分隔，不解析 shell 引号。
+								: []
 						: undefined,
 				url: !server?.isOverride && form.transport === "url" ? form.url.trim() : undefined,
 				description: server?.isOverride ? undefined : form.description,
@@ -241,7 +243,10 @@ export function ServerEditorPage({
 									className={monoInput}
 									value={form.args}
 									placeholder="-y @modelcontextprotocol/server-everything"
-									onChange={(event) => setForm({ ...form, args: event.target.value })}
+									onChange={(event) => {
+										setArgsEdited(true);
+										setForm({ ...form, args: event.target.value });
+									}}
 								/>
 							</div>
 						</>
@@ -278,13 +283,13 @@ export function ServerEditorPage({
 					<span className={label}>{t("settings.mcp.exposure")}</span>
 					<Segmented
 						value={form.exposure}
-						options={EXPOSURES.map((exposure) => ({
+						options={MCP_EXPOSURES.map((exposure) => ({
 							value: exposure,
 							label: t(`settings.mcp.exposureShort.${exposure}`),
 						}))}
 						onChange={(exposure) => setForm({ ...form, exposure })}
 					/>
-					<p className={hint}>{t(`settings.mcp.exposureExplain.${form.exposure}`)}</p>
+					{form.exposure && <p className={hint}>{t(`settings.mcp.exposureExplain.${form.exposure}`)}</p>}
 				</div>
 			</div>
 
