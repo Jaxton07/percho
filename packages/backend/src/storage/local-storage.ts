@@ -167,6 +167,7 @@ interface Entry {
 	size: number;
 	digest: string;
 	link?: string;
+	linkType?: "dir" | "file";
 	identity?: string[];
 }
 async function digest(path: string, signal?: AbortSignal) {
@@ -290,10 +291,16 @@ async function scan(
 				if (["sessions", "sessions-subagents"].includes(section) && !inside(join(root, section), destination))
 					throw new Error(`Session link crosses its private history root: ${file}`);
 				const mapped = inside(root, destination) ? join(target, relative(root, destination)) : destination;
+				const targetStat = await followStat(destination).catch((cause) => {
+					if ((cause as NodeJS.ErrnoException).code === "ENOENT")
+						throw new Error(`Source changed: ${file}`, { cause });
+					throw cause;
+				});
 				entries.push({
 					...base,
 					type: "link",
 					link: mapped,
+					linkType: targetStat.isDirectory() ? "dir" : "file",
 					digest: link,
 					identity: identity(linkStat, true),
 				});
@@ -481,9 +488,7 @@ export async function initializeLocalStorage(
 					await symlink(
 						entry.link as string,
 						file,
-						process.platform === "win32" && (await statOrMissing(await realpath(input)))?.isDirectory()
-							? "junction"
-							: undefined,
+						process.platform === "win32" && entry.linkType === "dir" ? "junction" : undefined,
 					);
 				else {
 					await pipeline(createReadStream(input), createWriteStream(file, { flags: "wx", mode: 0o600 }), {

@@ -503,7 +503,7 @@ describe("links and resource settings", () => {
 			spy.mockRestore();
 		}
 	});
-	it.each(["restore", "retarget", "new-broken", "valid-broken", "settings"])(
+	it.each(["restore", "retarget", "new-broken", "valid-broken", "valid-type-change", "settings"])(
 		"rejects %s after preview and during copy",
 		async (change) => {
 			for (const duringCopy of [false, true]) {
@@ -523,6 +523,10 @@ describe("links and resource settings", () => {
 					if (change === "new-broken")
 						symlinkSync(join(home, "other-missing"), join(source, "skills", "new"));
 					if (change === "valid-broken") rmSync(join(home, "valid"));
+					if (change === "valid-type-change") {
+						rmSync(join(home, "valid"));
+						mkdirSync(join(home, "valid"));
+					}
 					if (change === "settings") writeFileSync(join(source, "settings.json"), '{"skills":[]}');
 				};
 				if (!duringCopy) mutate();
@@ -539,7 +543,7 @@ describe("links and resource settings", () => {
 				).rejects.toThrow("Source changed");
 				await expect(lstat(selection.target)).rejects.toHaveProperty("code", "ENOENT");
 				await rm(source, { recursive: true, force: true });
-				await rm(join(home, "valid"), { force: true });
+				await rm(join(home, "valid"), { recursive: true, force: true });
 				await rm(join(home, "missing"), { force: true });
 			}
 		},
