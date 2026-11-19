@@ -89,7 +89,16 @@ jobs:
           node-version: 22
           cache: npm
       - run: npm ci
+      # Native ACL checks launch PowerShell, whose cold start can exceed Vitest's 5s default.
+      # This is an integration-test budget, not a production timeout or a relaxed assertion.
       - name: Verify private storage on native filesystem and ACLs
-        run: npm run test -w packages/backend -- test/local-agent-storage.test.ts test/local-agent-storage-sdk.test.ts
+        run: >-
+          npm run test -w packages/backend -- test/local-agent-storage.test.ts test/local-agent-storage-sdk.test.ts
+          --reporter=verbose --maxWorkers=2
+          --testTimeout=${{ runner.os == 'Windows' && 120000 || 5000 }}
+          --hookTimeout=${{ runner.os == 'Windows' && 30000 || 10000 }}
       - name: Test private storage startup decisions
-        run: npm run test -w packages/desktop -- src/main/storage-startup-controller.test.ts
+        run: >-
+          npm run test -w packages/desktop -- src/main/storage-startup-controller.test.ts
+          --maxWorkers=2 --testTimeout=${{ runner.os == 'Windows' && 120000 || 5000 }}
+          --hookTimeout=${{ runner.os == 'Windows' && 30000 || 10000 }}

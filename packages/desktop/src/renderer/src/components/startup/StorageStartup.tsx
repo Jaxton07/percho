@@ -12,7 +12,7 @@ import {
 import { Button } from "../ui/Button";
 import { StartupSheet } from "./StartupSheet";
 
-type Detail = "paths" | "shared" | "error" | "cancel";
+type Detail = "paths" | "shared" | "warnings" | "error" | "cancel";
 export function StorageStartup({
 	state,
 	error,
@@ -24,7 +24,7 @@ export function StorageStartup({
 }) {
 	const t = useT();
 	const [selection, setSelection] = useState<"copy" | "empty">("copy");
-	const [step, setStep] = useState<"choose" | "review" | "empty">("choose");
+	const [step, setStep] = useState<"choose" | "empty">("choose");
 	const [detail, setDetail] = useState<Detail | null>(null);
 	const phase = error ? "error" : (state?.phase ?? "inspecting");
 	const view = phase === "choice" ? step : phase;
@@ -114,7 +114,7 @@ export function StorageStartup({
 		right = (
 			<Button
 				className="font-medium text-ink-2"
-				onClick={() => setStep(selection === "copy" ? "review" : "empty")}
+				onClick={() => (selection === "copy" ? onAction("scan") : setStep("empty"))}
 			>
 				{t("storageStartup.continue")}
 				<ChevronRightIcon className="ml-1 inline" />
@@ -142,13 +142,24 @@ export function StorageStartup({
 					</p>
 				)}
 				{pathLink}
+				{copy && !!state?.warnings?.length && (
+					<div className="mt-3 flex items-center justify-center gap-2 text-ink-dim">
+						<ErrorCircleIcon size={16} />
+						{more(t("storageStartup.warningCount", { count: state.warnings.length }), "warnings")}
+					</div>
+				)}
 				{copy && (
-					<p className="mt-3 text-ui-115 leading-relaxed text-ink-dim">{t("storageStartup.closeOldApps")}</p>
+					<>
+						<p className="mt-3 text-ui-115 leading-relaxed text-ink-dim">
+							{t("storageStartup.closeOldApps")}
+						</p>
+						<Button onClick={() => onAction("scan")}>{t("storageStartup.rescan")}</Button>
+					</>
 				)}
 			</>
 		);
 		left = (
-			<Button onClick={() => setStep("choose")}>
+			<Button onClick={() => (copy ? onAction("back") : setStep("choose"))}>
 				<ArrowLeftIcon size={12} className="mr-1 inline" />
 				{t("storageStartup.back")}
 			</Button>
@@ -176,10 +187,25 @@ export function StorageStartup({
 	} else if (view === "error") {
 		content = (
 			<>
-				{title("errorTitle", t("storageStartup.errorHint"), ErrorCircleIcon)}
+				{title(
+					"errorTitle",
+					t(state?.retryable === false ? "storageStartup.restartHint" : "storageStartup.errorHint"),
+					ErrorCircleIcon,
+				)}
 				<div className="mt-4">{more(t("storageStartup.errorDetails"), "error")}</div>
 			</>
 		);
+		if (state?.canReturn)
+			left = (
+				<Button
+					onClick={() => {
+						setStep("choose");
+						onAction("back");
+					}}
+				>
+					{t("storageStartup.back")}
+				</Button>
+			);
 		if (state?.retryable !== false)
 			right = (
 				<Button
@@ -199,17 +225,19 @@ export function StorageStartup({
 				? Math.min(100, Math.floor((state.bytes / (state.totalBytes as number)) * 100))
 				: undefined;
 		const message =
-			phase === "copying"
-				? t(
-						work === "copy"
-							? "storageStartup.copying"
-							: work === "verify"
-								? "storageStartup.verifying"
-								: work === "publish"
-									? "storageStartup.publishing"
-									: "storageStartup.scanning",
-					)
-				: t(phase === "preferences" ? "storageStartup.preferences" : "storageStartup.ready");
+			phase === "scanning"
+				? t("storageStartup.scanning")
+				: phase === "copying"
+					? t(
+							work === "copy"
+								? "storageStartup.copying"
+								: work === "verify"
+									? "storageStartup.verifying"
+									: work === "publish"
+										? "storageStartup.publishing"
+										: "storageStartup.scanning",
+						)
+					: t(phase === "preferences" ? "storageStartup.preferences" : "storageStartup.ready");
 		content = (
 			<>
 				{title("progressTitle", t("storageStartup.keepOpen"), CopyIcon)}
@@ -245,7 +273,12 @@ export function StorageStartup({
 				{pathLink}
 			</>
 		);
-		left = <Button onClick={() => setDetail("cancel")}>{t("storageStartup.exit")}</Button>;
+		left =
+			phase === "scanning" ? (
+				<Button onClick={() => onAction("back")}>{t("storageStartup.back")}</Button>
+			) : (
+				<Button onClick={() => setDetail("cancel")}>{t("storageStartup.exit")}</Button>
+			);
 	}
 	return (
 		<>
@@ -271,9 +304,11 @@ export function StorageStartup({
 							? "storageStartup.directoryDetails"
 							: detail === "shared"
 								? "storageStartup.external"
-								: detail === "cancel"
-									? "storageStartup.cancelTitle"
-									: "storageStartup.errorDetails",
+								: detail === "warnings"
+									? "storageStartup.warningTitle"
+									: detail === "cancel"
+										? "storageStartup.cancelTitle"
+										: "storageStartup.errorDetails",
 					)}
 					closeLabel={t(detail === "cancel" ? "storageStartup.keepWaiting" : "storageStartup.done")}
 					onClose={() => setDetail(null)}
@@ -286,9 +321,28 @@ export function StorageStartup({
 					{detail === "cancel" ? (
 						<p>{t("storageStartup.cancelHint")}</p>
 					) : detail === "error" ? (
-						<pre className="whitespace-pre-wrap break-words font-mono text-ui-115">
-							{error || state?.error}
-						</pre>
+						<>
+							<pre className="whitespace-pre-wrap break-words font-mono text-ui-115">
+								{error || state?.error}
+							</pre>
+							{state?.recoveryPath && (
+								<p className="mt-3 break-all">
+									{t("storageStartup.recoveryPath")}: {state.recoveryPath}
+								</p>
+							)}
+						</>
+					) : detail === "warnings" ? (
+						<>
+							<p className="mb-3">{t("storageStartup.warningHint")}</p>
+							<ul className="space-y-3 text-ui-115">
+								{state?.warnings?.map((warning) => (
+									<li key={warning.path}>
+										<span className="break-all font-mono">{warning.path}</span>
+										<p>{t("storageStartup.missingLinkTarget")}</p>
+									</li>
+								))}
+							</ul>
+						</>
 					) : detail === "shared" ? (
 						<>
 							<p className="mb-3">{t("storageStartup.externalHint")}</p>

@@ -1010,7 +1010,7 @@ export const STORAGE_STARTUP_CHANNELS = {
 		"storageStartup:act",
 		"desktop",
 	)<{ action: StorageStartupAction }, void>({
-		action: input.oneOf("copy", "empty", "adopt", "retry", "cancel", "exit"),
+		action: input.oneOf("scan", "back", "copy", "empty", "adopt", "retry", "cancel", "exit"),
 	}),
 } as const;
 

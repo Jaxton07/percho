@@ -100,8 +100,10 @@ export {
 	inspectLocalStorage,
 	type LocalStorageRecord,
 	readStorageRecord,
+	StorageInitializationError,
 	type StorageInspection,
 	type StorageProgress,
+	type StorageWork,
 } from "./storage/local-storage";
 export { migrateNavigation } from "./storage/preferences";
 export { type LocalSessionPaths, localSessionPaths } from "./storage/session-paths";

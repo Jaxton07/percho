@@ -68,6 +68,18 @@ beforeEach(() => {
 });
 afterEach(() => vi.unstubAllGlobals());
 describe("storage to workbench handoff", () => {
+	it.each(["scanning", "review"] as const)(
+		"shows setup when the initial query arrives at %s",
+		async (phase) => {
+			fixture.get.mockResolvedValue(state(phase));
+			const { renderStorageStartup } = await import("./storage-startup");
+			renderStorageStartup();
+			await flush();
+			expect(dataset.startupView).toBe("setup");
+			expect(fixture.render.mock.lastCall?.[0]?.props.state.phase).toBe(phase);
+			expect(fixture.importWorkbench).not.toHaveBeenCalled();
+		},
+	);
 	it("renders no migration page for a prepared user and waits for business IPC permission", async () => {
 		const { renderStorageStartup } = await import("./storage-startup");
 		renderStorageStartup();

@@ -29,7 +29,8 @@ export function renderStorageStartup() {
 	};
 	const render = () => {
 		if (disposed) return;
-		if (error || (state && ["choice", "existing", "error"].includes(state.phase))) setupShown = true;
+		if (error || (state && ["choice", "scanning", "review", "existing", "error"].includes(state.phase)))
+			setupShown = true;
 		if (setupShown) document.documentElement.dataset.startupView = "setup";
 		setSplashMessage(translate(useI18nStore.getState().language, "storageStartup.preparing"));
 		root.render(setupShown ? <StorageStartup state={state} error={error} onAction={action} /> : null);
