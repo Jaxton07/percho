@@ -23,7 +23,8 @@ afterEach(async () => {
 });
 const turn = () => new Promise<void>((r) => setImmediate(r));
 async function waitFor(test: () => boolean) {
-	const end = Date.now() + 10000;
+	// Match native ACL integration-test budgets; a cold PowerShell launch can exceed 10s.
+	const end = Date.now() + (process.platform === "win32" ? 120000 : 10000);
 	while (!test()) {
 		if (Date.now() > end) throw Error("startup did not settle");
 		await turn();
