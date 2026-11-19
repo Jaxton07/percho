@@ -79,6 +79,7 @@ function Segmented<T extends string>({
 
 /** 设置二级页面的左上角「← 返回」（与 Codex 的二级页一致；本面板所有子页面共用） */
 export function BackBar({ title, onBack }: { title: string; onBack: () => void }) {
+	const t = useT();
 	return (
 		<div className="mb-4">
 			<button
@@ -87,7 +88,7 @@ export function BackBar({ title, onBack }: { title: string; onBack: () => void }
 				onClick={onBack}
 			>
 				<ArrowLeftIcon size={13} />
-				<span>返回</span>
+				<span>{t("settings.mcp.back")}</span>
 			</button>
 			<h3 className="mt-2 text-ui-15 font-medium text-ink">{title}</h3>
 		</div>

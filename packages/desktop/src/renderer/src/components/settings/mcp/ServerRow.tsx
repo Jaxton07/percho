@@ -3,7 +3,7 @@ import { useState } from "react";
 import { useT } from "../../../i18n";
 import { mcpActionKey, useMcpStore } from "../../../stores/mcp";
 import { ChevronRightIcon } from "../../icons";
-import { serverState, toolsSummary, transportSummary } from "./pure";
+import { serverState, toolsSummary } from "./pure";
 
 /** 状态点：7px 圆点 —— 全行只有这一枚 coloring glyph（设计稿 §3） */
 function StateDot({ state }: { state: ReturnType<typeof serverState> }) {
@@ -64,7 +64,6 @@ export function ServerRow({
 	const [saveError, setSaveError] = useState<string>();
 	const state = serverState(server);
 	const summary = toolsSummary(server.tools);
-	const command = transportSummary(server);
 	const instance = config?.runtime?.instances.find(
 		(item) => item.instanceId === selectedInstanceId && item.cwd === config.contextCwd,
 	);
@@ -82,12 +81,6 @@ export function ServerRow({
 	const reconnectError = action?.error;
 	const canReconnect = ownsLiveTarget && isMcpReconnectable(live?.state);
 	const configuredEnabled = server.configuredEnabled ?? server.enabled;
-	const transportWord =
-		server.transport.kind === "stdio"
-			? t("settings.mcp.transportStdio")
-			: server.transport.kind === "url"
-				? t("settings.mcp.transportUrl")
-				: t("settings.mcp.transportUnknown");
 	const ghost =
 		"rounded-full px-2 py-0.5 text-ui-11 text-ink-faint transition-colors hover:bg-hover hover:text-ink-2 disabled:opacity-40 disabled:hover:bg-transparent";
 	const ghostStrong = "rounded-full px-2 py-0.5 text-ui-11 text-ink transition-colors hover:bg-hover";
@@ -100,19 +93,18 @@ export function ServerRow({
 		>
 			<div className="flex items-center gap-2">
 				<StateDot state={state} />
-				<span className={`text-ui-13 ${server.enabled ? "text-ink-2" : "text-ink-faint"}`}>
-					{server.name}
-				</span>
-				<span
-					className={`shrink-0 rounded-full bg-hover px-2 py-0.5 font-mono text-ui-11 ${
-						server.exposure === "deferred" ? "text-ink-2" : "text-ink-faint"
-					}`}
+				<button
+					type="button"
+					className={`min-w-0 flex-1 truncate text-left text-ui-13 ${server.enabled ? "text-ink-2" : "text-ink-faint"}`}
+					aria-label={t("settings.mcp.viewServer", { name: server.name })}
+					onClick={() => onEdit(server)}
 				>
-					{server.exposure}
-				</span>
-				<span className="shrink-0 whitespace-nowrap text-ui-11 text-ink-faint">{transportWord}</span>
+					{server.name}
+				</button>
 				<StateWord state={state} />
-				<span className="flex-1" />
+				{configuredEnabled && state === "disabled" && config?.restartRequired && (
+					<span className="shrink-0 text-ui-11 text-ink-faint">{t("settings.mcp.waitingForRestart")}</span>
+				)}
 				{state === "connected" && !summary && (
 					<span className="text-ui-11 text-ink-faint">{t("settings.mcp.connectedZero")}</span>
 				)}
@@ -194,27 +186,13 @@ export function ServerRow({
 				</span>
 			</div>
 
-			{command && (
-				<p className="mt-1 truncate pl-[15px] font-mono text-ui-115 text-ink-dim" title={command}>
-					{command}
-				</p>
-			)}
-			{(server.description || (summary && summary.readOnly > 0)) && (
-				<div className="mt-0.5 flex items-center gap-2 pl-[15px] text-ui-11 text-ink-faint">
-					{server.description && <span className="truncate">{server.description}</span>}
-					{server.description && summary && summary.readOnly > 0 && (
-						<span className="text-ink-faint/60">·</span>
-					)}
-					{summary && summary.readOnly > 0 && (
-						<span>{t("settings.mcp.toolsReadOnly", { count: summary.readOnly })}</span>
-					)}
-				</div>
-			)}
-
 			{toolsOpen && summary && (
 				<div className="mb-1 ml-[15px] mt-2 rounded-[10px] bg-hover px-3 py-2.5">
-					<div className="mb-1.5 text-ui-11 text-ink-faint">
-						{t("settings.mcp.toolsTitle", { count: summary.count })}
+					<div className="mb-1.5 flex flex-wrap gap-x-2 text-ui-11 text-ink-faint">
+						<span>{t("settings.mcp.toolsTitle", { count: summary.count })}</span>
+						{summary.readOnly > 0 && (
+							<span>{t("settings.mcp.toolsReadOnly", { count: summary.readOnly })}</span>
+						)}
 					</div>
 					<div className="flex flex-col gap-1">
 						{server.tools.map((tool) => (
@@ -239,9 +217,6 @@ export function ServerRow({
 
 			{reconnectError && <p className="mt-2 pl-[15px] text-ui-115 text-err">{reconnectError}</p>}
 			{saveError && <p className="mt-2 pl-[15px] text-ui-115 text-err">{saveError}</p>}
-			{configuredEnabled && live?.state === "disabled" && config?.restartRequired && (
-				<p className="mt-2 pl-[15px] text-ui-11 text-ink-faint">{t("settings.mcp.waitingForRestart")}</p>
-			)}
 
 			{(loginWaiting || loginError) && (
 				<div className="mb-1 ml-[15px] mt-2 rounded-[10px] bg-hover px-3 py-2.5 text-ui-115 text-ink-dim">

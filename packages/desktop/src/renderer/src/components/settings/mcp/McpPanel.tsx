@@ -47,12 +47,11 @@ function Notice({
 	);
 }
 
-function Group({ title, path, children }: { title: string; path?: string; children: React.ReactNode }) {
+function Group({ title, children }: { title: string; children: React.ReactNode }) {
 	return (
 		<div>
 			<div className="flex items-baseline gap-2 px-2.5 pb-0.5">
 				<span className="text-ui-11 text-ink-faint">{title}</span>
-				{path && <span className="truncate font-mono text-ui-11 text-ink-faint">{path}</span>}
 			</div>
 			{children}
 		</div>
@@ -64,7 +63,7 @@ function Group({ title, path, children }: { title: string; path?: string; childr
  *
  * 先前是「在 sessions 列表里按 activeSessionId 找 cwd」，但列表是异步加载的子集：刚打开会话、
  * 列表还没跟上时找不到那条 → cwd 为 undefined → 面板误报「当前没有打开的会话」（实测踩过）。
- * 这里分两个概念：配置读写用 `cwd`；运行态（连接/工具清单）靠会话上报，用 `hasSession` 判断。
+ * 目录用于配置及操作目标归属；运行实例由后端报告，不必常显上下文信息。
  */
 function useProjectCwd(): string | undefined {
 	const environment = useEnvironment();
@@ -79,16 +78,6 @@ function useProjectCwd(): string | undefined {
 		const ref = cwd ? environmentEntityRef(cwd) : undefined;
 		return ref && sameEnvironment(ref.environment, environment) ? ref.id : undefined;
 	});
-}
-
-/** 是否有活跃会话（运行态报告来源）：draft 新会话页为 null */
-function useHasActiveSession(): boolean {
-	const environment = useEnvironment();
-	return useSessionsStore(
-		(s) =>
-			s.activeSessionId !== null &&
-			sameEnvironment(environmentEntityRef(s.activeSessionId).environment, environment),
-	);
 }
 
 /** MCP 设置面板：mcp.json 的增删改 + 运行态（连接/工具/失效原因）。连接与授权都交给官方内置 mcp 扩展 */
@@ -106,13 +95,12 @@ export function McpPanel() {
 		selectInstance,
 	} = useMcpStore();
 	const cwd = useProjectCwd();
-	const hasSession = useHasActiveSession();
 	/** 二级页面（不是浮层）：列表 ↔ 添加/编辑/粘贴 JSON —— 返回按钮在左上角 */
 	const [view, setView] = useState<
 		{ mode: "add" } | { mode: "edit"; server: McpServerView } | { mode: "paste" } | null
 	>(null);
 	const [query, setQuery] = useState("");
-	const [pathsOpen, setPathsOpen] = useState(false);
+	const [detailsOpen, setDetailsOpen] = useState(false);
 	const activeId = useSessionsStore((s) => s.activeSessionId);
 
 	useEffect(() => {
@@ -135,6 +123,27 @@ export function McpPanel() {
 	const selectedEnded =
 		typeof selectedInstanceId === "string" &&
 		!candidates.some((instance) => instance.instanceId === selectedInstanceId);
+	const needsSelection = candidates.length > 0 && !config?.selectedInstanceId;
+	const sessionPicker =
+		candidates.length > 0 ? (
+			<select
+				aria-label={t("settings.mcp.chooseSession")}
+				className="rounded-full bg-hover px-2 py-1 text-ink-2"
+				value={config?.selectedInstanceId ?? ""}
+				onChange={(event) => selectInstance(event.target.value || null)}
+			>
+				<option value="">
+					{selectedEnded ? t("settings.mcp.instanceEnded") : t("settings.mcp.chooseSession")}
+				</option>
+				{candidates.map((instance) => (
+					<option key={instance.instanceId} value={instance.instanceId}>
+						{instance.sessionId.slice(0, 8)}
+					</option>
+				))}
+			</select>
+		) : (
+			<span>{selectedEnded ? t("settings.mcp.instanceEnded") : t("settings.mcp.noInstance")}</span>
+		);
 
 	if (!config && loading) {
 		return <p className="py-8 text-center text-ui-13 text-ink-faint">{t("settings.mcp.loading")}</p>;
@@ -180,31 +189,8 @@ export function McpPanel() {
 				</button>
 			</div>
 
-			{config && (
-				<div className="mt-3 flex flex-wrap items-center gap-2 text-ui-11 text-ink-faint">
-					<span>
-						{t("settings.mcp.context")}: {config.contextCwd ?? "—"}
-					</span>
-					{candidates.length > 0 ? (
-						<select
-							aria-label={t("settings.mcp.chooseSession")}
-							className="rounded-full bg-hover px-2 py-1 text-ink-2"
-							value={config.selectedInstanceId ?? ""}
-							onChange={(event) => selectInstance(event.target.value || null)}
-						>
-							<option value="">
-								{selectedEnded ? t("settings.mcp.instanceEnded") : t("settings.mcp.chooseSession")}
-							</option>
-							{candidates.map((instance) => (
-								<option key={instance.instanceId} value={instance.instanceId}>
-									{instance.sessionId.slice(0, 8)}
-								</option>
-							))}
-						</select>
-					) : (
-						<span>{selectedEnded ? t("settings.mcp.instanceEnded") : t("settings.mcp.noInstance")}</span>
-					)}
-				</div>
+			{needsSelection && !detailsOpen && (
+				<div className="mt-3 text-ui-11 text-ink-faint">{sessionPicker}</div>
 			)}
 			{config?.runtimeErrors?.map((error) => (
 				<p key={error} className="mt-2 text-ui-11 text-err">
@@ -298,7 +284,7 @@ export function McpPanel() {
 						</Group>
 					)}
 					{(config?.project.length ?? 0) > 0 && (
-						<Group title={t("settings.mcp.groupProject")} path={config?.projectPath}>
+						<Group title={t("settings.mcp.groupProject")}>
 							{visible(config?.project ?? []).map((server) => (
 								<ServerRow
 									key={`${environmentKey(environment)}:project:${server.name}:${selectedInstanceId ?? ""}`}
@@ -312,28 +298,34 @@ export function McpPanel() {
 					{config && !config.projectTrusted && config.projectPath && (
 						<p className="px-2.5 text-ui-11 text-ink-faint">{t("settings.mcp.projectUntrusted")}</p>
 					)}
-					{!hasSession && (
-						<p className="px-2.5 text-ui-11 text-ink-faint">{t("settings.mcp.noActiveSession")}</p>
-					)}
 				</div>
 			)}
 
-			{/* 页脚：运维信息收进来（默认折叠）+ 最近一次重连结果 */}
+			{/* 上下文及配置路径默认收起，不影响原有会话归属与选择。 */}
 			<div className="mt-auto flex items-center gap-2 pt-4">
 				<button
 					type="button"
 					className="flex items-center gap-1 rounded-full py-0.5 pl-1 pr-2 text-ui-11 text-ink-faint transition-colors hover:bg-hover hover:text-ink-2"
-					onClick={() => setPathsOpen((v) => !v)}
+					aria-expanded={detailsOpen}
+					onClick={() => setDetailsOpen((v) => !v)}
 				>
 					<ChevronRightIcon
-						className={pathsOpen ? "rotate-90 transition-transform" : "transition-transform"}
+						className={detailsOpen ? "rotate-90 transition-transform" : "transition-transform"}
 					/>
-					{t("settings.mcp.configFiles")}
+					{t("settings.mcp.details")}
 				</button>
 				<span className="flex-1" />
 			</div>
-			{pathsOpen && config && (
-				<div className="mt-1 flex flex-col gap-1">
+			{detailsOpen && config && (
+				<section aria-label={t("settings.mcp.details")} className="mt-1 flex flex-col gap-2">
+					<div className="flex items-center gap-2 text-ui-11 text-ink-dim">
+						<span className="w-20 shrink-0 text-ink-faint">{t("settings.mcp.context")}</span>
+						<span className="truncate font-mono">{config.contextCwd ?? "—"}</span>
+					</div>
+					<div className="flex items-center gap-2 text-ui-11 text-ink-dim">
+						<span className="w-20 shrink-0 text-ink-faint">{t("settings.mcp.sessionLabel")}</span>
+						{sessionPicker}
+					</div>
 					<div className="flex items-center gap-2 font-mono text-ui-115 text-ink-dim">
 						<span className="w-[52px] shrink-0 text-ui-11 text-ink-faint">
 							{t("settings.mcp.pathGlobal")}
@@ -348,7 +340,7 @@ export function McpPanel() {
 							<span className="truncate">{config.projectPath}</span>
 						</div>
 					)}
-				</div>
+				</section>
 			)}
 		</div>
 	);
