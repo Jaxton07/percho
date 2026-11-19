@@ -1,5 +1,6 @@
 export * from "./cache-warming";
 export * from "./channel-subscriptions";
+export * from "./chat-column";
 export * from "./composer-document";
 export * from "./display-image";
 export * from "./environment";

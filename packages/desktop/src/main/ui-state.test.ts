@@ -284,6 +284,64 @@ describe("sidebarWidth 白名单（用户意图宽度）", () => {
 	});
 });
 
+describe("chatColumnWidth persistence (intended max-width)", () => {
+	it("defaults to 760 for legacy files and unrelated first saves", async () => {
+		writeFileSync(file(), "{}");
+		expect((await loadUiState())?.chatColumnWidth).toBe(760);
+		rmSync(file());
+		await saveUiState({ sidebarWidth: 300 });
+		expect((await loadUiState())?.chatColumnWidth).toBe(760);
+	});
+
+	it.each([
+		[480, 480],
+		[920, 920],
+		[920.6, 921],
+		[100, 480],
+		[10000, 10000],
+	])("normalizes and round-trips %s as %s", async (value, expected) => {
+		await saveUiState({ chatColumnWidth: value });
+		expect((await loadUiState())?.chatColumnWidth).toBe(expected);
+	});
+
+	it("normalizes finite values read directly from disk", async () => {
+		writeFileSync(file(), '{"chatColumnWidth":100}');
+		expect((await loadUiState())?.chatColumnWidth).toBe(480);
+		writeFileSync(file(), '{"chatColumnWidth":10000.6}');
+		expect((await loadUiState())?.chatColumnWidth).toBe(10001);
+	});
+
+	it("defaults invalid saved values and nonfinite patches to 760", async () => {
+		for (const raw of [
+			'{"chatColumnWidth":"900"}',
+			'{"chatColumnWidth":null}',
+			'{"chatColumnWidth":true}',
+			'{"chatColumnWidth":[]}',
+			'{"chatColumnWidth":{}}',
+			'{"chatColumnWidth":1e400}',
+			'{"chatColumnWidth":-1e400}',
+		]) {
+			writeFileSync(file(), raw);
+			expect((await loadUiState())?.chatColumnWidth, raw).toBe(760);
+		}
+		for (const value of [Number.NaN, Infinity, -Infinity]) {
+			await saveUiState({ chatColumnWidth: value });
+			expect((await loadUiState())?.chatColumnWidth).toBe(760);
+		}
+	});
+
+	it("preserves other preferences and survives unrelated patches", async () => {
+		await saveUiState({ sidebarWidth: 320, pinnedSessions: ["s1"] });
+		await saveUiState({ chatColumnWidth: 10000 });
+		await saveUiState({ theme: "dark" });
+		const state = await loadUiState();
+		expect(state?.chatColumnWidth).toBe(10000);
+		expect(state?.sidebarWidth).toBe(320);
+		expect(state?.pinnedSessions).toEqual(["s1"]);
+		expect(state?.theme).toBe("dark");
+	});
+});
+
 describe("windowBounds 白名单（normal 态窗口位置与尺寸）", () => {
 	it("缺字段 / 没记过 → null", async () => {
 		writeFileSync(file(), "{}");

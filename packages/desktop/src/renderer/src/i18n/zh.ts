@@ -394,6 +394,9 @@ export const zh = {
 		jump: "跳转到这条消息",
 	},
 	message: {
+		resizeColumnLeft: "调整聊天列宽度（左侧）",
+		resizeColumnRight: "调整聊天列宽度（右侧）",
+		resizeColumnHint: "拖动或按左右键调整宽度；双击或按 Enter 恢复默认",
 		copy: "复制",
 		copied: "已复制",
 		recall: "撤回并放回输入框",

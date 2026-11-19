@@ -412,6 +412,9 @@ export const en: Messages = {
 		jump: "Jump to this message",
 	},
 	message: {
+		resizeColumnLeft: "Resize chat column (left)",
+		resizeColumnRight: "Resize chat column (right)",
+		resizeColumnHint: "Drag or use arrow keys to resize; double-click or press Enter to reset",
 		copy: "Copy",
 		copied: "Copied",
 		recall: "Recall to composer",
