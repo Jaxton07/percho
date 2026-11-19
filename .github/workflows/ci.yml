@@ -90,6 +90,6 @@ jobs:
           cache: npm
       - run: npm ci
       - name: Verify private storage on native filesystem and ACLs
-        run: npm run test -w packages/backend -- test/local-agent-storage.test.ts test/local-agent-storage-sdk.test.ts
+        run: npm run test -w packages/backend -- test/local-agent-storage.test.ts test/local-agent-storage-sdk.test.ts --reporter=verbose
       - name: Test private storage startup decisions
         run: npm run test -w packages/desktop -- src/main/storage-startup-controller.test.ts
