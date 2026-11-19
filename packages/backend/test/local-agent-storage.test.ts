@@ -221,12 +221,18 @@ describe("copy, publish, retry", () => {
 			const original = fsPromises.mkdir;
 			let changed = false;
 			const spy = vi.spyOn(fsPromises, "mkdir").mockImplementation(async (path, ...args) => {
+				if (String(path).includes(".agent-import-"))
+					console.info("[DEBUG-storage-ci] staging mkdir entered", change);
 				const result = await original(path, ...args);
+				if (String(path).includes(".agent-import-"))
+					console.info("[DEBUG-storage-ci] staging mkdir returned", change);
 				if (!changed && String(path).includes(".agent-import-")) {
 					changed = true;
 					if (change === "skipped-link") {
+						console.info("[DEBUG-storage-ci] replacing broken link");
 						rmSync(join(source, "skills", "broken"));
 						symlinkSync(join(home, "another-missing"), join(source, "skills", "broken"));
+						console.info("[DEBUG-storage-ci] broken link replaced");
 					} else if (change === "settings") {
 						writeFileSync(join(source, "settings.json"), '{"skills":[]}');
 					} else {
@@ -236,6 +242,7 @@ describe("copy, publish, retry", () => {
 				}
 				return result;
 			});
+			console.info("[DEBUG-storage-ci] mkdir alias", change, original === spy);
 			try {
 				await expect(initializeLocalStorage(preview, "copy")).rejects.toThrow("Source changed");
 				expect(changed).toBe(true);
