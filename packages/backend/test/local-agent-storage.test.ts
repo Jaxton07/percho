@@ -1,6 +1,6 @@
 import { execFileSync } from "node:child_process";
 import * as fs from "node:fs";
-import { mkdirSync, renameSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { mkdirSync, readdirSync, renameSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import * as fsPromises from "node:fs/promises";
 import {
 	chmod,
@@ -221,28 +221,24 @@ describe("copy, publish, retry", () => {
 			const original = fsPromises.mkdir;
 			let changed = false;
 			const spy = vi.spyOn(fsPromises, "mkdir").mockImplementation(async (path, ...args) => {
-				if (String(path).includes(".agent-import-"))
-					console.info("[DEBUG-storage-ci] staging mkdir entered", change);
 				const result = await original(path, ...args);
-				if (String(path).includes(".agent-import-"))
-					console.info("[DEBUG-storage-ci] staging mkdir returned", change);
 				if (!changed && String(path).includes(".agent-import-")) {
 					changed = true;
 					if (change === "skipped-link") {
-						console.info("[DEBUG-storage-ci] replacing broken link");
 						rmSync(join(source, "skills", "broken"));
 						symlinkSync(join(home, "another-missing"), join(source, "skills", "broken"));
-						console.info("[DEBUG-storage-ci] broken link replaced");
 					} else if (change === "settings") {
 						writeFileSync(join(source, "settings.json"), '{"skills":[]}');
 					} else {
 						renameSync(source, `${source}-previous`);
-						fs.cpSync(`${source}-previous`, source, { recursive: true, preserveTimestamps: true });
+						mkdirSync(source);
+						// Replace the root without cloning its children or dereferencing the broken links.
+						for (const name of readdirSync(`${source}-previous`))
+							renameSync(join(`${source}-previous`, name), join(source, name));
 					}
 				}
 				return result;
 			});
-			console.info("[DEBUG-storage-ci] mkdir alias", change, original === spy);
 			try {
 				await expect(initializeLocalStorage(preview, "copy")).rejects.toThrow("Source changed");
 				expect(changed).toBe(true);
