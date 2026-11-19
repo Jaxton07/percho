@@ -1,9 +1,7 @@
-import type { McpServerView } from "@percho/shared";
+import { isMcpReconnectable, type McpServerView } from "@percho/shared";
 import { useState } from "react";
 import { useT } from "../../../i18n";
-import { useMcpStore } from "../../../stores/mcp";
-import { useSessionsStore } from "../../../stores/sessions";
-import { selectTranscript, useTranscriptStore } from "../../../stores/transcript";
+import { mcpActionKey, useMcpStore } from "../../../stores/mcp";
 import { ChevronRightIcon } from "../../icons";
 import { serverState, toolsSummary, transportSummary } from "./pure";
 
@@ -57,19 +55,31 @@ export function ServerRow({
 	onEdit: (server: McpServerView) => void;
 }) {
 	const t = useT();
-	const { upsert, remove, reload, login } = useMcpStore();
+	const { upsert, remove, reconnect, login, config, selectedInstanceId, reconnectActions } = useMcpStore();
+	const action = selectedInstanceId
+		? reconnectActions[mcpActionKey(selectedInstanceId, server.name)]
+		: undefined;
+	const reconnecting = action?.pending ?? false;
+	const reconnectError = action?.error;
 	const [toolsOpen, setToolsOpen] = useState(false);
 	const [reasonOpen, setReasonOpen] = useState(false);
 	const [confirming, setConfirming] = useState(false);
 	const [loginWaiting, setLoginWaiting] = useState(false);
 	const [loginError, setLoginError] = useState<string>();
+	const [saveError, setSaveError] = useState<string>();
 	const state = serverState(server);
 	const summary = toolsSummary(server.tools);
 	const command = transportSummary(server);
-	const activeId = useSessionsStore((s) => s.activeSessionId);
-	const running = useTranscriptStore((s) =>
-		activeId ? selectTranscript(s, activeId).phase === "streaming" : false,
+	const instance = config?.runtime?.instances.find(
+		(item) => item.instanceId === selectedInstanceId && item.cwd === config.contextCwd,
 	);
+	const path = server.source === "user" ? config?.globalPath : config?.projectPath;
+	const live =
+		instance?.available && path
+			? instance.servers.find((item) => item.name === server.name && (item.override ?? item.source) === path)
+			: undefined;
+	const canReconnect = !!live && isMcpReconnectable(live.state) && state !== "overridden";
+	const configuredEnabled = server.configuredEnabled ?? server.enabled;
 	const transportWord =
 		server.transport.kind === "stdio"
 			? t("settings.mcp.transportStdio")
@@ -139,22 +149,32 @@ export function ServerRow({
 					</button>
 				)}
 				{/* hover / 键盘聚焦才显形的操作组 */}
-				<span className="flex shrink-0 items-center gap-0.5 opacity-0 transition-opacity group-hover/row:opacity-100 group-focus-within/row:opacity-100">
-					{server.enabled ? (
+				<span
+					className={`flex shrink-0 items-center gap-0.5 transition-opacity group-hover/row:opacity-100 group-focus-within/row:opacity-100 ${reconnecting ? "opacity-100" : "opacity-0"}`}
+				>
+					{canReconnect || configuredEnabled || reconnecting ? (
 						<button
 							type="button"
 							className={ghost}
-							disabled={running}
-							title={running ? t("settings.mcp.reconnectRunning") : undefined}
-							onClick={() => void reload(cwd)}
+							disabled={!canReconnect || reconnecting}
+							onClick={() => {
+								// RPC errors are retained by the store for the owning target.
+								void reconnect(server.name).catch(() => {});
+							}}
 						>
-							{t("settings.mcp.reconnect")}
+							{t(reconnecting ? "settings.mcp.reconnecting" : "settings.mcp.reconnect")}
 						</button>
-					) : (
+					) : null}
+					{!configuredEnabled && (
 						<button
 							type="button"
 							className={ghost}
-							onClick={() => void upsert({ scope: server.source, cwd, name: server.name, enabled: true })}
+							onClick={() => {
+								setSaveError(undefined);
+								void upsert({ scope: server.source, cwd, name: server.name, enabled: true }).catch(
+									(error: unknown) => setSaveError(error instanceof Error ? error.message : String(error)),
+								);
+							}}
 						>
 							{t("settings.mcp.enable")}
 						</button>
@@ -177,7 +197,7 @@ export function ServerRow({
 					{command}
 				</p>
 			)}
-			{(server.description || (summary && summary.readOnly > 0) || (running && server.enabled)) && (
+			{(server.description || (summary && summary.readOnly > 0)) && (
 				<div className="mt-0.5 flex items-center gap-2 pl-[15px] text-ui-11 text-ink-faint">
 					{server.description && <span className="truncate">{server.description}</span>}
 					{server.description && summary && summary.readOnly > 0 && (
@@ -186,7 +206,6 @@ export function ServerRow({
 					{summary && summary.readOnly > 0 && (
 						<span>{t("settings.mcp.toolsReadOnly", { count: summary.readOnly })}</span>
 					)}
-					{running && server.enabled && <span>{t("settings.mcp.reconnectDisabledHint")}</span>}
 				</div>
 			)}
 
@@ -216,6 +235,12 @@ export function ServerRow({
 				</div>
 			)}
 
+			{reconnectError && <p className="mt-2 pl-[15px] text-ui-115 text-err">{reconnectError}</p>}
+			{saveError && <p className="mt-2 pl-[15px] text-ui-115 text-err">{saveError}</p>}
+			{configuredEnabled && live?.state === "disabled" && config?.restartRequired && (
+				<p className="mt-2 pl-[15px] text-ui-11 text-ink-faint">{t("settings.mcp.waitingForRestart")}</p>
+			)}
+
 			{(loginWaiting || loginError) && (
 				<div className="mb-1 ml-[15px] mt-2 rounded-[10px] bg-hover px-3 py-2.5 text-ui-115 text-ink-dim">
 					{loginError ?? t("settings.mcp.loginWaiting")}
@@ -235,7 +260,10 @@ export function ServerRow({
 						className="rounded-full px-2 py-0.5 text-ui-11 text-err transition-colors hover:bg-hover"
 						onClick={() => {
 							setConfirming(false);
-							void remove({ scope: server.source, cwd, name: server.name });
+							setSaveError(undefined);
+							void remove({ scope: server.source, cwd, name: server.name }).catch((error: unknown) =>
+								setSaveError(error instanceof Error ? error.message : String(error)),
+							);
 						}}
 					>
 						{t("settings.mcp.deleteNow")}

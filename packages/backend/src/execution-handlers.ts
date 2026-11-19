@@ -79,7 +79,7 @@ export function createExecutionHandlers(
 		mcpConfigUpsert: (input) => backend.upsertMcpServer(input),
 		mcpConfigImport: (input) => backend.importMcpServers(input),
 		mcpConfigRemove: (input) => backend.removeMcpServer(input),
-		mcpConfigReload: ({ cwd }) => backend.reloadMcpServers({ cwd }),
+		mcpReconnect: (input) => backend.reconnectMcpServer(input),
 		listProviders: ({ options }) => backend.settings.listProviders(options),
 		saveApiKey: ({ providerId, key }) => backend.settings.saveApiKey(providerId, key),
 		removeCredential: ({ providerId }) => backend.settings.removeCredential(providerId),

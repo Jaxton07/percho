@@ -37,7 +37,6 @@ import type {
 	LoginEventPayload,
 	McpConfigListResult,
 	McpMutationResult,
-	McpReloadReport,
 	McpServersChangedPayload,
 	McpUpsertInput,
 	PendingInteractions,
@@ -64,6 +63,7 @@ import {
 	composerDocumentText,
 	extractTodos,
 	formatSkillCommand,
+	isMcpReconnectable,
 	isModelVisible,
 	parseComposerDocument,
 	parseExpandedSkillInvocation,
@@ -245,7 +245,13 @@ export interface PiBackendOptions {
  * - emitter.ts            泛型订阅/分发原语（9 套事件管线共用）
  * - settings/quota.ts     opencode-go 套餐额度（TTL 缓存 + 官方 API）
  */
+type SessionReloadReport = {
+	reloaded: number;
+	skipped: Array<{ sessionId: string; reason: "streaming" | "compacting" | "failed" }>;
+};
+
 export class PiBackend {
+	private mcpRestartRequired = false;
 	private readonly registry = new SessionRegistry();
 	private readonly cacheWarming = new CacheWarmingSettings(getAgentDir, () =>
 		this.registry
@@ -2752,37 +2758,31 @@ export class PiBackend {
 	): Promise<McpConfigListResult> {
 		const cwd = options.cwd;
 		const config = await listMcpServers({ cwd, projectTrusted: this.isProjectTrusted(cwd) });
-		return projectMcpRuntime({ ...config, contextCwd: cwd }, this.mcpRuntime.snapshot(), options.instanceId);
+		return projectMcpRuntime(
+			{ ...config, contextCwd: cwd, restartRequired: this.mcpRestartRequired },
+			this.mcpRuntime.snapshot(),
+			options.instanceId,
+		);
 	}
 
 	async importMcpServers(input: { json: string; cwd?: string }): Promise<McpMutationResult> {
 		const cwd = input.cwd;
 		await importMcpServers({ ...input, cwd }, { projectTrusted: this.isProjectTrusted(cwd) });
-		const reload = await this.reloadIdleSessions(undefined);
-		return { config: await this.getMcpConfig({ cwd }), reload };
+		this.mcpRestartRequired = true;
+		return { config: await this.getMcpConfig({ cwd }) };
 	}
 
-	/** 新增/编辑一个 MCP server；写盘后 reload 空闲会话（运行中的跳过并回报，见 reloadIdleSessions） */
+	/** 新增或编辑配置，只在重启后生效。 */
 	async upsertMcpServer(input: McpUpsertInput): Promise<McpMutationResult> {
 		const cwd = input.cwd;
 		if (input.scope === "project" && !cwd) throw new Error("项目级 MCP 配置需要项目目录");
 		const projectTrusted = this.isProjectTrusted(cwd);
 		await upsertMcpServer({ ...input, cwd }, { projectTrusted });
-		const reload = await this.reloadIdleSessions(input.scope === "project" ? cwd : undefined);
-		return { config: await this.getMcpConfig({ cwd }), reload };
+		this.mcpRestartRequired = true;
+		return { config: await this.getMcpConfig({ cwd }) };
 	}
 
-	/**
-	 * 重连（面板入口）：reload 会话 → 官方 mcp 扩展重读 mcp.json、重连 server。
-	 * 对应官方 `/mcp` 的 reconnect；连接状态来自官方运行态快照。
-	 */
-	async reloadMcpServers(input: { cwd?: string } = {}): Promise<McpMutationResult> {
-		const cwd = input.cwd;
-		const reload = await this.reloadIdleSessions(undefined); // 全局配置影响所有会话
-		return { config: await this.getMcpConfig({ cwd }), reload };
-	}
-
-	/** 删除一个 MCP server（写盘后 reload） */
+	/** 删除配置，不改变现有连接。 */
 	async removeMcpServer(input: {
 		scope: "user" | "project";
 		cwd?: string;
@@ -2794,8 +2794,36 @@ export class PiBackend {
 			if (!this.isProjectTrusted(cwd)) throw new Error("项目未受信，不能修改 MCP 配置");
 		}
 		await removeMcpServer({ ...input, cwd, projectTrusted: this.isProjectTrusted(cwd) });
-		const reload = await this.reloadIdleSessions(input.scope === "project" ? cwd : undefined);
-		return { config: await this.getMcpConfig({ cwd }), reload };
+		this.mcpRestartRequired = true;
+		return { config: await this.getMcpConfig({ cwd }) };
+	}
+
+	/** Reconnect exactly the observed server using the official extension command. */
+	async reconnectMcpServer(input: { instanceId: string; name: string }): Promise<void> {
+		const instance = this.mcpRuntime
+			.snapshot()
+			.instances.find((item) => item.instanceId === input.instanceId);
+		const entry = instance && this.registry.get(instance.sessionId);
+		if (!instance || !entry || entry.readOnly || this.stopping || this.sessionDisposals.has(entry))
+			throw new Error("MCP 实例已失效，请重新选择会话");
+		const server = instance.servers.find((item) => item.name === input.name);
+		if (!instance.available || !server || !isMcpReconnectable(server.state))
+			throw new Error("MCP 服务器当前无法重连，请等待连接完成或检查服务器状态");
+		if (!entry.session.extensionRunner.getCommand("mcp")) throw new Error("MCP 重连命令不可用");
+		if (!entry.session.isStreaming && !entry.session.isCompacting) {
+			const lease = entry.session.tryAcquireIdleLease();
+			if (!lease) throw new Error("会话正在切换，请稍后重试 MCP 重连");
+			lease.release();
+		}
+		await entry.session.prompt(`/mcp reconnect ${input.name}`);
+		const result = this.mcpRuntime
+			.snapshot()
+			.instances.find((item) => item.instanceId === input.instanceId)
+			?.servers.find((item) => item.name === input.name);
+		if (!result || this.stopping || this.sessionDisposals.has(entry))
+			throw new Error("MCP 实例已失效，请重新选择会话");
+		if (["failed", "needs-auth", "disconnected", "closed", "disabled"].includes(result.state ?? ""))
+			throw new Error(result.error || "MCP 服务器重连失败");
 	}
 
 	/** Use the SDK command only for the currently observed owner and server. */
@@ -2839,15 +2867,15 @@ export class PiBackend {
 	}
 
 	/**
-	 * 包安装/卸载与 MCP 变更的唯一空闲重载实现。官方 mcp 扩展在 session_start/reload 时读配置。
+	 * 包安装/卸载使用的空闲会话重载实现。
 	 * `cwd` 给定 = 只重载该项目下的会话（项目级配置只影响它们）；缺省 = 全局配置，重载全部。
 	 *
 	 * 预检运行状态并将跳过的会话回报 UI；SDK 的 reload 也会在 shutdown 前拒绝忙碌会话，
 	 * 因此预检之后状态变化不会静默中断在途任务。
 	 */
-	private async reloadIdleSessions(cwd: string | undefined): Promise<McpReloadReport> {
+	private async reloadIdleSessions(cwd: string | undefined): Promise<SessionReloadReport> {
 		this.assertRunning();
-		const skipped: McpReloadReport["skipped"] = [];
+		const skipped: SessionReloadReport["skipped"] = [];
 		let reloaded = 0;
 		for (const entry of this.registry.list()) {
 			if (entry.readOnly || (cwd && entry.cwd !== cwd)) continue;

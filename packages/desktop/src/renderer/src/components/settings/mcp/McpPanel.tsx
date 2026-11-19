@@ -1,5 +1,5 @@
 import type { McpServerView } from "@percho/shared";
-import { environmentEntityRef, LOCAL_ENVIRONMENT, sameEnvironment } from "@percho/shared";
+import { environmentEntityRef, environmentKey, LOCAL_ENVIRONMENT, sameEnvironment } from "@percho/shared";
 import { useEffect, useState } from "react";
 import { getExecutionApi } from "../../../environment-api";
 import { useEnvironment } from "../../../environment-context";
@@ -7,7 +7,6 @@ import { useT } from "../../../i18n";
 import { selectActiveCwd } from "../../../lib/active-cwd";
 import { useMcpStore } from "../../../stores/mcp";
 import { useSessionsStore } from "../../../stores/sessions";
-import { selectTranscript, useTranscriptStore } from "../../../stores/transcript";
 import { ChevronRightIcon, PlusIcon } from "../../icons";
 import { filterServers, serverState, showSearch, sortServers, toolsSummary } from "./pure";
 import { PasteJsonPage, ServerEditorPage } from "./ServerEditorPage";
@@ -101,7 +100,7 @@ export function McpPanel() {
 		loading,
 		load,
 		notice,
-		lastReload,
+		restartRequired,
 		applyServersChanged,
 		selectedInstanceId,
 		selectInstance,
@@ -113,14 +112,8 @@ export function McpPanel() {
 		{ mode: "add" } | { mode: "edit"; server: McpServerView } | { mode: "paste" } | null
 	>(null);
 	const [query, setQuery] = useState("");
-	const [runningDismissed, setRunningDismissed] = useState(false);
 	const [pathsOpen, setPathsOpen] = useState(false);
 	const activeId = useSessionsStore((s) => s.activeSessionId);
-	const running = useTranscriptStore((s) =>
-		activeId && sameEnvironment(environmentEntityRef(activeId).environment, environment)
-			? selectTranscript(s, activeId).phase === "streaming"
-			: false,
-	);
 
 	useEffect(() => {
 		const ref = activeId ? environmentEntityRef(activeId) : undefined;
@@ -229,14 +222,15 @@ export function McpPanel() {
 				</div>
 			)}
 
-			{/* 运行中：重连会打断当前会话，这里把原因说出来（不是 hover title） */}
-			{running && !runningDismissed && (
+			{restartRequired && config && (
 				<div className="mt-3">
 					<Notice
-						glyph="warn"
-						message={t("settings.mcp.runningNotice")}
-						action={t("settings.mcp.gotIt")}
-						onAction={() => setRunningDismissed(true)}
+						glyph="info"
+						message={t(
+							environment.kind === "local"
+								? "settings.mcp.restartRequired"
+								: "settings.mcp.restartRequiredRemote",
+						)}
 					/>
 				</div>
 			)}
@@ -295,7 +289,7 @@ export function McpPanel() {
 						<Group title={t("settings.mcp.groupGlobal")}>
 							{visible(config?.global ?? []).map((server) => (
 								<ServerRow
-									key={`user:${server.name}`}
+									key={`${environmentKey(environment)}:user:${server.name}:${selectedInstanceId ?? ""}`}
 									server={server}
 									cwd={cwd}
 									onEdit={(s) => setView({ mode: "edit", server: s })}
@@ -307,7 +301,7 @@ export function McpPanel() {
 						<Group title={t("settings.mcp.groupProject")} path={config?.projectPath}>
 							{visible(config?.project ?? []).map((server) => (
 								<ServerRow
-									key={`project:${server.name}`}
+									key={`${environmentKey(environment)}:project:${server.name}:${selectedInstanceId ?? ""}`}
 									server={server}
 									cwd={cwd}
 									onEdit={(s) => setView({ mode: "edit", server: s })}
@@ -337,16 +331,6 @@ export function McpPanel() {
 					{t("settings.mcp.configFiles")}
 				</button>
 				<span className="flex-1" />
-				{lastReload && (
-					<span className="text-ui-11 text-ink-faint">
-						{lastReload.skipped.length === 0
-							? t("settings.mcp.reloadApplied", { count: lastReload.reloaded })
-							: t("settings.mcp.reloadSkipped", {
-									count: lastReload.skipped.length,
-									reloaded: lastReload.reloaded,
-								})}
-					</span>
-				)}
 			</div>
 			{pathsOpen && config && (
 				<div className="mt-1 flex flex-col gap-1">
@@ -364,7 +348,6 @@ export function McpPanel() {
 							<span className="truncate">{config.projectPath}</span>
 						</div>
 					)}
-					<p className="text-ui-11 leading-relaxed text-ink-faint">{t("settings.mcp.reloadExplain")}</p>
 				</div>
 			)}
 		</div>

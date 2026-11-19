@@ -909,12 +909,15 @@ export const en: Messages = {
 			deleteAsk: "Remove {name}? The mcp.json entry is removed immediately.",
 			deleteNow: "Remove",
 			enable: "Enable",
-			reconnectDisabledHint: "Reconnect disabled (this session is running)",
+			restartRequired:
+				"Configuration saved. Restart Percho to apply it; existing connections remain unchanged.",
+			restartRequiredRemote:
+				"Configuration saved. Restart the corresponding remote Percho service to apply it; existing connections remain unchanged.",
+			waitingForRestart: "Enabled in configuration; waiting for restart.",
+			reconnecting: "Reconnecting…",
 			configFiles: "Config files",
 			pathGlobal: "Global",
 			pathProject: "Project",
-			reloadExplain:
-				"Reconnect reloads sessions so the official mcp extension re-reads the config; sessions that are running are skipped (so the current turn is not interrupted) and pick it up when idle.",
 			searchPlaceholder: "Search servers",
 			emptyTitle: "No MCP servers yet",
 			emptyDesc:
@@ -929,8 +932,6 @@ export const en: Messages = {
 			projectUntrusted:
 				"Project is not trusted, so .pi/mcp.json is not read; trust the project to manage its servers here.",
 			projectNeedsCwd: "No open session: project-level config is not editable.",
-			runningNotice:
-				"This session is running: reconnecting would interrupt it. Saved changes take effect when idle — or reconnect after the turn ends.",
 			gotIt: "Got it",
 			addServer: "Add server",
 			editServer: "Edit server",
@@ -970,11 +971,7 @@ export const en: Messages = {
 			loading: "Loading…",
 			cancel: "Cancel",
 			save: "Save",
-			reloadApplied: "Reconnected {count} idle session(s)",
-			reloadSkipped:
-				"Saved: {count} running session(s) were not reconnected (takes effect when idle); {reloaded} reconnected",
 			reconnect: "Reconnect",
-			reconnectRunning: "This session is running — reconnecting would interrupt it; retry when the turn ends",
 			edit: "Edit",
 			remove: "Remove",
 			enabled: "Enabled",
@@ -983,7 +980,7 @@ export const en: Messages = {
 			transportUrl: "Remote",
 			transportUnknown: "Incomplete config",
 			noActiveSession:
-				"No open session: connection state and tool inventory are reported from sessions (open one or hit Reconnect).",
+				"No open session: connection state and tool inventory are reported by running instances.",
 			reloadFailed: "Reconnect failed",
 		},
 		extensions: {

@@ -26,7 +26,12 @@ import { McpPanel } from "./McpPanel";
 describe("McpPanel 初始态渲染冒烟", () => {
 	beforeEach(() => {
 		vi.stubGlobal("React", React);
-		useMcpStore.setState({ config: null, loading: false, lastReload: null, selectedInstanceId: undefined });
+		useMcpStore.setState({
+			config: null,
+			loading: false,
+			restartRequired: false,
+			selectedInstanceId: undefined,
+		});
 	});
 
 	it("选定远端环境只查询归属项目字面路径，不回落其他环境", async () => {

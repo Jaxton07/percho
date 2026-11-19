@@ -2,10 +2,10 @@ import {
 	type EnvironmentRef,
 	environmentKey,
 	environmentRef,
+	isMcpReconnectable,
 	LOCAL_ENVIRONMENT,
 	type McpConfigListResult,
 	type McpGlobalNotice,
-	type McpReloadReport,
 	type McpRuntimeInventory,
 	type McpServersChangedPayload,
 	type McpUpsertInput,
@@ -16,19 +16,24 @@ import { getExecutionApi } from "../environment-api";
 import { useEnvironment } from "../environment-context";
 import { useToastsStore } from "./toasts";
 
+export function mcpActionKey(instanceId: string, name: string): string {
+	return JSON.stringify([instanceId, name]);
+}
+
 interface McpStore {
 	config: McpConfigListResult | null;
 	loading: boolean;
 	notice?: McpGlobalNotice;
-	lastReload: McpReloadReport | null;
+	restartRequired: boolean;
 	selectedInstanceId: string | null | undefined;
+	reconnectActions: Readonly<Record<string, { instanceId: string; pending: boolean; error?: string }>>;
 	load: (cwd?: string, activeSessionId?: string) => Promise<void>;
 	selectInstance: (id: string | null) => void;
 	login: (name: string) => Promise<void>;
 	upsert: (input: McpUpsertInput) => Promise<void>;
 	importServers: (json: string, cwd?: string) => Promise<void>;
 	remove: (input: { scope: "user" | "project"; cwd?: string; name: string }) => Promise<void>;
-	reload: (cwd?: string) => Promise<void>;
+	reconnect: (name: string) => Promise<void>;
 	applyServersChanged: (payload: McpServersChangedPayload) => void;
 }
 
@@ -37,12 +42,30 @@ function createMcpStore(environment: EnvironmentRef) {
 		let loadSeq = 0;
 		let contextSeq = 0;
 		let operationSeq = 0;
-		let selectionSeq = 0;
 		let reconcileFailedOperation: (() => Promise<void>) | undefined;
 		// Concurrent IPC completion can install a newer recovery while this operation is awaiting.
 		const reconcileAfterWrite = () => reconcileFailedOperation?.();
 		const reconcileCurrentContext = () => reconcileAfterWrite() ?? get().load(contextCwd, activeSession);
 		const retiredEpochs = new Set<string>();
+		const reconnectPromises = new Map<string, Promise<void>>();
+		const pruneActions = (incoming: McpRuntimeInventory) => {
+			const epochChanged = runtime && runtime.epoch !== incoming.epoch;
+			const actions = { ...get().reconnectActions };
+			let changed = false;
+			for (const [key, action] of Object.entries(actions)) {
+				if (
+					epochChanged ||
+					!incoming.instances.some(
+						(instance) => instance.instanceId === action.instanceId && instance.available,
+					)
+				) {
+					delete actions[key];
+					reconnectPromises.delete(key);
+					changed = true;
+				}
+			}
+			if (changed) set({ reconnectActions: actions });
+		};
 		let contextCwd: string | undefined;
 		let runtime: McpRuntimeInventory | undefined;
 		let eventSeq = 0;
@@ -71,40 +94,22 @@ function createMcpStore(environment: EnvironmentRef) {
 			)
 				return;
 			if (runtime && runtime.epoch !== incoming.epoch) retiredEpochs.add(runtime.epoch);
+			pruneActions(incoming);
 			runtime = incoming;
 		};
 		const commit = (config: McpConfigListResult) => {
 			const projected = project(config);
-			set({ config: projected, notice: projected.notice });
+			set({
+				config: projected,
+				notice: projected.notice,
+				restartRequired: projected.restartRequired === true,
+			});
 		};
-		const mutationSelection = () => {
-			const id = get().selectedInstanceId;
-			const instance = runtime?.instances.find(
-				(item) => item.instanceId === id && item.cwd === get().config?.contextCwd,
-			);
-			return { id, sessionId: instance?.sessionId, cwd: get().config?.contextCwd, selectionSeq };
-		};
-		const followMutation = (selection: ReturnType<typeof mutationSelection>) => {
-			if (
-				selection.selectionSeq !== selectionSeq ||
-				!selection.sessionId ||
-				get().selectedInstanceId !== selection.id ||
-				get().config?.contextCwd !== selection.cwd
-			)
-				return;
-			const next = runtime?.instances.find(
-				(item) => item.cwd === selection.cwd && item.sessionId === selection.sessionId,
-			);
-			if (next) set({ selectedInstanceId: next.instanceId });
-		};
-		const mutate = async (
-			request: () => Promise<{ config: McpConfigListResult; reload: McpReloadReport }>,
-		) => {
+		const mutate = async (request: () => Promise<{ config: McpConfigListResult }>) => {
 			const seq = contextSeq;
 			const operation = ++operationSeq;
 			reconcileFailedOperation = undefined;
 			const startedAt = eventSeq;
-			const selection = mutationSelection();
 			const cwd = contextCwd;
 			const current = () => seq === contextSeq && operation === operationSeq;
 			const recover = async () => {
@@ -115,7 +120,6 @@ function createMcpStore(environment: EnvironmentRef) {
 					const config = await getExecutionApi(environment).mcpConfigList({ cwd });
 					if (current() && read === loadSeq) {
 						acceptBase(config.runtime, recoveryStartedAt);
-						followMutation(selection);
 						commit(config);
 						set({ loading: false });
 					}
@@ -125,7 +129,7 @@ function createMcpStore(environment: EnvironmentRef) {
 					// Keep the mutation's original failure; another pending write may trigger reconciliation.
 				}
 			};
-			let result: { config: McpConfigListResult; reload: McpReloadReport };
+			let result: { config: McpConfigListResult };
 			try {
 				result = await request();
 			} catch (error) {
@@ -142,15 +146,15 @@ function createMcpStore(environment: EnvironmentRef) {
 			// Acknowledged writes supersede any reads that began before they completed.
 			loadSeq++;
 			acceptBase(result.config.runtime, startedAt);
-			followMutation(selection);
 			commit(result.config);
-			set({ lastReload: result.reload, loading: false });
+			set({ loading: false });
 		};
 		return {
 			config: null,
 			loading: false,
-			lastReload: null,
+			restartRequired: false,
 			selectedInstanceId: undefined,
+			reconnectActions: {},
 			load: async (cwd, sessionId) => {
 				const seq = ++loadSeq;
 				const operation = operationSeq;
@@ -181,7 +185,6 @@ function createMcpStore(environment: EnvironmentRef) {
 				}
 			},
 			selectInstance: (id) => {
-				selectionSeq++;
 				set({ selectedInstanceId: id });
 				const config = get().config;
 				if (config) commit(config);
@@ -194,7 +197,51 @@ function createMcpStore(environment: EnvironmentRef) {
 			upsert: (input) => mutate(() => getExecutionApi(environment).mcpConfigUpsert(input)),
 			importServers: (json, cwd) => mutate(() => getExecutionApi(environment).mcpConfigImport({ json, cwd })),
 			remove: (input) => mutate(() => getExecutionApi(environment).mcpConfigRemove(input)),
-			reload: (cwd) => mutate(() => getExecutionApi(environment).mcpConfigReload({ cwd })),
+			reconnect: (name) => {
+				const instanceId = get().selectedInstanceId;
+				const instance = runtime?.instances.find(
+					(item) => item.instanceId === instanceId && item.cwd === get().config?.contextCwd,
+				);
+				if (!instanceId || !instance?.available)
+					return Promise.reject(new Error("MCP instance or server is not available"));
+				const key = mcpActionKey(instanceId, name);
+				const existing = reconnectPromises.get(key);
+				// An admitted reconnect temporarily reports connecting; callers still join its result.
+				if (existing) return existing;
+				if (!instance.servers.some((server) => server.name === name && isMcpReconnectable(server.state)))
+					return Promise.reject(new Error("MCP instance or server is not available"));
+				const promise = Promise.resolve()
+					.then(() => getExecutionApi(environment).mcpReconnect({ instanceId, name }))
+					.then(
+						() => {
+							if (reconnectPromises.get(key) !== promise) return;
+							const actions = { ...get().reconnectActions };
+							delete actions[key];
+							set({ reconnectActions: actions });
+						},
+						(error: unknown) => {
+							if (reconnectPromises.get(key) === promise) {
+								set({
+									reconnectActions: {
+										...get().reconnectActions,
+										[key]: {
+											instanceId,
+											pending: false,
+											error: error instanceof Error ? error.message : String(error),
+										},
+									},
+								});
+							}
+							throw error;
+						},
+					)
+					.finally(() => {
+						if (reconnectPromises.get(key) === promise) reconnectPromises.delete(key);
+					});
+				reconnectPromises.set(key, promise);
+				set({ reconnectActions: { ...get().reconnectActions, [key]: { instanceId, pending: true } } });
+				return promise;
+			},
 			applyServersChanged: (payload) => {
 				if (
 					retiredEpochs.has(payload.epoch) ||
@@ -202,6 +249,7 @@ function createMcpStore(environment: EnvironmentRef) {
 				)
 					return;
 				if (runtime && runtime.epoch !== payload.epoch) retiredEpochs.add(runtime.epoch);
+				pruneActions(payload);
 				eventSeq++;
 				runtime = payload;
 				const config = get().config;

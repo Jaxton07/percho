@@ -5,12 +5,12 @@ const api = vi.hoisted(() => ({
 	mcpConfigList: vi.fn(),
 	mcpConfigUpsert: vi.fn(),
 	mcpConfigImport: vi.fn(),
-	mcpConfigReload: vi.fn(),
+	mcpReconnect: vi.fn(),
 	mcpConfigRemove: vi.fn(),
 }));
 vi.mock("../environment-api", () => ({ getExecutionApi: () => api }));
 
-import { getMcpStore } from "./mcp";
+import { getMcpStore, mcpActionKey } from "./mcp";
 
 const server = {
 	name: "my-server",
@@ -67,23 +67,23 @@ describe("MCP 完整运行态", () => {
 		const store = getMcpStore({ kind: "ssh", connectionId: "mcp-import-order", environmentId: "e" });
 		api.mcpConfigList.mockResolvedValueOnce(config(inventory(0)));
 		await store.getState().load("/a");
-		const pending = deferred<{ config: McpConfigListResult; reload: { reloaded: number; skipped: [] } }>();
+		const pending = deferred<{ config: McpConfigListResult }>();
 		api.mcpConfigImport.mockReturnValueOnce(pending.promise);
 		const importing = store.getState().importServers("{}", "/a");
 		api.mcpConfigUpsert.mockResolvedValueOnce({
 			config: config(inventory(2)),
-			reload: { reloaded: 2, skipped: [] },
 		});
 		await store.getState().upsert({ scope: "user", name: "x", command: "node" });
 		api.mcpConfigList.mockResolvedValueOnce(config(inventory(2)));
-		pending.resolve({ config: config(inventory(1)), reload: { reloaded: 1, skipped: [] } });
+		pending.resolve({ config: config(inventory(1)) });
 		await importing;
-		expect(store.getState().lastReload?.reloaded).toBe(2);
+		expect(store.getState().config?.runtime?.revision).toBe(2);
 	});
 	it("原样提交批量导入并传播错误", async () => {
 		const store = getMcpStore({ kind: "ssh", connectionId: "mcp-import-test", environmentId: "e" });
 		api.mcpConfigImport.mockRejectedValueOnce(new Error("invalid row"));
 		await expect(store.getState().importServers('{"bad":3}', "/a")).rejects.toThrow("invalid row");
+		expect(store.getState().restartRequired).toBe(false);
 		expect(api.mcpConfigImport).toHaveBeenCalledWith({ json: '{"bad":3}', cwd: "/a" });
 	});
 	beforeEach(() => {
@@ -91,7 +91,7 @@ describe("MCP 完整运行态", () => {
 		api.mcpConfigUpsert.mockReset();
 		api.mcpConfigImport.mockReset();
 		api.mcpConfigRemove.mockReset();
-		api.mcpConfigReload.mockReset();
+		api.mcpReconnect.mockReset();
 	});
 	it("事件先于旧基线时保留新版，并完整清除工具和错误", async () => {
 		const store = getMcpStore({ kind: "ssh", connectionId: "mcp-test-1", environmentId: "e" });
@@ -148,26 +148,26 @@ describe("MCP 完整运行态", () => {
 		await pending;
 		expect(store.getState().config?.selectedInstanceId).toBe("2");
 	});
-	it("主动重连跟随同会话新实例，普通关闭不切换", async () => {
+	it("保存不切换选中实例，重连不清除重启标志", async () => {
 		const store = getMcpStore({ kind: "ssh", connectionId: "reconnect", environmentId: "e" });
-		api.mcpConfigList.mockResolvedValueOnce(config(inventory(1, [instance("1"), instance("2")])));
+		const saved = { ...config(inventory(1, [instance("1"), instance("2")])), restartRequired: true };
+		api.mcpConfigList.mockResolvedValueOnce(saved);
 		await store.getState().load("/a", "session-1");
-		api.mcpConfigReload.mockResolvedValueOnce({
-			config: config(inventory(2, [{ ...instance("new"), sessionId: "session-1" }, instance("2")])),
-			reload: { reloaded: 1, skipped: [] },
-		});
-		await store.getState().reload("/a");
-		expect(store.getState().selectedInstanceId).toBe("new");
-		store.getState().applyServersChanged(inventory(3, [instance("2")]));
-		expect(store.getState().selectedInstanceId).toBe("new");
+		api.mcpConfigUpsert.mockResolvedValueOnce({ config: saved });
+		await store.getState().upsert({ scope: "user", name: "my-server" });
+		await store.getState().reconnect("my-server");
+		expect(api.mcpReconnect).toHaveBeenCalledWith({ instanceId: "1", name: "my-server" });
+		expect(store.getState().selectedInstanceId).toBe("1");
+		store.getState().applyServersChanged(inventory(2, [instance("1"), instance("2")]));
+		expect(store.getState().restartRequired).toBe(true);
 	});
-	it.each(["upsert", "import", "remove", "reload"] as const)(
-		"%s 失败后重读已落盘的较早操作",
+	it.each(["upsert", "import", "remove"] as const)(
+		"%s 失败后重读已落盘的较早操作并保留当前选择，同时在较早写入迟到时再次执行权威对账",
 		async (kind) => {
 			const store = getMcpStore({ kind: "ssh", connectionId: `recover-${kind}`, environmentId: "e" });
 			api.mcpConfigList.mockResolvedValueOnce(config(inventory(1, [instance("1")])));
 			await store.getState().load("/a", "session-1");
-			const first = deferred<{ config: McpConfigListResult; reload: { reloaded: number; skipped: [] } }>();
+			const first = deferred<{ config: McpConfigListResult }>();
 			const failed = deferred<never>();
 			const recovery = deferred<McpConfigListResult>();
 			api.mcpConfigUpsert.mockReturnValueOnce(first.promise);
@@ -176,13 +176,11 @@ describe("MCP 完整运行态", () => {
 				upsert: () => store.getState().upsert({ scope: "user", name: "two" }),
 				import: () => store.getState().importServers("{}", "/a"),
 				remove: () => store.getState().remove({ scope: "user", name: "two" }),
-				reload: () => store.getState().reload("/a"),
 			};
 			const mocks = {
 				upsert: api.mcpConfigUpsert,
 				import: api.mcpConfigImport,
 				remove: api.mcpConfigRemove,
-				reload: api.mcpConfigReload,
 			};
 			mocks[kind].mockReturnValueOnce(failed.promise);
 			api.mcpConfigList.mockReturnValueOnce(recovery.promise);
@@ -198,14 +196,13 @@ describe("MCP 完整运行态", () => {
 			});
 			await rejected;
 			expect(store.getState().config?.globalPath).toBe("/saved");
-			expect(store.getState().selectedInstanceId).toBe("new");
+			expect(store.getState().selectedInstanceId).toBe("1");
 			api.mcpConfigList.mockResolvedValueOnce({
 				...config(inventory(2, [{ ...instance("new"), sessionId: "session-1" }])),
 				globalPath: "/saved",
 			});
 			first.resolve({
 				config: { ...config(inventory(1)), globalPath: "/stale" },
-				reload: { reloaded: 0, skipped: [] },
 			});
 			await pending;
 			expect(store.getState().config?.globalPath).toBe("/saved");
@@ -215,7 +212,7 @@ describe("MCP 完整运行态", () => {
 		const store = getMcpStore({ kind: "ssh", connectionId: "reconcile-late-write", environmentId: "e" });
 		api.mcpConfigList.mockResolvedValueOnce(config(inventory(1)));
 		await store.getState().load("/a");
-		const earlier = deferred<{ config: McpConfigListResult; reload: { reloaded: number; skipped: [] } }>();
+		const earlier = deferred<{ config: McpConfigListResult }>();
 		api.mcpConfigUpsert.mockReturnValueOnce(earlier.promise);
 		const pending = store.getState().upsert({ scope: "user", name: "one" });
 		api.mcpConfigRemove.mockRejectedValueOnce(new Error("invalid later operation"));
@@ -225,7 +222,7 @@ describe("MCP 完整运行态", () => {
 		);
 		const saved = { ...config(inventory(2)), globalPath: "/actually-saved" };
 		api.mcpConfigList.mockResolvedValueOnce(saved);
-		earlier.resolve({ config: saved, reload: { reloaded: 0, skipped: [] } });
+		earlier.resolve({ config: saved });
 		await pending;
 		expect(api.mcpConfigList).toHaveBeenCalledTimes(3);
 		expect(store.getState().config?.globalPath).toBe("/actually-saved");
@@ -271,11 +268,10 @@ describe("MCP 完整运行态", () => {
 		const rejected = expect(store.getState().remove({ scope: "user", name: "x" })).rejects.toBe(error);
 		await Promise.resolve();
 		store.getState().selectInstance("2");
-		api.mcpConfigReload.mockResolvedValueOnce({
+		api.mcpConfigUpsert.mockResolvedValueOnce({
 			config: { ...config(inventory(3, [instance("2")])), globalPath: "/new" },
-			reload: { reloaded: 0, skipped: [] },
 		});
-		await store.getState().reload("/a");
+		await store.getState().upsert({ scope: "user", name: "x" });
 		recovery.resolve({ ...config(inventory(2)), globalPath: "/old" });
 		await rejected;
 		expect(store.getState().config?.globalPath).toBe("/new");
@@ -287,7 +283,7 @@ describe("MCP 完整运行态", () => {
 			const store = getMcpStore({ kind: "ssh", connectionId: `load-write-${order}`, environmentId: "e" });
 			api.mcpConfigList.mockResolvedValueOnce(config(inventory(1)));
 			await store.getState().load("/a");
-			const write = deferred<{ config: McpConfigListResult; reload: { reloaded: number; skipped: [] } }>();
+			const write = deferred<{ config: McpConfigListResult }>();
 			const read = deferred<McpConfigListResult>();
 			api.mcpConfigUpsert.mockReturnValueOnce(write.promise);
 			const saving = store.getState().upsert({ scope: "user", name: "saved" });
@@ -297,17 +293,17 @@ describe("MCP 完整运行态", () => {
 			if (order === "read-first") {
 				read.resolve(config(inventory(1)));
 				await loading;
-				write.resolve({ config: saved, reload: { reloaded: 1, skipped: [] } });
+				write.resolve({ config: saved });
 				await saving;
 			} else {
-				write.resolve({ config: saved, reload: { reloaded: 1, skipped: [] } });
+				write.resolve({ config: saved });
 				await saving;
 				read.resolve(config(inventory(1)));
 				await loading;
 			}
 			expect(store.getState().config?.globalPath).toBe("/saved");
 			expect(store.getState().loading).toBe(false);
-			expect(store.getState().lastReload?.reloaded).toBe(1);
+			expect(store.getState().config?.runtime?.revision).toBe(2);
 		},
 	);
 	it("写入失败后的权威对账也能撤销较早的读取", async () => {
@@ -371,7 +367,7 @@ describe("MCP 完整运行态", () => {
 		const store = getMcpStore({ kind: "ssh", connectionId: "late-write-new-context", environmentId: "e" });
 		api.mcpConfigList.mockResolvedValueOnce(config(inventory(1)));
 		await store.getState().load("/a");
-		const write = deferred<{ config: McpConfigListResult; reload: { reloaded: number; skipped: [] } }>();
+		const write = deferred<{ config: McpConfigListResult }>();
 		api.mcpConfigUpsert.mockReturnValueOnce(write.promise);
 		const saving = store.getState().upsert({ scope: "user", name: "saved" });
 		api.mcpConfigList.mockResolvedValueOnce({ ...config(inventory(2), "/b"), globalPath: "/before" });
@@ -379,7 +375,6 @@ describe("MCP 完整运行态", () => {
 		api.mcpConfigList.mockResolvedValueOnce({ ...config(inventory(3), "/b"), globalPath: "/after" });
 		write.resolve({
 			config: { ...config(inventory(2)), globalPath: "/old-context" },
-			reload: { reloaded: 0, skipped: [] },
 		});
 		await saving;
 		expect(api.mcpConfigList).toHaveBeenLastCalledWith({ cwd: "/b" });
@@ -413,41 +408,121 @@ describe("MCP 完整运行态", () => {
 		const store = getMcpStore({ kind: "ssh", connectionId: "mutation-order", environmentId: "e" });
 		api.mcpConfigList.mockResolvedValueOnce(config(inventory(1)));
 		await store.getState().load("/a");
-		const old = deferred<{ config: McpConfigListResult; reload: { reloaded: number; skipped: [] } }>();
+		const old = deferred<{ config: McpConfigListResult }>();
 		api.mcpConfigUpsert.mockReturnValueOnce(old.promise).mockResolvedValueOnce({
 			config: { ...config(inventory(3)), globalPath: "/new" },
-			reload: { reloaded: 0, skipped: [] },
 		});
 		const first = store.getState().upsert({ scope: "user", name: "one" });
 		await store.getState().upsert({ scope: "user", name: "two" });
 		api.mcpConfigList.mockResolvedValueOnce({ ...config(inventory(3)), globalPath: "/new" });
 		old.resolve({
 			config: { ...config(inventory(2)), globalPath: "/old" },
-			reload: { reloaded: 0, skipped: [] },
 		});
 		await first;
 		expect(store.getState().config?.globalPath).toBe("/new");
 	});
-	it("重连找不到同会话时保留已结束选择，用户中途选择不被覆盖", async () => {
+	it("保存途中用户选择不被覆盖，失效实例不重连", async () => {
 		const store = getMcpStore({ kind: "ssh", connectionId: "reconnect-selection", environmentId: "e" });
 		api.mcpConfigList.mockResolvedValueOnce(config(inventory(1, [instance("1"), instance("2")])));
 		await store.getState().load("/a", "session-1");
-		api.mcpConfigReload.mockResolvedValueOnce({
-			config: config(inventory(2, [instance("2")])),
-			reload: { reloaded: 0, skipped: [] },
-		});
-		await store.getState().reload("/a");
-		expect(store.getState().selectedInstanceId).toBe("1");
-		const pending = deferred<{ config: McpConfigListResult; reload: { reloaded: number; skipped: [] } }>();
-		api.mcpConfigReload.mockReturnValueOnce(pending.promise);
-		const loading = store.getState().reload("/a");
+		const pending = deferred<{ config: McpConfigListResult }>();
+		api.mcpConfigUpsert.mockReturnValueOnce(pending.promise);
+		const saving = store.getState().upsert({ scope: "user", name: "x" });
 		store.getState().selectInstance("2");
-		pending.resolve({
-			config: config(inventory(3, [{ ...instance("new"), sessionId: "session-1" }, instance("2")])),
-			reload: { reloaded: 1, skipped: [] },
-		});
-		await loading;
+		pending.resolve({ config: config(inventory(2, [instance("1"), instance("2")])) });
+		await saving;
 		expect(store.getState().selectedInstanceId).toBe("2");
+		store.getState().applyServersChanged(inventory(3, [instance("1")]));
+		await expect(store.getState().reconnect("my-server")).rejects.toThrow();
+		expect(api.mcpReconnect).not.toHaveBeenCalled();
+	});
+	it("同目标单飞，撤销实例或切换 epoch 后迟到失败不能复活", async () => {
+		for (const change of ["remove", "epoch"] as const) {
+			const store = getMcpStore({ kind: "ssh", connectionId: `action-${change}`, environmentId: "e" });
+			api.mcpConfigList.mockResolvedValueOnce(config(inventory(1, [instance("1"), instance("2")])));
+			await store.getState().load("/a", "session-1");
+			const pending = deferred<void>();
+			api.mcpReconnect.mockReturnValueOnce(pending.promise);
+			const first = store.getState().reconnect("my-server");
+			store.getState().applyServersChanged(
+				inventory(2, [
+					{
+						...instance("1"),
+						servers: instance("1").servers.map((item) => ({ ...item, state: "connecting" as const })),
+					},
+					instance("2"),
+				]),
+			);
+			const second = store.getState().reconnect("my-server");
+			expect(first).toBe(second);
+			await Promise.resolve();
+			expect(api.mcpReconnect).toHaveBeenCalledTimes(1);
+			expect(store.getState().reconnectActions[mcpActionKey("1", "my-server")]?.pending).toBe(true);
+			store
+				.getState()
+				.applyServersChanged(
+					change === "remove"
+						? inventory(3, [instance("2")])
+						: { epoch: "next", revision: 1, instances: [instance("1")] },
+				);
+			const rejected = expect(first).rejects.toThrow("late");
+			pending.reject(new Error("late"));
+			await rejected;
+			expect(store.getState().reconnectActions).toEqual({});
+			api.mcpReconnect.mockReset();
+		}
+	});
+	it("不同实例、服务器和环境各自独立运行", async () => {
+		const a = getMcpStore({ kind: "ssh", connectionId: "action-isolation", environmentId: "a" });
+		const b = getMcpStore({ kind: "ssh", connectionId: "action-isolation", environmentId: "b" });
+		const live = instance("1");
+		const withOther = { ...live, servers: [...live.servers, { ...live.servers[0]!, name: "other" }] };
+		api.mcpConfigList.mockResolvedValue(config(inventory(1, [withOther, instance("2")])));
+		await a.getState().load("/a", "session-1");
+		await b.getState().load("/a", "session-1");
+		const pending = deferred<void>();
+		api.mcpReconnect.mockReturnValue(pending.promise);
+		const requests = [
+			a.getState().reconnect("my-server"),
+			a.getState().reconnect("other"),
+			b.getState().reconnect("my-server"),
+		];
+		a.getState().selectInstance("2");
+		requests.push(a.getState().reconnect("my-server"));
+		await Promise.resolve();
+		expect(api.mcpReconnect).toHaveBeenCalledTimes(4);
+		expect(Object.keys(a.getState().reconnectActions)).toHaveLength(3);
+		expect(Object.keys(b.getState().reconnectActions)).toHaveLength(1);
+		pending.resolve(undefined);
+		await Promise.all(requests);
+		expect(a.getState().reconnectActions).toEqual({});
+		expect(b.getState().reconnectActions).toEqual({});
+	});
+	it("同步异常可见且可重试，不支持的状态拒绝重连", async () => {
+		const store = getMcpStore({ kind: "ssh", connectionId: "action-sync", environmentId: "e" });
+		api.mcpConfigList.mockResolvedValueOnce(config(inventory(1, [instance("1")])));
+		await store.getState().load("/a");
+		api.mcpReconnect
+			.mockImplementationOnce(() => {
+				throw new Error("sync failure");
+			})
+			.mockResolvedValueOnce(undefined);
+		await expect(store.getState().reconnect("my-server")).rejects.toThrow("sync failure");
+		expect(store.getState().reconnectActions[mcpActionKey("1", "my-server")]?.error).toBe("sync failure");
+		await store.getState().reconnect("my-server");
+		expect(store.getState().reconnectActions).toEqual({});
+		for (const state of ["connecting", "closed", "unknown"] as const) {
+			const live = instance("1");
+			store
+				.getState()
+				.applyServersChanged(
+					inventory(store.getState().config!.runtime!.revision + 1, [
+						{ ...live, servers: [{ ...live.servers[0]!, state }] },
+					]),
+				);
+			await expect(store.getState().reconnect("my-server")).rejects.toThrow();
+		}
+		expect(api.mcpReconnect).toHaveBeenCalledTimes(2);
 	});
 	it("不同环境配置与选择独立", async () => {
 		const a = getMcpStore({ kind: "ssh", connectionId: "isolation", environmentId: "a" });

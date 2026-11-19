@@ -37,6 +37,11 @@ export type McpConnectionState =
 	| "disabled"
 	| "overridden";
 
+/** 与官方 MCP 管理界面的可重连状态一致；连接尚在建立时不能再次发起。 */
+export function isMcpReconnectable(state?: McpConnectionState): boolean {
+	return state === "connected" || state === "failed" || state === "disconnected" || state === "needs-auth";
+}
+
 /** 官方扩展报告的原始服务器身份与当前运行态。 */
 export interface McpServerStatus {
 	name: string;
@@ -108,6 +113,8 @@ export interface McpConfigListResult {
 	/** 后端确认的字面项目路径，避免 renderer 用跨环境 UI 引用比对。 */
 	contextCwd?: string;
 	runtimeErrors?: string[];
+	/** 此后端进程保存过 MCP 配置；只落盘，不热应用，重启 Percho 后生效。 */
+	restartRequired?: boolean;
 }
 
 /** `mcp.config:upsert` 入参（新增/编辑一个 server；缺省 transport 字段保持不变） */
@@ -157,18 +164,7 @@ export function parseMcpToolName(toolName: string): { server: string; tool: stri
 	return { server: rest.slice(0, sep), tool: rest.slice(sep + 2) };
 }
 
-/**
- * 写盘/重连后的会话 reload 报告。
- *
- * 忙碌会话跳过，SDK 也会在 shutdown 前拒绝忙碌的 reload；其他失败同样报告给 UI。
- */
-export interface McpReloadReport {
-	reloaded: number;
-	skipped: { sessionId: string; reason: "streaming" | "compacting" | "failed" }[];
-}
-
-/** 写盘类 MCP 动作的结果：新配置 + 哪些会话没跟着重连 */
+/** 写盘动作只返回新配置，不重载会话或改变已有 MCP 连接。 */
 export interface McpMutationResult {
 	config: McpConfigListResult;
-	reload: McpReloadReport;
 }
