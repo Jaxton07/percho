@@ -1,6 +1,7 @@
 /** Native packaged-app smoke; all agent/profile writes stay in .local/tmp.
  * Usage: node scripts/check-local-storage-startup.mjs --app <absolute executable>
- * Requires the production build/package; never starts the user's installed application.
+ * For a local build: --app <Electron executable> --host <absolute desktop directory>.
+ * Requires a fresh production build/package; never starts the user's installed application.
  */
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
@@ -8,12 +9,18 @@ import { mkdir, mkdtemp, readFile, stat, writeFile } from "node:fs/promises";
 import { createServer } from "node:net";
 import { dirname, isAbsolute, join, resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
+import { parseArgs } from "node:util";
 import { build } from "esbuild";
 import { expectNativeExit } from "./release/native-exit.mjs";
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
-const executable = process.argv[3];
-assert.equal(process.argv[2], "--app");
+const { values } = parseArgs({ options: { app: { type: "string" }, host: { type: "string" } } });
+const executable = values.app;
+const host = values.host;
+if (host) {
+	assert.ok(isAbsolute(host), "Pass the built host's absolute directory");
+	assert.ok((await stat(join(host, "out/main/index.js"))).isFile());
+}
 assert.ok(executable && isAbsolute(executable), "Pass the packaged executable's absolute path");
 assert.ok((await stat(executable)).isFile());
 const evidence = join(root, ".local/tmp/local-storage-startup-check");
@@ -150,6 +157,7 @@ async function scenario(name, agent, action) {
 	const child = spawn(
 		executable,
 		[
+			...(host ? [host] : []),
 			`--user-data-dir=${profile}`,
 			`--remote-debugging-port=${port}`,
 			...(process.platform === "linux" && process.env.CI ? ["--no-sandbox"] : []),
@@ -295,9 +303,17 @@ try {
 	await scenario("legacy-env", join(run, "must-not-be-created"));
 	await writeFile(
 		join(run, "result.json"),
-		`${JSON.stringify({ passed: true, platform: process.platform, results }, null, 2)}\n`,
+		`${JSON.stringify({ passed: true, platform: process.platform, mode: host ? "built-host" : "packaged", results }, null, 2)}\n`,
 	);
-	console.log(JSON.stringify({ passed: true, platform: process.platform, results, evidence: run }));
+	console.log(
+		JSON.stringify({
+			passed: true,
+			platform: process.platform,
+			mode: host ? "built-host" : "packaged",
+			results,
+			evidence: run,
+		}),
+	);
 } catch (error) {
 	await writeFile(join(run, "failure.txt"), String(error.stack ?? error));
 	throw error;

@@ -1,5 +1,7 @@
 import { execFileSync } from "node:child_process";
-import { mkdirSync, writeFileSync } from "node:fs";
+import * as fs from "node:fs";
+import { mkdirSync, renameSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import * as fsPromises from "node:fs/promises";
 import {
 	chmod,
 	lstat,
@@ -18,7 +20,12 @@ import { join, resolve } from "node:path";
 import { environmentEntityKey } from "@percho/shared";
 import lockfile from "proper-lockfile";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { initializeLocalStorage, inspectLocalStorage, readStorageRecord } from "../src/storage/local-storage";
+import {
+	initializeLocalStorage,
+	inspectLocalStorage,
+	readStorageRecord,
+	StorageInitializationError,
+} from "../src/storage/local-storage";
 import {
 	assertRemoteStorage,
 	inside,
@@ -31,6 +38,9 @@ import { migrateNavigation } from "../src/storage/preferences";
 import { privateDirectory } from "../src/storage/private-directory";
 import { relocateResourceSettings } from "../src/storage/resource-settings";
 import { localSessionPaths } from "../src/storage/session-paths";
+
+vi.mock("node:fs", { spy: true });
+vi.mock("node:fs/promises", { spy: true });
 
 let home: string, selection: LocalStorageSelection;
 const base = resolve(".local/tmp/local-agent-storage-tests");
@@ -124,6 +134,117 @@ describe("private directory selection", () => {
 });
 
 describe("copy, publish, retry", () => {
+	it("still offers a choice when source metadata discovery fails after safe path validation", async () => {
+		const source = await seed();
+		const original = fsPromises.lstat;
+		let visits = 0;
+		const spy = vi.spyOn(fsPromises, "lstat").mockImplementation(async (path, ...args) => {
+			if (path === source && ++visits === 2)
+				throw Object.assign(new Error("probe denied"), { code: "EACCES" });
+			return original(path, ...args);
+		});
+		try {
+			const probe = await inspectLocalStorage(selection, { scanSource: false });
+			expect(probe.state).toBe("candidate");
+			await initializeLocalStorage(probe, "empty");
+		} finally {
+			spy.mockRestore();
+		}
+	});
+	it("preserves copy failure and recovery details if lock release also fails", async () => {
+		await seed();
+		const preview = await inspectLocalStorage(selection);
+		const original = lockfile.lock.bind(lockfile);
+		const spy = vi.spyOn(lockfile, "lock").mockImplementation(async (path, options) => {
+			const release = await original(path, options);
+			return async () => {
+				await release();
+				throw new Error("release failed");
+			};
+		});
+		try {
+			const failure = await initializeLocalStorage(preview, "copy", {
+				onProgress: (progress) => {
+					if (progress.phase === "copy") throw new Error("copy failed");
+				},
+			}).catch((error) => error);
+			expect(failure).toBeInstanceOf(StorageInitializationError);
+			expect(failure.message).toContain("copy failed");
+			expect(failure.message).toContain("release failed");
+			expect(failure.recoveryPath).toContain(".agent-import-");
+			expect(failure.lockReleased).toBe(false);
+		} finally {
+			spy.mockRestore();
+		}
+	});
+	it("offers a candidate and starts empty without scanning broken source content", async () => {
+		const source = selection.source as string;
+		await mkdir(join(source, "skills"), { recursive: true });
+		await symlink(join(home, "missing"), join(source, "skills", "broken"));
+		const reads = vi.spyOn(fsPromises, "readFile");
+		const directories = vi.spyOn(fsPromises, "readdir");
+		try {
+			const inspection = await inspectLocalStorage(selection, { scanSource: false });
+			expect(inspection.state).toBe("candidate");
+			expect((await initializeLocalStorage(inspection, "empty")).kind).toBe("empty");
+			expect(reads.mock.calls.some(([path]) => String(path).startsWith(`${source}/`))).toBe(false);
+			expect(directories.mock.calls.some(([path]) => String(path).startsWith(source))).toBe(false);
+		} finally {
+			reads.mockRestore();
+			directories.mockRestore();
+		}
+	});
+	it("does not enumerate or read source content during discovery and locked fresh initialization", async () => {
+		const source = await seed();
+		const reads = vi.spyOn(fsPromises, "readFile");
+		const directories = vi.spyOn(fsPromises, "readdir");
+		const streams = vi.spyOn(fs, "createReadStream");
+		try {
+			const inspection = await inspectLocalStorage(selection, { scanSource: false });
+			await initializeLocalStorage(inspection, "empty");
+			expect(reads.mock.calls.filter(([path]) => inside(source, String(path)))).toEqual([]);
+			expect(directories.mock.calls.filter(([path]) => inside(source, String(path)))).toEqual([]);
+			expect(streams.mock.calls.filter(([path]) => inside(source, String(path)))).toEqual([]);
+		} finally {
+			reads.mockRestore();
+			directories.mockRestore();
+			streams.mockRestore();
+		}
+	});
+	it.each(["skipped-link", "source-root", "settings"])(
+		"rejects changed %s between locked inspection and the snapshot actually copied",
+		async (change) => {
+			const source = await seed();
+			await mkdir(join(source, "skills"));
+			await symlink(join(home, "missing"), join(source, "skills", "broken"));
+			const preview = await inspectLocalStorage(selection);
+			const original = fsPromises.mkdir;
+			let changed = false;
+			const spy = vi.spyOn(fsPromises, "mkdir").mockImplementation(async (path, ...args) => {
+				const result = await original(path, ...args);
+				if (!changed && String(path).includes(".agent-import-")) {
+					changed = true;
+					if (change === "skipped-link") {
+						rmSync(join(source, "skills", "broken"));
+						symlinkSync(join(home, "another-missing"), join(source, "skills", "broken"));
+					} else if (change === "settings") {
+						writeFileSync(join(source, "settings.json"), '{"skills":[]}');
+					} else {
+						renameSync(source, `${source}-previous`);
+						fs.cpSync(`${source}-previous`, source, { recursive: true, preserveTimestamps: true });
+					}
+				}
+				return result;
+			});
+			try {
+				await expect(initializeLocalStorage(preview, "copy")).rejects.toThrow("Source changed");
+				expect(changed).toBe(true);
+				await expect(lstat(selection.target)).rejects.toHaveProperty("code", "ENOENT");
+			} finally {
+				spy.mockRestore();
+			}
+		},
+	);
 	it.runIf(process.platform === "win32")(
 		"classifies mixed-case core links and storage markers as private data",
 		async () => {
@@ -237,6 +358,15 @@ describe("copy, publish, retry", () => {
 		expect(await readdir(selection.target)).toEqual([LOCAL_STORAGE_RECORD]);
 		expect((await inspectLocalStorage(selection)).state).toBe("ready");
 	});
+	it("rejects replacing the source root with identical contents after confirmation", async () => {
+		const source = selection.source as string;
+		await mkdir(source, { recursive: true });
+		const inspection = await inspectLocalStorage(selection);
+		await rename(source, `${source}-old`);
+		await mkdir(source);
+		await expect(initializeLocalStorage(inspection, "copy")).rejects.toThrow("Source changed");
+		await expect(lstat(selection.target)).rejects.toHaveProperty("code", "ENOENT");
+	});
 	it("source changes after confirmation and during copying cannot publish", async () => {
 		const source = await seed(),
 			first = await inspectLocalStorage(selection);
@@ -255,6 +385,21 @@ describe("copy, publish, retry", () => {
 		).rejects.toThrow("Source changed");
 		await expect(stat(selection.target)).rejects.toHaveProperty("code", "ENOENT");
 		expect((await readdir(join(home, ".percho"))).some((p) => p.startsWith(".agent-import-"))).toBe(true);
+	});
+	it("reports the retained staging path as structured recovery data", async () => {
+		await seed();
+		const inspection = await inspectLocalStorage(selection);
+		let failure: unknown;
+		try {
+			await initializeLocalStorage(inspection, "copy", {
+				onProgress: (p) => {
+					if (p.phase === "copy") throw new Error("injected failure");
+				},
+			});
+		} catch (error) {
+			failure = error;
+		}
+		expect(failure).toHaveProperty("recoveryPath", expect.stringContaining(".agent-import-"));
 	});
 	it("cancellation retains a recovery copy and retry publishes a fresh one", async () => {
 		await seed();
@@ -308,6 +453,181 @@ describe("copy, publish, retry", () => {
 });
 
 describe("links and resource settings", () => {
+	it.each(["disappear", "replace", "no-inode"])(
+		"rejects %s while resolving a broken link",
+		async (change) => {
+			const source = selection.source as string;
+			const link = join(source, "skills", "bad");
+			await mkdir(join(source, "skills"), { recursive: true });
+			await symlink(join(home, "missing"), link);
+			const originalRealpath = fsPromises.realpath;
+			const originalLstat = fsPromises.lstat;
+			const realpathSpy = vi.spyOn(fsPromises, "realpath").mockImplementation(async (path, ...args) => {
+				if (path === link && change !== "no-inode") {
+					if (change === "replace") {
+						renameSync(link, join(home, "old-link"));
+						symlinkSync(join(home, "missing"), link);
+					} else rmSync(link);
+				}
+				return originalRealpath(path, ...args);
+			});
+			const lstatSpy = vi.spyOn(fsPromises, "lstat").mockImplementation(async (path, ...args) => {
+				const result = await originalLstat(path, ...args);
+				if (path === link && change === "no-inode") Object.defineProperty(result, "ino", { value: 0 });
+				return result;
+			});
+			try {
+				await expect(inspectLocalStorage(selection)).rejects.toThrow("Source changed");
+			} finally {
+				realpathSpy.mockRestore();
+				lstatSpy.mockRestore();
+			}
+		},
+	);
+	it.each(["EACCES", "ELOOP", "ENOTDIR"])("does not suppress %s resolving a resource link", async (code) => {
+		const source = selection.source as string;
+		const link = join(source, "skills", "bad");
+		await mkdir(join(source, "skills"), { recursive: true });
+		await symlink(join(home, "missing"), link);
+		const original = fsPromises.realpath;
+		const spy = vi.spyOn(fsPromises, "realpath").mockImplementation(async (path, ...args) => {
+			if (path === link) throw Object.assign(new Error(code), { code });
+			return original(path, ...args);
+		});
+		try {
+			await expect(inspectLocalStorage(selection)).rejects.toHaveProperty("code", code);
+		} finally {
+			spy.mockRestore();
+		}
+	});
+	it.each(["restore", "retarget", "new-broken", "valid-broken", "settings"])(
+		"rejects %s after preview and during copy",
+		async (change) => {
+			for (const duringCopy of [false, true]) {
+				const source = selection.source as string;
+				await mkdir(join(source, "skills"), { recursive: true });
+				await writeFile(join(source, "settings.json"), "{}");
+				await writeFile(join(home, "valid"), "valid");
+				await symlink(join(home, "missing"), join(source, "skills", "bad"));
+				await symlink(join(home, "valid"), join(source, "skills", "valid"));
+				const preview = await inspectLocalStorage(selection);
+				const mutate = () => {
+					if (change === "restore") writeFileSync(join(home, "missing"), "restored");
+					if (change === "retarget") {
+						rmSync(join(source, "skills", "bad"));
+						symlinkSync(join(home, "other-missing"), join(source, "skills", "bad"));
+					}
+					if (change === "new-broken")
+						symlinkSync(join(home, "other-missing"), join(source, "skills", "new"));
+					if (change === "valid-broken") rmSync(join(home, "valid"));
+					if (change === "settings") writeFileSync(join(source, "settings.json"), '{"skills":[]}');
+				};
+				if (!duringCopy) mutate();
+				let changed = false;
+				await expect(
+					initializeLocalStorage(preview, "copy", {
+						onProgress: (p) => {
+							if (duringCopy && !changed && p.phase === "copy") {
+								changed = true;
+								mutate();
+							}
+						},
+					}),
+				).rejects.toThrow("Source changed");
+				await expect(lstat(selection.target)).rejects.toHaveProperty("code", "ENOENT");
+				await rm(source, { recursive: true, force: true });
+				await rm(join(home, "valid"), { force: true });
+				await rm(join(home, "missing"), { force: true });
+			}
+		},
+	);
+	it("detects link identity changes above the safe integer range", async () => {
+		const source = selection.source as string;
+		const broken = join(source, "skills", "broken");
+		await mkdir(join(source, "skills"), { recursive: true });
+		await symlink(join(home, "missing"), broken);
+		const original = fsPromises.lstat;
+		let visits = 0;
+		const spy = vi.spyOn(fsPromises, "lstat").mockImplementation(async (path, ...args) => {
+			const stat = await original(path, ...args);
+			if (path === broken) {
+				const integer = 9007199254740992n + BigInt(visits++ > 1 ? 1 : 0);
+				return Object.assign(stat, { ino: typeof stat.ino === "bigint" ? integer : Number(integer) });
+			}
+			return stat;
+		});
+		try {
+			await expect(inspectLocalStorage(selection)).rejects.toThrow("Source changed");
+		} finally {
+			spy.mockRestore();
+		}
+	});
+	it("classifies relative to the resolved symlink source root", async () => {
+		const source = selection.source as string;
+		const actual = join(home, "actual");
+		await mkdir(join(actual, "skills"), { recursive: true });
+		await mkdir(join(home, ".pi"), { recursive: true });
+		await symlink(actual, source, process.platform === "win32" ? "junction" : "dir");
+		await symlink(join(home, "missing"), join(actual, "skills", "bad"));
+		const preview = await inspectLocalStorage(selection);
+		expect(preview.warnings).toEqual([{ path: "skills/bad", reason: "missing-link-target" }]);
+		await initializeLocalStorage(preview, "copy");
+		expect((await readStorageRecord(selection.target))?.warnings).toEqual(preview.warnings);
+	});
+	it.runIf(process.platform === "win32")("recognizes mixed-case Skills and broken junctions", async () => {
+		const source = selection.source as string;
+		await mkdir(join(source, "Skills"), { recursive: true });
+		await symlink(join(home, "missing"), join(source, "Skills", "broken"), "junction");
+		const preview = await inspectLocalStorage(selection);
+		expect(preview.warnings).toEqual([{ path: "Skills/broken", reason: "missing-link-target" }]);
+		await initializeLocalStorage(preview, "copy");
+		expect((await readStorageRecord(selection.target))?.warnings).toEqual(preview.warnings);
+	});
+	it.skipIf(process.platform === "win32")(
+		"rejects an unrepresentable warning path before publishing",
+		async () => {
+			const source = selection.source as string;
+			await mkdir(join(source, "skills"), { recursive: true });
+			await symlink(join(home, "missing"), join(source, "skills", "bad\\name"));
+			await expect(inspectLocalStorage(selection)).rejects.toThrow("warning");
+			await expect(lstat(selection.target)).rejects.toHaveProperty("code", "ENOENT");
+		},
+	);
+	it.each(["skills", "extensions", "prompts", "themes"])(
+		"preserves source and imports good content alongside deep broken %s links",
+		async (resource) => {
+			const source = selection.source as string;
+			const dir = join(source, resource, "nested", "deep");
+			await mkdir(dir, { recursive: true });
+			await writeFile(join(dir, "good"), "content");
+			await symlink(
+				join(home, "missing"),
+				join(dir, "bad"),
+				process.platform === "win32" ? "junction" : undefined,
+			);
+			const inspection = await inspectLocalStorage(selection);
+			expect(inspection.warnings).toEqual([
+				{ path: `${resource}/nested/deep/bad`, reason: "missing-link-target" },
+			]);
+			await initializeLocalStorage(inspection, "copy");
+			expect((await readStorageRecord(selection.target))?.warnings).toEqual(inspection.warnings);
+			expect(await readFile(join(selection.target, resource, "nested", "deep", "good"), "utf8")).toBe(
+				"content",
+			);
+			if (process.platform === "win32") expect((await lstat(join(dir, "bad"))).isSymbolicLink()).toBe(true);
+			else expect(await readlink(join(dir, "bad"))).toBe(join(home, "missing"));
+			await expect(lstat(join(selection.target, resource, "nested", "deep", "bad"))).rejects.toHaveProperty(
+				"code",
+				"ENOENT",
+			);
+		},
+	);
+	it.each(["unknown/skills", "sessions/skills"])("does not exempt nested %s", async (path) => {
+		const source = selection.source as string;
+		await mkdir(join(source, path), { recursive: true });
+		await symlink(join(home, "missing"), join(source, path, "bad"));
+		await expect(inspectLocalStorage(selection)).rejects.toThrow();
+	});
 	it("rebases internal links but blocks external core links", async () => {
 		const source = await seed();
 		await symlink(join(source, "extensions", "tool.ts"), join(source, "extensions", "alias.ts"));
@@ -321,13 +641,65 @@ describe("links and resource settings", () => {
 		await symlink(join(home, "external-auth.json"), join(source, "auth.json"));
 		await expect(inspectLocalStorage(selection)).rejects.toThrow("Core storage");
 	});
-	it("lists external resource links before consent and rejects broken links", async () => {
+	it("lists external links and persists skipped broken resource links", async () => {
 		const source = await seed();
 		await writeFile(join(home, "outside.ts"), "fixture");
 		await symlink(join(home, "outside.ts"), join(source, "extensions", "outside.ts"));
-		expect((await inspectLocalStorage(selection)).external).toContain(join("extensions", "outside.ts"));
 		await symlink(join(home, "missing"), join(source, "extensions", "broken"));
+		const inspection = await inspectLocalStorage(selection);
+		expect(inspection.external).toContain(join("extensions", "outside.ts"));
+		expect(inspection.warnings).toEqual([{ path: "extensions/broken", reason: "missing-link-target" }]);
+		await initializeLocalStorage(inspection, "copy");
+		expect((await readStorageRecord(selection.target))?.warnings).toEqual(inspection.warnings);
+		await expect(lstat(join(selection.target, "extensions", "broken"))).rejects.toHaveProperty(
+			"code",
+			"ENOENT",
+		);
+	});
+	it.each(["skills", "extensions", "prompts", "themes"])(
+		"imports with a broken %s root",
+		async (resource) => {
+			const source = selection.source as string;
+			await mkdir(source, { recursive: true });
+			await symlink(
+				join(home, "missing"),
+				join(source, resource),
+				process.platform === "win32" ? "junction" : undefined,
+			);
+			const inspection = await inspectLocalStorage(selection);
+			expect(inspection.state).toBe("import");
+			expect(inspection.warnings).toEqual([{ path: resource, reason: "missing-link-target" }]);
+			await initializeLocalStorage(inspection, "copy");
+			expect((await readStorageRecord(selection.target))?.warnings).toEqual(inspection.warnings);
+		},
+	);
+	it("keeps unknown broken links fatal and refuses changed skipped links", async () => {
+		const source = selection.source as string;
+		await mkdir(join(source, "skills"), { recursive: true });
+		await symlink(join(home, "missing"), join(source, "skills", "broken"));
+		const inspection = await inspectLocalStorage(selection);
+		await rm(join(source, "skills", "broken"));
+		await expect(initializeLocalStorage(inspection, "copy")).rejects.toThrow("Source changed");
+		await symlink(join(home, "missing"), join(source, "unknown"));
 		await expect(inspectLocalStorage(selection)).rejects.toThrow();
+	});
+	it("rejects malformed or non-import warning records", async () => {
+		const { record } = await imported();
+		const marker = join(selection.target, LOCAL_STORAGE_RECORD);
+		for (const warnings of [
+			null,
+			[{ path: "../skills/x", reason: "missing-link-target" }],
+			[{ path: "skills/x", reason: "unknown" }],
+			[
+				{ path: "skills/x", reason: "missing-link-target" },
+				{ path: "skills/x", reason: "missing-link-target" },
+			],
+		]) {
+			await writeFile(marker, JSON.stringify({ ...record, warnings }));
+			await expect(readStorageRecord(selection.target)).rejects.toThrow("Invalid local storage record");
+		}
+		await writeFile(marker, JSON.stringify({ ...record, kind: "empty", sources: [], warnings: [] }));
+		await expect(readStorageRecord(selection.target)).rejects.toThrow("Invalid local storage record");
 	});
 	it("preserves comments, command strings, npm/git sources and external relative meaning", () => {
 		const source = selection.source as string,

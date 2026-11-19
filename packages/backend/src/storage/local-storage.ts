@@ -1,7 +1,9 @@
 import { createHash, randomUUID } from "node:crypto";
-import { createReadStream, createWriteStream } from "node:fs";
+import { type BigIntStats, createReadStream, createWriteStream } from "node:fs";
 import {
 	chmod,
+	stat as followStat,
+	lstat,
 	mkdir,
 	open,
 	readdir,
@@ -14,6 +16,7 @@ import {
 } from "node:fs/promises";
 import { dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import { pipeline } from "node:stream/promises";
+import type { StorageMigrationWarning } from "@percho/shared";
 import lockfile from "proper-lockfile";
 import { JsonStore } from "../json-store";
 import {
@@ -23,6 +26,7 @@ import {
 	LOCAL_STORAGE_RECORD,
 	type LocalStorageSelection,
 	statOrMissing,
+	validateStorageSelection,
 } from "./path-policy";
 import { privateDirectory } from "./private-directory";
 import { relocateResourceSettings } from "./resource-settings";
@@ -36,6 +40,18 @@ export interface LocalStorageRecord {
 	createdAt: string;
 	files: number;
 	bytes: number;
+	warnings?: StorageMigrationWarning[];
+}
+export class StorageInitializationError extends Error {
+	constructor(
+		message: string,
+		public readonly recoveryPath: string | undefined,
+		cause: unknown,
+		public readonly lockReleased = true,
+	) {
+		super(message, { cause });
+		this.name = "StorageInitializationError";
+	}
 }
 export interface StorageProgress {
 	phase: "scan" | "copy" | "verify" | "publish" | "preferences";
@@ -46,14 +62,16 @@ export interface StorageProgress {
 }
 export interface StorageInspection {
 	selection: LocalStorageSelection;
-	state: "ready" | "new" | "import" | "existing";
+	state: "ready" | "new" | "candidate" | "import" | "existing";
 	record: LocalStorageRecord | null;
 	files: number;
 	bytes: number;
 	external: string[];
+	warnings: StorageMigrationWarning[];
 	fingerprint?: string;
 }
 export interface StorageWork {
+	scanSource?: boolean;
 	signal?: AbortSignal;
 	onProgress?: (progress: StorageProgress) => void;
 }
@@ -90,6 +108,7 @@ export async function readStorageRecord(target: string): Promise<LocalStorageRec
 		) ||
 		(r.kind !== "import" && r.sources.length !== 0) ||
 		(r.kind === "import" && r.sources.length === 0) ||
+		(r.warnings !== undefined && (r.kind !== "import" || !validWarnings(r.warnings))) ||
 		typeof r.createdAt !== "string" ||
 		!Number.isSafeInteger(r.files) ||
 		r.files < 0 ||
@@ -99,6 +118,47 @@ export async function readStorageRecord(target: string): Promise<LocalStorageRec
 		throw new Error(`Invalid local storage record: ${target}`);
 	return r;
 }
+const OPTIONAL_RESOURCES = new Set(["skills", "extensions", "prompts", "themes"]);
+function validWarnings(warnings: unknown): warnings is StorageMigrationWarning[] {
+	if (!Array.isArray(warnings)) return false;
+	let previous: string | undefined;
+	for (const warning of warnings) {
+		if (
+			!warning ||
+			typeof warning !== "object" ||
+			Object.keys(warning).sort().join(",") !== "path,reason" ||
+			typeof warning.path !== "string" ||
+			warning.reason !== "missing-link-target" ||
+			warning.path.includes("\\") ||
+			isAbsolute(warning.path) ||
+			/^[A-Za-z]:/.test(warning.path)
+		)
+			return false;
+		const parts = warning.path.split("/");
+		const first = process.platform === "win32" ? parts[0]?.toLowerCase() : parts[0];
+		if (
+			!first ||
+			!OPTIONAL_RESOURCES.has(first) ||
+			parts.some((p: string) => !p || p === "." || p === "..") ||
+			(previous !== undefined && previous >= warning.path)
+		)
+			return false;
+		previous = warning.path;
+	}
+	return true;
+}
+function identity(stat: BigIntStats, link = false) {
+	// Keep native file IDs and nanosecond timestamps lossless on Windows as well as POSIX.
+	const fields = link
+		? [stat.dev, stat.ino, stat.mode, stat.size, stat.birthtimeNs, stat.ctimeNs, stat.mtimeNs]
+		: [stat.dev, stat.ino, stat.mode, stat.birthtimeNs];
+	return fields.map((value) => value.toString());
+}
+interface SkippedLink {
+	path: string;
+	link: string;
+	identity: string[];
+}
 interface Entry {
 	name: string;
 	type: "file" | "directory" | "link";
@@ -107,6 +167,7 @@ interface Entry {
 	size: number;
 	digest: string;
 	link?: string;
+	identity?: string[];
 }
 async function digest(path: string, signal?: AbortSignal) {
 	const hash = createHash("sha256");
@@ -151,10 +212,19 @@ async function scan(
 	target: string,
 	legacyRoots: string[],
 	work: StorageWork,
-): Promise<{ entries: Entry[]; external: string[]; files: number; bytes: number }> {
+): Promise<{
+	entries: Entry[];
+	external: string[];
+	warnings: StorageMigrationWarning[];
+	skipped: SkippedLink[];
+	files: number;
+	bytes: number;
+}> {
 	const root = await realpath(source),
 		entries: Entry[] = [],
-		external: string[] = [];
+		external: string[] = [],
+		warnings: StorageMigrationWarning[] = [],
+		skipped: SkippedLink[] = [];
 	let files = 0,
 		bytes = 0;
 	async function visit(dir: string) {
@@ -176,8 +246,34 @@ async function scan(
 			if (stat.isSymbolicLink()) {
 				if (key === "sessions" || key === "sessions-subagents")
 					throw new Error(`Session roots must be ordinary directories: ${file}`);
-				const link = await readlink(file),
+				const linkStat = await lstat(file, { bigint: true });
+				if (!linkStat.isSymbolicLink()) throw new Error(`Source changed: ${file}`);
+				const link = await readlink(file);
+				let destination: string;
+				try {
 					destination = await realpath(file);
+				} catch (error) {
+					if (
+						(error as NodeJS.ErrnoException).code !== "ENOENT" ||
+						!OPTIONAL_RESOURCES.has(key.split(sep)[0] ?? "")
+					)
+						throw error;
+					const again = await lstat(file, { bigint: true }).catch((cause) => {
+						throw new Error(`Source changed: ${file}`, { cause });
+					});
+					if (
+						!again.isSymbolicLink() ||
+						!linkStat.ino ||
+						!again.ino ||
+						JSON.stringify(identity(linkStat, true)) !== JSON.stringify(identity(again, true)) ||
+						(await readlink(file)) !== link
+					)
+						throw new Error(`Source changed: ${file}`);
+					const path = name.split(sep).join("/");
+					warnings.push({ path, reason: "missing-link-target" });
+					skipped.push({ path, link, identity: identity(linkStat, true) });
+					continue;
+				}
 				if (!inside(root, destination)) {
 					if (
 						CORE.has(key) ||
@@ -194,9 +290,15 @@ async function scan(
 				if (["sessions", "sessions-subagents"].includes(section) && !inside(join(root, section), destination))
 					throw new Error(`Session link crosses its private history root: ${file}`);
 				const mapped = inside(root, destination) ? join(target, relative(root, destination)) : destination;
-				entries.push({ ...base, type: "link", link: mapped, digest: link });
+				entries.push({
+					...base,
+					type: "link",
+					link: mapped,
+					digest: link,
+					identity: identity(linkStat, true),
+				});
 			} else if (stat.isDirectory()) {
-				entries.push({ ...base, type: "directory", digest: "" });
+				entries.push({ ...base, mtime: 0, size: 0, type: "directory", digest: "" });
 				await visit(file);
 			} else if (stat.isFile()) {
 				entries.push({ ...base, type: "file", digest: await digest(file, work.signal) });
@@ -207,52 +309,90 @@ async function scan(
 		}
 	}
 	await visit(root);
-	return { entries, external, files, bytes };
+	warnings.sort((a, b) => (a.path < b.path ? -1 : a.path > b.path ? 1 : 0));
+	if (!validWarnings(warnings)) throw new Error("Cannot represent migration warning path");
+	skipped.sort((a, b) => JSON.stringify(a).localeCompare(JSON.stringify(b)));
+	return { entries, external, warnings, skipped, files, bytes };
 }
 export async function inspectLocalStorage(
 	selection: LocalStorageSelection,
 	work: StorageWork = {},
 ): Promise<StorageInspection> {
 	work.signal?.throwIfAborted();
+	const validated = await validateStorageSelection(selection);
+	if (validated.target !== selection.target) throw new Error("Storage path changed; inspect it again");
 	await assertDesktopStorage(selection.target);
 	const stat = await statOrMissing(selection.target);
 	if (stat && (!stat.isDirectory() || stat.isSymbolicLink()))
 		throw new Error(`Storage must be a real directory: ${selection.target}`);
 	const record = stat ? await readStorageRecord(selection.target) : null;
-	const result = { selection, record, files: 0, bytes: 0, external: [] as string[] };
+	const result = {
+		selection,
+		record,
+		files: 0,
+		bytes: 0,
+		external: [] as string[],
+		warnings: [] as StorageMigrationWarning[],
+	};
 	if (record) {
 		await validateCoreLinks(selection.target);
 		await privateDirectory(selection.target, false);
 		return { ...result, state: "ready" };
 	}
 	if (stat) return { ...result, state: "existing" };
-	if (!selection.source || !(await statOrMissing(selection.source))) return { ...result, state: "new" };
+	if (!selection.source) return { ...result, state: "new" };
+	try {
+		if (!(await statOrMissing(selection.source))) return { ...result, state: "new" };
+	} catch (error) {
+		// Isolation has already been verified. Uncertain discovery still requires a user choice.
+		if (work.scanSource !== false) throw error;
+		return { ...result, state: "candidate" };
+	}
+	if (work.scanSource === false) return { ...result, state: "candidate" };
 	await assertDesktopStorage(selection.source);
-	const snapshot = await scan(selection.source, selection.target, selection.legacyRoots, work);
-	const plan = await settingsPlan(selection, selection.source);
+	const snapshot = await fullSnapshot(selection, work);
 	return {
 		...result,
-		state: snapshot.entries.length ? "import" : "new",
+		state: "import",
+		...snapshot,
+		fingerprint: fingerprint(snapshot),
+	};
+}
+async function fullSnapshot(selection: LocalStorageSelection, work: StorageWork) {
+	const source = selection.source as string;
+	const rootLink = await lstat(source, { bigint: true });
+	const root = await realpath(source);
+	const rootStat = await followStat(root, { bigint: true });
+	const rootIdentity = {
+		root,
+		link: rootLink.isSymbolicLink() ? [identity(rootLink, true), await readlink(source)] : null,
+		directory: identity(rootStat),
+	};
+	const snapshot = await scan(root, selection.target, selection.legacyRoots, work);
+	const plan = await settingsPlan(selection, root);
+	return {
 		...snapshot,
 		external: [...snapshot.external, ...(plan?.external ?? [])],
-		fingerprint: createHash("sha256").update(JSON.stringify(snapshot.entries)).digest("hex"),
+		rootIdentity,
+		settings: plan,
 	};
+}
+function fingerprint(snapshot: Awaited<ReturnType<typeof fullSnapshot>>) {
+	return createHash("sha256").update(JSON.stringify(snapshot)).digest("hex");
 }
 async function settingsPlan(selection: LocalStorageSelection, source: string) {
 	let path = join(source, "settings.json");
 	const stat = await statOrMissing(path);
 	if (!stat) return null;
-	if (stat.isSymbolicLink() && selection.source && source !== selection.source) {
-		const originalRoot = await realpath(selection.source);
-		const originalFile = await realpath(join(selection.source, "settings.json"));
-		if (!inside(originalRoot, originalFile)) throw new Error("Settings link escapes source storage");
-		path = join(source, relative(originalRoot, originalFile));
+	if (stat.isSymbolicLink()) {
+		path = await realpath(path);
+		if (!inside(source, path)) throw new Error("Settings link escapes source storage");
 	}
 	return {
 		path,
 		...relocateResourceSettings(await readFile(path, "utf8"), {
 			source: selection.source ?? source,
-			sources: [...new Set([selection.source ?? source, await realpath(selection.source ?? source)])],
+			sources: [...new Set([selection.source ?? source, source])],
 			target: selection.target,
 			home: selection.home,
 			legacyRoots: selection.legacyRoots,
@@ -280,8 +420,12 @@ export async function initializeLocalStorage(
 		if (compromised) throw new Error("Storage migration lost its lock");
 	};
 	let staging: string | undefined;
-	try {
-		const current = await inspectLocalStorage(selection, { signal: work.signal });
+	let published = false;
+	const prepare = async () => {
+		const current = await inspectLocalStorage(selection, {
+			signal: work.signal,
+			scanSource: choice === "copy",
+		});
 		if (current.record) throw new Error("Storage changed; inspect it again before choosing");
 		if (
 			choice === "copy" &&
@@ -297,10 +441,7 @@ export async function initializeLocalStorage(
 			id: randomUUID(),
 			kind: choice === "copy" ? "import" : choice,
 			target,
-			sources:
-				choice === "copy" && selection.source
-					? [...new Set([selection.source, await realpath(selection.source)])]
-					: [],
+			sources: [],
 			createdAt: new Date().toISOString(),
 			files: 0,
 			bytes: 0,
@@ -315,6 +456,7 @@ export async function initializeLocalStorage(
 				defaultValue: () => record,
 				mode: 0o600,
 			}).update((value) => value);
+			published = true;
 			await assertDesktopStorage(target);
 			return record;
 		}
@@ -322,8 +464,12 @@ export async function initializeLocalStorage(
 		await mkdir(staging, { mode: 0o700 });
 		await privateDirectory(staging, true);
 		if (choice === "copy" && selection.source) {
-			const source = await realpath(selection.source),
-				before = await scan(source, target, selection.legacyRoots, work);
+			const before = await fullSnapshot(selection, work),
+				source = before.rootIdentity.root;
+			if (fingerprint(before) !== inspection.fingerprint)
+				throw new Error("Source changed since confirmation; inspect it again");
+			record.sources = [...new Set([selection.source, source])];
+			record.warnings = before.warnings;
 			let files = 0,
 				bytes = 0;
 			for (const entry of before.entries) {
@@ -359,26 +505,26 @@ export async function initializeLocalStorage(
 				});
 			}
 			work.onProgress?.({ phase: "verify", files, bytes });
-			const after = await scan(source, target, selection.legacyRoots, {
+			const after = await fullSnapshot(selection, {
 				...work,
 				onProgress: (progress) => work.onProgress?.({ ...progress, phase: "verify" }),
 			});
-			if (
-				(await realpath(selection.source)) !== source ||
-				JSON.stringify(before.entries) !== JSON.stringify(after.entries)
-			)
+			if (fingerprint(after) !== inspection.fingerprint)
 				throw new Error("Source changed while copying; close Pi CLI and retry");
 			record.files = before.files;
 			record.bytes = before.bytes;
-			const plan = await settingsPlan(selection, staging);
-			if (plan && plan.text !== (await readFile(plan.path, "utf8")))
-				await new JsonStore<string>({
-					path: plan.path,
-					defaultValue: () => "",
-					parse: (raw) => raw,
-					stringify: (raw) => raw,
-					mode: 0o600,
-				}).write(plan.text);
+			const plan = before.settings;
+			if (plan) {
+				const settingsPath = join(staging, relative(source, plan.path));
+				if (plan.text !== (await readFile(settingsPath, "utf8")))
+					await new JsonStore<string>({
+						path: settingsPath,
+						defaultValue: () => "",
+						parse: (raw) => raw,
+						stringify: (raw) => raw,
+						mode: 0o600,
+					}).write(plan.text);
+			}
 		}
 		check();
 		await new JsonStore({
@@ -400,13 +546,36 @@ export async function initializeLocalStorage(
 		if ((await canonicalPath(target)) !== target || (await statOrMissing(target)))
 			throw new Error(`Target appeared or changed during import: ${target}`);
 		await rename(staging, target);
+		published = true;
 		return record;
+	};
+	let outcome: { record: LocalStorageRecord } | { error: StorageInitializationError };
+	try {
+		outcome = { record: await prepare() };
 	} catch (error) {
-		throw new Error(
-			`${error instanceof Error ? error.message : error}${staging ? `\nRecovery copy retained: ${staging}` : ""}`,
-			{ cause: error },
-		);
-	} finally {
-		if (!compromised) await release();
+		const recoveryPath = published ? undefined : staging;
+		outcome = {
+			error: new StorageInitializationError(
+				`${error instanceof Error ? error.message : error}${recoveryPath ? `\nRecovery copy retained: ${recoveryPath}` : ""}`,
+				recoveryPath,
+				error,
+				!compromised,
+			),
+		};
 	}
+	if (!compromised) {
+		try {
+			await release();
+		} catch (error) {
+			const failure = "error" in outcome ? outcome.error : undefined;
+			throw new StorageInitializationError(
+				`${failure ? `${failure.message}\n` : ""}Cannot release storage lock: ${error instanceof Error ? error.message : error}`,
+				published ? undefined : staging,
+				new AggregateError(failure ? [failure, error] : [error], "Storage lock release failed"),
+				false,
+			);
+		}
+	}
+	if ("error" in outcome) throw outcome.error;
+	return outcome.record;
 }
