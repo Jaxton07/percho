@@ -152,6 +152,92 @@ it("保存停用配置后，当前仍连接的服务器依然可以重连", asyn
 	}
 });
 
+it("同名覆盖配置只在实际生效行显示重连加载和错误", async () => {
+	vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
+	useMcpStore.setState({ selectedInstanceId: undefined });
+	fixture.api.mcpConfigList.mockResolvedValue({
+		global: [
+			{
+				name: "same-name",
+				source: "user",
+				transport: { kind: "unknown" },
+				enabled: true,
+				exposure: "direct",
+				tools: [],
+			},
+		],
+		project: [
+			{
+				name: "same-name",
+				source: "project",
+				transport: { kind: "unknown" },
+				enabled: true,
+				exposure: "direct",
+				tools: [],
+			},
+		],
+		errors: [],
+		projectTrusted: true,
+		globalPath: "/global",
+		projectPath: "/a/.pi/mcp.json",
+		contextCwd: "/a",
+		runtime: {
+			epoch: "overridden-row-actions",
+			revision: 1,
+			instances: [
+				{
+					instanceId: "override-owner",
+					sessionId: "s",
+					cwd: "/a",
+					available: true,
+					errors: [],
+					servers: [
+						{
+							name: "same-name",
+							source: "/global",
+							override: "/a/.pi/mcp.json",
+							state: "connected",
+							tools: [],
+						},
+					],
+				},
+			],
+		},
+	});
+	let rejectPending: (error: Error) => void = () => {};
+	fixture.api.mcpReconnect.mockReturnValueOnce(
+		new Promise<void>((_, reject) => {
+			rejectPending = reject;
+		}),
+	);
+	const host = document.createElement("div");
+	const root = createRoot(host);
+	try {
+		await act(async () => root.render(<McpPanel />));
+		const rows = host.querySelectorAll<HTMLElement>('[class~="group/row"]');
+		const globalRow = rows[0];
+		const projectRow = rows[1];
+		if (!globalRow || !projectRow) throw new Error("Missing overridden server rows");
+		const button = [...projectRow.querySelectorAll("button")].find(
+			(item) => item.textContent === "settings.mcp.reconnect",
+		);
+		await act(async () => button?.click());
+		expect(fixture.api.mcpReconnect).toHaveBeenLastCalledWith({
+			instanceId: "override-owner",
+			name: "same-name",
+		});
+		expect(projectRow.textContent).toContain("settings.mcp.reconnecting");
+		expect(globalRow.textContent).not.toContain("settings.mcp.reconnecting");
+		await act(async () => rejectPending(new Error("project-row-only-error")));
+		expect(projectRow.textContent).toContain("project-row-only-error");
+		expect(globalRow.textContent).not.toContain("project-row-only-error");
+	} finally {
+		await act(async () => rejectPending(new Error("fixture cleanup")));
+		await act(() => root.unmount());
+		vi.unstubAllGlobals();
+	}
+});
+
 it("手写的不支持配置仍展示服务器及 SDK 诊断", async () => {
 	vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
 	fixture.api.mcpConfigList.mockResolvedValue({

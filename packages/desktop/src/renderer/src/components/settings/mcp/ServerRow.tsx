@@ -56,11 +56,6 @@ export function ServerRow({
 }) {
 	const t = useT();
 	const { upsert, remove, reconnect, login, config, selectedInstanceId, reconnectActions } = useMcpStore();
-	const action = selectedInstanceId
-		? reconnectActions[mcpActionKey(selectedInstanceId, server.name)]
-		: undefined;
-	const reconnecting = action?.pending ?? false;
-	const reconnectError = action?.error;
 	const [toolsOpen, setToolsOpen] = useState(false);
 	const [reasonOpen, setReasonOpen] = useState(false);
 	const [confirming, setConfirming] = useState(false);
@@ -78,7 +73,14 @@ export function ServerRow({
 		instance?.available && path
 			? instance.servers.find((item) => item.name === server.name && (item.override ?? item.source) === path)
 			: undefined;
-	const canReconnect = !!live && isMcpReconnectable(live.state) && state !== "overridden";
+	const ownsLiveTarget = !!live && state !== "overridden";
+	const action =
+		ownsLiveTarget && selectedInstanceId
+			? reconnectActions[mcpActionKey(selectedInstanceId, server.name)]
+			: undefined;
+	const reconnecting = action?.pending ?? false;
+	const reconnectError = action?.error;
+	const canReconnect = ownsLiveTarget && isMcpReconnectable(live?.state);
 	const configuredEnabled = server.configuredEnabled ?? server.enabled;
 	const transportWord =
 		server.transport.kind === "stdio"
