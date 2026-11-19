@@ -13,12 +13,14 @@ const sharedRequire = createRequire(join(root, "packages/shared/package.json"));
 const semverPath = sharedRequire.resolve("semver/package.json");
 const semver = JSON.parse(await readFile(semverPath, "utf8"));
 
-test("runtime build lock pins shared semver as an isolated build dependency", () => {
+test("runtime build lock retains production MCP and build-only shared semver", () => {
 	const selected = runtimeBuildLock(lock, "0.0.0-test");
 	assert.equal(selected.manifest.devDependencies["percho-semver-build"], `npm:semver@${semver.version}`);
 	assert.equal(selected.lock.packages["node_modules/percho-semver-build"].version, semver.version);
 	assert.equal(selected.lock.packages["node_modules/percho-semver-build"].dev, true);
 	assert.equal(selected.manifest.dependencies["percho-semver-build"], undefined);
+	assert.equal(selected.lock.packages["node_modules/@earendil-works/pi-mcp"].version, "1.5.1");
+	assert.notEqual(selected.lock.packages["node_modules/@earendil-works/pi-mcp"].dev, true);
 });
 
 test("runtime install uses the official tarball source without changing versions, integrity or the checkout lock", () => {
@@ -59,7 +61,7 @@ test("runtime install preserves official and unrelated tarball hosts", () => {
 	}
 });
 
-test("runtime bundle resolves semver subpaths without checkout dependencies", async (t) => {
+test("runtime bundle resolves MCP helpers and semver subpaths without checkout dependencies", async (t) => {
 	const parent = join(root, ".local/tmp/runtime-build-tests");
 	await mkdir(parent, { recursive: true });
 	const directory = await mkdtemp(join(parent, "case-"));
@@ -75,11 +77,19 @@ test("runtime bundle resolves semver subpaths without checkout dependencies", as
 		? "packages/backend/node_modules/typebox"
 		: "node_modules/typebox";
 	await cp(join(root, typeboxKey), aliases.typebox, { recursive: true });
+	await cp(
+		join(root, "node_modules/@earendil-works/pi-mcp"),
+		join(stage, "node_modules/@earendil-works/pi-mcp"),
+		{ recursive: true },
+	);
 	await writeFile(
 		join(source, "entry.ts"),
 		`
 		import { isNewerVersion } from "./packages/shared/src/packages";
 		import { Type } from "typebox";
+		import { isMcpServerOverride, mcpNamespace } from "@earendil-works/pi-mcp";
+		export const namespace = mcpNamespace("my-server");
+		export const override = isMcpServerOverride({ enabled: false });
 		export const newer = isNewerVersion("1.2.0", "1.2.0-beta.1");
 		export const schema = Type.Object({ version: Type.String() });
 	`,
@@ -99,7 +109,7 @@ test("runtime bundle resolves semver subpaths without checkout dependencies", as
 				name: "no-checkout-dependencies",
 				setup(builder) {
 					// CI masks checkout node_modules. Do not let local ancestor installs hide a missing alias.
-					builder.onResolve({ filter: /^(semver|typebox)(\/|$)/ }, async (args) => {
+					builder.onResolve({ filter: /^(semver|typebox|@earendil-works\/pi-mcp)(\/|$)/ }, async (args) => {
 						if (args.pluginData?.checked) return;
 						const resolved = await builder.resolve(args.path, {
 							resolveDir: args.resolveDir,
@@ -127,4 +137,6 @@ test("runtime bundle resolves semver subpaths without checkout dependencies", as
 	const result = await import(pathToFileURL(outfile).href);
 	assert.equal(result.newer, true);
 	assert.equal(result.schema.type, "object");
+	assert.equal(result.namespace, "mcp__my_server");
+	assert.equal(result.override, true);
 });
