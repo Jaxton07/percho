@@ -6,7 +6,7 @@ import type { ActivityEntry, StreamingState, SubagentRunUi, UIMessage, UIToolCal
  * 聊天行构建（transcript → 渲染行序列）：桌面 MessageList 与 lan-web ChatView 共享的
  * 「分组大脑」。纯函数、零 React/DOM——两端各自把行模型映射成自己的渲染壳。
  *
- * 合并规则：assistant 消息的思考/工具并入折叠组，正文（text）是边界——正文出现时组关闭、
+ * 合并规则：assistant 消息的思考/工具并入折叠组，非纯空白正文是边界——正文出现时组关闭、
  * 正文作为独立行；子代理结果先落所属折叠状态行再紧跟卡片。
  */
 
@@ -81,7 +81,7 @@ export function isAgentWorking(
 		streaming?.tools.some((t) => t.state === "running") ||
 			streaming?.subagentRuns.some((r) => r.status === "running"),
 	);
-	return input.agentActive && (!streaming?.text || hasRunningWork);
+	return input.agentActive && (!streaming?.text.trim() || hasRunningWork);
 }
 
 /**
@@ -117,6 +117,7 @@ export function buildChatRows(
 	opts?: TurnDiffRowsOptions,
 ): ChatRow[] {
 	const { streaming } = transcript;
+	const hasStreamingText = Boolean(streaming?.text.trim());
 	const agentWorking = isAgentWorking(transcript);
 	const rows: ChatRow[] = [];
 	let metaItems: MetaItem[] = [];
@@ -136,7 +137,7 @@ export function buildChatRows(
 			lastTextId = null;
 			continue;
 		}
-		if (message.kind === "assistant" && message.text) lastTextId = message.id;
+		if (message.kind === "assistant" && message.text.trim()) lastTextId = message.id;
 	}
 	if (!transcript.agentActive && lastTextId) turnFinalTextIds.add(lastTextId);
 
@@ -145,7 +146,7 @@ export function buildChatRows(
 	let groupTurnId = `prefix:${transcript.messages[0]?.id ?? "empty"}`;
 	const flushMeta = (isLatest = false, forceEmpty = false, subagentCount = 0): void => {
 		if (metaItems.length === 0 && !forceEmpty && subagentCount === 0) return;
-		const endImmediately = transcript.compacting || Boolean(streaming?.text) || !transcript.agentActive;
+		const endImmediately = transcript.compacting || hasStreamingText || !transcript.agentActive;
 		rows.push({
 			kind: "metaGroup",
 			key: `meta-${sessionId}-${groupTurnId}-g${groupIndex++}`,
@@ -251,7 +252,7 @@ export function buildChatRows(
 			metaItems.push(committedMetaItem(message));
 		}
 		// 正文是边界：组关闭，正文独立成行（meta 已并入组）
-		if (message.text) {
+		if (message.text.trim()) {
 			flushMeta();
 			rows.push({
 				kind: "message",
@@ -267,7 +268,7 @@ export function buildChatRows(
 	if (streaming) {
 		// 正文起点锚：同 turn 的工具按 blockIndex 分「正文前/正文后」两组，保住 text→toolCall 交错时序
 		//（与 finalizeStreaming 的拆分一致）；正文出现后 pre 组立即结束，post 组成为最新组接收 working 信号
-		const textIdx = streaming.textBlockIndex;
+		const textIdx = hasStreamingText ? streaming.textBlockIndex : null;
 		const preTools =
 			textIdx == null ? streaming.tools : streaming.tools.filter((t) => (t.blockIndex ?? 0) < textIdx);
 		const postTools = textIdx == null ? [] : streaming.tools.filter((t) => (t.blockIndex ?? 0) > textIdx);
@@ -280,7 +281,7 @@ export function buildChatRows(
 				activity: textIdx == null ? streaming.activity : undefined,
 			});
 		}
-		if (streaming.text) {
+		if (hasStreamingText) {
 			flushMeta();
 			rows.push({
 				kind: "message",
