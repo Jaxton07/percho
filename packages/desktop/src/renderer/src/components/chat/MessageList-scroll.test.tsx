@@ -11,6 +11,7 @@ const fixture = vi.hoisted(() => ({
 	windowed: false,
 	longWindow: false,
 	rail: false,
+	shownWorking: vi.fn((_working: boolean, _endImmediately?: boolean) => false),
 }));
 
 vi.mock("@percho/shared", async (importOriginal) => {
@@ -50,7 +51,7 @@ vi.mock("../../stores/session-workspace", () => ({
 }));
 vi.mock("../../i18n", () => ({ useT: () => (key: string) => key }));
 vi.mock("../../lib/use-edge-fade", () => ({ useEdgeFade: () => {} }));
-vi.mock("./use-shown-working", () => ({ useShownWorking: () => false }));
+vi.mock("./use-shown-working", () => ({ useShownWorking: fixture.shownWorking }));
 vi.mock("./history-image/history-image-service", () => ({
 	thumbnailService: () => ({ cancelView: () => {} }),
 }));
@@ -299,6 +300,18 @@ describe("MessageList scroll regressions", () => {
 		);
 		await drainFrames();
 		expect(writes).toContain(positions.offsetOf(1) - 12);
+	});
+});
+
+describe("MessageList center orb", () => {
+	it.each([
+		{ text: " \n\t", endImmediately: false },
+		{ text: "reply", endImmediately: true },
+	])("ends immediately only for visible streaming text ($text)", async ({ text, endImmediately }) => {
+		fixture.transcripts.A = { ...fixture.transcripts.A, agentActive: true, streaming: { text } };
+		fixture.shownWorking.mockClear();
+		await render();
+		expect(fixture.shownWorking.mock.lastCall?.[1]).toBe(endImmediately);
 	});
 });
 
