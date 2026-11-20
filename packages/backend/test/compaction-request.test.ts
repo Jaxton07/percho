@@ -703,7 +703,7 @@ describe("request boundary compaction", () => {
 	});
 
 	it.each(["creation", "result"] as const)(
-		"retries thrown network faults during %s with exact 2/4/8 second waits",
+		"retries thrown network faults during %s with exact 2/4/8/16/32 second waits",
 		async (fault) => {
 			const f = await fixture();
 			let attempts = 0;
@@ -727,7 +727,7 @@ describe("request boundary compaction", () => {
 				const running = f.session.prompt("continue");
 				await vi.advanceTimersByTimeAsync(0);
 				expect(attempts).toBe(1);
-				for (const [index, delay] of [2000, 4000, 8000].entries()) {
+				for (const [index, delay] of [2000, 4000, 8000, 16000, 32000].entries()) {
 					await vi.advanceTimersByTimeAsync(delay - 1);
 					expect(attempts).toBe(index + 1);
 					await vi.advanceTimersByTimeAsync(1);
@@ -739,7 +739,7 @@ describe("request boundary compaction", () => {
 					f.events
 						.filter((event) => event.type === "summarization_retry_scheduled")
 						.map((event) => event.delayMs),
-				).toEqual([2000, 4000, 8000]);
+				).toEqual([2000, 4000, 8000, 16000, 32000]);
 			} finally {
 				vi.useRealTimers();
 			}
@@ -753,16 +753,16 @@ describe("request boundary compaction", () => {
 		expect(f.session.compactionPause).toBeNull();
 	});
 
-	it("gives each split-summary part its own three retries without restarting the first part", async () => {
+	it("gives each split-summary part its own five retries without restarting the first part", async () => {
 		const f = await fixture({ split: true });
 		f.policy.retry.baseDelayMs = 1;
 		let attempts = 0;
 		f.setSummary(async () => {
 			attempts++;
-			return attempts % 4 === 0 ? answer("short summary") : answer("", 0, "fetch failed");
+			return attempts % 6 === 0 ? answer("short summary") : answer("", 0, "fetch failed");
 		});
 		await f.session.prompt("continue");
-		expect(attempts).toBe(8);
+		expect(attempts).toBe(12);
 		expect(f.session.compactionPause).toBeNull();
 		expect(f.sm.getBranch().filter((e) => e.type === "compaction")).toHaveLength(1);
 		expect(f.requests.filter((r) => !r.summary)).toHaveLength(1);
@@ -1016,9 +1016,9 @@ describe("request boundary compaction", () => {
 		expect(manager.getCompactionSettings(model).reserveTokens).toBe(16_384);
 		expect(f.policy.retry).toEqual({
 			enabled: true,
-			maxRetries: 3,
+			maxRetries: 5,
 			baseDelayMs: 2000,
-			maxAgentDelayMs: 8000,
+			maxAgentDelayMs: 32000,
 		});
 	});
 
@@ -1305,7 +1305,7 @@ describe("request boundary compaction", () => {
 				const running = f.session.prompt("temporary summary preparation failure");
 				await vi.advanceTimersByTimeAsync(0);
 				expect(preparations).toBe(1);
-				for (const [index, delay] of [2000, 4000, 8000].entries()) {
+				for (const [index, delay] of [2000, 4000, 8000, 16000, 32000].entries()) {
 					await vi.advanceTimersByTimeAsync(delay - 1);
 					expect(preparations).toBe(index + 1);
 					await vi.advanceTimersByTimeAsync(1);
@@ -1316,9 +1316,9 @@ describe("request boundary compaction", () => {
 					f.events
 						.filter((event) => event.type === "summarization_retry_scheduled")
 						.map((event) => event.delayMs),
-				).toEqual([2000, 4000, 8000]);
+				).toEqual([2000, 4000, 8000, 16000, 32000]);
 				expect(f.session.compactionPause?.reason).toBe("failed");
-				if (phase === "route") expect(f.requests.filter((request) => request.summary)).toHaveLength(2);
+				if (phase === "route") expect(f.requests.filter((request) => request.summary)).toHaveLength(4);
 			} finally {
 				vi.useRealTimers();
 			}

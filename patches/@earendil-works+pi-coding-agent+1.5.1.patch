@@ -1,3 +1,27 @@
+diff --git a/node_modules/@earendil-works/pi-coding-agent/dist/core/settings-defaults.js b/node_modules/@earendil-works/pi-coding-agent/dist/core/settings-defaults.js
+--- a/node_modules/@earendil-works/pi-coding-agent/dist/core/settings-defaults.js
++++ b/node_modules/@earendil-works/pi-coding-agent/dist/core/settings-defaults.js
+@@ -16,7 +16,7 @@
+     },
+     retry: {
+         enabled: true,
+-        maxRetries: 3,
++        maxRetries: 5,
+         baseDelayMs: 2000,
+         maxAgentDelayMs: DEFAULT_MAX_AGENT_RETRY_DELAY_MS,
+         provider: {
+diff --git a/node_modules/@earendil-works/pi-coding-agent/dist/core/settings-defaults.d.ts b/node_modules/@earendil-works/pi-coding-agent/dist/core/settings-defaults.d.ts
+--- a/node_modules/@earendil-works/pi-coding-agent/dist/core/settings-defaults.d.ts
++++ b/node_modules/@earendil-works/pi-coding-agent/dist/core/settings-defaults.d.ts
+@@ -15,7 +15,7 @@
+     };
+     readonly retry: {
+         readonly enabled: true;
+-        readonly maxRetries: 3;
++        readonly maxRetries: 5;
+         readonly baseDelayMs: 2000;
+         readonly maxAgentDelayMs: 60000;
+         readonly provider: {
 diff --git a/node_modules/@earendil-works/pi-coding-agent/dist/core/agent-session.d.ts b/node_modules/@earendil-works/pi-coding-agent/dist/core/agent-session.d.ts
 index 8b6a584..dc10b8e 100644
 --- a/node_modules/@earendil-works/pi-coding-agent/dist/core/agent-session.d.ts

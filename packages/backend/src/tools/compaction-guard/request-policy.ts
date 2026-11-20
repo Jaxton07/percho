@@ -45,6 +45,6 @@ export function createCompactionRequestPolicy(
 		describeError: describeCompactionError,
 		onResult: ({ status, ...detail }) =>
 			status === "success" || status === "cancelled" ? null : { reason: status, ...detail },
-		retry: { enabled: true, maxRetries: 3, baseDelayMs: 2000, maxAgentDelayMs: 8000 },
+		retry: { enabled: true, maxRetries: 5, baseDelayMs: 2000, maxAgentDelayMs: 32000 },
 	};
 }
