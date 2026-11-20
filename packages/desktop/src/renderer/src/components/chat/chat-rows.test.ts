@@ -131,6 +131,30 @@ describe("buildChatRows", () => {
 		expect(rows[1]).toMatchObject({ kind: "message", metaInGroup: true, showActions: true });
 	});
 
+	it("whitespace-only history keeps tools grouped and actions on the last visible reply", () => {
+		const reply = assistant("  正文\n");
+		const read = tool("read");
+		const edit = tool("edit");
+		const t = {
+			...emptyTranscript(),
+			messages: [
+				reply,
+				assistant(" ", { tools: [read] }),
+				assistant("\n\t", { thinking: "想", tools: [edit] }),
+			],
+		};
+		expect(buildChatRows(t, "s1")).toEqual([
+			expect.objectContaining({ kind: "message", message: reply, showActions: true }),
+			expect.objectContaining({
+				kind: "metaGroup",
+				items: [
+					expect.objectContaining({ tools: [read] }),
+					expect.objectContaining({ thinking: "想", tools: [edit] }),
+				],
+			}),
+		]);
+	});
+
 	it("text splits consecutive tool runs into two groups (order preserved)", () => {
 		const t = {
 			...emptyTranscript(),
@@ -199,6 +223,35 @@ describe("buildChatRows", () => {
 		expect(activity).toEqual([t.streaming.activity[1]]);
 		const next = buildChatRows({ ...t, streaming: { ...t.streaming, text: "正文继续增长" } }, "s1");
 		expect((next[2] as { items: { activity?: unknown[] }[] }).items[0]?.activity).toBe(activity);
+	});
+
+	it("whitespace-only streaming text keeps one working group and its activity", () => {
+		const previous = tool("edit");
+		const tools = [tool("read", "done", 0), tool("bash", "done", 3)];
+		const current = streaming({
+			text: "  ",
+			textBlockIndex: 2,
+			thinking: "想",
+			tools,
+			activity: [{ id: "ac1", kind: "tool", name: "bash", args: "" }],
+		});
+		const t = {
+			...emptyTranscript(),
+			agentActive: true,
+			messages: [assistant("", { tools: [previous] })],
+			streaming: current,
+		};
+		expect(buildChatRows(t, "s1")).toEqual([
+			expect.objectContaining({
+				kind: "metaGroup",
+				working: true,
+				endImmediately: false,
+				items: [
+					expect.objectContaining({ tools: [previous] }),
+					expect.objectContaining({ thinking: "想", tools, activity: current.activity }),
+				],
+			}),
+		]);
 	});
 
 	it("working empty group placeholder when agent active without content", () => {
