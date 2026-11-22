@@ -58,6 +58,7 @@ export class ChannelStore {
 	db: DatabaseSync | null = null;
 	databaseId: string | null = null;
 	private cursorSecret: string | null = null;
+	private readOnly = false;
 	fileIdentity: { dev: number; ino: number } | null = null;
 
 	constructor(options: { projectRoot: string; agentDir: string }) {
@@ -121,10 +122,16 @@ export class ChannelStore {
 	}
 
 	open(create = false): DatabaseSync | null {
+		let previous: { id: string; dev: number; ino: number } | undefined;
 		if (this.db) {
 			this.verify();
-			if (create) this.ensureIgnore();
-			return this.db;
+			if (!create || !this.readOnly) {
+				if (create) this.ensureIgnore();
+				return this.db;
+			}
+			if (!this.databaseId || !this.fileIdentity) throw new Error("Channel store is closed");
+			previous = { id: this.databaseId, ...this.fileIdentity };
+			this.close();
 		}
 		for (const path of [join(this.projectRoot, ".percho"), join(this.projectRoot, ".percho", "channels")]) {
 			try {
@@ -137,6 +144,58 @@ export class ChannelStore {
 		const exists = existsSync(this.databasePath);
 		if (!exists && mark) throw new Error("Channel database missing");
 		if (!exists && !create) return null;
+		if (previous) {
+			const stat = statSync(this.databasePath);
+			if (mark?.id !== previous.id || stat.dev !== previous.dev || stat.ino !== previous.ino)
+				throw new Error("Channel database replaced");
+		}
+		if (!create) {
+			if (!mark) throw new Error("Channel marker missing; explicit recovery required");
+			const db = new DatabaseSync(this.databasePath, { readOnly: true });
+			try {
+				const schema: Record<string, string[]> = {
+					channel_meta: ["id", "version", "cursor_secret"],
+					topics: ["id", "topic"],
+					messages: ["id", "topic", "sender", "name", "at", "body"],
+					members: ["topic", "session", "active", "epoch", "position"],
+					fences: ["session", "state", "op", "source"],
+					receipts: ["session", "kind", "call_id", "params", "epoch", "result"],
+					maintenance_history: ["session", "op"],
+				};
+				for (const [table, required] of Object.entries(schema)) {
+					const columns = db.prepare(`PRAGMA table_info(${table})`).all();
+					if (required.some((name) => !columns.some((column) => column.name === name)))
+						throw new Error("Incomplete channel database schema; explicit recovery required");
+				}
+				for (const index of ["messages_topic_id", "members_session"]) {
+					if (!db.prepare("SELECT 1 FROM sqlite_master WHERE type='index' AND name=?").get(index))
+						throw new Error("Incomplete channel database schema; explicit recovery required");
+				}
+				const rows = db.prepare("SELECT id, version, cursor_secret FROM channel_meta").all();
+				const row = rows[0];
+				if (rows.length !== 1 || !row || row.version !== 1 || typeof row.id !== "string" || !row.id)
+					throw new Error("Unsupported channel database identity");
+				if (typeof row.cursor_secret !== "string" || !/^[0-9a-f]{64}$/.test(row.cursor_secret))
+					throw new Error("Invalid channel cursor secret");
+				if (mark.id !== row.id) throw new Error("Channel database identity mismatch");
+				this.db = db;
+				this.readOnly = true;
+				this.databaseId = row.id;
+				this.cursorSecret = row.cursor_secret;
+				const stat = statSync(this.databasePath);
+				this.fileIdentity = { dev: stat.dev, ino: stat.ino };
+				this.verify();
+				return db;
+			} catch (error) {
+				db.close();
+				this.db = null;
+				this.databaseId = null;
+				this.cursorSecret = null;
+				this.fileIdentity = null;
+				this.readOnly = false;
+				throw error;
+			}
+		}
 		mkdirSync(join(this.projectRoot, ".percho", "channels"), { recursive: true });
 		if (create) this.ensureIgnore();
 		const empty = !exists || statSync(this.databasePath).size === 0;
@@ -714,5 +773,6 @@ export class ChannelStore {
 		this.databaseId = null;
 		this.cursorSecret = null;
 		this.fileIdentity = null;
+		this.readOnly = false;
 	}
 }

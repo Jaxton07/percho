@@ -152,7 +152,7 @@ function SingleChannelPill({
 			label={topic}
 			align="end"
 			// 超长 / 多频道的完整名要在气泡里**可读**：局部限宽 + 允许换行（只覆盖本气泡，不动全局 Tooltip 样式）
-			className="pointer-events-auto [&>[role=tooltip]]:max-w-[320px] [&>[role=tooltip]]:whitespace-normal"
+			className="pointer-events-auto [&>[role=tooltip]]:max-w-[min(320px,calc(100vw-32px))] [&>[role=tooltip]]:whitespace-normal [&>[role=tooltip]]:[overflow-wrap:anywhere]"
 		>
 			<span
 				data-channel-topic={topic}

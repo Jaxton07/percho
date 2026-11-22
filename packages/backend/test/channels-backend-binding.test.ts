@@ -1,12 +1,4 @@
-import {
-	mkdirSync,
-	mkdtempSync,
-	readFileSync,
-	realpathSync,
-	rmSync,
-	symlinkSync,
-	writeFileSync,
-} from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { Worker } from "node:worker_threads";
@@ -66,6 +58,27 @@ it("hides cached subscriptions for disabled watch, including read-only sessions"
 	}
 });
 
+it("does not rewrite an existing registration", async () => {
+	mkdirSync(".local/tmp", { recursive: true });
+	const root = mkdtempSync(join(process.cwd(), ".local/tmp/channel-register-"));
+	try {
+		const host = new ChannelBackendHost(root, () => {
+			throw new Error("unexpected service");
+		});
+		await host.register(root);
+		const path = join(root, "channel-projects.json");
+		const before = { bytes: readFileSync(path), stat: statSync(path) };
+		await host.register(root);
+		expect(readFileSync(path)).toEqual(before.bytes);
+		expect(statSync(path).mtimeMs).toBe(before.stat.mtimeMs);
+		expect(statSync(path).ino).toBe(before.stat.ino);
+		await host.register(join(root, "other"));
+		expect(JSON.parse(readFileSync(path, "utf8")).projects).toEqual([root, join(root, "other")]);
+	} finally {
+		rmSync(root, { recursive: true, force: true });
+	}
+});
+
 it("preserves legacy projects and unknown data when binding across host restarts", async () => {
 	mkdirSync(".local/tmp", { recursive: true });
 	const root = mkdtempSync(join(process.cwd(), ".local/tmp/channel-bind-"));
@@ -85,44 +98,6 @@ it("preserves legacy projects and unknown data when binding across host restarts
 		expect(JSON.parse(readFileSync(file, "utf8")).future).toEqual({ value: 1 });
 	} finally {
 		rmSync(root, { recursive: true, force: true });
-	}
-});
-
-it("resolves only existing registered canonical project roots after restart", async () => {
-	mkdirSync(".local/tmp", { recursive: true });
-	const base = realpathSync(mkdtempSync(join(process.cwd(), ".local/tmp/channel-roots-")));
-	const agent = join(base, "agent");
-	const root = join(base, "project");
-	const nested = join(root, "nested");
-	const child = join(nested, "child");
-	const prefix = join(base, "project-other");
-	mkdirSync(agent);
-	mkdirSync(child, { recursive: true });
-	mkdirSync(prefix);
-	const host = () =>
-		new ChannelBackendHost(agent, () => {
-			throw new Error("unexpected service");
-		});
-	try {
-		await host().register(root);
-		await host().register(nested);
-		expect(await host().projectRootForCwd(root)).toBe(root);
-		expect(await host().projectRootForCwd(child)).toBe(nested);
-		expect(await host().projectRootForCwd(prefix)).toBeUndefined();
-		expect(await host().projectRootForCwd("relative")).toBeUndefined();
-		const alias = join(base, "alias");
-		symlinkSync(child, alias);
-		expect(await host().projectRootForCwd(alias)).toBe(nested);
-		rmSync(nested, { recursive: true });
-		symlinkSync(prefix, nested);
-		expect(await host().projectRootForCwd(nested)).toBeUndefined();
-		expect(
-			await new ChannelBackendHost(join(base, "other-agent"), () => {
-				throw new Error("unexpected service");
-			}).projectRootForCwd(root),
-		).toBeUndefined();
-	} finally {
-		rmSync(base, { recursive: true, force: true });
 	}
 });
 
@@ -233,7 +208,7 @@ it("persists a binding through the public backend creation entry", async () => {
 	}
 });
 
-it("inherits a registered non-worktree project through cwd-only creation", async () => {
+it("keeps an independent non-worktree child separate unless its parent is explicitly bound", async () => {
 	mkdirSync(".local/tmp", { recursive: true });
 	const root = mkdtempSync(join(process.cwd(), ".local/tmp/channel-cwd-only-"));
 	const agent = join(root, "agent");
@@ -250,15 +225,43 @@ it("inherits a registered non-worktree project through cwd-only creation", async
 	try {
 		const parentSession = await backend.createSession({ cwd: project });
 		const childSession = await backend.createSession({ cwd: child });
+		const derived = await backend.createSession({ cwd: child, channelProjectRoot: project });
 		const host = new ChannelBackendHost(agent, () => {
 			throw new Error("unexpected service");
 		});
 		expect((await host.binding(parentSession.sessionId))?.root).toBe(project);
-		expect((await host.binding(childSession.sessionId))?.root).toBe(project);
+		expect((await host.binding(childSession.sessionId))?.root).toBe(child);
 		expect((await host.binding(childSession.sessionId))?.cwd).toBe(child);
+		expect((await host.binding(derived.sessionId))?.root).toBe(project);
 	} finally {
 		await backend.shutdown();
 		rootResolver.mockRestore();
+		vi.unstubAllEnvs();
+		rmSync(root, { recursive: true, force: true });
+	}
+});
+
+it("read-only service access neither registers a project nor runs deletion recovery", async () => {
+	mkdirSync(".local/tmp", { recursive: true });
+	const root = mkdtempSync(join(process.cwd(), ".local/tmp/channel-read-only-host-"));
+	const agent = join(root, "agent");
+	mkdirSync(agent);
+	vi.stubEnv("PI_CODING_AGENT_DIR", agent);
+	const backend = new PiBackend();
+	const internal = backend as unknown as {
+		channelService(cwd: string, root: string, readOnly: boolean): Promise<ChannelService>;
+		recoverChannelDeletes(): Promise<void>;
+	};
+	const recover = vi.spyOn(internal, "recoverChannelDeletes");
+	try {
+		const service = await internal.channelService(root, root, true);
+		expect(await service.snapshot("reader")).toEqual([]);
+		expect(recover).not.toHaveBeenCalled();
+		expect(() => readFileSync(join(agent, "channel-projects.json"))).toThrow();
+		expect(existsSync(join(agent, "channel-projects.json.lock"))).toBe(false);
+	} finally {
+		await backend.shutdown();
+		vi.restoreAllMocks();
 		vi.unstubAllEnvs();
 		rmSync(root, { recursive: true, force: true });
 	}

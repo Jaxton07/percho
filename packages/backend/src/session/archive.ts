@@ -41,6 +41,8 @@ export interface SessionArchiveOptions {
 	disposeSession: (sessionId: string) => Promise<void>;
 	withFile: <T>(files: string[], operation: () => Promise<T>) => Promise<T>;
 	resolveFile?: (file: string) => string;
+	/** Called under the source lease; only a durable matching deletion may authorize removal. */
+	confirmDeleted?: (input: ChannelArchiveMaintenance) => Promise<boolean>;
 	/** Idempotently initialize storage, fence this identity and unsubscribe in one durable boundary. */
 	prepareChannelMaintenance?: (input: ChannelArchiveMaintenance) => Promise<void>;
 	/** Idempotent and operation-scoped; active must never release a newer fence or tombstone. */
@@ -48,7 +50,11 @@ export interface SessionArchiveOptions {
 		input: ChannelArchiveMaintenance & { outcome: "archived" | "active" },
 	) => Promise<void>;
 }
-export type SessionArchiveState = SessionArchiveResult & { phase: Phase | "none"; blocked: boolean };
+export type SessionArchiveState = SessionArchiveResult & {
+	phase: Phase | "none";
+	blocked: boolean;
+	operationId?: string;
+};
 
 function parseData(raw: string): ArchiveData {
 	const value: unknown = JSON.parse(raw);
@@ -366,6 +372,7 @@ export class SessionArchiveService {
 			cleanupPending: r?.phase === "archived-cleanup" || undefined,
 			phase: r?.phase ?? "none",
 			blocked: !!r && r.phase !== "unarchived",
+			operationId: r?.opId,
 		};
 	}
 	async init(): Promise<void> {
@@ -381,7 +388,16 @@ export class SessionArchiveService {
 			}
 			await this.confirmUncertain();
 			const current = await this.data(true);
-			for (const r of current.records) {
+			for (const r of [...current.records]) {
+				if (this.options.confirmDeleted) {
+					const removed = await this.options.withFile([r.file], async () => {
+						if (!(await this.options.confirmDeleted?.(this.maintenance(r)))) return false;
+						current.records = current.records.filter((item) => item !== r);
+						await this.save(current);
+						return true;
+					});
+					if (removed) continue;
+				}
 				if (r.phase === "unarchived") {
 					await this.completeMaintenance(r, "active");
 					continue;

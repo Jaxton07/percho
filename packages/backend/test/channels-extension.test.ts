@@ -6,9 +6,13 @@ import type { ChannelService } from "../src/tools/channels/service";
 test("unread projection is ephemeral, fails softly and never wakes sessions", async () => {
 	const handlers = new Map<string, (...args: any[]) => any>();
 	const tools: string[] = [];
+	const registered: any[] = [];
 	const pi = {
 		on: (name: string, handler: (...args: any[]) => any) => handlers.set(name, handler),
-		registerTool: (tool: { name: string }) => tools.push(tool.name),
+		registerTool: (tool: { name: string }) => {
+			tools.push(tool.name);
+			registered.push(tool);
+		},
 	} as unknown as ExtensionAPI;
 	const ctx = {
 		cwd: process.cwd(),
@@ -16,11 +20,18 @@ test("unread projection is ephemeral, fails softly and never wakes sessions", as
 		sessionManager: { getSessionId: () => "s", getSessionName: () => "name" },
 	} as unknown as ExtensionContext;
 	let unread = 2;
-	const service = { snapshot: async () => [{ topic: "work", unread }] } as unknown as ChannelService;
+	const modes: Array<boolean | undefined> = [];
+	const service = {
+		snapshot: async () => [{ topic: "work", unread }],
+		manage: async () => ({ channels: [] }),
+	} as unknown as ChannelService;
 	const extension = makeChannelsExtension({
 		cwd: process.cwd(),
 		agentDir: process.cwd(),
-		service: async () => service,
+		service: async (readOnly) => {
+			modes.push(readOnly);
+			return service;
+		},
 		isEnabled: () => true,
 		authorizeRoot: async () => true,
 	});
@@ -34,6 +45,9 @@ test("unread projection is ephemeral, fails softly and never wakes sessions", as
 	expect(result.messages[1].content).toContain("可自行决定是否读取");
 	unread = 0;
 	expect(await handlers.get("context_with_system")!(event, ctx)).toBeUndefined();
+	expect(modes).toEqual([true, true, true]);
+	await registered[0].execute("id", { action: "create", topic: "work" });
+	expect(modes).toEqual([true, true, true, false, true]);
 	await handlers.get("session_shutdown")!({}, ctx);
 	expect(await handlers.get("context_with_system")!(event, ctx)).toBeUndefined();
 });

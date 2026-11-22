@@ -95,6 +95,7 @@ describe("ChannelSubscriptionPill（SSR 装配）", () => {
 		const html = markup(presence({ display: [long], opened: true, mounted: true }));
 		expect(html).toContain("max-width:160px"); // 首帧兜底上限（运行时会按可用宽进一步夹取）
 		expect(html).toContain("truncate");
+		expect(html).toContain("[overflow-wrap:anywhere]");
 		expect(html).toContain('role="tooltip"');
 		expect(html).toContain(long); // Tooltip 里给完整名
 		// 右缘元素：气泡右对齐，避免向右溢出撑出横向滚动条

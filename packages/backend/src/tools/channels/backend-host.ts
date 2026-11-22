@@ -1,12 +1,19 @@
-import { mkdir, realpath, stat } from "node:fs/promises";
-import { isAbsolute, join, relative, resolve, sep } from "node:path";
+import { mkdir } from "node:fs/promises";
+import { isAbsolute, join, resolve } from "node:path";
 import lockfile from "proper-lockfile";
 import { JsonStore } from "../../json-store";
 import type { ChannelService } from "./service";
 import type { ChannelFence } from "./types";
 
 type Binding = { root: string; cwd: string };
-export type DeleteFingerprint = { dev: number; ino: number; ctimeMs: number; mtimeMs: number; id: string };
+export type DeleteFingerprint = {
+	dev: number;
+	ino: number;
+	ctimeMs: number;
+	mtimeMs: number;
+	id: string;
+	archiveOperationId?: string | null;
+};
 type Registry = {
 	projects: string[];
 	bindings: Record<string, Binding>;
@@ -52,13 +59,14 @@ export class ChannelBackendHost {
 			},
 		});
 	}
-	private async update(fn: (data: Registry) => void): Promise<void> {
+	private async update(fn: (data: Registry) => void, skip?: (data: Registry) => boolean): Promise<void> {
 		await mkdir(this.agentDir, { recursive: true });
 		const release = await lockfile.lock(this.path, {
 			realpath: false,
 			retries: { retries: 100, minTimeout: 10, maxTimeout: 100 },
 		});
 		try {
+			if (skip?.(await this.projects.readStrict())) return;
 			await this.projects.update(fn);
 		} finally {
 			await release();
@@ -75,34 +83,13 @@ export class ChannelBackendHost {
 		});
 	}
 	async register(root: string): Promise<void> {
-		await this.update((data) => {
-			if (!data.projects.includes(root)) data.projects.push(root);
-		});
-	}
-	/** Resolve only against durable, still-canonical project registrations in this host. */
-	async projectRootForCwd(cwd: string): Promise<string | undefined> {
-		if (!isAbsolute(cwd)) return undefined;
-		let canonical: string;
-		try {
-			canonical = await realpath(cwd);
-			if (!(await stat(canonical)).isDirectory()) return undefined;
-		} catch (error) {
-			if (["ENOENT", "ENOTDIR"].includes((error as NodeJS.ErrnoException).code ?? "")) return undefined;
-			throw error;
-		}
-		let best: string | undefined;
-		for (const root of (await this.projects.readStrict()).projects) {
-			const rel = relative(root, canonical);
-			if (rel === ".." || rel.startsWith(`..${sep}`) || isAbsolute(rel)) continue;
-			try {
-				if ((await realpath(root)) !== root || !(await stat(root)).isDirectory()) continue;
-			} catch (error) {
-				if (["ENOENT", "ENOTDIR"].includes((error as NodeJS.ErrnoException).code ?? "")) continue;
-				throw error;
-			}
-			if (!best || root.length > best.length) best = root;
-		}
-		return best;
+		if ((await this.projects.readStrict()).projects.includes(root)) return;
+		await this.update(
+			(data) => {
+				data.projects.push(root);
+			},
+			(data) => data.projects.includes(root),
+		);
 	}
 	async binding(id: string): Promise<Binding | undefined> {
 		return (await this.projects.readStrict()).bindings[id];

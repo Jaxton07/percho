@@ -393,14 +393,20 @@ export class PiBackend {
 			});
 		}
 	}
-	private async channelService(cwd: string, rootOverride?: string): Promise<ChannelService> {
-		this.channelRecovery ??= this.recoverChannelDeletes().catch((error) => {
-			this.channelRecovery = undefined;
-			throw error;
-		});
-		await this.channelRecovery;
+	private async channelService(
+		cwd: string,
+		rootOverride?: string,
+		readOnly = false,
+	): Promise<ChannelService> {
 		const root = rootOverride ?? (await resolveChannelProject(cwd));
-		await this.getChannelHost().register(root);
+		if (!readOnly) {
+			this.channelRecovery ??= this.recoverChannelDeletes().catch((error) => {
+				this.channelRecovery = undefined;
+				throw error;
+			});
+			await this.channelRecovery;
+			await this.getChannelHost().register(root);
+		}
 		return this.channelServiceAtRoot(root);
 	}
 
@@ -543,6 +549,26 @@ export class PiBackend {
 			disposeSession: async (id) => {
 				const entry = this.registry.get(id);
 				if (entry) await this.disposeSessionStrict(entry);
+			},
+			confirmDeleted: async ({ sessionId, sessionFile, operationId }) => {
+				const host = this.getChannelHost();
+				const match = await host.find(sessionId, sessionFile);
+				if (!match || match.fence.kind !== "delete" || !["delete", "deleted"].includes(match.fence.state))
+					return false;
+				const fingerprint = await host.deleteFingerprint(match.fence.opId);
+				if (
+					!fingerprint ||
+					fingerprint.id !== sessionId ||
+					fingerprint.archiveOperationId !== operationId ||
+					this.registry.has(sessionId)
+				)
+					return false;
+				if (await sourceExists(sessionFile)) return false;
+				await this.media.deleteOwner(sessionId);
+				if (await sourceExists(sessionFile)) return false;
+				await match.service.completeMaintenance(sessionId, match.fence.opId, "deleted");
+				this.channelSubs.delete(sessionId);
+				return true;
 			},
 			prepareChannelMaintenance: async ({ sessionId, sessionFile, operationId }) => {
 				if (!existsSync(sessionFile)) {
@@ -1044,11 +1070,11 @@ export class PiBackend {
 				agentDir: getAgentDir(),
 				cwd,
 				projectRoot: modeRef ? this.channelRoots.get(modeRef) : undefined,
-				service: async () => {
+				service: async (readOnly) => {
 					const bound = modeRef ? this.channelRoots.get(modeRef) : undefined;
 					if (bound && (await resolveChannelProject(cwd, bound)) !== bound)
 						throw new Error("Channel project root changed");
-					return this.channelService(cwd, bound);
+					return this.channelService(cwd, bound, readOnly);
 				},
 				authorizeRoot: async (root, ctx) => {
 					const decision = this.trustStore.get(root);
@@ -1427,9 +1453,8 @@ export class PiBackend {
 			// Legacy embedders can construct in-memory sessions before their cwd exists.
 		}
 		if (current) {
-			const registered =
-				options.channelProjectRoot ?? (await this.getChannelHost().projectRootForCwd(current));
-			const bound = registered ? await realpath(registered) : undefined;
+			// A separately selected nested directory is its own project unless the host explicitly binds it.
+			const bound = options.channelProjectRoot ? await realpath(options.channelProjectRoot) : undefined;
 			if (bound) {
 				const rel = relative(bound, current);
 				if (rel === ".." || rel.startsWith(`..${sep}`) || isAbsolute(rel))
@@ -1888,7 +1913,7 @@ export class PiBackend {
 			return before;
 		let entries: Awaited<ReturnType<ChannelService["snapshot"]>>;
 		try {
-			entries = await (await this.channelService(entry.cwd, root)).snapshot(sessionId);
+			entries = await (await this.channelService(entry.cwd, root, true)).snapshot(sessionId);
 		} catch (error) {
 			if (!(error instanceof Error) || error.message !== "Session is fenced") throw error;
 			entries = [];
@@ -2142,6 +2167,7 @@ export class PiBackend {
 					sessionId,
 					file,
 					cleanup && !this.archiveFrozen.has(cleanup) ? cleanup : undefined,
+					archiveState.operationId,
 				),
 			);
 			// Archive records acquire their own file lease; never re-enter it while holding delete's lease.
@@ -2157,6 +2183,7 @@ export class PiBackend {
 		sessionId: string,
 		sessionFile?: string,
 		expectedEntry?: RegisteredSession,
+		archiveOperationId?: string,
 	): Promise<string> {
 		const requested = sessionFile ?? this.registry.get(sessionId)?.session.sessionFile;
 		let controlledSource: string | undefined;
@@ -2265,7 +2292,14 @@ export class PiBackend {
 					before.mtimeMs !== after.mtimeMs
 				)
 					throw new Error("Session file identity changed");
-				return { dev: after.dev, ino: after.ino, ctimeMs: after.ctimeMs, mtimeMs: after.mtimeMs, id };
+				return {
+					dev: after.dev,
+					ino: after.ino,
+					ctimeMs: after.ctimeMs,
+					mtimeMs: after.mtimeMs,
+					id,
+					archiveOperationId: archiveOperationId ?? null,
+				};
 			} catch (error) {
 				if ((error as NodeJS.ErrnoException).code === "ENOENT") return null;
 				throw error;

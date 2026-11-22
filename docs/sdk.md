@@ -66,7 +66,7 @@
 - compaction entry 可按分支顺序回放，但不保存触发原因和压缩后估值，历史 UI 不伪造这些字段。
 - 请求上下文由 SDK projection 重建，手写 `agent.state.messages` 不构成可靠修改；撤回中绕过 `navigateTree` 的路径需要 `session.refreshContext()`，保持公开投影一致。
 - 追加宿主系统提示要用 `appendSystemPromptOverride` 合并 SDK 发现的 APPEND_SYSTEM.md，而不是覆盖文件发现。主会话与子代理保持同一信任规则，回归见 `test/append-system-prompt.test.ts`。
-- 频道消息不会自动唤醒会话；成员关系和阅读位置持久化，由会话主动读取消息。
+- 频道消息不会自动唤醒会话；成员关系和阅读位置持久化，由会话主动读取消息。自然请求中的未读摘要是只读投影，不顺带登记项目、恢复删除或修复数据库/标记；这些维护写入只由显式操作承担。
 
 ## 流式、附件与压缩
 

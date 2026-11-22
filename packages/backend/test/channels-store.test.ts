@@ -4,10 +4,12 @@ import {
 	mkdtempSync,
 	readFileSync,
 	rmSync,
+	statSync,
 	symlinkSync,
 	writeFileSync,
 } from "node:fs";
 import { join } from "node:path";
+import { DatabaseSync } from "node:sqlite";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { ChannelService } from "../src/tools/channels/service";
 import { ChannelStore } from "../src/tools/channels/store";
@@ -30,6 +32,34 @@ afterEach(() => {
 });
 
 describe("channel store", () => {
+	it("opens snapshots without changing files and upgrades to a writer", () => {
+		store.manage(alice, { action: "create", topic: "a" });
+		store.close();
+		const paths = [store.databasePath, store.markerPath];
+		const before = paths.map((path) => ({ content: readFileSync(path), mtime: statSync(path).mtimeMs }));
+		store = new ChannelStore({ projectRoot: root, agentDir });
+		expect(store.snapshot("alice")).toHaveLength(1);
+		expect(paths.map((path) => ({ content: readFileSync(path), mtime: statSync(path).mtimeMs }))).toEqual(
+			before,
+		);
+		store.manage(bob, { action: "subscribe", topic: "a" });
+		expect(store.snapshot("bob")).toHaveLength(1);
+	});
+	it("rejects incomplete schema without migrating on snapshot", () => {
+		store.manage(alice, { action: "create", topic: "a" });
+		store.close();
+		const db = new DatabaseSync(store.databasePath);
+		db.exec("DROP TABLE receipts");
+		db.close();
+		const before = readFileSync(store.databasePath);
+		const mtime = statSync(store.databasePath).mtimeMs;
+		store = new ChannelStore({ projectRoot: root, agentDir });
+		expect(() => store.snapshot("alice")).toThrow("schema");
+		expect(readFileSync(store.databasePath)).toEqual(before);
+		expect(statSync(store.databasePath).mtimeMs).toBe(mtime);
+		store.open(true);
+		expect(store.snapshot("alice")).toHaveLength(1);
+	});
 	it("serializes concurrent worker initialization and subscription limits", async () => {
 		const first = new ChannelService({ projectRoot: root, agentDir });
 		const second = new ChannelService({ projectRoot: root, agentDir });
@@ -149,6 +179,9 @@ describe("channel store", () => {
 		expect(() => store.snapshot("alice")).toThrow();
 		store.close();
 		store = new ChannelStore({ projectRoot: root, agentDir });
+		expect(() => store.snapshot("alice")).toThrow();
+		expect(existsSync(store.markerPath)).toBe(false);
+		store.open(true);
 		expect(store.snapshot("alice")).toEqual([{ topic: "a", unread: 0 }]);
 		store.close();
 		rmSync(store.databasePath);

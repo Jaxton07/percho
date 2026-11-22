@@ -10,7 +10,7 @@ export interface ChannelsExtensionOptions {
 	agentDir: string;
 	cwd: string;
 	projectRoot?: string;
-	service?: () => Promise<ChannelService>;
+	service?: (readOnly?: boolean) => Promise<ChannelService>;
 	isEnabled?: () => boolean;
 	authorizeRoot?: (root: string, ctx: ExtensionContext) => Promise<boolean>;
 	onSnapshot?: (sessionId: string, entries: ChannelSnapshotEntry[]) => void;
@@ -45,8 +45,8 @@ export function makeChannelsExtension(options: ChannelsExtensionOptions): Inline
 					: ctx.isProjectTrusted() && resolved === (await realpath(ctx.cwd));
 				if (!trusted || ctx !== context || !live()) throw new Error("Channel project is not trusted");
 			};
-			const service = () => {
-				if (options.service) return options.service();
+			const service = (readOnly = false) => {
+				if (options.service) return options.service(readOnly);
 				ownService ??= root().then(
 					(projectRoot) => new ChannelService({ projectRoot, agentDir: options.agentDir }),
 				);
@@ -64,7 +64,7 @@ export function makeChannelsExtension(options: ChannelsExtensionOptions): Inline
 					epoch = generation;
 				if (!id || !live()) return;
 				await authorize();
-				const entries = await (await service()).snapshot(id);
+				const entries = await (await service(true)).snapshot(id);
 				if (generation === epoch && live()) options.onSnapshot?.(id, entries);
 			};
 			for (const tool of makeChannelTools({ service, actor, authorize, onChanged: report }))
@@ -100,7 +100,7 @@ export function makeChannelsExtension(options: ChannelsExtensionOptions): Inline
 					const id = sessionId,
 						epoch = generation;
 					await authorize();
-					const entries = await (await service()).snapshot(id);
+					const entries = await (await service(true)).snapshot(id);
 					if (epoch !== generation || !live()) return;
 					options.onSnapshot?.(id, entries);
 					const unread = entries.filter((entry) => entry.unread > 0);
