@@ -17,19 +17,9 @@ import {
 	useLocalSettingsStore as useSettingsStore,
 } from "../../stores/settings";
 import { useUiPluginsStore } from "../../stores/ui-plugins";
-import {
-	ArchiveIcon,
-	ChevronDownIcon,
-	DevicesIcon,
-	FileTextIcon,
-	GearIcon,
-	InfoIcon,
-	PuzzleIcon,
-	ServerIcon,
-	SlidersIcon,
-	SubagentIcon,
-	SunIcon,
-} from "../icons";
+import { ChevronDownIcon, PuzzleIcon } from "../icons";
+import { SettingsIcon } from "../icons/SettingsIcon";
+import "./settings-dialog.css";
 import { RemoteConnectionPanel } from "../remote/RemoteConnectionDialog";
 import { SelectionMenu } from "../ui/SelectionMenu";
 import { AboutPanel } from "./AboutPanel";
@@ -56,17 +46,17 @@ const STATIC_CATEGORIES = [
 ] as const satisfies readonly SettingsCategory[];
 
 const CATEGORY_ICONS = {
-	general: GearIcon,
-	appearance: SunIcon,
-	archived: ArchiveIcon,
-	models: SlidersIcon,
-	skills: FileTextIcon,
-	mcp: SubagentIcon,
-	extensions: PuzzleIcon,
-	remote: ServerIcon,
-	lan: DevicesIcon,
-	about: InfoIcon,
-} satisfies Record<(typeof STATIC_CATEGORIES)[number], ComponentType<{ size?: number }>>;
+	general: "gear",
+	appearance: "sun",
+	archived: "archive",
+	models: "sliders",
+	skills: "file",
+	mcp: "plug",
+	extensions: "package",
+	remote: "server",
+	lan: "devices",
+	about: "info",
+} as const;
 
 /** 面板注册表：新增分类 = 写一个面板组件 + 在这里登记（未登记显示 coming soon） */
 const PANELS: Partial<Record<SettingsCategory, ComponentType>> = {
@@ -136,7 +126,16 @@ function SettingsDialogBody({
 }) {
 	const t = useT();
 	const [environmentAnchor, setEnvironmentAnchor] = useState<HTMLElement | null>(null);
-	const remoteStatus = useRemoteConnectionStore((state) => state.status);
+	const catalog = useRemoteConnectionStore((state) => state.catalog);
+	const environmentLabel = (ref: EnvironmentRef) => {
+		if (ref.kind === "local") return t("settings.localEnvironment");
+		return (
+			catalog?.records.find(
+				(record) =>
+					record.connectionId === ref.connectionId && record.binding?.environmentId === ref.environmentId,
+			)?.alias ?? t("remote.unavailableEnvironment")
+		);
+	};
 	const registeredEnvironments = getEnvironments();
 	const environments = registeredEnvironments.some(
 		(ref) => environmentKey(ref) === environmentKey(environment),
@@ -167,14 +166,59 @@ function SettingsDialogBody({
 	useEdgeFade(contentRef);
 
 	const Panel = PANELS[category];
+	const staticCategory = STATIC_CATEGORIES.find((id) => id === category);
+	const dialogRef = useRef<HTMLDivElement>(null);
+	const environmentAnchorRef = useRef(environmentAnchor);
+	environmentAnchorRef.current = environmentAnchor;
+	useEffect(() => {
+		const previous = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+		const dialog = dialogRef.current;
+		dialog?.querySelector<HTMLButtonElement>('button[aria-current="page"]')?.focus();
+		const onKeyDown = (event: KeyboardEvent) => {
+			if (!dialog || event.defaultPrevented) return;
+			const dialogs = document.querySelectorAll('[role="dialog"][aria-modal="true"]');
+			if (dialogs[dialogs.length - 1] !== dialog) return;
+			if (event.key === "Escape") {
+				if (environmentAnchorRef.current) return;
+				event.preventDefault();
+				setOpen(false);
+			} else if (event.key === "Tab" && dialog.contains(document.activeElement)) {
+				const items = [
+					...dialog.querySelectorAll<HTMLElement>(
+						'button:not(:disabled), input:not(:disabled), select:not(:disabled), textarea:not(:disabled), a[href], [tabindex="0"]',
+					),
+				].filter((item) => item.getClientRects().length > 0);
+				if (!items.length) return;
+				const first = items[0];
+				const last = items[items.length - 1];
+				if (event.shiftKey && document.activeElement === first) {
+					event.preventDefault();
+					last?.focus();
+				} else if (!event.shiftKey && document.activeElement === last) {
+					event.preventDefault();
+					first?.focus();
+				}
+			}
+		};
+		document.addEventListener("keydown", onKeyDown);
+		return () => {
+			document.removeEventListener("keydown", onKeyDown);
+			previous?.focus();
+		};
+	}, [setOpen]);
 
 	return (
-		<div className="fixed inset-0 z-40 flex items-center justify-center bg-ink/20" role="dialog" aria-modal>
-			<div className="flex h-[70vh] w-[720px] flex-col overflow-hidden rounded-xl bg-surface shadow-dialog">
+		<div className="fixed inset-0 z-40 flex items-center justify-center bg-ink/20">
+			<div
+				ref={dialogRef}
+				role="dialog"
+				aria-modal="true"
+				aria-label={t("settings.title")}
+				className="settings-dialog relative flex flex-col overflow-hidden bg-surface shadow-dialog"
+			>
 				{/* 顶栏底边不画 1px 实线（与对话页顶栏同一决策）：下面的内容滚动时用边界淡出区分 */}
-				<div className="flex shrink-0 items-center justify-between px-4 py-3">
-					<h2 className="text-ui-14 leading-[calc(1.25_/_0.875)] font-semibold text-ink">
-						{t("settings.title")}
+				<div className="settings-dialog-toolbar">
+					<div>
 						{category !== "remote" && (
 							<>
 								<button
@@ -191,13 +235,7 @@ function SettingsDialogBody({
 										}
 									}}
 								>
-									<span className="truncate">
-										{environment.kind === "local"
-											? t("settings.localEnvironment")
-											: remoteStatus.environment?.connectionId === environment.connectionId
-												? (remoteStatus.alias ?? t("remote.alias"))
-												: t("remote.unavailableEnvironment")}
-									</span>
+									<span className="truncate">{environmentLabel(environment)}</span>
 									<ChevronDownIcon size={12} className="shrink-0" />
 								</button>
 								{environmentAnchor && (
@@ -207,12 +245,7 @@ function SettingsDialogBody({
 										value={environmentKey(environment)}
 										options={environments.map((ref) => ({
 											value: environmentKey(ref),
-											label:
-												ref.kind === "local"
-													? t("settings.localEnvironment")
-													: remoteStatus.environment?.connectionId === ref.connectionId
-														? (remoteStatus.alias ?? t("remote.alias"))
-														: t("remote.unavailableEnvironment"),
+											label: environmentLabel(ref),
 										}))}
 										onSelect={(value) => {
 											const next = environments.find((ref) => environmentKey(ref) === value);
@@ -223,29 +256,32 @@ function SettingsDialogBody({
 								)}
 							</>
 						)}
-					</h2>
+					</div>
 					<button
 						type="button"
-						className="rounded-lg px-2 py-1 text-ink-faint transition-colors hover:bg-hover hover:text-ink-2"
+						className="settings-dialog-close flex items-center justify-center rounded-lg text-ink-faint transition-colors hover:bg-hover hover:text-ink-2 focus-visible:outline-2 focus-visible:outline-ink-faint"
 						onClick={() => setOpen(false)}
 						aria-label={t("common.close")}
 					>
-						✕
+						<SettingsIcon name="close" />
 					</button>
 				</div>
 				<div className="flex min-h-0 flex-1">
 					{/* 与内容的分界：中段实、两头淡出的发丝线（`.fade-rule-v`，同左栏） */}
 					<nav
 						ref={navRef}
-						className="fade-rule-v edge-fade w-44 shrink-0 overflow-y-auto p-2"
+						className="settings-dialog-nav fade-rule-v edge-fade shrink-0 overflow-y-auto"
 						style={{ "--edge-fade-size": "16px" } as CSSProperties}
 					>
+						<h2 className="settings-dialog-heading text-ui-16 font-semibold text-ink">
+							{t("settings.title")}
+						</h2>
 						{STATIC_CATEGORIES.map((id) => {
-							const Icon = CATEGORY_ICONS[id];
 							return (
 								<button
 									key={id}
 									type="button"
+									aria-current={category === id ? "page" : undefined}
 									className={`mb-0.5 flex w-full items-center gap-2 rounded-lg px-3 py-2 text-left text-ui-13 transition-colors ${
 										category === id
 											? "bg-hover font-medium text-ink"
@@ -254,7 +290,7 @@ function SettingsDialogBody({
 									onClick={() => setCategory(id)}
 								>
 									<span className="flex w-3.5 shrink-0 items-center justify-center">
-										<Icon size={14} />
+										<SettingsIcon name={CATEGORY_ICONS[id]} />
 									</span>
 									<span className="min-w-0">
 										{t(`settings.category.${id}`)}
@@ -291,25 +327,40 @@ function SettingsDialogBody({
 					</nav>
 					<div
 						ref={contentRef}
-						className="edge-fade min-w-0 flex-1 overflow-y-auto overflow-x-hidden px-4 py-3"
+						className="settings-dialog-content edge-fade min-w-0 flex-1 overflow-auto"
 						style={{ "--edge-fade-size": "20px" } as CSSProperties}
 					>
-						{Panel ? (
-							<Panel />
-						) : activePluginContribution ? (
-							// 插件设置页：包 PluginBoundary（崩溃 → null，与其他贡献同一套隔离语义）
-							<PluginBoundary
-								key={`${activePluginContribution.pluginName}:${activePluginContribution.id}:${
-									pluginNonces[activePluginContribution.pluginName] ?? 0
-								}`}
-								pluginName={activePluginContribution.pluginName}
-								label={category}
-							>
-								<activePluginContribution.component />
-							</PluginBoundary>
-						) : (
-							<p className="py-8 text-center text-ui-13 text-ink-faint">{t("settings.comingSoon")}</p>
-						)}
+						<div
+							className={
+								category === "general" || category === "appearance" || category === "remote"
+									? "settings-dialog-form"
+									: undefined
+							}
+						>
+							<h1 className="text-ui-28 font-semibold text-ink">
+								{staticCategory
+									? t(`settings.category.${staticCategory}`)
+									: (activePluginContribution?.title ?? activePluginContribution?.pluginName)}
+							</h1>
+							<div className="settings-dialog-panel">
+								{Panel ? (
+									<Panel />
+								) : activePluginContribution ? (
+									// 插件设置页：包 PluginBoundary（崩溃 → null，与其他贡献同一套隔离语义）
+									<PluginBoundary
+										key={`${activePluginContribution.pluginName}:${activePluginContribution.id}:${
+											pluginNonces[activePluginContribution.pluginName] ?? 0
+										}`}
+										pluginName={activePluginContribution.pluginName}
+										label={category}
+									>
+										<activePluginContribution.component />
+									</PluginBoundary>
+								) : (
+									<p className="py-8 text-center text-ui-13 text-ink-faint">{t("settings.comingSoon")}</p>
+								)}
+							</div>
+						</div>
 					</div>
 				</div>
 			</div>

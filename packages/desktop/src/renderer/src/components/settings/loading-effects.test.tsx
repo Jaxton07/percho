@@ -51,6 +51,7 @@ vi.mock("../../stores/sessions", () => ({
 vi.mock("../../i18n", () => ({ useT: () => (key: string) => key }));
 vi.mock("./providers/CustomProviderForm", () => ({ CustomProviderForm: () => null }));
 vi.mock("./providers/LoginDialog", () => ({ LoginDialog: () => null }));
+vi.mock("./providers/RemoteAuthHelp", () => ({ RemoteAuthHelp: () => null }));
 vi.mock("./providers/ProviderRow", () => ({ IconAction: () => null, ProviderRow: () => null }));
 vi.mock("./providers/SubagentPanel", () => ({ SubagentPanel: () => null }));
 

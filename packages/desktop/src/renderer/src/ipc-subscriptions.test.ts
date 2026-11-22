@@ -41,7 +41,7 @@ const code = buildSync({
 	write: false,
 	external: ["electron"],
 }).outputFiles[0]?.text;
-type Listener = (event: unknown, payload?: unknown, source?: unknown) => void;
+type Listener = (event: unknown, payload?: unknown, source?: unknown, metadata?: unknown) => void;
 function bootPreload() {
 	if (!code) throw new Error("preload bundle missing");
 	let exposed: PiApi | undefined;
@@ -174,8 +174,13 @@ describe("single-source subscription contract and real bundled preload", () => {
 		api.forEnvironment(LOCAL_ENVIRONMENT).onEvent(local);
 		const off = bound.onEvent(foreign);
 		const event = { sessionId: "same-id", event: { type: "agent_end", messages: [] } };
+		const environment = { kind: "ssh", connectionId: "company", environmentId: "data" };
+		const boundary = { epoch: "run", generation: 1 };
+		for (const listener of listeners.get(SUBSCRIPTION_TABLE.onRemoteConnectionStatus.channel) ?? []) {
+			listener({}, { state: "connected", revision: 1, ...boundary, connectionId: "company", environment });
+		}
 		for (const listener of listeners.get(IpcChannels.Event) ?? []) {
-			listener({}, event, { kind: "ssh", connectionId: "company", environmentId: "data" });
+			listener({}, event, environment, boundary);
 		}
 		expect(local).not.toHaveBeenCalled();
 		expect(foreign).toHaveBeenCalledExactlyOnceWith(event);

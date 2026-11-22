@@ -26,8 +26,14 @@ import type {
 } from "./packages";
 import type {
 	MutationReceipt,
+	RemoteAddCommand,
 	RemoteAuthGuide,
+	RemoteCatalogSnapshot,
 	RemoteConnectionStatus,
+	RemoteRecordCommand,
+	RemoteRemoveCommand,
+	RemoteSwitchCommand,
+	RemoteTokenCommand,
 	SshAliasDiscovery,
 	SshPreflight,
 } from "./remote-runtime";
@@ -987,20 +993,83 @@ export const UI_PLUGINS_CHANNELS = {
 	uiPluginsOpenDir: ch("uiPlugins:openDir", "desktop")<{ name?: string }, void>(),
 } as const;
 
+/** Each control action is bound to the observed desktop epoch, slot and saved target. */
+const remoteRecordRules = {
+	epoch: input.id,
+	generation: input.nonNegativeInt,
+	connectionId: input.id,
+};
+
 /** Desktop-owned connection control; never forwarded to a remote business handler. */
 export const REMOTE_CHANNELS = {
 	remoteListSshAliases: ch("remote:listSshAliases", "desktop")<void, SshAliasDiscovery>(),
 	remoteAuthGuide: ch("remote:authGuide", "desktop")<{ environment: EnvironmentRef }, RemoteAuthGuide>(),
-	remoteStopService: ch("remote:stopService", "desktop")<void, RemoteConnectionStatus>(),
-	remotePreflight: ch("remote:preflight", "desktop")<{ alias: string }, SshPreflight>(),
-	remoteForget: ch("remote:forget", "desktop")<void, RemoteConnectionStatus>(),
+	remoteGetCatalog: ch("remote:catalog", "desktop")<void, RemoteCatalogSnapshot>(),
+	remoteAdd: ch(
+		"remote:add",
+		"desktop",
+	)<RemoteAddCommand, { connectionId: string; catalog: RemoteCatalogSnapshot }>({
+		epoch: input.id,
+		generation: input.nonNegativeInt,
+		catalogRevision: input.nonNegativeInt,
+		alias: input.id,
+	}),
+	remoteResetCatalog: ch(
+		"remote:resetCatalog",
+		"desktop",
+	)<{ epoch: string; token: string }, RemoteCatalogSnapshot>({ epoch: input.id, token: input.id }),
+	remoteStopService: ch(
+		"remote:stopService",
+		"desktop",
+	)<RemoteRecordCommand, RemoteConnectionStatus>(remoteRecordRules),
+	remotePreflight: ch("remote:preflight", "desktop")<RemoteRecordCommand, SshPreflight>(remoteRecordRules),
+	remoteForget: ch(
+		"remote:forget",
+		"desktop",
+	)<RemoteRemoveCommand, RemoteCatalogSnapshot>({
+		...remoteRecordRules,
+		recordRevision: input.nonNegativeInt,
+	}),
 	remoteCheckOperation: ch("remote:checkOperation", "desktop")<{ operationId: string }, MutationReceipt>(),
 	remoteDismissOperation: ch("remote:dismissOperation", "desktop")<{ operationId: string }, void>(),
 	remoteGetStatus: ch("remote:status", "desktop")<void, RemoteConnectionStatus>(),
-	remotePrepareInstall: ch("remote:prepareInstall", "desktop")<{ alias: string }, RemoteConnectionStatus>(),
-	remoteInstall: ch("remote:install", "desktop")<{ token: string }, RemoteConnectionStatus>(),
-	remoteConnect: ch("remote:connect", "desktop")<{ alias: string }, RemoteConnectionStatus>(),
-	remoteDisconnect: ch("remote:disconnect", "desktop")<void, RemoteConnectionStatus>(),
+	remotePrepareInstall: ch(
+		"remote:prepareInstall",
+		"desktop",
+	)<RemoteRecordCommand, RemoteConnectionStatus>(remoteRecordRules),
+	remoteInstall: ch(
+		"remote:install",
+		"desktop",
+	)<RemoteTokenCommand, RemoteConnectionStatus>({
+		...remoteRecordRules,
+		token: input.id,
+	}),
+	remoteConfirmTarget: ch(
+		"remote:confirmTarget",
+		"desktop",
+	)<RemoteTokenCommand, RemoteConnectionStatus>({
+		...remoteRecordRules,
+		token: input.id,
+	}),
+	remoteConnect: ch(
+		"remote:connect",
+		"desktop",
+	)<RemoteRecordCommand, RemoteConnectionStatus>(remoteRecordRules),
+	remoteReconnect: ch(
+		"remote:reconnect",
+		"desktop",
+	)<RemoteRecordCommand, RemoteConnectionStatus>(remoteRecordRules),
+	remoteSwitch: ch(
+		"remote:switch",
+		"desktop",
+	)<RemoteSwitchCommand, RemoteConnectionStatus>({
+		...remoteRecordRules,
+		currentConnectionId: input.id,
+	}),
+	remoteDisconnect: ch(
+		"remote:disconnect",
+		"desktop",
+	)<RemoteRecordCommand, RemoteConnectionStatus>(remoteRecordRules),
 } as const;
 
 /** 已表化通道全集（分批迁移，终态 = 全部 invoke 通道） */
@@ -1080,6 +1149,10 @@ export const SUBSCRIPTION_TABLE = {
 	onStorageStartup: subscription<StorageStartupState, "desktop">("desktop")(
 		"StorageStartup",
 		"storageStartup:changed",
+	),
+	onRemoteCatalog: subscription<RemoteCatalogSnapshot, "desktop">("desktop")(
+		"RemoteCatalog",
+		"remote:catalogChanged",
 	),
 	onRemoteConnectionStatus: subscription<RemoteConnectionStatus, "desktop">("desktop")(
 		"RemoteConnectionStatus",

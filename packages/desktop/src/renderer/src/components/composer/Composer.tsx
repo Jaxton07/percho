@@ -410,7 +410,9 @@ export function Composer({ centered = false }: { centered?: boolean }) {
 						{t("composer.restoreFailedDraft")}
 					</button>
 				)}
-				{error && <SendErrorBar error={error} onRetry={() => void sendWhenReady()} />}
+				{error && (
+					<SendErrorBar error={error} environment={environment} onRetry={() => void sendWhenReady()} />
+				)}
 				{feedback && !error && (
 					<p
 						className={`mb-1.5 text-ui-12 leading-[calc(1_/_0.75)] ${feedback.tone === "warn" ? "text-amber-500" : "text-ink-dim"}`}

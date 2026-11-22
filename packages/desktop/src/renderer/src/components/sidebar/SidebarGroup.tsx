@@ -177,7 +177,7 @@ export function SidebarGroup({
 							paging
 								? {
 										offline: !online,
-										onConnect: () => useRemoteConnectionStore.getState().setOpen(true),
+										onConnect: () => useRemoteConnectionStore.getState().setOpen(true, environment),
 										loading: online && (!page || page.loading),
 										error: page?.error,
 										partial: !!page && !page.complete,

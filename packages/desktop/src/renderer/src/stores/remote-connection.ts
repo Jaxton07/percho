@@ -1,4 +1,14 @@
-import { environmentEntityKey, environmentKey, type RemoteConnectionStatus } from "@percho/shared";
+import {
+	type EnvironmentRef,
+	environmentEntityKey,
+	environmentKey,
+	type RemoteCatalogSnapshot,
+	type RemoteConnectionStatus,
+	type RemoteRecordCommand,
+	type RemoteRemoveCommand,
+	type RemoteSwitchCommand,
+	type RemoteTokenCommand,
+} from "@percho/shared";
 import { create } from "zustand";
 import { getPi } from "../api";
 import { getExecutionApi } from "../environment-api";
@@ -8,21 +18,32 @@ import { useInteractionStore } from "./interactions";
 import { useProjectsStore } from "./projects";
 import { claimActivation, isLatestActivation, noteUserIntent } from "./session-navigation";
 import { invalidateEnvironmentSessions, synchronizeEnvironmentSessions, useSessionsStore } from "./sessions";
+import { useSettingsStore } from "./settings";
 import { pushToast } from "./toasts";
 
 interface RemoteConnectionStore {
 	open: boolean;
 	status: RemoteConnectionStatus;
-	setOpen: (open: boolean) => void;
+	catalog: RemoteCatalogSnapshot;
+	acceptCatalog: (catalog: RemoteCatalogSnapshot) => void;
+	refreshCatalog: () => Promise<void>;
+	targetEnvironment: EnvironmentRef | null;
+	setOpen: (open: boolean, target?: EnvironmentRef) => void;
+	capture: (id?: string) => RemoteRecordCommand;
+	add: (alias: string) => Promise<string>;
+	reconnect: (cmd: RemoteRecordCommand) => Promise<void>;
+	switchConnection: (cmd: RemoteSwitchCommand) => Promise<void>;
+	confirmTarget: (cmd: RemoteTokenCommand) => Promise<void>;
+	resetCatalog: (token: string) => Promise<void>;
 	checkOperation: (id: string) => Promise<void>;
 	dismissOperation: (id: string) => Promise<void>;
-	install: (token: string) => Promise<void>;
-	prepareInstall: (alias: string) => Promise<void>;
-	connect: (alias: string) => Promise<void>;
-	preflight: (alias: string) => Promise<void>;
-	forget: () => Promise<void>;
-	disconnect: () => Promise<void>;
-	stopService: () => Promise<void>;
+	install: (cmd: RemoteTokenCommand) => Promise<void>;
+	prepareInstall: (cmd: RemoteRecordCommand) => Promise<void>;
+	connect: (id: string) => Promise<void>;
+	preflight: (cmd: RemoteRecordCommand) => Promise<void>;
+	forget: (cmd: RemoteRemoveCommand) => Promise<void>;
+	disconnect: (cmd: RemoteRecordCommand) => Promise<void>;
+	stopService: (cmd: RemoteRecordCommand) => Promise<void>;
 	openProject: (path: string) => Promise<void>;
 	accept: (status: RemoteConnectionStatus) => void;
 }
@@ -71,14 +92,28 @@ function startSynchronization(
 }
 export const useRemoteConnectionStore = create<RemoteConnectionStore>((set, get) => ({
 	open: false,
+	targetEnvironment: null,
 	status: { revision: -1, state: "disconnected" },
-	setOpen: (open) => {
-		if (!open) projectAttempt++;
-		set({ open });
+	catalog: { epoch: "", revision: -1, records: [], lastSuccessfulConnectionId: null },
+	acceptCatalog: (catalog) => {
+		const current = get().catalog;
+		if (current.epoch && catalog.epoch !== current.epoch) return;
+		if (catalog.revision <= current.revision) return;
+		set({ catalog });
 	},
+	refreshCatalog: async () => {
+		get().acceptCatalog(await getPi().remoteGetCatalog());
+	},
+	setOpen: (open, target) => {
+		if (!open) projectAttempt++;
+		set({ open, targetEnvironment: open ? (target ?? (get().open ? get().targetEnvironment : null)) : null });
+	},
+	capture: (id) => remoteCommand(get(), id),
 	accept: (status) => {
-		if (status.revision <= get().status.revision) return;
 		const previous = get().status;
+		if (previous.epoch && status.epoch !== previous.epoch) return;
+		if (get().catalog.epoch && status.epoch && status.epoch !== get().catalog.epoch) return;
+		if (status.revision <= previous.revision) return;
 		const environment = status.environment;
 		const changedEnvironment =
 			!!previous.environment &&
@@ -86,7 +121,10 @@ export const useRemoteConnectionStore = create<RemoteConnectionStore>((set, get)
 		const needsSynchronization =
 			environment &&
 			status.state === "connected" &&
-			(previous.state !== "connected" || changedEnvironment || previous.instanceId !== status.instanceId);
+			(previous.state !== "connected" ||
+				changedEnvironment ||
+				previous.instanceId !== status.instanceId ||
+				previous.generation !== status.generation);
 		if (status.state !== "connected" || needsSynchronization) cancelSynchronization();
 		if (!environment && registered) {
 			unregister?.();
@@ -122,35 +160,79 @@ export const useRemoteConnectionStore = create<RemoteConnectionStore>((set, get)
 	dismissOperation: async (id) => {
 		await getPi().remoteDismissOperation({ operationId: id });
 	},
-	preflight: async (alias) => {
-		await getPi().remotePreflight({ alias });
+	add: async (alias) => {
+		const { catalog, status } = get();
+		const epoch = status.epoch || catalog.epoch;
+		if (
+			!epoch ||
+			status.generation === undefined ||
+			catalog.revision < 0 ||
+			(status.epoch && catalog.epoch !== status.epoch)
+		)
+			throw new Error("Remote connection state is unavailable");
+		const result = await getPi().remoteAdd({
+			epoch,
+			generation: status.generation,
+			catalogRevision: catalog.revision,
+			alias,
+		});
+		get().acceptCatalog(result.catalog);
+		return result.connectionId;
 	},
-	forget: async () => {
-		get().accept(await getPi().remoteForget());
+	resetCatalog: async (token) => {
+		const epoch = get().catalog.epoch;
+		if (!epoch) throw new Error("Remote connection state is unavailable");
+		get().acceptCatalog(await getPi().remoteResetCatalog({ epoch, token }));
 	},
-	install: async (token) => {
-		get().accept(await getPi().remoteInstall({ token }));
+	preflight: async (cmd) => {
+		await getPi().remotePreflight(cmd);
 	},
-	prepareInstall: async (alias) => {
-		get().accept(await getPi().remotePrepareInstall({ alias }));
+	forget: async (cmd) => {
+		get().acceptCatalog(await getPi().remoteForget(cmd));
 	},
-	connect: async (alias) => {
-		get().accept(await getPi().remoteConnect({ alias }));
+	install: async (cmd) => {
+		get().accept(await getPi().remoteInstall(cmd));
 	},
-	stopService: async () => {
-		get().accept(await getPi().remoteStopService());
+	confirmTarget: async (cmd) => {
+		get().accept(await getPi().remoteConfirmTarget(cmd));
 	},
-	disconnect: async () => {
-		get().accept(await getPi().remoteDisconnect());
+	prepareInstall: async (cmd) => {
+		get().accept(await getPi().remotePrepareInstall(cmd));
+	},
+	connect: async (id) => {
+		get().accept(await getPi().remoteConnect(get().capture(id)));
+	},
+	reconnect: async (cmd) => {
+		get().accept(await getPi().remoteReconnect(cmd));
+	},
+	switchConnection: async (cmd) => {
+		get().accept(await getPi().remoteSwitch(cmd));
+	},
+	stopService: async (cmd) => {
+		get().accept(await getPi().remoteStopService(cmd));
+	},
+	disconnect: async (cmd) => {
+		get().accept(await getPi().remoteDisconnect(cmd));
 	},
 	openProject: async (path) => {
-		const { environment, state } = get().status;
+		const { environment, state, epoch, generation } = get().status;
 		if (state !== "connected" || !environment) throw new Error("Connect the remote environment first");
 		if (!path.startsWith("/")) throw new Error("Enter an absolute remote project directory");
 		noteUserIntent();
 		const navigation = claimActivation();
 		const attempt = ++projectAttempt;
-		const current = () => attempt === projectAttempt && isLatestActivation(navigation);
+		const current = () => {
+			const status = get().status;
+			return (
+				attempt === projectAttempt &&
+				isLatestActivation(navigation) &&
+				status.state === "connected" &&
+				status.epoch === epoch &&
+				status.generation === generation &&
+				!!status.environment &&
+				environmentKey(status.environment) === environmentKey(environment)
+			);
+		};
 		const api = getExecutionApi(environment);
 		const canonical = await api.validateProjectDirectory({ path });
 		if (!current()) return;
@@ -158,34 +240,72 @@ export const useRemoteConnectionStore = create<RemoteConnectionStore>((set, get)
 		set({ open: false });
 		const trustCwd = environmentEntityKey(environment, canonical);
 		useInteractionStore.getState().setTrustTarget(trustCwd);
+		let trusted: boolean;
 		try {
-			await api.ensureProjectTrust({ cwd: canonical });
+			trusted = await api.ensureProjectTrust({ cwd: canonical });
 		} finally {
 			if (useInteractionStore.getState().foregroundTrustCwd === trustCwd)
 				useInteractionStore.getState().setTrustTarget(null);
 		}
+		if (!trusted) return;
 		const cwd = environmentEntityKey(environment, canonical);
 		useProjectsStore.getState().addKnownProject(cwd);
 		if (!current()) return;
+		useSettingsStore.getState().setOpen(false);
 		useProjectsStore.getState().select(cwd);
 		useSessionsStore.getState().activateNewSessionDraftForCwd(cwd, environment);
 	},
 }));
 
+function remoteCommand(store: RemoteConnectionStore, id?: string): RemoteRecordCommand {
+	const { status, catalog } = store;
+	const connectionId = id ?? status.connectionId;
+	const epoch = status.epoch || catalog.epoch;
+	if (
+		!connectionId ||
+		!catalog.records.some((record) => record.connectionId === connectionId) ||
+		!epoch ||
+		status.generation === undefined ||
+		(status.epoch && catalog.epoch && status.epoch !== catalog.epoch)
+	)
+		throw new Error("Remote connection state is unavailable");
+	return { epoch, generation: status.generation, connectionId };
+}
+
 export function initRemoteConnectionBridge(): () => void {
+	const offCatalog = getPi().onRemoteCatalog((catalog) =>
+		useRemoteConnectionStore.getState().acceptCatalog(catalog),
+	);
 	const off = getPi().onRemoteConnectionStatus((status) =>
 		useRemoteConnectionStore.getState().accept(status),
 	);
 	let disposed = false;
 	void getPi()
+		.remoteGetCatalog()
+		.then((catalog) => {
+			if (!disposed) useRemoteConnectionStore.getState().acceptCatalog(catalog);
+		})
+		.catch((error) => {
+			if (!disposed && useRemoteConnectionStore.getState().catalog.revision < 0)
+				useRemoteConnectionStore.setState((state) => ({
+					catalog: { ...state.catalog, error: errText(error) },
+				}));
+		});
+	void getPi()
 		.remoteGetStatus()
 		.then((status) => {
 			if (!disposed) useRemoteConnectionStore.getState().accept(status);
 		})
-		.catch(() => {});
+		.catch((error) => {
+			if (!disposed && useRemoteConnectionStore.getState().status.revision < 0)
+				useRemoteConnectionStore.setState((state) => ({
+					status: { ...state.status, state: "error", error: errText(error) },
+				}));
+		});
 	return () => {
 		disposed = true;
 		cancelSynchronization();
 		off();
+		offCatalog();
 	};
 }

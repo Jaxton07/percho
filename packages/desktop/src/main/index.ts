@@ -121,7 +121,7 @@ app.on("before-quit", () => {
 	// 先放行 close 拦截：否则 macOS 下 ⌘Q 会被当成「关窗 → 隐藏」而退不掉
 	markQuitting();
 	void lanObserver?.stop();
-	remoteConnectionManager.disconnect();
+	void remoteConnectionManager.shutdown();
 	backend?.dispose();
 	uiPluginsManager?.disposeWatcher();
 });

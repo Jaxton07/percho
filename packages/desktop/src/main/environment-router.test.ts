@@ -6,6 +6,7 @@ import {
 	environmentEntityKey,
 	environmentInvocation,
 	LOCAL_ENVIRONMENT,
+	SUBSCRIPTION_TABLE,
 } from "@percho/shared";
 import { describe, expect, it, vi } from "vitest";
 import { createEnvironmentApi } from "../preload/environment-api";
@@ -89,7 +90,8 @@ describe("bound environment execution through the public API", () => {
 		const calls: unknown[] = [];
 		const api = createEnvironmentApi(
 			{
-				invoke: async (_channel, request) => {
+				invoke: async (channel, request) => {
+					if (channel === CHANNEL_TABLE.remoteGetStatus.channel) return undefined;
 					calls.push(request);
 				},
 				on: vi.fn(),
@@ -118,10 +120,15 @@ describe("bound environment execution through the public API", () => {
 	});
 
 	it("only delivers matching events and removes the exact bound listener", () => {
-		const listeners: Array<(event: unknown, payload: unknown, source?: unknown) => void> = [];
+		const listeners: Array<(event: unknown, payload: unknown, source?: unknown, metadata?: unknown) => void> =
+			[];
+		let statusListener: (event: unknown, payload: unknown) => void = () => {};
 		const ipc = {
-			invoke: vi.fn(),
-			on: vi.fn((_channel: string, listener: (typeof listeners)[number]) => listeners.push(listener)),
+			invoke: vi.fn(async () => undefined),
+			on: vi.fn((channel: string, listener: (typeof listeners)[number]) => {
+				if (channel === SUBSCRIPTION_TABLE.onRemoteConnectionStatus.channel) statusListener = listener;
+				else listeners.push(listener);
+			}),
 			removeListener: vi.fn(),
 		};
 		const local = vi.fn(),
@@ -129,9 +136,20 @@ describe("bound environment execution through the public API", () => {
 		const offLocal = createEnvironmentApi(ipc, LOCAL_ENVIRONMENT).onEvent(local);
 		const offRemote = createEnvironmentApi(ipc, remote).onEvent(foreign);
 		const payload = { sessionId: "same-id", event: { type: "agent_end", messages: [] } };
+		const boundary = { epoch: "run", generation: 1 };
+		statusListener(
+			{},
+			{
+				revision: 1,
+				state: "connected",
+				...boundary,
+				connectionId: remote.connectionId,
+				environment: remote,
+			},
+		);
 		for (const listener of listeners) {
 			listener({}, payload);
-			listener({}, payload, remote);
+			listener({}, payload, remote, boundary);
 			listener({}, payload, { ...remote, environmentId: "replacement" });
 			listener({}, payload, { kind: "invalid" });
 		}

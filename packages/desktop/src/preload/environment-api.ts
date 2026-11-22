@@ -9,12 +9,9 @@ import {
 	sameEnvironment,
 } from "@percho/shared";
 
-type Listener = (event: unknown, payload: unknown, source?: unknown) => void;
-interface EnvironmentIpc {
-	invoke(channel: string, args: unknown): Promise<unknown>;
-	on(channel: string, listener: Listener): unknown;
-	removeListener(channel: string, listener: Listener): unknown;
-}
+import { type EnvironmentIpc, installRemoteEventGate } from "./remote-event-gate";
+
+type Listener = (event: unknown, payload: unknown, source?: unknown, metadata?: unknown) => void;
 
 export function eventBelongsTo(source: unknown, environment: EnvironmentRef): boolean {
 	try {
@@ -27,6 +24,7 @@ export function eventBelongsTo(source: unknown, environment: EnvironmentRef): bo
 /** Derived from the same tables as the legacy API; no extra business channel or reflective proxy. */
 export function createEnvironmentApi(ipc: EnvironmentIpc, environment: EnvironmentRef): EnvironmentApi {
 	const bound = environmentRef(environment);
+	const gate = installRemoteEventGate(ipc, bound.kind === "ssh");
 	const invoke = Object.fromEntries(
 		Object.entries(CHANNEL_TABLE)
 			.filter(([, def]) => def.scope === "environment")
@@ -41,8 +39,10 @@ export function createEnvironmentApi(ipc: EnvironmentIpc, environment: Environme
 			.map(([key, def]) => [
 				key,
 				(cb: (payload: unknown) => void) => {
-					const listener: Listener = (_event, payload, source) => {
-						if (eventBelongsTo(source, bound)) cb(payload);
+					const listener: Listener = (_event, payload, source, metadata) => {
+						if (eventBelongsTo(source, bound) && (bound.kind === "local" || gate.allows(bound, metadata))) {
+							cb(payload);
+						}
 					};
 					ipc.on(def.channel, listener);
 					return () => ipc.removeListener(def.channel, listener);

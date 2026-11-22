@@ -19,28 +19,39 @@ export function initTaskNotificationNavigation() {
 			return;
 		}
 		const id = environmentEntityKey(target.environment, target.sessionId);
-		let remoteRevision: number | undefined;
+		let remoteBoundary: { epoch: string; generation: number } | undefined;
 		if (target.environment.kind === "ssh") {
 			const status = await getPi().remoteGetStatus();
 			if (disposed || attempt !== ownAttempt) return;
 			if (
 				status.state !== "connected" ||
 				!status.environment ||
+				!status.epoch ||
+				status.generation === undefined ||
 				!sameEnvironment(status.environment, target.environment)
 			) {
 				pushToast("warning", "notifications.targetUnavailable");
 				return;
 			}
 			useRemoteConnectionStore.getState().accept(status);
-			remoteRevision = status.revision;
+			remoteBoundary = { epoch: status.epoch, generation: status.generation };
 		}
 		let started = false;
 		const current = () =>
 			!disposed &&
 			ownAttempt === attempt &&
 			(started || intent === currentUserIntentToken()) &&
-			(remoteRevision === undefined ||
-				useRemoteConnectionStore.getState().status.revision === remoteRevision);
+			(!remoteBoundary ||
+				(() => {
+					const status = useRemoteConnectionStore.getState().status;
+					return (
+						status.state === "connected" &&
+						status.epoch === remoteBoundary.epoch &&
+						status.generation === remoteBoundary.generation &&
+						!!status.environment &&
+						sameEnvironment(status.environment, target.environment)
+					);
+				})());
 		if (!current()) return;
 		if (useSessionsStore.getState().sessions.some((meta) => meta.sessionId === id)) {
 			useSessionsStore.getState().switchSession(id);

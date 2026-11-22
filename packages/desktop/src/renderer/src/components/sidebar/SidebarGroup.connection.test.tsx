@@ -140,6 +140,7 @@ it("retains cached rows and cursor, disables more and opens the connection panel
 	expect(connect).toBeDefined();
 	await act(() => connect?.click());
 	expect(useRemoteConnectionStore.getState().open).toBe(true);
+	expect(useRemoteConnectionStore.getState().targetEnvironment).toEqual(environment);
 	expect(api.remoteConnect).not.toHaveBeenCalled();
 	expect(api.querySessionCatalog).not.toHaveBeenCalled();
 });

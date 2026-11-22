@@ -81,8 +81,65 @@ export interface SshPreflight {
 	serviceState?: "running" | "stopped" | "unreachable";
 	service?: RuntimeInfo;
 }
+/** Desktop-owned saved records; a bookmark is not an executable environment. */
+export interface RemoteConnectionBinding {
+	environmentId: string;
+	uid: number;
+	canonicalAgentDir: string;
+	node?: string;
+	releaseId?: string;
+	target?: SshPreflight["target"];
+}
+export interface RemoteConnectionRecord {
+	connectionId: string;
+	alias: string;
+	revision: number;
+	binding?: RemoteConnectionBinding;
+}
+export interface RemoteCatalogSnapshot {
+	epoch: string;
+	revision: number;
+	records: RemoteConnectionRecord[];
+	lastSuccessfulConnectionId: string | null;
+	error?: string;
+	errorKind?: "corrupted" | "invalid" | "version" | "io";
+	resetToken?: string;
+}
+export interface RemoteControlContext {
+	epoch: string;
+	generation: number;
+}
+export interface RemoteRecordCommand extends RemoteControlContext {
+	connectionId: string;
+}
+export interface RemoteAddCommand extends RemoteControlContext {
+	alias: string;
+	catalogRevision: number;
+}
+export interface RemoteRemoveCommand extends RemoteRecordCommand {
+	recordRevision: number;
+}
+export interface RemoteSwitchCommand extends RemoteRecordCommand {
+	currentConnectionId: string;
+}
+export interface RemoteTokenCommand extends RemoteRecordCommand {
+	token: string;
+}
+/** Local desktop delivery metadata, not part of the remote service protocol. */
+export interface RemoteEventBoundary {
+	epoch: string;
+	generation: number;
+}
 export interface RemoteConnectionStatus {
 	revision: number;
+	/** Absent only in initial renderer/legacy test snapshots; main always supplies these. */
+	epoch?: string;
+	generation?: number;
+	connectionId?: string;
+	phase?: "preparing" | "installing" | "cancelling";
+	targetConfirmation?: { token: string; target: SshPreflight["target"] };
+	stopUnconfirmed?: boolean;
+	operationsTruncated?: boolean;
 	state: "disconnected" | "checking" | "connecting" | "stopping" | "reconnecting" | "connected" | "error";
 	preflight?: SshPreflight;
 	installation?: { token: string; releaseId: string; bytes: number; directory: string };

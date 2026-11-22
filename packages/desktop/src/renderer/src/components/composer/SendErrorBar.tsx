@@ -1,4 +1,4 @@
-import type { UiError } from "@percho/shared";
+import type { EnvironmentRef, UiError } from "@percho/shared";
 import { type MessageKey, useT } from "../../i18n";
 import { useRemoteConnectionStore } from "../../stores/remote-connection";
 import { ErrorCircleIcon, RefreshIcon } from "../icons";
@@ -7,7 +7,15 @@ import { ErrorCircleIcon, RefreshIcon } from "../icons";
  * Composer 内联错误条（error-system 画板 ⑤）：QueueBar 同款悬浮卡——
  * glyph + 标题 + 副行（detail 截断单行）+ 幽灵重试按钮（重新发送）。
  */
-export function SendErrorBar({ error, onRetry }: { error: UiError; onRetry: () => void }) {
+export function SendErrorBar({
+	error,
+	onRetry,
+	environment,
+}: {
+	error: UiError;
+	onRetry: () => void;
+	environment?: EnvironmentRef;
+}) {
 	const t = useT();
 	return (
 		<div className="send-error mb-1.5" role="alert">
@@ -26,7 +34,7 @@ export function SendErrorBar({ error, onRetry }: { error: UiError; onRetry: () =
 				<button
 					type="button"
 					className="se-retry"
-					onClick={() => useRemoteConnectionStore.getState().setOpen(true)}
+					onClick={() => useRemoteConnectionStore.getState().setOpen(true, environment)}
 				>
 					{t("remote.check")}
 				</button>

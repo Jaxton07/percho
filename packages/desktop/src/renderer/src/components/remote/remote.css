@@ -1,0 +1,293 @@
+.remote-panel {
+	min-width: 0;
+}
+.remote-list-header {
+	display: flex;
+	justify-content: space-between;
+	align-items: center;
+	gap: 12px;
+	margin: 42px 0 12px;
+}
+.remote-primary,
+.remote-button,
+.remote-icon {
+	display: inline-flex;
+	align-items: center;
+	justify-content: center;
+	gap: 7px;
+	border-radius: 9px;
+	cursor: pointer;
+}
+.remote-primary {
+	background: var(--color-ink);
+	color: var(--color-on-ink);
+	padding: 8px 14px;
+	font-weight: 500;
+}
+.remote-button {
+	padding: 7px 9px;
+	color: var(--color-ink-dim);
+}
+.remote-icon {
+	width: 32px;
+	height: 32px;
+	color: var(--color-ink-faint);
+	flex-shrink: 0;
+}
+.remote-button:hover,
+.remote-icon:hover {
+	background: var(--color-hover);
+	color: var(--color-ink);
+}
+.remote-primary:disabled,
+.remote-button:disabled,
+.remote-icon:disabled {
+	opacity: 0.4;
+	cursor: default;
+}
+.remote-row {
+	position: relative;
+	display: flex;
+	align-items: center;
+	gap: 14px;
+	min-height: 74px;
+	padding: 14px 0;
+	border-bottom: 1px solid var(--color-border);
+}
+.remote-host {
+	min-width: 0;
+	flex: 1;
+}
+.remote-host-name,
+.remote-status,
+.remote-actions {
+	display: flex;
+	align-items: center;
+	gap: 7px;
+}
+.remote-host-name svg {
+	color: var(--color-ink-faint);
+	flex-shrink: 0;
+}
+.remote-status {
+	margin-top: 4px;
+	color: var(--color-ink-dim);
+}
+.remote-dot {
+	width: 7px;
+	height: 7px;
+	border-radius: 50%;
+	background: var(--color-ink-faint);
+	flex-shrink: 0;
+}
+.remote-dot-ok {
+	background: var(--color-ok);
+}
+.remote-spinner {
+	display: inline-block;
+	width: 12px;
+	height: 12px;
+	border: 1.5px solid var(--color-border);
+	border-top-color: var(--color-ink-dim);
+	border-radius: 50%;
+	animation: remote-spin 0.9s linear infinite;
+	flex-shrink: 0;
+}
+.remote-spin {
+	animation: remote-spin 0.9s linear infinite;
+}
+@keyframes remote-spin {
+	to {
+		transform: rotate(360deg);
+	}
+}
+@media (prefers-reduced-motion: reduce) {
+	.remote-spinner,
+	.remote-spin {
+		animation: none;
+	}
+}
+.remote-actions {
+	flex-shrink: 0;
+}
+.remote-error-line {
+	color: var(--color-ink-dim);
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+.remote-error-line button {
+	text-decoration: underline;
+}
+.remote-menu {
+	position: absolute;
+	right: 0;
+	top: calc(100% - 8px);
+	z-index: 10;
+	min-width: 200px;
+	border-radius: 14px;
+	background: var(--color-surface);
+	box-shadow: var(--shadow-pop);
+	padding: 6px;
+}
+.remote-menu button {
+	display: block;
+	width: 100%;
+	text-align: left;
+	padding: 9px 10px;
+	border-radius: 8px;
+}
+.remote-menu button:hover {
+	background: var(--color-hover);
+}
+.remote-menu button:disabled {
+	opacity: 0.4;
+}
+.remote-empty {
+	display: flex;
+	flex-direction: column;
+	align-items: center;
+	gap: 8px;
+	padding: 60px 12px;
+	text-align: center;
+	color: var(--color-ink-dim);
+}
+.remote-empty strong {
+	color: var(--color-ink-2);
+	font-weight: 500;
+}
+.remote-overlay {
+	position: fixed;
+	inset: 0;
+	z-index: 80;
+	display: flex;
+	align-items: center;
+	justify-content: center;
+	padding: 16px;
+	background: color-mix(in srgb, var(--color-ink) 15%, transparent);
+}
+.remote-modal {
+	width: min(520px, 100%);
+	max-height: calc(100dvh - 32px);
+	display: flex;
+	flex-direction: column;
+	border-radius: 22px;
+	background: var(--color-surface);
+	box-shadow: var(--shadow-dialog);
+	overflow: hidden;
+	color: var(--color-ink);
+}
+.remote-modal-head {
+	display: flex;
+	align-items: center;
+	justify-content: space-between;
+	gap: 12px;
+	padding: 20px 20px 14px;
+}
+.remote-modal-body {
+	min-height: 0;
+	overflow: auto;
+	padding: 0 20px;
+}
+.remote-modal-footer {
+	display: flex;
+	align-items: center;
+	justify-content: space-between;
+	gap: 10px;
+	padding: 14px 20px 20px;
+}
+.remote-modal-footer > :last-child {
+	margin-left: auto;
+}
+.remote-row[aria-current="location"] .remote-host-name {
+	font-weight: 600;
+}
+.remote-alias-skeleton {
+	height: 44px;
+	display: flex;
+	align-items: center;
+}
+.remote-alias-skeleton::after {
+	content: "";
+	width: 46%;
+	height: 8px;
+	border-radius: 4px;
+	background: var(--color-hover);
+}
+.remote-alias input[type="radio"] {
+	accent-color: var(--color-ink);
+}
+.remote-alias-list {
+	max-height: 320px;
+	overflow: auto;
+	border: 1px solid var(--color-border);
+	border-radius: 16px;
+	padding: 0 16px;
+}
+.remote-alias {
+	display: flex;
+	align-items: center;
+	gap: 12px;
+	padding: 12px 0;
+	min-width: 0;
+	border-bottom: 1px solid var(--color-border);
+	cursor: pointer;
+}
+.remote-alias:last-child {
+	border: 0;
+}
+.remote-alias:has(input:disabled) {
+	opacity: 0.5;
+	cursor: default;
+}
+.remote-input {
+	display: block;
+	width: 100%;
+	margin-top: 8px;
+	padding: 11px 12px;
+	border-radius: 10px;
+	background: var(--color-hover);
+	outline-color: var(--color-ink-faint);
+}
+.remote-intro {
+	line-height: 1.7;
+	margin-bottom: 16px;
+	color: var(--color-ink-dim);
+}
+.remote-note {
+	margin-top: 9px;
+	color: var(--color-ink-dim);
+	line-height: 1.6;
+	overflow-wrap: anywhere;
+}
+.remote-detail {
+	display: flex;
+	justify-content: space-between;
+	gap: 20px;
+	padding: 12px 0;
+	border-bottom: 1px solid var(--color-border);
+}
+.remote-detail span {
+	color: var(--color-ink-dim);
+}
+.remote-detail b {
+	min-width: 0;
+	overflow-wrap: anywhere;
+	text-align: right;
+	font-weight: 400;
+}
+.remote-recent {
+	display: block;
+	text-align: left;
+	color: var(--color-ink-dim);
+	overflow-wrap: anywhere;
+	padding: 6px 0;
+}
+@media (max-width: 650px) {
+	.remote-row {
+		gap: 8px;
+	}
+	.remote-actions {
+		gap: 0;
+	}
+}

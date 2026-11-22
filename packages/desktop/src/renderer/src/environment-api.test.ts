@@ -131,6 +131,8 @@ const fixture = vi.hoisted(() => {
 });
 vi.mock("./api", () => ({ getPi: () => fixture.local }));
 
+import { CHANNEL_TABLE, SUBSCRIPTION_TABLE } from "@percho/shared";
+import { createEnvironmentApi } from "../../preload/environment-api";
 import { getExecutionApi, subscribeExecutionEnvironments } from "./environment-api";
 import { registerEnvironment } from "./environment-registry";
 import { NEW_SESSION_DRAFT_KEY, newSessionDraftKey, useDraftStore } from "./stores/drafts";
@@ -148,6 +150,126 @@ import { useUiPreferencesStore } from "./stores/ui-preferences";
 
 const remote: EnvironmentRef = { kind: "ssh", connectionId: "company", environmentId: "remote-data" };
 const disposers: Array<() => void> = [];
+
+describe("preload 远端事件代次隔离", () => {
+	it("状态事件先于旧查询返回时，只投递当前代次", async () => {
+		let resolve!: (value: unknown) => void;
+		const listeners = new Map<string, Array<(...args: unknown[]) => void>>();
+		const ipc = {
+			invoke: vi.fn(
+				() =>
+					new Promise<unknown>((done) => {
+						resolve = done;
+					}),
+			),
+			on: vi.fn((channel: string, listener: (...args: unknown[]) => void) => {
+				listeners.set(channel, [...(listeners.get(channel) ?? []), listener]);
+			}),
+			removeListener: vi.fn(),
+		};
+		const emit = (channel: string, ...args: unknown[]) => {
+			for (const listener of listeners.get(channel) ?? []) listener({}, ...args);
+		};
+		const cb = vi.fn();
+		createEnvironmentApi(ipc, remote).onEvent(cb);
+		const status = (generation: number) => ({
+			state: "connected",
+			revision: generation,
+			epoch: "run",
+			generation,
+			connectionId: remote.connectionId,
+			environment: remote,
+		});
+		emit(SUBSCRIPTION_TABLE.onRemoteConnectionStatus.channel, status(2));
+		resolve(status(1));
+		await Promise.resolve();
+		emit(SUBSCRIPTION_TABLE.onEvent.channel, "old", remote, { epoch: "run", generation: 1 });
+		emit(SUBSCRIPTION_TABLE.onEvent.channel, "new", remote, { epoch: "run", generation: 2 });
+		expect(ipc.invoke).toHaveBeenCalledWith(CHANNEL_TABLE.remoteGetStatus.channel, undefined);
+		expect(cb.mock.calls).toEqual([["new"]]);
+	});
+
+	it("共享状态门禁隔离切换、重连、缺失或无效来源，同时保留本机事件", async () => {
+		const listeners = new Map<string, Array<(...args: unknown[]) => void>>();
+		const ipc = {
+			invoke: vi.fn(async () => ({
+				state: "connected",
+				revision: 1,
+				epoch: "run",
+				generation: 1,
+				connectionId: remote.connectionId,
+				environment: remote,
+			})),
+			on: vi.fn((channel: string, listener: (...args: unknown[]) => void) => {
+				listeners.set(channel, [...(listeners.get(channel) ?? []), listener]);
+			}),
+			removeListener: vi.fn(),
+		};
+		const emit = (channel: string, ...args: unknown[]) => {
+			for (const listener of listeners.get(channel) ?? []) listener({}, ...args);
+		};
+		const foreign = vi.fn(),
+			local = vi.fn();
+		createEnvironmentApi(ipc, remote).onEvent(foreign);
+		createEnvironmentApi(ipc, LOCAL_ENVIRONMENT).onEvent(local);
+		await Promise.resolve();
+		const event = SUBSCRIPTION_TABLE.onEvent.channel;
+		const status = SUBSCRIPTION_TABLE.onRemoteConnectionStatus.channel;
+		const boundary = (generation: number) => ({ epoch: "run", generation });
+		emit(event, "baseline", remote, boundary(1));
+		emit(event, "no metadata", remote);
+		emit(event, "bad metadata", remote, null);
+		emit(event, "bad source", { kind: "invalid" }, boundary(1));
+		emit(event, "local");
+		const other = { ...remote, connectionId: "other" };
+		emit(status, {
+			state: "connected",
+			revision: 2,
+			...boundary(2),
+			connectionId: other.connectionId,
+			environment: other,
+		});
+		emit(event, "old A", remote, boundary(1));
+		emit(status, {
+			state: "connected",
+			revision: 3,
+			...boundary(3),
+			connectionId: remote.connectionId,
+			environment: remote,
+		});
+		emit(event, "queued A", remote, boundary(1));
+		emit(event, "new A", remote, boundary(3));
+		emit(status, {
+			state: "reconnecting",
+			revision: 4,
+			...boundary(4),
+			connectionId: remote.connectionId,
+			environment: remote,
+		});
+		emit(event, "offline", remote, boundary(4));
+		emit(status, {
+			state: "connected",
+			revision: 5,
+			...boundary(4),
+			connectionId: remote.connectionId,
+			environment: remote,
+		});
+		emit(event, "before reconnect", remote, boundary(3));
+		emit(event, "reconnected", remote, boundary(4));
+		emit(status, {
+			state: "connected",
+			revision: 6,
+			...boundary(4),
+			connectionId: remote.connectionId,
+			environment: null,
+		});
+		emit(event, "invalid status", remote, boundary(4));
+		expect(foreign.mock.calls).toEqual([["baseline"], ["new A"], ["reconnected"]]);
+		expect(local.mock.calls).toEqual([["local"]]);
+		expect(ipc.invoke).toHaveBeenCalledTimes(1);
+		expect(listeners.get(status)).toHaveLength(1);
+	});
+});
 
 describe("目录操作的执行环境边界", () => {
 	it("只转换明确的会话和目录身份，保留预览 token 与错误文本", async () => {

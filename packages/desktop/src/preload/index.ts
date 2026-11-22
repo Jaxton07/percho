@@ -1,6 +1,9 @@
 import { CHANNEL_TABLE, type DesktopApi, type PiApi, SUBSCRIPTION_TABLE } from "@percho/shared";
 import { contextBridge, ipcRenderer, webUtils } from "electron";
 import { createEnvironmentApi } from "./environment-api";
+import { installRemoteEventGate } from "./remote-event-gate";
+
+installRemoteEventGate(ipcRenderer, false);
 
 /** Invoke remains independent: single-object args pass through unchanged. */
 const invokeApi = Object.fromEntries(
