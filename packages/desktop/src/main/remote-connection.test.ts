@@ -216,12 +216,27 @@ describe("saved SSH intent and identity", () => {
 			initial = await command(id);
 		const connecting = manager.connect(initial);
 		await vi.waitFor(() => expect(fixture.connect).toHaveBeenCalled());
-		await disconnect();
-		wait.resolve({
-			info: { instanceId: "late", environmentId: "data", uid: probe.uid, canonicalAgentDir: probe.agentDir },
-			disconnect: fixture.close,
+		let cancelled = false;
+		const cancellation = disconnect().then(() => {
+			cancelled = true;
 		});
-		await connecting;
+		try {
+			await vi.waitFor(async () => expect(await manager.getStatus()).toMatchObject({ phase: "cancelling" }));
+			expect(cancelled).toBe(false);
+			await expect(manager.connect(await command(id))).rejects.toThrow();
+		} finally {
+			wait.resolve({
+				info: {
+					instanceId: "late",
+					environmentId: "data",
+					uid: probe.uid,
+					canonicalAgentDir: probe.agentDir,
+				},
+				disconnect: fixture.close,
+			});
+			await connecting;
+			await cancellation;
+		}
 		expect((await manager.getCatalog()).lastSuccessfulConnectionId).toBeNull();
 		expect((await manager.getStatus()).state).toBe("disconnected");
 	});
@@ -370,6 +385,34 @@ describe("installation, retries and explicit stop", () => {
 		await expect(manager.installAndConnect(confirm)).rejects.toThrow();
 		expect(distribution.install).not.toHaveBeenCalled();
 	});
+	it("keeps the slot occupied until cancelled installation work has released local resources", async () => {
+		fixture.probe.mockResolvedValue({ ...probe, installed: false });
+		const gate = deferred<void>();
+		const distribution = {
+			manifest: vi.fn().mockResolvedValue(manifest),
+			download: vi.fn().mockResolvedValue("/isolated/archive"),
+			install: vi.fn(() => gate.promise),
+		};
+		manager = new RemoteConnectionManager(distribution as never);
+		const ready = await connect();
+		const installation = manager.installAndConnect({
+			...(await command()),
+			token: ready.installation?.token ?? "",
+		});
+		await vi.waitFor(() => expect(distribution.install).toHaveBeenCalled());
+		const cancellation = disconnect();
+		try {
+			await vi.waitFor(async () => expect(await manager.getStatus()).toMatchObject({ phase: "cancelling" }));
+			await expect(manager.connect(await command())).rejects.toThrow();
+		} finally {
+			gate.resolve();
+			await installation;
+			await cancellation;
+		}
+		expect(await manager.getStatus()).toMatchObject({ state: "disconnected", cancelledUncertain: true });
+		expect(fixture.connect).not.toHaveBeenCalled();
+	});
+
 	it("connects an installed runtime without consulting a release manifest", async () => {
 		const distribution = { manifest: vi.fn(), download: vi.fn(), install: vi.fn() };
 		manager = new RemoteConnectionManager(distribution as never);
@@ -395,8 +438,10 @@ describe("installation, retries and explicit stop", () => {
 		const checking = manager.preflight(await command(id));
 		const rejection = expect(checking).rejects.toThrow("cancelled");
 		await vi.waitFor(() => expect(fixture.probe).toHaveBeenCalled());
-		await disconnect();
+		const cancellation = disconnect();
+		await vi.waitFor(async () => expect(await manager.getStatus()).toMatchObject({ phase: "cancelling" }));
 		pending.resolve(probe);
+		await cancellation;
 		await rejection;
 		expect((await manager.getStatus()).state).toBe("disconnected");
 	});

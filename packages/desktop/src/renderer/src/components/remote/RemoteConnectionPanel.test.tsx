@@ -111,3 +111,55 @@ it("captures the record revision when removal is confirmed", async () => {
 	await click(button("remote.confirmForget"));
 	expect(forget).toHaveBeenCalledWith({ epoch: "run", generation: 1, connectionId: "b", recordRevision: 4 });
 });
+
+it("captures the add observation and locks all discovery controls while saving", async () => {
+	await mount();
+	let release!: (id: string) => void;
+	const add = vi.fn(
+		() =>
+			new Promise<string>((resolve) => {
+				release = resolve;
+			}),
+	);
+	await act(async () => useRemoteConnectionStore.setState({ add }));
+	await click(button("remote.ux.add"));
+	await click(document.querySelector('input[value="new-host"]'));
+	await click(button("remote.ux.addConnect"));
+	try {
+		expect(add).toHaveBeenCalledWith("new-host", { epoch: "run", generation: 1, catalogRevision: 1 });
+		expect(document.querySelector<HTMLButtonElement>('[aria-label="remote.refreshAliases"]')?.disabled).toBe(
+			true,
+		);
+		expect((button("remote.ux.manual") as HTMLButtonElement).disabled).toBe(true);
+	} finally {
+		await act(async () => release("added"));
+	}
+});
+
+it("removes the project child when validation hands over to the real trust layer", async () => {
+	await mount(true);
+	let release!: () => void;
+	const openProject = vi.fn(() => {
+		useRemoteConnectionStore.setState({ open: false });
+		return new Promise<void>((resolve) => {
+			release = resolve;
+		});
+	});
+	await act(async () => useRemoteConnectionStore.setState({ openProject }));
+	await click(
+		document.querySelector('[aria-label="remote.ux.addProject first"]') ?? button("remote.ux.addProject"),
+	);
+	// Submit the actual form through its controlled input.
+	const input = document.querySelector<HTMLInputElement>("#remote-project-path");
+	expect(input).not.toBeNull();
+	await act(async () => {
+		Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")?.set?.call(input, "/remote/project");
+		input?.dispatchEvent(new Event("input", { bubbles: true }));
+	});
+	await click(document.querySelector(".remote-modal-footer .remote-primary"));
+	try {
+		expect(document.querySelector(".remote-modal")).toBeNull();
+	} finally {
+		if (release) await act(async () => release());
+	}
+});

@@ -37,6 +37,10 @@ export function RemoteModal({
 			)?.focus();
 		});
 		const key = (event: KeyboardEvent) => {
+			const dialogs = [...document.querySelectorAll<HTMLElement>('[role="dialog"]')].filter(
+				(item) => !item.inert,
+			);
+			if (dialogs.at(-1) !== ref.current) return;
 			if (event.key === "Escape") {
 				event.preventDefault();
 				event.stopImmediatePropagation();

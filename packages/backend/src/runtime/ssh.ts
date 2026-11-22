@@ -15,6 +15,7 @@ import { RuntimeClient } from "./client";
 
 import { sshArguments, validateSshAlias } from "./ssh-arguments";
 import { checkSshRequirements, preflightSsh, runSsh, shellQuote } from "./ssh-preflight";
+import { trackSshProcess } from "./ssh-process";
 
 export { sshArguments, validateSshAlias } from "./ssh-arguments";
 
@@ -78,6 +79,7 @@ export class SshRuntimeConnection {
 		readonly info: RuntimeInfo,
 		private readonly client: RuntimeClient,
 		private readonly closeBridge: () => void,
+		private readonly bridgeClosed: Promise<void>,
 		private readonly alias: string,
 		private readonly node: string,
 		private readonly signal: AbortSignal,
@@ -136,6 +138,7 @@ export class SshRuntimeConnection {
 			stdio: ["pipe", "pipe", "pipe"],
 			signal: options.signal,
 		});
+		const process = trackSshProcess(child);
 		let stderr = "";
 		child.stderr.on("data", (chunk: Buffer) => {
 			if (stderr.length < 16384) stderr += chunk.toString("utf8");
@@ -147,7 +150,7 @@ export class SshRuntimeConnection {
 			if (closed) return;
 			closed = true;
 			client.close();
-			child.kill();
+			process.terminate();
 		};
 		child.on("error", () => {
 			stream.destroy(new Error(stderr.trim() || "SSH bridge closed"));
@@ -179,6 +182,7 @@ export class SshRuntimeConnection {
 				attached.info,
 				client,
 				close,
+				process.closed,
 				alias,
 				probe.node,
 				options.signal,
@@ -186,6 +190,7 @@ export class SshRuntimeConnection {
 			);
 		} catch (error) {
 			close();
+			await process.closed;
 			throw error;
 		}
 	}
@@ -214,7 +219,8 @@ export class SshRuntimeConnection {
 		);
 		if (confirmed.stopped !== true) throw new Error("Remote service stop is unconfirmed");
 	}
-	disconnect(): void {
+	disconnect(): Promise<void> {
 		this.closeBridge();
+		return this.bridgeClosed;
 	}
 }

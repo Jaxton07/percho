@@ -139,6 +139,7 @@ export interface RemoteConnectionStatus {
 	phase?: "preparing" | "installing" | "cancelling";
 	targetConfirmation?: { token: string; target: SshPreflight["target"] };
 	stopUnconfirmed?: boolean;
+	cancelledUncertain?: boolean;
 	operationsTruncated?: boolean;
 	state: "disconnected" | "checking" | "connecting" | "stopping" | "reconnecting" | "connected" | "error";
 	preflight?: SshPreflight;

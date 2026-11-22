@@ -6,6 +6,7 @@ import {
 	type SshPreflight,
 } from "@percho/shared";
 import { sshArguments, validateSshAlias } from "./ssh-arguments";
+import { trackSshProcess } from "./ssh-process";
 
 export function shellQuote(value: string): string {
 	return `'${value.replaceAll("'", "'\\''")}'`;
@@ -15,27 +16,29 @@ export function shellQuote(value: string): string {
 export async function runSsh(args: string[], signal: AbortSignal, timeoutMs = 25_000): Promise<string> {
 	return new Promise((resolve, reject) => {
 		const child = spawn("ssh", args, { windowsHide: true, stdio: ["ignore", "pipe", "pipe"], signal });
+		const process = trackSshProcess(child);
 		const output: Buffer[] = [];
 		let bytes = 0;
 		let stderr = "";
 		let failure: Error | undefined;
 		const timer = setTimeout(() => {
-			failure = new Error("SSH connection timed out");
-			child.kill();
+			failure ??= new Error("SSH connection timed out");
+			process.terminate();
 		}, timeoutMs);
 		child.stdout.on("data", (chunk: Buffer) => {
 			bytes += chunk.length;
 			if (bytes > 1024 * 1024) {
-				failure = new Error("SSH response exceeds limit");
-				child.kill();
+				failure ??= new Error("SSH response exceeds limit");
+				process.terminate();
 			} else output.push(chunk);
 		});
 		child.stderr.on("data", (chunk: Buffer) => {
 			if (stderr.length < 16384) stderr = (stderr + chunk.toString("utf8")).slice(0, 16384);
 		});
 		child.once("error", (error) => {
+			failure ??= error;
 			clearTimeout(timer);
-			reject(error);
+			process.terminate();
 		});
 		child.once("close", (code) => {
 			clearTimeout(timer);

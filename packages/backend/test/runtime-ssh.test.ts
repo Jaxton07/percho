@@ -83,6 +83,51 @@ beforeEach(() => {
 });
 
 describe("SSH runtime boundary", () => {
+	it("waits for the bridge child to close on disconnect", async () => {
+		const connection = await SshRuntimeConnection.connect("company", {
+			signal: new AbortController().signal,
+			onEvent: () => {},
+			onClose: () => {},
+		});
+		const child = fixture.spawn.mock.results[3].value;
+		child.kill.mockImplementation(() => true);
+		let settled = false;
+		const disconnected = Promise.resolve(connection.disconnect()).then(() => {
+			settled = true;
+		});
+		await Promise.resolve();
+		expect(settled).toBe(false);
+		child.emit("close", null);
+		await disconnected;
+	});
+	it("waits for bridge close after an attach error", async () => {
+		const original = fixture.spawn.getMockImplementation();
+		if (!original) throw new Error("Missing spawn mock");
+		let bridge: ReturnType<typeof original>;
+		fixture.spawn.mockImplementation((file: string, args: string[]) => {
+			const child = original(file, args);
+			if (args.at(-1)?.endsWith(" bridge")) {
+				bridge = child;
+				child.kill.mockImplementation(() => true);
+				queueMicrotask(() => child.emit("error", new Error("bridge error")));
+			}
+			return child;
+		});
+		let settled = false;
+		const result = SshRuntimeConnection.connect("company", {
+			signal: new AbortController().signal,
+			onEvent: () => {},
+			onClose: () => {},
+		}).catch((error: unknown) => {
+			settled = true;
+			return error;
+		});
+		await new Promise((resolve) => setImmediate(resolve));
+		expect(settled).toBe(false);
+		if (!bridge) throw new Error("Bridge was not spawned");
+		bridge.emit("close", null);
+		expect(await result).toBeInstanceOf(Error);
+	});
 	it.each([
 		"-oProxyCommand=touch",
 		"company;touch proof",

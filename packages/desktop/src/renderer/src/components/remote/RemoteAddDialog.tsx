@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { getPi } from "../../api";
 import { useT } from "../../i18n";
 import { SettingsIcon } from "../icons/SettingsIcon";
+import { RemoteActionError } from "./RemoteActionError";
 import { RemoteModal } from "./RemoteModal";
 
 export function RemoteAddDialog({
@@ -89,7 +90,9 @@ export function RemoteAddDialog({
 							<button
 								className="remote-button"
 								type="button"
+								disabled={saving}
 								onClick={() => {
+									focusedCandidates.current = false;
 									setManual(false);
 									setSelected("");
 								}}
@@ -102,7 +105,7 @@ export function RemoteAddDialog({
 									type="button"
 									className="remote-icon"
 									aria-label={t("remote.refreshAliases")}
-									disabled={loading}
+									disabled={loading || saving}
 									onClick={refresh}
 								>
 									<SettingsIcon name="refresh" className={loading ? "remote-spin" : ""} />
@@ -110,6 +113,7 @@ export function RemoteAddDialog({
 								<button
 									type="button"
 									className="remote-button"
+									disabled={saving}
 									onClick={() => {
 										setManual(true);
 										setSelected("");
@@ -139,6 +143,7 @@ export function RemoteAddDialog({
 					<input
 						data-initial-focus
 						id="remote-manual"
+						disabled={saving}
 						className="remote-input"
 						value={selected}
 						onChange={(e) => setSelected(e.target.value)}
@@ -169,7 +174,7 @@ export function RemoteAddDialog({
 										type="radio"
 										name="remote-alias"
 										value={alias}
-										disabled={aliasesSaved.includes(alias)}
+										disabled={saving || aliasesSaved.includes(alias)}
 										checked={selected === alias}
 										onChange={() => setSelected(alias)}
 									/>
@@ -193,11 +198,7 @@ export function RemoteAddDialog({
 					{t("remote.ux.busyHint")}
 				</p>
 			)}
-			{error && (
-				<p role="alert" className="remote-note">
-					{error}
-				</p>
-			)}
+			{error && <RemoteActionError message={error} />}
 		</RemoteModal>
 	);
 }

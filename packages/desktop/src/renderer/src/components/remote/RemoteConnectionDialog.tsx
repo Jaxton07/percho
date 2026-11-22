@@ -1,5 +1,6 @@
 import {
 	environmentEntityRef,
+	type RemoteAddCommand,
 	type RemoteConnectionRecord,
 	type RemoteRecordCommand,
 	type RemoteTokenCommand,
@@ -15,6 +16,7 @@ import { ContextMenu } from "../ui/ContextMenu";
 import { anchorOfElement, type MenuAnchor } from "../ui/place-menu";
 import { Switch } from "../ui/Switch";
 import { Tooltip } from "../ui/Tooltip";
+import { RemoteActionError } from "./RemoteActionError";
 import { RemoteAddDialog } from "./RemoteAddDialog";
 import { RemoteModal } from "./RemoteModal";
 import "./remote.css";
@@ -28,7 +30,7 @@ export function RemoteConnectionDialog() {
 }
 
 type Dialog =
-	| { type: "add" }
+	| { type: "add"; observation: Omit<RemoteAddCommand, "alias"> }
 	| { type: "details" | "project"; record: RemoteConnectionRecord }
 	| {
 			type: "switch" | "stop" | "remove";
@@ -201,7 +203,8 @@ export function RemoteConnectionPanel() {
 	};
 	const add = async (alias: string) => {
 		const before = useRemoteConnectionStore.getState().status;
-		const id = await store.add(alias);
+		if (dialog?.type !== "add") return;
+		const id = await store.add(alias, dialog.observation);
 		const after = useRemoteConnectionStore.getState().status;
 		setDialog(null);
 		if (
@@ -231,7 +234,14 @@ export function RemoteConnectionPanel() {
 					disabled={busy || !!catalog.error}
 					onClick={() => {
 						setError("");
-						setDialog({ type: "add" });
+						setDialog({
+							type: "add",
+							observation: {
+								epoch: status.epoch ?? catalog.epoch,
+								generation: status.generation ?? 0,
+								catalogRevision: catalog.revision,
+							},
+						});
 					}}
 				>
 					{t("remote.ux.add")}
@@ -248,11 +258,7 @@ export function RemoteConnectionPanel() {
 					{notice}
 				</p>
 			)}
-			{error && !dialog && (
-				<p role="alert" className="remote-note">
-					{error}
-				</p>
-			)}
+			{error && !dialog && <RemoteActionError message={error} />}
 			{catalog.error ? (
 				<div role="alert" className="remote-empty">
 					{catalog.error}
@@ -281,15 +287,17 @@ export function RemoteConnectionPanel() {
 						const failed = active && (status.state === "error" || status.stopUnconfirmed);
 						const projectKnown = connected && recent.length > 0;
 						const label = active
-							? status.installation
-								? t("remote.ux.waitInstall")
-								: status.targetConfirmation
-									? t("remote.ux.waitTarget")
-									: status.phase === "installing"
-										? t("remote.ux.installing")
-										: status.phase === "preparing"
-											? t("remote.ux.preparing")
-											: t(`remote.${status.state}`)
+							? status.phase === "cancelling"
+								? t("remote.ux.cancelling")
+								: status.installation
+									? t("remote.ux.waitInstall")
+									: status.targetConfirmation
+										? t("remote.ux.waitTarget")
+										: status.phase === "installing"
+											? t("remote.ux.installing")
+											: status.phase === "preparing"
+												? t("remote.ux.preparing")
+												: t(`remote.${status.state}`)
 							: t("remote.disconnected");
 						return (
 							<li
@@ -329,13 +337,18 @@ export function RemoteConnectionPanel() {
 										/>
 										{label}
 									</div>
-									{failed && status.error && (
+									{failed && (
 										<p className="remote-error-line">
-											{status.error}{" "}
+											{status.stopUnconfirmed
+												? t("remote.ux.stopUnconfirmed")
+												: t(`remote.ux.failure.${status.errorKind ?? "other"}`)}{" "}
 											<button type="button" onClick={() => setDialog({ type: "details", record })}>
 												{t("remote.ux.details")}
 											</button>
 										</p>
+									)}
+									{active && status.cancelledUncertain && (
+										<p className="remote-note">{t("remote.ux.checkRemoteState")}</p>
 									)}
 								</div>
 								<div className="remote-actions">
@@ -376,7 +389,7 @@ export function RemoteConnectionPanel() {
 										<button
 											type="button"
 											className="remote-button"
-											disabled={working}
+											disabled={working || status.phase === "cancelling"}
 											onClick={() => start(() => store.disconnect(store.capture(record.connectionId)))}
 										>
 											{t("common.cancel")}
@@ -603,6 +616,12 @@ export function RemoteConnectionPanel() {
 								<span>{t("remote.ux.service")}</span>
 								<b>{dialog.record.binding?.releaseId ?? t("remote.ux.unknown")}</b>
 							</p>
+							{status.connectionId === dialog.record.connectionId && status.error && (
+								<details className="remote-note">
+									<summary>{t("remote.errorDetails")}</summary>
+									<pre className="remote-code">{status.error}</pre>
+								</details>
+							)}
 							{status.connectionId === dialog.record.connectionId && status.preflight && (
 								<details className="remote-note">
 									<summary>{t("remote.ux.technical")}</summary>
@@ -806,11 +825,7 @@ export function RemoteConnectionPanel() {
 							<span className="remote-spinner" /> {t("remote.ux.working")}
 						</p>
 					)}
-					{error && (
-						<p role="alert" className="remote-note">
-							{error}
-						</p>
-					)}
+					{error && <RemoteActionError message={error} />}
 				</RemoteModal>
 			)}
 		</section>

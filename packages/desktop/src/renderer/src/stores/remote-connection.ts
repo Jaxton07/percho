@@ -2,6 +2,7 @@ import {
 	type EnvironmentRef,
 	environmentEntityKey,
 	environmentKey,
+	type RemoteAddCommand,
 	type RemoteCatalogSnapshot,
 	type RemoteConnectionStatus,
 	type RemoteRecordCommand,
@@ -30,7 +31,7 @@ interface RemoteConnectionStore {
 	targetEnvironment: EnvironmentRef | null;
 	setOpen: (open: boolean, target?: EnvironmentRef) => void;
 	capture: (id?: string) => RemoteRecordCommand;
-	add: (alias: string) => Promise<string>;
+	add: (alias: string, observation?: Omit<RemoteAddCommand, "alias">) => Promise<string>;
 	reconnect: (cmd: RemoteRecordCommand) => Promise<void>;
 	switchConnection: (cmd: RemoteSwitchCommand) => Promise<void>;
 	confirmTarget: (cmd: RemoteTokenCommand) => Promise<void>;
@@ -160,9 +161,9 @@ export const useRemoteConnectionStore = create<RemoteConnectionStore>((set, get)
 	dismissOperation: async (id) => {
 		await getPi().remoteDismissOperation({ operationId: id });
 	},
-	add: async (alias) => {
+	add: async (alias, observation) => {
 		const { catalog, status } = get();
-		const epoch = status.epoch || catalog.epoch;
+		const epoch = observation?.epoch ?? (status.epoch || catalog.epoch);
 		if (
 			!epoch ||
 			status.generation === undefined ||
@@ -172,8 +173,8 @@ export const useRemoteConnectionStore = create<RemoteConnectionStore>((set, get)
 			throw new Error("Remote connection state is unavailable");
 		const result = await getPi().remoteAdd({
 			epoch,
-			generation: status.generation,
-			catalogRevision: catalog.revision,
+			generation: observation?.generation ?? status.generation,
+			catalogRevision: observation?.catalogRevision ?? catalog.revision,
 			alias,
 		});
 		get().acceptCatalog(result.catalog);

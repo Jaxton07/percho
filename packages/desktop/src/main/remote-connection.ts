@@ -84,6 +84,30 @@ export class RemoteConnectionManager {
 	private authorize: () => Promise<void> = async () => {};
 	private readonly uncertain = new Map<string, UncertainRemoteOperation>();
 	private operationsTruncated = false;
+	private closing: Promise<void> = Promise.resolve();
+	private readonly pendingWork = new Map<number, Set<Promise<unknown>>>();
+	private trackWork<T>(generation: number, work: Promise<T>): Promise<T> {
+		const jobs = this.pendingWork.get(generation) ?? new Set<Promise<unknown>>();
+		this.pendingWork.set(generation, jobs);
+		jobs.add(work);
+		return work.finally(() => {
+			jobs.delete(work);
+			if (!jobs.size) this.pendingWork.delete(generation);
+		});
+	}
+	private async authorizeIntent(signal: AbortSignal): Promise<void> {
+		if (signal.aborted) throw new Error("SSH connection cancelled");
+		let abort!: () => void;
+		const cancelled = new Promise<never>((_resolve, reject) => {
+			abort = () => reject(new Error("SSH connection cancelled"));
+			signal.addEventListener("abort", abort, { once: true });
+		});
+		try {
+			await Promise.race([this.authorize(), cancelled]);
+		} finally {
+			signal.removeEventListener("abort", abort);
+		}
+	}
 	private readonly unconfirmedStops = new Set<string>();
 	private maintenanceKey(record: RemoteConnectionRecord): string {
 		const b = record.binding;
@@ -179,7 +203,7 @@ export class RemoteConnectionManager {
 		this.detach = undefined;
 		const connection = this.connection;
 		this.connection = undefined;
-		connection?.disconnect();
+		this.closing = Promise.all([this.closing, connection?.disconnect()]).then(() => {});
 	}
 	private reserve(record: RemoteConnectionRecord, state: "checking" | "connecting"): number {
 		this.clearTransport();
@@ -264,21 +288,49 @@ export class RemoteConnectionManager {
 	}
 	async disconnect(command: RemoteRecordCommand): Promise<RemoteConnectionStatus> {
 		await this.ensure();
-		return this.serial(() => {
+		const cleanup = await this.serial(() => {
 			this.assert(command);
 			if (command.connectionId !== this.status.connectionId)
 				throw new Error("This SSH connection is not active");
 			if (this.status.state === "stopping") throw new Error("Remote service stop is still in progress");
-			return this.release();
+			const jobs = [...(this.pendingWork.get(this.generation) ?? [])];
+			const uncertain =
+				jobs.length > 0 &&
+				this.status.state !== "connected" &&
+				this.status.state !== "checking" &&
+				this.status.phase !== "preparing";
+			this.autoConnect = false;
+			this.clearTransport();
+			this.update({
+				...this.status,
+				state: "connecting",
+				phase: "cancelling",
+				installation: undefined,
+				targetConfirmation: undefined,
+			});
+			return { jobs, closing: this.closing, uncertain };
+		});
+		await Promise.allSettled(cleanup.jobs);
+		await Promise.all([cleanup.closing, this.closing]);
+		return this.serial(() => {
+			if (command.generation !== this.generation) return this.status;
+			this.release();
+			return this.update({ ...this.status, phase: undefined, cancelledUncertain: cleanup.uncertain });
 		});
 	}
 	/** Application teardown only; no public IPC path may bypass observed target checks. */
 	async shutdown(): Promise<void> {
-		await this.serial(() => {
+		const cleanup = await this.serial(() => {
+			const jobs = [...this.pendingWork.values()].flatMap((items) => [...items]);
 			this.release();
+			return { jobs, closing: this.closing };
 		});
+		await Promise.allSettled([...cleanup.jobs, cleanup.closing]);
 	}
-	async preflight(command: RemoteRecordCommand): Promise<SshPreflight> {
+	preflight(command: RemoteRecordCommand): Promise<SshPreflight> {
+		return this.trackWork(command.generation + 1, this.check(command));
+	}
+	private async check(command: RemoteRecordCommand): Promise<SshPreflight> {
 		await this.ensure();
 		const { record, generation, signal } = await this.serial(() => {
 			const record = this.assert(command);
@@ -287,7 +339,8 @@ export class RemoteConnectionManager {
 			return { record, generation, signal: this.controller!.signal };
 		});
 		try {
-			await this.authorize();
+			await this.closing;
+			await this.authorizeIntent(signal);
 			if (!this.current(generation)) throw new Error("SSH check cancelled");
 			const probe = await preflightSsh(record.alias, signal);
 			if (!this.current(generation)) throw new Error("SSH check cancelled");
@@ -407,7 +460,10 @@ export class RemoteConnectionManager {
 		this.update({ ...this.status, state: "connecting", targetConfirmation: undefined });
 		return this.run(record, command.generation, false, false);
 	}
-	async installAndConnect(command: RemoteTokenCommand): Promise<RemoteConnectionStatus> {
+	installAndConnect(command: RemoteTokenCommand): Promise<RemoteConnectionStatus> {
+		return this.trackWork(command.generation, this.installConfirmed(command));
+	}
+	private async installConfirmed(command: RemoteTokenCommand): Promise<RemoteConnectionStatus> {
 		await this.ensure();
 		this.assert(command);
 		const plan = this.installation;
@@ -423,7 +479,7 @@ export class RemoteConnectionManager {
 		this.installation = undefined;
 		this.update({ ...this.status, state: "connecting", phase: "installing", installation: undefined });
 		try {
-			await this.authorize();
+			await this.authorizeIntent(this.controller!.signal);
 			if (!this.current(command.generation)) return this.status;
 			const artifact = plan.manifest.artifacts[plan.probe.arch as "arm64" | "x64"];
 			await this.distribution.install(
@@ -445,7 +501,15 @@ export class RemoteConnectionManager {
 			throw error;
 		}
 	}
-	private async run(
+	private run(
+		record: RemoteConnectionRecord,
+		generation: number,
+		automatic: boolean,
+		forcePrepare: boolean,
+	): Promise<RemoteConnectionStatus> {
+		return this.trackWork(generation, this.performRun(record, generation, automatic, forcePrepare));
+	}
+	private async performRun(
 		record: RemoteConnectionRecord,
 		generation: number,
 		automatic: boolean,
@@ -454,9 +518,11 @@ export class RemoteConnectionManager {
 		let connection: SshRuntimeConnection | undefined;
 		let environment: EnvironmentRef | undefined;
 		let closed = false;
-		const signal = this.controller!.signal;
+		const signal = this.controller?.signal;
+		if (!signal || !this.current(generation)) return this.status;
 		try {
-			await this.authorize();
+			await this.closing;
+			await this.authorizeIntent(signal);
 			if (!this.current(generation)) return this.status;
 			const probe = await preflightSsh(record.alias, signal);
 			if (!this.current(generation)) return this.status;
@@ -571,6 +637,9 @@ export class RemoteConnectionManager {
 					target: probe.target,
 				});
 				this.publishCatalog(catalog);
+				const committed = catalog.records.find((item) => item.connectionId === record.connectionId);
+				if (committed && probe.serviceState === "stopped")
+					this.unconfirmedStops.delete(this.maintenanceKey(committed));
 				if (!this.current(generation) || closed) throw new Error("Remote connection cancelled");
 				environment = { kind: "ssh", connectionId: record.connectionId, environmentId: info.environmentId };
 				this.detach = environmentRouter.attach(environment, {
@@ -603,15 +672,15 @@ export class RemoteConnectionManager {
 			});
 			return this.status;
 		} catch (error) {
-			connection?.disconnect();
-			if (generation !== this.generation) return this.status;
+			await connection?.disconnect();
+			if (!this.current(generation)) return this.status;
 			this.fail(error, generation);
 			this.scheduleRetry(message(error).includes(`already controlled by ${this.clientTag}`));
 			throw error;
 		}
 	}
 	private fail(error: unknown, generation: number): void {
-		if (generation !== this.generation) return;
+		if (!this.current(generation)) return;
 		this.installation = undefined;
 		this.update({
 			...this.status,

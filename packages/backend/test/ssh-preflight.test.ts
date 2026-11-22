@@ -1,6 +1,57 @@
+import { EventEmitter } from "node:events";
+import { PassThrough } from "node:stream";
 import type { SshPreflight } from "@percho/shared";
-import { describe, expect, it } from "vitest";
-import { checkSshRequirements, shellQuote, sshFailureKind } from "../src/runtime/ssh-preflight";
+import { describe, expect, it, vi } from "vitest";
+
+const spawn = vi.hoisted(() => vi.fn());
+vi.mock("node:child_process", () => ({ spawn }));
+
+import { checkSshRequirements, runSsh, shellQuote, sshFailureKind } from "../src/runtime/ssh-preflight";
+
+describe("runSsh child lifecycle", () => {
+	it.each(["error", "abort"])("waits for close after %s and preserves the error", async (kind) => {
+		const child = Object.assign(new EventEmitter(), {
+			stdout: new PassThrough(),
+			stderr: new PassThrough(),
+			kill: vi.fn(),
+		});
+		const controller = new AbortController();
+		const error = Object.assign(new Error(kind), { name: kind === "abort" ? "AbortError" : "Error" });
+		spawn.mockImplementationOnce((_file, _args, options) => {
+			options.signal.addEventListener("abort", () => child.emit("error", error));
+			return child;
+		});
+		let settled = false;
+		const result = runSsh([], controller.signal).catch((err: unknown) => {
+			settled = true;
+			return err;
+		});
+		if (kind === "abort") controller.abort();
+		else child.emit("error", error);
+		await new Promise((resolve) => setImmediate(resolve));
+		expect(settled).toBe(false);
+		child.emit("close", null);
+		expect(await result).toBe(error);
+	});
+	it("escalates termination to SIGKILL while still waiting for close", async () => {
+		vi.useFakeTimers();
+		try {
+			const child = Object.assign(new EventEmitter(), {
+				stdout: new PassThrough(),
+				stderr: new PassThrough(),
+				kill: vi.fn(),
+			});
+			spawn.mockReturnValueOnce(child);
+			const result = runSsh([], new AbortController().signal, 10).catch((error: unknown) => error);
+			await vi.advanceTimersByTimeAsync(1010);
+			expect(child.kill.mock.calls).toEqual([["SIGTERM"], ["SIGKILL"]]);
+			child.emit("close", null);
+			expect(await result).toMatchObject({ message: "SSH connection timed out" });
+		} finally {
+			vi.useRealTimers();
+		}
+	});
+});
 
 const probe: SshPreflight = {
 	alias: "dev",
