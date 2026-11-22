@@ -103,9 +103,27 @@ export class ChannelStore {
 		return checked.readSync();
 	}
 
+	private ensureIgnore(): void {
+		const path = join(this.projectRoot, ".percho", "channels", ".gitignore");
+		const rules = [
+			"/.gitignore",
+			`/${this.namespace}.sqlite`,
+			`/${this.namespace}.sqlite-journal`,
+			`/${this.namespace}.sqlite-wal`,
+			`/${this.namespace}.sqlite-shm`,
+			`/${this.namespace}.json`,
+			`/.${this.namespace}.json.*.tmp`,
+		];
+		const existing = existsSync(path) ? readFileSync(path, "utf8").split(/\r?\n/) : [];
+		const missing = rules.filter((rule) => !existing.includes(rule));
+		// One append per namespace keeps concurrent writers from interleaving rules.
+		if (missing.length) appendFileSync(path, `\n${missing.join("\n")}\n`);
+	}
+
 	open(create = false): DatabaseSync | null {
 		if (this.db) {
 			this.verify();
+			if (create) this.ensureIgnore();
 			return this.db;
 		}
 		for (const path of [join(this.projectRoot, ".percho"), join(this.projectRoot, ".percho", "channels")]) {
@@ -119,13 +137,8 @@ export class ChannelStore {
 		const exists = existsSync(this.databasePath);
 		if (!exists && mark) throw new Error("Channel database missing");
 		if (!exists && !create) return null;
-		if (!exists && create) {
-			const ignorePath = join(this.projectRoot, ".gitignore");
-			const ignore = existsSync(ignorePath) ? readFileSync(ignorePath, "utf8") : "";
-			if (!ignore.split(/\r?\n/).includes("/.percho/channels/"))
-				appendFileSync(ignorePath, `${ignore && !ignore.endsWith("\n") ? "\n" : ""}/.percho/channels/\n`);
-		}
 		mkdirSync(join(this.projectRoot, ".percho", "channels"), { recursive: true });
+		if (create) this.ensureIgnore();
 		const empty = !exists || statSync(this.databasePath).size === 0;
 		if (empty && mark) throw new Error("Channel database missing or empty");
 		const db = new DatabaseSync(this.databasePath);

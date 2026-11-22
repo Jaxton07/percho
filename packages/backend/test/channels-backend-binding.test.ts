@@ -1,11 +1,70 @@
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import {
+	mkdirSync,
+	mkdtempSync,
+	readFileSync,
+	realpathSync,
+	rmSync,
+	symlinkSync,
+	writeFileSync,
+} from "node:fs";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { Worker } from "node:worker_threads";
 import { expect, it, vi } from "vitest";
 import { PiBackend } from "../src/pi-backend";
 import { ChannelBackendHost } from "../src/tools/channels/backend-host";
+import * as channelProject from "../src/tools/channels/project";
 import type { ChannelService } from "../src/tools/channels/service";
+
+it("fences services synchronously at shutdown and refuses late construction", async () => {
+	const backend = new PiBackend();
+	const internal = backend as unknown as {
+		channelServices: Map<string, ChannelService>;
+		channelServiceAtRoot(root: string): ChannelService;
+	};
+	const close = vi.fn().mockResolvedValue(undefined);
+	internal.channelServices.set("existing", { close } as unknown as ChannelService);
+	backend.beginShutdown();
+	expect(close).toHaveBeenCalledTimes(1);
+	expect(() => internal.channelServiceAtRoot("new")).toThrow("BACKEND_STOPPING");
+	await backend.shutdown();
+	expect(close).toHaveBeenCalledTimes(1);
+});
+
+it("hides cached subscriptions for disabled watch, including read-only sessions", async () => {
+	mkdirSync(".local/tmp", { recursive: true });
+	const root = mkdtempSync(join(process.cwd(), ".local/tmp/channel-disabled-"));
+	vi.stubEnv("PI_CODING_AGENT_DIR", root);
+	writeFileSync(join(root, "settings.json"), JSON.stringify({ channelWatchEnabled: false }));
+	const backend = new PiBackend();
+	const internal = backend as unknown as {
+		registry: { get(id: string): unknown };
+		channelSubs: {
+			noteSessionOpened(id: string): void;
+			reportEntries(id: string, entries: { topic: string; unread: number }[]): void;
+			snapshot(id: string): { generation: number; revision: number };
+		};
+	};
+	try {
+		for (const readOnly of [false, true]) {
+			const id = String(readOnly);
+			vi.spyOn(internal.registry, "get").mockReturnValue({ readOnly, session: {} });
+			internal.channelSubs.noteSessionOpened(id);
+			internal.channelSubs.reportEntries(id, [{ topic: "old", unread: 3 }]);
+			const before = internal.channelSubs.snapshot(id);
+			const hidden = await backend.getChannelSubscriptions(id);
+			expect(hidden.topics).toEqual([]);
+			expect(hidden.unreadCounts).toEqual({});
+			expect(hidden.generation).toBe(before.generation);
+			expect(hidden.revision).toBeGreaterThan(before.revision);
+			vi.restoreAllMocks();
+		}
+	} finally {
+		await backend.shutdown();
+		vi.unstubAllEnvs();
+		rmSync(root, { recursive: true, force: true });
+	}
+});
 
 it("preserves legacy projects and unknown data when binding across host restarts", async () => {
 	mkdirSync(".local/tmp", { recursive: true });
@@ -26,6 +85,44 @@ it("preserves legacy projects and unknown data when binding across host restarts
 		expect(JSON.parse(readFileSync(file, "utf8")).future).toEqual({ value: 1 });
 	} finally {
 		rmSync(root, { recursive: true, force: true });
+	}
+});
+
+it("resolves only existing registered canonical project roots after restart", async () => {
+	mkdirSync(".local/tmp", { recursive: true });
+	const base = realpathSync(mkdtempSync(join(process.cwd(), ".local/tmp/channel-roots-")));
+	const agent = join(base, "agent");
+	const root = join(base, "project");
+	const nested = join(root, "nested");
+	const child = join(nested, "child");
+	const prefix = join(base, "project-other");
+	mkdirSync(agent);
+	mkdirSync(child, { recursive: true });
+	mkdirSync(prefix);
+	const host = () =>
+		new ChannelBackendHost(agent, () => {
+			throw new Error("unexpected service");
+		});
+	try {
+		await host().register(root);
+		await host().register(nested);
+		expect(await host().projectRootForCwd(root)).toBe(root);
+		expect(await host().projectRootForCwd(child)).toBe(nested);
+		expect(await host().projectRootForCwd(prefix)).toBeUndefined();
+		expect(await host().projectRootForCwd("relative")).toBeUndefined();
+		const alias = join(base, "alias");
+		symlinkSync(child, alias);
+		expect(await host().projectRootForCwd(alias)).toBe(nested);
+		rmSync(nested, { recursive: true });
+		symlinkSync(prefix, nested);
+		expect(await host().projectRootForCwd(nested)).toBeUndefined();
+		expect(
+			await new ChannelBackendHost(join(base, "other-agent"), () => {
+				throw new Error("unexpected service");
+			}).projectRootForCwd(root),
+		).toBeUndefined();
+	} finally {
+		rmSync(base, { recursive: true, force: true });
 	}
 });
 
@@ -131,6 +228,37 @@ it("persists a binding through the public backend creation entry", async () => {
 		expect((await host.binding(session.sessionId))?.cwd).toBe(cwd);
 	} finally {
 		await backend.shutdown();
+		vi.unstubAllEnvs();
+		rmSync(root, { recursive: true, force: true });
+	}
+});
+
+it("inherits a registered non-worktree project through cwd-only creation", async () => {
+	mkdirSync(".local/tmp", { recursive: true });
+	const root = mkdtempSync(join(process.cwd(), ".local/tmp/channel-cwd-only-"));
+	const agent = join(root, "agent");
+	const project = join(root, "project");
+	const child = join(project, "child");
+	mkdirSync(agent);
+	mkdirSync(child, { recursive: true });
+	// Model the external Git probe's non-worktree result; all data stays inside this repository's ignored fixture.
+	const rootResolver = vi
+		.spyOn(channelProject, "resolveChannelProject")
+		.mockImplementation(async (cwd, bound) => bound ?? cwd);
+	vi.stubEnv("PI_CODING_AGENT_DIR", agent);
+	const backend = new PiBackend({ projectTrust: false, permissionGates: false });
+	try {
+		const parentSession = await backend.createSession({ cwd: project });
+		const childSession = await backend.createSession({ cwd: child });
+		const host = new ChannelBackendHost(agent, () => {
+			throw new Error("unexpected service");
+		});
+		expect((await host.binding(parentSession.sessionId))?.root).toBe(project);
+		expect((await host.binding(childSession.sessionId))?.root).toBe(project);
+		expect((await host.binding(childSession.sessionId))?.cwd).toBe(child);
+	} finally {
+		await backend.shutdown();
+		rootResolver.mockRestore();
 		vi.unstubAllEnvs();
 		rmSync(root, { recursive: true, force: true });
 	}

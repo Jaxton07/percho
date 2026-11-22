@@ -5,9 +5,25 @@ import { PiBackend } from "../src/pi-backend";
 import { SessionMediaStore } from "../src/session/media-store";
 import type { ChannelService } from "../src/tools/channels/service";
 
+const injected = vi.hoisted(() => ({ source: "", failAt: 0, calls: 0 }));
+vi.mock("node:fs/promises", async (importOriginal) => {
+	const actual = await importOriginal<typeof import("node:fs/promises")>();
+	return {
+		...actual,
+		lstat: async (...args: Parameters<typeof actual.lstat>) => {
+			if (args[0] === injected.source && ++injected.calls === injected.failAt)
+				throw Object.assign(new Error("denied"), { code: "EACCES" });
+			return actual.lstat(...args);
+		},
+	};
+});
+
 const roots: string[] = [];
 afterEach(() => {
 	vi.unstubAllEnvs();
+	injected.source = "";
+	injected.calls = 0;
+	injected.failAt = 0;
 	for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true });
 });
 
@@ -44,6 +60,34 @@ it("discovers a missing-source delete after a backend restart and retries failed
 		await recovered.completeMaintenance("session", "operation", "deleted");
 	} finally {
 		await second.shutdown();
+	}
+});
+
+it.each([1, 2])("retains the fence when source lstat fails at check %i", async (failAt) => {
+	mkdirSync(".local/tmp", { recursive: true });
+	const root = mkdtempSync(join(process.cwd(), ".local/tmp/channel-recovery-error-"));
+	roots.push(root);
+	const agent = join(root, "agent");
+	mkdirSync(agent);
+	vi.stubEnv("PI_CODING_AGENT_DIR", agent);
+	const media = new SessionMediaStore(join(agent, "media"));
+	const cleanup = vi.spyOn(media, "deleteOwner");
+	const backend = new PiBackend({ sessionMediaStore: media });
+	const internal = backend as unknown as {
+		channelService(cwd: string): Promise<ChannelService>;
+		recoverChannelDeletes(): Promise<void>;
+	};
+	try {
+		const service = await internal.channelService(root);
+		const source = join(root, "missing.jsonl");
+		await service.prepareMaintenance("session", "operation", "delete", source);
+		injected.source = source;
+		injected.failAt = failAt;
+		await expect(internal.recoverChannelDeletes()).rejects.toThrow("denied");
+		expect(cleanup).not.toHaveBeenCalled();
+		expect(await service.pendingMaintenance()).toMatchObject([{ state: "delete" }]);
+	} finally {
+		await backend.shutdown();
 	}
 });
 

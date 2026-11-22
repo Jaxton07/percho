@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { existsSync } from "node:fs";
-import { mkdtemp, open, readFile, realpath, rm, stat, unlink } from "node:fs/promises";
+import { lstat, mkdtemp, open, readFile, realpath, rm, stat, unlink } from "node:fs/promises";
 import { homedir } from "node:os";
 import { dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import type { Model, ThinkingLevel } from "@earendil-works/pi-ai";
@@ -173,6 +173,16 @@ import { makeWebFetchTool } from "./tools/webfetch";
 
 const log = createLogger("backend");
 
+async function sourceExists(path: string): Promise<boolean> {
+	try {
+		await lstat(path);
+		return true;
+	} catch (error) {
+		if ((error as NodeJS.ErrnoException).code === "ENOENT") return false;
+		throw error;
+	}
+}
+
 /** SessionManager 磁盘枚举项 → SessionMeta（listSessions/listAllSessions 共用） */
 function sessionInfoToMeta(
 	info: SessionInfo,
@@ -266,6 +276,21 @@ export class PiBackend {
 	private readonly constructionDialogs = new Set<ExtensionDialogHost>();
 	private readonly shutdownFailures: unknown[] = [];
 	private shutdownAborts: Promise<PromiseSettledResult<void>[]> = Promise.resolve([]);
+	private shutdownChannels?: Promise<PromiseSettledResult<void>[]>;
+	private stopChannels(): Promise<PromiseSettledResult<void>[]> {
+		if (!this.shutdownChannels) {
+			const closing = [...this.channelServices.values()].map((service) => {
+				try {
+					return service.close();
+				} catch (error) {
+					return Promise.reject(error);
+				}
+			});
+			this.channelServices.clear();
+			this.shutdownChannels = Promise.allSettled(closing);
+		}
+		return this.shutdownChannels;
+	}
 	assertRunning(): void {
 		if (this.stopping) throw new Error("BACKEND_STOPPING: no new work is accepted");
 	}
@@ -286,6 +311,7 @@ export class PiBackend {
 	beginShutdown(): void {
 		if (this.stopping) return;
 		this.stopping = true;
+		void this.stopChannels();
 		const attempt = (work: () => void) => {
 			try {
 				work();
@@ -320,10 +346,7 @@ export class PiBackend {
 			const disposed = await Promise.allSettled(entries.map((entry) => this.disposeSession(entry)));
 			for (const result of [...aborted, ...disposed])
 				if (result.status === "rejected") this.shutdownFailures.push(result.reason);
-			const channels = await Promise.allSettled(
-				[...this.channelServices.values()].map((service) => service.close()),
-			);
-			this.channelServices.clear();
+			const channels = await this.stopChannels();
 			for (const result of channels)
 				if (result.status === "rejected") this.shutdownFailures.push(result.reason);
 			this.dispose();
@@ -339,7 +362,7 @@ export class PiBackend {
 	private readonly shutdownErrors = new WeakMap<AgentSession, ExtensionError[]>();
 	/** open 的 single-flight（key = 规范化绝对路径）：同文件并发 open 共享一次构造（spec D4） */
 	private readonly openFlights = new KeyedSingleFlight<SessionMeta>();
-	/** 频道订阅快照与版本；驻留保护只针对当前已加载的会话。 */
+	/** 频道订阅的界面快照与版本。 */
 	private readonly channelSubs = new ChannelSubscriptionRegistry((id) => this.registry.has(id));
 	private readonly channelServices = new Map<string, ChannelService>();
 	private readonly channelRoots = new WeakMap<PermissionModeRef, string>();
@@ -353,6 +376,7 @@ export class PiBackend {
 	private channelServiceAtRoot(root: string): ChannelService {
 		let service = this.channelServices.get(root);
 		if (!service) {
+			this.assertRunning();
 			service = new ChannelService({ projectRoot: root, agentDir: getAgentDir() });
 			this.channelServices.set(root, service);
 		}
@@ -360,9 +384,9 @@ export class PiBackend {
 	}
 	private async recoverChannelDeletes(): Promise<void> {
 		for (const { service, fence } of await this.getChannelHost().fences()) {
-			if (fence.state !== "delete" || existsSync(fence.source)) continue;
+			if (fence.state !== "delete" || (await sourceExists(fence.source))) continue;
 			await this.fileOperations.run([fence.source], "delete", async () => {
-				if (existsSync(fence.source) || this.registry.has(fence.sessionId)) return;
+				if ((await sourceExists(fence.source)) || this.registry.has(fence.sessionId)) return;
 				await this.media.deleteOwner(fence.sessionId);
 				await service.completeMaintenance(fence.sessionId, fence.opId, "deleted");
 				this.channelSubs.delete(fence.sessionId);
@@ -1390,12 +1414,27 @@ export class PiBackend {
 		if (this.projectDeletion?.isDeleting(cwd)) throw new Error("Project deletion is in progress");
 		this.assertRunning();
 		let channelRoot: string | undefined;
-		if (options.channelProjectRoot) {
-			const current = await realpath(cwd);
-			const bound = await realpath(options.channelProjectRoot);
-			const rel = relative(bound, current);
-			if (rel === ".." || rel.startsWith(`..${sep}`) || isAbsolute(rel))
-				throw new Error("Channel project root does not contain cwd");
+		let current: string | undefined;
+		try {
+			current = await realpath(cwd);
+		} catch (error) {
+			if (
+				options.channelProjectRoot ||
+				this.options.validateWorkspace ||
+				(error as NodeJS.ErrnoException).code !== "ENOENT"
+			)
+				throw error;
+			// Legacy embedders can construct in-memory sessions before their cwd exists.
+		}
+		if (current) {
+			const registered =
+				options.channelProjectRoot ?? (await this.getChannelHost().projectRootForCwd(current));
+			const bound = registered ? await realpath(registered) : undefined;
+			if (bound) {
+				const rel = relative(bound, current);
+				if (rel === ".." || rel.startsWith(`..${sep}`) || isAbsolute(rel))
+					throw new Error("Channel project root does not contain cwd");
+			}
 			channelRoot = await resolveChannelProject(current, bound);
 		}
 		const model =
@@ -1820,9 +1859,8 @@ export class PiBackend {
 	}
 
 	/**
-	 * channel-watch 扩展回调入口（spec §6.1）：上报该会话当前的「有效运行态订阅」快照。
-	 * 只存 topic 名（不存消息内容）；空集 = 移出快照（退订最后一个 topic 即恢复普通 GC 资格）。
-	 * 这里只存取快照，不做保护策略（策略在 closeSession 的 intent 守卫与 renderer 纯策略层）。
+	 * 兼容旧宿主的订阅投影入口；新频道上报包含未读数的 reportEntries。
+	 * 只存 topic 名（不存消息内容）；空集表示没有可展示的订阅。
 	 */
 	reportChannelSubscriptions(sessionId: string, topics: ReadonlySet<string>): void {
 		this.channelSubs.report(sessionId, topics);
@@ -1832,7 +1870,12 @@ export class PiBackend {
 	async getChannelSubscriptions(sessionId: string): Promise<ChannelSubscriptionsSnapshot> {
 		const entry = this.registry.get(sessionId);
 		const before = this.channelSubs.snapshot(sessionId);
-		if (!entry || entry.readOnly || !readChannelWatchEnabled(getAgentDir())) return before;
+		if (!entry) return before;
+		if (!readChannelWatchEnabled(getAgentDir())) {
+			this.channelSubs.reportEntries(sessionId, []);
+			return this.channelSubs.snapshot(sessionId);
+		}
+		if (entry.readOnly) return before;
 		const bound = this.channelRoots.get(entry.modeRef);
 		const root = await resolveChannelProject(entry.cwd, bound);
 		if (bound && root !== bound) throw new Error("Channel project root changed");
@@ -1849,6 +1892,10 @@ export class PiBackend {
 		} catch (error) {
 			if (!(error instanceof Error) || error.message !== "Session is fenced") throw error;
 			entries = [];
+		}
+		if (!readChannelWatchEnabled(getAgentDir())) {
+			if (this.registry.get(sessionId) === entry) this.channelSubs.reportEntries(sessionId, []);
+			return this.channelSubs.snapshot(sessionId);
 		}
 		const after = this.channelSubs.snapshot(sessionId);
 		if (
@@ -1869,9 +1916,7 @@ export class PiBackend {
 	}
 
 	/**
-	 * renderer GC 查询用（spec §6.2）：**仍在 registry 中**且有效频道订阅非空的会话 ID
-	 * （顺序不构成契约）。按 registry 过滤是兜底：回调/构造异常路径可能留下孤儿键，
-	 * 不能让一个已不存在的会话 ID 永久影响 GC 判定。
+	 * 频道订阅不再阻止自动卸载，保留兼容查询并始终返回空集。
 	 */
 	getChannelSubscriptionSessionIds(): string[] {
 		return [];
@@ -1880,8 +1925,7 @@ export class PiBackend {
 	/**
 	 * 关会话（默认**用户主动关**）：agent 还在跑（含等审批）时拒绝——run 中途把后端会话 dispose 会直接掐断本轮，
 	 * 内存策略（自动卸载）靠这道兵底兼固（策略层已保护，这里是最后一道门）。
-	 * 自动卸载走同一个方法：行为与主动关基本一致，只是调用点分开（renderer 侧 `unloadSession`，intent="gc"），
-	 * 且 intent="gc" 时多一道频道订阅守卫（订阅场景下卸了就收不到唤醒——这是显式订阅语义，见 spec §6.2）。
+	 * 自动卸载走同一个方法（renderer 侧 `unloadSession`，intent="gc"）；频道订阅不阻止卸载。
 	 */
 	async closeSession(sessionId: string, intent: SessionCloseIntent = "user"): Promise<{ closed: boolean }> {
 		const entry = this.registry.get(sessionId);
@@ -1904,8 +1948,6 @@ export class PiBackend {
 			log.warn("closeSession ignored: streaming", sessionId);
 			return { closed: false };
 		}
-		// 自动 GC 不得卸掉有频道订阅的会话（快照按 sessionId 精确查，退订后自然恢复资格）。
-		// 显式关（intent="user"/缺省，含 delete 路径）不受此限：用户意图优先，订阅也不能绑架用户。
 		if (intent === "gc") {
 			const lease = entry.session.tryAcquireIdleLease();
 			if (!lease) return { closed: false };
@@ -3249,7 +3291,7 @@ export class PiBackend {
 		return { enabled: readChannelWatchEnabled(getAgentDir()) };
 	}
 
-	/** 写 channel-watch 开关（下一 session_start 生效：目录 init/watcher/工具注册全部跟随）。损坏拒写时上抛 */
+	/** 写频道开关，下一次会话加载生效；保留成员数据，关闭时隐藏状态和工具。损坏拒写时上抛。 */
 	setChannelWatchEnabled(enabled: boolean): void {
 		try {
 			writeChannelWatchEnabled(getAgentDir(), enabled);
@@ -3266,9 +3308,10 @@ export class PiBackend {
 
 	dispose(): void {
 		this.stopping = true;
-		for (const service of this.channelServices.values())
-			void service.close().catch((error) => log.warn("Channel shutdown failed", error));
-		this.channelServices.clear();
+		void this.stopChannels().then((results) => {
+			for (const result of results)
+				if (result.status === "rejected") log.warn("Channel shutdown failed", result.reason);
+		});
 		void this.sessionCatalog?.dispose().catch((error) => log.warn("catalog shutdown failed", error));
 		void this.mediaMaintenance?.dispose().catch((error) => log.warn("maintenance shutdown failed", error));
 		for (const child of this.runningSubagents.values()) {

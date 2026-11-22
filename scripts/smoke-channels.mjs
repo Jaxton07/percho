@@ -1,7 +1,8 @@
 // Offline packaged-worker smoke: node scripts/smoke-channels.mjs
 // Uses only a fresh ignored fixture; no models, credentials or user agent data.
 import assert from "node:assert/strict";
-import { mkdir, mkdtemp, rm } from "node:fs/promises";
+import { execFileSync, spawnSync } from "node:child_process";
+import { mkdir, mkdtemp, readdir, readFile, rm, writeFile } from "node:fs/promises";
 import { join, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 import { build } from "esbuild";
@@ -13,6 +14,8 @@ const projectRoot = join(root, "project");
 const agentDir = join(root, "agent");
 const outdir = join(root, "bundle");
 await Promise.all([mkdir(projectRoot), mkdir(agentDir)]);
+execFileSync("git", ["init", "--quiet"], { cwd: projectRoot });
+await writeFile(join(projectRoot, ".gitignore"), "existing-rule\n");
 let service;
 try {
 	await build({
@@ -33,6 +36,16 @@ try {
 	const sender = { sessionId: "sender", sessionName: "Sender" };
 	const reader = { sessionId: "reader", sessionName: "Reader" };
 	await service.manage(sender, { action: "create", topic: "smoke" });
+	assert.equal(await readFile(join(projectRoot, ".gitignore"), "utf8"), "existing-rule\n");
+	const metadata = join(projectRoot, ".percho", "channels");
+	const database = (await readdir(metadata)).find((name) => name.endsWith(".sqlite"));
+	assert.ok(database);
+	execFileSync("git", ["check-ignore", "--", `.percho/channels/${database}`], { cwd: projectRoot });
+	await writeFile(join(metadata, "note.md"), "not private channel storage");
+	assert.equal(
+		spawnSync("git", ["check-ignore", "--", ".percho/channels/note.md"], { cwd: projectRoot }).status,
+		1,
+	);
 	await service.manage(reader, { action: "subscribe", topic: "smoke" });
 	for (let i = 0; i < 60; i++) await service.post(sender, "smoke", `message ${i}`, `post-${i}`);
 	assert.deepEqual(await service.snapshot(reader.sessionId), [{ topic: "smoke", unread: 60 }]);

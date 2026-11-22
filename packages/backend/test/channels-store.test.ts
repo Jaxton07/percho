@@ -1,4 +1,12 @@
-import { existsSync, mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import {
+	existsSync,
+	mkdirSync,
+	mkdtempSync,
+	readFileSync,
+	rmSync,
+	symlinkSync,
+	writeFileSync,
+} from "node:fs";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { ChannelService } from "../src/tools/channels/service";
@@ -44,10 +52,11 @@ describe("channel store", () => {
 	it("does not write gitignore on existing database reads and rejects symlinked storage", () => {
 		store.manage(alice, { action: "create", topic: "a" });
 		store.close();
-		rmSync(join(root, ".gitignore"));
+		rmSync(join(root, ".percho", "channels", ".gitignore"));
 		store = new ChannelStore({ projectRoot: root, agentDir });
 		expect(store.snapshot("alice")).toHaveLength(1);
 		expect(existsSync(join(root, ".gitignore"))).toBe(false);
+		expect(existsSync(join(root, ".percho", "channels", ".gitignore"))).toBe(false);
 		store.close();
 		rmSync(join(root, ".percho"), { recursive: true });
 		const outside = join(root, "outside");
@@ -56,6 +65,39 @@ describe("channel store", () => {
 		store = new ChannelStore({ projectRoot: root, agentDir });
 		expect(() => store.manage(alice, { action: "create", topic: "b" })).toThrow();
 		expect(existsSync(join(outside, "channels"))).toBe(false);
+	});
+	it("preserves project ignore and appends only namespace-specific metadata rules", async () => {
+		const rootIgnore = join(root, ".gitignore");
+		writeFileSync(rootIgnore, "existing-without-newline");
+		const dir = join(root, ".percho", "channels");
+		mkdirSync(dir, { recursive: true });
+		const ignore = join(dir, ".gitignore");
+		writeFileSync(ignore, "custom-rule");
+		const otherAgent = join(root, "other-agent");
+		mkdirSync(otherAgent);
+		const otherStore = new ChannelStore({ projectRoot: root, agentDir: otherAgent });
+		const first = new ChannelService({ projectRoot: root, agentDir });
+		const second = new ChannelService({ projectRoot: root, agentDir: otherAgent });
+		try {
+			await Promise.all([
+				first.manage(alice, { action: "create", topic: "a" }),
+				second.manage(bob, { action: "create", topic: "b" }),
+			]);
+			expect(readFileSync(rootIgnore, "utf8")).toBe("existing-without-newline");
+			const rules = readFileSync(ignore, "utf8").trim().split("\n");
+			expect(rules[0]).toBe("custom-rule");
+			for (const namespace of [store.namespace, otherStore.namespace]) {
+				for (const suffix of [".sqlite", ".sqlite-journal", ".sqlite-wal", ".sqlite-shm", ".json"])
+					expect(rules).toContain(`/${namespace}${suffix}`);
+				expect(rules).toContain(`/.${namespace}.json.*.tmp`);
+			}
+			expect(rules).toContain("/.gitignore");
+			expect(rules).not.toContain("/note.md");
+			expect(rules).not.toContain("*");
+		} finally {
+			otherStore.close();
+			await Promise.all([first.close(), second.close()]);
+		}
 	});
 	it("requires explicit creation and preserves subscriptions across reopen", () => {
 		expect(store.snapshot("alice")).toEqual([]);

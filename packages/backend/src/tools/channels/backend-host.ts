@@ -1,5 +1,5 @@
-import { mkdir } from "node:fs/promises";
-import { isAbsolute, join, resolve } from "node:path";
+import { mkdir, realpath, stat } from "node:fs/promises";
+import { isAbsolute, join, relative, resolve, sep } from "node:path";
 import lockfile from "proper-lockfile";
 import { JsonStore } from "../../json-store";
 import type { ChannelService } from "./service";
@@ -78,6 +78,31 @@ export class ChannelBackendHost {
 		await this.update((data) => {
 			if (!data.projects.includes(root)) data.projects.push(root);
 		});
+	}
+	/** Resolve only against durable, still-canonical project registrations in this host. */
+	async projectRootForCwd(cwd: string): Promise<string | undefined> {
+		if (!isAbsolute(cwd)) return undefined;
+		let canonical: string;
+		try {
+			canonical = await realpath(cwd);
+			if (!(await stat(canonical)).isDirectory()) return undefined;
+		} catch (error) {
+			if (["ENOENT", "ENOTDIR"].includes((error as NodeJS.ErrnoException).code ?? "")) return undefined;
+			throw error;
+		}
+		let best: string | undefined;
+		for (const root of (await this.projects.readStrict()).projects) {
+			const rel = relative(root, canonical);
+			if (rel === ".." || rel.startsWith(`..${sep}`) || isAbsolute(rel)) continue;
+			try {
+				if ((await realpath(root)) !== root || !(await stat(root)).isDirectory()) continue;
+			} catch (error) {
+				if (["ENOENT", "ENOTDIR"].includes((error as NodeJS.ErrnoException).code ?? "")) continue;
+				throw error;
+			}
+			if (!best || root.length > best.length) best = root;
+		}
+		return best;
 	}
 	async binding(id: string): Promise<Binding | undefined> {
 		return (await this.projects.readStrict()).bindings[id];
