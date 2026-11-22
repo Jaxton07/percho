@@ -73,6 +73,8 @@ export interface SshPreflight {
 	platform: string;
 	arch: string;
 	glibc: string;
+	/** Read-only acquisition of an existing owner lock proved it was released at probe time. */
+	ownerReleased?: boolean;
 	commands: Record<string, boolean>;
 	installed: boolean;
 	installedReleaseId?: string;
@@ -179,6 +181,16 @@ export interface UncertainRemoteOperation {
 	operation: MutationReference;
 	createdAt: number;
 	receipt?: MutationReceipt;
+}
+
+/** A pending confirmation reserves the same slot as a running transport operation. */
+export function isRemoteConnectionBusy(status: RemoteConnectionStatus): boolean {
+	return (
+		["checking", "connecting", "reconnecting", "stopping"].includes(status.state) ||
+		!!status.installation ||
+		!!status.targetConfirmation ||
+		!!status.phase
+	);
 }
 
 export interface RemoteAuthGuide {

@@ -28,6 +28,7 @@ async function mount(connected = false) {
 	useRemoteConnectionStore.setState({
 		open: false,
 		targetEnvironment: null,
+		lastChecks: {},
 		status: {
 			epoch: "run",
 			generation: 1,
@@ -68,6 +69,164 @@ async function click(element: Element | null) {
 function button(text: string) {
 	return [...document.querySelectorAll("button")].find((item) => item.textContent?.trim() === text) ?? null;
 }
+
+it("keeps the parent settings open when Escape closes the portal menu", async () => {
+	await mount();
+	const panel = document.querySelector(".remote-panel") as HTMLElement;
+	const settings = panel.parentElement as HTMLElement;
+	settings.setAttribute("role", "dialog");
+	const closeSettings = vi.fn();
+	const key = (event: KeyboardEvent) => {
+		if (event.key === "Escape" && !event.defaultPrevented) closeSettings();
+	};
+	document.addEventListener("keydown", key);
+	try {
+		const trigger = document.querySelector<HTMLElement>('[aria-label="remote.ux.more first"]');
+		trigger?.focus();
+		await click(trigger ?? null);
+		const menu = document.querySelector('[role="menu"]');
+		expect(menu).not.toBeNull();
+		expect(settings.contains(menu)).toBe(false);
+		expect(document.activeElement?.getAttribute("role")).toBe("menuitem");
+		await act(async () =>
+			document.activeElement?.dispatchEvent(
+				new KeyboardEvent("keydown", { key: "ArrowDown", bubbles: true, cancelable: true }),
+			),
+		);
+		expect(document.activeElement?.textContent).toBe("remote.connect");
+		await act(async () =>
+			document.activeElement?.dispatchEvent(
+				new KeyboardEvent("keydown", { key: "Tab", bubbles: true, cancelable: true }),
+			),
+		);
+		expect(document.activeElement?.textContent).toBe("remote.forget");
+		await act(async () =>
+			document.activeElement?.dispatchEvent(
+				new KeyboardEvent("keydown", { key: "Escape", bubbles: true, cancelable: true }),
+			),
+		);
+		expect(document.querySelector('[role="menu"]')).toBeNull();
+		expect(closeSettings).not.toHaveBeenCalled();
+		expect(document.activeElement).toBe(trigger);
+	} finally {
+		document.removeEventListener("keydown", key);
+	}
+});
+
+it("focuses the first menu item only after the popup becomes visible", async () => {
+	const originalFocus = HTMLElement.prototype.focus;
+	const focus = vi.spyOn(HTMLElement.prototype, "focus").mockImplementation(function (
+		this: HTMLElement,
+		options,
+	) {
+		if (this.closest<HTMLElement>('[role="menu"]')?.style.visibility === "hidden") return;
+		originalFocus.call(this, options);
+	});
+	try {
+		await mount();
+		await click(document.querySelector('[aria-label="remote.ux.more second"]'));
+		expect(document.activeElement).toBe(document.querySelector('[role="menuitem"]'));
+	} finally {
+		focus.mockRestore();
+	}
+});
+
+it("shows only the selected record's fresh or cached diagnostics", async () => {
+	await mount();
+	await act(async () =>
+		useRemoteConnectionStore.setState({
+			catalog: {
+				epoch: "run",
+				revision: 2,
+				lastSuccessfulConnectionId: null,
+				records: [
+					{
+						connectionId: "a",
+						alias: "first",
+						revision: 1,
+						binding: {
+							environmentId: "env-a",
+							uid: 42,
+							canonicalAgentDir: "/cached/a",
+							node: "/cached/node",
+							releaseId: "old-a",
+							target: { hostname: "a.host", user: "alice", port: "22" },
+						},
+					},
+					{ connectionId: "b", alias: "second", revision: 1 },
+				],
+			},
+			status: {
+				epoch: "run",
+				generation: 2,
+				revision: 2,
+				state: "disconnected",
+				connectionId: "b",
+				preflight: {
+					alias: "second",
+					target: { hostname: "fresh.host", user: "bob", port: "2222" },
+					uid: 99,
+					home: "/home/b",
+					node: "/fresh/node",
+					nodeVersion: "v22",
+					platform: "linux",
+					arch: "arm64",
+					glibc: "2",
+					commands: {},
+					installed: true,
+					installedReleaseId: "fresh-release",
+					agentDir: "/fresh/b",
+				},
+			},
+		}),
+	);
+	await click(document.querySelector('[aria-label="remote.ux.more second"]'));
+	await click(button("remote.ux.details"));
+	expect(document.body.textContent).toContain("bob@fresh.host:2222");
+	expect(document.body.textContent).toContain("fresh-release");
+	const writeText = vi.spyOn(navigator.clipboard, "writeText").mockResolvedValue();
+	await click(button("remote.ux.copyDiagnostics"));
+	expect(writeText).toHaveBeenCalledWith(expect.stringContaining("fresh.host"));
+	expect(writeText.mock.calls[0]?.[0]).not.toContain("token");
+	writeText.mockRestore();
+	await click(button("common.cancel"));
+	await click(document.querySelector('[aria-label="remote.ux.more first"]'));
+	await click(button("remote.ux.details"));
+	expect(document.body.textContent).toContain("/cached/node");
+	expect(document.body.textContent).toContain("/cached/a");
+	expect(document.body.textContent).toContain("42");
+	expect(document.body.textContent).not.toContain("fresh.host");
+	expect(document.body.textContent).not.toContain("fresh-release");
+	await click(button("common.cancel"));
+	const checkA = {
+		...useRemoteConnectionStore.getState().status.preflight!,
+		alias: "first",
+		environmentId: "env-a",
+		uid: 42,
+		target: { hostname: "a.host", user: "alice", port: "22" },
+		agentDir: "/cached/a",
+		node: "/upgraded/a/node",
+		installedReleaseId: "new-a",
+	};
+	await act(async () => {
+		useRemoteConnectionStore.getState().accept({
+			epoch: "run",
+			generation: 3,
+			revision: 3,
+			state: "disconnected",
+			connectionId: "a",
+			preflight: checkA,
+		});
+		useRemoteConnectionStore
+			.getState()
+			.accept({ epoch: "run", generation: 4, revision: 4, state: "disconnected", connectionId: "b" });
+	});
+	await click(document.querySelector('[aria-label="remote.ux.more first"]'));
+	await click(button("remote.ux.details"));
+	expect(document.body.textContent).toContain("/upgraded/a/node");
+	expect(document.body.textContent).toContain("new-a");
+	expect(document.body.textContent).not.toContain("fresh.host");
+});
 
 it("discovers hosts without connecting when the user selects a candidate", async () => {
 	const { connect } = await mount();

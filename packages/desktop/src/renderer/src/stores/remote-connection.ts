@@ -9,6 +9,7 @@ import {
 	type RemoteRemoveCommand,
 	type RemoteSwitchCommand,
 	type RemoteTokenCommand,
+	type SshPreflight,
 } from "@percho/shared";
 import { create } from "zustand";
 import { getPi } from "../api";
@@ -26,6 +27,8 @@ interface RemoteConnectionStore {
 	open: boolean;
 	status: RemoteConnectionStatus;
 	catalog: RemoteCatalogSnapshot;
+	lastChecks: Readonly<Record<string, SshPreflight>>;
+	getLastCheck: (connectionId: string) => SshPreflight | undefined;
 	acceptCatalog: (catalog: RemoteCatalogSnapshot) => void;
 	refreshCatalog: () => Promise<void>;
 	targetEnvironment: EnvironmentRef | null;
@@ -91,16 +94,29 @@ function startSynchronization(
 	};
 	void attempt(generation, 0);
 }
+const EMPTY_CHECKS: Readonly<Record<string, SshPreflight>> = Object.freeze({});
+
 export const useRemoteConnectionStore = create<RemoteConnectionStore>((set, get) => ({
 	open: false,
 	targetEnvironment: null,
+	lastChecks: EMPTY_CHECKS,
+	getLastCheck: (id) => get().lastChecks[id],
 	status: { revision: -1, state: "disconnected" },
 	catalog: { epoch: "", revision: -1, records: [], lastSuccessfulConnectionId: null },
 	acceptCatalog: (catalog) => {
 		const current = get().catalog;
 		if (current.epoch && catalog.epoch !== current.epoch) return;
 		if (catalog.revision <= current.revision) return;
-		set({ catalog });
+		const checks = get().lastChecks;
+		const ids = new Set(catalog.records.map((record) => record.connectionId));
+		const retained = Object.entries(checks).filter(([id]) => ids.has(id));
+		const lastChecks =
+			retained.length === Object.keys(checks).length
+				? checks
+				: retained.length
+					? Object.fromEntries(retained)
+					: EMPTY_CHECKS;
+		set({ catalog, lastChecks });
 	},
 	refreshCatalog: async () => {
 		get().acceptCatalog(await getPi().remoteGetCatalog());
@@ -143,7 +159,17 @@ export const useRemoteConnectionStore = create<RemoteConnectionStore>((set, get)
 			(status.state !== "connected" || changedEnvironment)
 		)
 			invalidateEnvironmentSessions(previous.environment);
-		set({ status });
+		const id = status.connectionId;
+		const catalog = get().catalog;
+		let lastChecks = get().lastChecks;
+		if (
+			id &&
+			status.preflight &&
+			(catalog.revision < 0 || catalog.records.some((record) => record.connectionId === id))
+		) {
+			lastChecks = { ...lastChecks, [id]: status.preflight };
+		}
+		set({ status, lastChecks });
 		if (environment && status.state === "connected") {
 			if (needsSynchronization) {
 				if (previous.instanceId && status.instanceId && previous.instanceId !== status.instanceId)
@@ -186,7 +212,11 @@ export const useRemoteConnectionStore = create<RemoteConnectionStore>((set, get)
 		get().acceptCatalog(await getPi().remoteResetCatalog({ epoch, token }));
 	},
 	preflight: async (cmd) => {
-		await getPi().remotePreflight(cmd);
+		try {
+			await getPi().remotePreflight(cmd);
+		} finally {
+			get().accept(await getPi().remoteGetStatus());
+		}
 	},
 	forget: async (cmd) => {
 		get().acceptCatalog(await getPi().remoteForget(cmd));

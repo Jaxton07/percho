@@ -68,9 +68,21 @@ const fs=require('node:fs'),os=require('node:os'),path=require('node:path'),cp=r
   socket.on('connect',()=>socket.write(JSON.stringify({type:'inspect',id:'probe'})+'\\n'));
   socket.on('data',chunk=>{text+=chunk;if(text.length>1048576)return finish({serviceState:'unreachable'});if(text.includes('\\n')){try{const frame=JSON.parse(text.split('\\n')[0]);finish(frame.result?{serviceState:'running',service:frame.result}:{serviceState:'unreachable'});}catch{finish({serviceState:'unreachable'});}}});
  });
+ let ownerReleased=false,ownerFd;
+ try{
+  const lock=path.join(root,'run','owner.lock'),before=fs.lstatSync(lock),uid=process.getuid();
+  const safe=s=>s.isFile()&&!s.isSymbolicLink()&&s.uid===uid&&(s.mode&0o077)===0;
+  const privateDir=p=>{const s=fs.lstatSync(p);return s.isDirectory()&&!s.isSymbolicLink()&&s.uid===uid&&(s.mode&0o077)===0;};
+  if(commands.flock&&typeof fs.constants.O_NOFOLLOW==='number'&&safe(before)&&privateDir(root)&&privateDir(path.join(root,'run'))){
+   ownerFd=fs.openSync(lock,fs.constants.O_RDONLY|fs.constants.O_NOFOLLOW);
+   const after=fs.fstatSync(ownerFd);
+   if(safe(after)&&before.dev===after.dev&&before.ino===after.ino)
+    ownerReleased=cp.spawnSync('flock',['-n','-E','75','3'],{stdio:['ignore','ignore','ignore',ownerFd],timeout:2000}).status===0;
+  }
+ }catch{}finally{if(ownerFd!==undefined)try{fs.closeSync(ownerFd);}catch{ownerReleased=false;}}
  let installedReleaseId;try{const v=JSON.parse(fs.readFileSync(path.join(root,'installed.json'),'utf8'));if(!/^v[0-9]+\\.[0-9]+\\.[0-9]+(?:-[a-zA-Z0-9.-]+)?$/.test(v.releaseId))throw new Error('Invalid installed release');installedReleaseId=v.releaseId;}catch(e){if(e.code!=='ENOENT')throw e;}
  if(!installedReleaseId&&fs.existsSync(path.join(root,'releases/development/entry.mjs')))installedReleaseId='development';
- console.log(JSON.stringify({uid:process.getuid?.(),home,agentDir,environmentId,node:fs.realpathSync(process.execPath),nodeVersion:process.versions.node,platform:process.platform,arch:process.arch,glibc:process.report.getReport().header.glibcVersionRuntime||'',commands,installedReleaseId,installed:!!installedReleaseId&&fs.existsSync(path.join(root,'releases',installedReleaseId,'entry.mjs')),...status}));
+ console.log(JSON.stringify({uid:process.getuid?.(),home,agentDir,environmentId,node:fs.realpathSync(process.execPath),nodeVersion:process.versions.node,platform:process.platform,arch:process.arch,glibc:process.report.getReport().header.glibcVersionRuntime||'',commands,installedReleaseId,installed:!!installedReleaseId&&fs.existsSync(path.join(root,'releases',installedReleaseId,'entry.mjs')),ownerReleased,...status}));
 })().catch(e=>{console.error(e.message);process.exitCode=1;});
 `;
 
@@ -104,7 +116,8 @@ export async function preflightSsh(alias: string, signal: AbortSignal): Promise<
 		!result.home?.startsWith("/") ||
 		!result.node?.startsWith("/") ||
 		!result.commands ||
-		typeof result.installed !== "boolean"
+		typeof result.installed !== "boolean" ||
+		(result.ownerReleased !== undefined && typeof result.ownerReleased !== "boolean")
 	)
 		throw new Error("Invalid remote preflight response");
 	return result;

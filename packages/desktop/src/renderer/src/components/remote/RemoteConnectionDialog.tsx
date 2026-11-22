@@ -1,9 +1,12 @@
 import {
 	environmentEntityRef,
+	isRemoteConnectionBusy,
 	type RemoteAddCommand,
 	type RemoteConnectionRecord,
+	type RemoteConnectionStatus,
 	type RemoteRecordCommand,
 	type RemoteTokenCommand,
+	type SshPreflight,
 	sameEnvironment,
 } from "@percho/shared";
 import { useEffect, useRef, useState } from "react";
@@ -42,6 +45,38 @@ type Dialog =
 	| { type: "operations" }
 	| { type: "reset"; token: string };
 
+function detailsSnapshot(
+	record: RemoteConnectionRecord,
+	status: RemoteConnectionStatus,
+	cached?: SshPreflight,
+) {
+	const active = status.connectionId === record.connectionId;
+	const probe = active ? (status.preflight ?? cached) : cached;
+	const target = probe?.target ?? record.binding?.target;
+	return {
+		alias: record.alias,
+		state: active ? status.state : "disconnected",
+		errorKind: active ? status.errorKind : undefined,
+		target: target ? { hostname: target.hostname, user: target.user, port: target.port } : undefined,
+		service:
+			(active && status.state === "connected" ? record.binding?.releaseId : undefined) ??
+			probe?.service?.releaseId ??
+			probe?.installedReleaseId ??
+			record.binding?.releaseId,
+		platform: probe?.platform,
+		arch: probe?.arch,
+		glibc: probe?.glibc,
+		nodeVersion: probe?.nodeVersion,
+		node: probe?.node ?? record.binding?.node,
+		uid: probe?.uid ?? record.binding?.uid,
+		agentDir: probe?.agentDir ?? record.binding?.canonicalAgentDir,
+	};
+}
+
+function focusListEntry() {
+	document.querySelector<HTMLElement>(".remote-list-header button:not(:disabled)")?.focus();
+}
+
 // A confirmation shown in a previous visit must not reopen on return.
 const shownTokens = new Set<string>();
 
@@ -61,14 +96,7 @@ export function RemoteConnectionPanel() {
 	const initialToken = useRef(status.installation?.token ?? status.targetConfirmation?.token);
 	const listRef = useRef<HTMLUListElement>(null);
 	const target = store.targetEnvironment;
-	const busy =
-		status.state === "checking" ||
-		status.state === "connecting" ||
-		status.state === "reconnecting" ||
-		status.state === "stopping" ||
-		!!status.installation ||
-		!!status.targetConfirmation ||
-		!!status.phase;
+	const busy = isRemoteConnectionBusy(status);
 	const current = catalog.records.find((r) => r.connectionId === status.connectionId);
 	const visibleTarget =
 		target?.kind === "ssh"
@@ -219,6 +247,15 @@ export function RemoteConnectionPanel() {
 		const record = useRemoteConnectionStore.getState().catalog.records.find((r) => r.connectionId === id);
 		if (record) connect(record);
 	};
+	const snapshot =
+		dialog?.type === "details"
+			? detailsSnapshot(
+					catalog.records.find((record) => record.connectionId === dialog.record.connectionId) ??
+						dialog.record,
+					status,
+					store.getLastCheck(dialog.record.connectionId),
+				)
+			: null;
 	const targetMissing =
 		target?.kind === "ssh" &&
 		!catalog.records.some(
@@ -407,13 +444,14 @@ export function RemoteConnectionPanel() {
 												className="remote-icon"
 												aria-label={`${t("remote.ux.more")} ${record.alias}`}
 												aria-expanded={menu?.id === record.connectionId}
-												onClick={(event) =>
+												onClick={(event) => {
+													event.currentTarget.focus();
 													setMenu(
 														menu?.id === record.connectionId
 															? null
 															: { id: record.connectionId, anchor: anchorOfElement(event.currentTarget) },
-													)
-												}
+													);
+												}}
 											>
 												<SettingsIcon name="more" />
 											</button>
@@ -422,6 +460,8 @@ export function RemoteConnectionPanel() {
 								</div>
 								{menu?.id === record.connectionId && (
 									<ContextMenu
+										keyboard
+										focusFallback={focusListEntry}
 										anchor={menu.anchor}
 										onClose={() => setMenu(null)}
 										items={[
@@ -468,6 +508,7 @@ export function RemoteConnectionPanel() {
 										]}
 									/>
 								)}
+								<span className="fade-rule remote-rule" aria-hidden="true" />
 							</li>
 						);
 					})}
@@ -590,6 +631,7 @@ export function RemoteConnectionPanel() {
 							<p className="remote-detail">
 								<span>{t("remote.alias")}</span>
 								<b>{dialog.record.alias}</b>
+								<span className="fade-rule remote-rule" aria-hidden="true" />
 							</p>
 							<p className="remote-detail">
 								<span>{t("remote.ux.status")}</span>
@@ -598,6 +640,7 @@ export function RemoteConnectionPanel() {
 										? t(`remote.${status.state}`)
 										: t("remote.disconnected")}
 								</b>
+								<span className="fade-rule remote-rule" aria-hidden="true" />
 							</p>
 							<p className="remote-note">
 								{status.connectionId === dialog.record.connectionId && status.state === "connected"
@@ -607,14 +650,16 @@ export function RemoteConnectionPanel() {
 							<p className="remote-detail">
 								<span>{t("remote.ux.address")}</span>
 								<b>
-									{dialog.record.binding?.target
-										? `${dialog.record.binding.target.user}@${dialog.record.binding.target.hostname}:${dialog.record.binding.target.port}`
+									{snapshot?.target
+										? `${snapshot.target.user}@${snapshot.target.hostname}:${snapshot.target.port}`
 										: t("remote.ux.unknown")}
 								</b>
+								<span className="fade-rule remote-rule" aria-hidden="true" />
 							</p>
 							<p className="remote-detail">
 								<span>{t("remote.ux.service")}</span>
-								<b>{dialog.record.binding?.releaseId ?? t("remote.ux.unknown")}</b>
+								<b>{snapshot?.service ?? t("remote.ux.unknown")}</b>
+								<span className="fade-rule remote-rule" aria-hidden="true" />
 							</p>
 							{status.connectionId === dialog.record.connectionId && status.error && (
 								<details className="remote-note">
@@ -622,19 +667,22 @@ export function RemoteConnectionPanel() {
 									<pre className="remote-code">{status.error}</pre>
 								</details>
 							)}
-							{status.connectionId === dialog.record.connectionId && status.preflight && (
-								<details className="remote-note">
-									<summary>{t("remote.ux.technical")}</summary>
-									<p className="break-all">
-										{status.preflight.platform} {status.preflight.arch} · glibc {status.preflight.glibc} ·
-										Node {status.preflight.nodeVersion} · UID {status.preflight.uid}
-										<br />
-										{status.preflight.node}
-										<br />
-										{status.preflight.agentDir}
-									</p>
-								</details>
-							)}
+							{snapshot &&
+								(snapshot.node || snapshot.uid !== undefined || snapshot.agentDir || snapshot.platform) && (
+									<details className="remote-note">
+										<summary>{t("remote.ux.technical")}</summary>
+										<p className="break-all">
+											{snapshot.platform ?? t("remote.ux.unknown")} {snapshot.arch} · glibc{" "}
+											{snapshot.glibc ?? t("remote.ux.unknown")} · Node{" "}
+											{snapshot.nodeVersion ?? t("remote.ux.unknown")} · UID{" "}
+											{snapshot.uid ?? t("remote.ux.unknown")}
+											<br />
+											{snapshot.node ?? t("remote.ux.unknown")}
+											<br />
+											{snapshot.agentDir ?? t("remote.ux.unknown")}
+										</p>
+									</details>
+								)}
 							<div className="mt-4 flex flex-wrap gap-2">
 								<button
 									type="button"
@@ -671,22 +719,7 @@ export function RemoteConnectionPanel() {
 									disabled={working}
 									onClick={() =>
 										void run(async () => {
-											const record = dialog.record;
-											await navigator.clipboard.writeText(
-												JSON.stringify(
-													{
-														alias: record.alias,
-														target: record.binding?.target,
-														service: record.binding?.releaseId,
-														state:
-															status.connectionId === record.connectionId ? status.state : "disconnected",
-														errorKind:
-															status.connectionId === record.connectionId ? status.errorKind : undefined,
-													},
-													null,
-													2,
-												),
-											);
+											await navigator.clipboard.writeText(JSON.stringify(snapshot, null, 2));
 										})
 									}
 								>
@@ -695,12 +728,6 @@ export function RemoteConnectionPanel() {
 							</div>
 							{status.state === "connected" && (
 								<p className="remote-note">{t("remote.ux.disconnectFirst")}</p>
-							)}
-							{status.connectionId === dialog.record.connectionId && status.error && (
-								<details className="remote-note">
-									<summary>{t("remote.ux.technical")}</summary>
-									<p className="break-all">{status.error}</p>
-								</details>
 							)}
 						</>
 					)}
@@ -816,6 +843,7 @@ export function RemoteConnectionPanel() {
 											{t("remote.checked")}
 										</button>
 									</div>
+									<span className="fade-rule remote-rule" aria-hidden="true" />
 								</div>
 							))}
 						</>

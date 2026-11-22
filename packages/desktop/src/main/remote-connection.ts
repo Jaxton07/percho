@@ -11,6 +11,7 @@ import {
 } from "@percho/backend";
 import {
 	type EnvironmentRef,
+	isRemoteConnectionBusy,
 	type LoadedSessionSummary,
 	type MutationReceipt,
 	type RemoteAddCommand,
@@ -49,6 +50,18 @@ const environmentFor = (
 	record.binding
 		? { kind: "ssh", connectionId: record.connectionId, environmentId: record.binding.environmentId }
 		: undefined;
+
+const maintenanceIdentityKey = (
+	identity: Partial<Pick<SshPreflight, "environmentId" | "uid" | "agentDir" | "target">>,
+) =>
+	JSON.stringify([
+		identity.environmentId,
+		identity.uid,
+		identity.agentDir,
+		identity.target?.hostname,
+		identity.target?.user,
+		identity.target?.port,
+	]);
 
 type Installation = {
 	token: string;
@@ -111,7 +124,12 @@ export class RemoteConnectionManager {
 	private readonly unconfirmedStops = new Set<string>();
 	private maintenanceKey(record: RemoteConnectionRecord): string {
 		const b = record.binding;
-		return JSON.stringify([b?.environmentId, b?.uid, b?.canonicalAgentDir, b?.target]);
+		return maintenanceIdentityKey({
+			environmentId: b?.environmentId,
+			uid: b?.uid,
+			agentDir: b?.canonicalAgentDir,
+			target: b?.target,
+		});
 	}
 
 	constructor(
@@ -178,15 +196,8 @@ export class RemoteConnectionManager {
 			throw new Error("SSH connection changed; refresh before trying again");
 		return this.catalog.record(command.connectionId);
 	}
-	private busy(): boolean {
-		return (
-			["checking", "connecting", "reconnecting", "stopping"].includes(this.status.state) ||
-			!!this.status.installation ||
-			!!this.status.targetConfirmation
-		);
-	}
 	private assertAvailable(): void {
-		if (this.busy() || this.connection)
+		if (isRemoteConnectionBusy(this.status) || this.connection)
 			throw new Error(
 				"A remote connection is already being established or active; cancel or disconnect first",
 			);
@@ -243,7 +254,8 @@ export class RemoteConnectionManager {
 		return this.serial(async () => {
 			if (command.epoch !== this.epoch || command.generation !== this.generation)
 				throw new Error("SSH connection changed; refresh before adding");
-			if (this.busy()) throw new Error("Finish or cancel the current SSH operation first");
+			if (isRemoteConnectionBusy(this.status))
+				throw new Error("Finish or cancel the current SSH operation first");
 			const result = await this.catalog.add(command.alias, command.catalogRevision);
 			this.publishCatalog(result.catalog);
 			return result;
@@ -252,7 +264,7 @@ export class RemoteConnectionManager {
 	async resetCatalog(command: { epoch: string; token: string }): Promise<RemoteCatalogSnapshot> {
 		await this.ensure();
 		return this.serial(async () => {
-			if (command.epoch !== this.epoch || this.busy() || this.connection)
+			if (command.epoch !== this.epoch || isRemoteConnectionBusy(this.status) || this.connection)
 				throw new Error("SSH reset confirmation expired");
 			const catalog = await this.catalog.reset(command.token);
 			this.generation++;
@@ -267,8 +279,15 @@ export class RemoteConnectionManager {
 			if (record.revision !== command.recordRevision) throw new Error("SSH removal confirmation expired");
 			if (this.status.state === "stopping") throw new Error("Remote service stop is still in progress");
 			const active = this.status.connectionId === record.connectionId;
-			if (active && this.busy()) throw new Error("Cancel the SSH operation before removing this connection");
-			if (active) this.release();
+			if (active && isRemoteConnectionBusy(this.status))
+				throw new Error("Cancel the SSH operation before removing this connection");
+			if (active) {
+				this.autoConnect = false;
+				this.clearTransport();
+				this.update({ ...this.status, state: "connecting", phase: "cancelling" });
+				await this.closing;
+				this.release();
+			}
 			const catalog = await this.catalog.remove(record.connectionId, record.revision);
 			if (active) this.update({ state: "disconnected" });
 			return this.publishCatalog(catalog);
@@ -346,8 +365,9 @@ export class RemoteConnectionManager {
 			if (!this.current(generation)) throw new Error("SSH check cancelled");
 			this.checkIdentity(record, probe);
 			this.controller = undefined;
-			const maintenanceKey = this.maintenanceKey(record);
-			if (probe.serviceState === "stopped") this.unconfirmedStops.delete(maintenanceKey);
+			const maintenanceKey = maintenanceIdentityKey(probe);
+			if (probe.serviceState === "stopped" && probe.ownerReleased === true)
+				this.unconfirmedStops.delete(maintenanceKey);
 			this.update({
 				...this.status,
 				state: "disconnected",
@@ -528,8 +548,9 @@ export class RemoteConnectionManager {
 			if (!this.current(generation)) return this.status;
 			checkSshRequirements(probe);
 			this.checkIdentity(record, probe);
-			const maintenanceKey = this.maintenanceKey(record);
-			if (probe.serviceState === "stopped") this.unconfirmedStops.delete(maintenanceKey);
+			const maintenanceKey = maintenanceIdentityKey(probe);
+			if (probe.serviceState === "stopped" && probe.ownerReleased === true)
+				this.unconfirmedStops.delete(maintenanceKey);
 			this.update({
 				...this.status,
 				preflight: probe,
@@ -544,6 +565,10 @@ export class RemoteConnectionManager {
 				});
 			}
 			if (forcePrepare || (!probe.installed && probe.serviceState !== "running")) {
+				if (this.unconfirmedStops.has(maintenanceKey))
+					throw new Error(
+						"Remote service stop is unconfirmed; verify ownership release before preparing installation",
+					);
 				if (automatic) throw new Error("NOT_INSTALLED: Open the connection dialog to confirm installation");
 				if (probe.serviceState && probe.serviceState !== "stopped")
 					throw new Error(
@@ -640,7 +665,7 @@ export class RemoteConnectionManager {
 				});
 				this.publishCatalog(catalog);
 				const committed = catalog.records.find((item) => item.connectionId === record.connectionId);
-				if (committed && probe.serviceState === "stopped")
+				if (committed && probe.serviceState === "stopped" && probe.ownerReleased === true)
 					this.unconfirmedStops.delete(this.maintenanceKey(committed));
 				if (!this.current(generation) || closed) throw new Error("Remote connection cancelled");
 				environment = { kind: "ssh", connectionId: record.connectionId, environmentId: info.environmentId };
@@ -714,7 +739,13 @@ export class RemoteConnectionManager {
 			const record = snapshot.records.find(
 				(item) => item.connectionId === snapshot.lastSuccessfulConnectionId,
 			);
-			if (!snapshot.error && this.autoConnect && !this.busy() && !this.connection && record?.binding?.target)
+			if (
+				!snapshot.error &&
+				this.autoConnect &&
+				!isRemoteConnectionBusy(this.status) &&
+				!this.connection &&
+				record?.binding?.target
+			)
 				void this.start(
 					{ epoch: this.epoch, generation: this.generation, connectionId: record.connectionId },
 					true,

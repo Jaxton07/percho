@@ -492,6 +492,48 @@ describe("installation, retries and explicit stop", () => {
 		pending.resolve();
 		expect(await stopping).toMatchObject({ state: "disconnected", serviceStopped: true });
 	});
+	it("does not infer owner release from a missing socket, and only clears uncertainty after proof", async () => {
+		const distribution = {
+			manifest: vi.fn().mockResolvedValue({ ...manifest, releaseId: "v2.0.0" }),
+			download: vi.fn().mockResolvedValue("/isolated/archive"),
+			install: vi.fn(),
+		};
+		manager = new RemoteConnectionManager(distribution as never);
+		await connect();
+		fixture.stop.mockRejectedValueOnce(new Error("owner may still be running"));
+		await expect(manager.stopService(await command())).rejects.toThrow();
+		fixture.probe.mockResolvedValue({ ...probe, serviceState: "stopped", ownerReleased: false });
+		await manager.preflight(await command());
+		expect((await manager.getStatus()).stopUnconfirmed).toBe(true);
+		await expect(manager.prepareInstall(await command())).rejects.toThrow("unconfirmed");
+		expect(distribution.manifest).not.toHaveBeenCalled();
+		fixture.probe.mockResolvedValue({ ...probe, serviceState: "stopped", ownerReleased: true });
+		await manager.preflight(await command());
+		expect((await manager.getStatus()).stopUnconfirmed).toBe(false);
+		expect((await manager.prepareInstall(await command())).installation?.releaseId).toBe("v2.0.0");
+	});
+
+	it("keeps an active record until its local bridge has exited during removal", async () => {
+		await connect();
+		const record = (await manager.getCatalog()).records[0]!;
+		const closed = deferred<void>();
+		fixture.close.mockImplementationOnce(() => closed.promise);
+		let complete = false;
+		const removing = manager.forget({ ...(await command()), recordRevision: record.revision }).then(() => {
+			complete = true;
+		});
+		try {
+			await vi.waitFor(async () => expect(await manager.getStatus()).toMatchObject({ phase: "cancelling" }));
+			expect(complete).toBe(false);
+			expect((await manager.getCatalog()).records).toHaveLength(1);
+		} finally {
+			closed.resolve();
+			await removing;
+		}
+		expect((await manager.getCatalog()).records).toHaveLength(0);
+		expect((await manager.getStatus()).state).toBe("disconnected");
+	});
+
 	it("a failed stop remains explicitly unconfirmed", async () => {
 		await connect();
 		fixture.stop.mockRejectedValueOnce(new Error("owner may still be running"));

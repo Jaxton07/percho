@@ -52,7 +52,6 @@
 	gap: 14px;
 	min-height: 74px;
 	padding: 14px 0;
-	border-bottom: 1px solid var(--color-border);
 }
 .remote-host {
 	min-width: 0;
@@ -118,30 +117,6 @@
 }
 .remote-error-line button {
 	text-decoration: underline;
-}
-.remote-menu {
-	position: absolute;
-	right: 0;
-	top: calc(100% - 8px);
-	z-index: 10;
-	min-width: 200px;
-	border-radius: 14px;
-	background: var(--color-surface);
-	box-shadow: var(--shadow-pop);
-	padding: 6px;
-}
-.remote-menu button {
-	display: block;
-	width: 100%;
-	text-align: left;
-	padding: 9px 10px;
-	border-radius: 8px;
-}
-.remote-menu button:hover {
-	background: var(--color-hover);
-}
-.remote-menu button:disabled {
-	opacity: 0.4;
 }
 .remote-empty {
 	display: flex;
@@ -225,16 +200,16 @@
 	padding: 0 16px;
 }
 .remote-alias {
+	position: relative;
 	display: flex;
 	align-items: center;
 	gap: 12px;
 	padding: 12px 0;
 	min-width: 0;
-	border-bottom: 1px solid var(--color-border);
 	cursor: pointer;
 }
-.remote-alias:last-child {
-	border: 0;
+.remote-alias:last-child .remote-rule {
+	display: none;
 }
 .remote-alias:has(input:disabled) {
 	opacity: 0.5;
@@ -261,11 +236,17 @@
 	overflow-wrap: anywhere;
 }
 .remote-detail {
+	position: relative;
 	display: flex;
 	justify-content: space-between;
 	gap: 20px;
 	padding: 12px 0;
-	border-bottom: 1px solid var(--color-border);
+}
+.remote-rule {
+	position: absolute;
+	bottom: 0;
+	left: 0;
+	right: 0;
 }
 .remote-detail span {
 	color: var(--color-ink-dim);

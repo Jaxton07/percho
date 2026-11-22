@@ -178,6 +178,7 @@ export function RemoteAddDialog({
 										checked={selected === alias}
 										onChange={() => setSelected(alias)}
 									/>
+									<span className="fade-rule remote-rule" aria-hidden="true" />
 								</label>
 							))
 						)}

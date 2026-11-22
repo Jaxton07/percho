@@ -3,6 +3,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const fixture = vi.hoisted(() => ({
 	disconnect: vi.fn(),
+	preflight: vi.fn(),
 	remoteAdd: vi.fn(),
 	closeSettings: vi.fn(),
 	getCatalog: vi.fn(),
@@ -19,6 +20,7 @@ const fixture = vi.hoisted(() => ({
 vi.mock("../api", () => ({
 	getPi: () => ({
 		remoteDisconnect: fixture.disconnect,
+		remotePreflight: fixture.preflight,
 		remoteAdd: fixture.remoteAdd,
 		remoteGetCatalog: fixture.getCatalog,
 		remoteGetStatus: fixture.getStatus,
@@ -75,6 +77,56 @@ afterEach(() => {
 });
 
 describe("remote command capture", () => {
+	it("reads the fresh result and retains each host's last check without borrowing another host's data", async () => {
+		const catalog = {
+			epoch: "run",
+			revision: 1,
+			records: [
+				{ connectionId: "a", alias: "alpha", revision: 0 },
+				{ connectionId: "b", alias: "beta", revision: 0 },
+			],
+			lastSuccessfulConnectionId: null,
+		};
+		const status = {
+			epoch: "run",
+			revision: 1,
+			generation: 1,
+			connectionId: "a",
+			state: "disconnected" as const,
+		};
+		const preflight = {
+			alias: "alpha",
+			target: { hostname: "fresh-a", user: "dev", port: "2222" },
+			uid: 1000,
+			home: "/home/dev",
+			node: "/usr/bin/node",
+			nodeVersion: "22.19.0",
+			platform: "linux",
+			arch: "arm64",
+			glibc: "2.35",
+			commands: { sh: true, tar: true, sha256sum: true, flock: true, setsid: true },
+			installed: true,
+			agentDir: "/home/dev/.percho/agent",
+			installedReleaseId: "v2.0.0",
+		};
+		useRemoteConnectionStore.setState({ catalog, status });
+		fixture.preflight.mockResolvedValueOnce(preflight);
+		fixture.getStatus.mockResolvedValueOnce({ ...status, generation: 2, revision: 3, preflight });
+		await useRemoteConnectionStore.getState().preflight({ epoch: "run", generation: 1, connectionId: "a" });
+		expect(useRemoteConnectionStore.getState().status.preflight?.target.hostname).toBe("fresh-a");
+		expect(useRemoteConnectionStore.getState().getLastCheck("a")?.installedReleaseId).toBe("v2.0.0");
+		useRemoteConnectionStore.getState().accept({ ...status, connectionId: "b", generation: 3, revision: 4 });
+		expect(useRemoteConnectionStore.getState().getLastCheck("a")?.target.hostname).toBe("fresh-a");
+		expect(useRemoteConnectionStore.getState().getLastCheck("b")).toBeUndefined();
+		useRemoteConnectionStore
+			.getState()
+			.accept({ ...status, revision: 2, preflight: { ...preflight, installedReleaseId: "old" } });
+		expect(useRemoteConnectionStore.getState().getLastCheck("a")?.installedReleaseId).toBe("v2.0.0");
+		useRemoteConnectionStore
+			.getState()
+			.acceptCatalog({ ...catalog, revision: 2, records: [catalog.records[1]!] });
+		expect(useRemoteConnectionStore.getState().getLastCheck("a")).toBeUndefined();
+	});
 	it("saves a record with the observed catalog and slot without connecting", async () => {
 		const catalog = { epoch: "run", revision: 1, records: [], lastSuccessfulConnectionId: null };
 		const updated = {
