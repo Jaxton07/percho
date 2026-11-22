@@ -197,14 +197,19 @@ export const useRemoteConnectionStore = create<RemoteConnectionStore>((set, get)
 			(status.epoch && catalog.epoch !== status.epoch)
 		)
 			throw new Error("Remote connection state is unavailable");
-		const result = await getPi().remoteAdd({
-			epoch,
-			generation: observation?.generation ?? status.generation,
-			catalogRevision: observation?.catalogRevision ?? catalog.revision,
-			alias,
-		});
-		get().acceptCatalog(result.catalog);
-		return result.connectionId;
+		try {
+			const result = await getPi().remoteAdd({
+				epoch,
+				generation: observation?.generation ?? status.generation,
+				catalogRevision: observation?.catalogRevision ?? catalog.revision,
+				alias,
+			});
+			get().acceptCatalog(result.catalog);
+			return result.connectionId;
+		} catch (error) {
+			await get().refreshCatalog();
+			throw error;
+		}
 	},
 	resetCatalog: async (token) => {
 		const epoch = get().catalog.epoch;

@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { getPi } from "../../api";
 import { useT } from "../../i18n";
 import { SettingsIcon } from "../icons/SettingsIcon";
+import { Tooltip } from "../ui/Tooltip";
 import { RemoteActionError } from "./RemoteActionError";
 import { RemoteModal } from "./RemoteModal";
 
@@ -22,6 +23,8 @@ export function RemoteAddDialog({
 	const [aliases, setAliases] = useState<string[]>([]);
 	const [selected, setSelected] = useState("");
 	const [manual, setManual] = useState(false);
+	const [refreshHovered, setRefreshHovered] = useState(false);
+	const [refreshFocused, setRefreshFocused] = useState(false);
 	const [loading, setLoading] = useState(true);
 	const [loaded, setLoaded] = useState(false);
 	const [incomplete, setIncomplete] = useState(false);
@@ -101,15 +104,25 @@ export function RemoteAddDialog({
 							</button>
 						) : (
 							<>
-								<button
-									type="button"
-									className="remote-icon"
-									aria-label={t("remote.refreshAliases")}
-									disabled={loading || saving}
-									onClick={refresh}
+								<Tooltip
+									label={t("remote.refreshAliases")}
+									open={refreshHovered || refreshFocused}
+									zIndex={90}
 								>
-									<SettingsIcon name="refresh" className={loading ? "remote-spin" : ""} />
-								</button>
+									<button
+										type="button"
+										className="remote-icon"
+										aria-label={t("remote.refreshAliases")}
+										onMouseEnter={() => setRefreshHovered(true)}
+										onMouseLeave={() => setRefreshHovered(false)}
+										onFocus={() => setRefreshFocused(true)}
+										onBlur={() => setRefreshFocused(false)}
+										disabled={loading || saving}
+										onClick={refresh}
+									>
+										<SettingsIcon name="refresh" className={loading ? "remote-spin" : ""} />
+									</button>
+								</Tooltip>
 								<button
 									type="button"
 									className="remote-button"

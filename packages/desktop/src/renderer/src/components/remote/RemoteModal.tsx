@@ -70,8 +70,15 @@ export function RemoteModal({
 			cancelAnimationFrame(frame);
 			document.removeEventListener("keydown", key, true);
 			if (parent) parent.inert = !!wasInert;
-			if (previous?.isConnected) previous.focus();
-			else document.querySelector<HTMLElement>(".remote-list-header button:not(:disabled)")?.focus();
+			if (
+				previous?.isConnected &&
+				previous !== document.body &&
+				previous !== document.documentElement &&
+				!previous.matches(":disabled") &&
+				!previous.closest("[inert]")
+			) {
+				previous.focus();
+			} else document.querySelector<HTMLElement>(".remote-list-header button:not(:disabled)")?.focus();
 		};
 	}, []);
 	const t = useT();

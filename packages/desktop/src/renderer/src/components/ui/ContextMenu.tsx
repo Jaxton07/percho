@@ -23,7 +23,7 @@ export interface ContextMenuItem {
  * 锚在触发元素下沿左对齐，超右缘左翻、下方不足上翻（定位规则在 place-menu）。
  * 关闭：点浮层外（pointerdown 捕获）/ Esc / 选中任一项 / 滚动与窗口尺寸变化（防浮层脱锚）。
  * 外观：`rounded-xl border border-border bg-surface p-1 shadow-pop` 的有边框卡片（与左栏共用一套，
- * 不再有 veil 渐变变体）；项高 30px、图标与文字各 13px、危险项红字**且图标同红**、分隔线 `h-px bg-border`。
+ * 不再有 veil 渐变变体）；项高 30px、图标与文字各 13px、危险项红字**且图标同红**、分隔线 `fade-rule`。
  */
 export function ContextMenu({
 	anchor,
@@ -107,7 +107,7 @@ export function ContextMenu({
 
 	const renderRow = (item: ContextMenuItem) => (
 		<Fragment key={item.key}>
-			{item.separatorBefore && <div className="mx-1.5 my-1 h-px bg-border" />}
+			{item.separatorBefore && <div className="fade-rule mx-1.5 my-1" />}
 			{(() => {
 				const button = (
 					<button
@@ -118,6 +118,12 @@ export function ContextMenu({
 							item.danger ? "text-red-600" : "text-ink-2 hover:text-ink"
 						}`}
 						onClick={() => {
+							if (keyboard) {
+								const previous = previousRef.current;
+								if (previous?.isConnected && !previous.matches(":disabled") && !previous.closest("[inert]")) {
+									previous.focus({ preventScroll: true });
+								} else focusFallback?.();
+							}
 							item.onSelect();
 							onClose();
 						}}

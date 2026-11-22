@@ -131,6 +131,97 @@ it("focuses the first menu item only after the popup becomes visible", async () 
 	}
 });
 
+it.each(["mouse", "keyboard"])("restores the more button after opening details with %s", async (method) => {
+	await mount();
+	const trigger = document.querySelector<HTMLElement>('[aria-label="remote.ux.more first"]');
+	trigger?.focus();
+	await click(trigger ?? null);
+	const details = document.querySelector<HTMLElement>('[role="menuitem"]');
+	expect(document.activeElement).toBe(details);
+	if (method === "mouse") {
+		await act(async () => {
+			details?.dispatchEvent(new MouseEvent("mousedown", { bubbles: true }));
+			details?.focus();
+			details?.click();
+		});
+	} else {
+		await act(async () => {
+			details?.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true }));
+			// happy-dom does not synthesize the browser's click for Enter.
+			details?.click();
+		});
+	}
+	expect(document.querySelector('[role="menu"]')).toBeNull();
+	await click(document.querySelector('[role="dialog"] [aria-label="common.cancel"]'));
+	expect(document.activeElement).toBe(trigger);
+});
+
+it("falls back to the list entry when the details trigger disappears", async () => {
+	await mount();
+	const trigger = document.querySelector<HTMLElement>('[aria-label="remote.ux.more first"]');
+	await click(trigger);
+	await click(button("remote.ux.details"));
+	await act(async () => {
+		const catalog = useRemoteConnectionStore.getState().catalog;
+		useRemoteConnectionStore.setState({ catalog: { ...catalog, records: catalog.records.slice(1) } });
+	});
+	await click(document.querySelector('[role="dialog"] [aria-label="common.cancel"]'));
+	expect(document.activeElement).toBe(button("remote.ux.add"));
+});
+
+it("uses a fade rule for the menu separator", async () => {
+	await mount();
+	await click(document.querySelector('[aria-label="remote.ux.more first"]'));
+	const remove = button("remote.forget");
+	expect(remove?.previousElementSibling?.classList.contains("fade-rule")).toBe(true);
+});
+
+it("provides a tooltip for refresh but not for the close button", async () => {
+	await mount();
+	await click(button("remote.ux.add"));
+	const refresh = document.querySelector('[aria-label="remote.refreshAliases"]');
+	const close = document.querySelector('[role="dialog"] [aria-label="common.cancel"]');
+	assert(refresh);
+	await act(async () => {
+		refresh.dispatchEvent(new MouseEvent("mouseover", { bubbles: true }));
+	});
+	const tooltip = [...document.querySelectorAll<HTMLElement>('[role="tooltip"]')].find(
+		(item) => item.textContent === "remote.refreshAliases",
+	);
+	assert(tooltip);
+	expect(tooltip.textContent).toBe("remote.refreshAliases");
+	expect(tooltip.closest('[role="dialog"]')).toBeNull();
+	expect(Number(tooltip.style.zIndex)).toBeGreaterThan(80);
+	expect(close?.hasAttribute("title")).toBe(false);
+	expect(close?.parentElement?.querySelector('[role="tooltip"]')).toBeNull();
+});
+
+it("returns focus to the list when the menu trigger becomes disabled during reconnect", async () => {
+	const originalFocus = HTMLElement.prototype.focus;
+	const focus = vi.spyOn(HTMLElement.prototype, "focus").mockImplementation(function (
+		this: HTMLElement,
+		options,
+	) {
+		if (!this.matches(":disabled")) originalFocus.call(this, options);
+	});
+	try {
+		await mount();
+		await click(document.querySelector('[aria-label="remote.ux.more first"]'));
+		await act(async () =>
+			useRemoteConnectionStore.setState({
+				status: { ...useRemoteConnectionStore.getState().status, state: "reconnecting" },
+			}),
+		);
+		await act(async () => {
+			window.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
+		});
+		expect(document.querySelector('[role="menu"]')).toBeNull();
+		expect(document.activeElement).toBe(document.querySelector(".remote-row button:not(:disabled)"));
+	} finally {
+		focus.mockRestore();
+	}
+});
+
 it("shows only the selected record's fresh or cached diagnostics", async () => {
 	await mount();
 	await act(async () =>

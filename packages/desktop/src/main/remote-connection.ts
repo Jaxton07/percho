@@ -753,7 +753,10 @@ export class RemoteConnectionManager {
 				).catch(() => {});
 		});
 	}
-	async stopService(command: RemoteRecordCommand): Promise<RemoteConnectionStatus> {
+	stopService(command: RemoteRecordCommand): Promise<RemoteConnectionStatus> {
+		return this.trackWork(command.generation, this.stop(command));
+	}
+	private async stop(command: RemoteRecordCommand): Promise<RemoteConnectionStatus> {
 		await this.ensure();
 		const { target, generation } = await this.serial(() => {
 			this.assert(command);
@@ -770,16 +773,20 @@ export class RemoteConnectionManager {
 		});
 		try {
 			await target.stopService();
-			return await this.serial(() => {
+			return await this.serial(async () => {
 				if (generation !== this.generation) return this.status;
+				this.clearTransport();
+				await this.closing;
 				this.unconfirmedStops.delete(this.maintenanceKey(this.catalog.record(command.connectionId)));
 				this.release();
 				return this.update({ ...this.status, serviceStopped: true, stopUnconfirmed: false });
 			});
 		} catch (error) {
-			await this.serial(() => {
+			await this.serial(async () => {
 				if (generation !== this.generation) return;
 				this.unconfirmedStops.add(this.maintenanceKey(this.catalog.record(command.connectionId)));
+				this.clearTransport();
+				await this.closing;
 				this.release();
 				this.update({
 					...this.status,

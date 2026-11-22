@@ -207,17 +207,21 @@ export class SshRuntimeConnection {
 			/* A closed bridge or stop ACK does not prove owner exit. */
 		}
 		this.closeBridge();
-		const confirmed = JSON.parse(
-			await runSsh(
-				sshArguments(
-					this.alias,
-					`exec ${shellQuote(this.node)} ${releaseEntry(this.releaseId)} wait-stopped`,
+		try {
+			const confirmed = JSON.parse(
+				await runSsh(
+					sshArguments(
+						this.alias,
+						`exec ${shellQuote(this.node)} ${releaseEntry(this.releaseId)} wait-stopped`,
+					),
+					this.signal,
+					45_000,
 				),
-				this.signal,
-				45_000,
-			),
-		);
-		if (confirmed.stopped !== true) throw new Error("Remote service stop is unconfirmed");
+			);
+			if (confirmed.stopped !== true) throw new Error("Remote service stop is unconfirmed");
+		} finally {
+			await this.bridgeClosed;
+		}
 	}
 	disconnect(): Promise<void> {
 		this.closeBridge();

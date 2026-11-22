@@ -530,6 +530,60 @@ describe("installation, retries and explicit stop", () => {
 		pending.resolve();
 		expect(await stopping).toMatchObject({ state: "disconnected", serviceStopped: true });
 	});
+	it.each([true, false])(
+		"keeps stopping until local bridge exit after confirmation=%s",
+		async (confirmed) => {
+			await connect();
+			const closed = deferred<void>();
+			fixture.close.mockImplementationOnce(() => closed.promise);
+			if (!confirmed) fixture.stop.mockRejectedValueOnce(new Error("stop check failed"));
+			let settled = false,
+				failure: unknown;
+			const stopped = manager.stopService(await command()).then(
+				() => {
+					settled = true;
+				},
+				(error) => {
+					settled = true;
+					failure = error;
+				},
+			);
+			try {
+				await vi.waitFor(() => expect(fixture.close).toHaveBeenCalled());
+				expect(settled).toBe(false);
+				expect((await manager.getStatus()).state).toBe("stopping");
+			} finally {
+				closed.resolve();
+				await stopped;
+			}
+			if (confirmed) expect((await manager.getStatus()).serviceStopped).toBe(true);
+			else {
+				expect(failure).toBeInstanceOf(Error);
+				expect((await manager.getStatus()).stopUnconfirmed).toBe(true);
+			}
+		},
+	);
+
+	it("waits for the in-flight stop probe during application shutdown", async () => {
+		await connect();
+		const pending = deferred<void>();
+		fixture.stop.mockImplementationOnce(() => pending.promise);
+		const stopped = manager.stopService(await command());
+		await vi.waitFor(() => expect(fixture.stop).toHaveBeenCalled());
+		let finished = false;
+		const shutdown = manager.shutdown().then(() => {
+			finished = true;
+		});
+		try {
+			await vi.waitFor(() => expect(fixture.close).toHaveBeenCalled());
+			expect(finished).toBe(false);
+		} finally {
+			pending.resolve();
+			await stopped;
+			await shutdown;
+		}
+	});
+
 	it("does not infer owner release from a missing socket, and only clears uncertainty after proof", async () => {
 		const distribution = {
 			manifest: vi.fn().mockResolvedValue({ ...manifest, releaseId: "v2.0.0" }),

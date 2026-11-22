@@ -55,6 +55,35 @@ it("SSH 菜单挂在设置容器外，Escape 只关闭菜单", async () => {
 	container.remove();
 });
 
+it("SSH 详情关闭后焦点回到设置内的更多按钮", async () => {
+	useRemoteConnectionStore.setState({
+		status: { epoch: "test", generation: 1, revision: 1, state: "disconnected" },
+		catalog: {
+			epoch: "test",
+			revision: 1,
+			records: [{ connectionId: "a", alias: "host", revision: 1 }],
+			lastSuccessfulConnectionId: null,
+		},
+	});
+	useLocalSettingsStore.setState({ open: true, category: "remote" });
+	const container = document.createElement("div");
+	document.body.append(container);
+	const root = createRoot(container);
+	await act(async () => root.render(<SettingsDialog />));
+	const trigger = container.querySelector<HTMLElement>('[aria-label="remote.ux.more host"]');
+	await act(async () => trigger?.click());
+	const details = document.querySelector<HTMLElement>('[role="menuitem"]');
+	await act(async () => details?.click());
+	const close = document.querySelector<HTMLElement>(
+		'[aria-label="remote.ux.details"] [aria-label="common.cancel"]',
+	);
+	expect(close).not.toBeNull();
+	await act(async () => close?.click());
+	expect(document.activeElement).toBe(trigger);
+	await act(async () => root.unmount());
+	container.remove();
+});
+
 it("打开设置后可选择分类并用 Escape 关闭", async () => {
 	useLocalSettingsStore.setState({ open: true, category: "general" });
 	const container = document.createElement("div");

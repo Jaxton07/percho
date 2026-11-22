@@ -127,6 +127,32 @@ describe("remote command capture", () => {
 		useRemoteConnectionStore.getState().acceptCatalog({ ...catalog, revision: 2, records: [otherRecord] });
 		expect(useRemoteConnectionStore.getState().getLastCheck("a")).toBeUndefined();
 	});
+	it.each([true, false])(
+		"refreshes the catalog after a lost add response (saved=%s) without replaying",
+		async (saved) => {
+			const catalog = { epoch: "run", revision: 1, records: [], lastSuccessfulConnectionId: null };
+			const refreshed = {
+				...catalog,
+				revision: 2,
+				records: saved ? [{ connectionId: "saved", alias: "new-host", revision: 0 }] : [],
+			};
+			useRemoteConnectionStore.setState({
+				catalog,
+				status: { epoch: "run", revision: 1, generation: 2, state: "disconnected" },
+			});
+			const lost = new Error("IPC response lost");
+			fixture.remoteAdd.mockRejectedValueOnce(lost);
+			fixture.getCatalog.mockResolvedValueOnce(refreshed);
+			await expect(useRemoteConnectionStore.getState().add("new-host")).rejects.toBe(lost);
+			expect(fixture.getCatalog).toHaveBeenCalledTimes(1);
+			expect(useRemoteConnectionStore.getState().catalog).toEqual(refreshed);
+			expect(fixture.remoteAdd).toHaveBeenCalledTimes(1);
+			expect(fixture.preflight).not.toHaveBeenCalled();
+			expect(fixture.disconnect).not.toHaveBeenCalled();
+			expect(useRemoteConnectionStore.getState().status.state).toBe("disconnected");
+		},
+	);
+
 	it("saves a record with the observed catalog and slot without connecting", async () => {
 		const catalog = { epoch: "run", revision: 1, records: [], lastSuccessfulConnectionId: null };
 		const updated = {
