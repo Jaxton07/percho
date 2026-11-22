@@ -1,5 +1,4 @@
 import { useEffect } from "react";
-import { getExecutionApi } from "../environment-api";
 import { getEnvironments } from "../environment-registry";
 import { useSessionsStore } from "../stores/sessions";
 import { useTranscriptStore } from "../stores/transcript";
@@ -8,7 +7,7 @@ import { runEnvironmentSessionGc } from "./session-gc-run";
 
 /**
  * 会话内存策略接线层：把 store/IPC 接到 `lib/session-gc-run.ts` 的一轮编排上
- * （判定与 fail-safe 语义全在那边，这里只订阅与时序）。
+ * （判定在那边，这里只负责订阅与时序）。
  *
  * **为什么不订阅 transcript**：`bySession` 每来一个 token 就变一次，订阅它等于每个 token 白跑一轮判定。
  * 改为「挂载跑一次 + 20s 兜底 tick + 只订阅 sessions/activeSessionId」，回调里一律 `getState()` 现读
@@ -59,8 +58,6 @@ export function useSessionGc(): void {
 						};
 					},
 					entryOf,
-					listSubscriptionSessionIds: (environment) =>
-						getExecutionApi(environment).getChannelSubscriptionSessionIds(),
 					unload: (sessionId) => useSessionsStore.getState().unloadSession(sessionId),
 					now: Date.now(),
 					keep: KEEP,

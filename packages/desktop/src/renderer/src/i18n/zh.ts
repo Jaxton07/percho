@@ -682,7 +682,7 @@ export const zh = {
 		backgroundChange: "更换图片",
 		backgroundClear: "清除背景",
 		backgroundDim: "遮罩浓度",
-		channelWatch: "跨会话频道协作（channel-watch）",
+		channelWatch: "跨会话消息频道",
 		codemode: "Code Mode",
 		codemodeOnly: "Code Mode 独占模式",
 		codemodeOnlyHint:
@@ -711,7 +711,7 @@ export const zh = {
 		},
 		codemodeHint: "允许 AI 通过脚本组合调用工具、并行处理和筛选结果。默认开启，新建会话或重启应用后生效。",
 		channelWatchHint:
-			"会话订阅频道后自动监听 .local/agent-work/channel/<主题>/ 的文件更新，另一会话写入时唤醒本会话查收（HANDOFF.md 协议）。订阅随会话持久化，内置防环保护；默认开启，对已信任项目完全生效。",
+			"在已信任项目中使用消息频道。订阅和阅读位置随会话保留；未读消息不会自动唤醒会话。更改在下次加载会话时生效。",
 		topBar: "顶栏显示会话",
 		topBarHint:
 			"顶栏常驻（窗口拖动、左栏开合、本轮改动都在这里）；关掉后顶栏不再显示临时会话工作区胶囊，会话都在左侧栏。",

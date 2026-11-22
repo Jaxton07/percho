@@ -40,9 +40,7 @@ const ids = (over: Partial<SessionGcInput> = {}) =>
 
 describe("pickUnloadCandidates · 单条保护条件", () => {
 	it("只读检视可卸载而不停止实际运行者，但仍保护当前页、未决交互及未读完成", () => {
-		const open = [
-			session("view", NOW - 10_000_000, { readOnly: true, messageCount: 0, hasChannelSubscriptions: true }),
-		];
+		const open = [session("view", NOW - 10_000_000, { readOnly: true, messageCount: 0 })];
 		const busy = {
 			...IDLE_ENTRY,
 			agentActive: true,
@@ -238,35 +236,5 @@ describe("pickUnloadCandidates · 兜底超时与边界", () => {
 	it("空输入 / 无 active 不抛错", () => {
 		expect(pickUnloadCandidates(input())).toEqual([]);
 		expect(pickUnloadCandidates(input({ activeSessionId: null, open: [] }))).toEqual([]);
-	});
-});
-
-// ---------------------------------------------------------------------------
-// P0（spec channel-watch-retention-catchup §6.2）：有频道订阅的会话不被自动 GC
-// 以下用例为阶段 0 红测：固定契约，实现见 plan 阶段 1.3。
-// ---------------------------------------------------------------------------
-
-describe("pickUnloadCandidates · 频道订阅保护（P0）", () => {
-	it("订阅会话不成为候选，也不占 K 名额（超 K 只卸别人）", () => {
-		const open = [
-			// 订阅者是最久未用的那个：若没被剔除，它一定是 first 候选
-			session("sub", NOW - 10_000_000, { hasChannelSubscriptions: true }),
-			session("b", NOW - 60_000),
-			session("c", NOW - 40_000),
-			session("d", NOW - 20_000),
-		];
-		expect(ids({ open })).toEqual([]); // 3 个可卸空闲正好 K=3，订阅者不算名额
-		expect(ids({ open: [...open, session("e", NOW - 15_000)] })).toEqual(["b"]);
-	});
-
-	it("晾过 idleTimeoutMs 的订阅会话照样不卸（订阅 = 明确驻留语义）", () => {
-		const stale = NOW - (GC_DEFAULTS.idleTimeoutMs + 1);
-		expect(ids({ open: [session("sub", stale, { hasChannelSubscriptions: true })] })).toEqual([]);
-	});
-
-	it("isProtected 是保护条件的唯一事实源（订阅条件也在这里）", () => {
-		expect(isProtected(session("a", NOW, { hasChannelSubscriptions: true }), IDLE_ENTRY)).toBe(true);
-		expect(isProtected(session("a", NOW, { hasChannelSubscriptions: false }), IDLE_ENTRY)).toBe(false);
-		expect(isProtected(session("a", NOW), IDLE_ENTRY)).toBe(false); // 缺省 = 无订阅
 	});
 });

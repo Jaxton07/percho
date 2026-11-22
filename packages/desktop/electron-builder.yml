@@ -40,9 +40,6 @@ extraResources:
   # UI 插件 agent 规范三件套（SPEC/percho-ui.d.ts/skill/examples）：main 经 process.resourcesPath 读取
   - from: "resources/ui-plugins"
     to: "ui-plugins"
-  # 内置协作 skill（channel-pickup/design-handoff）：additionalSkillPaths 扫描，与 UI 插件目录分列
-  - from: "resources/skills"
-    to: "skills"
   # 显式导出更新诊断时的只读 Windows 快照脚本（无用户命令/凭证采集）
   - from: "resources/update-diagnostics"
     to: "update-diagnostics"

@@ -90,6 +90,184 @@ async function fixture() {
 	};
 }
 
+it("waits for durable channel maintenance before changing the session and unlocks only after unarchive", async () => {
+	const f = await fixture();
+	let release!: () => void;
+	let entered!: () => void;
+	const waiting = new Promise<void>((resolve) => {
+		release = resolve;
+	});
+	const started = new Promise<void>((resolve) => {
+		entered = resolve;
+	});
+	const outcomes: string[] = [];
+	const service = new SessionArchiveService({
+		...f.options,
+		prepareChannelMaintenance: async () => {
+			entered();
+			await waiting;
+		},
+		completeChannelMaintenance: async ({ outcome }) => {
+			outcomes.push(outcome);
+		},
+	});
+	await service.init();
+	const before = await readFile(f.file, "utf8");
+	const pending = service.archive(f.input);
+	await started;
+	expect(await readFile(f.file, "utf8")).toBe(before);
+	release();
+	await pending;
+	expect(outcomes).toEqual(["archived"]);
+	await service.unarchive({ ...f.input, expectedRevision: 1 });
+	expect(outcomes.at(-1)).toBe("active");
+	expect(outcomes.slice(0, -1).every((outcome) => outcome === "archived")).toBe(true);
+});
+
+it("keeps a failed prepare blocked and retries the same operation after restart", async () => {
+	const f = await fixture();
+	const operations: string[] = [];
+	let fail = true;
+	const options: SessionArchiveOptions = {
+		...f.options,
+		prepareChannelMaintenance: async ({ operationId }) => {
+			operations.push(operationId);
+			if (fail) throw new Error("maintenance unavailable");
+		},
+		completeChannelMaintenance: async () => {},
+	};
+	const service = new SessionArchiveService(options);
+	await service.init();
+	const before = await readFile(f.file, "utf8");
+	await expect(service.archive(f.input)).rejects.toThrow(/maintenance unavailable/);
+	expect(await readFile(f.file, "utf8")).toBe(before);
+	await expect(service.assertOpen(f.file)).rejects.toThrow();
+	fail = false;
+	const restarted = new SessionArchiveService(options);
+	await restarted.init();
+	expect(await restarted.archive(f.input)).toMatchObject({ archived: true });
+	expect(operations).toEqual([operations[0], operations[0]]);
+});
+
+it.each([false, true])("cancels failed append only without marker (%s)", async (writes) => {
+	const f = await fixture();
+	const outcomes: { operationId: string; outcome: string }[] = [];
+	let operationId = "";
+	const options: SessionArchiveOptions = {
+		...f.options,
+		prepareChannelMaintenance: async (input) => {
+			operationId = input.operationId;
+		},
+		completeChannelMaintenance: async (input) => {
+			outcomes.push(input);
+		},
+	};
+	const service = new SessionArchiveService(options);
+	await service.init();
+	const append = SessionManager.prototype.appendCustomEntry;
+	const spy = vi.spyOn(SessionManager.prototype, "appendCustomEntry");
+	spy.mockImplementation(function (...args) {
+		if (writes) append.apply(this, args);
+		throw new Error("append failed");
+	});
+	try {
+		await expect(service.archive(f.input)).rejects.toThrow("append failed");
+	} finally {
+		spy.mockRestore();
+	}
+	const restarted = new SessionArchiveService(options);
+	await restarted.init();
+	if (writes) {
+		await expect(restarted.unarchive(f.input)).rejects.toThrow();
+		expect(outcomes.some((item) => item.outcome === "active")).toBe(false);
+	} else {
+		expect(await restarted.unarchive(f.input)).toMatchObject({ phase: "unarchived", blocked: false });
+		expect(outcomes).toContainEqual({
+			sessionId: f.id,
+			sessionFile: f.file,
+			operationId,
+			kind: "archive",
+			outcome: "active",
+		});
+		await restarted.assertOpen(f.file);
+	}
+});
+
+it("does not cancel a prepared archive if the session file changes", async () => {
+	const f = await fixture();
+	const complete = vi.fn();
+	const service = new SessionArchiveService({
+		...f.options,
+		prepareChannelMaintenance: async () => {
+			throw new Error("prepare failed");
+		},
+		completeChannelMaintenance: complete,
+	});
+	await service.init();
+	await expect(service.archive(f.input)).rejects.toThrow("prepare failed");
+	const original = await readFile(f.file, "utf8");
+	await writeFile(f.file, `${original}\n`);
+	await expect(service.unarchive(f.input)).rejects.toThrow(/unresolved|invalid/);
+	expect(complete).not.toHaveBeenCalled();
+	expect(await service.state(f.id, f.file)).toMatchObject({ phase: "prepared", blocked: true });
+});
+
+it("reconciles a committed session marker with the same channel operation after restart", async () => {
+	const f = await fixture();
+	const operations: string[] = [];
+	const options: SessionArchiveOptions = {
+		...f.options,
+		prepareChannelMaintenance: async ({ operationId }) => {
+			operations.push(operationId);
+		},
+		completeChannelMaintenance: async () => {},
+	};
+	const service = new SessionArchiveService(options);
+	await service.init();
+	const write = JsonStore.prototype.write;
+	let fail = true;
+	const spy = vi.spyOn(JsonStore.prototype, "write").mockImplementation(async function (value) {
+		if (fail && (value as { records?: { phase: string }[] })?.records?.[0]?.phase === "archived-cleanup") {
+			fail = false;
+			throw new Error("commit unavailable");
+		}
+		await write.call(this, value);
+	});
+	try {
+		await expect(service.archive(f.input)).rejects.toThrow(/commit unavailable/);
+		const restarted = new SessionArchiveService(options);
+		await restarted.init();
+		expect(await restarted.state(f.id, f.file)).toMatchObject({ phase: "archived-cleanup" });
+		expect(operations).toEqual([operations[0], operations[0]]);
+	} finally {
+		spy.mockRestore();
+	}
+});
+
+it("retries an uncertain unarchive unlock after the authoritative commit", async () => {
+	const f = await fixture();
+	let fail = true;
+	const outcomes: { operationId: string; outcome: string }[] = [];
+	const options: SessionArchiveOptions = {
+		...f.options,
+		prepareChannelMaintenance: async () => {},
+		completeChannelMaintenance: async (input) => {
+			outcomes.push(input);
+			if (input.outcome === "active" && fail) throw new Error("unlock unavailable");
+		},
+	};
+	const service = new SessionArchiveService(options);
+	await service.init();
+	await service.archive(f.input);
+	await expect(service.unarchive({ ...f.input, expectedRevision: 1 })).rejects.toThrow(/unlock unavailable/);
+	expect(await service.state(f.id, f.file)).toMatchObject({ archived: false, revision: 2 });
+	fail = false;
+	const restarted = new SessionArchiveService(options);
+	await restarted.init();
+	expect(outcomes.slice(-2).map(({ outcome }) => outcome)).toEqual(["active", "active"]);
+	expect(new Set(outcomes.map(({ operationId }) => operationId)).size).toBe(1);
+});
+
 it("persists unsubscribe, supports idempotency and rejects stale opposite operations", async () => {
 	const f = await fixture();
 	const result = await f.service.archive(f.input);

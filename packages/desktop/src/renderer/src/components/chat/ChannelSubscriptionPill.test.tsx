@@ -1,9 +1,14 @@
+// @vitest-environment happy-dom
 import * as React from "react";
+import { act } from "react";
+import { createRoot } from "react-dom/client";
 import { renderToStaticMarkup } from "react-dom/server";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 vi.mock("../../i18n", () => ({ useT: () => (key: string) => key }));
 
+import { useChannelSubscriptionsStore } from "../../stores/channel-subscriptions";
+import { useSessionsStore } from "../../stores/sessions";
 import { ChannelSubscriptionPill } from "./ChannelSubscriptionPill";
 import { type ChannelPillPresence, HIDDEN_PRESENCE } from "./channel-pill-presence";
 
@@ -18,10 +23,37 @@ const presence = (patch: Partial<ChannelPillPresence>): ChannelPillPresence => (
 const markup = (state: ChannelPillPresence) =>
 	renderToStaticMarkup(<ChannelSubscriptionPill presence={state} onExitFinished={() => {}} />);
 
-beforeEach(() => vi.stubGlobal("React", React)); // classic JSX：给产品文件提供 React 全局（仅本文件）
+beforeEach(() => {
+	vi.stubGlobal("React", React); // classic JSX：给产品文件提供 React 全局（仅本文件）
+	vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
+});
 afterEach(() => vi.unstubAllGlobals());
 
 describe("ChannelSubscriptionPill（SSR 装配）", () => {
+	it("显示每个频道的权威非零未读数", async () => {
+		useSessionsStore.setState({ activeSessionId: "s1" });
+		useChannelSubscriptionsStore.getState().apply({
+			sessionId: "s1",
+			live: true,
+			generation: 1,
+			revision: 1,
+			topics: ["alpha", "beta"],
+			unreadCounts: { alpha: 12, beta: 3 },
+		});
+		const container = document.createElement("div");
+		const root = createRoot(container);
+		await act(() =>
+			root.render(
+				<ChannelSubscriptionPill
+					presence={presence({ display: ["alpha", "beta"], opened: true, mounted: true })}
+					onExitFinished={() => {}}
+				/>,
+			),
+		);
+		expect(container.textContent).toContain("12");
+		expect(container.textContent).toContain("3");
+		await act(() => root.unmount());
+	});
 	it("没挂载就什么都不渲染", () => {
 		expect(markup(HIDDEN_PRESENCE)).toBe("");
 	});

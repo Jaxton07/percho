@@ -71,6 +71,13 @@ beforeEach(() => {
 });
 
 describe("apply 的新旧守卫", () => {
+	it("同一订阅的未读数以新快照替换，迟到与重复事件不累加", () => {
+		const { apply } = useChannelSubscriptionsStore.getState();
+		apply({ ...snapshot("s1", ["alpha"], 1, 1), unreadCounts: { alpha: 2 } });
+		apply({ ...snapshot("s1", ["alpha"], 2, 1), unreadCounts: { alpha: 5 } });
+		apply({ ...snapshot("s1", ["alpha"], 1, 1), unreadCounts: { alpha: 2 } });
+		expect(useChannelSubscriptionsStore.getState().bySession.s1?.unreadCounts).toEqual({ alpha: 5 });
+	});
 	it("同代：revision 更大的快照覆盖，更小的被丢弃", () => {
 		const apply = useChannelSubscriptionsStore.getState().apply;
 		expect(apply(snapshot("s1", ["alpha"], 5, 1))).toBe(true);
@@ -124,6 +131,23 @@ describe("apply 的新旧守卫", () => {
 });
 
 describe("事件路径（先订阅再取快照）", () => {
+	it("观察期间定期恢复活动会话，停止观察后不再查询", async () => {
+		vi.useFakeTimers();
+		const dispose = initChannelSubscriptions();
+		piMock.getChannelSubscriptions.mockResolvedValue(snapshot("s1", ["alpha"], 1, 1));
+		await syncActiveSession("s1");
+		piMock.getChannelSubscriptions.mockResolvedValue({
+			...snapshot("s1", ["alpha"], 2, 1),
+			unreadCounts: { alpha: 4 },
+		});
+		await vi.advanceTimersByTimeAsync(10_000);
+		expect(useChannelSubscriptionsStore.getState().bySession.s1?.unreadCounts).toEqual({ alpha: 4 });
+		dispose();
+		piMock.getChannelSubscriptions.mockClear();
+		await vi.advanceTimersByTimeAsync(20_000);
+		expect(piMock.getChannelSubscriptions).not.toHaveBeenCalled();
+		vi.useRealTimers();
+	});
 	it("init 之后的 events 会落到 store；cleanup 之后不再接收", () => {
 		const dispose = initChannelSubscriptions();
 		emit(snapshot("s1", ["alpha"], 1, 1));

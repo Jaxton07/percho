@@ -28,9 +28,7 @@ function makeDeps(
 	opts: {
 		open?: SessionGcOpen[];
 		activeSessionId?: string | null;
-		subscribed?: string[];
 		keep?: number;
-		listError?: Error;
 		/** 覆盖状态读取（用于「判定与执行之间状态变了」的场景） */
 		getOpen?: () => { activeSessionId: string | null; open: SessionGcOpen[] };
 		/** 后端是否同意卸（closed） */
@@ -43,9 +41,6 @@ function makeDeps(
 		getOpen:
 			opts.getOpen ?? (() => ({ activeSessionId: opts.activeSessionId ?? null, open: opts.open ?? [] })),
 		entryOf: () => IDLE_ENTRY,
-		listSubscriptionSessionIds: opts.listError
-			? () => Promise.reject(opts.listError)
-			: () => Promise.resolve(opts.subscribed ?? []),
 		unload,
 		now: NOW,
 		keep: opts.keep,
@@ -54,8 +49,8 @@ function makeDeps(
 	return { deps, unload, log };
 }
 
-describe("runSessionGcRound · 频道订阅快照消费", () => {
-	it("快照里的会话进保护：最久未用也不卸、不占 K 名额（IPC 快照真被消费）", async () => {
+describe("runSessionGcRound · 普通回收", () => {
+	it("不查询频道订阅，空闲会话按普通策略卸载", async () => {
 		const open = [
 			openSession("sub", NOW - 10_000_000),
 			openSession("b", NOW - 60_000),
@@ -63,37 +58,22 @@ describe("runSessionGcRound · 频道订阅快照消费", () => {
 			openSession("d", NOW - 20_000),
 			openSession("e", NOW - 15_000),
 		];
-		const { deps, unload } = makeDeps({ open, subscribed: ["sub"] });
+		const { deps, unload } = makeDeps({ open });
 
 		const result = await runSessionGcRound(deps);
 
 		expect(result.skipped).toBeNull();
-		expect(result.unloaded).toEqual(["b"]); // 4 个可卸空闲抢 3 个名额 → 只卸最久未用的 b
-		expect(unload).not.toHaveBeenCalledWith("sub");
+		expect(result.unloaded).toEqual(["sub", "b"]);
+		expect(unload).toHaveBeenCalledWith("sub");
 	});
 
-	it("不在快照里 → 行为与改动前一致（按纯策略正常回收）", async () => {
+	it("按纯策略正常回收", async () => {
 		const open = [openSession("a", NOW - 10_000_000), openSession("b", NOW - 60_000)];
-		const { deps } = makeDeps({ open, keep: 1, subscribed: [] });
+		const { deps } = makeDeps({ open, keep: 1 });
 
 		const result = await runSessionGcRound(deps);
 
 		expect(result.unloaded).toEqual(["a"]);
-	});
-
-	it("快照拉取失败 → 整轮跳过：一个都不卸、unload 零调用（未知保护范围 ≠ 无人订阅）", async () => {
-		const open = [openSession("a", NOW - 10_000_000), openSession("b", NOW - 60_000)];
-		const { deps, unload, log } = makeDeps({
-			open,
-			keep: 1,
-			listError: new Error("IPC boom"),
-		});
-
-		const result = await runSessionGcRound(deps);
-
-		expect(result).toEqual({ skipped: "subscription-snapshot-failed", unloaded: [], refused: [] });
-		expect(unload).not.toHaveBeenCalled();
-		expect(log).toHaveBeenCalledWith("[session-gc] 跳过本轮：频道订阅快照获取失败", expect.any(Error));
 	});
 });
 
@@ -133,7 +113,7 @@ describe("runSessionGcRound · 卸载前的再确认与后端拒绝", () => {
 		expect(result.unloaded).toEqual([]);
 	});
 
-	it("后端拒绝（closed=false）→ 记 refused，不算已卸（竞态：判定后又跑起来/刚订阅）", async () => {
+	it("后端拒绝（closed=false）→ 记 refused，不算已卸（竞态：判定后又跑起来）", async () => {
 		const open = [openSession("a", NOW - 10_000_000), openSession("b", NOW - 60_000)];
 		const { deps } = makeDeps({
 			open,
@@ -148,7 +128,7 @@ describe("runSessionGcRound · 卸载前的再确认与后端拒绝", () => {
 	});
 });
 
-it("remote protection failure skips only remote candidates, while local uses its own retention budget", async () => {
+it("uses independent local and remote retention budgets without subscription queries", async () => {
 	const remote = { kind: "ssh" as const, connectionId: "company", environmentId: "data" };
 	const key = (id: string) => environmentEntityKey(remote, id);
 	const { deps, unload } = makeDeps({
@@ -162,14 +142,10 @@ it("remote protection failure skips only remote candidates, while local uses its
 	});
 	const results = await runEnvironmentSessionGc([LOCAL_ENVIRONMENT, remote], {
 		...deps,
-		listSubscriptionSessionIds: async (environment) => {
-			if (environment.kind === "ssh") throw new Error("offline");
-			return [];
-		},
 	});
 	expect(results[0]?.unloaded).toEqual(["a"]);
-	expect(results[1]?.skipped).toBe("subscription-snapshot-failed");
-	expect(unload).toHaveBeenCalledTimes(1);
+	expect(results[1]?.unloaded).toEqual([key("a")]);
+	expect(unload).toHaveBeenCalledTimes(2);
 });
 
 it("retains paused queues independently in local and remote environments", async () => {
@@ -187,7 +163,6 @@ it("retains paused queues independently in local and remote environments", async
 			id === "idle"
 				? IDLE_ENTRY
 				: { ...paused, messageCount: paused.messages.length, pendingPermissions: [], pendingDialogs: [] },
-		listSubscriptionSessionIds: async () => [],
 	});
 	expect(results.flatMap((result) => result.unloaded)).toEqual(["idle"]);
 	expect(unload).toHaveBeenCalledExactlyOnceWith("idle");

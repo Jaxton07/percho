@@ -343,6 +343,8 @@ export interface QueuedInput {
 
 export interface CreateSessionOptions {
 	cwd: string;
+	/** 宿主指定的频道项目根，不影响执行目录。 */
+	channelProjectRoot?: string;
 	provider?: string;
 	modelId?: string;
 	thinkingLevel?: string;

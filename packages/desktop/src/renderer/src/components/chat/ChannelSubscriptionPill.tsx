@@ -1,4 +1,6 @@
 import { Fragment, useCallback, useEffect, useRef, useState } from "react";
+import { EMPTY_UNREAD_COUNTS, useChannelSubscriptionsStore } from "../../stores/channel-subscriptions";
+import { useSessionsStore } from "../../stores/sessions";
 import { ChannelIcon } from "../icons";
 import { Tooltip } from "../ui/Tooltip";
 import type { ChannelPillPresence } from "./channel-pill-presence";
@@ -34,6 +36,12 @@ export function ChannelSubscriptionPill({
 	presence: ChannelPillPresence;
 	onExitFinished: (token: number) => void;
 }) {
+	const activeSessionId = useSessionsStore((state) => state.activeSessionId);
+	const unreadCounts = useChannelSubscriptionsStore((state) =>
+		activeSessionId
+			? (state.bySession[activeSessionId]?.unreadCounts ?? EMPTY_UNREAD_COUNTS)
+			: EMPTY_UNREAD_COUNTS,
+	);
 	const observerRef = useRef<ResizeObserver | null>(null);
 	const namesRef = useRef<HTMLSpanElement | null>(null);
 	const [naturalWidth, setNaturalWidth] = useState(0);
@@ -131,11 +139,16 @@ export function ChannelSubscriptionPill({
 			>
 				<div ref={measureRef} className="flex w-max items-center gap-2 px-3 py-[7px] text-ui-12 text-ink-dim">
 					<ChannelIcon className="shrink-0 text-ink-faint" />
-					<span ref={namesRef} className="truncate" style={{ maxWidth: NAMES_MAX_WIDTH }}>
+					<span ref={namesRef} className="flex min-w-0 flex-wrap" style={{ maxWidth: NAMES_MAX_WIDTH }}>
 						{presence.display.map((topic, index) => (
 							<Fragment key={topic}>
 								{index > 0 && <span className="px-1.5 text-ink-faint">·</span>}
-								{topic}
+								<span className="flex min-w-0 items-center gap-1">
+									<span className="truncate">{topic}</span>
+									{(unreadCounts[topic] ?? 0) > 0 && (
+										<span className="shrink-0 text-ink-faint tabular-nums">{unreadCounts[topic]}</span>
+									)}
+								</span>
 							</Fragment>
 						))}
 					</span>

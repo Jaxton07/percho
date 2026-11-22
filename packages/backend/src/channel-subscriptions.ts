@@ -22,6 +22,7 @@ import { Emitter } from "./emitter";
 export class ChannelSubscriptionRegistry {
 	/** sessionId → 有效订阅集合（空集不落表） */
 	private readonly topics = new Map<string, Set<string>>();
+	private readonly counts = new Map<string, Record<string, number>>();
 	/**
 	 * sessionId → 在册代次。`dispose` 后**保留代次值**（标 `live: false`）——关闭状态下查询也能给出
 	 * 稳定答案（同一代的旧响应因此仍被 revision 挡住）；下一次打开会领新的一代。
@@ -65,9 +66,24 @@ export class ChannelSubscriptionRegistry {
 	 * 因为 `snapshot()` 读的就是这张表）。
 	 */
 	report(sessionId: string, topics: ReadonlySet<string>): void {
-		const next = [...topics].sort();
+		this.reportEntries(
+			sessionId,
+			[...topics].map((topic) => ({ topic, unread: 0 })),
+		);
+	}
+
+	reportEntries(sessionId: string, entries: readonly { topic: string; unread: number }[]): void {
+		const counts = Object.fromEntries(entries.map(({ topic, unread }) => [topic, unread]));
+		const next = Object.keys(counts).sort();
+		const previous = this.counts.get(sessionId);
 		const confirmed = this.isLiveIncarnation(sessionId);
-		if (confirmed && sameTopics(this.topics.get(sessionId), next)) return;
+		if (
+			confirmed &&
+			sameTopics(this.topics.get(sessionId), next) &&
+			next.every((topic) => previous?.[topic] === counts[topic])
+		)
+			return;
+		this.counts.set(sessionId, counts);
 		if (next.length === 0) this.topics.delete(sessionId);
 		else this.topics.set(sessionId, new Set(next));
 		if (!confirmed) {
@@ -83,7 +99,6 @@ export class ChannelSubscriptionRegistry {
 	 * 保证 renderer 不会残留一个「其实已经关了」的订阅状态。
 	 */
 	dispose(sessionId: string): void {
-		this.topics.delete(sessionId);
 		this.pendingPublish.delete(sessionId);
 		const entry = this.incarnations.get(sessionId);
 		if (entry) entry.live = false; // 保留 generation：关闭状态下的查询仍然稳定
@@ -93,6 +108,7 @@ export class ChannelSubscriptionRegistry {
 	/** 会话被删除（磁盘也没了）：连代次记录一起清，避免表无限增长 */
 	delete(sessionId: string): void {
 		this.topics.delete(sessionId);
+		this.counts.delete(sessionId);
 		this.incarnations.delete(sessionId);
 		this.pendingPublish.delete(sessionId);
 	}
@@ -110,6 +126,7 @@ export class ChannelSubscriptionRegistry {
 			// dispose 后的空集才是 live=false —— renderer 的关闭水位只认这个信号
 			live: incarnation?.live === true,
 			topics: [...(this.topics.get(sessionId) ?? [])].sort(),
+			unreadCounts: { ...this.counts.get(sessionId) },
 			revision: this.revision,
 			generation: incarnation?.generation ?? 0,
 		};

@@ -31,7 +31,7 @@
 | 导航、并发装载、历史就绪 | renderer `stores/session-navigation.ts`、`session-loading.ts`、`session-history.ts` |
 | 会话目录、项目、左栏分组 | renderer `stores/projects.ts`、`lib/sidebar-groups.ts`、`components/sidebar/` |
 | 顶栏胶囊、左侧轨道、工作区恢复 | renderer `stores/session-workspace*.ts`、`components/session/`；移出动作 `lib/workspace-actions.ts` |
-| 会话自动卸载、频道驻留 | renderer `lib/session-gc*.ts`、`lib/use-session-gc.ts`；backend `channel-subscriptions.ts` |
+| 会话自动卸载、频道成员与消息 | renderer `lib/session-gc*.ts`、`lib/use-session-gc.ts`；backend `tools/channels/` |
 | 消息事件、历史回放、轮次派生 | shared `transcript/`；backend `session/messages.ts`；renderer `stores/transcript.ts` |
 | 消息气泡、Markdown、Mermaid、工具卡 | renderer `components/chat/`；流式合流 `stores/event-conflator.ts` |
 | 输入、发送、停止、排队、斜杠与 @ 补全 | renderer `components/composer/`、`stores/drafts.ts`；backend `slash-commands.ts` |
@@ -63,4 +63,4 @@
 
 ## 临时资料
 
-`.local/` 不入库：`design/` 为设计稿，`agent-work/` 为临时 spec/plan/channel。正式发版规则只维护在上面的发版流程中，不依赖本机临时资料。不要在这里登记各阶段产物；接手频道任务必须先加载 `channel-pickup` skill，再读 HANDOFF。
+`.local/` 不入库：`design/` 为设计稿，`agent-work/` 为临时 spec/plan/channel。正式发版规则只维护在上面的发版流程中，不依赖本机临时资料。不要在这里登记各阶段产物。

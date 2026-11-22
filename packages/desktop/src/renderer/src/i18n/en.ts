@@ -707,7 +707,7 @@ export const en: Messages = {
 		backgroundChange: "Change image",
 		backgroundClear: "Remove",
 		backgroundDim: "Overlay opacity",
-		channelWatch: "Cross-session channel collaboration (channel-watch)",
+		channelWatch: "Cross-session message channels",
 		codemode: "Code Mode",
 		codemodeOnly: "Code Mode only",
 		codemodeOnlyHint:
@@ -737,7 +737,7 @@ export const en: Messages = {
 		codemodeHint:
 			"Let AI combine tool calls in scripts, run them in parallel, and filter results. On by default; applies to new sessions or after restarting the app.",
 		channelWatchHint:
-			"After a session subscribes to a channel it watches .local/agent-work/channel/<topic>/ for file updates; writes from another session wake this session to pick them up (HANDOFF.md protocol). Subscriptions persist with the session; built-in loop protection. On by default, fully effective for trusted projects.",
+			"Use message channels in trusted projects. Subscriptions and reading positions persist with the session; unread messages do not wake it. Changes apply the next time a session is loaded.",
 		topBar: "Show sessions in the top bar",
 		topBarHint:
 			"The top bar is always there (window dragging, sidebar toggle, current changes). Turn this off and it simply stops showing the temporary-workspace pills — every session stays in the left sidebar.",

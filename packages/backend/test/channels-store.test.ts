@@ -1,0 +1,121 @@
+import { existsSync, mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { join } from "node:path";
+import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { ChannelService } from "../src/tools/channels/service";
+import { ChannelStore } from "../src/tools/channels/store";
+
+let root: string;
+let agentDir: string;
+let store: ChannelStore;
+const alice = { sessionId: "alice" };
+const bob = { sessionId: "bob" };
+beforeEach(() => {
+	mkdirSync(".local/tmp", { recursive: true });
+	root = mkdtempSync(join(process.cwd(), ".local/tmp/channels-"));
+	agentDir = join(root, "agent");
+	mkdirSync(agentDir);
+	store = new ChannelStore({ projectRoot: root, agentDir });
+});
+afterEach(() => {
+	store.close();
+	rmSync(root, { recursive: true, force: true });
+});
+
+describe("channel store", () => {
+	it("serializes concurrent worker initialization and subscription limits", async () => {
+		const first = new ChannelService({ projectRoot: root, agentDir });
+		const second = new ChannelService({ projectRoot: root, agentDir });
+		try {
+			await Promise.all([
+				first.manage({ sessionId: "owner1" }, { action: "create", topic: "a" }),
+				second.manage({ sessionId: "owner2" }, { action: "create", topic: "b" }),
+			]);
+			for (let i = 0; i < 4; i++) await first.manage(alice, { action: "create", topic: `x${i}` });
+			const results = await Promise.allSettled([
+				first.manage(alice, { action: "subscribe", topic: "a" }),
+				second.manage(alice, { action: "subscribe", topic: "b" }),
+			]);
+			expect(results.filter((result) => result.status === "fulfilled")).toHaveLength(1);
+			expect(await second.snapshot("alice")).toHaveLength(5);
+		} finally {
+			await Promise.all([first.close(), second.close()]);
+		}
+	});
+	it("does not write gitignore on existing database reads and rejects symlinked storage", () => {
+		store.manage(alice, { action: "create", topic: "a" });
+		store.close();
+		rmSync(join(root, ".gitignore"));
+		store = new ChannelStore({ projectRoot: root, agentDir });
+		expect(store.snapshot("alice")).toHaveLength(1);
+		expect(existsSync(join(root, ".gitignore"))).toBe(false);
+		store.close();
+		rmSync(join(root, ".percho"), { recursive: true });
+		const outside = join(root, "outside");
+		mkdirSync(outside);
+		symlinkSync(outside, join(root, ".percho"));
+		store = new ChannelStore({ projectRoot: root, agentDir });
+		expect(() => store.manage(alice, { action: "create", topic: "b" })).toThrow();
+		expect(existsSync(join(outside, "channels"))).toBe(false);
+	});
+	it("requires explicit creation and preserves subscriptions across reopen", () => {
+		expect(store.snapshot("alice")).toEqual([]);
+		expect(() => store.manage(alice, { action: "subscribe", topic: "missing" })).toThrow();
+		store.manage(alice, { action: "create", topic: "  Alpha  " });
+		expect(() => store.manage(bob, { action: "create", topic: "Alpha" })).toThrow();
+		store.manage(bob, { action: "subscribe", topic: "Alpha" });
+		store.manage(bob, { action: "unsubscribe", topic: "Alpha" });
+		store.manage(bob, { action: "subscribe", topic: "Alpha" });
+		store.close();
+		store = new ChannelStore({ projectRoot: root, agentDir });
+		expect(store.snapshot("bob")).toEqual([{ topic: "Alpha", unread: 0 }]);
+	});
+	it("enforces the limit atomically and validates parameters", () => {
+		for (let i = 0; i < 5; i++) store.manage(alice, { action: "create", topic: `t${i}` });
+		expect(() => store.manage(alice, { action: "create", topic: "overflow" })).toThrow();
+		expect(() => store.manage(bob, { action: "subscribe", topic: "overflow" })).toThrow();
+		expect(() => store.manage(alice, { action: "create", topic: "bad/name" })).toThrow();
+		expect(() => store.manage(alice, { action: "list", scope: "subscribed", limit: 1 })).toThrow();
+		expect(() => store.manage(alice, { action: "list", extra: true } as never)).toThrow();
+	});
+	it("paginates a fixed set and rejects tampered cursors", () => {
+		for (const topic of ["a", "c", "e"]) store.manage({ sessionId: topic }, { action: "create", topic });
+		const first = store.manage(alice, { action: "list", scope: "all", limit: 1 });
+		expect(first.channels.map((c) => c.topic)).toEqual(["a"]);
+		store.manage(bob, { action: "create", topic: "b" });
+		const second = store.manage(alice, { action: "list", cursor: first.nextCursor, limit: 100 });
+		expect(second.channels.map((c) => c.topic)).toEqual(["c", "e"]);
+		expect(() => store.manage(alice, { action: "list", cursor: `${first.nextCursor}x` })).toThrow();
+	});
+	it("keeps empty reads lazy and isolates agent data roots", () => {
+		expect(store.manage(alice, { action: "list", scope: "all" }).channels).toEqual([]);
+		expect(existsSync(store.databasePath)).toBe(false);
+		store.manage(alice, { action: "create", topic: "a" });
+		const otherAgent = join(root, "other-agent");
+		mkdirSync(otherAgent);
+		const other = new ChannelStore({ projectRoot: root, agentDir: otherAgent });
+		try {
+			expect(other.snapshot("alice")).toEqual([]);
+			other.manage(alice, { action: "create", topic: "b" });
+			expect(store.snapshot("alice")).toEqual([{ topic: "a", unread: 0 }]);
+		} finally {
+			other.close();
+		}
+	});
+	it("rejects missing authoritative files and recovers a missing marker only after reopening", () => {
+		store.manage(alice, { action: "create", topic: "a" });
+		rmSync(store.markerPath);
+		expect(() => store.snapshot("alice")).toThrow();
+		store.close();
+		store = new ChannelStore({ projectRoot: root, agentDir });
+		expect(store.snapshot("alice")).toEqual([{ topic: "a", unread: 0 }]);
+		store.close();
+		rmSync(store.databasePath);
+		store = new ChannelStore({ projectRoot: root, agentDir });
+		expect(() => store.snapshot("alice")).toThrow();
+	});
+	it("does not overwrite corrupt initialization markers", () => {
+		store.manage(alice, { action: "create", topic: "a" });
+		writeFileSync(store.markerPath, "broken");
+		expect(() => store.snapshot("alice")).toThrow();
+	});
+});

@@ -69,7 +69,7 @@ app.whenReady().then(async () => {
 
 		backend = new PiBackend({
 			localSessionPaths: localSessionPaths(storage.record, storage.selection.legacyRoots),
-			// 桌面端集成：UI 插件技能目录 + 内置协作 skill 目录（均随包分发）+ 系统提示词段落
+			// 桌面端集成：UI 插件技能目录和系统提示词段落
 			// MCP OAuth 授权页交给系统浏览器（官方内置 mcp 扩展用；缺省则扩展自行回落到平台默认浏览器）
 			openExternal: (url) => shell.openExternal(url),
 			desktopIntegration: {
@@ -79,11 +79,7 @@ app.whenReady().then(async () => {
 								line.replace("~/.percho/ui-plugins", join(app.getPath("userData"), "ui-plugins")),
 							)
 						: UI_PLUGIN_PROMPT,
-				additionalSkillPaths: [
-					join(uiPluginsResourcesDir(), "skills"),
-					// 内置协作 skill（channel-pickup/design-handoff）：语义上与 UI 插件无关，独立目录分发
-					app.isPackaged ? join(process.resourcesPath, "skills") : join(__dirname, "../../resources/skills"),
-				],
+				additionalSkillPaths: [join(uiPluginsResourcesDir(), "skills")],
 			},
 		});
 		await backend.init();
