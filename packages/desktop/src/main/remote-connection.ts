@@ -603,7 +603,9 @@ export class RemoteConnectionManager {
 					if (generation !== this.generation || !this.connection || this.status.state === "stopping") return;
 					this.detach?.();
 					this.detach = undefined;
+					const retired = this.connection;
 					this.connection = undefined;
+					this.closing = Promise.all([this.closing, retired.disconnect()]).then(() => {});
 					if (environment) taskNotificationObserver.detach(environment);
 					this.update({
 						...this.status,

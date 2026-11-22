@@ -339,6 +339,26 @@ describe("multiple bookmarks and one active connection", () => {
 		options.onEvent("onEvent", { sessionId: "old" });
 		expect(fixture.observe).toHaveBeenCalledTimes(1);
 	});
+	it("waits for the old local bridge when an unexpected stream close precedes process exit", async () => {
+		await connect();
+		const exited = deferred<void>();
+		fixture.close.mockImplementationOnce(() => exited.promise);
+		fixture.connect.mock.calls[0]![1].onClose();
+		let complete = false;
+		const cancellation = disconnect().then(() => {
+			complete = true;
+		});
+		try {
+			await vi.waitFor(async () => expect(await manager.getStatus()).toMatchObject({ phase: "cancelling" }));
+			expect(complete).toBe(false);
+			await expect(manager.connect(await command())).rejects.toThrow();
+		} finally {
+			exited.resolve();
+			await cancellation;
+		}
+		expect((await manager.getStatus()).state).toBe("disconnected");
+	});
+
 	it("derives auth maintenance instructions from the original identity, not the active alias", async () => {
 		const ready = await connect();
 		const original = ready.environment!;
