@@ -1,5 +1,5 @@
 import { type EnvironmentRef, environmentEntityKey } from "@percho/shared";
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, assert, beforeEach, describe, expect, it, vi } from "vitest";
 
 const fixture = vi.hoisted(() => ({
 	disconnect: vi.fn(),
@@ -122,9 +122,9 @@ describe("remote command capture", () => {
 			.getState()
 			.accept({ ...status, revision: 2, preflight: { ...preflight, installedReleaseId: "old" } });
 		expect(useRemoteConnectionStore.getState().getLastCheck("a")?.installedReleaseId).toBe("v2.0.0");
-		useRemoteConnectionStore
-			.getState()
-			.acceptCatalog({ ...catalog, revision: 2, records: [catalog.records[1]!] });
+		const otherRecord = catalog.records[1];
+		assert(otherRecord);
+		useRemoteConnectionStore.getState().acceptCatalog({ ...catalog, revision: 2, records: [otherRecord] });
 		expect(useRemoteConnectionStore.getState().getLastCheck("a")).toBeUndefined();
 	});
 	it("saves a record with the observed catalog and slot without connecting", async () => {

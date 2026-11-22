@@ -208,9 +208,6 @@
 	min-width: 0;
 	cursor: pointer;
 }
-.remote-alias:last-child .remote-rule {
-	display: none;
-}
 .remote-alias:has(input:disabled) {
 	opacity: 0.5;
 	cursor: default;
@@ -247,6 +244,9 @@
 	bottom: 0;
 	left: 0;
 	right: 0;
+}
+.remote-alias:last-child .remote-rule {
+	display: none;
 }
 .remote-detail span {
 	color: var(--color-ink-dim);

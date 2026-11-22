@@ -835,8 +835,10 @@ export class RemoteConnectionManager {
 		)
 			throw new Error("Reconnect to the original environment before checking the remote operation");
 		const receipt = await target.queryReceipt(record.operation);
-		this.uncertain.set(id, { ...record, receipt });
-		if (generation === this.generation) this.update(this.status);
+		if (this.uncertain.has(id)) {
+			this.uncertain.set(id, { ...record, receipt });
+			if (generation === this.generation) this.update(this.status);
+		}
 		return receipt;
 	}
 	dismissOperation(id: string): void {

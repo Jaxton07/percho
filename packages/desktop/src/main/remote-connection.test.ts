@@ -1,7 +1,7 @@
 import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { resolve } from "node:path";
 import type { RemoteRecordCommand, SshPreflight } from "@percho/shared";
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, assert, beforeEach, describe, expect, it, vi } from "vitest";
 
 const fixture = vi.hoisted(() => ({
 	directory: "",
@@ -28,12 +28,13 @@ vi.mock("@percho/backend", async () => {
 	const storage = await import("../../../backend/src/json-store");
 	const ssh = await import("../../../backend/src/runtime/ssh-preflight");
 	const args = await import("../../../backend/src/runtime/ssh-arguments");
+	const client = await import("../../../backend/src/runtime/client");
 	return {
 		...storage,
 		...ssh,
 		preflightSsh: fixture.probe,
 		validateSshAlias: args.validateSshAlias,
-		RemoteMutationUnknownError: class extends Error {},
+		RemoteMutationUnknownError: client.RemoteMutationUnknownError,
 		SshRuntimeConnection: { connect: fixture.connect },
 		remoteAuthGuide: (alias: string, node: string) => ({
 			sshCommand: `ssh ${alias}`,
@@ -359,6 +360,43 @@ describe("multiple bookmarks and one active connection", () => {
 		expect((await manager.getStatus()).state).toBe("disconnected");
 	});
 
+	it.each(["dismissed", "evicted"])(
+		"does not revive uncertain operations that were %s after a late receipt",
+		async (reason) => {
+			await connect();
+			const connected = fixture.connect.mock.results[0];
+			const attached = fixture.attach.mock.calls[0];
+			assert(connected?.type === "return" && attached);
+			const target = await connected.value;
+			const executor = attached[1];
+			const { RemoteMutationUnknownError } = await import("../../../backend/src/runtime/client");
+			const track = async (sequence: number) => {
+				target.invoke.mockRejectedValueOnce(
+					new RemoteMutationUnknownError(
+						{ instanceId: "instance", epoch: 1, sequence },
+						"createSession",
+						Date.now(),
+					),
+				);
+				await expect(executor.invoke("createSession", {})).rejects.toThrow();
+			};
+			await track(1);
+			const operation = (await manager.getStatus()).operations?.[0];
+			assert(operation);
+			const receipt = deferred<{ state: "succeeded" }>();
+			target.queryReceipt = vi.fn(() => receipt.promise);
+			const checking = manager.checkOperation(operation.id);
+			await vi.waitFor(() => expect(target.queryReceipt).toHaveBeenCalled());
+			if (reason === "dismissed") manager.dismissOperation(operation.id);
+			else for (let sequence = 2; sequence <= 129; sequence++) await track(sequence);
+			receipt.resolve({ state: "succeeded" });
+			await checking;
+			const operations = (await manager.getStatus()).operations ?? [];
+			expect(operations.some((item) => item.id === operation.id)).toBe(false);
+			expect(operations).toHaveLength(reason === "dismissed" ? 0 : 128);
+		},
+	);
+
 	it("derives auth maintenance instructions from the original identity, not the active alias", async () => {
 		const ready = await connect();
 		const original = ready.environment!;
@@ -515,7 +553,8 @@ describe("installation, retries and explicit stop", () => {
 
 	it("keeps an active record until its local bridge has exited during removal", async () => {
 		await connect();
-		const record = (await manager.getCatalog()).records[0]!;
+		const record = (await manager.getCatalog()).records[0];
+		assert(record);
 		const closed = deferred<void>();
 		fixture.close.mockImplementationOnce(() => closed.promise);
 		let complete = false;

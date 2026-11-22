@@ -2,7 +2,7 @@
 import * as React from "react";
 import { act } from "react";
 import { createRoot } from "react-dom/client";
-import { afterEach, expect, it, vi } from "vitest";
+import { afterEach, assert, expect, it, vi } from "vitest";
 
 const discover = vi.fn(async () => ({ aliases: ["new-host"], incomplete: false }));
 vi.mock("../../i18n", () => ({ useT: () => (key: string) => key }));
@@ -198,8 +198,10 @@ it("shows only the selected record's fresh or cached diagnostics", async () => {
 	expect(document.body.textContent).not.toContain("fresh.host");
 	expect(document.body.textContent).not.toContain("fresh-release");
 	await click(button("common.cancel"));
+	const originalPreflight = useRemoteConnectionStore.getState().status.preflight;
+	assert(originalPreflight);
 	const checkA = {
-		...useRemoteConnectionStore.getState().status.preflight!,
+		...originalPreflight,
 		alias: "first",
 		environmentId: "env-a",
 		uid: 42,
