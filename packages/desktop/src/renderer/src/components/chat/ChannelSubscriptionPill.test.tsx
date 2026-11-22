@@ -75,12 +75,14 @@ describe("ChannelSubscriptionPill（SSR 装配）", () => {
 		expect(html.match(/channel-pill /g)).toHaveLength(2);
 	});
 
-	it("最多五个频道全部保留为独立胶囊，不折叠", () => {
+	it("最多五个频道靠右单列展示，一频道一行，不折叠", () => {
 		const topics = ["alpha", "beta", "design", "research", "review"];
 		const html = markup(presence({ display: topics, opened: true, mounted: true }));
 		expect(html.match(/data-channel-topic=/g)).toHaveLength(5);
 		for (const topic of topics) expect(html).toContain(`data-channel-topic="${topic}"`);
-		expect(html).toContain("flex-wrap");
+		expect(html).toContain("flex-col");
+		expect(html).toContain("items-end");
+		expect(html).not.toContain("flex-wrap");
 	});
 
 	it("单个频道时不出现间隔点", () => {

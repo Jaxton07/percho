@@ -9,7 +9,7 @@ import type { ChannelPillPresence } from "./channel-pill-presence";
  * 频道订阅胶囊（spec D2 的展示层，无状态）。
  *
  * 无边框 `surface + shadow-pop`、`rounded-full`、频道 glyph（ink-faint）、文字（ink-dim）。
- * 每个频道独立一枚，右对齐排列，空间不足时换行；名称原样不翻译。
+ * 每个频道独立一枚，靠右单列排列，一频道一行；名称原样不翻译。
  *
  * 动画：宽度 0 ↔ **实测自然宽度**，右缘固定（左端向左伸展）；退场宽度回 0 并淡出，**DOM 保留到收起结束**
  * （状态机保证 `display` 还在）。`translateX` 一律不参与 —— 平移不能冒充展开。
@@ -43,7 +43,7 @@ export function ChannelSubscriptionPill({
 	);
 	if (!presence.mounted) return null;
 	return (
-		<div className="flex max-w-full flex-wrap justify-end gap-1.5">
+		<div className="flex max-w-full flex-col items-end gap-1.5">
 			{presence.display.map((topic) => (
 				<SingleChannelPill
 					key={topic}
