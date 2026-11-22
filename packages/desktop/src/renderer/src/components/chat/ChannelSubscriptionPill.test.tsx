@@ -13,7 +13,7 @@ import { ChannelSubscriptionPill } from "./ChannelSubscriptionPill";
 import { type ChannelPillPresence, HIDDEN_PRESENCE } from "./channel-pill-presence";
 
 /**
- * 胶囊的 SSR 装配（spec D2）：内容形态、名字原样、间隔点、长名省略、退场期间 DOM 仍在。
+ * 胶囊的 SSR 装配：每频道独立展示、名字原样、长名省略、退场期间 DOM 仍在。
  * 动画时长/关键帧/几何不属于 SSR 能断言的范围 —— 那部分由 scripts/verify-channel-pill.mjs 在真机上量。
  */
 const presence = (patch: Partial<ChannelPillPresence>): ChannelPillPresence => ({
@@ -50,27 +50,37 @@ describe("ChannelSubscriptionPill（SSR 装配）", () => {
 				/>,
 			),
 		);
-		expect(container.textContent).toContain("12");
-		expect(container.textContent).toContain("3");
+		const pills = container.querySelectorAll("[data-channel-topic]");
+		expect(pills).toHaveLength(2);
+		expect(pills[0]?.textContent).toBe("alpha12");
+		expect(pills[1]?.textContent).toBe("beta3");
 		await act(() => root.unmount());
 	});
 	it("没挂载就什么都不渲染", () => {
 		expect(markup(HIDDEN_PRESENCE)).toBe("");
 	});
 
-	it("展开态：一个胶囊装多个频道，用间隔点分隔、名字原样不翻译", () => {
+	it("展开态：每个频道独立一个胶囊，名字原样且不用间隔点", () => {
 		const html = markup(presence({ display: ["alpha", "beta-gamma"], opened: true, mounted: true }));
 		expect(html).toContain("channel-pill");
 		expect(html).toContain("channel-pill-open"); // 展开类
 		expect(html).toContain("alpha");
 		expect(html).toContain("beta-gamma"); // 原样（不改写/不翻译）
-		expect(html).toContain("·"); // 间隔点
+		expect(html).not.toContain("·");
 		expect(html).toContain("rounded-full"); // 胶囊形状
 		expect(html).toContain("bg-surface");
 		expect(html).toContain("shadow-pop"); // 无边框靠阴影分层
 		expect(html).not.toContain("border"); // 禁边框
-		// 只有一个胶囊（多频道在同一枚里）
-		expect(html.match(/channel-pill /g)?.length).toBe(1);
+		expect(html.match(/data-channel-topic=/g)).toHaveLength(2);
+		expect(html.match(/channel-pill /g)).toHaveLength(2);
+	});
+
+	it("最多五个频道全部保留为独立胶囊，不折叠", () => {
+		const topics = ["alpha", "beta", "design", "research", "review"];
+		const html = markup(presence({ display: topics, opened: true, mounted: true }));
+		expect(html.match(/data-channel-topic=/g)).toHaveLength(5);
+		for (const topic of topics) expect(html).toContain(`data-channel-topic="${topic}"`);
+		expect(html).toContain("flex-wrap");
 	});
 
 	it("单个频道时不出现间隔点", () => {
@@ -81,7 +91,7 @@ describe("ChannelSubscriptionPill（SSR 装配）", () => {
 	it("长名字：限制最大宽度 + 省略号（truncate），并提供 Tooltip 显示完整名称", () => {
 		const long = "extremely-long-channel-name-that-should-be-truncated-in-the-pill";
 		const html = markup(presence({ display: [long], opened: true, mounted: true }));
-		expect(html).toContain("max-width:300px"); // 首帧兜底上限（运行时会按可用宽进一步夹取）
+		expect(html).toContain("max-width:160px"); // 首帧兜底上限（运行时会按可用宽进一步夹取）
 		expect(html).toContain("truncate");
 		expect(html).toContain('role="tooltip"');
 		expect(html).toContain(long); // Tooltip 里给完整名
