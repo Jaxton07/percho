@@ -181,7 +181,10 @@ describe("buildChatRows", () => {
 				text: "正文流",
 				textBlockIndex: 2,
 				tools: [tool("read", "done", 0), tool("bash", "running", 3)],
-				activity: [{ id: "ac1", kind: "tool", name: "bash", args: "" }],
+				activity: [
+					{ id: "c0", kind: "tool", name: "read", args: "" },
+					{ id: "c3", kind: "tool", name: "bash", args: "" },
+				],
 			}),
 		};
 		const rows = buildChatRows(t, "s1");
@@ -192,7 +195,10 @@ describe("buildChatRows", () => {
 		expect(rows[1]).toMatchObject({ kind: "message", streaming: true, key: "stream-1", metaInGroup: true });
 		// post 组是最新组：接 working 信号 + 活动序列
 		expect(rows[2]).toMatchObject({ kind: "metaGroup", working: true });
-		expect((rows[2] as { items: { activity?: unknown[] }[] }).items[0]?.activity).toHaveLength(1);
+		const activity = (rows[2] as { items: { activity?: unknown[] }[] }).items[0]?.activity;
+		expect(activity).toEqual([t.streaming.activity[1]]);
+		const next = buildChatRows({ ...t, streaming: { ...t.streaming, text: "正文继续增长" } }, "s1");
+		expect((next[2] as { items: { activity?: unknown[] }[] }).items[0]?.activity).toBe(activity);
 	});
 
 	it("working empty group placeholder when agent active without content", () => {

@@ -20,6 +20,21 @@ export interface MetaItem {
 	activity?: ActivityEntry[];
 }
 
+const EMPTY_ACTIVITY: ActivityEntry[] = [];
+const trailingActivityCache = new WeakMap<ActivityEntry[], { boundary: number; activity: ActivityEntry[] }>();
+
+/** A body closes the preceding group; its activity cannot label the group after it. */
+function latestGroupActivity(streaming: StreamingState): ActivityEntry[] {
+	const boundary = streaming.textBlockIndex;
+	if (boundary == null) return streaming.activity;
+	const cached = trailingActivityCache.get(streaming.activity);
+	if (cached?.boundary === boundary) return cached.activity;
+	const filtered = streaming.activity.filter((entry) => Number(entry.id.slice(1)) > boundary);
+	const activity = filtered.length ? filtered : EMPTY_ACTIVITY;
+	trailingActivityCache.set(streaming.activity, { boundary, activity });
+	return activity;
+}
+
 export interface ActiveSubagent {
 	id: string;
 	/** blockIndex is local to this assistant message. */
@@ -295,6 +310,7 @@ export function buildChatRows(
 		}
 	}
 
+	const currentActivity = streaming ? latestGroupActivity(streaming) : EMPTY_ACTIVITY;
 	if (streaming) {
 		// 正文起点锚：同 turn 的工具按 blockIndex 分「正文前/正文后」两组，保住 text→toolCall 交错时序
 		//（与 finalizeStreaming 的拆分一致）；正文出现后 pre 组立即结束，post 组成为最新组接收 working 信号
@@ -335,13 +351,13 @@ export function buildChatRows(
 				sourceId: streaming.id,
 				thinking: "",
 				tools: postTools,
-				activity: streaming.activity,
+				activity: currentActivity,
 			});
 		}
 	}
 	// 最新组无内容但仍在工作（正文已出、工具/子代理执行中）：挂上流式活动序列，预览行继续显示最新活动
-	if (metaItems.length === 0 && agentWorking && streaming && streaming.activity.length > 0) {
-		metaItems.push({ sourceId: streaming.id, thinking: "", tools: [], activity: streaming.activity });
+	if (metaItems.length === 0 && agentWorking && streaming && currentActivity.length > 0) {
+		metaItems.push({ sourceId: streaming.id, thinking: "", tools: [], activity: currentActivity });
 	}
 	// 流式子代理也属于当前最后一条状态行：先 flush 状态行、后挂卡片行，避免卡片倒挂在折叠行上方。
 	const streamingSubagentRuns = streaming?.subagentRuns ?? [];

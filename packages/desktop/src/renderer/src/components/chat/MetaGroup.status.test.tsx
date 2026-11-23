@@ -131,6 +131,57 @@ it.each([
 	}
 });
 
+it("正文后的图片状态不能借用正文前工具摘要", async () => {
+	vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
+	container = document.createElement("div");
+	document.body.append(container);
+	root = createRoot(container);
+	let state = reduceEvent(emptyTranscript(), { type: "agent_start" } as AgentSessionEvent);
+	const tool = (name: string, id: string, index: number) => [
+		{
+			type: "message_update",
+			assistantMessageEvent: {
+				type: "toolcall_start",
+				contentIndex: index,
+				partial: { content: [{ type: "toolCall", name }] },
+			},
+		},
+		{
+			type: "message_update",
+			assistantMessageEvent: {
+				type: "toolcall_end",
+				contentIndex: index,
+				toolCall: { id, name, arguments: {} },
+			},
+		},
+		{ type: "tool_execution_start", toolCallId: id, toolName: name, args: {} },
+	];
+	for (const event of [
+		...tool("read", "before", 0),
+		{
+			type: "tool_execution_end",
+			toolCallId: "before",
+			toolName: "read",
+			isError: false,
+			result: { content: [] },
+		},
+		{
+			type: "message_update",
+			assistantMessageEvent: { type: "text_delta", contentIndex: 1, delta: "body boundary" },
+		},
+		...tool("show_image", "after", 2),
+	])
+		state = reduceEvent(state, event as AgentSessionEvent);
+	const rows = buildChatRows(state, "session");
+	const row = rows.findLast((r) => r.kind === "metaGroup");
+	if (row?.kind !== "metaGroup") throw Error("Missing post-body group");
+	expect(row.items.flatMap((i) => i.tools).map((t) => t.name)).toEqual(["show_image"]);
+	await act(() =>
+		required(root).render(<MetaGroup items={row.items} working endImmediately={row.endImmediately} />),
+	);
+	expect(container.querySelector("summary")?.textContent).toBe("Working");
+});
+
 it.each([false, true])("真实子代理事件投影，前置已提交工具=%s：双语摘要及结束撤销", async (withHistory) => {
 	vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
 	container = document.createElement("div");
