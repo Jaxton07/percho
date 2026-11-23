@@ -1,8 +1,8 @@
 /** CDP interactions after a settled synthetic history. No clipboard or tool execution. */
 import assert from "node:assert/strict";
 import { measureLiveSelection } from "./session-rendering-live-selection.mjs";
+import { measureStatusParticles } from "./session-rendering-particles-probe.mjs";
 import { readResources } from "./session-rendering-resources.mjs";
-import { measureSweep } from "./session-rendering-sweep-probe.mjs";
 import { verifyDiffViewState } from "./session-rendering-view-state.mjs";
 
 export async function measureInteractions(renderer, snapshot, round, options = {}) {
@@ -140,7 +140,7 @@ export async function measureInteractions(renderer, snapshot, round, options = {
 		);
 	}
 	await renderer.eval("delete __renderDiag.focusEditor");
-	await measureSweep(renderer, options.main, options.channel, snapshot, round);
+	await measureStatusParticles(renderer, options.main, options.channel, snapshot, round);
 	if (options.after) {
 		const folded = await measureLiveSelection(renderer, snapshot, round, options);
 		if (options.resources) {

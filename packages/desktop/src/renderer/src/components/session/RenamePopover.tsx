@@ -3,7 +3,7 @@ import { createPortal } from "react-dom";
 import { useT } from "../../i18n";
 import { type MenuAnchor, placeMenu } from "../ui/place-menu";
 
-/** 退场时长：必须与 globals.css 的 .pop-out（120ms）一致 —— 动画跑完前卸载会闪回（PreviewTicker 同坑） */
+/** 退场时长：必须与 globals.css 的 .pop-out（120ms）一致 —— 动画跑完前卸载会闪回 */
 const EXIT_MS = 120;
 
 /**

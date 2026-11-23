@@ -5,7 +5,7 @@ import type { SessionEvent } from "@percho/shared";
  *
  * 问题背景：快模型流式输出可达 50–100+ delta/s，每条 delta 经 IPC 到达后各自触发一次
  * zustand set → React 渲染（每条 IPC 回调是独立 macrotask，React 自动批处理救不了）→
- * MessageList 全量 buildChatRows + 历史组件级联重渲染 + StreamingMarquee 强制布局，
+ * MessageList 全量 buildChatRows + 历史组件级联重渲染（旧版另有流式预览强制布局），
  * 与状态行动画 / CenterOrb canvas 共享主线程，高峰帧被挤掉（掉帧非必现，取决于速率×历史长度）。
  *
  * 合流规则（保序、无损）：
