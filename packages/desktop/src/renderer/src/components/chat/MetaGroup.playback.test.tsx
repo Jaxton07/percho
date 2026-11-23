@@ -11,7 +11,7 @@ import {
 } from "@percho/shared";
 import { act } from "react";
 import { createRoot } from "react-dom/client";
-import { afterEach, expect, it, vi } from "vitest";
+import { afterEach, assert, expect, it, vi } from "vitest";
 import { MetaGroup } from "./MetaGroup";
 
 vi.mock("thinking-orbs", () => ({ ThinkingOrb: () => <span /> }));
@@ -90,6 +90,15 @@ function mount() {
 	document.body.append(host);
 	root = createRoot(host);
 }
+function mockFieldWidth(width: number) {
+	const original = vi.mocked(Element.prototype.getBoundingClientRect).getMockImplementation();
+	assert(original, "Missing rectangle mock");
+	vi.mocked(Element.prototype.getBoundingClientRect).mockImplementation(function (this: Element) {
+		const rect = original.call(this);
+		return this.tagName === "svg" ? { ...rect, width, right: rect.left + width } : rect;
+	});
+}
+
 function item(name: string, extras: Partial<UIToolCall> = {}, thinking = false): MetaItem {
 	const tool: UIToolCall = {
 		key: "call",
@@ -136,6 +145,16 @@ afterEach(async () => {
 	vi.useRealTimers();
 });
 
+it.each([
+	[500, 333],
+	[1000, 540],
+])("uses doubled density at %ipx, bounded to %i dots", async (width, count) => {
+	mount();
+	mockFieldWidth(width);
+	await render(item("read"));
+	expect(host?.querySelectorAll(".status-particles circle")).toHaveLength(count);
+});
+
 it("keeps only the newest candidate until the entire joined pass ends", async () => {
 	mount();
 	await render(item("read"));
@@ -148,7 +167,7 @@ it("keeps only the newest candidate until the entire joined pass ends", async ()
 	await finish();
 	const pass = animations.slice(-3);
 	expect(pass).toHaveLength(3);
-	expect(pass.map((a) => a.timing.duration)).toEqual([2356, 2356, 2356]);
+	expect(pass.map((a) => a.timing.duration)).toEqual([1570, 1570, 1570]);
 	expect(new Set(pass.map((a) => a.startTime)).size).toBe(1);
 	await render(item("todo"));
 	expect(text()).toBe("Reviewing relevant content");
@@ -156,6 +175,16 @@ it("keeps only the newest candidate until the entire joined pass ends", async ()
 	await finish();
 	expect(text()).toBe("Editing TODO content");
 	expect(animations.at(-1)?.timing.duration).toBe(600);
+});
+
+it("accelerates short routes too, keeping all three tracks synchronized", async () => {
+	mount();
+	mockFieldWidth(40);
+	await render(item("read"));
+	await finish();
+	const tracks = animations.slice(-3);
+	expect(tracks.map((a) => a.timing.duration)).toEqual([1067, 1067, 1067]);
+	expect(new Set(tracks.map((a) => a.startTime)).size).toBe(1);
 });
 
 it("does not re-enter when different tools resolve to the same text", async () => {
@@ -291,6 +320,43 @@ it.each([
 		expect(text()).toBe(running);
 		await act(() => vi.advanceTimersByTime(1));
 		expect(text()).toBe(waiting);
+	},
+);
+
+it.each([
+	["en", "reduced", "Reviewing relevant content", "Thinking", "Editing relevant files"],
+	["zh", "reduced", "正在查看相关内容", "正在思考", "正在编辑相关文件"],
+	["en", "unsupported", "Reviewing relevant content", "Thinking", "Editing relevant files"],
+	["zh", "unsupported", "正在查看相关内容", "正在思考", "正在编辑相关文件"],
+])(
+	"%s static %s promotes thinking without waiting for animation",
+	async (language, mode, reading, thinking, editing) => {
+		locale.language = language;
+		if (mode === "reduced")
+			vi.spyOn(window, "matchMedia").mockReturnValue({
+				matches: true,
+				addEventListener() {},
+				removeEventListener() {},
+			} as unknown as MediaQueryList);
+		mount();
+		const descriptor = Object.getOwnPropertyDescriptor(Element.prototype, "animate");
+		assert(descriptor, "Missing animation descriptor");
+		if (mode === "unsupported")
+			Object.defineProperty(Element.prototype, "animate", { ...descriptor, value: undefined });
+		try {
+			await render(item("read"), { viewKey: "old" });
+			await render(item("read", {}, true), { viewKey: "old" });
+			expect(text()).toBe(reading);
+			await render(item("read", { state: "done", endedAt: 1 }, true), { viewKey: "old" });
+			expect(text()).toBe(thinking);
+			await render(item("read", { state: "done", endedAt: 1 }, true), { viewKey: "new" });
+			expect(text()).toBe(thinking);
+			await render(item("write"), { viewKey: "new" });
+			expect(text()).toBe(editing);
+			expect(animations).toHaveLength(0);
+		} finally {
+			if (mode === "unsupported") Object.defineProperty(Element.prototype, "animate", descriptor);
+		}
 	},
 );
 

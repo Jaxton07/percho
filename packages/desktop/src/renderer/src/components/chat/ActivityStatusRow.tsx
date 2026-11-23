@@ -1,7 +1,15 @@
 import { useId, useLayoutEffect, useRef, useState } from "react";
 import { useI18nStore, useT } from "../../i18n";
 import { type ActivityStatus, STATUS, translateActivityStatus } from "./activity-status";
-import { BAND, ENVELOPE, PARTICLES } from "./activity-status-animation";
+import {
+	BAND,
+	ENVELOPE,
+	MAX_PARTICLES,
+	MIN_SWEEP_DURATION,
+	PARTICLE_SPACING,
+	PARTICLES,
+	SWEEP_SPEED,
+} from "./activity-status-animation";
 import "./activity-status.css";
 
 interface ActivityStatusRowProps {
@@ -54,15 +62,17 @@ export function ActivityStatusRow({
 			thinkingVersion.current++;
 		inputs.current = { thinkingId, hasRunningTool };
 		latest.current = status;
+		// Static presentation has no pass boundary to promote independent thinking.
+		const next = (reduced || staticFallback) && thinkingId && !hasRunningTool ? STATUS.thinking : status;
 		if (previousScope.current !== scope) {
 			previousScope.current = scope;
 			enterNext.current = true;
-			currentRef.current = status;
-			setCurrent(status);
+			currentRef.current = next;
+			setCurrent(next);
 			setRevision((n) => n + 1);
 		} else if (reduced || staticFallback) {
-			currentRef.current = status;
-			setCurrent(status);
+			currentRef.current = next;
+			setCurrent(next);
 		}
 	}, [status, thinkingId, hasRunningTool, scope, reduced, staticFallback]);
 
@@ -134,7 +144,12 @@ export function ActivityStatusRow({
 			const fieldRect = field.getBoundingClientRect();
 			const size = `${textRect.width},${fieldRect.width},${fieldRect.left - textRect.right}`;
 			setCount(
-				fieldRect.width > 0 ? Math.ceil(Math.min(270, Math.max(48, Math.round(fieldRect.width / 3))) / 9) : 0,
+				fieldRect.width > 0
+					? Math.ceil(
+							Math.min(MAX_PARTICLES, Math.max(48, Math.round(fieldRect.width / PARTICLE_SPACING))) /
+								PARTICLES.length,
+						)
+					: 0,
 			);
 			if (lastSize && size !== lastSize) {
 				enterNext.current = false;
@@ -203,7 +218,7 @@ export function ActivityStatusRow({
 				const pr = field.getBoundingClientRect();
 				const gap = Math.max(0, pr.left - tr.right);
 				const width = tr.width + gap + pr.width;
-				const duration = Math.max(1600, Math.round(((width + BAND) / 360) * 1000));
+				const duration = Math.max(MIN_SWEEP_DURATION, Math.round(((width + BAND) / SWEEP_SPEED) * 1000));
 				const shine = ENVELOPE.map(
 					({ offset, alpha }) =>
 						`color-mix(in srgb, var(--color-ink) ${(alpha * 100).toFixed(3)}%, transparent) ${offset * 100}%`,

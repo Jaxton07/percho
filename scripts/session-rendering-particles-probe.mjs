@@ -110,11 +110,11 @@ export async function measureStatusParticles(renderer, main, channel, snapshot, 
 		const verify = (s) => {
 			assert(s?.same && s.phase === "pass", "Outer status row must remain in a pass");
 			assert(
-				s.particles > 0 && s.particles <= 270 && s.height === 24 && s.uses === 2 && s.idsUnique,
+				s.particles > 0 && s.particles <= 540 && s.height === 24 && s.uses === 2 && s.idsUnique,
 				"Bounded particles and unique SVG references",
 			);
 			assert(s.tracks.every(Boolean), "Text, mask and breathing tracks must all run");
-			const duration = Math.max(1600, Math.round(((s.distance + 160) / 360) * 1000));
+			const duration = Math.max(1067, Math.round(((s.distance + 160) / 540) * 1000));
 			assert(
 				s.tracks.every((t) => t.duration === duration && t.iterations === 1 && t.start === s.tracks[0].start),
 				`Tracks must share the same clock and calculated duration: ${JSON.stringify(s)}`,
