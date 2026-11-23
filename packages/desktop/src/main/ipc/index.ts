@@ -58,26 +58,36 @@ export function registerIpc(
 	registerInvokeHandlers(REMOTE_CHANNELS, {
 		remoteListSshAliases: () => discoverSshAliases(),
 		remoteAuthGuide: ({ environment }) => remoteConnectionManager.authGuide(environment),
-		remoteStopService: () => remoteConnectionManager.stopService(),
-		remotePreflight: async ({ alias }) => {
+		remoteGetCatalog: () => remoteConnectionManager.getCatalog(),
+		remoteAdd: (command) => remoteConnectionManager.add(command),
+		remoteResetCatalog: (command) => remoteConnectionManager.resetCatalog(command),
+		remoteStopService: (command) => remoteConnectionManager.stopService(command),
+		remotePreflight: (command) => {
 			trust.resetDecline();
-			await authorizeRemote();
-			return remoteConnectionManager.preflight(alias);
+			return remoteConnectionManager.preflight(command);
 		},
-		remoteForget: () => remoteConnectionManager.forget(),
+		remoteForget: (command) => remoteConnectionManager.forget(command),
 		remoteCheckOperation: ({ operationId }) => remoteConnectionManager.checkOperation(operationId),
 		remoteDismissOperation: ({ operationId }) => remoteConnectionManager.dismissOperation(operationId),
 		remoteGetStatus: () => remoteConnectionManager.getStatus(),
-		remoteDisconnect: () => remoteConnectionManager.disconnect(),
-		remoteInstall: ({ token }) => remoteConnectionManager.installAndConnect(token),
-		remotePrepareInstall: async ({ alias }) => {
+		remoteDisconnect: (command) => remoteConnectionManager.disconnect(command),
+		remoteInstall: (command) => remoteConnectionManager.installAndConnect(command),
+		remoteConfirmTarget: (command) => remoteConnectionManager.confirmTarget(command),
+		remotePrepareInstall: (command) => {
 			trust.resetDecline();
-			await authorizeRemote();
-			return remoteConnectionManager.prepareInstall(alias);
+			return remoteConnectionManager.prepareInstall(command);
 		},
-		remoteConnect: ({ alias }) => {
+		remoteConnect: (command) => {
 			trust.resetDecline();
-			return remoteConnectionManager.connect(alias);
+			return remoteConnectionManager.connect(command);
+		},
+		remoteReconnect: (command) => {
+			trust.resetDecline();
+			return remoteConnectionManager.reconnect(command);
+		},
+		remoteSwitch: (command) => {
+			trust.resetDecline();
+			return remoteConnectionManager.switchConnection(command);
 		},
 	});
 	registerSessionsIpc(backend);

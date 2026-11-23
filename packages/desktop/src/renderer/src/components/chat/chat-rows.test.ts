@@ -1,8 +1,10 @@
 import {
+	type AgentSessionEvent,
 	buildChatRows,
 	type ChatRow,
 	emptyTranscript,
 	isAgentWorking,
+	reduceEvent,
 	type StreamingState,
 	type TurnChanges,
 	type UIMessage,
@@ -50,6 +52,46 @@ function kinds(rows: ChatRow[]): string[] {
 }
 
 describe("buildChatRows", () => {
+	it("derives the active subagent from real independent-card events and clears it at end", () => {
+		const event = (type: string, data: Record<string, unknown> = {}) =>
+			({ type, ...data }) as AgentSessionEvent;
+		let state = reduceEvent(emptyTranscript(), event("agent_start"));
+		state = reduceEvent(
+			state,
+			event("message_update", {
+				assistantMessageEvent: { type: "toolcall_start", contentIndex: 2, partial: { content: [] } },
+			}),
+		);
+		state = reduceEvent(
+			state,
+			event("message_update", {
+				assistantMessageEvent: {
+					type: "toolcall_end",
+					contentIndex: 2,
+					toolCall: { id: "sub", name: "subagent", arguments: {} },
+				},
+			}),
+		);
+		state = reduceEvent(
+			state,
+			event("tool_execution_start", {
+				toolCallId: "sub",
+				toolName: "subagent",
+				args: { tasks: [{ task: "one" }, { task: "two" }] },
+			}),
+		);
+		let rows = buildChatRows(state, "session");
+		expect(kinds(rows)).toEqual(["metaGroup", "streamingSubagents"]);
+		expect(rows[0]).toMatchObject({ activeSubagent: { id: "sub", blockIndex: 2 }, subagentCount: 2 });
+		expect(state.streaming?.tools).toEqual([]);
+		expect(state.streaming?.activity).toEqual([]);
+		state = reduceEvent(
+			state,
+			event("tool_execution_end", { toolCallId: "sub", toolName: "subagent", isError: false, result: {} }),
+		);
+		rows = buildChatRows(state, "session");
+		expect(rows[0]).not.toHaveProperty("activeSubagent");
+	});
 	it("suppresses working during compaction and resumes after compaction ends", () => {
 		const base = { ...emptyTranscript(), agentActive: true };
 		const compacting = { ...base, compacting: true };
@@ -139,7 +181,10 @@ describe("buildChatRows", () => {
 				text: "正文流",
 				textBlockIndex: 2,
 				tools: [tool("read", "done", 0), tool("bash", "running", 3)],
-				activity: [{ id: "ac1", kind: "tool", name: "bash", args: "" }],
+				activity: [
+					{ id: "c0", kind: "tool", name: "read", args: "" },
+					{ id: "c3", kind: "tool", name: "bash", args: "" },
+				],
 			}),
 		};
 		const rows = buildChatRows(t, "s1");
@@ -150,7 +195,10 @@ describe("buildChatRows", () => {
 		expect(rows[1]).toMatchObject({ kind: "message", streaming: true, key: "stream-1", metaInGroup: true });
 		// post 组是最新组：接 working 信号 + 活动序列
 		expect(rows[2]).toMatchObject({ kind: "metaGroup", working: true });
-		expect((rows[2] as { items: { activity?: unknown[] }[] }).items[0]?.activity).toHaveLength(1);
+		const activity = (rows[2] as { items: { activity?: unknown[] }[] }).items[0]?.activity;
+		expect(activity).toEqual([t.streaming.activity[1]]);
+		const next = buildChatRows({ ...t, streaming: { ...t.streaming, text: "正文继续增长" } }, "s1");
+		expect((next[2] as { items: { activity?: unknown[] }[] }).items[0]?.activity).toBe(activity);
 	});
 
 	it("working empty group placeholder when agent active without content", () => {

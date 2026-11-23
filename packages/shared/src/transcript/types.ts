@@ -132,6 +132,8 @@ export interface UIToolCall {
 	/** unified patch（仅 edit 工具成功时由 SDK details.patch 写入；write/其他工具无此字段） */
 	diff?: string;
 	state: "running" | "done" | "error";
+	/** 首次收到 live 执行开始事件的本地时间；历史或恢复未知时缺省。 */
+	startedAt?: number;
 	/** 执行结束时刻（live = reducer 在 tool_execution_end 盖戳；历史 = toolResult entry timestamp 透传）；
 	 * 轮次计时（deriveTurnTimings）用，子代理工具除外（独立行 timestamp 承担） */
 	endedAt?: number;
@@ -160,7 +162,7 @@ export interface StreamingState {
 	/** 子代理运行缓冲：tool_execution_start 建占位（工作中），end 用 details 完善，turn_end 固化为独立消息 */
 	subagentRuns: SubagentRunUi[];
 	/** toolCallId → subagentRuns 起点与占位数（parallel 一次调用可对应多行） */
-	subagentByToolCallId: Record<string, { start: number; count: number }>;
+	subagentByToolCallId: Record<string, { start: number; count: number; blockIndex?: number }>;
 	/** 最近一次 toolcall_start 的工具索引 */
 	activeToolIndex: number;
 	/** assistant 消息 content 绝对索引 → tools 数组索引（事件带 contentIndex，须按此匹配） */

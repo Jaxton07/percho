@@ -19,11 +19,20 @@ interface RecordEntry {
 	opId: string;
 	archivedAt: number;
 	phase: Phase;
+	/** File identity and timestamps before this operation touched the session. */
+	preparedFile?: string;
 }
 interface ArchiveData {
 	version: 1;
 	records: RecordEntry[];
 }
+export interface ChannelArchiveMaintenance {
+	sessionId: string;
+	sessionFile: string;
+	operationId: string;
+	kind: "archive";
+}
+
 export interface SessionArchiveOptions {
 	agentDir: string;
 	catalog: () => SessionCatalog;
@@ -32,8 +41,20 @@ export interface SessionArchiveOptions {
 	disposeSession: (sessionId: string) => Promise<void>;
 	withFile: <T>(files: string[], operation: () => Promise<T>) => Promise<T>;
 	resolveFile?: (file: string) => string;
+	/** Called under the source lease; only a durable matching deletion may authorize removal. */
+	confirmDeleted?: (input: ChannelArchiveMaintenance) => Promise<boolean>;
+	/** Idempotently initialize storage, fence this identity and unsubscribe in one durable boundary. */
+	prepareChannelMaintenance?: (input: ChannelArchiveMaintenance) => Promise<void>;
+	/** Idempotent and operation-scoped; active must never release a newer fence or tombstone. */
+	completeChannelMaintenance?: (
+		input: ChannelArchiveMaintenance & { outcome: "archived" | "active" },
+	) => Promise<void>;
 }
-export type SessionArchiveState = SessionArchiveResult & { phase: Phase | "none"; blocked: boolean };
+export type SessionArchiveState = SessionArchiveResult & {
+	phase: Phase | "none";
+	blocked: boolean;
+	operationId?: string;
+};
 
 function parseData(raw: string): ArchiveData {
 	const value: unknown = JSON.parse(raw);
@@ -51,7 +72,11 @@ function parseData(raw: string): ArchiveData {
 		if (!item || typeof item !== "object" || Array.isArray(item)) throw new Error("Invalid archive record");
 		const r = item as Record<string, unknown>;
 		if (
-			Object.keys(r).sort().join() !== "archivedAt,file,id,opId,phase,revision" ||
+			![
+				"archivedAt,file,id,opId,phase,revision",
+				"archivedAt,file,id,opId,phase,preparedFile,revision",
+			].includes(Object.keys(r).sort().join()) ||
+			(r.preparedFile !== undefined && (typeof r.preparedFile !== "string" || !r.preparedFile)) ||
 			typeof r.file !== "string" ||
 			!r.file ||
 			!isAbsolute(r.file) ||
@@ -178,6 +203,10 @@ export class SessionArchiveService {
 		byFile: Map<string, number>;
 	};
 	private readonly drafts = new WeakMap<ArchiveData, ArchiveData>();
+	private async sessionFingerprint(file: string): Promise<string> {
+		const s = await stat(file, { bigint: true });
+		return [s.dev, s.ino, s.size, s.mtimeNs, s.ctimeNs].join(":");
+	}
 	private async fingerprint(): Promise<string> {
 		const s = await stat(join(this.options.agentDir, "session-archive.json"), { bigint: true });
 		return [s.dev, s.ino, s.size, s.mtimeNs, s.ctimeNs].join(":");
@@ -211,6 +240,8 @@ export class SessionArchiveService {
 	private readonly retryable = new Set<string>();
 	private queue: Promise<void> = Promise.resolve();
 	constructor(private readonly options: SessionArchiveOptions) {
+		if (!!options.prepareChannelMaintenance !== !!options.completeChannelMaintenance)
+			throw new Error("Both channel maintenance callbacks are required");
 		this.store = new JsonStore({
 			path: join(options.agentDir, "session-archive.json"),
 			defaultValue: () => null,
@@ -341,6 +372,7 @@ export class SessionArchiveService {
 			cleanupPending: r?.phase === "archived-cleanup" || undefined,
 			phase: r?.phase ?? "none",
 			blocked: !!r && r.phase !== "unarchived",
+			operationId: r?.opId,
 		};
 	}
 	async init(): Promise<void> {
@@ -356,7 +388,25 @@ export class SessionArchiveService {
 			}
 			await this.confirmUncertain();
 			const current = await this.data(true);
-			for (const r of current.records) {
+			for (const r of [...current.records]) {
+				if (this.options.confirmDeleted) {
+					const removed = await this.options.withFile([r.file], async () => {
+						if (!(await this.options.confirmDeleted?.(this.maintenance(r)))) return false;
+						current.records = current.records.filter((item) => item !== r);
+						await this.save(current);
+						return true;
+					});
+					if (removed) continue;
+				}
+				if (r.phase === "unarchived") {
+					await this.completeMaintenance(r, "active");
+					continue;
+				}
+				if (r.phase === "archived" || r.phase === "archived-cleanup") {
+					await this.prepareMaintenance(r);
+					await this.completeMaintenance(r, "archived");
+					continue;
+				}
 				if (r.phase !== "prepared") continue;
 				await this.options.withFile([r.file], async () => {
 					let matches = false;
@@ -366,6 +416,7 @@ export class SessionArchiveService {
 						/* retain blocked intent */
 					}
 					if (!matches) return;
+					await this.prepareMaintenance(r);
 					const handle = await open(r.file, "r+");
 					try {
 						await handle.sync();
@@ -374,6 +425,7 @@ export class SessionArchiveService {
 					}
 					r.phase = "archived-cleanup";
 					await this.save(current);
+					await this.completeMaintenance(r, "archived");
 					// A stale disposable index must never prevent recovery of the authoritative state.
 					try {
 						await this.options.catalog().setArchive(this.projection(r));
@@ -423,6 +475,15 @@ export class SessionArchiveService {
 		)
 			throw new Error("Session catalog identity is unavailable or ambiguous");
 	}
+	private maintenance(r: RecordEntry): ChannelArchiveMaintenance {
+		return { sessionId: r.id, sessionFile: r.file, operationId: r.opId, kind: "archive" };
+	}
+	private async prepareMaintenance(r: RecordEntry): Promise<void> {
+		await this.options.prepareChannelMaintenance?.(this.maintenance(r));
+	}
+	private async completeMaintenance(r: RecordEntry, outcome: "archived" | "active"): Promise<void> {
+		await this.options.completeChannelMaintenance?.({ ...this.maintenance(r), outcome });
+	}
 	private async cleanup(data: ArchiveData, r: RecordEntry): Promise<boolean> {
 		if (r.phase !== "archived-cleanup") return true;
 		try {
@@ -448,6 +509,8 @@ export class SessionArchiveService {
 				const d = await this.data(true);
 				const r = this.find(d, sessionId, file);
 				if (r?.phase !== "archived-cleanup") throw new Error("No pending archive cleanup");
+				await this.prepareMaintenance(r);
+				await this.completeMaintenance(r, "archived");
 				if (!(await this.cleanup(d, r))) throw new Error("Archive cleanup failed; retry is required");
 			});
 		});
@@ -459,9 +522,11 @@ export class SessionArchiveService {
 				if (!this.initialized) await this.confirmUncertain();
 				const data = await this.data(true);
 				let r = this.find(data, input.sessionId, file);
-				if (r?.phase === "prepared" && !this.retryable.has(r.opId))
+				if (r?.phase === "prepared" && !this.retryable.has(r.opId) && !this.options.prepareChannelMaintenance)
 					throw new Error("Archive operation is unresolved");
 				if (r && (r.phase === "archived" || r.phase === "archived-cleanup")) {
+					await this.prepareMaintenance(r);
+					await this.completeMaintenance(r, "archived");
 					try {
 						await this.options.catalog().setArchive(this.projection(r));
 					} catch (error) {
@@ -472,6 +537,7 @@ export class SessionArchiveService {
 				}
 				if ((r?.phase === "prepared" ? r.revision - 1 : (r?.revision ?? 0)) !== input.expectedRevision)
 					throw new Error("Archive revision conflict");
+				if (r?.phase === "unarchived") await this.completeMaintenance(r, "active");
 				await this.verify(input.sessionId, file);
 				if (this.options.hasPending(input.sessionId, file)) throw new Error("Session is busy");
 				const session = this.options.getSession(input.sessionId, file);
@@ -488,13 +554,17 @@ export class SessionArchiveService {
 				let retain = this.leases.has(input.sessionId) || r?.phase === "prepared";
 				try {
 					if (this.options.hasPending(input.sessionId, file)) throw new Error("Session is busy");
+					const beforeInspect = await this.sessionFingerprint(file);
 					const checked = await inspect(file, input.sessionId);
+					if (beforeInspect !== (await this.sessionFingerprint(file)))
+						throw new Error("Session file changed during archive inspection");
 					if (
 						r?.phase === "prepared" &&
 						(!checked.complete || (checked.ops.has(r.opId) && checked.lastOp !== r.opId))
 					)
 						throw new Error("Archive operation is unresolved");
 					if (r?.phase === "prepared" && checked.lastOp === r.opId) {
+						await this.prepareMaintenance(r);
 						const h = await open(file, "r+");
 						try {
 							await h.sync();
@@ -503,6 +573,7 @@ export class SessionArchiveService {
 						}
 						r.phase = "archived-cleanup";
 						await this.save(data);
+						await this.completeMaintenance(r, "archived");
 						this.retryable.delete(r.opId);
 						try {
 							await this.options.catalog().setArchive(this.projection(r));
@@ -520,6 +591,7 @@ export class SessionArchiveService {
 							opId: randomUUID(),
 							archivedAt: Date.now(),
 							phase: "prepared",
+							preparedFile: beforeInspect,
 						};
 						data.records = data.records.filter((item) => item.id !== input.sessionId);
 						data.records.push(r);
@@ -529,6 +601,7 @@ export class SessionArchiveService {
 						this.retryable.add(r.opId);
 						await this.save(data);
 					}
+					await this.prepareMaintenance(r);
 					if (checked.needsNewline) {
 						const h = await open(file, constants.O_WRONLY | constants.O_APPEND);
 						try {
@@ -554,6 +627,7 @@ export class SessionArchiveService {
 						throw new Error("Archive unsubscribe could not be verified");
 					r.phase = "archived-cleanup";
 					await this.save(data);
+					await this.completeMaintenance(r, "archived");
 					this.retryable.delete(r.opId);
 					try {
 						await this.options.catalog().setArchive(this.projection(r));
@@ -574,19 +648,52 @@ export class SessionArchiveService {
 			return this.options.withFile([file], async () => {
 				const data = await this.data(true);
 				const r = this.find(data, input.sessionId, file);
-				if (r?.phase === "prepared") throw new Error("Archive operation is unresolved");
+				if (r?.phase === "prepared") {
+					if (r.revision - 1 !== input.expectedRevision) throw new Error("Archive revision conflict");
+					if (!this.options.completeChannelMaintenance || !r.preparedFile)
+						throw new Error("Archive operation is unresolved; cancellation cannot be verified");
+					await this.verify(input.sessionId, file);
+					const before = await this.sessionFingerprint(file);
+					const checked = await inspect(file, input.sessionId);
+					if (
+						before !== r.preparedFile ||
+						before !== (await this.sessionFingerprint(file)) ||
+						!checked.complete ||
+						checked.ops.has(r.opId)
+					)
+						throw new Error("Archive operation is unresolved; session file changed or marker exists");
+					r.phase = "unarchived";
+					delete r.preparedFile;
+					await this.save(data);
+					await this.completeMaintenance(r, "active");
+					this.leases.get(input.sessionId)?.release();
+					this.leases.delete(input.sessionId);
+					this.retryable.delete(r.opId);
+					try {
+						await this.options.catalog().setArchive(this.projection(r));
+					} catch (error) {
+						log.warn("Archive catalog projection failed", error);
+					}
+					return this.result(input.sessionId, file, r);
+				}
 				if (!r || r.phase === "unarchived") {
-					if (this.leases.has(input.sessionId)) throw new Error("Archive operation is unresolved");
+					if (!r && this.leases.has(input.sessionId)) throw new Error("Archive operation is unresolved");
+					if (r) await this.completeMaintenance(r, "active");
+					this.leases.get(input.sessionId)?.release();
+					this.leases.delete(input.sessionId);
 					return this.result(input.sessionId, file, r);
 				}
 				if (r.revision !== input.expectedRevision) throw new Error("Archive revision conflict");
+				await this.prepareMaintenance(r);
+				await this.completeMaintenance(r, "archived");
 				if (r.phase === "archived-cleanup" && !(await this.cleanup(data, r)))
 					throw new Error("Archive cleanup failed; retry is required");
 				await this.verify(input.sessionId, file);
 				r.revision++;
-				r.opId = randomUUID();
+				// Keep the archive operation identity so a failed unlock can be retried after restart.
 				r.phase = "unarchived";
 				await this.save(data);
+				await this.completeMaintenance(r, "active");
 				try {
 					await this.options.catalog().setArchive(this.projection(r));
 				} catch (error) {

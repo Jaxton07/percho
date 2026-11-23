@@ -58,9 +58,15 @@ beforeEach(() => {
 	fixture.open.mockResolvedValue({ ok: true, meta: { sessionId: "s" } });
 });
 describe("notification click entry point", () => {
-	it("keeps remote history routing and invalidates navigation on a new connection revision", async () => {
+	it("keeps remote history routing across unrelated revisions but invalidates a new connection generation", async () => {
 		const environment = { kind: "ssh", connectionId: "fixture", environmentId: "one" } as const;
-		fixture.status = { revision: 2, state: "connected", environment } as RemoteConnectionStatus;
+		fixture.status = {
+			revision: 2,
+			state: "connected",
+			environment,
+			epoch: "run",
+			generation: 1,
+		} as RemoteConnectionStatus;
 		let guard: ((meta: { sessionId: string }) => boolean) | undefined;
 		fixture.open.mockImplementation((_file, check) => {
 			guard = check;
@@ -76,6 +82,8 @@ describe("notification click entry point", () => {
 		);
 		expect(guard?.({ sessionId: id })).toBe(true);
 		fixture.status = { ...fixture.status, revision: 3 };
+		expect(guard?.({ sessionId: id })).toBe(true);
+		fixture.status = { ...fixture.status, generation: 2 };
 		expect(guard?.({ sessionId: id })).toBe(false);
 		off();
 	});

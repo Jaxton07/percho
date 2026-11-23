@@ -18,16 +18,16 @@ const channelFactory = vi.hoisted(() => ({
 	options: undefined as
 		| undefined
 		| {
-				onSubscriptionsChanged: (id: string, topics: ReadonlySet<string>) => void;
+				onSnapshot: (id: string, entries: Array<{ topic: string; unread: number }>) => void;
+				onSessionCleanup: (cleanup: () => void) => void;
 				isSessionAlive: (id: string) => boolean;
 		  },
 }));
-// Intercept watcher construction only; the captured producer callbacks and all lifecycle state are real.
-vi.mock("../src/tools/channel-watch", async (importOriginal) => ({
-	...(await importOriginal<typeof import("../src/tools/channel-watch")>()),
-	makeChannelWatchExtension: (options: NonNullable<typeof channelFactory.options>) => {
+// Intercept the channel extension only; callbacks and lifecycle state remain real.
+vi.mock("../src/tools/channels/extension", () => ({
+	makeChannelsExtension: (options: NonNullable<typeof channelFactory.options>) => {
 		channelFactory.options = options;
-		return () => {};
+		return { name: "channels", factory: () => {} };
 	},
 }));
 
@@ -128,23 +128,24 @@ function setup(id: string, shutdown: () => Promise<void> = async () => {}) {
 		}),
 		gate,
 		dialogs,
-		cwd: "/isolated/fixture",
+		cwd: directory,
 		modeRef: { current: "default" },
 	} as unknown as RegisteredSession;
 	internal.registry.add(entry);
 	internal.sourceSnapshots.capture(entry, { sessionId: id, branch: () => [], entries: () => [] });
 	internal.media.openOwner(id, entry.modeRef);
 	const mediaLease = internal.media.lease(id, () => true);
+	channelFactory.options = undefined;
 	internal.buildExtensionFactories(entry.cwd, undefined, entry.modeRef);
 	const producer = channelFactory.options;
-	if (!producer) throw Error("watcher producer callbacks not captured");
+	if (!producer) throw Error("channel producer callbacks not captured");
 	internal.channelSubs.noteSessionOpened(id);
 	internal.channelSubs.report(id, new Set(["topic"]));
 	internal.eventRates.tick(id);
 	const watcher = vi.fn(() => {
 		order.push("watcher");
 	});
-	internal.channelWatchCleanups.set(entry.modeRef, watcher);
+	producer.onSessionCleanup(watcher);
 	// Real pending resources; cancel/dispose must settle them rather than merely call spies.
 	const permission = gate.confirm("Approval", "fixture operation");
 	const dialog = dialogs.ask("confirm", { title: "Dialog", message: "fixture" }, { timeout: 60000 });
@@ -196,7 +197,7 @@ function assertAuxiliaryReleased(fixture: ReturnType<typeof setup>, id: string) 
 	expect(fixture.sdkEvents.listenerCount("event")).toBe(0);
 	expect(internal.channelWatchCleanups.has(entry.modeRef)).toBe(false);
 	expect(internal.eventRates.snapshot().has(id)).toBe(false);
-	expect(internal.channelSubs.snapshot(id)).toMatchObject({ live: false, topics: [] });
+	expect(internal.channelSubs.snapshot(id)).toMatchObject({ live: false, topics: ["topic"] });
 	expect(
 		internal.streamGuard.inspect(id, {
 			type: "message_update",
@@ -304,12 +305,12 @@ describe("registered session lifetime uses real pending resources and auxiliary 
 			expect(await fixture.permission).toBe(false);
 			expect(await fixture.dialog).toBe(false);
 			expect(await fixture.history).toBe(false);
-			fixture.producer.onSubscriptionsChanged("quit", new Set());
+			fixture.producer.onSnapshot("quit", []);
 			expect(fixture.producer.isSessionAlive("quit")).toBe(false);
 			expect(fixture.internal.channelSubs.snapshot("quit")).toMatchObject({
 				generation,
 				live: false,
-				topics: [],
+				topics: ["topic"],
 			});
 			fixture.backend.dispose();
 			for (const spy of [
@@ -419,7 +420,7 @@ describe("registered session lifetime uses real pending resources and auxiliary 
 			expect(await fixture.permission).toBe(false);
 			expect(await fixture.dialog).toBe(false);
 			expect(await fixture.history).toBe(false);
-			expect(internal.channelSubs.snapshot(`aux-${path}`)).toMatchObject({ live: false, topics: [] });
+			expect(internal.channelSubs.snapshot(`aux-${path}`)).toMatchObject({ live: false, topics: ["topic"] });
 			expect(internal.eventRates.snapshot().has(`aux-${path}`)).toBe(false);
 		},
 	);
@@ -427,11 +428,11 @@ describe("registered session lifetime uses real pending resources and auxiliary 
 		const fixture = setup("reopen");
 		const before = fixture.internal.channelSubs.snapshot("reopen");
 		await fixture.backend.closeSession("reopen");
-		fixture.producer.onSubscriptionsChanged("reopen", new Set());
+		fixture.producer.onSnapshot("reopen", []);
 		expect(fixture.internal.channelSubs.snapshot("reopen")).toMatchObject({
 			generation: before.generation,
 			live: false,
-			topics: [],
+			topics: ["topic"],
 		});
 		const next = {
 			...fixture.entry,
@@ -445,7 +446,7 @@ describe("registered session lifetime uses real pending resources and auxiliary 
 		fixture.internal.channelSubs.noteSessionOpened("reopen");
 		fixture.internal.channelSubs.report("reopen", new Set(["new"]));
 		const current = fixture.internal.channelSubs.snapshot("reopen");
-		fixture.producer.onSubscriptionsChanged("reopen", new Set(["late-old"]));
+		fixture.producer.onSnapshot("reopen", [{ topic: "late-old", unread: 0 }]);
 		expect(fixture.producer.isSessionAlive("reopen")).toBe(false);
 		expect(fixture.internal.channelSubs.snapshot("reopen")).toEqual(current);
 		expect(current.generation).toBeGreaterThan(before.generation);

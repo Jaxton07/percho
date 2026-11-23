@@ -417,6 +417,7 @@ export function reduceEvent(state: SessionTranscriptState, event: SessionEvent):
 								: []
 						: [];
 				if (runInputs.length > 0) {
+					if (streaming.subagentByToolCallId[event.toolCallId]) return streaming;
 					const start = streaming.subagentRuns.length;
 					const runs: SubagentRunUi[] = runInputs.map((input, index) => ({
 						key: `${event.toolCallId}:${index}`,
@@ -439,7 +440,7 @@ export function reduceEvent(state: SessionTranscriptState, event: SessionEvent):
 						subagentRuns: [...streaming.subagentRuns, ...runs],
 						subagentByToolCallId: {
 							...streaming.subagentByToolCallId,
-							[event.toolCallId]: { start, count: runs.length },
+							[event.toolCallId]: { start, count: runs.length, blockIndex: removedTool?.blockIndex },
 						},
 					};
 				}
@@ -448,6 +449,7 @@ export function reduceEvent(state: SessionTranscriptState, event: SessionEvent):
 					tools: patchStreamingTool(streaming.tools, event.toolCallId, (t) => ({
 						...t,
 						state: "running" as const,
+						startedAt: t.startedAt ?? Date.now(),
 					})),
 				};
 			});
@@ -532,6 +534,17 @@ export function reduceEvent(state: SessionTranscriptState, event: SessionEvent):
 								task: placeholder.task,
 								status: event.isError ? ("error" as const) : ("done" as const),
 							}));
+				// 终态不再是活跃调用；结果数量变化时同步调整后续调用的区间。
+				const subagentByToolCallId = Object.fromEntries(
+					Object.entries(streaming.subagentByToolCallId)
+						.filter(([id]) => id !== event.toolCallId)
+						.map(([id, other]) => [
+							id,
+							placement && other.start > start
+								? { ...other, start: other.start + runs.length - count }
+								: other,
+						]),
+				);
 				// ticker 摘条（兑底分支同 spec §9.0）：start 未建占位时工具仍在折叠区/activity 里
 				const endedTool = streaming.tools.find((t) => t.id === event.toolCallId);
 				const activity =
@@ -545,6 +558,7 @@ export function reduceEvent(state: SessionTranscriptState, event: SessionEvent):
 						tools: streaming.tools.filter((t) => t.id !== event.toolCallId),
 						activity,
 						subagentRuns: [...before, ...runs, ...after],
+						subagentByToolCallId,
 					},
 				};
 			}

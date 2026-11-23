@@ -6,6 +6,7 @@ import {
 	type SshPreflight,
 } from "@percho/shared";
 import { sshArguments, validateSshAlias } from "./ssh-arguments";
+import { trackSshProcess } from "./ssh-process";
 
 export function shellQuote(value: string): string {
 	return `'${value.replaceAll("'", "'\\''")}'`;
@@ -15,27 +16,29 @@ export function shellQuote(value: string): string {
 export async function runSsh(args: string[], signal: AbortSignal, timeoutMs = 25_000): Promise<string> {
 	return new Promise((resolve, reject) => {
 		const child = spawn("ssh", args, { windowsHide: true, stdio: ["ignore", "pipe", "pipe"], signal });
+		const process = trackSshProcess(child);
 		const output: Buffer[] = [];
 		let bytes = 0;
 		let stderr = "";
 		let failure: Error | undefined;
 		const timer = setTimeout(() => {
-			failure = new Error("SSH connection timed out");
-			child.kill();
+			failure ??= new Error("SSH connection timed out");
+			process.terminate();
 		}, timeoutMs);
 		child.stdout.on("data", (chunk: Buffer) => {
 			bytes += chunk.length;
 			if (bytes > 1024 * 1024) {
-				failure = new Error("SSH response exceeds limit");
-				child.kill();
+				failure ??= new Error("SSH response exceeds limit");
+				process.terminate();
 			} else output.push(chunk);
 		});
 		child.stderr.on("data", (chunk: Buffer) => {
 			if (stderr.length < 16384) stderr = (stderr + chunk.toString("utf8")).slice(0, 16384);
 		});
 		child.once("error", (error) => {
+			failure ??= error;
 			clearTimeout(timer);
-			reject(error);
+			process.terminate();
 		});
 		child.once("close", (code) => {
 			clearTimeout(timer);
@@ -65,9 +68,21 @@ const fs=require('node:fs'),os=require('node:os'),path=require('node:path'),cp=r
   socket.on('connect',()=>socket.write(JSON.stringify({type:'inspect',id:'probe'})+'\\n'));
   socket.on('data',chunk=>{text+=chunk;if(text.length>1048576)return finish({serviceState:'unreachable'});if(text.includes('\\n')){try{const frame=JSON.parse(text.split('\\n')[0]);finish(frame.result?{serviceState:'running',service:frame.result}:{serviceState:'unreachable'});}catch{finish({serviceState:'unreachable'});}}});
  });
+ let ownerReleased=false,ownerFd;
+ try{
+  const lock=path.join(root,'run','owner.lock'),before=fs.lstatSync(lock),uid=process.getuid();
+  const safe=s=>s.isFile()&&!s.isSymbolicLink()&&s.uid===uid&&(s.mode&0o077)===0;
+  const privateDir=p=>{const s=fs.lstatSync(p);return s.isDirectory()&&!s.isSymbolicLink()&&s.uid===uid&&(s.mode&0o077)===0;};
+  if(commands.flock&&typeof fs.constants.O_NOFOLLOW==='number'&&safe(before)&&privateDir(root)&&privateDir(path.join(root,'run'))){
+   ownerFd=fs.openSync(lock,fs.constants.O_RDONLY|fs.constants.O_NOFOLLOW);
+   const after=fs.fstatSync(ownerFd);
+   if(safe(after)&&before.dev===after.dev&&before.ino===after.ino)
+    ownerReleased=cp.spawnSync('flock',['-n','-E','75','3'],{stdio:['ignore','ignore','ignore',ownerFd],timeout:2000}).status===0;
+  }
+ }catch{}finally{if(ownerFd!==undefined)try{fs.closeSync(ownerFd);}catch{ownerReleased=false;}}
  let installedReleaseId;try{const v=JSON.parse(fs.readFileSync(path.join(root,'installed.json'),'utf8'));if(!/^v[0-9]+\\.[0-9]+\\.[0-9]+(?:-[a-zA-Z0-9.-]+)?$/.test(v.releaseId))throw new Error('Invalid installed release');installedReleaseId=v.releaseId;}catch(e){if(e.code!=='ENOENT')throw e;}
  if(!installedReleaseId&&fs.existsSync(path.join(root,'releases/development/entry.mjs')))installedReleaseId='development';
- console.log(JSON.stringify({uid:process.getuid?.(),home,agentDir,environmentId,node:fs.realpathSync(process.execPath),nodeVersion:process.versions.node,platform:process.platform,arch:process.arch,glibc:process.report.getReport().header.glibcVersionRuntime||'',commands,installedReleaseId,installed:!!installedReleaseId&&fs.existsSync(path.join(root,'releases',installedReleaseId,'entry.mjs')),...status}));
+ console.log(JSON.stringify({uid:process.getuid?.(),home,agentDir,environmentId,node:fs.realpathSync(process.execPath),nodeVersion:process.versions.node,platform:process.platform,arch:process.arch,glibc:process.report.getReport().header.glibcVersionRuntime||'',commands,installedReleaseId,installed:!!installedReleaseId&&fs.existsSync(path.join(root,'releases',installedReleaseId,'entry.mjs')),ownerReleased,...status}));
 })().catch(e=>{console.error(e.message);process.exitCode=1;});
 `;
 
@@ -101,7 +116,8 @@ export async function preflightSsh(alias: string, signal: AbortSignal): Promise<
 		!result.home?.startsWith("/") ||
 		!result.node?.startsWith("/") ||
 		!result.commands ||
-		typeof result.installed !== "boolean"
+		typeof result.installed !== "boolean" ||
+		(result.ownerReleased !== undefined && typeof result.ownerReleased !== "boolean")
 	)
 		throw new Error("Invalid remote preflight response");
 	return result;

@@ -51,6 +51,7 @@ export function CornerStack({ slotHostRef }: { slotHostRef: RefObject<HTMLElemen
 		<div
 			ref={stackRef}
 			data-corner-stack=""
+			style={{ width: "calc(100% - 32px)", maxWidth: 560 }}
 			className="pointer-events-none absolute right-4 top-2 z-20 flex flex-col items-end gap-2"
 		>
 			<ChannelSubscriptionPill presence={visible} onExitFinished={handleExitFinished} />

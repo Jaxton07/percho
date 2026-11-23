@@ -1,0 +1,54 @@
+.settings-dialog {
+	width: min(1120px, calc(100vw - 64px));
+	height: min(780px, calc(100dvh - 64px));
+	border-radius: 16px;
+}
+
+.settings-dialog-nav {
+	width: min(224px, 42%);
+	padding: 24px 12px;
+}
+
+.settings-dialog-heading {
+	margin: 0 12px 30px;
+}
+
+.settings-dialog-content {
+	padding: 53px 48px 48px;
+}
+
+.settings-dialog-form {
+	max-width: 640px;
+	margin-inline: auto;
+}
+
+.settings-dialog-panel {
+	margin-top: 30px;
+}
+
+.settings-dialog-toolbar {
+	position: absolute;
+	inset: 14px 15px auto auto;
+	z-index: 2;
+	display: flex;
+	align-items: center;
+	gap: 12px;
+}
+
+.settings-dialog-close {
+	width: 32px;
+	height: 32px;
+}
+
+@media (max-width: 900px), (max-height: 700px) {
+	.settings-dialog {
+		width: min(1120px, calc(100vw - 32px));
+		height: min(780px, calc(100dvh - 32px));
+	}
+	.settings-dialog-nav {
+		width: min(192px, 42%);
+	}
+	.settings-dialog-content {
+		padding: 53px 30px 30px;
+	}
+}

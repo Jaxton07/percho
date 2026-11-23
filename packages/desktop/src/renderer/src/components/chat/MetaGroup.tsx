@@ -1,17 +1,16 @@
 import { dotsFromItems, type MetaDot, type MetaItem, summarizeCategories } from "@percho/shared";
 import { Fragment, memo, useMemo } from "react";
-import type { OrbState } from "thinking-orbs";
 import { ThinkingOrb } from "thinking-orbs";
 import { useT } from "../../i18n";
 import { thinkingViewKey } from "../../lib/session-view-keys";
 import { ExpandArrowIcon } from "../icons";
 import { DeferredDetails } from "../ui/DeferredDetails";
 import { SelectableText } from "../ui/SelectableText";
+import { ActivityStatusRow } from "./ActivityStatusRow";
 import { summaryLabel } from "./meta-summary-label";
-import { type LivePreviewItem, PreviewTicker } from "./PreviewTicker";
 import { ToolCallCard } from "./ToolCallCard";
+import { type ActiveSubagent, useActivityStatus } from "./use-activity-status";
 import { useShownWorking } from "./use-shown-working";
-import { useSweepHighlight } from "./use-sweep-highlight";
 
 export type { MetaItem };
 
@@ -46,7 +45,7 @@ function dotClass(state: MetaDot["state"]): string {
 
 /**
  * 外层折叠组：聚合多条非正文消息的思考/工具。
- * 标题行：working 期 = 思考标签或工具名 + 内联预览行；worked 期 = 分类统计单行
+ * 标题行：working 期 = 当前思考标签或工具名 + 连续粒子带；worked 期 = 分类统计单行
  * （读取/编辑/探索/搜索/执行命令，未知工具按原名计数；无工具时回退 Worked 标签）。
  * 其下圆点行按 tool call 逐粒追加（done 实心 ink / error 灰 / running 空心呼吸），working 期
  * 实时、结束后随 items 冻结，展开组时隐藏。展开区为完整思考行/工具卡。
@@ -64,6 +63,7 @@ function metaGroupPropsEqual(
 		working: boolean;
 		endImmediately?: boolean;
 		subagentCount?: number;
+		activeSubagent?: ActiveSubagent;
 		viewKey?: string;
 	},
 	b: {
@@ -71,6 +71,7 @@ function metaGroupPropsEqual(
 		working: boolean;
 		endImmediately?: boolean;
 		subagentCount?: number;
+		activeSubagent?: ActiveSubagent;
 		viewKey?: string;
 	},
 ): boolean {
@@ -79,6 +80,9 @@ function metaGroupPropsEqual(
 		a.working !== b.working ||
 		a.endImmediately !== b.endImmediately ||
 		a.subagentCount !== b.subagentCount ||
+		a.activeSubagent?.id !== b.activeSubagent?.id ||
+		a.activeSubagent?.sourceId !== b.activeSubagent?.sourceId ||
+		a.activeSubagent?.blockIndex !== b.activeSubagent?.blockIndex ||
 		a.items.length !== b.items.length
 	)
 		return false;
@@ -93,6 +97,7 @@ export const MetaGroup = memo(function MetaGroup({
 	working,
 	endImmediately = false,
 	subagentCount = 0,
+	activeSubagent,
 	viewKey,
 }: {
 	items: MetaItem[];
@@ -100,6 +105,7 @@ export const MetaGroup = memo(function MetaGroup({
 	endImmediately?: boolean;
 	/** 该组派生的子代理数（统计行正向显示「子代理 ×N」；由 MessageList 按组归属计算） */
 	subagentCount?: number;
+	activeSubagent?: ActiveSubagent;
 	viewKey?: string;
 }) {
 	const t = useT();
@@ -125,42 +131,7 @@ export const MetaGroup = memo(function MetaGroup({
 			) : null,
 			...item.tools.map((tool) => <ToolCallCard key={tool.key} tool={tool} />),
 		]);
-	// orb 状态（名字是包的渲染器名，与我们的语义不同名）：
-	// tool 运行中 → connecting（星座连线 + 信号跑边）
-	// 纯 thinking → working（粒子轨道，转速更快）
-	// （必须在 liveItems 之前推导，因为 liveItems 会过滤掉 thinking）
-	const latestActivity = useMemo(() => {
-		for (let i = items.length - 1; i >= 0; i--) {
-			const activity = items[i]?.activity;
-			if (activity && activity.length > 0) {
-				return activity[activity.length - 1];
-			}
-		}
-		return undefined;
-	}, [items]);
-	const isTool = latestActivity?.kind === "tool";
-	const orbState: OrbState = isTool ? "connecting" : "working";
-
-	// 实时预览：完整活动序列按到达顺序展开，ticker 在 thinking/tool 间保持 latest-wins。
-	// 内容已由 reducer 分块累计；这里不重新合并、解析或摘要。
-	const liveItems = useMemo<LivePreviewItem[]>(() => {
-		const out: LivePreviewItem[] = [];
-		for (const item of items) {
-			if (!item.activity) continue;
-			for (const entry of item.activity) {
-				if (entry.kind === "thinking") {
-					out.push({ kind: "thinking", id: entry.id, text: entry.text });
-				} else {
-					out.push({ kind: "tool", id: entry.id, name: entry.name, text: entry.args });
-				}
-			}
-		}
-		return out;
-	}, [items]);
-
-	// 扫光目标集合（预览行 id）标识：集合变化 → hook 内同帧补样式，消除新行首帧实色闪烁
-	const liveKey = `${isTool}:${liveItems.map((i) => i.id).join(",")}`;
-	const { labelRef, wrapRef: tickerWrapRef } = useSweepHighlight(shownWorking, liveKey);
+	const activity = useActivityStatus(items, shownWorking, activeSubagent);
 
 	/** 单条已结束（如正文前的思考）直接裸行展示，不套 "已完成 · 1" 外壳；-mb-4 与包装组一致：
 	 * 与后续正文净距 8px（容器 gap-6 - 16px），单行/成组间距统一 */
@@ -181,25 +152,14 @@ export const MetaGroup = memo(function MetaGroup({
 				summaryClassName="group/row flex cursor-pointer select-none flex-col [&::-webkit-details-marker]:hidden"
 				summary={
 					<>
-						{/* min-h-6：与内联预览行（h-6）等高，working/worked 切换首行行高不变 */}
+						{/* 固定粒子区域高度，活动名称原位更新，不创建新旧预览行。 */}
 						<div className="flex min-h-6 w-full items-center gap-2 py-0.5">
 							{shownWorking ? (
 								<>
-									<div className="flex shrink-0 items-center gap-2">
-										<ThinkingOrb state={orbState} size={20} paused={false} />
-										{!isTool && (
-											<span
-												ref={labelRef}
-												className="sweep-target text-ui-14 font-bold text-ink-working transition-colors group-hover/row:text-ink"
-											>
-												{t(latestActivity ? "message.thinkingLabel" : "message.working")}
-											</span>
-										)}
+									<div className="shrink-0">
+										<ThinkingOrb state="connecting" size={20} paused={false} />
 									</div>
-									{/* 展开时隐藏预览正文，保留工具标题 */}
-									<div ref={tickerWrapRef} className="min-w-0 flex-1">
-										<PreviewTicker items={liveItems} reserveSpace />
-									</div>
+									<ActivityStatusRow {...activity} scope={viewKey} />
 								</>
 							) : segments.length > 0 ? (
 								/* worked 态标题 = 分类统计（原展开区速读行提上来）；单行截断，hover 变色提示可展开 */
@@ -212,10 +172,7 @@ export const MetaGroup = memo(function MetaGroup({
 									))}
 								</span>
 							) : (
-								<span
-									ref={labelRef}
-									className="text-ui-14 font-bold text-ink-dim transition-colors group-hover/row:text-ink"
-								>
+								<span className="text-ui-14 font-bold text-ink-dim transition-colors group-hover/row:text-ink">
 									{t("message.worked")}
 								</span>
 							)}

@@ -19,6 +19,16 @@ afterAll(() => rmSync(root, { recursive: true, force: true }));
 const topics = (...names: string[]) => new Set(names);
 
 describe("ChannelSubscriptionRegistry · 上报与发布", () => {
+	it("未读变化发布新版本，关闭保留持久成员", () => {
+		const reg = new ChannelSubscriptionRegistry(() => true);
+		reg.noteSessionOpened("s1");
+		reg.reportEntries("s1", [{ topic: "alpha", unread: 1 }]);
+		const before = reg.snapshot("s1");
+		reg.reportEntries("s1", [{ topic: "alpha", unread: 2 }]);
+		expect(reg.snapshot("s1").revision).toBeGreaterThan(before.revision);
+		reg.dispose("s1");
+		expect(reg.snapshot("s1")).toMatchObject({ live: false, topics: ["alpha"], unreadCounts: { alpha: 2 } });
+	});
 	it("内容没变不发布；内容变了发布一次，载荷是去重排序副本", () => {
 		const reg = new ChannelSubscriptionRegistry(() => true);
 		reg.noteSessionOpened("s1");
@@ -70,7 +80,7 @@ describe("ChannelSubscriptionRegistry · 上报与发布", () => {
 		reg.dispose("s1");
 		expect(seen).toEqual([
 			{ live: true, topics: ["alpha"] },
-			{ live: false, topics: [] },
+			{ live: false, topics: ["alpha"] },
 		]);
 	});
 
@@ -108,8 +118,8 @@ describe("ChannelSubscriptionRegistry · generation（每 open 一代）", () =>
 		reg.dispose("s1");
 		const afterDispose = reg.snapshot("s1");
 
-		expect(seen.at(-1)).toMatchObject({ topics: [], generation: beforeDispose.generation });
-		expect(afterDispose.topics).toEqual([]);
+		expect(seen.at(-1)).toMatchObject({ topics: ["alpha"], generation: beforeDispose.generation });
+		expect(afterDispose.topics).toEqual(["alpha"]);
 		expect(afterDispose.generation).toBe(beforeDispose.generation); // 关闭状态下答案稳定
 		expect(afterDispose.revision).toBeGreaterThan(beforeDispose.revision); // 旧响应因此仍被 revision 挡住
 	});
@@ -168,10 +178,10 @@ describe("ChannelSubscriptionRegistry · generation（每 open 一代）", () =>
 		reg.subscribe((s) => events.push({ topics: s.topics, generation: s.generation }));
 		reg.report("s1", topics("alpha"));
 		reg.dispose("s1"); // 没注册就被处置
-		expect(events).toEqual([{ topics: [], generation: 0 }]); // 只有 dispose 这一次（哨兵代次）
+		expect(events).toEqual([{ topics: ["alpha"], generation: 0 }]); // 只有 dispose 这一次（哨兵代次）
 		reg.noteSessionOpened("s1"); // 之后的注册不会再补发早报
 		expect(events).toHaveLength(1);
-		expect(reg.snapshot("s1").topics).toEqual([]);
+		expect(reg.snapshot("s1").topics).toEqual(["alpha"]);
 	});
 
 	it("删除会话（磁盘也没了）：代次记录一起清 ⇒ 回到哨兵 0", () => {
@@ -213,6 +223,7 @@ describe("ChannelSubscriptionRegistry · GC 查询保持原语义", () => {
 describe("PiBackend 接线（stub session 注入私有 registry，同 session-close-guard 手法）", () => {
 	function makeBackend(sessionId: string) {
 		const backend = new PiBackend({ projectTrust: false, permissionGates: false });
+		(backend as unknown as { trustStore: { get: () => boolean } }).trustStore.get = () => false;
 		const registry = (backend as unknown as { registry: SessionRegistry }).registry;
 		registry.add({
 			session: {
@@ -238,7 +249,7 @@ describe("PiBackend 接线（stub session 注入私有 registry，同 session-cl
 			sessionId,
 		);
 
-	it("上报 → 单会话查询拿到快照；事件同时可订阅", () => {
+	it("上报 → 单会话查询拿到快照；事件同时可订阅", async () => {
 		const { backend } = makeBackend("s1");
 		noteOpened(backend, "s1");
 		const events: Array<{ sessionId: string; topics: string[] }> = [];
@@ -247,27 +258,27 @@ describe("PiBackend 接线（stub session 注入私有 registry，同 session-cl
 		);
 		backend.reportChannelSubscriptions("s1", topics("alpha"));
 		expect(events).toEqual([{ sessionId: "s1", topics: ["alpha"] }]);
-		const snapshot = backend.getChannelSubscriptions("s1");
+		const snapshot = await backend.getChannelSubscriptions("s1");
 		expect(snapshot).toMatchObject({ sessionId: "s1", topics: ["alpha"] });
 		expect(snapshot.generation).toBeGreaterThan(0);
 		expect(snapshot.revision).toBeGreaterThan(0);
 		off();
 	});
 
-	it("早报（还没注册确认）：查询查得到订阅但代次是哨兵、且不发事件", () => {
+	it("早报（还没注册确认）：查询查得到订阅但代次是哨兵、且不发事件", async () => {
 		const { backend } = makeBackend("s1");
 		const events: string[] = [];
 		const off = backend.onChannelSubscriptionsChanged((snapshot) => events.push(snapshot.sessionId));
 		backend.reportChannelSubscriptions("s1", topics("alpha"));
 		expect(events).toEqual([]); // 还没定代次 ⇒ 不发布
-		expect(backend.getChannelSubscriptions("s1")).toMatchObject({
+		expect(await backend.getChannelSubscriptions("s1")).toMatchObject({
 			topics: ["alpha"],
 			generation: 0,
 			live: false, // 还没有在册实例
 		});
 		noteOpened(backend, "s1"); // 注册确认：用这一代发一次
 		expect(events).toEqual(["s1"]);
-		const opened = backend.getChannelSubscriptions("s1");
+		const opened = await backend.getChannelSubscriptions("s1");
 		expect(opened.generation).toBeGreaterThan(0);
 		expect(opened.live).toBe(true);
 		off();
@@ -277,10 +288,10 @@ describe("PiBackend 接线（stub session 注入私有 registry，同 session-cl
 		const { backend } = makeBackend("s1");
 		noteOpened(backend, "s1");
 		backend.reportChannelSubscriptions("s1", topics("alpha"));
-		const before = backend.getChannelSubscriptions("s1");
+		const before = await backend.getChannelSubscriptions("s1");
 		await backend.closeSession("s1");
-		const after = backend.getChannelSubscriptions("s1");
-		expect(after.topics).toEqual([]);
+		const after = await backend.getChannelSubscriptions("s1");
+		expect(after.topics).toEqual(["alpha"]);
 		expect(after.live).toBe(false); // 明确关闭信号（renderer 只认它，不认 topics 空）
 		expect(after.generation).toBe(before.generation);
 		expect(after.revision).toBeGreaterThan(before.revision);
@@ -290,9 +301,6 @@ describe("PiBackend 接线（stub session 注入私有 registry，同 session-cl
 		const { backend, registry } = makeBackend("s1");
 		noteOpened(backend, "s1");
 		backend.reportChannelSubscriptions("s1", topics("alpha"));
-		await expect(backend.closeSession("s1", "gc")).resolves.toEqual({ closed: false });
-		expect(registry.has("s1")).toBe(true);
-		backend.reportChannelSubscriptions("s1", topics());
 		await expect(backend.closeSession("s1", "gc")).resolves.toEqual({ closed: true });
 		expect(registry.has("s1")).toBe(false);
 	});
@@ -301,8 +309,8 @@ describe("PiBackend 接线（stub session 注入私有 registry，同 session-cl
 		const { backend } = makeBackend("s1");
 		noteOpened(backend, "s1");
 		backend.reportChannelSubscriptions("s1", topics("alpha"));
-		expect(backend.getChannelSubscriptionSessionIds()).toEqual(["s1"]);
+		expect(backend.getChannelSubscriptionSessionIds()).toEqual([]);
 		backend.reportChannelSubscriptions("孤儿会话", topics("beta"));
-		expect(backend.getChannelSubscriptionSessionIds()).toEqual(["s1"]); // 不在 registry 的键被过滤
+		expect(backend.getChannelSubscriptionSessionIds()).toEqual([]);
 	});
 });

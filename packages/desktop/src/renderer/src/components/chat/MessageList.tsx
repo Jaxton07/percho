@@ -662,6 +662,7 @@ export function MessageList() {
 					working={row.working}
 					endImmediately={row.endImmediately}
 					subagentCount={row.subagentCount}
+					activeSubagent={row.activeSubagent}
 				/>
 			);
 		}

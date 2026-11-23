@@ -170,7 +170,7 @@ async function rendering(context) {
 				"scripts/check-session-rendering.mjs",
 				"scripts/session-rendering-fixture.mjs",
 				"scripts/session-rendering-interactions.mjs",
-				"scripts/session-rendering-sweep-probe.mjs",
+				"scripts/session-rendering-particles-probe.mjs",
 			]),
 			measurementHash: await hash(repo, ["scripts/performance/rendering-report.mjs"]),
 			parameters: { profile, modes: all.map((item) => item.label) },

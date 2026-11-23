@@ -12,6 +12,7 @@ export default defineConfig({
 					index: resolve(__dirname, "src/main/index.ts"),
 					"session-media-worker": resolve(__dirname, "../backend/src/session/media-maintenance-worker.ts"),
 					"session-catalog-worker": resolve(__dirname, "../backend/src/session/catalog-worker.ts"),
+					"channels-worker": resolve(__dirname, "../backend/src/tools/channels/worker.ts"),
 				},
 				output: {
 					entryFileNames: (chunk) => (chunk.name.endsWith("-worker") ? "[name].mjs" : "[name].js"),

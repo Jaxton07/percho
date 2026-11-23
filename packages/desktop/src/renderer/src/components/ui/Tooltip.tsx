@@ -10,10 +10,12 @@ function AnchoredTooltip({
 	label,
 	id,
 	anchor,
+	zIndex,
 }: {
 	label: string;
 	id?: string;
 	anchor: RefObject<HTMLSpanElement | null>;
+	zIndex?: number;
 }) {
 	const bubble = useRef<HTMLSpanElement>(null);
 	const [position, setPosition] = useState<{ x: number; y: number } | null>(null);
@@ -48,6 +50,7 @@ function AnchoredTooltip({
 				left: position?.x ?? 0,
 				top: position?.y ?? 0,
 				visibility: visible && position ? "visible" : "hidden",
+				zIndex,
 			}}
 		>
 			{label}
@@ -71,6 +74,7 @@ export function Tooltip({
 	className,
 	open,
 	id,
+	zIndex,
 	children,
 }: {
 	label: string;
@@ -83,6 +87,8 @@ export function Tooltip({
 	/** 受控模式：在滚动容器外定位并限宽换行；省略时保留原有 hover 用法。 */
 	open?: boolean;
 	id?: string;
+	/** Override the default hint layer when its owner is a higher dialog. */
+	zIndex?: number;
 	children: ReactNode;
 }) {
 	const anchor = useRef<HTMLSpanElement>(null);
@@ -93,10 +99,11 @@ export function Tooltip({
 		>
 			{children}
 			{open !== undefined ? (
-				open && <AnchoredTooltip key={label} label={label} id={id} anchor={anchor} />
+				open && <AnchoredTooltip key={label} label={label} id={id} anchor={anchor} zIndex={zIndex} />
 			) : (
 				<span
 					role="tooltip"
+					style={{ zIndex }}
 					className={`${BUBBLE_CLASS} absolute top-full mt-1.5 opacity-0 transition-opacity duration-150 group-hover/tooltip:opacity-100 group-hover/tooltip:delay-300 ${
 						multiline
 							? "w-max max-w-[280px] whitespace-normal text-left leading-relaxed"

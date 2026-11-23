@@ -50,8 +50,7 @@
 	--color-ink-2: #3f3f46;
 	--color-ink-dim: #71717a;
 	--color-ink-faint: #a1a1aa;
-	/* 工作中状态行文字基色：日间用浅一档灰（= ink-faint），给加深扫光让出对比空间
-	   （若用 ink-dim 本身偏深，扫光加深不明显） */
+	/* 运行状态标题弱化为浅灰，活动指示由小球与粒子承担。 */
 	--color-ink-working: #a1a1aa;
 	--color-on-ink: #ffffff;
 	--color-accent: #7c3aed;
@@ -111,7 +110,7 @@
 	--color-ink-2: #c6c6cd;
 	--color-ink-dim: #9a9aa3;
 	--color-ink-faint: #6e6e77;
-	/* 工作中状态行文字基色：夜间保持 ink-dim（提亮扫光在浅灰上正好） */
+	/* 运行状态标题夜间保持 ink-dim，保证可读性。 */
 	--color-ink-working: #9a9aa3;
 	--color-on-ink: #17171a;
 	--color-accent: #8b5cf6;
@@ -255,44 +254,6 @@
 
 	.subagent-cap {
 		transition: none;
-	}
-}
-
-/* 预览行上滑切换：新行从下方滑入，旧行向上滑出（时长恒定 0.32s，与 PreviewTicker 的 ANIMATION_MS 同步；不随队列积压变化）。slide-out 必须 forwards：动画结束后保持透明/位移终态，否则旧行在 React 移除前弹回可见造成重叠 */
-.preview-slide-in {
-	animation: preview-slide-in 0.32s ease-out;
-}
-.preview-slide-out {
-	animation: preview-slide-out 0.28s ease-in forwards;
-}
-@keyframes preview-slide-in {
-	from {
-		transform: translateY(100%) scale(0.97);
-		opacity: 0;
-		filter: blur(1.5px);
-	}
-	to {
-		transform: translateY(0) scale(1);
-		opacity: 1;
-		filter: blur(0);
-	}
-}
-@keyframes preview-slide-out {
-	from {
-		transform: translateY(0) scale(1);
-		opacity: 1;
-		filter: blur(0);
-	}
-	to {
-		transform: translateY(-100%) scale(0.97);
-		opacity: 0;
-		filter: blur(1.5px);
-	}
-}
-@media (prefers-reduced-motion: reduce) {
-	.preview-slide-in,
-	.preview-slide-out {
-		animation: none;
 	}
 }
 
@@ -1138,15 +1099,6 @@ code {
 	to {
 		background-position: -100% 0;
 	}
-}
-/* 扫光目标常态兜底：实心 currentColor 渐变 + text clip，渲染效果与普通文字一致；
-   让扫光元素始终走同一条渲染路径（clip:text + 透明填充），rAF 扫光只重写 backgroundImage
-  （光带位置烘焙在渐变 px 色标里，背景恒铺满元素）——挂载/卸载/清理的瞬间无纯色闪帧。 */
-.sweep-target {
-	background-image: linear-gradient(90deg, currentColor, currentColor);
-	-webkit-background-clip: text;
-	background-clip: text;
-	-webkit-text-fill-color: transparent;
 }
 @media (prefers-reduced-motion: reduce) {
 	.shimmer-sweep {

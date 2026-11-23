@@ -13,7 +13,7 @@ const sharedRequire = createRequire(join(root, "packages/shared/package.json"));
 const semverPath = sharedRequire.resolve("semver/package.json");
 const semver = JSON.parse(await readFile(semverPath, "utf8"));
 
-test("runtime build lock retains production MCP and build-only shared semver", () => {
+test("runtime build lock retains production MCP and channel locks with build-only shared semver", () => {
 	const selected = runtimeBuildLock(lock, "0.0.0-test");
 	assert.equal(selected.manifest.devDependencies["percho-semver-build"], `npm:semver@${semver.version}`);
 	assert.equal(selected.lock.packages["node_modules/percho-semver-build"].version, semver.version);
@@ -21,6 +21,9 @@ test("runtime build lock retains production MCP and build-only shared semver", (
 	assert.equal(selected.manifest.dependencies["percho-semver-build"], undefined);
 	assert.equal(selected.lock.packages["node_modules/@earendil-works/pi-mcp"].version, "1.5.1");
 	assert.notEqual(selected.lock.packages["node_modules/@earendil-works/pi-mcp"].dev, true);
+	assert.equal(selected.manifest.dependencies["proper-lockfile"], "4.1.2");
+	assert.equal(selected.lock.packages["node_modules/proper-lockfile"].version, "4.1.2");
+	assert.notEqual(selected.lock.packages["node_modules/proper-lockfile"].dev, true);
 });
 
 test("runtime install uses the official tarball source without changing versions, integrity or the checkout lock", () => {
@@ -61,7 +64,7 @@ test("runtime install preserves official and unrelated tarball hosts", () => {
 	}
 });
 
-test("runtime bundle resolves MCP helpers and semver subpaths without checkout dependencies", async (t) => {
+test("runtime bundle resolves isolated helpers and loads channel locks without checkout dependencies", async (t) => {
 	const parent = join(root, ".local/tmp/runtime-build-tests");
 	await mkdir(parent, { recursive: true });
 	const directory = await mkdtemp(join(parent, "case-"));
@@ -72,6 +75,11 @@ test("runtime bundle resolves MCP helpers and semver subpaths without checkout d
 	await mkdir(shared, { recursive: true });
 	await cp(join(root, "packages/shared/src/packages.ts"), join(shared, "packages.ts"));
 	const aliases = runtimeBuildAliases(source, stage);
+	const selected = runtimeBuildLock(lock, "0.0.0-test");
+	for (const key of Object.keys(selected.lock.packages)) {
+		if (/^node_modules\/(proper-lockfile|graceful-fs|retry|signal-exit)(\/|$)/.test(key))
+			await cp(join(root, key), join(stage, key), { recursive: true });
+	}
 	await cp(dirname(semverPath), aliases.semver, { recursive: true });
 	const typeboxKey = lock.packages["packages/backend/node_modules/typebox"]
 		? "packages/backend/node_modules/typebox"
@@ -87,6 +95,9 @@ test("runtime bundle resolves MCP helpers and semver subpaths without checkout d
 		`
 		import { isNewerVersion } from "./packages/shared/src/packages";
 		import { Type } from "typebox";
+		import lockfile from "proper-lockfile";
+		export const canLock = typeof lockfile.lock === "function";
+		export const acquire = lockfile.lock;
 		import { isMcpServerOverride, mcpNamespace } from "@earendil-works/pi-mcp";
 		export const namespace = mcpNamespace("my-server");
 		export const override = isMcpServerOverride({ enabled: false });
@@ -103,24 +114,32 @@ test("runtime bundle resolves MCP helpers and semver subpaths without checkout d
 		format: "esm",
 		target: "node22",
 		outfile,
+		external: Object.keys(selected.manifest.dependencies),
 		logLevel: "silent",
 		plugins: [
 			{
 				name: "no-checkout-dependencies",
 				setup(builder) {
 					// CI masks checkout node_modules. Do not let local ancestor installs hide a missing alias.
-					builder.onResolve({ filter: /^(semver|typebox|@earendil-works\/pi-mcp)(\/|$)/ }, async (args) => {
-						if (args.pluginData?.checked) return;
-						const resolved = await builder.resolve(args.path, {
-							resolveDir: args.resolveDir,
-							kind: args.kind,
-							pluginData: { checked: true },
-						});
-						if (!resolved.errors.length && relative(stage, resolved.path).startsWith("..")) {
-							return { errors: [{ text: `Outside isolated install: ${args.path}` }] };
-						}
-						return resolved;
-					});
+					builder.onResolve(
+						{ filter: /^(semver|typebox|proper-lockfile|@earendil-works\/pi-mcp)(\/|$)/ },
+						async (args) => {
+							if (args.pluginData?.checked) return;
+							const resolved = await builder.resolve(args.path, {
+								resolveDir: args.resolveDir,
+								kind: args.kind,
+								pluginData: { checked: true },
+							});
+							if (
+								!resolved.external &&
+								!resolved.errors.length &&
+								relative(stage, resolved.path).startsWith("..")
+							) {
+								return { errors: [{ text: `Outside isolated install: ${args.path}` }] };
+							}
+							return resolved;
+						},
+					);
 				},
 			},
 		],
@@ -131,10 +150,24 @@ test("runtime bundle resolves MCP helpers and semver subpaths without checkout d
 		build({ ...options, alias: withoutSemver }),
 		/Could not resolve|Outside isolated install/,
 	);
+	await assert.rejects(
+		build({
+			...options,
+			alias: aliases,
+			external: options.external.filter((name) => name !== "proper-lockfile"),
+		}),
+		/Could not resolve|Outside isolated install/,
+	);
 	await build({ ...options, alias: aliases });
-	// The aliases are build-only; the emitted bundle must keep working after those installs are removed.
-	await rm(join(stage, "node_modules"), { recursive: true, force: true });
+	// CommonJS lockfile stays a runtime dependency; build-only aliases must still be removable.
+	for (const name of ["@earendil-works/pi-mcp", "percho-semver-build", "percho-typebox-build"])
+		await rm(join(stage, "node_modules", name), { recursive: true, force: true });
+	const runtimeRequire = createRequire(outfile);
+	assert.equal(relative(stage, runtimeRequire.resolve("proper-lockfile")).startsWith(".."), false);
 	const result = await import(pathToFileURL(outfile).href);
+	assert.equal(result.canLock, true);
+	const release = await result.acquire(join(stage, "channel.json"), { realpath: false });
+	await release();
 	assert.equal(result.newer, true);
 	assert.equal(result.schema.type, "object");
 	assert.equal(result.namespace, "mcp__my_server");

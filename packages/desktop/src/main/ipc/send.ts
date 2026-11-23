@@ -1,6 +1,7 @@
 import {
 	type EnvironmentRef,
 	environmentRef,
+	type RemoteEventBoundary,
 	SUBSCRIPTION_TABLE,
 	type SubscriptionChannel,
 	type SubscriptionPayload,
@@ -12,6 +13,7 @@ export function sendToRenderer<C extends SubscriptionChannel>(
 	channel: C,
 	payload: NoInfer<SubscriptionPayload<C>>,
 	environment?: EnvironmentRef,
+	boundary?: RemoteEventBoundary,
 ): void {
 	if (environment) {
 		const def = Object.values(SUBSCRIPTION_TABLE).find((entry) => entry.channel === channel);
@@ -20,7 +22,8 @@ export function sendToRenderer<C extends SubscriptionChannel>(
 	}
 	const window = BrowserWindow.getAllWindows()[0];
 	if (window && !window.isDestroyed()) {
-		if (environment) window.webContents.send(channel, payload, environment);
+		if (environment && boundary) window.webContents.send(channel, payload, environment, boundary);
+		else if (environment) window.webContents.send(channel, payload, environment);
 		else window.webContents.send(channel, payload);
 	}
 }

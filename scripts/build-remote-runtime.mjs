@@ -90,6 +90,7 @@ try {
 			server: "packages/backend/src/runtime/server.ts",
 			"session-media-worker": "packages/backend/src/session/media-maintenance-worker.ts",
 			"session-catalog-worker": "packages/backend/src/session/catalog-worker.ts",
+			"channels-worker": "packages/backend/src/tools/channels/worker.ts",
 		},
 		bundle: true,
 		splitting: true,
@@ -100,7 +101,8 @@ try {
 		target: "node22",
 		outdir: stage,
 		outExtension: { ".js": ".mjs" },
-		external: ["@earendil-works/pi-coding-agent", "@earendil-works/pi-ai"],
+		// Runtime packages stay external so Node loads CommonJS dependencies and their built-ins.
+		external: Object.keys(selected.manifest.dependencies),
 		alias: runtimeBuildAliases(repo, stage),
 		logLevel: "warning",
 	});
@@ -157,6 +159,7 @@ try {
 	for (const file of [
 		"session-media-worker.mjs",
 		"session-catalog-worker.mjs",
+		"channels-worker.mjs",
 		"node_modules/@earendil-works/pi-coding-agent/dist/bundle/cli.js",
 		"node_modules/@earendil-works/pi-coding-agent/dist/core/export-html/template.html",
 	])

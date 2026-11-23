@@ -23,12 +23,15 @@ export async function verifyDiffViewState(renderer, snapshot, round) {
 		previous = current;
 		await pause(150);
 	}
-	assert(
-		await renderer.eval(
+	// Focus consumption precedes virtual mounting/anchor restoration; await the visible outcome too.
+	while (
+		!(await renderer.eval(
 			`(()=>{const e=document.querySelector('[data-section-key="'+CSS.escape(${JSON.stringify(target)})+'"]'),root=document.querySelector('[data-diff-scroll-root]');if(!e||!root)return false;const a=e.getBoundingClientRect(),b=root.getBoundingClientRect();return a.bottom>b.top&&a.top<b.bottom&&__renderDiag.core.views.getState().bySession[__renderDiag.sid].scope==='all'})()`,
-		),
-		"Later source section must become visible outside latest scope",
-	);
+		))
+	) {
+		assert(Date.now() < end, "Later source section must become visible outside latest scope");
+		await pause(50);
+	}
 	const anchor = await renderer.eval("__renderDiag.core.views.getState().bySession[__renderDiag.sid].anchor");
 	assert(anchor, "Focused view must capture a source anchor");
 	await renderer.eval("__renderDiag.ui.getState().setDiffSidebarOpen(false)");

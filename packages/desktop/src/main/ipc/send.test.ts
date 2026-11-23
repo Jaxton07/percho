@@ -24,6 +24,18 @@ describe("renderer event send leaf", () => {
 		expect(() => sendToRenderer("app:quit-requested", undefined, remote)).toThrow("Desktop events");
 		expect(window.webContents.send).toHaveBeenCalledTimes(1);
 	});
+	it("adds desktop-only connection boundary metadata to a sourced event", () => {
+		const window = { isDestroyed: () => false, webContents: { send: vi.fn() } };
+		state.windows = [window];
+		const remote = { kind: "ssh" as const, connectionId: "company", environmentId: "data" };
+		const boundary = { epoch: "run", generation: 2 };
+		const payload = {
+			sessionId: "same-id",
+			event: { type: "agent_end" as const, messages: [], willRetry: false },
+		};
+		sendToRenderer("pi:event", payload, remote, boundary);
+		expect(window.webContents.send).toHaveBeenCalledExactlyOnceWith("pi:event", payload, remote, boundary);
+	});
 	it("explicit source forward passes the same payload through the typed send leaf", () => {
 		const window = { isDestroyed: () => false, webContents: { send: vi.fn() } };
 		state.windows = [window];

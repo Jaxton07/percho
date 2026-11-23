@@ -5,6 +5,7 @@ import type { SshPreflight } from "@percho/shared";
 import { INSTALL_SCRIPT } from "./install-script";
 import { sshArguments } from "./ssh-arguments";
 import { checkSshRequirements, preflightSsh, shellQuote } from "./ssh-preflight";
+import { trackSshProcess } from "./ssh-process";
 
 export async function installSshRuntime(
 	probe: SshPreflight,
@@ -39,6 +40,7 @@ export async function installSshRuntime(
 			signal,
 		},
 	);
+	const process = trackSshProcess(child);
 	let output = "",
 		stderr = "";
 	child.stdout.on("data", (chunk: Buffer) => {
@@ -47,7 +49,7 @@ export async function installSshRuntime(
 	child.stderr.on("data", (chunk: Buffer) => {
 		stderr = (stderr + chunk.toString()).slice(0, 16384);
 	});
-	const timer = setTimeout(() => child.kill(), 180_000);
+	const timer = setTimeout(() => process.terminate(), 180_000);
 	try {
 		const closed = new Promise<void>((resolve, reject) => {
 			child.once("error", reject);
@@ -67,6 +69,7 @@ export async function installSshRuntime(
 			throw new Error("Remote installation result is unconfirmed");
 	} finally {
 		clearTimeout(timer);
-		child.kill();
+		process.terminate();
+		await process.closed;
 	}
 }

@@ -2,9 +2,9 @@ import type { ChannelSubscriptionsSnapshot } from "@percho/shared";
 import { Emitter } from "./emitter";
 
 /**
- * 频道订阅快照仓库（spec D1）：backend 是订阅状态的**唯一事实源**，renderer 只读。
+ * SQLite 成员和未读状态的 UI 投影，不保存正文，也不承担持久权威或 GC 保护。
  *
- * 只存 topic 名（不存消息内容）+ 两把排序钥匙：
+ * topic/未读数使用两把排序钥匙拒绝迟到响应：
  * - `revision`：**进程内单调时钟**，每次发布 +1。用来拒绝「同一代内乱序到达」的快照
  *   （renderer 只接受 key 更大的快照：后读的一定更大）。
  * - `generation`：**每 open 一代**（同一个 sessionId 被关掉再打开就是新的一代，全局递增不重复）。
@@ -12,16 +12,13 @@ import { Emitter } from "./emitter";
  *   一旦 renderer 已经应用了新一代，就会被这条比较挡住；反之若两代交错，只有代次能一眼判出新旧。
  *   `generation = 0` 是哨兵：这个 sessionId **没有在册实例**（从未打开 / 已被删除）。
  *
- * 语义边界（spec §6.1/§6.2）：
- * - 上报只存取快照，不做保护策略（保护在 `closeSession` 的 intent 守卫 + renderer 纯策略层）；
- * - 空集 = 移出快照（退订最后一个 topic 即恢复普通 GC 资格），**内容没变则不发布**（不刷事件）；
- * - `dispose` **无条件发布空集**：这是「这一代结束了」的生命周期信号，不依赖扩展 shutdown 是否上报；
- * - GC 查询（`loadedSessionIdsWithSubscriptions`）仍按「是否仍在 registry 中」过滤：回调/构造异常
- *   路径可能留下孤儿键，不能让一个已不存在的会话 ID 永久影响 GC 判定。
+ * 数量变化也发布；关闭只标记运行实例结束，不冒充持久退订。
+ * renderer 用 live/代次判断运行生命周期，不能从 topic 是否为空推断关闭。
  */
 export class ChannelSubscriptionRegistry {
 	/** sessionId → 有效订阅集合（空集不落表） */
 	private readonly topics = new Map<string, Set<string>>();
+	private readonly counts = new Map<string, Record<string, number>>();
 	/**
 	 * sessionId → 在册代次。`dispose` 后**保留代次值**（标 `live: false`）——关闭状态下查询也能给出
 	 * 稳定答案（同一代的旧响应因此仍被 revision 挡住）；下一次打开会领新的一代。
@@ -37,7 +34,7 @@ export class ChannelSubscriptionRegistry {
 	private incarnationSeq = 0;
 
 	/**
-	 * @param isLive 该 sessionId 是否仍在 registry 中（只给 GC 查询用；单会话快照**不**过滤，
+	 * @param isLive 该 sessionId 是否仍在 registry 中（只给兼容运行态查询用；单会话快照**不**过滤，
 	 *   因为扩展可能早于 registry.add 上报，过滤会让「刚打开就有订阅」的会话查到空集）
 	 */
 	constructor(private readonly isLive: (sessionId: string) => boolean) {}
@@ -57,7 +54,7 @@ export class ChannelSubscriptionRegistry {
 	}
 
 	/**
-	 * channel-watch 扩展回调入口（spec §6.1）：上报该会话当前的「有效运行态订阅」快照。
+	 * 旧宿主的兼容入口；生产频道通过 reportEntries 上报带未读数的投影。
 	 * 内容与代次都没变 ⇒ 不发布（避免刷事件）；空集 ⇒ 移出快照。
 	 *
 	 * **早报**（`session_start` 前、扩展构造期上报，此时还没有在册代次）：只落表 + 记待发布，
@@ -65,9 +62,24 @@ export class ChannelSubscriptionRegistry {
 	 * 因为 `snapshot()` 读的就是这张表）。
 	 */
 	report(sessionId: string, topics: ReadonlySet<string>): void {
-		const next = [...topics].sort();
+		this.reportEntries(
+			sessionId,
+			[...topics].map((topic) => ({ topic, unread: 0 })),
+		);
+	}
+
+	reportEntries(sessionId: string, entries: readonly { topic: string; unread: number }[]): void {
+		const counts = Object.fromEntries(entries.map(({ topic, unread }) => [topic, unread]));
+		const next = Object.keys(counts).sort();
+		const previous = this.counts.get(sessionId);
 		const confirmed = this.isLiveIncarnation(sessionId);
-		if (confirmed && sameTopics(this.topics.get(sessionId), next)) return;
+		if (
+			confirmed &&
+			sameTopics(this.topics.get(sessionId), next) &&
+			next.every((topic) => previous?.[topic] === counts[topic])
+		)
+			return;
+		this.counts.set(sessionId, counts);
 		if (next.length === 0) this.topics.delete(sessionId);
 		else this.topics.set(sessionId, new Set(next));
 		if (!confirmed) {
@@ -77,13 +89,8 @@ export class ChannelSubscriptionRegistry {
 		this.publish(sessionId);
 	}
 
-	/**
-	 * 会话处置（关闭/卸载/删除前）：清订阅并**无条件发布空集**，把该代标成 not-live。
-	 * 正常路径扩展的 shutdown 会上报空集（一次内容变化发布），这里是兜底 + 生命周期信号，
-	 * 保证 renderer 不会残留一个「其实已经关了」的订阅状态。
-	 */
+	/** 关闭/卸载结束运行代次并发布 live=false；保留持久成员投影供重开刷新。 */
 	dispose(sessionId: string): void {
-		this.topics.delete(sessionId);
 		this.pendingPublish.delete(sessionId);
 		const entry = this.incarnations.get(sessionId);
 		if (entry) entry.live = false; // 保留 generation：关闭状态下的查询仍然稳定
@@ -93,6 +100,7 @@ export class ChannelSubscriptionRegistry {
 	/** 会话被删除（磁盘也没了）：连代次记录一起清，避免表无限增长 */
 	delete(sessionId: string): void {
 		this.topics.delete(sessionId);
+		this.counts.delete(sessionId);
 		this.incarnations.delete(sessionId);
 		this.pendingPublish.delete(sessionId);
 	}
@@ -107,17 +115,17 @@ export class ChannelSubscriptionRegistry {
 		return {
 			sessionId,
 			// 在册与否是**独立字段**（不是从 topics 猜）：重开后暂时没订阅仍是 live=true，
-			// dispose 后的空集才是 live=false —— renderer 的关闭水位只认这个信号
+			// dispose 保留 topics 但标 live=false；关闭水位只认生命周期信号。
 			live: incarnation?.live === true,
 			topics: [...(this.topics.get(sessionId) ?? [])].sort(),
+			unreadCounts: { ...this.counts.get(sessionId) },
 			revision: this.revision,
 			generation: incarnation?.generation ?? 0,
 		};
 	}
 
 	/**
-	 * renderer GC 查询用（spec §6.2）：**仍在 registry 中**且有效频道订阅非空的会话 ID
-	 * （顺序不构成契约）。语义与改造前完全一致。
+	 * 兼容运行态查询，顺序不构成契约。频道订阅不再用于决定 GC 资格。
 	 */
 	loadedSessionIdsWithSubscriptions(): string[] {
 		return [...this.topics.keys()].filter((id) => this.isLive(id));

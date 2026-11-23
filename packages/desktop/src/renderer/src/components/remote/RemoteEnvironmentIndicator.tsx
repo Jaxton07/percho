@@ -8,11 +8,21 @@ import { Tooltip } from "../ui/Tooltip";
 export function RemoteEnvironmentIndicator({ environment }: { environment: EnvironmentRef }) {
 	const t = useT();
 	const status = useRemoteConnectionStore((state) => state.status);
+	const records = useRemoteConnectionStore((state) => state.catalog.records);
 	if (environment.kind !== "ssh") return null;
-	const label =
-		status.environment && sameEnvironment(status.environment, environment)
-			? `${t("remote.label")} · ${status.alias ?? t("remote.alias")}`
-			: t("remote.unavailableProject");
+	const record = records.find(
+		(item) =>
+			item.connectionId === environment.connectionId &&
+			item.binding?.environmentId === environment.environmentId,
+	);
+	const online =
+		status.state === "connected" && status.environment && sameEnvironment(status.environment, environment);
+	const alias =
+		record?.alias ??
+		(status.environment && sameEnvironment(status.environment, environment) ? status.alias : undefined);
+	const label = alias
+		? `${t("remote.label")} · ${alias}${online ? "" : ` · ${t("remote.disconnected")}`}`
+		: t("remote.unavailableProject");
 	return (
 		<Tooltip label={label} align="end">
 			<span

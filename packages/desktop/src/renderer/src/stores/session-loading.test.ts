@@ -1,9 +1,11 @@
 import { readFileSync } from "node:fs";
 import {
+	type AgentSessionEvent,
 	emptyTranscript,
 	type LoadedSessionSummary,
 	messagesToUIMessages,
 	type PermissionMode,
+	reduceEvent,
 	type SessionBaseline,
 	type SessionMeta,
 } from "@percho/shared";
@@ -134,6 +136,55 @@ afterEach(() => {
 });
 
 describe("session loader owns flights and data, not navigation", () => {
+	it("does not use server snapshot timestamps as client execution starts", async () => {
+		const id = "snapshot-clock";
+		const f = fixture(id);
+		const event = (type: string, extra: Record<string, unknown> = {}) =>
+			({ type, ...extra }) as AgentSessionEvent;
+		let transcript = reduceEvent(emptyTranscript(), event("agent_start"));
+		transcript = reduceEvent(
+			transcript,
+			event("message_update", {
+				assistantMessageEvent: {
+					type: "toolcall_start",
+					contentIndex: 0,
+					partial: { content: [{ type: "toolCall", name: "codemode" }] },
+				},
+			}),
+		);
+		transcript = reduceEvent(
+			transcript,
+			event("message_update", {
+				assistantMessageEvent: {
+					type: "toolcall_end",
+					contentIndex: 0,
+					toolCall: { id: "call", name: "codemode", arguments: {} },
+				},
+			}),
+		);
+		transcript = reduceEvent(
+			transcript,
+			event("tool_execution_start", { toolCallId: "call", toolName: "codemode", args: {} }),
+		);
+		expect(transcript.streaming?.tools[0]?.startedAt).toBeDefined();
+		const baseline: SessionBaseline = {
+			hydrationToken: `open:${id}`,
+			meta: meta(id),
+			sequence: 1,
+			permissionMode: "default",
+			transcript,
+		};
+		pi.getSessionBaseline.mockResolvedValueOnce(baseline);
+		await f.loader.loadSessionBundle(id);
+		const installed = useTranscriptStore.getState().bySession[id];
+		expect(installed?.agentActive).toBe(true);
+		expect(installed?.streaming?.tools[0]).toMatchObject({
+			id: "call",
+			state: "running",
+			startedAt: undefined,
+		});
+		expect(baseline.transcript.streaming?.tools[0]?.startedAt).toBeDefined();
+	});
 	it("暂停后重新观察不复用旧基线请求，旧请求结束也不会覆盖新结果", async () => {
 		const id = "reentered-child";
 		const f = fixture(id);

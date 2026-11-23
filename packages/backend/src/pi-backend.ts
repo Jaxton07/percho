@@ -1,8 +1,8 @@
 import { randomUUID } from "node:crypto";
 import { existsSync } from "node:fs";
-import { mkdtemp, readFile, rm, unlink } from "node:fs/promises";
+import { lstat, mkdtemp, open, readFile, realpath, rm, stat, unlink } from "node:fs/promises";
 import { homedir } from "node:os";
-import { dirname, join, resolve } from "node:path";
+import { dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import type { Model, ThinkingLevel } from "@earendil-works/pi-ai";
 import { getSupportedThinkingLevels } from "@earendil-works/pi-ai";
 import {
@@ -155,11 +155,11 @@ import { SettingsService } from "./settings/settings";
 import { slashCommandsForLoader, slashCommandsForSession } from "./slash-commands";
 import { privateDirectory } from "./storage/private-directory";
 import type { LocalSessionPaths } from "./storage/session-paths";
-import {
-	makeChannelWatchExtension,
-	readChannelWatchEnabled,
-	writeChannelWatchEnabled,
-} from "./tools/channel-watch";
+import { readChannelWatchEnabled, writeChannelWatchEnabled } from "./tools/channel-watch";
+import { ChannelBackendHost } from "./tools/channels/backend-host";
+import { makeChannelsExtension } from "./tools/channels/extension";
+import { resolveChannelProject } from "./tools/channels/project";
+import { ChannelService } from "./tools/channels/service";
 import { makeCompactionGuardExtension } from "./tools/compaction-guard";
 import { createCompactionRequestPolicy } from "./tools/compaction-guard/request-policy";
 import { makeEvapExtension, reportEvapBatch } from "./tools/context-evaporation";
@@ -172,6 +172,16 @@ import { makeTodoReminderExtension } from "./tools/todo-reminder";
 import { makeWebFetchTool } from "./tools/webfetch";
 
 const log = createLogger("backend");
+
+async function sourceExists(path: string): Promise<boolean> {
+	try {
+		await lstat(path);
+		return true;
+	} catch (error) {
+		if ((error as NodeJS.ErrnoException).code === "ENOENT") return false;
+		throw error;
+	}
+}
 
 /** SessionManager 磁盘枚举项 → SessionMeta（listSessions/listAllSessions 共用） */
 function sessionInfoToMeta(
@@ -266,6 +276,21 @@ export class PiBackend {
 	private readonly constructionDialogs = new Set<ExtensionDialogHost>();
 	private readonly shutdownFailures: unknown[] = [];
 	private shutdownAborts: Promise<PromiseSettledResult<void>[]> = Promise.resolve([]);
+	private shutdownChannels?: Promise<PromiseSettledResult<void>[]>;
+	private stopChannels(): Promise<PromiseSettledResult<void>[]> {
+		if (!this.shutdownChannels) {
+			const closing = [...this.channelServices.values()].map((service) => {
+				try {
+					return service.close();
+				} catch (error) {
+					return Promise.reject(error);
+				}
+			});
+			this.channelServices.clear();
+			this.shutdownChannels = Promise.allSettled(closing);
+		}
+		return this.shutdownChannels;
+	}
 	assertRunning(): void {
 		if (this.stopping) throw new Error("BACKEND_STOPPING: no new work is accepted");
 	}
@@ -286,6 +311,7 @@ export class PiBackend {
 	beginShutdown(): void {
 		if (this.stopping) return;
 		this.stopping = true;
+		void this.stopChannels();
 		const attempt = (work: () => void) => {
 			try {
 				work();
@@ -320,6 +346,9 @@ export class PiBackend {
 			const disposed = await Promise.allSettled(entries.map((entry) => this.disposeSession(entry)));
 			for (const result of [...aborted, ...disposed])
 				if (result.status === "rejected") this.shutdownFailures.push(result.reason);
+			const channels = await this.stopChannels();
+			for (const result of channels)
+				if (result.status === "rejected") this.shutdownFailures.push(result.reason);
 			this.dispose();
 			if (this.shutdownFailures.length)
 				throw new AggregateError(this.shutdownFailures, "Remote SDK shutdown did not complete cleanly");
@@ -333,13 +362,104 @@ export class PiBackend {
 	private readonly shutdownErrors = new WeakMap<AgentSession, ExtensionError[]>();
 	/** open 的 single-flight（key = 规范化绝对路径）：同文件并发 open 共享一次构造（spec D4） */
 	private readonly openFlights = new KeyedSingleFlight<SessionMeta>();
-	/**
-	 * 频道订阅快照仓库（spec §6.1/§6.2 / spec D1）：sessionId → 有效运行态 topic 集，
-	 * 由 channel-watch 扩展经 `reportChannelSubscriptions` 维护（只存 topic 名）+ 版本/代次与事件发布。
-	 * 查询 IPC：`getChannelSubscriptionSessionIds`（GC 用，按 registry 过滤）与
-	 * `getChannelSubscriptions`（单会话快照，**不**过滤 —— 扩展可能早于 registry.add 上报）。
-	 */
+	/** 频道订阅的界面快照与版本。 */
 	private readonly channelSubs = new ChannelSubscriptionRegistry((id) => this.registry.has(id));
+	private readonly channelServices = new Map<string, ChannelService>();
+	private readonly channelRoots = new WeakMap<PermissionModeRef, string>();
+	private channelPeerRefresh: Promise<void> = Promise.resolve();
+	private channelHost?: ChannelBackendHost;
+	private channelRecovery?: Promise<void>;
+	private getChannelHost(): ChannelBackendHost {
+		this.channelHost ??= new ChannelBackendHost(getAgentDir(), (root) => this.channelServiceAtRoot(root));
+		return this.channelHost;
+	}
+	private channelServiceAtRoot(root: string): ChannelService {
+		let service = this.channelServices.get(root);
+		if (!service) {
+			this.assertRunning();
+			service = new ChannelService({ projectRoot: root, agentDir: getAgentDir() });
+			this.channelServices.set(root, service);
+		}
+		return service;
+	}
+	private async recoverChannelDeletes(): Promise<void> {
+		for (const { service, fence } of await this.getChannelHost().fences()) {
+			if (fence.state !== "delete" || (await sourceExists(fence.source))) continue;
+			await this.fileOperations.run([fence.source], "delete", async () => {
+				if ((await sourceExists(fence.source)) || this.registry.has(fence.sessionId)) return;
+				await this.media.deleteOwner(fence.sessionId);
+				await service.completeMaintenance(fence.sessionId, fence.opId, "deleted");
+				this.channelSubs.delete(fence.sessionId);
+			});
+		}
+	}
+	private async channelService(
+		cwd: string,
+		rootOverride?: string,
+		readOnly = false,
+	): Promise<ChannelService> {
+		const root = rootOverride ?? (await resolveChannelProject(cwd));
+		if (!readOnly) {
+			this.channelRecovery ??= this.recoverChannelDeletes().catch((error) => {
+				this.channelRecovery = undefined;
+				throw error;
+			});
+			await this.channelRecovery;
+			await this.getChannelHost().register(root);
+		}
+		return this.channelServiceAtRoot(root);
+	}
+
+	private async refreshChannelPeers(
+		sessionId: string,
+		cwd: string,
+		modeRef: PermissionModeRef | undefined,
+	): Promise<void> {
+		const root = await resolveChannelProject(cwd, modeRef ? this.channelRoots.get(modeRef) : undefined);
+		await Promise.all(
+			this.registry.list().map(async (entry) => {
+				const id = entry.session.sessionId;
+				if (id === sessionId || entry.readOnly) return;
+				try {
+					const peerRoot = await resolveChannelProject(entry.cwd, this.channelRoots.get(entry.modeRef));
+					if (peerRoot === root && this.registry.get(id) === entry) await this.getChannelSubscriptions(id);
+				} catch (error) {
+					log.warn("channel peer snapshot unavailable", id, error);
+				}
+			}),
+		);
+	}
+
+	private async channelServiceForFile(
+		file: string,
+		fallbackCwd?: string,
+		sessionId?: string,
+	): Promise<ChannelService> {
+		let cwd = fallbackCwd;
+		try {
+			const handle = await open(file, "r");
+			let header: { id?: unknown; cwd?: unknown };
+			try {
+				const buffer = Buffer.alloc(65536);
+				const { bytesRead } = await handle.read(buffer, 0, buffer.length, 0);
+				const end = buffer.subarray(0, bytesRead).indexOf(10);
+				if (end < 0) throw new Error("Session header exceeds limit");
+				header = JSON.parse(buffer.subarray(0, end).toString("utf8"));
+			} finally {
+				await handle.close();
+			}
+			if (sessionId && header.id !== sessionId) throw new Error("Session file identity changed");
+			if (typeof header.cwd !== "string") throw new Error("Session header has no cwd");
+			cwd = header.cwd;
+		} catch (error) {
+			if ((error as NodeJS.ErrnoException).code !== "ENOENT" || !cwd) throw error;
+		}
+		if (!cwd) throw new Error("Session project is unavailable");
+		const binding = sessionId ? await this.getChannelHost().binding(sessionId) : undefined;
+		if (binding && binding.cwd !== resolve(cwd)) throw new Error("Session binding cwd changed");
+		if (binding) return this.channelServiceAtRoot(binding.root);
+		return this.channelService(cwd);
+	}
 
 	private readonly catalogEmitter = new Emitter<import("@percho/shared").SessionCatalogChange>();
 	private sessionCatalog?: SessionCatalog;
@@ -429,6 +549,61 @@ export class PiBackend {
 			disposeSession: async (id) => {
 				const entry = this.registry.get(id);
 				if (entry) await this.disposeSessionStrict(entry);
+			},
+			confirmDeleted: async ({ sessionId, sessionFile, operationId }) => {
+				const host = this.getChannelHost();
+				const match = await host.find(sessionId, sessionFile);
+				if (!match || match.fence.kind !== "delete" || !["delete", "deleted"].includes(match.fence.state))
+					return false;
+				const fingerprint = await host.deleteFingerprint(match.fence.opId);
+				if (
+					!fingerprint ||
+					fingerprint.id !== sessionId ||
+					fingerprint.archiveOperationId !== operationId ||
+					this.registry.has(sessionId)
+				)
+					return false;
+				if (await sourceExists(sessionFile)) return false;
+				await this.media.deleteOwner(sessionId);
+				if (await sourceExists(sessionFile)) return false;
+				await match.service.completeMaintenance(sessionId, match.fence.opId, "deleted");
+				this.channelSubs.delete(sessionId);
+				return true;
+			},
+			prepareChannelMaintenance: async ({ sessionId, sessionFile, operationId }) => {
+				if (!existsSync(sessionFile)) {
+					const match = await this.getChannelHost().find(sessionId, sessionFile);
+					if (!match || match.fence.opId !== operationId)
+						throw new Error("Channel maintenance source unavailable");
+					await match.service.prepareMaintenance(sessionId, operationId, "archive", sessionFile);
+					return;
+				}
+				const service = await this.channelServiceForFile(
+					sessionFile,
+					this.registry.get(sessionId)?.cwd,
+					sessionId,
+				);
+				await service.prepareMaintenance(sessionId, operationId, "archive", sessionFile);
+			},
+			completeChannelMaintenance: async ({ sessionId, sessionFile, operationId, outcome }) => {
+				if (!existsSync(sessionFile)) {
+					const match = await this.getChannelHost().find(sessionId, sessionFile);
+					if (!match && outcome === "active") return;
+					if (!match || match.fence.opId !== operationId)
+						throw new Error("Channel maintenance source unavailable");
+					await match.service.completeMaintenance(sessionId, operationId, outcome);
+					return;
+				}
+				const service = await this.channelServiceForFile(
+					sessionFile,
+					this.registry.get(sessionId)?.cwd,
+					sessionId,
+				);
+				if (outcome === "active") {
+					const fence = (await service.pendingMaintenance()).find((item) => item.sessionId === sessionId);
+					if (!fence) return;
+				}
+				await service.completeMaintenance(sessionId, operationId, outcome);
 			},
 			withFile: (files, operation) => this.fileOperations.run(files, "archive", operation),
 			resolveFile: (file) => this.options.localSessionPaths?.resolveFile(file, true) ?? file,
@@ -842,13 +1017,13 @@ export class PiBackend {
 		modeRef?: PermissionModeRef,
 	): Array<
 		| ReturnType<typeof makeTodoReminderExtension>
-		| ReturnType<typeof makeChannelWatchExtension>
+		| ReturnType<typeof makeChannelsExtension>
 		| ReturnType<typeof makeEvapExtension>
 		| ReturnType<typeof makeCompactionGuardExtension>
 	> {
 		const factories: Array<
 			| ReturnType<typeof makeTodoReminderExtension>
-			| ReturnType<typeof makeChannelWatchExtension>
+			| ReturnType<typeof makeChannelsExtension>
 			| ReturnType<typeof makeEvapExtension>
 			| ReturnType<typeof makeCompactionGuardExtension>
 		> = [];
@@ -890,19 +1065,28 @@ export class PiBackend {
 				},
 			}),
 		);
-		// channel-watch 跨会话协作（开关默认开；session_start 检查开关 + trusted 门，
-		// 无订阅时零 fs 监听；钩子与蒸发/todo 无语义交互，位置不敏感，放 todo 前）
-		// 订阅快照回报给 backend：有有效订阅的会话不被 renderer 自动 GC 卸载（retention）
 		factories.push(
-			makeChannelWatchExtension({
+			makeChannelsExtension({
 				agentDir: getAgentDir(),
 				cwd,
-				onSubscriptionsChanged: (sessionId, topics) => {
-					const current = this.registry.get(sessionId);
-					if (!current || current.modeRef === modeRef) this.reportChannelSubscriptions(sessionId, topics);
+				projectRoot: modeRef ? this.channelRoots.get(modeRef) : undefined,
+				service: async (readOnly) => {
+					const bound = modeRef ? this.channelRoots.get(modeRef) : undefined;
+					if (bound && (await resolveChannelProject(cwd, bound)) !== bound)
+						throw new Error("Channel project root changed");
+					return this.channelService(cwd, bound, readOnly);
 				},
-				waitForHistoryReady: (sessionId) =>
-					modeRef ? this.historyGate.wait(sessionId, this.historyToken(modeRef)) : Promise.resolve(false),
+				authorizeRoot: async (root, ctx) => {
+					const decision = this.trustStore.get(root);
+					return decision ?? (root === resolve(ctx.cwd) && ctx.isProjectTrusted());
+				},
+				onSnapshot: (sessionId, entries) => {
+					if (this.registry.get(sessionId)?.modeRef !== modeRef) return;
+					this.channelSubs.reportEntries(sessionId, entries);
+					this.channelPeerRefresh = this.channelPeerRefresh
+						.then(() => this.refreshChannelPeers(sessionId, cwd, modeRef))
+						.catch((error) => log.warn("channel peer refresh failed", error));
+				},
 				isSessionAlive: (sessionId) =>
 					!this.stopping && modeRef !== undefined && this.registry.get(sessionId)?.modeRef === modeRef,
 				onSessionCleanup: (cleanup) => {
@@ -1255,28 +1439,65 @@ export class PiBackend {
 		const cwd = this.options.validateWorkspace ? await validateProjectDirectory(requested) : requested;
 		if (this.projectDeletion?.isDeleting(cwd)) throw new Error("Project deletion is in progress");
 		this.assertRunning();
+		let channelRoot: string | undefined;
+		let current: string | undefined;
+		try {
+			current = await realpath(cwd);
+		} catch (error) {
+			if (
+				options.channelProjectRoot ||
+				this.options.validateWorkspace ||
+				(error as NodeJS.ErrnoException).code !== "ENOENT"
+			)
+				throw error;
+			// Legacy embedders can construct in-memory sessions before their cwd exists.
+		}
+		if (current) {
+			// A separately selected nested directory is its own project unless the host explicitly binds it.
+			const bound = options.channelProjectRoot ? await realpath(options.channelProjectRoot) : undefined;
+			if (bound) {
+				const rel = relative(bound, current);
+				if (rel === ".." || rel.startsWith(`..${sep}`) || isAbsolute(rel))
+					throw new Error("Channel project root does not contain cwd");
+			}
+			channelRoot = await resolveChannelProject(current, bound);
+		}
 		const model =
 			options.provider && options.modelId ? runtime.getModel(options.provider, options.modelId) : undefined;
-		const session = await this.wireSession(cwd, undefined, async (deps) => {
-			const { settingsManager, resourceLoader } = await deps.load();
-			return createAgentSession({
-				cwd,
-				modelRuntime: runtime,
-				model,
-				thinkingLevel: options.thinkingLevel as ThinkingLevel | undefined,
-				tools: this.options.tools,
-				customTools: this.buildCustomTools(
-					deps.gate,
-					deps.preferBuiltin,
-					deps.getPermissionMode,
-					deps.modeRef,
-				),
-				sessionManager: SessionManager.create(cwd),
-				settingsManager,
-				resourceLoader,
-				...codemodeSessionOptions(settingsManager, getAgentDir()),
-			});
-		});
+		const session = await this.wireSession(
+			cwd,
+			undefined,
+			async (deps) => {
+				const { settingsManager, resourceLoader } = await deps.load();
+				return createAgentSession({
+					cwd,
+					modelRuntime: runtime,
+					model,
+					thinkingLevel: options.thinkingLevel as ThinkingLevel | undefined,
+					tools: this.options.tools,
+					customTools: this.buildCustomTools(
+						deps.gate,
+						deps.preferBuiltin,
+						deps.getPermissionMode,
+						deps.modeRef,
+					),
+					sessionManager: SessionManager.create(cwd),
+					settingsManager,
+					resourceLoader,
+					...codemodeSessionOptions(settingsManager, getAgentDir()),
+				});
+			},
+			channelRoot,
+		);
+		if (channelRoot) {
+			try {
+				await this.getChannelHost().bind(session.sessionId, channelRoot, resolve(cwd));
+			} catch (error) {
+				const entry = this.registry.get(session.sessionId);
+				if (entry) await this.disposeSession(entry);
+				throw error;
+			}
+		}
 		log.info("session created", session.sessionId, { cwd });
 		return this.toMetaOrThrow(session.sessionId);
 	}
@@ -1350,25 +1571,32 @@ export class PiBackend {
 		this.options.localSessionPaths?.assertCwd(cwd);
 		const readOnly = false;
 		const initialEntryCount = sessionManager.getEntryCount();
-		const session = await this.wireSession(cwd, readOnly, async (deps) => {
-			const { settingsManager, resourceLoader } = await deps.load();
-			return createAgentSession({
-				sessionManager,
-				modelRuntime: runtime,
-				// 与 create 对称应用工具白名单（F1 修复；SDK 仅在初始激活工具集层面消费，
-				// 会话文件不持久化工具开关，重开无状态冲突）
-				tools: this.options.tools,
-				settingsManager,
-				resourceLoader,
-				...codemodeSessionOptions(settingsManager, getAgentDir()),
-				customTools: this.buildCustomTools(
-					deps.gate,
-					deps.preferBuiltin,
-					deps.getPermissionMode,
-					deps.modeRef,
-				),
-			});
-		});
+		const binding = await this.getChannelHost().binding(sessionManager.getSessionId());
+		if (binding && binding.cwd !== resolve(cwd)) throw new Error("Session binding cwd changed");
+		const session = await this.wireSession(
+			cwd,
+			readOnly,
+			async (deps) => {
+				const { settingsManager, resourceLoader } = await deps.load();
+				return createAgentSession({
+					sessionManager,
+					modelRuntime: runtime,
+					// 与 create 对称应用工具白名单（F1 修复；SDK 仅在初始激活工具集层面消费，
+					// 会话文件不持久化工具开关，重开无状态冲突）
+					tools: this.options.tools,
+					settingsManager,
+					resourceLoader,
+					...codemodeSessionOptions(settingsManager, getAgentDir()),
+					customTools: this.buildCustomTools(
+						deps.gate,
+						deps.preferBuiltin,
+						deps.getPermissionMode,
+						deps.modeRef,
+					),
+				});
+			},
+			binding?.root,
+		);
 		// SDK 构造可在宿主订阅前补写模型/思考设置；只认证这些新条目的精确落盘增量。
 		this.sourceSnapshots.notePersisted(
 			sessionManager,
@@ -1471,6 +1699,7 @@ export class PiBackend {
 			/** 两阶段资源加载（信任决策走 projectLoader 既有链路）；懒执行：makeSession 决定时机 */
 			load: () => Promise<{ settingsManager: SettingsManagerType; resourceLoader: DefaultResourceLoader }>;
 		}) => Promise<CreateAgentSessionResult>,
+		channelRoot?: string,
 	): Promise<AgentSession> {
 		this.assertRunning();
 		const gate = new PermissionGate(
@@ -1479,6 +1708,7 @@ export class PiBackend {
 		);
 		this.constructionGates.add(gate);
 		const modeRef: PermissionModeRef = { current: "default" };
+		if (channelRoot) this.channelRoots.set(modeRef, channelRoot);
 		const mcpOwner = this.mcpRuntime.owner(cwd);
 		this.mcpOwners.set(modeRef, mcpOwner);
 		let candidate: AgentSession | undefined;
@@ -1654,16 +1884,51 @@ export class PiBackend {
 	}
 
 	/**
-	 * channel-watch 扩展回调入口（spec §6.1）：上报该会话当前的「有效运行态订阅」快照。
-	 * 只存 topic 名（不存消息内容）；空集 = 移出快照（退订最后一个 topic 即恢复普通 GC 资格）。
-	 * 这里只存取快照，不做保护策略（策略在 closeSession 的 intent 守卫与 renderer 纯策略层）。
+	 * 兼容旧宿主的订阅投影入口；新频道上报包含未读数的 reportEntries。
+	 * 只存 topic 名（不存消息内容）；空集表示没有可展示的订阅。
 	 */
 	reportChannelSubscriptions(sessionId: string, topics: ReadonlySet<string>): void {
 		this.channelSubs.report(sessionId, topics);
 	}
 
 	/** 单会话订阅快照（renderer 一次性查询 / reload 恢复用）：带 (generation, revision) 供 renderer 判新旧 */
-	getChannelSubscriptions(sessionId: string): ChannelSubscriptionsSnapshot {
+	async getChannelSubscriptions(sessionId: string): Promise<ChannelSubscriptionsSnapshot> {
+		const entry = this.registry.get(sessionId);
+		const before = this.channelSubs.snapshot(sessionId);
+		if (!entry) return before;
+		if (!readChannelWatchEnabled(getAgentDir())) {
+			this.channelSubs.reportEntries(sessionId, []);
+			return this.channelSubs.snapshot(sessionId);
+		}
+		if (entry.readOnly) return before;
+		const bound = this.channelRoots.get(entry.modeRef);
+		const root = await resolveChannelProject(entry.cwd, bound);
+		if (bound && root !== bound) throw new Error("Channel project root changed");
+		if (
+			!(
+				this.trustStore.get(root) ??
+				(root === resolve(entry.cwd) && entry.session.settingsManager?.isProjectTrusted?.())
+			)
+		)
+			return before;
+		let entries: Awaited<ReturnType<ChannelService["snapshot"]>>;
+		try {
+			entries = await (await this.channelService(entry.cwd, root, true)).snapshot(sessionId);
+		} catch (error) {
+			if (!(error instanceof Error) || error.message !== "Session is fenced") throw error;
+			entries = [];
+		}
+		if (!readChannelWatchEnabled(getAgentDir())) {
+			if (this.registry.get(sessionId) === entry) this.channelSubs.reportEntries(sessionId, []);
+			return this.channelSubs.snapshot(sessionId);
+		}
+		const after = this.channelSubs.snapshot(sessionId);
+		if (
+			this.registry.get(sessionId) === entry &&
+			before.generation === after.generation &&
+			before.revision === after.revision
+		)
+			this.channelSubs.reportEntries(sessionId, entries);
 		return this.channelSubs.snapshot(sessionId);
 	}
 
@@ -1676,19 +1941,16 @@ export class PiBackend {
 	}
 
 	/**
-	 * renderer GC 查询用（spec §6.2）：**仍在 registry 中**且有效频道订阅非空的会话 ID
-	 * （顺序不构成契约）。按 registry 过滤是兜底：回调/构造异常路径可能留下孤儿键，
-	 * 不能让一个已不存在的会话 ID 永久影响 GC 判定。
+	 * 频道订阅不再阻止自动卸载，保留兼容查询并始终返回空集。
 	 */
 	getChannelSubscriptionSessionIds(): string[] {
-		return this.channelSubs.loadedSessionIdsWithSubscriptions();
+		return [];
 	}
 
 	/**
 	 * 关会话（默认**用户主动关**）：agent 还在跑（含等审批）时拒绝——run 中途把后端会话 dispose 会直接掐断本轮，
 	 * 内存策略（自动卸载）靠这道兵底兼固（策略层已保护，这里是最后一道门）。
-	 * 自动卸载走同一个方法：行为与主动关基本一致，只是调用点分开（renderer 侧 `unloadSession`，intent="gc"），
-	 * 且 intent="gc" 时多一道频道订阅守卫（订阅场景下卸了就收不到唤醒——这是显式订阅语义，见 spec §6.2）。
+	 * 自动卸载走同一个方法（renderer 侧 `unloadSession`，intent="gc"）；频道订阅不阻止卸载。
 	 */
 	async closeSession(sessionId: string, intent: SessionCloseIntent = "user"): Promise<{ closed: boolean }> {
 		const entry = this.registry.get(sessionId);
@@ -1709,12 +1971,6 @@ export class PiBackend {
 		if (entry.session.isStreaming) {
 			// 等审批也在此列（实测 isStreaming 两态都为 true）：用户切走/自动卸载都不能把这一轮掐掉
 			log.warn("closeSession ignored: streaming", sessionId);
-			return { closed: false };
-		}
-		// 自动 GC 不得卸掉有频道订阅的会话（快照按 sessionId 精确查，退订后自然恢复资格）。
-		// 显式关（intent="user"/缺省，含 delete 路径）不受此限：用户意图优先，订阅也不能绑架用户。
-		if (intent === "gc" && this.channelSubs.snapshot(sessionId).topics.length > 0) {
-			log.info("closeSession ignored: channel subscriptions", sessionId);
 			return { closed: false };
 		}
 		if (intent === "gc") {
@@ -1911,6 +2167,7 @@ export class PiBackend {
 					sessionId,
 					file,
 					cleanup && !this.archiveFrozen.has(cleanup) ? cleanup : undefined,
+					archiveState.operationId,
 				),
 			);
 			// Archive records acquire their own file lease; never re-enter it while holding delete's lease.
@@ -1926,6 +2183,7 @@ export class PiBackend {
 		sessionId: string,
 		sessionFile?: string,
 		expectedEntry?: RegisteredSession,
+		archiveOperationId?: string,
 	): Promise<string> {
 		const requested = sessionFile ?? this.registry.get(sessionId)?.session.sessionFile;
 		let controlledSource: string | undefined;
@@ -2014,6 +2272,54 @@ export class PiBackend {
 		const file = requestedFile
 			? (this.options.localSessionPaths?.resolveFile(requestedFile, true) ?? requestedFile)
 			: undefined;
+		if (!file) throw new Error(`Session file not found: ${sessionId}`);
+		const existing = await this.getChannelHost().find(sessionId, file);
+		if (existsSync(file) && (await readSessionHeaderId(file)) !== sessionId)
+			throw new Error("Session file identity changed");
+		const channelService =
+			existing?.service ?? (await this.channelServiceForFile(file, entry?.cwd, sessionId));
+		const operationId = existing?.fence.kind === "delete" ? existing.fence.opId : randomUUID();
+		const fingerprint = async () => {
+			try {
+				const before = await stat(file);
+				const id = await readSessionHeaderId(file);
+				const after = await stat(file);
+				if (
+					id !== sessionId ||
+					before.dev !== after.dev ||
+					before.ino !== after.ino ||
+					before.ctimeMs !== after.ctimeMs ||
+					before.mtimeMs !== after.mtimeMs
+				)
+					throw new Error("Session file identity changed");
+				return {
+					dev: after.dev,
+					ino: after.ino,
+					ctimeMs: after.ctimeMs,
+					mtimeMs: after.mtimeMs,
+					id,
+					archiveOperationId: archiveOperationId ?? null,
+				};
+			} catch (error) {
+				if ((error as NodeJS.ErrnoException).code === "ENOENT") return null;
+				throw error;
+			}
+		};
+		const currentFingerprint = await fingerprint();
+		const host = this.getChannelHost();
+		if (existing?.fence.kind === "delete") {
+			const original = await host.deleteFingerprint(operationId);
+			if (
+				currentFingerprint &&
+				(existing.fence.state === "deleted" ||
+					!original ||
+					JSON.stringify(original) !== JSON.stringify(currentFingerprint))
+			)
+				throw new Error("Session file identity changed; confirm a new deletion");
+		} else {
+			await host.recordDeleteFingerprint(operationId, currentFingerprint);
+		}
+		await channelService.prepareMaintenance(sessionId, operationId, "delete", file);
 		// 显式删除是用户的明确意图（既有行为：即便正跑着也删），**绕开 closeSession 的 isStreaming 拒绝**，
 		// 否则会变成「拒绝 dispose 但磁盘文件照删」的跛脚状态（阶段 0 实测确认这条路径不先 abort）
 		if (entry) await this.disposeSession(entry);
@@ -2021,12 +2327,19 @@ export class PiBackend {
 		// 文件可能还不存在：0 消息会话（首条 prompt 没过 preflight）只有**计划路径**，SDK 要等
 		// 追加第一条 entry 才落盘。这类会话在左栏有行（目录也记着它，见 renderer stores/projects.ts
 		// 的写穿），删掉它应当照常成功——幂等：本来就没有文件 = 已经是「不存在」状态。
+		const finalFingerprint = await fingerprint();
+		if (
+			finalFingerprint &&
+			(!currentFingerprint || JSON.stringify(finalFingerprint) !== JSON.stringify(currentFingerprint))
+		)
+			throw new Error("Session file identity changed; delete can be retried");
 		await unlink(file).catch((error: NodeJS.ErrnoException) => {
 			if (error.code !== "ENOENT") throw error;
 		});
 		this.sourceSnapshots.invalidateOwner(sessionId);
 		await this.media.deleteOwner(sessionId);
 		if (sessionDir) await TraceRecorder.removeAll(sessionDir, sessionId);
+		await channelService.completeMaintenance(sessionId, operationId, "deleted");
 		this.channelSubs.delete(sessionId);
 		log.info("session deleted", sessionId);
 		return file;
@@ -2601,6 +2914,11 @@ export class PiBackend {
 				join(dirname(this.media.rootDirectory), "session-media-forks"),
 				() => !this.stopping,
 			);
+			const binding = await this.getChannelHost().binding(sessionId);
+			if (binding) {
+				const forkId = await readSessionHeaderId(newPath);
+				await this.getChannelHost().bind(forkId, binding.root, binding.cwd);
+			}
 			log.info("fork session", sessionId, { targetId, newPath });
 			return this.openSession(newPath);
 		});
@@ -3007,7 +3325,7 @@ export class PiBackend {
 		return { enabled: readChannelWatchEnabled(getAgentDir()) };
 	}
 
-	/** 写 channel-watch 开关（下一 session_start 生效：目录 init/watcher/工具注册全部跟随）。损坏拒写时上抛 */
+	/** 写频道开关，下一次会话加载生效；保留成员数据，关闭时隐藏状态和工具。损坏拒写时上抛。 */
 	setChannelWatchEnabled(enabled: boolean): void {
 		try {
 			writeChannelWatchEnabled(getAgentDir(), enabled);
@@ -3024,6 +3342,10 @@ export class PiBackend {
 
 	dispose(): void {
 		this.stopping = true;
+		void this.stopChannels().then((results) => {
+			for (const result of results)
+				if (result.status === "rejected") log.warn("Channel shutdown failed", result.reason);
+		});
 		void this.sessionCatalog?.dispose().catch((error) => log.warn("catalog shutdown failed", error));
 		void this.mediaMaintenance?.dispose().catch((error) => log.warn("maintenance shutdown failed", error));
 		for (const child of this.runningSubagents.values()) {

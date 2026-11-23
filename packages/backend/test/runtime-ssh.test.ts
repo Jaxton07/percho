@@ -3,13 +3,14 @@ import { PassThrough } from "node:stream";
 import { executionContract, REMOTE_PROTOCOL_VERSION, type RuntimeInfo } from "@percho/shared";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
-const fixture = vi.hoisted(() => ({ spawn: vi.fn(), info: undefined as unknown }));
+const fixture = vi.hoisted(() => ({ spawn: vi.fn(), info: undefined as unknown, stopConfirmed: true }));
 vi.mock("node:child_process", () => ({ spawn: fixture.spawn }));
 
 import { readRuntimeFrames } from "../src/runtime/frames";
 import { SshRuntimeConnection, validateSshAlias } from "../src/runtime/ssh";
 
 beforeEach(() => {
+	fixture.stopConfirmed = true;
 	fixture.info = {
 		...executionContract(),
 		protocol: REMOTE_PROTOCOL_VERSION,
@@ -63,6 +64,11 @@ beforeEach(() => {
 					child.stdout.write(bytes.subarray(offset, offset + 2));
 				child.emit("close", 0);
 			});
+		else if (args.at(-1)?.endsWith(" wait-stopped"))
+			queueMicrotask(() => {
+				child.stdout.write(JSON.stringify({ stopped: fixture.stopConfirmed }));
+				child.emit("close", 0);
+			});
 		else
 			child.stdin.on(
 				"data",
@@ -83,6 +89,86 @@ beforeEach(() => {
 });
 
 describe("SSH runtime boundary", () => {
+	it.each([true, false])("waits for local bridge exit after stop confirmation=%s", async (confirmed) => {
+		fixture.stopConfirmed = confirmed;
+		const connection = await SshRuntimeConnection.connect("company", {
+			signal: new AbortController().signal,
+			onEvent: () => {},
+			onClose: () => {},
+		});
+		const child = fixture.spawn.mock.results[3].value;
+		child.kill.mockImplementation(() => true);
+		let settled = false,
+			failure: unknown;
+		const stopped = connection.stopService().then(
+			() => {
+				settled = true;
+			},
+			(error) => {
+				settled = true;
+				failure = error;
+			},
+		);
+		try {
+			await vi.waitFor(() =>
+				expect(fixture.spawn.mock.calls.some(([, args]) => args.at(-1)?.endsWith(" wait-stopped"))).toBe(
+					true,
+				),
+			);
+			await new Promise((resolve) => setImmediate(resolve));
+			expect(settled).toBe(false);
+		} finally {
+			child.emit("close", null);
+			await stopped;
+		}
+		if (confirmed) expect(failure).toBeUndefined();
+		else expect(failure).toBeInstanceOf(Error);
+	});
+	it("waits for the bridge child to close on disconnect", async () => {
+		const connection = await SshRuntimeConnection.connect("company", {
+			signal: new AbortController().signal,
+			onEvent: () => {},
+			onClose: () => {},
+		});
+		const child = fixture.spawn.mock.results[3].value;
+		child.kill.mockImplementation(() => true);
+		let settled = false;
+		const disconnected = Promise.resolve(connection.disconnect()).then(() => {
+			settled = true;
+		});
+		await Promise.resolve();
+		expect(settled).toBe(false);
+		child.emit("close", null);
+		await disconnected;
+	});
+	it("waits for bridge close after an attach error", async () => {
+		const original = fixture.spawn.getMockImplementation();
+		if (!original) throw new Error("Missing spawn mock");
+		let bridge: ReturnType<typeof original>;
+		fixture.spawn.mockImplementation((file: string, args: string[]) => {
+			const child = original(file, args);
+			if (args.at(-1)?.endsWith(" bridge")) {
+				bridge = child;
+				child.kill.mockImplementation(() => true);
+				queueMicrotask(() => child.emit("error", new Error("bridge error")));
+			}
+			return child;
+		});
+		let settled = false;
+		const result = SshRuntimeConnection.connect("company", {
+			signal: new AbortController().signal,
+			onEvent: () => {},
+			onClose: () => {},
+		}).catch((error: unknown) => {
+			settled = true;
+			return error;
+		});
+		await new Promise((resolve) => setImmediate(resolve));
+		expect(settled).toBe(false);
+		if (!bridge) throw new Error("Bridge was not spawned");
+		bridge.emit("close", null);
+		expect(await result).toBeInstanceOf(Error);
+	});
 	it.each([
 		"-oProxyCommand=touch",
 		"company;touch proof",

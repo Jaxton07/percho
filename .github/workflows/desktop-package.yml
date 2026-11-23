@@ -42,7 +42,8 @@ jobs:
         run: >-
           npm run test -w packages/desktop --
           src/renderer/src/components/chat/MetaGroup.lazy.test.tsx
-          src/renderer/src/components/chat/use-sweep-highlight.test.tsx
+          src/renderer/src/components/chat/MetaGroup.status.test.tsx
+          src/renderer/src/components/chat/MetaGroup.playback.test.tsx
           src/renderer/src/components/chat/turn-files.test.ts
           src/renderer/src/components/composer/Composer.run-state.test.tsx
           src/renderer/src/components/composer/use-composer-send.test.tsx

@@ -29,6 +29,7 @@ import { getExecutionApi, subscribeExecutionEnvironments } from "../environment-
 export interface AppliedChannelSubscriptions {
 	/** 有效订阅（去重、字典序排序；空数组 = 无订阅） */
 	topics: readonly string[];
+	unreadCounts?: Readonly<Record<string, number>>;
 	revision: number;
 	generation: number;
 }
@@ -42,6 +43,7 @@ interface ChannelSubscriptionLifecycle {
 
 /** 稳定模块级常量：无订阅时 selector 返回同一个引用（避免无谓重渲染），与 TodoPanel 的 EMPTY_TODOS 同一手法 */
 export const EMPTY_TOPICS: readonly string[] = Object.freeze([]);
+export const EMPTY_UNREAD_COUNTS: Readonly<Record<string, number>> = Object.freeze({});
 
 interface ChannelSubscriptionsState {
 	/** 可见状态（只有它参与渲染） */
@@ -68,6 +70,7 @@ function isFresher(
 
 /** 查询作废序号（模块级：只回答「这次同步是否还是最新意图」，与 per-session 状态无关） */
 let loadSeq = 0;
+let activeSession: string | null = null;
 
 export const useChannelSubscriptionsStore = create<ChannelSubscriptionsState>((set) => ({
 	bySession: {},
@@ -107,6 +110,7 @@ export const useChannelSubscriptionsStore = create<ChannelSubscriptionsState>((s
 					[sessionId]: {
 						// 订阅没变就沿用旧数组引用：胶囊的 selector 因此不会被无谓地唤醒
 						topics: sameTopics && current ? current.topics : snapshot.topics,
+						unreadCounts: snapshot.unreadCounts ?? EMPTY_UNREAD_COUNTS,
 						revision: snapshot.revision,
 						generation: snapshot.generation,
 					},
@@ -159,11 +163,30 @@ export function useChannelTopics(sessionId: string | null): readonly string[] {
  * 返回取消订阅函数（React effect cleanup 直接 return 它）。
  */
 export function initChannelSubscriptions(): () => void {
-	return subscribeExecutionEnvironments((api) =>
+	const unsubscribe = subscribeExecutionEnvironments((api) =>
 		api.onChannelSubscriptionsChanged((snapshot) => {
 			useChannelSubscriptionsStore.getState().apply(snapshot);
 		}),
 	);
+	// 只在界面观察期间对当前会话补查，覆盖其他进程写入；查询本身不启动 agent。
+	let polling = false;
+	const timer = setInterval(() => {
+		if (
+			!polling &&
+			activeSession &&
+			(typeof document === "undefined" || document.visibilityState === "visible")
+		) {
+			polling = true;
+			void syncActiveSession(activeSession).finally(() => {
+				polling = false;
+			});
+		}
+	}, 10_000);
+	return () => {
+		clearInterval(timer);
+		invalidateChannelSubscriptionQueries();
+		unsubscribe();
+	};
 }
 
 /**
@@ -172,6 +195,7 @@ export function initChannelSubscriptions(): () => void {
  * cleanup 之后，上一次的在途查询不会再发布结果。
  */
 export function invalidateChannelSubscriptionQueries(): void {
+	activeSession = null;
 	loadSeq += 1;
 }
 
@@ -182,6 +206,7 @@ export function invalidateChannelSubscriptionQueries(): void {
  * 快照自身的新旧仍由 `apply` 的 (generation, revision)/关闭水位裁决 —— 两层各管一段，不互相替代。
  */
 export async function syncActiveSession(sessionId: string | null): Promise<void> {
+	activeSession = sessionId;
 	const token = ++loadSeq;
 	if (!sessionId) return;
 	const forgetToken = useChannelSubscriptionsStore.getState().forgetTokens[sessionId] ?? 0;

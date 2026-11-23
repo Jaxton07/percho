@@ -19,6 +19,8 @@ export interface ChannelSubscriptionsSnapshot {
 	live: boolean;
 	/** 有效订阅的 topic 名（去重、按字典序排序的副本）；空数组 = 无有效订阅（可能是 live 也可能是 disposed） */
 	topics: string[];
+	/** 每个有效订阅的权威未读数；旧版快照可能不含此字段。 */
+	unreadCounts?: Record<string, number>;
 	/** backend 进程内单调版本（同代内比较用） */
 	revision: number;
 	/** 每 open 一代（跨代比较用）；0 = 该会话没有在册实例 */

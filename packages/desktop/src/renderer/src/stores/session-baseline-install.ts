@@ -22,6 +22,13 @@ export function installSessionBaseline(
 				...state.bySession,
 				[sessionId]: {
 					...baseline.transcript,
+					// A snapshot start belongs to the server clock, not a live start observed here.
+					streaming: baseline.transcript.streaming
+						? {
+								...baseline.transcript.streaming,
+								tools: baseline.transcript.streaming.tools.map((tool) => ({ ...tool, startedAt: undefined })),
+							}
+						: null,
 					baselineRevision: (previous?.baselineRevision ?? 0) + 1,
 					phase: previous?.pendingPermissions.length ? "awaiting_permission" : baseline.transcript.phase,
 					pendingPermissions: previous?.pendingPermissions ?? [],

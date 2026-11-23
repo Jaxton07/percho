@@ -6,7 +6,7 @@
  * - mapping.ts  messagesToUIMessages（历史消息回放映射）
  */
 
-export { buildChatRows, type ChatRow, isAgentWorking, type MetaItem } from "./chat-rows";
+export { type ActiveSubagent, buildChatRows, type ChatRow, isAgentWorking, type MetaItem } from "./chat-rows";
 export { messagesToUIMessages } from "./mapping";
 export {
 	categoryOf,

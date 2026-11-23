@@ -3,19 +3,26 @@ import { join } from "node:path";
 import {
 	checkSshRequirements,
 	installSshRuntime,
-	JsonStore,
 	preflightSsh,
 	RemoteMutationUnknownError,
 	remoteAuthGuide,
 	SshRuntimeConnection,
 	sshFailureKind,
-	validateSshAlias,
 } from "@percho/backend";
-import type { LoadedSessionSummary, SessionEventEnvelope } from "@percho/shared";
 import {
 	type EnvironmentRef,
+	isRemoteConnectionBusy,
+	type LoadedSessionSummary,
 	type MutationReceipt,
+	type RemoteAddCommand,
+	type RemoteCatalogSnapshot,
+	type RemoteConnectionRecord,
 	type RemoteConnectionStatus,
+	type RemoteRecordCommand,
+	type RemoteRemoveCommand,
+	type RemoteSwitchCommand,
+	type RemoteTokenCommand,
+	type SessionEventEnvelope,
 	type SshPreflight,
 	SUBSCRIPTION_TABLE,
 	type SubscriptionPayload,
@@ -25,6 +32,7 @@ import {
 import { app } from "electron";
 import { environmentRouter } from "./environment-router";
 import { sendToRenderer } from "./ipc/send";
+import { RemoteCatalog } from "./remote-catalog";
 import {
 	downloadRuntimeArtifact,
 	type RuntimeManifest,
@@ -32,59 +40,98 @@ import {
 } from "./remote-runtime-download";
 import { observeTaskNotification, taskNotificationObserver } from "./task-notifications";
 
-interface SavedConnection {
-	connectionId: string;
-	alias: string;
-	environmentId: string;
-	uid: number;
-	canonicalAgentDir: string;
-	node?: string;
-	releaseId?: string;
-	target?: SshPreflight["target"];
-}
-const store = () =>
-	new JsonStore<SavedConnection | null>({
-		path: join(app.getPath("userData"), "remote-connection.json"),
-		defaultValue: () => null,
-	});
+const message = (error: unknown) => (error instanceof Error ? error.message : String(error));
+const identityError = (error: unknown) => /identity|saved SSH|catalog|target changed/i.test(message(error));
+const targetEquals = (a: SshPreflight["target"], b: SshPreflight["target"]) =>
+	a.hostname === b.hostname && a.user === b.user && a.port === b.port;
+const environmentFor = (
+	record: RemoteConnectionRecord,
+): Extract<EnvironmentRef, { kind: "ssh" }> | undefined =>
+	record.binding
+		? { kind: "ssh", connectionId: record.connectionId, environmentId: record.binding.environmentId }
+		: undefined;
 
-class InvalidSavedConnectionError extends Error {}
-async function readSaved(): Promise<SavedConnection | null> {
-	const value = await store().read();
-	if (value === null) return null;
-	if (
-		!value ||
-		typeof value !== "object" ||
-		Array.isArray(value) ||
-		typeof value.connectionId !== "string" ||
-		!value.connectionId ||
-		typeof value.environmentId !== "string" ||
-		!value.environmentId ||
-		!Number.isInteger(value.uid) ||
-		value.uid < 0 ||
-		typeof value.canonicalAgentDir !== "string" ||
-		!value.canonicalAgentDir.startsWith("/") ||
-		typeof value.alias !== "string" ||
-		(value.node !== undefined && (typeof value.node !== "string" || !value.node.startsWith("/")))
-	)
-		throw new InvalidSavedConnectionError("Saved SSH connection is invalid; remove it before reconnecting");
-	try {
-		validateSshAlias(value.alias);
-	} catch {
-		throw new InvalidSavedConnectionError("Saved SSH alias is invalid; remove it before reconnecting");
-	}
-	if (
-		value.target &&
-		(typeof value.target.hostname !== "string" ||
-			typeof value.target.user !== "string" ||
-			typeof value.target.port !== "string")
-	)
-		throw new InvalidSavedConnectionError("Saved SSH target is invalid; remove it before reconnecting");
-	return value;
-}
+const maintenanceIdentityKey = (
+	identity: Partial<Pick<SshPreflight, "environmentId" | "uid" | "agentDir" | "target">>,
+) =>
+	JSON.stringify([
+		identity.environmentId,
+		identity.uid,
+		identity.agentDir,
+		identity.target?.hostname,
+		identity.target?.user,
+		identity.target?.port,
+	]);
 
+type Installation = {
+	token: string;
+	recordId: string;
+	generation: number;
+	probe: SshPreflight;
+	manifest: RuntimeManifest;
+	archive: string;
+};
+
+/** One desktop-owned intent. Network work is cancellable; only short catalog commits are serialized. */
 export class RemoteConnectionManager {
-	private installation?: { token: string; probe: SshPreflight; manifest: RuntimeManifest; archive: string };
+	private readonly epoch = randomUUID();
+	private readonly catalog = new RemoteCatalog(this.epoch);
+	private loaded?: Promise<void>;
+	private status: RemoteConnectionStatus = {
+		revision: 0,
+		state: "disconnected",
+		epoch: this.epoch,
+		generation: 0,
+	};
+	private generation = 0;
+	private mutations: Promise<void> = Promise.resolve();
+	private installation?: Installation;
+	private approvedTarget?: { recordId: string; generation: number; target: SshPreflight["target"] };
+	private controller?: AbortController;
+	private connection?: SshRuntimeConnection;
+	private detach?: () => void;
+	private autoConnect = true;
+	private retryCount = 0;
+	private retryTimer?: ReturnType<typeof setTimeout>;
+	private readonly clientTag = randomUUID();
+	private authorize: () => Promise<void> = async () => {};
+	private readonly uncertain = new Map<string, UncertainRemoteOperation>();
+	private operationsTruncated = false;
+	private closing: Promise<void> = Promise.resolve();
+	private readonly pendingWork = new Map<number, Set<Promise<unknown>>>();
+	private trackWork<T>(generation: number, work: Promise<T>): Promise<T> {
+		const jobs = this.pendingWork.get(generation) ?? new Set<Promise<unknown>>();
+		this.pendingWork.set(generation, jobs);
+		jobs.add(work);
+		return work.finally(() => {
+			jobs.delete(work);
+			if (!jobs.size) this.pendingWork.delete(generation);
+		});
+	}
+	private async authorizeIntent(signal: AbortSignal): Promise<void> {
+		if (signal.aborted) throw new Error("SSH connection cancelled");
+		let abort!: () => void;
+		const cancelled = new Promise<never>((_resolve, reject) => {
+			abort = () => reject(new Error("SSH connection cancelled"));
+			signal.addEventListener("abort", abort, { once: true });
+		});
+		try {
+			await Promise.race([this.authorize(), cancelled]);
+		} finally {
+			signal.removeEventListener("abort", abort);
+		}
+	}
+	private readonly unconfirmedStops = new Set<string>();
+	private maintenanceKey(record: RemoteConnectionRecord): string {
+		const b = record.binding;
+		return maintenanceIdentityKey({
+			environmentId: b?.environmentId,
+			uid: b?.uid,
+			agentDir: b?.canonicalAgentDir,
+			target: b?.target,
+		});
+	}
+
 	constructor(
 		private readonly distribution = {
 			manifest: () =>
@@ -98,214 +145,362 @@ export class RemoteConnectionManager {
 			install: installSshRuntime,
 		},
 	) {}
-	private status: RemoteConnectionStatus = { revision: 0, state: "disconnected" };
-	private generation = 0;
-	private autoConnect = true;
-	private retryCount = 0;
-	private retryTimer?: ReturnType<typeof setTimeout>;
-	private authorize: () => Promise<void> = async () => {};
-	startAutoConnect(authorize: () => Promise<void>): void {
-		this.authorize = authorize;
-		void this.getStatus()
-			.then((status) => {
-				if (this.autoConnect && status.alias && status.state === "disconnected")
-					void this.connect(status.alias, true).catch(() => {});
-			})
-			.catch(() => {});
+
+	private serial<T>(action: () => T | Promise<T>): Promise<T> {
+		const result = this.mutations.then(action);
+		this.mutations = result.then(
+			() => {},
+			() => {},
+		);
+		return result;
 	}
-	private scheduleRetry(alias: string, ownBusy = false): void {
-		if (!this.autoConnect || this.retryCount >= 5 || (!ownBusy && this.status.errorKind !== "network"))
-			return;
-		const delay = ownBusy ? 22_000 : Math.min(1000 * 2 ** this.retryCount, 16_000);
-		this.retryCount++;
-		this.update({ ...this.status, state: "reconnecting", retryAt: Date.now() + delay });
-		this.retryTimer = setTimeout(() => {
-			this.retryTimer = undefined;
-			void this.connect(alias, true).catch(() => {});
-		}, delay);
+	private publishCatalog(catalog: RemoteCatalogSnapshot): RemoteCatalogSnapshot {
+		sendToRenderer(SUBSCRIPTION_TABLE.onRemoteCatalog.channel, catalog);
+		return catalog;
 	}
-	async preflight(alias: string): Promise<SshPreflight> {
-		validateSshAlias(alias);
-		if (this.connection || this.status.state === "connecting" || this.status.state === "checking")
-			throw new Error("Disconnect or cancel the current connection first");
-		this.disconnect();
-		const generation = ++this.generation;
-		this.installation = undefined;
-		const controller = new AbortController();
-		this.controller = controller;
-		this.update({ ...this.status, state: "checking", alias });
-		try {
-			const probe = await preflightSsh(alias, controller.signal);
-			if (generation !== this.generation || controller.signal.aborted) throw new Error("SSH check cancelled");
-			this.update({ ...this.status, state: "disconnected", preflight: probe });
-			return probe;
-		} catch (error) {
-			if (generation === this.generation)
-				this.update({
-					...this.status,
-					state: "error",
-					errorKind: error instanceof InvalidSavedConnectionError ? "identity" : sshFailureKind(error),
-					error: error instanceof Error ? error.message : String(error),
-				});
-			throw error;
-		}
+	private ensure(): Promise<void> {
+		this.loaded ??= this.catalog.load().then((catalog) => {
+			this.publishCatalog(catalog);
+			if (catalog.error) {
+				this.update({ state: "error", error: catalog.error, errorKind: "identity" });
+				return;
+			}
+			const record = catalog.records.find((item) => item.connectionId === catalog.lastSuccessfulConnectionId);
+			this.update({
+				state: "disconnected",
+				connectionId: record?.connectionId,
+				alias: record?.alias,
+				environment: record && environmentFor(record),
+			});
+		});
+		return this.loaded;
 	}
-	async authGuide(environment: EnvironmentRef) {
-		const saved = await readSaved();
-		if (
-			!saved ||
-			environment.kind !== "ssh" ||
-			environment.connectionId !== saved.connectionId ||
-			environment.environmentId !== saved.environmentId ||
-			!saved.node
-		)
-			throw new Error(
-				"Check and connect this environment before requesting authentication maintenance instructions",
-			);
-		return {
-			...remoteAuthGuide(saved.alias, saved.node, saved.releaseId),
-			agentDir: saved.canonicalAgentDir,
-		};
-	}
-	async forget(): Promise<RemoteConnectionStatus> {
-		this.disconnect();
-		await store().update(() => null);
-		return this.update({ state: "disconnected" });
-	}
-	private controller?: AbortController;
-	private connection?: SshRuntimeConnection;
-	private detach?: () => void;
-	private readonly clientTag = randomUUID();
-	private readonly uncertain = new Map<string, UncertainRemoteOperation>();
 	private update(patch: Omit<RemoteConnectionStatus, "revision">): RemoteConnectionStatus {
+		const record = patch.connectionId
+			? this.catalog.snapshot().records.find((r) => r.connectionId === patch.connectionId)
+			: undefined;
 		this.status = {
+			stopUnconfirmed: !!record && this.unconfirmedStops.has(this.maintenanceKey(record)),
 			...patch,
-			instanceId: patch.environment ? (patch.instanceId ?? this.status.instanceId) : undefined,
+			epoch: this.epoch,
+			generation: this.generation,
 			revision: this.status.revision + 1,
 			operations: [...this.uncertain.values()],
+			operationsTruncated: this.operationsTruncated,
 		};
 		sendToRenderer(SUBSCRIPTION_TABLE.onRemoteConnectionStatus.channel, this.status);
 		return this.status;
 	}
-
-	private track(error: RemoteMutationUnknownError, environment: EnvironmentRef): void {
-		const reference = error.operation;
-		const id = `${reference.instanceId}:${reference.epoch}:${reference.sequence}`;
-		this.uncertain.set(id, { id, environment, operation: reference, createdAt: error.createdAt });
-		if (this.uncertain.size > 128) {
-			const oldest = this.uncertain.keys().next().value;
-			if (oldest) this.uncertain.delete(oldest);
-		}
-		this.update(this.status);
+	private assert(command: RemoteRecordCommand): RemoteConnectionRecord {
+		if (command.epoch !== this.epoch || command.generation !== this.generation)
+			throw new Error("SSH connection changed; refresh before trying again");
+		return this.catalog.record(command.connectionId);
 	}
-	async checkOperation(id: string): Promise<MutationReceipt> {
-		const record = this.uncertain.get(id);
-		if (!record) return { state: "unknown" };
-		if (
-			!this.connection ||
-			!this.status.environment ||
-			!sameEnvironment(record.environment, this.status.environment)
-		)
-			throw new Error("Reconnect to the original environment before checking the remote operation");
-		const receipt = await this.connection.queryReceipt(record.operation);
-		this.uncertain.set(id, { ...record, receipt });
-		this.update(this.status);
-		return receipt;
+	private assertAvailable(): void {
+		if (isRemoteConnectionBusy(this.status) || this.connection)
+			throw new Error(
+				"A remote connection is already being established or active; cancel or disconnect first",
+			);
 	}
-	dismissOperation(id: string): void {
-		this.uncertain.delete(id);
-		this.update(this.status);
-	}
-	async getStatus(): Promise<RemoteConnectionStatus> {
-		if (this.status.revision === 0) {
-			let saved: SavedConnection | null;
-			try {
-				saved = await readSaved();
-			} catch (error) {
-				return this.update({
-					state: "error",
-					errorKind: "identity",
-					error: error instanceof Error ? error.message : "Invalid saved SSH connection",
-				});
-			}
-			if (saved && this.status.revision === 0)
-				this.update({
-					state: "disconnected",
-					alias: saved.alias,
-					environment: { kind: "ssh", connectionId: saved.connectionId, environmentId: saved.environmentId },
-				});
-		}
-		return this.status;
-	}
-	pauseAutoConnect(): void {
-		this.autoConnect = false;
-		clearTimeout(this.retryTimer);
-		this.retryTimer = undefined;
-	}
-	async stopService(): Promise<RemoteConnectionStatus> {
-		this.pauseAutoConnect();
-		const target = this.connection;
-		if (!target || this.status.state !== "connected")
-			throw new Error("Connect before explicitly stopping the service");
-		const generation = this.generation;
-		this.update({ ...this.status, state: "stopping" });
-		try {
-			await target.stopService();
-			if (generation !== this.generation) return this.status;
-			this.disconnect();
-			return this.update({ ...this.status, serviceStopped: true });
-		} catch (error) {
-			if (generation !== this.generation) return this.status;
-			this.disconnect();
-			this.update({
-				...this.status,
-				state: "error",
-				errorKind: "other",
-				error:
-					"Remote service stop is unconfirmed; do not start another version until ownership release is verified",
-			});
-			throw error;
-		}
-	}
-	disconnect(): RemoteConnectionStatus {
+	private clearTransport(): void {
 		if (this.status.environment) taskNotificationObserver.detach(this.status.environment);
-		this.pauseAutoConnect();
 		clearTimeout(this.retryTimer);
 		this.retryTimer = undefined;
-		this.generation += 1;
 		this.installation = undefined;
+		this.approvedTarget = undefined;
 		this.controller?.abort();
 		this.controller = undefined;
 		this.detach?.();
 		this.detach = undefined;
-		this.connection?.disconnect();
+		const connection = this.connection;
 		this.connection = undefined;
-		return this.update({
-			state: "disconnected",
-			alias: this.status.alias,
-			environment: this.status.environment,
-		});
+		this.closing = Promise.all([this.closing, connection?.disconnect()]).then(() => {});
 	}
-	async prepareInstall(alias: string): Promise<RemoteConnectionStatus> {
-		await this.connect(alias, false, true);
+	private reserve(record: RemoteConnectionRecord, state: "checking" | "connecting"): number {
+		this.clearTransport();
+		this.generation++;
+		this.controller = new AbortController();
+		this.update({
+			state,
+			connectionId: record.connectionId,
+			alias: record.alias,
+			environment: environmentFor(record),
+		});
+		return this.generation;
+	}
+	private command(): RemoteRecordCommand {
+		if (!this.status.connectionId) throw new Error("No SSH connection selected");
+		return { epoch: this.epoch, generation: this.generation, connectionId: this.status.connectionId };
+	}
+	private current(generation: number): boolean {
+		return generation === this.generation && !!this.controller && !this.controller.signal.aborted;
+	}
+	async getStatus(): Promise<RemoteConnectionStatus> {
+		await this.ensure();
 		return this.status;
 	}
-	async installAndConnect(token: string): Promise<RemoteConnectionStatus> {
+	async getCatalog(): Promise<RemoteCatalogSnapshot> {
+		await this.ensure();
+		if (!this.catalog.snapshot().error) return this.catalog.snapshot();
+		return this.serial(async () => {
+			const snapshot = await this.catalog.load();
+			this.publishCatalog(snapshot);
+			if (!snapshot.error) this.update({ state: "disconnected" });
+			return snapshot;
+		});
+	}
+	async add(command: RemoteAddCommand): Promise<{ connectionId: string; catalog: RemoteCatalogSnapshot }> {
+		await this.ensure();
+		return this.serial(async () => {
+			if (command.epoch !== this.epoch || command.generation !== this.generation)
+				throw new Error("SSH connection changed; refresh before adding");
+			if (isRemoteConnectionBusy(this.status))
+				throw new Error("Finish or cancel the current SSH operation first");
+			const result = await this.catalog.add(command.alias, command.catalogRevision);
+			this.publishCatalog(result.catalog);
+			return result;
+		});
+	}
+	async resetCatalog(command: { epoch: string; token: string }): Promise<RemoteCatalogSnapshot> {
+		await this.ensure();
+		return this.serial(async () => {
+			if (command.epoch !== this.epoch || isRemoteConnectionBusy(this.status) || this.connection)
+				throw new Error("SSH reset confirmation expired");
+			const catalog = await this.catalog.reset(command.token);
+			this.generation++;
+			this.update({ state: "disconnected" });
+			return this.publishCatalog(catalog);
+		});
+	}
+	async forget(command: RemoteRemoveCommand): Promise<RemoteCatalogSnapshot> {
+		await this.ensure();
+		return this.serial(async () => {
+			const record = this.assert(command);
+			if (record.revision !== command.recordRevision) throw new Error("SSH removal confirmation expired");
+			if (this.status.state === "stopping") throw new Error("Remote service stop is still in progress");
+			const active = this.status.connectionId === record.connectionId;
+			if (active && isRemoteConnectionBusy(this.status))
+				throw new Error("Cancel the SSH operation before removing this connection");
+			if (active) {
+				this.autoConnect = false;
+				this.clearTransport();
+				this.update({ ...this.status, state: "connecting", phase: "cancelling" });
+				await this.closing;
+				this.release();
+			}
+			const catalog = await this.catalog.remove(record.connectionId, record.revision);
+			if (active) this.update({ state: "disconnected" });
+			return this.publishCatalog(catalog);
+		});
+	}
+	private release(): RemoteConnectionStatus {
+		this.autoConnect = false;
+		this.generation++;
+		this.clearTransport();
+		return this.update({
+			state: "disconnected",
+			connectionId: this.status.connectionId,
+			alias: this.status.alias,
+			environment: this.status.environment,
+			stopUnconfirmed: this.status.stopUnconfirmed,
+		});
+	}
+	async disconnect(command: RemoteRecordCommand): Promise<RemoteConnectionStatus> {
+		await this.ensure();
+		const cleanup = await this.serial(() => {
+			this.assert(command);
+			if (command.connectionId !== this.status.connectionId)
+				throw new Error("This SSH connection is not active");
+			if (this.status.state === "stopping") throw new Error("Remote service stop is still in progress");
+			const jobs = [...(this.pendingWork.get(this.generation) ?? [])];
+			const uncertain =
+				jobs.length > 0 &&
+				this.status.state !== "connected" &&
+				this.status.state !== "checking" &&
+				this.status.phase !== "preparing";
+			this.autoConnect = false;
+			this.clearTransport();
+			this.update({
+				...this.status,
+				state: "connecting",
+				phase: "cancelling",
+				installation: undefined,
+				targetConfirmation: undefined,
+			});
+			return { jobs, closing: this.closing, uncertain };
+		});
+		await Promise.allSettled(cleanup.jobs);
+		await Promise.all([cleanup.closing, this.closing]);
+		return this.serial(() => {
+			if (command.generation !== this.generation) return this.status;
+			this.release();
+			return this.update({ ...this.status, phase: undefined, cancelledUncertain: cleanup.uncertain });
+		});
+	}
+	/** Application teardown only; no public IPC path may bypass observed target checks. */
+	async shutdown(): Promise<void> {
+		const cleanup = await this.serial(() => {
+			const jobs = [...this.pendingWork.values()].flatMap((items) => [...items]);
+			this.release();
+			return { jobs, closing: this.closing };
+		});
+		await Promise.allSettled([...cleanup.jobs, cleanup.closing]);
+	}
+	preflight(command: RemoteRecordCommand): Promise<SshPreflight> {
+		return this.trackWork(command.generation + 1, this.check(command));
+	}
+	private async check(command: RemoteRecordCommand): Promise<SshPreflight> {
+		await this.ensure();
+		const { record, generation, signal } = await this.serial(() => {
+			const record = this.assert(command);
+			this.assertAvailable();
+			const generation = this.reserve(record, "checking");
+			return { record, generation, signal: this.controller!.signal };
+		});
+		try {
+			await this.closing;
+			await this.authorizeIntent(signal);
+			if (!this.current(generation)) throw new Error("SSH check cancelled");
+			const probe = await preflightSsh(record.alias, signal);
+			if (!this.current(generation)) throw new Error("SSH check cancelled");
+			this.checkIdentity(record, probe);
+			this.controller = undefined;
+			const maintenanceKey = maintenanceIdentityKey(probe);
+			if (probe.serviceState === "stopped" && probe.ownerReleased === true)
+				this.unconfirmedStops.delete(maintenanceKey);
+			this.update({
+				...this.status,
+				state: "disconnected",
+				preflight: probe,
+				stopUnconfirmed: this.unconfirmedStops.has(maintenanceKey),
+			});
+			return probe;
+		} catch (error) {
+			this.fail(error, generation);
+			throw error;
+		}
+	}
+	async connect(command: RemoteRecordCommand): Promise<RemoteConnectionStatus> {
+		return this.start(command, false, false);
+	}
+	async prepareInstall(command: RemoteRecordCommand): Promise<RemoteConnectionStatus> {
+		return this.start(command, false, true);
+	}
+	async reconnect(command: RemoteRecordCommand): Promise<RemoteConnectionStatus> {
+		await this.ensure();
+		const { record, generation } = await this.serial(() => {
+			const record = this.assert(command);
+			if (this.status.state !== "connected" || this.status.connectionId !== record.connectionId)
+				throw new Error("Connect before reconnecting this server");
+			this.release();
+			this.autoConnect = true;
+			this.retryCount = 0;
+			return { record, generation: this.reserve(record, "connecting") };
+		});
+		return this.run(record, generation, false, false);
+	}
+	async switchConnection(command: RemoteSwitchCommand): Promise<RemoteConnectionStatus> {
+		await this.ensure();
+		const { record, generation } = await this.serial(() => {
+			const record = this.assert(command);
+			if (
+				!this.connection ||
+				this.status.state !== "connected" ||
+				this.status.connectionId !== command.currentConnectionId
+			)
+				throw new Error("SSH switch confirmation expired");
+			if (command.currentConnectionId === command.connectionId)
+				throw new Error("SSH target is already connected");
+			this.release();
+			this.autoConnect = true;
+			this.retryCount = 0;
+			return { record, generation: this.reserve(record, "connecting") };
+		});
+		return this.run(record, generation, false, false);
+	}
+	private async start(
+		command: RemoteRecordCommand,
+		automatic: boolean,
+		forcePrepare: boolean,
+	): Promise<RemoteConnectionStatus> {
+		await this.ensure();
+		const { record, generation } = await this.serial(() => {
+			const record = this.assert(command);
+			if (
+				automatic &&
+				(!this.autoConnect || (this.status.state !== "reconnecting" && this.status.state !== "disconnected"))
+			)
+				throw new Error("SSH automatic connection cancelled");
+			if (automatic && this.status.state === "reconnecting")
+				this.update({ ...this.status, state: "disconnected" });
+			this.assertAvailable();
+			if (!automatic) {
+				this.autoConnect = true;
+				this.retryCount = 0;
+			}
+			return { record, generation: this.reserve(record, "connecting") };
+		});
+		return this.run(record, generation, automatic, forcePrepare);
+	}
+	private checkIdentity(record: RemoteConnectionRecord, probe: SshPreflight): void {
+		const bound = record.binding;
+		if (!bound) return;
+		if (
+			probe.uid !== bound.uid ||
+			probe.agentDir !== bound.canonicalAgentDir ||
+			probe.environmentId !== bound.environmentId
+		)
+			throw new Error("Remote identity changed: UID or data directory differs");
+		if (bound.target && !targetEquals(bound.target, probe.target))
+			throw new Error("Remote identity changed: effective SSH hostname, port or user differs");
+		if (
+			this.approvedTarget &&
+			(this.approvedTarget.recordId !== record.connectionId ||
+				this.approvedTarget.generation !== this.generation ||
+				!targetEquals(this.approvedTarget.target, probe.target))
+		)
+			throw new Error("Remote target changed after confirmation");
+	}
+	async confirmTarget(command: RemoteTokenCommand): Promise<RemoteConnectionStatus> {
+		await this.ensure();
+		const record = this.assert(command);
+		const pending = this.status.targetConfirmation;
+		if (
+			!pending ||
+			pending.token !== command.token ||
+			this.status.connectionId !== record.connectionId ||
+			!this.current(command.generation)
+		)
+			throw new Error("SSH target confirmation expired");
+		this.approvedTarget = {
+			recordId: record.connectionId,
+			generation: command.generation,
+			target: pending.target,
+		};
+		this.update({ ...this.status, state: "connecting", targetConfirmation: undefined });
+		return this.run(record, command.generation, false, false);
+	}
+	installAndConnect(command: RemoteTokenCommand): Promise<RemoteConnectionStatus> {
+		return this.trackWork(command.generation, this.installConfirmed(command));
+	}
+	private async installConfirmed(command: RemoteTokenCommand): Promise<RemoteConnectionStatus> {
+		await this.ensure();
+		this.assert(command);
 		const plan = this.installation;
 		if (
 			!plan ||
-			plan.token !== token ||
-			this.status.installation?.token !== token ||
-			this.status.alias !== plan.probe.alias ||
-			!this.controller ||
-			this.controller.signal.aborted
+			plan.token !== command.token ||
+			plan.recordId !== command.connectionId ||
+			plan.generation !== command.generation ||
+			this.status.installation?.token !== command.token ||
+			!this.current(command.generation)
 		)
 			throw new Error("Installation confirmation expired; check the target again");
 		this.installation = undefined;
-		const generation = this.generation,
-			signal = this.controller.signal;
-		this.update({ ...this.status, state: "connecting", installation: undefined });
+		this.update({ ...this.status, state: "connecting", phase: "installing", installation: undefined });
 		try {
+			await this.authorizeIntent(this.controller!.signal);
+			if (!this.current(command.generation)) return this.status;
 			const artifact = plan.manifest.artifacts[plan.probe.arch as "arm64" | "x64"];
 			await this.distribution.install(
 				plan.probe,
@@ -316,74 +511,81 @@ export class RemoteConnectionManager {
 					protocol: plan.manifest.protocol,
 					arch: plan.probe.arch,
 				},
-				signal,
+				this.controller!.signal,
 			);
-			if (generation !== this.generation || signal.aborted) return this.status;
-			this.update({ ...this.status, state: "disconnected" });
-			return await this.connect(plan.probe.alias);
+			if (!this.current(command.generation)) return this.status;
+			this.update({ ...this.status, state: "connecting", phase: undefined });
+			return await this.run(this.catalog.record(command.connectionId), command.generation, false, false);
 		} catch (error) {
-			if (generation === this.generation)
-				this.update({
-					...this.status,
-					state: "error",
-					errorKind: "other",
-					error: error instanceof Error ? error.message : String(error),
-				});
+			this.fail(error, command.generation);
 			throw error;
 		}
 	}
-	async connect(alias: string, automatic = false, forcePrepare = false): Promise<RemoteConnectionStatus> {
-		if (automatic && !this.autoConnect) return this.status;
-		validateSshAlias(alias);
-		if (["connecting", "checking", "stopping"].includes(this.status.state))
-			throw new Error("A remote connection is already being established");
-		if (this.connection) {
-			if (alias === this.status.alias) return this.status;
-			throw new Error("Disconnect the existing remote environment first");
-		}
-		if (!automatic) {
-			this.autoConnect = true;
-			this.retryCount = 0;
-			clearTimeout(this.retryTimer);
-		}
-		const generation = ++this.generation;
-		if (this.status.environment) taskNotificationObserver.detach(this.status.environment);
-		this.installation = undefined;
-		const controller = new AbortController();
-		this.controller = controller;
-		this.update({ state: "connecting", alias, environment: this.status.environment });
+	private run(
+		record: RemoteConnectionRecord,
+		generation: number,
+		automatic: boolean,
+		forcePrepare: boolean,
+	): Promise<RemoteConnectionStatus> {
+		return this.trackWork(generation, this.performRun(record, generation, automatic, forcePrepare));
+	}
+	private async performRun(
+		record: RemoteConnectionRecord,
+		generation: number,
+		automatic: boolean,
+		forcePrepare: boolean,
+	): Promise<RemoteConnectionStatus> {
 		let connection: SshRuntimeConnection | undefined;
-		let transportClosed = false;
+		let environment: EnvironmentRef | undefined;
+		let closed = false;
+		const signal = this.controller?.signal;
+		if (!signal || !this.current(generation)) return this.status;
 		try {
-			await this.authorize();
-			const saved = await readSaved();
-			if (generation !== this.generation || controller.signal.aborted) return this.status;
-			if (saved && saved.alias !== alias)
-				throw new Error("This desktop is already bound to another SSH alias");
-			const probe = await preflightSsh(alias, controller.signal);
+			await this.closing;
+			await this.authorizeIntent(signal);
+			if (!this.current(generation)) return this.status;
+			const probe = await preflightSsh(record.alias, signal);
+			if (!this.current(generation)) return this.status;
 			checkSshRequirements(probe);
-			if (
-				saved &&
-				(probe.uid !== saved.uid ||
-					probe.agentDir !== saved.canonicalAgentDir ||
-					probe.environmentId !== saved.environmentId)
-			)
-				throw new Error("Remote identity changed: UID or data directory differs");
-			if (saved?.target && JSON.stringify(saved.target) !== JSON.stringify(probe.target))
-				throw new Error("Remote identity changed: effective SSH hostname, port or user differs");
-			if (generation !== this.generation || controller.signal.aborted) return this.status;
-			this.update({ ...this.status, state: "connecting", preflight: probe });
-			if (forcePrepare || (!probe.installed && probe.serviceState !== "running")) {
-				if (automatic) throw new Error("NOT_INSTALLED: Open the connection dialog to confirm installation");
-				const manifest = await this.distribution.manifest();
-				const artifact = manifest.artifacts[probe.arch as "arm64" | "x64"];
-				const archive = await this.distribution.download(artifact, controller.signal);
-				if (generation !== this.generation || controller.signal.aborted) return this.status;
-				const token = randomUUID();
-				this.installation = { token, probe, manifest, archive };
+			this.checkIdentity(record, probe);
+			const maintenanceKey = maintenanceIdentityKey(probe);
+			if (probe.serviceState === "stopped" && probe.ownerReleased === true)
+				this.unconfirmedStops.delete(maintenanceKey);
+			this.update({
+				...this.status,
+				preflight: probe,
+				stopUnconfirmed: this.unconfirmedStops.has(maintenanceKey),
+			});
+			if (record.binding && !record.binding.target && !this.approvedTarget) {
+				if (automatic) throw new Error("Saved SSH target requires manual identity confirmation");
 				return this.update({
 					...this.status,
 					state: "disconnected",
+					targetConfirmation: { token: randomUUID(), target: probe.target },
+				});
+			}
+			if (forcePrepare || (!probe.installed && probe.serviceState !== "running")) {
+				if (this.unconfirmedStops.has(maintenanceKey))
+					throw new Error(
+						"Remote service stop is unconfirmed; verify ownership release before preparing installation",
+					);
+				if (automatic) throw new Error("NOT_INSTALLED: Open the connection dialog to confirm installation");
+				if (probe.serviceState && probe.serviceState !== "stopped")
+					throw new Error(
+						"Explicitly stop the remote service and verify ownership release before installation",
+					);
+				this.update({ ...this.status, phase: "preparing" });
+				const manifest = await this.distribution.manifest();
+				if (!this.current(generation)) return this.status;
+				const artifact = manifest.artifacts[probe.arch as "arm64" | "x64"];
+				const archive = await this.distribution.download(artifact, signal);
+				if (!this.current(generation)) return this.status;
+				const token = randomUUID();
+				this.installation = { token, recordId: record.connectionId, generation, probe, manifest, archive };
+				return this.update({
+					...this.status,
+					state: "disconnected",
+					phase: undefined,
 					installation: {
 						token,
 						releaseId: manifest.releaseId,
@@ -392,121 +594,263 @@ export class RemoteConnectionManager {
 					},
 				});
 			}
-			const connectionId = saved?.connectionId ?? randomUUID();
-			let environment: Extract<EnvironmentRef, { kind: "ssh" }> | undefined;
-			connection = await SshRuntimeConnection.connect(alias, {
-				signal: controller.signal,
+			connection = await SshRuntimeConnection.connect(record.alias, {
+				signal,
 				clientTag: this.clientTag,
 				preflight: probe,
 				onEvent: (method, payload) => {
-					if (!environment || generation !== this.generation) return;
+					if (!environment || !this.current(generation) || this.status.state !== "connected") return;
 					if (method === "onEvent") {
 						const source = environment,
 							target = connection;
 						observeTaskNotification(source, payload as SessionEventEnvelope, async () => {
+							if (!this.current(generation)) return undefined;
 							const summaries = (await target?.invoke("getLoadedSessions", undefined)) as
 								| LoadedSessionSummary[]
 								| undefined;
+							if (!this.current(generation)) return undefined;
 							return summaries?.find(
 								(item) => item.meta.sessionId === (payload as SessionEventEnvelope).sessionId,
 							)?.meta;
 						});
 					}
 					const definition = SUBSCRIPTION_TABLE[method as keyof typeof SUBSCRIPTION_TABLE];
-					if (definition?.scope !== "environment") return;
-					sendToRenderer(
-						definition.channel,
-						payload as SubscriptionPayload<typeof definition.channel>,
-						environment,
-					);
+					if (definition?.scope === "environment")
+						sendToRenderer(
+							definition.channel,
+							payload as SubscriptionPayload<typeof definition.channel>,
+							environment,
+							{ epoch: this.epoch, generation },
+						);
 				},
 				onClose: () => {
-					transportClosed = true;
-					if (generation !== this.generation || !this.connection) return;
-					if (environment) taskNotificationObserver.detach(environment);
+					closed = true;
+					if (generation !== this.generation || !this.connection || this.status.state === "stopping") return;
 					this.detach?.();
 					this.detach = undefined;
+					const retired = this.connection;
 					this.connection = undefined;
+					this.closing = Promise.all([this.closing, retired.disconnect()]).then(() => {});
+					if (environment) taskNotificationObserver.detach(environment);
 					this.update({
-						state: this.status.state === "stopping" ? "stopping" : "error",
-						alias,
-						environment: this.status.environment,
+						...this.status,
+						state: "error",
 						error: "SSH connection closed",
 						errorKind: "network",
-						preflight: probe,
 					});
-					this.scheduleRetry(alias);
+					this.scheduleRetry();
 				},
 			});
 			const info = connection.info;
 			if (
-				saved &&
-				(saved.environmentId !== info.environmentId ||
-					saved.uid !== info.uid ||
-					saved.canonicalAgentDir !== info.canonicalAgentDir)
+				info.uid !== probe.uid ||
+				info.canonicalAgentDir !== probe.agentDir ||
+				(probe.environmentId && info.environmentId !== probe.environmentId) ||
+				(record.binding &&
+					(record.binding.environmentId !== info.environmentId ||
+						record.binding.uid !== info.uid ||
+						record.binding.canonicalAgentDir !== info.canonicalAgentDir))
 			)
 				throw new Error("Remote identity changed; existing projects cannot be rebound automatically");
-			if (generation !== this.generation || controller.signal.aborted || transportClosed)
-				throw new Error("Remote connection cancelled");
-			await store().update(() => {
-				if (generation !== this.generation || controller.signal.aborted || transportClosed)
-					throw new Error("Remote connection cancelled");
-				return {
-					connectionId,
-					alias,
+			const target = connection;
+			await this.serial(async () => {
+				if (!this.current(generation) || closed) throw new Error("Remote connection cancelled");
+				const catalog = await this.catalog.bind(record.connectionId, {
 					environmentId: info.environmentId,
 					uid: info.uid,
 					canonicalAgentDir: info.canonicalAgentDir,
 					node: probe.node,
 					releaseId: info.releaseId,
 					target: probe.target,
-				};
+				});
+				this.publishCatalog(catalog);
+				const committed = catalog.records.find((item) => item.connectionId === record.connectionId);
+				if (committed && probe.serviceState === "stopped" && probe.ownerReleased === true)
+					this.unconfirmedStops.delete(this.maintenanceKey(committed));
+				if (!this.current(generation) || closed) throw new Error("Remote connection cancelled");
+				environment = { kind: "ssh", connectionId: record.connectionId, environmentId: info.environmentId };
+				this.detach = environmentRouter.attach(environment, {
+					invoke: async (method, args) => {
+						if (!this.current(generation)) throw new Error("Remote connection changed");
+						try {
+							const result = await target.invoke(method, args);
+							if (!this.current(generation)) throw new Error("Remote connection changed");
+							if (environment && method === "deleteSession")
+								taskNotificationObserver.delete(environment, (args as { sessionId: string }).sessionId);
+							if (environment && method === "closeSession" && (result as { closed: boolean }).closed)
+								taskNotificationObserver.unload(environment, (args as { sessionId: string }).sessionId);
+							return result;
+						} catch (error) {
+							if (error instanceof RemoteMutationUnknownError && environment) this.track(error, environment);
+							throw error;
+						}
+					},
+				});
+				this.connection = target;
+				this.retryCount = 0;
+				this.update({
+					state: "connected",
+					connectionId: record.connectionId,
+					alias: record.alias,
+					environment,
+					instanceId: info.instanceId,
+					preflight: probe,
+				});
 			});
-			if (generation !== this.generation || controller.signal.aborted || transportClosed)
-				throw new Error("Remote connection cancelled");
-			environment = { kind: "ssh", connectionId, environmentId: info.environmentId };
-			const target = connection;
-			this.detach = environmentRouter.attach(environment, {
-				invoke: async (method, args) => {
-					try {
-						const result = await target.invoke(method, args);
-						if (environment && method === "deleteSession")
-							taskNotificationObserver.delete(environment, (args as { sessionId: string }).sessionId);
-						if (environment && method === "closeSession" && (result as { closed: boolean }).closed)
-							taskNotificationObserver.unload(environment, (args as { sessionId: string }).sessionId);
-						return result;
-					} catch (error) {
-						if (error instanceof RemoteMutationUnknownError) this.track(error, environment as EnvironmentRef);
-						throw error;
-					}
-				},
-			});
-			this.connection = connection;
-			this.retryCount = 0;
-			return this.update({
-				state: "connected",
-				alias,
-				environment,
-				instanceId: info.instanceId,
-				preflight: probe,
-			});
+			return this.status;
 		} catch (error) {
-			connection?.disconnect();
-			if (generation !== this.generation) return this.status;
-			this.update({
-				state: "error",
-				alias,
-				environment: this.status.environment,
-				error: error instanceof Error ? error.message : String(error),
-				errorKind: error instanceof InvalidSavedConnectionError ? "identity" : sshFailureKind(error),
-				preflight: this.status.preflight,
-			});
-			this.scheduleRetry(
-				alias,
-				error instanceof Error && error.message.includes(`already controlled by ${this.clientTag}`),
-			);
+			await connection?.disconnect();
+			if (!this.current(generation)) return this.status;
+			this.fail(error, generation);
+			this.scheduleRetry(message(error).includes(`already controlled by ${this.clientTag}`));
 			throw error;
 		}
+	}
+	private fail(error: unknown, generation: number): void {
+		if (!this.current(generation)) return;
+		this.installation = undefined;
+		this.update({
+			...this.status,
+			state: "error",
+			phase: undefined,
+			installation: undefined,
+			targetConfirmation: undefined,
+			error: message(error),
+			errorKind: identityError(error) ? "identity" : sshFailureKind(error),
+		});
+	}
+	private scheduleRetry(ownBusy = false): void {
+		if (!this.autoConnect || this.retryCount >= 5 || (!ownBusy && this.status.errorKind !== "network"))
+			return;
+		const delay = ownBusy ? 22_000 : Math.min(1000 * 2 ** this.retryCount, 16_000);
+		this.retryCount++;
+		const command = this.command();
+		this.update({ ...this.status, state: "reconnecting", retryAt: Date.now() + delay });
+		this.retryTimer = setTimeout(() => {
+			this.retryTimer = undefined;
+			if (this.autoConnect && command.generation === this.generation)
+				void this.start(command, true, false).catch(() => {});
+		}, delay);
+	}
+	startAutoConnect(authorize: () => Promise<void>): void {
+		this.authorize = authorize;
+		void this.ensure().then(() => {
+			const snapshot = this.catalog.snapshot();
+			const record = snapshot.records.find(
+				(item) => item.connectionId === snapshot.lastSuccessfulConnectionId,
+			);
+			if (
+				!snapshot.error &&
+				this.autoConnect &&
+				!isRemoteConnectionBusy(this.status) &&
+				!this.connection &&
+				record?.binding?.target
+			)
+				void this.start(
+					{ epoch: this.epoch, generation: this.generation, connectionId: record.connectionId },
+					true,
+					false,
+				).catch(() => {});
+		});
+	}
+	stopService(command: RemoteRecordCommand): Promise<RemoteConnectionStatus> {
+		return this.trackWork(command.generation, this.stop(command));
+	}
+	private async stop(command: RemoteRecordCommand): Promise<RemoteConnectionStatus> {
+		await this.ensure();
+		const { target, generation } = await this.serial(() => {
+			this.assert(command);
+			if (
+				command.connectionId !== this.status.connectionId ||
+				!this.connection ||
+				this.status.state !== "connected"
+			)
+				throw new Error("Connect before explicitly stopping the service");
+			this.autoConnect = false;
+			const target = this.connection;
+			this.update({ ...this.status, state: "stopping" });
+			return { target, generation: this.generation };
+		});
+		try {
+			await target.stopService();
+			return await this.serial(async () => {
+				if (generation !== this.generation) return this.status;
+				this.clearTransport();
+				await this.closing;
+				this.unconfirmedStops.delete(this.maintenanceKey(this.catalog.record(command.connectionId)));
+				this.release();
+				return this.update({ ...this.status, serviceStopped: true, stopUnconfirmed: false });
+			});
+		} catch (error) {
+			await this.serial(async () => {
+				if (generation !== this.generation) return;
+				this.unconfirmedStops.add(this.maintenanceKey(this.catalog.record(command.connectionId)));
+				this.clearTransport();
+				await this.closing;
+				this.release();
+				this.update({
+					...this.status,
+					state: "error",
+					stopUnconfirmed: true,
+					errorKind: "other",
+					error:
+						"Remote service stop is unconfirmed; verify ownership release before installing or starting another version",
+				});
+			});
+			throw error;
+		}
+	}
+	async authGuide(environment: EnvironmentRef) {
+		await this.ensure();
+		const record = this.catalog
+			.snapshot()
+			.records.find(
+				(item) =>
+					item.connectionId === (environment.kind === "ssh" ? environment.connectionId : "") &&
+					item.binding?.environmentId === (environment.kind === "ssh" ? environment.environmentId : ""),
+			);
+		if (!record?.binding?.node)
+			throw new Error(
+				"Check and connect this environment before requesting authentication maintenance instructions",
+			);
+		return {
+			...remoteAuthGuide(record.alias, record.binding.node, record.binding.releaseId),
+			agentDir: record.binding.canonicalAgentDir,
+		};
+	}
+	private track(error: RemoteMutationUnknownError, environment: EnvironmentRef): void {
+		const reference = error.operation;
+		const id = `${reference.instanceId}:${reference.epoch}:${reference.sequence}`;
+		this.uncertain.set(id, { id, environment, operation: reference, createdAt: error.createdAt });
+		if (this.uncertain.size > 128) {
+			const oldest = this.uncertain.keys().next().value;
+			if (oldest) this.uncertain.delete(oldest);
+			this.operationsTruncated = true;
+		}
+		this.update(this.status);
+	}
+	async checkOperation(id: string): Promise<MutationReceipt> {
+		const record = this.uncertain.get(id),
+			target = this.connection,
+			generation = this.generation;
+		if (!record) return { state: "unknown" };
+		if (
+			!target ||
+			this.status.state !== "connected" ||
+			!this.status.environment ||
+			!sameEnvironment(record.environment, this.status.environment)
+		)
+			throw new Error("Reconnect to the original environment before checking the remote operation");
+		const receipt = await target.queryReceipt(record.operation);
+		if (this.uncertain.has(id)) {
+			this.uncertain.set(id, { ...record, receipt });
+			if (generation === this.generation) this.update(this.status);
+		}
+		return receipt;
+	}
+	dismissOperation(id: string): void {
+		this.uncertain.delete(id);
+		this.update(this.status);
 	}
 }
 

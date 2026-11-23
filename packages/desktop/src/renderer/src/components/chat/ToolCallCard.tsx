@@ -133,7 +133,7 @@ export const ToolCallCard = memo(function ToolCallCard({ tool }: { tool: UIToolC
 		};
 	}, [summary, name]);
 
-	// running 时工具名加高光扫过动画（与 MetaGroup 状态行同款光带渐变）
+	// 详情中的运行工具名沿用扫光；折叠组状态标题独立使用粒子动画。
 	const nameClass = `shrink-0 font-mono text-ui-13 font-semibold text-ink-dim transition-colors group-hover/row:text-ink${
 		tool.state === "running" ? " shimmer-sweep" : ""
 	}`;

@@ -23,18 +23,24 @@ export interface ContextMenuItem {
  * 锚在触发元素下沿左对齐，超右缘左翻、下方不足上翻（定位规则在 place-menu）。
  * 关闭：点浮层外（pointerdown 捕获）/ Esc / 选中任一项 / 滚动与窗口尺寸变化（防浮层脱锚）。
  * 外观：`rounded-xl border border-border bg-surface p-1 shadow-pop` 的有边框卡片（与左栏共用一套，
- * 不再有 veil 渐变变体）；项高 30px、图标与文字各 13px、危险项红字**且图标同红**、分隔线 `h-px bg-border`。
+ * 不再有 veil 渐变变体）；项高 30px、图标与文字各 13px、危险项红字**且图标同红**、分隔线 `fade-rule`。
  */
 export function ContextMenu({
 	anchor,
 	items,
 	onClose,
+	keyboard = false,
+	focusFallback,
 }: {
 	anchor: MenuAnchor;
 	items: ContextMenuItem[];
 	onClose: () => void;
+	keyboard?: boolean;
+	focusFallback?: () => void;
 }) {
 	const ref = useRef<HTMLDivElement>(null);
+	const previousRef = useRef(document.activeElement as HTMLElement | null);
+	const focused = useRef(false);
 	const [pos, setPos] = useState<{ x: number; y: number } | null>(null);
 
 	// 先渲染再测量真实尺寸定位（尺寸由 items 行数决定），测量前整层不可见防抖动
@@ -45,30 +51,63 @@ export function ContextMenu({
 		setPos(placeMenu(anchor, { width, height }, { width: window.innerWidth, height: window.innerHeight }));
 	}, [anchor]);
 
+	useLayoutEffect(() => {
+		if (!keyboard || !pos || focused.current) return;
+		const first = ref.current?.querySelector<HTMLElement>('[role="menuitem"]:not(:disabled)');
+		if (first) {
+			first.focus({ preventScroll: true });
+			focused.current = true;
+		}
+	}, [keyboard, pos]);
+
 	useEffect(() => {
+		const previous = previousRef.current;
 		const onPointerDown = (e: PointerEvent) => {
 			if (ref.current?.contains(e.target as Node)) return;
 			onClose();
 		};
 		const onKeyDown = (e: KeyboardEvent) => {
-			if (e.key === "Escape") onClose();
+			const menus = document.querySelectorAll('[role="menu"]');
+			if (menus[menus.length - 1] !== ref.current) return;
+			const dialogs = document.querySelectorAll('[role="dialog"][aria-modal="true"]');
+			const topDialog = dialogs[dialogs.length - 1];
+			if (keyboard && topDialog && !topDialog.contains(previous)) return;
+			if (e.key === "Escape") {
+				if (keyboard) {
+					e.preventDefault();
+					e.stopImmediatePropagation();
+					if (previous?.isConnected) previous.focus();
+					else focusFallback?.();
+				}
+				onClose();
+			} else if (keyboard && (e.key === "ArrowDown" || e.key === "ArrowUp" || e.key === "Tab")) {
+				const buttons = [
+					...(ref.current?.querySelectorAll<HTMLElement>('[role="menuitem"]:not(:disabled)') ?? []),
+				];
+				if (!buttons.length) return;
+				e.preventDefault();
+				e.stopPropagation();
+				const index = buttons.indexOf(document.activeElement as HTMLElement);
+				const delta = e.key === "ArrowUp" || (e.key === "Tab" && e.shiftKey) ? -1 : 1;
+				buttons[(index + delta + buttons.length) % buttons.length]?.focus();
+			}
 		};
 		// pointerdown 用捕获阶段：点其他胶囊要「切会话 + 关菜单」同时发生，不等冒泡
 		window.addEventListener("pointerdown", onPointerDown, true);
-		window.addEventListener("keydown", onKeyDown);
+		window.addEventListener("keydown", onKeyDown, keyboard);
 		window.addEventListener("resize", onClose);
 		window.addEventListener("scroll", onClose, true);
 		return () => {
 			window.removeEventListener("pointerdown", onPointerDown, true);
-			window.removeEventListener("keydown", onKeyDown);
+			window.removeEventListener("keydown", onKeyDown, keyboard);
 			window.removeEventListener("resize", onClose);
 			window.removeEventListener("scroll", onClose, true);
 		};
-	}, [onClose]);
+	}, [onClose, keyboard, focusFallback]);
 
 	const renderRow = (item: ContextMenuItem) => (
 		<Fragment key={item.key}>
-			{item.separatorBefore && <div className="mx-1.5 my-1 h-px bg-border" />}
+			{item.separatorBefore && <div className="fade-rule mx-1.5 my-1" />}
 			{(() => {
 				const button = (
 					<button
@@ -79,6 +118,12 @@ export function ContextMenu({
 							item.danger ? "text-red-600" : "text-ink-2 hover:text-ink"
 						}`}
 						onClick={() => {
+							if (keyboard) {
+								const previous = previousRef.current;
+								if (previous?.isConnected && !previous.matches(":disabled") && !previous.closest("[inert]")) {
+									previous.focus({ preventScroll: true });
+								} else focusFallback?.();
+							}
 							item.onSelect();
 							onClose();
 						}}

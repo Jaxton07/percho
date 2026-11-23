@@ -1,4 +1,6 @@
-import { Fragment, useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
+import { EMPTY_UNREAD_COUNTS, useChannelSubscriptionsStore } from "../../stores/channel-subscriptions";
+import { useSessionsStore } from "../../stores/sessions";
 import { ChannelIcon } from "../icons";
 import { Tooltip } from "../ui/Tooltip";
 import type { ChannelPillPresence } from "./channel-pill-presence";
@@ -6,9 +8,8 @@ import type { ChannelPillPresence } from "./channel-pill-presence";
 /**
  * 频道订阅胶囊（spec D2 的展示层，无状态）。
  *
- * 视觉基线 = `.local/design/ux/channel-subscription-pill/index.html`：
- * 无边框 `surface + shadow-pop`、`rounded-full`、13px 频道 glyph（ink-faint）、12px 文字（ink-dim）、
- * 多个频道在**一个胶囊**里以间隔点分隔、名称原样不翻译。
+ * 无边框 `surface + shadow-pop`、`rounded-full`、频道 glyph（ink-faint）、文字（ink-dim）。
+ * 每个频道独立一枚，靠右单列排列，一频道一行；名称原样不翻译。
  *
  * 动画：宽度 0 ↔ **实测自然宽度**，右缘固定（左端向左伸展）；退场宽度回 0 并淡出，**DOM 保留到收起结束**
  * （状态机保证 `display` 还在）。`translateX` 一律不参与 —— 平移不能冒充展开。
@@ -21,7 +22,7 @@ import type { ChannelPillPresence } from "./channel-pill-presence";
 export const CHANNEL_PILL_DURATION_MS = 360; // 与 styles/globals.css 的 --channel-pill-time 同步
 
 /** 设计基准里频道名的上限（长名再长也不超过它） */
-const NAMES_MAX_WIDTH = 300;
+const NAMES_MAX_WIDTH = 160;
 /** 聊天区左右各留的气口（右锚 right-4 = 16px，左边也对称留 16px） */
 const SIDE_INSET = 16;
 /** 名字最多压到这么窄（再窄就没意义了；极限窄窗下宁可让整体先用满可用宽） */
@@ -31,6 +32,39 @@ export function ChannelSubscriptionPill({
 	presence,
 	onExitFinished,
 }: {
+	presence: ChannelPillPresence;
+	onExitFinished: (token: number) => void;
+}) {
+	const activeSessionId = useSessionsStore((state) => state.activeSessionId);
+	const unreadCounts = useChannelSubscriptionsStore((state) =>
+		activeSessionId
+			? (state.bySession[activeSessionId]?.unreadCounts ?? EMPTY_UNREAD_COUNTS)
+			: EMPTY_UNREAD_COUNTS,
+	);
+	if (!presence.mounted) return null;
+	return (
+		<div className="flex max-w-full flex-col items-end gap-1.5">
+			{presence.display.map((topic) => (
+				<SingleChannelPill
+					key={topic}
+					topic={topic}
+					unread={unreadCounts[topic] ?? 0}
+					presence={presence}
+					onExitFinished={onExitFinished}
+				/>
+			))}
+		</div>
+	);
+}
+
+function SingleChannelPill({
+	topic,
+	unread,
+	presence,
+	onExitFinished,
+}: {
+	topic: string;
+	unread: number;
 	presence: ChannelPillPresence;
 	onExitFinished: (token: number) => void;
 }) {
@@ -73,7 +107,7 @@ export function ChannelSubscriptionPill({
 
 		const measure = () => {
 			// 先按可用宽夹住名字（右锚容器宽度 = 定位祖先的宽 − 两侧气口），再量内容宽度：
-			// 固定 300px 文字 + 装饰（glyph/内边距/间隔）在窄聊天区会顶出边界（review R12）
+			// 名称上限还需扣除 glyph、内边距和未读数，避免单枚胶囊在极窄聊天区越界。
 			clampNames();
 			setNaturalWidth(el.getBoundingClientRect().width);
 		};
@@ -113,15 +147,15 @@ export function ChannelSubscriptionPill({
 
 	if (!presence.mounted) return null;
 
-	const label = presence.display.join(" · ");
 	return (
 		<Tooltip
-			label={label}
+			label={topic}
 			align="end"
 			// 超长 / 多频道的完整名要在气泡里**可读**：局部限宽 + 允许换行（只覆盖本气泡，不动全局 Tooltip 样式）
-			className="pointer-events-auto [&>[role=tooltip]]:max-w-[320px] [&>[role=tooltip]]:whitespace-normal"
+			className="pointer-events-auto [&>[role=tooltip]]:max-w-[min(320px,calc(100vw-32px))] [&>[role=tooltip]]:whitespace-normal [&>[role=tooltip]]:[overflow-wrap:anywhere]"
 		>
 			<span
+				data-channel-topic={topic}
 				className={`channel-pill rounded-full bg-surface shadow-pop${presence.opened ? " channel-pill-open" : ""}`}
 				style={{ width: targetWidth }}
 				aria-hidden={!presence.opened}
@@ -131,14 +165,10 @@ export function ChannelSubscriptionPill({
 			>
 				<div ref={measureRef} className="flex w-max items-center gap-2 px-3 py-[7px] text-ui-12 text-ink-dim">
 					<ChannelIcon className="shrink-0 text-ink-faint" />
-					<span ref={namesRef} className="truncate" style={{ maxWidth: NAMES_MAX_WIDTH }}>
-						{presence.display.map((topic, index) => (
-							<Fragment key={topic}>
-								{index > 0 && <span className="px-1.5 text-ink-faint">·</span>}
-								{topic}
-							</Fragment>
-						))}
+					<span ref={namesRef} className="min-w-0 truncate" style={{ maxWidth: NAMES_MAX_WIDTH }}>
+						{topic}
 					</span>
+					{unread > 0 && <span className="shrink-0 text-ink-faint tabular-nums">{unread}</span>}
 				</div>
 			</span>
 		</Tooltip>

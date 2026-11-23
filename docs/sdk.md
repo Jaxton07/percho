@@ -7,7 +7,7 @@
 - `pi-backend.ts` 是门面，`project/builtin-extensions.ts` 负责官方内置扩展接入；`Model` / `ThinkingLevel` 类型从 `@earendil-works/pi-ai` 导入。
 - 扩展 UI 用 `session.bindExtensions` 注入，目前主会话绑定 `mode:"rpc"`，不依赖权限门开关。实际可用能力见 [扩展 UI](extension-ui.md)，不能宣称完整 TUI 兼容。
 - **`AgentSession.dispose()` 不发送 `session_shutdown`**。官方 MCP 扩展依赖该事件关连接，单独 dispose 会遗留 stdio 子进程。复用 `session/shutdown.ts` 的公开 API 桥接，先 shutdown 再 dispose。
-- 远端明确停服务先设置不可逆停止标记，取消构造中与已注册会话的等待交互、停止频道唤醒、清空队列并 abort；等待在途构造/请求和公开 `session_shutdown` 完成后再 dispose。清理失败或超时不宣称停止，专用服务的所有者文件描述符一直保留到进程真正退出，避免旧定时器在锁释放后运行。本机退出保留同步兜底。
+- 远端明确停服务先设置不可逆停止标记，取消构造中与已注册会话的等待交互、停止频道服务、清空队列并 abort；等待在途构造/请求和公开 `session_shutdown` 完成后再 dispose。清理失败或超时不宣称停止，专用服务的所有者文件描述符一直保留到进程真正退出，避免旧定时器在锁释放后运行。本机退出保留同步兜底。
 - 自动内存卸载在整个异步关闭期间持有 SDK 空闲租约，不主动取消未完成的预热或其他受理责任；普通用户关闭保留原有取消/清理语义，不让缓存配置绑架显式关闭。重载的宿主预检仍保留，SDK 也会在 shutdown 前拒绝忙碌 reload；所有未成功的重载都进入报告，不仅是预检跳过。
 - 普通关闭需等待清理并保留首错；退出钩子不等异步完成，必须有同步兜底；注册冲突只能拆掉新构造实例，不碰旧 holder。修改时核对 `session/registry.ts` 与现有 shutdown/dispose 回归，不依赖 app 最后退出替每个会话收尾。
 - `before_agent_start` 按 `messageType` 区分用户与自定义起始消息，后者没有 `prompt`。启动处理期间会话已经 busy；取消可在实际请求开始前发生，传输层仍可能收到已取消的 signal，不能把进入传输回调当作已发出网络请求。
@@ -66,7 +66,7 @@
 - compaction entry 可按分支顺序回放，但不保存触发原因和压缩后估值，历史 UI 不伪造这些字段。
 - 请求上下文由 SDK projection 重建，手写 `agent.state.messages` 不构成可靠修改；撤回中绕过 `navigateTree` 的路径需要 `session.refreshContext()`，保持公开投影一致。
 - 追加宿主系统提示要用 `appendSystemPromptOverride` 合并 SDK 发现的 APPEND_SYSTEM.md，而不是覆盖文件发现。主会话与子代理保持同一信任规则，回归见 `test/append-system-prompt.test.ts`。
-- `sendUserMessage` 的 followUp 可能等当前 turn 结束才投递。跨会话唤醒不能把“已排队”当“对方已处理”，频道协作以 post、持久游标和恢复屏障为准。
+- 频道消息不会自动唤醒会话；成员关系和阅读位置持久化，由会话主动读取消息。自然请求中的未读摘要是只读投影，不顺带登记项目、恢复删除或修复数据库/标记；这些维护写入只由显式操作承担。
 
 ## 流式、附件与压缩
 

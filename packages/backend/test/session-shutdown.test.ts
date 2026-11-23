@@ -89,7 +89,7 @@ describe("V05 close/quit resource ordering characteristics", () => {
 			"trace",
 		]);
 		expect(internal.registry.list()).toHaveLength(0);
-		expect(internal.channelSubs.snapshot("s1")).toMatchObject({ live: false, topics: [] });
+		expect(internal.channelSubs.snapshot("s1")).toMatchObject({ live: false, topics: ["baseline"] });
 		expect(internal.channelWatchCleanups.has(entry.modeRef)).toBe(false);
 		backend.dispose();
 	});
@@ -107,7 +107,7 @@ describe("V05 close/quit resource ordering characteristics", () => {
 		expect(backend.dispose()).toBeUndefined();
 		expect(order).toEqual(["watcher", "unsubscribe", "gate", "dialogs", "emit:pending", "dispose"]);
 		expect(internal.registry.list()).toHaveLength(0);
-		expect(internal.channelSubs.snapshot("s1")).toMatchObject({ live: false, topics: [] });
+		expect(internal.channelSubs.snapshot("s1")).toMatchObject({ live: false, topics: ["baseline"] });
 		const published: unknown[] = [];
 		const unsubscribe = internal.channelSubs.subscribe((snapshot) => published.push(snapshot));
 		// A delayed shutdown clear cannot publish/revive the closed incarnation.

@@ -1,8 +1,8 @@
 /** CDP interactions after a settled synthetic history. No clipboard or tool execution. */
 import assert from "node:assert/strict";
 import { measureLiveSelection } from "./session-rendering-live-selection.mjs";
+import { measureStatusParticles } from "./session-rendering-particles-probe.mjs";
 import { readResources } from "./session-rendering-resources.mjs";
-import { measureSweep } from "./session-rendering-sweep-probe.mjs";
 import { verifyDiffViewState } from "./session-rendering-view-state.mjs";
 
 export async function measureInteractions(renderer, snapshot, round, options = {}) {
@@ -112,7 +112,14 @@ export async function measureInteractions(renderer, snapshot, round, options = {
 			"__renderDiag.bigGroup.querySelectorAll(\"details[class*='group/dets']\").length",
 		);
 		assert(sample.expandedTools >= 500, "Click did not expand the complete source group");
-		if (options.resources) sample.resources = await readResources(renderer);
+		if (options.resources) {
+			sample.resources = await readResources(renderer);
+			// Retain the actual observed descendants, not a global count from a different
+			// history viewport. Live events and paging legitimately change that count.
+			await renderer.eval(
+				`(()=>{const d=__renderDiag,entry=d.resources.entries.find(e=>e.name==='ResizeObserver');d.groupObserved=new Set([...entry.owners.values()].flatMap(s=>[...s]).filter(target=>target!==d.bigGroup&&d.bigGroup.contains(target)))})()`,
+			);
+		}
 	}
 	await pause(400);
 	await renderer.eval(
@@ -140,18 +147,30 @@ export async function measureInteractions(renderer, snapshot, round, options = {
 		);
 	}
 	await renderer.eval("delete __renderDiag.focusEditor");
-	await measureSweep(renderer, options.main, options.channel, snapshot, round);
 	if (options.after) {
 		const folded = await measureLiveSelection(renderer, snapshot, round, options);
 		if (options.resources) {
 			folded.resources = await readResources(renderer);
 			folded.resourcesBefore = resourcesBefore;
-			assert(
-				folded.resources.ResizeObserver.targets <= resourcesBefore.ResizeObserver.targets,
-				"Folded tool rows must release observations",
+			folded.groupObservers = await renderer.eval(
+				`(()=>{const d=__renderDiag,entry=d.resources.entries.find(e=>e.name==='ResizeObserver'),owned=[...entry.owners.values()].flatMap(s=>[...s]);return {captured:d.groupObserved.size,remaining:owned.filter(target=>d.groupObserved.has(target)).length,disconnected:owned.filter(target=>!target.isConnected).length}})()`,
 			);
+			assert(folded.groupObservers.captured > 0, "Expanded group must expose observed descendants");
+			assert.equal(
+				folded.groupObservers.remaining,
+				0,
+				"Folded tool rows must release their observed targets",
+			);
+			assert.equal(
+				folded.groupObservers.disconnected,
+				0,
+				"Resize observers must not retain detached targets",
+			);
+			await renderer.eval("delete __renderDiag.groupObserved");
 		}
 	}
 	await renderer.eval("delete __renderDiag.bigGroup");
 	if (options.resources) await verifyDiffViewState(renderer, snapshot, round);
+	// The live particle fixture appends tool calls; keep it after history/source-focus checks.
+	await measureStatusParticles(renderer, options.main, options.channel, snapshot, round);
 }

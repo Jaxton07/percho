@@ -3,7 +3,7 @@ import { useLayoutEffect, useRef } from "react";
 
 /**
  * 流式预览的贴尾滚动（向左滚动）：动态文本右缘贴视口右缘，最新 token 始终可见。
- * 运动数学用 shared tailOffsetForWidths（与桌面 StreamingMarquee 同一函数）；此处只做 DOM 测量。
+ * 运动数学用 shared tailOffsetForWidths；此处只做 DOM 测量。
  */
 export function TailMarquee({ text }: { text: string }) {
 	const wrapRef = useRef<HTMLDivElement>(null);
