@@ -131,14 +131,55 @@ it.each([
 	}
 });
 
-it("真实子代理事件投影为独立行并驱动双语摘要，结束后撤销", async () => {
+it.each([false, true])("真实子代理事件投影，前置已提交工具=%s：双语摘要及结束撤销", async (withHistory) => {
 	vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
 	container = document.createElement("div");
 	document.body.append(container);
 	root = createRoot(container);
 	const event = (type: string, extra: Record<string, unknown> = {}) =>
 		({ type, ...extra }) as AgentSessionEvent;
-	let state = reduceEvent(emptyTranscript(), event("agent_start"));
+	const baseline = emptyTranscript();
+	if (withHistory)
+		baseline.messages = [
+			{
+				kind: "assistant",
+				id: "old-message",
+				text: "",
+				thinking: "",
+				timestamp: 0,
+				tools: [
+					{ key: "old", id: "old", name: "read", args: "{}", output: "", state: "done", blockIndex: 9 },
+				],
+			},
+		];
+	let state = reduceEvent(baseline, event("agent_start"));
+	if (withHistory) {
+		state = reduceEvent(state, event("message_start", { message: { role: "assistant", content: [] } }));
+		state = reduceEvent(
+			state,
+			event("message_update", {
+				assistantMessageEvent: {
+					type: "toolcall_start",
+					contentIndex: 0,
+					partial: { content: [{ type: "toolCall", name: "subagent" }] },
+				},
+			}),
+		);
+		state = reduceEvent(
+			state,
+			event("message_update", {
+				assistantMessageEvent: {
+					type: "toolcall_end",
+					contentIndex: 0,
+					toolCall: {
+						id: "child",
+						name: "subagent",
+						arguments: { tasks: [{ task: "one" }, { task: "two" }] },
+					},
+				},
+			}),
+		);
+	}
 	state = reduceEvent(
 		state,
 		event("tool_execution_start", {

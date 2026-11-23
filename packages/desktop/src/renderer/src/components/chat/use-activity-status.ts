@@ -1,11 +1,9 @@
-import type { MetaItem, UIToolCall } from "@percho/shared";
+import type { ActiveSubagent, MetaItem, UIToolCall } from "@percho/shared";
+
+export type { ActiveSubagent } from "@percho/shared";
+
 import { useEffect, useMemo, useReducer } from "react";
 import { activityStatus, STATUS } from "./activity-status";
-
-export interface ActiveSubagent {
-	id: string;
-	blockIndex?: number;
-}
 
 /** Read the current group's activity, never reconstruct or summarize growing output. */
 export function useActivityStatus(items: MetaItem[], working: boolean, activeSubagent?: ActiveSubagent) {
@@ -37,27 +35,26 @@ export function useActivityStatus(items: MetaItem[], working: boolean, activeSub
 			blockIndex = tool?.blockIndex;
 			break;
 		}
-		if (name) break;
-	}
-	// Non-preview callers and older history have no activity entries.
-	if (!foundLatest) {
-		for (let i = items.length - 1; i >= 0 && !tool; i--) {
-			tool = items[i]?.tools.findLast(
+		// Committed messages have no activity array. Keep their last tool even when
+		// the newer streaming message has already emitted a thinking segment.
+		if (!name) {
+			tool = item.tools.findLast(
 				(candidate) => candidate.name !== "show_image" && candidate.name !== "parallel",
 			);
 			if (tool) {
 				name = tool.name;
-				source = items[i]?.sourceId;
+				source = item.sourceId;
 				blockIndex = tool.blockIndex;
 			}
 		}
+		if (name) break;
 	}
 	const args = tool?.id ? tool.args : undefined;
 	const mapped = useMemo(() => (name ? activityStatus(name, args) : undefined), [name, args]);
 	const subagentIsLatest = Boolean(
 		activeSubagent &&
 			(!name ||
-				source !== items.at(-1)?.sourceId ||
+				source !== activeSubagent.sourceId ||
 				blockIndex === undefined ||
 				activeSubagent.blockIndex === undefined ||
 				activeSubagent.blockIndex >= blockIndex),
@@ -70,8 +67,15 @@ export function useActivityStatus(items: MetaItem[], working: boolean, activeSub
 		if (!working || startedAt === undefined) return;
 		const remaining = startedAt + 10_001 - Date.now();
 		if (remaining <= 0) return;
+		const recheck = () => tick();
 		const timer = window.setTimeout(tick, Math.min(remaining, 2_147_483_647));
-		return () => window.clearTimeout(timer);
+		window.addEventListener("focus", recheck);
+		document.addEventListener("visibilitychange", recheck);
+		return () => {
+			window.clearTimeout(timer);
+			window.removeEventListener("focus", recheck);
+			document.removeEventListener("visibilitychange", recheck);
+		};
 	}, [working, startedAt]);
 	return {
 		status: subagentIsLatest

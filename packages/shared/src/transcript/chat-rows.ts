@@ -20,6 +20,13 @@ export interface MetaItem {
 	activity?: ActivityEntry[];
 }
 
+export interface ActiveSubagent {
+	id: string;
+	/** blockIndex is local to this assistant message. */
+	sourceId: string;
+	blockIndex?: number;
+}
+
 export type ChatRow =
 	| {
 			kind: "metaGroup";
@@ -31,7 +38,7 @@ export type ChatRow =
 			endImmediately: boolean;
 			subagentCount: number;
 			/** 当前组仍在排队或运行的独立子代理调用。 */
-			activeSubagent?: { id: string; blockIndex?: number };
+			activeSubagent?: ActiveSubagent;
 	  }
 	| {
 			kind: "message";
@@ -168,8 +175,14 @@ export function buildChatRows(
 			working: isLatest && agentWorking,
 			endImmediately,
 			subagentCount,
-			...(activeSubagent
-				? { activeSubagent: { id: activeSubagent[0], blockIndex: activeSubagent[1].blockIndex } }
+			...(activeSubagent && streaming
+				? {
+						activeSubagent: {
+							id: activeSubagent[0],
+							sourceId: streaming.id,
+							blockIndex: activeSubagent[1].blockIndex,
+						},
+					}
 				: {}),
 		});
 		metaItems = [];
@@ -318,12 +331,17 @@ export function buildChatRows(
 		}
 		// 正文后的工具进新组（成为最新组）：working 预览行继续显示最新活动
 		if (postTools.length > 0) {
-			metaItems.push({ thinking: "", tools: postTools, activity: streaming.activity });
+			metaItems.push({
+				sourceId: streaming.id,
+				thinking: "",
+				tools: postTools,
+				activity: streaming.activity,
+			});
 		}
 	}
 	// 最新组无内容但仍在工作（正文已出、工具/子代理执行中）：挂上流式活动序列，预览行继续显示最新活动
 	if (metaItems.length === 0 && agentWorking && streaming && streaming.activity.length > 0) {
-		metaItems.push({ thinking: "", tools: [], activity: streaming.activity });
+		metaItems.push({ sourceId: streaming.id, thinking: "", tools: [], activity: streaming.activity });
 	}
 	// 流式子代理也属于当前最后一条状态行：先 flush 状态行、后挂卡片行，避免卡片倒挂在折叠行上方。
 	const streamingSubagentRuns = streaming?.subagentRuns ?? [];

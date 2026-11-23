@@ -262,8 +262,131 @@ export async function measureStatusParticles(renderer, main, channel, snapshot, 
 				}
 			}
 		}
+		// Real bridge events also cover an elapsed command and a cross-message subagent.
+		if (visualBefore.language) {
+			await renderer.eval('__renderDiag.core.i18n.setState({language:"en"});true');
+			const call = (name, id, index, args) => [
+				{
+					type: "message_update",
+					assistantMessageEvent: {
+						type: "toolcall_start",
+						contentIndex: index,
+						partial: { content: [{ type: "toolCall", name }] },
+					},
+				},
+				{
+					type: "message_update",
+					assistantMessageEvent: {
+						type: "toolcall_end",
+						contentIndex: index,
+						toolCall: { id, name, arguments: args },
+					},
+				},
+				{ type: "tool_execution_start", toolCallId: id, toolName: name, args },
+			];
+			const id = `elapsed-${round}`;
+			await send(call("codemode", id, 2, { code: "synthetic long execution" }));
+			await waitFor(
+				"document.querySelector('.activity-status-label')?.textContent === 'Running a command'",
+				"Command must display before its deadline",
+			);
+			const readStart = () =>
+				renderer.eval(
+					`__renderDiag.transcripts.getState().bySession[__renderDiag.sid].streaming.tools.find(t=>t.id===${JSON.stringify(id)})?.startedAt`,
+				);
+			const start = await readStart();
+			assert(Number.isFinite(start), "Only a real live start may begin the command clock");
+			await send([
+				{
+					type: "tool_execution_update",
+					toolCallId: id,
+					toolName: "codemode",
+					partialResult: { content: [{ type: "text", text: "still producing output" }] },
+				},
+			]);
+			assert.equal(await readStart(), start, "Output must not reset the execution clock");
+			await waitFor(
+				"document.querySelector('.activity-status-label')?.textContent === 'Waiting for the command to finish'",
+				"Elapsed command must reach the waiting candidate",
+				15000,
+			);
+			assert(
+				await renderer.eval(`Date.now()-${start}>10000`),
+				"Waiting must not appear before the actual threshold",
+			);
+			await renderer.eval('__renderDiag.core.i18n.setState({language:"zh"});true');
+			await waitFor(
+				"document.querySelector('.activity-status-label')?.textContent === '正在等待命令执行完成'",
+				"Waiting must be localized during execution",
+			);
+			assert.equal(await readStart(), start, "Changing language must not reset the execution clock");
+			await send([
+				{
+					type: "tool_execution_end",
+					toolCallId: id,
+					toolName: "codemode",
+					isError: false,
+					result: { content: [{ type: "text", text: "done" }] },
+				},
+				{
+					type: "tool_execution_end",
+					toolCallId: "geometry-read",
+					toolName: "read",
+					isError: false,
+					result: { content: [] },
+				},
+				{
+					type: "tool_execution_end",
+					toolCallId: "geometry-probe",
+					toolName: "bash",
+					isError: false,
+					result: { content: [] },
+				},
+				{ type: "turn_end", message: { role: "assistant", content: [], stopReason: "toolUse" } },
+				{ type: "turn_start" },
+				{ type: "message_start", message: { role: "assistant", content: [] } },
+			]);
+			await renderer.eval('__renderDiag.core.i18n.setState({language:"en"});true');
+			const child = `subagent-${round}`;
+			await send(call("subagent", child, 0, { tasks: [{ task: "synthetic child" }] }));
+			await send([
+				{
+					type: "tool_execution_update",
+					toolCallId: child,
+					toolName: "subagent",
+					partialResult: {
+						details: {
+							results: [{ agent: "worker", task: "synthetic child", status: "running", exitCode: -1 }],
+						},
+					},
+				},
+			]);
+			await waitFor(
+				"document.querySelector('.activity-status-label')?.textContent === 'Waiting for subagent tasks to finish'",
+				"A new-message subagent must outrank the previous message tool",
+				7000,
+			);
+			await send([
+				{
+					type: "tool_execution_end",
+					toolCallId: child,
+					toolName: "subagent",
+					isError: false,
+					result: {
+						content: [],
+						details: { results: [{ agent: "worker", task: "synthetic child", status: "done", exitCode: 0 }] },
+					},
+				},
+			]);
+		}
 	} catch (error) {
 		console.error("Status particle verification failed:", error);
+		console.error(
+			"Activity diagnostics",
+			await renderer.eval(
+				"(()=>{const d=__renderDiag,s=d.transcripts.getState().bySession[d.sid];return {labels:[...document.querySelectorAll('.activity-status-label')].map(e=>e.textContent),active:s.agentActive,streaming:s.streaming&&{id:s.streaming.id,textBlockIndex:s.streaming.textBlockIndex,tools:s.streaming.tools.map(t=>({id:t.id,name:t.name,blockIndex:t.blockIndex,state:t.state})),placements:s.streaming.subagentByToolCallId,runs:s.streaming.subagentRuns.map(r=>r.status)},messages:s.messages.slice(-2).map(m=>({id:m.id,kind:m.kind,tools:m.tools?.map(t=>({name:t.name,blockIndex:t.blockIndex,state:t.state}))}))}})()",
+			),
+		);
 		throw error;
 	} finally {
 		await renderer.send("Emulation.clearDeviceMetricsOverride");

@@ -81,6 +81,7 @@ function metaGroupPropsEqual(
 		a.endImmediately !== b.endImmediately ||
 		a.subagentCount !== b.subagentCount ||
 		a.activeSubagent?.id !== b.activeSubagent?.id ||
+		a.activeSubagent?.sourceId !== b.activeSubagent?.sourceId ||
 		a.activeSubagent?.blockIndex !== b.activeSubagent?.blockIndex ||
 		a.items.length !== b.items.length
 	)

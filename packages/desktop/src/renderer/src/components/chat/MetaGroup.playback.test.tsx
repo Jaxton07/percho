@@ -1,6 +1,14 @@
 // @vitest-environment happy-dom
 
-import type { ActivityEntry, MetaItem, UIToolCall } from "@percho/shared";
+import {
+	type ActivityEntry,
+	type AgentSessionEvent,
+	buildChatRows,
+	emptyTranscript,
+	type MetaItem,
+	reduceEvent,
+	type UIToolCall,
+} from "@percho/shared";
 import { act } from "react";
 import { createRoot } from "react-dom/client";
 import { afterEach, expect, it, vi } from "vitest";
@@ -173,6 +181,18 @@ it("uses actual execution time and withdraws a waiting candidate before it can e
 	expect(text()).not.toBe("Waiting for the command to finish");
 });
 
+it("rechecks elapsed execution time on focus even before a throttled deadline fires", async () => {
+	vi.useFakeTimers();
+	vi.setSystemTime(1000);
+	mount();
+	await render(item("codemode", { startedAt: 1000 }));
+	await finish();
+	vi.setSystemTime(11001);
+	await act(() => window.dispatchEvent(new Event("focus")));
+	await finish();
+	expect(text()).toBe("Waiting for the command to finish");
+});
+
 it("only promotes sustained thinking after a complete pass without a running tool", async () => {
 	mount();
 	await render(item("read"));
@@ -183,6 +203,53 @@ it("only promotes sustained thinking after a complete pass without a running too
 	await finish();
 	expect(text()).toBe("Thinking");
 });
+
+it.each(["done", "running"] as const)(
+	"committed %s tool remains the thinking fallback across message boundaries",
+	async (state) => {
+		mount();
+		const before = { ...emptyTranscript(), agentActive: true };
+		before.messages = [
+			{
+				kind: "assistant",
+				id: "previous",
+				text: "",
+				thinking: "",
+				timestamp: 0,
+				tools: [{ ...item("read").tools[0]!, state }],
+			},
+		];
+		const draw = async (input: typeof before) => {
+			const row = buildChatRows(input, "session").find((row) => row.kind === "metaGroup");
+			if (row?.kind !== "metaGroup") throw Error("Missing actual group");
+			await act(() => root?.render(<MetaGroup items={row.items} working />));
+		};
+		await draw(before);
+		await finish();
+		let input = before;
+		for (const event of [
+			{ type: "message_start", message: { role: "assistant", content: [] } },
+			{
+				type: "message_update",
+				assistantMessageEvent: {
+					type: "thinking_start",
+					contentIndex: 0,
+					partial: { content: [{ type: "thinking", thinking: "" }] },
+				},
+			},
+			{
+				type: "message_update",
+				assistantMessageEvent: { type: "thinking_delta", contentIndex: 0, delta: "reason" },
+			},
+		])
+			input = reduceEvent(input, event as AgentSessionEvent);
+		await draw(input);
+		await finish();
+		expect(text()).toBe("Reviewing relevant content");
+		await finish();
+		expect(text()).toBe(state === "running" ? "Reviewing relevant content" : "Thinking");
+	},
+);
 
 it("switches current and candidate language without prematurely consuming the candidate", async () => {
 	mount();
