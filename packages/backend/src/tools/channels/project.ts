@@ -26,8 +26,13 @@ export async function resolveChannelProject(cwd: string, boundRoot?: string): Pr
 		if (
 			failure.code !== 128 ||
 			typeof failure.stderr !== "string" ||
-			!/^fatal: not a git repository(?: \(or any of the parent directories\): \.git)?\s*$/i.test(
-				failure.stderr,
+			!(
+				/^fatal: not a git repository(?: \(or any of the parent directories\): \.git)?\s*$/i.test(
+					failure.stderr,
+				) ||
+				/^fatal: not a git repository \(or any parent up to mount point [^\r\n]+\)\r?\nStopping at filesystem boundary \(GIT_DISCOVERY_ACROSS_FILESYSTEM not set\)\.\s*$/i.test(
+					failure.stderr,
+				)
 			)
 		)
 			throw error;

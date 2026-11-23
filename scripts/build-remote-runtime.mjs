@@ -101,7 +101,8 @@ try {
 		target: "node22",
 		outdir: stage,
 		outExtension: { ".js": ".mjs" },
-		external: ["@earendil-works/pi-coding-agent", "@earendil-works/pi-ai"],
+		// Runtime packages stay external so Node loads CommonJS dependencies and their built-ins.
+		external: Object.keys(selected.manifest.dependencies),
 		alias: runtimeBuildAliases(repo, stage),
 		logLevel: "warning",
 	});
