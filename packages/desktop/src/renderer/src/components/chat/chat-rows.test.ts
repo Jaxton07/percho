@@ -1,8 +1,10 @@
 import {
+	type AgentSessionEvent,
 	buildChatRows,
 	type ChatRow,
 	emptyTranscript,
 	isAgentWorking,
+	reduceEvent,
 	type StreamingState,
 	type TurnChanges,
 	type UIMessage,
@@ -50,6 +52,46 @@ function kinds(rows: ChatRow[]): string[] {
 }
 
 describe("buildChatRows", () => {
+	it("derives the active subagent from real independent-card events and clears it at end", () => {
+		const event = (type: string, data: Record<string, unknown> = {}) =>
+			({ type, ...data }) as AgentSessionEvent;
+		let state = reduceEvent(emptyTranscript(), event("agent_start"));
+		state = reduceEvent(
+			state,
+			event("message_update", {
+				assistantMessageEvent: { type: "toolcall_start", contentIndex: 2, partial: { content: [] } },
+			}),
+		);
+		state = reduceEvent(
+			state,
+			event("message_update", {
+				assistantMessageEvent: {
+					type: "toolcall_end",
+					contentIndex: 2,
+					toolCall: { id: "sub", name: "subagent", arguments: {} },
+				},
+			}),
+		);
+		state = reduceEvent(
+			state,
+			event("tool_execution_start", {
+				toolCallId: "sub",
+				toolName: "subagent",
+				args: { tasks: [{ task: "one" }, { task: "two" }] },
+			}),
+		);
+		let rows = buildChatRows(state, "session");
+		expect(kinds(rows)).toEqual(["metaGroup", "streamingSubagents"]);
+		expect(rows[0]).toMatchObject({ activeSubagent: { id: "sub", blockIndex: 2 }, subagentCount: 2 });
+		expect(state.streaming?.tools).toEqual([]);
+		expect(state.streaming?.activity).toEqual([]);
+		state = reduceEvent(
+			state,
+			event("tool_execution_end", { toolCallId: "sub", toolName: "subagent", isError: false, result: {} }),
+		);
+		rows = buildChatRows(state, "session");
+		expect(rows[0]).not.toHaveProperty("activeSubagent");
+	});
 	it("suppresses working during compaction and resumes after compaction ends", () => {
 		const base = { ...emptyTranscript(), agentActive: true };
 		const compacting = { ...base, compacting: true };

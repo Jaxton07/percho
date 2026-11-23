@@ -111,7 +111,7 @@ try {
 		await pause(100);
 	}
 	await renderer.eval(`(async()=>{
-		const [{useSessionsStore:sessions},{useTranscriptStore:transcripts},{useUiStore:ui},{useUiPreferencesStore:prefs},core,{getExecutionApi}]=await ${production ? `import(${JSON.stringify(pathToFileURL(moduleFile).href)}).then(m=>[{useSessionsStore:m.diagSessions},{useTranscriptStore:m.diagTranscripts},{useUiStore:m.diagUi},{useUiPreferencesStore:m.diagPrefs},{emptyTranscript:m.diagEmpty,reduceEvent:m.diagReduce,views:m.diagViews},{getExecutionApi:m.diagApi}])` : `Promise.all([import('/src/stores/sessions.ts'),import('/src/stores/transcript.ts'),import('/src/stores/ui.ts'),import('/src/stores/ui-preferences.ts'),import('/@fs${repo}/packages/shared/src/transcript/index.ts'),import('/src/environment-api.ts')])`};
+		const [{useSessionsStore:sessions},{useTranscriptStore:transcripts},{useUiStore:ui},{useUiPreferencesStore:prefs},core,{getExecutionApi}]=await ${production ? `import(${JSON.stringify(pathToFileURL(moduleFile).href)}).then(m=>[{useSessionsStore:m.diagSessions},{useTranscriptStore:m.diagTranscripts},{useUiStore:m.diagUi},{useUiPreferencesStore:m.diagPrefs},{emptyTranscript:m.diagEmpty,reduceEvent:m.diagReduce,views:m.diagViews,i18n:m.diagI18n},{getExecutionApi:m.diagApi}])` : `Promise.all([import('/src/stores/sessions.ts'),import('/src/stores/transcript.ts'),import('/src/stores/ui.ts'),import('/src/stores/ui-preferences.ts'),import('/@fs${repo}/packages/shared/src/transcript/index.ts'),import('/src/environment-api.ts')])`};
 		window.__renderDiag={sessions,transcripts,ui,prefs,core,getExecutionApi};
 		window.__renderDiag.received=0;
 		window.__renderDiag.off=window.pi.forEnvironment({kind:'local'}).onEvent(()=>{window.__renderDiag.received++});

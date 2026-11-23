@@ -30,6 +30,8 @@ export type ChatRow =
 			/** 正文在输出或 run 已终结 → working 消失时立即结束，不做滞后缓冲 */
 			endImmediately: boolean;
 			subagentCount: number;
+			/** 当前组仍在排队或运行的独立子代理调用。 */
+			activeSubagent?: { id: string; blockIndex?: number };
 	  }
 	| {
 			kind: "message";
@@ -79,7 +81,7 @@ export function isAgentWorking(
 	const { streaming } = input;
 	const hasRunningWork = Boolean(
 		streaming?.tools.some((t) => t.state === "running") ||
-			streaming?.subagentRuns.some((r) => r.status === "running"),
+			streaming?.subagentRuns.some((r) => r.status === "running" || r.status === "queued"),
 	);
 	return input.agentActive && (!streaming?.text || hasRunningWork);
 }
@@ -146,6 +148,19 @@ export function buildChatRows(
 	const flushMeta = (isLatest = false, forceEmpty = false, subagentCount = 0): void => {
 		if (metaItems.length === 0 && !forceEmpty && subagentCount === 0) return;
 		const endImmediately = transcript.compacting || Boolean(streaming?.text) || !transcript.agentActive;
+		const activeSubagent =
+			isLatest && agentWorking && streaming
+				? Object.entries(streaming.subagentByToolCallId)
+						.filter(
+							([, placement]) =>
+								(streaming.textBlockIndex == null ||
+									(placement.blockIndex != null && placement.blockIndex > streaming.textBlockIndex)) &&
+								streaming.subagentRuns
+									.slice(placement.start, placement.start + placement.count)
+									.some((run) => run.status === "queued" || run.status === "running"),
+						)
+						.sort((a, b) => (b[1].blockIndex ?? -1) - (a[1].blockIndex ?? -1))[0]
+				: undefined;
 		rows.push({
 			kind: "metaGroup",
 			key: `meta-${sessionId}-${groupTurnId}-g${groupIndex++}`,
@@ -153,6 +168,9 @@ export function buildChatRows(
 			working: isLatest && agentWorking,
 			endImmediately,
 			subagentCount,
+			...(activeSubagent
+				? { activeSubagent: { id: activeSubagent[0], blockIndex: activeSubagent[1].blockIndex } }
+				: {}),
 		});
 		metaItems = [];
 	};

@@ -7,7 +7,7 @@ import {
 	reduceEvent,
 	removeOptimisticUserMessage,
 } from "@percho/shared";
-import { beforeEach, describe, expect, it } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 import { useTranscriptStore } from "./transcript";
 
 function ev(type: string, extra: Record<string, unknown> = {}): AgentSessionEvent {
@@ -18,6 +18,57 @@ const canonicalSkill = (args?: string) =>
 	`<skill name="mindmap" location="/tmp/skills/mindmap/SKILL.md">\nReferences are relative to /tmp/skills/mindmap.\n\n# Mind map\n\nBody\n</skill>${args ? `\n\n${args}` : ""}`;
 
 describe("transcript reducer", () => {
+	it("records the first live execution receipt, not parameter generation or later updates", () => {
+		const clock = vi.spyOn(Date, "now").mockReturnValue(100);
+		try {
+			let state = reduceEvent(emptyTranscript(), ev("agent_start"));
+			state = reduceEvent(
+				state,
+				ev("message_update", {
+					assistantMessageEvent: {
+						type: "toolcall_start",
+						contentIndex: 0,
+						partial: { content: [{ type: "toolCall", name: "bash" }] },
+					},
+				}),
+			);
+			expect(state.streaming?.tools[0]?.startedAt).toBeUndefined();
+			state = reduceEvent(
+				state,
+				ev("message_update", {
+					assistantMessageEvent: {
+						type: "toolcall_end",
+						contentIndex: 0,
+						toolCall: { id: "call", name: "bash", arguments: {} },
+					},
+				}),
+			);
+			clock.mockReturnValue(200);
+			state = reduceEvent(
+				state,
+				ev("tool_execution_start", { toolCallId: "call", toolName: "bash", args: {} }),
+			);
+			clock.mockReturnValue(300);
+			state = reduceEvent(
+				state,
+				ev("tool_execution_start", { toolCallId: "call", toolName: "bash", args: {} }),
+			);
+			state = reduceEvent(
+				state,
+				ev("tool_execution_update", {
+					toolCallId: "call",
+					partialResult: { content: [{ type: "text", text: "output" }] },
+				}),
+			);
+			state = reduceEvent(
+				state,
+				ev("tool_execution_end", { toolCallId: "call", toolName: "bash", isError: false, result: {} }),
+			);
+			expect(state.streaming?.tools[0]).toMatchObject({ startedAt: 200, endedAt: 300, state: "done" });
+		} finally {
+			clock.mockRestore();
+		}
+	});
 	it("六任务逐行排队、运行、完成和中止；最终结果覆盖部分结果", () => {
 		let state = reduceEvent(emptyTranscript(), ev("agent_start"));
 		state = reduceEvent(

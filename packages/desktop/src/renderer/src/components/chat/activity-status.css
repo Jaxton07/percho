@@ -1,0 +1,59 @@
+.activity-status {
+	display: flex;
+	align-items: center;
+	min-width: 0;
+	flex: 1 1 0%;
+	gap: 0.5rem;
+}
+.activity-status-words {
+	flex: 0 1 auto;
+	min-width: 0;
+	max-width: 60%;
+	white-space: nowrap;
+}
+.activity-status-reveal,
+.activity-status-label {
+	display: block;
+	min-width: 0;
+	max-width: 100%;
+}
+.activity-status-label {
+	overflow: hidden;
+	text-overflow: ellipsis;
+}
+.activity-status-sweep {
+	background-clip: text;
+	-webkit-background-clip: text;
+	-webkit-text-fill-color: transparent;
+}
+.activity-status .status-particles {
+	pointer-events: none;
+	display: block;
+	height: 24px;
+	min-width: 0;
+	flex: 1 1 0%;
+	overflow: hidden;
+}
+.activity-status-base,
+.activity-status-highlight {
+	transform-box: view-box;
+	transform-origin: center;
+}
+.activity-status-base {
+	opacity: 0.12;
+	transform: scaleY(0.72);
+}
+.activity-status-highlight {
+	opacity: 0.82;
+	transform: scaleY(0.88);
+}
+.activity-status[data-static] .activity-status-base {
+	opacity: 0.32;
+	transform: none;
+}
+.activity-status[data-static] .activity-status-highlight {
+	display: none;
+}
+details[open] > summary .activity-status .status-particles {
+	visibility: hidden;
+}

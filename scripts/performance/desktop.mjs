@@ -121,7 +121,7 @@ async function prepare(repo, directory, owner, kind) {
 		moduleFile,
 		"Diagnostic bundle must be a private file, not a symlink",
 	);
-	const code = `${await readFile(moduleFile, "utf8")}\nexport {useSessionsStore as diagSessions,useTranscriptStore as diagTranscripts,reloadSessionHistory as diagReload,useUiPreferencesStore as diagPrefs,useUiStore as diagUi,getExecutionApi as diagApi,emptyTranscript as diagEmpty,reduceEvent as diagReduce,useSessionViewStore as diagViews,isHistoryReady as diagHistoryReady,isHistoryReady as diagReady,LOCAL_ENVIRONMENT as diagLocal};\n`;
+	const code = `${await readFile(moduleFile, "utf8")}\nexport {useSessionsStore as diagSessions,useTranscriptStore as diagTranscripts,reloadSessionHistory as diagReload,useUiPreferencesStore as diagPrefs,useUiStore as diagUi,getExecutionApi as diagApi,emptyTranscript as diagEmpty,reduceEvent as diagReduce,useSessionViewStore as diagViews,useI18nStore as diagI18n,isHistoryReady as diagHistoryReady,isHistoryReady as diagReady,LOCAL_ENVIRONMENT as diagLocal};\n`;
 	await transform(code, { loader: "js", format: "esm" });
 	await writeFile(moduleFile, code, { mode: 0o600 });
 	if (kind === "large-text") {

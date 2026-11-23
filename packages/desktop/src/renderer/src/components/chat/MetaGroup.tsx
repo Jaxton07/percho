@@ -1,16 +1,15 @@
 import { dotsFromItems, type MetaDot, type MetaItem, summarizeCategories } from "@percho/shared";
 import { Fragment, memo, useMemo } from "react";
-import type { OrbState } from "thinking-orbs";
 import { ThinkingOrb } from "thinking-orbs";
 import { useT } from "../../i18n";
 import { thinkingViewKey } from "../../lib/session-view-keys";
 import { ExpandArrowIcon } from "../icons";
 import { DeferredDetails } from "../ui/DeferredDetails";
 import { SelectableText } from "../ui/SelectableText";
+import { ActivityStatusRow } from "./ActivityStatusRow";
 import { summaryLabel } from "./meta-summary-label";
-import { StatusParticles } from "./StatusParticles";
 import { ToolCallCard } from "./ToolCallCard";
-import { displayName } from "./tool-label";
+import { type ActiveSubagent, useActivityStatus } from "./use-activity-status";
 import { useShownWorking } from "./use-shown-working";
 
 export type { MetaItem };
@@ -64,6 +63,7 @@ function metaGroupPropsEqual(
 		working: boolean;
 		endImmediately?: boolean;
 		subagentCount?: number;
+		activeSubagent?: ActiveSubagent;
 		viewKey?: string;
 	},
 	b: {
@@ -71,6 +71,7 @@ function metaGroupPropsEqual(
 		working: boolean;
 		endImmediately?: boolean;
 		subagentCount?: number;
+		activeSubagent?: ActiveSubagent;
 		viewKey?: string;
 	},
 ): boolean {
@@ -79,6 +80,8 @@ function metaGroupPropsEqual(
 		a.working !== b.working ||
 		a.endImmediately !== b.endImmediately ||
 		a.subagentCount !== b.subagentCount ||
+		a.activeSubagent?.id !== b.activeSubagent?.id ||
+		a.activeSubagent?.blockIndex !== b.activeSubagent?.blockIndex ||
 		a.items.length !== b.items.length
 	)
 		return false;
@@ -93,6 +96,7 @@ export const MetaGroup = memo(function MetaGroup({
 	working,
 	endImmediately = false,
 	subagentCount = 0,
+	activeSubagent,
 	viewKey,
 }: {
 	items: MetaItem[];
@@ -100,6 +104,7 @@ export const MetaGroup = memo(function MetaGroup({
 	endImmediately?: boolean;
 	/** 该组派生的子代理数（统计行正向显示「子代理 ×N」；由 MessageList 按组归属计算） */
 	subagentCount?: number;
+	activeSubagent?: ActiveSubagent;
 	viewKey?: string;
 }) {
 	const t = useT();
@@ -125,21 +130,7 @@ export const MetaGroup = memo(function MetaGroup({
 			) : null,
 			...item.tools.map((tool) => <ToolCallCard key={tool.key} tool={tool} />),
 		]);
-	// orb 状态（名字是包的渲染器名，与我们的语义不同名）：
-	// tool 运行中 → connecting（星座连线 + 信号跑边）
-	// 纯 thinking → working（粒子轨道，转速更快）
-	// 只读取最新活动的身份/类别/名称，不遍历拼接流式正文。
-	const latestActivity = useMemo(() => {
-		for (let i = items.length - 1; i >= 0; i--) {
-			const activity = items[i]?.activity;
-			if (activity && activity.length > 0) {
-				return activity[activity.length - 1];
-			}
-		}
-		return undefined;
-	}, [items]);
-	const isTool = latestActivity?.kind === "tool";
-	const orbState: OrbState = isTool ? "connecting" : "working";
+	const activity = useActivityStatus(items, shownWorking, activeSubagent);
 
 	/** 单条已结束（如正文前的思考）直接裸行展示，不套 "已完成 · 1" 外壳；-mb-4 与包装组一致：
 	 * 与后续正文净距 8px（容器 gap-6 - 16px），单行/成组间距统一 */
@@ -165,16 +156,9 @@ export const MetaGroup = memo(function MetaGroup({
 							{shownWorking ? (
 								<>
 									<div className="shrink-0">
-										<ThinkingOrb state={orbState} size={20} paused={false} />
+										<ThinkingOrb state="connecting" size={20} paused={false} />
 									</div>
-									<span
-										className={`min-w-0 shrink truncate font-bold text-ink-working transition-colors group-hover/row:text-ink ${isTool ? "font-mono text-ui-13" : "text-ui-14"}`}
-									>
-										{latestActivity?.kind === "tool"
-											? displayName(latestActivity.name, t)
-											: t(latestActivity ? "message.thinkingLabel" : "message.working")}
-									</span>
-									<StatusParticles />
+									<ActivityStatusRow {...activity} scope={viewKey} />
 								</>
 							) : segments.length > 0 ? (
 								/* worked 态标题 = 分类统计（原展开区速读行提上来）；单行截断，hover 变色提示可展开 */
