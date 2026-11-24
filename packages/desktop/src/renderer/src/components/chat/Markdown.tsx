@@ -4,7 +4,7 @@ import "markstream-react/index.css";
 // KaTeX 只在公式出现时才会被 markstream 动态 import（mermaid 的依赖里也有 katex）；
 // 它的 CSS 必须显式引入：缺了它 katex-mathml 层不会被隐藏，公式会重影地多一份 MathML 文本。
 import "katex/dist/katex.min.css";
-import { type MouseEvent, useMemo, useRef, useState } from "react";
+import { type ComponentProps, type MouseEvent, useEffect, useMemo, useRef, useState } from "react";
 import { getPi } from "../../api";
 import { errText } from "../../lib/error-text";
 import { monacoFontSizeFor, monacoLineHeightFor } from "../../lib/typography";
@@ -65,13 +65,23 @@ const CODE_BLOCK_PROPS_BASE = {
 const REDUCED_MOTION =
 	typeof window !== "undefined" && window.matchMedia("(prefers-reduced-motion: reduce)").matches;
 
+/** 首次直出已有正文，让库先 reset 到当前内容；挂载后只对新增 delta 启用 pacing。
+ * 放在字号 key 之内，切会话、虚拟列表补挂及字号重建均不会重播已有内容。
+ */
+function MarkdownContent({ smoothStreaming, ...props }: ComponentProps<typeof MarkdownRender>) {
+	const [mounted, setMounted] = useState(false);
+	useEffect(() => setMounted(true), []);
+	return <MarkdownRender {...props} smoothStreaming={mounted && Boolean(smoothStreaming)} />;
+}
+
 /**
  * Markdown 渲染：markstream-react（增量解析，为流式 token 设计，避免 react-markdown 每帧全量 re-parse）。
  * final=false 时未闭合的构造（代码块/表格/链接）按 pending 渲染；提交后必须 true。
  *
  * 流式丝滑性（两层）：
  * 1. smoothStreaming：内容经自适应速率控制器逐字放出（大 trunk 平滑滑出）。只对「挂载时就在流式」
- *    的消息启用——历史/固化后打开的消息直出（mount 初值锁定，否则整篇会重播一遍）。
+ *    的消息启用；首次挂载的已有正文先直出，只平滑追赶之后新增的文字。
+ *    历史/固化后打开的消息永不启用（mount 初值锁定）。
  *    流式 → turn_end 固化依赖 MessageList 的 key 稳定（StreamingState.id）保持组件不 remount，
  *    controller 才能存活并平滑追平。
  * 2. fade 必须关闭：开启后 smooth controller 每次 commit 都会创建带 opacity/will-change 的临时
@@ -145,12 +155,12 @@ export function Markdown({
 			<div className="markdown-body text-ui-15 leading-[1.75] text-ink select-text" onClick={onLinkClick}>
 				{/* key 里带 codeFontSize：monaco 的字号/行高**只在编辑器创建时**应用（库内没有 updateOptions
 			    调用，`monacoOptions` 换了也不会生效），所以换代码字号时必须让代码块重新挂载。
-			    代价：改档位会重建这一条消息的 markdown 子树（设置项，用户极少动；流式中改会重放当前
-			    消息的打字机动画）。key 只随 codeFontSize 变，流式期间稳定。 */}
+			    改档位会重建这一条消息的 markdown 子树，MarkdownContent 重新以已有正文为基线，
+			    不重播打字机动画。key 只随 codeFontSize 变，流式期间稳定。 */}
 				{/* deferNodesUntilVisible=false：markstream 0.0.55 的延迟节点 bug——块数 > initialRenderBatchSize(40)
 			    的节点先渲染为 node-placeholder 占位条，等 IntersectionObserver 标记可见后只写 ref 不触发
 			    re-render（非虚拟化路径）；流式期间靠内容更新顺带刷新，流一停占位条就永久残留。 */}
-				<MarkdownRender
+				<MarkdownContent
 					key={`code-font-${codeFontSize}`}
 					content={text}
 					nodes={plainNodes}

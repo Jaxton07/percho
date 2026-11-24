@@ -33,6 +33,8 @@ export interface RawMessage {
 	role: string;
 	/** 由 entry 外壳注入，绝不从 message 的同名持久字段采信。 */
 	sourceEntryId?: string;
+	/** 仅由当前分支的 context_edit 事实派生，不采信 message 的同名持久字段。 */
+	sourceErrorOmitted?: boolean;
 	perchoInput?: unknown;
 	content?: string | ContentBlock[];
 	toolCallId?: string;
@@ -211,9 +213,22 @@ export function toBranchSessionMessages(
 ): SessionMessage[] {
 	// 摊平成「消息 + 压缩标记」混合流后再走 toSessionMessages：toolResult 靠 toolCallId 配对，
 	// 标记插在中间不影响回填；assignEntryIds 只认 user/assistant，自动跳过标记
+	// SDK 重试/恢复会保留失败原文，并用 context_edit(null) 持久省略该次尝试。
+	// 只影响最终错误卡判定，不将上下文投影的删改应用到完整 UI 历史。
+	const omitted = new Set<string>();
+	for (const entry of branch) {
+		if (entry.type !== "context_edit") continue;
+		if (entry.replacement === null) omitted.add(entry.targetId);
+		else omitted.delete(entry.targetId);
+	}
 	const raw: unknown[] = [];
 	for (const entry of branch) {
-		if (entry.type === "message") raw.push({ ...entry.message, sourceEntryId: entry.id });
+		if (entry.type === "message")
+			raw.push({
+				...entry.message,
+				sourceEntryId: entry.id,
+				sourceErrorOmitted: omitted.has(entry.id),
+			});
 		else if (entry.type === "compaction") raw.push(compactionMarker(entry));
 	}
 	const messages = toSessionMessages(raw, ownerSessionId);
@@ -316,6 +331,7 @@ export function toSessionMessages(
 					images: [],
 					timestamp: raw.timestamp ?? Date.now(),
 					...(raw.stopReason ? { stopReason: raw.stopReason } : {}),
+					...(raw.stopReason === "error" && raw.sourceErrorOmitted === true ? { errorOmitted: true } : {}),
 					...(typeof raw.errorMessage === "string" && raw.errorMessage.length > 0
 						? { errorMessage: raw.errorMessage }
 						: {}),

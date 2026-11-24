@@ -130,7 +130,19 @@ export function SidebarGroup({
 				(b.session.modifiedAt ?? b.session.createdAt) - (a.session.modifiedAt ?? a.session.createdAt),
 		)
 		.slice(0, 6 + 16 * moreClicks);
-	if (paging && search && page && !page.loading && !page.error && page.complete && pagedSessions.length === 0)
+	if (
+		paging &&
+		search &&
+		online &&
+		page &&
+		!page.loading &&
+		!page.error &&
+		page.complete &&
+		!page.scan &&
+		!catalog.projects?.scan &&
+		(page.diagnostics?.errors ?? 0) === 0 &&
+		pagedSessions.length === 0
+	)
 		return null;
 	const openNewSession = () => {
 		activateNewSessionDraftForCwd(group.cwd);
@@ -159,6 +171,7 @@ export function SidebarGroup({
 			>
 				<div className="sidebar-group-content-inner">
 					<SidebarSessionList
+						expanded={expanded}
 						sessions={paging ? pagedSessions : visibleSessions(group.sessions, moreClicks)}
 						activeSessionId={activeSessionId}
 						emptyLabel={t("sidebar.noSessions")}
@@ -179,9 +192,20 @@ export function SidebarGroup({
 										offline: !online,
 										onConnect: () => useRemoteConnectionStore.getState().setOpen(true, environment),
 										loading: online && (!page || page.loading),
+										loadingStartedAt: page?.loadingStartedAt,
+										scan: page?.scan === undefined ? catalog.projects?.scan : page.scan,
+										diagnostics: page?.diagnostics,
 										error: page?.error,
 										partial: !!page && !page.complete,
-										onRetry: () => void useSessionCatalogStore.getState().loadPage(environment, query),
+										onRetry: () =>
+											void useSessionCatalogStore
+												.getState()
+												.loadPage(
+													environment,
+													{ ...query, ...(page?.scan !== undefined ? { refresh: true } : {}) },
+													false,
+													true,
+												),
 									}
 								: undefined
 						}

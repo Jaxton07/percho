@@ -1,8 +1,174 @@
 import { mkdir, rename, rm, symlink, writeFile } from "node:fs/promises";
 import { join, resolve } from "node:path";
 import { Worker } from "node:worker_threads";
+import { SESSION_CHANNELS } from "@percho/shared";
 import { expect, it } from "vitest";
 import { SessionCatalog } from "../src/session/catalog";
+
+it("validates refresh as an optional IPC boolean", () => {
+	const validate = SESSION_CHANNELS.querySessionCatalog.validate;
+	expect(() => validate({ query: {} })).not.toThrow();
+	expect(() => validate({ query: { refresh: true } })).not.toThrow();
+	expect(() => validate({ query: { refresh: "true" } })).toThrow();
+});
+
+it("reports scoped diagnostics and scan lifecycle, and coalesces real retries", async () => {
+	const root = resolve(import.meta.dirname, "../../../.local/tmp/sidebar-catalog-status/worker");
+	await rm(root, { recursive: true, force: true });
+	const dir = join(root, "sessions", "folder");
+	await mkdir(dir, { recursive: true });
+	const file = (name: string) => join(dir, `${name}.jsonl`);
+	const valid = (id: string, cwd: string) =>
+		JSON.stringify({ type: "session", id, cwd, timestamp: "2024-01-01T00:00:00Z" });
+	await writeFile(file("a"), valid("a", "/a"));
+	await writeFile(file("b"), valid("b", "/b"));
+	const changes: Array<import("@percho/shared").SessionCatalogChange> = [];
+	const catalog = new SessionCatalog({
+		sessionsDir: join(root, "sessions"),
+		indexPath: join(root, "index.db"),
+		onChange: (change) => changes.push(change),
+	});
+	try {
+		await catalog.refresh();
+		await writeFile(file("a"), "broken");
+		await writeFile(file("unknown"), "broken");
+		await writeFile(
+			file("header"),
+			`${valid("header", "/a")}\n${JSON.stringify({ type: "session_info", name: 42 })}`,
+		);
+		const page = await catalog.query({ cwd: "/a", refresh: true });
+		expect(page.scan).toBeNull();
+		expect(page.complete).toBe(false);
+		expect(page.diagnostics?.errors).toBe(2);
+		expect((await catalog.query({ cwd: "/b" })).diagnostics?.errors).toBe(0);
+		expect((await catalog.projects()).diagnostics?.errors).toBe(3);
+		expect((await catalog.query({})).diagnostics?.errors).toBe(3);
+		await writeFile(file("a"), valid("a", "/a"));
+		await rm(file("unknown"));
+		await rm(file("header"));
+		changes.length = 0;
+		const [a, b] = await Promise.all([
+			catalog.query({ cwd: "/a", refresh: true }),
+			catalog.query({ cwd: "/b", refresh: true }),
+		]);
+		expect(a.complete && b.complete).toBe(true);
+		expect(a.scan).toBeNull();
+		expect(a.diagnostics?.errors).toBe(0);
+		const starts = changes.filter((change) => change.scan);
+		expect(starts).toHaveLength(1);
+		expect(starts[0].scan?.id).toBeTruthy();
+		expect(starts[0].scan?.startedAt).toBeGreaterThan(0);
+		expect(changes.at(-1)?.scan).toBeNull();
+		const first = await catalog.query({ limit: 1 });
+		const next = await catalog.query({ limit: 1, cursor: first.nextCursor, refresh: true });
+		expect(next.sessions).toHaveLength(1);
+		await expect(catalog.query({ refresh: "yes" } as never)).rejects.toThrow();
+	} finally {
+		await catalog.dispose();
+		await rm(root, { recursive: true, force: true });
+	}
+});
+
+it("keeps cursors across diagnostic-only changes and versions the whole projection", async () => {
+	const root = resolve(import.meta.dirname, "../../../.local/tmp/catalog-diagnostics-regression");
+	await rm(root, { recursive: true, force: true });
+	const dir = join(root, "sessions");
+	await mkdir(dir, { recursive: true });
+	const valid = (id: string) =>
+		JSON.stringify({ type: "session", id, cwd: "/project", timestamp: "2024-01-01T00:00:00Z" });
+	await writeFile(join(dir, "a.jsonl"), valid("a"));
+	await writeFile(join(dir, "b.jsonl"), valid("b"));
+	const changes: Array<import("@percho/shared").SessionCatalogChange> = [];
+	const catalog = new SessionCatalog({
+		sessionsDir: dir,
+		indexPath: join(root, "index.db"),
+		onChange: (change) => changes.push(change),
+	});
+	try {
+		await catalog.refresh();
+		const first = await catalog.query({ limit: 1 });
+		await writeFile(join(dir, "bad.jsonl"), "broken");
+		await catalog.refresh();
+		const next = await catalog.query({ limit: 1, cursor: first.nextCursor });
+		expect(next.sessions).toHaveLength(1);
+		expect(next.revision).toBe(first.revision);
+		expect(next.complete).toBe(false);
+		const diag = next.diagnostics as { revision?: string };
+		expect(diag.revision).toBeTruthy();
+		expect(diag.revision).not.toBe((first.diagnostics as { revision?: string }).revision);
+		expect((await catalog.projects()).diagnostics).toEqual(next.diagnostics);
+		expect(changes.at(-1)?.diagnostics).toEqual(next.diagnostics);
+		await catalog.refresh();
+		expect((await catalog.query({})).diagnostics).toEqual(next.diagnostics);
+		await writeFile(
+			join(dir, "bad.jsonl"),
+			`${valid("bad")}\n${JSON.stringify({ type: "session_info", name: 42 })}`,
+		);
+		await catalog.refresh();
+		const scoped = await catalog.query({ cwd: "/project" });
+		expect(scoped.diagnostics?.errors).toBe(1);
+		expect(scoped.diagnostics?.revision).not.toBe(diag.revision);
+		await rm(join(dir, "bad.jsonl"));
+		const restored = await catalog.query({ limit: 1, cursor: first.nextCursor, refresh: true });
+		expect(restored.complete).toBe(true);
+		expect((restored.diagnostics as { revision?: string }).revision).not.toBe(diag.revision);
+	} finally {
+		await catalog.dispose();
+		await rm(root, { recursive: true, force: true });
+	}
+});
+
+it("queues concurrent explicit retries behind a running ordinary scan", async () => {
+	const root = resolve(import.meta.dirname, "../../../.local/tmp/catalog-retry-regression");
+	await rm(root, { recursive: true, force: true });
+	const dir = join(root, "sessions");
+	await mkdir(dir, { recursive: true });
+	for (let i = 0; i < 150; i++)
+		await writeFile(
+			join(dir, `${i}.jsonl`),
+			JSON.stringify({ type: "session", id: `${i}`, cwd: "/project", timestamp: "2024-01-01T00:00:00Z" }),
+		);
+	const changes: Array<import("@percho/shared").SessionCatalogChange> = [];
+	let onStart: (() => void) | undefined;
+	const catalog = new SessionCatalog({
+		sessionsDir: dir,
+		indexPath: join(root, "index.db"),
+		onChange: (change) => {
+			changes.push(change);
+			if (change.scan) onStart?.();
+		},
+	});
+	try {
+		await catalog.refresh();
+		changes.length = 0;
+		let retries!: Promise<
+			[import("@percho/shared").SessionCatalogPage, import("@percho/shared").SessionCatalogPage]
+		>;
+		let active!: Promise<import("@percho/shared").SessionCatalogPage>;
+		onStart = () => {
+			onStart = undefined;
+			active = catalog.query({});
+			retries = Promise.all([catalog.query({ refresh: true }), catalog.query({ refresh: true })]);
+		};
+		const ordinary = catalog.refresh();
+		await ordinary;
+		const [a, b] = await retries;
+		await ordinary;
+		const starts = changes.filter((change) => change.scan);
+		const ids = [...new Set(starts.map((change) => change.scan?.id))];
+		expect(ids).toHaveLength(2);
+		const snapshot = (await active).scan;
+		expect(snapshot?.id).toBe(ids[0]);
+		expect(snapshot?.elapsedMs).toBeGreaterThanOrEqual(0);
+		for (const change of starts)
+			expect((change.scan as { elapsedMs?: number }).elapsedMs).toBeGreaterThanOrEqual(0);
+		expect(a.scan).toBeNull();
+		expect(b.scan).toBeNull();
+	} finally {
+		await catalog.dispose();
+		await rm(root, { recursive: true, force: true });
+	}
+});
 
 it("verifies 100 long unindexed sessions without parsing their bodies", async () => {
 	const root = resolve(

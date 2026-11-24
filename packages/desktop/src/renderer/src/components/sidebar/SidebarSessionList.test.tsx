@@ -22,7 +22,12 @@ it("分页加载、整理和失败时不误报空历史，并可重试", async (
 		onContextMenu: vi.fn(),
 	};
 	await act(() =>
-		root.render(<SidebarSessionList {...props} paging={{ loading: true, partial: false, onRetry: retry }} />),
+		root.render(
+			<SidebarSessionList
+				{...props}
+				paging={{ loading: true, loadingStartedAt: Date.now() - 2000, partial: false, onRetry: retry }}
+			/>,
+		),
 	);
 	expect(container.textContent).toContain("sidebar.catalogLoading");
 	expect(container.textContent).not.toContain("empty");

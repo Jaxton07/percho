@@ -92,7 +92,7 @@ import { TrustGate } from "./project/trust";
 import { ProjectResourceLoader } from "./project/trust-loader";
 import { addAllowedPattern, addWorkspaceRoot } from "./project/workspace-store";
 import { RUNTIME_MESSAGE_BYTES } from "./runtime/frames";
-import { readSessionHeaderId, SessionArchiveService } from "./session/archive";
+import { ArchiveSourceUnavailableError, readSessionHeaderId, SessionArchiveService } from "./session/archive";
 import { SessionCatalog } from "./session/catalog";
 import {
 	composerInputBridge,
@@ -159,7 +159,7 @@ import { readChannelWatchEnabled, writeChannelWatchEnabled } from "./tools/chann
 import { ChannelBackendHost } from "./tools/channels/backend-host";
 import { makeChannelsExtension } from "./tools/channels/extension";
 import { resolveChannelProject } from "./tools/channels/project";
-import { ChannelService } from "./tools/channels/service";
+import { ChannelDatabaseService, ChannelService } from "./tools/channels/service";
 import { makeCompactionGuardExtension } from "./tools/compaction-guard";
 import { createCompactionRequestPolicy } from "./tools/compaction-guard/request-policy";
 import { makeEvapExtension, reportEvapBatch } from "./tools/context-evaporation";
@@ -287,6 +287,7 @@ export class PiBackend {
 				}
 			});
 			this.channelServices.clear();
+			if (this.channelDatabase) closing.push(this.channelDatabase.close());
 			this.shutdownChannels = Promise.allSettled(closing);
 		}
 		return this.shutdownChannels;
@@ -368,16 +369,31 @@ export class PiBackend {
 	private readonly channelRoots = new WeakMap<PermissionModeRef, string>();
 	private channelPeerRefresh: Promise<void> = Promise.resolve();
 	private channelHost?: ChannelBackendHost;
+	private channelDatabase?: ChannelDatabaseService;
 	private channelRecovery?: Promise<void>;
+	private getChannelDatabase(): ChannelDatabaseService {
+		this.assertRunning();
+		this.channelDatabase ??= new ChannelDatabaseService({ agentDir: getAgentDir() });
+		return this.channelDatabase;
+	}
 	private getChannelHost(): ChannelBackendHost {
-		this.channelHost ??= new ChannelBackendHost(getAgentDir(), (root) => this.channelServiceAtRoot(root));
+		this.channelHost ??= new ChannelBackendHost(
+			getAgentDir(),
+			(root) => this.channelServiceAtRoot(root),
+			this.getChannelDatabase(),
+		);
 		return this.channelHost;
 	}
 	private channelServiceAtRoot(root: string): ChannelService {
+		root = resolve(root);
 		let service = this.channelServices.get(root);
 		if (!service) {
 			this.assertRunning();
-			service = new ChannelService({ projectRoot: root, agentDir: getAgentDir() });
+			service = new ChannelService({
+				projectRoot: root,
+				agentDir: getAgentDir(),
+				database: this.getChannelDatabase(),
+			});
 			this.channelServices.set(root, service);
 		}
 		return service;
@@ -452,13 +468,18 @@ export class PiBackend {
 			if (typeof header.cwd !== "string") throw new Error("Session header has no cwd");
 			cwd = header.cwd;
 		} catch (error) {
-			if ((error as NodeJS.ErrnoException).code !== "ENOENT" || !cwd) throw error;
+			if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+			if (!cwd) {
+				const match = sessionId ? await this.getChannelHost().find(sessionId, file) : undefined;
+				if (match) return match.service;
+				throw new ArchiveSourceUnavailableError("Channel maintenance source unavailable");
+			}
 		}
 		if (!cwd) throw new Error("Session project is unavailable");
 		const binding = sessionId ? await this.getChannelHost().binding(sessionId) : undefined;
 		if (binding && binding.cwd !== resolve(cwd)) throw new Error("Session binding cwd changed");
-		if (binding) return this.channelServiceAtRoot(binding.root);
-		return this.channelService(cwd);
+		// Historical maintenance uses persisted identity, not a live cwd/Git probe.
+		return this.channelServiceAtRoot(binding?.root ?? resolve(cwd));
 	}
 
 	private readonly catalogEmitter = new Emitter<import("@percho/shared").SessionCatalogChange>();
@@ -555,7 +576,7 @@ export class PiBackend {
 				const match = await host.find(sessionId, sessionFile);
 				if (!match || match.fence.kind !== "delete" || !["delete", "deleted"].includes(match.fence.state))
 					return false;
-				const fingerprint = await host.deleteFingerprint(match.fence.opId);
+				const fingerprint = await host.deleteFingerprint(match.service.projectRoot, match.fence.opId);
 				if (
 					!fingerprint ||
 					fingerprint.id !== sessionId ||
@@ -571,10 +592,10 @@ export class PiBackend {
 				return true;
 			},
 			prepareChannelMaintenance: async ({ sessionId, sessionFile, operationId }) => {
-				if (!existsSync(sessionFile)) {
+				if (!(await sourceExists(sessionFile))) {
 					const match = await this.getChannelHost().find(sessionId, sessionFile);
-					if (!match || match.fence.opId !== operationId)
-						throw new Error("Channel maintenance source unavailable");
+					if (!match) throw new ArchiveSourceUnavailableError("Channel maintenance source unavailable");
+					if (match.fence.opId !== operationId) throw new Error("Channel maintenance operation changed");
 					await match.service.prepareMaintenance(sessionId, operationId, "archive", sessionFile);
 					return;
 				}
@@ -586,11 +607,11 @@ export class PiBackend {
 				await service.prepareMaintenance(sessionId, operationId, "archive", sessionFile);
 			},
 			completeChannelMaintenance: async ({ sessionId, sessionFile, operationId, outcome }) => {
-				if (!existsSync(sessionFile)) {
+				if (!(await sourceExists(sessionFile))) {
 					const match = await this.getChannelHost().find(sessionId, sessionFile);
 					if (!match && outcome === "active") return;
-					if (!match || match.fence.opId !== operationId)
-						throw new Error("Channel maintenance source unavailable");
+					if (!match) throw new ArchiveSourceUnavailableError("Channel maintenance source unavailable");
+					if (match.fence.opId !== operationId) throw new Error("Channel maintenance operation changed");
 					await match.service.completeMaintenance(sessionId, operationId, outcome);
 					return;
 				}
@@ -621,6 +642,7 @@ export class PiBackend {
 			})
 			.catch((error) => {
 				this.archiveInitialization = undefined;
+				log.warn("Archive authority initialization failed before catalog query", error);
 				throw error;
 			});
 		await this.archiveInitialization;
@@ -1573,6 +1595,15 @@ export class PiBackend {
 		const initialEntryCount = sessionManager.getEntryCount();
 		const binding = await this.getChannelHost().binding(sessionManager.getSessionId());
 		if (binding && binding.cwd !== resolve(cwd)) throw new Error("Session binding cwd changed");
+		let channelRoot = binding?.root;
+		if (!channelRoot) {
+			try {
+				channelRoot = await resolveChannelProject(cwd);
+			} catch (error) {
+				// Historical browsing must not require a vanished working directory.
+				if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+			}
+		}
 		const session = await this.wireSession(
 			cwd,
 			readOnly,
@@ -1595,8 +1626,17 @@ export class PiBackend {
 					),
 				});
 			},
-			binding?.root,
+			channelRoot,
 		);
+		if (channelRoot) {
+			try {
+				await this.getChannelHost().bind(session.sessionId, channelRoot, resolve(cwd));
+			} catch (error) {
+				const entry = this.registry.get(session.sessionId);
+				if (entry) await this.disposeSession(entry);
+				throw error;
+			}
+		}
 		// SDK 构造可在宿主订阅前补写模型/思考设置；只认证这些新条目的精确落盘增量。
 		this.sourceSnapshots.notePersisted(
 			sessionManager,
@@ -2308,7 +2348,7 @@ export class PiBackend {
 		const currentFingerprint = await fingerprint();
 		const host = this.getChannelHost();
 		if (existing?.fence.kind === "delete") {
-			const original = await host.deleteFingerprint(operationId);
+			const original = await host.deleteFingerprint(channelService.projectRoot, operationId);
 			if (
 				currentFingerprint &&
 				(existing.fence.state === "deleted" ||
@@ -2317,7 +2357,7 @@ export class PiBackend {
 			)
 				throw new Error("Session file identity changed; confirm a new deletion");
 		} else {
-			await host.recordDeleteFingerprint(operationId, currentFingerprint);
+			await host.recordDeleteFingerprint(channelService.projectRoot, operationId, currentFingerprint);
 		}
 		await channelService.prepareMaintenance(sessionId, operationId, "delete", file);
 		// 显式删除是用户的明确意图（既有行为：即便正跑着也删），**绕开 closeSession 的 isStreaming 拒绝**，

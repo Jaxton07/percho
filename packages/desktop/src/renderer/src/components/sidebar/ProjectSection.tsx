@@ -1,5 +1,5 @@
 import type { SessionMeta } from "@percho/shared";
-import { useEffect, useRef, useState } from "react";
+import { type ReactNode, useEffect, useRef, useState } from "react";
 import { getExecutionApi } from "../../environment-api";
 import { useT } from "../../i18n";
 import type { SidebarProjectEntry } from "../../lib/sidebar-groups";
@@ -22,6 +22,7 @@ export function ProjectSection({
 	onRemoveProject,
 	activeCwd,
 	visible = true,
+	discoveryFallback,
 	paging,
 }: {
 	projects: SidebarProjectEntry[];
@@ -31,6 +32,7 @@ export function ProjectSection({
 	onRemoveProject: (cwd: string, token: string) => Promise<void>;
 	activeCwd?: string | null;
 	visible?: boolean;
+	discoveryFallback?: ReactNode;
 	paging?: {
 		search: string;
 		verified: SessionMeta[];
@@ -153,6 +155,7 @@ export function ProjectSection({
 					<PlusIcon size={15} />
 				</button>
 			</div>
+			{visible && discoveryFallback}
 			{projects.map((project) => (
 				<SidebarGroup
 					key={project.cwd}

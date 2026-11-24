@@ -1,4 +1,5 @@
-import type { SessionMeta } from "@percho/shared";
+import type { SessionCatalogPage, SessionMeta } from "@percho/shared";
+import { useEffect, useState } from "react";
 import { useT } from "../../i18n";
 import type { SidebarSession } from "../../lib/sidebar-groups";
 import { useListShift } from "../../lib/use-list-shift";
@@ -25,7 +26,9 @@ export function SidebarSessionList({
 	onSelect,
 	onContextMenu,
 	paging,
+	expanded = true,
 }: {
+	expanded?: boolean;
 	/** 当前应显示的会话（已由调用方按 `6 + 16 × 点击数` 裁剪，顺序不变） */
 	sessions: readonly SidebarSession[];
 	activeSessionId: string | null;
@@ -38,6 +41,9 @@ export function SidebarSessionList({
 	onContextMenu: (session: SessionMeta, anchor: MenuAnchor) => void;
 	paging?: {
 		loading: boolean;
+		loadingStartedAt?: number;
+		scan?: SessionCatalogPage["scan"];
+		diagnostics?: SessionCatalogPage["diagnostics"];
 		error?: string;
 		partial: boolean;
 		offline?: boolean;
@@ -47,22 +53,44 @@ export function SidebarSessionList({
 }) {
 	const t = useT();
 	const listRef = useListShift({ collapse: true });
-	const status = paging?.offline
-		? "offline"
-		: paging?.error
-			? "error"
-			: paging?.loading
-				? "loading"
-				: paging?.partial
-					? "partial"
-					: undefined;
-	if (sessions.length === 0 && !status) {
+	const status = !expanded
+		? undefined
+		: paging?.offline
+			? "offline"
+			: paging?.error
+				? "error"
+				: (paging?.diagnostics?.errors ?? 0) > 0
+					? "issues"
+					: paging?.loading
+						? "loading"
+						: paging?.scan && paging.partial
+							? "updating"
+							: paging?.partial
+								? "partial"
+								: undefined;
+	const progressStart =
+		status === "updating"
+			? paging?.scan?.startedAt
+			: status === "loading"
+				? paging?.loadingStartedAt
+				: undefined;
+	const [, tick] = useState(0);
+	// 首屏请求尚未启动时也不抢先展示加载提示；起点由请求或扫描提供。
+	const showProgress = progressStart !== undefined && Date.now() - progressStart >= 2000;
+	useEffect(() => {
+		if (progressStart === undefined) return;
+		const remaining = 2000 - (Date.now() - progressStart);
+		if (remaining <= 0) return;
+		const timer = setTimeout(() => tick((value) => value + 1), remaining);
+		return () => clearTimeout(timer);
+	}, [progressStart]);
+	if (expanded && sessions.length === 0 && !status && !paging?.partial) {
 		return <p className="py-1 pl-[30px] text-ui-12 text-ink-faint">{emptyLabel}</p>;
 	}
 	return (
 		<div ref={listRef} className="relative">
 			{/* 可测试性只读属性（验收脚本按它定位列表并断言「这里没有自己的滚动」；纯属性，不影响视觉） */}
-			<div data-sidebar-session-list="" aria-busy={status === "loading"}>
+			<div data-sidebar-session-list="" aria-busy={expanded && (paging?.loading || status === "updating")}>
 				{sessions.map(({ session, pinned }) => (
 					<SessionRow
 						key={session.sessionId}
@@ -88,24 +116,26 @@ export function SidebarSessionList({
 			{status === "error" && (
 				<button
 					type="button"
-					className="py-1 pl-[30px] text-ui-12 text-ink-faint hover:text-ink-2"
+					disabled={paging?.loading}
+					className="py-1 pl-[30px] text-ui-12 text-ink-faint enabled:hover:text-ink-2"
 					onClick={paging?.onRetry}
 				>
 					{t("sidebar.catalogRetry")}
 				</button>
 			)}
-			{status === "loading" && sessions.length === 0 && (
+			{(status === "loading" || status === "updating") && showProgress && (
 				<p role="status" className="py-1 pl-[30px] text-ui-12 text-ink-faint">
-					{t("sidebar.catalogLoading")}
+					{status === "updating" ? t("sidebar.catalogUpdating") : t("sidebar.catalogLoading")}
 				</p>
 			)}
-			{status === "partial" && (
+			{(status === "partial" || status === "issues") && (
 				<button
 					type="button"
-					className="py-1 pl-[30px] text-ui-12 text-ink-faint hover:text-ink-2"
+					disabled={paging?.loading}
+					className="py-1 pl-[30px] text-ui-12 text-ink-faint enabled:hover:text-ink-2"
 					onClick={paging?.onRetry}
 				>
-					{t("sidebar.catalogPartial")}
+					{status === "issues" ? t("sidebar.catalogIssues") : t("sidebar.catalogPartial")}
 				</button>
 			)}
 			{/* 幽灵文字按钮（左侧缩进与会话标题同为 30px），行高沿用 31px 保持纵向节奏；

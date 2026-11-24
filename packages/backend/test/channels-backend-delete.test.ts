@@ -50,7 +50,7 @@ it("reuses the delete fence after unlink and media cleanup failure", async () =>
 	vi.spyOn(media, "deleteOwner").mockRejectedValueOnce(new Error("media failure"));
 	const backend = new PiBackend({ sessionMediaStore: media });
 	const internal = backend as unknown as {
-		channelService(cwd: string): Promise<ChannelService>;
+		channelServiceForFile(file: string, cwd: string, sessionId: string): Promise<ChannelService>;
 		deleteSessionUnlocked(id: string, file: string): Promise<string>;
 		archives: () => Promise<unknown>;
 		getSessionCatalog: () => unknown;
@@ -60,7 +60,7 @@ it("reuses the delete fence after unlink and media cleanup failure", async () =>
 	internal.archives = async () => ({});
 	internal.getSessionCatalog = () => ({ verify: async () => [{ status: "missing" }] });
 	try {
-		const service = await internal.channelService(root);
+		const service = await internal.channelServiceForFile(source, root, "session");
 		await expect(internal.deleteSessionUnlocked("session", source)).rejects.toThrow("media failure");
 		const [fence] = await service.pendingMaintenance();
 		expect(fence?.state).toBe("delete");

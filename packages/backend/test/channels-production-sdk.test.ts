@@ -96,17 +96,14 @@ test("production backend carries unread projection through real SDK tool continu
 		};
 		const register = vi.spyOn(ChannelBackendHost.prototype, "register");
 		const fences = vi.spyOn(ChannelBackendHost.prototype, "fences");
-		const channelDir = join(fixture.root, ".percho", "channels");
+		const channelDir = join(fixture.agent, "channels");
 		const names = readdirSync(channelDir);
 		expect(names.some((name) => name.endsWith(".sqlite"))).toBe(true);
 		expect(names.some((name) => name.endsWith(".json"))).toBe(true);
 		const snapshot = () => {
-			const files = [
-				join(fixture.agent, "channel-projects.json"),
-				...readdirSync(channelDir)
-					.sort()
-					.map((name) => join(channelDir, name)),
-			];
+			const files = readdirSync(channelDir)
+				.sort()
+				.map((name) => join(channelDir, name));
 			return files.map((file) => ({
 				file,
 				bytes: readFileSync(file).toString("base64"),
