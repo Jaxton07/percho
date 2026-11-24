@@ -77,6 +77,23 @@ describe("工具名称中文投影", () => {
 		// MCP 工具是唯一的例外：保留 server 命名空间（`mcp__<server>__<tool>` → `server › tool`）
 		expect(displayName("mcp__server__search", t)).toBe("server › search");
 	});
+	it.each([
+		["channel_manage", "管理频道", "Manage channels"],
+		["channel_read", "读取频道消息", "Read channel messages"],
+		["tool_search", "搜索工具", "Search tools"],
+		["search_pi_packages", "搜索扩展包", "Search packages"],
+	])("%s 在卡片、摘要和插件 API 中均有翻译", (name, chinese, english) => {
+		for (const [language, label] of [
+			["zh", chinese],
+			["en", english],
+		] as const) {
+			useI18nStore.setState({ language });
+			const translate = translator(language);
+			expect(displayName(name)).toBe(label);
+			expect(summaryLabel(translate, { key: name, category: "other", name, count: 1 })).toBe(`${label} ×1`);
+			expect(renderToStaticMarkup(createElement(ToolCallCard, { tool: { ...tool, name } }))).toContain(label);
+		}
+	});
 	it("插件 API 单参数调用跟随当前语言", () => {
 		expect(displayName("show_image")).toBe("展示图片");
 		useI18nStore.setState({ language: "en" });

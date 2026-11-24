@@ -12,6 +12,7 @@ import { getExecutionApi } from "../environment-api";
 export interface CatalogPageState extends SessionCatalogPage {
 	query: SessionCatalogQuery;
 	loading: boolean;
+	loadingStartedAt?: number;
 	error?: string;
 }
 export interface CatalogEnvironmentState {
@@ -81,11 +82,21 @@ function watchApi(
 	);
 }
 
-type Watch = { refs: number; off: () => void; last?: string; timer?: ReturnType<typeof setTimeout> };
+type Watch = {
+	refs: number;
+	off: () => void;
+	last?: string;
+	lastData?: string;
+	timer?: ReturnType<typeof setTimeout>;
+};
 export const useSessionCatalogStore = create<CatalogStore>((set, get) => {
 	let sequence = 0;
 	const requests = new Map<string, number>();
 	const watches = new Map<string, Watch>();
+	const observationsByEnvironment = new Map<
+		string,
+		{ sequence: number; scan: SessionCatalogChange["scan"] }
+	>();
 	const request = (key: string) => {
 		const id = ++sequence;
 		requests.set(key, id);
@@ -98,6 +109,31 @@ export const useSessionCatalogStore = create<CatalogStore>((set, get) => {
 				[key]: fn(state.byEnvironment[key] ?? EMPTY_CATALOG_ENVIRONMENT),
 			},
 		}));
+	// 服务端时长换算为本机展示起点；同一次扫描复用起点，不依赖 SSH 两端时钟同步。
+	const localScan = (key: string, scan: SessionCatalogChange["scan"]): SessionCatalogChange["scan"] => {
+		if (!scan || scan.elapsedMs === undefined || !Number.isFinite(scan.elapsedMs)) return scan;
+		const state = get().byEnvironment[key];
+		const known = [
+			observationsByEnvironment.get(key)?.scan,
+			state?.projects?.scan,
+			...Object.values(state?.pages ?? {}).map((page) => page.scan),
+		].find((candidate) => candidate?.id === scan.id);
+		return { ...scan, startedAt: known?.startedAt ?? Date.now() - Math.max(0, scan.elapsedMs) };
+	};
+	const cancelRequests = (key: string) => {
+		observationsByEnvironment.delete(key);
+		for (const tokenKey of requests.keys()) if (JSON.parse(tokenKey)[0] === key) requests.delete(tokenKey);
+		update(key, (state) => ({
+			...state,
+			loading: false,
+			pages: Object.fromEntries(
+				Object.entries(state.pages).map(([pageKey, page]) => [
+					pageKey,
+					{ ...page, loading: false, loadingStartedAt: undefined },
+				]),
+			),
+		}));
+	};
 	const refresh = (environment: EnvironmentRef) => {
 		const key = environmentKey(environment);
 		const pages = Object.values(get().byEnvironment[key]?.pages ?? {});
@@ -110,13 +146,23 @@ export const useSessionCatalogStore = create<CatalogStore>((set, get) => {
 			const key = environmentKey(environment);
 			const tokenKey = JSON.stringify([key, "projects"]);
 			const token = request(tokenKey);
-			update(key, (state) => ({ ...state, loading: true, error: undefined }));
+			const observations = observationsByEnvironment.get(key)?.sequence ?? 0;
+			update(key, (state) => ({ ...state, loading: true }));
 			try {
 				const api = getExecutionApi(environment);
 				if (!projectsApi(api)) throw new Error("Execution environment does not support querySessionProjects");
-				const projects = await api.querySessionProjects();
+				const result = await api.querySessionProjects();
+				const projects = { ...result, scan: localScan(key, result.scan) };
 				if (requests.get(tokenKey) === token)
-					update(key, (state) => ({ ...state, projects, loading: false }));
+					update(key, (state) => ({
+						...state,
+						projects:
+							(observationsByEnvironment.get(key)?.sequence ?? 0) !== observations
+								? { ...projects, scan: observationsByEnvironment.get(key)?.scan }
+								: projects,
+						loading: false,
+						error: undefined,
+					}));
 			} catch (error) {
 				if (requests.get(tokenKey) === token)
 					update(key, (state) => ({ ...state, loading: false, error: errorMessage(error) }));
@@ -128,9 +174,10 @@ export const useSessionCatalogStore = create<CatalogStore>((set, get) => {
 			const tokenKey = JSON.stringify([key, "page", pageKey]);
 			const old = get().byEnvironment[key]?.pages[pageKey];
 			if (append && (!old?.nextCursor || old.loading)) return;
-			const { cursor: _cursor, limit, ...base } = query;
+			const { cursor: _cursor, limit, refresh: forceRefresh, ...base } = query;
 			const normalized = { ...base, limit: limit ?? 6 };
 			const token = request(tokenKey);
+			const observations = observationsByEnvironment.get(key)?.sequence ?? 0;
 			// Retain the unfiltered page and only the latest search for each project and sort.
 			if (query.search) {
 				for (const [otherKey, page] of Object.entries(get().byEnvironment[key]?.pages ?? {})) {
@@ -162,7 +209,13 @@ export const useSessionCatalogStore = create<CatalogStore>((set, get) => {
 				...state,
 				pages: {
 					...state.pages,
-					[pageKey]: { ...initial, query: normalized, loading: true, error: undefined },
+					[pageKey]: {
+						...initial,
+						query: normalized,
+						loading: true,
+						loadingStartedAt: initial.loading ? (initial.loadingStartedAt ?? Date.now()) : Date.now(),
+						error: initial.error,
+					},
 				},
 			}));
 			const active = () => requests.get(tokenKey) === token;
@@ -173,7 +226,10 @@ export const useSessionCatalogStore = create<CatalogStore>((set, get) => {
 				let shouldAppend = append;
 				try {
 					result = await api.querySessionCatalog({
-						query: append ? { ...base, limit: 16, cursor: old?.nextCursor } : normalized,
+						query: {
+							...(append ? { ...base, limit: 16, cursor: old?.nextCursor } : normalized),
+							...(forceRefresh === true ? { refresh: true } : {}),
+						},
 					});
 				} catch (error) {
 					if (!append || !/stale/i.test(errorMessage(error))) throw error;
@@ -208,6 +264,10 @@ export const useSessionCatalogStore = create<CatalogStore>((set, get) => {
 						...state.pages,
 						[pageKey]: {
 							...result,
+							scan: localScan(key, result.scan),
+							...((observationsByEnvironment.get(key)?.sequence ?? 0) !== observations
+								? { scan: observationsByEnvironment.get(key)?.scan }
+								: {}),
 							sessions: shouldAppend ? [...initial.sessions, ...result.sessions] : result.sessions,
 							query: normalized,
 							loading: false,
@@ -220,7 +280,13 @@ export const useSessionCatalogStore = create<CatalogStore>((set, get) => {
 						...state,
 						pages: {
 							...state.pages,
-							[pageKey]: { ...initial, ...state.pages[pageKey], loading: false, error: errorMessage(error) },
+							[pageKey]: {
+								...initial,
+								...state.pages[pageKey],
+								loading: false,
+								loadingStartedAt: undefined,
+								error: errorMessage(error),
+							},
 						},
 					}));
 			}
@@ -230,7 +296,15 @@ export const useSessionCatalogStore = create<CatalogStore>((set, get) => {
 			let watch = watches.get(key);
 			if (watch) watch.refs++;
 			else {
-				watch = { refs: 1, off: () => {} };
+				const existing = get().byEnvironment[key];
+				const baseline = existing?.projects ?? Object.values(existing?.pages ?? {})[0];
+				watch = {
+					refs: 1,
+					off: () => {},
+					lastData: baseline
+						? JSON.stringify([baseline.revision, baseline.complete, baseline.diagnostics?.revision])
+						: undefined,
+				};
 				watches.set(key, watch);
 				const entry = watch;
 				try {
@@ -239,18 +313,49 @@ export const useSessionCatalogStore = create<CatalogStore>((set, get) => {
 						throw new Error("Execution environment does not support onSessionCatalogChanged");
 					entry.off = api.onSessionCatalogChanged((change) => {
 						if (watches.get(key) !== entry) return;
-						const signature = JSON.stringify([change.revision, change.complete]);
+						const signature = JSON.stringify({
+							revision: change.revision,
+							complete: change.complete,
+							scan: change.scan && { id: change.scan.id, startedAt: change.scan.startedAt },
+							diagnosticsRevision: change.diagnostics?.revision,
+						});
 						if (entry.last === signature) return;
 						entry.last = signature;
+						const scan = localScan(key, change.scan);
+						observationsByEnvironment.set(key, { sequence: ++sequence, scan });
+						update(key, (state) => ({
+							...state,
+							projects: state.projects
+								? {
+										...state.projects,
+										scan,
+										...(change.diagnostics ? { diagnostics: change.diagnostics } : {}),
+									}
+								: undefined,
+							pages: Object.fromEntries(
+								Object.entries(state.pages).map(([pageKey, page]) => [pageKey, { ...page, scan }]),
+							),
+						}));
+						const dataSignature = JSON.stringify([
+							change.revision,
+							change.complete,
+							change.diagnostics?.revision,
+						]);
+						if (entry.lastData === dataSignature) return;
+						entry.lastData = dataSignature;
 						if (entry.timer) return;
 						entry.timer = setTimeout(() => {
 							entry.timer = undefined;
 							if (watches.get(key) === entry) refresh(environment);
 						}, 150);
 					});
-					void get().loadProjects(environment);
+					// 新的远端连接不能依赖断线前的空搜索缓存或等待下一次目录变化。
+					if (environment.kind === "ssh") refresh(environment);
+					else void get().loadProjects(environment);
 				} catch (error) {
 					watches.delete(key);
+					clearTimeout(entry.timer);
+					cancelRequests(key);
 					update(key, (state) => ({ ...state, loading: false, error: errorMessage(error) }));
 				}
 			}
@@ -264,6 +369,7 @@ export const useSessionCatalogStore = create<CatalogStore>((set, get) => {
 					watches.delete(key);
 					clearTimeout(entry.timer);
 					entry.off();
+					cancelRequests(key);
 				}
 			};
 		},
@@ -293,6 +399,7 @@ export const useSessionCatalogStore = create<CatalogStore>((set, get) => {
 			for (const key of keys) {
 				const watch = watches.get(key);
 				watches.delete(key);
+				observationsByEnvironment.delete(key);
 				clearTimeout(watch?.timer);
 				watch?.off();
 				for (const tokenKey of requests.keys())

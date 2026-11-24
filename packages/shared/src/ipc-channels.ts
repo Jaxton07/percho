@@ -211,6 +211,7 @@ export const SESSION_CHANNELS = {
 			sort: input.optional(input.oneOf("archived", "modified", "created", "name")),
 			limit: input.optional(input.number),
 			cursor: input.optional(input.id),
+			refresh: input.optional(input.boolean),
 		}),
 	}),
 	verifySessionCatalog: ch(

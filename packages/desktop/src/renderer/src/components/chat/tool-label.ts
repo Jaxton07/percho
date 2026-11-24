@@ -1,27 +1,9 @@
 import { parseMcpToolName } from "@percho/shared";
 import { type Translate, translate, useI18nStore } from "../../i18n";
-import type { Messages } from "../../i18n/zh";
+import { type Messages, zh } from "../../i18n/zh";
 
 type BuiltinToolName = keyof Messages["tool"]["names"];
-const BUILTIN_TOOL_NAMES = new Set<string>([
-	"read",
-	"edit",
-	"write",
-	"bash",
-	"codemode",
-	"ls",
-	"glob",
-	"find",
-	"grep",
-	"webfetch",
-	"show_image",
-	"todo",
-	"subagent",
-	"channel_subscribe",
-	"channel_unsubscribe",
-	"channel_post",
-	"channel_list",
-] satisfies BuiltinToolName[]);
+const BUILTIN_TOOL_NAMES = new Set<string>(Object.keys(zh.tool.names));
 
 /**
  * 工具显示名：内置工具查翻译表；**MCP 工具保留命名空间**（`mcp__<server>__<tool>` → `server › tool`，

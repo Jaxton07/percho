@@ -49,6 +49,35 @@ let complete = false,
 	disposed = false;
 let revision = randomUUID();
 let scan: Promise<void> | undefined;
+let scanActivity: { id: string; startedAt: number } | null = null;
+let issues: Array<{ cwd?: string; reason: string }> = [];
+let diagnosticsRevision = randomUUID();
+function setIssues(next: Array<{ cwd?: string; reason: string }>) {
+	next.sort((a, b) => (a.cwd ?? "").localeCompare(b.cwd ?? "") || a.reason.localeCompare(b.reason));
+	if (JSON.stringify(issues) !== JSON.stringify(next)) diagnosticsRevision = randomUUID();
+	issues = next;
+	errors = issues.length;
+}
+function scanSnapshot() {
+	return scanActivity
+		? { ...scanActivity, elapsedMs: Math.max(0, Date.now() - scanActivity.startedAt) }
+		: null;
+}
+function diagnostics(cwd?: string) {
+	const selected = cwd ? issues.filter((issue) => issue.cwd === cwd) : issues;
+	const reasons: Record<string, number> = {};
+	for (const issue of selected) reasons[issue.reason] = (reasons[issue.reason] ?? 0) + 1;
+	return { revision: diagnosticsRevision, errors: selected.length, reasons };
+}
+function notifyStatus() {
+	if (notify) clearTimeout(notify);
+	notify = undefined;
+	if (!disposed)
+		port?.postMessage({
+			event: "changed",
+			data: { revision, complete, scan: scanSnapshot(), diagnostics: diagnostics() },
+		});
+}
 const confirmedMissing = new Set<string>();
 let notify: ReturnType<typeof setTimeout> | undefined;
 const tick = () => new Promise<void>((done) => setImmediate(done));
@@ -57,7 +86,7 @@ function changed() {
 	if (!notify && !disposed)
 		notify = setTimeout(() => {
 			notify = undefined;
-			if (!disposed) port?.postMessage({ event: "changed", data: { revision, complete } });
+			notifyStatus();
 		}, 25);
 }
 function rows(): Row[] {
@@ -204,9 +233,7 @@ async function update(path: string, force = false): Promise<"valid" | "unknown" 
 	return "valid";
 }
 async function reconcile() {
-	const previousComplete = complete;
-	const previousErrors = errors;
-	let scanErrors = 0;
+	const nextIssues: Array<{ cwd?: string; reason: string }> = [];
 	const found = new Set<string>();
 	const existing = new Set(rows().map((row) => row.path));
 	let discoveryFailed = false;
@@ -215,7 +242,7 @@ async function reconcile() {
 		try {
 			entries = await readdir(dir, { withFileTypes: true });
 		} catch {
-			scanErrors++;
+			nextIssues.push({ reason: "discovery" });
 			discoveryFailed = true;
 			return;
 		}
@@ -224,7 +251,7 @@ async function reconcile() {
 			const path = join(dir, entry.name);
 			if (excluded(path)) continue;
 			if (entry.isSymbolicLink()) {
-				scanErrors++;
+				nextIssues.push({ reason: "discovery" });
 				discoveryFailed = true;
 				continue;
 			}
@@ -236,7 +263,14 @@ async function reconcile() {
 	let n = 0;
 	for (const path of found) {
 		if (disposed) return;
-		if ((await update(path)) !== "valid") scanErrors++;
+		const status = await update(path);
+		if (status !== "valid") {
+			const old = byPath(path);
+			const header = old ? undefined : await readSessionHeader(path);
+			const cwd =
+				old?.cwd ?? (header?.status === "valid" && header.meta.cwd.trim() ? header.meta.cwd : undefined);
+			nextIssues.push({ cwd, reason: status === "unknown" ? "unreadable" : "invalid" });
+		}
 		if (++n % 4 === 0) await tick();
 	}
 	if (disposed) return;
@@ -247,21 +281,44 @@ async function reconcile() {
 				db.prepare("DELETE FROM sessions WHERE path = ?").run(row.path);
 				changed();
 			}
-	errors = scanErrors;
+	setIssues(nextIssues);
 	complete = !discoveryFailed && errors === 0;
 	confirmedMissing.clear();
 	if (complete)
 		for (const row of rows())
 			if (belongs(row.path, sessionsDir) && !found.has(row.path)) confirmedMissing.add(row.path);
-	if (complete !== previousComplete || errors !== previousErrors) changed();
 }
 function refresh() {
 	if (!scan) {
-		scan = reconcile().finally(() => {
-			scan = undefined;
-		});
+		scanActivity = { id: randomUUID(), startedAt: Date.now() };
+		notifyStatus();
+		scan = reconcile()
+			.catch((error) => {
+				setIssues([{ reason: "scan_failed" }]);
+				complete = false;
+				throw error;
+			})
+			.finally(() => {
+				scan = undefined;
+				scanActivity = null;
+				notifyStatus();
+			});
 	}
 	return scan;
+}
+let requestedRefresh: Promise<void> | undefined;
+function requestRefresh() {
+	if (!requestedRefresh) {
+		const running = scan;
+		const request = (async () => {
+			if (running) await running.catch(() => {});
+			if (!disposed) await refresh();
+		})();
+		requestedRefresh = request.finally(() => {
+			requestedRefresh = undefined;
+		});
+	}
+	return requestedRefresh;
 }
 function query(q: SessionCatalogQuery = {}) {
 	if (!q || typeof q !== "object" || Array.isArray(q)) throw new Error("Invalid catalog query");
@@ -333,6 +390,8 @@ function query(q: SessionCatalogQuery = {}) {
 		revision,
 		complete,
 		errors,
+		scan: scanSnapshot(),
+		diagnostics: diagnostics(q.cwd),
 		total: complete && !errors ? count : undefined,
 	};
 }
@@ -347,6 +406,8 @@ function projects() {
 		revision,
 		complete,
 		errors,
+		scan: scanSnapshot(),
+		diagnostics: diagnostics(),
 	};
 }
 const countIdentityBytes = identityReadCounter
@@ -370,9 +431,7 @@ function queueIdentityRefresh() {
 					if (!disposed) await refresh();
 				} while (refreshAgain && !disposed);
 			} catch {
-				errors++;
-				complete = false;
-				changed();
+				// refresh publishes failure state itself.
 			} finally {
 				refreshQueued = false;
 			}
@@ -533,8 +592,16 @@ async function run(method: string, params: any) {
 			if (params !== undefined && (!object(params) || Object.keys(params).length))
 				throw new Error("Invalid catalog parameters");
 			return projects();
-		case "query":
-			return query(params);
+		case "query": {
+			params ??= {};
+			if (!object(params)) throw new Error("Invalid catalog query");
+			const { refresh: requested, ...rest } = params;
+			if (requested !== undefined && typeof requested !== "boolean") throw new Error("Invalid catalog query");
+			// Validate before starting IO, including the cursor and all query keys.
+			query(rest);
+			if (requested) await requestRefresh();
+			return query(rest);
+		}
 		case "verify":
 			if (!Array.isArray(params)) {
 				if (!object(params)) throw new Error("Invalid catalog references");
@@ -649,17 +716,9 @@ port.on("close", () => {
 void ready
 	.then(() => {
 		if (disposed) return;
-		void refresh().catch(() => {
-			errors++;
-			complete = false;
-			changed();
-		});
+		void refresh().catch(() => {});
 		timer = setInterval(() => {
-			void refresh().catch(() => {
-				errors++;
-				complete = false;
-				changed();
-			});
+			void refresh().catch(() => {});
 		}, 20_000);
 		timer.unref();
 	})

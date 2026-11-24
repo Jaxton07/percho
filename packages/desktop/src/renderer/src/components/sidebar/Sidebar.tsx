@@ -47,7 +47,7 @@ export function Sidebar() {
 	// 默认展开组使用同一当前目录规则，不依赖外部seed的兼容镜像。
 	const activeCwd = useSessionsStore(selectActiveCwd);
 
-	const { data, verified, catalogs, environments } = usePagedSidebar({
+	const { data, verified, catalogs, environments, watchedEnvironments } = usePagedSidebar({
 		addedProjects,
 		activeCwd,
 		pinnedSessions,
@@ -61,6 +61,28 @@ export function Sidebar() {
 	// 首次开合的起点由派生层给（当前会话所在组），组件不自己再算一遍。
 	const batching = useSidebarBatching({ search, defaults: data.defaultExpandedKeys });
 	const empty = data.dailies.length === 0 && data.projects.length === 0;
+	// 首次项目发现失败时没有分组可承载重试，在项目区提供明确的环境入口，而非目录进度提示。
+	const discoveryFallback =
+		!search && data.projects.length === 0
+			? watchedEnvironments.map((environment) => {
+					const key = environmentKey(environment);
+					const catalog = catalogs[key];
+					if (!catalog?.error || catalog.projects) return null;
+					return (
+						<button
+							key={key}
+							type="button"
+							disabled={catalog.loading}
+							className="px-1.5 text-ui-12 text-ink-faint enabled:hover:text-ink-2"
+							onClick={() => void useSessionCatalogStore.getState().loadProjects(environment)}
+						>
+							{environment.kind === "local"
+								? t("sidebar.catalogLocalProjectsRetry")
+								: t("sidebar.catalogRemoteProjectsRetry")}
+						</button>
+					);
+				})
+			: null;
 
 	// 左栏唯一滚动容器的边界淡出（底部下沿淡出，原来这里是一条 1px 实线）
 	const sidebarScrollRef = useRef<HTMLDivElement>(null);
@@ -96,6 +118,7 @@ export function Sidebar() {
 					))}
 					<ProjectSection
 						projects={data.projects}
+						discoveryFallback={discoveryFallback}
 						activeSessionId={activeSessionId}
 						batching={batching}
 						paging={paging}
@@ -107,23 +130,6 @@ export function Sidebar() {
 							batching.forget(cwd);
 						}}
 					/>
-					{environments.map((environment) => {
-						const catalog = catalogs[environmentKey(environment)];
-						return catalog?.error ? (
-							<button
-								key={environmentKey(environment)}
-								type="button"
-								className="px-1.5 text-ui-12 text-ink-faint hover:text-ink-2"
-								onClick={() => void useSessionCatalogStore.getState().loadProjects(environment)}
-							>
-								{t("sidebar.catalogRetry")}
-							</button>
-						) : catalog?.projects && !catalog.projects.complete ? (
-							<p key={environmentKey(environment)} className="px-1.5 text-ui-12 text-ink-faint">
-								{t("sidebar.catalogPartial")}
-							</p>
-						) : null;
-					})}
 					{empty &&
 						environments.every(
 							(environment) => catalogs[environmentKey(environment)]?.projects?.complete,

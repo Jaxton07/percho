@@ -189,11 +189,21 @@ export function usePagedSidebar(input: {
 		});
 		const visible = (cwd: string) => {
 			if (!search) return true;
-			const page =
-				catalogs[environmentKey(environmentEntityRef(cwd).environment)]?.pages[
-					sessionCatalogPageKey({ cwd, search, archived: false, limit: 6 })
-				];
-			if (!page || page.loading || page.error || !page.complete) return true;
+			const environment = environmentEntityRef(cwd).environment;
+			const key = environmentKey(environment);
+			const catalog = catalogs[key];
+			const page = catalog?.pages[sessionCatalogPageKey({ cwd, search, archived: false, limit: 6 })];
+			if (
+				(environment.kind !== "local" && key !== connectedEnvironment) ||
+				!page ||
+				page.loading ||
+				page.error ||
+				!page.complete ||
+				page.scan ||
+				catalog?.projects?.scan ||
+				(page.diagnostics?.errors ?? 0) > 0
+			)
+				return true;
 			const query = search.toLowerCase();
 			return [
 				...page.sessions,
@@ -219,6 +229,7 @@ export function usePagedSidebar(input: {
 	}, [
 		catalogs,
 		environments,
+		connectedEnvironment,
 		known,
 		memory,
 		local,
@@ -236,6 +247,7 @@ export function usePagedSidebar(input: {
 		verified: [...verified, ...Object.values(local)],
 		catalogs,
 		environments,
+		watchedEnvironments,
 		dailyDirs: getDailyDirsCached(),
 	};
 }

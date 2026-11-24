@@ -48,6 +48,196 @@ beforeEach(() => {
 });
 
 describe("session catalog", () => {
+	it("keeps discovery failure visible while retrying and clears it only on success", async () => {
+		api.querySessionProjects.mockRejectedValueOnce(new Error("unavailable"));
+		await useSessionCatalogStore.getState().loadProjects(LOCAL_ENVIRONMENT);
+		const retry = deferred<import("@percho/shared").SessionCatalogProjects>();
+		api.querySessionProjects.mockReturnValueOnce(retry.promise);
+		const request = useSessionCatalogStore.getState().loadProjects(LOCAL_ENVIRONMENT);
+		expect(state()?.loading).toBe(true);
+		expect(state()?.error).toBe("unavailable");
+		retry.resolve({ projects: [], revision: "fresh", complete: true, errors: 0 });
+		await request;
+		expect(state()?.error).toBeUndefined();
+	});
+	it("revalidates cached remote pages on a new watch even without a directory change event", async () => {
+		const remote = { kind: "ssh", connectionId: "host", environmentId: "remote" } as const;
+		api.querySessionCatalog.mockResolvedValueOnce({ ...page("old"), sessions: [] });
+		await useSessionCatalogStore.getState().loadPage(remote, query);
+		api.querySessionCatalog.mockClear();
+		api.querySessionCatalog.mockResolvedValue(page("new"));
+		const stop = useSessionCatalogStore.getState().watch(remote);
+		expect(api.querySessionCatalog).toHaveBeenCalledTimes(1);
+		await Promise.resolve();
+		const remotePage =
+			useSessionCatalogStore.getState().byEnvironment[environmentKey(remote)]?.pages[
+				sessionCatalogPageKey(query)
+			];
+		expect(remotePage?.sessions[0]?.sessionId).toBe("new");
+		stop();
+	});
+	it.each([-3600000, 3600000])(
+		"uses elapsed scan time despite a remote clock offset of %i ms",
+		async (offset) => {
+			vi.useFakeTimers();
+			vi.setSystemTime(10000);
+			const scan = { id: "remote-scan", startedAt: 10000 + offset, elapsedMs: 1500 };
+			api.querySessionCatalog.mockResolvedValue({ ...page("a"), scan });
+			await useSessionCatalogStore.getState().loadPage(LOCAL_ENVIRONMENT, query);
+			expect(current()?.scan?.startedAt).toBe(8500);
+			vi.setSystemTime(11000);
+			await useSessionCatalogStore.getState().loadPage(LOCAL_ENVIRONMENT, query);
+			expect(current()?.scan?.startedAt).toBe(8500);
+			vi.useRealTimers();
+		},
+	);
+	it("refetches scoped diagnostics when their version changes without invalidating data cursors", async () => {
+		vi.useFakeTimers();
+		let change: (event: import("@percho/shared").SessionCatalogChange) => void = () => {};
+		api.onSessionCatalogChanged.mockImplementation((handler) => {
+			change = handler;
+			return () => {};
+		});
+		api.querySessionProjects.mockResolvedValue({
+			projects: [],
+			revision: "1",
+			complete: false,
+			errors: 1,
+			diagnostics: { errors: 1, reasons: {}, revision: "old" },
+		});
+		api.querySessionCatalog.mockResolvedValue({
+			...page("a", "1", "cursor"),
+			sessions: Array.from({ length: 6 }, (_, index) => meta(`a${index}`)),
+			complete: false,
+			diagnostics: { errors: 0, reasons: {}, revision: "old" },
+		});
+		await useSessionCatalogStore.getState().loadPage(LOCAL_ENVIRONMENT, query);
+		const stop = useSessionCatalogStore.getState().watch(LOCAL_ENVIRONMENT);
+		await Promise.resolve();
+		const count = api.querySessionCatalog.mock.calls.length;
+		change({
+			revision: "1",
+			complete: false,
+			scan: null,
+			diagnostics: { errors: 1, reasons: {}, revision: "new" },
+		});
+		await vi.advanceTimersByTimeAsync(150);
+		expect(api.querySessionCatalog).toHaveBeenCalledTimes(count + 1);
+		expect(current()?.revision).toBe("1");
+		expect(current()?.nextCursor).toBe("cursor");
+		stop();
+		vi.useRealTimers();
+	});
+	it("passes refresh only to the first request and preserves the loaded range", async () => {
+		api.querySessionCatalog.mockImplementation(async ({ query: q }) => {
+			const start = Number(q.cursor ?? 0);
+			return {
+				...page(String(start), "1", start < 10 ? String(start + q.limit) : undefined),
+				sessions: Array.from({ length: q.limit }, (_, i) => meta(String(start + i))),
+			};
+		});
+		await useSessionCatalogStore.getState().loadPage(LOCAL_ENVIRONMENT, query);
+		await useSessionCatalogStore.getState().loadPage(LOCAL_ENVIRONMENT, query, true);
+		api.querySessionCatalog.mockClear();
+		await useSessionCatalogStore
+			.getState()
+			.loadPage(LOCAL_ENVIRONMENT, { ...query, refresh: true }, false, true);
+		expect(api.querySessionCatalog.mock.calls[0]?.[0].query.refresh).toBe(true);
+		expect(api.querySessionCatalog.mock.calls[1]?.[0].query.refresh).toBeUndefined();
+		expect(current()?.query.refresh).toBeUndefined();
+		expect(current()?.sessions).toHaveLength(22);
+	});
+	it("keeps the original loading time across overlapping requests and clears it on failure", async () => {
+		vi.useFakeTimers();
+		vi.setSystemTime(1000);
+		const first = deferred<SessionCatalogPage>();
+		const second = deferred<SessionCatalogPage>();
+		api.querySessionCatalog.mockReturnValueOnce(first.promise).mockReturnValueOnce(second.promise);
+		const a = useSessionCatalogStore.getState().loadPage(LOCAL_ENVIRONMENT, query);
+		vi.setSystemTime(2000);
+		const b = useSessionCatalogStore.getState().loadPage(LOCAL_ENVIRONMENT, query);
+		expect(current()?.loadingStartedAt).toBe(1000);
+		second.reject(new Error("failed"));
+		await b;
+		expect(current()?.loadingStartedAt).toBeUndefined();
+		first.resolve(page("late"));
+		await a;
+		vi.useRealTimers();
+	});
+	it("propagates scan-only changes without refetch or replacing scoped diagnostics, rejecting late snapshots", async () => {
+		vi.useFakeTimers();
+		let change!: (event: import("@percho/shared").SessionCatalogChange) => void;
+		api.onSessionCatalogChanged.mockImplementation((cb) => {
+			change = cb;
+			return () => {};
+		});
+		const scoped = { errors: 1, reasons: { scoped: 1 } };
+		api.querySessionCatalog.mockResolvedValue({ ...page("a"), scan: null, diagnostics: scoped });
+		await useSessionCatalogStore.getState().loadPage(LOCAL_ENVIRONMENT, query);
+		const stop = useSessionCatalogStore.getState().watch(LOCAL_ENVIRONMENT);
+		await Promise.resolve();
+		change({ revision: "1", complete: true, scan: null });
+		await vi.advanceTimersByTimeAsync(150);
+		const pending = deferred<SessionCatalogPage>();
+		api.querySessionCatalog.mockReturnValueOnce(pending.promise);
+		const load = useSessionCatalogStore.getState().loadPage(LOCAL_ENVIRONMENT, query);
+		const count = api.querySessionCatalog.mock.calls.length;
+		const scan = { id: "scan", startedAt: 100 };
+		change({ revision: "1", complete: true, scan, diagnostics: { errors: 4, reasons: { global: 4 } } });
+		expect(current()?.scan).toEqual(scan);
+		expect(current()?.diagnostics).toEqual(scoped);
+		pending.resolve({ ...page("late"), scan: null, diagnostics: scoped });
+		await load;
+		expect(current()?.scan).toEqual(scan);
+		change({ revision: "1", complete: true, scan: null });
+		expect(current()?.scan).toBeNull();
+		await vi.advanceTimersByTimeAsync(150);
+		expect(api.querySessionCatalog).toHaveBeenCalledTimes(count);
+		stop();
+		vi.useRealTimers();
+	});
+	it("protects pending project and page snapshots started before watching", async () => {
+		let change!: (event: import("@percho/shared").SessionCatalogChange) => void;
+		api.onSessionCatalogChanged.mockImplementation((cb) => {
+			change = cb;
+			return () => {};
+		});
+		const projects = deferred<import("@percho/shared").SessionCatalogProjects>();
+		const result = deferred<SessionCatalogPage>();
+		api.querySessionProjects.mockReturnValue(projects.promise);
+		api.querySessionCatalog.mockReturnValue(result.promise);
+		const pageLoad = useSessionCatalogStore.getState().loadPage(LOCAL_ENVIRONMENT, query);
+		const stop = useSessionCatalogStore.getState().watch(LOCAL_ENVIRONMENT);
+		const scan = { id: "new", startedAt: 42 };
+		change({ revision: "1", complete: true, scan });
+		projects.resolve({ projects: [], revision: "1", complete: true, errors: 0, scan: null });
+		result.resolve({ ...page("a"), scan: null });
+		await pageLoad;
+		await Promise.resolve();
+		expect(current()?.scan).toEqual(scan);
+		expect(state()?.projects?.scan).toEqual(scan);
+		stop();
+		change({ revision: "2", complete: true, scan: null });
+		expect(current()?.scan).toEqual(scan);
+	});
+	it("does not revive a released watch or commit its pending request", async () => {
+		let change!: (event: import("@percho/shared").SessionCatalogChange) => void;
+		api.onSessionCatalogChanged.mockImplementation((cb) => {
+			change = cb;
+			return () => {};
+		});
+		const pending = deferred<SessionCatalogPage>();
+		api.querySessionCatalog.mockReturnValueOnce(pending.promise);
+		const stop = useSessionCatalogStore.getState().watch(LOCAL_ENVIRONMENT);
+		const load = useSessionCatalogStore.getState().loadPage(LOCAL_ENVIRONMENT, query);
+		stop();
+		change({ revision: "1", complete: true, scan: { id: "late", startedAt: 1 } });
+		pending.resolve({ ...page("late"), scan: { id: "late", startedAt: 1 } });
+		await load;
+		expect(current()?.sessions).toEqual([]);
+		expect(current()?.loading).toBe(false);
+		expect(current()?.scan).toBeUndefined();
+	});
 	it("loads six then appends sixteen, resetting on revision mismatch", async () => {
 		api.querySessionCatalog
 			.mockResolvedValueOnce(page("a", "1", "next"))

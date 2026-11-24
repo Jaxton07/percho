@@ -2,6 +2,17 @@ import type { SessionMeta } from "./session";
 
 export type SessionCatalogSort = "archived" | "modified" | "created" | "name";
 
+export interface SessionCatalogScan {
+	id: string;
+	startedAt: number;
+	elapsedMs?: number;
+}
+export interface SessionCatalogDiagnostics {
+	revision?: string;
+	errors: number;
+	reasons: Record<string, number>;
+}
+
 export interface SessionCatalogQuery {
 	cwd?: string;
 	search?: string;
@@ -9,6 +20,7 @@ export interface SessionCatalogQuery {
 	sort?: SessionCatalogSort;
 	limit?: number;
 	cursor?: string;
+	refresh?: boolean;
 }
 
 export interface SessionCatalogPage {
@@ -17,6 +29,8 @@ export interface SessionCatalogPage {
 	revision: string;
 	complete: boolean;
 	errors: number;
+	scan?: SessionCatalogScan | null;
+	diagnostics?: SessionCatalogDiagnostics;
 	total?: number;
 }
 
@@ -32,6 +46,8 @@ export interface SessionCatalogProjects {
 	revision: string;
 	complete: boolean;
 	errors: number;
+	scan?: SessionCatalogScan | null;
+	diagnostics?: SessionCatalogDiagnostics;
 }
 
 export interface SessionCatalogReference {
@@ -76,4 +92,6 @@ export interface SessionProjectDeletionResult {
 export interface SessionCatalogChange {
 	revision: string;
 	complete: boolean;
+	scan?: SessionCatalogScan | null;
+	diagnostics?: SessionCatalogDiagnostics;
 }
