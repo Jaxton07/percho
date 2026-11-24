@@ -107,7 +107,7 @@ export function ActivityStatusRow({
 			if (parent instanceof HTMLDetailsElement) details.push(parent);
 		}
 		const expanded = () => details.some((detail) => detail.open);
-		const paused = () => document.hidden || !document.hasFocus();
+		const paused = () => document.hidden;
 		const syncPause = () => {
 			if (paused()) field.setAttribute("data-paused", "");
 			else field.removeAttribute("data-paused");
@@ -137,8 +137,6 @@ export function ActivityStatusRow({
 			observer?.observe(detail, { attributes: true, attributeFilter: ["open"] });
 		});
 		document.addEventListener("visibilitychange", syncPause);
-		window.addEventListener("blur", syncPause);
-		window.addEventListener("focus", syncPause);
 		const measure = () => {
 			const textRect = text.getBoundingClientRect();
 			const fieldRect = field.getBoundingClientRect();
@@ -203,8 +201,8 @@ export function ActivityStatusRow({
 				enterNext.current = false;
 				container.dataset.phase = "enter";
 				controller = text.animate([{ clipPath: "inset(0 100% 0 0)" }, { clipPath: "inset(0 0% 0 0)" }], {
-					duration: 600,
-					easing: "ease-in-out",
+					duration: Math.max(1, Math.round((text.getBoundingClientRect().width / SWEEP_SPEED) * 1000)),
+					easing: "linear",
 				});
 				animations = [controller];
 				syncPause();
@@ -288,8 +286,6 @@ export function ActivityStatusRow({
 			resize?.disconnect();
 			cancelAnimationFrame(resizeFrame);
 			document.removeEventListener("visibilitychange", syncPause);
-			window.removeEventListener("blur", syncPause);
-			window.removeEventListener("focus", syncPause);
 		};
 	}, [current, language, revision, reduced, staticFallback]);
 
