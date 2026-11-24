@@ -1,5 +1,5 @@
 import { execFile } from "node:child_process";
-import { access, mkdir, mkdtemp, rename, rm } from "node:fs/promises";
+import { access, mkdir, mkdtemp, readFile, rename, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
@@ -185,6 +185,44 @@ it("recovers an unbound archive whose session cwd no longer exists", async () =>
 	await expect(backend.openSession(active.file)).resolves.toMatchObject({ sessionId: active.id });
 	await removeProject(backend, f.normal);
 	await removeProject(backend, f.missing);
+}, 30_000);
+
+it("retains a missing archived source without blocking healthy sessions, then retries on restart", async () => {
+	const f = await fixture();
+	const archived = session(f.missing);
+	const active = session(f.normal);
+	const before = f.backend();
+	const archive = new SessionArchiveService({
+		agentDir: f.agentDir,
+		catalog: () => before.getSessionCatalog(),
+		getSession: () => undefined,
+		hasPending: () => false,
+		disposeSession: async () => {},
+		withFile: async (_files, operation) => operation(),
+	});
+	await archive.init();
+	await archive.archive({ sessionId: archived.id, sessionFile: archived.file, expectedRevision: 0 });
+	const authorityPath = join(f.agentDir, "session-archive.json");
+	const authority = await readFile(authorityPath);
+	const bytes = await readFile(archived.file);
+	await before.shutdown();
+	await rm(archived.file);
+	const after = f.backend();
+	await expect(after.querySessionCatalog({ cwd: f.normal, limit: 100 })).resolves.toMatchObject({
+		sessions: [expect.objectContaining({ sessionId: active.id })],
+	});
+	await expect(after.openSession(active.file)).resolves.toMatchObject({ sessionId: active.id });
+	expect(await readFile(authorityPath)).toEqual(authority);
+	await expect(after.openSession(archived.file)).rejects.toThrow();
+	await after.shutdown();
+	await writeFile(archived.file, bytes);
+	const restarted = f.backend();
+	await expect(restarted.querySessionCatalog({ cwd: f.normal, limit: 100 })).resolves.toBeDefined();
+	expect(await readFile(authorityPath)).toEqual(authority);
+	await expect(f.service(f.missing).pendingMaintenance()).resolves.toMatchObject([
+		{ sessionId: archived.id, state: "archived" },
+	]);
+	await expect(restarted.openSession(archived.file)).rejects.toThrow(/archived|unresolved/i);
 }, 30_000);
 
 it("logs archive initialization failure before creating the catalog", async () => {

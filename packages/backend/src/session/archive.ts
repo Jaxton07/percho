@@ -50,6 +50,9 @@ export interface SessionArchiveOptions {
 		input: ChannelArchiveMaintenance & { outcome: "archived" | "active" },
 	) => Promise<void>;
 }
+/** A missing source with no durable channel proof is local, but its archive stays blocked. */
+export class ArchiveSourceUnavailableError extends Error {}
+
 export type SessionArchiveState = SessionArchiveResult & {
 	phase: Phase | "none";
 	blocked: boolean;
@@ -389,50 +392,62 @@ export class SessionArchiveService {
 			await this.confirmUncertain();
 			const current = await this.data(true);
 			for (const r of [...current.records]) {
-				if (this.options.confirmDeleted) {
-					const removed = await this.options.withFile([r.file], async () => {
-						if (!(await this.options.confirmDeleted?.(this.maintenance(r)))) return false;
-						current.records = current.records.filter((item) => item !== r);
-						await this.save(current);
-						return true;
+				try {
+					await this.recoverRecord(r, current);
+				} catch (error) {
+					if (!(error instanceof ArchiveSourceUnavailableError)) throw error;
+					log.warn("Archive recovery postponed: session source unavailable", {
+						sessionId: r.id,
+						sessionFile: r.file,
+						operationId: r.opId,
 					});
-					if (removed) continue;
 				}
-				if (r.phase === "unarchived") {
-					await this.completeMaintenance(r, "active");
-					continue;
-				}
-				if (r.phase === "archived" || r.phase === "archived-cleanup") {
-					await this.prepareMaintenance(r);
-					await this.completeMaintenance(r, "archived");
-					continue;
-				}
-				if (r.phase !== "prepared") continue;
-				await this.options.withFile([r.file], async () => {
-					let matches = false;
-					try {
-						matches = (await inspect(r.file, r.id)).lastOp === r.opId;
-					} catch {
-						/* retain blocked intent */
-					}
-					if (!matches) return;
-					await this.prepareMaintenance(r);
-					const handle = await open(r.file, "r+");
-					try {
-						await handle.sync();
-					} finally {
-						await handle.close();
-					}
-					r.phase = "archived-cleanup";
-					await this.save(current);
-					await this.completeMaintenance(r, "archived");
-					// A stale disposable index must never prevent recovery of the authoritative state.
-					try {
-						await this.options.catalog().setArchive(this.projection(r));
-					} catch (error) {
-						log.warn("Archive catalog projection failed", error);
-					}
-				});
+			}
+		});
+	}
+	private async recoverRecord(r: RecordEntry, current: ArchiveData): Promise<void> {
+		if (this.options.confirmDeleted) {
+			const removed = await this.options.withFile([r.file], async () => {
+				if (!(await this.options.confirmDeleted?.(this.maintenance(r)))) return false;
+				current.records = current.records.filter((item) => item !== r);
+				await this.save(current);
+				return true;
+			});
+			if (removed) return;
+		}
+		if (r.phase === "unarchived") {
+			await this.completeMaintenance(r, "active");
+			return;
+		}
+		if (r.phase === "archived" || r.phase === "archived-cleanup") {
+			await this.prepareMaintenance(r);
+			await this.completeMaintenance(r, "archived");
+			return;
+		}
+		if (r.phase !== "prepared") return;
+		await this.options.withFile([r.file], async () => {
+			let matches = false;
+			try {
+				matches = (await inspect(r.file, r.id)).lastOp === r.opId;
+			} catch {
+				/* retain blocked intent */
+			}
+			if (!matches) return;
+			await this.prepareMaintenance(r);
+			const handle = await open(r.file, "r+");
+			try {
+				await handle.sync();
+			} finally {
+				await handle.close();
+			}
+			r.phase = "archived-cleanup";
+			await this.save(current);
+			await this.completeMaintenance(r, "archived");
+			// A stale disposable index must never prevent recovery of the authoritative state.
+			try {
+				await this.options.catalog().setArchive(this.projection(r));
+			} catch (error) {
+				log.warn("Archive catalog projection failed", error);
 			}
 		});
 	}

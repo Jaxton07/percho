@@ -92,7 +92,7 @@ import { TrustGate } from "./project/trust";
 import { ProjectResourceLoader } from "./project/trust-loader";
 import { addAllowedPattern, addWorkspaceRoot } from "./project/workspace-store";
 import { RUNTIME_MESSAGE_BYTES } from "./runtime/frames";
-import { readSessionHeaderId, SessionArchiveService } from "./session/archive";
+import { ArchiveSourceUnavailableError, readSessionHeaderId, SessionArchiveService } from "./session/archive";
 import { SessionCatalog } from "./session/catalog";
 import {
 	composerInputBridge,
@@ -587,10 +587,10 @@ export class PiBackend {
 				return true;
 			},
 			prepareChannelMaintenance: async ({ sessionId, sessionFile, operationId }) => {
-				if (!existsSync(sessionFile)) {
+				if (!(await sourceExists(sessionFile))) {
 					const match = await this.getChannelHost().find(sessionId, sessionFile);
-					if (!match || match.fence.opId !== operationId)
-						throw new Error("Channel maintenance source unavailable");
+					if (!match) throw new ArchiveSourceUnavailableError("Channel maintenance source unavailable");
+					if (match.fence.opId !== operationId) throw new Error("Channel maintenance operation changed");
 					await match.service.prepareMaintenance(sessionId, operationId, "archive", sessionFile);
 					return;
 				}
@@ -602,11 +602,11 @@ export class PiBackend {
 				await service.prepareMaintenance(sessionId, operationId, "archive", sessionFile);
 			},
 			completeChannelMaintenance: async ({ sessionId, sessionFile, operationId, outcome }) => {
-				if (!existsSync(sessionFile)) {
+				if (!(await sourceExists(sessionFile))) {
 					const match = await this.getChannelHost().find(sessionId, sessionFile);
 					if (!match && outcome === "active") return;
-					if (!match || match.fence.opId !== operationId)
-						throw new Error("Channel maintenance source unavailable");
+					if (!match) throw new ArchiveSourceUnavailableError("Channel maintenance source unavailable");
+					if (match.fence.opId !== operationId) throw new Error("Channel maintenance operation changed");
 					await match.service.completeMaintenance(sessionId, operationId, outcome);
 					return;
 				}

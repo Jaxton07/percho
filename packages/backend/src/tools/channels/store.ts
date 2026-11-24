@@ -14,10 +14,6 @@ import type {
 	ChannelSnapshotEntry,
 } from "./types";
 
-interface Marker {
-	version: 1;
-	id: string;
-}
 interface Cursor {
 	version: 1;
 	type: "channel-list";
@@ -58,32 +54,14 @@ export class ChannelStore {
 	get markerPath() {
 		return this.database.markerPath;
 	}
-	get marker() {
-		return this.database.marker;
-	}
-	get db() {
-		return this.database.db;
-	}
-	get databaseId() {
+	private get databaseId() {
 		return this.database.databaseId;
 	}
-	get cursorSecret() {
+	private get cursorSecret() {
 		return this.database.cursorSecret;
 	}
-	get fileIdentity() {
-		return this.database.fileIdentity;
-	}
-
-	readMarker(): Marker | null {
-		return this.database.readMarker();
-	}
-
 	open(create = false): DatabaseSync | null {
 		return this.database.open(create);
-	}
-
-	verify(): void {
-		this.database.verify();
 	}
 
 	transaction<T>(fn: (db: DatabaseSync) => T): T {
