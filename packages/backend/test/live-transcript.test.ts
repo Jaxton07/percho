@@ -48,6 +48,21 @@ describe("current-turn baseline projection", () => {
 		const active = live.snapshot(manager.getBranch(), { streaming: true, compacting: false });
 		expect(active.retrying).toBeNull();
 		expect(active.messages.filter((message) => message.kind === "error")).toHaveLength(0);
+		const recovered = assistant("恢复成功", 2);
+		manager.appendMessage(recovered);
+		emit({ type: "message_end", message: recovered });
+		emit({ type: "auto_retry_end", success: true, attempt: 1 });
+		expect(
+			live
+				.snapshot(manager.getBranch(), { streaming: true, compacting: false })
+				.messages.filter((message) => message.kind === "error"),
+		).toHaveLength(0);
+		emit({ type: "turn_end", message: recovered, toolResults: [] });
+		expect(
+			live
+				.snapshot(manager.getBranch(), { streaming: false, compacting: false })
+				.messages.filter((message) => message.kind === "error"),
+		).toHaveLength(0);
 	});
 	it("溢出恢复先省略原消息但压缩失败时，历史基线仍保留真正的最终错误", () => {
 		const manager = SessionManager.inMemory();
@@ -77,6 +92,38 @@ describe("current-turn baseline projection", () => {
 		emit({ type: "agent_end", messages: [], willRetry: false });
 		const final = live.snapshot(manager.getBranch(), { streaming: false, compacting: false });
 		expect(final.messages.filter((message) => message.kind === "error")).toHaveLength(1);
+	});
+	it("新任务或普通压缩不能把旧轮已省略的最终失败当成当前恢复", () => {
+		const manager = SessionManager.inMemory();
+		const failure = {
+			...assistant("", 1),
+			stopReason: "error",
+			errorMessage: "context_length_exceeded",
+		} as Message;
+		const failedId = manager.appendMessage(failure);
+		manager.appendContextEdit(failedId, null);
+		const live = new LiveTranscript();
+		const emit = (event: unknown) => live.apply(event as SessionEvent, manager.getBranch());
+		emit({ type: "agent_start" });
+		emit({ type: "turn_start" });
+		const countErrors = (streaming: boolean, compacting = false) =>
+			live
+				.snapshot(manager.getBranch(), { streaming, compacting })
+				.messages.filter((message) => message.kind === "error").length;
+		expect(countErrors(true)).toBe(1);
+		const user = { role: "user" as const, content: "新任务", timestamp: 2 };
+		emit({ type: "message_start", message: user });
+		manager.appendMessage(user);
+		emit({
+			type: "message_update",
+			assistantMessageEvent: { type: "text_delta", contentIndex: 0, delta: "新任务的回复" },
+		});
+		expect(countErrors(true)).toBe(1);
+		emit({ type: "compaction_start", reason: "threshold" });
+		expect(countErrors(false, true)).toBe(1);
+		// 即使新任务确实开始溢出恢复，也不能跨过仍在瞬态区的新用户边界隐藏旧卡。
+		emit({ type: "compaction_start", reason: "overflow" });
+		expect(countErrors(false, true)).toBe(1);
 	});
 	it("活动基线的用户附件和未落盘show结果都只带引用，并保持实际SDK用户entry", () => {
 		const manager = SessionManager.inMemory();

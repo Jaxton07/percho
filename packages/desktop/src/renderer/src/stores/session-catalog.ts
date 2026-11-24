@@ -23,7 +23,7 @@ export interface CatalogEnvironmentState {
 }
 interface CatalogStore {
 	byEnvironment: Record<string, CatalogEnvironmentState>;
-	loadProjects: (environment: EnvironmentRef) => Promise<void>;
+	loadProjects: (environment: EnvironmentRef, refresh?: boolean) => Promise<void>;
 	loadPage: (
 		environment: EnvironmentRef,
 		query: SessionCatalogQuery,
@@ -142,7 +142,7 @@ export const useSessionCatalogStore = create<CatalogStore>((set, get) => {
 	};
 	return {
 		byEnvironment: {},
-		loadProjects: async (environment) => {
+		loadProjects: async (environment, refresh = false) => {
 			const key = environmentKey(environment);
 			const tokenKey = JSON.stringify([key, "projects"]);
 			const token = request(tokenKey);
@@ -151,6 +151,10 @@ export const useSessionCatalogStore = create<CatalogStore>((set, get) => {
 			try {
 				const api = getExecutionApi(environment);
 				if (!projectsApi(api)) throw new Error("Execution environment does not support querySessionProjects");
+				if (refresh && get().byEnvironment[key]?.projects?.scan !== undefined && pageApi(api)) {
+					await api.querySessionCatalog({ query: { limit: 1, refresh: true } });
+					if (requests.get(tokenKey) !== token) return;
+				}
 				const result = await api.querySessionProjects();
 				const projects = { ...result, scan: localScan(key, result.scan) };
 				if (requests.get(tokenKey) === token)

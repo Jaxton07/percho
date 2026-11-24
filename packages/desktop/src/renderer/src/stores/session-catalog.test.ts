@@ -48,6 +48,26 @@ beforeEach(() => {
 });
 
 describe("session catalog", () => {
+	it.each([false, true])(
+		"project discovery retry honors refresh capability (%s) without caching a global page",
+		async (supported) => {
+			api.querySessionProjects.mockResolvedValue({
+				projects: [],
+				revision: "1",
+				complete: false,
+				errors: 1,
+				...(supported ? { scan: null } : {}),
+			});
+			api.querySessionCatalog.mockResolvedValue(page("recheck"));
+			await useSessionCatalogStore.getState().loadProjects(LOCAL_ENVIRONMENT);
+			await useSessionCatalogStore.getState().loadProjects(LOCAL_ENVIRONMENT, true);
+			if (supported)
+				expect(api.querySessionCatalog).toHaveBeenCalledWith({ query: { limit: 1, refresh: true } });
+			else expect(api.querySessionCatalog).not.toHaveBeenCalled();
+			expect(state()?.pages).toEqual({});
+			expect(api.querySessionProjects).toHaveBeenCalledTimes(2);
+		},
+	);
 	it("keeps discovery failure visible while retrying and clears it only on success", async () => {
 		api.querySessionProjects.mockRejectedValueOnce(new Error("unavailable"));
 		await useSessionCatalogStore.getState().loadProjects(LOCAL_ENVIRONMENT);

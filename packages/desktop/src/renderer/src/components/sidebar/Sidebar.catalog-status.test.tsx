@@ -147,6 +147,53 @@ it("首次项目发现失败且没有分组时，项目区提供本机项目列�
 	expect(host.textContent).not.toContain("sidebar.catalogPartial");
 });
 
+it("本机已有项目时仍展示没有项目的远端首次发现失败入口", async () => {
+	const remote = { kind: "ssh", connectionId: "host", environmentId: "remote" } as const;
+	unregisterRemote = registerEnvironment(remote);
+	useRemoteConnectionStore.setState({ status: { revision: 1, state: "connected", environment: remote } });
+	api.querySessionProjects.mockResolvedValueOnce({
+		projects: [{ cwd, sessionCount: 1, archivedCount: 0, lastActive: 1 }],
+		revision: "local",
+		complete: true,
+		errors: 0,
+		scan: null,
+	});
+	api.querySessionProjects.mockRejectedValueOnce(new Error("remote unavailable"));
+	await render(false);
+	expect(host.textContent).toContain("project");
+	expect(host.textContent).toContain("sidebar.catalogRemoteProjectsRetry");
+	expect(host.textContent).not.toContain("sidebar.catalogLocalProjectsRetry");
+});
+
+it("目录以扫描诊断返回首次发现故障时仍提供真实重新扫描的入口", async () => {
+	useProjectsStore.setState({ addedProjects: [] });
+	api.querySessionProjects.mockResolvedValue({
+		projects: [],
+		revision: "1",
+		complete: false,
+		errors: 1,
+		scan: null,
+		diagnostics: { errors: 1, reasons: { discovery: 1 } },
+	});
+	await render(false);
+	const retry = [...host.querySelectorAll("button")].find((button) =>
+		button.textContent?.includes("sidebar.catalogLocalProjectsRetry"),
+	);
+	expect(retry).toBeDefined();
+	if (!retry) throw new Error("Missing diagnostic retry");
+	api.querySessionProjects.mockResolvedValue({
+		projects: [{ cwd, sessionCount: 1, archivedCount: 0, lastActive: 1 }],
+		complete: true,
+		errors: 0,
+		revision: "recovered",
+		scan: null,
+	});
+	api.querySessionCatalog.mockResolvedValue(result({ complete: true, errors: 0, scan: null }));
+	await act(async () => retry.click());
+	expect(api.querySessionCatalog).toHaveBeenCalledWith({ query: { limit: 1, refresh: true } });
+	expect(host.textContent).not.toContain("sidebar.catalogLocalProjectsRetry");
+});
+
 it.each(["issues", "error"])("%s 的重试在途时禁用按钮，避免重复请求", async (kind) => {
 	if (kind === "error") api.querySessionCatalog.mockRejectedValueOnce(new Error("failed"));
 	await render(true);
@@ -175,6 +222,7 @@ it("收起的项目不显示目录状态，侧栏底部也不泄漏全局整理�
 	expect(host.textContent).not.toContain("sidebar.catalogPartial");
 	expect(host.textContent).not.toContain("sidebar.catalogRetry");
 	expect(api.querySessionCatalog).not.toHaveBeenCalled();
+	expect(host.textContent).not.toContain("sidebar.catalogLocalProjectsRetry");
 });
 
 it("展开后仅显示该项目异常，收起后立即移除状态和重试入口", async () => {

@@ -1,4 +1,4 @@
-import { environmentKey } from "@percho/shared";
+import { environmentEntityRef, environmentKey } from "@percho/shared";
 import { type CSSProperties, useRef, useState } from "react";
 import { useT } from "../../i18n";
 import { selectActiveCwd } from "../../lib/active-cwd";
@@ -62,27 +62,31 @@ export function Sidebar() {
 	const batching = useSidebarBatching({ search, defaults: data.defaultExpandedKeys });
 	const empty = data.dailies.length === 0 && data.projects.length === 0;
 	// 首次项目发现失败时没有分组可承载重试，在项目区提供明确的环境入口，而非目录进度提示。
-	const discoveryFallback =
-		!search && data.projects.length === 0
-			? watchedEnvironments.map((environment) => {
-					const key = environmentKey(environment);
-					const catalog = catalogs[key];
-					if (!catalog?.error || catalog.projects) return null;
-					return (
-						<button
-							key={key}
-							type="button"
-							disabled={catalog.loading}
-							className="px-1.5 text-ui-12 text-ink-faint enabled:hover:text-ink-2"
-							onClick={() => void useSessionCatalogStore.getState().loadProjects(environment)}
-						>
-							{environment.kind === "local"
-								? t("sidebar.catalogLocalProjectsRetry")
-								: t("sidebar.catalogRemoteProjectsRetry")}
-						</button>
-					);
-				})
-			: null;
+	const discoveryFallback = !search
+		? watchedEnvironments.map((environment) => {
+				const key = environmentKey(environment);
+				const catalog = catalogs[key];
+				const hasProject = data.projects.some(
+					(project) => environmentKey(environmentEntityRef(project.cwd).environment) === key,
+				);
+				const discoveryFailed =
+					catalog?.error || (catalog?.projects?.diagnostics?.errors ?? catalog?.projects?.errors ?? 0) > 0;
+				if (!catalog || hasProject || !discoveryFailed) return null;
+				return (
+					<button
+						key={key}
+						type="button"
+						disabled={catalog.loading}
+						className="px-1.5 text-ui-12 text-ink-faint enabled:hover:text-ink-2"
+						onClick={() => void useSessionCatalogStore.getState().loadProjects(environment, true)}
+					>
+						{environment.kind === "local"
+							? t("sidebar.catalogLocalProjectsRetry")
+							: t("sidebar.catalogRemoteProjectsRetry")}
+					</button>
+				);
+			})
+		: null;
 
 	// 左栏唯一滚动容器的边界淡出（底部下沿淡出，原来这里是一条 1px 实线）
 	const sidebarScrollRef = useRef<HTMLDivElement>(null);

@@ -17,6 +17,8 @@ export class LiveTranscript {
 	private userSources = new WeakMap<object, string>();
 	private imageSources = new WeakMap<DisplayImage[], object>();
 	private state = emptyTranscript();
+	// 仅由恢复事件置位；普通新任务的 streaming/compacting 不能替旧轮失败作恢复证明。
+	private recoveryActive = false;
 	apply(
 		event: SessionEvent,
 		branch: readonly SessionEntry[],
@@ -24,6 +26,23 @@ export class LiveTranscript {
 		rawToolResult?: object,
 	): void {
 		this.sequence++;
+		if (
+			event.type === "auto_retry_start" ||
+			(event.type === "compaction_start" && event.reason === "overflow")
+		) {
+			this.recoveryActive = true;
+		} else if (
+			event.type === "agent_settled" ||
+			(event.type === "message_start" && event.message.role === "user") ||
+			(event.type === "auto_retry_end" && !event.success) ||
+			(event.type === "agent_end" && !event.willRetry) ||
+			(event.type === "compaction_end" && event.reason === "overflow" && !event.willRetry) ||
+			(event.type === "turn_end" &&
+				event.message.role === "assistant" &&
+				event.message.stopReason !== "error")
+		) {
+			this.recoveryActive = false;
+		}
 		if (event.type === "turn_start") {
 			this.anchor = branch.at(-1)?.id ?? null;
 			this.userSources = new WeakMap();
@@ -85,7 +104,10 @@ export class LiveTranscript {
 			...this.state,
 			messages: [
 				...messagesToUIMessages(project(history), {
-					recovering: Boolean(this.state.retrying || runtime.streaming || runtime.compacting),
+					recovering:
+						this.recoveryActive &&
+						!this.state.messages.some((message) => message.kind === "user") &&
+						Boolean(this.state.retrying || runtime.streaming || runtime.compacting),
 				}),
 				...this.state.messages.map((message) =>
 					transient && (message.kind === "user" || message.kind === "image")
