@@ -17,6 +17,67 @@ const assistant = (text: string, timestamp: number) =>
 	}) as Message;
 
 describe("current-turn baseline projection", () => {
+	it("重试退避和活动回复的基线都不把已省略的中间尝试显示成最终失败", () => {
+		const manager = SessionManager.inMemory();
+		const failure = {
+			...assistant("partial", 1),
+			stopReason: "error",
+			errorMessage: "503: temporary",
+		} as Message;
+		const failedId = manager.appendMessage(failure);
+		manager.appendContextEdit(failedId, null);
+		const live = new LiveTranscript();
+		const emit = (event: unknown) => live.apply(event as SessionEvent, manager.getBranch());
+		emit({ type: "turn_end", message: failure, toolResults: [] });
+		emit({ type: "agent_end", messages: [], willRetry: true });
+		emit({
+			type: "auto_retry_start",
+			attempt: 1,
+			maxAttempts: 5,
+			delayMs: 2000,
+			errorMessage: "503: temporary",
+		});
+		const waiting = live.snapshot(manager.getBranch(), { streaming: false, compacting: false });
+		expect(waiting.retrying).not.toBeNull();
+		expect(waiting.messages.filter((message) => message.kind === "error")).toHaveLength(0);
+		emit({ type: "turn_start" });
+		emit({
+			type: "message_update",
+			assistantMessageEvent: { type: "thinking_delta", contentIndex: 0, delta: "recovered" },
+		});
+		const active = live.snapshot(manager.getBranch(), { streaming: true, compacting: false });
+		expect(active.retrying).toBeNull();
+		expect(active.messages.filter((message) => message.kind === "error")).toHaveLength(0);
+	});
+	it("溢出恢复先省略原消息但压缩失败时，历史基线仍保留真正的最终错误", () => {
+		const manager = SessionManager.inMemory();
+		const failure = {
+			...assistant("", 1),
+			stopReason: "error",
+			errorMessage: "context_length_exceeded",
+		} as Message;
+		const failedId = manager.appendMessage(failure);
+		const live = new LiveTranscript();
+		const emit = (event: unknown) => live.apply(event as SessionEvent, manager.getBranch());
+		emit({ type: "turn_end", message: failure, toolResults: [] });
+		manager.appendContextEdit(failedId, null);
+		emit({ type: "compaction_start", reason: "overflow" });
+		expect(
+			live
+				.snapshot(manager.getBranch(), { streaming: false, compacting: true })
+				.messages.filter((message) => message.kind === "error"),
+		).toHaveLength(0);
+		emit({
+			type: "compaction_end",
+			reason: "overflow",
+			aborted: false,
+			willRetry: false,
+			errorMessage: "compaction failed",
+		});
+		emit({ type: "agent_end", messages: [], willRetry: false });
+		const final = live.snapshot(manager.getBranch(), { streaming: false, compacting: false });
+		expect(final.messages.filter((message) => message.kind === "error")).toHaveLength(1);
+	});
 	it("活动基线的用户附件和未落盘show结果都只带引用，并保持实际SDK用户entry", () => {
 		const manager = SessionManager.inMemory();
 		const live = new LiveTranscript();

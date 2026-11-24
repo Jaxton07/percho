@@ -84,7 +84,9 @@ export class LiveTranscript {
 		return {
 			...this.state,
 			messages: [
-				...messagesToUIMessages(project(history)),
+				...messagesToUIMessages(project(history), {
+					recovering: Boolean(this.state.retrying || runtime.streaming || runtime.compacting),
+				}),
 				...this.state.messages.map((message) =>
 					transient && (message.kind === "user" || message.kind === "image")
 						? {

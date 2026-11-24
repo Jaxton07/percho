@@ -6,8 +6,23 @@ import { buildRoundErrorCard, isLlmErrorRound } from "./llm-errors";
 import type { UIMessage, UIToolCall } from "./types";
 
 /** 历史消息 → UI 消息（打开历史会话时回放；backend 已按 entryId 配对、正文/工具拆分） */
-export function messagesToUIMessages(messages: SessionMessage[]): UIMessage[] {
+export function messagesToUIMessages(
+	messages: SessionMessage[],
+	{ recovering = false }: { recovering?: boolean } = {},
+): UIMessage[] {
 	const ui: UIMessage[] = [];
+	// 省略只是模型上下文事实：必须还有后续尝试或已知实时恢复，才能不显示该次失败。
+	// 溢出恢复可能先省略再压缩失败；缺少继续证据的历史尾错误仍按最终失败保留。
+	const recovered = new Set<number>();
+	let continuation = recovering;
+	for (let i = messages.length - 1; i >= 0; i--) {
+		const message = messages[i];
+		if (message?.role === "user") continuation = false;
+		else if (message?.role === "assistant") {
+			if (message.errorOmitted && continuation) recovered.add(i);
+			continuation = true;
+		}
+	}
 	// 连续 error assistant（SDK 重试轮在 jsonl 里是连续的，中间无其他消息——实测 V2 场景 1 user + 3
 	// 条 assistant(error)）只留最后一张卡；遇到任何非 error 消息或流结束先落卡（与 live 的
 	// agent_end willRetry 判定语义一致，决策 D1）。
@@ -117,7 +132,7 @@ export function messagesToUIMessages(messages: SessionMessage[]): UIMessage[] {
 		};
 		// 错误轮：partial 正文照常展示（保留），错误卡挂起——连续错误轮合并，非 error 消息或流结束才落卡
 		// 判定与 reducer live 路径共用 isLlmErrorRound（决策 D1 单一事实源，llm-errors.ts）
-		if (isLlmErrorRound(m)) {
+		if (isLlmErrorRound(m) && !recovered.has(i)) {
 			pendingErrorId = m.historyId ? `${m.historyId}:error` : undefined;
 			pendingError = buildRoundErrorCard(m, m.timestamp);
 			// 空错误回复也保留为不可见统计载体；实时重试成功后同样不能冒充完整数据。
