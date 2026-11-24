@@ -31,10 +31,11 @@ jobs:
       channel: ${{ steps.plan.outputs.channel }}
       sourceCommit: ${{ steps.plan.outputs.sourceCommit }}
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
         with:
           node-version: 22
+          package-manager-cache: false
       - id: plan
         env:
           RELEASE_VERSION: ${{ inputs.version }}
@@ -51,8 +52,8 @@ jobs:
   check:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
         with:
           node-version: 22
           cache: npm
@@ -76,16 +77,17 @@ jobs:
       PERCHO_BUILD_RELEASE_TAG: ${{ needs.prepare.outputs.tag }}
       PERCHO_BUILD_SOURCE_COMMIT: ${{ needs.prepare.outputs.sourceCommit }}
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
         with:
           node-version: 22
-      - uses: actions/download-artifact@v4
+          package-manager-cache: false
+      - uses: actions/download-artifact@v8
         with:
           pattern: remote-runtime-*
           path: .local/release-bundle
           merge-multiple: true
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v8
         with:
           pattern: desktop-*
           path: .local/release-bundle
