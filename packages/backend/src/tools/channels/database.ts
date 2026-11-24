@@ -11,17 +11,28 @@ interface Marker {
 }
 export type ProjectChannelFence = ChannelFence & { projectRoot: string };
 
-const SCHEMA: Record<string, string[]> = {
-	channel_meta: ["id", "version", "cursor_secret"],
-	projects: ["project"],
-	bindings: ["session", "project", "cwd"],
-	deletes: ["project", "op", "fingerprint"],
-	topics: ["id", "project", "topic"],
-	messages: ["id", "project", "topic", "sender", "name", "at", "body"],
-	members: ["project", "topic", "session", "active", "epoch", "position"],
-	fences: ["project", "session", "state", "op", "source"],
-	receipts: ["project", "session", "kind", "call_id", "params", "epoch", "result"],
-	maintenance_history: ["project", "session", "op"],
+const SCHEMA: Record<string, string> = {
+	channel_meta:
+		"CREATE TABLE channel_meta (id TEXT NOT NULL, version INTEGER NOT NULL, cursor_secret TEXT NOT NULL)",
+	projects: "CREATE TABLE projects (project TEXT PRIMARY KEY)",
+	bindings: "CREATE TABLE bindings (session TEXT PRIMARY KEY, project TEXT NOT NULL, cwd TEXT NOT NULL)",
+	deletes:
+		"CREATE TABLE deletes (project TEXT NOT NULL, op TEXT NOT NULL, fingerprint TEXT NOT NULL, PRIMARY KEY(project,op))",
+	topics:
+		"CREATE TABLE topics (id INTEGER PRIMARY KEY AUTOINCREMENT, project TEXT NOT NULL, topic TEXT NOT NULL COLLATE BINARY, UNIQUE(project,topic))",
+	messages:
+		"CREATE TABLE messages (id INTEGER PRIMARY KEY AUTOINCREMENT, project TEXT NOT NULL, topic TEXT NOT NULL, sender TEXT NOT NULL, name TEXT NOT NULL, at TEXT NOT NULL, body TEXT NOT NULL)",
+	messages_topic_id: "CREATE INDEX messages_topic_id ON messages(project,topic,id)",
+	members:
+		"CREATE TABLE members (project TEXT NOT NULL, topic TEXT NOT NULL, session TEXT NOT NULL, active INTEGER NOT NULL, epoch INTEGER NOT NULL, position INTEGER NOT NULL, PRIMARY KEY(project,topic,session))",
+	members_session: "CREATE INDEX members_session ON members(project,session,active)",
+	fences:
+		"CREATE TABLE fences (project TEXT NOT NULL, session TEXT NOT NULL, state TEXT NOT NULL, op TEXT NOT NULL, source TEXT NOT NULL, PRIMARY KEY(project,session))",
+	fences_source: "CREATE INDEX fences_source ON fences(session,source)",
+	receipts:
+		"CREATE TABLE receipts (project TEXT NOT NULL, session TEXT NOT NULL, kind TEXT NOT NULL, call_id TEXT NOT NULL, params TEXT NOT NULL, epoch INTEGER, result TEXT NOT NULL, PRIMARY KEY(project,session,kind,call_id))",
+	maintenance_history:
+		"CREATE TABLE maintenance_history (project TEXT NOT NULL, session TEXT NOT NULL, op TEXT NOT NULL, PRIMARY KEY(project,session,op))",
 };
 
 /** One synchronous connection per worker. Project views share this owner, never its lifetime. */
@@ -69,13 +80,9 @@ export class ChannelDatabase {
 	}
 
 	private identity(db: DatabaseSync): { id: string; secret: string } {
-		for (const [table, required] of Object.entries(SCHEMA)) {
-			const columns = db.prepare(`PRAGMA table_info(${table})`).all();
-			if (required.some((name) => !columns.some((column) => column.name === name)))
-				throw new Error("Incomplete channel database schema; explicit recovery required");
-		}
-		for (const index of ["messages_topic_id", "members_session", "fences_source"]) {
-			if (!db.prepare("SELECT 1 FROM sqlite_master WHERE type='index' AND name=?").get(index))
+		for (const [name, definition] of Object.entries(SCHEMA)) {
+			const row = db.prepare("SELECT sql FROM sqlite_master WHERE name=?").get(name);
+			if (row?.sql !== definition)
 				throw new Error("Incomplete channel database schema; explicit recovery required");
 		}
 		const rows = db.prepare("SELECT id, version, cursor_secret FROM channel_meta").all();
@@ -128,19 +135,7 @@ export class ChannelDatabase {
 						.prepare("SELECT COUNT(*) AS n FROM sqlite_master WHERE name NOT LIKE 'sqlite_%'")
 						.get();
 					if (mark || Number(objects?.n) !== 0) throw new Error("Unsupported channel database");
-					db.exec(`CREATE TABLE channel_meta (id TEXT NOT NULL, version INTEGER NOT NULL, cursor_secret TEXT NOT NULL);
-						CREATE TABLE projects (project TEXT PRIMARY KEY);
-						CREATE TABLE bindings (session TEXT PRIMARY KEY, project TEXT NOT NULL, cwd TEXT NOT NULL);
-						CREATE TABLE deletes (project TEXT NOT NULL, op TEXT NOT NULL, fingerprint TEXT NOT NULL, PRIMARY KEY(project,op));
-						CREATE TABLE topics (id INTEGER PRIMARY KEY AUTOINCREMENT, project TEXT NOT NULL, topic TEXT NOT NULL COLLATE BINARY, UNIQUE(project,topic));
-						CREATE TABLE messages (id INTEGER PRIMARY KEY AUTOINCREMENT, project TEXT NOT NULL, topic TEXT NOT NULL, sender TEXT NOT NULL, name TEXT NOT NULL, at TEXT NOT NULL, body TEXT NOT NULL);
-						CREATE INDEX messages_topic_id ON messages(project,topic,id);
-						CREATE TABLE members (project TEXT NOT NULL, topic TEXT NOT NULL, session TEXT NOT NULL, active INTEGER NOT NULL, epoch INTEGER NOT NULL, position INTEGER NOT NULL, PRIMARY KEY(project,topic,session));
-						CREATE INDEX members_session ON members(project,session,active);
-						CREATE TABLE fences (project TEXT NOT NULL, session TEXT NOT NULL, state TEXT NOT NULL, op TEXT NOT NULL, source TEXT NOT NULL, PRIMARY KEY(project,session));
-						CREATE INDEX fences_source ON fences(session,source);
-						CREATE TABLE receipts (project TEXT NOT NULL, session TEXT NOT NULL, kind TEXT NOT NULL, call_id TEXT NOT NULL, params TEXT NOT NULL, epoch INTEGER, result TEXT NOT NULL, PRIMARY KEY(project,session,kind,call_id));
-						CREATE TABLE maintenance_history (project TEXT NOT NULL, session TEXT NOT NULL, op TEXT NOT NULL, PRIMARY KEY(project,session,op));`);
+					db.exec(Object.values(SCHEMA).join(";"));
 					db.prepare("INSERT INTO channel_meta VALUES (?,1,?)").run(
 						randomUUID(),
 						randomBytes(32).toString("hex"),
@@ -148,6 +143,8 @@ export class ChannelDatabase {
 				}
 			}
 			const identity = this.identity(db);
+			if (create && exists && !mark && db.prepare("PRAGMA quick_check").get()?.quick_check !== "ok")
+				throw new Error("Channel database integrity check failed");
 			if (mark && mark.id !== identity.id) throw new Error("Channel database identity mismatch");
 			if (create) {
 				db.exec("COMMIT; BEGIN IMMEDIATE");
@@ -259,11 +256,14 @@ export class ChannelDatabase {
 		).map((row) => this.fence(row));
 	}
 	find(sessionId: string, source: string): ProjectChannelFence | undefined {
+		const db = this.open(false);
 		const rows =
-			this.open(false)
+			db
 				?.prepare("SELECT project,session,op,source,state FROM fences WHERE session=? AND source=? LIMIT 2")
 				.all(sessionId, resolve(source)) ?? [];
 		if (rows.length > 1) throw new Error("Ambiguous channel maintenance source");
+		if (!rows.length && db?.prepare("SELECT 1 FROM fences WHERE session=? LIMIT 1").get(sessionId))
+			throw new Error("Channel maintenance source changed");
 		return rows[0] ? this.fence(rows[0]) : undefined;
 	}
 	close(): void {

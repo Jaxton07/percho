@@ -225,6 +225,34 @@ it("retains a missing archived source without blocking healthy sessions, then re
 	await expect(restarted.openSession(archived.file)).rejects.toThrow(/archived|unresolved/i);
 }, 30_000);
 
+it("does not treat a conflicting maintenance source as a locally missing record", async () => {
+	const f = await fixture();
+	const archived = session(f.missing);
+	session(f.normal);
+	const before = f.backend();
+	const archive = new SessionArchiveService({
+		agentDir: f.agentDir,
+		catalog: () => before.getSessionCatalog(),
+		getSession: () => undefined,
+		hasPending: () => false,
+		disposeSession: async () => {},
+		withFile: async (_files, operation) => operation(),
+	});
+	await archive.init();
+	await archive.archive({ sessionId: archived.id, sessionFile: archived.file, expectedRevision: 0 });
+	await before.shutdown();
+	const authorityPath = join(f.agentDir, "session-archive.json");
+	const authority = await readFile(authorityPath);
+	const channels = f.service(f.missing);
+	await channels.prepareMaintenance(archived.id, "conflict", "archive", `${archived.file}.different`);
+	await channels.close();
+	await rm(archived.file);
+	await expect(f.backend().querySessionCatalog({ cwd: f.normal, limit: 100 })).rejects.toThrow(
+		/source changed/i,
+	);
+	expect(await readFile(authorityPath)).toEqual(authority);
+}, 30_000);
+
 it("logs archive initialization failure before creating the catalog", async () => {
 	const f = await fixture();
 	const first = f.backend();

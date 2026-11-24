@@ -180,6 +180,15 @@ describe("channel store", () => {
 		store = new ChannelStore({ projectRoot: root, agentDir });
 		expect(() => store.snapshot("alice")).toThrow();
 	});
+	it("does not repair a missing marker when table constraints have been removed", () => {
+		store.manage(alice, { action: "create", topic: "a" });
+		store.open(true)?.exec("DROP TABLE topics; CREATE TABLE topics (id INTEGER, project TEXT, topic TEXT)");
+		store.close();
+		rmSync(store.markerPath);
+		store = new ChannelStore({ projectRoot: root, agentDir });
+		expect(() => store.open(true)).toThrow(/schema/i);
+		expect(existsSync(store.markerPath)).toBe(false);
+	});
 	it("does not overwrite corrupt initialization markers", () => {
 		store.manage(alice, { action: "create", topic: "a" });
 		writeFileSync(store.markerPath, "broken");
