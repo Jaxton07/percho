@@ -96,7 +96,7 @@ export function MessageList() {
 	const uiFontSize = useUiPreferencesStore((s) => s.uiFontSize);
 	const shownWorking = useShownWorking(
 		agentWorking,
-		transcript.compacting || Boolean(streaming?.text) || !transcript.agentActive,
+		transcript.compacting || Boolean(streaming?.text.trim()) || !transcript.agentActive,
 		activeSessionId,
 	);
 
