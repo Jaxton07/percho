@@ -39,6 +39,7 @@ beforeEach(() => {
 		sessionRailEnabled: false,
 		sidebarCollapsed: true,
 		sidebarWidth: 240,
+		chatColumnWidth: 760,
 		expandedGroups: [],
 		expandedGroupsTouched: false,
 		pinnedProjects: [],
@@ -346,6 +347,85 @@ describe("侧栏宽度（用户意图值）", () => {
 		useUiPreferencesStore.getState().commitSidebarWidth();
 		expect(piMock.saveUiState).toHaveBeenCalledTimes(1);
 		expect(piMock.saveUiState).toHaveBeenCalledWith({ state: { sidebarWidth: 360 } });
+	});
+});
+
+describe("chat-column width (intended max-width)", () => {
+	it("defaults to 760 before init", () => {
+		expect(useUiPreferencesStore.getInitialState().chatColumnWidth).toBe(760);
+		expect(useUiPreferencesStore.getState().chatColumnWidth).toBe(760);
+	});
+
+	it.each([
+		[920, 920],
+		[920.6, 921],
+		[100, 480],
+		[10000, 10000],
+		["920", 760],
+		[null, 760],
+		[Number.NaN, 760],
+		[Infinity, 760],
+	])("init normalizes saved %s to %s without saving", async (value, expected) => {
+		piMock.loadUiState.mockResolvedValue({ chatColumnWidth: value });
+		await useUiPreferencesStore.getState().init();
+		expect(useUiPreferencesStore.getState().chatColumnWidth).toBe(expected);
+		expect(piMock.saveUiState).not.toHaveBeenCalled();
+	});
+
+	it("init defaults missing state, missing fields, and load failures without saving", async () => {
+		for (const saved of [null, {}]) {
+			useUiPreferencesStore.setState({ chatColumnWidth: 900 });
+			piMock.loadUiState.mockResolvedValue(saved);
+			await useUiPreferencesStore.getState().init();
+			expect(useUiPreferencesStore.getState().chatColumnWidth).toBe(760);
+		}
+		useUiPreferencesStore.setState({ chatColumnWidth: 900 });
+		piMock.loadUiState.mockRejectedValueOnce(new Error("no file"));
+		await useUiPreferencesStore.getState().init();
+		expect(useUiPreferencesStore.getState().chatColumnWidth).toBe(760);
+		expect(piMock.saveUiState).not.toHaveBeenCalled();
+	});
+
+	it("normalizes previews in memory only, leaving other preferences unchanged", () => {
+		const store = useUiPreferencesStore.getState();
+		for (const [value, expected] of [
+			[920.6, 921],
+			[100, 480],
+			[10000, 10000],
+			[Number.NaN, 760],
+			[Infinity, 760],
+		] as const) {
+			store.previewChatColumnWidth(value);
+			expect(useUiPreferencesStore.getState().chatColumnWidth).toBe(expected);
+		}
+		expect(useUiPreferencesStore.getState().sidebarWidth).toBe(store.sidebarWidth);
+		expect(piMock.saveUiState).not.toHaveBeenCalled();
+	});
+
+	it("short-circuits equal normalized previews without notifying subscribers", () => {
+		useUiPreferencesStore.getState().previewChatColumnWidth(920);
+		const before = useUiPreferencesStore.getState();
+		const listener = vi.fn();
+		const unsubscribe = useUiPreferencesStore.subscribe(listener);
+		try {
+			before.previewChatColumnWidth(920);
+			before.previewChatColumnWidth(920.4);
+			expect(useUiPreferencesStore.getState()).toBe(before);
+			expect(listener).not.toHaveBeenCalled();
+			expect(piMock.saveUiState).not.toHaveBeenCalled();
+		} finally {
+			unsubscribe();
+		}
+	});
+
+	it("commits only the latest normalized width in one save", () => {
+		const store = useUiPreferencesStore.getState();
+		store.previewChatColumnWidth(900);
+		store.previewChatColumnWidth(10000.6);
+		expect(piMock.saveUiState).not.toHaveBeenCalled();
+		store.commitChatColumnWidth();
+		expect(piMock.saveUiState).toHaveBeenCalledTimes(1);
+		expect(piMock.saveUiState).toHaveBeenCalledWith({ state: { chatColumnWidth: 10001 } });
 	});
 });
 
