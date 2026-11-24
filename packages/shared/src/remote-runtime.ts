@@ -6,7 +6,9 @@ import { CHANNEL_TABLE, SUBSCRIPTION_TABLE } from "./ipc-channels";
 export const REMOTE_PROTOCOL_VERSION = 3;
 export const REMOTE_OUTCOME_UNKNOWN = "[PERCHO_REMOTE_OUTCOME_UNKNOWN]";
 export const EXECUTION_EVENT_CONTRACT_VERSION = 8;
-export const OPTIONAL_EXECUTION_METHODS = ["getSessionNavigation"] as const;
+export const OPTIONAL_EXECUTION_METHODS = ["getSessionNavigation", "updatePackage"] as const;
+/** 远程端未声明该方法（旧版运行时）；客户端在发出前拒绝，不消耗变更序号。跨 IPC 错误只保留 message，故用标记串 */
+export const REMOTE_METHOD_UNSUPPORTED = "[PERCHO_REMOTE_METHOD_UNSUPPORTED]";
 export function executionContract() {
 	return {
 		eventContract: EXECUTION_EVENT_CONTRACT_VERSION,

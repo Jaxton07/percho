@@ -1,4 +1,10 @@
-import { type ConfiguredPackageInfo, configuredPackageKey, npmSourceToPackageName } from "@percho/shared";
+import {
+	type ConfiguredPackageInfo,
+	configuredPackageKey,
+	isNewerVersion,
+	isUpdatableSource,
+	npmSourceToPackageName,
+} from "@percho/shared";
 import { useMemo } from "react";
 import { useT } from "../../../i18n";
 import { useCatalogStore } from "../../../stores/catalog";
@@ -17,6 +23,8 @@ export function LoadedSection({ sessionId = null }: { sessionId?: string | null 
 		s.configuredSessionId === sessionId ? s.configuredPackages : null,
 	);
 	const packageUpdates = useCatalogStore((s) => s.packageUpdates);
+	const updatePackages = useCatalogStore((s) => s.updatePackages);
+	const anyUpdating = useCatalogStore((s) => Object.keys(s.updatingSources).length > 0);
 
 	// 已加载扩展的 source 命中已配置包 → 可卸载（source 为 npm:/git: 等安装源时）
 	const configuredBySource = useMemo(() => {
@@ -27,6 +35,19 @@ export function LoadedSection({ sessionId = null }: { sessionId?: string | null 
 		return map;
 	}, [configuredPackages]);
 
+	// 「全部更新」的目标：与行内按钮同一判定（有新版本 + 未锁定版本的 npm 源）
+	const updatable = useMemo(
+		() =>
+			(configuredPackages ?? []).filter((p) => {
+				const latest = packageUpdates[npmSourceToPackageName(p.source) ?? ""]?.latest;
+				return (
+					Boolean(latest && p.installedVersion && isNewerVersion(latest, p.installedVersion)) &&
+					isUpdatableSource(p.source)
+				);
+			}),
+		[configuredPackages, packageUpdates],
+	);
+
 	if (extensions === null) {
 		return (
 			<p className="py-8 text-center text-ui-13 text-ink-faint">{t("settings.extensions.emptyNoSession")}</p>
@@ -34,6 +55,18 @@ export function LoadedSection({ sessionId = null }: { sessionId?: string | null 
 	}
 	return (
 		<div>
+			{updatable.length > 1 && (
+				<div className="mb-1 flex justify-end">
+					<button
+						type="button"
+						className="rounded-lg px-2 py-1 text-ui-12 font-medium text-accent transition-colors hover:bg-accent/10 disabled:opacity-60"
+						disabled={anyUpdating}
+						onClick={() => void updatePackages(updatable.map(({ source, scope }) => ({ source, scope })))}
+					>
+						{t("settings.extensions.updateAll", { count: updatable.length })}
+					</button>
+				</div>
+			)}
 			{extensions.length === 0 && diagnostics.length === 0 ? (
 				<p className="py-8 text-center text-ui-13 text-ink-faint">{t("settings.extensions.empty")}</p>
 			) : (

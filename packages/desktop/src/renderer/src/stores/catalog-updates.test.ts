@@ -1,4 +1,8 @@
-import type { ConfiguredPackageInfo, PackageUpdateInfo } from "@percho/shared";
+import {
+	type ConfiguredPackageInfo,
+	type PackageUpdateInfo,
+	REMOTE_METHOD_UNSUPPORTED,
+} from "@percho/shared";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const api = vi.hoisted(() => ({
@@ -6,6 +10,7 @@ const api = vi.hoisted(() => ({
 	listConfiguredPackages: vi.fn(),
 	installPackage: vi.fn(),
 	removePackage: vi.fn(),
+	updatePackage: vi.fn(),
 }));
 vi.mock("../environment-api", () => ({ getExecutionApi: () => api }));
 vi.mock("./settings", () => ({
@@ -175,5 +180,56 @@ describe("package update checks", () => {
 		expect(api.removePackage).toHaveBeenCalledWith({ source: "npm:demo", scope: "project", sessionId: "a" });
 		expect(store.getState().configuredSessionId).toBe("b");
 		expect(api.listConfiguredPackages).toHaveBeenLastCalledWith({ sessionId: "b" });
+	});
+});
+
+describe("package updates", () => {
+	it("updates in order, reports each row, and refreshes once at the end", async () => {
+		await store.getState().refreshConfiguredPackages("a");
+		api.listConfiguredPackages.mockClear();
+		api.updatePackage
+			.mockResolvedValueOnce({ from: "1.0.0", to: "3.0.0" })
+			.mockRejectedValueOnce(new Error("network down"))
+			.mockResolvedValueOnce({ from: "2.0.0", to: "2.0.0" });
+		await store.getState().updatePackages([
+			{ source: "npm:demo", scope: "user" },
+			{ source: "npm:broken", scope: "user" },
+			{ source: "npm:same", scope: "project" },
+		]);
+		expect(api.updatePackage.mock.calls).toEqual([
+			[{ source: "npm:demo", scope: "user", sessionId: "a" }],
+			[{ source: "npm:broken", scope: "user", sessionId: "a" }],
+			[{ source: "npm:same", scope: "project", sessionId: "a" }],
+		]);
+		expect(store.getState().updateResults).toEqual({
+			"npm:demo": { kind: "updated", version: "3.0.0" },
+			"npm:broken": { kind: "error", message: "network down" },
+			"npm:same": { kind: "unchanged" },
+		});
+		expect(store.getState().updatingSources).toEqual({});
+		expect(api.listConfiguredPackages).toHaveBeenCalledOnce();
+	});
+
+	it("does not refresh when nothing changed, and maps an old remote to unsupported", async () => {
+		await store.getState().refreshConfiguredPackages();
+		api.listConfiguredPackages.mockClear();
+		api.updatePackage.mockRejectedValueOnce(
+			new Error(`${REMOTE_METHOD_UNSUPPORTED} Remote runtime does not support updatePackage`),
+		);
+		await store.getState().updateConfiguredPackage("npm:demo", "user");
+		expect(store.getState().updateResults["npm:demo"]).toEqual({ kind: "unsupported" });
+		expect(api.listConfiguredPackages).not.toHaveBeenCalled();
+	});
+
+	it("ignores a second request for a package that is already updating", async () => {
+		await store.getState().refreshConfiguredPackages();
+		const mutation = deferred<{ from: string; to: string }>();
+		api.updatePackage.mockReturnValueOnce(mutation.promise);
+		const first = store.getState().updateConfiguredPackage("npm:demo", "user");
+		expect(store.getState().updatingSources["npm:demo"]).toBe(true);
+		await store.getState().updateConfiguredPackage("npm:demo", "user");
+		mutation.resolve({ from: "1.0.0", to: "3.0.0" });
+		await first;
+		expect(api.updatePackage).toHaveBeenCalledOnce();
 	});
 });
