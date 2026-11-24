@@ -468,7 +468,12 @@ export class PiBackend {
 			if (typeof header.cwd !== "string") throw new Error("Session header has no cwd");
 			cwd = header.cwd;
 		} catch (error) {
-			if ((error as NodeJS.ErrnoException).code !== "ENOENT" || !cwd) throw error;
+			if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+			if (!cwd) {
+				const match = sessionId ? await this.getChannelHost().find(sessionId, file) : undefined;
+				if (match) return match.service;
+				throw new ArchiveSourceUnavailableError("Channel maintenance source unavailable");
+			}
 		}
 		if (!cwd) throw new Error("Session project is unavailable");
 		const binding = sessionId ? await this.getChannelHost().binding(sessionId) : undefined;
@@ -1590,6 +1595,15 @@ export class PiBackend {
 		const initialEntryCount = sessionManager.getEntryCount();
 		const binding = await this.getChannelHost().binding(sessionManager.getSessionId());
 		if (binding && binding.cwd !== resolve(cwd)) throw new Error("Session binding cwd changed");
+		let channelRoot = binding?.root;
+		if (!channelRoot) {
+			try {
+				channelRoot = await resolveChannelProject(cwd);
+			} catch (error) {
+				// Historical browsing must not require a vanished working directory.
+				if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+			}
+		}
 		const session = await this.wireSession(
 			cwd,
 			readOnly,
@@ -1612,8 +1626,17 @@ export class PiBackend {
 					),
 				});
 			},
-			binding?.root,
+			channelRoot,
 		);
+		if (channelRoot) {
+			try {
+				await this.getChannelHost().bind(session.sessionId, channelRoot, resolve(cwd));
+			} catch (error) {
+				const entry = this.registry.get(session.sessionId);
+				if (entry) await this.disposeSession(entry);
+				throw error;
+			}
+		}
 		// SDK 构造可在宿主订阅前补写模型/思考设置；只认证这些新条目的精确落盘增量。
 		this.sourceSnapshots.notePersisted(
 			sessionManager,

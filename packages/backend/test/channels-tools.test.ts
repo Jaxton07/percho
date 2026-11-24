@@ -101,6 +101,33 @@ test("unexpected worker exit permits a new worker", async () => {
 	expect(state.worker).not.toBe(original);
 });
 
+test("list and history tools resolve services without unrelated maintenance", async () => {
+	const base = resolve("../../.local/tmp/channels-tools");
+	await mkdir(base, { recursive: true });
+	dir = await mkdtemp(join(base, "readonly-"));
+	service = new ChannelService({ projectRoot: dir, agentDir: dir });
+	await service.manage({ sessionId: "alice" }, { action: "create", topic: "work" });
+	await service.manage({ sessionId: "bob" }, { action: "subscribe", topic: "work" });
+	await service.post({ sessionId: "alice" }, "work", "message", "post");
+	const resolveService = vi.fn(async (_readOnly?: boolean) => {
+		if (!service) throw new Error("Missing service");
+		return service;
+	});
+	const tools = makeChannelTools({ service: resolveService, actor: () => ({ sessionId: "bob" }) });
+	for (const [name, params] of [
+		["channel_manage", { action: "list" }],
+		["channel_read", { topic: "work", mode: "recent" }],
+		["channel_read", { topic: "work", mode: "start" }],
+	] as const) {
+		const tool = tools.find((item) => item.name === name);
+		if (!tool) throw new Error("Missing channel tool");
+		const result = await tool.execute(name, params, undefined, undefined, {} as never);
+		expect(result.isError).not.toBe(true);
+	}
+	expect(resolveService.mock.calls).toEqual([[true], [true], [true]]);
+	expect(await service.snapshot("bob")).toEqual([{ topic: "work", unread: 1 }]);
+});
+
 test("real tools share a worker and preserve unread and call receipts", async () => {
 	const base = resolve("../../.local/tmp/channels-tools");
 	await mkdir(base, { recursive: true });

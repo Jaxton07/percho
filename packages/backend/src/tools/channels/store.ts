@@ -64,8 +64,8 @@ export class ChannelStore {
 		return this.database.open(create);
 	}
 
-	transaction<T>(fn: (db: DatabaseSync) => T): T {
-		return this.database.transaction(fn);
+	transaction<T>(fn: (db: DatabaseSync) => T, write = true): T {
+		return this.database.transaction(fn, write);
 	}
 
 	assertActive(sessionId: string, currentDb?: DatabaseSync): void {
@@ -347,16 +347,16 @@ export class ChannelStore {
 			params.limit ?? null,
 		]);
 		if (!this.open(false)) throw new Error("Channel does not exist");
+		const cursor = params.cursor ? this.messageCursor(params.cursor) : null;
+		const mode = cursor?.mode ?? params.mode ?? "unread";
 		return this.transaction((db) => {
 			const member = this.member(db, actor, params.topic);
-			const cursor = params.cursor ? this.messageCursor(params.cursor) : null;
 			if (
 				cursor &&
 				(cursor.topic !== params.topic ||
 					(cursor.mode === "unread" && (cursor.session !== actor.sessionId || cursor.epoch !== member.epoch)))
 			)
 				throw new Error("Invalid or expired channel cursor");
-			const mode = cursor?.mode ?? params.mode ?? "unread";
 			if (mode === "unread") {
 				const prior = this.receipt(db, actor.sessionId, "read", callId, fingerprint, member.epoch);
 				if (prior) return JSON.parse(prior) as ChannelReadResult;
@@ -468,7 +468,7 @@ export class ChannelStore {
 					JSON.stringify(result),
 				);
 			return result;
-		});
+		}, mode === "unread");
 	}
 
 	prepareMaintenance(sessionId: string, opId: string, kind: "archive" | "delete", source: string): void {

@@ -184,9 +184,10 @@ export class ChannelDatabase {
 			throw new Error("Channel database identity changed");
 	}
 
-	transaction<T>(fn: (db: DatabaseSync) => T): T {
-		const db = this.open(true);
-		db.exec("BEGIN IMMEDIATE");
+	transaction<T>(fn: (db: DatabaseSync) => T, write = true): T {
+		const db = this.open(write);
+		if (!db) throw new Error("Channel database missing");
+		db.exec(write ? "BEGIN IMMEDIATE" : "BEGIN");
 		try {
 			this.verify();
 			const result = fn(db);

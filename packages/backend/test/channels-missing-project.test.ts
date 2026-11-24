@@ -80,6 +80,41 @@ async function removeProject(backend: PiBackend, cwd: string) {
 	expect(result.deleted.length).toBe(preview.sessionCount);
 }
 
+it.each(["archive", "delete"] as const)(
+	"keeps an opened unbound Git-subdirectory session in the actual project during %s",
+	async (operation) => {
+		const f = await fixture();
+		const nested = join(f.normal, "nested");
+		await mkdir(nested);
+		const historical = session(nested);
+		const backend = f.backend();
+		await backend.openSession(historical.file);
+		const channel = f.service(f.normal);
+		await channel.manage({ sessionId: historical.id }, { action: "create", topic: "work" });
+		if (operation === "archive") {
+			const result = await backend.archiveSession({
+				sessionId: historical.id,
+				sessionFile: historical.file,
+				expectedRevision: 0,
+			});
+			await expect(channel.snapshot(historical.id)).rejects.toThrow(/fenced/i);
+			await backend.unarchiveSession({
+				sessionId: historical.id,
+				sessionFile: historical.file,
+				expectedRevision: result.revision,
+			});
+			await expect(channel.snapshot(historical.id)).resolves.toEqual([]);
+		} else {
+			await backend.deleteSession(historical.id, historical.file);
+			await expect(channel.pendingMaintenance()).resolves.toMatchObject([
+				{ sessionId: historical.id, state: "deleted" },
+			]);
+			await expect(channel.snapshot(historical.id)).rejects.toThrow(/fenced/i);
+		}
+	},
+	30_000,
+);
+
 it("preserves channel history and peer cursor while a project's archived history is removed", async () => {
 	const f = await fixture();
 	const archived = session(f.missing);

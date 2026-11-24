@@ -4,7 +4,7 @@ import type { ChannelService } from "./service";
 import type { ChannelActor } from "./types";
 
 export interface ChannelToolDeps {
-	service: () => Promise<ChannelService>;
+	service: (readOnly?: boolean) => Promise<ChannelService>;
 	actor: () => ChannelActor;
 	authorize?: () => Promise<void>;
 	onChanged?: () => void | Promise<void>;
@@ -69,7 +69,7 @@ export function makeChannelTools(deps: ChannelToolDeps): ToolDefinition[] {
 			async execute(_id, params) {
 				return run(async () => {
 					checkKeys(params, ["action", "topic", "scope", "limit", "cursor"]);
-					return (await deps.service()).manage(deps.actor(), params);
+					return (await deps.service(params.action === "list")).manage(deps.actor(), params);
 				});
 			},
 		}),
@@ -105,7 +105,8 @@ export function makeChannelTools(deps: ChannelToolDeps): ToolDefinition[] {
 			async execute(id, params) {
 				return run(async () => {
 					checkKeys(params, ["topic", "mode", "cursor", "limit"]);
-					return (await deps.service()).read(deps.actor(), params, id);
+					// Resolve without unrelated maintenance; unread acknowledgement owns its own transaction.
+					return (await deps.service(true)).read(deps.actor(), params, id);
 				});
 			},
 		}),

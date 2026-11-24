@@ -121,6 +121,31 @@ describe("channel store", () => {
 			await Promise.all([first.close(), second.close()]);
 		}
 	});
+	it.each(["recent", "start"] as const)(
+		"reads %s history without acquiring a write lock or acknowledging unread",
+		(mode) => {
+			store.manage(alice, { action: "create", topic: "work" });
+			store.manage(bob, { action: "subscribe", topic: "work" });
+			store.post(alice, "work", "message", "post");
+			store.close();
+			store = new ChannelStore({ projectRoot: root, agentDir });
+			store.open(false);
+			const writer = new ChannelStore({ projectRoot: root, agentDir });
+			const db = writer.open(true);
+			if (!db) throw new Error("Missing fixture writer");
+			db.exec("BEGIN IMMEDIATE");
+			try {
+				expect(
+					store.read(bob, { topic: "work", mode }, "history").messages.map((message) => message.body),
+				).toEqual(["message"]);
+				expect(store.snapshot("bob")).toEqual([{ topic: "work", unread: 1 }]);
+			} finally {
+				db.exec("ROLLBACK");
+				writer.close();
+			}
+		},
+		15_000,
+	);
 	it("requires explicit creation and preserves subscriptions across reopen", () => {
 		expect(store.snapshot("alice")).toEqual([]);
 		expect(() => store.manage(alice, { action: "subscribe", topic: "missing" })).toThrow();
