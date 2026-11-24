@@ -78,7 +78,7 @@ gh run watch "$release_run_id" --interval 30 --exit-status
 
 只保留一个 watch，失败后再查失败日志。[Release workflow](../.github/workflows/release.yml) 自行执行检查、运行包构建与离线验收、桌面打包与隔离启动验收；[发布脚本](../scripts/publish-release.mjs) 复用同提交的草稿、保留正文，校验全部产物并上传完整后才公开。无需本机重复全量测试、打包或手工上传，也不能用 PR 的 Beta 包代替正式包。
 
-已有 main CI 打包可与 Release 并行，无需再等一轮；但 Release 尚不复用其检查结果，不能跳过自己的检查。正式版成为 latest 并请求官网刷新；Beta/RC 不改变正式版 latest，也不刷新官网。hook 未配置记为“未触发”，请求成功不等于部署完成。
+已有 main CI 打包可与 Release 并行，无需再等一轮；但 Release 尚不复用其检查结果，不能跳过自己的检查。正式版成为 latest，Beta/RC 不改变正式版 latest。官网由已有的独立 GitHub 自动部署链路更新，正常发版无需额外通知；主仓库的 `website` job 仅为可选的 Cloudflare hook。
 
 ## 4. 核对公开结果
 
@@ -96,6 +96,7 @@ gh release download "$release_tag" --dir "$release_dir/verify" \
 - **发行与说明**：标签、完整源码 SHA、正文正确，`draft=false`；正式版 `prerelease=false` 且 `/releases/latest` 返回本版，Beta/RC 则已标为 prerelease 且未改变正式版 latest。Quick Downloads 的平台和本版资产对应，链接固定到本版。
 - **验收与完整性**：三份 `release-*.json` 同版本、同提交，`passed=true`、`mode=release`；两份运行包元数据同版同提交。报告及运行包元数据列出的资产全部上传，GitHub 的 `size`、`digest` 与其字节数、SHA256 一致，摘要文件与报告一致。摘要缺失或冲突时下载相关资产取证，不能算通过。
 - **更新源**：正式版的三份 `latest*.yml` 均指向本版；安装包、更新文件、摘要和运行包的预期集合以 [整包校验逻辑](../scripts/release/bundle.mjs) 为准，不写死资产数量。
+- **官网**：以实际部署记录或线上显示的版本为准。可选 hook 跳过只表示该通知未执行，不能据此报告“官网未部署／未更新”，也不作为发版故障或待配置项；尚未核实时只写“官网状态未核验”。
 
 公开前已完成整包字节校验，此处只检查报告和公开资产元数据。完成后汇报发行链接、源码、workflow 及未完成项；证据保留在任务目录，不提交本机产物或凭据，本次测试进程应已退出。
 
@@ -107,14 +108,8 @@ gh release download "$release_tag" --dir "$release_dir/verify" \
 | 检查、构建或验收失败 | `gh run view "$release_run_id" --log-failed` 定位；相同提交、同一未公开草稿可用 `gh run rerun "$release_run_id" --failed`。修复代码后使用新提交和新版本。 |
 | 上传失败 | 保留同提交草稿按发布脚本恢复，不中断在途 publish，不手工公开半套资产或混入其他提交的包。 |
 | 已公开且二进制有问题 | 发新版本；不整条重跑以替换安装包或更新文件。 |
-| 只修说明 | `gh release edit "$release_tag" --notes-file "$release_dir/notes.md"`；正式版随后只重跑 website job。 |
-| 只有官网刷新失败 | 只重跑 website job；hook 未配置则记录未触发，不重新发包。 |
-
-重跑 website 时，从原运行取实际 job ID，设置为 `website_job_id`：
-
-```bash
-gh api --method POST "repos/Jaxton07/percho/actions/jobs/${website_job_id}/rerun"
-```
+| 只修说明 | `gh release edit "$release_tag" --notes-file "$release_dir/notes.md"`；不强制补发 hook 或重跑 website job。 |
+| 官网实际未更新 | 在官网的自动部署链路中核对来源、构建和部署记录，再按需重试该部署；不重跑 Release 或替换安装包。 |
 
 ## 只要内测包时
 
@@ -124,4 +119,4 @@ gh api --method POST "repos/Jaxton07/percho/actions/jobs/${website_job_id}/rerun
 gh workflow run release.yml --ref main -f version=0.6.8-beta.1 -f publish=false
 ```
 
-核对实际源码提交后，从 Actions 下载产物；不创建发行或刷新官网。公开 Beta/RC 走上面的草稿与标签流程；仅本机调试打包见 [本地构建](build-release.md#本地-macos-内测包)。
+核对实际源码提交后，从 Actions 下载产物；不创建发行。公开 Beta/RC 走上面的草稿与标签流程；仅本机调试打包见 [本地构建](build-release.md#本地-macos-内测包)。
