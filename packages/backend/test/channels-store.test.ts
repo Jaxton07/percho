@@ -57,8 +57,9 @@ describe("channel store", () => {
 		expect(() => store.snapshot("alice")).toThrow("schema");
 		expect(readFileSync(store.databasePath)).toEqual(before);
 		expect(statSync(store.databasePath).mtimeMs).toBe(mtime);
-		store.open(true);
-		expect(store.snapshot("alice")).toHaveLength(1);
+		expect(() => store.open(true)).toThrow("schema");
+		expect(readFileSync(store.databasePath)).toEqual(before);
+		expect(statSync(store.databasePath).mtimeMs).toBe(mtime);
 	});
 	it("serializes concurrent worker initialization and subscription limits", async () => {
 		const first = new ChannelService({ projectRoot: root, agentDir });
@@ -79,24 +80,23 @@ describe("channel store", () => {
 			await Promise.all([first.close(), second.close()]);
 		}
 	});
-	it("does not write gitignore on existing database reads and rejects symlinked storage", () => {
+	it("does not write project storage and rejects symlinked agent storage", () => {
 		store.manage(alice, { action: "create", topic: "a" });
 		store.close();
-		rmSync(join(root, ".percho", "channels", ".gitignore"));
 		store = new ChannelStore({ projectRoot: root, agentDir });
 		expect(store.snapshot("alice")).toHaveLength(1);
 		expect(existsSync(join(root, ".gitignore"))).toBe(false);
-		expect(existsSync(join(root, ".percho", "channels", ".gitignore"))).toBe(false);
+		expect(existsSync(join(root, ".percho"))).toBe(false);
 		store.close();
-		rmSync(join(root, ".percho"), { recursive: true });
+		rmSync(join(agentDir, "channels"), { recursive: true });
 		const outside = join(root, "outside");
 		mkdirSync(outside);
-		symlinkSync(outside, join(root, ".percho"));
+		symlinkSync(outside, join(agentDir, "channels"));
 		store = new ChannelStore({ projectRoot: root, agentDir });
 		expect(() => store.manage(alice, { action: "create", topic: "b" })).toThrow();
-		expect(existsSync(join(outside, "channels"))).toBe(false);
+		expect(existsSync(join(outside, "channels.sqlite"))).toBe(false);
 	});
-	it("preserves project ignore and appends only namespace-specific metadata rules", async () => {
+	it("preserves existing project ignore files without adding rules", async () => {
 		const rootIgnore = join(root, ".gitignore");
 		writeFileSync(rootIgnore, "existing-without-newline");
 		const dir = join(root, ".percho", "channels");
@@ -105,7 +105,6 @@ describe("channel store", () => {
 		writeFileSync(ignore, "custom-rule");
 		const otherAgent = join(root, "other-agent");
 		mkdirSync(otherAgent);
-		const otherStore = new ChannelStore({ projectRoot: root, agentDir: otherAgent });
 		const first = new ChannelService({ projectRoot: root, agentDir });
 		const second = new ChannelService({ projectRoot: root, agentDir: otherAgent });
 		try {
@@ -114,18 +113,11 @@ describe("channel store", () => {
 				second.manage(bob, { action: "create", topic: "b" }),
 			]);
 			expect(readFileSync(rootIgnore, "utf8")).toBe("existing-without-newline");
-			const rules = readFileSync(ignore, "utf8").trim().split("\n");
-			expect(rules[0]).toBe("custom-rule");
-			for (const namespace of [store.namespace, otherStore.namespace]) {
-				for (const suffix of [".sqlite", ".sqlite-journal", ".sqlite-wal", ".sqlite-shm", ".json"])
-					expect(rules).toContain(`/${namespace}${suffix}`);
-				expect(rules).toContain(`/.${namespace}.json.*.tmp`);
-			}
-			expect(rules).toContain("/.gitignore");
-			expect(rules).not.toContain("/note.md");
-			expect(rules).not.toContain("*");
+			expect(readFileSync(ignore, "utf8")).toBe("custom-rule");
+			expect(existsSync(join(dir, "channels.sqlite"))).toBe(false);
+			expect(await first.snapshot("alice")).toEqual([{ topic: "a", unread: 0 }]);
+			expect(await second.snapshot("bob")).toEqual([{ topic: "b", unread: 0 }]);
 		} finally {
-			otherStore.close();
 			await Promise.all([first.close(), second.close()]);
 		}
 	});

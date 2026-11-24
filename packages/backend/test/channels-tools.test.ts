@@ -2,8 +2,34 @@ import { mkdir, mkdtemp, rm } from "node:fs/promises";
 import { join, resolve } from "node:path";
 import type { Worker } from "node:worker_threads";
 import { afterEach, expect, test, vi } from "vitest";
-import { ChannelService } from "../src/tools/channels/service";
+import { ChannelDatabaseService, ChannelService } from "../src/tools/channels/service";
 import { makeChannelTools } from "../src/tools/channels/tools";
+
+test("project views share one worker without closing each other's lifetime", async () => {
+	const base = resolve(".local/tmp/channels-shared-worker");
+	await mkdir(base, { recursive: true });
+	const root = await mkdtemp(join(base, "case-"));
+	const agentDir = join(root, "agent");
+	const database = new ChannelDatabaseService({ agentDir });
+	const first = new ChannelService({ projectRoot: join(root, "a"), agentDir, database });
+	const second = new ChannelService({ projectRoot: join(root, "b"), agentDir, database });
+	try {
+		await Promise.all(
+			[first, second].map((view) => view.manage({ sessionId: "same" }, { action: "create", topic: "work" })),
+		);
+		const pending = first.post({ sessionId: "same" }, "work", "accepted before closing a view", "post");
+		await first.close();
+		await expect(pending).resolves.toMatchObject({ body: "accepted before closing a view" });
+		await expect(second.post({ sessionId: "same" }, "work", "second project", "post")).resolves.toMatchObject(
+			{ body: "second project" },
+		);
+		await database.close();
+		await expect(second.snapshot("same")).rejects.toThrow(/closed/i);
+	} finally {
+		await database.close();
+		await rm(root, { recursive: true, force: true });
+	}
+});
 
 let dir = "";
 let service: ChannelService | undefined;
@@ -32,7 +58,7 @@ test("idle workers close and reopen without losing messages, read positions or r
 	await mkdir(base, { recursive: true });
 	dir = await mkdtemp(join(base, "idle-"));
 	service = new ChannelService({ projectRoot: dir, agentDir: dir });
-	const state = service as unknown as { worker?: Worker; idleClosing?: Promise<void> };
+	const state = service.database as unknown as { worker?: Worker; idleClosing?: Promise<void> };
 	const creating = service.manage({ sessionId: "alice" }, { action: "create", topic: "work" });
 	const original = state.worker;
 	vi.advanceTimersByTime(30_000);
@@ -67,7 +93,7 @@ test("unexpected worker exit permits a new worker", async () => {
 	dir = await mkdtemp(join(base, "exit-"));
 	service = new ChannelService({ projectRoot: dir, agentDir: dir });
 	await service.manage({ sessionId: "alice" }, { action: "create", topic: "work" });
-	const state = service as unknown as { worker?: Worker };
+	const state = service.database as unknown as { worker?: Worker };
 	const original = state.worker;
 	if (!original) throw new Error("Expected a worker");
 	await original.terminate();

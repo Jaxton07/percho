@@ -1,7 +1,5 @@
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { fileURLToPath } from "node:url";
-import { Worker } from "node:worker_threads";
 import { expect, it, vi } from "vitest";
 import { PiBackend } from "../src/pi-backend";
 import { ChannelBackendHost } from "../src/tools/channels/backend-host";
@@ -61,42 +59,47 @@ it("hides cached subscriptions for disabled watch, including read-only sessions"
 it("does not rewrite an existing registration", async () => {
 	mkdirSync(".local/tmp", { recursive: true });
 	const root = mkdtempSync(join(process.cwd(), ".local/tmp/channel-register-"));
+	const host = new ChannelBackendHost(root, () => {
+		throw new Error("unexpected service");
+	});
 	try {
-		const host = new ChannelBackendHost(root, () => {
-			throw new Error("unexpected service");
-		});
+		await host.bind("session", root, root);
 		await host.register(root);
-		const path = join(root, "channel-projects.json");
-		const before = { bytes: readFileSync(path), stat: statSync(path) };
+		const path = join(root, "channels", "channels.sqlite");
+		const before = { bytes: readFileSync(path), mtime: statSync(path).mtimeMs };
 		await host.register(root);
 		expect(readFileSync(path)).toEqual(before.bytes);
-		expect(statSync(path).mtimeMs).toBe(before.stat.mtimeMs);
-		expect(statSync(path).ino).toBe(before.stat.ino);
+		expect(statSync(path).mtimeMs).toBe(before.mtime);
+		expect(await host.binding("session")).toEqual({ root, cwd: root });
 		await host.register(join(root, "other"));
-		expect(JSON.parse(readFileSync(path, "utf8")).projects).toEqual([root, join(root, "other")]);
+		expect(await host.binding("session")).toEqual({ root, cwd: root });
 	} finally {
+		await host.close();
 		rmSync(root, { recursive: true, force: true });
 	}
 });
 
-it("preserves legacy projects and unknown data when binding across host restarts", async () => {
+it("ignores and preserves legacy registration while persisting new bindings across restarts", async () => {
 	mkdirSync(".local/tmp", { recursive: true });
 	const root = mkdtempSync(join(process.cwd(), ".local/tmp/channel-bind-"));
+	const first = new ChannelBackendHost(root, () => {
+		throw new Error("unexpected service");
+	});
+	const second = new ChannelBackendHost(root, () => {
+		throw new Error("unexpected service");
+	});
 	try {
 		const file = join(root, "channel-projects.json");
-		writeFileSync(file, JSON.stringify([root]));
-		const host = () =>
-			new ChannelBackendHost(root, () => {
-				throw new Error("unexpected service");
-			});
-		await host().bind("session", root, root);
-		expect(await host().binding("session")).toEqual({ root, cwd: root });
-		const data = JSON.parse(readFileSync(file, "utf8"));
-		data.future = { value: 1 };
-		writeFileSync(file, JSON.stringify(data));
-		await host().bind("other", root, root);
-		expect(JSON.parse(readFileSync(file, "utf8")).future).toEqual({ value: 1 });
+		const legacy = JSON.stringify({ projects: [root], bindings: { old: { root, cwd: root } } });
+		writeFileSync(file, legacy);
+		expect(await first.binding("old")).toBeUndefined();
+		await first.bind("session", root, root);
+		await first.close();
+		expect(await second.binding("session")).toEqual({ root, cwd: root });
+		await expect(second.bind("session", join(root, "other"), root)).rejects.toThrow("conflicts");
+		expect(readFileSync(file, "utf8")).toBe(legacy);
 	} finally {
+		await Promise.all([first.close(), second.close()]);
 		rmSync(root, { recursive: true, force: true });
 	}
 });
@@ -105,45 +108,44 @@ it("serializes concurrent registrations from independent workers and rejects con
 	mkdirSync(".local/tmp", { recursive: true });
 	const root = mkdtempSync(join(process.cwd(), ".local/tmp/channel-workers-"));
 	const agent = join(root, "agent");
-	const source = fileURLToPath(new URL("../src/tools/channels/backend-host.ts", import.meta.url));
-	const script = `
-		const { parentPort, workerData } = require('node:worker_threads');
-		const ts = require('typescript');
-		const fs = require('node:fs');
-		require.extensions['.ts'] = (module, filename) => module._compile(ts.transpileModule(fs.readFileSync(filename, 'utf8'), { compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022, esModuleInterop: true } }).outputText, filename);
-		const { ChannelBackendHost } = require(workerData.source);
-		parentPort.once('message', async () => {
-			try { await new ChannelBackendHost(workerData.agent, () => {}).bind(workerData.id, workerData.root, workerData.root); parentPort.postMessage('done'); }
-			catch (e) { parentPort.postMessage({ error: String(e) }); }
-		});
-	`;
+	const hosts = Array.from(
+		{ length: 3 },
+		() =>
+			new ChannelBackendHost(agent, () => {
+				throw new Error("unexpected service");
+			}),
+	);
 	try {
 		const roots = [join(root, "one"), join(root, "two")];
-		const workers = roots.map(
-			(project, index) =>
-				new Worker(script, { eval: true, workerData: { source, agent, root: project, id: `s${index}` } }),
-		);
-		const results = workers.map(
-			(worker) =>
-				new Promise<void>((resolve, reject) => {
-					worker.once("error", reject);
-					worker.once("message", (result) =>
-						result === "done" ? resolve() : reject(new Error(JSON.stringify(result))),
-					);
-				}),
-		);
-		for (const worker of workers) worker.postMessage("go");
-		await Promise.all(results);
-		const restarted = new ChannelBackendHost(agent, () => {
-			throw new Error("unexpected service");
-		});
+		await Promise.all(roots.map((project, index) => hosts[index].bind(`s${index}`, project, project)));
+		await Promise.all([hosts[0].close(), hosts[1].close()]);
+		const restarted = hosts[2];
 		expect(await restarted.binding("s0")).toEqual({ root: roots[0], cwd: roots[0] });
 		expect(await restarted.binding("s1")).toEqual({ root: roots[1], cwd: roots[1] });
-		expect(JSON.parse(readFileSync(join(agent, "channel-projects.json"), "utf8")).projects.sort()).toEqual(
-			roots.sort(),
-		);
 		await expect(restarted.bind("s0", roots[1], roots[1])).rejects.toThrow("conflicts");
 	} finally {
+		await Promise.all(hosts.map((host) => host.close()));
+		rmSync(root, { recursive: true, force: true });
+	}
+});
+
+it("scopes deletion fingerprints by project even for the same operation", async () => {
+	mkdirSync(".local/tmp", { recursive: true });
+	const root = mkdtempSync(join(process.cwd(), ".local/tmp/channel-fingerprint-"));
+	const host = new ChannelBackendHost(root, () => {
+		throw new Error("unexpected service");
+	});
+	try {
+		const first = join(root, "first");
+		const second = join(root, "second");
+		await host.recordDeleteFingerprint(first, "op", null);
+		expect(await host.deleteFingerprint(second, "op")).toBeUndefined();
+		await host.recordDeleteFingerprint(second, "op", null);
+		expect(await host.deleteFingerprint(first, "op")).toBeNull();
+		expect(await host.deleteFingerprint(second, "op")).toBeNull();
+		await expect(host.recordDeleteFingerprint(first, "op", null)).rejects.toThrow();
+	} finally {
+		await host.close();
 		rmSync(root, { recursive: true, force: true });
 	}
 });
@@ -200,7 +202,11 @@ it("persists a binding through the public backend creation entry", async () => {
 		const host = new ChannelBackendHost(agent, () => {
 			throw new Error("unexpected service");
 		});
-		expect((await host.binding(session.sessionId))?.cwd).toBe(cwd);
+		try {
+			expect((await host.binding(session.sessionId))?.cwd).toBe(cwd);
+		} finally {
+			await host.close();
+		}
 	} finally {
 		await backend.shutdown();
 		vi.unstubAllEnvs();
@@ -229,10 +235,14 @@ it("keeps an independent non-worktree child separate unless its parent is explic
 		const host = new ChannelBackendHost(agent, () => {
 			throw new Error("unexpected service");
 		});
-		expect((await host.binding(parentSession.sessionId))?.root).toBe(project);
-		expect((await host.binding(childSession.sessionId))?.root).toBe(child);
-		expect((await host.binding(childSession.sessionId))?.cwd).toBe(child);
-		expect((await host.binding(derived.sessionId))?.root).toBe(project);
+		try {
+			expect((await host.binding(parentSession.sessionId))?.root).toBe(project);
+			expect((await host.binding(childSession.sessionId))?.root).toBe(child);
+			expect((await host.binding(childSession.sessionId))?.cwd).toBe(child);
+			expect((await host.binding(derived.sessionId))?.root).toBe(project);
+		} finally {
+			await host.close();
+		}
 	} finally {
 		await backend.shutdown();
 		rootResolver.mockRestore();
@@ -257,8 +267,7 @@ it("read-only service access neither registers a project nor runs deletion recov
 		const service = await internal.channelService(root, root, true);
 		expect(await service.snapshot("reader")).toEqual([]);
 		expect(recover).not.toHaveBeenCalled();
-		expect(() => readFileSync(join(agent, "channel-projects.json"))).toThrow();
-		expect(existsSync(join(agent, "channel-projects.json.lock"))).toBe(false);
+		expect(existsSync(join(agent, "channels", "channels.sqlite"))).toBe(false);
 	} finally {
 		await backend.shutdown();
 		vi.restoreAllMocks();

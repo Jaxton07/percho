@@ -1,7 +1,8 @@
 import { existsSync } from "node:fs";
-import { dirname, join } from "node:path";
+import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { Worker } from "node:worker_threads";
+import type { ProjectChannelFence } from "./database";
 import type {
 	ChannelActor,
 	ChannelFence,
@@ -11,15 +12,19 @@ import type {
 	ChannelReadParams,
 	ChannelReadResult,
 	ChannelSnapshotEntry,
+	DeleteFingerprint,
 } from "./types";
-export interface ChannelServiceOptions {
-	projectRoot: string;
+export interface ChannelDatabaseServiceOptions {
 	agentDir: string;
 	workerPath?: string;
 }
+export interface ChannelServiceOptions extends ChannelDatabaseServiceOptions {
+	projectRoot: string;
+	database?: ChannelDatabaseService;
+}
 
-/** All database access is isolated in one worker. */
-export class ChannelService {
+/** One worker for all projects belonging to a backend. */
+export class ChannelDatabaseService {
 	private worker?: Worker;
 	private sequence = 0;
 	private disposed = false;
@@ -28,7 +33,7 @@ export class ChannelService {
 	private idleTimer?: ReturnType<typeof setTimeout>;
 	private accepted = new Set<Promise<unknown>>();
 	private pending = new Map<number, { resolve: (value: unknown) => void; reject: (error: Error) => void }>();
-	constructor(private readonly options: ChannelServiceOptions) {}
+	constructor(private readonly options: ChannelDatabaseServiceOptions) {}
 	private start(): Worker {
 		if (this.worker) return this.worker;
 		const dir = dirname(fileURLToPath(import.meta.url));
@@ -95,12 +100,12 @@ export class ChannelService {
 		}, 30_000);
 		this.idleTimer.unref();
 	}
-	private call<T>(method: string, args: unknown[] = []): Promise<T> {
+	call<T>(method: string, args: unknown[] = [], projectRoot?: string): Promise<T> {
 		if (this.disposed) return Promise.reject(new Error("Channel service closed"));
 		this.clearIdle();
 		const request = (async () => {
 			if (this.idleClosing) await this.idleClosing;
-			return this.send<T>(this.start(), method, args);
+			return this.send<T>(this.start(), method, args, projectRoot);
 		})();
 		this.accepted.add(request);
 		void request.then(
@@ -109,13 +114,13 @@ export class ChannelService {
 		);
 		return request;
 	}
-	private send<T>(worker: Worker, method: string, args: unknown[]): Promise<T> {
+	private send<T>(worker: Worker, method: string, args: unknown[], projectRoot?: string): Promise<T> {
 		const id = ++this.sequence;
 		worker.ref();
 		return new Promise<T>((resolve, reject) => {
 			this.pending.set(id, { resolve: (value) => resolve(value as T), reject });
 			try {
-				worker.postMessage({ id, method, args });
+				worker.postMessage({ id, method, args, projectRoot });
 			} catch (error) {
 				this.pending.delete(id);
 				if (!this.pending.size) {
@@ -125,6 +130,62 @@ export class ChannelService {
 				reject(error);
 			}
 		});
+	}
+	register(root: string): Promise<void> {
+		return this.call("register", [root]);
+	}
+	bind(id: string, root: string, cwd: string): Promise<void> {
+		return this.call("bind", [id, root, cwd]);
+	}
+	binding(id: string): Promise<{ root: string; cwd: string } | undefined> {
+		return this.call("binding", [id]);
+	}
+	deleteFingerprint(root: string, opId: string): Promise<DeleteFingerprint | null | undefined> {
+		return this.call("deleteFingerprint", [root, opId]);
+	}
+	recordDeleteFingerprint(root: string, opId: string, fingerprint: DeleteFingerprint | null): Promise<void> {
+		return this.call("recordDeleteFingerprint", [root, opId, fingerprint]);
+	}
+	fences(): Promise<ProjectChannelFence[]> {
+		return this.call("fences");
+	}
+	find(id: string, source: string): Promise<ProjectChannelFence | undefined> {
+		return this.call("find", [id, source]);
+	}
+	close(): Promise<void> {
+		if (this.closing) return this.closing;
+		this.disposed = true;
+		this.clearIdle();
+		this.closing = (async () => {
+			if (this.idleClosing) await this.idleClosing;
+			await Promise.allSettled(this.accepted);
+			const worker = this.worker;
+			if (!worker) return;
+			try {
+				await this.send<void>(worker, "close", []);
+			} finally {
+				await worker.terminate();
+				if (this.worker === worker) this.worker = undefined;
+			}
+		})();
+		return this.closing;
+	}
+}
+
+/** A project-scoped view. Closing a borrowed view never closes its shared worker. */
+export class ChannelService {
+	readonly projectRoot: string;
+	readonly database: ChannelDatabaseService;
+	private readonly ownsDatabase: boolean;
+	constructor(options: ChannelServiceOptions) {
+		this.projectRoot = resolve(options.projectRoot);
+		this.database =
+			options.database ??
+			new ChannelDatabaseService({ agentDir: options.agentDir, workerPath: options.workerPath });
+		this.ownsDatabase = !options.database;
+	}
+	private call<T>(method: string, args: unknown[] = []): Promise<T> {
+		return this.database.call(method, args, this.projectRoot);
 	}
 	manage(actor: ChannelActor, params: ChannelManageParams): Promise<ChannelManageResult> {
 		return this.call("manage", [actor, params]);
@@ -157,21 +218,6 @@ export class ChannelService {
 		return this.call("pendingMaintenance");
 	}
 	close(): Promise<void> {
-		if (this.closing) return this.closing;
-		this.disposed = true;
-		this.clearIdle();
-		this.closing = (async () => {
-			if (this.idleClosing) await this.idleClosing;
-			await Promise.allSettled(this.accepted);
-			const worker = this.worker;
-			if (!worker) return;
-			try {
-				await this.send<void>(worker, "close", []);
-			} finally {
-				await worker.terminate();
-				if (this.worker === worker) this.worker = undefined;
-			}
-		})();
-		return this.closing;
+		return this.ownsDatabase ? this.database.close() : Promise.resolve();
 	}
 }

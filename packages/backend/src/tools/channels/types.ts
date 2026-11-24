@@ -1,3 +1,12 @@
+export interface DeleteFingerprint {
+	dev: number;
+	ino: number;
+	ctimeMs: number;
+	mtimeMs: number;
+	id: string;
+	archiveOperationId?: string | null;
+}
+
 export interface ChannelActor {
 	sessionId: string;
 	sessionName?: string;
