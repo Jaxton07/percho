@@ -31,8 +31,8 @@ jobs:
       PERCHO_BUILD_RELEASE_TAG: ${{ inputs.release_tag }}
       PERCHO_BUILD_SOURCE_COMMIT: ${{ github.sha }}
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
         with:
           node-version: 22
           cache: npm
@@ -52,7 +52,7 @@ jobs:
           src/renderer/src/stores/session-view.test.ts
           src/renderer/src/stores/ui-plugin-config-baseline.test.ts
           src/main/ui-plugins/manifest.test.ts
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v8
         with:
           pattern: remote-runtime-*
           path: .local/runtime-release
@@ -74,7 +74,7 @@ jobs:
       - name: Verify Windows packaged media worker and recovery
         if: runner.os == 'Windows'
         run: node scripts/check-session-media-package.mjs --build-output .local/release-output
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         if: always() && runner.os == 'Windows'
         with:
           name: media-worker-${{ runner.os }}
@@ -83,14 +83,14 @@ jobs:
             .local/tmp/session-media-package-check/**/native.log
           include-hidden-files: true
           if-no-files-found: ignore
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: desktop-${{ runner.os }}
           path: .local/release-output/artifacts/*
           include-hidden-files: true
           compression-level: 0
           if-no-files-found: error
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         if: failure()
         with:
           name: startup-logs-${{ runner.os }}

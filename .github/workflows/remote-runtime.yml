@@ -27,8 +27,8 @@ jobs:
       PERCHO_BUILD_RELEASE_TAG: ${{ inputs.release_tag }}
       PERCHO_BUILD_SOURCE_COMMIT: ${{ github.sha }}
     steps:
-      - uses: actions/checkout@v4
-      - uses: docker/setup-buildx-action@v3
+      - uses: actions/checkout@v7
+      - uses: docker/setup-buildx-action@v4
       - name: Prepare target Linux build environment
         run: docker buildx build --load --platform "$PLATFORM" -t percho-runtime-build -f scripts/remote-runtime/Dockerfile scripts/remote-runtime
       - name: Build locked runtime with target dependencies
@@ -71,7 +71,7 @@ jobs:
             -v "$PWD/packages/backend/src/runtime/install-script.ts:/bootstrap.mjs:ro" \
             -v "$PWD/.local/runtime-${ARTIFACT_ARCH}:/artifacts:ro" \
             percho-runtime-current node /verify/verify-remote-runtime-install.mjs
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: remote-runtime-${{ matrix.arch }}
           include-hidden-files: true
