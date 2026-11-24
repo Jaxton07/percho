@@ -54,13 +54,13 @@ function HeadMeta({ request, queueCount }: { request: ExtensionDialogRequest; qu
 	return (
 		<>
 			{remainingSec !== null && (
-				<span className="inline-flex shrink-0 items-center gap-1 text-ui-11 text-ink-faint tabular-nums">
+				<span className="inline-flex h-5 shrink-0 items-center gap-1 text-ui-11 text-ink-faint tabular-nums">
 					<ClockIcon size={11} />
 					{remainingSec}s
 				</span>
 			)}
 			{queueCount > 0 && (
-				<span className="shrink-0 text-ui-11 text-ink-faint">
+				<span className="flex h-5 shrink-0 items-center text-ui-11 text-ink-faint">
 					{t("interaction.queueMore", { count: queueCount })}
 				</span>
 			)}
@@ -197,11 +197,13 @@ export function InteractionDock({ sessionId }: { sessionId: string | null }) {
 							leaving ? "dock-exit" : ""
 						}`}
 					>
-						<div className="flex min-h-5 items-center gap-2">
-							<span className="flex-none text-accent" aria-hidden="true">
+						<div className="flex min-h-5 items-start gap-2">
+							<span className="flex h-5 flex-none items-center text-accent" aria-hidden="true">
 								<Glyph />
 							</span>
-							<h3 className="min-w-0 flex-1 truncate text-ui-13 font-medium tracking-[-0.01em] text-ink-2">
+							{/* 标题可能是多行（如多选题把问题、选项、输入说明拼在一起）：保留换行并自动折行，
+							    过长时在标题内滚动，输入框与按钮始终可见 */}
+							<h3 className="max-h-[40vh] min-w-0 flex-1 overflow-y-auto text-ui-13 leading-5 font-medium tracking-[-0.01em] break-words whitespace-pre-wrap text-ink-2">
 								{shown.title}
 							</h3>
 							<HeadMeta request={shown} queueCount={queueCount} />
