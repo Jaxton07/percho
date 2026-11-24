@@ -42,7 +42,22 @@ gh api --paginate repos/Jaxton07/percho/releases --jq ".[] | select(.tag_name ==
 
 将说明写入 `$release_dir/notes.md`，在触发构建前完成核对。说明覆盖上个版本以来的全部用户可见变化，不能只写最后一个 PR。
 
-正文沿用英文，参考 [Pi release note](https://github.com/earendil-works/pi/releases/tag/v1.5.0) 的分类：`New Features`、`Breaking Changes`、`Added`、`Changed`、`Fixed`、`Removed`，只保留有内容的小节。开头突出少量主要变化，细项关联 PR；核对贡献者署名，明确兼容性、迁移和使用限制，不把局部测量写成所有平台的性能保证。末尾保留本版的 Full Changelog 比较链接。
+正文沿用英文，参考 [Pi release note](https://github.com/earendil-works/pi/releases/tag/v1.5.0) 的分类：`New Features`、`Breaking Changes`、`Added`、`Changed`、`Fixed`、`Removed`，只保留有内容的小节。开头突出少量主要变化，细项关联 PR；核对贡献者署名，明确兼容性、迁移和使用限制，不把局部测量写成所有平台的性能保证。正文之后保留本版的 Full Changelog 比较链接，**最后固定附上 Quick Downloads 平台直达下载表**，不让用户再去资产列表寻找安装包。
+
+正式版说明末尾使用以下模板，将 `{{previous_tag}}`、`{{release_tag}}` 换成实际完整标签（含 `v`）。下载链接固定到本版，不使用 `releases/latest/download`，避免旧版说明下载到新版。文件名以 [artifactNames](../scripts/release/plan.mjs) 为准；Beta/RC 的文件名前缀不同，须按该函数生成，不能直接照搬正式版表格。Linux 桌面目前只有 x64，不把 ARM64 SSH 运行包列成桌面安装包。
+
+```markdown
+**Full Changelog:** https://github.com/Jaxton07/percho/compare/{{previous_tag}}...{{release_tag}}
+
+## Quick Downloads
+
+| Platform | Download |
+| --- | --- |
+| macOS (Apple Silicon) | [DMG](https://github.com/Jaxton07/percho/releases/download/{{release_tag}}/percho-mac-arm64.dmg) |
+| macOS (Intel) | [DMG](https://github.com/Jaxton07/percho/releases/download/{{release_tag}}/percho-mac-x64.dmg) |
+| Windows (x64) | [Installer](https://github.com/Jaxton07/percho/releases/download/{{release_tag}}/percho-windows-x64.exe) · [ZIP](https://github.com/Jaxton07/percho/releases/download/{{release_tag}}/percho-windows-x64.zip) |
+| Linux (x64) | [AppImage](https://github.com/Jaxton07/percho/releases/download/{{release_tag}}/percho-linux-x86_64.AppImage) |
+```
 
 ```bash
 gh release create "$release_tag" --draft --target "$release_sha" \
@@ -90,6 +105,7 @@ gh release download "$release_tag" --dir "$release_dir/verify" \
 逐项确认：
 
 - `published.json` 的标签、目标提交和正文正确，`draft=false`；正式版 `prerelease=false`，且 `/repos/Jaxton07/percho/releases/latest` 返回本版。Beta/RC 则确认 prerelease 且未改变正式版 latest。
+- 正文最后的 Quick Downloads 覆盖本次支持的桌面平台，各链接固定到本版标签，文件名确实存在于本版资产列表中；不能把未发布的架构或 SSH 运行包误标成桌面安装包。
 - 三平台 `release-*.json` 为本次版本、同一源码提交，`passed=true`、`mode=release`；两份运行包元数据也指向同版同提交。
 - 每份报告列出的资产都已上传，GitHub 资产的 `size`、`digest` 与报告中的字节数、SHA256对应；两份 SSH 归档同样与各自元数据一致。摘要缺失或不一致时再下载相关资产取证，不把缺失当作通过。
 - 正式版的 `latest.yml`、`latest-mac.yml`、`latest-linux.yml` 均指向本版，报告列出的安装包、更新文件、摘要和运行包齐全。预期资产以 [整包校验逻辑](../scripts/release/bundle.mjs) 为准，不硬编码资产总数。
