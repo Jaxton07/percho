@@ -1,4 +1,4 @@
-import { useLanguage, useSessionsStore, useTranscriptStore } from "@percho/plugin-api";
+import { useLanguage, usePluginState, useSessionsStore, useTranscriptStore } from "@percho/plugin-api";
 import { memo, useCallback, useEffect, useRef, useState } from "react";
 import blinkUrl from "./assets/blink.png";
 import happyUrl from "./assets/happy.png";
@@ -117,6 +117,8 @@ export const Pet = memo(function Pet() {
 	);
 
 	const [offset, setOffset] = useState({ x: 0, y: 0 });
+	// 拖到哪里记到哪里（#72）：拖动中只更新内存，松手时存一次；重启后读回并按当前窗口 clamp
+	const [savedOffset, saveOffset, offsetReady] = usePluginState("offset", { x: 0, y: 0 });
 	const [dragging, setDragging] = useState(false); // 已越过位移阈值
 	const [happyTick, setHappyTick] = useState(0); // 0 = 非开心；>0 每次点击 +1（key 重挂载重启弹跳/爱心动画）
 	const [blinking, setBlinking] = useState(false);
@@ -191,6 +193,14 @@ export const Pet = memo(function Pet() {
 		window.addEventListener("resize", onResize);
 		return () => window.removeEventListener("resize", onResize);
 	}, [clampOffset]);
+
+	// 读到上次保存的位置后只恢复一次（窗口可能变小了，先 clamp 进视口）
+	const restoredRef = useRef(false);
+	useEffect(() => {
+		if (!offsetReady || restoredRef.current) return;
+		restoredRef.current = true;
+		if (savedOffset.x !== 0 || savedOffset.y !== 0) setOffset(clampOffset(savedOffset.x, savedOffset.y));
+	}, [offsetReady, savedOffset, clampOffset]);
 
 	// 开心定时器卸载清理
 	useEffect(
@@ -284,8 +294,10 @@ export const Pet = memo(function Pet() {
 								if (!d || e.pointerId !== d.pointerId) return;
 								dragRef.current = null;
 								setJelly({ sx: 1, sy: 1 });
-								if (d.moved) setDragging(false);
-								else triggerHappy();
+								if (d.moved) {
+									setDragging(false);
+									saveOffset(offsetRef.current);
+								} else triggerHappy();
 							}}
 							onPointerCancel={(e) => {
 								const d = dragRef.current;

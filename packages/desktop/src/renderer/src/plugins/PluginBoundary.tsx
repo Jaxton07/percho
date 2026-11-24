@@ -1,5 +1,6 @@
 import { Component, type ReactNode } from "react";
 import { getPi } from "../api";
+import { PluginNameContext } from "./plugin-state";
 import { useUiPluginRegistry } from "./registry";
 
 interface PluginBoundaryProps {
@@ -40,7 +41,11 @@ class PluginBoundary extends Component<PluginBoundaryProps, PluginBoundaryState>
 	}
 
 	render() {
-		return this.state.errored ? (this.props.fallback ?? null) : this.props.children;
+		return (
+			<PluginNameContext.Provider value={this.props.pluginName}>
+				{this.state.errored ? (this.props.fallback ?? null) : this.props.children}
+			</PluginNameContext.Provider>
+		);
 	}
 }
 
