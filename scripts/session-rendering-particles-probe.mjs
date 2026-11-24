@@ -83,9 +83,14 @@ export async function measureStatusParticles(renderer, main, channel, snapshot, 
 			"Status row must enter via SDK events",
 		);
 		const enter = await renderer.eval(
-			"(()=>{const r=document.querySelector('.activity-status'),a=r.querySelector('.activity-status-words').getAnimations()[0];return {duration:a?.effect.getTiming().duration,iterations:a?.effect.getTiming().iterations}})()",
+			"(()=>{const r=document.querySelector('.activity-status'),w=r.querySelector('.activity-status-words'),a=w.getAnimations()[0];return {width:w.getBoundingClientRect().width,duration:a?.effect.getTiming().duration,easing:a?.effect.getTiming().easing,iterations:a?.effect.getTiming().iterations}})()",
 		);
-		assert.equal(enter.duration, 600, "Entry duration must be 600ms");
+		assert.equal(
+			enter.duration,
+			Math.max(1, Math.round((enter.width / 540) * 1000)),
+			"Entry must reveal visible text at 540px/s",
+		);
+		assert.equal(enter.easing, "linear");
 		assert.equal(enter.iterations, 1);
 		await waitFor(
 			"document.querySelector('.activity-status[data-phase=pass]')",
@@ -208,6 +213,67 @@ export async function measureStatusParticles(renderer, main, channel, snapshot, 
 		);
 		const sample = await snapshot("particles-stationary", round);
 		sample.particleGeometry = stationary;
+		sample.entryTiming = enter;
+		// Another native window takes focus without hiding the status window.
+		await waitFor("document.querySelector('.activity-status[data-phase=pass]')", "Focus probe needs a pass");
+		await renderer.send("Emulation.setFocusEmulationEnabled", { enabled: false });
+		try {
+			await main.eval(`(async()=>{
+				const {app,BrowserWindow}=process.getBuiltinModule('module').createRequire(process.cwd()+'/package.json')('electron');
+				app.focus({steal:true});
+				const primary=BrowserWindow.getAllWindows()[0],b=primary.getBounds();
+				globalThis.__statusFocusWindow=new BrowserWindow({width:200,height:120,x:b.x+b.width-220,y:b.y+40,show:false,webPreferences:{sandbox:true,contextIsolation:true}});
+				await globalThis.__statusFocusWindow.loadURL('data:text/html,<title>Focus probe</title>');
+				globalThis.__statusFocusWindow.show();globalThis.__statusFocusWindow.focus();return true;
+			})()`);
+			try {
+				await waitFor(
+					"!document.hasFocus() && !document.hidden",
+					"Native focus must move while the status remains visible",
+				);
+			} catch (error) {
+				const page = await renderer.eval("({focused:document.hasFocus(),hidden:document.hidden})");
+				const windows = await main.eval(
+					"process.getBuiltinModule('module').createRequire(process.cwd()+'/package.json')('electron').BrowserWindow.getAllWindows().map(w=>({id:w.id,focused:w.isFocused(),visible:w.isVisible(),pageFocused:w.webContents.isFocused()}))",
+				);
+				console.error("Native status focus precondition", JSON.stringify({ page, windows }));
+				throw error;
+			}
+			await waitFor(
+				"document.querySelector('.activity-status[data-phase=pass]')",
+				"Unfocused entry must lead to a pass",
+			);
+			await waitFor(
+				"(()=>{const t=[...document.querySelector('.activity-status').getAnimations({subtree:true})];return t.length===3&&t.every(a=>a.playState==='running'&&typeof a.currentTime==='number'&&Number(a.effect.getTiming().duration)-a.currentTime>300)})()",
+				"Unfocused clocks need a running pass with room to advance",
+			);
+			const before = await renderer.eval(`(()=>{
+				const tracks=[...document.querySelector('.activity-status').getAnimations({subtree:true})];
+				__renderDiag.focusTracks=tracks;return tracks.map(a=>({time:a.currentTime,state:a.playState}));
+			})()`);
+			assert.equal(before.length, 3);
+			assert(
+				before.every((a) => a.state === "running"),
+				"Visible unfocused tracks must keep playing",
+			);
+			await waitFor(
+				`__renderDiag.focusTracks.every((a,i)=>a.playState==='running'&&typeof a.currentTime==='number'&&a.currentTime>${JSON.stringify(before.map((a) => a.time))}[i])`,
+				"All unfocused clocks must advance",
+			);
+			const sample = await snapshot("particles-visible-unfocused", round);
+			sample.focusPlayback = await renderer.eval(
+				"({focused:document.hasFocus(),hidden:document.hidden,tracks:__renderDiag.focusTracks.map(a=>({time:a.currentTime,state:a.playState}))})",
+			);
+			sample.focusPlayback.before = before;
+			assert.equal(sample.focusPlayback.focused, false);
+			assert.equal(sample.focusPlayback.hidden, false);
+		} finally {
+			await main.eval(
+				"if(globalThis.__statusFocusWindow){globalThis.__statusFocusWindow.destroy();delete globalThis.__statusFocusWindow}true",
+			);
+			await renderer.send("Emulation.setFocusEmulationEnabled", { enabled: true });
+			await renderer.eval("delete __renderDiag.focusTracks;true");
+		}
 		let previousWidth = stationary.width;
 		for (const collapsed of [true, false, true, false]) {
 			await renderer.eval(

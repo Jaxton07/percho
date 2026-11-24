@@ -155,11 +155,27 @@ it.each([
 	expect(host?.querySelectorAll(".status-particles circle")).toHaveLength(count);
 });
 
+it.each([
+	[0, 1],
+	[108, 200],
+	[216, 400],
+])("reveals %ipx of visible text at 540px/s in %ims", async (width, duration) => {
+	mount();
+	const measure = vi.mocked(Element.prototype.getBoundingClientRect).getMockImplementation();
+	assert(measure, "Missing rectangle mock");
+	vi.mocked(Element.prototype.getBoundingClientRect).mockImplementation(function (this: Element) {
+		const rect = measure.call(this);
+		return this.classList.contains("activity-status-words") ? { ...rect, width, right: width } : rect;
+	});
+	await render(item("read"));
+	expect(animations[0]?.timing).toMatchObject({ duration, easing: "linear" });
+});
+
 it("keeps only the newest candidate until the entire joined pass ends", async () => {
 	mount();
 	await render(item("read"));
 	expect(text()).toBe("Reviewing relevant content");
-	expect(animations[0]?.timing).toMatchObject({ duration: 600, easing: "ease-in-out" });
+	expect(animations[0]?.timing).toMatchObject({ duration: 333, easing: "linear" });
 	await render(item("write"));
 	await render(item("webfetch"));
 	expect(text()).toBe("Reviewing relevant content");
@@ -174,7 +190,7 @@ it("keeps only the newest candidate until the entire joined pass ends", async ()
 	expect(animations).toHaveLength(4);
 	await finish();
 	expect(text()).toBe("Editing TODO content");
-	expect(animations.at(-1)?.timing.duration).toBe(600);
+	expect(animations.at(-1)?.timing.duration).toBe(333);
 });
 
 it("accelerates short routes too, keeping all three tracks synchronized", async () => {
@@ -194,7 +210,7 @@ it("does not re-enter when different tools resolve to the same text", async () =
 	await render(item("grep"));
 	await finish();
 	expect(text()).toBe("Reviewing relevant content");
-	expect(animations.filter((a) => a.timing.duration === 600)).toHaveLength(1);
+	expect(animations.filter((a) => a.node.classList.contains("activity-status-words"))).toHaveLength(1);
 });
 
 it("uses actual execution time and withdraws a waiting candidate before it can enter", async () => {
@@ -370,17 +386,36 @@ it("ignores old playback completion after switching scope", async () => {
 	expect(text()).toBe("Editing relevant files");
 });
 
-it("pauses on blur, resumes on focus and hides only particles while expanded", async () => {
+it.each(["entry", "pass"])("keeps %s playing while visible but unfocused", async (phase) => {
+	mount();
+	vi.spyOn(document, "hidden", "get").mockReturnValue(false);
+	await render(item("read"));
+	if (phase === "pass") await finish();
+	const active = animations.slice(phase === "pass" ? -3 : -1);
+	vi.mocked(document.hasFocus).mockReturnValue(false);
+	await act(() => window.dispatchEvent(new Event("blur")));
+	expect(active.map((a) => a.playState)).toEqual(active.map(() => "running"));
+	expect(host?.querySelector(".status-particles")?.hasAttribute("data-paused")).toBe(false);
+	if (phase === "entry") await finish();
+	await render(item("write"));
+	await finish();
+	expect(text()).toBe("Editing relevant files");
+	expect(animations.at(-1)?.playState).toBe("running");
+});
+
+it("pauses only while hidden, resumes without focus and hides particles while expanded", async () => {
 	mount();
 	await render(item("read"));
 	await finish();
 	const pass = animations.slice(-3);
+	const hidden = vi.spyOn(document, "hidden", "get").mockReturnValue(true);
 	vi.mocked(document.hasFocus).mockReturnValue(false);
-	await act(() => window.dispatchEvent(new Event("blur")));
+	await act(() => document.dispatchEvent(new Event("visibilitychange")));
 	expect(pass.map((a) => a.playState)).toEqual(["paused", "paused", "paused"]);
-	vi.mocked(document.hasFocus).mockReturnValue(true);
-	await act(() => window.dispatchEvent(new Event("focus")));
+	hidden.mockReturnValue(false);
+	await act(() => document.dispatchEvent(new Event("visibilitychange")));
 	expect(pass.map((a) => a.playState)).toEqual(["running", "running", "running"]);
+	expect(new Set(pass.map((a) => a.startTime)).size).toBe(1);
 	const summary = host?.querySelector("summary");
 	const particles = host?.querySelector<SVGElement>(".status-particles");
 	await act(async () => {
